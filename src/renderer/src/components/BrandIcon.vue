@@ -90,11 +90,11 @@ const raw = computed(() => {
       <line v-for="(r, i) in claudeRays" :key="i" :x1="r.x1" :y1="r.y1" :x2="r.x2" :y2="r.y2" />
     </g>
 
-    <!-- Codex CLI, Cline, Copilot CLI, Qwen Code, Ollama: their own icons -->
+    <!-- Cline, Copilot CLI, Qwen Code, Ollama: their own icons -->
     <!-- eslint-disable-next-line vue/no-v-html -->
     <svg v-else-if="raw" x="1" y="1" width="22" height="22" :viewBox="raw.box" v-html="raw.html" />
 
-    <!-- OpenAI blossom -->
+    <!-- Codex / OpenAI blossom -->
     <path v-else-if="k === 'codex' || k === 'openai'" :d="OPENAI_PATH" fill="#ececec" />
 
     <!-- OpenCode: its "O" (opencode.ai/brand, dark version), as tall as the others -->
