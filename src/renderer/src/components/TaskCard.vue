@@ -101,6 +101,14 @@ const selectedPane = computed({
 const assignedPane = computed(
   () => props.agentPanes.find((p) => p.id === props.task.paneId) || null
 )
+// The agent is chosen while the work is to do or under way; once it waits
+// for review or is done, the agent that did it is shown, not changeable (the
+// review merges or discards that agent's copy).
+const canAssign = computed(() => props.task.column === 'todo' || props.task.column === 'doing')
+// "Show agent": while it works on it or waits for review.
+const canShowAgent = computed(
+  () => !!assignedPane.value && (props.task.column === 'doing' || props.task.column === 'review')
+)
 
 // When the work started and was finished: "Started 10:42 · done 11:05 ·
 // 23 min" (a date instead of today's time for other days).
@@ -140,6 +148,7 @@ function paneLabel(pane) {
     :class="{ dragging }"
     data-test="task-card"
     :data-task-id="task.id"
+    :data-column="task.column"
     :draggable="!editing"
     tabindex="0"
     title="Drag to another column (keyboard: Alt+Left / Alt+Right)"
@@ -148,6 +157,7 @@ function paneLabel(pane) {
     @dragstart="onDragStart"
     @dragend="dragging = false"
   >
+    <!-- Title, then rename (To do only) and delete, always in the same place. -->
     <div class="task-card-top">
       <input
         v-if="editing"
@@ -168,8 +178,8 @@ function paneLabel(pane) {
         >{{ task.title }}</span
       >
       <button
-        v-if="canEdit"
-        class="task-btn task-edit-btn"
+        v-if="canEdit && !editing"
+        class="task-btn task-icon-btn"
         title="Rename task"
         aria-label="Rename task"
         data-test="edit-title"
@@ -185,12 +195,33 @@ function paneLabel(pane) {
           <path d="M9.8 3.9l2.3 2.3" stroke="currentColor" stroke-width="1.3" />
         </svg>
       </button>
+      <button
+        class="task-btn task-icon-btn danger"
+        title="Delete task"
+        aria-label="Delete task"
+        data-test="delete-task"
+        @click="onDelete"
+      >
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+        </svg>
+      </button>
     </div>
 
-    <div class="task-card-meta">
-      <span class="task-status" :class="`status-${task.column}`" data-test="card-status">{{
-        task.column
-      }}</span>
+    <!-- The agent: chosen in To do and Doing, shown in Review and Done. -->
+    <select
+      v-if="canAssign"
+      v-model="selectedPane"
+      class="task-assign"
+      title="The agent doing this task"
+      data-test="assign-select"
+    >
+      <option value="">Unassigned</option>
+      <option v-for="pane in agentPanes" :key="pane.id" :value="pane.id">
+        {{ paneLabel(pane) }}
+      </option>
+    </select>
+    <div v-else class="task-card-meta">
       <span
         v-if="assignedPane"
         class="task-assignee"
@@ -199,7 +230,7 @@ function paneLabel(pane) {
       >
         <BrandIcon :kind="assignedPane.agentId || ''" :size="13" />{{ paneLabel(assignedPane) }}
       </span>
-      <span v-else class="task-assignee unassigned" data-test="assignee">Unassigned</span>
+      <span v-else class="task-assignee unassigned" data-test="assignee">No agent</span>
       <span
         v-if="task.column === 'review' && task.leadReview"
         class="task-lead"
@@ -215,46 +246,34 @@ function paneLabel(pane) {
       <span v-if="assignedPane.track.reason" class="task-track-reason">{{ assignedPane.track.reason }}</span>
     </div>
 
-    <div v-if="timing" class="task-timing" data-test="task-timing" :title="timingTitle">{{ timing }}</div>
-
     <div v-if="task.worktree || task.brief" class="task-card-extra">
       <span v-if="task.worktree" class="task-branch" :title="task.worktree.path">{{ task.worktree.branch }}</span>
       <span v-if="task.brief" class="task-brief" :title="task.brief">{{ task.brief }}</span>
     </div>
 
-    <div class="task-card-actions">
-      <button
-        v-if="task.column === 'review'"
-        class="task-btn task-review-btn"
-        title="See the changes, then merge, ask for changes or discard"
-        data-test="review-task"
-        @click="emit('review', task.id)"
-      >
-        Review
-      </button>
-      <button
-        v-if="assignedPane && (task.column === 'doing' || task.column === 'review')"
-        class="task-btn"
-        title="Go to the agent doing this task"
-        @click="emit('focus-pane', task.paneId)"
-      >
-        Show agent
-      </button>
-      <select
-        v-model="selectedPane"
-        class="task-assign"
-        title="Assign to an agent pane"
-        data-test="assign-select"
-      >
-        <option value="">Unassigned</option>
-        <option v-for="pane in agentPanes" :key="pane.id" :value="pane.id">
-          {{ paneLabel(pane) }}
-        </option>
-      </select>
-
-      <button class="task-btn danger" title="Delete task" data-test="delete-task" @click="onDelete">
-        ✕
-      </button>
+    <!-- Bottom line: when, then what can be done now. -->
+    <div v-if="timing || canShowAgent || task.column === 'review'" class="task-card-foot">
+      <span v-if="timing" class="task-timing" data-test="task-timing" :title="timingTitle">{{ timing }}</span>
+      <span class="task-card-actions">
+        <button
+          v-if="canShowAgent"
+          class="task-btn"
+          title="Go to the agent doing this task"
+          data-test="show-agent"
+          @click="emit('focus-pane', task.paneId)"
+        >
+          Show agent
+        </button>
+        <button
+          v-if="task.column === 'review'"
+          class="task-btn task-review-btn"
+          title="See the changes, then merge, ask for changes or discard"
+          data-test="review-task"
+          @click="emit('review', task.id)"
+        >
+          Review
+        </button>
+      </span>
     </div>
   </div>
 </template>

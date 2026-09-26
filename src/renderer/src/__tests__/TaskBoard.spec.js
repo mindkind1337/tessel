@@ -122,7 +122,7 @@ describe('TaskCard.vue', () => {
   it('shows the task title and current status', () => {
     const { wrapper } = mountCard({ column: 'doing' })
     expect(wrapper.get('[data-test="card-title"]').text()).toContain('Card task')
-    expect(wrapper.get('[data-test="card-status"]').text().toLowerCase()).toContain('doing')
+    expect(wrapper.get('[data-test="task-card"]').attributes('data-column')).toBe('doing')
   })
 
   it('is moved by dragging only (no arrow buttons)', async () => {
@@ -190,12 +190,31 @@ describe('TaskCard.vue', () => {
 
   it('shows the assigned pane name when assigned', async () => {
     const { wrapper } = mountCard({ paneId: 'pane-1' })
-    expect(wrapper.get('[data-test="assignee"]').text()).toContain('Claude')
+    expect(wrapper.get('[data-test="assign-select"]').element.value).toBe('pane-1')
+  })
+
+  it('the agent is chosen in To do and Doing, only shown in Review and Done; delete in every column', () => {
+    for (const column of ['todo', 'doing']) {
+      const { wrapper } = mountCard({ column, paneId: 'pane-1' })
+      expect(wrapper.find('[data-test="assign-select"]').exists()).toBe(true)
+      expect(wrapper.find('[data-test="delete-task"]').exists()).toBe(true)
+    }
+    for (const column of ['review', 'done']) {
+      const { wrapper } = mountCard({ column, paneId: 'pane-1' })
+      expect(wrapper.find('[data-test="assign-select"]').exists()).toBe(false)
+      expect(wrapper.get('[data-test="assignee"]').text()).toContain('Claude')
+      expect(wrapper.find('[data-test="delete-task"]').exists()).toBe(true)
+    }
+    // Show agent: while it works on it or waits for review, never in Done.
+    expect(mountCard({ column: 'doing', paneId: 'pane-1' }).wrapper.find('[data-test="show-agent"]').exists()).toBe(true)
+    expect(mountCard({ column: 'done', paneId: 'pane-1' }).wrapper.find('[data-test="show-agent"]').exists()).toBe(false)
+    expect(mountCard({ column: 'review' }).wrapper.get('[data-test="assignee"]').text()).toBe('No agent')
   })
 
   it('falls back to the agentId when a pane has no title', () => {
     const task = addTask({ title: 'Card task' })
     task.paneId = 'pane-3'
+    task.column = 'review'
     const wrapper = mount(TaskCard, {
       props: {
         task,
@@ -203,8 +222,11 @@ describe('TaskCard.vue', () => {
       }
     })
     expect(wrapper.get('[data-test="assignee"]').text()).toContain('gemini')
-    const options = wrapper.findAll('[data-test="assign-select"] option')
-    expect(options.some((o) => o.text().includes('gemini'))).toBe(true)
+    task.column = 'todo'
+    return wrapper.vm.$nextTick().then(() => {
+      const options = wrapper.findAll('[data-test="assign-select"] option')
+      expect(options.some((o) => o.text().includes('gemini'))).toBe(true)
+    })
   })
 })
 

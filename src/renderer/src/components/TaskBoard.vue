@@ -72,8 +72,9 @@ function onDrop(e, column) {
   if (task && task.column !== column) moveTask(id, column)
 }
 
+const COLUMN_LABEL = { todo: 'To do', doing: 'Doing', review: 'Review', done: 'Done' }
 function columnLabel(column) {
-  return column.charAt(0).toUpperCase() + column.slice(1)
+  return COLUMN_LABEL[column] || column
 }
 </script>
 

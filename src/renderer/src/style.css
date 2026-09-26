@@ -1012,28 +1012,27 @@ button {
   user-select: text;
 }
 
+/* Review and Done: the agent that did it (not changeable), and the lead's
+   review. */
 .task-card-meta {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-  font-size: 11px;
-}
-
-/* The column is already shown by the section header. */
-.task-status {
-  display: none;
+  min-height: 22px;
+  font-size: 11.5px;
 }
 
 .task-assignee {
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  min-width: 0;
   color: var(--text);
 }
 
-/* The assign dropdown already says "Unassigned"; don't repeat it. */
-.task-card-meta:has(.task-assignee.unassigned) {
-  display: none;
+.task-assignee.unassigned {
+  color: var(--text-dim);
 }
 
 .assignee-swatch {
@@ -1043,10 +1042,19 @@ button {
   background: var(--accent);
 }
 
+/* Bottom line: when (left), what can be done now (right). */
+.task-card-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+}
+
 .task-card-actions {
   display: flex;
   align-items: center;
   gap: 4px;
+  margin-left: auto;
 }
 
 .task-card .task-btn {
@@ -1079,8 +1087,9 @@ button {
   border-color: transparent;
 }
 
-/* The pencil (rename): always there, brighter on hover. */
-.task-card-top .task-btn {
+/* Rename and delete, top right of every card: quiet, brighter on hover
+   or when focused with the keyboard. */
+.task-card .task-icon-btn {
   flex: 0 0 auto;
   min-width: 24px;
   padding: 0;
@@ -1089,14 +1098,16 @@ button {
   transition: opacity 0.12s;
 }
 
-.task-card:hover .task-card-top .task-btn {
+.task-card:hover .task-icon-btn,
+.task-card:focus-within .task-icon-btn,
+.task-card .task-icon-btn:focus-visible {
   opacity: 1;
 }
 
 .task-assign {
-  flex: 1 1 auto;
+  width: 100%;
   min-width: 0;
-  height: 24px;
+  height: 26px;
   padding: 0 6px;
   border: 1px solid var(--border);
   border-radius: 5px;
@@ -5238,9 +5249,16 @@ button.act-stat:hover,
   accent-color: var(--accent);
 }
 
-.task-review-btn {
+/* Review: the main thing to do on a card waiting for review. */
+.task-card .task-review-btn {
   border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
   color: var(--text-strong);
+  font-weight: 600;
+}
+
+.task-card .task-review-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 36%, transparent);
 }
 
 /* Team lead: a quiet tag in Sessions and on task cards. */
