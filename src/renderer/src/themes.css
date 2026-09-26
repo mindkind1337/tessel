@@ -838,19 +838,6 @@
   line-height: 1.35;
 }
 
-:root[data-theme='warp'] .pane-task {
-  padding: 1px 5px;
-  border-color: var(--border);
-  border-radius: 3px;
-  color: var(--text-dim);
-  font-size: 10px;
-}
-
-:root[data-theme='warp'] .pane-task.review {
-  border-color: color-mix(in srgb, var(--warn) 42%, var(--border));
-  color: var(--warn);
-}
-
 :root[data-theme='warp'] .nt-dialog {
   width: min(560px, 100%);
   max-height: calc(100vh - 36px);
@@ -1286,13 +1273,6 @@
 
 :root[data-theme='warp'] .pane {
   container: warp-pane / inline-size;
-}
-
-/* The task and full tracking details remain in Sessions and the task card. */
-@container warp-pane (max-width: 420px) {
-  :root[data-theme='warp'] .pane-nav-left:has(.pane-stuck) .pane-task {
-    display: none;
-  }
 }
 
 @container warp-pane (max-width: 300px) {

@@ -4690,25 +4690,6 @@ button.act-stat:hover,
   -webkit-line-clamp: 2;
 }
 
-.pane-task {
-  flex: 0 1 auto;
-  min-width: 0;
-  max-width: 220px;
-  overflow: hidden;
-  padding: 1px 7px;
-  border: 1px solid var(--border-strong);
-  border-radius: 9px;
-  color: var(--text);
-  font-size: 10.5px;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.pane-task.review {
-  border-color: color-mix(in srgb, var(--accent) 60%, transparent);
-  color: var(--text-strong);
-}
-
 /* New task dialog. */
 .nt-backdrop {
   position: fixed;

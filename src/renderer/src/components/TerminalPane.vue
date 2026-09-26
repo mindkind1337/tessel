@@ -197,8 +197,6 @@ const needsYou = computed(() => !!attention[props.node.id])
 const limit = computed(() => limits[props.node.id] || null)
 
 const asksApproval = computed(() => !!approvals[props.node.id])
-// The task this agent is doing (or waiting to have reviewed), if any.
-const task = computed(() => (ctx.taskOfPane ? ctx.taskOfPane(props.node.id) : null))
 // How it is doing (src/shared/tracking.js), when it may be stuck.
 const track = computed(() => (ctx.trackOf ? ctx.trackOf(props.node.id) : null))
 
@@ -1124,13 +1122,6 @@ onBeforeUnmount(() => {
           </svg>
           {{ node.worktree.branch }}
         </span>
-        <span
-          v-if="task"
-          class="pane-task"
-          :class="task.column"
-          :title="`Task: ${task.title}${task.worktree ? ` (branch ${task.worktree.branch})` : ''}`"
-          >{{ task.column === 'review' ? 'To review: ' : '' }}{{ task.title }}</span
-        >
         <span
           v-if="team"
           class="pane-team"
