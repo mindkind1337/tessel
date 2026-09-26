@@ -7,6 +7,7 @@ import { loadTasks, loadBoard, saveTasks } from './taskBoardPersistence'
 import { trimEvents, isEvent } from '../shared/activity'
 import { claudeSessionExists, findCodexSession, listSessions } from './agentSessions'
 import { agentModelLive, watchModelFiles } from './agentModel'
+import { extraToolDirs, withToolDirs } from './toolDirs'
 import { createLogger, describe } from './logger'
 import { cleanEnv } from './cleanEnv'
 import { createPtyClient } from './ptyClient'
@@ -336,8 +337,25 @@ async function readFreshPath() {
 readFreshPath().then((p) => {
   if (freshPath === null) freshPath = p || ''
 })
+// Plus the folders installers put commands in without adding them to PATH
+// (pip with the Store Python, uv, pipx...: see toolDirs.js), looked up again
+// when PATH is read again (after installing an agent).
+let toolDirs = null
+// Python's user scripts folder (where pip --user puts kimi, aider...), asked
+// once in the background: python and the py launcher.
+let pythonDirs = []
+if (process.platform === 'win32') {
+  const ask = "import sysconfig, os; print(sysconfig.get_path('scripts', os.name + '_user'))"
+  Promise.all([runQuiet('python', ['-c', ask], { timeout: 15000 }), runQuiet('py', ['-3', '-c', ask], { timeout: 15000 })]).then(
+    (res) => {
+      pythonDirs = [...new Set(res.filter((r) => r.ok).map((r) => r.stdout.trim()).filter(Boolean))]
+      toolDirs = null
+    }
+  )
+}
 function currentPath() {
-  return freshPath || process.env.PATH || process.env.Path || ''
+  if (!toolDirs) toolDirs = extraToolDirs(process.env, os.homedir(), pythonDirs)
+  return withToolDirs(freshPath || process.env.PATH || process.env.Path || '', toolDirs)
 }
 
 // process.env with PATH replaced by the fresh value (Windows env keys are
@@ -1031,6 +1049,7 @@ ipcMain.handle('tools:status', async () => {
 
 ipcMain.handle('tools:refreshPath', async () => {
   freshPath = await readFreshPath()
+  toolDirs = null
   agentCache = null
   codexNoDaemon = null
   return true
@@ -1039,6 +1058,7 @@ ipcMain.handle('tools:refreshPath', async () => {
 // Re-read PATH and re-detect agents (after installing one).
 ipcMain.handle('agents:refresh', async (_evt, custom) => {
   freshPath = await readFreshPath()
+  toolDirs = null
   agentCache = null
   codexNoDaemon = null // an agent just installed or updated
   return getAgents(custom)
