@@ -39,7 +39,10 @@ const SCOPE_LABEL = {
 const cardEl = ref(null)
 const tab = ref('installed')
 const loading = ref(true)
-const lists = reactive({ claude: [], codex: [], gemini: [], qwen: [], copilot: [], opencode: [], codexError: null })
+// One (empty until read) list per agent in ALL_AGENTS: the dialog draws before
+// the lists arrive, so every agent it names must have one.
+const lists = reactive({ ...Object.fromEntries(ALL_AGENTS.map((a) => [a, []])), codexError: null })
+const listOf = (agent) => (Array.isArray(lists[agent]) ? lists[agent] : [])
 const listErrors = reactive({}) // agent -> why its servers could not be read
 const busy = ref('') // key of the action in progress
 const message = reactive({ text: '', kind: 'ok' })
@@ -52,7 +55,7 @@ const installed = computed(() =>
 // The agents shown: installed here, or already holding servers (Claude Code
 // and Codex when nothing is detected, so the dialog is never empty).
 const AGENTS = computed(() => {
-  const shown = ALL_AGENTS.filter((a) => installed.value[a] || lists[a].length)
+  const shown = ALL_AGENTS.filter((a) => installed.value[a] || listOf(a).length)
   return shown.length ? shown : ['claude', 'codex']
 })
 
@@ -66,7 +69,7 @@ function say(text, kind = 'ok') {
 const rows = computed(() => {
   const map = new Map()
   for (const agent of AGENTS.value) {
-    for (const s of lists[agent]) {
+    for (const s of listOf(agent)) {
       if (!map.has(s.name))
         map.set(s.name, { name: s.name, target: s.target, type: s.type, by: {} })
       map.get(s.name).by[agent] = s
@@ -223,7 +226,7 @@ const filtered = computed(() => {
 })
 
 function addedTo(id) {
-  return AGENTS.value.filter((a) => lists[a].some((s) => s.name === id))
+  return AGENTS.value.filter((a) => listOf(a).some((s) => s.name === id))
 }
 
 function open(entry) {
@@ -285,7 +288,7 @@ async function addFromCatalog(entry) {
     await refresh()
     // Check it right away.
     for (const agent of chosen) {
-      const s = lists[agent].find((x) => x.name === entry.id)
+      const s = listOf(agent).find((x) => x.name === entry.id)
       if (s) test(agent, s)
     }
   }
