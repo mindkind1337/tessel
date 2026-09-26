@@ -4,7 +4,7 @@
 //   pip with the Microsoft Store Python  ...\Packages\PythonSoftwareFoundation.Python.*\LocalCache\local-packages\Python*\Scripts
 //   pip --user with python.org Python    %APPDATA%\Python\Python*\Scripts
 //   uv tool / pipx                       ~\.local\bin
-//   npm global, Bun, Ollama, OpenCode's installer
+//   npm global, Bun, Ollama, the OpenCode and Kimi Code installers
 // Only folders that exist are added, after PATH's own (PATH always wins).
 import fs from 'fs'
 import os from 'os'
@@ -28,18 +28,20 @@ export function extraToolDirs(env = process.env, home = os.homedir(), pythonDirs
   if (process.platform !== 'win32' && !env.TESSEL_TOOLDIRS_TEST) return [join(home, '.local', 'bin')]
   const local = env.LOCALAPPDATA || join(home, 'AppData', 'Local')
   const roaming = env.APPDATA || join(home, 'AppData', 'Roaming')
-  const dirs = []
+  // The agents' own install folders first: a newer agent must win over an
+  // old pip copy with the same name (kimi-cli's "kimi" vs Kimi Code's).
+  const dirs = [
+    join(home, '.kimi-code', 'bin'),
+    join(home, '.opencode', 'bin'),
+    join(local, 'Programs', 'Ollama'),
+    join(home, '.local', 'bin'),
+    join(roaming, 'npm'),
+    join(home, '.bun', 'bin')
+  ]
   for (const pkg of subdirs(join(local, 'Packages'), /^PythonSoftwareFoundation\.Python\./i)) {
     for (const py of subdirs(join(pkg, 'LocalCache', 'local-packages'), /^Python\d+$/i)) dirs.push(join(py, 'Scripts'))
   }
   for (const py of subdirs(join(roaming, 'Python'), /^Python\d+$/i)) dirs.push(join(py, 'Scripts'))
-  dirs.push(
-    join(home, '.local', 'bin'),
-    join(roaming, 'npm'),
-    join(home, '.bun', 'bin'),
-    join(local, 'Programs', 'Ollama'),
-    join(home, '.opencode', 'bin')
-  )
   const found = dirs.filter((d) => {
     try {
       return fs.statSync(d).isDirectory()

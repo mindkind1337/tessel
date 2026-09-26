@@ -307,15 +307,38 @@ let lastRows = 0
 // so panes still refit while the window is unfocused or occluded.
 const RESIZE_SETTLE_MS = 90
 let fitTimer = 0
-// A pane that was at the latest output stays there through a resize (a
-// sidebar opening, a split) and the redraw the program sends right after it:
-// the reflow would otherwise leave it scrolled up with "New output" shown.
-const KEEP_BOTTOM_MS = 1500
-let keepBottomUntil = 0
+// Following the latest output: true while the pane is at the bottom. Only
+// you (the wheel, scroll keys, the scrollbar, a click-drag) or a search move
+// it up; a resize, a sidebar opening or a program's redraw never do. (When
+// its box changes size, xterm can shift the view a line up at once, before
+// Tessel refits the pane: that must not show "New output".)
+let following = true
+let handAt = 0 // last scroll by hand in the terminal
+const HAND_MS = 1000
+let restickQueued = false
 
 function atBottom() {
   const buf = term.buffer.active
   return buf.viewportY >= buf.baseY
+}
+
+// Set when the terminal opens: refresh the "Latest / New output" button.
+let refreshScrolled = () => {}
+// Back to the latest output, and again on the next frame and a moment later:
+// right after a resize, xterm syncs its view on the next frame and can put
+// it one line up again (seen with Ollama, Cline, OpenCode...). A scroll made
+// by code does not refresh the button by itself.
+function stickToBottom() {
+  if (!term) return
+  term.scrollToBottom()
+  refreshScrolled()
+  const again = () => {
+    if (!term || !following) return
+    if (!atBottom()) term.scrollToBottom()
+    refreshScrolled()
+  }
+  requestAnimationFrame(again)
+  setTimeout(again, 150)
 }
 
 function doFit() {
@@ -327,11 +350,11 @@ function doFit() {
     if (dims.cols < 2 || dims.rows < 1) return
     if (dims.cols !== term.cols || dims.rows !== term.rows) {
       expectRedraw()
-      const wasAtBottom = atBottom() || Date.now() < keepBottomUntil
+      const wasFollowing = following || atBottom()
       term.resize(dims.cols, dims.rows)
-      if (wasAtBottom) {
-        keepBottomUntil = Date.now() + KEEP_BOTTOM_MS
-        term.scrollToBottom()
+      if (wasFollowing) {
+        following = true
+        stickToBottom()
       }
     }
     notifyPtySize()
@@ -422,12 +445,12 @@ function closeFind() {
 }
 
 function findNext() {
-  keepBottomUntil = 0
+  following = false
   if (search && findQuery.value) search.findNext(findQuery.value, { decorations: FIND_DECORATIONS })
 }
 
 function findPrev() {
-  keepBottomUntil = 0
+  following = false
   if (search && findQuery.value)
     search.findPrevious(findQuery.value, { decorations: FIND_DECORATIONS })
 }
@@ -440,7 +463,7 @@ function onFindInput() {
     return
   }
   // Incremental: re-search from the current match as you type.
-  keepBottomUntil = 0
+  following = false
   if (search) search.findNext(findQuery.value, { incremental: true, decorations: FIND_DECORATIONS })
 }
 
@@ -769,6 +792,7 @@ function menuOpenHere() {
 }
 function jumpToBottom() {
   if (!term) return
+  following = true
   term.scrollToBottom()
   scrolledUp.value = false
   newBelow.value = false
@@ -827,16 +851,30 @@ onMounted(() => {
     if (!term) return
     const buf = term.buffer.active
     const up = buf.viewportY < buf.baseY
-    if (!up) newBelow.value = false
-    scrolledUp.value = up
+    if (!up) {
+      following = true
+      newBelow.value = false
+    } else if (following && Date.now() - handAt < HAND_MS) following = false
+    // Moved up without you (a resize): back to the bottom, no button.
+    if (up && following && !restickQueued) {
+      restickQueued = true
+      requestAnimationFrame(() => {
+        restickQueued = false
+        if (following) stickToBottom()
+      })
+    }
+    scrolledUp.value = up && !following
   }
+  refreshScrolled = updateScrolled
   term.onScroll(updateScrolled)
   term.onWriteParsed(() => {
     if (!term) return
     const buf = term.buffer.active
-    // Just resized from the bottom: the redraw keeps it at the bottom.
-    if (buf.viewportY < buf.baseY && Date.now() < keepBottomUntil) term.scrollToBottom()
-    else if (buf.viewportY < buf.baseY) newBelow.value = true
+    // Following the output: stay at the bottom; scrolled up by you: say so.
+    const up = buf.viewportY < buf.baseY
+    if (up && following && Date.now() - handAt < HAND_MS) following = false
+    if (up && following) stickToBottom()
+    else if (up) newBelow.value = true
     updateScrolled()
   })
 
@@ -857,10 +895,18 @@ onMounted(() => {
     findResult.count = resultCount
   })
   term.open(hostEl.value)
-  // Anything done by hand in the terminal (wheel, keys like Shift+PageUp,
-  // dragging the scrollbar, a click) ends "stay at the bottom" at once.
-  const byHand = () => (keepBottomUntil = 0)
-  for (const ev of ['wheel', 'keydown', 'pointerdown'])
+  // Scrolling by hand in the terminal (the wheel, Shift+PageUp and other
+  // scroll keys, the scrollbar, a click-drag): the view may then leave the
+  // bottom and stay there. Typing does not count.
+  // (xterm does not report a scroll made with the wheel or the keys: the
+  // button is refreshed just after.)
+  const byHand = (e) => {
+    if (e.type === 'keydown' && !e.shiftKey && !/^(PageUp|PageDown|Home|End)$/.test(e.key)) return
+    if (e.type === 'pointermove' && !e.buttons) return
+    handAt = Date.now()
+    setTimeout(refreshScrolled, 60)
+  }
+  for (const ev of ['wheel', 'keydown', 'pointerdown', 'pointermove'])
     hostEl.value.addEventListener(ev, byHand, { passive: true, capture: true })
   // Draw with the graphics card (much faster with busy agents and many
   // panes), like VS Code. Falls back to the normal renderer if WebGL is

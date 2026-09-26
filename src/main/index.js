@@ -269,7 +269,9 @@ const AGENT_PRESETS = [
     name: 'Kimi Code',
     command: 'kimi',
     accent: '#3b82f6',
-    install: ['python -m pip install -U kimi-cli']
+    // Kimi Code's own installer (the pip kimi-cli is no longer maintained);
+    // run through PowerShell so it works from any shell.
+    install: ['powershell -NoProfile -Command "irm https://code.kimi.com/kimi-code/install.ps1 | iex"']
   },
   {
     id: 'ollama',
