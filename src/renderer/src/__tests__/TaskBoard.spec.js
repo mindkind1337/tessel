@@ -47,6 +47,38 @@ describe('TaskBoard.vue', () => {
     expect(doingCol.text()).toContain('In doing')
   })
 
+  it('Done > Select: tick finished tasks and delete them together', async () => {
+    const keep = addTask({ title: 'Still to do' })
+    const d1 = addTask({ title: 'Done one' })
+    const d2 = addTask({ title: 'Done two' })
+    const d3 = addTask({ title: 'Done three' })
+    for (const t of [d1, d2, d3]) t.column = 'done'
+    const wrapper = mount(TaskBoard)
+    // Only Done has Select, and no tick boxes before it.
+    expect(wrapper.get('[data-column="todo"]').find('[data-test="select-done"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="task-check"]').exists()).toBe(false)
+    await wrapper.get('[data-test="select-done"]').trigger('click')
+    const done = wrapper.get('[data-column="done"]')
+    expect(done.findAll('[data-test="task-check"]')).toHaveLength(3)
+    expect(wrapper.get('[data-column="todo"]').find('[data-test="task-check"]').exists()).toBe(false)
+    expect(wrapper.get('[data-test="delete-picked"]').attributes('disabled')).toBeDefined()
+    // Tick one by its box, one by clicking the card.
+    await done.findAll('[data-test="task-check"]')[0].trigger('change')
+    await done.findAll('[data-test="task-card"]')[1].trigger('click')
+    expect(wrapper.get('[data-test="delete-picked"]').text()).toBe('Delete (2)')
+    await wrapper.get('[data-test="delete-picked"]').trigger('click')
+    await nextTick()
+    expect(tasks.map((t) => t.title).sort()).toEqual(['Done three', 'Still to do'])
+    expect(tasks).toContain(keep)
+    // All, then Cancel: nothing deleted, selection closed.
+    await wrapper.get('[data-test="select-done"]').trigger('click')
+    await wrapper.get('[data-test="pick-all"]').trigger('click')
+    expect(wrapper.get('[data-test="delete-picked"]').text()).toBe('Delete (1)')
+    await wrapper.get('[data-test="cancel-select"]').trigger('click')
+    expect(wrapper.find('[data-test="task-check"]').exists()).toBe(false)
+    expect(tasks).toHaveLength(2)
+  })
+
   it('passes agentPanes through to its TaskCards', () => {
     addTask({ title: 'needs an agent' })
     const wrapper = mount(TaskBoard, { props: { agentPanes: AGENT_PANES } })

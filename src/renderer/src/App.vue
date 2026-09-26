@@ -2998,6 +2998,44 @@ async function deleteTask(taskId) {
 }
 provide('deleteTask', deleteTask)
 
+// Several cards at once (Done > Select): one question for all; the copies
+// with work not merged are named in it and deleted like with ✕. A card whose
+// copy cannot be deleted is kept.
+async function deleteTasks(taskIds) {
+  const list = (taskIds || []).map((id) => boardTasks.find((t) => t.id === id)).filter(Boolean)
+  if (!list.length) return false
+  const withCopy = list.filter((t) => t.worktree && !t.mergedAt)
+  const ok = await askConfirm({
+    title: `Delete ${list.length} task${list.length === 1 ? '' : 's'}?`,
+    text: withCopy.length
+      ? `${withCopy.length} of them still ha${withCopy.length === 1 ? 's its' : 've their'} own copy of the project (${withCopy
+          .map((t) => t.worktree.branch)
+          .join(', ')}): ${withCopy.length === 1 ? 'it is' : 'they are'} deleted with any work not merged yet. This cannot be undone.`
+      : 'The cards are removed from the board.',
+    confirmLabel: 'Delete',
+    danger: withCopy.length > 0
+  })
+  if (!ok) return false
+  const kept = []
+  for (const task of list) {
+    if (task.worktree && !task.mergedAt) {
+      const rm = await removeTaskCopy(task, true)
+      if (!rm || !rm.ok) {
+        kept.push(task.title)
+        continue
+      }
+    }
+    removeTask(task.id)
+  }
+  if (kept.length) {
+    showToast(`Kept ${kept.length}: their copy could not be deleted (${kept.join(', ')}).`, { kind: 'error', timeout: 9000 })
+  } else {
+    showToast(`Deleted ${list.length} task${list.length === 1 ? '' : 's'}.`, { timeout: 4000 })
+  }
+  return true
+}
+provide('deleteTasks', deleteTasks)
+
 const reviewActions = {
   requestChanges(text) {
     const task = reviewTask.value

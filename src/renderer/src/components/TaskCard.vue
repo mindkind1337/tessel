@@ -17,10 +17,20 @@ const props = defineProps({
   // Agent panes available to assign work to: [{ id, title, agentId, accent }].
   // We store pane.id into task.paneId and label by title (falling back to
   // agentId). Optional so the card renders standalone (e.g. in tests).
-  agentPanes: { type: Array, default: () => [] }
+  agentPanes: { type: Array, default: () => [] },
+  // Picking cards to delete together (Done > Select): a tick box, and a click
+  // on the card ticks it.
+  selectable: { type: Boolean, default: false },
+  selected: { type: Boolean, default: false }
 })
 
-const emit = defineEmits(['focus-pane', 'review'])
+const emit = defineEmits(['focus-pane', 'review', 'toggle-select'])
+
+function onCardClick(e) {
+  if (!props.selectable) return
+  if (e.target.closest && e.target.closest('button, select, input, a')) return
+  emit('toggle-select', props.task.id)
+}
 
 // Drag a card to another column (the only way to move it).
 const TASK_DRAG_TYPE = 'application/x-tessel-task' // same type in TaskBoard.vue
@@ -145,7 +155,7 @@ function paneLabel(pane) {
 <template>
   <div
     class="task-card"
-    :class="{ dragging }"
+    :class="{ dragging, selectable, selected }"
     data-test="task-card"
     :data-task-id="task.id"
     :data-column="task.column"
@@ -154,11 +164,21 @@ function paneLabel(pane) {
     title="Drag to another column (keyboard: Alt+Left / Alt+Right)"
     aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight"
     @keydown="onCardKey"
+    @click="onCardClick"
     @dragstart="onDragStart"
     @dragend="dragging = false"
   >
     <!-- Title, then rename (To do only) and delete, always in the same place. -->
     <div class="task-card-top">
+      <input
+        v-if="selectable"
+        type="checkbox"
+        class="task-check"
+        :checked="selected"
+        :aria-label="`Select ${task.title}`"
+        data-test="task-check"
+        @change="emit('toggle-select', task.id)"
+      />
       <input
         v-if="editing"
         ref="titleInputEl"
@@ -196,6 +216,7 @@ function paneLabel(pane) {
         </svg>
       </button>
       <button
+        v-if="!selectable"
         class="task-btn task-icon-btn danger"
         title="Delete task"
         aria-label="Delete task"

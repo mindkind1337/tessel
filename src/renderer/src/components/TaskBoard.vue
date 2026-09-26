@@ -5,9 +5,9 @@
 // are bucketed once per change (O(n)) and rendered with a stable :key, so a
 // single task update re-renders just that card, not the whole board.
 
-import { ref, computed } from 'vue'
+import { ref, computed, inject, watch } from 'vue'
 import { COLUMNS } from '../../../shared/taskModel'
-import { tasks, addTask, moveTask } from '../taskBoardStore'
+import { tasks, addTask, moveTask, removeTask } from '../taskBoardStore'
 import TaskCard from './TaskCard.vue'
 
 const props = defineProps({
@@ -73,13 +73,49 @@ function onDrop(e, column) {
 }
 
 const COLUMN_LABEL = { todo: 'To do', doing: 'Doing', review: 'Review', done: 'Done' }
+// Done > Select: tick finished cards and delete them together.
+const selecting = ref(false)
+const picked = ref([]) // task ids
+const deleteTasks = inject('deleteTasks', null)
+function startSelect() {
+  selecting.value = true
+  picked.value = []
+}
+function stopSelect() {
+  selecting.value = false
+  picked.value = []
+}
+function togglePick(id) {
+  picked.value = picked.value.includes(id) ? picked.value.filter((x) => x !== id) : [...picked.value, id]
+}
+const allPicked = computed(() => grouped.value.done.length > 0 && grouped.value.done.every((t) => picked.value.includes(t.id)))
+function pickAll() {
+  picked.value = allPicked.value ? [] : grouped.value.done.map((t) => t.id)
+}
+async function deletePicked() {
+  const ids = picked.value.slice()
+  if (!ids.length) return
+  // The app asks once and cleans up copies; alone (tests), direct.
+  const done = deleteTasks ? await deleteTasks(ids) : (ids.forEach((id) => removeTask(id)), true)
+  if (done) stopSelect()
+}
+// A card that left Done (moved, deleted) is no longer picked; nothing left
+// in Done ends the selection.
+watch(
+  () => grouped.value.done.map((t) => t.id),
+  (ids) => {
+    picked.value = picked.value.filter((id) => ids.includes(id))
+    if (!ids.length) selecting.value = false
+  }
+)
+
 function columnLabel(column) {
   return COLUMN_LABEL[column] || column
 }
 </script>
 
 <template>
-  <div class="task-board" @dragend="dropColumn = null">
+  <div class="task-board" @dragend="dropColumn = null" @keydown.escape="selecting && stopSelect()">
     <div class="task-board-head">
       <button
         class="task-board-new"
@@ -116,6 +152,28 @@ function columnLabel(column) {
         <header class="task-column-head">
           <span class="task-column-title">{{ columnLabel(column) }}</span>
           <span class="task-column-count">{{ grouped[column].length }}</span>
+          <span v-if="column === 'done' && grouped.done.length" class="task-column-tools">
+            <template v-if="!selecting">
+              <button type="button" class="task-head-btn" data-test="select-done" title="Pick finished tasks to delete them together" @click="startSelect">
+                Select
+              </button>
+            </template>
+            <template v-else>
+              <button type="button" class="task-head-btn" data-test="pick-all" @click="pickAll">
+                {{ allPicked ? 'None' : 'All' }}
+              </button>
+              <button
+                type="button"
+                class="task-head-btn danger"
+                data-test="delete-picked"
+                :disabled="!picked.length"
+                @click="deletePicked"
+              >
+                Delete{{ picked.length ? ` (${picked.length})` : '' }}
+              </button>
+              <button type="button" class="task-head-btn" data-test="cancel-select" @click="stopSelect">Cancel</button>
+            </template>
+          </span>
         </header>
         <div class="task-column-body">
           <TaskCard
@@ -123,6 +181,9 @@ function columnLabel(column) {
             :key="task.id"
             :task="task"
             :agent-panes="agentPanes"
+            :selectable="selecting && column === 'done'"
+            :selected="picked.includes(task.id)"
+            @toggle-select="togglePick"
             @focus-pane="(id) => emit('focus-pane', id)"
             @review="(id) => emit('review', id)"
           />

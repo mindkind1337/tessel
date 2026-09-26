@@ -955,6 +955,64 @@ button {
   gap: 6px;
 }
 
+/* Done > Select: the tools sit at the end of the column title. */
+.task-column-tools {
+  display: inline-flex;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.task-head-btn {
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.task-head-btn:hover:not(:disabled) {
+  background: var(--surface-3);
+  color: var(--text-strong);
+}
+
+.task-head-btn.danger:not(:disabled) {
+  border-color: color-mix(in srgb, var(--danger) 55%, transparent);
+  color: #ffb4b6;
+}
+
+.task-head-btn.danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger) 25%, transparent);
+}
+
+.task-head-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.task-check {
+  flex: 0 0 auto;
+  width: 15px;
+  height: 15px;
+  margin: 2px 0 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.task-card.selectable {
+  cursor: pointer;
+}
+
+.task-card.selected,
+.task-card.selected:hover {
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface-2));
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  border-left-color: var(--col, var(--border-strong));
+}
+
 .task-column-empty {
   margin: 0;
   padding: 10px;
