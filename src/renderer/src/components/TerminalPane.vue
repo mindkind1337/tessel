@@ -827,6 +827,13 @@ function onEscapeMenu(e) {
   if (e.key === 'Escape' && ctxMenu.visible) closeCtxMenu()
 }
 
+// A clicked link opens in the system browser (the main process only lets
+// http, https and mailto through).
+function openLink(uri) {
+  if (window.shellApi.openExternal) window.shellApi.openExternal(uri)
+  else window.open(uri)
+}
+
 onMounted(() => {
   term = new Terminal({
     fontFamily: fontStack(settings.fontFamily),
@@ -836,17 +843,17 @@ onMounted(() => {
     scrollback: settings.scrollback,
     allowProposedApi: true,
     windowsPty: windowsPtyOptions(),
-    theme: terminalTheme(settings.theme)
+    theme: terminalTheme(settings.theme),
+    // Links a program writes with a text of their own (OSC 8: Claude Code,
+    // Codex and others print their links this way). Without this, xterm
+    // asks in a browser popup "WARNING: This link could potentially be
+    // dangerous" and opens it in a new Electron window.
+    linkHandler: { activate: (_e, uri) => openLink(uri), allowNonHttpProtocols: false }
   })
   fit = new FitAddon()
   term.loadAddon(fit)
-  // Ctrl+click (or click) a link: open it in the system browser.
-  term.loadAddon(
-    new WebLinksAddon((event, uri) => {
-      if (window.shellApi.openExternal) window.shellApi.openExternal(uri)
-      else window.open(uri)
-    })
-  )
+  // A link written as plain text: the same.
+  term.loadAddon(new WebLinksAddon((_e, uri) => openLink(uri)))
   const updateScrolled = () => {
     if (!term) return
     const buf = term.buffer.active
