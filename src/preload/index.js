@@ -41,6 +41,14 @@ const api = {
   findAgentSession: (query) => ipcRenderer.invoke('sessions:find', query),
   geminiSessionExists: (id) => ipcRenderer.invoke('sessions:geminiExists', id),
   qwenSessionExists: (id) => ipcRenderer.invoke('sessions:qwenExists', id),
+  installLogStart: (q) => ipcRenderer.invoke('install:logStart', q),
+  openInstallLog: (file) => ipcRenderer.invoke('install:openLog', file),
+  showInstallLog: (file) => ipcRenderer.invoke('install:showLog', file),
+  onInstallResult: (cb) => {
+    const handler = (_e, r) => cb(r)
+    ipcRenderer.on('install:result', handler)
+    return () => ipcRenderer.removeListener('install:result', handler)
+  },
   agentModel: (query) => ipcRenderer.invoke('agents:model', query),
   onAgentModelChanged: (cb) => {
     const handler = (_e, agentId) => cb(agentId)

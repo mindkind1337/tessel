@@ -14,7 +14,7 @@ import CommandPalette from './components/CommandPalette.vue'
 import ToolsDialog from './components/ToolsDialog.vue'
 import SessionsDialog from './components/SessionsDialog.vue'
 import { getPane } from './paneRegistry'
-import { chainCommands } from './shellChain'
+import { installChain } from './shellChain'
 import {
   agentStatus,
   attention,
@@ -1395,12 +1395,45 @@ async function runInPane({ label, command, steps, shell }) {
   const leaf = await openPaneBelow(shellId)
   if (!leaf) return
   leaf.title = label
-  const line = chainCommands(steps || [command], shellId)
+  const list = steps || [command]
+  const line = installChain(list, null, shellId)
+  await startInstallLog(leaf.id, label, shellId, list, null)
   setTimeout(() => window.shellApi.writePty(leaf.id, `${line}\r`), 700)
-  showToast(`${label} is running below. When it finishes, open Tools and click Check again.`, {
+  showToast(`${label} is running below. Tessel tells you when it has finished.`, {
     timeout: 7000
   })
 }
+
+// Installs are logged (<logs>/installs) and their end told here: success,
+// or a failure with its log to open (and attach to a bug report).
+const installRuns = {} // paneId -> { label, agent }
+async function startInstallLog(paneId, label, shellId, steps, agent) {
+  installRuns[paneId] = { label, agent }
+  if (!window.shellApi.installLogStart) return
+  try {
+    await window.shellApi.installLogStart({ paneId, name: label, shell: shellId, steps })
+  } catch {
+    /* no log this time: the install still runs */
+  }
+}
+function onInstallResult(r) {
+  const run = installRuns[r.paneId]
+  if (!run) return
+  delete installRuns[r.paneId]
+  loadAgents(true)
+  if (r.ok === true) {
+    showToast(run.agent ? `${run.label} is installed and starting.` : `${run.label} finished.`, { timeout: 6000 })
+    return
+  }
+  const why = r.ok === false ? 'failed' : 'did not finish'
+  showToast(`${run.label} ${why}${r.reason ? ` (${r.reason})` : ''}. The log shows what went wrong; attach it to a bug report.`, {
+    kind: 'error',
+    timeout: 30000,
+    action: r.file ? { label: 'Open log', run: () => window.shellApi.openInstallLog(r.file) } : null
+  })
+}
+const stopInstallResults = window.shellApi.onInstallResult ? window.shellApi.onInstallResult(onInstallResult) : null
+onBeforeUnmount(() => stopInstallResults && stopInstallResults())
 
 // Install an agent, then start it in the same pane once the install succeeds.
 async function installAgent(agent) {
@@ -1411,14 +1444,13 @@ async function installAgent(agent) {
   // Install first; start the agent (with its session) only if that succeeds.
   const install = [].concat(agent.install)
   const leaf = await openPaneBelow(shellId, agent, {
-    wrap: (startLine) => chainCommands([...install, startLine], shellId)
+    wrap: (startLine) => installChain(install, startLine, shellId)
   })
   if (!leaf) return
+  await startInstallLog(leaf.id, agent.name, shellId, install, agent)
   showToast(`Installing ${agent.name}. It starts in the new pane when the install finishes.`, {
     timeout: 7000
   })
-  // Pick it up in menus once npm is done (checked again whenever menus open).
-  setTimeout(() => loadAgents(true), 45000)
 }
 
 // --- Sessions -----------------------------------------------------------------

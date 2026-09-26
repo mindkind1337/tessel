@@ -9,6 +9,7 @@ import { claudeSessionExists, findCodexSession, listSessions } from './agentSess
 import { agentModelLive, watchModelFiles } from './agentModel'
 import { findAgentSession, geminiSessionExists, qwenSessionExists } from './agentResume'
 import { extraToolDirs, withToolDirs } from './toolDirs'
+import { createInstallLogs } from './installLog'
 import { createLogger, describe } from './logger'
 import { cleanEnv } from './cleanEnv'
 import { createPtyClient } from './ptyClient'
@@ -272,7 +273,10 @@ const AGENT_PRESETS = [
     accent: '#3b82f6',
     // Kimi Code's own installer (the pip kimi-cli is no longer maintained);
     // run through PowerShell so it works from any shell.
-    install: ['powershell -NoProfile -Command "irm https://code.kimi.com/kimi-code/install.ps1 | iex"']
+    install: ['powershell -NoProfile -Command "irm https://code.kimi.com/kimi-code/install.ps1 | iex"'],
+    // The old pip kimi-cli answers to "kimi" too (and only says it is no
+    // longer maintained): found there, Kimi Code is not installed.
+    notFrom: /[\\/](Python\d*[\\/]Scripts|local-packages[\\/][^\\/]+[\\/]Scripts)[\\/]kimi(\.exe)?$/i
   },
   {
     id: 'ollama',
@@ -372,10 +376,14 @@ function freshEnv() {
   return env
 }
 
-async function commandExists(bin) {
+// notFrom: a copy found there does not count (the first one found is the
+// one that runs).
+async function commandExists(bin, notFrom = null) {
   if (!bin || !/^[\w.@+-]+$/.test(bin)) return false
   const res = await runQuiet('where.exe', [bin], { env: freshEnv(), timeout: 10000 })
-  return res.ok && res.stdout.trim().length > 0
+  const first = res.ok ? res.stdout.split(/\r?\n/).map((l) => l.trim()).find(Boolean) : ''
+  if (!first) return false
+  return !(notFrom && notFrom.test(first))
 }
 
 function firstWord(command) {
@@ -396,7 +404,7 @@ async function getAgents(custom = []) {
         command: a.command,
         accent: a.accent,
         install: a.install,
-        available: await commandExists(a.command)
+        available: await commandExists(a.command, a.notFrom || null)
       }))
     )
   }
@@ -1159,6 +1167,28 @@ function startHost() {
   child.unref()
 }
 
+// Installs run from Tessel: their output is logged, their end told to the
+// window (installLog.js).
+const installLogs = createInstallLogs({
+  dir: log.dir,
+  appVersion: app.getVersion(),
+  notify: (r) => {
+    log[r.ok === false ? 'warn' : 'info']('install', `${r.name}: ${r.ok === true ? 'succeeded' : r.ok === false ? 'FAILED' : 'unknown'}${r.reason ? ` (${r.reason})` : ''}, log ${r.file}`)
+    send('install:result', r)
+  }
+})
+ipcMain.handle('install:logStart', (_evt, q = {}) => installLogs.start(q || {}))
+ipcMain.handle('install:openLog', async (_evt, file) => {
+  if (!installLogs.isLog(file)) return { ok: false, error: 'Not an install log.' }
+  const err = await shell.openPath(file)
+  return err ? { ok: false, error: err } : { ok: true }
+})
+ipcMain.handle('install:showLog', (_evt, file) => {
+  if (!installLogs.isLog(file)) return { ok: false }
+  shell.showItemInFolder(file)
+  return { ok: true }
+})
+
 const pendingData = new Map() // id -> string
 let flushTimer = null
 function flushData() {
@@ -1178,8 +1208,12 @@ const host = createPtyClient({
   log,
   // Output is batched per terminal (every ~8 ms) instead of one message per
   // chunk: a busy agent can print thousands of small chunks a second.
-  onData: (id, data) => queueData(id, data),
+  onData: (id, data) => {
+    installLogs.onData(id, data)
+    queueData(id, data)
+  },
   onExit: (id, exitCode, signal, pid) => {
+    installLogs.onExit(id, exitCode)
     flushData() // deliver the last output before the exit notice
     const info = ptyInfo.get(id)
     if (exitCode && info) {
