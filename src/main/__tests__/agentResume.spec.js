@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import fs from 'fs'
 import os from 'os'
 import { join } from 'path'
-import { pickSession, isSessionId, geminiSessionExists, findAgentSession } from '../agentResume'
+import { pickSession, isSessionId, geminiSessionExists, qwenSessionExists, findAgentSession } from '../agentResume'
 
 const G = '6f1d0780-1111-4222-8333-444455556666'
 let home
@@ -61,8 +61,37 @@ describe('Gemini', () => {
   })
 })
 
+describe('Qwen', () => {
+  it('there is something to resume once projects/<project>/chats/<id>.jsonl exists', () => {
+    const old = process.env.QWEN_HOME
+    delete process.env.QWEN_HOME
+    try {
+      expect(qwenSessionExists(G, home)).toBe(false)
+      put(`.qwen/projects/c-proj/chats/${G}.jsonl`, '{}\n')
+      expect(qwenSessionExists(G, home)).toBe(true)
+      expect(qwenSessionExists('../x', home)).toBe(false)
+    } finally {
+      if (old !== undefined) process.env.QWEN_HOME = old
+    }
+  })
+})
+
 describe('found after start', () => {
   const T = Date.now() - 60e3
+
+  it('Kimi Code: from sessions/<workspace>/<id>/state.json', () => {
+    const old = process.env.KIMI_CODE_HOME
+    delete process.env.KIMI_CODE_HOME
+    try {
+      put('.kimi-code/sessions/ws1/sess_old/state.json', JSON.stringify({ cwd: 'C:\\Proj', createdAt: new Date(T - 3600e3).toISOString() }))
+      put('.kimi-code/sessions/ws1/sess_mine/session-meta/state.json', JSON.stringify({ workDir: 'C:\\Proj', createdAt: T + 3e3, updatedAt: T + 9e3 }))
+      put('.kimi-code/sessions/ws2/sess_else/state.json', JSON.stringify({ cwd: 'C:\\Else', createdAt: T + 1e3 }))
+      put('.kimi-code/sessions/.index-cache/scan.json', '{}')
+      expect(findAgentSession({ agent: 'kimi', cwd: 'C:/Proj', since: T }, home)).toBe('sess_mine')
+    } finally {
+      if (old !== undefined) process.env.KIMI_CODE_HOME = old
+    }
+  })
   it('Copilot: from session-state/<id>/events.jsonl', () => {
     const start = (id, cwd, at) =>
       put(`.copilot/session-state/${id}/events.jsonl`, JSON.stringify({ type: 'session.start', data: { sessionId: id, startTime: new Date(at).toISOString(), context: { cwd } } }) + '\n')
@@ -90,6 +119,6 @@ describe('found after start', () => {
     c.run('1790450764736_xww6d', 'C:\\Proj', new Date(T + 3e3).toISOString(), new Date(T + 8e3).toISOString(), 0, null)
     db.close()
     expect(findAgentSession({ agent: 'cline', cwd: 'C:/Proj', since: T }, home)).toBe('1790450764736_xww6d')
-    expect(findAgentSession({ agent: 'kimi', cwd: 'C:/Proj', since: T }, home)).toBe(null)
+    expect(findAgentSession({ agent: 'aider', cwd: 'C:/Proj', since: T }, home)).toBe(null)
   })
 })

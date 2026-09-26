@@ -7,7 +7,7 @@ import { loadTasks, loadBoard, saveTasks } from './taskBoardPersistence'
 import { trimEvents, isEvent } from '../shared/activity'
 import { claudeSessionExists, findCodexSession, listSessions } from './agentSessions'
 import { agentModelLive, watchModelFiles } from './agentModel'
-import { findAgentSession, geminiSessionExists } from './agentResume'
+import { findAgentSession, geminiSessionExists, qwenSessionExists } from './agentResume'
 import { extraToolDirs, withToolDirs } from './toolDirs'
 import { createLogger, describe } from './logger'
 import { cleanEnv } from './cleanEnv'
@@ -692,6 +692,7 @@ ipcMain.handle('sessions:findCodex', (_evt, q = {}) => findCodexSession(q))
 // Gemini: is there a conversation to resume? OpenCode, Cline, Copilot, Codex:
 // the session a pane started (they choose its id), found after it starts.
 ipcMain.handle('sessions:geminiExists', (_evt, id) => geminiSessionExists(id))
+ipcMain.handle('sessions:qwenExists', (_evt, id) => qwenSessionExists(id))
 ipcMain.handle('sessions:find', (_evt, q = {}) => {
   try {
     return findAgentSession(q || {})

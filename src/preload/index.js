@@ -40,6 +40,7 @@ const api = {
   findCodexSession: (query) => ipcRenderer.invoke('sessions:findCodex', query),
   findAgentSession: (query) => ipcRenderer.invoke('sessions:find', query),
   geminiSessionExists: (id) => ipcRenderer.invoke('sessions:geminiExists', id),
+  qwenSessionExists: (id) => ipcRenderer.invoke('sessions:qwenExists', id),
   agentModel: (query) => ipcRenderer.invoke('agents:model', query),
   onAgentModelChanged: (cb) => {
     const handler = (_e, agentId) => cb(agentId)

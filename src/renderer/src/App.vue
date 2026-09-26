@@ -324,11 +324,11 @@ function newId(prefix) {
   return `${prefix}-${counter}-${Math.floor(Math.random() * 1e6)}`
 }
 
-// Which agents we can resume, and how. Claude Code and Gemini take the id we
-// choose; Codex, OpenCode, Cline and Copilot choose theirs, found after they
-// start (watchFoundSession).
-const RESUMABLE = ['claude', 'codex', 'gemini', 'opencode', 'cline', 'copilot']
-const FOUND_AFTER_START = ['codex', 'opencode', 'cline', 'copilot']
+// Which agents we can resume, and how. Claude Code, Gemini and Qwen take the
+// id we choose; Codex, OpenCode, Cline, Copilot and Kimi choose theirs, found
+// after they start (watchFoundSession).
+const RESUMABLE = ['claude', 'codex', 'gemini', 'qwen', 'opencode', 'cline', 'copilot', 'kimi']
+const FOUND_AFTER_START = ['codex', 'opencode', 'cline', 'copilot', 'kimi']
 function sessionKind(agent) {
   return agent && RESUMABLE.includes(agent.id) ? agent.id : null
 }
@@ -369,18 +369,17 @@ async function agentStartLine(agent, sessionId, resume) {
     if (sessionId && resume) return { line: `${agent.command} resume ${sessionId}${own}`, sessionId, resumed: true }
     return { line: `${agent.command}${own}`, sessionId: null, resumed: false }
   }
-  if (kind === 'gemini') {
+  if (kind === 'gemini' || kind === 'qwen') {
     // Like Claude Code: resume if it was written to, else start with this id.
     if (sessionId && resume) {
-      const exists = window.shellApi.geminiSessionExists
-        ? await window.shellApi.geminiSessionExists(sessionId).catch(() => false)
-        : false
+      const check = kind === 'gemini' ? window.shellApi.geminiSessionExists : window.shellApi.qwenSessionExists
+      const exists = check ? await check(sessionId).catch(() => false) : false
       if (exists) return { line: `${agent.command} --resume ${sessionId}`, sessionId, resumed: true }
     }
     const id = sessionId || newUuid()
     return { line: `${agent.command} --session-id ${id}`, sessionId: id, resumed: false }
   }
-  const flag = { opencode: '--session', cline: '--id', copilot: '--resume' }[kind]
+  const flag = { opencode: '--session', cline: '--id', copilot: '--resume', kimi: '--session' }[kind]
   if (flag && sessionId && resume && safeSessionId(sessionId)) {
     return { line: `${agent.command} ${flag} ${sessionId}`, sessionId, resumed: true }
   }

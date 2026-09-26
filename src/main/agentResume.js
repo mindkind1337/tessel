@@ -9,6 +9,9 @@
 //               with cline --id <id>
 //   Copilot CLI picks its own id: found in ~/.copilot/session-state/<id>/
 //               (events.jsonl starts with session.start), copilot --resume <id>
+//   Qwen Code   like Gemini (qwen --session-id / --resume <uuid>)
+//   Kimi Code   picks its own id: ~/.kimi-code/sessions/<workspace>/<id>/state.json,
+//               resumed with kimi --session <id>
 // Each "find" takes the session started in the pane's folder at or after the
 // pane started, not already used by another pane (like findCodexSession).
 import fs from 'fs'
@@ -183,6 +186,83 @@ export function copilotSessions(home = os.homedir(), since = 0) {
   return out
 }
 
+// --- Qwen Code ------------------------------------------------------------------------
+// Like Gemini: we choose the id (qwen --session-id), resumed with qwen --resume
+// once its file exists: <QWEN_HOME or ~/.qwen>/projects/<project>/chats/<id>.jsonl
+
+export function qwenSessionExists(id, home = os.homedir()) {
+  if (!isUuid(id)) return false
+  const root = join(process.env.QWEN_HOME || join(home, '.qwen'), 'projects')
+  let projects
+  try {
+    projects = fs.readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirectory())
+  } catch {
+    return false
+  }
+  return projects.some(
+    (p) =>
+      fs.existsSync(join(root, p.name, 'chats', `${id}.jsonl`)) ||
+      fs.existsSync(join(root, p.name, 'chats', 'archive', `${id}.jsonl`))
+  )
+}
+
+// --- Kimi Code ------------------------------------------------------------------------
+// Picks its own id: <KIMI_CODE_HOME or ~/.kimi-code>/sessions/<workspace>/<id>/
+// state.json (or session-meta/state.json) holds its folder and dates; resumed
+// with kimi --session <id>.
+
+function timeOf(v) {
+  if (typeof v === 'number' && Number.isFinite(v)) return v
+  const t = Date.parse(v || '')
+  return Number.isFinite(t) ? t : 0
+}
+
+export function kimiSessions(home = os.homedir(), since = 0) {
+  const root = join(process.env.KIMI_CODE_HOME || join(home, '.kimi-code'), 'sessions')
+  const out = []
+  let workspaces
+  try {
+    workspaces = fs.readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirectory() && !d.name.startsWith('.'))
+  } catch {
+    return out
+  }
+  for (const ws of workspaces) {
+    let sessions
+    try {
+      sessions = fs.readdirSync(join(root, ws.name), { withFileTypes: true }).filter((d) => d.isDirectory() && !d.name.startsWith('.'))
+    } catch {
+      continue
+    }
+    for (const s of sessions) {
+      for (const f of [join(root, ws.name, s.name, 'state.json'), join(root, ws.name, s.name, 'session-meta', 'state.json')]) {
+        let stat
+        try {
+          stat = fs.statSync(f)
+        } catch {
+          continue
+        }
+        if (stat.mtimeMs < since - SLACK) break // older than the pane
+        try {
+          let meta = JSON.parse(fs.readFileSync(f, 'utf8'))
+          if (meta && typeof meta.data === 'object' && meta.data && !meta.cwd && !meta.workDir) meta = meta.data
+          const custom = meta && typeof meta.custom === 'object' && meta.custom ? meta.custom : {}
+          const cwd = meta.cwd || meta.workDir || custom.cwd || ''
+          out.push({
+            id: s.name,
+            cwd,
+            time: timeOf(meta.createdAt) || timeOf(meta.createdAtMs) || stat.birthtimeMs || stat.mtimeMs,
+            updated: timeOf(meta.updatedAt) || timeOf(meta.updatedAtMs) || stat.mtimeMs
+          })
+        } catch {
+          /* not readable */
+        }
+        break
+      }
+    }
+  }
+  return out
+}
+
 // --- All -------------------------------------------------------------------------------
 
 // q: { agent, cwd, since, exclude, latest, activeSince } -> the session id or null
@@ -193,5 +273,6 @@ export function findAgentSession(q = {}, home = os.homedir()) {
   if (agent === 'opencode') return pickSession(opencodeSessions(home), q)
   if (agent === 'cline') return pickSession(clineSessions(home), q)
   if (agent === 'copilot') return pickSession(copilotSessions(home, q.since), q)
+  if (agent === 'kimi') return pickSession(kimiSessions(home, q.since), q)
   return null
 }
