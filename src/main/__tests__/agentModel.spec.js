@@ -130,6 +130,55 @@ describe('command and settings', () => {
     }
   })
 
+  it('OpenCode: the model picked in it since the pane started beats its settings', () => {
+    const old = process.env.XDG_CONFIG_HOME
+    const oldState = process.env.XDG_STATE_HOME
+    delete process.env.XDG_CONFIG_HOME
+    delete process.env.XDG_STATE_HOME
+    try {
+      const f = put('.local/state/opencode/model.json', '{"recent":[{"providerID":"opencode","modelID":"big-pickle"},{"providerID":"x","modelID":"y"}]}')
+      // Nothing in its settings: the last picked model.
+      expect(agentModel({ agentId: 'opencode' }, home)).toEqual({ model: 'opencode/big-pickle', effort: null, source: 'picked' })
+      put('.config/opencode/opencode.json', '{"model":"anthropic/claude-sonnet-5"}')
+      const t = fs.statSync(f).mtimeMs
+      // Picked before the pane started: its settings win.
+      expect(agentModel({ agentId: 'opencode', launchedAt: t + 60000 }, home).model).toBe('anthropic/claude-sonnet-5')
+      // Picked while it runs: that one.
+      expect(agentModel({ agentId: 'opencode', launchedAt: t - 60000 }, home).source).toBe('picked')
+    } finally {
+      if (old !== undefined) process.env.XDG_CONFIG_HOME = old
+      if (oldState !== undefined) process.env.XDG_STATE_HOME = oldState
+    }
+  })
+
+  it('Copilot: the running session, in the pane folder first', () => {
+    const ev = (o) => JSON.stringify(o)
+    const session = (id, cwd, lines, pid) => {
+      put(`.copilot/session-state/${id}/workspace.yaml`, `id: ${id}\ncwd: ${cwd}\n`)
+      put(`.copilot/session-state/${id}/events.jsonl`, lines.map(ev).join('\n') + '\n')
+      if (pid) put(`.copilot/session-state/${id}/inuse.${pid}.lock`, String(pid))
+    }
+    const dead = 999999 // no such process
+    session('a', 'C:\\Old', [{ type: 'assistant.message', data: { model: 'gpt-old' } }], dead)
+    session('b', 'C:\\Other', [{ type: 'assistant.message', data: { model: 'gpt-other' } }], process.pid)
+    session(
+      'c',
+      'C:\\Proj',
+      [
+        { type: 'session.model_change', data: { newModel: 'auto', reasoningEffort: null } },
+        { type: 'assistant.message', data: { model: 'mai-code-1.1-flash' } }
+      ],
+      process.pid
+    )
+    expect(agentModel({ agentId: 'copilot', cwd: 'C:\\Proj\\' }, home)).toEqual({
+      model: 'mai-code-1.1-flash',
+      effort: null,
+      source: 'session'
+    })
+    // Not in its folder: the running one still counts, never the closed one.
+    expect(agentModel({ agentId: 'copilot', cwd: 'C:\\Old' }, home).model).not.toBe('gpt-old')
+  })
+
   it('nothing found: null, never a guess', () => {
     expect(agentModel({ agentId: 'copilot' }, home)).toBe(null)
     expect(agentModel({}, home)).toBe(null)

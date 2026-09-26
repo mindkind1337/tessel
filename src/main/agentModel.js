@@ -151,6 +151,101 @@ function codexRollout(id, home, now = Date.now()) {
   return null
 }
 
+// The model of the latest answer (or /model change) in a Copilot session's
+// events.jsonl. "auto" until the first answer says which model it picked.
+export function copilotModelFromText(text) {
+  const lines = String(text || '').split('\n')
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i]
+    if (!line.includes('"model') || !line.includes('"type":"')) continue
+    try {
+      const o = JSON.parse(line)
+      const d = o && o.data
+      if (!d) continue
+      if (o.type === 'assistant.message' && typeof d.model === 'string' && d.model) return { model: d.model, effort: null }
+      if (o.type === 'session.model_change' && typeof d.newModel === 'string' && d.newModel) {
+        return { model: d.newModel, effort: typeof d.reasoningEffort === 'string' ? d.reasoningEffort : null }
+      }
+    } catch {
+      /* a line cut by the tail read */
+    }
+  }
+  return null
+}
+
+function pidAlive(pid) {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (err) {
+    return err.code === 'EPERM'
+  }
+}
+
+const normDir = (p) =>
+  String(p || '')
+    .replace(/\//g, '\\')
+    .replace(/\\+$/, '')
+    .toLowerCase()
+
+// Copilot keeps each session in ~/.copilot/session-state/<id>/, with an
+// inuse.<pid>.lock file while a Copilot process has it open. The pane's
+// session: one open by a running Copilot, in the pane's folder if any,
+// the most recently written first.
+function copilotLiveSession(cwd, home) {
+  const root = join(home, '.copilot', 'session-state')
+  let dirs
+  try {
+    dirs = fs.readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirectory())
+  } catch {
+    return null
+  }
+  const want = normDir(cwd)
+  let best = null
+  for (const d of dirs) {
+    const dir = join(root, d.name)
+    let files
+    try {
+      files = fs.readdirSync(dir)
+    } catch {
+      continue
+    }
+    const open = files.some((f) => {
+      const m = /^inuse\.(\d+)\.lock$/.exec(f)
+      return m && pidAlive(Number(m[1]))
+    })
+    if (!open || !files.includes('events.jsonl')) continue
+    let mtime = 0
+    try {
+      mtime = fs.statSync(join(dir, 'events.jsonl')).mtimeMs
+    } catch {
+      continue
+    }
+    const ws = /^cwd:\s*(.+?)\s*$/m.exec(readText(join(dir, 'workspace.yaml')))
+    const here = !!(want && ws && normDir(ws[1]) === want)
+    if (!best || here > best.here || (here === best.here && mtime > best.mtime)) {
+      best = { file: join(dir, 'events.jsonl'), here, mtime }
+    }
+  }
+  return best ? best.file : null
+}
+
+// OpenCode remembers the models last picked in its model list (newest first).
+function opencodeRecent(home) {
+  const dir = process.env.XDG_STATE_HOME || join(home, '.local', 'state')
+  const file = join(dir, 'opencode', 'model.json')
+  const o = parseLoose(readText(file))
+  const r = o && Array.isArray(o.recent) ? o.recent[0] : null
+  if (!r || typeof r.modelID !== 'string' || !r.modelID) return null
+  let mtime = 0
+  try {
+    mtime = fs.statSync(file).mtimeMs
+  } catch {
+    /* read just above */
+  }
+  return { model: r.providerID ? `${r.providerID}/${r.modelID}` : r.modelID, mtime }
+}
+
 // --- 2. The command's own option ----------------------------------------------
 
 export function modelFromCommand(command) {
@@ -215,15 +310,25 @@ function settingsModel(agentId, cwd, home) {
     return null
   }
   if (agentId === 'copilot') {
-    const m = jsonModel(join(home, '.copilot', 'config.json'), plainModel)
-    return m ? { model: m } : null
+    for (const f of [join(home, '.copilot', 'settings.json'), join(home, '.copilot', 'config.json')]) {
+      const m = jsonModel(f, plainModel)
+      if (m) return { model: m }
+    }
+    return null
   }
   return null
 }
 
-// { model, effort, source: 'session' | 'command' | 'settings' } or null.
-export function agentModel({ agentId, sessionId, command, cwd } = {}, home = os.homedir()) {
+// { model, effort, source: 'session' | 'command' | 'picked' | 'settings' } or null.
+// launchedAt (ms): when the pane started, so a model picked in OpenCode
+// since then beats its settings file.
+export function agentModel({ agentId, sessionId, command, cwd, launchedAt = 0 } = {}, home = os.homedir()) {
   if (!agentId) return null
+  if (agentId === 'copilot') {
+    const f = copilotLiveSession(cwd, home)
+    const m = f && copilotModelFromText(readTail(f))
+    if (m) return { ...m, source: 'session' }
+  }
   if (isUuid(sessionId)) {
     if (agentId === 'claude') {
       const f = claudeTranscript(sessionId, home)
@@ -243,6 +348,9 @@ export function agentModel({ agentId, sessionId, command, cwd } = {}, home = os.
   }
   const flag = modelFromCommand(command)
   if (flag) return { model: flag, effort: null, source: 'command' }
+  const picked = agentId === 'opencode' ? opencodeRecent(home) : null
+  if (picked && launchedAt && picked.mtime >= launchedAt) return { model: picked.model, effort: null, source: 'picked' }
   const s = settingsModel(agentId, cwd, home)
-  return s ? { model: s.model, effort: s.effort || null, source: 'settings' } : null
+  if (s) return { model: s.model, effort: s.effort || null, source: 'settings' }
+  return picked ? { model: picked.model, effort: null, source: 'picked' } : null
 }

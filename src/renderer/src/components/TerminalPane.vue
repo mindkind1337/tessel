@@ -67,7 +67,9 @@ const modelTitle = computed(() => {
       ? 'from its latest answer'
       : m.source === 'command'
         ? 'from its command'
-        : 'from its settings (a change inside the agent may not show)'
+        : m.source === 'picked'
+          ? 'the model last picked in it'
+          : 'from its settings (a change inside the agent may not show)'
   return `Model: ${m.model}${m.effort ? ` (reasoning ${m.effort})` : ''}\n${from}`
 })
 let modelBusy = false
@@ -83,7 +85,8 @@ async function refreshModel() {
       agentId: n.agentId,
       sessionId: n.sessionId,
       command: n.agentCommand,
-      cwd: n.startDir
+      cwd: n.startDir,
+      launchedAt: n.launchedAt || 0
     })
   } catch {
     /* keep what it showed */
