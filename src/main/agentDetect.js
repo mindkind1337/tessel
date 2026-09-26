@@ -10,7 +10,10 @@ const RULES = [
   { id: 'gemini', re: /@google[\\/]gemini-cli|(^|[\\/])gemini(\.exe)?$/i },
   { id: 'qwen', re: /@qwen-code[\\/]|(^|[\\/])qwen(\.exe)?$/i },
   { id: 'opencode', re: /opencode-ai|(^|[\\/])opencode(\.exe)?$/i },
-  { id: 'copilot', re: /@github[\\/]copilot|(^|[\\/])copilot(\.exe)?$/i }
+  { id: 'copilot', re: /@github[\\/]copilot|(^|[\\/])copilot(\.exe)?$/i },
+  { id: 'cline', re: /@cline[\\/]cli-|(^|[\\/])cline(\.exe)?$/i },
+  { id: 'amp', re: /@sourcegraph[\\/]amp|(^|[\\/])amp(\.exe)?$/i },
+  { id: 'aider', re: /(^|[\\/])aider(\.exe)?$/i }
 ]
 
 export function agentOf(proc) {

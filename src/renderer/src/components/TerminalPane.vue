@@ -95,7 +95,16 @@ async function refreshModel() {
   }
 }
 const modelTimer = setInterval(refreshModel, 20000)
-onBeforeUnmount(() => clearInterval(modelTimer))
+// Tessel watches the agents' model files: a change shows right away.
+const stopModelChanged = window.shellApi.onAgentModelChanged
+  ? window.shellApi.onAgentModelChanged((agentId) => {
+      if (isAgent.value && agentId === props.node.agentId) refreshModel()
+    })
+  : null
+onBeforeUnmount(() => {
+  clearInterval(modelTimer)
+  if (stopModelChanged) stopModelChanged()
+})
 watch(
   () => [props.node.kind, props.node.agentId, props.node.sessionId],
   () => refreshModel(),

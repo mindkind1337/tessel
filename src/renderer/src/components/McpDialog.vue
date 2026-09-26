@@ -20,14 +20,15 @@ const props = defineProps({
 })
 const emit = defineEmits(['close', 'run', 'tools'])
 
-const ALL_AGENTS = ['claude', 'codex', 'gemini', 'qwen', 'copilot', 'opencode']
+const ALL_AGENTS = ['claude', 'codex', 'gemini', 'qwen', 'copilot', 'opencode', 'cline']
 const AGENT_NAME = {
   claude: 'Claude Code',
   codex: 'Codex',
   gemini: 'Gemini CLI',
   qwen: 'Qwen Code',
   copilot: 'Copilot CLI',
-  opencode: 'OpenCode'
+  opencode: 'OpenCode',
+  cline: 'Cline'
 }
 const SCOPE_LABEL = {
   user: 'All projects',

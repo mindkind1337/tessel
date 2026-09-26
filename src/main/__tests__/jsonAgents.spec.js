@@ -71,5 +71,34 @@ describe('MCP servers in agents settings files', () => {
     })
     // No path through {env:}: OpenCode inserts it raw, and a backslash breaks its JSON.
     expect(teamToolsEntry('opencode', 'C:/t/s.cjs').environment).toEqual({ TESSEL_PANE_ID: '{env:TESSEL_PANE_ID}' })
+    // Cline hands the pane's environment on and never expands $VAR: no env.
+    expect(teamToolsEntry('cline', 'C:/t/s.cjs')).toEqual({ command: 'node', args: ['C:/t/s.cjs'] })
+  })
+
+  it('Cline: its settings/cline_mcp_settings.json, http as streamableHttp', () => {
+    const old = { dir: process.env.CLINE_DIR, data: process.env.CLINE_DATA_DIR, file: process.env.CLINE_MCP_SETTINGS_PATH }
+    delete process.env.CLINE_DIR
+    delete process.env.CLINE_DATA_DIR
+    delete process.env.CLINE_MCP_SETTINGS_PATH
+    try {
+      fs.mkdirSync(join(home, '.cline', 'data', 'settings'), { recursive: true })
+      fs.writeFileSync(join(home, '.cline', 'data', 'settings', 'cline_mcp_settings.json'), JSON.stringify({ mcpServers: {} }))
+      expect(setJsonAgentServer('cline', 'tessel-team', teamToolsEntry('cline', 'C:/t/s.cjs'), home).ok).toBe(true)
+      const web = configToEntry('cline', { transport: 'http', url: 'https://x/mcp', headers: { A: 'b' } })
+      expect(web).toEqual({ type: 'streamableHttp', url: 'https://x/mcp', headers: { A: 'b' } })
+      expect(setJsonAgentServer('cline', 'web', web, home).ok).toBe(true)
+      expect(read('.cline', 'data', 'settings', 'cline_mcp_settings.json').mcpServers['tessel-team']).toEqual({
+        command: 'node',
+        args: ['C:/t/s.cjs']
+      })
+      expect(listJsonAgent('cline', home).servers.map((s) => [s.name, s.type, s.target])).toEqual([
+        ['tessel-team', 'stdio', 'node C:/t/s.cjs'],
+        ['web', 'http', 'https://x/mcp']
+      ])
+    } finally {
+      for (const [k, v] of [['CLINE_DIR', old.dir], ['CLINE_DATA_DIR', old.data], ['CLINE_MCP_SETTINGS_PATH', old.file]]) {
+        if (v !== undefined) process.env[k] = v
+      }
+    }
   })
 })

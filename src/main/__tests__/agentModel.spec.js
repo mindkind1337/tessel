@@ -4,6 +4,8 @@ import os from 'os'
 import { join } from 'path'
 import {
   agentModel,
+  clineSessionModel,
+  watchModelFiles,
   claudeModelFromText,
   codexModelFromText,
   codexModelFromToml,
@@ -184,6 +186,75 @@ describe('command and settings', () => {
     expect(agentModel({}, home)).toBe(null)
     put('.qwen/settings.json', '{ broken')
     expect(agentModel({ agentId: 'qwen' }, home)).toBe(null)
+  })
+})
+
+describe('Cline', () => {
+  it('the open session of a running Cline, in the pane folder first', () => {
+    const alive = (pid) => pid !== 1
+    const rows = [
+      { pid: 1, model: 'gone-model', cwd: 'C:\\Proj', ended_at: null, is_subagent: 0, updated_at: '2026-09-26T19:30:00Z' },
+      { pid: 2, model: 'other-folder', cwd: 'C:\\Else', ended_at: null, is_subagent: 0, updated_at: '2026-09-26T19:29:00Z' },
+      { pid: 3, model: 'deepseek/deepseek-v4-flash', cwd: 'C:\\Proj', ended_at: null, is_subagent: 0, updated_at: '2026-09-26T19:00:00Z' },
+      { pid: 4, model: 'sub', cwd: 'C:\\Proj', ended_at: null, is_subagent: 1, updated_at: '2026-09-26T19:31:00Z' }
+    ]
+    expect(clineSessionModel(rows, 'C:/Proj/', alive).model).toBe('deepseek/deepseek-v4-flash')
+    expect(clineSessionModel(rows, 'C:\\Nowhere', alive).model).toBe('other-folder')
+    expect(clineSessionModel([], 'C:\\Proj', alive)).toBe(null)
+  })
+
+  it('reads sessions.db, else the provider settings', () => {
+    const sqlite = process.getBuiltinModule && process.getBuiltinModule('node:sqlite')
+    const old = { dir: process.env.CLINE_DIR, data: process.env.CLINE_DATA_DIR }
+    delete process.env.CLINE_DIR
+    delete process.env.CLINE_DATA_DIR
+    try {
+      put('.cline/data/settings/providers.json', JSON.stringify({
+        version: 1,
+        lastUsedProvider: 'openrouter',
+        providers: { openrouter: { settings: { provider: 'openrouter', model: 'anthropic/claude-sonnet-5' } } }
+      }))
+      // Its settings file is older than the session written below.
+      const old2 = new Date(Date.now() - 3600 * 1000)
+      fs.utimesSync(join(home, '.cline/data/settings/providers.json'), old2, old2)
+      expect(agentModel({ agentId: 'cline', cwd: 'C:\\Proj' }, home)).toEqual({
+        model: 'anthropic/claude-sonnet-5',
+        effort: null,
+        source: 'settings'
+      })
+      if (!sqlite) return
+      fs.mkdirSync(join(home, '.cline/data/db'), { recursive: true })
+      const db = new sqlite.DatabaseSync(join(home, '.cline/data/db/sessions.db'))
+      db.exec('CREATE TABLE sessions (session_id TEXT, pid INTEGER, model TEXT, cwd TEXT, ended_at TEXT, is_subagent INTEGER, updated_at TEXT)')
+      db.prepare('INSERT INTO sessions VALUES (?, ?, ?, ?, ?, ?, ?)').run('s1', process.pid, 'gpt-5.5', 'C:\\Proj', null, 0, new Date().toISOString())
+      db.close()
+      expect(agentModel({ agentId: 'cline', cwd: 'C:\\Proj' }, home)).toEqual({ model: 'gpt-5.5', effort: null, source: 'session' })
+    } finally {
+      if (old.dir !== undefined) process.env.CLINE_DIR = old.dir
+      if (old.data !== undefined) process.env.CLINE_DATA_DIR = old.data
+    }
+  })
+})
+
+describe('watching', () => {
+  it('a model file change calls back with its agent, once', async () => {
+    put('.local/state/opencode/model.json', '{}')
+    put('.codex/config.toml', 'model = "a"')
+    const oldState = process.env.XDG_STATE_HOME
+    delete process.env.XDG_STATE_HOME
+    const seen = []
+    const stop = watchModelFiles((a) => seen.push(a), home)
+    try {
+      await new Promise((r) => setTimeout(r, 100))
+      fs.writeFileSync(join(home, '.local/state/opencode/model.json'), '{"recent":[]}')
+      fs.writeFileSync(join(home, '.local/state/opencode/model.json'), '{"recent":[{}]}')
+      fs.writeFileSync(join(home, '.codex/other.txt'), 'x') // not a model file
+      await new Promise((r) => setTimeout(r, 1500))
+      expect(seen).toEqual(['opencode'])
+    } finally {
+      stop()
+      if (oldState !== undefined) process.env.XDG_STATE_HOME = oldState
+    }
   })
 })
 

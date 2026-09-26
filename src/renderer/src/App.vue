@@ -3473,7 +3473,7 @@ async function pollTeams() {
     // an agent CLI is here (Claude Code, Codex, Gemini, Qwen, Copilot,
     // OpenCode), not only once a team exists: an agent
     // working alone uses the board too.
-    const MCP_AGENTS = ['claude', 'codex', 'gemini', 'qwen', 'copilot', 'opencode']
+    const MCP_AGENTS = ['claude', 'codex', 'gemini', 'qwen', 'copilot', 'opencode', 'cline']
     if (agents.value.some((a) => MCP_AGENTS.includes(a.id) && a.available)) installTeamToolsOnce()
     teamStepIs('team map')
     await publishCurrentTeams()
@@ -3588,7 +3588,7 @@ let teamToolsReady = false
 // every 30 s (teamMcp/server.cjs, .tessel/agents/<pane>.json). An agent of a
 // team with no such sign for a minute after it started gets a warning on its
 // row and a message once; both go when the tools are back.
-const MCP_AGENT_IDS = ['claude', 'codex', 'gemini', 'qwen', 'copilot', 'opencode']
+const MCP_AGENT_IDS = ['claude', 'codex', 'gemini', 'qwen', 'copilot', 'opencode', 'cline']
 const toolsDown = reactive({}) // paneId -> true
 const toolsWarned = new Set()
 let toolsCheckAt = 0

@@ -39,6 +39,11 @@ const api = {
   claudeSessionExists: (id) => ipcRenderer.invoke('sessions:claudeExists', id),
   findCodexSession: (query) => ipcRenderer.invoke('sessions:findCodex', query),
   agentModel: (query) => ipcRenderer.invoke('agents:model', query),
+  onAgentModelChanged: (cb) => {
+    const handler = (_e, agentId) => cb(agentId)
+    ipcRenderer.on('agents:modelChanged', handler)
+    return () => ipcRenderer.removeListener('agents:modelChanged', handler)
+  },
   listSessions: (query) => ipcRenderer.invoke('sessions:list', query),
   voiceTyping: (opts) => ipcRenderer.invoke('app:voiceTyping', opts),
   inputLanguages: () => ipcRenderer.invoke('app:inputLanguages'),

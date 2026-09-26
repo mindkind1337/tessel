@@ -4,6 +4,7 @@
 //   Qwen Code    ~/.qwen/settings.json           same format (a Gemini CLI fork)
 //   Copilot CLI  ~/.copilot/mcp-config.json      "mcpServers": { name: { type: local|http, command, args, env, tools | url, headers } }
 //   OpenCode     ~/.config/opencode/opencode.json "mcp": { name: { type: local, command: [..], environment | type: remote, url, headers } }
+//   Cline        ~/.cline/data/settings/cline_mcp_settings.json "mcpServers": { name: { command, args, env | type: streamableHttp, url, headers } }
 // Only the server entries are read or changed; everything else in the file is
 // kept as it is. A file that cannot be read as JSON (comments in a .jsonc,
 // say) is never rewritten: the change is refused with a clear error.
@@ -12,12 +13,18 @@ import os from 'os'
 import { join, dirname } from 'path'
 import { writeFileAtomic } from './safeJson'
 
-export const JSON_AGENTS = ['gemini', 'qwen', 'copilot', 'opencode']
+export const JSON_AGENTS = ['gemini', 'qwen', 'copilot', 'opencode', 'cline']
 
 function settingsFile(agent, home = os.homedir()) {
   if (agent === 'gemini') return join(home, '.gemini', 'settings.json')
   if (agent === 'qwen') return join(home, '.qwen', 'settings.json')
   if (agent === 'copilot') return join(home, '.copilot', 'mcp-config.json')
+  if (agent === 'cline') {
+    // Cline's own overrides first (CLINE_MCP_SETTINGS_PATH, CLINE_DATA_DIR, CLINE_DIR).
+    const env = process.env
+    if (env.CLINE_MCP_SETTINGS_PATH && env.CLINE_MCP_SETTINGS_PATH.trim()) return env.CLINE_MCP_SETTINGS_PATH.trim()
+    return join(clineDataDir(home), 'settings', 'cline_mcp_settings.json')
+  }
   if (agent === 'opencode') {
     const dir = join(home, '.config', 'opencode')
     const jsonc = join(dir, 'opencode.jsonc')
@@ -26,7 +33,15 @@ function settingsFile(agent, home = os.homedir()) {
   return null
 }
 
-const KEY = { gemini: 'mcpServers', qwen: 'mcpServers', copilot: 'mcpServers', opencode: 'mcp' }
+// Cline's data folder (settings, sessions): ~/.cline/data unless moved.
+export function clineDataDir(home = os.homedir()) {
+  const env = process.env
+  if (env.CLINE_DATA_DIR && env.CLINE_DATA_DIR.trim()) return env.CLINE_DATA_DIR.trim()
+  const dir = env.CLINE_DIR && env.CLINE_DIR.trim() ? env.CLINE_DIR.trim() : join(home, '.cline')
+  return join(dir, 'data')
+}
+
+const KEY = { gemini: 'mcpServers', qwen: 'mcpServers', copilot: 'mcpServers', opencode: 'mcp', cline: 'mcpServers' }
 
 // -> { data } (null data: no file yet) or { error }
 function readSettings(file) {
@@ -95,6 +110,16 @@ export function configToEntry(agent, cfg, extra = {}) {
       return e
     }
     const e = { type: 'local', command: cfg.command, args: cfg.args || [], tools: ['*'] }
+    if (cfg.env && Object.keys(cfg.env).length) e.env = cfg.env
+    return e
+  }
+  if (agent === 'cline') {
+    if (cfg.transport === 'http') {
+      const e = { type: 'streamableHttp', url: cfg.url }
+      if (cfg.headers && Object.keys(cfg.headers).length) e.headers = cfg.headers
+      return e
+    }
+    const e = { command: cfg.command, args: cfg.args || [] }
     if (cfg.env && Object.keys(cfg.env).length) e.env = cfg.env
     return e
   }
@@ -179,7 +204,9 @@ export function teamToolsEntry(agent, scriptPath) {
   // the pane id (no backslash) goes that way; the project folder is found
   // from the folder OpenCode runs in.
   if (agent === 'opencode') return configToEntry(agent, { ...stdio, env: { TESSEL_PANE_ID: '{env:TESSEL_PANE_ID}' } })
-  if (agent === 'copilot') return configToEntry(agent, stdio)
+  // Copilot and Cline hand their whole environment (the pane's) to the
+  // server; Cline never expands $VAR in env values, so none is written.
+  if (agent === 'copilot' || agent === 'cline') return configToEntry(agent, stdio)
   // Gemini CLI / Qwen Code: variables expanded from the environment; trusted,
   // so its tools run without asking each time (like Codex's "approve").
   return configToEntry(

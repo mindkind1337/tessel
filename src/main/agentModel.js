@@ -1,15 +1,18 @@
 // Which model an agent pane uses, for the pane header.
 //
 // Best first:
-// 1. The conversation file (Claude Code and Codex): the model of the latest
-//    answer, so a change with /model shows up.
+// 1. The running session (Claude Code, Codex, Copilot: its conversation
+//    file; Cline: its sessions database), so a change with /model shows up.
 // 2. A --model / -m option in the agent's command.
-// 3. The agent's settings file (the folder's own first, then the user's).
+// 3. What the agent remembers or its settings file (OpenCode's last picked
+//    model, Cline's provider settings, the folder's settings, the user's).
 // Nothing found: null (the header shows nothing rather than a guess).
+// watchModelFiles tells when one of these files changes.
 import fs from 'fs'
 import os from 'os'
 import { join } from 'path'
 import { isUuid } from './agentSessions'
+import { clineDataDir } from './jsonAgents'
 
 const TAIL = 256 * 1024
 
@@ -246,6 +249,62 @@ function opencodeRecent(home) {
   return { model: r.providerID ? `${r.providerID}/${r.modelID}` : r.modelID, mtime }
 }
 
+// Cline 3 lists its sessions in <data>/db/sessions.db (SQLite), each with
+// the process running it, its folder, provider and model. The pane's: one
+// still open whose process runs, in the pane's folder first.
+export function clineSessionModel(rows, cwd, alive = pidAlive) {
+  const want = normDir(cwd)
+  let best = null
+  for (const r of rows || []) {
+    if (!r || r.ended_at || r.is_subagent || !r.model || !alive(Number(r.pid))) continue
+    const here = !!(want && normDir(r.cwd) === want)
+    const at = Date.parse(r.updated_at || '') || 0
+    if (!best || here > best.here || (here === best.here && at > best.at)) best = { here, at, model: r.model }
+  }
+  return best ? { model: best.model, at: best.at } : null
+}
+
+function clineLive(cwd, home) {
+  const sqlite = process.getBuiltinModule ? process.getBuiltinModule('node:sqlite') : null
+  const file = join(clineDataDir(home), 'db', 'sessions.db')
+  if (!sqlite || !fs.existsSync(file)) return null
+  let db
+  try {
+    db = new sqlite.DatabaseSync(file, { readOnly: true })
+    const rows = db
+      .prepare(
+        'SELECT pid, model, cwd, ended_at, is_subagent, updated_at FROM sessions WHERE ended_at IS NULL ORDER BY updated_at DESC LIMIT 50'
+      )
+      .all()
+    return clineSessionModel(rows, cwd)
+  } catch {
+    return null // busy, or another layout
+  } finally {
+    try {
+      if (db) db.close()
+    } catch {
+      /* closed */
+    }
+  }
+}
+
+// Cline's provider settings: the provider in use and its model (none set:
+// the provider's own default, which is not written anywhere).
+function clineSettings(home) {
+  const file = join(clineDataDir(home), 'settings', 'providers.json')
+  const o = parseLoose(readText(file))
+  const p = o && o.lastUsedProvider && o.providers && o.providers[o.lastUsedProvider]
+  const m = p && p.settings && p.settings.model
+  if (typeof m !== 'string' || !m) return null
+  let mtime = 0
+  try {
+    mtime = fs.statSync(file).mtimeMs
+  } catch {
+    /* read just above */
+  }
+  return { model: m, mtime }
+}
+
 // --- 2. The command's own option ----------------------------------------------
 
 export function modelFromCommand(command) {
@@ -329,6 +388,15 @@ export function agentModel({ agentId, sessionId, command, cwd, launchedAt = 0 } 
     const m = f && copilotModelFromText(readTail(f))
     if (m) return { ...m, source: 'session' }
   }
+  if (agentId === 'cline') {
+    const live = clineLive(cwd, home)
+    const set = clineSettings(home)
+    // A model picked in Cline after its session was written: that one.
+    if (live && !(set && set.mtime > live.at)) return { model: live.model, effort: null, source: 'session' }
+    const flag = modelFromCommand(command)
+    if (flag) return { model: flag, effort: null, source: 'command' }
+    return set ? { model: set.model, effort: null, source: 'settings' } : null
+  }
   if (isUuid(sessionId)) {
     if (agentId === 'claude') {
       const f = claudeTranscript(sessionId, home)
@@ -353,4 +421,82 @@ export function agentModel({ agentId, sessionId, command, cwd, launchedAt = 0 } 
   const s = settingsModel(agentId, cwd, home)
   if (s) return { model: s.model, effort: s.effort || null, source: 'settings' }
   return picked ? { model: picked.model, effort: null, source: 'picked' } : null
+}
+
+// --- Watching: a model change shows right away ---------------------------------
+// The files where agents keep their model are watched; a change calls
+// onChange(agentId) (at most about once a second per agent), so the panes of
+// that agent read it again. A folder that does not exist yet is tried again
+// every minute (an agent installed later).
+export function watchModelFiles(onChange, home = os.homedir()) {
+  const state = process.env.XDG_STATE_HOME || join(home, '.local', 'state')
+  const cfg = process.env.XDG_CONFIG_HOME || join(home, '.config')
+  const cline = clineDataDir(home)
+  const targets = [
+    { agent: 'claude', dir: join(home, '.claude'), match: /^settings\.json$/ },
+    { agent: 'codex', dir: join(home, '.codex'), match: /^config\.toml$/ },
+    { agent: 'gemini', dir: join(home, '.gemini'), match: /^settings\.json$/ },
+    { agent: 'qwen', dir: join(home, '.qwen'), match: /^settings\.json$/ },
+    { agent: 'copilot', dir: join(home, '.copilot'), match: /^(settings|config)\.json$/ },
+    { agent: 'copilot', dir: join(home, '.copilot', 'session-state'), match: /events\.jsonl$/, recursive: true },
+    { agent: 'opencode', dir: join(state, 'opencode'), match: /^model\.json$/ },
+    { agent: 'opencode', dir: join(cfg, 'opencode'), match: /^opencode\.jsonc?$/ },
+    { agent: 'cline', dir: join(cline, 'settings'), match: /^providers\.json$/ },
+    { agent: 'cline', dir: join(cline, 'db'), match: /^sessions\.db/ }
+  ]
+  const watchers = new Map() // target -> fs.FSWatcher
+  const timers = new Map() // agent -> timeout
+  const last = new Map() // agent -> last call (ms)
+  let closed = false
+  const fire = (agent) => {
+    if (closed || timers.has(agent)) return
+    const wait = Math.max(300, 1000 - (Date.now() - (last.get(agent) || 0)))
+    timers.set(
+      agent,
+      setTimeout(() => {
+        timers.delete(agent)
+        last.set(agent, Date.now())
+        if (!closed) onChange(agent)
+      }, wait)
+    )
+  }
+  const attach = () => {
+    for (const t of targets) {
+      if (watchers.has(t) || !fs.existsSync(t.dir)) continue
+      try {
+        const w = fs.watch(t.dir, { recursive: !!t.recursive, persistent: false }, (_ev, name) => {
+          if (!name || t.match.test(String(name).replace(/\\/g, '/').split('/').pop())) fire(t.agent)
+        })
+        w.on('error', () => {
+          // The folder went away: watch it again when it is back.
+          try {
+            w.close()
+          } catch {
+            /* closed */
+          }
+          watchers.delete(t)
+        })
+        watchers.set(t, w)
+      } catch {
+        /* not watchable now: next minute */
+      }
+    }
+  }
+  attach()
+  const retry = setInterval(attach, 60000)
+  if (retry.unref) retry.unref()
+  return () => {
+    closed = true
+    clearInterval(retry)
+    for (const w of watchers.values()) {
+      try {
+        w.close()
+      } catch {
+        /* closed */
+      }
+    }
+    watchers.clear()
+    for (const t of timers.values()) clearTimeout(t)
+    timers.clear()
+  }
 }

@@ -11,12 +11,18 @@ describe('which agent runs in a shell pane', () => {
     expect(agentOf({ name: 'node.exe', cmd: win`node C:\npm\node_modules\@google\gemini-cli\dist\index.js` })).toBe('gemini')
     expect(agentOf({ name: 'opencode.exe', cmd: 'opencode' })).toBe('opencode')
     expect(agentOf({ name: 'node.exe', cmd: win`node C:\npm\node_modules\@github\copilot\index.js` })).toBe('copilot')
+    // Cline: its node launcher, then the compiled program it starts.
+    expect(agentOf({ name: 'node.exe', cmd: win`"node" "C:\Users\u\AppData\Roaming\npm\node_modules\cline\bin\cline"` })).toBe('cline')
+    expect(agentOf({ name: 'cline.exe', cmd: win`C:\npm\node_modules\@cline\cli-windows-x64\bin\cline.exe` })).toBe('cline')
+    expect(agentOf({ name: 'amp.exe', cmd: 'amp' })).toBe('amp')
+    expect(agentOf({ name: 'aider.exe', cmd: 'aider --model x' })).toBe('aider')
   })
 
   it('does not mistake other programs for agents', () => {
     expect(agentOf({ name: 'node.exe', cmd: win`node C:\Tessel-claude\scripts\build.js` })).toBe(null)
     expect(agentOf({ name: 'node.exe', cmd: win`node C:\Users\u\AppData\Roaming\tessel-team\tessel-team-mcp.cjs` })).toBe(null)
     expect(agentOf({ name: 'powershell.exe', cmd: 'powershell -NoLogo' })).toBe(null)
+    expect(agentOf({ name: 'node.exe', cmd: win`node C:\proj\scripts\incline.js` })).toBe(null)
     expect(agentOf({ name: 'git.exe', cmd: 'git commit -m "ask claude"' })).toBe(null)
   })
 

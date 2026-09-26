@@ -6,7 +6,7 @@ import { spawn, execFile } from 'child_process'
 import { loadTasks, loadBoard, saveTasks } from './taskBoardPersistence'
 import { trimEvents, isEvent } from '../shared/activity'
 import { claudeSessionExists, findCodexSession, listSessions } from './agentSessions'
-import { agentModel } from './agentModel'
+import { agentModel, watchModelFiles } from './agentModel'
 import { createLogger, describe } from './logger'
 import { cleanEnv } from './cleanEnv'
 import { createPtyClient } from './ptyClient'
@@ -262,6 +262,13 @@ const AGENT_PRESETS = [
     command: 'copilot',
     accent: '#8957e5',
     install: ['npm install -g @github/copilot']
+  },
+  {
+    id: 'cline',
+    name: 'Cline',
+    command: 'cline',
+    accent: '#6ea8fe',
+    install: ['npm install -g cline']
   },
   {
     id: 'amp',
@@ -863,7 +870,7 @@ ipcMain.handle(
     } catch (err) {
       errors.push(`Codex: ${err.message}`)
     }
-    // Gemini CLI, Qwen Code, Copilot CLI, OpenCode: in their settings file,
+    // Gemini CLI, Qwen Code, Copilot CLI, OpenCode, Cline: in their settings file,
     // for those installed here (a file Tessel cannot read is left alone).
     for (const agent of JSON_AGENTS) {
       const preset = (await getAgents()).find((a) => a.id === agent)
@@ -1567,6 +1574,9 @@ Promise.all([acquireInstanceLock(), app.whenReady()]).then(([gotInstanceLock]) =
   ensureDevShortcut()
   createWindow()
   updater.start()
+  // A model changed in an agent: its panes read it again (header).
+  const stopModelWatch = watchModelFiles((agentId) => send('agents:modelChanged', agentId))
+  app.on('will-quit', stopModelWatch)
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
