@@ -324,10 +324,16 @@ function newId(prefix) {
   return `${prefix}-${counter}-${Math.floor(Math.random() * 1e6)}`
 }
 
-// Which agents we can resume, and how.
+// Which agents we can resume, and how. Claude Code and Gemini take the id we
+// choose; Codex, OpenCode, Cline and Copilot choose theirs, found after they
+// start (watchFoundSession).
+const RESUMABLE = ['claude', 'codex', 'gemini', 'opencode', 'cline', 'copilot']
+const FOUND_AFTER_START = ['codex', 'opencode', 'cline', 'copilot']
 function sessionKind(agent) {
-  return agent && (agent.id === 'claude' || agent.id === 'codex') ? agent.id : null
+  return agent && RESUMABLE.includes(agent.id) ? agent.id : null
 }
+// Ids come from the agents' own files: only plain ones go into a command line.
+const safeSessionId = (id) => typeof id === 'string' && /^[A-Za-z0-9_-]{6,80}$/.test(id)
 
 function newUuid() {
   if (window.crypto && window.crypto.randomUUID) return window.crypto.randomUUID()
@@ -363,22 +369,44 @@ async function agentStartLine(agent, sessionId, resume) {
     if (sessionId && resume) return { line: `${agent.command} resume ${sessionId}${own}`, sessionId, resumed: true }
     return { line: `${agent.command}${own}`, sessionId: null, resumed: false }
   }
+  if (kind === 'gemini') {
+    // Like Claude Code: resume if it was written to, else start with this id.
+    if (sessionId && resume) {
+      const exists = window.shellApi.geminiSessionExists
+        ? await window.shellApi.geminiSessionExists(sessionId).catch(() => false)
+        : false
+      if (exists) return { line: `${agent.command} --resume ${sessionId}`, sessionId, resumed: true }
+    }
+    const id = sessionId || newUuid()
+    return { line: `${agent.command} --session-id ${id}`, sessionId: id, resumed: false }
+  }
+  const flag = { opencode: '--session', cline: '--id', copilot: '--resume' }[kind]
+  if (flag && sessionId && resume && safeSessionId(sessionId)) {
+    return { line: `${agent.command} ${flag} ${sessionId}`, sessionId, resumed: true }
+  }
   return { line: agent.command, sessionId: null, resumed: false }
 }
 
-// Codex picks its own session id; find it from its session files shortly after
-// the pane starts, so the pane can resume it next time.
-function watchCodexSession(leaf) {
-  if (!window.shellApi.findCodexSession || !leaf.startDir) return
+// Codex, OpenCode, Cline and Copilot pick their own session id; find it from
+// their session files after the pane starts (some only create it with your
+// first message: looked for during 30 minutes), so the pane can resume it
+// next time.
+function watchFoundSession(leaf, kind) {
+  const find = window.shellApi.findAgentSession
+    ? (q) => window.shellApi.findAgentSession({ ...q, agent: kind })
+    : kind === 'codex'
+      ? window.shellApi.findCodexSession
+      : null
+  if (!find || !leaf.startDir) return
   let tries = 0
   const tick = async () => {
-    if (leaf.sessionId || !findLeaf(leaf.id) || ++tries > 60) return
+    if (leaf.sessionId || !findLeaf(leaf.id) || leaf.agentId !== kind || ++tries > 120) return
     const exclude = []
     forEachWsLeaf((l) => {
       if (l.sessionId) exclude.push(l.sessionId)
     })
     try {
-      const id = await window.shellApi.findCodexSession({
+      const id = await find({
         cwd: leaf.startDir,
         since: leaf.launchedAt,
         exclude,
@@ -495,7 +523,7 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
       leaf.launchGuessed = true
     }
     if (opts.startDir) leaf.startDir = opts.startDir
-    if (sessionKind(agent) === 'codex' && !leaf.sessionId) watchCodexSession(leaf)
+    if (FOUND_AFTER_START.includes(sessionKind(agent)) && !leaf.sessionId) watchFoundSession(leaf, agent.id)
     return leaf
   }
   // Launch the agent CLI once the shell has had a moment to print its prompt.
@@ -504,7 +532,7 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
     leaf.sessionId = start.sessionId
     const line = opts.wrap ? opts.wrap(start.line) : start.line
     setTimeout(() => window.shellApi.writePty(id, `${line}\r`), 600)
-    if (sessionKind(agent) === 'codex' && !leaf.sessionId) watchCodexSession(leaf)
+    if (FOUND_AFTER_START.includes(sessionKind(agent)) && !leaf.sessionId) watchFoundSession(leaf, agent.id)
   }
   return leaf
 }

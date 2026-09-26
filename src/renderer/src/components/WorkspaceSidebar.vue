@@ -647,7 +647,7 @@ defineExpose({
               r.s.track && r.s.track.onTask ? `${r.s.task} · ${r.s.track.onTask}` : r.s.task
             }}</span>
           </span>
-          <span class="ws-session-num">{{ r.s.num }}</span>
+          <span v-if="r.s.num" class="ws-session-num pane-num">{{ r.s.num }}</span>
         </button>
       </template>
       <div v-if="picking" class="ws-pick-bar">

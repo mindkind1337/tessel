@@ -7,6 +7,7 @@ import { loadTasks, loadBoard, saveTasks } from './taskBoardPersistence'
 import { trimEvents, isEvent } from '../shared/activity'
 import { claudeSessionExists, findCodexSession, listSessions } from './agentSessions'
 import { agentModelLive, watchModelFiles } from './agentModel'
+import { findAgentSession, geminiSessionExists } from './agentResume'
 import { extraToolDirs, withToolDirs } from './toolDirs'
 import { createLogger, describe } from './logger'
 import { cleanEnv } from './cleanEnv'
@@ -688,6 +689,16 @@ ipcMain.handle('logs:diagnostics', () => {
 // Agent session lookups, for resuming conversations when panes reopen.
 ipcMain.handle('sessions:claudeExists', (_evt, id) => claudeSessionExists(id))
 ipcMain.handle('sessions:findCodex', (_evt, q = {}) => findCodexSession(q))
+// Gemini: is there a conversation to resume? OpenCode, Cline, Copilot, Codex:
+// the session a pane started (they choose its id), found after it starts.
+ipcMain.handle('sessions:geminiExists', (_evt, id) => geminiSessionExists(id))
+ipcMain.handle('sessions:find', (_evt, q = {}) => {
+  try {
+    return findAgentSession(q || {})
+  } catch {
+    return null
+  }
+})
 ipcMain.handle('sessions:list', (_evt, q = {}) => listSessions(q))
 // The model an agent pane uses (for its header), or null.
 ipcMain.handle('agents:model', async (_evt, q = {}) => {

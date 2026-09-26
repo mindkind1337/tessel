@@ -162,8 +162,6 @@
 
 :root[data-theme='warp'] .ws-sessions-count,
 :root[data-theme='warp'] .ws-session-num {
-  color: var(--text-dim);
-  font-size: 10px;
   font-variant-numeric: tabular-nums;
 }
 

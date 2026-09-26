@@ -3879,9 +3879,15 @@ body.pane-dragging * {
   color: #ffb4b6;
 }
 
+/* The pane number, as in the pane header (.pane-num): a badge, lit on the
+   pane in use. */
 .ws-session-num {
-  color: var(--text-dim);
-  font-size: 11px;
+  margin-left: auto;
+}
+
+.ws-session.active .ws-session-num {
+  background: color-mix(in srgb, var(--accent) 30%, var(--surface-3));
+  color: var(--text-strong);
 }
 
 /* With "Sessions" below, the workspace list takes only the room it needs, so

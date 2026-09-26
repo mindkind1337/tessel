@@ -38,6 +38,8 @@ const api = {
   diagnostics: () => ipcRenderer.invoke('logs:diagnostics'),
   claudeSessionExists: (id) => ipcRenderer.invoke('sessions:claudeExists', id),
   findCodexSession: (query) => ipcRenderer.invoke('sessions:findCodex', query),
+  findAgentSession: (query) => ipcRenderer.invoke('sessions:find', query),
+  geminiSessionExists: (id) => ipcRenderer.invoke('sessions:geminiExists', id),
   agentModel: (query) => ipcRenderer.invoke('agents:model', query),
   onAgentModelChanged: (cb) => {
     const handler = (_e, agentId) => cb(agentId)
