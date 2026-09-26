@@ -6,6 +6,7 @@ import { spawn, execFile } from 'child_process'
 import { loadTasks, loadBoard, saveTasks } from './taskBoardPersistence'
 import { trimEvents, isEvent } from '../shared/activity'
 import { claudeSessionExists, findCodexSession, listSessions } from './agentSessions'
+import { agentModel } from './agentModel'
 import { createLogger, describe } from './logger'
 import { cleanEnv } from './cleanEnv'
 import { createPtyClient } from './ptyClient'
@@ -647,6 +648,14 @@ ipcMain.handle('logs:diagnostics', () => {
 ipcMain.handle('sessions:claudeExists', (_evt, id) => claudeSessionExists(id))
 ipcMain.handle('sessions:findCodex', (_evt, q = {}) => findCodexSession(q))
 ipcMain.handle('sessions:list', (_evt, q = {}) => listSessions(q))
+// The model an agent pane uses (for its header), or null.
+ipcMain.handle('agents:model', (_evt, q = {}) => {
+  try {
+    return agentModel(q || {})
+  } catch {
+    return null
+  }
+})
 
 // Windows input languages, for choosing the voice typing language.
 // Returns [{ tag: 'fr-CA', name: 'Français (Canada)', tip: '0C0C:00001009' }].

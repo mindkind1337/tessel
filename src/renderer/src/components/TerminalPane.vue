@@ -26,6 +26,7 @@ import {
 } from '../agentStatus'
 import { promptShowsPlaceholder } from '../promptCheck'
 import { detectLimit, detectApproval, detectTaskDone } from '../agentLimit'
+import { modelLabel } from '../../../shared/modelLabel'
 
 const props = defineProps({
   node: { type: Object, required: true }
@@ -49,11 +50,63 @@ const isMember = computed(() => ctx.broadcast.value && props.node.broadcast)
 const isMaximized = computed(() => ctx.maximizedId.value === props.node.id)
 const isAgent = computed(() => props.node.kind === 'agent')
 
+// The model the agent uses, shown in the header: read from its conversation
+// file (so a /model change shows up), its command or its settings. Checked
+// every 20 s and each time it finishes working.
+const agentModel = ref(null) // { model, effort, source } | null
+const modelText = computed(() => {
+  const m = agentModel.value
+  if (!m || !m.model) return ''
+  return modelLabel(m.model) + (m.effort ? ` · ${m.effort}` : '')
+})
+const modelTitle = computed(() => {
+  const m = agentModel.value
+  if (!m) return ''
+  const from =
+    m.source === 'session'
+      ? 'from its latest answer'
+      : m.source === 'command'
+        ? 'from its command'
+        : 'from its settings (a change inside the agent may not show)'
+  return `Model: ${m.model}${m.effort ? ` (reasoning ${m.effort})` : ''}\n${from}`
+})
+let modelBusy = false
+async function refreshModel() {
+  if (!isAgent.value || !window.shellApi.agentModel || modelBusy) {
+    if (!isAgent.value) agentModel.value = null
+    return
+  }
+  modelBusy = true
+  try {
+    const n = props.node
+    agentModel.value = await window.shellApi.agentModel({
+      agentId: n.agentId,
+      sessionId: n.sessionId,
+      command: n.agentCommand,
+      cwd: n.startDir
+    })
+  } catch {
+    /* keep what it showed */
+  } finally {
+    modelBusy = false
+  }
+}
+const modelTimer = setInterval(refreshModel, 20000)
+onBeforeUnmount(() => clearInterval(modelTimer))
+watch(
+  () => [props.node.kind, props.node.agentId, props.node.sessionId],
+  () => refreshModel(),
+  { immediate: true }
+)
+
 // Busy/idle indicator for agent panes: an agent that is actively emitting output
 // is "working"; once output has been quiet for a moment it is "idle" — i.e.
 // waiting for your input. This is a backend-agnostic heuristic (no TUI parsing).
 const agentStatus = ref('idle') // 'busy' | 'idle'
-watch(agentStatus, (v) => setAgentStatus(props.node.id, v))
+watch(agentStatus, (v) => {
+  setAgentStatus(props.node.id, v)
+  if (v === 'idle') refreshModel() // an answer just ended
+})
 let statusTimer = 0
 let busySince = 0
 const IDLE_AFTER_MS = 1400
@@ -1050,6 +1103,7 @@ onBeforeUnmount(() => {
           @dblclick="startEditTitle"
           >{{ paneTitle }}</span
         >
+        <span v-if="isAgent && modelText" class="pane-model" :title="modelTitle">{{ modelText }}</span>
         <span
           v-if="node.worktree"
           class="pane-branch"

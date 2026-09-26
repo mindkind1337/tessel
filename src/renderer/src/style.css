@@ -2272,6 +2272,16 @@ body.pane-dragging * {
   text-overflow: ellipsis;
 }
 
+.pane-model {
+  flex: 0 3 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-dim);
+  font-size: 10.5px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 .ctx-menu-label {
   padding: 6px 9px 3px;
   color: var(--text-dim);

@@ -38,6 +38,7 @@ const api = {
   diagnostics: () => ipcRenderer.invoke('logs:diagnostics'),
   claudeSessionExists: (id) => ipcRenderer.invoke('sessions:claudeExists', id),
   findCodexSession: (query) => ipcRenderer.invoke('sessions:findCodex', query),
+  agentModel: (query) => ipcRenderer.invoke('agents:model', query),
   listSessions: (query) => ipcRenderer.invoke('sessions:list', query),
   voiceTyping: (opts) => ipcRenderer.invoke('app:voiceTyping', opts),
   inputLanguages: () => ipcRenderer.invoke('app:inputLanguages'),
