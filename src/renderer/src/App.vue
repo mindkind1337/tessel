@@ -594,7 +594,8 @@ function serializeNode(node) {
       num: node.num || null,
       team: node.team || null,
       teamTools: !!node.teamTools,
-      toolsVersion: node.toolsVersion || null
+      toolsVersion: node.toolsVersion || null,
+      modelOverride: node.detected ? null : node.modelOverride || null
     }
   }
   return {
@@ -631,6 +632,7 @@ async function deserializeNode(snap, cwd = null) {
     if (Number.isInteger(snap.num) && snap.num > 0) leaf.num = snap.num
     if (snap.teamTools) leaf.teamTools = true
     if (typeof snap.toolsVersion === 'string') leaf.toolsVersion = snap.toolsVersion
+    if (typeof snap.modelOverride === 'string' && snap.modelOverride) leaf.modelOverride = snap.modelOverride.slice(0, 80)
     // Still running: its line is what was saved. Unknown (an older layout):
     // no automatic reminder until the user sends or clears a line there.
     // Still running: its line is what this window recorded; nothing
@@ -3673,6 +3675,9 @@ async function detectShellAgents() {
     for (const [id, agentId] of Object.entries(res.agents || {})) {
       const l = findLeaf(id)
       if (!l || l !== watched[id]) continue // closed or replaced meanwhile
+      // Its command line (the model may be in it: ollama run <model>, --model).
+      const cmd = res.commands && typeof res.commands[id] === 'string' ? res.commands[id].slice(0, 2000) : null
+      if (agentId && l.detectedCommand !== cmd) l.detectedCommand = cmd
       if (agentId && !l.detected && l.kind !== 'agent') becomeAgent(l, agentId)
       else if (agentId && l.detected && l.agentId !== agentId) becomeAgent(l, agentId)
       else if (!agentId && l.detected) becomeShell(l)
@@ -3700,6 +3705,8 @@ function becomeShell(leaf) {
   leaf.title = leaf.shellTitle || leaf.title
   leaf.detected = false
   delete leaf.shellTitle
+  delete leaf.modelOverride
+  delete leaf.detectedCommand
   clearAgentStatus(leaf.id)
 }
 const detectTimer = setInterval(detectShellAgents, 4000)

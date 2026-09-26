@@ -308,8 +308,39 @@ function clineSettings(home) {
 // --- 2. The command's own option ----------------------------------------------
 
 export function modelFromCommand(command) {
-  const m = /(?:^|\s)(?:--model|-m)(?:=|\s+)("([^"]+)"|'([^']+)'|([^\s"']+))/.exec(String(command || ''))
-  return m ? m[2] || m[3] || m[4] : null
+  const text = String(command || '')
+  const m = /(?:^|\s)(?:--model|-m)(?:=|\s+)("([^"]+)"|'([^']+)'|([^\s"']+))/.exec(text)
+  if (m) return m[2] || m[3] || m[4]
+  // ollama run <model>: the first word after "run" that is not an option
+  // (nor the value of one).
+  const words = []
+  const re = /"([^"]*)"|(\S+)/g
+  let w
+  while ((w = re.exec(text))) words.push(w[1] !== undefined ? w[1] : w[2])
+  for (let i = 0; i < words.length - 1; i++) {
+    if (!/(^|[\\/])ollama(\.exe)?$/i.test(words[i]) || words[i + 1] !== 'run') continue
+    for (let j = i + 2; j < words.length; j++) {
+      const t = words[j]
+      if (/^--(format|keepalive|dimensions|think)$/.test(t)) j++
+      else if (!t.startsWith('-')) return t
+    }
+  }
+  return null
+}
+
+// The models Ollama has loaded now (its local API), newest first. Only one:
+// that one; several: unknown (which pane uses which is not told).
+export async function ollamaRunningModel(fetchImpl = globalThis.fetch) {
+  if (!fetchImpl) return null
+  try {
+    const res = await fetchImpl('http://127.0.0.1:11434/api/ps', { signal: AbortSignal.timeout(1500) })
+    if (!res.ok) return null
+    const data = await res.json()
+    const models = Array.isArray(data && data.models) ? data.models : []
+    return models.length === 1 && typeof models[0].name === 'string' ? models[0].name : null
+  } catch {
+    return null // Ollama not running
+  }
 }
 
 // --- 3. Settings files ------------------------------------------------------------
@@ -499,4 +530,12 @@ export function watchModelFiles(onChange, home = os.homedir()) {
     for (const t of timers.values()) clearTimeout(t)
     timers.clear()
   }
+}
+
+// agentModel, plus what needs asking a running program (Ollama's API).
+export async function agentModelLive(q = {}, home = os.homedir(), fetchImpl = globalThis.fetch) {
+  const found = agentModel(q, home)
+  if (found || q.agentId !== 'ollama') return found
+  const running = await ollamaRunningModel(fetchImpl)
+  return running ? { model: running, effort: null, source: 'running' } : null
 }

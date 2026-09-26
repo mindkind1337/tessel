@@ -2282,6 +2282,15 @@ body.pane-dragging * {
   text-overflow: ellipsis;
 }
 
+.pane-model.manual {
+  font-style: italic;
+}
+
+.pane-model-input {
+  width: 150px;
+  flex: 0 1 150px;
+}
+
 .ctx-menu-label {
   padding: 6px 9px 3px;
   color: var(--text-dim);

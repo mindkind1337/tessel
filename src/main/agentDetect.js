@@ -13,6 +13,7 @@ const RULES = [
   { id: 'copilot', re: /@github[\\/]copilot|(^|[\\/])copilot(\.exe)?$/i },
   { id: 'cline', re: /@cline[\\/]cli-|(^|[\\/])cline(\.exe)?$/i },
   { id: 'amp', re: /@sourcegraph[\\/]amp|(^|[\\/])amp(\.exe)?$/i },
+  { id: 'kimi', re: /(^|[\\/])kimi(\.exe)?$/i },
   { id: 'aider', re: /(^|[\\/])aider(\.exe)?$/i }
 ]
 
@@ -27,12 +28,21 @@ export function agentOf(proc) {
   let m
   while (words.length < 3 && (m = re.exec(cmd))) words.push(m[1] !== undefined ? m[1] : m[2])
   for (const r of RULES) if (words.some((w) => r.re.test(w))) return r.id
+  // Ollama: its menu (no arguments), a chat (run) or an agent it starts
+  // (launch); not the server or a list.
+  if (/(^|[\\/])ollama(\.exe)?$/i.test(name) || /(^|[\\/])ollama(\.exe)?$/i.test(words[1] || '')) {
+    const sub = /(^|[\\/])ollama(\.exe)?$/i.test(words[1] || '') ? words[2] : words[1]
+    if (!sub || sub === 'run' || sub === 'launch') return 'ollama'
+  }
   return null
 }
 
 // procs: [{ pid, ppid, name, cmd }]; shells: { paneId: shellPid }.
 // -> { paneId: agentId | null } — the nearest agent under each shell.
-export function agentsUnderShells(procs, shells) {
+// commands (optional, filled): { paneId: its command line } (the model
+// may be written in it). Ollama starting an agent (ollama launch claude):
+// that agent, with Ollama's command line too.
+export function agentsUnderShells(procs, shells, commands = {}) {
   const children = new Map()
   for (const p of procs) {
     if (!children.has(p.ppid)) children.set(p.ppid, [])
@@ -49,6 +59,14 @@ export function agentsUnderShells(procs, shells) {
         const a = agentOf(p)
         if (a) {
           out[paneId] = a
+          commands[paneId] = String(p.cmd || '').replace(/\t/g, ' ')
+          if (a === 'ollama') {
+            const inner = agentBelow(p.pid, children)
+            if (inner) {
+              out[paneId] = inner.id
+              commands[paneId] = String(inner.cmd || '').replace(/\t/g, ' ') + ' ' + commands[paneId]
+            }
+          }
           break
         }
       }
@@ -98,10 +116,26 @@ function listProcesses() {
   })
 }
 
-// shells: { paneId: shellPid } -> { ok, agents: { paneId: agentId | null } }
+// The first agent (other than Ollama) under a process.
+function agentBelow(pid, children) {
+  let level = children.get(pid) || []
+  for (let depth = 0; depth < 4 && level.length; depth++) {
+    for (const p of level) {
+      const a = agentOf(p)
+      if (a && a !== 'ollama') return { id: a, cmd: p.cmd }
+    }
+    level = level.flatMap((p) => children.get(p.pid) || [])
+  }
+  return null
+}
+
+// shells: { paneId: shellPid }
+// -> { ok, agents: { paneId: agentId | null }, commands: { paneId: cmd } }
 export async function detectAgents({ shells } = {}) {
   if (!shells || typeof shells !== 'object') return { ok: false, error: 'No panes.' }
   const procs = await listProcesses()
   if (!procs) return { ok: false, error: 'Could not list the processes.' }
-  return { ok: true, agents: agentsUnderShells(procs, shells) }
+  const commands = {}
+  const agents = agentsUnderShells(procs, shells, commands)
+  return { ok: true, agents, commands }
 }

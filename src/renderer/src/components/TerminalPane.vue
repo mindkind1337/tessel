@@ -27,6 +27,7 @@ import {
 import { promptShowsPlaceholder } from '../promptCheck'
 import { detectLimit, detectApproval, detectTaskDone } from '../agentLimit'
 import { modelLabel } from '../../../shared/modelLabel'
+import { modelFromScreen } from '../../../shared/screenModel'
 
 const props = defineProps({
   node: { type: Object, required: true }
@@ -50,9 +51,11 @@ const isMember = computed(() => ctx.broadcast.value && props.node.broadcast)
 const isMaximized = computed(() => ctx.maximizedId.value === props.node.id)
 const isAgent = computed(() => props.node.kind === 'agent')
 
-// The model the agent uses, shown in the header: read from its conversation
-// file (so a /model change shows up), its command or its settings. Checked
-// every 20 s and each time it finishes working.
+// The model the agent uses, shown in the header: the one you set (pane menu
+// > Set model...), else read from its conversation file (so a /model change
+// shows up), its command or its settings, else from its screen (status bar
+// or banner, for agents Tessel has no file for). Checked every 20 s, each
+// time it finishes working, and when one of those files changes.
 const agentModel = ref(null) // { model, effort, source } | null
 const modelText = computed(() => {
   const m = agentModel.value
@@ -69,31 +72,92 @@ const modelTitle = computed(() => {
         ? 'from its command'
         : m.source === 'picked'
           ? 'the model last picked in it'
-          : 'from its settings (a change inside the agent may not show)'
+          : m.source === 'manual'
+            ? 'set by you (pane menu > Set model...)'
+            : m.source === 'screen'
+              ? 'read from its screen (status bar or banner)'
+              : m.source === 'running'
+                ? 'the only model Ollama has running'
+              : 'from its settings (a change inside the agent may not show)'
   return `Model: ${m.model}${m.effort ? ` (reasoning ${m.effort})` : ''}\n${from}`
 })
 let modelBusy = false
+let modelAgain = false // asked while a check ran: one more after it
 async function refreshModel() {
-  if (!isAgent.value || !window.shellApi.agentModel || modelBusy) {
+  if (!isAgent.value || !window.shellApi.agentModel) {
     if (!isAgent.value) agentModel.value = null
+    return
+  }
+  if (modelBusy) {
+    modelAgain = true
     return
   }
   modelBusy = true
   try {
     const n = props.node
-    agentModel.value = await window.shellApi.agentModel({
+    if (n.modelOverride) {
+      agentModel.value = { model: n.modelOverride, effort: null, source: 'manual' }
+      return
+    }
+    let res = await window.shellApi.agentModel({
       agentId: n.agentId,
       sessionId: n.sessionId,
-      command: n.agentCommand,
+      command: [n.agentCommand, n.detectedCommand].filter(Boolean).join(' '),
       cwd: n.startDir,
       launchedAt: n.launchedAt || 0
     })
+    if (!res) {
+      const seen = modelOnScreen()
+      if (seen) res = { model: seen, effort: null, source: 'screen' }
+    }
+    if (!n.modelOverride) agentModel.value = res
   } catch {
     /* keep what it showed */
   } finally {
     modelBusy = false
+    if (modelAgain) {
+      modelAgain = false
+      refreshModel()
+    }
   }
 }
+// The model the agent prints: its status bar (last lines on screen) or
+// its welcome banner (first lines of its output).
+function modelOnScreen() {
+  if (!term) return null
+  const buf = term.buffer.active
+  const top = []
+  for (let y = 0; y < Math.min(buf.length, 30); y++) {
+    const line = buf.getLine(y)
+    if (line) top.push(line.translateToString(true))
+  }
+  return modelFromScreen({ bottom: screenText(6).split('\n'), top })
+}
+
+// Pane menu > Set model...: your own name for it (empty: automatic again).
+const editingModel = ref(false)
+const modelDraft = ref('')
+const modelInputEl = ref(null)
+function menuSetModel() {
+  closeCtxMenu()
+  modelDraft.value = props.node.modelOverride || (agentModel.value && agentModel.value.model) || ''
+  editingModel.value = true
+  nextTick(() => modelInputEl.value && modelInputEl.value.select())
+}
+function saveModel() {
+  if (!editingModel.value) return
+  editingModel.value = false
+  const v = modelDraft.value.trim().slice(0, 80)
+  if (v) props.node.modelOverride = v
+  else delete props.node.modelOverride
+  refreshModel()
+  if (term) term.focus()
+}
+function cancelModel() {
+  editingModel.value = false
+  if (term) term.focus()
+}
+
 const modelTimer = setInterval(refreshModel, 20000)
 // Tessel watches the agents' model files: a change shows right away.
 const stopModelChanged = window.shellApi.onAgentModelChanged
@@ -106,7 +170,7 @@ onBeforeUnmount(() => {
   if (stopModelChanged) stopModelChanged()
 })
 watch(
-  () => [props.node.kind, props.node.agentId, props.node.sessionId],
+  () => [props.node.kind, props.node.agentId, props.node.sessionId, props.node.detectedCommand],
   () => refreshModel(),
   { immediate: true }
 )
@@ -1113,7 +1177,26 @@ onBeforeUnmount(() => {
           @dblclick="startEditTitle"
           >{{ paneTitle }}</span
         >
-        <span v-if="isAgent && modelText" class="pane-model" :title="modelTitle">{{ modelText }}</span>
+        <input
+          v-if="isAgent && editingModel"
+          ref="modelInputEl"
+          v-model="modelDraft"
+          class="pane-tab-input pane-model-input"
+          placeholder="Model (empty: automatic)"
+          aria-label="Model this agent uses (empty: find it automatically)"
+          @blur="saveModel"
+          @keydown.enter.prevent="saveModel"
+          @keydown.escape.prevent="cancelModel"
+          @mousedown.stop
+          @click.stop
+        />
+        <span
+          v-else-if="isAgent && modelText"
+          class="pane-model"
+          :class="{ manual: agentModel && agentModel.source === 'manual' }"
+          :title="modelTitle"
+          >{{ modelText }}</span
+        >
         <span
           v-if="node.worktree"
           class="pane-branch"
@@ -1482,6 +1565,9 @@ onBeforeUnmount(() => {
       </button>
       <button class="ctx-menu-item" @click="menuFind">
         Find<span class="ctx-menu-shortcut">Ctrl+Shift+F</span>
+      </button>
+      <button v-if="isAgent" class="ctx-menu-item" @click="menuSetModel">
+        Set model…<span v-if="node.modelOverride" class="ctx-menu-shortcut">yours</span>
       </button>
       <div class="ctx-menu-sep"></div>
       <template v-if="otherPanes.length">

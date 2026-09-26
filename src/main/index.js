@@ -6,7 +6,7 @@ import { spawn, execFile } from 'child_process'
 import { loadTasks, loadBoard, saveTasks } from './taskBoardPersistence'
 import { trimEvents, isEvent } from '../shared/activity'
 import { claudeSessionExists, findCodexSession, listSessions } from './agentSessions'
-import { agentModel, watchModelFiles } from './agentModel'
+import { agentModelLive, watchModelFiles } from './agentModel'
 import { createLogger, describe } from './logger'
 import { cleanEnv } from './cleanEnv'
 import { createPtyClient } from './ptyClient'
@@ -262,6 +262,20 @@ const AGENT_PRESETS = [
     command: 'copilot',
     accent: '#8957e5',
     install: ['npm install -g @github/copilot']
+  },
+  {
+    id: 'kimi',
+    name: 'Kimi Code',
+    command: 'kimi',
+    accent: '#3b82f6',
+    install: ['python -m pip install -U kimi-cli']
+  },
+  {
+    id: 'ollama',
+    name: 'Ollama',
+    command: 'ollama',
+    accent: '#f5f5f5',
+    install: ['winget install --id Ollama.Ollama -e']
   },
   {
     id: 'cline',
@@ -656,9 +670,9 @@ ipcMain.handle('sessions:claudeExists', (_evt, id) => claudeSessionExists(id))
 ipcMain.handle('sessions:findCodex', (_evt, q = {}) => findCodexSession(q))
 ipcMain.handle('sessions:list', (_evt, q = {}) => listSessions(q))
 // The model an agent pane uses (for its header), or null.
-ipcMain.handle('agents:model', (_evt, q = {}) => {
+ipcMain.handle('agents:model', async (_evt, q = {}) => {
   try {
-    return agentModel(q || {})
+    return await agentModelLive(q || {})
   } catch {
     return null
   }

@@ -4,6 +4,7 @@
 // (claude / codex / gemini / opencode) or a shell id (powershell / pwsh / cmd / gitbash /
 // wsl). Anything unknown falls back to a generic terminal glyph.
 import { computed } from 'vue'
+import { BRAND_SVGS } from '../brandSvgs'
 
 const props = defineProps({
   kind: { type: String, default: '' },
@@ -18,6 +19,7 @@ const KNOWN = new Set([
   'codex',
   'openai',
   'opencode',
+  ...Object.keys(BRAND_SVGS),
   'gemini',
   'powershell',
   'pwsh',
@@ -67,6 +69,11 @@ const claudeRays = computed(() => {
 })
 
 const k = computed(() => (props.kind || '').toLowerCase())
+// An official icon (brandSvgs.js), with ids of its own.
+const raw = computed(() => {
+  const b = BRAND_SVGS[k.value]
+  return b ? { box: b.box, html: b.body.split('__UID__').join(gid) } : null
+})
 </script>
 
 <template>
@@ -83,14 +90,17 @@ const k = computed(() => (props.kind || '').toLowerCase())
       <line v-for="(r, i) in claudeRays" :key="i" :x1="r.x1" :y1="r.y1" :x2="r.x2" :y2="r.y2" />
     </g>
 
-    <!-- Codex / OpenAI blossom -->
+    <!-- Codex CLI, Cline, Copilot CLI, Qwen Code, Ollama: their own icons -->
+    <!-- eslint-disable-next-line vue/no-v-html -->
+    <svg v-else-if="raw" x="1" y="1" width="22" height="22" :viewBox="raw.box" v-html="raw.html" />
+
+    <!-- OpenAI blossom -->
     <path v-else-if="k === 'codex' || k === 'openai'" :d="OPENAI_PATH" fill="#ececec" />
 
-    <!-- OpenCode: its block "O" (white frame, grey lower half) on dark -->
-    <g v-else-if="k === 'opencode'" transform="scale(0.046875)">
-      <rect width="512" height="512" rx="96" fill="#131010" />
-      <path d="M320 224V352H192V224H320Z" fill="#5a5858" />
-      <path fill-rule="evenodd" d="M384 416H128V96H384V416ZM320 160H192V352H320V160Z" fill="#fff" />
+    <!-- OpenCode: its "O" (opencode.ai/brand, dark version), as tall as the others -->
+    <g v-else-if="k === 'opencode'">
+      <path d="M8 10h8v8H8Z" fill="#4b4646" />
+      <path fill-rule="evenodd" d="M4 2h16v20H4ZM8 6v12h8V6Z" fill="#f1ecec" />
     </g>
 
     <!-- Gemini sparkle -->

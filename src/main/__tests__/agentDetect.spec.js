@@ -41,4 +41,25 @@ describe('which agent runs in a shell pane', () => {
       'pane-3': null
     })
   })
+
+  it('Ollama: its menu, a chat or an agent it launches; never its server', () => {
+    const O = 'C:/Programs/Ollama/ollama.exe'
+    expect(agentOf({ name: 'ollama.exe', cmd: `"${O}" run glm-5.2:cloud` })).toBe('ollama')
+    expect(agentOf({ name: 'ollama.exe', cmd: 'ollama' })).toBe('ollama')
+    expect(agentOf({ name: 'ollama.exe', cmd: 'ollama launch cline --model glm' })).toBe('ollama')
+    expect(agentOf({ name: 'ollama.exe', cmd: 'ollama serve' })).toBe(null)
+    expect(agentOf({ name: 'ollama.exe', cmd: 'ollama list' })).toBe(null)
+    // ollama launch claude: the pane is Claude Code, with Ollama's command line too.
+    const procs = [
+      { pid: 10, ppid: 1, name: 'pwsh.exe', cmd: 'pwsh' },
+      { pid: 11, ppid: 10, name: 'ollama.exe', cmd: 'ollama launch claude --model glm-5.2:cloud' },
+      { pid: 12, ppid: 11, name: 'claude.exe', cmd: 'claude' },
+      { pid: 20, ppid: 1, name: 'pwsh.exe', cmd: 'pwsh' },
+      { pid: 21, ppid: 20, name: 'ollama.exe', cmd: 'ollama run qwen3:8b' }
+    ]
+    const commands = {}
+    expect(agentsUnderShells(procs, { a: 10, b: 20 }, commands)).toEqual({ a: 'claude', b: 'ollama' })
+    expect(commands.a).toBe('claude ollama launch claude --model glm-5.2:cloud')
+    expect(commands.b).toBe('ollama run qwen3:8b')
+  })
 })

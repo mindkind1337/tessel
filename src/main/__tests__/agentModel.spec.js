@@ -4,6 +4,7 @@ import os from 'os'
 import { join } from 'path'
 import {
   agentModel,
+  agentModelLive,
   clineSessionModel,
   watchModelFiles,
   claudeModelFromText,
@@ -186,6 +187,30 @@ describe('command and settings', () => {
     expect(agentModel({}, home)).toBe(null)
     put('.qwen/settings.json', '{ broken')
     expect(agentModel({ agentId: 'qwen' }, home)).toBe(null)
+  })
+})
+
+describe('Ollama', () => {
+  it('the model in its command, else the only one it has running', async () => {
+    expect(modelFromCommand('ollama run glm-5.2:cloud')).toBe('glm-5.2:cloud')
+    expect(modelFromCommand('"C:\\x\\ollama.exe" run --keepalive 5m --verbose qwen3:8b hi')).toBe('qwen3:8b')
+    expect(modelFromCommand('claude ollama launch claude --model glm-5.2:cloud')).toBe('glm-5.2:cloud')
+    expect(modelFromCommand('ollama serve')).toBe(null)
+    const one = async () => ({ ok: true, json: async () => ({ models: [{ name: 'llama4:scout' }] }) })
+    const two = async () => ({ ok: true, json: async () => ({ models: [{ name: 'a' }, { name: 'b' }] }) })
+    const down = async () => {
+      throw new Error('ECONNREFUSED')
+    }
+    expect(await agentModelLive({ agentId: 'ollama', command: 'ollama' }, home, one)).toEqual({
+      model: 'llama4:scout',
+      effort: null,
+      source: 'running'
+    })
+    expect(await agentModelLive({ agentId: 'ollama', command: 'ollama' }, home, two)).toBe(null)
+    expect(await agentModelLive({ agentId: 'ollama', command: 'ollama' }, home, down)).toBe(null)
+    expect((await agentModelLive({ agentId: 'ollama', command: 'ollama run phi5' }, home, one)).model).toBe('phi5')
+    // Other agents never ask Ollama.
+    expect(await agentModelLive({ agentId: 'copilot' }, home, one)).toBe(null)
   })
 })
 

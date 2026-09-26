@@ -153,6 +153,16 @@ describe('TaskCard.vue', () => {
     expect(wrapper.find('[data-test="title-input"]').exists()).toBe(false)
   })
 
+  it('renames only in To do: no pencil once the task has started', async () => {
+    for (const column of ['doing', 'review', 'done']) {
+      const { wrapper, task } = mountCard({ column })
+      expect(wrapper.find('[data-test="edit-title"]').exists()).toBe(false)
+      await wrapper.get('[data-test="card-title"]').trigger('dblclick')
+      expect(wrapper.find('[data-test="title-input"]').exists()).toBe(false)
+      expect(task.title).toBe('Card task')
+    }
+  })
+
   it('keeps the old title when an edit is blanked — no silent wipe', async () => {
     const { wrapper, task } = mountCard()
     await wrapper.get('[data-test="edit-title"]').trigger('click')

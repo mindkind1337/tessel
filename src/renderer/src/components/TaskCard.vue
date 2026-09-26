@@ -6,7 +6,7 @@
 // It only ever reads/writes its own `task`, so a change to one card never forces
 // its siblings to re-render.
 
-import { ref, computed, nextTick, inject } from 'vue'
+import { ref, computed, nextTick, inject, watch } from 'vue'
 import { updateTask, removeTask, assignAgent, moveTask } from '../taskBoardStore'
 import { COLUMNS } from '../../../shared/taskModel'
 import BrandIcon from './BrandIcon.vue'
@@ -40,8 +40,16 @@ function onDragStart(e) {
 const editing = ref(false)
 const draft = ref('')
 const titleInputEl = ref(null)
+// Only a task not started yet (To do) is renamed: once an agent works on it,
+// its title is what the agent was given.
+const canEdit = computed(() => props.task.column === 'todo')
+// It left To do while being renamed: the edit is dropped.
+watch(canEdit, (ok) => {
+  if (!ok) editing.value = false
+})
 
 function startEdit() {
+  if (!canEdit.value) return
   draft.value = props.task.title
   editing.value = true
   nextTick(() => titleInputEl.value && titleInputEl.value.select())
@@ -155,11 +163,12 @@ function paneLabel(pane) {
         v-else
         class="task-title"
         data-test="card-title"
-        title="Double-click to rename"
+        :title="canEdit ? 'Double-click to rename' : null"
         @dblclick="startEdit"
         >{{ task.title }}</span
       >
       <button
+        v-if="canEdit"
         class="task-btn task-edit-btn"
         title="Rename task"
         aria-label="Rename task"
