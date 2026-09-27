@@ -44,6 +44,7 @@ import {
   installCodexHooks,
   installGeminiHooks,
   installCopilotHooks,
+  installOpencodePlugin,
   installCodexServer,
   claudeServerPresent,
   claudeServerExists,
@@ -1016,6 +1017,18 @@ ipcMain.handle(
       }
     } catch (err) {
       errors.push(`Copilot CLI hooks: ${err.message}`)
+    }
+    // OpenCode plugin: its conversation, messages after a tool, and when idle
+    // (woken through its own API, never typed). Where it is installed.
+    try {
+      const opencode = (await getAgents()).find((a) => a.id === 'opencode')
+      if (opencode && opencode.available) {
+        const r = installOpencodePlugin(script)
+        if (r.error) errors.push(`OpenCode plugin: ${r.error}`)
+        else if (r.changed) changed.push('OpenCode: plugin (team messages, current conversation)')
+      }
+    } catch (err) {
+      errors.push(`OpenCode plugin: ${err.message}`)
     }
     // Gemini CLI, Qwen Code, Copilot CLI, OpenCode, Cline: in their settings file,
     // for those installed here (a file Tessel cannot read is left alone).

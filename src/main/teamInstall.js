@@ -103,6 +103,103 @@ export function installCopilotHooks(scriptPath, home = os.homedir()) {
   }
 }
 
+// OpenCode: a plugin (it has no command hooks), ~/.config/opencode/plugins/
+// tessel-team.js, loaded by every OpenCode; it does nothing outside a Tessel
+// pane (no TESSEL_PANE_ID). It runs the same hook script (node, --opencode):
+// the conversation (session events), messages added to a tool's result, and,
+// when the session is idle (just finished, or waiting), the messages sent to
+// it as a new message through its own API: an idle OpenCode is woken without
+// anything typed into its terminal.
+export const OPENCODE_PLUGIN_FILE = 'tessel-team.js'
+export const OPENCODE_MARKER = '// Tessel team tools: OpenCode plugin'
+export function opencodePlugin(scriptPath) {
+  return `${OPENCODE_MARKER}. Written by Tessel and replaced when it updates; delete it to remove.
+import { spawnSync } from 'node:child_process'
+
+const SCRIPT = ${JSON.stringify(scriptPath)}
+const IDLE_CHECK_MS = 15000
+
+export const TesselTeam = async ({ client, directory }) => {
+  if (!process.env.TESSEL_PANE_ID) return {}
+  const hook = (event, sessionId) => {
+    try {
+      const r = spawnSync('node', [SCRIPT, '--hook', '--opencode'], {
+        input: JSON.stringify({ hook_event_name: event, session_id: sessionId || '', cwd: directory, stop_hook_active: false }),
+        encoding: 'utf8',
+        windowsHide: true,
+        timeout: 20000
+      })
+      return r.stdout ? JSON.parse(r.stdout) : null
+    } catch {
+      return null
+    }
+  }
+  let current = null // the session this OpenCode works in
+  let idle = false
+  let sending = false
+  // Waiting messages, sent as a new message while the session is idle.
+  const deliver = async () => {
+    if (!current || !idle || sending) return
+    sending = true
+    try {
+      const out = hook('Stop', current)
+      if (out && out.decision === 'block' && out.reason) {
+        idle = false
+        await client.session.prompt({ path: { id: current }, body: { parts: [{ type: 'text', text: out.reason }] } })
+      }
+    } catch {
+      // the next check tries again (the messages stay unread when not claimed)
+    } finally {
+      sending = false
+    }
+  }
+  const timer = setInterval(deliver, IDLE_CHECK_MS)
+  if (timer.unref) timer.unref()
+  return {
+    event: async ({ event }) => {
+      const p = (event && event.properties) || {}
+      const id = p.sessionID || (p.info && p.info.id) || null
+      if (event.type === 'session.created' || event.type === 'session.updated') {
+        if (id && (!p.info || !p.info.parentID) && id !== current) {
+          current = id
+          hook('SessionStart', id)
+        }
+      } else if (event.type === 'session.status') {
+        if (id === current) idle = !!(p.status && p.status.type === 'idle')
+      } else if (event.type === 'session.idle') {
+        if (!id || (current && id !== current)) return
+        current = id
+        idle = true
+        await deliver()
+      }
+    },
+    'tool.execute.after': async (input, output) => {
+      if (!output || typeof output.output !== 'string') return
+      const out = hook('PostToolUse', (input && input.sessionID) || current)
+      const note = out && out.hookSpecificOutput && out.hookSpecificOutput.additionalContext
+      if (note) output.output += '\\n\\n' + note
+    }
+  }
+}
+`
+}
+export function installOpencodePlugin(scriptPath, home = os.homedir()) {
+  const file = join(home, '.config', 'opencode', 'plugins', OPENCODE_PLUGIN_FILE)
+  const text = opencodePlugin(scriptPath)
+  try {
+    if (fs.existsSync(file)) {
+      const old = fs.readFileSync(file, 'utf8')
+      if (old === text) return { changed: false }
+      if (!old.startsWith(OPENCODE_MARKER)) return { error: `${file} is not Tessel's, so it was left alone.` }
+    }
+    fs.mkdirSync(dirname(file), { recursive: true })
+    writeAtomic(file, text)
+    return { changed: true }
+  } catch (err) {
+    return { error: `${file}: ${err.message}` }
+  }
+}
+
 // Tessel's command in each event's hook list of a hooks file ({ hooks: {
 // Event: [{ matcher, hooks: [{ type, command }] }] } }), replacing an older
 // Tessel entry and keeping everything else. -> { changed } or { error }

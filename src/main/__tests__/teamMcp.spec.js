@@ -220,6 +220,29 @@ describe('Tessel team tools (background messages)', () => {
     fs.rmSync(sessions, { recursive: true, force: true })
   })
 
+  it("as OpenCode's plugin calls it: Claude's answers, its conversation reported as OpenCode's", async () => {
+    const sessions = fs.mkdtempSync(join(os.tmpdir(), 'tessel-sessions-'))
+    mcp.send(as(A), '#4', 'OpenCode, when idle')
+    pollTeamChannel({ dir, teamId })
+    const run = (input) =>
+      new Promise((resolve) => {
+        const child = spawn(process.execPath, [SERVER, '--hook', '--opencode'], {
+          env: { ...process.env, TESSEL_PANE_ID: B.id, TESSEL_PROJECT_DIR: dir, TESSEL_SESSIONS_DIR: sessions }
+        })
+        let out = ''
+        child.stdout.on('data', (c) => (out += c))
+        child.on('close', () => resolve(out))
+        child.stdin.end(JSON.stringify({ session_id: 'ses_open0001', cwd: dir, stop_hook_active: false, ...input }))
+      })
+    expect(await run({ hook_event_name: 'SessionStart' })).toBe('')
+    expect(JSON.parse(fs.readFileSync(join(sessions, `${B.id}.json`), 'utf8'))).toMatchObject({ agent: 'opencode', sessionId: 'ses_open0001' })
+    const stop = JSON.parse(await run({ hook_event_name: 'Stop' }))
+    expect(stop).toMatchObject({ decision: 'block' })
+    expect(stop.reason).toMatch(/OpenCode, when idle/)
+    expect(await run({ hook_event_name: 'Stop' })).toBe('') // nothing waits any more
+    fs.rmSync(sessions, { recursive: true, force: true })
+  })
+
   it('as a Copilot CLI hook: event from its command, camelCase ids, never reads at a prompt', async () => {
     const sessions = fs.mkdtempSync(join(os.tmpdir(), 'tessel-sessions-'))
     mcp.send(as(A), '#4', 'Copilot, after a tool')
@@ -405,6 +428,20 @@ describe('setting up the team tools', () => {
     expect(h.hooks.Stop).toEqual([{ type: 'command', bash: cmd, powershell: cmd, timeoutSec: 30 }])
     expect(fs.readFileSync(join(home, '.copilot', 'settings.json'), 'utf8')).toMatch(/theirs/)
     expect(installCopilotHooks(script, home)).toEqual({ changed: false })
+  })
+
+  it('writes the OpenCode plugin once, never over a file that is not Tessel’s', async () => {
+    const { installOpencodePlugin, opencodePlugin } = await import('../teamInstall')
+    const file = join(home, '.config', 'opencode', 'plugins', 'tessel-team.js')
+    expect(installOpencodePlugin(script, home)).toEqual({ changed: true })
+    const text = fs.readFileSync(file, 'utf8')
+    expect(text).toBe(opencodePlugin(script))
+    expect(text).toContain(JSON.stringify(script))
+    expect(text).toMatch(/if \(!process\.env\.TESSEL_PANE_ID\) return \{\}/) // nothing outside a Tessel pane
+    expect(installOpencodePlugin(script, home)).toEqual({ changed: false })
+    fs.writeFileSync(file, 'export const Mine = async () => ({})\n')
+    expect(installOpencodePlugin(script, home).error).toMatch(/not Tessel's/)
+    expect(fs.readFileSync(file, 'utf8')).toMatch(/Mine/)
   })
 
   it('never overwrites a settings file it cannot read', async () => {

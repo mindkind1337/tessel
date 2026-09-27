@@ -25,7 +25,7 @@ const fs = require('fs')
 const path = require('path')
 const { randomUUID } = require('crypto')
 
-const VERSION = '1.6.8'
+const VERSION = '1.6.9'
 const MAX_TEXT = 6000
 
 // --- Finding my team and me ---------------------------------------------------
@@ -553,7 +553,10 @@ function hookMain() {
     // Which conversation the agent is in: recorded first, team or not.
     const codex = process.argv.includes('--codex')
     const gemini = process.argv.includes('--gemini')
-    reportSession(data, codex ? 'codex' : gemini ? 'gemini' : copilot ? 'copilot' : 'claude')
+    // OpenCode's plugin (teamInstall.js) sends Claude Code's event names and
+    // reads Claude's answers: only its conversation is reported as OpenCode's.
+    const opencode = process.argv.includes('--opencode')
+    reportSession(data, codex ? 'codex' : gemini ? 'gemini' : copilot ? 'copilot' : opencode ? 'opencode' : 'claude')
     if (codex) {
       // Codex Stop decisions become continuation prompts. Other events keep
       // reporting the session only; an already continued turn never loops.
