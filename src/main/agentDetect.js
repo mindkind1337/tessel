@@ -3,16 +3,63 @@
 // list per call, read with CIM (Windows) or ps (elsewhere).
 import { execFile } from 'child_process'
 
-// The first rule that matches a process (its name or command line) names it.
+// Executable names and runtime entrypoints are separate: an agent name in a
+// prompt or another program's arguments is not an agent process.
 const RULES = [
-  { id: 'claude', re: /(^|[\\/])claude(\.exe)?$|@anthropic-ai[\\/]claude-code/i },
-  { id: 'codex', re: /(^|[\\/])codex(\.exe)?$|@openai[\\/]codex/i },
-  { id: 'gemini', re: /@google[\\/]gemini-cli|(^|[\\/])gemini(\.exe)?$/i },
-  { id: 'qwen', re: /@qwen-code[\\/]|(^|[\\/])qwen(\.exe)?$/i },
-  { id: 'opencode', re: /opencode-ai|(^|[\\/])opencode(\.exe)?$/i },
-  { id: 'copilot', re: /@github[\\/]copilot|(^|[\\/])copilot(\.exe)?$/i },
-  { id: 'cline', re: /@cline[\\/]cli-|(^|[\\/])cline(\.exe)?$/i },
-  { id: 'amp', re: /@sourcegraph[\\/]amp|(^|[\\/])amp(\.exe)?$/i },
+  {
+    id: 'claude',
+    re: /(^|[\\/])claude(\.exe)?$/i,
+    script: /(^|[\\/])@anthropic-ai[\\/]claude-code[\\/]/i
+  },
+  { id: 'codex', re: /(^|[\\/])codex(\.exe)?$/i, script: /(^|[\\/])@openai[\\/]codex[\\/]/i },
+  {
+    id: 'gemini',
+    re: /(^|[\\/])gemini(\.exe)?$/i,
+    script: /(^|[\\/])@google[\\/]gemini-cli[\\/]/i
+  },
+  { id: 'qwen', re: /(^|[\\/])qwen(\.exe)?$/i, script: /(^|[\\/])@qwen-code[\\/]qwen-code[\\/]/i },
+  { id: 'opencode', re: /(^|[\\/])opencode(\.exe)?$/i, script: /(^|[\\/])opencode-ai[\\/]/i },
+  { id: 'copilot', re: /(^|[\\/])copilot(\.exe)?$/i, script: /(^|[\\/])@github[\\/]copilot[\\/]/i },
+  {
+    id: 'cline',
+    re: /(^|[\\/])cline(\.exe)?$/i,
+    script: /(^|[\\/])cline[\\/]bin[\\/]cline$|(^|[\\/])@cline[\\/]cli-[^\\/]+[\\/]/i
+  },
+  {
+    id: 'amp',
+    re: /(^|[\\/])amp(\.exe)?$/i,
+    script:
+      /(^|[\\/])@sourcegraph[\\/]amp[\\/]|(^|[\\/])@ampcode[\\/]cli[\\/]bin[\\/]amp(?:\.exe)?$/i
+  },
+  // Both Cursor and Grok ship an `agent.exe` alias. Only their distinctive
+  // install paths identify that alias; Cursor.exe is the editor, not the CLI.
+  {
+    id: 'cursor',
+    re: /(^|[\\/])cursor-agent(\.exe)?$|[\\/]cursor-agent[\\/](?:versions[\\/][^\\/]+[\\/])?agent(\.exe)?$/i
+  },
+  { id: 'grok', re: /(^|[\\/])grok(\.exe)?$|[\\/]\.grok[\\/]bin[\\/]agent(\.exe)?$/i },
+  {
+    id: 'pi',
+    re: /(^|[\\/])pi(\.exe)?$/i,
+    script:
+      /(^|[\\/])@(?:mariozechner|earendil-works)[\\/]pi-coding-agent[\\/]dist[\\/](?:bundle[\\/])?cli\.js$/i
+  },
+  {
+    id: 'droid',
+    re: /(^|[\\/])droid(\.exe)?$/i,
+    script: /(^|[\\/])@factory[\\/]cli[\\/]bin[\\/]droid(?:\.exe)?$/i
+  },
+  {
+    id: 'crush',
+    re: /(^|[\\/])crush(\.exe)?$/i,
+    script: /(^|[\\/])@charmland[\\/]crush[\\/]run-crush\.js$/i
+  },
+  { id: 'goose', re: /(^|[\\/])goose(\.exe)?$/i },
+  {
+    id: 'auggie',
+    re: /(^|[\\/])auggie(\.exe)?$/i,
+    script: /(^|[\\/])@augmentcode[\\/]auggie[\\/]augment\.mjs$/i
+  },
   { id: 'kimi', re: /(^|[\\/])kimi(\.exe)?$/i },
   { id: 'aider', re: /(^|[\\/])aider(\.exe)?$/i }
 ]
@@ -20,18 +67,22 @@ const RULES = [
 export function agentOf(proc) {
   const name = String(proc.name || '')
   const cmd = String(proc.cmd || '')
-  // The program itself, then (for node / an npm shim) the script it runs:
-  // only the first two words, never the arguments ("git commit -m 'ask
-  // claude'" is not Claude).
-  const words = [name]
-  const re = /"([^"]*)"|(\S+)/g
+  // Read only the executable and its first argument. A runtime's first
+  // argument may be its script; flags, eval text and later arguments are not.
+  const words = []
+  const re = /"([^"]*)"|'([^']*)'|(\S+)/g
   let m
-  while (words.length < 3 && (m = re.exec(cmd))) words.push(m[1] !== undefined ? m[1] : m[2])
-  for (const r of RULES) if (words.some((w) => r.re.test(w))) return r.id
+  while (words.length < 2 && (m = re.exec(cmd))) words.push(m[1] ?? m[2] ?? m[3])
+  const executables = [name, words[0] || '']
+  const runtime = /(^|[\\/])(?:node|nodejs|bun)(\.exe)?$/i.test(name || words[0] || '')
+  const script = runtime && words[1] && !words[1].startsWith('-') ? words[1] : ''
+  for (const r of RULES) {
+    if (executables.some((w) => r.re.test(w)) || (script && r.script?.test(script))) return r.id
+  }
   // Ollama: its menu (no arguments), a chat (run) or an agent it starts
   // (launch); not the server or a list.
-  if (/(^|[\\/])ollama(\.exe)?$/i.test(name) || /(^|[\\/])ollama(\.exe)?$/i.test(words[1] || '')) {
-    const sub = /(^|[\\/])ollama(\.exe)?$/i.test(words[1] || '') ? words[2] : words[1]
+  if (executables.some((w) => /(^|[\\/])ollama(\.exe)?$/i.test(w))) {
+    const sub = words[1]
     if (!sub || sub === 'run' || sub === 'launch') return 'ollama'
   }
   return null
@@ -64,7 +115,8 @@ export function agentsUnderShells(procs, shells, commands = {}) {
             const inner = agentBelow(p.pid, children)
             if (inner) {
               out[paneId] = inner.id
-              commands[paneId] = String(inner.cmd || '').replace(/\t/g, ' ') + ' ' + commands[paneId]
+              commands[paneId] =
+                String(inner.cmd || '').replace(/\t/g, ' ') + ' ' + commands[paneId]
             }
           }
           break
@@ -99,19 +151,24 @@ function listProcesses() {
         }
       )
     } else {
-      execFile('ps', ['-eo', 'pid=,ppid=,comm=,args='], { timeout: 15000, maxBuffer: 16 * 1024 * 1024 }, (err, stdout) => {
-        if (err) return resolve(null)
-        resolve(
-          String(stdout)
-            .split('\n')
-            .filter(Boolean)
-            .map((line) => {
-              const m = /^\s*(\d+)\s+(\d+)\s+(\S+)\s*(.*)$/.exec(line)
-              return m ? { pid: Number(m[1]), ppid: Number(m[2]), name: m[3], cmd: m[4] } : null
-            })
-            .filter(Boolean)
-        )
-      })
+      execFile(
+        'ps',
+        ['-eo', 'pid=,ppid=,comm=,args='],
+        { timeout: 15000, maxBuffer: 16 * 1024 * 1024 },
+        (err, stdout) => {
+          if (err) return resolve(null)
+          resolve(
+            String(stdout)
+              .split('\n')
+              .filter(Boolean)
+              .map((line) => {
+                const m = /^\s*(\d+)\s+(\d+)\s+(\S+)\s*(.*)$/.exec(line)
+                return m ? { pid: Number(m[1]), ppid: Number(m[2]), name: m[3], cmd: m[4] } : null
+              })
+              .filter(Boolean)
+          )
+        }
+      )
     }
   })
 }
