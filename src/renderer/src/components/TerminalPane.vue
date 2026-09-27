@@ -29,6 +29,7 @@ import { detectLimit, detectApproval, detectTaskDone } from '../agentLimit'
 import { modelLabel } from '../../../shared/modelLabel'
 import { modelFromScreen } from '../../../shared/screenModel'
 import { findFileRefs } from '../../../shared/fileLinks'
+import { osc52Text } from '../../../shared/osc52'
 
 const props = defineProps({
   node: { type: Object, required: true }
@@ -898,6 +899,15 @@ onMounted(() => {
   term.loadAddon(fit)
   // A link written as plain text: the same.
   term.loadAddon(new WebLinksAddon((_e, uri) => openLink(uri)))
+  // OSC 52: a program copies text to the clipboard (writing only, never read).
+  term.parser.registerOscHandler(52, (data) => {
+    const text = osc52Text(data)
+    if (text && window.shellApi.writeClipboard) {
+      window.shellApi.writeClipboard(text)
+      if (ctx.toast) ctx.toast(`Copied ${text.length > 60 ? `${text.length} characters` : `"${text.replace(/\s+/g, ' ').trim()}"`}`, { timeout: 2500 })
+    }
+    return true
+  })
   // [Image #N] in Claude Code: click to open the image.
   term.registerLinkProvider({
     provideLinks(y, callback) {
