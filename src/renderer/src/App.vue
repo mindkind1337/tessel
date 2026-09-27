@@ -27,6 +27,7 @@ import { detectApproval } from './agentLimit'
 import { activity, recordActivity, loadActivity, saveActivityNow, activityChanged } from './activityStore'
 import ActivityPanel from './components/ActivityPanel.vue'
 import ConfirmDialog from './components/ConfirmDialog.vue'
+import ImageViewer from './components/ImageViewer.vue'
 import NotesPanel from './components/NotesPanel.vue'
 import NewTaskDialog from './components/NewTaskDialog.vue'
 import ReviewPanel from './components/ReviewPanel.vue'
@@ -139,6 +140,8 @@ const sidebarEl = ref(null)
 
 // Confirmations in Tessel's own look (window.confirm ignores the theme).
 // askConfirm({ title, text, confirmLabel, danger }) resolves to true / false.
+// An image shown over Tessel ([Image #N] in a Claude Code pane): { src, title, file }
+const imageView = ref(null)
 const confirmState = ref(null)
 function askConfirm(opts) {
   return new Promise((resolve) => {
@@ -1159,7 +1162,8 @@ provide('panelCtx', {
   resolveUnsent,
   agentReportedDone,
   copied: (what) => showToast(`${what} copied.`, { timeout: 2000 }),
-  toast: (text, opts) => showToast(text, opts)
+  toast: (text, opts) => showToast(text, opts),
+  showImage: (img) => (imageView.value = img)
 })
 
 function splitActive(dir) {
@@ -4900,7 +4904,7 @@ function focusActivePane() {
   })
 }
 watch(
-  () => [paletteOpen.value, !!confirmState.value, !!notesView.value, !!reviewTask.value],
+  () => [paletteOpen.value, !!confirmState.value, !!notesView.value, !!reviewTask.value, !!imageView.value],
   (now, before) => {
     if (before && now.some((v, i) => before[i] && !v)) focusActivePane()
   }
@@ -4919,6 +4923,7 @@ function dialogOpen() {
     newTaskOpen.value ||
     paletteOpen.value ||
     !!confirmState.value ||
+    !!imageView.value ||
     launcher.open
   )
 }
@@ -5699,6 +5704,14 @@ onBeforeUnmount(() => {
     />
 
     <CommandPalette v-if="paletteOpen" :commands="paletteCommands" @close="paletteOpen = false" />
+
+    <ImageViewer
+      v-if="imageView"
+      :src="imageView.src"
+      :title="imageView.title"
+      :file="imageView.file"
+      @close="imageView = null"
+    />
 
     <ConfirmDialog
       v-if="confirmState"

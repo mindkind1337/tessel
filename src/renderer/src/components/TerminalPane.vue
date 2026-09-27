@@ -586,11 +586,15 @@ function rememberPastedImage(file, before) {
   setTimeout(look, 150)
 }
 async function openImage(n) {
-  const res = window.shellApi.openPastedImage
+  const res = window.shellApi.getPastedImage
     ? await window.shellApi
-        .openPastedImage({ file: pastedImages[n] || null, sessionId: props.node.sessionId || null, n })
+        .getPastedImage({ file: pastedImages[n] || null, sessionId: props.node.sessionId || null, n })
         .catch(() => null)
     : null
+  if (res && res.ok && ctx.showImage) {
+    ctx.showImage({ src: res.src, file: res.file, title: `Image #${n}` })
+    return
+  }
   if ((!res || !res.ok) && ctx.toast) {
     ctx.toast(`Image #${n} was not found (only images pasted in this pane or sent in its conversation can be opened).`, { timeout: 5000 })
   }

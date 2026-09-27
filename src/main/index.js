@@ -1114,17 +1114,26 @@ ipcMain.handle('clipboard:saveImage', () => {
   return file
 })
 // [Image #N] clicked in a Claude Code pane: the image Tessel pasted, or the
-// one in the pane's conversation, in the system viewer.
-ipcMain.handle('images:open', async (_evt, q = {}) => {
+// one in the pane's conversation, for Tessel's own viewer. -> { ok, file, src }
+const IMAGE_MIME = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp' }
+ipcMain.handle('images:get', async (_evt, q = {}) => {
   try {
     let file = q && isPastedImage(q.file) && fs.existsSync(q.file) ? q.file : null
     if (!file && q && typeof q.sessionId === 'string') file = await claudeImageFile({ sessionId: q.sessionId, n: Number(q.n) })
     if (!file) return { ok: false }
-    const err = await shell.openPath(file)
-    return err ? { ok: false, error: err } : { ok: true }
+    const data = fs.readFileSync(file)
+    if (data.length > 40 * 1024 * 1024) return { ok: false, error: 'The image is too large to show.' }
+    const mime = IMAGE_MIME[file.split('.').pop().toLowerCase()] || 'image/png'
+    return { ok: true, file, src: `data:${mime};base64,${data.toString('base64')}` }
   } catch (err) {
     return { ok: false, error: err.message }
   }
+})
+// "Open in viewer" from Tessel's image popup: the system's image app.
+ipcMain.handle('images:openExternal', async (_evt, file) => {
+  if (!isPastedImage(file) || !fs.existsSync(file)) return { ok: false }
+  const err = await shell.openPath(file)
+  return err ? { ok: false, error: err } : { ok: true }
 })
 ipcMain.on('clipboard:write', (_evt, text) => {
   if (typeof text === 'string' && text.length) clipboard.writeText(text)
