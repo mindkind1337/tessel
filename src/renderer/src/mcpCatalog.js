@@ -171,6 +171,25 @@ export const MCP_CATALOG = [
     inputs: [{ key: 'FIRECRAWL_API_KEY', label: 'Firecrawl API key', kind: 'secret', as: 'env' }]
   },
   {
+    id: 'elevenlabs',
+    name: 'ElevenLabs',
+    category: 'Services',
+    accent: '#8b5cf6',
+    desc: 'Text to speech, voice cloning, transcription and sound effects. Uses your ElevenLabs credits.',
+    transport: 'stdio',
+    command: 'uvx elevenlabs-mcp',
+    requires: 'uvx',
+    inputs: [
+      {
+        key: 'ELEVENLABS_API_KEY',
+        label: 'ElevenLabs API key',
+        kind: 'secret',
+        as: 'env',
+        help: 'Create one at elevenlabs.io/app/settings/api-keys. Audio files are saved to your Desktop.'
+      }
+    ]
+  },
+  {
     id: 'supabase',
     name: 'Supabase',
     category: 'Data',
