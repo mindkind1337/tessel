@@ -284,6 +284,20 @@ describe('when a task started and finished', () => {
     const wrapper = mount(TaskCard, { props: { task, agentPanes: [] } })
     expect(wrapper.get('[data-test="task-timing"]').text()).toMatch(/^Started .+ · done .+ · 23 min$/)
   })
+
+  it('shows when a To do card was added (new cards record it; older ones: when they came to To do)', () => {
+    const t = addTask({ title: 'Fresh card' })
+    expect(typeof t.createdAt).toBe('number')
+    const at = new Date(2026, 8, 20, 9, 5).getTime()
+    const wrapper = mount(TaskCard, { props: { task: { id: 'task-t-2', title: 'Todo', column: 'todo', paneId: null, createdAt: at }, agentPanes: [] } })
+    expect(wrapper.get('[data-test="task-timing"]').text()).toMatch(/^Added .+/)
+    expect(wrapper.get('[data-test="task-timing"]').attributes('title')).toMatch(/^Added /)
+    const old = mount(TaskCard, { props: { task: { id: 'task-t-3', title: 'Old', column: 'todo', paneId: null, columnSince: at }, agentPanes: [] } })
+    expect(old.get('[data-test="task-timing"]').text()).toMatch(/^Added /)
+    const none = mount(TaskCard, { props: { task: { id: 'task-t-4', title: 'Unknown', column: 'todo', paneId: null }, agentPanes: [] } })
+    expect(none.find('[data-test="task-timing"]').exists()).toBe(false)
+    tasks.splice(tasks.indexOf(t), 1)
+  })
 })
 
 describe('the order of the cards in a column', () => {

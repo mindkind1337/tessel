@@ -21,6 +21,8 @@ export function createTask({ title, wsId } = {}) {
     title: name,
     column: COLUMNS[0],
     paneId: null,
-    wsId: typeof wsId === 'string' && wsId ? wsId : null
+    wsId: typeof wsId === 'string' && wsId ? wsId : null,
+    // When it was added (shown on the card while it waits in To do).
+    createdAt: Date.now()
   }
 }

@@ -10,7 +10,7 @@ import { ref, computed, nextTick, inject, watch } from 'vue'
 import { updateTask, removeTask, assignAgent, moveTask } from '../taskBoardStore'
 import { COLUMNS } from '../../../shared/taskModel'
 import BrandIcon from './BrandIcon.vue'
-import { formatDuration } from '../../../shared/activity'
+import { formatDuration, formatWhen } from '../../../shared/activity'
 
 const props = defineProps({
   task: { type: Object, required: true },
@@ -121,15 +121,13 @@ const canShowAgent = computed(
 )
 
 // When the work started and was finished: "Started 10:42 · done 11:05 ·
-// 23 min" (a date instead of today's time for other days).
-function when(t) {
-  const d = new Date(t)
-  const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-  if (d.toDateString() === new Date().toDateString()) return time
-  return `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })} ${time}`
-}
+// 23 min" (a date instead of today's time for other days). In To do: when it
+// was added (a card from before that was recorded: when it came to To do).
+const when = (t) => formatWhen(t)
+const addedAt = computed(() => props.task.createdAt || (props.task.column === 'todo' ? props.task.columnSince : null) || null)
 const timing = computed(() => {
   const t = props.task
+  if (t.column === 'todo') return addedAt.value ? `Added ${when(addedAt.value)}` : ''
   const start = t.startedAt || t.doingSince
   if (t.column === 'done' && t.doneAt) {
     return start ? `Started ${when(start)} · done ${when(t.doneAt)} · ${formatDuration(t.doneAt - start)}` : `Done ${when(t.doneAt)}`
@@ -140,6 +138,7 @@ const timingTitle = computed(() => {
   const t = props.task
   const start = t.startedAt || t.doingSince
   const parts = []
+  if (addedAt.value) parts.push(`Added ${new Date(addedAt.value).toLocaleString()}`)
   if (start) parts.push(`Started ${new Date(start).toLocaleString()}`)
   if (t.column === 'done' && t.doneAt) parts.push(`Finished ${new Date(t.doneAt).toLocaleString()}`)
   return parts.join('\n')
