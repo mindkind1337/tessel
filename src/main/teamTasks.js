@@ -120,7 +120,10 @@ export function takeTeamRequests({ dir, teamId, board } = {}) {
     let data = null
     try {
       data = JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, ''))
-    } catch {
+    } catch (err) {
+      // A locked or temporarily unavailable file must never be consumed as
+      // a bad request. Only a successful read can establish invalid JSON.
+      if (!(err instanceof SyntaxError)) continue
       // Being written: next round. Still unreadable after 5 s: damaged, so
       // refused and removed (it would block the requests behind it).
       if (Date.now() - f.at < UNREADABLE_AFTER_MS) continue

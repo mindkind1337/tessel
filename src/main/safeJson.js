@@ -12,8 +12,17 @@ const anyShape = () => true
 
 // The parsed content of `file` when it is good, else undefined.
 function readGood(file, valid) {
+  let text
   try {
-    const data = JSON.parse(fs.readFileSync(file, 'utf8'))
+    text = fs.readFileSync(file, 'utf8')
+  } catch (err) {
+    if (err.code === 'ENOENT') return undefined
+    // A failed read says nothing about the contents. Falling back to an
+    // older backup here could discard a successfully committed update.
+    throw err
+  }
+  try {
+    const data = JSON.parse(text)
     return valid(data) ? data : undefined
   } catch {
     return undefined

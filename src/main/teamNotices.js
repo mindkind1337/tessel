@@ -170,6 +170,19 @@ export function retireOldTeams({ dir, liveTeamIds, owner } = {}) {
 }
 
 // Notices from Tessel to agents of a team: [{ toId, text }].
+function readNotices(file) {
+  let text
+  try {
+    text = fs.readFileSync(file, 'utf8')
+  } catch (err) {
+    if (err.code === 'ENOENT') return { notices: [] }
+    throw err
+  }
+  const data = JSON.parse(text)
+  if (!data || !Array.isArray(data.notices)) throw new Error('Invalid team notices file.')
+  return data
+}
+
 export function addNotices({ dir, teamId, notices } = {}) {
   const b = base(dir)
   if (!b || typeof teamId !== 'string' || !ID_RE.test(teamId) || !Array.isArray(notices))
@@ -177,8 +190,7 @@ export function addNotices({ dir, teamId, notices } = {}) {
   const root = join(b, teamId)
   fs.mkdirSync(root, { recursive: true })
   const file = join(root, 'notices.json')
-  const data = readJson(file) || { notices: [] }
-  const list = Array.isArray(data.notices) ? data.notices : []
+  const list = readNotices(file).notices
   for (const n of notices) {
     if (!n || !ID_RE.test(String(n.toId)) || typeof n.text !== 'string' || !n.text.trim()) continue
     list.push({
@@ -197,9 +209,13 @@ export function removeNotice({ dir, teamId, id } = {}) {
   const b = base(dir)
   if (!b || !ID_RE.test(String(teamId))) return false
   const file = join(b, teamId, 'notices.json')
-  const data = readJson(file)
-  if (!data || !Array.isArray(data.notices)) return true
-  const next = data.notices.filter((n) => n.id !== id)
-  if (next.length !== data.notices.length) writeAtomic(file, { notices: next })
-  return true
+  try {
+    const data = readNotices(file)
+    const next = data.notices.filter((n) => n.id !== id)
+    if (next.length !== data.notices.length) writeAtomic(file, { notices: next })
+    return true
+  } catch {
+    // Keep the acknowledgement queued until removal really succeeds.
+    return false
+  }
 }

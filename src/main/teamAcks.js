@@ -51,7 +51,7 @@ export function takeTeamAcks({ dir, teamId } = {}) {
         : { ok: false }
     // Done, or not a delivery any more (unknown / already confirmed; a notice
     // already removed): deleted a minute from now.
-    if (res.ok || notice || /Unknown delivery/.test(res.error || '') || !data) {
+    if (res.ok || /Unknown delivery/.test(res.error || '') || !data) {
       processedAt.set(file, Date.now())
       if (res.ok) count++
     }

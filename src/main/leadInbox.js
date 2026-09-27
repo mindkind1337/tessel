@@ -63,8 +63,10 @@ export function takeInbox({ dir, token } = {}) {
           item = { file: n.name, error: `not valid JSON (${err.message})` }
         }
       }
-    } catch (err) {
-      item = { file: n.name, error: err.message }
+    } catch {
+      // Retry failed filesystem reads without removing the request. JSON
+      // errors are handled above, after the entire file was actually read.
+      continue
     }
     try {
       fs.rmSync(n.file, { force: true })

@@ -203,6 +203,9 @@ function ingest(root, state) {
         if (stat.size > MAX_FILE) error = 'the file is too large'
         else data = JSON.parse(fs.readFileSync(file.path, 'utf8').replace(/^\uFEFF/, ''))
       } catch (err) {
+        // Failure to open/read a file is not evidence of malformed JSON.
+        // Keep it queued, even when it is old, until storage is accessible.
+        if (!(err instanceof SyntaxError)) continue
         let age = Infinity
         try {
           age = Date.now() - fs.statSync(file.path).mtimeMs
