@@ -371,7 +371,11 @@ async function agentStartLine(agent, sessionId, resume) {
   if (kind === 'codex') {
     // Without Codex's shared daemon: with it, the team tools lose the pane's
     // identity and are closed after start (see codexSupportsNoDaemon).
-    const own = window.shellApi.codexNoDaemon && (await window.shellApi.codexNoDaemon().catch(() => false)) ? ' --no-daemon' : ''
+    const own =
+      (window.shellApi.codexNoDaemon && (await window.shellApi.codexNoDaemon().catch(() => false)) ? ' --no-daemon' : '') +
+      // No update check at start: its menu takes keystrokes (a reminder's
+      // Enter chose "Update now" and Codex quit). Updates: Install, or npm.
+      ' -c check_for_update_on_startup=false'
     if (sessionId && resume) return { line: `${agent.command} resume ${sessionId}${own}`, sessionId, resumed: true }
     return { line: `${agent.command}${own}`, sessionId: null, resumed: false }
   }
@@ -4041,6 +4045,7 @@ function wakeIfNeeded(leaf) {
   if (!wakeAllowed(leaf.id)) return
   // Just restarted: it is still loading (a line typed now can stay unsent).
   if (leaf.restartedAt && Date.now() - leaf.restartedAt < WAKE_AFTER_RESTART_MS) return
+  if (restartingLeaves.has(leaf.id)) return // being restarted right now
   w.woken = true
   w.wokenAt = Date.now()
   // A reminder typed before is still in its input line, not sent: send that
@@ -4100,6 +4105,9 @@ async function restartForTeamTools() {
       const draftMaybe = !!userDraft[leaf.id] || (!!draftUnknown[leaf.id] && !inputShownEmpty(leaf.id))
       const inUse = (leaf.id === activeId.value && document.hasFocus()) || userIsTyping(leaf.id) || draftMaybe
       if (!quiet || inUse || approvals[leaf.id] || pendingMessages[leaf.id] || unsent[leaf.id] || delivering.has(leaf.id)) continue
+      // A reminder was typed there a moment ago: its Enter could reach the
+      // new agent (Codex took one as "Update now").
+      if (wakeState[leaf.id] && now - (wakeState[leaf.id].wokenAt || 0) < 60000) continue
       restarting = true
       restartedForTools.add(leaf.id)
       const title = paneLabel(leaf)
