@@ -42,11 +42,15 @@ function installation(home, id, scriptPath, events) {
     const hooks = config.hooks || {}
     for (const event of events) {
       if (hooks[event] === undefined) continue
-      if (!Array.isArray(hooks[event])) throw new Error()
+      // Another tool's entries in a shape the agent itself ignores (a flat
+      // { type, command } with no hooks list, as BridgeSpace writes in Gemini's
+      // file) are not Tessel's and never run: skipped, not an error. The real
+      // indices are kept, since Codex's saved approval is keyed by them.
+      if (!Array.isArray(hooks[event])) continue
       hooks[event].forEach((group, groupIndex) => {
-        if (!record(group) || !Array.isArray(group.hooks)) throw new Error()
+        if (!record(group) || !Array.isArray(group.hooks)) return
         group.hooks.forEach((handler, handlerIndex) => {
-          if (!record(handler)) throw new Error()
+          if (!record(handler)) return
           const command =
             id === 'codex' && process.platform === 'win32' && handler.commandWindows !== undefined
               ? handler.commandWindows

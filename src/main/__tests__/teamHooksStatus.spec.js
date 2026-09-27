@@ -134,18 +134,30 @@ describe('read-only hook connection diagnostics', () => {
     expect(agent().events.Stop).toBe(process.platform !== 'win32')
   })
 
-  it.each([
-    null,
-    [],
-    { hooks: [] },
-    { hooks: { Stop: {} } },
-    { hooks: { Stop: [null] } },
-    { hooks: { Stop: [{ hooks: [null] }] } }
-  ])('reports invalid hook structure without affecting the other agent: %j', (value) => {
+  it.each([null, [], { hooks: [] }])('reports an unreadable hooks file without affecting the other agent: %j', (value) => {
     install()
     json(hooksFile(), value)
     expect(agent()).toMatchObject({ hooks: 'error', approval: null })
     expect(agent('claude').hooks).toBe('installed')
+  })
+
+  it.each([{ hooks: { Stop: {} } }, { hooks: { Stop: [null] } }, { hooks: { Stop: [{ hooks: [null] }] } }])(
+    'skips entries in a shape the agent ignores (not Tessel’s): %j',
+    (value) => {
+      json(hooksFile(), value)
+      expect(agent()).toMatchObject({ hooks: 'missing' })
+      expect(agent().error).toBeUndefined()
+    }
+  )
+
+  it("another tool's flat entries next to Tessel's (BridgeSpace in Gemini's file): installed, no error", () => {
+    install()
+    const s = JSON.parse(fs.readFileSync(geminiFile(), 'utf8'))
+    s.hooks.AfterAgent.unshift({ type: 'command', command: 'node bs-agent-notify.cjs', timeout: 5000 })
+    s.hooks.Notification = [{ type: 'command', command: 'node bs-agent-notify.cjs' }]
+    json(geminiFile(), s)
+    expect(agent('gemini')).toMatchObject({ hooks: 'installed' })
+    expect(agent('gemini').error).toBeUndefined()
   })
 
   it('does not expose JSON contents in parse errors', () => {
