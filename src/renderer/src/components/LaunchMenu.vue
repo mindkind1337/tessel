@@ -10,7 +10,7 @@ const props = defineProps({
   shells: { type: Array, default: () => [] },
   agents: { type: Array, default: () => [] },
   defaultShell: { type: String, default: null },
-  placement: { type: String, default: 'right' }, // 'right' | 'down' | 'workspace'
+  placement: { type: String, default: 'right' }, // 'left' | 'right' | 'down'
   // Title of the pane the new one will open next to (null = empty workspace).
   targetTitle: { type: String, default: null },
   // { available: bool, reason: string|null, checking: bool }
@@ -36,16 +36,18 @@ const missingAgents = computed(() => props.agents.filter((a) => !a.available && 
 const rootEl = ref(null)
 const pos = ref({ left: props.x, top: props.y })
 
+// Where the new pane goes, next to the pane in use. (A new workspace has its
+// own button in the sidebar.) The icon shades the side it opens on.
 const PLACEMENTS = [
-  { id: 'right', label: 'Right', title: 'Split to the right' },
-  { id: 'down', label: 'Below', title: 'Split below' },
-  { id: 'workspace', label: 'New workspace', title: 'Open in a new workspace' }
+  { id: 'left', label: 'Left', title: 'Split to the left', shade: { x: 2.1, y: 3.1, w: 5.9, h: 9.8 }, line: 'M8 2.5v11' },
+  { id: 'right', label: 'Right', title: 'Split to the right', shade: { x: 8, y: 3.1, w: 5.9, h: 9.8 }, line: 'M8 2.5v11' },
+  { id: 'down', label: 'Below', title: 'Split below', shade: { x: 2.1, y: 8, w: 11.8, h: 4.9 }, line: 'M1.5 8h13' }
 ]
+const SIDE = { left: 'to the left of', right: 'to the right of', down: 'below' }
 
 const whereText = computed(() => {
-  if (props.placement === 'workspace') return 'Opens in a new workspace'
   if (!props.targetTitle) return 'Opens in this workspace'
-  return `Opens ${props.placement === 'down' ? 'below' : 'to the right of'} ${props.targetTitle}`
+  return `Opens ${SIDE[props.placement] || SIDE.right} ${props.targetTitle}`
 })
 
 function launch(kind, item) {
@@ -106,60 +108,10 @@ onMounted(async () => {
           :title="p.title"
           @click="emit('placement', p.id)"
         >
-          <svg
-            v-if="p.id === 'right'"
-            width="14"
-            height="14"
-            viewBox="0 0 16 16"
-            fill="none"
-            aria-hidden="true"
-          >
-            <rect
-              x="1.5"
-              y="2.5"
-              width="13"
-              height="11"
-              rx="2"
-              stroke="currentColor"
-              stroke-width="1.3"
-            />
-            <path d="M8 2.5v11" stroke="currentColor" stroke-width="1.3" />
-          </svg>
-          <svg
-            v-else-if="p.id === 'down'"
-            width="14"
-            height="14"
-            viewBox="0 0 16 16"
-            fill="none"
-            aria-hidden="true"
-          >
-            <rect
-              x="1.5"
-              y="2.5"
-              width="13"
-              height="11"
-              rx="2"
-              stroke="currentColor"
-              stroke-width="1.3"
-            />
-            <path d="M1.5 8h13" stroke="currentColor" stroke-width="1.3" />
-          </svg>
-          <svg v-else width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <rect
-              x="1.5"
-              y="3.5"
-              width="10"
-              height="10"
-              rx="2"
-              stroke="currentColor"
-              stroke-width="1.3"
-            />
-            <path
-              d="M5 1.5h7.5a2 2 0 012 2V11"
-              stroke="currentColor"
-              stroke-width="1.3"
-              stroke-linecap="round"
-            />
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <rect :x="p.shade.x" :y="p.shade.y" :width="p.shade.w" :height="p.shade.h" rx="1" fill="currentColor" opacity="0.35" />
+            <rect x="1.5" y="2.5" width="13" height="11" rx="2" stroke="currentColor" stroke-width="1.3" />
+            <path :d="p.line" stroke="currentColor" stroke-width="1.3" />
           </svg>
           <span>{{ p.label }}</span>
         </button>

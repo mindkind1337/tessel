@@ -101,7 +101,7 @@ const sessionsOpen = ref(false)
 const useWorktree = ref(false)
 const worktreeState = reactive({ available: false, reason: null, checking: false })
 
-// Where the launcher opens new panes: 'right' | 'down' | 'workspace'. Saved.
+// Where the launcher opens new panes: 'left' | 'right' | 'down'. Saved.
 const placement = ref('right')
 const launcher = reactive({ open: false, x: 0, y: 0, targetId: null })
 const helpOpen = ref(false)
@@ -756,7 +756,7 @@ async function splitLeaf(
   // to what is there (or is the whole workspace), never lost.
   if (!findLeafIn(ws.tree, leafId)) {
     ws.tree = ws.tree
-      ? reactive({ type: 'split', id: newId('split'), dir, sizes: [50, 50], children: [ws.tree, leaf] })
+      ? reactive({ type: 'split', id: newId('split'), dir, sizes: [50, 50], children: opts.before ? [leaf, ws.tree] : [ws.tree, leaf] })
       : leaf
     ws.activeId = leaf.id
     return leaf
@@ -767,7 +767,8 @@ async function splitLeaf(
       id: newId('split'),
       dir,
       sizes: [50, 50],
-      children: [orig, leaf]
+      // opts.before: the new pane goes first (to the left / above).
+      children: opts.before ? [leaf, orig] : [orig, leaf]
     })
   )
   ws.activeId = leaf.id
@@ -1351,7 +1352,7 @@ async function launch({ kind, id }, targetId = activeId.value, where = placement
 
   const ws = (targetId && wsOfLeaf(targetId)) || currentWs.value
   if (targetId && ws && ws.tree) {
-    await splitLeaf(targetId, where === 'down' ? 'col' : 'row', agent, shellId, worktree)
+    await splitLeaf(targetId, where === 'down' ? 'col' : 'row', agent, shellId, worktree, { before: where === 'left' })
     return
   }
   if (!ws) return
@@ -1487,7 +1488,7 @@ async function resumeSession(s) {
       agent,
       selectedShell.value,
       null,
-      opts
+      { ...opts, before: placement.value === 'left' }
     )
   } else {
     const leaf = await createLeaf(selectedShell.value, agent, opts.cwd, null, opts)
@@ -5066,7 +5067,8 @@ async function restoreOrSeedLayout() {
     loadSettings(
       saved.settings || (Number.isFinite(saved.fontSize) ? { fontSize: saved.fontSize } : null)
     )
-    if (['right', 'down', 'workspace'].includes(saved.placement)) placement.value = saved.placement
+    // (A saved "new workspace" from before is now Right: it has its own button.)
+    if (['left', 'right', 'down'].includes(saved.placement)) placement.value = saved.placement
     if (Array.isArray(saved.teams)) teams.value = saved.teams.filter(isTeam)
     // v2 stores a list of workspaces; v1 stored a single tree.
     const snaps = !settings.restoreWorkspaces
