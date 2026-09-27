@@ -107,17 +107,14 @@ export function installCopilotHooks(scriptPath, home = os.homedir()) {
 // tessel-team.js, loaded by every OpenCode; it does nothing outside a Tessel
 // pane (no TESSEL_PANE_ID). It runs the same hook script (node, --opencode):
 // the conversation (session events), messages added to a tool's result, and,
-// when the session is idle (just finished, or waiting), the messages sent to
-// it as a new message through its own API: an idle OpenCode is woken without
-// anything typed into its terminal.
+// when the session is idle (just finished, or waiting), a reminder sent to it
+// as a new message through its own API: an idle OpenCode is woken without
+// anything typed into its terminal, and reads its messages with team_inbox.
 export const OPENCODE_PLUGIN_FILE = 'tessel-team.js'
 export const OPENCODE_MARKER = '// Tessel team tools: OpenCode plugin'
 export function opencodePlugin(scriptPath) {
   return `${OPENCODE_MARKER}. Written by Tessel and replaced when it updates; delete it to remove.
 import { spawnSync } from 'node:child_process'
-import { readFileSync, writeFileSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 
 const SCRIPT = ${JSON.stringify(scriptPath)}
 const IDLE_CHECK_MS = 15000
@@ -140,42 +137,32 @@ export const TesselTeam = async ({ client, directory }) => {
   let current = null // the session this OpenCode works in
   let idle = false
   let sending = false
-  // Messages already claimed (read) but not yet handed to OpenCode: kept
-  // until a send succeeds, also on disk (per pane), so neither a failed send
-  // nor OpenCode restarting meanwhile loses them.
-  const keep = join(tmpdir(), 'tessel-opencode-' + process.env.TESSEL_PANE_ID.replace(/[^A-Za-z0-9._-]/g, '_') + '.txt')
-  let pending = null
-  try {
-    pending = readFileSync(keep, 'utf8') || null
-  } catch {}
-  const hold = (text) => {
-    pending = text
-    try {
-      if (text) writeFileSync(keep, text)
-      else rmSync(keep, { force: true })
-    } catch {}
-  }
-  // Waiting messages, sent as a new message while the session is idle.
+  let reminded = { count: 0, at: 0 }
+  // While the session is idle, messages waiting: a reminder is sent to it as a
+  // new message, and the agent reads them with team_inbox. Nothing is read
+  // here, so a failed send or OpenCode restarting never loses one. Again only
+  // for more messages, or 5 minutes later.
   const deliver = async () => {
     if (!current || !idle || sending) return
     sending = true
     try {
-      if (!pending) {
-        const out = hook('Stop', current)
-        if (out && out.decision === 'block' && out.reason) hold(out.reason)
+      const out = hook('Peek', current)
+      const n = (out && out.unread) || 0
+      if (!n) {
+        reminded = { count: 0, at: 0 }
+        return
       }
-      if (pending) {
-        idle = false
-        // promptAsync answers once OpenCode has taken the message (a failure
-        // then means it was not taken: safe to send again); prompt, in older
-        // versions, waits for the whole reply.
-        const req = { path: { id: current }, body: { parts: [{ type: 'text', text: pending }] } }
-        const r = client.session.promptAsync ? await client.session.promptAsync(req) : await client.session.prompt(req)
-        if (r && r.error) throw new Error('not taken')
-        hold(null)
-      }
+      if (n <= reminded.count && Date.now() - reminded.at < 5 * 60 * 1000) return
+      const text = '[Tessel] You have ' + n + ' new team message' + (n > 1 ? 's' : '') + ': read ' + (n > 1 ? 'them' : 'it') + ' with team_inbox.'
+      const req = { path: { id: current }, body: { parts: [{ type: 'text', text }] } }
+      // promptAsync answers once OpenCode has taken it; prompt (older
+      // versions) waits for the whole reply.
+      const r = client.session.promptAsync ? await client.session.promptAsync(req) : await client.session.prompt(req)
+      if (r && r.error) return
+      reminded = { count: n, at: Date.now() }
+      idle = false
     } catch {
-      idle = true // not sent: the next check sends the same messages again
+      // tried again at the next check
     } finally {
       sending = false
     }

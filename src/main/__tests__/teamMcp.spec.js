@@ -236,6 +236,9 @@ describe('Tessel team tools (background messages)', () => {
       })
     expect(await run({ hook_event_name: 'SessionStart' })).toBe('')
     expect(JSON.parse(fs.readFileSync(join(sessions, `${B.id}.json`), 'utf8'))).toMatchObject({ agent: 'opencode', sessionId: 'ses_open0001' })
+    // Peek (the plugin, when idle): counts, reads nothing.
+    expect(JSON.parse(await run({ hook_event_name: 'Peek' }))).toEqual({ unread: 1 })
+    expect(JSON.parse(await run({ hook_event_name: 'Peek' }))).toEqual({ unread: 1 })
     const stop = JSON.parse(await run({ hook_event_name: 'Stop' }))
     expect(stop).toMatchObject({ decision: 'block' })
     expect(stop.reason).toMatch(/OpenCode, when idle/)

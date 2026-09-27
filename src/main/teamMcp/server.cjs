@@ -625,6 +625,12 @@ function hookMain() {
     if (copilot && event === 'UserPromptSubmit') return
     const ctx = locate(null, data.cwd)
     if (ctx.error) return
+    // How many messages wait, read nothing (OpenCode's plugin, when idle,
+    // then asks the agent to read them with team_inbox): { unread: n }.
+    if (event === 'Peek') {
+      process.stdout.write(JSON.stringify({ unread: unread(ctx).filter((m) => !isReceipt(m)).length }))
+      return
+    }
     if (event === 'Stop' && data.stop_hook_active) return
     const text = readInbox(ctx)
     const notes = []
