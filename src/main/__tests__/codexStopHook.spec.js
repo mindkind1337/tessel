@@ -214,6 +214,7 @@ describe('Codex Stop hook delivers team messages without terminal input', () => 
     expect(mcp.unread(context())).toHaveLength(1)
   })
 
+  // Three real Node processes can take longer to start under suite/CI load.
   it('delivers once when two Stop hooks and a team_inbox reader race', async () => {
     const text = 'Only one reader gets this exact message.'
     send(text)
@@ -226,5 +227,5 @@ describe('Codex Stop hook delivers team messages without terminal input', () => 
     expect(outputs.filter((output) => output.includes(text))).toHaveLength(1)
     expect(acks()).toHaveLength(1)
     expect(mcp.readInbox(context())).toBe('')
-  })
+  }, 20_000)
 })
