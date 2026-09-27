@@ -46,6 +46,10 @@ const api = {
   reportedSessions: () => ipcRenderer.invoke('sessions:reported'),
   installLogStart: (q) => ipcRenderer.invoke('install:logStart', q),
   getPastedImage: (q) => ipcRenderer.invoke('images:get', q),
+  // File references in a terminal: { cwd, paths } -> { path: absolute | null };
+  // { file, line, col } opens it (VS Code at the line, else its default app).
+  resolveFiles: (q) => ipcRenderer.invoke('files:resolve', q),
+  openFile: (q) => ipcRenderer.invoke('files:open', q),
   openImageExternally: (file) => ipcRenderer.invoke('images:openExternal', file),
   openInstallLog: (file) => ipcRenderer.invoke('install:openLog', file),
   showInstallLog: (file) => ipcRenderer.invoke('install:showLog', file),

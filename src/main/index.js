@@ -10,6 +10,7 @@ import { agentModelLive, watchModelFiles } from './agentModel'
 import { postToInbox } from './agentInbox'
 import { hooksStatus } from './teamHooksStatus'
 import { assessNeeds } from './tesselNeeds'
+import { resolveFiles, codeGotoArg } from './fileOpen'
 import { findAgentSession, geminiSessionExists, qwenSessionExists } from './agentResume'
 import { extraToolDirs, withToolDirs } from './toolDirs'
 import { createInstallLogs } from './installLog'
@@ -1296,6 +1297,29 @@ ipcMain.handle('images:openExternal', async (_evt, file) => {
   if (!isPastedImage(file) || !fs.existsSync(file)) return { ok: false }
   const err = await shell.openPath(file)
   return err ? { ok: false, error: err } : { ok: true }
+})
+// File references in a terminal (fileOpen.js): which exist, and opening one
+// at its line in VS Code when installed, else in its default program.
+ipcMain.handle('files:resolve', (_evt, q = {}) => resolveFiles(q || {}))
+ipcMain.handle('files:open', async (_evt, q = {}) => {
+  const file = q && typeof q.file === 'string' ? q.file : ''
+  let ok = false
+  try {
+    ok = !!file && fs.statSync(file).isFile()
+  } catch {
+    ok = false
+  }
+  if (!ok) return { ok: false, error: 'The file was not found.' }
+  const line = Number.isInteger(q.line) && q.line > 0 ? q.line : null
+  const col = Number.isInteger(q.col) && q.col > 0 ? q.col : null
+  // VS Code's launcher is a .cmd (run through cmd): never with a path cmd
+  // could read as a command; such a file opens in its default program.
+  if (!/[&|<>^%"]/.test(file) && (await commandExists('code'))) {
+    const res = await runQuiet('cmd.exe', ['/d', '/c', 'code', '-g', codeGotoArg(file, line, col)], { env: freshEnv(), timeout: 20000 })
+    if (res.ok) return { ok: true, with: 'code' }
+  }
+  const err = await shell.openPath(file)
+  return err ? { ok: false, error: err } : { ok: true, with: 'default' }
 })
 ipcMain.on('clipboard:write', (_evt, text) => {
   if (typeof text === 'string' && text.length) clipboard.writeText(text)

@@ -28,6 +28,7 @@ import { promptShowsPlaceholder } from '../promptCheck'
 import { detectLimit, detectApproval, detectTaskDone } from '../agentLimit'
 import { modelLabel } from '../../../shared/modelLabel'
 import { modelFromScreen } from '../../../shared/screenModel'
+import { findFileRefs } from '../../../shared/fileLinks'
 
 const props = defineProps({
   node: { type: Object, required: true }
@@ -600,6 +601,13 @@ async function openImage(n) {
   }
 }
 
+// File references clicked in the terminal (see the link provider below).
+const fileLinkCache = new Map() // "<cwd>\n<path>" -> { file, at }
+async function openFileRef(file, ref) {
+  const res = await window.shellApi.openFile({ file, line: ref.line, col: ref.col }).catch(() => null)
+  if ((!res || !res.ok) && ctx.toast) ctx.toast(`Could not open ${ref.path}${res && res.error ? `: ${res.error}` : ''}`, { timeout: 5000 })
+}
+
 // Pasting goes through xterm's paste(), which wraps the text as a bracketed
 // paste when the program supports it (so several lines arrive as one block
 // instead of running line by line) and sends it to the pane (or to every pane
@@ -907,6 +915,43 @@ onMounted(() => {
         })
       }
       callback(links.length ? links : undefined)
+    }
+  })
+  // A file path (src/app.js:12:5, C:\x\y.ts:3...) that exists: a click opens
+  // it at that line (VS Code when installed). Checked on disk, relative to
+  // the pane's folder; answers are kept 30 s so hovering stays instant.
+  term.registerLinkProvider({
+    provideLinks(y, callback) {
+      if (!term || !window.shellApi.resolveFiles) return callback(undefined)
+      const line = term.buffer.active.getLine(y - 1)
+      const refs = findFileRefs(line ? line.translateToString(true) : '')
+      if (!refs.length) return callback(undefined)
+      const cwd = props.node.startDir || null
+      const key = (p) => `${cwd}\n${p}`
+      const now = Date.now()
+      const unknown = [...new Set(refs.map((r) => r.path))].filter((p) => {
+        const c = fileLinkCache.get(key(p))
+        return !c || now - c.at > 30000
+      })
+      const build = () =>
+        callback(
+          refs
+            .filter((r) => (fileLinkCache.get(key(r.path)) || {}).file)
+            .map((r) => ({
+              range: { start: { x: r.index + 1, y }, end: { x: r.index + r.text.length, y } },
+              text: r.text,
+              decorations: { underline: true, pointerCursor: true },
+              activate: () => openFileRef(fileLinkCache.get(key(r.path)).file, r)
+            }))
+        )
+      if (!unknown.length) return build()
+      window.shellApi
+        .resolveFiles({ cwd, paths: unknown })
+        .then((res) => {
+          for (const p of unknown) fileLinkCache.set(key(p), { file: (res && res[p]) || null, at: Date.now() })
+          build()
+        })
+        .catch(() => callback(undefined))
     }
   })
   const updateScrolled = () => {
