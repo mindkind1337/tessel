@@ -274,6 +274,20 @@ describe('setting up the team tools', () => {
     expect(installClaudeHooks(script, home)).toEqual({ changed: false }) // already there
   })
 
+  it('adds the Codex hooks (conversation only) to ~/.codex/hooks.json, keeping the user own', async () => {
+    const { installCodexHooks } = await import('../teamInstall')
+    fs.mkdirSync(join(home, '.codex'))
+    const file = join(home, '.codex', 'hooks.json')
+    fs.writeFileSync(file, JSON.stringify({ hooks: { UserPromptSubmit: [{ hooks: [{ type: 'command', command: 'mine.py' }] }] } }))
+    expect(installCodexHooks(script, home)).toEqual({ changed: true })
+    const h = JSON.parse(fs.readFileSync(file, 'utf8')).hooks
+    const cmd = `node "${script}" --hook --codex`
+    expect(h.UserPromptSubmit.map((g) => g.hooks[0].command)).toEqual(['mine.py', cmd])
+    expect(h.SessionStart[0].hooks[0]).toEqual({ type: 'command', command: cmd, commandWindows: cmd })
+    expect(h.Stop).toBeUndefined()
+    expect(installCodexHooks(script, home)).toEqual({ changed: false })
+  })
+
   it('never overwrites a settings file it cannot read', async () => {
     const { installClaudeHooks } = await import('../teamInstall')
     fs.mkdirSync(join(home, '.claude'))

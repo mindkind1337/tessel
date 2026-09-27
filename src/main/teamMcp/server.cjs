@@ -24,7 +24,7 @@
 const fs = require('fs')
 const path = require('path')
 
-const VERSION = '1.6.3'
+const VERSION = '1.6.4'
 const MAX_TEXT = 6000
 
 // --- Finding my team and me ---------------------------------------------------
@@ -525,7 +525,11 @@ function hookMain() {
     // (they would be marked read and never reach it) nor change its session.
     if (data.agent_id) return
     // Which conversation the agent is in: recorded first, team or not.
-    reportSession(data, process.argv.includes('--codex') ? 'codex' : 'claude')
+    const codex = process.argv.includes('--codex')
+    reportSession(data, codex ? 'codex' : 'claude')
+    // Codex's hooks only tell the conversation: its hook output format is
+    // not Claude Code's, so nothing is printed for it.
+    if (codex) return
     const event = data.hook_event_name
     if (event === 'SessionStart') return // only the report above
     const ctx = locate(null, data.cwd)

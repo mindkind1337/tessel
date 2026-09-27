@@ -4672,9 +4672,30 @@ function noticeAgents(list, text, teamId, meta = { source: 'tessel', scope: 'tea
     for (const l of agents) logMessage(l.id, 'skipped', text, meta)
     return false
   }
-  window.shellApi.team.notice({ dir, teamId, notices: agents.map((l) => ({ toId: l.id, text })) })
-  for (const l of agents) logMessage(l.id, 'sent', text, meta)
+  // Each notice has its own id: a retry after a failed write can never add
+  // it twice. It counts as sent only once the notices file really has it.
+  const notices = agents.map((l) => ({ id: noticeId(), toId: l.id, text }))
+  sendNotices({ dir, teamId, notices, text, meta, tries: 0 })
   return true
+}
+const noticeId = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`
+const NOTICE_RETRY_MS = 5000
+const NOTICE_TRIES = 60 // 5 minutes, then said failed in the activity log
+function sendNotices(job) {
+  const retry = (why) => {
+    if (++job.tries >= NOTICE_TRIES) {
+      for (const n of job.notices) logMessage(n.toId, 'unconfirmed', job.text, job.meta)
+      if (window.shellApi.log) window.shellApi.log('error', `team notice not written after ${NOTICE_TRIES} tries: ${why}`)
+      return
+    }
+    setTimeout(() => sendNotices(job), NOTICE_RETRY_MS)
+  }
+  Promise.resolve(window.shellApi.team.notice({ dir: job.dir, teamId: job.teamId, notices: job.notices }))
+    .then((res) => {
+      if (res && res.ok) for (const n of job.notices) logMessage(n.toId, 'sent', job.text, job.meta)
+      else retry((res && res.error) || 'no answer')
+    })
+    .catch((err) => retry(err && err.message))
 }
 
 function messageTeam(teamId, text) {
