@@ -18,7 +18,7 @@ import { readJson } from './fileRead'
 import { writeFileAtomic as writeAtomic } from './safeJson'
 
 export const SERVER_NAME = 'tessel-team'
-const HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PostToolUse', 'Stop']
+export const HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PostToolUse', 'Stop']
 const OURS = 'tessel-team-mcp.cjs'
 
 // The server's VERSION ('1.4.0' -> [1, 4, 0]), or null.
