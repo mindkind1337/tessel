@@ -7,13 +7,31 @@
 // `valid(data)` (optional) says whether parsed content has the expected
 // shape; content that parses but fails it counts as damaged.
 import fs from 'fs'
+import { resolve } from 'path'
 
 const anyShape = () => true
+const transientRead = ['EPERM', 'EBUSY', 'EACCES']
+// A failed load must never turn a fallback/empty UI into a saved replacement
+// of unread data. Only another successful load lifts this write protection.
+const unloaded = new Set()
 
 // The parsed content of `file` when it is good, else undefined.
 function readGood(file, valid) {
+  let text
+  for (let i = 0; ; i++) {
+    try {
+      text = fs.readFileSync(file, 'utf8')
+      break
+    } catch (err) {
+      if (err.code === 'ENOENT') return undefined
+      // A failed read says nothing about the contents. Retry brief Windows
+      // sharing locks, then propagate the error without declaring corruption.
+      if (i >= 20 || !transientRead.includes(err.code)) throw err
+      sleepSync(25)
+    }
+  }
   try {
-    const data = JSON.parse(fs.readFileSync(file, 'utf8'))
+    const data = JSON.parse(text)
     return valid(data) ? data : undefined
   } catch {
     return undefined
@@ -51,6 +69,11 @@ export function writeFileAtomic(file, text) {
 const writeAtomic = writeFileAtomic
 
 export function writeJsonSafe(file, data, valid = anyShape) {
+  if (unloaded.has(resolve(file))) {
+    throw Object.assign(new Error('Saved data has not been loaded; reload it before saving.'), {
+      code: 'EJSONUNREAD'
+    })
+  }
   const text = JSON.stringify(data, null, 2)
   // Only a good file becomes the backup (a damaged one would replace the
   // last good copy), and the backup itself is replaced atomically.
@@ -64,12 +87,13 @@ export function writeJsonSafe(file, data, valid = anyShape) {
   writeAtomic(file, text)
 }
 
-// -> { data, from: 'file' | 'backup' | null, corrupt: path | null }
-export function readJsonSafe(file, valid = anyShape) {
+function readAvailable(file, valid) {
   let corrupt = null
+  // existsSync can hide access errors; an actual read distinguishes those
+  // from a genuinely absent first save.
+  const data = readGood(file, valid)
+  if (data !== undefined) return { data, from: 'file', corrupt }
   if (fs.existsSync(file)) {
-    const data = readGood(file, valid)
-    if (data !== undefined) return { data, from: 'file', corrupt }
     corrupt = `${file}.corrupt-${Date.now()}`
     try {
       fs.copyFileSync(file, corrupt)
@@ -80,4 +104,31 @@ export function readJsonSafe(file, valid = anyShape) {
   const bak = readGood(`${file}.bak`, valid)
   if (bak !== undefined) return { data: bak, from: 'backup', corrupt }
   return { data: null, from: null, corrupt }
+}
+
+// -> { data, from: 'file' | 'backup' | null, corrupt: path | null, locked? }
+// Strict by default for queues: an older snapshot cannot be safely replayed.
+// UI loaders may request a read-only backup while they retry the primary.
+export function readJsonSafe(file, valid = anyShape, { onLocked = 'throw' } = {}) {
+  const key = resolve(file)
+  try {
+    const result = readAvailable(file, valid)
+    unloaded.delete(key)
+    return result
+  } catch (err) {
+    unloaded.add(key)
+    if (onLocked !== 'backup') throw err
+    let backup
+    try {
+      backup = readGood(`${file}.bak`, valid)
+    } catch {
+      // No readable snapshot; still locked, never a new empty document.
+    }
+    return {
+      data: backup === undefined ? null : backup,
+      from: backup === undefined ? null : 'backup',
+      corrupt: null,
+      locked: true
+    }
+  }
 }

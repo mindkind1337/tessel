@@ -64,17 +64,17 @@ describe('Tessel team tools (background messages)', () => {
     mcp.send(as(A), '#4', 'two')
     pollTeamChannel({ dir, teamId })
     const ctx = as(B)
-    const realRename = fs.renameSync
+    const realLink = fs.linkSync
     let calls = 0
-    fs.renameSync = (...a) => {
+    fs.linkSync = (...a) => {
       if (String(a[1]).includes('acks') && ++calls === 2) throw new Error('disk full')
-      return realRename(...a)
+      return realLink(...a)
     }
     let first
     try {
       first = mcp.readInbox(ctx)
     } finally {
-      fs.renameSync = realRename
+      fs.linkSync = realLink
     }
     expect(first).toMatch(/one/)
     expect(first).not.toMatch(/two/)

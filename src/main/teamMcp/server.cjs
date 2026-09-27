@@ -23,6 +23,7 @@
 'use strict'
 const fs = require('fs')
 const path = require('path')
+const { randomUUID } = require('crypto')
 
 const VERSION = '1.6.4'
 const MAX_TEXT = 6000
@@ -169,9 +170,10 @@ function unread(ctx) {
   return list
 }
 
-// Marks each message read, one by one, and returns those that were: a
-// message whose read note could not be written stays unread and is not
-// shown, so nothing is ever marked read without being seen.
+// Claim each message before returning it. Hooks and MCP tools may have
+// selected the same unread snapshot: publishing an already complete ack
+// without replacing an existing one lets only one reader return it.
+// Failed publication leaves the message unread for a later attempt.
 function markRead(ctx, messages) {
   const done = []
   try {
@@ -181,18 +183,22 @@ function markRead(ctx, messages) {
   }
   for (const m of messages) {
     const file = ackPath(ctx.root, m.toId, m.id)
-    const tmp = `${file}.${process.pid}.tmp`
+    const tmp = `${file}.${process.pid}.${randomUUID()}.tmp`
     try {
       fs.writeFileSync(tmp, JSON.stringify({ id: m.id, toId: m.toId, at: Date.now() }))
-      fs.renameSync(tmp, file)
+      // Same-directory hard link: atomic, complete, and exclusive. Unlike
+      // rename it cannot replace the claim made by another reader.
+      fs.linkSync(tmp, file)
       done.push(m)
-    } catch {
+    } catch (err) {
+      // Another reader won this message; later messages can still be ours.
+      if (err.code !== 'EEXIST') break
+    } finally {
       try {
         fs.rmSync(tmp, { force: true })
       } catch {
         // nothing to clean
       }
-      break
     }
   }
   return done
