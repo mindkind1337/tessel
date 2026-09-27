@@ -69,6 +69,15 @@ export function installCodexHooks(scriptPath, home = os.homedir()) {
   return installHooks(join(home, '.codex', 'hooks.json'), CODEX_HOOK_EVENTS, command, { commandWindows: command })
 }
 
+// Gemini CLI hooks in ~/.gemini/settings.json (Claude Code's format and
+// answers; on by default, no approval step for user hooks): the conversation
+// (SessionStart), messages with each prompt (BeforeAgent) and after each tool
+// (AfterTool), and at the turn's end (AfterAgent).
+export const GEMINI_HOOK_EVENTS = ['SessionStart', 'BeforeAgent', 'AfterTool', 'AfterAgent']
+export function installGeminiHooks(scriptPath, home = os.homedir()) {
+  return installHooks(join(home, '.gemini', 'settings.json'), GEMINI_HOOK_EVENTS, `node ${quote(scriptPath)} --hook --gemini`)
+}
+
 // Tessel's command in each event's hook list of a hooks file ({ hooks: {
 // Event: [{ matcher, hooks: [{ type, command }] }] } }), replacing an older
 // Tessel entry and keeping everything else. -> { changed } or { error }

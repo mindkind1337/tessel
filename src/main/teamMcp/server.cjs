@@ -25,7 +25,7 @@ const fs = require('fs')
 const path = require('path')
 const { randomUUID } = require('crypto')
 
-const VERSION = '1.6.6'
+const VERSION = '1.6.7'
 const MAX_TEXT = 6000
 
 // --- Finding my team and me ---------------------------------------------------
@@ -506,8 +506,17 @@ function reportSession(data, agent) {
   const inboxToken = inbox ? String(process.env.CLAUDE_CODE_MESSAGING_TOKEN || '') : ''
   try {
     const old = readJson(file)
-    if (old && old.sessionId === id && old.agent === agent && (old.inbox || '') === inbox && (old.inboxToken || '') === inboxToken)
-      return // unchanged
+    // Unchanged: rewritten at most once a minute, so its time says when the
+    // hooks last ran (Tessel's "last signal"), without a write per event.
+    if (
+      old &&
+      old.sessionId === id &&
+      old.agent === agent &&
+      (old.inbox || '') === inbox &&
+      (old.inboxToken || '') === inboxToken &&
+      Date.now() - (Number(old.at) || 0) < 60000
+    )
+      return
     fs.mkdirSync(dir, { recursive: true })
     const tmp = `${file}.${process.pid}.tmp`
     const report = { agent, sessionId: id, source: String(data.source || data.hook_event_name || ''), cwd: String(data.cwd || ''), at: Date.now() }
@@ -536,7 +545,8 @@ function hookMain() {
     if (data.agent_id) return
     // Which conversation the agent is in: recorded first, team or not.
     const codex = process.argv.includes('--codex')
-    reportSession(data, codex ? 'codex' : 'claude')
+    const gemini = process.argv.includes('--gemini')
+    reportSession(data, codex ? 'codex' : gemini ? 'gemini' : 'claude')
     if (codex) {
       // Codex Stop decisions become continuation prompts. Other events keep
       // reporting the session only; an already continued turn never loops.
@@ -572,7 +582,11 @@ function hookMain() {
       }
       return
     }
-    const event = data.hook_event_name
+    // Gemini CLI takes Claude Code's answers under its own event names: a
+    // prompt (BeforeAgent), after a tool (AfterTool), the turn's end
+    // (AfterAgent, where a "block" continues with the reason as a prompt).
+    const GEMINI_EVENTS = { BeforeAgent: 'UserPromptSubmit', AfterTool: 'PostToolUse', AfterAgent: 'Stop' }
+    const event = gemini ? GEMINI_EVENTS[data.hook_event_name] || data.hook_event_name : data.hook_event_name
     if (event === 'SessionStart') return // only the report above
     const ctx = locate(null, data.cwd)
     if (ctx.error) return
@@ -586,7 +600,7 @@ function hookMain() {
     if (!notes.length) return
     const note = notes.join('\n\n')
     if (event === 'Stop') process.stdout.write(JSON.stringify({ decision: 'block', reason: note }))
-    else process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: event, additionalContext: note } }))
+    else process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: data.hook_event_name, additionalContext: note } }))
   })
 }
 

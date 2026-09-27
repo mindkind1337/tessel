@@ -188,6 +188,38 @@ describe('Tessel team tools (background messages)', () => {
     expect(stop.reason).toMatch(/Another one/)
   })
 
+  it('as a Gemini CLI hook: the same answers under its event names, and its conversation reported', async () => {
+    const sessions = fs.mkdtempSync(join(os.tmpdir(), 'tessel-sessions-'))
+    mcp.send(as(A), '#4', 'Gemini, after a tool')
+    pollTeamChannel({ dir, teamId })
+    const run = (input) =>
+      new Promise((resolve) => {
+        const child = spawn(process.execPath, [SERVER, '--hook', '--gemini'], {
+          env: { ...process.env, TESSEL_PANE_ID: B.id, TESSEL_PROJECT_DIR: dir, TESSEL_SESSIONS_DIR: sessions }
+        })
+        let out = ''
+        child.stdout.on('data', (c) => (out += c))
+        child.on('close', () => resolve(out))
+        child.stdin.end(JSON.stringify({ session_id: 'gem-session-0001', cwd: dir, ...input }))
+      })
+    expect(await run({ hook_event_name: 'SessionStart', source: 'startup' })).toBe('')
+    expect(JSON.parse(fs.readFileSync(join(sessions, `${B.id}.json`), 'utf8'))).toMatchObject({ agent: 'gemini', sessionId: 'gem-session-0001' })
+    const after = JSON.parse(await run({ hook_event_name: 'AfterTool', tool_name: 'read_file' }))
+    expect(after.hookSpecificOutput.hookEventName).toBe('AfterTool')
+    expect(after.hookSpecificOutput.additionalContext).toMatch(/Gemini, after a tool/)
+    // A prompt: the board rule, like Claude Code's UserPromptSubmit.
+    const prompt = JSON.parse(await run({ hook_event_name: 'BeforeAgent', prompt: 'hi' }))
+    expect(prompt.hookSpecificOutput.hookEventName).toBe('BeforeAgent')
+    // The turn's end: continues once with a new message, never when already continuing.
+    mcp.send(as(A), '#4', 'Gemini, before you stop')
+    pollTeamChannel({ dir, teamId })
+    expect(await run({ hook_event_name: 'AfterAgent', stop_hook_active: true })).toBe('')
+    const stop = JSON.parse(await run({ hook_event_name: 'AfterAgent', stop_hook_active: false }))
+    expect(stop.decision).toBe('block')
+    expect(stop.reason).toMatch(/Gemini, before you stop/)
+    fs.rmSync(sessions, { recursive: true, force: true })
+  })
+
   it('reports the conversation the agent is really in (start, /clear, /resume), team or not', async () => {
     const sessions = fs.mkdtempSync(join(os.tmpdir(), 'tessel-sessions-'))
     const run = (input, extra = []) =>
@@ -310,6 +342,26 @@ describe('setting up the team tools', () => {
     expect(h.Stop.map((g) => g.hooks[0].command)).toEqual(['my-stop.cmd', cmd])
     expect(h.Stop[1].hooks[0]).toEqual({ type: 'command', command: cmd, commandWindows: cmd })
     expect(installCodexHooks(script, home)).toEqual({ changed: false })
+  })
+
+  it('adds the Gemini CLI hooks, keeping its servers and other entries (even ones Gemini ignores)', async () => {
+    const { installGeminiHooks } = await import('../teamInstall')
+    fs.mkdirSync(join(home, '.gemini'))
+    const file = join(home, '.gemini', 'settings.json')
+    const flat = { type: 'command', command: 'bs-agent-notify.cjs', timeout: 5000 } // no hooks:[...] wrapper
+    fs.writeFileSync(
+      file,
+      JSON.stringify({ mcpServers: { x: { command: 'y' } }, hooks: { AfterAgent: [flat], AfterTool: [{ matcher: '*', hooks: [{ type: 'command', command: 'mine.sh' }] }] } })
+    )
+    expect(installGeminiHooks(script, home)).toEqual({ changed: true })
+    const s = JSON.parse(fs.readFileSync(file, 'utf8'))
+    const cmd = `node "${script}" --hook --gemini`
+    expect(s.mcpServers).toEqual({ x: { command: 'y' } })
+    expect(s.hooks.AfterAgent[0]).toEqual(flat)
+    expect(s.hooks.AfterAgent[1].hooks[0].command).toBe(cmd)
+    expect(s.hooks.AfterTool.map((g) => g.hooks[0].command)).toEqual(['mine.sh', cmd])
+    for (const ev of ['SessionStart', 'BeforeAgent']) expect(s.hooks[ev][0].hooks[0].command).toBe(cmd)
+    expect(installGeminiHooks(script, home)).toEqual({ changed: false })
   })
 
   it('never overwrites a settings file it cannot read', async () => {
