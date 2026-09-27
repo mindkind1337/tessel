@@ -11,7 +11,10 @@ import {
   installCodexHooks,
   GEMINI_HOOK_EVENTS,
   installGeminiHooks,
-  installCopilotHooks
+  installCopilotHooks,
+  installOpencodePlugin,
+  OPENCODE_MARKER,
+  opencodePlugin
 } from '../teamInstall'
 
 describe('read-only hook connection diagnostics', () => {
@@ -56,7 +59,7 @@ describe('read-only hook connection diagnostics', () => {
 
   it('reports missing setups without creating directories, using the installer event lists', () => {
     const result = status()
-    expect(result.agents.map((a) => a.hooks)).toEqual(['missing', 'missing', 'missing', 'missing', 'missing'])
+    expect(result.agents.map((a) => a.hooks)).toEqual(['missing', 'missing', 'missing', 'missing', 'missing', 'missing'])
     expect(Object.keys(result.agents[0].events)).toEqual(HOOK_EVENTS)
     expect(Object.keys(result.agents[1].events)).toEqual(CODEX_HOOK_EVENTS)
     expect(Object.keys(result.agents[2].events)).toEqual(GEMINI_HOOK_EVENTS)
@@ -88,6 +91,7 @@ describe('read-only hook connection diagnostics', () => {
       'installed',
       'installed',
       'installed',
+      'missing',
       'missing'
     ])
   })
@@ -102,8 +106,8 @@ describe('read-only hook connection diagnostics', () => {
       throw new Error('unexpected mkdir')
     })
     const result = status()
-    expect(result.agents.map((a) => a.hooks)).toEqual(['installed', 'installed', 'installed', 'installed', 'missing'])
-    expect(result.agents.map((a) => a.approval)).toEqual([null, 'needs-approval', null, null, null])
+    expect(result.agents.map((a) => a.hooks)).toEqual(['installed', 'installed', 'installed', 'installed', 'missing', 'missing'])
+    expect(result.agents.map((a) => a.approval)).toEqual([null, 'needs-approval', null, null, null, null])
     expect(writer).not.toHaveBeenCalled()
     expect(mkdir).not.toHaveBeenCalled()
     expect(fs.readFileSync(hooksFile(), 'utf8')).toBe(before)
@@ -332,6 +336,35 @@ describe('read-only hook connection diagnostics', () => {
     expect(agent('gemini')).toMatchObject({ hooks: 'installed', approval: null })
   })
 
+  it('checks the exact OpenCode plugin without loading or modifying its source', () => {
+    const file = join(home, '.config', 'opencode', 'plugins', 'tessel-team.js')
+    expect(agent('opencode')).toMatchObject({ hooks: 'missing', events: { Plugin: false } })
+    installOpencodePlugin(scriptPath, home)
+    expect(agent('opencode')).toMatchObject({ hooks: 'installed', events: { Plugin: true }, approval: null })
+    write(file, opencodePlugin('C:\\old\\tessel-team-mcp.cjs'))
+    expect(agent('opencode')).toMatchObject({ hooks: 'partial', events: { Plugin: false } })
+    write(file, `${OPENCODE_MARKER}\nthrow new Error('PRIVATE-PLUGIN-CONTENT')`)
+    expect(agent('opencode').hooks).toBe('partial')
+    const custom = "throw new Error('PRIVATE-PLUGIN-CONTENT')"
+    write(file, custom)
+    const writer = vi.spyOn(fs, 'writeFileSync')
+    expect(agent('opencode').hooks).toBe('error')
+    expect(JSON.stringify(agent('opencode'))).not.toContain('PRIVATE-PLUGIN-CONTENT')
+    expect(writer).not.toHaveBeenCalled()
+    expect(fs.readFileSync(file, 'utf8')).toBe(custom)
+  })
+
+  it('reports an OpenCode plugin read failure and still returns its last session signal', () => {
+    const file = join(home, '.config', 'opencode', 'plugins', 'tessel-team.js')
+    json(join(sessionsDir, 'opencode-pane.json'), { agent: 'opencode', at: 120, source: 'SessionStart' })
+    const read = fs.readFileSync.bind(fs)
+    vi.spyOn(fs, 'readFileSync').mockImplementation((path, ...args) => {
+      if (path === file) throw Object.assign(new Error('PRIVATE-ERROR'), { code: 'EACCES' })
+      return read(path, ...args)
+    })
+    expect(agent('opencode')).toMatchObject({ hooks: 'error', error: 'Cannot read OpenCode plugin.', lastSignal: { paneId: 'opencode-pane', at: 120, source: 'SessionStart' } })
+  })
+
   it('does not hide installed hooks when session reports are unreadable', () => {
     install()
     vi.spyOn(fs, 'readdirSync').mockImplementation(() => {
@@ -340,7 +373,7 @@ describe('read-only hook connection diagnostics', () => {
     expect(
       status().agents.every(
         (a) =>
-          a.hooks === (a.id === 'kimi' ? 'missing' : 'installed') &&
+          a.hooks === (['kimi', 'opencode'].includes(a.id) ? 'missing' : 'installed') &&
           a.lastSignal === null &&
           a.error === 'Cannot read session reports.'
       )

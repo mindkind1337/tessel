@@ -4,7 +4,7 @@ import fs from 'fs'
 import os from 'os'
 import { kimiConfigFile, kimiHookEvents, KIMI_HOOK_EVENTS } from './kimiHooks'
 import { join } from 'path'
-import { HOOK_EVENTS, CODEX_HOOK_EVENTS, GEMINI_HOOK_EVENTS, COPILOT_HOOK_EVENTS, COPILOT_HOOKS_FILE } from './teamInstall'
+import { HOOK_EVENTS, CODEX_HOOK_EVENTS, GEMINI_HOOK_EVENTS, COPILOT_HOOK_EVENTS, COPILOT_HOOKS_FILE, OPENCODE_PLUGIN_FILE, OPENCODE_MARKER, opencodePlugin } from './teamInstall'
 
 const record = (value) => value !== null && typeof value === 'object' && !Array.isArray(value)
 const snake = (event) => event.replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase()
@@ -308,12 +308,27 @@ function kimiInstallation(home, scriptPath) {
   return agent
 }
 
+function opencodeInstallation(home, scriptPath) {
+  const agent = { id: 'opencode', hooks: 'missing', events: { Plugin: false }, approval: null, lastSignal: null, inbox: false }
+  const file = join(home, '.config', 'opencode', 'plugins', OPENCODE_PLUGIN_FILE)
+  const data = readText(file, 'OpenCode plugin')
+  if (data.missing) return agent
+  if (data.error || !data.text.startsWith(OPENCODE_MARKER)) {
+    agent.hooks = 'error'
+    addError(agent, data.error || 'The OpenCode plugin file is not managed by Tessel; it was left unchanged.')
+    return agent
+  }
+  agent.events.Plugin = !!scriptPath && data.text === opencodePlugin(scriptPath)
+  agent.hooks = agent.events.Plugin ? 'installed' : 'partial'
+  return agent
+}
+
 export function hooksStatus({ home = os.homedir(), sessionsDir, scriptPath } = {}) {
   const claude = installation(home, 'claude', scriptPath, HOOK_EVENTS)
   const codex = installation(home, 'codex', scriptPath, CODEX_HOOK_EVENTS)
   const gemini = installation(home, 'gemini', scriptPath, GEMINI_HOOK_EVENTS)
   codexApproval(home, codex)
-  const agents = [claude.agent, codex.agent, gemini.agent, copilotInstallation(home, scriptPath), kimiInstallation(home, scriptPath)]
+  const agents = [claude.agent, codex.agent, gemini.agent, copilotInstallation(home, scriptPath), kimiInstallation(home, scriptPath), opencodeInstallation(home, scriptPath)]
   sessionSignals(sessionsDir, agents)
   return { agents }
 }
