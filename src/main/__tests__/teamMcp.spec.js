@@ -198,7 +198,8 @@ describe('Tessel team tools (background messages)', () => {
       })
     const none = JSON.parse(await run({ hook_event_name: 'UserPromptSubmit', cwd: dir }))
     expect(none.hookSpecificOutput.hookEventName).toBe('UserPromptSubmit')
-    expect(none.hookSpecificOutput.additionalContext).toMatch(/add a card for it first \(team_task_add, column "doing"\)/)
+    expect(none.hookSpecificOutput.additionalContext).toMatch(/add a card for every piece of work the moment you start it/)
+    expect(none.hookSpecificOutput.additionalContext).toMatch(/each step you decide to take/)
     expect(none.hookSpecificOutput.additionalContext).toMatch(/no open card/)
     fs.writeFileSync(
       join(dir, '.tessel', 'team-channel', teamId, 'tasks.json'),

@@ -24,7 +24,7 @@
 const fs = require('fs')
 const path = require('path')
 
-const VERSION = '1.6.0'
+const VERSION = '1.6.1'
 const MAX_TEXT = 6000
 
 // --- Finding my team and me ---------------------------------------------------
@@ -265,7 +265,7 @@ function boardReminder(ctx) {
   const open = mine.length
     ? `Your open cards: ${mine.slice(0, 6).map((t) => `${t.id} "${t.title}" (${COLUMN_NAMES[t.column]})`).join('; ')}${mine.length > 6 ? ' …' : ''}.`
     : 'You have no open card.'
-  return `Tessel task board (the user follows it): if this message asks for a new piece of work, add a card for it first (team_task_add, column "doing"); move your cards as the work goes (team_task_move: "done" as soon as it is finished). A quick question or a short answer needs no card. ${open}`
+  return `Tessel task board (the user follows your work there; keep it up to date yourself): add a card for every piece of work the moment you start it, what this message asks and each step you decide to take (team_task_add, column "doing"); move your cards as they go (team_task_move: "done" as soon as one is finished). Only a quick question or a short answer needs no card. ${open}`
 }
 
 function taskRequest(ctx, data) {
@@ -346,7 +346,7 @@ const TOOLS = [
   {
     name: 'team_task_add',
     description:
-      "The user follows your work on Tessel's task board: keep it up to date, every time. When you start a piece of work (a request from the user, or a task you give a teammate), add a card for it first: column \"doing\" for what you start now, \"todo\" for later. One card per piece of work; a quick question or a short answer needs none.",
+      "Tessel's task board is how the user follows your work: it must show everything you do. Add a card for every piece of work, the moment you start it: what the user asks, each step you decide to take (split bigger work into cards), and each task you give a teammate. Column \"doing\" for what you start now, \"todo\" for later. Then move it (team_task_move). Only a quick question or a short answer needs no card.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -361,7 +361,7 @@ const TOOLS = [
   {
     name: 'team_task_move',
     description:
-      'Move your card as the work goes, every time (the user relies on the board): "doing" when you start it, "review" when it waits for a review, "done" as soon as it is finished. See the ids with team_tasks.',
+      'Move your cards as the work goes, every time, without being asked: "doing" when you start one, "review" when it waits for a review, "done" as soon as it is finished. See the ids with team_tasks.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -430,7 +430,7 @@ function handle(msg) {
       capabilities: { tools: {} },
       serverInfo: { name: 'tessel-team', version: VERSION },
       instructions:
-        'You work in Tessel, where the user follows every piece of work on a task board. Always keep it up to date: when you start a piece of work (a request from the user, or a task you give a teammate), add a card for it first (team_task_add, column "doing"), and move it as it goes (team_task_move: "review" when it waits for a review, "done" as soon as it is finished). A quick question or a short answer needs no card. If you are in a team, call team_inbox when you start and after each step to read messages from teammates, answer them with team_send, and never ask the user to pass messages between agents.'
+        'You work in Tessel: the user follows everything you do on its task board, so keep it up to date yourself, without being asked. Add a card (team_task_add) for every piece of work the moment you start it (what the user asks, each step you decide to take, each task you give a teammate), and move your cards as they go (team_task_move: "done" as soon as one is finished). Only a quick question or a short answer needs no card. If you are in a team, call team_inbox when you start and after each step to read messages from teammates, answer them with team_send, and never ask the user to pass messages between agents.'
     }
   }
   if (method === 'ping') return {}

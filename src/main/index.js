@@ -10,6 +10,7 @@ import { agentModelLive, watchModelFiles } from './agentModel'
 import { findAgentSession, geminiSessionExists, qwenSessionExists } from './agentResume'
 import { extraToolDirs, withToolDirs } from './toolDirs'
 import { createInstallLogs } from './installLog'
+import { writeBoardRule } from './agentMemory'
 import { claudeImageFile, isPastedImage, PASTE_DIR } from './pastedImages'
 import { createLogger, describe } from './logger'
 import { cleanEnv } from './cleanEnv'
@@ -933,6 +934,14 @@ ipcMain.handle(
       const r = setJsonAgentServer(agent, SERVER_NAME, teamToolsEntry(agent, script))
       if (!r.ok) errors.push(`${preset.name}: ${r.error}`)
       else if (r.changed) changed.push(`${preset.name}: MCP server tessel-team`)
+    }
+    // The task board rule in each installed agent's persistent memory
+    // (CLAUDE.md, AGENTS.md...: read every session), see agentMemory.js.
+    for (const preset of await getAgents()) {
+      if (!preset.available || preset.custom) continue
+      const r = writeBoardRule(preset.id)
+      if (r.error) errors.push(`${preset.name}: memory file ${r.file}: ${r.error}`)
+      else if (r.changed) changed.push(`${preset.name}: task board rule in ${r.file}`)
     }
     if (changed.length) log.info('team', `team tools set up: ${changed.join('; ')}`)
     if (errors.length) log.error('team', `team tools: ${errors.join('; ')}`)
