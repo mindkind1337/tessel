@@ -287,11 +287,11 @@ const CURSORS = [
           <div class="set-label">
             Wake idle agents for team messages
             <span class="set-hint"
-              >Types a one-line reminder in an idle agent's terminal. Off: messages stay in the background and are
-              read when the agent works</span
+              >Types a one-line reminder in an idle agent's terminal, never while you are in that pane or typing there
+              (nothing else can start an idle agent). Off: messages wait until the agent next works</span
             >
           </div>
-          <input v-model="settings.wakeIdleAgents" type="checkbox" class="set-switch" />
+          <input v-model="settings.teamWakeUps" type="checkbox" class="set-switch" />
         </label>
         <label class="set-row">
           <div class="set-label">

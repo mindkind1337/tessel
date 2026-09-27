@@ -3947,6 +3947,9 @@ const USER_AWAY_MS = 30000
 // later, say its team tools were down) is sent again; an agent restarted
 // since (gen) gets one at once.
 const REWAKE_AFTER_MS = 5 * 60 * 1000
+const WAKE_AFTER_RESTART_MS = 2 * 60 * 1000
+// The reminder's own words, to find one left in an input line.
+const WAKE_LINE = /\[Tessel\] You have \d+ new team messages?/
 const wakeState = {} // leafId -> { since, woken, wokenAt, gen }
 // The user is not in this pane, has no line in progress there, and has not
 // typed there for 30 s.
@@ -3980,9 +3983,9 @@ function wakeIfNeeded(leaf) {
     delete wakeState[leaf.id]
     return
   }
-  // Off (the default): the messages stay in the background, never typed
-  // into the terminal; the agent reads them when it works.
-  if (!settings.wakeIdleAgents) return
+  // Off in Settings: the messages stay in the background, never typed into
+  // the terminal; the agent reads them when it next works.
+  if (!settings.teamWakeUps) return
   const w = (wakeState[leaf.id] = wakeState[leaf.id] || { since: Date.now(), woken: false, gen: leaf.gen || 0 })
   if (w.woken && ((leaf.gen || 0) !== w.gen || Date.now() - (w.wokenAt || 0) >= REWAKE_AFTER_MS)) {
     w.woken = false
@@ -3995,8 +3998,19 @@ function wakeIfNeeded(leaf) {
   if (!t || t.state !== 'idle') return
   if (approvals[leaf.id] || limits[leaf.id] || pendingMessages[leaf.id] || unsent[leaf.id] || delivering.has(leaf.id)) return
   if (!wakeAllowed(leaf.id)) return
+  // Just restarted: it is still loading (a line typed now can stay unsent).
+  if (leaf.restartedAt && Date.now() - leaf.restartedAt < WAKE_AFTER_RESTART_MS) return
   w.woken = true
   w.wokenAt = Date.now()
+  // A reminder typed before is still in its input line, not sent: send that
+  // one (Enter) instead of typing a second one on top of it.
+  const pane = getPane(leaf.id)
+  const bottom = pane && pane.screenText ? pane.screenText(4) : ''
+  if (pane && WAKE_LINE.test(bottom) && !(leaf.agentId === 'codex' && inputShownEmpty(leaf.id))) {
+    pane.submit()
+    if (window.shellApi.log) window.shellApi.log('info', `team tools: sent the waiting reminder in ${paneLabel(leaf)} (${leaf.id})`)
+    return
+  }
   deliverToAgent(
     leaf.id,
     `[Tessel] You have ${count} new team message${count > 1 ? 's' : ''}: read ${count > 1 ? 'them' : 'it'} with team_inbox.`,
