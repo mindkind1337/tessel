@@ -25,7 +25,7 @@ const fs = require('fs')
 const path = require('path')
 const { randomUUID } = require('crypto')
 
-const VERSION = '1.6.9'
+const VERSION = '1.6.10'
 const MAX_TEXT = 6000
 
 // --- Finding my team and me ---------------------------------------------------
@@ -66,7 +66,21 @@ function readJson(file) {
 // gone: no team). current.json only when there is no window file at all
 // (an older Tessel wrote just that).
 const WINDOW_GONE_MS = 5 * 60 * 1000
-function currentPanes(base) {
+// A file there that cannot be read right now (being replaced, held by an
+// antivirus, Tessel restarting) is tried again briefly; still unreadable, it
+// is reported in `info.unsure` so a caller never takes it for "no team".
+function readJsonSteady(file, info) {
+  for (let i = 0; i < 4; i++) {
+    const data = readJson(file)
+    if (data) return data
+    if (!fs.existsSync(file)) return null
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 40)
+  }
+  if (info) info.unsure = true
+  return null
+}
+
+function currentPanes(base, info) {
   let names = []
   try {
     names = fs.readdirSync(base)
@@ -77,13 +91,13 @@ function currentPanes(base) {
   if (windows.length) {
     const panes = {}
     for (const n of windows) {
-      const data = readJson(path.join(base, n))
+      const data = readJsonSteady(path.join(base, n), info)
       if (!data || !data.panes || typeof data.at !== 'number' || Date.now() - data.at > WINDOW_GONE_MS) continue
       Object.assign(panes, data.panes)
     }
     return panes
   }
-  const current = readJson(path.join(base, 'current.json'))
+  const current = readJsonSteady(path.join(base, 'current.json'), info)
   return current && current.panes ? current.panes : null
 }
 
@@ -112,9 +126,10 @@ function locate(meArg, start) {
   if (!paneId && !num)
     return { error: 'Tessel does not know who you are: pass your pane number as "me", e.g. {"me":"#4"}.' }
   const hits = []
+  const info = { unsure: false }
   for (const dir of candidateDirs(start)) {
     const base = path.join(dir, '.tessel', 'team-channel')
-    const panes = currentPanes(base)
+    const panes = currentPanes(base, info)
     if (!panes) continue
     for (const [id, p] of Object.entries(panes)) {
       if (!p || typeof p.team !== 'string') continue
@@ -124,6 +139,9 @@ function locate(meArg, start) {
     if (hits.length) break
   }
   if (!hits.length) {
+    // Tessel's team list could not be read just now: never taken for "no
+    // team" (that tells the agent to stop working as a team member).
+    if (info.unsure) return { error: 'Tessel is updating its team list: try again in a few seconds.' }
     // Was it in a team that the user ungrouped (or that it left)? Say so
     // plainly, so the agent stops acting as a team member.
     if (paneId && formerMember(paneId, start))

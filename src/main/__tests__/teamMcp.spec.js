@@ -722,6 +722,20 @@ describe('an agent whose team was ungrouped', () => {
     process.env.TESSEL_PANE_ID = 'pane-9-zzzzzz'
     expect(mcp.locate().error).toMatch(/not in a Tessel team right now/)
   })
+
+  it('a team list that cannot be read right now is never taken for "no team"', () => {
+    const A = { id: 'pane-1-aaaaaa', num: 1, title: 'Codex CLI' }
+    ensureTeamChannel({ dir, teamId: 'team-1', members: [A] })
+    writeCurrentTeams({ dir, owner: 'dev', panes: { [A.id]: { team: 'team-1', num: 1 } } })
+    process.env.TESSEL_PANE_ID = A.id
+    process.env.TESSEL_PROJECT_DIR = dir
+    const file = join(dir, '.tessel', 'team-channel', 'current.dev.json')
+    const good = fs.readFileSync(file, 'utf8')
+    fs.writeFileSync(file, good.slice(0, 10)) // cut mid-write, or held by another program
+    expect(mcp.locate().error).toMatch(/updating its team list: try again/)
+    fs.writeFileSync(file, good)
+    expect(mcp.locate().teamId).toBe('team-1')
+  })
 })
 
 describe('robustness of the team files', () => {
