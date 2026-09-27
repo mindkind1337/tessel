@@ -1055,11 +1055,17 @@ function boardToSave() {
   return { tasks: JSON.parse(JSON.stringify(boardTasks)), appliedRequests: [...appliedRequests] }
 }
 
+// Every board save goes here: none while the saved board could not be read
+// (locked at start), so it is never overwritten.
+function saveBoard() {
+  if (boardLocked) return Promise.resolve({ ok: false, error: 'The saved board could not be read at start.' })
+  return window.shellApi.taskBoard.save(boardToSave())
+}
 function scheduleTaskSave() {
   if (taskSaveTimer) clearTimeout(taskSaveTimer)
   taskSaveTimer = setTimeout(() => {
     taskSaveTimer = null
-    window.shellApi.taskBoard.save(boardToSave())
+    saveBoard()
   }, 500)
 }
 
@@ -1096,7 +1102,7 @@ async function installUpdate() {
     clearTimeout(taskSaveTimer)
     taskSaveTimer = null
     try {
-      await window.shellApi.taskBoard.save(boardToSave())
+      await saveBoard()
     } catch {
       /* best-effort */
     }
@@ -4272,7 +4278,7 @@ async function syncBoard(b, round = teamRound) {
   // the request files removed; a request is dropped from the ledger only once
   // its file is surely gone (it can never come back then).
   if (applied.length) {
-    const saved = await window.shellApi.taskBoard.save(boardToSave()).catch(() => null)
+    const saved = await saveBoard().catch(() => null)
     // Replaced meanwhile: the new round saves and removes them (the ledger
     // already has them: not applied twice).
     if (roundGone(round)) return
@@ -5141,9 +5147,17 @@ async function restoreOrSeedLayout() {
 
   let saved = null
   try {
-    saved = await window.shellApi.loadLayout()
+    saved = await loadUnlocked(() => window.shellApi.loadLayout())
   } catch {
     saved = null
+  }
+  // Still locked (another program holds the file): start, but never save
+  // over the user's saved workspaces during this session.
+  if (saved && saved.locked === true) {
+    layoutLocked = true
+    // The previous copy is shown when there is one; nothing is saved.
+    saved = saved.backup && typeof saved.backup === 'object' ? saved.backup : null
+    showToast('Your saved workspaces could not be read (the file is in use by another program). Tessel shows its previous copy and will not save the layout until it is restarted, so the file stays intact.', { kind: 'error', timeout: 20000 })
   }
 
   if (saved) {
@@ -5244,7 +5258,7 @@ onMounted(async () => {
   // Persist on any structural / size / title / broadcast change (debounced).
   pruneTeams()
   loadActivity().then(hydrateTracking)
-  persistReady = true
+  persistReady = !layoutLocked
   watch(
     [
       workspaces,
@@ -5273,10 +5287,16 @@ onMounted(async () => {
   // tasks doesn't immediately trigger a redundant save.
   try {
     startStep = 'task board'
-    const saved = await window.shellApi.taskBoard.load({ withLedger: true })
-    const savedTasks = Array.isArray(saved) ? saved : saved && saved.tasks
-    if (Array.isArray(savedTasks)) setTasks(savedTasks)
-    for (const k of (saved && saved.appliedRequests) || []) appliedRequests.add(k)
+    const saved = await loadUnlocked(() => window.shellApi.taskBoard.load({ withLedger: true }))
+    if (saved && saved.locked === true) {
+      boardLocked = true
+      if (Array.isArray(saved.tasks)) setTasks(saved.tasks) // its previous copy, shown only
+      showToast('Your task board could not be read (the file is in use by another program). Tessel shows its previous copy and will not save it until it is restarted, so the file stays intact.', { kind: 'error', timeout: 20000 })
+    } else {
+      const savedTasks = Array.isArray(saved) ? saved : saved && saved.tasks
+      if (Array.isArray(savedTasks)) setTasks(savedTasks)
+      for (const k of (saved && saved.appliedRequests) || []) appliedRequests.add(k)
+    }
   } catch {
     /* start with an empty board if persisted tasks can't be read */
   }
@@ -5285,7 +5305,7 @@ onMounted(async () => {
   // file back on every launch (the cleanup is idempotent and persists on the
   // next real change).
   reconcileTaskPanes()
-  watch(boardTasks, scheduleTaskSave, { deep: true })
+  if (!boardLocked) watch(boardTasks, scheduleTaskSave, { deep: true })
   teamsReady = true
 
   window.addEventListener('keydown', onKey)
@@ -5298,6 +5318,20 @@ onMounted(async () => {
 
 let unsubFocusPane = null
 
+// A saved file another program holds for a moment (antivirus, backup): the
+// main process answers { locked: true }; tried again every second for 30 s
+// before giving up. Given up: the file is left alone (never saved over).
+let layoutLocked = false
+let boardLocked = false
+async function loadUnlocked(load, tries = 30) {
+  let res = await load()
+  for (let i = 1; i < tries && res && res.locked === true; i++) {
+    await new Promise((r) => setTimeout(r, 1000))
+    res = await load()
+  }
+  return res
+}
+
 // Closing or reloading the window: what is waiting to be saved (layout,
 // board, activity; saved a moment after each change) is written now, so the
 // last change before closing is not lost.
@@ -5306,7 +5340,7 @@ function flushSaves() {
   if (taskSaveTimer) {
     clearTimeout(taskSaveTimer)
     taskSaveTimer = null
-    window.shellApi.taskBoard.save(boardToSave())
+    saveBoard()
   }
   saveActivityNow()
 }

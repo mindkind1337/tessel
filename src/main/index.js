@@ -461,6 +461,12 @@ const isLayout = (d) => !!d && typeof d === 'object' && !Array.isArray(d)
 ipcMain.handle('layout:load', () => {
   try {
     const res = readJsonSafe(layoutFile(), isLayout)
+    // Held by another program even after retries: say so, with the previous
+    // copy to show (the window never saves over the file this session).
+    if (res.locked) {
+      log.warn('app', 'layout: the file is in use by another program; showing the previous copy, not saving')
+      return { locked: true, backup: res.data || null }
+    }
     if (res.corrupt) logCrashContext(`layout:load: damaged layout kept as ${res.corrupt}`)
     if (res.from === 'backup') log.warn('app', 'layout: restored from the previous copy (the file was damaged)')
     return res.data
