@@ -13,7 +13,7 @@
 // added, updated or removed; everything else is left as it is.
 import fs from 'fs'
 import os from 'os'
-import { join } from 'path'
+import { join, dirname } from 'path'
 import { readJson } from './fileRead'
 import { writeFileAtomic as writeAtomic } from './safeJson'
 
@@ -56,16 +56,31 @@ const isOurs = (h) => h && typeof h === 'object' && String(h.command || '').incl
 // Claude Code hooks in ~/.claude/settings.json.
 // -> { changed: bool } or { error }
 export function installClaudeHooks(scriptPath, home = os.homedir()) {
-  const dir = join(home, '.claude')
-  const file = join(dir, 'settings.json')
+  return installHooks(join(home, '.claude', 'settings.json'), HOOK_EVENTS, `node ${quote(scriptPath)} --hook`)
+}
+
+// Codex hooks in ~/.codex/hooks.json (the same format; hooks are on by
+// default since Codex 0.157). Only to learn the conversation Codex is in
+// (SessionStart after /new, /resume, a restart; every prompt): the hook
+// prints nothing for Codex.
+export const CODEX_HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit']
+export function installCodexHooks(scriptPath, home = os.homedir()) {
+  const command = `node ${quote(scriptPath)} --hook --codex`
+  return installHooks(join(home, '.codex', 'hooks.json'), CODEX_HOOK_EVENTS, command, { commandWindows: command })
+}
+
+// Tessel's command in each event's hook list of a hooks file ({ hooks: {
+// Event: [{ matcher, hooks: [{ type, command }] }] } }), replacing an older
+// Tessel entry and keeping everything else. -> { changed } or { error }
+function installHooks(file, events, command, extra = {}) {
+  const dir = dirname(file)
   const exists = fs.existsSync(file)
   const settings = exists ? readJson(file) : {}
   if (!settings || typeof settings !== 'object' || Array.isArray(settings))
     return { error: `${file} could not be read, so Tessel did not change it.` }
-  const command = `node ${quote(scriptPath)} --hook`
   const hooks = settings.hooks && typeof settings.hooks === 'object' ? settings.hooks : {}
   let changed = false
-  for (const event of HOOK_EVENTS) {
+  for (const event of events) {
     const list = Array.isArray(hooks[event]) ? hooks[event] : []
     const already = list.some((g) => g && Array.isArray(g.hooks) && g.hooks.some((h) => h.command === command))
     const stale = list.some((g) => g && Array.isArray(g.hooks) && g.hooks.some((h) => isOurs(h) && h.command !== command))
@@ -82,7 +97,7 @@ export function installClaudeHooks(scriptPath, home = os.homedir()) {
       if (others.length === g.hooks.length) kept.push(g)
       else if (others.length) kept.push({ ...g, hooks: others })
     }
-    kept.push({ matcher: '', hooks: [{ type: 'command', command }] })
+    kept.push({ matcher: '', hooks: [{ type: 'command', command, ...extra }] })
     hooks[event] = kept
     changed = true
   }

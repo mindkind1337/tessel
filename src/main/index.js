@@ -38,6 +38,7 @@ import { publishTeamTasks, takeTeamRequests, finishTeamRequests, messageStatuses
 import {
   writeServerScript,
   installClaudeHooks,
+  installCodexHooks,
   installCodexServer,
   claudeServerPresent,
   claudeServerExists,
@@ -946,6 +947,18 @@ ipcMain.handle(
       else if (r.changed) changed.push('Codex: MCP server tessel-team')
     } catch (err) {
       errors.push(`Codex: ${err.message}`)
+    }
+    // Codex hooks: they tell Tessel the conversation Codex is in (after /new,
+    // /resume, a restart), so it resumes that one. Only where Codex is installed.
+    try {
+      const codex = (await getAgents()).find((a) => a.id === 'codex')
+      if (codex && codex.available) {
+        const r = installCodexHooks(script)
+        if (r.error) errors.push(`Codex hooks: ${r.error}`)
+        else if (r.changed) changed.push('Codex: hooks (current conversation)')
+      }
+    } catch (err) {
+      errors.push(`Codex hooks: ${err.message}`)
     }
     // Gemini CLI, Qwen Code, Copilot CLI, OpenCode, Cline: in their settings file,
     // for those installed here (a file Tessel cannot read is left alone).
