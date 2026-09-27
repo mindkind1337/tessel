@@ -25,7 +25,7 @@ const fs = require('fs')
 const path = require('path')
 const { randomUUID } = require('crypto')
 
-const VERSION = '1.6.7'
+const VERSION = '1.6.8'
 const MAX_TEXT = 6000
 
 // --- Finding my team and me ---------------------------------------------------
