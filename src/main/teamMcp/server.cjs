@@ -24,7 +24,7 @@
 const fs = require('fs')
 const path = require('path')
 
-const VERSION = '1.6.2'
+const VERSION = '1.6.3'
 const MAX_TEXT = 6000
 
 // --- Finding my team and me ---------------------------------------------------
@@ -520,6 +520,10 @@ function hookMain() {
     } catch {
       data = {}
     }
+    // A sub-agent of this agent (Claude Code's Task/Agent tool, agent_id set):
+    // not the agent itself. Its events must not read the agent's messages
+    // (they would be marked read and never reach it) nor change its session.
+    if (data.agent_id) return
     // Which conversation the agent is in: recorded first, team or not.
     reportSession(data, process.argv.includes('--codex') ? 'codex' : 'claude')
     const event = data.hook_event_name

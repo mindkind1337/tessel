@@ -172,6 +172,9 @@ describe('Tessel team tools (background messages)', () => {
         child.on('close', () => resolve(out))
         child.stdin.end(JSON.stringify(input))
       })
+    // A sub-agent's event (agent_id): nothing shown, and the message stays
+    // unread for the agent itself.
+    expect(await run({ hook_event_name: 'PostToolUse', cwd: dir, agent_id: 'sub-1', agent_type: 'Explore' })).toBe('')
     const first = JSON.parse(await run({ hook_event_name: 'PostToolUse', cwd: dir }))
     expect(first.hookSpecificOutput.hookEventName).toBe('PostToolUse')
     expect(first.hookSpecificOutput.additionalContext).toMatch(/Ping for the hook/)
