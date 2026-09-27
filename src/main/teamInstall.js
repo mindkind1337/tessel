@@ -115,6 +115,9 @@ export const OPENCODE_MARKER = '// Tessel team tools: OpenCode plugin'
 export function opencodePlugin(scriptPath) {
   return `${OPENCODE_MARKER}. Written by Tessel and replaced when it updates; delete it to remove.
 import { spawnSync } from 'node:child_process'
+import { readFileSync, writeFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 const SCRIPT = ${JSON.stringify(scriptPath)}
 const IDLE_CHECK_MS = 15000
@@ -138,8 +141,20 @@ export const TesselTeam = async ({ client, directory }) => {
   let idle = false
   let sending = false
   // Messages already claimed (read) but not yet handed to OpenCode: kept
-  // here until a send succeeds, so a failed send never loses them.
+  // until a send succeeds, also on disk (per pane), so neither a failed send
+  // nor OpenCode restarting meanwhile loses them.
+  const keep = join(tmpdir(), 'tessel-opencode-' + process.env.TESSEL_PANE_ID.replace(/[^A-Za-z0-9._-]/g, '_') + '.txt')
   let pending = null
+  try {
+    pending = readFileSync(keep, 'utf8') || null
+  } catch {}
+  const hold = (text) => {
+    pending = text
+    try {
+      if (text) writeFileSync(keep, text)
+      else rmSync(keep, { force: true })
+    } catch {}
+  }
   // Waiting messages, sent as a new message while the session is idle.
   const deliver = async () => {
     if (!current || !idle || sending) return
@@ -147,7 +162,7 @@ export const TesselTeam = async ({ client, directory }) => {
     try {
       if (!pending) {
         const out = hook('Stop', current)
-        if (out && out.decision === 'block' && out.reason) pending = out.reason
+        if (out && out.decision === 'block' && out.reason) hold(out.reason)
       }
       if (pending) {
         idle = false
@@ -157,7 +172,7 @@ export const TesselTeam = async ({ client, directory }) => {
         const req = { path: { id: current }, body: { parts: [{ type: 'text', text: pending }] } }
         const r = client.session.promptAsync ? await client.session.promptAsync(req) : await client.session.prompt(req)
         if (r && r.error) throw new Error('not taken')
-        pending = null
+        hold(null)
       }
     } catch {
       idle = true // not sent: the next check sends the same messages again
