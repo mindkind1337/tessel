@@ -137,18 +137,30 @@ export const TesselTeam = async ({ client, directory }) => {
   let current = null // the session this OpenCode works in
   let idle = false
   let sending = false
+  // Messages already claimed (read) but not yet handed to OpenCode: kept
+  // here until a send succeeds, so a failed send never loses them.
+  let pending = null
   // Waiting messages, sent as a new message while the session is idle.
   const deliver = async () => {
     if (!current || !idle || sending) return
     sending = true
     try {
-      const out = hook('Stop', current)
-      if (out && out.decision === 'block' && out.reason) {
+      if (!pending) {
+        const out = hook('Stop', current)
+        if (out && out.decision === 'block' && out.reason) pending = out.reason
+      }
+      if (pending) {
         idle = false
-        await client.session.prompt({ path: { id: current }, body: { parts: [{ type: 'text', text: out.reason }] } })
+        // promptAsync answers once OpenCode has taken the message (a failure
+        // then means it was not taken: safe to send again); prompt, in older
+        // versions, waits for the whole reply.
+        const req = { path: { id: current }, body: { parts: [{ type: 'text', text: pending }] } }
+        const r = client.session.promptAsync ? await client.session.promptAsync(req) : await client.session.prompt(req)
+        if (r && r.error) throw new Error('not taken')
+        pending = null
       }
     } catch {
-      // the next check tries again (the messages stay unread when not claimed)
+      idle = true // not sent: the next check sends the same messages again
     } finally {
       sending = false
     }
