@@ -41,6 +41,7 @@ const api = {
   findAgentSession: (query) => ipcRenderer.invoke('sessions:find', query),
   geminiSessionExists: (id) => ipcRenderer.invoke('sessions:geminiExists', id),
   qwenSessionExists: (id) => ipcRenderer.invoke('sessions:qwenExists', id),
+  reportedSessions: () => ipcRenderer.invoke('sessions:reported'),
   installLogStart: (q) => ipcRenderer.invoke('install:logStart', q),
   getPastedImage: (q) => ipcRenderer.invoke('images:get', q),
   openImageExternally: (file) => ipcRenderer.invoke('images:openExternal', file),

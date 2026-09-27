@@ -185,6 +185,34 @@ describe('Tessel team tools (background messages)', () => {
     expect(stop.reason).toMatch(/Another one/)
   })
 
+  it('reports the conversation the agent is really in (start, /clear, /resume), team or not', async () => {
+    const sessions = fs.mkdtempSync(join(os.tmpdir(), 'tessel-sessions-'))
+    const run = (input, extra = []) =>
+      new Promise((resolve) => {
+        const child = spawn(process.execPath, [SERVER, '--hook', ...extra], {
+          env: { ...process.env, TESSEL_PANE_ID: 'pane-9-solo', TESSEL_SESSIONS_DIR: sessions }
+        })
+        let out = ''
+        child.stdout.on('data', (c) => (out += c))
+        child.on('close', () => resolve(out))
+        child.stdin.end(JSON.stringify(input))
+      })
+    const report = () => JSON.parse(fs.readFileSync(join(sessions, 'pane-9-solo.json'), 'utf8'))
+    // SessionStart: recorded, nothing printed (a pane in no team).
+    expect(await run({ hook_event_name: 'SessionStart', source: 'startup', session_id: '11111111-aaaa-4bbb-8ccc-000000000001', cwd: dir })).toBe('')
+    expect(report()).toMatchObject({ agent: 'claude', sessionId: '11111111-aaaa-4bbb-8ccc-000000000001', source: 'startup' })
+    // /clear: a new conversation, reported at once.
+    await run({ hook_event_name: 'SessionStart', source: 'clear', session_id: '22222222-aaaa-4bbb-8ccc-000000000002', cwd: dir })
+    expect(report()).toMatchObject({ sessionId: '22222222-aaaa-4bbb-8ccc-000000000002', source: 'clear' })
+    // Any later event carries it too; Codex's hook says so.
+    await run({ hook_event_name: 'UserPromptSubmit', session_id: '019a0000-cccc-7ddd-8eee-000000000003', cwd: dir }, ['--codex'])
+    expect(report()).toMatchObject({ agent: 'codex', sessionId: '019a0000-cccc-7ddd-8eee-000000000003' })
+    // Never a strange id.
+    await run({ hook_event_name: 'UserPromptSubmit', session_id: '../../evil', cwd: dir })
+    expect(report().sessionId).toBe('019a0000-cccc-7ddd-8eee-000000000003')
+    fs.rmSync(sessions, { recursive: true, force: true })
+  })
+
   it('each user message reminds Claude Code of the board rule, with its open cards', async () => {
     const run = (input) =>
       new Promise((resolve) => {
@@ -237,6 +265,8 @@ describe('setting up the team tools', () => {
     expect(s.model).toBe('x')
     expect(s.hooks.Stop.map((g) => g.hooks[0].command)).toEqual(['mine.sh', `node "${script}" --hook`])
     expect(s.hooks.UserPromptSubmit[0].hooks[0].command).toMatch(/--hook$/)
+    // SessionStart too: it tells Tessel the conversation after /clear, /resume.
+    expect(s.hooks.SessionStart[0].hooks[0].command).toMatch(/--hook$/)
     expect(fs.existsSync(file + '.before-tessel')).toBe(true)
     expect(installClaudeHooks(script, home)).toEqual({ changed: false }) // already there
   })

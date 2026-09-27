@@ -24,7 +24,7 @@
 const fs = require('fs')
 const path = require('path')
 
-const VERSION = '1.6.1'
+const VERSION = '1.6.2'
 const MAX_TEXT = 6000
 
 // --- Finding my team and me ---------------------------------------------------
@@ -481,6 +481,34 @@ function serve() {
 // extra context (UserPromptSubmit, PostToolUse); on Stop they keep Claude
 // going once so it can answer (never when it already continued for a hook).
 // Outside a Tessel team it prints nothing.
+// --- Session reports -------------------------------------------------------------
+// The conversation an agent is in right now, as its own hooks say it (every
+// event carries session_id; SessionStart comes right after /clear, /resume
+// or a restart). Written per pane in <this script's folder>/sessions/, so
+// Tessel always resumes the conversation the agent was really in, never an
+// id recorded at launch that the user left since.
+function reportSession(data, agent) {
+  const paneId = process.env.TESSEL_PANE_ID || ''
+  const id = String((data && data.session_id) || '')
+  if (!/^[A-Za-z0-9._-]{1,100}$/.test(paneId) || paneId.startsWith('.')) return
+  if (!/^[A-Za-z0-9_-]{6,80}$/.test(id)) return
+  const dir = process.env.TESSEL_SESSIONS_DIR || path.join(__dirname, 'sessions')
+  const file = path.join(dir, `${paneId}.json`)
+  try {
+    const old = readJson(file)
+    if (old && old.sessionId === id && old.agent === agent) return // unchanged
+    fs.mkdirSync(dir, { recursive: true })
+    const tmp = `${file}.${process.pid}.tmp`
+    fs.writeFileSync(
+      tmp,
+      JSON.stringify({ agent, sessionId: id, source: String(data.source || data.hook_event_name || ''), cwd: String(data.cwd || ''), at: Date.now() })
+    )
+    fs.renameSync(tmp, file)
+  } catch {
+    // not recorded this time: the next event tries again
+  }
+}
+
 function hookMain() {
   let input = ''
   process.stdin.setEncoding('utf8')
@@ -492,9 +520,12 @@ function hookMain() {
     } catch {
       data = {}
     }
+    // Which conversation the agent is in: recorded first, team or not.
+    reportSession(data, process.argv.includes('--codex') ? 'codex' : 'claude')
+    const event = data.hook_event_name
+    if (event === 'SessionStart') return // only the report above
     const ctx = locate(null, data.cwd)
     if (ctx.error) return
-    const event = data.hook_event_name
     if (event === 'Stop' && data.stop_hook_active) return
     const text = readInbox(ctx)
     const notes = []

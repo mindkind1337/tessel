@@ -703,6 +703,27 @@ ipcMain.handle('sessions:findCodex', (_evt, q = {}) => findCodexSession(q))
 // the session a pane started (they choose its id), found after it starts.
 ipcMain.handle('sessions:geminiExists', (_evt, id) => geminiSessionExists(id))
 ipcMain.handle('sessions:qwenExists', (_evt, id) => qwenSessionExists(id))
+// The conversation each agent pane is in now, as its hooks reported it
+// (teamMcp/server.cjs reportSession): { paneId: { agent, sessionId, source, at } }.
+ipcMain.handle('sessions:reported', () => {
+  const dir = join(app.getPath('appData'), 'tessel-team', 'sessions')
+  const out = {}
+  let names = []
+  try {
+    names = fs.readdirSync(dir).filter((n) => n.endsWith('.json'))
+  } catch {
+    return out
+  }
+  for (const n of names) {
+    try {
+      const r = JSON.parse(fs.readFileSync(join(dir, n), 'utf8'))
+      if (r && typeof r.sessionId === 'string') out[n.slice(0, -5)] = r
+    } catch {
+      /* being written: next time */
+    }
+  }
+  return out
+})
 ipcMain.handle('sessions:find', (_evt, q = {}) => {
   try {
     return findAgentSession(q || {})

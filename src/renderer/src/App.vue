@@ -3839,9 +3839,39 @@ onBeforeUnmount(() => clearInterval(detectTimer))
 // The team tools' version now (server.cjs VERSION), once they are set up.
 let teamToolsVersion = null
 // Started with the team tools as they are now (an older version: restarted).
+// Only a new tools API (the first two numbers of their version: new or
+// changed tools) restarts agents; a fix (third number) is picked up by the
+// next hook run or tool start without restarting anyone.
+const toolsApi = (v) => String(v || '').split('.').slice(0, 2).join('.')
 function hasCurrentTools(leaf) {
-  return !!leaf.teamTools && (!teamToolsVersion || leaf.toolsVersion === teamToolsVersion)
+  return !!leaf.teamTools && (!teamToolsVersion || toolsApi(leaf.toolsVersion) === toolsApi(teamToolsVersion))
 }
+
+// The conversation each agent is really in, as its hooks report it (after
+// /clear, /resume, a new conversation...): the pane follows it, so a restart
+// or a reopened Tessel resumes that one, never the id found at launch.
+const safeReportedId = (id) => typeof id === 'string' && /^[A-Za-z0-9_-]{6,80}$/.test(id)
+async function followReportedSessions() {
+  if (!window.shellApi.reportedSessions) return
+  let reports = null
+  try {
+    reports = await window.shellApi.reportedSessions()
+  } catch {
+    return
+  }
+  if (!reports) return
+  forEachWsLeaf((leaf) => {
+    const r = reports[leaf.id]
+    if (!r || leaf.kind !== 'agent' || r.agent !== leaf.agentId || !safeReportedId(r.sessionId)) return
+    if (r.sessionId === leaf.sessionId) return
+    // A report older than this pane's start belongs to an earlier agent in it.
+    if (leaf.launchedAt && r.at < leaf.launchedAt - 5000) return
+    if (window.shellApi.log) window.shellApi.log('info', `${paneLabel(leaf)} (${leaf.id}) is now in conversation ${r.sessionId} (${r.source || 'reported'})`)
+    leaf.sessionId = r.sessionId
+  })
+}
+const sessionFollowTimer = setInterval(followReportedSessions, 5000)
+onBeforeUnmount(() => clearInterval(sessionFollowTimer))
 // The team tools are set up for Claude Code and Codex once a team exists
 // (MCP server "tessel-team" + Claude Code hooks; listed in the MCP dialog).
 let teamToolsNextTry = 0
