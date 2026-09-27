@@ -60,10 +60,10 @@ export function installClaudeHooks(scriptPath, home = os.homedir()) {
 }
 
 // Codex hooks in ~/.codex/hooks.json (the same format; hooks are on by
-// default since Codex 0.157). Only to learn the conversation Codex is in
-// (SessionStart after /new, /resume, a restart; every prompt): the hook
-// prints nothing for Codex.
-export const CODEX_HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit']
+// default since Codex 0.157). SessionStart and UserPromptSubmit report the
+// conversation; Stop can continue once with unread team messages. Codex
+// requires the updated hook definition to be reviewed/trusted in /hooks.
+export const CODEX_HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'Stop']
 export function installCodexHooks(scriptPath, home = os.homedir()) {
   const command = `node ${quote(scriptPath)} --hook --codex`
   return installHooks(join(home, '.codex', 'hooks.json'), CODEX_HOOK_EVENTS, command, { commandWindows: command })

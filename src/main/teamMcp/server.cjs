@@ -25,7 +25,7 @@ const fs = require('fs')
 const path = require('path')
 const { randomUUID } = require('crypto')
 
-const VERSION = '1.6.5'
+const VERSION = '1.6.6'
 const MAX_TEXT = 6000
 
 // --- Finding my team and me ---------------------------------------------------
@@ -537,9 +537,41 @@ function hookMain() {
     // Which conversation the agent is in: recorded first, team or not.
     const codex = process.argv.includes('--codex')
     reportSession(data, codex ? 'codex' : 'claude')
-    // Codex's hooks only tell the conversation: its hook output format is
-    // not Claude Code's, so nothing is printed for it.
-    if (codex) return
+    if (codex) {
+      // Codex Stop decisions become continuation prompts. Other events keep
+      // reporting the session only; an already continued turn never loops.
+      if (data.hook_event_name !== 'Stop' || data.stop_hook_active) return
+      const ctx = locate(null, data.cwd)
+      if (ctx.error) return
+      const prefix = '[Tessel] New team messages:\n'
+      const suffix = '\nReply with team_send. Read team_inbox for any remaining messages.'
+      const format = (m) => `[${label(ctx, m.fromId)} → you, message ${m.id}${m.replyTo ? `, reply to ${m.replyTo}` : ''}] ${m.text}`
+      const selected = []
+      let remaining = 16000 - prefix.length - suffix.length
+      let oversized = false
+      for (const m of unread(ctx)) {
+        const size = isReceipt(m) ? 0 : format(m).length + 1
+        // Never acknowledge a message and then truncate away its contents:
+        // whole messages that do not fit stay unread for team_inbox.
+        if (size > remaining) {
+          oversized = selected.every(isReceipt)
+          break
+        }
+        remaining -= size
+        selected.push(m)
+      }
+      // The same exclusive claim as team_inbox: a concurrent reader cannot
+      // also receive the messages this hook includes in its continuation.
+      const shown = markRead(ctx, selected).filter((m) => !isReceipt(m))
+      if (shown.length) {
+        process.stdout.write(JSON.stringify({ decision: 'block', reason: prefix + shown.map(format).join('\n') + suffix }))
+      } else if (oversized) {
+        // Older/foreign channel data may contain one oversized message.
+        // Leave it unread and ask for the full inbox instead of losing text.
+        process.stdout.write(JSON.stringify({ decision: 'block', reason: '[Tessel] A new team message is too long for this notification. Read it with team_inbox and reply with team_send.' }))
+      }
+      return
+    }
     const event = data.hook_event_name
     if (event === 'SessionStart') return // only the report above
     const ctx = locate(null, data.cwd)
