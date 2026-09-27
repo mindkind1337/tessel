@@ -32,7 +32,10 @@ export function taskBoardFilePath(userDataDir) {
  * @returns {Array<object>}
  */
 export function loadTasks(userDataDir) {
-  return loadBoard(userDataDir).tasks
+  const board = loadBoard(userDataDir)
+  // Even the older list API must preserve this signal: its fallback cannot
+  // be edited/saved while the latest board remains unread.
+  return board.locked ? board : board.tasks
 }
 
 // The board with its ledger: appliedRequests, the agents' board requests
@@ -41,11 +44,16 @@ export function loadTasks(userDataDir) {
 // -> { tasks, appliedRequests }
 export function loadBoard(userDataDir) {
   const file = taskBoardFilePath(userDataDir)
-  if (!fs.existsSync(file) && !fs.existsSync(`${file}.bak`)) return { tasks: [], appliedRequests: [] }
 
   // A damaged file (stopped mid-write by an older version, cut, unknown
   // shape) is kept aside as .corrupt-<time> and the previous good copy used.
-  const res = readJsonSafe(file, isTaskList)
+  const res = readJsonSafe(file, isTaskList, { onLocked: 'backup' })
+  if (res.locked) return {
+    locked: true,
+    tasks: Array.isArray(res.data) ? res.data : res.data?.tasks || [],
+    appliedRequests: Array.isArray(res.data?.appliedRequests)
+      ? res.data.appliedRequests.filter((k) => typeof k === 'string') : []
+  }
   if (res.data) {
     if (Array.isArray(res.data)) return { tasks: res.data, appliedRequests: [] }
     const applied = Array.isArray(res.data.appliedRequests)
