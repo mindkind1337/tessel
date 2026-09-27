@@ -19,7 +19,8 @@ import os from 'os'
 import { join } from 'path'
 import { findCodexSession, isUuid } from './agentSessions'
 import { clineDataDir } from './jsonAgents'
-import { normDir, readFirstLine, readRows } from './fileRead'
+import { normDir, readFirstLine, readRows, readHead } from './fileRead'
+import { geminiFiles, parseGeminiHead, qwenProjectsRoot } from './agentHistory'
 
 const SLACK = 5000
 
@@ -49,36 +50,12 @@ export function pickSession(list, { cwd, since, exclude = [], latest = false, ac
 
 export function geminiSessionExists(id, home = os.homedir()) {
   if (!isUuid(id)) return false
-  const tmp = join(home, '.gemini', 'tmp')
-  let projects
-  try {
-    projects = fs.readdirSync(tmp, { withFileTypes: true }).filter((d) => d.isDirectory())
-  } catch {
-    return false
-  }
-  const tail = `-${id.slice(0, 8)}.jsonl`
-  for (const p of projects) {
-    let files
-    try {
-      files = fs.readdirSync(join(tmp, p.name, 'chats'))
-    } catch {
-      continue
-    }
-    for (const f of files) {
-      if (!f.startsWith('session-') || !f.endsWith(tail)) continue
-      // The first 8 characters could match another id: check the whole one.
-      try {
-        const fd = fs.openSync(join(tmp, p.name, 'chats', f), 'r')
-        const buf = Buffer.alloc(4096)
-        const n = fs.readSync(fd, buf, 0, buf.length, 0)
-        fs.closeSync(fd)
-        if (buf.subarray(0, n).toString('utf8').includes(id)) return true
-      } catch {
-        /* unreadable: not this one */
-      }
-    }
-  }
-  return false
+  return geminiFiles(home).some(f => {
+    // Both the current JSONL and legacy JSON files use the short id in their
+    // name. Verify the full metadata id, never a mention in a user prompt.
+    if (!f.full.endsWith(`-${id.slice(0, 8)}.${f.legacy ? 'json' : 'jsonl'}`)) return false
+    return parseGeminiHead(readHead(f.full), { legacy: f.legacy, truncated: f.size > 256 * 1024 })?.id === id
+  })
 }
 
 // --- OpenCode ----------------------------------------------------------------------
@@ -148,7 +125,7 @@ export function copilotSessions(home = os.homedir(), since = 0) {
 
 export function qwenSessionExists(id, home = os.homedir()) {
   if (!isUuid(id)) return false
-  const root = join(process.env.QWEN_HOME || join(home, '.qwen'), 'projects')
+  const root = qwenProjectsRoot(home)
   let projects
   try {
     projects = fs.readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirectory())

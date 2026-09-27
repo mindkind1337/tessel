@@ -309,7 +309,58 @@ const AGENT_PRESETS = [
     name: 'Amp',
     command: 'amp',
     accent: '#f34e3f',
-    install: ['npm install -g @sourcegraph/amp']
+    install: ['npm install -g @ampcode/cli']
+  },
+  {
+    id: 'cursor',
+    name: 'Cursor CLI',
+    // `agent` is also a Grok alias. Cursor keeps its distinctive CLI name.
+    command: 'cursor-agent',
+    accent: '#a3a3a3',
+    install: null
+  },
+  {
+    id: 'grok',
+    name: 'Grok Build',
+    command: 'grok',
+    accent: '#b8b8b8',
+    install: null
+  },
+  {
+    id: 'pi',
+    name: 'Pi',
+    command: 'pi',
+    accent: '#cf7cdb',
+    install: ['npm install -g --ignore-scripts @earendil-works/pi-coding-agent']
+  },
+  {
+    id: 'droid',
+    name: 'Factory Droid',
+    command: 'droid',
+    accent: '#f08050',
+    install: ['npm install -g @factory/cli']
+  },
+  {
+    id: 'crush',
+    name: 'Crush',
+    command: 'crush',
+    accent: '#ff79c6',
+    install: ['npm install -g @charmland/crush']
+  },
+  {
+    id: 'goose',
+    name: 'Goose',
+    command: 'goose',
+    accent: '#e4b65b',
+    install: null
+  },
+  {
+    id: 'auggie',
+    name: 'Auggie',
+    command: 'auggie',
+    accent: '#67c5ad',
+    // Augment currently documents Windows through WSL, not native setup.
+    install: null
   },
   {
     id: 'aider',

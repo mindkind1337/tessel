@@ -1,5 +1,5 @@
 <script setup>
-// Past Claude Code and Codex conversations, newest first. Resume one in a new
+// Past agent conversations, newest first. Resume one in a new
 // pane (in the folder it ran in), jump to a pane that already has it open, or
 // copy its session id.
 import { ref, computed, onMounted } from 'vue'
@@ -11,7 +11,13 @@ const props = defineProps({
 })
 const emit = defineEmits(['close', 'resume', 'show', 'copied'])
 
-const AGENT_NAME = { claude: 'Claude Code', codex: 'Codex' }
+const AGENT_NAME = {
+  claude: 'Claude Code',
+  codex: 'Codex',
+  gemini: 'Gemini',
+  qwen: 'Qwen',
+  opencode: 'OpenCode'
+}
 
 const cardEl = ref(null)
 const loading = ref(true)
@@ -99,20 +105,19 @@ onMounted(() => {
           </svg>
         </button>
       </div>
-      <p class="mcp-intro">
-        Your past Claude Code and Codex conversations. Resume one to pick up where it left off.
-      </p>
+      <p class="mcp-intro">Your past conversations. Resume one to pick up where it left off.</p>
 
       <div class="sessions-filters">
         <input
           v-model="query"
           class="set-number sessions-search"
           placeholder="Search conversations"
+          aria-label="Search conversations"
           spellcheck="false"
         />
         <div class="mcp-cats">
           <button
-            v-for="f in ['all', 'claude', 'codex']"
+            v-for="f in ['all', ...Object.keys(AGENT_NAME)]"
             :key="f"
             class="mcp-cat"
             :class="{ on: agentFilter === f }"
@@ -145,7 +150,8 @@ onMounted(() => {
         <div class="tool-main">
           <span class="session-title" :title="s.title">{{ s.title }}</span>
           <span class="set-hint session-meta">
-            {{ ago(s.updated) }} · <span :title="s.cwd">{{ folderName(s.cwd) }}</span> ·
+            {{ ago(s.updated) }} ·
+            <span :title="s.cwd">{{ folderName(s.cwd) || 'Unknown folder' }}</span> ·
             <code class="session-id" :title="s.id">{{ s.id.slice(0, 8) }}</code>
           </span>
         </div>
@@ -153,7 +159,19 @@ onMounted(() => {
         <button v-if="openIds[s.id]" class="exit-btn" @click="emit('show', openIds[s.id])">
           Show pane
         </button>
-        <button v-else class="exit-btn primary" @click="emit('resume', s)">Resume</button>
+        <button
+          v-else
+          class="exit-btn primary"
+          :disabled="!s.cwd"
+          :title="
+            s.cwd
+              ? 'Resume in its project folder'
+              : 'The saved project folder is unavailable. You can still copy the session ID.'
+          "
+          @click="emit('resume', s)"
+        >
+          Resume
+        </button>
       </div>
     </div>
   </div>
