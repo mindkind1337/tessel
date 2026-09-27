@@ -540,7 +540,11 @@ describe('two Tessel windows in one project', () => {
     expect(found('pane-9-zzzzzz').teamId).toBe('team-9')
     age('app', 6 * 60 * 1000)
     expect(found('pane-9-zzzzzz').error).toMatch(/no longer in a Tessel team/)
+    // Damaged and left unchanged since its window closed (not one being
+    // replaced right now): the team is over.
     fs.writeFileSync(ownFile('app'), '{damaged')
+    const old = new Date(Date.now() - 6 * 60 * 1000)
+    fs.utimesSync(ownFile('app'), old, old)
     expect(found('pane-9-zzzzzz').error).toMatch(/no longer in a Tessel team/)
   })
 

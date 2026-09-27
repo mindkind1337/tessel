@@ -68,7 +68,8 @@ function readJson(file) {
 const WINDOW_GONE_MS = 5 * 60 * 1000
 // A file there that cannot be read right now (being replaced, held by an
 // antivirus, Tessel restarting) is tried again briefly; still unreadable, it
-// is reported in `info.unsure` so a caller never takes it for "no team".
+// is reported in `info.unsure` so a caller never takes it for "no team". One
+// left unchanged longer than a window is kept (its window is gone) is not.
 function readJsonSteady(file, info) {
   for (let i = 0; i < 4; i++) {
     const data = readJson(file)
@@ -76,7 +77,11 @@ function readJsonSteady(file, info) {
     if (!fs.existsSync(file)) return null
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 40)
   }
-  if (info) info.unsure = true
+  try {
+    if (info && Date.now() - fs.statSync(file).mtimeMs <= WINDOW_GONE_MS) info.unsure = true
+  } catch {
+    // gone meanwhile
+  }
   return null
 }
 
