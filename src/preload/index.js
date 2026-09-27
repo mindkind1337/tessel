@@ -9,6 +9,8 @@ const api = {
   refreshAgents: (custom) => ipcRenderer.invoke('agents:refresh', custom),
   checkTools: (bins) => ipcRenderer.invoke('tools:check', bins),
   toolStatus: () => ipcRenderer.invoke('tools:status'),
+  // What Tessel needs and whether it is here: { ok, rows: [...] }.
+  tesselNeeds: () => ipcRenderer.invoke('tools:needs'),
   refreshPath: () => ipcRenderer.invoke('tools:refreshPath'),
   createPty: (opts) => ipcRenderer.invoke('pty:create', opts),
   attachPty: (id) => ipcRenderer.invoke('pty:attach', id),

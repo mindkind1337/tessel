@@ -14,7 +14,26 @@ const props = defineProps({
 const emit = defineEmits(['close', 'run', 'refresh', 'install-agent'])
 
 const cardEl = ref(null)
-const tab = ref('agents')
+const tab = ref('needs')
+
+// What Tessel itself needs (main process, tesselNeeds.js): each row ok, to
+// fix, missing or optional, with the install or the place to fix it.
+const NEED_LABEL = { ok: 'OK', warn: 'To fix', missing: 'Missing', optional: 'Optional' }
+const toolById = Object.fromEntries(DEV_TOOLS.map((t) => [t.id, t]))
+const needs = ref(null)
+const needsError = ref('')
+const needsToFix = computed(() => (needs.value || []).filter((r) => r.status === 'warn' || r.status === 'missing').length)
+async function loadNeeds() {
+  if (!window.shellApi.tesselNeeds) return
+  needsError.value = ''
+  try {
+    const res = await window.shellApi.tesselNeeds()
+    if (res && res.ok) needs.value = res.rows
+    else needsError.value = (res && res.error) || 'Could not check.'
+  } catch (err) {
+    needsError.value = (err && err.message) || 'Could not check.'
+  }
+}
 const found = reactive({}) // bin -> bool
 const setup = reactive({}) // tool id -> setup status from the main process
 const checking = ref(false)
@@ -40,6 +59,7 @@ async function checkAll() {
       Object.assign(found, res || {})
     }
     await loadSetup()
+    await loadNeeds()
     emit('refresh')
   } finally {
     checking.value = false
@@ -158,6 +178,9 @@ onBeforeUnmount(() => window.removeEventListener('focus', onWindowFocus))
       </div>
 
       <div class="launch-seg tools-tabs">
+        <button class="launch-seg-btn" :class="{ on: tab === 'needs' }" @click="tab = 'needs'">
+          Tessel needs<span v-if="needsToFix" class="mcp-count">{{ needsToFix }}</span>
+        </button>
         <button class="launch-seg-btn" :class="{ on: tab === 'agents' }" @click="tab = 'agents'">
           AI agents
         </button>
@@ -170,8 +193,30 @@ onBeforeUnmount(() => window.removeEventListener('focus', onWindowFocus))
         <b>Check again</b>. New panes pick it up without restarting the app.
       </p>
 
+      <!-- What Tessel itself needs -->
+      <template v-if="tab === 'needs'">
+        <p v-if="needsError" class="mcp-error">{{ needsError }}</p>
+        <p v-else-if="!needs" class="set-hint">Checking…</p>
+        <p v-else-if="!needsToFix" class="mcp-notice">Everything Tessel needs is here.</p>
+        <div v-for="r in needs || []" :key="r.id" class="tool-row">
+          <div class="tool-main">
+            <span class="tool-name">{{ r.name }}</span>
+            <span class="tool-why">{{ r.why }}</span>
+            <span class="tool-detail">{{ r.detail }}</span>
+            <span v-if="r.fix && r.fix.where" class="tool-why">Fix: {{ r.fix.where }}</span>
+          </div>
+          <span class="tool-status" :class="r.status">{{ NEED_LABEL[r.status] || r.status }}</span>
+          <button v-if="r.fix && r.fix.install && toolById[r.fix.install]" class="exit-btn primary" @click="install(toolById[r.fix.install].name, toolById[r.fix.install].install)">
+            Install
+          </button>
+          <button v-else-if="r.fix && r.fix.run" class="exit-btn primary" @click="runAction({ label: r.fix.run, command: r.fix.run })">
+            Update
+          </button>
+        </div>
+      </template>
+
       <!-- AI agents -->
-      <template v-if="tab === 'agents'">
+      <template v-else-if="tab === 'agents'">
         <div v-for="a in builtinAgents" :key="a.id" class="tool-row">
           <BrandIcon :kind="a.id" :accent="a.accent" :label="a.name" :size="22" />
           <div class="tool-main">

@@ -9,6 +9,7 @@ import { claudeSessionExists, findCodexSession, listSessions } from './agentSess
 import { agentModelLive, watchModelFiles } from './agentModel'
 import { postToInbox } from './agentInbox'
 import { hooksStatus } from './teamHooksStatus'
+import { assessNeeds } from './tesselNeeds'
 import { findAgentSession, geminiSessionExists, qwenSessionExists } from './agentResume'
 import { extraToolDirs, withToolDirs } from './toolDirs'
 import { createInstallLogs } from './installLog'
@@ -1147,6 +1148,44 @@ function runFile(file, args) {
     )
   })
 }
+
+// What Tessel itself needs, checked on this machine (tesselNeeds.js).
+ipcMain.handle(
+  'tools:needs',
+  safe(async () => {
+    const [nodePath, gitPath, uvx, agentList] = await Promise.all([
+      whichFresh('node'),
+      whichFresh('git'),
+      commandExists('uvx'),
+      getAgents()
+    ])
+    const node = nodePath ? { path: nodePath, version: (await runFile(nodePath, ['--version'])).out.trim() } : null
+    let git = null
+    if (gitPath) {
+      const name = await runFile(gitPath, ['config', '--global', 'user.name'])
+      const email = await runFile(gitPath, ['config', '--global', 'user.email'])
+      git = { path: gitPath, configured: !!(name.ok && name.out.trim() && email.ok && email.out.trim()) }
+    }
+    const claude = agentList.find((a) => a.id === 'claude' && a.available)
+    // An npm launcher (claude.cmd): through cmd, on the fresh PATH.
+    const claudeVersion = claude ? (await runFile('cmd.exe', ['/d', '/c', 'claude', '--version'])).out.trim() : null
+    const scriptPath = join(app.getPath('appData'), 'tessel-team', 'tessel-team-mcp.cjs')
+    let script = { exists: false }
+    try {
+      const text = fs.readFileSync(scriptPath, 'utf8')
+      script = { exists: true, version: (/const VERSION = '([^']+)'/.exec(text) || [])[1] || null }
+    } catch {
+      /* not set up yet */
+    }
+    let hooks
+    try {
+      hooks = hooksStatus({ sessionsDir: sessionsDir(), scriptPath })
+    } catch (err) {
+      hooks = { error: err.message }
+    }
+    return { ok: true, rows: assessNeeds({ node, git, uvx, agents: agentList, claudeVersion, script, hooks }) }
+  })
+)
 
 // Setup status for tools that need a one-time step, so Tools only offers the
 // step when it's still needed: GitHub CLI sign-in and git's name/email.

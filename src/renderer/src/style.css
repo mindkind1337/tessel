@@ -2619,6 +2619,28 @@ body.pane-dragging * {
   color: #8ff0b8;
 }
 
+.tool-status.warn {
+  background: color-mix(in srgb, var(--warn) 18%, transparent);
+  color: var(--warn);
+}
+
+.tool-status.missing {
+  background: color-mix(in srgb, var(--danger) 20%, transparent);
+  color: var(--danger);
+}
+
+.tool-why {
+  color: var(--text-dim);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+.tool-detail {
+  color: var(--text);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
 .tools-search {
   width: 100%;
   margin-bottom: 4px;
