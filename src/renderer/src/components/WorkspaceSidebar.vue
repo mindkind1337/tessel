@@ -623,7 +623,7 @@ defineExpose({
             :kind="r.s.kind === 'agent' ? r.s.agentId : r.s.shellId"
             :accent="r.s.kind === 'agent' ? r.s.accent : null"
             :label="r.s.kind === 'agent' ? r.s.title : null"
-            :size="14"
+            :size="16"
           />
           <span class="ws-session-body">
             <span class="ws-session-name"
