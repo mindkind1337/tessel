@@ -13,32 +13,10 @@ import os from 'os'
 import { join } from 'path'
 import { isUuid } from './agentSessions'
 import { clineDataDir } from './jsonAgents'
+import { normDir, readRows, readTail as readTailBytes, readText } from './fileRead'
 
 const TAIL = 256 * 1024
-
-function readTail(file, bytes = TAIL) {
-  let fd
-  try {
-    fd = fs.openSync(file, 'r')
-    const size = fs.fstatSync(fd).size
-    const len = Math.min(bytes, size)
-    const buf = Buffer.alloc(len)
-    const n = fs.readSync(fd, buf, 0, len, size - len)
-    return buf.subarray(0, n).toString('utf8')
-  } catch {
-    return ''
-  } finally {
-    if (fd !== undefined) fs.closeSync(fd)
-  }
-}
-
-function readText(file) {
-  try {
-    return fs.readFileSync(file, 'utf8')
-  } catch {
-    return ''
-  }
-}
+const readTail = (file) => readTailBytes(file, TAIL)
 
 // JSON, or JSON with comments and trailing commas (.jsonc).
 function parseLoose(text) {
@@ -185,11 +163,6 @@ function pidAlive(pid) {
   }
 }
 
-const normDir = (p) =>
-  String(p || '')
-    .replace(/\//g, '\\')
-    .replace(/\\+$/, '')
-    .toLowerCase()
 
 // Copilot keeps each session in ~/.copilot/session-state/<id>/, with an
 // inuse.<pid>.lock file while a Copilot process has it open. The pane's
@@ -265,27 +238,11 @@ export function clineSessionModel(rows, cwd, alive = pidAlive) {
 }
 
 function clineLive(cwd, home) {
-  const sqlite = process.getBuiltinModule ? process.getBuiltinModule('node:sqlite') : null
-  const file = join(clineDataDir(home), 'db', 'sessions.db')
-  if (!sqlite || !fs.existsSync(file)) return null
-  let db
-  try {
-    db = new sqlite.DatabaseSync(file, { readOnly: true })
-    const rows = db
-      .prepare(
-        'SELECT pid, model, cwd, ended_at, is_subagent, updated_at FROM sessions WHERE ended_at IS NULL ORDER BY updated_at DESC LIMIT 50'
-      )
-      .all()
-    return clineSessionModel(rows, cwd)
-  } catch {
-    return null // busy, or another layout
-  } finally {
-    try {
-      if (db) db.close()
-    } catch {
-      /* closed */
-    }
-  }
+  const rows = readRows(
+    join(clineDataDir(home), 'db', 'sessions.db'),
+    'SELECT pid, model, cwd, ended_at, is_subagent, updated_at FROM sessions WHERE ended_at IS NULL ORDER BY updated_at DESC LIMIT 50'
+  )
+  return rows.length ? clineSessionModel(rows, cwd) : null
 }
 
 // Cline's provider settings: the provider in use and its model (none set:

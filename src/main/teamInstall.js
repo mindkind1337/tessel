@@ -14,24 +14,12 @@
 import fs from 'fs'
 import os from 'os'
 import { join } from 'path'
+import { readJson } from './fileRead'
+import { writeFileAtomic as writeAtomic } from './safeJson'
 
 export const SERVER_NAME = 'tessel-team'
 const HOOK_EVENTS = ['UserPromptSubmit', 'PostToolUse', 'Stop']
 const OURS = 'tessel-team-mcp.cjs'
-
-function readJson(file) {
-  try {
-    return JSON.parse(fs.readFileSync(file, 'utf8'))
-  } catch {
-    return null
-  }
-}
-
-function writeAtomic(file, text) {
-  const tmp = `${file}.tessel-${process.pid}.tmp`
-  fs.writeFileSync(tmp, text, 'utf8')
-  fs.renameSync(tmp, file)
-}
 
 // The server's VERSION ('1.4.0' -> [1, 4, 0]), or null.
 export function scriptVersion(source) {

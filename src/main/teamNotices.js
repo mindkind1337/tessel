@@ -6,6 +6,10 @@
 import fs from 'fs'
 import { join, resolve, isAbsolute } from 'path'
 import { ensureTeamChannel } from './teamChannel'
+import { readJson } from './fileRead'
+import { writeFileAtomic } from './safeJson'
+
+const writeAtomic = (file, data) => writeFileAtomic(file, JSON.stringify(data, null, 2))
 
 const ID_RE = /^(?!\.)(?!.*\.\.)[A-Za-z0-9._-]{1,100}$/
 const MAX_NOTICES = 500
@@ -13,41 +17,6 @@ const MAX_NOTICES = 500
 function base(dir) {
   if (typeof dir !== 'string' || !isAbsolute(dir) || !fs.existsSync(dir)) return null
   return join(resolve(dir), '.tessel', 'team-channel')
-}
-
-// On Windows the rename fails for a moment while another process (a team
-// tool reading the file, an antivirus scan) has the file open: tried again.
-function writeAtomic(file, data) {
-  const tmp = `${file}.${process.pid}.tmp`
-  fs.writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf8')
-  for (let i = 0; ; i++) {
-    try {
-      fs.renameSync(tmp, file)
-      return
-    } catch (err) {
-      if (i >= 20 || !['EPERM', 'EBUSY', 'EACCES'].includes(err.code)) {
-        try {
-          fs.unlinkSync(tmp)
-        } catch {
-          // nothing left to clean
-        }
-        throw err
-      }
-      sleepSync(25)
-    }
-  }
-}
-
-function readJson(file) {
-  try {
-    return JSON.parse(fs.readFileSync(file, 'utf8'))
-  } catch {
-    return null
-  }
-}
-
-function sleepSync(ms) {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
 }
 
 // Two Tessel windows (say the installed app and the dev build) can have teams

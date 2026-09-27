@@ -9,6 +9,7 @@
 import fs from 'fs'
 import os from 'os'
 import { join } from 'path'
+import { normDir, readFirstLine, readHead } from './fileRead'
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -27,29 +28,6 @@ export function claudeSessionExists(id, home = os.homedir()) {
     return false
   }
   return dirs.some((d) => d.isDirectory() && fs.existsSync(join(root, d.name, `${id}.jsonl`)))
-}
-
-function normDir(p) {
-  return String(p || '')
-    .replace(/\//g, '\\')
-    .replace(/\\+$/, '')
-    .toLowerCase()
-}
-
-function readFirstLine(file) {
-  let fd
-  try {
-    fd = fs.openSync(file, 'r')
-    const buf = Buffer.alloc(64 * 1024)
-    const n = fs.readSync(fd, buf, 0, buf.length, 0)
-    const text = buf.subarray(0, n).toString('utf8')
-    const nl = text.indexOf('\n')
-    return nl >= 0 ? text.slice(0, nl) : text
-  } catch {
-    return ''
-  } finally {
-    if (fd !== undefined) fs.closeSync(fd)
-  }
 }
 
 // Parse a Codex rollout file's first line into { id, cwd, time } (or null).
@@ -127,20 +105,6 @@ export function findCodexSession(
 // Session list: past Claude Code and Codex conversations, newest first.
 // Only the start of each file is read, so this stays fast with many sessions.
 // ---------------------------------------------------------------------------
-
-function readHead(file, bytes = 256 * 1024) {
-  let fd
-  try {
-    fd = fs.openSync(file, 'r')
-    const buf = Buffer.alloc(bytes)
-    const n = fs.readSync(fd, buf, 0, bytes, 0)
-    return buf.subarray(0, n).toString('utf8')
-  } catch {
-    return ''
-  } finally {
-    if (fd !== undefined) fs.closeSync(fd)
-  }
-}
 
 function textOf(content) {
   if (typeof content === 'string') return content

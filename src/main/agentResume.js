@@ -19,42 +19,14 @@ import os from 'os'
 import { join } from 'path'
 import { findCodexSession, isUuid } from './agentSessions'
 import { clineDataDir } from './jsonAgents'
+import { normDir, readFirstLine, readRows } from './fileRead'
 
 const SLACK = 5000
-
-function normDir(p) {
-  return String(p || '')
-    .replace(/\//g, '\\')
-    .replace(/\\+$/, '')
-    .toLowerCase()
-}
 
 // Session ids an agent hands out: letters, digits, _ and -, nothing a shell
 // could read as anything else.
 export function isSessionId(id) {
   return typeof id === 'string' && /^[A-Za-z0-9_-]{6,80}$/.test(id)
-}
-
-function sqliteOf() {
-  return process.getBuiltinModule ? process.getBuiltinModule('node:sqlite') : null
-}
-
-function readRows(file, sql, params = []) {
-  const sqlite = sqliteOf()
-  if (!sqlite || !fs.existsSync(file)) return []
-  let db
-  try {
-    db = new sqlite.DatabaseSync(file, { readOnly: true })
-    return db.prepare(sql).all(...params)
-  } catch {
-    return [] // busy, or another layout
-  } finally {
-    try {
-      if (db) db.close()
-    } catch {
-      /* closed */
-    }
-  }
 }
 
 // The choice, from { id, cwd, time (ms start), updated (ms) } candidates.
@@ -135,22 +107,6 @@ export function clineSessions(home = os.homedir()) {
 
 // --- Copilot CLI --------------------------------------------------------------------
 
-function firstLine(file) {
-  let fd
-  try {
-    fd = fs.openSync(file, 'r')
-    const buf = Buffer.alloc(16 * 1024)
-    const n = fs.readSync(fd, buf, 0, buf.length, 0)
-    const text = buf.subarray(0, n).toString('utf8')
-    const nl = text.indexOf('\n')
-    return nl >= 0 ? text.slice(0, nl) : text
-  } catch {
-    return ''
-  } finally {
-    if (fd !== undefined) fs.closeSync(fd)
-  }
-}
-
 export function copilotSessions(home = os.homedir(), since = 0) {
   const root = join(home, '.copilot', 'session-state')
   let dirs
@@ -170,7 +126,7 @@ export function copilotSessions(home = os.homedir(), since = 0) {
     }
     if (updated < since - SLACK) continue // older than the pane: skip reading it
     try {
-      const o = JSON.parse(firstLine(events))
+      const o = JSON.parse(readFirstLine(events, 16 * 1024))
       const data = o && o.type === 'session.start' ? o.data || {} : null
       if (!data) continue
       out.push({

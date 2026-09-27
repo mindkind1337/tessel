@@ -14,6 +14,7 @@ import {
 import { join, dirname, basename } from 'path'
 import os from 'os'
 import fs from 'fs'
+import { readJson } from './fileRead'
 
 // ---------------------------------------------------------------------------
 // Pure helpers
@@ -373,14 +374,6 @@ export async function createWorktree(cwd, label) {
 // ---------------------------------------------------------------------------
 // MCP servers
 // ---------------------------------------------------------------------------
-
-function readJson(file) {
-  try {
-    return JSON.parse(fs.readFileSync(file, 'utf8'))
-  } catch {
-    return null
-  }
-}
 
 export async function listMcp(cwd) {
   const claudeJson = readJson(join(os.homedir(), '.claude.json'))
