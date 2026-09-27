@@ -45,6 +45,7 @@ import {
   installGeminiHooks,
   installCopilotHooks,
   installOpencodePlugin,
+  installKimiHooks,
   installCodexServer,
   claudeServerPresent,
   claudeServerExists,
@@ -1029,6 +1030,16 @@ ipcMain.handle(
       }
     } catch (err) {
       errors.push(`OpenCode plugin: ${err.message}`)
+    }
+    try {
+      const kimi = (await getAgents()).find((a) => a.id === 'kimi')
+      if (kimi && kimi.available) {
+        const r = await installKimiHooks(script)
+        if (r.error) errors.push(`Kimi Code hooks: ${r.error}`)
+        else if (r.changed) changed.push('Kimi Code: hooks (team messages, current conversation)')
+      }
+    } catch {
+      errors.push('Kimi Code hooks: installation could not be completed.')
     }
     // Gemini CLI, Qwen Code, Copilot CLI, OpenCode, Cline: in their settings file,
     // for those installed here (a file Tessel cannot read is left alone).

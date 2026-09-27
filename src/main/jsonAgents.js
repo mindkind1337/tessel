@@ -5,6 +5,7 @@
 //   Copilot CLI  ~/.copilot/mcp-config.json      "mcpServers": { name: { type: local|http, command, args, env, tools | url, headers } }
 //   OpenCode     ~/.config/opencode/opencode.json "mcp": { name: { type: local, command: [..], environment | type: remote, url, headers } }
 //   Cline        ~/.cline/data/settings/cline_mcp_settings.json "mcpServers": { name: { command, args, env | type: streamableHttp, url, headers } }
+//   Kimi Code    ~/.kimi-code/mcp.json           "mcpServers": { name: { command, args, env | transport: http, url, headers } }
 // Only the server entries are read or changed; everything else in the file is
 // kept as it is. A file that cannot be read as JSON (comments in a .jsonc,
 // say) is never rewritten: the change is refused with a clear error.
@@ -13,12 +14,13 @@ import os from 'os'
 import { join, dirname } from 'path'
 import { writeFileAtomic } from './safeJson'
 
-export const JSON_AGENTS = ['gemini', 'qwen', 'copilot', 'opencode', 'cline']
+export const JSON_AGENTS = ['gemini', 'qwen', 'copilot', 'opencode', 'cline', 'kimi']
 
 function settingsFile(agent, home = os.homedir()) {
   if (agent === 'gemini') return join(home, '.gemini', 'settings.json')
   if (agent === 'qwen') return join(home, '.qwen', 'settings.json')
   if (agent === 'copilot') return join(home, '.copilot', 'mcp-config.json')
+  if (agent === 'kimi') return join(process.env.KIMI_CODE_HOME || join(home, '.kimi-code'), 'mcp.json')
   if (agent === 'cline') {
     // Cline's own overrides first (CLINE_MCP_SETTINGS_PATH, CLINE_DATA_DIR, CLINE_DIR).
     const env = process.env
@@ -41,7 +43,7 @@ export function clineDataDir(home = os.homedir()) {
   return join(dir, 'data')
 }
 
-const KEY = { gemini: 'mcpServers', qwen: 'mcpServers', copilot: 'mcpServers', opencode: 'mcp', cline: 'mcpServers' }
+const KEY = { gemini: 'mcpServers', qwen: 'mcpServers', copilot: 'mcpServers', opencode: 'mcp', cline: 'mcpServers', kimi: 'mcpServers' }
 
 // -> { data } (null data: no file yet) or { error }
 function readSettings(file) {
@@ -113,9 +115,9 @@ export function configToEntry(agent, cfg, extra = {}) {
     if (cfg.env && Object.keys(cfg.env).length) e.env = cfg.env
     return e
   }
-  if (agent === 'cline') {
+  if (agent === 'cline' || agent === 'kimi') {
     if (cfg.transport === 'http') {
-      const e = { type: 'streamableHttp', url: cfg.url }
+      const e = agent === 'kimi' ? { transport: 'http', url: cfg.url } : { type: 'streamableHttp', url: cfg.url }
       if (cfg.headers && Object.keys(cfg.headers).length) e.headers = cfg.headers
       return e
     }
@@ -168,6 +170,8 @@ export function setJsonAgentServer(agent, name, entry, home) {
   if (r.error) return { ok: false, error: r.error }
   const data = r.data || (agent === 'opencode' ? { $schema: 'https://opencode.ai/config.json' } : {})
   const key = KEY[agent]
+  if (agent === 'kimi' && Object.hasOwn(data, key) && (!data[key] || typeof data[key] !== 'object' || Array.isArray(data[key])))
+    return { ok: false, error: 'Kimi mcpServers is not an object; the existing file was left unchanged.' }
   if (!data[key] || typeof data[key] !== 'object' || Array.isArray(data[key])) data[key] = {}
   if (JSON.stringify(data[key][name]) === JSON.stringify(entry)) return { ok: true, changed: false }
   data[key][name] = entry
@@ -204,9 +208,9 @@ export function teamToolsEntry(agent, scriptPath) {
   // the pane id (no backslash) goes that way; the project folder is found
   // from the folder OpenCode runs in.
   if (agent === 'opencode') return configToEntry(agent, { ...stdio, env: { TESSEL_PANE_ID: '{env:TESSEL_PANE_ID}' } })
-  // Copilot and Cline hand their whole environment (the pane's) to the
+  // Kimi, Copilot and Cline hand their whole environment (the pane's) to the
   // server; Cline never expands $VAR in env values, so none is written.
-  if (agent === 'copilot' || agent === 'cline') return configToEntry(agent, stdio)
+  if (agent === 'copilot' || agent === 'cline' || agent === 'kimi') return configToEntry(agent, stdio)
   // Gemini CLI / Qwen Code: variables expanded from the environment; trusted,
   // so its tools run without asking each time (like Codex's "approve").
   return configToEntry(

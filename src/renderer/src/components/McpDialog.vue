@@ -20,7 +20,7 @@ const props = defineProps({
 })
 const emit = defineEmits(['close', 'run', 'tools'])
 
-const ALL_AGENTS = ['claude', 'codex', 'gemini', 'qwen', 'copilot', 'opencode', 'cline']
+const ALL_AGENTS = ['claude', 'codex', 'gemini', 'qwen', 'copilot', 'opencode', 'cline', 'kimi']
 const AGENT_NAME = {
   claude: 'Claude Code',
   codex: 'Codex',
@@ -28,7 +28,8 @@ const AGENT_NAME = {
   qwen: 'Qwen Code',
   copilot: 'Copilot CLI',
   opencode: 'OpenCode',
-  cline: 'Cline'
+  cline: 'Cline',
+  kimi: 'Kimi Code'
 }
 const SCOPE_LABEL = {
   user: 'All projects',
@@ -639,6 +640,9 @@ onMounted(async () => {
           <p v-else-if="r.id === 'codex'" class="set-hint">
             Approved (saved in Codex). If messages stop arriving, <code>/hooks</code> in Codex shows the
             current state.
+          </p>
+          <p v-if="r.id === 'kimi'" class="set-hint">
+            Team messages arrive when you send a prompt, or extend the end of a turn once.
           </p>
           <p v-if="r.error" class="mcp-error">{{ r.error }}</p>
           <div v-if="r.events" class="mcp-agents">

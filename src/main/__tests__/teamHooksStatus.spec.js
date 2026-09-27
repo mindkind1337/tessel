@@ -56,7 +56,7 @@ describe('read-only hook connection diagnostics', () => {
 
   it('reports missing setups without creating directories, using the installer event lists', () => {
     const result = status()
-    expect(result.agents.map((a) => a.hooks)).toEqual(['missing', 'missing', 'missing', 'missing'])
+    expect(result.agents.map((a) => a.hooks)).toEqual(['missing', 'missing', 'missing', 'missing', 'missing'])
     expect(Object.keys(result.agents[0].events)).toEqual(HOOK_EVENTS)
     expect(Object.keys(result.agents[1].events)).toEqual(CODEX_HOOK_EVENTS)
     expect(Object.keys(result.agents[2].events)).toEqual(GEMINI_HOOK_EVENTS)
@@ -87,7 +87,8 @@ describe('read-only hook connection diagnostics', () => {
       'installed',
       'installed',
       'installed',
-      'installed'
+      'installed',
+      'missing'
     ])
   })
 
@@ -101,8 +102,8 @@ describe('read-only hook connection diagnostics', () => {
       throw new Error('unexpected mkdir')
     })
     const result = status()
-    expect(result.agents.map((a) => a.hooks)).toEqual(['installed', 'installed', 'installed', 'installed'])
-    expect(result.agents.map((a) => a.approval)).toEqual([null, 'needs-approval', null, null])
+    expect(result.agents.map((a) => a.hooks)).toEqual(['installed', 'installed', 'installed', 'installed', 'missing'])
+    expect(result.agents.map((a) => a.approval)).toEqual([null, 'needs-approval', null, null, null])
     expect(writer).not.toHaveBeenCalled()
     expect(mkdir).not.toHaveBeenCalled()
     expect(fs.readFileSync(hooksFile(), 'utf8')).toBe(before)
@@ -339,7 +340,7 @@ describe('read-only hook connection diagnostics', () => {
     expect(
       status().agents.every(
         (a) =>
-          a.hooks === 'installed' &&
+          a.hooks === (a.id === 'kimi' ? 'missing' : 'installed') &&
           a.lastSignal === null &&
           a.error === 'Cannot read session reports.'
       )
