@@ -204,7 +204,10 @@ function noteUserInput(id, data) {
     return
   }
   lastUserKey[id] = Date.now()
-  if (/[\r\n]/.test(s)) setDraft(id, false)
+  // A key answering an approval prompt ("y", "p", "2"...) is a choice, not a
+  // line being typed: it never gets the Enter that would clear a draft.
+  if (approvals[id]) setDraft(id, false)
+  else if (/[\r\n]/.test(s)) setDraft(id, false)
   // Ctrl+C, Esc, Ctrl+U clear the line in the agent CLIs.
   else if (s === '\x03' || s === '\x1b' || s === '\x15') setDraft(id, false)
   else if (/[^\x00-\x1f\x7f]/.test(s)) setDraft(id, true)
@@ -4006,6 +4009,9 @@ const wakeState = {} // leafId -> { since, woken, wokenAt, gen }
 // typed there for 30 s.
 function wakeAllowed(id) {
   if (id === activeId.value && document.hasFocus()) return false
+  // A draft Codex's screen proves gone (its empty-prompt placeholder is back:
+  // sent, cleared, or never a draft at all) no longer holds reminders back.
+  if (userDraft[id] && Date.now() - (lastUserKey[id] || 0) >= USER_AWAY_MS && inputShownEmpty(id)) setDraft(id, false)
   if (userDraft[id]) return false
   // Unknown line: shown empty on screen now = known empty from here on (the
   // user's next key is tracked again by noteUserInput).
