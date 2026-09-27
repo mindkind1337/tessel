@@ -25,7 +25,7 @@ const fs = require('fs')
 const path = require('path')
 const { randomUUID } = require('crypto')
 
-const VERSION = '1.6.4'
+const VERSION = '1.6.5'
 const MAX_TEXT = 6000
 
 // --- Finding my team and me ---------------------------------------------------
@@ -500,15 +500,19 @@ function reportSession(data, agent) {
   if (!/^[A-Za-z0-9_-]{6,80}$/.test(id)) return
   const dir = process.env.TESSEL_SESSIONS_DIR || path.join(__dirname, 'sessions')
   const file = path.join(dir, `${paneId}.json`)
+  // Claude Code's own inbox (a named pipe and its key, given to its hooks):
+  // Tessel posts reminders there instead of typing them into the terminal.
+  const inbox = agent === 'claude' ? String(process.env.CLAUDE_CODE_MESSAGING_SOCKET || '') : ''
+  const inboxToken = inbox ? String(process.env.CLAUDE_CODE_MESSAGING_TOKEN || '') : ''
   try {
     const old = readJson(file)
-    if (old && old.sessionId === id && old.agent === agent) return // unchanged
+    if (old && old.sessionId === id && old.agent === agent && (old.inbox || '') === inbox && (old.inboxToken || '') === inboxToken)
+      return // unchanged
     fs.mkdirSync(dir, { recursive: true })
     const tmp = `${file}.${process.pid}.tmp`
-    fs.writeFileSync(
-      tmp,
-      JSON.stringify({ agent, sessionId: id, source: String(data.source || data.hook_event_name || ''), cwd: String(data.cwd || ''), at: Date.now() })
-    )
+    const report = { agent, sessionId: id, source: String(data.source || data.hook_event_name || ''), cwd: String(data.cwd || ''), at: Date.now() }
+    if (inbox && inboxToken) Object.assign(report, { inbox, inboxToken })
+    fs.writeFileSync(tmp, JSON.stringify(report))
     fs.renameSync(tmp, file)
   } catch {
     // not recorded this time: the next event tries again

@@ -3861,6 +3861,10 @@ function hasCurrentTools(leaf) {
 // /clear, /resume, a new conversation...): the pane follows it, so a restart
 // or a reopened Tessel resumes that one, never the id found at launch.
 const safeReportedId = (id) => typeof id === 'string' && /^[A-Za-z0-9_-]{6,80}$/.test(id)
+// paneId -> the conversation whose Claude Code inbox its hooks reported
+// (agentInbox.js): reminders go there, never typed into the terminal.
+const agentInboxes = {}
+const inboxDownAt = {} // paneId -> when posting to its inbox last failed
 async function followReportedSessions() {
   if (!window.shellApi.reportedSessions) return
   let reports = null
@@ -3872,10 +3876,19 @@ async function followReportedSessions() {
   if (!reports) return
   forEachWsLeaf((leaf) => {
     const r = reports[leaf.id]
-    if (!r || leaf.kind !== 'agent' || r.agent !== leaf.agentId || !safeReportedId(r.sessionId)) return
+    if (!r || leaf.kind !== 'agent' || r.agent !== leaf.agentId || !safeReportedId(r.sessionId)) {
+      delete agentInboxes[leaf.id]
+      return
+    }
+    // A report older than this pane's start belongs to an earlier agent in it
+    // (its inbox is gone with it).
+    if (leaf.launchedAt && r.at < leaf.launchedAt - 5000) {
+      delete agentInboxes[leaf.id]
+      return
+    }
+    if (r.inbox) agentInboxes[leaf.id] = r.sessionId
+    else delete agentInboxes[leaf.id]
     if (r.sessionId === leaf.sessionId) return
-    // A report older than this pane's start belongs to an earlier agent in it.
-    if (leaf.launchedAt && r.at < leaf.launchedAt - 5000) return
     if (window.shellApi.log) window.shellApi.log('info', `${paneLabel(leaf)} (${leaf.id}) is now in conversation ${r.sessionId} (${r.source || 'reported'})`)
     leaf.sessionId = r.sessionId
   })
@@ -4051,10 +4064,37 @@ function wakeIfNeeded(leaf) {
   const t = trackedState[leaf.id]
   if (!t || t.state !== 'idle') return
   if (approvals[leaf.id] || limits[leaf.id] || pendingMessages[leaf.id] || unsent[leaf.id] || delivering.has(leaf.id)) return
+  if (restartingLeaves.has(leaf.id)) return // being restarted right now
+  const reminder = `[Tessel] You have ${count} new team message${count > 1 ? 's' : ''}: read ${count > 1 ? 'them' : 'it'} with team_inbox.`
+  // Claude Code with its own inbox: the reminder goes there (it starts a turn
+  // by itself), so the user's input line and prompts are never touched. It
+  // failed lately (older Claude Code, process gone): typed as before.
+  if (
+    leaf.agentId === 'claude' &&
+    leaf.sessionId &&
+    agentInboxes[leaf.id] === leaf.sessionId &&
+    window.shellApi.agentInbox &&
+    Date.now() - (inboxDownAt[leaf.id] || 0) >= REWAKE_AFTER_MS
+  ) {
+    w.woken = true
+    w.wokenAt = Date.now()
+    const failed = (why) => {
+      inboxDownAt[leaf.id] = Date.now()
+      if (wakeState[leaf.id]) wakeState[leaf.id].woken = false // typed on the next round
+      if (window.shellApi.log) window.shellApi.log('warn', `team tools: ${paneLabel(leaf)} (${leaf.id}) inbox unreachable (${why}); the reminder is typed instead`)
+    }
+    window.shellApi
+      .agentInbox({ paneId: leaf.id, sessionId: leaf.sessionId, text: reminder })
+      .then((res) => {
+        if (!res || !res.ok) return failed((res && res.error) || 'no answer')
+        if (window.shellApi.log) window.shellApi.log('info', `team tools: reminded ${paneLabel(leaf)} (${leaf.id}) of ${count} waiting message(s) through its inbox`)
+      })
+      .catch((err) => failed(err && err.message))
+    return
+  }
   if (!wakeAllowed(leaf.id)) return
   // Just restarted: it is still loading (a line typed now can stay unsent).
   if (leaf.restartedAt && Date.now() - leaf.restartedAt < WAKE_AFTER_RESTART_MS) return
-  if (restartingLeaves.has(leaf.id)) return // being restarted right now
   w.woken = true
   w.wokenAt = Date.now()
   // A reminder typed before is still in its input line, not sent: send that
@@ -4068,7 +4108,7 @@ function wakeIfNeeded(leaf) {
   }
   deliverToAgent(
     leaf.id,
-    `[Tessel] You have ${count} new team message${count > 1 ? 's' : ''}: read ${count > 1 ? 'them' : 'it'} with team_inbox.`,
+    reminder,
     {
       source: 'tessel',
       scope: 'wake',

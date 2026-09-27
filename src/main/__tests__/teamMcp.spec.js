@@ -216,6 +216,29 @@ describe('Tessel team tools (background messages)', () => {
     fs.rmSync(sessions, { recursive: true, force: true })
   })
 
+  it("reports Claude Code's own inbox (pipe and key) with its conversation, never Codex's", async () => {
+    const sessions = fs.mkdtempSync(join(os.tmpdir(), 'tessel-sessions-'))
+    const run = (input, env, extra = []) =>
+      new Promise((resolve) => {
+        const child = spawn(process.execPath, [SERVER, '--hook', ...extra], {
+          env: { ...process.env, TESSEL_PANE_ID: 'pane-9-box', TESSEL_SESSIONS_DIR: sessions, ...env }
+        })
+        child.on('close', resolve)
+        child.stdin.end(JSON.stringify(input))
+      })
+    const report = () => JSON.parse(fs.readFileSync(join(sessions, 'pane-9-box.json'), 'utf8'))
+    const ev = { hook_event_name: 'SessionStart', source: 'startup', session_id: '33333333-aaaa-4bbb-8ccc-000000000003', cwd: dir }
+    await run(ev, { CLAUDE_CODE_MESSAGING_SOCKET: '\\\\.\\pipe\\LOCAL\\cc-msg-1', CLAUDE_CODE_MESSAGING_TOKEN: 'tok-1' })
+    expect(report()).toMatchObject({ agent: 'claude', inbox: '\\\\.\\pipe\\LOCAL\\cc-msg-1', inboxToken: 'tok-1' })
+    // Same conversation in a new process (a restart): its new inbox replaces the old.
+    await run({ ...ev, hook_event_name: 'UserPromptSubmit' }, { CLAUDE_CODE_MESSAGING_SOCKET: '\\\\.\\pipe\\LOCAL\\cc-msg-2', CLAUDE_CODE_MESSAGING_TOKEN: 'tok-2' })
+    expect(report()).toMatchObject({ inbox: '\\\\.\\pipe\\LOCAL\\cc-msg-2', inboxToken: 'tok-2' })
+    // Codex: no inbox, even if the variables are around.
+    await run({ ...ev, session_id: '019a0000-cccc-7ddd-8eee-000000000004' }, { CLAUDE_CODE_MESSAGING_SOCKET: '\\\\.\\pipe\\x', CLAUDE_CODE_MESSAGING_TOKEN: 't' }, ['--codex'])
+    expect(report().inbox).toBeUndefined()
+    fs.rmSync(sessions, { recursive: true, force: true })
+  })
+
   it('each user message reminds Claude Code of the board rule, with its open cards', async () => {
     const run = (input) =>
       new Promise((resolve) => {

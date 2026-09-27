@@ -53,6 +53,8 @@ const api = {
     return () => ipcRenderer.removeListener('install:result', handler)
   },
   agentModel: (query) => ipcRenderer.invoke('agents:model', query),
+  // { paneId, sessionId, text } -> { ok } | { ok: false, error }
+  agentInbox: (query) => ipcRenderer.invoke('agents:inbox', query),
   onAgentModelChanged: (cb) => {
     const handler = (_e, agentId) => cb(agentId)
     ipcRenderer.on('agents:modelChanged', handler)

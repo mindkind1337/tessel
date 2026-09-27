@@ -7,6 +7,7 @@ import { loadTasks, loadBoard, saveTasks } from './taskBoardPersistence'
 import { trimEvents, isEvent } from '../shared/activity'
 import { claudeSessionExists, findCodexSession, listSessions } from './agentSessions'
 import { agentModelLive, watchModelFiles } from './agentModel'
+import { postToInbox } from './agentInbox'
 import { findAgentSession, geminiSessionExists, qwenSessionExists } from './agentResume'
 import { extraToolDirs, withToolDirs } from './toolDirs'
 import { createInstallLogs } from './installLog'
@@ -714,8 +715,9 @@ ipcMain.handle('sessions:geminiExists', (_evt, id) => geminiSessionExists(id))
 ipcMain.handle('sessions:qwenExists', (_evt, id) => qwenSessionExists(id))
 // The conversation each agent pane is in now, as its hooks reported it
 // (teamMcp/server.cjs reportSession): { paneId: { agent, sessionId, source, at } }.
+const sessionsDir = () => join(app.getPath('appData'), 'tessel-team', 'sessions')
 ipcMain.handle('sessions:reported', () => {
-  const dir = join(app.getPath('appData'), 'tessel-team', 'sessions')
+  const dir = sessionsDir()
   const out = {}
   let names = []
   try {
@@ -726,13 +728,22 @@ ipcMain.handle('sessions:reported', () => {
   for (const n of names) {
     try {
       const r = JSON.parse(fs.readFileSync(join(dir, n), 'utf8'))
-      if (r && typeof r.sessionId === 'string') out[n.slice(0, -5)] = r
+      if (r && typeof r.sessionId === 'string') {
+        // The inbox key stays in this process (agents:inbox).
+        const { inboxToken, ...shown } = r
+        out[n.slice(0, -5)] = { ...shown, inbox: !!(r.inbox && inboxToken) }
+      }
     } catch {
       /* being written: next time */
     }
   }
   return out
 })
+// A message into a Claude Code session's own inbox (agentInbox.js), only
+// for the conversation the pane is in now. -> { ok } or { ok: false, error }
+ipcMain.handle('agents:inbox', (_evt, q = {}) =>
+  postToInbox({ sessionsDir: sessionsDir(), paneId: q && q.paneId, sessionId: q && q.sessionId, text: q && q.text })
+)
 ipcMain.handle('sessions:find', (_evt, q = {}) => {
   try {
     return findAgentSession(q || {})
