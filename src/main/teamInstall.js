@@ -16,6 +16,7 @@ import os from 'os'
 import { join, dirname } from 'path'
 import { readJson } from './fileRead'
 import { writeFileAtomic as writeAtomic } from './safeJson'
+export { installKimiHooks, KIMI_HOOK_EVENTS } from './kimiHooks'
 
 export const SERVER_NAME = 'tessel-team'
 export const HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PostToolUse', 'Stop']

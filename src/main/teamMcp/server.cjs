@@ -551,6 +551,49 @@ function reportSession(data, agent) {
   }
 }
 
+// Older Kimi hook payloads without stop_hook_active get one continuation until
+// the next real user prompt. Current 2.x also enforces this in its own loop.
+function kimiStopGuard(data, reset = false) {
+  const pane = process.env.TESSEL_PANE_ID || ''
+  const session = String(data.session_id || '')
+  if (!/^[A-Za-z0-9_-][A-Za-z0-9._-]{0,99}$/.test(pane) || !/^[A-Za-z0-9_-]{6,80}$/.test(session)) return false
+  const dir = path.join(process.env.TESSEL_SESSIONS_DIR || path.join(__dirname, 'sessions'), 'kimi-stop')
+  const file = path.join(dir, `${pane}-${session}.json`)
+  try {
+    if (reset) fs.rmSync(file, { force: true })
+    else {
+      fs.mkdirSync(dir, { recursive: true })
+      fs.writeFileSync(file, JSON.stringify({ at: Date.now() }), { flag: 'wx' })
+    }
+    return true
+  } catch { return false }
+}
+
+function kimiHook(data) {
+  const event = data.hook_event_name
+  // Observation-only events, including PostToolUse, must NEVER claim messages.
+  if (event !== 'UserPromptSubmit' && event !== 'Stop') return
+  if (event === 'Stop' && data.stop_hook_active) return
+  if (event === 'UserPromptSubmit') kimiStopGuard(data, true)
+  const ctx = locate(null, data.cwd)
+  if (ctx.error) return
+  if (event === 'Stop') {
+    if (!unread(ctx).some((m) => !isReceipt(m))) return
+    if (data.stop_hook_active !== false && !kimiStopGuard(data)) return
+  }
+  const text = readInbox(ctx)
+  const notes = []
+  if (text) notes.push(`New messages from your Tessel team (answer with team_send, not through the user):\n${text}`)
+  if (event === 'UserPromptSubmit') notes.push(boardReminder(ctx))
+  if (!notes.length) return
+  const note = notes.join('\n\n')
+  if (event === 'Stop') {
+    // Kimi's runner uses stderr as the continuation reason for exit code 2.
+    process.stderr.write(note)
+    process.exitCode = 2
+  } else process.stdout.write(note)
+}
+
 function hookMain() {
   let input = ''
   process.stdin.setEncoding('utf8')
@@ -579,7 +622,9 @@ function hookMain() {
     // OpenCode's plugin (teamInstall.js) sends Claude Code's event names and
     // reads Claude's answers: only its conversation is reported as OpenCode's.
     const opencode = process.argv.includes('--opencode')
-    reportSession(data, codex ? 'codex' : gemini ? 'gemini' : copilot ? 'copilot' : opencode ? 'opencode' : 'claude')
+    const kimi = process.argv.includes('--kimi')
+    reportSession(data, codex ? 'codex' : gemini ? 'gemini' : copilot ? 'copilot' : opencode ? 'opencode' : kimi ? 'kimi' : 'claude')
+    if (kimi) return kimiHook(data)
     if (codex) {
       // Codex Stop decisions become continuation prompts. Other events keep
       // reporting the session only; an already continued turn never loops.
