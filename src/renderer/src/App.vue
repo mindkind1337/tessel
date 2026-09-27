@@ -47,6 +47,8 @@ const broadcast = ref(false)
 // workspaces stay mounted (hidden ones are invisible but keep their size), so
 // switching never kills or resizes a running shell or agent.
 const workspaces = ref([]) // [{ id, name, tree, activeId }]
+// A workspace by its id, or null.
+const wsById = (id) => workspaces.value.find((w) => w.id === id) || null
 const currentWsId = ref(null)
 const sidebarCollapsed = ref(false)
 const sidebarWidth = ref(216)
@@ -155,7 +157,7 @@ function answerConfirm(ok) {
   if (c) c.resolve(ok === 'alt' ? 'alt' : !!ok)
 }
 provide('askConfirm', askConfirm)
-const currentWs = computed(() => workspaces.value.find((w) => w.id === currentWsId.value) || null)
+const currentWs = computed(() => wsById(currentWsId.value))
 
 // Teams: named, coloured groups of agents inside a workspace. Each member pane
 // keeps its team id (leaf.team); saved with the layout.
@@ -576,19 +578,22 @@ function forEachWsLeaf(fn) {
   workspaces.value.forEach((w) => forEachLeaf(w.tree, fn))
 }
 
+// The pane with this id in a tree, or null (stops at the first match).
+function findLeafIn(node, id) {
+  if (!node) return null
+  if (node.type === 'leaf') return node.id === id ? node : null
+  for (const c of node.children) {
+    const found = findLeafIn(c, id)
+    if (found) return found
+  }
+  return null
+}
+
 // The workspace whose tree contains a pane. Pane operations target the owning
 // workspace, so an async PTY spawn still lands in the right place even if the
 // user switched workspaces meanwhile.
 function wsOfLeaf(leafId) {
-  return (
-    workspaces.value.find((w) => {
-      let found = false
-      forEachLeaf(w.tree, (l) => {
-        if (l.id === leafId) found = true
-      })
-      return found
-    }) || null
-  )
+  return workspaces.value.find((w) => findLeafIn(w.tree, leafId)) || null
 }
 
 function firstLeafId(node) {
@@ -789,10 +794,7 @@ function closeLeaf(leafId, opts = {}) {
   const hadTeam = closing?.team || null
   const closingTitle = closing?.title || 'An agent'
   if (!opts.force && settings.confirmCloseAgent && ws) {
-    let leaf = null
-    forEachLeaf(ws.tree, (l) => {
-      if (l.id === leafId) leaf = l
-    })
+    const leaf = findLeafIn(ws.tree, leafId)
     if (leaf && leaf.kind === 'agent') {
       askConfirm({
         title: `Close ${leaf.title}?`,
@@ -892,14 +894,6 @@ async function buildGrid(cols, rows, ws = currentWs.value) {
   window.dispatchEvent(new Event('terminal-layout-change'))
 }
 
-function findLeafIn(node, id) {
-  let found = null
-  forEachLeaf(node, (l) => {
-    if (l.id === id) found = l
-  })
-  return found
-}
-
 // A terminal's own answer to a program's question (cursor position, device
 // attributes, focus in/out): it goes back to that terminal only, never to
 // the other panes.
@@ -908,10 +902,7 @@ const TERMINAL_REPLY = /^\x1b\[[?>]?[\d;]*[cRn]$|^\x1b\[[IO]$|^\x1b\][^\x07\x1b]
 function routeInput(sourceId, data) {
   // Multi-write: only typing in a pane that takes part (its "write" box
   // ticked), in the workspace on screen, goes to every such pane.
-  let source = null
-  forEachLeaf(tree.value, (leaf) => {
-    if (leaf.id === sourceId) source = leaf
-  })
+  const source = findLeafIn(tree.value, sourceId)
   const fanOut = broadcast.value && source && source.broadcast && !TERMINAL_REPLY.test(String(data))
   if (fanOut) {
     forEachLeaf(tree.value, (leaf) => {
@@ -1757,10 +1748,7 @@ const restartingLeaves = new Set()
 async function restartLeaf(leafId) {
   let ws = wsOfLeaf(leafId)
   if (!ws) return
-  let old = null
-  forEachLeaf(ws.tree, (l) => {
-    if (l.id === leafId) old = l
-  })
+  let old = findLeafIn(ws.tree, leafId)
   if (!old) return
   // An agent keeps its pane id: its team messages, lead role, tasks and
   // inbox stay addressed to it.
@@ -1903,11 +1891,11 @@ const paneDrag = reactive({
 const DRAG_THRESHOLD = 6
 
 function findLeaf(id) {
-  let found = null
-  forEachWsLeaf((l) => {
-    if (l.id === id) found = l
-  })
-  return found
+  for (const w of workspaces.value) {
+    const found = findLeafIn(w.tree, id)
+    if (found) return found
+  }
+  return null
 }
 
 function beginPaneDrag(srcId, e) {
@@ -1968,7 +1956,7 @@ function updateDropTarget(x, y) {
     const id = wsEl.dataset.wsId
     const src = wsOfLeaf(paneDrag.srcId)
     if (id && (!src || src.id !== id)) {
-      const ws = workspaces.value.find((w) => w.id === id)
+      const ws = wsById(id)
       const r = wsEl.getBoundingClientRect()
       paneDrag.target = { kind: 'ws', id }
       paneDrag.zoneRect = { left: r.left, top: r.top, width: r.width, height: r.height }
@@ -2033,7 +2021,7 @@ function movePane(srcId, target) {
   if (!srcWs || !src) return
 
   if (target.kind === 'ws') {
-    const dst = workspaces.value.find((w) => w.id === target.id)
+    const dst = wsById(target.id)
     if (!dst || dst === srcWs) return
     detachLeaf(srcWs, srcId)
     const anchor = dst.activeId || firstLeafId(dst.tree)
@@ -2107,7 +2095,7 @@ function folderName(path) {
 
 // Choose the folder new panes in a workspace start in.
 async function setWorkspaceFolder(id) {
-  const ws = workspaces.value.find((w) => w.id === id)
+  const ws = wsById(id)
   if (!ws) return
   if (!window.shellApi.pickFolder) {
     showToast('Restart Tessel to enable project folders.', { kind: 'error' })
@@ -2157,7 +2145,7 @@ async function createWorkspace() {
 }
 
 function renameWorkspace(id, name) {
-  const ws = workspaces.value.find((w) => w.id === id)
+  const ws = wsById(id)
   if (ws) ws.name = name
 }
 
@@ -2492,7 +2480,7 @@ const activityScopes = computed(() => {
     out.push({ value: 'workspace', label: `Workspace: ${ws.name}`, wsId: ws.id, teamId: null, notesDir: ws.cwd || null })
   }
   for (const t of teams.value) {
-    const home = workspaces.value.find((w) => w.id === teamWsId(t.id)) || ws
+    const home = wsById(teamWsId(t.id)) || ws
     out.push({ value: 'team:' + t.id, label: `Team: ${t.name}`, wsId: null, teamId: t.id, notesDir: (home && home.cwd) || null })
   }
   out.push({ value: 'all', label: 'All workspaces', wsId: null, teamId: null, notesDir: (ws && ws.cwd) || null })
@@ -3159,7 +3147,7 @@ const reviewActions = {
 
 // The agents (not plain shells) of a workspace.
 function wsAgents(wsId) {
-  const ws = workspaces.value.find((w) => w.id === wsId)
+  const ws = wsById(wsId)
   const out = []
   if (ws) forEachLeaf(ws.tree, (l) => l.kind === 'agent' && out.push(l))
   return out
@@ -4553,7 +4541,7 @@ function disbandTeam(teamId) {
     for (const leaf of still) logMembership(leaf, null)
     tellAgents(still, `[Tessel] Team "${team.name}" was ungrouped: you now work on your own.`, teamId)
     recordActivity({ type: 'team', action: 'ungrouped', teamId, wsId, name: team.name })
-    const home = workspaces.value.find((w) => w.id === wsId)
+    const home = wsById(wsId)
     for (const id of Object.keys(team.inboxes || {})) dropInbox(team, id, home && home.cwd)
     team.leadId = null
     handOffLeadReviews(teamId)
@@ -4659,7 +4647,7 @@ function messageTeam(teamId, text) {
 // Send one message to every agent of a workspace (never to plain shells,
 // which would run it as a command).
 function messageWorkspace(wsId, text) {
-  const ws = workspaces.value.find((w) => w.id === wsId)
+  const ws = wsById(wsId)
   if (ws) messageAgents(wsAgents(wsId), text, ws.name, { scope: 'workspace' })
 }
 
@@ -4771,7 +4759,7 @@ ${members || '- (none yet)'}
 // Create the workspace's shared notes file (once) and tell each agent who the
 // others are and where the file is.
 async function shareProjectNotes(wsId) {
-  const ws = workspaces.value.find((w) => w.id === wsId)
+  const ws = wsById(wsId)
   if (!ws) return
   const agents = wsAgents(wsId)
   if (!agents.length) {
@@ -4823,7 +4811,7 @@ async function shareProjectNotes(wsId) {
 // The notes view inside Tessel (NotesPanel), for a workspace.
 const notesView = ref(null) // { wsId, dir, wsName, template }
 function openNotesView(wsId) {
-  const ws = workspaces.value.find((w) => w.id === wsId)
+  const ws = wsById(wsId)
   if (!ws) return
   const dir = ws.cwd || wsAgents(wsId)[0]?.startDir
   if (!dir) {
@@ -4836,7 +4824,7 @@ function openNotesView(wsId) {
 
 // Open the workspace's notes file in the user's text editor (created if missing).
 async function openProjectNotes(wsId) {
-  const ws = workspaces.value.find((w) => w.id === wsId)
+  const ws = wsById(wsId)
   if (!ws) return
   const dir = ws.cwd || wsAgents(wsId)[0]?.startDir
   if (!dir) {

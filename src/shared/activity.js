@@ -309,6 +309,21 @@ export function cardsFor(rows) {
 }
 
 // "4 min", "2 h 05", "3 d 4 h": short durations for the table.
+// A moment as the clock time, with the date when it is not today ("now" =
+// the time it is compared with, a reactive clock in views).
+export function formatWhen(t, now = Date.now()) {
+  const d = new Date(t)
+  const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  if (d.toDateString() === new Date(now).toDateString()) return time
+  return `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })} ${time}`
+}
+
+// The last folder of a path (C:\Proj\app\ -> app).
+export function folderName(p) {
+  const parts = String(p || '').replace(/[\\/]+$/, '').split(/[\\/]/)
+  return parts[parts.length - 1] || String(p || '')
+}
+
 export function formatDuration(ms) {
   if (ms === null || ms === undefined) return '—'
   const s = Math.round(ms / 1000)
