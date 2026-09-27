@@ -184,6 +184,38 @@ describe('Tessel team tools (background messages)', () => {
     expect(stop.decision).toBe('block')
     expect(stop.reason).toMatch(/Another one/)
   })
+
+  it('each user message reminds Claude Code of the board rule, with its open cards', async () => {
+    const run = (input) =>
+      new Promise((resolve) => {
+        const child = spawn(process.execPath, [SERVER, '--hook'], {
+          env: { ...process.env, TESSEL_PANE_ID: B.id, TESSEL_PROJECT_DIR: dir }
+        })
+        let out = ''
+        child.stdout.on('data', (c) => (out += c))
+        child.on('close', () => resolve(out))
+        child.stdin.end(JSON.stringify(input))
+      })
+    const none = JSON.parse(await run({ hook_event_name: 'UserPromptSubmit', cwd: dir }))
+    expect(none.hookSpecificOutput.hookEventName).toBe('UserPromptSubmit')
+    expect(none.hookSpecificOutput.additionalContext).toMatch(/add a card for it first \(team_task_add, column "doing"\)/)
+    expect(none.hookSpecificOutput.additionalContext).toMatch(/no open card/)
+    fs.writeFileSync(
+      join(dir, '.tessel', 'team-channel', teamId, 'tasks.json'),
+      JSON.stringify({
+        tasks: [
+          { id: 'task-1-a', title: 'Mine, working', column: 'doing', assignee: '#4' },
+          { id: 'task-2-b', title: 'Mine, finished', column: 'done', assignee: '#4' },
+          { id: 'task-3-c', title: 'Not mine', column: 'doing', assignee: '#1' }
+        ]
+      })
+    )
+    const ctxText = JSON.parse(await run({ hook_event_name: 'UserPromptSubmit', cwd: dir })).hookSpecificOutput.additionalContext
+    expect(ctxText).toMatch(/Your open cards: task-1-a "Mine, working" \(Doing\)\./)
+    expect(ctxText).not.toMatch(/Mine, finished|Not mine/)
+    // Other events stay quiet without messages.
+    expect(await run({ hook_event_name: 'PostToolUse', cwd: dir })).toBe('')
+  })
 })
 
 describe('setting up the team tools', () => {

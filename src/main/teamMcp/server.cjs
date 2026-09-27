@@ -24,7 +24,7 @@
 const fs = require('fs')
 const path = require('path')
 
-const VERSION = '1.5.0'
+const VERSION = '1.6.0'
 const MAX_TEXT = 6000
 
 // --- Finding my team and me ---------------------------------------------------
@@ -255,6 +255,19 @@ function listTasks(ctx) {
     .join('\n')
 }
 
+// The reminder added to each user message (Claude Code hook): the rule, and
+// this agent's cards still open.
+function boardReminder(ctx) {
+  const data = readJson(path.join(ctx.root, 'tasks.json'))
+  const tasks = data && Array.isArray(data.tasks) ? data.tasks : []
+  const me = `#${ctx.me.num}`
+  const mine = tasks.filter((t) => t.assignee === me && (t.column === 'doing' || t.column === 'todo' || t.column === 'review'))
+  const open = mine.length
+    ? `Your open cards: ${mine.slice(0, 6).map((t) => `${t.id} "${t.title}" (${COLUMN_NAMES[t.column]})`).join('; ')}${mine.length > 6 ? ' …' : ''}.`
+    : 'You have no open card.'
+  return `Tessel task board (the user follows it): if this message asks for a new piece of work, add a card for it first (team_task_add, column "doing"); move your cards as the work goes (team_task_move: "done" as soon as it is finished). A quick question or a short answer needs no card. ${open}`
+}
+
 function taskRequest(ctx, data) {
   const folder = path.join(ctx.root, 'requests')
   fs.mkdirSync(folder, { recursive: true })
@@ -333,7 +346,7 @@ const TOOLS = [
   {
     name: 'team_task_add',
     description:
-      "Put a piece of work on your team's task board, so the user sees who does what. Add one card per task you take or give.",
+      "The user follows your work on Tessel's task board: keep it up to date, every time. When you start a piece of work (a request from the user, or a task you give a teammate), add a card for it first: column \"doing\" for what you start now, \"todo\" for later. One card per piece of work; a quick question or a short answer needs none.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -348,7 +361,7 @@ const TOOLS = [
   {
     name: 'team_task_move',
     description:
-      'Move a card on the team board: to "doing" when you start it, "review" when it waits for a review, "done" when it is finished.',
+      'Move your card as the work goes, every time (the user relies on the board): "doing" when you start it, "review" when it waits for a review, "done" as soon as it is finished. See the ids with team_tasks.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -417,7 +430,7 @@ function handle(msg) {
       capabilities: { tools: {} },
       serverInfo: { name: 'tessel-team', version: VERSION },
       instructions:
-        'You may be working in a Tessel team with other agents. Call team_inbox when you start and after each step of your work to read messages from teammates, and answer them with team_send. Never ask the user to pass messages between agents. Put each piece of work you take or give on the team board (team_task_add) and move its card as it goes (team_task_move), so the user sees who does what.'
+        'You work in Tessel, where the user follows every piece of work on a task board. Always keep it up to date: when you start a piece of work (a request from the user, or a task you give a teammate), add a card for it first (team_task_add, column "doing"), and move it as it goes (team_task_move: "review" when it waits for a review, "done" as soon as it is finished). A quick question or a short answer needs no card. If you are in a team, call team_inbox when you start and after each step to read messages from teammates, answer them with team_send, and never ask the user to pass messages between agents.'
     }
   }
   if (method === 'ping') return {}
@@ -484,8 +497,13 @@ function hookMain() {
     const event = data.hook_event_name
     if (event === 'Stop' && data.stop_hook_active) return
     const text = readInbox(ctx)
-    if (!text) return
-    const note = `New messages from your Tessel team (answer with the team_send tool, not through the user):\n${text}`
+    const notes = []
+    if (text) notes.push(`New messages from your Tessel team (answer with the team_send tool, not through the user):\n${text}`)
+    // Each message from the user: the board rule, with the cards this agent
+    // has open, so it is never forgotten (a long session, a compacted one).
+    if (event === 'UserPromptSubmit') notes.push(boardReminder(ctx))
+    if (!notes.length) return
+    const note = notes.join('\n\n')
     if (event === 'Stop') process.stdout.write(JSON.stringify({ decision: 'block', reason: note }))
     else process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: event, additionalContext: note } }))
   })
