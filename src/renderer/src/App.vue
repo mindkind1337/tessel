@@ -204,10 +204,7 @@ function noteUserInput(id, data) {
     return
   }
   lastUserKey[id] = Date.now()
-  // A key answering an approval prompt ("y", "p", "2"...) is a choice, not a
-  // line being typed: it never gets the Enter that would clear a draft.
-  if (approvals[id]) setDraft(id, false)
-  else if (/[\r\n]/.test(s)) setDraft(id, false)
+  if (/[\r\n]/.test(s)) setDraft(id, false)
   // Ctrl+C, Esc, Ctrl+U clear the line in the agent CLIs.
   else if (s === '\x03' || s === '\x1b' || s === '\x15') setDraft(id, false)
   else if (/[^\x00-\x1f\x7f]/.test(s)) setDraft(id, true)
