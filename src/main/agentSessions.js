@@ -10,6 +10,7 @@ import fs from 'fs'
 import os from 'os'
 import { join } from 'path'
 import { normDir, readFirstLine, readHead } from './fileRead'
+import { geminiHistory, qwenHistory, opencodeHistory } from './agentHistory'
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -102,7 +103,7 @@ export function findCodexSession(
 }
 
 // ---------------------------------------------------------------------------
-// Session list: past Claude Code and Codex conversations, newest first.
+// Session list: past conversations, newest first, with a per-agent limit.
 // Only the start of each file is read, so this stays fast with many sessions.
 // ---------------------------------------------------------------------------
 
@@ -185,6 +186,9 @@ function sameDir(a, b) {
 }
 
 export function listSessions({ cwd = null, limit = 60 } = {}, home = os.homedir()) {
+  limit = Number.isFinite(limit) ? Math.max(0, Math.min(200, Math.floor(limit))) : 60
+  cwd = typeof cwd === 'string' && cwd ? cwd : null
+  if (!limit) return []
   const out = []
 
   // Claude Code: ~/.claude/projects/<folder slug>/<uuid>.jsonl
@@ -271,5 +275,6 @@ export function listSessions({ cwd = null, limit = 60 } = {}, home = os.homedir(
     codexCount++
   }
 
+  out.push(...geminiHistory({ cwd, limit }, home), ...qwenHistory({ cwd, limit }, home), ...opencodeHistory({ cwd, limit }, home))
   return out.sort((a, b) => b.updated - a.updated)
 }
