@@ -78,6 +78,31 @@ export function installGeminiHooks(scriptPath, home = os.homedir()) {
   return installHooks(join(home, '.gemini', 'settings.json'), GEMINI_HOOK_EVENTS, `node ${quote(scriptPath)} --hook --gemini`)
 }
 
+// Copilot CLI hooks: Tessel's own file in ~/.copilot/hooks/ (its settings and
+// the user's other hooks are never touched). Claude Code's event names, which
+// Copilot accepts with Claude's answers: the conversation (SessionStart),
+// messages after each tool (PostToolUse) and at the turn's end (Stop). Not its
+// prompt hook: it cannot add text there. The event is named in the command.
+export const COPILOT_HOOK_EVENTS = ['SessionStart', 'PostToolUse', 'Stop']
+export const COPILOT_HOOKS_FILE = 'tessel-team.json'
+export function installCopilotHooks(scriptPath, home = os.homedir()) {
+  const file = join(home, '.copilot', 'hooks', COPILOT_HOOKS_FILE)
+  const hooks = {}
+  for (const event of COPILOT_HOOK_EVENTS) {
+    const command = `node ${quote(scriptPath)} --hook --copilot --event=${event}`
+    hooks[event] = [{ type: 'command', bash: command, powershell: command, timeoutSec: 30 }]
+  }
+  const text = JSON.stringify({ version: 1, hooks }, null, 2) + '\n'
+  try {
+    if (fs.existsSync(file) && fs.readFileSync(file, 'utf8') === text) return { changed: false }
+    fs.mkdirSync(dirname(file), { recursive: true })
+    writeAtomic(file, text)
+    return { changed: true }
+  } catch (err) {
+    return { error: `${file}: ${err.message}` }
+  }
+}
+
 // Tessel's command in each event's hook list of a hooks file ({ hooks: {
 // Event: [{ matcher, hooks: [{ type, command }] }] } }), replacing an older
 // Tessel entry and keeping everything else. -> { changed } or { error }

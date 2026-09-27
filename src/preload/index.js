@@ -84,6 +84,8 @@ const api = {
   },
   // Set up the team tools (MCP server + Claude hooks) for agent CLIs.
   installTeamTools: () => ipcRenderer.invoke('team:install'),
+  // How each agent gets team messages: its hooks, approval, last signal.
+  teamHooksStatus: () => ipcRenderer.invoke('team:hooksStatus'),
   // Whether the installed Codex can run without its shared daemon.
   codexNoDaemon: () => ipcRenderer.invoke('agents:codex-no-daemon'),
   // { shells: { paneId: shellPid } } -> { ok, agents: { paneId: agentId | null } }

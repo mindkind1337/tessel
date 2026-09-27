@@ -8,6 +8,7 @@ import { trimEvents, isEvent } from '../shared/activity'
 import { claudeSessionExists, findCodexSession, listSessions } from './agentSessions'
 import { agentModelLive, watchModelFiles } from './agentModel'
 import { postToInbox } from './agentInbox'
+import { hooksStatus } from './teamHooksStatus'
 import { findAgentSession, geminiSessionExists, qwenSessionExists } from './agentResume'
 import { extraToolDirs, withToolDirs } from './toolDirs'
 import { createInstallLogs } from './installLog'
@@ -40,6 +41,8 @@ import {
   writeServerScript,
   installClaudeHooks,
   installCodexHooks,
+  installGeminiHooks,
+  installCopilotHooks,
   installCodexServer,
   claudeServerPresent,
   claudeServerExists,
@@ -907,6 +910,17 @@ function validateCodexConfig(text) {
   })
 }
 
+// How each agent gets its team messages (teamHooksStatus.js), read-only.
+ipcMain.handle(
+  'team:hooksStatus',
+  safe(() =>
+    hooksStatus({
+      sessionsDir: sessionsDir(),
+      scriptPath: join(app.getPath('appData'), 'tessel-team', 'tessel-team-mcp.cjs')
+    })
+  )
+)
+
 // Team tools for agents (background messages, never typed into terminals):
 // the MCP server script, registered for Claude Code and Codex, plus Claude
 // Code hooks. -> { ok, changed: [...], errors: [...] }
@@ -978,6 +992,29 @@ ipcMain.handle(
       }
     } catch (err) {
       errors.push(`Codex hooks: ${err.message}`)
+    }
+    // Gemini CLI hooks: its conversation, and its team messages while it works
+    // and when it finishes a turn (never typed). Only where it is installed.
+    try {
+      const gemini = (await getAgents()).find((a) => a.id === 'gemini')
+      if (gemini && gemini.available) {
+        const r = installGeminiHooks(script)
+        if (r.error) errors.push(`Gemini CLI hooks: ${r.error}`)
+        else if (r.changed) changed.push('Gemini CLI: hooks (team messages, current conversation)')
+      }
+    } catch (err) {
+      errors.push(`Gemini CLI hooks: ${err.message}`)
+    }
+    // Copilot CLI hooks, in their own file: the same, where it is installed.
+    try {
+      const copilot = (await getAgents()).find((a) => a.id === 'copilot')
+      if (copilot && copilot.available) {
+        const r = installCopilotHooks(script)
+        if (r.error) errors.push(`Copilot CLI hooks: ${r.error}`)
+        else if (r.changed) changed.push('Copilot CLI: hooks (team messages, current conversation)')
+      }
+    } catch (err) {
+      errors.push(`Copilot CLI hooks: ${err.message}`)
     }
     // Gemini CLI, Qwen Code, Copilot CLI, OpenCode, Cline: in their settings file,
     // for those installed here (a file Tessel cannot read is left alone).

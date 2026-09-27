@@ -3,7 +3,7 @@
 import fs from 'fs'
 import os from 'os'
 import { join } from 'path'
-import { HOOK_EVENTS, CODEX_HOOK_EVENTS, GEMINI_HOOK_EVENTS } from './teamInstall'
+import { HOOK_EVENTS, CODEX_HOOK_EVENTS, GEMINI_HOOK_EVENTS, COPILOT_HOOK_EVENTS, COPILOT_HOOKS_FILE } from './teamInstall'
 
 const record = (value) => value !== null && typeof value === 'object' && !Array.isArray(value)
 const snake = (event) => event.replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase()
@@ -255,12 +255,44 @@ function sessionSignals(sessionsDir, agents) {
   }
 }
 
+// Copilot CLI: Tessel's own hooks file, one command per event (--event=<name>).
+function copilotInstallation(home, scriptPath) {
+  const agent = {
+    id: 'copilot',
+    hooks: 'missing',
+    events: Object.fromEntries(COPILOT_HOOK_EVENTS.map((e) => [e, false])),
+    approval: null,
+    lastSignal: null,
+    inbox: false
+  }
+  const data = readText(join(home, '.copilot', 'hooks', COPILOT_HOOKS_FILE), 'copilot hooks')
+  if (data.missing) return agent
+  try {
+    if (data.error) throw new Error(data.error)
+    const config = JSON.parse(data.text)
+    if (!record(config) || !record(config.hooks)) throw new Error()
+    for (const event of COPILOT_HOOK_EVENTS) {
+      const want = `node "${scriptPath}" --hook --copilot --event=${event}`
+      const list = Array.isArray(config.hooks[event]) ? config.hooks[event] : []
+      agent.events[event] =
+        !!scriptPath && list.some((h) => record(h) && h.type === 'command' && String(h.powershell || h.bash || '').trim() === want)
+    }
+    const on = Object.values(agent.events).filter(Boolean).length
+    agent.hooks = on === COPILOT_HOOK_EVENTS.length ? 'installed' : on ? 'partial' : 'missing'
+  } catch (error) {
+    agent.hooks = 'error'
+    // Never the file's content or a parser message: generic only.
+    addError(agent, data.error || 'Cannot read copilot hooks.')
+  }
+  return agent
+}
+
 export function hooksStatus({ home = os.homedir(), sessionsDir, scriptPath } = {}) {
   const claude = installation(home, 'claude', scriptPath, HOOK_EVENTS)
   const codex = installation(home, 'codex', scriptPath, CODEX_HOOK_EVENTS)
   const gemini = installation(home, 'gemini', scriptPath, GEMINI_HOOK_EVENTS)
   codexApproval(home, codex)
-  const agents = [claude.agent, codex.agent, gemini.agent]
+  const agents = [claude.agent, codex.agent, gemini.agent, copilotInstallation(home, scriptPath)]
   sessionSignals(sessionsDir, agents)
   return { agents }
 }

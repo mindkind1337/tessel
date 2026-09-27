@@ -220,6 +220,35 @@ describe('Tessel team tools (background messages)', () => {
     fs.rmSync(sessions, { recursive: true, force: true })
   })
 
+  it('as a Copilot CLI hook: event from its command, camelCase ids, never reads at a prompt', async () => {
+    const sessions = fs.mkdtempSync(join(os.tmpdir(), 'tessel-sessions-'))
+    mcp.send(as(A), '#4', 'Copilot, after a tool')
+    pollTeamChannel({ dir, teamId })
+    const run = (event, input) =>
+      new Promise((resolve) => {
+        const child = spawn(process.execPath, [SERVER, '--hook', '--copilot', `--event=${event}`], {
+          env: { ...process.env, TESSEL_PANE_ID: B.id, TESSEL_PROJECT_DIR: dir, TESSEL_SESSIONS_DIR: sessions }
+        })
+        let out = ''
+        child.stdout.on('data', (c) => (out += c))
+        child.on('close', () => resolve(out))
+        child.stdin.end(JSON.stringify({ sessionId: 'cop-session-0001', cwd: dir, ...input }))
+      })
+    expect(await run('SessionStart', { source: 'new' })).toBe('')
+    expect(JSON.parse(fs.readFileSync(join(sessions, `${B.id}.json`), 'utf8'))).toMatchObject({ agent: 'copilot', sessionId: 'cop-session-0001' })
+    // Its prompt hook cannot add text: the message stays unread for later.
+    expect(await run('UserPromptSubmit', { prompt: 'hi' })).toBe('')
+    const after = JSON.parse(await run('PostToolUse', { toolName: 'view' }))
+    expect(after.additionalContext).toMatch(/Copilot, after a tool/)
+    mcp.send(as(A), '#4', 'Copilot, before you stop')
+    pollTeamChannel({ dir, teamId })
+    expect(await run('Stop', { stop_hook_active: true })).toBe('')
+    const stop = JSON.parse(await run('Stop', { stop_hook_active: false }))
+    expect(stop).toMatchObject({ decision: 'block' })
+    expect(stop.reason).toMatch(/Copilot, before you stop/)
+    fs.rmSync(sessions, { recursive: true, force: true })
+  })
+
   it('reports the conversation the agent is really in (start, /clear, /resume), team or not', async () => {
     const sessions = fs.mkdtempSync(join(os.tmpdir(), 'tessel-sessions-'))
     const run = (input, extra = []) =>
@@ -362,6 +391,20 @@ describe('setting up the team tools', () => {
     expect(s.hooks.AfterTool.map((g) => g.hooks[0].command)).toEqual(['mine.sh', cmd])
     for (const ev of ['SessionStart', 'BeforeAgent']) expect(s.hooks[ev][0].hooks[0].command).toBe(cmd)
     expect(installGeminiHooks(script, home)).toEqual({ changed: false })
+  })
+
+  it('writes the Copilot CLI hooks in their own file, once, never its settings', async () => {
+    const { installCopilotHooks } = await import('../teamInstall')
+    fs.mkdirSync(join(home, '.copilot'))
+    fs.writeFileSync(join(home, '.copilot', 'settings.json'), '{"hooks":{"agentStop":[{"type":"command","bash":"theirs"}]}}')
+    expect(installCopilotHooks(script, home)).toEqual({ changed: true })
+    const h = JSON.parse(fs.readFileSync(join(home, '.copilot', 'hooks', 'tessel-team.json'), 'utf8'))
+    expect(h.version).toBe(1)
+    expect(Object.keys(h.hooks)).toEqual(['SessionStart', 'PostToolUse', 'Stop'])
+    const cmd = `node "${script}" --hook --copilot --event=Stop`
+    expect(h.hooks.Stop).toEqual([{ type: 'command', bash: cmd, powershell: cmd, timeoutSec: 30 }])
+    expect(fs.readFileSync(join(home, '.copilot', 'settings.json'), 'utf8')).toMatch(/theirs/)
+    expect(installCopilotHooks(script, home)).toEqual({ changed: false })
   })
 
   it('never overwrites a settings file it cannot read', async () => {

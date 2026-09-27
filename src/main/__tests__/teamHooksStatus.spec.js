@@ -10,7 +10,8 @@ import {
   installClaudeHooks,
   installCodexHooks,
   GEMINI_HOOK_EVENTS,
-  installGeminiHooks
+  installGeminiHooks,
+  installCopilotHooks
 } from '../teamInstall'
 
 describe('read-only hook connection diagnostics', () => {
@@ -32,6 +33,7 @@ describe('read-only hook connection diagnostics', () => {
     installClaudeHooks(scriptPath, home)
     installCodexHooks(scriptPath, home)
     installGeminiHooks(scriptPath, home)
+    installCopilotHooks(scriptPath, home)
   }
   const trust = (event, group = 0, handler = 0, enabled, quoted = false) => {
     const name = event.replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase()
@@ -54,7 +56,7 @@ describe('read-only hook connection diagnostics', () => {
 
   it('reports missing setups without creating directories, using the installer event lists', () => {
     const result = status()
-    expect(result.agents.map((a) => a.hooks)).toEqual(['missing', 'missing', 'missing'])
+    expect(result.agents.map((a) => a.hooks)).toEqual(['missing', 'missing', 'missing', 'missing'])
     expect(Object.keys(result.agents[0].events)).toEqual(HOOK_EVENTS)
     expect(Object.keys(result.agents[1].events)).toEqual(CODEX_HOOK_EVENTS)
     expect(Object.keys(result.agents[2].events)).toEqual(GEMINI_HOOK_EVENTS)
@@ -64,10 +66,25 @@ describe('read-only hook connection diagnostics', () => {
     expect(fs.readdirSync(home)).toEqual([])
   })
 
+  it("Copilot: Tessel's own hooks file, each event checked, never its content in an error", () => {
+    expect(agent('copilot').hooks).toBe('missing')
+    installCopilotHooks(scriptPath, home)
+    expect(agent('copilot')).toMatchObject({ hooks: 'installed', events: { SessionStart: true, PostToolUse: true, Stop: true } })
+    const file = join(home, '.copilot', 'hooks', 'tessel-team.json')
+    const h = JSON.parse(fs.readFileSync(file, 'utf8'))
+    delete h.hooks.Stop
+    json(file, h)
+    expect(agent('copilot')).toMatchObject({ hooks: 'partial', events: { Stop: false } })
+    write(file, '{"secret": "abc"')
+    expect(agent('copilot').hooks).toBe('error')
+    expect(agent('copilot').error).not.toMatch(/secret|abc/)
+  })
+
   it('defaults home to os.homedir without reading the real user configuration', () => {
     install()
     vi.spyOn(os, 'homedir').mockReturnValue(home)
     expect(hooksStatus({ scriptPath }).agents.map((a) => a.hooks)).toEqual([
+      'installed',
       'installed',
       'installed',
       'installed'
@@ -84,8 +101,8 @@ describe('read-only hook connection diagnostics', () => {
       throw new Error('unexpected mkdir')
     })
     const result = status()
-    expect(result.agents.map((a) => a.hooks)).toEqual(['installed', 'installed', 'installed'])
-    expect(result.agents.map((a) => a.approval)).toEqual([null, 'needs-approval', null])
+    expect(result.agents.map((a) => a.hooks)).toEqual(['installed', 'installed', 'installed', 'installed'])
+    expect(result.agents.map((a) => a.approval)).toEqual([null, 'needs-approval', null, null])
     expect(writer).not.toHaveBeenCalled()
     expect(mkdir).not.toHaveBeenCalled()
     expect(fs.readFileSync(hooksFile(), 'utf8')).toBe(before)

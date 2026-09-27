@@ -543,10 +543,17 @@ function hookMain() {
     // not the agent itself. Its events must not read the agent's messages
     // (they would be marked read and never reach it) nor change its session.
     if (data.agent_id) return
+    // Copilot CLI (hooks in Claude Code's names, --event=<name> in its command
+    // since its payload may not name the event): camelCase fields accepted too.
+    const copilot = process.argv.includes('--copilot')
+    if (copilot) {
+      const named = process.argv.find((a) => a.startsWith('--event='))
+      data = { ...data, session_id: data.session_id || data.sessionId, hook_event_name: data.hook_event_name || (named ? named.slice(8) : '') }
+    }
     // Which conversation the agent is in: recorded first, team or not.
     const codex = process.argv.includes('--codex')
     const gemini = process.argv.includes('--gemini')
-    reportSession(data, codex ? 'codex' : gemini ? 'gemini' : 'claude')
+    reportSession(data, codex ? 'codex' : gemini ? 'gemini' : copilot ? 'copilot' : 'claude')
     if (codex) {
       // Codex Stop decisions become continuation prompts. Other events keep
       // reporting the session only; an already continued turn never loops.
@@ -588,6 +595,8 @@ function hookMain() {
     const GEMINI_EVENTS = { BeforeAgent: 'UserPromptSubmit', AfterTool: 'PostToolUse', AfterAgent: 'Stop' }
     const event = gemini ? GEMINI_EVENTS[data.hook_event_name] || data.hook_event_name : data.hook_event_name
     if (event === 'SessionStart') return // only the report above
+    // Copilot's prompt hook cannot add text: messages read there would be lost.
+    if (copilot && event === 'UserPromptSubmit') return
     const ctx = locate(null, data.cwd)
     if (ctx.error) return
     if (event === 'Stop' && data.stop_hook_active) return
@@ -600,6 +609,8 @@ function hookMain() {
     if (!notes.length) return
     const note = notes.join('\n\n')
     if (event === 'Stop') process.stdout.write(JSON.stringify({ decision: 'block', reason: note }))
+    // Copilot reads additionalContext at the top level (its own format).
+    else if (copilot) process.stdout.write(JSON.stringify({ additionalContext: note, hookSpecificOutput: { hookEventName: data.hook_event_name, additionalContext: note } }))
     else process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: data.hook_event_name, additionalContext: note } }))
   })
 }

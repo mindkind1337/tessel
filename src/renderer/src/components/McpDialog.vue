@@ -356,9 +356,69 @@ async function addCustom() {
   }
 }
 
+// --- Connections: how each agent gets its team messages (its hooks) ---------
+// Read-only status from the main process (teamHooksStatus.js): hooks in place,
+// Codex's one-time approval in /hooks, and the last signal a hook sent, the
+// proof it works. Agents without hooks set up get the typed reminder only.
+const hooks = ref(null) // { agents: [...] } | { error }
+const hooksLoading = ref(false)
+async function loadHooks() {
+  if (!window.shellApi.teamHooksStatus) return
+  hooksLoading.value = true
+  try {
+    hooks.value = await window.shellApi.teamHooksStatus()
+  } catch (err) {
+    hooks.value = { error: err && err.message }
+  } finally {
+    hooksLoading.value = false
+  }
+}
+// Agents installed here, or with Tessel's hooks still in place.
+const hookRows = computed(() =>
+  (hooks.value && Array.isArray(hooks.value.agents) ? hooks.value.agents : []).filter(
+    (r) => installed.value[r.id] || r.hooks !== 'missing'
+  )
+)
+// Installed agents Tessel has no hooks for yet (they get the typed reminder).
+const noHookAgents = computed(() =>
+  ALL_AGENTS.filter((a) => installed.value[a] && !hookRows.value.find((r) => r.id === a))
+)
+function hookState(r) {
+  if (r.error || r.hooks === 'error') return { cls: 'error', label: 'Error' }
+  if (r.hooks !== 'installed') return { cls: 'error', label: r.hooks === 'partial' ? 'Incomplete' : 'Not set up' }
+  if (r.approval === 'needs-approval' || r.approval === 'changed') return { cls: 'auth', label: 'Needs your approval' }
+  // Codex's saved approval could not be read: /hooks is the reference.
+  if (r.id === 'codex' && !r.approval) return { cls: 'auth', label: 'Approval unknown' }
+  return { cls: 'connected', label: r.lastSignal ? 'Working' : 'Set up' }
+}
+function ago(at) {
+  const s = Math.max(0, Math.round((Date.now() - at) / 1000))
+  if (s < 60) return 'just now'
+  if (s < 3600) return `${Math.round(s / 60)} min ago`
+  if (s < 86400) return `${Math.round(s / 3600)} h ago`
+  return `${Math.round(s / 86400)} d ago`
+}
+async function reinstallHooks() {
+  if (!window.shellApi.installTeamTools) return
+  busy.value = 'hooks'
+  try {
+    const res = await window.shellApi.installTeamTools()
+    const errors = (res && res.errors) || []
+    message.kind = errors.length ? 'error' : 'ok'
+    message.text = errors.length ? errors.join(' ') : 'Team tools and hooks are set up.'
+  } catch (err) {
+    message.kind = 'error'
+    message.text = (err && err.message) || 'The team tools could not be set up.'
+  } finally {
+    busy.value = ''
+    loadHooks()
+  }
+}
+
 onMounted(async () => {
   if (cardEl.value) cardEl.value.focus()
   refresh()
+  loadHooks()
   if (window.shellApi.checkTools) {
     Object.assign(haveCmd, (await window.shellApi.checkTools(['node', 'uvx'])) || {})
   }
@@ -411,6 +471,13 @@ onMounted(async () => {
           </button>
           <button class="launch-seg-btn" :class="{ on: tab === 'custom' }" @click="tab = 'custom'">
             Custom
+          </button>
+          <button
+            class="launch-seg-btn"
+            :class="{ on: tab === 'connections' }"
+            @click="(tab = 'connections'), loadHooks()"
+          >
+            Team connections
           </button>
         </div>
       </div>
@@ -523,6 +590,78 @@ onMounted(async () => {
                   <span v-else class="set-hint">Not installed</span>
                 </span>
               </template>
+            </div>
+          </div>
+        </div>
+      </template>
+
+      <!-- ================= Team connections ================= -->
+      <template v-else-if="tab === 'connections'">
+        <p class="mcp-about">
+          How each agent gets its team messages. With its hooks set up, an agent receives them
+          while it works and when it finishes a turn, without anything typed into its terminal.
+          Without hooks, Tessel types a short reminder when the agent is idle.
+        </p>
+        <div class="mcp-toolbar">
+          <span class="set-hint">
+            <template v-if="hooksLoading">Checking…</template>
+            <template v-else-if="hooks && hooks.error">Could not check: {{ hooks.error }}</template>
+          </span>
+          <button class="exit-btn" :disabled="hooksLoading" @click="loadHooks">Check again</button>
+          <button class="exit-btn" :disabled="!!busy" @click="reinstallHooks">
+            {{ busy === 'hooks' ? 'Setting up…' : 'Set up again' }}
+          </button>
+        </div>
+
+        <div v-for="r in hookRows" :key="r.id" class="mcp-server">
+          <div class="mcp-server-head">
+            <BrandIcon :kind="r.id" :size="22" />
+            <div class="mcp-row-main">
+              <span class="mcp-name">{{ AGENT_NAME[r.id] || r.id }}</span>
+              <span class="mcp-target">
+                <template v-if="r.lastSignal"
+                  >Last signal {{ ago(r.lastSignal.at) }}{{
+                    r.lastSignal.source ? ` (${r.lastSignal.source})` : ''
+                  }}</template
+                >
+                <template v-else>No signal from its hooks yet</template>
+                <template v-if="r.id === 'claude'">
+                  · {{ r.inbox ? 'reminders go to its own inbox' : 'inbox not reported yet' }}</template
+                >
+              </span>
+            </div>
+            <span class="mcp-status" :class="hookState(r).cls">{{ hookState(r).label }}</span>
+          </div>
+          <p v-if="r.id === 'codex' && r.approval !== 'approved'" class="mcp-about">
+            <strong>One step for you:</strong> in each Codex pane, type <code>/hooks</code> and approve
+            Tessel's entries. Codex runs a new or changed hook only after you review it.
+          </p>
+          <p v-else-if="r.id === 'codex'" class="set-hint">
+            Approved (saved in Codex). If messages stop arriving, <code>/hooks</code> in Codex shows the
+            current state.
+          </p>
+          <p v-if="r.error" class="mcp-error">{{ r.error }}</p>
+          <div v-if="r.events" class="mcp-agents">
+            <div v-for="(on, ev) in r.events" :key="ev" class="mcp-agent">
+              <span class="mcp-agent-name" :class="{ dim: !on }">{{ ev }}</span>
+              <span class="mcp-agent-actions">
+                <span class="set-hint">{{ on ? 'set up' : 'missing' }}</span>
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div v-if="noHookAgents.length" class="mcp-server">
+          <div class="mcp-server-head">
+            <div class="mcp-row-main">
+              <span class="mcp-name">No hooks yet</span>
+              <span class="mcp-target">Typed reminder only, when the agent is idle</span>
+            </div>
+          </div>
+          <div class="mcp-agents">
+            <div v-for="a in noHookAgents" :key="a" class="mcp-agent">
+              <BrandIcon :kind="a" :size="14" />
+              <span class="mcp-agent-name">{{ AGENT_NAME[a] }}</span>
             </div>
           </div>
         </div>
