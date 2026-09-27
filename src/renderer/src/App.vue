@@ -1373,7 +1373,17 @@ async function loadAgents(refresh = false) {
         ? window.shellApi.refreshAgents
         : window.shellApi.listAgents
     const list = await fn(custom)
-    if (Array.isArray(list)) agents.value = list
+    if (Array.isArray(list)) {
+      const before = new Set(agents.value.filter((a) => a.available).map((a) => a.id))
+      agents.value = list
+      // An agent installed since the team tools were set up (Install button,
+      // or by hand): set them up again so it gets them, and the board rule in
+      // its memory, without restarting Tessel.
+      if (teamToolsReady && list.some((a) => a.available && !a.custom && !before.has(a.id))) {
+        teamToolsReady = false
+        installTeamToolsOnce()
+      }
+    }
   } catch {
     /* keep the previous list */
   }
@@ -3840,7 +3850,7 @@ async function installTeamToolsOnce() {
   if (res && res.ok) {
     teamToolsReady = true
     teamToolsVersion = res.version || null
-    if (res.changed && res.changed.length)
+    if (res.changed && res.changed.some((c) => c.includes('MCP server')))
       showToast('Team messages now go in the background, never into your terminals (MCP servers: tessel-team).', { timeout: 10000 })
     return
   }
