@@ -11,6 +11,7 @@ import { postToInbox } from './agentInbox'
 import { hooksStatus } from './teamHooksStatus'
 import { assessNeeds } from './tesselNeeds'
 import { resolveFiles, codeGotoArg } from './fileOpen'
+import { titleBarColors } from '../shared/themePalettes'
 import { findAgentSession, geminiSessionExists, qwenSessionExists } from './agentResume'
 import { extraToolDirs, withToolDirs } from './toolDirs'
 import { createInstallLogs } from './installLog'
@@ -1652,12 +1653,8 @@ ipcMain.handle('update:check', () => updater.check())
 ipcMain.handle('update:install', () => updater.install())
 ipcMain.on('window:theme', (event, theme) => {
   if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return
-  const palette = {
-    classic: { color: '#101216', symbolColor: '#d6d9df' },
-    warp: { color: '#161917', symbolColor: '#dfe5df' }
-  }[theme]
-  if (!palette) return
-  mainWindow.setTitleBarOverlay({ ...palette, height: 39 })
+  if (typeof theme !== 'string') return
+  mainWindow.setTitleBarOverlay({ ...titleBarColors(theme), height: 39 })
 })
 // After an update: { from, to } once, on the first start of the new version.
 ipcMain.handle('update:justInstalled', () => {
