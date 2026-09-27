@@ -39,10 +39,13 @@ export const DEFAULT_SETTINGS = Object.freeze({
   // true once you pick a voice language yourself (then we never override it).
   voiceTipChosen: false,
   // [{ id, name, command, accent }] agents you add yourself (Tools dialog).
-  customAgents: []
+  customAgents: [],
+  // [{ id, name, text, enter }] text you send to the active pane from the
+  // command palette ("Run: <name>"); enter: also press Enter.
+  quickCommands: []
 })
 
-const fresh = () => ({ ...DEFAULT_SETTINGS, customAgents: [] })
+const fresh = () => ({ ...DEFAULT_SETTINGS, customAgents: [], quickCommands: [] })
 
 export const settings = reactive(fresh())
 
@@ -57,6 +60,10 @@ export function loadSettings(saved) {
       if (Array.isArray(v)) settings.customAgents = v.filter(validCustomAgent).slice(0, 30)
       continue
     }
+    if (key === 'quickCommands') {
+      if (Array.isArray(v)) settings.quickCommands = v.filter(validQuickCommand).slice(0, 100)
+      continue
+    }
     if (typeof v !== typeof def) continue
     if (key === 'theme' && !isTheme(v)) continue
     if (key === 'cursorStyle' && !['block', 'bar', 'underline'].includes(v)) continue
@@ -66,10 +73,23 @@ export function loadSettings(saved) {
   settings.scrollback = clamp(Math.round(settings.scrollback), 500, 100000)
 }
 
-// Resets preferences; your custom agents are kept.
+// Resets preferences; your custom agents and quick commands are kept.
 export function resetSettings() {
-  const keep = settings.customAgents
-  Object.assign(settings, fresh(), { customAgents: keep })
+  const keep = { customAgents: settings.customAgents, quickCommands: settings.quickCommands }
+  Object.assign(settings, fresh(), keep)
+}
+
+export function validQuickCommand(q) {
+  return (
+    q &&
+    typeof q.id === 'string' &&
+    typeof q.name === 'string' &&
+    q.name.trim() &&
+    typeof q.text === 'string' &&
+    q.text.trim() &&
+    q.text.length <= 20000 &&
+    typeof q.enter === 'boolean'
+  )
 }
 
 export function validCustomAgent(a) {

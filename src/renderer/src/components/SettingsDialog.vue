@@ -6,11 +6,31 @@ import BrandIcon from './BrandIcon.vue'
 import { settings, FONT_FAMILIES, resetSettings, clamp } from '../settings'
 import { THEMES } from '../themes'
 
-defineProps({
+const props = defineProps({
   shells: { type: Array, default: () => [] },
   defaultShell: { type: String, default: null },
-  updateStatus: { type: Object, default: () => ({ state: 'disabled' }) }
+  updateStatus: { type: Object, default: () => ({ state: 'disabled' }) },
+  // Open scrolled to this section (its element id), e.g. 'quick-commands'.
+  section: { type: String, default: null }
 })
+
+// Quick commands: text sent to the active pane from the command palette.
+const quickDraft = ref({ name: '', text: '', enter: true, error: '' })
+function addQuickCommand() {
+  const d = quickDraft.value
+  const name = d.name.trim()
+  const text = d.text.replace(/\s+$/, '')
+  if (!name || !text.trim()) {
+    d.error = 'Give it a name and the text to send.'
+    return
+  }
+  settings.quickCommands.push({ id: `qc-${Date.now().toString(36)}`, name, text, enter: !!d.enter })
+  quickDraft.value = { name: '', text: '', enter: d.enter, error: '' }
+}
+function removeQuickCommand(id) {
+  const i = settings.quickCommands.findIndex((q) => q.id === id)
+  if (i >= 0) settings.quickCommands.splice(i, 1)
+}
 const emit = defineEmits(['close', 'set-default-shell', 'check-updates', 'open-update'])
 
 function updateText(u) {
@@ -89,6 +109,10 @@ onMounted(async () => {
   }
   document.addEventListener('focusin', containFocus)
   focusCard()
+  if (props.section) {
+    const el = document.getElementById(`set-${props.section}`)
+    if (el) el.scrollIntoView({ block: 'start' })
+  }
   if (window.shellApi.inputLanguages) {
     try {
       languages.value = (await window.shellApi.inputLanguages()) || []
@@ -314,6 +338,28 @@ const CURSORS = [
           </div>
           <input v-model="settings.resumeAgents" type="checkbox" class="set-switch" />
         </label>
+      </section>
+
+      <section id="set-quick-commands" class="set-section">
+        <h3>Quick commands</h3>
+        <p class="set-hint">
+          Text you send to the active pane from the command palette (Ctrl+Shift+P, then
+          "Run: name"): a command you type often, or a prompt for an agent.
+        </p>
+        <div v-for="q in settings.quickCommands" :key="q.id" class="set-row quick-row">
+          <div class="set-label">
+            {{ q.name }}
+            <span class="set-hint quick-text">{{ q.text }}{{ q.enter ? ' ⏎' : '' }}</span>
+          </div>
+          <button class="exit-btn" type="button" @click="removeQuickCommand(q.id)">Remove</button>
+        </div>
+        <form class="custom-agent-form" @submit.prevent="addQuickCommand">
+          <input v-model="quickDraft.name" class="set-number" placeholder="Name, e.g. Run tests" spellcheck="false" />
+          <input v-model="quickDraft.text" class="set-number mcp-input" placeholder="Text, e.g. npm test" spellcheck="false" />
+          <label class="quick-enter"><input v-model="quickDraft.enter" type="checkbox" /> Press Enter</label>
+          <button class="exit-btn primary" type="submit">Add</button>
+        </form>
+        <p v-if="quickDraft.error" class="mcp-error">{{ quickDraft.error }}</p>
       </section>
 
       <section class="set-section">

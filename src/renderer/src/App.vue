@@ -96,6 +96,20 @@ const voiceName = computed(() => {
 // Hovering a pane in a menu outlines it, so you can see which one you pick.
 const highlightId = ref(null)
 const settingsOpen = ref(false)
+const settingsSection = ref(null) // opens Settings scrolled to that section
+function openSettingsAt(section) {
+  settingsSection.value = section
+  settingsOpen.value = true
+}
+// A quick command (Settings > Quick commands) into a pane: pasted as text
+// (safe, bracketed when the program supports it), then Enter if asked.
+function runQuickCommand(id, q) {
+  const pane = getPane(id)
+  if (!pane || !pane.paste) return
+  pane.paste(q.text)
+  if (q.enter) setTimeout(() => pane.submit && pane.submit(), 60)
+  focusPane(id)
+}
 const mcpOpen = ref(false)
 const toolsOpen = ref(false)
 const sessionsOpen = ref(false)
@@ -1258,6 +1272,19 @@ function buildCommands() {
     }
   )
 
+  // Quick commands (Settings > Quick commands): sent to the active pane.
+  if (activeId.value) {
+    const id = activeId.value
+    for (const q of settings.quickCommands || []) {
+      add('Quick commands', `Run: ${q.name}`, () => runQuickCommand(id, q), {
+        hint: q.text.length > 60 ? `${q.text.slice(0, 60)}…` : q.text
+      })
+    }
+  }
+  add('Quick commands', 'Add or edit quick commands', () => openSettingsAt('quick-commands'), {
+    hint: 'Text you send to a pane in two keystrokes'
+  })
+
   add('Task', 'New task…', openNewTask, { hint: 'Give an agent a task, in its own copy of the project' })
   if (currentWs.value) {
     const wsId = currentWs.value.id
@@ -1745,6 +1772,7 @@ async function copyDiagnostics() {
 // The dialog gives focus back to what had it before (terminal or button).
 function closeSettings() {
   settingsOpen.value = false
+  settingsSection.value = null
 }
 
 function setDefaultShell(id) {
@@ -5948,6 +5976,7 @@ onBeforeUnmount(() => {
       :shells="shells"
       :default-shell="selectedShell"
       :update-status="updateStatus"
+      :section="settingsSection"
       @check-updates="checkForUpdates"
       @open-update="((settingsOpen = false), (updateOpen = true))"
       @set-default-shell="setDefaultShell"

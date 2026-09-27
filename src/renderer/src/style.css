@@ -2663,6 +2663,20 @@ body.pane-dragging * {
   min-width: 0;
 }
 
+.quick-text {
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.quick-enter {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
 .custom-color {
   width: 32px;
   height: 28px;
