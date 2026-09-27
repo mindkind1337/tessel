@@ -4,6 +4,7 @@
 //   <project>/.tessel/team-channel/<team>/notices.json   Tessel's own notices
 //     to an agent (team changes, answers to a lead), read once like messages
 import fs from 'fs'
+import { createHash, randomBytes } from 'crypto'
 import { join, resolve, isAbsolute } from 'path'
 import { ensureTeamChannel } from './teamChannel'
 import { readJson } from './fileRead'
@@ -12,6 +13,7 @@ import { writeFileAtomic } from './safeJson'
 const writeAtomic = (file, data) => writeFileAtomic(file, JSON.stringify(data, null, 2))
 
 const ID_RE = /^(?!\.)(?!.*\.\.)[A-Za-z0-9._-]{1,100}$/
+const NOTICE_ID_RE = /^[a-z0-9]{6,40}$/
 const MAX_NOTICES = 500
 
 function base(dir) {
@@ -180,7 +182,27 @@ function readNotices(file) {
   }
   const data = JSON.parse(text)
   if (!data || !Array.isArray(data.notices)) throw new Error('Invalid team notices file.')
+  if (data.accepted != null && (!Array.isArray(data.accepted) || data.accepted.some(
+    n => !n || !NOTICE_ID_RE.test(n.id) || !/^[a-f0-9]{64}$/.test(n.hash)
+  ))) throw new Error('Invalid team notice ledger.')
   return data
+}
+
+const noticeHash = n => createHash('sha256').update(JSON.stringify([n.toId, n.text])).digest('hex')
+function noticeLedger(data) {
+  const accepted = new Map((data.accepted || []).map(n => [n.id, n.hash]))
+  for (const n of data.notices) accepted.set(n.id, noticeHash(n))
+  return accepted
+}
+function noticeState(data, notices, accepted = noticeLedger(data)) {
+  return {
+    ...data,
+    notices,
+    // Keep ids after removal too: a lost IPC response may be retried after
+    // the agent already read the notice. The ledger lives with this team,
+    // and is removed when the retired team's folder is cleaned up.
+    accepted: [...accepted].map(([id, hash]) => ({ id, hash }))
+  }
 }
 
 export function addNotices({ dir, teamId, notices } = {}) {
@@ -190,17 +212,32 @@ export function addNotices({ dir, teamId, notices } = {}) {
   const root = join(b, teamId)
   fs.mkdirSync(root, { recursive: true })
   const file = join(root, 'notices.json')
-  const list = readNotices(file).notices
+  const data = readNotices(file)
+  const list = [...data.notices]
+  const accepted = noticeLedger(data)
   for (const n of notices) {
     if (!n || !ID_RE.test(String(n.toId)) || typeof n.text !== 'string' || !n.text.trim()) continue
-    list.push({
-      id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`,
+    if (n.id != null && (typeof n.id !== 'string' || !NOTICE_ID_RE.test(n.id)))
+      return { ok: false, error: 'Invalid notice id.' }
+    const item = {
+      id: n.id ?? randomBytes(16).toString('hex'),
       toId: n.toId,
       text: n.text.slice(0, 6000),
       at: Date.now()
-    })
+    }
+    const hash = noticeHash(item)
+    if (accepted.has(item.id)) {
+      if (accepted.get(item.id) !== hash)
+        return { ok: false, error: 'Notice id already used for different content.' }
+      continue
+    }
+    if (list.length >= MAX_NOTICES)
+      return { ok: false, error: 'Team notice queue is full; retry after notices are read.' }
+    accepted.set(item.id, hash)
+    list.push(item)
   }
-  writeAtomic(file, { notices: list.slice(-MAX_NOTICES) })
+  // Publish the complete batch and its deduplication ledger together.
+  writeAtomic(file, noticeState(data, list, accepted))
   return { ok: true }
 }
 
@@ -212,7 +249,7 @@ export function removeNotice({ dir, teamId, id } = {}) {
   try {
     const data = readNotices(file)
     const next = data.notices.filter((n) => n.id !== id)
-    if (next.length !== data.notices.length) writeAtomic(file, { notices: next })
+    if (next.length !== data.notices.length) writeAtomic(file, noticeState(data, next))
     return true
   } catch {
     // Keep the acknowledgement queued until removal really succeeds.
