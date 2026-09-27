@@ -104,7 +104,7 @@ export function codexModelFromText(text) {
 
 const fileCache = new Map() // session id -> transcript path
 
-function claudeTranscript(id, home) {
+export function claudeTranscript(id, home = os.homedir()) {
   const hit = fileCache.get(id)
   if (hit && fs.existsSync(hit)) return hit
   const root = join(home, '.claude', 'projects')

@@ -10,6 +10,7 @@ import { agentModelLive, watchModelFiles } from './agentModel'
 import { findAgentSession, geminiSessionExists, qwenSessionExists } from './agentResume'
 import { extraToolDirs, withToolDirs } from './toolDirs'
 import { createInstallLogs } from './installLog'
+import { claudeImageFile, isPastedImage, PASTE_DIR } from './pastedImages'
 import { createLogger, describe } from './logger'
 import { cleanEnv } from './cleanEnv'
 import { createPtyClient } from './ptyClient'
@@ -1098,7 +1099,7 @@ ipcMain.handle('clipboard:hasImage', () =>
 ipcMain.handle('clipboard:saveImage', () => {
   const img = clipboard.readImage()
   if (img.isEmpty()) return null
-  const dir = join(os.tmpdir(), 'tessel-paste')
+  const dir = PASTE_DIR
   fs.mkdirSync(dir, { recursive: true })
   const dayAgo = Date.now() - 24 * 60 * 60 * 1000
   for (const f of fs.readdirSync(dir)) {
@@ -1111,6 +1112,19 @@ ipcMain.handle('clipboard:saveImage', () => {
   const file = join(dir, `image-${Date.now()}.png`)
   fs.writeFileSync(file, img.toPNG())
   return file
+})
+// [Image #N] clicked in a Claude Code pane: the image Tessel pasted, or the
+// one in the pane's conversation, in the system viewer.
+ipcMain.handle('images:open', async (_evt, q = {}) => {
+  try {
+    let file = q && isPastedImage(q.file) && fs.existsSync(q.file) ? q.file : null
+    if (!file && q && typeof q.sessionId === 'string') file = await claudeImageFile({ sessionId: q.sessionId, n: Number(q.n) })
+    if (!file) return { ok: false }
+    const err = await shell.openPath(file)
+    return err ? { ok: false, error: err } : { ok: true }
+  } catch (err) {
+    return { ok: false, error: err.message }
+  }
 })
 ipcMain.on('clipboard:write', (_evt, text) => {
   if (typeof text === 'string' && text.length) clipboard.writeText(text)

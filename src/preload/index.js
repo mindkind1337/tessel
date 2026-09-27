@@ -42,6 +42,7 @@ const api = {
   geminiSessionExists: (id) => ipcRenderer.invoke('sessions:geminiExists', id),
   qwenSessionExists: (id) => ipcRenderer.invoke('sessions:qwenExists', id),
   installLogStart: (q) => ipcRenderer.invoke('install:logStart', q),
+  openPastedImage: (q) => ipcRenderer.invoke('images:open', q),
   openInstallLog: (file) => ipcRenderer.invoke('install:openLog', file),
   showInstallLog: (file) => ipcRenderer.invoke('install:showLog', file),
   onInstallResult: (cb) => {

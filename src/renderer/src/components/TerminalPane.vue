@@ -556,12 +556,44 @@ async function pasteImage() {
     } catch {
       /* fall back to Claude's own key */
     }
-    if (file && term) term.paste(file)
-    else window.shellApi.writePty(props.node.id, '\x1bv')
+    if (file && term) {
+      const before = Math.max(0, ...imageNumbersOnScreen())
+      term.paste(file)
+      rememberPastedImage(file, before)
+    } else window.shellApi.writePty(props.node.id, '\x1bv')
   } else {
     window.shellApi.writePty(props.node.id, '\x16')
   }
   if (term) term.focus()
+}
+
+// "[Image #N]" in a Claude Code pane opens that image (a click on it).
+// The images pasted here: Claude shows the path as "[Image #N]" a moment
+// later, the first number above those on screen before is this one. Images
+// already sent are found in the pane's conversation (main process).
+const pastedImages = {} // n -> file
+const IMAGE_TAG = /\[Image #(\d+)\]/g
+function imageNumbersOnScreen() {
+  return [...screenText(40).matchAll(IMAGE_TAG)].map((m) => Number(m[1]))
+}
+function rememberPastedImage(file, before) {
+  let tries = 0
+  const look = () => {
+    const fresh = imageNumbersOnScreen().filter((n) => n > before && !pastedImages[n])
+    if (fresh.length) pastedImages[Math.min(...fresh)] = file
+    else if (++tries < 25) setTimeout(look, 200)
+  }
+  setTimeout(look, 150)
+}
+async function openImage(n) {
+  const res = window.shellApi.openPastedImage
+    ? await window.shellApi
+        .openPastedImage({ file: pastedImages[n] || null, sessionId: props.node.sessionId || null, n })
+        .catch(() => null)
+    : null
+  if ((!res || !res.ok) && ctx.toast) {
+    ctx.toast(`Image #${n} was not found (only images pasted in this pane or sent in its conversation can be opened).`, { timeout: 5000 })
+  }
 }
 
 // Pasting goes through xterm's paste(), which wraps the text as a bracketed
@@ -854,6 +886,25 @@ onMounted(() => {
   term.loadAddon(fit)
   // A link written as plain text: the same.
   term.loadAddon(new WebLinksAddon((_e, uri) => openLink(uri)))
+  // [Image #N] in Claude Code: click to open the image.
+  term.registerLinkProvider({
+    provideLinks(y, callback) {
+      if (props.node.agentId !== 'claude' || !term) return callback(undefined)
+      const line = term.buffer.active.getLine(y - 1)
+      const text = line ? line.translateToString(true) : ''
+      const links = []
+      for (const m of text.matchAll(IMAGE_TAG)) {
+        const n = Number(m[1])
+        links.push({
+          range: { start: { x: m.index + 1, y }, end: { x: m.index + m[0].length, y } },
+          text: m[0],
+          decorations: { underline: true, pointerCursor: true },
+          activate: () => openImage(n)
+        })
+      }
+      callback(links.length ? links : undefined)
+    }
+  })
   const updateScrolled = () => {
     if (!term) return
     const buf = term.buffer.active

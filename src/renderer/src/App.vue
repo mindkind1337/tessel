@@ -1158,7 +1158,8 @@ provide('panelCtx', {
   unsent,
   resolveUnsent,
   agentReportedDone,
-  copied: (what) => showToast(`${what} copied.`, { timeout: 2000 })
+  copied: (what) => showToast(`${what} copied.`, { timeout: 2000 }),
+  toast: (text, opts) => showToast(text, opts)
 })
 
 function splitActive(dir) {
