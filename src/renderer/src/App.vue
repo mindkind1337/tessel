@@ -218,6 +218,7 @@ function readDrafts() {
   }
 }
 function setDraft(id, on) {
+  if (userDraft[id] === on && !draftUnknown[id]) return // already recorded
   userDraft[id] = on
   delete draftUnknown[id]
   const all = readDrafts()
@@ -730,11 +731,18 @@ function saveLayoutNow() {
     }))
   }
   try {
-    window.shellApi.saveLayout(JSON.parse(JSON.stringify(snapshot)))
+    const text = JSON.stringify(snapshot)
+    // Many changes never reach the saved layout (a pane's process id, its
+    // restart count, a team's poll state): the same snapshot is not written
+    // again.
+    if (text === lastLayoutText) return
+    lastLayoutText = text
+    window.shellApi.saveLayout(JSON.parse(text))
   } catch (err) {
     console.error('Could not save the layout', err)
   }
 }
+let lastLayoutText = ''
 
 async function splitLeaf(
   leafId,
@@ -2289,23 +2297,28 @@ const workspaceItems = computed(() =>
 // Every open agent's state, for the activity log and the Activity view.
 const agentStates = computed(() => {
   const out = {}
-  forEachWsLeaf((leaf) => {
-    if (leaf.kind !== 'agent') return
-    let state = 'idle'
-    if (approvals[leaf.id]) state = 'approval'
-    else if (limits[leaf.id]) state = 'limited'
-    else if (agentStatus[leaf.id] === 'busy') state = 'working'
-    out[leaf.id] = {
-      state,
-      title: leaf.title || 'Agent',
-      agentId: leaf.agentId || null,
-      reset: limits[leaf.id] ? limits[leaf.id].reset : '',
-      wsId: wsOfLeaf(leaf.id)?.id || null,
-      teamId: leaf.team || null
-    }
-  })
+  for (const ws of workspaces.value) {
+    forEachLeaf(ws.tree, (leaf) => {
+      if (leaf.kind !== 'agent') return
+      addAgentState(out, leaf, ws.id)
+    })
+  }
   return out
 })
+function addAgentState(out, leaf, wsId) {
+  let state = 'idle'
+  if (approvals[leaf.id]) state = 'approval'
+  else if (limits[leaf.id]) state = 'limited'
+  else if (agentStatus[leaf.id] === 'busy') state = 'working'
+  out[leaf.id] = {
+    state,
+    title: leaf.title || 'Agent',
+    agentId: leaf.agentId || null,
+    reset: limits[leaf.id] ? limits[leaf.id].reset : '',
+    wsId,
+    teamId: leaf.team || null
+  }
+}
 
 // --- Agent tracking -----------------------------------------------------------
 // For each agent: its state and since when (trackedState), its task, and
@@ -3588,8 +3601,10 @@ async function pollTeams() {
     // an agent CLI is here (Claude Code, Codex, Gemini, Qwen, Copilot,
     // OpenCode), not only once a team exists: an agent
     // working alone uses the board too.
-    const MCP_AGENTS = ['claude', 'codex', 'gemini', 'qwen', 'copilot', 'opencode', 'cline']
-    if (agents.value.some((a) => MCP_AGENTS.includes(a.id) && a.available)) installTeamToolsOnce()
+    if (agents.value.some((a) => MCP_AGENT_IDS.includes(a.id) && a.available)) installTeamToolsOnce()
+    // Agents of a team started before the current tools: restarted (once
+    // per round, it looks at every team itself).
+    if (teams.value.length) restartForTeamTools()
     teamStepIs('team map')
     await publishCurrentTeams()
   } finally {
@@ -4326,8 +4341,6 @@ async function deliverChannel(team, members, round = teamRound) {
     }
     teamStepIs('task board', team)
     await syncTeamBoard(team, dir, members, round)
-    installTeamToolsOnce() // runs on its own (Claude and Codex take a while)
-    restartForTeamTools()
     return
   }
   const res = await window.shellApi.channel.poll({ dir, teamId: team.id, availableIds: members.map((m) => m.id) })
@@ -4865,6 +4878,7 @@ const sessionItems = computed(() => {
   const items = []
   forEachLeaf(tree.value, (leaf) => {
     const state = paneState(leaf)
+    const task = taskOfPane(leaf.id)
     items.push({
       id: leaf.id,
       num: leaf.num || 0,
@@ -4881,9 +4895,9 @@ const sessionItems = computed(() => {
       toolsDown: !!toolsDown[leaf.id],
       team: leaf.team || null,
       lead: !!(leaf.team && teamById(leaf.team)?.leadId === leaf.id),
-      task: taskOfPane(leaf.id)?.title || null,
-      review: taskOfPane(leaf.id)?.column === 'review',
-      leadReview: taskOfPane(leaf.id)?.leadReview || null,
+      task: task?.title || null,
+      review: task?.column === 'review',
+      leadReview: task?.leadReview || null,
       track: leaf.kind === 'agent' ? trackOf(leaf.id) : null,
       active: leaf.id === activeId.value
     })
