@@ -26,6 +26,10 @@ export const DEFAULT_SETTINGS = Object.freeze({
   desktopNotifications: true,
   inAppAlerts: true,
   confirmCloseAgent: true,
+  // Type a one-line reminder into an idle agent's terminal when team
+  // messages wait for it. Off: messages stay in the background only (read
+  // when the agent works; Tessel never types into your terminals).
+  wakeIdleAgents: false,
   restoreWorkspaces: true,
   resumeAgents: true,
   // Draw terminals with the graphics card (WebGL). Off = plain renderer.

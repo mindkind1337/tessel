@@ -3980,6 +3980,9 @@ function wakeIfNeeded(leaf) {
     delete wakeState[leaf.id]
     return
   }
+  // Off (the default): the messages stay in the background, never typed
+  // into the terminal; the agent reads them when it works.
+  if (!settings.wakeIdleAgents) return
   const w = (wakeState[leaf.id] = wakeState[leaf.id] || { since: Date.now(), woken: false, gen: leaf.gen || 0 })
   if (w.woken && ((leaf.gen || 0) !== w.gen || Date.now() - (w.wokenAt || 0) >= REWAKE_AFTER_MS)) {
     w.woken = false

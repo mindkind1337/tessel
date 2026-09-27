@@ -285,6 +285,16 @@ const CURSORS = [
         </label>
         <label class="set-row">
           <div class="set-label">
+            Wake idle agents for team messages
+            <span class="set-hint"
+              >Types a one-line reminder in an idle agent's terminal. Off: messages stay in the background and are
+              read when the agent works</span
+            >
+          </div>
+          <input v-model="settings.wakeIdleAgents" type="checkbox" class="set-switch" />
+        </label>
+        <label class="set-row">
+          <div class="set-label">
             Reopen my workspaces at launch
             <span class="set-hint">Off starts with a single terminal</span>
           </div>
