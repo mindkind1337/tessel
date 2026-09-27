@@ -3766,20 +3766,28 @@ async function checkTeamTools(round) {
 const shellEnterAt = {} // paneId -> last Enter pressed there
 let detectBusy = false
 let detectedAtStart = false
+const DETECTED_EVERY_MS = 20000
+let lastDetectedCheck = 0
 async function detectShellAgents() {
   if (!teamsReady || detectBusy || !window.shellApi.detectAgents) return
   const now = Date.now()
   const shells = {}
   const watched = {}
+  // An agent already recognised is only watched to see it exit: every 20 s
+  // (each check lists the processes through PowerShell), not every 4 s.
+  const checkDetected = now - lastDetectedCheck >= DETECTED_EVERY_MS
   forEachWsLeaf((l) => {
     if (!l.pid) return
-    const watch = l.detected || (l.kind !== 'agent' && (!detectedAtStart || now - (shellEnterAt[l.id] || 0) < 60000))
+    const watch =
+      (l.detected && checkDetected) ||
+      (l.kind !== 'agent' && (!detectedAtStart || now - (shellEnterAt[l.id] || 0) < 60000))
     if (watch) {
       shells[l.id] = l.pid
       watched[l.id] = l
     }
   })
   detectedAtStart = true
+  if (checkDetected && Object.values(watched).some((l) => l.detected)) lastDetectedCheck = now
   if (!Object.keys(shells).length) return
   detectBusy = true
   try {
