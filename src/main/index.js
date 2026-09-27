@@ -460,7 +460,7 @@ const isLayout = (d) => !!d && typeof d === 'object' && !Array.isArray(d)
 
 ipcMain.handle('layout:load', () => {
   try {
-    const res = readJsonSafe(layoutFile(), isLayout)
+    const res = readJsonSafe(layoutFile(), isLayout, { onLocked: 'backup' })
     // Held by another program even after retries: say so, with the previous
     // copy to show (the window never saves over the file this session).
     if (res.locked) {
@@ -472,7 +472,8 @@ ipcMain.handle('layout:load', () => {
     return res.data
   } catch (err) {
     logCrashContext(`layout:load failed: ${err.message}`)
-    return null
+    // Unread is not empty: the window must not start blank and save over it.
+    return { locked: true, backup: null }
   }
 })
 
@@ -496,7 +497,8 @@ ipcMain.handle('taskboard:load', (_evt, opts) => {
     return withLedger ? loadBoard(app.getPath('userData')) : loadTasks(app.getPath('userData'))
   } catch (err) {
     logCrashContext(`taskboard:load failed: ${err.message}`)
-    return withLedger ? { tasks: [], appliedRequests: [] } : []
+    // Unread is not empty: the window shows nothing and saves nothing.
+    return { locked: true, tasks: [], appliedRequests: [] }
   }
 })
 

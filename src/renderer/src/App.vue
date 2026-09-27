@@ -4225,6 +4225,9 @@ async function syncSoloBoards(round) {
 // wsId, members (agents allowed to ask), teamId (null: alone) }
 async function syncBoard(b, round = teamRound) {
   if (!window.shellApi.team || !window.shellApi.team.requests) return
+  // The board shown is only its previous copy (never saved): agents' requests
+  // wait in their files and nothing is published as the current board.
+  if (boardLocked) return
   const { key: boardKey, dir, target, wsId, members } = b
   const byNum = (n) => members.find((m) => m.num === Number(String(n).slice(1))) || null
   const res = await window.shellApi.team.requests({ dir, ...target })
@@ -5287,7 +5290,8 @@ onMounted(async () => {
   // tasks doesn't immediately trigger a redundant save.
   try {
     startStep = 'task board'
-    const saved = await loadUnlocked(() => window.shellApi.taskBoard.load({ withLedger: true }))
+    // The layout already waited for its lock: no second long wait.
+    const saved = await loadUnlocked(() => window.shellApi.taskBoard.load({ withLedger: true }), layoutLocked ? 2 : 10)
     if (saved && saved.locked === true) {
       boardLocked = true
       if (Array.isArray(saved.tasks)) setTasks(saved.tasks) // its previous copy, shown only
@@ -5319,11 +5323,12 @@ onMounted(async () => {
 let unsubFocusPane = null
 
 // A saved file another program holds for a moment (antivirus, backup): the
-// main process answers { locked: true }; tried again every second for 30 s
-// before giving up. Given up: the file is left alone (never saved over).
+// main process answers { locked: true }; tried again every second (about 15 s
+// in all, each try also waits briefly in the main process) before giving up.
+// Given up: the file is left alone (never saved over).
 let layoutLocked = false
 let boardLocked = false
-async function loadUnlocked(load, tries = 30) {
+async function loadUnlocked(load, tries = 10) {
   let res = await load()
   for (let i = 1; i < tries && res && res.locked === true; i++) {
     await new Promise((r) => setTimeout(r, 1000))
