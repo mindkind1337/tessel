@@ -25,6 +25,8 @@ export const DEFAULT_SETTINGS = Object.freeze({
   alwaysSelect: false,
   desktopNotifications: true,
   inAppAlerts: true,
+  // A short sound with each new notification: 'none' | 'chime' | 'ping'.
+  alertSound: 'none',
   confirmCloseAgent: true,
   // Type a one-line reminder into an idle agent's terminal when team
   // messages wait for it (nothing else can start an idle agent's turn). Off:
@@ -67,6 +69,7 @@ export function loadSettings(saved) {
     if (typeof v !== typeof def) continue
     if (key === 'theme' && !isTheme(v)) continue
     if (key === 'cursorStyle' && !['block', 'bar', 'underline'].includes(v)) continue
+    if (key === 'alertSound' && !['none', 'chime', 'ping'].includes(v)) continue
     settings[key] = v
   }
   settings.fontSize = clamp(Math.round(settings.fontSize), 8, 28)

@@ -28,6 +28,8 @@ import { activity, recordActivity, loadActivity, saveActivityNow, activityChange
 import ActivityPanel from './components/ActivityPanel.vue'
 import ConfirmDialog from './components/ConfirmDialog.vue'
 import ImageViewer from './components/ImageViewer.vue'
+import NotificationsMenu from './components/NotificationsMenu.vue'
+import { addNotification, readForPane, playAlertSound } from './notificationsStore'
 import NotesPanel from './components/NotesPanel.vue'
 import NewTaskDialog from './components/NewTaskDialog.vue'
 import ReviewPanel from './components/ReviewPanel.vue'
@@ -1843,12 +1845,20 @@ function focusPane(paneId) {
   selectWorkspace(ws.id)
   ws.activeId = paneId
   clearAttention(paneId)
+  readForPane(paneId)
+}
+
+// An entry in the notification inbox (toolbar bell), with its sound.
+function inboxNote(kind, title, body, paneId) {
+  addNotification({ kind, title, body, paneId })
+  playAlertSound(settings.alertSound)
 }
 
 // An agent finished a stretch of work while you were elsewhere.
 function notifyAgentDone(node) {
   const ws = wsOfLeaf(node.id)
   const where = ws && workspaces.value.length > 1 ? ` in ${ws.name}` : ''
+  inboxNote('done', `${node.title} finished and is waiting for you`, ws ? `Workspace: ${ws.name}` : '', node.id)
   if (document.hasFocus()) {
     if (!settings.inAppAlerts) return
     showToast(`${node.title} finished and is waiting for you${where}.`, {
@@ -2445,6 +2455,7 @@ watch(agentAlerts, (list) => {
   for (const a of list) {
     if (alertedAgents.has(a.key)) continue
     alertedAgents.add(a.key)
+    inboxNote('alert', `${a.title} needs you`, a.reason, a.id)
     showToast(`${a.title}: ${a.reason}`, { kind: 'attention', timeout: 12000, action: { label: 'Show', run: () => focusPane(a.id) } })
   }
 })
@@ -4838,6 +4849,7 @@ function notifyAgentLimit(node, hit) {
     ? ` ${others.map((l) => l.title).join(', ')} can take over.`
     : ''
   const text = `${node.title} hit its usage limit${when}.${handOver}`
+  inboxNote('limit', `${node.title} hit its usage limit`, `${when.trim()}${handOver}`.trim(), node.id)
   if (document.hasFocus()) {
     showToast(text, {
       kind: 'attention',
@@ -5610,6 +5622,7 @@ onBeforeUnmount(() => {
 
         <span class="toolbar-sep"></span>
 
+        <NotificationsMenu @focus-pane="focusPane" />
         <button
           class="tb-icon"
           :class="{ on: broadcast, warn: broadcast }"

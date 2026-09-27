@@ -5,6 +5,7 @@ import { ref, onMounted, onUnmounted } from 'vue'
 import BrandIcon from './BrandIcon.vue'
 import { settings, FONT_FAMILIES, resetSettings, clamp } from '../settings'
 import { THEMES } from '../themes'
+import { playAlertSound } from '../notificationsStore'
 
 const props = defineProps({
   shells: { type: Array, default: () => [] },
@@ -401,6 +402,17 @@ const CURSORS = [
             <span class="set-hint">When an agent finishes in a pane you aren't looking at</span>
           </div>
           <input v-model="settings.inAppAlerts" type="checkbox" class="set-switch" />
+        </label>
+        <label class="set-row">
+          <div class="set-label">
+            Sound
+            <span class="set-hint">With each new notification (the bell in the toolbar lists them)</span>
+          </div>
+          <select v-model="settings.alertSound" class="set-select" @change="playAlertSound(settings.alertSound)">
+            <option value="none">None</option>
+            <option value="chime">Chime</option>
+            <option value="ping">Ping</option>
+          </select>
         </label>
       </section>
 
