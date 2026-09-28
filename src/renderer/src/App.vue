@@ -4468,10 +4468,15 @@ async function syncSoloBoards(round) {
 // A card's report (team_task_done): kept on the card; succeeded moves it to
 // Done. Whoever gave the card is told, in the background.
 function applyReport(task, r, from, teamId) {
+  // Kept on the card; but a card that still waits (cards before it, your
+  // decision) does not go to Done on a report.
+  const blocked = r.outcome === 'succeeded' && blockedReason(task)
   updateTask(task.id, {
     report: { outcome: r.outcome, summary: r.summary, files: r.files || [], by: from.id, at: Date.now() },
-    ...(r.outcome === 'succeeded' ? { column: 'done' } : {})
+    ...(r.outcome === 'succeeded' && !blocked ? { column: 'done' } : {})
   })
+  if (blocked && teamId && from.team === teamId)
+    tellAgents([from], `[Tessel] Your report on card ${task.id} is kept, but the card stays in ${task.column}: ${blocked}.`, teamId)
   recordActivity({
     type: 'task',
     action: 'reported',
@@ -4537,8 +4542,17 @@ provide('resolveDecision', resolveDecision)
 // agent is told once (in the background in a team).
 const waitingOn = (task) => (task.deps || []).filter((d) => {
   const dep = boardTasks.find((t) => t.id === d)
-  return dep && dep.column !== 'done'
+  // Deleted from the board: still not done (you decide: remove the wait, or
+  // move the card yourself).
+  return !dep || dep.column !== 'done'
 })
+// Why an agent cannot move a card on yet ('' when it can).
+function blockedReason(task) {
+  const waiting = waitingOn(task)
+  if (waiting.length) return `it waits for ${waiting.join(', ')}`
+  if (task.gate && task.gate.status === 'pending') return `it waits for the user's decision (${task.gate.question})`
+  return ''
+}
 watch(
   () => boardTasks.map((t) => `${t.id}:${t.column}`).join('|'),
   () => {
@@ -4569,13 +4583,20 @@ function writeTeamRoster(team, dir, members) {
     const st = agentStates.value[m.id]
     out[m.id] = { agent: m.agentId || null, model: paneModels[m.id] || null, state: st ? st.state : null }
   }
+  const key = `${dir}|${team.id}`
   const sig = JSON.stringify(out)
-  if (rosterSigs[team.id] === sig) return
-  rosterSigs[team.id] = sig
-  window.shellApi.team.roster({ dir, teamId: team.id, members: out }).catch(() => {
-    delete rosterSigs[team.id]
-  })
+  if (rosterSigs[key] === sig || rosterPending.has(key)) return
+  rosterPending.add(key)
+  // Remembered only once written: a failed write is tried again next round.
+  window.shellApi.team
+    .roster({ dir, teamId: team.id, members: out })
+    .then((res) => {
+      if (res && res.ok) rosterSigs[key] = sig
+    })
+    .catch(() => {})
+    .finally(() => rosterPending.delete(key))
 }
+const rosterPending = new Set()
 
 // b: { key (ledger and cache key), dir, target ({ teamId } or { board }),
 // wsId, members (agents allowed to ask), teamId (null: alone) }
@@ -4608,11 +4629,15 @@ async function syncBoard(b, round = teamRound) {
           refusals.push({ fromId: from.id, text: `The card "${r.title}" was not added: ${r.assignee} is not in your team.` })
           continue
         }
+        const unknown = (r.deps || []).filter((d) => !boardTasks.some((t) => t.id === d && t.wsId === wsId))
+        if (unknown.length) {
+          refusals.push({ fromId: from.id, text: `The card "${r.title}" was not added: no card ${unknown.join(', ')} on your team's board to wait for (see team_tasks).` })
+          continue
+        }
         const task = addTask({ title: r.title, wsId })
         updateTask(task.id, { paneId: who.id, column: r.column, createdBy: from.id })
-        // Cards it waits for (only this board's).
-        const deps = (r.deps || []).filter((d) => boardTasks.some((t) => t.id === d && t.wsId === wsId))
-        if (deps.length) updateTask(task.id, { deps })
+        // Cards it waits for.
+        if (r.deps && r.deps.length) updateTask(task.id, { deps: [...r.deps] })
         recordActivity({ type: 'task', action: 'added', paneId: who.id, agent: agentInfo(who), title: r.title, wsId, by: paneLabel(from) })
       } else if (r.action === 'report' || r.action === 'gate') {
         const task = boardTasks.find((t) => t.id === r.id)
@@ -4629,6 +4654,11 @@ async function syncBoard(b, round = teamRound) {
           continue
         }
         if (task.column === r.column) continue
+        const blocked = (r.column === 'doing' || r.column === 'review' || r.column === 'done') && blockedReason(task)
+        if (blocked) {
+          refusals.push({ fromId: from.id, text: `Card ${task.id} "${task.title}" stays in ${task.column}: ${blocked}.` })
+          continue
+        }
         updateTask(task.id, { column: r.column })
         const owner = task.paneId ? findLeaf(task.paneId) : null
         recordActivity({

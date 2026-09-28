@@ -120,6 +120,42 @@ describe('Orchestration through the team tools', () => {
     expect(text(r)).toMatch(/^Answer from #1 Codex CLI \(message .+\): No, go ahead\.$/)
   }, 30000)
 
+  it('team_ask: only the teammate asked answers; a cancelled wait leaves the answer unread', async () => {
+    const control = new AbortController()
+    const asking = mcp.handle({ id: 7, method: 'tools/call', params: { name: 'team_ask', arguments: { to: '#1', question: 'Q?', wait_seconds: 20 } } }, control.signal)
+    let q = null
+    for (let i = 0; i < 40 && !q; i++) {
+      pollTeamChannel({ dir, teamId })
+      const state = JSON.parse(fs.readFileSync(join(dir, '.tessel', 'team-channel', teamId, 'state.json'), 'utf8'))
+      q = state.messages.find((m) => m.toId === A.id && m.askId)
+      if (!q) await new Promise((r) => setTimeout(r, 100))
+    }
+    // #3 replies to it: not the answer.
+    as(C)
+    mcp.send(mcp.locate(), '#2', 'I am not #1.', q.id)
+    as(B)
+    pollTeamChannel({ dir, teamId })
+    await new Promise((r) => setTimeout(r, 1500))
+    // The agent cancels its call; then #1 answers: left for team_inbox.
+    control.abort()
+    as(A)
+    mcp.send(mcp.locate(), '#2', 'Yes from #1.', q.id)
+    as(B)
+    pollTeamChannel({ dir, teamId })
+    const r = await asking
+    expect(text(r)).toBe('Cancelled.')
+    const inbox = mcp.readInbox(mcp.locate())
+    expect(inbox).toContain('I am not #1.')
+    expect(inbox).toContain('Yes from #1.')
+  }, 30000)
+
+  it('team_ask: Tessel slow to take the question in is not "not asked"', async () => {
+    // Nobody polls the channel: the question waits in the outbox.
+    const r = await call('team_ask', { to: '#1', question: 'Slow?', wait_seconds: 5 })
+    expect(r.isError).toBe(false)
+    expect(text(r)).toMatch(/No answer yet after 5 s\. The question stays open/)
+  }, 30000)
+
   it('team_ask: no answer in time keeps the question open; a question to nobody is refused', async () => {
     const asking = call('team_ask', { to: '#1', question: 'Ready?', wait_seconds: 5 })
     setTimeout(() => pollTeamChannel({ dir, teamId }), 300)

@@ -146,10 +146,11 @@ const timingTitle = computed(() => {
 
 // --- Orchestration --------------------------------------------------------------
 // The cards this one waits for (team_task_add "after"), those not done yet.
+// A card deleted from the board still blocks: it shows as removed.
 const waitsFor = computed(() =>
   (props.task.deps || [])
-    .map((id) => allTasks.find((t) => t.id === id))
-    .filter((t) => t && t.column !== 'done')
+    .map((id) => allTasks.find((t) => t.id === id) || { id, title: `${id} (removed)`, column: 'gone' })
+    .filter((t) => t.column !== 'done')
 )
 const hadDeps = computed(() => (props.task.deps || []).length > 0)
 // A decision the agent asked you for (team_task_gate).

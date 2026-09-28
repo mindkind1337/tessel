@@ -447,15 +447,20 @@ function answerTo(ctx, qid) {
   const state = readJson(path.join(ctx.root, 'state.json'))
   const messages = (state && Array.isArray(state.messages) && state.messages) || []
   const asked = messages.filter((m) => m.fromId === ctx.meId && m.askId === qid)
-  const ids = new Set(asked.map((m) => m.id))
-  const answer = messages.find((m) => m.toId === ctx.meId && m.replyTo && ids.has(m.replyTo))
+  // Only the one asked answers it (a reply from someone else is a message).
+  const askedWhom = new Map(asked.map((m) => [m.id, m.toId]))
+  const answer = messages.find(
+    (m) => m.toId === ctx.meId && m.replyTo && askedWhom.has(m.replyTo) && m.fromId === askedWhom.get(m.replyTo)
+  )
   const refused = messages.find((m) => m.toId === ctx.meId && m.fromId === 'tessel' && m.askId === qid)
   return { asked: asked.length > 0, answer, refused, state }
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
-async function ask(ctx, args) {
+// signal: aborted when the agent's tool call is cancelled; the answer is then
+// left unread (team_inbox, or team_ask with resume, still gets it).
+async function ask(ctx, args, signal = null) {
   let qid = args.resume ? String(args.resume).trim() : ''
   if (qid && !ASK_ID.test(qid)) return { error: '"resume" must be the question id team_ask gave you.' }
   const waitS = Math.min(ASK_MAX_S, Math.max(5, Number(args.wait_seconds) || ASK_DEFAULT_S))
@@ -474,16 +479,14 @@ async function ask(ctx, args) {
     if (sent.error) return sent
   }
   const until = Date.now() + waitS * 1000
-  const startedAt = Date.now()
   for (;;) {
+    if (signal && signal.aborted) return { error: 'Cancelled.' }
     const r = answerTo(ctx, qid)
     if (r.answer) {
       markRead(ctx, [r.answer])
       return { ok: true, text: `Answer from ${label(ctx, r.answer.fromId)} (message ${r.answer.id}): ${r.answer.text}` }
     }
     if (r.refused) return { error: `The question was not sent: ${r.refused.text}` }
-    // Tessel takes a message in within seconds: not there, it is not running.
-    if (!r.asked && Date.now() - startedAt > 15000) return { error: 'Tessel did not take the question in: is Tessel running? Nothing was asked.' }
     if (Date.now() >= until) break
     await sleep(1000)
   }
@@ -642,7 +645,7 @@ function boardLocate(start) {
 
 const BOARD_TOOLS = ['team_tasks', 'team_task_add', 'team_task_move', 'team_task_done', 'team_task_gate']
 
-function callTool(name, args = {}) {
+function callTool(name, args = {}, signal = null) {
   let ctx = locate(args.me)
   // Alone (no team): the board tools use the workspace's board.
   if (ctx.error && BOARD_TOOLS.includes(name)) ctx = boardLocate() || ctx
@@ -665,12 +668,13 @@ function callTool(name, args = {}) {
   if (name === 'team_ask') {
     // Only in a team: someone must be there to answer.
     if (!ctx.state) return { text: 'You are not in a Tessel team: nobody can answer.', isError: true }
-    return ask(ctx, args).then((r) => (r.error ? { text: r.error, isError: true } : { text: r.text }))
+    return ask(ctx, args, signal).then((r) => (r.error ? { text: r.error, isError: true } : { text: r.text }))
   }
   return { text: `Unknown tool ${name}.`, isError: true }
 }
 
-function handle(msg) {
+// signal: aborted when the client cancels this request (a waiting team_ask).
+function handle(msg, signal = null) {
   const { id, method, params } = msg
   if (method === 'initialize') {
     return {
@@ -687,7 +691,7 @@ function handle(msg) {
     const done = (r) => ({ content: [{ type: 'text', text: r.text }], isError: !!r.isError })
     const failed = (err) => done({ text: `Tessel team tool failed: ${err.message}`, isError: true })
     try {
-      const r = callTool(params && params.name, (params && params.arguments) || {})
+      const r = callTool(params && params.name, (params && params.arguments) || {}, signal)
       // Only a tool that waits (team_ask) answers later.
       return r && typeof r.then === 'function' ? r.then(done, failed) : done(r)
     } catch (err) {
@@ -700,6 +704,7 @@ function handle(msg) {
 
 function serve() {
   let buf = ''
+  const running = new Map() // request id -> AbortController
   const write = (obj) => process.stdout.write(JSON.stringify(obj) + '\n')
   process.stdin.setEncoding('utf8')
   process.stdin.on('data', (chunk) => {
@@ -716,17 +721,27 @@ function serve() {
         write({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } })
         continue
       }
+      // The client gave up on a request (a waiting team_ask): stop it.
+      if (msg.method === 'notifications/cancelled') {
+        const c = msg.params && running.get(msg.params.requestId)
+        if (c) c.abort()
+        continue
+      }
       // A tool may wait (team_ask): answered when done, the others meanwhile.
+      const control = new AbortController()
+      if (msg.id !== undefined) running.set(msg.id, control)
       Promise.resolve()
-        .then(() => handle(msg))
+        .then(() => handle(msg, control.signal))
         .then(
           (result) => {
-            if (msg.id !== undefined && result !== undefined) write({ jsonrpc: '2.0', id: msg.id, result })
+            if (msg.id !== undefined && result !== undefined && !control.signal.aborted) write({ jsonrpc: '2.0', id: msg.id, result })
           },
           (err) => {
-            if (msg.id !== undefined) write({ jsonrpc: '2.0', id: msg.id, error: { code: err.code || -32603, message: err.message } })
+            if (msg.id !== undefined && !control.signal.aborted)
+              write({ jsonrpc: '2.0', id: msg.id, error: { code: err.code || -32603, message: err.message } })
           }
         )
+        .finally(() => running.delete(msg.id))
     }
   })
 }
