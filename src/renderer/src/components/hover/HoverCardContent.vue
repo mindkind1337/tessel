@@ -73,7 +73,19 @@ function setEl(node) {
   if (observer) observer.disconnect()
   observer = null
   if (node && typeof ResizeObserver !== 'undefined') {
-    observer = new ResizeObserver(() => place())
+    // Placed on the next frame, and only when its size really changed: a card
+    // whose clock ticks every second otherwise re-placed itself inside the
+    // observer's own callback ("ResizeObserver loop" errors, 1 per second).
+    let lastSize = ''
+    let frame = 0
+    observer = new ResizeObserver((entries) => {
+      const box = entries[0] && entries[0].contentRect
+      const size = box ? `${Math.round(box.width)}x${Math.round(box.height)}` : ''
+      if (size === lastSize) return
+      lastSize = size
+      cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(() => place())
+    })
     observer.observe(node)
   }
 }
