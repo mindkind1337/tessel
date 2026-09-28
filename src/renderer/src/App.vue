@@ -4342,7 +4342,7 @@ function canSleep(leaf, ws, now) {
     state: info ? info.state : null,
     // Only a state the agent's own hooks confirmed (never one estimated
     // from its screen): stopping a terminal needs that proof.
-    confirmed: !!(info && info.confirmed === true && leaf.agentLaunchToken),
+    confirmed: !!(leaf.agentLaunchToken && agentStateKnown(leaf.id, leaf.agentLaunchToken)),
     trackedState: t ? t.state : null,
     since: t ? t.since : NaN,
     lastKey: lastUserKey[leaf.id] || 0,
