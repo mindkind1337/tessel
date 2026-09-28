@@ -19,32 +19,55 @@ const repo = ref(true)
 const loading = ref(false)
 const loaded = ref(false)
 const selected = ref(null)
+// The last status could not be read: shown instead of the list (never a
+// "clean" copy without a status that worked).
+const error = ref('')
 
-const rootKey = () => String(props.root || '').replace(/[\\/]+$/, '').toLowerCase()
+// Windows paths: one kind of separator, none at the end (case is compared
+// apart, lowercased).
+const normPath = (p) => String(p || '').replace(/[\\/]+/g, '\\').replace(/\\+$/, '')
 
 let seq = 0
+let disposed = false
 async function load() {
-  if (!props.root || !api()) {
+  // A new request (or none) makes any request still out of date.
+  const my = ++seq
+  const root = props.root
+  if (!root || !api()) {
+    files.value = []
+    loading.value = false
+    error.value = ''
+    return
+  }
+  loading.value = true
+  let res = null
+  let failed = ''
+  try {
+    res = await api().status({ root })
+  } catch (err) {
+    failed = (err && err.message) || ''
+  }
+  // Answered too late: unmounted, another request, or another folder.
+  if (disposed || my !== seq || props.root !== root) return
+  loading.value = false
+  loaded.value = true
+  if (!res || !res.ok) {
+    error.value = (res && res.error) || failed || 'Git status failed.'
     files.value = []
     return
   }
-  const my = ++seq
-  loading.value = true
-  const res = await api().status({ root: props.root }).catch(() => null)
-  if (my !== seq) return
-  loading.value = false
-  loaded.value = true
-  if (!res || !res.ok) return
+  error.value = ''
   repo.value = !!res.repo
-  const r = props.root.replace(/[\\/]+$/, '')
+  const rKey = normPath(root).toLowerCase() + '\\'
   const out = []
-  for (const [p, letter] of Object.entries(res.files || {})) {
+  for (const [raw, letter] of Object.entries(res.files || {})) {
     if (letter === '!') continue
+    const p = normPath(raw)
     // Only what is in this project's folder (its repository may be bigger).
-    if (!p.toLowerCase().startsWith(rootKey() + '\\')) continue
-    const rel = p.slice(r.length + 1)
+    if (!p.toLowerCase().startsWith(rKey)) continue
+    const rel = p.slice(rKey.length)
     const i = rel.search(/[\\/][^\\/]*$/)
-    out.push({ path: p, rel, name: i >= 0 ? rel.slice(i + 1) : rel, dir: i >= 0 ? rel.slice(0, i) : '', letter })
+    out.push({ path: raw, rel, name: i >= 0 ? rel.slice(i + 1) : rel, dir: i >= 0 ? rel.slice(0, i) : '', letter })
   }
   out.sort((a, b) => a.rel.localeCompare(b.rel, undefined, { numeric: true, sensitivity: 'base' }))
   files.value = out
@@ -68,6 +91,7 @@ let timer = 0
 watch(() => props.root, () => {
   files.value = []
   loaded.value = false
+  error.value = ''
   if (props.root && api()) api().watch(props.root)
   load()
 })
@@ -76,12 +100,13 @@ onMounted(() => {
   load()
   if (api() && api().onChanged)
     stop = api().onChanged((r) => {
-      if (!props.root || String(r).toLowerCase() !== props.root.toLowerCase()) return
+      if (!props.root || normPath(r).toLowerCase() !== normPath(props.root).toLowerCase()) return
       clearTimeout(timer)
       timer = setTimeout(load, 250)
     })
 })
 onBeforeUnmount(() => {
+  disposed = true
   if (stop) stop()
   clearTimeout(timer)
   // The side panel closes (the file explorer, when shown, closes with it).
@@ -109,7 +134,8 @@ defineExpose({ load })
           <button class="exit-btn" data-test="review-changes" @click="emit('review', t.id)">Review changes</button>
         </div>
       </template>
-      <div v-if="loaded && !repo" class="explorer-empty">This folder is not in a git repository.</div>
+      <div v-if="loaded && error" class="explorer-empty explorer-error" data-test="changes-error">Could not read the git status: {{ error }}</div>
+      <div v-else-if="loaded && !repo" class="explorer-empty">This folder is not in a git repository.</div>
       <template v-else>
         <div class="changes-group">
           Changes <span class="changes-count" data-test="changes-count">{{ files.length }}</span>

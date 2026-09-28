@@ -2,7 +2,7 @@
 // and the few changes you make from it (new file or folder, rename, to the
 // Recycle Bin). Everything stays inside the project folder it was asked for.
 import fs from 'fs'
-import { join, resolve, relative, isAbsolute, dirname, basename } from 'path'
+import { join, resolve, relative, isAbsolute, dirname, basename, sep } from 'path'
 import { execFile, spawn } from 'child_process'
 import { StringDecoder } from 'string_decoder'
 
@@ -82,6 +82,15 @@ export function parsePorcelain(top, out) {
   return files
 }
 
+// Git's own message (its first line), for an error shown to the user.
+export function gitError(stderr, fallback) {
+  const line = String(stderr || '')
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .find((l) => l)
+  return line ? `${fallback} ${line.slice(0, 300)}` : fallback
+}
+
 // The repository's top folder (status paths are relative to it).
 export function gitTop(root) {
   return new Promise((done) => {
@@ -100,8 +109,9 @@ export async function projectStatus({ root, ignored = false } = {}) {
   return new Promise((done) => {
     const args = ['-C', top, 'status', '--porcelain=v1', '-z', '--untracked-files=all']
     if (ignored) args.push('--ignored=matching')
-    execFile('git', args, { windowsHide: true, timeout: 15000, maxBuffer: 32 * 1024 * 1024 }, (err, stdout) => {
-      if (err) return done({ ok: true, files: {}, repo: false })
+    execFile('git', args, { windowsHide: true, timeout: 15000, maxBuffer: 32 * 1024 * 1024 }, (err, stdout, stderr) => {
+      // A repository whose status failed is not a clean one: said as an error.
+      if (err) return done({ ok: false, error: gitError(stderr, err.killed ? 'Git status took too long.' : 'Git status failed.') })
       done({ ok: true, files: parsePorcelain(top, String(stdout)), repo: true })
     })
   })
@@ -112,6 +122,14 @@ export const SEARCH_LIMIT = 500
 const MAX_WALK = 100000 // entries looked at, at most, per search
 const MAX_FILE = 2 * 1024 * 1024 // content search skips bigger files
 const MAX_TEXT = 240 // a result's line, cut around the match
+const MAX_RECORD = 8192 // chars of one git grep line kept (path + text); the rest is dropped unread
+const MAX_OUTPUT = 32 * 1024 * 1024 // bytes of git grep output read, at most
+
+// The number of results asked for, within 1..SEARCH_LIMIT.
+export function searchCap(limit) {
+  const n = Number(limit)
+  return Number.isInteger(n) && n > 0 ? Math.min(n, SEARCH_LIMIT) : SEARCH_LIMIT
+}
 
 // Every folder and file of the project, breadth first, without the heavy
 // folders: fn(entry) returns true to stop.
@@ -147,6 +165,7 @@ const relOf = (root, p) => relative(resolve(root), p)
 // not opened yet too: -> { ok, results: [{ name, path, rel, dir }], truncated }
 export async function searchNames({ root, query, dotfiles = true, limit = SEARCH_LIMIT } = {}) {
   if (!inside(root, root)) return { ok: false, error: 'Invalid folder.' }
+  limit = searchCap(limit)
   const q = String(query || '').trim().toLowerCase()
   if (!q) return { ok: true, results: [], truncated: false }
   const results = []
@@ -177,6 +196,7 @@ export function clipLine(text, q) {
 // are skipped. -> { ok, results: [{ path, rel, line, text }], truncated }
 export async function searchContentWalk({ root, query, limit = SEARCH_LIMIT } = {}) {
   if (!inside(root, root)) return { ok: false, error: 'Invalid folder.' }
+  limit = searchCap(limit)
   const q = String(query || '').toLowerCase()
   if (!q.trim()) return { ok: true, results: [], truncated: false }
   const results = []
@@ -221,23 +241,131 @@ export function parseGrepRecord(root, rec, q) {
   return { path, rel: relOf(root, path), line, text: clipLine(rec.slice(b + 1), q) }
 }
 
+const contained = (base, p) => {
+  const rel = relative(base, p)
+  return rel !== '' && rel !== '..' && !rel.startsWith('..' + sep) && !isAbsolute(rel)
+}
+
+// Is a file git grep found one the walk would search? Under no link or
+// junction below the project folder, its real path inside the project's real
+// one, a regular file of 2 MB at most. -> fn(full path) -> boolean, with the
+// answers kept for the search (a file has many lines, a folder many files).
+export function grepFileCheck(root) {
+  const r = resolve(root)
+  let realRoot = null
+  try {
+    realRoot = fs.realpathSync.native(r)
+  } catch {
+    // gone: nothing passes
+  }
+  const dirs = new Map([[r, true]])
+  const files = new Map()
+  const dirOk = (d) => {
+    if (dirs.has(d)) return dirs.get(d)
+    let ok = false
+    const parent = dirname(d)
+    if (parent !== d && contained(r, d) && dirOk(parent)) {
+      try {
+        const st = fs.lstatSync(d)
+        ok = st.isDirectory() && !st.isSymbolicLink()
+      } catch {
+        ok = false
+      }
+    }
+    dirs.set(d, ok)
+    return ok
+  }
+  return (full) => {
+    if (files.has(full)) return files.get(full)
+    let ok = false
+    if (realRoot && contained(r, full) && dirOk(dirname(full))) {
+      try {
+        const st = fs.lstatSync(full)
+        ok = st.isFile() && !st.isSymbolicLink() && st.size <= MAX_FILE && contained(realRoot, fs.realpathSync.native(full))
+      } catch {
+        ok = false
+      }
+    }
+    files.set(full, ok)
+    return ok
+  }
+}
+
+// git grep's arguments: its answer shaped whatever the repository's or the
+// user's git config says (paths relative to the project folder, line numbers,
+// fixed text), without the heavy folders.
+export function grepArgs(root, query) {
+  return [
+    '-C', root,
+    '-c', 'grep.fullName=false',
+    '-c', 'grep.lineNumber=true',
+    '-c', 'grep.column=false',
+    '-c', 'grep.patternType=fixed',
+    '-c', 'grep.extendedRegexp=false',
+    '-c', 'color.grep=never',
+    'grep', '-n', '-I', '-z', '-i', '-F', '--untracked', '--no-color',
+    '-e', String(query),
+    '--', '.',
+    ...HEAVY.filter((h) => h !== '.git').map((h) => `:(exclude,glob)**/${h}/**`)
+  ]
+}
+
+// Reads git grep's output one record at a time, keeping at most MAX_RECORD
+// chars of each (a huge line is not held in memory). onRecord(rec) returns
+// true to stop. -> { write(text) -> stop?, end() -> stop? }
+export function grepReader(onRecord) {
+  let pending = ''
+  let skipping = false
+  const write = (text) => {
+    let start = 0
+    for (;;) {
+      const nl = text.indexOf('\n', start)
+      if (!skipping) {
+        pending += nl < 0 ? text.slice(start, start + MAX_RECORD + 1) : text.slice(start, Math.min(nl, start + MAX_RECORD + 1))
+        if (pending.length > MAX_RECORD) {
+          pending = pending.slice(0, MAX_RECORD)
+          skipping = true
+        }
+      }
+      if (nl < 0) return false
+      const rec = pending
+      pending = ''
+      skipping = false
+      start = nl + 1
+      if (onRecord(rec)) return true
+    }
+  }
+  const end = () => {
+    const rec = pending
+    pending = ''
+    skipping = false
+    return rec ? onRecord(rec) : false
+  }
+  return { write, end }
+}
+
 // Content search: `git grep` in a repository (tracked and untracked files,
-// not ignored ones), else the walk above.
+// not ignored ones), else the walk above. Its results follow the walk's rules
+// (no link or junction, 2 MB at most, no heavy folder); a git that fails is
+// said as an error, never as "no results".
 export async function searchContent({ root, query, limit = SEARCH_LIMIT } = {}) {
   if (!inside(root, root)) return { ok: false, error: 'Invalid folder.' }
+  limit = searchCap(limit)
   const q = String(query || '').toLowerCase()
   if (!q.trim()) return { ok: true, results: [], truncated: false }
   const top = await gitTop(root)
   if (!top) return searchContentWalk({ root, query, limit })
+  const allowed = grepFileCheck(root)
   return new Promise((done) => {
     const results = []
     const decoder = new StringDecoder('utf8')
-    let pending = ''
     let finished = false
     let child = null
     let timer = 0
-    // Stopped early (enough results, or too slow): git is ended first, so it
-    // no longer holds the folder when the answer arrives.
+    let bytes = 0
+    let stderr = ''
+    // Stopped early (enough results, too much output, or too slow): git is
+    // ended first, so it no longer holds the folder when the answer arrives.
     const finish = (res) => {
       if (finished) return
       finished = true
@@ -254,41 +382,39 @@ export async function searchContent({ root, query, limit = SEARCH_LIMIT } = {}) 
         // gone already
       }
     }
-    // Complete records only (the last one may still be coming).
-    const take = (text, last) => {
-      pending += text
-      const recs = pending.split('\n')
-      pending = last ? '' : recs.pop()
-      for (const rec of recs) {
-        const r = parseGrepRecord(root, rec, q)
-        if (!r) continue
-        if (results.length >= limit) return true
-        results.push(r)
-      }
+    const reader = grepReader((rec) => {
+      const r = parseGrepRecord(root, rec, q)
+      if (!r || !allowed(r.path)) return false
+      if (results.length >= limit) return true
+      results.push(r)
       return false
-    }
+    })
     try {
-      child = spawn('git', ['-C', root, 'grep', '-n', '-I', '-z', '-i', '-F', '--untracked', '--no-color', '-e', String(query), '--', '.'], {
-        windowsHide: true
-      })
+      child = spawn('git', grepArgs(root, query), { windowsHide: true })
     } catch {
       finished = true
       return done(searchContentWalk({ root, query, limit }))
     }
     timer = setTimeout(() => finish({ ok: true, results, truncated: true }), 20000)
     child.stdout.on('data', (chunk) => {
-      if (!finished && take(decoder.write(chunk), false)) finish({ ok: true, results, truncated: true })
+      if (finished) return
+      bytes += chunk.length
+      if (reader.write(decoder.write(chunk)) || bytes > MAX_OUTPUT) finish({ ok: true, results, truncated: true })
     })
-    child.stderr.on('data', () => {})
+    child.stderr.on('data', (chunk) => {
+      if (stderr.length < 4096) stderr += String(chunk)
+    })
     child.on('error', () => {
       if (finished) return
       finished = true
       clearTimeout(timer)
       done(searchContentWalk({ root, query, limit }))
     })
-    child.on('close', () => {
+    child.on('close', (code) => {
       if (finished) return
-      const full = take(decoder.end(), true)
+      // 0: matches, 1: none; anything else is git failing.
+      if (code !== 0 && code !== 1) return finish({ ok: false, error: gitError(stderr, 'The search failed (git grep).') })
+      const full = reader.write(decoder.end()) || reader.end()
       finish({ ok: true, results, truncated: full })
     })
   })

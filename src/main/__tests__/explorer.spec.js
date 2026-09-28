@@ -3,7 +3,7 @@ import fs from 'fs'
 import os from 'os'
 import { join } from 'path'
 import { execFileSync } from 'child_process'
-import { inside, listDir, parsePorcelain, projectStatus, checkName, create, rename, trash, searchNames, searchContent, searchContentWalk, parseGrepRecord, clipLine } from '../explorer'
+import { inside, listDir, parsePorcelain, projectStatus, checkName, create, rename, trash, searchNames, searchContent, searchContentWalk, parseGrepRecord, clipLine, grepFileCheck, grepReader, grepArgs, searchCap, SEARCH_LIMIT } from '../explorer'
 import { statusOf, folderStatus, ignoredSet, isIgnored } from '../../renderer/src/explorerStatus'
 
 describe('file explorer', () => {
@@ -211,4 +211,97 @@ describe('file explorer', () => {
     // Ignored files never count for their folder's letter.
     expect(folderStatus(map, rk)[k('out')]).toBeUndefined()
   }, 30000)
+
+  it('a git status that fails is an error, never a clean copy or "not a repository"', async () => {
+    fs.rmSync(join(root, '.git'), { recursive: true })
+    execFileSync('git', ['-C', root, 'init', '-q'], { windowsHide: true })
+    fs.writeFileSync(join(root, '.git', 'index'), 'not an index')
+    const res = await projectStatus({ root })
+    expect(res.ok).toBe(false)
+    expect(res.error).toMatch(/git status failed/i)
+  }, 30000)
+})
+
+describe('content search with git grep follows the walk rules', () => {
+  let base
+  let root
+  const git = (...a) => execFileSync('git', ['-C', root, ...a], { windowsHide: true })
+  beforeEach(() => {
+    base = fs.mkdtempSync(join(os.tmpdir(), 'tessel-grep-'))
+    root = join(base, 'repo')
+    fs.mkdirSync(root)
+    git('init', '-q')
+    git('config', 'core.autocrlf', 'false')
+  })
+  afterEach(() => fs.rmSync(base, { recursive: true, force: true }))
+
+  it('never shows a file reached through a junction (even one git tracks)', async () => {
+    fs.mkdirSync(join(root, 'linked'))
+    fs.writeFileSync(join(root, 'linked', 'inside.txt'), 'ORIGINAL\n')
+    git('add', '.')
+    const outside = join(base, 'outside')
+    fs.mkdirSync(outside)
+    fs.writeFileSync(join(outside, 'inside.txt'), 'OUTSIDE_ONLY\n')
+    fs.renameSync(join(root, 'linked'), join(base, 'moved'))
+    fs.symlinkSync(outside, join(root, 'linked'), 'junction')
+    const res = await searchContent({ root, query: 'OUTSIDE_ONLY' })
+    expect(res.ok).toBe(true)
+    expect(res.results).toEqual([])
+    const check = grepFileCheck(root)
+    expect(check(join(root, 'linked', 'inside.txt'))).toBe(false)
+  }, 30000)
+
+  it('a git that fails (exit 128) is an error, not "no results"', async () => {
+    fs.writeFileSync(join(root, 'present.txt'), 'PRESENT\n')
+    git('config', 'grep.threads', 'not-an-integer')
+    const res = await searchContent({ root, query: 'PRESENT' })
+    expect(res.ok).toBe(false)
+    expect(res.error).toMatch(/search failed/i)
+  }, 30000)
+
+  it('gives real paths from a folder inside the repository, whatever grep.fullName says', async () => {
+    fs.mkdirSync(join(root, 'src'))
+    fs.writeFileSync(join(root, 'src', 'present.txt'), 'SUBROOT_ONLY\n')
+    git('config', 'grep.fullName', 'true')
+    const res = await searchContent({ root: join(root, 'src'), query: 'SUBROOT_ONLY' })
+    expect(res.ok).toBe(true)
+    expect(res.results.map((r) => r.path)).toEqual([join(root, 'src', 'present.txt')])
+  }, 30000)
+
+  it('skips files over 2 MB, heavy folders, and a bad limit is the usual cap', async () => {
+    fs.writeFileSync(join(root, 'large.txt'), 'LARGE_ONLY' + 'x'.repeat(3 * 1024 * 1024) + '\n')
+    fs.mkdirSync(join(root, 'node_modules', 'pkg'), { recursive: true })
+    fs.writeFileSync(join(root, 'node_modules', 'pkg', 'i.js'), 'LARGE_ONLY\n')
+    fs.writeFileSync(join(root, 'many.txt'), Array.from({ length: 600 }, (_, i) => `CAP_${i}`).join('\n'))
+    const large = await searchContent({ root, query: 'LARGE_ONLY' })
+    expect(large).toEqual({ ok: true, results: [], truncated: false })
+    const capped = await searchContent({ root, query: 'CAP_', limit: 'not-a-number' })
+    expect(capped.results).toHaveLength(SEARCH_LIMIT)
+    expect(capped.truncated).toBe(true)
+  }, 30000)
+
+  it('reads records without holding a huge line in memory', () => {
+    const got = []
+    const reader = grepReader((rec) => {
+      got.push(rec)
+      return false
+    })
+    const huge = 'a.txt\u00001\u0000' + 'y'.repeat(100000)
+    for (let i = 0; i < huge.length; i += 7000) reader.write(huge.slice(i, i + 7000))
+    reader.write('\nb.txt\u00002\u0000short')
+    reader.end()
+    expect(got).toHaveLength(2)
+    expect(got[0].length).toBeLessThanOrEqual(8192)
+    expect(got[0].startsWith('a.txt\u00001\u0000yyy')).toBe(true)
+    expect(got[1]).toBe('b.txt\u00002\u0000short')
+    expect(searchCap('x')).toBe(SEARCH_LIMIT)
+    expect(searchCap(-3)).toBe(SEARCH_LIMIT)
+    expect(searchCap(10)).toBe(10)
+  })
+
+  it('forces the answer shape whatever the git config says', () => {
+    const args = grepArgs('C:\\p', 'q')
+    expect(args.join(' ')).toContain('-c grep.fullName=false')
+    expect(args).toContain(':(exclude,glob)**/node_modules/**')
+  })
 })

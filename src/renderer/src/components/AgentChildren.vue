@@ -16,8 +16,22 @@ const open = ref(false)
 const now = ref(Date.now())
 let pollTimer = 0
 let clockTimer = 0
+let disposed = false
+// Which conversation the list is of (agent, session, account): an answer for
+// another one, or older than the last request, is dropped.
+let seq = 0
+let shownKey = null
+const keyOf = () => JSON.stringify([props.agentId, props.sessionId, props.accountId === undefined ? null : props.accountId])
 
 async function refresh() {
+  if (disposed) return
+  const key = keyOf()
+  // Another conversation: its old list goes at once.
+  if (key !== shownKey) {
+    shownKey = key
+    list.value = []
+  }
+  const my = ++seq
   if (props.agentId !== 'claude' || !props.sessionId || !window.shellApi.agentChildren) {
     list.value = []
     return
@@ -29,13 +43,17 @@ async function refresh() {
       sessionId: props.sessionId,
       ...(props.accountId !== undefined ? { accountId: props.accountId } : {})
     })
+    if (disposed || my !== seq || keyOf() !== key) return
     list.value = Array.isArray(res) ? res : []
+    // The clock moves with each answer too (not only while one runs), so the
+    // "done" count forgets the ones finished more than 30 min ago.
+    now.value = Date.now()
   } catch {
     // next time
   }
 }
 const summary = computed(() => childrenSummary(list.value, now.value))
-const shown = computed(() => summary.value.running > 0 || summary.value.recent > 0)
+const shown = computed(() => summary.value.running > 0 || summary.value.quiet > 0 || summary.value.recent > 0)
 // Running first, then newest.
 const rows = computed(() =>
   [...list.value].sort((a, b) => (b.state === 'running') - (a.state === 'running') || (b.startedAt || 0) - (a.startedAt || 0))
@@ -44,6 +62,7 @@ const rows = computed(() =>
 // Every 5 s while some run (else every 20 s); the clock ticks while shown.
 function schedule() {
   clearTimeout(pollTimer)
+  if (disposed) return
   pollTimer = setTimeout(async () => {
     await refresh()
     schedule()
@@ -56,7 +75,7 @@ watch(
     if (tick) clockTimer = setInterval(() => (now.value = Date.now()), 1000)
   }
 )
-watch(() => props.sessionId, refresh)
+watch(keyOf, refresh)
 function onDocClick(e) {
   if (open.value && !e.target.closest('.agent-children')) open.value = false
 }
@@ -65,11 +84,13 @@ onMounted(() => {
   document.addEventListener('mousedown', onDocClick, true)
 })
 onBeforeUnmount(() => {
+  disposed = true
   clearTimeout(pollTimer)
   clearInterval(clockTimer)
   document.removeEventListener('mousedown', onDocClick, true)
 })
-const MARK = { running: '◌', done: '✓', stopped: '■' }
+const MARK = { running: '◌', done: '✓', quiet: '…' }
+const STATE_TITLE = { running: 'Running', done: 'Finished', quiet: 'Quiet: nothing written for a while (a long tool, or stopped)' }
 </script>
 
 <template>
@@ -84,12 +105,12 @@ const MARK = { running: '◌', done: '✓', stopped: '■' }
       @click.stop="(open = !open), refresh()"
     >
       <span class="agent-children-dot" aria-hidden="true"></span>
-      {{ summary.running ? `${summary.running} running` : `${summary.recent} done` }}
+      {{ summary.running ? `${summary.running} running` : summary.quiet ? `${summary.quiet} quiet` : `${summary.recent} done` }}
     </button>
     <div v-if="open" class="agent-children-list" role="list" data-test="agent-children-list">
       <div class="agent-children-head">Sub-agents ({{ list.length }})</div>
       <div v-for="c in rows" :key="c.id" class="agent-child" :class="c.state" role="listitem">
-        <span class="agent-child-mark" :title="c.state">{{ MARK[c.state] || '·' }}</span>
+        <span class="agent-child-mark" :title="STATE_TITLE[c.state] || c.state">{{ MARK[c.state] || '·' }}</span>
         <span class="agent-child-type">{{ c.type }}</span>
         <span class="agent-child-title" :title="c.title">{{ c.title || '(no title)' }}</span>
         <span class="agent-child-stats">{{ childTime(c, now) }}<template v-if="formatTokens(c.tokens)"> · ↓ {{ formatTokens(c.tokens) }} tokens</template></span>

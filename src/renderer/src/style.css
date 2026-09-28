@@ -7414,7 +7414,7 @@ button.act-stat:hover,
   color: #73c991;
 }
 
-.agent-child.stopped .agent-child-mark {
+.agent-child.quiet .agent-child-mark {
   color: var(--text-dim);
 }
 
@@ -7431,8 +7431,7 @@ button.act-stat:hover,
   text-overflow: ellipsis;
 }
 
-.agent-child.done .agent-child-title,
-.agent-child.stopped .agent-child-title {
+.agent-child.done .agent-child-title {
   color: var(--text-dim);
 }
 
