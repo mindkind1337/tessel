@@ -10,7 +10,7 @@ import { agentModelLive, watchModelFiles } from './agentModel'
 import { postToInbox } from './agentInbox'
 import { hooksStatus } from './teamHooksStatus'
 import { assessNeeds } from './tesselNeeds'
-import { resolveFiles, codeGotoArg } from './fileOpen'
+import { resolveFiles, codeGotoArg, listProjectFiles } from './fileOpen'
 import { titleBarColors } from '../shared/themePalettes'
 import { findAgentSession, geminiSessionExists, qwenSessionExists } from './agentResume'
 import { extraToolDirs, withToolDirs } from './toolDirs'
@@ -1355,6 +1355,7 @@ ipcMain.handle('images:openExternal', async (_evt, file) => {
 // File references in a terminal (fileOpen.js): which exist, and opening one
 // at its line in VS Code when installed, else in its default program.
 ipcMain.handle('files:resolve', (_evt, q = {}) => resolveFiles(q || {}))
+ipcMain.handle('files:list', safe((root) => listProjectFiles(root)))
 ipcMain.handle('files:open', async (_evt, q = {}) => {
   const file = q && typeof q.file === 'string' ? q.file : ''
   let ok = false

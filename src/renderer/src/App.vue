@@ -29,6 +29,7 @@ import ActivityPanel from './components/ActivityPanel.vue'
 import ConfirmDialog from './components/ConfirmDialog.vue'
 import ImageViewer from './components/ImageViewer.vue'
 import NotificationsMenu from './components/NotificationsMenu.vue'
+import FileFinder from './components/FileFinder.vue'
 import { addNotification, readForPane, playAlertSound } from './notificationsStore'
 import NotesPanel from './components/NotesPanel.vue'
 import NewTaskDialog from './components/NewTaskDialog.vue'
@@ -102,6 +103,31 @@ const settingsSection = ref(null) // opens Settings scrolled to that section
 function openSettingsAt(section) {
   settingsSection.value = section
   settingsOpen.value = true
+}
+// Jump to file (Ctrl+Shift+J): the current workspace's project files.
+const finderOpen = ref(false)
+function openFinder() {
+  paletteOpen.value = false
+  finderOpen.value = true
+}
+// Its folder: the workspace's project, else the active pane's folder.
+function finderRoot() {
+  if (currentWs.value && currentWs.value.cwd) return currentWs.value.cwd
+  const leaf = activeId.value ? findLeaf(activeId.value) : null
+  return (leaf && leaf.startDir) || null
+}
+async function openFoundFile({ full, rel }) {
+  const res = await window.shellApi.openFile({ file: full }).catch(() => null)
+  if (!res || !res.ok) showToast(`Could not open ${rel}${res && res.error ? `: ${res.error}` : ''}`, { kind: 'error', timeout: 5000 })
+}
+// Ctrl+Enter in Jump to file: the path into the active pane (quoted when it
+// has spaces), e.g. to point an agent at it.
+function insertFoundPath({ rel }) {
+  const id = activeId.value
+  const pane = id && getPane(id)
+  if (!pane || !pane.paste) return
+  pane.paste(/\s/.test(rel) ? `"${rel}"` : rel)
+  focusPane(id)
 }
 // A quick command (Settings > Quick commands) into a pane: pasted as text
 // (safe, bracketed when the program supports it), then Enter if asked.
@@ -291,6 +317,7 @@ const SHORTCUTS = [
       ['Ctrl+Shift+T', 'New terminal (default shell)'],
       ['Ctrl+Shift+Space', 'Open a terminal or agent'],
       ['Ctrl+Shift+P', 'Command palette: find panes, workspaces, commands'],
+      ['Ctrl+Shift+J', "Jump to a file of the workspace's project"],
       ['Ctrl+Shift+E', 'Split right'],
       ['Ctrl+Shift+O', 'Split down'],
       ['Ctrl+Shift+W', 'Close pane'],
@@ -1283,6 +1310,10 @@ function buildCommands() {
       })
     }
   }
+  add('Files', 'Jump to a file…', openFinder, {
+    shortcut: 'Ctrl+Shift+J',
+    hint: "Find a file of this workspace's project by a few letters"
+  })
   add('Quick commands', 'Add or edit quick commands', () => openSettingsAt('quick-commands'), {
     hint: 'Text you send to a pane in two keystrokes'
   })
@@ -5111,6 +5142,7 @@ function dialogOpen() {
     updateOpen.value ||
     newTaskOpen.value ||
     paletteOpen.value ||
+    finderOpen.value ||
     !!confirmState.value ||
     !!imageView.value ||
     launcher.open
@@ -5172,6 +5204,9 @@ function onKey(e) {
     } else if (k === 'p') {
       e.preventDefault()
       togglePalette()
+    } else if (k === 'j') {
+      e.preventDefault()
+      openFinder()
     }
   }
   if (e.ctrlKey && !e.shiftKey && !e.altKey) {
@@ -5925,6 +5960,14 @@ onBeforeUnmount(() => {
     />
 
     <CommandPalette v-if="paletteOpen" :commands="paletteCommands" @close="paletteOpen = false" />
+    <FileFinder
+      v-if="finderOpen"
+      :root="finderRoot()"
+      :can-insert="!!activeId"
+      @open="openFoundFile"
+      @insert="insertFoundPath"
+      @close="finderOpen = false"
+    />
 
     <ImageViewer
       v-if="imageView"

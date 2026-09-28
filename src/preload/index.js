@@ -50,6 +50,8 @@ const api = {
   // { file, line, col } opens it (VS Code at the line, else its default app).
   resolveFiles: (q) => ipcRenderer.invoke('files:resolve', q),
   openFile: (q) => ipcRenderer.invoke('files:open', q),
+  // A project's files for Jump to file: root -> { ok, files, truncated }.
+  listFiles: (root) => ipcRenderer.invoke('files:list', root),
   openImageExternally: (file) => ipcRenderer.invoke('images:openExternal', file),
   openInstallLog: (file) => ipcRenderer.invoke('install:openLog', file),
   showInstallLog: (file) => ipcRenderer.invoke('install:showLog', file),
