@@ -135,7 +135,7 @@ watch(
 )
 watch(keyOf, refresh)
 function tokensLabel(tokens) {
-  return t('pane.subAgents.tokens', '{{tokens}} tokens', { tokens: formatTokens(tokens) })
+  return t('pane.subAgents.tokens', '{{tokens}}', { tokens: formatTokens(tokens) })
 }
 function onDocDown(e) {
   if (!open.value) return

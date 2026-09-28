@@ -83,7 +83,7 @@ function stateTitle(state) {
 function childStats(c) {
   const time = childTime(c, clock.value)
   const tokens = formatTokens(c.tokens)
-  return tokens ? t('sidebar.agentRow.stats', '{{time}} · ↓ {{tokens}} tokens', { time, tokens }) : time
+  return tokens ? t('sidebar.agentRow.stats', '{{time}} · ↓ {{tokens}}', { time, tokens }) : time
 }
 function childTitle(c, state) {
   return c.type ? `${c.title || noTitle()}, ${c.type} · ${state}` : `${c.title || noTitle()}, ${state}`

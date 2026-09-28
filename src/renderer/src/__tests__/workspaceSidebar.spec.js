@@ -251,7 +251,7 @@ describe('left sidebar', () => {
     await flushPromises()
     const kids = w.findAll('[data-agent-child]')
     expect(kids.map((k) => k.find('.car-lead').text())).toEqual(['Write tests', 'Scan the repo'])
-    expect(kids[1].find('.car-time').text()).toContain('↓ 1.2k tokens')
+    expect(kids[1].find('.car-time').text()).toContain('↓ 1.2k')
     expect(w.find('.child-more').text()).toBe('1 more')
     await w.find('.compact-agent-child-disclosure-button').trigger('click')
     expect(w.findAll('[data-agent-child]')).toHaveLength(0)
