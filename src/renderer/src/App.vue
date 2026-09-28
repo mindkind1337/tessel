@@ -32,6 +32,8 @@ import { activity, recordActivity, loadActivity, saveActivityNow, activityChange
 import ActivityPanel from './components/ActivityPanel.vue'
 import ConfirmDialog from './components/ConfirmDialog.vue'
 import ImageViewer from './components/ImageViewer.vue'
+import FileViewer from './components/FileViewer.vue'
+import { fileKind, isViewed } from '../../shared/fileKinds'
 import NotificationsMenu from './components/NotificationsMenu.vue'
 import FileFinder from './components/FileFinder.vue'
 import UsageMenu from './components/UsageMenu.vue'
@@ -114,6 +116,27 @@ function openSettingsAt(section) {
   settingsSection.value = section
   settingsOpen.value = true
 }
+// The file viewer (FileViewer.vue): Markdown, diagrams, tables, JSON,
+// images and any text; PDFs in their own window (Chromium's viewer).
+const fileView = ref(null) // { file, label, line }
+async function viewFile({ file, label = '', line = null }) {
+  if (!file) return
+  if (fileKind(file) === 'pdf') {
+    const res = window.shellApi.openPdf ? await window.shellApi.openPdf(file).catch(() => null) : null
+    if (!res || !res.ok) showToast(`Could not open ${label || file}${res && res.error ? `: ${res.error}` : ''}`, { kind: 'error', timeout: 5000 })
+    return
+  }
+  fileView.value = { file, label, line: Number.isInteger(line) ? line : null }
+}
+async function openInEditor({ file, line }) {
+  const res = await window.shellApi.openFile({ file, line: line || undefined }).catch(() => null)
+  if (!res || !res.ok) showToast(`Could not open ${file}${res && res.error ? `: ${res.error}` : ''}`, { kind: 'error', timeout: 5000 })
+}
+// A link in a viewed file: shown here too, or opened in the editor.
+function openFromViewer(file) {
+  if (isViewed(file) || fileKind(file) === 'text') viewFile({ file })
+}
+
 // Jump to file (Ctrl+Shift+J): the current workspace's project files.
 const finderOpen = ref(false)
 function openFinder() {
@@ -127,6 +150,7 @@ function finderRoot() {
   return (leaf && leaf.startDir) || null
 }
 async function openFoundFile({ full, rel }) {
+  if (isViewed(full)) return viewFile({ file: full, label: rel })
   const res = await window.shellApi.openFile({ file: full }).catch(() => null)
   if (!res || !res.ok) showToast(`Could not open ${rel}${res && res.error ? `: ${res.error}` : ''}`, { kind: 'error', timeout: 5000 })
 }
@@ -1295,7 +1319,8 @@ provide('panelCtx', {
   agentReportedDone,
   copied: (what) => showToast(`${what} copied.`, { timeout: 2000 }),
   toast: (text, opts) => showToast(text, opts),
-  showImage: (img) => (imageView.value = img)
+  showImage: (img) => (imageView.value = img),
+  viewFile: (f) => viewFile(f)
 })
 
 function splitActive(dir) {
@@ -5464,7 +5489,7 @@ function focusActivePane() {
   })
 }
 watch(
-  () => [paletteOpen.value, !!confirmState.value, !!notesView.value, !!reviewTask.value, !!imageView.value],
+  () => [paletteOpen.value, !!confirmState.value, !!notesView.value, !!reviewTask.value, !!imageView.value, !!fileView.value],
   (now, before) => {
     if (before && now.some((v, i) => before[i] && !v)) focusActivePane()
   }
@@ -5486,6 +5511,7 @@ function dialogOpen() {
     usageOpen.value ||
     !!confirmState.value ||
     !!imageView.value ||
+    !!fileView.value ||
     launcher.open
   )
 }
@@ -6312,6 +6338,16 @@ onBeforeUnmount(() => {
       @open="openFoundFile"
       @insert="insertFoundPath"
       @close="finderOpen = false"
+    />
+
+    <FileViewer
+      v-if="fileView"
+      :file="fileView.file"
+      :label="fileView.label"
+      :line="fileView.line"
+      @open-editor="openInEditor"
+      @open="openFromViewer"
+      @close="fileView = null"
     />
 
     <ImageViewer

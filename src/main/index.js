@@ -22,6 +22,7 @@ import { resolveFiles, codeGotoArg, listProjectFiles } from './fileOpen'
 import { titleBarColors } from '../shared/themePalettes'
 import { geminiSessionExists, qwenSessionExists } from './agentResume'
 import { paneEnv } from './paneEnv'
+import { readForView, readImageForView, openPdfWindow } from './fileView'
 import { extraToolDirs, withToolDirs } from './toolDirs'
 import { createInstallLogs } from './installLog'
 import { writeBoardRule } from './agentMemory'
@@ -1571,6 +1572,24 @@ ipcMain.handle('files:open', async (_evt, q = {}) => {
   const err = await shell.openPath(file)
   return err ? { ok: false, error: err } : { ok: true, with: 'default' }
 })
+// The file viewer (fileView.js): read a file to show it; a PDF in its own window.
+ipcMain.handle('files:view', (_evt, file) => {
+  try {
+    return readForView(file)
+  } catch (err) {
+    return { ok: false, error: err.message }
+  }
+})
+ipcMain.handle('files:viewImage', (_evt, file) => {
+  try {
+    return readImageForView(file)
+  } catch (err) {
+    return { ok: false, error: err.message }
+  }
+})
+ipcMain.handle('files:openPdf', (_evt, file) =>
+  openPdfWindow(BrowserWindow, file, { icon: fs.existsSync(appIconPath()) ? appIconPath() : null })
+)
 ipcMain.on('clipboard:write', (_evt, text) => {
   if (typeof text === 'string' && text.length) clipboard.writeText(text)
 })

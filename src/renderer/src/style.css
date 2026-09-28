@@ -4986,7 +4986,7 @@ button.act-stat:hover,
   padding: 2px 6px;
   border: 1px solid var(--border);
   border-radius: 4px;
-  background: var(--bg);
+  background: var(--surface-2);
   color: var(--text);
   font-size: 11.5px;
 }
@@ -6380,4 +6380,253 @@ button.act-stat:hover,
 .usage-table th:nth-last-child(-n + 2),
 .usage-table td:nth-last-child(-n + 2) {
   text-align: right;
+}
+
+/* File viewer (FileViewer.vue): Markdown, diagrams, tables, JSON, images, text. */
+.fview-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 400;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 28px;
+  background: rgba(8, 9, 12, 0.7);
+}
+
+.fview-card {
+  display: flex;
+  flex-direction: column;
+  width: min(1100px, 100%);
+  height: 100%;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+
+.fview-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px 8px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--chrome);
+}
+
+.fview-title {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-strong);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fview-size {
+  color: var(--text-dim);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.fview-seg {
+  flex-shrink: 0;
+}
+
+.fview-spacer {
+  flex: 1 1 auto;
+}
+
+.fview-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  background: var(--term);
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.fview-note {
+  padding: 16px 20px;
+  color: var(--text-dim);
+}
+
+.fview-note.error {
+  color: #ff9b9e;
+}
+
+/* Markdown */
+.fview-md {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 24px 32px 48px;
+  color: var(--text);
+  font-size: 14.5px;
+  line-height: 1.6;
+}
+
+.fview-md h1,
+.fview-md h2 {
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.fview-md h1,
+.fview-md h2,
+.fview-md h3,
+.fview-md h4 {
+  margin: 1.4em 0 0.6em;
+  color: var(--text-strong);
+  line-height: 1.3;
+}
+
+.fview-md a {
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.fview-md code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--surface-2);
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  font-size: 0.9em;
+}
+
+.fview-md pre {
+  padding: 12px 14px;
+  border-radius: 6px;
+  background: var(--surface-2);
+  overflow: auto;
+}
+
+.fview-md pre code {
+  padding: 0;
+  background: none;
+}
+
+.fview-md blockquote {
+  margin: 0;
+  padding: 0 14px;
+  border-left: 3px solid var(--border-strong);
+  color: var(--text-dim);
+}
+
+.fview-md table {
+  border-collapse: collapse;
+}
+
+.fview-md th,
+.fview-md td {
+  padding: 5px 10px;
+  border: 1px solid var(--border-strong);
+}
+
+.fview-md img {
+  max-width: 100%;
+}
+
+.fview-md hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+
+.md-mermaid {
+  margin: 12px 0;
+  text-align: center;
+}
+
+.md-mermaid svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.md-mermaid.error {
+  color: #ff9b9e;
+  font-size: 12.5px;
+  text-align: left;
+}
+
+.fview-mermaid {
+  padding: 24px;
+}
+
+/* Tables (CSV / TSV) */
+.fview-table-wrap {
+  padding: 0;
+}
+
+.fview-table {
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+.fview-table th,
+.fview-table td {
+  max-width: 320px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: top;
+}
+
+.fview-table th {
+  position: sticky;
+  top: 0;
+  background: var(--surface-2);
+  color: var(--text-strong);
+  text-align: left;
+}
+
+.fview-rownum {
+  color: var(--text-dim);
+  text-align: right;
+}
+
+/* Images */
+.fview-image {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100%;
+  padding: 20px;
+}
+
+.fview-image img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+/* Text with line numbers */
+.fview-code {
+  margin: 0;
+  padding: 10px 0;
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.fview-line {
+  display: block;
+  padding-right: 16px;
+  white-space: pre;
+}
+
+.fview-line.hl {
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+.fview-ln {
+  display: inline-block;
+  width: 52px;
+  margin-right: 14px;
+  padding-right: 8px;
+  color: var(--text-dim);
+  text-align: right;
+  -webkit-user-select: none;
+  user-select: none;
 }

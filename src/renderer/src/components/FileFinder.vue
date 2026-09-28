@@ -1,6 +1,6 @@
 <script setup>
 // Jump to file (Ctrl+Shift+J): the workspace's project files, found by a
-// few letters (fuzzy). Enter opens the file (VS Code when installed);
+// few letters (fuzzy). Enter opens the file (Markdown, tables, images and the like in Tessel's viewer, code in VS Code when installed);
 // Ctrl+Enter puts its path in the active pane, e.g. to point an agent at it.
 import { ref, computed, onMounted, nextTick, watch } from 'vue'
 import { fuzzyFilter } from '../../../shared/fuzzy'

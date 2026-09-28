@@ -36,6 +36,7 @@ import { modelFromScreen } from '../../../shared/screenModel'
 import { findFileRefs } from '../../../shared/fileLinks'
 import { osc52Text } from '../../../shared/osc52'
 import { cacheCountdown } from '../promptCache'
+import { isViewed } from '../../../shared/fileKinds'
 import { paneModels } from '../paneModels'
 
 const props = defineProps({
@@ -642,7 +643,13 @@ async function openImage(n) {
 
 // File references clicked in the terminal (see the link provider below).
 const fileLinkCache = new Map() // "<cwd>\n<path>" -> { file, at }
-async function openFileRef(file, ref) {
+// Markdown, diagrams, tables, JSON, images and PDFs show in Tessel's viewer;
+// code (or Shift+click) opens in your editor at its line.
+async function openFileRef(file, ref, event) {
+  if (ctx.viewFile && isViewed(file) && !(event && event.shiftKey)) {
+    ctx.viewFile({ file, label: ref.path, line: ref.line || null })
+    return
+  }
   const res = await window.shellApi.openFile({ file, line: ref.line, col: ref.col }).catch(() => null)
   if ((!res || !res.ok) && ctx.toast) ctx.toast(`Could not open ${ref.path}${res && res.error ? `: ${res.error}` : ''}`, { timeout: 5000 })
 }
@@ -1006,7 +1013,7 @@ onMounted(() => {
               range: { start: { x: r.index + 1, y }, end: { x: r.index + r.text.length, y } },
               text: r.text,
               decorations: { underline: true, pointerCursor: true },
-              activate: () => openFileRef(fileLinkCache.get(key(r.path)).file, r)
+              activate: (event) => openFileRef(fileLinkCache.get(key(r.path)).file, r, event)
             }))
         )
       if (!unknown.length) return build()
