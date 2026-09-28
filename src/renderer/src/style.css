@@ -8689,18 +8689,15 @@ button.act-stat:hover,
 /* The agent's task, on a line of its own under its row. */
 .car-subline {
   margin: -2px 0 2px;
-  padding: 0 8px 0 42px;
+  /* Lined up with the sub-agent rows under it (lineage margin + padding). */
+  padding: 0 8px 0 calc(0.75rem + 0.25rem + 5px);
   overflow: hidden;
   color: color-mix(in srgb, var(--wts-muted) 65%, transparent);
-  font-size: 11.5px;
+  font-size: 11px;
   line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
   cursor: pointer;
-}
-
-.car-subline.nested {
-  padding-left: 58px;
 }
 
 .car-subline.focused {
