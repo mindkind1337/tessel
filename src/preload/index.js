@@ -75,6 +75,27 @@ const api = {
       return () => ipcRenderer.removeListener('explorer:changed', h)
     }
   },
+  // Tessel's code editor (src/main/editorFiles.js).
+  editor: {
+    read: (file) => ipcRenderer.invoke('editor:read', file),
+    stat: (file) => ipcRenderer.invoke('editor:stat', file),
+    write: (q) => ipcRenderer.invoke('editor:write', q),
+    head: (file) => ipcRenderer.invoke('editor:head', file),
+    watch: (paths) => ipcRenderer.invoke('editor:watch', paths),
+    onChanged: (fn) => {
+      const h = (_e, change) => fn(change)
+      ipcRenderer.on('editor:changed', h)
+      return () => ipcRenderer.removeListener('editor:changed', h)
+    },
+    // How many open files have unsaved changes (the window asks before closing).
+    setDirtyCount: (n) => ipcRenderer.send('editor:dirty', n),
+    onConfirmClose: (fn) => {
+      const h = () => fn()
+      ipcRenderer.on('editor:confirmClose', h)
+      return () => ipcRenderer.removeListener('editor:confirmClose', h)
+    },
+    closeWindow: () => ipcRenderer.send('editor:closeWindow')
+  },
   viewImage: (file) => ipcRenderer.invoke('files:viewImage', file),
   openPdf: (file) => ipcRenderer.invoke('files:openPdf', file),
   // A project's files for Jump to file: root -> { ok, files, truncated }.
