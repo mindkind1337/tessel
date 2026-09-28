@@ -815,7 +815,6 @@ const titleInputEl = ref(null)
 
 function startEditTitle(e) {
   e.stopPropagation()
-  if (autoTitle.value) paneTitle.value = autoTitle.value
   editingTitle.value = true
   nextTick(() => titleInputEl.value && titleInputEl.value.select())
 }
@@ -837,7 +836,7 @@ function saveTitle() {
     }
     paneTitle.value = props.node.shellName
   }
-  if (paneTitle.value !== (autoTitle.value || props.node.title)) props.node.titleSet = true
+  if (paneTitle.value !== props.node.title) props.node.titleSet = true
   props.node.title = paneTitle.value
   editingTitle.value = false
   if (term) term.focus()
@@ -1516,8 +1515,13 @@ onBeforeUnmount(() => {
           data-test="pane-title"
           :title="titleTooltip"
           @dblclick="startEditTitle"
-          >{{ autoTitle || paneTitle }}</span
+          >{{ paneTitle }}</span
         >
+        <!-- The conversation's title beside the agent's name (never instead
+             of it: which agent runs here stays readable). -->
+        <span v-if="!editingTitle && autoTitle" class="pane-subtitle" data-test="pane-subtitle" :title="autoTitle">{{
+          autoTitle
+        }}</span>
         <!-- Pane menu > Set model...: edited in place, only while editing. -->
         <input
           v-if="isAgent && editingModel"

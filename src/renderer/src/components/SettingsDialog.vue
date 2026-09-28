@@ -669,10 +669,9 @@ const CURSORS = [
               </label>
               <label class="set-row">
                 <div class="set-label">
-                  Name panes after their conversation
+                  Show the conversation's title
                   <span class="set-hint"
-                    >Claude Code and Codex panes take their conversation's title. A name you give a pane
-                    always wins (empty it to go back)</span
+                    >Beside the agent's name in Claude Code and Codex panes (the name stays)</span
                   >
                 </div>
                 <input v-model="settings.autoTitles" type="checkbox" class="set-switch" />
