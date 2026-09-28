@@ -214,6 +214,99 @@ describe('Codex observed request accounting', () => {
 })
 
 describe('report projections and filters', () => {
+  it('counts unique sessions per model/project across turns, models, projects and filters', () => {
+    const first = state([
+      meta('shared'),
+      context('model-a', 'C:/Repo/A'),
+      count(),
+      context('model-a', 'c:\\REPO\\a\\'),
+      count(raw(200), raw(50), 1),
+      context('model-b', 'C:/Repo/B'),
+      count(raw(300), raw(50), 2)
+    ])
+    const second = state([meta('second'), context('model-b', 'C:/Repo/A'), count(raw(), raw(), 3)])
+    const oldCount = count()
+    oldCount.timestamp = '2026-01-01T12:00:00Z'
+    const old = state([meta('old'), context('model-a', 'C:/Repo/A'), oldCount])
+    const files = [file(first, '/first'), file(second, '/second'), file(old, '/old')]
+    const result = aggregate(files)
+    expect(result.totals).toMatchObject({ turns: 4, sessions: 2 })
+    expect(result.byModel.find((entry) => entry.model === 'model-a')).toMatchObject({
+      turns: 2,
+      sessions: 1
+    })
+    expect(result.byModel.find((entry) => entry.model === 'model-b')).toMatchObject({
+      turns: 2,
+      sessions: 2
+    })
+    expect(result.byProject.find((entry) => entry.cwd === 'C:/Repo/A')).toMatchObject({
+      turns: 3,
+      sessions: 2
+    })
+    expect(result.byProject.find((entry) => entry.cwd === 'C:/Repo/B')).toMatchObject({
+      turns: 1,
+      sessions: 1
+    })
+    const scoped = aggregate(files, { roots: ['C:/Repo/A'], model: 'model-b' })
+    expect(scoped.totals.sessions).toBe(1)
+    expect(scoped.byModel).toHaveLength(1)
+    expect(scoped.byModel[0].sessions).toBe(1)
+    expect(scoped.byProject).toHaveLength(1)
+    expect(scoped.byProject[0].sessions).toBe(1)
+    expect(
+      aggregate(files, { from: null, to: null }).byModel.find((entry) => entry.model === 'model-a')
+        .sessions
+    ).toBe(2)
+    expect(JSON.parse(JSON.stringify(result)).byModel[0].sessions).toEqual(expect.any(Number))
+  })
+
+  it('filters worktree roots with path boundaries, Windows aliases and POSIX case preserved', () => {
+    const paths = [
+      'C:/Repo/tree',
+      'c:\\REPO\\tree\\nested',
+      'C:/Repo/tree-other',
+      'C:/Repo/tree/../outside',
+      '/work/Repo',
+      '/work/repo',
+      '\\\\SERVER\\Share\\tree'
+    ]
+    const files = paths.map((cwd, i) =>
+      file(
+        state([
+          meta(`session-${i}`),
+          context('m', cwd),
+          count(raw(10, 0, 0, 0), raw(10, 0, 0, 0), i)
+        ]),
+        `/file-${i}`
+      )
+    )
+    expect(aggregate(files, { roots: ['C:\\repo\\TREE\\'] })).toMatchObject({
+      scope: 'tessel-worktrees',
+      totals: { input: 20, turns: 2, sessions: 2 }
+    })
+    expect(aggregate(files, { roots: ['C:/Repo/tree'], cwd: 'c:/repo/TREE' }).totals.input).toBe(10)
+    expect(aggregate(files, { roots: ['C:/Repo/tree'], model: 'other' }).totals.input).toBe(0)
+    expect(aggregate(files, { roots: ['/work/Repo'] }).totals.input).toBe(10)
+    expect(aggregate(files, { roots: ['//server/share'] }).totals.input).toBe(10)
+    expect(aggregate(files, { roots: [] })).toMatchObject({
+      scope: 'tessel-worktrees',
+      totals: { total: 0 }
+    })
+    expect(aggregate(files).scope).toBe('all')
+  })
+
+  it('deduplicates before root filtering so copied prefixes cannot change attribution', () => {
+    const original = state([meta(), context('m', 'C:/outside'), count()])
+    const forkMeta = meta('fork', { forked_from_id: 'session-a' })
+    forkMeta.timestamp = at(5)
+    const fork = state([forkMeta, context('m', 'C:/tree'), count(), count(raw(200), raw(50), 10)])
+    const result = aggregate([file(fork, '/fork'), file(original, '/original')], {
+      roots: ['C:/tree']
+    })
+    expect(result.totals).toMatchObject({ input: 50, turns: 1, sessions: 1 })
+    expect(result.scan.duplicated).toBe(1)
+  })
+
   it('keeps POSIX project names case-sensitive while matching Windows aliases', () => {
     const upper = state([
       meta('upper'),
@@ -314,7 +407,11 @@ describe('report projections and filters', () => {
     for (const query of [
       { from: '2026-02-30' },
       { from: '2026-10-01', to: '2026-09-01' },
-      { model: [] }
+      { model: [] },
+      { roots: null },
+      { roots: ['relative/path'] },
+      { roots: ['C:relative'] },
+      { roots: ['/root\nother'] }
     ])
       expect(() => aggregate([], query)).toThrow()
     const empty = aggregate([])

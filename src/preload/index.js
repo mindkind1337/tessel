@@ -164,7 +164,9 @@ const api = {
   },
   // Claude Code's usage report (tokens and estimated cost by day, model,
   // project, conversation), from its own files on this computer.
-  claudeUsageReport: () => ipcRenderer.invoke('usage:claudeReport'),
+  claudeUsageReport: (query = {}) => ipcRenderer.invoke('usage:claudeReport', query),
+  statsUsage: { summary: () => ipcRenderer.invoke('statsUsage:summary') },
+  writeClipboardImage: (bytes) => ipcRenderer.invoke('statsUsage:copyImage', bytes),
   // Codex's usage report (tokens and requests), from its own session files.
   codexUsageReport: (query = {}) => ipcRenderer.invoke('usage:codexReport', query),
   // Review and merge a task branch: { root, path, branch, target, ... }.

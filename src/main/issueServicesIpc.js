@@ -2,7 +2,7 @@
 import { createGithubService } from './githubService'
 import { createLinearService } from './linearService'
 
-export function registerIssueServices({ ipcMain, dir, safeStorage, github, linear }) {
+export function registerIssueServices({ ipcMain, dir, safeStorage, github, linear, onPrCreated }) {
   const services = {
     github: github || createGithubService(),
     linear: linear || createLinearService({ dir, safeStorage })
@@ -24,7 +24,16 @@ export function registerIssueServices({ ipcMain, dir, safeStorage, github, linea
     for (const name of names) {
       ipcMain.handle(`${provider}:${name}`, async (_event, query) => {
         try {
-          return await services[provider][name](query || {})
+          const result = await services[provider][name](query || {})
+          if (provider === 'github' && name === 'createPr' && result?.ok && result.url) {
+            // Statistics cannot turn a successfully created PR into a failure.
+            try {
+              await onPrCreated?.(result.url)
+            } catch {
+              /* Preserve the successful PR result. */
+            }
+          }
+          return result
         } catch {
           return {
             ok: false,

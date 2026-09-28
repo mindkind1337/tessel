@@ -9,6 +9,12 @@ import fs from 'fs/promises'
 import { basename, join } from 'path'
 import { createHash } from 'crypto'
 import { createCodexUsageScanner } from './codexUsageScan'
+import {
+  usageDayFormatter as dayFormatter,
+  usageQueryRange as queryRange,
+  matchesUsageRoots,
+  usageScope
+} from './usageReportFilters'
 
 const FIELDS = ['input', 'cached', 'output', 'reasoning']
 const seenByState = new WeakMap()
@@ -197,43 +203,6 @@ export function validCodexUsageState(state) {
   )
 }
 
-function dayFormatter(timezone) {
-  const format = new Intl.DateTimeFormat('en-CA', {
-    timeZone: timezone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit'
-  })
-  return (value) => {
-    const parts = Object.fromEntries(
-      format.formatToParts(new Date(value)).map((p) => [p.type, p.value])
-    )
-    return `${parts.year}-${parts.month}-${parts.day}`
-  }
-}
-function validDay(value) {
-  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
-  const d = new Date(`${value}T00:00:00Z`)
-  return Number.isFinite(d.getTime()) && d.toISOString().slice(0, 10) === value
-}
-function queryRange(query, today) {
-  if (!object(query)) throw new Error('Usage filters must be an object.')
-  const start = new Date(`${today}T00:00:00Z`)
-  start.setUTCDate(start.getUTCDate() - 29)
-  const from = query.from === undefined ? start.toISOString().slice(0, 10) : query.from
-  const to = query.to === undefined ? today : query.to
-  if (
-    (from !== null && !validDay(from)) ||
-    (to !== null && !validDay(to)) ||
-    (from && to && from > to)
-  )
-    throw new Error('Use an inclusive local date range (YYYY-MM-DD).')
-  for (const key of ['cwd', 'model'])
-    if (query[key] != null && typeof query[key] !== 'string')
-      throw new Error('Project and model filters must be text.')
-  return { from, to, cwd: query.cwd || '', model: query.model || '' }
-}
-
 export function aggregateCodexUsage(
   files,
   query = {},
@@ -271,19 +240,27 @@ export function aggregateCodexUsage(
         (range.from && day < range.from) ||
         (range.to && day > range.to) ||
         (range.cwd && projectKey(event.cwd) !== projectKey(range.cwd)) ||
-        (range.model && event.model !== range.model)
+        (range.model && event.model !== range.model) ||
+        !matchesUsageRoots(event.cwd, range.roots)
       )
         continue
       sum(totals, event)
       if (!days.has(day)) days.set(day, { day, ...emptyCounts() })
       sum(days.get(day), event)
       if (!models.has(event.model))
-        models.set(event.model, { model: event.model, ...emptyCounts() })
+        models.set(event.model, { model: event.model, ...emptyCounts(), sessions: new Set() })
       sum(models.get(event.model), event)
+      models.get(event.model).sessions.add(state.id)
       const key = projectKey(event.cwd)
       if (!projects.has(key))
-        projects.set(key, { cwd: event.cwd, label: projectLabel(event.cwd), ...emptyCounts() })
+        projects.set(key, {
+          cwd: event.cwd,
+          label: projectLabel(event.cwd),
+          ...emptyCounts(),
+          sessions: new Set()
+        })
       sum(projects.get(key), event)
+      projects.get(key).sessions.add(state.id)
       if (!sessions.has(state.id))
         sessions.set(state.id, {
           id: state.id,
@@ -312,20 +289,22 @@ export function aggregateCodexUsage(
       model: s.models.size === 1 ? [...s.models][0] : 'mixed'
     }))
     .sort((a, b) => b.last.localeCompare(a.last) || a.id.localeCompare(b.id))
+  const withSessionCount = ({ sessions, ...entry }) => ({ ...entry, sessions: sessions.size })
   return {
     ok: true,
     provider: 'codex',
     generatedAt: new Date(now).toISOString(),
     timezone,
     range: { from: range.from, to: range.to },
+    scope: usageScope(range),
     totals: { ...totals, sessions: rows.length },
     byDay: [...days.values()].sort((a, b) => a.day.localeCompare(b.day)),
-    byModel: [...models.values()].sort(
-      (a, b) => b.total - a.total || a.model.localeCompare(b.model)
-    ),
-    byProject: [...projects.values()].sort(
-      (a, b) => b.total - a.total || a.cwd.localeCompare(b.cwd)
-    ),
+    byModel: [...models.values()]
+      .map(withSessionCount)
+      .sort((a, b) => b.total - a.total || a.model.localeCompare(b.model)),
+    byProject: [...projects.values()]
+      .map(withSessionCount)
+      .sort((a, b) => b.total - a.total || a.cwd.localeCompare(b.cwd)),
     sessions: rows,
     warnings: [
       ...(malformed ? ['Some malformed log records were skipped.'] : []),

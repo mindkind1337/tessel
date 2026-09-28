@@ -6,7 +6,10 @@ import { resetSettings } from '../settings'
 
 // Settings is a page with a sidebar: one page shows at a time.
 const visiblePages = (w) =>
-  w.findAll('.set-page').filter((p) => !p.element.hidden).map((p) => p.attributes('data-page'))
+  w
+    .findAll('.set-page')
+    .filter((p) => !p.element.hidden)
+    .map((p) => p.attributes('data-page'))
 const shown = (el) => !el.closest('[hidden]')
 const settle = async () => {
   await nextTick()
@@ -38,13 +41,17 @@ describe('Settings pages', () => {
   it('opens on General, and a nav entry shows its page (and is remembered)', async () => {
     wrapper = mount(SettingsDialog, { attachTo: document.body })
     expect(visiblePages(wrapper)).toEqual(['general'])
-    expect(wrapper.get('.set-nav-item[data-page="general"]').attributes('aria-current')).toBe('page')
+    expect(wrapper.get('.set-nav-item[data-page="general"]').attributes('aria-current')).toBe(
+      'page'
+    )
 
     await wrapper.get('.set-nav-item[data-page="text"]').trigger('click')
     expect(visiblePages(wrapper)).toEqual(['text'])
     expect(wrapper.get('#set-text h2').text()).toBe('Text')
     expect(wrapper.get('.set-nav-item[data-page="text"]').attributes('aria-current')).toBe('page')
-    expect(wrapper.get('.set-nav-item[data-page="general"]').attributes('aria-current')).toBeUndefined()
+    expect(
+      wrapper.get('.set-nav-item[data-page="general"]').attributes('aria-current')
+    ).toBeUndefined()
     expect(localStorage.getItem('tessel.settingsPage')).toBe('text')
 
     wrapper.unmount()
@@ -53,13 +60,39 @@ describe('Settings pages', () => {
   })
 
   it('the section prop opens its page', async () => {
-    for (const section of ['accounts', 'agents', 'orchestration', 'quick-commands']) {
+    for (const section of ['accounts', 'agents', 'orchestration', 'quick-commands', 'stats']) {
       wrapper = mount(SettingsDialog, { props: { section }, attachTo: document.body })
       expect(visiblePages(wrapper)).toEqual([section])
       expect(wrapper.get(`#set-${section}`).element.hidden).toBe(false)
       wrapper.unmount()
     }
     wrapper = null
+  })
+
+  it('mounts analytics only on its page and forwards known worktree paths', async () => {
+    wrapper = mount(SettingsDialog, {
+      props: { worktreePaths: ['C:/project/copy'] },
+      attachTo: document.body,
+      global: {
+        stubs: {
+          StatsUsage: {
+            props: ['worktreePaths'],
+            template: '<div class="stats-stub">{{ worktreePaths.join() }}</div>'
+          }
+        }
+      }
+    })
+    expect(wrapper.find('.stats-stub').exists()).toBe(false)
+    await wrapper.get('input[type="search"]').setValue('tokens')
+    await settle()
+    expect(visiblePages(wrapper)).toContain('stats')
+    expect(wrapper.find('.stats-stub').exists()).toBe(false)
+    await wrapper.get('.set-nav-item[data-page="stats"]').trigger('click')
+    await settle()
+    expect(visiblePages(wrapper)).toEqual(['stats'])
+    expect(wrapper.get('.stats-stub').text()).toBe('C:/project/copy')
+    await wrapper.get('.set-nav-item[data-page="general"]').trigger('click')
+    expect(wrapper.find('.stats-stub').exists()).toBe(false)
   })
 
   it('search finds "Font" across pages, with its page name; clearing it goes back', async () => {

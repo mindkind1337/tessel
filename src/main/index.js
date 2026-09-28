@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, clipboard, dialog, Notification, shell, powerSaveBlocker, safeStorage } from 'electron'
+import { app, BrowserWindow, ipcMain, clipboard, nativeImage, dialog, Notification, shell, powerSaveBlocker, powerMonitor, safeStorage } from 'electron'
 import { join, isAbsolute } from 'path'
 import os from 'os'
 import fs from 'fs'
@@ -16,6 +16,8 @@ import { createAccountSessions } from './providerAccountSessions'
 import { postToInbox } from './agentInbox'
 import { hooksStatus } from './teamHooksStatus'
 import { createAgentStateStore } from './agentStateStore'
+import { createUsageStatsTracker } from './usageStatsTracker'
+import { copyUsageImage } from './usageClipboard'
 import { registerIssueServices } from './issueServicesIpc'
 import { prepareAgentStateHooks } from './agentStateSetup'
 import { assessNeeds } from './tesselNeeds'
@@ -919,9 +921,19 @@ ipcMain.handle('sessions:qwenExists', (_evt, id) => qwenSessionExists(id))
 // (teamMcp/server.cjs reportSession): { paneId: { agent, sessionId, source, at } }.
 const sessionsDir = () => join(app.getPath('appData'), 'tessel-team', 'sessions')
 const agentStateDir = join(app.getPath('userData'), 'agent-status')
+const usageStats = createUsageStatsTracker({ file: join(app.getPath('userData'), 'stats-usage.json') })
 const agentStateStore = createAgentStateStore({
   dir: agentStateDir,
-  onChange: (states) => send('agents:state', states)
+  onChange: (states) => {
+    send('agents:state', states)
+    void usageStats.observe(states).catch(() => {})
+  }
+})
+ipcMain.handle('statsUsage:summary', () => usageStats.summary())
+ipcMain.handle('statsUsage:copyImage', (_event, bytes) => copyUsageImage(bytes, { nativeImage, clipboard }))
+app.whenReady().then(() => {
+  powerMonitor.on('suspend', () => { void usageStats.suspend() })
+  powerMonitor.on('resume', () => { void usageStats.resume() })
 })
 let scanningAgentStates = false
 const agentStateTimer = setInterval(async () => {
@@ -1090,7 +1102,7 @@ ipcMain.handle(
   safe(({ cwd, label, options } = {}) => createWorktree(cwd, label, options))
 )
 const accountOptions = { userData: app.getPath('userData'), runLogin: createProviderLogin() }
-registerIssueServices({ ipcMain, dir: join(app.getPath('userData'), 'linear'), safeStorage })
+registerIssueServices({ ipcMain, dir: join(app.getPath('userData'), 'linear'), safeStorage, onPrCreated: (url) => usageStats.prCreated(url) })
 const accounts = createProviderAccounts({
   claude: createClaudeAccounts(accountOptions),
   codex: createCodexAccounts(accountOptions)
@@ -1105,7 +1117,7 @@ const accountUsage = createAccountUsage({ accounts, userData: app.getPath('userD
 ipcMain.handle('usage:get', safe(() => accountUsage.usage()))
 // Claude Code's usage report from its own conversation files (tokens, estimated cost).
 const claudeUsageReport = createClaudeUsageReport()
-ipcMain.handle('usage:claudeReport', safe(() => claudeUsageReport()))
+ipcMain.handle('usage:claudeReport', safe((query) => claudeUsageReport(query)))
 // Codex's usage report from its own session files (tokens, requests).
 ipcMain.handle('usage:codexReport', safe((query) => accountUsage.report(query)))
 ipcMain.handle('review:info', safe(reviewInfo))
@@ -2339,5 +2351,5 @@ app.on('before-quit', (event) => {
   if (shutdownDone) return
   event.preventDefault()
   shutdownDone = true
-  Promise.allSettled([accounts.close(), shutdownTerminals()]).finally(() => app.quit())
+  Promise.allSettled([accounts.close(), usageStats.close(), shutdownTerminals()]).finally(() => app.quit())
 })

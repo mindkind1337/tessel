@@ -37,7 +37,6 @@ import { fileKind, isViewed } from '../../shared/fileKinds'
 import NotificationsMenu from './components/NotificationsMenu.vue'
 import FileFinder from './components/FileFinder.vue'
 import UsageMenu from './components/UsageMenu.vue'
-import UsageDialog from './components/UsageDialog.vue'
 import GitHubDialog from './components/GitHubDialog.vue'
 import LinearDialog from './components/LinearDialog.vue'
 import { createExternalIssueStarter } from './externalIssues'
@@ -127,7 +126,6 @@ const voiceName = computed(() => {
 // Hovering a pane in a menu outlines it, so you can see which one you pick.
 const highlightId = ref(null)
 const settingsOpen = ref(false)
-const usageOpen = ref(false) // Usage details (from the toolbar gauge)
 const githubOpen = ref(false)
 const linearOpen = ref(false)
 const githubBusy = ref(false)
@@ -169,6 +167,12 @@ function openSettingsAt(section) {
   settingsSection.value = section
   settingsOpen.value = true
 }
+const usageWorktreePaths = computed(() => {
+  const paths = new Set(boardTasks.map(task => task.worktree?.path).filter(Boolean))
+  for (const ws of workspaces.value)
+    forEachLeaf(ws.tree, leaf => { if (leaf.worktree?.path) paths.add(leaf.worktree.path) })
+  return [...paths]
+})
 // The file viewer (FileViewer.vue): Markdown, diagrams, tables, JSON,
 // images and any text; PDFs in their own window (Chromium's viewer).
 const fileView = ref(null) // { file, label, line }
@@ -1731,6 +1735,7 @@ function buildCommands() {
   add('Quick commands', 'Add or edit quick commands', () => openSettingsAt('quick-commands'), {
     hint: 'Text you send to a pane in two keystrokes'
   })
+  add('Settings', 'Stats & Usage', () => openSettingsAt('stats'), { hint: 'Token analytics, daily usage, models, projects and conversations' })
 
   add('Task', 'New task…', openNewTask, { hint: 'Give an agent a task, in its own copy of the project' })
   add('Issues', 'GitHub issues and pull requests', () => openGitHub(), { hint: 'Browse, create, check and start a task from GitHub' })
@@ -5937,7 +5942,6 @@ function dialogOpen() {
     newTaskOpen.value ||
     paletteOpen.value ||
     finderOpen.value ||
-    usageOpen.value ||
     githubOpen.value ||
     linearOpen.value ||
     !!confirmState.value ||
@@ -6052,7 +6056,6 @@ function onKey(e, opts = {}) {
     mcpOpen.value = false
     toolsOpen.value = false
     sessionsOpen.value = false
-    usageOpen.value = false
     if (!githubBusy.value) githubOpen.value = false
     if (!linearBusy.value) linearOpen.value = false
     closeMenus()
@@ -6488,7 +6491,7 @@ onBeforeUnmount(() => {
 
         <span class="toolbar-sep"></span>
 
-        <UsageMenu @details="usageOpen = true" @accounts="openSettingsAt('accounts')" />
+        <UsageMenu @details="openSettingsAt('stats')" @accounts="openSettingsAt('accounts')" />
         <NotificationsMenu @focus-pane="focusPane" />
         <div class="menu-group" @pointerdown.stop>
           <button class="tb-icon" aria-label="Issues" title="GitHub and Linear issues" aria-haspopup="menu" :aria-expanded="openMenu === 'issues'" @click="toggleMenu('issues')">
@@ -6826,7 +6829,6 @@ onBeforeUnmount(() => {
     />
 
     <CommandPalette v-if="paletteOpen" :commands="paletteCommands" @close="paletteOpen = false" />
-    <UsageDialog v-if="usageOpen" @close="usageOpen = false" />
     <GitHubDialog v-if="githubOpen" :cwd="issueWorkspace?.cwd || ''" :pr-cwd="githubTaskContext?.cwd || ''" :pr-base="githubTaskContext?.base || ''" :initial-mode="githubTaskContext ? 'createPr' : ''" :agents="taskAgentKinds" :default-agent="settings.defaultAgent || ''" :start-issue="prepareLinkedIssue" @busy="githubBusy = $event" @close="githubOpen = false" />
     <LinearDialog v-if="linearOpen" :cwd="issueWorkspace?.cwd || ''" :agents="taskAgentKinds" :default-agent="settings.defaultAgent || ''" :start-issue="prepareLinkedIssue" @busy="linearBusy = $event" @close="linearOpen = false" />
     <FileFinder
@@ -6914,6 +6916,7 @@ onBeforeUnmount(() => {
       :update-status="updateStatus"
       :section="settingsSection"
       :agents="agents"
+      :worktree-paths="usageWorktreePaths"
       @detect-agents="(done) => loadAgents(true).finally(done)"
       @open-connections="((settingsOpen = false), (mcpTab = 'connections'), (mcpOpen = true))"
       @check-updates="checkForUpdates"

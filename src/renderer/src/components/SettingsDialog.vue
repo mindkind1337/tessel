@@ -6,6 +6,8 @@
 import { ref, computed, watch, nextTick, onMounted, onUnmounted, onUpdated } from 'vue'
 import BrandIcon from './BrandIcon.vue'
 import ProviderAccounts from './ProviderAccounts.vue'
+import StatsUsage from './StatsUsage.vue'
+import { BarChart3 } from 'lucide-vue-next'
 import { settings, FONT_FAMILIES, resetSettings, clamp } from '../settings'
 import { THEMES } from '../themes'
 import { playAlertSound } from '../notificationsStore'
@@ -18,6 +20,7 @@ const props = defineProps({
   shells: { type: Array, default: () => [] },
   // Built-in and your own agents, with `available` (found on the PATH).
   agents: { type: Array, default: () => [] },
+  worktreePaths: { type: Array, default: () => [] },
   defaultShell: { type: String, default: null },
   updateStatus: { type: Object, default: () => ({ state: 'disabled' }) },
   // Open on this page, e.g. 'quick-commands', 'accounts', 'agents'.
@@ -26,6 +29,10 @@ const props = defineProps({
 
 // The pages, grouped as in the sidebar. `icon` is a 16x16 stroke path.
 const PAGES = {
+  stats: {
+    title: 'Stats & Usage',
+    desc: 'Tessel stats plus local agent token analytics.'
+  },
   agents: {
     title: 'Agents',
     desc: 'Which agents Tessel offers, how they start and what they may do.',
@@ -91,6 +98,7 @@ const GROUPS = [
   { title: 'AI capabilities', pages: ['agents', 'accounts', 'orchestration', 'voice'] },
   { title: 'Configure', pages: ['general', 'appearance', 'text', 'terminal', 'editor', 'alerts'] },
   { title: 'Workflows', pages: ['quick-commands'] },
+  { title: 'Interface', pages: ['stats'] },
   { title: 'About', pages: ['updates'] }
 ]
 const PAGE_KEY = 'tessel.settingsPage'
@@ -476,7 +484,8 @@ const CURSORS = [
               :aria-current="!searching && page === id ? 'page' : undefined"
               @click="go(id)"
             >
-              <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <BarChart3 v-if="id === 'stats'" :size="15" aria-hidden="true" />
+              <svg v-else width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                 <path
                   :d="PAGES[id].icon"
                   stroke="currentColor"
@@ -497,6 +506,22 @@ const CURSORS = [
         <p v-if="searching && !matched.length" class="set-empty" role="status">
           No settings match “{{ query.trim() }}”.
         </p>
+
+        <section id="set-stats" class="set-page" data-page="stats" :hidden="!shown('stats')" aria-labelledby="set-stats-title">
+          <header class="set-page-head">
+            <h2 id="set-stats-title">{{ PAGES.stats.title }}</h2>
+            <p class="set-page-desc">{{ PAGES.stats.desc }}</p>
+          </header>
+          <div class="set-group">
+            <StatsUsage v-if="page === 'stats' && !searching" :worktree-paths="worktreePaths" />
+            <div v-else class="set-row">
+              <div class="set-label">Usage Analytics
+                <span class="set-hint">Overview, Claude, Codex, tokens, costs, cache efficiency, daily usage, models, projects and sessions.</span>
+              </div>
+              <button type="button" class="exit-btn" @click="go('stats')">Open Stats &amp; Usage</button>
+            </div>
+          </div>
+        </section>
 
         <!-- ============ Agents ============ -->
         <section
