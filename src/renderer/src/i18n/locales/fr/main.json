@@ -51,6 +51,13 @@
     "update": {
       "removed": "La mise à jour téléchargée a été supprimée (un antivirus ?). Tessel la télécharge de nouveau.",
       "notStarted": "La mise à jour n'a pas pu démarrer. Réessayez, ou téléchargez-la depuis la page Releases."
+    },
+    "remote": {
+      "notFound": "Cet hôte distant n'est plus enregistré dans Tessel.",
+      "noSsh": "Le client OpenSSH (ssh.exe) est introuvable. Installez-le depuis Paramètres Windows > Fonctionnalités facultatives.",
+      "testTimeout": "Le test de connexion a expiré.",
+      "testExit": "ssh s'est terminé avec le code {{code}}.",
+      "sshFailed": "ssh n'a pas pu se connecter (code de sortie 255). Voir son terminal pour les détails."
     }
   }
 }

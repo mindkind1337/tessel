@@ -46,6 +46,7 @@ import LinearDialog from './components/LinearDialog.vue'
 import { createExternalIssueStarter } from './externalIssues'
 import './issueDialogs.css'
 import { addNotification, readForPane, playAlertSound } from './notificationsStore'
+import { initRemoteHosts, setRemoteHostHandlers } from './remoteHosts'
 import NotesPanel from './components/NotesPanel.vue'
 import NewTaskDialog from './components/NewTaskDialog.vue'
 import ReviewPanel from './components/ReviewPanel.vue'
@@ -771,7 +772,7 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
     res = { ok: false, error: refused }
   } else if (!attached) {
     try {
-      res = await window.shellApi.createPty({ id, shellId, agentId: agent?.id, cols: 80, rows: 24, cwd, projectDir, extraEnv, accountEnv, unsetEnv })
+      res = await window.shellApi.createPty({ id, shellId, agentId: agent?.id, cols: 80, rows: 24, cwd, projectDir, extraEnv, accountEnv, unsetEnv, ...(opts.remoteHostId ? { remoteHostId: opts.remoteHostId } : {}) })
     } catch (err) {
       res = { ok: false, error: err && err.message }
     }
@@ -803,6 +804,7 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
       backend: 'conpty',
       sessionId: opts.sessionId || null,
       accountId,
+      remoteHostId: opts.remoteHostId || null,
       failed: msg,
       broadcast: true
     })
@@ -813,7 +815,7 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
     id,
     shellId: res.shell.id,
     shellName: res.shell.name,
-    title: agent ? agent.name : res.shell.name,
+    title: agent ? agent.name : (res.remoteHost && res.remoteHost.label) || res.shell.name,
     kind: agent ? 'agent' : 'shell',
     agentId: agent ? agent.id : null,
     agentCommand: agent ? agent.command : null,
@@ -825,6 +827,8 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
     startDir: res.cwd || cwd || null,
     sessionId: null,
     accountId,
+    // A terminal on a remote host (Settings > SSH Hosts): ssh runs in it.
+    remoteHostId: opts.remoteHostId || res.remoteHostId || null,
     agentLaunchToken: res.agentLaunchToken || null,
     // How it was launched (Settings > Agents), to show Yolo and whether a
     // restart is needed to apply changed settings.
@@ -967,6 +971,7 @@ function serializeNode(node) {
       sessionId: node.sessionId || null,
       // Left out when not recorded (see createLeaf); null is kept.
       accountId: node.detected ? undefined : node.accountId,
+      remoteHostId: node.remoteHostId || undefined,
       // Asleep: restored asleep (no terminal) until you open it.
       sleeping: !node.detected && node.sleeping && Number.isFinite(node.sleeping.at) ? { at: node.sleeping.at } : undefined,
       titleSet: node.detected ? undefined : node.titleSet || undefined,
@@ -1060,6 +1065,7 @@ async function deserializeNode(snap, cwd = null) {
       launchedAt: Number.isFinite(snap.launchedAt) ? snap.launchedAt : null,
       startDir: typeof snap.startDir === 'string' ? snap.startDir : null,
       resume: settings.resumeAgents,
+      remoteHostId: typeof snap.remoteHostId === 'string' && /^ssh-[\w-]{1,60}$/.test(snap.remoteHostId) ? snap.remoteHostId : undefined,
       keepOnFailure: true
     })
     if (!leaf) return null
@@ -2005,6 +2011,17 @@ async function openPaneBelow(shellId, agent = null, opts = {}) {
   return leaf
 }
 
+// Remote hosts (remoteHosts.js): Connect opens a terminal pane running ssh
+// on the host; Manage Remote Hosts opens Settings > SSH Hosts.
+setRemoteHostHandlers({
+  connect: async (target) => {
+    settingsOpen.value = false
+    return !!(await openPaneBelow(selectedShell.value, null, { remoteHostId: target.id }))
+  },
+  openSettings: () => openSettingsAt('ssh')
+})
+initRemoteHosts()
+
 // Run a command (or steps) in a new terminal pane (installs, setup). `shell`
 // forces a shell, e.g. PowerShell for commands written in PowerShell syntax.
 async function runInPane({ label, command, steps, shell }) {
@@ -2397,7 +2414,8 @@ async function restartLeaf(leafId) {
   const fresh = await createLeaf(old.shellId, agent, old.startDir || ws.cwd, old.worktree, {
     sessionId: old.sessionId,
     accountId: old.accountId,
-    resume: settings.resumeAgents
+    resume: settings.resumeAgents,
+    ...(old.remoteHostId ? { remoteHostId: old.remoteHostId } : {})
   })
   if (!fresh) return
   // Closed, or moved to another workspace, while it was starting.

@@ -8,7 +8,8 @@ import { ref, computed, watch, nextTick, onMounted, onUnmounted, onUpdated } fro
 import BrandIcon from './BrandIcon.vue'
 import ProviderAccounts from './ProviderAccounts.vue'
 import StatsUsage from './StatsUsage.vue'
-import { BarChart3 } from 'lucide-vue-next'
+import RemoteHostsSettings from './remote/RemoteHostsSettings.vue'
+import { BarChart3, Cable } from 'lucide-vue-next'
 import { settings, FONT_FAMILIES, resetSettings, clamp, MAX_LEFT_SIDEBAR_TINT_OPACITY, limitNumber, DEFAULT_SETTINGS, LIMITS } from '../settings'
 import { THEMES } from '../themes'
 import { playAlertSound } from '../notificationsStore'
@@ -164,6 +165,16 @@ const PAGES = {
       return t('settings.pages.updates.desc', 'Tessel\'s version and updates.')
     },
     icon: 'M13 8a5 5 0 11-1.5-3.55M13 2.5V5h-2.5'
+  },
+  // Remote Hosts > SSH Hosts (Orca's SshPane; components/remote/).
+  ssh: {
+    get title() {
+      return t('remote.page.title', 'SSH Hosts')
+    },
+    get desc() {
+      return t('remote.page.desc', 'Use existing machines over SSH for files, terminals, Git, and workspaces.')
+    },
+    lucide: Cable
   }
 }
 const GROUPS = [
@@ -196,6 +207,13 @@ const GROUPS = [
     pages: ['stats']
   },
   {
+    id: 'remote',
+    get title() {
+      return t('remote.group', 'Remote Hosts')
+    },
+    pages: ['ssh']
+  },
+  {
     id: 'about',
     get title() {
       return t('settings.groups.about', 'About')
@@ -219,6 +237,7 @@ const PAGE_TITLES_EN = {
   git: 'Git & Source Control', // i18n-ignore
   'quick-commands': 'Quick commands', // i18n-ignore
   updates: 'Updates', // i18n-ignore
+  ssh: 'SSH Hosts', // i18n-ignore
 }
 const PAGE_KEY = 'tessel.settingsPage'
 
@@ -838,6 +857,7 @@ function previewSound() {
               @click="go(id)"
             >
               <BarChart3 v-if="id === 'stats'" :size="15" aria-hidden="true" />
+              <component :is="PAGES[id].lucide" v-else-if="PAGES[id].lucide" :size="15" aria-hidden="true" />
               <svg v-else width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                 <path
                   :d="PAGES[id].icon"
@@ -2443,6 +2463,17 @@ function previewSound() {
               </form>
               <p v-if="quickDraft.error" class="mcp-error">{{ quickDraft.error }}</p>
             </div>
+          </div>
+        </section>
+
+        <!-- ============ SSH Hosts (Remote Hosts) ============ -->
+        <section id="set-ssh" class="set-page" data-page="ssh" :hidden="!shown('ssh')" aria-labelledby="set-ssh-title">
+          <header class="set-page-head">
+            <h2 id="set-ssh-title">{{ PAGES.ssh.title }}</h2>
+            <p class="set-page-desc">{{ PAGES.ssh.desc }}</p>
+          </header>
+          <div class="set-group">
+            <RemoteHostsSettings />
           </div>
         </section>
 

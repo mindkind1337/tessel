@@ -19,6 +19,7 @@ import { createAgentStateStore } from './agentStateStore'
 import { createUsageStatsTracker } from './usageStatsTracker'
 import { copyUsageImage } from './usageClipboard'
 import { registerIssueServices } from './issueServicesIpc'
+import { createRemoteHosts, registerRemoteHosts } from './remoteHosts'
 import { prepareAgentStateHooks } from './agentStateSetup'
 import { assessNeeds } from './tesselNeeds'
 import { createClaudeUsageReport } from './claudeUsageReport'
@@ -1129,6 +1130,9 @@ ipcMain.handle(
 )
 const accountOptions = { userData: app.getPath('userData'), runLogin: createProviderLogin() }
 registerIssueServices({ ipcMain, dir: join(app.getPath('userData'), 'linear'), safeStorage, onPrCreated: (url) => usageStats.prCreated(url) })
+// Remote hosts over SSH (remoteHosts.js): Settings > SSH Hosts, the status bar.
+const remoteHosts = createRemoteHosts({ dir: app.getPath('userData'), onChange: (states) => send('remoteHosts:state', states) })
+registerRemoteHosts({ ipcMain, service: remoteHosts, killPane: (id) => host.send('kill', { id }) })
 const accounts = createProviderAccounts({
   claude: createClaudeAccounts(accountOptions),
   codex: createCodexAccounts(accountOptions)
@@ -1963,6 +1967,7 @@ const host = createPtyClient({
     if (pid && info?.pid && pid !== info.pid) return // a delayed exit from the previous execution
     void agentStateStore.unregister(id, info?.agentLaunchToken).catch(() => {})
     installLogs.onExit(id, exitCode)
+    remoteHosts.paneExited(id, exitCode)
     flushData() // deliver the last output before the exit notice
     if (exitCode && info) {
       log.warn(
@@ -1978,6 +1983,7 @@ const host = createPtyClient({
     // Its terminals are gone with it: tell the panes.
     for (const id of ptyInfo.keys()) {
       void agentStateStore.unregister(id).catch(() => {})
+      remoteHosts.paneExited(id, -1)
       send('pty:exit', { id, exitCode: -1, signal: 0 })
     }
     ptyInfo.clear()
@@ -1988,6 +1994,9 @@ ipcMain.handle('pty:create', async (_evt, opts = {}) => {
   const { id, shellId, cols = 80, rows = 24, cwd, projectDir } = opts
   if (!id) throw new Error('pty:create requires an id')
   const shell = getShells().find((s) => s.id === shellId) || defaultShell()
+  // A pane on a remote host runs ssh.exe with the argv built from the saved host.
+  const remote = opts.remoteHostId ? remoteHosts.launchFor(String(opts.remoteHostId)) : null
+  if (remote && !remote.ok) return { ok: false, error: remote.error }
   const startDir = cwd && fs.existsSync(cwd) ? cwd : os.homedir()
   const useConpty = shouldUseConpty()
   const backend = useConpty ? 'conpty' : 'winpty'
@@ -2007,8 +2016,8 @@ ipcMain.handle('pty:create', async (_evt, opts = {}) => {
   try {
     res = await host.request('create', {
       id,
-      file: shell.file,
-      args: shell.args,
+      file: remote ? remote.file : shell.file,
+      args: remote ? remote.args : shell.args,
       cwd: startDir,
       env: {
         ...env,
@@ -2023,7 +2032,7 @@ ipcMain.handle('pty:create', async (_evt, opts = {}) => {
       useConpty,
       // ConPTY is required for full-screen TUIs like Claude Code to redraw on
       // resize. Set TESSEL_USE_WINPTY=1 only as a fallback.
-      meta: { shellId: shell.id, shellName: shell.name, backend, cwd: startDir, agentProvider, agentLaunchToken, agentStartedAt }
+      meta: { shellId: shell.id, shellName: shell.name, backend, cwd: startDir, agentProvider, agentLaunchToken, agentStartedAt, remoteHostId: remote ? remote.target.id : null }
     })
   } catch (err) {
     res = { ok: false, error: err.message }
@@ -2033,6 +2042,7 @@ ipcMain.handle('pty:create', async (_evt, opts = {}) => {
     return { ok: false, error: t('main.error.launchShell', 'Failed to launch {{shell}}: {{error}}', { shell: shell.name, error: res.error }) }
   }
   ptyInfo.set(id, { shellId: shell.id, shellName: shell.name, backend, pid: res.pid, agentLaunchToken })
+  if (remote) remoteHosts.paneStarted(id, remote.target.id)
   if (agentProvider) {
     try { await agentStateStore.register({ paneId: id, provider: agentProvider, launchToken: agentLaunchToken, startedAt: agentStartedAt }) }
     catch { agentStatusWarning = 'Agent status observations are unavailable.' }
@@ -2045,7 +2055,8 @@ ipcMain.handle('pty:create', async (_evt, opts = {}) => {
     pid: res.pid,
     cwd: startDir,
     agentLaunchToken,
-    agentStatusWarning
+    agentStatusWarning,
+    remoteHost: remote ? { id: remote.target.id, label: remote.name } : null
   }
 })
 
@@ -2062,6 +2073,7 @@ ipcMain.handle('pty:attach', async (_evt, id) => {
   // Output queued here but not sent yet is in the snapshot already.
   pendingData.delete(id)
   ptyInfo.set(id, { shellId: res.shellId, shellName: res.shellName, backend: res.backend, pid: res.pid, agentLaunchToken: res.agentLaunchToken })
+  if (res.remoteHostId && !res.exited) remoteHosts.paneStarted(id, res.remoteHostId)
   if (res.agentProvider && res.agentLaunchToken && !res.exited) {
     try { await agentStateStore.register({ paneId: id, provider: res.agentProvider, launchToken: res.agentLaunchToken, startedAt: res.agentStartedAt }) }
     catch { /* renderer shows unknown until an observation can be read */ }
@@ -2076,7 +2088,8 @@ ipcMain.handle('pty:attach', async (_evt, id) => {
     exited: !!res.exited,
     exitCode: res.exitCode,
     buffer: res.buffer || '',
-    agentLaunchToken: res.agentLaunchToken || null
+    agentLaunchToken: res.agentLaunchToken || null,
+    remoteHostId: res.remoteHostId || null
   }
 })
 

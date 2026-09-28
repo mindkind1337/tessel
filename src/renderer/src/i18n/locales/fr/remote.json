@@ -1,0 +1,109 @@
+{
+  "remote": {
+    "group": "Hôtes distants",
+    "page": {
+      "title": "Hôtes SSH",
+      "desc": "Utilisez des machines existantes via SSH pour les fichiers, les terminaux, Git et les espaces de travail."
+    },
+    "pane": {
+      "title": "Hôtes SSH",
+      "description": "Ajoutez une machine existante via SSH pour y exécuter des projets et des espaces de travail.",
+      "import": "Importer",
+      "addTarget": "Ajouter une cible",
+      "empty": "Aucune cible SSH configurée.",
+      "loadFailed": "Échec du chargement des cibles SSH",
+      "added": "Cible ajoutée",
+      "updated": "Cible mise à jour",
+      "saveFailed": "Échec de l'enregistrement de la cible",
+      "removed": "Cible supprimée",
+      "removeFailed": "Échec de la suppression de la cible",
+      "connectFailed": "Échec de la connexion",
+      "disconnectFailed": "Échec de la déconnexion",
+      "testOk": "Connexion réussie",
+      "testFailed": "Échec du test de connexion",
+      "testError": "Échec du test",
+      "importFailed": "Échec de l'importation",
+      "inSync": "~/.ssh/config est déjà synchronisé",
+      "synced_one": "Synchronisation terminée : {{count}} serveur",
+      "synced_other": "Synchronisation terminée : {{count}} serveurs",
+      "hostRequired": "Un hôte ou un alias de config SSH est requis",
+      "portInvalid": "Le port doit être compris entre 1 et 65535"
+    },
+    "card": {
+      "connect": "Se connecter",
+      "connecting": "Connexion",
+      "disconnect": "Déconnecter",
+      "test": "Tester",
+      "edit": "Modifier la cible",
+      "remove": "Supprimer la cible",
+      "removing": "Suppression de la cible",
+      "fromConfig": "depuis ~/.ssh/config"
+    },
+    "form": {
+      "addTitle": "Ajouter un hôte SSH",
+      "editTitle": "Modifier l'hôte SSH",
+      "addDescription": "Ajoutez une machine permanente sur laquelle vous pouvez vous connecter en SSH.",
+      "editDescription": "Mettez à jour les détails de connexion de cette machine. Les modifications s'appliquent à la prochaine connexion.",
+      "editingPrefix": "Modification",
+      "close": "Fermer",
+      "label": "Libellé",
+      "labelPlaceholder": "Mon serveur",
+      "host": "Hôte ou alias *",
+      "hostPlaceholder": "server, deploy@server:2222, ssh://server",
+      "username": "Nom d'utilisateur",
+      "usernamePlaceholder": "deploy",
+      "port": "Port",
+      "identityFile": "Fichier d'identité",
+      "identityPlaceholder": "~/.ssh/id_ed25519 (laisser vide pour l'agent SSH)",
+      "identityHint": "Facultatif. L'agent SSH est utilisé par défaut.",
+      "advanced": "Avancé",
+      "proxyCommand": "Commande de proxy",
+      "proxyPlaceholder": "ex. cloudflared access ssh --hostname %h",
+      "proxyHint": "Facultatif. Utilisé pour le tunneling (ex. Cloudflare Access, ProxyCommand).",
+      "jumpHost": "Hôte de rebond",
+      "jumpPlaceholder": "bastion.example.com",
+      "jumpHint": "Facultatif. Équivalent à ProxyJump / ssh -J.",
+      "cancel": "Annuler",
+      "saveChanges": "Enregistrer les modifications",
+      "addTarget": "Ajouter une cible"
+    },
+    "remove": {
+      "title": "Supprimer la cible SSH",
+      "description": "Ceci supprimera la cible et arrêtera tous les terminaux distants actifs.",
+      "confirm": "Supprimer"
+    },
+    "error": {
+      "hostInvalid": "Cet hôte ou cet alias contient des caractères que ssh ne peut pas accepter.",
+      "userInvalid": "Ce nom d'utilisateur contient des caractères que ssh ne peut pas accepter.",
+      "identityInvalid": "Ce chemin de fichier d'identité n'est pas valide.",
+      "jumpInvalid": "Cet hôte de rebond n'est pas valide.",
+      "proxyInvalid": "Cette commande de proxy n'est pas valide.",
+      "tooMany": "Trop de cibles SSH.",
+      "notFound": "Cette cible SSH n'existe plus."
+    },
+    "status": {
+      "connected": "Connecté",
+      "connecting": "Connexion…",
+      "authFailed": "Échec de l'authentification",
+      "reconnecting": "Reconnexion…",
+      "reconnectionFailed": "Échec de la reconnexion",
+      "error": "Erreur",
+      "disconnected": "Déconnecté"
+    },
+    "verb": {
+      "connect": "Se connecter",
+      "reconnect": "Reconnecter",
+      "retry": "Réessayer"
+    },
+    "statusBar": {
+      "title": "Hôtes distants",
+      "ariaLabel": "État de connexion de l'hôte distant",
+      "connecting": "Connexion…",
+      "hostCount_one": "{{count}} hôte",
+      "hostCount_other": "{{count}} hôtes",
+      "sshHost": "Hôte SSH",
+      "disconnect": "Déconnecter",
+      "manage": "Gérer les hôtes distants…"
+    }
+  }
+}
