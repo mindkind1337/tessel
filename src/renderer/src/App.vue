@@ -1080,12 +1080,6 @@ async function deserializeNode(snap, cwd = null) {
     }
     if (snap.titleSet === true) leaf.titleSet = true
     if (typeof snap.autoTitle === 'string' && snap.autoTitle) leaf.autoTitle = snap.autoTitle.slice(0, 80)
-    // An older version named the pane after its conversation: the agent's
-    // name comes back (the conversation's title shows beside it).
-    if (leaf.kind === 'agent' && !leaf.titleSet && leaf.autoTitle && leaf.title === leaf.autoTitle) {
-      const preset = agents.value.find((a) => a.id === leaf.agentId)
-      if (preset && preset.name) leaf.title = preset.name
-    }
     // Still running: its line is what was saved. Unknown (an older layout):
     // no automatic reminder until the user sends or clears a line there.
     // Still running: its line is what this window recorded; nothing
@@ -1097,6 +1091,12 @@ async function deserializeNode(snap, cwd = null) {
       else if (saved !== false) draftUnknown[leaf.id] = true
     }
     if (snap.title) leaf.title = snap.title
+    // An older version named the pane after its conversation: the agent's
+    // name comes back (the conversation's title shows beside it).
+    if (leaf.kind === 'agent' && !leaf.titleSet && leaf.autoTitle && leaf.title === leaf.autoTitle) {
+      const preset = agents.value.find((a) => a.id === leaf.agentId)
+      if (preset && preset.name) leaf.title = preset.name
+    }
     leaf.broadcast = snap.broadcast !== false
     if (typeof snap.team === 'string') leaf.team = snap.team
     return leaf
