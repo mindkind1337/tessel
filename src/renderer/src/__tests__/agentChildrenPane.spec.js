@@ -4,6 +4,10 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import AgentChildren from '../components/AgentChildren.vue'
 
+// The list is teleported to <body> (above the other panes): these tests look
+// at what it shows, so it renders in place here.
+const mountChip = (props) => mount(AgentChildren, { props, global: { stubs: { teleport: true } } })
+
 let requests
 beforeEach(() => {
   requests = []
@@ -21,7 +25,7 @@ afterEach(() => {
 
 describe('sub-agents chip', () => {
   it("an older answer (another session) never shows in the current one's list", async () => {
-    const w = mount(AgentChildren, { props: { agentId: 'claude', sessionId: 'A', accountId: null } })
+    const w = mountChip({ agentId: 'claude', sessionId: 'A', accountId: null })
     await flushPromises()
     requests[0].resolve([{ id: 'child-A0', state: 'running', startedAt: Date.now() }])
     await flushPromises()
@@ -46,7 +50,7 @@ describe('sub-agents chip', () => {
   })
 
   it('an account change drops the old list too', async () => {
-    const w = mount(AgentChildren, { props: { agentId: 'claude', sessionId: 'A', accountId: 'one' } })
+    const w = mountChip({ agentId: 'claude', sessionId: 'A', accountId: 'one' })
     await flushPromises()
     await w.setProps({ accountId: 'two' })
     await flushPromises()
@@ -58,7 +62,7 @@ describe('sub-agents chip', () => {
 
   it('a refresh answered after the pane closed sets no new polling timer', async () => {
     vi.useFakeTimers()
-    const w = mount(AgentChildren, { props: { agentId: 'claude', sessionId: 'A' } })
+    const w = mountChip({ agentId: 'claude', sessionId: 'A' })
     const before = vi.getTimerCount()
     w.unmount()
     requests[0].resolve([{ id: 'c', state: 'running', startedAt: Date.now() }])
@@ -71,7 +75,7 @@ describe('sub-agents chip', () => {
     vi.useFakeTimers()
     const t0 = Date.now()
     const done = [{ id: 'd', state: 'done', startedAt: t0 - 60000, endedAt: t0 - 1000 }]
-    const w = mount(AgentChildren, { props: { agentId: 'claude', sessionId: 'A' } })
+    const w = mountChip({ agentId: 'claude', sessionId: 'A' })
     requests[0].resolve(done)
     await vi.advanceTimersByTimeAsync(0)
     expect(w.text()).toContain('1 done')
@@ -86,7 +90,7 @@ describe('sub-agents chip', () => {
 
   it('a quiet one shows as quiet, never as finished', async () => {
     const now = Date.now()
-    const w = mount(AgentChildren, { props: { agentId: 'claude', sessionId: 'A' } })
+    const w = mountChip({ agentId: 'claude', sessionId: 'A' })
     requests[0].resolve([{ id: 'q', title: 'long tool', state: 'quiet', startedAt: now - 40 * 60000, lastAt: now - 16 * 60000, endedAt: null }])
     await flushPromises()
     expect(w.text()).toContain('1 quiet')
@@ -94,5 +98,43 @@ describe('sub-agents chip', () => {
     expect(w.text()).toContain('quiet 16m')
     expect(w.text()).not.toContain('✓')
     w.unmount()
+  })
+
+  it('is a compact count in the header; its list opens in the top layer, next to it and inside the window', async () => {
+    const host = document.createElement('div')
+    document.body.append(host)
+    const w = mount(AgentChildren, { props: { agentId: 'claude', sessionId: 'A' }, attachTo: host })
+    requests[0].resolve([
+      { id: 'a', type: 'Explore', title: 'first', state: 'running', startedAt: Date.now() },
+      { id: 'b', type: 'Plan', title: 'second', state: 'running', startedAt: Date.now() }
+    ])
+    await flushPromises()
+    const chip = w.get('[data-test="agent-children"]')
+    expect(chip.get('.agent-children-count').text()).toBe('2')
+    expect(chip.attributes('title')).toContain('2 running')
+    chip.element.getBoundingClientRect = () => ({ left: 900, right: 930, top: 40, bottom: 60, width: 30, height: 20 })
+    await chip.trigger('click')
+    await flushPromises()
+    // Not inside the pane (its header), but at the end of <body>.
+    expect(w.find('[data-test="agent-children-list"]').exists()).toBe(false)
+    const list = document.body.querySelector(':scope > [data-test="agent-children-list"]')
+    expect(list).not.toBeNull()
+    expect(list.textContent).toContain('first')
+    expect(parseInt(list.style.top)).toBe(66)
+    expect(parseInt(list.style.left)).toBeLessThanOrEqual(window.innerWidth)
+    // A click in the list keeps it open; outside, or Esc, closes it.
+    list.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+    await flushPromises()
+    expect(document.body.querySelector('[data-test="agent-children-list"]')).not.toBeNull()
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    await flushPromises()
+    expect(document.body.querySelector('[data-test="agent-children-list"]')).toBeNull()
+    await chip.trigger('click')
+    await flushPromises()
+    document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+    await flushPromises()
+    expect(document.body.querySelector('[data-test="agent-children-list"]')).toBeNull()
+    w.unmount()
+    host.remove()
   })
 })
