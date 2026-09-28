@@ -59,6 +59,8 @@ import { writeJsonSafe, readJsonSafe } from './safeJson'
 import { addNotices, writeCurrentTeams, retireOldTeams } from './teamNotices'
 import { JSON_AGENTS, setJsonAgentServer, teamToolsEntry } from './jsonAgents'
 import { detectAgents } from './agentDetect'
+import { createPortScanner } from './workspacePorts'
+import { createResourceCollector } from './resourceUsage'
 import { publishTeamTasks, takeTeamRequests, finishTeamRequests, messageStatuses, writeBoardPanes, toolsAlive, writeRoster } from './teamTasks'
 import {
   writeServerScript,
@@ -1483,6 +1485,23 @@ function codexSupportsNoDaemon() {
 ipcMain.handle('agents:codex-no-daemon', () => codexSupportsNoDaemon())
 // Which agent CLI runs inside each shell pane (started by hand in it).
 ipcMain.handle('agents:detect', safe(detectAgents))
+// Live ports of each workspace copy (sidebar plug, status bar), like Orca.
+const portScanner = createPortScanner()
+ipcMain.handle('ports:scan', safe((q) => portScanner.scan(q || {})))
+ipcMain.handle('ports:kill', safe((q) => portScanner.kill(q || {}, { selfPids: [process.pid, ...ptyHostPids()] })))
+// The status bar's Resource Manager: Tessel's processes and each terminal's
+// process tree (Orca's memory collector).
+const resourceCollector = createResourceCollector({ cpuCount: os.cpus().length })
+ipcMain.handle(
+  'resources:snapshot',
+  safe((q) =>
+    resourceCollector.snapshot({
+      appMetrics: app.getAppMetrics(),
+      ptys: Array.isArray(q && q.ptys) ? q.ptys.filter((t) => t && typeof t.id === 'string' && Number.isSafeInteger(t.pid)).slice(0, 500) : [],
+      hostPids: ptyHostPids()
+    })
+  )
+)
 // Which of these commands are on PATH (fresh PATH, so just-installed tools
 // show up). Returns { bin: true|false }.
 ipcMain.handle('tools:check', async (_evt, bins) => {
@@ -1778,6 +1797,16 @@ const hostPipe = pipeName(
 
 function hostPidFile() {
   return join(app.getPath('userData'), 'pty-host.pid')
+}
+
+// The terminal host's PID, as it wrote it ([] when unknown).
+function ptyHostPids() {
+  try {
+    const pid = parseInt(fs.readFileSync(hostPidFile(), 'utf8'), 10)
+    return pid > 0 ? [pid] : []
+  } catch {
+    return []
+  }
 }
 
 // A host that holds the pipe but no longer answers (stuck while closing its

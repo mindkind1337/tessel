@@ -7808,6 +7808,255 @@ button.act-stat:hover,
   overflow: hidden;
   color: var(--text-dim);
   font-size: 11.5px;
+
+/* ================= Left sidebar (Orca's) =================
+   Ported from Orca's sidebar (MIT, Copyright (c) 2026 Lovecast Inc.):
+   its Tailwind classes translated to CSS on Tessel's theme variables. */
+}
+
+.osb {
+  --wts: var(--surface);
+  --wts-fg: var(--text-strong);
+  --wts-muted: var(--text-dim);
+  --wts-accent: color-mix(in srgb, var(--wts-fg) 9%, var(--wts));
+  --wts-border: var(--border);
+  --wts-ring: color-mix(in srgb, var(--wts-fg) 44%, var(--wts));
+  --orca-accent: var(--surface-3);
+  --agent-question: #f97316;
+  --orca-yellow: #eab308;
+  --orca-amber: #f59e0b;
+  position: relative;
+  flex: 0 0 280px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--wts);
+  color: var(--wts-fg);
+  border-right: 1px solid var(--wts-border);
+  font-size: 13px;
+  transition: flex-basis 0.15s ease;
+}
+
+.osb.collapsed {
+  flex-basis: 52px;
+}
+
+.osb.resizing {
+  transition: none;
+}
+
+.osb button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+
+/* SidebarNav: the search button. */
+.osb-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 8px 4px;
+}
+
+.osb .osb-search {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--wts-fg) 5%, transparent);
+  color: color-mix(in srgb, var(--wts-fg) 60%, transparent);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+
+.osb .osb-search:hover {
+  background: color-mix(in srgb, var(--wts-fg) 8%, transparent);
+}
+
+.osb-search-icon {
+  flex-shrink: 0;
+  color: color-mix(in srgb, var(--wts-fg) 30%, transparent);
+}
+
+.osb-search-label {
+  flex: 1;
+}
+
+.osb-search-keys {
+  display: none;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 2px;
+}
+
+.osb-search:hover .osb-search-keys,
+.osb-search:focus-visible .osb-search-keys {
+  display: inline-flex;
+}
+
+.osb-search-keys kbd {
+  min-width: 16px;
+  padding: 1px 4px;
+  border: 1px solid color-mix(in srgb, var(--wts-border) 80%, transparent);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--wts-fg) 8%, transparent);
+  color: color-mix(in srgb, var(--wts-fg) 55%, transparent);
+  font: inherit;
+  font-size: 9px;
+  text-align: center;
+}
+
+/* SidebarHeader: "Projects" and its actions. */
+.osb-header {
+  display: flex;
+  height: 32px;
+  min-width: 0;
+  margin-top: 8px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 0 8px;
+}
+
+.osb-header-title {
+  min-width: 0;
+  overflow: hidden;
+  padding: 0 2px 0 8px;
+  color: color-mix(in srgb, var(--wts-muted) 80%, transparent);
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.osb-header-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 4px;
+}
+
+.osb .osb-icon-btn {
+  position: relative;
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  color: var(--wts-muted);
+  cursor: pointer;
+  transition: background-color 0.15s, color 0.15s;
+}
+
+.osb .osb-icon-btn:hover,
+.osb .osb-icon-btn.on {
+  background: var(--orca-accent);
+  color: var(--wts-fg);
+}
+
+.osb-icon-btn:focus-visible,
+.osb-search:focus-visible,
+.osb-section-header:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1px var(--wts-ring);
+}
+
+.osb-filter-badge {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  display: flex;
+  height: 12px;
+  min-width: 12px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 2px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--backdrop);
+  font-size: 9px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+/* WorktreeList */
+.osb-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 1px 0 8px 4px;
+  outline: none;
+}
+
+.osb-list:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--wts-ring);
+}
+
+.osb-group {
+  padding-top: 4px;
+}
+
+.osb-group.first {
+  padding-top: 0;
+}
+
+/* SectionHeader: a project. */
+.osb-section-header {
+  position: relative;
+  display: flex;
+  height: 28px;
+  width: 100%;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px 0 10px;
+  cursor: pointer;
+  overflow: hidden;
+  border-radius: 6px;
+}
+
+.osb-section-title {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-self: stretch;
+  align-items: center;
+  gap: 6px;
+}
+
+.osb-section-icon {
+  display: flex;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  color: var(--wts-muted);
+}
+
+.osb-section-label {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--wts-fg);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -7815,4 +8064,1842 @@ button.act-stat:hover,
 .pane-subtitle::before {
   content: '·';
   margin: 0 6px 0 2px;
+}
+
+.osb-section-header.flat .osb-section-label {
+  color: var(--wts-muted);
+  font-size: 12px;
+}
+
+/* Header actions show on hover, over the title's end (Orca's ProjectHeaderActions). */
+.osb-section-actions {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  z-index: 10;
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 2px;
+  padding-left: 4px;
+  border-radius: 6px;
+  background: var(--wts);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-50%);
+  transition: opacity 0.15s;
+}
+
+.osb-section-header:hover .osb-section-actions,
+.osb-section-header:focus-within .osb-section-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.osb .osb-collapse,
+.osb .osb-header-action {
+  display: flex;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  color: var(--wts-muted);
+  cursor: pointer;
+  transition: background-color 0.15s, color 0.15s;
+}
+
+.osb .osb-collapse:hover,
+.osb .osb-header-action:hover {
+  background: color-mix(in srgb, var(--orca-accent) 70%, transparent);
+  color: var(--wts-fg);
+}
+
+.osb-collapse svg {
+  transition: transform 0.15s;
+}
+
+.osb-collapse svg.collapsed {
+  transform: rotate(-90deg);
+}
+
+.osb-rename {
+  min-width: 0;
+  flex: 1;
+  height: 22px;
+  padding: 0 6px;
+  border: 1px solid var(--wts-ring);
+  border-radius: 5px;
+  outline: none;
+  background: var(--surface-2);
+  color: var(--wts-fg);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.osb-rename.wide {
+  width: 100%;
+  font-weight: 400;
+}
+
+/* Message box, team rename, team picking: under their project. */
+.osb-inline-box {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 4px 8px 6px 14px;
+  padding: 8px;
+  border: 1px solid var(--wts-border);
+  border-radius: 8px;
+  background: var(--surface-2);
+  font-size: 12px;
+}
+
+.osb-inline-box textarea {
+  width: 100%;
+  resize: vertical;
+  padding: 6px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  outline: none;
+  background: var(--term);
+  color: var(--text);
+  font: inherit;
+}
+
+.osb-inline-box textarea:focus {
+  border-color: var(--accent);
+}
+
+.osb-pick-bar {
+  color: var(--wts-muted);
+}
+
+.osb-inline-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.osb .osb-btn {
+  padding: 3px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.osb .osb-btn:hover:not(:disabled) {
+  background: var(--surface-3);
+}
+
+.osb .osb-btn.primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--backdrop);
+}
+
+.osb .osb-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.osb-empty {
+  padding: 16px 12px;
+  color: var(--wts-muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+/* Collapsed rail */
+.osb-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 0;
+  overflow-y: auto;
+}
+
+.osb .osb-rail-item {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--wts-muted);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.osb .osb-rail-item.current {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--wts-fg) 18%, var(--wts-border));
+  color: var(--wts-fg);
+}
+
+.osb-rail-dot {
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--orca-yellow);
+  box-shadow: 0 0 0 2px var(--wts);
+}
+
+.osb-rail-dot.attention {
+  background: var(--agent-question);
+}
+
+/* Resize handle: straddles the border (Orca's). */
+.osb-resize {
+  position: absolute;
+  top: 0;
+  right: -6px;
+  z-index: 10;
+  display: flex;
+  width: 12px;
+  height: 100%;
+  justify-content: center;
+  cursor: col-resize;
+}
+
+.osb-resize-line {
+  width: 1px;
+  height: 100%;
+  background: transparent;
+  transition: background 0.15s;
+}
+
+.osb-resize:hover .osb-resize-line {
+  background: color-mix(in srgb, var(--wts-ring) 50%, transparent);
+}
+
+.osb.resizing .osb-resize-line {
+  background: var(--wts-ring);
+}
+
+/* --- Workspace card (Orca's legacy "Detailed" card) --- */
+.wtc-row {
+  position: relative;
+}
+
+.wtc-surface {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: calc(100% - 4px);
+  margin-left: 4px;
+  padding: 5px 6px 6px 2px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  outline: none;
+  user-select: none;
+  transition: background-color 0.2s, border-color 0.2s, opacity 0.2s, box-shadow 0.2s;
+}
+
+.wtc-surface.wtc-grouped {
+  padding-left: 16px;
+}
+
+.wtc-surface.wtc-title-only {
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+.wtc-surface:hover {
+  background: color-mix(in srgb, var(--orca-accent) 40%, transparent);
+}
+
+/* The workspace you are in: a brighter border and a translucent wash. */
+.wtc-surface[data-worktree-card-active='primary'] {
+  border-color: color-mix(in srgb, var(--wts-fg) 18%, var(--wts-border));
+  background: color-mix(in srgb, var(--wts-fg) 10%, transparent);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--wts-fg) 3%, transparent);
+}
+
+.wtc-parent {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.wtc-parent.center {
+  align-items: center;
+}
+
+.wtc-status-slot {
+  display: flex;
+  flex-shrink: 0;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 2px;
+}
+
+.wtc-parent.center .wtc-status-slot {
+  padding-top: 0;
+}
+
+.osb .wtc-unread {
+  position: relative;
+  display: flex;
+  width: 16px;
+  height: 16px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.osb .wtc-unread:hover {
+  background: color-mix(in srgb, var(--orca-accent) 80%, transparent);
+}
+
+.wtc-unread:active {
+  transform: scale(0.95);
+}
+
+.wtc-unread:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1px var(--wts-ring);
+}
+
+.wtc-status-glyph {
+  transition: opacity 0.15s;
+}
+
+.wtc-bell-hover {
+  position: absolute;
+  color: color-mix(in srgb, var(--wts-muted) 40%, transparent);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.wtc-unread:hover .wtc-status-glyph,
+.wtc-unread:focus-visible .wtc-status-glyph {
+  opacity: 0;
+}
+
+.wtc-unread:hover .wtc-bell-hover,
+.wtc-unread:focus-visible .wtc-bell-hover {
+  opacity: 1;
+}
+
+.wtc-filled-bell {
+  width: 13px;
+  height: 13px;
+  color: var(--orca-amber);
+}
+
+.wtc-content {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 6px;
+  overflow: hidden;
+}
+
+.wtc-content.visible {
+  overflow: visible;
+}
+
+.wtc-identity {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.wtc-header {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.wtc-header-main {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 6px;
+}
+
+.wtc-title {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--wts-fg);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wtc-title.unread {
+  font-weight: 600;
+}
+
+/* A sleeping workspace's text steps toward the sidebar surface (Orca). */
+.wtc-sleeping .wtc-title,
+.wtc-sleeping .wtc-branch {
+  color: color-mix(in oklab, var(--wts-fg) 52%, var(--wts));
+}
+
+.wtc-badge {
+  display: inline-flex;
+  height: 16px;
+  flex-shrink: 0;
+  align-items: center;
+  padding: 0 6px;
+  border: 1px solid color-mix(in srgb, var(--wts-fg) 20%, transparent);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--wts-fg) 6%, transparent);
+  color: color-mix(in srgb, var(--wts-fg) 70%, transparent);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.wtc-title-indicators {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  padding-right: 6px;
+}
+
+.wtc-meta {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.wtc-meta-main {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+}
+
+.wtc-branch {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--wts-muted);
+  font-size: 11px;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wtc-meta-details {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  padding-right: 6px;
+}
+
+.wtc-repo-badge {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 6px;
+  border: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--orca-accent) 50%, transparent);
+}
+
+.wtc-repo-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--wts-muted);
+}
+
+.wtc-repo-name {
+  max-width: 6rem;
+  overflow: hidden;
+  color: var(--wts-fg);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  text-overflow: ellipsis;
+  text-transform: lowercase;
+  white-space: nowrap;
+}
+
+/* The agents and terminals of a workspace (Orca's compact agent list). */
+.wtc-agents {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 0;
+  margin-inline-start: -0.5rem;
+  width: calc(100% + 0.5rem);
+}
+
+.wtc-agents.no-meta {
+  margin-top: -4px;
+}
+
+.compact-agent-row {
+  display: flex;
+  height: 24px;
+  min-width: 0;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+  padding: 0 4px;
+  border-radius: 4px;
+  color: var(--wts-muted);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.worktree-agent-row-hover:hover {
+  background: color-mix(in srgb, var(--orca-accent) 18%, transparent);
+}
+
+/* The pane you are in: a borderless fill. */
+.worktree-agent-row-hover[data-focused-agent-pane='true'] {
+  background: color-mix(in srgb, var(--orca-accent) 70%, transparent);
+}
+
+.compact-agent-row.picked {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.compact-agent-row.unpickable {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.car-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.car-text {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.car-lead {
+  color: color-mix(in srgb, var(--wts-muted) 90%, transparent);
+  font-weight: 400;
+}
+
+.car-lead.unvisited {
+  color: var(--wts-fg);
+  font-weight: 600;
+}
+
+.car-lead.focused {
+  color: var(--wts-fg);
+}
+
+.car-trail {
+  color: color-mix(in srgb, var(--wts-muted) 65%, transparent);
+}
+
+.car-trail.focused {
+  color: color-mix(in srgb, var(--wts-fg) 70%, transparent);
+}
+
+.car-trail.track-warn {
+  color: var(--warn);
+}
+
+.car-trail.track-alert {
+  color: var(--danger);
+}
+
+.car-time,
+.car-tag {
+  flex-shrink: 0;
+  color: color-mix(in srgb, var(--wts-muted) 60%, transparent);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.car-time.focused {
+  color: color-mix(in srgb, var(--wts-fg) 70%, transparent);
+}
+
+.car-tag {
+  color: color-mix(in srgb, var(--wts-muted) 85%, transparent);
+}
+
+.car-num {
+  display: inline-grid;
+  flex-shrink: 0;
+  place-items: center;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--orca-accent) 70%, transparent);
+  color: var(--wts-muted);
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  font-size: 9px;
+}
+
+.car-num.focused {
+  background: color-mix(in srgb, var(--wts-fg) 14%, transparent);
+  color: var(--wts-fg);
+}
+
+.car-pick {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+}
+
+.car-pick.on {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+/* Sub-agents under their agent (Orca's lineage children). */
+.osb .compact-agent-child-disclosure-button {
+  display: flex;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  margin-left: -20px;
+  border-radius: 4px;
+  color: var(--wts-muted);
+  cursor: pointer;
+}
+
+.compact-agent-row.worktree-agent-lineage-parent-row {
+  overflow: visible;
+}
+
+.osb .compact-agent-child-disclosure-button:hover {
+  background: var(--wts-accent);
+  color: var(--wts-fg);
+}
+
+.compact-agent-child-disclosure-button svg {
+  transition: transform 0.15s;
+}
+
+.compact-agent-child-disclosure-button svg.open {
+  transform: rotate(90deg);
+}
+
+.worktree-agent-lineage-children {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-left: 0.75rem;
+  padding-left: 0.25rem;
+  border-left: 1px solid color-mix(in srgb, var(--wts-fg) 22%, transparent);
+}
+
+.osb .child-more {
+  align-self: flex-start;
+  padding: 2px 4px;
+  border-radius: 4px;
+  color: color-mix(in srgb, var(--wts-muted) 80%, transparent);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.osb .child-more:hover {
+  background: color-mix(in srgb, var(--orca-accent) 40%, transparent);
+  color: var(--wts-fg);
+}
+
+/* The "N agents" summary line (compact agent activity). */
+.compact-agent-summary-panel {
+  padding: 2px;
+  border-radius: 4px;
+}
+
+.osb .compact-agent-summary-button {
+  display: flex;
+  height: 24px;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  padding: 0 4px;
+  border: 1px solid color-mix(in srgb, var(--wts-border) 70%, transparent);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--wts-accent) 35%, transparent);
+  color: var(--wts-muted);
+  font-size: 11px;
+  line-height: 1;
+  text-align: left;
+  cursor: pointer;
+}
+
+.osb .compact-agent-summary-button.expanded {
+  border-color: transparent;
+  background: transparent;
+}
+
+.osb .compact-agent-summary-button:hover {
+  background: color-mix(in srgb, var(--wts-fg) 3.5%, transparent);
+}
+
+.cas-subject {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  padding: 0 4px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cas-groups {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+}
+
+.cas-group {
+  display: inline-flex;
+  min-width: 0;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--wts) 70%, transparent);
+}
+
+.cas-icons {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  padding-left: 2px;
+}
+
+.cas-icon {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in srgb, var(--wts-border) 70%, transparent);
+  border-radius: 50%;
+  background: var(--wts);
+}
+
+.cas-icon + .cas-icon {
+  margin-left: -2px;
+}
+
+.cas-more {
+  flex-shrink: 0;
+  color: color-mix(in srgb, var(--wts-muted) 70%, transparent);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.cas-chevron {
+  flex-shrink: 0;
+  transition: transform 0.15s;
+}
+
+.cas-chevron.collapsed {
+  transform: rotate(-90deg);
+}
+
+.compact-agent-expansion-grid {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 180ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.compact-agent-expansion-grid-expanded {
+  grid-template-rows: 1fr;
+}
+
+.cae-clip {
+  min-width: 0;
+  min-height: 0;
+  overflow-x: visible;
+  overflow-y: clip;
+}
+
+.compact-agent-expansion-content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 2px;
+}
+
+@keyframes compact-agent-expansion-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.compact-agent-expansion-grid-expanded .compact-agent-expansion-content {
+  animation: compact-agent-expansion-reveal 180ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* Orca's AgentStateDot / StatusIndicator. */
+.asd {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+}
+
+.asd-row {
+  width: 10px;
+  height: 10px;
+}
+
+.asd-status {
+  width: 12px;
+  height: 12px;
+}
+
+.asd-dot {
+  display: block;
+  border-radius: 50%;
+  background: color-mix(in srgb, #737373 40%, transparent);
+}
+
+.asd-row .asd-dot {
+  width: 6px;
+  height: 6px;
+}
+
+.asd-status .asd-dot {
+  width: 8px;
+  height: 8px;
+}
+
+.asd-dot.green {
+  background: #10b981;
+}
+
+.asd-dot.red {
+  background: #ef4444;
+}
+
+.asd-row .asd-icon {
+  width: 10px;
+  height: 10px;
+}
+
+.asd-status .asd-icon {
+  width: 12px;
+  height: 12px;
+}
+
+.asd-question {
+  color: #f97316;
+}
+
+.asd-green {
+  color: #10b981;
+}
+
+.asd-amber {
+  color: #f59e0b;
+}
+
+.asd-yellow {
+  color: #eab308;
+}
+
+.asd-moon {
+  width: 13px;
+  height: 13px;
+  color: var(--text-dim);
+}
+
+.agent-working-spinner {
+  display: block;
+  box-sizing: border-box;
+  border: 2px solid #eab308;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: agent-spinner-rotate 86400s steps(1036800, end) infinite;
+}
+
+.asd-row .agent-working-spinner {
+  width: 8px;
+  height: 8px;
+  border-width: 1.5px;
+}
+
+.asd-status .agent-working-spinner {
+  width: 10px;
+  height: 10px;
+}
+
+@keyframes agent-spinner-rotate {
+  to {
+    transform: rotate(86400turn);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-working-spinner {
+    animation: none;
+    border-top-color: #eab308;
+  }
+}
+
+/* The plug and its Live Ports hover card. */
+.wcp {
+  display: inline-flex;
+}
+
+.osb .wcp-trigger {
+  display: inline-flex;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  color: color-mix(in srgb, var(--text-dim) 70%, transparent);
+  cursor: pointer;
+}
+
+.osb .wcp-trigger:hover,
+.osb .wcp-trigger[aria-expanded='true'] {
+  color: var(--text-strong);
+}
+
+.wcp-trigger:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1px var(--border-strong);
+}
+
+.wcp-card,
+.sb-popover {
+  position: fixed;
+  z-index: 60;
+  overflow-y: auto;
+  border: 1px solid color-mix(in srgb, var(--text-strong) 14%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--backdrop) 90%, transparent);
+  color: var(--text-strong);
+  box-shadow: 0 16px 36px rgb(0 0 0 / 0.24);
+  backdrop-filter: blur(40px);
+}
+
+.wcp-card {
+  width: 320px;
+  max-height: 28rem;
+  padding: 12px;
+  font-size: 12px;
+}
+
+.wcp-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.wcp-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 4px;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.wcp-count {
+  color: color-mix(in srgb, var(--text-dim) 70%, transparent);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+.wcp-content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: 12px;
+  border-left: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+}
+
+/* A port row (sidebar card and status bar). */
+.port-row {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  align-items: center;
+  border-radius: 6px;
+}
+
+.port-row:hover {
+  background: color-mix(in srgb, var(--surface-3) 50%, transparent);
+}
+
+.port-row-card {
+  grid-template-columns: 3.25rem minmax(0, 1fr);
+  gap: 6px;
+  padding: 4px 6px;
+}
+
+.port-row-status {
+  grid-template-columns: 4.5rem minmax(0, 1fr);
+  gap: 8px;
+  padding: 6px 8px;
+}
+
+.port-row-num {
+  color: var(--text-strong);
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  user-select: text;
+}
+
+.port-row-body-inline {
+  display: flex;
+  height: 20px;
+  min-width: 0;
+  align-items: baseline;
+  gap: 4px;
+  overflow: hidden;
+  padding-right: 3.75rem;
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 20px;
+  user-select: text;
+}
+
+.port-row-body-inline .port-row-process {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.port-row-dash {
+  flex-shrink: 0;
+  color: color-mix(in srgb, var(--text-dim) 45%, transparent);
+}
+
+.port-row-body-inline .port-row-address {
+  min-width: 0;
+  flex: 1.1;
+  overflow: hidden;
+  color: color-mix(in srgb, var(--text-dim) 70%, transparent);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.port-row-body {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+  padding-right: 3.75rem;
+}
+
+.port-row-body .port-row-process {
+  overflow: hidden;
+  color: var(--text-dim);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.port-row-body .port-row-address {
+  overflow: hidden;
+  color: color-mix(in srgb, var(--text-dim) 70%, transparent);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.port-row-actions {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 2px;
+  border: 1px solid color-mix(in srgb, var(--border) 40%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--surface-2) 95%, transparent);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.05);
+  opacity: 0;
+  transform: translateY(-50%);
+  transition: opacity 0.15s;
+}
+
+.port-row:hover .port-row-actions,
+.port-row:focus-within .port-row-actions {
+  opacity: 1;
+}
+
+.port-row-action {
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.port-row-action:hover:not(:disabled) {
+  background: var(--surface-3);
+  color: var(--text-strong);
+}
+
+.port-row-action:disabled {
+  color: color-mix(in srgb, var(--text-dim) 35%, transparent);
+  cursor: default;
+}
+
+/* ================= Menus (Orca's DropdownMenu) ================= */
+.orca-menu {
+  position: fixed;
+  z-index: 70;
+  min-width: 11rem;
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid color-mix(in srgb, var(--text-strong) 14%, transparent);
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--backdrop) 90%, transparent);
+  color: var(--text-strong);
+  box-shadow:
+    0 12px 28px rgb(0 0 0 / 0.22),
+    inset 0 1px 0 rgb(255 255 255 / 0.14);
+  backdrop-filter: blur(40px);
+  font-size: 12px;
+}
+
+.orca-menu-label {
+  padding: 4px 8px;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.orca-menu-label.orca-menu-title {
+  padding-bottom: 0;
+  color: var(--text-strong);
+  font-size: 13px;
+}
+
+.orca-menu-label.orca-menu-caps {
+  padding: 6px 8px 4px;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.orca-menu-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--text-strong);
+}
+
+.orca-menu-header-hint {
+  color: var(--text-dim);
+  font-weight: 400;
+}
+
+.orca-menu-sep {
+  height: 1px;
+  margin: 3px 0;
+  background: color-mix(in srgb, var(--border) 60%, transparent);
+}
+
+.orca-menu-item {
+  position: relative;
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 6px;
+  outline: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 450;
+  line-height: 17px;
+  text-align: left;
+  cursor: default;
+}
+
+.orca-menu-item.indicator {
+  padding-left: 28px;
+}
+
+.orca-menu-item.tall {
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+
+.orca-menu-item:hover:not(:disabled),
+.orca-menu-item:focus-visible,
+.orca-menu-item.open {
+  background: color-mix(in srgb, var(--text-strong) 14%, transparent);
+}
+
+.orca-menu-item:disabled {
+  opacity: 0.5;
+}
+
+.orca-menu-item.danger {
+  color: #ff6568;
+}
+
+.orca-menu-item.danger:hover:not(:disabled) {
+  background: color-mix(in srgb, #ff6568 20%, transparent);
+}
+
+.orca-menu-icon {
+  flex-shrink: 0;
+  color: var(--text-dim);
+}
+
+.orca-menu-item.danger .orca-menu-icon {
+  color: inherit;
+}
+
+.orca-menu-text {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.orca-menu-two-line {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.orca-menu-desc {
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.orca-menu-hint {
+  flex-shrink: 0;
+  margin-left: auto;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.orca-menu-chevron {
+  flex-shrink: 0;
+  color: var(--text-dim);
+}
+
+.orca-menu-text + .orca-menu-chevron {
+  margin-left: auto;
+}
+
+.orca-menu-indicator {
+  position: absolute;
+  left: 8px;
+  display: flex;
+  width: 14px;
+  height: 14px;
+  align-items: center;
+  justify-content: center;
+}
+
+.orca-menu-radio-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+/* Orca's FilterToggleRow (a switch row). */
+.orca-filter-row {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: var(--text-strong);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: default;
+}
+
+.orca-filter-row.indented {
+  padding-left: 28px;
+}
+
+.orca-filter-row:hover {
+  background: var(--surface-3);
+}
+
+.orca-filter-row:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1px var(--border-strong);
+}
+
+.orca-filter-row-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.orca-filter-row-label.dim {
+  color: var(--text-dim);
+}
+
+.orca-filter-row-icon {
+  color: var(--text-dim);
+}
+
+.orca-switch {
+  position: relative;
+  display: inline-flex;
+  width: 24px;
+  height: 14px;
+  flex-shrink: 0;
+  border-radius: 999px;
+  background: var(--border-strong);
+  transition: background 0.15s;
+}
+
+.orca-switch span {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--text-strong);
+  transition: transform 0.15s;
+}
+
+.orca-switch.on {
+  background: var(--accent);
+}
+
+.orca-switch.on span {
+  transform: translateX(10px);
+}
+
+.orca-menu-seg-wrap {
+  padding: 2px 8px 4px;
+}
+
+/* Orca's ToggleGroup (outline, sm). */
+.orca-seg {
+  display: flex;
+  height: 24px;
+  width: 100%;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.orca-seg-item {
+  flex: 1 1 0;
+  padding: 0 4px;
+  border: 0;
+  background: none;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.orca-seg-item + .orca-seg-item {
+  border-left: 1px solid var(--border-strong);
+}
+
+.orca-seg-item.on {
+  background: color-mix(in srgb, var(--text-strong) 10%, transparent);
+  color: var(--text-strong);
+  font-weight: 600;
+}
+
+/* ================= Status bar (Orca's) ================= */
+.sb {
+  position: relative;
+  display: flex;
+  height: 24px;
+  min-height: 24px;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 16px;
+  padding: 0 12px;
+  border-top: 1px solid var(--border);
+  background: var(--chrome);
+  color: var(--text-dim);
+  font-size: 12px;
+  user-select: none;
+}
+
+.sb-left,
+.sb-right {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
+}
+
+.sb-right {
+  flex-shrink: 0;
+}
+
+.sb-spacer {
+  flex: 1;
+}
+
+.sb-info {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sb-target {
+  color: var(--text);
+}
+
+.sb-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--text-dim);
+  font: inherit;
+  cursor: pointer;
+  transition: background-color 0.15s, color 0.15s;
+}
+
+.sb-trigger:hover,
+.sb-trigger[aria-expanded='true'] {
+  background: color-mix(in srgb, var(--surface-3) 70%, transparent);
+}
+
+.sb-awake {
+  gap: 4px;
+}
+
+.sb-awake:hover {
+  color: var(--text-strong);
+}
+
+.sb-awake svg.active {
+  color: var(--text-strong);
+}
+
+.sb-awake-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--text-dim) 40%, transparent);
+}
+
+.sb-awake-dot.active {
+  background: var(--text-strong);
+}
+
+.sb-label {
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.sb-num,
+.sb-count {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sb-muted,
+.sb-muted-text {
+  color: var(--text-dim);
+}
+
+.sb-sep {
+  color: color-mix(in srgb, var(--text-dim) 50%, transparent);
+}
+
+.sb-spin {
+  animation: sb-spin 1s linear infinite;
+}
+
+@keyframes sb-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.sb-host-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--text-dim) 40%, transparent);
+}
+
+.sb-host-dot.big {
+  width: 8px;
+  height: 8px;
+}
+
+.sb-popover {
+  max-width: calc(100vw - 2rem);
+  font-size: 12px;
+}
+
+.sb-resources {
+  width: 26rem;
+  overflow: hidden;
+}
+
+.sb-ports {
+  width: 24rem;
+  overflow: hidden;
+}
+
+.sb-pop-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.sb-pop-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.sb-pop-hint {
+  color: var(--text-dim);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sb-notice {
+  padding: 6px 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 40%, transparent);
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.sb-res-summary {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sb-res-body {
+  display: flex;
+  height: 420px;
+  flex-direction: column;
+}
+
+.sb-res-sort {
+  display: flex;
+  align-items: center;
+  padding: 4px 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+  background: color-mix(in srgb, var(--surface-2) 30%, transparent);
+}
+
+.sb-res-col {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: color-mix(in srgb, var(--text-dim) 80%, transparent);
+  font: inherit;
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.sb-res-col.on {
+  color: var(--text-strong);
+  font-weight: 600;
+}
+
+.sb-res-col.name {
+  flex: 1;
+  text-align: left;
+}
+
+.sb-res-col.cpu {
+  width: 48px;
+  text-align: right;
+}
+
+.sb-res-col.mem {
+  width: 64px;
+  margin-right: 20px;
+  text-align: right;
+}
+
+.sb-res-scroll {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.sb-res-row {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+}
+
+.sb-res-row.session {
+  padding-left: 40px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.sb-res-row.sb-res-app {
+  cursor: pointer;
+}
+
+.sb-res-row:hover {
+  background: color-mix(in srgb, var(--surface-3) 50%, transparent);
+}
+
+.sb-res-row.group {
+  font-weight: 500;
+}
+
+.sb-res-name {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sb-res-name.caps {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.sb-res-cpu,
+.sb-res-mem {
+  flex-shrink: 0;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.sb-res-cpu {
+  width: 48px;
+}
+
+.sb-res-mem {
+  width: 64px;
+  margin-right: 20px;
+}
+
+.sb-res-dot {
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--text-dim) 40%, transparent);
+}
+
+.sb-res-dot.bound {
+  background: #10b981;
+}
+
+.sb-res-chevron {
+  flex-shrink: 0;
+  color: var(--text-dim);
+  transition: transform 0.15s;
+}
+
+.sb-res-chevron.open {
+  transform: rotate(90deg);
+}
+
+.sb-empty {
+  padding: 16px 12px;
+  color: var(--text-dim);
+  font-size: 12px;
+  text-align: center;
+}
+
+.sb-ports-list {
+  max-height: 28rem;
+  overflow-y: auto;
+}
+
+.sb-port-group + .sb-port-group {
+  border-top: 1px solid color-mix(in srgb, var(--border) 40%, transparent);
+}
+
+.sb-port-group-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 40%, transparent);
+  background: var(--backdrop);
+}
+
+.sb-port-group-name {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sb-port-group-count {
+  margin-left: auto;
+  color: color-mix(in srgb, var(--text-dim) 70%, transparent);
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  font-size: 10px;
+}
+
+.sb-port-rows {
+  padding: 0 4px 4px;
+}
+
+.sb-external {
+  border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+}
+
+.sb-external-toggle {
+  position: sticky;
+  top: 0;
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 40%, transparent);
+  background: var(--backdrop);
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.sb-external-toggle:hover {
+  background: var(--surface-2);
+}
+
+/* Settings > Appearance > Window & Sidebar: nested status bar toggles (Orca's ml-4), tint color. */
+.set-row.set-row-nested {
+  padding-left: 32px;
+}
+
+.set-color {
+  width: 36px;
+  height: 24px;
+  padding: 0 2px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface-2);
+  cursor: pointer;
 }

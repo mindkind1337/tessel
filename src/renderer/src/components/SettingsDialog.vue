@@ -8,7 +8,7 @@ import BrandIcon from './BrandIcon.vue'
 import ProviderAccounts from './ProviderAccounts.vue'
 import StatsUsage from './StatsUsage.vue'
 import { BarChart3 } from 'lucide-vue-next'
-import { settings, FONT_FAMILIES, resetSettings, clamp } from '../settings'
+import { settings, FONT_FAMILIES, resetSettings, clamp, MAX_LEFT_SIDEBAR_TINT_OPACITY } from '../settings'
 import { THEMES } from '../themes'
 import { playAlertSound } from '../notificationsStore'
 import { parseEnvText, YOLO_ARGS, YOLO_ENV, agentEnabled } from '../../../shared/agentPrefs'
@@ -66,7 +66,7 @@ const PAGES = {
   },
   appearance: {
     title: 'Appearance',
-    desc: 'The colors of the whole app.',
+    desc: 'The colors of the whole app, the sidebar and the status bar.',
     icon: 'M8 2a6 6 0 100 12A6 6 0 008 2zM8 2v12'
   },
   text: {
@@ -488,11 +488,45 @@ function setScrollback(e) {
   e.target.value = settings.scrollback
 }
 
+// Orca's "Keep computer awake" (agent-awake-copy.ts): On, Agent, Off.
 const AWAKE_MODES = [
-  { id: 'off', label: 'Off', title: 'Windows sleeps as usual' },
-  { id: 'agents', label: 'While agents work', title: 'Only while at least one agent is working' },
-  { id: 'on', label: 'Always', title: 'As long as Tessel is open' }
+  { id: 'on', label: 'On', title: 'Keep this computer awake continuously' },
+  { id: 'agents', label: 'Agent', title: 'Stay awake while an agent is working' },
+  { id: 'off', label: 'Off', title: 'Allow normal system sleep behavior' }
 ]
+
+// Settings > Appearance > Window & Sidebar (Orca's AppearanceWindowSidebarSection).
+const SIDEBAR_APPEARANCES = [
+  { id: 'default', label: 'Default' },
+  { id: 'match-terminal', label: 'Match Terminal' },
+  { id: 'tinted', label: 'Tinted' }
+]
+const STATUS_BAR_TOGGLES = [
+  {
+    id: 'ssh',
+    title: 'Remote Hosts',
+    description: 'Show configured SSH and remote Tessel hosts when any are available.'
+  },
+  {
+    id: 'resource-usage',
+    title: 'Resource Manager',
+    description: 'Show the Resource Manager. Click it for CPU, memory and sessions.'
+  },
+  {
+    id: 'ports',
+    title: 'Ports',
+    description: 'Show live workspace ports. Click it for workspace-scoped ports and external listeners.'
+  }
+]
+function toggleStatusBarItem(id) {
+  const list = settings.statusBarItems
+  settings.statusBarItems = list.includes(id) ? list.filter((x) => x !== id) : [...list, id]
+}
+function setTintOpacity(e) {
+  const n = parseFloat(e.target.value)
+  if (Number.isFinite(n)) settings.leftSidebarTintOpacity = clamp(n, 0, MAX_LEFT_SIDEBAR_TINT_OPACITY)
+  e.target.value = settings.leftSidebarTintOpacity
+}
 
 const CURSORS = [
   { id: 'block', label: 'Block' },
@@ -684,10 +718,10 @@ const CURSORS = [
             <div class="set-card">
               <div class="set-row">
                 <div id="settings-awake-label" class="set-label">
-                  Keep the computer awake
+                  Keep computer awake
                   <span class="set-hint"
-                    >So it doesn't go to sleep in the middle of an agent's work. The screen can still turn
-                    off</span
+                    >Choose On, Agent, or Off. Agent mode stays awake while agents are working; lid-close
+                    behavior follows this device's power settings.</span
                   >
                 </div>
                 <div class="launch-seg set-seg" role="group" aria-labelledby="settings-awake-label">
@@ -1104,6 +1138,111 @@ const CURSORS = [
                     {{ theme.label }}
                   </option>
                 </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- Orca's Appearance > Window & Sidebar. -->
+          <div class="set-group">
+            <h3 class="set-group-title">Window &amp; Sidebar</h3>
+            <div class="set-card">
+              <div class="set-row">
+                <div id="settings-sidebar-appearance-label" class="set-label">
+                  Left Sidebar Appearance
+                  <span class="set-hint">Make the left sidebar match your terminal, stay default, or use a tint.</span>
+                </div>
+                <div class="launch-seg set-seg" role="group" aria-labelledby="settings-sidebar-appearance-label">
+                  <button
+                    v-for="m in SIDEBAR_APPEARANCES"
+                    :key="m.id"
+                    class="launch-seg-btn"
+                    :class="{ on: settings.leftSidebarAppearanceMode === m.id }"
+                    :aria-pressed="settings.leftSidebarAppearanceMode === m.id"
+                    @click="settings.leftSidebarAppearanceMode = m.id"
+                  >
+                    {{ m.label }}
+                  </button>
+                </div>
+              </div>
+              <template v-if="settings.leftSidebarAppearanceMode === 'tinted'">
+                <label class="set-row">
+                  <div class="set-label">
+                    Sidebar Tint
+                    <span class="set-hint">The color mixed into the left sidebar surface.</span>
+                  </div>
+                  <input v-model="settings.leftSidebarTintColor" type="color" class="set-color" aria-label="Sidebar Tint" />
+                </label>
+                <label class="set-row">
+                  <div class="set-label">
+                    Tint Strength
+                    <span class="set-hint">Controls how strongly the tint is mixed into the sidebar. 0 to {{ MAX_LEFT_SIDEBAR_TINT_OPACITY }}</span>
+                  </div>
+                  <input
+                    type="number"
+                    class="set-number"
+                    min="0"
+                    :max="MAX_LEFT_SIDEBAR_TINT_OPACITY"
+                    step="0.01"
+                    :value="settings.leftSidebarTintOpacity"
+                    aria-label="Tint Strength"
+                    @change="setTintOpacity"
+                  />
+                </label>
+              </template>
+              <label class="set-row">
+                <div class="set-label">
+                  Show Status Bar
+                  <span class="set-hint">The bar at the bottom of the window.</span>
+                </div>
+                <input v-model="settings.statusBarVisible" type="checkbox" class="set-switch" />
+              </label>
+              <div class="set-row">
+                <div class="set-label">
+                  Status Bar
+                  <span class="set-hint">Choose which indicators appear in the status bar.</span>
+                </div>
+              </div>
+              <label v-for="t in STATUS_BAR_TOGGLES" :key="t.id" class="set-row set-row-nested">
+                <div class="set-label">
+                  {{ t.title }}
+                  <span class="set-hint">{{ t.description }}</span>
+                </div>
+                <input
+                  type="checkbox"
+                  class="set-switch"
+                  :checked="settings.statusBarItems.includes(t.id)"
+                  :aria-label="t.title"
+                  @change="toggleStatusBarItem(t.id)"
+                />
+              </label>
+            </div>
+          </div>
+          <div class="set-group">
+            <h3 class="set-group-title">Sidebar</h3>
+            <div class="set-card">
+              <div class="set-row">
+                <div id="settings-card-layout-label" class="set-label">
+                  Workspace Card Layout
+                  <span class="set-hint">Workspace cards can use compact or detailed layouts.</span>
+                </div>
+                <div class="launch-seg set-seg" role="group" aria-labelledby="settings-card-layout-label">
+                  <button
+                    class="launch-seg-btn"
+                    :class="{ on: !settings.compactWorktreeCards }"
+                    :aria-pressed="!settings.compactWorktreeCards"
+                    @click="settings.compactWorktreeCards = false"
+                  >
+                    Detailed
+                  </button>
+                  <button
+                    class="launch-seg-btn"
+                    :class="{ on: settings.compactWorktreeCards }"
+                    :aria-pressed="settings.compactWorktreeCards"
+                    @click="settings.compactWorktreeCards = true"
+                  >
+                    Compact
+                  </button>
+                </div>
               </div>
             </div>
           </div>

@@ -128,7 +128,7 @@ export function agentsUnderShells(procs, shells, commands = {}) {
   return out
 }
 
-function listProcesses() {
+export function listProcesses() {
   return new Promise((resolve) => {
     if (process.platform === 'win32') {
       const script =

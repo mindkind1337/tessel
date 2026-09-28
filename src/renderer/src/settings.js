@@ -80,13 +80,51 @@ export const DEFAULT_SETTINGS = Object.freeze({
   editorMinimap: false,
   editorWordWrap: true,
   editorPreviewTabs: true,
-  diffSideBySide: false
+  diffSideBySide: false,
+  // The left sidebar, like Orca's (same defaults): its Workspace options
+  // menu (group, sort, project order, filters, card properties, agent
+  // activity layout), the projects shown, the collapsed project groups.
+  sidebarGroupBy: 'repo', // 'repo' (Project) | 'none'
+  sidebarSortBy: 'recent', // 'name' | 'smart' | 'recent' | 'repo' | 'manual'
+  sidebarProjectOrderBy: 'manual', // 'manual' | 'recent'
+  showSleepingWorkspaces: true,
+  alwaysShowDefaultBranchWorkspace: true,
+  hideDefaultBranchWorkspace: false,
+  sidebarFilterRepoIds: [],
+  sidebarCollapsedGroups: [],
+  worktreeCardProperties: ['ports', 'inline-agents'],
+  agentActivityDisplayMode: 'compact', // 'compact' | 'full'
+  // Settings > Appearance > Window & Sidebar (Orca's).
+  compactWorktreeCards: false,
+  leftSidebarAppearanceMode: 'default', // 'default' | 'match-terminal' | 'tinted'
+  leftSidebarTintColor: '#18181b',
+  leftSidebarTintOpacity: 0.08,
+  // The status bar at the bottom (Orca's) and the indicators it shows.
+  statusBarVisible: true,
+  statusBarItems: ['ssh', 'resource-usage', 'ports']
 })
+
+export const SIDEBAR_SORTS = ['name', 'smart', 'recent', 'repo', 'manual']
+export const WORKTREE_CARD_PROPERTIES = ['ports', 'inline-agents']
+export const STATUS_BAR_ITEMS = ['ssh', 'resource-usage', 'ports']
+export const MAX_LEFT_SIDEBAR_TINT_OPACITY = 0.35
+
+const idList = (v, max = 200) =>
+  Array.isArray(v) ? [...new Set(v.filter((x) => typeof x === 'string' && x.length <= 200))].slice(0, max) : null
 
 export const EDITOR_AUTOSAVE_MIN_MS = 250
 export const EDITOR_AUTOSAVE_MAX_MS = 10000
 
-const fresh = () => ({ ...DEFAULT_SETTINGS, customAgents: [], quickCommands: [], agentPrefs: {} })
+const fresh = () => ({
+  ...DEFAULT_SETTINGS,
+  customAgents: [],
+  quickCommands: [],
+  agentPrefs: {},
+  sidebarFilterRepoIds: [],
+  sidebarCollapsedGroups: [],
+  worktreeCardProperties: [...DEFAULT_SETTINGS.worktreeCardProperties],
+  statusBarItems: [...DEFAULT_SETTINGS.statusBarItems]
+})
 
 export const settings = reactive(fresh())
 
@@ -116,6 +154,27 @@ export function loadSettings(saved) {
       continue
     if (key === 'quickCommands') {
       if (Array.isArray(v)) settings.quickCommands = v.filter(validQuickCommand).slice(0, 100)
+      continue
+    }
+    if (key === 'sidebarFilterRepoIds' || key === 'sidebarCollapsedGroups') {
+      const list = idList(v)
+      if (list) settings[key] = list
+      continue
+    }
+    if (key === 'worktreeCardProperties' || key === 'statusBarItems') {
+      const known = key === 'statusBarItems' ? STATUS_BAR_ITEMS : WORKTREE_CARD_PROPERTIES
+      const list = idList(v)
+      if (list) settings[key] = list.filter((x) => known.includes(x))
+      continue
+    }
+    if (key === 'sidebarGroupBy' && !['repo', 'none'].includes(v)) continue
+    if (key === 'sidebarSortBy' && !SIDEBAR_SORTS.includes(v)) continue
+    if (key === 'sidebarProjectOrderBy' && !['manual', 'recent'].includes(v)) continue
+    if (key === 'agentActivityDisplayMode' && !['compact', 'full'].includes(v)) continue
+    if (key === 'leftSidebarAppearanceMode' && !['default', 'match-terminal', 'tinted'].includes(v)) continue
+    if (key === 'leftSidebarTintColor' && !(typeof v === 'string' && /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(v))) continue
+    if (key === 'leftSidebarTintOpacity') {
+      if (typeof v === 'number' && Number.isFinite(v)) settings[key] = clamp(v, 0, MAX_LEFT_SIDEBAR_TINT_OPACITY)
       continue
     }
     if (typeof v !== typeof def) continue

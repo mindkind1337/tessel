@@ -207,6 +207,12 @@ const api = {
   codexNoDaemon: () => ipcRenderer.invoke('agents:codex-no-daemon'),
   // { shells: { paneId: shellPid } } -> { ok, agents: { paneId: agentId | null } }
   detectAgents: (args) => ipcRenderer.invoke('agents:detect', args),
+  // Live ports: { probes: [{ id, pids, path }] } -> { ok, ports: { [id]: [port] } };
+  // kill: { probes, pid, port } -> { ok, reason }.
+  scanPorts: (args) => ipcRenderer.invoke('ports:scan', args),
+  killPort: (args) => ipcRenderer.invoke('ports:kill', args),
+  // Status bar Resource Manager: { ptys: [{ id, pid }] } -> memory / CPU snapshot.
+  resourceSnapshot: (args) => ipcRenderer.invoke('resources:snapshot', args),
   // Background team information (never typed into terminals).
   team: {
     notice: (args) => ipcRenderer.invoke('team:notice', args),
