@@ -8,7 +8,12 @@ describe('the usage gauge', () => {
     window.shellApi = {
       getUsage: vi.fn(async () => ({
         agents: [
-          { id: 'codex', windows: [{ label: 'week', usedPct: 86, resetsAt: soon, stale: false }], observedAt: new Date().toISOString(), stale: false },
+          {
+            id: 'codex',
+            windows: [{ label: 'week', usedPct: 86, resetsAt: soon, stale: false }],
+            observedAt: new Date().toISOString(),
+            stale: false
+          },
           { id: 'claude', windows: [], error: null }
         ]
       }))
@@ -18,6 +23,7 @@ describe('the usage gauge', () => {
     expect(w.find('[data-test="usage-button"]').classes()).toContain('usage-warn')
     await w.find('[data-test="usage-button"]').trigger('click')
     await flushPromises()
+    await w.get('[data-test="usage-mode-detailed"]').trigger('click')
     const [codex, claude] = w.findAll('[data-test="usage-agent"]')
     expect(codex.text()).toMatch(/Weekly\s*86%/)
     expect(codex.text()).toMatch(/resets in 1 h 30 min|resets in 1 h 29 min/)

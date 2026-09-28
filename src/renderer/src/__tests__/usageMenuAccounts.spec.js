@@ -39,6 +39,7 @@ describe('usage menu account switching', () => {
     expect(api.accounts.list).not.toHaveBeenCalled()
     await wrapper.get('[data-test="usage-button"]').trigger('click')
     await flushPromises()
+    await wrapper.get('[data-test="usage-row-codex"]').trigger('click')
   }
   it('loads accounts only on opening and refreshes usage after a successful selection', async () => {
     await open()
