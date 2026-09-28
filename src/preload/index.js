@@ -73,7 +73,10 @@ const api = {
   inputLanguages: () => ipcRenderer.invoke('app:inputLanguages'),
   openExternal: (url) => ipcRenderer.invoke('app:openExternal', url),
   gitInfo: (cwd) => ipcRenderer.invoke('git:info', cwd),
-  createWorktree: (cwd, label) => ipcRenderer.invoke('git:createWorktree', { cwd, label }),
+  createWorktree: (cwd, label, options) =>
+    ipcRenderer.invoke('git:createWorktree', { cwd, label, options }),
+  // Last locally observed subscription quotas, with timestamps and stale flags.
+  getUsage: () => ipcRenderer.invoke('usage:get'),
   // Review and merge a task branch: { root, path, branch, target, ... }.
   // A team lead's inbox folder: { dir, token, guide }.
   lead: {

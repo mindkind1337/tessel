@@ -15,6 +15,7 @@ import { join, dirname, basename } from 'path'
 import os from 'os'
 import fs from 'fs'
 import { readJson } from './fileRead'
+import { copyWorktreeEnv, resolveWorktreeBase, setupWorktree } from './worktreeCreate'
 
 // ---------------------------------------------------------------------------
 // Pure helpers
@@ -344,8 +345,12 @@ export async function gitStatus(cwd) {
   return { isRepo: true, ...parseGitStatus(res.stdout) }
 }
 
-// Create <repo>.worktrees/<name> on a new branch agent/<name> from HEAD.
-export async function createWorktree(cwd, label) {
+// Create a new agent branch from HEAD or a selected local/remote branch.
+// Initialization is opt-in; a failed optional step never hides a created tree.
+export async function createWorktree(cwd, label, options = {}) {
+  if (!options || typeof options !== 'object' || Array.isArray(options)) {
+    return { ok: false, error: 'Worktree options must be an object.' }
+  }
   const info = await gitInfo(cwd)
   if (!info.isRepo) return { ok: false, error: 'The workspace folder is not a git repository.' }
   if (!info.hasCommits)
@@ -353,6 +358,8 @@ export async function createWorktree(cwd, label) {
       ok: false,
       error: 'The repository has no commits yet. Make a first commit, then try again.'
     }
+  const selected = await resolveWorktreeBase(info.root, info.branch, options.baseBranch, run)
+  if (!selected.ok) return selected
   const base = join(dirname(info.root), `${basename(info.root)}.worktrees`)
   const slug = slugify(label)
   let n = 1
@@ -365,10 +372,18 @@ export async function createWorktree(cwd, label) {
   }
   const path = join(base, name)
   const branch = `agent/${name}`
-  fs.mkdirSync(base, { recursive: true })
-  const res = await run('git', ['-C', info.root, 'worktree', 'add', '-b', branch, path, 'HEAD'])
+  try {
+    fs.mkdirSync(base, { recursive: true })
+    if (fs.lstatSync(base).isSymbolicLink()) return { ok: false, error: 'The worktree directory must not be a link.' }
+  } catch {
+    return { ok: false, error: 'Could not create the worktree directory.' }
+  }
+  const res = await run('git', ['-C', info.root, 'worktree', 'add', '-b', branch, path, selected.commit])
   if (!res.ok) return { ok: false, error: cliError(res, 'git worktree add failed') }
-  return { ok: true, path, branch, baseBranch: info.branch, root: info.root }
+  const result = { ok: true, path, branch, baseBranch: selected.branch, baseCommit: selected.commit, root: info.root }
+  if (options.copyEnv === true) result.copyEnvResult = await copyWorktreeEnv(info.root, path, run)
+  if (options.runSetup === true) result.setup = await setupWorktree(path, selected.commit, run)
+  return result
 }
 
 // ---------------------------------------------------------------------------
