@@ -13,7 +13,10 @@ const props = defineProps({
   state: { type: String, required: true },
   // 'row' = AgentStateDot size sm; 'status' = StatusIndicator (h-3 w-3).
   variant: { type: String, default: 'row' },
-  title: { type: String, default: undefined }
+  title: { type: String, default: undefined },
+  // false inside rows whose hover card tells the state: no native tooltip,
+  // the label stays for screen readers.
+  tooltip: { type: Boolean, default: true }
 })
 
 const status = computed(() => props.variant === 'status')
@@ -44,7 +47,7 @@ const dotClass = computed(() => {
   <span
     class="asd"
     :class="[status ? 'asd-status' : 'asd-row']"
-    :title="label || undefined"
+    :title="(tooltip && label) || undefined"
     :aria-label="label || undefined"
     role="img"
   >

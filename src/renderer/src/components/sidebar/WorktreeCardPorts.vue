@@ -7,6 +7,7 @@
 import { ref, nextTick, onBeforeUnmount } from 'vue'
 import { Plug } from 'lucide-vue-next'
 import PortRow from './PortRow.vue'
+import { closeOpenHoverCard } from './useHoverCard'
 import { t } from '../../i18n'
 
 const props = defineProps({
@@ -37,6 +38,8 @@ function show(delay = 250) {
   clearTimeout(closeTimer)
   clearTimeout(openTimer)
   openTimer = setTimeout(() => {
+    // One hover card at a time: the workspace's details card gives way.
+    closeOpenHoverCard()
     open.value = true
     nextTick(place)
   }, delay)
