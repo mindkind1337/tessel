@@ -108,6 +108,81 @@ describe('advanced worktree creation', { timeout: 30000 }, () => {
     expect(git('rev-parse', remote.branch)).toBe(release)
   })
 
+  it('creates a worktree at a full pinned PR commit while the current branch moves', async () => {
+    const pinned = git('rev-parse', 'HEAD')
+    git('update-ref', 'refs/tessel/pr/41', pinned)
+    write(join(repo, 'README.md'), 'later main\n')
+    const current = commit('main moved after PR discovery')
+    const result = await createWorktree(repo, 'pinned PR', { baseBranch: pinned })
+    expect(result).toMatchObject({ ok: true, baseBranch: pinned, baseCommit: pinned })
+    expect(git('-C', result.path, 'rev-parse', 'HEAD')).toBe(pinned)
+    expect(fs.readFileSync(join(result.path, 'README.md'), 'utf8')).toBe('fixture\n')
+    expect(git('rev-parse', 'HEAD')).toBe(current)
+    expect(git('branch', '--show-current')).toBe('main')
+  })
+
+  it('accepts full SHA-256 commits but rejects abbreviated identities', async () => {
+    repo = join(sandbox, 'sha256 repo')
+    fs.mkdirSync(repo)
+    git(
+      '-c',
+      'init.templateDir=',
+      'init',
+      '--quiet',
+      '--initial-branch=main',
+      '--object-format=sha256'
+    )
+    git('config', 'user.name', 'Worktree fixture')
+    git('config', 'user.email', 'fixture@example.invalid')
+    git('config', 'commit.gpgsign', 'false')
+    git('config', 'core.autocrlf', 'false')
+    git('config', 'core.hooksPath', join(sandbox, 'empty-hooks'))
+    write(join(repo, 'README.md'), 'SHA-256 fixture\n')
+    const pinned = commit()
+    expect(pinned).toHaveLength(64)
+    expect(
+      (await createWorktree(repo, 'abbreviated', { baseBranch: pinned.slice(0, 40) })).ok
+    ).toBe(false)
+    const result = await createWorktree(repo, 'full SHA-256', { baseBranch: pinned.toUpperCase() })
+    expect(result).toMatchObject({ ok: true, baseBranch: pinned.toUpperCase(), baseCommit: pinned })
+    expect(git('-C', result.path, 'rev-parse', 'HEAD')).toBe(pinned)
+  })
+
+  it('refuses missing objects, noncommit objects and expressions without creating branches', async () => {
+    const pinned = git('rev-parse', 'HEAD')
+    const blob = git('rev-parse', 'HEAD:README.md')
+    const tree = git('rev-parse', 'HEAD^{tree}')
+    git('tag', '-a', 'annotated-fixture', '-m', 'Fixture annotated tag')
+    const tagObject = git('rev-parse', 'annotated-fixture')
+    git('update-ref', 'refs/tessel/pr/42', pinned)
+    for (const baseBranch of [
+      '0'.repeat(40),
+      '0'.repeat(64),
+      blob,
+      tree,
+      tagObject,
+      pinned.slice(0, 12),
+      `${pinned}~0`,
+      `${pinned}^{commit}`,
+      'refs/tessel/pr/42'
+    ]) {
+      const result = await createWorktree(repo, 'invalid object', { baseBranch })
+      expect(result.ok, baseBranch).toBe(false)
+      expect(result).not.toHaveProperty('path')
+    }
+    expect(git('branch', '--list', 'agent/*')).toBe('')
+    expect(fs.existsSync(`${repo}.worktrees`)).toBe(false)
+  })
+
+  it('does not let a full hex branch name substitute for a missing object', async () => {
+    const missing = '1'.repeat(40)
+    git('branch', missing)
+    const result = await createWorktree(repo, 'shadowed object', { baseBranch: missing })
+    expect(result.ok).toBe(false)
+    expect(git('branch', '--list', 'agent/*')).toBe('')
+    expect(fs.existsSync(`${repo}.worktrees`)).toBe(false)
+  })
+
   it('rejects unknown refs, revision expressions, tags and options before creating anything', async () => {
     git('tag', 'tag-only')
     for (const baseBranch of ['missing', 'main~0', 'tag-only', '--help', 'main\nother', 42]) {

@@ -491,6 +491,7 @@ function commentsStore(taskId) {
         >
           {{ busy === 'push' ? 'Pushing…' : 'Push branch' }}
         </button>
+        <button v-if="wt && actions.createPr" class="confirm-btn" :disabled="!!busy" title="Create a GitHub pull request from this task's copy" @click="actions.createPr()">Create PR…</button>
         <span class="rv-spacer"></span>
         <label v-if="wt" class="rv-cleanup" title="After merging, close the agent and delete its copy and branch">
           <input v-model="cleanup" type="checkbox" /> Close the agent and remove its copy after merging

@@ -105,6 +105,25 @@ const api = {
     ipcRenderer.invoke('git:createWorktree', { cwd, label, options }),
   // Last locally observed subscription quotas, with timestamps and stale flags.
   getUsage: () => ipcRenderer.invoke('usage:get'),
+  github: {
+    status: (q) => ipcRenderer.invoke('github:status', q),
+    list: (q) => ipcRenderer.invoke('github:list', q),
+    detail: (q) => ipcRenderer.invoke('github:detail', q),
+    createIssue: (q) => ipcRenderer.invoke('github:createIssue', q),
+    createPr: (q) => ipcRenderer.invoke('github:createPr', q),
+    checks: (q) => ipcRenderer.invoke('github:checks', q),
+    action: (q) => ipcRenderer.invoke('github:action', q),
+    startPoint: (q) => ipcRenderer.invoke('github:startPoint', q)
+  },
+  linear: {
+    status: () => ipcRenderer.invoke('linear:status'),
+    connect: (q) => ipcRenderer.invoke('linear:connect', q),
+    disconnect: () => ipcRenderer.invoke('linear:disconnect'),
+    issues: (q) => ipcRenderer.invoke('linear:issues', q),
+    teams: (q) => ipcRenderer.invoke('linear:teams', q),
+    states: (q) => ipcRenderer.invoke('linear:states', q),
+    setState: (q) => ipcRenderer.invoke('linear:setState', q)
+  },
   accounts: {
     list: () => ipcRenderer.invoke('accounts:list'),
     select: (provider, id) => ipcRenderer.invoke('accounts:select', { provider, id }),

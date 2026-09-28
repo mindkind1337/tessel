@@ -39,6 +39,10 @@ import NotificationsMenu from './components/NotificationsMenu.vue'
 import FileFinder from './components/FileFinder.vue'
 import UsageMenu from './components/UsageMenu.vue'
 import UsageDialog from './components/UsageDialog.vue'
+import GitHubDialog from './components/GitHubDialog.vue'
+import LinearDialog from './components/LinearDialog.vue'
+import { createExternalIssueStarter } from './externalIssues'
+import './issueDialogs.css'
 import { addNotification, readForPane, playAlertSound } from './notificationsStore'
 import NotesPanel from './components/NotesPanel.vue'
 import NewTaskDialog from './components/NewTaskDialog.vue'
@@ -113,6 +117,42 @@ const voiceName = computed(() => {
 const highlightId = ref(null)
 const settingsOpen = ref(false)
 const usageOpen = ref(false) // Usage details (from the toolbar gauge)
+const githubOpen = ref(false)
+const linearOpen = ref(false)
+const githubBusy = ref(false)
+const linearBusy = ref(false)
+watch(githubOpen, (open) => { if (!open) githubBusy.value = false })
+watch(linearOpen, (open) => { if (!open) linearBusy.value = false })
+const issueWorkspaceId = ref(null)
+const issueWorkspace = computed(() => wsById(issueWorkspaceId.value))
+const githubTaskContext = ref(null)
+function openGitHub(task = null) {
+  closeMenus()
+  paletteOpen.value = false
+  issueWorkspaceId.value = task?.wsId || currentWsId.value
+  githubTaskContext.value = task?.worktree ? { cwd: task.worktree.path, base: task.worktree.baseBranch || '' } : null
+  githubOpen.value = true
+}
+function openLinear() {
+  closeMenus()
+  paletteOpen.value = false
+  issueWorkspaceId.value = currentWsId.value
+  linearOpen.value = true
+}
+const startLinkedIssue = createExternalIssueStarter({
+  getWorkspace: () => issueWorkspace.value,
+  hasWorkspace: (ws) => workspaces.value.includes(ws),
+  agentAvailable: (id) => launchableAgents.value.some((a) => a.id === id && a.available !== false),
+  startTask: (spec, opts) => startTask(spec, opts),
+  github: window.shellApi.github,
+  linear: window.shellApi.linear
+})
+async function prepareLinkedIssue(request) {
+  const result = await startLinkedIssue(request)
+  if (result.ok && result.paneId) focusPane(result.paneId)
+  if (result.warning) showToast(result.warning, { kind: 'error', timeout: 10000 })
+  return result
+}
 const settingsSection = ref(null) // opens Settings scrolled to that section
 function openSettingsAt(section) {
   settingsSection.value = section
@@ -1487,6 +1527,10 @@ function buildCommands() {
   })
 
   add('Task', 'New task…', openNewTask, { hint: 'Give an agent a task, in its own copy of the project' })
+  add('Issues', 'GitHub issues and pull requests', () => openGitHub(), { hint: 'Browse, create, check and start a task from GitHub' })
+  add('Issues', 'Linear issues', openLinear, { hint: 'Assigned issues, teams, states and new agent tasks' })
+  const activeTask = activeId.value ? taskOfPane(activeId.value) : null
+  if (activeTask?.worktree) add('Issues', 'Create a GitHub pull request from this task copy', () => openGitHub(activeTask))
   if (currentWs.value) {
     const wsId = currentWs.value.id
     add('Workspace', 'Message every agent in this workspace', () => startWsMessage(wsId), {
@@ -3109,6 +3153,7 @@ async function startTask(spec, opts = {}) {
   newTaskOpen.value = false
   const ws = opts.ws || currentWs.value
   if (!ws || !spec || !spec.title) return { error: 'no workspace' }
+  if (opts.expectedCwd && (!workspaces.value.includes(ws) || ws.cwd !== opts.expectedCwd)) return { error: 'The workspace folder changed. No agent was started.' }
   const task = addTask({ title: spec.title, wsId: ws.id })
   updateTask(task.id, {
     brief: spec.brief || '',
@@ -3154,6 +3199,10 @@ async function startTask(spec, opts = {}) {
       }
       worktree = { path: res.path, branch: res.branch, baseBranch: res.baseBranch || null, root: res.root || ws.cwd }
       updateTask(task.id, { worktree })
+    }
+    if (opts.expectedCwd && (!workspaces.value.includes(ws) || ws.cwd !== opts.expectedCwd)) {
+      updateTask(task.id, { column: 'todo' })
+      return { error: 'The workspace folder changed. The task and any prepared copy were kept in To do; no agent was started.' }
     }
     const target =
       opts.roomy && ws.tree ? largestLeaf(ws.tree).id : ws.activeId && findLeaf(ws.activeId) ? ws.activeId : null
@@ -3382,6 +3431,12 @@ async function deleteTasks(taskIds) {
 provide('deleteTasks', deleteTasks)
 
 const reviewActions = {
+  createPr() {
+    const task = reviewTask.value
+    if (!task?.worktree) return
+    reviewTaskId.value = null
+    openGitHub(task)
+  },
   requestChanges(text) {
     const task = reviewTask.value
     if (task) sendBackToAgent(task, `Changes requested by the user:\n${text}`, 'changes', text.length > 80 ? text.slice(0, 80) + '…' : text)
@@ -5662,6 +5717,8 @@ function dialogOpen() {
     paletteOpen.value ||
     finderOpen.value ||
     usageOpen.value ||
+    githubOpen.value ||
+    linearOpen.value ||
     !!confirmState.value ||
     !!imageView.value ||
     !!fileView.value ||
@@ -5772,6 +5829,8 @@ function onKey(e) {
     toolsOpen.value = false
     sessionsOpen.value = false
     usageOpen.value = false
+    if (!githubBusy.value) githubOpen.value = false
+    if (!linearBusy.value) linearOpen.value = false
     closeMenus()
   }
 }
@@ -6184,6 +6243,15 @@ onBeforeUnmount(() => {
 
         <UsageMenu @details="usageOpen = true" @accounts="openSettingsAt('accounts')" />
         <NotificationsMenu @focus-pane="focusPane" />
+        <div class="menu-group" @pointerdown.stop>
+          <button class="tb-icon" aria-label="Issues" title="GitHub and Linear issues" aria-haspopup="menu" :aria-expanded="openMenu === 'issues'" @click="toggleMenu('issues')">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="8" cy="8" r="5.7" stroke="currentColor" stroke-width="1.3" /><path d="M8 4.5v4M8 11h.01" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" /></svg>
+          </button>
+          <div v-if="openMenu === 'issues'" class="toolbar-menu align-right" role="menu">
+            <button class="toolbar-menu-item" role="menuitem" @click="openGitHub()">GitHub issues and PRs</button>
+            <button class="toolbar-menu-item" role="menuitem" @click="openLinear">Linear issues</button>
+          </div>
+        </div>
         <button
           class="tb-icon"
           :class="{ on: broadcast, warn: broadcast }"
@@ -6512,6 +6580,8 @@ onBeforeUnmount(() => {
 
     <CommandPalette v-if="paletteOpen" :commands="paletteCommands" @close="paletteOpen = false" />
     <UsageDialog v-if="usageOpen" @close="usageOpen = false" />
+    <GitHubDialog v-if="githubOpen" :cwd="issueWorkspace?.cwd || ''" :pr-cwd="githubTaskContext?.cwd || ''" :pr-base="githubTaskContext?.base || ''" :initial-mode="githubTaskContext ? 'createPr' : ''" :agents="taskAgentKinds" :default-agent="settings.defaultAgent || ''" :start-issue="prepareLinkedIssue" @busy="githubBusy = $event" @close="githubOpen = false" />
+    <LinearDialog v-if="linearOpen" :cwd="issueWorkspace?.cwd || ''" :agents="taskAgentKinds" :default-agent="settings.defaultAgent || ''" :start-issue="prepareLinkedIssue" @busy="linearBusy = $event" @close="linearOpen = false" />
     <FileFinder
       v-if="finderOpen"
       :root="finderRoot()"

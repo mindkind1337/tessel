@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, clipboard, dialog, Notification, shell, powerSaveBlocker } from 'electron'
+import { app, BrowserWindow, ipcMain, clipboard, dialog, Notification, shell, powerSaveBlocker, safeStorage } from 'electron'
 import { join, isAbsolute } from 'path'
 import os from 'os'
 import fs from 'fs'
@@ -15,6 +15,7 @@ import { createAccountSessions } from './providerAccountSessions'
 import { postToInbox } from './agentInbox'
 import { hooksStatus } from './teamHooksStatus'
 import { createAgentStateStore } from './agentStateStore'
+import { registerIssueServices } from './issueServicesIpc'
 import { prepareAgentStateHooks } from './agentStateSetup'
 import { assessNeeds } from './tesselNeeds'
 import { createClaudeUsageReport } from './claudeUsageReport'
@@ -1078,6 +1079,7 @@ ipcMain.handle(
   safe(({ cwd, label, options } = {}) => createWorktree(cwd, label, options))
 )
 const accountOptions = { userData: app.getPath('userData'), runLogin: createProviderLogin() }
+registerIssueServices({ ipcMain, dir: join(app.getPath('userData'), 'linear'), safeStorage })
 const accounts = createProviderAccounts({
   claude: createClaudeAccounts(accountOptions),
   codex: createCodexAccounts(accountOptions)
