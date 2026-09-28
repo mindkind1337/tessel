@@ -1,4 +1,3 @@
-<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // Vue port of Orca's StatsPane / UsageOverviewPane / provider panes
 // (MIT, Copyright (c) 2026 Lovecast Inc.). Reads Tessel's local reports.
@@ -16,6 +15,7 @@ import StatsUsageProvider from './stats/StatsUsageProvider.vue'
 import { normalizeUsageReport, buildUsageOverview, usageDateRange } from '../usageStats'
 import { duration } from './stats/statsFormat'
 import './stats/statsUsage.css'
+import { t, intlLocale } from '../i18n'
 
 const props = defineProps({
   initialProvider: { type: String, default: 'overview' },
@@ -25,7 +25,7 @@ const props = defineProps({
 const catalog = ref([])
 const catalogError = ref('')
 const PROVIDERS = computed(() => [
-  { id: 'overview', label: 'Overview' },
+  { id: 'overview', label: t('stats.overviewTab', 'Overview') },
   ...catalog.value
     .filter((p) => p.report && !settings.hiddenUsageProviders.includes(p.id))
     .map((p) => ({ id: p.id, label: p.id === 'claude' ? 'Claude' : p.name }))
@@ -64,7 +64,9 @@ let statsRequest = 0
 let catalogRequest = 0
 const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
 const label = computed(
-  () => PROVIDERS.value.find((provider) => provider.id === active.value)?.label || 'Overview'
+  () =>
+    PROVIDERS.value.find((provider) => provider.id === active.value)?.label ||
+    t('stats.overviewTab', 'Overview')
 )
 const summary = computed(() => props.statsSummary || stats.value)
 const available = (id) =>
@@ -108,7 +110,8 @@ async function detectProviders() {
     if (!PROVIDERS.value.some((p) => p.id === active.value)) active.value = 'overview'
   } catch {
     if (!disposed && request === catalogRequest)
-      catalogError.value = 'Could not detect installed usage providers. Refresh to retry.'
+      catalogError.value = t('stats.catalogError', 'Could not detect installed usage providers. Refresh to retry.'
+      )
   }
 }
 watch(
@@ -126,12 +129,16 @@ async function loadStats() {
   try {
     const result = await window.shellApi.statsUsage.summary()
     if (disposed || request !== statsRequest) return
-    if (!result?.ok) throw new Error(result?.error || 'Could not read activity statistics.')
+    if (!result?.ok)
+      throw new Error(
+        result?.error || t('stats.activityError', 'Could not read activity statistics.')
+      )
     stats.value = result
     statsError.value = ''
   } catch (error) {
     if (!disposed && request === statsRequest)
-      statsError.value = error.message || 'Could not read activity statistics.'
+      statsError.value =
+        error.message || t('stats.activityError', 'Could not read activity statistics.')
   }
 }
 async function loadProvider(id, { refresh = false } = {}) {
@@ -159,12 +166,13 @@ async function loadProvider(id, { refresh = false } = {}) {
     const raw =
       await window.shellApi[id === 'claude' ? 'claudeUsageReport' : 'codexUsageReport'](query)
     if (disposed || request !== requests.get(key)) return
-    if (!raw?.ok) throw new Error(raw?.error || `Could not read ${id} usage.`)
+    if (!raw?.ok)
+      throw new Error(raw?.error || t('stats.providerError', 'Could not read {{id}} usage.', { id }))
     target.value[id] = normalizeUsageReport(id, raw, { timezone, range: dates })
     queryKeys.set(key, signature)
   } catch (error) {
     if (!disposed && request === requests.get(key)) {
-      errors.value[key] = error.message || 'Could not read local usage.'
+      errors.value[key] = error.message || t('stats.localError', 'Could not read local usage.')
       // Data from another filter must never look like the requested scope.
       if (queryKeys.get(key) !== signature) delete target.value[id]
     }
@@ -292,57 +300,64 @@ onBeforeUnmount(() => {
   <div ref="root" class="stats-usage" data-test="stats-usage">
     <section v-if="summary" class="su-activity">
       <p v-if="summary.totalAgentsSpawned === 0 && summary.totalPRsCreated === 0" class="su-empty">
-        Start your first agent to begin tracking
+        {{ t('stats.firstAgent', 'Start your first agent to begin tracking') }}
       </p>
       <template v-else>
         <div class="su-cards su-cards-three">
           <StatsStatCard
-            label="Agents spawned"
-            :value="summary.totalAgentsSpawned?.toLocaleString() ?? 'n/a'"
+            :label="t('stats.agentsSpawned', 'Agents spawned')"
+            :value="summary.totalAgentsSpawned?.toLocaleString(intlLocale()) ?? t('stats.na', 'n/a')"
             icon="agent"
           />
           <StatsStatCard
-            label="Time agents worked"
+            :label="t('stats.agentTime', 'Time agents worked')"
             :value="duration(summary.totalAgentTimeMs)"
             icon="clock"
           />
           <StatsStatCard
-            label="PRs created"
-            :value="summary.totalPRsCreated?.toLocaleString() ?? 'n/a'"
+            :label="t('stats.prsCreated', 'PRs created')"
+            :value="summary.totalPRsCreated?.toLocaleString(intlLocale()) ?? t('stats.na', 'n/a')"
             icon="pr"
           />
         </div>
-        <p v-if="summary.firstEventAt" class="su-muted">
-          Tracking since
-          {{
-            new Date(summary.firstEventAt).toLocaleDateString([], {
-              month: 'short',
-              day: 'numeric',
-              year: 'numeric'
+        <p
+          v-if="summary.firstEventAt"
+          class="su-muted"
+          v-text="
+            t('stats.trackingSince', 'Tracking since {{date}}', {
+              date: new Date(summary.firstEventAt).toLocaleDateString(intlLocale(), {
+                month: 'short',
+                day: 'numeric',
+                year: 'numeric'
+              })
             })
-          }}
-        </p>
+          "
+        ></p>
       </template>
     </section>
     <p v-if="statsError" class="su-error" role="alert">{{ statsError }}</p>
     <p v-if="catalogError" class="su-error" role="alert">
       {{ catalogError }}
-      <button type="button" class="su-button" @click="refreshOverview">Retry</button>
+      <button type="button" class="su-button" @click="refreshOverview">
+        {{ t('stats.retry', 'Retry') }}
+      </button>
     </p>
     <UsageVisibility :providers="catalog" />
     <p v-if="PROVIDERS.length === 1 && !catalogError" class="su-muted">
-      No installed agents with a local usage history collector. Subscription quotas are available in
-      the Usage menu.
+      {{
+        t('stats.noCollector', 'No installed agents with a local usage history collector. Subscription quotas are available in the Usage menu.'
+        )
+      }}
     </p>
     <header class="su-analytics-head">
-      <h3>Usage Analytics</h3>
+      <h3>{{ t('stats.analytics', 'Usage Analytics') }}</h3>
       <div class="su-provider-control" @keydown="selectionKey">
         <button
           type="button"
           class="su-button su-provider-select"
           aria-haspopup="menu"
           :aria-expanded="selectionOpen"
-          :aria-label="'Usage analytics provider: ' + label"
+          :aria-label="t('stats.providerSelect', 'Usage analytics provider: {{name}}', { name: label })"
           data-test="stats-provider-select"
           @click="toggleSelection"
         >
@@ -358,7 +373,7 @@ onBeforeUnmount(() => {
           v-if="selectionOpen"
           class="su-provider-menu"
           role="menu"
-          aria-label="Usage analytics provider"
+          :aria-label="t('stats.providerMenu', 'Usage analytics provider')"
         >
           <button
             v-for="provider in PROVIDERS"

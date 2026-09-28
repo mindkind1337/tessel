@@ -1,7 +1,7 @@
-<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 import { computed } from 'vue'
 import { tokens } from './statsFormat'
+import { t, intlLocale } from '../../i18n'
 const props = defineProps({
   daily: { type: Array, default: () => [] },
   provider: { type: String, required: true }
@@ -9,16 +9,28 @@ const props = defineProps({
 const segments = computed(() =>
   props.provider === 'claude'
     ? [
-        { key: 'inputTokens', label: 'Input', color: 'input' },
-        { key: 'outputTokens', label: 'Output', color: 'output' },
-        { key: 'cacheReadTokens', label: 'Cache read', color: 'cache' },
-        { key: 'cacheWriteTokens', label: 'Cache write', color: 'reasoning' }
+        { key: 'inputTokens', label: t('stats.series.input', 'Input'), color: 'input' },
+        { key: 'outputTokens', label: t('stats.series.output', 'Output'), color: 'output' },
+        { key: 'cacheReadTokens', label: t('stats.series.cacheRead', 'Cache read'), color: 'cache' },
+        {
+          key: 'cacheWriteTokens',
+          label: t('stats.series.cacheWrite', 'Cache write'),
+          color: 'reasoning'
+        }
       ]
     : [
-        { key: 'newInputTokens', label: 'Input', color: 'input' },
-        { key: 'visibleOutput', label: 'Output', color: 'output' },
-        { key: 'cachedInputTokens', label: 'Cached input', color: 'cache' },
-        { key: 'reasoningTokens', label: 'Reasoning', color: 'reasoning' }
+        { key: 'newInputTokens', label: t('stats.series.input', 'Input'), color: 'input' },
+        { key: 'visibleOutput', label: t('stats.series.output', 'Output'), color: 'output' },
+        {
+          key: 'cachedInputTokens',
+          label: t('stats.series.cachedInput', 'Cached input'),
+          color: 'cache'
+        },
+        {
+          key: 'reasoningTokens',
+          label: t('stats.series.reasoning', 'Reasoning'),
+          color: 'reasoning'
+        }
       ]
 )
 const rows = computed(() =>
@@ -30,23 +42,34 @@ const maximum = computed(() => props.daily.reduce((max, row) => Math.max(max, ro
 const barSegments = computed(() =>
   props.provider === 'claude' ? [...segments.value].reverse() : segments.value
 )
+function segmentTitle(day, segment) {
+  return t('stats.chart.segment', '{{day}} - {{series}}: {{count}} tokens', {
+    day: day.day,
+    series: segment.label,
+    count: day[segment.key].toLocaleString(intlLocale())
+  })
+}
 </script>
 <template>
   <section class="su-panel su-daily" data-test="stats-daily-chart">
     <header>
-      <h4>Daily usage</h4>
+      <h4>{{ t('stats.chart.title', 'Daily usage') }}</h4>
       <p class="su-muted">
         {{
           provider === 'claude'
-            ? 'Input, output, cache read, and cache write totals by day.'
-            : 'Input, cached input, output, and reasoning totals by day.'
+            ? t('stats.chart.claudeHint', 'Input, output, cache read, and cache write totals by day.')
+            : t('stats.chart.codexHint', 'Input, cached input, output, and reasoning totals by day.')
         }}
       </p>
     </header>
     <div
       class="su-daily-grid"
       role="img"
-      :aria-label="provider + ' daily token usage; latest ten days in the selected range'"
+      :aria-label="
+        t('stats.chart.label', '{{provider}} daily token usage; latest ten days in the selected range', {
+          provider
+        })
+      "
     >
       <div v-for="day in rows" :key="day.day" class="su-daily-column">
         <span class="su-daily-value">{{ tokens(day.totalTokens) }}</span>
@@ -56,9 +79,7 @@ const barSegments = computed(() =>
             :key="segment.key"
             :class="'su-color-' + segment.color"
             :style="{ height: (day[segment.key] / maximum) * 100 + '%' }"
-            :title="
-              day.day + ' - ' + segment.label + ': ' + day[segment.key].toLocaleString() + ' tokens'
-            "
+            :title="segmentTitle(day, segment)"
             :data-segment="segment.key"
           ></div>
         </div>
@@ -71,7 +92,10 @@ const barSegments = computed(() =>
       >
     </div>
     <p v-if="provider === 'codex'" class="su-muted su-chart-note">
-      Cached input and reasoning are included in the totals, not added twice.
+      {{
+        t('stats.chart.codexNote', 'Cached input and reasoning are included in the totals, not added twice.'
+        )
+      }}
     </p>
   </section>
 </template>
