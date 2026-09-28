@@ -205,6 +205,28 @@ async function run(kind, fn) {
   }
 }
 
+// Commit what the agent left uncommitted in its copy; push the branch to
+// origin (for a pull request). The outcome shows under the checks.
+const notice = ref(null) // { kind: 'ok'|'bad', text }
+const commitOpen = ref(false)
+const commitMsg = ref('')
+async function commitCopy() {
+  const message = commitMsg.value.trim()
+  if (!message || !window.shellApi.review.commit) return
+  const res = await run('commit', () => window.shellApi.review.commit({ ...args.value, message }))
+  notice.value = res && res.ok ? { kind: 'ok', text: `Committed in the agent's copy (${res.sha.slice(0, 7)}).` } : { kind: 'bad', text: (res && res.error) || 'Commit failed.' }
+  if (res && res.ok) {
+    commitOpen.value = false
+    commitMsg.value = ''
+  }
+  refresh()
+}
+async function pushBranch() {
+  if (!window.shellApi.review.push) return
+  const res = await run('push', () => window.shellApi.review.push(args.value))
+  notice.value = res && res.ok ? { kind: 'ok', text: `Pushed ${res.branch} to origin.` } : { kind: 'bad', text: (res && res.error) || 'Push failed.' }
+}
+
 const merge = () => run('merge', () => props.actions.merge(info.value, { cleanup: cleanup.value }))
 const discard = () => run('discard', () => props.actions.discard(info.value))
 
@@ -304,6 +326,24 @@ function commentsStore(taskId) {
             <span>{{ c.text }}</span>
           </li>
         </ul>
+        <div v-if="info && info.ok && info.uncommitted.length" class="rv-commit-bar">
+          <template v-if="commitOpen">
+            <input
+              v-model="commitMsg"
+              class="set-number rv-commit-msg"
+              placeholder="Commit message"
+              aria-label="Commit message"
+              spellcheck="false"
+              @keydown.enter.prevent="commitCopy"
+            />
+            <button class="confirm-btn" @click="commitOpen = false">Cancel</button>
+            <button class="confirm-btn primary" :disabled="!commitMsg.trim() || !!busy" @click="commitCopy">
+              {{ busy === 'commit' ? 'Committing…' : 'Commit' }}
+            </button>
+          </template>
+          <button v-else class="confirm-btn" :disabled="!!busy" @click="commitOpen = true">Commit these files…</button>
+        </div>
+        <p v-if="notice" class="rv-notice" :class="notice.kind" role="status">{{ notice.text }}</p>
         <div v-if="info && info.ok && info.conflicts.length" class="notes-conflict" role="alert">
           <span>The branch cannot merge until the conflicts are resolved in the agent's copy.</span>
           <button class="confirm-btn" :disabled="!agentLabel" @click="actions.resolveConflicts(info)">
@@ -441,6 +481,15 @@ function commentsStore(taskId) {
       <div class="rv-foot">
         <button v-if="wt" class="confirm-btn danger" :disabled="!!busy" @click="discard">
           {{ busy === 'discard' ? 'Discarding…' : 'Discard…' }}
+        </button>
+        <button
+          v-if="wt"
+          class="confirm-btn"
+          :disabled="!!busy || !(info && info.ok && info.commits.length)"
+          title="Push the task branch to origin (to open a pull request)"
+          @click="pushBranch"
+        >
+          {{ busy === 'push' ? 'Pushing…' : 'Push branch' }}
         </button>
         <span class="rv-spacer"></span>
         <label v-if="wt" class="rv-cleanup" title="After merging, close the agent and delete its copy and branch">

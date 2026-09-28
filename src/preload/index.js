@@ -112,7 +112,10 @@ const api = {
     info: (args) => ipcRenderer.invoke('review:info', args),
     diff: (args) => ipcRenderer.invoke('review:diff', args),
     merge: (args) => ipcRenderer.invoke('review:merge', args),
-    remove: (args) => ipcRenderer.invoke('review:remove', args)
+    remove: (args) => ipcRenderer.invoke('review:remove', args),
+    // Commit what the agent left uncommitted (args + message); push the branch.
+    commit: (args) => ipcRenderer.invoke('review:commit', args),
+    push: (args) => ipcRenderer.invoke('review:push', args)
   },
   mcpList: (cwd) => ipcRenderer.invoke('mcp:list', cwd),
   mcpAdd: (spec) => ipcRenderer.invoke('mcp:add', spec),

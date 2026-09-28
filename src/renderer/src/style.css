@@ -5835,3 +5835,29 @@ button.act-stat:hover,
   color: var(--text-dim);
   font-size: 12px;
 }
+
+/* Review: commit what the agent left uncommitted, outcome of commit / push */
+.rv-commit-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+}
+
+.rv-commit-msg {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.rv-notice {
+  margin: 0 0 8px;
+  font-size: 12px;
+}
+
+.rv-notice.ok {
+  color: var(--ok, #8ff0b8);
+}
+
+.rv-notice.bad {
+  color: var(--danger);
+}

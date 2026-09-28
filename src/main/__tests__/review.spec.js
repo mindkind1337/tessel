@@ -221,3 +221,68 @@ describe('review against git', () => {
     expect(g(repo, 'branch', '--list', 'agent/nope').trim()).toBe('')
   })
 })
+
+describe('review: commit and push the task branch', () => {
+  let dir, repo, copy, origin
+  const g = (cwd, ...args) => execFileSync('git', ['-C', cwd, ...args], { stdio: 'pipe' }).toString()
+  const base = () => ({ root: repo, path: copy, branch: 'agent/cp', target: 'main' })
+
+  beforeAll(() => {
+    dir = fs.mkdtempSync(join(os.tmpdir(), 'tessel-review-cp-'))
+    repo = join(dir, 'proj')
+    copy = join(dir, 'proj.worktrees', 'cp')
+    origin = join(dir, 'origin.git')
+    fs.mkdirSync(repo)
+    g(dir, 'init', '-q', '--bare', origin)
+    g(repo, 'init', '-q', '-b', 'main')
+    g(repo, 'config', 'user.email', 't@example.com')
+    g(repo, 'config', 'user.name', 'T')
+    g(repo, 'config', 'core.autocrlf', 'false')
+    fs.writeFileSync(join(repo, 'a.txt'), 'a\n')
+    g(repo, 'add', '.')
+    g(repo, 'commit', '-q', '-m', 'init')
+    g(repo, 'remote', 'add', 'origin', origin)
+    g(repo, 'worktree', 'add', '-q', '-b', 'agent/cp', copy, 'HEAD')
+  })
+  afterAll(() => {
+    try {
+      fs.rmSync(dir, { recursive: true, force: true })
+    } catch {
+      // cleaned later
+    }
+  })
+
+  it("commits what the agent left uncommitted, with the user's message", async () => {
+    const { reviewCommit } = await import('../review')
+    expect(await reviewCommit({ ...base(), message: 'x' })).toMatchObject({ ok: false, error: /Nothing to commit/ })
+    fs.writeFileSync(join(copy, 'b.txt'), 'b\n')
+    fs.writeFileSync(join(copy, 'a.txt'), 'A\n')
+    expect(await reviewCommit({ ...base(), message: '   ' })).toMatchObject({ ok: false, error: /commit message/ })
+    const res = await reviewCommit({ ...base(), message: 'Finish the task\n\nDetails' })
+    expect(res.ok).toBe(true)
+    expect(g(copy, 'log', '-1', '--format=%s')).toMatch(/Finish the task/)
+    expect(g(copy, 'status', '--porcelain').trim()).toBe('')
+    // Never a copy of another branch.
+    expect((await reviewCommit({ ...base(), branch: 'agent/other', message: 'x' })).ok).toBe(false)
+  })
+
+  it('pushes the task branch to origin; refuses when origin has commits it lacks', async () => {
+    const { reviewPush } = await import('../review')
+    const res = await reviewPush(base())
+    expect(res).toMatchObject({ ok: true, branch: 'agent/cp' })
+    expect(g(origin, 'rev-parse', 'agent/cp').trim()).toBe(g(copy, 'rev-parse', 'HEAD').trim())
+    // Someone else pushed to the branch: nothing is forced.
+    const other = join(dir, 'other')
+    g(dir, 'clone', '-q', '-b', 'agent/cp', origin, other)
+    g(other, 'config', 'user.email', 'o@example.com')
+    g(other, 'config', 'user.name', 'O')
+    fs.writeFileSync(join(other, 'o.txt'), 'o\n')
+    g(other, 'add', '.')
+    g(other, 'commit', '-q', '-m', 'other')
+    g(other, 'push', '-q', 'origin', 'agent/cp')
+    fs.writeFileSync(join(copy, 'c.txt'), 'c\n')
+    g(copy, 'add', '.')
+    g(copy, 'commit', '-q', '-m', 'mine')
+    expect(await reviewPush(base())).toMatchObject({ ok: false, error: /nothing was pushed/ })
+  })
+})

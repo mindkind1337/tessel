@@ -14,7 +14,7 @@ const DIFF = [
   ''
 ].join('\n')
 
-function setup() {
+function setup(extra = {}) {
   window.shellApi = {
     review: {
       info: vi.fn(async () => ({
@@ -30,7 +30,8 @@ function setup() {
         dirtyOverlap: [],
         behind: 0,
         merging: false,
-        blocker: null
+        blocker: null,
+        ...extra
       })),
       diff: vi.fn(async () => ({ ok: true, text: DIFF }))
     }
@@ -69,6 +70,26 @@ describe('review: comments on diff lines', () => {
     expect(msg).toMatch(/src\/app\.js:2: Why 3\?\n {2}> const b = 3/)
     // Sent: the comments are cleared.
     expect(w.find('[data-test="comment-count"]').exists()).toBe(false)
+    w.unmount()
+  })
+})
+
+describe('review: commit and push buttons', () => {
+  it('commits the files the agent left, then pushes the branch; each outcome shows', async () => {
+    const { w } = setup({ commits: [{ sha: 'c'.repeat(40), subject: 'x', time: 1 }], uncommitted: ['notes.md'] })
+    window.shellApi.review.commit = vi.fn(async () => ({ ok: true, sha: 'abcdef1234' }))
+    window.shellApi.review.push = vi.fn(async () => ({ ok: false, error: 'Git could not sign in to origin.' }))
+    await flushPromises()
+    await flushPromises()
+    await w.find('.rv-commit-bar .confirm-btn').trigger('click')
+    await w.find('.rv-commit-msg').setValue('Save the notes')
+    await w.findAll('.rv-commit-bar .confirm-btn.primary')[0].trigger('click')
+    await flushPromises()
+    expect(window.shellApi.review.commit).toHaveBeenCalledWith(expect.objectContaining({ branch: 'agent/x', message: 'Save the notes' }))
+    expect(w.find('.rv-notice.ok').text()).toMatch(/Committed .*abcdef1/)
+    await w.findAll('.rv-foot .confirm-btn').find((b) => b.text() === 'Push branch').trigger('click')
+    await flushPromises()
+    expect(w.find('.rv-notice.bad').text()).toMatch(/could not sign in/)
     w.unmount()
   })
 })

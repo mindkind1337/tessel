@@ -33,7 +33,7 @@ import {
   copyMcp,
   hklFromTip
 } from './agentTools'
-import { reviewInfo, reviewDiff, reviewMerge, reviewRemove } from './review'
+import { reviewInfo, reviewDiff, reviewMerge, reviewRemove, reviewCommit, reviewPush } from './review'
 import { takeTeamAcks } from './teamAcks'
 import { writeJsonSafe, readJsonSafe } from './safeJson'
 import { addNotices, writeCurrentTeams, retireOldTeams } from './teamNotices'
@@ -913,6 +913,8 @@ ipcMain.handle('review:info', safe(reviewInfo))
 ipcMain.handle('review:diff', safe(reviewDiff))
 ipcMain.handle('review:merge', safe(reviewMerge))
 ipcMain.handle('review:remove', safe(reviewRemove))
+ipcMain.handle('review:commit', safe(reviewCommit))
+ipcMain.handle('review:push', safe(reviewPush))
 ipcMain.handle('lead:ensure', safe(ensureInbox))
 ipcMain.handle('lead:take', safe(takeInbox))
 ipcMain.handle('lead:remove', safe(removeInbox))

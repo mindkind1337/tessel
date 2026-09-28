@@ -8,6 +8,7 @@
 import { join, dirname, basename, resolve, relative, isAbsolute } from 'path'
 import fs from 'fs'
 import { run } from './agentTools'
+import { cleanEnv } from './cleanEnv'
 import {
   parseChangedFiles,
   parseCommits,
@@ -171,6 +172,54 @@ export async function reviewMerge(args = {}) {
   }
   const sha = await git(info.repo, ['rev-parse', 'HEAD'])
   return { ok: true, sha: sha.stdout.trim(), commits: info.commits.length, files: info.files.length }
+}
+
+// Commit what the agent left uncommitted in its copy (all of it), with the
+// user's message. -> { ok, sha } or { ok: false, error }
+export async function reviewCommit(args = {}) {
+  const c = await check(args)
+  if (c.error) return { ok: false, error: c.error }
+  if (!c.path || !c.listed) return { ok: false, error: "The agent's copy was not found." }
+  const message = String(args.message || '')
+    .replace(/\r/g, '')
+    .trim()
+    .slice(0, 2000)
+  if (!message) return { ok: false, error: 'Write a commit message.' }
+  const status = await git(c.path, ['status', '--porcelain'])
+  if (!status.ok) return { ok: false, error: 'Could not read the copy.' }
+  if (!status.stdout.trim()) return { ok: false, error: 'Nothing to commit: everything is committed.' }
+  const add = await git(c.path, ['add', '-A'])
+  if (!add.ok) return { ok: false, error: (add.stderr || 'git add failed').trim().split(/\r?\n/)[0] }
+  const res = await git(c.path, ['commit', '-m', message])
+  if (!res.ok) {
+    if (/tell me who you are|unable to auto-detect email/i.test(res.stderr))
+      return { ok: false, error: 'Git does not know your name yet (Tools > Git > Set name & email), then commit again.' }
+    return { ok: false, error: (res.stdout + res.stderr).trim().split(/\r?\n/).slice(-2).join(' ') || 'git commit failed' }
+  }
+  const sha = await git(c.path, ['rev-parse', 'HEAD'])
+  return { ok: true, sha: sha.stdout.trim() }
+}
+
+// Push the task branch to origin (for a pull request). Never forced; git never
+// waits for a password in the background (its credential helper still works).
+export async function reviewPush(args = {}) {
+  const c = await check(args)
+  if (c.error) return { ok: false, error: c.error }
+  const remote = await git(c.repo, ['remote', 'get-url', 'origin'])
+  if (!remote.ok) return { ok: false, error: 'This project has no remote named origin.' }
+  const res = await git(c.repo, ['push', '-u', 'origin', `${c.branch}:${c.branch}`], {
+    timeout: 120000,
+    env: { ...cleanEnv(process.env), GIT_TERMINAL_PROMPT: '0' }
+  })
+  if (!res.ok) {
+    const text = (res.stderr || res.stdout || '').trim()
+    if (/rejected|non-fast-forward|fetch first/i.test(text))
+      return { ok: false, error: 'The branch on origin has commits this one does not: nothing was pushed.' }
+    if (/could not read username|authentication|permission denied|403/i.test(text))
+      return { ok: false, error: 'Git could not sign in to origin. Sign in once (Tools > GitHub CLI > Sign in, or git push in a terminal), then push again.' }
+    return { ok: false, error: text.split(/\r?\n/).slice(-2).join(' ') || 'git push failed' }
+  }
+  return { ok: true, remote: remote.stdout.trim(), branch: c.branch }
 }
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms))
