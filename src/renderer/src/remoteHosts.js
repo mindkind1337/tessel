@@ -165,6 +165,9 @@ export function formFromTarget(target) {
   return {
     label: target.label || '',
     configHost,
+    // The host the alias stood for when the form opened (not a field): a
+    // different Host on save means a new destination, and the alias goes.
+    aliasHost: configHost ? target.host || '' : '',
     host: target.host || '',
     port: String(target.port || 22),
     username: target.username || '',
@@ -224,7 +227,12 @@ export function isFormDirty(current, baseline) {
 
 // -> { ok: true, target } | { ok: false, error } (Orca's buildSshTargetSavePayload)
 export function buildSavePayload(form) {
-  const { host, configHost, username, port } = draftConnectionFields(form)
+  const fields = draftConnectionFields(form)
+  const { host, username, port } = fields
+  // An imported alias stays only while its Host is untouched: a Host typed
+  // over it is connected to as shown, not through the old alias.
+  const aliasKept = form.configHost && form.aliasHost !== undefined && host === form.aliasHost
+  const configHost = form.configHost && form.aliasHost !== undefined && !aliasKept ? host : fields.configHost
   if (!host) return { ok: false, error: t('remote.pane.hostRequired', 'Host or SSH config alias is required') }
   if (!Number.isInteger(port) || port < 1 || port > 65535)
     return { ok: false, error: t('remote.pane.portInvalid', 'Port must be between 1 and 65535') }
