@@ -1112,7 +1112,7 @@ const accounts = createProviderAccounts({
   codex: createCodexAccounts(accountOptions)
 })
 ipcMain.handle('accounts:list', safe(() => accounts.list()))
-registerProviderUsage({ ipcMain, accounts })
+registerProviderUsage({ ipcMain, accounts, userData: app.getPath('userData'), log })
 ipcMain.handle('accounts:loginStatus', safe((id) => accounts.loginStatus(id)))
 ipcMain.handle('accounts:launchEnv', safe((query) => typeof query === 'string'
   ? accounts.launchEnv(query) : accounts.launchEnv(query?.provider, query?.accountId)))

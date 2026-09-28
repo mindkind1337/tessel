@@ -7,6 +7,7 @@
 // Amber from 66 %, red from 95 %; an old reading says so.
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import BrandIcon from './BrandIcon.vue'
+import ResetHistory from './ResetHistory.vue'
 
 const emit = defineEmits(['details', 'accounts'])
 const NAMES = {
@@ -35,6 +36,7 @@ const providerBusy = ref({})
 const resetConfirm = ref(null)
 const resetBusy = ref(false)
 const resetNotice = ref('')
+const historyRevision = ref(0)
 const installed = ref([])
 const rosterError = ref('')
 const loading = ref(false)
@@ -386,6 +388,7 @@ async function confirmReset() {
       resetNotice.value = result?.uncertain
         ? 'The reset result is uncertain. Refresh usage to check before trying again.'
         : result?.error || 'The reset could not be completed. Refresh before trying again.'
+      if (result?.historyError) resetNotice.value += ` ${result.historyError}`
       return
     }
     resetNotice.value =
@@ -395,6 +398,7 @@ async function confirmReset() {
         noCredit: 'No reset credit is available.',
         alreadyRedeemed: 'This reset was already redeemed.'
       }[result.outcome] || 'Reset request completed.'
+    if (result.historyError) resetNotice.value += ` ${result.historyError}`
     await Promise.all([readProvider('codex'), load()])
   } catch {
     if (alive) {
@@ -404,7 +408,10 @@ async function confirmReset() {
         'The reset result is uncertain. Refresh usage to check before trying again.'
     }
   } finally {
-    if (alive) resetBusy.value = false
+    if (alive) {
+      resetBusy.value = false
+      historyRevision.value++
+    }
   }
 }
 function expiryText(iso) {
@@ -931,6 +938,13 @@ function toggle() {
         >
           {{ resetNotice }}
         </p>
+        <ResetHistory
+          v-if="detailAgent.id === 'codex'"
+          provider="codex"
+          :account-id="selectedAccount('codex')"
+          :revision="historyRevision"
+          compact
+        />
         <div v-if="providerAccounts(detailAgent.id)" class="usage-flyout-accounts">
           <h4>{{ agentName(detailAgent) }} account</h4>
           <button

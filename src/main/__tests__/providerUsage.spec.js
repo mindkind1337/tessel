@@ -116,6 +116,128 @@ function fixture(options = {}) {
   return { service, state, accounts, readFile, request, home, expectedIdentity }
 }
 const selection = { provider: 'codex', accountId: null }
+
+describe('reset history and provider credit records', () => {
+  it.each(['reset', 'nothing_to_reset', 'no_credit', 'already_redeemed'])(
+    'records %s once per redemption, before/after observations and no credentials',
+    async (code) => {
+      const records = new Map()
+      const history = { record: vi.fn((row) => records.set(row.id, row)) }
+      const { service, request } = fixture({ history })
+      const args = await resetArgs(service)
+      let consumed = false
+      request.mockImplementation(async (url) => {
+        if (url === urls.consume) {
+          expect([...records.values()][0].outcome).toBe('pending')
+          consumed = true
+          return reply({ code })
+        }
+        return reply({ ...creditData, available_count: consumed ? 1 : 2 })
+      })
+      const [a, b] = await Promise.all([service.redeemReset(args), service.redeemReset(args)])
+      expect(a).toEqual(b)
+      expect(a.ok).toBe(true)
+      expect(request.mock.calls.filter(([url]) => url === urls.consume)).toHaveLength(1)
+      expect(history.record).toHaveBeenCalledTimes(2)
+      expect([...records.values()]).toHaveLength(1)
+      expect([...records.values()][0]).toMatchObject({
+        outcome: code,
+        creditsBefore: 2,
+        creditsAfter: 1,
+        accountId: null,
+        accountLabel: 'System default',
+        windows: [{ label: '5-hour' }, { label: 'Weekly' }]
+      })
+      expect(JSON.stringify([...records.values()])).not.toMatch(
+        /fixture-codex-token|Authorization|resetToken|fingerprint/
+      )
+    }
+  )
+  it('refuses a reset when the write-ahead entry cannot be saved', async () => {
+    const history = {
+      record: vi.fn(() => {
+        throw new Error('disk')
+      })
+    }
+    const { service, request } = fixture({ history })
+    const args = await resetArgs(service)
+    const result = await service.redeemReset(args)
+    expect(result).toMatchObject({ ok: false, code: 'history' })
+    expect(request.mock.calls.filter(([, options]) => options.method === 'POST')).toHaveLength(0)
+  })
+  it('preserves uncertainty after a lost POST response, without retrying or assuming a credit decrement', async () => {
+    const history = { record: vi.fn() }
+    const { service, request } = fixture({ history })
+    const args = await resetArgs(service)
+    request.mockImplementation(async (url) => {
+      if (url === urls.consume) throw new Error('secret request header')
+      return reply(creditData)
+    })
+    expect(await service.redeemReset(args)).toMatchObject({ ok: false, uncertain: true })
+    expect(history.record.mock.calls.at(-1)[0]).toMatchObject({
+      outcome: 'error',
+      uncertain: true,
+      creditsAfter: null
+    })
+    expect(JSON.stringify(history.record.mock.calls)).not.toContain('secret')
+  })
+  it('does not turn a confirmed reset into failure when the after-reading is unavailable', async () => {
+    const history = { record: vi.fn() }
+    const { service, request } = fixture({ history })
+    const args = await resetArgs(service)
+    let consumed = false
+    request.mockImplementation(async (url) => {
+      if (url === urls.consume) {
+        consumed = true
+        return reply({ code: 'reset' })
+      }
+      if (consumed) throw new Error('offline')
+      return reply(creditData)
+    })
+    expect(await service.redeemReset(args)).toMatchObject({ ok: true, outcome: 'reset' })
+    expect(history.record.mock.calls.at(-1)[0]).toMatchObject({
+      outcome: 'reset',
+      creditsAfter: null
+    })
+  })
+  it('returns only bounded provider credit fields on explicit request, with no invented redemption date', async () => {
+    const { service, request, readFile } = fixture()
+    expect(readFile).not.toHaveBeenCalled()
+    request.mockResolvedValue(
+      reply({
+        credits: [
+          {
+            status: 'consumed',
+            granted_at: '2026-09-20T12:00:00Z',
+            expires_at: '2026-10-20T12:00:00Z',
+            token: 'secret'
+          },
+          { status: 'secret-status' }
+        ]
+      })
+    )
+    const result = await service.creditHistory(selection)
+    expect(result).toMatchObject({
+      ok: true,
+      provider: 'codex',
+      accountId: null,
+      available: true,
+      entries: [{ status: 'consumed' }, { status: 'unknown' }]
+    })
+    expect(Object.keys(result.entries[0])).toEqual(['status', 'grantedAt', 'expiresAt'])
+    expect(JSON.stringify(result)).not.toContain('secret')
+    expect(request).toHaveBeenCalledTimes(1)
+    expect(request.mock.calls[0][0]).toBe(urls.credits)
+  })
+  it('rejects credit records when the account changes during the GET', async () => {
+    const { service, request, state } = fixture()
+    request.mockImplementation(async () => {
+      state.selected.codex = 'managed-a'
+      return reply(creditData)
+    })
+    expect(await service.creditHistory(selection)).toMatchObject({ ok: false, code: 'stale' })
+  })
+})
 async function resetArgs(service, query = selection) {
   const read = await service.read(query)
   expect(read.ok).toBe(true)

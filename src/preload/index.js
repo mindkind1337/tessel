@@ -143,6 +143,8 @@ const api = {
   getUsage: () => ipcRenderer.invoke('usage:get'),
   // Authenticated quota reads happen only on an explicit menu action.
   providerUsage: {
+    resetHistory: (query) => ipcRenderer.invoke('providerUsage:resetHistory', query),
+    creditHistory: (query) => ipcRenderer.invoke('providerUsage:creditHistory', query),
     read: (query) => ipcRenderer.invoke('providerUsage:read', query),
     redeemReset: (query) => ipcRenderer.invoke('providerUsage:redeemReset', query)
   },

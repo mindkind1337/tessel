@@ -222,6 +222,8 @@ export function createProviderUsage({
   request = globalThis.fetch,
   readFile = boundedCredentialRead,
   clock = Date.now,
+  history,
+  log,
   timeoutMs = 10000
 } = {}) {
   const generation = { codex: 0, claude: 0 }
@@ -281,6 +283,8 @@ export function createProviderUsage({
       authPath,
       configPath,
       expectedIdentity: resolved.expectedIdentity,
+      accountLabel:
+        text(account.label) || (accountId === null ? 'System default' : 'Saved account'),
       plan: plan(account.plan)
     }
   }
@@ -435,7 +439,7 @@ export function createProviderUsage({
     code: error instanceof UsageError ? error.code : 'network',
     error: error instanceof UsageError ? error.message : 'The usage request could not be completed.'
   })
-  function mint(snapshot, fingerprint, credit) {
+  function mint(snapshot, fingerprint, credit, windows) {
     if (redeeming.has(`${snapshot.provider}:${snapshot.accountId}`)) return null
     for (const [key, value] of tickets) {
       if (value.expiresAt <= clock()) tickets.delete(key)
@@ -455,6 +459,7 @@ export function createProviderUsage({
       snapshot: { ...snapshot },
       fingerprint,
       credits: credit,
+      windows,
       expiresAt: clock() + TICKET_TTL,
       requestId: randomUUID(),
       promise: null
@@ -463,8 +468,56 @@ export function createProviderUsage({
   }
   async function redeem(ticket) {
     let sent = false
+    let before = ticket.credits?.availableCount ?? null
+    let after = null
+    const at = clock()
     const { snapshot } = ticket
+    const audit = (outcome, extra = {}) =>
+      history?.record({
+        id: ticket.requestId,
+        at,
+        provider: snapshot.provider,
+        accountId: snapshot.accountId,
+        accountLabel: snapshot.accountLabel,
+        windows: ticket.windows,
+        creditsBefore: before,
+        creditsAfter: after,
+        outcome,
+        ...(outcome !== 'pending' ? { completedAt: clock() } : {}),
+        ...extra
+      })
+    const finish = (result) => {
+      try {
+        audit(
+          {
+            reset: 'reset',
+            nothingToReset: 'nothing_to_reset',
+            noCredit: 'no_credit',
+            alreadyRedeemed: 'already_redeemed'
+          }[result.outcome] || 'error',
+          { uncertain: result.uncertain, code: result.code }
+        )
+      } catch {
+        result.historyError = 'The reset result could not be saved to local history.'
+        try {
+          log?.warn(
+            'reset',
+            'Could not save reset result; do not retry the reset to repair history.'
+          )
+        } catch {
+          /* best effort */
+        }
+      }
+      return result
+    }
     try {
+      // Write ahead: a crash after the POST leaves a visible uncertain attempt.
+      // Refuse consumption if its audit cannot be saved.
+      try {
+        audit('pending')
+      } catch {
+        fail('history', 'Could not save reset history. No reset was sent.')
+      }
       if (ticket.expiresAt <= clock() || snapshot.epoch !== generation[snapshot.provider]) stale()
       const login = await stable(snapshot, ticket.fingerprint)
       const available = credits(await network(snapshot, ENDPOINTS.credits, login.headers), clock())
@@ -473,13 +526,16 @@ export function createProviderUsage({
           'response',
           'Reset availability could not be verified. Refresh usage before trying again.'
         )
-      if (!available.eligible)
-        return {
+      before = available.availableCount
+      if (!available.eligible) {
+        after = before
+        return finish({
           ok: true,
           provider: snapshot.provider,
           accountId: snapshot.accountId,
           outcome: 'noCredit'
-        }
+        })
+      }
       const latest = await stable(snapshot, ticket.fingerprint)
       if (ticket.expiresAt <= clock()) stale()
       sent = true
@@ -499,26 +555,71 @@ export function createProviderUsage({
       if (!Object.hasOwn(outcomes, data.code))
         fail('response', 'The reset service returned an unknown outcome.')
       await stable(snapshot, ticket.fingerprint)
-      return {
+      if (history) {
+        // Optional observation after the explicit reset. Never infer before - 1.
+        try {
+          const current = await network(snapshot, ENDPOINTS.credits, latest.headers)
+          await stable(snapshot, ticket.fingerprint)
+          after = credits(current, clock())?.availableCount ?? null
+        } catch {
+          /* result is known; a missing after-reading must not change it */
+        }
+      }
+      return finish({
         ok: true,
         provider: snapshot.provider,
         accountId: snapshot.accountId,
         outcome: outcomes[data.code]
-      }
+      })
     } catch (error) {
-      return sent
-        ? {
-            ok: false,
-            provider: snapshot.provider,
-            accountId: snapshot.accountId,
-            uncertain: true,
-            error:
-              'The reset may have been applied to the confirmed account. Refresh usage before taking any further action.'
-          }
-        : errorResult(error, { provider: snapshot.provider, accountId: snapshot.accountId })
+      return finish(
+        sent
+          ? {
+              ok: false,
+              provider: snapshot.provider,
+              accountId: snapshot.accountId,
+              uncertain: true,
+              error:
+                'The reset may have been applied to the confirmed account. Refresh usage before taking any further action.'
+            }
+          : errorResult(error, { provider: snapshot.provider, accountId: snapshot.accountId })
+      )
     }
   }
   return {
+    // Explicit opening/refresh only. Orca exposes credit status, granted and
+    // expiry dates; these are not a dated redemption ledger.
+    async creditHistory({ provider, accountId } = {}) {
+      try {
+        if (provider !== 'codex') fail('validation', 'Credit history is available for Codex only.')
+        const snapshot = await scope(provider, accountId)
+        const login = await auth(snapshot)
+        const data = await network(snapshot, ENDPOINTS.credits, login.headers)
+        await stable(snapshot, login.fingerprint)
+        if (!Array.isArray(data.credits))
+          return { ok: true, provider, accountId, available: false, entries: [] }
+        const entries = data.credits.slice(0, 500).map((row) => ({
+          status: ['available', 'consumed', 'redeemed', 'used', 'expired'].includes(
+            text(row?.status)?.toLowerCase()
+          )
+            ? row.status.trim().toLowerCase()
+            : 'unknown',
+          grantedAt: timestamp(row?.granted_at),
+          expiresAt: timestamp(row?.expires_at)
+        }))
+        return {
+          ok: true,
+          provider,
+          accountId,
+          available: true,
+          observedAt: clock(),
+          entries,
+          truncated: data.credits.length > entries.length
+        }
+      } catch (error) {
+        return errorResult(error)
+      }
+    },
     async read({ provider, accountId } = {}) {
       try {
         validate(provider, accountId)
@@ -566,7 +667,7 @@ export function createProviderUsage({
         if (provider === 'codex' && resetCredits) {
           const resetToken =
             resetCredits.eligible && !resetCreditsError
-              ? mint(snapshot, login.fingerprint, resetCredits)
+              ? mint(snapshot, login.fingerprint, resetCredits, windows)
               : null
           result.resetCredits = { ...resetCredits, eligible: resetCredits.eligible && !!resetToken }
           if (resetToken) result.resetToken = resetToken
@@ -604,7 +705,24 @@ export function createProviderUsage({
         }
         return await ticket.promise
       } catch (error) {
-        return errorResult(error)
+        const result = errorResult(error)
+        if (['codex', 'claude'].includes(provider)) {
+          try {
+            history?.record({
+              id: randomUUID(),
+              at: clock(),
+              completedAt: clock(),
+              provider,
+              accountId,
+              accountLabel: accountId === null ? 'System default' : 'Unverified account',
+              outcome: 'error',
+              code: result.code
+            })
+          } catch {
+            result.historyError = 'The reset result could not be saved to local history.'
+          }
+        }
+        return result
       }
     },
     invalidate(provider) {

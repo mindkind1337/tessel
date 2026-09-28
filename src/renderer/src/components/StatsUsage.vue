@@ -4,6 +4,7 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { Check, ChevronDown } from 'lucide-vue-next'
 import BrandIcon from './BrandIcon.vue'
+import ResetHistory from './ResetHistory.vue'
 import StatsStatCard from './stats/StatsStatCard.vue'
 import StatsIcon from './stats/StatsIcon.vue'
 import StatsUsageOverview from './stats/StatsUsageOverview.vue'
@@ -363,6 +364,10 @@ onBeforeUnmount(() => {
       @enable="setEnabled(active, $event)"
       @refresh="loadProvider(active, { refresh: true })"
       @filter="setFilter($event.kind, $event.value)"
+    />
+    <ResetHistory
+      v-if="active === 'overview' || active === 'codex'"
+      :provider="active === 'codex' ? 'codex' : undefined"
     />
   </div>
 </template>

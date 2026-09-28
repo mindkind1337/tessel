@@ -1,9 +1,14 @@
 // Quota requests are explicit renderer actions. Registering this service neither
 // reads credentials nor starts a polling loop.
 import { createProviderUsage } from './providerUsage'
+import { createResetHistory } from './resetHistory'
+import { join } from 'node:path'
 
-export function registerProviderUsage({ ipcMain, accounts, service }) {
-  const usage = service || createProviderUsage({ accounts })
+export function registerProviderUsage({ ipcMain, accounts, service, userData, log }) {
+  const history = userData
+    ? createResetHistory({ file: join(userData, 'reset-history.json'), log })
+    : null
+  const usage = service || createProviderUsage({ accounts, history, log })
   const handle = (name, action, error) => {
     ipcMain.handle(name, async (_event, query) => {
       try {
@@ -15,6 +20,16 @@ export function registerProviderUsage({ ipcMain, accounts, service }) {
     })
   }
   handle('providerUsage:read', (query) => usage.read(query), 'Could not read provider usage.')
+  handle(
+    'providerUsage:resetHistory',
+    (query) => history?.read(query) || { ok: false, error: 'Local reset history is unavailable.' },
+    'Could not read reset history.'
+  )
+  handle(
+    'providerUsage:creditHistory',
+    (query) => usage.creditHistory(query),
+    'Could not read provider credit history.'
+  )
   handle(
     'providerUsage:redeemReset',
     (query) => usage.redeemReset(query),
