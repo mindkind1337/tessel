@@ -52,7 +52,10 @@ export const DEFAULT_SETTINGS = Object.freeze({
   defaultAgent: '',
   // 'manual' (agents ask before acting) or 'yolo' (each agent's own
   // skip-approvals flag, unless you set its arguments yourself).
-  agentPermissions: 'manual'
+  agentPermissions: 'manual',
+  // Keep the computer from sleeping: 'off' | 'agents' (while an agent is
+  // working) | 'on' (while Tessel is open).
+  keepAwake: 'off'
 })
 
 const fresh = () => ({ ...DEFAULT_SETTINGS, customAgents: [], quickCommands: [], agentPrefs: {} })
@@ -75,6 +78,7 @@ export function loadSettings(saved) {
       continue
     }
     if (key === 'agentPermissions' && !['manual', 'yolo'].includes(v)) continue
+    if (key === 'keepAwake' && !['off', 'agents', 'on'].includes(v)) continue
     if (key === 'quickCommands') {
       if (Array.isArray(v)) settings.quickCommands = v.filter(validQuickCommand).slice(0, 100)
       continue

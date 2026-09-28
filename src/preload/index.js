@@ -38,7 +38,7 @@ const api = {
   // from validated named palettes instead of passing arbitrary CSS colors.
   setWindowTheme: (theme) => ipcRenderer.send('window:theme', theme),
   diagnostics: () => ipcRenderer.invoke('logs:diagnostics'),
-  claudeSessionExists: (id) => ipcRenderer.invoke('sessions:claudeExists', id),
+  claudeSessionExists: (id, scope) => ipcRenderer.invoke('sessions:claudeExists', id, scope),
   findCodexSession: (query) => ipcRenderer.invoke('sessions:findCodex', query),
   findAgentSession: (query) => ipcRenderer.invoke('sessions:find', query),
   geminiSessionExists: (id) => ipcRenderer.invoke('sessions:geminiExists', id),
@@ -72,6 +72,7 @@ const api = {
   voiceTyping: (opts) => ipcRenderer.invoke('app:voiceTyping', opts),
   inputLanguages: () => ipcRenderer.invoke('app:inputLanguages'),
   openExternal: (url) => ipcRenderer.invoke('app:openExternal', url),
+  keepAwake: (on) => ipcRenderer.invoke('power:keepAwake', on === true),
   gitInfo: (cwd) => ipcRenderer.invoke('git:info', cwd),
   createWorktree: (cwd, label, options) =>
     ipcRenderer.invoke('git:createWorktree', { cwd, label, options }),

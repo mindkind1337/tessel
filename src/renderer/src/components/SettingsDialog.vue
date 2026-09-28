@@ -183,6 +183,12 @@ function setScrollback(e) {
   e.target.value = settings.scrollback
 }
 
+const AWAKE_MODES = [
+  { id: 'off', label: 'Off', title: 'Windows sleeps as usual' },
+  { id: 'agents', label: 'While agents work', title: 'Only while at least one agent is working' },
+  { id: 'on', label: 'Always', title: 'As long as Tessel is open' }
+]
+
 const CURSORS = [
   { id: 'block', label: 'Block' },
   { id: 'bar', label: 'Bar' },
@@ -418,6 +424,25 @@ const CURSORS = [
           skip-approvals option, unless you set its arguments yourself). Use it only in projects you
           can restore.
         </p>
+        <div class="set-row">
+          <div id="settings-awake-label" class="set-label">
+            Keep the computer awake
+            <span class="set-hint">So it doesn't go to sleep in the middle of an agent's work. The screen can still turn off</span>
+          </div>
+          <div class="launch-seg set-seg" role="group" aria-labelledby="settings-awake-label">
+            <button
+              v-for="m in AWAKE_MODES"
+              :key="m.id"
+              class="launch-seg-btn"
+              :class="{ on: settings.keepAwake === m.id }"
+              :aria-pressed="settings.keepAwake === m.id"
+              :title="m.title"
+              @click="settings.keepAwake = m.id"
+            >
+              {{ m.label }}
+            </button>
+          </div>
+        </div>
         <div class="agents-head">
           <span class="set-hint">Detected on this computer</span>
           <button class="exit-btn" type="button" :disabled="detecting" @click="detectAgents">
