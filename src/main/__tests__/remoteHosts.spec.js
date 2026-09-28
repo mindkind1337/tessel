@@ -267,6 +267,18 @@ describe('connecting state', () => {
     s.paneExited('pane-3', 255)
     expect(s.snapshot()[target.id].status).toBe('disconnected')
   })
+
+  it('ssh asking again after it counted as connected goes back to connecting', () => {
+    const s = service()
+    const { target } = s.add({ host: 'srv' })
+    s.paneStarted('pane-1', target.id, { connected: false })
+    s.paneConnected('pane-1')
+    s.paneConnecting('pane-1')
+    expect(s.snapshot()[target.id].status).toBe('connecting')
+    s.paneConnected('pane-1')
+    expect(s.snapshot()[target.id].status).toBe('connected')
+    s.paneConnecting('pane-unknown')
+  })
 })
 
 describe('IPC', () => {

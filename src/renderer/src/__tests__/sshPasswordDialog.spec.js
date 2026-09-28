@@ -152,8 +152,55 @@ describe('SSH password dialog', () => {
   })
 
   it('ignores malformed requests', async () => {
-    const { w } = await open({ paneId: 'p', promptId: 'x', kind: 'hostkey' })
+    const { w } = await open({ paneId: 'p', promptId: 'x', kind: 'root-shell' })
     expect($('[data-test="ssh-credential-dialog"]')).toBe(null)
+    w.unmount()
+  })
+
+  const HOSTKEY = {
+    paneId: 'pane-1',
+    promptId: 'hk-1',
+    hostId: 'ssh-1',
+    label: 'srv',
+    kind: 'hostkey',
+    detail: [
+      "The authenticity of host 'srv (10.0.0.5)' can't be established.",
+      'ED25519 key fingerprint is SHA256:AbCd+Ef//012.',
+      'Are you sure you want to continue connecting (yes/no/[fingerprint])?'
+    ].join('\n'),
+    retry: false
+  }
+
+  it("a host key question shows ssh's text and fingerprint with Yes / No, no password field; No has the focus", async () => {
+    const { w, api } = await open(HOSTKEY)
+    const dlg = $('[data-test="ssh-credential-dialog"]')
+    expect(dlg.querySelector('#ssh-cred-title').textContent).toBe('Unknown SSH Host Key')
+    expect($('[data-test="ssh-credential-question"]').textContent).toContain('SHA256:AbCd+Ef//012')
+    expect($('[data-test="ssh-credential-input"]')).toBe(null)
+    expect(document.activeElement).toBe($('[data-test="ssh-credential-no"]'))
+    expect($('[data-test="ssh-credential-yes"]').textContent.trim()).toBe('Yes, connect')
+    $('[data-test="ssh-credential-yes"]').click()
+    await flushPromises()
+    expect(api.sshCredentials.submit).toHaveBeenCalledWith('pane-1', 'hk-1', 'yes')
+    expect($('[data-test="ssh-credential-dialog"]')).toBe(null)
+    w.unmount()
+  })
+
+  it('host key: No and Esc answer no; in French', async () => {
+    setMessages('fr', frRemote)
+    const { w, api } = await open(HOSTKEY)
+    expect($('#ssh-cred-title').textContent).toBe("Clé d'hôte SSH inconnue")
+    expect($('[data-test="ssh-credential-yes"]').textContent.trim()).toBe('Oui, se connecter')
+    expect($('[data-test="ssh-credential-no"]').textContent.trim()).toBe('Non')
+    $('[data-test="ssh-credential-dialog"]').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await flushPromises()
+    expect(api.sshCredentials.submit).toHaveBeenCalledWith('pane-1', 'hk-1', 'no')
+    requestCb({ ...HOSTKEY, promptId: 'hk-2' })
+    await nextTick()
+    $('[data-test="ssh-credential-no"]').click()
+    await flushPromises()
+    expect(api.sshCredentials.submit).toHaveBeenLastCalledWith('pane-1', 'hk-2', 'no')
+    expect(api.sshCredentials.submit).toHaveBeenCalledTimes(2)
     w.unmount()
   })
 })

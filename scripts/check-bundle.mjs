@@ -34,5 +34,11 @@ if (!files.some((f) => f.endsWith('ptyHost.js'))) {
   console.error('check-bundle: out/main/ptyHost.js is missing')
   failed = true
 }
+// The SSH askpass helper (scripts/build-askpass.mjs): without it, SSH
+// passwords fall back to the terminal; a release must carry it.
+if (process.platform === 'win32' && !fs.existsSync(path.join(dir, 'tessel-askpass.exe'))) {
+  console.error('check-bundle: out/main/tessel-askpass.exe is missing (SSH askpass helper)')
+  failed = true
+}
 if (failed) process.exit(1)
 console.log(`check-bundle: ok (${files.length} files)`)
