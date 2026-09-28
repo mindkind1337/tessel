@@ -1,4 +1,3 @@
-<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // A saved review note, inline under its diff line (after Orca's
 // DiffCommentCard.tsx and diff-comment-zone-card.tsx, MIT, Copyright (c) 2026
@@ -7,7 +6,8 @@
 import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import LucideIcon from './LucideIcon.vue'
 import NotesSendMenu from './NotesSendMenu.vue'
-import { getDiffCommentLineLabel, formatDiffComments } from '../../../shared/sourceControl'
+import { formatDiffComments } from '../../../shared/sourceControl'
+import { t } from '../i18n'
 
 const props = defineProps({
   note: { type: Object, required: true },
@@ -23,11 +23,20 @@ const draft = ref('')
 const submitting = ref(false)
 const cardEl = ref(null)
 const textEl = ref(null)
-const metaText = computed(() =>
-  ['Note', getDiffCommentLineLabel(props.note).toLowerCase(), props.note.sentAt ? 'sent' : null].filter(Boolean).join(' ')
-)
+const metaText = computed(() => {
+  const n = props.note
+  const sent = !!n.sentAt
+  if (n.startLine !== undefined && n.startLine !== null && n.startLine !== n.lineNumber) {
+    const vars = { start: n.startLine, end: n.lineNumber }
+    return sent
+      ? t('notes.card.linesSent', 'Note lines {{start}}-{{end}} sent', vars)
+      : t('notes.card.lines', 'Note lines {{start}}-{{end}}', vars)
+  }
+  const vars = { line: n.lineNumber }
+  return sent ? t('notes.card.lineSent', 'Note line {{line}} sent', vars) : t('notes.card.line', 'Note line {{line}}', vars)
+})
 const scopes = computed(() => [
-  { id: 'note', label: 'This note', notes: props.note.sentAt ? [] : [props.note], prompt: formatDiffComments([props.note]) }
+  { id: 'note', label: t('notes.card.thisNote', 'This note'), notes: props.note.sentAt ? [] : [props.note], prompt: formatDiffComments([props.note]) }
 ])
 const canSubmit = computed(() => !submitting.value && draft.value.trim().length > 0 && draft.value.trim() !== props.note.body)
 
@@ -90,19 +99,19 @@ onBeforeUnmount(() => ro && ro.disconnect())
           <NotesSendMenu
             :scopes="scopes"
             trigger-class="orca-diff-comment-edit orca-diff-comment-pill-btn"
-            disabled-tooltip="Note already sent"
+            :disabled-tooltip="t('notes.card.alreadySent', 'Note already sent')"
             @delivered="(n) => onDelivered && onDelivered(n)"
           />
           <span class="orca-diff-comment-pill-divider"></span>
-          <button type="button" class="orca-diff-comment-pill-btn" title="Edit note" aria-label="Edit note" @click.prevent.stop="startEdit">
+          <button type="button" class="orca-diff-comment-pill-btn" :title="t('notes.card.edit', 'Edit note')" :aria-label="t('notes.card.edit', 'Edit note')" @click.prevent.stop="startEdit">
             <LucideIcon name="pencil" :size="12" />
           </button>
           <span class="orca-diff-comment-pill-divider"></span>
           <button
             type="button"
             class="orca-diff-comment-pill-btn orca-diff-comment-pill-btn-danger"
-            title="Delete note"
-            aria-label="Delete note"
+            :title="t('notes.card.delete', 'Delete note')"
+            :aria-label="t('notes.card.delete', 'Delete note')"
             data-test="diff-note-delete"
             @click.prevent.stop="onDelete()"
           >
@@ -113,9 +122,17 @@ onBeforeUnmount(() => ro && ro.disconnect())
       <div v-if="editing" class="orca-edit-col">
         <textarea ref="textEl" v-model="draft" class="orca-diff-comment-popover-textarea" rows="3" @keydown="onKeydown"></textarea>
         <div class="orca-diff-comment-popover-footer">
-          <button type="button" class="orca-btn-ghost" :disabled="submitting" @click="cancel">Cancel</button>
-          <button type="button" class="orca-btn-primary" :disabled="!canSubmit" :title="submitting ? 'Saving…' : undefined" @click="submit">
-            Save
+          <button type="button" class="orca-btn-ghost" :disabled="submitting" @click="cancel">
+            {{ t('notes.card.cancel', 'Cancel') }}
+          </button>
+          <button
+            type="button"
+            class="orca-btn-primary"
+            :disabled="!canSubmit"
+            :title="submitting ? t('notes.card.saving', 'Saving…') : undefined"
+            @click="submit"
+          >
+            {{ t('notes.card.save', 'Save') }}
             <LucideIcon name="cornerDownLeft" :size="12" class="orca-kbd-icon" />
           </button>
         </div>

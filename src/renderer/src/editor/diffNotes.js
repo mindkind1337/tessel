@@ -1,4 +1,3 @@
-// i18n-pending: text here does not go through t() yet
 // Review notes on the lines of a diff (the modified side), after Orca's
 // useDiffCommentDecorator.tsx, diff-comment-add-button-overlay.ts,
 // diff-comment-add-note-shortcut.ts and diff-comment-view-zone-entry.ts
@@ -9,6 +8,7 @@
 //   - each saved note is a card in a view zone under its line.
 // The cards are Vue components mounted by the caller (mount(dom, kind, props)
 // -> { update(props), unmount() }).
+import { t } from '../i18n'
 
 const BUTTON_SIZE = 18
 const ZONE_MIN_PX = 64
@@ -50,8 +50,15 @@ export function installDiffNotes(editor, opts) {
   const plus = document.createElement('button')
   plus.type = 'button'
   plus.className = 'orca-diff-comment-add-btn'
-  plus.title = 'Add note for the AI'
-  plus.setAttribute('aria-label', 'Add note for the AI')
+  // Labelled again when shown: the language may have changed since.
+  const labelPlus = () => {
+    const label = t('notes.draft.placeholder', 'Add note for the AI')
+    if (plus.title !== label) {
+      plus.title = label
+      plus.setAttribute('aria-label', label)
+    }
+  }
+  labelPlus()
   plus.setAttribute('data-test', 'diff-note-plus')
   plus.innerHTML =
     '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 3v10M3 8h10"/></svg>'
@@ -61,6 +68,7 @@ export function installDiffNotes(editor, opts) {
   let lastDisplay = 'none'
   const setDisplay = (v) => {
     if (lastDisplay === v) return
+    if (v !== 'none') labelPlus()
     plus.style.display = v
     lastDisplay = v
   }
@@ -193,11 +201,11 @@ export function installDiffNotes(editor, opts) {
       e.stopPropagation()
       return
     }
-    const t = selectionTarget(editor.getSelection())
-    if (!t) return
+    const target = selectionTarget(editor.getSelection())
+    if (!target) return
     e.preventDefault()
     e.stopPropagation()
-    openDraft(t)
+    openDraft(target)
   }
   container.addEventListener('keydown', onKey, true)
 

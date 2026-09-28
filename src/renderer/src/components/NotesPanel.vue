@@ -1,10 +1,10 @@
-<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // The project notes, inside Tessel: read them formatted, or edit and save.
 // Agents write in the same file, so the view follows their changes, and a
 // save never overwrites a change you have not seen.
 import { ref, computed, onMounted, onBeforeUnmount, inject, nextTick } from 'vue'
 import { parseMarkdown } from '../../../shared/markdown'
+import { t } from '../i18n'
 
 const props = defineProps({
   dir: { type: String, required: true },
@@ -41,7 +41,9 @@ async function load(initial = false) {
   loading.value = false
   if (seq <= savedAtSeq) return // started before the last save
   if (!res || !res.ok) {
-    status.value = `Could not read the notes: ${(res && res.error) || 'unknown error'}`
+    status.value = t('notes.panel.readFailed', 'Could not read the notes: {{error}}', {
+      error: (res && res.error) || t('notes.panel.unknownError', 'unknown error')
+    })
     return
   }
   path.value = res.path
@@ -80,12 +82,15 @@ async function save(force = false) {
     text.value = draft.value
     mtime.value = res.mtime
     theirs.value = null
-    status.value = 'Saved'
-    setTimeout(() => status.value === 'Saved' && (status.value = ''), 2000)
+    const saved = t('notes.panel.saved', 'Saved')
+    status.value = saved
+    setTimeout(() => status.value === saved && (status.value = ''), 2000)
   } else if (res && res.conflict) {
     theirs.value = { text: res.text, mtime: res.mtime }
   } else {
-    status.value = `Could not save: ${(res && res.error) || 'unknown error'}`
+    status.value = t('notes.panel.saveFailed', 'Could not save: {{error}}', {
+      error: (res && res.error) || t('notes.panel.unknownError', 'unknown error')
+    })
   }
 }
 
@@ -100,9 +105,9 @@ function useTheirs() {
 async function done() {
   if (dirty.value) {
     const ok = await askConfirm({
-      title: 'Discard your changes?',
-      text: 'Your edits to the notes are not saved.',
-      confirmLabel: 'Discard',
+      title: t('notes.panel.discardTitle', 'Discard your changes?'),
+      text: t('notes.panel.notSaved', 'Your edits to the notes are not saved.'),
+      confirmLabel: t('notes.panel.discard', 'Discard'),
       danger: true
     })
     if (!ok) return
@@ -114,9 +119,9 @@ async function done() {
 async function close() {
   if (dirty.value) {
     const ok = await askConfirm({
-      title: 'Close without saving?',
-      text: 'Your edits to the notes are not saved.',
-      confirmLabel: 'Close',
+      title: t('notes.panel.closeTitle', 'Close without saving?'),
+      text: t('notes.panel.notSaved', 'Your edits to the notes are not saved.'),
+      confirmLabel: t('notes.panel.close', 'Close'),
       danger: true
     })
     if (!ok) return
@@ -156,24 +161,26 @@ onBeforeUnmount(() => {
     <div ref="cardEl" class="help-card notes-card" role="dialog" aria-labelledby="notes-title" tabindex="-1">
       <div class="help-head">
         <span class="notes-heading">
-          <span id="notes-title">Project notes</span>
+          <span id="notes-title">{{ t('notes.panel.title', 'Project notes') }}</span>
           <span class="notes-where">{{ wsName }}<template v-if="path"> · {{ path }}</template></span>
         </span>
         <span class="notes-tools">
           <span v-if="status" class="notes-status" role="status">{{ status }}</span>
           <template v-if="editing">
-            <button class="confirm-btn" @click="done">{{ dirty ? 'Cancel' : 'Done' }}</button>
-            <button class="confirm-btn primary" :disabled="!dirty" title="Save (Ctrl+S)" @click="save()">
-              Save
+            <button class="confirm-btn" @click="done">
+              {{ dirty ? t('notes.panel.cancel', 'Cancel') : t('notes.panel.done', 'Done') }}
+            </button>
+            <button class="confirm-btn primary" :disabled="!dirty" :title="t('notes.panel.saveHint', 'Save (Ctrl+S)')" @click="save()">
+              {{ t('notes.panel.save', 'Save') }}
             </button>
           </template>
           <template v-else>
-            <button class="confirm-btn" title="Open the file in your text editor" @click="emit('open-external')">
-              Open in editor
+            <button class="confirm-btn" :title="t('notes.panel.openHint', 'Open the file in your text editor')" @click="emit('open-external')">
+              {{ t('notes.panel.openInEditor', 'Open in editor') }}
             </button>
-            <button class="confirm-btn primary" :disabled="loading" @click="startEdit">Edit</button>
+            <button class="confirm-btn primary" :disabled="loading" @click="startEdit">{{ t('notes.panel.edit', 'Edit') }}</button>
           </template>
-          <button class="tb-icon" title="Close (Esc)" aria-label="Close" @click="close">
+          <button class="tb-icon" :title="t('notes.panel.closeEsc', 'Close (Esc)')" :aria-label="t('notes.panel.close', 'Close')" @click="close">
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
               <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
             </svg>
@@ -182,9 +189,9 @@ onBeforeUnmount(() => {
       </div>
 
       <div v-if="theirs" class="notes-conflict" role="alert">
-        <span>The notes changed while you were editing (an agent wrote in them).</span>
-        <button class="confirm-btn" @click="useTheirs">Load their version</button>
-        <button class="confirm-btn danger" @click="save(true)">Keep mine</button>
+        <span>{{ t('notes.panel.conflict', 'The notes changed while you were editing (an agent wrote in them).') }}</span>
+        <button class="confirm-btn" @click="useTheirs">{{ t('notes.panel.loadTheirs', 'Load their version') }}</button>
+        <button class="confirm-btn danger" @click="save(true)">{{ t('notes.panel.keepMine', 'Keep mine') }}</button>
       </div>
 
       <textarea
@@ -193,12 +200,12 @@ onBeforeUnmount(() => {
         v-model="draft"
         class="notes-editor"
         spellcheck="false"
-        aria-label="Project notes (Markdown)"
+        :aria-label="t('notes.panel.editorAria', 'Project notes (Markdown)')"
         @keydown="onEditorKey"
       ></textarea>
 
       <div v-else class="notes-view">
-        <p v-if="loading" class="act-none">Loading…</p>
+        <p v-if="loading" class="act-none">{{ t('notes.panel.loading', 'Loading…') }}</p>
         <template v-for="(b, i) in blocks" :key="i">
           <h3 v-if="b.type === 'h1'" class="notes-h1">
             <template v-for="(p, j) in b.parts" :key="j"><code v-if="p.kind === 'code'">{{ p.text }}</code><strong v-else-if="p.kind === 'bold'">{{ p.text }}</strong><em v-else-if="p.kind === 'italic'">{{ p.text }}</em><template v-else>{{ p.text }}</template></template>

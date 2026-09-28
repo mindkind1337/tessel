@@ -1,4 +1,3 @@
-<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // A code editor pane (like Orca's editor, with the same Monaco engine): one
 // tab per open file, preview tabs (italic) replaced by the next file opened
@@ -48,6 +47,7 @@ import RichView from './RichView.vue'
 import NotesSendMenu from './NotesSendMenu.vue'
 import DiffNoteDraft from './DiffNoteDraft.vue'
 import DiffNoteCard from './DiffNoteCard.vue'
+import { t } from '../i18n'
 
 const props = defineProps({
   node: { type: Object, required: true }
@@ -116,15 +116,16 @@ const toggleValue = computed(() => {
 })
 // Orca's EditorViewToggle metadata (CSV: Table; Tessel's rendered Markdown and
 // Mermaid take the "rich" slot as Preview).
-const TOGGLE_META = {
-  source: { label: 'Source', icon: 'code' },
-  rich: { label: 'Preview', icon: 'eye' },
-  edit: { label: 'Edit', icon: 'fileText' },
-  changes: { label: 'Changes', icon: 'gitCompareArrows', title: 'Uncommitted changes' }
-}
 function toggleMeta(v) {
-  if (v === 'rich' && kind.value === 'table') return { label: 'Table', icon: 'table' }
-  return TOGGLE_META[v]
+  if (v === 'rich' && kind.value === 'table') return { label: t('editor.viewer.table', 'Table'), icon: 'table' }
+  if (v === 'source') return { label: t('editor.viewer.source', 'Source'), icon: 'code' }
+  if (v === 'rich') return { label: t('editor.viewer.preview', 'Preview'), icon: 'eye' }
+  if (v === 'edit') return { label: t('editor.view.edit', 'Edit'), icon: 'fileText' }
+  return {
+    label: t('editor.view.changes', 'Changes'),
+    icon: 'gitCompareArrows',
+    title: t('editor.view.uncommitted', 'Uncommitted changes')
+  }
 }
 function setToggle(v) {
   if (diffInfo.value) return setMode(v === 'rich' ? 'rich' : 'diff')
@@ -138,7 +139,7 @@ const diffBinary = ref(false)
 const diffReadOnly = ref(false)
 const richText = ref('')
 
-const title = computed(() => props.node.title || 'Editor')
+const title = computed(() => props.node.title || t('editor.pane.title', 'Editor'))
 const docOf = (f) => docs[pathKey(docPathOf(f))] || null
 
 // Orca's editor-labels.ts: "name (diff)", "name (staged diff)".
@@ -151,24 +152,26 @@ function baseLabel(f) {
 }
 function tabLabel(f) {
   if (!f.diff) return baseLabel(f)
-  return `${baseLabel(f)} (${f.diff.area === 'staged' ? 'staged diff' : 'diff'})`
+  return f.diff.area === 'staged'
+    ? t('editor.tab.stagedDiff', '{{name}} (staged diff)', { name: baseLabel(f) })
+    : t('editor.tab.diff', '{{name}} (diff)', { name: baseLabel(f) })
 }
 
 // What the body shows instead of the editor (loading, an error).
 const message = computed(() => {
   if (loadError.value) return loadError.value
-  if (!files.value.length) return 'No file open. Open one from Jump to file (Ctrl+Shift+J) or the file explorer.'
+  if (!files.value.length) return t('editor.pane.noFile', 'No file open. Open one from Jump to file (Ctrl+Shift+J) or the file explorer.')
   if (mode.value === 'image') return ''
   if (diffInfo.value) {
-    if (!ready.value) return 'Opening…'
+    if (!ready.value) return t('editor.pane.opening', 'Opening…')
     if (diffError.value) return diffError.value
-    if (diffBinary.value) return 'Binary file changed'
-    return mode.value === 'rich' || !diffBusy.value ? '' : 'Loading diff...'
+    if (diffBinary.value) return t('editor.diff.binary', 'Binary file changed')
+    return mode.value === 'rich' || !diffBusy.value ? '' : t('editor.diff.loading', 'Loading diff...')
   }
   const d = activeDoc.value
   if (!d) return ''
   if (d.error) return d.error
-  if (d.loading || !ready.value) return 'Opening…'
+  if (d.loading || !ready.value) return t('editor.pane.opening', 'Opening…')
   return ''
 })
 const showDiff = computed(() => !message.value && ['changes', 'compare', 'diff'].includes(mode.value))
@@ -395,7 +398,7 @@ async function enterDiff(d, m) {
   let text = ''
   if (m === 'compare') {
     text = diskTextOf(d.path) ?? ''
-    diffNote.value = 'Left: the file on disk now. Right: your unsaved edits.'
+    diffNote.value = t('editor.diff.compareNote', 'Left: the file on disk now. Right: your unsaved edits.')
   } else {
     let r = null
     try {
@@ -404,7 +407,7 @@ async function enterDiff(d, m) {
       r = { ok: false, error: err && err.message }
     }
     if (token !== diffSeq) return
-    if (!r || !r.ok) diffNote.value = (r && r.error) || 'The committed version could not be read.'
+    if (!r || !r.ok) diffNote.value = (r && r.error) || t('editor.diff.headUnreadable', 'The committed version could not be read.')
     else {
       text = r.text || ''
       diffNote.value = r.note || ''
@@ -452,7 +455,7 @@ async function enterDiffTab(f) {
   if (token !== diffSeq || !mounted) return
   if (!r || !r.ok) {
     diffBusy.value = false
-    diffError.value = (r && r.error) || 'The diff could not be read.'
+    diffError.value = (r && r.error) || t('editor.diff.unreadable', 'The diff could not be read.')
     return
   }
   if (r.binary) {
@@ -540,7 +543,7 @@ function attachNotes(dff) {
     getNotes: () => notesFor(dff.root).filter((n) => n.filePath === dff.rel),
     create: async ({ lineNumber, startLine, body }) => {
       const n = addNote({ repo: dff.root, filePath: dff.rel, lineNumber, startLine, body })
-      if (!n && ctx.toast) ctx.toast('Failed to save comment', { kind: 'error' })
+      if (!n && ctx.toast) ctx.toast(t('notes.saveFailed', 'Failed to save comment'), { kind: 'error' })
       return !!n
     },
     remove: (id) => deleteNote(dff.root, id),
@@ -561,8 +564,8 @@ watch(
 const unsentFile = computed(() => fileNotes.value.filter((n) => !n.sentAt))
 const unsentAll = computed(() => allNotes.value.filter((n) => !n.sentAt))
 const noteScopes = computed(() => [
-  { id: 'file', label: 'This file', notes: unsentFile.value, prompt: formatDiffComments(unsentFile.value) },
-  { id: 'all', label: 'All unsent notes', notes: unsentAll.value, prompt: formatDiffComments(unsentAll.value) }
+  { id: 'file', label: t('notes.scope.thisFile', 'This file'), notes: unsentFile.value, prompt: formatDiffComments(unsentFile.value) },
+  { id: 'all', label: t('changes.notes.allUnsent', 'All unsent notes'), notes: unsentAll.value, prompt: formatDiffComments(unsentAll.value) }
 ])
 function onNotesDelivered(sent) {
   if (diffInfo.value) clearDelivered(diffInfo.value.root, sent)
@@ -601,12 +604,12 @@ async function closeTab(path) {
   if (d && d.dirty && holders <= 1 && ownersOf(docPath).length <= 1) {
     const answer = askConfirm
       ? await askConfirm({
-          title: 'Unsaved changes',
-          text: `"${d.name}" has unsaved changes. Do you want to save before closing?`,
-          confirmLabel: 'Save',
-          altLabel: "Don't Save"
+          title: t('editor.close.title', 'Unsaved changes'),
+          text: t('editor.close.text', '"{{name}}" has unsaved changes. Do you want to save before closing?', { name: d.name }),
+          confirmLabel: t('editor.close.save', 'Save'),
+          altLabel: t('editor.close.dontSave', "Don't Save")
         })
-      : window.confirm(`"${d.name}" has unsaved changes. Close without saving?`)
+      : window.confirm(t('editor.close.confirm', '"{{name}}" has unsaved changes. Close without saving?', { name: d.name }))
         ? 'alt'
         : false
     if (!answer) return
@@ -722,7 +725,13 @@ function openExternally() {
   window.shellApi
     .openFile({ file: d.path, line: pos ? pos.lineNumber : undefined, col: pos ? pos.column : undefined })
     .then((res) => {
-      if ((!res || !res.ok) && ctx.toast) ctx.toast(`Could not open ${d.name}${res && res.error ? `: ${res.error}` : ''}`, { kind: 'error' })
+      if ((!res || !res.ok) && ctx.toast)
+        ctx.toast(
+          res && res.error
+            ? t('editor.pane.openFailedWith', 'Could not open {{name}}: {{error}}', { name: d.name, error: res.error })
+            : t('editor.pane.openFailed', 'Could not open {{name}}', { name: d.name }),
+          { kind: 'error' }
+        )
     })
     .catch(() => {})
 }
@@ -781,7 +790,7 @@ onMounted(async () => {
   try {
     monaco = await loadMonaco()
   } catch (err) {
-    loadError.value = `The editor could not start: ${(err && err.message) || err}`
+    loadError.value = t('editor.pane.startFailed', 'The editor could not start: {{error}}', { error: (err && err.message) || err })
     return
   }
   if (!mounted || !hostEl.value) return
@@ -845,27 +854,45 @@ onBeforeUnmount(() => {
   >
     <div class="pane-nav" data-test="pane-header" @mousedown.stop="onNavMouseDown" @pointerdown="onNavPointerDown">
       <div class="pane-nav-left">
-        <span v-if="node.num" class="pane-num" :title="`Pane #${node.num}`">{{ node.num }}</span>
-        <span class="pane-icon" title="Editor">
+        <span v-if="node.num" class="pane-num" :title="t('editor.pane.number', 'Pane #{{num}}', { num: node.num })">{{ node.num }}</span>
+        <span class="pane-icon" :title="t('editor.pane.title', 'Editor')">
           <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path d="M5.5 4.5L2 8l3.5 3.5M10.5 4.5L14 8l-3.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
           </svg>
         </span>
-        <span class="pane-title" :title="`${activeDocPath || title}\nDrag the header to move the pane`">{{ title }}</span>
+        <span class="pane-title" :title="t('editor.pane.titleHint', '{{path}}\nDrag the header to move the pane', { path: activeDocPath || title })">{{
+          title
+        }}</span>
       </div>
       <div class="pane-nav-actions" @mousedown.stop>
-        <button v-if="activeDocPath" class="pane-nav-btn" title="Copy the file's full path" aria-label="Copy path" @click="copyPath">
+        <button
+          v-if="activeDocPath"
+          class="pane-nav-btn"
+          :title="t('editor.viewer.copyPathHint', 'Copy the file\'s full path')"
+          :aria-label="t('editor.viewer.copyPath', 'Copy path')"
+          @click="copyPath"
+        >
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <rect x="5.5" y="5.5" width="8" height="8.5" rx="1.5" stroke="currentColor" stroke-width="1.3" />
             <path d="M10.5 3.5V3a1 1 0 00-1-1h-6a1 1 0 00-1 1v7a1 1 0 001 1h.5" stroke="currentColor" stroke-width="1.3" />
           </svg>
         </button>
-        <button v-if="activeDoc" class="pane-nav-btn" title="Open in VS Code (at the cursor's line)" aria-label="Open in VS Code" @click="openExternally">
+        <button
+          v-if="activeDoc"
+          class="pane-nav-btn"
+          :title="t('editor.pane.openVsCodeHint', 'Open in VS Code (at the cursor\'s line)')"
+          :aria-label="t('editor.viewer.openInVsCode', 'Open in VS Code')"
+          @click="openExternally"
+        >
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path d="M9 2.5h4.5V7M13.5 2.5L7.5 8.5M11.5 9.5v3.5a.5.5 0 01-.5.5H3a.5.5 0 01-.5-.5V5a.5.5 0 01.5-.5h3.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" />
           </svg>
         </button>
-        <button class="pane-nav-btn" :title="isMaximized ? 'Restore pane' : 'Maximize pane'" @click="ctx.toggleMaximize(node.id)">
+        <button
+          class="pane-nav-btn"
+          :title="isMaximized ? t('editor.pane.restore', 'Restore pane') : t('editor.pane.maximize', 'Maximize pane')"
+          @click="ctx.toggleMaximize(node.id)"
+        >
           <svg v-if="isMaximized" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path d="M6 2v4H2M14 6h-4V2M10 14v-4h4M2 10h4v4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
           </svg>
@@ -873,7 +900,12 @@ onBeforeUnmount(() => {
             <path d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
           </svg>
         </button>
-        <button class="pane-nav-btn close" title="Close pane (Ctrl+Shift+W)" aria-label="Close pane" @click="ctx.closeLeaf(node.id)">
+        <button
+          class="pane-nav-btn close"
+          :title="t('editor.pane.closeHint', 'Close pane (Ctrl+Shift+W)')"
+          :aria-label="t('editor.pane.close', 'Close pane')"
+          @click="ctx.closeLeaf(node.id)"
+        >
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path d="M3.5 3.5l9 9M12.5 3.5l-9 9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
           </svg>
@@ -882,7 +914,7 @@ onBeforeUnmount(() => {
     </div>
 
     <div class="ed-body">
-      <div class="ed-tabs" role="tablist" aria-label="Open files" @wheel.passive="onTabsWheel">
+      <div class="ed-tabs" role="tablist" :aria-label="t('editor.tabs.aria', 'Open files')" @wheel.passive="onTabsWheel">
         <div
           v-for="f in files"
           :key="f.path"
@@ -897,7 +929,7 @@ onBeforeUnmount(() => {
             deleted: !f.diff && docOf(f) && docOf(f).deleted,
             failed: !f.diff && defaultMode(f) !== 'image' && docOf(f) && !!docOf(f).error
           }"
-          :title="docPathOf(f) + (f.preview ? '\nPreview: double-click to keep it open' : '')"
+          :title="f.preview ? t('editor.tabs.previewHint', '{{path}}\nPreview: double-click to keep it open', { path: docPathOf(f) }) : docPathOf(f)"
           :data-path="docPathOf(f)"
           :data-diff="f.diff ? f.diff.area : null"
           @mousedown.left.prevent="activate(f.path)"
@@ -906,12 +938,16 @@ onBeforeUnmount(() => {
           @dblclick="pin(f.path)"
         >
           <span class="ed-tab-name">{{ tabLabel(f) }}</span>
-          <span v-if="!f.diff && docOf(f) && docOf(f).deleted" class="ed-tab-tag">deleted</span>
+          <span v-if="!f.diff && docOf(f) && docOf(f).deleted" class="ed-tab-tag">{{ t('editor.tabs.deleted', 'deleted') }}</span>
           <button
             class="ed-tab-close"
             :class="{ dirty: docOf(f) && docOf(f).dirty }"
-            :title="docOf(f) && docOf(f).dirty ? 'Unsaved changes. Close (Ctrl+W)' : 'Close (Ctrl+W)'"
-            :aria-label="docOf(f) && docOf(f).dirty ? `Close ${tabLabel(f)} (unsaved changes)` : `Close ${tabLabel(f)}`"
+            :title="docOf(f) && docOf(f).dirty ? t('editor.tabs.closeDirty', 'Unsaved changes. Close (Ctrl+W)') : t('editor.tabs.close', 'Close (Ctrl+W)')"
+            :aria-label="
+              docOf(f) && docOf(f).dirty
+                ? t('editor.tabs.closeNameDirty', 'Close {{name}} (unsaved changes)', { name: tabLabel(f) })
+                : t('editor.tabs.closeName', 'Close {{name}}', { name: tabLabel(f) })
+            "
             @mousedown.stop
             @click.stop="closeTab(f.path)"
           >
@@ -924,28 +960,36 @@ onBeforeUnmount(() => {
       </div>
 
       <div v-if="!diffInfo && activeDoc && activeDoc.external" class="ed-banner" role="alert">
-        <span class="ed-banner-text">This file changed on disk while you have unsaved edits. Saving will overwrite the newer disk content.</span>
+        <span class="ed-banner-text">{{
+          t('editor.banner.text', 'This file changed on disk while you have unsaved edits. Saving will overwrite the newer disk content.')
+        }}</span>
         <span class="ed-banner-actions">
-          <button class="exit-btn" @click="compare">Compare</button>
-          <button class="exit-btn" @click="reloadDisk">Reload from Disk</button>
-          <button class="exit-btn" @click="keepEdits">Keep My Edits</button>
+          <button class="exit-btn" @click="compare">{{ t('editor.banner.compare', 'Compare') }}</button>
+          <button class="exit-btn" @click="reloadDisk">{{ t('editor.banner.reload', 'Reload from Disk') }}</button>
+          <button class="exit-btn" @click="keepEdits">{{ t('editor.banner.keep', 'Keep My Edits') }}</button>
         </span>
       </div>
 
       <div v-if="activeFile && (diffInfo || (activeDoc && (!activeDoc.error || mode === 'image')))" class="ed-bar" data-test="editor-bar">
         <span class="ed-bar-path" :title="activeDocPath">{{ diffInfo ? diffInfo.rel : '' }}</span>
-        <span v-if="mode !== 'edit' && mode !== 'image' && diffNote && !diffInfo" class="ed-note-inline">{{ diffBusy ? 'Reading…' : diffNote }}</span>
-        <span v-if="diffInfo && diffReadOnly && !diffBusy && mode === 'diff'" class="ed-note-inline" data-test="diff-readonly">{{ diffInfo.area === 'staged' ? 'Staged: read-only' : 'Read-only' }}</span>
+        <span v-if="mode !== 'edit' && mode !== 'image' && diffNote && !diffInfo" class="ed-note-inline">{{
+          diffBusy ? t('editor.viewer.reading', 'Reading…') : diffNote
+        }}</span>
+        <span v-if="diffInfo && diffReadOnly && !diffBusy && mode === 'diff'" class="ed-note-inline" data-test="diff-readonly">{{
+          diffInfo.area === 'staged' ? t('editor.diff.stagedReadOnly', 'Staged: read-only') : t('editor.diff.readOnly', 'Read-only')
+        }}</span>
         <span class="ed-spacer"></span>
-        <span v-if="activeDoc && activeDoc.saving" class="ed-state">Saving…</span>
-        <span v-else-if="!diffInfo && activeDoc && activeDoc.deleted" class="ed-state warn">Deleted on disk: saving creates it again</span>
+        <span v-if="activeDoc && activeDoc.saving" class="ed-state">{{ t('editor.state.saving', 'Saving…') }}</span>
+        <span v-else-if="!diffInfo && activeDoc && activeDoc.deleted" class="ed-state warn">{{
+          t('editor.state.deletedOnDisk', 'Deleted on disk: saving creates it again')
+        }}</span>
         <button
           v-if="diffInfo"
           type="button"
           class="ed-hbtn"
           :disabled="!canOpenFile"
-          :title="canOpenFile ? 'Open file tab' : 'This diff has no modified-side file to open'"
-          aria-label="Open file"
+          :title="canOpenFile ? t('editor.diff.openFileTab', 'Open file tab') : t('editor.diff.noFileToOpen', 'This diff has no modified-side file to open')"
+          :aria-label="t('editor.diff.openFile', 'Open file')"
           data-test="diff-open-file"
           @click="openDiffTargetFile"
         >
@@ -955,7 +999,7 @@ onBeforeUnmount(() => {
           v-if="diffInfo && fileNotes.length"
           :scopes="noteScopes"
           default-scope-id="file"
-          trigger-label="AI notes"
+          :trigger-label="t('notes.aiNotes', 'AI notes')"
           :trigger-count="fileNotes.length"
           trigger-class="ed-notes-pill"
           @delivered="onNotesDelivered"
@@ -964,21 +1008,37 @@ onBeforeUnmount(() => {
           <button
             type="button"
             class="ed-hbtn"
-            :title="settings.diffSideBySide ? 'Switch to inline diff' : 'Switch to side-by-side diff'"
-            :aria-label="settings.diffSideBySide ? 'Switch to inline diff' : 'Switch to side-by-side diff'"
+            :title="settings.diffSideBySide ? t('editor.diff.toInline', 'Switch to inline diff') : t('editor.diff.toSideBySide', 'Switch to side-by-side diff')"
+            :aria-label="
+              settings.diffSideBySide ? t('editor.diff.toInline', 'Switch to inline diff') : t('editor.diff.toSideBySide', 'Switch to side-by-side diff')
+            "
             data-test="diff-layout"
             @click="toggleSideBySide"
           >
             <LucideIcon :name="settings.diffSideBySide ? 'rows2' : 'columns2'" :size="14" />
           </button>
-          <button type="button" class="ed-hbtn" title="Previous change (Shift+F7)" aria-label="Previous change" data-test="diff-prev" @click="goToDiff('previous')">
+          <button
+            type="button"
+            class="ed-hbtn"
+            :title="t('editor.diff.prevHint', 'Previous change (Shift+F7)')"
+            :aria-label="t('editor.diff.prev', 'Previous change')"
+            data-test="diff-prev"
+            @click="goToDiff('previous')"
+          >
             <LucideIcon name="arrowUp" :size="14" />
           </button>
-          <button type="button" class="ed-hbtn" title="Next change (F7)" aria-label="Next change" data-test="diff-next" @click="goToDiff('next')">
+          <button
+            type="button"
+            class="ed-hbtn"
+            :title="t('editor.diff.nextHint', 'Next change (F7)')"
+            :aria-label="t('editor.diff.next', 'Next change')"
+            data-test="diff-next"
+            @click="goToDiff('next')"
+          >
             <LucideIcon name="arrowDown" :size="14" />
           </button>
         </template>
-        <div v-if="toggleModes.length > 1" class="ed-toggle" role="radiogroup" aria-label="View" data-test="view-toggle">
+        <div v-if="toggleModes.length > 1" class="ed-toggle" role="radiogroup" :aria-label="t('editor.view.aria', 'View')" data-test="view-toggle">
           <button
             v-for="v in toggleModes"
             :key="v"

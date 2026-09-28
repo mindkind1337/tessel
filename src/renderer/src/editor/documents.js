@@ -1,4 +1,3 @@
-// i18n-pending: text here does not go through t() yet
 // The files open in Tessel's editor panes, one document per file (kept while
 // any pane has a tab for it, so undo history survives tab switches and pane
 // moves; disposed when its last tab closes). Each document holds one Monaco
@@ -16,6 +15,9 @@ import { settings } from '../settings'
 import { pathKey, fileName, autoSaveDelay, minimalEdit, mainEol } from './editorTabs'
 import { pickLanguage } from '../../../shared/editorLanguage'
 import { createSaveQueue } from './saveQueue'
+import { t } from '../i18n'
+
+const unknownError = () => t('editor.doc.unknownError', 'unknown error')
 
 // key -> { path, key, name, loading, error, errorCode, dirty, deleted,
 //          external, saving, bom, sig, language }
@@ -131,12 +133,12 @@ async function load(key) {
   try {
     ;[monaco, res] = await Promise.all([loadMonaco(), window.shellApi.editor.read(d.path)])
   } catch (err) {
-    res = { ok: false, error: (err && err.message) || 'The editor could not start.', code: 'error' }
+    res = { ok: false, error: (err && err.message) || t('editor.doc.cannotStart', 'The editor could not start.'), code: 'error' }
   }
   if (docs[key] !== d) return // closed meanwhile
   d.loading = false
   if (!res || !res.ok) {
-    d.error = (res && res.error) || 'The file could not be read.'
+    d.error = (res && res.error) || t('editor.viewer.fileUnreadable', 'The file could not be read.')
     d.errorCode = (res && res.code) || 'error'
     return
   }
@@ -216,16 +218,24 @@ export function saveDoc(path, { trigger = 'user' } = {}) {
   return queue.run(key, async () => {
     const d = docs[key]
     const i = inner.get(key)
-    if (!d || !i || !i.model) return { ok: false, skipped: true, error: d && d.error ? d.error : 'The file is not open.' }
+    if (!d || !i || !i.model) return { ok: false, skipped: true, error: d && d.error ? d.error : t('editor.doc.notOpen', 'The file is not open.') }
     if (trigger === 'autosave' && !autoSaveAllowed(d)) return { ok: false, skipped: true }
     // Changed on disk under unsaved edits: not written over until the banner's
     // "Keep My Edits" (or Reload) says which version wins.
     if (d.external) {
-      hooks.toast(`${d.name} was changed on disk by another program: choose Compare, Reload or Keep My Edits before saving.`, {
-        kind: 'error',
-        timeout: 8000
-      })
-      return { ok: false, conflict: true, error: 'The file was changed on disk by another program.' }
+      hooks.toast(
+        t(
+          'editor.doc.changedChoose',
+          '{{name}} was changed on disk by another program: choose Compare, Reload or Keep My Edits before saving.',
+          { name: d.name }
+        ),
+        { kind: 'error', timeout: 8000 }
+      )
+      return {
+        ok: false,
+        conflict: true,
+        error: t('editor.doc.changedOnDisk', 'The file was changed on disk by another program.')
+      }
     }
     const text = i.model.getValue()
     const alt = i.model.getAlternativeVersionId()
@@ -242,7 +252,7 @@ export function saveDoc(path, { trigger = 'user' } = {}) {
           expectHash: i.diskHash || undefined
         })
       } catch (err) {
-        return { ok: false, error: (err && err.message) || 'unknown error' }
+        return { ok: false, error: (err && err.message) || unknownError() }
       }
     }
     d.saving = true
@@ -260,15 +270,22 @@ export function saveDoc(path, { trigger = 'user' } = {}) {
       if (trigger !== 'autosave')
         hooks.toast(
           d.external
-            ? `${d.name} was changed on disk by another program: your edits were not saved. Compare, reload or keep them.`
-            : `${d.name} was changed on disk by another program: reloaded.`,
+            ? t(
+                'editor.doc.changedNotSaved',
+                '{{name}} was changed on disk by another program: your edits were not saved. Compare, reload or keep them.',
+                { name: d.name }
+              )
+            : t('editor.doc.changedReloaded', '{{name}} was changed on disk by another program: reloaded.', { name: d.name }),
           { kind: 'error', timeout: 8000 }
         )
       return res
     }
     if (!res || !res.ok) {
-      hooks.toast(`Could not save ${d.name}: ${(res && res.error) || 'unknown error'}`, { kind: 'error', timeout: 8000 })
-      return res || { ok: false, error: 'unknown error' }
+      hooks.toast(
+        t('editor.doc.saveFailed', 'Could not save {{name}}: {{error}}', { name: d.name, error: (res && res.error) || unknownError() }),
+        { kind: 'error', timeout: 8000 }
+      )
+      return res || { ok: false, error: unknownError() }
     }
     // Our own write: the watcher ignores it (main process), and so does this
     // window for a second (the same signature).
@@ -438,7 +455,10 @@ export async function reloadFromDisk(path) {
   const res = await readFile(d.path)
   if (docs[key] !== d) return
   if (!res || !res.ok) {
-    hooks.toast(`Could not reload ${d.name}: ${(res && res.error) || 'unknown error'}`, { kind: 'error' })
+    hooks.toast(
+      t('editor.doc.reloadFailed', 'Could not reload {{name}}: {{error}}', { name: d.name, error: (res && res.error) || unknownError() }),
+      { kind: 'error' }
+    )
     return
   }
   d.sig = res.sig || null

@@ -1,4 +1,3 @@
-<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // The rendered view of an editor tab (Orca's view modes, after its
 // MarkdownPreview.tsx, MermaidViewer, CsvViewer and ImageViewer; MIT,
@@ -9,6 +8,7 @@ import { ref, computed, watch, nextTick, onMounted } from 'vue'
 import { parseTable } from '../../../shared/fileKinds'
 import { renderMarkdown, renderMermaid } from '../markdownView'
 import { resolveFrom } from '../../../shared/viewPaths'
+import { t } from '../i18n'
 
 const props = defineProps({
   file: { type: String, required: true },
@@ -61,7 +61,7 @@ async function afterRender() {
     renderMermaid(src, { dark: isDark() }).then((r) => {
       if (r.error) {
         el.classList.add('error')
-        el.textContent = `Diagram error: ${r.error}`
+        el.textContent = t('editor.viewer.diagramError', 'Diagram error: {{error}}', { error: r.error })
       } else el.innerHTML = r.svg
     })
   }
@@ -85,7 +85,7 @@ async function loadImage() {
     r = { ok: false, error: err && err.message }
   }
   if (r && r.ok && r.dataUrl) imageUrl.value = r.dataUrl
-  else imageError.value = (r && r.error) || 'The image could not be read.'
+  else imageError.value = (r && r.error) || t('editor.viewer.imageUnreadable', 'The image could not be read.')
 }
 
 let renderTimer = 0
@@ -122,8 +122,8 @@ function onBodyClick(e) {
   }
   if (href.startsWith('#')) {
     const id = decodeURIComponent(href.slice(1))
-    const t = [...bodyEl.value.querySelectorAll('[id]')].find((el) => el.id === id)
-    if (t) t.scrollIntoView({ block: 'start' })
+    const heading = [...bodyEl.value.querySelectorAll('[id]')].find((el) => el.id === id)
+    if (heading) heading.scrollIntoView({ block: 'start' })
     return
   }
   const target = resolveFrom(props.file, href)
@@ -136,10 +136,14 @@ function onBodyClick(e) {
     <!-- eslint-disable-next-line vue/no-v-html (sanitized by DOMPurify, markdownView.js) -->
     <article v-if="kind === 'markdown'" class="fview-md" v-html="markdownHtml"></article>
     <div v-else-if="kind === 'mermaid'" class="fview-mermaid">
-      <div v-if="mermaidError" class="fview-note error">Diagram error: {{ mermaidError }}</div>
+      <div
+        v-if="mermaidError"
+        class="fview-note error"
+        v-text="t('editor.viewer.diagramError', 'Diagram error: {{error}}', { error: mermaidError })"
+      ></div>
       <!-- eslint-disable-next-line vue/no-v-html (sanitized SVG) -->
       <div v-else-if="mermaidSvg" class="md-mermaid" v-html="mermaidSvg"></div>
-      <div v-else class="fview-note">Drawing…</div>
+      <div v-else class="fview-note">{{ t('editor.viewer.drawing', 'Drawing…') }}</div>
     </div>
     <div v-else-if="table" class="fview-table-wrap">
       <table class="fview-table">
@@ -156,12 +160,16 @@ function onBodyClick(e) {
           </tr>
         </tbody>
       </table>
-      <div v-if="table.more" class="fview-note">{{ table.more }} more rows not shown. Source shows them all.</div>
+      <div
+        v-if="table.more"
+        class="fview-note"
+        v-text="t('editor.viewer.moreRows', '{{count}} more rows not shown. Source shows them all.', { count: table.more })"
+      ></div>
     </div>
     <div v-else-if="kind === 'image'" class="fview-image" data-test="image-view">
       <div v-if="imageError" class="fview-note error">{{ imageError }}</div>
       <img v-else-if="imageUrl" :src="imageUrl" :alt="file.split(/[\\/]/).pop()" draggable="false" />
-      <div v-else class="fview-note">Reading…</div>
+      <div v-else class="fview-note">{{ t('editor.viewer.reading', 'Reading…') }}</div>
     </div>
   </div>
 </template>

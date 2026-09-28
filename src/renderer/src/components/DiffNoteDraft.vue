@@ -1,4 +1,3 @@
-<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // The composer for a new review note, inline under a diff line (after Orca's
 // DiffCommentDraftCard.tsx, MIT, Copyright (c) 2026 Lovecast Inc.): Enter
@@ -6,11 +5,12 @@
 // elsewhere cancels an empty draft.
 import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import LucideIcon from './LucideIcon.vue'
+import { t } from '../i18n'
 
 const props = defineProps({
   lineNumber: { type: Number, required: true },
   startLine: { type: Number, default: null },
-  placeholder: { type: String, default: 'Add note for the AI' },
+  placeholder: { type: String, default: null },
   onCancel: { type: Function, required: true },
   // (body) -> Promise<boolean>
   onSubmit: { type: Function, required: true },
@@ -22,15 +22,18 @@ const submitting = ref(false)
 const cardEl = ref(null)
 const textEl = ref(null)
 const headerLabel = computed(() =>
-  props.startLine && props.startLine !== props.lineNumber ? `Lines ${props.startLine}-${props.lineNumber}` : `Line ${props.lineNumber}`
+  props.startLine && props.startLine !== props.lineNumber
+    ? t('notes.draft.lines', 'Lines {{start}}-{{end}}', { start: props.startLine, end: props.lineNumber })
+    : t('notes.draft.line', 'Line {{line}}', { line: props.lineNumber })
 )
+const shownPlaceholder = computed(() => props.placeholder || t('notes.draft.placeholder', 'Add note for the AI'))
 const canSubmit = computed(() => !submitting.value && /\S/.test(body.value))
 
 function resizeTextarea() {
-  const t = textEl.value
-  if (!t) return
-  t.style.height = 'auto'
-  t.style.height = `${Math.min(240, Math.max(56, t.scrollHeight + 2))}px`
+  const ta = textEl.value
+  if (!ta) return
+  ta.style.height = 'auto'
+  ta.style.height = `${Math.min(240, Math.max(56, ta.scrollHeight + 2))}px`
   if (props.onResize) props.onResize()
 }
 
@@ -103,16 +106,25 @@ onBeforeUnmount(() => {
         ref="textEl"
         v-model="body"
         class="orca-diff-comment-popover-textarea"
-        :placeholder="placeholder"
+        :placeholder="shownPlaceholder"
         rows="3"
         data-test="diff-note-input"
         @input="resizeTextarea"
         @keydown="onKeydown"
       ></textarea>
       <div class="orca-diff-comment-popover-footer">
-        <button type="button" class="orca-btn-ghost" :disabled="submitting" @click="onCancel()">Cancel</button>
-        <button type="button" class="orca-btn-primary" aria-label="Add note" :disabled="!canSubmit" data-test="diff-note-add" @click="submit">
-          {{ submitting ? 'Adding...' : 'Add note' }}
+        <button type="button" class="orca-btn-ghost" :disabled="submitting" @click="onCancel()">
+          {{ t('notes.draft.cancel', 'Cancel') }}
+        </button>
+        <button
+          type="button"
+          class="orca-btn-primary"
+          :aria-label="t('notes.draft.add', 'Add note')"
+          :disabled="!canSubmit"
+          data-test="diff-note-add"
+          @click="submit"
+        >
+          {{ submitting ? t('notes.draft.adding', 'Adding...') : t('notes.draft.add', 'Add note') }}
           <LucideIcon v-if="!submitting" name="cornerDownLeft" :size="12" class="orca-kbd-icon" />
         </button>
       </div>

@@ -1,9 +1,9 @@
-// i18n-pending: text here does not go through t() yet
 // The git status the Changes tab shows, shared by the side panel (its count
 // badge), the Changes tab and the diff tabs (which read their sides again
 // after a stage, a discard or a commit). One request per folder at a time;
 // an answer for a folder asked again since, or no longer shown, is dropped.
 import { reactive } from 'vue'
+import { t } from './i18n'
 
 const api = () => window.shellApi && window.shellApi.scm
 
@@ -35,7 +35,7 @@ export async function refreshStatus(root) {
   try {
     res = await api().status({ root })
   } catch (err) {
-    failed = (err && err.message) || 'Git status failed.'
+    failed = (err && err.message) || t('changes.status.failed', 'Git status failed.')
   }
   if (seqs[k] !== my || !scmStatus[k]) return null // a newer request, or forgotten
   const s = scmStatus[k]
@@ -43,7 +43,7 @@ export async function refreshStatus(root) {
   s.loaded = true
   if (!res || !res.ok) {
     // Never a clean copy without a status that worked.
-    s.error = (res && res.error) || failed || 'Git status failed.'
+    s.error = (res && res.error) || failed || t('changes.status.failed', 'Git status failed.')
     s.data = null
     return null
   }
