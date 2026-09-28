@@ -267,11 +267,15 @@ async function askEditorClose(paths) {
   if (answer !== true) return false
   return saveDocs(paths)
 }
-// Editor files with unsaved changes that closing these panes would lose.
+// Editor files with unsaved changes that closing these panes would lose: every
+// pane still showing one is among them (two closing panes showing the same
+// file lose it too), each file asked about once.
 function dirtyEditorPaths(leaves) {
+  const editors = leaves.filter((l) => l && l.kind === 'editor')
+  const ids = editors.map((l) => l.id)
   const out = []
-  for (const l of leaves) {
-    if (l && l.kind === 'editor') for (const p of dirtyOnlyIn(l.id, (l.files || []).map((f) => f.path))) if (!out.some((o) => samePath(o, p))) out.push(p)
+  for (const l of editors) {
+    for (const p of dirtyOnlyIn(ids, (l.files || []).map((f) => f.path))) if (!out.some((o) => samePath(o, p))) out.push(p)
   }
   return out
 }

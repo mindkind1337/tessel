@@ -62,7 +62,36 @@ export function readForEdit(file) {
   } catch {
     return { ok: false, error: 'This file is not UTF-8 text: open it with another editor.', code: 'encoding' }
   }
-  return { ok: true, text, bom, size: st.size, mtimeMs: st.mtimeMs, sig: signatureOf(st) }
+  return { ok: true, text, bom, size: st.size, mtimeMs: st.mtimeMs, sig: signatureOf(st), hash: hashOf(buf) }
+}
+
+// A file's content identity (its bytes, BOM included).
+export function hashOf(buf) {
+  return crypto.createHash('sha256').update(buf).digest('hex')
+}
+
+// Has the file changed since the editor last knew it (expectHash: its bytes
+// then, expectSig: its signature then)? Neither given: not checked. A file
+// gone meanwhile has nothing to overwrite. -> { changed, sig }
+export function changedOnDisk(file, { expectSig, expectHash } = {}) {
+  if (expectSig === undefined && expectHash === undefined) return { changed: false, sig: null }
+  let st
+  try {
+    st = fs.statSync(file)
+  } catch {
+    return { changed: false, sig: null }
+  }
+  const sig = signatureOf(st)
+  if (typeof expectHash === 'string' && expectHash) {
+    // The content decides: touched but the same bytes is no change, and a
+    // change that kept the size and time is still one.
+    try {
+      return { changed: hashOf(fs.readFileSync(file)) !== expectHash, sig }
+    } catch {
+      return { changed: true, sig }
+    }
+  }
+  return { changed: sig !== expectSig, sig }
 }
 
 // -> { ok, exists, size, mtimeMs, sig }
@@ -97,8 +126,12 @@ async function renameOver(tmp, target) {
   return last
 }
 
-// { file, text, bom } -> { ok, size, mtimeMs, sig } | { ok: false, error }
-export async function writeForEdit({ file, text, bom = false } = {}) {
+// { file, text, bom, expectSig, expectHash } -> { ok, size, mtimeMs, sig, hash }
+// | { ok: false, error } | { ok: false, conflict: true, error, sig }
+// expectSig / expectHash: the file as the editor last knew it. Changed on disk
+// since (an agent wrote it before the watcher told the window): refused, never
+// overwritten; the editor treats it as a change made on disk.
+export async function writeForEdit({ file, text, bom = false, expectSig, expectHash } = {}) {
   const bad = checkPath(file)
   if (bad) return { ok: false, error: bad }
   if (typeof text !== 'string') return { ok: false, error: 'Nothing to write.' }
@@ -116,6 +149,10 @@ export async function writeForEdit({ file, text, bom = false } = {}) {
   }
   const data = bom ? Buffer.concat([BOM, Buffer.from(text, 'utf8')]) : Buffer.from(text, 'utf8')
   if (data.length > MAX_EDIT_BYTES) return { ok: false, error: 'The text is too large to save (over 50 MB).' }
+  const expect = { expectSig, expectHash }
+  const conflict = (sig) => ({ ok: false, conflict: true, sig, error: 'The file was changed on disk by another program.' })
+  const before = changedOnDisk(target, expect)
+  if (before.changed) return conflict(before.sig)
   const dir = dirname(target)
   const tmp = join(dir, `.${basename(target)}.tessel-${process.pid}-${crypto.randomBytes(4).toString('hex')}.tmp`)
   try {
@@ -135,6 +172,16 @@ export async function writeForEdit({ file, text, bom = false } = {}) {
     }
     return { ok: false, error: (err && err.message) || 'The file could not be written.' }
   }
+  // Checked again right before the file is replaced (the write took time).
+  const late = changedOnDisk(target, expect)
+  if (late.changed) {
+    try {
+      fs.unlinkSync(tmp)
+    } catch {
+      // gone already
+    }
+    return conflict(late.sig)
+  }
   const failed = await renameOver(tmp, target)
   if (failed) {
     try {
@@ -145,7 +192,7 @@ export async function writeForEdit({ file, text, bom = false } = {}) {
     return { ok: false, error: failed.message || 'The file could not be replaced.' }
   }
   const st = statForEdit(target)
-  return { ok: true, size: st.size, mtimeMs: st.mtimeMs, sig: st.sig }
+  return { ok: true, size: st.size, mtimeMs: st.mtimeMs, sig: st.sig, hash: hashOf(data) }
 }
 
 function git(args, opts = {}) {

@@ -108,8 +108,11 @@ function install() {
         const d = disk.get(file)
         return { ok: true, text: d.text, bom: !!d.bom, sig: d.sig }
       },
-      write: async ({ file, text, bom }) => {
+      write: async ({ file, text, bom, expectSig }) => {
         if (file.includes('readonly')) return { ok: false, error: 'EPERM: operation not permitted' }
+        // The main process's guard: changed on disk since the editor knew it.
+        if (expectSig !== undefined && disk.has(file) && disk.get(file).sig !== expectSig)
+          return { ok: false, conflict: true, sig: disk.get(file).sig, error: 'changed on disk' }
         const sig = `s${writes.length + 100}`
         disk.set(file, { text, bom, sig })
         writes.push({ file, text, bom })
@@ -273,6 +276,149 @@ describe('editor documents', () => {
     mod.reconcileOwner('pane-1', [])
     expect(mod.getDoc(F)).toBe(null)
     expect(m.isDisposed()).toBe(true)
+  })
+
+  it('counts a document held only by panes closing together as at risk', async () => {
+    await open('a\n')
+    mod.acquireDoc(F, 'pane-2')
+    mod.modelOf(F).type('x')
+    // Each pane alone: the other still shows it.
+    expect(mod.dirtyOnlyIn('pane-1', [F])).toEqual([])
+    expect(mod.dirtyOnlyIn(['pane-2'], [F])).toEqual([])
+    // Both closing (a workspace): lost unless asked about.
+    expect(mod.dirtyOnlyIn(['pane-1', 'pane-2'], [F])).toEqual([F])
+    expect(mod.dirtyOnlyIn(new Set(['pane-1', 'pane-2', 'pane-3']), [F])).toEqual([F])
+    mod.acquireDoc(F, 'pane-3')
+    expect(mod.dirtyOnlyIn(['pane-1', 'pane-2'], [F])).toEqual([])
+  })
+
+  it("App's dirtyEditorPaths asks once about a file two closing panes show", async () => {
+    const fs = await import('fs')
+    const { join } = await import('path')
+    const { samePath } = await import('../editor/editorTabs')
+    const src = fs.readFileSync(join(process.cwd(), 'src', 'renderer', 'src', 'App.vue'), 'utf8')
+    const fn = src.match(/function dirtyEditorPaths\(leaves\) \{[\s\S]*?\n\}/)[0]
+    const dirtyEditorPaths = new Function('dirtyOnlyIn', 'samePath', `${fn}\nreturn dirtyEditorPaths`)(mod.dirtyOnlyIn, samePath)
+    await open('a\n')
+    mod.acquireDoc(F, 'pane-2')
+    mod.modelOf(F).type('x')
+    const leaves = ['pane-1', 'pane-2'].map((id) => ({ id, kind: 'editor', files: [{ path: F }] }))
+    expect(dirtyEditorPaths(leaves)).toEqual([F])
+    expect(dirtyEditorPaths([leaves[0]])).toEqual([])
+    expect(dirtyEditorPaths([leaves[0], { id: 'term', kind: 'terminal' }])).toEqual([])
+  })
+
+  it('never auto-saves over a change made on disk before the watcher said so', async () => {
+    const { settings } = await import('../settings')
+    await open('original')
+    mod.modelOf(F).type(' MINE')
+    // An agent writes; the watcher's event has not arrived yet.
+    disk.set(F, { text: 'IMPORTANT AGENT EDIT', sig: 's2' })
+    settings.editorAutoSave = true
+    const res = await mod.saveDoc(F, { trigger: 'autosave' })
+    expect(res).toMatchObject({ ok: false, conflict: true })
+    expect(disk.get(F).text).toBe('IMPORTANT AGENT EDIT')
+    const d = mod.getDoc(F)
+    expect(d.external).toBe(true)
+    expect(d.dirty).toBe(true)
+    expect(mod.diskTextOf(F)).toBe('IMPORTANT AGENT EDIT')
+    expect(mod.modelOf(F).getValue()).toBe('original MINE')
+    expect(toasts).toEqual([])
+    // Auto-save stays suspended.
+    vi.useFakeTimers()
+    mod.modelOf(F).type('!')
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(writes.length).toBe(0)
+    vi.useRealTimers()
+    // The watcher's late event changes nothing more.
+    await changed({ path: F, exists: true, sig: 's2' })
+    await flush()
+    expect(d.external).toBe(true)
+    // A manual Save (or Save in a close prompt) refuses too while the banner
+    // is unanswered, and says so.
+    settings.editorAutoSave = false
+    expect(await mod.saveDoc(F)).toMatchObject({ ok: false, conflict: true })
+    expect(await mod.saveDocs([F])).toBe(false)
+    expect(toasts[0]).toMatch(/Keep My Edits before saving/)
+    expect(disk.get(F).text).toBe('IMPORTANT AGENT EDIT')
+    expect(writes.length).toBe(0)
+  })
+
+  it('a manual save after a conflict is refused until Keep My Edits, then writes on purpose', async () => {
+    await open('original')
+    mod.modelOf(F).type(' MINE')
+    disk.set(F, { text: 'AGENT', sig: 's2' })
+    const first = await mod.saveDoc(F)
+    expect(first).toMatchObject({ ok: false, conflict: true })
+    expect(toasts[0]).toMatch(/changed on disk by another program: your edits were not saved/)
+    expect(disk.get(F).text).toBe('AGENT')
+    expect(mod.getDoc(F).external).toBe(true)
+    // Refused while the banner is unanswered.
+    expect((await mod.saveDoc(F)).conflict).toBe(true)
+    // Keep My Edits, but the agent wrote again meanwhile: refused again.
+    disk.set(F, { text: 'AGENT 2', sig: 's3' })
+    mod.keepMyEdits(F)
+    expect((await mod.saveDoc(F)).conflict).toBe(true)
+    expect(disk.get(F).text).toBe('AGENT 2')
+    expect(mod.diskTextOf(F)).toBe('AGENT 2')
+    expect(mod.getDoc(F).external).toBe(true)
+    // Keep My Edits over the version now shown: written on purpose.
+    mod.keepMyEdits(F)
+    const res = await mod.saveDoc(F)
+    expect(res.ok).toBe(true)
+    expect(disk.get(F).text).toBe('original MINE')
+    expect(mod.getDoc(F).dirty).toBe(false)
+  })
+
+  it('a clean document whose file changed before the watcher said so is reloaded, not overwritten', async () => {
+    await open('original')
+    disk.set(F, { text: 'AGENT', sig: 's2' })
+    const res = await mod.saveDoc(F)
+    expect(res.conflict).toBe(true)
+    expect(disk.get(F).text).toBe('AGENT')
+    expect(mod.modelOf(F).getValue()).toBe('AGENT')
+    expect(mod.getDoc(F).dirty).toBe(false)
+    expect(mod.getDoc(F).external).toBe(false)
+  })
+
+  it('saving before closing also saves an edit typed during the save', async () => {
+    await open('a')
+    const m = mod.modelOf(F)
+    m.type(' SAVE THIS')
+    const realWrite = window.shellApi.editor.write
+    let release
+    const gate = new Promise((r) => (release = r))
+    let calls = 0
+    window.shellApi.editor.write = async (q) => {
+      if (calls++ === 0) await gate
+      return realWrite(q)
+    }
+    const closing = mod.saveDocs([F])
+    await flush()
+    m.type(' NEW EDIT DURING SAVE')
+    release()
+    expect(await closing).toBe(true)
+    expect(mod.getDoc(F).dirty).toBe(false)
+    expect(disk.get(F).text).toBe('a SAVE THIS NEW EDIT DURING SAVE')
+    expect(writes.length).toBe(2)
+  })
+
+  it('saving before closing says no when an edit typed during the save could not be saved', async () => {
+    await open('a')
+    const m = mod.modelOf(F)
+    m.type('b')
+    const realWrite = window.shellApi.editor.write
+    let calls = 0
+    window.shellApi.editor.write = async (q) => {
+      calls++
+      if (calls === 1) {
+        m.type('c') // typed while the first write runs
+        return realWrite(q)
+      }
+      return { ok: false, error: 'disk full' }
+    }
+    expect(await mod.saveDocs([F])).toBe(false)
+    expect(mod.getDoc(F).dirty).toBe(true)
   })
 
   it('shows why a file cannot be opened', async () => {
