@@ -107,7 +107,7 @@
       "resume": "Reprendre les conversations à la réouverture des panneaux",
       "resumeHint": "Claude Code et Codex reprennent là où ils s'étaient arrêtés après un redémarrage, au lieu de commencer une nouvelle conversation",
       "autoTitles": "Afficher le titre de la conversation",
-      "autoTitlesHint": "À côté du nom de l'agent dans les panneaux Claude Code et Codex (le nom reste)",
+      "autoTitlesHint": "Sous l'agent dans la barre de gauche et dans la bulle au survol du panneau (Claude Code et Codex)",
       "whileWorking": "Pendant que les agents travaillent",
       "keepAwake": "Empêcher la mise en veille de l'ordinateur",
       "keepAwakeHint": "Choisissez Activé, Agent ou Désactivé. Le mode Agent reste éveillé tant que des agents travaillent ; le comportement à la fermeture du capot suit les paramètres d'alimentation de cet appareil.",

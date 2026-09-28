@@ -42,6 +42,10 @@ import { isViewed } from '../../../shared/fileKinds'
 import { effectiveAgent, launchSignature } from '../../../shared/agentPrefs'
 import { paneModels } from '../paneModels'
 import AgentChildren from './AgentChildren.vue'
+import HoverCardContent from './hover/HoverCardContent.vue'
+import PaneHoverDetails from './PaneHoverDetails.vue'
+import { useHoverCard } from './hover/useHoverCard'
+import { agentStateLabel } from '../sidebarModel'
 import { t, intlLocale } from '../i18n'
 
 const props = defineProps({
@@ -209,17 +213,23 @@ let pendingScreenWrites = 0
 let hasLiveScreen = false
 const observedState = computed(() => managedAgentStatus(props.node) ? getAgentState(props.node.id, props.node.agentLaunchToken) : null)
 const estimatedState = computed(() => !managedAgentStatus(props.node) || !observedState.value?.hookSeen)
-const statusTitle = computed(() => {
+const shownState = computed(() => {
   const observed = observedState.value
-  const state = observed?.confirmed && !observed.stale
+  return observed?.confirmed && !observed.stale
     ? observed.state
     : agentStatus.value === 'busy' ? 'working' : agentStatus.value === 'idle' ? 'idle' : 'unknown'
-  const source =
-    state === 'unknown'
-      ? t('pane.status.noFresh', 'No fresh status is confirmed for this agent.')
-      : estimatedState.value
-        ? t('pane.status.estimated', 'Estimated from terminal output; hooks have not confirmed it.')
-        : t('pane.status.confirmed', 'Confirmed by agent events and terminal readiness.')
+})
+// Where the shown state comes from (hooks, or guessed from the screen).
+const statusSource = computed(() =>
+  shownState.value === 'unknown'
+    ? t('pane.status.noFresh', 'No fresh status is confirmed for this agent.')
+    : estimatedState.value
+      ? t('pane.status.estimated', 'Estimated from terminal output; hooks have not confirmed it.')
+      : t('pane.status.confirmed', 'Confirmed by agent events and terminal readiness.')
+)
+const statusTitle = computed(() => {
+  const state = shownState.value
+  const source = statusSource.value
   const line = managedAgentStatus(props.node)
     ? t('pane.status.mainState', 'Main agent state: {{state}}. {{source}}', { state: stateWord(state), source })
     : t('pane.status.agentState', 'Agent state: {{state}}. {{source}}', { state: stateWord(state), source })
@@ -416,8 +426,9 @@ const badge = computed(() => {
   return null
 })
 
-// The title's tooltip: what the header no longer shows, in one place.
-const titleTooltip = computed(() => {
+// What the header no longer shows, in one place, for screen readers (the
+// hover card below shows it to the eye).
+const titleDescription = computed(() => {
   const lines = [
     autoTitle.value
       ? t('pane.title.namedAfter', '{{name}}: {{title}} (named after its conversation)', { name: paneTitle.value, title: autoTitle.value })
@@ -433,12 +444,65 @@ const titleTooltip = computed(() => {
         : t('sidebar.card.team', 'Team: {{team}}', { team: team.value.name })
     )
   if (isAgent.value && props.node.launchYolo) lines.push(t('pane.title.yolo', 'Yolo: runs without asking you'))
+  if (headerState.value) lines.push(headerState.value.label)
   lines.push(t('pane.title.hint', 'Double-click to rename. Drag the header to move the pane. More in the … menu'))
   return lines.join('\n')
 })
-const iconTooltip = computed(() => {
-  if (!isAgent.value) return props.node.shellName
-  return props.node.launchYolo ? `${statusTitle.value}\n${yoloTitle()}` : statusTitle.value
+
+// The header's hover card (Orca's hover card, like the sidebar's agent rows)
+// instead of native tooltips on the number, icon, title and state badge.
+// Orca's pane tab titles show a tooltip after its TooltipProvider's 400 ms,
+// below the title (side bottom, 6 px away, at most w-80): the same here.
+const headerHover = useHoverCard({
+  openDelay: 400,
+  disabled: () =>
+    editingTitle.value ||
+    editingModel.value ||
+    ctxMenu.visible ||
+    (typeof document !== 'undefined' && document.body.classList.contains('pane-dragging')),
+  // Badges that keep their own one-line tooltip close the card.
+  ignore: '.pane-approval, .pane-limit, .pane-unsent, .pane-stuck, .pane-apply, .pane-cache, .exit-tag[title], input'
+})
+// The agent's own name (the pane can be renamed), or the shell's.
+const agentName = computed(() => {
+  const n = props.node
+  if (!isAgent.value) return n.shellName || ''
+  const list = ctx.agents && ctx.agents.value
+  const found = Array.isArray(list) ? list.find((a) => a && a.id === n.agentId) : null
+  return (found && found.name) || (!n.titleSet && n.title) || n.agentId || ''
+})
+// The state the header's dot and badge show, as the sidebar's dot and words.
+const headerState = computed(() => {
+  if (props.node.sleeping) return { dot: 'sleeping', label: t('sidebar.status.sleeping', 'Sleeping') }
+  if (exited.value) return { dot: 'failed', label: t('pane.hover.exited', 'Exited') }
+  if (!isAgent.value) return null
+  if (asksApproval.value) return { dot: 'waiting', label: t('sidebar.row.asksApproval', 'Asks your approval') }
+  if (limit.value) return { dot: 'blocked', label: limitTitle.value }
+  if (agentStatus.value === 'busy') return { dot: 'working', label: agentStateLabel('working') }
+  if (agentStatus.value === 'unknown') return { dot: 'unverifiable', label: agentStateLabel('unverifiable') }
+  if (needsYou.value) return { dot: 'done', label: agentStateLabel('done') }
+  return { dot: 'idle', label: agentStateLabel('idle') }
+})
+const hoverInfo = computed(() => {
+  const n = props.node
+  const agent = isAgent.value
+  const live = agent && !n.sleeping && !exited.value
+  return {
+    heading: paneTitle.value,
+    agentName: agentName.value,
+    iconKind: agent ? n.agentId : n.shellId,
+    accent: agent ? n.accent : null,
+    model: agent ? modelText.value : '',
+    conversation: autoTitle.value,
+    branch: n.worktree ? n.worktree.branch : '',
+    state: headerState.value,
+    stateDetail: live && !asksApproval.value && !limit.value ? statusSource.value : '',
+    warn: stuck.value && track.value ? track.value.reason : '',
+    yolo: agent && n.launchYolo ? yoloTitle() : '',
+    team: team.value ? { name: team.value.name, lead: isLead.value } : null,
+    num: n.num || 0,
+    session: agent ? n.sessionId || '' : ''
+  }
 })
 
 // The team this pane is in (a named, coloured group of agents), if any.
@@ -1023,6 +1087,9 @@ function onNavMouseDown(e) {
 
 // Drag the header to move the pane (buttons and inputs stay clickable; a click without movement is not a drag).
 function onNavPointerDown(e) {
+  // A press in the header (a drag, a double-click to rename, a button)
+  // closes its hover card until the pointer leaves.
+  headerHover.dismiss()
   if (e.button !== 0) return
   if (e.target.closest('button, input, label')) return
   ctx.beginPaneDrag(props.node.id, e)
@@ -1709,13 +1776,16 @@ onBeforeUnmount(() => {
       @mousedown.stop="onNavMouseDown"
       @pointerdown="onNavPointerDown"
     >
-      <div class="pane-nav-left">
-        <span v-if="node.num" class="pane-num" :title="t('pane.number', 'Pane #{{num}}', { num: node.num })">{{ node.num }}</span>
+      <!-- Resting on the number, icon, title or state shows the hover card
+           (a press, Esc or a right-click closes it). -->
+      <div class="pane-nav-left" data-test="pane-hover-trigger" v-on="headerHover.triggerListeners">
+        <span v-if="node.num" class="pane-num" :aria-label="t('pane.number', 'Pane #{{num}}', { num: node.num })">{{ node.num }}</span>
         <span
           class="pane-icon"
           :class="isAgent ? ['agent', needsYou ? 'attention' : agentStatus, { yolo: node.launchYolo }] : null"
           :style="isAgent ? { '--accent': node.accent } : null"
-          :title="iconTooltip"
+          :aria-label="agentName"
+          :aria-description="isAgent ? statusTitle : undefined"
         >
           <BrandIcon
             :kind="isAgent ? node.agentId : node.shellId"
@@ -1740,15 +1810,12 @@ onBeforeUnmount(() => {
           v-if="!editingTitle"
           class="pane-title"
           data-test="pane-title"
-          :title="titleTooltip"
+          :aria-description="titleDescription"
           @dblclick="startEditTitle"
           >{{ paneTitle }}</span
         >
-        <!-- The conversation's title beside the agent's name (never instead
-             of it: which agent runs here stays readable). -->
-        <span v-if="!editingTitle && autoTitle" class="pane-subtitle" data-test="pane-subtitle" :title="autoTitle">{{
-          autoTitle
-        }}</span>
+        <!-- The conversation's title is in the header's hover card only (the
+             header keeps its space). -->
         <!-- Pane menu > Set model...: edited in place, only while editing. -->
         <input
           v-if="isAgent && editingModel"
@@ -1788,8 +1855,8 @@ onBeforeUnmount(() => {
         >
           {{ t('pane.badge.apply', 'Restart to apply') }}
         </button>
-        <span v-else-if="badge === 'working'" class="pane-working" data-test="pane-badge" :title="statusTitle">{{ estimatedState ? t('pane.badge.workingEstimated', 'working · estimated') : t('pane.badge.working', 'working') }}</span>
-        <span v-else-if="badge === 'unknown'" class="pane-working" data-test="pane-badge" :title="statusTitle">{{ t('pane.badge.unknown', 'unknown') }}</span>
+        <span v-else-if="badge === 'working'" class="pane-working" data-test="pane-badge" :aria-description="statusTitle">{{ estimatedState ? t('pane.badge.workingEstimated', 'working · estimated') : t('pane.badge.working', 'working') }}</span>
+        <span v-else-if="badge === 'unknown'" class="pane-working" data-test="pane-badge" :aria-description="statusTitle">{{ t('pane.badge.unknown', 'unknown') }}</span>
         <span v-else-if="badge === 'needs'" class="pane-needs-you" data-test="pane-badge">{{ t('pane.badge.needs', 'needs you') }}</span>
         <span v-else-if="badge === 'cache'" class="pane-cache" :class="cache.level" data-test="pane-badge" :title="cacheTitle">
           <svg width="11" height="11" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -1799,6 +1866,9 @@ onBeforeUnmount(() => {
           <template v-if="cache.level !== 'expired'">{{ cache.label }}</template>
         </span>
       </div>
+      <HoverCardContent :hc="headerHover" side="bottom" align="start" :side-offset="6" class="pane-hover-card" data-test="pane-hover-card">
+        <PaneHoverDetails :info="hoverInfo" />
+      </HoverCardContent>
       <div class="pane-nav-actions" @mousedown.stop>
         <label
           v-if="ctx.broadcast.value"

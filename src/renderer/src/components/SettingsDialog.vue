@@ -967,7 +967,7 @@ function previewSound() {
               <label class="set-row">
                 <div class="set-label">
                   {{ t('settings.agents.autoTitles', 'Show the conversation\'s title') }}
-                  <span class="set-hint">{{ t('settings.agents.autoTitlesHint', 'Beside the agent\'s name in Claude Code and Codex panes (the name stays)') }}</span>
+                  <span class="set-hint">{{ t('settings.agents.autoTitlesHint', 'Under the agent in the left sidebar and in the pane\'s hover card (Claude Code and Codex)') }}</span>
                 </div>
                 <input v-model="settings.autoTitles" type="checkbox" class="set-switch" />
               </label>

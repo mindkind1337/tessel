@@ -9203,10 +9203,74 @@ button.act-stat:hover,
   }
 }
 
+/* Below its trigger (a pane header): Radix's slide-in-from-top. */
+.hover-card[data-side='bottom'] {
+  animation-name: hover-card-in-bottom;
+}
+
+.hover-card[data-side='top'] {
+  transform-origin: left bottom;
+  animation-name: hover-card-in-top;
+}
+
+@keyframes hover-card-in-bottom {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.95);
+  }
+}
+
+@keyframes hover-card-in-top {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.95);
+  }
+}
+
+/* A hover card is in the top layer: above every pane, a maximized one too
+   (z-index 100), below menus and dialogs. */
+.hover-card {
+  z-index: 150;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .hover-card {
     animation: none;
   }
+}
+
+/* The pane header's card: the heading with the shell's icon, the model
+   line, and the muted hint at the end. */
+.hc-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.hc-title-row > svg,
+.hc-agent > svg {
+  flex-shrink: 0;
+}
+
+.hc-agent > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.hc-model {
+  color: var(--text-strong);
+}
+
+.hc-session {
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  overflow-wrap: anywhere;
+}
+
+.hc-hint {
+  color: color-mix(in srgb, var(--text-dim) 80%, transparent);
+  font-size: 11px;
+  line-height: 1.4;
 }
 
 /* space-y-3 between the header and each detail section. */

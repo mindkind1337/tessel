@@ -139,10 +139,11 @@ describe('terminal pane header', () => {
     expect(h.findAll('[data-test="pane-badge"]')).toHaveLength(1)
     expect(h.get('[data-test="pane-badge"]').text()).toBe('approve?')
     // No pane-wide "Drag to move this pane" tooltip over the header (it
-    // showed through other panes' popovers); the title's tooltip says it.
+    // showed through other panes' popovers); the title's hover card and its description say it.
     expect(h.attributes('title')).toBeUndefined()
-    expect(h.get('.pane-title').attributes('title')).toContain('Drag the header to move the pane')
-    expect(h.get('.pane-title').attributes('title')).toContain('Branch: feat/header')
+    expect(h.get('.pane-title').attributes('title')).toBeUndefined()
+    expect(h.get('.pane-title').attributes('aria-description')).toContain('Drag the header to move the pane')
+    expect(h.get('.pane-title').attributes('aria-description')).toContain('Branch: feat/header')
     // Actions: voice (icon only), …, maximize, close. "+" is in the menu.
     const actions = h.findAll('.pane-nav-actions > button').map((b) => b.attributes('aria-label'))
     expect(actions).toEqual(['Voice typing (Français)', 'More options', 'Maximize pane', 'Close pane'])

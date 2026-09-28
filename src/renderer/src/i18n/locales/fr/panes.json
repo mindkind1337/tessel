@@ -421,6 +421,9 @@
       "yolo": "Yolo : s'exécute sans vous demander",
       "hint": "Double-cliquez pour renommer. Faites glisser l'en-tête pour déplacer le panneau. Plus dans le menu …"
     },
+    "hover": {
+      "exited": "Terminé"
+    },
     "image": {
       "title": "Image n° {{n}}",
       "notFound": "Image n° {{n}} introuvable (seules les images collées dans ce panneau ou envoyées dans sa conversation peuvent être ouvertes)."

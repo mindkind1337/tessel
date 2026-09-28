@@ -1691,6 +1691,8 @@ provide('panelCtx', {
   activeId,
   maximizedId,
   shells,
+  // The agents' names, for a pane's hover card (its agent under its name).
+  agents,
   selectedShell,
   routeInput,
   splitLeaf,
