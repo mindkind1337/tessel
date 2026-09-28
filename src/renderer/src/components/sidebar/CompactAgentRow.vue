@@ -6,10 +6,15 @@
 // pane number and its team marks (lead, unread team messages, tools down).
 // A Claude Code row lists its conversation's sub-agents under it, folded by
 // a chevron in the card gutter like Orca's child agents.
+// Hovering the row (or a sub-agent) opens a hover card with its details
+// instead of a native tooltip (HoverCardContent, AgentHoverDetails).
 import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { ChevronRight } from 'lucide-vue-next'
 import BrandIcon from '../BrandIcon.vue'
 import AgentStateDot from './AgentStateDot.vue'
+import AgentHoverDetails from './AgentHoverDetails.vue'
+import HoverCardContent from './HoverCardContent.vue'
+import { useHoverCard } from './useHoverCard'
 import { acquireChildren, childrenKey, splitChildren, childDotState } from '../../agentChildrenFeed'
 import { childTime, formatTokens } from '../../agentChildrenView'
 import { childrenFolded, olderShown } from './agentRowState'
@@ -20,7 +25,9 @@ const props = defineProps({
   picking: { type: Boolean, default: false },
   picked: { type: Boolean, default: false },
   pickable: { type: Boolean, default: true },
-  title: { type: String, default: '' },
+  // Why the row can or cannot be ticked while picking a team.
+  pickHint: { type: String, default: '' },
+  teamLabel: { type: String, default: '' },
   now: { type: Number, default: () => Date.now() }
 })
 const emit = defineEmits(['activate', 'context'])
@@ -79,7 +86,7 @@ function childStats(c) {
   return tokens ? t('sidebar.agentRow.stats', '{{time}} · ↓ {{tokens}} tokens', { time, tokens }) : time
 }
 function childTitle(c, state) {
-  return `${c.title || noTitle()}\n${c.type || ''} · ${state}`
+  return c.type ? `${c.title || noTitle()}, ${c.type} · ${state}` : `${c.title || noTitle()}, ${state}`
 }
 function noTitle() {
   return t('sidebar.agentRow.noTitle', '(no title)')
@@ -97,11 +104,46 @@ const disclosureLabel = computed(() => {
 function moreLabel(count) {
   return t('sidebar.agentRow.more', '{{count}} more', { count })
 }
-function unreadTitle(count) {
-  return count > 1
-    ? t('sidebar.agentRow.unread', '{{count}} team messages this agent has not read yet (it reads them with its team tools)', { count })
-    : t('sidebar.agentRow.unread', '{{count}} team message this agent has not read yet (it reads them with its team tools)', { count })
+
+// --- Hover cards (Orca's HoverCard: opens after 250 ms, closes 120 ms) --------
+// The row's card; its sub-agents share a second one (their rows own it).
+const rowHover = useHoverCard()
+const childHover = useHoverCard()
+const hoveredChild = ref(null)
+function pickChild(e) {
+  const id = e.currentTarget && e.currentTarget.dataset.childId
+  const c = children.value.find((x) => x.id === id)
+  if (c) hoveredChild.value = c
 }
+const childListeners = {
+  ...childHover.triggerListeners,
+  pointerover(e) {
+    pickChild(e)
+    childHover.triggerListeners.pointerover(e)
+  },
+  focusin(e) {
+    pickChild(e)
+    childHover.triggerListeners.focusin(e)
+  }
+}
+const childState = computed(() => {
+  const c = hoveredChild.value
+  if (!c) return ''
+  return split.value.older.includes(c) ? t('sidebar.agentRow.finished', 'Finished') : stateTitle(c.state)
+})
+// What the old native tooltip said, for screen readers.
+const rowLabel = computed(() => {
+  const r = props.row
+  const team = props.teamLabel || r.team
+  const parts = [r.secondary ? `${r.primary} - ${r.secondary}` : r.primary]
+  if (r.team)
+    parts.push(
+      r.lead ? t('sidebar.card.teamLead', 'Team: {{team}} (lead)', { team }) : t('sidebar.card.team', 'Team: {{team}}', { team })
+    )
+  if (r.num) parts.push(t('sidebar.card.pane', 'Pane {{num}}', { num: r.num }))
+  if (props.picking && props.pickHint) parts.push(props.pickHint)
+  return parts.join(', ')
+})
 </script>
 
 <template>
@@ -110,10 +152,11 @@ function unreadTitle(count) {
     :class="{ picked, unpickable: picking && !pickable, 'worktree-agent-lineage-parent-row': hasChildren }"
     :data-focused-agent-pane="row.focused ? 'true' : undefined"
     :data-pane-id="row.id"
-    :title="title"
     role="button"
     tabindex="-1"
+    :aria-label="rowLabel"
     :aria-expanded="hasChildren ? !folded : undefined"
+    v-on="rowHover.triggerListeners"
     @click.stop="emit('activate', row)"
     @contextmenu.prevent.stop="emit('context', row, $event)"
   >
@@ -128,7 +171,7 @@ function unreadTitle(count) {
       <ChevronRight :size="12" :class="{ open: !folded }" aria-hidden="true" />
     </button>
     <span v-if="picking" class="car-pick" :class="{ on: picked }" aria-hidden="true"></span>
-    <AgentStateDot :state="row.dotState" />
+    <AgentStateDot :state="row.dotState" :tooltip="false" />
     <span class="car-icon">
       <BrandIcon :kind="row.iconKind" :accent="row.accent" :label="row.kind === 'agent' ? row.title : null" :size="13" />
     </span>
@@ -138,19 +181,9 @@ function unreadTitle(count) {
         - {{ row.secondary }}</span
       >
     </span>
-    <span v-if="row.lead" class="car-tag" :title="t('sidebar.agentRow.leadHint', 'Leads the team')">{{ t('sidebar.agentRow.lead', 'lead') }}</span>
-    <span
-      v-if="row.teamUnread"
-      class="car-tag"
-      :title="unreadTitle(row.teamUnread)"
-      >✉ {{ row.teamUnread }}</span
-    >
-    <span
-      v-if="row.toolsDown"
-      class="car-tag"
-      :title="t('sidebar.agentRow.toolsDownHint', 'Its team tools (tessel-team) are not connected: it cannot read or send team messages. Restart it (right-click its pane, Restart).')"
-      >⚠ {{ t('sidebar.agentRow.toolsDown', 'tools') }}</span
-    >
+    <span v-if="row.lead" class="car-tag">{{ t('sidebar.agentRow.lead', 'lead') }}</span>
+    <span v-if="row.teamUnread" class="car-tag">✉ {{ row.teamUnread }}</span>
+    <span v-if="row.toolsDown" class="car-tag">⚠ {{ t('sidebar.agentRow.toolsDown', 'tools') }}</span>
     <span v-if="hasChildren && folded" class="car-time" :class="{ focused: row.focused }">+{{ children.length }}</span>
     <span v-if="row.time" class="car-time" :class="{ focused: row.focused }">{{ row.time }}</span>
     <span v-if="row.num" class="car-num" :class="{ focused: row.focused }">{{ row.num }}</span>
@@ -161,11 +194,15 @@ function unreadTitle(count) {
       :key="c.id"
       class="compact-agent-row worktree-agent-row-hover worktree-agent-lineage-child-row"
       :class="'child-' + c.state"
-      :title="childTitle(c, stateTitle(c.state))"
+      role="button"
+      tabindex="-1"
+      :aria-label="childTitle(c, stateTitle(c.state))"
+      :data-child-id="c.id"
       data-agent-child=""
+      v-on="childListeners"
       @click.stop="emit('activate', row)"
     >
-      <AgentStateDot :state="childDotState(c)" :title="stateTitle(c.state)" />
+      <AgentStateDot :state="childDotState(c)" :title="stateTitle(c.state)" :tooltip="false" />
       <span class="car-text">
         <span class="car-lead">{{ c.title || noTitle() }}</span>
         <span v-if="c.type" class="car-trail"> - {{ c.type }}</span>
@@ -177,11 +214,15 @@ function unreadTitle(count) {
         v-for="c in split.older"
         :key="c.id"
         class="compact-agent-row worktree-agent-row-hover worktree-agent-lineage-child-row child-done"
-        :title="childTitle(c, t('sidebar.agentRow.finished', 'Finished'))"
+        role="button"
+        tabindex="-1"
+        :aria-label="childTitle(c, t('sidebar.agentRow.finished', 'Finished'))"
+        :data-child-id="c.id"
         data-agent-child=""
+        v-on="childListeners"
         @click.stop="emit('activate', row)"
       >
-        <AgentStateDot :state="childDotState(c)" :title="t('sidebar.agentRow.finished', 'Finished')" />
+        <AgentStateDot :state="childDotState(c)" :title="t('sidebar.agentRow.finished', 'Finished')" :tooltip="false" />
         <span class="car-text">
           <span class="car-lead">{{ c.title || noTitle() }}</span>
           <span v-if="c.type" class="car-trail"> - {{ c.type }}</span>
@@ -193,4 +234,26 @@ function unreadTitle(count) {
       {{ showOlder ? t('sidebar.agentRow.showLess', 'Show less') : moreLabel(split.older.length) }}
     </button>
   </div>
+  <HoverCardContent :hc="rowHover" class="agent-hover-card">
+    <AgentHoverDetails
+      :row="row"
+      :team-label="teamLabel"
+      :pick-hint="picking ? pickHint : ''"
+      :child-count="children.length"
+      :running-count="running"
+    />
+  </HoverCardContent>
+  <HoverCardContent v-if="hoveredChild" :hc="childHover" class="agent-hover-card">
+    <div class="hc-body" data-agent-child-hover="">
+      <div class="hc-identity">
+        <div class="hc-title">{{ hoveredChild.title || noTitle() }}</div>
+        <div v-if="hoveredChild.type" class="hc-branch">{{ hoveredChild.type }}</div>
+      </div>
+      <div class="hc-status">
+        <AgentStateDot :state="childDotState(hoveredChild)" :tooltip="false" />
+        <span class="hc-status-label" v-text="childState"></span>
+      </div>
+      <div class="hc-detail" v-text="childStats(hoveredChild)"></div>
+    </div>
+  </HoverCardContent>
 </template>

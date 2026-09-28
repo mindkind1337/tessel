@@ -9092,6 +9092,7 @@ button.act-stat:hover,
 }
 
 .wcp-card,
+.hover-card,
 .sb-popover {
   position: fixed;
   z-index: 60;
@@ -9141,6 +9142,212 @@ button.act-stat:hover,
   gap: 2px;
   padding-left: 12px;
   border-left: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+}
+
+/* Orca's HoverCardContent (ui/hover-card.tsx) as the sidebar's details card
+   (WorktreeCardMeta.tsx: w-80 max-h-[28rem] overflow-y-auto p-3 text-xs),
+   replacing the native tooltips of workspace cards and agent rows. */
+.hover-card {
+  max-height: 28rem;
+  padding: 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: left;
+  box-shadow:
+    0 16px 36px rgb(0 0 0 / 0.24),
+    inset 0 1px 0 rgb(255 255 255 / 0.06);
+  outline: none;
+  cursor: default;
+  user-select: text;
+  transform-origin: left top;
+  animation: hover-card-in 150ms ease-out;
+}
+
+.hover-card[data-side='left'] {
+  transform-origin: right top;
+  animation-name: hover-card-in-left;
+}
+
+@keyframes hover-card-in {
+  from {
+    opacity: 0;
+    transform: translateX(-8px) scale(0.95);
+  }
+}
+
+@keyframes hover-card-in-left {
+  from {
+    opacity: 0;
+    transform: translateX(8px) scale(0.95);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hover-card {
+    animation: none;
+  }
+}
+
+/* space-y-3 between the header and each detail section. */
+.hc-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+/* WorktreeCardHoverIdentityHeader: the title, then the branch in mono. */
+.hc-identity {
+  min-width: 0;
+}
+
+.hc-title {
+  color: var(--text-strong);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.375;
+  overflow-wrap: anywhere;
+}
+
+.hc-branch,
+.hc-path {
+  margin-top: 4px;
+  color: var(--text-dim);
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.375;
+  overflow-wrap: anywhere;
+}
+
+.hc-path {
+  margin-top: 0;
+}
+
+.hc-agent {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.hc-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin-top: -4px;
+  color: var(--text-strong);
+}
+
+.hc-status .asd {
+  flex-shrink: 0;
+}
+
+.hc-status-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.hc-detail {
+  margin-top: -8px;
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+
+.hc-identity .hc-detail {
+  margin-top: 4px;
+}
+
+.hc-warn {
+  margin-top: -4px;
+  color: var(--warn);
+  overflow-wrap: anywhere;
+}
+
+/* WorktreeCardDetailSection + DetailHeader: an uppercase 11 px header, the
+   body inset behind a rule. */
+.hc-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.hc-section-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.hc-section-body {
+  min-width: 0;
+  padding-left: 12px;
+  border-left: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  color: var(--text-strong);
+  overflow-wrap: anywhere;
+}
+
+.hc-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.hc-ports {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.hc-strong {
+  color: var(--text-strong);
+  font-weight: 500;
+}
+
+.hc-muted {
+  color: var(--text-dim);
+}
+
+.hc-count {
+  color: color-mix(in srgb, var(--text-dim) 70%, transparent);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+.hc-footer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.hc-agent-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.hc-agent-line .asd,
+.hc-agent-line svg {
+  flex-shrink: 0;
+}
+
+.hc-agent-text {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* A port row (sidebar card and status bar). */

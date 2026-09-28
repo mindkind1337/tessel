@@ -304,7 +304,19 @@
       "working": "Un agent travaille"
     },
     "menu": "Menu",
-    "resizeHint": "Faites glisser pour redimensionner. Double-cliquez pour réinitialiser."
+    "resizeHint": "Faites glisser pour redimensionner. Double-cliquez pour réinitialiser.",
+    "hover": {
+      "stateSince": "{{state}} · {{time}}",
+      "teamLead": "{{team}} (chef)",
+      "subAgents_one": "{{count}} sous-agent",
+      "subAgents_other": "{{count}} sous-agents",
+      "subAgentsRunning": "{{total}} · {{running}} en cours",
+      "pick": "Choix de l'équipe",
+      "team": "Équipe",
+      "subAgentsTitle": "Sous-agents",
+      "statusUnread": "{{status}} · Non lu",
+      "folder": "Dossier"
+    }
   },
   "pane": {
     "subAgents": {

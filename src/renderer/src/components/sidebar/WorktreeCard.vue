@@ -5,12 +5,17 @@
 // worktree-card-parent-content, worktree-card-header, worktree-card-meta-row,
 // WorktreeCardStatusSlot, WorktreeCardAgents, worktree-card-compact-agents
 // and worktree-card-compact-agent-row (MIT, Copyright (c) 2026 Lovecast Inc.).
-import { computed } from 'vue'
-import { Bell, ChevronDown } from 'lucide-vue-next'
+// Its details (title, branch, status, folder, live ports) show in Orca's
+// WorktreeCardDetailsHover card instead of native tooltips.
+import { computed, useId } from 'vue'
+import { Bell, ChevronDown, Folder, Plug } from 'lucide-vue-next'
 import BrandIcon from '../BrandIcon.vue'
 import AgentStateDot from './AgentStateDot.vue'
 import CompactAgentRow from './CompactAgentRow.vue'
 import WorktreeCardPorts from './WorktreeCardPorts.vue'
+import PortRow from './PortRow.vue'
+import HoverCardContent from './HoverCardContent.vue'
+import { useHoverCard } from './useHoverCard'
 import {
   buildSummaryAgentGroups,
   selectSummaryGroupIconAgents,
@@ -89,16 +94,27 @@ const summaryGroups = computed(() => {
   return { visible, hiddenCount }
 })
 
-function rowTitle(r) {
-  const parts = [r.secondary ? `${r.primary} - ${r.secondary}` : r.primary]
-  if (r.team)
-    parts.push(
-      r.lead
-        ? t('sidebar.card.teamLead', 'Team: {{team}} (lead)', { team: props.teamName(r.team) })
-        : t('sidebar.card.team', 'Team: {{team}}', { team: props.teamName(r.team) })
-    )
-  if (r.num) parts.push(t('sidebar.card.pane', 'Pane {{num}}', { num: r.num }))
-  return parts.join('\n')
+// --- Hover cards (Orca's WorktreeCardDetailsHover) ---------------------------
+// The card's identity (status lane, title, branch) opens the details card
+// after 100 ms like Orca's card hover; the plug and the agent rows own their
+// own cards, so resting on them closes this one.
+const cardHover = useHoverCard({ openDelay: 100, ignore: '.wtc-agents, .wcp' })
+const summaryHover = useHoverCard({ disabled: () => props.expanded })
+const descId = `wtc-desc-${useId()}`
+const hoverBranch = computed(() => (card.value.branch && card.value.branch !== card.value.title ? card.value.branch : ''))
+const statusLine = computed(() =>
+  card.value.isUnread ? t('sidebar.hover.statusUnread', '{{status}} · Unread', { status: statusLabel.value }) : statusLabel.value
+)
+// The old native tooltips' text (branch, folder), for screen readers.
+const cardDescription = computed(() => [card.value.branch, card.value.path].filter(Boolean).join(', '))
+function pickHint(r) {
+  return props.picking && props.picking.active ? props.picking.why(r) || '' : ''
+}
+function teamLabel(r) {
+  return r.team ? props.teamName(r.team) || '' : ''
+}
+function rowLine(r) {
+  return r.secondary ? `${r.primary} - ${r.secondary}` : r.primary
 }
 
 function onRow(r) {
@@ -122,7 +138,9 @@ function onCardClick(e) {
     :aria-selected="card.isActive"
     :aria-current="card.isActive ? 'page' : undefined"
     :data-card-key="card.key"
+    :aria-describedby="cardDescription ? descId : undefined"
   >
+    <span v-if="cardDescription" :id="descId" class="sr-only">{{ cardDescription }}</span>
     <div
       class="wtc-surface"
       :class="{
@@ -135,7 +153,7 @@ function onCardClick(e) {
       @click="onCardClick"
       @contextmenu.prevent.stop="emit('context', card, $event)"
     >
-      <div class="wtc-parent" :class="{ center: titleOnly }">
+      <div class="wtc-parent" :class="{ center: titleOnly }" data-worktree-card-hover-trigger="" v-on="cardHover.triggerListeners">
         <!-- Status lane: status glyph; hover shows the bell (mark read/unread). -->
         <div class="wtc-status-slot">
           <button
@@ -143,7 +161,7 @@ function onCardClick(e) {
             class="wtc-unread"
             :class="{ unread: card.isUnread }"
             :aria-label="card.isUnread ? t('sidebar.card.markRead', 'Mark as read') : t('sidebar.card.markUnread', 'Mark as unread')"
-            :title="unreadTooltip"
+            :aria-description="unreadTooltip"
             @click.stop="emit('toggle-read', card)"
           >
             <svg v-if="card.isUnread" class="wtc-filled-bell" viewBox="0 0 24 24" aria-hidden="true">
@@ -166,13 +184,12 @@ function onCardClick(e) {
           <div class="wtc-identity">
             <div class="wtc-header">
               <div class="wtc-header-main">
-                <span class="wtc-title" :class="{ unread: card.isUnread }" :title="card.path || card.title">
+                <span class="wtc-title" :class="{ unread: card.isUnread }">
                   <span v-if="card.isUnread" class="sr-only">{{ t('sidebar.card.unread', 'Unread:') }}</span>{{ card.title }}
                 </span>
                 <span
                   v-if="!compactCards && card.isMain && card.branch"
                   class="wtc-badge"
-                  :title="t('sidebar.card.primaryHint', 'Primary worktree (original clone directory)')"
                   >{{ t('sidebar.card.primary', 'primary') }}</span
                 >
                 <span v-if="showTitleRowIndicators" class="wtc-title-indicators">
@@ -191,7 +208,7 @@ function onCardClick(e) {
                   <span class="wtc-repo-dot"></span>
                   <span class="wtc-repo-name">{{ projectName }}</span>
                 </span>
-                <span v-if="showBranch" class="wtc-branch" :title="card.path ? `${card.branch}\n${card.path}` : card.branch">{{
+                <span v-if="showBranch" class="wtc-branch">{{
                   card.branch
                 }}</span>
               </div>
@@ -228,14 +245,14 @@ function onCardClick(e) {
                     : t('sidebar.card.expand', 'Expand {{summary}}. {{identities}}', { summary, identities: summarizeAgentIdentities(rows) })
                 "
                 :aria-expanded="expanded"
-                :title="expanded ? '' : summary"
-                @click.stop="emit('toggle-expanded', card.key)"
+                v-on="summaryHover.triggerListeners"
+                @click.stop="summaryHover.dismiss(), emit('toggle-expanded', card.key)"
               >
                 <span v-if="expanded" class="cas-subject">{{ subjectLabel }}</span>
                 <template v-else>
                   <span class="cas-groups" aria-hidden="true">
                     <span v-for="g in summaryGroups.visible" :key="g.state" class="cas-group">
-                      <AgentStateDot :state="g.state" />
+                      <AgentStateDot :state="g.state" :tooltip="false" />
                       <span class="cas-icons">
                         <span v-for="a in g.icons" :key="a.id" class="cas-icon">
                           <BrandIcon :kind="a.iconKind" :accent="a.accent" :label="a.kind === 'agent' ? a.title : null" :size="13" />
@@ -258,7 +275,8 @@ function onCardClick(e) {
                       :picking="!!(picking && picking.active)"
                       :picked="!!(picking && picking.picked.includes(r.id))"
                       :pickable="!picking || !picking.active || picking.canPick(r)"
-                      :title="picking && picking.active ? picking.why(r) : rowTitle(r)"
+                      :pick-hint="pickHint(r)"
+                      :team-label="teamLabel(r)"
                       @activate="onRow(r, $event)"
                       @context="(row, e) => emit('row-context', row, card, e)"
                       />
@@ -274,7 +292,8 @@ function onCardClick(e) {
                 :picking="!!(picking && picking.active)"
                 :picked="!!(picking && picking.picked.includes(r.id))"
                 :pickable="!picking || !picking.active || picking.canPick(r)"
-                :title="picking && picking.active ? picking.why(r) : rowTitle(r)"
+                :pick-hint="pickHint(r)"
+                :team-label="teamLabel(r)"
                 @activate="onRow(r, $event)"
                 @context="(row, e) => emit('row-context', row, card, e)"
                 />
@@ -283,5 +302,68 @@ function onCardClick(e) {
         </div>
       </div>
     </div>
+
+    <!-- Orca's WorktreeCardDetailsHover: identity header, status, folder, live ports. -->
+    <HoverCardContent :hc="cardHover" class="worktree-hover-card" data-worktree-hover-card="">
+      <div class="hc-body">
+        <div class="hc-identity" data-worktree-hover-identity-header="">
+          <div class="hc-title">{{ card.title }}</div>
+          <div v-if="hoverBranch" class="hc-branch">{{ hoverBranch }}</div>
+        </div>
+        <div class="hc-status">
+          <AgentStateDot :state="statusGlyph" variant="status" :tooltip="false" />
+          <span class="hc-status-label" v-text="statusLine"></span>
+        </div>
+        <section v-if="card.path || showProjectBadge" class="hc-section">
+          <div class="hc-section-title">
+            <Folder :size="12" aria-hidden="true" />
+            <span>{{ t('sidebar.hover.folder', 'Folder') }}</span>
+          </div>
+          <div class="hc-section-body hc-lines">
+            <div v-if="showProjectBadge && projectName" class="hc-strong">{{ projectName }}</div>
+            <div v-if="card.path" class="hc-path">{{ card.path }}</div>
+            <div v-if="card.isMain && card.branch" class="hc-muted">
+              {{ t('sidebar.card.primaryHint', 'Primary worktree (original clone directory)') }}
+            </div>
+          </div>
+        </section>
+        <section v-if="hasPorts" class="hc-section">
+          <div class="hc-section-title">
+            <Plug :size="12" aria-hidden="true" />
+            <span
+              >{{ t('sidebar.ports.live', 'Live Ports') }} <span class="hc-count">({{ ports.length }})</span></span
+            >
+          </div>
+          <div class="hc-section-body hc-ports">
+            <PortRow
+              v-for="p in ports"
+              :key="p.id"
+              :port="p"
+              @open="emit('port-open', $event)"
+              @copy="emit('port-copy', $event)"
+              @stop="emit('port-stop', $event)"
+            />
+          </div>
+        </section>
+      </div>
+    </HoverCardContent>
+
+    <!-- The folded agents: who is in this workspace and what each does. -->
+    <HoverCardContent v-if="useSummary" :hc="summaryHover" class="agent-hover-card" data-agent-summary-hover="">
+      <div class="hc-body">
+        <div class="hc-identity">
+          <div class="hc-title">{{ subjectLabel }}</div>
+          <div class="hc-detail">{{ summary }}</div>
+        </div>
+        <div class="hc-section-body hc-lines">
+          <div v-for="r in rows" :key="r.id" class="hc-agent-line">
+            <AgentStateDot :state="r.dotState" :tooltip="false" />
+            <BrandIcon :kind="r.iconKind" :accent="r.accent" :label="null" :size="12" />
+            <span class="hc-agent-text" v-text="rowLine(r)"></span>
+            <span v-if="r.num" class="hc-count">{{ r.num }}</span>
+          </div>
+        </div>
+      </div>
+    </HoverCardContent>
   </div>
                 </template>
