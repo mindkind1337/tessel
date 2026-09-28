@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  AGENT_SETTLE_MS,
   AGENT_STATE_STALE_MS,
   createAgentState,
   publicAgentState,
@@ -79,6 +80,24 @@ describe('main agent lifecycle evidence', () => {
     expect(f.state).toBe(working)
     expect(publicAgentState(f.state, 1602)).toMatchObject({ state: 'working', since: 102 })
     expect(publicAgentState(f.state, 15 * 60 * 1000).state).toBe('working')
+  })
+
+  it('a Stop with no event at all for AGENT_SETTLE_MS reads idle (a pane nobody watches never reports its screen)', () => {
+    const f = fixture()
+    f.send('UserPromptSubmit', 101)
+    f.send('Stop', 1000)
+    expect(publicAgentState(f.state, 1000 + AGENT_SETTLE_MS)).toMatchObject({ state: 'working', reason: 'settling' })
+    expect(publicAgentState(f.state, 1001 + AGENT_SETTLE_MS)).toMatchObject({ state: 'idle', reason: 'ready' })
+    // A continuing Stop, or new work after it, keeps it working.
+    const g = fixture()
+    g.send('UserPromptSubmit', 101)
+    g.send('Stop', 1000, { continuing: true })
+    expect(publicAgentState(g.state, 1000 + 10 * AGENT_SETTLE_MS).state).toBe('working')
+    const h = fixture()
+    h.send('UserPromptSubmit', 101)
+    h.send('Stop', 1000)
+    h.send('PreToolUse', 2000, { toolName: 'Bash' })
+    expect(publicAgentState(h.state, 2000 + 10 * AGENT_SETTLE_MS).state).toBe('working')
   })
 
   it('requires ready evidence after Stop and completes only once', () => {

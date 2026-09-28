@@ -2,7 +2,8 @@
 // Orca's AgentStateDot (agent rows) and StatusIndicator (workspace status
 // lane), ported from src/renderer/src/components/AgentStateDot.tsx and
 // sidebar/StatusIndicator.tsx (MIT, Copyright (c) 2026 Lovecast Inc.).
-// Working is a spinning ring, waiting / permission a question bubble, done a
+// Working is the pane header's flashing green dot (Orca spins a yellow ring;
+// the user wanted the pane's dot), waiting / permission a question bubble, done a
 // check (rows) or a green dot (status lane), problems a red dot.
 import { computed } from 'vue'
 import { Activity, CircleCheck, CircleDashed, MessageCircleQuestion, Moon } from 'lucide-vue-next'
@@ -27,7 +28,7 @@ const label = computed(() => {
 })
 const kind = computed(() => {
   const s = props.state
-  if (s === 'working') return 'spinner'
+  if (s === 'working') return 'working'
   if (s === 'monitoring') return 'monitoring'
   if (s === 'sleeping') return 'moon'
   if (s === 'permission' || s === 'waiting') return 'question'
@@ -51,7 +52,7 @@ const dotClass = computed(() => {
     :aria-label="label || undefined"
     role="img"
   >
-    <span v-if="kind === 'spinner'" class="agent-working-spinner" data-agent-spinner=""></span>
+    <span v-if="kind === 'working'" class="asd-dot asd-working" data-agent-working=""></span>
     <Activity v-else-if="kind === 'monitoring'" class="asd-icon asd-yellow" aria-hidden="true" />
     <MessageCircleQuestion v-else-if="kind === 'question'" class="asd-icon asd-question" aria-hidden="true" />
     <CircleCheck v-else-if="kind === 'check'" class="asd-icon asd-green" aria-hidden="true" />

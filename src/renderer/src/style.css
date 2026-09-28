@@ -8999,6 +8999,12 @@ button.act-stat:hover,
   background: #10b981;
 }
 
+/* Working: the flashing green dot of the pane header (agent-pulse). */
+.asd-dot.asd-working {
+  background: #3ddc84;
+  animation: agent-pulse 1.1s ease-in-out infinite;
+}
+
 .asd-dot.red {
   background: #ef4444;
 }

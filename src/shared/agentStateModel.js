@@ -1,6 +1,10 @@
 // Status evidence only: this model never makes permission decisions or infers
 // completion from silence. Keep its serializable state free of CLI content.
 export const AGENT_STATE_STALE_MS = 30 * 60 * 1000
+// After the agent's Stop hook, the pane's screen confirms it is ready. A pane
+// nobody is looking at (another workspace) may never report its screen: with
+// no event at all for this long after Stop, the turn is taken as finished.
+export const AGENT_SETTLE_MS = 20 * 1000
 const MAX_SEEN = 256
 const MAX_CHILDREN = 32
 const MAX_PENDING = 32
@@ -578,9 +582,17 @@ function publicScope(value, now) {
   const stale =
     value.state !== 'closed' && lastEvidence !== null && now - lastEvidence > AGENT_STATE_STALE_MS
   const unconfirmed = !value.confirmed
+  const settled =
+    !unconfirmed &&
+    !stale &&
+    value.state === 'working' &&
+    value.reason === 'settling' &&
+    value.stopCandidateAt != null &&
+    !value.continuing &&
+    now - Math.max(value.stopCandidateAt, value.lastEventAt ?? 0) > AGENT_SETTLE_MS
   return {
-    state: unconfirmed || stale ? 'unknown' : value.state,
-    reason: unconfirmed ? 'unconfirmed' : stale ? 'stale' : value.reason,
+    state: unconfirmed || stale ? 'unknown' : settled ? 'idle' : value.state,
+    reason: unconfirmed ? 'unconfirmed' : stale ? 'stale' : settled ? 'ready' : value.reason,
     source: value.source,
     since: value.since,
     observedAt: value.observedAt,
