@@ -5,9 +5,9 @@
 // Phase 1: hosts detected in ~/.ssh/config or added by hand, and terminal
 // panes that run Windows' OpenSSH client (ssh.exe) on them through Tessel's
 // usual terminal host. The argv is built here from the saved host (never a
-// command line from the renderer). Passwords and passphrases are asked in a
-// dialog (sshPrompts.js) and written to that pane's terminal only; host key
-// questions are answered in the terminal. Nothing secret is stored, and ssh's
+// command line from the renderer). Passwords, passphrases and host key
+// questions come through OpenSSH's askpass channel to a dialog (sshAskpass.js)
+// and the answer goes back to ssh only. Nothing secret is stored, and ssh's
 // own host key checking is left as it is.
 import fs from 'fs'
 import os from 'os'
@@ -360,8 +360,8 @@ export function createRemoteHosts({
     const mine = [...panes.values()].filter((p) => p.hostId === hostId)
     return mine.some((p) => p.connected) ? 'connected' : 'connecting'
   }
-  // connected: false for a new ssh pane (sshPrompts.js calls paneConnected
-  // once the remote side answers); a re-attached pane is connected already.
+  // connected: false for a new ssh pane (sshAskpass.js calls paneConnected
+  // once ssh is through its login); a re-attached pane is connected already.
   function paneStarted(paneId, hostId, { connected = true } = {}) {
     if (!hostId) return
     panes.set(paneId, { hostId, connected: !!connected })
@@ -373,6 +373,14 @@ export function createRemoteHosts({
     if (!p || p.connected) return
     p.connected = true
     states.set(p.hostId, { status: 'connected' })
+    notify()
+  }
+  // ssh asks something again (sshAskpass.js): back to Connecting.
+  function paneConnecting(paneId) {
+    const p = panes.get(paneId)
+    if (!p || !p.connected) return
+    p.connected = false
+    states.set(p.hostId, { status: paneState(p.hostId) })
     notify()
   }
   function paneExited(paneId, exitCode) {
@@ -415,7 +423,7 @@ export function createRemoteHosts({
     if (pane) pane.closing = true
   }
 
-  return { list, importConfig, add, update, remove, get, launchFor, test, snapshot, paneStarted, paneConnected, paneExited, panesOf, markDisconnecting, paneClosing }
+  return { list, importConfig, add, update, remove, get, launchFor, test, snapshot, paneStarted, paneConnected, paneConnecting, paneExited, panesOf, markDisconnecting, paneClosing }
 }
 
 // IPC: remoteHosts:* (the renderer sends ids and form fields, never argv).

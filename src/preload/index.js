@@ -345,9 +345,10 @@ const api = {
       return () => ipcRenderer.removeListener('remoteHosts:state', handler)
     }
   },
-  // SSH password / passphrase prompts (src/main/sshPrompts.js). The answer
-  // goes in this one call, bound to the pane and its one-time prompt id;
-  // value null cancels.
+  // ssh's questions for a remote host pane: password, passphrase, challenge,
+  // host key (src/main/sshAskpass.js, through OpenSSH's askpass). The answer
+  // goes in this one call, bound to the pane and its one-time request id
+  // ('yes' / 'no' for a host key); value null cancels.
   sshCredentials: {
     submit: (paneId, promptId, value) => ipcRenderer.invoke('ssh:submitCredential', { paneId, promptId, value }),
     onRequest: (cb) => {

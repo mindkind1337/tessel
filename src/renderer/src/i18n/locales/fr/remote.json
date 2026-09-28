@@ -126,7 +126,14 @@
       "denied": "Autorisation refusée, veuillez réessayer.",
       "badPassphrase": "Phrase secrète incorrecte, veuillez réessayer.",
       "submitFailed": "Échec de l'envoi des identifiants SSH",
-      "cancelFailed": "Échec de l'annulation de la demande d'identifiants SSH"
+      "cancelFailed": "Échec de l'annulation de la demande d'identifiants SSH",
+      "titleHostKey": "Clé d'hôte SSH inconnue",
+      "titleConfirm": "Confirmation SSH",
+      "descHostKey": "ssh n'a jamais vu la clé de cet hôte. Vérifiez son empreinte avant de vous connecter à",
+      "descConfirm": "ssh pose une question au sujet de",
+      "yesConnect": "Oui, se connecter",
+      "yes": "Oui",
+      "no": "Non"
     }
   }
 }

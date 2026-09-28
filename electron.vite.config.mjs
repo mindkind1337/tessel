@@ -1,11 +1,14 @@
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 import vue from '@vitejs/plugin-vue'
+import { askpassPlugin } from './scripts/build-askpass.mjs'
 
 export default defineConfig({
   main: {
     // node-pty is a native module: keep it external so it is required at
     // runtime from node_modules instead of being bundled.
-    plugins: [externalizeDepsPlugin()],
+    // askpassPlugin: Tessel's SSH_ASKPASS helper (src/main/askpass), built
+    // next to index.js as tessel-askpass.exe.
+    plugins: [externalizeDepsPlugin(), askpassPlugin()],
     build: {
       rollupOptions: {
         // Never bundle Electron or native modules: they must be required at
