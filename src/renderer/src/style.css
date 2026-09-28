@@ -7880,11 +7880,13 @@ button.act-stat:hover,
   overflow: hidden;
   color: var(--text-dim);
   font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 /* ================= Left sidebar (Orca's) =================
    Ported from Orca's sidebar (MIT, Copyright (c) 2026 Lovecast Inc.):
    its Tailwind classes translated to CSS on Tessel's theme variables. */
-}
 
 .osb {
   --wts: var(--surface);
@@ -8072,7 +8074,7 @@ button.act-stat:hover,
   min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
-  padding: 1px 0 8px 4px;
+  padding: 1px 8px 8px 4px;
   outline: none;
 }
 
@@ -9903,7 +9905,7 @@ button.act-stat:hover,
 .sb-port-group-head {
   position: sticky;
   top: 0;
-  z-index: 1;
+  z-index: 2;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -9940,6 +9942,8 @@ button.act-stat:hover,
 .sb-external-toggle {
   position: sticky;
   top: 0;
+  /* Above the rows that scroll under it (dimmed rows form their own layer). */
+  z-index: 2;
   display: flex;
   width: 100%;
   align-items: center;
