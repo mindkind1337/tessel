@@ -1,4 +1,3 @@
-<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // One live port with its Open / Copy / Stop actions, ported from Orca's
 // WorktreePortRow (sidebar/WorktreeCardPorts.tsx) and the status bar's
@@ -8,6 +7,7 @@
 import { computed } from 'vue'
 import { Copy, ExternalLink, Trash2 } from 'lucide-vue-next'
 import { addressForPort } from '../../portScanner'
+import { t } from '../../i18n'
 
 const props = defineProps({
   port: { type: Object, required: true },
@@ -16,7 +16,11 @@ const props = defineProps({
 })
 const emit = defineEmits(['open', 'copy', 'stop'])
 
-const processLabel = computed(() => props.port.processName || (props.port.pid ? `PID ${props.port.pid}` : 'Unknown process'))
+const processLabel = computed(
+  () =>
+    props.port.processName ||
+    (props.port.pid ? `PID ${props.port.pid}` : t('sidebar.ports.unknownProcess', 'Unknown process'))
+)
 const address = computed(() => addressForPort(props.port))
 // Orca's canStopWorkspacePort: an owned process, never the app itself.
 const canStop = computed(() => props.port.kind !== 'external' && !!props.port.pid && props.port.processName !== 'Electron')
@@ -41,14 +45,14 @@ function act(kind, e) {
       <span class="port-row-address">{{ address }}</span>
     </div>
     <div class="port-row-actions">
-      <button type="button" class="port-row-action" aria-label="Open in Browser" title="Open in Browser" @click="act('open', $event)">
+      <button type="button" class="port-row-action" :aria-label="t('sidebar.ports.openInBrowser', 'Open in Browser')" :title="t('sidebar.ports.openInBrowser', 'Open in Browser')" @click="act('open', $event)">
         <ExternalLink :size="12" aria-hidden="true" />
       </button>
       <button
         type="button"
         class="port-row-action"
-        :aria-label="`Copy ${address}`"
-        :title="`Copy ${address}`"
+        :aria-label="t('sidebar.ports.copy', 'Copy {{address}}', { address })"
+        :title="t('sidebar.ports.copy', 'Copy {{address}}', { address })"
         @click="act('copy', $event)"
       >
         <Copy :size="12" aria-hidden="true" />
@@ -56,8 +60,8 @@ function act(kind, e) {
       <button
         type="button"
         class="port-row-action"
-        aria-label="Stop Process"
-        title="Stop Process"
+        :aria-label="t('sidebar.ports.stopProcess', 'Stop Process')"
+        :title="t('sidebar.ports.stopProcess', 'Stop Process')"
         :disabled="!canStop"
         @click="act('stop', $event)"
       >

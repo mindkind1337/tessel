@@ -1,4 +1,3 @@
-<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // The left sidebar, rebuilt on Orca's (MIT, Copyright (c) 2026 Lovecast
 // Inc.; src/renderer/src/components/sidebar/: index.tsx, SidebarNav,
@@ -40,6 +39,7 @@ import OrcaMenu from './OrcaMenu.vue'
 import WorktreeCard from './sidebar/WorktreeCard.vue'
 import { settings } from '../settings'
 import { buildSidebarRows, neighborCard, cardTargetPane } from '../sidebarModel'
+import { t } from '../i18n'
 
 const props = defineProps({
   // Tessel workspaces as projects: [{ id, name, cwd, branch, panes: [...],
@@ -241,10 +241,10 @@ function sendMessage() {
   messageDraft.value = ''
 }
 function teamById(id) {
-  return props.teams.find((t) => t.id === id) || null
+  return props.teams.find((team) => team.id === id) || null
 }
 function teamName(id) {
-  return teamById(id)?.name || 'a team'
+  return teamById(id)?.name || t('sidebar.team.aTeam', 'a team')
 }
 
 // --- Tick agents to make a team, or add them to one --------------------------
@@ -259,9 +259,9 @@ function canPick(row) {
   return row.kind === 'agent' && !row.team
 }
 function pickWhy(row) {
-  if (row.kind !== 'agent') return 'Terminals cannot be in a team'
-  if (row.team) return `Already in ${teamName(row.team)}. To move it, use Leave Team in its menu first.`
-  return 'Tick to put it in the team'
+  if (row.kind !== 'agent') return t('sidebar.team.noTerminals', 'Terminals cannot be in a team')
+  if (row.team) return t('sidebar.team.alreadyIn', 'Already in {{team}}. To move it, use Leave Team in its menu first.', { team: teamName(row.team) })
+  return t('sidebar.team.tickToAdd', 'Tick to put it in the team')
 }
 function startPicking(wsId, target = 'new', first = null) {
   picking.value = { wsId, target }
@@ -364,17 +364,37 @@ function rectOf(e) {
   return { left: r.left, top: r.top, right: r.right, bottom: r.bottom }
 }
 
-const SORT_OPTIONS = [
-  { id: 'name', label: 'Name' },
-  { id: 'smart', label: 'Agent Activity', description: 'Agents that need attention, then most recent activity.' },
-  { id: 'recent', label: 'Recent' },
-  { id: 'repo', label: 'Project' },
-  { id: 'manual', label: 'Manual', description: 'The project folder first, then each task copy as it was made.' }
-]
-const PROJECT_ORDER_OPTIONS = [
-  { id: 'manual', label: 'Manual', description: 'Drag projects to arrange them' },
-  { id: 'recent', label: 'Recent', description: 'Most recent workspace activity' }
-]
+function sortOptions() {
+  return [
+    { id: 'name', label: t('sidebar.options.sortName', 'Name') },
+    {
+      id: 'smart',
+      label: t('sidebar.options.sortSmart', 'Agent Activity'),
+      description: t('sidebar.options.sortSmartHint', 'Agents that need attention, then most recent activity.')
+    },
+    { id: 'recent', label: t('sidebar.options.recent', 'Recent') },
+    { id: 'repo', label: t('sidebar.options.project', 'Project') },
+    {
+      id: 'manual',
+      label: t('sidebar.options.manual', 'Manual'),
+      description: t('sidebar.options.sortManualHint', 'The project folder first, then each task copy as it was made.')
+    }
+  ]
+}
+function projectOrderOptions() {
+  return [
+    {
+      id: 'manual',
+      label: t('sidebar.options.manual', 'Manual'),
+      description: t('sidebar.options.orderManualHint', 'Drag projects to arrange them')
+    },
+    {
+      id: 'recent',
+      label: t('sidebar.options.recent', 'Recent'),
+      description: t('sidebar.options.orderRecentHint', 'Most recent workspace activity')
+    }
+  ]
+}
 
 // Orca's useWorkspaceOptionsFilterBadge.
 const filterBadge = computed(() => {
@@ -382,30 +402,36 @@ const filterBadge = computed(() => {
   const sleeping = settings.showSleepingWorkspaces !== true
   const exemption = !settings.showSleepingWorkspaces && !settings.alwaysShowDefaultBranchWorkspace
   const count = (sleeping ? 1 : 0) + (settings.hideDefaultBranchWorkspace ? 1 : 0) + (exemption ? 1 : 0) + selected
-  return { count, label: `${count} ${count === 1 ? 'filter' : 'filters'}` }
+  return {
+    count,
+    label:
+      count === 1
+        ? t('sidebar.options.filterCount', '{{count}} filter', { count })
+        : t('sidebar.options.filterCount', '{{count}} filters', { count })
+  }
 })
 
 function projectFilterLabel() {
   const sel = props.projects.filter((p) => settings.sidebarFilterRepoIds.includes(p.id))
-  if (!sel.length) return 'All projects'
+  if (!sel.length) return t('sidebar.options.allProjects', 'All projects')
   if (sel.length === 1) return sel[0].name
-  return `${sel.length} projects`
+  return t('sidebar.options.projectCount', '{{count}} projects', { count: sel.length })
 }
 
 function optionsItems() {
-  const items = [{ type: 'label', label: 'Workspace options', className: 'orca-menu-title' }]
+  const items = [{ type: 'label', label: t('sidebar.options.title', 'Workspace options'), className: 'orca-menu-title' }]
   if (props.projects.length > 1) {
     const filter = settings.sidebarFilterRepoIds
-    items.push({ type: 'label', label: 'Show' })
+    items.push({ type: 'label', label: t('sidebar.options.show', 'Show') })
     items.push({
       type: 'sub',
-      label: 'Projects',
+      label: t('sidebar.options.projects', 'Projects'),
       hint: projectFilterLabel(),
       width: 256,
       children: [
         {
           type: 'item',
-          label: 'Clear',
+          label: t('sidebar.options.clear', 'Clear'),
           disabled: !filter.length,
           keepOpen: true,
           onSelect: () => (settings.sidebarFilterRepoIds = [])
@@ -422,24 +448,24 @@ function optionsItems() {
     })
     items.push({ type: 'separator' })
   }
-  items.push({ type: 'label', label: 'Group by' })
+  items.push({ type: 'label', label: t('sidebar.options.groupBy', 'Group by') })
   items.push({
     type: 'segmented',
-    label: 'Group by',
+    label: t('sidebar.options.groupBy', 'Group by'),
     value: settings.sidebarGroupBy,
     options: [
-      { id: 'none', label: 'None' },
-      { id: 'repo', label: 'Project' }
+      { id: 'none', label: t('sidebar.options.groupNone', 'None') },
+      { id: 'repo', label: t('sidebar.options.project', 'Project') }
     ],
     onChange: (v) => (settings.sidebarGroupBy = v)
   })
   items.push({ type: 'separator' })
   items.push({
     type: 'sub',
-    label: 'Sort by',
-    hint: SORT_OPTIONS.find((o) => o.id === settings.sidebarSortBy)?.label || 'Sort',
+    label: t('sidebar.options.sortBy', 'Sort by'),
+    hint: sortOptions().find((o) => o.id === settings.sidebarSortBy)?.label || t('sidebar.options.sort', 'Sort'),
     width: 176,
-    children: SORT_OPTIONS.map((o) => ({
+    children: sortOptions().map((o) => ({
       type: 'radio',
       label: o.label,
       title: o.description || '',
@@ -450,10 +476,12 @@ function optionsItems() {
   if (settings.sidebarGroupBy === 'repo') {
     items.push({
       type: 'sub',
-      label: 'Project order',
-      hint: PROJECT_ORDER_OPTIONS.find((o) => o.id === settings.sidebarProjectOrderBy)?.label || 'Manual',
+      label: t('sidebar.options.projectOrder', 'Project order'),
+      hint:
+        projectOrderOptions().find((o) => o.id === settings.sidebarProjectOrderBy)?.label ||
+        t('sidebar.options.manual', 'Manual'),
       width: 176,
-      children: PROJECT_ORDER_OPTIONS.map((o) => ({
+      children: projectOrderOptions().map((o) => ({
         type: 'radio',
         label: o.label,
         title: o.description,
@@ -464,12 +492,12 @@ function optionsItems() {
   }
   items.push({
     type: 'sub',
-    label: 'Card layout',
-    hint: settings.compactWorktreeCards ? 'Compact' : 'Detailed',
+    label: t('sidebar.options.cardLayout', 'Card layout'),
+    hint: settings.compactWorktreeCards ? t('sidebar.options.compact', 'Compact') : t('sidebar.options.detailed', 'Detailed'),
     width: 176,
     children: [
-      { id: false, label: 'Detailed' },
-      { id: true, label: 'Compact' }
+      { id: false, label: t('sidebar.options.detailed', 'Detailed') },
+      { id: true, label: t('sidebar.options.compact', 'Compact') }
     ].map((o) => ({
       type: 'radio',
       label: o.label,
@@ -482,22 +510,27 @@ function optionsItems() {
     (settings.worktreeCardProperties = props_.includes(id) ? props_.filter((x) => x !== id) : [...props_, id])
   items.push({
     type: 'sub',
-    label: 'Show properties',
-    hint: settings.compactWorktreeCards ? 'Hover' : props_.length ? String(props_.length) : '',
+    label: t('sidebar.options.showProperties', 'Show properties'),
+    hint: settings.compactWorktreeCards ? t('sidebar.options.hover', 'Hover') : props_.length ? String(props_.length) : '',
     width: 192,
     children: [
-      { type: 'checkbox', label: 'Ports', checked: props_.includes('ports'), onSelect: () => toggleProp('ports') },
       {
         type: 'checkbox',
-        label: 'Agent activity',
+        label: t('sidebar.options.ports', 'Ports'),
+        checked: props_.includes('ports'),
+        onSelect: () => toggleProp('ports')
+      },
+      {
+        type: 'checkbox',
+        label: t('sidebar.options.agentActivity', 'Agent activity'),
         checked: props_.includes('inline-agents'),
         onSelect: () => toggleProp('inline-agents')
       },
       { type: 'separator' },
-      { type: 'label', label: 'Agent activity layout' },
+      { type: 'label', label: t('sidebar.options.agentActivityLayout', 'Agent activity layout') },
       ...[
-        { id: 'compact', label: 'Compact' },
-        { id: 'full', label: 'Full list' }
+        { id: 'compact', label: t('sidebar.options.compact', 'Compact') },
+        { id: 'full', label: t('sidebar.options.fullList', 'Full list') }
       ].map((o) => ({
         type: 'radio',
         label: o.label,
@@ -507,11 +540,11 @@ function optionsItems() {
     ]
   })
   items.push({ type: 'separator' })
-  items.push({ type: 'label', label: 'Filters' })
+  items.push({ type: 'label', label: t('sidebar.options.filters', 'Filters') })
   items.push({
     type: 'switch',
     icon: Moon,
-    label: 'Hide sleeping',
+    label: t('sidebar.options.hideSleeping', 'Hide sleeping'),
     checked: !settings.showSleepingWorkspaces,
     onChange: (hide) => (settings.showSleepingWorkspaces = !hide)
   })
@@ -520,8 +553,8 @@ function optionsItems() {
       type: 'switch',
       icon: GitBranch,
       indented: true,
-      label: 'Except default branch',
-      ariaLabel: 'Keep the default branch visible while hiding sleeping workspaces',
+      label: t('sidebar.options.exceptDefault', 'Except default branch'),
+      ariaLabel: t('sidebar.options.exceptDefaultHint', 'Keep the default branch visible while hiding sleeping workspaces'),
       checked: settings.alwaysShowDefaultBranchWorkspace,
       onChange: (v) => (settings.alwaysShowDefaultBranchWorkspace = v)
     })
@@ -529,7 +562,7 @@ function optionsItems() {
   items.push({
     type: 'switch',
     icon: GitBranch,
-    label: 'Hide default branch',
+    label: t('sidebar.options.hideDefault', 'Hide default branch'),
     checked: settings.hideDefaultBranchWorkspace,
     onChange: (v) => (settings.hideDefaultBranchWorkspace = v)
   })
@@ -542,19 +575,23 @@ const optionsMenuItems = computed(() => (optionsOpen.value ? optionsItems() : []
 function projectActionItems(project) {
   const wsId = project.id
   return [
-    { type: 'item', icon: Pencil, label: 'Rename', onSelect: () => startRename(project) },
+    { type: 'item', icon: Pencil, label: t('sidebar.project.rename', 'Rename'), onSelect: () => startRename(project) },
     {
       type: 'item',
       icon: FolderOpen,
-      label: project.cwd ? 'Change Project Folder…' : 'Set Project Folder…',
-      title: project.cwd ? `Project folder: ${project.cwd}` : 'New panes start in the project folder',
+      label: project.cwd
+        ? t('sidebar.project.changeFolder', 'Change Project Folder…')
+        : t('sidebar.project.setFolder', 'Set Project Folder…'),
+      title: project.cwd
+        ? t('sidebar.project.folder', 'Project folder: {{path}}', { path: project.cwd })
+        : t('sidebar.project.folderHint', 'New panes start in the project folder'),
       onSelect: () => emit('folder', wsId)
     },
     { type: 'separator' },
     {
       type: 'item',
       icon: ListPlus,
-      label: 'New Task…',
+      label: t('sidebar.project.newTask', 'New Task…'),
       onSelect: () => {
         emit('select', wsId)
         emit('new-task')
@@ -563,63 +600,63 @@ function projectActionItems(project) {
     {
       type: 'item',
       icon: MessageSquare,
-      label: 'Message All Agents…',
+      label: t('sidebar.project.messageAll', 'Message All Agents…'),
       disabled: !projectPanes(wsId).some((p) => p.kind === 'agent'),
       onSelect: () => startMessage(wsId, wsId)
     },
     {
       type: 'item',
       icon: Users,
-      label: 'New Team…',
+      label: t('sidebar.team.new', 'New Team…'),
       disabled: pickableCount(wsId) < 2,
-      title: pickableCount(wsId) < 2 ? 'A team needs at least two agents that are in no team yet' : '',
+      title: pickableCount(wsId) < 2 ? t('sidebar.team.needsTwo', 'A team needs at least two agents that are in no team yet') : '',
       onSelect: () => startPicking(wsId, 'new')
     },
-    { type: 'item', icon: StickyNote, label: 'Project Notes', onSelect: () => emit('notes-ws', wsId) },
+    { type: 'item', icon: StickyNote, label: t('sidebar.project.notes', 'Project Notes'), onSelect: () => emit('notes-ws', wsId) },
     {
       type: 'item',
       icon: Activity,
-      label: 'Activity',
+      label: t('sidebar.project.activity', 'Activity'),
       onSelect: () => {
         emit('select', wsId)
         emit('activity', 'workspace')
       }
     },
     { type: 'separator' },
-    { type: 'item', icon: Trash2, label: 'Remove Project', danger: true, onSelect: () => emit('remove', wsId) }
+    { type: 'item', icon: Trash2, label: t('sidebar.project.remove', 'Remove Project'), danger: true, onSelect: () => emit('remove', wsId) }
   ]
 }
 
 function cardMenuItems(card) {
-  const items = [{ type: 'label', label: 'Workspace' }]
+  const items = [{ type: 'label', label: t('sidebar.card.workspace', 'Workspace') }]
   if (card.path) {
-    items.push({ type: 'item', icon: FolderOpen, label: 'Open in File Explorer', onSelect: () => emit('reveal', card.path) })
-    items.push({ type: 'item', icon: Copy, label: 'Copy Path', onSelect: () => emit('copy', card.path, 'path') })
+    items.push({ type: 'item', icon: FolderOpen, label: t('sidebar.card.openInExplorer', 'Open in File Explorer'), onSelect: () => emit('reveal', card.path) })
+    items.push({ type: 'item', icon: Copy, label: t('sidebar.card.copyPath', 'Copy Path'), onSelect: () => emit('copy', card.path, 'path') })
   }
   items.push({
     type: 'item',
     icon: Copy,
-    label: 'Copy Worktree Name',
+    label: t('sidebar.card.copyName', 'Copy Worktree Name'),
     onSelect: () => emit('copy', card.branch || card.title, 'name')
   })
   items.push({ type: 'separator' })
   items.push({
     type: 'item',
     icon: card.isUnread ? BellOff : Bell,
-    label: card.isUnread ? 'Mark Read' : 'Mark Unread',
+    label: card.isUnread ? t('sidebar.card.menuMarkRead', 'Mark Read') : t('sidebar.card.menuMarkUnread', 'Mark Unread'),
     disabled: !card.panes.length,
     onSelect: () => toggleRead(card)
   })
   if (card.taskId) {
-    items.push({ type: 'item', icon: GitCompare, label: 'Review Changes…', onSelect: () => emit('review-task', card.taskId) })
+    items.push({ type: 'item', icon: GitCompare, label: t('sidebar.card.review', 'Review Changes…'), onSelect: () => emit('review-task', card.taskId) })
   }
   items.push({ type: 'separator' })
   const sleepable = card.panes.filter((r) => r.kind === 'agent' && !r.sleeping).map((r) => r.id)
   items.push({
     type: 'item',
     icon: Moon,
-    label: 'Sleep',
-    title: 'Close all active panels in this workspace to free up memory and CPU.',
+    label: t('sidebar.card.sleep', 'Sleep'),
+    title: t('sidebar.card.sleepHint', 'Close all active panels in this workspace to free up memory and CPU.'),
     disabled: !sleepable.length,
     onSelect: () => emit('sleep', sleepable)
   })
@@ -627,20 +664,26 @@ function cardMenuItems(card) {
     items.push({
       type: 'item',
       icon: Trash2,
-      label: 'Delete Worktree',
+      label: t('sidebar.card.deleteWorktree', 'Delete Worktree'),
       danger: true,
       disabled: true,
-      title: "Primary worktree — can't be deleted. Remove the project instead."
+      title: t('sidebar.card.deletePrimaryHint', "Primary worktree — can't be deleted. Remove the project instead.")
     })
-    items.push({ type: 'item', icon: Trash2, label: 'Remove Project from Tessel', danger: true, onSelect: () => emit('remove', card.projectId) })
+    items.push({
+      type: 'item',
+      icon: Trash2,
+      label: t('sidebar.card.removeProject', 'Remove Project from Tessel'),
+      danger: true,
+      onSelect: () => emit('remove', card.projectId)
+    })
   } else {
     items.push({
       type: 'item',
       icon: Trash2,
-      label: 'Delete',
+      label: t('sidebar.card.delete', 'Delete'),
       danger: true,
       disabled: !card.taskId,
-      title: card.taskId ? '' : 'Only a task copy can be deleted here',
+      title: card.taskId ? '' : t('sidebar.card.deleteHint', 'Only a task copy can be deleted here'),
       onSelect: () => emit('delete-task', card.taskId)
     })
   }
@@ -650,57 +693,63 @@ function cardMenuItems(card) {
 function rowMenuItems(row, card) {
   const wsId = card.projectId
   const items = [{ type: 'label', label: row.num ? `#${row.num} ${row.title}` : row.title }]
-  items.push({ type: 'item', icon: SquareTerminal, label: 'Go to Pane', onSelect: () => focusRow(row.id) })
+  items.push({ type: 'item', icon: SquareTerminal, label: t('sidebar.row.goToPane', 'Go to Pane'), onSelect: () => focusRow(row.id) })
   if (row.kind === 'agent') {
     items.push({ type: 'separator' })
     const team = row.team ? teamById(row.team) : null
     if (team) {
       const members = projectPanes(wsId).filter((p) => p.kind === 'agent' && p.team === team.id)
       items.push({ type: 'label', label: team.name })
-      items.push({ type: 'item', icon: MessageSquare, label: 'Message the Team…', onSelect: () => startMessage('team:' + team.id, wsId) })
+      items.push({
+        type: 'item',
+        icon: MessageSquare,
+        label: t('sidebar.team.message', 'Message the Team…'),
+        onSelect: () => startMessage('team:' + team.id, wsId)
+      })
       items.push({
         type: 'item',
         icon: Users,
-        label: 'Add Agents…',
+        label: t('sidebar.team.addAgents', 'Add Agents…'),
         disabled: !pickableCount(wsId),
         onSelect: () => startPicking(wsId, team.id)
       })
-      items.push({ type: 'item', icon: Activity, label: 'Team Activity', onSelect: () => emit('activity', 'team:' + team.id) })
-      if (team.leadId === row.id) items.push({ type: 'item', icon: Crown, label: 'No Lead', onSelect: () => emit('set-lead', team.id, null) })
+      items.push({ type: 'item', icon: Activity, label: t('sidebar.team.activity', 'Team Activity'), onSelect: () => emit('activity', 'team:' + team.id) })
+      if (team.leadId === row.id)
+        items.push({ type: 'item', icon: Crown, label: t('sidebar.team.noLead', 'No Lead'), onSelect: () => emit('set-lead', team.id, null) })
       else
         items.push({
           type: 'item',
           icon: Crown,
-          label: 'Make Lead',
-          title: 'The lead gives tasks to the team and reviews them before you merge',
+          label: t('sidebar.team.makeLead', 'Make Lead'),
+          title: t('sidebar.team.makeLeadHint', 'The lead gives tasks to the team and reviews them before you merge'),
           onSelect: () => emit('set-lead', team.id, row.id)
         })
-      items.push({ type: 'item', icon: LogOut, label: 'Leave Team', onSelect: () => emit('leave-team', row.id) })
-      items.push({ type: 'item', icon: Pencil, label: 'Rename Team…', onSelect: () => startTeamRename(team, wsId) })
+      items.push({ type: 'item', icon: LogOut, label: t('sidebar.team.leave', 'Leave Team'), onSelect: () => emit('leave-team', row.id) })
+      items.push({ type: 'item', icon: Pencil, label: t('sidebar.team.rename', 'Rename Team…'), onSelect: () => startTeamRename(team, wsId) })
       items.push({
         type: 'item',
         icon: Trash2,
-        label: 'Ungroup Team',
+        label: t('sidebar.team.ungroup', 'Ungroup Team'),
         danger: true,
         disabled: members.length === 0,
         onSelect: () => emit('disband-team', team.id)
       })
     } else {
-      const wsTeams = props.teams.filter((t) => projectPanes(wsId).some((p) => p.team === t.id))
+      const wsTeams = props.teams.filter((tm) => projectPanes(wsId).some((p) => p.team === tm.id))
       items.push({
         type: 'item',
         icon: Users,
-        label: 'New Team…',
+        label: t('sidebar.team.new', 'New Team…'),
         disabled: pickableCount(wsId) < 2,
-        title: pickableCount(wsId) < 2 ? 'A team needs at least two agents that are in no team yet' : '',
+        title: pickableCount(wsId) < 2 ? t('sidebar.team.needsTwo', 'A team needs at least two agents that are in no team yet') : '',
         onSelect: () => startPicking(wsId, 'new', row.id)
       })
       if (wsTeams.length) {
         items.push({
           type: 'sub',
           icon: Users,
-          label: 'Add to Team',
-          children: wsTeams.map((t) => ({ type: 'item', label: t.name, onSelect: () => emit('add-to-team', t.id, [row.id]) }))
+          label: t('sidebar.team.addTo', 'Add to Team'),
+          children: wsTeams.map((tm) => ({ type: 'item', label: tm.name, onSelect: () => emit('add-to-team', tm.id, [row.id]) }))
         })
       }
     }
@@ -708,9 +757,9 @@ function rowMenuItems(row, card) {
     items.push({
       type: 'item',
       icon: Moon,
-      label: 'Sleep',
+      label: t('sidebar.card.sleep', 'Sleep'),
       disabled: row.sleeping,
-      title: 'Stop its terminal to free memory; opening the pane resumes the conversation.',
+      title: t('sidebar.row.sleepHint', 'Stop its terminal to free memory; opening the pane resumes the conversation.'),
       onSelect: () => emit('sleep', [row.id])
     })
   }
@@ -721,10 +770,17 @@ function openOptions(e) {
   optionsOpen.value = optionsOpen.value ? null : rectOf(e)
 }
 function openProjectActions(project, e) {
-  openMenu('project', rectOf(e), projectActionItems(project), { align: 'end', label: `Project actions for ${project.name}` })
+  openMenu('project', rectOf(e), projectActionItems(project), {
+    align: 'end',
+    label: t('sidebar.project.actionsFor', 'Project actions for {{name}}', { name: project.name })
+  })
 }
 function openCardMenu(card, e) {
-  openMenu('card', { x: e.clientX, y: e.clientY }, cardMenuItems(card), { offset: 0, width: 208, label: 'Workspace' })
+  openMenu('card', { x: e.clientX, y: e.clientY }, cardMenuItems(card), {
+    offset: 0,
+    width: 208,
+    label: t('sidebar.card.workspace', 'Workspace')
+  })
 }
 function openRowMenu(row, card, e) {
   openMenu('row', { x: e.clientX, y: e.clientY }, rowMenuItems(row, card), { offset: 0, width: 224, label: row.title })
@@ -732,6 +788,32 @@ function openRowMenu(row, card, e) {
 
 function portsOf(card) {
   return props.ports[card.key] || []
+}
+
+function wsOptionsLabel(active) {
+  const badge = filterBadge.value
+  if (!badge.count) return t('sidebar.options.title', 'Workspace options')
+  return active
+    ? t('sidebar.options.titleActive', 'Workspace options ({{filters}} active)', { filters: badge.label })
+    : t('sidebar.options.titleFilters', 'Workspace options ({{filters}})', { filters: badge.label })
+}
+function sectionTitle(project) {
+  if (!project) return ''
+  return project.cwd
+    ? t('sidebar.project.titleWithFolder', '{{name}}\n{{path}}\nDouble-click to rename', { name: project.name, path: project.cwd })
+    : t('sidebar.project.titleNoFolder', '{{name}}\nDouble-click to rename', { name: project.name })
+}
+function pickHint(wsId) {
+  if (picked.value.length) return t('sidebar.team.selected', '{{count}} selected', { count: picked.value.length })
+  if (!pickableCount(wsId)) return t('sidebar.team.allInTeams', 'Every agent here is already in a team. Use Leave Team in an agent’s menu to free it.')
+  return pickTeam.value
+    ? t('sidebar.team.tickToAddTo', 'Tick the agents to add to {{team}}', { team: pickTeam.value.name })
+    : t('sidebar.team.tickTwo', 'Tick at least two agents that work together')
+}
+function messagePlaceholder() {
+  return messagingId.value && messagingId.value.startsWith('team:')
+    ? t('sidebar.message.teamPlaceholder', 'Message every agent of {{team}}… (Enter to send, Shift+Enter for a new line)', { team: teamName(messagingId.value.slice(5)) })
+    : t('sidebar.message.workspacePlaceholder', 'Message every agent of this workspace… (Enter to send, Shift+Enter for a new line)')
 }
 
 function onDocKey(e) {
@@ -770,15 +852,15 @@ defineExpose({
     class="osb"
     :class="{ collapsed, resizing }"
     :style="sidebarStyle"
-    aria-label="Workspaces"
+    :aria-label="t('sidebar.workspaces', 'Workspaces')"
     data-worktree-sidebar=""
   >
     <template v-if="!collapsed">
       <!-- SidebarNav: search. -->
       <div class="osb-nav">
-        <button type="button" class="osb-search" aria-label="Search worktrees and browser tabs" @click="emit('search')">
+        <button type="button" class="osb-search" :aria-label="t('sidebar.searchLabel', 'Search worktrees and browser tabs')" @click="emit('search')">
           <Search class="osb-search-icon" :size="16" :stroke-width="1.75" aria-hidden="true" />
-          <span class="osb-search-label">Search</span>
+          <span class="osb-search-label">{{ t('sidebar.search', 'Search') }}</span>
           <span class="osb-search-keys" aria-hidden="true">
             <kbd v-for="k in paletteShortcut.split('+')" :key="k">{{ k }}</kbd>
           </span>
@@ -788,18 +870,24 @@ defineExpose({
       <!-- SidebarHeader: section title and actions. -->
       <div class="osb-header">
         <span class="osb-header-title" :data-sidebar-section-title="grouped ? 'projects' : 'workspaces'">{{
-          grouped ? 'Projects' : 'Workspaces'
+          grouped ? t('sidebar.projects', 'Projects') : t('sidebar.workspaces', 'Workspaces')
         }}</span>
         <div class="osb-header-actions" data-sidebar-header-actions="">
-          <button type="button" class="osb-icon-btn" aria-label="View activity" title="View activity" @click="emit('activity', 'workspace')">
+          <button
+            type="button"
+            class="osb-icon-btn"
+            :aria-label="t('sidebar.viewActivity', 'View activity')"
+            :title="t('sidebar.viewActivity', 'View activity')"
+            @click="emit('activity', 'workspace')"
+          >
             <Bell :size="14" :stroke-width="2.25" aria-hidden="true" />
           </button>
           <button
             type="button"
             class="osb-icon-btn osb-options-btn"
             :class="{ on: !!optionsOpen }"
-            :aria-label="filterBadge.count ? `Workspace options (${filterBadge.label} active)` : 'Workspace options'"
-            :title="filterBadge.count ? `Workspace options (${filterBadge.label})` : 'Workspace options'"
+            :aria-label="wsOptionsLabel(true)"
+            :title="wsOptionsLabel(false)"
             aria-haspopup="menu"
             @click="openOptions"
           >
@@ -808,13 +896,31 @@ defineExpose({
               filterBadge.count > 9 ? '9+' : filterBadge.count
             }}</span>
           </button>
-          <button type="button" class="osb-icon-btn" aria-label="Add project" title="Add project" @click="emit('create')">
+          <button
+            type="button"
+            class="osb-icon-btn"
+            :aria-label="t('sidebar.addProject', 'Add project')"
+            :title="t('sidebar.addProject', 'Add project')"
+            @click="emit('create')"
+          >
             <FolderPlus :size="14" :stroke-width="2.25" aria-hidden="true" />
           </button>
-          <button type="button" class="osb-icon-btn" aria-label="New workspace" title="New workspace" @click="emit('new-task')">
+          <button
+            type="button"
+            class="osb-icon-btn"
+            :aria-label="t('sidebar.newWorkspace', 'New workspace')"
+            :title="t('sidebar.newWorkspace', 'New workspace')"
+            @click="emit('new-task')"
+          >
             <Plus :size="14" :stroke-width="2.25" aria-hidden="true" />
           </button>
-          <button type="button" class="osb-icon-btn" aria-label="Collapse sidebar" title="Collapse sidebar" @click="emit('toggle')">
+          <button
+            type="button"
+            class="osb-icon-btn"
+            :aria-label="t('sidebar.collapse', 'Collapse sidebar')"
+            :title="t('sidebar.collapse', 'Collapse sidebar')"
+            @click="emit('toggle')"
+          >
             <PanelLeft :size="14" :stroke-width="2" aria-hidden="true" />
           </button>
         </div>
@@ -825,7 +931,7 @@ defineExpose({
         ref="listEl"
         class="osb-list"
         role="listbox"
-        aria-label="Workspaces"
+        :aria-label="t('sidebar.workspaces', 'Workspaces')"
         tabindex="0"
         @keydown="onListKey"
       >
@@ -853,7 +959,7 @@ defineExpose({
                   :ref="(el) => (inputEls[r.project.id] = el)"
                   v-model="draft"
                   class="osb-rename"
-                  aria-label="Rename project"
+                  :aria-label="t('sidebar.project.renameLabel', 'Rename project')"
                   @click.stop
                   @dblclick.stop
                   @keydown.stop
@@ -864,7 +970,7 @@ defineExpose({
                 <span
                   v-else
                   class="osb-section-label"
-                  :title="r.project ? (r.project.cwd ? `${r.project.name}\n${r.project.cwd}\nDouble-click to rename` : `${r.project.name}\nDouble-click to rename`) : ''"
+                  :title="sectionTitle(r.project)"
                   @dblclick.stop="r.project && startRename(r.project)"
                   >{{ r.label }}</span
                 >
@@ -874,7 +980,7 @@ defineExpose({
                   v-if="r.count > 0"
                   type="button"
                   class="osb-collapse"
-                  :aria-label="r.collapsed ? `Expand ${r.label}` : `Collapse ${r.label}`"
+                  :aria-label="r.collapsed ? t('sidebar.expandGroup', 'Expand {{name}}', { name: r.label }) : t('sidebar.collapseGroup', 'Collapse {{name}}', { name: r.label })"
                   @click.stop="toggleGroup(r.key)"
                 >
                   <ChevronDown :size="14" :class="{ collapsed: r.collapsed }" aria-hidden="true" />
@@ -883,8 +989,8 @@ defineExpose({
                   <button
                     type="button"
                     class="osb-header-action"
-                    :aria-label="`Project actions for ${r.label}`"
-                    title="Project actions"
+                    :aria-label="t('sidebar.project.actionsFor', 'Project actions for {{name}}', { name: r.label })"
+                    :title="t('sidebar.project.actions', 'Project actions')"
                     aria-haspopup="menu"
                     @click.stop="openProjectActions(r.project, $event)"
                   >
@@ -893,8 +999,8 @@ defineExpose({
                   <button
                     type="button"
                     class="osb-header-action"
-                    :aria-label="`Create workspace for ${r.label}`"
-                    :title="`Create workspace for ${r.label}`"
+                    :aria-label="t('sidebar.project.createWorkspace', 'Create workspace for {{name}}', { name: r.label })"
+                    :title="t('sidebar.project.createWorkspace', 'Create workspace for {{name}}', { name: r.label })"
                     @click.stop="emit('select', r.project.id), emit('new-task')"
                   >
                     <Plus :size="12" aria-hidden="true" />
@@ -909,17 +1015,15 @@ defineExpose({
                 :ref="(el) => el && (messageEl = el)"
                 v-model="messageDraft"
                 rows="3"
-                :placeholder="
-                  messagingId.startsWith('team:')
-                    ? `Message every agent of ${teamName(messagingId.slice(5))}… (Enter to send, Shift+Enter for a new line)`
-                    : 'Message every agent of this workspace… (Enter to send, Shift+Enter for a new line)'
-                "
+                :placeholder="messagePlaceholder()"
                 @keydown.enter.exact.prevent="sendMessage"
                 @keydown.escape.prevent.stop="messagingId = null"
               ></textarea>
               <div class="osb-inline-actions">
-                <button type="button" class="osb-btn" @click="messagingId = null">Cancel</button>
-                <button type="button" class="osb-btn primary" :disabled="!messageDraft.trim()" @click="sendMessage">Send</button>
+                <button type="button" class="osb-btn" @click="messagingId = null">{{ t('sidebar.cancel', 'Cancel') }}</button>
+                <button type="button" class="osb-btn primary" :disabled="!messageDraft.trim()" @click="sendMessage">
+                  {{ t('sidebar.message.send', 'Send') }}
+                </button>
               </div>
             </div>
             <div v-if="r.project && editingTeam && editingTeam.wsId === r.project.id" class="osb-inline-box">
@@ -928,31 +1032,25 @@ defineExpose({
                 v-model="teamDraft"
                 class="osb-rename wide"
                 maxlength="40"
-                aria-label="Team name"
+                :aria-label="t('sidebar.team.name', 'Team name')"
                 @blur="commitTeamRename"
                 @keydown.enter.prevent.stop="commitTeamRename"
                 @keydown.escape.prevent.stop="editingTeam = null"
               />
             </div>
             <div v-if="r.project && picking && picking.wsId === r.project.id" class="osb-inline-box osb-pick-bar">
-              <span>{{
-                picked.length
-                  ? `${picked.length} selected`
-                  : pickableCount(r.project.id)
-                    ? pickTeam
-                      ? `Tick the agents to add to ${pickTeam.name}`
-                      : 'Tick at least two agents that work together'
-                    : 'Every agent here is already in a team. Use Leave Team in an agent’s menu to free it.'
-              }}</span>
+              <span>{{ pickHint(r.project.id) }}</span>
               <div class="osb-inline-actions">
-                <button type="button" class="osb-btn" @click="cancelPicking">Cancel</button>
+                <button type="button" class="osb-btn" @click="cancelPicking">{{ t('sidebar.cancel', 'Cancel') }}</button>
                 <button
                   type="button"
                   class="osb-btn primary"
                   :disabled="pickTeam ? !picked.length : picked.length < 2"
                   @click="groupPicked"
                 >
-                  {{ pickTeam ? `Add to ${pickTeam.name}` : 'Group as a team' }}
+                  <span
+                    v-text="pickTeam ? t('sidebar.team.addToName', 'Add to {{team}}', { team: pickTeam.name }) : t('sidebar.team.group', 'Group as a team')"
+                  ></span>
                 </button>
               </div>
             </div>
@@ -985,7 +1083,7 @@ defineExpose({
           />
         </template>
         <div v-if="!rows.some((x) => x.type === 'card') && projects.length" class="osb-empty">
-          No workspaces match these filters.
+          {{ t('sidebar.noMatch', 'No workspaces match these filters.') }}
         </div>
       </div>
     </template>
@@ -993,7 +1091,13 @@ defineExpose({
     <!-- Collapsed: one badge per project. -->
     <template v-else>
       <div class="osb-rail">
-        <button type="button" class="osb-icon-btn" aria-label="Expand sidebar" title="Expand sidebar" @click="emit('toggle')">
+        <button
+          type="button"
+          class="osb-icon-btn"
+          :aria-label="t('sidebar.expand', 'Expand sidebar')"
+          :title="t('sidebar.expand', 'Expand sidebar')"
+          @click="emit('toggle')"
+        >
           <PanelLeft :size="14" :stroke-width="2" aria-hidden="true" />
         </button>
         <button
@@ -1007,10 +1111,16 @@ defineExpose({
           @click="emit('select', p.id)"
         >
           {{ initials(p.name) }}
-          <span v-if="p.needsYou" class="osb-rail-dot attention" title="An agent is waiting for you"></span>
-          <span v-else-if="p.busy" class="osb-rail-dot" title="An agent is working"></span>
+          <span v-if="p.needsYou" class="osb-rail-dot attention" :title="t('sidebar.rail.waiting', 'An agent is waiting for you')"></span>
+          <span v-else-if="p.busy" class="osb-rail-dot" :title="t('sidebar.rail.working', 'An agent is working')"></span>
         </button>
-        <button type="button" class="osb-icon-btn" aria-label="Add project" title="Add project" @click="emit('create')">
+        <button
+          type="button"
+          class="osb-icon-btn"
+          :aria-label="t('sidebar.addProject', 'Add project')"
+          :title="t('sidebar.addProject', 'Add project')"
+          @click="emit('create')"
+        >
           <FolderPlus :size="14" :stroke-width="2.25" aria-hidden="true" />
         </button>
       </div>
@@ -1023,7 +1133,7 @@ defineExpose({
       :offset="8"
       :width="288"
       :items="optionsMenuItems"
-      label="Workspace options"
+      :label="t('sidebar.options.title', 'Workspace options')"
       @close="optionsOpen = null"
     />
     <OrcaMenu
@@ -1034,11 +1144,11 @@ defineExpose({
       :offset="menu && menu.offset !== undefined ? menu.offset : 6"
       :width="menu && menu.width"
       :items="menu ? menu.items : []"
-      :label="menu ? menu.label || 'Menu' : 'Menu'"
+      :label="menu ? menu.label || t('sidebar.menu', 'Menu') : t('sidebar.menu', 'Menu')"
       @close="closeMenu"
     />
 
-    <div class="osb-resize" title="Drag to resize. Double-click to reset." @pointerdown="startResize">
+    <div class="osb-resize" :title="t('sidebar.resizeHint', 'Drag to resize. Double-click to reset.')" @pointerdown="startResize">
       <div class="osb-resize-line"></div>
     </div>
   </nav>

@@ -7,6 +7,7 @@
 import { computed } from 'vue'
 import { Activity, CircleCheck, CircleDashed, MessageCircleQuestion, Moon } from 'lucide-vue-next'
 import { agentStateLabel, getWorktreeStatusLabel } from '../../sidebarModel'
+import { t } from '../../i18n'
 
 const props = defineProps({
   state: { type: String, required: true },
@@ -18,7 +19,7 @@ const props = defineProps({
 const status = computed(() => props.variant === 'status')
 const label = computed(() => {
   if (props.title !== undefined) return props.title
-  if (status.value) return props.state === 'sleeping' ? 'Sleeping' : getWorktreeStatusLabel(props.state)
+  if (status.value) return props.state === 'sleeping' ? t('sidebar.status.sleeping', 'Sleeping') : getWorktreeStatusLabel(props.state)
   return agentStateLabel(props.state)
 })
 const kind = computed(() => {

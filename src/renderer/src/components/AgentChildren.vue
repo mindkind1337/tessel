@@ -1,4 +1,3 @@
-<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // The sub-agents a Claude Code pane's conversation started (its Task / Agent
 // tool), like Claude Code's own list: each one's kind, title, time and
@@ -8,6 +7,7 @@
 // the window), so it is never hidden under a neighbouring pane or clipped.
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { childTime, formatTokens, childrenSummary } from '../agentChildrenView'
+import { t } from '../i18n'
 
 const props = defineProps({
   agentId: { type: String, default: null },
@@ -63,14 +63,22 @@ const summary = computed(() => childrenSummary(list.value, now.value))
 const shown = computed(() => summary.value.running > 0 || summary.value.quiet > 0 || summary.value.recent > 0)
 // The indicator: a number, its state in words for screen readers and tests.
 const count = computed(() => summary.value.running || summary.value.quiet || summary.value.recent)
-const countWord = computed(() => (summary.value.running ? 'running' : summary.value.quiet ? 'quiet' : 'done'))
+const countWord = computed(() =>
+  summary.value.running
+    ? t('pane.subAgents.running', 'running')
+    : summary.value.quiet
+      ? t('pane.subAgents.quiet', 'quiet')
+      : t('pane.subAgents.done', 'done')
+)
 const chipTitle = computed(() => {
   const s = summary.value
   const parts = []
-  if (s.running) parts.push(`${s.running} running`)
-  if (s.quiet) parts.push(`${s.quiet} quiet`)
-  if (s.recent) parts.push(`${s.recent} done`)
-  return `Sub-agents this conversation started: ${parts.join(', ') || 'none'}. Click for the list`
+  if (s.running) parts.push(t('pane.subAgents.runningCount', '{{count}} running', { count: s.running }))
+  if (s.quiet) parts.push(t('pane.subAgents.quietCount', '{{count}} quiet', { count: s.quiet }))
+  if (s.recent) parts.push(t('pane.subAgents.doneCount', '{{count}} done', { count: s.recent }))
+  return t('pane.subAgents.chipTitle', 'Sub-agents this conversation started: {{list}}. Click for the list', {
+    list: parts.join(', ') || t('pane.subAgents.none', 'none')
+  })
 })
 // Running first, then newest.
 const rows = computed(() =>
@@ -126,10 +134,13 @@ watch(
   }
 )
 watch(keyOf, refresh)
+function tokensLabel(tokens) {
+  return t('pane.subAgents.tokens', '{{tokens}} tokens', { tokens: formatTokens(tokens) })
+}
 function onDocDown(e) {
   if (!open.value) return
-  const t = e.target
-  if ((chipEl.value && chipEl.value.contains(t)) || (listEl.value && listEl.value.contains(t))) return
+  const target = e.target
+  if ((chipEl.value && chipEl.value.contains(target)) || (listEl.value && listEl.value.contains(target))) return
   open.value = false
 }
 function onKey(e) {
@@ -160,7 +171,12 @@ onBeforeUnmount(() => {
   window.removeEventListener('terminal-layout-change', onLayout)
 })
 const MARK = { running: '◌', done: '✓', quiet: '…' }
-const STATE_TITLE = { running: 'Running', done: 'Finished', quiet: 'Quiet: nothing written for a while (a long tool, or stopped)' }
+function stateTitle(state) {
+  if (state === 'running') return t('sidebar.agentRow.running', 'Running')
+  if (state === 'done') return t('sidebar.agentRow.finished', 'Finished')
+  if (state === 'quiet') return t('sidebar.agentRow.quiet', 'Quiet: nothing written for a while (a long tool, or stopped)')
+  return state
+}
 </script>
 
 <template>
@@ -195,12 +211,12 @@ const STATE_TITLE = { running: 'Running', done: 'Finished', quiet: 'Quiet: nothi
         @mousedown.stop
         @contextmenu.stop
       >
-        <div class="agent-children-head">Sub-agents ({{ list.length }})</div>
+        <div class="agent-children-head">{{ t('pane.subAgents.title', 'Sub-agents') }} ({{ list.length }})</div>
         <div v-for="c in rows" :key="c.id" class="agent-child" :class="c.state" role="listitem">
-          <span class="agent-child-mark" :title="STATE_TITLE[c.state] || c.state">{{ MARK[c.state] || '·' }}</span>
+          <span class="agent-child-mark" :title="stateTitle(c.state)">{{ MARK[c.state] || '·' }}</span>
           <span class="agent-child-type">{{ c.type }}</span>
-          <span class="agent-child-title" :title="c.title">{{ c.title || '(no title)' }}</span>
-          <span class="agent-child-stats">{{ childTime(c, now) }}<template v-if="formatTokens(c.tokens)"> · ↓ {{ formatTokens(c.tokens) }} tokens</template></span>
+          <span class="agent-child-title" :title="c.title">{{ c.title || t('sidebar.agentRow.noTitle', '(no title)') }}</span>
+          <span class="agent-child-stats">{{ childTime(c, now) }}<template v-if="formatTokens(c.tokens)"> · ↓ {{ tokensLabel(c.tokens) }}</template></span>
         </div>
       </div>
     </Teleport>

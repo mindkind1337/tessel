@@ -1,4 +1,3 @@
-<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 import { ref, reactive, inject, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { Terminal } from '@xterm/xterm'
@@ -43,6 +42,7 @@ import { isViewed } from '../../../shared/fileKinds'
 import { effectiveAgent, launchSignature } from '../../../shared/agentPrefs'
 import { paneModels } from '../paneModels'
 import AgentChildren from './AgentChildren.vue'
+import { t, intlLocale } from '../i18n'
 
 const props = defineProps({
   node: { type: Object, required: true }
@@ -79,8 +79,8 @@ const modelText = computed(() => {
 // For the team roster (team_members): the model this pane shows.
 watch(
   modelText,
-  (t) => {
-    if (t) paneModels[props.node.id] = t
+  (text) => {
+    if (text) paneModels[props.node.id] = text
     else delete paneModels[props.node.id]
   },
   { immediate: true }
@@ -91,19 +91,22 @@ const modelTitle = computed(() => {
   if (!m) return ''
   const from =
     m.source === 'session'
-      ? 'from its latest answer'
+      ? t('pane.model.fromSession', 'from its latest answer')
       : m.source === 'command'
-        ? 'from its command'
+        ? t('pane.model.fromCommand', 'from its command')
         : m.source === 'picked'
-          ? 'the model last picked in it'
+          ? t('pane.model.fromPicked', 'the model last picked in it')
           : m.source === 'manual'
-            ? 'set by you (pane menu > Set model...)'
+            ? t('pane.model.fromManual', 'set by you (pane menu > Set model...)')
             : m.source === 'screen'
-              ? 'read from its screen (status bar or banner)'
+              ? t('pane.model.fromScreen', 'read from its screen (status bar or banner)')
               : m.source === 'running'
-                ? 'the only model Ollama has running'
-              : 'from its settings (a change inside the agent may not show)'
-  return `Model: ${m.model}${m.effort ? ` (reasoning ${m.effort})` : ''}\n${from}`
+                ? t('pane.model.fromRunning', 'the only model Ollama has running')
+              : t('pane.model.fromSettings', 'from its settings (a change inside the agent may not show)')
+  const head = m.effort
+    ? t('pane.model.titleEffort', 'Model: {{model}} (reasoning {{effort}})', { model: m.model, effort: m.effort })
+    : t('pane.model.title', 'Model: {{model}}', { model: m.model })
+  return `${head}\n${from}`
 })
 let modelBusy = false
 let modelAgain = false // asked while a check ran: one more after it
@@ -211,10 +214,37 @@ const statusTitle = computed(() => {
   const state = observed?.confirmed && !observed.stale
     ? observed.state
     : agentStatus.value === 'busy' ? 'working' : agentStatus.value === 'idle' ? 'idle' : 'unknown'
-  const source = state === 'unknown' ? 'No fresh status is confirmed for this agent.' : estimatedState.value ? 'Estimated from terminal output; hooks have not confirmed it.' : 'Confirmed by agent events and terminal readiness.'
-  const scope = managedAgentStatus(props.node) ? 'Main agent' : 'Agent'
-  return `${scope} state: ${state}. ${source}${props.node.sessionId ? `\nSession ${props.node.sessionId}` : ''}`
+  const source =
+    state === 'unknown'
+      ? t('pane.status.noFresh', 'No fresh status is confirmed for this agent.')
+      : estimatedState.value
+        ? t('pane.status.estimated', 'Estimated from terminal output; hooks have not confirmed it.')
+        : t('pane.status.confirmed', 'Confirmed by agent events and terminal readiness.')
+  const line = managedAgentStatus(props.node)
+    ? t('pane.status.mainState', 'Main agent state: {{state}}. {{source}}', { state: stateWord(state), source })
+    : t('pane.status.agentState', 'Agent state: {{state}}. {{source}}', { state: stateWord(state), source })
+  return props.node.sessionId ? `${line}\n${t('pane.status.session', 'Session {{id}}', { id: props.node.sessionId })}` : line
 })
+// The state's word in the interface's language (an unknown one as it is).
+function stateWord(state) {
+  switch (state) {
+    case 'working':
+      return t('pane.state.working', 'working')
+    case 'idle':
+      return t('pane.state.idle', 'idle')
+    case 'unknown':
+      return t('pane.state.unknown', 'unknown')
+    case 'approval':
+      return t('pane.state.approval', 'approval')
+    case 'waiting':
+      return t('pane.state.waiting', 'waiting')
+    case 'done':
+      return t('pane.state.done', 'done')
+    case 'limited':
+      return t('pane.state.limited', 'limited')
+  }
+  return state
+}
 watch(agentStatus, (v) => {
   setAgentStatus(props.node.id, v, props.node.agentLaunchToken)
   if (v === 'idle') refreshModel() // an answer just ended
@@ -315,7 +345,7 @@ onBeforeUnmount(() => {
 const cache = computed(() => (cacheShown.value ? cacheCountdown(cacheStartedAt.value, settings.promptCacheTtlMs, cacheNow.value) : null))
 
 const sleptAt = computed(() =>
-  props.node.sleeping ? new Date(props.node.sleeping.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''
+  props.node.sleeping ? new Date(props.node.sleeping.at).toLocaleTimeString(intlLocale(), { hour: '2-digit', minute: '2-digit' }) : ''
 )
 
 // How this agent was launched vs Settings > Agents now: Yolo shown, and a
@@ -345,19 +375,24 @@ const limitTitle = computed(() =>
   !limit.value
     ? ''
     : limit.value.reset
-      ? `This agent hit its usage limit. It resets ${/^in /.test(limit.value.reset) ? '' : 'at '}${limit.value.reset}.`
-      : 'This agent hit its usage limit.'
+      ? /^in /.test(limit.value.reset)
+        ? t('pane.limit.resetsIn', 'This agent hit its usage limit. It resets {{reset}}.', { reset: limit.value.reset })
+        : t('pane.limit.resetsAt', 'This agent hit its usage limit. It resets at {{reset}}.', { reset: limit.value.reset })
+      : t('pane.limit.hit', 'This agent hit its usage limit.')
 )
 const cacheTitle = computed(() =>
   !cache.value
     ? ''
     : cache.value.level === 'expired'
-      ? 'Prompt cache expired: the next message re-sends the whole conversation uncached'
-      : `Prompt cache expires in ${cache.value.label}: a message before then reuses it (faster, cheaper)`
+      ? t('pane.cache.expired', 'Prompt cache expired: the next message re-sends the whole conversation uncached')
+      : t('pane.cache.expiresIn', 'Prompt cache expires in {{time}}: a message before then reuses it (faster, cheaper)', { time: cache.value.label })
 )
-const YOLO_TITLE = 'Started in Yolo: this agent runs commands and changes files without asking you'
-const APPLY_TITLE =
-  'Settings > Agents changed since this agent started (Yolo, arguments or variables). Restart it to apply them: same pane, its conversation resumed'
+function yoloTitle() {
+  return t('pane.yolo.title', 'Started in Yolo: this agent runs commands and changes files without asking you')
+}
+function applyTitle() {
+  return t('pane.apply.title', 'Settings > Agents changed since this agent started (Yolo, arguments or variables). Restart it to apply them: same pane, its conversation resumed')
+}
 
 // Like Orca's pane header, the header shows only what matters: the status
 // dot, the icon, the title and at most ONE state badge, the most urgent one.
@@ -383,18 +418,27 @@ const badge = computed(() => {
 
 // The title's tooltip: what the header no longer shows, in one place.
 const titleTooltip = computed(() => {
-  const lines = [autoTitle.value ? `${paneTitle.value}: ${autoTitle.value} (named after its conversation)` : paneTitle.value]
+  const lines = [
+    autoTitle.value
+      ? t('pane.title.namedAfter', '{{name}}: {{title}} (named after its conversation)', { name: paneTitle.value, title: autoTitle.value })
+      : paneTitle.value
+  ]
   if (props.node.num) lines[0] = `#${props.node.num} ${lines[0]}`
-  if (isAgent.value && modelText.value) lines.push(`Model: ${modelText.value}`)
-  if (props.node.worktree) lines.push(`Branch: ${props.node.worktree.branch} (separate copy)`)
-  if (team.value) lines.push(`Team: ${team.value.name}${isLead.value ? ' (lead)' : ''}`)
-  if (isAgent.value && props.node.launchYolo) lines.push('Yolo: runs without asking you')
-  lines.push('Double-click to rename. Drag the header to move the pane. More in the … menu')
+  if (isAgent.value && modelText.value) lines.push(t('pane.model.title', 'Model: {{model}}', { model: modelText.value }))
+  if (props.node.worktree) lines.push(t('pane.title.branch', 'Branch: {{branch}} (separate copy)', { branch: props.node.worktree.branch }))
+  if (team.value)
+    lines.push(
+      isLead.value
+        ? t('sidebar.card.teamLead', 'Team: {{team}} (lead)', { team: team.value.name })
+        : t('sidebar.card.team', 'Team: {{team}}', { team: team.value.name })
+    )
+  if (isAgent.value && props.node.launchYolo) lines.push(t('pane.title.yolo', 'Yolo: runs without asking you'))
+  lines.push(t('pane.title.hint', 'Double-click to rename. Drag the header to move the pane. More in the … menu'))
   return lines.join('\n')
 })
 const iconTooltip = computed(() => {
   if (!isAgent.value) return props.node.shellName
-  return props.node.launchYolo ? `${statusTitle.value}\n${YOLO_TITLE}` : statusTitle.value
+  return props.node.launchYolo ? `${statusTitle.value}\n${yoloTitle()}` : statusTitle.value
 })
 
 // The team this pane is in (a named, coloured group of agents), if any.
@@ -739,11 +783,11 @@ async function openImage(n) {
         .catch(() => null)
     : null
   if (res && res.ok && ctx.showImage) {
-    ctx.showImage({ src: res.src, file: res.file, title: `Image #${n}` })
+    ctx.showImage({ src: res.src, file: res.file, title: t('pane.image.title', 'Image #{{n}}', { n }) })
     return
   }
   if ((!res || !res.ok) && ctx.toast) {
-    ctx.toast(`Image #${n} was not found (only images pasted in this pane or sent in its conversation can be opened).`, { timeout: 5000 })
+    ctx.toast(t('pane.image.notFound', 'Image #{{n}} was not found (only images pasted in this pane or sent in its conversation can be opened).', { n }), { timeout: 5000 })
   }
 }
 
@@ -763,7 +807,13 @@ async function openFileRef(file, ref, event) {
     return
   }
   const res = await window.shellApi.openFile({ file, line: ref.line, col: ref.col }).catch(() => null)
-  if ((!res || !res.ok) && ctx.toast) ctx.toast(`Could not open ${ref.path}${res && res.error ? `: ${res.error}` : ''}`, { timeout: 5000 })
+  if ((!res || !res.ok) && ctx.toast)
+    ctx.toast(
+      res && res.error
+        ? t('pane.file.openFailedWhy', 'Could not open {{path}}: {{error}}', { path: ref.path, error: res.error })
+        : t('pane.file.openFailed', 'Could not open {{path}}', { path: ref.path }),
+      { timeout: 5000 }
+    )
 }
 
 // Pasting goes through xterm's paste(), which wraps the text as a bracketed
@@ -825,8 +875,8 @@ const editingTitle = ref(false)
 // install pane renamed right after it opens), unless you're editing it.
 watch(
   () => props.node.title,
-  (t) => {
-    if (!editingTitle.value && t) paneTitle.value = t
+  (title) => {
+    if (!editingTitle.value && title) paneTitle.value = title
   }
 )
 const titleInputEl = ref(null)
@@ -1041,7 +1091,7 @@ function menuCopySession() {
   closeCtxMenu()
   if (!props.node.sessionId) return
   window.shellApi.writeClipboard(props.node.sessionId)
-  ctx.copied('Session ID')
+  ctx.copied(t('pane.menu.sessionIdLabel', 'Session ID'))
 }
 function menuFind() {
   closeCtxMenu()
@@ -1050,6 +1100,58 @@ function menuFind() {
 function menuRestart() {
   closeCtxMenu()
   ctx.restartLeaf(props.node.id)
+}
+
+// Text with a number or a name in it, for the template.
+function quietFor(minutes) {
+  return t('pane.badge.quiet', 'quiet {{minutes}} min', { minutes })
+}
+function asleepText() {
+  return t('pane.sleep.overlay', 'Asleep since {{time}}: its terminal was stopped to free memory. Its conversation is kept.', { time: sleptAt.value })
+}
+function exitedText() {
+  return exitCode.value !== null
+    ? t('pane.exit.withCode', 'Process exited with code {{code}}.', { code: exitCode.value })
+    : t('pane.exit.plain', 'Process exited.')
+}
+function pasteTitle(count) {
+  return count === 1
+    ? t('pane.paste.title', 'Paste {{count}} line?', { count })
+    : t('pane.paste.title', 'Paste {{count}} lines?', { count })
+}
+function pasteMore(count) {
+  return count === 1
+    ? t('pane.paste.more', 'and {{count}} more line', { count })
+    : t('pane.paste.more', 'and {{count}} more lines', { count })
+}
+function findCount() {
+  if (!findQuery.value) return ''
+  return findResult.count
+    ? t('pane.find.count', '{{index}} of {{count}}', { index: findResult.index + 1, count: findResult.count })
+    : t('pane.find.none', 'No results')
+}
+function limitState() {
+  return limit.value && limit.value.reset
+    ? t('pane.state.limitResets', 'usage limit · resets {{reset}}', { reset: limit.value.reset })
+    : t('pane.state.limit', 'usage limit')
+}
+function cacheLeft() {
+  return cache.value.level === 'expired'
+    ? t('pane.cache.expiredShort', 'expired')
+    : t('pane.cache.left', '{{time}} left', { time: cache.value.label })
+}
+function teamFactTitle() {
+  return isLead.value
+    ? t('pane.team.factLead', 'Team: {{team}} (this agent leads it) (manage it under Sessions)', { team: team.value.name })
+    : t('pane.team.fact', 'Team: {{team}} (manage it under Sessions)', { team: team.value.name })
+}
+function leadToggleText() {
+  return isLead.value
+    ? t('pane.team.stopLeading', 'Stop leading {{team}}', { team: team.value.name })
+    : t('pane.team.makeLeadOf', 'Make lead of {{team}}', { team: team.value.name })
+}
+function leaveTeamText() {
+  return t('pane.team.leave', 'Leave {{team}}', { team: team.value.name })
 }
 
 function onDocPointerDownMenu(e) {
@@ -1161,7 +1263,13 @@ onMounted(() => {
     const text = osc52Text(data)
     if (text && window.shellApi.writeClipboard) {
       window.shellApi.writeClipboard(text)
-      if (ctx.toast) ctx.toast(`Copied ${text.length > 60 ? `${text.length} characters` : `"${text.replace(/\s+/g, ' ').trim()}"`}`, { timeout: 2500 })
+      if (ctx.toast)
+        ctx.toast(
+          text.length > 60
+            ? t('pane.osc52.copiedChars', 'Copied {{count}} characters', { count: text.length })
+            : t('pane.osc52.copiedText', 'Copied "{{text}}"', { text: text.replace(/\s+/g, ' ').trim() }),
+          { timeout: 2500 }
+        )
     }
     return true
   })
@@ -1310,7 +1418,7 @@ onMounted(() => {
         // Reset, leave any full-screen mode and jump to the bottom row, so
         // the screen drawn by the saved output scrolls up intact.
         '\x1b[0m\x1b[?1049l\x1b[?25h\x1b[999;1H\r\n' +
-        '\x1b[2m──── restored from your last session (scroll up to see it) ────\x1b[0m' +
+        `\x1b[2m──── ${t('pane.restored', 'restored from your last session (scroll up to see it)')} ────\x1b[0m` +
         '\r\n'.repeat(rows)
     )
     props.node.restoredText = ''
@@ -1449,7 +1557,7 @@ onMounted(() => {
     exited.value = true
     activityMonitor.dispose()
     exitCode.value = code
-    term.write(`\r\n\x1b[33m[process exited with code ${code}]\x1b[0m\r\n`)
+    term.write(`\r\n\x1b[33m[${t('pane.exitedWithCode', 'process exited with code {{code}}', { code })}]\x1b[0m\r\n`)
   })
 
   // Refit whenever the pane is resized (divider drag, window resize, splits).
@@ -1602,7 +1710,7 @@ onBeforeUnmount(() => {
       @pointerdown="onNavPointerDown"
     >
       <div class="pane-nav-left">
-        <span v-if="node.num" class="pane-num" :title="`Pane #${node.num}`">{{ node.num }}</span>
+        <span v-if="node.num" class="pane-num" :title="t('pane.number', 'Pane #{{num}}', { num: node.num })">{{ node.num }}</span>
         <span
           class="pane-icon"
           :class="isAgent ? ['agent', needsYou ? 'attention' : agentStatus, { yolo: node.launchYolo }] : null"
@@ -1647,8 +1755,8 @@ onBeforeUnmount(() => {
           ref="modelInputEl"
           v-model="modelDraft"
           class="pane-tab-input pane-model-input"
-          placeholder="Model (empty: automatic)"
-          aria-label="Model this agent uses (empty: find it automatically)"
+          :placeholder="t('pane.model.placeholder', 'Model (empty: automatic)')"
+          :aria-label="t('pane.model.inputLabel', 'Model this agent uses (empty: find it automatically)')"
           @blur="saveModel"
           @keydown.enter.prevent="saveModel"
           @keydown.escape.prevent="cancelModel"
@@ -1656,33 +1764,33 @@ onBeforeUnmount(() => {
           @click.stop
         />
         <!-- One badge: the most urgent state (all of them are in the … menu). -->
-        <span v-if="badge === 'asleep'" class="exit-tag" data-test="pane-badge" title="Asleep: open the pane to wake it">asleep</span>
-        <span v-else-if="badge === 'exited'" class="exit-tag" data-test="pane-badge">exited</span>
-        <span v-else-if="badge === 'approval'" class="pane-approval" data-test="pane-badge" title="This agent is asking you to approve something">approve?</span>
-        <span v-else-if="badge === 'limit'" class="pane-limit" data-test="pane-badge" :title="limitTitle">limit{{ limit.reset ? ` · ${limit.reset}` : '' }}</span>
+        <span v-if="badge === 'asleep'" class="exit-tag" data-test="pane-badge" :title="t('pane.badge.asleepHint', 'Asleep: open the pane to wake it')">{{ t('pane.badge.asleep', 'asleep') }}</span>
+        <span v-else-if="badge === 'exited'" class="exit-tag" data-test="pane-badge">{{ t('pane.badge.exited', 'exited') }}</span>
+        <span v-else-if="badge === 'approval'" class="pane-approval" data-test="pane-badge" :title="t('pane.badge.approvalHint', 'This agent is asking you to approve something')">{{ t('pane.badge.approval', 'approve?') }}</span>
+        <span v-else-if="badge === 'limit'" class="pane-limit" data-test="pane-badge" :title="limitTitle">{{ t('pane.badge.limit', 'limit') }}{{ limit.reset ? ` · ${limit.reset}` : '' }}</span>
         <button
           v-else-if="badge === 'unsent'"
           class="pane-unsent"
           data-test="pane-badge"
-          title="A message was pasted but not seen taken: click to say what happened"
+          :title="t('pane.badge.unsentHint', 'A message was pasted but not seen taken: click to say what happened')"
           @click.stop="ctx.resolveUnsent(node.id)"
         >
-          not confirmed
+          {{ t('pane.badge.unsent', 'not confirmed') }}
         </button>
-        <span v-else-if="badge === 'stuck'" class="pane-stuck" :class="track.level" data-test="pane-badge" :title="track.reason">quiet {{ track.minutes }} min</span>
+        <span v-else-if="badge === 'stuck'" class="pane-stuck" :class="track.level" data-test="pane-badge" :title="track.reason">{{ quietFor(track.minutes) }}</span>
         <button
           v-else-if="badge === 'apply'"
           class="pane-apply"
           type="button"
           data-test="pane-restart-apply"
-          :title="APPLY_TITLE"
+          :title="applyTitle()"
           @click.stop="restartToApply"
         >
-          Restart to apply
+          {{ t('pane.badge.apply', 'Restart to apply') }}
         </button>
-        <span v-else-if="badge === 'working'" class="pane-working" data-test="pane-badge" :title="statusTitle">{{ estimatedState ? 'working · estimated' : 'working' }}</span>
-        <span v-else-if="badge === 'unknown'" class="pane-working" data-test="pane-badge" :title="statusTitle">unknown</span>
-        <span v-else-if="badge === 'needs'" class="pane-needs-you" data-test="pane-badge">needs you</span>
+        <span v-else-if="badge === 'working'" class="pane-working" data-test="pane-badge" :title="statusTitle">{{ estimatedState ? t('pane.badge.workingEstimated', 'working · estimated') : t('pane.badge.working', 'working') }}</span>
+        <span v-else-if="badge === 'unknown'" class="pane-working" data-test="pane-badge" :title="statusTitle">{{ t('pane.badge.unknown', 'unknown') }}</span>
+        <span v-else-if="badge === 'needs'" class="pane-needs-you" data-test="pane-badge">{{ t('pane.badge.needs', 'needs you') }}</span>
         <span v-else-if="badge === 'cache'" class="pane-cache" :class="cache.level" data-test="pane-badge" :title="cacheTitle">
           <svg width="11" height="11" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <circle cx="8" cy="9" r="5.5" stroke="currentColor" stroke-width="1.4" />
@@ -1696,10 +1804,10 @@ onBeforeUnmount(() => {
           v-if="ctx.broadcast.value"
           class="bc-toggle"
           :class="{ member: node.broadcast }"
-          title="Include this pane in multi-write"
+          :title="t('pane.broadcast.hint', 'Include this pane in multi-write')"
         >
           <input v-model="node.broadcast" type="checkbox" />
-          write
+          {{ t('pane.broadcast.write', 'write') }}
         </label>
         <!-- sub-agents: a compact count; click for the list -->
         <AgentChildren
@@ -1712,8 +1820,8 @@ onBeforeUnmount(() => {
         <button
           class="pane-nav-btn mic-btn"
           data-test="pane-voice"
-          :title="`Speak instead of typing (${ctx.voiceName.value}). Windows voice typing, Win+H. Language: … menu`"
-          :aria-label="`Voice typing (${ctx.voiceName.value})`"
+          :title="t('pane.voice.hint', 'Speak instead of typing ({{language}}). Windows voice typing, Win+H. Language: … menu', { language: ctx.voiceName.value })"
+          :aria-label="t('pane.voice.label', 'Voice typing ({{language}})', { language: ctx.voiceName.value })"
           @click="ctx.voiceTyping(node.id)"
         >
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -1725,8 +1833,8 @@ onBeforeUnmount(() => {
         <button
           class="pane-nav-btn"
           data-test="pane-menu-btn"
-          title="More options (or Shift+right-click in the pane)"
-          aria-label="More options"
+          :title="t('pane.moreHint', 'More options (or Shift+right-click in the pane)')"
+          :aria-label="t('pane.more', 'More options')"
           aria-haspopup="menu"
           :aria-expanded="ctxMenu.visible"
           @click="openMenuAtBtn"
@@ -1740,8 +1848,8 @@ onBeforeUnmount(() => {
         <!-- maximize / restore -->
         <button
           class="pane-nav-btn"
-          :title="isMaximized ? 'Restore pane' : 'Maximize pane'"
-          :aria-label="isMaximized ? 'Restore pane' : 'Maximize pane'"
+          :title="isMaximized ? t('pane.restore', 'Restore pane') : t('pane.maximize', 'Maximize pane')"
+          :aria-label="isMaximized ? t('pane.restore', 'Restore pane') : t('pane.maximize', 'Maximize pane')"
           @click="ctx.toggleMaximize(node.id)"
         >
           <svg v-if="isMaximized" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -1752,7 +1860,12 @@ onBeforeUnmount(() => {
           </svg>
         </button>
         <!-- close -->
-        <button class="pane-nav-btn close" title="Close pane (Ctrl+Shift+W)" aria-label="Close pane" @click="ctx.closeLeaf(node.id)">
+        <button
+          class="pane-nav-btn close"
+          :title="t('pane.closeHint', 'Close pane (Ctrl+Shift+W)')"
+          :aria-label="t('pane.close', 'Close pane')"
+          @click="ctx.closeLeaf(node.id)"
+        >
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path d="M3.5 3.5l9 9M12.5 3.5l-9 9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
           </svg>
@@ -1767,21 +1880,15 @@ onBeforeUnmount(() => {
         ref="findInputEl"
         v-model="findQuery"
         class="find-input"
-        placeholder="Find"
+        :placeholder="t('pane.find.placeholder', 'Find')"
         spellcheck="false"
         @input="onFindInput"
         @keydown.enter.exact.prevent="findNext"
         @keydown.shift.enter.prevent="findPrev"
         @keydown.escape.prevent="closeFind"
       />
-      <span class="find-count">{{
-        !findQuery
-          ? ''
-          : findResult.count
-            ? `${findResult.index + 1} of ${findResult.count}`
-            : 'No results'
-      }}</span>
-      <button class="pane-nav-btn" title="Previous (Shift+Enter)" @click="findPrev">
+      <span class="find-count">{{ findCount() }}</span>
+      <button class="pane-nav-btn" :title="t('pane.find.previous', 'Previous (Shift+Enter)')" @click="findPrev">
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
           <path
             d="M4 10l4-4 4 4"
@@ -1792,7 +1899,7 @@ onBeforeUnmount(() => {
           />
         </svg>
       </button>
-      <button class="pane-nav-btn" title="Next (Enter)" @click="findNext">
+      <button class="pane-nav-btn" :title="t('pane.find.next', 'Next (Enter)')" @click="findNext">
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
           <path
             d="M4 6l4 4 4-4"
@@ -1803,7 +1910,7 @@ onBeforeUnmount(() => {
           />
         </svg>
       </button>
-      <button class="pane-nav-btn" title="Close (Esc)" @click="closeFind">
+      <button class="pane-nav-btn" :title="t('pane.find.close', 'Close (Esc)')" @click="closeFind">
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
           <path
             d="M4 4l8 8M12 4l-8 8"
@@ -1819,7 +1926,7 @@ onBeforeUnmount(() => {
       v-if="scrolledUp && !exited"
       class="jump-bottom"
       :class="{ fresh: newBelow }"
-      :title="newBelow ? 'New output below. Jump to the latest' : 'Jump to the latest output'"
+      :title="newBelow ? t('pane.jump.newHint', 'New output below. Jump to the latest') : t('pane.jump.hint', 'Jump to the latest output')"
       @mousedown.stop
       @click="jumpToBottom"
     >
@@ -1832,27 +1939,27 @@ onBeforeUnmount(() => {
           stroke-linejoin="round"
         />
       </svg>
-      {{ newBelow ? 'New output' : 'Latest' }}
+      {{ newBelow ? t('pane.jump.new', 'New output') : t('pane.jump.latest', 'Latest') }}
     </button>
 
     <div v-if="node.failed" class="exit-overlay failed" @mousedown.stop>
-      <span :title="node.failed">This terminal couldn't start.</span>
-      <button class="exit-btn primary" @click="ctx.restartLeaf(node.id)">Retry</button>
-      <button class="exit-btn" @click="ctx.closeLeaf(node.id, { force: true })">Close pane</button>
+      <span :title="node.failed">{{ t('pane.failed', "This terminal couldn't start.") }}</span>
+      <button class="exit-btn primary" @click="ctx.restartLeaf(node.id)">{{ t('pane.retry', 'Retry') }}</button>
+      <button class="exit-btn" @click="ctx.closeLeaf(node.id, { force: true })">{{ t('pane.close', 'Close pane') }}</button>
     </div>
 
     <div v-else-if="node.sleeping" class="exit-overlay sleeping" data-test="sleep-overlay" @mousedown.stop>
-      <span>Asleep since {{ sleptAt }}: its terminal was stopped to free memory. Its conversation is kept.</span>
-      <button class="exit-btn primary" @click="ctx.wakeLeaf && ctx.wakeLeaf(node.id)">Wake it</button>
+      <span>{{ asleepText() }}</span>
+      <button class="exit-btn primary" @click="ctx.wakeLeaf && ctx.wakeLeaf(node.id)">{{ t('pane.sleep.wake', 'Wake it') }}</button>
     </div>
 
     <div v-else-if="exited" class="exit-overlay" @mousedown.stop>
-      <span>Process exited{{ exitCode !== null ? ` with code ${exitCode}` : '' }}.</span>
-      <button class="exit-btn primary" @click="ctx.restartLeaf(node.id)">Restart</button>
-      <button class="exit-btn" @click="ctx.closeLeaf(node.id, { force: true })">Close pane</button>
+      <span>{{ exitedText() }}</span>
+      <button class="exit-btn primary" @click="ctx.restartLeaf(node.id)">{{ t('pane.restart', 'Restart') }}</button>
+      <button class="exit-btn" @click="ctx.closeLeaf(node.id, { force: true })">{{ t('pane.close', 'Close pane') }}</button>
     </div>
 
-    <div v-if="dropping" class="drop-hint">Drop to paste the file path</div>
+    <div v-if="dropping" class="drop-hint">{{ t('pane.dropHint', 'Drop to paste the file path') }}</div>
 
     <div
       v-if="pasteAsk"
@@ -1860,7 +1967,7 @@ onBeforeUnmount(() => {
       class="paste-ask"
       tabindex="-1"
       role="dialog"
-      aria-label="Confirm paste"
+      :aria-label="t('pane.paste.confirm', 'Confirm paste')"
       @mousedown.stop
       @contextmenu.stop.prevent
       @keydown.enter.stop="
@@ -1869,15 +1976,15 @@ onBeforeUnmount(() => {
       @keydown.escape.prevent.stop="cancelPaste"
     >
       <div class="paste-ask-title">
-        Paste {{ pasteAsk.lines }} {{ pasteAsk.lines === 1 ? 'line' : 'lines' }}?
+        {{ pasteTitle(pasteAsk.lines) }}
       </div>
       <pre class="paste-ask-preview">{{ pasteAsk.preview }}</pre>
       <div v-if="pasteAsk.more" class="paste-ask-more">
-        and {{ pasteAsk.more }} more {{ pasteAsk.more === 1 ? 'line' : 'lines' }}
+        {{ pasteMore(pasteAsk.more) }}
       </div>
       <div class="paste-ask-actions">
-        <button class="exit-btn" @click="cancelPaste">Cancel <kbd>Esc</kbd></button>
-        <button class="exit-btn primary" @click="confirmPaste">Paste <kbd>Enter</kbd></button>
+        <button class="exit-btn" @click="cancelPaste">{{ t('pane.paste.cancel', 'Cancel') }} <kbd>Esc</kbd></button>
+        <button class="exit-btn primary" @click="confirmPaste">{{ t('pane.paste.paste', 'Paste') }} <kbd>Enter</kbd></button>
       </div>
     </div>
   </div>
@@ -1899,81 +2006,81 @@ onBeforeUnmount(() => {
       <!-- What the pane header does not show (Orca keeps its header to the
            title): where it works, its team, how it was started, its states. -->
       <div class="ctx-menu-facts" data-test="pane-menu-facts">
-        <div v-if="node.worktree" class="ctx-menu-fact" data-test="pane-branch" :title="`Separate copy on branch ${node.worktree.branch}\n${node.worktree.path}`">
-          <span class="ctx-fact-label">Branch</span><span class="ctx-fact-value">{{ node.worktree.branch }}</span>
+        <div v-if="node.worktree" class="ctx-menu-fact" data-test="pane-branch" :title="t('pane.fact.branchHint', 'Separate copy on branch {{branch}}\n{{path}}', { branch: node.worktree.branch, path: node.worktree.path })">
+          <span class="ctx-fact-label">{{ t('pane.fact.branch', 'Branch') }}</span><span class="ctx-fact-value">{{ node.worktree.branch }}</span>
         </div>
-        <div v-if="team" class="ctx-menu-fact" data-test="pane-team" :title="`Team: ${team.name}${isLead ? ' (this agent leads it)' : ''} (manage it under Sessions)`">
-          <span class="ctx-fact-label">Team</span><span class="ctx-fact-value pane-team-name">{{ team.name }}{{ isLead ? ' · lead' : '' }}</span>
+        <div v-if="team" class="ctx-menu-fact" data-test="pane-team" :title="teamFactTitle()">
+          <span class="ctx-fact-label">{{ t('pane.fact.team', 'Team') }}</span><span class="ctx-fact-value pane-team-name">{{ team.name }}{{ isLead ? ' · ' + t('pane.fact.lead', 'lead') : '' }}</span>
         </div>
-        <div v-if="isAgent && node.launchYolo" class="ctx-menu-fact" data-test="pane-yolo" :title="YOLO_TITLE">
-          <span class="ctx-fact-label">Started</span><span class="ctx-fact-value pane-yolo">Yolo</span>
+        <div v-if="isAgent && node.launchYolo" class="ctx-menu-fact" data-test="pane-yolo" :title="yoloTitle()">
+          <span class="ctx-fact-label">{{ t('pane.fact.started', 'Started') }}</span><span class="ctx-fact-value pane-yolo">Yolo</span>
         </div>
         <div v-if="isAgent" class="ctx-menu-fact" data-test="pane-state" :title="statusTitle">
-          <span class="ctx-fact-label">State</span>
+          <span class="ctx-fact-label">{{ t('pane.fact.state', 'State') }}</span>
           <span class="ctx-fact-value">
-            <template v-if="node.sleeping">asleep</template>
-            <template v-else-if="exited">exited</template>
-            <template v-else-if="asksApproval">asks you to approve</template>
-            <template v-else-if="limit">usage limit{{ limit.reset ? ` · resets ${limit.reset}` : '' }}</template>
-            <template v-else-if="agentStatus === 'busy'">{{ estimatedState ? 'working (estimated)' : 'working' }}</template>
-            <template v-else-if="agentStatus === 'unknown'">unknown</template>
-            <template v-else-if="needsYou">done, needs you</template>
-            <template v-else>idle</template>
+            <template v-if="node.sleeping">{{ t('pane.badge.asleep', 'asleep') }}</template>
+            <template v-else-if="exited">{{ t('pane.badge.exited', 'exited') }}</template>
+            <template v-else-if="asksApproval">{{ t('pane.state.asksApproval', 'asks you to approve') }}</template>
+            <template v-else-if="limit">{{ limitState() }}</template>
+            <template v-else-if="agentStatus === 'busy'">{{ estimatedState ? t('pane.state.workingEstimated', 'working (estimated)') : t('pane.badge.working', 'working') }}</template>
+            <template v-else-if="agentStatus === 'unknown'">{{ t('pane.badge.unknown', 'unknown') }}</template>
+            <template v-else-if="needsYou">{{ t('pane.state.doneNeedsYou', 'done, needs you') }}</template>
+            <template v-else>{{ t('pane.state.idle', 'idle') }}</template>
           </span>
         </div>
         <div v-if="stuck" class="ctx-menu-fact" data-test="pane-stuck" :title="track.reason">
-          <span class="ctx-fact-label">Quiet</span><span class="ctx-fact-value pane-stuck-text" :class="track.level">{{ track.minutes }} min</span>
+          <span class="ctx-fact-label">{{ t('pane.fact.quiet', 'Quiet') }}</span><span class="ctx-fact-value pane-stuck-text" :class="track.level">{{ track.minutes }} min</span>
         </div>
         <div v-if="cache" class="ctx-menu-fact" data-test="pane-cache-fact" :title="cacheTitle">
-          <span class="ctx-fact-label">Prompt cache</span><span class="ctx-fact-value">{{ cache.level === 'expired' ? 'expired' : `${cache.label} left` }}</span>
+          <span class="ctx-fact-label">{{ t('pane.fact.cache', 'Prompt cache') }}</span><span class="ctx-fact-value">{{ cacheLeft() }}</span>
         </div>
       </div>
       <template v-if="unsent || launchStale">
-        <button v-if="unsent" class="ctx-menu-item" data-test="menu-unsent" title="A message was pasted but not seen taken" @click="menuResolveUnsent">
-          Message not confirmed…
+        <button v-if="unsent" class="ctx-menu-item" data-test="menu-unsent" :title="t('pane.menu.unsentHint', 'A message was pasted but not seen taken')" @click="menuResolveUnsent">
+          {{ t('pane.menu.unsent', 'Message not confirmed…') }}
         </button>
-        <button v-if="launchStale" class="ctx-menu-item" data-test="menu-restart-apply" :title="APPLY_TITLE" @click="menuRestartApply">
-          Restart to apply settings
+        <button v-if="launchStale" class="ctx-menu-item" data-test="menu-restart-apply" :title="applyTitle()" @click="menuRestartApply">
+          {{ t('pane.menu.restartApply', 'Restart to apply settings') }}
         </button>
       </template>
       <div class="ctx-menu-sep"></div>
       <button class="ctx-menu-item" :disabled="!ctxMenu.hasSelection" @click="menuCopy">
-        Copy
+        {{ t('pane.menu.copy', 'Copy') }}
       </button>
-      <button class="ctx-menu-item" @click="menuPaste">Paste</button>
+      <button class="ctx-menu-item" @click="menuPaste">{{ t('pane.menu.paste', 'Paste') }}</button>
       <div class="ctx-menu-sep"></div>
-      <button class="ctx-menu-item" @click="menuCopyOutput">Copy output</button>
-      <button class="ctx-menu-item" @click="menuClear">Clear</button>
+      <button class="ctx-menu-item" @click="menuCopyOutput">{{ t('pane.menu.copyOutput', 'Copy output') }}</button>
+      <button class="ctx-menu-item" @click="menuClear">{{ t('pane.menu.clear', 'Clear') }}</button>
       <button v-if="node.sessionId" class="ctx-menu-item" @click="menuCopySession">
-        Copy session ID<span class="ctx-menu-shortcut">{{ node.sessionId.slice(0, 8) }}</span>
+        {{ t('pane.menu.copySession', 'Copy session ID') }}<span class="ctx-menu-shortcut">{{ node.sessionId.slice(0, 8) }}</span>
       </button>
       <button class="ctx-menu-item" @click="menuFind">
-        Find<span class="ctx-menu-shortcut">Ctrl+Shift+F</span>
+        {{ t('pane.menu.find', 'Find') }}<span class="ctx-menu-shortcut">Ctrl+Shift+F</span>
       </button>
-      <button v-if="isAgent" class="ctx-menu-item" data-test="pane-model" :title="modelTitle || 'Name the model this agent uses'" @click="menuSetModel">
-        Set model…<span class="ctx-menu-shortcut ctx-menu-model" :class="{ manual: node.modelOverride }">{{ modelText }}{{ node.modelOverride ? ' (yours)' : '' }}</span>
+      <button v-if="isAgent" class="ctx-menu-item" data-test="pane-model" :title="modelTitle || t('pane.menu.setModelHint', 'Name the model this agent uses')" @click="menuSetModel">
+        {{ t('pane.menu.setModel', 'Set model…') }}<span class="ctx-menu-shortcut ctx-menu-model" :class="{ manual: node.modelOverride }">{{ modelText }}{{ node.modelOverride ? t('pane.menu.yours', ' (yours)') : '' }}</span>
       </button>
       <div class="ctx-menu-sep"></div>
-      <button class="ctx-menu-item" data-test="menu-voice" :title="`Speak instead of typing (${ctx.voiceName.value}). Windows voice typing`" @click="menuVoice">
-        Voice typing<span class="ctx-menu-shortcut">{{ ctx.voiceLabel.value || 'Win+H' }}</span>
+      <button class="ctx-menu-item" data-test="menu-voice" :title="t('pane.voice.menuHint', 'Speak instead of typing ({{language}}). Windows voice typing', { language: ctx.voiceName.value })" @click="menuVoice">
+        {{ t('pane.voice.menu', 'Voice typing') }}<span class="ctx-menu-shortcut">{{ ctx.voiceLabel.value || 'Win+H' }}</span>
       </button>
       <div v-if="ctx.voiceLanguages.value.length" class="ctx-menu-chips" data-test="pane-voice-langs">
-        <span class="ctx-chips-label">Speak in</span>
+        <span class="ctx-chips-label">{{ t('pane.voice.speakIn', 'Speak in') }}</span>
         <button
           v-for="l in ctx.voiceLanguages.value"
           :key="l.tip"
           class="ctx-chip"
           :class="{ selected: settings.voiceTip === l.tip }"
-          :title="`Speak in ${l.name}`"
+          :title="t('pane.voice.speakInLanguage', 'Speak in {{language}}', { language: l.name })"
           @click="menuPickVoice(l.tip)"
         >
           {{ l.tag.slice(0, 2).toUpperCase() }}
         </button>
-        <button class="ctx-chip" :class="{ selected: !settings.voiceTip }" title="Current keyboard language" @click="menuPickVoice('')">⌨</button>
+        <button class="ctx-chip" :class="{ selected: !settings.voiceTip }" :title="t('pane.voice.keyboard', 'Current keyboard language')" @click="menuPickVoice('')">⌨</button>
       </div>
       <div class="ctx-menu-sep"></div>
       <template v-if="otherPanes.length">
-        <div class="ctx-menu-label">Send selection to</div>
+        <div class="ctx-menu-label">{{ t('pane.menu.sendSelection', 'Send selection to') }}</div>
         <button
           v-for="p in otherPanes"
           :key="'sel-' + p.id"
@@ -1991,7 +2098,7 @@ onBeforeUnmount(() => {
           <span class="ctx-menu-shortcut">{{ p.branch || p.where }}</span>
         </button>
         <template v-if="otherPanes.some((p) => p.agent)">
-          <div class="ctx-menu-label">Ask to review this pane's changes</div>
+          <div class="ctx-menu-label">{{ t('pane.menu.askReview', "Ask to review this pane's changes") }}</div>
           <button
             v-for="p in otherPanes.filter((p) => p.agent)"
             :key="'rev-' + p.id"
@@ -2016,25 +2123,25 @@ onBeforeUnmount(() => {
           class="ctx-menu-item"
           @click="(closeCtxMenu(), ctx.setTeamLead(team.id, isLead ? null : node.id))"
         >
-          {{ isLead ? `Stop leading ${team.name}` : `Make lead of ${team.name}` }}
+          {{ leadToggleText() }}
         </button>
         <button class="ctx-menu-item" @click="(closeCtxMenu(), ctx.leaveTeam(node.id))">
-          Leave {{ team.name }}
+          {{ leaveTeamText() }}
         </button>
         <div class="ctx-menu-sep"></div>
       </template>
-      <button class="ctx-menu-item" @click="menuOpenHere">Open terminal or agent here…</button>
+      <button class="ctx-menu-item" @click="menuOpenHere">{{ t('pane.menu.openHere', 'Open terminal or agent here…') }}</button>
       <button class="ctx-menu-item" @click="menuSplit('row')">
-        Split right<span class="ctx-menu-shortcut">▥</span>
+        {{ t('pane.menu.splitRight', 'Split right') }}<span class="ctx-menu-shortcut">▥</span>
       </button>
       <button class="ctx-menu-item" @click="menuSplit('col')">
-        Split down<span class="ctx-menu-shortcut">▤</span>
+        {{ t('pane.menu.splitDown', 'Split down') }}<span class="ctx-menu-shortcut">▤</span>
       </button>
       <div class="ctx-menu-sep"></div>
       <button class="ctx-menu-item" @click="menuRestart">
-        Restart<span class="ctx-menu-shortcut">Ctrl+Shift+R</span>
+        {{ t('pane.restart', 'Restart') }}<span class="ctx-menu-shortcut">Ctrl+Shift+R</span>
       </button>
-      <button class="ctx-menu-item danger" @click="menuClose">Close pane</button>
+      <button class="ctx-menu-item danger" @click="menuClose">{{ t('pane.close', 'Close pane') }}</button>
     </div>
   </Teleport>
 </template>
