@@ -77,6 +77,9 @@ const api = {
     ipcRenderer.invoke('git:createWorktree', { cwd, label, options }),
   // Last locally observed subscription quotas, with timestamps and stale flags.
   getUsage: () => ipcRenderer.invoke('usage:get'),
+  // Claude Code's usage report (tokens and estimated cost by day, model,
+  // project, conversation), from its own files on this computer.
+  claudeUsageReport: () => ipcRenderer.invoke('usage:claudeReport'),
   // Review and merge a task branch: { root, path, branch, target, ... }.
   // A team lead's inbox folder: { dir, token, guide }.
   lead: {

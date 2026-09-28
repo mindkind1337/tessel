@@ -11,6 +11,7 @@ import { createUsageReader } from './agentUsage'
 import { postToInbox } from './agentInbox'
 import { hooksStatus } from './teamHooksStatus'
 import { assessNeeds } from './tesselNeeds'
+import { createClaudeUsageReport } from './claudeUsageReport'
 import { resolveFiles, codeGotoArg, listProjectFiles } from './fileOpen'
 import { titleBarColors } from '../shared/themePalettes'
 import { findAgentSession, geminiSessionExists, qwenSessionExists } from './agentResume'
@@ -911,6 +912,9 @@ ipcMain.handle(
   safe(({ cwd, label, options } = {}) => createWorktree(cwd, label, options))
 )
 ipcMain.handle('usage:get', safe(createUsageReader()))
+// Claude Code's usage report from its own conversation files (tokens, estimated cost).
+const claudeUsageReport = createClaudeUsageReport()
+ipcMain.handle('usage:claudeReport', safe(() => claudeUsageReport()))
 ipcMain.handle('review:info', safe(reviewInfo))
 ipcMain.handle('review:diff', safe(reviewDiff))
 ipcMain.handle('review:merge', safe(reviewMerge))

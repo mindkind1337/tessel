@@ -6,6 +6,7 @@
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import BrandIcon from './BrandIcon.vue'
 
+const emit = defineEmits(['details'])
 const NAMES = { claude: 'Claude Code', codex: 'Codex' }
 const open = ref(false)
 const usage = ref(null) // { agents: [...] } | { error }
@@ -77,7 +78,10 @@ function toggle() {
       </svg>
     </button>
     <div v-if="open" class="notif-menu usage-menu" role="dialog" aria-label="Usage">
-      <div class="notif-head"><span>Usage of your subscriptions</span></div>
+      <div class="notif-head">
+        <span>Usage of your subscriptions</span>
+        <button class="exit-btn" data-test="usage-details" @click="(open = false), emit('details')">Details…</button>
+      </div>
       <p v-if="usage && usage.error" class="notif-empty">Could not read the usage: {{ usage.error }}</p>
       <p v-else-if="!agents.length" class="notif-empty">Reading…</p>
       <div v-for="a in agents" :key="a.id" class="usage-agent" data-test="usage-agent">

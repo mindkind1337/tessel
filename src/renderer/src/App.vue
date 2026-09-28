@@ -31,6 +31,7 @@ import ImageViewer from './components/ImageViewer.vue'
 import NotificationsMenu from './components/NotificationsMenu.vue'
 import FileFinder from './components/FileFinder.vue'
 import UsageMenu from './components/UsageMenu.vue'
+import UsageDialog from './components/UsageDialog.vue'
 import { addNotification, readForPane, playAlertSound } from './notificationsStore'
 import NotesPanel from './components/NotesPanel.vue'
 import NewTaskDialog from './components/NewTaskDialog.vue'
@@ -100,6 +101,7 @@ const voiceName = computed(() => {
 // Hovering a pane in a menu outlines it, so you can see which one you pick.
 const highlightId = ref(null)
 const settingsOpen = ref(false)
+const usageOpen = ref(false) // Usage details (from the toolbar gauge)
 const settingsSection = ref(null) // opens Settings scrolled to that section
 function openSettingsAt(section) {
   settingsSection.value = section
@@ -5149,6 +5151,7 @@ function dialogOpen() {
     newTaskOpen.value ||
     paletteOpen.value ||
     finderOpen.value ||
+    usageOpen.value ||
     !!confirmState.value ||
     !!imageView.value ||
     launcher.open
@@ -5254,6 +5257,7 @@ function onKey(e) {
     mcpOpen.value = false
     toolsOpen.value = false
     sessionsOpen.value = false
+    usageOpen.value = false
     closeMenus()
   }
 }
@@ -5663,7 +5667,7 @@ onBeforeUnmount(() => {
 
         <span class="toolbar-sep"></span>
 
-        <UsageMenu />
+        <UsageMenu @details="usageOpen = true" />
         <NotificationsMenu @focus-pane="focusPane" />
         <button
           class="tb-icon"
@@ -5967,6 +5971,7 @@ onBeforeUnmount(() => {
     />
 
     <CommandPalette v-if="paletteOpen" :commands="paletteCommands" @close="paletteOpen = false" />
+    <UsageDialog v-if="usageOpen" @close="usageOpen = false" />
     <FileFinder
       v-if="finderOpen"
       :root="finderRoot()"

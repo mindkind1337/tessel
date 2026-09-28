@@ -6028,3 +6028,136 @@ button.act-stat:hover,
 .nt-branch {
   width: 180px;
 }
+
+/* Usage details window */
+.usage-card {
+  width: min(860px, calc(100vw - 32px));
+  max-height: min(88vh, 900px);
+  overflow-y: auto;
+}
+
+.usage-note {
+  margin: 10px 0 0;
+  color: var(--text-dim);
+  font-size: 11.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.usage-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  margin: 12px 0 16px;
+}
+
+.usage-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.usage-tile-value {
+  color: var(--text-strong);
+  font-size: 20px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-tile-label {
+  color: var(--text-dim);
+  font-size: 11.5px;
+}
+
+.usage-chart-head {
+  margin: 14px 0 6px;
+  color: var(--text-strong);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.usage-chart {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 120px;
+  padding: 0 2px;
+  border-bottom: 1px solid var(--border);
+}
+
+.usage-col {
+  display: flex;
+  flex: 1 1 0;
+  align-items: flex-end;
+  height: 100%;
+  cursor: default;
+}
+
+.usage-col:hover .usage-colbar {
+  opacity: 0.8;
+}
+
+.usage-colbar {
+  width: 100%;
+  border-radius: 4px 4px 0 0;
+  background: var(--accent);
+}
+
+.usage-tip {
+  position: absolute;
+  top: -4px;
+  right: 0;
+  padding: 3px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--text-strong);
+  font-size: 11.5px;
+  pointer-events: none;
+}
+
+.usage-axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 4px;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.usage-cols2 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.usage-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.usage-table th {
+  padding: 5px 6px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-dim);
+  font-weight: 500;
+  text-align: left;
+}
+
+.usage-table td {
+  padding: 5px 6px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-table th:nth-last-child(-n + 2),
+.usage-table td:nth-last-child(-n + 2) {
+  text-align: right;
+}
