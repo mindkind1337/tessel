@@ -13,7 +13,6 @@ import {
   Terminal,
   Plug,
   LoaderCircle,
-  ServerOff,
   Server,
   Activity,
   ChevronRight,
@@ -21,6 +20,7 @@ import {
 } from 'lucide-vue-next'
 import OrcaMenu from './OrcaMenu.vue'
 import PortRow from './sidebar/PortRow.vue'
+import RemoteHostsStatus from './remote/RemoteHostsStatus.vue'
 import { settings } from '../settings'
 import { formatMemory, formatCpu, awakeCopy, resourceTree, portsSummary } from '../statusBarModel'
 import { t } from '../i18n'
@@ -192,11 +192,7 @@ function togglePorts(e) {
   if (portsOpen.value) emit('refresh-ports')
 }
 
-// --- Remote hosts (SshStatusSegment): Tessel has none yet ---------------------
-const hostsOpen = ref(null)
-const hostItems = computed(() => [
-  { type: 'label', label: t('statusBar.hosts.title', 'Remote Hosts'), className: 'orca-menu-caps' }
-])
+// --- Remote hosts (SshStatusSegment): see remote/RemoteHostsStatus.vue ------
 
 // --- Popovers: placed above their trigger, closed by a click outside ---------
 const popEl = ref(null)
@@ -336,24 +332,8 @@ function goToWorktree(key) {
         <span v-if="!iconOnly || ports.totalCount > 0" class="sb-label sb-num">{{ ports.workspaceCount }}</span>
       </button>
 
-      <!-- Remote hosts -->
-      <button
-        v-if="shows('ssh')"
-        type="button"
-        class="sb-trigger"
-        :aria-label="t('statusBar.hosts.ariaLabel', 'Remote host connection status')"
-        data-status-bar-trigger
-        @click="hostsOpen = hostsOpen ? null : $event.currentTarget.getBoundingClientRect()"
-      >
-        <template v-if="!iconOnly">
-          <ServerOff :size="12" class="sb-muted" aria-hidden="true" />
-          <span v-if="!compact" class="sb-label sb-muted-text">{{ t('statusBar.hosts.none', '0 hosts') }}</span>
-          <span class="sb-host-dot" aria-hidden="true"></span>
-        </template>
-        <template v-else>
-          <span class="sb-host-dot big" aria-hidden="true"></span>
-        </template>
-      </button>
+      <!-- Remote hosts (remote/RemoteHostsStatus.vue) -->
+      <RemoteHostsStatus v-if="shows('ssh')" :compact="compact" :icon-only="iconOnly" />
     </div>
 
     <OrcaMenu
@@ -366,17 +346,6 @@ function goToWorktree(key) {
       :items="awakeItems"
       :label="awake.title"
       @close="awakeOpen = null"
-    />
-    <OrcaMenu
-      :open="!!hostsOpen"
-      :anchor="hostsOpen"
-      side="top"
-      align="start"
-      :offset="8"
-      :width="320"
-      :items="hostItems"
-      :label="t('statusBar.hosts.title', 'Remote Hosts')"
-      @close="hostsOpen = null"
     />
     <OrcaMenu
       :open="!!visibilityMenu"

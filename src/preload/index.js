@@ -297,6 +297,21 @@ const api = {
   },
 
   // Updates (see src/main/updater.js).
+  // Remote hosts over SSH (src/main/remoteHosts.js): ids and form fields only.
+  remoteHosts: {
+    list: () => ipcRenderer.invoke('remoteHosts:list'),
+    importConfig: (reAdopt = false) => ipcRenderer.invoke('remoteHosts:importConfig', { reAdopt }),
+    add: (target) => ipcRenderer.invoke('remoteHosts:add', { target }),
+    update: (id, updates) => ipcRenderer.invoke('remoteHosts:update', { id, updates }),
+    remove: (id) => ipcRenderer.invoke('remoteHosts:remove', { id }),
+    test: (id) => ipcRenderer.invoke('remoteHosts:test', { id }),
+    disconnect: (id) => ipcRenderer.invoke('remoteHosts:disconnect', { id }),
+    onState: (cb) => {
+      const handler = (_e, payload) => cb(payload)
+      ipcRenderer.on('remoteHosts:state', handler)
+      return () => ipcRenderer.removeListener('remoteHosts:state', handler)
+    }
+  },
   update: {
     status: () => ipcRenderer.invoke('update:status'),
     check: () => ipcRenderer.invoke('update:check'),
