@@ -3023,6 +3023,15 @@ body.pane-dragging * {
   flex-shrink: 0;
 }
 
+/* Agent versions and updates */
+.agent-set-name .agent-version.agent-update-available {
+  color: var(--accent);
+}
+.agent-set-name > .agent-version,
+.agent-set-name > .agent-update-job {
+  text-align: left;
+}
+
 .agent-custom {
   display: flex;
   flex-direction: column;

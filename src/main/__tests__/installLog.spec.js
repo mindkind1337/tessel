@@ -50,6 +50,24 @@ describe('install logs', () => {
     expect(fs.readFileSync(results[0].file, 'utf8')).toContain('No matching distribution')
   })
 
+  it('tells when a failure came from files in use (npm EBUSY/EPERM on Windows)', () => {
+    logs.start({ paneId: 'u', name: 'Update Codex CLI' })
+    logs.onData('u', 'npm error code EBU')
+    logs.onData('u', 'SY\nnpm error syscall rename\n')
+    logs.onData('u', `${MARK_FAILED}\n`)
+    logs.start({ paneId: 'v', name: 'Update Claude Code' })
+    logs.onData('v', 'npm error code ENOTFOUND\n')
+    logs.onData('v', `${MARK_FAILED}\n`)
+    logs.start({ paneId: 'w', name: 'Update Gemini' })
+    logs.onData('w', 'The process cannot access the file because it is being used by another process.\n')
+    logs.onData('w', `${MARK_OK}\n`)
+    expect(results.map((r) => [r.paneId, r.ok, !!r.locked])).toEqual([
+      ['u', false, true],
+      ['v', false, false],
+      ['w', true, false] // a success is a success
+    ])
+  })
+
   it('only its own log files can be opened', () => {
     const { file } = logs.start({ paneId: 'p', name: 'X' })
     expect(logs.isLog(file)).toBe(true)
