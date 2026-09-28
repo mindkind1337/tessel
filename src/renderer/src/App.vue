@@ -4053,6 +4053,14 @@ const reviewActions = {
     const task = reviewTask.value
     reviewTaskId.value = null
     if (task && task.paneId) focusPane(task.paneId)
+  },
+  // A task done in the project folder: its changes are the project's, shown
+  // in the Changes tab (list, diffs, review notes) like Orca's review.
+  openChanges() {
+    const task = reviewTask.value
+    reviewTaskId.value = null
+    if (task && task.wsId && workspaces.value.some((w) => w.id === task.wsId)) selectWorkspace(task.wsId)
+    showSideTab('changes')
   }
 }
 

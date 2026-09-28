@@ -312,8 +312,12 @@ function commentsStore(taskId) {
           <p v-if="task.brief" class="rv-brief">{{ task.brief }}</p>
           <p class="act-none">
             This task was done directly in the project folder, not in its own copy, so there is no branch to merge.
-            Check the changes in the project (for example with git diff), then mark it done or ask for changes.
+            Its changes are the project's: review them in the Changes tab (each file's diff, review notes for the agent),
+            then mark the task done or ask for changes.
           </p>
+          <button class="confirm-btn primary" data-test="rv-open-changes" @click="actions.openChanges && actions.openChanges()">
+            Open the changes
+          </button>
         </div>
       </template>
 
