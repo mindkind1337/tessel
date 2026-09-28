@@ -1,4 +1,3 @@
-<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // A single kanban task. Renders its title + current column and drives the shared
 // task-board store directly (the brief: the card consumes the store) — renaming
@@ -12,6 +11,7 @@ import { updateTask, removeTask, assignAgent, moveTask, tasks as allTasks } from
 import { COLUMNS } from '../../../shared/taskModel'
 import BrandIcon from './BrandIcon.vue'
 import { formatDuration, formatWhen } from '../../../shared/activity'
+import { t, intlLocale } from '../i18n'
 
 const props = defineProps({
   task: { type: Object, required: true },
@@ -127,21 +127,28 @@ const canShowAgent = computed(
 const when = (t) => formatWhen(t)
 const addedAt = computed(() => props.task.createdAt || (props.task.column === 'todo' ? props.task.columnSince : null) || null)
 const timing = computed(() => {
-  const t = props.task
-  if (t.column === 'todo') return addedAt.value ? `Added ${when(addedAt.value)}` : ''
-  const start = t.startedAt || t.doingSince
-  if (t.column === 'done' && t.doneAt) {
-    return start ? `Started ${when(start)} · done ${when(t.doneAt)} · ${formatDuration(t.doneAt - start)}` : `Done ${when(t.doneAt)}`
+  const task = props.task
+  if (task.column === 'todo') return addedAt.value ? t('tasks.card.added', 'Added {{when}}', { when: when(addedAt.value) }) : ''
+  const start = task.startedAt || task.doingSince
+  if (task.column === 'done' && task.doneAt) {
+    return start
+      ? t('tasks.card.startedDone', 'Started {{start}} · done {{done}} · {{duration}}', {
+          start: when(start),
+          done: when(task.doneAt),
+          duration: formatDuration(task.doneAt - start)
+        })
+      : t('tasks.card.doneAt', 'Done {{when}}', { when: when(task.doneAt) })
   }
-  return start ? `Started ${when(start)}` : ''
+  return start ? t('tasks.card.started', 'Started {{when}}', { when: when(start) }) : ''
 })
 const timingTitle = computed(() => {
-  const t = props.task
-  const start = t.startedAt || t.doingSince
+  const task = props.task
+  const start = task.startedAt || task.doingSince
+  const full = (ms) => new Date(ms).toLocaleString(intlLocale())
   const parts = []
-  if (addedAt.value) parts.push(`Added ${new Date(addedAt.value).toLocaleString()}`)
-  if (start) parts.push(`Started ${new Date(start).toLocaleString()}`)
-  if (t.column === 'done' && t.doneAt) parts.push(`Finished ${new Date(t.doneAt).toLocaleString()}`)
+  if (addedAt.value) parts.push(t('tasks.card.added', 'Added {{when}}', { when: full(addedAt.value) }))
+  if (start) parts.push(t('tasks.card.started', 'Started {{when}}', { when: full(start) }))
+  if (task.column === 'done' && task.doneAt) parts.push(t('tasks.card.finished', 'Finished {{when}}', { when: full(task.doneAt) }))
   return parts.join('\n')
 })
 
@@ -150,8 +157,8 @@ const timingTitle = computed(() => {
 // A card deleted from the board still blocks: it shows as removed.
 const waitsFor = computed(() =>
   (props.task.deps || [])
-    .map((id) => allTasks.find((t) => t.id === id) || { id, title: `${id} (removed)`, column: 'gone' })
-    .filter((t) => t.column !== 'done')
+    .map((id) => allTasks.find((x) => x.id === id) || { id, title: t('tasks.card.removed', '{{id}} (removed)', { id }), column: 'gone' })
+    .filter((x) => x.column !== 'done')
 )
 const hadDeps = computed(() => (props.task.deps || []).length > 0)
 // A decision the agent asked you for (team_task_gate).
@@ -162,6 +169,17 @@ function decide(answer) {
   gateDraft.value = ''
 }
 const reportOpen = ref(false)
+
+const reportLabel = computed(() => {
+  const r = props.task.report
+  const head = r.outcome === 'succeeded' ? t('tasks.card.report', 'Report') : t('tasks.card.failed', 'Failed')
+  const n = (r.files && r.files.length) || 0
+  if (!n) return head
+  return `${head} · ${t('tasks.card.files', n > 1 ? '{{count}} files' : '{{count}} file', { count: n })}`
+})
+function onTaskText(onTask) {
+  return t('tasks.card.onThisTask', ' · on this task {{time}}', { time: onTask })
+}
 
 // Display label for a pane: its title, falling back to the agent id.
 function paneLabel(pane) {
@@ -179,7 +197,7 @@ function paneLabel(pane) {
     :data-column="task.column"
     :draggable="!editing"
     tabindex="0"
-    title="Drag to another column (keyboard: Alt+Left / Alt+Right)"
+    :title="t('tasks.card.dragHint', 'Drag to another column (keyboard: Alt+Left / Alt+Right)')"
     aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight"
     @keydown="onCardKey"
     @click="onCardClick"
@@ -193,7 +211,7 @@ function paneLabel(pane) {
         type="checkbox"
         class="task-check"
         :checked="selected"
-        :aria-label="`Select ${task.title}`"
+        :aria-label="t('tasks.card.selectTask', 'Select {{title}}', { title: task.title })"
         data-test="task-check"
         @change="emit('toggle-select', task.id)"
       />
@@ -211,15 +229,15 @@ function paneLabel(pane) {
         v-else
         class="task-title"
         data-test="card-title"
-        :title="canEdit ? 'Double-click to rename' : null"
+        :title="canEdit ? t('tasks.card.renameHint', 'Double-click to rename') : null"
         @dblclick="startEdit"
         >{{ task.title }}</span
       >
       <button
         v-if="canEdit && !editing"
         class="task-btn task-icon-btn"
-        title="Rename task"
-        aria-label="Rename task"
+        :title="t('tasks.card.rename', 'Rename task')"
+        :aria-label="t('tasks.card.rename', 'Rename task')"
         data-test="edit-title"
         @click="startEdit"
       >
@@ -236,8 +254,8 @@ function paneLabel(pane) {
       <button
         v-if="!selectable"
         class="task-btn task-icon-btn danger"
-        title="Delete task"
-        aria-label="Delete task"
+        :title="t('tasks.card.delete', 'Delete task')"
+        :aria-label="t('tasks.card.delete', 'Delete task')"
         data-test="delete-task"
         @click="onDelete"
       >
@@ -252,10 +270,10 @@ function paneLabel(pane) {
       v-if="canAssign"
       v-model="selectedPane"
       class="task-assign"
-      title="The agent doing this task"
+      :title="t('tasks.card.agentHint', 'The agent doing this task')"
       data-test="assign-select"
     >
-      <option value="">Unassigned</option>
+      <option value="">{{ t('tasks.card.unassigned', 'Unassigned') }}</option>
       <option v-for="pane in agentPanes" :key="pane.id" :value="pane.id">
         {{ paneLabel(pane) }}
       </option>
@@ -269,48 +287,46 @@ function paneLabel(pane) {
       >
         <BrandIcon :kind="assignedPane.agentId || ''" :size="13" />{{ paneLabel(assignedPane) }}
       </span>
-      <span v-else class="task-assignee unassigned" data-test="assignee">No agent</span>
+      <span v-else class="task-assignee unassigned" data-test="assignee">{{ t('tasks.card.noAgent', 'No agent') }}</span>
       <span
         v-if="task.column === 'review' && task.leadReview"
         class="task-lead"
         :class="task.leadReview"
         data-test="lead-review"
         :title="task.leadNote || ''"
-        >{{ task.leadReview === 'approved' ? 'Lead approved' : 'Lead reviewing' }}</span
+        >{{ task.leadReview === 'approved' ? t('tasks.card.leadApproved', 'Lead approved') : t('tasks.card.leadReviewing', 'Lead reviewing') }}</span
       >
     </div>
 
     <div v-if="assignedPane && assignedPane.track && task.column === 'doing'" class="task-track" :class="'track-' + assignedPane.track.level">
-      <span>{{ assignedPane.track.text }}<template v-if="assignedPane.track.onTask"> · on this task {{ assignedPane.track.onTask }}</template></span>
+      <span>{{ assignedPane.track.text }}<template v-if="assignedPane.track.onTask">{{ onTaskText(assignedPane.track.onTask) }}</template></span>
       <span v-if="assignedPane.track.reason" class="task-track-reason">{{ assignedPane.track.reason }}</span>
     </div>
 
     <div v-if="hadDeps && task.column !== 'done'" class="task-deps" data-test="task-deps">
       <template v-if="waitsFor.length">
-        Waits for: <span v-for="d in waitsFor" :key="d.id" class="task-dep" :title="d.id">{{ d.title }}</span>
+        {{ t('tasks.card.waitsFor', 'Waits for:') }} <span v-for="d in waitsFor" :key="d.id" class="task-dep" :title="d.id">{{ d.title }}</span>
       </template>
-      <template v-else>Ready: the cards it waited for are done</template>
+      <template v-else>{{ t('tasks.card.ready', 'Ready: the cards it waited for are done') }}</template>
     </div>
 
     <div v-if="task.gate && task.gate.status === 'pending'" class="task-gate" data-test="task-gate">
-      <div class="task-gate-q"><strong>Your decision:</strong> {{ task.gate.question }}</div>
+      <div class="task-gate-q"><strong>{{ t('tasks.card.yourDecision', 'Your decision:') }}</strong> {{ task.gate.question }}</div>
       <div class="task-gate-options">
         <button v-for="o in task.gate.options || []" :key="o" class="task-btn" @click="decide(o)">{{ o }}</button>
       </div>
       <form class="task-gate-own" @submit.prevent="decide(gateDraft)">
-        <input v-model="gateDraft" class="task-gate-input" placeholder="Or your own answer" aria-label="Your own answer" />
-        <button class="task-btn" type="submit" :disabled="!gateDraft.trim()">Answer</button>
+        <input v-model="gateDraft" class="task-gate-input" :placeholder="t('tasks.card.ownAnswerPlaceholder', 'Or your own answer')" :aria-label="t('tasks.card.ownAnswer', 'Your own answer')" />
+        <button class="task-btn" type="submit" :disabled="!gateDraft.trim()">{{ t('tasks.card.answer', 'Answer') }}</button>
       </form>
     </div>
     <div v-else-if="task.gate && task.gate.status === 'resolved'" class="task-gate done" :title="task.gate.question">
-      Decided: {{ task.gate.answer }}
+      {{ t('tasks.card.decided', 'Decided:') }} {{ task.gate.answer }}
     </div>
 
     <div v-if="task.report" class="task-report" :class="task.report.outcome" data-test="task-report">
       <button class="task-report-head" type="button" :aria-expanded="reportOpen" @click="reportOpen = !reportOpen">
-        {{ task.report.outcome === 'succeeded' ? 'Report' : 'Failed' }}<template v-if="task.report.files && task.report.files.length">
-          · {{ task.report.files.length }} file{{ task.report.files.length > 1 ? 's' : '' }}</template
-        >
+        {{ reportLabel }}
       </button>
       <div v-if="reportOpen" class="task-report-body">
         <p>{{ task.report.summary }}</p>
@@ -332,20 +348,20 @@ function paneLabel(pane) {
         <button
           v-if="canShowAgent"
           class="task-btn"
-          title="Go to the agent doing this task"
+          :title="t('tasks.card.showAgentHint', 'Go to the agent doing this task')"
           data-test="show-agent"
           @click="emit('focus-pane', task.paneId)"
         >
-          Show agent
+          {{ t('tasks.card.showAgent', 'Show agent') }}
         </button>
         <button
           v-if="task.column === 'review'"
           class="task-btn task-review-btn"
-          title="See the changes, then merge, ask for changes or discard"
+          :title="t('tasks.card.reviewHint', 'See the changes, then merge, ask for changes or discard')"
           data-test="review-task"
           @click="emit('review', task.id)"
         >
-          Review
+          {{ t('tasks.card.review', 'Review') }}
         </button>
       </span>
     </div>
