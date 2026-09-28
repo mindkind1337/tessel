@@ -82,7 +82,7 @@ describe('sidebar hover cards', () => {
     const w = mountSidebar()
     for (const row of w.findAll('.wtc-row')) expect(row.findAll('[title]').map((e) => e.attributes('title'))).toEqual([])
     const row = agentRow(w, 'a')
-    expect(row.attributes('aria-label')).toBe('Fix the cart - Working, Team: Team 2 (lead), Pane 1')
+    expect(row.attributes('aria-label')).toBe('Codex - Fix the cart, Working, Team: Team 2 (lead), Pane 1')
     const copy = cardFor(w, 'Fix the login')
     const desc = document.getElementById(copy.attributes('aria-describedby'))
     expect(desc.textContent).toBe('tessel/fix-login, C:\\repo.worktrees\\fix-login')

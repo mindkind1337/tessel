@@ -225,9 +225,12 @@ export function paneRow(pane, now = Date.now()) {
   else if (pane.state === 'approval') secondary = t('sidebar.row.asksApproval', 'Asks your approval')
   else if (pane.typingHold) secondary = t('sidebar.row.typingHold', 'Message waits until you send your text')
   else if (pane.held) secondary = t('sidebar.row.held', 'Message waits for your approval')
+  // The agent's name leads (like the pane header); its task follows,
+  // dimmed, unless something needs attention (the dot shows the state).
+  else if (pane.task) secondary = pane.task
   else if (pane.track && pane.track.text) secondary = pane.track.text
   else secondary = agentStateLabel(dotState)
-  const primary = agent && pane.task ? pane.task : pane.title || (agent ? agentName : terminal)
+  const primary = pane.title || (agent ? agentName : terminal)
   return {
     id: pane.id,
     num: pane.num || 0,
@@ -238,6 +241,7 @@ export function paneRow(pane, now = Date.now()) {
     title: pane.title || (agent ? agentName : terminal),
     primary,
     secondary: primary === secondary ? '' : secondary,
+    stateLabel: agent ? agentStateLabel(dotState) : '',
     dotState,
     sleeping: !!pane.sleeping,
     since: pane.since || 0,

@@ -136,6 +136,7 @@ const rowLabel = computed(() => {
   const r = props.row
   const team = props.teamLabel || r.team
   const parts = [r.secondary ? `${r.primary} - ${r.secondary}` : r.primary]
+  if (r.stateLabel && r.stateLabel !== r.secondary) parts.push(r.stateLabel)
   if (r.team)
     parts.push(
       r.lead ? t('sidebar.card.teamLead', 'Team: {{team}} (lead)', { team }) : t('sidebar.card.team', 'Team: {{team}}', { team })
