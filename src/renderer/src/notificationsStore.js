@@ -75,9 +75,16 @@ export function clearNotifications() {
   save()
 }
 
-// A short sound for a new entry (Settings > Agent alerts), made here: no file.
-export function playAlertSound(kind) {
+// A short sound for a new entry (Settings > Notifications), made here: no
+// file. volume: 0 to 100 (Settings > Notifications, Volume).
+export function alertPeakGain(volume = 100) {
+  const v = Number.isFinite(volume) ? Math.min(100, Math.max(0, volume)) : 100
+  return 0.18 * (v / 100)
+}
+export function playAlertSound(kind, volume = 100) {
   if (!kind || kind === 'none') return
+  const peak = alertPeakGain(volume)
+  if (peak <= 0) return
   try {
     const Ctx = window.AudioContext || window.webkitAudioContext
     if (!Ctx) return
@@ -89,7 +96,7 @@ export function playAlertSound(kind) {
       osc.type = 'sine'
       osc.frequency.value = freq
       gain.gain.setValueAtTime(0.0001, ac.currentTime + start)
-      gain.gain.exponentialRampToValueAtTime(0.18, ac.currentTime + start + 0.01)
+      gain.gain.exponentialRampToValueAtTime(Math.max(0.0002, peak), ac.currentTime + start + 0.01)
       gain.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + start + len)
       osc.connect(gain).connect(ac.destination)
       osc.start(ac.currentTime + start)

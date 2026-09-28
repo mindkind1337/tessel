@@ -26,6 +26,7 @@ import {
   CONFLICTS_SECTION_LABEL,
   CONFLICT_KIND_LABELS,
   buildDisplaySections,
+  resolveSourceControlGroupOrder,
   canStageStatusEntry,
   canUnstageStatusEntry,
   canDiscardStatusEntry,
@@ -105,8 +106,9 @@ function clearAndCollapseFilter() {
 const filtered = computed(() =>
   normalizedFilter.value ? entries.value.filter((e) => e.path.toLowerCase().includes(normalizedFilter.value)) : entries.value
 )
-const displaySections = computed(() => buildDisplaySections(filtered.value))
-const unfilteredSectionsById = computed(() => new Map(buildDisplaySections(entries.value).map((s) => [s.id, s])))
+const groupOrder = computed(() => resolveSourceControlGroupOrder(settings.sourceControlGroupOrder))
+const displaySections = computed(() => buildDisplaySections(filtered.value, groupOrder.value))
+const unfilteredSectionsById = computed(() => new Map(buildDisplaySections(entries.value, groupOrder.value).map((s) => [s.id, s])))
 const collapsed = ref(new Set())
 function toggleSection(id) {
   const next = new Set(collapsed.value)

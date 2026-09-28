@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer, webUtils } from 'electron'
+import { contextBridge, ipcRenderer, webUtils, webFrame } from 'electron'
 
 // Bridge a minimal, typed-ish API to the renderer. No node access leaks.
 const api = {
@@ -19,6 +19,17 @@ const api = {
   writePty: (id, data) => ipcRenderer.send('pty:write', { id, data }),
   resizePty: (id, cols, rows) => ipcRenderer.send('pty:resize', { id, cols, rows }),
   killPty: (id) => ipcRenderer.send('pty:kill', { id }),
+  // Is a program running in this terminal (under its shell)? -> { running,
+  // names } or { unknown: true } (Settings > General, closing a pane).
+  ptyRunningWork: (id) => ipcRenderer.invoke('pty:runningWork', id),
+  // Settings > Appearance, UI Zoom: Chromium's zoom level (0 = 100 %).
+  setUiZoomLevel: (level) => {
+    try {
+      webFrame.setZoomLevel(Number(level) || 0)
+    } catch {
+      /* not in a window */
+    }
+  },
   // Stop terminals and wait until their processes really ended.
   stopPtysAndWait: (ids, timeoutMs) => ipcRenderer.invoke('pty:stopAndWait', { ids, timeoutMs }),
 

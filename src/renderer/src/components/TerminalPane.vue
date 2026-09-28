@@ -35,6 +35,8 @@ import { modelLabel } from '../../../shared/modelLabel'
 import { modelFromScreen } from '../../../shared/screenModel'
 import { findFileRefs } from '../../../shared/fileLinks'
 import { osc52Text } from '../../../shared/osc52'
+import { stripTerminalSelectionGutter } from '../../../shared/terminalSelectionGutter'
+import { terminalSettingOptions, composeTerminalTheme, useWebgl, METRIC_OPTIONS } from '../terminalOptions'
 import { cacheCountdown } from '../promptCache'
 import { isViewed } from '../../../shared/fileKinds'
 import { effectiveAgent, launchSignature } from '../../../shared/agentPrefs'
@@ -275,8 +277,11 @@ const activityMonitor = createAgentActivityMonitor({
     // A successful turn boundary is not a completed task: keep the explicit
     // standalone TASK_COMPLETE signal as the separate task contract.
     if (detectTaskDone(screen) && ctx.agentReportedDone) ctx.agentReportedDone(props.node.id)
-    if (!(isActive.value && document.hasFocus())) {
-      setAttention(props.node.id)
+    // Settings > Notifications, "Suppress While Focused": nothing for the
+    // pane you are looking at (off: you are told there too).
+    const looking = isActive.value && document.hasFocus()
+    if (!looking || settings.notifySuppressWhenFocused === false) {
+      if (!looking) setAttention(props.node.id)
       ctx.notifyAgentDone(props.node)
     }
   }
@@ -597,9 +602,21 @@ function isAppShortcut(e) {
   return k === 'F1'
 }
 
+// The selection as copied to the clipboard: without the left gutter agent
+// output is painted behind (Settings > Terminal, "Trim Gutter on Copy").
+function selectionText() {
+  const sel = term ? term.getSelection() : ''
+  return settings.copyTrimsGutter === false ? sel : stripTerminalSelectionGutter(sel)
+}
+
+// The theme of this pane's terminal, with the cursor's opacity.
+function paneTheme() {
+  return composeTerminalTheme(terminalTheme(settings.theme), settings.cursorOpacity)
+}
+
 function copySelection() {
   if (!term) return false
-  const sel = term.getSelection()
+  const sel = selectionText()
   if (sel && sel.length) {
     window.shellApi.writeClipboard(sel)
     return true
@@ -799,7 +816,7 @@ async function onContextMenu(e) {
   // right-click to paste it at the prompt. Shift+right-click (or the ⋯
   // button) opens the menu.
   if (settings.rightClickPaste && !e.shiftKey) {
-    const sel = term ? term.getSelection() : ''
+    const sel = selectionText()
     if (sel) {
       window.shellApi.writeClipboard(sel)
       term.clearSelection()
@@ -917,7 +934,7 @@ function pasteText(text) {
 }
 
 function menuSendSelection(targetId) {
-  const text = term ? term.getSelection() : ''
+  const text = selectionText()
   closeCtxMenu()
   if (text) ctx.sendToPane(props.node.id, targetId, 'selection', text)
 }
@@ -977,7 +994,73 @@ function openLink(uri) {
   else window.open(uri)
 }
 
+// Draw with the graphics card (much faster with busy agents and many panes),
+// like VS Code: Settings > Terminal, GPU Acceleration (Auto / On / Off).
+// Falls back to the normal renderer if WebGL fails or its context is lost.
+let webgl = null
+function applyRenderer() {
+  if (!term) return
+  const want = useWebgl(settings.gpuAcceleration)
+  if (want && !webgl) {
+    try {
+      const gl = new WebglAddon()
+      if (gl.onContextLoss)
+        gl.onContextLoss(() => {
+          try {
+            gl.dispose()
+          } catch {
+            /* already gone */
+          }
+          if (webgl === gl) webgl = null
+        })
+      term.loadAddon(gl)
+      webgl = gl
+    } catch {
+      /* no WebGL: keep the default renderer */
+    }
+  } else if (!want && webgl) {
+    try {
+      webgl.dispose()
+    } catch {
+      /* already gone */
+    }
+    webgl = null
+  }
+}
+
+// Hide the mouse pointer while you type in the pane; it comes back as soon
+// as the mouse moves (Settings > Appearance, like Orca's).
+let mouseHidden = false
+function hideMouseOnType() {
+  if (!settings.hideMouseWhileTyping || !hostEl.value || mouseHidden) return
+  mouseHidden = true
+  hostEl.value.classList.add('mouse-hidden')
+}
+function showMouse() {
+  if (!mouseHidden || !hostEl.value) return
+  mouseHidden = false
+  hostEl.value.classList.remove('mouse-hidden')
+}
+
+// Focus follows mouse (Settings > Terminal): hovering a pane makes it the
+// active one, never while a button is held (a drag, a selection) nor when
+// Tessel is in the background or a menu is open.
+function onPaneMouseEnter(e) {
+  if (!settings.focusFollowsMouse || isActive.value || e.buttons) return
+  if (!document.hasFocus() || ctxMenu.visible || editingTitle.value) return
+  const el = document.activeElement
+  if (el && el.closest && !el.closest('.pane') && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) return
+  focusTerm()
+}
+
+// A bell from the program (BEL): a notification when you aren't looking
+// (Settings > Notifications, Terminal Bell).
+function onTerminalBell() {
+  if (ctx.terminalBell) ctx.terminalBell(props.node, { visible: isActive.value && document.hasFocus() })
+}
+
 onMounted(() => {
+  const theme = paneTheme()
   term = new Terminal({
     fontFamily: fontStack(settings.fontFamily),
     fontSize: settings.fontSize,
@@ -986,7 +1069,8 @@ onMounted(() => {
     scrollback: settings.scrollback,
     allowProposedApi: true,
     windowsPty: windowsPtyOptions(),
-    theme: terminalTheme(settings.theme),
+    theme,
+    ...terminalSettingOptions(settings, theme),
     // Links a program writes with a text of their own (OSC 8: Claude Code,
     // Codex and others print their links this way). Without this, xterm
     // asks in a browser popup "WARNING: This link could potentially be
@@ -998,7 +1082,10 @@ onMounted(() => {
   // A link written as plain text: the same.
   term.loadAddon(new WebLinksAddon((_e, uri) => openLink(uri)))
   // OSC 52: a program copies text to the clipboard (writing only, never read).
+  // Settings > Terminal, "Allow TUI Clipboard Writes (OSC 52)": off, it is
+  // ignored.
   term.parser.registerOscHandler(52, (data) => {
+    if (settings.allowOsc52Clipboard === false) return true
     const text = osc52Text(data)
     if (text && window.shellApi.writeClipboard) {
       window.shellApi.writeClipboard(text)
@@ -1123,23 +1210,21 @@ onMounted(() => {
   }
   for (const ev of ['wheel', 'keydown', 'pointerdown', 'pointermove'])
     hostEl.value.addEventListener(ev, byHand, { passive: true, capture: true })
-  // Draw with the graphics card (much faster with busy agents and many
-  // panes), like VS Code. Falls back to the normal renderer if WebGL is
-  // unavailable or the graphics context is lost.
-  if (settings.gpuRendering)
-    try {
-      const gl = new WebglAddon()
-      gl.onContextLoss(() => {
-        try {
-          gl.dispose()
-        } catch {
-          /* already gone */
-        }
-      })
-      term.loadAddon(gl)
-    } catch {
-      /* no WebGL: keep the default renderer */
-    }
+  applyRenderer()
+  // A copy xterm makes itself (Ctrl+Insert): without the gutter too.
+  if (term.element)
+    term.element.addEventListener(
+      'copy',
+      (event) => {
+        if (!term || !term.hasSelection || !term.hasSelection() || !event.clipboardData) return
+        event.clipboardData.setData('text/plain', selectionText())
+        event.preventDefault()
+        event.stopImmediatePropagation()
+      },
+      { capture: true }
+    )
+  hostEl.value.addEventListener('mousemove', showMouse, { passive: true })
+  if (term.onBell) term.onBell(onTerminalBell)
 
   doFit()
 
@@ -1176,6 +1261,7 @@ onMounted(() => {
   // User input → routed through App (handles broadcast / multi-write).
   term.onData((data) => {
     if (replaying) return
+    hideMouseOnType()
     expectRedraw()
     ctx.routeInput(props.node.id, data)
   })
@@ -1326,10 +1412,40 @@ watch(isActive, (a) => {
 
 // Live settings. Text metrics changes refit right away.
 watch(
-  () => settings.theme,
-  (theme) => {
-    if (term) term.options.theme = terminalTheme(theme)
+  () => [settings.theme, settings.cursorOpacity],
+  () => {
+    if (term) term.options.theme = paneTheme()
   }
+)
+// Weights, line height, scroll speed, contrast, word separators: applied to
+// open panes right away (a refit when the grid's size may change).
+watch(
+  () => [
+    settings.theme,
+    settings.fontWeight,
+    settings.fontWeightBold,
+    settings.lineHeight,
+    settings.scrollSensitivity,
+    settings.fastScrollSensitivity,
+    settings.minimumContrastRatio,
+    settings.wordSeparator
+  ],
+  () => {
+    if (!term) return
+    const next = terminalSettingOptions(settings, paneTheme())
+    let refit = false
+    for (const [k, v] of Object.entries(next)) {
+      if (term.options[k] === v) continue
+      term.options[k] = v
+      if (METRIC_OPTIONS.includes(k)) refit = true
+    }
+    if (refit) doFit()
+  }
+)
+watch(() => settings.gpuAcceleration, applyRenderer)
+watch(
+  () => settings.hideMouseWhileTyping,
+  (on) => !on && showMouse()
 )
 watch(
   () => [settings.fontSize, settings.fontFamily],
@@ -1374,6 +1490,7 @@ onBeforeUnmount(() => {
   if (unsubExit) unsubExit()
   if (term) term.dispose()
   term = null
+  webgl = null
   // NOTE: the PTY is intentionally NOT killed here — the pane may merely be
   // re-mounting after a layout change. App.closeLeaf() owns PTY termination.
 })
@@ -1394,6 +1511,7 @@ onBeforeUnmount(() => {
     }"
     :style="paneStyle"
     :data-pane-id="node.id"
+    @mouseenter="onPaneMouseEnter"
     @mousedown="focusTerm"
     @contextmenu="onContextMenu"
     @paste.capture="onPasteEvent"

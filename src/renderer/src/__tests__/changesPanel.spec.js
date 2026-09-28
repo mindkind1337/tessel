@@ -9,6 +9,7 @@ import { setTasks } from '../taskBoardStore'
 import { scmStatus } from '../scmState'
 import { addNote, notesFor, clearNotes } from '../reviewNotes'
 import { setNotesDelivery } from '../notesDelivery'
+import { settings, resetSettings } from '../settings'
 
 const ROOT = 'C:\\proj'
 let w
@@ -113,6 +114,28 @@ describe('Source Control: status', () => {
     expect(rowOf('src/b.js', 'staged').find('.explorer-hit-dir').text()).toBe('src')
     expect(w.find('[data-test="sc-branch"]').text()).toContain('main')
     expect(w.find('[data-test="sc-empty"]').exists()).toBe(false)
+  })
+
+  it('Settings > Git & Source Control, Source Control Group Order: the chosen group first', async () => {
+    api({
+      status: () =>
+        status([
+          { path: 'src/b.js', area: 'staged', status: 'added', added: 4, removed: 0 },
+          { path: 'a.js', area: 'unstaged', status: 'modified', added: 2, removed: 1 },
+          { path: 'n.txt', area: 'untracked', status: 'untracked' }
+        ])
+    })
+    settings.sourceControlGroupOrder = 'untracked-first'
+    try {
+      make()
+      await flushPromises()
+      expect(w.findAll('.sc-section-label').map((s) => s.text())).toEqual(['Untracked Files', 'Changes', 'Staged Changes'])
+      settings.sourceControlGroupOrder = 'staged-first'
+      await flushPromises()
+      expect(w.findAll('.sc-section-label').map((s) => s.text())).toEqual(['Staged Changes', 'Changes', 'Untracked Files'])
+    } finally {
+      resetSettings()
+    }
   })
 
   it('a clean repository says so', async () => {

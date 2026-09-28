@@ -85,7 +85,7 @@ describe('TerminalPane status integration', () => {
     fixture.terminals.length = 0
     clearAgentStatus('test-pane')
     resetSettings()
-    settings.gpuRendering = false
+    settings.gpuAcceleration = 'off'
     settings.promptCacheTimer = true
     vi.stubGlobal(
       'ResizeObserver',

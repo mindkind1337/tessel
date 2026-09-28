@@ -6,6 +6,7 @@ import './sourceControl.css'
 import './themes.css'
 import { settings } from './settings'
 import { applyTheme } from './themes'
+import { applyAppearance, applyUiZoom } from './appearance'
 import { startCapture } from './ptyStore'
 
 // Begin buffering PTY output before any pane mounts so nothing is lost.
@@ -13,6 +14,12 @@ startCapture()
 
 // Root-level styling also reaches dialogs rendered outside the main app tree.
 watch(() => settings.theme, applyTheme, { immediate: true, flush: 'sync' })
+watch(
+  () => [settings.dividerThickness, settings.terminalPaddingX, settings.terminalPaddingY, settings.inactivePaneOpacity],
+  () => applyAppearance(settings),
+  { immediate: true }
+)
+watch(() => settings.uiZoomLevel, applyUiZoom, { immediate: true })
 
 // Send interface errors to the app log (%APPDATA%\\tessel\\logs).
 function report(level, value) {

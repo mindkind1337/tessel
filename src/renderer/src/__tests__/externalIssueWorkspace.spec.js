@@ -20,6 +20,7 @@ function fixture() {
     addTask: vi.fn(() => task),
     updateTask: vi.fn((id, patch) => Object.assign(task, patch)),
     agentById: () => ({ id: 'codex' }),
+    worktreeSettings: () => ({ branchPrefix: 'custom', branchPrefixCustom: 'agent', workspaceDir: '' }),
     showToast: vi.fn(),
     splitLeaf: vi.fn(),
     createLeaf: vi.fn(),

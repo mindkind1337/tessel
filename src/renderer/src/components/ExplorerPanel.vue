@@ -7,6 +7,7 @@
 // folders not opened yet too) or by content; git-ignored files are dimmed.
 import { ref, reactive, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { statusOf, folderStatus, ignoredSet, isIgnored } from '../explorerStatus'
+import { settings } from '../settings'
 
 const props = defineProps({
   root: { type: String, default: null },
@@ -65,6 +66,8 @@ const rows = computed(() => {
     const n = nodes[dir]
     if (!n) return
     for (const e of n.entries) {
+      // Settings > Appearance, "Show Git-Ignored Files" off: hidden.
+      if (!settings.showGitIgnoredFiles && ignoredOf(e.path)) continue
       out.push({ ...e, depth })
       if (e.dir && open[e.path]) walk(e.path, depth + 1)
     }
@@ -76,6 +79,10 @@ function letterOf(e) {
   return e.dir ? folderStatuses.value[key(e.path)] || '' : statusOf(status.value, key(e.path))
 }
 const ignoredOf = (p) => isIgnored(ignored.value, key(p), key(props.root))
+// Search results without git-ignored files when they are hidden.
+const shownResults = computed(() =>
+  settings.showGitIgnoredFiles ? search.results : search.results.filter((h) => !ignoredOf(h.path))
+)
 
 // --- Search ------------------------------------------------------------------------
 let searchTimer = 0
@@ -386,7 +393,7 @@ const LETTER_TITLE = { M: 'Modified', A: 'Added', D: 'Deleted', R: 'Renamed', C:
       <div v-else-if="search.done && !search.busy && !search.results.length" class="explorer-empty">No {{ mode === 'content' ? 'text' : 'file' }} matches “{{ query.trim() }}”.</div>
       <template v-if="mode === 'names'">
         <div
-          v-for="h in search.results"
+          v-for="h in shownResults"
           :key="h.path"
           class="explorer-row explorer-hit"
           :class="{ selected: selected === h.path, dir: h.dir, ignored: ignoredOf(h.path), ['git-' + (letterOf(h) || 'none')]: true }"
@@ -407,7 +414,7 @@ const LETTER_TITLE = { M: 'Modified', A: 'Added', D: 'Deleted', R: 'Renamed', C:
       </template>
       <template v-else>
         <div
-          v-for="h in search.results"
+          v-for="h in shownResults"
           :key="h.path + ':' + h.line"
           class="explorer-row explorer-line-hit"
           :class="{ selected: selected === h.path + ':' + h.line }"

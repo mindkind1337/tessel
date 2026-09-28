@@ -128,3 +128,30 @@ describe('real processes', () => {
     }
   }, 30000)
 })
+
+describe('runningWork (closing a terminal with a program running)', () => {
+  it('reads the process listing', async () => {
+    const { parseProcessNames } = await import('../processTree')
+    expect(parseProcessNames('10\t4\tpwsh.exe\r\n11\t10\tnode.exe\r\njunk\n')).toEqual([
+      { pid: 10, ppid: 4, name: 'pwsh.exe' },
+      { pid: 11, ppid: 10, name: 'node.exe' }
+    ])
+  })
+  it('an idle shell has nothing; console helpers do not count; a launcher is looked through', async () => {
+    const { runningWork } = await import('../processTree')
+    const procs = [
+      { pid: 10, ppid: 4, name: 'pwsh.exe' },
+      { pid: 12, ppid: 10, name: 'conhost.exe' },
+      { pid: 20, ppid: 4, name: 'bash.exe' },
+      { pid: 21, ppid: 20, name: 'bash.exe' },
+      { pid: 30, ppid: 4, name: 'cmd.exe' },
+      { pid: 31, ppid: 30, name: 'npm.cmd' },
+      { pid: 32, ppid: 30, name: 'node.exe' }
+    ]
+    expect(runningWork(procs, 10)).toEqual([])
+    expect(runningWork(procs, 20)).toEqual([])
+    expect(runningWork([...procs, { pid: 22, ppid: 21, name: 'vim.exe' }], 20)).toEqual(['vim.exe'])
+    expect(runningWork(procs, 30)).toEqual(['npm.cmd', 'node.exe'])
+    expect(runningWork(procs, 99)).toEqual([])
+  })
+})

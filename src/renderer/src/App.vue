@@ -1187,6 +1187,25 @@ async function splitLeaf(
   return leaf
 }
 
+// Settings > Git and > General: how task copies are named and where they go.
+function worktreeSettings() {
+  return {
+    branchPrefix: settings.branchPrefix,
+    branchPrefixCustom: settings.branchPrefixCustom,
+    workspaceDir: settings.workspaceDir
+  }
+}
+
+// Asks the main process what runs under a terminal's shell, at most 4 s (an
+// unanswered probe is not proof it is idle: then Tessel asks, as Orca does).
+function probeRunningWork(leafId) {
+  const timeout = new Promise((resolve) => setTimeout(() => resolve({ unknown: true }), 4000))
+  const ask = Promise.resolve(window.shellApi.ptyRunningWork(leafId))
+    .then((r) => (r && typeof r === 'object' ? { running: !!r.running, unknown: !!r.unknown, names: Array.isArray(r.names) ? r.names : [] } : { unknown: true }))
+    .catch(() => ({ unknown: true }))
+  return Promise.race([ask, timeout]).then((r) => ({ names: [], ...r }))
+}
+
 function closeLeaf(leafId, opts = {}) {
   const ws = wsOfLeaf(leafId)
   const closing = findLeaf(leafId)
@@ -1204,6 +1223,8 @@ function closeLeaf(leafId, opts = {}) {
     releaseOwner(leafId)
   }
   const isEditor = !!(closing && closing.kind === 'editor')
+  // Settings > General, "Confirm before closing running terminals" (Orca's):
+  // an agent pane, or a terminal where a program runs under the shell.
   if (!opts.force && settings.confirmCloseAgent && ws) {
     const leaf = findLeafIn(ws.tree, leafId)
     if (leaf && leaf.kind === 'agent') {
@@ -1213,6 +1234,21 @@ function closeLeaf(leafId, opts = {}) {
         confirmLabel: 'Close',
         danger: true
       }).then((ok) => ok && closeLeaf(leafId, { ...opts, force: true }))
+      return
+    }
+    if (leaf && !isEditor && !opts.probed && window.shellApi.ptyRunningWork) {
+      probeRunningWork(leafId).then((work) => {
+        if (!findLeaf(leafId)) return // closed meanwhile
+        if (!work.running && !work.unknown) return closeLeaf(leafId, { ...opts, probed: true })
+        askConfirm({
+          title: `Close ${leaf.title}?`,
+          text: work.unknown
+            ? 'Tessel could not check whether a command is still running in it. Closing stops anything running.'
+            : `${work.names.join(', ')} ${work.names.length === 1 ? 'is' : 'are'} still running in it. Closing stops ${work.names.length === 1 ? 'it' : 'them'}.`,
+          confirmLabel: 'Close',
+          danger: true
+        }).then((ok) => ok && closeLeaf(leafId, { ...opts, force: true }))
+      })
       return
     }
   }
@@ -1645,6 +1681,7 @@ provide('panelCtx', {
   fontSize,
   notifyAgentDone,
   notifyAgentLimit,
+  terminalBell,
   openLauncherAt,
   beginPaneDrag,
   otherPanes,
@@ -1865,7 +1902,7 @@ async function launch({ kind, id }, targetId = activeId.value, where = placement
   let worktree = null
   const baseWs = (targetId && wsOfLeaf(targetId)) || currentWs.value
   if (agent && useWorktree.value && worktreeState.available && baseWs && baseWs.cwd) {
-    const res = await window.shellApi.createWorktree(baseWs.cwd, agent.id)
+    const res = await window.shellApi.createWorktree(baseWs.cwd, agent.id, worktreeSettings())
     if (!res || !res.ok) {
       showToast((res && res.error) || 'Could not create a separate copy.', {
         kind: 'error',
@@ -2372,10 +2409,26 @@ function focusPane(paneId) {
   if (getEditorPane(paneId)) nextTick(() => getEditorPane(paneId) && getEditorPane(paneId).focus())
 }
 
-// An entry in the notification inbox (toolbar bell), with its sound.
+// An entry in the notification inbox (toolbar bell), with its sound
+// (Settings > Notifications: off with Enable Notifications, at its Volume).
 function inboxNote(kind, title, body, paneId) {
   addNotification({ kind, title, body, paneId })
-  playAlertSound(settings.alertSound)
+  if (settings.notificationsEnabled !== false) playAlertSound(settings.alertSound, settings.notificationVolume)
+}
+
+// A Windows notification (Settings > Notifications): only with Enable
+// Notifications and Windows notifications on; while Tessel is in front only
+// when Suppress While Focused is off.
+function wantsNative() {
+  return (
+    !!window.shellApi.notify &&
+    settings.notificationsEnabled !== false &&
+    settings.desktopNotifications !== false &&
+    (!document.hasFocus() || settings.notifySuppressWhenFocused === false)
+  )
+}
+function nativeNotify(payload) {
+  if (wantsNative()) window.shellApi.notify(payload)
 }
 
 // An agent finished a stretch of work while you were elsewhere.
@@ -2384,20 +2437,46 @@ function notifyAgentDone(node) {
   const where = ws && workspaces.value.length > 1 ? ` in ${ws.name}` : ''
   const message = node.agentLaunchToken ? `${node.title} finished a response` : `${node.title} finished and is waiting for you`
   inboxNote('done', message, ws ? `Workspace: ${ws.name}` : '', node.id)
-  if (document.hasFocus()) {
-    if (!settings.inAppAlerts) return
+  if (document.hasFocus() && settings.inAppAlerts)
     showToast(`${message}${where}.`, {
       kind: 'attention',
       timeout: 8000,
       action: { label: 'Show', run: () => focusPane(node.id) }
     })
-  } else if (window.shellApi.notify && settings.desktopNotifications) {
-    window.shellApi.notify({
-      title: `${node.title} is waiting for you`,
-      body: ws ? `Workspace: ${ws.name}` : '',
-      paneId: node.id
-    })
-  }
+  nativeNotify({
+    title: `${node.title} is waiting for you`,
+    body: ws ? `Workspace: ${ws.name}` : '',
+    paneId: node.id
+  })
+}
+
+// A program rang the terminal bell (BEL) in a pane (Settings > Notifications,
+// Terminal Bell, off by default). Nothing when its workspace is on screen and
+// Suppress While Focused is on; one per pane every 5 s.
+const bellAt = new Map()
+function terminalBell(node) {
+  if (!node || settings.notificationsEnabled === false || !settings.notifyTerminalBell) return
+  const ws = wsOfLeaf(node.id)
+  const visible = !!ws && ws.id === currentWsId.value && document.hasFocus()
+  if (visible && settings.notifySuppressWhenFocused !== false) return
+  const now = Date.now()
+  if (now - (bellAt.get(node.id) || 0) < 5000) return
+  bellAt.set(node.id, now)
+  const title = `Bell in ${ws ? ws.name : 'workspace'}`
+  const body = `${node.title} · Attention requested`
+  inboxNote('attention', title, body, node.id)
+  if (document.hasFocus() && settings.inAppAlerts)
+    showToast(`${node.title}: bell.`, { kind: 'attention', timeout: 6000, action: { label: 'Show', run: () => focusPane(node.id) } })
+  nativeNotify({ title, body, paneId: node.id })
+}
+
+// Settings > Notifications, "Send Test Notification": always shown, with the
+// alert sound.
+function sendTestNotification() {
+  if (window.shellApi.notify)
+    window.shellApi.notify({ title: 'Tessel notifications are on', body: 'This is a test notification from Tessel.' })
+  playAlertSound(settings.alertSound, settings.notificationVolume)
+  showToast(window.shellApi.notify ? 'Test notification sent' : 'Notifications are not supported on this system', { timeout: 3000 })
 }
 
 // Alt+Arrow: move focus to the nearest pane in that direction.
@@ -2744,7 +2823,9 @@ function removeWorkspace(id, confirmed = false, editorChecked = false) {
   if (wsTasks.length)
     lost.push(`its ${wsTasks.length} ${wsTasks.length === 1 ? 'task' : 'tasks'} deleted`)
   const what = lost.join(' and ')
-  if (lost.length && !confirmed) {
+  // Settings > General, "Ask Before Deleting Workspaces" (unsaved files are
+  // still asked about above).
+  if (lost.length && !confirmed && settings.confirmDeleteWorkspace !== false) {
     askConfirm({
       title: `Delete "${ws.name}"?`,
       text: `${what[0]?.toUpperCase()}${what.slice(1)}.`,
@@ -3469,7 +3550,7 @@ async function startTask(spec, opts = {}) {
     }
     let worktree = null
     if (spec.isolated) {
-      const res = await window.shellApi.createWorktree(ws.cwd, spec.title, spec.worktreeOptions || {})
+      const res = await window.shellApi.createWorktree(ws.cwd, spec.title, { ...(spec.worktreeOptions || {}), ...worktreeSettings() })
       // The copy exists even when its setup script failed: said, never undone.
       if (res && res.ok && res.setup && res.setup.ran && !res.setup.ok)
         showToast(`The copy is ready, but .tessel/setup.ps1 failed: ${res.setup.error || 'see the script'}.`, { kind: 'error', timeout: 9000 })
@@ -5525,12 +5606,9 @@ function askDecision(task, r, from) {
   recordActivity({ type: 'task', action: 'gate', paneId: from.id, agent: agentInfo(from), title: task.title, wsId: task.wsId, by: paneLabel(from), detail: r.question })
   inboxNote('attention', `${paneLabel(from)} needs your decision`, r.question, from.id)
   const text = `${paneLabel(from)} needs your decision on "${task.title}": ${r.question}`
-  if (document.hasFocus()) {
-    if (settings.inAppAlerts)
-      showToast(text, { kind: 'attention', timeout: 12000, action: { label: 'Show the board', run: () => showSideTab('tasks') } })
-  } else if (window.shellApi.notify && settings.desktopNotifications) {
-    window.shellApi.notify({ title: `${paneLabel(from)} needs your decision`, body: r.question, paneId: from.id })
-  }
+  if (document.hasFocus() && settings.inAppAlerts)
+    showToast(text, { kind: 'attention', timeout: 12000, action: { label: 'Show the board', run: () => showSideTab('tasks') } })
+  nativeNotify({ title: `${paneLabel(from)} needs your decision`, body: r.question, paneId: from.id })
 }
 
 function resolveDecision(taskId, answer) {
@@ -6203,19 +6281,17 @@ function notifyAgentLimit(node, hit) {
     : ''
   const text = `${node.title} hit its usage limit${when}.${handOver}`
   inboxNote('limit', `${node.title} hit its usage limit`, `${when.trim()}${handOver}`.trim(), node.id)
-  if (document.hasFocus()) {
+  if (document.hasFocus())
     showToast(text, {
       kind: 'attention',
       timeout: 10000,
       action: { label: 'Show', run: () => focusPane(node.id) }
     })
-  } else if (window.shellApi.notify && settings.desktopNotifications) {
-    window.shellApi.notify({
-      title: `${node.title} hit its usage limit`,
-      body: `${when.trim()}${ws ? ` Workspace: ${ws.name}.` : ''}${handOver}`.trim(),
-      paneId: node.id
-    })
-  }
+  nativeNotify({
+    title: `${node.title} hit its usage limit`,
+    body: `${when.trim()}${ws ? ` Workspace: ${ws.name}.` : ''}${handOver}`.trim(),
+    paneId: node.id
+  })
 }
 
 function slugify(name) {
@@ -7459,6 +7535,7 @@ onBeforeUnmount(() => {
       @check-updates="checkForUpdates"
       @open-update="((settingsOpen = false), (updateOpen = true))"
       @set-default-shell="setDefaultShell"
+      @test-notification="sendTestNotification"
       @close="closeSettings"
     />
 

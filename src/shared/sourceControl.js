@@ -39,6 +39,17 @@ export function groupEntries(entries) {
 }
 
 // -> [{ id: 'conflicts'|area, area, items }] with unresolved conflicts pinned first.
+// Settings > Git & Source Control, "Source Control Group Order" (Orca's
+// section-order.ts): which group comes first.
+const ORDER_BY_PRESET = {
+  'changes-first': ['unstaged', 'staged', 'untracked'],
+  'staged-first': ['staged', 'unstaged', 'untracked'],
+  'untracked-first': ['untracked', 'unstaged', 'staged']
+}
+export function resolveSourceControlGroupOrder(value) {
+  return ORDER_BY_PRESET[value] || ORDER_BY_PRESET['changes-first']
+}
+
 export function buildDisplaySections(entries, order = SOURCE_CONTROL_AREAS) {
   const groups = groupEntries(entries)
   const pinned = SOURCE_CONTROL_AREAS.flatMap((a) => groups[a].filter(isPinnedConflictEntry))

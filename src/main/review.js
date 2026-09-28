@@ -17,7 +17,11 @@ import {
   mergeBlocker
 } from '../shared/diff'
 
+// Tessel's own task branches (agent/<name>, the default Branch Prefix).
 const BRANCH_RE = /^agent\/[A-Za-z0-9._-]{1,80}$/
+// Any other name a task branch can have (Settings > Git, Branch Prefix):
+// only trusted as a task branch once git lists a task copy on it.
+const ANY_BRANCH_RE = /^(?!-)(?!.*\.\.)(?!.*\/\/)(?!.*\.lock(?:\/|$))(?!.*\/$)[A-Za-z0-9._/-]{1,200}$/
 const REF_RE = /^(?!-)(?!.*\.\.)[A-Za-z0-9._/-]{1,120}$/
 const MAX_DIFF = 600 * 1024
 
@@ -35,23 +39,31 @@ async function check({ root, path, branch, target } = {}) {
   const top = await git(root, ['rev-parse', '--show-toplevel'])
   if (!top.ok) return { error: 'The project folder is not a git repository.' }
   const repo = top.stdout.trim()
-  if (typeof branch !== 'string' || !BRANCH_RE.test(branch)) return { error: 'Not a task branch.' }
+  if (typeof branch !== 'string' || !ANY_BRANCH_RE.test(branch)) return { error: 'Not a task branch.' }
   if (typeof target !== 'string' || !REF_RE.test(target)) return { error: 'Unknown base branch.' }
+  if (branch === target) return { error: 'Not a task branch.' }
   const out = { repo, branch, target, path: null }
+  let listedOnBranch = false
   if (path) {
-    // Only a copy that git lists for this repo, inside <repo>.worktrees.
+    // Only a copy that git lists for this repo (not the project folder
+    // itself), or, unlisted, one inside <repo>.worktrees.
     const base = join(dirname(repo), `${basename(repo)}.worktrees`)
     const rel = relative(base, resolve(path))
-    if (!rel || rel.startsWith('..') || isAbsolute(rel)) return { error: 'Not a task copy of this project.' }
+    const inBase = !(!rel || rel.startsWith('..') || isAbsolute(rel))
     const list = await git(repo, ['worktree', 'list', '--porcelain'])
     const rec = parseWorktrees(list.stdout).find((w) => samePath(w.path, path))
+    if (samePath(path, repo) || (!rec && !inBase)) return { error: 'Not a task copy of this project.' }
     // A listed copy must be the one on this branch: never pair copy A with
     // branch B.
     if (rec && rec.branch !== `refs/heads/${branch}`)
       return { error: `That copy is not on branch ${branch}.` }
     out.path = rec ? rec.path : resolve(path)
     out.listed = !!rec
+    listedOnBranch = !!rec
   }
+  // A branch named with another prefix is a task branch only while git
+  // lists its task copy.
+  if (!BRANCH_RE.test(branch) && !listedOnBranch) return { error: 'Not a task branch.' }
   return out
 }
 

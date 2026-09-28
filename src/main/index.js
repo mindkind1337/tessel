@@ -36,7 +36,7 @@ import { claudeImageFile, isPastedImage, PASTE_DIR } from './pastedImages'
 import { createLogger, describe } from './logger'
 import { cleanEnv } from './cleanEnv'
 import { createPtyClient } from './ptyClient'
-import { listProcesses, treeOf, waitForExit, killPids } from './processTree'
+import { listProcesses, treeOf, waitForExit, killPids, listProcessNames, runningWork } from './processTree'
 import { pipeName } from './ptyProtocol'
 import { createUpdater } from './updater'
 import { createAgentUpdates } from './agentUpdates'
@@ -2053,6 +2053,25 @@ ipcMain.on('pty:resize', (_evt, { id, cols, rows }) => {
 ipcMain.on('pty:kill', (_evt, { id }) => {
   host.send('kill', { id })
   ptyInfo.delete(id)
+})
+
+// Settings > General, "Confirm before closing running terminals": is a
+// program running under this terminal's shell? -> { running, names }, or
+// { unknown: true } when it can't tell (the renderer then asks).
+ipcMain.handle('pty:runningWork', async (_evt, id) => {
+  if (!((typeof id === 'string' && id) || Number.isInteger(id))) return { unknown: true }
+  let pid = ptyInfo.get(id)?.pid
+  if (!pid) {
+    const a = await host.request('attach', { id }, 3000).catch(() => null)
+    if (a && a.ok && a.exited) return { running: false, names: [] }
+    pid = a && a.ok ? a.pid : null
+  }
+  if (!Number.isInteger(pid) || pid <= 0) return { unknown: true }
+  const procs = await listProcessNames()
+  if (!procs) return { unknown: true }
+  if (!procs.some((p) => p.pid === pid)) return { running: false, names: [] }
+  const names = runningWork(procs, pid)
+  return { running: names.length > 0, names: [...new Set(names)].slice(0, 5) }
 })
 
 // Stop these terminals and wait for the real end of each one's processes

@@ -11,11 +11,12 @@ import {
   setJsonAgentServer,
   removeJsonAgentServer
 } from './jsonAgents'
-import { join, dirname, basename } from 'path'
+import path, { join, dirname, basename } from 'path'
 import os from 'os'
 import fs from 'fs'
 import { readJson } from './fileRead'
 import { copyWorktreeEnv, resolveWorktreeBase, setupWorktree } from './worktreeCreate'
+import { branchPrefixFor, branchNameFor, worktreeBaseDir } from '../shared/worktreeNaming'
 
 // ---------------------------------------------------------------------------
 // Pure helpers
@@ -345,6 +346,38 @@ export async function gitStatus(cwd) {
   return { isRepo: true, ...parseGitStatus(res.stdout) }
 }
 
+// "~/x" -> the home folder's x (Orca's workspace directories start so).
+export function expandHome(dir) {
+  const d = typeof dir === 'string' ? dir.trim() : ''
+  if (d === '~') return os.homedir()
+  if (/^~[\\/]/.test(d)) return join(os.homedir(), d.slice(2))
+  return d
+}
+
+// The account name for Settings > Git, "Git Username" branch prefix (Orca's
+// resolveLocalGitUsername): git config github.user or user.username, else
+// the GitHub CLI's login for a project hosted on GitHub. '' when unknown.
+export async function gitUsername(root) {
+  for (const key of ['github.user', 'user.username']) {
+    const r = await run('git', ['-C', root, 'config', '--get', key], { timeout: 5000 })
+    const v = normalizeGitUsername(r.ok ? r.stdout : '')
+    if (v && /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(v)) return v
+  }
+  const remote = await run('git', ['-C', root, 'remote', 'get-url', 'origin'], { timeout: 5000 })
+  if (!remote.ok || !/github\.com[:/]/i.test(remote.stdout)) return ''
+  const gh = await run('gh', ['api', 'user', '--jq', '.login'], { timeout: 4000 })
+  const login = normalizeGitUsername(gh.ok ? gh.stdout : '')
+  return /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/.test(login) ? login : ''
+}
+
+// "12345+name@users.noreply.github.com" -> "name".
+export function normalizeGitUsername(value) {
+  const t = String(value || '').trim()
+  if (!t || /\s/.test(t)) return ''
+  const local = t.includes('@') ? t.split('@')[0] : t
+  return local.replace(/^\d+\+/, '')
+}
+
 // Create a new agent branch from HEAD or a selected local/remote branch.
 // Initialization is opt-in; a failed optional step never hides a created tree.
 export async function createWorktree(cwd, label, options = {}) {
@@ -360,29 +393,39 @@ export async function createWorktree(cwd, label, options = {}) {
     }
   const selected = await resolveWorktreeBase(info.root, info.branch, options.baseBranch, run)
   if (!selected.ok) return selected
-  const base = join(dirname(info.root), `${basename(info.root)}.worktrees`)
+  // Settings > General (Workspace Directory) and > Git (Branch Prefix).
+  const base = worktreeBaseDir(info.root, expandHome(options.workspaceDir), path)
+  let prefix
+  try {
+    const naming = options.branchPrefix
+      ? options
+      : { branchPrefix: 'custom', branchPrefixCustom: 'agent' } // Tessel's default
+    prefix = branchPrefixFor(naming, naming.branchPrefix === 'git-username' ? await gitUsername(info.root) : null)
+  } catch (err) {
+    return { ok: false, error: err.message }
+  }
   const slug = slugify(label)
   let n = 1
   let name = slug
   const branchExists = async (b) =>
     (await run('git', ['-C', info.root, 'show-ref', '--verify', '--quiet', `refs/heads/${b}`])).ok
-  while (fs.existsSync(join(base, name)) || (await branchExists(`agent/${name}`))) {
+  while (fs.existsSync(join(base, name)) || (await branchExists(branchNameFor(name, prefix)))) {
     n += 1
     name = `${slug}-${n}`
   }
-  const path = join(base, name)
-  const branch = `agent/${name}`
+  const wtPath = join(base, name)
+  const branch = branchNameFor(name, prefix)
   try {
     fs.mkdirSync(base, { recursive: true })
     if (fs.lstatSync(base).isSymbolicLink()) return { ok: false, error: 'The worktree directory must not be a link.' }
   } catch {
     return { ok: false, error: 'Could not create the worktree directory.' }
   }
-  const res = await run('git', ['-C', info.root, 'worktree', 'add', '-b', branch, path, selected.commit])
+  const res = await run('git', ['-C', info.root, 'worktree', 'add', '-b', branch, wtPath, selected.commit])
   if (!res.ok) return { ok: false, error: cliError(res, 'git worktree add failed') }
-  const result = { ok: true, path, branch, baseBranch: selected.branch, baseCommit: selected.commit, root: info.root }
-  if (options.copyEnv === true) result.copyEnvResult = await copyWorktreeEnv(info.root, path, run)
-  if (options.runSetup === true) result.setup = await setupWorktree(path, selected.commit, run)
+  const result = { ok: true, path: wtPath, branch, baseBranch: selected.branch, baseCommit: selected.commit, root: info.root }
+  if (options.copyEnv === true) result.copyEnvResult = await copyWorktreeEnv(info.root, wtPath, run)
+  if (options.runSetup === true) result.setup = await setupWorktree(wtPath, selected.commit, run)
   return result
 }
 
