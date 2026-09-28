@@ -52,6 +52,39 @@
       "removed": "La mise à jour téléchargée a été supprimée (un antivirus ?). Tessel la télécharge de nouveau.",
       "notStarted": "La mise à jour n'a pas pu démarrer. Réessayez, ou téléchargez-la depuis la page Releases."
     },
+    "project": {
+      "unknownError": "erreur inconnue",
+      "noGit": "Git est requis pour créer un projet.",
+      "gitMissing": "Git est introuvable. Installez Git pour Windows et réessayez.",
+      "remotePathInvalid": "Ce chemin de dossier distant n'est pas valide. Utilisez un chemin absolu comme /home/user/project ou ~/project.",
+      "clone": {
+        "failed": "Échec du clonage : {{error}}",
+        "aborted": "Clonage annulé",
+        "busy": "Un clonage est déjà en cours.",
+        "exists": "La destination existe déjà et n'est pas vide : {{path}}. Choisissez un autre dossier parent, supprimez le dossier existant ou ajoutez plutôt le dépôt existant.",
+        "urlRequired": "Saisissez l'URL Git.",
+        "urlOption": "Une URL Git ne peut pas commencer par « - ».",
+        "urlScheme": "Utilisez une URL https://, ssh:// ou git@hôte:chemin, ou le chemin d'un dépôt sur cet ordinateur.",
+        "urlInvalid": "Cette URL Git n'est pas valide.",
+        "destinationInvalid": "Choisissez un dossier parent absolu.",
+        "nameInvalid": "Aucun nom de dossier valide ne peut être tiré de cette URL."
+      },
+      "create": {
+        "nameEmpty": "Le nom ne peut pas être vide",
+        "nameInvalid": "Ce nom ne peut pas être un nom de dossier (pas de barres obliques, pas de <>:\"|?*, ni « . » ou « .. »).",
+        "parentRequired": "Le dossier parent est requis",
+        "parentAbsolute": "Le dossier parent doit être un chemin absolu",
+        "mkdirFailed": "Impossible de créer le dossier : {{error}}",
+        "readFailed": "Impossible de lire le dossier : {{error}}",
+        "notEmpty": "« {{name}} » existe déjà à cet emplacement et n'est pas vide.",
+        "initFailed": "Impossible d'initialiser le dépôt git : {{error}}",
+        "commitFailed": "Impossible de créer le premier commit : {{error}}",
+        "identity": "L'identité d'auteur Git n'est pas configurée. Lancez `git config --global user.name \"Votre nom\"` et `git config --global user.email \"vous@exemple.com\"`, puis réessayez."
+      },
+      "scan": {
+        "absolute": "Le chemin du dépôt doit être un chemin absolu"
+      }
+    },
     "remote": {
       "notFound": "Cet hôte distant n'est plus enregistré dans Tessel.",
       "noSsh": "Le client OpenSSH (ssh.exe) est introuvable. Installez-le depuis Paramètres Windows > Fonctionnalités facultatives.",

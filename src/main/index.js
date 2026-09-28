@@ -21,6 +21,8 @@ import { copyUsageImage } from './usageClipboard'
 import { registerIssueServices } from './issueServicesIpc'
 import { createRemoteHosts, registerRemoteHosts } from './remoteHosts'
 import { createSshPromptWatcher, registerSshPrompts } from './sshPrompts'
+import { remoteProjectLaunch } from './remoteProject'
+import { createAddProject, registerAddProject } from './addProject'
 import { prepareAgentStateHooks } from './agentStateSetup'
 import { assessNeeds } from './tesselNeeds'
 import { createClaudeUsageReport } from './claudeUsageReport'
@@ -1146,6 +1148,9 @@ const sshPrompts = createSshPromptWatcher({
 })
 registerSshPrompts({ ipcMain, watcher: sshPrompts })
 const SSH_PROMPT_DIALOG = false
+// Add a project (addProject.js): clone from a URL, create a new one, find the
+// repositories in a folder.
+registerAddProject({ ipcMain, service: createAddProject({ send: (channel, payload) => send(channel, payload) }) })
 const accounts = createProviderAccounts({
   claude: createClaudeAccounts(accountOptions),
   codex: createCodexAccounts(accountOptions)
@@ -2161,8 +2166,13 @@ ipcMain.handle('pty:create', async (_evt, opts = {}) => {
   if (!id) throw new Error('pty:create requires an id')
   const shell = getShells().find((s) => s.id === shellId) || defaultShell()
   // A pane on a remote host runs ssh.exe with the argv built from the saved host.
-  const remote = opts.remoteHostId ? remoteHosts.launchFor(String(opts.remoteHostId)) : null
+  let remote = opts.remoteHostId ? remoteHosts.launchFor(String(opts.remoteHostId)) : null
   if (remote && !remote.ok) return { ok: false, error: remote.error }
+  // A project on that host (remoteProject.js): the terminal starts in its folder.
+  if (remote && opts.remotePath) {
+    remote = remoteProjectLaunch(remote, opts.remotePath)
+    if (!remote.ok) return { ok: false, error: t('main.project.remotePathInvalid', 'This remote folder path is not valid. Use an absolute path like /home/user/project or ~/project.') }
+  }
   const startDir = cwd && fs.existsSync(cwd) ? cwd : os.homedir()
   const useConpty = shouldUseConpty()
   const backend = useConpty ? 'conpty' : 'winpty'

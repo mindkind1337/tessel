@@ -1,0 +1,124 @@
+{
+  "project": {
+    "back": "Retour",
+    "close": "Fermer",
+    "host": {
+      "label": "Hôte",
+      "localWindows": "Local Windows",
+      "thisComputer": "Cet ordinateur",
+      "local": "Local",
+      "addRemote": "Ajouter un hôte distant",
+      "addSshDetail": "Utiliser une machine existante via SSH."
+    },
+    "start": {
+      "title": "Ajouter un projet",
+      "getStarted": "Ajoutez un projet pour démarrer avec Tessel.",
+      "otherWays": "Autres moyens d'ajout",
+      "browseTitle": "Parcourir le dossier",
+      "browseDescription": "Projet local, dépôt Git ou dossier contenant plusieurs dépôts",
+      "sshBrowseTitle": "Ouvrir un projet sur l'hôte SSH",
+      "sshBrowseDescription": "Dépôt Git existant ou dossier sur cet hôte SSH",
+      "sshUnavailable": "Pas encore disponible pour les hôtes SSH",
+      "cloneTitle": "Cloner depuis une URL",
+      "cloneDescription": "Cloner un dépôt Git distant",
+      "createTitle": "Créer un nouveau projet",
+      "createDescription": "Démarrer depuis un dossier vide"
+    },
+    "busy": {
+      "choose": "Choisissez un dossier...",
+      "scanning": "Recherche des dépôts...",
+      "opening": "Ouverture du projet..."
+    },
+    "browse": {
+      "pickTitle": "Choisir un dossier de projet"
+    },
+    "error": {
+      "generic": "Une erreur est survenue."
+    },
+    "clone": {
+      "title": "Cloner depuis une URL",
+      "description": "Saisissez l'URL Git et choisissez où le cloner.",
+      "url": "URL Git",
+      "urlPlaceholder": "https://github.com/user/repo.git",
+      "parent": "Dossier parent",
+      "parentPlaceholder": "C:\\chemin\\vers\\destination",
+      "chooseFolder": "Choisir un dossier",
+      "pickTitle": "Choisir où le cloner",
+      "cloning": "Clonage...",
+      "go": "Cloner"
+    },
+    "create": {
+      "title": "Créer un nouveau projet",
+      "description": "Nommez-le et Tessel créera un vrai projet avec des valeurs par défaut sensées.",
+      "name": "Nom",
+      "namePlaceholder": "my-project",
+      "summary": "{{kind}} dans {{parent}}",
+      "kindGit": "Dépôt Git",
+      "noLocation": "emplacement non sélectionné",
+      "checkingGit": "Vérification de Git sur cet hôte...",
+      "gitRequired": "Git est requis pour créer un projet.",
+      "location": "Emplacement",
+      "change": "Modifier",
+      "changeParent": "Modifier le dossier parent",
+      "pickTitle": "Choisir un dossier parent...",
+      "creating": "Création…",
+      "go": "Créer le projet"
+    },
+    "remote": {
+      "title": "Ouvrir un projet sur l'hôte SSH",
+      "description": "Saisissez le chemin vers un dépôt Git sur {{host}}.",
+      "hostPath": "Chemin sur l'hôte",
+      "pathPlaceholder": "/home/user/project",
+      "hint": "Ses terminaux s'ouvrent sur cet hôte avec ssh, dans ce dossier. Les fichiers, les modifications et l'éditeur ne sont pas encore disponibles pour un projet distant.",
+      "go": "Ajouter un projet sur l'hôte SSH",
+      "pathRequired": "Saisissez le chemin d'un dossier sur cet hôte.",
+      "pathInvalid": "Ce chemin contient des caractères qui ne peuvent pas être utilisés.",
+      "pathAbsolute": "Utilisez un chemin absolu comme /home/user/project ou ~/project.",
+      "unavailable": "Non disponible pour un projet distant pour l'instant",
+      "unavailableHint": "Utilisez les terminaux de ce projet : ils s'exécutent sur l'hôte, dans son dossier."
+    },
+    "nested": {
+      "title": "Importer des dépôts depuis un dossier",
+      "oneRepo": "1 dépôt",
+      "repoCount": "{{count}} dépôt(s)",
+      "found": "{{repos}} trouvé(s) dans {{path}}.",
+      "scanning": "Analyse… {{found}}",
+      "stopScan": "Interrompre l'analyse",
+      "stopScanning": "Arrêter l'analyse",
+      "stopHint": "Analyse des dépôts en cours. Cliquez pour arrêter.",
+      "selectAll": "Tout sélectionner",
+      "deselectAll": "Tout désélectionner",
+      "selectedCount": "{{selected}} sur {{total}} sélectionnés",
+      "stopped": "Le scan s'est arrêté prématurément.",
+      "partial": "Affichage de résultats de scan partiels.",
+      "limitsAria": "Limites du scan des dépôts imbriqués",
+      "limitDepth": "{{count}} niveaux de dossiers",
+      "limitRepos": "{{count}} dépôts",
+      "limitSeconds": "{{count}} secondes",
+      "limitMs": "{{count}} ms",
+      "or": " ou ",
+      "limitText": "L'analyse s'arrête après {{limits}}. Vous pouvez l'arrêter plus tôt et importer les dépôts trouvés jusqu'ici.",
+      "groupTitle": "Regrouper ces dépôts ?",
+      "groupDescription": "Choisissez ceci si ces projets vont ensemble — un monorepo, ou juste un ensemble de dépôts liés. Tessel les regroupera et vous permettra de travailler depuis le dossier parent.",
+      "groupName": "Nom du groupe",
+      "noneSelected": "Aucun dépôt sélectionné. Ouvrez plutôt le dossier parent pour utiliser l'éditeur, le terminal et la recherche sans les fonctionnalités Git.",
+      "openAsFolder": "Ouvrir comme dossier",
+      "separate": "Non, importer séparément",
+      "group": "Oui, importer comme groupe"
+    },
+    "toast": {
+      "alreadyAdded": "Projet déjà ajouté",
+      "cloned": "Dépôt cloné",
+      "created": "Projet créé",
+      "remoteAdded": "Projet ajouté sur l'hôte SSH",
+      "imported": "{{count}} projets ajoutés"
+    },
+    "cmd": {
+      "addProject": "Ajouter un projet…"
+    },
+    "sidebar": {
+      "titleRemote": "{{name}}\n{{host}}:{{path}}\nDouble-cliquez pour renommer",
+      "titleGroup": "{{name}}\n{{path}}\nGroupe de {{count}} dépôts\nDouble-cliquez pour renommer"
+    }
+  }
+}

@@ -34,6 +34,25 @@ const api = {
   stopPtysAndWait: (ids, timeoutMs) => ipcRenderer.invoke('pty:stopAndWait', { ids, timeoutMs }),
 
   pickFolder: (opts) => ipcRenderer.invoke('dialog:pickFolder', opts),
+  // Add a project (src/main/addProject.js): a URL, a name, paths; never argv.
+  addProject: {
+    defaults: () => ipcRenderer.invoke('addProject:defaults'),
+    clone: (url, destination) => ipcRenderer.invoke('addProject:clone', { url, destination }),
+    cloneAbort: () => ipcRenderer.invoke('addProject:cloneAbort'),
+    onCloneProgress: (cb) => {
+      const handler = (_e, payload) => cb(payload)
+      ipcRenderer.on('addProject:cloneProgress', handler)
+      return () => ipcRenderer.removeListener('addProject:cloneProgress', handler)
+    },
+    create: (parentPath, name) => ipcRenderer.invoke('addProject:create', { parentPath, name }),
+    scan: (path, scanId) => ipcRenderer.invoke('addProject:scan', { path, scanId }),
+    scanStop: (scanId) => ipcRenderer.invoke('addProject:scanStop', { scanId }),
+    onScanProgress: (cb) => {
+      const handler = (_e, payload) => cb(payload)
+      ipcRenderer.on('addProject:scanProgress', handler)
+      return () => ipcRenderer.removeListener('addProject:scanProgress', handler)
+    }
+  },
   projectNotes: (opts) => ipcRenderer.invoke('notes:ensure', opts),
   openProjectNotes: (opts) => ipcRenderer.invoke('notes:open', opts),
   readProjectNotes: (dir) => ipcRenderer.invoke('notes:read', dir),
