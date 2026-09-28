@@ -6630,3 +6630,197 @@ button.act-stat:hover,
   -webkit-user-select: none;
   user-select: none;
 }
+
+/* File explorer (ExplorerPanel.vue), left of the panes. */
+.explorer {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 260px;
+  min-width: 0;
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+  font-size: 12.5px;
+}
+
+.explorer-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 6px 6px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.explorer-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-strong);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.explorer-actions {
+  display: flex;
+  gap: 2px;
+}
+
+.explorer-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+}
+
+.explorer-filter {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 3px 7px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.explorer-dot {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--text-dim);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.explorer-tree {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding-bottom: 20px;
+}
+
+.explorer-empty {
+  padding: 14px 12px;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+.explorer-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding-right: 8px;
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.explorer-row:hover {
+  background: var(--surface-3);
+}
+
+.explorer-row.selected {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.explorer-chev {
+  flex: 0 0 10px;
+  color: var(--text-dim);
+  font-size: 10px;
+}
+
+.explorer-icon {
+  flex: 0 0 auto;
+  color: var(--text-dim);
+}
+
+.explorer-row.dir .explorer-icon {
+  color: #d8b35a;
+}
+
+.explorer-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.explorer-git {
+  flex: 0 0 auto;
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  font-size: 11px;
+}
+
+.explorer-row.git-M .explorer-name,
+.explorer-row.git-M .explorer-git {
+  color: #e2c08d;
+}
+
+.explorer-row.git-A .explorer-name,
+.explorer-row.git-A .explorer-git,
+.explorer-row.git-U .explorer-name,
+.explorer-row.git-U .explorer-git {
+  color: #73c991;
+}
+
+.explorer-row.git-D .explorer-name,
+.explorer-row.git-D .explorer-git {
+  color: #f07178;
+}
+
+.explorer-row.git-R .explorer-name,
+.explorer-row.git-R .explorer-git,
+.explorer-row.git-C .explorer-name,
+.explorer-row.git-C .explorer-git {
+  color: #7fb8e8;
+}
+
+.explorer-edit {
+  padding: 2px 8px 2px 0;
+}
+
+.explorer-edit-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 2px 6px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 12.5px;
+}
+
+.explorer-edit-error {
+  padding: 3px 2px;
+  color: #ff9b9e;
+  font-size: 11.5px;
+  white-space: normal;
+}
+
+.explorer-menu-back {
+  position: fixed;
+  inset: 0;
+  z-index: 9998;
+}
+
+.explorer-confirm {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  left: 8px;
+  z-index: 5;
+  padding: 10px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface-2);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+}
+
+.explorer-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 8px;
+}

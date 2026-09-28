@@ -33,6 +33,7 @@ import ActivityPanel from './components/ActivityPanel.vue'
 import ConfirmDialog from './components/ConfirmDialog.vue'
 import ImageViewer from './components/ImageViewer.vue'
 import FileViewer from './components/FileViewer.vue'
+import ExplorerPanel from './components/ExplorerPanel.vue'
 import { fileKind, isViewed } from '../../shared/fileKinds'
 import NotificationsMenu from './components/NotificationsMenu.vue'
 import FileFinder from './components/FileFinder.vue'
@@ -390,6 +391,7 @@ const SHORTCUTS = [
     rows: [
       ['Ctrl+Shift+B', 'Broadcast typing to all panes'],
       ['Ctrl+Shift+K', 'Task board'],
+      ['Ctrl+Shift+X', 'File explorer'],
       ['Ctrl+,', 'Settings'],
       ['Win+H', 'Voice typing (Windows)'],
       ['F1', 'This help']
@@ -871,6 +873,7 @@ function saveLayoutNow() {
     sidebarWidth: sidebarWidth.value,
     taskPanelWidth: taskPanelWidth.value,
     taskPanelOpen: taskPanelOpen.value,
+    explorerOpen: explorerOpen.value,
     currentIndex: Math.max(
       0,
       workspaces.value.findIndex((w) => w.id === currentWsId.value)
@@ -1161,6 +1164,27 @@ const agentPanes = computed(() => {
   return out
 })
 
+// --- File explorer (ExplorerPanel.vue), on the left of the panes ------------------
+const explorerOpen = ref(false)
+function toggleExplorer() {
+  explorerOpen.value = !explorerOpen.value
+  nextTick(() => window.dispatchEvent(new Event('terminal-layout-change')))
+}
+function openExplorerFile(file) {
+  if (isViewed(file)) viewFile({ file })
+  else openInEditor({ file })
+}
+function terminalHere(dir) {
+  openPaneBelow(selectedShell.value, null, { cwd: dir })
+}
+function insertPathInPane(text) {
+  const id = activeId.value
+  const pane = id && getPane(id)
+  if (!pane || !pane.paste) return
+  pane.paste(text)
+  focusPane(id)
+}
+
 function toggleTaskPanel() {
   taskPanelOpen.value = !taskPanelOpen.value
   // Opening/closing the panel changes the terminal area's width — nudge panes to
@@ -1414,6 +1438,10 @@ function buildCommands() {
       })
     }
   }
+  add('Files', explorerOpen.value ? 'Hide the file explorer' : 'Show the file explorer', toggleExplorer, {
+    shortcut: 'Ctrl+Shift+X',
+    hint: "The project's files, with their git status"
+  })
   add('Files', 'Jump to a file…', openFinder, {
     shortcut: 'Ctrl+Shift+J',
     hint: "Find a file of this workspace's project by a few letters"
@@ -5556,6 +5584,9 @@ function onKey(e) {
     } else if (k === 'k') {
       e.preventDefault()
       toggleTaskPanel()
+    } else if (k === 'x') {
+      e.preventDefault()
+      toggleExplorer()
     } else if (k === 'n') {
       e.preventDefault()
       createWorkspace()
@@ -5657,6 +5688,7 @@ async function restoreOrSeedLayout() {
     sidebarCollapsed.value = !!saved.sidebarCollapsed
     // The task board opens again if it was open.
     if (saved.taskPanelOpen === true) taskPanelOpen.value = true
+    if (saved.explorerOpen === true) explorerOpen.value = true
     if (Number.isFinite(saved.taskPanelWidth))
       taskPanelWidth.value = Math.round(Math.min(TASK_PANEL_MAX, Math.max(TASK_PANEL_MIN, saved.taskPanelWidth)))
     if (Number.isFinite(saved.sidebarWidth)) {
@@ -6047,6 +6079,19 @@ onBeforeUnmount(() => {
         </button>
         <button
           class="tb-icon"
+          :class="{ on: explorerOpen }"
+          title="Files (Ctrl+Shift+X)"
+          aria-label="File explorer"
+          :aria-pressed="explorerOpen"
+          data-test="explorer-button"
+          @click="toggleExplorer"
+        >
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M1.8 3.5h4.4l1.4 1.5h6.6v8.5H1.8z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" />
+          </svg>
+        </button>
+        <button
+          class="tb-icon"
           :class="{ on: taskPanelOpen }"
           title="Task board (Ctrl+Shift+K)"
           aria-label="Task board"
@@ -6192,6 +6237,17 @@ onBeforeUnmount(() => {
         @toggle="toggleSidebar"
         @resize="resizeSidebar"
         @resize-end="refitSoon"
+      />
+      <ExplorerPanel
+        v-if="explorerOpen"
+        :root="currentWs ? currentWs.cwd : null"
+        :can-insert="!!activeId"
+        @open="openExplorerFile"
+        @open-editor="(file) => openInEditor({ file })"
+        @terminal-here="terminalHere"
+        @insert-path="insertPathInPane"
+        @toast="(t) => showToast(t, { timeout: 5000 })"
+        @close="toggleExplorer"
       />
       <div class="workspace-main">
         <div

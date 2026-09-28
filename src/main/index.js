@@ -23,6 +23,7 @@ import { titleBarColors } from '../shared/themePalettes'
 import { geminiSessionExists, qwenSessionExists } from './agentResume'
 import { paneEnv } from './paneEnv'
 import { readForView, readImageForView, openPdfWindow } from './fileView'
+import * as explorer from './explorer'
 import { extraToolDirs, withToolDirs } from './toolDirs'
 import { createInstallLogs } from './installLog'
 import { writeBoardRule } from './agentMemory'
@@ -1572,6 +1573,43 @@ ipcMain.handle('files:open', async (_evt, q = {}) => {
   const err = await shell.openPath(file)
   return err ? { ok: false, error: err } : { ok: true, with: 'default' }
 })
+// The file explorer (explorer.js): folders, git status, a few changes, and a
+// watch per project (the window is told when files change).
+ipcMain.handle('explorer:list', safe((q) => explorer.listDir(q || {})))
+ipcMain.handle('explorer:status', safe((q) => explorer.projectStatus(q || {})))
+ipcMain.handle('explorer:create', safe((q) => explorer.create(q || {})))
+ipcMain.handle('explorer:rename', safe((q) => explorer.rename(q || {})))
+ipcMain.handle('explorer:trash', safe((q) => explorer.trash(q || {}, (p) => shell.trashItem(p))))
+ipcMain.handle('explorer:reveal', safe((q) => {
+  const p = q && explorer.inside(q.root, q.path)
+  if (!p || !fs.existsSync(p)) return { ok: false, error: 'Not found.' }
+  shell.showItemInFolder(p)
+  return { ok: true }
+}))
+const explorerWatches = new Map() // root -> stop
+ipcMain.handle('explorer:watch', (_evt, root) => {
+  if (typeof root !== 'string' || !isAbsolute(root) || !fs.existsSync(root)) return { ok: false }
+  if (!explorerWatches.has(root)) {
+    // One project watched at a time is enough (the one shown).
+    for (const [r, stop] of explorerWatches) {
+      stop()
+      explorerWatches.delete(r)
+    }
+    explorerWatches.set(
+      root,
+      explorer.watchProject(root, (r) => {
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('explorer:changed', r)
+      })
+    )
+  }
+  return { ok: true }
+})
+ipcMain.handle('explorer:unwatch', () => {
+  for (const stop of explorerWatches.values()) stop()
+  explorerWatches.clear()
+  return { ok: true }
+})
+
 // The file viewer (fileView.js): read a file to show it; a PDF in its own window.
 ipcMain.handle('files:view', (_evt, file) => {
   try {

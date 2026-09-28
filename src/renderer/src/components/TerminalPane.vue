@@ -528,8 +528,12 @@ function quotePath(path) {
   return /[\s&()'^;,%]/.test(path) ? `"${path}"` : path
 }
 
+// Files from Windows, or a path dragged from Tessel's file explorer.
+const TESSEL_PATH = 'text/x-tessel-path'
 function onDragOver(e) {
-  if (!e.dataTransfer || ![...e.dataTransfer.types].includes('Files')) return
+  if (!e.dataTransfer) return
+  const types = [...e.dataTransfer.types]
+  if (!types.includes('Files') && !types.includes(TESSEL_PATH)) return
   e.preventDefault()
   e.dataTransfer.dropEffect = 'copy'
   dropping.value = true
@@ -541,6 +545,13 @@ function onDragLeave(e) {
 
 function onDrop(e) {
   dropping.value = false
+  const dragged = e.dataTransfer ? e.dataTransfer.getData(TESSEL_PATH) : ''
+  if (dragged) {
+    e.preventDefault()
+    window.shellApi.writePty(props.node.id, quotePath(dragged) + ' ')
+    focusTerm()
+    return
+  }
   const files = e.dataTransfer ? [...e.dataTransfer.files] : []
   if (!files.length) return
   e.preventDefault()
@@ -556,7 +567,7 @@ function onDrop(e) {
 function isAppShortcut(e) {
   const k = e.key
   if (e.ctrlKey && e.shiftKey && !e.altKey) {
-    return ['e', 'o', 'w', 'b', 'k', 'n', 'f', 'r', 'p'].includes(k.toLowerCase())
+    return ['e', 'o', 'w', 'b', 'k', 'n', 'f', 'r', 'p', 'x'].includes(k.toLowerCase())
   }
   if (e.ctrlKey && !e.shiftKey && !e.altKey) {
     return ['=', '+', '-', '0', ',', 'PageUp', 'PageDown'].includes(k)

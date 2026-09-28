@@ -60,6 +60,21 @@ const api = {
   resolveFiles: (q) => ipcRenderer.invoke('files:resolve', q),
   openFile: (q) => ipcRenderer.invoke('files:open', q),
   viewFile: (file) => ipcRenderer.invoke('files:view', file),
+  explorer: {
+    list: (q) => ipcRenderer.invoke('explorer:list', q),
+    status: (q) => ipcRenderer.invoke('explorer:status', q),
+    create: (q) => ipcRenderer.invoke('explorer:create', q),
+    rename: (q) => ipcRenderer.invoke('explorer:rename', q),
+    trash: (q) => ipcRenderer.invoke('explorer:trash', q),
+    reveal: (q) => ipcRenderer.invoke('explorer:reveal', q),
+    watch: (root) => ipcRenderer.invoke('explorer:watch', root),
+    unwatch: () => ipcRenderer.invoke('explorer:unwatch'),
+    onChanged: (fn) => {
+      const h = (_e, root) => fn(root)
+      ipcRenderer.on('explorer:changed', h)
+      return () => ipcRenderer.removeListener('explorer:changed', h)
+    }
+  },
   viewImage: (file) => ipcRenderer.invoke('files:viewImage', file),
   openPdf: (file) => ipcRenderer.invoke('files:openPdf', file),
   // A project's files for Jump to file: root -> { ok, files, truncated }.
