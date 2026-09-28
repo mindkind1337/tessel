@@ -7,6 +7,7 @@ import { loadTasks, loadBoard, saveTasks } from './taskBoardPersistence'
 import { trimEvents, isEvent } from '../shared/activity'
 import { claudeSessionExists, findCodexSession, listSessions } from './agentSessions'
 import { agentModelLive, watchModelFiles } from './agentModel'
+import { createUsageReader } from './agentUsage'
 import { postToInbox } from './agentInbox'
 import { hooksStatus } from './teamHooksStatus'
 import { assessNeeds } from './tesselNeeds'
@@ -907,8 +908,9 @@ ipcMain.handle(
 )
 ipcMain.handle(
   'git:createWorktree',
-  safe(({ cwd, label } = {}) => createWorktree(cwd, label))
+  safe(({ cwd, label, options } = {}) => createWorktree(cwd, label, options))
 )
+ipcMain.handle('usage:get', safe(createUsageReader()))
 ipcMain.handle('review:info', safe(reviewInfo))
 ipcMain.handle('review:diff', safe(reviewDiff))
 ipcMain.handle('review:merge', safe(reviewMerge))
