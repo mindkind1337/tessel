@@ -1,4 +1,3 @@
-<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // The right side panel (after Orca's): one panel, a tab bar at its top —
 // Files (the explorer), Changes (source control), Tasks (the task board).
@@ -9,6 +8,7 @@ import ExplorerPanel from './ExplorerPanel.vue'
 import { refreshStatus, statusOf, changeCount, rootKey } from '../scmState'
 import ChangesPanel from './ChangesPanel.vue'
 import TaskBoard from './TaskBoard.vue'
+import { t } from '../i18n'
 
 const SIDE_TABS = ['files', 'changes', 'tasks']
 
@@ -35,11 +35,13 @@ const emit = defineEmits([
   'create-pr'
 ])
 
+// Labels are translated where shown (the language can change while open).
 const TABS = [
-  { id: 'files', label: 'Files', shortcut: 'Ctrl+Shift+X' },
-  { id: 'changes', label: 'Changes', shortcut: 'Ctrl+Shift+G' },
-  { id: 'tasks', label: 'Tasks', shortcut: 'Ctrl+Shift+K' }
+  { id: 'files', key: 'explorer.side.files', label: 'Files', shortcut: 'Ctrl+Shift+X' },
+  { id: 'changes', key: 'explorer.side.changes', label: 'Changes', shortcut: 'Ctrl+Shift+G' },
+  { id: 'tasks', key: 'explorer.side.tasks', label: 'Tasks', shortcut: 'Ctrl+Shift+K' }
 ]
+const tabLabel = (tab) => t(tab.key, tab.label)
 const shown = reactive({})
 watch(
   () => props.tab,
@@ -89,24 +91,24 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="side-panel">
-    <div class="side-tabs" role="tablist" aria-label="Side panel">
+    <div class="side-tabs" role="tablist" :aria-label="t('explorer.side.panel', 'Side panel')">
       <button
-        v-for="t in TABS"
-        :key="t.id"
+        v-for="tab in TABS"
+        :key="tab.id"
         class="side-tab"
-        :class="{ on: current() === t.id }"
+        :class="{ on: current() === tab.id }"
         role="tab"
-        :aria-selected="current() === t.id"
-        :title="t.label + (t.shortcut ? ` (${t.shortcut})` : '')"
-        :aria-label="t.label"
-        :data-test="'side-tab-' + t.id"
-        @click="emit('update:tab', t.id)"
+        :aria-selected="current() === tab.id"
+        :title="tabLabel(tab) + (tab.shortcut ? ` (${tab.shortcut})` : '')"
+        :aria-label="tabLabel(tab)"
+        :data-test="'side-tab-' + tab.id"
+        @click="emit('update:tab', tab.id)"
       >
-        <svg v-if="t.id === 'files'" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <svg v-if="tab.id === 'files'" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
           <path d="M4 1.8h5l3 3v9.4H4z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" />
           <path d="M9 1.8v3h3" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" />
         </svg>
-        <svg v-else-if="t.id === 'changes'" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <svg v-else-if="tab.id === 'changes'" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
           <circle cx="4.5" cy="3.5" r="1.6" stroke="currentColor" stroke-width="1.3" />
           <circle cx="4.5" cy="12.5" r="1.6" stroke="currentColor" stroke-width="1.3" />
           <circle cx="11.5" cy="5.5" r="1.6" stroke="currentColor" stroke-width="1.3" />
@@ -116,17 +118,21 @@ onBeforeUnmount(() => {
           <rect x="2" y="2.5" width="12" height="11" rx="2" stroke="currentColor" stroke-width="1.3" />
           <path d="M5 6.2l1.3 1.3L8.6 5.2M5 10.3h6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
         </svg>
-        <span class="side-tab-label">{{ t.label }}</span>
+        <span class="side-tab-label">{{ tabLabel(tab) }}</span>
         <span
-          v-if="t.id === 'changes' && changes > 0"
+          v-if="tab.id === 'changes' && changes > 0"
           class="side-tab-badge"
-          :title="`${changes} changed file${changes === 1 ? '' : 's'}`"
+          :title="
+            changes === 1
+              ? t('explorer.side.changedFiles', '{{count}} changed file', { count: changes })
+              : t('explorer.side.changedFiles', '{{count}} changed files', { count: changes })
+          "
           data-test="changes-badge"
           >{{ badge }}</span
         >
       </button>
       <span class="side-tabs-fill"></span>
-      <button class="tb-icon side-close" title="Close the panel" aria-label="Close the side panel" data-test="side-close" @click="emit('close')">
+      <button class="tb-icon side-close" :title="t('explorer.side.close', 'Close the panel')" :aria-label="t('explorer.side.closeAria', 'Close the side panel')" data-test="side-close" @click="emit('close')">
         <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" /></svg>
       </button>
     </div>

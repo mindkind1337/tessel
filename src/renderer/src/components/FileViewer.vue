@@ -1,4 +1,3 @@
-<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // A file shown in Tessel (after Orca's viewers): Markdown rendered or as its
 // source, Mermaid diagrams, CSV/TSV as a table, JSON formatted, images, and
@@ -8,6 +7,7 @@ import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { fileKind, parseTable, formatJson } from '../../../shared/fileKinds'
 import { renderMarkdown, renderMermaid } from '../markdownView'
 import { resolveFrom } from '../../../shared/viewPaths'
+import { t, intlLocale } from '../i18n'
 
 const props = defineProps({
   file: { type: String, required: true },
@@ -28,7 +28,11 @@ const size = ref(0)
 // Rendered (Preview, Diagram, Table) or the file as it is (Source).
 const mode = ref('rich')
 const hasRich = computed(() => ['markdown', 'mermaid', 'table'].includes(kind.value))
-const richLabel = computed(() => ({ markdown: 'Preview', mermaid: 'Diagram', table: 'Table' })[kind.value] || 'Preview')
+const richLabel = computed(() => {
+  if (kind.value === 'mermaid') return t('editor.viewer.diagram', 'Diagram')
+  if (kind.value === 'table') return t('editor.viewer.table', 'Table')
+  return t('editor.viewer.preview', 'Preview')
+})
 
 const bodyEl = ref(null)
 const closeBtn = ref(null)
@@ -46,7 +50,7 @@ async function load() {
   }
   loading.value = false
   if (!res || !res.ok) {
-    error.value = (res && res.error) || 'The file could not be read.'
+    error.value = (res && res.error) || t('editor.viewer.fileUnreadable', 'The file could not be read.')
     return
   }
   size.value = res.size || 0
@@ -104,7 +108,7 @@ async function afterRender() {
       renderMermaid(src, { dark: isDark() }).then((r) => {
         if (r.error) {
           el.classList.add('error')
-          el.textContent = `Diagram error: ${r.error}`
+          el.textContent = t('editor.viewer.diagramError', 'Diagram error: {{error}}', { error: r.error })
         } else el.innerHTML = r.svg
       })
     }
@@ -161,9 +165,10 @@ function copyPath() {
 const sizeText = computed(() => {
   const n = size.value
   if (!n) return ''
-  if (n < 1024) return `${n} B`
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
-  return `${(n / 1024 / 1024).toFixed(1)} MB`
+  const num = (v) => new Intl.NumberFormat(intlLocale(), { minimumFractionDigits: 1, maximumFractionDigits: 1, useGrouping: false }).format(v)
+  if (n < 1024) return t('editor.viewer.sizeB', '{{n}} B', { n })
+  if (n < 1024 * 1024) return t('editor.viewer.sizeKb', '{{n}} KB', { n: num(n / 1024) })
+  return t('editor.viewer.sizeMb', '{{n}} MB', { n: num(n / 1024 / 1024) })
 })
 
 onMounted(() => {
@@ -180,19 +185,43 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey, true))
       <div class="fview-bar">
         <span class="fview-title" :title="file">{{ name }}</span>
         <span v-if="sizeText" class="fview-size">{{ sizeText }}</span>
-        <div v-if="hasRich && !error" class="launch-seg fview-seg" role="group" aria-label="How to show it">
+        <div v-if="hasRich && !error" class="launch-seg fview-seg" role="group" :aria-label="t('editor.viewer.howToShow', 'How to show it')">
           <button class="launch-seg-btn" :class="{ on: mode === 'rich' }" :aria-pressed="mode === 'rich'" @click="mode = 'rich'">
             {{ richLabel }}
           </button>
           <button class="launch-seg-btn" :class="{ on: mode === 'source' }" :aria-pressed="mode === 'source'" @click="mode = 'source'">
-            Source
+            {{ t('editor.viewer.source', 'Source') }}
           </button>
         </div>
         <span class="fview-spacer"></span>
-        <button type="button" class="imgview-btn" title="Copy the file's full path" @click="copyPath">Copy path</button>
-        <button v-if="kind !== 'image' && kind !== 'pdf'" type="button" class="imgview-btn" title="Edit it in Tessel's editor" @click="emit('open-editor', { file, line })">Open in editor</button>
-        <button type="button" class="imgview-btn" title="VS Code when installed, else the file's own program" @click="emit('open-external', { file, line })">Open in VS Code</button>
-        <button ref="closeBtn" type="button" class="imgview-btn imgview-close" title="Close (Esc)" aria-label="Close" @click="emit('close')">
+        <button type="button" class="imgview-btn" :title="t('editor.viewer.copyPathHint', 'Copy the file\'s full path')" @click="copyPath">
+          {{ t('editor.viewer.copyPath', 'Copy path') }}
+        </button>
+        <button
+          v-if="kind !== 'image' && kind !== 'pdf'"
+          type="button"
+          class="imgview-btn"
+          :title="t('editor.viewer.openInEditorHint', 'Edit it in Tessel\'s editor')"
+          @click="emit('open-editor', { file, line })"
+        >
+          {{ t('editor.viewer.openInEditor', 'Open in editor') }}
+        </button>
+        <button
+          type="button"
+          class="imgview-btn"
+          :title="t('editor.viewer.openInVsCodeHint', 'VS Code when installed, else the file\'s own program')"
+          @click="emit('open-external', { file, line })"
+        >
+          {{ t('editor.viewer.openInVsCode', 'Open in VS Code') }}
+        </button>
+        <button
+          ref="closeBtn"
+          type="button"
+          class="imgview-btn imgview-close"
+          :title="t('editor.viewer.closeEsc', 'Close (Esc)')"
+          :aria-label="t('editor.viewer.close', 'Close')"
+          @click="emit('close')"
+        >
           <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
           </svg>
@@ -200,16 +229,20 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey, true))
       </div>
 
       <div ref="bodyEl" class="fview-body" :data-kind="kind" @click="onBodyClick">
-        <div v-if="loading" class="fview-note">Reading…</div>
+        <div v-if="loading" class="fview-note">{{ t('editor.viewer.reading', 'Reading…') }}</div>
         <div v-else-if="error" class="fview-note error">{{ error }}</div>
         <template v-else>
           <!-- eslint-disable-next-line vue/no-v-html (sanitized by DOMPurify, markdownView.js) -->
           <article v-if="kind === 'markdown' && mode === 'rich'" class="fview-md" v-html="markdownHtml"></article>
           <div v-else-if="kind === 'mermaid' && mode === 'rich'" class="fview-mermaid">
-            <div v-if="mermaidError" class="fview-note error">Diagram error: {{ mermaidError }}</div>
+            <div
+              v-if="mermaidError"
+              class="fview-note error"
+              v-text="t('editor.viewer.diagramError', 'Diagram error: {{error}}', { error: mermaidError })"
+            ></div>
             <!-- eslint-disable-next-line vue/no-v-html (sanitized SVG) -->
             <div v-else-if="mermaidSvg" class="md-mermaid" v-html="mermaidSvg"></div>
-            <div v-else class="fview-note">Drawing…</div>
+            <div v-else class="fview-note">{{ t('editor.viewer.drawing', 'Drawing…') }}</div>
           </div>
           <div v-else-if="table" class="fview-table-wrap">
             <table class="fview-table">
@@ -226,7 +259,11 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey, true))
                 </tr>
               </tbody>
             </table>
-            <div v-if="table.more" class="fview-note">{{ table.more }} more rows not shown. Source shows them all.</div>
+            <div
+              v-if="table.more"
+              class="fview-note"
+              v-text="t('editor.viewer.moreRows', '{{count}} more rows not shown. Source shows them all.', { count: table.more })"
+            ></div>
           </div>
           <div v-else-if="kind === 'image'" class="fview-image">
             <img :src="imageUrl" :alt="name" draggable="false" />

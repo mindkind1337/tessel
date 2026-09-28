@@ -1,4 +1,3 @@
-<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // Source Control (the side panel's Changes tab), ported from Orca's
 // right-sidebar/source-control (panel/panel-ready.tsx, panel/header-toolbar.tsx,
@@ -22,10 +21,6 @@ import { notesFor, deleteNote, clearNotes, clearDelivered } from '../reviewNotes
 import {
   STATUS_LABELS,
   STATUS_COLORS,
-  STATUS_TITLES,
-  SECTION_LABELS,
-  CONFLICTS_SECTION_LABEL,
-  CONFLICT_KIND_LABELS,
   buildDisplaySections,
   resolveSourceControlGroupOrder,
   canStageStatusEntry,
@@ -34,20 +29,27 @@ import {
   getStageAllPaths,
   getUnstageAllPaths,
   getDiscardAllPaths,
-  getDiscardEntryConfirmationCopy,
-  getDiscardAreaConfirmationCopy,
   getCommitMessageTextareaRows,
   resolvePrimaryAction,
   resolveDropdownItems,
   formatDiffComment,
   formatDiffComments,
-  getDiffCommentLineLabel,
-  getListLineLabel,
-  conflictSummaryTitle,
-  operationBannerTitle
+  getDiffCommentLineLabel
 } from '../../../shared/sourceControl'
+import {
+  scmText,
+  statusTitle,
+  sectionLabel,
+  conflictKindLabel,
+  conflictTitle,
+  operationTitle,
+  listLineLabel,
+  discardEntryCopy,
+  discardAreaCopy
+} from '../scmLabels'
 import LucideIcon from './LucideIcon.vue'
 import NotesSendMenu from './NotesSendMenu.vue'
+import { t } from '../i18n'
 
 const props = defineProps({
   root: { type: String, default: null },
@@ -61,13 +63,13 @@ const api = () => window.shellApi && window.shellApi.scm
 
 // --- Which repository: the project, or a task's copy --------------------------------
 const copies = computed(() =>
-  tasks.filter((t) => t.worktree && t.worktree.path && (!props.workspaceId || t.wsId === props.workspaceId) && t.column !== 'done')
+  tasks.filter((k) => k.worktree && k.worktree.path && (!props.workspaceId || k.wsId === props.workspaceId) && k.column !== 'done')
 )
 const target = ref('project') // 'project' | task id
-const copyTask = computed(() => (target.value === 'project' ? null : copies.value.find((t) => t.id === target.value) || null))
+const copyTask = computed(() => (target.value === 'project' ? null : copies.value.find((k) => k.id === target.value) || null))
 const repoRoot = computed(() => (copyTask.value ? copyTask.value.worktree.path : props.root))
 watch(copies, (list) => {
-  if (target.value !== 'project' && !list.some((t) => t.id === target.value)) target.value = 'project'
+  if (target.value !== 'project' && !list.some((k) => k.id === target.value)) target.value = 'project'
 })
 
 const state = computed(() => statusOf(repoRoot.value))
@@ -131,6 +133,14 @@ function dirName(p) {
   return i >= 0 ? p.slice(0, i) : ''
 }
 const rowKey = (e) => `${e.area}::${e.path}`
+const noMatchText = () => t('changes.filter.noMatch', 'No changed files match "{{query}}"', { query: filterQuery.value })
+const notesCountTitle = (n) =>
+  n === 1 ? t('changes.row.notes', '{{count}} note', { count: n }) : t('changes.row.notes', '{{count}} notes', { count: n })
+function discardTitle(entry) {
+  if (entry.area === 'untracked') return t('changes.action.deleteUntracked', 'Delete untracked file')
+  if (entry.status === 'deleted') return t('changes.action.restore', 'Restore file')
+  return t('changes.action.discard', 'Discard changes')
+}
 
 // --- Notes (review notes left on diff lines) -----------------------------------------
 const notes = computed(() => (top.value ? notesFor(top.value) : []))
@@ -153,7 +163,7 @@ const noteGroups = computed(() => {
   return [...map.entries()]
 })
 const unsentNotes = computed(() => notes.value.filter((n) => !n.sentAt))
-const allNotesScopes = computed(() => [{ id: 'all', label: 'All unsent notes', notes: unsentNotes.value, prompt: formatDiffComments(unsentNotes.value) }])
+const allNotesScopes = computed(() => [{ id: 'all', label: t('changes.notes.allUnsent', 'All unsent notes'), notes: unsentNotes.value, prompt: formatDiffComments(unsentNotes.value) }])
 function onNotesDelivered(sent) {
   clearDelivered(top.value, sent)
 }
@@ -169,7 +179,7 @@ async function copyAllNotes() {
     clearTimeout(copiedTimer)
     copiedTimer = setTimeout(() => (notesCopied.value = false), 1500)
   } catch {
-    emit('toast', 'Failed to copy notes')
+    emit('toast', t('changes.notes.copyFailed', 'Failed to copy notes'))
   }
 }
 async function copyNote(c) {
@@ -189,9 +199,14 @@ async function askClearNotes(filePath = null) {
   if (!count) return
   const ok = askConfirm
     ? await askConfirm({
-        title: filePath ? `Clear notes for ${filePath}?` : 'Clear all notes?',
-        text: `This will permanently delete ${count} note${count === 1 ? '' : 's'}. This cannot be undone.`,
-        confirmLabel: 'Clear',
+        title: filePath
+          ? t('changes.notes.clearForTitle', 'Clear notes for {{path}}?', { path: filePath })
+          : t('changes.notes.clearAllTitle', 'Clear all notes?'),
+        text:
+          count === 1
+            ? t('changes.notes.clearText', 'This will permanently delete {{count}} note. This cannot be undone.', { count })
+            : t('changes.notes.clearText', 'This will permanently delete {{count}} notes. This cannot be undone.', { count }),
+        confirmLabel: t('changes.notes.clear', 'Clear'),
         danger: true
       })
     : false
@@ -240,17 +255,27 @@ async function runGit(fn, failure) {
   } catch (err) {
     res = { ok: false, error: err && err.message }
   }
-  if (!res || !res.ok) emit('toast', `${failure}: ${(res && res.error) || 'unknown error'}`)
+  if (!res || !res.ok)
+    emit('toast', t('changes.git.failedWith', '{{failure}}: {{error}}', { failure, error: (res && res.error) || unknownError() }))
   await afterMutation()
   return !!(res && res.ok)
 }
-const stage = (path) => runGit(() => api().stage({ root: repoRoot.value, paths: [path] }), `Failed to stage ${fileName(path)}`)
-const unstage = (path) => runGit(() => api().unstage({ root: repoRoot.value, paths: [path] }), `Failed to unstage ${fileName(path)}`)
+const unknownError = () => t('changes.unknownError', 'unknown error')
+const stage = (path) =>
+  runGit(
+    () => api().stage({ root: repoRoot.value, paths: [path] }),
+    t('changes.git.stageFileFailed', 'Failed to stage {{name}}', { name: fileName(path) })
+  )
+const unstage = (path) =>
+  runGit(
+    () => api().unstage({ root: repoRoot.value, paths: [path] }),
+    t('changes.git.unstageFileFailed', 'Failed to unstage {{name}}', { name: fileName(path) })
+  )
 async function stagePaths(paths) {
   if (!paths.length || isExecutingBulk.value) return
   isExecutingBulk.value = true
   try {
-    await runGit(() => api().stage({ root: repoRoot.value, paths }), 'Failed to stage')
+    await runGit(() => api().stage({ root: repoRoot.value, paths }), t('changes.git.stageFailed', 'Failed to stage'))
   } finally {
     isExecutingBulk.value = false
   }
@@ -259,7 +284,7 @@ async function unstagePaths(paths) {
   if (!paths.length || isExecutingBulk.value) return
   isExecutingBulk.value = true
   try {
-    await runGit(() => api().unstage({ root: repoRoot.value, paths }), 'Failed to unstage')
+    await runGit(() => api().unstage({ root: repoRoot.value, paths }), t('changes.git.unstageFailed', 'Failed to unstage'))
   } finally {
     isExecutingBulk.value = false
   }
@@ -269,17 +294,22 @@ async function confirmDiscard(copy, pathText) {
   return (await askConfirm({ title: copy.title, text: `${copy.description}\n${pathText}`, confirmLabel: copy.confirmLabel, danger: true })) === true
 }
 async function requestDiscardEntry(entry) {
-  const copy = getDiscardEntryConfirmationCopy(entry)
+  const copy = discardEntryCopy(entry)
   if (!(await confirmDiscard(copy, entry.path))) return
-  await runGit(() => api().discard({ root: repoRoot.value, paths: [entry.path] }), `Failed to discard ${fileName(entry.path)}`)
+  await runGit(
+    () => api().discard({ root: repoRoot.value, paths: [entry.path] }),
+    t('changes.git.discardFileFailed', 'Failed to discard {{name}}', { name: fileName(entry.path) })
+  )
 }
 async function requestDiscardAllInArea(area, paths) {
   if (!paths.length || isExecutingBulk.value) return
-  const copy = getDiscardAreaConfirmationCopy(area, paths.length)
-  if (!(await confirmDiscard(copy, `${paths.length} ${paths.length === 1 ? 'file' : 'files'}`))) return
+  const copy = discardAreaCopy(area, paths.length)
+  const n = paths.length
+  const filesText = n === 1 ? t('changes.discard.files', '{{count}} file', { count: n }) : t('changes.discard.files', '{{count}} files', { count: n })
+  if (!(await confirmDiscard(copy, filesText))) return
   isExecutingBulk.value = true
   try {
-    await runGit(() => api().discard({ root: repoRoot.value, paths }), 'Failed to discard')
+    await runGit(() => api().discard({ root: repoRoot.value, paths }), t('changes.git.discardFailed', 'Failed to discard'))
   } finally {
     isExecutingBulk.value = false
   }
@@ -348,11 +378,13 @@ const isGenerateDisabled = computed(
   () => isGenerating.value || isCommitting.value || stagedEntries.value.length === 0 || hasMessage.value || unresolved.value.length > 0
 )
 const generateTooltip = computed(() => {
-  if (isGenerating.value) return 'Generating commit message…'
-  if (isCommitting.value) return 'Commit in progress…'
-  if (stagedEntries.value.length === 0) return 'Stage at least one file to generate a message.'
-  if (hasMessage.value) return 'Clear the message to regenerate.'
-  return `Generate a commit message with ${generateAgent.value === 'codex' ? 'Codex' : 'Claude'} from the staged changes`
+  if (isGenerating.value) return t('changes.generate.generating', 'Generating commit message…')
+  if (isCommitting.value) return t('changes.sc.commitInProgress', 'Commit in progress…')
+  if (stagedEntries.value.length === 0) return t('changes.generate.stageFirst', 'Stage at least one file to generate a message.')
+  if (hasMessage.value) return t('changes.generate.clearFirst', 'Clear the message to regenerate.')
+  return t('changes.generate.tooltip', 'Generate a commit message with {{agent}} from the staged changes', {
+    agent: generateAgent.value === 'codex' ? 'Codex' : 'Claude'
+  })
 })
 
 async function commit() {
@@ -374,7 +406,7 @@ async function commit() {
     await afterMutation()
     return true
   }
-  commitError.value = (res && res.error) || 'Commit failed.'
+  commitError.value = (res && res.error) || t('changes.commit.failed', 'Commit failed.')
   await afterMutation()
   return false
 }
@@ -387,7 +419,14 @@ const REMOTE = {
   sync: (root) => api().sync({ root }),
   fetch: (root) => api().fetch({ root })
 }
-const REMOTE_FAIL = { push: 'Push failed', publish: 'Publish failed', pull: 'Pull failed', fast_forward: 'Fast-forward failed', sync: 'Sync failed', fetch: 'Fetch failed' }
+function remoteFailure(kind) {
+  if (kind === 'push') return t('changes.remote.pushFailed', 'Push failed')
+  if (kind === 'publish') return t('changes.remote.publishFailed', 'Publish failed')
+  if (kind === 'pull') return t('changes.remote.pullFailed', 'Pull failed')
+  if (kind === 'fast_forward') return t('changes.remote.ffFailed', 'Fast-forward failed')
+  if (kind === 'sync') return t('changes.remote.syncFailed', 'Sync failed')
+  return t('changes.remote.fetchFailed', 'Fetch failed')
+}
 async function remote(kind) {
   if (remoteOp.value || !REMOTE[kind]) return false
   remoteOp.value = kind
@@ -400,7 +439,11 @@ async function remote(kind) {
   } finally {
     remoteOp.value = null
   }
-  if (!res || !res.ok) remoteActionError.value = `${REMOTE_FAIL[kind]}: ${(res && res.error) || 'unknown error'}`
+  if (!res || !res.ok)
+    remoteActionError.value = t('changes.git.failedWith', '{{failure}}: {{error}}', {
+      failure: remoteFailure(kind),
+      error: (res && res.error) || unknownError()
+    })
   await afterMutation()
   return !!(res && res.ok)
 }
@@ -466,7 +509,10 @@ async function generate() {
   }
   if (res && res.ok && res.message) {
     if (!(drafts[rootKey(root)] || '').trim()) drafts[rootKey(root)] = res.message
-  } else if (!(res && res.cancelled)) generateError.value = `Could not generate a commit message: ${(res && res.error) || 'unknown error'}`
+  } else if (!(res && res.cancelled))
+    generateError.value = t('changes.generate.failed', 'Could not generate a commit message: {{error}}', {
+      error: (res && res.error) || unknownError()
+    })
 }
 function cancelGenerate() {
   if (api() && api().cancelGenerate) api().cancelGenerate({ root: repoRoot.value })
@@ -500,7 +546,7 @@ function createPr() {
 const branchTitle = computed(() => {
   const d = data.value
   if (!d || !d.repo) return ''
-  if (!d.branch) return 'Detached HEAD'
+  if (!d.branch) return t('changes.branch.detached', 'Detached HEAD')
   return d.branch
 })
 
@@ -554,49 +600,51 @@ function draftStore() {
 </script>
 
 <template>
-  <div class="changes sc-root" aria-label="Source Control" data-test="changes-panel" @keydown="onRootKeydown">
+  <div class="changes sc-root" :aria-label="t('changes.title', 'Source Control')" data-test="changes-panel" @keydown="onRootKeydown">
     <div class="sc-header">
       <div v-if="!filterExpanded" class="sc-header-row">
         <select
           v-if="root && copies.length"
           v-model="target"
           class="sc-repo-select"
-          title="Show the changes of the project or of a task's own copy"
-          aria-label="Repository"
+          :title="t('changes.target.hint', 'Show the changes of the project or of a task\'s own copy')"
+          :aria-label="t('changes.target.repository', 'Repository')"
           data-test="changes-target"
         >
-          <option value="project">Project</option>
-          <option v-for="t in copies" :key="t.id" :value="t.id">{{ t.title }}</option>
+          <option value="project">{{ t('changes.target.project', 'Project') }}</option>
+          <option v-for="k in copies" :key="k.id" :value="k.id">{{ k.title }}</option>
         </select>
-        <span v-else class="sc-title">Source Control</span>
+        <span v-else class="sc-title">{{ t('changes.title', 'Source Control') }}</span>
         <span class="sc-fill" aria-hidden="true"></span>
         <button
           v-if="copyTask"
           type="button"
           class="sc-btn-xs sc-review-btn"
-          title="Review this task's branch: its commits, then merge or discard"
+          :title="t('changes.review.hint', 'Review this task\'s branch: its commits, then merge or discard')"
           data-test="review-changes"
           @click="emit('review', copyTask.id)"
         >
-          Review &amp; merge
+          {{ t('changes.review.button', 'Review & merge') }}
         </button>
         <button
           v-else-if="canCreatePr"
           type="button"
           class="sc-btn-xs"
-          title="Create a pull request for this branch"
+          :title="t('changes.pr.hint', 'Create a pull request for this branch')"
           data-test="sc-create-pr"
           @click="createPr"
         >
           <LucideIcon name="gitPullRequestArrow" :size="14" />
-          Create PR
+          {{ t('changes.pr.create', 'Create PR') }}
         </button>
         <button
           type="button"
           class="sc-icon-btn"
           :class="{ on: normalizedFilter }"
-          :title="normalizedFilter ? `Filter: ${filterQuery}` : 'Filter files by name'"
-          :aria-label="normalizedFilter ? `Filter: ${filterQuery}` : 'Filter files by name'"
+          :title="normalizedFilter ? t('changes.filter.active', 'Filter: {{query}}', { query: filterQuery }) : t('changes.filter.byName', 'Filter files by name')"
+          :aria-label="
+            normalizedFilter ? t('changes.filter.active', 'Filter: {{query}}', { query: filterQuery }) : t('changes.filter.byName', 'Filter files by name')
+          "
           data-test="source-control-filter-toggle"
           @click="expandFilter"
         >
@@ -610,8 +658,8 @@ function draftStore() {
           ref="moreBtn"
           type="button"
           class="sc-icon-btn"
-          title="More source control actions"
-          aria-label="More source control actions"
+          :title="t('changes.moreActions', 'More source control actions')"
+          :aria-label="t('changes.moreActions', 'More source control actions')"
           data-test="sc-more"
           @click="toggleMore"
         >
@@ -628,41 +676,51 @@ function draftStore() {
           v-model="filterQuery"
           type="text"
           class="sc-filter-input"
-          placeholder="Filter files…"
-          aria-label="Filter files…"
+          :placeholder="t('changes.filter.placeholder', 'Filter files…')"
+          :aria-label="t('changes.filter.placeholder', 'Filter files…')"
           data-test="source-control-filter-input"
           @keydown.escape.prevent.stop="filterExpanded = false"
         />
-        <button type="button" class="sc-icon-btn" title="Clear and close filter" aria-label="Clear and close filter" @click="clearAndCollapseFilter">
+        <button
+          type="button"
+          class="sc-icon-btn"
+          :title="t('changes.filter.clearClose', 'Clear and close filter')"
+          :aria-label="t('changes.filter.clearClose', 'Clear and close filter')"
+          @click="clearAndCollapseFilter"
+        >
           <LucideIcon name="x" :size="14" />
         </button>
       </div>
       <div v-if="data && data.repo" class="sc-branch-row" data-test="sc-branch">
         <LucideIcon name="gitBranch" :size="12" class="sc-dim" />
-        <span class="sc-branch-name" :title="branchTitle" :aria-label="`Current branch: ${branchTitle}`">{{ branchTitle }}</span>
+        <span class="sc-branch-name" :title="branchTitle" :aria-label="t('changes.branch.current', 'Current branch: {{branch}}', { branch: branchTitle })">{{
+          branchTitle
+        }}</span>
         <template v-if="data.hasUpstream">
-          <span class="sc-upstream" :title="`Tracking ${data.upstream}`">
-            <span v-if="data.ahead" title="Commits to push">↑{{ data.ahead }}</span>
-            <span v-if="data.behind" title="Commits to pull">↓{{ data.behind }}</span>
+          <span class="sc-upstream" :title="t('changes.branch.tracking', 'Tracking {{upstream}}', { upstream: data.upstream })">
+            <span v-if="data.ahead" :title="t('changes.branch.toPush', 'Commits to push')">↑{{ data.ahead }}</span>
+            <span v-if="data.behind" :title="t('changes.branch.toPull', 'Commits to pull')">↓{{ data.behind }}</span>
             <span v-if="!data.ahead && !data.behind" class="sc-dim">{{ data.upstream }}</span>
           </span>
         </template>
-        <span v-else-if="data.branch" class="sc-upstream sc-dim" title="This branch has no upstream yet">not published</span>
+        <span v-else-if="data.branch" class="sc-upstream sc-dim" :title="t('changes.branch.noUpstream', 'This branch has no upstream yet')">{{
+          t('changes.branch.notPublished', 'not published')
+        }}</span>
       </div>
     </div>
 
     <Teleport to="body">
       <div v-if="moreOpen" ref="moreEl" class="ctx-menu sc-menu" role="menu" :style="{ top: morePos.top + 'px', right: morePos.right + 'px' }" data-test="sc-more-menu">
         <button type="button" class="ctx-menu-item" role="menuitem" @click="closeMore(), load()">
-          <span class="sc-menu-row"><LucideIcon name="refreshCw" :size="14" />Refresh</span>
+          <span class="sc-menu-row"><LucideIcon name="refreshCw" :size="14" />{{ t('changes.menu.refresh', 'Refresh') }}</span>
         </button>
         <button type="button" class="ctx-menu-item" role="menuitem" :disabled="!canCreatePr" @click="createPr">
-          <span class="sc-menu-row"><LucideIcon name="gitPullRequestArrow" :size="14" />Create PR…</span>
+          <span class="sc-menu-row"><LucideIcon name="gitPullRequestArrow" :size="14" />{{ t('changes.menu.createPr', 'Create PR…') }}</span>
         </button>
         <template v-if="notes.length">
           <div class="ctx-menu-sep"></div>
           <button type="button" class="ctx-menu-item" role="menuitem" @click="closeMore(), (notesExpanded = true)">
-            <span class="sc-menu-row"><LucideIcon name="messageSquare" :size="14" />Notes</span>
+            <span class="sc-menu-row"><LucideIcon name="messageSquare" :size="14" />{{ t('changes.notes.title', 'Notes') }}</span>
             <span class="sc-menu-count">{{ notes.length }}</span>
           </button>
         </template>
@@ -676,27 +734,39 @@ function draftStore() {
           type="button"
           class="sc-notes-toggle"
           :aria-expanded="notesExpanded"
-          :title="notesExpanded ? 'Collapse notes' : 'Expand notes'"
+          :title="notesExpanded ? t('changes.notes.collapse', 'Collapse notes') : t('changes.notes.expand', 'Expand notes')"
           data-test="sc-notes-toggle"
           @click="notesExpanded = !notesExpanded"
         >
           <LucideIcon name="chevronDown" :size="12" :class="{ 'sc-rot': !notesExpanded }" />
           <LucideIcon name="messageSquare" :size="14" />
-          <span>Notes</span>
+          <span>{{ t('changes.notes.title', 'Notes') }}</span>
           <span class="sc-notes-count">{{ notes.length }}</span>
         </button>
         <span class="sc-notes-actions">
           <NotesSendMenu :scopes="allNotesScopes" trigger-class="sc-notes-btn" @delivered="onNotesDelivered" />
-          <button type="button" class="sc-notes-btn" aria-label="Copy all notes to clipboard" title="Copy all notes" @click="copyAllNotes">
+          <button
+            type="button"
+            class="sc-notes-btn"
+            :aria-label="t('changes.notes.copyAllAria', 'Copy all notes to clipboard')"
+            :title="t('changes.notes.copyAll', 'Copy all notes')"
+            @click="copyAllNotes"
+          >
             <LucideIcon :name="notesCopied ? 'check' : 'copy'" :size="14" />
           </button>
           <span class="sc-rel">
-            <button type="button" class="sc-notes-btn" aria-label="More note actions" title="More note actions" @click="notesMenuOpen = !notesMenuOpen">
+            <button
+              type="button"
+              class="sc-notes-btn"
+              :aria-label="t('changes.notes.more', 'More note actions')"
+              :title="t('changes.notes.more', 'More note actions')"
+              @click="notesMenuOpen = !notesMenuOpen"
+            >
               <LucideIcon name="moreHorizontal" :size="14" />
             </button>
             <div v-if="notesMenuOpen" class="ctx-menu sc-notes-menu" role="menu">
               <button type="button" class="ctx-menu-item danger" role="menuitem" data-test="sc-clear-notes" @click="askClearNotes()">
-                <span class="sc-menu-row"><LucideIcon name="trash2" :size="14" />Clear all notes...</span>
+                <span class="sc-menu-row"><LucideIcon name="trash2" :size="14" />{{ t('changes.notes.clearAll', 'Clear all notes...') }}</span>
               </button>
             </div>
           </span>
@@ -705,8 +775,16 @@ function draftStore() {
       <div v-if="notesExpanded" class="sc-notes-list" data-test="sc-notes-list">
         <div v-for="[filePath, list] in noteGroups" :key="filePath" class="sc-notes-file">
           <div class="sc-notes-file-head">
-            <button type="button" class="sc-notes-file-name" :title="`Open ${filePath}`" @click="openNote(list[0])">{{ filePath }}</button>
-            <button type="button" class="sc-note-mini danger" :title="`Clear notes for ${filePath}`" :aria-label="`Clear notes for ${filePath}`" @click="askClearNotes(filePath)">
+            <button type="button" class="sc-notes-file-name" :title="t('changes.notes.openFile', 'Open {{path}}', { path: filePath })" @click="openNote(list[0])">
+              {{ filePath }}
+            </button>
+            <button
+              type="button"
+              class="sc-note-mini danger"
+              :title="t('changes.notes.clearFor', 'Clear notes for {{path}}', { path: filePath })"
+              :aria-label="t('changes.notes.clearFor', 'Clear notes for {{path}}', { path: filePath })"
+              @click="askClearNotes(filePath)"
+            >
               <LucideIcon name="trash2" :size="12" />
             </button>
           </div>
@@ -715,19 +793,31 @@ function draftStore() {
               <button
                 type="button"
                 class="sc-note-open"
-                :title="`Open ${c.filePath} (${getListLineLabel(c)})`"
-                :aria-label="`Open note on ${getListLineLabel(c)}`"
+                :title="t('changes.notes.openNoteTitle', 'Open {{path}} ({{where}})', { path: c.filePath, where: listLineLabel(c) })"
+                :aria-label="t('changes.notes.openNoteAria', 'Open note on {{where}}', { where: listLineLabel(c) })"
                 @click="openNote(c)"
               >
                 <span class="sc-chip">{{ getDiffCommentLineLabel(c, true) }}</span>
-                <span class="sc-chip sc-chip-soft">Diff</span>
-                <span v-if="c.sentAt" class="sc-chip sc-chip-soft">Sent</span>
+                <span class="sc-chip sc-chip-soft">{{ t('changes.notes.diff', 'Diff') }}</span>
+                <span v-if="c.sentAt" class="sc-chip sc-chip-soft">{{ t('changes.notes.sent', 'Sent') }}</span>
                 <span class="sc-note-body">{{ c.body }}</span>
               </button>
-              <button type="button" class="sc-note-mini" title="Copy note" :aria-label="`Copy note on line ${c.lineNumber}`" @click="copyNote(c)">
+              <button
+                type="button"
+                class="sc-note-mini"
+                :title="t('changes.notes.copy', 'Copy note')"
+                :aria-label="t('changes.notes.copyOnLine', 'Copy note on line {{line}}', { line: c.lineNumber })"
+                @click="copyNote(c)"
+              >
                 <LucideIcon :name="copiedNoteId === c.id ? 'check' : 'copy'" :size="12" />
               </button>
-              <button type="button" class="sc-note-mini danger" title="Delete note" :aria-label="`Delete note on line ${c.lineNumber}`" @click="deleteNote(top, c.id)">
+              <button
+                type="button"
+                class="sc-note-mini danger"
+                :title="t('changes.notes.delete', 'Delete note')"
+                :aria-label="t('changes.notes.deleteOnLine', 'Delete note on line {{line}}', { line: c.lineNumber })"
+                @click="deleteNote(top, c.id)"
+              >
                 <LucideIcon name="trash" :size="12" />
               </button>
             </li>
@@ -737,21 +827,43 @@ function draftStore() {
     </div>
 
     <div class="sc-scroll explorer-tree">
-      <div v-if="!root && !copyTask" class="explorer-empty">This workspace has no project folder. Choose one from the workspace menu (Project folder…) to see its changes here.</div>
-      <div v-else-if="loaded && error" class="explorer-empty explorer-error" data-test="changes-error">Could not read the git status: {{ error }}</div>
-      <div v-else-if="loaded && data && !data.repo" class="explorer-empty">This folder is not in a git repository.</div>
+      <div v-if="!root && !copyTask" class="explorer-empty">
+        {{
+          t(
+            'changes.noProject',
+            'This workspace has no project folder. Choose one from the workspace menu (Project folder…) to see its changes here.'
+          )
+        }}
+      </div>
+      <div
+        v-else-if="loaded && error"
+        class="explorer-empty explorer-error"
+        data-test="changes-error"
+        v-text="t('changes.statusError', 'Could not read the git status: {{error}}', { error })"
+      ></div>
+      <div v-else-if="loaded && data && !data.repo" class="explorer-empty">{{ t('changes.notRepo', 'This folder is not in a git repository.') }}</div>
       <template v-else>
         <!-- Conflicts / an operation stopped half way -->
         <div v-if="unresolved.length" class="sc-pad">
           <div class="sc-conflict-card" role="alert">
-            <div class="sc-conflict-title"><LucideIcon name="triangleAlert" :size="14" />{{ conflictSummaryTitle(data && data.operation) }}</div>
-            <div class="sc-conflict-text">{{ conflictSummaryTitle(data && data.operation) }}: {{ unresolved.length }} unresolved</div>
-            <div class="sc-conflict-hint">Resolved files move back to normal changes after they leave the live conflict state.</div>
+            <div class="sc-conflict-title"><LucideIcon name="triangleAlert" :size="14" />{{ conflictTitle(data && data.operation) }}</div>
+            <div
+              class="sc-conflict-text"
+              v-text="
+                t('changes.conflict.unresolvedCount', '{{title}}: {{count}} unresolved', {
+                  title: conflictTitle(data && data.operation),
+                  count: unresolved.length
+                })
+              "
+            ></div>
+            <div class="sc-conflict-hint">
+              {{ t('changes.conflict.hint', 'Resolved files move back to normal changes after they leave the live conflict state.') }}
+            </div>
           </div>
         </div>
         <div v-else-if="data && data.operation" class="sc-pad">
           <div class="sc-conflict-card sc-op-card">
-            <div class="sc-conflict-title">{{ operationBannerTitle(data.operation) }}</div>
+            <div class="sc-conflict-title">{{ operationTitle(data.operation) }}</div>
           </div>
         </div>
 
@@ -764,8 +876,8 @@ function draftStore() {
               :class="{ 'with-generate': true }"
               :rows="rows"
               :disabled="commitFieldDisabled"
-              placeholder="Message"
-              aria-label="Commit message"
+              :placeholder="t('changes.commit.placeholder', 'Message')"
+              :aria-label="t('changes.commit.message', 'Commit message')"
               spellcheck="false"
               data-test="sc-commit-message"
             ></textarea>
@@ -773,8 +885,8 @@ function draftStore() {
               v-if="isGenerating"
               type="button"
               class="sc-generate cancel"
-              title="Generating commit message. Click to stop."
-              aria-label="Stop generating commit message"
+              :title="t('changes.generate.clickToStop', 'Generating commit message. Click to stop.')"
+              :aria-label="t('changes.generate.stop', 'Stop generating commit message')"
               data-test="sc-generate-stop"
               @click="cancelGenerate"
             >
@@ -788,7 +900,7 @@ function draftStore() {
               :class="{ disabled: isGenerateDisabled }"
               :aria-disabled="isGenerateDisabled"
               :title="generateTooltip"
-              aria-label="Generate commit message with AI"
+              :aria-label="t('changes.generate.aria', 'Generate commit message with AI')"
               data-test="sc-generate"
               @click="generate"
             >
@@ -800,21 +912,21 @@ function draftStore() {
               type="button"
               class="sc-primary"
               :disabled="primaryAction.disabled"
-              :title="primaryAction.title"
+              :title="scmText(primaryAction.title)"
               data-test="sc-primary"
               @click="onPrimaryAction"
             >
               <LucideIcon v-if="showSpinner" name="loader2" :size="14" class="sc-spin" />
               <LucideIcon v-else-if="primaryIcon" :name="primaryIcon" :size="14" />
-              {{ primaryAction.label }}
+              {{ scmText(primaryAction.label) }}
             </button>
             <button
               ref="chevronEl"
               type="button"
               class="sc-chevron"
               :class="{ dim: primaryAction.disabled }"
-              title="More commit and remote actions"
-              aria-label="More commit and remote actions"
+              :title="t('changes.commit.moreActions', 'More commit and remote actions')"
+              :aria-label="t('changes.commit.moreActions', 'More commit and remote actions')"
               aria-haspopup="menu"
               :aria-expanded="menuOpen"
               data-test="sc-chevron"
@@ -837,11 +949,11 @@ function draftStore() {
                 class="ctx-menu-item sc-menu-item"
                 role="menuitem"
                 :disabled="item.disabled"
-                :title="item.title"
+                :title="scmText(item.title)"
                 :data-kind="item.kind"
                 @click="onDropdownAction(item.kind)"
               >
-                <span>{{ item.label }}</span>
+                <span>{{ scmText(item.label) }}</span>
               </button>
             </template>
           </div>
@@ -853,9 +965,7 @@ function draftStore() {
             <div class="sc-section-row">
               <button type="button" class="sc-section-toggle" :aria-expanded="!collapsed.has(section.id)" data-test="sc-section-toggle" @click="toggleSection(section.id)">
                 <LucideIcon name="chevronDown" :size="14" :class="{ 'sc-rot': collapsed.has(section.id) }" />
-                <span class="sc-section-label" :title="section.id === 'conflicts' ? CONFLICTS_SECTION_LABEL : SECTION_LABELS[section.area]">{{
-                  section.id === 'conflicts' ? CONFLICTS_SECTION_LABEL : SECTION_LABELS[section.area]
-                }}</span>
+                <span class="sc-section-label" :title="sectionLabel(section)">{{ sectionLabel(section) }}</span>
                 <span class="sc-section-count" data-test="changes-count">{{ section.items.length }}</span>
               </button>
               <span class="sc-section-actions">
@@ -865,8 +975,10 @@ function draftStore() {
                     type="button"
                     class="sc-action"
                     :class="{ disabled: isExecutingBulk }"
-                    :title="section.area === 'untracked' ? 'Delete all untracked' : 'Discard all'"
-                    :aria-label="section.area === 'untracked' ? 'Delete all untracked' : 'Discard all'"
+                    :title="section.area === 'untracked' ? t('changes.action.deleteAllUntracked', 'Delete all untracked') : t('changes.discard.discardAll', 'Discard all')"
+                    :aria-label="
+                      section.area === 'untracked' ? t('changes.action.deleteAllUntracked', 'Delete all untracked') : t('changes.discard.discardAll', 'Discard all')
+                    "
                     data-test="sc-discard-all"
                     @click.stop="requestDiscardAllInArea(section.area, a.discardAll)"
                   >
@@ -877,8 +989,8 @@ function draftStore() {
                     type="button"
                     class="sc-action"
                     :class="{ disabled: isExecutingBulk }"
-                    title="Stage all"
-                    aria-label="Stage all"
+                    :title="t('changes.action.stageAll', 'Stage all')"
+                    :aria-label="t('changes.action.stageAll', 'Stage all')"
                     data-test="sc-stage-all"
                     @click.stop="stagePaths(a.stageAll)"
                   >
@@ -889,8 +1001,8 @@ function draftStore() {
                     type="button"
                     class="sc-action"
                     :class="{ disabled: isExecutingBulk }"
-                    title="Unstage all"
-                    aria-label="Unstage all"
+                    :title="t('changes.action.unstageAll', 'Unstage all')"
+                    :aria-label="t('changes.action.unstageAll', 'Unstage all')"
                     data-test="sc-unstage-all"
                     @click.stop="unstagePaths(a.unstageAll)"
                   >
@@ -908,7 +1020,7 @@ function draftStore() {
               :class="{ current: openKey === rowKey(entry) }"
               :data-path="entry.path"
               :data-area="entry.area"
-              :title="`${entry.path} (${STATUS_TITLES[entry.status] || entry.status})`"
+              :title="t('changes.row.title', '{{path}} ({{status}})', { path: entry.path, status: statusTitle(entry.status) })"
               data-test="changes-row"
               @click="openDiff(entry)"
               @dblclick="openDiff(entry, true)"
@@ -919,18 +1031,14 @@ function draftStore() {
                   <span class="sc-row-name explorer-name">{{ fileName(entry.path) }}</span>
                   <span v-if="dirName(entry.path)" class="sc-row-dir explorer-hit-dir">{{ dirName(entry.path) }}</span>
                 </span>
-                <div v-if="entry.conflictKind" class="sc-row-sub">{{ CONFLICT_KIND_LABELS[entry.conflictKind] }}</div>
+                <div v-if="entry.conflictKind" class="sc-row-sub">{{ conflictKindLabel(entry.conflictKind) }}</div>
               </div>
-              <span
-                v-if="noteCountByPath.get(entry.path)"
-                class="sc-row-notes"
-                :title="`${noteCountByPath.get(entry.path)} note${noteCountByPath.get(entry.path) === 1 ? '' : 's'}`"
-              >
+              <span v-if="noteCountByPath.get(entry.path)" class="sc-row-notes" :title="notesCountTitle(noteCountByPath.get(entry.path))">
                 <LucideIcon name="messageSquare" :size="12" />
                 <span>{{ noteCountByPath.get(entry.path) }}</span>
               </span>
               <span v-if="entry.conflictStatus === 'unresolved'" class="sc-conflict-badge" role="status">
-                <LucideIcon name="triangleAlert" :size="12" /><span>Unresolved</span>
+                <LucideIcon name="triangleAlert" :size="12" /><span>{{ t('changes.row.unresolved', 'Unresolved') }}</span>
               </span>
               <template v-else>
                 <span v-if="entry.added > 0 || entry.removed > 0" class="sc-counts">
@@ -945,17 +1053,33 @@ function draftStore() {
                   v-if="canDiscardStatusEntry(entry)"
                   type="button"
                   class="sc-action"
-                  :title="entry.area === 'untracked' ? 'Delete untracked file' : entry.status === 'deleted' ? 'Restore file' : 'Discard changes'"
-                  :aria-label="entry.area === 'untracked' ? 'Delete untracked file' : entry.status === 'deleted' ? 'Restore file' : 'Discard changes'"
+                  :title="discardTitle(entry)"
+                  :aria-label="discardTitle(entry)"
                   data-test="sc-discard"
                   @click="requestDiscardEntry(entry)"
                 >
                   <LucideIcon :name="entry.area === 'untracked' ? 'trash' : 'undo2'" :size="14" />
                 </button>
-                <button v-if="canStageStatusEntry(entry)" type="button" class="sc-action" title="Stage" aria-label="Stage" data-test="sc-stage" @click="stage(entry.path)">
+                <button
+                  v-if="canStageStatusEntry(entry)"
+                  type="button"
+                  class="sc-action"
+                  :title="t('changes.action.stage', 'Stage')"
+                  :aria-label="t('changes.action.stage', 'Stage')"
+                  data-test="sc-stage"
+                  @click="stage(entry.path)"
+                >
                   <LucideIcon name="plus" :size="14" />
                 </button>
-                <button v-if="canUnstageStatusEntry(entry)" type="button" class="sc-action" title="Unstage" aria-label="Unstage" data-test="sc-unstage" @click="unstage(entry.path)">
+                <button
+                  v-if="canUnstageStatusEntry(entry)"
+                  type="button"
+                  class="sc-action"
+                  :title="t('changes.action.unstage', 'Unstage')"
+                  :aria-label="t('changes.action.unstage', 'Unstage')"
+                  data-test="sc-unstage"
+                  @click="unstage(entry.path)"
+                >
                   <LucideIcon name="minus" :size="14" />
                 </button>
               </div>
@@ -964,14 +1088,14 @@ function draftStore() {
         </div>
 
         <div v-if="loaded && data && data.repo && !hasUncommittedEntries && !normalizedFilter" class="sc-empty" data-test="sc-empty">
-          <div class="sc-empty-heading">No changes</div>
-          <div class="sc-empty-text">This workspace is clean: everything is committed.</div>
+          <div class="sc-empty-heading">{{ t('changes.empty.title', 'No changes') }}</div>
+          <div class="sc-empty-text">{{ t('changes.empty.text', 'This workspace is clean: everything is committed.') }}</div>
         </div>
         <div v-if="normalizedFilter && !filtered.length" class="sc-empty">
-          <div class="sc-empty-heading">No matching files</div>
-          <div class="sc-empty-text">No changed files match "{{ filterQuery }}"</div>
+          <div class="sc-empty-heading">{{ t('changes.filter.noMatchTitle', 'No matching files') }}</div>
+          <div class="sc-empty-text" v-text="noMatchText()"></div>
         </div>
-        <div v-if="!loaded" class="explorer-empty">Reading git status…</div>
+        <div v-if="!loaded" class="explorer-empty">{{ t('changes.reading', 'Reading git status…') }}</div>
       </template>
     </div>
   </div>
