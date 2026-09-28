@@ -2996,11 +2996,24 @@ body.pane-dragging * {
   margin: 10px 0 4px;
 }
 
-.agent-set-name {
+/* One line, left: icon, name, status (.set-label is a column elsewhere). */
+.agent-set-name,
+.set-card .set-row > .set-label.agent-set-name {
   display: flex;
+  flex-direction: row;
   align-items: center;
-  gap: 8px;
+  justify-content: flex-start;
+  gap: 4px 8px;
   flex-wrap: wrap;
+  text-align: left;
+}
+
+/* Longer lines under the name (an update, a wait) take the full width. */
+.agent-set-name > .set-hint:not(:nth-child(3)),
+.agent-set-name > div,
+.agent-set-name > p {
+  flex-basis: 100%;
+  margin: 0;
 }
 
 .agent-set-actions {
