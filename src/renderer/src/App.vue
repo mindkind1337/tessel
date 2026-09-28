@@ -3033,7 +3033,7 @@ function copyPort(port) {
 }
 async function stopPort(port) {
   const res = await portScanner.kill(port)
-  if (res && res.ok) showToast(`Stopped process on ${port.port}`)
+  if (res && res.ok) showToast(res.alreadyExited ? `The process on ${port.port} had already exited` : `Stopped process on ${port.port}`)
   else showToast((res && res.reason) || 'Failed to stop the process.', { kind: 'error' })
 }
 

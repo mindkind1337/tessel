@@ -4,14 +4,19 @@
 // workspace-port-ownership.ts; Orca is MIT, Copyright (c) 2026 Lovecast Inc.).
 //
 // One scan = one listener listing (`netstat -ano -p tcp` on Windows, like
-// Orca; `lsof` elsewhere) + one process listing (the same one agent
-// detection uses). A listener belongs to a copy when its process runs under
-// one of the copy's pane shells (Tessel knows each pane's shell pid), else,
-// like Orca, when its command line names the copy's folder.
+// Orca; `lsof` elsewhere) + one process listing (pid, parent, creation time,
+// name, executable, command line). A listener belongs to a copy when its
+// process runs under one of the copy's pane shells (Tessel knows each pane's
+// shell pid), else, like Orca, when its command line names the copy's folder.
+//
+// Stop Process is destructive, so it trusts nothing cached: it runs its own
+// listing started after the request, refuses when any part of it failed or
+// the process cannot be identified (pid + creation time + name from that
+// listing), never stops one of Tessel's own processes, re-checks the process
+// and its port right before stopping it, and then stops that one pid only.
 import { execFile } from 'child_process'
 import path from 'path'
 import os from 'os'
-import { listProcesses } from './agentDetect'
 
 const HTTP_PORTS = new Set([80, 3000, 3001, 4200, 5000, 5173, 5174, 8000, 8080, 8888])
 const HTTPS_PORTS = new Set([443, 8443])
@@ -27,13 +32,15 @@ export function parseAddressWithPort(value) {
   const trimmed = String(value || '')
     .trim()
     .replace(/\s+\(LISTEN\)$/i, '')
-  const bracketed = trimmed.match(/^\[([^\]]+)\]:(\d+)$/)
-  if (bracketed) return { host: bracketed[1], port: Number.parseInt(bracketed[2], 10) }
-  const match = trimmed.match(/^(.+):(\d+)$/)
+  const match = trimmed.match(/^\[([^\]]+)\]:(\d+)$/) || trimmed.match(/^(.+):(\d+)$/)
   if (!match) return null
   const port = Number.parseInt(match[2], 10)
-  if (!Number.isFinite(port) || port <= 0 || port > 65535) return null
+  if (!validPort(port)) return null
   return { host: match[1], port }
+}
+
+function validPort(port) {
+  return Number.isSafeInteger(port) && port >= 1 && port <= 65535
 }
 
 // Orca: dedupeRawPorts (0.0.0.0 and :: of one process are one row).
@@ -202,26 +209,175 @@ function runListeners() {
   })
 }
 
+// The processes, for ports: [{ pid, ppid, created, name, exe, cmd }], or null
+// when the listing failed. created: when the process started, as the system
+// says it (Windows FILETIME in UTC, `ps` lstart elsewhere), '' when unknown;
+// with the pid it tells a process from a later one that reused its pid.
+const PS_ROW =
+  "$c = if ($_.CreationDate) { $_.CreationDate.ToFileTimeUtc() } else { '' }; " +
+  '"$($_.ProcessId)`t$($_.ParentProcessId)`t$c`t$($_.Name)`t$($_.ExecutablePath)`t$($_.CommandLine)"'
+
+export function parseWindowsProcesses(stdout) {
+  const out = []
+  for (const line of String(stdout || '').split(/\r?\n/)) {
+    if (!/^\d+\t/.test(line)) continue
+    const [pid, ppid, created, name, exe, ...cmd] = line.split('\t')
+    out.push({ pid: Number(pid), ppid: Number(ppid), created: created || '', name: name || '', exe: exe || '', cmd: cmd.join('\t') })
+  }
+  return out
+}
+
+export function parsePsProcesses(stdout) {
+  const out = []
+  for (const line of String(stdout || '').split('\n')) {
+    const m = /^\s*(\d+)\s+(\d+)\s+(\S+\s+\S+\s+\d+\s+[\d:]+\s+\d+)\s+(\S+)\s*(.*)$/.exec(line)
+    if (m) out.push({ pid: Number(m[1]), ppid: Number(m[2]), created: m[3].replace(/\s+/g, ' '), name: path.basename(m[4]), exe: '', cmd: m[5] })
+  }
+  return out
+}
+
+// pid: only that process ([] when it is not running); else all of them.
+function runProcesses(pid) {
+  const one = Number.isSafeInteger(pid) && pid > 0
+  const opts = { windowsHide: true, timeout: 15000, maxBuffer: 16 * 1024 * 1024 }
+  return new Promise((resolve) => {
+    if (process.platform === 'win32') {
+      const filter = one ? ` -Filter "ProcessId=${pid}"` : ''
+      const script = `[Console]::OutputEncoding = [Text.Encoding]::UTF8; Get-CimInstance Win32_Process${filter} -ErrorAction Stop | ForEach-Object { ${PS_ROW} }`
+      execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], opts, (err, stdout) => {
+        if (err) return resolve(null)
+        const list = parseWindowsProcesses(stdout)
+        resolve(!one && !list.length ? null : list)
+      })
+    } else {
+      const args = [...(one ? ['-p', String(pid)] : ['-e']), '-o', 'pid=,ppid=,lstart=,comm=,args=']
+      execFile('ps', args, { ...opts, env: { ...process.env, LC_ALL: 'C' } }, (err, stdout) => {
+        // ps -p exits 1 when that process is not running.
+        if (err && !(one && err.code === 1 && !String(stdout || '').trim())) return resolve(null)
+        const list = parsePsProcesses(stdout)
+        resolve(!one && !list.length ? null : list)
+      })
+    }
+  })
+}
+
+function sameProcess(a, b) {
+  return !!(a && b && a.pid === b.pid && a.created && String(a.created) === String(b.created) && String(a.name).toLowerCase() === String(b.name).toLowerCase())
+}
+
+function createdOrder(c) {
+  const s = String(c || '')
+  if (/^\d+$/.test(s)) return BigInt(s)
+  const t = Date.parse(s)
+  return Number.isFinite(t) ? BigInt(t) : null
+}
+
+function firstWord(cmd) {
+  const m = /^\s*(?:"([^"]*)"|'([^']*)'|(\S+))/.exec(String(cmd || ''))
+  return m ? m[1] ?? m[2] ?? m[3] : ''
+}
+
+function isAbsolutePath(p) {
+  return /^[a-zA-Z]:[\\/]/.test(p) || p.startsWith('\\\\') || p.startsWith('/')
+}
+
+// Is this one of Tessel's own processes? selfPids: every Tessel process
+// (main, renderers, GPU, utility, terminal host); terminalHostPids: the
+// terminal host, whose children are the terminals' shells; shellPids: the
+// pane shells. Its executable is Tessel's (selfExe) or lies in Tessel's
+// folders (appRoots); or it runs under a Tessel process without a terminal
+// in between (what a terminal runs is the user's).
+export function isTesselProcess(target, byPid, { selfPids = [], terminalHostPids = [], shellPids = [], selfExe = '', appRoots = [] } = {}) {
+  const valid = (n) => Number.isSafeInteger(n) && n > 0
+  const self = new Set(selfPids.filter(valid))
+  if (self.has(target.pid)) return true
+  const exe = target.exe || firstWord(target.cmd)
+  if (exe && isAbsolutePath(exe)) {
+    const e = comparablePath(exe)
+    if (selfExe && e === comparablePath(selfExe)) return true
+    for (const root of appRoots) {
+      if (!root) continue
+      const r = comparablePath(root)
+      if (e === r || e.startsWith(r + '/')) return true
+    }
+  }
+  const shells = new Set(shellPids.filter(valid))
+  const hosts = new Set(terminalHostPids.filter(valid))
+  const seen = new Set([target.pid])
+  let child = target
+  for (let depth = 0; depth < 64; depth++) {
+    if (shells.has(child.pid)) return false // a terminal's shell
+    const ppid = child.ppid
+    if (!valid(ppid) || seen.has(ppid)) return false
+    const parent = byPid.get(ppid)
+    // Windows keeps a dead parent's pid: a younger "parent" is not the parent.
+    const pc = parent ? createdOrder(parent.created) : null
+    const cc = createdOrder(child.created)
+    if (pc !== null && cc !== null && pc > cc) return false
+    if (hosts.has(ppid)) return false // a shell of the terminal host
+    if (self.has(ppid)) return true
+    if (!parent) return false
+    seen.add(ppid)
+    child = parent
+  }
+  return false
+}
+
 // Scans share their raw data for a few seconds (the sidebar and the status
 // bar ask at the same time); one listing each at most.
-export function createPortScanner({ listeners = runListeners, processes = listProcesses, now = () => Date.now(), ttlMs = 4000 } = {}) {
+// processInfo(pid) -> { ok: false } when the check failed, else { ok: true,
+// proc } (proc undefined when that pid is not running).
+export function createPortScanner({
+  listeners = runListeners,
+  processes,
+  processInfo,
+  now = () => Date.now(),
+  ttlMs = 4000,
+  sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+} = {}) {
+  if (!processes) {
+    processes = () => runProcesses()
+    if (!processInfo) processInfo = async (pid) => {
+      const list = await runProcesses(pid)
+      return list ? { ok: true, proc: list.find((p) => p.pid === pid) } : { ok: false }
+    }
+  }
+  if (!processInfo) processInfo = async (pid) => {
+    const list = await processes()
+    return list ? { ok: true, proc: list.find((p) => p.pid === pid) } : { ok: false }
+  }
   let cache = null // { at, raw, procs }
   let inFlight = null
 
-  async function snapshot(fresh = false) {
-    if (!fresh && cache && now() - cache.at < ttlMs) return cache
-    if (inFlight) return inFlight
-    inFlight = (async () => {
+  function startScan() {
+    const run = (async () => {
       const [raw, procs] = await Promise.all([listeners(), processes()])
       if (!raw) throw new Error('Could not list the listening ports.')
       cache = { at: now(), raw, procs: procs || [] }
       return cache
     })()
-    try {
-      return await inFlight
-    } finally {
-      inFlight = null
+    inFlight = run
+    const clear = () => {
+      if (inFlight === run) inFlight = null
     }
+    run.then(clear, clear)
+    return run
+  }
+
+  // Until no scan started earlier is still running.
+  async function settled() {
+    while (inFlight) await inFlight.catch(() => {})
+  }
+
+  // fresh: a listing started after this call (never one already running).
+  async function snapshot(fresh = false) {
+    if (!fresh) {
+      if (cache && now() - cache.at < ttlMs) return cache
+      if (inFlight) return inFlight
+      return startScan()
+    }
+    await settled()
+    return startScan()
   }
 
   // probes: [{ id, pids, path }] -> { ok, platform, scannedAt, ports: { [id]: [port] }, external: [port] }
@@ -236,26 +392,67 @@ export function createPortScanner({ listeners = runListeners, processes = listPr
     }
   }
 
-  // Orca's killWorkspacePort: a fresh scan proves the pid still owns that
-  // port in one of the copies before it is stopped.
-  async function kill({ probes, pid, port } = {}, { killer = (p) => process.kill(p, 'SIGTERM'), selfPids = [process.pid] } = {}) {
-    if (!Number.isSafeInteger(pid) || pid <= 0 || !Number.isSafeInteger(port)) return { ok: false, reason: 'Invalid process or port.' }
-    const res = await scan({ probes }, { fresh: true })
-    if (!res.ok) return { ok: false, reason: res.unavailableReason || 'Workspace port scan failed.' }
-    const found = Object.values(res.ports)
+  const refuse = (reason) => ({ ok: false, reason })
+  const attempt = (fn, fallback) => Promise.resolve().then(fn).catch(() => fallback)
+
+  // Orca's killWorkspacePort, stricter: its own listing, started after the
+  // request, proves that this very process (pid, creation time, name) owns
+  // that port in one of the copies and is not Tessel's; it is checked again
+  // right before it is stopped, then only that pid is stopped (not its
+  // tree: Windows keeps dead parents' pids, so a tree walk can reach
+  // unrelated processes; a dev server's own helpers end with it).
+  // -> { ok: true } | { ok: true, alreadyExited: true } | { ok: false, reason }
+  async function kill({ probes, pid, port } = {}, opts = {}) {
+    const { killer = (p) => process.kill(p), selfPids = [process.pid], terminalHostPids = [], selfExe = process.execPath, appRoots = [] } = opts
+    if (!Number.isSafeInteger(pid) || pid <= 0 || !validPort(port)) return refuse('Invalid process or port.')
+    const list = sanitizeProbes(probes)
+    await settled()
+    const procsLater = attempt(processes, null)
+    const raw = await attempt(listeners, null)
+    if (!raw) return refuse('Could not list the listening ports, so nothing was stopped.')
+    if (!raw.some((r) => r.pid === pid && r.port === port)) return refuse('The port is no longer listening.')
+    const procs = await procsLater
+    if (!Array.isArray(procs)) return refuse('Could not list the processes, so nothing was stopped.')
+    const byPid = new Map(procs.map((p) => [p.pid, p]))
+    const target = byPid.get(pid)
+    if (!target) return refuse('Could not find that process, so nothing was stopped.')
+    const inCopy = Object.values(attributePorts(raw, procs, list).byProbe)
       .flat()
-      .find((p) => p.pid === pid && p.port === port)
-    if (!found) return { ok: false, reason: 'The port is no longer listening.' }
-    if (selfPids.includes(pid) || found.processName === 'Electron' || /^tessel(\.exe)?$/i.test(found.processName || ''))
-      return { ok: false, reason: 'Tessel cannot stop its own process.' }
+      .some((p) => p.pid === pid && p.port === port)
+    if (!inCopy) return refuse('That port does not belong to a workspace, so nothing was stopped.')
+    const shellPids = list.flatMap((p) => p.pids)
+    if (isTesselProcess(target, byPid, { selfPids, terminalHostPids, shellPids, selfExe, appRoots }))
+      return refuse('Tessel cannot stop its own process.')
+    if (!target.created || !target.name) return refuse('Could not identify that process, so nothing was stopped.')
+
+    // Right before stopping it: the same process, still on that port.
+    const [again, info] = await Promise.all([attempt(listeners, null), attempt(() => processInfo(pid), null)])
+    if (!again || !info || !info.ok) return refuse('Could not check the process again, so nothing was stopped.')
+    if (!info.proc) return refuse('The process has already exited.')
+    if (!sameProcess(info.proc, target)) return refuse('That process id now belongs to another process, so nothing was stopped.')
+    if (!again.some((r) => r.pid === pid && r.port === port)) return refuse('The port is no longer listening.')
+
+    cache = null
     try {
       killer(pid)
-      cache = null
-      return { ok: true }
     } catch (e) {
-      if (e && e.code === 'ESRCH') return { ok: true }
-      return { ok: false, reason: (e && e.message) || 'Failed to stop the process.' }
+      if (e && e.code === 'ESRCH') return { ok: true, alreadyExited: true }
+      if (e && e.code === 'EPERM') return refuse('Access denied: the system would not let Tessel stop that process.')
+      return refuse((e && e.message) || 'Failed to stop the process.')
     }
+    // Stopping is asynchronous: say it stopped only once it is gone.
+    let unsure = false
+    for (let i = 0; i < 15; i++) {
+      const res = await attempt(() => processInfo(pid), null)
+      if (res && res.ok) {
+        if (!res.proc || !sameProcess(res.proc, target)) return { ok: true }
+        unsure = false
+      } else unsure = true
+      await sleep(200)
+    }
+    return refuse(
+      unsure ? 'Stop was requested, but Tessel could not confirm that the process exited.' : 'Stop was requested, but the process is still running.'
+    )
   }
 
   return { scan, kill }

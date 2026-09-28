@@ -1,5 +1,5 @@
 import { app, BrowserWindow, ipcMain, clipboard, nativeImage, dialog, Notification, shell, powerSaveBlocker, powerMonitor, safeStorage } from 'electron'
-import { join, isAbsolute } from 'path'
+import { join, isAbsolute, dirname } from 'path'
 import os from 'os'
 import fs from 'fs'
 import { spawn, execFile } from 'child_process'
@@ -1488,7 +1488,25 @@ ipcMain.handle('agents:detect', safe(detectAgents))
 // Live ports of each workspace copy (sidebar plug, status bar), like Orca.
 const portScanner = createPortScanner()
 ipcMain.handle('ports:scan', safe((q) => portScanner.scan(q || {})))
-ipcMain.handle('ports:kill', safe((q) => portScanner.kill(q || {}, { selfPids: [process.pid, ...ptyHostPids()] })))
+// Stop Process never stops Tessel itself: none of its processes (main,
+// renderers, GPU, utility, terminal host), nothing they run outside a
+// terminal, nothing started from Tessel's executable or its folders.
+ipcMain.handle(
+  'ports:kill',
+  safe((q) => {
+    const hostPids = ptyHostPids()
+    let metricPids = []
+    try {
+      metricPids = app.getAppMetrics().map((m) => m.pid)
+    } catch {}
+    return portScanner.kill(q || {}, {
+      selfPids: [process.pid, ...metricPids, ...hostPids],
+      terminalHostPids: hostPids,
+      selfExe: process.execPath,
+      appRoots: [dirname(process.execPath), app.getAppPath()]
+    })
+  })
+)
 // The status bar's Resource Manager: Tessel's processes and each terminal's
 // process tree (Orca's memory collector).
 const resourceCollector = createResourceCollector({ cpuCount: os.cpus().length })
