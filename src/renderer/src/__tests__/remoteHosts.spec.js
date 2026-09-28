@@ -266,6 +266,44 @@ describe('status bar: remote hosts', () => {
     w.unmount()
   })
 
+  it('each state like Orca: Connecting… with a spinner, Error with Retry, Disconnected with Connect, Connected with Disconnect; French words', async () => {
+    remoteHostsState.targets = [PROD, BOX, { ...BOX, id: 'ssh-4', label: 'err' }, { ...BOX, id: 'ssh-5', label: 'off' }]
+    remoteHostsState.states = {
+      'ssh-1': { status: 'connecting' },
+      'ssh-2': { status: 'connected' },
+      'ssh-4': { status: 'error', error: 'x' }
+    }
+    const w = mount(RemoteHostsStatus, { attachTo: document.body })
+    expect(w.text()).toContain('Connecting…')
+    await w.find('[data-test="remote-hosts-status"]').trigger('click')
+    const row = (label) => [...document.querySelectorAll('[data-test="remote-host-row"]')].find((r) => r.querySelector('.rh-status-label').textContent === label)
+    expect(row('prod').textContent).toContain('Connecting…')
+    expect(row('prod').querySelector('[data-test="remote-host-connecting"]')).not.toBe(null)
+    expect(row('prod').querySelector('button')).toBe(null)
+    expect(row('prod').querySelector('.rh-dot-busy')).not.toBe(null)
+    expect(row('err').textContent).toContain('Error')
+    expect(row('err').querySelector('.rh-dot-bad')).not.toBe(null)
+    expect(row('err').querySelector('button').textContent.trim()).toBe('Retry')
+    expect(row('off').textContent).toContain('Disconnected')
+    expect(row('off').querySelector('button').textContent.trim()).toBe('Connect')
+    expect(row('box').querySelector('.rh-dot-ok')).not.toBe(null)
+    expect(row('box').querySelector('button').textContent.trim()).toBe('Disconnect')
+    w.unmount()
+
+    setMessages('fr', frRemote)
+    const fr = mount(RemoteHostsStatus, { attachTo: document.body })
+    await fr.find('[data-test="remote-hosts-status"]').trigger('click')
+    expect(row('prod').textContent).toContain('Connexion…')
+    expect(row('err').textContent).toContain('Erreur')
+    expect(row('err').querySelector('button').textContent.trim()).toBe('Réessayer')
+    expect(row('off').textContent).toContain('Déconnecté')
+    expect(row('off').querySelector('button').textContent.trim()).toBe('Se connecter')
+    expect(row('box').textContent).toContain('Connecté')
+    expect(row('box').querySelector('button').textContent.trim()).toBe('Se déconnecter')
+    fr.unmount()
+    setMessages('en', {})
+  })
+
   it('0 hosts when nothing is connected', () => {
     remoteHostsState.states = {}
     const w = mount(RemoteHostsStatus)

@@ -20,6 +20,7 @@ import { createUsageStatsTracker } from './usageStatsTracker'
 import { copyUsageImage } from './usageClipboard'
 import { registerIssueServices } from './issueServicesIpc'
 import { createRemoteHosts, registerRemoteHosts } from './remoteHosts'
+import { createSshPromptWatcher, registerSshPrompts } from './sshPrompts'
 import { prepareAgentStateHooks } from './agentStateSetup'
 import { assessNeeds } from './tesselNeeds'
 import { createClaudeUsageReport } from './claudeUsageReport'
@@ -1133,6 +1134,15 @@ registerIssueServices({ ipcMain, dir: join(app.getPath('userData'), 'linear'), s
 // Remote hosts over SSH (remoteHosts.js): Settings > SSH Hosts, the status bar.
 const remoteHosts = createRemoteHosts({ dir: app.getPath('userData'), onChange: (states) => send('remoteHosts:state', states) })
 registerRemoteHosts({ ipcMain, service: remoteHosts, killPane: (id) => host.send('kill', { id }) })
+// Its password / passphrase prompts (sshPrompts.js): the answer goes to that
+// pane's terminal only. Never logged.
+const sshPrompts = createSshPromptWatcher({
+  send: (channel, payload) => send(channel, payload),
+  write: (id, data) => host.send('write', { id, data }),
+  onConnected: (id) => remoteHosts.paneConnected(id),
+  onCancel: (_id, hostId) => hostId && remoteHosts.markDisconnecting(hostId)
+})
+registerSshPrompts({ ipcMain, watcher: sshPrompts })
 const accounts = createProviderAccounts({
   claude: createClaudeAccounts(accountOptions),
   codex: createCodexAccounts(accountOptions)
@@ -1960,6 +1970,7 @@ const host = createPtyClient({
   // chunk: a busy agent can print thousands of small chunks a second.
   onData: (id, data) => {
     installLogs.onData(id, data)
+    sshPrompts.onData(id, data)
     queueData(id, data)
   },
   onExit: (id, exitCode, signal, pid) => {
@@ -1967,6 +1978,7 @@ const host = createPtyClient({
     if (pid && info?.pid && pid !== info.pid) return // a delayed exit from the previous execution
     void agentStateStore.unregister(id, info?.agentLaunchToken).catch(() => {})
     installLogs.onExit(id, exitCode)
+    sshPrompts.onExit(id)
     remoteHosts.paneExited(id, exitCode)
     flushData() // deliver the last output before the exit notice
     if (exitCode && info) {
@@ -1983,6 +1995,7 @@ const host = createPtyClient({
     // Its terminals are gone with it: tell the panes.
     for (const id of ptyInfo.keys()) {
       void agentStateStore.unregister(id).catch(() => {})
+      sshPrompts.onExit(id)
       remoteHosts.paneExited(id, -1)
       send('pty:exit', { id, exitCode: -1, signal: 0 })
     }
@@ -2012,6 +2025,8 @@ ipcMain.handle('pty:create', async (_evt, opts = {}) => {
     const setup = prepareStatus(agentProvider, env)
     if (!setup.ok) agentStatusWarning = setup.error
   }
+  // Watched from the start: its first prompt can come before the reply.
+  if (remote) sshPrompts.watch(id, { hostId: remote.target.id, label: remote.name })
   let res
   try {
     res = await host.request('create', {
@@ -2038,11 +2053,15 @@ ipcMain.handle('pty:create', async (_evt, opts = {}) => {
     res = { ok: false, error: err.message }
   }
   if (!res.ok) {
+    if (remote) sshPrompts.unwatch(id)
     log.error('pty', `failed to launch ${shell.name} (${shell.file}) in ${startDir}: ${res.error}`)
     return { ok: false, error: t('main.error.launchShell', 'Failed to launch {{shell}}: {{error}}', { shell: shell.name, error: res.error }) }
   }
   ptyInfo.set(id, { shellId: shell.id, shellName: shell.name, backend, pid: res.pid, agentLaunchToken })
-  if (remote) remoteHosts.paneStarted(id, remote.target.id)
+  if (remote) {
+    // "Connecting…" until the remote side answers (sshPrompts.js).
+    remoteHosts.paneStarted(id, remote.target.id, { connected: false })
+  }
   if (agentProvider) {
     try { await agentStateStore.register({ paneId: id, provider: agentProvider, launchToken: agentLaunchToken, startedAt: agentStartedAt }) }
     catch { agentStatusWarning = 'Agent status observations are unavailable.' }
@@ -2131,6 +2150,7 @@ ipcMain.on('pty:resize', (_evt, { id, cols, rows }) => {
 })
 
 ipcMain.on('pty:kill', (_evt, { id }) => {
+  sshPrompts.onExit(id)
   host.send('kill', { id })
   ptyInfo.delete(id)
 })

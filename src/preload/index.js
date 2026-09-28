@@ -312,6 +312,22 @@ const api = {
       return () => ipcRenderer.removeListener('remoteHosts:state', handler)
     }
   },
+  // SSH password / passphrase prompts (src/main/sshPrompts.js). The answer
+  // goes in this one call, bound to the pane and its one-time prompt id;
+  // value null cancels.
+  sshCredentials: {
+    submit: (paneId, promptId, value) => ipcRenderer.invoke('ssh:submitCredential', { paneId, promptId, value }),
+    onRequest: (cb) => {
+      const handler = (_e, payload) => cb(payload)
+      ipcRenderer.on('ssh:credential-request', handler)
+      return () => ipcRenderer.removeListener('ssh:credential-request', handler)
+    },
+    onResolved: (cb) => {
+      const handler = (_e, payload) => cb(payload)
+      ipcRenderer.on('ssh:credential-resolved', handler)
+      return () => ipcRenderer.removeListener('ssh:credential-resolved', handler)
+    }
+  },
   update: {
     status: () => ipcRenderer.invoke('update:status'),
     check: () => ipcRenderer.invoke('update:check'),

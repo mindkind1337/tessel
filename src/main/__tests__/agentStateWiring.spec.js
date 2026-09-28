@@ -150,6 +150,7 @@ it('a delayed exit cannot close the new execution registered for the same pane',
     agentStateStore: { unregister },
     installLogs: { onExit: vi.fn() },
     remoteHosts: { paneExited: vi.fn() },
+    sshPrompts: { onExit: vi.fn() },
     flushData: vi.fn(),
     send,
     log: { warn: vi.fn() }

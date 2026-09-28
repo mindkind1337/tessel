@@ -238,6 +238,28 @@ describe('live state', () => {
   })
 })
 
+describe('connecting state', () => {
+  it('a new ssh pane is connecting until it gets through; ssh exiting with 255 is an error', () => {
+    const s = service()
+    const { target } = s.add({ host: 'srv' })
+    s.paneStarted('pane-1', target.id, { connected: false })
+    expect(s.snapshot()[target.id]).toMatchObject({ status: 'connecting', panes: ['pane-1'] })
+    s.paneConnected('pane-1')
+    expect(s.snapshot()[target.id].status).toBe('connected')
+    s.paneStarted('pane-2', target.id, { connected: false })
+    expect(s.snapshot()[target.id].status).toBe('connected') // one of them got through
+    s.paneExited('pane-1', 0)
+    expect(s.snapshot()[target.id].status).toBe('connecting')
+    s.paneExited('pane-2', 255)
+    expect(s.snapshot()[target.id].status).toBe('error')
+    // Cancelled from the password dialog: disconnected, not an error.
+    s.paneStarted('pane-3', target.id, { connected: false })
+    s.markDisconnecting(target.id)
+    s.paneExited('pane-3', 255)
+    expect(s.snapshot()[target.id].status).toBe('disconnected')
+  })
+})
+
 describe('IPC', () => {
   it('registers remoteHosts:* and disconnect ends the host\'s panes', async () => {
     const handlers = {}

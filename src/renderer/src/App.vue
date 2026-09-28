@@ -10,6 +10,8 @@ import { createPortScanner, browserUrlForPort, addressForPort } from './portScan
 import LaunchMenu from './components/LaunchMenu.vue'
 import SettingsDialog from './components/SettingsDialog.vue'
 import UpdateDialog from './components/UpdateDialog.vue'
+import UpdateCard from './components/UpdateCard.vue'
+import SshPasswordDialog from './components/remote/SshPasswordDialog.vue'
 import { settings, loadSettings, DEFAULT_SETTINGS } from './settings'
 import { effectiveAgent, agentEnabled, launchSignature, launchIsYolo } from '../../shared/agentPrefs'
 import { THEMES } from './themes'
@@ -1630,6 +1632,10 @@ const isDev = !!window.shellApi.isDev
 const updateStatus = ref({ state: 'disabled' })
 const updateOpen = ref(false)
 const updateInstalling = ref(false)
+// This version's GitHub release page ("Release notes" on the update card).
+const updateReleaseUrl = computed(() =>
+  updateStatus.value.version ? `https://github.com/mindkind1337/tessel/releases/tag/v${updateStatus.value.version}` : ''
+)
 let unsubUpdate = null
 
 function paneCount() {
@@ -1674,15 +1680,8 @@ async function initUpdates() {
   const api = window.shellApi.update
   if (!api) return
   unsubUpdate = api.onStatus((s) => {
-    const wasReady = updateStatus.value.state === 'ready'
+    // A ready update shows Orca's "Update Available" card (UpdateCard.vue).
     updateStatus.value = s
-    if (s.state === 'ready' && !wasReady) {
-      showToast(t('app.update.readyToast', 'Tessel {{version}} is ready to install.', { version: s.version }), {
-        kind: 'attention',
-        timeout: 15000,
-        action: { label: t('app.update.action', 'Update'), run: () => (updateOpen.value = true) }
-      })
-    }
   })
   updateStatus.value = await api.status()
   const done = await api.justInstalled()
@@ -7902,7 +7901,10 @@ onBeforeUnmount(() => {
       @close="closeSettings"
     />
 
+    <SshPasswordDialog />
+
     <div class="toasts" aria-live="polite">
+      <UpdateCard :status="updateStatus" :release-url="updateReleaseUrl" @update="updateOpen = true" />
       <div v-for="toast in toasts" :key="toast.id" class="toast" :class="toast.kind">
         <span class="toast-text">{{ toast.text }}</span>
         <button v-if="toast.action" class="toast-action" @click="runToastAction(toast)">
