@@ -1,4 +1,3 @@
-<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // Review a finished task before it reaches the project: what the agent
 // changed (files, commits, the diff of each file), whether it can merge into
@@ -7,6 +6,7 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { parseUnifiedDiff } from '../../../shared/diff'
 import { reviewMessage, commentLocation } from '../../../shared/reviewComments'
+import { t, intlLocale } from '../i18n'
 
 const props = defineProps({
   task: { type: Object, required: true },
@@ -97,7 +97,7 @@ async function refresh() {
     refreshing = false
   }
   loading.value = false
-  if (!next) next = { ok: false, error: 'No answer.' }
+  if (!next) next = { ok: false, error: t('review.noAnswer', 'No answer.') }
   const headChanged = !info.value || info.value.head !== next.head
   info.value = next
   if (!next.ok) return
@@ -129,7 +129,7 @@ async function loadDiff(file) {
   if (selected.value !== file) return
   diff.value = res && res.ok
     ? { file, parsed: parseUnifiedDiff(res.text), truncated: res.truncated }
-    : { file, error: (res && res.error) || 'Could not read the diff.' }
+    : { file, error: (res && res.error) || t('review.diffError', 'Could not read the diff.') }
 }
 
 watch(selected, (f) => loadDiff(f))
@@ -148,38 +148,78 @@ const viewedCount = computed(() =>
 // The state lines at the top: never green for something not checked.
 const checks = computed(() => {
   const i = info.value
-  if (!i) return [{ kind: 'wait', text: 'Checking the branch…' }]
+  if (!i) return [{ kind: 'wait', text: t('review.check.checking', 'Checking the branch…') }]
   if (!i.ok) return [{ kind: 'bad', text: i.error }]
   const out = []
   if (props.task.leadReview === 'approved')
-    out.push({ kind: 'ok', text: `Approved by the team lead${props.task.leadNote ? `: ${props.task.leadNote}` : '.'}` })
-  else if (props.task.leadReview === 'pending') out.push({ kind: 'info', text: 'The team lead has not reviewed it yet.' })
-  if (i.uncommitted.length)
+    out.push({
+      kind: 'ok',
+      text: props.task.leadNote
+        ? t('review.check.leadApprovedNote', 'Approved by the team lead: {{note}}', { note: props.task.leadNote })
+        : t('review.check.leadApproved', 'Approved by the team lead.')
+    })
+  else if (props.task.leadReview === 'pending')
+    out.push({ kind: 'info', text: t('review.check.leadPending', 'The team lead has not reviewed it yet.') })
+  if (i.uncommitted.length) {
+    const n = i.uncommitted.length
     out.push({
       kind: 'bad',
-      text: `${i.uncommitted.length} file${i.uncommitted.length > 1 ? 's' : ''} not committed in the agent's copy: ${short(i.uncommitted)}`
+      text: t(
+        'review.check.uncommitted',
+        n > 1 ? "{{count}} files not committed in the agent's copy: {{files}}" : "{{count}} file not committed in the agent's copy: {{files}}",
+        { count: n, files: short(i.uncommitted) }
+      )
     })
-  if (!i.files.length) out.push({ kind: 'warn', text: 'No committed changes on this branch yet.' })
+  }
+  if (!i.files.length) out.push({ kind: 'warn', text: t('review.check.noChanges', 'No committed changes on this branch yet.') })
   if (i.mergeCheck === 'failed') out.push({ kind: 'warn', text: i.blocker })
   else if (i.conflicts.length)
-    out.push({ kind: 'bad', text: `Conflicts with ${i.target} in ${short(i.conflicts)}.` })
-  else if (i.files.length) out.push({ kind: 'ok', text: `No conflicts with ${i.target}.` })
-  if (i.behind) out.push({ kind: 'info', text: `${i.target} has ${i.behind} newer commit${i.behind > 1 ? 's' : ''} since this branch started.` })
+    out.push({
+      kind: 'bad',
+      text: t('review.check.conflicts', 'Conflicts with {{target}} in {{files}}.', { target: i.target, files: short(i.conflicts) })
+    })
+  else if (i.files.length) out.push({ kind: 'ok', text: t('review.check.noConflicts', 'No conflicts with {{target}}.', { target: i.target }) })
+  if (i.behind)
+    out.push({
+      kind: 'info',
+      text: t(
+        'review.check.behind',
+        i.behind > 1
+          ? '{{target}} has {{count}} newer commits since this branch started.'
+          : '{{target}} has {{count}} newer commit since this branch started.',
+        { target: i.target, count: i.behind }
+      )
+    })
   if (i.rootBranch !== i.target)
-    out.push({ kind: 'bad', text: `The project folder is on branch ${i.rootBranch || '(none)'}; switch it to ${i.target} to merge.` })
+    out.push({
+      kind: 'bad',
+      text: t('review.check.wrongBranch', 'The project folder is on branch {{branch}}; switch it to {{target}} to merge.', {
+        branch: i.rootBranch || t('review.check.noBranch', '(none)'),
+        target: i.target
+      })
+    })
   if (i.dirtyOverlap.length)
-    out.push({ kind: 'bad', text: `Unsaved changes in the project folder touch the same files: ${short(i.dirtyOverlap)}.` })
-  if (i.merging) out.push({ kind: 'bad', text: 'The project folder is in the middle of another merge.' })
+    out.push({
+      kind: 'bad',
+      text: t('review.check.dirtyOverlap', 'Unsaved changes in the project folder touch the same files: {{files}}.', {
+        files: short(i.dirtyOverlap)
+      })
+    })
+  if (i.merging) out.push({ kind: 'bad', text: t('review.check.merging', 'The project folder is in the middle of another merge.') })
   return out
 })
 
 function short(list) {
-  return list.length > 3 ? `${list.slice(0, 3).join(', ')} and ${list.length - 3} more` : list.join(', ')
+  return list.length > 3
+    ? t('review.shortList', '{{first}} and {{count}} more', { first: list.slice(0, 3).join(', '), count: list.length - 3 })
+    : list.join(', ')
 }
 
 const canMerge = computed(() => !!(info.value && info.value.ok && !info.value.blocker) && !busy.value)
 const mergeTitle = computed(() =>
-  info.value && info.value.ok ? info.value.blocker || `Merge ${info.value.branch} into ${info.value.target}` : 'Checking…'
+  info.value && info.value.ok
+    ? info.value.blocker || t('review.mergeHint', 'Merge {{branch}} into {{target}}', { branch: info.value.branch, target: info.value.target })
+    : t('review.checking', 'Checking…')
 )
 
 function openFeedback() {
@@ -215,7 +255,10 @@ async function commitCopy() {
   const message = commitMsg.value.trim()
   if (!message || !window.shellApi.review.commit) return
   const res = await run('commit', () => window.shellApi.review.commit({ ...args.value, message }))
-  notice.value = res && res.ok ? { kind: 'ok', text: `Committed in the agent's copy (${res.sha.slice(0, 7)}).` } : { kind: 'bad', text: (res && res.error) || 'Commit failed.' }
+  notice.value =
+    res && res.ok
+      ? { kind: 'ok', text: t('review.committed', "Committed in the agent's copy ({{sha}}).", { sha: res.sha.slice(0, 7) }) }
+      : { kind: 'bad', text: (res && res.error) || t('review.commitFailed', 'Commit failed.') }
   if (res && res.ok) {
     commitOpen.value = false
     commitMsg.value = ''
@@ -225,20 +268,55 @@ async function commitCopy() {
 async function pushBranch() {
   if (!window.shellApi.review.push) return
   const res = await run('push', () => window.shellApi.review.push(args.value))
-  notice.value = res && res.ok ? { kind: 'ok', text: `Pushed ${res.branch} to origin.` } : { kind: 'bad', text: (res && res.error) || 'Push failed.' }
+  notice.value =
+    res && res.ok
+      ? { kind: 'ok', text: t('review.pushed', 'Pushed {{branch}} to origin.', { branch: res.branch }) }
+      : { kind: 'bad', text: (res && res.error) || t('review.pushFailed', 'Push failed.') }
 }
 
 const merge = () => run('merge', () => props.actions.merge(info.value, { cleanup: cleanup.value }))
 const discard = () => run('discard', () => props.actions.discard(info.value))
 
 function statusWord(s) {
-  return s === 'A' ? 'Added' : s === 'D' ? 'Deleted' : 'Modified'
+  return s === 'A' ? t('review.status.added', 'Added') : s === 'D' ? t('review.status.deleted', 'Deleted') : t('review.status.modified', 'Modified')
 }
 
 function when(ms) {
   if (!ms) return ''
   const d = new Date(ms)
-  return d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+  return d.toLocaleString(intlLocale(), { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
+
+// Header and labels with counts (kept out of the template: {{ }} placeholders).
+function reviewTitle() {
+  return t('review.title', 'Review: {{title}}', { title: props.task.title })
+}
+function countsText() {
+  const c = info.value.commits.length
+  const f = info.value.files.length
+  const commits = t('review.commits', c === 1 ? '{{count}} commit' : '{{count}} commits', { count: c })
+  const files = t('review.files', f === 1 ? '{{count}} file' : '{{count}} files', { count: f })
+  return `· ${commits} · ${files}`
+}
+function viewedText() {
+  return t('review.viewedCount', '{{viewed}}/{{total}} viewed', {
+    viewed: viewedCount.value,
+    total: info.value && info.value.ok ? info.value.files.length : 0
+  })
+}
+function commentPlaceholder() {
+  return t('review.commentPlaceholder', 'Comment on {{where}} (sent with Request changes)', { where: commentLocation(draft.value) })
+}
+function withCommentsText() {
+  const count = commentCount.value
+  return count > 1
+    ? t('review.withComments', 'With your {{count}} comments on lines, each tied to its file and line.', { count })
+    : t('review.withComment', 'With your {{count}} comment on lines, each tied to its file and line.', { count })
+}
+function mergeLabel() {
+  return busy.value === 'merge'
+    ? t('review.merging', 'Merging…')
+    : t('review.mergeInto', 'Merge into {{branch}}', { branch: (wt.value && wt.value.baseBranch) || 'main' })
 }
 
 function onKey(e) {
@@ -283,23 +361,22 @@ function commentsStore(taskId) {
     <div ref="cardEl" class="help-card rv-card" role="dialog" aria-labelledby="rv-title" tabindex="-1">
       <div class="help-head">
         <span class="notes-heading">
-          <span id="rv-title">Review: {{ task.title }}</span>
+          <span id="rv-title">{{ reviewTitle() }}</span>
           <span class="notes-where">
-            {{ agentLabel || 'Agent closed' }}
+            {{ agentLabel || t('review.agentClosed', 'Agent closed') }}
             <template v-if="wt"> · {{ wt.branch }} → {{ wt.baseBranch || 'main' }}</template>
             <template v-if="info && info.ok">
-              · {{ info.commits.length }} commit{{ info.commits.length === 1 ? '' : 's' }} ·
-              {{ info.files.length }} file{{ info.files.length === 1 ? '' : 's' }}
+              {{ countsText() }}
               <span class="rv-plus">+{{ totals.added }}</span> <span class="rv-minus">−{{ totals.removed }}</span>
             </template>
           </span>
         </span>
         <span class="notes-tools">
-          <span v-if="loading" class="notes-status">Checking…</span>
-          <button class="confirm-btn" :disabled="!agentLabel" title="Go to the agent's terminal" @click="actions.focusAgent()">
-            Show agent
+          <span v-if="loading" class="notes-status">{{ t('review.checking', 'Checking…') }}</span>
+          <button class="confirm-btn" :disabled="!agentLabel" :title="t('review.showAgentHint', 'Go to the agent\'s terminal')" @click="actions.focusAgent()">
+            {{ t('review.showAgent', 'Show agent') }}
           </button>
-          <button class="tb-icon" title="Close (Esc)" aria-label="Close" @click="emit('close')">
+          <button class="tb-icon" :title="t('review.closeEsc', 'Close (Esc)')" :aria-label="t('review.close', 'Close')" @click="emit('close')">
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
               <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
             </svg>
@@ -312,18 +389,21 @@ function commentsStore(taskId) {
         <div class="rv-plain">
           <p v-if="task.brief" class="rv-brief">{{ task.brief }}</p>
           <p class="act-none">
-            This task was done directly in the project folder, not in its own copy, so there is no branch to merge.
-            Its changes are the project's: review them in the Changes tab (each file's diff, review notes for the agent),
-            then mark the task done or ask for changes.
+            {{
+              t(
+                'review.direct',
+                "This task was done directly in the project folder, not in its own copy, so there is no branch to merge. Its changes are the project's: review them in the Changes tab (each file's diff, review notes for the agent), then mark the task done or ask for changes."
+              )
+            }}
           </p>
           <button class="confirm-btn primary" data-test="rv-open-changes" @click="actions.openChanges && actions.openChanges()">
-            Open the changes
+            {{ t('review.openChanges', 'Open the changes') }}
           </button>
         </div>
       </template>
 
       <template v-else>
-        <ul class="rv-checks" aria-label="Checks">
+        <ul class="rv-checks" :aria-label="t('review.checks', 'Checks')">
           <li v-for="(c, i) in checks" :key="i" class="rv-check" :class="c.kind">
             <span class="rv-check-mark" aria-hidden="true">{{
               c.kind === 'ok' ? '✓' : c.kind === 'bad' ? '!' : c.kind === 'warn' ? '!' : c.kind === 'wait' ? '…' : 'i'
@@ -336,35 +416,35 @@ function commentsStore(taskId) {
             <input
               v-model="commitMsg"
               class="set-number rv-commit-msg"
-              placeholder="Commit message"
-              aria-label="Commit message"
+              :placeholder="t('review.commitMessage', 'Commit message')"
+              :aria-label="t('review.commitMessage', 'Commit message')"
               spellcheck="false"
               @keydown.enter.prevent="commitCopy"
             />
-            <button class="confirm-btn" @click="commitOpen = false">Cancel</button>
+            <button class="confirm-btn" @click="commitOpen = false">{{ t('review.cancel', 'Cancel') }}</button>
             <button class="confirm-btn primary" :disabled="!commitMsg.trim() || !!busy" @click="commitCopy">
-              {{ busy === 'commit' ? 'Committing…' : 'Commit' }}
+              {{ busy === 'commit' ? t('review.committing', 'Committing…') : t('review.commit', 'Commit') }}
             </button>
           </template>
-          <button v-else class="confirm-btn" :disabled="!!busy" @click="commitOpen = true">Commit these files…</button>
+          <button v-else class="confirm-btn" :disabled="!!busy" @click="commitOpen = true">{{ t('review.commitFiles', 'Commit these files…') }}</button>
         </div>
         <p v-if="notice" class="rv-notice" :class="notice.kind" role="status">{{ notice.text }}</p>
         <div v-if="info && info.ok && info.conflicts.length" class="notes-conflict" role="alert">
-          <span>The branch cannot merge until the conflicts are resolved in the agent's copy.</span>
+          <span>{{ t('review.conflictsBlock', "The branch cannot merge until the conflicts are resolved in the agent's copy.") }}</span>
           <button class="confirm-btn" :disabled="!agentLabel" @click="actions.resolveConflicts(info)">
-            Ask the agent to resolve
+            {{ t('review.askResolve', 'Ask the agent to resolve') }}
           </button>
         </div>
 
         <div class="rv-body">
           <div class="rv-side">
             <div v-if="task.brief" class="rv-section">
-              <div class="rv-section-head">Task</div>
+              <div class="rv-section-head">{{ t('review.task', 'Task') }}</div>
               <p class="rv-brief">{{ task.brief }}</p>
             </div>
             <div class="rv-section">
               <div class="rv-section-head">
-                Files <span class="act-count">{{ viewedCount }}/{{ info && info.ok ? info.files.length : 0 }} viewed</span>
+                {{ t('review.filesHead', 'Files') }} <span class="act-count">{{ viewedText() }}</span>
               </div>
               <ul class="rv-files">
                 <li
@@ -376,46 +456,46 @@ function commentsStore(taskId) {
                   <button class="rv-file-btn" :title="f.path" @click="selected = f.path">
                     <span class="rv-status" :class="'s-' + f.status" :title="statusWord(f.status)">{{ f.status }}</span>
                     <span class="rv-path">{{ f.path }}</span>
-                    <span v-if="f.binary" class="act-dim">bin</span>
+                    <span v-if="f.binary" class="act-dim">{{ t('review.bin', 'bin') }}</span>
                     <span v-else class="rv-counts"
                       ><span class="rv-plus">+{{ f.added }}</span> <span class="rv-minus">−{{ f.removed }}</span></span
                     >
                   </button>
-                  <label class="rv-viewed" :title="viewed[f.path] ? 'Viewed' : 'Mark as viewed'">
+                  <label class="rv-viewed" :title="viewed[f.path] ? t('review.viewed', 'Viewed') : t('review.markViewed', 'Mark as viewed')">
                     <input
                       type="checkbox"
                       :checked="!!viewed[f.path]"
-                      :aria-label="`Viewed ${f.path}`"
+                      :aria-label="t('review.viewedFile', 'Viewed {{path}}', { path: f.path })"
                       @change="setViewed(f, $event.target.checked)"
                     />
                   </label>
                 </li>
-                <li v-if="info && info.ok && !info.files.length" class="act-none">No files changed.</li>
+                <li v-if="info && info.ok && !info.files.length" class="act-none">{{ t('review.noFiles', 'No files changed.') }}</li>
               </ul>
             </div>
             <div class="rv-section">
-              <div class="rv-section-head">Commits</div>
+              <div class="rv-section-head">{{ t('review.commitsHead', 'Commits') }}</div>
               <ul class="rv-commits">
                 <li v-for="c in info && info.ok ? info.commits : []" :key="c.sha" class="rv-commit">
                   <span class="rv-commit-subject">{{ c.subject }}</span>
                   <span class="act-dim">{{ c.sha.slice(0, 7) }} · {{ when(c.time) }}</span>
                   <span v-if="c.body" class="rv-commit-body">{{ c.body }}</span>
                 </li>
-                <li v-if="info && info.ok && !info.commits.length" class="act-none">No commits yet.</li>
+                <li v-if="info && info.ok && !info.commits.length" class="act-none">{{ t('review.noCommits', 'No commits yet.') }}</li>
               </ul>
             </div>
           </div>
 
           <div class="rv-diff" aria-live="polite">
-            <p v-if="!selected" class="act-none">{{ info ? 'Nothing to show.' : 'Loading…' }}</p>
+            <p v-if="!selected" class="act-none">{{ info ? t('review.nothing', 'Nothing to show.') : t('review.loading', 'Loading…') }}</p>
             <template v-else>
               <div class="rv-diff-head">
                 <span class="rv-path">{{ selected }}</span>
-                <span v-if="diffLoading" class="act-dim">Loading…</span>
+                <span v-if="diffLoading" class="act-dim">{{ t('review.loading', 'Loading…') }}</span>
               </div>
               <p v-if="diff && diff.error" class="act-none">{{ diff.error }}</p>
-              <p v-else-if="diff && diff.parsed.binary" class="act-none">Binary file: no text diff.</p>
-              <p v-else-if="diff && !diff.parsed.hunks.length" class="act-none">No text changes (mode or empty file).</p>
+              <p v-else-if="diff && diff.parsed.binary" class="act-none">{{ t('review.binary', 'Binary file: no text diff.') }}</p>
+              <p v-else-if="diff && !diff.parsed.hunks.length" class="act-none">{{ t('review.noTextChanges', 'No text changes (mode or empty file).') }}</p>
               <table v-else-if="diff" class="rv-table">
                 <tbody v-for="(h, hi) in diff.parsed.hunks" :key="hi">
                   <tr class="rv-hunk">
@@ -423,15 +503,15 @@ function commentsStore(taskId) {
                   </tr>
                   <template v-for="(l, li) in h.lines" :key="li">
                     <tr class="rv-line" :class="l.kind">
-                      <td class="rv-num rv-num-click" title="Comment on this line" @click="startComment(l)">{{ l.old }}</td>
-                      <td class="rv-num rv-num-click" title="Comment on this line" @click="startComment(l)">{{ l.new }}</td>
+                      <td class="rv-num rv-num-click" :title="t('review.commentLine', 'Comment on this line')" @click="startComment(l)">{{ l.old }}</td>
+                      <td class="rv-num rv-num-click" :title="t('review.commentLine', 'Comment on this line')" @click="startComment(l)">{{ l.new }}</td>
                       <td class="rv-code"><span class="rv-sign">{{ l.kind === 'add' ? '+' : l.kind === 'del' ? '−' : ' ' }}</span>{{ l.text }}</td>
                     </tr>
                     <tr v-for="c in commentsAt(l)" :key="c.id" class="rv-comment-row">
                       <td colspan="3">
                         <div class="rv-comment" data-test="line-comment">
                           <span class="rv-comment-text">{{ c.text }}</span>
-                          <button class="rv-comment-del" title="Remove this comment" @click="removeComment(c.id)">Remove</button>
+                          <button class="rv-comment-del" :title="t('review.removeCommentHint', 'Remove this comment')" @click="removeComment(c.id)">{{ t('review.remove', 'Remove') }}</button>
                         </div>
                       </td>
                     </tr>
@@ -442,14 +522,14 @@ function commentsStore(taskId) {
                             :ref="(el) => el && (draftEl = el)"
                             v-model="draft.text"
                             class="notes-editor rv-comment-input"
-                            :placeholder="`Comment on ${commentLocation(draft)} (sent with Request changes)`"
-                            aria-label="Comment on this line"
+                            :placeholder="commentPlaceholder()"
+                            :aria-label="t('review.commentLine', 'Comment on this line')"
                             @keydown.ctrl.enter.prevent="saveDraft"
                             @keydown.escape.stop.prevent="draft = null"
                           ></textarea>
                           <div class="confirm-actions">
-                            <button class="confirm-btn" @click="draft = null">Cancel</button>
-                            <button class="confirm-btn primary" :disabled="!draft.text.trim()" title="Ctrl+Enter" @click="saveDraft">Add comment</button>
+                            <button class="confirm-btn" @click="draft = null">{{ t('review.cancel', 'Cancel') }}</button>
+                            <button class="confirm-btn primary" :disabled="!draft.text.trim()" title="Ctrl+Enter" @click="saveDraft">{{ t('review.addComment', 'Add comment') }}</button>
                           </div>
                         </div>
                       </td>
@@ -457,7 +537,7 @@ function commentsStore(taskId) {
                   </template>
                 </tbody>
               </table>
-              <p v-if="diff && diff.truncated" class="act-none">The diff is too long to show in full.</p>
+              <p v-if="diff && diff.truncated" class="act-none">{{ t('review.truncated', 'The diff is too long to show in full.') }}</p>
             </template>
           </div>
         </div>
@@ -468,51 +548,51 @@ function commentsStore(taskId) {
           ref="feedbackEl"
           v-model="feedback"
           class="notes-editor rv-feedback-text"
-          placeholder="What should the agent change? It gets this with the task, then shows the task for review again."
-          aria-label="Changes to request"
+          :placeholder="t('review.feedbackPlaceholder', 'What should the agent change? It gets this with the task, then shows the task for review again.')"
+          :aria-label="t('review.feedbackLabel', 'Changes to request')"
           @keydown.ctrl.enter.prevent="sendFeedback"
         ></textarea>
         <p v-if="commentCount" class="rv-comment-note">
-          With your {{ commentCount }} comment{{ commentCount > 1 ? 's' : '' }} on lines, each tied to its file and line.
+          {{ withCommentsText() }}
         </p>
         <div class="confirm-actions">
-          <button class="confirm-btn" @click="feedbackOpen = false">Cancel</button>
+          <button class="confirm-btn" @click="feedbackOpen = false">{{ t('review.cancel', 'Cancel') }}</button>
           <button class="confirm-btn primary" :disabled="(!feedback.trim() && !commentCount) || !agentLabel" title="Ctrl+Enter" @click="sendFeedback">
-            Send to the agent
+            {{ t('review.send', 'Send to the agent') }}
           </button>
         </div>
       </div>
 
       <div class="rv-foot">
         <button v-if="wt" class="confirm-btn danger" :disabled="!!busy" @click="discard">
-          {{ busy === 'discard' ? 'Discarding…' : 'Discard…' }}
+          {{ busy === 'discard' ? t('review.discarding', 'Discarding…') : t('review.discard', 'Discard…') }}
         </button>
         <button
           v-if="wt"
           class="confirm-btn"
           :disabled="!!busy || !(info && info.ok && info.commits.length)"
-          title="Push the task branch to origin (to open a pull request)"
+          :title="t('review.pushHint', 'Push the task branch to origin (to open a pull request)')"
           @click="pushBranch"
         >
-          {{ busy === 'push' ? 'Pushing…' : 'Push branch' }}
+          {{ busy === 'push' ? t('review.pushing', 'Pushing…') : t('review.push', 'Push branch') }}
         </button>
-        <button v-if="wt && actions.createPr" class="confirm-btn" :disabled="!!busy" title="Create a GitHub pull request from this task's copy" @click="actions.createPr()">Create PR…</button>
+        <button v-if="wt && actions.createPr" class="confirm-btn" :disabled="!!busy" :title="t('review.createPrHint', 'Create a GitHub pull request from this task\'s copy')" @click="actions.createPr()">{{ t('review.createPr', 'Create PR…') }}</button>
         <span class="rv-spacer"></span>
-        <label v-if="wt" class="rv-cleanup" title="After merging, close the agent and delete its copy and branch">
-          <input v-model="cleanup" type="checkbox" /> Close the agent and remove its copy after merging
+        <label v-if="wt" class="rv-cleanup" :title="t('review.cleanupHint', 'After merging, close the agent and delete its copy and branch')">
+          <input v-model="cleanup" type="checkbox" /> {{ t('review.cleanup', 'Close the agent and remove its copy after merging') }}
         </label>
         <button
           v-if="!feedbackOpen"
           class="confirm-btn"
           :disabled="!agentLabel || !!busy"
-          :title="agentLabel ? 'Send your feedback to the agent' : 'The agent was closed'"
+          :title="agentLabel ? t('review.feedbackHint', 'Send your feedback to the agent') : t('review.agentWasClosed', 'The agent was closed')"
           @click="openFeedback"
         >
-          Request changes…<span v-if="commentCount" class="mcp-count" data-test="comment-count">{{ commentCount }}</span>
+          {{ t('review.requestChanges', 'Request changes…') }}<span v-if="commentCount" class="mcp-count" data-test="comment-count">{{ commentCount }}</span>
         </button>
-        <button v-if="!wt" class="confirm-btn primary" @click="actions.markDone()">Mark as done</button>
+        <button v-if="!wt" class="confirm-btn primary" @click="actions.markDone()">{{ t('review.markDone', 'Mark as done') }}</button>
         <button v-else class="confirm-btn primary" :disabled="!canMerge" :title="mergeTitle" @click="merge">
-          {{ busy === 'merge' ? 'Merging…' : `Merge into ${wt.baseBranch || 'main'}` }}
+          {{ mergeLabel() }}
         </button>
       </div>
     </div>

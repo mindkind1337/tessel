@@ -1,10 +1,10 @@
-<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // "New task": a title, instructions and the agent that does it. By default a
 // new agent works in its own copy of the project (git worktree + branch), so
 // it cannot break the running app or another agent's work. App starts it.
 import { ref, computed, onMounted, nextTick } from 'vue'
 import BrandIcon from './BrandIcon.vue'
+import { t } from '../i18n'
 
 const props = defineProps({
   wsName: { type: String, default: '' },
@@ -46,11 +46,24 @@ function taken(a) {
 }
 
 function stateLabel(a) {
-  if (a.task) return `Busy: ${a.task}`
-  if (a.state === 'limited') return a.reset ? `Usage limit · ${a.reset}` : 'Usage limit'
-  if (a.state === 'working') return 'Busy'
-  if (a.state === 'approval') return 'Waiting for your approval'
-  return 'Free'
+  if (a.task) return t('tasks.new.busyOn', 'Busy: {{task}}', { task: a.task })
+  if (a.state === 'limited')
+    return a.reset
+      ? t('tasks.new.usageLimitReset', 'Usage limit · {{reset}}', { reset: a.reset })
+      : t('tasks.new.usageLimit', 'Usage limit')
+  if (a.state === 'working') return t('tasks.new.busy', 'Busy')
+  if (a.state === 'approval') return t('tasks.new.waitingApproval', 'Waiting for your approval')
+  return t('tasks.new.free', 'Free')
+}
+
+function inWorkspace() {
+  return t('tasks.new.inWorkspace', 'In {{name}}', { name: props.wsName })
+}
+function newAgentName(name) {
+  return t('tasks.new.newAgent', 'New {{name}}', { name })
+}
+function alreadyOpen(a) {
+  return t('tasks.new.alreadyOpen', 'Already open · {{state}}', { state: stateLabel(a) })
 }
 
 function start() {
@@ -83,30 +96,30 @@ onMounted(() => nextTick(() => titleEl.value && titleEl.value.focus()))
       @keydown.escape.prevent.stop="emit('close')"
     >
       <header class="nt-head">
-        <h2 id="nt-heading">New task</h2>
-        <p>In {{ wsName }}<span v-if="cwd"> · {{ cwd }}</span></p>
+        <h2 id="nt-heading">{{ t('tasks.new.heading', 'New task') }}</h2>
+        <p>{{ inWorkspace() }}<span v-if="cwd"> · {{ cwd }}</span></p>
       </header>
 
-      <label class="nt-label" for="nt-title">Title</label>
+      <label class="nt-label" for="nt-title">{{ t('tasks.new.title', 'Title') }}</label>
       <input
         id="nt-title"
         ref="titleEl"
         v-model="title"
         class="nt-input"
         maxlength="120"
-        placeholder="What should be done"
+        :placeholder="t('tasks.new.titlePlaceholder', 'What should be done')"
       />
 
-      <label class="nt-label" for="nt-brief">Instructions for the agent</label>
+      <label class="nt-label" for="nt-brief">{{ t('tasks.new.brief', 'Instructions for the agent') }}</label>
       <textarea
         id="nt-brief"
         v-model="brief"
         class="nt-input nt-brief"
         rows="4"
-        placeholder="Details, files to touch or leave alone, how to check it works…"
+        :placeholder="t('tasks.new.briefPlaceholder', 'Details, files to touch or leave alone, how to check it works…')"
       ></textarea>
 
-      <span class="nt-label">Agent</span>
+      <span class="nt-label">{{ t('tasks.new.agent', 'Agent') }}</span>
       <div class="nt-agents">
         <label
           v-for="k in agentKinds"
@@ -117,8 +130,8 @@ onMounted(() => nextTick(() => titleEl.value && titleEl.value.focus()))
           <input v-model="who" type="radio" name="nt-who" :value="'new:' + k.id" />
           <BrandIcon :kind="k.id" :accent="k.accent" :label="k.name" :size="18" />
           <span class="nt-agent-body">
-            <span class="nt-agent-name">New {{ k.name }}</span>
-            <span class="nt-agent-sub">Starts for this task</span>
+            <span class="nt-agent-name">{{ newAgentName(k.name) }}</span>
+            <span class="nt-agent-sub">{{ t('tasks.new.startsForTask', 'Starts for this task') }}</span>
           </span>
         </label>
         <label
@@ -137,33 +150,37 @@ onMounted(() => nextTick(() => titleEl.value && titleEl.value.focus()))
           <BrandIcon :kind="a.agentId" :accent="a.accent" :label="a.title" :size="18" />
           <span class="nt-agent-body">
             <span class="nt-agent-name">#{{ a.num }} {{ a.title }}</span>
-            <span class="nt-agent-sub">Already open · {{ stateLabel(a) }}</span>
+            <span class="nt-agent-sub">{{ alreadyOpen(a) }}</span>
           </span>
         </label>
       </div>
 
-      <span class="nt-label">Where it works</span>
+      <span class="nt-label">{{ t('tasks.new.where', 'Where it works') }}</span>
       <label class="nt-where" :class="{ on: canIsolate && isolated, off: !canIsolate }">
         <input v-model="isolated" type="radio" name="nt-where" :value="true" :disabled="!canIsolate" />
         <span class="nt-where-body">
-          <span class="nt-where-name">In its own copy <em v-if="canIsolate">recommended</em></span>
+          <span class="nt-where-name">{{ t('tasks.new.ownCopy', 'In its own copy') }} <em v-if="canIsolate">{{ t('tasks.new.recommended', 'recommended') }}</em></span>
           <span class="nt-where-sub">
             <template v-if="canIsolate">
-              A new git branch in a separate folder. It cannot break the running app or another
-              agent's work; you review and merge when it is done.
+              {{
+                t(
+                  'tasks.new.ownCopyHint',
+                  "A new git branch in a separate folder. It cannot break the running app or another agent's work; you review and merge when it is done."
+                )
+              }}
             </template>
-            <template v-else-if="!isNew">An agent that is already open works where it is.</template>
-            <template v-else>{{ isolation.reason || 'Not available for this project' }}</template>
+            <template v-else-if="!isNew">{{ t('tasks.new.openWorksWhereItIs', 'An agent that is already open works where it is.') }}</template>
+            <template v-else>{{ isolation.reason || t('tasks.new.notAvailable', 'Not available for this project') }}</template>
           </span>
         </span>
       </label>
       <div v-if="canIsolate && isolated" class="nt-copy-opts" data-test="copy-options">
         <label class="nt-copy-opt">
-          <span>Start from branch</span>
-          <input v-model="baseBranch" class="nt-select nt-branch" placeholder="the current branch" spellcheck="false" />
+          <span>{{ t('tasks.new.baseBranch', 'Start from branch') }}</span>
+          <input v-model="baseBranch" class="nt-select nt-branch" :placeholder="t('tasks.new.currentBranch', 'the current branch')" spellcheck="false" />
         </label>
-        <label class="nt-copy-opt"><input v-model="copyEnv" type="checkbox" /> Copy the project's .env files into it</label>
-        <label class="nt-copy-opt"><input v-model="runSetup" type="checkbox" /> Run .tessel/setup.ps1 in it first (if the project has one)</label>
+        <label class="nt-copy-opt"><input v-model="copyEnv" type="checkbox" /> {{ t('tasks.new.copyEnv', "Copy the project's .env files into it") }}</label>
+        <label class="nt-copy-opt"><input v-model="runSetup" type="checkbox" /> {{ t('tasks.new.runSetup', 'Run .tessel/setup.ps1 in it first (if the project has one)') }}</label>
       </div>
       <label class="nt-where" :class="{ on: !(canIsolate && isolated) }">
         <input
@@ -174,22 +191,22 @@ onMounted(() => nextTick(() => titleEl.value && titleEl.value.focus()))
           :checked="!canIsolate || !isolated"
         />
         <span class="nt-where-body">
-          <span class="nt-where-name">Directly in the project folder</span>
-          <span class="nt-where-sub">For a small change. Its edits land in the project right away.</span>
+          <span class="nt-where-name">{{ t('tasks.new.direct', 'Directly in the project folder') }}</span>
+          <span class="nt-where-sub">{{ t('tasks.new.directHint', 'For a small change. Its edits land in the project right away.') }}</span>
         </span>
       </label>
 
       <label v-if="reviewers.length" class="nt-review">
-        <span>When it is done, ask for a review by</span>
+        <span>{{ t('tasks.new.reviewBy', 'When it is done, ask for a review by') }}</span>
         <select v-model="reviewerId" class="nt-select">
-          <option value="">nobody</option>
+          <option value="">{{ t('tasks.new.nobody', 'nobody') }}</option>
           <option v-for="r in reviewers" :key="r.id" :value="r.id">#{{ r.num }} {{ r.title }}</option>
         </select>
       </label>
 
       <footer class="nt-actions">
-        <button type="button" class="nt-btn" @click="emit('close')">Cancel</button>
-        <button type="submit" class="nt-btn primary" :disabled="!ready">Start task</button>
+        <button type="button" class="nt-btn" @click="emit('close')">{{ t('tasks.new.cancel', 'Cancel') }}</button>
+        <button type="submit" class="nt-btn primary" :disabled="!ready">{{ t('tasks.new.start', 'Start task') }}</button>
       </footer>
     </form>
   </div>

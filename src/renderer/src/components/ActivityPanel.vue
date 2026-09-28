@@ -1,4 +1,3 @@
-<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // Activity of the agents: what needs you now, one line per agent, and a
 // timeline of messages, approvals, limits, team changes and journal entries.
@@ -7,6 +6,7 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import BrandIcon from './BrandIcon.vue'
 import { summarize, cardsFor, parseJournal, formatDuration } from '../../../shared/activity'
+import { t, intlLocale } from '../i18n'
 
 const props = defineProps({
   events: { type: Array, required: true },
@@ -19,26 +19,51 @@ const props = defineProps({
 const emit = defineEmits(['close', 'focus-pane', 'update:scope'])
 
 const PERIODS = [
-  { value: '24h', label: '24 h', ms: 24 * 3600 * 1000 },
-  { value: '7d', label: '7 days', ms: 7 * 24 * 3600 * 1000 },
-  { value: '30d', label: '30 days', ms: 30 * 24 * 3600 * 1000 }
+  { value: '24h', ms: 24 * 3600 * 1000 },
+  { value: '7d', ms: 7 * 24 * 3600 * 1000 },
+  { value: '30d', ms: 30 * 24 * 3600 * 1000 }
 ]
-const TYPES = [
-  { value: 'task', label: 'Tasks' },
-  { value: 'message', label: 'Messages' },
-  { value: 'team-chat', label: 'Between agents' },
-  { value: 'approval', label: 'Approvals' },
-  { value: 'limit', label: 'Limits' },
-  { value: 'team', label: 'Team' },
-  { value: 'journal', label: 'Notes' }
-]
-const STATE = {
-  working: 'Working',
-  idle: 'Idle',
-  approval: 'Needs your approval',
-  limited: 'Usage limit',
-  sleeping: 'Asleep',
-  closed: 'Closed'
+function periodText(value) {
+  if (value === '24h') return t('activity.period.24h', '24 h')
+  if (value === '7d') return t('activity.period.7d', '7 days')
+  return t('activity.period.30d', '30 days')
+}
+const TYPES = ['task', 'message', 'team-chat', 'approval', 'limit', 'team', 'journal'].map((value) => ({ value }))
+// The filter buttons (plural) and the kind of one event (singular).
+function typeLabel(value) {
+  return {
+    task: t('activity.type.tasks', 'Tasks'),
+    message: t('activity.type.messages', 'Messages'),
+    'team-chat': t('activity.type.betweenAgents', 'Between agents'),
+    approval: t('activity.type.approvals', 'Approvals'),
+    limit: t('activity.type.limits', 'Limits'),
+    team: t('activity.type.team', 'Team'),
+    journal: t('activity.type.notes', 'Notes')
+  }[value]
+}
+function kindLabel(kind) {
+  return (
+    {
+      task: t('activity.kind.task', 'Task'),
+      message: t('activity.kind.message', 'Message'),
+      approval: t('activity.kind.approval', 'Approval'),
+      limit: t('activity.kind.limit', 'Limit'),
+      team: t('activity.kind.team', 'Team'),
+      journal: t('activity.kind.note', 'Note')
+    }[kind.replace(/-end$/, '')] || kind
+  )
+}
+function stateText(state) {
+  return (
+    {
+      working: t('activity.state.working', 'Working'),
+      idle: t('activity.state.idle', 'Idle'),
+      approval: t('activity.state.approval', 'Needs your approval'),
+      limited: t('activity.state.limited', 'Usage limit'),
+      sleeping: t('activity.state.sleeping', 'Asleep'),
+      closed: t('activity.state.closed', 'Closed')
+    }[state] || state
+  )
 }
 
 const period = ref('7d')
@@ -53,7 +78,7 @@ function toggleRow(key) {
 
 const rowKey = (x) => x.key
 const agentFilter = ref('')
-const typeFilter = ref(new Set(TYPES.map((t) => t.value)))
+const typeFilter = ref(new Set(TYPES.map((x) => x.value)))
 const stateFilter = ref(null) // from the cards: 'approval' | 'working'
 const journal = ref([])
 const now = ref(Date.now())
@@ -135,7 +160,7 @@ const filtered = computed(
 function clearFilters() {
   agentFilter.value = ''
   stateFilter.value = null
-  typeFilter.value = new Set(TYPES.map((t) => t.value))
+  typeFilter.value = new Set(TYPES.map((x) => x.value))
 }
 
 function toggleType(v) {
@@ -152,45 +177,71 @@ function pickState(s) {
 function when(t) {
   const d = new Date(t)
   const today = new Date(now.value)
-  const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  const time = d.toLocaleTimeString(intlLocale(), { hour: '2-digit', minute: '2-digit' })
   if (d.toDateString() === today.toDateString()) return time
-  return `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })} ${time}`
+  return `${d.toLocaleDateString(intlLocale(), { month: 'short', day: 'numeric' })} ${time}`
 }
 
 // One line for a task event: what happened to it and who did it.
 function taskLine(x) {
-  const t = `“${x.task}”`
+  const task = `“${x.task}”`
+  const you = t('activity.you', 'You')
+  const lead = (name) => t('activity.lead', '{{name}} (lead)', { name })
   switch (x.action) {
     // Cards the agents put on the team board and move themselves.
     case 'added':
-      return { who: x.by || x.title, text: `put ${t} on the board`, note: `for ${x.title}` }
+      return {
+        who: x.by || x.title,
+        text: t('activity.task.added', 'put {{task}} on the board', { task }),
+        note: t('activity.task.addedFor', 'for {{agent}}', { agent: x.title })
+      }
     case 'moved':
-      return { who: x.by || x.title, text: `moved ${t} to ${x.detail}`, note: '' }
+      return { who: x.by || x.title, text: t('activity.task.moved', 'moved {{task}} to {{column}}', { task, column: x.detail }), note: '' }
     case 'review':
-      return { who: x.title, text: `finished the task ${t}`, note: x.detail || 'ready for your review' }
+      return {
+        who: x.title,
+        text: t('activity.task.finished', 'finished the task {{task}}', { task }),
+        note: x.detail || t('activity.task.readyForReview', 'ready for your review')
+      }
     case 'approved':
-      return { who: `${x.by || 'The lead'} (lead)`, text: `approved ${t}`, note: x.detail }
+      return { who: lead(x.by || t('activity.theLead', 'The lead')), text: t('activity.task.approved', 'approved {{task}}', { task }), note: x.detail }
     case 'changes':
-      return { who: x.by ? `${x.by} (lead)` : 'You', text: `asked ${x.title} for changes to ${t}`, note: x.detail }
+      return {
+        who: x.by ? lead(x.by) : you,
+        text: t('activity.task.changes', 'asked {{agent}} for changes to {{task}}', { agent: x.title, task }),
+        note: x.detail
+      }
     case 'resolve':
-      return { who: 'You', text: `asked ${x.title} to resolve the conflicts of ${t}`, note: x.detail }
+      return {
+        who: you,
+        text: t('activity.task.resolve', 'asked {{agent}} to resolve the conflicts of {{task}}', { agent: x.title, task }),
+        note: x.detail
+      }
     case 'merged':
-      return { who: 'You', text: `merged ${t}`, note: x.detail }
+      return { who: you, text: t('activity.task.merged', 'merged {{task}}', { task }), note: x.detail }
     case 'discarded':
-      return { who: 'You', text: `discarded ${t}`, note: x.detail }
+      return { who: you, text: t('activity.task.discarded', 'discarded {{task}}', { task }), note: x.detail }
     case 'done':
-      return { who: 'You', text: `marked ${t} as done`, note: '' }
+      return { who: you, text: t('activity.task.done', 'marked {{task}} as done', { task }), note: '' }
     // Orchestration: a report, a decision asked and given, a card free to start.
     case 'reported':
-      return { who: x.by || x.title, text: `reported ${t}: ${x.detail}`, note: '' }
+      return { who: x.by || x.title, text: t('activity.task.reported', 'reported {{task}}: {{report}}', { task, report: x.detail }), note: '' }
     case 'gate':
-      return { who: x.by || x.title, text: `asks your decision on ${t}`, note: x.detail }
+      return { who: x.by || x.title, text: t('activity.task.gate', 'asks your decision on {{task}}', { task }), note: x.detail }
     case 'decided':
-      return { who: 'You', text: `decided on ${t}`, note: x.detail }
+      return { who: you, text: t('activity.task.decided', 'decided on {{task}}', { task }), note: x.detail }
     case 'ready':
-      return { who: x.title, text: `can start ${t}`, note: 'the cards it waited for are done' }
+      return {
+        who: x.title,
+        text: t('activity.task.canStart', 'can start {{task}}', { task }),
+        note: t('activity.task.depsDone', 'the cards it waited for are done')
+      }
     default:
-      return { who: x.title, text: `started the task ${t}`, note: x.branch ? `branch ${x.branch}` : '' }
+      return {
+        who: x.title,
+        text: t('activity.task.started', 'started the task {{task}}', { task }),
+        note: x.branch ? t('activity.task.branch', 'branch {{branch}}', { branch: x.branch }) : ''
+      }
   }
 }
 
@@ -200,53 +251,93 @@ function describe(x) {
       // Between agents, through the team tools (not typed anywhere).
       if (x.scope === 'team-chat')
         return {
-          who: x.from || 'An agent',
+          who: x.from || t('activity.anAgent', 'An agent'),
           text: `→ ${x.title}: “${x.preview}”`,
-          note: x.status === 'read' ? 'read' : 'not read yet'
+          note: x.status === 'read' ? t('activity.msg.read', 'read') : t('activity.msg.notRead', 'not read yet')
         }
-      const who = x.source === 'tessel' ? 'Tessel' : x.source === 'lead' ? `${x.from || 'The lead'} (lead)` : x.source === 'agent' ? x.from || 'An agent' : 'You'
-      const to = x.scope === 'team' ? ' (team)' : x.scope === 'workspace' ? ' (all agents)' : ''
+      const who =
+        x.source === 'tessel'
+          ? 'Tessel'
+          : x.source === 'lead'
+            ? t('activity.lead', '{{name}} (lead)', { name: x.from || t('activity.theLead', 'The lead') })
+            : x.source === 'agent'
+              ? x.from || t('activity.anAgent', 'An agent')
+              : t('activity.you', 'You')
+      const to =
+        x.scope === 'team'
+          ? t('activity.msg.toTeam', ' (team)')
+          : x.scope === 'workspace'
+            ? t('activity.msg.toAll', ' (all agents)')
+            : ''
       const how =
         x.status === 'held'
-          ? 'held until the approval prompt was answered'
+          ? t('activity.msg.held', 'held until the approval prompt was answered')
           : x.status === 'skipped'
-            ? 'not sent: usage limit'
+            ? t('activity.msg.skipped', 'not sent: usage limit')
             : x.status === 'unconfirmed'
-              ? 'pasted, but not seen taken: check the input box'
-              : 'sent'
+              ? t('activity.msg.unconfirmed', 'pasted, but not seen taken: check the input box')
+              : t('activity.msg.sent', 'sent')
       return { who, text: `→ ${x.title}${to}: “${x.preview}”`, note: how }
     }
     case 'task':
       return taskLine(x)
     case 'approval':
-      return { who: x.title, text: 'asked for your approval', note: '' }
+      return { who: x.title, text: t('activity.approval.asked', 'asked for your approval'), note: '' }
     case 'approval-end':
-      return { who: x.title, text: 'approval answered', note: `waited ${formatDuration(x.waited)}` }
+      return {
+        who: x.title,
+        text: t('activity.approval.answered', 'approval answered'),
+        note: t('activity.approval.waited', 'waited {{duration}}', { duration: formatDuration(x.waited) })
+      }
     case 'limit':
-      return { who: x.title, text: 'hit its usage limit', note: x.reset ? `resets ${x.reset}` : '' }
+      return {
+        who: x.title,
+        text: t('activity.limit.hit', 'hit its usage limit'),
+        note: x.reset ? t('activity.limit.resets', 'resets {{reset}}', { reset: x.reset }) : ''
+      }
     case 'limit-end':
-      return { who: x.title, text: 'working again after its usage limit', note: '' }
+      return { who: x.title, text: t('activity.limit.end', 'working again after its usage limit'), note: '' }
     case 'team': {
+      const v = { name: x.name, detail: x.detail }
       const what = {
-        created: `created team “${x.name}”${x.detail ? ` with ${x.detail}` : ''}`,
-        joined: `${x.detail} joined “${x.name}”`,
-        renamed: `renamed team “${x.detail}” to “${x.name}”`,
-        left: `${x.detail} left “${x.name}”`,
-        closed: `${x.detail} was closed and left “${x.name}”`,
-        ungrouped: `ungrouped team “${x.name}”`,
-        lead: `${x.detail} now leads “${x.name}”`,
-        'lead-removed': `“${x.name}” has no lead any more`
+        created: x.detail
+          ? t('activity.team.createdWith', 'created team “{{name}}” with {{detail}}', v)
+          : t('activity.team.created', 'created team “{{name}}”', v),
+        joined: t('activity.team.joined', '{{detail}} joined “{{name}}”', v),
+        renamed: t('activity.team.renamed', 'renamed team “{{detail}}” to “{{name}}”', v),
+        left: t('activity.team.left', '{{detail}} left “{{name}}”', v),
+        closed: t('activity.team.closed', '{{detail}} was closed and left “{{name}}”', v),
+        ungrouped: t('activity.team.ungrouped', 'ungrouped team “{{name}}”', v),
+        lead: t('activity.team.lead', '{{detail}} now leads “{{name}}”', v),
+        'lead-removed': t('activity.team.leadRemoved', '“{{name}}” has no lead any more', v)
       }[x.action]
-      return { who: 'Team', text: what || x.action, note: '' }
+      return { who: t('activity.team.who', 'Team'), text: what || x.action, note: '' }
     }
     case 'journal':
-      return { who: x.author, text: `wrote in the notes: “${x.preview}”`, note: '' }
+      return { who: x.author, text: t('activity.journal.wrote', 'wrote in the notes: “{{preview}}”', { preview: x.preview }), note: '' }
     default:
       return { who: '', text: x.kind, note: '' }
   }
 }
 
-const periodLabel = computed(() => PERIODS.find((p) => p.value === period.value).label)
+const periodLabel = computed(() => periodText(period.value))
+const waitSub = computed(() =>
+  cards.value.approvalWait.count
+    ? t('activity.cards.medianOf', 'median of {{count}}, last {{period}}', {
+        count: cards.value.approvalWait.count,
+        period: periodLabel.value
+      })
+    : t('activity.cards.noneAnswered', 'none answered, last {{period}}', { period: periodLabel.value })
+)
+function ofOpenAgents(n) {
+  return t('activity.cards.ofOpen', 'of {{count}} open agents', { count: n })
+}
+const messagesSub = computed(() =>
+  t('activity.cards.heldSkipped', '{{held}} held · {{skipped}} not sent', {
+    held: cards.value.messages.held,
+    skipped: cards.value.messages.skipped
+  })
+)
 </script>
 
 <template>
@@ -259,8 +350,8 @@ const periodLabel = computed(() => PERIODS.find((p) => p.value === period.value)
       tabindex="-1"
     >
       <div class="help-head">
-        <span id="act-title">Activity</span>
-        <button class="tb-icon" title="Close (Esc)" aria-label="Close" @click="emit('close')">
+        <span id="act-title">{{ t('activity.title', 'Activity') }}</span>
+        <button class="tb-icon" :title="t('activity.closeEsc', 'Close (Esc)')" :aria-label="t('activity.close', 'Close')" @click="emit('close')">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
           </svg>
@@ -269,7 +360,7 @@ const periodLabel = computed(() => PERIODS.find((p) => p.value === period.value)
 
       <div class="act-filters">
         <label class="act-field">
-          <span>Scope</span>
+          <span>{{ t('activity.scope', 'Scope') }}</span>
           <select
             class="act-select"
             :value="scope"
@@ -278,7 +369,7 @@ const periodLabel = computed(() => PERIODS.find((p) => p.value === period.value)
             <option v-for="s in scopes" :key="s.value" :value="s.value">{{ s.label }}</option>
           </select>
         </label>
-        <div class="act-seg" role="group" aria-label="Period">
+        <div class="act-seg" role="group" :aria-label="t('activity.periodLabel', 'Period')">
           <button
             v-for="p in PERIODS"
             :key="p.value"
@@ -287,25 +378,29 @@ const periodLabel = computed(() => PERIODS.find((p) => p.value === period.value)
             :aria-pressed="period === p.value"
             @click="period = p.value"
           >
-            {{ p.label }}
+            {{ periodText(p.value) }}
           </button>
         </div>
         <label class="act-field">
-          <span>Agent</span>
+          <span>{{ t('activity.agent', 'Agent') }}</span>
           <select v-model="agentFilter" class="act-select">
-            <option value="">All agents</option>
+            <option value="">{{ t('activity.allAgents', 'All agents') }}</option>
             <option v-for="r in summary.rows" :key="r.paneId" :value="r.paneId">
-              {{ r.title }}{{ r.open ? '' : ' (closed)' }}
+              {{ r.title }}{{ r.open ? '' : t('activity.closedSuffix', ' (closed)') }}
             </option>
           </select>
         </label>
       </div>
 
       <div v-if="summary.empty" class="act-empty">
-        <p class="act-empty-title">No activity yet</p>
+        <p class="act-empty-title">{{ t('activity.emptyTitle', 'No activity yet') }}</p>
         <p>
-          Tessel starts counting from now: messages to the agents, approvals, usage limits and
-          working time will show up here as they happen.
+          {{
+            t(
+              'activity.emptyHint',
+              'Tessel starts counting from now: messages to the agents, approvals, usage limits and working time will show up here as they happen.'
+            )
+          }}
         </p>
       </div>
 
@@ -314,63 +409,57 @@ const periodLabel = computed(() => PERIODS.find((p) => p.value === period.value)
           <button
             class="act-stat"
             :class="{ on: stateFilter === 'approval', alert: cards.needsApproval > 0 }"
-            title="Show the agents waiting for your approval"
+            :title="t('activity.cards.approvalHint', 'Show the agents waiting for your approval')"
             @click="pickState('approval')"
           >
-            <span class="act-stat-label">Need your approval now</span>
+            <span class="act-stat-label">{{ t('activity.cards.approvalNow', 'Need your approval now') }}</span>
             <span class="act-stat-value">{{ cards.needsApproval }}</span>
-            <span class="act-stat-sub">of {{ cards.openAgents }} open agents</span>
+            <span class="act-stat-sub">{{ ofOpenAgents(cards.openAgents) }}</span>
           </button>
           <button
             class="act-stat"
             :class="{ on: stateFilter === 'working' }"
-            title="Show the agents working now"
+            :title="t('activity.cards.workingHint', 'Show the agents working now')"
             @click="pickState('working')"
           >
-            <span class="act-stat-label">Working now</span>
+            <span class="act-stat-label">{{ t('activity.cards.workingNow', 'Working now') }}</span>
             <span class="act-stat-value">{{ cards.working }}</span>
-            <span class="act-stat-sub">of {{ cards.openAgents }} open agents</span>
+            <span class="act-stat-sub">{{ ofOpenAgents(cards.openAgents) }}</span>
           </button>
           <div class="act-stat static">
-            <span class="act-stat-label">Wait for your approval</span>
+            <span class="act-stat-label">{{ t('activity.cards.approvalWait', 'Wait for your approval') }}</span>
             <span class="act-stat-value">{{
               cards.approvalWait.count ? formatDuration(cards.approvalWait.median) : '—'
             }}</span>
-            <span class="act-stat-sub">{{
-              cards.approvalWait.count
-                ? `median of ${cards.approvalWait.count}, last ${periodLabel}`
-                : `none answered, last ${periodLabel}`
-            }}</span>
+            <span class="act-stat-sub">{{ waitSub }}</span>
           </div>
           <div class="act-stat static">
-            <span class="act-stat-label">Messages to agents</span>
+            <span class="act-stat-label">{{ t('activity.cards.messages', 'Messages to agents') }}</span>
             <span class="act-stat-value">{{ cards.messages.received }}</span>
-            <span class="act-stat-sub"
-              >{{ cards.messages.held }} held · {{ cards.messages.skipped }} not sent</span
-            >
+            <span class="act-stat-sub">{{ messagesSub }}</span>
           </div>
         </div>
 
         <div class="act-section-head">
-          <span>Agents</span>
+          <span>{{ t('activity.agents', 'Agents') }}</span>
           <span class="act-count">{{ rows.length }}</span>
-          <button v-if="filtered" class="act-link" @click="clearFilters">Clear filters</button>
+          <button v-if="filtered" class="act-link" @click="clearFilters">{{ t('activity.clearFilters', 'Clear filters') }}</button>
         </div>
         <div class="act-table-wrap">
           <table v-if="rows.length" class="act-table">
             <thead>
               <tr>
-                <th scope="col">Agent</th>
-                <th scope="col">Now</th>
-                <th scope="col" class="num" title="Time in the Working state, this period">Working</th>
-                <th scope="col" class="num" title="Times it waited for your approval, and for how long">
-                  Waited on you
+                <th scope="col">{{ t('activity.col.agent', 'Agent') }}</th>
+                <th scope="col">{{ t('activity.col.now', 'Now') }}</th>
+                <th scope="col" class="num" :title="t('activity.col.workingHint', 'Time in the Working state, this period')">{{ t('activity.col.working', 'Working') }}</th>
+                <th scope="col" class="num" :title="t('activity.col.waitedHint', 'Times it waited for your approval, and for how long')">
+                  {{ t('activity.col.waited', 'Waited on you') }}
                 </th>
-                <th scope="col" class="num">Limits</th>
-                <th scope="col" class="num" title="Received · held · not sent">Messages</th>
-                <th scope="col" class="num" title="Lines in the Journal of the project notes">Notes</th>
-                <th scope="col">Last activity</th>
-                <th scope="col"><span class="sr-only">Open</span></th>
+                <th scope="col" class="num">{{ t('activity.col.limits', 'Limits') }}</th>
+                <th scope="col" class="num" :title="t('activity.col.messagesHint', 'Received · held · not sent')">{{ t('activity.col.messages', 'Messages') }}</th>
+                <th scope="col" class="num" :title="t('activity.col.notesHint', 'Lines in the Journal of the project notes')">{{ t('activity.col.notes', 'Notes') }}</th>
+                <th scope="col">{{ t('activity.col.last', 'Last activity') }}</th>
+                <th scope="col"><span class="sr-only">{{ t('activity.open', 'Open') }}</span></th>
               </tr>
             </thead>
             <tbody>
@@ -383,7 +472,7 @@ const periodLabel = computed(() => PERIODS.find((p) => p.value === period.value)
                 </td>
                 <td>
                   <span class="act-state" :class="r.state">
-                    <span class="act-dot" aria-hidden="true"></span>{{ STATE[r.state] || r.state }}
+                    <span class="act-dot" aria-hidden="true"></span>{{ stateText(r.state) }}
                   </span>
                   <span v-if="r.since && r.open" class="act-dim"> · {{ formatDuration(now - r.since) }}</span>
                 </td>
@@ -399,30 +488,30 @@ const periodLabel = computed(() => PERIODS.find((p) => p.value === period.value)
                 <td>{{ r.lastActivity ? when(r.lastActivity) : '—' }}</td>
                 <td>
                   <button v-if="r.open" class="act-open" @click="emit('focus-pane', r.paneId)">
-                    Open
+                    {{ t('activity.open', 'Open') }}
                   </button>
                 </td>
               </tr>
             </tbody>
           </table>
           <p v-else class="act-none">
-            No agent for these filters. <button class="act-link" @click="clearFilters">Clear filters</button>
+            {{ t('activity.noAgentFiltered', 'No agent for these filters.') }} <button class="act-link" @click="clearFilters">{{ t('activity.clearFilters', 'Clear filters') }}</button>
           </p>
         </div>
 
         <div class="act-section-head">
-          <span>Timeline</span>
+          <span>{{ t('activity.timeline', 'Timeline') }}</span>
           <span class="act-count">{{ timeline.length }}</span>
-          <div class="mcp-cats act-types" role="group" aria-label="Event types">
+          <div class="mcp-cats act-types" role="group" :aria-label="t('activity.eventTypes', 'Event types')">
             <button
-              v-for="t in TYPES"
-              :key="t.value"
+              v-for="ty in TYPES"
+              :key="ty.value"
               class="mcp-cat"
-              :class="{ on: typeFilter.has(t.value) }"
-              :aria-pressed="typeFilter.has(t.value)"
-              @click="toggleType(t.value)"
+              :class="{ on: typeFilter.has(ty.value) }"
+              :aria-pressed="typeFilter.has(ty.value)"
+              @click="toggleType(ty.value)"
             >
-              {{ t.label }}
+              {{ typeLabel(ty.value) }}
             </button>
           </div>
         </div>
@@ -438,9 +527,7 @@ const periodLabel = computed(() => PERIODS.find((p) => p.value === period.value)
             @keydown.enter.prevent="(x.text || x.preview) && toggleRow(rowKey(x))"
           >
             <span class="act-time">{{ x.day && x.kind === 'journal' ? x.day : when(x.t) }}</span>
-            <span class="act-kind" :class="x.kind.replace(/-end$/, '')">{{
-              TYPES.find((t) => t.value === x.kind.replace(/-end$/, ''))?.label.replace(/s$/, '') || x.kind
-            }}</span>
+            <span class="act-kind" :class="x.kind.replace(/-end$/, '')">{{ kindLabel(x.kind) }}</span>
             <span class="act-text">
               <strong>{{ describe(x).who }}</strong> {{ describe(x).text }}
               <span v-if="describe(x).note" class="act-dim"> · {{ describe(x).note }}</span>
@@ -449,7 +536,7 @@ const periodLabel = computed(() => PERIODS.find((p) => p.value === period.value)
           </li>
         </ol>
         <p v-else class="act-none">
-          No activity for these filters. <button class="act-link" @click="clearFilters">Clear filters</button>
+          {{ t('activity.noneFiltered', 'No activity for these filters.') }} <button class="act-link" @click="clearFilters">{{ t('activity.clearFilters', 'Clear filters') }}</button>
         </p>
       </template>
     </div>

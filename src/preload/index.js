@@ -268,6 +268,9 @@ const api = {
   mcpTest: (ref) => ipcRenderer.invoke('mcp:test', ref),
   mcpCopy: (spec) => ipcRenderer.invoke('mcp:copy', spec),
   notify: (payload) => ipcRenderer.send('app:notify', payload),
+  // The language the interface shows ('en', 'fr'): the main process uses it
+  // for its dialogs, notifications and messages (src/main/i18n.js).
+  setUiLanguage: (locale) => ipcRenderer.send('app:setUiLanguage', String(locale || '')),
   // Real filesystem path of a dropped File (File.path was removed in Electron 32).
   pathForFile: (file) => {
     try {

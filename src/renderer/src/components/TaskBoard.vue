@@ -1,4 +1,3 @@
-<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // The Agent Task Board: a 4-column kanban (todo / doing / review / done) rendered
 // from the shared reactive store. It owns only the add-task control and the
@@ -10,6 +9,7 @@ import { ref, computed, inject, watch } from 'vue'
 import { COLUMNS } from '../../../shared/taskModel'
 import { tasks, addTask, moveTask, removeTask } from '../taskBoardStore'
 import TaskCard from './TaskCard.vue'
+import { t } from '../i18n'
 
 const props = defineProps({
   // Agent panes available for assignment, forwarded to every card.
@@ -73,7 +73,6 @@ function onDrop(e, column) {
   if (task && task.column !== column) moveTask(id, column)
 }
 
-const COLUMN_LABEL = { todo: 'To do', doing: 'Doing', review: 'Review', done: 'Done' }
 // Done > Select: tick finished cards and delete them together.
 const selecting = ref(false)
 const picked = ref([]) // task ids
@@ -111,8 +110,20 @@ watch(
 )
 
 function columnLabel(column) {
-  return COLUMN_LABEL[column] || column
+  const labels = {
+    todo: t('tasks.column.todo', 'To do'),
+    doing: t('tasks.column.doing', 'Doing'),
+    review: t('tasks.column.review', 'Review'),
+    done: t('tasks.column.done', 'Done')
+  }
+  return labels[column] || column
 }
+
+const deleteLabel = computed(() =>
+  picked.value.length
+    ? t('tasks.board.deleteCount', 'Delete ({{count}})', { count: picked.value.length })
+    : t('tasks.board.delete', 'Delete')
+)
 </script>
 
 <template>
@@ -121,10 +132,10 @@ function columnLabel(column) {
       <button
         class="task-board-new"
         type="button"
-        title="Give a task to an agent, in its own copy of the project"
+        :title="t('tasks.board.newTaskHint', 'Give a task to an agent, in its own copy of the project')"
         @click="emit('new-task')"
       >
-        New task…
+        {{ t('tasks.board.newTask', 'New task…') }}
       </button>
     </div>
     <form class="task-board-add" data-test="add-task-form" @submit.prevent="onAdd">
@@ -132,10 +143,10 @@ function columnLabel(column) {
         v-model="newTitle"
         class="task-board-input"
         type="text"
-        placeholder="Add a task…"
+        :placeholder="t('tasks.board.addPlaceholder', 'Add a task…')"
         data-test="new-task-input"
       />
-      <button class="task-board-add-btn" type="submit">Add</button>
+      <button class="task-board-add-btn" type="submit">{{ t('tasks.board.add', 'Add') }}</button>
     </form>
 
     <div class="task-board-columns">
@@ -155,13 +166,13 @@ function columnLabel(column) {
           <span class="task-column-count">{{ grouped[column].length }}</span>
           <span v-if="column === 'done' && grouped.done.length" class="task-column-tools">
             <template v-if="!selecting">
-              <button type="button" class="task-head-btn" data-test="select-done" title="Pick finished tasks to delete them together" @click="startSelect">
-                Select
+              <button type="button" class="task-head-btn" data-test="select-done" :title="t('tasks.board.selectHint', 'Pick finished tasks to delete them together')" @click="startSelect">
+                {{ t('tasks.board.select', 'Select') }}
               </button>
             </template>
             <template v-else>
               <button type="button" class="task-head-btn" data-test="pick-all" @click="pickAll">
-                {{ allPicked ? 'None' : 'All' }}
+                {{ allPicked ? t('tasks.board.pickNone', 'None') : t('tasks.board.pickAll', 'All') }}
               </button>
               <button
                 type="button"
@@ -170,9 +181,9 @@ function columnLabel(column) {
                 :disabled="!picked.length"
                 @click="deletePicked"
               >
-                Delete{{ picked.length ? ` (${picked.length})` : '' }}
+                {{ deleteLabel }}
               </button>
-              <button type="button" class="task-head-btn" data-test="cancel-select" @click="stopSelect">Cancel</button>
+              <button type="button" class="task-head-btn" data-test="cancel-select" @click="stopSelect">{{ t('tasks.board.cancel', 'Cancel') }}</button>
             </template>
           </span>
         </header>
@@ -188,7 +199,7 @@ function columnLabel(column) {
             @focus-pane="(id) => emit('focus-pane', id)"
             @review="(id) => emit('review', id)"
           />
-          <p v-if="!grouped[column].length" class="task-column-empty">No tasks</p>
+          <p v-if="!grouped[column].length" class="task-column-empty">{{ t('tasks.board.empty', 'No tasks') }}</p>
         </div>
       </section>
     </div>

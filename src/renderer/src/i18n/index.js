@@ -58,7 +58,19 @@ export async function setUiLanguage(language) {
   state.messages = messages
   state.locale = locale
   if (typeof document !== 'undefined') document.documentElement.lang = locale
+  tellMainProcess(locale)
   return locale
+}
+
+// The main process shows dialogs and messages in the same language
+// (src/main/i18n.js). Not there in tests.
+function tellMainProcess(locale) {
+  try {
+    const api = typeof window !== 'undefined' ? window.shellApi : null
+    if (api && typeof api.setUiLanguage === 'function') api.setUiLanguage(locale)
+  } catch {
+    // The main process keeps its language.
+  }
 }
 
 // For tests: set a catalog directly.

@@ -9,6 +9,7 @@ import { join, dirname, basename, resolve, relative, isAbsolute } from 'path'
 import fs from 'fs'
 import { run } from './agentTools'
 import { cleanEnv } from './cleanEnv'
+import { t } from './i18n'
 import {
   parseChangedFiles,
   parseCommits,
@@ -35,13 +36,13 @@ function samePath(a, b) {
 
 // { root, path, branch, target } from the renderer -> checked values, or an error.
 async function check({ root, path, branch, target } = {}) {
-  if (typeof root !== 'string' || !root || !fs.existsSync(root)) return { error: 'The project folder is missing.' }
+  if (typeof root !== 'string' || !root || !fs.existsSync(root)) return { error: t('main.review.noProject', 'The project folder is missing.') }
   const top = await git(root, ['rev-parse', '--show-toplevel'])
-  if (!top.ok) return { error: 'The project folder is not a git repository.' }
+  if (!top.ok) return { error: t('main.review.notGit', 'The project folder is not a git repository.') }
   const repo = top.stdout.trim()
-  if (typeof branch !== 'string' || !ANY_BRANCH_RE.test(branch)) return { error: 'Not a task branch.' }
-  if (typeof target !== 'string' || !REF_RE.test(target)) return { error: 'Unknown base branch.' }
-  if (branch === target) return { error: 'Not a task branch.' }
+  if (typeof branch !== 'string' || !ANY_BRANCH_RE.test(branch)) return { error: t('main.review.notTaskBranch', 'Not a task branch.') }
+  if (typeof target !== 'string' || !REF_RE.test(target)) return { error: t('main.review.unknownBase', 'Unknown base branch.') }
+  if (branch === target) return { error: t('main.review.notTaskBranch', 'Not a task branch.') }
   const out = { repo, branch, target, path: null }
   let listedOnBranch = false
   if (path) {
@@ -52,18 +53,18 @@ async function check({ root, path, branch, target } = {}) {
     const inBase = !(!rel || rel.startsWith('..') || isAbsolute(rel))
     const list = await git(repo, ['worktree', 'list', '--porcelain'])
     const rec = parseWorktrees(list.stdout).find((w) => samePath(w.path, path))
-    if (samePath(path, repo) || (!rec && !inBase)) return { error: 'Not a task copy of this project.' }
+    if (samePath(path, repo) || (!rec && !inBase)) return { error: t('main.review.notTaskCopy', 'Not a task copy of this project.') }
     // A listed copy must be the one on this branch: never pair copy A with
     // branch B.
     if (rec && rec.branch !== `refs/heads/${branch}`)
-      return { error: `That copy is not on branch ${branch}.` }
+      return { error: t('main.review.copyWrongBranch', 'That copy is not on branch {{branch}}.', { branch }) }
     out.path = rec ? rec.path : resolve(path)
     out.listed = !!rec
     listedOnBranch = !!rec
   }
   // A branch named with another prefix is a task branch only while git
   // lists its task copy.
-  if (!BRANCH_RE.test(branch) && !listedOnBranch) return { error: 'Not a task branch.' }
+  if (!BRANCH_RE.test(branch) && !listedOnBranch) return { error: t('main.review.notTaskBranch', 'Not a task branch.') }
   return out
 }
 
@@ -89,8 +90,8 @@ export async function reviewInfo(args) {
   const c = await check(args)
   if (c.error) return { ok: false, error: c.error }
   const { repo, branch, target } = c
-  if (!(await refExists(repo, branch))) return { ok: false, error: `The branch ${branch} no longer exists.` }
-  if (!(await refExists(repo, target))) return { ok: false, error: `The base branch ${target} no longer exists.` }
+  if (!(await refExists(repo, branch))) return { ok: false, error: t('main.review.branchGone', 'The branch {{branch}} no longer exists.', { branch }) }
+  if (!(await refExists(repo, target))) return { ok: false, error: t('main.review.baseGone', 'The base branch {{branch}} no longer exists.', { branch: target }) }
 
   const mb = await git(repo, ['merge-base', target, branch])
   if (!mb.ok) return { ok: false, error: `${branch} and ${target} have no common history.` }
@@ -140,9 +141,11 @@ export async function reviewInfo(args) {
     copyExists: !!(c.path && fs.existsSync(c.path))
   }
   info.blocker = merging
-    ? 'The project folder is in the middle of another merge.'
+    ? t('main.review.merging', 'The project folder is in the middle of another merge.')
     : mergeCheck === 'failed'
-      ? `Could not check for conflicts: ${(merge.stderr || merge.error || '').trim().split(/\r?\n/)[0]}`
+      ? t('main.review.checkFailed', 'Could not check for conflicts: {{error}}', {
+          error: (merge.stderr || merge.error || '').trim().split(/\r?\n/)[0]
+        })
       : mergeBlocker(info)
   return info
 }
@@ -152,9 +155,9 @@ export async function reviewDiff(args = {}) {
   const c = await check(args)
   if (c.error) return { ok: false, error: c.error }
   const file = args.file
-  if (typeof file !== 'string' || !file || file.startsWith('-')) return { ok: false, error: 'No file.' }
+  if (typeof file !== 'string' || !file || file.startsWith('-')) return { ok: false, error: t('main.review.noFile', 'No file.') }
   const mb = await git(c.repo, ['merge-base', c.target, c.branch])
-  if (!mb.ok) return { ok: false, error: 'No common history.' }
+  if (!mb.ok) return { ok: false, error: t('main.review.noCommonHistory', 'No common history.') }
   const res = await git(c.repo, ['diff', '--no-renames', '--no-color', '-U3', mb.stdout.trim(), c.branch, '--', file])
   if (!res.ok) return { ok: false, error: (res.stderr || 'git diff failed').trim() }
   const tooBig = res.stdout.length > MAX_DIFF
@@ -167,7 +170,7 @@ export async function reviewMerge(args = {}) {
   if (!info.ok) return info
   if (info.blocker) return { ok: false, error: info.blocker }
   if (args.expectHead && args.expectHead !== info.head)
-    return { ok: false, error: 'The agent committed again since you looked. Check the changes again.' }
+    return { ok: false, error: t('main.review.movedOn', 'The agent committed again since you looked. Check the changes again.') }
   const title = String(args.title || info.branch)
     .replace(/[\r\n]+/g, ' ')
     .slice(0, 120)
@@ -179,7 +182,10 @@ export async function reviewMerge(args = {}) {
   if (!res.ok) {
     if (fs.existsSync(join(info.repo, '.git', 'MERGE_HEAD'))) await git(info.repo, ['merge', '--abort'])
     if (/tell me who you are|unable to auto-detect email/i.test(res.stderr))
-      return { ok: false, error: 'Git does not know your name yet. Run git config user.name and git config user.email in the project, then merge again.' }
+      return {
+        ok: false,
+        error: t('main.review.noGitNameMerge', 'Git does not know your name yet. Run git config user.name and git config user.email in the project, then merge again.')
+      }
     return { ok: false, error: (res.stdout + res.stderr).trim().split(/\r?\n/).slice(-3).join(' ') || 'git merge failed' }
   }
   const sha = await git(info.repo, ['rev-parse', 'HEAD'])
@@ -196,16 +202,16 @@ export async function reviewCommit(args = {}) {
     .replace(/\r/g, '')
     .trim()
     .slice(0, 2000)
-  if (!message) return { ok: false, error: 'Write a commit message.' }
+  if (!message) return { ok: false, error: t('main.review.noMessage', 'Write a commit message.') }
   const status = await git(c.path, ['status', '--porcelain'])
-  if (!status.ok) return { ok: false, error: 'Could not read the copy.' }
-  if (!status.stdout.trim()) return { ok: false, error: 'Nothing to commit: everything is committed.' }
+  if (!status.ok) return { ok: false, error: t('main.review.readCopy', 'Could not read the copy.') }
+  if (!status.stdout.trim()) return { ok: false, error: t('main.review.nothingToCommit', 'Nothing to commit: everything is committed.') }
   const add = await git(c.path, ['add', '-A'])
   if (!add.ok) return { ok: false, error: (add.stderr || 'git add failed').trim().split(/\r?\n/)[0] }
   const res = await git(c.path, ['commit', '-m', message])
   if (!res.ok) {
     if (/tell me who you are|unable to auto-detect email/i.test(res.stderr))
-      return { ok: false, error: 'Git does not know your name yet (Tools > Git > Set name & email), then commit again.' }
+      return { ok: false, error: t('main.review.noGitNameCommit', 'Git does not know your name yet (Tools > Git > Set name & email), then commit again.') }
     return { ok: false, error: (res.stdout + res.stderr).trim().split(/\r?\n/).slice(-2).join(' ') || 'git commit failed' }
   }
   const sha = await git(c.path, ['rev-parse', 'HEAD'])
@@ -218,7 +224,7 @@ export async function reviewPush(args = {}) {
   const c = await check(args)
   if (c.error) return { ok: false, error: c.error }
   const remote = await git(c.repo, ['remote', 'get-url', 'origin'])
-  if (!remote.ok) return { ok: false, error: 'This project has no remote named origin.' }
+  if (!remote.ok) return { ok: false, error: t('main.review.noOrigin', 'This project has no remote named origin.') }
   const res = await git(c.repo, ['push', '-u', 'origin', `${c.branch}:${c.branch}`], {
     timeout: 120000,
     env: { ...cleanEnv(process.env), GIT_TERMINAL_PROMPT: '0' }
@@ -226,9 +232,12 @@ export async function reviewPush(args = {}) {
   if (!res.ok) {
     const text = (res.stderr || res.stdout || '').trim()
     if (/rejected|non-fast-forward|fetch first/i.test(text))
-      return { ok: false, error: 'The branch on origin has commits this one does not: nothing was pushed.' }
+      return { ok: false, error: t('main.review.pushRejected', 'The branch on origin has commits this one does not: nothing was pushed.') }
     if (/could not read username|authentication|permission denied|403/i.test(text))
-      return { ok: false, error: 'Git could not sign in to origin. Sign in once (Tools > GitHub CLI > Sign in, or git push in a terminal), then push again.' }
+      return {
+        ok: false,
+        error: t('main.review.pushAuth', 'Git could not sign in to origin. Sign in once (Tools > GitHub CLI > Sign in, or git push in a terminal), then push again.')
+      }
     return { ok: false, error: text.split(/\r?\n/).slice(-2).join(' ') || 'git push failed' }
   }
   return { ok: true, remote: remote.stdout.trim(), branch: c.branch }
@@ -267,7 +276,7 @@ export async function reviewRemove(args = {}) {
       }
     }
     if (fs.existsSync(c.path))
-      return { ok: false, error: `Could not delete the folder ${c.path}. Close what uses it and try again.` }
+      return { ok: false, error: t('main.review.deleteFolder', 'Could not delete the folder {{path}}. Close what uses it and try again.', { path: c.path }) }
   }
   await git(c.repo, ['worktree', 'prune'])
   if (await refExists(c.repo, c.branch)) {

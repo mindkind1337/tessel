@@ -4,6 +4,7 @@ import fs from 'fs'
 import { execFile, spawn } from 'child_process'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'path'
 import { cleanEnv } from './cleanEnv'
+import { t } from './i18n'
 
 const ENV_LIMITS = {
   entries: 10000,
@@ -80,7 +81,7 @@ function safeDirectory(root, path, create = false) {
 
 export async function resolveWorktreeBase(root, currentBranch, requested, run) {
   if (requested != null && typeof requested !== 'string') {
-    return { ok: false, error: 'The base branch must be a branch name.' }
+    return { ok: false, error: t('main.worktree.baseNotName', 'The base branch must be a branch name.') }
   }
   const selected = requested?.trim() || 'HEAD'
   // Only full object identities bypass symbolic branch validation. Verify the
@@ -90,7 +91,7 @@ export async function resolveWorktreeBase(root, currentBranch, requested, run) {
   let ref = pinnedCommit ? selected.toLowerCase() : 'HEAD'
   if (selected !== 'HEAD' && !pinnedCommit) {
     if (selected.length > 1024 || /[\r\n\0]/.test(selected)) {
-      return { ok: false, error: 'The selected base branch is not valid.' }
+      return { ok: false, error: t('main.worktree.baseInvalid', 'The selected base branch is not valid.') }
     }
     const symbolic = await run('git', [
       '-C',
@@ -103,7 +104,7 @@ export async function resolveWorktreeBase(root, currentBranch, requested, run) {
     ])
     ref = symbolic.stdout.trim()
     if (!symbolic.ok || !/^refs\/(heads|remotes)\/[^\r\n]+$/.test(ref)) {
-      return { ok: false, error: 'The selected base branch was not found.' }
+      return { ok: false, error: t('main.worktree.baseNotFound', 'The selected base branch was not found.') }
     }
   }
   const resolved = await run('git', [
@@ -120,7 +121,7 @@ export async function resolveWorktreeBase(root, currentBranch, requested, run) {
     !/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/i.test(commit) ||
     (pinnedCommit && commit.toLowerCase() !== ref)
   ) {
-    return { ok: false, error: 'The selected base branch does not point to a commit.' }
+    return { ok: false, error: t('main.worktree.baseNoCommit', 'The selected base branch does not point to a commit.') }
   }
   return { ok: true, commit, branch: selected === 'HEAD' ? currentBranch : selected }
 }
@@ -309,7 +310,7 @@ export async function copyWorktreeEnv(source, destination, run) {
   } catch {
     result.ok = false
   }
-  if (!result.ok) result.error = 'Some environment files could not be copied safely.'
+  if (!result.ok) result.error = t('main.worktree.envCopy', 'Some environment files could not be copied safely.')
   return result
 }
 
@@ -397,13 +398,13 @@ export async function setupWorktree(path, baseCommit, run, execute = runWorktree
       }
     )
     if (!entry.ok)
-      return { ok: false, ran: false, error: 'Could not check the worktree setup script.' }
+      return { ok: false, ran: false, error: t('main.worktree.setupCheck', 'Could not check the worktree setup script.') }
     if (!entry.stdout) return { ok: true, ran: false, skipped: 'missing' }
     if (!/^100(?:644|755) blob [a-f0-9]+\t\.tessel\/setup\.ps1\0$/i.test(entry.stdout)) {
       return {
         ok: false,
         ran: false,
-        error: 'The worktree setup script must be a regular tracked file.'
+        error: t('main.worktree.setupNotTracked', 'The worktree setup script must be a regular tracked file.')
       }
     }
     safeDirectory(root, dirname(hook))
@@ -420,13 +421,13 @@ export async function setupWorktree(path, baseCommit, run, execute = runWorktree
       : {
           ok: false,
           ran: true,
-          error: 'The worktree setup script failed or exceeded its execution limit.'
+          error: t('main.worktree.setupFailed', 'The worktree setup script failed or exceeded its execution limit.')
         }
   } catch {
     return {
       ok: false,
       ran: false,
-      error: 'The worktree setup script could not be started safely.'
+      error: t('main.worktree.setupUnsafe', 'The worktree setup script could not be started safely.')
     }
   }
 }

@@ -77,6 +77,7 @@ import {
 } from './teamInstall'
 import teamServerSource from './teamMcp/server.cjs?raw'
 import { ensureInbox, takeInbox, removeInbox } from './leadInbox'
+import { t, setLanguage as setMainLanguage } from './i18n'
 import {
   ensureTeamChannel,
   pollTeamChannel,
@@ -780,7 +781,7 @@ ipcMain.handle('shells:list', () => getShells())
 ipcMain.handle('dialog:pickFolder', async (_evt, opts = {}) => {
   if (!mainWindow) return null
   const res = await dialog.showOpenDialog(mainWindow, {
-    title: opts.title || 'Choose a project folder',
+    title: opts.title || t('main.dialog.pickFolder', 'Choose a project folder'),
     defaultPath: opts.defaultPath && fs.existsSync(opts.defaultPath) ? opts.defaultPath : undefined,
     properties: ['openDirectory', 'createDirectory']
   })
@@ -795,7 +796,7 @@ function ensureNotes(opts = {}) {
   try {
     const dir = String(opts.dir || '')
     if (!isAbsolute(dir) || !fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) {
-      return { ok: false, error: 'The project folder does not exist.' }
+      return { ok: false, error: t('main.error.noProjectFolder', 'The project folder does not exist.') }
     }
     const folder = join(dir, '.tessel')
     const file = join(folder, 'notes.md')
@@ -824,7 +825,7 @@ ipcMain.handle('notes:open', async (_evt, opts) => {
       const child = spawn('notepad.exe', [res.path], { detached: true, stdio: 'ignore' })
       child.once('error', (e) => {
         log.warn('notes', `could not open ${res.path}: ${e.message}`)
-        resolve({ ok: false, error: `Could not open the notes: ${e.message}` })
+        resolve({ ok: false, error: t('main.error.openNotes', 'Could not open the notes: {{error}}', { error: e.message }) })
       })
       child.once('spawn', () => {
         child.unref()
@@ -937,6 +938,25 @@ const agentStateStore = createAgentStateStore({
 })
 ipcMain.handle('statsUsage:summary', () => usageStats.summary())
 ipcMain.handle('statsUsage:copyImage', (_event, bytes) => copyUsageImage(bytes, { nativeImage, clipboard }))
+
+// --- Language (src/main/i18n.js) ---------------------------------------------
+// The interface tells the main process the language it shows ('en', 'fr');
+// until it does, Windows' display languages decide.
+function systemLanguages() {
+  try {
+    const list = typeof app.getPreferredSystemLanguages === 'function' ? app.getPreferredSystemLanguages() : []
+    return list && list.length ? list : [app.getLocale()]
+  } catch {
+    return []
+  }
+}
+ipcMain.on('app:setUiLanguage', (_evt, language) => {
+  setMainLanguage(typeof language === 'string' ? language : 'system', systemLanguages())
+})
+app.whenReady().then(() => {
+  setMainLanguage('system', systemLanguages())
+})
+
 app.whenReady().then(() => {
   powerMonitor.on('suspend', () => { void usageStats.suspend() })
   powerMonitor.on('resume', () => { void usageStats.resume() })
@@ -1153,7 +1173,7 @@ ipcMain.handle('scm:generate', safe(async (q) => {
   const res = await runHeadless(q && q.agent, scm.commitPrompt(d.diff), { cwd: d.top, key: d.top })
   if (!res.ok) return res
   const message = scm.cleanGeneratedMessage(res.text)
-  return message ? { ok: true, message } : { ok: false, error: 'The agent gave no message.' }
+  return message ? { ok: true, message } : { ok: false, error: t('main.error.noCommitMessage', 'The agent gave no message.') }
 }))
 ipcMain.handle('scm:cancelGenerate', safe(async (q) => {
   const r = await scm.repoOf(q && q.root)
@@ -1661,7 +1681,7 @@ ipcMain.handle('images:get', async (_evt, q = {}) => {
     if (!file && q && typeof q.sessionId === 'string') file = await claudeImageFile({ sessionId: q.sessionId, n: Number(q.n) })
     if (!file) return { ok: false }
     const data = fs.readFileSync(file)
-    if (data.length > 40 * 1024 * 1024) return { ok: false, error: 'The image is too large to show.' }
+    if (data.length > 40 * 1024 * 1024) return { ok: false, error: t('main.error.imageTooLarge', 'The image is too large to show.') }
     const mime = IMAGE_MIME[file.split('.').pop().toLowerCase()] || 'image/png'
     return { ok: true, file, src: `data:${mime};base64,${data.toString('base64')}` }
   } catch (err) {
@@ -1686,7 +1706,7 @@ ipcMain.handle('files:open', async (_evt, q = {}) => {
   } catch {
     ok = false
   }
-  if (!ok) return { ok: false, error: 'The file was not found.' }
+  if (!ok) return { ok: false, error: t('main.error.fileNotFound', 'The file was not found.') }
   const line = Number.isInteger(q.line) && q.line > 0 ? q.line : null
   const col = Number.isInteger(q.col) && q.col > 0 ? q.col : null
   // VS Code's launcher is a .cmd (run through cmd): never with a path cmd
@@ -1710,7 +1730,7 @@ ipcMain.handle('explorer:rename', safe((q) => explorer.rename(q || {})))
 ipcMain.handle('explorer:trash', safe((q) => explorer.trash(q || {}, (p) => shell.trashItem(p))))
 ipcMain.handle('explorer:reveal', safe((q) => {
   const p = q && explorer.inside(q.root, q.path)
-  if (!p || !fs.existsSync(p)) return { ok: false, error: 'Not found.' }
+  if (!p || !fs.existsSync(p)) return { ok: false, error: t('main.error.notFound', 'Not found.') }
   shell.showItemInFolder(p)
   return { ok: true }
 }))
@@ -1904,7 +1924,7 @@ const installLogs = createInstallLogs({
 })
 ipcMain.handle('install:logStart', (_evt, q = {}) => installLogs.start(q || {}))
 ipcMain.handle('install:openLog', async (_evt, file) => {
-  if (!installLogs.isLog(file)) return { ok: false, error: 'Not an install log.' }
+  if (!installLogs.isLog(file)) return { ok: false, error: t('main.error.notInstallLog', 'Not an install log.') }
   const err = await shell.openPath(file)
   return err ? { ok: false, error: err } : { ok: true }
 })
@@ -2010,7 +2030,7 @@ ipcMain.handle('pty:create', async (_evt, opts = {}) => {
   }
   if (!res.ok) {
     log.error('pty', `failed to launch ${shell.name} (${shell.file}) in ${startDir}: ${res.error}`)
-    return { ok: false, error: `Failed to launch ${shell.name}: ${res.error}` }
+    return { ok: false, error: t('main.error.launchShell', 'Failed to launch {{shell}}: {{error}}', { shell: shell.name, error: res.error }) }
   }
   ptyInfo.set(id, { shellId: shell.id, shellName: shell.name, backend, pid: res.pid, agentLaunchToken })
   if (agentProvider) {

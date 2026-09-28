@@ -10,6 +10,7 @@
 import { app } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import fs from 'fs'
+import { t } from './i18n'
 
 const FIRST_CHECK_MS = 15 * 1000
 const CHECK_EVERY_MS = 4 * 60 * 60 * 1000
@@ -113,7 +114,7 @@ export function createUpdater({ log, send, beforeInstall, onInstallFailed }) {
     const file = autoUpdater.installerPath
     if (!file || !fs.existsSync(file)) {
       log.warn('update', `the downloaded update is missing (${file || 'no file'}): downloading it again`)
-      set({ state: 'error', message: 'The downloaded update was removed (an antivirus?). Tessel downloads it again.' })
+      set({ state: 'error', message: t('main.update.removed', 'The downloaded update was removed (an antivirus?). Tessel downloads it again.') })
       check()
       return false
     }
@@ -137,7 +138,7 @@ export function createUpdater({ log, send, beforeInstall, onInstallFailed }) {
     setTimeout(() => {
       installing = false
       log.warn('update', 'the update did not start')
-      set({ state: 'error', message: 'The update could not start. Try again, or download it from the Releases page.' })
+      set({ state: 'error', message: t('main.update.notStarted', 'The update could not start. Try again, or download it from the Releases page.') })
       if (onInstallFailed) onInstallFailed()
     }, 20000).unref()
     return true

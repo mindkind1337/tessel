@@ -1,0 +1,56 @@
+{
+  "main": {
+    "dialog": {
+      "pickFolder": "Choisir un dossier de projet"
+    },
+    "error": {
+      "noProjectFolder": "Le dossier du projet n'existe pas.",
+      "openNotes": "Impossible d'ouvrir les notes : {{error}}",
+      "noCommitMessage": "L'agent n'a donné aucun message.",
+      "imageTooLarge": "L'image est trop grande pour être affichée.",
+      "fileNotFound": "Le fichier est introuvable.",
+      "notFound": "Introuvable.",
+      "notInstallLog": "Ce n'est pas un journal d'installation.",
+      "launchShell": "Impossible de lancer {{shell}} : {{error}}"
+    },
+    "review": {
+      "noProject": "Le dossier du projet est manquant.",
+      "notGit": "Le dossier du projet n'est pas un dépôt git.",
+      "notTaskBranch": "Ce n'est pas une branche de tâche.",
+      "unknownBase": "Branche de base inconnue.",
+      "notTaskCopy": "Ce n'est pas une copie de tâche de ce projet.",
+      "copyWrongBranch": "Cette copie n'est pas sur la branche {{branch}}.",
+      "branchGone": "La branche {{branch}} n'existe plus.",
+      "baseGone": "La branche de base {{branch}} n'existe plus.",
+      "merging": "Le dossier du projet est au milieu d'une autre fusion.",
+      "checkFailed": "Impossible de vérifier les conflits : {{error}}",
+      "noFile": "Aucun fichier.",
+      "noCommonHistory": "Aucun historique commun.",
+      "movedOn": "L'agent a commité de nouveau depuis votre examen. Vérifiez à nouveau les modifications.",
+      "noGitNameMerge": "Git ne connaît pas encore votre nom. Lancez git config user.name et git config user.email dans le projet, puis fusionnez de nouveau.",
+      "noMessage": "Écrivez un message de commit.",
+      "readCopy": "Impossible de lire la copie.",
+      "nothingToCommit": "Rien à commiter : tout est commité.",
+      "noGitNameCommit": "Git ne connaît pas encore votre nom (Outils > Git > Définir le nom et l'e-mail), puis commitez de nouveau.",
+      "noOrigin": "Ce projet n'a pas de remote nommé origin.",
+      "pushRejected": "La branche sur origin a des commits que celle-ci n'a pas : rien n'a été poussé.",
+      "pushAuth": "Git n'a pas pu se connecter à origin. Connectez-vous une fois (Outils > GitHub CLI > Se connecter, ou git push dans un terminal), puis poussez de nouveau.",
+      "deleteFolder": "Impossible de supprimer le dossier {{path}}. Fermez ce qui l'utilise et réessayez."
+    },
+    "worktree": {
+      "baseNotName": "La branche de base doit être un nom de branche.",
+      "baseInvalid": "La branche de base choisie n'est pas valide.",
+      "baseNotFound": "La branche de base choisie est introuvable.",
+      "baseNoCommit": "La branche de base choisie ne pointe pas vers un commit.",
+      "envCopy": "Certains fichiers d'environnement n'ont pas pu être copiés en toute sécurité.",
+      "setupCheck": "Impossible de vérifier le script de préparation de la copie.",
+      "setupNotTracked": "Le script de préparation de la copie doit être un fichier suivi ordinaire.",
+      "setupFailed": "Le script de préparation de la copie a échoué ou a dépassé sa limite d'exécution.",
+      "setupUnsafe": "Le script de préparation de la copie n'a pas pu être lancé en toute sécurité."
+    },
+    "update": {
+      "removed": "La mise à jour téléchargée a été supprimée (un antivirus ?). Tessel la télécharge de nouveau.",
+      "notStarted": "La mise à jour n'a pas pu démarrer. Réessayez, ou téléchargez-la depuis la page Releases."
+    }
+  }
+}
