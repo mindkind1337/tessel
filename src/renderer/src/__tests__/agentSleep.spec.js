@@ -6,6 +6,7 @@ const base = {
   leaf: { kind: 'agent', agentId: 'claude', agentCommand: 'claude', sessionId: 'abc123' },
   resumable: true,
   state: 'idle',
+  confirmed: true,
   trackedState: 'idle',
   since: now - 31 * 60 * 1000,
   lastKey: 0,
@@ -25,6 +26,8 @@ describe('which idle agents may sleep', () => {
     for (const state of ['working', 'approval', 'limited', 'unknown', null]) expect(ok({ state })).toBe(false)
     expect(ok({ since: now - 29 * 60 * 1000 })).toBe(false)
     expect(ok({ since: NaN })).toBe(false)
+    // Idle only estimated from the screen: never.
+    expect(ok({ confirmed: false })).toBe(false)
   })
   it('never a teammate, the pane you are in, one with something typed, or one you typed in lately', () => {
     expect(ok({ leaf: { ...base.leaf, inTeam: true } })).toBe(false)

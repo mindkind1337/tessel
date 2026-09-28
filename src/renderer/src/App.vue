@@ -770,6 +770,8 @@ function serializeNode(node) {
       sessionId: node.sessionId || null,
       // Left out when not recorded (see createLeaf); null is kept.
       accountId: node.detected ? undefined : node.accountId,
+      // Asleep: restored asleep (no terminal) until you open it.
+      sleeping: !node.detected && node.sleeping && Number.isFinite(node.sleeping.at) ? { at: node.sleeping.at } : undefined,
       titleSet: node.detected ? undefined : node.titleSet || undefined,
       autoTitle: node.detected ? undefined : node.autoTitle || undefined,
       launchedAt: node.launchedAt || null,
@@ -802,8 +804,40 @@ async function deserializeNode(snap, cwd = null) {
             accent: snap.accent
           }
         : null
+    const savedId = typeof snap.id === 'string' && /^pane-[\w-]+$/.test(snap.id) ? snap.id : null
+    // An agent put to sleep stays asleep: its pane, conversation, account and
+    // copy are kept, no terminal is started until you open it (Wake).
+    if (agent && savedId && snap.sleeping && Number.isFinite(snap.sleeping.at) && safeSessionId(snap.sessionId)) {
+      const asleep = reactive({
+        type: 'leaf',
+        id: savedId,
+        shellId: snap.shellId,
+        shellName: snap.shellId,
+        title: snap.title || agent.name,
+        kind: 'agent',
+        agentId: agent.id,
+        agentCommand: agent.command,
+        accent: agent.accent || null,
+        worktree: snap.worktree && snap.worktree.path ? { path: snap.worktree.path, branch: snap.worktree.branch } : null,
+        backend: 'conpty',
+        startDir: typeof snap.startDir === 'string' ? snap.startDir : cwd,
+        sessionId: snap.sessionId,
+        accountId:
+          snap.accountId === null || (typeof snap.accountId === 'string' && /^[\w.-]{1,80}$/.test(snap.accountId))
+            ? snap.accountId
+            : undefined,
+        launchedAt: Number.isFinite(snap.launchedAt) ? snap.launchedAt : null,
+        restoredText: savedOutput[savedId] || '',
+        sleeping: { at: snap.sleeping.at },
+        broadcast: snap.broadcast !== false
+      })
+      if (Number.isInteger(snap.num) && snap.num > 0) asleep.num = snap.num
+      if (snap.titleSet === true) asleep.titleSet = true
+      if (typeof snap.autoTitle === 'string' && snap.autoTitle) asleep.autoTitle = snap.autoTitle.slice(0, 80)
+      return asleep
+    }
     const leaf = await createLeaf(snap.shellId, agent, cwd, snap.worktree || null, {
-      id: typeof snap.id === 'string' && /^pane-[\w-]+$/.test(snap.id) ? snap.id : null,
+      id: savedId,
       savedOutput: snap.id ? savedOutput[snap.id] || '' : '',
       sessionId: snap.sessionId || null,
       accountId:
@@ -4306,6 +4340,9 @@ function canSleep(leaf, ws, now) {
     leaf: { ...leaf, inTeam: !!(leaf.team && teamById(leaf.team)) },
     resumable: !!sessionKind({ id: leaf.agentId }) && safeSessionId(leaf.sessionId),
     state: info ? info.state : null,
+    // Only a state the agent's own hooks confirmed (never one estimated
+    // from its screen): stopping a terminal needs that proof.
+    confirmed: !!(info && info.confirmed === true && leaf.agentLaunchToken),
     trackedState: t ? t.state : null,
     since: t ? t.since : NaN,
     lastKey: lastUserKey[leaf.id] || 0,
