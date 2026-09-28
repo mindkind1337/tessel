@@ -4,6 +4,9 @@ import SplitNode from './components/SplitNode.vue'
 import BrandIcon from './components/BrandIcon.vue'
 import SidePanel from './components/SidePanel.vue'
 import WorkspaceSidebar from './components/WorkspaceSidebar.vue'
+import StatusBar from './components/StatusBar.vue'
+import { buildProjectCards, cardTargetPane, portProbes } from './sidebarModel'
+import { createPortScanner, browserUrlForPort, addressForPort } from './portScanner'
 import LaunchMenu from './components/LaunchMenu.vue'
 import SettingsDialog from './components/SettingsDialog.vue'
 import UpdateDialog from './components/UpdateDialog.vue'
@@ -25,7 +28,8 @@ import {
   getAgentState,
   agentStateKnown,
   clearAgentStatus,
-  clearAttention
+  clearAttention,
+  setAttention
 } from './agentStatus'
 import { detectApproval } from './agentLimit'
 import { activity, recordActivity, loadActivity, saveActivityNow, activityChanged } from './activityStore'
@@ -82,7 +86,7 @@ const workspaces = ref([]) // [{ id, name, tree, activeId }]
 const wsById = (id) => workspaces.value.find((w) => w.id === id) || null
 const currentWsId = ref(null)
 const sidebarCollapsed = ref(false)
-const sidebarWidth = ref(216)
+const sidebarWidth = ref(280) // Orca's default sidebar width
 
 // Terminal font size lives in settings; zoomed with Ctrl+= / Ctrl+- / Ctrl+0.
 const DEFAULT_FONT_SIZE = DEFAULT_SETTINGS.fontSize
@@ -2479,9 +2483,9 @@ function updateDropTarget(x, y) {
   paneDrag.target = null
   paneDrag.zoneRect = null
   const els = document.elementsFromPoint(x, y)
-  const wsEl = els.find((el) => el.classList && el.classList.contains('ws-item'))
+  const wsEl = els.find((el) => el.dataset && el.dataset.wsDropId)
   if (wsEl) {
-    const id = wsEl.dataset.wsId
+    const id = wsEl.dataset.wsDropId
     const src = wsOfLeaf(paneDrag.srcId)
     if (id && (!src || src.id !== id)) {
       const ws = wsById(id)
@@ -2782,47 +2786,195 @@ watch(
   { immediate: true }
 )
 
-// Per-workspace summary for the sidebar: pane count, agent logos, and whether
-// any agent in it is currently working.
-const workspaceItems = computed(() =>
-  workspaces.value.map((w) => {
-    let paneCount = 0
-    let busy = false
-    let needsYou = false
-    const agentIds = []
-    const members = []
-    forEachLeaf(w.tree, (leaf) => {
-      paneCount++
-      if (leaf.kind === 'agent') {
-        if (leaf.agentId) agentIds.push(leaf.agentId)
-        if (agentStatus[leaf.id] === 'busy') busy = true
-        if (attention[leaf.id] || approvals[leaf.id]) needsYou = true
-        members.push({
-          id: leaf.id,
-          num: leaf.num || 0,
-          title: leaf.title || 'Agent',
-          agentId: leaf.agentId || null,
-          accent: leaf.accent || null,
-          state: paneState(leaf),
-          reset: limits[leaf.id] ? limits[leaf.id].reset : '',
-          held: !!pendingMessages[leaf.id],
-          active: w.id === currentWsId.value && leaf.id === w.activeId
-        })
-      }
-    })
-    return {
-      id: w.id,
-      name: w.name,
-      paneCount,
-      agents: agentIds,
-      members,
-      busy,
-      needsYou,
-      folder: w.cwd ? folderName(w.cwd) : '',
-      cwd: w.cwd || ''
+// The sidebar's projects (Orca's logic, see sidebarModel.js): each workspace
+// with its folder's git branch, its task copies and every pane (agent or
+// terminal) with its live state.
+const wsBranches = reactive({}) // ws.cwd -> git branch ('' when not a repo)
+async function refreshBranches() {
+  if (!window.shellApi.gitInfo) return
+  const cwds = [...new Set(workspaces.value.map((w) => w.cwd).filter(Boolean))]
+  for (const cwd of cwds) {
+    try {
+      const info = await window.shellApi.gitInfo(cwd)
+      const branch = info && info.isRepo && info.branch && info.branch !== 'HEAD' ? info.branch : ''
+      if (wsBranches[cwd] !== branch) wsBranches[cwd] = branch
+    } catch {
+      // next time
     }
+  }
+}
+watch(() => workspaces.value.map((w) => w.cwd || '').join('|'), refreshBranches, { immediate: true })
+function onWindowFocusBranches() {
+  refreshBranches()
+}
+window.addEventListener('focus', onWindowFocusBranches)
+onBeforeUnmount(() => window.removeEventListener('focus', onWindowFocusBranches))
+
+// When you were last in each pane (Orca's "Recent" order).
+const paneActivityAt = reactive({})
+watch(
+  () => activeId.value,
+  (id) => {
+    if (id) paneActivityAt[id] = Date.now()
+  },
+  { immediate: true }
+)
+
+const sidebarProjects = computed(() =>
+  workspaces.value.map((w) => {
+    const panes = []
+    forEachLeaf(w.tree, (leaf) => {
+      if (leaf.kind === 'editor') return
+      const task = taskOfPane(leaf.id)
+      const t = trackedState[leaf.id]
+      panes.push({
+        id: leaf.id,
+        num: leaf.num || 0,
+        kind: leaf.kind || 'shell',
+        title: leaf.title || leaf.shellName || 'Terminal',
+        agentId: leaf.agentId || null,
+        shellId: leaf.shellId || null,
+        accent: leaf.accent || null,
+        state: paneState(leaf),
+        sleeping: !!leaf.sleeping,
+        attention: !!attention[leaf.id],
+        reset: limits[leaf.id] ? limits[leaf.id].reset : '',
+        held: !!pendingMessages[leaf.id],
+        typingHold: !!pendingMessages[leaf.id] && !!userDraft[leaf.id],
+        teamUnread: teamUnread[leaf.id] || 0,
+        toolsDown: !!toolsDown[leaf.id],
+        team: leaf.team || null,
+        lead: !!(leaf.team && teamById(leaf.team)?.leadId === leaf.id),
+        task: leaf.kind === 'agent' ? task?.title || null : null,
+        track: leaf.kind === 'agent' ? trackOf(leaf.id) : null,
+        pid: Number.isInteger(leaf.pid) ? leaf.pid : null,
+        copyPath: leaf.worktree && leaf.worktree.path ? leaf.worktree.path : null,
+        copyBranch: leaf.worktree ? leaf.worktree.branch || '' : '',
+        since: t && t.since ? t.since : 0,
+        activityAt: paneActivityAt[leaf.id] || 0,
+        isActive: leaf.id === w.activeId,
+        focused: w.id === currentWsId.value && leaf.id === activeId.value,
+        sessionId: leaf.sessionId || null,
+        ...(leaf.accountId !== undefined ? { accountId: leaf.accountId } : {})
+      })
+    })
+    const copies = boardTasks
+      .filter((t) => t.wsId === w.id && t.worktree && t.worktree.path && !t.mergedAt)
+      .map((t) => ({ path: t.worktree.path, branch: t.worktree.branch || '', title: t.title, taskId: t.id }))
+    return { id: w.id, name: w.name, cwd: w.cwd || null, branch: (w.cwd && wsBranches[w.cwd]) || '', panes, copies }
   })
 )
+
+// Live ports of each workspace (Orca's scanner: every 30 s while visible).
+const portScanner = createPortScanner({ getProbes: () => portProbes(sidebarProjects.value) })
+const probeSignature = computed(() =>
+  portProbes(sidebarProjects.value)
+    .map((p) => `${p.id}:${p.pids.join(',')}`)
+    .join('|')
+)
+onMounted(() => portScanner.start(() => probeSignature.value))
+onBeforeUnmount(() => portScanner.stop())
+
+function cardByKey(key) {
+  for (const p of sidebarProjects.value) {
+    const card = buildProjectCards(p).find((c) => c.key === key)
+    if (card) return card
+  }
+  return null
+}
+
+function openPort(port) {
+  const url = browserUrlForPort(port)
+  Promise.resolve(window.shellApi.openExternal ? window.shellApi.openExternal(url) : false)
+    .then((ok) => {
+      if (!ok) showToast('Failed to open browser', { kind: 'error' })
+    })
+    .catch(() => showToast('Failed to open browser', { kind: 'error' }))
+}
+function copyPort(port) {
+  const address = addressForPort(port)
+  if (window.shellApi.writeClipboard) window.shellApi.writeClipboard(address)
+  showToast(`Copied ${address}`)
+}
+async function stopPort(port) {
+  const res = await portScanner.kill(port)
+  if (res && res.ok) showToast(`Stopped process on ${port.port}`)
+  else showToast((res && res.reason) || 'Failed to stop the process.', { kind: 'error' })
+}
+
+// A workspace card with no pane (a task copy whose agent was closed, or the
+// project folder): a terminal opens there.
+async function openCard({ wsId, path, isMain }) {
+  const ws = wsById(wsId)
+  if (!ws) return
+  selectWorkspace(ws.id)
+  const task = !isMain ? boardTasks.find((t) => t.wsId === ws.id && t.worktree && t.worktree.path === path) : null
+  const worktree = task ? { path: task.worktree.path, branch: task.worktree.branch } : null
+  if (!ws.tree) {
+    const leaf = await createLeaf(selectedShell.value, null, isMain ? ws.cwd : path, worktree)
+    if (leaf && wsById(wsId)) {
+      ws.tree = leaf
+      ws.activeId = leaf.id
+    }
+    return
+  }
+  await splitLeaf(ws.activeId || largestLeaf(ws.tree).id, 'row', null, selectedShell.value, worktree, isMain ? {} : { cwd: path })
+}
+function activateCardByKey(key) {
+  const card = cardByKey(key)
+  if (!card) return
+  const target = cardTargetPane(card)
+  if (target) focusPane(target)
+  else openCard({ wsId: card.projectId, path: card.path, isMain: card.isMain })
+}
+
+function markPanesRead(ids) {
+  for (const id of ids || []) {
+    clearAttention(id)
+    readForPane(id)
+  }
+}
+function markPaneUnread(id) {
+  if (findLeaf(id)) setAttention(id)
+}
+// "Sleep" from the sidebar: agents whose conversation can be resumed stop
+// their terminal now (opening the pane resumes them); the pane you are in
+// stays awake.
+function sleepPanes(ids) {
+  const skipped = []
+  let slept = 0
+  for (const id of ids || []) {
+    const leaf = findLeaf(id)
+    if (!leaf || leaf.kind !== 'agent' || leaf.sleeping || restartingLeaves.has(id)) continue
+    const ws = wsOfLeaf(id)
+    if (ws && ws.id === currentWsId.value && id === activeId.value) {
+      skipped.push(`${paneLabel(leaf)} (the pane you are in)`)
+      continue
+    }
+    if (!sessionKind({ id: leaf.agentId }) || !safeSessionId(leaf.sessionId)) {
+      skipped.push(`${paneLabel(leaf)} (its conversation cannot be resumed)`)
+      continue
+    }
+    putToSleep(leaf)
+    slept++
+  }
+  if (skipped.length) showToast(`Stays awake: ${skipped.join(', ')}.`, { timeout: 7000 })
+  else if (slept) showToast(`${slept} ${slept === 1 ? 'agent' : 'agents'} asleep. Open a pane to wake it.`)
+}
+function copyText(text) {
+  if (!text) return
+  if (window.shellApi.writeClipboard) window.shellApi.writeClipboard(text)
+  showToast(`Copied ${text}`)
+}
+function revealFolder(path) {
+  if (!path || !window.shellApi.explorer || !window.shellApi.explorer.reveal) return
+  window.shellApi.explorer
+    .reveal({ root: path, path })
+    .then((res) => {
+      if (res && res.ok === false) showToast(`Could not open ${path}: ${res.error || 'not found'}`, { kind: 'error' })
+    })
+    .catch(() => {})
+}
 
 // Every open agent's state, for the activity log and the Activity view.
 // One subscription supplies the whole app. A slow initial snapshot must not
@@ -6270,44 +6422,14 @@ function paneState(leaf) {
   return agentStatus[leaf.id] === 'busy' ? 'working' : 'ready'
 }
 
-// Panes of the current workspace with their agent state, for the sidebar's
-// session list. Only the Warp theme shows it.
-const sessionItems = computed(() => {
+// The status bar's left side (Tessel's former footer): where typing goes,
+// the current workspace's panes, its folder.
+const statusInfo = computed(() => {
   const items = []
   forEachLeaf(tree.value, (leaf) => {
-    if (leaf.kind === 'editor') return // not a session
-    const state = paneState(leaf)
-    const task = taskOfPane(leaf.id)
-    items.push({
-      id: leaf.id,
-      num: leaf.num || 0,
-      title: leaf.title || leaf.shellName || 'Terminal',
-      kind: leaf.kind || 'shell',
-      agentId: leaf.agentId || null,
-      shellId: leaf.shellId || null,
-      accent: leaf.accent || null,
-      state,
-      reset: limits[leaf.id] ? limits[leaf.id].reset : '',
-      held: !!pendingMessages[leaf.id],
-      typingHold: !!pendingMessages[leaf.id] && !!userDraft[leaf.id],
-      teamUnread: teamUnread[leaf.id] || 0,
-      toolsDown: !!toolsDown[leaf.id],
-      team: leaf.team || null,
-      lead: !!(leaf.team && teamById(leaf.team)?.leadId === leaf.id),
-      task: task?.title || null,
-      review: task?.column === 'review',
-      leadReview: task?.leadReview || null,
-      track: leaf.kind === 'agent' ? trackOf(leaf.id) : null,
-      active: leaf.id === activeId.value
-    })
+    if (leaf.kind === 'editor') return
+    items.push({ state: paneState(leaf), title: leaf.title || leaf.shellName || 'Terminal', active: leaf.id === activeId.value })
   })
-  return items
-})
-
-// Bottom status bar (Warp theme): where typing goes, pane states, folder.
-const statusBar = computed(() => {
-  if (settings.theme !== 'warp') return null
-  const items = sessionItems.value
   const count = (state) => items.filter((s) => s.state === state).length
   const parts = [`${items.length} ${items.length === 1 ? 'pane' : 'panes'}`]
   if (count('working')) parts.push(`${count('working')} working`)
@@ -6320,6 +6442,38 @@ const statusBar = computed(() => {
     target = `Broadcast → ${n} ${n === 1 ? 'pane' : 'panes'}`
   }
   return { target, summary: parts.join(' · '), path: currentWs.value?.cwd || '' }
+})
+
+// Live terminals (not asleep) for the Resource Manager, grouped by workspace.
+const statusTerminals = computed(() => {
+  const out = []
+  for (const p of sidebarProjects.value) {
+    for (const card of buildProjectCards(p)) {
+      for (const r of card.panes) {
+        if (r.sleeping || !r.pid) continue
+        out.push({
+          id: r.id,
+          pid: r.pid,
+          label: `${r.num ? '#' + r.num + ' ' : ''}${r.title}`,
+          group: `${p.name} / ${card.title}`,
+          groupKey: card.key
+        })
+      }
+    }
+  }
+  return out
+})
+
+// Ports per workspace for the status bar popover.
+const statusPortGroups = computed(() => {
+  const groups = []
+  for (const p of sidebarProjects.value) {
+    for (const card of buildProjectCards(p)) {
+      const ports = portScanner.state.byCard[card.key] || []
+      if (ports.length) groups.push({ key: card.key, name: `${p.name} / ${card.title}`, ports })
+    }
+  }
+  return groups
 })
 
 function closeMenus() {
@@ -6537,7 +6691,7 @@ async function restoreOrSeedLayout() {
     if (Number.isFinite(saved.taskPanelWidth))
       taskPanelWidth.value = Math.round(Math.min(TASK_PANEL_MAX, Math.max(TASK_PANEL_MIN, saved.taskPanelWidth)))
     if (Number.isFinite(saved.sidebarWidth)) {
-      sidebarWidth.value = Math.min(480, Math.max(160, saved.sidebarWidth))
+      sidebarWidth.value = Math.min(500, Math.max(220, saved.sidebarWidth))
     }
     // Older saves kept only the font size at the top level.
     loadSettings(
@@ -7085,16 +7239,18 @@ onBeforeUnmount(() => {
       <WorkspaceSidebar
         v-if="workspaces.length"
         ref="sidebarEl"
-        :items="workspaceItems"
+        :projects="sidebarProjects"
         :current-id="currentWsId"
         :collapsed="sidebarCollapsed"
         :width="sidebarWidth"
-        :sessions="sessionItems"
         :teams="teams"
+        :ports="portScanner.state.byCard"
+        :now="clock"
         @create-team="createTeam"
         @add-to-team="addToTeam"
         @rename-team="renameTeam"
         @disband-team="disbandTeam"
+        @leave-team="leaveTeam"
         @set-lead="setTeamLead"
         @message-team="messageTeam"
         @activity="openActivity"
@@ -7110,6 +7266,18 @@ onBeforeUnmount(() => {
         @toggle="toggleSidebar"
         @resize="resizeSidebar"
         @resize-end="refitSoon"
+        @search="openPalette"
+        @open-card="openCard"
+        @mark-read="markPanesRead"
+        @mark-unread="markPaneUnread"
+        @sleep="sleepPanes"
+        @copy="copyText"
+        @reveal="revealFolder"
+        @delete-task="deleteTask"
+        @review-task="openReview"
+        @port-open="openPort"
+        @port-copy="copyPort"
+        @port-stop="stopPort"
       />
       <div class="workspace-main">
         <div
@@ -7156,11 +7324,22 @@ onBeforeUnmount(() => {
       </aside>
     </div>
 
-    <footer v-if="statusBar" class="statusbar">
-      <span class="statusbar-target">{{ statusBar.target }}</span>
-      <span class="statusbar-summary">{{ statusBar.summary }}</span>
-      <span class="statusbar-path" :title="statusBar.path">{{ statusBar.path }}</span>
-    </footer>
+    <StatusBar
+      v-if="settings.statusBarVisible"
+      :info="statusInfo"
+      :keep-awake-active="wantAwake"
+      :terminals="statusTerminals"
+      :port-groups="statusPortGroups"
+      :external-ports="portScanner.state.external"
+      :ports-refreshing="portScanner.state.refreshing"
+      :ports-unavailable="portScanner.state.unavailableReason"
+      @focus-pane="focusPane"
+      @activate-card="activateCardByKey"
+      @port-open="openPort"
+      @port-copy="copyPort"
+      @port-stop="stopPort"
+      @refresh-ports="portScanner.refresh()"
+    />
 
     <LaunchMenu
       v-if="launcher.open"
