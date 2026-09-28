@@ -2154,6 +2154,7 @@ ipcMain.on('pty:resize', (_evt, { id, cols, rows }) => {
 })
 
 ipcMain.on('pty:kill', (_evt, { id }) => {
+  remoteHosts.paneClosing(id)
   sshPrompts.onExit(id)
   host.send('kill', { id })
   ptyInfo.delete(id)

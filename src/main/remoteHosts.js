@@ -379,6 +379,8 @@ export function createRemoteHosts({
     const pane = panes.get(paneId)
     if (!pane) return
     const hostId = pane.hostId
+    // Closed by the user (its pane closed): an ended session, not a failure.
+    const closedByUser = !!pane.closing
     panes.delete(paneId)
     if ([...panes.values()].some((p) => p.hostId === hostId)) {
       states.set(hostId, { status: paneState(hostId) })
@@ -391,7 +393,7 @@ export function createRemoteHosts({
       return notify()
     }
     // 255: ssh itself failed (could not connect, authentication, host key).
-    if (exitCode === 255 && !disconnecting.has(hostId)) {
+    if (exitCode === 255 && !disconnecting.has(hostId) && !closedByUser) {
       states.set(hostId, {
         status: 'error',
         error: t('main.remote.sshFailed', 'ssh could not connect (exit code 255). See its terminal for details.')
@@ -407,8 +409,13 @@ export function createRemoteHosts({
   function markDisconnecting(hostId) {
     disconnecting.add(hostId)
   }
+  // Its pane is being closed: however ssh ends, it is not an error.
+  function paneClosing(paneId) {
+    const pane = panes.get(paneId)
+    if (pane) pane.closing = true
+  }
 
-  return { list, importConfig, add, update, remove, get, launchFor, test, snapshot, paneStarted, paneConnected, paneExited, panesOf, markDisconnecting }
+  return { list, importConfig, add, update, remove, get, launchFor, test, snapshot, paneStarted, paneConnected, paneExited, panesOf, markDisconnecting, paneClosing }
 }
 
 // IPC: remoteHosts:* (the renderer sends ids and form fields, never argv).

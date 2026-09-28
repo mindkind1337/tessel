@@ -236,6 +236,15 @@ describe('live state', () => {
     s.paneExited('pane-unknown', 0)
     expect(changes.length).toBeGreaterThan(3)
   })
+
+  it('closing its pane is not an error, whatever ssh returns', () => {
+    const s = service()
+    const { target } = s.add({ host: 'srv' })
+    s.paneStarted('pane-1', target.id)
+    s.paneClosing('pane-1')
+    s.paneExited('pane-1', 255)
+    expect(s.snapshot()[target.id].status).toBe('disconnected')
+  })
 })
 
 describe('connecting state', () => {
