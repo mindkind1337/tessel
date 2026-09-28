@@ -517,6 +517,9 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
   // system's own sign-in, chosen on purpose; undefined = not recorded (an
   // older layout, or a new pane): the account chosen now.
   let accountId = typeof opts.accountId === 'string' || opts.accountId === null ? opts.accountId : undefined
+  // The account can't be used: never started on another one without saying
+  // so. A saved pane stays in the layout, with the reason and Retry.
+  let refused = null
   if (agent && !attached && window.shellApi.accounts && window.shellApi.accounts.launchEnv) {
     let acc = null
     try {
@@ -524,23 +527,27 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
     } catch (err) {
       acc = { ok: false, error: err && err.message }
     }
-    // The chosen account cannot be used: never started on another one
-    // without saying so.
     if (!acc || acc.ok === false) {
-      showToast(`${agent.name || agent.id} was not started: its account could not be used (${(acc && acc.error) || 'unknown error'}). See Settings > AI provider accounts.`, { kind: 'error', timeout: 10000 })
-      return null
+      refused = `${agent.name || agent.id} was not started: its account could not be used (${(acc && acc.error) || 'unknown error'}). See Settings > AI provider accounts.`
+      if (!opts.keepOnFailure) {
+        showToast(refused, { kind: 'error', timeout: 10000 })
+        return null
+      }
+    } else {
+      // What the account removes can't come back from the agent's own
+      // variables (an ANTHROPIC_API_KEY there would override the account).
+      if (Array.isArray(acc.unsetEnv)) {
+        unsetEnv = acc.unsetEnv.filter((n) => typeof n === 'string')
+        const drop = new Set(unsetEnv.map((n) => n.toUpperCase()))
+        for (const k of Object.keys(extraEnv)) if (drop.has(k.toUpperCase())) delete extraEnv[k]
+      }
+      if (acc.env && typeof acc.env === 'object') accountEnv = { ...acc.env }
+      accountId = typeof acc.accountId === 'string' ? acc.accountId : null
     }
-    // What the account removes can't come back from the agent's own variables
-    // (an ANTHROPIC_API_KEY there would override the chosen account).
-    if (Array.isArray(acc.unsetEnv)) {
-      unsetEnv = acc.unsetEnv.filter((n) => typeof n === 'string')
-      const drop = new Set(unsetEnv.map((n) => n.toUpperCase()))
-      for (const k of Object.keys(extraEnv)) if (drop.has(k.toUpperCase())) delete extraEnv[k]
-    }
-    if (acc.env && typeof acc.env === 'object') accountEnv = { ...acc.env }
-    accountId = typeof acc.accountId === 'string' ? acc.accountId : null
   }
-  if (!attached) {
+  if (refused) {
+    res = { ok: false, error: refused }
+  } else if (!attached) {
     try {
       res = await window.shellApi.createPty({ id, shellId, cols: 80, rows: 24, cwd, projectDir, extraEnv, accountEnv, unsetEnv })
     } catch (err) {
@@ -1611,7 +1618,9 @@ async function resumeSession(s) {
   }
   const ws = currentWs.value
   if (!ws) return
-  const opts = { cwd: s.cwd || null, sessionId: s.id, resume: true }
+  // A Codex session of a managed account resumes in that account (null: the
+  // system's own sign-in).
+  const opts = { cwd: s.cwd || null, sessionId: s.id, resume: true, ...(s.accountId === null || typeof s.accountId === 'string' ? { accountId: s.accountId } : {}) }
   if (activeId.value && ws.tree) {
     await splitLeaf(
       activeId.value,
