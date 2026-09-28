@@ -66,6 +66,11 @@ const PAGES = {
     desc: 'Shell, scrollback, drawing, copy and paste.',
     icon: 'M2.5 3.5h11v9h-11zM5 6.5l2 1.5-2 1.5M8.5 10H11'
   },
+  editor: {
+    title: 'Editor',
+    desc: 'The code editor in Tessel panes: saving, wrapping, tabs and changes.',
+    icon: 'M5 4L1.5 8 5 12M11 4l3.5 4-3.5 4M9.5 2.5l-3 11'
+  },
   alerts: {
     title: 'Agent alerts',
     desc: 'How Tessel tells you an agent has finished.',
@@ -84,7 +89,7 @@ const PAGES = {
 }
 const GROUPS = [
   { title: 'AI capabilities', pages: ['agents', 'accounts', 'orchestration', 'voice'] },
-  { title: 'Configure', pages: ['general', 'appearance', 'text', 'terminal', 'alerts'] },
+  { title: 'Configure', pages: ['general', 'appearance', 'text', 'terminal', 'editor', 'alerts'] },
   { title: 'Workflows', pages: ['quick-commands'] },
   { title: 'About', pages: ['updates'] }
 ]
@@ -1129,6 +1134,76 @@ const CURSORS = [
                   <option value="ping">Ping</option>
                 </select>
               </label>
+            </div>
+          </div>
+        </section>
+
+        <!-- ============ Editor ============ -->
+        <section
+          id="set-editor"
+          class="set-page"
+          data-page="editor"
+          :hidden="!shown('editor')"
+          aria-labelledby="set-editor-title"
+        >
+          <header class="set-page-head">
+            <h2 id="set-editor-title">{{ PAGES.editor.title }}</h2>
+            <p class="set-page-desc">{{ PAGES.editor.desc }}</p>
+          </header>
+          <div class="set-group">
+            <div class="set-card">
+              <label class="set-row">
+                <div class="set-label">
+                  Save automatically
+                  <span class="set-hint">A moment after you stop typing (never over a file that changed on disk)</span>
+                </div>
+                <input v-model="settings.editorAutoSave" type="checkbox" class="set-switch" />
+              </label>
+              <div v-if="settings.editorAutoSave" class="set-row">
+                <label class="set-label" for="settings-autosave-ms">
+                  Save after
+                  <span class="set-hint">Milliseconds without typing (250 to 10000)</span>
+                </label>
+                <input
+                  id="settings-autosave-ms"
+                  class="set-number"
+                  type="number"
+                  min="250"
+                  max="10000"
+                  step="250"
+                  :value="settings.editorAutoSaveDelayMs"
+                  @change="
+                    settings.editorAutoSaveDelayMs = Math.min(10000, Math.max(250, parseInt($event.target.value, 10) || 1000));
+                    $event.target.value = settings.editorAutoSaveDelayMs
+                  "
+                />
+              </div>
+              <label class="set-row">
+                <div class="set-label">
+                  Word wrap
+                  <span class="set-hint">Long lines wrap to the pane's width (Alt+Z in the editor)</span>
+                </div>
+                <input v-model="settings.editorWordWrap" type="checkbox" class="set-switch" />
+              </label>
+              <label class="set-row">
+                <div class="set-label">Minimap</div>
+                <input v-model="settings.editorMinimap" type="checkbox" class="set-switch" />
+              </label>
+              <label class="set-row">
+                <div class="set-label">
+                  Preview tabs
+                  <span class="set-hint">A file opened with one click replaces the previous one until you edit it or double-click its tab</span>
+                </div>
+                <input v-model="settings.editorPreviewTabs" type="checkbox" class="set-switch" />
+              </label>
+              <label class="set-row">
+                <div class="set-label">
+                  Changes side by side
+                  <span class="set-hint">Otherwise inline, in one column</span>
+                </div>
+                <input v-model="settings.diffSideBySide" type="checkbox" class="set-switch" />
+              </label>
+
             </div>
           </div>
         </section>

@@ -24,6 +24,7 @@ import { titleBarColors } from '../shared/themePalettes'
 import { geminiSessionExists, qwenSessionExists } from './agentResume'
 import { paneEnv } from './paneEnv'
 import { readForView, readImageForView, openPdfWindow } from './fileView'
+import { readForEdit, statForEdit, writeForEdit, headContent, createFileWatcher } from './editorFiles'
 import * as explorer from './explorer'
 import { extraToolDirs, withToolDirs } from './toolDirs'
 import { createInstallLogs } from './installLog'
@@ -1642,6 +1643,36 @@ ipcMain.handle('files:viewImage', (_evt, file) => {
 ipcMain.handle('files:openPdf', (_evt, file) =>
   openPdfWindow(BrowserWindow, file, { icon: fs.existsSync(appIconPath()) ? appIconPath() : null })
 )
+
+// Tessel's code editor (editorFiles.js): read, write (atomic), the last
+// committed version, and a watch on the open files (the window is told when
+// one changes on disk; Tessel's own saves are not reported back).
+const editorWatcher = createFileWatcher((change) => {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('editor:changed', change)
+})
+ipcMain.handle('editor:read', safe((file) => readForEdit(file)))
+ipcMain.handle('editor:stat', safe((file) => statForEdit(file)))
+ipcMain.handle('editor:write', safe(async (q) => {
+  const res = await writeForEdit(q || {})
+  if (res.ok) editorWatcher.noteWritten(q.file, res.sig)
+  return res
+}))
+ipcMain.handle('editor:head', safe((file) => headContent(file)))
+ipcMain.handle('editor:watch', safe((paths) => ({ ok: true, count: editorWatcher.set(paths) })))
+// Closing the window with unsaved editor files: the window asks first (Save,
+// Don't Save, Cancel). Quitting for an update was asked about beforehand.
+let editorDirtyCount = 0
+let editorCloseAllowed = false
+let appQuitting = false
+ipcMain.on('editor:dirty', (event, n) => {
+  if (!mainWindow || event.sender !== mainWindow.webContents) return
+  editorDirtyCount = Number.isInteger(n) && n > 0 ? n : 0
+})
+ipcMain.on('editor:closeWindow', (event) => {
+  if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return
+  editorCloseAllowed = true
+  mainWindow.close()
+})
 ipcMain.on('clipboard:write', (_evt, text) => {
   if (typeof text === 'string' && text.length) clipboard.writeText(text)
 })
@@ -2144,6 +2175,22 @@ function createWindow() {
   mainWindow.on('focus', () => {
     if (mainWindow) mainWindow.flashFrame(false)
   })
+  // Unsaved files in the editor: the window asks before it closes (see
+  // editor:dirty). Not while the app is quitting (an update asked already).
+  mainWindow.on('close', (event) => {
+    if (editorCloseAllowed || appQuitting || editorDirtyCount <= 0) return
+    // A page that cannot answer never keeps the window open.
+    if (mainWindow.webContents.isCrashed() || mainWindow.webContents.isLoading()) return
+    event.preventDefault()
+    mainWindow.webContents.send('editor:confirmClose')
+  })
+  // A new page (reload) or a crashed one has no unsaved editor files.
+  mainWindow.webContents.on('did-start-navigation', (details) => {
+    if (details && details.isMainFrame && !details.isSameDocument) editorDirtyCount = 0
+  })
+  mainWindow.webContents.on('render-process-gone', () => {
+    editorDirtyCount = 0
+  })
   mainWindow.on('closed', () => {
     mainWindow = null
   })
@@ -2290,6 +2337,7 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', (event) => {
+  appQuitting = true
   if (shutdownDone) return
   event.preventDefault()
   shutdownDone = true

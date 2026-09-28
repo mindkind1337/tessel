@@ -22,6 +22,7 @@ const emit = defineEmits([
   'close',
   'open',
   'open-editor',
+  'open-external',
   'terminal-here',
   'insert-path',
   'toast',
@@ -88,8 +89,9 @@ const current = () => (SIDE_TABS.includes(props.tab) ? props.tab : 'tasks')
         v-show="current() === 'files'"
         :root="root"
         :can-insert="canInsert"
-        @open="(file, line) => emit('open', file, line)"
+        @open="(file, arg) => emit('open', file, arg)"
         @open-editor="(file) => emit('open-editor', file)"
+        @open-external="(file) => emit('open-external', file)"
         @terminal-here="(dir) => emit('terminal-here', dir)"
         @insert-path="(text) => emit('insert-path', text)"
         @toast="(t) => emit('toast', t)"

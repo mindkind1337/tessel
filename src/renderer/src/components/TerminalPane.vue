@@ -660,10 +660,16 @@ async function openImage(n) {
 // File references clicked in the terminal (see the link provider below).
 const fileLinkCache = new Map() // "<cwd>\n<path>" -> { file, at }
 // Markdown, diagrams, tables, JSON, images and PDFs show in Tessel's viewer;
-// code (or Shift+click) opens in your editor at its line.
+// code opens in Tessel's editor at its line; Shift+click opens it in VS
+// Code (or the file's own program).
 async function openFileRef(file, ref, event) {
-  if (ctx.viewFile && isViewed(file) && !(event && event.shiftKey)) {
+  const outside = !!(event && event.shiftKey)
+  if (ctx.viewFile && isViewed(file) && !outside) {
     ctx.viewFile({ file, label: ref.path, line: ref.line || null })
+    return
+  }
+  if (ctx.openInEditor && !outside) {
+    ctx.openInEditor({ file, line: ref.line || null, col: ref.col || null })
     return
   }
   const res = await window.shellApi.openFile({ file, line: ref.line, col: ref.col }).catch(() => null)
