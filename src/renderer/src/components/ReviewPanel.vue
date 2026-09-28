@@ -5,6 +5,7 @@
 // happens in the main process (src/main/review.js); App.vue does the actions.
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { parseUnifiedDiff } from '../../../shared/diff'
+import { reviewMessage, commentLocation } from '../../../shared/reviewComments'
 
 const props = defineProps({
   task: { type: Object, required: true },
@@ -39,6 +40,45 @@ const feedbackEl = ref(null)
 // "Viewed" marks survive closing the panel (not a restart). A file whose
 // content changes in a new commit is unmarked.
 const viewed = viewedStore(props.task.id)
+
+// Comments on diff lines (a click on a line number): kept like the viewed
+// marks, all sent to the agent in one message with "Request changes".
+const comments = commentsStore(props.task.id)
+const draft = ref(null) // { file, line, side, code, text }
+const draftEl = ref(null)
+function lineRef(l) {
+  // A removed line has only its old number; others point at the new file.
+  return l.kind === 'del' ? { line: l.old, side: 'old' } : { line: l.new, side: 'new' }
+}
+function startComment(l) {
+  if (!diff.value || l.kind === 'hunk') return
+  const at = lineRef(l)
+  if (!at.line) return
+  draft.value = { file: diff.value.file, ...at, code: l.text, text: '' }
+  setTimeout(() => draftEl.value && draftEl.value.focus(), 0)
+}
+function isDraftAt(l) {
+  const d = draft.value
+  if (!d || !diff.value || d.file !== diff.value.file) return false
+  const at = lineRef(l)
+  return d.line === at.line && d.side === at.side
+}
+function saveDraft() {
+  const d = draft.value
+  if (!d || !d.text.trim()) return
+  comments.push({ file: d.file, line: d.line, side: d.side, code: d.code, text: d.text.trim(), id: `c${Date.now().toString(36)}` })
+  draft.value = null
+}
+function commentsAt(l) {
+  if (!diff.value) return []
+  const at = lineRef(l)
+  return comments.filter((c) => c.file === diff.value.file && c.line === at.line && c.side === at.side)
+}
+function removeComment(id) {
+  const i = comments.findIndex((c) => c.id === id)
+  if (i >= 0) comments.splice(i, 1)
+}
+const commentCount = computed(() => comments.length)
 
 // One refresh at a time (the 5 s poll skips while one runs), so an older
 // answer can never land after a newer one.
@@ -147,10 +187,11 @@ function openFeedback() {
 }
 
 function sendFeedback() {
-  const text = feedback.value.trim()
+  const text = reviewMessage(feedback.value, comments)
   if (!text) return
   props.actions.requestChanges(text)
   feedback.value = ''
+  comments.splice(0)
   feedbackOpen.value = false
 }
 
@@ -206,6 +247,11 @@ const viewedByTask = new Map()
 function viewedStore(taskId) {
   if (!viewedByTask.has(taskId)) viewedByTask.set(taskId, reactive({}))
   return viewedByTask.get(taskId)
+}
+const commentsByTask = new Map()
+function commentsStore(taskId) {
+  if (!commentsByTask.has(taskId)) commentsByTask.set(taskId, reactive([]))
+  return commentsByTask.get(taskId)
 }
 </script>
 
@@ -330,11 +376,40 @@ function viewedStore(taskId) {
                   <tr class="rv-hunk">
                     <td colspan="3">{{ h.header }}</td>
                   </tr>
-                  <tr v-for="(l, li) in h.lines" :key="li" class="rv-line" :class="l.kind">
-                    <td class="rv-num">{{ l.old }}</td>
-                    <td class="rv-num">{{ l.new }}</td>
-                    <td class="rv-code"><span class="rv-sign">{{ l.kind === 'add' ? '+' : l.kind === 'del' ? '−' : ' ' }}</span>{{ l.text }}</td>
-                  </tr>
+                  <template v-for="(l, li) in h.lines" :key="li">
+                    <tr class="rv-line" :class="l.kind">
+                      <td class="rv-num rv-num-click" title="Comment on this line" @click="startComment(l)">{{ l.old }}</td>
+                      <td class="rv-num rv-num-click" title="Comment on this line" @click="startComment(l)">{{ l.new }}</td>
+                      <td class="rv-code"><span class="rv-sign">{{ l.kind === 'add' ? '+' : l.kind === 'del' ? '−' : ' ' }}</span>{{ l.text }}</td>
+                    </tr>
+                    <tr v-for="c in commentsAt(l)" :key="c.id" class="rv-comment-row">
+                      <td colspan="3">
+                        <div class="rv-comment" data-test="line-comment">
+                          <span class="rv-comment-text">{{ c.text }}</span>
+                          <button class="rv-comment-del" title="Remove this comment" @click="removeComment(c.id)">Remove</button>
+                        </div>
+                      </td>
+                    </tr>
+                    <tr v-if="isDraftAt(l)" class="rv-comment-row">
+                      <td colspan="3">
+                        <div class="rv-comment-draft">
+                          <textarea
+                            :ref="(el) => el && (draftEl = el)"
+                            v-model="draft.text"
+                            class="notes-editor rv-comment-input"
+                            :placeholder="`Comment on ${commentLocation(draft)} (sent with Request changes)`"
+                            aria-label="Comment on this line"
+                            @keydown.ctrl.enter.prevent="saveDraft"
+                            @keydown.escape.stop.prevent="draft = null"
+                          ></textarea>
+                          <div class="confirm-actions">
+                            <button class="confirm-btn" @click="draft = null">Cancel</button>
+                            <button class="confirm-btn primary" :disabled="!draft.text.trim()" title="Ctrl+Enter" @click="saveDraft">Add comment</button>
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  </template>
                 </tbody>
               </table>
               <p v-if="diff && diff.truncated" class="act-none">The diff is too long to show in full.</p>
@@ -352,9 +427,12 @@ function viewedStore(taskId) {
           aria-label="Changes to request"
           @keydown.ctrl.enter.prevent="sendFeedback"
         ></textarea>
+        <p v-if="commentCount" class="rv-comment-note">
+          With your {{ commentCount }} comment{{ commentCount > 1 ? 's' : '' }} on lines, each tied to its file and line.
+        </p>
         <div class="confirm-actions">
           <button class="confirm-btn" @click="feedbackOpen = false">Cancel</button>
-          <button class="confirm-btn primary" :disabled="!feedback.trim() || !agentLabel" title="Ctrl+Enter" @click="sendFeedback">
+          <button class="confirm-btn primary" :disabled="(!feedback.trim() && !commentCount) || !agentLabel" title="Ctrl+Enter" @click="sendFeedback">
             Send to the agent
           </button>
         </div>
@@ -375,7 +453,7 @@ function viewedStore(taskId) {
           :title="agentLabel ? 'Send your feedback to the agent' : 'The agent was closed'"
           @click="openFeedback"
         >
-          Request changes…
+          Request changes…<span v-if="commentCount" class="mcp-count" data-test="comment-count">{{ commentCount }}</span>
         </button>
         <button v-if="!wt" class="confirm-btn primary" @click="actions.markDone()">Mark as done</button>
         <button v-else class="confirm-btn primary" :disabled="!canMerge" :title="mergeTitle" @click="merge">
