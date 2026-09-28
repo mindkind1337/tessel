@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import fs from 'fs'
 import vm from 'vm'
+import { t } from '../i18n'
 import { join } from 'path'
 
 // Exercise the real App workflow with an asynchronous Git copy, before any
@@ -35,7 +36,7 @@ function fixture() {
       }
     }
   }
-  vm.createContext(ctx)
+  vm.createContext(Object.assign(ctx, { t })) // App.vue's interface text goes through t()
   vm.runInContext(source.slice(start, end), ctx)
   const spec = { title: 'Linked issue', isolated: true, agent: { kind: 'new', id: 'codex' } }
   return {

@@ -1,10 +1,10 @@
-<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // The toolbar bell: the notification inbox (notificationsStore.js). A click on
 // an entry opens its pane; each entry can be marked read or unread.
 import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { notifications, unreadCount, setRead, markAllRead, clearNotifications } from '../notificationsStore'
 import { formatWhen } from '../../../shared/activity'
+import { t } from '../i18n'
 
 const emit = defineEmits(['focus-pane'])
 const open = ref(false)
@@ -28,8 +28,8 @@ function openEntry(n) {
     <button
       class="tb-icon"
       :class="{ on: open }"
-      :title="unreadCount ? `Notifications: ${unreadCount} unread` : 'Notifications'"
-      aria-label="Notifications"
+      :title="unreadCount ? t('app.notifications.unread', 'Notifications: {{count}} unread', { count: unreadCount }) : t('app.notifications.title', 'Notifications')"
+      :aria-label="t('app.notifications.title', 'Notifications')"
       :aria-expanded="open"
       data-test="notif-bell"
       @click="open = !open"
@@ -45,15 +45,15 @@ function openEntry(n) {
       </svg>
       <span v-if="unreadCount" class="notif-badge" data-test="notif-count">{{ unreadCount > 99 ? '99+' : unreadCount }}</span>
     </button>
-    <div v-if="open" class="notif-menu" role="dialog" aria-label="Notifications">
+    <div v-if="open" class="notif-menu" role="dialog" :aria-label="t('app.notifications.title', 'Notifications')">
       <div class="notif-head">
-        <span>Notifications</span>
+        <span>{{ t('app.notifications.title', 'Notifications') }}</span>
         <span class="notif-head-actions">
-          <button class="exit-btn" :disabled="!unreadCount" @click="markAllRead">Mark all read</button>
-          <button class="exit-btn" :disabled="!notifications.length" @click="clearNotifications">Clear</button>
+          <button class="exit-btn" :disabled="!unreadCount" @click="markAllRead">{{ t('app.notifications.markAllRead', 'Mark all read') }}</button>
+          <button class="exit-btn" :disabled="!notifications.length" @click="clearNotifications">{{ t('app.notifications.clear', 'Clear') }}</button>
         </span>
       </div>
-      <p v-if="!notifications.length" class="notif-empty">Nothing yet. When an agent finishes, hits its limit or needs you, it shows here.</p>
+      <p v-if="!notifications.length" class="notif-empty">{{ t('app.notifications.empty', 'Nothing yet. When an agent finishes, hits its limit or needs you, it shows here.') }}</p>
       <div
         v-for="n in notifications"
         :key="n.id"
@@ -69,8 +69,8 @@ function openEntry(n) {
           </span>
           <span class="notif-when">{{ formatWhen(n.at) }}</span>
         </button>
-        <button class="notif-toggle" :title="n.read ? 'Mark unread' : 'Mark read'" @click="setRead(n.id, !n.read)">
-          {{ n.read ? 'Unread' : 'Read' }}
+        <button class="notif-toggle" :title="n.read ? t('app.notifications.markUnread', 'Mark unread') : t('app.notifications.markRead', 'Mark read')" @click="setRead(n.id, !n.read)">
+          {{ n.read ? t('app.notifications.unreadShort', 'Unread') : t('app.notifications.readShort', 'Read') }}
         </button>
       </div>
     </div>

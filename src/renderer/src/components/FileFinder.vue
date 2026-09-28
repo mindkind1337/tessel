@@ -1,10 +1,10 @@
-<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // Jump to file (Ctrl+Shift+J): the workspace's project files, found by a
 // few letters (fuzzy). Enter opens the file (Markdown, tables, images and the like in Tessel's viewer, code in VS Code when installed);
 // Ctrl+Enter puts its path in the active pane, e.g. to point an agent at it.
 import { ref, computed, onMounted, nextTick, watch } from 'vue'
 import { fuzzyFilter } from '../../../shared/fuzzy'
+import { t } from '../i18n'
 
 const props = defineProps({
   root: { type: String, default: null }, // the workspace's project folder
@@ -29,13 +29,13 @@ onMounted(async () => {
   if (inputEl.value) inputEl.value.focus()
   if (!props.root) {
     state.value = 'error'
-    error.value = 'This workspace has no project folder.'
+    error.value = t('app.finder.noFolder', 'This workspace has no project folder.')
     return
   }
   const res = await window.shellApi.listFiles(props.root).catch((e) => ({ ok: false, error: e.message }))
   if (!res || !res.ok) {
     state.value = 'error'
-    error.value = (res && res.error) || 'Could not list the files.'
+    error.value = (res && res.error) || t('app.finder.listFailed', 'Could not list the files.')
     return
   }
   files.value = res.files
@@ -76,7 +76,7 @@ function dirOf(rel) {
 
 <template>
   <div class="pal-backdrop" @pointerdown.self="emit('close')">
-    <div class="pal file-finder" role="dialog" aria-label="Jump to file">
+    <div class="pal file-finder" role="dialog" :aria-label="t('app.finder.label', 'Jump to file')">
       <div class="pal-search">
         <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
           <path d="M4 2h5l3 3v9H4z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" />
@@ -86,16 +86,16 @@ function dirOf(rel) {
           ref="inputEl"
           v-model="query"
           class="pal-input"
-          placeholder="Jump to a file: type a few letters of its name"
+          :placeholder="t('app.finder.placeholder', 'Jump to a file: type a few letters of its name')"
           spellcheck="false"
           data-test="finder-input"
           @keydown.stop="onKey"
         />
         <kbd class="pal-kbd">Esc</kbd>
       </div>
-      <p v-if="state === 'loading'" class="finder-empty">Listing the project's files…</p>
+      <p v-if="state === 'loading'" class="finder-empty">{{ t('app.finder.loading', "Listing the project's files…") }}</p>
       <p v-else-if="state === 'error'" class="finder-empty">{{ error }}</p>
-      <p v-else-if="!results.length" class="finder-empty">No file matches.</p>
+      <p v-else-if="!results.length" class="finder-empty">{{ t('app.finder.noMatch', 'No file matches.') }}</p>
       <div v-else ref="listEl" class="pal-list">
         <button
           v-for="(rel, i) in results"
@@ -112,8 +112,8 @@ function dirOf(rel) {
         </button>
       </div>
       <p class="finder-hint">
-        Enter: open<template v-if="canInsert"> · Ctrl+Enter: put its path in the active pane</template
-        ><template v-if="truncated"> · only the first 20,000 files</template>
+        {{ t('app.finder.hintOpen', 'Enter: open') }}<template v-if="canInsert"> · {{ t('app.finder.hintInsert', 'Ctrl+Enter: put its path in the active pane') }}</template
+        ><template v-if="truncated"> · {{ t('app.finder.hintTruncated', 'only the first 20,000 files') }}</template>
       </p>
     </div>
   </div>

@@ -1,10 +1,10 @@
-<!-- i18n-pending: text here does not go through t() yet -->
 <script>
 export default { name: 'SplitNode' }
 </script>
 
 <script setup>
 import { ref } from 'vue'
+import { t } from '../i18n'
 import TerminalPane from './TerminalPane.vue'
 import EditorPane from './EditorPane.vue'
 
@@ -108,7 +108,7 @@ function startDrag(e, i) {
         role="separator"
         tabindex="0"
         :aria-orientation="node.dir === 'row' ? 'vertical' : 'horizontal'"
-        aria-label="Resize panes (arrow keys)"
+        :aria-label="t('app.split.resize', 'Resize panes (arrow keys)')"
         @pointerdown="startDrag($event, i)"
         @keydown="onDividerKey($event, i)"
       ></div>
