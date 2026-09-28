@@ -111,7 +111,12 @@ async function importConfig() {
       return
     }
     const n = (res.targets || []).length
-    if (n === 0) say(t('remote.pane.inSync', '~/.ssh/config already in sync'))
+    if (res.truncated)
+      say(
+        t('remote.pane.importTruncated', '~/.ssh/config and its Include files are too large or too many: only part of them was read.'),
+        'bad'
+      )
+    else if (n === 0) say(t('remote.pane.inSync', '~/.ssh/config already in sync'))
     else if (n === 1) say(t('remote.pane.synced_one', 'Synced {{count}} server', { count: n }), 'ok')
     else say(t('remote.pane.synced', 'Synced {{count}} servers', { count: n }), 'ok')
     await refreshRemoteHosts()
@@ -194,7 +199,18 @@ function subtitle(target) {
         </p>
       </div>
       <div class="rh-head-actions">
-        <button type="button" class="rh-btn" data-test="remote-import" @click="importConfig">
+        <button
+          type="button"
+          class="rh-btn"
+          data-test="remote-import"
+          :title="
+            t(
+              'remote.pane.importHint',
+              'Reads ~/.ssh/config and the files it includes. Files that look like keys (id_*, *.pem, *.key, *.pub, known_hosts) are skipped, and the IdentityFile keys are never opened.'
+            )
+          "
+          @click="importConfig"
+        >
           <Upload :size="12" aria-hidden="true" />
           {{ t('remote.pane.import', 'Import') }}
         </button>

@@ -12,7 +12,7 @@ import fs from 'fs'
 import os from 'os'
 import { join } from 'path'
 import { execFile } from 'child_process'
-import { loadUserSshConfig } from './sshConfig'
+import { loadUserSshConfigDetailed } from './sshConfig'
 import { readJsonSafe, writeJsonSafe } from './safeJson'
 import { t } from './i18n'
 
@@ -114,8 +114,14 @@ export function configHostsToTargets(hosts) {
 }
 
 // --- The ssh.exe command line -------------------------------------------------------
-// argv (an array, never a shell string) for a terminal on `target`. A host
-// from ~/.ssh/config is reached by its alias: ssh reads the rest itself.
+// argv (an array, never a shell string) for a terminal on `target`.
+// - A host from ~/.ssh/config, untouched: reached by its alias alone, ssh
+//   reads the rest (HostName, User, Port...) from the config itself.
+// - A host edited or added in Tessel: its fields are passed explicitly. When
+//   it still carries a config alias (only its label, user... were edited),
+//   the alias keeps the config's other options but HostName and the port are
+//   stated (Orca's appendUnclaimedAliasEndpoint), so ssh always dials the
+//   host and port Tessel shows, never what the alias says.
 export function sshArgsFor(target, { test = false } = {}) {
   const checked = sanitizeTarget(target, { id: target && target.id })
   if (checked.error) throw new Error(checked.error)
@@ -123,13 +129,16 @@ export function sshArgsFor(target, { test = false } = {}) {
   const args = []
   if (test) args.push('-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10')
   if (tg.source !== 'ssh-config') {
-    if (tg.port !== DEFAULT_SSH_PORT) args.push('-p', String(tg.port))
+    const viaAlias = tg.configHost !== tg.host
+    // % would be read as a token in HostName (%h, %%): escaped.
+    if (viaAlias) args.push('-o', `HostName=${tg.host.replace(/%/g, '%%')}`)
+    if (viaAlias || tg.port !== DEFAULT_SSH_PORT) args.push('-p', String(tg.port))
     if (tg.username) args.push('-l', tg.username)
     if (tg.identityFile) args.push('-i', tg.identityFile)
     if (tg.jumpHost) args.push('-J', tg.jumpHost)
     if (tg.proxyCommand) args.push('-o', `ProxyCommand=${tg.proxyCommand}`)
   }
-  args.push(tg.configHost || tg.host)
+  args.push(tg.source === 'ssh-config' || tg.configHost !== tg.host ? tg.configHost : tg.host)
   if (test) args.push('exit')
   return args
 }
@@ -205,10 +214,12 @@ export function createRemoteHosts({
   // ~/.ssh/config -> saved targets (Orca's importConfig): new aliases are
   // added, config-sourced ones are refreshed, hand-made ones are left alone,
   // removed ones stay removed unless reAdopt (the explicit Import button).
-  function importConfig({ reAdopt = false } = {}) {
+  // Reads the config asynchronously; truncated: the parse hit its budget.
+  async function importConfig({ reAdopt = false } = {}) {
+    const { hosts, truncated } = await loadUserSshConfigDetailed({ home, fsApi })
     const store = load()
     if (reAdopt) store.removed = []
-    const fromConfig = configHostsToTargets(loadUserSshConfig({ home, fsApi }))
+    const fromConfig = configHostsToTargets(hosts)
     const removed = new Set(store.removed.map((r) => r.configHost))
     const added = []
     let changed = reAdopt
@@ -233,7 +244,7 @@ export function createRemoteHosts({
       changed = true
     }
     if (changed) save(store)
-    return { targets: added, all: list() }
+    return { targets: added, all: list(), truncated }
   }
 
   function add(input) {
@@ -252,8 +263,22 @@ export function createRemoteHosts({
     const i = store.targets.findIndex((x) => x.id === id)
     if (i < 0) return { ok: false, error: 'not-found' }
     // An edited host is the user's: a later config sync leaves it alone.
-    const { target, error } = sanitizeTarget({ ...store.targets[i], ...(updates || {}), source: 'manual' }, { id })
+    const prev = store.targets[i]
+    const merged = { ...prev, ...(updates || {}), source: 'manual' }
+    // A new Host typed over an imported alias is a new destination, not the
+    // alias any more: the alias is dropped (the host is connected to as
+    // shown) and remembered as removed, so the next passive sync does not
+    // bring the old entry back (Import does, on request).
+    const prevAlias = prev.configHost !== prev.host ? prev.configHost : ''
+    const newHost = typeof merged.host === 'string' ? merged.host.trim() : merged.host
+    const hostEdited = prevAlias && newHost !== prev.host
+    if (hostEdited && (merged.configHost === prevAlias || !merged.configHost)) merged.configHost = newHost
+    const { target, error } = sanitizeTarget(merged, { id })
     if (error) return { ok: false, error }
+    if (prevAlias && target.configHost !== prevAlias && !store.removed.some((r) => r.configHost === prevAlias)) {
+      store.removed.push({ configHost: prevAlias, host: prev.host, port: prev.port, username: prev.username, removedAt: now() })
+      store.removed = store.removed.slice(-200)
+    }
     store.targets[i] = target
     save(store)
     return { ok: true, target: { ...target } }
@@ -376,7 +401,7 @@ export function registerRemoteHosts({ ipcMain, service, killPane }) {
     }
   }
   ipcMain.handle('remoteHosts:list', guard(() => ({ ok: true, targets: service.list(), states: service.snapshot() })))
-  ipcMain.handle('remoteHosts:importConfig', guard(({ reAdopt }) => ({ ok: true, ...service.importConfig({ reAdopt: reAdopt === true }) })))
+  ipcMain.handle('remoteHosts:importConfig', guard(async ({ reAdopt }) => ({ ok: true, ...(await service.importConfig({ reAdopt: reAdopt === true })) })))
   ipcMain.handle('remoteHosts:add', guard(({ target }) => service.add(target)))
   ipcMain.handle('remoteHosts:update', guard(({ id, updates }) => service.update(String(id || ''), updates)))
   ipcMain.handle('remoteHosts:remove', guard(({ id }) => {

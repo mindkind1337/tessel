@@ -6,6 +6,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createRemoteHosts, registerRemoteHosts, sanitizeTarget, sshArgsFor, configHostsToTargets, findSshExe } from '../remoteHosts'
+import { formFromTarget, buildSavePayload } from '../../renderer/src/remoteHosts'
 
 let root
 let home
@@ -79,34 +80,34 @@ describe('sanitizeTarget / sshArgsFor', () => {
 })
 
 describe('the host store', () => {
-  it('imports ~/.ssh/config hosts, skipping wildcards, and saves them', () => {
+  it('imports ~/.ssh/config hosts, skipping wildcards, and saves them', async () => {
     writeConfig('Host *\n  User all\nHost prod\n  HostName prod.example.com\n  User deploy\nHost box\n')
     const s = service()
-    const res = s.importConfig()
+    const res = await s.importConfig()
     expect(res.targets.map((x) => x.configHost)).toEqual(['prod', 'box'])
     expect(s.list()[0]).toMatchObject({ label: 'prod', host: 'prod.example.com', username: 'deploy', port: 22, source: 'ssh-config' })
     const saved = JSON.parse(readFileSync(join(dir, 'remote-hosts.json'), 'utf8'))
     expect(saved.targets).toHaveLength(2)
     // A second sync adds nothing.
-    expect(service().importConfig().targets).toEqual([])
+    expect((await service().importConfig()).targets).toEqual([])
   })
 
-  it('refreshes config hosts, leaves edited ones alone, and keeps removed ones removed until Import', () => {
+  it('refreshes config hosts, leaves edited ones alone, and keeps removed ones removed until Import', async () => {
     writeConfig('Host prod\n  HostName one\nHost box\n')
     const s = service()
-    s.importConfig()
+    await s.importConfig()
     const prod = s.list().find((x) => x.configHost === 'prod')
     const box = s.list().find((x) => x.configHost === 'box')
     writeConfig('Host prod\n  HostName two\nHost box\n  HostName changed\n')
     expect(s.update(box.id, { label: 'Mine' }).ok).toBe(true)
-    s.importConfig()
+    await s.importConfig()
     expect(s.get(prod.id).host).toBe('two')
     expect(s.get(box.id)).toMatchObject({ label: 'Mine', host: 'box', source: 'manual' })
 
     expect(s.remove(prod.id).ok).toBe(true)
-    expect(s.importConfig().targets).toEqual([])
+    expect((await s.importConfig()).targets).toEqual([])
     expect(s.list().some((x) => x.configHost === 'prod')).toBe(false)
-    expect(s.importConfig({ reAdopt: true }).targets.map((x) => x.configHost)).toEqual(['prod'])
+    expect((await s.importConfig({ reAdopt: true })).targets.map((x) => x.configHost)).toEqual(['prod'])
   })
 
   it('adds, updates and removes hand-made hosts with validation', () => {
@@ -134,6 +135,64 @@ describe('the host store', () => {
     expect(s.launchFor(target.id)).toMatchObject({ ok: true, file: 'C:\\Windows\\System32\\OpenSSH\\ssh.exe', args: ['-p', '2222', 'srv'], name: 'srv' })
     expect(s.launchFor('ssh-missing').ok).toBe(false)
     expect(service({ sshExe: () => null }).launchFor(target.id).ok).toBe(false)
+  })
+})
+
+describe('an imported host whose Host is edited (Codex review, defect 1)', () => {
+  it('form -> service -> argv: connects to the host shown, not to the old alias', async () => {
+    writeConfig('Host prod\n  HostName old.example.invalid\n  User deploy\n')
+    const s = service()
+    await s.importConfig()
+    const old = s.list()[0]
+    expect(s.launchFor(old.id).args).toEqual(['prod'])
+    const form = formFromTarget(old)
+    form.host = 'new.example.invalid'
+    const payload = buildSavePayload(form)
+    expect(payload.ok).toBe(true)
+    expect(s.update(old.id, payload.target).ok).toBe(true)
+    const launch = s.launchFor(old.id)
+    expect(launch.target.host).toBe('new.example.invalid')
+    expect(launch.args).toEqual(['-l', 'deploy', 'new.example.invalid'])
+    expect(launch.args).not.toContain('prod')
+    // The old alias is not brought back by the next passive sync...
+    expect((await s.importConfig()).targets).toEqual([])
+    expect(s.list()).toHaveLength(1)
+    // ...only by Import, on request.
+    expect((await s.importConfig({ reAdopt: true })).targets.map((x) => x.configHost)).toEqual(['prod'])
+  })
+
+  it('the service drops the alias even when the renderer sends it back unchanged', async () => {
+    writeConfig('Host prod\n  HostName old.example.invalid\n  User deploy\n')
+    const s = service()
+    await s.importConfig()
+    const old = s.list()[0]
+    const res = s.update(old.id, { configHost: 'prod', host: 'new.example.invalid' })
+    expect(res.target).toMatchObject({ configHost: 'new.example.invalid', host: 'new.example.invalid', source: 'manual' })
+    expect(s.launchFor(old.id).args).toEqual(['-l', 'deploy', 'new.example.invalid'])
+  })
+
+  it('an alias kept (only the label edited) still dials the host and port shown', async () => {
+    writeConfig('Host prod\n  HostName old.example.invalid\n  User deploy\n')
+    const s = service()
+    await s.importConfig()
+    const old = s.list()[0]
+    const form = formFromTarget(old)
+    form.label = 'Production'
+    s.update(old.id, buildSavePayload(form).target)
+    expect(s.get(old.id)).toMatchObject({ configHost: 'prod', host: 'old.example.invalid', source: 'manual' })
+    expect(s.launchFor(old.id).args).toEqual(['-o', 'HostName=old.example.invalid', '-p', '22', '-l', 'deploy', 'prod'])
+  })
+
+  it('a % in a stated HostName is escaped (no token expansion)', () => {
+    const { target } = sanitizeTarget({ configHost: 'lab', host: 'fe80::1%eth0', source: 'manual' })
+    expect(sshArgsFor(target)).toEqual(['-o', 'HostName=fe80::1%%eth0', '-p', '22', 'lab'])
+  })
+
+  it('an untouched config host still goes by its alias alone', async () => {
+    writeConfig('Host prod\n  HostName old.example.invalid\n  User deploy\n  Port 2200\n')
+    const s = service()
+    await s.importConfig()
+    expect(s.launchFor(s.list()[0].id).args).toEqual(['prod'])
   })
 })
 

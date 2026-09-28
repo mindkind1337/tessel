@@ -27,7 +27,9 @@
       "synced_one": "Synchronisation terminée : {{count}} serveur",
       "synced_other": "Synchronisation terminée : {{count}} serveurs",
       "hostRequired": "Un hôte ou un alias de config SSH est requis",
-      "portInvalid": "Le port doit être compris entre 1 et 65535"
+      "portInvalid": "Le port doit être compris entre 1 et 65535",
+      "importHint": "Lit ~/.ssh/config et les fichiers qu'il inclut. Les fichiers qui ressemblent à des clés (id_*, *.pem, *.key, *.pub, known_hosts) sont ignorés, et les clés IdentityFile ne sont jamais ouvertes.",
+      "importTruncated": "~/.ssh/config et ses fichiers Include sont trop gros ou trop nombreux : seule une partie a été lue."
     },
     "card": {
       "connect": "Se connecter",
