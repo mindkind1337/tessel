@@ -1,6 +1,6 @@
-<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { t } from '../i18n'
 
 const props = defineProps({
   cwd: { type: String, default: '' },
@@ -47,10 +47,10 @@ const connected = computed(() => connection.value?.available && connection.value
 const isPr = computed(() => kind.value === 'prs')
 const api = () => window.shellApi.github
 const failed = (result) => {
-  if (!result?.ok) throw new Error(result?.error || 'GitHub request failed.')
+  if (!result?.ok) throw new Error(result?.error || t('github.requestFailed', 'GitHub request failed.'))
   return result
 }
-const errorText = (err) => err?.message || 'GitHub request failed.'
+const errorText = (err) => err?.message || t('github.requestFailed', 'GitHub request failed.')
 function close() {
   if (!busy.value) emit('close')
 }
@@ -68,23 +68,23 @@ async function openUrl(value) {
     try {
       await window.shellApi.openExternal(url)
     } catch {
-      error.value = 'Could not open this link.'
+      error.value = t('github.openFailed', 'Could not open this link.')
     }
   }
 }
-async function copy(value, label = 'Link copied.') {
+async function copy(value, label = t('github.linkCopied', 'Link copied.')) {
   try {
     await window.shellApi.writeClipboard(String(value))
     notice.value = label
   } catch {
-    error.value = 'Could not copy to the clipboard.'
+    error.value = t('github.copyFailed', 'Could not copy to the clipboard.')
   }
 }
 function copyIssue() {
   const item = selected.value
   copy(
     `#${item.number} ${item.title}\n${item.url}\n\n${item.body || ''}`,
-    isPr.value ? 'Pull request copied.' : 'Issue copied.'
+    isPr.value ? t('github.prCopied', 'Pull request copied.') : t('github.issueCopied', 'Issue copied.')
   )
 }
 async function loadStatus() {
@@ -93,7 +93,7 @@ async function loadStatus() {
   error.value = ''
   try {
     if (!window.shellApi.github)
-      throw new Error('GitHub integration is not available in this version.')
+      throw new Error(t('github.unavailable', 'GitHub integration is not available in this version.'))
     const result = failed(await api().status({ cwd: props.cwd }))
     if (!alive || request !== statusRequest) return
     connection.value = result
@@ -189,7 +189,7 @@ async function create() {
     if (!alive) return
     composer.value = false
     createdUrl.value = result.url || ''
-    notice.value = isPr.value ? 'Pull request created.' : 'Issue created.'
+    notice.value = isPr.value ? t('github.prCreated', 'Pull request created.') : t('github.issueCreated', 'Issue created.')
     await loadList()
   } catch (err) {
     if (alive) error.value = errorText(err)
@@ -201,13 +201,25 @@ function askAction(action) {
   confirmation.value = action
   error.value = ''
 }
-const actionLabels = {
-  close: 'Close',
-  reopen: 'Reopen',
-  merge: 'Merge pull request',
-  autoMerge: 'Enable auto-merge',
-  rerunFailed: 'Rerun failed checks',
-  rerunAll: 'Rerun all checks'
+// Text with {{placeholders}} is built here: in the template, "}}" would end
+// the interpolation.
+function confirmText(action, number) {
+  if (action === 'autoMerge')
+    return t('github.confirm.autoMerge', 'Enable auto-merge for #{{number}}? GitHub may merge immediately if its requirements are already met.', { number })
+  if (action === 'close') return t('github.confirm.close', 'Close #{{number}} on GitHub?', { number })
+  if (action === 'reopen') return t('github.confirm.reopen', 'Reopen #{{number}} on GitHub?', { number })
+  if (action === 'merge') return t('github.confirm.merge', 'Merge pull request on GitHub?')
+  if (action === 'rerunFailed') return t('github.confirm.rerunFailed', 'Rerun failed checks on GitHub?')
+  if (action === 'rerunAll') return t('github.confirm.rerunAll', 'Rerun all checks on GitHub?')
+  return ''
+}
+const fromHint = (path) => t('github.create.from', 'From {{path}}. Push this branch before creating the pull request.', { path })
+const filesTab = (count) => t('github.detail.files', 'Files ({{count}})', { count })
+const checksTab = (count) => t('github.detail.checks', 'Checks ({{count}})', { count })
+function closeLabel(state, pr) {
+  if (String(state).toUpperCase() === 'CLOSED')
+    return pr ? t('github.reopenPr', 'Reopen pull request') : t('github.reopenIssue', 'Reopen issue')
+  return pr ? t('github.closePr', 'Close pull request') : t('github.closeIssue', 'Close issue')
 }
 async function runAction(action, extra = {}) {
   if (busy.value || !selected.value) return
@@ -226,7 +238,7 @@ async function runAction(action, extra = {}) {
     if (!alive) return
     confirmation.value = null
     comment.value = ''
-    notice.value = action === 'comment' ? 'Comment posted.' : 'GitHub updated.'
+    notice.value = action === 'comment' ? t('github.commentPosted', 'Comment posted.') : t('github.updated', 'GitHub updated.')
     await loadDetail()
   } catch (err) {
     if (alive) error.value = errorText(err)
@@ -260,7 +272,7 @@ async function start() {
   try {
     if (!props.startIssue) {
       emit('start', request)
-      notice.value = 'Task preparation requested.'
+      notice.value = t('github.startRequested', 'Task preparation requested.')
       return
     }
     failed(await props.startIssue(request))
@@ -338,9 +350,9 @@ onBeforeUnmount(() => {
       <header class="issue-dialog-head">
         <div>
           <h2 id="github-dialog-title">GitHub</h2>
-          <p>{{ connection?.repo?.nameWithOwner || cwd || 'Choose a project workspace' }}</p>
+          <p>{{ connection?.repo?.nameWithOwner || cwd || t('github.chooseWorkspace', 'Choose a project workspace') }}</p>
         </div>
-        <button class="issue-btn" aria-label="Close GitHub" :disabled="busy" @click="close">
+        <button class="issue-btn" :aria-label="t('github.close', 'Close GitHub')" :disabled="busy" @click="close">
           ✕
         </button>
       </header>
@@ -348,35 +360,35 @@ onBeforeUnmount(() => {
         <p v-if="error" class="issue-error" role="alert">
           {{ error }}
           <button v-if="selected" class="issue-link" :disabled="busy" @click="loadDetail()">
-            Retry details
+            {{ t('github.retryDetails', 'Retry details') }}
           </button>
         </p>
         <p v-if="notice" class="issue-notice" role="status">
           {{ notice }}
           <button v-if="createdUrl" class="issue-link" @click="openUrl(createdUrl)">
-            Open on GitHub
+            {{ t('github.openOnGitHub', 'Open on GitHub') }}
           </button>
         </p>
         <div v-if="!connected" class="issue-empty">
-          <p v-if="loading">Checking GitHub…</p>
+          <p v-if="loading">{{ t('github.checking', 'Checking GitHub…') }}</p>
           <template v-else
             ><p>
               {{
                 connection?.available === false
-                  ? 'Install GitHub CLI to connect this project.'
+                  ? t('github.needCli', 'Install GitHub CLI to connect this project.')
                   : connection?.authenticated === false
-                    ? 'Sign in with gh auth login in a terminal, then refresh.'
-                    : 'GitHub could not be loaded for this project.'
+                    ? t('github.needSignIn', 'Sign in with gh auth login in a terminal, then refresh.')
+                    : t('github.loadFailed', 'GitHub could not be loaded for this project.')
               }}
             </p>
             <button class="issue-btn" data-test="github-connect-refresh" @click="loadStatus">
-              Refresh connection
+              {{ t('github.refreshConnection', 'Refresh connection') }}
             </button></template
           >
         </div>
         <template v-else>
           <div v-if="!selected && !composer" class="issue-toolbar">
-            <div class="issue-segments" role="group" aria-label="GitHub item type">
+            <div class="issue-segments" role="group" :aria-label="t('github.itemType', 'GitHub item type')">
               <button
                 v-for="value in ['issues', 'prs']"
                 :key="value"
@@ -385,27 +397,30 @@ onBeforeUnmount(() => {
                 :disabled="busy"
                 @click="kind = value"
               >
-                {{ value === 'issues' ? 'Issues' : 'Pull requests' }}
+                {{ value === 'issues' ? t('github.issues', 'Issues') : t('github.prs', 'Pull requests') }}
               </button>
             </div>
-            <button class="issue-btn" :disabled="loading || busy" @click="loadList">Refresh</button
+            <button class="issue-btn" :disabled="loading || busy" @click="loadList">
+              {{ t('github.refresh', 'Refresh') }}</button
             ><button class="issue-btn primary" data-test="github-new" @click="beginCreate">
-              {{ isPr ? 'New pull request' : 'New issue' }}
+              {{ isPr ? t('github.newPr', 'New pull request') : t('github.newIssue', 'New issue') }}
             </button>
           </div>
           <template v-if="composer">
-            <button class="issue-link" :disabled="busy" @click="back">← Back</button>
-            <h3>{{ isPr ? 'New pull request' : 'New issue' }}</h3>
+            <button class="issue-link" :disabled="busy" @click="back">
+              {{ t('github.back', '← Back') }}
+            </button>
+            <h3>{{ isPr ? t('github.newPr', 'New pull request') : t('github.newIssue', 'New issue') }}</h3>
             <form class="issue-form" @submit.prevent="create">
               <label
-                >Title<input
+                >{{ t('github.create.title', 'Title') }}<input
                   v-model="title"
                   data-test="github-title"
                   maxlength="256"
                   required
                   :disabled="busy" /></label
               ><label
-                >Description<textarea
+                >{{ t('github.create.description', 'Description') }}<textarea
                   v-model="body"
                   data-test="github-body"
                   rows="6"
@@ -413,31 +428,38 @@ onBeforeUnmount(() => {
                 ></textarea></label
               ><template v-if="isPr"
                 ><p class="issue-hint">
-                  From {{ prCwd || cwd }}. Push this branch before creating the pull request.
+                  {{ fromHint(prCwd || cwd) }}
                 </p>
                 <div class="issue-form-pair">
                   <label
-                    >Base branch<input
+                    >{{ t('github.create.base', 'Base branch') }}<input
                       v-model="base"
-                      aria-label="Base branch"
+                      :aria-label="t('github.create.base', 'Base branch')"
                       :disabled="busy" /></label
                   ><label
-                    >Head branch<input v-model="head" placeholder="Current branch" :disabled="busy"
+                    >{{ t('github.create.head', 'Head branch')
+                    }}<input v-model="head" :placeholder="t('github.create.headPlaceholder', 'Current branch')" :disabled="busy"
                   /></label>
                 </div>
                 <label class="issue-checkbox"
-                  ><input v-model="draft" type="checkbox" />Create as draft</label
+                  ><input v-model="draft" type="checkbox" />{{ t('github.create.draft', 'Create as draft') }}</label
                 ></template
               >
               <div class="issue-actions">
                 <button type="button" class="issue-btn" :disabled="busy" @click="back">
-                  Cancel</button
+                  {{ t('github.cancel', 'Cancel') }}</button
                 ><button
                   class="issue-btn primary"
                   data-test="github-create-submit"
                   :disabled="busy || !title.trim() || (isPr && !base.trim())"
                 >
-                  {{ busy ? 'Creating…' : isPr ? 'Create pull request' : 'Create issue' }}
+                  {{
+                    busy
+                      ? t('github.create.creating', 'Creating…')
+                      : isPr
+                        ? t('github.create.pr', 'Create pull request')
+                        : t('github.create.issue', 'Create issue')
+                  }}
                 </button>
               </div>
             </form>
@@ -445,10 +467,13 @@ onBeforeUnmount(() => {
           <template v-else-if="selected">
             <div class="issue-toolbar">
               <button class="issue-link" :disabled="busy" @click="back">
-                ← {{ isPr ? 'Pull requests' : 'Issues' }}</button
+                {{ isPr ? t('github.backToPrs', '← Pull requests') : t('github.backToIssues', '← Issues') }}</button
               ><span class="issue-spacer"></span
-              ><button class="issue-btn" @click="openUrl(selected.url)">Open</button
-              ><button class="issue-btn" @click="copy(selected.url)">Copy link</button>
+              ><button class="issue-btn" @click="openUrl(selected.url)">
+                {{ t('github.open', 'Open') }}</button
+              ><button class="issue-btn" @click="copy(selected.url)">
+                {{ t('github.copyLink', 'Copy link') }}
+              </button>
             </div>
             <h3 class="issue-item-title">
               <span class="issue-id">#{{ selected.number }}</span> {{ selected.title }}
@@ -456,7 +481,7 @@ onBeforeUnmount(() => {
             <p class="issue-hint">
               {{ selected.state
               }}<span v-if="selected.author?.login"> · {{ selected.author.login }}</span
-              ><span v-if="selected.isDraft"> · Draft</span>
+              ><span v-if="selected.isDraft"> · {{ t('github.draft', 'Draft') }}</span>
             </p>
             <div class="issue-labels">
               <span v-for="label in selected.labels || []" :key="label.name" class="issue-tag">{{
@@ -464,37 +489,39 @@ onBeforeUnmount(() => {
               }}</span>
             </div>
             <p v-if="selected.truncated" class="issue-hint">
-              Some details are limited. Open this item on GitHub to see everything.
+              {{ t('github.detail.limited', 'Some details are limited. Open this item on GitHub to see everything.') }}
             </p>
-            <p v-if="detailLoading" class="issue-empty" role="status">Reading details…</p>
+            <p v-if="detailLoading" class="issue-empty" role="status">
+              {{ t('github.detail.reading', 'Reading details…') }}
+            </p>
             <template v-else>
               <div
                 class="issue-segments issue-detail-tabs"
                 role="group"
-                aria-label="Pull request details"
+                :aria-label="t('github.detail.label', 'Pull request details')"
               >
                 <button :aria-pressed="tab === 'conversation'" @click="tab = 'conversation'">
-                  Conversation</button
+                  {{ t('github.detail.conversation', 'Conversation') }}</button
                 ><template v-if="isPr"
                   ><button :aria-pressed="tab === 'files'" @click="tab = 'files'">
-                    Files ({{ selected.files?.length || 0 }})</button
+                    {{ filesTab(selected.files?.length || 0) }}</button
                   ><button :aria-pressed="tab === 'checks'" @click="tab = 'checks'">
-                    Checks ({{ selected.checks?.length || 0 }})
+                    {{ checksTab(selected.checks?.length || 0) }}
                   </button></template
                 >
               </div>
               <div v-if="tab === 'conversation'" class="issue-conversation">
-                <pre class="issue-prose">{{ selected.body || 'No description.' }}</pre>
+                <pre class="issue-prose">{{ selected.body || t('github.detail.noDescription', 'No description.') }}</pre>
                 <article
                   v-for="(entry, index) in selected.comments || []"
                   :key="entry.id || index"
                   class="issue-comment"
                 >
-                  <strong>{{ entry.author?.login || 'GitHub user' }}</strong>
+                  <strong>{{ entry.author?.login || t('github.detail.user', 'GitHub user') }}</strong>
                   <pre class="issue-prose">{{ entry.body }}</pre>
                 </article>
                 <label class="issue-field"
-                  >Add a comment<textarea v-model="comment" rows="3" :disabled="busy" />
+                  >{{ t('github.detail.addComment', 'Add a comment') }}<textarea v-model="comment" rows="3" :disabled="busy" />
                 </label>
                 <div class="issue-actions">
                   <button
@@ -503,12 +530,14 @@ onBeforeUnmount(() => {
                     :disabled="busy || !comment.trim()"
                     @click="runAction('comment', { body: comment })"
                   >
-                    Post comment
+                    {{ t('github.detail.postComment', 'Post comment') }}
                   </button>
                 </div>
               </div>
               <div v-else-if="tab === 'files'" class="issue-files">
-                <p v-if="!selected.files?.length" class="issue-empty">No changed files reported.</p>
+                <p v-if="!selected.files?.length" class="issue-empty">
+                  {{ t('github.detail.noFiles', 'No changed files reported.') }}
+                </p>
                 <div v-for="file in selected.files || []" :key="file.path" class="issue-file">
                   <div>
                     <code>{{ file.path }}</code
@@ -521,15 +550,17 @@ onBeforeUnmount(() => {
               </div>
               <div v-else>
                 <div class="issue-toolbar">
-                  <span class="issue-hint">Latest reported checks</span
+                  <span class="issue-hint">{{ t('github.checks.latest', 'Latest reported checks') }}</span
                   ><button class="issue-btn" :disabled="busy" @click="refreshChecks">
-                    Refresh checks
+                    {{ t('github.checks.refresh', 'Refresh checks') }}
                   </button>
                 </div>
                 <p v-if="selected.checksError" class="issue-error" role="alert">
                   {{ selected.checksError }}
                 </p>
-                <p v-if="!selected.checks?.length" class="issue-empty">No checks reported.</p>
+                <p v-if="!selected.checks?.length" class="issue-empty">
+                  {{ t('github.checks.none', 'No checks reported.') }}
+                </p>
                 <div
                   v-for="(check, index) in selected.checks || []"
                   :key="check.name + index"
@@ -537,17 +568,17 @@ onBeforeUnmount(() => {
                 >
                   <span>{{ check.name }}</span
                   ><span class="issue-tag">{{
-                    check.conclusion || check.state || check.status || 'Pending'
+                    check.conclusion || check.state || check.status || t('github.checks.pending', 'Pending')
                   }}</span
                   ><button v-if="check.url" class="issue-link" @click="openUrl(check.url)">
-                    Open
+                    {{ t('github.open', 'Open') }}
                   </button>
                 </div>
                 <div class="issue-actions">
                   <button class="issue-btn" :disabled="busy" @click="askAction('rerunFailed')">
-                    Rerun failed</button
+                    {{ t('github.checks.rerunFailed', 'Rerun failed') }}</button
                   ><button class="issue-btn" :disabled="busy" @click="askAction('rerunAll')">
-                    Rerun all
+                    {{ t('github.checks.rerunAll', 'Rerun all') }}
                   </button>
                 </div>
               </div>
@@ -555,27 +586,19 @@ onBeforeUnmount(() => {
                 v-if="confirmation"
                 class="issue-confirm"
                 role="group"
-                aria-label="Confirm GitHub action"
+                :aria-label="t('github.confirm.label', 'Confirm GitHub action')"
               >
-                <p v-if="confirmation === 'autoMerge'">
-                  Enable auto-merge for #{{ selected.number }}? GitHub may merge immediately if its
-                  requirements are already met.
-                </p>
-                <p v-else>
-                  {{ actionLabels[confirmation]
-                  }}{{ ['close', 'reopen'].includes(confirmation) ? ` #${selected.number}` : '' }}
-                  on GitHub?
-                </p>
+                <p>{{ confirmText(confirmation, selected.number) }}</p>
                 <label v-if="['merge', 'autoMerge'].includes(confirmation)" class="issue-field"
-                  >Merge method<select v-model="method" :disabled="busy">
-                    <option value="squash">Squash</option>
-                    <option value="merge">Merge commit</option>
-                    <option value="rebase">Rebase</option>
+                  >{{ t('github.merge.method', 'Merge method') }}<select v-model="method" :disabled="busy">
+                    <option value="squash">{{ t('github.merge.squash', 'Squash') }}</option>
+                    <option value="merge">{{ t('github.merge.commit', 'Merge commit') }}</option>
+                    <option value="rebase">{{ t('github.merge.rebase', 'Rebase') }}</option>
                   </select></label
                 >
                 <div class="issue-actions">
                   <button class="issue-btn" :disabled="busy" @click="confirmation = null">
-                    Cancel</button
+                    {{ t('github.cancel', 'Cancel') }}</button
                   ><button
                     class="issue-btn primary"
                     data-test="github-confirm-action"
@@ -587,7 +610,7 @@ onBeforeUnmount(() => {
                       )
                     "
                   >
-                    {{ busy ? 'Updating…' : 'Confirm' }}
+                    {{ busy ? t('github.confirm.updating', 'Updating…') : t('github.confirm.button', 'Confirm') }}
                   </button>
                 </div>
               </div>
@@ -601,28 +624,27 @@ onBeforeUnmount(() => {
                     )
                   "
                 >
-                  {{ String(selected.state).toUpperCase() === 'CLOSED' ? 'Reopen' : 'Close' }}
-                  {{ isPr ? 'pull request' : 'issue' }}</button
+                  {{ closeLabel(selected.state, isPr) }}</button
                 ><template v-if="isPr && String(selected.state).toUpperCase() === 'OPEN'"
                   ><button class="issue-btn" :disabled="busy" @click="askAction('autoMerge')">
-                    Enable auto-merge</button
+                    {{ t('github.autoMerge', 'Enable auto-merge') }}</button
                   ><button
                     class="issue-btn primary"
                     :disabled="busy"
                     data-test="github-merge"
                     @click="askAction('merge')"
                   >
-                    Merge…
+                    {{ t('github.mergeButton', 'Merge…') }}
                   </button></template
                 >
               </div>
               <div class="issue-start">
-                <h4>{{ isPr ? 'Work on this pull request' : 'Work on this issue' }}</h4>
+                <h4>{{ isPr ? t('github.start.titlePr', 'Work on this pull request') : t('github.start.titleIssue', 'Work on this issue') }}</h4>
                 <div class="issue-start-row">
                   <label class="issue-field"
-                    >Agent<select
+                    >{{ t('github.start.agent', 'Agent') }}<select
                       v-model="agentId"
-                      aria-label="Agent for GitHub issue"
+                      :aria-label="t('github.start.agentLabel', 'Agent for GitHub issue')"
                       :disabled="busy"
                     >
                       <option v-for="agent in agents" :key="agent.id" :value="agent.id">
@@ -630,20 +652,21 @@ onBeforeUnmount(() => {
                       </option>
                     </select></label
                   ><label class="issue-checkbox"
-                    ><input v-model="worktree" type="checkbox" :disabled="busy || isPr" />Own Git
-                    copy</label
+                    ><input v-model="worktree" type="checkbox" :disabled="busy || isPr" />{{
+                      t('github.start.ownCopy', 'Own Git copy')
+                    }}</label
                   >
                 </div>
                 <div class="issue-actions">
                   <button class="issue-btn" @click="copyIssue">
-                    {{ isPr ? 'Copy pull request' : 'Copy issue' }}</button
+                    {{ isPr ? t('github.copyPr', 'Copy pull request') : t('github.copyIssue', 'Copy issue') }}</button
                   ><button
                     class="issue-btn primary"
                     data-test="github-start"
                     :disabled="busy || !agentId"
                     @click="start"
                   >
-                    {{ busy ? 'Preparing…' : 'Start task' }}
+                    {{ busy ? t('github.start.preparing', 'Preparing…') : t('github.start.button', 'Start task') }}
                   </button>
                 </div>
               </div>
@@ -652,26 +675,30 @@ onBeforeUnmount(() => {
           <template v-else>
             <form class="issue-filters" @submit.prevent="loadList">
               <label
-                >Show<select v-model="preset" aria-label="GitHub issue filter">
-                  <option value="all">All open</option>
-                  <option value="mine">{{ isPr ? 'Created by me' : 'Assigned to me' }}</option>
-                  <option v-if="isPr" value="review">Review requested</option>
+                >{{ t('github.filter.show', 'Show')
+                }}<select v-model="preset" :aria-label="t('github.filter.label', 'GitHub issue filter')">
+                  <option value="all">{{ t('github.filter.allOpen', 'All open') }}</option>
+                  <option value="mine">
+                    {{ isPr ? t('github.filter.createdByMe', 'Created by me') : t('github.filter.assignedToMe', 'Assigned to me') }}
+                  </option>
+                  <option v-if="isPr" value="review">{{ t('github.filter.review', 'Review requested') }}</option>
                 </select></label
               ><label class="issue-search"
-                >Search<input
+                >{{ t('github.search.label', 'Search')
+                }}<input
                   v-model="query"
-                  placeholder="Title, label, or GitHub search"
-                  aria-label="Search GitHub" /></label
-              ><button class="issue-btn" type="submit">Search</button>
+                  :placeholder="t('github.search.placeholder', 'Title, label, or GitHub search')"
+                  :aria-label="t('github.search.aria', 'Search GitHub')" /></label
+              ><button class="issue-btn" type="submit">{{ t('github.search.button', 'Search') }}</button>
             </form>
             <p v-if="loading" class="issue-empty" role="status">
-              Reading {{ isPr ? 'pull requests' : 'issues' }}…
+              {{ isPr ? t('github.list.readingPrs', 'Reading pull requests…') : t('github.list.readingIssues', 'Reading issues…') }}
             </p>
             <p v-else-if="!items.length && !error" class="issue-empty">
-              No {{ isPr ? 'pull requests' : 'issues' }} match this view.
+              {{ isPr ? t('github.list.noPrs', 'No pull requests match this view.') : t('github.list.noIssues', 'No issues match this view.') }}
             </p>
             <p v-if="truncated" class="issue-hint">
-              Results are limited. Narrow your search to find more.
+              {{ t('github.list.truncated', 'Results are limited. Narrow your search to find more.') }}
             </p>
             <div class="issue-list">
               <button
@@ -687,7 +714,7 @@ onBeforeUnmount(() => {
                   ><strong>{{ item.title }}</strong></span
                 ><span class="issue-row-meta"
                   >{{ item.state }}<span v-if="item.author?.login"> · {{ item.author.login }}</span
-                  ><span v-if="item.isDraft"> · Draft</span></span
+                  ><span v-if="item.isDraft"> · {{ t('github.draft', 'Draft') }}</span></span
                 ><span v-if="item.labels?.length" class="issue-labels"
                   ><span v-for="label in item.labels" :key="label.name" class="issue-tag">{{
                     label.name

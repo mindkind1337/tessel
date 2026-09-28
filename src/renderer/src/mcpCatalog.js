@@ -1,4 +1,3 @@
-// i18n-pending: text here does not go through t() yet
 // Popular MCP servers for the catalog. Every package and URL here was checked
 // to exist. `inputs` are asked for before adding; `{key}` placeholders in the
 // command, URL or header are replaced with the answers.
@@ -7,258 +6,372 @@
 //               'header' (HTTP header for Claude Code)
 // `requires` names a command that must be installed (see Tools).
 // `auth: 'oauth'` means the server asks you to sign in on first use.
+// Descriptions, labels and help are getters, so they read in the current
+// language when shown.
+import { t } from './i18n'
 
 export const MCP_CATEGORIES = ['All', 'Browser', 'Docs', 'Code', 'Data', 'Services', 'Utility']
+
+// The category's name in the interface's language (the value stays English).
+export function categoryLabel(category) {
+  const labels = {
+    All: () => t('mcp.category.all', 'All'),
+    Browser: () => t('mcp.category.browser', 'Browser'),
+    Docs: () => t('mcp.category.docs', 'Docs'),
+    Code: () => t('mcp.category.code', 'Code'),
+    Data: () => t('mcp.category.data', 'Data'),
+    Services: () => t('mcp.category.services', 'Services'),
+    Utility: () => t('mcp.category.utility', 'Utility')
+  }
+  return labels[category] ? labels[category]() : category
+}
 
 export const MCP_CATALOG = [
   {
     id: 'playwright',
-    name: 'Playwright',
+    name: 'Playwright', // i18n-ignore
     category: 'Browser',
     accent: '#2ead33',
-    desc: 'Lets agents open web pages, click, type and take screenshots in a real browser.',
+    get desc() {
+      return t('mcp.catalog.playwright.desc', 'Lets agents open web pages, click, type and take screenshots in a real browser.')
+    },
     transport: 'stdio',
     command: 'npx -y @playwright/mcp@latest',
     requires: 'node'
   },
   {
     id: 'chrome-devtools',
-    name: 'Chrome DevTools',
+    name: 'Chrome DevTools', // i18n-ignore
     category: 'Browser',
     accent: '#4285f4',
-    desc: 'Debug a live Chrome: console, network, performance traces.',
+    get desc() {
+      return t('mcp.catalog.chrome-devtools.desc', 'Debug a live Chrome: console, network, performance traces.')
+    },
     transport: 'stdio',
     command: 'npx -y chrome-devtools-mcp@latest',
     requires: 'node'
   },
   {
     id: 'context7',
-    name: 'Context7',
+    name: 'Context7', // i18n-ignore
     category: 'Docs',
     accent: '#10b981',
-    desc: 'Up-to-date documentation and code examples for thousands of libraries.',
+    get desc() {
+      return t('mcp.catalog.context7.desc', 'Up-to-date documentation and code examples for thousands of libraries.')
+    },
     transport: 'http',
     url: 'https://mcp.context7.com/mcp'
   },
   {
     id: 'deepwiki',
-    name: 'DeepWiki',
+    name: 'DeepWiki', // i18n-ignore
     category: 'Docs',
     accent: '#3b82f6',
-    desc: 'Ask questions about any public GitHub repository and read its generated docs.',
+    get desc() {
+      return t('mcp.catalog.deepwiki.desc', 'Ask questions about any public GitHub repository and read its generated docs.')
+    },
     transport: 'http',
     url: 'https://mcp.deepwiki.com/mcp'
   },
   {
     id: 'cloudflare-docs',
-    name: 'Cloudflare Docs',
+    name: 'Cloudflare Docs', // i18n-ignore
     category: 'Docs',
     accent: '#f38020',
-    desc: 'Search Cloudflare developer documentation.',
+    get desc() {
+      return t('mcp.catalog.cloudflare-docs.desc', 'Search Cloudflare developer documentation.')
+    },
     transport: 'http',
     url: 'https://docs.mcp.cloudflare.com/mcp'
   },
   {
     id: 'huggingface',
-    name: 'Hugging Face',
+    name: 'Hugging Face', // i18n-ignore
     category: 'Docs',
     accent: '#ffd21e',
-    desc: 'Search models, datasets, papers and Spaces on Hugging Face.',
+    get desc() {
+      return t('mcp.catalog.huggingface.desc', 'Search models, datasets, papers and Spaces on Hugging Face.')
+    },
     transport: 'http',
     url: 'https://huggingface.co/mcp'
   },
   {
     id: 'github',
-    name: 'GitHub',
+    name: 'GitHub', // i18n-ignore
     category: 'Code',
     accent: '#e6edf3',
-    desc: 'Issues, pull requests, code search and Actions on GitHub.',
+    get desc() {
+      return t('mcp.catalog.github.desc', 'Issues, pull requests, code search and Actions on GitHub.')
+    },
     transport: 'http',
     url: 'https://api.githubcopilot.com/mcp/',
-    headers: 'Authorization: Bearer {token}',
+    headers: 'Authorization: Bearer {token}', // i18n-ignore
     bearerEnvVar: 'GITHUB_PERSONAL_ACCESS_TOKEN',
     inputs: [
       {
         key: 'token',
-        label: 'Personal access token',
+        get label() {
+          return t('mcp.catalog.github.token', 'Personal access token')
+        },
         kind: 'secret',
         as: 'header',
-        help: 'Create one at github.com/settings/tokens. Codex reads it from the GITHUB_PERSONAL_ACCESS_TOKEN environment variable.'
+        get help() {
+          return t('mcp.catalog.github.tokenHelp', 'Create one at github.com/settings/tokens. Codex reads it from the GITHUB_PERSONAL_ACCESS_TOKEN environment variable.')
+        }
       }
     ]
   },
   {
     id: 'git',
-    name: 'Git',
+    name: 'Git', // i18n-ignore
     category: 'Code',
     accent: '#f05032',
-    desc: 'Read history, diffs and branches of a local repository.',
+    get desc() {
+      return t('mcp.catalog.git.desc', 'Read history, diffs and branches of a local repository.')
+    },
     transport: 'stdio',
     command: 'uvx mcp-server-git --repository "{folder}"',
     requires: 'uvx',
-    inputs: [{ key: 'folder', label: 'Repository folder', kind: 'folder', as: 'arg' }]
+    inputs: [
+      {
+        key: 'folder',
+        get label() {
+          return t('mcp.catalog.git.folder', 'Repository folder')
+        },
+        kind: 'folder',
+        as: 'arg'
+      }
+    ]
   },
   {
     id: 'filesystem',
-    name: 'Filesystem',
+    name: 'Filesystem', // i18n-ignore
     category: 'Utility',
     accent: '#8a93a6',
-    desc: 'Read and write files inside one folder you choose.',
+    get desc() {
+      return t('mcp.catalog.filesystem.desc', 'Read and write files inside one folder you choose.')
+    },
     transport: 'stdio',
     command: 'npx -y @modelcontextprotocol/server-filesystem "{folder}"',
     requires: 'node',
-    inputs: [{ key: 'folder', label: 'Allowed folder', kind: 'folder', as: 'arg' }]
+    inputs: [
+      {
+        key: 'folder',
+        get label() {
+          return t('mcp.catalog.filesystem.folder', 'Allowed folder')
+        },
+        kind: 'folder',
+        as: 'arg'
+      }
+    ]
   },
   {
     id: 'memory',
-    name: 'Memory',
+    name: 'Memory', // i18n-ignore
     category: 'Utility',
     accent: '#a78bfa',
-    desc: 'A small knowledge graph the agent can remember facts in across sessions.',
+    get desc() {
+      return t('mcp.catalog.memory.desc', 'A small knowledge graph the agent can remember facts in across sessions.')
+    },
     transport: 'stdio',
     command: 'npx -y @modelcontextprotocol/server-memory',
     requires: 'node'
   },
   {
     id: 'sequential-thinking',
-    name: 'Sequential Thinking',
+    name: 'Sequential Thinking', // i18n-ignore
     category: 'Utility',
     accent: '#f472b6',
-    desc: 'Helps the agent break hard problems into steps.',
+    get desc() {
+      return t('mcp.catalog.sequential-thinking.desc', 'Helps the agent break hard problems into steps.')
+    },
     transport: 'stdio',
     command: 'npx -y @modelcontextprotocol/server-sequential-thinking',
     requires: 'node'
   },
   {
     id: 'fetch',
-    name: 'Fetch',
+    name: 'Fetch', // i18n-ignore
     category: 'Utility',
     accent: '#22d3ee',
-    desc: 'Fetch a web page and turn it into clean text for the agent.',
+    get desc() {
+      return t('mcp.catalog.fetch.desc', 'Fetch a web page and turn it into clean text for the agent.')
+    },
     transport: 'stdio',
     command: 'uvx mcp-server-fetch',
     requires: 'uvx'
   },
   {
     id: 'time',
-    name: 'Time',
+    name: 'Time', // i18n-ignore
     category: 'Utility',
     accent: '#94a3b8',
-    desc: 'Current time and time-zone conversions.',
+    get desc() {
+      return t('mcp.catalog.time.desc', 'Current time and time-zone conversions.')
+    },
     transport: 'stdio',
     command: 'uvx mcp-server-time',
     requires: 'uvx'
   },
   {
     id: 'brave-search',
-    name: 'Brave Search',
+    name: 'Brave Search', // i18n-ignore
     category: 'Data',
     accent: '#fb542b',
-    desc: 'Web and local search through the Brave Search API.',
+    get desc() {
+      return t('mcp.catalog.brave-search.desc', 'Web and local search through the Brave Search API.')
+    },
     transport: 'stdio',
     command: 'npx -y @brave/brave-search-mcp-server',
     requires: 'node',
-    inputs: [{ key: 'BRAVE_API_KEY', label: 'Brave API key', kind: 'secret', as: 'env' }]
+    inputs: [
+      {
+        key: 'BRAVE_API_KEY',
+        get label() {
+          return t('mcp.catalog.brave-search.apiKey', 'Brave API key')
+        },
+        kind: 'secret',
+        as: 'env'
+      }
+    ]
   },
   {
     id: 'firecrawl',
-    name: 'Firecrawl',
+    name: 'Firecrawl', // i18n-ignore
     category: 'Data',
     accent: '#ff6b00',
-    desc: 'Crawl and scrape websites into clean data.',
+    get desc() {
+      return t('mcp.catalog.firecrawl.desc', 'Crawl and scrape websites into clean data.')
+    },
     transport: 'stdio',
     command: 'npx -y firecrawl-mcp',
     requires: 'node',
-    inputs: [{ key: 'FIRECRAWL_API_KEY', label: 'Firecrawl API key', kind: 'secret', as: 'env' }]
+    inputs: [
+      {
+        key: 'FIRECRAWL_API_KEY',
+        get label() {
+          return t('mcp.catalog.firecrawl.apiKey', 'Firecrawl API key')
+        },
+        kind: 'secret',
+        as: 'env'
+      }
+    ]
   },
   {
     id: 'elevenlabs',
-    name: 'ElevenLabs',
+    name: 'ElevenLabs', // i18n-ignore
     category: 'Services',
     accent: '#8b5cf6',
-    desc: 'Text to speech, voice cloning, transcription and sound effects. Uses your ElevenLabs credits.',
+    get desc() {
+      return t('mcp.catalog.elevenlabs.desc', 'Text to speech, voice cloning, transcription and sound effects. Uses your ElevenLabs credits.')
+    },
     transport: 'stdio',
     command: 'uvx elevenlabs-mcp',
     requires: 'uvx',
     inputs: [
       {
         key: 'ELEVENLABS_API_KEY',
-        label: 'ElevenLabs API key',
+        get label() {
+          return t('mcp.catalog.elevenlabs.apiKey', 'ElevenLabs API key')
+        },
         kind: 'secret',
         as: 'env',
-        help: 'Create one at elevenlabs.io/app/settings/api-keys. Audio files are saved to your Desktop.'
+        get help() {
+          return t('mcp.catalog.elevenlabs.apiKeyHelp', 'Create one at elevenlabs.io/app/settings/api-keys. Audio files are saved to your Desktop.')
+        }
       }
     ]
   },
   {
     id: 'supabase',
-    name: 'Supabase',
+    name: 'Supabase', // i18n-ignore
     category: 'Data',
     accent: '#3ecf8e',
-    desc: 'Manage Supabase projects, tables and queries.',
+    get desc() {
+      return t('mcp.catalog.supabase.desc', 'Manage Supabase projects, tables and queries.')
+    },
     transport: 'stdio',
     command: 'npx -y @supabase/mcp-server-supabase@latest',
     requires: 'node',
     inputs: [
-      { key: 'SUPABASE_ACCESS_TOKEN', label: 'Supabase access token', kind: 'secret', as: 'env' }
+      {
+        key: 'SUPABASE_ACCESS_TOKEN',
+        get label() {
+          return t('mcp.catalog.supabase.token', 'Supabase access token')
+        },
+        kind: 'secret',
+        as: 'env'
+      }
     ]
   },
   {
     id: 'sentry',
-    name: 'Sentry',
+    name: 'Sentry', // i18n-ignore
     category: 'Services',
     accent: '#8d5bd6',
-    desc: 'Look up errors, issues and releases in Sentry.',
+    get desc() {
+      return t('mcp.catalog.sentry.desc', 'Look up errors, issues and releases in Sentry.')
+    },
     transport: 'http',
     url: 'https://mcp.sentry.dev/mcp',
     auth: 'oauth'
   },
   {
     id: 'notion',
-    name: 'Notion',
+    name: 'Notion', // i18n-ignore
     category: 'Services',
     accent: '#e6e6e6',
-    desc: 'Search and edit pages and databases in your Notion workspace.',
+    get desc() {
+      return t('mcp.catalog.notion.desc', 'Search and edit pages and databases in your Notion workspace.')
+    },
     transport: 'http',
     url: 'https://mcp.notion.com/mcp',
     auth: 'oauth'
   },
   {
     id: 'linear',
-    name: 'Linear',
+    name: 'Linear', // i18n-ignore
     category: 'Services',
     accent: '#5e6ad2',
-    desc: 'Create and update Linear issues and projects.',
+    get desc() {
+      return t('mcp.catalog.linear.desc', 'Create and update Linear issues and projects.')
+    },
     transport: 'http',
     url: 'https://mcp.linear.app/mcp',
     auth: 'oauth'
   },
   {
     id: 'atlassian',
-    name: 'Atlassian',
+    name: 'Atlassian', // i18n-ignore
     category: 'Services',
     accent: '#2684ff',
-    desc: 'Jira issues and Confluence pages.',
+    get desc() {
+      return t('mcp.catalog.atlassian.desc', 'Jira issues and Confluence pages.')
+    },
     transport: 'http',
     url: 'https://mcp.atlassian.com/v1/mcp',
     auth: 'oauth'
   },
   {
     id: 'stripe',
-    name: 'Stripe',
+    name: 'Stripe', // i18n-ignore
     category: 'Services',
     accent: '#635bff',
-    desc: 'Customers, payments and docs from your Stripe account.',
+    get desc() {
+      return t('mcp.catalog.stripe.desc', 'Customers, payments and docs from your Stripe account.')
+    },
     transport: 'http',
     url: 'https://mcp.stripe.com',
     auth: 'oauth'
   },
   {
     id: 'vercel',
-    name: 'Vercel',
+    name: 'Vercel', // i18n-ignore
     category: 'Services',
     accent: '#e6e6e6',
-    desc: 'Projects, deployments and logs on Vercel.',
+    get desc() {
+      return t('mcp.catalog.vercel.desc', 'Projects, deployments and logs on Vercel.')
+    },
     transport: 'http',
     url: 'https://mcp.vercel.com',
     auth: 'oauth'

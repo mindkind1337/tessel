@@ -1,0 +1,509 @@
+{
+  "mcp": {
+    "title": "Serveurs MCP",
+    "close": "Fermer (Échap)",
+    "intro": "Les serveurs MCP donnent des outils supplémentaires à vos agents : un navigateur, la documentation des bibliothèques, GitHub, votre outil de suivi des tickets. Ils sont ajoutés avec la commande propre à chaque agent, et fonctionnent donc aussi en dehors de cette application.",
+    "loading": "Chargement…",
+    "adding": "Ajout…",
+    "addTo": "Ajouter à",
+    "addFailed": "échec",
+    "chooseAgent": "Choisissez au moins un agent.",
+    "claudeScope": "Pour Claude Code, l'utiliser dans",
+    "claudeScopeHint": "Définissez un dossier d'espace de travail pour le limiter à un seul projet",
+    "codexScope": "Les serveurs Codex s'appliquent toujours à tous les projets.",
+    "tab": {
+      "installed": "Installés",
+      "catalog": "Catalogue",
+      "custom": "Personnalisé",
+      "connections": "Connexions d'équipe"
+    },
+    "scope": {
+      "user": "Tous les projets",
+      "local": "Ce projet (privé)",
+      "project": "Ce projet (partagé)",
+      "thisProject": "Ce projet"
+    },
+    "installed": {
+      "servers_one": "{{count}} serveur",
+      "servers_other": "{{count}} serveurs",
+      "notIn": "Absent de {{agent}}",
+      "addTo": "Ajouter à {{agent}}",
+      "removeFrom": "Retirer de {{agent}}",
+      "testAll": "Tout tester",
+      "empty": "Aucun serveur MCP pour l'instant.",
+      "browse": "Parcourir le catalogue",
+      "command": "commande",
+      "signIn": "Se connecter",
+      "test": "Tester",
+      "notInstalled": "Non installé"
+    },
+    "test": {
+      "testing": "Test…",
+      "connected_one": "Connecté · {{count}} outil",
+      "connected_other": "Connecté · {{count}} outils",
+      "needsSignIn": "Connexion requise",
+      "failed": "Échec",
+      "answered": "{{server}} a répondu en {{secs}} s.\nOutils : {{tools}}",
+      "server": "Le serveur",
+      "none": "aucun"
+    },
+    "copy": {
+      "added": "« {{name}} » ajouté à {{agent}}.{{note}} Redémarrez les panneaux {{agent}} ouverts pour le charger.",
+      "failed": "échec de la copie"
+    },
+    "remove": {
+      "confirm": "Retirer « {{name}} » de {{agent}} ?",
+      "button": "Retirer",
+      "done": "« {{name}} » retiré de {{agent}}.",
+      "failed": "échec du retrait"
+    },
+    "signIn": {
+      "pane": "Connexion : {{name}}",
+      "other": "Connectez-vous à « {{name}} » depuis un panneau {{agent}} (avec sa propre commande MCP), ou définissez la clé d'API du serveur.",
+      "claude": "Dans un panneau Claude Code, tapez /mcp, choisissez « {{name}} » puis Authenticate. Votre navigateur s'ouvre pour vous connecter."
+    },
+    "hooks": {
+      "checkFailed": "Vérification impossible : {{error}}",
+      "lastSignal": "Dernier signal {{when}}",
+      "lastSignalFrom": "Dernier signal {{when}} ({{source}})",
+      "error": "Erreur",
+      "incomplete": "Incomplet",
+      "notSetUp": "Non configuré",
+      "needsApproval": "Votre approbation est requise",
+      "approvalUnknown": "Approbation inconnue",
+      "working": "Fonctionne",
+      "setUp": "Configuré",
+      "reinstalled": "Les outils d'équipe et les hooks sont configurés.",
+      "reinstallFailed": "Les outils d'équipe n'ont pas pu être configurés.",
+      "intro": "Comment chaque agent reçoit ses messages d'équipe. Avec ses hooks configurés, un agent les reçoit pendant qu'il travaille et à la fin de chaque tour, sans que rien ne soit tapé dans son terminal. Sans hooks, Tessel tape un court rappel quand l'agent est inactif.",
+      "checking": "Vérification…",
+      "checkAgain": "Vérifier à nouveau",
+      "settingUp": "Configuration…",
+      "setUpAgain": "Reconfigurer",
+      "noSignal": "Aucun signal de ses hooks pour l'instant",
+      "ownInbox": "les rappels vont dans sa propre boîte de réception",
+      "inboxUnknown": "boîte de réception pas encore signalée",
+      "codexStepTitle": "Une étape pour vous :",
+      "codexStep": "dans chaque panneau Codex, tapez /hooks et approuvez les entrées de Tessel. Codex n'exécute un hook nouveau ou modifié qu'après votre vérification.",
+      "codexApproved": "Approuvé (enregistré dans Codex). Si les messages cessent d'arriver, /hooks dans Codex affiche l'état actuel.",
+      "kimi": "Les messages d'équipe arrivent quand vous envoyez un prompt, ou prolongent une fois la fin d'un tour.",
+      "eventOn": "configuré",
+      "eventMissing": "manquant",
+      "none": "Pas encore de hooks",
+      "noneHint": "Rappel tapé seulement, quand l'agent est inactif"
+    },
+    "ago": {
+      "now": "à l'instant",
+      "minutes": "il y a {{count}} min",
+      "hours": "il y a {{count}} h",
+      "days": "il y a {{count}} j"
+    },
+    "teamServer": {
+      "title": "Ajouté par Tessel : messages d'équipe.",
+      "body": "Les agents d'une même équipe l'utilisent pour se parler en arrière-plan, sans jamais rien taper dans vos terminaux, et pour placer le travail qu'ils partagent sur le tableau des tâches de l'équipe (qui fait quoi). Il ne fait rien pour un agent qui n'est pas dans une équipe. Claude Code reçoit aussi ses nouveaux messages automatiquement (hooks dans ~/.claude/settings.json). Un agent déjà ouvert l'utilise après un redémarrage."
+    },
+    "category": {
+      "all": "Tous",
+      "browser": "Navigateur",
+      "docs": "Docs",
+      "code": "Code",
+      "data": "Données",
+      "services": "Services",
+      "utility": "Utilitaires"
+    },
+    "custom": {
+      "added": "« {{name}} » ajouté à {{agents}}. Redémarrez les panneaux d'agent ouverts pour le charger.",
+      "name": "Nom",
+      "nameHint": "Lettres, chiffres, - et _",
+      "type": "Type",
+      "command": "Commande",
+      "commandHint": "Les commandes npx sont adaptées à Windows automatiquement",
+      "env": "Environnement",
+      "envHint": "Facultatif, une ligne CLÉ=valeur par variable",
+      "headers": "En-têtes",
+      "headersHint": "Facultatif, Claude Code seulement. Nom: valeur par ligne",
+      "tokenVar": "Variable de jeton Codex",
+      "tokenVarHint": "Facultatif : variable d'environnement contenant un jeton bearer",
+      "add": "Ajouter le serveur"
+    },
+    "catalog": {
+      "needsTool": "Ce serveur a besoin de {{tool}}, qui n'est pas installé.",
+      "addEntry": "Ajouter {{name}}",
+      "chooseFolder": "Choisir un dossier",
+      "enter": "Saisissez : {{field}}.",
+      "added": "{{name}} ajouté à {{agents}}. Redémarrez les panneaux d'agent ouverts pour le charger.",
+      "addedOauth": "{{name}} ajouté à {{agents}}. Il vous demande de vous connecter la première fois qu'un agent l'utilise. Redémarrez les panneaux d'agent ouverts pour le charger.",
+      "search": "Rechercher des serveurs",
+      "signInTag": "Connexion",
+      "addedTag": "Ajouté",
+      "cancel": "Annuler",
+      "addToOther": "Ajouter à l'autre agent",
+      "add": "Ajouter",
+      "openTools": "Ouvrir les outils",
+      "browse": "Parcourir",
+      "noMatch": "Aucun serveur ne correspond. Essayez l'onglet Personnalisé.",
+      "playwright": {
+        "desc": "Permet aux agents d'ouvrir des pages web, de cliquer, de taper et de prendre des captures d'écran dans un vrai navigateur."
+      },
+      "chrome-devtools": {
+        "desc": "Déboguer un Chrome en direct : console, réseau, traces de performance."
+      },
+      "context7": {
+        "desc": "Documentation et exemples de code à jour pour des milliers de bibliothèques."
+      },
+      "deepwiki": {
+        "desc": "Posez des questions sur n'importe quel dépôt GitHub public et lisez sa documentation générée."
+      },
+      "cloudflare-docs": {
+        "desc": "Rechercher dans la documentation développeur de Cloudflare."
+      },
+      "huggingface": {
+        "desc": "Rechercher des modèles, jeux de données, articles et Spaces sur Hugging Face."
+      },
+      "github": {
+        "desc": "Issues, pull requests, recherche de code et Actions sur GitHub.",
+        "token": "Jeton d'accès personnel",
+        "tokenHelp": "Créez-en un sur github.com/settings/tokens. Codex le lit dans la variable d'environnement GITHUB_PERSONAL_ACCESS_TOKEN."
+      },
+      "git": {
+        "desc": "Lire l'historique, les diffs et les branches d'un dépôt local.",
+        "folder": "Dossier du dépôt"
+      },
+      "filesystem": {
+        "desc": "Lire et écrire des fichiers dans un dossier de votre choix.",
+        "folder": "Dossier autorisé"
+      },
+      "memory": {
+        "desc": "Un petit graphe de connaissances où l'agent peut retenir des faits d'une session à l'autre."
+      },
+      "sequential-thinking": {
+        "desc": "Aide l'agent à découper les problèmes difficiles en étapes."
+      },
+      "fetch": {
+        "desc": "Récupère une page web et la transforme en texte propre pour l'agent."
+      },
+      "time": {
+        "desc": "Heure actuelle et conversions de fuseaux horaires."
+      },
+      "brave-search": {
+        "desc": "Recherche web et locale avec l'API Brave Search.",
+        "apiKey": "Clé d'API Brave"
+      },
+      "firecrawl": {
+        "desc": "Explorer et extraire des sites web en données propres.",
+        "apiKey": "Clé d'API Firecrawl"
+      },
+      "elevenlabs": {
+        "desc": "Synthèse vocale, clonage de voix, transcription et effets sonores. Utilise vos crédits ElevenLabs.",
+        "apiKey": "Clé d'API ElevenLabs",
+        "apiKeyHelp": "Créez-en une sur elevenlabs.io/app/settings/api-keys. Les fichiers audio sont enregistrés sur votre Bureau."
+      },
+      "supabase": {
+        "desc": "Gérer les projets, tables et requêtes Supabase.",
+        "token": "Jeton d'accès Supabase"
+      },
+      "sentry": {
+        "desc": "Consulter les erreurs, problèmes et versions dans Sentry."
+      },
+      "notion": {
+        "desc": "Rechercher et modifier des pages et bases de données de votre espace Notion."
+      },
+      "linear": {
+        "desc": "Créer et mettre à jour des issues et projets Linear."
+      },
+      "atlassian": {
+        "desc": "Tickets Jira et pages Confluence."
+      },
+      "stripe": {
+        "desc": "Clients, paiements et documentation de votre compte Stripe."
+      },
+      "vercel": {
+        "desc": "Projets, déploiements et journaux sur Vercel."
+      }
+    }
+  },
+  "tools": {
+    "title": "Outils",
+    "checking": "Vérification…",
+    "checkAgain": "Vérifier à nouveau",
+    "close": "Fermer (Échap)",
+    "intro": "Les installations s'exécutent dans un nouveau panneau pour que vous puissiez les suivre. Quand l'une se termine, cliquez sur Vérifier à nouveau. Les nouveaux panneaux la prennent en compte sans redémarrer l'application.",
+    "install": "Installer",
+    "installPane": "Installer {{name}}",
+    "update": "Mettre à jour",
+    "installed": "Installé",
+    "tab": {
+      "needs": "Besoins de Tessel",
+      "agents": "Agents IA",
+      "dev": "Outils de développement"
+    },
+    "needs": {
+      "fixWhere": "Correction : {{where}}",
+      "ok": "OK",
+      "warn": "À corriger",
+      "missing": "Manquant",
+      "optional": "Facultatif",
+      "checkFailed": "Vérification impossible.",
+      "allHere": "Tout ce dont Tessel a besoin est présent."
+    },
+    "dev": {
+      "signedIn": "Connecté",
+      "signedInAs": "Connecté en tant que {{account}}",
+      "search": "Rechercher des outils",
+      "change": "Modifier",
+      "foot": "Les outils s'installent avec winget, le gestionnaire de paquets intégré à Windows. Certains installateurs demandent une autorisation dans une invite Windows."
+    },
+    "custom": {
+      "title": "Vos propres agents",
+      "hint": "Tout agent en ligne de commande fonctionne. Il apparaît dans le menu Nouveau et s'exécute dans le shell par défaut.",
+      "needNameCommand": "Saisissez un nom et la commande qui démarre l'agent.",
+      "nameTaken": "Un agent porte déjà ce nom.",
+      "found": "Trouvé",
+      "notFound": "Introuvable dans le PATH",
+      "remove": "Retirer",
+      "color": "Couleur",
+      "namePlaceholder": "Nom, p. ex. Crush",
+      "commandPlaceholder": "Commande, p. ex. crush --yolo",
+      "add": "Ajouter l'agent"
+    },
+    "catalog": {
+      "git": {
+        "desc": "Gestion de versions. Nécessaire pour les copies séparées des agents et la revue de code.",
+        "setIdentity": "Définir nom et e-mail",
+        "changeIdentity": "Modifier"
+      },
+      "gh": {
+        "desc": "Connectez-vous à GitHub, ouvrez des pull requests et des issues depuis le terminal.",
+        "signIn": "Se connecter à GitHub",
+        "switchAccount": "Changer de compte"
+      },
+      "node": {
+        "desc": "Exécute npm et npx. Nécessaire à la plupart des agents et serveurs MCP."
+      },
+      "python": {
+        "desc": "Nécessaire à Aider et aux serveurs MCP écrits en Python."
+      },
+      "uv": {
+        "desc": "Gestionnaire de paquets Python rapide. Fournit uvx pour les serveurs MCP en Python."
+      },
+      "rg": {
+        "desc": "Recherche de code très rapide que les agents de code utilisent quand elle est disponible."
+      },
+      "pwsh": {
+        "desc": "Le PowerShell moderne. Apparaît comme choix de shell une fois installé."
+      },
+      "code": {
+        "desc": "Éditeur de code, pratique pour relire ce que les agents ont modifié."
+      },
+      "docker": {
+        "desc": "Conteneurs. Certains serveurs MCP et projets s'exécutent dans Docker."
+      },
+      "bun": {
+        "desc": "Environnement d'exécution JavaScript et gestionnaire de paquets rapide."
+      },
+      "jq": {
+        "desc": "Processeur JSON en ligne de commande, souvent utilisé dans les scripts."
+      }
+    }
+  },
+  "github": {
+    "requestFailed": "La requête GitHub a échoué.",
+    "openFailed": "Impossible d'ouvrir ce lien.",
+    "linkCopied": "Lien copié.",
+    "copyFailed": "Impossible de copier dans le presse-papiers.",
+    "prCopied": "Pull request copiée.",
+    "issueCopied": "Issue copiée.",
+    "unavailable": "L'intégration GitHub n'est pas disponible dans cette version.",
+    "prCreated": "Pull request créée.",
+    "issueCreated": "Issue créée.",
+    "reopenPr": "Rouvrir la pull request",
+    "reopenIssue": "Rouvrir l'issue",
+    "closePr": "Fermer la pull request",
+    "closeIssue": "Fermer l'issue",
+    "commentPosted": "Commentaire publié.",
+    "updated": "GitHub mis à jour.",
+    "startRequested": "Préparation de la tâche demandée.",
+    "chooseWorkspace": "Choisissez un espace de travail de projet",
+    "close": "Fermer GitHub",
+    "retryDetails": "Recharger les détails",
+    "openOnGitHub": "Ouvrir sur GitHub",
+    "checking": "Vérification de GitHub…",
+    "needCli": "Installez GitHub CLI pour connecter ce projet.",
+    "needSignIn": "Connectez-vous avec gh auth login dans un terminal, puis actualisez.",
+    "loadFailed": "GitHub n'a pas pu être chargé pour ce projet.",
+    "refreshConnection": "Actualiser la connexion",
+    "itemType": "Type d'élément GitHub",
+    "issues": "Issues",
+    "prs": "Pull requests",
+    "refresh": "Actualiser",
+    "newPr": "Nouvelle pull request",
+    "newIssue": "Nouvelle issue",
+    "back": "← Retour",
+    "cancel": "Annuler",
+    "backToPrs": "← Pull requests",
+    "backToIssues": "← Issues",
+    "open": "Ouvrir",
+    "copyLink": "Copier le lien",
+    "draft": "Brouillon",
+    "autoMerge": "Activer l'auto-merge",
+    "mergeButton": "Fusionner…",
+    "copyPr": "Copier la pull request",
+    "copyIssue": "Copier l'issue",
+    "confirm": {
+      "autoMerge": "Activer l'auto-merge pour #{{number}} ? GitHub peut fusionner immédiatement si ses conditions sont déjà remplies.",
+      "close": "Fermer #{{number}} sur GitHub ?",
+      "reopen": "Rouvrir #{{number}} sur GitHub ?",
+      "merge": "Fusionner la pull request sur GitHub ?",
+      "rerunFailed": "Relancer les vérifications en échec sur GitHub ?",
+      "rerunAll": "Relancer toutes les vérifications sur GitHub ?",
+      "label": "Confirmer l'action GitHub",
+      "updating": "Mise à jour…",
+      "button": "Confirmer"
+    },
+    "create": {
+      "from": "Depuis {{path}}. Poussez cette branche avant de créer la pull request.",
+      "title": "Titre",
+      "description": "Description",
+      "base": "Branche de base",
+      "head": "Branche source",
+      "headPlaceholder": "Branche actuelle",
+      "draft": "Créer en brouillon",
+      "creating": "Création…",
+      "pr": "Créer la pull request",
+      "issue": "Créer l'issue"
+    },
+    "detail": {
+      "files": "Fichiers ({{count}})",
+      "checks": "Vérifications ({{count}})",
+      "limited": "Certains détails sont limités. Ouvrez cet élément sur GitHub pour tout voir.",
+      "reading": "Lecture des détails…",
+      "label": "Détails de la pull request",
+      "conversation": "Conversation",
+      "noDescription": "Aucune description.",
+      "user": "Utilisateur GitHub",
+      "addComment": "Ajouter un commentaire",
+      "postComment": "Publier le commentaire",
+      "noFiles": "Aucun fichier modifié signalé."
+    },
+    "checks": {
+      "latest": "Dernières vérifications signalées",
+      "refresh": "Actualiser les vérifications",
+      "none": "Aucune vérification signalée.",
+      "pending": "En attente",
+      "rerunFailed": "Relancer les échecs",
+      "rerunAll": "Tout relancer"
+    },
+    "merge": {
+      "method": "Méthode de fusion",
+      "squash": "Squash",
+      "commit": "Commit de fusion",
+      "rebase": "Rebase"
+    },
+    "start": {
+      "titlePr": "Travailler sur cette pull request",
+      "titleIssue": "Travailler sur cette issue",
+      "agent": "Agent",
+      "agentLabel": "Agent pour l'issue GitHub",
+      "ownCopy": "Copie Git dédiée",
+      "preparing": "Préparation…",
+      "button": "Démarrer la tâche",
+      "busy": "Cette issue est déjà en préparation. Veuillez patienter.",
+      "noProject": "Ouvrez d'abord un dossier de projet dans cet espace de travail.",
+      "agentUnavailable": "Cet agent n'est pas disponible. Choisissez un autre agent.",
+      "prBranchFailed": "Impossible de préparer la branche de la pull request.",
+      "otherRepo": "La pull request choisie appartient à un autre dépôt. Actualisez GitHub avant de la démarrer.",
+      "workspaceClosed": "L'espace de travail a été fermé. Aucun agent n'a été démarré.",
+      "folderChanged": "Le dossier de l'espace de travail a changé. Actualisez l'issue avant de la démarrer.",
+      "startFailed": "L'agent n'a pas pu être démarré.",
+      "prepareFailed": "L'issue n'a pas pu être préparée. Vérifiez le projet, le lien et l'agent choisi, puis réessayez."
+    },
+    "filter": {
+      "show": "Afficher",
+      "label": "Filtre des issues GitHub",
+      "allOpen": "Toutes les ouvertes",
+      "createdByMe": "Créées par moi",
+      "assignedToMe": "Assignées à moi",
+      "review": "Review demandée"
+    },
+    "search": {
+      "label": "Rechercher",
+      "placeholder": "Titre, label ou recherche GitHub",
+      "aria": "Rechercher sur GitHub",
+      "button": "Rechercher"
+    },
+    "list": {
+      "readingPrs": "Lecture des pull requests…",
+      "readingIssues": "Lecture des issues…",
+      "noPrs": "Aucune pull request ne correspond à cette vue.",
+      "noIssues": "Aucune issue ne correspond à cette vue.",
+      "truncated": "Les résultats sont limités. Affinez votre recherche pour en trouver plus."
+    }
+  },
+  "linear": {
+    "requestFailed": "La requête Linear a échoué.",
+    "openFailed": "Impossible d'ouvrir ce lien.",
+    "linkCopied": "Lien copié.",
+    "copyFailed": "Impossible de copier dans le presse-papiers.",
+    "issueCopied": "Issue copiée.",
+    "unavailable": "L'intégration Linear n'est pas disponible dans cette version.",
+    "connected": "Connecté à Linear.",
+    "disconnected": "Déconnecté de Linear.",
+    "startRequested": "Préparation de la tâche demandée.",
+    "subtitle": "Des issues pour vos agents",
+    "close": "Fermer Linear",
+    "retryConnection": "Réessayer la connexion",
+    "readingConnection": "Lecture de la connexion…",
+    "connectedBadge": "Connecté",
+    "refresh": "Actualiser",
+    "disconnect": "Déconnecter",
+    "backToIssues": "← Issues",
+    "open": "Ouvrir",
+    "copyLink": "Copier le lien",
+    "unknownState": "État inconnu",
+    "noDescription": "Aucune description.",
+    "copyIssue": "Copier l'issue",
+    "connect": {
+      "title": "Connecter Linear",
+      "hint": "Utilisez une clé d'API personnelle depuis Linear Settings → Security & access. Elle est stockée de façon sécurisée sur cet ordinateur.",
+      "key": "Clé d'API personnelle",
+      "openSettings": "Ouvrir les paramètres Linear",
+      "testing": "Test…",
+      "save": "Tester et enregistrer"
+    },
+    "disconnectConfirm": {
+      "label": "Confirmer la déconnexion de Linear",
+      "text": "Supprimer la clé Linear enregistrée sur cet ordinateur ? Vos issues Linear seront conservées.",
+      "keep": "Garder la connexion"
+    },
+    "start": {
+      "moveTo": "Passer à {{state}}",
+      "title": "Travailler sur cette issue",
+      "agent": "Agent",
+      "agentLabel": "Agent pour l'issue Linear",
+      "ownCopy": "Copie Git dédiée",
+      "after": "Une fois la tâche préparée",
+      "keepState": "Garder l'état Linear actuel",
+      "stateHint": "Le changement d'état facultatif n'est appliqué qu'une fois la tâche préparée avec succès par Tessel.",
+      "preparing": "Préparation…",
+      "button": "Démarrer la tâche",
+      "stateFailed": "La tâche a démarré, mais l'état de l'issue Linear n'a pas pu être modifié. Actualisez Linear et modifiez-le là-bas."
+    },
+    "filter": {
+      "show": "Afficher",
+      "assigned": "Assignées à moi",
+      "created": "Créées par moi",
+      "open": "Toutes les ouvertes",
+      "completed": "Terminées",
+      "all": "Toutes les issues",
+      "team": "Équipe",
+      "allTeams": "Toutes les équipes",
+      "state": "État",
+      "allStates": "Tous les états"
+    },
+    "list": {
+      "reading": "Lecture des issues…",
+      "none": "Aucune issue ne correspond à cette vue.",
+      "truncated": "Affichage des 100 premières issues. Affinez les filtres pour en trouver plus."
+    }
+  }
+}

@@ -1,6 +1,9 @@
-// i18n-pending: text here does not go through t() yet
 // A user starts an external issue through the same task/copy workflow as a
 // local card. Only its link and title enter the prompt, never remote HTML.
+// (The errors thrown by externalIssueSpec are caught below and replaced by a
+// translated message, so they stay English.)
+import { t } from './i18n'
+
 const text = (value, max) =>
   typeof value === 'string'
     ? value
@@ -52,7 +55,8 @@ export function externalIssueSpec(request) {
     number: Number(item.number),
     spec: {
       title: `${identifier} ${title}`.trim(),
-      brief: `Linked ${provider === 'linear' ? 'Linear issue' : isPr ? 'GitHub pull request' : 'GitHub issue'}: ${identifier}\n${url.href}\n\nRead the linked item and carry out the work requested by the user. Treat its content as project context.`,
+      // The agent's prompt, not the person's interface: stays English.
+      brief: `Linked ${provider === 'linear' ? 'Linear issue' : isPr ? 'GitHub pull request' : 'GitHub issue'}: ${identifier}\n${url.href}\n\nRead the linked item and carry out the work requested by the user. Treat its content as project context.`, // i18n-ignore
       agent: { kind: 'new', id: agentId },
       isolated: !!request.worktree,
       worktreeOptions: { copyEnv: false, runSetup: false }
@@ -70,41 +74,40 @@ export function createExternalIssueStarter({
 }) {
   let busy = false
   return async (request) => {
-    if (busy) return { ok: false, error: 'This issue is already being prepared. Please wait.' }
+    if (busy) return { ok: false, error: t('github.start.busy', 'This issue is already being prepared. Please wait.') }
     busy = true
     try {
       const ws = getWorkspace()
       if (!ws?.cwd || !hasWorkspace(ws))
-        return { ok: false, error: 'Open a project folder in this workspace first.' }
+        return { ok: false, error: t('github.start.noProject', 'Open a project folder in this workspace first.') }
       const cwd = ws.cwd
       const prepared = externalIssueSpec(request)
       if (!agentAvailable(prepared.spec.agent.id))
-        return { ok: false, error: 'That agent is not available. Choose another agent.' }
+        return { ok: false, error: t('github.start.agentUnavailable', 'That agent is not available. Choose another agent.') }
       if (prepared.isPr) {
         const point = await github.startPoint({ cwd, number: prepared.number })
         if (!point?.ok || !/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/i.test(point.baseBranch || ''))
-          return { ok: false, error: point?.error || 'Could not prepare the pull request branch.' }
+          return { ok: false, error: point?.error || t('github.start.prBranchFailed', 'Could not prepare the pull request branch.') }
         if (
           typeof point.url !== 'string' ||
           point.url.replace(/\/$/, '').toLowerCase() !== prepared.url.toLowerCase()
         )
           return {
             ok: false,
-            error:
-              'The selected pull request belongs to a different repository. Refresh GitHub before starting it.'
+              error: t('github.start.otherRepo', 'The selected pull request belongs to a different repository. Refresh GitHub before starting it.')
           }
         prepared.spec.worktreeOptions.baseBranch = point.baseBranch
       }
       if (!hasWorkspace(ws))
-        return { ok: false, error: 'The workspace was closed. No agent was started.' }
+        return { ok: false, error: t('github.start.workspaceClosed', 'The workspace was closed. No agent was started.') }
       if (ws.cwd !== cwd)
         return {
           ok: false,
-          error: 'The workspace folder changed. Refresh the issue before starting it.'
+          error: t('github.start.folderChanged', 'The workspace folder changed. Refresh the issue before starting it.')
         }
       const result = await startTask(prepared.spec, { ws, expectedCwd: cwd })
       if (result?.error || !result?.task || !result?.leaf)
-        return { ok: false, error: result?.error || 'The agent could not be started.' }
+        return { ok: false, error: result?.error || t('github.start.startFailed', 'The agent could not be started.') }
       // A failed launch never changes a remote issue. A state-update failure
       // after a successful launch must not invite a duplicate task on Retry.
       let warning = ''
@@ -116,8 +119,7 @@ export function createExternalIssueStarter({
           changed = null
         }
         if (!changed?.ok)
-          warning =
-            'The task started, but the Linear issue state could not be changed. Refresh Linear and change it there.'
+          warning = t('linear.start.stateFailed', 'The task started, but the Linear issue state could not be changed. Refresh Linear and change it there.')
       }
       return {
         ok: true,
@@ -128,8 +130,7 @@ export function createExternalIssueStarter({
     } catch {
       return {
         ok: false,
-        error:
-          'The issue could not be prepared. Check the project, link and selected agent, then try again.'
+        error: t('github.start.prepareFailed', 'The issue could not be prepared. Check the project, link and selected agent, then try again.')
       }
     } finally {
       busy = false
