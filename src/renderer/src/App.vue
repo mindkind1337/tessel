@@ -8,7 +8,7 @@ import LaunchMenu from './components/LaunchMenu.vue'
 import SettingsDialog from './components/SettingsDialog.vue'
 import UpdateDialog from './components/UpdateDialog.vue'
 import { settings, loadSettings, DEFAULT_SETTINGS } from './settings'
-import { effectiveAgent, agentEnabled } from '../../shared/agentPrefs'
+import { effectiveAgent, agentEnabled, launchSignature, launchIsYolo } from '../../shared/agentPrefs'
 import { THEMES } from './themes'
 import McpDialog from './components/McpDialog.vue'
 import CommandPalette from './components/CommandPalette.vue'
@@ -818,6 +818,10 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
     sessionId: null,
     accountId,
     agentLaunchToken: res.agentLaunchToken || null,
+    // How it was launched (Settings > Agents), to show Yolo and whether a
+    // restart is needed to apply changed settings.
+    launchSig: !attached && launch ? launchSignature(launch) : null,
+    launchYolo: !attached && launch ? launchIsYolo(agent.id, launch) : false,
     launchedAt: Date.now(),
     teamTools: !attached && teamToolsReady,
     toolsVersion: !attached && teamToolsReady ? teamToolsVersion : null,
@@ -965,7 +969,9 @@ function serializeNode(node) {
       team: node.team || null,
       teamTools: !!node.teamTools,
       toolsVersion: node.toolsVersion || null,
-      modelOverride: node.detected ? null : node.modelOverride || null
+      modelOverride: node.detected ? null : node.modelOverride || null,
+      launchSig: node.detected ? undefined : node.launchSig || undefined,
+      launchYolo: node.detected ? undefined : node.launchYolo || undefined
     }
   }
   return {
@@ -1053,6 +1059,11 @@ async function deserializeNode(snap, cwd = null) {
     if (snap.teamTools) leaf.teamTools = true
     if (typeof snap.toolsVersion === 'string') leaf.toolsVersion = snap.toolsVersion
     if (typeof snap.modelOverride === 'string' && snap.modelOverride) leaf.modelOverride = snap.modelOverride.slice(0, 80)
+    // Still running since before: it keeps how it was launched.
+    if (leaf.attached && typeof snap.launchSig === 'string') {
+      leaf.launchSig = snap.launchSig.slice(0, 20000)
+      leaf.launchYolo = snap.launchYolo === true
+    }
     if (snap.titleSet === true) leaf.titleSet = true
     if (typeof snap.autoTitle === 'string' && snap.autoTitle) leaf.autoTitle = snap.autoTitle.slice(0, 80)
     // Still running: its line is what was saved. Unknown (an older layout):

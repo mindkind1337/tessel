@@ -28,3 +28,22 @@ describe('per-agent settings', () => {
     expect(agentEnabled(prefs, 'codex')).toBe(true)
   })
 })
+
+import { launchSignature, launchIsYolo } from '../../../shared/agentPrefs'
+describe('how an agent was launched', () => {
+  it('Yolo is seen from its flag or its variables; the signature changes with the settings', () => {
+    const manual = effectiveAgent(claude, {}, 'manual')
+    const yolo = effectiveAgent(claude, {}, 'yolo')
+    expect(launchIsYolo('claude', manual)).toBe(false)
+    expect(launchIsYolo('claude', yolo)).toBe(true)
+    expect(launchIsYolo('goose', effectiveAgent(goose, {}, 'yolo'))).toBe(true)
+    expect(launchSignature(manual)).not.toBe(launchSignature(yolo))
+    expect(launchSignature(yolo)).toBe(launchSignature(effectiveAgent(claude, {}, 'yolo')))
+    // Your own arguments replace Yolo's: not Yolo, and a new signature.
+    const own = effectiveAgent(claude, { claude: { args: '--model sonnet' } }, 'yolo')
+    expect(launchIsYolo('claude', own)).toBe(false)
+    expect(launchSignature(own)).not.toBe(launchSignature(yolo))
+    // Variables in any order give the same signature.
+    expect(launchSignature({ command: 'x', args: '', env: { B: '1', A: '2' } })).toBe(launchSignature({ command: 'x', args: '', env: { A: '2', B: '1' } }))
+  })
+})

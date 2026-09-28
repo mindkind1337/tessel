@@ -37,6 +37,7 @@ import { findFileRefs } from '../../../shared/fileLinks'
 import { osc52Text } from '../../../shared/osc52'
 import { cacheCountdown } from '../promptCache'
 import { isViewed } from '../../../shared/fileKinds'
+import { effectiveAgent, launchSignature } from '../../../shared/agentPrefs'
 import { paneModels } from '../paneModels'
 import AgentChildren from './AgentChildren.vue'
 
@@ -311,6 +312,19 @@ const cache = computed(() => (cacheShown.value ? cacheCountdown(cacheStartedAt.v
 const sleptAt = computed(() =>
   props.node.sleeping ? new Date(props.node.sleeping.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''
 )
+
+// How this agent was launched vs Settings > Agents now: Yolo shown, and a
+// restart offered when its settings changed since (Yolo on/off, arguments,
+// command, variables). Agents started by hand in a shell are not known.
+const launchStale = computed(() => {
+  const n = props.node
+  if (n.kind !== 'agent' || !n.launchSig || !n.agentCommand || n.detected) return false
+  const now = effectiveAgent({ id: n.agentId, command: n.agentCommand }, settings.agentPrefs, settings.agentPermissions)
+  return launchSignature(now) !== n.launchSig
+})
+function restartToApply() {
+  if (ctx.restartLeaf) ctx.restartLeaf(props.node.id)
+}
 
 const needsYou = computed(() => !!attention[props.node.id])
 const limit = computed(() => limits[props.node.id] || null)
@@ -1494,6 +1508,23 @@ Named after its conversation. Double-click to rename` : 'Double-click to rename'
           :title="track.reason"
           >quiet {{ track.minutes }} min</span
         >
+        <span
+          v-if="isAgent && node.launchYolo"
+          class="pane-yolo"
+          data-test="pane-yolo"
+          title="Started in Yolo: this agent runs commands and changes files without asking you"
+          >Yolo</span
+        >
+        <button
+          v-if="launchStale"
+          class="pane-apply"
+          type="button"
+          data-test="pane-restart-apply"
+          title="Settings > Agents changed since this agent started (Yolo, arguments or variables). Restart it to apply them: same pane, its conversation resumed"
+          @click.stop="restartToApply"
+        >
+          Restart to apply
+        </button>
         <AgentChildren
           v-if="isAgent && node.agentId === 'claude' && node.sessionId && !node.sleeping"
           :agent-id="node.agentId"

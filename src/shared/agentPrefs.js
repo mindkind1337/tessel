@@ -73,3 +73,22 @@ export function effectiveAgent(agent, prefs = {}, permissions = 'manual') {
 export function agentEnabled(prefs, id) {
   return !(prefs && prefs[id] && prefs[id].enabled === false)
 }
+
+// How an agent was launched, to tell later whether its settings changed
+// since (Settings > Agents): its command, arguments and variables.
+export function launchSignature(launch) {
+  if (!launch) return ''
+  const env = Object.keys(launch.env || {})
+    .sort()
+    .map((k) => `${k}=${launch.env[k]}`)
+  return JSON.stringify([launch.command || '', launch.args || '', env])
+}
+
+// Launched with its skip-approvals option (Yolo) in effect.
+export function launchIsYolo(agentId, launch) {
+  if (!launch) return false
+  const flag = YOLO_ARGS[agentId]
+  if (flag && (launch.args || '').includes(flag)) return true
+  const env = YOLO_ENV[agentId]
+  return !!env && Object.entries(env).every(([k, v]) => (launch.env || {})[k] === v)
+}
