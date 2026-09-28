@@ -476,7 +476,10 @@
         "inUse": "ses fichiers sont utilisés",
         "failed": "la mise à jour a échoué",
         "unfinished": "la mise à jour ne s'est pas terminée",
-        "cancelled": "annulée"
+        "cancelled": "annulée",
+        "noStart": "elle n'a pas pu être lancée",
+        "busy": "un autre agent était en cours de mise à jour",
+        "inUsePanes": "ses fichiers sont utilisés par ses panneaux"
       },
       "paneTitle": "Mise à jour de {{name}}",
       "updating": "Mise à jour de {{name}} ci-dessous. Tessel vous avertit quand c'est terminé.",
@@ -509,7 +512,21 @@
       "paneRestartFailed": "{{pane}} n'a pas pu être redémarré sur la nouvelle version : utilisez Redémarrer.",
       "waitingRestart": "{{name}} est à jour. En attente de redémarrage : {{list}}.",
       "waitsFor": "La mise à jour de {{name}} attend : {{list}}.",
-      "queued": "Un autre agent est en cours de mise à jour : celui-ci suivra."
+      "queued": "Un autre agent est en cours de mise à jour : celui-ci suivra.",
+      "updatingBackground": "Mise à jour de {{name}} en arrière-plan. Tessel vous avertit quand c'est terminé.",
+      "closeReopen": "Les fermer et les rouvrir",
+      "notUpdatedShort": "{{name}} n'a pas été mis à jour.",
+      "why": {
+        "inUsePanes": "{{name}} tourne dans d'autres panneaux, donc ses fichiers sont utilisés. Tessel peut les fermer et les rouvrir (conversations conservées) pour terminer la mise à jour.",
+        "inUseOutside": "Les fichiers de {{name}} sont utilisés par un programme hors de Tessel (un autre terminal ?). Fermez-le là-bas, puis réessayez.",
+        "permission": "Tessel n'a pas le droit d'écrire dans le dossier global de npm. Lancez la mise à jour dans un terminal ouvert en administrateur, ou réglez le préfixe global de npm sur un dossier à vous.",
+        "network": "Le serveur de téléchargement est injoignable (réseau, proxy ou pare-feu). Vérifiez votre connexion, puis réessayez.",
+        "notFound": "La commande de mise à jour ou le paquet est introuvable : npm (ou {{name}}) n'est pas dans le PATH, ou le paquet a changé de nom.",
+        "timeout": "La mise à jour ne s'est pas terminée en 10 minutes, Tessel l'a donc arrêtée.",
+        "sameVersion": "La mise à jour s'est exécutée, mais {{name}} indique toujours l'ancienne version : une autre copie passe peut-être avant dans le PATH.",
+        "busy": "Un autre agent était en cours de mise à jour. Réessayez quand il aura terminé.",
+        "failed": "La mise à jour a échoué. Le journal montre ce qui n'a pas fonctionné."
+      }
     },
     "message": {
       "noAgent": "{{where}} n'a aucun agent à qui écrire.",

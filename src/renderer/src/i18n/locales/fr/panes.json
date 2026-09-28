@@ -68,6 +68,10 @@
       "mb": "{{value}} Mo",
       "gb": "{{value}} Go",
       "percent": "{{value}} %"
+    },
+    "agentUpdate": {
+      "one": "Mise à jour de {{name}}…",
+      "many": "Mise à jour de {{count}} agents…"
     }
   },
   "sidebar": {
@@ -97,7 +101,8 @@
       "running": "En cours",
       "finished": "Terminé",
       "quiet": "Silencieux : rien d'écrit depuis un moment (un outil long, ou arrêté)",
-      "stats": "{{time}} · ↓ {{tokens}}", "statsLong": "{{time}} · ↓ {{tokens}} jetons",
+      "stats": "{{time}} · ↓ {{tokens}}",
+      "statsLong": "{{time}} · ↓ {{tokens}} jetons",
       "noTitle": "(sans titre)",
       "showChildren_one": "Afficher {{count}} agent enfant",
       "showChildren_other": "Afficher {{count}} agents enfants",

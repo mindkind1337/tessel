@@ -57,12 +57,22 @@ export function createInstallLogs({ dir, notify, appVersion = '' }) {
     clearTimeout(a.timer)
     const verdict = ok === true ? 'SUCCEEDED' : ok === false ? 'FAILED' : 'UNKNOWN'
     write(a.file, `\n\n===== ${verdict}${reason ? ` (${reason})` : ''} at ${new Date().toISOString()} =====\n`)
-    notify({ paneId, name: a.name, ok, reason: reason || '', file: a.file, ...(ok !== true && a.locked ? { locked: true } : {}) })
+    notify({
+      paneId,
+      name: a.name,
+      ok,
+      reason: reason || '',
+      file: a.file,
+      ...(ok !== true && a.locked ? { locked: true } : {}),
+      ...(a.agentUpdate ? { agentUpdate: a.agentUpdate } : {})
+    })
   }
 
   return {
     // -> { file } or { error }
-    start({ paneId, name, shell, steps }) {
+    // agentUpdate: { agentId, from, to } when it updates an agent (told back
+    // with the result, for the update history).
+    start({ paneId, name, shell, steps, agentUpdate }) {
       if (typeof paneId !== 'string' || !paneId) return { error: 'No pane.' }
       if (active.has(paneId)) finish(paneId, null, 'another run started in this pane')
       const folder = join(dir, 'installs')
@@ -89,7 +99,11 @@ export function createInstallLogs({ dir, notify, appVersion = '' }) {
       }
       const timer = setTimeout(() => finish(paneId, null, 'no end seen after 45 minutes'), MAX_MS)
       if (timer.unref) timer.unref()
-      active.set(paneId, { file, name: String(name || ''), tail: '', timer })
+      const upd =
+        agentUpdate && typeof agentUpdate === 'object' && typeof agentUpdate.agentId === 'string'
+          ? { agentId: agentUpdate.agentId.slice(0, 64), from: String(agentUpdate.from || '').slice(0, 64), to: String(agentUpdate.to || '').slice(0, 64) }
+          : null
+      active.set(paneId, { file, name: String(name || ''), tail: '', timer, ...(upd ? { agentUpdate: upd } : {}) })
       return { file }
     },
     onData(paneId, data) {
@@ -106,6 +120,11 @@ export function createInstallLogs({ dir, notify, appVersion = '' }) {
       const bad = look.indexOf(MARK_FAILED)
       if (ok >= 0 && (bad < 0 || ok < bad)) finish(paneId, true)
       else if (bad >= 0) finish(paneId, false)
+    },
+    // The end of a run not in a pane (a background agent update): its runner
+    // knows how it ended, no marker needed.
+    end(paneId, ok, reason) {
+      finish(paneId, ok, reason)
     },
     onExit(paneId, exitCode) {
       if (active.has(paneId)) finish(paneId, false, `the terminal closed (exit code ${exitCode})`)

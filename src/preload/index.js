@@ -76,6 +76,20 @@ const api = {
       const handler = (_e, r) => cb(r)
       ipcRenderer.on('agentUpdates:changed', handler)
       return () => ipcRenderer.removeListener('agentUpdates:changed', handler)
+    },
+    // Update one agent in the background (no pane): resolves when it ended.
+    run: (q) => ipcRenderer.invoke('agentUpdates:run', q),
+    // { entries: [...newest first], last: { agentId: entry } }
+    history: () => ipcRenderer.invoke('agentUpdates:history'),
+    onHistory: (cb) => {
+      const handler = (_e, r) => cb(r)
+      ipcRenderer.on('agentUpdates:history', handler)
+      return () => ipcRenderer.removeListener('agentUpdates:history', handler)
+    },
+    onProgress: (cb) => {
+      const handler = (_e, r) => cb(r)
+      ipcRenderer.on('agentUpdates:progress', handler)
+      return () => ipcRenderer.removeListener('agentUpdates:progress', handler)
     }
   },
   getPastedImage: (q) => ipcRenderer.invoke('images:get', q),

@@ -169,7 +169,28 @@
       "variablesYolo": "Variables, une NOM=valeur par ligne (Yolo définit {{names}})",
       "notUsedUntilFixed": "Non utilisées tant que ce n'est pas corrigé.",
       "appliesFromNow": "S'applique aux panneaux que vous lancez à partir de maintenant",
-      "reset": "Réinitialiser"
+      "reset": "Réinitialiser",
+      "kind": {
+        "ok": "Mis à jour",
+        "sameVersion": "Toujours l'ancienne version",
+        "inUse": "Fichiers utilisés",
+        "permission": "Permission refusée",
+        "network": "Erreur réseau",
+        "notFound": "Introuvable",
+        "timeout": "Délai dépassé",
+        "busy": "Une autre mise à jour était en cours",
+        "failed": "Échec"
+      },
+      "jobUpdatingBackground": "Mise à jour en arrière-plan…",
+      "lastOk": "Dernière mise à jour {{when}} : {{versions}}, réussie",
+      "lastFailed": "Dernière mise à jour {{when}} : {{versions}}, échouée ({{kind}})",
+      "closeReopen": "Les fermer et les rouvrir",
+      "viewLog": "Voir le journal",
+      "runInTerminal": "Lancer dans un terminal",
+      "runInTerminalTitle": "Lancer la mise à jour dans un panneau de terminal, pour voir sa sortie au fur et à mesure",
+      "history": "Historique des mises à jour ({{count}})",
+      "viaPane": "dans un terminal",
+      "viaAuto": "automatique"
     },
     "orchestration": {
       "yourTeam": "Votre équipe",

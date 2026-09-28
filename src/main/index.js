@@ -42,6 +42,8 @@ import { listProcesses, treeOf, waitForExit, killPids, listProcessNames, running
 import { pipeName } from './ptyProtocol'
 import { createUpdater } from './updater'
 import { createAgentUpdates } from './agentUpdates'
+import { createUpdateRunner, fakeSpawn, classifyFailure } from './agentUpdateRunner'
+import { createUpdateHistory } from './agentUpdateHistory'
 import crypto from 'crypto'
 import {
   gitInfo,
@@ -1486,6 +1488,154 @@ ipcMain.handle('agentUpdates:status', () => agentUpdates.status())
 ipcMain.handle('agentUpdates:check', (_evt, q = {}) =>
   checkAgentUpdates({ force: !!(q && q.force) }).catch((err) => ({ error: err.message, agents: {}, newlyFound: [] }))
 )
+// Agent updates run in the background here, not in a pane
+// (agentUpdateRunner.js): same commands and environment as a pane's (the
+// terminals' fresh environment, without Tessel's per-agent variables), output
+// in the same install log. Each attempt (background or pane) goes to the
+// update history shown in Settings > Agents (agentUpdateHistory.js).
+const agentUpdateHistory = createUpdateHistory({
+  file: join(app.getPath('userData'), 'agent-update-history.json'),
+  log: (level, message) => log[level === 'warn' ? 'warn' : 'info']('agents', message)
+})
+function updateEnv() {
+  const env = freshEnv()
+  for (const key of Object.keys(env)) if (/^TESSEL_AGENT_/i.test(key)) delete env[key]
+  return env
+}
+// TESSEL_AGENT_UPDATES_FAKE: nothing is ever started; each fake agent's
+// `run` ({ output, exitCode, delayMs, hang }) is played instead.
+function fakeRunOf(agentId) {
+  try {
+    const data = JSON.parse(fs.readFileSync(process.env.TESSEL_AGENT_UPDATES_FAKE, 'utf8'))
+    const f = (data.agents || []).find((a) => a && a.id === agentId)
+    return (f && f.run) || {}
+  } catch {
+    return {}
+  }
+}
+const agentUpdateRunner = createUpdateRunner({
+  spawn: process.env.TESSEL_AGENT_UPDATES_FAKE
+    ? (file, args, opts) => fakeSpawn(() => fakeRunOf(agentUpdateRunner.busy()))(file, args, opts)
+    : spawn,
+  getEnv: updateEnv,
+  logs: { start: (q) => installLogs.start(q), onData: (id, d) => installLogs.onData(id, d), end: (id, ok, r) => installLogs.end(id, ok, r) },
+  // The tree this run started, by its PID (never by image name).
+  killTree: (pid) =>
+    process.platform === 'win32'
+      ? execFile('taskkill.exe', ['/PID', String(pid), '/T', '/F'], { windowsHide: true }, () => {})
+      : process.kill(pid, 'SIGKILL'),
+  cwd: os.homedir(),
+  timeoutMs: Number(process.env.TESSEL_AGENT_UPDATE_TIMEOUT_MS) || undefined,
+  log: (level, message) => log[level === 'warn' ? 'warn' : 'info']('agents', message)
+})
+
+// After an attempt: the version it now reports (a fresh check), then the
+// history entry. -> { entry, row }
+async function recordAgentUpdate({ agentId, name, from, to, ok, kind, detail, reason, file, via, auto }) {
+  let row = null
+  if (ok) {
+    const r = await checkAgentUpdates({ force: false }).catch(() => null)
+    row = r && r.agents ? r.agents[agentId] || null : null
+  }
+  const version = row && row.installed ? row.installed : ''
+  // It ran fine but still reports the old version (another copy runs first).
+  const same = ok && version && from && version === from
+  const entry = agentUpdateHistory.add({
+    agentId,
+    name,
+    at: Date.now(),
+    ok: ok && !same,
+    kind: ok ? (same ? 'same-version' : 'ok') : kind || 'failed',
+    from,
+    to,
+    version,
+    detail,
+    reason,
+    file,
+    via,
+    auto
+  })
+  log[entry && entry.ok ? 'info' : 'warn'](
+    'agents',
+    `update ${agentId} (${via}): ${entry ? entry.kind : '?'}${reason ? ` (${reason})` : ''}${file ? `, log ${file}` : ''}`
+  )
+  send('agentUpdates:history', agentUpdateHistory.get())
+  return { entry, row }
+}
+
+// A pane's update ended (install log): classified from the end of its log.
+function recordPaneUpdate(r) {
+  const u = r.agentUpdate
+  let kind = r.ok === true ? 'ok' : r.locked ? 'in-use' : 'failed'
+  let detail = ''
+  if (r.ok !== true && r.file) {
+    try {
+      const text = fs.readFileSync(r.file, 'utf8').slice(-64 * 1024)
+      const c = classifyFailure({ output: text })
+      kind = c.kind
+      detail = c.detail
+    } catch {
+      /* no log: kind from the pane's own flag */
+    }
+  }
+  const row = agentUpdates.status() && agentUpdates.status().agents ? agentUpdates.status().agents[u.agentId] : null
+  return recordAgentUpdate({
+    agentId: u.agentId,
+    name: (row && row.name) || r.name,
+    from: u.from,
+    to: u.to,
+    ok: r.ok === true,
+    kind,
+    detail,
+    reason: r.reason,
+    file: r.file,
+    via: 'pane',
+    auto: false
+  })
+}
+
+ipcMain.handle('agentUpdates:history', () => agentUpdateHistory.get())
+// Update one agent in the background. Its steps come from the last check
+// (never from the window). Progress: 'agentUpdates:progress'
+// { agentId, state: 'running' | 'succeeded' | 'failed', kind?, detail?, file? }.
+// -> { ok, kind?, detail?, reason, file, locked?, version?, row? }
+ipcMain.handle('agentUpdates:run', async (_evt, q = {}) => {
+  const agentId = q && typeof q.agentId === 'string' ? q.agentId : ''
+  const status = agentUpdates.status()
+  const row = status && status.agents ? status.agents[agentId] : null
+  if (!row || !Array.isArray(row.steps) || !row.steps.length) return { ok: false, kind: 'failed', reason: 'no update known for this agent' }
+  if (agentUpdateRunner.busy()) return { ok: false, kind: 'busy', reason: 'another agent is being updated' }
+  const from = row.installed || ''
+  const to = row.latest || ''
+  send('agentUpdates:progress', { agentId, state: 'running', from, to })
+  const res = await agentUpdateRunner.run({ agentId, name: row.name, steps: row.steps })
+  if (res.kind === 'busy') return res
+  const { entry, row: after } = await recordAgentUpdate({
+    agentId,
+    name: row.name,
+    from,
+    to,
+    ok: res.ok,
+    kind: res.kind,
+    detail: res.detail,
+    reason: res.reason,
+    file: res.file,
+    via: 'background',
+    auto: !!(q && q.auto)
+  })
+  send('agentUpdates:progress', {
+    agentId,
+    state: res.ok ? 'succeeded' : 'failed',
+    kind: entry ? entry.kind : res.kind,
+    detail: res.detail || '',
+    file: res.file
+  })
+  return {
+    ...res,
+    ...(res.kind === 'in-use' ? { locked: true } : {}),
+    ...(after ? { version: after.installed || '', row: after } : {})
+  }
+})
 const AGENT_UPDATE_FIRST_MS = Number(process.env.TESSEL_AGENT_UPDATES_FIRST_MS) || 2 * 60 * 1000
 const AGENT_UPDATE_EVERY_MS = 4 * 60 * 60 * 1000
 const firstAgentCheck = setTimeout(() => checkAgentUpdates().catch(() => {}), AGENT_UPDATE_FIRST_MS)
@@ -1935,6 +2085,8 @@ const installLogs = createInstallLogs({
   notify: (r) => {
     log[r.ok === false ? 'warn' : 'info']('install', `${r.name}: ${r.ok === true ? 'succeeded' : r.ok === false ? 'FAILED' : 'unknown'}${r.reason ? ` (${r.reason})` : ''}, log ${r.file}`)
     send('install:result', r)
+    // An agent update run in a pane: its attempt goes to the update history.
+    if (r.agentUpdate) recordPaneUpdate(r).catch(() => {})
   }
 })
 ipcMain.handle('install:logStart', (_evt, q = {}) => installLogs.start(q || {}))

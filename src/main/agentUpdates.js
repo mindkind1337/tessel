@@ -1,5 +1,6 @@
 // Agent CLI updates: which installed agents have a newer version, and the
-// command that updates each one (run in a pane by the window, like Install).
+// command that updates each one (run in the background by
+// agentUpdateRunner.js, or in a pane when asked: Run in a terminal).
 //
 // - Installed version: one `npm ls -g --depth=0 --json` for every npm-installed
 //   CLI; Claude Code's native install (~/.local/bin/claude.exe) answers

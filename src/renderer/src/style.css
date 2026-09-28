@@ -3114,8 +3114,63 @@ body.pane-dragging * {
   color: var(--accent);
 }
 .agent-set-name > .agent-version,
-.agent-set-name > .agent-update-job {
+.agent-set-name > .agent-update-job,
+.agent-set-name > .agent-update-last {
   text-align: left;
+}
+.agent-update-spinner {
+  vertical-align: -1px;
+  margin-right: 3px;
+}
+.agent-set-name > .agent-update-last {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+.agent-update-last .agent-update-why {
+  flex-basis: 100%;
+}
+.agent-update-last .agent-update-detail {
+  flex-basis: 100%;
+  font-size: 11px;
+  opacity: 0.85;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.agent-update-last-actions {
+  display: flex;
+  gap: 6px;
+}
+.agent-update-failed > span:first-child,
+.agent-update-history-list .agent-update-failed > span:nth-child(4) {
+  color: var(--danger, #e5534b);
+}
+.agent-update-history {
+  margin-top: 8px;
+}
+.agent-update-history-toggle {
+  background: none;
+  border: 0;
+  padding: 4px 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.agent-update-history-list {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.agent-update-history-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  font-size: 12px;
 }
 
 .agent-custom {

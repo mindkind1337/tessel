@@ -9,7 +9,8 @@ import BrandIcon from './BrandIcon.vue'
 import ProviderAccounts from './ProviderAccounts.vue'
 import StatsUsage from './StatsUsage.vue'
 import RemoteHostsSettings from './remote/RemoteHostsSettings.vue'
-import { BarChart3, Cable } from 'lucide-vue-next'
+import { BarChart3, Cable, LoaderCircle } from 'lucide-vue-next'
+import { updateFailureText, updateKindLabel } from '../agentUpdateErrors'
 import { settings, FONT_FAMILIES, resetSettings, clamp, MAX_LEFT_SIDEBAR_TINT_OPACITY, limitNumber, DEFAULT_SETTINGS, LIMITS } from '../settings'
 import { THEMES } from '../themes'
 import { playAlertSound } from '../notificationsStore'
@@ -35,7 +36,9 @@ const props = defineProps({
   // the ones waiting their turn.
   agentUpdates: { type: Object, default: null },
   agentUpdateJobs: { type: Object, default: () => ({}) },
-  agentUpdateQueue: { type: Array, default: () => [] }
+  agentUpdateQueue: { type: Array, default: () => [] },
+  // { entries: [...newest first], last: { agentId: entry } } (main's agentUpdateHistory.js)
+  agentUpdateHistory: { type: Object, default: () => ({ entries: [], last: {} }) }
 })
 
 // The pages, grouped as in the sidebar. `icon` is a 16x16 stroke path.
@@ -373,6 +376,9 @@ const emit = defineEmits([
   'update-agent',
   'update-all-agents',
   'cancel-agent-update',
+  'update-agent-in-pane',
+  'close-reopen-agent-update',
+  'open-update-log',
   'test-notification'
 ])
 
@@ -424,7 +430,9 @@ function jobText(id) {
   const waiting = (j.waiting || []).map((w) => `${w.label} (${w.why})`).join(', ')
   switch (j.phase) {
     case 'updating':
-      return t('settings.agents.jobUpdating', 'Updating in a pane below…')
+      return j.via === 'background'
+        ? t('settings.agents.jobUpdatingBackground', 'Updating in the background…')
+        : t('settings.agents.jobUpdating', 'Updating in a pane below…')
     case 'waiting-stop':
       return t('settings.agents.jobWaitingStop', 'Its files are in use: waiting to stop {{panes}} safely, then updating and resuming them', {
         panes: waiting || t('settings.agents.jobItsPanes', 'its panes')
@@ -443,12 +451,58 @@ function jobText(id) {
         (j.report ? ` ${j.report}` : '')
       )
     case 'failed':
+      // Told by the last result line (the history) when it has it.
+      if (lastUpdate(id) && lastUpdate(id).at >= (j.startedAt || 0) && !j.inUse) return ''
       return j.error
         ? t('settings.agents.jobFailedWith', 'Not updated: {{error}}.', { error: j.error })
         : t('settings.agents.jobFailed', 'Not updated.')
     default:
       return ''
   }
+}
+function jobRunning(id) {
+  const j = props.agentUpdateJobs && props.agentUpdateJobs[id]
+  return !!(j && ['updating', 'retrying'].includes(j.phase))
+}
+// Files in use by its own panes: Tessel can close and reopen them.
+function jobInUse(id) {
+  const j = props.agentUpdateJobs && props.agentUpdateJobs[id]
+  return !!(j && j.phase === 'failed' && j.inUse)
+}
+
+// The update history (the last attempts) and each agent's last result.
+function lastUpdate(id) {
+  const h = props.agentUpdateHistory
+  return (h && h.last && h.last[id]) || null
+}
+const updateHistory = computed(() => {
+  const h = props.agentUpdateHistory
+  return h && Array.isArray(h.entries) ? h.entries : []
+})
+const historyOpen = ref(false)
+const historyTitle = computed(() => t('settings.agents.history', 'Update history ({{count}})', { count: updateHistory.value.length }))
+function whenText(at) {
+  return new Date(at).toLocaleString(intlLocale(), { dateStyle: 'short', timeStyle: 'short' })
+}
+function versionsText(e) {
+  const to = e.ok ? e.version || e.to : e.to
+  return e.from && to ? `${e.from} → ${to}` : to || e.from || ''
+}
+function lastUpdateText(id) {
+  const e = lastUpdate(id)
+  if (!e) return ''
+  const vars = { when: whenText(e.at), versions: versionsText(e) }
+  return e.ok
+    ? t('settings.agents.lastOk', 'Last update {{when}}: {{versions}}, succeeded', vars)
+    : t('settings.agents.lastFailed', 'Last update {{when}}: {{versions}}, failed ({{kind}})', { ...vars, kind: updateKindLabel(e.kind) })
+}
+// Why the last attempt failed, in plain words, and the line of output that tells it.
+function lastUpdateWhy(a) {
+  const e = lastUpdate(a.id)
+  if (!e || e.ok) return ''
+  // Files in use by its own panes: the job's line says it, with its button.
+  if (jobInUse(a.id)) return updateFailureText('in-use', a.name, { panes: 1 })
+  return updateFailureText(e.kind, a.name)
 }
 function jobActive(id) {
   const j = props.agentUpdateJobs && props.agentUpdateJobs[id]
@@ -1098,7 +1152,38 @@ function previewSound() {
                       {{ versionText(a) }}
                     </div>
                     <div v-if="jobText(a.id)" class="set-hint agent-update-job" :data-test="`agent-update-job-${a.id}`">
+                      <LoaderCircle v-if="jobRunning(a.id)" :size="11" class="sb-spin agent-update-spinner" aria-hidden="true" />
                       {{ jobText(a.id) }}
+                    </div>
+                    <div
+                      v-if="a.available && lastUpdate(a.id)"
+                      class="set-hint agent-update-last"
+                      :class="{ 'agent-update-failed': !lastUpdate(a.id).ok }"
+                      :data-test="`agent-update-last-${a.id}`"
+                    >
+                      <span>{{ lastUpdateText(a.id) }}</span>
+                      <span v-if="lastUpdateWhy(a)" class="agent-update-why">{{ lastUpdateWhy(a) }}</span>
+                      <code v-if="!lastUpdate(a.id).ok && lastUpdate(a.id).detail" class="agent-update-detail">{{ lastUpdate(a.id).detail }}</code>
+                      <span class="agent-update-last-actions">
+                        <button
+                          v-if="jobInUse(a.id)"
+                          class="exit-btn"
+                          type="button"
+                          :data-test="`close-reopen-${a.id}`"
+                          @click="emit('close-reopen-agent-update', a.id)"
+                        >
+                          {{ t('settings.agents.closeReopen', 'Close and reopen them') }}
+                        </button>
+                        <button
+                          v-if="lastUpdate(a.id).file"
+                          class="exit-btn"
+                          type="button"
+                          :data-test="`view-update-log-${a.id}`"
+                          @click="emit('open-update-log', lastUpdate(a.id).file)"
+                        >
+                          {{ t('settings.agents.viewLog', 'View log') }}
+                        </button>
+                      </span>
                     </div>
                   </div>
                   <div class="agent-set-actions">
@@ -1110,7 +1195,18 @@ function previewSound() {
                       :disabled="jobActive(a.id)"
                       @click="emit('update-agent', a.id)"
                     >
+                      <LoaderCircle v-if="jobRunning(a.id)" :size="11" class="sb-spin agent-update-spinner" aria-hidden="true" />
                       {{ jobActive(a.id) ? t('settings.agents.updating', 'Updating…') : t('settings.agents.update', 'Update') }}
+                    </button>
+                    <button
+                      v-if="a.available && updateRow(a.id) && updateRow(a.id).update && !jobActive(a.id)"
+                      class="exit-btn"
+                      type="button"
+                      :data-test="`update-agent-pane-${a.id}`"
+                      :title="t('settings.agents.runInTerminalTitle', 'Run the update in a terminal pane, to see its output as it goes')"
+                      @click="emit('update-agent-in-pane', a.id)"
+                    >
+                      {{ t('settings.agents.runInTerminal', 'Run in a terminal') }}
                     </button>
                     <button
                       v-if="agentUpdateJobs[a.id] && ['waiting-stop', 'restarting'].includes(agentUpdateJobs[a.id].phase)"
@@ -1191,6 +1287,36 @@ function previewSound() {
                     </button>
                   </div>
                 </div>
+              </div>
+              <!-- The last update attempts (kept by Tessel, at most 20). -->
+              <div v-if="updateHistory.length" class="agent-update-history" data-test="agent-update-history">
+                <button
+                  class="agent-update-history-toggle"
+                  type="button"
+                  :aria-expanded="historyOpen"
+                  @click="historyOpen = !historyOpen"
+                >
+                  {{ historyOpen ? '▾' : '▸' }}
+                  {{ historyTitle }}
+                </button>
+                <ul v-if="historyOpen" class="agent-update-history-list">
+                  <li
+                    v-for="(e, i) in updateHistory"
+                    :key="`${e.agentId}-${e.at}-${i}`"
+                    :class="{ 'agent-update-failed': !e.ok }"
+                    data-test="agent-update-history-entry"
+                  >
+                    <span class="set-hint">{{ whenText(e.at) }}</span>
+                    <span>{{ e.name }}</span>
+                    <span class="set-hint">{{ versionsText(e) }}</span>
+                    <span>{{ updateKindLabel(e.kind) }}</span>
+                    <span v-if="e.via === 'pane'" class="set-hint">{{ t('settings.agents.viaPane', 'in a terminal') }}</span>
+                    <span v-else-if="e.auto" class="set-hint">{{ t('settings.agents.viaAuto', 'automatic') }}</span>
+                    <button v-if="e.file" class="exit-btn" type="button" @click="emit('open-update-log', e.file)">
+                      {{ t('settings.agents.viewLog', 'View log') }}
+                    </button>
+                  </li>
+                </ul>
               </div>
             </div>
           </div>

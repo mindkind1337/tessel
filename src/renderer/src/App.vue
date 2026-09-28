@@ -61,6 +61,7 @@ import { paneModels } from './paneModels'
 import { sleepBlocker } from '../../shared/agentSleep'
 import { updateBlocker, planUpdate, autoUpdateMoment, describeWaiting } from '../../shared/agentUpdatePlan'
 import { stopThenRetry, stuckMessage } from './agentUpdateRetry'
+import { updateFailureText, updateKindLabel } from './agentUpdateErrors'
 import {
   docs as editorDocs,
   getDoc,
@@ -5347,8 +5348,9 @@ async function restartForTeamTools() {
 
 // --- Agent CLI updates (Settings > Agents) ------------------------------------------
 // The main process finds which installed agents have a newer version
-// (agentUpdates.js). An update runs its command in a new pane, like Install
-// (output shown, result reported). Panes running that agent then restart in
+// (agentUpdates.js). An update runs in the background in the main process
+// (agentUpdateRunner.js: output in the install log, result reported, kept in
+// the update history), or in a new pane when asked (Run in a terminal). Panes running that agent then restart in
 // place with their conversation resumed, each only at a safe moment (idle,
 // nothing typed, no approval or limit, not the pane you are in: see
 // src/shared/agentUpdatePlan.js); until then they wait, and you are told
@@ -5357,6 +5359,7 @@ async function restartForTeamTools() {
 // runs the update again and relaunches each one in place, resumed.
 const agentUpdateInfo = ref(null) // { checkedAt, agents: { id: row } }
 const agentUpdateJobs = reactive({}) // agentId -> job (see startAgentUpdate)
+const agentUpdateHistory = ref({ entries: [], last: {} }) // main's agentUpdateHistory.js
 const restartAfterUpdate = reactive({}) // leafId -> { agentId, version }
 const UPDATE_TICK_MS = 10 * 1000
 const autoUpdateTried = {} // agentId -> version tried automatically (once)
@@ -5405,6 +5408,12 @@ function updatePlanFor(agentId) {
     }))
   )
 }
+// Updates running now (the status bar shows them).
+const agentUpdatingNow = computed(() =>
+  Object.values(agentUpdateJobs)
+    .filter((j) => ['updating', 'retrying'].includes(j.phase))
+    .map((j) => ({ id: j.agentId, name: j.name }))
+)
 const agentUpdateCount = computed(() => {
   const rows = agentUpdateInfo.value ? Object.values(agentUpdateInfo.value.agents || {}) : []
   return rows.filter((r) => r.update).length
@@ -5439,6 +5448,12 @@ if (window.shellApi.agentUpdates) {
   window.shellApi.agentUpdates.status().then((r) => r && applyAgentUpdateInfo(r, { announce: false })).catch(() => {})
   const off = window.shellApi.agentUpdates.onChanged((r) => applyAgentUpdateInfo(r))
   onBeforeUnmount(() => off && off())
+  // The update history (Settings > Agents), kept by the main process.
+  if (window.shellApi.agentUpdates.history) {
+    window.shellApi.agentUpdates.history().then((h) => h && (agentUpdateHistory.value = h)).catch(() => {})
+    const offHistory = window.shellApi.agentUpdates.onHistory((h) => h && (agentUpdateHistory.value = h))
+    onBeforeUnmount(() => offHistory && offHistory())
+  }
 }
 
 function logUpdate(level, text) {
@@ -5446,12 +5461,14 @@ function logUpdate(level, text) {
 }
 
 // Update one agent (Update button, Update all, or automatically). A job:
-// { agentId, name, phase, from, target, paneId, retried, paused, waiting,
-//   manual, auto, toldWaiting }. Phases: updating, waiting-stop (its files
-// are locked: waiting until every pane running it may be stopped),
-// retrying (stopped, updating again), restarting (updated; panes waiting
-// for a safe moment to restart), done, failed.
-async function startAgentUpdate(agentId, { auto = false } = {}) {
+// { agentId, name, phase, from, target, via, paneId, retried, paused,
+//   waiting, manual, auto, toldWaiting, kind, detail, file, inUse }. Phases:
+// updating, waiting-stop (its files are locked: waiting until every pane
+// running it may be stopped), retrying (stopped, updating again), restarting
+// (updated; panes waiting for a safe moment to restart), done, failed.
+// via: 'background' (the main process runs it, no pane: agentUpdateRunner.js)
+// or 'pane' (Run in a terminal, for troubleshooting).
+async function startAgentUpdate(agentId, { auto = false, pane = false } = {}) {
   const row = agentUpdateInfo.value && agentUpdateInfo.value.agents[agentId]
   if (!row || !row.update || !Array.isArray(row.steps) || !row.steps.length) return false
   const job = agentUpdateJobs[agentId]
@@ -5459,12 +5476,15 @@ async function startAgentUpdate(agentId, { auto = false } = {}) {
     if (!auto) showToast(t('app.agentUpdate.already', '{{name}} is already being updated.', { name: row.name }), { timeout: 4000 })
     return false
   }
+  const background = !pane && !!(window.shellApi.agentUpdates && window.shellApi.agentUpdates.run)
   agentUpdateJobs[agentId] = {
     agentId,
     name: row.name,
     phase: 'updating',
     from: row.installed,
     target: row.latest,
+    via: background ? 'background' : 'pane',
+    startedAt: Date.now(),
     paneId: null,
     retried: false,
     paused: [],
@@ -5473,17 +5493,52 @@ async function startAgentUpdate(agentId, { auto = false } = {}) {
     auto,
     toldWaiting: false
   }
-  logUpdate('info', `${row.name} ${row.installed} -> ${row.latest}${auto ? ' (automatic)' : ''}`)
+  logUpdate('info', `${row.name} ${row.installed} -> ${row.latest}${auto ? ' (automatic)' : ''}${background ? '' : ' (in a pane)'}`)
   let ok = false
   try {
-    ok = await runUpdatePane(agentId)
+    ok = await runUpdate(agentId)
   } catch (err) {
     logUpdate('error', `${row.name}: ${err && err.message}`)
   }
   if (!ok) {
-    Object.assign(agentUpdateJobs[agentId], { phase: 'failed', error: t('app.agentUpdate.err.noPane', 'could not open a pane') })
+    Object.assign(agentUpdateJobs[agentId], {
+      phase: 'failed',
+      error: background ? t('app.agentUpdate.err.noStart', 'it could not be started') : t('app.agentUpdate.err.noPane', 'could not open a pane')
+    })
     return false
   }
+  return true
+}
+// Run (or run again, after its panes were stopped) the job's update, the way
+// it was started. -> true once it runs.
+function runUpdate(agentId) {
+  const job = agentUpdateJobs[agentId]
+  return job && job.via === 'pane' ? runUpdatePane(agentId) : runUpdateBackground(agentId)
+}
+// In the background: the main process runs it; its result comes back here.
+async function runUpdateBackground(agentId) {
+  const job = agentUpdateJobs[agentId]
+  const api = window.shellApi.agentUpdates
+  if (!job || !api || !api.run) return false
+  job.phase = job.retried ? 'retrying' : 'updating'
+  if (!job.retried && !job.auto)
+    showToast(t('app.agentUpdate.updatingBackground', 'Updating {{name}} in the background. Tessel tells you when it has finished.', { name: job.name }), { timeout: 5000 })
+  api
+    .run({ agentId, auto: !!job.auto })
+    .catch((err) => ({ ok: false, kind: 'failed', reason: (err && err.message) || '' }))
+    .then((r) => {
+      job.file = (r && r.file) || job.file || null
+      if (r && r.kind === 'busy') {
+        // Another run was going on in the main process (not one this window
+        // started): try again later with Update.
+        job.phase = 'failed'
+        job.error = t('app.agentUpdate.err.busy', 'another agent was being updated')
+        return
+      }
+      return onAgentUpdateResult(agentId, r || { ok: false })
+    })
+    .catch((err) => logUpdate('error', `${job.name}: ${err && err.message}`))
+    .finally(() => startQueuedUpdate())
   return true
 }
 async function runUpdatePane(agentId) {
@@ -5499,8 +5554,9 @@ async function runUpdatePane(agentId) {
   installRuns[leaf.id] = { label, agent: null, update: agentId }
   // Plain strings (a reactive array cannot be sent to the main process).
   const steps = Array.from(row.steps, String)
+  const agentUpdate = { agentId, from: String(job.from || ''), to: String(job.target || '') }
   if (window.shellApi.installLogStart) {
-    await window.shellApi.installLogStart({ paneId: leaf.id, name: label, shell: shellId, steps }).catch(() => {})
+    await window.shellApi.installLogStart({ paneId: leaf.id, name: label, shell: shellId, steps, agentUpdate }).catch(() => {})
   }
   const line = installChain(steps, null, shellId)
   setTimeout(() => window.shellApi.writePty(leaf.id, `${line}\r`), 700)
@@ -5508,14 +5564,45 @@ async function runUpdatePane(agentId) {
   return true
 }
 
-// The update pane ended (installLog.js told the result).
+// Open an update's log in Tessel's editor (with the system's app when there
+// is no workspace to show it in).
+function openUpdateLog(file) {
+  if (!file) return
+  closeSettings()
+  if (!openInTesselEditor({ file, preview: true })) window.shellApi.openInstallLog(file)
+}
+function logAction(file) {
+  return file ? { label: t('app.common.openLog', 'Open log'), run: () => openUpdateLog(file) } : null
+}
+// Files in use by panes Tessel runs: stop them when idle, update again,
+// reopen them with their conversation (the waiting-stop flow).
+function closeAndReopenForUpdate(agentId) {
+  const job = agentUpdateJobs[agentId]
+  if (!job || job.phase !== 'failed' || !job.inUse) return
+  job.inUse = false
+  job.error = ''
+  job.phase = 'waiting-stop'
+  job.toldWaiting = false
+  const queued = updateQueue.indexOf(agentId)
+  if (queued >= 0) updateQueue.splice(queued, 1)
+  logUpdate('info', `${job.name}: closing and reopening its panes to finish the update`)
+  agentUpdateTick()
+}
+
+// The update ended (background: the main process's answer; pane:
+// installLog.js told the result). r: { ok, kind?, detail?, reason, file,
+// locked?, row? }.
 async function onAgentUpdateResult(agentId, r) {
   const job = agentUpdateJobs[agentId]
   if (!job) return
+  job.file = r.file || job.file || null
+  job.kind = r.kind || (r.ok === true ? 'ok' : r.locked ? 'in-use' : 'failed')
+  job.detail = r.detail || ''
   if (r.ok === true) {
     await loadAgents(true)
-    const res = await checkAgentUpdates({ force: false, quiet: true })
-    const row = res && res.agents ? res.agents[agentId] : null
+    // The main process checked the version after a background update.
+    const res = r.row ? null : await checkAgentUpdates({ force: false, quiet: true })
+    const row = r.row || (res && res.agents ? res.agents[agentId] : null)
     const version = (row && row.installed) || job.target
     job.version = version
     // The command succeeded but the version it reports did not change (a
@@ -5525,12 +5612,11 @@ async function onAgentUpdateResult(agentId, r) {
       logUpdate('warn', `${job.name}: the update finished but it still reports ${version}`)
       if (job.paused.length) await relaunchPaused(job, 'resumed (still on the same version)', t('app.agentUpdate.what.sameVersion', 'resumed (still on the same version)')) // i18n-ignore
       job.phase = 'failed'
+      job.kind = 'same-version'
       job.error = t('app.agentUpdate.err.sameVersion', 'the update finished, but {{name}} still reports {{version}}', { name: job.name, version })
-      showToast(`${t('app.agentUpdate.sameVersion', 'The update of {{name}} finished, but it still reports version {{version}}.', { name: job.name, version })} ${job.report || ''}`.trim(), {
-        kind: 'attention',
-        timeout: 15000,
-        action: r.file ? { label: t('app.common.openLog', 'Open log'), run: () => window.shellApi.openInstallLog(r.file) } : null
-      })
+      const text = `${t('app.agentUpdate.sameVersion', 'The update of {{name}} finished, but it still reports version {{version}}.', { name: job.name, version })} ${job.report || ''}`.trim()
+      inboxNote('attention', t('app.agentUpdate.notUpdatedTitle', '{{name}} was not updated', { name: job.name }), text, null)
+      showToast(text, { kind: 'attention', timeout: 15000, action: logAction(r.file) })
       return
     }
     logUpdate('info', `${job.name} updated to ${version}`)
@@ -5560,34 +5646,49 @@ async function onAgentUpdateResult(agentId, r) {
         timeout: tail ? 15000 : 7000
       }
     )
-    if (job.phase === 'done') inboxNote('done', t('app.agentUpdate.updatedTo', '{{name}} updated to {{version}}', { name: job.name, version }), tail.trim(), null)
+    inboxNote('done', t('app.agentUpdate.updatedTo', '{{name}} updated to {{version}}', { name: job.name, version }), tail.trim(), null)
     agentUpdateTick()
     return
   }
   // Its files are in use by the agents running it: stop them (when safe),
-  // update again, relaunch them.
-  if (r.locked && !job.retried) {
+  // update again, relaunch them. Asked first (a button), unless the update
+  // is automatic (you chose that it happens by itself at a safe moment).
+  if ((r.locked || job.kind === 'in-use') && !job.retried) {
+    job.kind = 'in-use'
     const plan = updatePlanFor(agentId)
+    const title = t('app.agentUpdate.notUpdatedTitle', '{{name}} was not updated', { name: job.name })
     if (!plan.running.length) {
       job.phase = 'failed'
       job.error = t('app.agentUpdate.err.inUseOutside', 'its files are in use by a program outside Tessel')
-      showToast(t('app.agentUpdate.inUseOutside', '{{name}} was not updated: its files are in use, but no Tessel pane runs it. Close {{name}} where it runs (another terminal?) and try again.', { name: job.name }), {
-        kind: 'error',
-        timeout: 20000,
-        action: r.file ? { label: t('app.common.openLog', 'Open log'), run: () => window.shellApi.openInstallLog(r.file) } : null
-      })
+      const text = updateFailureText('in-use', job.name, { panes: 0 })
+      inboxNote('attention', title, text, null)
+      showToast(text, { kind: 'error', timeout: 20000, action: logAction(r.file) })
       return
     }
     if (plan.manual.length) {
       job.phase = 'failed'
       job.manual = plan.manual
       job.error = t('app.agentUpdate.err.inUse', 'its files are in use')
-      showToast(
+      const list = plan.manual.map((m) => m.label).join(', ')
+      const text =
         plan.manual.length === 1
-          ? t('app.agentUpdate.inUseManualOne', '{{name}} was not updated: its files are in use by {{list}}, which Tessel cannot restart without losing its conversation. Close it, then click Update again.', { name: job.name, list: plan.manual.map((m) => m.label).join(', ') })
-          : t('app.agentUpdate.inUseManualMany', '{{name}} was not updated: its files are in use by {{list}}, which Tessel cannot restart without losing their conversation. Close them, then click Update again.', { name: job.name, list: plan.manual.map((m) => m.label).join(', ') }),
-        { kind: 'error', timeout: 20000 }
-      )
+          ? t('app.agentUpdate.inUseManualOne', '{{name}} was not updated: its files are in use by {{list}}, which Tessel cannot restart without losing its conversation. Close it, then click Update again.', { name: job.name, list })
+          : t('app.agentUpdate.inUseManualMany', '{{name}} was not updated: its files are in use by {{list}}, which Tessel cannot restart without losing their conversation. Close them, then click Update again.', { name: job.name, list })
+      inboxNote('attention', title, text, null)
+      showToast(text, { kind: 'error', timeout: 20000 })
+      return
+    }
+    if (!job.auto) {
+      job.phase = 'failed'
+      job.inUse = true
+      job.error = t('app.agentUpdate.err.inUsePanes', 'its files are in use by its panes')
+      const text = updateFailureText('in-use', job.name, { panes: plan.running.length })
+      inboxNote('attention', title, text, null)
+      showToast(text, {
+        kind: 'attention',
+        timeout: 30000,
+        action: { label: t('app.agentUpdate.closeReopen', 'Close and reopen them'), run: () => closeAndReopenForUpdate(agentId) }
+      })
       return
     }
     job.phase = 'waiting-stop'
@@ -5602,18 +5703,12 @@ async function onAgentUpdateResult(agentId, r) {
     return
   }
   job.phase = 'failed'
-  job.error = r.ok === false ? t('app.agentUpdate.err.failed', 'the update failed') : t('app.agentUpdate.err.unfinished', 'the update did not finish')
+  const why = updateFailureText(job.kind, job.name, { panes: 0 })
+  job.error = r.ok === false ? updateKindLabel(job.kind) : t('app.agentUpdate.err.unfinished', 'the update did not finish')
   if (job.paused.length) await relaunchPaused(job, 'resumed (not updated)', t('app.agentUpdate.what.notUpdated', 'resumed (not updated)')) // i18n-ignore
-  const failVars = { name: job.name, reason: r.reason ? ` (${r.reason})` : '', report: job.report ? ` ${job.report}` : '' }
-  showToast(
-    r.ok === false
-      ? t('app.agentUpdate.notUpdated', '{{name}} was not updated{{reason}}.{{report}} The log shows what went wrong.', failVars)
-      : t('app.agentUpdate.unfinished', '{{name}} update did not finish{{reason}}.{{report}} The log shows what went wrong.', failVars),
-    {
-    kind: 'error',
-    timeout: 20000,
-    action: r.file ? { label: t('app.common.openLog', 'Open log'), run: () => window.shellApi.openInstallLog(r.file) } : null
-  })
+  const text = `${t('app.agentUpdate.notUpdatedShort', '{{name}} was not updated.', { name: job.name })} ${why}${job.report ? ` ${job.report}` : ''}`
+  inboxNote('attention', t('app.agentUpdate.notUpdatedTitle', '{{name}} was not updated', { name: job.name }), `${why}${job.detail ? `\n${job.detail}` : ''}`, null)
+  showToast(text, { kind: 'error', timeout: 20000, action: logAction(r.file) })
 }
 
 // Stop every pane running this agent (each checked safe at this very
@@ -5629,7 +5724,7 @@ async function stopAndRetryUpdate(job) {
   const label = (id) => paneLabel(findLeaf(id))
   await stopThenRetry(job, plan.ready, {
     stopAndWait: (ids, timeoutMs) => window.shellApi.stopPtysAndWait(ids, timeoutMs),
-    runUpdate: () => runUpdatePane(job.agentId),
+    runUpdate: () => runUpdate(job.agentId),
     relaunch: relaunchPaused,
     release: (ids) => ids.forEach((id) => restartingLeaves.delete(id)),
     log: logUpdate,
@@ -5768,16 +5863,19 @@ async function updateAllAgents() {
   for (const r of rows) if (!updateQueue.includes(r.id)) updateQueue.push(r.id)
   await startQueuedUpdate()
 }
+const updateInPane = new Set() // queued ids to run in a pane (Run in a terminal)
 async function startQueuedUpdate() {
   while (updateQueue.length && !updateRunning()) {
     const id = updateQueue.shift()
-    await startAgentUpdate(id)
+    await startAgentUpdate(id, { pane: updateInPane.delete(id) })
   }
 }
-// The Update button of one agent.
-async function requestAgentUpdate(agentId) {
+// The Update button of one agent (in the background), or its Run in a
+// terminal (pane: true, to see the output as it goes).
+async function requestAgentUpdate(agentId, { pane = false } = {}) {
   const job = agentUpdateJobs[agentId]
   if (updateQueue.includes(agentId) || (job && !['done', 'failed'].includes(job.phase))) return
+  if (pane) updateInPane.add(agentId)
   updateQueue.push(agentId)
   if (updateRunning()) showToast(t('app.agentUpdate.queued', 'Another agent is being updated: this one follows.'), { timeout: 4000 })
   await startQueuedUpdate()
@@ -7693,6 +7791,8 @@ onBeforeUnmount(() => {
       :external-ports="portScanner.state.external"
       :ports-refreshing="portScanner.state.refreshing"
       :ports-unavailable="portScanner.state.unavailableReason"
+      :agent-updating="agentUpdatingNow"
+      @open-agent-updates="openSettingsAt('agents')"
       @focus-pane="focusPane"
       @activate-card="activateCardByKey"
       @port-open="openPort"
@@ -7890,7 +7990,11 @@ onBeforeUnmount(() => {
       :agent-update-queue="updateQueue"
       @detect-agents="(done) => loadAgents(true).finally(done)"
       @check-agent-updates="(done) => checkAgentUpdates({ force: true }).finally(done)"
+      :agent-update-history="agentUpdateHistory"
       @update-agent="requestAgentUpdate"
+      @update-agent-in-pane="(id) => requestAgentUpdate(id, { pane: true })"
+      @close-reopen-agent-update="closeAndReopenForUpdate"
+      @open-update-log="openUpdateLog"
       @update-all-agents="updateAllAgents"
       @cancel-agent-update="cancelAgentUpdate"
       @open-connections="((settingsOpen = false), (mcpTab = 'connections'), (mcpOpen = true))"

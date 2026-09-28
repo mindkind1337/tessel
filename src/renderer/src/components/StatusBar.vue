@@ -44,9 +44,18 @@ const props = defineProps({
   portGroups: { type: Array, default: () => [] },
   externalPorts: { type: Array, default: () => [] },
   portsRefreshing: { type: Boolean, default: false },
-  portsUnavailable: { type: String, default: '' }
+  portsUnavailable: { type: String, default: '' },
+  // Agent updates running in the background: [{ id, name }]
+  agentUpdating: { type: Array, default: () => [] }
 })
-const emit = defineEmits(['focus-pane', 'activate-card', 'port-open', 'port-copy', 'port-stop', 'refresh-ports'])
+const emit = defineEmits(['focus-pane', 'activate-card', 'port-open', 'port-copy', 'port-stop', 'refresh-ports', 'open-agent-updates'])
+const agentUpdatingText = computed(() => {
+  const list = props.agentUpdating || []
+  if (!list.length) return ''
+  return list.length === 1
+    ? t('statusBar.agentUpdate.one', 'Updating {{name}}…', { name: list[0].name })
+    : t('statusBar.agentUpdate.many', 'Updating {{count}} agents…', { count: list.length })
+})
 
 // --- Width breakpoints (Orca: compact < 900, icon only < 500) ---------------
 const barEl = ref(null)
@@ -298,6 +307,20 @@ function goToWorktree(key) {
     </div>
     <div class="sb-spacer"></div>
     <div class="sb-right">
+      <!-- An agent update running in the background (Settings > Agents). -->
+      <button
+        v-if="agentUpdatingText"
+        type="button"
+        class="sb-trigger sb-agent-update"
+        data-test="sb-agent-update"
+        :title="agentUpdatingText"
+        :aria-label="agentUpdatingText"
+        data-status-bar-context-menu-exempt
+        @click="emit('open-agent-updates')"
+      >
+        <LoaderCircle :size="12" class="sb-muted sb-spin" aria-hidden="true" />
+        <span v-if="!iconOnly" class="sb-label">{{ agentUpdatingText }}</span>
+      </button>
       <!-- Keep computer awake -->
       <button
         type="button"
