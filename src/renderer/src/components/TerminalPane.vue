@@ -1789,7 +1789,7 @@ onBeforeUnmount(() => {
         <span v-if="node.num" class="pane-num" :aria-label="t('pane.number', 'Pane #{{num}}', { num: node.num })">{{ node.num }}</span>
         <span
           class="pane-icon"
-          :class="isAgent ? ['agent', needsYou ? 'attention' : agentStatus, { yolo: node.launchYolo }] : null"
+          :class="isAgent ? ['agent', needsYou ? 'attention' : subRunning > 0 ? 'busy' : agentStatus, { yolo: node.launchYolo }] : null"
           :style="isAgent ? { '--accent': node.accent } : null"
           :aria-label="agentName"
           :aria-description="isAgent ? statusTitle : undefined"
