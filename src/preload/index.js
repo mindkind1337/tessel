@@ -19,6 +19,8 @@ const api = {
   writePty: (id, data) => ipcRenderer.send('pty:write', { id, data }),
   resizePty: (id, cols, rows) => ipcRenderer.send('pty:resize', { id, cols, rows }),
   killPty: (id) => ipcRenderer.send('pty:kill', { id }),
+  // Stop terminals and wait until their processes really ended.
+  stopPtysAndWait: (ids, timeoutMs) => ipcRenderer.invoke('pty:stopAndWait', { ids, timeoutMs }),
 
   pickFolder: (opts) => ipcRenderer.invoke('dialog:pickFolder', opts),
   projectNotes: (opts) => ipcRenderer.invoke('notes:ensure', opts),

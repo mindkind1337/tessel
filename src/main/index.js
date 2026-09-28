@@ -36,6 +36,7 @@ import { claudeImageFile, isPastedImage, PASTE_DIR } from './pastedImages'
 import { createLogger, describe } from './logger'
 import { cleanEnv } from './cleanEnv'
 import { createPtyClient } from './ptyClient'
+import { listProcesses, treeOf, waitForExit, killPids } from './processTree'
 import { pipeName } from './ptyProtocol'
 import { createUpdater } from './updater'
 import { createAgentUpdates } from './agentUpdates'
@@ -2052,6 +2053,49 @@ ipcMain.on('pty:resize', (_evt, { id, cols, rows }) => {
 ipcMain.on('pty:kill', (_evt, { id }) => {
   host.send('kill', { id })
   ptyInfo.delete(id)
+})
+
+// Stop these terminals and wait for the real end of each one's processes
+// (shell and everything under it), not just the host forgetting it: an
+// agent update retries an install only once they released their files.
+// See processTree.js for why the host's word is not enough.
+// -> { ok: true } or { ok: false, stuck: [ids still running something] }
+ipcMain.handle('pty:stopAndWait', async (_evt, { ids = [], timeoutMs = 15000 } = {}) => {
+  const list = (Array.isArray(ids) ? ids : []).filter((id) => (typeof id === 'string' && id) || Number.isInteger(id))
+  const roots = {} // id -> shell pid
+  for (const id of list) {
+    let pid = ptyInfo.get(id)?.pid
+    if (!pid) {
+      const a = await host.request('attach', { id }, 5000).catch(() => null)
+      pid = a && a.ok && !a.exited ? a.pid : null
+    }
+    if (Number.isInteger(pid) && pid > 0) roots[id] = pid
+  }
+  // Recorded before the stop: once the shell is gone, what it started can
+  // no longer be traced back to it.
+  const procs = Object.keys(roots).length ? await listProcesses() : []
+  const trees = {}
+  for (const [id, pid] of Object.entries(roots)) {
+    trees[id] = procs ? treeOf(procs, [{ pid }]) : [{ pid, created: null }]
+    if (!trees[id].length) delete trees[id] // already ended
+  }
+  for (const id of list) {
+    host.send('kill', { id })
+    ptyInfo.delete(id)
+  }
+  const res = await waitForExit({
+    entries: Object.values(trees).flat(),
+    // Still there after the host's own force-kill (1.5 s): what was left
+    // under the shell (an agent that outlived it) is ended too.
+    force: (left) => killPids(left),
+    timeoutMs: Math.min(Math.max(Number(timeoutMs) || 15000, 1000), 60000)
+  })
+  if (res.ok) return { ok: true }
+  const left = new Set(res.left.map((e) => e.pid))
+  const stuck = Object.keys(trees).filter((id) => trees[id].some((e) => left.has(e.pid)))
+  log.warn('pty', `terminal(s) ${Object.keys(trees).join(', ')} did not end: pid(s) ${[...left].join(', ')} still run`)
+  // Only a process started under them since the stop is left: still theirs.
+  return { ok: false, stuck: stuck.length ? stuck : Object.keys(trees) }
 })
 
 // Recent output saved when you close the app, shown again when panes reopen.

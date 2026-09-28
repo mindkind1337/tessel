@@ -53,6 +53,7 @@ import { tasks as boardTasks, setTasks, updateTask, removeTask, addTask } from '
 import { paneModels } from './paneModels'
 import { sleepBlocker } from '../../shared/agentSleep'
 import { updateBlocker, planUpdate, autoUpdateMoment, describeWaiting } from '../../shared/agentUpdatePlan'
+import { stopThenRetry, stuckMessage } from './agentUpdateRetry'
 import {
   docs as editorDocs,
   getDoc,
@@ -5228,37 +5229,39 @@ async function onAgentUpdateResult(agentId, r) {
 }
 
 // Stop every pane running this agent (each checked safe at this very
-// moment), then update again. They are relaunched once it ends, whatever
-// the result.
+// moment), wait until their processes really ended, then update again.
+// They are relaunched once it ends, whatever the result. If one does not
+// end in time: no update and no relaunch; they stay stopped for you to
+// restart (agentUpdateRetry.js).
 async function stopAndRetryUpdate(job) {
   const plan = updatePlanFor(job.agentId)
   if (!plan.allReady || plan.manual.length) return
-  job.phase = 'retrying'
-  job.retried = true
-  const stopped = []
-  for (const id of plan.ready) {
-    restartingLeaves.add(id) // nothing else restarts or types into it meanwhile
-    window.shellApi.killPty(id)
-    stopped.push(id)
-  }
-  job.paused = stopped
-  logUpdate('info', `${job.name}: stopped ${stopped.map((id) => paneLabel(findLeaf(id))).join(', ')} to update`)
-  // Wait until their terminals are really gone (their files released).
-  for (const id of stopped) {
-    for (let i = 0; i < 40; i++) {
-      const a = await window.shellApi.attachPty(id).catch(() => null)
-      if (!a || !a.ok) break
-      window.shellApi.killPty(id)
-      await new Promise((r) => setTimeout(r, 250))
+  // Nothing else restarts or types into them meanwhile.
+  for (const id of plan.ready) restartingLeaves.add(id)
+  const label = (id) => paneLabel(findLeaf(id))
+  await stopThenRetry(job, plan.ready, {
+    stopAndWait: (ids, timeoutMs) => window.shellApi.stopPtysAndWait(ids, timeoutMs),
+    runUpdate: () => runUpdatePane(job.agentId),
+    relaunch: relaunchPaused,
+    release: (ids) => ids.forEach((id) => restartingLeaves.delete(id)),
+    log: logUpdate,
+    label,
+    onStuck: (r) => {
+      const text = stuckMessage(r, label)
+      inboxNote('attention', `${job.name} was not updated`, text, r.stuck[0] || null)
+      showToast(text, {
+        kind: 'error',
+        timeout: 30000,
+        action: {
+          label: 'Restart',
+          // Same pane, conversation resumed (its session id is kept).
+          run: async () => {
+            for (const id of r.stopped) if (findLeaf(id)) await restartInPlace(id, { resume: true })
+          }
+        }
+      })
     }
-  }
-  await new Promise((r) => setTimeout(r, 1000)) // Windows releases the files a moment later
-  const ok = await runUpdatePane(job.agentId)
-  if (!ok) {
-    job.phase = 'failed'
-    job.error = 'could not open a pane'
-    await relaunchPaused(job, 'resumed (not updated)')
-  }
+  })
 }
 
 // Relaunch the panes stopped for an update, in place, conversation resumed.
