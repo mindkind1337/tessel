@@ -23,8 +23,8 @@ function addError(agent, error) {
   agent.error = agent.error ? `${agent.error} ${error}` : error
 }
 
-function installation(home, id, scriptPath, events) {
-  const file = join(home, `.${id}`, id === 'codex' ? 'hooks.json' : 'settings.json')
+function installation(home, id, scriptPath, events, configDir = join(home, `.${id}`)) {
+  const file = join(configDir, id === 'codex' ? 'hooks.json' : 'settings.json')
   const agent = {
     id,
     hooks: 'missing',
@@ -200,9 +200,9 @@ function savedTrust(text) {
   return { states, disabled: (features.hooks ?? features.codex_hooks) === false }
 }
 
-function codexApproval(home, result) {
+function codexApproval(home, result, configDir = join(home, '.codex')) {
   const { agent, matches } = result
-  const data = readText(join(home, '.codex', 'config.toml'), 'Codex config.toml')
+  const data = readText(join(configDir, 'config.toml'), 'Codex config.toml')
   if (data.error) return addError(agent, data.error)
   try {
     const { states, disabled } = savedTrust(data.text || '')
@@ -323,12 +323,20 @@ function opencodeInstallation(home, scriptPath) {
   return agent
 }
 
-export function hooksStatus({ home = os.homedir(), sessionsDir, scriptPath } = {}) {
-  const claude = installation(home, 'claude', scriptPath, HOOK_EVENTS)
-  const codex = installation(home, 'codex', scriptPath, CODEX_HOOK_EVENTS)
+export function hooksStatus({ home = os.homedir(), sessionsDir, scriptPath, configDirs = {}, states } = {}) {
+  const claude = installation(home, 'claude', scriptPath, HOOK_EVENTS, configDirs.claude)
+  const codex = installation(home, 'codex', scriptPath, CODEX_HOOK_EVENTS, configDirs.codex)
   const gemini = installation(home, 'gemini', scriptPath, GEMINI_HOOK_EVENTS)
-  codexApproval(home, codex)
+  codexApproval(home, codex, configDirs.codex)
   const agents = [claude.agent, codex.agent, gemini.agent, copilotInstallation(home, scriptPath), kimiInstallation(home, scriptPath), opencodeInstallation(home, scriptPath)]
   sessionSignals(sessionsDir, agents)
+  if (states) for (const agent of agents) {
+    if (!['claude', 'codex'].includes(agent.id)) continue
+    const observed = Object.values(states).filter((state) => state.provider === agent.id)
+    agent.status = {
+      observed: observed.some((state) => state.hookSeen && state.confirmed && !state.stale),
+      panes: observed.map(({ paneId, state, source, confirmed, stale, observedAt }) => ({ paneId, state, source, confirmed, stale, observedAt }))
+    }
+  }
   return { agents }
 }

@@ -22,10 +22,15 @@ import {
   setLimit,
   clearLimit,
   setApproval,
-  approvals
+  approvals,
+  agentStates,
+  getAgentState,
+  managedAgentStatus,
+  agentScreenObservation,
+  createAgentActivityMonitor
 } from '../agentStatus'
 import { promptShowsPlaceholder } from '../promptCheck'
-import { detectLimit, detectApproval, detectTaskDone } from '../agentLimit'
+import { detectTaskDone } from '../agentLimit'
 import { modelLabel } from '../../../shared/modelLabel'
 import { modelFromScreen } from '../../../shared/screenModel'
 import { findFileRefs } from '../../../shared/fileLinks'
@@ -189,21 +194,26 @@ watch(
   { immediate: true }
 )
 
-// Busy/idle indicator for agent panes: an agent that is actively emitting output
-// is "working"; once output has been quiet for a moment it is "idle" — i.e.
-// waiting for your input. This is a backend-agnostic heuristic (no TUI parsing).
-const agentStatus = ref('idle') // 'busy' | 'idle'
+// Hook observations own supported launches. Older panes and other providers
+// retain their explicitly estimated output-based display.
+const agentStatus = ref(managedAgentStatus(props.node) ? 'unknown' : 'idle')
+let pendingScreenWrites = 0
+let hasLiveScreen = false
+const observedState = computed(() => managedAgentStatus(props.node) ? getAgentState(props.node.id, props.node.agentLaunchToken) : null)
+const estimatedState = computed(() => !managedAgentStatus(props.node) || !observedState.value?.hookSeen)
+const statusTitle = computed(() => {
+  const observed = observedState.value
+  const state = observed?.confirmed && !observed.stale
+    ? observed.state
+    : agentStatus.value === 'busy' ? 'working' : agentStatus.value === 'idle' ? 'idle' : 'unknown'
+  const source = state === 'unknown' ? 'No fresh status is confirmed for this agent.' : estimatedState.value ? 'Estimated from terminal output; hooks have not confirmed it.' : 'Confirmed by agent events and terminal readiness.'
+  const scope = managedAgentStatus(props.node) ? 'Main agent' : 'Agent'
+  return `${scope} state: ${state}. ${source}${props.node.sessionId ? `\nSession ${props.node.sessionId}` : ''}`
+})
 watch(agentStatus, (v) => {
-  setAgentStatus(props.node.id, v)
+  setAgentStatus(props.node.id, v, props.node.agentLaunchToken)
   if (v === 'idle') refreshModel() // an answer just ended
 })
-let statusTimer = 0
-let busySince = 0
-const IDLE_AFTER_MS = 1400
-// Only a real stretch of work counts as "finished" (typing echoes and redraws
-// also produce output, but only for a moment).
-const ATTENTION_AFTER_MS = 4000
-let lastRecheck = 0
 // Output that answers something done here (a click that focuses the pane, a
 // resize, a key typed) is the agent redrawing or echoing, not working: it does
 // not count as activity for this long after it.
@@ -213,57 +223,8 @@ function expectRedraw() {
   redrawUntil = Date.now() + REDRAW_MS
 }
 function markActivity() {
-  if (Date.now() < redrawUntil) return
   if (!isAgent.value) return
-  // An approval prompt or a usage limit flagged earlier: still on screen? An
-  // agent that keeps redrawing a spinner ("Working 12m") never goes quiet, so
-  // this cannot wait for the idle check below. At most once a second.
-  const id = props.node.id
-  if ((approvals[id] || limits[id]) && Date.now() - lastRecheck > 1000) {
-    lastRecheck = Date.now()
-    const screen = screenText(12)
-    if (approvals[id] && !detectApproval(screen)) setApproval(id, false)
-    if (limits[id] && !detectLimit(screen)) clearLimit(id)
-  }
-  if (agentStatus.value !== 'busy') {
-    busySince = Date.now()
-    // Working for real (not a key echo): a new request refreshes the cache.
-    clearTimeout(cacheBusyTimer)
-    cacheBusyTimer = setTimeout(() => (cacheStartedAt.value = 0), ATTENTION_AFTER_MS)
-  }
-  agentStatus.value = 'busy'
-  if (statusTimer) clearTimeout(statusTimer)
-  statusTimer = setTimeout(() => {
-    agentStatus.value = 'idle'
-    clearTimeout(cacheBusyTimer)
-    const worked = Date.now() - busySince - IDLE_AFTER_MS
-    const screen = screenText(12)
-    // Waiting for you to approve a command or an edit: not "finished".
-    const asks = detectApproval(screen)
-    setApproval(props.node.id, asks)
-    if (asks) return
-    // Stopped because it hit its usage limit? Say so instead of "finished".
-    const hit = detectLimit(screen)
-    if (hit) {
-      const isNew = !limits[props.node.id]
-      setLimit(props.node.id, hit)
-      if (isNew) ctx.notifyAgentLimit(props.node, hit)
-      return
-    }
-    // Working again for real: whatever limit it had is over.
-    if (worked >= ATTENTION_AFTER_MS) clearLimit(props.node.id)
-    // Claude answered: its prompt cache lasts from now.
-    if (worked >= ATTENTION_AFTER_MS && props.node.agentId === 'claude') cacheStartedAt.value = Date.now()
-    // A task it was given is finished (it printed the task signal).
-    if (worked >= ATTENTION_AFTER_MS && detectTaskDone(screen) && ctx.agentReportedDone) {
-      ctx.agentReportedDone(props.node.id)
-    }
-    const lookingHere = isActive.value && document.hasFocus()
-    if (worked >= ATTENTION_AFTER_MS && !lookingHere) {
-      setAttention(props.node.id)
-      ctx.notifyAgentDone(props.node)
-    }
-  }, IDLE_AFTER_MS)
+  activityMonitor.output({ redraw: Date.now() < redrawUntil })
 }
 
 // The last `lines` non-empty lines on screen as plain text (a tall pane can
@@ -290,7 +251,38 @@ function screenText(lines = 20) {
 
 // Prompt cache countdown (Settings > Agents): from Claude's last answer.
 const cacheStartedAt = ref(0)
-let cacheBusyTimer = 0
+const activityMonitor = createAgentActivityMonitor({
+  getNode: () => props.node,
+  readScreen: () => pendingScreenWrites || !hasLiveScreen
+    ? { screen: '', ready: false, busy: false, approval: false, limit: null }
+    : agentScreenObservation(term, props.node.agentId, screenText(12)),
+  report: (event) => window.shellApi.reportAgentScreen?.(event),
+  onStatus: (status) => { agentStatus.value = status },
+  onWorking: () => { cacheStartedAt.value = 0 },
+  onApproval: (on) => setApproval(props.node.id, on),
+  onLimit: (hit) => {
+    const isNew = !limits[props.node.id]
+    setApproval(props.node.id, false)
+    setLimit(props.node.id, hit)
+    if (isNew) ctx.notifyAgentLimit(props.node, hit)
+  },
+  onCompleted: ({ at, screen }) => {
+    clearLimit(props.node.id)
+    if (props.node.agentId === 'claude') cacheStartedAt.value = at
+    // A successful turn boundary is not a completed task: keep the explicit
+    // standalone TASK_COMPLETE signal as the separate task contract.
+    if (detectTaskDone(screen) && ctx.agentReportedDone) ctx.agentReportedDone(props.node.id)
+    if (!(isActive.value && document.hasFocus())) {
+      setAttention(props.node.id)
+      ctx.notifyAgentDone(props.node)
+    }
+  }
+})
+// Watch the identity as well as the snapshot, so a late old-process event
+// cannot label a new process that happens to reuse this pane id.
+watch(() => [props.node.agentLaunchToken, agentStates[props.node.id]], () => {
+  activityMonitor.stateChanged(observedState.value)
+}, { flush: 'sync' })
 const cacheNow = ref(Date.now())
 let cacheClock = 0
 const cacheShown = computed(() => settings.promptCacheTimer && props.node.agentId === 'claude' && cacheStartedAt.value > 0)
@@ -310,7 +302,7 @@ document.addEventListener('visibilitychange', syncCacheClock)
 onBeforeUnmount(() => {
   document.removeEventListener('visibilitychange', syncCacheClock)
   clearInterval(cacheClock)
-  clearTimeout(cacheBusyTimer)
+  activityMonitor.dispose()
 })
 const cache = computed(() => (cacheShown.value ? cacheCountdown(cacheStartedAt.value, settings.promptCacheTtlMs, cacheNow.value) : null))
 
@@ -1227,8 +1219,15 @@ onMounted(() => {
   // Live output for this pane only.
   unsubData = window.shellApi.onData(({ id, data }) => {
     if (id === props.node.id && term) {
-      term.write(data)
-      markActivity()
+      const outputTerm = term
+      pendingScreenWrites++
+      outputTerm.write(data, () => {
+        pendingScreenWrites = Math.max(0, pendingScreenWrites - 1)
+        if (mounted && term === outputTerm) {
+          hasLiveScreen = true
+          markActivity()
+        }
+      })
     }
   })
   unsubExit = window.shellApi.onExit(async ({ id, exitCode: code, pid }) => {
@@ -1245,6 +1244,7 @@ onMounted(() => {
       if (a && a.ok && !a.exited && (!a.pid || !props.node.pid || a.pid === props.node.pid)) return
     }
     exited.value = true
+    activityMonitor.dispose()
     exitCode.value = code
     term.write(`\r\n\x1b[33m[process exited with code ${code}]\x1b[0m\r\n`)
   })
@@ -1267,6 +1267,8 @@ onMounted(() => {
     promptShowsPlaceholder: (promptChar) => promptShowsPlaceholder(term, promptChar)
   }
   registerPane(props.node.id, paneApi)
+
+  if (isAgent.value) activityMonitor.stateChanged(observedState.value)
 
   if (props.node.exitedAtStart) exited.value = true
   if (isActive.value) term.focus()
@@ -1318,7 +1320,6 @@ onBeforeUnmount(() => {
   mounted = false
   if (ro) ro.disconnect()
   if (fitTimer) clearTimeout(fitTimer)
-  if (statusTimer) clearTimeout(statusTimer)
   window.removeEventListener('resize', onLayoutChange)
   window.removeEventListener('terminal-layout-change', onLayoutChange)
   window.removeEventListener('pointerdown', onDocPointerDownMenu, true)
@@ -1369,13 +1370,7 @@ onBeforeUnmount(() => {
           class="pane-icon"
           :class="isAgent ? ['agent', needsYou ? 'attention' : agentStatus] : null"
           :style="isAgent ? { '--accent': node.accent } : null"
-          :title="
-            isAgent
-              ? agentStatus === 'busy'
-                ? `Agent is working${node.sessionId ? `\nSession ${node.sessionId}` : ''}`
-                : `Agent is idle, waiting for input${node.sessionId ? `\nSession ${node.sessionId}` : ''}`
-              : node.shellName
-          "
+          :title="isAgent ? statusTitle : node.shellName"
         >
           <BrandIcon
             :kind="isAgent ? node.agentId : node.shellId"
@@ -1500,7 +1495,8 @@ Named after its conversation. Double-click to rename` : 'Double-click to rename'
           "
           >limit{{ limit.reset ? ` · ${limit.reset}` : '' }}</span
         >
-        <span v-else-if="isAgent && agentStatus === 'busy'" class="pane-working">working</span>
+        <span v-else-if="isAgent && agentStatus === 'busy'" class="pane-working" :title="statusTitle">{{ estimatedState ? 'working · estimated' : 'working' }}</span>
+        <span v-else-if="isAgent && agentStatus === 'unknown'" class="pane-working" :title="statusTitle">unknown</span>
         <span v-else-if="needsYou" class="pane-needs-you">needs you</span>
         <span v-if="exited" class="exit-tag">exited</span>
       </div>

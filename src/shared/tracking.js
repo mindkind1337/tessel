@@ -28,6 +28,7 @@ export function formatSpan(ms) {
 }
 
 const STATE_WORD = {
+  unknown: 'Status unknown',
   working: 'Working',
   idle: 'Idle',
   approval: 'Waiting for your approval',

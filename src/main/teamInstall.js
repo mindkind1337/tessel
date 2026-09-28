@@ -19,7 +19,7 @@ import { writeFileAtomic as writeAtomic } from './safeJson'
 export { installKimiHooks, KIMI_HOOK_EVENTS } from './kimiHooks'
 
 export const SERVER_NAME = 'tessel-team'
-export const HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PostToolUse', 'Stop']
+export const HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'PermissionRequest', 'Notification', 'Stop', 'StopFailure', 'SessionEnd', 'SubagentStart', 'SubagentStop']
 const OURS = 'tessel-team-mcp.cjs'
 
 // The server's VERSION ('1.4.0' -> [1, 4, 0]), or null.
@@ -56,18 +56,18 @@ const isOurs = (h) => h && typeof h === 'object' && String(h.command || '').incl
 
 // Claude Code hooks in ~/.claude/settings.json.
 // -> { changed: bool } or { error }
-export function installClaudeHooks(scriptPath, home = os.homedir()) {
-  return installHooks(join(home, '.claude', 'settings.json'), HOOK_EVENTS, `node ${quote(scriptPath)} --hook`)
+export function installClaudeHooks(scriptPath, home = os.homedir(), { configDir = join(home, '.claude') } = {}) {
+  return installHooks(join(configDir, 'settings.json'), HOOK_EVENTS, `node ${quote(scriptPath)} --hook`)
 }
 
 // Codex hooks in ~/.codex/hooks.json (the same format; hooks are on by
 // default since Codex 0.157). SessionStart and UserPromptSubmit report the
 // conversation; Stop can continue once with unread team messages. Codex
 // requires the updated hook definition to be reviewed/trusted in /hooks.
-export const CODEX_HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'Stop']
-export function installCodexHooks(scriptPath, home = os.homedir()) {
+export const CODEX_HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PermissionRequest', 'PostToolUse', 'Stop', 'Interrupt', 'SessionEnd', 'SubagentStart', 'SubagentStop']
+export function installCodexHooks(scriptPath, home = os.homedir(), { configDir = join(home, '.codex') } = {}) {
   const command = `node ${quote(scriptPath)} --hook --codex`
-  return installHooks(join(home, '.codex', 'hooks.json'), CODEX_HOOK_EVENTS, command, { commandWindows: command })
+  return installHooks(join(configDir, 'hooks.json'), CODEX_HOOK_EVENTS, command, { commandWindows: command })
 }
 
 // Gemini CLI hooks in ~/.gemini/settings.json (Claude Code's format and
@@ -228,8 +228,9 @@ function installHooks(file, events, command, extra = {}) {
   let changed = false
   for (const event of events) {
     const list = Array.isArray(hooks[event]) ? hooks[event] : []
-    const already = list.some((g) => g && Array.isArray(g.hooks) && g.hooks.some((h) => h.command === command))
-    const stale = list.some((g) => g && Array.isArray(g.hooks) && g.hooks.some((h) => isOurs(h) && h.command !== command))
+    const matches = (h) => h && h.type === 'command' && h.command === command && Object.entries(extra).every(([key, value]) => h[key] === value)
+    const already = list.some((g) => g && [undefined, '', '*'].includes(g.matcher) && Array.isArray(g.hooks) && g.hooks.some(matches))
+    const stale = list.some((g) => g && Array.isArray(g.hooks) && g.hooks.some((h) => isOurs(h) && !matches(h)))
     if (already && !stale) continue
     // Only Tessel's own hook entries are removed (an older path); the other
     // hooks of a group, and the group itself, stay.

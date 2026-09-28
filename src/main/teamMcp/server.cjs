@@ -25,7 +25,7 @@ const fs = require('fs')
 const path = require('path')
 const { randomUUID } = require('crypto')
 
-const VERSION = '1.7.0'
+const VERSION = '1.7.1'
 const MAX_TEXT = 6000
 
 // --- Finding my team and me ---------------------------------------------------
@@ -752,6 +752,59 @@ function serve() {
 // going once so it can answer (never when it already continued for a hook).
 // Outside a Tessel team it prints nothing.
 // --- Session reports -------------------------------------------------------------
+// Status observations have their own bounded spool. They never claim messages
+// or return a permission decision. Keep this self-contained: this file is also
+// copied outside the application and run directly by the CLIs.
+const AGENT_STATE_PROTOCOL = 1
+const HOOK_STARTED_AT = Date.now()
+const STATUS_EVENTS = {
+  claude: new Set(['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'PermissionRequest', 'Notification', 'Stop', 'StopFailure', 'SessionEnd', 'SubagentStart', 'SubagentStop']),
+  codex: new Set(['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PermissionRequest', 'PostToolUse', 'Stop', 'Interrupt', 'SessionEnd', 'SubagentStart', 'SubagentStop'])
+}
+function reportAgentState(data, provider, continuing = false) {
+  const paneId = process.env.TESSEL_PANE_ID || ''
+  const launchToken = process.env.TESSEL_AGENT_LAUNCH || ''
+  const root = process.env.TESSEL_AGENT_STATE_DIR || ''
+  const sessionId = String(data.session_id || '')
+  if (!STATUS_EVENTS[provider]?.has(data.hook_event_name) || process.env.TESSEL_AGENT_PROVIDER !== provider) return
+  if (!/^[A-Za-z0-9_-][A-Za-z0-9._-]{0,99}$/.test(paneId) || !/^[A-Za-z0-9_-]{16,100}$/.test(launchToken)) return
+  if (!/^[A-Za-z0-9_-]{6,100}$/.test(sessionId) || !path.isAbsolute(root)) return
+  const dir = path.join(root, 'events')
+  let tmp
+  try {
+    fs.mkdirSync(dir, { recursive: true })
+    // A stopped application must not leave an unbounded event log. Recovery
+    // will use new observations, not pretend dropped history was complete.
+    let count = 0
+    const listing = fs.opendirSync(dir)
+    try { while (listing.readSync()) if (++count >= 4096) return } finally { listing.closeSync() }
+    const event = {
+      v: AGENT_STATE_PROTOCOL, id: randomUUID(), paneId, provider, launchToken,
+      sessionId, event: data.hook_event_name, at: HOOK_STARTED_AT, source: 'hook'
+    }
+    const identifier = (value) => typeof value === 'string' && /^[A-Za-z0-9_.:-]{1,160}$/.test(value) ? value : undefined
+    if (data.agent_id && !identifier(data.agent_id)) return // never turn an invalid child identity into the parent
+    const fields = {
+      agentId: data.agent_id,
+      toolId: data.tool_use_id || data.tool_call_id,
+      turnId: data.prompt_id || data.turn_id
+    }
+    for (const [key, value] of Object.entries(fields)) if (identifier(value)) event[key] = value
+    if (['permission_prompt', 'idle_prompt'].includes(data.notification_type)) event.notificationType = data.notification_type
+    if (['startup', 'resume', 'clear', 'compact'].includes(data.source)) event.startSource = data.source
+    if (data.hook_event_name === 'Stop') event.continuing = continuing
+    // Only a tool's identity, never its arguments or prompt text.
+    if (['AskUserQuestion', 'request_user_input'].includes(data.tool_name)) event.toolName = data.tool_name
+    const file = path.join(dir, `${event.at}-${event.id}.json`)
+    tmp = file + '.tmp'
+    fs.writeFileSync(tmp, JSON.stringify(event), { flag: 'wx', mode: 0o600 })
+    fs.renameSync(tmp, file)
+  } catch {
+    // Observation cannot break a command or permission hook.
+    if (tmp) { try { fs.unlinkSync(tmp) } catch { /* already absent */ } }
+  }
+}
+
 // The conversation an agent is in right now, as its own hooks say it (every
 // event carries session_id; SessionStart comes right after /clear, /resume
 // or a restart). Written per pane in <this script's folder>/sessions/, so
@@ -849,7 +902,6 @@ function hookMain() {
     // A sub-agent of this agent (Claude Code's Task/Agent tool, agent_id set):
     // not the agent itself. Its events must not read the agent's messages
     // (they would be marked read and never reach it) nor change its session.
-    if (data.agent_id) return
     // Copilot CLI (hooks in Claude Code's names, --event=<name> in its command
     // since its payload may not name the event): camelCase fields accepted too.
     const copilot = process.argv.includes('--copilot')
@@ -864,7 +916,13 @@ function hookMain() {
     // reads Claude's answers: only its conversation is reported as OpenCode's.
     const opencode = process.argv.includes('--opencode')
     const kimi = process.argv.includes('--kimi')
-    reportSession(data, codex ? 'codex' : gemini ? 'gemini' : copilot ? 'copilot' : opencode ? 'opencode' : kimi ? 'kimi' : 'claude')
+    const provider = codex ? 'codex' : gemini ? 'gemini' : copilot ? 'copilot' : opencode ? 'opencode' : kimi ? 'kimi' : 'claude'
+    let continuing = false
+    try {
+    // Children may report their own state, but never change the root session
+    // or consume its messages (the finally below is observation-only).
+    if (data.agent_id) return
+    reportSession(data, provider)
     if (kimi) return kimiHook(data)
     if (codex) {
       // Codex Stop decisions become continuation prompts. Other events keep
@@ -893,10 +951,12 @@ function hookMain() {
       // also receive the messages this hook includes in its continuation.
       const shown = markRead(ctx, selected).filter((m) => !isReceipt(m))
       if (shown.length) {
+        continuing = true
         process.stdout.write(JSON.stringify({ decision: 'block', reason: prefix + shown.map(format).join('\n') + suffix }))
       } else if (oversized) {
         // Older/foreign channel data may contain one oversized message.
         // Leave it unread and ask for the full inbox instead of losing text.
+        continuing = true
         process.stdout.write(JSON.stringify({ decision: 'block', reason: '[Tessel] A new team message is too long for this notification. Read it with team_inbox and reply with team_send.' }))
       }
       return
@@ -907,6 +967,9 @@ function hookMain() {
     const GEMINI_EVENTS = { BeforeAgent: 'UserPromptSubmit', AfterTool: 'PostToolUse', AfterAgent: 'Stop' }
     const event = gemini ? GEMINI_EVENTS[data.hook_event_name] || data.hook_event_name : data.hook_event_name
     if (event === 'SessionStart') return // only the report above
+    // Status/permission/failure events cannot carry our delivery format.
+    // Never acknowledge inbox messages on an observation-only event.
+    if (!['UserPromptSubmit', 'PostToolUse', 'Stop', 'Peek'].includes(event)) return
     // Copilot's prompt hook cannot add text: messages read there would be lost.
     if (copilot && event === 'UserPromptSubmit') return
     const ctx = locate(null, data.cwd)
@@ -926,10 +989,16 @@ function hookMain() {
     if (event === 'UserPromptSubmit') notes.push(boardReminder(ctx))
     if (!notes.length) return
     const note = notes.join('\n\n')
-    if (event === 'Stop') process.stdout.write(JSON.stringify({ decision: 'block', reason: note }))
+    if (event === 'Stop') {
+      continuing = true
+      process.stdout.write(JSON.stringify({ decision: 'block', reason: note }))
+    }
     // Copilot reads additionalContext at the top level (its own format).
     else if (copilot) process.stdout.write(JSON.stringify({ additionalContext: note, hookSpecificOutput: { hookEventName: data.hook_event_name, additionalContext: note } }))
     else process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: data.hook_event_name, additionalContext: note } }))
+    } finally {
+      reportAgentState(data, provider, continuing)
+    }
   })
 }
 
