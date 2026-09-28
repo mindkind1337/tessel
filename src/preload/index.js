@@ -41,6 +41,7 @@ const api = {
   claudeSessionExists: (id, scope) => ipcRenderer.invoke('sessions:claudeExists', id, scope),
   findCodexSession: (query) => ipcRenderer.invoke('sessions:findCodex', query),
   findAgentSession: (query) => ipcRenderer.invoke('sessions:find', query),
+  sessionTitle: (query) => ipcRenderer.invoke('sessions:title', query),
   geminiSessionExists: (id) => ipcRenderer.invoke('sessions:geminiExists', id),
   qwenSessionExists: (id) => ipcRenderer.invoke('sessions:qwenExists', id),
   reportedSessions: () => ipcRenderer.invoke('sessions:reported'),

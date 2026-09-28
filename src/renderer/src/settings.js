@@ -55,7 +55,14 @@ export const DEFAULT_SETTINGS = Object.freeze({
   agentPermissions: 'manual',
   // Keep the computer from sleeping: 'off' | 'agents' (while an agent is
   // working) | 'on' (while Tessel is open).
-  keepAwake: 'off'
+  keepAwake: 'off',
+  // A countdown in Claude's panes until its prompt cache expires, and how
+  // long the cache lasts (5 min, or 1 h for a longer cache).
+  promptCacheTimer: false,
+  // Agent panes named after their conversation (Claude Code's title, Codex's
+  // thread name) until you rename them.
+  autoTitles: true,
+  promptCacheTtlMs: 300000
 })
 
 const fresh = () => ({ ...DEFAULT_SETTINGS, customAgents: [], quickCommands: [], agentPrefs: {} })
@@ -79,6 +86,7 @@ export function loadSettings(saved) {
     }
     if (key === 'agentPermissions' && !['manual', 'yolo'].includes(v)) continue
     if (key === 'keepAwake' && !['off', 'agents', 'on'].includes(v)) continue
+    if (key === 'promptCacheTtlMs' && ![300000, 3600000].includes(v)) continue
     if (key === 'quickCommands') {
       if (Array.isArray(v)) settings.quickCommands = v.filter(validQuickCommand).slice(0, 100)
       continue

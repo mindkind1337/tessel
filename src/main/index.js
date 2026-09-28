@@ -17,6 +17,7 @@ import { resolveFiles, codeGotoArg, listProjectFiles } from './fileOpen'
 import { titleBarColors } from '../shared/themePalettes'
 import { findAgentSession, geminiSessionExists, qwenSessionExists } from './agentResume'
 import { paneEnv } from './paneEnv'
+import { claudeSessionTitle, codexSessionTitle } from './sessionTitle'
 import { extraToolDirs, withToolDirs } from './toolDirs'
 import { createInstallLogs } from './installLog'
 import { writeBoardRule } from './agentMemory'
@@ -770,6 +771,16 @@ ipcMain.handle('logs:diagnostics', () => {
 })
 
 // Agent session lookups, for resuming conversations when panes reopen.
+// A pane's title from its conversation (Settings > Agents, automatic titles).
+ipcMain.handle('sessions:title', async (_evt, q = {}) => {
+  try {
+    if (q.agent === 'claude') return await claudeSessionTitle(q.sessionId)
+    if (q.agent === 'codex') return codexSessionTitle(q.sessionId)
+  } catch (err) {
+    log.warn('sessions', `title: ${err.message}`)
+  }
+  return ''
+})
 ipcMain.handle('sessions:claudeExists', (_evt, id) => claudeSessionExists(id))
 ipcMain.handle('sessions:findCodex', (_evt, q = {}) => findCodexSession(q))
 // Gemini: is there a conversation to resume? OpenCode, Cline, Copilot, Codex:

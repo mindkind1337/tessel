@@ -8,6 +8,7 @@ import { THEMES } from '../themes'
 import { playAlertSound } from '../notificationsStore'
 import { parseEnvText, YOLO_ARGS, YOLO_ENV, agentEnabled } from '../../../shared/agentPrefs'
 import { AGENT_DOCS } from '../../../shared/agentDocs'
+import { CACHE_TTLS } from '../promptCache'
 
 const props = defineProps({
   shells: { type: Array, default: () => [] },
@@ -442,6 +443,35 @@ const CURSORS = [
               {{ m.label }}
             </button>
           </div>
+        </div>
+        <label class="set-row">
+          <div class="set-label">
+            Name panes after their conversation
+            <span class="set-hint"
+              >Claude Code and Codex panes take their conversation's title. A name you give a pane always
+              wins (empty it to go back)</span
+            >
+          </div>
+          <input v-model="settings.autoTitles" type="checkbox" class="set-switch" />
+        </label>
+        <label class="set-row">
+          <div class="set-label">
+            Prompt cache timer
+            <span class="set-hint"
+              >Claude keeps your conversation cached for a while after it answers. A message sent later
+              re-sends it all uncached (slower, costs more). Shows a countdown in Claude's panes</span
+            >
+          </div>
+          <input v-model="settings.promptCacheTimer" type="checkbox" class="set-switch" />
+        </label>
+        <div v-if="settings.promptCacheTimer" class="set-row">
+          <label class="set-label" for="settings-cache-ttl">
+            Cache duration
+            <span class="set-hint">Match your provider's cache. The default is 5 minutes</span>
+          </label>
+          <select id="settings-cache-ttl" v-model.number="settings.promptCacheTtlMs" class="set-select">
+            <option v-for="t in CACHE_TTLS" :key="t.ms" :value="t.ms">{{ t.label }}</option>
+          </select>
         </div>
         <div class="agents-head">
           <span class="set-hint">Detected on this computer</span>

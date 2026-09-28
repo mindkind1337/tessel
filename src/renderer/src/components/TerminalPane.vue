@@ -30,6 +30,7 @@ import { modelLabel } from '../../../shared/modelLabel'
 import { modelFromScreen } from '../../../shared/screenModel'
 import { findFileRefs } from '../../../shared/fileLinks'
 import { osc52Text } from '../../../shared/osc52'
+import { cacheCountdown } from '../promptCache'
 
 const props = defineProps({
   node: { type: Object, required: true }
@@ -213,11 +214,17 @@ function markActivity() {
     if (approvals[id] && !detectApproval(screen)) setApproval(id, false)
     if (limits[id] && !detectLimit(screen)) clearLimit(id)
   }
-  if (agentStatus.value !== 'busy') busySince = Date.now()
+  if (agentStatus.value !== 'busy') {
+    busySince = Date.now()
+    // Working for real (not a key echo): a new request refreshes the cache.
+    clearTimeout(cacheBusyTimer)
+    cacheBusyTimer = setTimeout(() => (cacheStartedAt.value = 0), ATTENTION_AFTER_MS)
+  }
   agentStatus.value = 'busy'
   if (statusTimer) clearTimeout(statusTimer)
   statusTimer = setTimeout(() => {
     agentStatus.value = 'idle'
+    clearTimeout(cacheBusyTimer)
     const worked = Date.now() - busySince - IDLE_AFTER_MS
     const screen = screenText(12)
     // Waiting for you to approve a command or an edit: not "finished".
@@ -234,6 +241,8 @@ function markActivity() {
     }
     // Working again for real: whatever limit it had is over.
     if (worked >= ATTENTION_AFTER_MS) clearLimit(props.node.id)
+    // Claude answered: its prompt cache lasts from now.
+    if (worked >= ATTENTION_AFTER_MS && props.node.agentId === 'claude') cacheStartedAt.value = Date.now()
     // A task it was given is finished (it printed the task signal).
     if (worked >= ATTENTION_AFTER_MS && detectTaskDone(screen) && ctx.agentReportedDone) {
       ctx.agentReportedDone(props.node.id)
@@ -267,6 +276,32 @@ function screenText(lines = 20) {
   }
   return out.join('\n')
 }
+
+// Prompt cache countdown (Settings > Agents): from Claude's last answer.
+const cacheStartedAt = ref(0)
+let cacheBusyTimer = 0
+const cacheNow = ref(Date.now())
+let cacheClock = 0
+const cacheShown = computed(() => settings.promptCacheTimer && props.node.agentId === 'claude' && cacheStartedAt.value > 0)
+// Ticks once a second, only while shown and the window is visible.
+function syncCacheClock() {
+  const run = cacheShown.value && document.visibilityState === 'visible'
+  if (run && !cacheClock) {
+    cacheNow.value = Date.now()
+    cacheClock = setInterval(() => (cacheNow.value = Date.now()), 1000)
+  } else if (!run && cacheClock) {
+    clearInterval(cacheClock)
+    cacheClock = 0
+  }
+}
+watch(cacheShown, syncCacheClock)
+document.addEventListener('visibilitychange', syncCacheClock)
+onBeforeUnmount(() => {
+  document.removeEventListener('visibilitychange', syncCacheClock)
+  clearInterval(cacheClock)
+  clearTimeout(cacheBusyTimer)
+})
+const cache = computed(() => (cacheShown.value ? cacheCountdown(cacheStartedAt.value, settings.promptCacheTtlMs, cacheNow.value) : null))
 
 const needsYou = computed(() => !!attention[props.node.id])
 const limit = computed(() => limits[props.node.id] || null)
@@ -676,12 +711,29 @@ const titleInputEl = ref(null)
 
 function startEditTitle(e) {
   e.stopPropagation()
+  if (autoTitle.value) paneTitle.value = autoTitle.value
   editingTitle.value = true
   nextTick(() => titleInputEl.value && titleInputEl.value.select())
 }
 
+// An agent pane is named after its conversation (Settings > Agents) until
+// you name it yourself; emptying your name goes back to that.
+const autoTitle = computed(() =>
+  settings.autoTitles && isAgent.value && !props.node.titleSet && props.node.autoTitle ? props.node.autoTitle : ''
+)
+
 function saveTitle() {
-  if (!paneTitle.value.trim()) paneTitle.value = props.node.shellName
+  if (!paneTitle.value.trim()) {
+    if (isAgent.value && props.node.titleSet) {
+      props.node.titleSet = false
+      paneTitle.value = props.node.title
+      editingTitle.value = false
+      if (term) term.focus()
+      return
+    }
+    paneTitle.value = props.node.shellName
+  }
+  if (paneTitle.value !== (autoTitle.value || props.node.title)) props.node.titleSet = true
   props.node.title = paneTitle.value
   editingTitle.value = false
   if (term) term.focus()
@@ -1336,9 +1388,10 @@ onBeforeUnmount(() => {
         <span
           v-if="!editingTitle"
           class="pane-title"
-          title="Double-click to rename"
+          :title="autoTitle ? `${paneTitle}: ${autoTitle}
+Named after its conversation. Double-click to rename` : 'Double-click to rename'"
           @dblclick="startEditTitle"
-          >{{ paneTitle }}</span
+          >{{ autoTitle || paneTitle }}</span
         >
         <input
           v-if="isAgent && editingModel"
@@ -1404,6 +1457,22 @@ onBeforeUnmount(() => {
           :title="track.reason"
           >quiet {{ track.minutes }} min</span
         >
+        <span
+          v-if="cache"
+          class="pane-cache"
+          :class="cache.level"
+          :title="
+            cache.level === 'expired'
+              ? 'Prompt cache expired: the next message re-sends the whole conversation uncached'
+              : `Prompt cache expires in ${cache.label}: a message before then reuses it (faster, cheaper)`
+          "
+        >
+          <svg width="11" height="11" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <circle cx="8" cy="9" r="5.5" stroke="currentColor" stroke-width="1.4" />
+            <path d="M8 6v3l2 1.5M6.5 1.5h3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+          </svg>
+          <template v-if="cache.level !== 'expired'">{{ cache.label }}</template>
+        </span>
         <span
           v-if="isAgent && asksApproval"
           class="pane-approval"

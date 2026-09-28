@@ -727,6 +727,8 @@ function serializeNode(node) {
       sessionId: node.sessionId || null,
       // Left out when not recorded (see createLeaf); null is kept.
       accountId: node.detected ? undefined : node.accountId,
+      titleSet: node.detected ? undefined : node.titleSet || undefined,
+      autoTitle: node.detected ? undefined : node.autoTitle || undefined,
       launchedAt: node.launchedAt || null,
       startDir: node.startDir || null,
       num: node.num || null,
@@ -775,6 +777,8 @@ async function deserializeNode(snap, cwd = null) {
     if (snap.teamTools) leaf.teamTools = true
     if (typeof snap.toolsVersion === 'string') leaf.toolsVersion = snap.toolsVersion
     if (typeof snap.modelOverride === 'string' && snap.modelOverride) leaf.modelOverride = snap.modelOverride.slice(0, 80)
+    if (snap.titleSet === true) leaf.titleSet = true
+    if (typeof snap.autoTitle === 'string' && snap.autoTitle) leaf.autoTitle = snap.autoTitle.slice(0, 80)
     // Still running: its line is what was saved. Unknown (an older layout):
     // no automatic reminder until the user sends or clears a line there.
     // Still running: its line is what this window recorded; nothing
@@ -1915,6 +1919,8 @@ async function restartLeaf(leafId) {
   }
   ws = now
   fresh.title = old.title
+  if (old.titleSet) fresh.titleSet = true
+  if (old.autoTitle && fresh.sessionId === old.sessionId) fresh.autoTitle = old.autoTitle
   fresh.broadcast = old.broadcast
   if (old.num) fresh.num = old.num
   if (old.team && teamById(old.team)) {
@@ -2612,6 +2618,36 @@ watch(
   },
   { immediate: true }
 )
+
+// Automatic titles (Settings > Agents): Claude Code and Codex panes are named
+// after their conversation. Looked for every 20 s until found, then every
+// 5 min (a /rename changes it).
+const titleCheckedAt = new Map()
+async function refreshAutoTitles() {
+  if (!settings.autoTitles || !window.shellApi.sessionTitle || document.visibilityState !== 'visible') return
+  const now = Date.now()
+  const due = []
+  forEachWsLeaf((l) => {
+    if (l.kind !== 'agent' || l.titleSet || !l.sessionId || !['claude', 'codex'].includes(l.agentId)) return
+    const wait = l.autoTitle ? 5 * 60 * 1000 : 0
+    if (now - (titleCheckedAt.get(l.id) || 0) >= wait) due.push(l)
+  })
+  for (const l of due) {
+    titleCheckedAt.set(l.id, now)
+    try {
+      const t = await window.shellApi.sessionTitle({
+        agent: l.agentId,
+        sessionId: l.sessionId,
+        ...(l.accountId !== undefined ? { accountId: l.accountId } : {})
+      })
+      if (typeof t === 'string' && t && t !== l.autoTitle) l.autoTitle = t.slice(0, 80)
+    } catch {
+      /* next time */
+    }
+  }
+}
+const autoTitleTimer = setInterval(refreshAutoTitles, 20 * 1000)
+onBeforeUnmount(() => clearInterval(autoTitleTimer))
 
 // Keep the computer awake (Settings > Agents): always, or while an agent works.
 const wantAwake = computed(
@@ -4131,6 +4167,8 @@ async function restartInPlaceNow(leafId, opts) {
   }
   Object.assign(fresh, {
     title: old.title,
+    ...(old.titleSet ? { titleSet: true } : {}),
+    ...(old.autoTitle && fresh.sessionId === old.sessionId ? { autoTitle: old.autoTitle } : {}),
     broadcast: old.broadcast,
     num: old.num,
     team: old.team,
