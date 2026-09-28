@@ -1,10 +1,11 @@
-// i18n-pending: text here does not go through t() yet
 // Local-report presentation, independently adapted from Orca's usage overview
 // normalization/daily series (MIT, Copyright (c) 2026 Lovecast Inc.).
 // Reports are already deduplicated and filtered in main. Never reconstruct
 // totals from a page of conversations, or add cached/reasoning subsets twice.
+import { t } from './i18n'
+
 const PROVIDERS = ['claude', 'codex']
-const LABELS = { claude: 'Claude Code', codex: 'Codex' }
+const LABELS = { claude: 'Claude Code', codex: 'Codex' } // product names // i18n-ignore
 const object = (v) => v !== null && typeof v === 'object' && !Array.isArray(v)
 const count = (v) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 0)
 const optionalCount = (v) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null)
@@ -24,7 +25,7 @@ export function validUsageDay(value) {
 
 export function usageLocalDay(value = Date.now(), timezone = localZone()) {
   const at = epoch(value)
-  if (at === null) throw new RangeError('Choose a valid usage date.')
+  if (at === null) throw new RangeError(t('usage.report.invalidDate', 'Choose a valid usage date.'))
   const parts = Object.fromEntries(
     new Intl.DateTimeFormat('en-CA', {
       timeZone: timezone,
@@ -52,11 +53,13 @@ export function usageDateRange(
   if (preset === 'all') return { from: null, to: null }
   if (preset === 'custom') {
     if (!validUsageDay(from) || !validUsageDay(to) || from > to)
-      throw new RangeError('Use an inclusive date range (YYYY-MM-DD).')
+      throw new RangeError(
+        t('usage.report.invalidRange', 'Use an inclusive date range (YYYY-MM-DD).')
+      )
     return { from, to }
   }
   if (!['7d', '30d', '90d'].includes(preset))
-    throw new RangeError('Choose 7d, 30d, 90d, all or custom.')
+    throw new RangeError(t('usage.report.invalidPreset', 'Choose 7d, 30d, 90d, all or custom.'))
   const end = usageLocalDay(now, timezone)
   return { from: shiftDay(end, 1 - Number.parseInt(preset, 10)), to: end }
 }
@@ -89,7 +92,8 @@ function normalizeMetrics(provider, value = {}) {
     reasoningOutputTokens: reasoning,
     totalTokens: provider === 'codex' ? input + output : input + output + cached + write,
     activityCount: activity,
-    activityLabel: provider === 'codex' ? 'events' : 'turns',
+    activityLabel:
+      provider === 'codex' ? t('usage.report.events', 'events') : t('usage.report.turns', 'turns'),
     turns: provider === 'claude' ? activity : null,
     events: provider === 'codex' ? activity : null,
     sessions: optionalCount(value.sessions),
@@ -112,7 +116,7 @@ function folder(cwd) {
     text(cwd)
       .replace(/[\\/]+$/, '')
       .split(/[\\/]/)
-      .at(-1) || 'Unknown project'
+      .at(-1) || t('usage.report.unknownProject', 'Unknown project')
   )
 }
 
@@ -131,7 +135,7 @@ function reportRange(raw, options) {
 // This adapts the selected report; date/model/project/worktree filtering belongs
 // to the backend, where individual usage observations still exist.
 export function normalizeUsageReport(provider, raw, options = {}) {
-  if (!PROVIDERS.includes(provider)) throw new RangeError('Unsupported local usage provider.')
+  if (!PROVIDERS.includes(provider)) throw new RangeError(t('usage.report.unsupportedProvider', 'Unsupported local usage provider.'))
   const ready = raw?.ok === true && raw.enabled !== false
   const legacyClaude = provider === 'claude' && !object(raw?.range) && object(raw?.lastDays)
   const value = ready ? (legacyClaude ? raw.lastDays : raw.totals) || {} : {}
@@ -159,7 +163,7 @@ export function normalizeUsageReport(provider, raw, options = {}) {
   const byModel = breakdown(
     mapRows('byModel', (row) => ({
       key: text(row.model) || 'unknown',
-      label: text(row.model) || 'Unknown model',
+      label: text(row.model) || t('usage.report.unknownModel', 'Unknown model'),
       model: text(row.model) || 'unknown'
     }))
   )
@@ -200,7 +204,8 @@ export function normalizeUsageReport(provider, raw, options = {}) {
     ready && Array.isArray(raw.warnings) ? raw.warnings.filter((v) => typeof v === 'string') : []
   if (legacyClaude)
     warnings.push(
-      'This older Claude report covers its recent window; its conversation list may be incomplete.'
+      t('usage.report.legacyClaude', 'This older Claude report covers its recent window; its conversation list may be incomplete.'
+      )
     )
   const scope = ready && raw.scope === 'tessel-worktrees' ? 'tessel-worktrees' : 'all'
   const updatedAt = ready ? epoch(raw.generatedAt ?? raw.observedAt) : null
@@ -221,10 +226,10 @@ export function normalizeUsageReport(provider, raw, options = {}) {
     scope,
     scopeLabel:
       scope === 'tessel-worktrees'
-        ? 'Tessel worktrees only'
+        ? t('usage.report.scopeTessel', 'Tessel worktrees only')
         : provider === 'claude'
-          ? 'Shared Claude history on this computer'
-          : 'Selected Codex account’s local history',
+          ? t('usage.report.scopeClaude', 'Shared Claude history on this computer')
+          : t('usage.report.scopeCodex', 'Selected Codex account’s local history'),
     accountId:
       provider === 'codex' && (raw?.accountId === null || typeof raw?.accountId === 'string')
         ? raw.accountId
@@ -247,12 +252,14 @@ export function normalizeUsageReport(provider, raw, options = {}) {
     turnsMeaning:
       text(raw?.turnsMeaning) ||
       (provider === 'codex'
-        ? 'Observed model usage events; not user prompts.'
-        : 'Deduplicated assistant replies.'),
+        ? t('usage.report.codexTurns', 'Observed model usage events; not user prompts.')
+        : t('usage.report.claudeTurns', 'Deduplicated assistant replies.')),
     tokenSemantics:
       provider === 'codex'
-        ? 'Cached input and reasoning output are subsets, not additional tokens.'
-        : 'Cache reads and cache writes are additional to input; one-hour cache writes are a subset of all cache writes.'
+        ? t('usage.report.codexTokens', 'Cached input and reasoning output are subsets, not additional tokens.'
+          )
+        : t('usage.report.claudeTokens', 'Cache reads and cache writes are additional to input; one-hour cache writes are a subset of all cache writes.'
+          )
   }
 }
 

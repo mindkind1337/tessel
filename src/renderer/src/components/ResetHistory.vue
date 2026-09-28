@@ -1,6 +1,6 @@
-<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 import { ref, watch, onBeforeUnmount } from 'vue'
+import { t, intlLocale } from '../i18n'
 const props = defineProps({
   provider: { type: String, default: undefined },
   accountId: { type: String, default: undefined },
@@ -19,19 +19,25 @@ let sequence = 0,
   remoteSequence = 0,
   disposed = false
 const outcomes = {
-  reset: 'Limits reset',
-  nothing_to_reset: 'Nothing to reset',
-  no_credit: 'No credit',
-  already_redeemed: 'Already redeemed',
-  error: 'Failed',
-  pending: 'Result unknown'
+  reset: () => t('usage.history.outcome.reset', 'Limits reset'),
+  nothing_to_reset: () => t('usage.history.outcome.nothingToReset', 'Nothing to reset'),
+  no_credit: () => t('usage.history.outcome.noCredit', 'No credit'),
+  already_redeemed: () => t('usage.history.outcome.alreadyRedeemed', 'Already redeemed'),
+  error: () => t('usage.history.outcome.error', 'Failed'),
+  pending: () => t('usage.history.resultUnknown', 'Result unknown')
 }
+const outcomeText = (row) =>
+  row.uncertain
+    ? t('usage.history.resultUnknown', 'Result unknown')
+    : outcomes[row.outcome]?.() || t('usage.history.unknown', 'Unknown')
 const date = (value) =>
   value
-    ? new Date(value).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })
-    : 'Not provided'
+    ? new Date(value).toLocaleString(intlLocale(), { dateStyle: 'medium', timeStyle: 'short' })
+    : t('usage.history.notProvided', 'Not provided')
 const count = (value) =>
-  value === null || value === undefined ? 'Unknown' : value.toLocaleString()
+  value === null || value === undefined
+    ? t('usage.history.unknown', 'Unknown')
+    : value.toLocaleString(intlLocale())
 async function load() {
   const id = ++sequence
   busy.value = true
@@ -42,10 +48,15 @@ async function load() {
       ...(props.accountId !== undefined ? { accountId: props.accountId } : {})
     })
     if (disposed || id !== sequence) return
-    if (!result?.ok) throw new Error(result?.error || 'Local reset history is unavailable.')
+    if (!result?.ok)
+      throw new Error(
+        result?.error ||
+          t('usage.history.unavailable', 'Local reset history is unavailable.')
+      )
     rows.value = result.entries || []
   } catch (err) {
-    if (!disposed && id === sequence) error.value = err.message || 'Could not read reset history.'
+    if (!disposed && id === sequence)
+      error.value = err.message || t('usage.history.readError', 'Could not read reset history.')
   } finally {
     if (!disposed && id === sequence) busy.value = false
   }
@@ -57,13 +68,15 @@ async function loadCredits() {
   remote.value = null
   try {
     let accountId = props.accountId
-    let label = 'Selected Codex account'
+    let label = t('usage.history.selectedAccount', 'Selected Codex account')
     if (accountId === undefined) {
       const state = await window.shellApi.accounts.list()
       if (disposed || id !== remoteSequence) return
       const provider = state?.providers?.find((row) => row.provider === 'codex')
       if (!state?.ok || !provider || provider.error)
-        throw new Error('Could not verify the selected Codex account.')
+        throw new Error(
+          t('usage.history.verifyError', 'Could not verify the selected Codex account.')
+        )
       accountId = provider.selectedId ?? null
       label =
         (accountId === null ? provider.system : provider.accounts?.find((a) => a.id === accountId))
@@ -74,13 +87,17 @@ async function loadCredits() {
       accountId
     })
     if (disposed || id !== remoteSequence) return
-    if (!result?.ok) throw new Error(result?.error || 'Could not read Codex credits.')
+    if (!result?.ok)
+      throw new Error(
+        result?.error || t('usage.history.creditsError', 'Could not read Codex credits.')
+      )
     if (result.provider !== 'codex' || result.accountId !== accountId)
-      throw new Error('The account changed. Refresh credits.')
+      throw new Error(t('usage.history.accountChanged', 'The account changed. Refresh credits.'))
     remote.value = { ...result, label }
   } catch (err) {
     if (!disposed && id === remoteSequence)
-      remoteError.value = err.message || 'Could not read Codex credits.'
+      remoteError.value =
+        err.message || t('usage.history.creditsError', 'Could not read Codex credits.')
   } finally {
     if (!disposed && id === remoteSequence) remoteBusy.value = false
   }
@@ -115,25 +132,32 @@ onBeforeUnmount(() => {
         :aria-expanded="expanded"
         @click="expanded = !expanded"
       >
-        Reset history <span aria-hidden="true">{{ expanded ? '−' : '+' }}</span>
+        {{ t('usage.history.title', 'Reset history') }}
+        <span aria-hidden="true">{{ expanded ? '−' : '+' }}</span>
       </button>
       <button v-if="expanded" type="button" class="rh-button" :disabled="busy" @click="load">
-        Refresh
+        {{ t('usage.history.refresh', 'Refresh') }}
       </button>
     </div>
     <div v-if="expanded">
       <p class="rh-muted">
-        Resets requested in Tessel on this computer. Keeps the latest 500 attempts. Earlier resets
-        are not reconstructed.
+        {{
+          t('usage.history.intro', 'Resets requested in Tessel on this computer. Keeps the latest 500 attempts. Earlier resets are not reconstructed.'
+          )
+        }}
       </p>
-      <p v-if="busy" role="status" class="rh-muted">Loading history…</p>
+      <p v-if="busy" role="status" class="rh-muted">
+        {{ t('usage.history.loading', 'Loading history…') }}
+      </p>
       <p v-if="error" class="rh-error" role="alert">{{ error }}</p>
-      <p v-else-if="!busy && !rows.length" class="rh-muted">No resets recorded yet.</p>
+      <p v-else-if="!busy && !rows.length" class="rh-muted">
+        {{ t('usage.history.empty', 'No resets recorded yet.') }}
+      </p>
       <ol v-if="rows.length" class="rh-list">
         <li v-for="row in rows.slice(0, visible)" :key="row.id" class="rh-row">
           <div class="rh-line">
             <strong :class="{ 'rh-error': row.uncertain || row.outcome === 'error' }">{{
-              row.uncertain ? 'Result unknown' : outcomes[row.outcome] || 'Unknown'
+              outcomeText(row)
             }}</strong
             ><time>{{ date(row.at) }}</time>
           </div>
@@ -141,31 +165,51 @@ onBeforeUnmount(() => {
             {{ row.provider === 'codex' ? 'Codex' : 'Claude' }} · {{ row.accountLabel }}
             <span v-if="row.accountId" :title="row.accountId">({{ row.accountId }})</span>
           </div>
-          <div class="rh-muted">
-            Credits: {{ count(row.creditsBefore) }} → {{ count(row.creditsAfter) }}
-          </div>
+          <div
+            class="rh-muted"
+            v-text="
+              t('usage.history.credits', 'Credits: {{before}} → {{after}}', {
+                before: count(row.creditsBefore),
+                after: count(row.creditsAfter)
+              })
+            "
+          ></div>
           <p v-if="row.uncertain" class="rh-muted">
-            Not confirmed. Check current usage before requesting another reset.
+            {{
+              t('usage.history.notConfirmed', 'Not confirmed. Check current usage before requesting another reset.'
+              )
+            }}
           </p>
           <p v-else-if="row.outcome === 'error'" class="rh-muted">
             {{
               row.code === 'history'
-                ? 'History could not be saved; no reset was sent.'
-                : 'The request failed before a reset was confirmed.'
+                ? t('usage.history.notSaved', 'History could not be saved; no reset was sent.')
+                : t('usage.history.requestFailed', 'The request failed before a reset was confirmed.')
             }}
           </p>
           <details v-if="row.windows?.length" class="rh-windows">
-            <summary>Windows observed before request</summary>
-            <div v-for="(win, i) in row.windows" :key="i">
-              {{ win.label }} · {{ win.usedPct ?? 'Unknown' }}% used · reset
-              {{ date(win.resetsAt) }}
-            </div>
+            <summary>{{ t('usage.history.windows', 'Windows observed before request') }}</summary>
+            <div
+              v-for="(win, i) in row.windows"
+              :key="i"
+              v-text="
+                t('usage.history.window', '{{window}} · {{pct}}% used · reset {{date}}', {
+                  window: win.label,
+                  pct: win.usedPct ?? t('usage.history.unknown', 'Unknown'),
+                  date: date(win.resetsAt)
+                })
+              "
+            ></div>
           </details>
         </li>
       </ol>
-      <button v-if="rows.length > visible" type="button" class="rh-button" @click="visible += 20">
-        Show more ({{ rows.length - visible }})
-      </button>
+      <button
+        v-if="rows.length > visible"
+        type="button"
+        class="rh-button"
+        @click="visible += 20"
+        v-text="t('usage.history.showMore', 'Show more ({{count}})', { count: rows.length - visible })"
+      ></button>
       <div v-if="!provider || provider === 'codex'" class="rh-provider">
         <button
           type="button"
@@ -174,30 +218,46 @@ onBeforeUnmount(() => {
           data-test="reset-provider-credits"
           @click="loadCredits"
         >
-          {{ remoteBusy ? 'Reading Codex credits…' : 'Read Codex credit records' }}
+          {{
+            remoteBusy
+              ? t('usage.history.readingCredits', 'Reading Codex credits…')
+              : t('usage.history.readCredits', 'Read Codex credit records')
+          }}
         </button>
         <p class="rh-muted">
-          Reads the selected account only on click. Provider credit statuses are separate from local
-          reset attempts; grant and expiry dates are not reset dates.
+          {{
+            t('usage.history.creditsIntro', 'Reads the selected account only on click. Provider credit statuses are separate from local reset attempts; grant and expiry dates are not reset dates.'
+            )
+          }}
         </p>
         <p v-if="remoteError" class="rh-error" role="alert">{{ remoteError }}</p>
         <template v-if="remote">
           <p class="rh-muted">{{ remote.label }} · {{ date(remote.observedAt) }}</p>
           <p v-if="!remote.available" class="rh-muted">
-            The provider did not return individual credit records.
+            {{
+              t('usage.history.noIndividual', 'The provider did not return individual credit records.')
+            }}
           </p>
           <p v-else-if="!remote.entries.length" class="rh-muted">
-            No credit records returned by the provider.
+            {{ t('usage.history.noRecords', 'No credit records returned by the provider.') }}
           </p>
           <ul v-else class="rh-list rh-credits">
             <li v-for="(credit, i) in remote.entries" :key="i" class="rh-row">
               <strong>{{ credit.status }}</strong>
-              <div class="rh-muted">
-                Granted {{ date(credit.grantedAt) }} · Expires {{ date(credit.expiresAt) }}
-              </div>
+              <div
+                class="rh-muted"
+                v-text="
+                  t('usage.history.grantedExpires', 'Granted {{granted}} · Expires {{expires}}', {
+                    granted: date(credit.grantedAt),
+                    expires: date(credit.expiresAt)
+                  })
+                "
+              ></div>
             </li>
           </ul>
-          <p v-if="remote.truncated" class="rh-muted">Showing the first 500 provider records.</p>
+          <p v-if="remote.truncated" class="rh-muted">
+            {{ t('usage.history.truncated', 'Showing the first 500 provider records.') }}
+          </p>
         </template>
       </div>
     </div>

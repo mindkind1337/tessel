@@ -1,4 +1,3 @@
-<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // Local quota observations update the toolbar without network polling.
 // Authenticated provider reads happen only on menu/open/refresh actions;
@@ -13,10 +12,11 @@ import UsageVisibility from './UsageVisibility.vue'
 import { settings } from '../settings'
 import { displayedUsagePercent, usagePercentLabel } from '../usagePercent'
 import { loadUsageProviders } from '../usageProviders'
+import { t, intlLocale } from '../i18n'
 
 const emit = defineEmits(['details', 'accounts'])
 const NAMES = {
-  claude: 'Claude Code',
+  claude: 'Claude Code', // i18n-ignore
   codex: 'Codex',
   kimi: 'Kimi',
   gemini: 'Gemini',
@@ -70,7 +70,9 @@ const providerRequests = new Map()
 
 async function load() {
   if (!window.shellApi.getUsage) {
-    usage.value = { error: 'The local usage reader is not available.' }
+    usage.value = {
+      error: t('usage.menu.readerUnavailable', 'The local usage reader is not available.')
+    }
     return
   }
   const request = ++usageRequest
@@ -96,7 +98,8 @@ async function loadAgents() {
     rosterError.value = ''
   } catch {
     if (alive && request === agentsRequest)
-      rosterError.value = 'Could not refresh the installed agent list.'
+      rosterError.value = t('usage.menu.rosterError', 'Could not refresh the installed agent list.'
+      )
   }
 }
 async function loadAccounts() {
@@ -105,7 +108,8 @@ async function loadAccounts() {
   try {
     const result = await window.shellApi.accounts.list()
     if (!alive || request !== accountsRequest) return
-    if (!result?.ok) throw new Error(result?.error || 'Could not read accounts.')
+    if (!result?.ok)
+      throw new Error(result?.error || t('usage.menu.accountsError', 'Could not read accounts.'))
     accounts.value = (result.providers || []).map((provider) => {
       const old = accounts.value.find((entry) => entry.provider === provider.provider)
       const next = provider.error && old ? { ...old, error: provider.error } : provider
@@ -117,7 +121,8 @@ async function loadAccounts() {
     accountsReadFailed.value = false
   } catch (err) {
     if (alive && request === accountsRequest) {
-      accountsError.value = err.message || 'Could not read accounts.'
+      accountsError.value =
+        err.message || t('usage.menu.accountsError', 'Could not read accounts.')
       accountsReadFailed.value = true
     }
   }
@@ -152,10 +157,14 @@ async function readProvider(id) {
     if (!result?.ok) {
       if (result?.code === 'unavailable')
         unavailable.value = [...new Set([...unavailable.value, id])]
-      throw new Error(result?.error || 'Could not refresh provider usage.')
+      throw new Error(
+        result?.error || t('usage.menu.providerError', 'Could not refresh provider usage.')
+      )
     }
     if (result.provider !== id || result.accountId !== accountId)
-      throw new Error('The usage account changed. Refresh before continuing.')
+      throw new Error(
+        t('usage.menu.accountChanged', 'The usage account changed. Refresh before continuing.')
+      )
     providerReadings.value[id] = {
       ...result,
       id,
@@ -169,7 +178,8 @@ async function readProvider(id) {
     now.value = Date.now()
   } catch (err) {
     if (alive && request === providerRequests.get(id)) {
-      providerErrors.value[id] = err.message || 'Could not refresh provider usage.'
+      providerErrors.value[id] =
+        err.message || t('usage.menu.providerError', 'Could not refresh provider usage.')
       const previous = [
         providerReadings.value[id],
         agents.value.find((agent) => agent.id === id)
@@ -200,12 +210,14 @@ async function selectAccount(provider, event) {
   accountNotice.value = ''
   try {
     const result = await window.shellApi.accounts.select(provider.provider, selection)
-    if (!result?.ok) throw new Error(result?.error || 'Could not switch accounts.')
+    if (!result?.ok)
+      throw new Error(result?.error || t('usage.menu.switchError', 'Could not switch accounts.'))
     if (!alive) return
     accountNotice.value =
       provider.provider === 'claude'
-        ? 'Restart your Claude terminals when ready to use this sign-in.'
-        : 'New Codex terminals will use this account.'
+        ? t('usage.menu.claudeSwitched', 'Restart your Claude terminals when ready to use this sign-in.'
+          )
+        : t('usage.menu.codexSwitched', 'New Codex terminals will use this account.')
     if (result.warning) accountNotice.value += ` ${result.warning}`
     await Promise.all([loadAccounts(), load()])
     accountBusy.value[provider.provider] = false
@@ -217,7 +229,9 @@ async function selectAccount(provider, event) {
         })
       )
   } catch (err) {
-    if (alive) accountsError.value = err.message || 'Could not switch accounts.'
+    if (alive)
+      accountsError.value =
+        err.message || t('usage.menu.switchError', 'Could not switch accounts.')
   } finally {
     if (alive) accountBusy.value[provider.provider] = false
   }
@@ -245,7 +259,7 @@ const agents = computed(() => {
               accountId: selected,
               windows: [],
               source: 'unavailable',
-              error: 'Usage has not been read for this account.'
+              error: t('usage.menu.notReadForAccount', 'Usage has not been read for this account.')
             }
       )
     }
@@ -258,7 +272,9 @@ const agents = computed(() => {
         name: agent.name,
         windows: [],
         source: 'unavailable',
-        error: providerErrors.value[agent.id] || 'Open to read provider usage.'
+        error:
+          providerErrors.value[agent.id] ||
+          t('usage.menu.openToReadProvider', 'Open to read provider usage.')
       })
   }
   for (const reading of Object.values(providerReadings.value)) {
@@ -315,9 +331,10 @@ function planLabel(agent) {
     : ''
 }
 function unavailableText(agent) {
-  if (agent.unlimited) return 'Unlimited plan — no quota ceiling reported.'
+  if (agent.unlimited)
+    return t('usage.menu.unlimitedPlan', 'Unlimited plan — no quota ceiling reported.')
   if (agent.error) return agent.error
-  return 'Open to read usage for this account.'
+  return t('usage.menu.openToRead', 'Open to read usage for this account.')
 }
 function expandedFor(id) {
   return selectedProvider.value === id
@@ -392,7 +409,8 @@ async function confirmReset() {
     request.resetToken !== detailAgent.value?.resetToken
   ) {
     resetConfirm.value = null
-    resetNotice.value = 'The usage account or reading changed. Refresh before resetting.'
+    resetNotice.value = t('usage.menu.resetStale', 'The usage account or reading changed. Refresh before resetting.'
+    )
     return
   }
   resetBusy.value = true
@@ -410,26 +428,31 @@ async function confirmReset() {
     resetConfirm.value = null
     if (!result?.ok) {
       resetNotice.value = result?.uncertain
-        ? 'The reset result is uncertain. Refresh usage to check before trying again.'
-        : result?.error || 'The reset could not be completed. Refresh before trying again.'
+        ? t('usage.menu.resetUncertain', 'The reset result is uncertain. Refresh usage to check before trying again.'
+          )
+        : result?.error ||
+          t('usage.menu.resetFailed', 'The reset could not be completed. Refresh before trying again.'
+          )
       if (result?.historyError) resetNotice.value += ` ${result.historyError}`
       return
     }
     resetNotice.value =
       {
-        reset: 'Usage limits reset.',
-        nothingToReset: 'There are no eligible limits to reset.',
-        noCredit: 'No reset credit is available.',
-        alreadyRedeemed: 'This reset was already redeemed.'
-      }[result.outcome] || 'Reset request completed.'
+        reset: () => t('usage.menu.outcome.reset', 'Usage limits reset.'),
+        nothingToReset: () =>
+          t('usage.menu.outcome.nothingToReset', 'There are no eligible limits to reset.'),
+        noCredit: () => t('usage.menu.outcome.noCredit', 'No reset credit is available.'),
+        alreadyRedeemed: () =>
+          t('usage.menu.outcome.alreadyRedeemed', 'This reset was already redeemed.')
+      }[result.outcome]?.() || t('usage.menu.outcome.done', 'Reset request completed.')
     if (result.historyError) resetNotice.value += ` ${result.historyError}`
     await Promise.all([readProvider('codex'), load()])
   } catch {
     if (alive) {
       if (providerReadings.value.codex) delete providerReadings.value.codex.resetToken
       resetConfirm.value = null
-      resetNotice.value =
-        'The reset result is uncertain. Refresh usage to check before trying again.'
+      resetNotice.value = t('usage.menu.resetUncertain', 'The reset result is uncertain. Refresh usage to check before trying again.'
+      )
     }
   } finally {
     if (alive) {
@@ -440,34 +463,42 @@ async function confirmReset() {
 }
 function expiryText(iso) {
   if (!Number.isFinite(timestamp(iso))) return ''
-  if (timestamp(iso) <= now.value) return 'Expired'
-  return `Expires in ${shortReset(iso)}`
+  if (timestamp(iso) <= now.value) return t('usage.menu.expired', 'Expired')
+  return t('usage.menu.expiresIn', 'Expires in {{time}}', { time: shortReset(iso) })
 }
 function accountLabel(id) {
   const provider = providerAccounts(id)
   return provider?.selectedId
     ? provider.accounts?.find((account) => account.id === provider.selectedId)?.label ||
-        'Saved account'
-    : provider?.system?.label || 'System default'
+        t('usage.menu.savedAccount', 'Saved account')
+    : provider?.system?.label || t('usage.menu.systemDefault', 'System default')
 }
 function updatedText(agent) {
   const observed = timestamp(agent?.updatedAt || agent?.observedAt)
-  if (!Number.isFinite(observed)) return 'Not yet updated'
+  if (!Number.isFinite(observed)) return t('usage.menu.notUpdated', 'Not yet updated')
   const seconds = Math.max(0, Math.floor((now.value - observed) / 1000))
-  if (seconds < 60) return 'Updated just now'
-  if (seconds < 3600) return `Updated ${Math.floor(seconds / 60)} min ago`
-  if (seconds < 86400) return `Updated ${Math.floor(seconds / 3600)} h ago`
-  return `Updated ${Math.floor(seconds / 86400)} d ago`
+  if (seconds < 60) return t('usage.menu.updatedNow', 'Updated just now')
+  if (seconds < 3600)
+    return t('usage.menu.updatedMin', 'Updated {{count}} min ago', {
+      count: Math.floor(seconds / 60)
+    })
+  if (seconds < 86400)
+    return t('usage.menu.updatedHours', 'Updated {{count}} h ago', {
+      count: Math.floor(seconds / 3600)
+    })
+  return t('usage.menu.updatedDays', 'Updated {{count}} d ago', {
+    count: Math.floor(seconds / 86400)
+  })
 }
 function shortReset(iso) {
   const milliseconds = timestamp(iso) - now.value
   if (!Number.isFinite(milliseconds)) return ''
-  if (milliseconds <= 0) return 'Reset passed'
+  if (milliseconds <= 0) return t('usage.menu.resetPassed', 'Reset passed')
   const minutes = Math.ceil(milliseconds / 60000)
-  if (minutes < 60) return `${minutes}m`
+  if (minutes < 60) return t('usage.time.minutes', '{{m}}m', { m: minutes })
   const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours}h ${minutes % 60}m`
-  return `${Math.floor(hours / 24)}d ${hours % 24}h`
+  if (hours < 24) return t('usage.time.hoursMinutes', '{{h}}h {{m}}m', { h: hours, m: minutes % 60 })
+  return t('usage.time.daysHours', '{{d}}d {{h}}h', { d: Math.floor(hours / 24), h: hours % 24 })
 }
 // The highest fresh window, for the icon's colour.
 const worst = computed(() => {
@@ -482,15 +513,64 @@ function resetText(iso) {
   if (!iso) return ''
   const ms = timestamp(iso) - now.value
   if (!Number.isFinite(ms)) return ''
-  if (!(ms > 0)) return 'reset time passed'
+  if (!(ms > 0)) return t('usage.menu.resetTimePassed', 'reset time passed')
   const min = Math.round(ms / 60000)
-  if (min < 60) return `resets in ${min} min`
-  if (min < 48 * 60) return `resets in ${Math.floor(min / 60)} h ${min % 60} min`
-  return `resets ${new Date(iso).toLocaleDateString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' })}`
+  if (min < 60) return t('usage.menu.resetsInMin', 'resets in {{m}} min', { m: min })
+  if (min < 48 * 60)
+    return t('usage.menu.resetsInHours', 'resets in {{h}} h {{m}} min', {
+      h: Math.floor(min / 60),
+      m: min % 60
+    })
+  return t('usage.menu.resetsOn', 'resets {{date}}', {
+    date: new Date(iso).toLocaleDateString(intlLocale(), {
+      weekday: 'short',
+      hour: '2-digit',
+      minute: '2-digit'
+    })
+  })
 }
 function windowLabel(l) {
-  return l === '5h' ? '5-hour' : l === 'week' ? 'Weekly' : l
+  return l === '5h'
+    ? t('usage.window.fiveHour', '5-hour')
+    : l === 'week'
+      ? t('usage.window.weekly', 'Weekly')
+      : l
 }
+// "5-hour quota used", or "left" when Settings shows what remains.
+function quotaText(label) {
+  const name = windowLabel(label)
+  return settings.usagePercentageDisplay === 'remaining'
+    ? t('usage.menu.quotaLeft', '{{window}} quota left', { window: name })
+    : t('usage.menu.quotaUsed', '{{window}} quota used', { window: name })
+}
+function summaryTitle(agent) {
+  const quota = quotaText(summaryWindow(agent).label)
+  return stale(agent, summaryWindow(agent))
+    ? t('usage.menu.quotaLastKnown', '{{quota}} - last known reading', { quota })
+    : quota
+}
+function observedText(value) {
+  return t('usage.menu.observed', 'Observed {{time}}', {
+    time: new Date(value).toLocaleString(intlLocale(), {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    })
+  })
+}
+function creditsText(count) {
+  return t(
+    'usage.menu.resetsAvailable',
+    count === 1 ? '{{count}} rate-limit reset available' : '{{count}} rate-limit resets available',
+    { count }
+  )
+}
+// The account name sits in bold inside the sentence, wherever the language puts it.
+const resetExplanation = computed(() =>
+  t('usage.menu.resetExplain', 'This uses one reset credit for {{account}} and immediately resets eligible usage windows.'
+  ).split('{{account}}')
+)
 
 function onDocDown(e) {
   if (resetBusy.value) return
@@ -585,7 +665,7 @@ function toggle() {
 // Settings > Appearance, "Usage percentages": used or remaining.
 const shownPct = (used) => displayedUsagePercent(used, settings.usagePercentageDisplay)
 const pctLabel = (used) => usagePercentLabel(used, settings.usagePercentageDisplay)
-const quotaWord = computed(() => (settings.usagePercentageDisplay === 'remaining' ? ' quota left' : ' quota used'))
+const emptyTitle = () => t('usage.menu.buttonTitleEmpty', "Usage of your agents' quotas")
 </script>
 
 <template>
@@ -596,10 +676,12 @@ const quotaWord = computed(() => (settings.usagePercentageDisplay === 'remaining
       :class="[{ on: open }, worst >= 0 ? 'usage-' + level(worst) : '']"
       :title="
         worst >= 0
-          ? 'Usage: up to ' + Math.round(worst) + '% of a quota used'
-          : 'Usage of your agents\u0027 quotas'
+          ? t('usage.menu.buttonTitle', 'Usage: up to {{pct}}% of a quota used', {
+              pct: Math.round(worst)
+            })
+          : emptyTitle()
       "
-      aria-label="Usage"
+      :aria-label="t('usage.menu.title', 'Usage')"
       :aria-expanded="open"
       data-test="usage-button"
       @click="toggle"
@@ -621,16 +703,17 @@ const quotaWord = computed(() => (settings.usagePercentageDisplay === 'remaining
       :class="{ compact: mode === 'compact' }"
       :style="menuPosition"
       role="dialog"
-      aria-label="Usage"
+      :aria-label="t('usage.menu.title', 'Usage')"
       :aria-busy="refreshing"
     >
       <header class="usage-roster-head">
-        <strong>Usage</strong><span>supported providers</span
+        <strong>{{ t('usage.menu.title', 'Usage') }}</strong
+        ><span>{{ t('usage.menu.supportedProviders', 'supported providers') }}</span
         ><button
           type="button"
           class="usage-refresh"
-          aria-label="Refresh usage"
-          title="Refresh usage"
+          :aria-label="t('usage.menu.refresh', 'Refresh usage')"
+          :title="t('usage.menu.refresh', 'Refresh usage')"
           :disabled="refreshing || resetBusy"
           data-test="usage-refresh"
           @click="refresh"
@@ -653,33 +736,37 @@ const quotaWord = computed(() => (settings.usagePercentageDisplay === 'remaining
           </svg>
         </button>
       </header>
-      <div class="usage-density" role="group" aria-label="Usage display">
+      <div class="usage-density" role="group" :aria-label="t('usage.menu.display', 'Usage display')">
         <button
           type="button"
           :aria-pressed="mode === 'detailed'"
           data-test="usage-mode-detailed"
           @click="changeMode('detailed')"
         >
-          Detailed</button
+          {{ t('usage.menu.detailed', 'Detailed') }}</button
         ><button
           type="button"
           :aria-pressed="mode === 'compact'"
           data-test="usage-mode-compact"
           @click="changeMode('compact')"
         >
-          Compact
+          {{ t('usage.menu.compact', 'Compact') }}
         </button>
       </div>
       <div class="usage-roster-body">
         <UsageVisibility :providers="installed" @change="visibilityChanged" />
-        <p v-if="usage && usage.error" class="usage-account-error" role="alert">
-          Could not read usage: {{ usage.error }}
-        </p>
+        <p
+          v-if="usage && usage.error"
+          class="usage-account-error"
+          role="alert"
+          v-text="t('usage.menu.readError', 'Could not read usage: {{error}}', { error: usage.error })"
+        ></p>
         <p v-else-if="!agents.length" class="notif-empty">
           {{
             loading
-              ? 'Reading usage...'
-              : 'No configured usage providers to show. Install a supported agent, sign in, then refresh.'
+              ? t('usage.menu.reading', 'Reading usage...')
+              : t('usage.menu.empty', 'No configured usage providers to show. Install a supported agent, sign in, then refresh.'
+                )
           }}
         </p>
         <p v-if="rosterError" class="usage-account-notice" role="status">{{ rosterError }}</p>
@@ -692,7 +779,7 @@ const quotaWord = computed(() => (settings.usagePercentageDisplay === 'remaining
             data-test="usage-accounts-retry"
             @click="loadAccounts"
           >
-            Retry
+            {{ t('usage.menu.retry', 'Retry') }}
           </button>
         </p>
         <p v-if="accountNotice" class="usage-account-notice" role="status">{{ accountNotice }}</p>
@@ -721,13 +808,11 @@ const quotaWord = computed(() => (settings.usagePercentageDisplay === 'remaining
               v-if="mode === 'compact' && summaryWindow(a)"
               class="usage-summary"
               :class="{ stale: stale(a, summaryWindow(a)) }"
-              :title="
-                windowLabel(summaryWindow(a).label) +
-                quotaWord +
-                (stale(a, summaryWindow(a)) ? ' - last known reading' : '')
-              "
+              :title="summaryTitle(a)"
             >
-              <span v-if="stale(a, summaryWindow(a))" class="usage-old">last seen</span>
+              <span v-if="stale(a, summaryWindow(a))" class="usage-old">{{
+                t('usage.menu.lastSeen', 'last seen')
+              }}</span>
               <span v-else-if="shortReset(summaryWindow(a).resetsAt)" class="usage-countdown">{{
                 shortReset(summaryWindow(a).resetsAt)
               }}</span>
@@ -739,12 +824,12 @@ const quotaWord = computed(() => (settings.usagePercentageDisplay === 'remaining
             </span>
             <span v-else-if="!windows(a).length" class="usage-no-data">{{
               providerBusy[a.id]
-                ? 'Loading usage…'
+                ? t('usage.menu.loading', 'Loading usage…')
                 : a.unlimited
-                  ? 'Unlimited'
+                  ? t('usage.menu.unlimited', 'Unlimited')
                   : providerErrors[a.id]
-                    ? 'Refresh needed'
-                    : 'Open for usage'
+                    ? t('usage.menu.refreshNeeded', 'Refresh needed')
+                    : t('usage.menu.openForUsage', 'Open for usage')
             }}</span>
             <svg
               class="usage-chevron"
@@ -787,33 +872,29 @@ const quotaWord = computed(() => (settings.usagePercentageDisplay === 'remaining
               </div>
               <div class="usage-reset">
                 {{ resetText(w.resetsAt)
-                }}<span v-if="stale(a, w)"> &middot; last known reading</span>
+                }}<span v-if="stale(a, w)">
+                  &middot; {{ t('usage.menu.lastKnownReadingLower', 'last known reading') }}</span
+                >
               </div>
             </div>
             <p v-if="a.observedAt && windows(a).length" class="usage-observed">
-              Observed
-              {{
-                new Date(a.observedAt).toLocaleString([], {
-                  month: 'short',
-                  day: 'numeric',
-                  hour: '2-digit',
-                  minute: '2-digit'
-                })
-              }}
+              {{ observedText(a.observedAt) }}
             </p>
           </div>
         </section>
       </div>
       <footer class="usage-roster-foot">
         <button type="button" data-test="usage-details" @click="(closeMenu(), emit('details'))">
-          <span>Usage details &amp; history</span><span aria-hidden="true">&rsaquo;</span></button
+          <span>{{ t('usage.menu.details', 'Usage details & history') }}</span
+          ><span aria-hidden="true">&rsaquo;</span></button
         ><button
           v-if="hasAccounts"
           type="button"
           data-test="usage-manage-accounts"
           @click="(closeMenu(), emit('accounts'))"
         >
-          <span>Manage accounts</span><span aria-hidden="true">&rsaquo;</span>
+          <span>{{ t('usage.menu.manageAccounts', 'Manage accounts') }}</span
+          ><span aria-hidden="true">&rsaquo;</span>
         </button>
       </footer>
     </div>
@@ -824,7 +905,7 @@ const quotaWord = computed(() => (settings.usagePercentageDisplay === 'remaining
       :class="{ stacked }"
       :style="flyoutPosition"
       role="dialog"
-      :aria-label="agentName(detailAgent) + ' usage'"
+      :aria-label="t('usage.menu.agentUsage', '{{name}} usage', { name: agentName(detailAgent) })"
       :aria-busy="providerBusy[detailAgent.id] || resetBusy"
       data-test="usage-provider-flyout"
     >
@@ -833,7 +914,7 @@ const quotaWord = computed(() => (settings.usagePercentageDisplay === 'remaining
           type="button"
           class="usage-back"
           :disabled="resetBusy"
-          aria-label="Back to all agents"
+          :aria-label="t('usage.menu.back', 'Back to all agents')"
           data-test="usage-provider-back"
           @click="closeProvider"
         >
@@ -851,7 +932,7 @@ const quotaWord = computed(() => (settings.usagePercentageDisplay === 'remaining
           type="button"
           class="usage-refresh"
           :disabled="providerBusy[detailAgent.id] || resetBusy"
-          aria-label="Refresh provider usage"
+          :aria-label="t('usage.menu.refreshProvider', 'Refresh provider usage')"
           data-test="usage-provider-refresh"
           @click="readProvider(detailAgent.id)"
         >
@@ -879,19 +960,24 @@ const quotaWord = computed(() => (settings.usagePercentageDisplay === 'remaining
           class="usage-account-error"
           role="alert"
           data-test="usage-reset-credits-error"
-        >
-          Reset credits: {{ detailAgent.resetCreditsError }}
-        </p>
+          v-text="
+            t('usage.menu.resetCreditsError', 'Reset credits: {{error}}', {
+              error: detailAgent.resetCreditsError
+            })
+          "
+        ></p>
         <p v-if="providerErrors[detailAgent.id]" class="usage-account-error" role="alert">
           {{ providerErrors[detailAgent.id]
-          }}<span v-if="windows(detailAgent).length"> Showing the last known reading.</span>
+          }}<span v-if="windows(detailAgent).length">
+            {{ t('usage.menu.showingLastKnown', 'Showing the last known reading.') }}</span
+          >
         </p>
         <p
           v-if="providerBusy[detailAgent.id] && !windows(detailAgent).length"
           class="usage-none"
           role="status"
         >
-          Reading provider usage...
+          {{ t('usage.menu.readingProvider', 'Reading provider usage...') }}
         </p>
         <p v-else-if="!windows(detailAgent).length" class="usage-none">
           {{ unavailableText(detailAgent) }}
@@ -908,7 +994,7 @@ const quotaWord = computed(() => (settings.usagePercentageDisplay === 'remaining
           <div
             class="usage-bar"
             role="meter"
-            :aria-label="windowLabel(w.label) + quotaWord"
+            :aria-label="quotaText(w.label)"
             aria-valuemin="0"
             aria-valuemax="100"
             :aria-valuenow="shownPct(w.usedPct)"
@@ -922,19 +1008,21 @@ const quotaWord = computed(() => (settings.usagePercentageDisplay === 'remaining
           <div class="usage-flyout-window-meta">
             <span class="usage-pct" :class="'usage-level-' + level(w.usedPct)"
               >{{ pctLabel(w.usedPct) }}</span
-            ><span v-if="shortReset(w.resetsAt)">{{
-              stale(detailAgent, w) ? 'Last known reading' : 'Resets in ' + shortReset(w.resetsAt)
-            }}</span>
+            ><span
+              v-if="shortReset(w.resetsAt)"
+              v-text="
+                stale(detailAgent, w)
+                  ? t('usage.menu.lastKnownReading', 'Last known reading')
+                  : t('usage.menu.resetsIn', 'Resets in {{time}}', { time: shortReset(w.resetsAt) })
+              "
+            ></span>
           </div>
         </div>
         <div v-if="credits" class="usage-reset-credits" data-test="usage-reset-credits">
-          <strong
-            >{{ credits.availableCount }} rate-limit
-            {{ credits.availableCount === 1 ? 'reset' : 'resets' }} available</strong
-          >
+          <strong>{{ creditsText(credits.availableCount) }}</strong>
           <span
             v-if="expiryText(credits.nextExpiresAt)"
-            :title="new Date(credits.nextExpiresAt).toLocaleString()"
+            :title="new Date(credits.nextExpiresAt).toLocaleString(intlLocale())"
             >{{ expiryText(credits.nextExpiresAt) }}</span
           >
           <button
@@ -945,20 +1033,22 @@ const quotaWord = computed(() => (settings.usagePercentageDisplay === 'remaining
             data-test="usage-reset-now"
             @click="beginReset"
           >
-            {{ resetBusy ? 'Resetting…' : 'Reset now' }}
+            {{
+              resetBusy ? t('usage.menu.resetting', 'Resetting…') : t('usage.menu.resetNow', 'Reset now')
+            }}
           </button>
         </div>
         <div
           v-if="resetConfirm"
           class="usage-reset-confirm"
           role="alertdialog"
-          aria-label="Confirm Codex usage reset"
+          :aria-label="t('usage.menu.confirmResetLabel', 'Confirm Codex usage reset')"
           aria-describedby="usage-reset-explanation"
         >
-          <strong>Reset Codex limits?</strong>
+          <strong>{{ t('usage.menu.confirmResetTitle', 'Reset Codex limits?') }}</strong>
           <p id="usage-reset-explanation">
-            This uses one reset credit for <strong>{{ resetConfirm.label }}</strong> and immediately
-            resets eligible usage windows.
+            {{ resetExplanation[0] }}<strong>{{ resetConfirm.label }}</strong
+            >{{ resetExplanation[1] }}
           </p>
           <div>
             <button
@@ -968,7 +1058,11 @@ const quotaWord = computed(() => (settings.usagePercentageDisplay === 'remaining
               data-test="usage-reset-confirm"
               @click="confirmReset"
             >
-              {{ resetBusy ? 'Resetting…' : 'Reset now' }}</button
+              {{
+                resetBusy
+                  ? t('usage.menu.resetting', 'Resetting…')
+                  : t('usage.menu.resetNow', 'Reset now')
+              }}</button
             ><button
               type="button"
               :disabled="resetBusy"
@@ -976,7 +1070,7 @@ const quotaWord = computed(() => (settings.usagePercentageDisplay === 'remaining
               data-test="usage-reset-cancel"
               @click="resetConfirm = null"
             >
-              Cancel
+              {{ t('usage.menu.cancel', 'Cancel') }}
             </button>
           </div>
         </div>
@@ -996,7 +1090,9 @@ const quotaWord = computed(() => (settings.usagePercentageDisplay === 'remaining
           compact
         />
         <div v-if="providerAccounts(detailAgent.id)" class="usage-flyout-accounts">
-          <h4>{{ agentName(detailAgent) }} account</h4>
+          <h4
+            v-text="t('usage.menu.agentAccount', '{{name}} account', { name: agentName(detailAgent) })"
+          ></h4>
           <button
             type="button"
             class="usage-account-toggle"
@@ -1009,7 +1105,9 @@ const quotaWord = computed(() => (settings.usagePercentageDisplay === 'remaining
             ><span aria-hidden="true">{{ accountChooser ? '\u2304' : '\u203a' }}</span>
           </button>
           <div v-if="accountChooser" class="usage-account-picker">
-            <label :for="'usage-account-' + detailAgent.id">Account</label>
+            <label :for="'usage-account-' + detailAgent.id">{{
+              t('usage.menu.account', 'Account')
+            }}</label>
             <select
               :id="'usage-account-' + detailAgent.id"
               :value="providerAccounts(detailAgent.id).selectedId || ''"
@@ -1023,16 +1121,23 @@ const quotaWord = computed(() => (settings.usagePercentageDisplay === 'remaining
               @change="selectAccount(providerAccounts(detailAgent.id), $event)"
             >
               <option v-if="providerAccounts(detailAgent.id).system" value="">
-                {{ providerAccounts(detailAgent.id).system.label || 'System default' }}
+                {{
+                  providerAccounts(detailAgent.id).system.label ||
+                  t('usage.menu.systemDefault', 'System default')
+                }}
               </option>
               <option
                 v-for="account in providerAccounts(detailAgent.id).accounts || []"
                 :key="account.id"
                 :value="account.id"
-              >
-                {{ account.label || account.email || 'Account'
-                }}{{ account.status === 'missing' ? ' - sign-in needed' : '' }}
-              </option>
+                v-text="
+                  account.status === 'missing'
+                    ? t('usage.menu.signInNeeded', '{{account}} - sign-in needed', {
+                        account: account.label || account.email || t('usage.menu.account', 'Account')
+                      })
+                    : account.label || account.email || t('usage.menu.account', 'Account')
+                "
+              ></option>
             </select>
           </div>
           <p v-if="providerAccounts(detailAgent.id).error" class="usage-account-error" role="alert">
@@ -1047,7 +1152,7 @@ const quotaWord = computed(() => (settings.usagePercentageDisplay === 'remaining
               data-test="usage-provider-accounts-retry"
               @click="loadAccounts"
             >
-              Retry
+              {{ t('usage.menu.retry', 'Retry') }}
             </button>
           </p>
           <p v-if="accountNotice" class="usage-account-notice" role="status">{{ accountNotice }}</p>
@@ -1060,7 +1165,7 @@ const quotaWord = computed(() => (settings.usagePercentageDisplay === 'remaining
           data-test="usage-provider-manage-accounts"
           @click="(closeMenu(), emit('accounts'))"
         >
-          <span>Manage accounts</span><span aria-hidden="true">&rsaquo;</span>
+          <span>{{ t('usage.menu.manageAccounts', 'Manage accounts') }}</span><span aria-hidden="true">&rsaquo;</span>
         </button>
       </footer>
     </section>
