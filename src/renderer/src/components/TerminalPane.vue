@@ -51,7 +51,6 @@ const exited = ref(false)
 // False once the pane is gone (checked after awaits).
 let mounted = true
 const exitCode = ref(null)
-const micMenu = ref(false)
 // Scrolled up into history? Then offer a button back to the latest output.
 const scrolledUp = ref(false)
 const newBelow = ref(false)
@@ -332,6 +331,65 @@ const limit = computed(() => limits[props.node.id] || null)
 const asksApproval = computed(() => !!approvals[props.node.id])
 // How it is doing (src/shared/tracking.js), when it may be stuck.
 const track = computed(() => (ctx.trackOf ? ctx.trackOf(props.node.id) : null))
+const stuck = computed(
+  () => isAgent.value && !!track.value && (track.value.level === 'warn' || track.value.level === 'alert') && !asksApproval.value && !limit.value
+)
+const unsent = computed(() => isAgent.value && !!(ctx.unsent && ctx.unsent[props.node.id]))
+const limitTitle = computed(() =>
+  !limit.value
+    ? ''
+    : limit.value.reset
+      ? `This agent hit its usage limit. It resets ${/^in /.test(limit.value.reset) ? '' : 'at '}${limit.value.reset}.`
+      : 'This agent hit its usage limit.'
+)
+const cacheTitle = computed(() =>
+  !cache.value
+    ? ''
+    : cache.value.level === 'expired'
+      ? 'Prompt cache expired: the next message re-sends the whole conversation uncached'
+      : `Prompt cache expires in ${cache.value.label}: a message before then reuses it (faster, cheaper)`
+)
+const YOLO_TITLE = 'Started in Yolo: this agent runs commands and changes files without asking you'
+const APPLY_TITLE =
+  'Settings > Agents changed since this agent started (Yolo, arguments or variables). Restart it to apply them: same pane, its conversation resumed'
+
+// Like Orca's pane header, the header shows only what matters: the status
+// dot, the icon, the title and at most ONE state badge, the most urgent one.
+// Everything else (model, branch, team, Yolo, the other states, voice
+// language...) is in the pane's menu (… or Shift+right-click) and tooltips.
+const badge = computed(() => {
+  if (props.node.sleeping) return 'asleep'
+  if (exited.value) return 'exited'
+  if (!isAgent.value) return null
+  if (asksApproval.value) return 'approval'
+  if (limit.value) return 'limit'
+  if (unsent.value) return 'unsent'
+  if (stuck.value) return 'stuck'
+  if (launchStale.value) return 'apply'
+  if (agentStatus.value === 'busy') return 'working'
+  if (agentStatus.value === 'unknown') return 'unknown'
+  // "Needs you" is also the status dot and the pane's glow; the prompt cache
+  // countdown is shown nowhere else, so it goes first.
+  if (cache.value) return 'cache'
+  if (needsYou.value) return 'needs'
+  return null
+})
+
+// The title's tooltip: what the header no longer shows, in one place.
+const titleTooltip = computed(() => {
+  const lines = [autoTitle.value ? `${paneTitle.value}: ${autoTitle.value} (named after its conversation)` : paneTitle.value]
+  if (props.node.num) lines[0] = `#${props.node.num} ${lines[0]}`
+  if (isAgent.value && modelText.value) lines.push(`Model: ${modelText.value}`)
+  if (props.node.worktree) lines.push(`Branch: ${props.node.worktree.branch} (separate copy)`)
+  if (team.value) lines.push(`Team: ${team.value.name}${isLead.value ? ' (lead)' : ''}`)
+  if (isAgent.value && props.node.launchYolo) lines.push('Yolo: runs without asking you')
+  lines.push('Double-click to rename. Drag the header to move the pane. More in the … menu')
+  return lines.join('\n')
+})
+const iconTooltip = computed(() => {
+  if (!isAgent.value) return props.node.shellName
+  return props.node.launchYolo ? `${statusTitle.value}\n${YOLO_TITLE}` : statusTitle.value
+})
 
 // The team this pane is in (a named, coloured group of agents), if any.
 // (Checked: in the dev build this file can reload before App.vue provides it.)
@@ -816,12 +874,19 @@ async function onContextMenu(e) {
   ctxMenu.y = e.clientY
   ctxMenu.visible = true
   await nextTick()
-  if (ctxMenuEl.value) {
-    ctxMenuEl.value.focus({ preventScroll: true })
-    const r = ctxMenuEl.value.getBoundingClientRect()
-    if (ctxMenu.x + r.width > window.innerWidth) ctxMenu.x = window.innerWidth - r.width - 4
-    if (ctxMenu.y + r.height > window.innerHeight) ctxMenu.y = window.innerHeight - r.height - 4
-  }
+  keepCtxMenuInWindow()
+}
+
+// The menu stays inside the window (it scrolls when taller than it).
+function keepCtxMenuInWindow(alignRight = null) {
+  if (!ctxMenuEl.value) return
+  ctxMenuEl.value.focus({ preventScroll: true })
+  const r = ctxMenuEl.value.getBoundingClientRect()
+  if (alignRight !== null) ctxMenu.x = alignRight - r.width
+  if (ctxMenu.x + r.width > window.innerWidth) ctxMenu.x = window.innerWidth - r.width - 4
+  if (ctxMenu.y + r.height > window.innerHeight) ctxMenu.y = window.innerHeight - r.height - 4
+  ctxMenu.x = Math.max(4, ctxMenu.x)
+  ctxMenu.y = Math.max(4, ctxMenu.y)
 }
 
 // The menu takes keyboard focus while open, so Esc closes it instead of
@@ -846,12 +911,8 @@ async function openMenuAtBtn(e) {
   ctxMenu.y = rect.bottom + 2
   ctxMenu.visible = true
   await nextTick()
-  if (ctxMenuEl.value) {
-    ctxMenuEl.value.focus({ preventScroll: true })
-    const r = ctxMenuEl.value.getBoundingClientRect()
-    if (ctxMenu.x + r.width > window.innerWidth) ctxMenu.x = window.innerWidth - r.width - 4
-    if (ctxMenu.y + r.height > window.innerHeight) ctxMenu.y = window.innerHeight - r.height - 4
-  }
+  // Under the … button, its right edge on the button's (like Orca's menus).
+  keepCtxMenuInWindow(rect.right)
 }
 
 function menuCopy() {
@@ -942,11 +1003,23 @@ function jumpToBottom() {
   term.focus()
 }
 
-function pickVoice(tip) {
-  micMenu.value = false
+// Pane menu > Speak in: pick the voice typing language and start dictation.
+function menuPickVoice(tip) {
+  closeCtxMenu()
   ctx.voiceTypingIn(props.node.id, tip)
 }
-
+function menuVoice() {
+  closeCtxMenu()
+  ctx.voiceTyping(props.node.id)
+}
+function menuRestartApply() {
+  closeCtxMenu()
+  restartToApply()
+}
+function menuResolveUnsent() {
+  closeCtxMenu()
+  if (ctx.resolveUnsent) ctx.resolveUnsent(props.node.id)
+}
 function menuCopySession() {
   closeCtxMenu()
   if (!props.node.sessionId) return
@@ -963,7 +1036,6 @@ function menuRestart() {
 }
 
 function onDocPointerDownMenu(e) {
-  if (micMenu.value && !(e.target.closest && e.target.closest('.mic-group'))) micMenu.value = false
   if (ctxMenu.visible && ctxMenuEl.value && !ctxMenuEl.value.contains(e.target)) closeCtxMenu()
 }
 function onEscapeMenu(e) {
@@ -1401,11 +1473,13 @@ onBeforeUnmount(() => {
     @dragleave="onDragLeave"
     @drop="onDrop"
   >
+    <!-- The pane header, like Orca's: status and icon, title, at most one
+         state badge; then a few actions. The rest is in the … menu. -->
     <div
       class="pane-nav"
       :class="{ agent: isAgent, busy: isAgent && agentStatus === 'busy' }"
       :style="isAgent ? { '--accent': node.accent } : null"
-      title="Drag to move this pane"
+      data-test="pane-header"
       @mousedown.stop="onNavMouseDown"
       @pointerdown="onNavPointerDown"
     >
@@ -1413,9 +1487,9 @@ onBeforeUnmount(() => {
         <span v-if="node.num" class="pane-num" :title="`Pane #${node.num}`">{{ node.num }}</span>
         <span
           class="pane-icon"
-          :class="isAgent ? ['agent', needsYou ? 'attention' : agentStatus] : null"
+          :class="isAgent ? ['agent', needsYou ? 'attention' : agentStatus, { yolo: node.launchYolo }] : null"
           :style="isAgent ? { '--accent': node.accent } : null"
-          :title="isAgent ? statusTitle : node.shellName"
+          :title="iconTooltip"
         >
           <BrandIcon
             :kind="isAgent ? node.agentId : node.shellId"
@@ -1439,11 +1513,12 @@ onBeforeUnmount(() => {
         <span
           v-if="!editingTitle"
           class="pane-title"
-          :title="autoTitle ? `${paneTitle}: ${autoTitle}
-Named after its conversation. Double-click to rename` : 'Double-click to rename'"
+          data-test="pane-title"
+          :title="titleTooltip"
           @dblclick="startEditTitle"
           >{{ autoTitle || paneTitle }}</span
         >
+        <!-- Pane menu > Set model...: edited in place, only while editing. -->
         <input
           v-if="isAgent && editingModel"
           ref="modelInputEl"
@@ -1457,117 +1532,41 @@ Named after its conversation. Double-click to rename` : 'Double-click to rename'
           @mousedown.stop
           @click.stop
         />
-        <span
-          v-else-if="isAgent && modelText"
-          class="pane-model"
-          :class="{ manual: agentModel && agentModel.source === 'manual' }"
-          :title="modelTitle"
-          >{{ modelText }}</span
-        >
-        <span
-          v-if="node.worktree"
-          class="pane-branch"
-          :title="`Separate copy on branch ${node.worktree.branch}\n${node.worktree.path}`"
-        >
-          <svg width="11" height="11" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <circle cx="4.5" cy="3.5" r="1.8" stroke="currentColor" stroke-width="1.4" />
-            <circle cx="4.5" cy="12.5" r="1.8" stroke="currentColor" stroke-width="1.4" />
-            <circle cx="11.5" cy="5.5" r="1.8" stroke="currentColor" stroke-width="1.4" />
-            <path
-              d="M4.5 5.3v5.4M11.5 7.3c0 2.5-2 3-5 4"
-              stroke="currentColor"
-              stroke-width="1.4"
-            />
-          </svg>
-          {{ node.worktree.branch }}
-        </span>
-        <span
-          v-if="team"
-          class="pane-team"
-          :title="`Team: ${team.name}${isLead ? ' (this agent leads it)' : ''} (manage it under Sessions)`"
-          >{{ team.name }}{{ isLead ? ' · lead' : '' }}</span
-        >
+        <!-- One badge: the most urgent state (all of them are in the … menu). -->
+        <span v-if="badge === 'asleep'" class="exit-tag" data-test="pane-badge" title="Asleep: open the pane to wake it">asleep</span>
+        <span v-else-if="badge === 'exited'" class="exit-tag" data-test="pane-badge">exited</span>
+        <span v-else-if="badge === 'approval'" class="pane-approval" data-test="pane-badge" title="This agent is asking you to approve something">approve?</span>
+        <span v-else-if="badge === 'limit'" class="pane-limit" data-test="pane-badge" :title="limitTitle">limit{{ limit.reset ? ` · ${limit.reset}` : '' }}</span>
         <button
-          v-if="isAgent && ctx.unsent && ctx.unsent[node.id]"
+          v-else-if="badge === 'unsent'"
           class="pane-unsent"
+          data-test="pane-badge"
           title="A message was pasted but not seen taken: click to say what happened"
           @click.stop="ctx.resolveUnsent(node.id)"
         >
-          message not confirmed
+          not confirmed
         </button>
-        <span
-          v-if="
-            isAgent &&
-            track &&
-            (track.level === 'warn' || track.level === 'alert') &&
-            !asksApproval &&
-            !limit
-          "
-          class="pane-stuck"
-          :class="track.level"
-          :title="track.reason"
-          >quiet {{ track.minutes }} min</span
-        >
-        <span
-          v-if="isAgent && node.launchYolo"
-          class="pane-yolo"
-          data-test="pane-yolo"
-          title="Started in Yolo: this agent runs commands and changes files without asking you"
-          >Yolo</span
-        >
+        <span v-else-if="badge === 'stuck'" class="pane-stuck" :class="track.level" data-test="pane-badge" :title="track.reason">quiet {{ track.minutes }} min</span>
         <button
-          v-if="launchStale"
+          v-else-if="badge === 'apply'"
           class="pane-apply"
           type="button"
           data-test="pane-restart-apply"
-          title="Settings > Agents changed since this agent started (Yolo, arguments or variables). Restart it to apply them: same pane, its conversation resumed"
+          :title="APPLY_TITLE"
           @click.stop="restartToApply"
         >
           Restart to apply
         </button>
-        <AgentChildren
-          v-if="isAgent && node.agentId === 'claude' && node.sessionId && !node.sleeping"
-          :agent-id="node.agentId"
-          :session-id="node.sessionId"
-          :account-id="node.accountId"
-        />
-        <span
-          v-if="cache"
-          class="pane-cache"
-          :class="cache.level"
-          :title="
-            cache.level === 'expired'
-              ? 'Prompt cache expired: the next message re-sends the whole conversation uncached'
-              : `Prompt cache expires in ${cache.label}: a message before then reuses it (faster, cheaper)`
-          "
-        >
+        <span v-else-if="badge === 'working'" class="pane-working" data-test="pane-badge" :title="statusTitle">{{ estimatedState ? 'working · estimated' : 'working' }}</span>
+        <span v-else-if="badge === 'unknown'" class="pane-working" data-test="pane-badge" :title="statusTitle">unknown</span>
+        <span v-else-if="badge === 'needs'" class="pane-needs-you" data-test="pane-badge">needs you</span>
+        <span v-else-if="badge === 'cache'" class="pane-cache" :class="cache.level" data-test="pane-badge" :title="cacheTitle">
           <svg width="11" height="11" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <circle cx="8" cy="9" r="5.5" stroke="currentColor" stroke-width="1.4" />
             <path d="M8 6v3l2 1.5M6.5 1.5h3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
           </svg>
           <template v-if="cache.level !== 'expired'">{{ cache.label }}</template>
         </span>
-        <span
-          v-if="isAgent && asksApproval"
-          class="pane-approval"
-          title="This agent is asking you to approve something"
-          >approve?</span
-        >
-        <span
-          v-else-if="isAgent && limit"
-          class="pane-limit"
-          :title="
-            limit.reset
-              ? `This agent hit its usage limit. It resets ${/^in /.test(limit.reset) ? '' : 'at '}${limit.reset}.`
-              : 'This agent hit its usage limit.'
-          "
-          >limit{{ limit.reset ? ` · ${limit.reset}` : '' }}</span
-        >
-        <span v-else-if="isAgent && agentStatus === 'busy'" class="pane-working" :title="statusTitle">{{ estimatedState ? 'working · estimated' : 'working' }}</span>
-        <span v-else-if="isAgent && agentStatus === 'unknown'" class="pane-working" :title="statusTitle">unknown</span>
-        <span v-else-if="needsYou" class="pane-needs-you">needs you</span>
-        <span v-if="node.sleeping" class="exit-tag" title="Asleep: open the pane to wake it">asleep</span>
-        <span v-else-if="exited" class="exit-tag">exited</span>
       </div>
       <div class="pane-nav-actions" @mousedown.stop>
         <label
@@ -1579,88 +1578,36 @@ Named after its conversation. Double-click to rename` : 'Double-click to rename'
           <input v-model="node.broadcast" type="checkbox" />
           write
         </label>
-        <!-- voice typing, with its language -->
-        <span class="mic-group">
-          <button
-            class="pane-nav-btn mic-btn"
-            :title="`Speak instead of typing (${ctx.voiceName.value}). Windows voice typing, Win+H`"
-            @click="ctx.voiceTyping(node.id)"
-          >
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <rect
-                x="5.5"
-                y="1.8"
-                width="5"
-                height="8"
-                rx="2.5"
-                stroke="currentColor"
-                stroke-width="1.4"
-              />
-              <path
-                d="M3.3 7.5a4.7 4.7 0 009.4 0M8 12.2v2"
-                stroke="currentColor"
-                stroke-width="1.4"
-                stroke-linecap="round"
-              />
-            </svg>
-            <span v-if="ctx.voiceLabel.value" class="mic-lang">{{ ctx.voiceLabel.value }}</span>
-          </button>
-          <button
-            v-if="ctx.voiceLanguages.value.length"
-            class="pane-nav-btn mic-caret"
-            title="Voice typing language"
-            @click.stop="micMenu = !micMenu"
-          >
-            <svg width="8" height="8" viewBox="0 0 10 10" aria-hidden="true">
-              <path
-                d="M2.5 4l2.5 2.5L7.5 4"
-                stroke="currentColor"
-                stroke-width="1.4"
-                fill="none"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              />
-            </svg>
-          </button>
-          <div v-if="micMenu" class="mic-menu" @mousedown.stop>
-            <div class="menu-label">Speak in</div>
-            <button
-              v-for="l in ctx.voiceLanguages.value"
-              :key="l.tip"
-              class="toolbar-menu-item"
-              :class="{ selected: settings.voiceTip === l.tip }"
-              @click="pickVoice(l.tip)"
-            >
-              <span class="mic-menu-tag">{{ l.tag.slice(0, 2).toUpperCase() }}</span>
-              <span class="menu-item-name">{{ l.name }}</span>
-            </button>
-            <button
-              class="toolbar-menu-item"
-              :class="{ selected: !settings.voiceTip }"
-              @click="pickVoice('')"
-            >
-              <span class="mic-menu-tag">⌨</span>
-              <span class="menu-item-name">Current keyboard language</span>
-            </button>
-          </div>
-        </span>
-        <!-- open a terminal or agent next to this pane -->
+        <!-- sub-agents: a compact count; click for the list -->
+        <AgentChildren
+          v-if="isAgent && node.agentId === 'claude' && node.sessionId && !node.sleeping"
+          :agent-id="node.agentId"
+          :session-id="node.sessionId"
+          :account-id="node.accountId"
+        />
+        <!-- voice typing (its language: in the … menu) -->
         <button
-          class="pane-nav-btn"
-          title="Open a terminal or agent next to this pane"
-          @click="(e) => ctx.openLauncherAt(e.currentTarget.getBoundingClientRect(), node.id)"
+          class="pane-nav-btn mic-btn"
+          data-test="pane-voice"
+          :title="`Speak instead of typing (${ctx.voiceName.value}). Windows voice typing, Win+H. Language: … menu`"
+          :aria-label="`Voice typing (${ctx.voiceName.value})`"
+          @click="ctx.voiceTyping(node.id)"
         >
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <path
-              d="M8 3v10M3 8h10"
-              stroke="currentColor"
-              stroke-width="1.5"
-              stroke-linecap="round"
-            />
+            <rect x="5.5" y="1.8" width="5" height="8" rx="2.5" stroke="currentColor" stroke-width="1.4" />
+            <path d="M3.3 7.5a4.7 4.7 0 009.4 0M8 12.2v2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
           </svg>
         </button>
-        <!-- ellipsis / more options -->
-        <button class="pane-nav-btn" title="More options" @click="openMenuAtBtn">
+        <!-- ellipsis / more options: everything the header no longer shows -->
+        <button
+          class="pane-nav-btn"
+          data-test="pane-menu-btn"
+          title="More options (or Shift+right-click in the pane)"
+          aria-label="More options"
+          aria-haspopup="menu"
+          :aria-expanded="ctxMenu.visible"
+          @click="openMenuAtBtn"
+        >
           <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
             <circle cx="3" cy="8" r="1.4" fill="currentColor" />
             <circle cx="8" cy="8" r="1.4" fill="currentColor" />
@@ -1671,59 +1618,20 @@ Named after its conversation. Double-click to rename` : 'Double-click to rename'
         <button
           class="pane-nav-btn"
           :title="isMaximized ? 'Restore pane' : 'Maximize pane'"
+          :aria-label="isMaximized ? 'Restore pane' : 'Maximize pane'"
           @click="ctx.toggleMaximize(node.id)"
         >
-          <svg
-            v-if="isMaximized"
-            width="14"
-            height="14"
-            viewBox="0 0 16 16"
-            fill="none"
-            aria-hidden="true"
-          >
-            <path
-              d="M6 2v4H2M14 6h-4V2M10 14v-4h4M2 10h4v4"
-              stroke="currentColor"
-              stroke-width="1.5"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            />
+          <svg v-if="isMaximized" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M6 2v4H2M14 6h-4V2M10 14v-4h4M2 10h4v4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
           </svg>
           <svg v-else width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <path
-              d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4"
-              stroke="currentColor"
-              stroke-width="1.5"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            />
+            <path d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
           </svg>
         </button>
         <!-- close -->
-        <button
-          class="pane-nav-btn close"
-          title="Close pane (Ctrl+Shift+W)"
-          @click="ctx.closeLeaf(node.id)"
-        >
+        <button class="pane-nav-btn close" title="Close pane (Ctrl+Shift+W)" aria-label="Close pane" @click="ctx.closeLeaf(node.id)">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <line
-              x1="3.5"
-              y1="3.5"
-              x2="12.5"
-              y2="12.5"
-              stroke="currentColor"
-              stroke-width="1.6"
-              stroke-linecap="round"
-            />
-            <line
-              x1="12.5"
-              y1="3.5"
-              x2="3.5"
-              y2="12.5"
-              stroke="currentColor"
-              stroke-width="1.6"
-              stroke-linecap="round"
-            />
+            <path d="M3.5 3.5l9 9M12.5 3.5l-9 9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
           </svg>
         </button>
       </div>
@@ -1865,6 +1773,46 @@ Named after its conversation. Double-click to rename` : 'Double-click to rename'
         <span class="ctx-menu-title">{{ node.num ? `#${node.num} ` : '' }}{{ paneTitle }}</span>
         <span class="ctx-menu-subtitle">{{ node.shellName }}</span>
       </div>
+      <!-- What the pane header does not show (Orca keeps its header to the
+           title): where it works, its team, how it was started, its states. -->
+      <div class="ctx-menu-facts" data-test="pane-menu-facts">
+        <div v-if="node.worktree" class="ctx-menu-fact" data-test="pane-branch" :title="`Separate copy on branch ${node.worktree.branch}\n${node.worktree.path}`">
+          <span class="ctx-fact-label">Branch</span><span class="ctx-fact-value">{{ node.worktree.branch }}</span>
+        </div>
+        <div v-if="team" class="ctx-menu-fact" data-test="pane-team" :title="`Team: ${team.name}${isLead ? ' (this agent leads it)' : ''} (manage it under Sessions)`">
+          <span class="ctx-fact-label">Team</span><span class="ctx-fact-value pane-team-name">{{ team.name }}{{ isLead ? ' · lead' : '' }}</span>
+        </div>
+        <div v-if="isAgent && node.launchYolo" class="ctx-menu-fact" data-test="pane-yolo" :title="YOLO_TITLE">
+          <span class="ctx-fact-label">Started</span><span class="ctx-fact-value pane-yolo">Yolo</span>
+        </div>
+        <div v-if="isAgent" class="ctx-menu-fact" data-test="pane-state" :title="statusTitle">
+          <span class="ctx-fact-label">State</span>
+          <span class="ctx-fact-value">
+            <template v-if="node.sleeping">asleep</template>
+            <template v-else-if="exited">exited</template>
+            <template v-else-if="asksApproval">asks you to approve</template>
+            <template v-else-if="limit">usage limit{{ limit.reset ? ` · resets ${limit.reset}` : '' }}</template>
+            <template v-else-if="agentStatus === 'busy'">{{ estimatedState ? 'working (estimated)' : 'working' }}</template>
+            <template v-else-if="agentStatus === 'unknown'">unknown</template>
+            <template v-else-if="needsYou">done, needs you</template>
+            <template v-else>idle</template>
+          </span>
+        </div>
+        <div v-if="stuck" class="ctx-menu-fact" data-test="pane-stuck" :title="track.reason">
+          <span class="ctx-fact-label">Quiet</span><span class="ctx-fact-value pane-stuck-text" :class="track.level">{{ track.minutes }} min</span>
+        </div>
+        <div v-if="cache" class="ctx-menu-fact" data-test="pane-cache-fact" :title="cacheTitle">
+          <span class="ctx-fact-label">Prompt cache</span><span class="ctx-fact-value">{{ cache.level === 'expired' ? 'expired' : `${cache.label} left` }}</span>
+        </div>
+      </div>
+      <template v-if="unsent || launchStale">
+        <button v-if="unsent" class="ctx-menu-item" data-test="menu-unsent" title="A message was pasted but not seen taken" @click="menuResolveUnsent">
+          Message not confirmed…
+        </button>
+        <button v-if="launchStale" class="ctx-menu-item" data-test="menu-restart-apply" :title="APPLY_TITLE" @click="menuRestartApply">
+          Restart to apply settings
+        </button>
+      </template>
       <div class="ctx-menu-sep"></div>
       <button class="ctx-menu-item" :disabled="!ctxMenu.hasSelection" @click="menuCopy">
         Copy
@@ -1879,9 +1827,27 @@ Named after its conversation. Double-click to rename` : 'Double-click to rename'
       <button class="ctx-menu-item" @click="menuFind">
         Find<span class="ctx-menu-shortcut">Ctrl+Shift+F</span>
       </button>
-      <button v-if="isAgent" class="ctx-menu-item" @click="menuSetModel">
-        Set model…<span v-if="node.modelOverride" class="ctx-menu-shortcut">yours</span>
+      <button v-if="isAgent" class="ctx-menu-item" data-test="pane-model" :title="modelTitle || 'Name the model this agent uses'" @click="menuSetModel">
+        Set model…<span class="ctx-menu-shortcut ctx-menu-model" :class="{ manual: node.modelOverride }">{{ modelText }}{{ node.modelOverride ? ' (yours)' : '' }}</span>
       </button>
+      <div class="ctx-menu-sep"></div>
+      <button class="ctx-menu-item" data-test="menu-voice" :title="`Speak instead of typing (${ctx.voiceName.value}). Windows voice typing`" @click="menuVoice">
+        Voice typing<span class="ctx-menu-shortcut">{{ ctx.voiceLabel.value || 'Win+H' }}</span>
+      </button>
+      <div v-if="ctx.voiceLanguages.value.length" class="ctx-menu-chips" data-test="pane-voice-langs">
+        <span class="ctx-chips-label">Speak in</span>
+        <button
+          v-for="l in ctx.voiceLanguages.value"
+          :key="l.tip"
+          class="ctx-chip"
+          :class="{ selected: settings.voiceTip === l.tip }"
+          :title="`Speak in ${l.name}`"
+          @click="menuPickVoice(l.tip)"
+        >
+          {{ l.tag.slice(0, 2).toUpperCase() }}
+        </button>
+        <button class="ctx-chip" :class="{ selected: !settings.voiceTip }" title="Current keyboard language" @click="menuPickVoice('')">⌨</button>
+      </div>
       <div class="ctx-menu-sep"></div>
       <template v-if="otherPanes.length">
         <div class="ctx-menu-label">Send selection to</div>

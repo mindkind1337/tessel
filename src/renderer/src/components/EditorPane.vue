@@ -838,7 +838,7 @@ onBeforeUnmount(() => {
     tabindex="-1"
     @mousedown="onPaneMouseDown"
   >
-    <div class="pane-nav" title="Drag to move this pane" @mousedown.stop="onNavMouseDown" @pointerdown="onNavPointerDown">
+    <div class="pane-nav" data-test="pane-header" @mousedown.stop="onNavMouseDown" @pointerdown="onNavPointerDown">
       <div class="pane-nav-left">
         <span v-if="node.num" class="pane-num" :title="`Pane #${node.num}`">{{ node.num }}</span>
         <span class="pane-icon" title="Editor">
@@ -846,7 +846,7 @@ onBeforeUnmount(() => {
             <path d="M5.5 4.5L2 8l3.5 3.5M10.5 4.5L14 8l-3.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
           </svg>
         </span>
-        <span class="pane-title" :title="activeDocPath || title">{{ title }}</span>
+        <span class="pane-title" :title="`${activeDocPath || title}\nDrag the header to move the pane`">{{ title }}</span>
       </div>
       <div class="pane-nav-actions" @mousedown.stop>
         <button v-if="activeDocPath" class="pane-nav-btn" title="Copy the file's full path" aria-label="Copy path" @click="copyPath">
