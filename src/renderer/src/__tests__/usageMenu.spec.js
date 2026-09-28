@@ -38,6 +38,8 @@ describe('the usage gauge', () => {
 
   it('Settings > Appearance, Usage percentages: Remaining shows the part left', async () => {
     window.shellApi = {
+      // The menu lists only installed agents with a usage source.
+      listAgents: vi.fn(async () => [{ id: 'codex', available: true }]),
       getUsage: vi.fn(async () => ({
         agents: [
           {
