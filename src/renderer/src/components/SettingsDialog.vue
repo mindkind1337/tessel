@@ -24,7 +24,13 @@ const props = defineProps({
   defaultShell: { type: String, default: null },
   updateStatus: { type: Object, default: () => ({ state: 'disabled' }) },
   // Open on this page, e.g. 'quick-commands', 'accounts', 'agents'.
-  section: { type: String, default: null }
+  section: { type: String, default: null },
+  // Agent CLI updates: { checkedAt, agents: { id: { installed, latest,
+  // update, source, note } } }, the updates running (agentId -> job) and
+  // the ones waiting their turn.
+  agentUpdates: { type: Object, default: null },
+  agentUpdateJobs: { type: Object, default: () => ({}) },
+  agentUpdateQueue: { type: Array, default: () => [] }
 })
 
 // The pages, grouped as in the sidebar. `icon` is a 16x16 stroke path.
@@ -223,7 +229,75 @@ function removeQuickCommand(id) {
   const i = settings.quickCommands.findIndex((q) => q.id === id)
   if (i >= 0) settings.quickCommands.splice(i, 1)
 }
-const emit = defineEmits(['close', 'set-default-shell', 'check-updates', 'open-update', 'detect-agents', 'open-connections'])
+const emit = defineEmits([
+  'close',
+  'set-default-shell',
+  'check-updates',
+  'open-update',
+  'detect-agents',
+  'open-connections',
+  'check-agent-updates',
+  'update-agent',
+  'update-all-agents',
+  'cancel-agent-update'
+])
+
+// Settings > Agents: versions and updates of the installed agent CLIs.
+const checkingAgentUpdates = ref(false)
+async function checkAgentUpdates() {
+  checkingAgentUpdates.value = true
+  try {
+    await new Promise((resolve) => emit('check-agent-updates', resolve))
+  } finally {
+    checkingAgentUpdates.value = false
+  }
+}
+function updateRow(id) {
+  return (props.agentUpdates && props.agentUpdates.agents && props.agentUpdates.agents[id]) || null
+}
+const updatableCount = computed(() =>
+  props.agentUpdates && props.agentUpdates.agents ? Object.values(props.agentUpdates.agents).filter((r) => r.update).length : 0
+)
+const agentUpdatesSummary = computed(() => {
+  const u = props.agentUpdates
+  if (!u) return 'Not checked yet'
+  const when = new Date(u.checkedAt).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })
+  const n = updatableCount.value
+  return `${n ? `${n} update${n === 1 ? '' : 's'} available` : 'All up to date'} · checked ${when}`
+})
+function versionText(a) {
+  const r = updateRow(a.id)
+  if (!r) return ''
+  if (r.update) return `Update available: ${r.installed} → ${r.latest}`
+  if (r.installed) return `Version ${r.installed}${r.latest ? ' (latest)' : ''}`
+  return r.note || ''
+}
+// An update in progress, in words.
+function jobText(id) {
+  const j = props.agentUpdateJobs && props.agentUpdateJobs[id]
+  if (!j) return props.agentUpdateQueue.includes(id) ? 'Waiting for the other updates' : ''
+  const waiting = (j.waiting || []).map((w) => `${w.label} (${w.why})`).join(', ')
+  switch (j.phase) {
+    case 'updating':
+      return 'Updating in a pane below…'
+    case 'waiting-stop':
+      return `Its files are in use: waiting to stop ${waiting || 'its panes'} safely, then updating and resuming them`
+    case 'retrying':
+      return 'Stopped its panes; updating again…'
+    case 'restarting':
+      return `Updated to ${j.version}. Waiting to restart: ${waiting || '…'}`
+    case 'done':
+      return `Updated to ${j.version || j.target}.${j.report ? ` ${j.report}` : ''}`
+    case 'failed':
+      return `Not updated${j.error ? `: ${j.error}` : ''}.`
+    default:
+      return ''
+  }
+}
+function jobActive(id) {
+  const j = props.agentUpdateJobs && props.agentUpdateJobs[id]
+  return props.agentUpdateQueue.includes(id) || !!(j && !['done', 'failed'].includes(j.phase))
+}
 
 // Settings > Orchestration: which agents can work as a team (Tessel's team
 // tools and hooks set up in them), and how to ask for it.
@@ -689,6 +763,42 @@ const CURSORS = [
                   {{ detecting ? 'Detecting…' : 'Detect again' }}
                 </button>
               </div>
+              <div class="set-row agent-updates-row" data-test="agent-updates">
+                <div class="set-label">
+                  Agent updates
+                  <span class="set-hint agent-updates-summary">{{ agentUpdatesSummary }}</span>
+                </div>
+                <div class="agent-set-actions">
+                  <button
+                    class="exit-btn"
+                    type="button"
+                    data-test="check-agent-updates"
+                    :disabled="checkingAgentUpdates"
+                    @click="checkAgentUpdates"
+                  >
+                    {{ checkingAgentUpdates ? 'Checking…' : 'Check for agent updates' }}
+                  </button>
+                  <button
+                    v-if="updatableCount > 1"
+                    class="exit-btn"
+                    type="button"
+                    data-test="update-all-agents"
+                    @click="emit('update-all-agents')"
+                  >
+                    Update all
+                  </button>
+                </div>
+              </div>
+              <label class="set-row">
+                <div class="set-label">
+                  Update agents automatically
+                  <span class="set-hint"
+                    >When a newer version is found, update it by itself at a safe moment: panes running it
+                    are idle, nothing typed in them. They restart in place and resume their conversation</span
+                  >
+                </div>
+                <input v-model="settings.autoUpdateAgents" type="checkbox" class="set-switch" />
+              </label>
               <div v-for="a in agents" :key="a.id" class="agent-set" :data-agent="a.id">
                 <div class="set-row">
                   <div class="set-label agent-set-name">
@@ -697,8 +807,39 @@ const CURSORS = [
                     <span class="set-hint">
                       {{ a.available ? 'Installed' : 'Not found' }}{{ customized(a.id) ? ' · customized' : '' }}
                     </span>
+                    <!-- Full-width lines under the name row. -->
+                    <div
+                      v-if="a.available && versionText(a)"
+                      class="set-hint agent-version"
+                      :class="{ 'agent-update-available': updateRow(a.id) && updateRow(a.id).update }"
+                      :data-test="`agent-version-${a.id}`"
+                    >
+                      {{ versionText(a) }}
+                    </div>
+                    <div v-if="jobText(a.id)" class="set-hint agent-update-job" :data-test="`agent-update-job-${a.id}`">
+                      {{ jobText(a.id) }}
+                    </div>
                   </div>
                   <div class="agent-set-actions">
+                    <button
+                      v-if="a.available && updateRow(a.id) && updateRow(a.id).update"
+                      class="exit-btn agent-update-btn"
+                      type="button"
+                      :data-test="`update-agent-${a.id}`"
+                      :disabled="jobActive(a.id)"
+                      @click="emit('update-agent', a.id)"
+                    >
+                      {{ jobActive(a.id) ? 'Updating…' : 'Update' }}
+                    </button>
+                    <button
+                      v-if="agentUpdateJobs[a.id] && ['waiting-stop', 'restarting'].includes(agentUpdateJobs[a.id].phase)"
+                      class="exit-btn"
+                      type="button"
+                      title="Stop waiting for its panes (they keep running as they are)"
+                      @click="emit('cancel-agent-update', a.id)"
+                    >
+                      Stop waiting
+                    </button>
                     <button v-if="AGENT_DOCS[a.id]" class="exit-btn" type="button" @click="openDocs(a.id)">
                       Docs
                     </button>

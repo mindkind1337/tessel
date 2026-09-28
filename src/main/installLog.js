@@ -10,6 +10,10 @@ import { join } from 'path'
 export const MARK_OK = 'TESSEL-INSTALL-OK'
 export const MARK_FAILED = 'TESSEL-INSTALL-FAILED'
 const MAX_MS = 45 * 60 * 1000 // no end seen by then: closed as unknown
+// Files in use by a running program (Windows): npm's EBUSY/EPERM when it
+// replaces a CLI whose .exe is running. Told with the result (locked), so an
+// agent update can stop those agents safely and try again.
+export const LOCKED_OUTPUT = /\bEBUSY\b|\bEPERM\b|resource busy or locked|being used by another process/i
 
 // Terminal output as plain text: no colors, cursor moves or titles.
 export function plainText(data) {
@@ -53,7 +57,7 @@ export function createInstallLogs({ dir, notify, appVersion = '' }) {
     clearTimeout(a.timer)
     const verdict = ok === true ? 'SUCCEEDED' : ok === false ? 'FAILED' : 'UNKNOWN'
     write(a.file, `\n\n===== ${verdict}${reason ? ` (${reason})` : ''} at ${new Date().toISOString()} =====\n`)
-    notify({ paneId, name: a.name, ok, reason: reason || '', file: a.file })
+    notify({ paneId, name: a.name, ok, reason: reason || '', file: a.file, ...(ok !== true && a.locked ? { locked: true } : {}) })
   }
 
   return {
@@ -97,6 +101,7 @@ export function createInstallLogs({ dir, notify, appVersion = '' }) {
       // one plus this one.
       const look = a.tail + text
       a.tail = look.slice(-64)
+      if (!a.locked && LOCKED_OUTPUT.test(look)) a.locked = true
       const ok = look.indexOf(MARK_OK)
       const bad = look.indexOf(MARK_FAILED)
       if (ok >= 0 && (bad < 0 || ok < bad)) finish(paneId, true)

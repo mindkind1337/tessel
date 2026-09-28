@@ -66,6 +66,10 @@ export const DEFAULT_SETTINGS = Object.freeze({
   // conversation stay; opening the pane resumes it). Off by default.
   agentSleep: false,
   agentSleepMinutes: 30,
+  // Update agent CLIs by themselves when a newer version is found, at a safe
+  // moment (panes running them idle: restarted in place, conversation
+  // resumed). Off by default: Settings > Agents shows an Update button.
+  autoUpdateAgents: false,
   promptCacheTtlMs: 300000,
   // The code editor (like Orca's): save by itself a moment after you stop
   // typing (off by default), the minimap, word wrap, preview tabs (a file

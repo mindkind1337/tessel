@@ -55,6 +55,16 @@ const api = {
     return () => ipcRenderer.removeListener('agents:state', handler)
   },
   installLogStart: (q) => ipcRenderer.invoke('install:logStart', q),
+  // Agent CLI updates: { checkedAt, agents: { id: { installed, latest, update, steps } } }.
+  agentUpdates: {
+    status: () => ipcRenderer.invoke('agentUpdates:status'),
+    check: (q) => ipcRenderer.invoke('agentUpdates:check', q),
+    onChanged: (cb) => {
+      const handler = (_e, r) => cb(r)
+      ipcRenderer.on('agentUpdates:changed', handler)
+      return () => ipcRenderer.removeListener('agentUpdates:changed', handler)
+    }
+  },
   getPastedImage: (q) => ipcRenderer.invoke('images:get', q),
   // File references in a terminal: { cwd, paths } -> { path: absolute | null };
   // { file, line, col } opens it (VS Code at the line, else its default app).

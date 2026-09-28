@@ -38,6 +38,7 @@ import { cleanEnv } from './cleanEnv'
 import { createPtyClient } from './ptyClient'
 import { pipeName } from './ptyProtocol'
 import { createUpdater } from './updater'
+import { createAgentUpdates } from './agentUpdates'
 import crypto from 'crypto'
 import {
   gitInfo,
@@ -1389,6 +1390,41 @@ ipcMain.on('app:notify', (_evt, { title, body, paneId } = {}) => {
   setTimeout(ensureDevShortcut, 3000)
 })
 ipcMain.handle('agents:list', (_evt, custom) => getAgents(custom))
+
+// Agent CLI updates (agentUpdates.js): checked in the background a while
+// after start, then every few hours (latest versions cached 6 h), and on
+// demand. The window shows them in Settings > Agents and runs the updates.
+const agentUpdates = createAgentUpdates({
+  getAgents: () => getAgents(),
+  which: (bin) => whichFresh(bin),
+  shell: (line) =>
+    process.platform === 'win32'
+      ? runQuiet('cmd.exe', ['/d', '/s', '/c', line], { env: freshEnv(), timeout: 60000, maxBuffer: 8 * 1024 * 1024 })
+      : runQuiet('sh', ['-c', line], { env: freshEnv(), timeout: 60000, maxBuffer: 8 * 1024 * 1024 }),
+  runFile: (file, args) => runQuiet(file, args, { env: freshEnv(), timeout: 20000 }),
+  cacheFile: join(app.getPath('userData'), 'agent-updates.json'),
+  home: os.homedir(),
+  registry: process.env.TESSEL_AGENT_REGISTRY || undefined,
+  fakeFile: process.env.TESSEL_AGENT_UPDATES_FAKE || null,
+  log: (level, message) => log[level === 'warn' ? 'warn' : 'info']('agents', message)
+})
+async function checkAgentUpdates(opts = {}) {
+  const r = await agentUpdates.check(opts)
+  const found = Object.values(r.agents || {}).filter((a) => a.update)
+  log.info('agents', `update check: ${found.length ? found.map((a) => `${a.id} ${a.installed} -> ${a.latest}`).join(', ') : 'all up to date'}`)
+  send('agentUpdates:changed', r)
+  return r
+}
+ipcMain.handle('agentUpdates:status', () => agentUpdates.status())
+ipcMain.handle('agentUpdates:check', (_evt, q = {}) =>
+  checkAgentUpdates({ force: !!(q && q.force) }).catch((err) => ({ error: err.message, agents: {}, newlyFound: [] }))
+)
+const AGENT_UPDATE_FIRST_MS = Number(process.env.TESSEL_AGENT_UPDATES_FIRST_MS) || 2 * 60 * 1000
+const AGENT_UPDATE_EVERY_MS = 4 * 60 * 60 * 1000
+const firstAgentCheck = setTimeout(() => checkAgentUpdates().catch(() => {}), AGENT_UPDATE_FIRST_MS)
+if (firstAgentCheck.unref) firstAgentCheck.unref()
+const agentCheckTimer = setInterval(() => checkAgentUpdates().catch(() => {}), AGENT_UPDATE_EVERY_MS)
+if (agentCheckTimer.unref) agentCheckTimer.unref()
 
 // Codex 0.157+ runs its tools through a shared background server (daemon) by
 // default. In Tessel that breaks the team tools: the daemon does not get each
