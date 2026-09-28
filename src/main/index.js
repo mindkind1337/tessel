@@ -1143,6 +1143,7 @@ const sshPrompts = createSshPromptWatcher({
   onCancel: (_id, hostId) => hostId && remoteHosts.markDisconnecting(hostId)
 })
 registerSshPrompts({ ipcMain, watcher: sshPrompts })
+const SSH_PROMPT_DIALOG = false
 const accounts = createProviderAccounts({
   claude: createClaudeAccounts(accountOptions),
   codex: createCodexAccounts(accountOptions)
@@ -2026,7 +2027,10 @@ ipcMain.handle('pty:create', async (_evt, opts = {}) => {
     if (!setup.ok) agentStatusWarning = setup.error
   }
   // Watched from the start: its first prompt can come before the reply.
-  if (remote) sshPrompts.watch(id, { hostId: remote.target.id, label: remote.name })
+  // OFF until prompts come through OpenSSH's askpass (Codex review of
+  // 4158647: reading prompts from the screen can take a remote program's
+  // "Password:" for ssh's); the password is typed in the terminal meanwhile.
+  if (remote && SSH_PROMPT_DIALOG) sshPrompts.watch(id, { hostId: remote.target.id, label: remote.name })
   let res
   try {
     res = await host.request('create', {
@@ -2060,7 +2064,7 @@ ipcMain.handle('pty:create', async (_evt, opts = {}) => {
   ptyInfo.set(id, { shellId: shell.id, shellName: shell.name, backend, pid: res.pid, agentLaunchToken })
   if (remote) {
     // "Connecting…" until the remote side answers (sshPrompts.js).
-    remoteHosts.paneStarted(id, remote.target.id, { connected: false })
+    remoteHosts.paneStarted(id, remote.target.id, { connected: !SSH_PROMPT_DIALOG })
   }
   if (agentProvider) {
     try { await agentStateStore.register({ paneId: id, provider: agentProvider, launchToken: agentLaunchToken, startedAt: agentStartedAt }) }
