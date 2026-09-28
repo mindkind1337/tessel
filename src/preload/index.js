@@ -77,6 +77,7 @@ const api = {
     ipcRenderer.invoke('git:createWorktree', { cwd, label, options }),
   // Last locally observed subscription quotas, with timestamps and stale flags.
   getUsage: () => ipcRenderer.invoke('usage:get'),
+  codexUsageReport: (query = {}) => ipcRenderer.invoke('usage:codexReport', query),
   // Review and merge a task branch: { root, path, branch, target, ... }.
   // A team lead's inbox folder: { dir, token, guide }.
   lead: {

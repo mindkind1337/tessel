@@ -8,6 +8,7 @@ import { trimEvents, isEvent } from '../shared/activity'
 import { claudeSessionExists, findCodexSession, listSessions } from './agentSessions'
 import { agentModelLive, watchModelFiles } from './agentModel'
 import { createUsageReader } from './agentUsage'
+import { createCodexUsageReport } from './codexUsageReport'
 import { postToInbox } from './agentInbox'
 import { hooksStatus } from './teamHooksStatus'
 import { assessNeeds } from './tesselNeeds'
@@ -911,6 +912,7 @@ ipcMain.handle(
   safe(({ cwd, label, options } = {}) => createWorktree(cwd, label, options))
 )
 ipcMain.handle('usage:get', safe(createUsageReader()))
+ipcMain.handle('usage:codexReport', safe(createCodexUsageReport({ userData: app.getPath('userData') })))
 ipcMain.handle('review:info', safe(reviewInfo))
 ipcMain.handle('review:diff', safe(reviewDiff))
 ipcMain.handle('review:merge', safe(reviewMerge))
