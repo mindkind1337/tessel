@@ -33,13 +33,13 @@ describe('a conversation’s own title', () => {
       line({ type: 'user', message: { content: '<command-name>/clear</command-name>' } }) +
         line({ type: 'user', message: { content: [{ type: 'text', text: 'Please add a usage report. With costs.' }] } })
     )
-    expect(await claudeSessionTitle(ID, home)).toBe('Add a usage report')
+    expect(await claudeSessionTitle(ID, join(home, '.claude'))).toBe('Add a usage report')
     fs.appendFileSync(f, line({ type: 'ai-title', aiTitle: 'Usage report with costs' }))
-    expect(await claudeSessionTitle(ID, home)).toBe('Usage report with costs')
+    expect(await claudeSessionTitle(ID, join(home, '.claude'))).toBe('Usage report with costs')
     fs.appendFileSync(f, line({ type: 'custom-title', customTitle: 'Usage v2' }) + '{"type":"ai-ti')
-    expect(await claudeSessionTitle(ID, home)).toBe('Usage v2')
-    expect(await claudeSessionTitle('not-an-id', home)).toBe('')
-    expect(await claudeSessionTitle('99999999-2222-4333-8444-555555555555', home)).toBe('')
+    expect(await claudeSessionTitle(ID, join(home, '.claude'))).toBe('Usage v2')
+    expect(await claudeSessionTitle('not-an-id', join(home, '.claude'))).toBe('')
+    expect(await claudeSessionTitle('99999999-2222-4333-8444-555555555555', join(home, '.claude'))).toBe('')
   })
 
   it('Codex: the latest thread name for the id', () => {

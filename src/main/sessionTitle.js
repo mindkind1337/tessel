@@ -57,8 +57,8 @@ function isRealPrompt(text) {
 // Per transcript: how far it was read, and what was found (files only grow).
 const claudeState = new Map()
 
-function findClaudeTranscript(id, home) {
-  const root = join(home, '.claude', 'projects')
+function findClaudeTranscript(id, claudeDir) {
+  const root = join(claudeDir, 'projects')
   let dirs
   try {
     dirs = fs.readdirSync(root, { withFileTypes: true })
@@ -77,9 +77,10 @@ function findClaudeTranscript(id, home) {
 // ~100 MB); calls for the same file while one runs share it.
 const reading = new Map()
 
-export async function claudeSessionTitle(id, home = os.homedir()) {
+// claudeDir: Claude Code's folder (~/.claude, or an account's).
+export async function claudeSessionTitle(id, claudeDir = join(os.homedir(), '.claude')) {
   if (!ID.test(String(id))) return ''
-  const file = findClaudeTranscript(id, home)
+  const file = findClaudeTranscript(id, claudeDir)
   if (!file) return ''
   if (!reading.has(file)) {
     reading.set(

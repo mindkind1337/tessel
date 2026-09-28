@@ -79,6 +79,15 @@ const api = {
     ipcRenderer.invoke('git:createWorktree', { cwd, label, options }),
   // Last locally observed subscription quotas, with timestamps and stale flags.
   getUsage: () => ipcRenderer.invoke('usage:get'),
+  accounts: {
+    list: () => ipcRenderer.invoke('accounts:list'),
+    select: (provider, id) => ipcRenderer.invoke('accounts:select', { provider, id }),
+    remove: (provider, id) => ipcRenderer.invoke('accounts:remove', { provider, id }),
+    startLogin: (provider, id = null) => ipcRenderer.invoke('accounts:startLogin', { provider, id }),
+    loginStatus: (id) => ipcRenderer.invoke('accounts:loginStatus', id),
+    cancelLogin: (id) => ipcRenderer.invoke('accounts:cancelLogin', id),
+    launchEnv: (provider, accountId) => ipcRenderer.invoke('accounts:launchEnv', { provider, accountId })
+  },
   // Claude Code's usage report (tokens and estimated cost by day, model,
   // project, conversation), from its own files on this computer.
   claudeUsageReport: () => ipcRenderer.invoke('usage:claudeReport'),

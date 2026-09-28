@@ -19,9 +19,9 @@ export function isUuid(id) {
 }
 
 // Does Claude Code have a saved transcript for this session id?
-export function claudeSessionExists(id, home = os.homedir()) {
+export function claudeSessionExists(id, home = os.homedir(), configDir = join(home, '.claude')) {
   if (!isUuid(id)) return false
-  const root = join(home, '.claude', 'projects')
+  const root = join(configDir, 'projects')
   let dirs
   try {
     dirs = fs.readdirSync(root, { withFileTypes: true })
@@ -64,12 +64,13 @@ function dayDirs(root, since, now) {
 export function findCodexSession(
   { cwd, since, exclude = [], latest = false, activeSince = 0 },
   home = os.homedir(),
-  now = Date.now()
+  now = Date.now(),
+  codexHome = join(home, '.codex')
 ) {
   if (!cwd || !Number.isFinite(since)) return null
   // Never back to 1970 (since 0): at most the last 30 days of session folders.
   since = Math.max(since, now - 30 * 24 * 3600 * 1000)
-  const root = join(home, '.codex', 'sessions')
+  const root = join(codexHome, 'sessions')
   const want = normDir(cwd)
   const skip = new Set(exclude)
   const slack = 5000
@@ -185,17 +186,17 @@ function sameDir(a, b) {
   return normDir(a) === normDir(b)
 }
 
-export function listSessions({ cwd = null, limit = 60 } = {}, home = os.homedir()) {
+export function listSessions({ cwd = null, limit = 60 } = {}, home = os.homedir(), roots = {}) {
   limit = Number.isFinite(limit) ? Math.max(0, Math.min(200, Math.floor(limit))) : 60
   cwd = typeof cwd === 'string' && cwd ? cwd : null
   if (!limit) return []
   const out = []
 
   // Claude Code: ~/.claude/projects/<folder slug>/<uuid>.jsonl
-  const claudeRoot = join(home, '.claude', 'projects')
+  const claudeRoot = roots.claude === null ? null : join(roots.claude || join(home, '.claude'), 'projects')
   let projects = []
   try {
-    projects = fs.readdirSync(claudeRoot, { withFileTypes: true }).filter((d) => d.isDirectory())
+    projects = claudeRoot ? fs.readdirSync(claudeRoot, { withFileTypes: true }).filter((d) => d.isDirectory()) : []
   } catch {
     /* Claude not used yet */
   }
@@ -235,7 +236,7 @@ export function listSessions({ cwd = null, limit = 60 } = {}, home = os.homedir(
   }
 
   // Codex: ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl
-  const codexRoot = join(home, '.codex', 'sessions')
+  const codexRoot = roots.codex === null ? null : join(roots.codex || join(home, '.codex'), 'sessions')
   const codexFiles = []
   const walk = (dir, depth) => {
     let entries = []
@@ -256,7 +257,7 @@ export function listSessions({ cwd = null, limit = 60 } = {}, home = os.homedir(
       }
     }
   }
-  walk(codexRoot, 0)
+  if (codexRoot) walk(codexRoot, 0)
   codexFiles.sort((a, b) => b.updated - a.updated)
   let codexCount = 0
   for (const f of codexFiles) {
@@ -275,6 +276,6 @@ export function listSessions({ cwd = null, limit = 60 } = {}, home = os.homedir(
     codexCount++
   }
 
-  out.push(...geminiHistory({ cwd, limit }, home), ...qwenHistory({ cwd, limit }, home), ...opencodeHistory({ cwd, limit }, home))
+  if (roots.others !== false) out.push(...geminiHistory({ cwd, limit }, home), ...qwenHistory({ cwd, limit }, home), ...opencodeHistory({ cwd, limit }, home))
   return out.sort((a, b) => b.updated - a.updated)
 }

@@ -3,6 +3,7 @@
 // change applies live to all panes and is saved automatically.
 import { ref, onMounted, onUnmounted } from 'vue'
 import BrandIcon from './BrandIcon.vue'
+import ProviderAccounts from './ProviderAccounts.vue'
 import { settings, FONT_FAMILIES, resetSettings, clamp } from '../settings'
 import { THEMES } from '../themes'
 import { playAlertSound } from '../notificationsStore'
@@ -562,6 +563,11 @@ const CURSORS = [
           </div>
           <input v-model="settings.resumeAgents" type="checkbox" class="set-switch" />
         </label>
+      </section>
+
+      <section id="set-accounts" class="set-section">
+        <h3>AI provider accounts</h3>
+        <ProviderAccounts />
       </section>
 
       <section id="set-quick-commands" class="set-section">
