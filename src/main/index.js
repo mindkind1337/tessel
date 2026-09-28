@@ -1792,7 +1792,13 @@ function createWindow() {
       additionalArguments: app.isPackaged ? [] : ['--tessel-dev'],
       sandbox: false,
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      // Tessel works while minimized or behind other windows: agents message
+      // each other, get reminders, the board and the team map stay current.
+      // Chromium's background throttling slowed its timers to about once a
+      // minute after 5 minutes hidden, so a minimized window stopped the team
+      // loop and agents were told their team was gone (2026-09-28).
+      backgroundThrottling: false
     }
   })
 
