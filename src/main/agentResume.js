@@ -199,9 +199,9 @@ export function kimiSessions(home = os.homedir(), since = 0) {
 // --- All -------------------------------------------------------------------------------
 
 // q: { agent, cwd, since, exclude, latest, activeSince } -> the session id or null
-export function findAgentSession(q = {}, home = os.homedir()) {
+export function findAgentSession(q = {}, home = os.homedir(), roots = {}) {
   const { agent } = q
-  if (agent === 'codex') return findCodexSession(q, home)
+  if (agent === 'codex') return findCodexSession(q, home, Date.now(), roots.codex)
   if (!q.cwd || !Number.isFinite(q.since)) return null
   if (agent === 'opencode') return pickSession(opencodeSessions(home), q)
   if (agent === 'cline') return pickSession(clineSessions(home), q)

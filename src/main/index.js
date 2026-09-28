@@ -5,17 +5,20 @@ import fs from 'fs'
 import { spawn, execFile } from 'child_process'
 import { loadTasks, loadBoard, saveTasks } from './taskBoardPersistence'
 import { trimEvents, isEvent } from '../shared/activity'
-import { claudeSessionExists, findCodexSession, listSessions } from './agentSessions'
 import { agentModelLive, watchModelFiles } from './agentModel'
-import { createUsageReader } from './agentUsage'
-import { createCodexUsageReport } from './codexUsageReport'
+import { createCodexAccounts } from './codexAccounts'
+import { createClaudeAccounts } from './claudeAccounts'
+import { createProviderLogin } from './providerLogin'
+import { createProviderAccounts } from './providerAccounts'
+import { createAccountUsage } from './providerAccountUsage'
+import { createAccountSessions } from './providerAccountSessions'
 import { postToInbox } from './agentInbox'
 import { hooksStatus } from './teamHooksStatus'
 import { assessNeeds } from './tesselNeeds'
 import { createClaudeUsageReport } from './claudeUsageReport'
 import { resolveFiles, codeGotoArg, listProjectFiles } from './fileOpen'
 import { titleBarColors } from '../shared/themePalettes'
-import { findAgentSession, geminiSessionExists, qwenSessionExists } from './agentResume'
+import { geminiSessionExists, qwenSessionExists } from './agentResume'
 import { extraToolDirs, withToolDirs } from './toolDirs'
 import { createInstallLogs } from './installLog'
 import { writeBoardRule } from './agentMemory'
@@ -769,8 +772,12 @@ ipcMain.handle('logs:diagnostics', () => {
 })
 
 // Agent session lookups, for resuming conversations when panes reopen.
-ipcMain.handle('sessions:claudeExists', (_evt, id) => claudeSessionExists(id))
-ipcMain.handle('sessions:findCodex', (_evt, q = {}) => findCodexSession(q))
+ipcMain.handle('sessions:claudeExists', async (_evt, id, scope) => {
+  try { return await accountSessions.claudeExists(id, scope) } catch { return false }
+})
+ipcMain.handle('sessions:findCodex', async (_evt, q = {}) => {
+  try { return await accountSessions.find({ ...q, agent: 'codex' }) } catch { return null }
+})
 // Gemini: is there a conversation to resume? OpenCode, Cline, Copilot, Codex:
 // the session a pane started (they choose its id), found after it starts.
 ipcMain.handle('sessions:geminiExists', (_evt, id) => geminiSessionExists(id))
@@ -806,14 +813,16 @@ ipcMain.handle('sessions:reported', () => {
 ipcMain.handle('agents:inbox', (_evt, q = {}) =>
   postToInbox({ sessionsDir: sessionsDir(), paneId: q && q.paneId, sessionId: q && q.sessionId, text: q && q.text })
 )
-ipcMain.handle('sessions:find', (_evt, q = {}) => {
+ipcMain.handle('sessions:find', async (_evt, q = {}) => {
   try {
-    return findAgentSession(q || {})
+    return await accountSessions.find(q || {})
   } catch {
     return null
   }
 })
-ipcMain.handle('sessions:list', (_evt, q = {}) => listSessions(q))
+ipcMain.handle('sessions:list', async (_evt, q = {}) => {
+  try { return await accountSessions.list(q) } catch { return [] }
+})
 // The model an agent pane uses (for its header), or null.
 ipcMain.handle('agents:model', async (_evt, q = {}) => {
   try {
@@ -912,12 +921,27 @@ ipcMain.handle(
   'git:createWorktree',
   safe(({ cwd, label, options } = {}) => createWorktree(cwd, label, options))
 )
-ipcMain.handle('usage:get', safe(createUsageReader()))
+const accountOptions = { userData: app.getPath('userData'), runLogin: createProviderLogin() }
+const accounts = createProviderAccounts({
+  claude: createClaudeAccounts(accountOptions),
+  codex: createCodexAccounts(accountOptions)
+})
+ipcMain.handle('accounts:list', safe(() => accounts.list()))
+ipcMain.handle('accounts:select', safe(({ provider, id } = {}) => accounts.select(provider, id)))
+ipcMain.handle('accounts:remove', safe(({ provider, id } = {}) => accounts.remove(provider, id)))
+ipcMain.handle('accounts:startLogin', safe(({ provider, id = null } = {}) => accounts.startLogin(provider, id)))
+ipcMain.handle('accounts:loginStatus', safe((id) => accounts.loginStatus(id)))
+ipcMain.handle('accounts:cancelLogin', safe((id) => accounts.cancelLogin(id)))
+ipcMain.handle('accounts:launchEnv', safe((query) => typeof query === 'string'
+  ? accounts.launchEnv(query) : accounts.launchEnv(query?.provider, query?.accountId)))
+const accountSessions = createAccountSessions({ accounts })
+const accountUsage = createAccountUsage({ accounts, userData: app.getPath('userData') })
+ipcMain.handle('usage:get', safe(() => accountUsage.usage()))
 // Claude Code's usage report from its own conversation files (tokens, estimated cost).
 const claudeUsageReport = createClaudeUsageReport()
 ipcMain.handle('usage:claudeReport', safe(() => claudeUsageReport()))
 // Codex's usage report from its own session files (tokens, requests).
-ipcMain.handle('usage:codexReport', safe(createCodexUsageReport({ userData: app.getPath('userData') })))
+ipcMain.handle('usage:codexReport', safe((query) => accountUsage.report(query)))
 ipcMain.handle('review:info', safe(reviewInfo))
 ipcMain.handle('review:diff', safe(reviewDiff))
 ipcMain.handle('review:merge', safe(reviewMerge))
@@ -2007,5 +2031,5 @@ app.on('before-quit', (event) => {
   if (shutdownDone) return
   event.preventDefault()
   shutdownDone = true
-  shutdownTerminals().finally(() => app.quit())
+  Promise.allSettled([accounts.close(), shutdownTerminals()]).finally(() => app.quit())
 })
