@@ -36,6 +36,7 @@ const STATE = {
   idle: 'Idle',
   approval: 'Needs your approval',
   limited: 'Usage limit',
+  sleeping: 'Asleep',
   closed: 'Closed'
 }
 

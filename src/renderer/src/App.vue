@@ -49,6 +49,7 @@ import { pasteAndConfirm } from './deliver'
 import { dropBuffer, seedBuffer } from './ptyStore'
 import { tasks as boardTasks, setTasks, updateTask, removeTask, addTask } from './taskBoardStore'
 import { paneModels } from './paneModels'
+import { sleepBlocker } from '../../shared/agentSleep'
 
 const shells = ref([])
 const agents = ref([])
@@ -1317,6 +1318,7 @@ provide('panelCtx', {
   splitLeaf,
   closeLeaf,
   restartLeaf,
+  wakeLeaf: (id) => wakeLeaf(id),
   setActive,
   toggleMaximize,
   fontSize,
@@ -2531,7 +2533,8 @@ const agentStates = computed(() => {
 function addAgentState(out, leaf, wsId) {
   const observed = leaf.agentLaunchToken ? getAgentState(leaf.id, leaf.agentLaunchToken) : null
   let state = observed?.state || (leaf.agentLaunchToken ? 'unknown' : 'idle')
-  if (approvals[leaf.id]) state = 'approval'
+  if (leaf.sleeping) state = 'sleeping'
+  else if (approvals[leaf.id]) state = 'approval'
   else if (limits[leaf.id]) state = 'limited'
   else if (agentStatus[leaf.id] === 'busy') state = 'working'
   out[leaf.id] = {
@@ -4281,6 +4284,91 @@ async function restartInPlaceNow(leafId, opts) {
   ws.tree = replaceNode(ws.tree, leafId, () => fresh)
   return true
 }
+
+// --- Agent sleep (Settings > Agents, after Orca's) ---------------------------------
+// An agent idle for a while (its conversation saved, not in a team, nothing
+// typed in it, not the pane you are in) has its terminal stopped to free
+// memory; its pane stays, marked asleep. Opening the pane wakes it: the agent
+// starts again in the same pane and resumes its conversation. Checked every
+// minute; a pane must qualify twice in a row (a minute apart).
+const SLEEP_TICK_MS = 60 * 1000
+const sleepCandidates = {} // leafId -> signature seen at the last check
+function sleepSignature(leaf) {
+  const t = trackedState[leaf.id]
+  return `${leaf.sessionId}|${t ? t.since : ''}|${lastUserKey[leaf.id] || 0}`
+}
+const sleepWhy = {} // leafId -> why it stays awake ('' when it may sleep)
+// -> '' when this pane may sleep now, else why not.
+function canSleep(leaf, ws, now) {
+  const info = agentStates.value[leaf.id]
+  const t = trackedState[leaf.id]
+  return sleepBlocker({
+    leaf: { ...leaf, inTeam: !!(leaf.team && teamById(leaf.team)) },
+    resumable: !!sessionKind({ id: leaf.agentId }) && safeSessionId(leaf.sessionId),
+    state: info ? info.state : null,
+    trackedState: t ? t.state : null,
+    since: t ? t.since : NaN,
+    lastKey: lastUserKey[leaf.id] || 0,
+    draft: !!(userDraft[leaf.id] || draftUnknown[leaf.id]),
+    // The pane you are in (the shown workspace's active pane) stays awake,
+    // even with Tessel in the background (opening a pane is what wakes it).
+    active: ws.id === currentWsId.value && leaf.id === activeId.value,
+    restarting: restartingLeaves.has(leaf.id),
+    minutes: settings.agentSleepMinutes,
+    now
+  })
+}
+async function sleepTick() {
+  if (!settings.agentSleep) {
+    for (const k of Object.keys(sleepCandidates)) delete sleepCandidates[k]
+    return
+  }
+  const now = Date.now()
+  for (const ws of workspaces.value) {
+    forEachLeaf(ws.tree, (leaf) => {
+      const why = canSleep(leaf, ws, now)
+      // Why an agent stays awake, in the log when it changes (agents only).
+      if (leaf.kind === 'agent' && sleepWhy[leaf.id] !== why) {
+        sleepWhy[leaf.id] = why
+        if (why && window.shellApi.log) window.shellApi.log('info', `agent sleep: ${paneLabel(leaf)} stays awake: ${why}`)
+      }
+      if (why) {
+        delete sleepCandidates[leaf.id]
+        return
+      }
+      const sig = sleepSignature(leaf)
+      if (sleepCandidates[leaf.id] === sig) {
+        delete sleepCandidates[leaf.id]
+        putToSleep(leaf)
+      } else sleepCandidates[leaf.id] = sig
+    })
+  }
+}
+function putToSleep(leaf) {
+  leaf.sleeping = { at: Date.now() }
+  window.shellApi.killPty(leaf.id)
+  if (window.shellApi.log) window.shellApi.log('info', `agent sleep: ${paneLabel(leaf)} asleep (idle ${settings.agentSleepMinutes} min)`)
+}
+// Opening a sleeping pane (or its Wake button): the same pane, the
+// conversation resumed.
+async function wakeLeaf(leafId) {
+  const leaf = findLeaf(leafId)
+  if (!leaf || !leaf.sleeping || restartingLeaves.has(leafId)) return
+  const ok = await restartInPlace(leafId, { resume: true })
+  if (!ok && findLeaf(leafId) === leaf) showToast(`${leaf.title} could not be woken: try Wake again.`, { kind: 'error', timeout: 8000 })
+}
+// A sleeping pane you open wakes up.
+watch(
+  () => {
+    const leaf = activeId.value ? findLeaf(activeId.value) : null
+    return leaf && leaf.sleeping ? leaf.id : null
+  },
+  (id) => {
+    if (id) wakeLeaf(id)
+  }
+)
+const sleepTimer = setInterval(sleepTick, SLEEP_TICK_MS)
+onBeforeUnmount(() => clearInterval(sleepTimer))
 
 // Safe wake-up: an idle agent does not read its team messages by itself (it
 // reads them when it works). When messages have waited 10 s, Tessel types

@@ -32,7 +32,8 @@ const STATE_WORD = {
   working: 'Working',
   idle: 'Idle',
   approval: 'Waiting for your approval',
-  limited: 'Usage limit'
+  limited: 'Usage limit',
+  sleeping: 'Asleep'
 }
 
 // agent: { state: 'working'|'idle'|'approval'|'limited', since (ms), reset,

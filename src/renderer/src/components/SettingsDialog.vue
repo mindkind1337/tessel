@@ -222,6 +222,12 @@ function stepFont(d) {
   settings.fontSize = clamp(settings.fontSize + d, 8, 28)
 }
 
+function setSleepMinutes(e) {
+  const n = parseInt(e.target.value, 10)
+  if (Number.isFinite(n)) settings.agentSleepMinutes = clamp(n, 1, 1440)
+  e.target.value = settings.agentSleepMinutes
+}
+
 function setScrollback(e) {
   const n = parseInt(e.target.value, 10)
   if (Number.isFinite(n)) settings.scrollback = clamp(n, 500, 100000)
@@ -516,6 +522,32 @@ const CURSORS = [
           <select id="settings-cache-ttl" v-model.number="settings.promptCacheTtlMs" class="set-select">
             <option v-for="t in CACHE_TTLS" :key="t.ms" :value="t.ms">{{ t.label }}</option>
           </select>
+        </div>
+        <label class="set-row">
+          <div class="set-label">
+            Put idle agents to sleep
+            <span class="set-hint"
+              >An agent idle for a while stops its terminal to free memory; its pane stays and opening it
+              resumes the conversation. Only agents whose conversation Tessel can resume, never teammates,
+              nor the pane you are in</span
+            >
+          </div>
+          <input v-model="settings.agentSleep" type="checkbox" class="set-switch" />
+        </label>
+        <div v-if="settings.agentSleep" class="set-row">
+          <label class="set-label" for="settings-sleep-min">
+            Sleep after
+            <span class="set-hint">Minutes idle (1 to 1440)</span>
+          </label>
+          <input
+            id="settings-sleep-min"
+            class="set-number"
+            type="number"
+            min="1"
+            max="1440"
+            :value="settings.agentSleepMinutes"
+            @change="setSleepMinutes"
+          />
         </div>
         <div class="agents-head">
           <span class="set-hint">Detected on this computer</span>

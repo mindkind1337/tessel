@@ -62,6 +62,10 @@ export const DEFAULT_SETTINGS = Object.freeze({
   // Agent panes named after their conversation (Claude Code's title, Codex's
   // thread name) until you rename them.
   autoTitles: true,
+  // Agent sleep: an agent idle this long stops its terminal (its pane and
+  // conversation stay; opening the pane resumes it). Off by default.
+  agentSleep: false,
+  agentSleepMinutes: 30,
   promptCacheTtlMs: 300000
 })
 
@@ -87,6 +91,7 @@ export function loadSettings(saved) {
     if (key === 'agentPermissions' && !['manual', 'yolo'].includes(v)) continue
     if (key === 'keepAwake' && !['off', 'agents', 'on'].includes(v)) continue
     if (key === 'promptCacheTtlMs' && ![300000, 3600000].includes(v)) continue
+    if (key === 'agentSleepMinutes' && !(Number.isInteger(v) && v >= 1 && v <= 1440)) continue
     if (key === 'quickCommands') {
       if (Array.isArray(v)) settings.quickCommands = v.filter(validQuickCommand).slice(0, 100)
       continue

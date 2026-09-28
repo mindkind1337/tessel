@@ -307,6 +307,10 @@ onBeforeUnmount(() => {
 })
 const cache = computed(() => (cacheShown.value ? cacheCountdown(cacheStartedAt.value, settings.promptCacheTtlMs, cacheNow.value) : null))
 
+const sleptAt = computed(() =>
+  props.node.sleeping ? new Date(props.node.sleeping.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''
+)
+
 const needsYou = computed(() => !!attention[props.node.id])
 const limit = computed(() => limits[props.node.id] || null)
 
@@ -1261,6 +1265,8 @@ onMounted(() => {
       if (!mounted || props.node.gen !== gen || !term) return
       if (a && a.ok && !a.exited && (!a.pid || !props.node.pid || a.pid === props.node.pid)) return
     }
+    // Put to sleep (Settings > Agents): not an end; the pane shows it asleep.
+    if (props.node.sleeping) return
     exited.value = true
     activityMonitor.dispose()
     exitCode.value = code
@@ -1516,7 +1522,8 @@ Named after its conversation. Double-click to rename` : 'Double-click to rename'
         <span v-else-if="isAgent && agentStatus === 'busy'" class="pane-working" :title="statusTitle">{{ estimatedState ? 'working · estimated' : 'working' }}</span>
         <span v-else-if="isAgent && agentStatus === 'unknown'" class="pane-working" :title="statusTitle">unknown</span>
         <span v-else-if="needsYou" class="pane-needs-you">needs you</span>
-        <span v-if="exited" class="exit-tag">exited</span>
+        <span v-if="node.sleeping" class="exit-tag" title="Asleep: open the pane to wake it">asleep</span>
+        <span v-else-if="exited" class="exit-tag">exited</span>
       </div>
       <div class="pane-nav-actions" @mousedown.stop>
         <label
@@ -1757,6 +1764,11 @@ Named after its conversation. Double-click to rename` : 'Double-click to rename'
       <span :title="node.failed">This terminal couldn't start.</span>
       <button class="exit-btn primary" @click="ctx.restartLeaf(node.id)">Retry</button>
       <button class="exit-btn" @click="ctx.closeLeaf(node.id, { force: true })">Close pane</button>
+    </div>
+
+    <div v-else-if="node.sleeping" class="exit-overlay sleeping" data-test="sleep-overlay" @mousedown.stop>
+      <span>Asleep since {{ sleptAt }}: its terminal was stopped to free memory. Its conversation is kept.</span>
+      <button class="exit-btn primary" @click="ctx.wakeLeaf && ctx.wakeLeaf(node.id)">Wake it</button>
     </div>
 
     <div v-else-if="exited" class="exit-overlay" @mousedown.stop>
