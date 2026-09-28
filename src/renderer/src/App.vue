@@ -86,6 +86,13 @@ const broadcast = ref(false)
 // workspaces stay mounted (hidden ones are invisible but keep their size), so
 // switching never kills or resizes a running shell or agent.
 const workspaces = ref([]) // [{ id, name, tree, activeId }]
+// Panes whose sub-agents run now (TerminalPane reports its AgentChildren):
+// they are at work even while the main agent waits for them.
+const childrenRunning = reactive({})
+function setChildrenRunning(id, n) {
+  if (n > 0) childrenRunning[id] = n
+  else delete childrenRunning[id]
+}
 // A workspace by its id, or null.
 const wsById = (id) => workspaces.value.find((w) => w.id === id) || null
 const currentWsId = ref(null)
@@ -1721,6 +1728,7 @@ provide('panelCtx', {
   teamLead,
   taskOfPane,
   trackOf,
+  setChildrenRunning,
   unsent,
   resolveUnsent,
   agentReportedDone,
@@ -3312,8 +3320,10 @@ function trackOf(leafId) {
   const t = trackedState[leafId]
   if (!t) return null
   const info = agentStates.value[leafId]
+  // Waiting for its running sub-agents is not being quiet.
+  const state = childrenRunning[leafId] && (t.state === 'idle' || t.state === 'unknown') ? 'working' : t.state
   return trackAgent(
-    { state: t.state, since: t.since, sinceStart: t.sinceStart, reset: info ? info.reset : '' },
+    { state, since: t.since, sinceStart: t.sinceStart, reset: info ? info.reset : '' },
     taskOfPane(leafId),
     clock.value
   )
@@ -6761,6 +6771,7 @@ function paneState(leaf) {
   if (leaf.kind !== 'agent') return 'ready'
   if (approvals[leaf.id]) return 'approval'
   if (limits[leaf.id]) return 'limited'
+  if (childrenRunning[leaf.id]) return 'working'
   if (leaf.agentLaunchToken && agentStatus[leaf.id] === 'unknown') return 'unknown'
   if (attention[leaf.id]) return 'waiting'
   return agentStatus[leaf.id] === 'busy' ? 'working' : 'ready'

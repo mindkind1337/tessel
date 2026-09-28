@@ -60,6 +60,14 @@ async function refresh() {
   }
 }
 const summary = computed(() => childrenSummary(list.value, now.value))
+// The pane counts as working while one of its sub-agents runs.
+const emit = defineEmits(['running'])
+watch(
+  () => summary.value.running,
+  (n) => emit('running', n),
+  { immediate: true }
+)
+onBeforeUnmount(() => emit('running', 0))
 const shown = computed(() => summary.value.running > 0 || summary.value.quiet > 0 || summary.value.recent > 0)
 // The indicator: a number, its state in words for screen readers and tests.
 const count = computed(() => summary.value.running || summary.value.quiet || summary.value.recent)

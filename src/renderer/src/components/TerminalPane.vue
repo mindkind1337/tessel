@@ -377,8 +377,15 @@ const limit = computed(() => limits[props.node.id] || null)
 const asksApproval = computed(() => !!approvals[props.node.id])
 // How it is doing (src/shared/tracking.js), when it may be stuck.
 const track = computed(() => (ctx.trackOf ? ctx.trackOf(props.node.id) : null))
+// Sub-agents of this conversation running now (AgentChildren reports them):
+// the pane is at work even while the main agent waits for them.
+const subRunning = ref(0)
+function onSubRunning(n) {
+  subRunning.value = n
+  if (ctx.setChildrenRunning) ctx.setChildrenRunning(props.node.id, n)
+}
 const stuck = computed(
-  () => isAgent.value && !!track.value && (track.value.level === 'warn' || track.value.level === 'alert') && !asksApproval.value && !limit.value
+  () => isAgent.value && !subRunning.value && !!track.value && (track.value.level === 'warn' || track.value.level === 'alert') && !asksApproval.value && !limit.value
 )
 const unsent = computed(() => isAgent.value && !!(ctx.unsent && ctx.unsent[props.node.id]))
 const limitTitle = computed(() =>
@@ -417,7 +424,7 @@ const badge = computed(() => {
   if (unsent.value) return 'unsent'
   if (stuck.value) return 'stuck'
   if (launchStale.value) return 'apply'
-  if (agentStatus.value === 'busy') return 'working'
+  if (agentStatus.value === 'busy' || subRunning.value) return 'working'
   if (agentStatus.value === 'unknown') return 'unknown'
   // "Needs you" is also the status dot and the pane's glow; the prompt cache
   // countdown is shown nowhere else, so it goes first.
@@ -478,7 +485,7 @@ const headerState = computed(() => {
   if (!isAgent.value) return null
   if (asksApproval.value) return { dot: 'waiting', label: t('sidebar.row.asksApproval', 'Asks your approval') }
   if (limit.value) return { dot: 'blocked', label: limitTitle.value }
-  if (agentStatus.value === 'busy') return { dot: 'working', label: agentStateLabel('working') }
+  if (agentStatus.value === 'busy' || subRunning.value) return { dot: 'working', label: agentStateLabel('working') }
   if (agentStatus.value === 'unknown') return { dot: 'unverifiable', label: agentStateLabel('unverifiable') }
   if (needsYou.value) return { dot: 'done', label: agentStateLabel('done') }
   return { dot: 'idle', label: agentStateLabel('idle') }
@@ -1770,7 +1777,7 @@ onBeforeUnmount(() => {
          state badge; then a few actions. The rest is in the … menu. -->
     <div
       class="pane-nav"
-      :class="{ agent: isAgent, busy: isAgent && agentStatus === 'busy' }"
+      :class="{ agent: isAgent, busy: isAgent && (agentStatus === 'busy' || subRunning > 0) }"
       :style="isAgent ? { '--accent': node.accent } : null"
       data-test="pane-header"
       @mousedown.stop="onNavMouseDown"
@@ -1885,6 +1892,7 @@ onBeforeUnmount(() => {
           :agent-id="node.agentId"
           :session-id="node.sessionId"
           :account-id="node.accountId"
+          @running="onSubRunning"
         />
         <!-- voice typing (its language: in the … menu) -->
         <button

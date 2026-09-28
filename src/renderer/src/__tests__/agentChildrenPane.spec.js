@@ -137,4 +137,17 @@ describe('sub-agents chip', () => {
     w.unmount()
     host.remove()
   })
+
+  it('tells its pane how many sub-agents run (the pane counts as working meanwhile), 0 when gone', async () => {
+    const w = mountChip({ agentId: 'claude', sessionId: 'A' })
+    requests[0].resolve([
+      { id: 'a', type: 'Explore', title: 'first', state: 'running', startedAt: Date.now() },
+      { id: 'b', type: 'Plan', title: 'second', state: 'running', startedAt: Date.now() }
+    ])
+    await flushPromises()
+    const counts = w.emitted('running').map((e) => e[0])
+    expect(counts.at(-1)).toBe(2)
+    w.unmount()
+    expect(w.emitted('running').at(-1)[0]).toBe(0)
+  })
 })
