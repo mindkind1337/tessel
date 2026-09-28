@@ -1400,6 +1400,46 @@ const hostPipe = pipeName(
   process.env.TESSEL_PTYHOST_CHANNEL || (app.isPackaged ? 'app' : 'dev')
 )
 
+function hostPidFile() {
+  return join(app.getPath('userData'), 'pty-host.pid')
+}
+
+// A host that holds the pipe but no longer answers (stuck while closing its
+// terminals): ended so a new one can start. Only the PID the host wrote, and
+// only if that process really is this build's terminal host (a PID can be
+// reused by another program). -> true once it is gone.
+async function endStuckHost() {
+  if (process.platform !== 'win32') return false
+  let pid = 0
+  try {
+    pid = parseInt(fs.readFileSync(hostPidFile(), 'utf8'), 10)
+  } catch {
+    log.error('pty', 'the stuck terminal host left no PID: end it in Task Manager (electron.exe running ptyHost.js)')
+    return false
+  }
+  if (!(pid > 0) || pid === process.pid) return false
+  const q = await runQuiet('powershell.exe', [
+    '-NoProfile',
+    '-NonInteractive',
+    '-Command',
+    `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").CommandLine`
+  ])
+  const script = join(__dirname, 'ptyHost.js').toLowerCase()
+  if (!q.stdout.toLowerCase().includes(script)) {
+    log.error('pty', `the stuck terminal host is not PID ${pid} any more: not ending it`)
+    return false
+  }
+  log.warn('pty', `ending the stuck terminal host (pid ${pid})`)
+  await runQuiet('taskkill.exe', ['/PID', String(pid), '/T', '/F'])
+  try {
+    fs.rmSync(hostPidFile(), { force: true })
+  } catch {
+    /* rewritten by the next host */
+  }
+  await new Promise((r) => setTimeout(r, 500))
+  return true
+}
+
 // Safety limit: never start more than 3 hosts a minute, whatever goes wrong.
 const hostStarts = []
 function startHost() {
@@ -1418,6 +1458,7 @@ function startHost() {
       ELECTRON_RUN_AS_NODE: '1',
       TESSEL_PTYHOST_PIPE: hostPipe,
       TESSEL_PTYHOST_TOKEN: hostToken(),
+      TESSEL_PTYHOST_PIDFILE: hostPidFile(),
       TESSEL_LOG_DIR: log.dir
     },
     detached: true,
@@ -1466,6 +1507,7 @@ const host = createPtyClient({
   pipe: hostPipe,
   token: hostToken(),
   startHost,
+  endStuckHost,
   log,
   // Output is batched per terminal (every ~8 ms) instead of one message per
   // chunk: a busy agent can print thousands of small chunks a second.

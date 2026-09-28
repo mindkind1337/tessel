@@ -61,6 +61,7 @@ function snapshot(entry) {
 const PIPE = process.env.TESSEL_PTYHOST_PIPE
 const TOKEN = process.env.TESSEL_PTYHOST_TOKEN
 const LOG_DIR = process.env.TESSEL_LOG_DIR
+const PID_FILE = process.env.TESSEL_PTYHOST_PIDFILE
 const log = LOG_DIR ? createLogger({ dir: LOG_DIR, name: 'pty-host' }) : null
 const say = (level, msg) => log && log[level]('host', msg)
 
@@ -141,6 +142,28 @@ function terminate(id, forceDelay = 1500) {
     p.child.kill()
   } catch {
     /* ignore */
+  }
+}
+
+// Closing a ConPTY console can block this process for good, and then the
+// exit timer below never runs: the host keeps the pipe and answers nobody, so
+// no new host can start. A separate process ends it if it is still there.
+function exitGuard() {
+  try {
+    const g = spawn(
+      process.execPath,
+      ['-e', `setTimeout(() => { try { process.kill(${process.pid}) } catch {} }, 4000)`],
+      {
+        env: { ELECTRON_RUN_AS_NODE: '1' },
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: true
+      }
+    )
+    g.on('error', () => {})
+    g.unref()
+  } catch {
+    /* the exit timer is still there */
   }
 }
 
@@ -292,6 +315,7 @@ function handle(sock, msg) {
       return
     case 'shutdown':
       say('info', `shutdown requested: closing ${ptys.size} terminal(s)`)
+      exitGuard()
       for (const id of [...ptys.keys()]) terminate(id, 300)
       reply({ ok: true })
       setTimeout(() => process.exit(0), 800)
@@ -338,6 +362,14 @@ server.on('error', (err) => {
 
 server.listen(PIPE, () => {
   say('info', `terminal host started (pid ${process.pid})`)
+  // Lets the app end this host if it ever stops answering (ptyClient.js).
+  if (PID_FILE) {
+    try {
+      fs.writeFileSync(PID_FILE, String(process.pid))
+    } catch {
+      /* the app then waits for it to go away by itself */
+    }
+  }
   checkIdle()
 })
 

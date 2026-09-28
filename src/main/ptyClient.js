@@ -3,7 +3,7 @@
 import net from 'net'
 import { PROTOCOL } from './ptyProtocol'
 
-export function createPtyClient({ pipe, token, startHost, log, onData, onExit, onLost }) {
+export function createPtyClient({ pipe, token, startHost, endStuckHost, log, onData, onExit, onLost }) {
   let sock = null
   let connecting = null
   let seq = 0
@@ -75,7 +75,7 @@ export function createPtyClient({ pipe, token, startHost, log, onData, onExit, o
     })
   }
 
-  async function connectAndHello(allowStart) {
+  async function connectAndHello(allowStart, retried = false) {
     let s = null
     try {
       s = await connectOnce()
@@ -94,7 +94,18 @@ export function createPtyClient({ pipe, token, startHost, log, onData, onExit, o
       if (!s) throw new Error('could not start the terminal host')
     }
     wire(s)
-    const hello = await rawRequest(s, { op: 'hello', token }, 5000)
+    let hello
+    try {
+      hello = await rawRequest(s, { op: 'hello', token }, 5000)
+    } catch (err) {
+      s.destroy()
+      // A host that takes the pipe but answers nobody (stuck): while it lives,
+      // no new host can start (EADDRINUSE). End it and start one, once.
+      if (retried || !allowStart || !endStuckHost) throw err
+      log.warn('pty', 'terminal host is not answering: ending it and starting a new one')
+      if (!(await endStuckHost())) throw err
+      return connectAndHello(true, true)
+    }
     if (!hello.ok) throw new Error('terminal host refused the connection')
     if (hello.protocol !== PROTOCOL) {
       // An older/newer host from a different version: replace it.
