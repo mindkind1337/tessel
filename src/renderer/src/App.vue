@@ -46,7 +46,9 @@ import LinearDialog from './components/LinearDialog.vue'
 import { createExternalIssueStarter } from './externalIssues'
 import './issueDialogs.css'
 import { addNotification, readForPane, playAlertSound } from './notificationsStore'
-import { initRemoteHosts, setRemoteHostHandlers } from './remoteHosts'
+import { initRemoteHosts, setRemoteHostHandlers, remoteHostsState, manageRemoteHosts } from './remoteHosts'
+import AddProjectDialog from './components/project/AddProjectDialog.vue'
+import { savedRemote, savedGroup } from './addProject'
 import NotesPanel from './components/NotesPanel.vue'
 import NewTaskDialog from './components/NewTaskDialog.vue'
 import ReviewPanel from './components/ReviewPanel.vue'
@@ -315,6 +317,11 @@ function focusActiveInput() {
 const finderOpen = ref(false)
 function openFinder() {
   paletteOpen.value = false
+  // Its files are on the remote host: nothing local to search.
+  if (currentWs.value && currentWs.value.remote) {
+    showToast(t('project.remote.unavailable', 'Not available for a remote project yet'))
+    return
+  }
   finderOpen.value = true
 }
 // Its folder: the workspace's project, else the active pane's folder.
@@ -772,7 +779,7 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
     res = { ok: false, error: refused }
   } else if (!attached) {
     try {
-      res = await window.shellApi.createPty({ id, shellId, agentId: agent?.id, cols: 80, rows: 24, cwd, projectDir, extraEnv, accountEnv, unsetEnv, ...(opts.remoteHostId ? { remoteHostId: opts.remoteHostId } : {}) })
+      res = await window.shellApi.createPty({ id, shellId, agentId: agent?.id, cols: 80, rows: 24, cwd, projectDir, extraEnv, accountEnv, unsetEnv, ...(opts.remoteHostId ? { remoteHostId: opts.remoteHostId } : {}), ...(opts.remoteHostId && opts.remotePath ? { remotePath: opts.remotePath } : {}) })
     } catch (err) {
       res = { ok: false, error: err && err.message }
     }
@@ -805,6 +812,7 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
       sessionId: opts.sessionId || null,
       accountId,
       remoteHostId: opts.remoteHostId || null,
+      remotePath: (opts.remoteHostId && opts.remotePath) || null,
       failed: msg,
       broadcast: true
     })
@@ -829,6 +837,8 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
     accountId,
     // A terminal on a remote host (Settings > SSH Hosts): ssh runs in it.
     remoteHostId: opts.remoteHostId || res.remoteHostId || null,
+    // ...in this folder of that host (a remote project).
+    remotePath: (opts.remoteHostId && opts.remotePath) || null,
     agentLaunchToken: res.agentLaunchToken || null,
     // How it was launched (Settings > Agents), to show Yolo and whether a
     // restart is needed to apply changed settings.
@@ -972,6 +982,7 @@ function serializeNode(node) {
       // Left out when not recorded (see createLeaf); null is kept.
       accountId: node.detected ? undefined : node.accountId,
       remoteHostId: node.remoteHostId || undefined,
+      remotePath: node.remotePath || undefined,
       // Asleep: restored asleep (no terminal) until you open it.
       sleeping: !node.detected && node.sleeping && Number.isFinite(node.sleeping.at) ? { at: node.sleeping.at } : undefined,
       titleSet: node.detected ? undefined : node.titleSet || undefined,
@@ -1066,6 +1077,7 @@ async function deserializeNode(snap, cwd = null) {
       startDir: typeof snap.startDir === 'string' ? snap.startDir : null,
       resume: settings.resumeAgents,
       remoteHostId: typeof snap.remoteHostId === 'string' && /^ssh-[\w-]{1,60}$/.test(snap.remoteHostId) ? snap.remoteHostId : undefined,
+      remotePath: typeof snap.remotePath === 'string' && snap.remotePath.length <= 1024 ? snap.remotePath : undefined,
       keepOnFailure: true
     })
     if (!leaf) return null
@@ -1150,6 +1162,8 @@ function saveLayoutNow() {
       id: w.id,
       name: w.name,
       cwd: w.cwd || null,
+      ...(w.remote ? { remote: { hostId: w.remote.hostId, path: w.remote.path } } : {}),
+      ...(w.group ? { group: { repos: w.group.repos.map((r) => ({ path: r.path, name: r.name })) } } : {}),
       tree: serializeNode(w.tree)
     }))
   }
@@ -1176,7 +1190,7 @@ async function splitLeaf(
   opts = {}
 ) {
   const ws = wsOfLeaf(leafId) || currentWs.value
-  const leaf = await createLeaf(shellId, agent, opts.cwd || (ws && ws.cwd), worktree, opts)
+  const leaf = await createLeaf(shellId, agent, opts.cwd || (ws && ws.cwd), worktree, wsLeafOpts(ws, opts))
   if (!leaf) return
   if (!ws || !workspaces.value.includes(ws)) {
     // The workspace is gone meanwhile: do not leave its terminal running.
@@ -1287,7 +1301,7 @@ function closeLeaf(leafId, opts = {}) {
   } else {
     ws.tree = null
     ws.activeId = null
-    createLeaf(selectedShell.value, null, ws.cwd).then((leaf) => {
+    createLeaf(selectedShell.value, null, ws.cwd, null, wsLeafOpts(ws)).then((leaf) => {
       if (!leaf) return
       // A pane was dropped here meanwhile: keep it, drop this new shell.
       if (ws.tree) {
@@ -1329,7 +1343,7 @@ async function buildGrid(cols, rows, ws = currentWs.value) {
   for (let r = 0; r < rows; r++) {
     const leaves = []
     for (let c = 0; c < cols; c++) {
-      const leaf = kept.length ? kept.shift() : await createLeaf(selectedShell.value, null, ws.cwd)
+      const leaf = kept.length ? kept.shift() : await createLeaf(selectedShell.value, null, ws.cwd, null, wsLeafOpts(ws))
       if (leaf) leaves.push(leaf)
     }
     if (!leaves.length) continue
@@ -1788,6 +1802,7 @@ function buildCommands() {
     add(t('app.cmd.group.new', 'New'), t('app.cmd.newNamed', 'New {{name}}', { name: a.name }), () => launch({ kind: 'agent', id: a.id }), { hint: t('app.cmd.aiAgent', 'AI agent') })
   }
   add(t('app.cmd.group.new', 'New'), t('app.cmd.newWorkspace', 'New workspace'), createWorkspace, { shortcut: 'Ctrl+Shift+N' })
+  add(t('app.cmd.group.new', 'New'), t('project.cmd.addProject', 'Add a project…'), openAddProject)
 
   const layout = t('app.cmd.group.layout', 'Layout')
   add(layout, t('app.cmd.splitRight', 'Split right'), () => splitActive('row'), { shortcut: 'Ctrl+Shift+E' })
@@ -1951,9 +1966,10 @@ async function launch({ kind, id }, targetId = activeId.value, where = placement
       agent ? agent.name.replace(/\s+(CLI|Code)$/i, '') : nextWorkspaceName()
     )
     ws.cwd = from ? from.cwd : null
+    ws.remote = from && from.remote ? { ...from.remote } : null
     workspaces.value.push(ws)
     selectWorkspace(ws.id)
-    const leaf = await createLeaf(shellId, agent, ws.cwd, worktree)
+    const leaf = await createLeaf(shellId, agent, ws.cwd, worktree, wsLeafOpts(ws))
     if (leaf) {
       ws.tree = leaf
       ws.activeId = leaf.id
@@ -2005,7 +2021,7 @@ async function openPaneBelow(shellId, agent = null, opts = {}) {
   const ws = currentWs.value
   if (!ws) return null
   if (activeId.value && ws.tree) return splitLeaf(activeId.value, 'col', agent, shellId, null, opts)
-  const leaf = await createLeaf(shellId, agent, ws.cwd, null, opts)
+  const leaf = await createLeaf(shellId, agent, ws.cwd, null, wsLeafOpts(ws, opts))
   if (leaf) {
     ws.tree = leaf
     ws.activeId = leaf.id
@@ -2024,13 +2040,69 @@ setRemoteHostHandlers({
 })
 initRemoteHosts()
 
+// --- Add a project (components/project/AddProjectDialog.vue) ----------------
+// The sidebar's "Add project" opens it; it hands back the projects to make:
+// a local folder, a clone, a new project, several repositories (separately or
+// as one group), or a folder on an SSH host.
+const addProjectOpen = ref(false)
+function openAddProject() {
+  closeMenus()
+  paletteOpen.value = false
+  addProjectOpen.value = true
+}
+function remoteHostLabel(hostId) {
+  const target = remoteHostsState.targets.find((x) => x.id === hostId)
+  return target ? target.label || target.host : hostId
+}
+function sameProject(ws, spec) {
+  if (spec.remote) return !!(ws.remote && ws.remote.hostId === spec.remote.hostId && ws.remote.path === spec.remote.path)
+  return !ws.remote && !!ws.cwd && !!spec.cwd && samePath(ws.cwd, spec.cwd)
+}
+async function addProjects({ projects, source } = {}) {
+  addProjectOpen.value = false
+  const list = Array.isArray(projects) ? projects : []
+  let firstId = null
+  let added = 0
+  for (const spec of list) {
+    const existing = workspaces.value.find((w) => sameProject(w, spec))
+    if (existing) {
+      firstId = firstId || existing.id
+      if (list.length === 1) showToast(t('project.toast.alreadyAdded', 'Project already added'))
+      continue
+    }
+    const ws = makeWorkspace(String(spec.name || '').slice(0, 80) || nextWorkspaceName())
+    if (spec.remote) ws.remote = { hostId: spec.remote.hostId, path: spec.remote.path }
+    else ws.cwd = spec.cwd || null
+    if (spec.group && Array.isArray(spec.group.repos)) ws.group = { repos: spec.group.repos.map((r) => ({ path: r.path, name: r.name })) }
+    workspaces.value.push(ws)
+    firstId = firstId || ws.id
+    added++
+    const leaf = await createLeaf(selectedShell.value, null, ws.cwd, null, wsLeafOpts(ws))
+    if (leaf && workspaces.value.includes(ws) && !ws.tree) {
+      ws.tree = leaf
+      ws.activeId = leaf.id
+    } else if (leaf) window.shellApi.killPty(leaf.id)
+  }
+  if (firstId) selectWorkspace(firstId)
+  if (!added) return
+  if (source === 'clone') showToast(t('project.toast.cloned', 'Repository cloned'))
+  else if (source === 'create') showToast(t('project.toast.created', 'Project created'))
+  else if (source === 'remote') showToast(t('project.toast.remoteAdded', 'Project added on SSH host'))
+  else if (added > 1) showToast(t('project.toast.imported', '{{count}} projects added', { count: added }))
+}
+function manageHostsFromAddProject() {
+  addProjectOpen.value = false
+  manageRemoteHosts()
+}
+
 // Run a command (or steps) in a new terminal pane (installs, setup). `shell`
 // forces a shell, e.g. PowerShell for commands written in PowerShell syntax.
 async function runInPane({ label, command, steps, shell }) {
   closeMenus()
   toolsOpen.value = false
   const shellId = shell && shells.value.some((s) => s.id === shell) ? shell : selectedShell.value
-  const leaf = await openPaneBelow(shellId)
+  // Installs run on this computer, also from a remote project.
+  const leaf = await openPaneBelow(shellId, null, { local: true })
   if (!leaf) return
   leaf.title = label
   const list = steps || [command]
@@ -2417,7 +2489,8 @@ async function restartLeaf(leafId) {
     sessionId: old.sessionId,
     accountId: old.accountId,
     resume: settings.resumeAgents,
-    ...(old.remoteHostId ? { remoteHostId: old.remoteHostId } : {})
+    ...(old.remoteHostId ? { remoteHostId: old.remoteHostId } : {}),
+    ...(old.remoteHostId && old.remotePath ? { remotePath: old.remotePath } : {})
   })
   if (!fresh) return
   // Closed, or moved to another workspace, while it was starting.
@@ -2730,7 +2803,7 @@ function detachLeaf(ws, leafId) {
   ws.tree = next
   if (ws.activeId === leafId) ws.activeId = next ? firstLeafId(next) : null
   if (!next) {
-    createLeaf(selectedShell.value, null, ws.cwd).then((leaf) => {
+    createLeaf(selectedShell.value, null, ws.cwd, null, wsLeafOpts(ws)).then((leaf) => {
       if (leaf && !ws.tree) {
         ws.tree = leaf
         ws.activeId = leaf.id
@@ -2808,7 +2881,18 @@ function zoom(delta) {
 
 // --- Workspace actions -------------------------------------------------------
 function makeWorkspace(name) {
-  return reactive({ id: newId('ws'), name, tree: null, activeId: null, cwd: null })
+  // remote: a project on an SSH host ({ hostId, path }, cwd stays null: no
+  // local folder). group: the repositories of a folder imported as a group
+  // ({ repos: [{ path, name }] }, cwd is their parent folder).
+  return reactive({ id: newId('ws'), name, tree: null, activeId: null, cwd: null, remote: null, group: null })
+}
+
+// A new pane in `ws`: on a remote project, a terminal on its host, in its
+// folder (remoteProject.js builds the ssh command). A host chosen on purpose
+// (Connect on a remote host) is kept as it is.
+function wsLeafOpts(ws, opts = {}) {
+  if (!ws || !ws.remote || opts.remoteHostId || opts.local) return opts
+  return { ...opts, remoteHostId: ws.remote.hostId, remotePath: ws.remote.path }
 }
 
 function folderName(path) {
@@ -2821,6 +2905,11 @@ function folderName(path) {
 async function setWorkspaceFolder(id) {
   const ws = wsById(id)
   if (!ws) return
+  // A remote project's folder is on its host (Add a project sets it).
+  if (ws.remote) {
+    showToast(t('project.remote.unavailable', 'Not available for a remote project yet'))
+    return
+  }
   if (!window.shellApi.pickFolder) {
     showToast(t('app.folder.restart', 'Restart Tessel to enable project folders.'), { kind: 'error' })
     return
@@ -2868,11 +2957,12 @@ function selectWorkspace(id) {
 async function createWorkspace() {
   const ws = makeWorkspace(nextWorkspaceName())
   ws.cwd = currentWs.value ? currentWs.value.cwd : null
+  ws.remote = currentWs.value && currentWs.value.remote ? { ...currentWs.value.remote } : null
   workspaces.value.push(ws)
   selectWorkspace(ws.id)
   // Put the new workspace's name straight into edit mode.
   nextTick(() => sidebarEl.value && sidebarEl.value.startRename(ws.id))
-  const leaf = await createLeaf(selectedShell.value, null, ws.cwd)
+  const leaf = await createLeaf(selectedShell.value, null, ws.cwd, null, wsLeafOpts(ws))
   if (leaf) {
     ws.tree = leaf
     ws.activeId = leaf.id
@@ -3076,7 +3166,16 @@ const sidebarProjects = computed(() =>
     const copies = boardTasks
       .filter((t) => t.wsId === w.id && t.worktree && t.worktree.path && !t.mergedAt)
       .map((t) => ({ path: t.worktree.path, branch: t.worktree.branch || '', title: t.title, taskId: t.id }))
-    return { id: w.id, name: w.name, cwd: w.cwd || null, branch: (w.cwd && wsBranches[w.cwd]) || '', panes, copies }
+    return {
+      id: w.id,
+      name: w.name,
+      cwd: w.cwd || null,
+      branch: (w.cwd && wsBranches[w.cwd]) || '',
+      panes,
+      copies,
+      ...(w.remote ? { remote: { host: remoteHostLabel(w.remote.hostId), path: w.remote.path } } : {}),
+      ...(w.group ? { repoCount: w.group.repos.length } : {})
+    }
   })
 )
 
@@ -3126,7 +3225,7 @@ async function openCard({ wsId, path, isMain }) {
   const task = !isMain ? boardTasks.find((t) => t.wsId === ws.id && t.worktree && t.worktree.path === path) : null
   const worktree = task ? { path: task.worktree.path, branch: task.worktree.branch } : null
   if (!ws.tree) {
-    const leaf = await createLeaf(selectedShell.value, null, isMain ? ws.cwd : path, worktree)
+    const leaf = await createLeaf(selectedShell.value, null, isMain ? ws.cwd : path, worktree, isMain ? wsLeafOpts(ws) : {})
     if (leaf && wsById(wsId)) {
       ws.tree = leaf
       ws.activeId = leaf.id
@@ -3829,7 +3928,7 @@ async function startTask(spec, opts = {}) {
       opts.roomy && ws.tree ? largestLeaf(ws.tree).id : ws.activeId && findLeaf(ws.activeId) ? ws.activeId : null
     leaf = target
       ? await splitLeaf(target, opts.roomy ? largestLeaf(ws.tree).dir : 'row', agent, selectedShell.value, worktree)
-      : await createLeaf(selectedShell.value, agent, ws.cwd, worktree)
+      : await createLeaf(selectedShell.value, agent, ws.cwd, worktree, wsLeafOpts(ws))
     if (leaf && !target) {
       ws.tree = leaf
       ws.activeId = leaf.id
@@ -7066,13 +7165,16 @@ async function restoreOrSeedLayout() {
       )
         ws.id = snap.id
       ws.cwd = typeof snap.cwd === 'string' && snap.cwd ? snap.cwd : null
+      ws.remote = savedRemote(snap.remote)
+      if (ws.remote) ws.cwd = null
+      ws.group = savedGroup(snap.group)
       try {
         ws.tree = await deserializeNode(snap.tree, ws.cwd)
       } catch {
         ws.tree = null
       }
       if (!ws.tree) {
-        const leaf = await createLeaf(selectedShell.value, null, ws.cwd)
+        const leaf = await createLeaf(selectedShell.value, null, ws.cwd, null, wsLeafOpts(ws))
         if (!leaf) continue
         ws.tree = leaf
       }
@@ -7607,7 +7709,7 @@ onBeforeUnmount(() => {
         @notes-ws="openNotesView"
         @new-task="openNewTask"
         @select="selectWorkspace"
-        @create="createWorkspace"
+        @create="openAddProject"
         @rename="renameWorkspace"
         @remove="removeWorkspace"
         @folder="setWorkspaceFolder"
@@ -7658,6 +7760,7 @@ onBeforeUnmount(() => {
           :can-insert="canInsertPath"
           :agent-panes="agentPanes"
           :workspace-id="currentWsId"
+          :remote="currentWs && currentWs.remote ? { host: remoteHostLabel(currentWs.remote.hostId), path: currentWs.remote.path } : null"
           @close="closeSidePanel"
           @open="openExplorerFile"
           @open-diff="openScmDiff"
@@ -7787,6 +7890,13 @@ onBeforeUnmount(() => {
     />
 
     <CommandPalette v-if="paletteOpen" :commands="paletteCommands" @close="paletteOpen = false" />
+    <AddProjectDialog
+      v-if="addProjectOpen"
+      :project-count="workspaces.length"
+      @add="addProjects"
+      @manage-hosts="manageHostsFromAddProject"
+      @close="addProjectOpen = false"
+    />
     <GitHubDialog v-if="githubOpen" :cwd="issueWorkspace?.cwd || ''" :pr-cwd="githubTaskContext?.cwd || ''" :pr-base="githubTaskContext?.base || ''" :initial-mode="githubTaskContext ? 'createPr' : ''" :agents="taskAgentKinds" :default-agent="settings.defaultAgent || ''" :start-issue="prepareLinkedIssue" @busy="githubBusy = $event" @close="githubOpen = false" />
     <LinearDialog v-if="linearOpen" :cwd="issueWorkspace?.cwd || ''" :agents="taskAgentKinds" :default-agent="settings.defaultAgent || ''" :start-issue="prepareLinkedIssue" @busy="linearBusy = $event" @close="linearOpen = false" />
     <FileFinder

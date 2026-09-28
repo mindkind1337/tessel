@@ -799,6 +799,19 @@ function wsOptionsLabel(active) {
 }
 function sectionTitle(project) {
   if (!project) return ''
+  // A project on a remote host (Add a project): its host and folder there.
+  if (project.remote)
+    return t('project.sidebar.titleRemote', '{{name}}\n{{host}}:{{path}}\nDouble-click to rename', {
+      name: project.name,
+      host: project.remote.host,
+      path: project.remote.path
+    })
+  if (project.repoCount && project.cwd)
+    return t('project.sidebar.titleGroup', '{{name}}\n{{path}}\nGroup of {{count}} repositories\nDouble-click to rename', {
+      name: project.name,
+      path: project.cwd,
+      count: project.repoCount
+    })
   return project.cwd
     ? t('sidebar.project.titleWithFolder', '{{name}}\n{{path}}\nDouble-click to rename', { name: project.name, path: project.cwd })
     : t('sidebar.project.titleNoFolder', '{{name}}\nDouble-click to rename', { name: project.name })

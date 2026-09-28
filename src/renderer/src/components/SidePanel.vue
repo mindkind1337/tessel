@@ -8,6 +8,7 @@ import ExplorerPanel from './ExplorerPanel.vue'
 import { refreshStatus, statusOf, changeCount, rootKey } from '../scmState'
 import ChangesPanel from './ChangesPanel.vue'
 import TaskBoard from './TaskBoard.vue'
+import RemoteUnavailable from './project/RemoteUnavailable.vue'
 import { t } from '../i18n'
 
 const SIDE_TABS = ['files', 'changes', 'tasks']
@@ -17,7 +18,10 @@ const props = defineProps({
   root: { type: String, default: null },
   canInsert: { type: Boolean, default: false },
   agentPanes: { type: Array, default: () => [] },
-  workspaceId: { type: String, default: null }
+  workspaceId: { type: String, default: null },
+  // A project on a remote host: { host, path }. Files and Changes need local
+  // files, so they say they are not available yet (RemoteUnavailable).
+  remote: { type: Object, default: null }
 })
 const emit = defineEmits([
   'update:tab',
@@ -137,8 +141,13 @@ onBeforeUnmount(() => {
       </button>
     </div>
     <div class="side-body">
+      <RemoteUnavailable
+        v-if="remote && (current() === 'files' || current() === 'changes')"
+        :host="remote.host"
+        :path="remote.path"
+      />
       <ExplorerPanel
-        v-if="shown.files"
+        v-if="shown.files && !remote"
         v-show="current() === 'files'"
         :root="root"
         :can-insert="canInsert"
@@ -151,7 +160,7 @@ onBeforeUnmount(() => {
         @close="emit('close')"
       />
       <ChangesPanel
-        v-if="shown.changes"
+        v-if="shown.changes && !remote"
         v-show="current() === 'changes'"
         :root="root"
         :workspace-id="workspaceId"
