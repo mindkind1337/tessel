@@ -103,7 +103,11 @@ export function createPortScanner({
   async function kill(port) {
     if (!api || !api.killPort) return { ok: false, reason: 'Restart Tessel to enable this.' }
     const res = await api.killPort({ probes: getProbes(), pid: port.pid, port: port.port })
-    if (res && res.ok) await refresh()
+    if (res && res.ok) {
+      // A refresh already running started before the stop: wait, then list again.
+      if (inFlight) await inFlight
+      await refresh()
+    }
     return res || { ok: false, reason: 'Failed to stop the process.' }
   }
 
