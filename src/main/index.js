@@ -913,13 +913,11 @@ ipcMain.handle(
   safe(({ cwd, label, options } = {}) => createWorktree(cwd, label, options))
 )
 ipcMain.handle('usage:get', safe(createUsageReader()))
-<<<<<<< HEAD
 // Claude Code's usage report from its own conversation files (tokens, estimated cost).
 const claudeUsageReport = createClaudeUsageReport()
 ipcMain.handle('usage:claudeReport', safe(() => claudeUsageReport()))
-=======
+// Codex's usage report from its own session files (tokens, requests).
 ipcMain.handle('usage:codexReport', safe(createCodexUsageReport({ userData: app.getPath('userData') })))
->>>>>>> codex/stabilize
 ipcMain.handle('review:info', safe(reviewInfo))
 ipcMain.handle('review:diff', safe(reviewDiff))
 ipcMain.handle('review:merge', safe(reviewMerge))
