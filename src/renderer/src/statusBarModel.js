@@ -90,6 +90,64 @@ export function resourceTree(snapshot, terminals, sortBy = 'memory') {
   }
 }
 
+// --- Sparkline history (Orca's memory-snapshot-buckets.ts ring + Sparkline) --
+// Orca keeps, per workspace and for the app total, the last 60 memory samples
+// (one per snapshot: the seed at start, then every 2 s while the popover is
+// open), and forgets a key not sampled for 10 minutes. Tessel groups its
+// terminals by workspace in the renderer, so the rings live here, bounded and
+// in memory, fed by the snapshots the Resource Manager already fetches.
+export const HISTORY_CAPACITY = 60
+export const HISTORY_STALE_MS = 10 * 60 * 1000
+export const APP_HISTORY_KEY = '__app__'
+
+export function createResourceHistory({ capacity = HISTORY_CAPACITY, staleMs = HISTORY_STALE_MS } = {}) {
+  const rings = new Map() // key -> { samples, touchedAt }
+  function push(key, memoryBytes, now) {
+    let ring = rings.get(key)
+    if (!ring) rings.set(key, (ring = { samples: [], touchedAt: now }))
+    ring.samples.push(Number.isFinite(memoryBytes) ? memoryBytes : 0)
+    if (ring.samples.length > capacity) ring.samples.shift()
+    ring.touchedAt = now
+  }
+  function sweep(now) {
+    for (const [key, ring] of rings) if (now - ring.touchedAt > staleMs) rings.delete(key)
+  }
+  // One snapshot: the app total and each workspace's summed memory.
+  function record(snapshot, terminals, now = Date.now()) {
+    if (snapshot && snapshot.app && snapshot.app.total) push(APP_HISTORY_KEY, snapshot.app.total.memory, now)
+    for (const g of resourceTree(snapshot, terminals).groups) push(g.key, g.memory, now)
+    sweep(now)
+  }
+  const read = (key) => {
+    const ring = rings.get(key)
+    return ring ? [...ring.samples] : []
+  }
+  return { push, record, sweep, read, size: () => rings.size }
+}
+
+// Orca's Sparkline points: min-max scaled into width x height, a flat
+// midline until there are two samples.
+export function sparklinePoints(samples, width = 48, height = 14) {
+  const safe = Array.isArray(samples) ? samples : []
+  if (safe.length < 2) {
+    const midY = (height / 2).toFixed(1)
+    return `0,${midY} ${width},${midY}`
+  }
+  let min = safe[0]
+  let max = safe[0]
+  for (const v of safe) {
+    if (v < min) min = v
+    if (v > max) max = v
+  }
+  const range = max - min || 1
+  const stepX = width / (safe.length - 1)
+  const out = []
+  for (let i = 0; i < safe.length; i++) {
+    out.push(`${(i * stepX).toFixed(1)},${(height - ((safe[i] - min) / range) * height).toFixed(1)}`)
+  }
+  return out.join(' ')
+}
+
 // The Ports segment's numbers: workspace ports (shown), external ones.
 export function portsSummary(groups, external) {
   const withPorts = (groups || []).filter((g) => g.ports && g.ports.length)

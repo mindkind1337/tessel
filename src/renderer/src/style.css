@@ -9864,6 +9864,16 @@ button.act-stat:hover,
   margin-right: 20px;
 }
 
+/* Orca's Sparkline: 48 x 14, 1 px, stroke-muted-foreground/70. */
+.sb-res-spark {
+  display: block;
+  flex-shrink: 0;
+}
+
+.sb-res-spark polyline {
+  stroke: color-mix(in srgb, var(--text-dim) 70%, transparent);
+}
+
 .sb-res-dot {
   width: 6px;
   height: 6px;

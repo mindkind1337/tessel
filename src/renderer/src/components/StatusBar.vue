@@ -21,8 +21,17 @@ import {
 } from 'lucide-vue-next'
 import OrcaMenu from './OrcaMenu.vue'
 import PortRow from './sidebar/PortRow.vue'
+import ResourceSparkline from './ResourceSparkline.vue'
 import { settings } from '../settings'
-import { formatMemory, formatCpu, awakeCopy, resourceTree, portsSummary } from '../statusBarModel'
+import {
+  formatMemory,
+  formatCpu,
+  awakeCopy,
+  resourceTree,
+  portsSummary,
+  createResourceHistory,
+  APP_HISTORY_KEY
+} from '../statusBarModel'
 import { t } from '../i18n'
 
 const props = defineProps({
@@ -94,13 +103,24 @@ const sortBy = ref('memory') // 'name' | 'cpu' | 'memory'
 const appExpanded = ref(false)
 let pollTimer = 0
 let fetching = null
+// Sparklines: each snapshot we already fetch adds one memory sample per
+// workspace and for Tessel (Orca: 60 kept, kept while the popover is closed).
+const history = createResourceHistory()
+const historyTick = ref(0)
+function historyOf(key) {
+  void historyTick.value
+  return history.read(key)
+}
 async function fetchSnapshot() {
   if (!window.shellApi || !window.shellApi.resourceSnapshot) return
   if (fetching) return fetching
   fetching = (async () => {
     try {
-      const res = await window.shellApi.resourceSnapshot({ ptys: props.terminals.map((t) => ({ id: t.id, pid: t.pid })) })
+      const terms = props.terminals
+      const res = await window.shellApi.resourceSnapshot({ ptys: terms.map((t) => ({ id: t.id, pid: t.pid })) })
       if (res && res.ok) {
+        history.record(res, terms, Number.isFinite(res.at) ? res.at : Date.now())
+        historyTick.value++
         snapshot.value = res
         snapshotError.value = ''
       } else snapshotError.value = (res && res.error) || t('statusBar.resources.memoryUnavailable', 'memory unavailable')
@@ -425,6 +445,7 @@ function goToWorktree(key) {
               <div v-for="g in tree.groups" :key="g.key" class="sb-res-group">
                 <div class="sb-res-row group">
                   <span class="sb-res-name">{{ g.name }}</span>
+                  <ResourceSparkline :samples="historyOf(g.key)" />
                   <span class="sb-res-cpu">{{ formatCpu(g.cpu) }}</span>
                   <span class="sb-res-mem">{{ formatMemory(g.memory) }}</span>
                 </div>
@@ -451,6 +472,7 @@ function goToWorktree(key) {
                 >
                   <ChevronRight :size="12" class="sb-res-chevron" :class="{ open: appExpanded }" aria-hidden="true" />
                   <span class="sb-res-name caps">Tessel</span>
+                  <ResourceSparkline :samples="historyOf(APP_HISTORY_KEY)" />
                   <span class="sb-res-cpu">{{ formatCpu(snapshot.app.total.cpu) }}</span>
                   <span class="sb-res-mem">{{ formatMemory(snapshot.app.total.memory) }}</span>
                 </button>

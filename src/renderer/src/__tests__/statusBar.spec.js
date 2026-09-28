@@ -105,6 +105,38 @@ describe('status bar', () => {
     expect(w.emitted('focus-pane')[0]).toEqual(['a'])
   })
 
+  it("Resource Manager rows: Orca's sparkline of recent memory on the workspace and Tessel rows only", async () => {
+    let n = 0
+    const base = await window.shellApi.resourceSnapshot()
+    window.shellApi.resourceSnapshot = vi.fn(async () => {
+      n++
+      return { ...base, sessions: { a: { memory: n * GB, cpu: 1 } } }
+    })
+    const w = mountBar()
+    await flushPromises() // the seed snapshot: one sample
+    await w.findAll('.sb-trigger')[1].trigger('click')
+    await flushPromises() // the snapshot on open: a second one
+    const pop = document.querySelector('.sb-resources')
+    const group = pop.querySelector('.sb-res-row.group')
+    const spark = group.querySelector('svg.sb-res-spark')
+    expect(spark.getAttribute('width')).toBe('48')
+    expect(spark.getAttribute('height')).toBe('14')
+    expect(spark.getAttribute('aria-hidden')).toBe('true')
+    // Left of the CPU and memory columns.
+    expect(spark.nextElementSibling.classList.contains('sb-res-cpu')).toBe(true)
+    // 1 GB then 2 GB: rising from the bottom left to the top right.
+    expect(spark.querySelector('polyline').getAttribute('points')).toBe('0.0,14.0 48.0,0.0')
+    // Tessel's own row: its total is flat, so a flat line along the bottom.
+    const app = pop.querySelector('.sb-res-app .sb-res-spark polyline')
+    expect(app.getAttribute('points')).toBe('0.0,14.0 48.0,14.0')
+    // Child rows (terminals, Main / Renderer) have none.
+    expect(pop.querySelectorAll('.sb-res-row.session .sb-res-spark')).toHaveLength(0)
+    pop.querySelector('.sb-res-app').click()
+    await flushPromises()
+    expect(document.querySelectorAll('.sb-res-row.session').length).toBeGreaterThan(2)
+    expect(document.querySelectorAll('.sb-res-row.session .sb-res-spark')).toHaveLength(0)
+  })
+
   it('Ports popover: workspace groups, Go to Worktree, collapsed External Ports', async () => {
     const w = mountBar()
     await w.findAll('.sb-trigger')[2].trigger('click')

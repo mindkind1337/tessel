@@ -3,9 +3,71 @@
 // sub-agents feed shared by the sidebar rows.
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { ref, nextTick } from 'vue'
-import { formatMemory, formatCpu, awakeCopy, resourceTree, portsSummary } from '../statusBarModel'
+import {
+  formatMemory,
+  formatCpu,
+  awakeCopy,
+  resourceTree,
+  portsSummary,
+  sparklinePoints,
+  createResourceHistory,
+  APP_HISTORY_KEY,
+  HISTORY_CAPACITY,
+  HISTORY_STALE_MS
+} from '../statusBarModel'
 import { createPortScanner, addressForPort, browserUrlForPort } from '../portScanner'
 import { acquireChildren, splitChildren, childDotState, _resetFeedsForTest } from '../agentChildrenFeed'
+
+describe('Resource Manager sparklines (Orca)', () => {
+  it('points: a flat midline under two samples, else min-max scaled into 48 x 14', () => {
+    expect(sparklinePoints([])).toBe('0,7.0 48,7.0')
+    expect(sparklinePoints([5])).toBe('0,7.0 48,7.0')
+    expect(sparklinePoints(null)).toBe('0,7.0 48,7.0')
+    expect(sparklinePoints([10, 20, 30])).toBe('0.0,14.0 24.0,7.0 48.0,0.0')
+    expect(sparklinePoints([30, 10])).toBe('0.0,0.0 48.0,14.0')
+    // Equal samples: range 1, the line lies on the bottom.
+    expect(sparklinePoints([4, 4, 4])).toBe('0.0,14.0 24.0,14.0 48.0,14.0')
+    expect(sparklinePoints([0, 1], 10, 4)).toBe('0.0,4.0 10.0,0.0')
+  })
+
+  it('history: one memory sample per snapshot for Tessel and each workspace, bounded to 60', () => {
+    const h = createResourceHistory()
+    const terminals = [
+      { id: 'a', group: 'Shop', groupKey: 'k1' },
+      { id: 'b', group: 'Shop', groupKey: 'k1' },
+      { id: 'c', group: 'Blog', groupKey: 'k2' }
+    ]
+    const snap = (i) => ({
+      app: { main: {}, renderer: {}, total: { memory: 100 + i, cpu: 0 } },
+      sessions: { a: { memory: i, cpu: 0 }, b: { memory: 10, cpu: 0 }, c: { memory: 2 * i, cpu: 0 } }
+    })
+    h.record(snap(1), terminals, 1000)
+    h.record(snap(2), terminals, 3000)
+    expect(h.read(APP_HISTORY_KEY)).toEqual([101, 102])
+    expect(h.read('k1')).toEqual([11, 12])
+    expect(h.read('k2')).toEqual([2, 4])
+    expect(h.read('nope')).toEqual([])
+    // A copy: the caller cannot change the ring.
+    h.read('k1').push(99)
+    expect(h.read('k1')).toEqual([11, 12])
+    for (let i = 3; i <= 100; i++) h.record(snap(i), terminals, 1000 + i * 2000)
+    expect(h.read('k2')).toHaveLength(HISTORY_CAPACITY)
+    expect(h.read('k2')[HISTORY_CAPACITY - 1]).toBe(200)
+    expect(h.read('k2')[0]).toBe(2 * 41)
+  })
+
+  it('history: a workspace not sampled for 10 minutes is forgotten', () => {
+    const h = createResourceHistory()
+    const snap = { app: { total: { memory: 1 } }, sessions: {} }
+    h.record(snap, [{ id: 'a', group: 'Shop', groupKey: 'k1' }], 0)
+    h.record(snap, [], HISTORY_STALE_MS)
+    expect(h.read('k1')).toEqual([0])
+    h.record(snap, [], HISTORY_STALE_MS + 1)
+    expect(h.read('k1')).toEqual([])
+    expect(h.read(APP_HISTORY_KEY)).toHaveLength(3)
+    expect(h.size()).toBe(1)
+  })
+})
 
 describe('status bar model', () => {
   it("formats memory and CPU like Orca's formatMemory / formatCpu", () => {
