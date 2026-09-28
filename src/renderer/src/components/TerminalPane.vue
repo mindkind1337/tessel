@@ -1814,11 +1814,8 @@ onBeforeUnmount(() => {
           @dblclick="startEditTitle"
           >{{ paneTitle }}</span
         >
-        <!-- The conversation's title beside the agent's name (never instead
-             of it: which agent runs here stays readable). -->
-        <span v-if="!editingTitle && autoTitle" class="pane-subtitle" data-test="pane-subtitle">{{
-          autoTitle
-        }}</span>
+        <!-- The header shows only the agent's name: the conversation's title
+             is in the hover card. -->
         <!-- Pane menu > Set model...: edited in place, only while editing. -->
         <input
           v-if="isAgent && editingModel"

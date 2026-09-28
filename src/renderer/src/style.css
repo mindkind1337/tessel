@@ -7872,18 +7872,6 @@ button.act-stat:hover,
   background: color-mix(in srgb, var(--accent) 28%, transparent);
 }
 
-/* Pane header: the conversation's title, beside the agent's name. */
-.pane-subtitle {
-  flex: 0 1 auto;
-  min-width: 0;
-  max-width: 40%;
-  overflow: hidden;
-  color: var(--text-dim);
-  font-size: 11.5px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 /* ================= Left sidebar (Orca's) =================
    Ported from Orca's sidebar (MIT, Copyright (c) 2026 Lovecast Inc.):
    its Tailwind classes translated to CSS on Tessel's theme variables. */
@@ -8133,11 +8121,6 @@ button.act-stat:hover,
   line-height: 1;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.pane-subtitle::before {
-  content: '·';
-  margin: 0 6px 0 2px;
 }
 
 .osb-section-header.flat .osb-section-label {

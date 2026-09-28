@@ -151,7 +151,12 @@ describe('pane header hover card', () => {
     await wait(0)
     const left = w.find('[data-test="pane-hover-trigger"]')
     expect(left.findAll('[title]').map((e) => e.attributes('title'))).toEqual([])
+    // The header shows only the agent's name: the conversation's title is in
+    // the hover card, not beside it.
+    expect(w.find('.pane-subtitle').exists()).toBe(false)
+    expect(w.find('[data-test="pane-header"]').text()).not.toContain('Fix the cart')
     const title = w.find('[data-test="pane-title"]')
+    expect(title.text()).toBe('Claude Code')
     expect(title.attributes('title')).toBeUndefined()
     const desc = title.attributes('aria-description')
     expect(desc).toContain('Fix the cart')
