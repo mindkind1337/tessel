@@ -85,6 +85,12 @@ function childStats(c) {
   const tokens = formatTokens(c.tokens)
   return tokens ? t('sidebar.agentRow.stats', '{{time}} · ↓ {{tokens}}', { time, tokens }) : time
 }
+// In the hover card there is room: the word "tokens" is spelled out.
+function childStatsLong(c) {
+  const time = childTime(c, clock.value)
+  const tokens = formatTokens(c.tokens)
+  return tokens ? t('sidebar.agentRow.statsLong', '{{time}} · ↓ {{tokens}} tokens', { time, tokens }) : time
+}
 function childTitle(c, state) {
   return c.type ? `${c.title || noTitle()}, ${c.type} · ${state}` : `${c.title || noTitle()}, ${state}`
 }
@@ -135,7 +141,7 @@ const childState = computed(() => {
 const rowLabel = computed(() => {
   const r = props.row
   const team = props.teamLabel || r.team
-  const parts = [r.secondary ? `${r.primary} - ${r.secondary}` : r.primary]
+  const parts = [[r.primary, r.subline, r.secondary].filter(Boolean).join(' - ')]
   if (r.stateLabel && r.stateLabel !== r.secondary) parts.push(r.stateLabel)
   if (r.team)
     parts.push(
@@ -188,6 +194,17 @@ const rowLabel = computed(() => {
     <span v-if="hasChildren && folded" class="car-time" :class="{ focused: row.focused }">+{{ children.length }}</span>
     <span v-if="row.time" class="car-time" :class="{ focused: row.focused }">{{ row.time }}</span>
     <span v-if="row.num" class="car-num" :class="{ focused: row.focused }">{{ row.num }}</span>
+  </div>
+  <!-- The task on its own line under the agent (the row keeps its space). -->
+  <div
+    v-if="row.subline"
+    class="car-subline"
+    :class="{ focused: row.focused, nested: hasChildren || picking }"
+    aria-hidden="true"
+    @click.stop="emit('activate', row)"
+    @contextmenu.prevent.stop="emit('context', row, $event)"
+  >
+    {{ row.subline }}
   </div>
   <div v-if="hasChildren && !folded" class="worktree-agent-lineage-children" role="group" :aria-label="t('sidebar.agentRow.subAgentsOf', 'Sub-agents of {{name}}', { name: row.title })">
     <div
@@ -254,7 +271,7 @@ const rowLabel = computed(() => {
         <AgentStateDot :state="childDotState(hoveredChild)" :tooltip="false" />
         <span class="hc-status-label" v-text="childState"></span>
       </div>
-      <div class="hc-detail" v-text="childStats(hoveredChild)"></div>
+      <div class="hc-detail" v-text="childStatsLong(hoveredChild)"></div>
     </div>
   </HoverCardContent>
 </template>

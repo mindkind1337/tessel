@@ -80,7 +80,7 @@ describe('states in Orca words', () => {
     expect(paneRow(pane('x', { state: 'limited', reset: 'resets 4pm' }), NOW).secondary).toBe('Usage limit · resets 4pm')
     expect(paneRow(pane('x', { sleeping: true }), NOW).secondary).toBe('Sleeping')
     expect(paneRow(pane('x', { kind: 'shell', title: 'pwsh' }), NOW)).toMatchObject({ primary: 'pwsh', secondary: 'Terminal' })
-    expect(paneRow(pane('x', { task: 'Fix it', state: 'working' }), NOW)).toMatchObject({ primary: 'x', secondary: 'Fix it', stateLabel: 'Working' })
+    expect(paneRow(pane('x', { task: 'Fix it', state: 'working' }), NOW)).toMatchObject({ primary: 'x', secondary: '', subline: 'Fix it', stateLabel: 'Working' })
     expect(paneRow(pane('x', { sessionId: 's1' }), NOW).children).toEqual({ agent: 'claude', sessionId: 's1' })
     expect(paneRow(pane('x', { agentId: 'codex', sessionId: 's1' }), NOW).children).toBeNull()
   })

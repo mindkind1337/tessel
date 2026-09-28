@@ -99,7 +99,7 @@ describe('left sidebar', () => {
     expect(main.findAll('.compact-agent-row')).toHaveLength(0)
     await summary.trigger('click')
     expect(main.findAll('.compact-agent-row').map((r) => r.attributes('data-pane-id'))).toEqual(['a', 't'])
-    expect(main.find('.compact-agent-row .car-trail').text()).toBe('- Working')
+    expect(main.find('[data-pane-id="a"] .car-trail').exists()).toBe(false)
     expect(main.find('.car-time').text()).toBe('2m')
     // "Full list" shows every row without a summary.
     settings.agentActivityDisplayMode = 'full'

@@ -20,7 +20,7 @@ const props = defineProps({
   runningCount: { type: Number, default: 0 }
 })
 
-const heading = computed(() => props.row.primary || props.row.title)
+const heading = computed(() => props.row.subline || props.row.primary || props.row.title)
 const showAgentLine = computed(() => !!props.row.title && props.row.title !== heading.value)
 const stateLabel = computed(() => {
   if (props.row.kind !== 'agent') return t('sidebar.row.terminal', 'Terminal')

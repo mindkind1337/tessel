@@ -114,7 +114,7 @@ function teamLabel(r) {
   return r.team ? props.teamName(r.team) || '' : ''
 }
 function rowLine(r) {
-  return r.secondary ? `${r.primary} - ${r.secondary}` : r.primary
+  return [r.primary, r.subline, r.secondary].filter(Boolean).join(' - ')
 }
 
 function onRow(r) {

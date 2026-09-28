@@ -8703,6 +8703,27 @@ button.act-stat:hover,
   color: color-mix(in srgb, var(--wts-muted) 65%, transparent);
 }
 
+/* The agent's task, on a line of its own under its row. */
+.car-subline {
+  margin: -2px 0 2px;
+  padding: 0 8px 0 42px;
+  overflow: hidden;
+  color: color-mix(in srgb, var(--wts-muted) 65%, transparent);
+  font-size: 11.5px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.car-subline.nested {
+  padding-left: 58px;
+}
+
+.car-subline.focused {
+  color: color-mix(in srgb, var(--wts-fg) 70%, transparent);
+}
+
 .car-trail.focused {
   color: color-mix(in srgb, var(--wts-fg) 70%, transparent);
 }
