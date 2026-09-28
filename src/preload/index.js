@@ -80,6 +80,8 @@ const api = {
   // Claude Code's usage report (tokens and estimated cost by day, model,
   // project, conversation), from its own files on this computer.
   claudeUsageReport: () => ipcRenderer.invoke('usage:claudeReport'),
+  // Codex's usage report (tokens and requests), from its own session files.
+  codexUsageReport: (query = {}) => ipcRenderer.invoke('usage:codexReport', query),
   // Review and merge a task branch: { root, path, branch, target, ... }.
   // A team lead's inbox folder: { dir, token, guide }.
   lead: {
