@@ -8,6 +8,7 @@ import LaunchMenu from './components/LaunchMenu.vue'
 import SettingsDialog from './components/SettingsDialog.vue'
 import UpdateDialog from './components/UpdateDialog.vue'
 import { settings, loadSettings, DEFAULT_SETTINGS } from './settings'
+import { effectiveAgent, agentEnabled } from '../../shared/agentPrefs'
 import { THEMES } from './themes'
 import McpDialog from './components/McpDialog.vue'
 import CommandPalette from './components/CommandPalette.vue'
@@ -44,6 +45,8 @@ import { tasks as boardTasks, setTasks, updateTask, removeTask, addTask } from '
 
 const shells = ref([])
 const agents = ref([])
+// The agents offered in menus: not those turned off in Settings > Agents.
+const launchableAgents = computed(() => agents.value.filter((a) => agentEnabled(settings.agentPrefs, a.id)))
 const selectedShell = ref(null)
 const broadcast = ref(false)
 
@@ -317,7 +320,7 @@ const SHORTCUTS = [
   {
     title: 'Panes',
     rows: [
-      ['Ctrl+Shift+T', 'New terminal (default shell)'],
+      ['Ctrl+Shift+T', 'New pane: the default agent, or the default shell'],
       ['Ctrl+Shift+Space', 'Open a terminal or agent'],
       ['Ctrl+Shift+P', 'Command palette: find panes, workspaces, commands'],
       ['Ctrl+Shift+J', "Jump to a file of the workspace's project"],
@@ -501,9 +504,36 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
       /* fall back to a new terminal */
     }
   }
+  // Settings > Agents: its command, arguments and variables; and the account
+  // chosen for it (Settings > AI provider accounts), when there is one.
+  const launch = agent ? effectiveAgent(agent, settings.agentPrefs, settings.agentPermissions) : null
+  let extraEnv = launch ? { ...launch.env } : {}
+  let unsetEnv = []
+  if (agent && !attached && window.shellApi.accounts && window.shellApi.accounts.launchEnv) {
+    let acc = null
+    try {
+      acc = await window.shellApi.accounts.launchEnv(agent.id)
+    } catch (err) {
+      acc = { ok: false, error: err && err.message }
+    }
+    // The chosen account cannot be used: never started on another one
+    // without saying so.
+    if (!acc || acc.ok === false) {
+      showToast(`${agent.name || agent.id} was not started: its account could not be used (${(acc && acc.error) || 'unknown error'}). See Settings > AI provider accounts.`, { kind: 'error', timeout: 10000 })
+      return null
+    }
+    // What the account removes can't come back from the agent's own variables
+    // (an ANTHROPIC_API_KEY there would override the chosen account).
+    if (Array.isArray(acc.unsetEnv)) {
+      unsetEnv = acc.unsetEnv.filter((n) => typeof n === 'string')
+      const drop = new Set(unsetEnv.map((n) => n.toUpperCase()))
+      for (const k of Object.keys(extraEnv)) if (drop.has(k.toUpperCase())) delete extraEnv[k]
+    }
+    if (acc.env && typeof acc.env === 'object') extraEnv = { ...extraEnv, ...acc.env }
+  }
   if (!attached) {
     try {
-      res = await window.shellApi.createPty({ id, shellId, cols: 80, rows: 24, cwd, projectDir })
+      res = await window.shellApi.createPty({ id, shellId, cols: 80, rows: 24, cwd, projectDir, extraEnv, unsetEnv })
     } catch (err) {
       res = { ok: false, error: err && err.message }
     }
@@ -583,9 +613,11 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
   }
   // Launch the agent CLI once the shell has had a moment to print its prompt.
   if (agent && agent.command) {
-    const start = await agentStartLine(agent, opts.sessionId || null, !!opts.resume)
+    const start = await agentStartLine({ ...agent, command: launch.command }, opts.sessionId || null, !!opts.resume)
     leaf.sessionId = start.sessionId
-    const line = opts.wrap ? opts.wrap(start.line) : start.line
+    // Its arguments (or the Yolo flag) at the end: they work with resuming too.
+    const full = launch.args ? `${start.line} ${launch.args}` : start.line
+    const line = opts.wrap ? opts.wrap(full) : full
     setTimeout(() => window.shellApi.writePty(id, `${line}\r`), 600)
     if (FOUND_AFTER_START.includes(sessionKind(agent)) && !leaf.sessionId) watchFoundSession(leaf, agent.id)
   }
@@ -1272,7 +1304,7 @@ function buildCommands() {
       shortcut: s.id === selectedShell.value ? 'Ctrl+Shift+T' : ''
     })
   }
-  for (const a of agents.value.filter((x) => x.available)) {
+  for (const a of launchableAgents.value.filter((x) => x.available)) {
     add('New', `New ${a.name}`, () => launch({ kind: 'agent', id: a.id }), { hint: 'AI agent' })
   }
   add('New', 'New workspace', createWorkspace, { shortcut: 'Ctrl+Shift+N' })
@@ -1628,8 +1660,12 @@ function closeTools() {
   })
 }
 
+// Ctrl+Shift+T: the default agent (Settings > Agents) when one is set, is
+// installed and not turned off; else the default shell.
 function newDefaultTerminal() {
-  launch({ kind: 'shell', id: selectedShell.value })
+  const a = settings.defaultAgent ? agentById(settings.defaultAgent) : null
+  if (a && a.available !== false && agentEnabled(settings.agentPrefs, a.id)) launch({ kind: 'agent', id: a.id })
+  else launch({ kind: 'shell', id: selectedShell.value })
 }
 
 function openLauncherAt(rect, targetId = null) {
@@ -2800,7 +2836,7 @@ async function openNewTask() {
 
 // Agent kinds that can be started, for the dialog.
 const taskAgentKinds = computed(() =>
-  agents.value
+  launchableAgents.value
     .filter((a) => a.available !== false)
     .map((a) => ({ id: a.id, name: a.name, accent: a.accent || null }))
 )
@@ -5667,7 +5703,7 @@ onBeforeUnmount(() => {
 
         <span class="toolbar-sep"></span>
 
-        <UsageMenu @details="usageOpen = true" />
+        <UsageMenu @details="usageOpen = true" @accounts="openSettingsAt('accounts')" />
         <NotificationsMenu @focus-pane="focusPane" />
         <button
           class="tb-icon"
@@ -5879,7 +5915,7 @@ onBeforeUnmount(() => {
     <LaunchMenu
       v-if="launcher.open"
       :shells="shells"
-      :agents="agents"
+      :agents="launchableAgents"
       :default-shell="selectedShell"
       :placement="placement"
       :target-title="launcherTargetTitle"
@@ -6045,6 +6081,8 @@ onBeforeUnmount(() => {
       :default-shell="selectedShell"
       :update-status="updateStatus"
       :section="settingsSection"
+      :agents="agents"
+      @detect-agents="(done) => loadAgents(true).finally(done)"
       @check-updates="checkForUpdates"
       @open-update="((settingsOpen = false), (updateOpen = true))"
       @set-default-shell="setDefaultShell"

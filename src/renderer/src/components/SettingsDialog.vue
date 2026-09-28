@@ -6,9 +6,13 @@ import BrandIcon from './BrandIcon.vue'
 import { settings, FONT_FAMILIES, resetSettings, clamp } from '../settings'
 import { THEMES } from '../themes'
 import { playAlertSound } from '../notificationsStore'
+import { parseEnvText, YOLO_ARGS, YOLO_ENV, agentEnabled } from '../../../shared/agentPrefs'
+import { AGENT_DOCS } from '../../../shared/agentDocs'
 
 const props = defineProps({
   shells: { type: Array, default: () => [] },
+  // Built-in and your own agents, with `available` (found on the PATH).
+  agents: { type: Array, default: () => [] },
   defaultShell: { type: String, default: null },
   updateStatus: { type: Object, default: () => ({ state: 'disabled' }) },
   // Open scrolled to this section (its element id), e.g. 'quick-commands'.
@@ -32,7 +36,47 @@ function removeQuickCommand(id) {
   const i = settings.quickCommands.findIndex((q) => q.id === id)
   if (i >= 0) settings.quickCommands.splice(i, 1)
 }
-const emit = defineEmits(['close', 'set-default-shell', 'check-updates', 'open-update'])
+const emit = defineEmits(['close', 'set-default-shell', 'check-updates', 'open-update', 'detect-agents'])
+
+// Settings > Agents: each detected agent's own command, arguments and
+// variables, whether it is offered, and the one a new pane starts.
+const openAgent = ref(null) // the agent whose "Customize" is open
+const envErrors = ref({})
+function agentPref(id) {
+  return settings.agentPrefs[id] || {}
+}
+function setAgentPref(id, field, value) {
+  const next = { ...agentPref(id), [field]: value }
+  if (field === 'env') {
+    const r = parseEnvText(value)
+    envErrors.value = { ...envErrors.value, [id]: r.error || '' }
+  }
+  settings.agentPrefs = { ...settings.agentPrefs, [id]: next }
+}
+function resetAgent(id) {
+  const next = { ...settings.agentPrefs }
+  const keepOff = next[id] && next[id].enabled === false
+  delete next[id]
+  if (keepOff) next[id] = { enabled: false }
+  settings.agentPrefs = next
+  envErrors.value = { ...envErrors.value, [id]: '' }
+}
+function customized(id) {
+  const p = agentPref(id)
+  return !!((p.command && p.command.trim()) || (p.args && p.args.trim()) || (p.env && p.env.trim()))
+}
+const detecting = ref(false)
+async function detectAgents() {
+  detecting.value = true
+  try {
+    await new Promise((resolve) => emit('detect-agents', resolve))
+  } finally {
+    detecting.value = false
+  }
+}
+function openDocs(id) {
+  if (AGENT_DOCS[id] && window.shellApi.openExternal) window.shellApi.openExternal(AGENT_DOCS[id])
+}
 
 function updateText(u) {
   switch (u.state) {
@@ -327,8 +371,132 @@ const CURSORS = [
         </label>
       </section>
 
-      <section class="set-section">
+      <section id="set-agents" class="set-section">
         <h3>Agents</h3>
+        <div class="set-row">
+          <label class="set-label" for="settings-default-agent">
+            Default agent
+            <span class="set-hint">What a new pane starts (Ctrl+Shift+T)</span>
+          </label>
+          <select id="settings-default-agent" v-model="settings.defaultAgent" class="set-select">
+            <option value="">The default shell</option>
+            <option
+              v-for="a in agents.filter((x) => x.available && agentEnabled(settings.agentPrefs, x.id))"
+              :key="a.id"
+              :value="a.id"
+            >
+              {{ a.name }}
+            </option>
+          </select>
+        </div>
+        <div class="set-row">
+          <div id="settings-perm-label" class="set-label">
+            Permissions
+            <span class="set-hint">For agents you start from now on</span>
+          </div>
+          <div class="launch-seg set-seg" role="group" aria-labelledby="settings-perm-label">
+            <button
+              class="launch-seg-btn"
+              :class="{ on: settings.agentPermissions === 'manual' }"
+              :aria-pressed="settings.agentPermissions === 'manual'"
+              @click="settings.agentPermissions = 'manual'"
+            >
+              Manual
+            </button>
+            <button
+              class="launch-seg-btn"
+              :class="{ on: settings.agentPermissions === 'yolo' }"
+              :aria-pressed="settings.agentPermissions === 'yolo'"
+              @click="settings.agentPermissions = 'yolo'"
+            >
+              Yolo
+            </button>
+          </div>
+        </div>
+        <p v-if="settings.agentPermissions === 'yolo'" class="mcp-error agents-warn">
+          Yolo: agents run commands and change files without asking you first (each agent's own
+          skip-approvals option, unless you set its arguments yourself). Use it only in projects you
+          can restore.
+        </p>
+        <div class="agents-head">
+          <span class="set-hint">Detected on this computer</span>
+          <button class="exit-btn" type="button" :disabled="detecting" @click="detectAgents">
+            {{ detecting ? 'Detecting…' : 'Detect again' }}
+          </button>
+        </div>
+        <div v-for="a in agents" :key="a.id" class="agent-set" :data-agent="a.id">
+          <div class="set-row">
+            <div class="set-label agent-set-name">
+              <BrandIcon :kind="a.id" :size="15" />
+              <span>{{ a.name }}</span>
+              <span class="set-hint">
+                {{ a.available ? 'Installed' : 'Not found' }}{{ customized(a.id) ? ' · customized' : '' }}
+              </span>
+            </div>
+            <div class="agent-set-actions">
+              <button v-if="AGENT_DOCS[a.id]" class="exit-btn" type="button" @click="openDocs(a.id)">Docs</button>
+              <button
+                class="exit-btn"
+                type="button"
+                :aria-expanded="openAgent === a.id"
+                @click="openAgent = openAgent === a.id ? null : a.id"
+              >
+                Customize
+              </button>
+              <input
+                type="checkbox"
+                class="set-switch"
+                :aria-label="`Offer ${a.name} in menus`"
+                :title="agentEnabled(settings.agentPrefs, a.id) ? 'Shown in menus' : 'Hidden from menus'"
+                :checked="agentEnabled(settings.agentPrefs, a.id)"
+                @change="setAgentPref(a.id, 'enabled', $event.target.checked)"
+              />
+            </div>
+          </div>
+          <div v-if="openAgent === a.id" class="agent-custom">
+            <label class="agent-field">
+              <span class="set-hint">Command</span>
+              <input
+                class="set-number mcp-input"
+                spellcheck="false"
+                :placeholder="a.command"
+                :value="agentPref(a.id).command || ''"
+                @change="setAgentPref(a.id, 'command', $event.target.value)"
+              />
+            </label>
+            <label class="agent-field">
+              <span class="set-hint">Arguments (replace the Yolo option when set)</span>
+              <input
+                class="set-number mcp-input"
+                spellcheck="false"
+                :placeholder="YOLO_ARGS[a.id] ? `Yolo adds: ${YOLO_ARGS[a.id]}` : 'e.g. --model …'"
+                :value="agentPref(a.id).args || ''"
+                @change="setAgentPref(a.id, 'args', $event.target.value)"
+              />
+            </label>
+            <label class="agent-field">
+              <span class="set-hint"
+                >Variables, one NAME=value per line{{
+                  YOLO_ENV[a.id] ? ` (Yolo sets ${Object.keys(YOLO_ENV[a.id]).join(', ')})` : ''
+                }}</span
+              >
+              <textarea
+                class="set-number mcp-input agent-env"
+                rows="3"
+                spellcheck="false"
+                :value="agentPref(a.id).env || ''"
+                @change="setAgentPref(a.id, 'env', $event.target.value)"
+              ></textarea>
+            </label>
+            <p v-if="envErrors[a.id]" class="mcp-error">{{ envErrors[a.id] }} Not used until fixed.</p>
+            <div class="agent-custom-foot">
+              <span class="set-hint">Applies to panes you start from now on</span>
+              <button class="exit-btn" type="button" :disabled="!customized(a.id)" @click="resetAgent(a.id)">
+                Reset
+              </button>
+            </div>
+          </div>
+        </div>
         <label class="set-row">
           <div class="set-label">
             Resume conversations when panes reopen

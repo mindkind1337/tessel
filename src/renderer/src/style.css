@@ -2669,6 +2669,64 @@ body.pane-dragging * {
   word-break: break-all;
 }
 
+/* Settings > Agents */
+.agents-warn {
+  margin: 4px 0 8px;
+}
+
+.agents-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 10px 0 4px;
+}
+
+.agent-set-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.agent-set-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.agent-custom {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 0 10px 23px;
+  padding: 10px;
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.1));
+  border-radius: 6px;
+}
+
+.agent-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.agent-field .set-number {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.agent-env {
+  resize: vertical;
+  font-family: 'Cascadia Mono', Consolas, monospace;
+}
+
+.agent-custom-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
 .quick-enter {
   display: inline-flex;
   align-items: center;

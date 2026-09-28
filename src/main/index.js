@@ -1555,6 +1555,28 @@ ipcMain.handle('pty:create', async (_evt, opts = {}) => {
   const startDir = cwd && fs.existsSync(cwd) ? cwd : os.homedir()
   const useConpty = shouldUseConpty()
   const backend = useConpty ? 'conpty' : 'winpty'
+  // Variables for this pane only (an agent's settings, its account): checked
+  // names, at most 50, never Tessel's own TESSEL_*.
+  const extraEnv = {}
+  if (opts.extraEnv && typeof opts.extraEnv === 'object' && !Array.isArray(opts.extraEnv)) {
+    for (const [k, v] of Object.entries(opts.extraEnv).slice(0, 50)) {
+      if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(k) && !/^TESSEL_/i.test(k) && typeof v === 'string' && v.length <= 8192) extraEnv[k] = v
+    }
+  }
+  // A managed provider account: inherited sign-in variables that would win
+  // over it are removed (only these known names; the account's own values in
+  // extraEnv, like its CODEX_HOME, stay).
+  const UNSETTABLE = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CONFIG_DIR', 'OPENAI_API_KEY', 'CODEX_ACCESS_TOKEN', 'CODEX_HOME',
+    'CODEX_API_KEY', 'OPENAI_IDENTITY_TOKEN_FILE', 'OPENAI_FEDERATION_RULE_ID', 'OPENAI_WORKLOAD_IDENTITY_CONTEXT',
+    'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY']
+  const baseEnv = freshEnv()
+  if (Array.isArray(opts.unsetEnv)) {
+    for (const name of opts.unsetEnv) {
+      if (!UNSETTABLE.includes(name)) continue
+      // Windows variable names ignore case.
+      for (const k of Object.keys(baseEnv)) if (k.toUpperCase() === name) delete baseEnv[k]
+    }
+  }
   let res
   try {
     res = await host.request('create', {
@@ -1563,7 +1585,8 @@ ipcMain.handle('pty:create', async (_evt, opts = {}) => {
       args: shell.args,
       cwd: startDir,
       env: {
-        ...freshEnv(),
+        ...baseEnv,
+        ...extraEnv,
         // For the Tessel team tools (teamMcp/server.cjs): which pane this is,
         // and the project its team lives in.
         TESSEL_PANE_ID: String(id),

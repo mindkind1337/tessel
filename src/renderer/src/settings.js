@@ -44,10 +44,18 @@ export const DEFAULT_SETTINGS = Object.freeze({
   customAgents: [],
   // [{ id, name, text, enter }] text you send to the active pane from the
   // command palette ("Run: <name>"); enter: also press Enter.
-  quickCommands: []
+  quickCommands: [],
+  // Settings > Agents. { [agent id]: { enabled, command, args, env } }: its
+  // own command, arguments, "NAME=value" variables; enabled false hides it.
+  agentPrefs: {},
+  // The agent a new pane starts (Ctrl+Shift+T): '' = the default shell.
+  defaultAgent: '',
+  // 'manual' (agents ask before acting) or 'yolo' (each agent's own
+  // skip-approvals flag, unless you set its arguments yourself).
+  agentPermissions: 'manual'
 })
 
-const fresh = () => ({ ...DEFAULT_SETTINGS, customAgents: [], quickCommands: [] })
+const fresh = () => ({ ...DEFAULT_SETTINGS, customAgents: [], quickCommands: [], agentPrefs: {} })
 
 export const settings = reactive(fresh())
 
@@ -62,6 +70,11 @@ export function loadSettings(saved) {
       if (Array.isArray(v)) settings.customAgents = v.filter(validCustomAgent).slice(0, 30)
       continue
     }
+    if (key === 'agentPrefs') {
+      settings.agentPrefs = validAgentPrefs(v)
+      continue
+    }
+    if (key === 'agentPermissions' && !['manual', 'yolo'].includes(v)) continue
     if (key === 'quickCommands') {
       if (Array.isArray(v)) settings.quickCommands = v.filter(validQuickCommand).slice(0, 100)
       continue
@@ -78,8 +91,24 @@ export function loadSettings(saved) {
 
 // Resets preferences; your custom agents and quick commands are kept.
 export function resetSettings() {
-  const keep = { customAgents: settings.customAgents, quickCommands: settings.quickCommands }
+  const keep = { customAgents: settings.customAgents, quickCommands: settings.quickCommands, agentPrefs: settings.agentPrefs }
   Object.assign(settings, fresh(), keep)
+}
+
+// { [agent id]: { enabled?, command?, args?, env? } } from storage: only
+// well-formed entries, strings trimmed to sane sizes.
+export function validAgentPrefs(v) {
+  const out = {}
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return out
+  for (const [id, p] of Object.entries(v).slice(0, 100)) {
+    if (!/^[\w.-]{1,60}$/.test(id) || !p || typeof p !== 'object') continue
+    const e = {}
+    if (typeof p.enabled === 'boolean') e.enabled = p.enabled
+    for (const f of ['command', 'args']) if (typeof p[f] === 'string' && p[f].length <= 2000) e[f] = p[f]
+    if (typeof p.env === 'string' && p.env.length <= 16384) e.env = p.env
+    out[id] = e
+  }
+  return out
 }
 
 export function validQuickCommand(q) {
