@@ -37,3 +37,31 @@ describe('Usage details', () => {
     w.unmount()
   })
 })
+
+describe('Usage details: Codex tab', () => {
+  it('tokens and requests (no $), by day, model, project and session', async () => {
+    const z = { input: 0, cached: 0, output: 0, reasoning: 0, total: 0, turns: 0 }
+    window.shellApi = {
+      claudeUsageReport: vi.fn(async () => ({ ok: false, error: 'x' })),
+      codexUsageReport: vi.fn(async () => ({
+        ok: true,
+        provider: 'codex',
+        totals: { ...z, total: 1500000, turns: 40, cached: 900000, reasoning: 20000 },
+        byDay: [{ day: key, ...z, total: 1500000, turns: 40 }],
+        byModel: [{ model: 'gpt-6-astra', ...z, total: 1500000, turns: 40 }],
+        byProject: [{ cwd: 'C:\Tessel', label: 'Tessel', ...z, total: 1500000, turns: 40 }],
+        sessions: [{ id: 'x1', title: 'Stabilize', cwd: 'C:\Tessel', model: 'gpt-6-astra', last: new Date().toISOString(), tokens: { ...z, total: 1500000, turns: 40 } }]
+      }))
+    }
+    const w = mount(UsageDialog, { attachTo: document.body })
+    await flushPromises()
+    await w.findAll('.launch-seg-btn')[1].trigger('click')
+    expect(window.shellApi.codexUsageReport).toHaveBeenCalledWith({})
+    const tiles = w.find('[data-test="codex-tiles"]').text()
+    expect(tiles).toMatch(/1\.5M/)
+    expect(tiles).toMatch(/40\s*Requests/)
+    expect(w.text()).toMatch(/Stabilize/)
+    expect(w.text()).not.toMatch(/\$\d/)
+    w.unmount()
+  })
+})

@@ -38,6 +38,26 @@ const days = computed(() => {
 })
 const maxCost = computed(() => Math.max(0.01, ...days.value.map((d) => d.cost)))
 
+// Codex (codexUsageReport.js, Codex's): tokens only, no price table to trust.
+// Counters { input, cached, output, reasoning, total, turns } (turns: requests).
+const cx = computed(() => (codex.value && codex.value.ok ? codex.value : null))
+const cxHover = ref(null)
+const cxDays = computed(() => {
+  if (!cx.value) return []
+  const byDay = new Map((cx.value.byDay || []).map((d) => [d.day, d]))
+  const out = []
+  const now = new Date()
+  for (let i = 29; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i)
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+    const got = byDay.get(key)
+    out.push({ day: key, label: d.toLocaleDateString([], { month: 'short', day: 'numeric' }), total: got ? got.total || 0 : 0, turns: got ? got.turns || 0 : 0 })
+  }
+  return out
+})
+const cxMax = computed(() => Math.max(1, ...cxDays.value.map((d) => d.total)))
+const ms = (v) => (typeof v === 'number' ? v : Date.parse(v) || 0)
+
 const money = (v) => (v >= 100 ? `$${Math.round(v)}` : `$${v.toFixed(2)}`)
 function tokens(v) {
   if (v >= 1e9) return `${(v / 1e9).toFixed(1)}B`
@@ -136,8 +156,65 @@ const folder = (p) => (p ? p.replace(/[\\/]+$/, '').split(/[\\/]/).pop() : '')
 
       <template v-else>
         <p v-if="!codex" class="usage-note">{{ hasCodex ? 'Reading Codex’s sessions…' : 'Coming soon: Codex’s report is being added.' }}</p>
-        <p v-else-if="!codex.ok" class="mcp-error">Could not read them: {{ codex.error }}</p>
-        <pre v-else class="usage-note">{{ codex }}</pre>
+        <p v-else-if="!cx" class="mcp-error">Could not read them: {{ codex.error }}</p>
+        <template v-else>
+          <div class="usage-tiles" data-test="codex-tiles">
+            <div class="usage-tile">
+              <span class="usage-tile-value">{{ tokens(cx.totals.total || 0) }}</span>
+              <span class="usage-tile-label">Tokens, last 30 days</span>
+            </div>
+            <div class="usage-tile">
+              <span class="usage-tile-value">{{ (cx.totals.turns || 0).toLocaleString() }}</span>
+              <span class="usage-tile-label">Requests</span>
+            </div>
+            <div class="usage-tile">
+              <span class="usage-tile-value">{{ tokens(cx.totals.cached || 0) }}</span>
+              <span class="usage-tile-label">Input read from cache</span>
+            </div>
+            <div class="usage-tile">
+              <span class="usage-tile-value">{{ tokens(cx.totals.reasoning || 0) }}</span>
+              <span class="usage-tile-label">Reasoning tokens</span>
+            </div>
+          </div>
+
+          <div class="usage-chart-head">Tokens per day</div>
+          <div class="usage-chart" role="img" aria-label="Codex tokens per day over the last 30 days" @mouseleave="cxHover = null">
+            <div v-for="d in cxDays" :key="d.day" class="usage-col" @mouseenter="cxHover = d">
+              <div class="usage-colbar" :style="{ height: d.total > 0 ? Math.max(2, (d.total / cxMax) * 100) + '%' : '0' }"></div>
+            </div>
+            <div v-if="cxHover" class="usage-tip">{{ cxHover.label }} · {{ tokens(cxHover.total) }} tokens · {{ cxHover.turns }} requests</div>
+          </div>
+          <div class="usage-axis"><span>{{ cxDays[0] && cxDays[0].label }}</span><span>today</span></div>
+
+          <div class="usage-cols2">
+            <table class="usage-table">
+              <thead><tr><th>Model</th><th>Requests</th><th>Tokens</th></tr></thead>
+              <tbody>
+                <tr v-for="m in cx.byModel || []" :key="m.model"><td>{{ m.model }}</td><td>{{ m.turns }}</td><td>{{ tokens(m.total || 0) }}</td></tr>
+              </tbody>
+            </table>
+            <table class="usage-table">
+              <thead><tr><th>Project</th><th>Requests</th><th>Tokens</th></tr></thead>
+              <tbody>
+                <tr v-for="p in (cx.byProject || []).slice(0, 10)" :key="p.cwd"><td :title="p.cwd">{{ p.label || folder(p.cwd) }}</td><td>{{ p.turns }}</td><td>{{ tokens(p.total || 0) }}</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="usage-chart-head">Sessions</div>
+          <table class="usage-table usage-sessions">
+            <thead><tr><th>Title</th><th>Project</th><th>Last</th><th>Model</th><th>Requests</th><th>Tokens</th></tr></thead>
+            <tbody>
+              <tr v-for="s in (cx.sessions || []).slice(0, 20)" :key="s.id" :title="s.id">
+                <td>{{ s.title || '' }}</td><td>{{ folder(s.cwd) }}</td><td>{{ when(ms(s.last)) }}</td><td>{{ s.model }}</td><td>{{ (s.tokens && s.tokens.turns) || 0 }}</td><td>{{ tokens((s.tokens && s.tokens.total) || 0) }}</td>
+              </tr>
+            </tbody>
+          </table>
+          <p class="usage-note">
+            Read from Codex's own session files on this computer; nothing is sent anywhere. No cost in $: Codex has no
+            price table Tessel can check.
+          </p>
+        </template>
       </template>
     </div>
   </div>
