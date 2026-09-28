@@ -23,6 +23,11 @@ const brief = ref('')
 // 'new:<kind id>' or 'pane:<pane id>'
 const who = ref(props.agentKinds[0] ? `new:${props.agentKinds[0].id}` : '')
 const isolated = ref(true)
+// Its own copy: from which branch, with the project's .env files, and its
+// setup script (.tessel/setup.ps1) run first.
+const baseBranch = ref('')
+const copyEnv = ref(true)
+const runSetup = ref(false)
 const reviewerId = ref('')
 const titleEl = ref(null)
 
@@ -55,6 +60,11 @@ function start() {
     brief: brief.value.trim(),
     agent: { kind, id },
     isolated: kind === 'new' && canIsolate.value && isolated.value,
+    worktreeOptions: {
+      ...(baseBranch.value.trim() ? { baseBranch: baseBranch.value.trim() } : {}),
+      copyEnv: copyEnv.value,
+      runSetup: runSetup.value
+    },
     reviewerId: reviewerId.value || null
   })
 }
@@ -146,6 +156,14 @@ onMounted(() => nextTick(() => titleEl.value && titleEl.value.focus()))
           </span>
         </span>
       </label>
+      <div v-if="canIsolate && isolated" class="nt-copy-opts" data-test="copy-options">
+        <label class="nt-copy-opt">
+          <span>Start from branch</span>
+          <input v-model="baseBranch" class="nt-select nt-branch" placeholder="the current branch" spellcheck="false" />
+        </label>
+        <label class="nt-copy-opt"><input v-model="copyEnv" type="checkbox" /> Copy the project's .env files into it</label>
+        <label class="nt-copy-opt"><input v-model="runSetup" type="checkbox" /> Run .tessel/setup.ps1 in it first (if the project has one)</label>
+      </div>
       <label class="nt-where" :class="{ on: !(canIsolate && isolated) }">
         <input
           v-model="isolated"

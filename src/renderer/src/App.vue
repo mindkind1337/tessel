@@ -30,6 +30,7 @@ import ConfirmDialog from './components/ConfirmDialog.vue'
 import ImageViewer from './components/ImageViewer.vue'
 import NotificationsMenu from './components/NotificationsMenu.vue'
 import FileFinder from './components/FileFinder.vue'
+import UsageMenu from './components/UsageMenu.vue'
 import { addNotification, readForPane, playAlertSound } from './notificationsStore'
 import NotesPanel from './components/NotesPanel.vue'
 import NewTaskDialog from './components/NewTaskDialog.vue'
@@ -2895,7 +2896,12 @@ async function startTask(spec, opts = {}) {
     }
     let worktree = null
     if (spec.isolated) {
-      const res = await window.shellApi.createWorktree(ws.cwd, spec.title)
+      const res = await window.shellApi.createWorktree(ws.cwd, spec.title, spec.worktreeOptions || {})
+      // The copy exists even when its setup script failed: said, never undone.
+      if (res && res.ok && res.setup && res.setup.ran && !res.setup.ok)
+        showToast(`The copy is ready, but .tessel/setup.ps1 failed: ${res.setup.error || 'see the script'}.`, { kind: 'error', timeout: 9000 })
+      if (res && res.ok && res.copyEnvResult && res.copyEnvResult.error)
+        showToast(`The copy is ready, but its .env files were not all copied: ${res.copyEnvResult.error}.`, { kind: 'error', timeout: 9000 })
       if (!res || !res.ok) {
         updateTask(task.id, { column: 'todo' })
         showToast(`Could not make a separate copy: ${(res && res.error) || 'unknown error'}. The task stays in To do.`, {
@@ -5657,6 +5663,7 @@ onBeforeUnmount(() => {
 
         <span class="toolbar-sep"></span>
 
+        <UsageMenu />
         <NotificationsMenu @focus-pane="focusPane" />
         <button
           class="tb-icon"
