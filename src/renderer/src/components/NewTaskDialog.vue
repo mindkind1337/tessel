@@ -1,3 +1,4 @@
+<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // "New task": a title, instructions and the agent that does it. By default a
 // new agent works in its own copy of the project (git worktree + branch), so

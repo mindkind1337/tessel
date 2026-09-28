@@ -1,3 +1,4 @@
+<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // The rendered view of an editor tab (Orca's view modes, after its
 // MarkdownPreview.tsx, MermaidViewer, CsvViewer and ImageViewer; MIT,

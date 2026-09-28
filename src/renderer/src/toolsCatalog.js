@@ -1,3 +1,4 @@
+// i18n-pending: text here does not go through t() yet
 // Developer tools the Tools dialog can detect and install. `bin` is the command
 // looked up on PATH; `install` runs in a new pane (winget ships with Windows).
 // `actions` are extra one-click commands once the tool is installed.

@@ -1,3 +1,4 @@
+<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // Review a finished task before it reaches the project: what the agent
 // changed (files, commits, the diff of each file), whether it can merge into

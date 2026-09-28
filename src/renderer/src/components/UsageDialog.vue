@@ -1,3 +1,4 @@
+<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // Usage details (from the toolbar gauge): for each agent, tokens and the
 // estimated cost by day, model, project and conversation, read from its own

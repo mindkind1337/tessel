@@ -1,3 +1,4 @@
+<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // Source Control (the side panel's Changes tab), ported from Orca's
 // right-sidebar/source-control (panel/panel-ready.tsx, panel/header-toolbar.tsx,

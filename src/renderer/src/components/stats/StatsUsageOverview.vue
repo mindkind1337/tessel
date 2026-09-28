@@ -1,3 +1,4 @@
+<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 import { computed } from 'vue'
 import BrandIcon from '../BrandIcon.vue'

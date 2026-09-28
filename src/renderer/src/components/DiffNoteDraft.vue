@@ -1,3 +1,4 @@
+<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // The composer for a new review note, inline under a diff line (after Orca's
 // DiffCommentDraftCard.tsx, MIT, Copyright (c) 2026 Lovecast Inc.): Enter

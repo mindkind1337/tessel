@@ -1,3 +1,4 @@
+// i18n-pending: text here does not go through t() yet
 // Review notes on the lines of a diff (the modified side), after Orca's
 // useDiffCommentDecorator.tsx, diff-comment-add-button-overlay.ts,
 // diff-comment-add-note-shortcut.ts and diff-comment-view-zone-entry.ts

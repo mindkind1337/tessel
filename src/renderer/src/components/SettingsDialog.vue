@@ -1,4 +1,6 @@
+<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
+import { t, UI_LANGUAGES } from '../i18n'
 // Settings, as a full page over the app's main area (like Orca's): a sidebar
 // with "Back to app", a search box and the pages, then one page at a time.
 // Edits the shared `settings` store directly, so every change applies live to
@@ -1272,6 +1274,19 @@ function previewSound() {
           </header>
           <div class="set-group">
             <div class="set-card">
+              <div class="set-row" data-setting="ui-language">
+                <label class="set-label" for="appearance-language">
+                  {{ t('settings.language.title', 'Language') }}
+                  <span class="set-hint">{{
+                    t('settings.language.hint', "The language of Tessel's interface. System follows Windows.")
+                  }}</span>
+                </label>
+                <select id="appearance-language" v-model="settings.uiLanguage" class="set-select">
+                  <option v-for="lang in UI_LANGUAGES" :key="lang.value" :value="lang.value">
+                    {{ t(lang.key, lang.label) }}
+                  </option>
+                </select>
+              </div>
               <div class="set-row">
                 <label class="set-label" for="appearance-theme">
                   Theme

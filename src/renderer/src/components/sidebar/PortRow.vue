@@ -1,3 +1,4 @@
+<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // One live port with its Open / Copy / Stop actions, ported from Orca's
 // WorktreePortRow (sidebar/WorktreeCardPorts.tsx) and the status bar's

@@ -1,3 +1,4 @@
+<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // The plug on a workspace card and its hover card listing the live ports,
 // ported from Orca's WorktreeCardPortsTrigger / WorktreeCardPortsDetails

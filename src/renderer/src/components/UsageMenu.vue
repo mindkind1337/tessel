@@ -1,3 +1,4 @@
+<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // Local quota observations update the toolbar without network polling.
 // Authenticated provider reads happen only on menu/open/refresh actions;

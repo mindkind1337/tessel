@@ -1,3 +1,4 @@
+// i18n-pending: text here does not go through t() yet
 // Popular MCP servers for the catalog. Every package and URL here was checked
 // to exist. `inputs` are asked for before adding; `{key}` placeholders in the
 // command, URL or header are replaced with the answers.

@@ -1,3 +1,4 @@
+// i18n-pending: text here does not go through t() yet
 // The git status the Changes tab shows, shared by the side panel (its count
 // badge), the Changes tab and the diff tabs (which read their sides again
 // after a stage, a discard or a commit). One request per folder at a time;

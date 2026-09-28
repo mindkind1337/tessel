@@ -1,3 +1,4 @@
+<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // "Restart and update" confirmation: what's new, and what happens to the panes.
 import { ref, onMounted } from 'vue'

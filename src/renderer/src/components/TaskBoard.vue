@@ -1,3 +1,4 @@
+<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // The Agent Task Board: a 4-column kanban (todo / doing / review / done) rendered
 // from the shared reactive store. It owns only the add-task control and the

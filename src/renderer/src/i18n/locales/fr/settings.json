@@ -1,0 +1,11 @@
+{
+  "settings": {
+    "language": {
+      "title": "Langue",
+      "hint": "La langue de l'interface de Tessel. Système suit Windows.",
+      "system": "Système",
+      "english": "English",
+      "french": "Français"
+    }
+  }
+}

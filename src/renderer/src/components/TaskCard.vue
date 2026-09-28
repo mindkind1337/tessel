@@ -1,3 +1,4 @@
+<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // A single kanban task. Renders its title + current column and drives the shared
 // task-board store directly (the brief: the card consumes the store) — renaming

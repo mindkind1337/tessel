@@ -1,3 +1,4 @@
+<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // Command palette (Ctrl+Shift+P, or the search box in the middle of the
 // toolbar): type to find any command, pane or workspace, Enter to run it.

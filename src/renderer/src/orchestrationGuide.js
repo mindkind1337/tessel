@@ -1,3 +1,4 @@
+// i18n-pending: text here does not go through t() yet
 // Settings > Orchestration: ways to have agents work together through
 // Tessel's team tools (after Orca's usage examples). Each is a prompt you give
 // the agent that leads a team.

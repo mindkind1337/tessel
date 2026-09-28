@@ -1,3 +1,4 @@
+<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // An image shown over Tessel ([Image #N] clicked in a Claude Code pane):
 // fitted to the window, full size on click (scroll to move around). Esc, a

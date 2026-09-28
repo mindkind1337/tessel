@@ -1,3 +1,4 @@
+// i18n-pending: text here does not go through t() yet
 import { createApp, watch } from 'vue'
 import App from './App.vue'
 import '@xterm/xterm/css/xterm.css'
@@ -8,6 +9,7 @@ import { settings } from './settings'
 import { applyTheme } from './themes'
 import { applyAppearance, applyUiZoom } from './appearance'
 import { startCapture } from './ptyStore'
+import { setUiLanguage } from './i18n'
 
 // Begin buffering PTY output before any pane mounts so nothing is lost.
 startCapture()
@@ -20,6 +22,7 @@ watch(
   { immediate: true }
 )
 watch(() => settings.uiZoomLevel, applyUiZoom, { immediate: true })
+watch(() => settings.uiLanguage, (lang) => setUiLanguage(lang), { immediate: true })
 
 // Send interface errors to the app log (%APPDATA%\\tessel\\logs).
 function report(level, value) {

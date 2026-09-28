@@ -1,7 +1,9 @@
+// i18n-pending: text here does not go through t() yet
 // User preferences. One reactive object shared by the settings dialog, App and
 // every TerminalPane; App persists it with the workspace layout.
 import { reactive } from 'vue'
 import { isTheme } from './themes'
+import { UI_LANGUAGES } from './i18n'
 import { validHiddenUsageProviders } from '../../shared/usageProviders'
 
 export const FONT_FAMILIES = [
@@ -15,6 +17,9 @@ export const FONT_FAMILIES = [
 
 export const DEFAULT_SETTINGS = Object.freeze({
   theme: 'classic',
+  // The interface's language: 'system' (Windows' language when Tessel has
+  // it, else English), 'en' or 'fr'.
+  uiLanguage: 'system',
   hiddenUsageProviders: [],
   fontSize: 13,
   fontFamily: 'Cascadia Mono',
@@ -288,6 +293,7 @@ export function loadSettings(saved) {
       continue
     }
     if (key === 'theme' && !isTheme(v)) continue
+    if (key === 'uiLanguage' && !UI_LANGUAGES.some((l) => l.value === v)) continue
     if (key === 'cursorStyle' && !['block', 'bar', 'underline'].includes(v)) continue
     if (key === 'alertSound' && !['none', 'chime', 'ping'].includes(v)) continue
     if (key === 'usagePercentageDisplay' && !['used', 'remaining'].includes(v)) continue

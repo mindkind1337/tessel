@@ -1,3 +1,4 @@
+<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // One agent or terminal in a workspace card, ported from Orca's
 // CompactAgentRow (sidebar/worktree-card-compact-agent-row.tsx; MIT,

@@ -1,3 +1,4 @@
+<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // Vue port of Orca's StatsPane / UsageOverviewPane / provider panes
 // (MIT, Copyright (c) 2026 Lovecast Inc.). Reads Tessel's local reports.

@@ -1,3 +1,4 @@
+<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // A file shown in Tessel (after Orca's viewers): Markdown rendered or as its
 // source, Mermaid diagrams, CSV/TSV as a table, JSON formatted, images, and

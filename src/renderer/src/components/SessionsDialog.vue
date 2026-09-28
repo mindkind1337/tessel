@@ -1,3 +1,4 @@
+<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // Past agent conversations, newest first. Resume one in a new
 // pane (in the folder it ran in), jump to a pane that already has it open, or

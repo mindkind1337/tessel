@@ -1,3 +1,4 @@
+// i18n-pending: text here does not go through t() yet
 // Scans the live ports of every workspace copy, like Orca's
 // WorkspacePortScanner (MIT, Copyright (c) 2026 Lovecast Inc.): every 30 s
 // while the window is visible, at once when it becomes visible again, and

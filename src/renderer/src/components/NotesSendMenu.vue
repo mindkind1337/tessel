@@ -1,3 +1,4 @@
+<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // "Send notes to an agent" (after Orca's NotesSendMenu.tsx and
 // ReviewNotesSendMenuContent.tsx, MIT, Copyright (c) 2026 Lovecast Inc.):

@@ -1,3 +1,4 @@
+// i18n-pending: text here does not go through t() yet
 // The files open in Tessel's editor panes, one document per file (kept while
 // any pane has a tab for it, so undo history survives tab switches and pane
 // moves; disposed when its last tab closes). Each document holds one Monaco

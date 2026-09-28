@@ -1,3 +1,4 @@
+<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // MCP servers for every agent CLI (Claude Code, Codex, Gemini CLI, Qwen Code,
 // Copilot CLI, OpenCode), in one place:

@@ -1,3 +1,4 @@
+<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // The sub-agents a Claude Code pane's conversation started (its Task / Agent
 // tool), like Claude Code's own list: each one's kind, title, time and

@@ -1,3 +1,4 @@
+<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // Activity of the agents: what needs you now, one line per agent, and a
 // timeline of messages, approvals, limits, team changes and journal entries.

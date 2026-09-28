@@ -1,3 +1,4 @@
+<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // The right side panel (after Orca's): one panel, a tab bar at its top —
 // Files (the explorer), Changes (source control), Tasks (the task board).

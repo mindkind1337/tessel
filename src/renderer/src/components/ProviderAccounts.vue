@@ -1,3 +1,4 @@
+<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // Account rows and quiet maintenance actions are inspired by Orca's MIT
 // AccountsPane (Lovecast, 2026). This Vue implementation is independent.

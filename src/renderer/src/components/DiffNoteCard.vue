@@ -1,3 +1,4 @@
+<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // A saved review note, inline under its diff line (after Orca's
 // DiffCommentCard.tsx and diff-comment-zone-card.tsx, MIT, Copyright (c) 2026

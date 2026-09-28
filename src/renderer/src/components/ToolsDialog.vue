@@ -1,3 +1,4 @@
+<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // "Tools": see which AI agents and developer tools are installed, install the
 // missing ones in a pane (npm / winget), run their setup steps, and add your

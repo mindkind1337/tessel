@@ -1,3 +1,4 @@
+<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // The project notes, inside Tessel: read them formatted, or edit and save.
 // Agents write in the same file, so the view follows their changes, and a

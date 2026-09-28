@@ -1,3 +1,4 @@
+<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // One place to open anything: pick a terminal or an agent, and where it goes.
 // Used from the toolbar's "New" button and from a pane's own menu (then the

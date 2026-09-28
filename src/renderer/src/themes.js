@@ -1,3 +1,4 @@
+// i18n-pending: text here does not go through t() yet
 // UI themes share terminal backgrounds with their corresponding CSS palette.
 // Classic and Warp-inspired leave ANSI colours untouched (programs keep their
 // colour semantics); the named palette themes (shared/themePalettes.js) bring

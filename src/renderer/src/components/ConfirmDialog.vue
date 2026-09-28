@@ -1,3 +1,4 @@
+<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // A confirmation in Tessel's own look, instead of the operating system's
 // window.confirm (which ignores the theme). Enter confirms, Esc cancels.

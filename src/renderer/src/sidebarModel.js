@@ -1,3 +1,4 @@
+// i18n-pending: text here does not go through t() yet
 // The left sidebar's logic, ported from Orca (MIT, Copyright (c) 2026
 // Lovecast Inc.): projects (Orca's repos) -> workspaces (Orca's worktrees:
 // the project folder and each task copy) -> the agents and terminals in each,

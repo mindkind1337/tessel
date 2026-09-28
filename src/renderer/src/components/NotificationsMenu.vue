@@ -1,3 +1,4 @@
+<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // The toolbar bell: the notification inbox (notificationsStore.js). A click on
 // an entry opens its pane; each entry can be marked read or unread.

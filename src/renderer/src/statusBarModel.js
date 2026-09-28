@@ -1,3 +1,4 @@
+// i18n-pending: text here does not go through t() yet
 // The status bar's pure logic, ported from Orca (MIT, Copyright (c) 2026
 // Lovecast Inc.): resource-usage-metrics.tsx (formatMemory / formatCpu),
 // agent-awake-copy.ts, the Resource Manager tree and the Ports summary.

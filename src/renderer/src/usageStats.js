@@ -1,3 +1,4 @@
+// i18n-pending: text here does not go through t() yet
 // Local-report presentation, independently adapted from Orca's usage overview
 // normalization/daily series (MIT, Copyright (c) 2026 Lovecast Inc.).
 // Reports are already deduplicated and filtered in main. Never reconstruct

@@ -1,3 +1,4 @@
+<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // A code editor pane (like Orca's editor, with the same Monaco engine): one
 // tab per open file, preview tabs (italic) replaced by the next file opened

@@ -1,3 +1,4 @@
+<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // The file explorer (after Orca's): the workspace's project as a tree, with
 // its git status (M modified, A added, D deleted, R renamed, U untracked),

@@ -1,3 +1,4 @@
+<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // The left sidebar, rebuilt on Orca's (MIT, Copyright (c) 2026 Lovecast
 // Inc.; src/renderer/src/components/sidebar/: index.tsx, SidebarNav,

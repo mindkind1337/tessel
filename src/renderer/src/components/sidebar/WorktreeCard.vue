@@ -1,3 +1,4 @@
+<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // One workspace card (the project folder, or a task copy) with its status
 // lane, title, branch, live ports and the agents / terminals working in it.

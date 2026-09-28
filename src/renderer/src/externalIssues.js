@@ -1,3 +1,4 @@
+// i18n-pending: text here does not go through t() yet
 // A user starts an external issue through the same task/copy workflow as a
 // local card. Only its link and title enter the prompt, never remote HTML.
 const text = (value, max) =>
