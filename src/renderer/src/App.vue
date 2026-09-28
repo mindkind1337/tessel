@@ -1,4 +1,3 @@
-<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 import { ref, reactive, provide, watch, computed, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import SplitNode from './components/SplitNode.vue'
@@ -72,6 +71,7 @@ import {
 } from './editor/documents'
 import { openTab, validSavedFiles, samePath, fileName, docPathOf, diffTabPath } from './editor/editorTabs'
 import { setNotesDelivery } from './notesDelivery'
+import { t, intlLocale } from './i18n'
 
 const shells = ref([])
 const agents = ref([])
@@ -128,7 +128,7 @@ const voiceLabel = computed(() => {
 })
 const voiceName = computed(() => {
   const l = voiceLanguages.value.find((x) => x.tip === settings.voiceTip)
-  return l ? l.name : 'current keyboard language'
+  return l ? l.name : t('app.voice.currentKeyboard', 'current keyboard language')
 })
 
 // Hovering a pane in a menu outlines it, so you can see which one you pick.
@@ -190,7 +190,7 @@ async function viewFile({ file, label = '', line = null, preview = true }) {
   if (!file) return
   if (fileKind(file) === 'pdf') {
     const res = window.shellApi.openPdf ? await window.shellApi.openPdf(file).catch(() => null) : null
-    if (!res || !res.ok) showToast(`Could not open ${label || file}${res && res.error ? `: ${res.error}` : ''}`, { kind: 'error', timeout: 5000 })
+    if (!res || !res.ok) showToast(res && res.error ? t('app.file.openFailedWhy', 'Could not open {{file}}: {{error}}', { file: label || file, error: res.error }) : t('app.file.openFailed', 'Could not open {{file}}', { file: label || file }), { kind: 'error', timeout: 5000 })
     return
   }
   const ln = Number.isInteger(line) ? line : null
@@ -200,7 +200,7 @@ async function viewFile({ file, label = '', line = null, preview = true }) {
 // Outside Tessel: VS Code at the line when installed, else the file's own program.
 async function openExternally({ file, line, col }) {
   const res = await window.shellApi.openFile({ file, line: line || undefined, col: col || undefined }).catch(() => null)
-  if (!res || !res.ok) showToast(`Could not open ${file}${res && res.error ? `: ${res.error}` : ''}`, { kind: 'error', timeout: 5000 })
+  if (!res || !res.ok) showToast(res && res.error ? t('app.file.openFailedWhy', 'Could not open {{file}}: {{error}}', { file, error: res.error }) : t('app.file.openFailed', 'Could not open {{file}}', { file }), { kind: 'error', timeout: 5000 })
 }
 
 // --- Tessel's code editor (EditorPane.vue) --------------------------------------------
@@ -214,7 +214,7 @@ function makeEditorLeaf(id = null) {
     type: 'leaf',
     kind: 'editor',
     id: id || newId('pane'),
-    title: 'Editor',
+    title: t('app.pane.editor', 'Editor'),
     files: [],
     activePath: null,
     broadcast: false,
@@ -274,13 +274,13 @@ async function askEditorClose(paths) {
   if (!paths.length) return true
   const names = paths.map((p) => fileName(p))
   const answer = await askConfirm({
-    title: 'Unsaved changes',
+    title: t('app.unsaved.title', 'Unsaved changes'),
     text:
       paths.length === 1
-        ? `"${names[0]}" has unsaved changes. Do you want to save before closing?`
-        : `${paths.length} files have unsaved changes (${names.slice(0, 4).join(', ')}${paths.length > 4 ? ', …' : ''}). Do you want to save them before closing?`,
-    confirmLabel: paths.length === 1 ? 'Save' : 'Save all',
-    altLabel: "Don't Save"
+        ? t('app.unsaved.one', '"{{name}}" has unsaved changes. Do you want to save before closing?', { name: names[0] })
+        : t('app.unsaved.many', '{{count}} files have unsaved changes ({{names}}). Do you want to save them before closing?', { count: paths.length, names: `${names.slice(0, 4).join(', ')}${paths.length > 4 ? ', …' : ''}` }),
+    confirmLabel: paths.length === 1 ? t('app.unsaved.save', 'Save') : t('app.unsaved.saveAll', 'Save all'),
+    altLabel: t('app.unsaved.dontSave', "Don't Save")
   })
   if (answer === 'alt') return true
   if (answer !== true) return false
@@ -515,69 +515,71 @@ const activeId = computed({
 const initError = ref('')
 const openMenu = ref(null) // toolbar dropdown: 'layout' | 'agents'
 
-const SHORTCUTS = [
+// The help dialog's shortcuts, in the interface's language.
+const shortcuts = computed(() => [
   {
-    title: 'Panes',
+    title: t('app.help.panes', 'Panes'),
     rows: [
-      ['Ctrl+Shift+T', 'New pane: the default agent, or the default shell'],
-      ['Ctrl+Shift+Space', 'Open a terminal or agent'],
-      ['Ctrl+Shift+P', 'Command palette: find panes, workspaces, commands'],
-      ['Ctrl+Shift+J', "Jump to a file of the workspace's project"],
-      ['Ctrl+Shift+E', 'Split right'],
-      ['Ctrl+Shift+O', 'Split down'],
-      ['Ctrl+Shift+W', 'Close pane'],
-      ['Ctrl+Shift+R', 'Restart pane'],
-      ['Alt+Arrow', 'Move between panes'],
-      ['Esc', 'Restore a maximized pane']
+      ['Ctrl+Shift+T', t('app.help.newPane', 'New pane: the default agent, or the default shell')],
+      ['Ctrl+Shift+Space', t('app.help.launcher', 'Open a terminal or agent')],
+      ['Ctrl+Shift+P', t('app.help.palette', 'Command palette: find panes, workspaces, commands')],
+      ['Ctrl+Shift+J', t('app.help.finder', "Jump to a file of the workspace's project")],
+      ['Ctrl+Shift+E', t('app.help.splitRight', 'Split right')],
+      ['Ctrl+Shift+O', t('app.help.splitDown', 'Split down')],
+      ['Ctrl+Shift+W', t('app.help.closePane', 'Close pane')],
+      ['Ctrl+Shift+R', t('app.help.restartPane', 'Restart pane')],
+      ['Alt+Arrow', t('app.help.movePanes', 'Move between panes')],
+      ['Esc', t('app.help.restoreMax', 'Restore a maximized pane')]
     ]
   },
   {
-    title: 'Workspaces',
+    title: t('app.help.workspaces', 'Workspaces'),
     rows: [
-      ['Ctrl+Shift+N', 'New workspace'],
-      ['Ctrl+PageUp', 'Previous workspace'],
-      ['Ctrl+PageDown', 'Next workspace']
+      ['Ctrl+Shift+N', t('app.help.newWorkspace', 'New workspace')],
+      ['Ctrl+PageUp', t('app.help.prevWorkspace', 'Previous workspace')],
+      ['Ctrl+PageDown', t('app.help.nextWorkspace', 'Next workspace')]
     ]
   },
   {
-    title: 'Terminal',
+    title: t('app.help.terminal', 'Terminal'),
     rows: [
-      ['Ctrl+Shift+F', 'Find'],
-      ['Ctrl+Shift+C', 'Copy'],
-      ['Ctrl+Shift+V', 'Paste'],
-      ['Ctrl+=', 'Bigger text'],
-      ['Ctrl+-', 'Smaller text'],
-      ['Ctrl+0', 'Reset text size'],
-      ['Shift+PageUp', 'Scroll up in the pane'],
-      ['Shift+PageDown', 'Scroll down in the pane']
+      ['Ctrl+Shift+F', t('app.help.find', 'Find')],
+      ['Ctrl+Shift+C', t('app.help.copy', 'Copy')],
+      ['Ctrl+Shift+V', t('app.help.paste', 'Paste')],
+      ['Ctrl+=', t('app.help.bigger', 'Bigger text')],
+      ['Ctrl+-', t('app.help.smaller', 'Smaller text')],
+      ['Ctrl+0', t('app.help.resetSize', 'Reset text size')],
+      ['Shift+PageUp', t('app.help.scrollUp', 'Scroll up in the pane')],
+      ['Shift+PageDown', t('app.help.scrollDown', 'Scroll down in the pane')]
     ]
   },
   {
-    title: 'Editor',
+    title: t('app.help.editor', 'Editor'),
     rows: [
-      ['Ctrl+S', 'Save the file'],
-      ['Ctrl+W', 'Close the editor tab'],
-      ['Ctrl+F', 'Find in the file'],
-      ['Ctrl+H', 'Replace'],
-      ['Ctrl+G', 'Go to line'],
-      ['Alt+Z', 'Word wrap on or off'],
-      ['F7 / Shift+F7', 'Next / previous change (a diff)'],
-      ['Ctrl+Shift+A', 'Add Review Note (a diff: the selected lines)']
+      ['Ctrl+S', t('app.help.save', 'Save the file')],
+      ['Ctrl+W', t('app.help.closeTab', 'Close the editor tab')],
+      ['Ctrl+F', t('app.help.findInFile', 'Find in the file')],
+      ['Ctrl+H', t('app.help.replace', 'Replace')],
+      ['Ctrl+G', t('app.help.goToLine', 'Go to line')],
+      ['Alt+Z', t('app.help.wordWrap', 'Word wrap on or off')],
+      ['F7 / Shift+F7', t('app.help.nextChange', 'Next / previous change (a diff)')],
+      ['Ctrl+Shift+A', t('app.help.reviewNote', 'Add Review Note (a diff: the selected lines)')]
     ]
   },
   {
-    title: 'App',
+    title: t('app.help.app', 'App'),
     rows: [
-      ['Ctrl+Shift+B', 'Broadcast typing to all panes'],
-      ['Ctrl+Shift+K', 'Task board'],
-      ['Ctrl+Shift+X', 'File explorer'],
-      ['Ctrl+Shift+G', 'Source Control (the git changes)'],
-      ['Ctrl+,', 'Settings'],
-      ['Win+H', 'Voice typing (Windows)'],
-      ['F1', 'This help']
+      ['Ctrl+Shift+B', t('app.help.broadcast', 'Broadcast typing to all panes')],
+      ['Ctrl+Shift+K', t('app.help.taskBoard', 'Task board')],
+      ['Ctrl+Shift+X', t('app.help.fileExplorer', 'File explorer')],
+      ['Ctrl+Shift+G', t('app.help.sourceControl', 'Source Control (the git changes)')],
+      ['Ctrl+,', t('app.help.settings', 'Settings')],
+      ['Win+H', t('app.help.voice', 'Voice typing (Windows)')],
+      ['F1', t('app.help.thisHelp', 'This help')]
     ]
   }
-]
+])
+const updateLabel = computed(() => t('app.toolbar.updateVersion', 'Update {{version}}', { version: updateStatus.value.version }))
 
 const gridOptions = [
   { value: '1x2', label: '1 x 2' },
@@ -738,7 +740,7 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
   // A status setup failure does not prevent the user's agent from launching.
   if (agent && !attached && window.shellApi.prepareAgentStatus) {
     const statusSetup = await window.shellApi.prepareAgentStatus(agent.id).catch(() => null)
-    if (statusSetup?.needsReview) showToast('Codex status hooks were updated. Review them in /hooks to enable live status.', { timeout: 10000 })
+    if (statusSetup?.needsReview) showToast(t('app.codexHooks.updated', 'Codex status hooks were updated. Review them in /hooks to enable live status.'), { timeout: 10000 })
   }
   if (agent && !attached && window.shellApi.accounts && window.shellApi.accounts.launchEnv) {
     let acc = null
@@ -748,7 +750,7 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
       acc = { ok: false, error: err && err.message }
     }
     if (!acc || acc.ok === false) {
-      refused = `${agent.name || agent.id} was not started: its account could not be used (${(acc && acc.error) || 'unknown error'}). See Settings > AI provider accounts.`
+      refused = t('app.account.refused', '{{agent}} was not started: its account could not be used ({{error}}). See Settings > AI provider accounts.', { agent: agent.name || agent.id, error: (acc && acc.error) || t('app.common.unknownError', 'unknown error') })
       if (!opts.keepOnFailure) {
         showToast(refused, { kind: 'error', timeout: 10000 })
         return null
@@ -778,7 +780,7 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
     restoredText = res && res.ok ? opts.savedOutput || '' : ''
   }
   if (!res || !res.ok) {
-    const msg = (res && res.error) || 'Could not start the terminal.'
+    const msg = (res && res.error) || t('app.pane.startFailed', 'Could not start the terminal.')
     showToast(msg, { kind: 'error', timeout: 8000 })
     if (window.shellApi.log) window.shellApi.log('error', `pane ${id} could not start: ${msg}`)
     if (!opts.keepOnFailure) {
@@ -942,7 +944,7 @@ function serializeNode(node) {
       type: 'leaf',
       kind: 'editor',
       id: node.id,
-      title: node.title || 'Editor',
+      title: node.title || t('app.pane.editor', 'Editor'),
       num: node.num || null,
       files: (node.files || []).map((f) => ({ path: f.path, preview: !!f.preview })),
       activePath: node.activePath || null
@@ -1215,7 +1217,7 @@ function closeLeaf(leafId, opts = {}) {
   const ws = wsOfLeaf(leafId)
   const closing = findLeaf(leafId)
   const hadTeam = closing?.team || null
-  const closingTitle = closing?.title || 'An agent'
+  const closingTitle = closing?.title || 'An agent' // i18n-ignore
   // An editor pane: unsaved files are asked about first; it has no terminal.
   if (closing && closing.kind === 'editor') {
     if (!opts.editorChecked) {
@@ -1234,9 +1236,9 @@ function closeLeaf(leafId, opts = {}) {
     const leaf = findLeafIn(ws.tree, leafId)
     if (leaf && leaf.kind === 'agent') {
       askConfirm({
-        title: `Close ${leaf.title}?`,
-        text: 'The agent session will end. Its conversation can be resumed later from Agent sessions.',
-        confirmLabel: 'Close',
+        title: t('app.close.title', 'Close {{name}}?', { name: leaf.title }),
+        text: t('app.close.agentText', 'The agent session will end. Its conversation can be resumed later from Agent sessions.'),
+        confirmLabel: t('app.close.confirm', 'Close'),
         danger: true
       }).then((ok) => ok && closeLeaf(leafId, { ...opts, force: true }))
       return
@@ -1246,11 +1248,13 @@ function closeLeaf(leafId, opts = {}) {
         if (!findLeaf(leafId)) return // closed meanwhile
         if (!work.running && !work.unknown) return closeLeaf(leafId, { ...opts, probed: true })
         askConfirm({
-          title: `Close ${leaf.title}?`,
+          title: t('app.close.title', 'Close {{name}}?', { name: leaf.title }),
           text: work.unknown
-            ? 'Tessel could not check whether a command is still running in it. Closing stops anything running.'
-            : `${work.names.join(', ')} ${work.names.length === 1 ? 'is' : 'are'} still running in it. Closing stops ${work.names.length === 1 ? 'it' : 'them'}.`,
-          confirmLabel: 'Close',
+            ? t('app.close.unknownWork', 'Tessel could not check whether a command is still running in it. Closing stops anything running.')
+            : work.names.length === 1
+              ? t('app.close.runningOne', '{{names}} is still running in it. Closing stops it.', { names: work.names.join(', ') })
+              : t('app.close.runningMany', '{{names}} are still running in it. Closing stops them.', { names: work.names.join(', ') }),
+          confirmLabel: t('app.close.confirm', 'Close'),
           danger: true
         }).then((ok) => ok && closeLeaf(leafId, { ...opts, force: true }))
       })
@@ -1294,7 +1298,7 @@ function closeLeaf(leafId, opts = {}) {
         name: teamById(hadTeam).name,
         detail: closingTitle
       })
-      tellTeam(hadTeam, `${closingTitle} was closed and left the team.`)
+      tellTeam(hadTeam, `${closingTitle} was closed and left the team.`) // i18n-ignore
     }
   }
 }
@@ -1586,7 +1590,7 @@ function boardToSave() {
 // Every board save goes here: none while the saved board could not be read
 // (locked at start), so it is never overwritten.
 function saveBoard() {
-  if (boardLocked) return Promise.resolve({ ok: false, error: 'The saved board could not be read at start.' })
+  if (boardLocked) return Promise.resolve({ ok: false, error: t('app.board.lockedAtStart', 'The saved board could not be read at start.') })
   return window.shellApi.taskBoard.save(boardToSave())
 }
 function scheduleTaskSave() {
@@ -1643,7 +1647,7 @@ async function installUpdate() {
   const ok = await window.shellApi.update.install()
   if (!ok) {
     updateInstalling.value = false
-    showToast('The update is not ready to install yet.', { kind: 'error' })
+    showToast(t('app.update.notReady', 'The update is not ready to install yet.'), { kind: 'error' })
   }
 }
 
@@ -1654,17 +1658,17 @@ async function initUpdates() {
     const wasReady = updateStatus.value.state === 'ready'
     updateStatus.value = s
     if (s.state === 'ready' && !wasReady) {
-      showToast(`Tessel ${s.version} is ready to install.`, {
+      showToast(t('app.update.readyToast', 'Tessel {{version}} is ready to install.', { version: s.version }), {
         kind: 'attention',
         timeout: 15000,
-        action: { label: 'Update', run: () => (updateOpen.value = true) }
+        action: { label: t('app.update.action', 'Update'), run: () => (updateOpen.value = true) }
       })
     }
   })
   updateStatus.value = await api.status()
   const done = await api.justInstalled()
   if (done) {
-    showToast(`Updated to Tessel ${done.to}. Your panes were restored.`, {
+    showToast(t('app.update.done', 'Updated to Tessel {{version}}. Your panes were restored.', { version: done.to }), {
       timeout: 8000
     })
   }
@@ -1706,7 +1710,7 @@ provide('panelCtx', {
   unsent,
   resolveUnsent,
   agentReportedDone,
-  copied: (what) => showToast(`${what} copied.`, { timeout: 2000 }),
+  copied: (what) => showToast(t('app.toast.copied', '{{what}} copied.', { what }), { timeout: 2000 }),
   toast: (text, opts) => showToast(text, opts),
   showImage: (img) => (imageView.value = img),
   viewFile: (f) => viewFile(f),
@@ -1762,44 +1766,46 @@ function buildCommands() {
     cmds.push({ id: `${group}:${cmds.length}`, group, title, run, ...extra })
 
   for (const s of shells.value) {
-    add('New', `New ${s.name}`, () => launch({ kind: 'shell', id: s.id }), {
+    add(t('app.cmd.group.new', 'New'), t('app.cmd.newNamed', 'New {{name}}', { name: s.name }), () => launch({ kind: 'shell', id: s.id }), {
       shortcut: s.id === selectedShell.value ? 'Ctrl+Shift+T' : ''
     })
   }
   for (const a of launchableAgents.value.filter((x) => x.available)) {
-    add('New', `New ${a.name}`, () => launch({ kind: 'agent', id: a.id }), { hint: 'AI agent' })
+    add(t('app.cmd.group.new', 'New'), t('app.cmd.newNamed', 'New {{name}}', { name: a.name }), () => launch({ kind: 'agent', id: a.id }), { hint: t('app.cmd.aiAgent', 'AI agent') })
   }
-  add('New', 'New workspace', createWorkspace, { shortcut: 'Ctrl+Shift+N' })
+  add(t('app.cmd.group.new', 'New'), t('app.cmd.newWorkspace', 'New workspace'), createWorkspace, { shortcut: 'Ctrl+Shift+N' })
 
-  add('Layout', 'Split right', () => splitActive('row'), { shortcut: 'Ctrl+Shift+E' })
-  add('Layout', 'Split down', () => splitActive('col'), { shortcut: 'Ctrl+Shift+O' })
-  for (const o of gridOptions) add('Layout', `Even grid ${o.label}`, () => applyGrid(o.value))
+  const layout = t('app.cmd.group.layout', 'Layout')
+  add(layout, t('app.cmd.splitRight', 'Split right'), () => splitActive('row'), { shortcut: 'Ctrl+Shift+E' })
+  add(layout, t('app.cmd.splitDown', 'Split down'), () => splitActive('col'), { shortcut: 'Ctrl+Shift+O' })
+  for (const o of gridOptions) add(layout, t('app.cmd.evenGrid', 'Even grid {{grid}}', { grid: o.label }), () => applyGrid(o.value))
   if (activeId.value) {
     const id = activeId.value
-    add('Layout', 'Maximize or restore the active pane', () => toggleMaximize(id))
+    add(layout, t('app.cmd.maximize', 'Maximize or restore the active pane'), () => toggleMaximize(id))
   }
-  add('Layout', 'Close the active pane', closeActive, { shortcut: 'Ctrl+Shift+W' })
-  add('Layout', sidebarCollapsed.value ? 'Show the sidebar' : 'Hide the sidebar', toggleSidebar)
+  add(layout, t('app.cmd.closeActive', 'Close the active pane'), closeActive, { shortcut: 'Ctrl+Shift+W' })
+  add(layout, sidebarCollapsed.value ? t('app.cmd.showSidebar', 'Show the sidebar') : t('app.cmd.hideSidebar', 'Hide the sidebar'), toggleSidebar)
 
-  add('Agents', 'Resume a session', openSessions, {
-    hint: 'Reopen a past Claude or Codex conversation'
+  const agentsGroup = t('app.cmd.group.agents', 'Agents')
+  add(agentsGroup, t('app.cmd.resumeSession', 'Resume a session'), openSessions, {
+    hint: t('app.cmd.resumeSessionHint', 'Reopen a past Claude or Codex conversation')
   })
-  add('Agents', 'MCP servers', () => (mcpOpen.value = true), { hint: 'Give agents extra tools' })
-  add('Agents', 'Install tools', openTools, { hint: 'Agents, Git, Node.js and more' })
-  add('Agents', 'Check for agent updates', () => checkAgentUpdates({ force: true }), {
-    hint: 'Newer versions of your installed agent CLIs'
+  add(agentsGroup, t('app.cmd.mcp', 'MCP servers'), () => (mcpOpen.value = true), { hint: t('app.cmd.mcpHint', 'Give agents extra tools') })
+  add(agentsGroup, t('app.cmd.installTools', 'Install tools'), openTools, { hint: t('app.cmd.installToolsHint', 'Agents, Git, Node.js and more') })
+  add(agentsGroup, t('app.cmd.checkAgentUpdates', 'Check for agent updates'), () => checkAgentUpdates({ force: true }), {
+    hint: t('app.cmd.checkAgentUpdatesHint', 'Newer versions of your installed agent CLIs')
   })
   if (agentUpdateCount.value) {
-    add('Agents', `Update agents (${agentUpdateCount.value})`, () => openSettingsAt('agents'), {
-      hint: 'Settings > Agents: update, then resume each conversation'
+    add(agentsGroup, t('app.cmd.updateAgents', 'Update agents ({{count}})', { count: agentUpdateCount.value }), () => openSettingsAt('agents'), {
+      hint: t('app.cmd.updateAgentsHint', 'Settings > Agents: update, then resume each conversation')
     })
   }
-  add('Agents', broadcast.value ? 'Turn broadcast off' : 'Turn broadcast on', toggleBroadcast, {
+  add(agentsGroup, broadcast.value ? t('app.cmd.broadcastOff', 'Turn broadcast off') : t('app.cmd.broadcastOn', 'Turn broadcast on'), toggleBroadcast, {
     shortcut: 'Ctrl+Shift+B'
   })
   add(
-    'Agents',
-    taskBoardShown.value ? 'Hide the task board' : 'Show the task board',
+    agentsGroup,
+    taskBoardShown.value ? t('app.cmd.hideBoard', 'Hide the task board') : t('app.cmd.showBoard', 'Show the task board'),
     toggleTaskPanel,
     {
       shortcut: 'Ctrl+Shift+K'
@@ -1811,73 +1817,76 @@ function buildCommands() {
   if (activeId.value && findLeaf(activeId.value)?.kind !== 'editor') {
     const id = activeId.value
     for (const q of settings.quickCommands || []) {
-      add('Quick commands', `Run: ${q.name}`, () => runQuickCommand(id, q), {
+      add(t('app.cmd.group.quick', 'Quick commands'), t('app.cmd.runQuick', 'Run: {{name}}', { name: q.name }), () => runQuickCommand(id, q), {
         hint: q.text.length > 60 ? `${q.text.slice(0, 60)}…` : q.text
       })
     }
   }
-  add('Files', explorerOpen.value ? 'Hide the file explorer' : 'Show the file explorer', toggleExplorer, {
+  const files = t('app.cmd.group.files', 'Files')
+  add(files, explorerOpen.value ? t('app.cmd.hideExplorer', 'Hide the file explorer') : t('app.cmd.showExplorer', 'Show the file explorer'), toggleExplorer, {
     shortcut: 'Ctrl+Shift+X',
-    hint: "The project's files, with their git status"
+    hint: t('app.cmd.explorerHint', "The project's files, with their git status")
   })
-  add('Files', taskPanelOpen.value && sideTab.value === 'changes' ? 'Hide Source Control' : 'Show Source Control', () => toggleSideTab('changes'), {
+  add(files, taskPanelOpen.value && sideTab.value === 'changes' ? t('app.cmd.hideScm', 'Hide Source Control') : t('app.cmd.showScm', 'Show Source Control'), () => toggleSideTab('changes'), {
     shortcut: 'Ctrl+Shift+G',
-    hint: 'Stage, commit, push; review diffs and send notes to an agent'
+    hint: t('app.cmd.scmHint', 'Stage, commit, push; review diffs and send notes to an agent')
   })
-  add('Files', 'Jump to a file…', openFinder, {
+  add(files, t('app.cmd.jumpToFile', 'Jump to a file…'), openFinder, {
     shortcut: 'Ctrl+Shift+J',
-    hint: "Find a file of this workspace's project by a few letters"
+    hint: t('app.cmd.jumpToFileHint', "Find a file of this workspace's project by a few letters")
   })
-  add('Quick commands', 'Add or edit quick commands', () => openSettingsAt('quick-commands'), {
-    hint: 'Text you send to a pane in two keystrokes'
+  add(t('app.cmd.group.quick', 'Quick commands'), t('app.cmd.editQuick', 'Add or edit quick commands'), () => openSettingsAt('quick-commands'), {
+    hint: t('app.cmd.editQuickHint', 'Text you send to a pane in two keystrokes')
   })
-  add('Settings', 'Stats & Usage', () => openSettingsAt('stats'), { hint: 'Token analytics, daily usage, models, projects and conversations' })
+  add(t('app.cmd.group.settings', 'Settings'), t('app.cmd.stats', 'Stats & Usage'), () => openSettingsAt('stats'), { hint: t('app.cmd.statsHint', 'Token analytics, daily usage, models, projects and conversations') })
 
-  add('Task', 'New task…', openNewTask, { hint: 'Give an agent a task, in its own copy of the project' })
-  add('Issues', 'GitHub issues and pull requests', () => openGitHub(), { hint: 'Browse, create, check and start a task from GitHub' })
-  add('Issues', 'Linear issues', openLinear, { hint: 'Assigned issues, teams, states and new agent tasks' })
+  add(t('app.cmd.group.task', 'Task'), t('app.cmd.newTask', 'New task…'), openNewTask, { hint: t('app.cmd.newTaskHint', 'Give an agent a task, in its own copy of the project') })
+  const issues = t('app.cmd.group.issues', 'Issues')
+  add(issues, t('app.cmd.github', 'GitHub issues and pull requests'), () => openGitHub(), { hint: t('app.cmd.githubHint', 'Browse, create, check and start a task from GitHub') })
+  add(issues, t('app.cmd.linear', 'Linear issues'), openLinear, { hint: t('app.cmd.linearHint', 'Assigned issues, teams, states and new agent tasks') })
   const activeTask = activeId.value ? taskOfPane(activeId.value) : null
-  if (activeTask?.worktree) add('Issues', 'Create a GitHub pull request from this task copy', () => openGitHub(activeTask))
+  if (activeTask?.worktree) add(issues, t('app.cmd.createPr', 'Create a GitHub pull request from this task copy'), () => openGitHub(activeTask))
   if (currentWs.value) {
     const wsId = currentWs.value.id
-    add('Workspace', 'Message every agent in this workspace', () => startWsMessage(wsId), {
-      hint: 'One message, sent to each agent (never to plain shells)'
+    const wsGroup = t('app.cmd.group.workspace', 'Workspace')
+    add(wsGroup, t('app.cmd.messageAll', 'Message every agent in this workspace'), () => startWsMessage(wsId), {
+      hint: t('app.cmd.messageAllHint', 'One message, sent to each agent (never to plain shells)')
     })
-    add('Workspace', 'Activity of the agents', () => openActivity('workspace'), {
-      hint: 'Messages, approvals, limits and working time'
+    add(wsGroup, t('app.cmd.activity', 'Activity of the agents'), () => openActivity('workspace'), {
+      hint: t('app.cmd.activityHint', 'Messages, approvals, limits and working time')
     })
-    add('Workspace', 'Project notes', () => openNotesView(wsId), {
-      hint: 'Read or edit the notes the agents of this workspace share'
+    add(wsGroup, t('app.cmd.notes', 'Project notes'), () => openNotesView(wsId), {
+      hint: t('app.cmd.notesHint', 'Read or edit the notes the agents of this workspace share')
     })
-    add('Workspace', 'Open project notes in a text editor', () => openProjectNotes(wsId))
-    add('Workspace', 'Share project notes with the agents', () => shareProjectNotes(wsId), {
-      hint: 'Tell each agent where the notes are'
+    add(wsGroup, t('app.cmd.notesExternal', 'Open project notes in a text editor'), () => openProjectNotes(wsId))
+    add(wsGroup, t('app.cmd.shareNotes', 'Share project notes with the agents'), () => shareProjectNotes(wsId), {
+      hint: t('app.cmd.shareNotesHint', 'Tell each agent where the notes are')
     })
   }
 
-  for (const t of THEMES) {
-    if (t.id !== settings.theme) {
-      add('Theme', `Theme: ${t.label}`, () => (settings.theme = t.id), { hint: t.description })
+  for (const theme of THEMES) {
+    if (theme.id !== settings.theme) {
+      add(t('app.cmd.group.theme', 'Theme'), t('app.cmd.theme', 'Theme: {{name}}', { name: theme.label }), () => (settings.theme = theme.id), { hint: theme.description })
     }
   }
 
-  add('Tessel', 'Settings', () => (settingsOpen.value = true), { shortcut: 'Ctrl+,' })
-  add('Tessel', 'Keyboard shortcuts and help', () => (helpOpen.value = true), { shortcut: 'F1' })
+  add('Tessel', t('app.cmd.settings', 'Settings'), () => (settingsOpen.value = true), { shortcut: 'Ctrl+,' })
+  add('Tessel', t('app.cmd.help', 'Keyboard shortcuts and help'), () => (helpOpen.value = true), { shortcut: 'F1' })
   if (updateStatus.value.state === 'ready') {
-    add('Tessel', `Install update ${updateStatus.value.version}`, () => (updateOpen.value = true))
+    add('Tessel', t('app.cmd.installUpdate', 'Install update {{version}}', { version: updateStatus.value.version }), () => (updateOpen.value = true))
   } else {
-    add('Tessel', 'Check for updates', checkForUpdates)
+    add('Tessel', t('app.cmd.checkUpdates', 'Check for updates'), checkForUpdates)
   }
-  add('Tessel', 'Open the logs folder', openLogs)
+  add('Tessel', t('app.cmd.openLogs', 'Open the logs folder'), openLogs)
 
   for (const w of workspaces.value) {
     if (w.id !== currentWsId.value) {
-      add('Go to workspace', w.name, () => selectWorkspace(w.id), { hint: w.cwd || '' })
+      add(t('app.cmd.group.goWorkspace', 'Go to workspace'), w.name, () => selectWorkspace(w.id), { hint: w.cwd || '' })
     }
   }
   for (const w of workspaces.value) {
     forEachLeaf(w.tree, (leaf) => {
-      add('Go to pane', paneLabel(leaf), () => focusPane(leaf.id), {
+      add(t('app.cmd.group.goPane', 'Go to pane'), paneLabel(leaf), () => focusPane(leaf.id), {
         hint: workspaces.value.length > 1 ? w.name : leaf.shellName || ''
       })
     })
@@ -1909,7 +1918,7 @@ async function launch({ kind, id }, targetId = activeId.value, where = placement
   if (agent && useWorktree.value && worktreeState.available && baseWs && baseWs.cwd) {
     const res = await window.shellApi.createWorktree(baseWs.cwd, agent.id, worktreeSettings())
     if (!res || !res.ok) {
-      showToast((res && res.error) || 'Could not create a separate copy.', {
+      showToast((res && res.error) || t('app.worktree.createFailed', 'Could not create a separate copy.'), {
         kind: 'error',
         timeout: 8000
       })
@@ -1917,7 +1926,7 @@ async function launch({ kind, id }, targetId = activeId.value, where = placement
     }
     worktree = { path: res.path, branch: res.branch }
     showToast(
-      `${agent.name} works on branch ${res.branch} in ${res.path}. When it is done, merge it from the main folder with: git merge ${res.branch}`,
+      t('app.worktree.created', '{{agent}} works on branch {{branch}} in {{path}}. When it is done, merge it from the main folder with: git merge {{branch}}', { agent: agent.name, branch: res.branch, path: res.path }),
       { timeout: 12000 }
     )
   }
@@ -2003,7 +2012,7 @@ async function runInPane({ label, command, steps, shell }) {
   const line = installChain(list, null, shellId)
   await startInstallLog(leaf.id, label, shellId, list, null)
   setTimeout(() => window.shellApi.writePty(leaf.id, `${line}\r`), 700)
-  showToast(`${label} is running below. Tessel tells you when it has finished.`, {
+  showToast(t('app.install.running', '{{label}} is running below. Tessel tells you when it has finished.', { label }), {
     timeout: 7000
   })
 }
@@ -2041,14 +2050,18 @@ function onInstallResult(r) {
   }
   loadAgents(true)
   if (r.ok === true) {
-    showToast(run.agent ? `${run.label} is installed and starting.` : `${run.label} finished.`, { timeout: 6000 })
+    showToast(run.agent ? t('app.install.installedStarting', '{{label}} is installed and starting.', { label: run.label }) : t('app.install.finished', '{{label}} finished.', { label: run.label }), { timeout: 6000 })
     return
   }
-  const why = r.ok === false ? 'failed' : 'did not finish'
-  showToast(`${run.label} ${why}${r.reason ? ` (${r.reason})` : ''}. The log shows what went wrong; attach it to a bug report.`, {
+  const reason = r.reason ? ` (${r.reason})` : ''
+  showToast(
+    r.ok === false
+      ? t('app.install.failed', '{{label}} failed{{reason}}. The log shows what went wrong; attach it to a bug report.', { label: run.label, reason })
+      : t('app.install.unfinished', '{{label}} did not finish{{reason}}. The log shows what went wrong; attach it to a bug report.', { label: run.label, reason }),
+    {
     kind: 'error',
     timeout: 30000,
-    action: r.file ? { label: 'Open log', run: () => window.shellApi.openInstallLog(r.file) } : null
+    action: r.file ? { label: t('app.common.openLog', 'Open log'), run: () => window.shellApi.openInstallLog(r.file) } : null
   })
 }
 const stopInstallResults = window.shellApi.onInstallResult ? window.shellApi.onInstallResult(onInstallResult) : null
@@ -2067,7 +2080,7 @@ async function installAgent(agent) {
   })
   if (!leaf) return
   await startInstallLog(leaf.id, agent.name, shellId, install, agent)
-  showToast(`Installing ${agent.name}. It starts in the new pane when the install finishes.`, {
+  showToast(t('app.install.agent', 'Installing {{agent}}. It starts in the new pane when the install finishes.', { agent: agent.name }), {
     timeout: 7000
   })
 }
@@ -2087,7 +2100,7 @@ async function resumeSession(s) {
   sessionsOpen.value = false
   const agent = agentById(s.agent) || {
     id: s.agent,
-    name: s.agent === 'claude' ? 'Claude Code' : 'Codex CLI',
+    name: s.agent === 'claude' ? 'Claude Code' : 'Codex CLI', // i18n-ignore
     command: s.agent,
     accent: s.agent === 'claude' ? '#d97757' : '#10a37f'
   }
@@ -2138,12 +2151,12 @@ async function voiceTyping(paneId) {
   await nextTick()
   focusActiveInput()
   if (!window.shellApi.voiceTyping) {
-    showToast('Restart Tessel to enable voice typing, or press Win+H.', { kind: 'error' })
+    showToast(t('app.voice.restart', 'Restart Tessel to enable voice typing, or press Win+H.'), { kind: 'error' })
     return
   }
   const ok = await window.shellApi.voiceTyping({ tip: settings.voiceTip || null })
   if (!ok)
-    showToast('Could not start voice typing. Press Win+H to start it yourself.', { kind: 'error' })
+    showToast(t('app.voice.failed', 'Could not start voice typing. Press Win+H to start it yourself.'), { kind: 'error' })
 }
 
 function openTools() {
@@ -2181,25 +2194,25 @@ async function checkWorktree() {
   const ws = (launcher.targetId && wsOfLeaf(launcher.targetId)) || currentWs.value
   worktreeState.available = false
   if (!ws || !ws.cwd) {
-    worktreeState.reason = 'Set a project folder on this workspace to use this'
+    worktreeState.reason = t('app.worktree.needFolder', 'Set a project folder on this workspace to use this')
     return
   }
   if (!window.shellApi.gitInfo) {
-    worktreeState.reason = 'Restart Tessel to enable this'
+    worktreeState.reason = t('app.worktree.restart', 'Restart Tessel to enable this')
     return
   }
   worktreeState.checking = true
   try {
     const info = await window.shellApi.gitInfo(ws.cwd)
     if (!info || !info.isRepo)
-      worktreeState.reason = (info && info.error) || 'The project folder is not a git repository'
-    else if (!info.hasCommits) worktreeState.reason = 'Make a first git commit to use this'
+      worktreeState.reason = (info && info.error) || t('app.worktree.notRepo', 'The project folder is not a git repository')
+    else if (!info.hasCommits) worktreeState.reason = t('app.worktree.noCommits', 'Make a first git commit to use this')
     else {
       worktreeState.available = true
       worktreeState.reason = null
     }
   } catch {
-    worktreeState.reason = 'Could not check the project'
+    worktreeState.reason = t('app.worktree.checkFailed', 'Could not check the project')
   } finally {
     worktreeState.checking = false
   }
@@ -2250,13 +2263,14 @@ function paneLabel(leaf) {
 
 function reviewPrompt(fromLeaf, ws) {
   const dir = (fromLeaf && fromLeaf.worktree && fromLeaf.worktree.path) || (ws && ws.cwd)
-  const who = fromLeaf ? fromLeaf.title : 'another agent'
-  const where = dir ? ` in ${dir}` : ''
-  const branch = fromLeaf && fromLeaf.worktree ? ` (branch ${fromLeaf.worktree.branch})` : ''
+  // Sent to an agent: stays English.
+  const who = fromLeaf ? fromLeaf.title : 'another agent' // i18n-ignore
+  const where = dir ? ` in ${dir}` : '' // i18n-ignore
+  const branch = fromLeaf && fromLeaf.worktree ? ` (branch ${fromLeaf.worktree.branch})` : '' // i18n-ignore
   return (
-    `Please review the changes ${who} made${where}${branch}. ` +
-    'Run git status and git diff there to see them. Point out bugs, risky changes and missing ' +
-    'tests, with file and line references. Do not modify any files; only report.'
+    `Please review the changes ${who} made${where}${branch}. ` + // i18n-ignore
+    'Run git status and git diff there to see them. Point out bugs, risky changes and missing ' + // i18n-ignore
+    'tests, with file and line references. Do not modify any files; only report.' // i18n-ignore
   )
 }
 
@@ -2281,7 +2295,7 @@ function sendToPane(fromId, toId, mode, text = '') {
   if (ws) ws.activeId = toId
   if (to)
     showToast(
-      mode === 'review' ? `Asked ${paneLabel(to)} to review.` : `Sent to ${paneLabel(to)}.`,
+      mode === 'review' ? t('app.send.askedReview', 'Asked {{pane}} to review.', { pane: paneLabel(to) }) : t('app.send.sent', 'Sent to {{pane}}.', { pane: paneLabel(to) }),
       {
         timeout: 2500
       }
@@ -2326,17 +2340,17 @@ function closeMcp() {
 
 function openLogs() {
   if (window.shellApi.openLogs) window.shellApi.openLogs()
-  else showToast('Restart Tessel to enable logs.', { kind: 'error' })
+  else showToast(t('app.logs.restart', 'Restart Tessel to enable logs.'), { kind: 'error' })
 }
 
 async function copyDiagnostics() {
   if (!window.shellApi.diagnostics) {
-    showToast('Restart Tessel to enable diagnostics.', { kind: 'error' })
+    showToast(t('app.diagnostics.restart', 'Restart Tessel to enable diagnostics.'), { kind: 'error' })
     return
   }
   const text = await window.shellApi.diagnostics()
   window.shellApi.writeClipboard(text)
-  showToast('Diagnostics copied. Paste them into your message.', { timeout: 4000 })
+  showToast(t('app.diagnostics.copied', 'Diagnostics copied. Paste them into your message.'), { timeout: 4000 })
 }
 
 // The dialog gives focus back to what had it before (terminal or button).
@@ -2348,7 +2362,7 @@ function closeSettings() {
 function setDefaultShell(id) {
   selectedShell.value = id
   const shell = shells.value.find((s) => s.id === id)
-  if (shell) showToast(`${shell.name} is now the default shell.`)
+  if (shell) showToast(t('app.shell.default', '{{name}} is now the default shell.', { name: shell.name }))
 }
 
 // Replace a pane with a fresh process of the same kind, in the same spot.
@@ -2367,7 +2381,7 @@ async function restartLeaf(leafId) {
     // Never a new id for an agent (its messages would stay addressed to the
     // old one): if its old terminal would not stop, say so and leave it.
     if (!ok && findLeaf(leafId) === old)
-      showToast(`${old.title} could not be restarted: its terminal did not stop. Try again.`, { kind: 'error', timeout: 8000 })
+      showToast(t('app.restart.failed', '{{name}} could not be restarted: its terminal did not stop. Try again.', { name: old.title }), { kind: 'error', timeout: 8000 })
     return
   }
   const agent =
@@ -2448,18 +2462,30 @@ function nativeNotify(payload) {
 // An agent finished a stretch of work while you were elsewhere.
 function notifyAgentDone(node) {
   const ws = wsOfLeaf(node.id)
-  const where = ws && workspaces.value.length > 1 ? ` in ${ws.name}` : ''
-  const message = node.agentLaunchToken ? `${node.title} finished a response` : `${node.title} finished and is waiting for you`
-  inboxNote('done', message, ws ? `Workspace: ${ws.name}` : '', node.id)
+  const inWs = ws && workspaces.value.length > 1
+  const message = node.agentLaunchToken
+    ? t('app.notify.finishedResponse', '{{name}} finished a response', { name: node.title })
+    : t('app.notify.finishedWaiting', '{{name}} finished and is waiting for you', { name: node.title })
+  const wsLine = ws ? t('app.notify.workspace', 'Workspace: {{name}}', { name: ws.name }) : ''
+  inboxNote('done', message, wsLine, node.id)
   if (document.hasFocus() && settings.inAppAlerts)
-    showToast(`${message}${where}.`, {
-      kind: 'attention',
-      timeout: 8000,
-      action: { label: 'Show', run: () => focusPane(node.id) }
-    })
+    showToast(
+      node.agentLaunchToken
+        ? inWs
+          ? t('app.notify.finishedResponseIn', '{{name}} finished a response in {{ws}}.', { name: node.title, ws: ws.name })
+          : t('app.notify.finishedResponseDot', '{{name}} finished a response.', { name: node.title })
+        : inWs
+          ? t('app.notify.finishedWaitingIn', '{{name}} finished and is waiting for you in {{ws}}.', { name: node.title, ws: ws.name })
+          : t('app.notify.finishedWaitingDot', '{{name}} finished and is waiting for you.', { name: node.title }),
+      {
+        kind: 'attention',
+        timeout: 8000,
+        action: { label: t('app.common.show', 'Show'), run: () => focusPane(node.id) }
+      }
+    )
   nativeNotify({
-    title: `${node.title} is waiting for you`,
-    body: ws ? `Workspace: ${ws.name}` : '',
+    title: t('app.notify.waiting', '{{name}} is waiting for you', { name: node.title }),
+    body: wsLine,
     paneId: node.id
   })
 }
@@ -2476,11 +2502,11 @@ function terminalBell(node) {
   const now = Date.now()
   if (now - (bellAt.get(node.id) || 0) < 5000) return
   bellAt.set(node.id, now)
-  const title = `Bell in ${ws ? ws.name : 'workspace'}`
-  const body = `${node.title} · Attention requested`
+  const title = ws ? t('app.bell.titleIn', 'Bell in {{ws}}', { ws: ws.name }) : t('app.bell.title', 'Bell in workspace')
+  const body = t('app.bell.body', '{{name}} · Attention requested', { name: node.title })
   inboxNote('attention', title, body, node.id)
   if (document.hasFocus() && settings.inAppAlerts)
-    showToast(`${node.title}: bell.`, { kind: 'attention', timeout: 6000, action: { label: 'Show', run: () => focusPane(node.id) } })
+    showToast(t('app.bell.toast', '{{name}}: bell.', { name: node.title }), { kind: 'attention', timeout: 6000, action: { label: t('app.common.show', 'Show'), run: () => focusPane(node.id) } })
   nativeNotify({ title, body, paneId: node.id })
 }
 
@@ -2488,9 +2514,9 @@ function terminalBell(node) {
 // alert sound.
 function sendTestNotification() {
   if (window.shellApi.notify)
-    window.shellApi.notify({ title: 'Tessel notifications are on', body: 'This is a test notification from Tessel.' })
+    window.shellApi.notify({ title: t('app.notify.testTitle', 'Tessel notifications are on'), body: t('app.notify.testBody', 'This is a test notification from Tessel.') })
   playAlertSound(settings.alertSound, settings.notificationVolume)
-  showToast(window.shellApi.notify ? 'Test notification sent' : 'Notifications are not supported on this system', { timeout: 3000 })
+  showToast(window.shellApi.notify ? t('app.notify.testSent', 'Test notification sent') : t('app.notify.unsupported', 'Notifications are not supported on this system'), { timeout: 3000 })
 }
 
 // Alt+Arrow: move focus to the nearest pane in that direction.
@@ -2626,7 +2652,7 @@ function updateDropTarget(x, y) {
       const r = wsEl.getBoundingClientRect()
       paneDrag.target = { kind: 'ws', id }
       paneDrag.zoneRect = { left: r.left, top: r.top, width: r.width, height: r.height }
-      paneDrag.label = `Move to ${ws ? ws.name : 'workspace'}`
+      paneDrag.label = ws ? t('app.drag.moveTo', 'Move to {{ws}}', { ws: ws.name }) : t('app.drag.moveToWorkspace', 'Move to workspace')
     }
     return
   }
@@ -2651,13 +2677,19 @@ function updateDropTarget(x, y) {
     center: { left: r.left + 8, top: r.top + 8, width: r.width - 16, height: r.height - 16 }
   }[zone]
   const title = paneEl.querySelector('.pane-title')
-  const other = title ? title.textContent.trim() : 'this pane'
+  const other = title ? title.textContent.trim() : t('app.drag.thisPane', 'this pane')
   paneDrag.target = { kind: 'pane', id: paneEl.dataset.paneId, zone }
   paneDrag.zoneRect = rect
   paneDrag.label =
     zone === 'center'
-      ? `Swap with ${other}`
-      : `Place ${zone === 'top' ? 'above' : zone === 'bottom' ? 'below' : zone === 'left' ? 'left of' : 'right of'} ${other}`
+      ? t('app.drag.swap', 'Swap with {{pane}}', { pane: other })
+      : zone === 'top'
+        ? t('app.drag.above', 'Place above {{pane}}', { pane: other })
+        : zone === 'bottom'
+          ? t('app.drag.below', 'Place below {{pane}}', { pane: other })
+          : zone === 'left'
+            ? t('app.drag.leftOf', 'Place left of {{pane}}', { pane: other })
+            : t('app.drag.rightOf', 'Place right of {{pane}}', { pane: other })
 }
 
 function mapLeaves(node, fn) {
@@ -2764,24 +2796,35 @@ async function setWorkspaceFolder(id) {
   const ws = wsById(id)
   if (!ws) return
   if (!window.shellApi.pickFolder) {
-    showToast('Restart Tessel to enable project folders.', { kind: 'error' })
+    showToast(t('app.folder.restart', 'Restart Tessel to enable project folders.'), { kind: 'error' })
     return
   }
   const picked = await window.shellApi.pickFolder({
-    title: `Project folder for "${ws.name}"`,
+    title: t('app.folder.pickTitle', 'Project folder for "{{name}}"', { name: ws.name }),
     defaultPath: ws.cwd || undefined
   })
   if (!picked) return
   ws.cwd = picked
-  if (/^Workspace \d+$/.test(ws.name)) ws.name = folderName(picked)
-  showToast(`New panes in ${ws.name} will open in ${picked}`)
+  if (isDefaultWorkspaceName(ws.name)) ws.name = folderName(picked)
+  showToast(t('app.folder.set', 'New panes in {{name}} will open in {{folder}}', { name: ws.name, folder: picked }))
 }
 
+// "Workspace 3", in the interface's language.
+function defaultWorkspaceName(n) {
+  return t('app.ws.defaultName', 'Workspace {{n}}', { n })
+}
+// A name Tessel gave (in English or in the interface's language), not the user.
+function isDefaultWorkspaceName(name) {
+  if (/^Workspace \d+$/.test(name)) return true // i18n-ignore
+  const [pre, post] = defaultWorkspaceName('\u0001').split('\u0001')
+  const mid = name.startsWith(pre) && name.endsWith(post) ? name.slice(pre.length, name.length - post.length) : ''
+  return /^\d+$/.test(mid)
+}
 function nextWorkspaceName() {
   const taken = new Set(workspaces.value.map((w) => w.name))
   let n = workspaces.value.length + 1
-  while (taken.has(`Workspace ${n}`)) n++
-  return `Workspace ${n}`
+  while (taken.has(defaultWorkspaceName(n))) n++
+  return defaultWorkspaceName(n)
 }
 
 function refitSoon() {
@@ -2833,17 +2876,27 @@ function removeWorkspace(id, confirmed = false, editorChecked = false) {
   forEachLeaf(ws.tree, () => count++)
   const wsTasks = boardTasks.filter((t) => t.wsId === id)
   const lost = []
-  if (count) lost.push(`its ${count} ${count === 1 ? 'pane' : 'panes'} will be closed`)
-  if (wsTasks.length)
-    lost.push(`its ${wsTasks.length} ${wsTasks.length === 1 ? 'task' : 'tasks'} deleted`)
-  const what = lost.join(' and ')
+  if (count) lost.push('panes')
+  if (wsTasks.length) lost.push('tasks')
+  const panesText =
+    count === 1 ? t('app.ws.deletePanesOne', 'Its 1 pane will be closed') : t('app.ws.deletePanes', 'Its {{count}} panes will be closed', { count })
+  const tasksText =
+    wsTasks.length === 1 ? t('app.ws.deleteTasksOne', 'its 1 task deleted') : t('app.ws.deleteTasks', 'its {{count}} tasks deleted', { count: wsTasks.length })
+  const what =
+    count && wsTasks.length
+      ? t('app.ws.deleteBoth', '{{panes}} and {{tasks}}.', { panes: panesText, tasks: tasksText })
+      : count
+        ? `${panesText}.`
+        : wsTasks.length === 1
+          ? t('app.ws.deleteOnlyTasksOne', 'Its 1 task deleted.')
+          : t('app.ws.deleteOnlyTasks', 'Its {{count}} tasks deleted.', { count: wsTasks.length })
   // Settings > General, "Ask Before Deleting Workspaces" (unsaved files are
   // still asked about above).
   if (lost.length && !confirmed && settings.confirmDeleteWorkspace !== false) {
     askConfirm({
-      title: `Delete "${ws.name}"?`,
-      text: `${what[0]?.toUpperCase()}${what.slice(1)}.`,
-      confirmLabel: 'Delete',
+      title: t('app.ws.deleteTitle', 'Delete "{{name}}"?', { name: ws.name }),
+      text: what,
+      confirmLabel: t('app.common.delete', 'Delete'),
       danger: true
     }).then((ok) => ok && removeWorkspace(id, true, true))
     return
@@ -2962,12 +3015,12 @@ const sidebarProjects = computed(() =>
     forEachLeaf(w.tree, (leaf) => {
       if (leaf.kind === 'editor') return
       const task = taskOfPane(leaf.id)
-      const t = trackedState[leaf.id]
+      const tracked = trackedState[leaf.id]
       panes.push({
         id: leaf.id,
         num: leaf.num || 0,
         kind: leaf.kind || 'shell',
-        title: leaf.title || leaf.shellName || 'Terminal',
+        title: leaf.title || leaf.shellName || t('app.pane.terminal', 'Terminal'),
         agentId: leaf.agentId || null,
         shellId: leaf.shellId || null,
         accent: leaf.accent || null,
@@ -2986,7 +3039,7 @@ const sidebarProjects = computed(() =>
         pid: Number.isInteger(leaf.pid) ? leaf.pid : null,
         copyPath: leaf.worktree && leaf.worktree.path ? leaf.worktree.path : null,
         copyBranch: leaf.worktree ? leaf.worktree.branch || '' : '',
-        since: t && t.since ? t.since : 0,
+        since: tracked && tracked.since ? tracked.since : 0,
         activityAt: paneActivityAt[leaf.id] || 0,
         isActive: leaf.id === w.activeId,
         focused: w.id === currentWsId.value && leaf.id === activeId.value,
@@ -3023,19 +3076,19 @@ function openPort(port) {
   const url = browserUrlForPort(port)
   Promise.resolve(window.shellApi.openExternal ? window.shellApi.openExternal(url) : false)
     .then((ok) => {
-      if (!ok) showToast('Failed to open browser', { kind: 'error' })
+      if (!ok) showToast(t('app.port.browserFailed', 'Failed to open browser'), { kind: 'error' })
     })
-    .catch(() => showToast('Failed to open browser', { kind: 'error' }))
+    .catch(() => showToast(t('app.port.browserFailed', 'Failed to open browser'), { kind: 'error' }))
 }
 function copyPort(port) {
   const address = addressForPort(port)
   if (window.shellApi.writeClipboard) window.shellApi.writeClipboard(address)
-  showToast(`Copied ${address}`)
+  showToast(t('app.toast.copiedValue', 'Copied {{value}}', { value: address }))
 }
 async function stopPort(port) {
   const res = await portScanner.kill(port)
-  if (res && res.ok) showToast(res.alreadyExited ? `The process on ${port.port} had already exited` : `Stopped process on ${port.port}`)
-  else showToast((res && res.reason) || 'Failed to stop the process.', { kind: 'error' })
+  if (res && res.ok) showToast(res.alreadyExited ? t('app.port.alreadyExited', 'The process on {{port}} had already exited', { port: port.port }) : t('app.port.stopped', 'Stopped process on {{port}}', { port: port.port }))
+  else showToast((res && res.reason) || t('app.port.stopFailed', 'Failed to stop the process.'), { kind: 'error' })
 }
 
 // A workspace card with no pane (a task copy whose agent was closed, or the
@@ -3084,30 +3137,35 @@ function sleepPanes(ids) {
     if (!leaf || leaf.kind !== 'agent' || leaf.sleeping || restartingLeaves.has(id)) continue
     const ws = wsOfLeaf(id)
     if (ws && ws.id === currentWsId.value && id === activeId.value) {
-      skipped.push(`${paneLabel(leaf)} (the pane you are in)`)
+      skipped.push(t('app.sleep.activePane', '{{pane}} (the pane you are in)', { pane: paneLabel(leaf) }))
       continue
     }
     if (!sessionKind({ id: leaf.agentId }) || !safeSessionId(leaf.sessionId)) {
-      skipped.push(`${paneLabel(leaf)} (its conversation cannot be resumed)`)
+      skipped.push(t('app.sleep.notResumable', '{{pane}} (its conversation cannot be resumed)', { pane: paneLabel(leaf) }))
       continue
     }
     putToSleep(leaf)
     slept++
   }
-  if (skipped.length) showToast(`Stays awake: ${skipped.join(', ')}.`, { timeout: 7000 })
-  else if (slept) showToast(`${slept} ${slept === 1 ? 'agent' : 'agents'} asleep. Open a pane to wake it.`)
+  if (skipped.length) showToast(t('app.sleep.staysAwake', 'Stays awake: {{list}}.', { list: skipped.join(', ') }), { timeout: 7000 })
+  else if (slept)
+    showToast(
+      slept === 1
+        ? t('app.sleep.asleepOne', '1 agent asleep. Open a pane to wake it.')
+        : t('app.sleep.asleep', '{{count}} agents asleep. Open a pane to wake it.', { count: slept })
+    )
 }
 function copyText(text) {
   if (!text) return
   if (window.shellApi.writeClipboard) window.shellApi.writeClipboard(text)
-  showToast(`Copied ${text}`)
+  showToast(t('app.toast.copiedValue', 'Copied {{value}}', { value: text }))
 }
 function revealFolder(path) {
   if (!path || !window.shellApi.explorer || !window.shellApi.explorer.reveal) return
   window.shellApi.explorer
     .reveal({ root: path, path })
     .then((res) => {
-      if (res && res.ok === false) showToast(`Could not open ${path}: ${res.error || 'not found'}`, { kind: 'error' })
+      if (res && res.ok === false) showToast(t('app.file.openFailedWhy', 'Could not open {{file}}: {{error}}', { file: path, error: res.error || t('app.common.notFound', 'not found') }), { kind: 'error' })
     })
     .catch(() => {})
 }
@@ -3147,7 +3205,7 @@ function addAgentState(out, leaf, wsId) {
   out[leaf.id] = {
     state,
     ...(observed ? { source: observed.source, confirmed: observed.confirmed, since: observed.since } : {}),
-    title: leaf.title || 'Agent',
+    title: leaf.title || t('app.pane.agent', 'Agent'),
     agentId: leaf.agentId || null,
     reset: limits[leaf.id] ? limits[leaf.id].reset : '',
     wsId,
@@ -3254,8 +3312,8 @@ watch(agentAlerts, (list) => {
   for (const a of list) {
     if (alertedAgents.has(a.key)) continue
     alertedAgents.add(a.key)
-    inboxNote('alert', `${a.title} needs you`, a.reason, a.id)
-    showToast(`${a.title}: ${a.reason}`, { kind: 'attention', timeout: 12000, action: { label: 'Show', run: () => focusPane(a.id) } })
+    inboxNote('alert', t('app.notify.needsYou', '{{name}} needs you', { name: a.title }), a.reason, a.id)
+    showToast(t('app.notify.reason', '{{name}}: {{reason}}', { name: a.title, reason: a.reason }), { kind: 'attention', timeout: 12000, action: { label: t('app.common.show', 'Show'), run: () => focusPane(a.id) } })
   }
 })
 
@@ -3373,13 +3431,13 @@ const activityScopes = computed(() => {
   const ws = currentWs.value
   const out = []
   if (ws) {
-    out.push({ value: 'workspace', label: `Workspace: ${ws.name}`, wsId: ws.id, teamId: null, notesDir: ws.cwd || null })
+    out.push({ value: 'workspace', label: t('app.notify.workspace', 'Workspace: {{name}}', { name: ws.name }), wsId: ws.id, teamId: null, notesDir: ws.cwd || null })
   }
-  for (const t of teams.value) {
-    const home = wsById(teamWsId(t.id)) || ws
-    out.push({ value: 'team:' + t.id, label: `Team: ${t.name}`, wsId: null, teamId: t.id, notesDir: (home && home.cwd) || null })
+  for (const team of teams.value) {
+    const home = wsById(teamWsId(team.id)) || ws
+    out.push({ value: 'team:' + team.id, label: t('app.activity.team', 'Team: {{name}}', { name: team.name }), wsId: null, teamId: team.id, notesDir: (home && home.cwd) || null })
   }
-  out.push({ value: 'all', label: 'All workspaces', wsId: null, teamId: null, notesDir: (ws && ws.cwd) || null })
+  out.push({ value: 'all', label: t('app.activity.all', 'All workspaces'), wsId: null, teamId: null, notesDir: (ws && ws.cwd) || null })
   return out
 })
 
@@ -3408,15 +3466,12 @@ async function resolveUnsent(id) {
   if (!u) return
   focusPane(id)
   const leaf = findLeaf(id)
-  const who = leaf ? leaf.title : 'the agent'
+  const who = leaf ? leaf.title : t('app.unsent.theAgent', 'the agent')
   const answer = await askConfirm({
-    title: `Did ${who} get the message?`,
-    text:
-      `Tessel pasted a message and pressed Enter, but ${who} did not visibly take it: "${u.item.text.slice(0, 160)}${u.item.text.length > 160 ? '…' : ''}". ` +
-      'Look at its input box. If the message is still there, press Enter in the terminal yourself, then choose "It was sent". ' +
-      'If it is gone and was not received, choose "Send again".',
-    confirmLabel: 'It was sent',
-    altLabel: 'Send again'
+    title: t('app.unsent.title', 'Did {{who}} get the message?', { who }),
+    text: t('app.unsent.text', 'Tessel pasted a message and pressed Enter, but {{who}} did not visibly take it: "{{message}}". Look at its input box. If the message is still there, press Enter in the terminal yourself, then choose "It was sent". If it is gone and was not received, choose "Send again".', { who, message: `${u.item.text.slice(0, 160)}${u.item.text.length > 160 ? '…' : ''}` }),
+    confirmLabel: t('app.unsent.wasSent', 'It was sent'),
+    altLabel: t('app.unsent.sendAgain', 'Send again')
   })
   if (!unsent[id] || unsent[id] !== u) return
   const meta = u.item.meta || {}
@@ -3424,7 +3479,7 @@ async function resolveUnsent(id) {
     // Recorded first; the pane stays held if that fails.
     const ok = meta.confirmSent ? await meta.confirmSent() : true
     if (!ok) {
-      showToast('Tessel could not record that. Try again.', { kind: 'error' })
+      showToast(t('app.unsent.recordFailed', 'Tessel could not record that. Try again.'), { kind: 'error' })
       return
     }
     if (unsent[id] === u) delete unsent[id]
@@ -3435,7 +3490,7 @@ async function resolveUnsent(id) {
     // channel; anything else is queued again here.
     const handled = meta.onRetry ? await meta.onRetry() : false
     if (handled === null) {
-      showToast('Tessel could not record that. Try again.', { kind: 'error' })
+      showToast(t('app.unsent.recordFailed', 'Tessel could not record that. Try again.'), { kind: 'error' })
       return
     }
     if (unsent[id] === u) delete unsent[id]
@@ -3476,7 +3531,7 @@ function teamWsId(teamId) {
 }
 
 function agentInfo(leaf) {
-  return leaf ? { title: leaf.title || 'Agent', agentId: leaf.agentId || null } : null
+  return leaf ? { title: leaf.title || t('app.pane.agent', 'Agent'), agentId: leaf.agentId || null } : null
 }
 
 function logMessage(leafId, status, text, meta = {}) {
@@ -3571,10 +3626,10 @@ function flushPending() {
           unsent[id] = { item, at: Date.now() }
           if (item.meta && item.meta.onUncertain) item.meta.onUncertain()
           const leaf = findLeaf(id)
-          showToast(`A message to ${leaf ? leaf.title : 'an agent'} may not have been sent. Check its input box.`, {
+          showToast(leaf ? t('app.unsent.toast', 'A message to {{name}} may not have been sent. Check its input box.', { name: leaf.title }) : t('app.unsent.toastAgent', 'A message to an agent may not have been sent. Check its input box.'), {
             kind: 'attention',
             timeout: 15000,
-            action: { label: 'Check', run: () => resolveUnsent(id) }
+            action: { label: t('app.unsent.check', 'Check'), run: () => resolveUnsent(id) }
           })
         } else {
           failDelivery(item)
@@ -3623,7 +3678,7 @@ const taskOpenAgents = computed(() =>
   (currentWs.value ? wsAgents(currentWs.value.id) : []).map((l) => ({
     id: l.id,
     num: l.num || 0,
-    title: l.title || 'Agent',
+    title: l.title || t('app.pane.agent', 'Agent'),
     agentId: l.agentId || null,
     accent: l.accent || null,
     state: paneState(l),
@@ -3632,13 +3687,23 @@ const taskOpenAgents = computed(() =>
   }))
 )
 
-// Why an open agent cannot take a new task now, or '' if it can.
+// Why an open agent cannot take a new task now, or '' if it can (English:
+// it goes to a team lead; busyReasonText says it to the person).
 function busyReason(leaf) {
-  const t = taskOfPane(leaf.id)
-  if (t) return `already on "${t.title}"`
-  if (limits[leaf.id]) return 'at its usage limit'
-  if (approvals[leaf.id]) return 'waiting for your approval'
-  if (agentStatus[leaf.id] === 'busy') return 'working on something else'
+  const task = taskOfPane(leaf.id)
+  if (task) return `already on "${task.title}"` // i18n-ignore
+  if (limits[leaf.id]) return 'at its usage limit' // i18n-ignore
+  if (approvals[leaf.id]) return 'waiting for your approval' // i18n-ignore
+  if (agentStatus[leaf.id] === 'busy') return 'working on something else' // i18n-ignore
+  return ''
+}
+function busyReasonText(leaf) {
+  if (!leaf) return t('app.task.busy.gone', 'gone')
+  const task = taskOfPane(leaf.id)
+  if (task) return t('app.task.busy.onTask', 'already on "{{title}}"', { title: task.title })
+  if (limits[leaf.id]) return t('app.task.busy.limit', 'at its usage limit')
+  if (approvals[leaf.id]) return t('app.task.busy.approval', 'waiting for your approval')
+  if (agentStatus[leaf.id] === 'busy') return t('app.task.busy.working', 'working on something else')
   return ''
 }
 
@@ -3650,18 +3715,19 @@ function taskOfPane(paneId) {
 
 function taskPrompt(task, ws) {
   const wt = task.worktree
+  // Sent to the agent: stays English.
   const where = wt
-    ? `You work in your own copy of the project: ${wt.path} (git branch ${wt.branch}, made from ${wt.baseBranch || 'the main branch'}). ` +
-      'Commit your work on that branch (git add the files you changed, then git commit). Do not merge it and do not push: the user reviews and merges it. ' +
-      'In your last commit message, list the checks you ran (tests, build) and their results. ' +
-      'If the project needs its dependencies installed, install them in this copy (for example npm ci); never link them to another folder.'
-    : `You work directly in the project folder ${(ws && ws.cwd) || ''}. Other agents may work there too: check .tessel/notes.md before editing shared files.`
+    ? `You work in your own copy of the project: ${wt.path} (git branch ${wt.branch}, made from ${wt.baseBranch || 'the main branch'}). ` + // i18n-ignore
+      'Commit your work on that branch (git add the files you changed, then git commit). Do not merge it and do not push: the user reviews and merges it. ' + // i18n-ignore
+      'In your last commit message, list the checks you ran (tests, build) and their results. ' + // i18n-ignore
+      'If the project needs its dependencies installed, install them in this copy (for example npm ci); never link them to another folder.' // i18n-ignore
+    : `You work directly in the project folder ${(ws && ws.cwd) || ''}. Other agents may work there too: check .tessel/notes.md before editing shared files.` // i18n-ignore
   const lead = task.teamId ? teamLead(task.teamId) : null
   const tm = task.teamId ? teamById(task.teamId) : null
   const box = tm && task.paneId && channelBoxes[tm.id] ? channelBoxes[tm.id][task.paneId] : null
   const team = tm
-    ? `You are in team "${tm.name}"` +
-      (lead ? `, led by ${paneLabel(lead)}: it gave you this task and reviews your work when you finish. Ask it if something is unclear.` : '.') +
+    ? `You are in team "${tm.name}"` + // i18n-ignore
+      (lead ? `, led by ${paneLabel(lead)}: it gave you this task and reviews your work when you finish. Ask it if something is unclear.` : '.') + // i18n-ignore
       (box ? `\n${box.guide}` : '') +
       '\n\n'
     : ''
@@ -3670,7 +3736,7 @@ function taskPrompt(task, ws) {
     (task.brief ? `${task.brief}\n\n` : '') +
     team +
     `${where}\n\n` +
-    'When the task is complete and checked, end your last message with a line that contains only the words TASK and COMPLETE joined by an underscore, and nothing else on that line.'
+    'When the task is complete and checked, end your last message with a line that contains only the words TASK and COMPLETE joined by an underscore, and nothing else on that line.' // i18n-ignore
   )
 }
 
@@ -3682,7 +3748,7 @@ async function startTask(spec, opts = {}) {
   newTaskOpen.value = false
   const ws = opts.ws || currentWs.value
   if (!ws || !spec || !spec.title) return { error: 'no workspace' }
-  if (opts.expectedCwd && (!workspaces.value.includes(ws) || ws.cwd !== opts.expectedCwd)) return { error: 'The workspace folder changed. No agent was started.' }
+  if (opts.expectedCwd && (!workspaces.value.includes(ws) || ws.cwd !== opts.expectedCwd)) return { error: t('app.task.folderChanged', 'The workspace folder changed. No agent was started.') }
   const task = addTask({ title: spec.title, wsId: ws.id })
   updateTask(task.id, {
     brief: spec.brief || '',
@@ -3700,14 +3766,14 @@ async function startTask(spec, opts = {}) {
     const why = leaf ? busyReason(leaf) : 'gone'
     if (why) {
       removeTask(task.id)
-      showToast(`${leaf ? leaf.title : 'That agent'} cannot take this task: ${why}.`, { kind: 'error', timeout: 7000 })
+      showToast(t('app.task.cannotTake', '{{name}} cannot take this task: {{why}}.', { name: leaf ? leaf.title : t('app.task.thatAgent', 'That agent'), why: busyReasonText(leaf) }), { kind: 'error', timeout: 7000 })
       return { error: `${leaf ? paneLabel(leaf) : 'that agent'} cannot take it: ${why}` }
     }
   } else {
     const agent = agentById(spec.agent.id)
     if (!agent) {
       removeTask(task.id)
-      showToast('That agent is not available.', { kind: 'error' })
+      showToast(t('app.task.agentUnavailable', 'That agent is not available.'), { kind: 'error' })
       return { error: 'that agent kind is not available' }
     }
     let worktree = null
@@ -3715,12 +3781,12 @@ async function startTask(spec, opts = {}) {
       const res = await window.shellApi.createWorktree(ws.cwd, spec.title, { ...(spec.worktreeOptions || {}), ...worktreeSettings() })
       // The copy exists even when its setup script failed: said, never undone.
       if (res && res.ok && res.setup && res.setup.ran && !res.setup.ok)
-        showToast(`The copy is ready, but .tessel/setup.ps1 failed: ${res.setup.error || 'see the script'}.`, { kind: 'error', timeout: 9000 })
+        showToast(t('app.task.setupFailed', 'The copy is ready, but .tessel/setup.ps1 failed: {{error}}.', { error: res.setup.error || t('app.task.seeScript', 'see the script') }), { kind: 'error', timeout: 9000 })
       if (res && res.ok && res.copyEnvResult && res.copyEnvResult.error)
-        showToast(`The copy is ready, but its .env files were not all copied: ${res.copyEnvResult.error}.`, { kind: 'error', timeout: 9000 })
+        showToast(t('app.task.envFailed', 'The copy is ready, but its .env files were not all copied: {{error}}.', { error: res.copyEnvResult.error }), { kind: 'error', timeout: 9000 })
       if (!res || !res.ok) {
         updateTask(task.id, { column: 'todo' })
-        showToast(`Could not make a separate copy: ${(res && res.error) || 'unknown error'}. The task stays in To do.`, {
+        showToast(t('app.task.copyFailed', 'Could not make a separate copy: {{error}}. The task stays in To do.', { error: (res && res.error) || t('app.common.unknownError', 'unknown error') }), {
           kind: 'error',
           timeout: 9000
         })
@@ -3731,7 +3797,7 @@ async function startTask(spec, opts = {}) {
     }
     if (opts.expectedCwd && (!workspaces.value.includes(ws) || ws.cwd !== opts.expectedCwd)) {
       updateTask(task.id, { column: 'todo' })
-      return { error: 'The workspace folder changed. The task and any prepared copy were kept in To do; no agent was started.' }
+      return { error: t('app.task.folderChangedKept', 'The workspace folder changed. The task and any prepared copy were kept in To do; no agent was started.') }
     }
     const target =
       opts.roomy && ws.tree ? largestLeaf(ws.tree).id : ws.activeId && findLeaf(ws.activeId) ? ws.activeId : null
@@ -3746,7 +3812,7 @@ async function startTask(spec, opts = {}) {
   }
   if (!leaf) {
     updateTask(task.id, { column: 'todo' })
-    showToast('Could not start the agent. The task stays in To do.', { kind: 'error' })
+    showToast(t('app.task.startFailed', 'Could not start the agent. The task stays in To do.'), { kind: 'error' })
     return { error: 'could not start the agent' }
   }
   // A new agent started by a lead joins its team (told in the task itself).
@@ -3758,7 +3824,7 @@ async function startTask(spec, opts = {}) {
     tellAgents(before, `[Tessel] Team "${teamById(opts.teamId).name}": ${paneLabel(leaf)} joined the team.`, opts.teamId)
   }
   updateTask(task.id, { paneId: leaf.id })
-  const t = boardTasks.find((x) => x.id === task.id)
+  const started = boardTasks.find((x) => x.id === task.id)
   recordActivity({
     type: 'task',
     action: 'started',
@@ -3767,9 +3833,9 @@ async function startTask(spec, opts = {}) {
     paneId: leaf.id,
     agent: agentInfo(leaf),
     wsId: ws.id,
-    branch: t.worktree ? t.worktree.branch : null
+    branch: started.worktree ? started.worktree.branch : null
   })
-  deliverToAgent(leaf.id, taskPrompt(t, ws), {
+  deliverToAgent(leaf.id, taskPrompt(started, ws), {
     source: 'tessel',
     scope: 'task',
     // A new agent needs a moment to start (and may ask to trust the folder).
@@ -3777,12 +3843,12 @@ async function startTask(spec, opts = {}) {
   })
   if (!taskPanelOpen.value) showSideTab('tasks')
   showToast(
-    t.worktree
-      ? `${leaf.title} started "${task.title}" on branch ${t.worktree.branch}.`
-      : `${leaf.title} started "${task.title}".`,
+    started.worktree
+      ? t('app.task.startedOnBranch', '{{name}} started "{{title}}" on branch {{branch}}.', { name: leaf.title, title: task.title, branch: started.worktree.branch })
+      : t('app.task.started', '{{name}} started "{{title}}".', { name: leaf.title, title: task.title }),
     { timeout: 5000 }
   )
-  return { task: t, leaf }
+  return { task: started, leaf }
 }
 
 // An agent printed the task signal: its card goes to Review.
@@ -3800,20 +3866,20 @@ function agentReportedDone(paneId) {
     paneId,
     agent: agentInfo(leaf),
     wsId: task.wsId,
-    detail: lead && lead.id !== paneId ? `${lead.title} (lead) reviews it first` : ''
+    detail: lead && lead.id !== paneId ? t('app.task.leadReviewsDetail', '{{lead}} (lead) reviews it first', { lead: lead.title }) : ''
   })
   if (lead && lead.id !== paneId) {
     updateTask(task.id, { leadReview: 'pending', teamId: task.teamId || leaf.team })
     noticeAgents([lead], leadReviewPrompt(task, leaf), leaf.team, { source: 'tessel', scope: 'lead', teamId: leaf.team })
-    showToast(`${leaf.title} finished "${task.title}". ${lead.title} (lead) reviews it first.`, { timeout: 6000 })
+    showToast(t('app.task.finishedLead', '{{name}} finished "{{title}}". {{lead}} (lead) reviews it first.', { name: leaf.title, title: task.title, lead: lead.title }), { timeout: 6000 })
     return
   }
-  showToast(`${leaf ? leaf.title : 'An agent'} finished "${task.title}". It is ready for your review.`, {
+  showToast(t('app.task.finished', '{{name}} finished "{{title}}". It is ready for your review.', { name: leaf ? leaf.title : t('app.task.anAgent', 'An agent'), title: task.title }), {
     kind: 'attention',
     timeout: 10000,
     action: task.worktree
-      ? { label: 'Review', run: () => openReview(task.id) }
-      : { label: 'Show', run: () => focusPane(paneId) }
+      ? { label: t('app.task.review', 'Review'), run: () => openReview(task.id) }
+      : { label: t('app.common.show', 'Show'), run: () => focusPane(paneId) }
   })
   // Optional second opinion from another agent.
   const reviewer = task.reviewerId && findLeaf(task.reviewerId)
@@ -3849,7 +3915,7 @@ function taskEvent(task, action, detail = '', by = null) {
     taskId: task.id,
     title: task.title,
     paneId: task.paneId || null,
-    agent: leaf ? agentInfo(leaf) : { title: 'the agent' },
+    agent: leaf ? agentInfo(leaf) : { title: t('app.unsent.theAgent', 'the agent') },
     wsId: task.wsId,
     branch: task.worktree ? task.worktree.branch : null,
     detail,
@@ -3862,22 +3928,22 @@ function taskEvent(task, action, detail = '', by = null) {
 function sendBackToAgent(task, text, action, detail, by = null) {
   const leaf = findLeaf(task.paneId)
   if (!leaf) {
-    showToast('The agent of this task was closed. Start a new task instead.', { kind: 'error' })
+    showToast(t('app.task.agentClosed', 'The agent of this task was closed. Start a new task instead.'), { kind: 'error' })
     return false
   }
   const wt = task.worktree
   deliverToAgent(
     leaf.id,
     `[Tessel review] ${task.title}\n\n${text}\n\n` +
-      (wt ? `Work in ${wt.path} on branch ${wt.branch}, commit the changes there (say which checks you ran in the commit message), and do not merge. ` : '') +
-      'When it is done and checked, end your last message with a line that contains only the words TASK and COMPLETE joined by an underscore.',
+      (wt ? `Work in ${wt.path} on branch ${wt.branch}, commit the changes there (say which checks you ran in the commit message), and do not merge. ` : '') + // i18n-ignore
+      'When it is done and checked, end your last message with a line that contains only the words TASK and COMPLETE joined by an underscore.', // i18n-ignore
     by ? { source: 'lead', scope: 'task', from: by } : { source: 'you', scope: 'task' }
   )
   // Back in Doing: a new period starts.
   updateTask(task.id, { column: 'doing', leadReview: null, doingSince: Date.now() })
   taskEvent(task, action, detail, by)
   reviewTaskId.value = null
-  showToast(`Sent to ${leaf.title}. "${task.title}" is back in Doing.`, { timeout: 5000 })
+  showToast(t('app.task.sentBack', 'Sent to {{name}}. "{{title}}" is back in Doing.', { name: leaf.title, title: task.title }), { timeout: 5000 })
   return true
 }
 
@@ -3902,18 +3968,20 @@ async function deleteTask(taskId) {
   const wt = task.worktree && !task.mergedAt ? task.worktree : null
   const leaf = task.paneId ? findLeaf(task.paneId) : null
   const ok = await askConfirm({
-    title: `Delete "${task.title}"?`,
+    title: t('app.task.deleteTitle', 'Delete "{{title}}"?', { title: task.title }),
     text: wt
-      ? `${leaf ? leaf.title + ' closes, and ' : ''}its copy (${wt.path}) and branch ${wt.branch} are deleted with any work not merged yet. To keep the work, open Review and merge it first. This cannot be undone.`
-      : 'The card is removed from the board.',
-    confirmLabel: 'Delete',
+      ? leaf
+        ? t('app.task.deleteCopyAgent', '{{name}} closes, and its copy ({{path}}) and branch {{branch}} are deleted with any work not merged yet. To keep the work, open Review and merge it first. This cannot be undone.', { name: leaf.title, path: wt.path, branch: wt.branch })
+        : t('app.task.deleteCopy', 'its copy ({{path}}) and branch {{branch}} are deleted with any work not merged yet. To keep the work, open Review and merge it first. This cannot be undone.', { path: wt.path, branch: wt.branch })
+      : t('app.task.deleteCard', 'The card is removed from the board.'),
+    confirmLabel: t('app.common.delete', 'Delete'),
     danger: !!wt
   })
   if (!ok) return
   if (wt) {
     const rm = await removeTaskCopy(task, true)
     if (!rm || !rm.ok) {
-      showToast(`The card was kept: its copy could not be deleted (${(rm && rm.error) || 'unknown error'}).`, { kind: 'error', timeout: 9000 })
+      showToast(t('app.task.cardKept', 'The card was kept: its copy could not be deleted ({{error}}).', { error: (rm && rm.error) || t('app.common.unknownError', 'unknown error') }), { kind: 'error', timeout: 9000 })
       return
     }
   }
@@ -3929,13 +3997,13 @@ async function deleteTasks(taskIds) {
   if (!list.length) return false
   const withCopy = list.filter((t) => t.worktree && !t.mergedAt)
   const ok = await askConfirm({
-    title: `Delete ${list.length} task${list.length === 1 ? '' : 's'}?`,
+    title: list.length === 1 ? t('app.task.deleteManyTitleOne', 'Delete 1 task?') : t('app.task.deleteManyTitle', 'Delete {{count}} tasks?', { count: list.length }),
     text: withCopy.length
-      ? `${withCopy.length} of them still ha${withCopy.length === 1 ? 's its' : 've their'} own copy of the project (${withCopy
-          .map((t) => t.worktree.branch)
-          .join(', ')}): ${withCopy.length === 1 ? 'it is' : 'they are'} deleted with any work not merged yet. This cannot be undone.`
-      : 'The cards are removed from the board.',
-    confirmLabel: 'Delete',
+      ? withCopy.length === 1
+        ? t('app.task.deleteManyCopyOne', '1 of them still has its own copy of the project ({{branches}}): it is deleted with any work not merged yet. This cannot be undone.', { branches: withCopy.map((task) => task.worktree.branch).join(', ') })
+        : t('app.task.deleteManyCopy', '{{count}} of them still have their own copy of the project ({{branches}}): they are deleted with any work not merged yet. This cannot be undone.', { count: withCopy.length, branches: withCopy.map((task) => task.worktree.branch).join(', ') })
+      : t('app.task.deleteCards', 'The cards are removed from the board.'),
+    confirmLabel: t('app.common.delete', 'Delete'),
     danger: withCopy.length > 0
   })
   if (!ok) return false
@@ -3951,9 +4019,9 @@ async function deleteTasks(taskIds) {
     removeTask(task.id)
   }
   if (kept.length) {
-    showToast(`Kept ${kept.length}: their copy could not be deleted (${kept.join(', ')}).`, { kind: 'error', timeout: 9000 })
+    showToast(t('app.task.keptMany', 'Kept {{count}}: their copy could not be deleted ({{titles}}).', { count: kept.length, titles: kept.join(', ') }), { kind: 'error', timeout: 9000 })
   } else {
-    showToast(`Deleted ${list.length} task${list.length === 1 ? '' : 's'}.`, { timeout: 4000 })
+    showToast(list.length === 1 ? t('app.task.deletedOne', 'Deleted 1 task.') : t('app.task.deleted', 'Deleted {{count}} tasks.', { count: list.length }), { timeout: 4000 })
   }
   return true
 }
@@ -3968,15 +4036,16 @@ const reviewActions = {
   },
   requestChanges(text) {
     const task = reviewTask.value
-    if (task) sendBackToAgent(task, `Changes requested by the user:\n${text}`, 'changes', text.length > 80 ? text.slice(0, 80) + '…' : text)
+    if (task) sendBackToAgent(task, `Changes requested by the user:\n${text}`, 'changes', // i18n-ignore
+       text.length > 80 ? text.slice(0, 80) + '…' : text)
   },
   resolveConflicts(info) {
     const task = reviewTask.value
     if (!task || !info) return
     sendBackToAgent(
       task,
-      `Your branch ${info.branch} conflicts with ${info.target} in: ${info.conflicts.join(', ')}. ` +
-        `Merge ${info.target} into your branch (git merge ${info.target}), resolve the conflicts keeping both intents, run the checks again, and commit.`,
+      `Your branch ${info.branch} conflicts with ${info.target} in: ${info.conflicts.join(', ')}. ` + // i18n-ignore
+        `Merge ${info.target} into your branch (git merge ${info.target}), resolve the conflicts keeping both intents, run the checks again, and commit.`, // i18n-ignore
       'resolve',
       info.conflicts.join(', ')
     )
@@ -3986,11 +4055,22 @@ const reviewActions = {
     if (!task || !info || !info.ok) return false
     const leaf = findLeaf(task.paneId)
     const ok = await askConfirm({
-      title: `Merge "${task.title}" into ${info.target}?`,
+      title: t('app.merge.title', 'Merge "{{title}}" into {{target}}?', { title: task.title, target: info.target }),
       text:
-        `${info.commits.length} commit${info.commits.length === 1 ? '' : 's'} and ${info.files.length} file${info.files.length === 1 ? '' : 's'} from ${info.branch} go into ${info.target} in ${info.repo}.` +
-        (cleanup ? ` Then ${leaf ? leaf.title + ' closes and ' : ''}its copy and branch are deleted.` : ''),
-      confirmLabel: 'Merge'
+        t('app.merge.text', '{{commits}} and {{files}} from {{branch}} go into {{target}} in {{repo}}.', {
+          commits: info.commits.length === 1 ? t('app.merge.commitOne', '1 commit') : t('app.merge.commits', '{{count}} commits', { count: info.commits.length }),
+          files: info.files.length === 1 ? t('app.merge.fileOne', '1 file') : t('app.merge.files', '{{count}} files', { count: info.files.length }),
+          branch: info.branch,
+          target: info.target,
+          repo: info.repo
+        }) +
+        (cleanup
+          ? ' ' +
+            (leaf
+              ? t('app.merge.cleanupAgent', 'Then {{name}} closes and its copy and branch are deleted.', { name: leaf.title })
+              : t('app.merge.cleanup', 'Then its copy and branch are deleted.'))
+          : ''),
+      confirmLabel: t('app.merge.confirm', 'Merge')
     })
     if (!ok) return false
     const res = await window.shellApi.review.merge({
@@ -4002,19 +4082,19 @@ const reviewActions = {
       expectHead: info.head
     })
     if (!res || !res.ok) {
-      showToast(`Not merged: ${(res && res.error) || 'unknown error'}`, { kind: 'error', timeout: 9000 })
+      showToast(t('app.merge.failed', 'Not merged: {{error}}', { error: (res && res.error) || t('app.common.unknownError', 'unknown error') }), { kind: 'error', timeout: 9000 })
       return false
     }
     updateTask(task.id, { column: 'done', mergedAt: Date.now(), mergeSha: res.sha })
-    taskEvent(task, 'merged', `${res.commits} commit${res.commits === 1 ? '' : 's'} into ${info.target}`)
+    taskEvent(task, 'merged', res.commits === 1 ? t('app.merge.detailOne', '1 commit into {{target}}', { target: info.target }) : t('app.merge.detail', '{{count}} commits into {{target}}', { count: res.commits, target: info.target }))
     reviewTaskId.value = null
     let note = ''
     if (cleanup) {
       const rm = await removeTaskCopy(task, false)
       if (rm && rm.ok) updateTask(task.id, { paneId: null })
-      else note = ` Its copy was kept: ${(rm && rm.error) || 'could not remove it'}.`
+      else note = ' ' + t('app.merge.copyKept', 'Its copy was kept: {{error}}.', { error: (rm && rm.error) || t('app.merge.couldNotRemove', 'could not remove it') })
     }
-    showToast(`Merged "${task.title}" into ${info.target}.${note}`, { kind: note ? 'error' : undefined, timeout: note ? 9000 : 5000 })
+    showToast(t('app.merge.done', 'Merged "{{title}}" into {{target}}.', { title: task.title, target: info.target }) + note, { kind: note ? 'error' : undefined, timeout: note ? 9000 : 5000 })
     return true
   },
   async discard(info) {
@@ -4023,24 +4103,26 @@ const reviewActions = {
     const leaf = findLeaf(task.paneId)
     const n = info && info.ok ? info.commits.length : 0
     const ok = await askConfirm({
-      title: `Discard "${task.title}"?`,
-      text:
-        `${leaf ? leaf.title + ' closes, and ' : ''}its copy (${task.worktree.path}) and branch ${task.worktree.branch} are deleted` +
-        (n ? `, with its ${n} unmerged commit${n === 1 ? '' : 's'}` : '') +
-        '. This cannot be undone.',
-      confirmLabel: 'Discard',
+      title: t('app.discard.title', 'Discard "{{title}}"?', { title: task.title }),
+      text: t('app.discard.text', '{{who}}its copy ({{path}}) and branch {{branch}} are deleted{{commits}}. This cannot be undone.', {
+        who: leaf ? t('app.discard.closes', '{{name}} closes, and ', { name: leaf.title }) : '',
+        path: task.worktree.path,
+        branch: task.worktree.branch,
+        commits: n ? (n === 1 ? t('app.discard.commitOne', ', with its 1 unmerged commit') : t('app.discard.commits', ', with its {{count}} unmerged commits', { count: n })) : ''
+      }),
+      confirmLabel: t('app.discard.confirm', 'Discard'),
       danger: true
     })
     if (!ok) return false
     const rm = await removeTaskCopy(task, true)
     if (!rm || !rm.ok) {
-      showToast(`Could not delete the copy: ${(rm && rm.error) || 'unknown error'}`, { kind: 'error', timeout: 9000 })
+      showToast(t('app.discard.failed', 'Could not delete the copy: {{error}}', { error: (rm && rm.error) || t('app.common.unknownError', 'unknown error') }), { kind: 'error', timeout: 9000 })
       return false
     }
     taskEvent(task, 'discarded', task.worktree.branch)
     reviewTaskId.value = null
     removeTask(task.id)
-    showToast(`Discarded "${task.title}".`, { timeout: 5000 })
+    showToast(t('app.discard.done', 'Discarded "{{title}}".', { title: task.title }), { timeout: 5000 })
     return true
   },
   markDone() {
@@ -4069,12 +4151,13 @@ const reviewActions = {
 // the agents of the current workspace, and delivery through their message
 // queue: never typed while the agent works or waits for an approval,
 // confirmed when it takes the message; the notes are then cleared.
-const NOTE_TARGET_STATE = {
-  ready: 'Ready',
-  working: 'Working: sent when it is free',
-  waiting: 'Waiting for you',
-  limited: 'At its usage limit',
-  unknown: 'Starting'
+function noteTargetState(state) {
+  if (state === 'ready') return t('app.notes.state.ready', 'Ready')
+  if (state === 'working') return t('app.notes.state.working', 'Working: sent when it is free')
+  if (state === 'waiting') return t('app.notes.state.waiting', 'Waiting for you')
+  if (state === 'limited') return t('app.notes.state.limited', 'At its usage limit')
+  if (state === 'unknown') return t('app.notes.state.starting', 'Starting')
+  return ''
 }
 setNotesDelivery({
   targets() {
@@ -4083,20 +4166,20 @@ setNotesDelivery({
       const task = taskOfPane(l.id)
       return {
         id: l.id,
-        label: `#${l.num || '?'} ${l.title || 'Agent'}`,
-        stateLabel: NOTE_TARGET_STATE[state] || '',
-        disabledReason: state === 'approval' ? 'Agent needs permission' : '',
-        hint: task ? `Working on "${task.title}"` : ''
+        label: `#${l.num || '?'} ${l.title || t('app.pane.agent', 'Agent')}`,
+        stateLabel: noteTargetState(state),
+        disabledReason: state === 'approval' ? t('app.notes.needsPermission', 'Agent needs permission') : '',
+        hint: task ? t('app.notes.workingOn', 'Working on "{{title}}"', { title: task.title }) : ''
       }
     })
   },
   send(paneId, text, { onDelivered } = {}) {
     const leaf = findLeaf(paneId)
     if (!leaf || !text) {
-      showToast('Terminal is no longer available', { kind: 'error' })
+      showToast(t('app.notes.terminalGone', 'Terminal is no longer available'), { kind: 'error' })
       return
     }
-    showToast('Sending notes...', { timeout: 3000 })
+    showToast(t('app.notes.sending', 'Sending notes...'), { timeout: 3000 })
     deliverToAgent(leaf.id, text, {
       source: 'you',
       scope: 'notes',
@@ -4105,10 +4188,10 @@ setNotesDelivery({
         // A task waiting for review goes back to Doing: its agent works again.
         const task = taskOfPane(leaf.id)
         if (task && task.column === 'review') updateTask(task.id, { column: 'doing', leadReview: null, doingSince: Date.now() })
-        showToast('Notes sent.', { timeout: 3000 })
+        showToast(t('app.notes.sent', 'Notes sent.'), { timeout: 3000 })
         if (onDelivered) onDelivered()
       },
-      onFailed: () => showToast(`The notes could not be sent to ${leaf.title}.`, { kind: 'error' })
+      onFailed: () => showToast(t('app.notes.failed', 'The notes could not be sent to {{name}}.', { name: leaf.title }), { kind: 'error' })
     })
   }
 })
@@ -4175,7 +4258,7 @@ async function changeTeamLead(teamId, leafId) {
   if (leaf && old && old.id === leaf.id) return
   if (leaf && (leaf.kind !== 'agent' || leaf.team !== teamId)) return
   if (leaf && !dir) {
-    showToast('Set a project folder on this workspace first: the lead works from it.', { kind: 'error' })
+    showToast(t('app.lead.needFolder', 'Set a project folder on this workspace first: the lead works from it.'), { kind: 'error' })
     return
   }
   // The new lead's inbox first: if it cannot be made, nothing changes.
@@ -4190,7 +4273,7 @@ async function changeTeamLead(teamId, leafId) {
     if (!box) {
       // Not the lead after all: the poll tells it about the channel instead.
       if (team.channelTold) delete team.channelTold[leaf.id]
-      showToast(`Could not make ${leaf.title}'s inbox, so it is not the lead. Check that the project folder can be written to.`, {
+      showToast(t('app.lead.inboxFailed', "Could not make {{name}}'s inbox, so it is not the lead. Check that the project folder can be written to.", { name: leaf.title }), {
         kind: 'error',
         timeout: 8000
       })
@@ -4215,10 +4298,10 @@ async function changeTeamLead(teamId, leafId) {
   tellAgents([leaf], `[Tessel] ${box.guide}`, teamId)
   tellAgents(
     teamMembers(teamId).filter((l) => l.id !== leaf.id),
-    `[Tessel] Team "${team.name}": ${paneLabel(leaf)} now leads the team. It may give you tasks; when you finish one, it reviews your work first.`,
+    `[Tessel] Team "${team.name}": ${paneLabel(leaf)} now leads the team. It may give you tasks; when you finish one, it reviews your work first.`, // i18n-ignore
     teamId
   )
-  showToast(`${leaf.title} now leads ${team.name}.`, { timeout: 4000 })
+  showToast(t('app.lead.nowLeads', '{{name}} now leads {{team}}.', { name: leaf.title, team: team.name }), { timeout: 4000 })
   handOffLeadReviews(teamId, leaf)
 }
 
@@ -4329,10 +4412,10 @@ function handOffLeadReviews(teamId, newLead = null) {
       continue
     }
     updateTask(task.id, { leadReview: null })
-    showToast(`"${task.title}" is ready for your review: its team has no lead any more.`, {
+    showToast(t('app.lead.noLeadReview', '"{{title}}" is ready for your review: its team has no lead any more.', { title: task.title }), {
       kind: 'attention',
       timeout: 10000,
-      action: task.worktree ? { label: 'Review', run: () => openReview(task.id) } : { label: 'Show', run: () => focusPane(task.paneId) }
+      action: task.worktree ? { label: t('app.task.review', 'Review'), run: () => openReview(task.id) } : { label: t('app.common.show', 'Show'), run: () => focusPane(task.paneId) }
     })
   }
 }
@@ -4341,10 +4424,10 @@ function leadReviewPrompt(task, worker) {
   const wt = task.worktree
   const where = wt
     ? `in its own copy ${wt.path} (branch ${wt.branch}, from ${wt.baseBranch || 'main'}). See the changes with: git -C "${wt.path}" log ${wt.baseBranch || 'main'}..HEAD and git -C "${wt.path}" diff ${wt.baseBranch || 'main'}...HEAD`
-    : 'in the project folder (see git status and git diff there)'
+    : 'in the project folder (see git status and git diff there)' // i18n-ignore
   return (
     `[Tessel] ${paneLabel(worker)} finished the task "${task.title}" (task id ${task.id}) ${where}.\n` +
-    'Review it: correctness, scope, tests. Do not edit its files. Then write to your lead inbox either ' +
+    'Review it: correctness, scope, tests. Do not edit its files. Then write to your lead inbox either ' + // i18n-ignore
     `{"action":"approve","task":"${task.id}","note":"..."} or {"action":"changes","task":"${task.id}","text":"what to fix"}.`
   )
 }
@@ -4355,51 +4438,52 @@ async function runLeadRequest(team, lead, req) {
   const member = (num) => teamMembers(team.id).find((l) => l.num === num && l.id !== lead.id) || null
   if (req.action === 'task') {
     const active = boardTasks.filter((t) => t.teamId === team.id && (t.column === 'doing' || t.column === 'review')).length
-    if (active >= LEAD_MAX_ACTIVE) return `Not started "${req.title}": the team already has ${active} tasks in progress (limit ${LEAD_MAX_ACTIVE}).`
+    // Answers to a lead (an agent): English.
+    if (active >= LEAD_MAX_ACTIVE) return `Not started "${req.title}": the team already has ${active} tasks in progress (limit ${LEAD_MAX_ACTIVE}).` // i18n-ignore
     let spec
     if (req.num != null) {
       const m = member(req.num)
-      if (!m) return `Not started "${req.title}": #${req.num} is not in your team.`
+      if (!m) return `Not started "${req.title}": #${req.num} is not in your team.` // i18n-ignore
       spec = { title: req.title, brief: req.brief, agent: { kind: 'pane', id: m.id }, isolated: false }
     } else {
       const kind = taskAgentKinds.value.find((a) => a.id === req.kind)
-      if (!kind) return `Not started "${req.title}": unknown agent kind "${req.kind}". Use one of: ${taskAgentKinds.value.map((a) => a.id).join(', ')}.`
+      if (!kind) return `Not started "${req.title}": unknown agent kind "${req.kind}". Use one of: ${taskAgentKinds.value.map((a) => a.id).join(', ')}.` // i18n-ignore
       if (req.ownCopy) {
         const info = ws && ws.cwd ? await window.shellApi.gitInfo(ws.cwd) : null
         if (!info || !info.isRepo || !info.hasCommits) {
           const why = !ws || !ws.cwd ? 'the workspace has no project folder' : !info || !info.isRepo ? 'the project folder is not a git repository' : 'the repository has no commits yet'
-          return `Not started "${req.title}": ${why}, so the new agent cannot have its own copy. Add "own_copy": false to let it work in the project folder.`
+          return `Not started "${req.title}": ${why}, so the new agent cannot have its own copy. Add "own_copy": false to let it work in the project folder.` // i18n-ignore
         }
       }
       spec = { title: req.title, brief: req.brief, agent: { kind: 'new', id: kind.id }, isolated: req.ownCopy }
     }
     const res = await startTask(spec, { ws, roomy: true, teamId: team.id })
-    if (!res || res.error) return `Not started "${req.title}": ${(res && res.error) || 'unknown error'}.`
-    return `Started "${req.title}" (task id ${res.task.id}) with ${paneLabel(res.leaf)}${res.task.worktree ? ` on branch ${res.task.worktree.branch}` : ''}.`
+    if (!res || res.error) return `Not started "${req.title}": ${(res && res.error) || 'unknown error'}.` // i18n-ignore
+    return `Started "${req.title}" (task id ${res.task.id}) with ${paneLabel(res.leaf)}${res.task.worktree ? ` on branch ${res.task.worktree.branch}` : ''}.` // i18n-ignore
   }
   if (req.action === 'message') return runMemberMessage(team, lead, req)
   const inReview = boardTasks.filter((t) => t.teamId === team.id && t.column === 'review')
   const found = findTaskRef(inReview, req.task)
   const task = found.task
   if (!task) {
-    if (found.error) return `Not done: ${found.error}.`
+    if (found.error) return `Not done: ${found.error}.` // i18n-ignore
     return (
-      `No task of your team waits for review under "${req.task}".` +
+      `No task of your team waits for review under "${req.task}".` + // i18n-ignore
       (inReview.length ? ` In review: ${inReview.map((t) => `${t.id} "${t.title}"`).join(', ')}.` : '')
     )
   }
   if (req.action === 'approve') {
     updateTask(task.id, { leadReview: 'approved', leadNote: req.text || '' })
     taskEvent(task, 'approved', req.text, lead.title)
-    showToast(`${lead.title} (lead) approved "${task.title}". It is ready for you to merge.`, {
+    showToast(t('app.lead.approved', '{{lead}} (lead) approved "{{title}}". It is ready for you to merge.', { lead: lead.title, title: task.title }), {
       kind: 'attention',
       timeout: 10000,
-      action: task.worktree ? { label: 'Review', run: () => openReview(task.id) } : { label: 'Show', run: () => focusPane(task.paneId) }
+      action: task.worktree ? { label: t('app.task.review', 'Review'), run: () => openReview(task.id) } : { label: t('app.common.show', 'Show'), run: () => focusPane(task.paneId) }
     })
-    return `Approved "${task.title}". The user was told it is ready to merge.`
+    return `Approved "${task.title}". The user was told it is ready to merge.` // i18n-ignore
   }
-  const ok = sendBackToAgent(task, `Your lead ${paneLabel(lead)} asks for changes:\n${req.text}`, 'changes', req.text.slice(0, 80), lead.title)
-  return ok ? `Sent your changes for "${task.title}" back to its agent.` : `The agent of "${task.title}" was closed.`
+  const ok = sendBackToAgent(task, `Your lead ${paneLabel(lead)} asks for changes:\n${req.text}`, 'changes', req.text.slice(0, 80), lead.title) // i18n-ignore
+  return ok ? `Sent your changes for "${task.title}" back to its agent.` : `The agent of "${task.title}" was closed.` // i18n-ignore
 }
 
 // A message from one team member to others (to: "#3", "team" or "lead").
@@ -4409,7 +4493,7 @@ const sentLog = {}
 function runMemberMessage(team, from, req) {
   const now = Date.now()
   const log = (sentLog[from.id] = (sentLog[from.id] || []).filter((t) => now - t < MESSAGE_BUDGET.perMs))
-  if (log.length >= MESSAGE_BUDGET.max) return 'Not sent: too many messages in the last 10 minutes. Wait a little.'
+  if (log.length >= MESSAGE_BUDGET.max) return 'Not sent: too many messages in the last 10 minutes. Wait a little.' // i18n-ignore
   const others = teamMembers(team.id).filter((l) => l.id !== from.id && l.kind === 'agent')
   const lead = teamLead(team.id)
   const to =
@@ -4419,8 +4503,8 @@ function runMemberMessage(team, from, req) {
         ? others.filter((l) => lead && l.id === lead.id)
         : others.filter((l) => l.num === req.num)
   if (!to.length) {
-    if (req.to === 'team') return 'Nobody else is in your team yet.'
-    if (req.to === 'lead') return 'Your team has no lead.'
+    if (req.to === 'team') return 'Nobody else is in your team yet.' // i18n-ignore
+    if (req.to === 'lead') return 'Your team has no lead.' // i18n-ignore
     return `#${req.num} is not in your team. Teammates: ${others.map(paneLabel).join(', ') || 'none'}.`
   }
   log.push(now)
@@ -4434,7 +4518,7 @@ function runMemberMessage(team, from, req) {
       skipped.push(paneLabel(l))
     } else noticeAgents([l], `${head} ${req.text}`, team.id, meta)
   }
-  return skipped.length ? `Not delivered to ${skipped.join(', ')}: usage limit reached.` : ''
+  return skipped.length ? `Not delivered to ${skipped.join(', ')}: usage limit reached.` : '' // i18n-ignore
 }
 
 // Every few seconds: take each team member's requests and carry them out.
@@ -4481,7 +4565,7 @@ async function pollTeams() {
         // The lead was closed or left the team.
         team.leadId = null
         recordActivity({ type: 'team', action: 'lead-removed', teamId: team.id, wsId: teamWsId(team.id), name: team.name })
-        tellTeam(team.id, 'The team has no lead any more.')
+        tellTeam(team.id, 'The team has no lead any more.') // i18n-ignore
         handOffLeadReviews(team.id)
       }
       const members = teamMembers(team.id).filter((l) => l.kind === 'agent')
@@ -4714,10 +4798,10 @@ async function checkTeamTools(round) {
         toolsDown[m.id] = true
         if (!toolsWarned.has(m.id)) {
           toolsWarned.add(m.id)
-          showToast(`${paneLabel(m)}: its team tools (tessel-team) are not connected, so it cannot read or send team messages. Restart it (right-click its pane, Restart).`, {
+          showToast(t('app.team.toolsDown', '{{pane}}: its team tools (tessel-team) are not connected, so it cannot read or send team messages. Restart it (right-click its pane, Restart).', { pane: paneLabel(m) }), {
             kind: 'attention',
             timeout: 15000,
-            action: { label: 'Restart', run: () => restartLeaf(m.id) }
+            action: { label: t('app.common.restart', 'Restart'), run: () => restartLeaf(m.id) }
           })
           if (window.shellApi.log) window.shellApi.log('info', `team tools: ${paneLabel(m)} (${m.id}) has no connected tessel-team server`)
         }
@@ -4873,7 +4957,7 @@ async function installTeamToolsOnce() {
     teamToolsReady = true
     teamToolsVersion = res.version || null
     if (res.changed && res.changed.some((c) => c.includes('MCP server')))
-      showToast('Team messages now go in the background, never into your terminals (MCP servers: tessel-team).', { timeout: 10000 })
+      showToast(t('app.team.toolsReady', 'Team messages now go in the background, never into your terminals (MCP servers: tessel-team).'), { timeout: 10000 })
     return
   }
   // Not (fully) set up: say so once per failure, and try again in 5 minutes.
@@ -4881,7 +4965,7 @@ async function installTeamToolsOnce() {
   const why = (res && res.errors && res.errors[0]) || 'unknown error'
   if (why !== teamToolsFailed) {
     teamToolsFailed = why
-    showToast(`Team messages are not set up yet: ${why} Tessel will try again in 5 minutes.`, { kind: 'error', timeout: 12000 })
+    showToast(t('app.team.toolsFailed', 'Team messages are not set up yet: {{why}} Tessel will try again in 5 minutes.', { why }), { kind: 'error', timeout: 12000 })
   }
 }
 
@@ -5032,7 +5116,7 @@ async function wakeLeaf(leafId) {
   const leaf = findLeaf(leafId)
   if (!leaf || !leaf.sleeping || restartingLeaves.has(leafId)) return
   const ok = await restartInPlace(leafId, { resume: true })
-  if (!ok && findLeaf(leafId) === leaf) showToast(`${leaf.title} could not be woken: try Wake again.`, { kind: 'error', timeout: 8000 })
+  if (!ok && findLeaf(leafId) === leaf) showToast(t('app.sleep.wakeFailed', '{{name}} could not be woken: try Wake again.', { name: leaf.title }), { kind: 'error', timeout: 8000 })
 }
 // A sleeping pane you open wakes up.
 watch(
@@ -5199,8 +5283,8 @@ async function restartForTeamTools() {
         }
         continue
       }
-      const t = trackedState[leaf.id]
-      const quiet = t && t.state === 'idle' && now - t.since > 60000
+      const tracked = trackedState[leaf.id]
+      const quiet = tracked && tracked.state === 'idle' && now - tracked.since > 60000
       // Nor over a line that may hold an unsent draft: not known to be empty
       // (after a reload, or history recalled) and not proven empty on screen.
       const draftMaybe = !!userDraft[leaf.id] || (!!draftUnknown[leaf.id] && !inputShownEmpty(leaf.id))
@@ -5217,7 +5301,7 @@ async function restartForTeamTools() {
         const ok = await restartInPlace(leaf.id, { forTools: true })
         if (window.shellApi.log)
           window.shellApi.log(ok ? 'info' : 'error', `team tools: ${ok ? 'restarted' : 'could not restart'} ${title} (${leaf.id}) in place`)
-        if (ok) showToast(`Restarted ${title} so it has the latest team tools. Its conversation continues.`, { timeout: 6000 })
+        if (ok) showToast(t('app.team.toolsRestarted', 'Restarted {{pane}} so it has the latest team tools. Its conversation continues.', { pane: title }), { timeout: 6000 })
       } finally {
         restarting = false
       }
@@ -5298,21 +5382,21 @@ function applyAgentUpdateInfo(r, { announce = true } = {}) {
   const found = announce && Array.isArray(r.newlyFound) ? r.newlyFound : []
   if (!found.length) return
   const list = found.map((f) => `${f.name} ${f.installed} → ${f.latest}`).join(', ')
-  inboxNote('info', found.length === 1 ? `Update available for ${found[0].name}` : `${found.length} agent updates available`, list, null)
-  showToast(`Agent update${found.length === 1 ? '' : 's'} available: ${list}.`, {
+  inboxNote('info', found.length === 1 ? t('app.agentUpdate.availableFor', 'Update available for {{name}}', { name: found[0].name }) : t('app.agentUpdate.availableCount', '{{count}} agent updates available', { count: found.length }), list, null)
+  showToast(found.length === 1 ? t('app.agentUpdate.availableOne', 'Agent update available: {{list}}.', { list }) : t('app.agentUpdate.availableMany', 'Agent updates available: {{list}}.', { list }), {
     kind: 'attention',
     timeout: 12000,
-    action: { label: 'Show', run: () => openSettingsAt('agents') }
+    action: { label: t('app.common.show', 'Show'), run: () => openSettingsAt('agents') }
   })
 }
 async function checkAgentUpdates({ force = true, quiet = false } = {}) {
   const api = window.shellApi.agentUpdates
   if (!api) return null
   const r = await api.check({ force }).catch((err) => ({ error: err && err.message }))
-  if (r && r.error && !quiet) showToast(`Could not check for agent updates: ${r.error}`, { kind: 'error', timeout: 8000 })
+  if (r && r.error && !quiet) showToast(t('app.agentUpdate.checkFailed', 'Could not check for agent updates: {{error}}', { error: r.error }), { kind: 'error', timeout: 8000 })
   if (r && !r.error && !quiet) {
     const n = Object.values(r.agents || {}).filter((a) => a.update).length
-    if (!n) showToast('Your agents are up to date.', { timeout: 4000 })
+    if (!n) showToast(t('app.agentUpdate.upToDate', 'Your agents are up to date.'), { timeout: 4000 })
   }
   return r
 }
@@ -5337,7 +5421,7 @@ async function startAgentUpdate(agentId, { auto = false } = {}) {
   if (!row || !row.update || !Array.isArray(row.steps) || !row.steps.length) return false
   const job = agentUpdateJobs[agentId]
   if (job && !['done', 'failed'].includes(job.phase)) {
-    if (!auto) showToast(`${row.name} is already being updated.`, { timeout: 4000 })
+    if (!auto) showToast(t('app.agentUpdate.already', '{{name}} is already being updated.', { name: row.name }), { timeout: 4000 })
     return false
   }
   agentUpdateJobs[agentId] = {
@@ -5362,7 +5446,7 @@ async function startAgentUpdate(agentId, { auto = false } = {}) {
     logUpdate('error', `${row.name}: ${err && err.message}`)
   }
   if (!ok) {
-    Object.assign(agentUpdateJobs[agentId], { phase: 'failed', error: 'could not open a pane' })
+    Object.assign(agentUpdateJobs[agentId], { phase: 'failed', error: t('app.agentUpdate.err.noPane', 'could not open a pane') })
     return false
   }
   return true
@@ -5374,7 +5458,7 @@ async function runUpdatePane(agentId) {
   const shellId = selectedShell.value
   const leaf = await openPaneBelow(shellId)
   if (!leaf) return false
-  const label = `Update ${row.name}`
+  const label = t('app.agentUpdate.paneTitle', 'Update {{name}}', { name: row.name })
   leaf.title = label
   job.paneId = leaf.id
   installRuns[leaf.id] = { label, agent: null, update: agentId }
@@ -5385,7 +5469,7 @@ async function runUpdatePane(agentId) {
   }
   const line = installChain(steps, null, shellId)
   setTimeout(() => window.shellApi.writePty(leaf.id, `${line}\r`), 700)
-  if (!job.retried) showToast(`Updating ${row.name} below. Tessel tells you when it has finished.`, { timeout: 6000 })
+  if (!job.retried) showToast(t('app.agentUpdate.updating', 'Updating {{name}} below. Tessel tells you when it has finished.', { name: row.name }), { timeout: 6000 })
   return true
 }
 
@@ -5404,21 +5488,21 @@ async function onAgentUpdateResult(agentId, r) {
     // is restarted for nothing; stopped ones are relaunched as they were.
     if (row && row.installed && job.from && row.installed === job.from) {
       logUpdate('warn', `${job.name}: the update finished but it still reports ${version}`)
-      if (job.paused.length) await relaunchPaused(job, 'resumed (still on the same version)')
+      if (job.paused.length) await relaunchPaused(job, 'resumed (still on the same version)', t('app.agentUpdate.what.sameVersion', 'resumed (still on the same version)')) // i18n-ignore
       job.phase = 'failed'
-      job.error = `the update finished, but ${job.name} still reports ${version}`
-      showToast(`The update of ${job.name} finished, but it still reports version ${version}. ${job.report || ''}`.trim(), {
+      job.error = t('app.agentUpdate.err.sameVersion', 'the update finished, but {{name}} still reports {{version}}', { name: job.name, version })
+      showToast(`${t('app.agentUpdate.sameVersion', 'The update of {{name}} finished, but it still reports version {{version}}.', { name: job.name, version })} ${job.report || ''}`.trim(), {
         kind: 'attention',
         timeout: 15000,
-        action: r.file ? { label: 'Open log', run: () => window.shellApi.openInstallLog(r.file) } : null
+        action: r.file ? { label: t('app.common.openLog', 'Open log'), run: () => window.shellApi.openInstallLog(r.file) } : null
       })
       return
     }
     logUpdate('info', `${job.name} updated to ${version}`)
     if (job.paused.length) {
-      await relaunchPaused(job, `updated to ${version} and resumed`)
+      await relaunchPaused(job, `updated to ${version} and resumed`, t('app.agentUpdate.what.updated', 'updated to {{version}} and resumed', { version }))
       job.phase = 'done'
-      inboxNote('done', `${job.name} updated to ${version}`, job.report || '', null)
+      inboxNote('done', t('app.agentUpdate.updatedTo', '{{name}} updated to {{version}}', { name: job.name, version }), job.report || '', null)
       return
     }
     // Panes running the old version: restarted in place when each is safe.
@@ -5426,13 +5510,22 @@ async function onAgentUpdateResult(agentId, r) {
     for (const id of plan.running) if (!plan.manual.some((m) => m.id === id)) restartAfterUpdate[id] = { agentId, version }
     job.manual = plan.manual
     job.phase = plan.running.length > plan.manual.length ? 'restarting' : 'done'
+    const manualList = plan.manual.map((m) => m.label).join(', ')
     const tail = plan.manual.length
-      ? ` ${plan.manual.map((m) => m.label).join(', ')} still run${plan.manual.length === 1 ? 's' : ''} the old version: restart ${plan.manual.length === 1 ? 'it' : 'them'} yourself when it suits you (no conversation Tessel can resume).`
+      ? ' ' +
+        (plan.manual.length === 1
+          ? t('app.agentUpdate.manualOne', '{{list}} still runs the old version: restart it yourself when it suits you (no conversation Tessel can resume).', { list: manualList })
+          : t('app.agentUpdate.manualMany', '{{list}} still run the old version: restart them yourself when it suits you (no conversation Tessel can resume).', { list: manualList }))
       : ''
-    showToast(`${job.name} updated to ${version}.${job.phase === 'restarting' ? ' Its panes restart with their conversation as soon as each is idle.' : ''}${tail}`, {
-      timeout: tail ? 15000 : 7000
-    })
-    if (job.phase === 'done') inboxNote('done', `${job.name} updated to ${version}`, tail.trim(), null)
+    showToast(
+      t('app.agentUpdate.updatedToDot', '{{name}} updated to {{version}}.', { name: job.name, version }) +
+        (job.phase === 'restarting' ? ' ' + t('app.agentUpdate.panesRestart', 'Its panes restart with their conversation as soon as each is idle.') : '') +
+        tail,
+      {
+        timeout: tail ? 15000 : 7000
+      }
+    )
+    if (job.phase === 'done') inboxNote('done', t('app.agentUpdate.updatedTo', '{{name}} updated to {{version}}', { name: job.name, version }), tail.trim(), null)
     agentUpdateTick()
     return
   }
@@ -5442,20 +5535,22 @@ async function onAgentUpdateResult(agentId, r) {
     const plan = updatePlanFor(agentId)
     if (!plan.running.length) {
       job.phase = 'failed'
-      job.error = 'its files are in use by a program outside Tessel'
-      showToast(`${job.name} was not updated: its files are in use, but no Tessel pane runs it. Close ${job.name} where it runs (another terminal?) and try again.`, {
+      job.error = t('app.agentUpdate.err.inUseOutside', 'its files are in use by a program outside Tessel')
+      showToast(t('app.agentUpdate.inUseOutside', '{{name}} was not updated: its files are in use, but no Tessel pane runs it. Close {{name}} where it runs (another terminal?) and try again.', { name: job.name }), {
         kind: 'error',
         timeout: 20000,
-        action: r.file ? { label: 'Open log', run: () => window.shellApi.openInstallLog(r.file) } : null
+        action: r.file ? { label: t('app.common.openLog', 'Open log'), run: () => window.shellApi.openInstallLog(r.file) } : null
       })
       return
     }
     if (plan.manual.length) {
       job.phase = 'failed'
       job.manual = plan.manual
-      job.error = 'its files are in use'
+      job.error = t('app.agentUpdate.err.inUse', 'its files are in use')
       showToast(
-        `${job.name} was not updated: its files are in use by ${plan.manual.map((m) => m.label).join(', ')}, which Tessel cannot restart without losing ${plan.manual.length === 1 ? 'its' : 'their'} conversation. Close ${plan.manual.length === 1 ? 'it' : 'them'}, then click Update again.`,
+        plan.manual.length === 1
+          ? t('app.agentUpdate.inUseManualOne', '{{name}} was not updated: its files are in use by {{list}}, which Tessel cannot restart without losing its conversation. Close it, then click Update again.', { name: job.name, list: plan.manual.map((m) => m.label).join(', ') })
+          : t('app.agentUpdate.inUseManualMany', '{{name}} was not updated: its files are in use by {{list}}, which Tessel cannot restart without losing their conversation. Close them, then click Update again.', { name: job.name, list: plan.manual.map((m) => m.label).join(', ') }),
         { kind: 'error', timeout: 20000 }
       )
       return
@@ -5463,19 +5558,26 @@ async function onAgentUpdateResult(agentId, r) {
     job.phase = 'waiting-stop'
     logUpdate('info', `${job.name}: files in use; waiting to stop ${plan.running.length} pane(s) safely`)
     showToast(
-      `${job.name}'s files are in use by its running agents. Tessel stops ${plan.running.length === 1 ? 'it' : 'them'} when idle, updates, then resumes ${plan.running.length === 1 ? 'its conversation' : 'each conversation'}.`,
+      plan.running.length === 1
+        ? t('app.agentUpdate.stopOne', "{{name}}'s files are in use by its running agents. Tessel stops it when idle, updates, then resumes its conversation.", { name: job.name })
+        : t('app.agentUpdate.stopMany', "{{name}}'s files are in use by its running agents. Tessel stops them when idle, updates, then resumes each conversation.", { name: job.name }),
       { timeout: 9000 }
     )
     agentUpdateTick()
     return
   }
   job.phase = 'failed'
-  job.error = r.ok === false ? 'the update failed' : 'the update did not finish'
-  if (job.paused.length) await relaunchPaused(job, 'resumed (not updated)')
-  showToast(`${job.name} ${r.ok === false ? 'was not updated' : 'update did not finish'}${r.reason ? ` (${r.reason})` : ''}.${job.report ? ` ${job.report}` : ''} The log shows what went wrong.`, {
+  job.error = r.ok === false ? t('app.agentUpdate.err.failed', 'the update failed') : t('app.agentUpdate.err.unfinished', 'the update did not finish')
+  if (job.paused.length) await relaunchPaused(job, 'resumed (not updated)', t('app.agentUpdate.what.notUpdated', 'resumed (not updated)')) // i18n-ignore
+  const failVars = { name: job.name, reason: r.reason ? ` (${r.reason})` : '', report: job.report ? ` ${job.report}` : '' }
+  showToast(
+    r.ok === false
+      ? t('app.agentUpdate.notUpdated', '{{name}} was not updated{{reason}}.{{report}} The log shows what went wrong.', failVars)
+      : t('app.agentUpdate.unfinished', '{{name}} update did not finish{{reason}}.{{report}} The log shows what went wrong.', failVars),
+    {
     kind: 'error',
     timeout: 20000,
-    action: r.file ? { label: 'Open log', run: () => window.shellApi.openInstallLog(r.file) } : null
+    action: r.file ? { label: t('app.common.openLog', 'Open log'), run: () => window.shellApi.openInstallLog(r.file) } : null
   })
 }
 
@@ -5499,12 +5601,12 @@ async function stopAndRetryUpdate(job) {
     label,
     onStuck: (r) => {
       const text = stuckMessage(r, label)
-      inboxNote('attention', `${job.name} was not updated`, text, r.stuck[0] || null)
+      inboxNote('attention', t('app.agentUpdate.notUpdatedTitle', '{{name}} was not updated', { name: job.name }), text, r.stuck[0] || null)
       showToast(text, {
         kind: 'error',
         timeout: 30000,
         action: {
-          label: 'Restart',
+          label: t('app.common.restart', 'Restart'),
           // Same pane, conversation resumed (its session id is kept).
           run: async () => {
             for (const id of r.stopped) if (findLeaf(id)) await restartInPlace(id, { resume: true })
@@ -5516,7 +5618,8 @@ async function stopAndRetryUpdate(job) {
 }
 
 // Relaunch the panes stopped for an update, in place, conversation resumed.
-async function relaunchPaused(job, what) {
+// what: for the log (English); whatText: the same, for the person.
+async function relaunchPaused(job, what, whatText = what) {
   const done = []
   const failed = []
   for (const id of job.paused) {
@@ -5527,13 +5630,27 @@ async function relaunchPaused(job, what) {
     const ok = await restartInPlace(id, { resume: true })
     ;(ok ? done : failed).push(label)
     logUpdate(ok ? 'info' : 'error', `${label} ${ok ? what : 'could not be relaunched'}`)
-    if (ok) showToast(`${label} ${what}.`, { timeout: 7000 })
+    if (ok) showToast(t('app.agentUpdate.relaunched', '{{list}} {{what}}.', { list: label, what: whatText }), { timeout: 7000 })
   }
   job.paused = []
-  job.report = [done.length ? `${done.join(', ')} ${what}.` : '', failed.length ? `${failed.join(', ')} could not be relaunched: use Restart on ${failed.length === 1 ? 'it' : 'them'}.` : '']
+  const failedList = failed.join(', ')
+  job.report = [
+    done.length ? t('app.agentUpdate.relaunched', '{{list}} {{what}}.', { list: done.join(', '), what: whatText }) : '',
+    failed.length
+      ? failed.length === 1
+        ? t('app.agentUpdate.relaunchFailedOne', '{{list}} could not be relaunched: use Restart on it.', { list: failedList })
+        : t('app.agentUpdate.relaunchFailedMany', '{{list}} could not be relaunched: use Restart on them.', { list: failedList })
+      : ''
+  ]
     .filter(Boolean)
     .join(' ')
-  if (failed.length) showToast(`${failed.join(', ')} could not be relaunched after the update: use Restart on ${failed.length === 1 ? 'it' : 'them'}.`, { kind: 'error', timeout: 12000 })
+  if (failed.length)
+    showToast(
+      failed.length === 1
+        ? t('app.agentUpdate.relaunchAfterFailedOne', '{{list}} could not be relaunched after the update: use Restart on it.', { list: failedList })
+        : t('app.agentUpdate.relaunchAfterFailedMany', '{{list}} could not be relaunched after the update: use Restart on them.', { list: failedList }),
+      { kind: 'error', timeout: 12000 }
+    )
 }
 
 async function agentUpdateTick() {
@@ -5560,9 +5677,9 @@ async function agentUpdateTick() {
       const ok = await restartInPlace(id, { resume: true })
       logUpdate(ok ? 'info' : 'error', `${label} ${ok ? `restarted on ${q.version}, conversation resumed` : 'could not be restarted'}`)
       if (ok) {
-        showToast(`${label} updated to ${q.version} and resumed.`, { timeout: 7000 })
-        inboxNote('done', `${label} updated to ${q.version} and resumed`, '', id)
-      } else showToast(`${label} could not be restarted on the new version: use Restart on it.`, { kind: 'error', timeout: 10000 })
+        showToast(t('app.agentUpdate.paneResumedDot', '{{pane}} updated to {{version}} and resumed.', { pane: label, version: q.version }), { timeout: 7000 })
+        inboxNote('done', t('app.agentUpdate.paneResumed', '{{pane}} updated to {{version}} and resumed', { pane: label, version: q.version }), '', id)
+      } else showToast(t('app.agentUpdate.paneRestartFailed', '{{pane}} could not be restarted on the new version: use Restart on it.', { pane: label }), { kind: 'error', timeout: 10000 })
       break
     }
     for (const job of Object.values(agentUpdateJobs)) {
@@ -5572,7 +5689,7 @@ async function agentUpdateTick() {
         if (!left.length) job.phase = 'done'
         else if (!job.toldWaiting && left.every(([, q]) => q.why)) {
           job.toldWaiting = true
-          showToast(`${job.name} is updated. Waiting to restart: ${describeWaiting(job.waiting)}.`, { timeout: 9000 })
+          showToast(t('app.agentUpdate.waitingRestart', '{{name}} is updated. Waiting to restart: {{list}}.', { name: job.name, list: describeWaiting(job.waiting) }), { timeout: 9000 })
         }
       } else if (job.phase === 'waiting-stop') {
         const plan = updatePlanFor(job.agentId)
@@ -5581,7 +5698,7 @@ async function agentUpdateTick() {
           await stopAndRetryUpdate(job)
         } else if (!job.toldWaiting) {
           job.toldWaiting = true
-          showToast(`${job.name} update waits for: ${describeWaiting(plan.waiting)}.`, { timeout: 9000 })
+          showToast(t('app.agentUpdate.waitsFor', '{{name}} update waits for: {{list}}.', { name: job.name, list: describeWaiting(plan.waiting) }), { timeout: 9000 })
         }
       }
     }
@@ -5627,7 +5744,7 @@ async function requestAgentUpdate(agentId) {
   const job = agentUpdateJobs[agentId]
   if (updateQueue.includes(agentId) || (job && !['done', 'failed'].includes(job.phase))) return
   updateQueue.push(agentId)
-  if (updateRunning()) showToast('Another agent is being updated: this one follows.', { timeout: 4000 })
+  if (updateRunning()) showToast(t('app.agentUpdate.queued', 'Another agent is being updated: this one follows.'), { timeout: 4000 })
   await startQueuedUpdate()
 }
 // Stop waiting (the update itself, if it already ran, stays).
@@ -5637,7 +5754,7 @@ function cancelAgentUpdate(agentId) {
   for (const id of Object.keys(restartAfterUpdate)) if (restartAfterUpdate[id].agentId === agentId) delete restartAfterUpdate[id]
   if (job.phase === 'waiting-stop' || job.phase === 'restarting') {
     job.phase = job.phase === 'restarting' ? 'done' : 'failed'
-    job.error = job.phase === 'failed' ? 'cancelled' : job.error
+    job.error = job.phase === 'failed' ? t('app.agentUpdate.err.cancelled', 'cancelled') : job.error
     job.waiting = []
   }
 }
@@ -5662,7 +5779,7 @@ function logTeamMessages(team, res) {
     const leaf = findLeaf(id)
     if (leaf) return paneLabel(leaf)
     const p = (res.participants || []).find((x) => x.id === id)
-    return p ? `${p.num ? `#${p.num} ` : ''}${p.title || 'Agent'}` : 'An agent'
+    return p ? `${p.num ? `#${p.num} ` : ''}${p.title || t('app.pane.agent', 'Agent')}` : t('app.task.anAgent', 'An agent')
   }
   let changed = false
   for (const m of res.history) {
@@ -5765,7 +5882,7 @@ Files: ${r.files.slice(0, 20).join(', ')}${r.files.length > 20 ? ' …' : ''}` :
 ${r.summary}${files}`, teamId)
   }
   if (r.outcome === 'failed') {
-    inboxNote('attention', `${paneLabel(from)} could not finish "${task.title}"`, r.summary.slice(0, 200), from.id)
+    inboxNote('attention', t('app.board.couldNotFinish', '{{pane}} could not finish "{{title}}"', { pane: paneLabel(from), title: task.title }), r.summary.slice(0, 200), from.id)
   }
 }
 
@@ -5774,11 +5891,12 @@ ${r.summary}${files}`, teamId)
 function askDecision(task, r, from) {
   updateTask(task.id, { gate: { question: r.question, options: r.options || [], status: 'pending', by: from.id, askedAt: Date.now() } })
   recordActivity({ type: 'task', action: 'gate', paneId: from.id, agent: agentInfo(from), title: task.title, wsId: task.wsId, by: paneLabel(from), detail: r.question })
-  inboxNote('attention', `${paneLabel(from)} needs your decision`, r.question, from.id)
-  const text = `${paneLabel(from)} needs your decision on "${task.title}": ${r.question}`
+  const needs = t('app.board.needsDecision', '{{pane}} needs your decision', { pane: paneLabel(from) })
+  inboxNote('attention', needs, r.question, from.id)
+  const text = t('app.board.needsDecisionOn', '{{pane}} needs your decision on "{{title}}": {{question}}', { pane: paneLabel(from), title: task.title, question: r.question })
   if (document.hasFocus() && settings.inAppAlerts)
-    showToast(text, { kind: 'attention', timeout: 12000, action: { label: 'Show the board', run: () => showSideTab('tasks') } })
-  nativeNotify({ title: `${paneLabel(from)} needs your decision`, body: r.question, paneId: from.id })
+    showToast(text, { kind: 'attention', timeout: 12000, action: { label: t('app.board.showBoard', 'Show the board'), run: () => showSideTab('tasks') } })
+  nativeNotify({ title: needs, body: r.question, paneId: from.id })
 }
 
 function resolveDecision(taskId, answer) {
@@ -5795,9 +5913,9 @@ function resolveDecision(taskId, answer) {
     // pass it on (the text is copied).
     else {
       if (navigator.clipboard) navigator.clipboard.writeText(msg.replace(/^\[Tessel\] /, '')).catch(() => {})
-      showToast(`Tell ${asker.title} your decision (copied): ${text}`, {
+      showToast(t('app.board.tellDecision', 'Tell {{name}} your decision (copied): {{text}}', { name: asker.title, text }), {
         timeout: 12000,
-        action: { label: 'Show', run: () => focusPane(asker.id) }
+        action: { label: t('app.common.show', 'Show'), run: () => focusPane(asker.id) }
       })
     }
   }
@@ -5880,7 +5998,7 @@ async function syncBoard(b, round = teamRound) {
   const refusals = []
   const applied = [] // request files, removed once the board is saved
   if (res && res.ok) {
-    for (const r of res.refused || []) refusals.push({ fromId: r.fromId, text: `Your board request was not done: ${r.error}.` })
+    for (const r of res.refused || []) refusals.push({ fromId: r.fromId, text: `Your board request was not done: ${r.error}.` }) // i18n-ignore
     for (const r of res.requests || []) {
       const from = members.find((m) => m.id === r.fromId)
       applied.push(r.file)
@@ -5893,12 +6011,12 @@ async function syncBoard(b, round = teamRound) {
       if (r.action === 'add') {
         const who = r.assignee ? byNum(r.assignee) : from
         if (!who) {
-          refusals.push({ fromId: from.id, text: `The card "${r.title}" was not added: ${r.assignee} is not in your team.` })
+          refusals.push({ fromId: from.id, text: `The card "${r.title}" was not added: ${r.assignee} is not in your team.` }) // i18n-ignore
           continue
         }
         const unknown = (r.deps || []).filter((d) => !boardTasks.some((t) => t.id === d && t.wsId === wsId))
         if (unknown.length) {
-          refusals.push({ fromId: from.id, text: `The card "${r.title}" was not added: no card ${unknown.join(', ')} on your team's board to wait for (see team_tasks).` })
+          refusals.push({ fromId: from.id, text: `The card "${r.title}" was not added: no card ${unknown.join(', ')} on your team's board to wait for (see team_tasks).` }) // i18n-ignore
           continue
         }
         // A card that waits for cards not done yet starts in To do.
@@ -5911,13 +6029,13 @@ async function syncBoard(b, round = teamRound) {
         if (column !== r.column)
           refusals.push({
             fromId: from.id,
-            text: `The card "${r.title}" (${task.id}) was put in To do, not ${r.column}: it waits for ${pendingDeps.join(', ')}.`
+            text: `The card "${r.title}" (${task.id}) was put in To do, not ${r.column}: it waits for ${pendingDeps.join(', ')}.` // i18n-ignore
           })
         recordActivity({ type: 'task', action: 'added', paneId: who.id, agent: agentInfo(who), title: r.title, wsId, by: paneLabel(from) })
       } else if (r.action === 'report' || r.action === 'gate') {
         const task = boardTasks.find((t) => t.id === r.id)
         if (!task || task.wsId !== wsId) {
-          refusals.push({ fromId: from.id, text: `No card ${r.id} on your team's board (see team_tasks).` })
+          refusals.push({ fromId: from.id, text: `No card ${r.id} on your team's board (see team_tasks).` }) // i18n-ignore
           continue
         }
         if (r.action === 'report') applyReport(task, r, from, b.teamId)
@@ -5925,13 +6043,13 @@ async function syncBoard(b, round = teamRound) {
       } else if (r.action === 'move') {
         const task = boardTasks.find((t) => t.id === r.id)
         if (!task || task.wsId !== wsId) {
-          refusals.push({ fromId: from.id, text: `No card ${r.id} on your team's board (see team_tasks).` })
+          refusals.push({ fromId: from.id, text: `No card ${r.id} on your team's board (see team_tasks).` }) // i18n-ignore
           continue
         }
         if (task.column === r.column) continue
         const blocked = (r.column === 'doing' || r.column === 'review' || r.column === 'done') && blockedReason(task)
         if (blocked) {
-          refusals.push({ fromId: from.id, text: `Card ${task.id} "${task.title}" stays in ${task.column}: ${blocked}.` })
+          refusals.push({ fromId: from.id, text: `Card ${task.id} "${task.title}" stays in ${task.column}: ${blocked}.` }) // i18n-ignore
           continue
         }
         updateTask(task.id, { column: r.column })
@@ -5944,7 +6062,7 @@ async function syncBoard(b, round = teamRound) {
           title: task.title,
           wsId,
           by: paneLabel(from),
-          detail: { todo: 'To do', doing: 'Doing', review: 'Review', done: 'Done' }[r.column]
+          detail: { todo: t('app.board.col.todo', 'To do'), doing: t('app.board.col.doing', 'Doing'), review: t('app.board.col.review', 'Review'), done: t('app.board.col.done', 'Done') }[r.column]
         })
       }
     }
@@ -6174,10 +6292,11 @@ function createTeam(leafIds) {
   if (!ids.length) return null
   const names = new Set(teams.value.map((t) => t.name))
   let n = 1
-  while (names.has(`Team ${n}`)) n++
-  const used = new Set(teams.value.map((t) => t.color))
+  const teamName = (i) => t('app.team.defaultName', 'Team {{n}}', { n: i })
+  while (names.has(teamName(n))) n++
+  const used = new Set(teams.value.map((x) => x.color))
   const color = TEAM_COLORS.find((c) => !used.has(c)) || TEAM_COLORS[n % TEAM_COLORS.length]
-  const team = { id: newId('team'), name: `Team ${n}`, color }
+  const team = { id: newId('team'), name: teamName(n), color }
   teams.value.push(team)
   // Agents taken from another team: that team hears they left.
   const leftFrom = new Map()
@@ -6231,14 +6350,14 @@ function renameTeam(teamId, name) {
   const old = team.name
   team.name = clean
   recordActivity({ type: 'team', action: 'renamed', teamId, wsId: teamWsId(teamId), name: clean, detail: old })
-  tellTeam(teamId, `The team "${old}" is now called "${clean}".`)
+  tellTeam(teamId, `The team "${old}" is now called "${clean}".`) // i18n-ignore
 }
 
 function leaveTeam(leafId) {
   const leaf = findLeaf(leafId)
   if (!leaf || !leaf.team) return
   const teamId = leaf.team
-  const name = teamById(teamId)?.name || 'the team'
+  const name = teamById(teamId)?.name || 'the team' // i18n-ignore
   const wsId = wsOfLeaf(leaf.id)?.id || null
   leaf.team = null
   logMembership(leaf, null)
@@ -6276,10 +6395,10 @@ function disbandTeam(teamId) {
     team.leadId = null
     handOffLeadReviews(teamId)
   }, UNGROUP_UNDO_MS)
-  showToast(`${team.name} ungrouped. Its sessions stay where they are.`, {
+  showToast(t('app.team.ungrouped', '{{name}} ungrouped. Its sessions stay where they are.', { name: team.name }), {
     timeout: UNGROUP_UNDO_MS,
     action: {
-      label: 'Undo',
+      label: t('app.common.undo', 'Undo'),
       run: () => {
         undone = true
         clearTimeout(commit)
@@ -6326,13 +6445,13 @@ async function tellTeam(teamId, text, opts = {}) {
         (notes
           ? ` Shared notes: ${notes} . Read them, agree there on who does what, and add a dated line to their Journal for each notable change.`
           : '') +
-        ' Before editing a file a teammate may be editing, check with them. Do not commit the notes file.' +
+        ' Before editing a file a teammate may be editing, check with them. Do not commit the notes file.' + // i18n-ignore
         (box ? `\nTalk to your teammates directly through the team channel, not through the user.\n${box.guide}` : ''),
       teamId
     )
   }
   const told = members.filter((l) => !limits[l.id] && (!opts.only || opts.only.includes(l.id))).length
-  showToast(`Told ${told} ${told === 1 ? 'agent' : 'agents'} they are in ${team.name}.`, {
+  showToast(told === 1 ? t('app.team.toldOne', 'Told 1 agent they are in {{team}}.', { team: team.name }) : t('app.team.told', 'Told {{count}} agents they are in {{team}}.', { count: told, team: team.name }), {
     timeout: 3000
   })
 }
@@ -6407,7 +6526,7 @@ function messageAgents(list, text, where, meta = {}) {
   if (!body) return
   const agents = list.filter((l) => l.kind === 'agent')
   if (!agents.length) {
-    showToast(`${where} has no agent to message.`, { kind: 'error' })
+    showToast(t('app.message.noAgent', '{{where}} has no agent to message.', { where }), { kind: 'error' })
     return
   }
   // Agents out of usage would not act on it: skip them and say so.
@@ -6417,15 +6536,17 @@ function messageAgents(list, text, where, meta = {}) {
   for (const leaf of limited) logMessage(leaf.id, 'skipped', body, meta)
   const held = reached.filter((l) => pendingMessages[l.id])
   const names = (list) => list.map((l) => l.title).join(', ')
-  const parts = [`Sent to ${reached.length - held.length} of ${agents.length} agents.`]
+  const parts = [t('app.message.sent', 'Sent to {{sent}} of {{count}} agents.', { sent: reached.length - held.length, count: agents.length })]
   if (held.length) {
     parts.push(
-      `${names(held)} ${held.length === 1 ? 'is' : 'are'} waiting for your approval and will get it right after.`
+      held.length === 1
+        ? t('app.message.heldOne', '{{names}} is waiting for your approval and will get it right after.', { names: names(held) })
+        : t('app.message.heldMany', '{{names}} are waiting for your approval and will get it right after.', { names: names(held) })
     )
   }
   if (limited.length) {
     parts.push(
-      `Skipped ${limited.map((l) => `${l.title}${limitWhen(l.id)}`).join(', ')}: usage limit reached.`
+      t('app.message.skipped', 'Skipped {{list}}: usage limit reached.', { list: limited.map((l) => `${l.title}${limitWhen(l.id)}`).join(', ') })
     )
   }
   showToast(parts.join(' '), {
@@ -6438,28 +6559,29 @@ function messageAgents(list, text, where, meta = {}) {
 function limitWhen(leafId) {
   const reset = limits[leafId] && limits[leafId].reset
   if (!reset) return ''
-  return /^in /.test(reset) ? ` (resets ${reset})` : ` (resets at ${reset})`
+  return ' ' + (/^in /.test(reset) ? t('app.limit.resets', '(resets {{when}})', { when: reset }) : t('app.limit.resetsAt', '(resets at {{when}})', { when: reset }))
 }
 
 // An agent just stopped because it hit its usage limit.
 function notifyAgentLimit(node, hit) {
   const ws = wsOfLeaf(node.id)
-  const when = limitWhen(node.id) || (hit && hit.reset ? ` (resets ${hit.reset})` : '')
+  const when = limitWhen(node.id) || (hit && hit.reset ? ' ' + t('app.limit.resets', '(resets {{when}})', { when: hit.reset }) : '')
   const others = ws ? wsAgents(ws.id).filter((l) => l.id !== node.id && !limits[l.id]) : []
   const handOver = others.length
-    ? ` ${others.map((l) => l.title).join(', ')} can take over.`
+    ? ' ' + t('app.limit.takeOver', '{{names}} can take over.', { names: others.map((l) => l.title).join(', ') })
     : ''
-  const text = `${node.title} hit its usage limit${when}.${handOver}`
-  inboxNote('limit', `${node.title} hit its usage limit`, `${when.trim()}${handOver}`.trim(), node.id)
+  const hitTitle = t('app.limit.hit', '{{name}} hit its usage limit', { name: node.title })
+  const text = t('app.limit.hitWhen', '{{name}} hit its usage limit{{when}}.', { name: node.title, when }) + handOver
+  inboxNote('limit', hitTitle, `${when.trim()}${handOver}`.trim(), node.id)
   if (document.hasFocus())
     showToast(text, {
       kind: 'attention',
       timeout: 10000,
-      action: { label: 'Show', run: () => focusPane(node.id) }
+      action: { label: t('app.common.show', 'Show'), run: () => focusPane(node.id) }
     })
   nativeNotify({
-    title: `${node.title} hit its usage limit`,
-    body: `${when.trim()}${ws ? ` Workspace: ${ws.name}.` : ''}${handOver}`.trim(),
+    title: hitTitle,
+    body: `${when.trim()}${ws ? ' ' + t('app.limit.workspace', 'Workspace: {{name}}.', { name: ws.name }) : ''}${handOver}`.trim(),
     paneId: node.id
   })
 }
@@ -6479,6 +6601,7 @@ function projectNotesTemplate(ws) {
   const members = wsAgents(ws.id)
     .map((l) => `- ${agentLabel(l)}`)
     .join('\n')
+  // The notes file is written for the agents: English.
   return `# Project notes: ${ws.name}
 
 Shared notes of the agents working in this project (made by Tessel). Every
@@ -6513,21 +6636,21 @@ async function shareProjectNotes(wsId) {
   if (!ws) return
   const agents = wsAgents(wsId)
   if (!agents.length) {
-    showToast(`Open an agent in ${ws.name} first.`, { kind: 'error' })
+    showToast(t('app.notes.openAgentFirst', 'Open an agent in {{name}} first.', { name: ws.name }), { kind: 'error' })
     return
   }
   const dir = ws.cwd || agents[0].startDir
   if (!dir) {
-    showToast(`Set a project folder for "${ws.name}" first.`, { kind: 'error' })
+    showToast(t('app.notes.needFolder', 'Set a project folder for "{{name}}" first.', { name: ws.name }), { kind: 'error' })
     return
   }
   if (!window.shellApi.projectNotes) {
-    showToast('Restart Tessel to enable project notes.', { kind: 'error' })
+    showToast(t('app.notes.restart', 'Restart Tessel to enable project notes.'), { kind: 'error' })
     return
   }
   const res = await window.shellApi.projectNotes({ dir, content: projectNotesTemplate(ws) })
   if (!res || !res.ok) {
-    showToast(`Could not create the project notes: ${(res && res.error) || 'unknown error'}`, {
+    showToast(t('app.notes.createFailed', 'Could not create the project notes: {{error}}', { error: (res && res.error) || t('app.common.unknownError', 'unknown error') }), {
       kind: 'error'
     })
     return
@@ -6542,17 +6665,23 @@ async function shareProjectNotes(wsId) {
       leaf.id,
       `[Tessel] Other agents in this project: ${others || 'none yet'}.` +
         ` Shared notes: ${res.path} . Read that file now, agree there on who does what, ` +
-        'and add a dated line to its Journal section for each notable change. ' +
-        'Before editing a file another agent may be editing, check the notes. Do not commit that file.',
+        'and add a dated line to its Journal section for each notable change. ' + // i18n-ignore
+        'Before editing a file another agent may be editing, check the notes. Do not commit that file.', // i18n-ignore
       { source: 'tessel', scope: 'notes' }
     )
   }
   const limited = agents.filter((l) => limits[l.id])
   const told = agents.length - limited.length
   showToast(
-    `${res.created ? 'Created' : 'Shared'} the project notes with ${told} ${told === 1 ? 'agent' : 'agents'}. ${res.path}` +
+    (res.created
+      ? told === 1
+        ? t('app.notes.createdOne', 'Created the project notes with 1 agent. {{path}}', { path: res.path })
+        : t('app.notes.created', 'Created the project notes with {{count}} agents. {{path}}', { count: told, path: res.path })
+      : told === 1
+        ? t('app.notes.sharedOne', 'Shared the project notes with 1 agent. {{path}}', { path: res.path })
+        : t('app.notes.shared', 'Shared the project notes with {{count}} agents. {{path}}', { count: told, path: res.path })) +
       (limited.length
-        ? ` Skipped ${limited.map((l) => `${l.title}${limitWhen(l.id)}`).join(', ')}: usage limit reached.`
+        ? ' ' + t('app.message.skipped', 'Skipped {{list}}: usage limit reached.', { list: limited.map((l) => `${l.title}${limitWhen(l.id)}`).join(', ') })
         : ''),
     { timeout: limited.length ? 8000 : 5000 }
   )
@@ -6565,7 +6694,7 @@ function openNotesView(wsId) {
   if (!ws) return
   const dir = ws.cwd || wsAgents(wsId)[0]?.startDir
   if (!dir) {
-    showToast(`Set a project folder for "${ws.name}" first.`, { kind: 'error' })
+    showToast(t('app.notes.needFolder', 'Set a project folder for "{{name}}" first.', { name: ws.name }), { kind: 'error' })
     return
   }
   closeMenus()
@@ -6578,16 +6707,16 @@ async function openProjectNotes(wsId) {
   if (!ws) return
   const dir = ws.cwd || wsAgents(wsId)[0]?.startDir
   if (!dir) {
-    showToast(`Set a project folder for "${ws.name}" first.`, { kind: 'error' })
+    showToast(t('app.notes.needFolder', 'Set a project folder for "{{name}}" first.', { name: ws.name }), { kind: 'error' })
     return
   }
   if (!window.shellApi.openProjectNotes) {
-    showToast('Restart Tessel to open the project notes.', { kind: 'error' })
+    showToast(t('app.notes.restartOpen', 'Restart Tessel to open the project notes.'), { kind: 'error' })
     return
   }
   const res = await window.shellApi.openProjectNotes({ dir, content: projectNotesTemplate(ws) })
   if (!res || !res.ok) {
-    showToast(`Could not open the project notes: ${(res && res.error) || 'unknown error'}`, {
+    showToast(t('app.notes.openFailed', 'Could not open the project notes: {{error}}', { error: (res && res.error) || t('app.common.unknownError', 'unknown error') }), {
       kind: 'error'
     })
   }
@@ -6617,18 +6746,18 @@ const statusInfo = computed(() => {
   const items = []
   forEachLeaf(tree.value, (leaf) => {
     if (leaf.kind === 'editor') return
-    items.push({ state: paneState(leaf), title: leaf.title || leaf.shellName || 'Terminal', active: leaf.id === activeId.value })
+    items.push({ state: paneState(leaf), title: leaf.title || leaf.shellName || t('app.pane.terminal', 'Terminal'), active: leaf.id === activeId.value })
   })
   const count = (state) => items.filter((s) => s.state === state).length
-  const parts = [`${items.length} ${items.length === 1 ? 'pane' : 'panes'}`]
-  if (count('working')) parts.push(`${count('working')} working`)
-  if (count('waiting')) parts.push(`${count('waiting')} waiting for you`)
+  const parts = [items.length === 1 ? t('app.status.paneOne', '1 pane') : t('app.status.panes', '{{count}} panes', { count: items.length })]
+  if (count('working')) parts.push(t('app.status.working', '{{count}} working', { count: count('working') }))
+  if (count('waiting')) parts.push(t('app.status.waiting', '{{count}} waiting for you', { count: count('waiting') }))
   const active = items.find((s) => s.active)
-  let target = active ? `Input → ${active.title}` : ''
+  let target = active ? t('app.status.input', 'Input → {{name}}', { name: active.title }) : ''
   if (broadcast.value) {
     let n = 0
     forEachLeaf(tree.value, (leaf) => leaf.broadcast && n++)
-    target = `Broadcast → ${n} ${n === 1 ? 'pane' : 'panes'}`
+    target = n === 1 ? t('app.status.broadcastOne', 'Broadcast → 1 pane') : t('app.status.broadcast', 'Broadcast → {{count}} panes', { count: n })
   }
   return { target, summary: parts.join(' · '), path: currentWs.value?.cwd || '' }
 })
@@ -6864,7 +6993,7 @@ async function restoreOrSeedLayout() {
     layoutLocked = true
     // The previous copy is shown when there is one; nothing is saved.
     saved = saved.backup && typeof saved.backup === 'object' ? saved.backup : null
-    showToast('Your saved workspaces could not be read (the file is in use by another program). Tessel shows its previous copy and will not save the layout until it is restarted, so the file stays intact.', { kind: 'error', timeout: 20000 })
+    showToast(t('app.layout.locked', 'Your saved workspaces could not be read (the file is in use by another program). Tessel shows its previous copy and will not save the layout until it is restarted, so the file stays intact.'), { kind: 'error', timeout: 20000 })
   }
 
   if (saved) {
@@ -6899,7 +7028,7 @@ async function restoreOrSeedLayout() {
       : Array.isArray(saved.workspaces)
         ? saved.workspaces
         : saved.tree
-          ? [{ name: 'Workspace 1', tree: saved.tree }]
+          ? [{ name: defaultWorkspaceName(1), tree: saved.tree }]
           : []
     for (const snap of snaps) {
       const ws = makeWorkspace(snap.name || nextWorkspaceName())
@@ -6931,7 +7060,7 @@ async function restoreOrSeedLayout() {
     }
   }
 
-  const ws = makeWorkspace('Workspace 1')
+  const ws = makeWorkspace(defaultWorkspaceName(1))
   workspaces.value.push(ws)
   currentWsId.value = ws.id
   await buildGrid(3, 2, ws)
@@ -7006,7 +7135,7 @@ onMounted(async () => {
     if (saved && saved.locked === true) {
       boardLocked = true
       if (Array.isArray(saved.tasks)) setTasks(saved.tasks) // its previous copy, shown only
-      showToast('Your task board could not be read (the file is in use by another program). Tessel shows its previous copy and will not save it until it is restarted, so the file stays intact.', { kind: 'error', timeout: 20000 })
+      showToast(t('app.board.locked', 'Your task board could not be read (the file is in use by another program). Tessel shows its previous copy and will not save it until it is restarted, so the file stays intact.'), { kind: 'error', timeout: 20000 })
     } else {
       const savedTasks = Array.isArray(saved) ? saved : saved && saved.tasks
       if (Array.isArray(savedTasks)) setTasks(savedTasks)
@@ -7124,18 +7253,18 @@ onBeforeUnmount(() => {
             />
           </svg>
           <span class="brand-name">Tessel</span>
-          <span v-if="isDev" class="brand-dev" title="Development build (npm run dev)">dev</span>
+          <span v-if="isDev" class="brand-dev" :title="t('app.toolbar.devBuild', 'Development build (npm run dev)')">{{ t('app.toolbar.dev', 'dev') }}</span>
         </div>
         <span class="tb-slash">/</span>
         <div class="menu-group" @pointerdown.stop>
           <button
             class="tb-ws"
             :class="{ open: openMenu === 'workspaces' }"
-            title="Switch workspace (Ctrl+PageUp / Ctrl+PageDown)"
+            :title="t('app.toolbar.switchWorkspace', 'Switch workspace (Ctrl+PageUp / Ctrl+PageDown)')"
             aria-haspopup="menu"
             @click="toggleMenu('workspaces')"
           >
-            <span class="tb-ws-name">{{ currentWs ? currentWs.name : 'Workspace' }}</span>
+            <span class="tb-ws-name">{{ currentWs ? currentWs.name : t('app.toolbar.workspace', 'Workspace') }}</span>
             <svg
               class="chev"
               width="10"
@@ -7154,7 +7283,7 @@ onBeforeUnmount(() => {
             </svg>
           </button>
           <div v-if="openMenu === 'workspaces'" class="toolbar-menu ws-menu" role="menu">
-            <div class="menu-label">Workspaces</div>
+            <div class="menu-label">{{ t('app.toolbar.workspaces', 'Workspaces') }}</div>
             <button
               v-for="w in workspaces"
               :key="w.id"
@@ -7185,7 +7314,7 @@ onBeforeUnmount(() => {
             </button>
             <div class="menu-sep"></div>
             <button class="toolbar-menu-item" role="menuitem" @click="menuAction(createWorkspace)">
-              <span class="menu-item-name">New workspace</span>
+              <span class="menu-item-name">{{ t('app.toolbar.newWorkspace', 'New workspace') }}</span>
               <span class="menu-shortcut">Ctrl+Shift+N</span>
             </button>
           </div>
@@ -7194,7 +7323,7 @@ onBeforeUnmount(() => {
 
       <!-- Middle: one search box that finds panes, workspaces and commands. -->
       <div class="tb-center">
-        <button class="tb-command" title="Command palette (Ctrl+Shift+P)" @click="openPalette">
+        <button class="tb-command" :title="t('app.toolbar.palette', 'Command palette (Ctrl+Shift+P)')" @click="openPalette">
           <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <circle cx="7" cy="7" r="4.6" stroke="currentColor" stroke-width="1.4" />
             <path
@@ -7204,7 +7333,7 @@ onBeforeUnmount(() => {
               stroke-linecap="round"
             />
           </svg>
-          <span class="tb-command-text">Search panes, run a command</span>
+          <span class="tb-command-text">{{ t('app.toolbar.search', 'Search panes, run a command') }}</span>
           <kbd class="tb-command-kbd">Ctrl+Shift+P</kbd>
         </button>
       </div>
@@ -7214,7 +7343,7 @@ onBeforeUnmount(() => {
         <button
           v-if="updateStatus.state === 'ready'"
           class="tb-update"
-          :title="`Tessel ${updateStatus.version} is ready: restart to update`"
+          :title="t('app.toolbar.updateReady', 'Tessel {{version}} is ready: restart to update', { version: updateStatus.version })"
           @click="updateOpen = true"
         >
           <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -7226,14 +7355,14 @@ onBeforeUnmount(() => {
               stroke-linejoin="round"
             />
           </svg>
-          Update {{ updateStatus.version }}
+          {{ updateLabel }}
         </button>
 
         <div class="tb-newsplit launch-trigger" @pointerdown.stop>
           <button
             class="tb-icon"
-            :title="`New ${selectedShellName()} (Ctrl+Shift+T)`"
-            aria-label="New terminal"
+            :title="t('app.toolbar.newShell', 'New {{name}} (Ctrl+Shift+T)', { name: selectedShellName() })"
+            :aria-label="t('app.toolbar.newTerminal', 'New terminal')"
             @click="newDefaultTerminal"
           >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -7248,7 +7377,7 @@ onBeforeUnmount(() => {
           <button
             class="tb-icon tb-icon-narrow"
             :class="{ open: launcher.open }"
-            title="Open a terminal or an agent (Ctrl+Shift+Space)"
+            :title="t('app.toolbar.launcher', 'Open a terminal or an agent (Ctrl+Shift+Space)')"
             aria-haspopup="menu"
             :aria-expanded="launcher.open"
             @click="toggleLauncher"
@@ -7270,19 +7399,19 @@ onBeforeUnmount(() => {
         <UsageMenu @details="openSettingsAt('stats')" @accounts="openSettingsAt('accounts')" />
         <NotificationsMenu @focus-pane="focusPane" />
         <div class="menu-group" @pointerdown.stop>
-          <button class="tb-icon" aria-label="Issues" title="GitHub and Linear issues" aria-haspopup="menu" :aria-expanded="openMenu === 'issues'" @click="toggleMenu('issues')">
+          <button class="tb-icon" :aria-label="t('app.toolbar.issues', 'Issues')" :title="t('app.toolbar.issuesTitle', 'GitHub and Linear issues')" aria-haspopup="menu" :aria-expanded="openMenu === 'issues'" @click="toggleMenu('issues')">
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="8" cy="8" r="5.7" stroke="currentColor" stroke-width="1.3" /><path d="M8 4.5v4M8 11h.01" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" /></svg>
           </button>
           <div v-if="openMenu === 'issues'" class="toolbar-menu align-right" role="menu">
-            <button class="toolbar-menu-item" role="menuitem" @click="openGitHub()">GitHub issues and PRs</button>
-            <button class="toolbar-menu-item" role="menuitem" @click="openLinear">Linear issues</button>
+            <button class="toolbar-menu-item" role="menuitem" @click="openGitHub()">{{ t('app.toolbar.githubIssues', 'GitHub issues and PRs') }}</button>
+            <button class="toolbar-menu-item" role="menuitem" @click="openLinear">{{ t('app.toolbar.linearIssues', 'Linear issues') }}</button>
           </div>
         </div>
         <button
           class="tb-icon"
           :class="{ on: broadcast, warn: broadcast }"
-          :title="`Broadcast is ${broadcast ? 'on' : 'off'}: type once into every pane with write checked (Ctrl+Shift+B)`"
-          aria-label="Broadcast"
+          :title="broadcast ? t('app.toolbar.broadcastOn', 'Broadcast is on: type once into every pane with write checked (Ctrl+Shift+B)') : t('app.toolbar.broadcastOff', 'Broadcast is off: type once into every pane with write checked (Ctrl+Shift+B)')"
+          :aria-label="t('app.toolbar.broadcast', 'Broadcast')"
           :aria-pressed="broadcast"
           @click="toggleBroadcast"
         >
@@ -7299,8 +7428,8 @@ onBeforeUnmount(() => {
         <button
           class="tb-icon"
           :class="{ on: explorerOpen }"
-          title="Files (Ctrl+Shift+X)"
-          aria-label="File explorer"
+          :title="t('app.toolbar.files', 'Files (Ctrl+Shift+X)')"
+          :aria-label="t('app.toolbar.fileExplorer', 'File explorer')"
           :aria-pressed="explorerOpen"
           data-test="explorer-button"
           @click="toggleExplorer"
@@ -7312,8 +7441,8 @@ onBeforeUnmount(() => {
         <button
           class="tb-icon"
           :class="{ on: taskBoardShown }"
-          title="Task board (Ctrl+Shift+K)"
-          aria-label="Task board"
+          :title="t('app.toolbar.taskBoardTitle', 'Task board (Ctrl+Shift+K)')"
+          :aria-label="t('app.toolbar.taskBoard', 'Task board')"
           :aria-pressed="taskBoardShown"
           data-test="tasks-button"
           @click="toggleTaskPanel"
@@ -7341,8 +7470,8 @@ onBeforeUnmount(() => {
           <button
             class="tb-icon"
             :class="{ open: openMenu === 'layout' }"
-            title="Layout: split and arrange panes"
-            aria-label="Layout"
+            :title="t('app.toolbar.layoutTitle', 'Layout: split and arrange panes')"
+            :aria-label="t('app.toolbar.layout', 'Layout')"
             aria-haspopup="menu"
             @click="toggleMenu('layout')"
           >
@@ -7369,7 +7498,7 @@ onBeforeUnmount(() => {
               role="menuitem"
               @click="menuAction(() => splitActive('row'))"
             >
-              <span class="menu-item-name">Split right</span>
+              <span class="menu-item-name">{{ t('app.toolbar.splitRight', 'Split right') }}</span>
               <span class="menu-shortcut">Ctrl+Shift+E</span>
             </button>
             <button
@@ -7377,17 +7506,17 @@ onBeforeUnmount(() => {
               role="menuitem"
               @click="menuAction(() => splitActive('col'))"
             >
-              <span class="menu-item-name">Split down</span>
+              <span class="menu-item-name">{{ t('app.toolbar.splitDown', 'Split down') }}</span>
               <span class="menu-shortcut">Ctrl+Shift+O</span>
             </button>
             <div class="menu-sep"></div>
-            <div class="menu-label">Even grid</div>
+            <div class="menu-label">{{ t('app.toolbar.evenGrid', 'Even grid') }}</div>
             <div class="grid-chips">
               <button
                 v-for="option in gridOptions"
                 :key="option.value"
                 class="grid-chip"
-                :title="`Arrange this workspace into ${option.label}`"
+                :title="t('app.toolbar.arrangeGrid', 'Arrange this workspace into {{grid}}', { grid: option.label })"
                 @click="applyGrid(option.value)"
               >
                 {{ option.label }}
@@ -7399,15 +7528,15 @@ onBeforeUnmount(() => {
               role="menuitem"
               @click="menuAction(closeActive)"
             >
-              <span class="menu-item-name">Close active pane</span>
+              <span class="menu-item-name">{{ t('app.toolbar.closeActive', 'Close active pane') }}</span>
               <span class="menu-shortcut">Ctrl+Shift+W</span>
             </button>
           </div>
         </div>
         <button
           class="tb-icon"
-          title="Settings (Ctrl+,)"
-          aria-label="Settings"
+          :title="t('app.toolbar.settingsTitle', 'Settings (Ctrl+,)')"
+          :aria-label="t('app.toolbar.settings', 'Settings')"
           @click="settingsOpen = true"
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -7425,7 +7554,7 @@ onBeforeUnmount(() => {
     </div>
 
     <div v-if="broadcast" class="broadcast-banner">
-      Broadcast is on. Keystrokes go to every pane with "write" checked.
+      {{ t('app.toolbar.broadcastBanner', 'Broadcast is on. Keystrokes go to every pane with "write" checked.') }}
     </div>
 
     <div class="workspace">
@@ -7483,7 +7612,7 @@ onBeforeUnmount(() => {
           <SplitNode v-if="ws.tree" :node="ws.tree" />
         </div>
         <div v-if="!tree" class="startup-message">
-          {{ initError || 'Starting...' }}
+          {{ initError || t('app.main.starting', 'Starting...') }}
         </div>
       </div>
       <aside
@@ -7494,7 +7623,7 @@ onBeforeUnmount(() => {
       >
         <div
           class="task-resize"
-          title="Drag to resize. Double-click to reset."
+          :title="t('app.main.resizeHint', 'Drag to resize. Double-click to reset.')"
           @pointerdown="startTaskResize"
         ></div>
         <SidePanel
@@ -7589,7 +7718,7 @@ onBeforeUnmount(() => {
           focusPane(id)
         }
       "
-      @copied="showToast('Session ID copied.', { timeout: 2000 })"
+      @copied="showToast(t('app.sessions.copied', 'Session ID copied.'), { timeout: 2000 })"
       @close="closeSessions"
     />
 
@@ -7737,12 +7866,12 @@ onBeforeUnmount(() => {
     />
 
     <div class="toasts" aria-live="polite">
-      <div v-for="t in toasts" :key="t.id" class="toast" :class="t.kind">
-        <span class="toast-text">{{ t.text }}</span>
-        <button v-if="t.action" class="toast-action" @click="runToastAction(t)">
-          {{ t.action.label }}
+      <div v-for="toast in toasts" :key="toast.id" class="toast" :class="toast.kind">
+        <span class="toast-text">{{ toast.text }}</span>
+        <button v-if="toast.action" class="toast-action" @click="runToastAction(toast)">
+          {{ toast.action.label }}
         </button>
-        <button class="toast-close" title="Dismiss" @click="dismissToast(t.id)">
+        <button class="toast-close" :title="t('app.toast.dismiss', 'Dismiss')" @click="dismissToast(toast.id)">
           <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path
               d="M4 4l8 8M12 4l-8 8"
@@ -7760,13 +7889,13 @@ onBeforeUnmount(() => {
         ref="helpCardEl"
         class="help-card"
         role="dialog"
-        aria-label="Keyboard shortcuts"
+        :aria-label="t('app.help.title', 'Keyboard shortcuts')"
         tabindex="-1"
         @keydown.escape.prevent.stop="helpOpen = false"
       >
         <div class="help-head">
-          <span>Keyboard shortcuts</span>
-          <button class="tb-icon" title="Close (Esc)" @click="helpOpen = false">
+          <span>{{ t('app.help.title', 'Keyboard shortcuts') }}</span>
+          <button class="tb-icon" :title="t('app.help.close', 'Close (Esc)')" @click="helpOpen = false">
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
               <path
                 d="M4 4l8 8M12 4l-8 8"
@@ -7778,7 +7907,7 @@ onBeforeUnmount(() => {
           </button>
         </div>
         <div class="help-grid">
-          <section v-for="group in SHORTCUTS" :key="group.title">
+          <section v-for="group in shortcuts" :key="group.title">
             <h3>{{ group.title }}</h3>
             <div v-for="row in group.rows" :key="row[1]" class="help-row">
               <span>{{ row[1] }}</span>
@@ -7789,13 +7918,12 @@ onBeforeUnmount(() => {
           </section>
         </div>
         <div class="help-logs">
-          <span class="set-hint">Something wrong? Logs help find the cause.</span>
-          <button class="exit-btn" @click="openLogs">Open logs folder</button>
-          <button class="exit-btn" @click="copyDiagnostics">Copy diagnostics</button>
+          <span class="set-hint">{{ t('app.help.logsHint', 'Something wrong? Logs help find the cause.') }}</span>
+          <button class="exit-btn" @click="openLogs">{{ t('app.help.openLogs', 'Open logs folder') }}</button>
+          <button class="exit-btn" @click="copyDiagnostics">{{ t('app.help.copyDiagnostics', 'Copy diagnostics') }}</button>
         </div>
         <p class="help-foot">
-          Drop files on a pane to paste their paths. Select text to copy it, right-click to paste.
-          Shift+right-click a pane for more.
+          {{ t('app.help.foot', 'Drop files on a pane to paste their paths. Select text to copy it, right-click to paste. Shift+right-click a pane for more.') }}
         </p>
       </div>
     </div>

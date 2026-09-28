@@ -1,9 +1,9 @@
-<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // Command palette (Ctrl+Shift+P, or the search box in the middle of the
 // toolbar): type to find any command, pane or workspace, Enter to run it.
 // `commands` is a list of { id, group, title, hint?, shortcut?, run }.
 import { ref, computed, onMounted, nextTick, watch } from 'vue'
+import { t } from '../i18n'
 
 const props = defineProps({
   commands: { type: Array, required: true }
@@ -42,6 +42,8 @@ const rows = computed(() =>
   }))
 )
 
+const emptyText = computed(() => t('app.palette.empty', 'Nothing matches "{{query}}"', { query: query.value }))
+
 watch(query, () => (index.value = 0))
 
 function move(d) {
@@ -65,7 +67,7 @@ onMounted(() => inputEl.value && inputEl.value.focus())
 
 <template>
   <div class="pal-backdrop" @pointerdown.self="emit('close')">
-    <div class="pal" role="dialog" aria-label="Command palette">
+    <div class="pal" role="dialog" :aria-label="t('app.palette.label', 'Command palette')">
       <div class="pal-search">
         <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
           <circle cx="7" cy="7" r="4.6" stroke="currentColor" stroke-width="1.4" />
@@ -80,7 +82,7 @@ onMounted(() => inputEl.value && inputEl.value.focus())
           ref="inputEl"
           v-model="query"
           class="pal-input"
-          placeholder="Search panes, workspaces and commands"
+          :placeholder="t('app.palette.placeholder', 'Search panes, workspaces and commands')"
           spellcheck="false"
           role="combobox"
           aria-expanded="true"
@@ -112,7 +114,7 @@ onMounted(() => inputEl.value && inputEl.value.focus())
             <span v-if="r.c.shortcut" class="pal-shortcut">{{ r.c.shortcut }}</span>
           </button>
         </template>
-        <div v-if="!rows.length" class="pal-empty">Nothing matches "{{ query }}"</div>
+        <div v-if="!rows.length" class="pal-empty">{{ emptyText }}</div>
       </div>
     </div>
   </div>

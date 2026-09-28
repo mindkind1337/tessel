@@ -6,6 +6,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import fs from 'fs'
 import vm from 'vm'
+import { t } from '../i18n'
 import { join } from 'path'
 import { DEFAULT_SETTINGS } from '../settings'
 
@@ -37,7 +38,7 @@ describe('notifications', () => {
       Map,
       Date
     }
-    vm.createContext(ctx)
+    vm.createContext(Object.assign(ctx, { t })) // App.vue's interface text goes through t()
     vm.runInContext(
       slice('// An entry in the notification inbox', '// Alt+Arrow: move focus') +
         '\nthis.api = { inboxNote, notifyAgentDone, terminalBell, sendTestNotification }',
@@ -125,7 +126,7 @@ describe('Confirm before closing running terminals', () => {
       Promise,
       Array
     }
-    vm.createContext(ctx)
+    vm.createContext(Object.assign(ctx, { t })) // App.vue's interface text goes through t()
     vm.runInContext(
       slice('// Asks the main process what runs under a terminal', '// Arrange the workspace as an even grid') +
         '\nthis.closeLeaf = closeLeaf',
@@ -192,7 +193,7 @@ describe('Ask Before Deleting Workspaces', () => {
       window: { shellApi: { killPty: vi.fn() } },
       Math
     }
-    vm.createContext(ctx)
+    vm.createContext(Object.assign(ctx, { t })) // App.vue's interface text goes through t()
     vm.runInContext(slice('function removeWorkspace(', 'function cycleWorkspace(') + '\nthis.removeWorkspace = removeWorkspace', ctx)
     ctx.removeWorkspace('ws1')
     return ctx

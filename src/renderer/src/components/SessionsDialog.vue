@@ -1,10 +1,10 @@
-<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // Past agent conversations, newest first. Resume one in a new
 // pane (in the folder it ran in), jump to a pane that already has it open, or
 // copy its session id.
 import { ref, computed, onMounted } from 'vue'
 import BrandIcon from './BrandIcon.vue'
+import { t, intlLocale } from '../i18n'
 
 const props = defineProps({
   cwd: { type: String, default: null }, // current workspace folder
@@ -13,7 +13,7 @@ const props = defineProps({
 const emit = defineEmits(['close', 'resume', 'show', 'copied'])
 
 const AGENT_NAME = {
-  claude: 'Claude Code',
+  claude: 'Claude Code', // i18n-ignore
   codex: 'Codex',
   gemini: 'Gemini',
   qwen: 'Qwen',
@@ -53,12 +53,19 @@ const shown = computed(() => {
 
 function ago(ms) {
   const s = Math.max(0, (Date.now() - ms) / 1000)
-  if (s < 60) return 'just now'
-  if (s < 3600) return `${Math.floor(s / 60)} min ago`
-  if (s < 86400) return `${Math.floor(s / 3600)} h ago`
-  if (s < 86400 * 7) return `${Math.floor(s / 86400)} d ago`
-  return new Date(ms).toLocaleDateString()
+  if (s < 60) return t('app.sessions.justNow', 'just now')
+  if (s < 3600) return t('app.sessions.minAgo', '{{n}} min ago', { n: Math.floor(s / 60) })
+  if (s < 86400) return t('app.sessions.hAgo', '{{n}} h ago', { n: Math.floor(s / 3600) })
+  if (s < 86400 * 7) return t('app.sessions.dAgo', '{{n}} d ago', { n: Math.floor(s / 86400) })
+  return new Date(ms).toLocaleDateString(intlLocale())
 }
+
+const onlyLabel = computed(() => t('app.sessions.only', 'Only {{folder}}', { folder: folderName(props.cwd) }))
+const emptyText = computed(() =>
+  onlyHere.value && props.cwd
+    ? t('app.sessions.emptyIn', 'No conversations found in {{folder}}.', { folder: folderName(props.cwd) })
+    : t('app.sessions.empty', 'No conversations found.')
+)
 
 function folderName(p) {
   const parts = String(p || '')
@@ -89,13 +96,13 @@ onMounted(() => {
       ref="cardEl"
       class="help-card sessions-card"
       role="dialog"
-      aria-label="Sessions"
+      :aria-label="t('app.sessions.label', 'Sessions')"
       tabindex="-1"
       @keydown.escape.prevent.stop="emit('close')"
     >
       <div class="help-head">
-        <span>Agent sessions</span>
-        <button class="tb-icon" title="Close (Esc)" @click="emit('close')">
+        <span>{{ t('app.sessions.title', 'Agent sessions') }}</span>
+        <button class="tb-icon" :title="t('app.sessions.close', 'Close (Esc)')" @click="emit('close')">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path
               d="M4 4l8 8M12 4l-8 8"
@@ -106,14 +113,14 @@ onMounted(() => {
           </svg>
         </button>
       </div>
-      <p class="mcp-intro">Your past conversations. Resume one to pick up where it left off.</p>
+      <p class="mcp-intro">{{ t('app.sessions.intro', 'Your past conversations. Resume one to pick up where it left off.') }}</p>
 
       <div class="sessions-filters">
         <input
           v-model="query"
           class="set-number sessions-search"
-          placeholder="Search conversations"
-          aria-label="Search conversations"
+          :placeholder="t('app.sessions.search', 'Search conversations')"
+          :aria-label="t('app.sessions.search', 'Search conversations')"
           spellcheck="false"
         />
         <div class="mcp-cats">
@@ -124,7 +131,7 @@ onMounted(() => {
             :class="{ on: agentFilter === f }"
             @click="agentFilter = f"
           >
-            {{ f === 'all' ? 'All' : AGENT_NAME[f] }}
+            {{ f === 'all' ? t('app.sessions.all', 'All') : AGENT_NAME[f] }}
           </button>
           <button
             v-if="cwd"
@@ -133,16 +140,16 @@ onMounted(() => {
             :title="cwd"
             @click="toggleHere"
           >
-            Only {{ folderName(cwd) }}
+            {{ onlyLabel }}
           </button>
         </div>
       </div>
 
-      <p v-if="loading" class="set-hint">Loading…</p>
+      <p v-if="loading" class="set-hint">{{ t('app.sessions.loading', 'Loading…') }}</p>
       <div v-else-if="!shown.length" class="mcp-empty">
-        No conversations found{{ onlyHere && cwd ? ` in ${folderName(cwd)}` : '' }}.
+        {{ emptyText }}
         <button v-if="onlyHere && cwd" class="exit-btn" @click="toggleHere">
-          Show all folders
+          {{ t('app.sessions.showAll', 'Show all folders') }}
         </button>
       </div>
 
@@ -152,13 +159,13 @@ onMounted(() => {
           <span class="session-title" :title="s.title">{{ s.title }}</span>
           <span class="set-hint session-meta">
             {{ ago(s.updated) }} ·
-            <span :title="s.cwd">{{ folderName(s.cwd) || 'Unknown folder' }}</span> ·
+            <span :title="s.cwd">{{ folderName(s.cwd) || t('app.sessions.unknownFolder', 'Unknown folder') }}</span> ·
             <code class="session-id" :title="s.id">{{ s.id.slice(0, 8) }}</code>
           </span>
         </div>
-        <button class="exit-btn" title="Copy the session id" @click="copyId(s)">Copy ID</button>
+        <button class="exit-btn" :title="t('app.sessions.copyIdTitle', 'Copy the session id')" @click="copyId(s)">{{ t('app.sessions.copyId', 'Copy ID') }}</button>
         <button v-if="openIds[s.id]" class="exit-btn" @click="emit('show', openIds[s.id])">
-          Show pane
+          {{ t('app.sessions.showPane', 'Show pane') }}
         </button>
         <button
           v-else
@@ -166,12 +173,12 @@ onMounted(() => {
           :disabled="!s.cwd"
           :title="
             s.cwd
-              ? 'Resume in its project folder'
-              : 'The saved project folder is unavailable. You can still copy the session ID.'
+              ? t('app.sessions.resumeTitle', 'Resume in its project folder')
+              : t('app.sessions.resumeUnavailable', 'The saved project folder is unavailable. You can still copy the session ID.')
           "
           @click="emit('resume', s)"
         >
-          Resume
+          {{ t('app.sessions.resume', 'Resume') }}
         </button>
       </div>
     </div>

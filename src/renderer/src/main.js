@@ -1,4 +1,3 @@
-// i18n-pending: text here does not go through t() yet
 import { createApp, watch } from 'vue'
 import App from './App.vue'
 import '@xterm/xterm/css/xterm.css'
@@ -9,7 +8,7 @@ import { settings } from './settings'
 import { applyTheme } from './themes'
 import { applyAppearance, applyUiZoom } from './appearance'
 import { startCapture } from './ptyStore'
-import { setUiLanguage } from './i18n'
+import { setUiLanguage, t } from './i18n'
 
 // Begin buffering PTY output before any pane mounts so nothing is lost.
 startCapture()
@@ -56,17 +55,17 @@ function showCrash(err) {
   const box = document.createElement('div')
   box.className = 'crash-screen'
   const title = document.createElement('h1')
-  title.textContent = 'Tessel hit a problem'
+  title.textContent = t('app.crash.title', 'Tessel hit a problem')
   const text = document.createElement('p')
-  text.textContent =
-    'The window could not finish loading. Your workspaces are saved. Reload to try again.'
+  text.textContent = t('app.crash.body', 'The window could not finish loading. Your workspaces are saved. Reload to try again.'
+  )
   const detail = document.createElement('pre')
   detail.textContent = String((err && (err.stack || err.message)) || err).slice(0, 1200)
   const button = document.createElement('button')
-  button.textContent = 'Reload'
+  button.textContent = t('app.crash.reload', 'Reload')
   button.onclick = () => window.location.reload()
   const logs = document.createElement('button')
-  logs.textContent = 'Open logs folder'
+  logs.textContent = t('app.crash.openLogs', 'Open logs folder')
   logs.className = 'secondary'
   logs.onclick = () => window.shellApi && window.shellApi.openLogs && window.shellApi.openLogs()
   const row = document.createElement('div')
@@ -77,7 +76,7 @@ function showCrash(err) {
   // Dev build: agents edit this code while it runs, so a half-finished change
   // can land here. Reload by itself as soon as the next change is saved.
   if (import.meta.hot) {
-    text.textContent += ' This window reloads by itself when the code changes.'
+    text.textContent += ' ' + t('app.crash.devReload', 'This window reloads by itself when the code changes.')
     import.meta.hot.on('vite:afterUpdate', () => window.location.reload())
     import.meta.hot.on('vite:beforeFullReload', () => window.location.reload())
   }

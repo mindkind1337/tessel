@@ -1,8 +1,8 @@
-<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // A confirmation in Tessel's own look, instead of the operating system's
 // window.confirm (which ignores the theme). Enter confirms, Esc cancels.
 import { ref, onMounted } from 'vue'
+import { t } from '../i18n'
 
 defineProps({
   title: { type: String, required: true },
@@ -31,7 +31,7 @@ onMounted(() => okEl.value && okEl.value.focus())
       <h2 id="confirm-title" class="confirm-title">{{ title }}</h2>
       <p v-if="text" id="confirm-text" class="confirm-text">{{ text }}</p>
       <div class="confirm-actions">
-        <button class="confirm-btn" @click="emit('answer', false)">Cancel</button>
+        <button class="confirm-btn" @click="emit('answer', false)">{{ t('app.confirm.cancel', 'Cancel') }}</button>
         <button v-if="altLabel" class="confirm-btn" @click="emit('answer', 'alt')">{{ altLabel }}</button>
         <button
           ref="okEl"
