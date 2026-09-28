@@ -4670,10 +4670,18 @@ async function syncBoard(b, round = teamRound) {
           refusals.push({ fromId: from.id, text: `The card "${r.title}" was not added: no card ${unknown.join(', ')} on your team's board to wait for (see team_tasks).` })
           continue
         }
+        // A card that waits for cards not done yet starts in To do.
+        const pendingDeps = (r.deps || []).filter((d) => boardTasks.find((t) => t.id === d).column !== 'done')
+        const column = pendingDeps.length && r.column !== 'todo' ? 'todo' : r.column
         const task = addTask({ title: r.title, wsId })
-        updateTask(task.id, { paneId: who.id, column: r.column, createdBy: from.id })
+        updateTask(task.id, { paneId: who.id, column, createdBy: from.id })
         // Cards it waits for.
         if (r.deps && r.deps.length) updateTask(task.id, { deps: [...r.deps] })
+        if (column !== r.column)
+          refusals.push({
+            fromId: from.id,
+            text: `The card "${r.title}" (${task.id}) was put in To do, not ${r.column}: it waits for ${pendingDeps.join(', ')}.`
+          })
         recordActivity({ type: 'task', action: 'added', paneId: who.id, agent: agentInfo(who), title: r.title, wsId, by: paneLabel(from) })
       } else if (r.action === 'report' || r.action === 'gate') {
         const task = boardTasks.find((t) => t.id === r.id)
