@@ -888,7 +888,7 @@ function toggle() {
             data-test="usage-reset-now"
             @click="beginReset"
           >
-            {{ resetBusy ? 'Using reset...' : 'Reset now' }}
+            {{ resetBusy ? 'Resetting…' : 'Reset now' }}
           </button>
         </div>
         <div
@@ -907,19 +907,19 @@ function toggle() {
             <button
               type="button"
               :disabled="resetBusy"
-              class="usage-action"
-              data-test="usage-reset-cancel"
-              @click="resetConfirm = null"
-            >
-              Cancel</button
-            ><button
-              type="button"
-              :disabled="resetBusy"
               class="usage-action primary"
               data-test="usage-reset-confirm"
               @click="confirmReset"
             >
-              {{ resetBusy ? 'Using reset...' : 'Use one reset credit' }}
+              {{ resetBusy ? 'Resetting…' : 'Reset now' }}</button
+            ><button
+              type="button"
+              :disabled="resetBusy"
+              class="usage-action"
+              data-test="usage-reset-cancel"
+              @click="resetConfirm = null"
+            >
+              Cancel
             </button>
           </div>
         </div>
@@ -1143,6 +1143,13 @@ function toggle() {
   background: var(--accent);
   color: var(--chrome);
   border-color: var(--accent);
+  font-weight: 600;
+}
+/* Hovered, it stays the main button (a lighter blue), still readable. */
+.usage-action.primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 82%, #fff);
+  border-color: color-mix(in srgb, var(--accent) 82%, #fff);
+  color: var(--chrome);
 }
 .usage-reset-confirm {
   margin-top: 12px;
