@@ -8,6 +8,8 @@
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import BrandIcon from './BrandIcon.vue'
 import ResetHistory from './ResetHistory.vue'
+import { settings } from '../settings'
+import { displayedUsagePercent, usagePercentLabel } from '../usagePercent'
 
 const emit = defineEmits(['details', 'accounts'])
 const NAMES = {
@@ -552,6 +554,11 @@ function toggle() {
     refresh()
   }
 }
+
+// Settings > Appearance, "Usage percentages": used or remaining.
+const shownPct = (used) => displayedUsagePercent(used, settings.usagePercentageDisplay)
+const pctLabel = (used) => usagePercentLabel(used, settings.usagePercentageDisplay)
+const quotaWord = computed(() => (settings.usagePercentageDisplay === 'remaining' ? ' quota left' : ' quota used'))
 </script>
 
 <template>
@@ -681,7 +688,7 @@ function toggle() {
               :class="{ stale: stale(a, summaryWindow(a)) }"
               :title="
                 windowLabel(summaryWindow(a).label) +
-                ' quota used' +
+                quotaWord +
                 (stale(a, summaryWindow(a)) ? ' - last known reading' : '')
               "
             >
@@ -692,7 +699,7 @@ function toggle() {
               <span
                 class="usage-summary-pct"
                 :class="'usage-level-' + level(summaryWindow(a).usedPct)"
-                >{{ Math.round(summaryWindow(a).usedPct) }}%</span
+                >{{ shownPct(summaryWindow(a).usedPct) }}%</span
               >
             </span>
             <span v-else-if="!windows(a).length" class="usage-no-data">No local usage data</span>
@@ -725,14 +732,14 @@ function toggle() {
               <div class="usage-line">
                 <span>{{ windowLabel(w.label) }}</span
                 ><span class="usage-pct" :class="'usage-level-' + level(w.usedPct)"
-                  >{{ Math.round(w.usedPct) }}%</span
+                  >{{ shownPct(w.usedPct) }}%</span
                 >
               </div>
               <div class="usage-bar">
                 <div
                   class="usage-fill"
                   :class="level(w.usedPct)"
-                  :style="{ width: w.usedPct + '%' }"
+                  :style="{ width: shownPct(w.usedPct) + '%' }"
                 ></div>
               </div>
               <div class="usage-reset">
@@ -858,20 +865,20 @@ function toggle() {
           <div
             class="usage-bar"
             role="meter"
-            :aria-label="windowLabel(w.label) + ' quota used'"
+            :aria-label="windowLabel(w.label) + quotaWord"
             aria-valuemin="0"
             aria-valuemax="100"
-            :aria-valuenow="w.usedPct"
+            :aria-valuenow="shownPct(w.usedPct)"
           >
             <div
               class="usage-fill"
               :class="level(w.usedPct)"
-              :style="{ width: w.usedPct + '%' }"
+              :style="{ width: shownPct(w.usedPct) + '%' }"
             ></div>
           </div>
           <div class="usage-flyout-window-meta">
             <span class="usage-pct" :class="'usage-level-' + level(w.usedPct)"
-              >{{ Math.round(w.usedPct) }}% used</span
+              >{{ pctLabel(w.usedPct) }}</span
             ><span v-if="shortReset(w.resetsAt)">{{
               stale(detailAgent, w) ? 'Last known reading' : 'Resets in ' + shortReset(w.resetsAt)
             }}</span>

@@ -451,7 +451,8 @@ button {
 
 /* Thin dividers with a wider invisible grab area. */
 .divider {
-  flex: 0 0 2px;
+  /* Settings > Appearance, Divider Thickness. */
+  flex: 0 0 var(--divider-thickness, 3px);
   background: var(--backdrop);
   position: relative;
   z-index: 2;
@@ -724,14 +725,30 @@ button {
 /* Inset with offsets, never padding: the fit addon measures this element's
    full box, so padding here makes it compute rows that don't fit and the
    bottom line gets clipped. */
+/* Settings > Appearance: Horizontal / Vertical Padding around the grid (under
+   the 30px header), set on :root by App. */
 .term-host {
   position: absolute;
-  top: 36px;
-  left: 10px;
-  right: 4px;
-  bottom: 6px;
+  top: calc(30px + var(--term-pad-y, 4px));
+  left: var(--term-pad-x, 4px);
+  right: var(--term-pad-x, 4px);
+  bottom: var(--term-pad-y, 4px);
   overflow: hidden;
   padding: 0;
+}
+
+/* Inactive Pane Opacity: panes other than the active one are dimmed. */
+.pane:not(.active) > .term-host {
+  opacity: var(--inactive-pane-opacity, 1);
+}
+.pane > .term-host {
+  transition: opacity 140ms ease;
+}
+
+/* Hide Mouse While Typing. */
+.term-host.mouse-hidden,
+.term-host.mouse-hidden * {
+  cursor: none !important;
 }
 
 .term-host .xterm {
@@ -2446,6 +2463,61 @@ label.set-row {
 
 .set-seg {
   width: 250px;
+}
+
+.set-seg.set-seg-small {
+  width: 130px;
+}
+
+.set-seg.set-seg-wide {
+  width: 330px;
+}
+
+/* A control with a companion (a field and its Reset, a slider and its value). */
+.set-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.set-range {
+  width: 150px;
+  accent-color: var(--accent);
+}
+
+.set-number.set-number-short {
+  min-width: 0;
+  width: 70px;
+}
+
+.set-mono {
+  font-family: 'Cascadia Mono', Consolas, monospace;
+}
+
+.set-volume-value {
+  min-width: 36px;
+  text-align: right;
+}
+
+.set-row.set-disabled .set-label {
+  opacity: 0.55;
+}
+
+.set-error {
+  color: var(--danger, #f87171);
+}
+
+.set-branch-prefix {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.set-stepper button:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 /* Toggle switch built from a checkbox. */

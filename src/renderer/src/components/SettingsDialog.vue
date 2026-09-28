@@ -8,9 +8,12 @@ import BrandIcon from './BrandIcon.vue'
 import ProviderAccounts from './ProviderAccounts.vue'
 import StatsUsage from './StatsUsage.vue'
 import { BarChart3 } from 'lucide-vue-next'
-import { settings, FONT_FAMILIES, resetSettings, clamp, MAX_LEFT_SIDEBAR_TINT_OPACITY } from '../settings'
+import { settings, FONT_FAMILIES, resetSettings, clamp, MAX_LEFT_SIDEBAR_TINT_OPACITY, limitNumber, DEFAULT_SETTINGS, LIMITS } from '../settings'
 import { THEMES } from '../themes'
 import { playAlertSound } from '../notificationsStore'
+import { uiZoomPercent, stepUiZoom } from '../appearance'
+import { LIGHT_BG_MIN_CONTRAST, DEFAULT_WORD_SEPARATOR } from '../terminalOptions'
+import { getBranchPrefixIssue, normalizeBranchPrefix } from '../../../shared/worktreeNaming'
 import { parseEnvText, YOLO_ARGS, YOLO_ENV, agentEnabled } from '../../../shared/agentPrefs'
 import { AGENT_DOCS } from '../../../shared/agentDocs'
 import { CACHE_TTLS } from '../promptCache'
@@ -85,9 +88,14 @@ const PAGES = {
     icon: 'M5 4L1.5 8 5 12M11 4l3.5 4-3.5 4M9.5 2.5l-3 11'
   },
   alerts: {
-    title: 'Agent alerts',
-    desc: 'How Tessel tells you an agent has finished.',
+    title: 'Notifications',
+    desc: 'Native desktop notifications for agent and terminal events.',
     icon: 'M4 11V7a4 4 0 018 0v4l1 1.5H3zM6.5 14a1.5 1.5 0 003 0'
+  },
+  git: {
+    title: 'Git & Source Control',
+    desc: 'Branch naming and Source Control.',
+    icon: 'M5 3v7M5 10a2 2 0 100 4 2 2 0 000-4zM11 3a2 2 0 100 4 2 2 0 000-4zM11 7c0 2.5-2 3-6 3'
   },
   'quick-commands': {
     title: 'Quick commands',
@@ -103,7 +111,7 @@ const PAGES = {
 const GROUPS = [
   { title: 'AI capabilities', pages: ['agents', 'accounts', 'orchestration', 'voice'] },
   { title: 'Configure', pages: ['general', 'appearance', 'text', 'terminal', 'editor', 'alerts'] },
-  { title: 'Workflows', pages: ['quick-commands'] },
+  { title: 'Workflows', pages: ['git', 'quick-commands'] },
   { title: 'Interface', pages: ['stats'] },
   { title: 'About', pages: ['updates'] }
 ]
@@ -239,7 +247,8 @@ const emit = defineEmits([
   'check-agent-updates',
   'update-agent',
   'update-all-agents',
-  'cancel-agent-update'
+  'cancel-agent-update',
+  'test-notification'
 ])
 
 // Settings > Agents: versions and updates of the installed agent CLIs.
@@ -533,6 +542,94 @@ const CURSORS = [
   { id: 'bar', label: 'Bar' },
   { id: 'underline', label: 'Underline' }
 ]
+
+// A number setting typed in a field: kept in its range (Orca's), shown back.
+function setNumber(key, e, round = false) {
+  const v = limitNumber(key, parseFloat(e.target.value))
+  if (v !== null) settings[key] = round ? Math.round(v) : Math.round(v * 100) / 100
+  e.target.value = settings[key]
+}
+function setRange(key, e) {
+  const v = limitNumber(key, parseFloat(e.target.value))
+  if (v !== null) settings[key] = Math.round(v * 100) / 100
+}
+
+const OFF_ON = [
+  { id: false, label: 'Off' },
+  { id: true, label: 'On' }
+]
+const GPU_MODES = [
+  { id: 'auto', label: 'Auto' },
+  { id: 'on', label: 'On' },
+  { id: 'off', label: 'Off' }
+]
+const gpuHint = computed(() =>
+  settings.gpuAcceleration === 'off'
+    ? 'WebGL disabled; DOM renderer for max compatibility.'
+    : settings.gpuAcceleration === 'on'
+      ? 'WebGL is always attempted for terminal panes.'
+      : 'Auto tries WebGL, with DOM fallback for unsupported or risky renderers.'
+)
+
+// Color Contrast (Orca's): Automatic (null), Off (1) or a custom ratio.
+const CONTRAST_MODES = [
+  { id: 'auto', label: 'Automatic' },
+  { id: 'off', label: 'Off' },
+  { id: 'custom', label: 'Custom' }
+]
+const contrastMode = computed(() =>
+  settings.minimumContrastRatio === null ? 'auto' : settings.minimumContrastRatio === 1 ? 'off' : 'custom'
+)
+let lastCustomContrast = LIGHT_BG_MIN_CONTRAST
+function setContrastMode(mode) {
+  if (contrastMode.value === 'custom') lastCustomContrast = settings.minimumContrastRatio
+  settings.minimumContrastRatio = mode === 'auto' ? null : mode === 'off' ? 1 : lastCustomContrast
+}
+const contrastHint = computed(() =>
+  contrastMode.value === 'auto'
+    ? 'Balances readability with your terminal theme. Recommended.'
+    : contrastMode.value === 'off'
+      ? 'Keeps program colors unchanged, including dim text and Powerline separators.'
+      : 'Choose how much to increase contrast between text and its background.'
+)
+
+function resetScrollSpeed() {
+  settings.scrollSensitivity = DEFAULT_SETTINGS.scrollSensitivity
+  settings.fastScrollSensitivity = DEFAULT_SETTINGS.fastScrollSensitivity
+}
+
+const zoomPercent = computed(() => uiZoomPercent(settings.uiZoomLevel))
+function zoom(direction) {
+  settings.uiZoomLevel = stepUiZoom(settings.uiZoomLevel, direction)
+}
+
+// Settings > Git & Source Control.
+const BRANCH_PREFIX_MODES = [
+  { id: 'git-username', label: 'Git Username' },
+  { id: 'custom', label: 'Custom' },
+  { id: 'none', label: 'None' }
+]
+const GROUP_ORDERS = [
+  { id: 'changes-first', label: 'Changes first' },
+  { id: 'staged-first', label: 'Staged first' },
+  { id: 'untracked-first', label: 'Untracked first' }
+]
+const branchPrefixFeedback = computed(() => {
+  if (settings.branchPrefix === 'none') return { text: '', error: false }
+  if (settings.branchPrefix === 'git-username')
+    return { text: 'Uses git config github.user or user.username, else your GitHub CLI login', error: false }
+  const raw = settings.branchPrefixCustom || ''
+  if (getBranchPrefixIssue(raw))
+    return { text: 'Prefix cannot contain spaces or special characters like ~ ^ : ? * [ \\', error: true }
+  const p = normalizeBranchPrefix(raw)
+  if (p) return { text: `Branches will be named ${p}/feature`, error: false }
+  return { text: raw.trim() ? 'No prefix will be applied' : '', error: false }
+})
+
+// Notifications: the sound at the chosen volume.
+function previewSound() {
+  playAlertSound(settings.alertSound, settings.notificationVolume)
+}
 </script>
 
 <template>
@@ -1092,8 +1189,55 @@ const CURSORS = [
                 <input v-model="settings.restoreWorkspaces" type="checkbox" class="set-switch" />
               </label>
               <label class="set-row">
-                <div class="set-label">Ask before closing an agent pane</div>
+                <div class="set-label">
+                  Confirm before closing running terminals
+                  <span class="set-hint">Ask before stopping a running agent or command when closing a terminal.</span>
+                </div>
                 <input v-model="settings.confirmCloseAgent" type="checkbox" class="set-switch" />
+              </label>
+            </div>
+          </div>
+          <div class="set-group">
+            <h3 class="set-group-title">Workspace</h3>
+            <div class="set-card">
+              <p class="set-hint set-card-text">Configure where new workspaces are created.</p>
+              <div class="set-row">
+                <label class="set-label" for="settings-workspace-dir">
+                  Workspace Directory
+                  <span class="set-hint"
+                    >Root directory where workspace folders are created. Use a relative path (e.g.
+                    .tessel/worktrees) for a per-project location, or an absolute path for one shared folder.
+                    Empty: next to the project, in &lt;project&gt;.worktrees.</span
+                  >
+                </label>
+                <div class="set-inline">
+                  <input
+                    id="settings-workspace-dir"
+                    class="set-number mcp-input"
+                    spellcheck="false"
+                    placeholder="<project>.worktrees"
+                    :value="settings.workspaceDir"
+                    @change="settings.workspaceDir = $event.target.value.trim()"
+                  />
+                  <button
+                    class="exit-btn"
+                    type="button"
+                    :disabled="!settings.workspaceDir"
+                    @click="settings.workspaceDir = ''"
+                  >
+                    Reset
+                  </button>
+                </div>
+              </div>
+              <label class="set-row">
+                <div class="set-label">
+                  Ask Before Deleting Workspaces
+                  <span class="set-hint"
+                    >Show a confirmation before deleting a workspace from the context menu. Unsaved files are
+                    always asked about.</span
+                  >
+                </div>
+                <input v-model="settings.confirmDeleteWorkspace" type="checkbox" class="set-switch" />
               </label>
             </div>
           </div>
@@ -1139,13 +1283,152 @@ const CURSORS = [
                   </option>
                 </select>
               </div>
+              <div class="set-row" data-setting="ui-zoom">
+                <div class="set-label">
+                  UI Zoom
+                  <span class="set-hint">Scale the entire application interface.</span>
+                </div>
+                <div class="set-inline">
+                  <div class="set-stepper">
+                    <button
+                      type="button"
+                      title="Zoom out"
+                      aria-label="Zoom out"
+                      :disabled="settings.uiZoomLevel <= LIMITS.uiZoomLevel[0]"
+                      @click="zoom('out')"
+                    >
+                      −
+                    </button>
+                    <span data-test="ui-zoom-percent">{{ zoomPercent }}%</span>
+                    <button
+                      type="button"
+                      title="Zoom in"
+                      aria-label="Zoom in"
+                      :disabled="settings.uiZoomLevel >= LIMITS.uiZoomLevel[1]"
+                      @click="zoom('in')"
+                    >
+                      +
+                    </button>
+                  </div>
+                  <button class="exit-btn" type="button" :disabled="settings.uiZoomLevel === 0" @click="zoom('reset')">
+                    Reset
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
-
-          <!-- Orca's Appearance > Window & Sidebar. -->
+          <div class="set-group">
+            <h3 class="set-group-title">Terminal Panes</h3>
+            <div class="set-card">
+              <div class="set-row">
+                <label class="set-label" for="settings-inactive-opacity">
+                  Inactive Pane Opacity
+                  <span class="set-hint">Dim unfocused panes. 0-1</span>
+                </label>
+                <input
+                  id="settings-inactive-opacity"
+                  class="set-number"
+                  type="number"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  :value="settings.inactivePaneOpacity"
+                  @change="setNumber('inactivePaneOpacity', $event)"
+                />
+              </div>
+              <div class="set-row">
+                <label class="set-label" for="settings-divider">
+                  Divider Thickness
+                  <span class="set-hint">Thickness of the pane divider line. px</span>
+                </label>
+                <input
+                  id="settings-divider"
+                  class="set-number"
+                  type="number"
+                  min="1"
+                  max="32"
+                  step="1"
+                  :value="settings.dividerThickness"
+                  @change="setNumber('dividerThickness', $event, true)"
+                />
+              </div>
+            </div>
+          </div>
+          <div class="set-group">
+            <h3 class="set-group-title">Window</h3>
+            <div class="set-card">
+              <p class="set-hint set-card-text">Window appearance and background settings.</p>
+              <div class="set-row">
+                <label class="set-label" for="settings-pad-x">
+                  Horizontal Padding
+                  <span class="set-hint">Horizontal padding around the terminal grid in pixels.</span>
+                </label>
+                <input
+                  id="settings-pad-x"
+                  class="set-number"
+                  type="number"
+                  min="0"
+                  max="512"
+                  step="1"
+                  :value="settings.terminalPaddingX"
+                  @change="setNumber('terminalPaddingX', $event, true)"
+                />
+              </div>
+              <div class="set-row">
+                <label class="set-label" for="settings-pad-y">
+                  Vertical Padding
+                  <span class="set-hint">Vertical padding around the terminal grid in pixels.</span>
+                </label>
+                <input
+                  id="settings-pad-y"
+                  class="set-number"
+                  type="number"
+                  min="0"
+                  max="512"
+                  step="1"
+                  :value="settings.terminalPaddingY"
+                  @change="setNumber('terminalPaddingY', $event, true)"
+                />
+              </div>
+              <label class="set-row">
+                <div class="set-label">Hide Mouse While Typing</div>
+                <input v-model="settings.hideMouseWhileTyping" type="checkbox" class="set-switch" />
+              </label>
+            </div>
+          </div>
           <div class="set-group">
             <h3 class="set-group-title">Window &amp; Sidebar</h3>
             <div class="set-card">
+              <div class="set-row">
+                <div id="settings-usage-pct-label" class="set-label">
+                  Usage percentages
+                  <span class="set-hint">Choose whether provider limits show the percentage used or remaining.</span>
+                </div>
+                <div class="launch-seg set-seg" role="group" aria-labelledby="settings-usage-pct-label">
+                  <button
+                    v-for="o in [
+                      { id: 'used', label: 'Used' },
+                      { id: 'remaining', label: 'Remaining' }
+                    ]"
+                    :key="o.id"
+                    type="button"
+                    class="launch-seg-btn"
+                    :class="{ on: settings.usagePercentageDisplay === o.id }"
+                    :aria-pressed="settings.usagePercentageDisplay === o.id"
+                    @click="settings.usagePercentageDisplay = o.id"
+                  >
+                    {{ o.label }}
+                  </button>
+                </div>
+              </div>
+              <label class="set-row">
+                <div class="set-label">
+                  Show Git-Ignored Files
+                  <span class="set-hint">Files matched by .gitignore.</span>
+                </div>
+                <input v-model="settings.showGitIgnoredFiles" type="checkbox" class="set-switch" />
+              </label>
+              <!-- Orca's Appearance > Window & Sidebar (same section). -->
               <div class="set-row">
                 <div id="settings-sidebar-appearance-label" class="set-label">
                   Left Sidebar Appearance
@@ -1301,6 +1584,75 @@ const CURSORS = [
                 <div class="set-label">Blinking cursor</div>
                 <input v-model="settings.cursorBlink" type="checkbox" class="set-switch" />
               </label>
+              <div class="set-row">
+                <label class="set-label" for="settings-cursor-opacity">
+                  Cursor Opacity
+                  <span class="set-hint">Opacity of the terminal cursor. 0-1</span>
+                </label>
+                <input
+                  id="settings-cursor-opacity"
+                  class="set-number"
+                  type="number"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  :value="settings.cursorOpacity"
+                  @change="setNumber('cursorOpacity', $event)"
+                />
+              </div>
+            </div>
+          </div>
+          <div class="set-group">
+            <h3 class="set-group-title">Terminal Typography</h3>
+            <div class="set-card">
+              <div class="set-row">
+                <label class="set-label" for="settings-font-weight">
+                  Font Weight
+                  <span class="set-hint">Controls the terminal text font weight. 100-900</span>
+                </label>
+                <input
+                  id="settings-font-weight"
+                  class="set-number"
+                  type="number"
+                  min="100"
+                  max="900"
+                  step="100"
+                  :value="settings.fontWeight"
+                  @change="setNumber('fontWeight', $event, true)"
+                />
+              </div>
+              <div class="set-row">
+                <label class="set-label" for="settings-font-weight-bold">
+                  Bold Font Weight
+                  <span class="set-hint">Adjust independently from Font Weight. Some fonts map several values to one face, so lower Font Weight or choose another font if bold looks unchanged. 100-900</span>
+                </label>
+                <input
+                  id="settings-font-weight-bold"
+                  class="set-number"
+                  type="number"
+                  min="100"
+                  max="900"
+                  step="100"
+                  :value="settings.fontWeightBold"
+                  @change="setNumber('fontWeightBold', $event, true)"
+                />
+              </div>
+              <div class="set-row">
+                <label class="set-label" for="settings-line-height">
+                  Line Height
+                  <span class="set-hint">Controls the terminal line height multiplier. 1-3</span>
+                </label>
+                <input
+                  id="settings-line-height"
+                  class="set-number"
+                  type="number"
+                  min="1"
+                  max="3"
+                  step="0.1"
+                  :value="settings.lineHeight"
+                  @change="setNumber('lineHeight', $event)"
+                />
+              </div>
             </div>
           </div>
         </section>
@@ -1351,15 +1703,80 @@ const CURSORS = [
                   @change="setScrollback"
                 />
               </div>
-              <label class="set-row">
-                <div class="set-label">
-                  Use the graphics card to draw terminals
-                  <span class="set-hint"
-                    >Faster with busy agents. Turn off if text looks wrong. Applies to new panes</span
-                  >
+            </div>
+          </div>
+          <div class="set-group">
+            <h3 class="set-group-title">Rendering</h3>
+            <div class="set-card">
+              <p class="set-hint set-card-text">Terminal renderer behavior for live panes and new panes.</p>
+              <div class="set-row">
+                <div id="settings-gpu-label" class="set-label">
+                  GPU Acceleration
+                  <span class="set-hint">{{ gpuHint }}</span>
                 </div>
-                <input v-model="settings.gpuRendering" type="checkbox" class="set-switch" />
-              </label>
+                <div class="launch-seg set-seg" role="group" aria-labelledby="settings-gpu-label">
+                  <button
+                    v-for="m in GPU_MODES"
+                    :key="m.id"
+                    type="button"
+                    class="launch-seg-btn"
+                    :class="{ on: settings.gpuAcceleration === m.id }"
+                    :aria-pressed="settings.gpuAcceleration === m.id"
+                    @click="settings.gpuAcceleration = m.id"
+                  >
+                    {{ m.label }}
+                  </button>
+                </div>
+              </div>
+              <div class="set-row">
+                <div id="settings-contrast-label" class="set-label">
+                  Color Contrast
+                  <span class="set-hint">{{ contrastHint }}</span>
+                </div>
+                <div class="launch-seg set-seg" role="group" aria-labelledby="settings-contrast-label">
+                  <button
+                    v-for="m in CONTRAST_MODES"
+                    :key="m.id"
+                    type="button"
+                    class="launch-seg-btn"
+                    :class="{ on: contrastMode === m.id }"
+                    :aria-pressed="contrastMode === m.id"
+                    @click="setContrastMode(m.id)"
+                  >
+                    {{ m.label }}
+                  </button>
+                </div>
+              </div>
+              <div v-if="contrastMode === 'custom'" class="set-row">
+                <label class="set-label" for="settings-contrast-ratio">
+                  Contrast target
+                  <span class="set-hint"
+                    >Higher values increase contrast where possible. Background colors stay unchanged.</span
+                  >
+                </label>
+                <div class="set-inline">
+                  <input
+                    class="set-range"
+                    type="range"
+                    min="1.1"
+                    max="21"
+                    step="0.1"
+                    aria-label="Contrast target"
+                    :value="settings.minimumContrastRatio"
+                    @input="setRange('minimumContrastRatio', $event)"
+                  />
+                  <input
+                    id="settings-contrast-ratio"
+                    class="set-number set-number-short"
+                    type="number"
+                    min="1"
+                    max="21"
+                    step="0.1"
+                    :value="settings.minimumContrastRatio"
+                    @change="setNumber('minimumContrastRatio', $event)"
+                  />
+                </div>
+              </div>
             </div>
           </div>
           <div class="set-group">
@@ -1397,6 +1814,122 @@ const CURSORS = [
               </label>
             </div>
           </div>
+          <div class="set-group">
+            <h3 class="set-group-title">Terminal Interaction</h3>
+            <div class="set-card">
+              <p class="set-hint set-card-text">Mouse and clipboard behavior for terminal panes.</p>
+              <div class="set-row">
+                <div class="set-label">
+                  Scroll Speed
+                  <span class="set-hint">Adjust how wheel input feels in scrollback and in mouse-aware terminal apps.</span>
+                </div>
+                <button class="exit-btn" type="button" @click="resetScrollSpeed">Reset</button>
+              </div>
+              <div class="set-row">
+                <label class="set-label" for="settings-scroll-normal">
+                  Normal
+                  <span class="set-hint">Scrollback wheel multiplier.</span>
+                </label>
+                <div class="set-inline">
+                  <input
+                    class="set-range"
+                    type="range"
+                    min="0.5"
+                    max="3"
+                    step="0.05"
+                    aria-label="Normal scroll speed"
+                    :value="settings.scrollSensitivity"
+                    @input="setRange('scrollSensitivity', $event)"
+                  />
+                  <input
+                    id="settings-scroll-normal"
+                    class="set-number set-number-short"
+                    type="number"
+                    min="0.5"
+                    max="3"
+                    step="0.05"
+                    :value="settings.scrollSensitivity"
+                    @change="setNumber('scrollSensitivity', $event)"
+                  />
+                </div>
+              </div>
+              <div class="set-row">
+                <label class="set-label" for="settings-scroll-fast">
+                  Fast
+                  <span class="set-hint">Extra multiplier while scrolling with a modifier key.</span>
+                </label>
+                <div class="set-inline">
+                  <input
+                    class="set-range"
+                    type="range"
+                    min="1"
+                    max="10"
+                    step="0.5"
+                    aria-label="Fast scroll speed"
+                    :value="settings.fastScrollSensitivity"
+                    @input="setRange('fastScrollSensitivity', $event)"
+                  />
+                  <input
+                    id="settings-scroll-fast"
+                    class="set-number set-number-short"
+                    type="number"
+                    min="1"
+                    max="10"
+                    step="0.5"
+                    :value="settings.fastScrollSensitivity"
+                    @change="setNumber('fastScrollSensitivity', $event)"
+                  />
+                </div>
+              </div>
+              <label class="set-row">
+                <div class="set-label">
+                  Focus Follows Mouse
+                  <span class="set-hint">Hovering a terminal pane activates it without needing to click.</span>
+                </div>
+                <input v-model="settings.focusFollowsMouse" type="checkbox" class="set-switch" />
+              </label>
+              <label class="set-row">
+                <div class="set-label">
+                  Trim Gutter on Copy
+                  <span class="set-hint"
+                    >Drop the left gutter agent output is painted behind, so copied text is not indented. Only
+                    the indent every selected line shares is removed.</span
+                  >
+                </div>
+                <input v-model="settings.copyTrimsGutter" type="checkbox" class="set-switch" />
+              </label>
+              <label class="set-row">
+                <div class="set-label">
+                  Allow TUI Clipboard Writes (OSC 52)
+                  <span class="set-hint"
+                    >Let programs in the terminal (Zellij, tmux, Neovim, fzf, Grok, SSH) copy to your system
+                    clipboard.</span
+                  >
+                </div>
+                <input v-model="settings.allowOsc52Clipboard" type="checkbox" class="set-switch" />
+              </label>
+            </div>
+          </div>
+          <div class="set-group">
+            <h3 class="set-group-title">Advanced</h3>
+            <div class="set-card">
+              <p class="set-hint set-card-text">Scrollback, word boundaries, and platform-specific terminal behaviors.</p>
+              <div class="set-row">
+                <label class="set-label" for="settings-word-separators">
+                  Word Separators
+                  <span class="set-hint">Characters treated as word boundaries for double-click selection.</span>
+                </label>
+                <input
+                  id="settings-word-separators"
+                  class="set-number mcp-input set-mono"
+                  spellcheck="false"
+                  :placeholder="DEFAULT_WORD_SEPARATOR"
+                  :value="settings.wordSeparator"
+                  @input="settings.wordSeparator = $event.target.value"
+                />
+              </div>
+            </div>
+          </div>
         </section>
 
         <!-- ============ Agent alerts ============ -->
@@ -1415,10 +1948,34 @@ const CURSORS = [
             <div class="set-card">
               <label class="set-row">
                 <div class="set-label">
+                  Enable Notifications
+                  <span class="set-hint">Native system notifications for background events.</span>
+                </div>
+                <input v-model="settings.notificationsEnabled" type="checkbox" class="set-switch" />
+              </label>
+              <label class="set-row" :class="{ 'set-disabled': !settings.notificationsEnabled }">
+                <div class="set-label">
                   Windows notifications
                   <span class="set-hint">When an agent finishes while the app is in the background</span>
                 </div>
-                <input v-model="settings.desktopNotifications" type="checkbox" class="set-switch" />
+                <input
+                  v-model="settings.desktopNotifications"
+                  type="checkbox"
+                  class="set-switch"
+                  :disabled="!settings.notificationsEnabled"
+                />
+              </label>
+              <label class="set-row" :class="{ 'set-disabled': !settings.notificationsEnabled }">
+                <div class="set-label">
+                  Terminal Bell
+                  <span class="set-hint">A background terminal emits a bell character.</span>
+                </div>
+                <input
+                  v-model="settings.notifyTerminalBell"
+                  type="checkbox"
+                  class="set-switch"
+                  :disabled="!settings.notificationsEnabled"
+                />
               </label>
               <label class="set-row">
                 <div class="set-label">
@@ -1427,17 +1984,70 @@ const CURSORS = [
                 </div>
                 <input v-model="settings.inAppAlerts" type="checkbox" class="set-switch" />
               </label>
-              <label class="set-row">
-                <div class="set-label">
+              <div class="set-row" :class="{ 'set-disabled': !settings.notificationsEnabled }">
+                <label class="set-label" for="settings-alert-sound">
                   Sound
                   <span class="set-hint">With each new notification (the bell in the toolbar lists them)</span>
-                </div>
-                <select v-model="settings.alertSound" class="set-select" @change="playAlertSound(settings.alertSound)">
+                </label>
+                <select
+                  id="settings-alert-sound"
+                  v-model="settings.alertSound"
+                  class="set-select"
+                  :disabled="!settings.notificationsEnabled"
+                  @change="previewSound"
+                >
                   <option value="none">None</option>
                   <option value="chime">Chime</option>
                   <option value="ping">Ping</option>
                 </select>
+              </div>
+              <div
+                v-if="settings.alertSound !== 'none'"
+                class="set-row"
+                :class="{ 'set-disabled': !settings.notificationsEnabled }"
+              >
+                <label class="set-label" for="settings-volume">Volume</label>
+                <div class="set-inline">
+                  <input
+                    id="settings-volume"
+                    class="set-range"
+                    type="range"
+                    min="0"
+                    max="100"
+                    step="5"
+                    aria-label="Notification sound volume"
+                    :disabled="!settings.notificationsEnabled"
+                    :value="settings.notificationVolume"
+                    @input="settings.notificationVolume = Math.round(Number($event.target.value))"
+                    @change="previewSound"
+                  />
+                  <span class="set-hint set-volume-value">{{ settings.notificationVolume }}%</span>
+                </div>
+              </div>
+              <label class="set-row" :class="{ 'set-disabled': !settings.notificationsEnabled }">
+                <div class="set-label">
+                  Suppress While Focused
+                  <span class="set-hint">Skip notifications when the triggering worktree is already visible.</span>
+                </div>
+                <input
+                  v-model="settings.notifySuppressWhenFocused"
+                  type="checkbox"
+                  class="set-switch"
+                  :disabled="!settings.notificationsEnabled"
+                />
               </label>
+              <div class="set-row">
+                <span></span>
+                <button
+                  class="exit-btn"
+                  type="button"
+                  data-test="test-notification"
+                  :disabled="!settings.notificationsEnabled"
+                  @click="emit('test-notification')"
+                >
+                  Send Test Notification
+                </button>
+              </div>
             </div>
           </div>
         </section>
@@ -1507,7 +2117,155 @@ const CURSORS = [
                 </div>
                 <input v-model="settings.diffSideBySide" type="checkbox" class="set-switch" />
               </label>
+              <div class="set-row">
+                <label class="set-label" for="settings-editor-font">
+                  Editor Font Family
+                  <span class="set-hint">Font used by file editors and diff views. Leave empty to follow the terminal font.</span>
+                </label>
+                <input
+                  id="settings-editor-font"
+                  class="set-number mcp-input"
+                  list="settings-editor-fonts"
+                  spellcheck="false"
+                  placeholder="Same as terminal font"
+                  :value="settings.editorFontFamily"
+                  @change="settings.editorFontFamily = $event.target.value.trim()"
+                />
+                <datalist id="settings-editor-fonts">
+                  <option v-for="f in FONT_FAMILIES" :key="f" :value="f"></option>
+                </datalist>
+              </div>
+              <div class="set-row">
+                <div id="settings-diff-ws-label" class="set-label">
+                  Diff Show Whitespace
+                  <span class="set-hint">Show leading and trailing whitespace differences in diffs.</span>
+                </div>
+                <div class="launch-seg set-seg set-seg-small" role="group" aria-labelledby="settings-diff-ws-label">
+                  <button
+                    v-for="o in OFF_ON"
+                    :key="String(o.id)"
+                    type="button"
+                    class="launch-seg-btn"
+                    :class="{ on: settings.diffShowWhitespace === o.id }"
+                    :aria-pressed="settings.diffShowWhitespace === o.id"
+                    @click="settings.diffShowWhitespace = o.id"
+                  >
+                    {{ o.label }}
+                  </button>
+                </div>
+              </div>
+              <div class="set-row">
+                <div id="settings-diff-collapse-label" class="set-label">
+                  Collapse Unchanged Regions
+                  <span class="set-hint">Show only changed lines and a little surrounding context in a file diff, hiding the rest behind expandable bands.</span>
+                </div>
+                <div class="launch-seg set-seg set-seg-small" role="group" aria-labelledby="settings-diff-collapse-label">
+                  <button
+                    v-for="o in OFF_ON"
+                    :key="String(o.id)"
+                    type="button"
+                    class="launch-seg-btn"
+                    :class="{ on: settings.diffCollapseUnchanged === o.id }"
+                    :aria-pressed="settings.diffCollapseUnchanged === o.id"
+                    @click="settings.diffCollapseUnchanged = o.id"
+                  >
+                    {{ o.label }}
+                  </button>
+                </div>
+              </div>
+              <div class="set-row">
+                <div id="settings-diff-wrap-label" class="set-label">
+                  Diff Word Wrap
+                  <span class="set-hint">Wrap long lines in diff editors instead of requiring horizontal scrolling.</span>
+                </div>
+                <div class="launch-seg set-seg set-seg-small" role="group" aria-labelledby="settings-diff-wrap-label">
+                  <button
+                    v-for="o in OFF_ON"
+                    :key="String(o.id)"
+                    type="button"
+                    class="launch-seg-btn"
+                    :class="{ on: settings.diffWordWrap === o.id }"
+                    :aria-pressed="settings.diffWordWrap === o.id"
+                    @click="settings.diffWordWrap = o.id"
+                  >
+                    {{ o.label }}
+                  </button>
+                </div>
+              </div>
 
+            </div>
+          </div>
+        </section>
+
+        <!-- ============ Git & Source Control ============ -->
+        <section
+          id="set-git"
+          class="set-page"
+          data-page="git"
+          :hidden="!shown('git')"
+          aria-labelledby="set-git-title"
+        >
+          <header class="set-page-head">
+            <h2 id="set-git-title">{{ PAGES.git.title }}</h2>
+            <p class="set-page-desc">{{ PAGES.git.desc }}</p>
+          </header>
+          <div class="set-group">
+            <div class="set-card">
+              <div class="set-row set-row-wrap">
+                <div id="settings-branch-prefix-label" class="set-label">
+                  Branch Prefix
+                  <span class="set-hint">Choose whether branch names use your Git username, a custom prefix, or no prefix.</span>
+                </div>
+                <div class="set-branch-prefix">
+                  <div class="launch-seg set-seg" role="group" aria-labelledby="settings-branch-prefix-label">
+                    <button
+                      v-for="m in BRANCH_PREFIX_MODES"
+                      :key="m.id"
+                      type="button"
+                      class="launch-seg-btn"
+                      :class="{ on: settings.branchPrefix === m.id }"
+                      :aria-pressed="settings.branchPrefix === m.id"
+                      @click="settings.branchPrefix = m.id"
+                    >
+                      {{ m.label }}
+                    </button>
+                  </div>
+                  <input
+                    v-if="settings.branchPrefix === 'custom'"
+                    class="set-number mcp-input"
+                    aria-label="Custom branch prefix"
+                    spellcheck="false"
+                    placeholder="e.g. feature"
+                    :value="settings.branchPrefixCustom"
+                    @input="settings.branchPrefixCustom = $event.target.value"
+                  />
+                  <span
+                    class="set-hint"
+                    data-test="branch-prefix-feedback"
+                    :class="{ 'set-error': branchPrefixFeedback.error }"
+                    >{{ branchPrefixFeedback.text }}</span
+                  >
+                </div>
+              </div>
+              <div class="set-row">
+                <div id="settings-group-order-label" class="set-label">
+                  Source Control Group Order
+                  <span class="set-hint">Choose whether Changes, Staged Changes, or Untracked Files appear first in Source Control.</span>
+                </div>
+                <div class="launch-seg set-seg set-seg-wide" role="group" aria-labelledby="settings-group-order-label">
+                  <button
+                    v-for="o in GROUP_ORDERS"
+                    :key="String(o.id)"
+                    type="button"
+                    class="launch-seg-btn"
+                    :class="{ on: settings.sourceControlGroupOrder === o.id }"
+                    :aria-pressed="settings.sourceControlGroupOrder === o.id"
+                    @click="settings.sourceControlGroupOrder = o.id"
+                  >
+                    {{ o.label }}
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </section>

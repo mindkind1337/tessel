@@ -15,7 +15,8 @@
 // persistence.ts, monaco-reveal.ts, ExternalFileChangeBanner.tsx and
 // editor-shortcuts.ts (MIT, Copyright (c) 2026 Lovecast Inc.), written for Vue.
 import { ref, computed, watch, inject, nextTick, onMounted, onBeforeUnmount, h, render, getCurrentInstance } from 'vue'
-import { settings, fontStack } from '../settings'
+import { settings } from '../settings'
+import { editorOptionsFor, diffOptionsFor } from '../editor/editorOptions'
 import { loadMonaco } from '../editor/loadMonaco'
 import {
   docs,
@@ -185,18 +186,22 @@ function applyTheme() {
   if (monaco) monaco.editor.setTheme(isDark() ? 'vs-dark' : 'vs')
 }
 function editorOptions() {
-  return {
-    fontSize: settings.fontSize,
-    fontFamily: fontStack(settings.fontFamily),
-    wordWrap: settings.editorWordWrap ? 'on' : 'off',
-    minimap: { enabled: !!settings.editorMinimap }
-  }
+  return editorOptionsFor(settings)
 }
 watch(
-  () => [settings.fontSize, settings.fontFamily, settings.editorWordWrap, settings.editorMinimap],
+  () => [
+    settings.fontSize,
+    settings.fontFamily,
+    settings.editorFontFamily,
+    settings.editorWordWrap,
+    settings.editorMinimap,
+    settings.diffWordWrap,
+    settings.diffShowWhitespace,
+    settings.diffCollapseUnchanged
+  ],
   () => {
     if (editor) editor.updateOptions(editorOptions())
-    if (diffEditor) diffEditor.updateOptions({ ...editorOptions(), minimap: { enabled: false } })
+    if (diffEditor) diffEditor.updateOptions(diffOptionsFor(settings))
   }
 )
 watch(
@@ -357,8 +362,7 @@ function setMode(m) {
 function ensureDiffEditor() {
   if (diffEditor) return
   diffEditor = monaco.editor.createDiffEditor(diffEl.value, {
-    ...editorOptions(),
-    minimap: { enabled: false },
+    ...diffOptionsFor(settings),
     automaticLayout: true,
     originalEditable: false,
     readOnly: false,

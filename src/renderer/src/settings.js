@@ -34,8 +34,6 @@ export const DEFAULT_SETTINGS = Object.freeze({
   teamWakeUps: true,
   restoreWorkspaces: true,
   resumeAgents: true,
-  // Draw terminals with the graphics card (WebGL). Off = plain renderer.
-  gpuRendering: true,
   // Windows input method tip for voice typing ('' = whatever is active).
   voiceTip: '',
   // true once you pick a voice language yourself (then we never override it).
@@ -101,7 +99,66 @@ export const DEFAULT_SETTINGS = Object.freeze({
   leftSidebarTintOpacity: 0.08,
   // The status bar at the bottom (Orca's) and the indicators it shows.
   statusBarVisible: true,
-  statusBarItems: ['ssh', 'resource-usage', 'ports']
+  statusBarItems: ['ssh', 'resource-usage', 'ports'],
+  // Like Orca's (Settings > Editor): the editor's own font ('' = the
+  // terminal font), and how diffs show whitespace, unchanged lines and long
+  // lines.
+  editorFontFamily: '',
+  diffShowWhitespace: false,
+  diffCollapseUnchanged: false,
+  diffWordWrap: false,
+
+  // Terminal typography and cursor (Orca's defaults).
+  fontWeight: 500,
+  fontWeightBold: 700,
+  lineHeight: 1,
+  cursorOpacity: 1,
+
+  // Appearance: the whole app's zoom (Chromium zoom level, 0 = 100 %),
+  // unfocused panes dimmed, the dividers between panes, the space around
+  // the terminal grid, the mouse hidden while typing, usage percentages
+  // used or remaining, git-ignored files in the explorer.
+  uiZoomLevel: 0,
+  inactivePaneOpacity: 0.9,
+  dividerThickness: 3,
+  terminalPaddingX: 4,
+  terminalPaddingY: 4,
+  hideMouseWhileTyping: false,
+  usagePercentageDisplay: 'used', // 'used' | 'remaining'
+  showGitIgnoredFiles: true,
+
+  // Terminal rendering and interaction. gpuAcceleration: 'auto' (WebGL
+  // unless the graphics are software-only; the normal renderer if WebGL
+  // fails), 'on' or 'off'. minimumContrastRatio: null = automatic (by the
+  // theme's background), 1 = off, else the ratio. wordSeparator '' = xterm's.
+  gpuAcceleration: 'auto',
+  minimumContrastRatio: null,
+  scrollSensitivity: 1.15,
+  fastScrollSensitivity: 5,
+  focusFollowsMouse: false,
+  copyTrimsGutter: true,
+  allowOsc52Clipboard: true,
+  wordSeparator: '',
+
+  // Notifications (Orca's): the master switch, a bell from a terminal you
+  // aren't looking at, nothing for the pane you are looking at, the volume
+  // of the alert sound.
+  notificationsEnabled: true,
+  notifyTerminalBell: false,
+  notifySuppressWhenFocused: true,
+  notificationVolume: 100,
+
+  // Ask before deleting a workspace (its panes and tasks).
+  confirmDeleteWorkspace: true,
+  // Where task copies (git worktrees) go: '' = next to the project, in
+  // <project>.worktrees; a relative path is inside the project; an absolute
+  // one holds a folder per project.
+  workspaceDir: '',
+  // Branch names of task copies: 'git-username' | 'custom' | 'none'. Tessel
+  // keeps its own agent/ prefix by default.
+  branchPrefix: 'custom',
+  branchPrefixCustom: 'agent',
+  sourceControlGroupOrder: 'changes-first'
 })
 
 export const SIDEBAR_SORTS = ['name', 'smart', 'recent', 'repo', 'manual']
@@ -114,6 +171,34 @@ const idList = (v, max = 200) =>
 
 export const EDITOR_AUTOSAVE_MIN_MS = 250
 export const EDITOR_AUTOSAVE_MAX_MS = 10000
+
+// Ranges, as in Orca's settings.
+export const LIMITS = Object.freeze({
+  fontWeight: [100, 900],
+  fontWeightBold: [100, 900],
+  lineHeight: [1, 3],
+  cursorOpacity: [0, 1],
+  uiZoomLevel: [-3, 5],
+  inactivePaneOpacity: [0, 1],
+  dividerThickness: [1, 32],
+  terminalPaddingX: [0, 512],
+  terminalPaddingY: [0, 512],
+  scrollSensitivity: [0.5, 3],
+  fastScrollSensitivity: [1, 10],
+  notificationVolume: [0, 100],
+  minimumContrastRatio: [1, 21]
+})
+export const UI_ZOOM_STEP = 0.5
+export const GPU_MODES = ['auto', 'on', 'off']
+export const SOURCE_CONTROL_GROUP_ORDERS = ['changes-first', 'staged-first', 'untracked-first']
+export const BRANCH_PREFIX_MODES = ['git-username', 'custom', 'none']
+
+// A number of a setting in its range (null when not a finite number).
+export function limitNumber(key, v) {
+  if (typeof v !== 'number' || !Number.isFinite(v)) return null
+  const [lo, hi] = LIMITS[key]
+  return Math.min(hi, Math.max(lo, v))
+}
 
 const fresh = () => ({
   ...DEFAULT_SETTINGS,
@@ -177,14 +262,40 @@ export function loadSettings(saved) {
       if (typeof v === 'number' && Number.isFinite(v)) settings[key] = clamp(v, 0, MAX_LEFT_SIDEBAR_TINT_OPACITY)
       continue
     }
+    if (key === 'minimumContrastRatio') {
+      // null = automatic; a number is kept in xterm's range.
+      if (v === null || v === undefined) settings.minimumContrastRatio = null
+      else if (limitNumber(key, v) !== null) settings.minimumContrastRatio = limitNumber(key, v)
+      continue
+    }
+    if (key === 'gpuAcceleration') {
+      // Before Orca's 3 choices: gpuRendering on/off. Off stays off; on
+      // (the old default) becomes Auto.
+      if (GPU_MODES.includes(v)) settings.gpuAcceleration = v
+      else if (saved.gpuRendering === false) settings.gpuAcceleration = 'off'
+      continue
+    }
     if (typeof v !== typeof def) continue
+    if (key in LIMITS) {
+      settings[key] = limitNumber(key, v) ?? def
+      continue
+    }
     if (key === 'theme' && !isTheme(v)) continue
     if (key === 'cursorStyle' && !['block', 'bar', 'underline'].includes(v)) continue
     if (key === 'alertSound' && !['none', 'chime', 'ping'].includes(v)) continue
+    if (key === 'usagePercentageDisplay' && !['used', 'remaining'].includes(v)) continue
+    if (key === 'sourceControlGroupOrder' && !SOURCE_CONTROL_GROUP_ORDERS.includes(v)) continue
+    if (key === 'branchPrefix' && !BRANCH_PREFIX_MODES.includes(v)) continue
+    if (['editorFontFamily', 'wordSeparator', 'branchPrefixCustom'].includes(key) && v.length > 200) continue
+    if (key === 'workspaceDir' && v.length > 1000) continue
     settings[key] = v
   }
   settings.fontSize = clamp(Math.round(settings.fontSize), 8, 28)
   settings.scrollback = clamp(Math.round(settings.scrollback), 500, 100000)
+  settings.fontWeight = Math.round(settings.fontWeight)
+  settings.fontWeightBold = Math.round(settings.fontWeightBold)
+  settings.dividerThickness = Math.round(settings.dividerThickness)
+  settings.notificationVolume = Math.round(settings.notificationVolume)
 }
 
 // Resets preferences; your custom agents and quick commands are kept.
@@ -236,6 +347,15 @@ export function validCustomAgent(a) {
 
 export function fontStack(family) {
   return `"${family}", "Cascadia Mono", Consolas, "Courier New", monospace`
+}
+
+// The editor's font: its own when set (a CSS font list is taken as it is,
+// a single name is quoted), else the terminal's.
+export function editorFontStack(s) {
+  const own = String(s.editorFontFamily || '').trim()
+  if (!own) return fontStack(s.fontFamily)
+  const first = own.includes(',') || /^["']/.test(own) ? own : `"${own.replace(/"/g, '')}"`
+  return `${first}, "Cascadia Mono", Consolas, "Courier New", monospace`
 }
 
 export { clamp }

@@ -154,3 +154,68 @@ export function killPids(entries) {
     }
   }
 }
+
+// -> [{ pid, ppid, name }] of every process, or null when it cannot list.
+export function listProcessNames() {
+  return new Promise((resolve) => {
+    if (process.platform !== 'win32') {
+      execFile('ps', ['-eo', 'pid=,ppid=,comm='], { timeout: 8000, maxBuffer: 16 * 1024 * 1024 }, (err, stdout) => {
+        if (err) return resolve(null)
+        resolve(
+          String(stdout)
+            .split('\n')
+            .map((line) => /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(line))
+            .filter(Boolean)
+            .map((m) => ({ pid: Number(m[1]), ppid: Number(m[2]), name: m[3].trim().split('/').pop() }))
+        )
+      })
+      return
+    }
+    const script =
+      'Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,Name | ForEach-Object { "$($_.ProcessId)`t$($_.ParentProcessId)`t$($_.Name)" }'
+    execFile(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-Command', script],
+      { windowsHide: true, timeout: 8000, maxBuffer: 16 * 1024 * 1024 },
+      (err, stdout) => resolve(err ? null : parseProcessNames(stdout))
+    )
+  })
+}
+
+// "pid<TAB>ppid<TAB>name" lines -> [{ pid, ppid, name }].
+export function parseProcessNames(text) {
+  return String(text || '')
+    .split(/\r?\n/)
+    .map((line) => line.split('\t'))
+    .filter((f) => f.length >= 3 && /^\d+$/.test(f[0].trim()) && /^\d+$/.test(f[1].trim()))
+    .map(([pid, ppid, ...name]) => ({ pid: Number(pid), ppid: Number(ppid), name: name.join('\t').trim() }))
+}
+
+// Helpers of the console itself, never "a program you run".
+const CONSOLE_HELPERS = /^(conhost|openconsole|wslhost|winpty-agent)(\.exe)?$/i
+
+// The programs running under a terminal's shell (Orca's "running terminal"
+// check before closing it): the shell's children, minus console helpers. A
+// launcher that starts the real shell under the same name (Git Bash's
+// bin\bash.exe runs usr\bin\bash.exe) is looked through.
+// -> [names] (empty: the shell is idle).
+export function runningWork(procs, rootPid) {
+  const list = Array.isArray(procs) ? procs : []
+  const byParent = new Map()
+  for (const p of list) {
+    if (p.pid === p.ppid) continue
+    if (!byParent.has(p.ppid)) byParent.set(p.ppid, [])
+    byParent.get(p.ppid).push(p)
+  }
+  const root = list.find((p) => p.pid === rootPid)
+  let shell = root || { pid: rootPid, name: '' }
+  for (let depth = 0; depth < 4; depth++) {
+    const kids = (byParent.get(shell.pid) || []).filter((c) => !CONSOLE_HELPERS.test(c.name))
+    if (kids.length === 1 && shell.name && kids[0].name.toLowerCase() === shell.name.toLowerCase()) {
+      shell = kids[0]
+      continue
+    }
+    return kids.map((c) => c.name)
+  }
+  return []
+}
