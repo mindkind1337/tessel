@@ -2,7 +2,7 @@
 import { ref, reactive, provide, watch, computed, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import SplitNode from './components/SplitNode.vue'
 import BrandIcon from './components/BrandIcon.vue'
-import TaskBoard from './components/TaskBoard.vue'
+import SidePanel from './components/SidePanel.vue'
 import WorkspaceSidebar from './components/WorkspaceSidebar.vue'
 import LaunchMenu from './components/LaunchMenu.vue'
 import SettingsDialog from './components/SettingsDialog.vue'
@@ -33,7 +33,6 @@ import ActivityPanel from './components/ActivityPanel.vue'
 import ConfirmDialog from './components/ConfirmDialog.vue'
 import ImageViewer from './components/ImageViewer.vue'
 import FileViewer from './components/FileViewer.vue'
-import ExplorerPanel from './components/ExplorerPanel.vue'
 import { fileKind, isViewed } from '../../shared/fileKinds'
 import NotificationsMenu from './components/NotificationsMenu.vue'
 import FileFinder from './components/FileFinder.vue'
@@ -948,7 +947,7 @@ function saveLayoutNow() {
     sidebarWidth: sidebarWidth.value,
     taskPanelWidth: taskPanelWidth.value,
     taskPanelOpen: taskPanelOpen.value,
-    explorerOpen: explorerOpen.value,
+    sidePanelTab: sideTab.value,
     currentIndex: Math.max(
       0,
       workspaces.value.findIndex((w) => w.id === currentWsId.value)
@@ -1239,15 +1238,43 @@ const agentPanes = computed(() => {
   return out
 })
 
-// --- File explorer (ExplorerPanel.vue), on the left of the panes ------------------
-const explorerOpen = ref(false)
-function toggleExplorer() {
-  explorerOpen.value = !explorerOpen.value
+// --- The right side panel (SidePanel.vue): Files, Changes, Tasks tabs --------------
+// taskPanelOpen: the panel is shown; sideTab: the tab it shows.
+const SIDE_TABS = ['files', 'changes', 'tasks']
+const sideTab = ref('tasks')
+const explorerOpen = computed(() => taskPanelOpen.value && sideTab.value === 'files')
+const taskBoardShown = computed(() => taskPanelOpen.value && sideTab.value === 'tasks')
+// Show a tab; the same tab again (its shortcut or button) closes the panel.
+function toggleSideTab(tab) {
+  if (taskPanelOpen.value && sideTab.value === tab) taskPanelOpen.value = false
+  else {
+    sideTab.value = tab
+    taskPanelOpen.value = true
+  }
   nextTick(() => window.dispatchEvent(new Event('terminal-layout-change')))
 }
-function openExplorerFile(file) {
-  if (isViewed(file)) viewFile({ file })
-  else openInEditor({ file })
+// Show a tab, never closing the panel.
+function showSideTab(tab) {
+  sideTab.value = tab
+  if (!taskPanelOpen.value) {
+    taskPanelOpen.value = true
+    nextTick(() => window.dispatchEvent(new Event('terminal-layout-change')))
+  }
+}
+function closeSidePanel() {
+  taskPanelOpen.value = false
+  nextTick(() => window.dispatchEvent(new Event('terminal-layout-change')))
+}
+function toggleExplorer() {
+  toggleSideTab('files')
+}
+// A file from the explorer or the changes; with a line (a content search
+// result), shown in the viewer at that line when it can show it.
+function openExplorerFile(file, line) {
+  const at = Number.isInteger(line) ? line : null
+  if (isViewed(file)) viewFile({ file, line: at })
+  else if (at && fileKind(file) === 'text') viewFile({ file, line: at })
+  else openInEditor({ file, line: at })
 }
 function terminalHere(dir) {
   openPaneBelow(selectedShell.value, null, { cwd: dir })
@@ -1260,11 +1287,11 @@ function insertPathInPane(text) {
   focusPane(id)
 }
 
+// The task board: the side panel's Tasks tab (Ctrl+Shift+K). Opening/closing
+// the panel changes the terminal area's width — toggleSideTab nudges panes to
+// refit with the same event SplitNode dispatches on a divider drag.
 function toggleTaskPanel() {
-  taskPanelOpen.value = !taskPanelOpen.value
-  // Opening/closing the panel changes the terminal area's width — nudge panes to
-  // refit with the same event SplitNode dispatches on a divider drag.
-  nextTick(() => window.dispatchEvent(new Event('terminal-layout-change')))
+  toggleSideTab('tasks')
 }
 
 // Pane ids are re-minted on every launch (serializeNode drops the id;
@@ -1498,7 +1525,7 @@ function buildCommands() {
   })
   add(
     'Agents',
-    taskPanelOpen.value ? 'Hide the task board' : 'Show the task board',
+    taskBoardShown.value ? 'Hide the task board' : 'Show the task board',
     toggleTaskPanel,
     {
       shortcut: 'Ctrl+Shift+K'
@@ -1517,6 +1544,9 @@ function buildCommands() {
   add('Files', explorerOpen.value ? 'Hide the file explorer' : 'Show the file explorer', toggleExplorer, {
     shortcut: 'Ctrl+Shift+X',
     hint: "The project's files, with their git status"
+  })
+  add('Files', taskPanelOpen.value && sideTab.value === 'changes' ? 'Hide the git changes' : 'Show the git changes', () => toggleSideTab('changes'), {
+    hint: "The project's changed files (source control)"
   })
   add('Files', 'Jump to a file…', openFinder, {
     shortcut: 'Ctrl+Shift+J',
@@ -3246,7 +3276,7 @@ async function startTask(spec, opts = {}) {
     // A new agent needs a moment to start (and may ask to trust the folder).
     notBefore: fresh ? Date.now() + 6000 : 0
   })
-  if (!taskPanelOpen.value) toggleTaskPanel()
+  if (!taskPanelOpen.value) showSideTab('tasks')
   showToast(
     t.worktree
       ? `${leaf.title} started "${task.title}" on branch ${t.worktree.branch}.`
@@ -4777,7 +4807,7 @@ function askDecision(task, r, from) {
   const text = `${paneLabel(from)} needs your decision on "${task.title}": ${r.question}`
   if (document.hasFocus()) {
     if (settings.inAppAlerts)
-      showToast(text, { kind: 'attention', timeout: 12000, action: { label: 'Show the board', run: () => !taskPanelOpen.value && toggleTaskPanel() } })
+      showToast(text, { kind: 'attention', timeout: 12000, action: { label: 'Show the board', run: () => showSideTab('tasks') } })
   } else if (window.shellApi.notify && settings.desktopNotifications) {
     window.shellApi.notify({ title: `${paneLabel(from)} needs your decision`, body: r.question, paneId: from.id })
   }
@@ -5872,7 +5902,12 @@ async function restoreOrSeedLayout() {
     sidebarCollapsed.value = !!saved.sidebarCollapsed
     // The task board opens again if it was open.
     if (saved.taskPanelOpen === true) taskPanelOpen.value = true
-    if (saved.explorerOpen === true) explorerOpen.value = true
+    // The side panel's tab (the file explorer was a panel of its own before).
+    if (SIDE_TABS.includes(saved.sidePanelTab)) sideTab.value = saved.sidePanelTab
+    else if (saved.explorerOpen === true && saved.taskPanelOpen !== true) {
+      sideTab.value = 'files'
+      taskPanelOpen.value = true
+    }
     if (Number.isFinite(saved.taskPanelWidth))
       taskPanelWidth.value = Math.round(Math.min(TASK_PANEL_MAX, Math.max(TASK_PANEL_MIN, saved.taskPanelWidth)))
     if (Number.isFinite(saved.sidebarWidth)) {
@@ -5974,6 +6009,7 @@ onMounted(async () => {
       sidebarWidth,
       taskPanelWidth,
       taskPanelOpen,
+      sideTab,
       settings,
       placement,
       teams
@@ -6285,10 +6321,11 @@ onBeforeUnmount(() => {
         </button>
         <button
           class="tb-icon"
-          :class="{ on: taskPanelOpen }"
+          :class="{ on: taskBoardShown }"
           title="Task board (Ctrl+Shift+K)"
           aria-label="Task board"
-          :aria-pressed="taskPanelOpen"
+          :aria-pressed="taskBoardShown"
+          data-test="tasks-button"
           @click="toggleTaskPanel"
         >
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -6431,17 +6468,6 @@ onBeforeUnmount(() => {
         @resize="resizeSidebar"
         @resize-end="refitSoon"
       />
-      <ExplorerPanel
-        v-if="explorerOpen"
-        :root="currentWs ? currentWs.cwd : null"
-        :can-insert="!!activeId"
-        @open="openExplorerFile"
-        @open-editor="(file) => openInEditor({ file })"
-        @terminal-here="terminalHere"
-        @insert-path="insertPathInPane"
-        @toast="(t) => showToast(t, { timeout: 5000 })"
-        @close="toggleExplorer"
-      />
       <div class="workspace-main">
         <div
           v-for="ws in workspaces"
@@ -6467,9 +6493,18 @@ onBeforeUnmount(() => {
           title="Drag to resize. Double-click to reset."
           @pointerdown="startTaskResize"
         ></div>
-        <TaskBoard
+        <SidePanel
+          v-model:tab="sideTab"
+          :root="currentWs ? currentWs.cwd : null"
+          :can-insert="!!activeId"
           :agent-panes="agentPanes"
           :workspace-id="currentWsId"
+          @close="closeSidePanel"
+          @open="openExplorerFile"
+          @open-editor="(file) => openInEditor({ file })"
+          @terminal-here="terminalHere"
+          @insert-path="insertPathInPane"
+          @toast="(t) => showToast(t, { timeout: 5000 })"
           @new-task="openNewTask"
           @focus-pane="focusPane"
           @review="openReview"

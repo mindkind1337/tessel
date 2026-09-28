@@ -26,3 +26,24 @@ export function folderStatus(map, rootKey) {
   }
   return out
 }
+
+// Git-ignored paths ('!' in the status map) -> a Set of their keys.
+export function ignoredSet(map) {
+  const out = new Set()
+  for (const [p, l] of Object.entries(map)) if (l === '!') out.add(p.replace(/[\\/]+$/, ''))
+  return out
+}
+
+// Ignored: the path itself, or a folder it is in (below root), is ignored.
+export function isIgnored(set, key, rootKey) {
+  if (!set || !set.size || !key) return false
+  const root = String(rootKey || '').replace(/[\\/]+$/, '')
+  let p = key.replace(/[\\/]+$/, '')
+  while (p.length > root.length) {
+    if (set.has(p)) return true
+    const up = parentOf(p)
+    if (up === p) break
+    p = up
+  }
+  return false
+}

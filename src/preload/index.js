@@ -64,6 +64,8 @@ const api = {
   explorer: {
     list: (q) => ipcRenderer.invoke('explorer:list', q),
     status: (q) => ipcRenderer.invoke('explorer:status', q),
+    searchNames: (q) => ipcRenderer.invoke('explorer:searchNames', q),
+    searchContent: (q) => ipcRenderer.invoke('explorer:searchContent', q),
     create: (q) => ipcRenderer.invoke('explorer:create', q),
     rename: (q) => ipcRenderer.invoke('explorer:rename', q),
     trash: (q) => ipcRenderer.invoke('explorer:trash', q),
