@@ -18,7 +18,19 @@ export const YOLO_ARGS = {
   cursor: '--yolo',
   crush: '--yolo',
   grok: '--permission-mode bypassPermissions',
-  droid: '--auto high'
+  droid: '--auto high',
+  openclaude: '--dangerously-skip-permissions',
+  antigravity: '--dangerously-skip-permissions',
+  commandcode: '--yolo',
+  rovo: '--yolo',
+  hermes: '--yolo',
+  trae: '--yolo',
+  kiro: '--trust-all-tools',
+  autohand: '--unrestricted',
+  continue: '--allow "*"',
+  zcode: '--mode yolo',
+  vibe: '--agent auto-approve',
+  devin: '--permission-mode bypass --respect-workspace-trust false'
 }
 export const YOLO_ENV = { goose: { GOOSE_MODE: 'auto' } }
 

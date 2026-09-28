@@ -375,6 +375,113 @@ const AGENT_PRESETS = [
     command: 'aider',
     accent: '#14b014',
     install: ['python -m pip install aider-install', 'aider-install']
+  },
+  // More agents Orca knows (its catalog, MIT). Only installers we are sure
+  // of; the others: see their Docs link in Settings > Agents.
+  {
+    id: 'openclaude',
+    name: 'OpenClaude',
+    command: 'openclaude',
+    accent: '#d9a077',
+    install: null
+  },
+  {
+    id: 'kilo',
+    name: 'Kilo Code',
+    command: 'kilo',
+    accent: '#f8f675',
+    install: ['npm install -g @kilocode/cli']
+  },
+  {
+    id: 'kiro',
+    name: 'Kiro',
+    command: 'kiro-cli chat --tui',
+    accent: '#9046ff',
+    install: null
+  },
+  {
+    id: 'continue',
+    name: 'Continue',
+    command: 'cn',
+    accent: '#be1fff',
+    install: ['npm install -g @continuedev/cli']
+  },
+  {
+    id: 'codebuff',
+    name: 'Codebuff',
+    command: 'codebuff',
+    accent: '#56c271',
+    install: ['npm install -g codebuff']
+  },
+  {
+    id: 'vibe',
+    name: 'Mistral Vibe',
+    command: 'vibe',
+    accent: '#fa520f',
+    install: null
+  },
+  {
+    id: 'antigravity',
+    name: 'Antigravity',
+    command: 'agy',
+    accent: '#5b8def',
+    install: null
+  },
+  {
+    id: 'rovo',
+    name: 'Rovo Dev',
+    command: 'rovo',
+    accent: '#1868db',
+    install: null
+  },
+  {
+    id: 'hermes',
+    name: 'Hermes',
+    command: 'hermes --tui',
+    accent: '#c9a86a',
+    install: null
+  },
+  {
+    id: 'devin',
+    name: 'Devin',
+    command: 'devin',
+    accent: '#3fb68b',
+    install: null
+  },
+  {
+    id: 'trae',
+    name: 'Trae',
+    command: 'traecli',
+    accent: '#ff4d4f',
+    install: null
+  },
+  {
+    id: 'zcode',
+    name: 'ZCode',
+    command: 'zcode',
+    accent: '#6c8cff',
+    install: null
+  },
+  {
+    id: 'autohand',
+    name: 'Autohand Code',
+    command: 'autohand',
+    accent: '#f59e0b',
+    install: null
+  },
+  {
+    id: 'commandcode',
+    name: 'Command Code',
+    command: 'command-code --trust',
+    accent: '#e5e7eb',
+    install: null
+  },
+  {
+    id: 'openclaw',
+    name: 'OpenClaw',
+    command: 'openclaw',
+    accent: '#ef6b5b',
+    install: null
   }
 ]
 
@@ -474,7 +581,7 @@ async function getAgents(custom = []) {
         command: a.command,
         accent: a.accent,
         install: a.install,
-        available: await commandExists(a.command, a.notFrom || null)
+        available: await commandExists(firstWord(a.command), a.notFrom || null)
       }))
     )
   }

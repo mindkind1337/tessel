@@ -11,5 +11,27 @@ export const AGENT_DOCS = {
   aider: 'https://aider.chat/docs/',
   amp: 'https://ampcode.com/manual',
   cursor: 'https://cursor.com/docs/cli/overview',
-  goose: 'https://block.github.io/goose/docs/'
+  goose: 'https://block.github.io/goose/docs/',
+  // From Orca's agent catalog.
+  grok: 'https://x.ai/cli',
+  droid: 'https://docs.factory.ai/cli/getting-started/quickstart',
+  crush: 'https://github.com/charmbracelet/crush',
+  auggie: 'https://docs.augmentcode.com/cli/overview',
+  pi: 'https://pi.dev',
+  kimi: 'https://www.kimi.com/code/docs/en/kimi-code-cli/getting-started.html',
+  openclaude: 'https://openclaude.gitlawb.com/',
+  kilo: 'https://kilo.ai/docs/cli',
+  kiro: 'https://kiro.dev/docs/cli/',
+  continue: 'https://docs.continue.dev/guides/cli',
+  codebuff: 'https://www.codebuff.com/docs/help/quick-start',
+  vibe: 'https://github.com/mistralai/mistral-vibe',
+  antigravity: 'https://antigravity.google/docs/cli-overview',
+  rovo: 'https://support.atlassian.com/rovo/docs/install-and-run-rovo-dev-cli-on-your-device/',
+  hermes: 'https://hermes-agent.nousresearch.com/docs/',
+  devin: 'https://devin.ai/cli',
+  trae: 'https://docs.trae.cn/cli_get-started-with-trae-cli',
+  zcode: 'https://zcode.z.ai/en/docs',
+  autohand: 'https://github.com/autohandai/code-cli',
+  commandcode: 'https://commandcode.ai/docs/quickstart',
+  openclaw: 'https://github.com/openclaw/openclaw'
 }
