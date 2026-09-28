@@ -1,6 +1,6 @@
-<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 import { settings } from '../settings'
+import { t } from '../i18n'
 defineProps({ providers: { type: Array, default: () => [] } })
 const emit = defineEmits(['change'])
 function toggle(id, show) {
@@ -16,14 +16,14 @@ function toggle(id, show) {
 </script>
 <template>
   <details v-if="providers.length" class="usage-visibility" data-test="usage-visibility">
-    <summary>Show in Usage</summary>
+    <summary>{{ t('settings.usageVisibility.showInUsage', 'Show in Usage') }}</summary>
     <label v-for="p in providers" :key="p.id"
       ><input
         type="checkbox"
         :checked="!settings.hiddenUsageProviders.includes(p.id)"
         :data-test="'usage-visible-' + p.id"
         @change="toggle(p.id, $event.target.checked)"
-      />{{ p.name }}<small v-if="!p.report">Quotas</small></label
+      />{{ p.name }}<small v-if="!p.report">{{ t('settings.usageVisibility.quotas', 'Quotas') }}</small></label
     >
   </details>
 </template>

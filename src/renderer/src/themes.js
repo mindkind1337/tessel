@@ -1,14 +1,39 @@
-// i18n-pending: text here does not go through t() yet
 // UI themes share terminal backgrounds with their corresponding CSS palette.
 // Classic and Warp-inspired leave ANSI colours untouched (programs keep their
 // colour semantics); the named palette themes (shared/themePalettes.js) bring
 // their own full ANSI palette, as those schemes are known for.
 import { PALETTE_THEMES, paletteTheme, paletteVars } from '../../shared/themePalettes'
+import { t } from './i18n'
 
+// label and description are getters: read where they are shown, so they
+// follow the interface's language.
 export const THEMES = Object.freeze([
-  { id: 'classic', label: 'Classic', description: 'Original Tessel appearance' },
-  { id: 'warp', label: 'Warp-inspired', description: 'Graphite surfaces and soft green accents' },
-  ...Object.entries(PALETTE_THEMES).map(([id, t]) => ({ id, label: t.label, description: t.description }))
+  {
+    id: 'classic',
+    get label() {
+      return t('settings.themes.classic.label', 'Classic')
+    },
+    get description() {
+      return t('settings.themes.classic.description', 'Original Tessel appearance')
+    }
+  },
+  {
+    id: 'warp',
+    get label() {
+      return t('settings.themes.warp.label', 'Warp-inspired')
+    },
+    get description() {
+      return t('settings.themes.warp.description', 'Graphite surfaces and soft green accents')
+    }
+  },
+  ...Object.entries(PALETTE_THEMES).map(([id, palette]) => ({
+    id,
+    // The scheme's own name (Dracula, Nord…) is the same in every language.
+    label: palette.label,
+    get description() {
+      return t(`settings.themes.${id}.description`, palette.description)
+    }
+  }))
 ])
 
 const TERMINAL_THEMES = {

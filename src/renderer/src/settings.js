@@ -1,4 +1,3 @@
-// i18n-pending: text here does not go through t() yet
 // User preferences. One reactive object shared by the settings dialog, App and
 // every TerminalPane; App persists it with the workspace layout.
 import { reactive } from 'vue'
@@ -6,13 +5,14 @@ import { isTheme } from './themes'
 import { UI_LANGUAGES } from './i18n'
 import { validHiddenUsageProviders } from '../../shared/usageProviders'
 
+// Font names: the same in every language.
 export const FONT_FAMILIES = [
-  'Cascadia Mono',
-  'Cascadia Code',
+  'Cascadia Mono', // i18n-ignore
+  'Cascadia Code', // i18n-ignore
   'Consolas',
-  'JetBrains Mono',
-  'Fira Code',
-  'Courier New'
+  'JetBrains Mono', // i18n-ignore
+  'Fira Code', // i18n-ignore
+  'Courier New' // i18n-ignore
 ]
 
 export const DEFAULT_SETTINGS = Object.freeze({
@@ -22,7 +22,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   uiLanguage: 'system',
   hiddenUsageProviders: [],
   fontSize: 13,
-  fontFamily: 'Cascadia Mono',
+  fontFamily: 'Cascadia Mono', // i18n-ignore
   cursorStyle: 'block', // 'block' | 'bar' | 'underline'
   cursorBlink: true,
   scrollback: 5000,
