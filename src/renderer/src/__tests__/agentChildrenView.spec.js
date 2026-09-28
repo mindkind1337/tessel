@@ -21,8 +21,16 @@ describe('sub-agents in a pane', () => {
       { state: 'running' },
       { state: 'done', endedAt: now - 60000 },
       { state: 'done', endedAt: now - 3600000 },
-      { state: 'stopped', endedAt: now - 1000 }
+      { state: 'quiet', lastAt: now - 1000 }
     ]
-    expect(childrenSummary(list, now)).toEqual({ running: 1, recent: 2, total: 4 })
+    expect(childrenSummary(list, now)).toEqual({ running: 1, quiet: 1, recent: 1, total: 4 })
+  })
+  it('a quiet one (unfinished, silent for a while) says for how long, never that it finished', () => {
+    const now = 100_000_000
+    const quiet = { state: 'quiet', startedAt: now - 40 * 60000, lastAt: now - 16 * 60000, endedAt: null }
+    expect(childTime(quiet, now)).toBe('quiet 16m')
+    expect(childTime({ ...quiet, lastAt: now - 125 * 60000 }, now)).toBe('quiet 2h 5m')
+    // Even with an end date, only a done one counts as recently finished.
+    expect(childrenSummary([{ ...quiet, endedAt: now - 1000 }], now)).toEqual({ running: 0, quiet: 1, recent: 0, total: 1 })
   })
 })

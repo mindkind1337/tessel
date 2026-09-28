@@ -53,4 +53,72 @@ describe("a Claude Code conversation's sub-agents", () => {
     expect(claudeSubagents('not-an-id', claudeDir)).toEqual([])
     expect(claudeSubagents('99999999-2222-4333-8444-555555555555', claudeDir)).toEqual([])
   })
+
+  const event = (at, stop) =>
+    line({ type: 'assistant', timestamp: new Date(at).toISOString(), message: { stop_reason: stop, usage: { input_tokens: 1, output_tokens: 2 } } }) + '\n'
+
+  it('an unfinished one silent for 16 min is quiet (not stopped, no end date)', () => {
+    const dir = join(claudeDir, 'projects', 'C--proj', SID, 'subagents')
+    fs.mkdirSync(dir, { recursive: true })
+    const now = Date.parse('2026-09-28T10:30:00Z')
+    const old = new Date(now - 16 * 60000)
+    const file = join(dir, 'agent-slow.jsonl')
+    fs.writeFileSync(file, event(old.getTime(), 'tool_use'))
+    fs.utimesSync(file, old, old)
+    const [c] = claudeSubagents(SID, claudeDir, now)
+    expect(c.state).toBe('quiet')
+    expect(c.endedAt).toBe(null)
+    expect(c.lastAt).toBe(old.getTime())
+  })
+
+  describe('never reads outside the account folder through a link or junction', () => {
+    let outside
+    beforeEach(() => {
+      outside = fs.mkdtempSync(join(os.tmpdir(), 'tessel-children-outside-'))
+      const now = Date.now()
+      fs.mkdirSync(join(outside, 'subagents'))
+      for (const d of [outside, join(outside, 'subagents')]) {
+        fs.writeFileSync(join(d, 'agent-foreign.jsonl'), event(now, 'end_turn'))
+        fs.writeFileSync(join(d, 'agent-foreign.meta.json'), JSON.stringify({ agentType: 'Explore', description: 'OUTSIDE' }))
+      }
+    })
+    afterEach(() => fs.rmSync(outside, { recursive: true, force: true }))
+
+    it('a junction for the subagents folder', () => {
+      const session = join(claudeDir, 'projects', 'C--proj', SID)
+      fs.mkdirSync(session, { recursive: true })
+      fs.symlinkSync(outside, join(session, 'subagents'), 'junction')
+      expect(claudeSubagents(SID, claudeDir)).toEqual([])
+    })
+
+    it('a junction for the session folder, the project folder or projects', () => {
+      const project = join(claudeDir, 'projects', 'C--proj')
+      fs.mkdirSync(project, { recursive: true })
+      fs.symlinkSync(outside, join(project, SID), 'junction')
+      expect(claudeSubagents(SID, claudeDir)).toEqual([])
+      fs.rmSync(join(claudeDir, 'projects'), { recursive: true, force: true })
+      const holder = join(outside, 'p')
+      fs.mkdirSync(join(holder, SID), { recursive: true })
+      fs.symlinkSync(join(outside, 'subagents'), join(holder, SID, 'subagents'), 'junction')
+      fs.mkdirSync(join(claudeDir, 'projects'))
+      fs.symlinkSync(holder, join(claudeDir, 'projects', 'C--proj'), 'junction')
+      expect(claudeSubagents(SID, claudeDir)).toEqual([])
+      fs.rmSync(join(claudeDir, 'projects'), { recursive: true, force: true })
+      fs.mkdirSync(join(outside, 'projects', 'C--proj', SID), { recursive: true })
+      fs.renameSync(join(outside, 'subagents'), join(outside, 'projects', 'C--proj', SID, 'subagents'))
+      fs.symlinkSync(join(outside, 'projects'), join(claudeDir, 'projects'), 'junction')
+      expect(claudeSubagents(SID, claudeDir)).toEqual([])
+    })
+
+    it('a linked transcript file (when this system allows file links)', () => {
+      const dir = join(claudeDir, 'projects', 'C--proj', SID, 'subagents')
+      fs.mkdirSync(dir, { recursive: true })
+      try {
+        fs.symlinkSync(join(outside, 'agent-foreign.jsonl'), join(dir, 'agent-foreign.jsonl'), 'file')
+      } catch {
+        return // no right to make file links here: nothing to check
+      }
+      expect(claudeSubagents(SID, claudeDir)).toEqual([])
+    })
+  })
 })

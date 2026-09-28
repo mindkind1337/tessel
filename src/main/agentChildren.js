@@ -6,16 +6,42 @@
 // Read-only; only the first line and the end of each transcript are read.
 import fs from 'fs'
 import os from 'os'
-import { join } from 'path'
+import { join, relative, isAbsolute } from 'path'
 
 const ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const TAIL_BYTES = 96 * 1024
 const MAX_AGENTS = 50
-// Not finished, and nothing written for this long: it was stopped.
-const STALE_MS = 15 * 60 * 1000
+// Not finished, and nothing written for this long: quiet (maybe a long tool,
+// maybe stopped: nothing proves which, so it is never shown as finished).
+const QUIET_MS = 15 * 60 * 1000
 
+function within(base, p) {
+  const rel = relative(base, p)
+  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))
+}
+
+// A real folder or file of the account: no link or junction, and its real
+// path inside the account's Claude folder (nothing is read outside it).
+export function realInside(base, p, dir) {
+  try {
+    const st = fs.lstatSync(p)
+    if (st.isSymbolicLink() || (dir ? !st.isDirectory() : !st.isFile())) return false
+    return within(base, fs.realpathSync.native(p))
+  } catch {
+    return false
+  }
+}
+
+// -> { base, dir } (the account folder's real path, the session's folder) or null.
 function sessionDir(claudeDir, sessionId) {
+  let base
+  try {
+    base = fs.realpathSync.native(claudeDir)
+  } catch {
+    return null
+  }
   const root = join(claudeDir, 'projects')
+  if (!realInside(base, root, true)) return null
   let dirs
   try {
     dirs = fs.readdirSync(root, { withFileTypes: true })
@@ -24,8 +50,10 @@ function sessionDir(claudeDir, sessionId) {
   }
   for (const d of dirs) {
     if (!d.isDirectory()) continue
-    const dir = join(root, d.name, sessionId)
-    if (fs.existsSync(join(dir, 'subagents'))) return dir
+    const project = join(root, d.name)
+    const dir = join(project, sessionId)
+    if (!fs.existsSync(join(dir, 'subagents'))) continue
+    if (realInside(base, project, true) && realInside(base, dir, true) && realInside(base, join(dir, 'subagents'), true)) return { base, dir }
   }
   return null
 }
@@ -91,12 +119,14 @@ export function summarizeTail(lines) {
   return { done, last, tokens }
 }
 
-// -> [{ id, type, title, state: 'running'|'done'|'stopped', startedAt, endedAt, tokens }]
-// newest first.
+// -> [{ id, type, title, state: 'running'|'done'|'quiet', startedAt, endedAt,
+// lastAt, tokens }] newest first. endedAt only for a finished one; a quiet one
+// (nothing written for 15 min, not finished) keeps when it last wrote.
 export function claudeSubagents(sessionId, claudeDir = join(os.homedir(), '.claude'), now = Date.now()) {
   if (!ID.test(String(sessionId))) return []
-  const dir = sessionDir(claudeDir, sessionId)
-  if (!dir) return []
+  const found = sessionDir(claudeDir, sessionId)
+  if (!found) return []
+  const { base, dir } = found
   const sub = join(dir, 'subagents')
   let names
   try {
@@ -108,6 +138,7 @@ export function claudeSubagents(sessionId, claudeDir = join(os.homedir(), '.clau
   for (const n of names) {
     const file = join(sub, n)
     const id = n.slice(6, -6)
+    if (!realInside(base, file, false)) continue
     let st
     try {
       st = fs.statSync(file)
@@ -115,8 +146,9 @@ export function claudeSubagents(sessionId, claudeDir = join(os.homedir(), '.clau
       continue
     }
     let meta = {}
+    const metaFile = join(sub, `agent-${id}.meta.json`)
     try {
-      meta = JSON.parse(fs.readFileSync(join(sub, `agent-${id}.meta.json`), 'utf8')) || {}
+      if (realInside(base, metaFile, false)) meta = JSON.parse(fs.readFileSync(metaFile, 'utf8')) || {}
     } catch {
       meta = {}
     }
@@ -129,14 +161,16 @@ export function claudeSubagents(sessionId, claudeDir = join(os.homedir(), '.clau
       // being written: next time
     }
     const last = tail.last || st.mtimeMs
-    const state = tail.done ? 'done' : now - Math.max(last, st.mtimeMs) > STALE_MS ? 'stopped' : 'running'
+    const lastAt = Math.max(last, st.mtimeMs)
+    const state = tail.done ? 'done' : now - lastAt > QUIET_MS ? 'quiet' : 'running'
     out.push({
       id,
       type: typeof meta.agentType === 'string' ? meta.agentType.slice(0, 60) : 'agent',
       title: typeof meta.description === 'string' ? meta.description.slice(0, 200) : '',
       state,
       startedAt: startedAt || st.birthtimeMs || null,
-      endedAt: state === 'running' ? null : last,
+      endedAt: state === 'done' ? last : null,
+      lastAt,
       tokens: tail.tokens
     })
   }
