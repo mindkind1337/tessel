@@ -225,6 +225,21 @@ const api = {
     commit: (args) => ipcRenderer.invoke('review:commit', args),
     push: (args) => ipcRenderer.invoke('review:push', args)
   },
+  // Source control of any folder in a repository (the Changes tab).
+  scm: {
+    status: (q) => ipcRenderer.invoke('scm:status', q),
+    stage: (q) => ipcRenderer.invoke('scm:stage', q),
+    unstage: (q) => ipcRenderer.invoke('scm:unstage', q),
+    discard: (q) => ipcRenderer.invoke('scm:discard', q),
+    commit: (q) => ipcRenderer.invoke('scm:commit', q),
+    push: (q) => ipcRenderer.invoke('scm:push', q),
+    pull: (q) => ipcRenderer.invoke('scm:pull', q),
+    fetch: (q) => ipcRenderer.invoke('scm:fetch', q),
+    sync: (q) => ipcRenderer.invoke('scm:sync', q),
+    fileVersions: (q) => ipcRenderer.invoke('scm:fileVersions', q),
+    generate: (q) => ipcRenderer.invoke('scm:generate', q),
+    cancelGenerate: (q) => ipcRenderer.invoke('scm:cancelGenerate', q)
+  },
   mcpList: (cwd) => ipcRenderer.invoke('mcp:list', cwd),
   mcpAdd: (spec) => ipcRenderer.invoke('mcp:add', spec),
   mcpRemove: (spec) => ipcRenderer.invoke('mcp:remove', spec),

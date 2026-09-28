@@ -295,10 +295,10 @@ describe('editor documents', () => {
   it("App's dirtyEditorPaths asks once about a file two closing panes show", async () => {
     const fs = await import('fs')
     const { join } = await import('path')
-    const { samePath } = await import('../editor/editorTabs')
+    const { samePath, docPathOf } = await import('../editor/editorTabs')
     const src = fs.readFileSync(join(process.cwd(), 'src', 'renderer', 'src', 'App.vue'), 'utf8')
     const fn = src.match(/function dirtyEditorPaths\(leaves\) \{[\s\S]*?\n\}/)[0]
-    const dirtyEditorPaths = new Function('dirtyOnlyIn', 'samePath', `${fn}\nreturn dirtyEditorPaths`)(mod.dirtyOnlyIn, samePath)
+    const dirtyEditorPaths = new Function('dirtyOnlyIn', 'samePath', 'docPathOf', `${fn}\nreturn dirtyEditorPaths`)(mod.dirtyOnlyIn, samePath, docPathOf)
     await open('a\n')
     mod.acquireDoc(F, 'pane-2')
     mod.modelOf(F).type('x')

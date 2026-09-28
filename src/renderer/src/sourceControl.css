@@ -1,0 +1,1355 @@
+/* Source Control, diff tabs and review notes, ported from Orca's source
+   control and diff comments (Tailwind classes and assets/main.css, MIT,
+   Copyright (c) 2026 Lovecast Inc.) onto Tessel's theme variables, so every
+   theme works. Orca's dark git decoration colours. */
+:root {
+  --git-decoration-added: #81b88b;
+  --git-decoration-modified: #e2c08d;
+  --git-decoration-deleted: #c74e39;
+  --git-decoration-renamed: #73c991;
+  --git-decoration-untracked: #73c991;
+  --git-decoration-copied: #73c991;
+  --git-decoration-ignored: #6e6e6e;
+}
+
+.lucide {
+  flex: 0 0 auto;
+  display: inline-block;
+  vertical-align: middle;
+}
+
+/* Side panel tab count (the Changes badge). */
+.side-tab-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 28%, var(--surface-3));
+  color: var(--text-strong);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.sc-root {
+  overflow: hidden;
+  font-size: 12px;
+}
+
+.sc-header {
+  flex: 0 0 auto;
+  padding: 6px 12px 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.sc-header-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.sc-filter-row {
+  gap: 6px;
+}
+
+.sc-title {
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.sc-fill {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.sc-dim {
+  color: var(--text-dim);
+}
+
+.sc-repo-select {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 60%;
+  height: 24px;
+  padding: 0 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 11.5px;
+}
+
+.sc-icon-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.sc-icon-btn:hover,
+.sc-icon-btn.on {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.sc-filter-dot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text);
+}
+
+.sc-filter-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+}
+
+.sc-filter-input::placeholder {
+  color: color-mix(in srgb, var(--text-dim) 60%, transparent);
+}
+
+.sc-btn-xs {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.sc-btn-xs:hover {
+  border-color: var(--accent);
+  color: var(--text-strong);
+}
+
+.sc-branch-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin-top: 4px;
+  padding-bottom: 2px;
+}
+
+.sc-branch-name {
+  min-width: 0;
+  overflow: hidden;
+  color: color-mix(in srgb, var(--text) 90%, transparent);
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  font-size: 10.5px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sc-upstream {
+  display: inline-flex;
+  gap: 6px;
+  flex: 0 0 auto;
+  color: var(--text-dim);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sc-menu {
+  position: fixed;
+  min-width: 180px;
+}
+
+.sc-commit-menu {
+  min-width: 14rem;
+}
+
+.sc-menu-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sc-menu-count {
+  color: var(--text-dim);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sc-scroll {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  padding-top: 4px;
+}
+
+.sc-pad {
+  padding: 0 12px 8px;
+}
+
+/* Conflict summary / an operation stopped half way. */
+.sc-conflict-card {
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--danger) 40%, var(--border));
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+}
+
+.sc-op-card {
+  border-color: var(--border-strong);
+  background: var(--surface-2);
+}
+
+.sc-conflict-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-strong);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.sc-conflict-text {
+  margin-top: 4px;
+  color: var(--text);
+  font-size: 11.5px;
+}
+
+.sc-conflict-hint {
+  margin-top: 2px;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+/* Commit area (commit-area.tsx): px-3 pb-2. */
+.sc-commit {
+  padding: 0 12px 8px;
+}
+
+.sc-composer {
+  position: relative;
+}
+
+.sc-commit-msg {
+  display: block;
+  width: 100%;
+  min-height: 56px;
+  margin-top: 2px;
+  padding: 6px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.45;
+  resize: none;
+  outline: none;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+.sc-commit-msg.with-generate {
+  padding-right: 32px;
+}
+
+.sc-commit-msg::placeholder {
+  color: color-mix(in srgb, var(--text-dim) 70%, transparent);
+}
+
+.sc-commit-msg:focus-visible {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.sc-commit-msg:disabled {
+  cursor: not-allowed;
+}
+
+.sc-generate {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.sc-generate:hover {
+  background: color-mix(in srgb, var(--surface-3) 60%, transparent);
+  color: var(--text);
+}
+
+.sc-generate.disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.sc-generate.disabled:hover {
+  background: transparent;
+  color: var(--text-dim);
+}
+
+.sc-generate.cancel .sc-gen-stop {
+  display: none;
+}
+
+.sc-generate.cancel:hover,
+.sc-generate.cancel:focus-visible {
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  color: var(--danger);
+}
+
+.sc-generate.cancel:hover .sc-gen-spin,
+.sc-generate.cancel:focus-visible .sc-gen-spin {
+  display: none;
+}
+
+.sc-generate.cancel:hover .sc-gen-stop,
+.sc-generate.cancel:focus-visible .sc-gen-stop {
+  display: inline-block;
+  fill: currentColor;
+}
+
+@keyframes sc-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.sc-spin {
+  animation: sc-spin 1s linear infinite;
+}
+
+/* The split button (commit-action-menu.tsx). */
+.sc-split {
+  display: flex;
+  align-items: stretch;
+  margin-top: 4px;
+}
+
+.sc-primary,
+.sc-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 24px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+.sc-primary {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0 12px;
+  border-radius: 6px 0 0 6px;
+}
+
+.sc-chevron {
+  flex: 0 0 auto;
+  padding: 0 6px;
+  border-left: 1px solid var(--border);
+  border-radius: 0 6px 6px 0;
+  margin-left: -1px;
+}
+
+.sc-primary:hover:not(:disabled),
+.sc-chevron:hover {
+  background: var(--surface-3);
+  color: var(--text-strong);
+}
+
+.sc-primary:disabled,
+.sc-chevron.dim {
+  opacity: 0.5;
+}
+
+.sc-primary:disabled {
+  cursor: default;
+}
+
+.sc-notice {
+  margin: 6px 0 0;
+  font-size: 11.5px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.sc-notice.bad {
+  color: #ff9b9e;
+}
+
+/* Section header (section-header.tsx): pl-1 pr-3 pt-3 pb-1. */
+.sc-section-header {
+  padding: 12px 12px 4px 4px;
+}
+
+.sc-section-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-right: 4px;
+  border-radius: 6px;
+}
+
+.sc-section-row:hover {
+  background: var(--surface-3);
+}
+
+.sc-section-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 24px;
+  padding: 2px 8px;
+  border: 0;
+  background: transparent;
+  color: color-mix(in srgb, var(--text) 70%, transparent);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-align: left;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.sc-section-row:hover .sc-section-toggle {
+  color: var(--text-strong);
+}
+
+.sc-section-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sc-section-count {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.sc-section-actions {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+.sc-rot {
+  transform: rotate(-90deg);
+}
+
+.sc-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.sc-action:hover {
+  background: color-mix(in srgb, var(--term) 70%, transparent);
+  color: var(--text-strong);
+}
+
+.sc-action.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* A changed file (uncommitted-entry-row.tsx). */
+.sc-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 12px 4px 20px;
+  color: var(--text);
+  cursor: pointer;
+  transition: background-color 100ms;
+}
+
+.sc-row:hover {
+  background: color-mix(in srgb, var(--surface-3) 40%, transparent);
+}
+
+.sc-row.current,
+.sc-row.current:hover {
+  background: var(--surface-3);
+}
+
+.sc-row-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+}
+
+.sc-row-line {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sc-row .sc-row-name {
+  color: var(--text);
+}
+
+.sc-row .sc-row-dir {
+  margin-left: 6px;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.sc-row-sub {
+  overflow: hidden;
+  color: var(--text-dim);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sc-row-notes {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+  color: var(--text-dim);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sc-counts {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sc-plus {
+  color: var(--git-decoration-added);
+}
+
+.sc-minus {
+  color: var(--git-decoration-deleted);
+}
+
+.sc-status {
+  flex: 0 0 16px;
+  width: 16px;
+  font-size: 10px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.sc-conflict-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  color: var(--danger);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+/* Hover actions over the row's right end (row-layout.ts). */
+.sc-row-actions {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px 0 8px;
+  background: var(--surface-3);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 100ms;
+}
+
+.sc-row:hover .sc-row-actions,
+.sc-row-actions:focus-within {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.sc-empty {
+  padding: 24px 16px;
+}
+
+.sc-empty-heading {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.sc-empty-text {
+  margin-top: 4px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+/* Notes shelf (notes-shelf.tsx, diff-comments-list.tsx). */
+.sc-notes {
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--border);
+}
+
+.sc-notes-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px 6px 12px;
+}
+
+.sc-notes-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sc-notes-toggle:hover {
+  color: var(--text);
+}
+
+.sc-notes-count {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.sc-notes-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  margin-left: 4px;
+}
+
+.sc-notes-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.sc-notes-btn:hover:not(:disabled) {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.sc-notes-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.sc-rel {
+  position: relative;
+}
+
+.sc-notes-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 180px;
+}
+
+.sc-notes-list {
+  background: color-mix(in srgb, var(--surface-3) 20%, transparent);
+}
+
+.sc-notes-file {
+  padding: 6px 12px;
+}
+
+.sc-notes-file-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.sc-notes-file-name {
+  display: block;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 10px;
+  font-weight: 500;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.sc-notes-file-name:hover {
+  color: var(--text);
+}
+
+.sc-notes-ul {
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sc-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+
+.sc-note + .sc-note {
+  margin-top: 4px;
+}
+
+.sc-note:hover {
+  background: color-mix(in srgb, var(--surface-3) 40%, transparent);
+}
+
+.sc-note-open {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sc-chip {
+  flex: 0 0 auto;
+  padding: 2px 4px;
+  border-radius: 4px;
+  background: var(--surface-3);
+  color: var(--text-dim);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.sc-chip-soft {
+  background: color-mix(in srgb, var(--surface-3) 70%, transparent);
+}
+
+.sc-note-body {
+  display: block;
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 11px;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.sc-note-mini {
+  flex: 0 0 auto;
+  padding: 2px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-dim);
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity 100ms;
+}
+
+.sc-note:hover .sc-note-mini,
+.sc-notes-file-head:hover .sc-note-mini,
+.sc-note-mini:focus-visible {
+  opacity: 1;
+}
+
+.sc-note-mini:hover {
+  color: var(--text);
+}
+
+.sc-note-mini.danger:hover {
+  color: var(--danger);
+}
+
+/* "Send notes to an agent" (NotesSendMenu.tsx). */
+.nsm {
+  display: inline-flex;
+}
+
+.nsm-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  cursor: pointer;
+}
+
+.nsm-trigger:hover:not(:disabled) {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.nsm-trigger:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.nsm-trigger.sc-notes-btn {
+  width: 24px;
+  height: 24px;
+}
+
+.nsm-sparkles {
+  color: #a78bfa;
+}
+
+.nsm-label {
+  white-space: nowrap;
+}
+
+.nsm-count {
+  padding: 0 4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--term) 80%, transparent);
+  color: var(--text-dim);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.nsm-sep {
+  width: 1px;
+  height: 12px;
+  margin: 0 2px;
+  background: color-mix(in srgb, var(--border-strong) 70%, transparent);
+}
+
+.nsm-menu {
+  position: fixed;
+  min-width: 220px;
+  max-width: 340px;
+}
+
+.nsm-sub {
+  min-width: 200px;
+}
+
+.nsm-menu-label {
+  padding: 6px 9px 4px;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.nsm-scope.on {
+  background: var(--surface-3);
+}
+
+.nsm-scope-count {
+  color: var(--text-dim);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.nsm-target {
+  gap: 10px;
+}
+
+.nsm-target-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nsm-target-state {
+  flex: 0 0 auto;
+  color: var(--text-dim);
+  font-size: 10.5px;
+}
+
+.nsm-empty {
+  max-width: 240px;
+  padding: 4px 9px 8px;
+  color: var(--text-dim);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+/* Editor header controls (EditorPanelHeader.tsx, EditorViewToggle.tsx). */
+.ed-bar-path {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-dim);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ed-hbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  padding: 4px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition:
+    background-color 100ms,
+    color 100ms;
+}
+
+.ed-hbtn:hover:not(:disabled) {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.ed-hbtn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.ed-notes-pill {
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid color-mix(in srgb, var(--border-strong) 70%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface-3) 40%, transparent);
+  color: color-mix(in srgb, var(--text) 80%, transparent);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.ed-toggle {
+  display: inline-flex;
+  flex: 0 0 auto;
+  height: 23px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.ed-toggle-item {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 21px;
+  padding: 0 8px;
+  border: 0;
+  border-left: 1px solid var(--border-strong);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.ed-toggle-item:first-child {
+  border-left: 0;
+}
+
+.ed-toggle-item:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.ed-toggle-item[aria-checked='true'] {
+  background: color-mix(in srgb, var(--text) 10%, transparent);
+  color: var(--text-strong);
+}
+
+.ed-toggle-item[aria-checked='true']:hover {
+  background: color-mix(in srgb, var(--text) 15%, transparent);
+}
+
+.ed-rich {
+  overflow: auto;
+}
+
+/* Review notes in a diff (assets/main.css .orca-diff-comment-*). */
+.orca-diff-comment-add-btn {
+  position: absolute;
+  left: 4px;
+  width: 18px;
+  height: 18px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--text) 22%, var(--border));
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--text) 5%, var(--term));
+  color: color-mix(in srgb, var(--text) 78%, var(--text-dim));
+  cursor: pointer;
+  z-index: 5;
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--text) 12%, transparent);
+  transition:
+    color 100ms ease,
+    background-color 100ms ease,
+    border-color 100ms ease,
+    box-shadow 100ms ease;
+}
+
+.orca-diff-comment-add-btn:hover {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 52%, var(--border));
+  background: color-mix(in srgb, var(--accent) 12%, var(--term));
+  box-shadow: 0 1px 4px color-mix(in srgb, var(--text) 16%, transparent);
+}
+
+.orca-diff-comment-add-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.monaco-editor .orca-diff-comment-range-highlight {
+  background: color-mix(in srgb, var(--accent) 38%, transparent);
+  border-left: 3px solid var(--accent);
+}
+
+.monaco-editor .orca-diff-comment-range-margin {
+  background: color-mix(in srgb, var(--accent) 26%, transparent);
+}
+
+.orca-diff-comment-inline {
+  width: 100%;
+  padding: 4px 24px 6px 0;
+  box-sizing: border-box;
+}
+
+.orca-diff-comment-inline > .orca-diff-comment-card {
+  max-width: 420px;
+}
+
+.orca-diff-comment-inline > .orca-diff-comment-draft-card {
+  position: relative;
+  left: auto;
+  right: auto;
+  width: 100%;
+  max-width: 420px;
+  z-index: 1;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+.orca-diff-comment-card {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  gap: 12px;
+  border: 1px solid color-mix(in srgb, var(--text) 12%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--text) 2%, var(--term));
+  padding: 12px 14px;
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.2),
+    0 4px 16px rgba(0, 0, 0, 0.15);
+  transition:
+    border-color 150ms ease,
+    box-shadow 150ms ease,
+    background-color 150ms ease;
+}
+
+.orca-diff-comment-content-col {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.orca-diff-comment-content-col.orca-gap-2 {
+  gap: 8px;
+}
+
+.orca-edit-col {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.orca-diff-comment-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.orca-diff-comment-meta-group {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 1.4;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.orca-diff-comment-actions-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 2px;
+  border: 1px solid color-mix(in srgb, var(--text) 14%, var(--border));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--text) 4%, var(--term));
+  overflow: hidden;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
+}
+
+.orca-diff-comment-pill-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  padding: 4px 7px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-dim);
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  height: 24px;
+  transition:
+    background-color 100ms ease,
+    color 100ms ease;
+}
+
+.orca-diff-comment-edit {
+  min-width: 28px;
+  height: 24px;
+  padding: 4px 7px;
+  border-radius: 4px;
+}
+
+.orca-diff-comment-pill-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  color: var(--text);
+}
+
+.orca-diff-comment-pill-btn-danger:hover {
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  color: var(--danger);
+}
+
+.orca-diff-comment-pill-divider {
+  width: 1px;
+  height: 12px;
+  background: color-mix(in srgb, var(--text) 12%, var(--border));
+  flex-shrink: 0;
+}
+
+.orca-diff-comment-body {
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin-top: 2px;
+}
+
+.orca-diff-comment-popover {
+  position: absolute;
+  left: 56px;
+  right: 24px;
+  max-width: 420px;
+  z-index: 1000;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--text) 14%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--text) 2%, var(--term));
+  color: var(--text);
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  box-shadow:
+    0 10px 32px rgba(0, 0, 0, 0.3),
+    0 4px 16px rgba(0, 0, 0, 0.2);
+}
+
+.orca-diff-comment-popover-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+  margin-bottom: 2px;
+}
+
+.orca-diff-comment-popover-textarea {
+  width: 100%;
+  min-height: 56px;
+  max-height: 240px;
+  overflow-y: auto;
+  resize: none;
+  padding: 8px 12px;
+  border: 1px solid color-mix(in srgb, var(--text) 10%, var(--border));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--text) 3%, var(--term));
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.45;
+  outline: none;
+  transition:
+    border-color 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.orca-diff-comment-popover-textarea:focus {
+  border-color: color-mix(in srgb, var(--accent) 70%, var(--border));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.orca-diff-comment-popover-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+/* shadcn Button size="sm": ghost and default. */
+.orca-btn-ghost,
+.orca-btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 32px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.orca-btn-ghost {
+  background: transparent;
+  color: var(--text);
+}
+
+.orca-btn-ghost:hover:not(:disabled) {
+  background: var(--surface-3);
+}
+
+.orca-btn-primary {
+  background: var(--text-strong);
+  color: var(--term);
+}
+
+.orca-btn-primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--text-strong) 90%, transparent);
+}
+
+.orca-btn-ghost:disabled,
+.orca-btn-primary:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.orca-kbd-icon {
+  margin-left: 4px;
+  opacity: 0.7;
+}
+
+/* A confirmation keeps its line breaks (a discard names its file on its own line). */
+.confirm-text {
+  white-space: pre-line;
+}
