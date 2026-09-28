@@ -6,6 +6,16 @@
 import { computed } from 'vue'
 import { BRAND_SVGS } from '../brandSvgs'
 
+// Logos of the other agents, as Orca ships them (its src/shared/agent-icons,
+// MIT, Copyright (c) 2026 Lovecast Inc.), bundled with Tessel (no external
+// images under its CSP). File name = Tessel's agent id.
+const PNG_ICONS = Object.fromEntries(
+  Object.entries(import.meta.glob('../assets/agent-icons/*.png', { eager: true, import: 'default' })).map(([p, url]) => [
+    p.split('/').pop().replace(/\.png$/, ''),
+    url
+  ])
+)
+
 const props = defineProps({
   kind: { type: String, default: '' },
   size: { type: Number, default: 16 },
@@ -20,6 +30,7 @@ const KNOWN = new Set([
   'openai',
   'opencode',
   ...Object.keys(BRAND_SVGS),
+  ...Object.keys(PNG_ICONS),
   'gemini',
   'powershell',
   'pwsh',
@@ -74,6 +85,7 @@ const raw = computed(() => {
   const b = BRAND_SVGS[k.value]
   return b ? { box: b.box, html: b.body.split('__UID__').join(gid) } : null
 })
+const png = computed(() => PNG_ICONS[k.value] || null)
 </script>
 
 <template>
@@ -93,6 +105,9 @@ const raw = computed(() => {
     <!-- Cline, Copilot CLI, Qwen Code, Ollama: their own icons -->
     <!-- eslint-disable-next-line vue/no-v-html -->
     <svg v-else-if="raw" x="1" y="1" width="22" height="22" :viewBox="raw.box" v-html="raw.html" />
+
+    <!-- The other agents' logos (Orca's) -->
+    <image v-else-if="png" x="1" y="1" width="22" height="22" :href="png" preserveAspectRatio="xMidYMid meet" />
 
     <!-- Codex / OpenAI blossom -->
     <path v-else-if="k === 'codex' || k === 'openai'" :d="OPENAI_PATH" fill="#ececec" />
