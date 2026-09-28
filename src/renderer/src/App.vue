@@ -50,6 +50,18 @@ import { dropBuffer, seedBuffer } from './ptyStore'
 import { tasks as boardTasks, setTasks, updateTask, removeTask, addTask } from './taskBoardStore'
 import { paneModels } from './paneModels'
 import { sleepBlocker } from '../../shared/agentSleep'
+import {
+  docs as editorDocs,
+  getDoc,
+  dirtyOnlyIn,
+  saveDocs,
+  releaseOwner,
+  getEditorPane,
+  setEditorHooks,
+  startDiskWatch,
+  autoSaveSettingsChanged
+} from './editor/documents'
+import { openTab, validSavedFiles, samePath, fileName } from './editor/editorTabs'
 
 const shells = ref([])
 const agents = ref([])
@@ -130,13 +142,110 @@ async function viewFile({ file, label = '', line = null }) {
   }
   fileView.value = { file, label, line: Number.isInteger(line) ? line : null }
 }
-async function openInEditor({ file, line }) {
-  const res = await window.shellApi.openFile({ file, line: line || undefined }).catch(() => null)
+// Outside Tessel: VS Code at the line when installed, else the file's own program.
+async function openExternally({ file, line, col }) {
+  const res = await window.shellApi.openFile({ file, line: line || undefined, col: col || undefined }).catch(() => null)
   if (!res || !res.ok) showToast(`Could not open ${file}${res && res.error ? `: ${res.error}` : ''}`, { kind: 'error', timeout: 5000 })
+}
+
+// --- Tessel's code editor (EditorPane.vue) --------------------------------------------
+// A file opens in the workspace's editor pane (the active pane when it is
+// one), as a preview tab when opened with one click (replaced by the next
+// such file until edited); with no editor pane yet, the active pane is split
+// to the right with a new one. line / col: shown centred, briefly highlighted.
+let revealSeq = 0
+function makeEditorLeaf(id = null) {
+  return reactive({
+    type: 'leaf',
+    kind: 'editor',
+    id: id || newId('pane'),
+    title: 'Editor',
+    files: [],
+    activePath: null,
+    broadcast: false,
+    reveal: null
+  })
+}
+function openInTesselEditor({ file, line = null, col = null, preview = true, ws = currentWs.value } = {}) {
+  if (!file || !ws) return null
+  const active = ws.activeId ? findLeafIn(ws.tree, ws.activeId) : null
+  let leaf = active && active.kind === 'editor' ? active : null
+  if (!leaf) forEachLeaf(ws.tree, (l) => !leaf && l.kind === 'editor' && (leaf = l))
+  if (!leaf) {
+    leaf = makeEditorLeaf()
+    const split = (orig) => reactive({ type: 'split', id: newId('split'), dir: 'row', sizes: [50, 50], children: [orig, leaf] })
+    if (active) ws.tree = replaceNode(ws.tree, active.id, split)
+    else ws.tree = ws.tree ? split(ws.tree) : leaf
+  }
+  const res = openTab(leaf.files, leaf.activePath, file, {
+    preview,
+    previewTabs: settings.editorPreviewTabs,
+    isDirty: (p) => !!(getDoc(p) && getDoc(p).dirty)
+  })
+  leaf.files = res.files
+  leaf.activePath = res.activePath
+  leaf.reveal = {
+    path: res.activePath,
+    line: Number.isInteger(line) && line > 0 ? line : null,
+    col: Number.isInteger(col) && col > 0 ? col : null,
+    seq: ++revealSeq
+  }
+  if (maximizedId.value && maximizedId.value !== leaf.id) maximizedId.value = null
+  selectWorkspace(ws.id)
+  ws.activeId = leaf.id
+  refitSoon()
+  return leaf
+}
+// The file viewer's "Open in editor": Tessel's editor (a kept tab).
+function openViewedInEditor({ file, line }) {
+  fileView.value = null
+  openInTesselEditor({ file, line, preview: false })
 }
 // A link in a viewed file: shown here too, or opened in the editor.
 function openFromViewer(file) {
-  if (isViewed(file) || fileKind(file) === 'text') viewFile({ file })
+  if (isViewed(file)) viewFile({ file })
+  else if (fileKind(file) === 'text') {
+    fileView.value = null
+    openInTesselEditor({ file })
+  }
+}
+
+// Closing editor files with unsaved changes: Save, Don't Save or Cancel.
+// -> true when closing may go on (saved, or not wanted).
+async function askEditorClose(paths) {
+  if (!paths.length) return true
+  const names = paths.map((p) => fileName(p))
+  const answer = await askConfirm({
+    title: 'Unsaved changes',
+    text:
+      paths.length === 1
+        ? `"${names[0]}" has unsaved changes. Do you want to save before closing?`
+        : `${paths.length} files have unsaved changes (${names.slice(0, 4).join(', ')}${paths.length > 4 ? ', …' : ''}). Do you want to save them before closing?`,
+    confirmLabel: paths.length === 1 ? 'Save' : 'Save all',
+    altLabel: "Don't Save"
+  })
+  if (answer === 'alt') return true
+  if (answer !== true) return false
+  return saveDocs(paths)
+}
+// Editor files with unsaved changes that closing these panes would lose.
+function dirtyEditorPaths(leaves) {
+  const out = []
+  for (const l of leaves) {
+    if (l && l.kind === 'editor') for (const p of dirtyOnlyIn(l.id, (l.files || []).map((f) => f.path))) if (!out.some((o) => samePath(o, p))) out.push(p)
+  }
+  return out
+}
+// The keyboard goes back to the active pane: its terminal, or its editor.
+function focusActiveInput() {
+  const id = activeId.value
+  const ed = id ? getEditorPane(id) : null
+  if (ed) {
+    ed.focus()
+    return
+  }
+  const ta = document.querySelector('.ws-layer:not(.hidden) .pane.active .xterm-helper-textarea')
+  if (ta) ta.focus()
 }
 
 // Jump to file (Ctrl+Shift+J): the current workspace's project files.
@@ -151,10 +260,9 @@ function finderRoot() {
   const leaf = activeId.value ? findLeaf(activeId.value) : null
   return (leaf && leaf.startDir) || null
 }
-async function openFoundFile({ full, rel }) {
+function openFoundFile({ full, rel }) {
   if (isViewed(full)) return viewFile({ file: full, label: rel })
-  const res = await window.shellApi.openFile({ file: full }).catch(() => null)
-  if (!res || !res.ok) showToast(`Could not open ${rel}${res && res.error ? `: ${res.error}` : ''}`, { kind: 'error', timeout: 5000 })
+  openInTesselEditor({ file: full })
 }
 // Ctrl+Enter in Jump to file: the path into the active pane (quoted when it
 // has spaces), e.g. to point an agent at it.
@@ -196,12 +304,7 @@ watch(helpOpen, (open) => {
   nextTick(() => {
     if (open) {
       if (helpCardEl.value) helpCardEl.value.focus()
-    } else {
-      const ta = document.querySelector(
-        '.ws-layer:not(.hidden) .pane.active .xterm-helper-textarea'
-      )
-      if (ta) ta.focus()
-    }
+    } else focusActiveInput()
   })
 })
 
@@ -385,6 +488,18 @@ const SHORTCUTS = [
       ['Ctrl+0', 'Reset text size'],
       ['Shift+PageUp', 'Scroll up in the pane'],
       ['Shift+PageDown', 'Scroll down in the pane']
+    ]
+  },
+  {
+    title: 'Editor',
+    rows: [
+      ['Ctrl+S', 'Save the file'],
+      ['Ctrl+W', 'Close the editor tab'],
+      ['Ctrl+F', 'Find in the file'],
+      ['Ctrl+H', 'Replace'],
+      ['Ctrl+G', 'Go to line'],
+      ['Alt+Z', 'Word wrap on or off'],
+      ['F7', 'Next change (Changes view)']
     ]
   },
   {
@@ -753,6 +868,18 @@ function firstLeafId(node) {
 // Serialize the live tree into a plain snapshot (no PTYs / pids / runtime ids).
 function serializeNode(node) {
   if (!node) return null
+  // An editor pane: its tabs (no terminal).
+  if (node.type === 'leaf' && node.kind === 'editor') {
+    return {
+      type: 'leaf',
+      kind: 'editor',
+      id: node.id,
+      title: node.title || 'Editor',
+      num: node.num || null,
+      files: (node.files || []).map((f) => ({ path: f.path, preview: !!f.preview })),
+      activePath: node.activePath || null
+    }
+  }
   if (node.type === 'leaf') {
     return {
       type: 'leaf',
@@ -794,6 +921,20 @@ function serializeNode(node) {
 // Rebuild a live tree from a snapshot, spawning a fresh PTY per leaf.
 async function deserializeNode(snap, cwd = null) {
   if (!snap) return null
+  // An editor pane comes back with its tabs, without any terminal (a file
+  // gone since shows its error in its tab).
+  if (snap.type === 'leaf' && snap.kind === 'editor') {
+    const files = validSavedFiles(snap.files)
+    if (!files.length) return null
+    const id = typeof snap.id === 'string' && /^pane-[\w-]+$/.test(snap.id) ? snap.id : null
+    const leaf = makeEditorLeaf(id)
+    if (typeof snap.title === 'string' && snap.title) leaf.title = snap.title.slice(0, 80)
+    if (Number.isInteger(snap.num) && snap.num > 0) leaf.num = snap.num
+    leaf.files = files
+    const active = files.find((f) => samePath(f.path, snap.activePath))
+    leaf.activePath = (active || files[0]).path
+    return leaf
+  }
   if (snap.type === 'leaf') {
     const agent =
       snap.kind === 'agent' && snap.agentCommand
@@ -981,6 +1122,18 @@ function closeLeaf(leafId, opts = {}) {
   const closing = findLeaf(leafId)
   const hadTeam = closing?.team || null
   const closingTitle = closing?.title || 'An agent'
+  // An editor pane: unsaved files are asked about first; it has no terminal.
+  if (closing && closing.kind === 'editor') {
+    if (!opts.editorChecked) {
+      const dirty = dirtyEditorPaths([closing])
+      if (dirty.length) {
+        askEditorClose(dirty).then((ok) => ok && closeLeaf(leafId, { ...opts, force: true, editorChecked: true }))
+        return
+      }
+    }
+    releaseOwner(leafId)
+  }
+  const isEditor = !!(closing && closing.kind === 'editor')
   if (!opts.force && settings.confirmCloseAgent && ws) {
     const leaf = findLeafIn(ws.tree, leafId)
     if (leaf && leaf.kind === 'agent') {
@@ -993,9 +1146,11 @@ function closeLeaf(leafId, opts = {}) {
       return
     }
   }
-  window.shellApi.killPty(leafId)
-  dropBuffer(leafId)
-  clearAgentStatus(leafId)
+  if (!isEditor) {
+    window.shellApi.killPty(leafId)
+    dropBuffer(leafId)
+    clearAgentStatus(leafId)
+  }
   if (!ws) return
   if (maximizedId.value === leafId) maximizedId.value = null
   const next = removeLeaf(ws.tree, leafId)
@@ -1094,7 +1249,7 @@ function routeInput(sourceId, data) {
   const fanOut = broadcast.value && source && source.broadcast && !TERMINAL_REPLY.test(String(data))
   if (fanOut) {
     forEachLeaf(tree.value, (leaf) => {
-      if (!leaf.broadcast) return
+      if (!leaf.broadcast || leaf.kind === 'editor') return
       noteUserInput(leaf.id, data)
       window.shellApi.writePty(leaf.id, data)
     })
@@ -1205,10 +1360,17 @@ function toggleExplorer() {
   explorerOpen.value = !explorerOpen.value
   nextTick(() => window.dispatchEvent(new Event('terminal-layout-change')))
 }
-function openExplorerFile(file) {
+// One click: a preview tab (or the viewer for Markdown, images...); a
+// double-click keeps the tab.
+function openExplorerFile(file, opts = {}) {
   if (isViewed(file)) viewFile({ file })
-  else openInEditor({ file })
+  else openInTesselEditor({ file, preview: !opts.keep })
 }
+// A path can go into the active pane when it is a terminal.
+const canInsertPath = computed(() => {
+  const l = activeId.value ? findLeaf(activeId.value) : null
+  return !!l && l.kind !== 'editor'
+})
 function terminalHere(dir) {
   openPaneBelow(selectedShell.value, null, { cwd: dir })
 }
@@ -1299,6 +1461,11 @@ async function checkForUpdates() {
 
 async function installUpdate() {
   if (updateInstalling.value) return
+  // The app restarts: unsaved editor files are asked about first.
+  const dirty = Object.values(editorDocs)
+    .filter((d) => d.dirty)
+    .map((d) => d.path)
+  if (dirty.length && !(await askEditorClose(dirty))) return
   updateInstalling.value = true
   // Write everything now instead of waiting for the debounced saves.
   saveLayoutNow()
@@ -1380,7 +1547,11 @@ provide('panelCtx', {
   copied: (what) => showToast(`${what} copied.`, { timeout: 2000 }),
   toast: (text, opts) => showToast(text, opts),
   showImage: (img) => (imageView.value = img),
-  viewFile: (f) => viewFile(f)
+  viewFile: (f) => viewFile(f),
+  // A file:line link into Tessel's editor ({ file, line, col }).
+  openInEditor: (q) => openInTesselEditor(q),
+  // Tessel's shortcuts pressed in an editor pane (it keeps them from Monaco).
+  appShortcut: (e) => onKey(e, { fromEditor: true })
 })
 
 function splitActive(dir) {
@@ -1465,8 +1636,9 @@ function buildCommands() {
     }
   )
 
-  // Quick commands (Settings > Quick commands): sent to the active pane.
-  if (activeId.value) {
+  // Quick commands (Settings > Quick commands): sent to the active pane
+  // (a terminal: an editor pane takes no command).
+  if (activeId.value && findLeaf(activeId.value)?.kind !== 'editor') {
     const id = activeId.value
     for (const q of settings.quickCommands || []) {
       add('Quick commands', `Run: ${q.name}`, () => runQuickCommand(id, q), {
@@ -1756,8 +1928,7 @@ function openSessions() {
 function closeSessions() {
   sessionsOpen.value = false
   nextTick(() => {
-    const ta = document.querySelector('.ws-layer:not(.hidden) .pane.active .xterm-helper-textarea')
-    if (ta) ta.focus()
+    focusActiveInput()
   })
 }
 
@@ -1771,8 +1942,7 @@ function voiceTypingIn(paneId, tip) {
 async function voiceTyping(paneId) {
   if (paneId) focusPane(paneId)
   await nextTick()
-  const ta = document.querySelector('.ws-layer:not(.hidden) .pane.active .xterm-helper-textarea')
-  if (ta) ta.focus()
+  focusActiveInput()
   if (!window.shellApi.voiceTyping) {
     showToast('Restart Tessel to enable voice typing, or press Win+H.', { kind: 'error' })
     return
@@ -1790,8 +1960,7 @@ function openTools() {
 function closeTools() {
   toolsOpen.value = false
   nextTick(() => {
-    const ta = document.querySelector('.ws-layer:not(.hidden) .pane.active .xterm-helper-textarea')
-    if (ta) ta.focus()
+    focusActiveInput()
   })
 }
 
@@ -1848,7 +2017,8 @@ function otherPanes(paneId) {
   const out = []
   if (!ws) return out
   forEachLeaf(ws.tree, (l) => {
-    if (l.id !== paneId) {
+    // Editor panes take no text from a terminal.
+    if (l.id !== paneId && l.kind !== 'editor') {
       out.push({
         id: l.id,
         num: l.num || null,
@@ -1956,8 +2126,7 @@ const launcherTargetTitle = computed(() => {
 function closeMcp() {
   mcpOpen.value = false
   nextTick(() => {
-    const ta = document.querySelector('.ws-layer:not(.hidden) .pane.active .xterm-helper-textarea')
-    if (ta) ta.focus()
+    focusActiveInput()
   })
 }
 
@@ -1994,7 +2163,8 @@ async function restartLeaf(leafId) {
   let ws = wsOfLeaf(leafId)
   if (!ws) return
   let old = findLeafIn(ws.tree, leafId)
-  if (!old) return
+  // An editor pane has no process to restart.
+  if (!old || old.kind === 'editor') return
   // An agent keeps its pane id: its team messages, lead role, tasks and
   // inbox stay addressed to it.
   if (old.kind === 'agent' && old.agentCommand) {
@@ -2054,6 +2224,9 @@ function focusPane(paneId) {
   ws.activeId = paneId
   clearAttention(paneId)
   readForPane(paneId)
+  // An editor pane: the keyboard goes to its editor (a terminal pane
+  // focuses itself when it becomes active).
+  if (getEditorPane(paneId)) nextTick(() => getEditorPane(paneId) && getEditorPane(paneId).focus())
 }
 
 // An entry in the notification inbox (toolbar bell), with its sound.
@@ -2166,7 +2339,7 @@ function beginPaneDrag(srcId, e) {
       paneDrag.active = true
       paneDrag.srcId = srcId
       paneDrag.title = leaf.title
-      paneDrag.kind = leaf.kind === 'agent' ? leaf.agentId : leaf.shellId
+      paneDrag.kind = leaf.kind === 'agent' ? leaf.agentId : leaf.kind === 'editor' ? '' : leaf.shellId
       maximizedId.value = null
       closeMenus()
       document.body.classList.add('pane-dragging')
@@ -2406,10 +2579,20 @@ function renameWorkspace(id, name) {
   if (ws) ws.name = name
 }
 
-function removeWorkspace(id, confirmed = false) {
+function removeWorkspace(id, confirmed = false, editorChecked = false) {
   const idx = workspaces.value.findIndex((w) => w.id === id)
   if (idx < 0) return
   const ws = workspaces.value[idx]
+  // Its editor panes' unsaved files are asked about first.
+  if (!editorChecked) {
+    const leaves = []
+    forEachLeaf(ws.tree, (l) => leaves.push(l))
+    const dirty = dirtyEditorPaths(leaves)
+    if (dirty.length) {
+      askEditorClose(dirty).then((ok) => ok && removeWorkspace(id, confirmed, true))
+      return
+    }
+  }
   let count = 0
   forEachLeaf(ws.tree, () => count++)
   const wsTasks = boardTasks.filter((t) => t.wsId === id)
@@ -2424,11 +2607,15 @@ function removeWorkspace(id, confirmed = false) {
       text: `${what[0]?.toUpperCase()}${what.slice(1)}.`,
       confirmLabel: 'Delete',
       danger: true
-    }).then((ok) => ok && removeWorkspace(id, true))
+    }).then((ok) => ok && removeWorkspace(id, true, true))
     return
   }
   for (const t of wsTasks) removeTask(t.id)
   forEachLeaf(ws.tree, (leaf) => {
+    if (leaf.kind === 'editor') {
+      releaseOwner(leaf.id)
+      return
+    }
     window.shellApi.killPty(leaf.id)
     dropBuffer(leaf.id)
     clearAgentStatus(leaf.id)
@@ -5565,6 +5752,7 @@ function paneState(leaf) {
 const sessionItems = computed(() => {
   const items = []
   forEachLeaf(tree.value, (leaf) => {
+    if (leaf.kind === 'editor') return // not a session
     const state = paneState(leaf)
     const task = taskOfPane(leaf.id)
     items.push({
@@ -5637,8 +5825,7 @@ function focusActivePane() {
   nextTick(() => {
     const el = document.activeElement
     if (el && el !== document.body && !el.closest('.pal, .help-card, .notes-panel, .review-panel')) return
-    const ta = document.querySelector('.ws-layer:not(.hidden) .pane.active .xterm-helper-textarea')
-    if (ta) ta.focus()
+    focusActiveInput()
   })
 }
 watch(
@@ -5675,11 +5862,14 @@ function typingInField(e) {
   const t = e.target
   if (!t || !t.closest) return false
   if (t.closest('.xterm')) return false // a terminal: shortcuts are for it
+  // The code editor: its pane hands Tessel's shortcuts over itself
+  // (EditorPane's capture handler, opts.fromEditor below).
+  if (t.closest('.monaco-editor, .editor-pane')) return true
   return !!t.closest('input, textarea, select, [contenteditable="true"]')
 }
 
-function onKey(e) {
-  if (typingInField(e) && e.key !== 'Escape' && e.key !== 'F1') return
+function onKey(e, opts = {}) {
+  if (!opts.fromEditor && typingInField(e) && e.key !== 'Escape' && e.key !== 'F1') return
   if (dialogOpen()) {
     // Ctrl+, and F1 close their own dialog; they never open one over another.
     if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === ',') {
@@ -5888,7 +6078,7 @@ onMounted(async () => {
   startStep = 'terminals'
   if (window.shellApi.reconcilePtys) {
     const ids = []
-    forEachWsLeaf((l) => ids.push(l.id))
+    forEachWsLeaf((l) => l.kind !== 'editor' && ids.push(l.id))
     window.shellApi.reconcilePtys(ids)
   }
   loadVoiceLanguages()
@@ -5957,6 +6147,21 @@ onMounted(async () => {
 
   window.addEventListener('keydown', onKey)
   window.addEventListener('pointerdown', onDocPointerDown, true)
+  // The code editor: its notices, files changed on disk, and closing the
+  // window with unsaved files (the main process asks through here).
+  setEditorHooks({ toast: (text, opts) => showToast(text, opts) })
+  startDiskWatch()
+  watch(() => [settings.editorAutoSave, settings.editorAutoSaveDelayMs], autoSaveSettingsChanged)
+  if (window.shellApi.editor && window.shellApi.editor.onConfirmClose) {
+    unsubEditorClose = window.shellApi.editor.onConfirmClose(async () => {
+      const dirty = Object.values(editorDocs)
+        .filter((d) => d.dirty)
+        .map((d) => d.path)
+      if (dirty.length && !(await askEditorClose(dirty))) return
+      saveLayoutNow()
+      window.shellApi.editor.closeWindow()
+    })
+  }
   unsubFocusPane = window.shellApi.onFocusPane
     ? window.shellApi.onFocusPane(({ paneId }) => focusPane(paneId))
     : null
@@ -5964,6 +6169,7 @@ onMounted(async () => {
 })
 
 let unsubFocusPane = null
+let unsubEditorClose = null
 
 // A saved file another program holds for a moment (antivirus, backup): the
 // main process answers { locked: true }; tried again every second (about 15 s
@@ -5997,6 +6203,7 @@ window.addEventListener('pagehide', flushSaves)
 
 onBeforeUnmount(() => {
   if (unsubFocusPane) unsubFocusPane()
+  if (unsubEditorClose) unsubEditorClose()
   if (unsubUpdate) unsubUpdate()
   flushSaves()
   window.removeEventListener('beforeunload', flushSaves)
@@ -6366,9 +6573,10 @@ onBeforeUnmount(() => {
       <ExplorerPanel
         v-if="explorerOpen"
         :root="currentWs ? currentWs.cwd : null"
-        :can-insert="!!activeId"
+        :can-insert="canInsertPath"
         @open="openExplorerFile"
-        @open-editor="(file) => openInEditor({ file })"
+        @open-editor="(file) => openInTesselEditor({ file, preview: false })"
+        @open-external="(file) => openExternally({ file })"
         @terminal-here="terminalHere"
         @insert-path="insertPathInPane"
         @toast="(t) => showToast(t, { timeout: 5000 })"
@@ -6515,7 +6723,7 @@ onBeforeUnmount(() => {
     <FileFinder
       v-if="finderOpen"
       :root="finderRoot()"
-      :can-insert="!!activeId"
+      :can-insert="canInsertPath"
       @open="openFoundFile"
       @insert="insertFoundPath"
       @close="finderOpen = false"
@@ -6526,7 +6734,8 @@ onBeforeUnmount(() => {
       :file="fileView.file"
       :label="fileView.label"
       :line="fileView.line"
-      @open-editor="openInEditor"
+      @open-editor="openViewedInEditor"
+      @open-external="openExternally"
       @open="openFromViewer"
       @close="fileView = null"
     />

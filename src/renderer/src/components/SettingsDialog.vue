@@ -640,6 +640,61 @@ const CURSORS = [
         </label>
       </section>
 
+      <section id="set-editor" class="set-section">
+        <h3>Editor</h3>
+        <label class="set-row">
+          <div class="set-label">
+            Save automatically
+            <span class="set-hint">A moment after you stop typing (never over a file that changed on disk)</span>
+          </div>
+          <input v-model="settings.editorAutoSave" type="checkbox" class="set-switch" />
+        </label>
+        <div v-if="settings.editorAutoSave" class="set-row">
+          <label class="set-label" for="settings-autosave-ms">
+            Save after
+            <span class="set-hint">Milliseconds without typing (250 to 10000)</span>
+          </label>
+          <input
+            id="settings-autosave-ms"
+            class="set-number"
+            type="number"
+            min="250"
+            max="10000"
+            step="250"
+            :value="settings.editorAutoSaveDelayMs"
+            @change="
+              settings.editorAutoSaveDelayMs = Math.min(10000, Math.max(250, parseInt($event.target.value, 10) || 1000));
+              $event.target.value = settings.editorAutoSaveDelayMs
+            "
+          />
+        </div>
+        <label class="set-row">
+          <div class="set-label">
+            Word wrap
+            <span class="set-hint">Long lines wrap to the pane's width (Alt+Z in the editor)</span>
+          </div>
+          <input v-model="settings.editorWordWrap" type="checkbox" class="set-switch" />
+        </label>
+        <label class="set-row">
+          <div class="set-label">Minimap</div>
+          <input v-model="settings.editorMinimap" type="checkbox" class="set-switch" />
+        </label>
+        <label class="set-row">
+          <div class="set-label">
+            Preview tabs
+            <span class="set-hint">A file opened with one click replaces the previous one until you edit it or double-click its tab</span>
+          </div>
+          <input v-model="settings.editorPreviewTabs" type="checkbox" class="set-switch" />
+        </label>
+        <label class="set-row">
+          <div class="set-label">
+            Changes side by side
+            <span class="set-hint">Otherwise inline, in one column</span>
+          </div>
+          <input v-model="settings.diffSideBySide" type="checkbox" class="set-switch" />
+        </label>
+      </section>
+
       <section id="set-orchestration" class="set-section">
         <h3>Orchestration</h3>
         <p class="set-hint">

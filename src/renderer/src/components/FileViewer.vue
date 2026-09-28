@@ -15,7 +15,7 @@ const props = defineProps({
   // Scroll to this line (text files), from a file:line link.
   line: { type: Number, default: null }
 })
-const emit = defineEmits(['close', 'open-editor', 'open'])
+const emit = defineEmits(['close', 'open-editor', 'open-external', 'open'])
 
 const kind = computed(() => fileKind(props.file))
 const name = computed(() => props.label || props.file.split(/[\\/]/).pop())
@@ -189,7 +189,8 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey, true))
         </div>
         <span class="fview-spacer"></span>
         <button type="button" class="imgview-btn" title="Copy the file's full path" @click="copyPath">Copy path</button>
-        <button type="button" class="imgview-btn" @click="emit('open-editor', { file, line })">Open in editor</button>
+        <button v-if="kind !== 'image' && kind !== 'pdf'" type="button" class="imgview-btn" title="Edit it in Tessel's editor" @click="emit('open-editor', { file, line })">Open in editor</button>
+        <button type="button" class="imgview-btn" title="VS Code when installed, else the file's own program" @click="emit('open-external', { file, line })">Open in VS Code</button>
         <button ref="closeBtn" type="button" class="imgview-btn imgview-close" title="Close (Esc)" aria-label="Close" @click="emit('close')">
           <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />

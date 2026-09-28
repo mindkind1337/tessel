@@ -66,8 +66,21 @@ export const DEFAULT_SETTINGS = Object.freeze({
   // conversation stay; opening the pane resumes it). Off by default.
   agentSleep: false,
   agentSleepMinutes: 30,
-  promptCacheTtlMs: 300000
+  promptCacheTtlMs: 300000,
+  // The code editor (like Orca's): save by itself a moment after you stop
+  // typing (off by default), the minimap, word wrap, preview tabs (a file
+  // opened with one click replaces the previous one until you edit it), and
+  // the Changes view side by side instead of inline.
+  editorAutoSave: false,
+  editorAutoSaveDelayMs: 1000,
+  editorMinimap: false,
+  editorWordWrap: true,
+  editorPreviewTabs: true,
+  diffSideBySide: false
 })
+
+export const EDITOR_AUTOSAVE_MIN_MS = 250
+export const EDITOR_AUTOSAVE_MAX_MS = 10000
 
 const fresh = () => ({ ...DEFAULT_SETTINGS, customAgents: [], quickCommands: [], agentPrefs: {} })
 
@@ -92,6 +105,11 @@ export function loadSettings(saved) {
     if (key === 'keepAwake' && !['off', 'agents', 'on'].includes(v)) continue
     if (key === 'promptCacheTtlMs' && ![300000, 3600000].includes(v)) continue
     if (key === 'agentSleepMinutes' && !(Number.isInteger(v) && v >= 1 && v <= 1440)) continue
+    if (
+      key === 'editorAutoSaveDelayMs' &&
+      !(Number.isInteger(v) && v >= EDITOR_AUTOSAVE_MIN_MS && v <= EDITOR_AUTOSAVE_MAX_MS)
+    )
+      continue
     if (key === 'quickCommands') {
       if (Array.isArray(v)) settings.quickCommands = v.filter(validQuickCommand).slice(0, 100)
       continue

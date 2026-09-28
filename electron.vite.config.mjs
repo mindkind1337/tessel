@@ -32,6 +32,11 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin()]
   },
   renderer: {
-    plugins: [vue()]
+    plugins: [vue()],
+    // Monaco's language workers (src/renderer/src/editor/monacoSetup.js) are
+    // ES modules that import other chunks: bundled as ES workers.
+    worker: {
+      format: 'es'
+    }
   }
 })

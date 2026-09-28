@@ -12,7 +12,7 @@ const props = defineProps({
   // A pane to type paths into (the active one), for "Insert path".
   canInsert: { type: Boolean, default: false }
 })
-const emit = defineEmits(['open', 'open-editor', 'terminal-here', 'insert-path', 'toast', 'close'])
+const emit = defineEmits(['open', 'open-editor', 'open-external', 'terminal-here', 'insert-path', 'toast', 'close'])
 
 const nodes = reactive({}) // path -> { entries, loading, error }
 const open = reactive({}) // folder path -> true when expanded
@@ -137,6 +137,7 @@ async function act(what) {
   closeMenu()
   if (what === 'open' && e) emit('open', e.path)
   else if (what === 'editor' && e) emit('open-editor', e.path)
+  else if (what === 'external' && e) emit('open-external', e.path)
   else if (what === 'terminal') emit('terminal-here', menuDir.value)
   else if (what === 'insert' && e) emit('insert-path', quoted(relPath(e.path)))
   else if (what === 'copy' && e) copy(e.path)
@@ -295,6 +296,7 @@ const LETTER_TITLE = { M: 'Modified', A: 'Added', D: 'Deleted', R: 'Renamed', C:
           draggable="true"
           :data-path="e.path"
           @click="onRowClick(e)"
+          @dblclick="!e.dir && emit('open', e.path, { keep: true })"
           @contextmenu="onContext($event, e)"
           @dragstart="onDragStart($event, e)"
         >
@@ -333,6 +335,7 @@ const LETTER_TITLE = { M: 'Modified', A: 'Added', D: 'Deleted', R: 'Renamed', C:
         <template v-if="menu.entry && !menu.entry.dir">
           <button role="menuitem" class="ctx-menu-item" @click="act('open')">Open</button>
           <button role="menuitem" class="ctx-menu-item" @click="act('editor')">Open in editor</button>
+          <button role="menuitem" class="ctx-menu-item" @click="act('external')">Open in VS Code</button>
         </template>
         <button role="menuitem" class="ctx-menu-item" @click="act('terminal')">Open a terminal here</button>
         <button v-if="menu.entry && canInsert" role="menuitem" @click="act('insert')">Insert path in the active pane</button>
