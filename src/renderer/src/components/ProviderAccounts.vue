@@ -1,9 +1,9 @@
-<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // Account rows and quiet maintenance actions are inspired by Orca's MIT
 // AccountsPane (Lovecast, 2026). This Vue implementation is independent.
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import BrandIcon from './BrandIcon.vue'
+import { t, intlLocale } from '../i18n'
 
 const emit = defineEmits(['changed'])
 const providers = ref([])
@@ -15,7 +15,7 @@ const jobs = ref({})
 const jobErrors = ref({})
 const copied = ref('')
 const removeTarget = ref(null)
-const names = { claude: 'Claude Code', codex: 'Codex' }
+const names = { claude: 'Claude Code', codex: 'Codex' } // i18n-ignore
 const available = computed(() => !!window.shellApi?.accounts?.list)
 let alive = true
 let pollTimer = null
@@ -25,7 +25,7 @@ let loadRequest = 0
 function api() {
   return window.shellApi.accounts
 }
-function message(err, fallback = 'The account action could not be completed.') {
+function message(err, fallback = t('settings.accounts.actionFailed', 'The account action could not be completed.')) {
   return err?.message || (typeof err === 'string' && err) || fallback
 }
 function requireOK(result) {
@@ -43,7 +43,11 @@ function rows(provider) {
           {
             ...provider.system,
             id: null,
-            label: provider.system.label || 'System default',
+            // The main process names it in English: show it in the interface's language.
+            label:
+              provider.system.label && provider.system.label !== 'System default' // i18n-ignore
+                ? provider.system.label
+                : t('settings.accounts.systemDefault', 'System default'),
             system: true
           }
         ]
@@ -55,17 +59,19 @@ function selected(provider, account) {
   return provider.selectedId === account.id
 }
 function statusLabel(status) {
-  return status === 'ready' ? 'Signed in' : status === 'missing' ? 'Sign-in needed' : 'Not verified'
+  if (status === 'ready') return t('settings.accounts.status.ready', 'Signed in')
+  if (status === 'missing') return t('settings.accounts.status.missing', 'Sign-in needed')
+  return t('settings.accounts.status.unverified', 'Not verified')
 }
 function accountName(account) {
-  return account.label || account.email || 'Account'
+  return account.label || account.email || t('settings.accounts.account', 'Account')
 }
 function lastLogin(value) {
   if (!value) return ''
   const date = new Date(value)
   return Number.isNaN(date.getTime())
     ? ''
-    : date.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })
+    : date.toLocaleString(intlLocale(), { dateStyle: 'medium', timeStyle: 'short' })
 }
 function isBusy(provider) {
   return (
@@ -77,8 +83,8 @@ function isBusy(provider) {
 function switchNotice(provider, result) {
   notice.value =
     provider === 'claude' || result.restartRequired
-      ? 'Account updated. Restart your Claude terminals when you are ready to use this sign-in.'
-      : 'Account updated. New Codex terminals will use this selection.'
+      ? t('settings.accounts.updatedClaude', 'Account updated. Restart your Claude terminals when you are ready to use this sign-in.')
+      : t('settings.accounts.updatedCodex', 'Account updated. New Codex terminals will use this selection.')
   if (result.warning) notice.value += ` ${result.warning}`
 }
 function mergeJobs(list) {
@@ -107,7 +113,7 @@ async function load() {
     mergeJobs(result.jobs)
   } catch (err) {
     if (alive && request === loadRequest)
-      error.value = message(err, 'Could not read your accounts.')
+      error.value = message(err, t('settings.accounts.readFailed', 'Could not read your accounts.'))
   } finally {
     if (alive && request === loadRequest) loading.value = false
   }
@@ -138,8 +144,8 @@ async function removeAccount() {
     if (!alive) return
     removeTarget.value = null
     notice.value = result.restartRequired
-      ? 'Account removed. Restart your Claude terminals when you are ready to use the restored sign-in.'
-      : 'Account removed from Tessel.'
+      ? t('settings.accounts.removedClaude', 'Account removed. Restart your Claude terminals when you are ready to use the restored sign-in.')
+      : t('settings.accounts.removed', 'Account removed from Tessel.')
     if (result.warning) notice.value += ` ${result.warning}`
     notifyChanged(target.provider)
     await load()
@@ -168,7 +174,7 @@ async function startLogin(provider, accountId) {
   try {
     const result = requireOK(await api().startLogin(provider, accountId))
     if (!alive) return
-    if (!result.job?.id) throw new Error('The sign-in did not return a job. Try again.')
+    if (!result.job?.id) throw new Error(t('settings.accounts.noJob', 'The sign-in did not return a job. Try again.'))
     jobs.value[provider] = result.job
     schedulePoll()
   } catch (err) {
@@ -203,12 +209,12 @@ async function pollJobs() {
           jobs.value[provider]?.state !== 'running'
         )
           return
-        if (!result.job?.state) throw new Error('Could not read sign-in progress.')
+        if (!result.job?.state) throw new Error(t('settings.accounts.progressFailed', 'Could not read sign-in progress.'))
         jobs.value[provider] = result.job
         jobErrors.value[provider] = ''
         if (result.job.state === 'done') {
           completed = true
-          notice.value = `${names[provider]} account saved. Select it below to use it.`
+          notice.value = t('settings.accounts.saved', '{{name}} account saved. Select it below to use it.', { name: names[provider] })
           notifyChanged(provider)
         }
       } catch (err) {
@@ -242,7 +248,7 @@ async function openLogin(job) {
     const result = await window.shellApi.openExternal(url)
     if (result?.ok === false) throw new Error(message(result.error))
   } catch (err) {
-    if (alive) jobErrors.value[job.provider] = message(err, 'Could not open the sign-in link.')
+    if (alive) jobErrors.value[job.provider] = message(err, t('settings.accounts.openFailed', 'Could not open the sign-in link.'))
   }
 }
 async function copyLogin(job) {
@@ -253,7 +259,7 @@ async function copyLogin(job) {
     else await navigator.clipboard.writeText(url)
     if (alive) copied.value = job.id
   } catch (err) {
-    if (alive) jobErrors.value[job.provider] = message(err, 'Could not copy the sign-in link.')
+    if (alive) jobErrors.value[job.provider] = message(err, t('settings.accounts.copyFailed', 'Could not copy the sign-in link.'))
   }
 }
 onMounted(load)
@@ -265,15 +271,19 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="provider-accounts" data-test="provider-accounts" :aria-busy="loading">
-    <p class="accounts-intro">Keep your usual sign-in, or add accounts for quick switching.</p>
-    <p v-if="!available" class="accounts-empty">
-      Account management is not available in this version.
+    <p class="accounts-intro">
+      {{ t('settings.accounts.intro', 'Keep your usual sign-in, or add accounts for quick switching.') }}
     </p>
-    <p v-else-if="loading" class="accounts-empty" role="status">Reading accounts…</p>
+    <p v-if="!available" class="accounts-empty">
+      {{ t('settings.accounts.unavailable', 'Account management is not available in this version.') }}
+    </p>
+    <p v-else-if="loading" class="accounts-empty" role="status">
+      {{ t('settings.accounts.reading', 'Reading accounts…') }}
+    </p>
     <div v-if="error" class="accounts-error" role="alert">
       <span>{{ error }}</span>
       <button type="button" class="account-btn" data-test="accounts-retry" @click="load">
-        Retry
+        {{ t('settings.accounts.retry', 'Retry') }}
       </button>
     </div>
     <p v-if="notice" class="accounts-notice" role="status">{{ notice }}</p>
@@ -297,20 +307,22 @@ onBeforeUnmount(() => {
           data-test="account-add"
           @click="startLogin(provider.provider)"
         >
-          Add account
+          {{ t('settings.accounts.add', 'Add account') }}
         </button>
       </header>
       <p class="account-scope">
         {{
           provider.provider === 'claude'
-            ? 'Switching updates your system Claude sign-in. Restart existing Claude terminals to use the selected account.'
-            : 'The selected account is used by new Codex terminals. Existing terminals keep their current account.'
+            ? t('settings.accounts.scopeClaude', 'Switching updates your system Claude sign-in. Restart existing Claude terminals to use the selected account.')
+            : t('settings.accounts.scopeCodex', 'The selected account is used by new Codex terminals. Existing terminals keep their current account.')
         }}
       </p>
       <div v-if="provider.error" class="accounts-error" role="alert">
-        <span>Could not read accounts: {{ provider.error }}</span
+        <span
+          v-text="t('settings.accounts.providerReadFailed', 'Could not read accounts: {{error}}', { error: provider.error })"
+        ></span
         ><button type="button" class="account-btn" data-test="provider-retry" @click="load">
-          Retry
+          {{ t('settings.accounts.retry', 'Retry') }}
         </button>
       </div>
       <div class="account-rows">
@@ -324,7 +336,7 @@ onBeforeUnmount(() => {
           <button
             type="button"
             class="account-select"
-            :aria-label="`Use ${accountName(account)} for ${names[provider.provider] || provider.provider}`"
+            :aria-label="t('settings.accounts.useFor', 'Use {{account}} for {{provider}}', { account: accountName(account), provider: names[provider.provider] || provider.provider })"
             :aria-pressed="selected(provider, account)"
             :disabled="isBusy(provider.provider)"
             @click="changeAccount(provider, account)"
@@ -335,7 +347,7 @@ onBeforeUnmount(() => {
             <span class="account-info">
               <span class="account-title"
                 ><span>{{ accountName(account) }}</span
-                ><span v-if="selected(provider, account)" class="account-badge">Current</span></span
+                ><span v-if="selected(provider, account)" class="account-badge">{{ t('settings.accounts.current', 'Current') }}</span></span
               >
               <span
                 v-if="account.email && account.email !== accountName(account)"
@@ -349,9 +361,11 @@ onBeforeUnmount(() => {
                   statusLabel(account.status)
                 }}</span></span
               >
-              <span v-if="lastLogin(account.lastLoginAt)" class="account-last"
-                >Last signed in {{ lastLogin(account.lastLoginAt) }}</span
-              >
+              <span
+                v-if="lastLogin(account.lastLoginAt)"
+                class="account-last"
+                v-text="t('settings.accounts.lastSignedIn', 'Last signed in {{date}}', { date: lastLogin(account.lastLoginAt) })"
+              ></span>
             </span>
           </button>
           <div v-if="!account.system" class="account-actions">
@@ -360,20 +374,20 @@ onBeforeUnmount(() => {
               class="account-btn account-quiet"
               :disabled="isBusy(provider.provider)"
               data-test="account-reauth"
-              :aria-label="`Sign in again to ${accountName(account)}`"
+              :aria-label="t('settings.accounts.reauthLabel', 'Sign in again to {{account}}', { account: accountName(account) })"
               @click="startLogin(provider.provider, account.id)"
             >
-              Sign in again
+              {{ t('settings.accounts.reauth', 'Sign in again') }}
             </button>
             <button
               type="button"
               class="account-btn account-quiet"
               :disabled="isBusy(provider.provider)"
               data-test="account-remove"
-              :aria-label="`Remove ${accountName(account)}`"
+              :aria-label="t('settings.accounts.removeLabel', 'Remove {{account}}', { account: accountName(account) })"
               @click="removeTarget = { provider: provider.provider, account }"
             >
-              Remove
+              {{ t('settings.accounts.remove', 'Remove') }}
             </button>
           </div>
         </div>
@@ -382,18 +396,18 @@ onBeforeUnmount(() => {
         v-if="removeTarget?.provider === provider.provider"
         class="account-confirm"
         role="group"
-        aria-label="Confirm account removal"
+        :aria-label="t('settings.accounts.confirmRemoval', 'Confirm account removal')"
       >
         <p>
-          Remove <strong>{{ accountName(removeTarget.account) }}</strong>
+          {{ t('settings.accounts.removePrefix', 'Remove') }} <strong>{{ accountName(removeTarget.account) }}</strong>
           {{
             provider.provider === 'codex'
-              ? 'and its local Codex history from Tessel? Your OpenAI account is kept.'
-              : 'from Tessel? Your Claude account and conversation history are kept.'
+              ? t('settings.accounts.removeCodexSuffix', 'and its local Codex history from Tessel? Your OpenAI account is kept.')
+              : t('settings.accounts.removeClaudeSuffix', 'from Tessel? Your Claude account and conversation history are kept.')
           }}
         </p>
         <p v-if="provider.selectedId === removeTarget.account.id" class="account-scope">
-          This account is selected. Removing it restores the system default for this provider.
+          {{ t('settings.accounts.removeSelected', 'This account is selected. Removing it restores the system default for this provider.') }}
         </p>
         <div class="account-confirm-actions">
           <button
@@ -403,7 +417,7 @@ onBeforeUnmount(() => {
             data-test="account-remove-cancel"
             @click="removeTarget = null"
           >
-            Keep account</button
+            {{ t('settings.accounts.keep', 'Keep account') }}</button
           ><button
             type="button"
             class="account-btn account-danger"
@@ -411,7 +425,7 @@ onBeforeUnmount(() => {
             data-test="account-remove-confirm"
             @click="removeAccount"
           >
-            Remove account
+            {{ t('settings.accounts.removeAccount', 'Remove account') }}
           </button>
         </div>
       </div>
@@ -423,11 +437,11 @@ onBeforeUnmount(() => {
       >
         <template v-if="jobs[provider.provider].state === 'running'">
           <p>
-            <span class="account-pulse" aria-hidden="true"></span>Waiting for
-            {{ names[provider.provider] }} sign-in…
+            <span class="account-pulse" aria-hidden="true"></span
+            ><span v-text="t('settings.accounts.waiting', 'Waiting for {{name}} sign-in…', { name: names[provider.provider] })"></span>
           </p>
           <p class="account-scope">
-            Finish signing in in your browser. You can close Settings while it completes.
+            {{ t('settings.accounts.finishInBrowser', 'Finish signing in in your browser. You can close Settings while it completes.') }}
           </p>
           <div class="account-login-actions">
             <template v-if="safeLoginUrl(jobs[provider.provider])"
@@ -437,14 +451,18 @@ onBeforeUnmount(() => {
                 data-test="account-login-open"
                 @click="openLogin(jobs[provider.provider])"
               >
-                Open sign-in</button
+                {{ t('settings.accounts.openSignIn', 'Open sign-in') }}</button
               ><button
                 type="button"
                 class="account-btn"
                 data-test="account-login-copy"
                 @click="copyLogin(jobs[provider.provider])"
               >
-                {{ copied === jobs[provider.provider].id ? 'Link copied' : 'Copy link' }}
+                {{
+                  copied === jobs[provider.provider].id
+                    ? t('settings.accounts.linkCopied', 'Link copied')
+                    : t('settings.accounts.copyLink', 'Copy link')
+                }}
               </button></template
             >
             <button
@@ -454,7 +472,11 @@ onBeforeUnmount(() => {
               data-test="account-login-cancel"
               @click="cancelLogin(provider.provider)"
             >
-              {{ jobs[provider.provider].cancelling ? 'Cancelling…' : 'Cancel sign-in' }}
+              {{
+                jobs[provider.provider].cancelling
+                  ? t('settings.accounts.cancelling', 'Cancelling…')
+                  : t('settings.accounts.cancelSignIn', 'Cancel sign-in')
+              }}
             </button>
           </div>
         </template>
@@ -463,12 +485,12 @@ onBeforeUnmount(() => {
           class="accounts-error"
           role="alert"
         >
-          {{ jobs[provider.provider].error || 'Sign-in failed. Try again.' }}
+          {{ jobs[provider.provider].error || t('settings.accounts.signInFailed', 'Sign-in failed. Try again.') }}
         </p>
         <p v-else-if="jobs[provider.provider].state === 'cancelled'" class="account-scope">
-          Sign-in cancelled.
+          {{ t('settings.accounts.signInCancelled', 'Sign-in cancelled.') }}
         </p>
-        <p v-else class="account-scope">Sign-in complete.</p>
+        <p v-else class="account-scope">{{ t('settings.accounts.signInComplete', 'Sign-in complete.') }}</p>
         <p v-if="jobErrors[provider.provider]" class="accounts-error" role="alert">
           {{ jobErrors[provider.provider] }}
         </p>
