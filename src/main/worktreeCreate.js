@@ -83,8 +83,12 @@ export async function resolveWorktreeBase(root, currentBranch, requested, run) {
     return { ok: false, error: 'The base branch must be a branch name.' }
   }
   const selected = requested?.trim() || 'HEAD'
-  let ref = 'HEAD'
-  if (selected !== 'HEAD') {
+  // Only full object identities bypass symbolic branch validation. Verify the
+  // object below and compare identities so a hex-named ref cannot impersonate
+  // a missing commit, nor a SHA-256 abbreviation pass as a full SHA-1 identity.
+  const pinnedCommit = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(selected)
+  let ref = pinnedCommit ? selected.toLowerCase() : 'HEAD'
+  if (selected !== 'HEAD' && !pinnedCommit) {
     if (selected.length > 1024 || /[\r\n\0]/.test(selected)) {
       return { ok: false, error: 'The selected base branch is not valid.' }
     }
@@ -111,7 +115,11 @@ export async function resolveWorktreeBase(root, currentBranch, requested, run) {
     `${ref}^{commit}`
   ])
   const commit = resolved.stdout.trim()
-  if (!resolved.ok || !/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/i.test(commit)) {
+  if (
+    !resolved.ok ||
+    !/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/i.test(commit) ||
+    (pinnedCommit && commit.toLowerCase() !== ref)
+  ) {
     return { ok: false, error: 'The selected base branch does not point to a commit.' }
   }
   return { ok: true, commit, branch: selected === 'HEAD' ? currentBranch : selected }
