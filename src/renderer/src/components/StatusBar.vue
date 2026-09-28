@@ -1,4 +1,3 @@
-<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // The status bar at the bottom, ported from Orca's (MIT, Copyright (c) 2026
 // Lovecast Inc.; src/renderer/src/components/status-bar/: StatusBarSurface,
@@ -24,6 +23,7 @@ import OrcaMenu from './OrcaMenu.vue'
 import PortRow from './sidebar/PortRow.vue'
 import { settings } from '../settings'
 import { formatMemory, formatCpu, awakeCopy, resourceTree, portsSummary } from '../statusBarModel'
+import { t } from '../i18n'
 
 const props = defineProps({
   // Left side: { target, summary, path }
@@ -58,12 +58,24 @@ const shows = (id) => settings.statusBarItems.includes(id)
 const awake = computed(() => awakeCopy(settings.keepAwake, props.keepAwakeActive))
 const awakeOpen = ref(null)
 const awakeItems = computed(() => [
-  { type: 'header', label: 'Keep computer awake', hint: awake.value.statusText },
+  { type: 'header', label: awake.value.title, hint: awake.value.statusText },
   { type: 'separator' },
   ...[
-    { id: 'on', label: 'On', description: 'Keep this computer awake continuously' },
-    { id: 'agents', label: 'Agent', description: 'Stay awake while an agent is working' },
-    { id: 'off', label: 'Off', description: 'Allow normal system sleep behavior' }
+    {
+      id: 'on',
+      label: t('statusBar.awake.on', 'On'),
+      description: t('statusBar.awake.onHint', 'Keep this computer awake continuously')
+    },
+    {
+      id: 'agents',
+      label: t('statusBar.awake.agent', 'Agent'),
+      description: t('statusBar.awake.agentHint', 'Stay awake while an agent is working')
+    },
+    {
+      id: 'off',
+      label: t('statusBar.awake.off', 'Off'),
+      description: t('statusBar.awake.offHint', 'Allow normal system sleep behavior')
+    }
   ].map((m) => ({
     type: 'radio',
     label: m.label,
@@ -91,7 +103,7 @@ async function fetchSnapshot() {
       if (res && res.ok) {
         snapshot.value = res
         snapshotError.value = ''
-      } else snapshotError.value = (res && res.error) || 'memory unavailable'
+      } else snapshotError.value = (res && res.error) || t('statusBar.resources.memoryUnavailable', 'memory unavailable')
     } catch (e) {
       snapshotError.value = e.message
     } finally {
@@ -117,26 +129,56 @@ const terminalCount = computed(() => props.terminals.length)
 const resourceTooltip = computed(() => {
   const mem = snapshot.value
     ? `${memBadge.value} · Σ ${metricLabel.value}${
-        snapshot.value.totalPrivateMemory !== undefined ? ` · ${formatMemory(snapshot.value.totalPrivateMemory)} Σ Private` : ''
+        snapshot.value.totalPrivateMemory !== undefined
+          ? ` · ${formatMemory(snapshot.value.totalPrivateMemory)} Σ ${t('statusBar.resources.private', 'Private')}`
+          : ''
       }`
-    : 'memory unavailable'
+    : t('statusBar.resources.memoryUnavailable', 'memory unavailable')
   const n = terminalCount.value
   return [
-    `Resource Manager - ${mem} - ${n} terminal ${n === 1 ? 'session' : 'sessions'}`,
-    n > 0 ? 'Terminal sessions are grouped by workspace.' : 'No terminal sessions yet.'
+    n === 1
+      ? t('statusBar.resources.tooltip', 'Resource Manager - {{memory}} - {{count}} terminal session', { memory: mem, count: n })
+      : t('statusBar.resources.tooltip', 'Resource Manager - {{memory}} - {{count}} terminal sessions', { memory: mem, count: n }),
+    n > 0
+      ? t('statusBar.resources.grouped', 'Terminal sessions are grouped by workspace.')
+      : t('statusBar.resources.noSessions', 'No terminal sessions yet.')
   ].join('\n')
+})
+const resourceAriaLabel = computed(() => {
+  const n = terminalCount.value
+  return n === 1
+    ? t('statusBar.resources.ariaLabel', 'Resource Manager, {{count}} terminal session', { count: n })
+    : t('statusBar.resources.ariaLabel', 'Resource Manager, {{count}} terminal sessions', { count: n })
 })
 function toggleResources(e) {
   resourceAnchor.value = e.currentTarget.getBoundingClientRect()
   portsOpen.value = false
   resourcesOpen.value = !resourcesOpen.value
 }
-const METRIC_DESCRIPTION = {
-  RSS: 'Summed resident set size (RSS). Shared or aliased pages can appear in more than one process.',
-  WS: 'Summed working set (WS): pages resident in RAM right now. Shared pages can appear in more than one process, and memory Windows has paged out is not counted here.'
+function metricDescription(metric) {
+  return metric === 'RSS'
+    ? t('statusBar.resources.rssHint', 'Summed resident set size (RSS). Shared or aliased pages can appear in more than one process.')
+    : t('statusBar.resources.wsHint', 'Summed working set (WS): pages resident in RAM right now. Shared pages can appear in more than one process, and memory Windows has paged out is not counted here.')
 }
-const PRIVATE_DESCRIPTION =
-  'Summed private bytes: memory these processes have committed, counted whether it is resident or paged out. This is what the host charges against its commit limit, so it keeps rising while the working set above shrinks under paging.'
+function privateDescription() {
+  return t('statusBar.resources.privateHint', 'Summed private bytes: memory these processes have committed, counted whether it is resident or paged out. This is what the host charges against its commit limit, so it keeps rising while the working set above shrinks under paging.')
+}
+const portsLabel = computed(() => {
+  const n = ports.value.workspaceCount
+  return n === 1
+    ? t('statusBar.ports.ariaLabel', 'Ports, {{count}} workspace port', { count: n })
+    : t('statusBar.ports.ariaLabel', 'Ports, {{count}} workspace ports', { count: n })
+})
+const portsTitle = computed(() => {
+  const n = ports.value.workspaceCount
+  const main =
+    n === 1
+      ? t('statusBar.ports.title', 'Ports — {{count}} workspace port', { count: n })
+      : t('statusBar.ports.title', 'Ports — {{count}} workspace ports', { count: n })
+  return ports.value.externalCount
+    ? main + t('statusBar.ports.externalSuffix', ' · {{count}} external', { count: ports.value.externalCount })
+    : main
+})
 
 // --- Ports ------------------------------------------------------------------
 const ports = computed(() => portsSummary(props.portGroups, props.externalPorts))
@@ -152,7 +194,9 @@ function togglePorts(e) {
 
 // --- Remote hosts (SshStatusSegment): Tessel has none yet ---------------------
 const hostsOpen = ref(null)
-const hostItems = [{ type: 'label', label: 'Remote Hosts', className: 'orca-menu-caps' }]
+const hostItems = computed(() => [
+  { type: 'label', label: t('statusBar.hosts.title', 'Remote Hosts'), className: 'orca-menu-caps' }
+])
 
 // --- Popovers: placed above their trigger, closed by a click outside ---------
 const popEl = ref(null)
@@ -195,13 +239,12 @@ onBeforeUnmount(() => {
 
 // --- Right-click: which indicators show (StatusBarVisibilityMenu) -----------
 const visibilityMenu = ref(null)
-const VISIBILITY_ITEMS = [
-  { id: 'ssh', label: 'Remote Hosts', icon: Server },
-  { id: 'resource-usage', label: 'Resource Manager', icon: Activity },
-  { id: 'ports', label: 'Ports', icon: Plug }
-]
 const visibilityItems = computed(() =>
-  VISIBILITY_ITEMS.map((i) => ({
+  [
+    { id: 'ssh', label: t('statusBar.hosts.title', 'Remote Hosts'), icon: Server },
+    { id: 'resource-usage', label: t('statusBar.resources.title', 'Resource Manager'), icon: Activity },
+    { id: 'ports', label: t('statusBar.ports.name', 'Ports'), icon: Plug }
+  ].map((i) => ({
     type: 'checkbox',
     label: i.label,
     icon: i.icon,
@@ -229,7 +272,7 @@ function goToWorktree(key) {
 </script>
 
 <template>
-  <footer ref="barEl" class="sb" aria-label="Status bar" @contextmenu="onContextMenu">
+  <footer ref="barEl" class="sb" :aria-label="t('statusBar.ariaLabel', 'Status bar')" @contextmenu="onContextMenu">
     <div class="sb-left">
       <template v-if="info">
         <span class="sb-info sb-target" :title="info.target">{{ info.target }}</span>
@@ -259,7 +302,7 @@ function goToWorktree(key) {
         v-if="shows('resource-usage')"
         type="button"
         class="sb-trigger"
-        :aria-label="`Resource Manager, ${terminalCount} terminal ${terminalCount === 1 ? 'session' : 'sessions'}`"
+        :aria-label="resourceAriaLabel"
         :title="resourceTooltip"
         :aria-expanded="resourcesOpen"
         data-status-bar-context-menu-exempt
@@ -281,10 +324,8 @@ function goToWorktree(key) {
         v-if="shows('ports')"
         type="button"
         class="sb-trigger"
-        :aria-label="`Ports, ${ports.workspaceCount} workspace ${ports.workspaceCount === 1 ? 'port' : 'ports'}`"
-        :title="`Ports — ${ports.workspaceCount} workspace ${ports.workspaceCount === 1 ? 'port' : 'ports'}${
-          ports.externalCount ? ` · ${ports.externalCount} external` : ''
-        }`"
+        :aria-label="portsLabel"
+        :title="portsTitle"
         :aria-expanded="portsOpen"
         data-status-bar-context-menu-exempt
         data-status-bar-trigger
@@ -300,13 +341,13 @@ function goToWorktree(key) {
         v-if="shows('ssh')"
         type="button"
         class="sb-trigger"
-        aria-label="Remote host connection status"
+        :aria-label="t('statusBar.hosts.ariaLabel', 'Remote host connection status')"
         data-status-bar-trigger
         @click="hostsOpen = hostsOpen ? null : $event.currentTarget.getBoundingClientRect()"
       >
         <template v-if="!iconOnly">
           <ServerOff :size="12" class="sb-muted" aria-hidden="true" />
-          <span v-if="!compact" class="sb-label sb-muted-text">0 hosts</span>
+          <span v-if="!compact" class="sb-label sb-muted-text">{{ t('statusBar.hosts.none', '0 hosts') }}</span>
           <span class="sb-host-dot" aria-hidden="true"></span>
         </template>
         <template v-else>
@@ -323,7 +364,7 @@ function goToWorktree(key) {
       :offset="8"
       :width="256"
       :items="awakeItems"
-      label="Keep computer awake"
+      :label="awake.title"
       @close="awakeOpen = null"
     />
     <OrcaMenu
@@ -334,7 +375,7 @@ function goToWorktree(key) {
       :offset="8"
       :width="320"
       :items="hostItems"
-      label="Remote Hosts"
+      :label="t('statusBar.hosts.title', 'Remote Hosts')"
       @close="hostsOpen = null"
     />
     <OrcaMenu
@@ -343,7 +384,7 @@ function goToWorktree(key) {
       side="bottom"
       :offset="0"
       :items="visibilityItems"
-      label="Status bar items"
+      :label="t('statusBar.menu.items', 'Status bar items')"
       @close="visibilityMenu = null"
     />
 
@@ -354,25 +395,25 @@ function goToWorktree(key) {
         ref="popEl"
         class="sb-popover sb-resources"
         role="dialog"
-        aria-label="Resource Manager"
+        :aria-label="t('statusBar.resources.title', 'Resource Manager')"
         data-status-bar-context-menu-exempt
         :style="{ left: popPos.left + 'px', top: popPos.top + 'px' }"
       >
         <div class="sb-pop-head">
-          <span class="sb-pop-title"><MemoryStick :size="12" class="sb-muted" aria-hidden="true" /> Resource Manager</span>
+          <span class="sb-pop-title"><MemoryStick :size="12" class="sb-muted" aria-hidden="true" /> {{ t('statusBar.resources.title', 'Resource Manager') }}</span>
         </div>
         <div v-if="snapshot" class="sb-res-summary">
-          <span title="Combined CPU load. Values above 100% mean more than one core is working at once.">{{ formatCpu(snapshot.totalCpu) }}</span>
+          <span :title="t('statusBar.resources.cpuHint', 'Combined CPU load. Values above 100% mean more than one core is working at once.')">{{ formatCpu(snapshot.totalCpu) }}</span>
           <span class="sb-sep">·</span>
-          <span :title="METRIC_DESCRIPTION[metricLabel]">{{ formatMemory(snapshot.totalMemory) }} <span class="sb-muted-text">Σ {{ metricLabel }}</span></span>
+          <span :title="metricDescription(metricLabel)">{{ formatMemory(snapshot.totalMemory) }} <span class="sb-muted-text">Σ {{ metricLabel }}</span></span>
           <template v-if="snapshot.totalPrivateMemory !== undefined">
             <span class="sb-sep">·</span>
-            <span :title="PRIVATE_DESCRIPTION">{{ formatMemory(snapshot.totalPrivateMemory) }} <span class="sb-muted-text">Σ Private</span></span>
+            <span :title="privateDescription()">{{ formatMemory(snapshot.totalPrivateMemory) }} <span class="sb-muted-text">Σ {{ t('statusBar.resources.private', 'Private') }}</span></span>
           </template>
         </div>
         <div class="sb-res-body">
           <div class="sb-res-sort">
-            <button type="button" class="sb-res-col name" :class="{ on: sortBy === 'name' }" @click="sortBy = 'name'">Name</button>
+            <button type="button" class="sb-res-col name" :class="{ on: sortBy === 'name' }" @click="sortBy = 'name'">{{ t('statusBar.resources.name', 'Name') }}</button>
             <button type="button" class="sb-res-col cpu" :class="{ on: sortBy === 'cpu' }" @click="sortBy = 'cpu'">CPU</button>
             <button type="button" class="sb-res-col mem" :class="{ on: sortBy === 'memory' }" @click="sortBy = 'memory'">
               {{ metricLabel }}
@@ -380,7 +421,7 @@ function goToWorktree(key) {
           </div>
           <div class="sb-res-scroll">
             <template v-if="snapshot">
-              <div v-if="!tree.groups.length" class="sb-empty">Nothing running right now</div>
+              <div v-if="!tree.groups.length" class="sb-empty">{{ t('statusBar.resources.nothingRunning', 'Nothing running right now') }}</div>
               <div v-for="g in tree.groups" :key="g.key" class="sb-res-group">
                 <div class="sb-res-row group">
                   <span class="sb-res-name">{{ g.name }}</span>
@@ -392,7 +433,7 @@ function goToWorktree(key) {
                   :key="s.id"
                   type="button"
                   class="sb-res-row session"
-                  :title="`Go to ${s.label}`"
+                  :title="t('statusBar.resources.goTo', 'Go to {{name}}', { name: s.label })"
                   @click="focusSession(s.id)"
                 >
                   <span class="sb-res-dot" :class="{ bound: s.bound }" aria-hidden="true"></span>
@@ -405,7 +446,7 @@ function goToWorktree(key) {
                 <button
                   type="button"
                   class="sb-res-row sb-res-app"
-                  :aria-label="appExpanded ? 'Collapse Tessel' : 'Expand Tessel'"
+                  :aria-label="appExpanded ? t('statusBar.resources.collapseApp', 'Collapse Tessel') : t('statusBar.resources.expandApp', 'Expand Tessel')"
                   @click="appExpanded = !appExpanded"
                 >
                   <ChevronRight :size="12" class="sb-res-chevron" :class="{ open: appExpanded }" aria-hidden="true" />
@@ -423,7 +464,11 @@ function goToWorktree(key) {
                 </template>
               </div>
             </template>
-            <div v-else class="sb-empty">{{ snapshotError ? `Resource snapshots are unavailable: ${snapshotError}` : 'Loading…' }}</div>
+            <div
+              v-else
+              class="sb-empty"
+              v-text="snapshotError ? t('statusBar.resources.unavailable', 'Resource snapshots are unavailable: {{error}}', { error: snapshotError }) : t('statusBar.loading', 'Loading…')"
+            ></div>
           </div>
         </div>
       </div>
@@ -434,20 +479,20 @@ function goToWorktree(key) {
         ref="popEl"
         class="sb-popover sb-ports"
         role="dialog"
-        aria-label="Ports"
+        :aria-label="t('statusBar.ports.name', 'Ports')"
         data-status-bar-context-menu-exempt
         :style="{ left: popPos.left + 'px', top: popPos.top + 'px' }"
       >
         <div class="sb-pop-head">
-          <span class="sb-pop-title"><Plug :size="12" class="sb-muted" aria-hidden="true" /> Ports</span>
-          <span class="sb-pop-hint">{{ ports.workspaceCount }} workspace · {{ ports.externalCount }} external</span>
+          <span class="sb-pop-title"><Plug :size="12" class="sb-muted" aria-hidden="true" /> {{ t('statusBar.ports.name', 'Ports') }}</span>
+          <span class="sb-pop-hint" v-text="t('statusBar.ports.counts', '{{workspace}} workspace · {{external}} external', { workspace: ports.workspaceCount, external: ports.externalCount })"></span>
         </div>
-        <div v-if="portsUnavailable" class="sb-notice">Port scan unavailable on this computer: {{ portsUnavailable }}</div>
+        <div v-if="portsUnavailable" class="sb-notice" v-text="t('statusBar.ports.unavailable', 'Port scan unavailable on this computer: {{reason}}', { reason: portsUnavailable })"></div>
         <div class="sb-ports-list">
           <section v-for="g in ports.groups" :key="g.key" class="sb-port-group">
             <div class="sb-port-group-head">
               <span class="sb-port-group-name" :title="g.name">{{ g.name }}</span>
-              <button type="button" class="port-row-action" aria-label="Go to Worktree" title="Go to Worktree" @click="goToWorktree(g.key)">
+              <button type="button" class="port-row-action" :aria-label="t('statusBar.ports.goToWorktree', 'Go to Worktree')" :title="t('statusBar.ports.goToWorktree', 'Go to Worktree')" @click="goToWorktree(g.key)">
                 <FolderOpen :size="12" aria-hidden="true" />
               </button>
               <span class="sb-port-group-count">{{ g.ports.length }}</span>
@@ -465,12 +510,12 @@ function goToWorktree(key) {
             </div>
           </section>
           <div v-if="!ports.groups.length" class="sb-empty">
-            {{ portsRefreshing ? 'Scanning for workspace ports...' : 'No workspace ports detected' }}
+            {{ portsRefreshing ? t('statusBar.ports.scanning', 'Scanning for workspace ports...') : t('statusBar.ports.none', 'No workspace ports detected') }}
           </div>
           <section class="sb-external">
             <button type="button" class="sb-external-toggle" :aria-expanded="externalExpanded" @click="externalExpanded = !externalExpanded">
               <ChevronRight :size="12" class="sb-res-chevron" :class="{ open: externalExpanded }" aria-hidden="true" />
-              External Ports
+              {{ t('statusBar.ports.external', 'External Ports') }}
               <span class="sb-port-group-count">{{ ports.externalCount }}</span>
             </button>
             <template v-if="externalExpanded">
@@ -485,7 +530,7 @@ function goToWorktree(key) {
                   @stop="emit('port-stop', $event)"
                 />
               </div>
-              <div v-else class="sb-empty">No external ports detected</div>
+              <div v-else class="sb-empty">{{ t('statusBar.ports.noExternal', 'No external ports detected') }}</div>
             </template>
           </section>
         </div>

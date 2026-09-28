@@ -1,4 +1,3 @@
-<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // One agent or terminal in a workspace card, ported from Orca's
 // CompactAgentRow (sidebar/worktree-card-compact-agent-row.tsx; MIT,
@@ -14,6 +13,7 @@ import AgentStateDot from './AgentStateDot.vue'
 import { acquireChildren, childrenKey, splitChildren, childDotState } from '../../agentChildrenFeed'
 import { childTime, formatTokens } from '../../agentChildrenView'
 import { childrenFolded, olderShown } from './agentRowState'
+import { t } from '../../i18n'
 
 const props = defineProps({
   row: { type: Object, required: true },
@@ -67,11 +67,40 @@ function toggleOlder(e) {
   e.stopPropagation()
   olderShown[props.row.id] = !showOlder.value
 }
-const STATE_TITLE = { running: 'Running', done: 'Finished', quiet: 'Quiet: nothing written for a while (a long tool, or stopped)' }
+function stateTitle(state) {
+  if (state === 'running') return t('sidebar.agentRow.running', 'Running')
+  if (state === 'done') return t('sidebar.agentRow.finished', 'Finished')
+  if (state === 'quiet') return t('sidebar.agentRow.quiet', 'Quiet: nothing written for a while (a long tool, or stopped)')
+  return state
+}
 function childStats(c) {
-  const t = childTime(c, clock.value)
+  const time = childTime(c, clock.value)
   const tokens = formatTokens(c.tokens)
-  return tokens ? `${t} · ↓ ${tokens} tokens` : t
+  return tokens ? t('sidebar.agentRow.stats', '{{time}} · ↓ {{tokens}} tokens', { time, tokens }) : time
+}
+function childTitle(c, state) {
+  return `${c.title || noTitle()}\n${c.type || ''} · ${state}`
+}
+function noTitle() {
+  return t('sidebar.agentRow.noTitle', '(no title)')
+}
+const disclosureLabel = computed(() => {
+  const count = children.value.length
+  if (folded.value)
+    return count === 1
+      ? t('sidebar.agentRow.showChildren', 'Show {{count}} child agent', { count })
+      : t('sidebar.agentRow.showChildren', 'Show {{count}} child agents', { count })
+  return count === 1
+    ? t('sidebar.agentRow.hideChildren', 'Hide {{count}} child agent', { count })
+    : t('sidebar.agentRow.hideChildren', 'Hide {{count}} child agents', { count })
+})
+function moreLabel(count) {
+  return t('sidebar.agentRow.more', '{{count}} more', { count })
+}
+function unreadTitle(count) {
+  return count > 1
+    ? t('sidebar.agentRow.unread', '{{count}} team messages this agent has not read yet (it reads them with its team tools)', { count })
+    : t('sidebar.agentRow.unread', '{{count}} team message this agent has not read yet (it reads them with its team tools)', { count })
 }
 </script>
 
@@ -92,7 +121,7 @@ function childStats(c) {
       v-if="hasChildren"
       type="button"
       class="compact-agent-child-disclosure-button"
-      :aria-label="`${folded ? 'Show' : 'Hide'} ${children.length} child ${children.length === 1 ? 'agent' : 'agents'}`"
+      :aria-label="disclosureLabel"
       :aria-expanded="!folded"
       @click="toggleChildren"
     >
@@ -109,36 +138,36 @@ function childStats(c) {
         - {{ row.secondary }}</span
       >
     </span>
-    <span v-if="row.lead" class="car-tag" title="Leads the team">lead</span>
+    <span v-if="row.lead" class="car-tag" :title="t('sidebar.agentRow.leadHint', 'Leads the team')">{{ t('sidebar.agentRow.lead', 'lead') }}</span>
     <span
       v-if="row.teamUnread"
       class="car-tag"
-      :title="`${row.teamUnread} team message${row.teamUnread > 1 ? 's' : ''} this agent has not read yet (it reads them with its team tools)`"
+      :title="unreadTitle(row.teamUnread)"
       >✉ {{ row.teamUnread }}</span
     >
     <span
       v-if="row.toolsDown"
       class="car-tag"
-      title="Its team tools (tessel-team) are not connected: it cannot read or send team messages. Restart it (right-click its pane, Restart)."
-      >⚠ tools</span
+      :title="t('sidebar.agentRow.toolsDownHint', 'Its team tools (tessel-team) are not connected: it cannot read or send team messages. Restart it (right-click its pane, Restart).')"
+      >⚠ {{ t('sidebar.agentRow.toolsDown', 'tools') }}</span
     >
     <span v-if="hasChildren && folded" class="car-time" :class="{ focused: row.focused }">+{{ children.length }}</span>
     <span v-if="row.time" class="car-time" :class="{ focused: row.focused }">{{ row.time }}</span>
     <span v-if="row.num" class="car-num" :class="{ focused: row.focused }">{{ row.num }}</span>
   </div>
-  <div v-if="hasChildren && !folded" class="worktree-agent-lineage-children" role="group" :aria-label="`Sub-agents of ${row.title}`">
+  <div v-if="hasChildren && !folded" class="worktree-agent-lineage-children" role="group" :aria-label="t('sidebar.agentRow.subAgentsOf', 'Sub-agents of {{name}}', { name: row.title })">
     <div
       v-for="c in split.shown"
       :key="c.id"
       class="compact-agent-row worktree-agent-row-hover worktree-agent-lineage-child-row"
       :class="'child-' + c.state"
-      :title="`${c.title || '(no title)'}\n${c.type || ''} · ${STATE_TITLE[c.state] || c.state}`"
+      :title="childTitle(c, stateTitle(c.state))"
       data-agent-child=""
       @click.stop="emit('activate', row)"
     >
-      <AgentStateDot :state="childDotState(c)" :title="STATE_TITLE[c.state] || c.state" />
+      <AgentStateDot :state="childDotState(c)" :title="stateTitle(c.state)" />
       <span class="car-text">
-        <span class="car-lead">{{ c.title || '(no title)' }}</span>
+        <span class="car-lead">{{ c.title || noTitle() }}</span>
         <span v-if="c.type" class="car-trail"> - {{ c.type }}</span>
       </span>
       <span class="car-time">{{ childStats(c) }}</span>
@@ -148,20 +177,20 @@ function childStats(c) {
         v-for="c in split.older"
         :key="c.id"
         class="compact-agent-row worktree-agent-row-hover worktree-agent-lineage-child-row child-done"
-        :title="`${c.title || '(no title)'}\n${c.type || ''} · Finished`"
+        :title="childTitle(c, t('sidebar.agentRow.finished', 'Finished'))"
         data-agent-child=""
         @click.stop="emit('activate', row)"
       >
-        <AgentStateDot :state="childDotState(c)" title="Finished" />
+        <AgentStateDot :state="childDotState(c)" :title="t('sidebar.agentRow.finished', 'Finished')" />
         <span class="car-text">
-          <span class="car-lead">{{ c.title || '(no title)' }}</span>
+          <span class="car-lead">{{ c.title || noTitle() }}</span>
           <span v-if="c.type" class="car-trail"> - {{ c.type }}</span>
         </span>
         <span class="car-time">{{ childStats(c) }}</span>
       </div>
     </template>
     <button v-if="split.older.length" type="button" class="child-more" @click="toggleOlder">
-      {{ showOlder ? 'Show less' : `${split.older.length} more` }}
+      {{ showOlder ? t('sidebar.agentRow.showLess', 'Show less') : moreLabel(split.older.length) }}
     </button>
   </div>
 </template>

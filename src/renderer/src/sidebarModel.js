@@ -1,4 +1,3 @@
-// i18n-pending: text here does not go through t() yet
 // The left sidebar's logic, ported from Orca (MIT, Copyright (c) 2026
 // Lovecast Inc.): projects (Orca's repos) -> workspaces (Orca's worktrees:
 // the project folder and each task copy) -> the agents and terminals in each,
@@ -7,32 +6,33 @@
 // smart-attention.ts, worktree-card-agent-summary.ts, AgentStateDot.tsx,
 // lib/worktree-status.ts, lib/short-time-ago.ts). Pure functions: App feeds
 // raw workspaces, the sidebar renders the rows.
+import { t, intlLocale } from './i18n'
 
 // --- Orca's agent state vocabulary (AgentStateDot.tsx) ------------------------
 export function agentStateLabel(state) {
   switch (state) {
     case 'working':
-      return 'Working'
+      return t('sidebar.agentState.working', 'Working')
     case 'monitoring':
-      return 'Monitoring background tasks'
+      return t('sidebar.agentState.monitoring', 'Monitoring background tasks')
     case 'blocked':
-      return 'Blocked'
+      return t('sidebar.agentState.blocked', 'Blocked')
     case 'waiting':
-      return 'Waiting for input'
+      return t('sidebar.agentState.waiting', 'Waiting for input')
     case 'interrupted':
-      return 'Interrupted'
+      return t('sidebar.agentState.interrupted', 'Interrupted')
     case 'failed':
-      return 'Failed'
+      return t('sidebar.agentState.failed', 'Failed')
     case 'done':
-      return 'Done'
+      return t('sidebar.agentState.done', 'Done')
     case 'idle':
-      return 'Idle'
+      return t('sidebar.agentState.idle', 'Idle')
     case 'unverifiable':
-      return 'No recent update'
+      return t('sidebar.agentState.unverifiable', 'No recent update')
     case 'permission':
-      return 'Needs attention'
+      return t('sidebar.agentState.permission', 'Needs attention')
   }
-  return 'Idle'
+  return t('sidebar.agentState.idle', 'Idle')
 }
 
 // Tessel's pane state -> Orca's dot state. Tessel: 'approval' (asks you),
@@ -61,9 +61,23 @@ export const SUMMARY_STATE_ORDER = ['waiting', 'blocked', 'working', 'monitoring
 export function formatSummaryStateLabel(state) {
   switch (state) {
     case 'unverifiable':
-      return 'not reporting'
+      return t('sidebar.summary.unverifiable', 'not reporting')
     case 'permission':
-      return 'needs attention'
+      return t('sidebar.summary.permission', 'needs attention')
+    case 'waiting':
+      return t('sidebar.summary.waiting', 'waiting')
+    case 'blocked':
+      return t('sidebar.summary.blocked', 'blocked')
+    case 'working':
+      return t('sidebar.summary.working', 'working')
+    case 'monitoring':
+      return t('sidebar.summary.monitoring', 'monitoring')
+    case 'interrupted':
+      return t('sidebar.summary.interrupted', 'interrupted')
+    case 'done':
+      return t('sidebar.summary.done', 'done')
+    case 'idle':
+      return t('sidebar.summary.idle', 'idle')
   }
   return state
 }
@@ -83,17 +97,22 @@ export function summarizeAgents(rows, subjectLabel) {
   for (const r of rows) counts.set(r.dotState, (counts.get(r.dotState) || 0) + 1)
   const parts = SUMMARY_STATE_ORDER.flatMap((state) => {
     const n = counts.get(state) || 0
-    return n ? [`${n} ${formatSummaryStateLabel(state)}`] : []
+    return n ? [{ count: n, state: formatSummaryStateLabel(state) }] : []
   })
   if (parts.length === 1) {
-    const only = parts[0].replace(/^\d+\s+/, '')
-    return rows.length === 1 ? `${subjectLabel} ${only}` : `All ${subjectLabel} ${only}`
+    const only = parts[0].state
+    return rows.length === 1
+      ? t('sidebar.summary.one', '{{subject}} {{state}}', { subject: subjectLabel, state: only })
+      : t('sidebar.summary.all', 'All {{subject}} {{state}}', { subject: subjectLabel, state: only })
   }
-  return `${subjectLabel}: ${parts.join(', ')}`
+  const list = parts.map((p) => t('sidebar.summary.part', '{{count}} {{state}}', p)).join(', ')
+  return t('sidebar.summary.list', '{{subject}}: {{list}}', { subject: subjectLabel, list })
 }
 
 export function summarizeAgentIdentities(rows) {
-  return rows.map((r) => `${r.typeLabel} ${formatSummaryStateLabel(r.dotState)}`).join('; ')
+  return rows
+    .map((r) => t('sidebar.summary.identity', '{{name}} {{state}}', { name: r.typeLabel, state: formatSummaryStateLabel(r.dotState) }))
+    .join('; ')
 }
 
 // Up to maxCount rows, one per agent kind, the most common kinds first.
@@ -114,27 +133,33 @@ export function selectSummaryGroupIconAgents(rows, maxCount) {
 // Orca's lib/short-time-ago.ts.
 export function formatShortTimeAgo(ts, now = Date.now()) {
   const delta = now - ts
-  if (delta < 60000) return 'now'
+  if (delta < 60000) return t('sidebar.time.now', 'now')
   const minutes = Math.floor(delta / 60000)
-  if (minutes < 60) return `${minutes}m`
+  if (minutes < 60) return t('sidebar.time.minutes', '{{count}}m', { count: minutes })
   const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours}h`
-  return `${Math.floor(hours / 24)}d`
+  if (hours < 24) return t('sidebar.time.hours', '{{count}}h', { count: hours })
+  return t('sidebar.time.days', '{{count}}d', { count: Math.floor(hours / 24) })
 }
 
 // --- Worktree status (Orca's lib/worktree-status.ts) --------------------------
-const STATUS_LABELS = {
-  active: 'Active',
-  working: 'Working',
-  monitoring: 'Monitoring background tasks',
-  permission: 'Needs permission',
-  interrupted: 'Interrupted',
-  done: 'Done',
-  inactive: 'Inactive'
-}
-
 export function getWorktreeStatusLabel(status) {
-  return STATUS_LABELS[status] || ''
+  switch (status) {
+    case 'active':
+      return t('sidebar.status.active', 'Active')
+    case 'working':
+      return t('sidebar.status.working', 'Working')
+    case 'monitoring':
+      return t('sidebar.status.monitoring', 'Monitoring background tasks')
+    case 'permission':
+      return t('sidebar.status.permission', 'Needs permission')
+    case 'interrupted':
+      return t('sidebar.status.interrupted', 'Interrupted')
+    case 'done':
+      return t('sidebar.status.done', 'Done')
+    case 'inactive':
+      return t('sidebar.status.inactive', 'Inactive')
+  }
+  return ''
 }
 
 // A copy's status from its panes: someone asks you > working > usage limit
@@ -158,10 +183,10 @@ export function attentionOf(rows) {
     if (r.sleeping || r.kind !== 'agent') continue
     const c =
       r.dotState === 'waiting' || r.dotState === 'blocked' ? 1 : r.dotState === 'done' ? 2 : r.dotState === 'working' ? 3 : r.dotState === 'unverifiable' ? 4 : 5
-    const t = r.since || 0
-    if (c < cls || (c === cls && t > ts)) {
+    const at = r.since || 0
+    if (c < cls || (c === cls && at > ts)) {
       cls = c
-      ts = t
+      ts = at
     }
   }
   return { cls, attentionTimestamp: cls === 5 ? 0 : ts }
@@ -189,23 +214,28 @@ export function paneRow(pane, now = Date.now()) {
   const agent = pane.kind === 'agent'
   const dotState = paneDotState(pane)
   let secondary
-  if (!agent) secondary = 'Terminal'
-  else if (pane.sleeping) secondary = 'Sleeping'
-  else if (pane.state === 'limited') secondary = pane.reset ? `Usage limit · ${pane.reset}` : 'Usage limit'
-  else if (pane.state === 'approval') secondary = 'Asks your approval'
-  else if (pane.typingHold) secondary = 'Message waits until you send your text'
-  else if (pane.held) secondary = 'Message waits for your approval'
+  const terminal = t('sidebar.row.terminal', 'Terminal')
+  const agentName = t('sidebar.row.agent', 'Agent')
+  if (!agent) secondary = terminal
+  else if (pane.sleeping) secondary = t('sidebar.status.sleeping', 'Sleeping')
+  else if (pane.state === 'limited')
+    secondary = pane.reset
+      ? t('sidebar.row.usageLimitReset', 'Usage limit · {{reset}}', { reset: pane.reset })
+      : t('sidebar.row.usageLimit', 'Usage limit')
+  else if (pane.state === 'approval') secondary = t('sidebar.row.asksApproval', 'Asks your approval')
+  else if (pane.typingHold) secondary = t('sidebar.row.typingHold', 'Message waits until you send your text')
+  else if (pane.held) secondary = t('sidebar.row.held', 'Message waits for your approval')
   else if (pane.track && pane.track.text) secondary = pane.track.text
   else secondary = agentStateLabel(dotState)
-  const primary = agent && pane.task ? pane.task : pane.title || (agent ? 'Agent' : 'Terminal')
+  const primary = agent && pane.task ? pane.task : pane.title || (agent ? agentName : terminal)
   return {
     id: pane.id,
     num: pane.num || 0,
     kind: agent ? 'agent' : 'shell',
     iconKind: agent ? pane.agentId || 'agent' : pane.shellId || 'shell',
     accent: agent ? pane.accent || null : null,
-    typeLabel: pane.title || (agent ? 'Agent' : 'Terminal'),
-    title: pane.title || (agent ? 'Agent' : 'Terminal'),
+    typeLabel: pane.title || (agent ? agentName : terminal),
+    title: pane.title || (agent ? agentName : terminal),
     primary,
     secondary: primary === secondary ? '' : secondary,
     dotState,
@@ -286,21 +316,25 @@ export function buildProjectCards(project, now = Date.now()) {
 // Orca's buildWorktreeComparator.
 export function compareCards(sortBy, projectNames = {}) {
   const label = (c) => c.title || ''
+  const locale = intlLocale()
   return (a, b) => {
     switch (sortBy) {
       case 'name':
-        return label(a).localeCompare(label(b))
+        return label(a).localeCompare(label(b), locale)
       case 'smart':
         return (
           a.attention.cls - b.attention.cls ||
           b.attention.attentionTimestamp - a.attention.attentionTimestamp ||
           b.lastActivityAt - a.lastActivityAt ||
-          label(a).localeCompare(label(b))
+          label(a).localeCompare(label(b), locale)
         )
       case 'recent':
-        return b.lastActivityAt - a.lastActivityAt || label(a).localeCompare(label(b))
+        return b.lastActivityAt - a.lastActivityAt || label(a).localeCompare(label(b), locale)
       case 'repo':
-        return (projectNames[a.projectId] || '').localeCompare(projectNames[b.projectId] || '') || label(a).localeCompare(label(b))
+        return (
+          (projectNames[a.projectId] || '').localeCompare(projectNames[b.projectId] || '', locale) ||
+          label(a).localeCompare(label(b), locale)
+        )
     }
     return (a.order || 0) - (b.order || 0) // manual: the project folder, then the copies as they came
   }
@@ -346,7 +380,7 @@ export function buildSidebarRows(projects, options = {}, now = Date.now()) {
   if (opts.groupBy === 'none') {
     const all = groups.flatMap((g) => g.cards.map((card) => ({ card, project: g.project }))).sort((a, b) => cmp(a.card, b.card))
     const key = 'all'
-    rows.push({ type: 'header', key, label: 'All', project: null, count: all.length, collapsed: collapsed.has(key) })
+    rows.push({ type: 'header', key, label: t('sidebar.groups.all', 'All'), project: null, count: all.length, collapsed: collapsed.has(key) })
     if (!collapsed.has(key)) for (const { card, project } of all) rows.push({ type: 'card', key: card.key, card, project })
     return rows
   }

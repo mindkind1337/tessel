@@ -1,4 +1,3 @@
-<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // One place to open anything: pick a terminal or an agent, and where it goes.
 // Used from the toolbar's "New" button and from a pane's own menu (then the
@@ -6,6 +5,7 @@
 import { ref, computed, onMounted, nextTick } from 'vue'
 import BrandIcon from './BrandIcon.vue'
 import { describeSteps } from '../shellChain'
+import { t } from '../i18n'
 
 const props = defineProps({
   shells: { type: Array, default: () => [] },
@@ -39,16 +39,36 @@ const pos = ref({ left: props.x, top: props.y })
 
 // Where the new pane goes, next to the pane in use. (A new workspace has its
 // own button in the sidebar.) The icon shades the side it opens on.
-const PLACEMENTS = [
-  { id: 'left', label: 'Left', title: 'Split to the left', shade: { x: 2.1, y: 3.1, w: 5.9, h: 9.8 }, line: 'M8 2.5v11' },
-  { id: 'right', label: 'Right', title: 'Split to the right', shade: { x: 8, y: 3.1, w: 5.9, h: 9.8 }, line: 'M8 2.5v11' },
-  { id: 'down', label: 'Below', title: 'Split below', shade: { x: 2.1, y: 8, w: 11.8, h: 4.9 }, line: 'M1.5 8h13' }
-]
-const SIDE = { left: 'to the left of', right: 'to the right of', down: 'below' }
+const placements = computed(() => [
+  {
+    id: 'left',
+    label: t('pane.launch.left', 'Left'),
+    title: t('pane.launch.splitLeft', 'Split to the left'),
+    shade: { x: 2.1, y: 3.1, w: 5.9, h: 9.8 },
+    line: 'M8 2.5v11'
+  },
+  {
+    id: 'right',
+    label: t('pane.launch.right', 'Right'),
+    title: t('pane.launch.splitRight', 'Split to the right'),
+    shade: { x: 8, y: 3.1, w: 5.9, h: 9.8 },
+    line: 'M8 2.5v11'
+  },
+  {
+    id: 'down',
+    label: t('pane.launch.below', 'Below'),
+    title: t('pane.launch.splitBelow', 'Split below'),
+    shade: { x: 2.1, y: 8, w: 11.8, h: 4.9 },
+    line: 'M1.5 8h13'
+  }
+])
 
 const whereText = computed(() => {
-  if (!props.targetTitle) return 'Opens in this workspace'
-  return `Opens ${SIDE[props.placement] || SIDE.right} ${props.targetTitle}`
+  if (!props.targetTitle) return t('pane.launch.opensHere', 'Opens in this workspace')
+  const name = props.targetTitle
+  if (props.placement === 'left') return t('pane.launch.opensLeftOf', 'Opens to the left of {{name}}', { name })
+  if (props.placement === 'down') return t('pane.launch.opensBelow', 'Opens below {{name}}', { name })
+  return t('pane.launch.opensRightOf', 'Opens to the right of {{name}}', { name })
 })
 
 function launch(kind, item) {
@@ -98,9 +118,9 @@ onMounted(async () => {
     @pointerdown.stop
   >
     <div class="launch-where">
-      <div class="launch-seg" role="radiogroup" aria-label="Where to open">
+      <div class="launch-seg" role="radiogroup" :aria-label="t('pane.launch.whereToOpen', 'Where to open')">
         <button
-          v-for="p in PLACEMENTS"
+          v-for="p in placements"
           :key="p.id"
           class="launch-seg-btn"
           :class="{ on: placement === p.id }"
@@ -120,7 +140,7 @@ onMounted(async () => {
       <div class="launch-where-text">{{ whereText }}</div>
     </div>
 
-    <div class="launch-section">Terminals</div>
+    <div class="launch-section">{{ t('pane.launch.terminals', 'Terminals') }}</div>
     <div v-for="shell in shells" :key="shell.id" class="launch-row">
       <button
         class="launch-item"
@@ -130,25 +150,25 @@ onMounted(async () => {
       >
         <BrandIcon :kind="shell.id" :size="16" />
         <span class="launch-name">{{ shell.name }}</span>
-        <span v-if="shell.id === defaultShell" class="launch-tag">Default</span>
+        <span v-if="shell.id === defaultShell" class="launch-tag">{{ t('pane.launch.default', 'Default') }}</span>
       </button>
       <button
         v-if="shell.id !== defaultShell"
         class="launch-set-default"
-        title="Use this shell by default, including for agents"
+        :title="t('pane.launch.setDefaultHint', 'Use this shell by default, including for agents')"
         @click="emit('set-default', shell.id)"
       >
-        Set default
+        {{ t('pane.launch.setDefault', 'Set default') }}
       </button>
     </div>
 
-    <div class="launch-section">AI agents</div>
+    <div class="launch-section">{{ t('pane.launch.agents', 'AI agents') }}</div>
     <label
       class="launch-worktree"
       :class="{ disabled: !worktree.available }"
       :title="
         worktree.available
-          ? 'The agent gets its own folder and git branch, so it cannot overwrite another agent\'s work. Merge the branch when it is done.'
+          ? t('pane.launch.worktreeHint', 'The agent gets its own folder and git branch, so it cannot overwrite another agent\'s work. Merge the branch when it is done.')
           : worktree.reason || ''
       "
     >
@@ -160,12 +180,12 @@ onMounted(async () => {
         @change="emit('worktree', $event.target.checked)"
       />
       <span class="launch-worktree-text">
-        Separate copy on its own branch
+        {{ t('pane.launch.worktree', 'Separate copy on its own branch') }}
         <span class="set-hint">{{
           worktree.checking
-            ? 'Checking the project…'
+            ? t('pane.launch.checking', 'Checking the project…')
             : worktree.available
-              ? 'Best when two agents work on the same project'
+              ? t('pane.launch.worktreeBest', 'Best when two agents work on the same project')
               : worktree.reason
         }}</span>
       </span>
@@ -174,21 +194,21 @@ onMounted(async () => {
       <button
         class="launch-item"
         role="menuitem"
-        :title="`Start ${agent.name}`"
+        :title="t('pane.launch.start', 'Start {{name}}', { name: agent.name })"
         @click="launch('agent', agent)"
       >
         <BrandIcon :kind="agent.id" :accent="agent.accent" :label="agent.name" :size="16" />
         <span class="launch-name">{{ agent.name }}</span>
       </button>
     </div>
-    <p v-if="!installedAgents.length" class="launch-empty">No AI agents installed yet.</p>
+    <p v-if="!installedAgents.length" class="launch-empty">{{ t('pane.launch.noAgents', 'No AI agents installed yet.') }}</p>
     <div v-if="missingAgents.length" class="launch-install">
-      <span class="launch-install-label">Install:</span>
+      <span class="launch-install-label">{{ t('pane.launch.install', 'Install:') }}</span>
       <button
         v-for="agent in missingAgents"
         :key="agent.id"
         class="launch-chip"
-        :title="`Install ${agent.name} (${describeSteps(agent.install)}), then start it`"
+        :title="t('pane.launch.installHint', 'Install {{name}} ({{steps}}), then start it', { name: agent.name, steps: describeSteps(agent.install) })"
         @click="emit('install', agent)"
       >
         <BrandIcon :kind="agent.id" :accent="agent.accent" :label="agent.name" :size="13" />
@@ -211,12 +231,13 @@ onMounted(async () => {
             stroke-linejoin="round"
           />
         </svg>
-        <span class="launch-name">Add your own agent or install tools…</span>
+        <span class="launch-name">{{ t('pane.launch.tools', 'Add your own agent or install tools…') }}</span>
       </button>
     </div>
 
     <div class="launch-foot">
-      <kbd>↑</kbd><kbd>↓</kbd> to move, <kbd>Enter</kbd> to open, <kbd>Esc</kbd> to close
+      <kbd>↑</kbd><kbd>↓</kbd> {{ t('pane.launch.keysMove', 'to move,') }} <kbd>Enter</kbd> {{ t('pane.launch.keysOpen', 'to open,') }}
+      <kbd>Esc</kbd> {{ t('pane.launch.keysClose', 'to close') }}
     </div>
   </div>
 </template>

@@ -1,4 +1,3 @@
-<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // One workspace card (the project folder, or a task copy) with its status
 // lane, title, branch, live ports and the agents / terminals working in it.
@@ -19,6 +18,7 @@ import {
   summarizeAgentIdentities,
   getWorktreeStatusLabel
 } from '../../sidebarModel'
+import { t } from '../../i18n'
 
 const props = defineProps({
   card: { type: Object, required: true },
@@ -60,18 +60,22 @@ const showTitleRowIndicators = computed(() => props.compactCards && hasPorts.val
 const showInlineAgents = computed(() => props.showAgents && rows.value.length > 0)
 const titleOnly = computed(() => !hasMetaRow.value && !showInlineAgents.value)
 const statusGlyph = computed(() => (card.value.sleeping ? 'sleeping' : card.value.status))
-const statusLabel = computed(() => (card.value.sleeping ? 'Sleeping' : getWorktreeStatusLabel(card.value.status)))
+const statusLabel = computed(() =>
+  card.value.sleeping ? t('sidebar.status.sleeping', 'Sleeping') : getWorktreeStatusLabel(card.value.status)
+)
 const unreadTooltip = computed(() =>
-  card.value.isUnread ? `Mark as read · ${statusLabel.value}` : `${statusLabel.value} · Mark as unread`
+  card.value.isUnread
+    ? t('sidebar.card.markReadTooltip', 'Mark as read · {{status}}', { status: statusLabel.value })
+    : t('sidebar.card.markUnreadTooltip', '{{status}} · Mark as unread', { status: statusLabel.value })
 )
 
 // Compact agent activity: several rows fold into one summary line (Orca).
 const subjectLabel = computed(() => {
   const n = rows.value.length
   const agents = rows.value.filter((r) => r.kind === 'agent').length
-  if (agents === n) return `${n} agents`
-  if (agents === 0) return `${n} terminals`
-  return `${n} panes`
+  if (agents === n) return t('sidebar.card.agents', '{{count}} agents', { count: n })
+  if (agents === 0) return t('sidebar.card.terminals', '{{count}} terminals', { count: n })
+  return t('sidebar.card.panes', '{{count}} panes', { count: n })
 })
 const useSummary = computed(() => props.agentMode === 'compact' && rows.value.length > 1 && !(props.picking && props.picking.active))
 const summary = computed(() => summarizeAgents(rows.value, subjectLabel.value))
@@ -87,8 +91,13 @@ const summaryGroups = computed(() => {
 
 function rowTitle(r) {
   const parts = [r.secondary ? `${r.primary} - ${r.secondary}` : r.primary]
-  if (r.team) parts.push(`Team: ${props.teamName(r.team)}${r.lead ? ' (lead)' : ''}`)
-  if (r.num) parts.push(`Pane ${r.num}`)
+  if (r.team)
+    parts.push(
+      r.lead
+        ? t('sidebar.card.teamLead', 'Team: {{team}} (lead)', { team: props.teamName(r.team) })
+        : t('sidebar.card.team', 'Team: {{team}}', { team: props.teamName(r.team) })
+    )
+  if (r.num) parts.push(t('sidebar.card.pane', 'Pane {{num}}', { num: r.num }))
   return parts.join('\n')
 }
 
@@ -133,7 +142,7 @@ function onCardClick(e) {
             type="button"
             class="wtc-unread"
             :class="{ unread: card.isUnread }"
-            :aria-label="card.isUnread ? 'Mark as read' : 'Mark as unread'"
+            :aria-label="card.isUnread ? t('sidebar.card.markRead', 'Mark as read') : t('sidebar.card.markUnread', 'Mark as unread')"
             :title="unreadTooltip"
             @click.stop="emit('toggle-read', card)"
           >
@@ -158,13 +167,13 @@ function onCardClick(e) {
             <div class="wtc-header">
               <div class="wtc-header-main">
                 <span class="wtc-title" :class="{ unread: card.isUnread }" :title="card.path || card.title">
-                  <span v-if="card.isUnread" class="sr-only">Unread:</span>{{ card.title }}
+                  <span v-if="card.isUnread" class="sr-only">{{ t('sidebar.card.unread', 'Unread:') }}</span>{{ card.title }}
                 </span>
                 <span
                   v-if="!compactCards && card.isMain && card.branch"
                   class="wtc-badge"
-                  title="Primary worktree (original clone directory)"
-                  >primary</span
+                  :title="t('sidebar.card.primaryHint', 'Primary worktree (original clone directory)')"
+                  >{{ t('sidebar.card.primary', 'primary') }}</span
                 >
                 <span v-if="showTitleRowIndicators" class="wtc-title-indicators">
                   <WorktreeCardPorts
@@ -203,7 +212,7 @@ function onCardClick(e) {
             class="wtc-agents"
             :class="{ 'no-meta': !hasMetaRow }"
             role="group"
-            aria-label="Agents"
+            :aria-label="t('sidebar.card.agentsLabel', 'Agents')"
             data-compact-agent-list="true"
             @click.stop
             @dblclick.stop
@@ -213,7 +222,11 @@ function onCardClick(e) {
                 type="button"
                 class="compact-agent-summary-button"
                 :class="{ expanded }"
-                :aria-label="expanded ? `Collapse ${subjectLabel}` : `Expand ${summary}. ${summarizeAgentIdentities(rows)}`"
+                :aria-label="
+                  expanded
+                    ? t('sidebar.card.collapse', 'Collapse {{subject}}', { subject: subjectLabel })
+                    : t('sidebar.card.expand', 'Expand {{summary}}. {{identities}}', { summary, identities: summarizeAgentIdentities(rows) })
+                "
                 :aria-expanded="expanded"
                 :title="expanded ? '' : summary"
                 @click.stop="emit('toggle-expanded', card.key)"

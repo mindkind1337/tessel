@@ -1,4 +1,3 @@
-<!-- i18n-pending: text here does not go through t() yet -->
 <script setup>
 // The plug on a workspace card and its hover card listing the live ports,
 // ported from Orca's WorktreeCardPortsTrigger / WorktreeCardPortsDetails
@@ -8,6 +7,7 @@
 import { ref, nextTick, onBeforeUnmount } from 'vue'
 import { Plug } from 'lucide-vue-next'
 import PortRow from './PortRow.vue'
+import { t } from '../../i18n'
 
 const props = defineProps({
   ports: { type: Array, required: true }
@@ -22,9 +22,9 @@ let openTimer = null
 let closeTimer = null
 
 function place() {
-  const t = trigger.value
-  if (!t) return
-  const r = t.getBoundingClientRect()
+  const el = trigger.value
+  if (!el) return
+  const r = el.getBoundingClientRect()
   const w = 320
   let left = r.right + 8
   if (left + w > window.innerWidth - 8) left = Math.max(8, r.left - w - 8)
@@ -63,7 +63,11 @@ onBeforeUnmount(() => {
       ref="trigger"
       type="button"
       class="wcp-trigger"
-      :aria-label="`${ports.length} live ${ports.length === 1 ? 'port' : 'ports'}`"
+      :aria-label="
+        ports.length === 1
+          ? t('sidebar.ports.liveCount', '{{count}} live port', { count: ports.length })
+          : t('sidebar.ports.liveCount', '{{count}} live ports', { count: ports.length })
+      "
       :aria-expanded="open"
       @click="toggle"
       @focus="show(0)"
@@ -78,7 +82,7 @@ onBeforeUnmount(() => {
         ref="card"
         class="wcp-card"
         role="dialog"
-        aria-label="Live Ports"
+        :aria-label="t('sidebar.ports.live', 'Live Ports')"
         :style="{ left: pos.left + 'px', top: pos.top + 'px' }"
         @mouseenter="show(0)"
         @mouseleave="hide()"
@@ -88,7 +92,7 @@ onBeforeUnmount(() => {
         <section class="wcp-section">
           <div class="wcp-title">
             <Plug :size="12" aria-hidden="true" />
-            <span>Live Ports <span class="wcp-count">({{ ports.length }})</span></span>
+            <span>{{ t('sidebar.ports.live', 'Live Ports') }} <span class="wcp-count">({{ ports.length }})</span></span>
           </div>
           <div class="wcp-content">
             <PortRow

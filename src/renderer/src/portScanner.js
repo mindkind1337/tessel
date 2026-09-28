@@ -1,10 +1,10 @@
-// i18n-pending: text here does not go through t() yet
 // Scans the live ports of every workspace copy, like Orca's
 // WorkspacePortScanner (MIT, Copyright (c) 2026 Lovecast Inc.): every 30 s
 // while the window is visible, at once when it becomes visible again, and
 // shortly after the panes change (a new pane, a closed one). Nothing runs
 // while the window is hidden.
 import { reactive, watch } from 'vue'
+import { t } from './i18n'
 
 export const WORKSPACE_PORT_SCAN_INTERVAL_MS = 30000
 const PROBES_SETTLE_MS = 1500
@@ -22,7 +22,7 @@ export function createPortScanner({
 } = {}) {
   const state = reactive({
     byCard: {}, // card key -> [port]
-    external: [], // listeners owned by no workspace (Orca's "External Ports")
+    external: [], // listeners owned by no workspace (Orca's External Ports)
     scannedAt: 0,
     refreshing: false,
     unavailableReason: ''
@@ -47,10 +47,10 @@ export function createPortScanner({
           state.scannedAt = res.scannedAt || Date.now()
           state.unavailableReason = ''
         } else {
-          state.unavailableReason = (res && (res.unavailableReason || res.error)) || 'Workspace port scan failed.'
+          state.unavailableReason = (res && (res.unavailableReason || res.error)) || t('sidebar.ports.scanFailed', 'Workspace port scan failed.')
         }
       } catch (e) {
-        state.unavailableReason = e.message || 'Workspace port scan failed.'
+        state.unavailableReason = e.message || t('sidebar.ports.scanFailed', 'Workspace port scan failed.')
       } finally {
         state.refreshing = false
         inFlight = null
@@ -102,14 +102,14 @@ export function createPortScanner({
 
   // Orca's Stop Process: main re-scans before it stops anything.
   async function kill(port) {
-    if (!api || !api.killPort) return { ok: false, reason: 'Restart Tessel to enable this.' }
+    if (!api || !api.killPort) return { ok: false, reason: t('sidebar.ports.restartToEnable', 'Restart Tessel to enable this.') }
     const res = await api.killPort({ probes: getProbes(), pid: port.pid, port: port.port })
     if (res && res.ok) {
       // A refresh already running started before the stop: wait, then list again.
       if (inFlight) await inFlight
       await refresh()
     }
-    return res || { ok: false, reason: 'Failed to stop the process.' }
+    return res || { ok: false, reason: t('sidebar.ports.stopFailed', 'Failed to stop the process.') }
   }
 
   return { state, refresh, start, stop, kill }
