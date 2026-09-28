@@ -40,6 +40,7 @@ describe('usage menu account switching', () => {
     await wrapper.get('[data-test="usage-button"]').trigger('click')
     await flushPromises()
     await wrapper.get('[data-test="usage-row-codex"]').trigger('click')
+    await wrapper.get('[data-test="usage-account-toggle"]').trigger('click')
   }
   it('loads accounts only on opening and refreshes usage after a successful selection', async () => {
     await open()
@@ -64,7 +65,7 @@ describe('usage menu account switching', () => {
     await flushPromises()
     expect(select.element.value).toBe('')
     expect(select.element.disabled).toBe(false)
-    expect(wrapper.get('[role="alert"]').text()).toContain('Could not save selection')
+    expect(wrapper.text()).toContain('Could not save selection')
     await select.setValue('work')
     await flushPromises()
     expect(select.element.value).toBe('work')
@@ -103,12 +104,12 @@ describe('usage menu account switching', () => {
     )
     await open()
     api.getUsage.mockResolvedValue({
-      agents: [{ id: 'codex', windows: [{ label: 'week', usedPct: 10 }] }]
+      agents: [{ id: 'codex', accountId: 'work', windows: [{ label: 'week', usedPct: 10 }] }]
     })
     await wrapper.get('[data-test="usage-account-codex"]').setValue('work')
     await flushPromises()
     finishOldUsage({ agents: [{ id: 'codex', windows: [{ label: 'week', usedPct: 99 }] }] })
     await flushPromises()
-    expect(wrapper.get('.usage-pct').text()).toBe('10%')
+    expect(wrapper.get('.usage-pct').text()).toBe('10% used')
   })
 })

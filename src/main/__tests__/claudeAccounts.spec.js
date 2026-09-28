@@ -89,6 +89,37 @@ afterEach(() => {
 })
 
 describe('Claude account capture and public state', () => {
+  it('binds quota scope to the selected private identity without materializing auth', async () => {
+    seedSystem()
+    const id = await add()
+    expect(await service.usageScope(id)).toMatchObject({ ok: false })
+    expect(await service.usageScope(null)).toEqual({
+      ok: true,
+      env: {},
+      accountId: null,
+      expectedIdentity: null
+    })
+    await service.select(id)
+    // An external CLI login changed the runtime. Reading scope must preserve it
+    // and return the expected saved identity, not relabel it as the new login.
+    put(credentialPath(), token('different'))
+    put(configPath(), { oauthAccount: who('different') })
+    const before = fs.readFileSync(credentialPath(), 'utf8')
+    const result = await service.usageScope(id)
+    expect(result).toEqual({
+      ok: true,
+      env: {},
+      accountId: id,
+      expectedIdentity: {
+        account: 'managed-id',
+        email: 'managed@fixture.invalid',
+        organization: 'managed-org'
+      }
+    })
+    expect(JSON.stringify(result)).not.toMatch(/fixture-access|fixture-refresh/)
+    expect(fs.readFileSync(credentialPath(), 'utf8')).toBe(before)
+    expect(await service.usageScope(null)).toMatchObject({ ok: false })
+  })
   it('captures an isolated login without changing system auth or exposing tokens', async () => {
     seedSystem()
     const before = fs.readFileSync(credentialPath(), 'utf8')

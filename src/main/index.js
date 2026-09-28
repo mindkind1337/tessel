@@ -11,6 +11,7 @@ import { createClaudeAccounts } from './claudeAccounts'
 import { createProviderLogin } from './providerLogin'
 import { createProviderAccounts } from './providerAccounts'
 import { createAccountUsage } from './providerAccountUsage'
+import { registerProviderUsage } from './providerUsageIpc'
 import { createAccountSessions } from './providerAccountSessions'
 import { postToInbox } from './agentInbox'
 import { hooksStatus } from './teamHooksStatus'
@@ -1095,11 +1096,8 @@ const accounts = createProviderAccounts({
   codex: createCodexAccounts(accountOptions)
 })
 ipcMain.handle('accounts:list', safe(() => accounts.list()))
-ipcMain.handle('accounts:select', safe(({ provider, id } = {}) => accounts.select(provider, id)))
-ipcMain.handle('accounts:remove', safe(({ provider, id } = {}) => accounts.remove(provider, id)))
-ipcMain.handle('accounts:startLogin', safe(({ provider, id = null } = {}) => accounts.startLogin(provider, id)))
+registerProviderUsage({ ipcMain, accounts })
 ipcMain.handle('accounts:loginStatus', safe((id) => accounts.loginStatus(id)))
-ipcMain.handle('accounts:cancelLogin', safe((id) => accounts.cancelLogin(id)))
 ipcMain.handle('accounts:launchEnv', safe((query) => typeof query === 'string'
   ? accounts.launchEnv(query) : accounts.launchEnv(query?.provider, query?.accountId)))
 const accountSessions = createAccountSessions({ accounts })

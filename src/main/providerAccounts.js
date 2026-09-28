@@ -200,6 +200,19 @@ export function createProviderAccounts({ claude, codex, now = Date.now, uuid = r
         return { ok: false, error: 'The selected Codex account could not be read.' }
       }
     },
+    // Internal only: identity constraints never cross the public account IPC.
+    async usageScope(provider, accountId = undefined) {
+      try {
+        const service = providerFor(provider)
+        if (busy.has(provider))
+          return { ok: false, error: 'Finish or cancel sign-in before reading usage.' }
+        return service.usageScope
+          ? await service.usageScope(accountId)
+          : await service.usageEnv(accountId)
+      } catch {
+        return { ok: false, error: 'The selected provider account could not be read.' }
+      }
+    },
     async sessionEnv(provider, accountId = undefined) {
       try {
         const service = providerFor(provider)

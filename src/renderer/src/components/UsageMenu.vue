@@ -1,9 +1,9 @@
 <script setup>
-// The toolbar gauge: how much of each agent's subscription quota is used
-// (5-hour and weekly windows) and when it resets, read by the main process
-// from the agents' own local files (agentUsage.js: no sign-in, no network).
-// Roster/density pattern inspired by Orca UsageRosterPanel (MIT, Lovecast,
-// 2026); independent Vue implementation using Tessel's read-only local data.
+// Local quota observations update the toolbar without network polling.
+// Authenticated provider reads happen only on menu/open/refresh actions;
+// redeeming an actual reset credit additionally requires confirmation.
+// Roster and provider flyout patterns inspired by Orca UsageRosterPanel,
+// ProviderPanel and CodexSwitcherMenu (MIT, Lovecast, 2026); independent Vue UI.
 // Amber from 66 %, red from 95 %; an old reading says so.
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import BrandIcon from './BrandIcon.vue'
@@ -25,7 +25,16 @@ const usage = ref(null) // { agents: [...] } | { error }
 const root = ref(null)
 const trigger = ref(null)
 const mode = ref('compact')
-const expanded = ref({})
+const selectedProvider = ref(null)
+const accountChooser = ref(false)
+const flyoutPosition = ref({})
+const stacked = ref(false)
+const providerReadings = ref({})
+const providerErrors = ref({})
+const providerBusy = ref({})
+const resetConfirm = ref(null)
+const resetBusy = ref(false)
+const resetNotice = ref('')
 const installed = ref([])
 const rosterError = ref('')
 const loading = ref(false)
@@ -37,11 +46,13 @@ const accountBusy = ref({})
 const accountNotice = ref('')
 const accountsReadFailed = ref(false)
 const hasAccounts = computed(() => !!window.shellApi.accounts?.list)
+const refreshing = computed(() => loading.value || Object.values(providerBusy.value).some(Boolean))
 let timer = null
 let alive = true
 let accountsRequest = 0
 let usageRequest = 0
 let agentsRequest = 0
+const providerRequests = new Map()
 
 async function load() {
   if (!window.shellApi.getUsage) {
@@ -83,7 +94,10 @@ async function loadAccounts() {
     if (!result?.ok) throw new Error(result?.error || 'Could not read accounts.')
     accounts.value = (result.providers || []).map((provider) => {
       const old = accounts.value.find((entry) => entry.provider === provider.provider)
-      return provider.error && old ? { ...old, error: provider.error } : provider
+      const next = provider.error && old ? { ...old, error: provider.error } : provider
+      if ((old?.selectedId || null) !== (next.selectedId || null))
+        invalidateProvider(provider.provider)
+      return next
     })
     accountsError.value = ''
     accountsReadFailed.value = false
@@ -97,11 +111,70 @@ async function loadAccounts() {
 function providerAccounts(id) {
   return accounts.value.find((provider) => provider.provider === id)
 }
+function selectedAccount(id) {
+  return providerAccounts(id)?.selectedId || null
+}
+function invalidateProvider(id) {
+  providerRequests.set(id, (providerRequests.get(id) || 0) + 1)
+  delete providerReadings.value[id]
+  delete providerErrors.value[id]
+  providerBusy.value[id] = false
+  resetConfirm.value = null
+}
+async function readProvider(id) {
+  if (!['claude', 'codex'].includes(id) || !window.shellApi.providerUsage?.read) return
+  if (accountsReadFailed.value || providerAccounts(id)?.error || accountBusy.value[id]) return
+  const accountId = selectedAccount(id)
+  const request = (providerRequests.get(id) || 0) + 1
+  providerRequests.set(id, request)
+  providerBusy.value[id] = true
+  providerErrors.value[id] = ''
+  resetConfirm.value = null
+  try {
+    const result = await window.shellApi.providerUsage.read({ provider: id, accountId })
+    if (!alive || request !== providerRequests.get(id) || accountId !== selectedAccount(id)) return
+    if (!result?.ok) throw new Error(result?.error || 'Could not refresh provider usage.')
+    if (result.provider !== id || result.accountId !== accountId)
+      throw new Error('The usage account changed. Refresh before continuing.')
+    providerReadings.value[id] = {
+      ...result,
+      id,
+      source: 'provider',
+      stale: false,
+      error: null,
+      resetToken: result.resetToken || null,
+      resetCredits: result.resetCredits || null,
+      resetCreditsError: result.resetCreditsError || null
+    }
+    now.value = Date.now()
+  } catch (err) {
+    if (alive && request === providerRequests.get(id)) {
+      providerErrors.value[id] = err.message || 'Could not refresh provider usage.'
+      const previous = [
+        providerReadings.value[id],
+        agents.value.find((agent) => agent.id === id)
+      ].find((reading) => reading && reading.accountId === accountId)
+      if (previous)
+        providerReadings.value[id] = {
+          ...previous,
+          accountId,
+          stale: true,
+          resetToken: null,
+          windows: windows(previous).map((window) => ({ ...window, stale: true }))
+        }
+      else delete providerReadings.value[id]
+    }
+  } finally {
+    if (alive && request === providerRequests.get(id)) providerBusy.value[id] = false
+  }
+}
 async function selectAccount(provider, event) {
   const selection = event.target.value || null
   // Keep the confirmed value visible until the main process has saved it.
   event.target.value = provider.selectedId || ''
-  if (accountBusy.value[provider.provider] || selection === provider.selectedId) return
+  if (resetBusy.value || accountBusy.value[provider.provider] || selection === provider.selectedId)
+    return
+  invalidateProvider(provider.provider)
   accountBusy.value[provider.provider] = true
   accountsError.value = ''
   accountNotice.value = ''
@@ -115,6 +188,8 @@ async function selectAccount(provider, event) {
         : 'New Codex terminals will use this account.'
     if (result.warning) accountNotice.value += ` ${result.warning}`
     await Promise.all([loadAccounts(), load()])
+    accountBusy.value[provider.provider] = false
+    if (alive && open.value) await readProvider(provider.provider)
     if (alive)
       window.dispatchEvent(
         new CustomEvent('tessel:accounts-changed', {
@@ -129,17 +204,39 @@ async function selectAccount(provider, event) {
 }
 function accountsChanged(event) {
   if (event.detail?.source === 'usage-menu') return
+  for (const id of ['claude', 'codex']) invalidateProvider(id)
   load()
   if (open.value) loadAccounts()
 }
 const agents = computed(() => {
   const rows = new Map()
   for (const agent of Array.isArray(usage.value?.agents) ? usage.value.agents : []) {
-    if (agent && typeof agent.id === 'string') rows.set(agent.id, { ...agent })
+    if (agent && typeof agent.id === 'string') {
+      const selected = selectedAccount(agent.id)
+      const matches =
+        agent.accountId === selected || (selected === null && agent.accountId === undefined)
+      rows.set(
+        agent.id,
+        matches
+          ? { ...agent }
+          : {
+              id: agent.id,
+              name: agent.name,
+              accountId: selected,
+              windows: [],
+              source: 'unavailable',
+              error: 'Usage has not been read for this account.'
+            }
+      )
+    }
   }
   for (const agent of installed.value) {
     if (rows.has(agent.id)) rows.get(agent.id).name ||= agent.name
     else rows.set(agent.id, { id: agent.id, name: agent.name, windows: [], source: 'unsupported' })
+  }
+  for (const reading of Object.values(providerReadings.value)) {
+    if (reading.accountId === selectedAccount(reading.id))
+      rows.set(reading.id, { ...rows.get(reading.id), ...reading })
   }
   return [...rows.values()]
 })
@@ -155,8 +252,11 @@ function windows(agent) {
       window.usedPct <= 100
   )
 }
+function timestamp(value) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : Date.parse(value)
+}
 function stale(agent, window) {
-  const reset = Date.parse(window.resetsAt)
+  const reset = timestamp(window.resetsAt)
   return (
     window.stale === true ||
     (window.stale === undefined && agent.stale === true) ||
@@ -194,17 +294,142 @@ function unavailableText(agent) {
     : 'Not available: its quota is not saved on this computer.'
 }
 function expandedFor(id) {
-  return mode.value === 'detailed' ? expanded.value[id] !== false : expanded.value[id] === true
+  return selectedProvider.value === id
 }
 function changeMode(value) {
   mode.value = value
-  expanded.value = {}
+  closeProvider()
 }
 function toggleProvider(id) {
-  expanded.value[id] = !expandedFor(id)
+  if (resetBusy.value) return
+  if (selectedProvider.value === id) return closeProvider()
+  selectedProvider.value = id
+  accountChooser.value = false
+  resetNotice.value = ''
+  positionMenu()
+  readProvider(id)
+}
+function closeProvider() {
+  if (resetBusy.value) return
+  selectedProvider.value = null
+  accountChooser.value = false
+  resetConfirm.value = null
+  positionMenu()
+}
+const detailAgent = computed(() =>
+  agents.value.find((agent) => agent.id === selectedProvider.value)
+)
+const credits = computed(() => {
+  const value = detailAgent.value?.resetCredits
+  return Number.isInteger(value?.availableCount) && value.availableCount >= 0 ? value : null
+})
+const canReset = computed(() => {
+  const agent = detailAgent.value
+  const observed = timestamp(agent?.observedAt)
+  return (
+    agent?.id === 'codex' &&
+    agent.source === 'provider' &&
+    agent.accountId === selectedAccount(agent.id) &&
+    !agent.stale &&
+    !agent.error &&
+    !agent.resetCreditsError &&
+    Number.isFinite(observed) &&
+    now.value - observed < 5 * 60000 &&
+    credits.value?.availableCount > 0 &&
+    credits.value.eligible === true &&
+    typeof agent.resetToken === 'string' &&
+    !!agent.resetToken &&
+    !providerErrors.value[agent.id] &&
+    !providerBusy.value[agent.id] &&
+    !accountBusy.value[agent.id] &&
+    !accountsReadFailed.value &&
+    !providerAccounts(agent.id)?.error &&
+    !!window.shellApi.providerUsage?.redeemReset
+  )
+})
+function beginReset() {
+  if (!canReset.value || resetBusy.value) return
+  resetNotice.value = ''
+  resetConfirm.value = {
+    provider: 'codex',
+    accountId: selectedAccount('codex'),
+    resetToken: detailAgent.value.resetToken,
+    label: accountLabel('codex')
+  }
+}
+async function confirmReset() {
+  const request = resetConfirm.value
+  if (resetBusy.value || !request) return
+  if (
+    !canReset.value ||
+    request.accountId !== selectedAccount('codex') ||
+    request.resetToken !== detailAgent.value?.resetToken
+  ) {
+    resetConfirm.value = null
+    resetNotice.value = 'The usage account or reading changed. Refresh before resetting.'
+    return
+  }
+  resetBusy.value = true
+  resetNotice.value = ''
+  try {
+    const result = await window.shellApi.providerUsage.redeemReset({
+      provider: 'codex',
+      accountId: request.accountId,
+      resetToken: request.resetToken,
+      confirmed: true
+    })
+    if (!alive) return
+    // A reset token is never retried, including ambiguous network failures.
+    if (providerReadings.value.codex) delete providerReadings.value.codex.resetToken
+    resetConfirm.value = null
+    if (!result?.ok) {
+      resetNotice.value = result?.uncertain
+        ? 'The reset result is uncertain. Refresh usage to check before trying again.'
+        : result?.error || 'The reset could not be completed. Refresh before trying again.'
+      return
+    }
+    resetNotice.value =
+      {
+        reset: 'Usage limits reset.',
+        nothingToReset: 'There are no eligible limits to reset.',
+        noCredit: 'No reset credit is available.',
+        alreadyRedeemed: 'This reset was already redeemed.'
+      }[result.outcome] || 'Reset request completed.'
+    await Promise.all([readProvider('codex'), load()])
+  } catch {
+    if (alive) {
+      if (providerReadings.value.codex) delete providerReadings.value.codex.resetToken
+      resetConfirm.value = null
+      resetNotice.value =
+        'The reset result is uncertain. Refresh usage to check before trying again.'
+    }
+  } finally {
+    if (alive) resetBusy.value = false
+  }
+}
+function expiryText(iso) {
+  if (!Number.isFinite(timestamp(iso))) return ''
+  if (timestamp(iso) <= now.value) return 'Expired'
+  return `Expires in ${shortReset(iso)}`
+}
+function accountLabel(id) {
+  const provider = providerAccounts(id)
+  return provider?.selectedId
+    ? provider.accounts?.find((account) => account.id === provider.selectedId)?.label ||
+        'Saved account'
+    : provider?.system?.label || 'System default'
+}
+function updatedText(agent) {
+  const observed = timestamp(agent?.updatedAt || agent?.observedAt)
+  if (!Number.isFinite(observed)) return 'Not yet updated'
+  const seconds = Math.max(0, Math.floor((now.value - observed) / 1000))
+  if (seconds < 60) return 'Updated just now'
+  if (seconds < 3600) return `Updated ${Math.floor(seconds / 60)} min ago`
+  if (seconds < 86400) return `Updated ${Math.floor(seconds / 3600)} h ago`
+  return `Updated ${Math.floor(seconds / 86400)} d ago`
 }
 function shortReset(iso) {
-  const milliseconds = Date.parse(iso) - now.value
+  const milliseconds = timestamp(iso) - now.value
   if (!Number.isFinite(milliseconds)) return ''
   if (milliseconds <= 0) return 'Reset passed'
   const minutes = Math.ceil(milliseconds / 60000)
@@ -224,7 +449,7 @@ const level = (pct) => (pct >= 95 ? 'bad' : pct >= 66 ? 'warn' : 'ok')
 
 function resetText(iso) {
   if (!iso) return ''
-  const ms = Date.parse(iso) - now.value
+  const ms = timestamp(iso) - now.value
   if (!Number.isFinite(ms)) return ''
   if (!(ms > 0)) return 'reset time passed'
   const min = Math.round(ms / 60000)
@@ -237,13 +462,16 @@ function windowLabel(l) {
 }
 
 function onDocDown(e) {
-  if (open.value && root.value && !root.value.contains(e.target)) open.value = false
+  if (resetBusy.value) return
+  if (open.value && root.value && !root.value.contains(e.target)) closeMenu()
 }
 function positionMenu() {
   const rect = trigger.value?.getBoundingClientRect()
   if (!rect) return
   const width = Math.min(360, Math.max(0, window.innerWidth - 16))
-  const left = Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8))
+  stacked.value = window.innerWidth < 684
+  const totalWidth = selectedProvider.value && !stacked.value ? width + 308 : width
+  const left = Math.max(8, Math.min(rect.right - width, window.innerWidth - totalWidth - 8))
   const top = Math.max(8, Math.min(rect.bottom + 8, window.innerHeight - 180))
   menuPosition.value = {
     position: 'fixed',
@@ -253,17 +481,44 @@ function positionMenu() {
     top: `${top}px`,
     maxHeight: `${Math.max(0, window.innerHeight - top - 8)}px`
   }
+  flyoutPosition.value = {
+    ...menuPosition.value,
+    width: `${stacked.value ? width : 300}px`,
+    left: `${stacked.value ? left : left + width + 8}px`
+  }
 }
 function onKey(event) {
   if (!open.value || event.key !== 'Escape') return
   event.stopPropagation()
-  open.value = false
+  if (resetBusy.value) return
+  if (resetConfirm.value) {
+    resetConfirm.value = null
+    return
+  }
+  if (accountChooser.value) {
+    accountChooser.value = false
+    return
+  }
+  if (selectedProvider.value) {
+    const id = selectedProvider.value
+    closeProvider()
+    Array.from(root.value?.querySelectorAll('[data-test]') || [])
+      .find((node) => node.dataset.test === `usage-row-${id}`)
+      ?.focus()
+    return
+  }
+  closeMenu()
   trigger.value?.focus()
 }
-function refresh() {
-  load()
-  loadAccounts()
-  loadAgents()
+function closeMenu() {
+  if (resetBusy.value) return
+  open.value = false
+  closeProvider()
+}
+async function refresh() {
+  if (resetBusy.value) return
+  await Promise.all([load(), loadAccounts(), loadAgents()])
+  if (alive && open.value) await Promise.all(['claude', 'codex'].map(readProvider))
 }
 onMounted(() => {
   document.addEventListener('pointerdown', onDocDown, true)
@@ -282,6 +537,8 @@ onBeforeUnmount(() => {
   clearInterval(timer)
 })
 function toggle() {
+  if (resetBusy.value) return
+  if (open.value) return closeMenu()
   open.value = !open.value
   if (open.value) {
     positionMenu()
@@ -318,12 +575,13 @@ function toggle() {
     </button>
     <div
       v-if="open"
+      v-show="!(selectedProvider && stacked)"
       class="notif-menu usage-menu usage-roster"
       :class="{ compact: mode === 'compact' }"
       :style="menuPosition"
       role="dialog"
       aria-label="Usage"
-      :aria-busy="loading"
+      :aria-busy="refreshing"
     >
       <header class="usage-roster-head">
         <strong>Usage</strong><span>all agents</span
@@ -331,13 +589,13 @@ function toggle() {
           type="button"
           class="usage-refresh"
           aria-label="Refresh usage"
-          title="Refresh local usage"
-          :disabled="loading"
+          title="Refresh usage"
+          :disabled="refreshing || resetBusy"
           data-test="usage-refresh"
           @click="refresh"
         >
           <svg
-            :class="{ spinning: loading }"
+            :class="{ spinning: refreshing }"
             width="14"
             height="14"
             viewBox="0 0 16 16"
@@ -398,7 +656,7 @@ function toggle() {
             class="usage-roster-row"
             :data-test="'usage-row-' + a.id"
             :aria-expanded="expandedFor(a.id)"
-            :aria-controls="'usage-provider-' + a.id"
+            :aria-controls="expandedFor(a.id) ? 'usage-provider-flyout' : undefined"
             @click="toggleProvider(a.id)"
           >
             <span class="usage-brand"
@@ -449,37 +707,7 @@ function toggle() {
               />
             </svg>
           </button>
-          <div
-            v-if="expandedFor(a.id)"
-            :id="'usage-provider-' + a.id"
-            class="usage-provider-detail"
-          >
-            <div v-if="providerAccounts(a.id)" class="usage-account-picker">
-              <label :for="'usage-account-' + a.id">Account</label
-              ><select
-                :id="'usage-account-' + a.id"
-                :value="providerAccounts(a.id).selectedId || ''"
-                :disabled="
-                  accountBusy[a.id] || !!providerAccounts(a.id).error || accountsReadFailed
-                "
-                :data-test="'usage-account-' + a.id"
-                @change="selectAccount(providerAccounts(a.id), $event)"
-              >
-                <option v-if="providerAccounts(a.id).system" value="">
-                  {{ providerAccounts(a.id).system.label || 'System default' }}
-                </option>
-                <option
-                  v-for="account in providerAccounts(a.id).accounts || []"
-                  :key="account.id"
-                  :value="account.id"
-                >
-                  {{ account.label || account.email || 'Account'
-                  }}{{ account.status === 'missing' ? ' - sign-in needed' : '' }}
-                </option></select
-              ><span v-if="providerAccounts(a.id).error" class="usage-account-error" role="alert">{{
-                providerAccounts(a.id).error
-              }}</span>
-            </div>
+          <div v-if="mode === 'detailed'" class="usage-provider-detail">
             <p v-if="!windows(a).length" class="usage-none">{{ unavailableText(a) }}</p>
             <div
               v-for="w in windows(a)"
@@ -520,18 +748,258 @@ function toggle() {
         </section>
       </div>
       <footer class="usage-roster-foot">
-        <button type="button" data-test="usage-details" @click="((open = false), emit('details'))">
+        <button type="button" data-test="usage-details" @click="(closeMenu(), emit('details'))">
           <span>Usage details &amp; history</span><span aria-hidden="true">&rsaquo;</span></button
         ><button
           v-if="hasAccounts"
           type="button"
           data-test="usage-manage-accounts"
-          @click="((open = false), emit('accounts'))"
+          @click="(closeMenu(), emit('accounts'))"
         >
           <span>Manage accounts</span><span aria-hidden="true">&rsaquo;</span>
         </button>
       </footer>
     </div>
+    <section
+      v-if="open && detailAgent"
+      id="usage-provider-flyout"
+      class="notif-menu usage-roster usage-flyout"
+      :class="{ stacked }"
+      :style="flyoutPosition"
+      role="dialog"
+      :aria-label="agentName(detailAgent) + ' usage'"
+      :aria-busy="providerBusy[detailAgent.id] || resetBusy"
+      data-test="usage-provider-flyout"
+    >
+      <header class="usage-flyout-head">
+        <button
+          type="button"
+          class="usage-back"
+          :disabled="resetBusy"
+          aria-label="Back to all agents"
+          data-test="usage-provider-back"
+          @click="closeProvider"
+        >
+          &lsaquo;
+        </button>
+        <div class="usage-flyout-title">
+          <strong
+            ><BrandIcon :kind="detailAgent.id" :size="16" :label="agentName(detailAgent)" />{{
+              agentName(detailAgent)
+            }}</strong
+          >
+          <span>{{ updatedText(detailAgent) }}</span>
+        </div>
+        <button
+          type="button"
+          class="usage-refresh"
+          :disabled="providerBusy[detailAgent.id] || resetBusy"
+          aria-label="Refresh provider usage"
+          data-test="usage-provider-refresh"
+          @click="readProvider(detailAgent.id)"
+        >
+          <svg
+            :class="{ spinning: providerBusy[detailAgent.id] }"
+            width="14"
+            height="14"
+            viewBox="0 0 16 16"
+            fill="none"
+            aria-hidden="true"
+          >
+            <path
+              d="M13 6a5 5 0 10.1 3M13 2.5V6H9.5"
+              stroke="currentColor"
+              stroke-width="1.3"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+        </button>
+      </header>
+      <div class="usage-flyout-body">
+        <p
+          v-if="detailAgent.resetCreditsError"
+          class="usage-account-error"
+          role="alert"
+          data-test="usage-reset-credits-error"
+        >
+          Reset credits: {{ detailAgent.resetCreditsError }}
+        </p>
+        <p v-if="providerErrors[detailAgent.id]" class="usage-account-error" role="alert">
+          {{ providerErrors[detailAgent.id]
+          }}<span v-if="windows(detailAgent).length"> Showing the last known reading.</span>
+        </p>
+        <p
+          v-if="providerBusy[detailAgent.id] && !windows(detailAgent).length"
+          class="usage-none"
+          role="status"
+        >
+          Reading provider usage...
+        </p>
+        <p v-else-if="!windows(detailAgent).length" class="usage-none">
+          {{ unavailableText(detailAgent) }}
+        </p>
+        <div
+          v-for="w in windows(detailAgent)"
+          :key="w.label"
+          class="usage-window usage-flyout-window"
+          :class="{ stale: stale(detailAgent, w) }"
+        >
+          <div class="usage-line">
+            <span>{{ windowLabel(w.label) }}</span>
+          </div>
+          <div
+            class="usage-bar"
+            role="meter"
+            :aria-label="windowLabel(w.label) + ' quota used'"
+            aria-valuemin="0"
+            aria-valuemax="100"
+            :aria-valuenow="w.usedPct"
+          >
+            <div
+              class="usage-fill"
+              :class="level(w.usedPct)"
+              :style="{ width: w.usedPct + '%' }"
+            ></div>
+          </div>
+          <div class="usage-flyout-window-meta">
+            <span class="usage-pct" :class="'usage-level-' + level(w.usedPct)"
+              >{{ Math.round(w.usedPct) }}% used</span
+            ><span v-if="shortReset(w.resetsAt)">{{
+              stale(detailAgent, w) ? 'Last known reading' : 'Resets in ' + shortReset(w.resetsAt)
+            }}</span>
+          </div>
+        </div>
+        <div v-if="credits" class="usage-reset-credits" data-test="usage-reset-credits">
+          <strong
+            >{{ credits.availableCount }} rate-limit
+            {{ credits.availableCount === 1 ? 'reset' : 'resets' }} available</strong
+          >
+          <span
+            v-if="expiryText(credits.nextExpiresAt)"
+            :title="new Date(credits.nextExpiresAt).toLocaleString()"
+            >{{ expiryText(credits.nextExpiresAt) }}</span
+          >
+          <button
+            v-if="!resetConfirm && (canReset || resetBusy)"
+            type="button"
+            :disabled="resetBusy"
+            class="usage-action"
+            data-test="usage-reset-now"
+            @click="beginReset"
+          >
+            {{ resetBusy ? 'Using reset...' : 'Reset now' }}
+          </button>
+        </div>
+        <div
+          v-if="resetConfirm"
+          class="usage-reset-confirm"
+          role="alertdialog"
+          aria-label="Confirm Codex usage reset"
+          aria-describedby="usage-reset-explanation"
+        >
+          <strong>Reset Codex limits?</strong>
+          <p id="usage-reset-explanation">
+            This uses one reset credit for <strong>{{ resetConfirm.label }}</strong> and immediately
+            resets eligible usage windows.
+          </p>
+          <div>
+            <button
+              type="button"
+              :disabled="resetBusy"
+              class="usage-action"
+              data-test="usage-reset-cancel"
+              @click="resetConfirm = null"
+            >
+              Cancel</button
+            ><button
+              type="button"
+              :disabled="resetBusy"
+              class="usage-action primary"
+              data-test="usage-reset-confirm"
+              @click="confirmReset"
+            >
+              {{ resetBusy ? 'Using reset...' : 'Use one reset credit' }}
+            </button>
+          </div>
+        </div>
+        <p
+          v-if="resetNotice"
+          class="usage-account-notice"
+          role="status"
+          data-test="usage-reset-notice"
+        >
+          {{ resetNotice }}
+        </p>
+        <div v-if="providerAccounts(detailAgent.id)" class="usage-flyout-accounts">
+          <h4>{{ agentName(detailAgent) }} account</h4>
+          <button
+            type="button"
+            class="usage-account-toggle"
+            :disabled="resetBusy || accountBusy[detailAgent.id]"
+            :aria-expanded="accountChooser"
+            data-test="usage-account-toggle"
+            @click="accountChooser = !accountChooser"
+          >
+            <span>{{ accountLabel(detailAgent.id) }}</span
+            ><span aria-hidden="true">{{ accountChooser ? '\u2304' : '\u203a' }}</span>
+          </button>
+          <div v-if="accountChooser" class="usage-account-picker">
+            <label :for="'usage-account-' + detailAgent.id">Account</label>
+            <select
+              :id="'usage-account-' + detailAgent.id"
+              :value="providerAccounts(detailAgent.id).selectedId || ''"
+              :disabled="
+                resetBusy ||
+                accountBusy[detailAgent.id] ||
+                !!providerAccounts(detailAgent.id).error ||
+                accountsReadFailed
+              "
+              :data-test="'usage-account-' + detailAgent.id"
+              @change="selectAccount(providerAccounts(detailAgent.id), $event)"
+            >
+              <option v-if="providerAccounts(detailAgent.id).system" value="">
+                {{ providerAccounts(detailAgent.id).system.label || 'System default' }}
+              </option>
+              <option
+                v-for="account in providerAccounts(detailAgent.id).accounts || []"
+                :key="account.id"
+                :value="account.id"
+              >
+                {{ account.label || account.email || 'Account'
+                }}{{ account.status === 'missing' ? ' - sign-in needed' : '' }}
+              </option>
+            </select>
+          </div>
+          <p v-if="providerAccounts(detailAgent.id).error" class="usage-account-error" role="alert">
+            {{ providerAccounts(detailAgent.id).error }}
+          </p>
+          <p v-if="accountsError" class="usage-account-error" role="alert">
+            {{ accountsError }}
+            <button
+              v-if="accountsReadFailed"
+              type="button"
+              class="usage-text-button"
+              data-test="usage-provider-accounts-retry"
+              @click="loadAccounts"
+            >
+              Retry
+            </button>
+          </p>
+          <p v-if="accountNotice" class="usage-account-notice" role="status">{{ accountNotice }}</p>
+        </div>
+      </div>
+      <footer v-if="hasAccounts" class="usage-roster-foot">
+        <button
+          type="button"
+          :disabled="resetBusy"
+          data-test="usage-provider-manage-accounts"
+          @click="(closeMenu(), emit('accounts'))"
+        >
+          <span>Manage accounts</span><span aria-hidden="true">&rsaquo;</span>
+        </button>
+      </footer>
+    </section>
   </div>
 </template>
 
@@ -546,6 +1014,167 @@ function toggle() {
   color: var(--text);
   background: var(--surface);
   box-shadow: 0 12px 40px #0005;
+}
+.usage-flyout.notif-menu {
+  z-index: 61;
+}
+.usage-flyout-head {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  padding: 12px;
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+.usage-flyout-title {
+  min-width: 0;
+  flex: 1;
+}
+.usage-flyout-title strong {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--text-strong);
+}
+.usage-flyout-title > span {
+  display: block;
+  margin-top: 5px;
+  font-size: 10px;
+  color: var(--text-dim);
+}
+.usage-back {
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 23px;
+  padding: 0 4px;
+  cursor: pointer;
+}
+.usage-flyout-body {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 13px 12px;
+  overscroll-behavior: contain;
+}
+.usage-flyout .usage-window {
+  margin-top: 13px;
+}
+.usage-flyout .usage-line {
+  color: var(--text-strong);
+  font-weight: 500;
+}
+.usage-flyout .usage-bar {
+  height: 6px;
+  margin-top: 7px;
+}
+.usage-flyout-window-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 6px;
+  font-size: 10px;
+  color: var(--text-dim);
+}
+.usage-flyout-window-meta .usage-pct {
+  font-size: 10px;
+  font-weight: 400;
+}
+.usage-flyout .usage-none {
+  margin-top: 12px;
+}
+.usage-flyout .usage-account-error,
+.usage-flyout .usage-account-notice {
+  margin: 10px 0 0;
+}
+.usage-reset-credits,
+.usage-flyout-accounts {
+  margin-top: 14px;
+  padding-top: 11px;
+  border-top: 1px solid var(--border);
+}
+.usage-reset-credits strong {
+  display: block;
+  font-size: 11px;
+  font-weight: 500;
+}
+.usage-reset-credits > span {
+  display: block;
+  font-size: 10px;
+  margin-top: 4px;
+  color: var(--text-dim);
+}
+.usage-action {
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 11px;
+  padding: 6px 9px;
+  cursor: pointer;
+}
+.usage-action:hover:not(:disabled) {
+  background: var(--surface-3);
+}
+.usage-action:disabled,
+.usage-account-toggle:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.usage-reset-credits .usage-action {
+  margin-top: 8px;
+}
+.usage-action.primary {
+  background: var(--accent);
+  color: var(--bg);
+  border-color: var(--accent);
+}
+.usage-reset-confirm {
+  margin-top: 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  padding: 10px;
+  font-size: 11px;
+}
+.usage-reset-confirm p {
+  margin: 7px 0 10px;
+  color: var(--text-dim);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.usage-reset-confirm > div {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.usage-flyout-accounts h4 {
+  margin: 0 0 6px;
+  color: var(--text-dim);
+  font-size: 10px;
+  font-weight: 500;
+}
+.usage-account-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 0;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+}
+.usage-account-toggle > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .usage-roster-head {
   display: flex;
@@ -637,6 +1266,9 @@ function toggle() {
   cursor: pointer;
 }
 .usage-roster-row:hover {
+  background: var(--surface-2);
+}
+.usage-roster-row[aria-expanded='true'] {
   background: var(--surface-2);
 }
 .usage-roster.compact .usage-roster-row {

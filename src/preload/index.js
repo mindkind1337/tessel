@@ -129,6 +129,11 @@ const api = {
     ipcRenderer.invoke('git:createWorktree', { cwd, label, options }),
   // Last locally observed subscription quotas, with timestamps and stale flags.
   getUsage: () => ipcRenderer.invoke('usage:get'),
+  // Authenticated quota reads happen only on an explicit menu action.
+  providerUsage: {
+    read: (query) => ipcRenderer.invoke('providerUsage:read', query),
+    redeemReset: (query) => ipcRenderer.invoke('providerUsage:redeemReset', query)
+  },
   github: {
     status: (q) => ipcRenderer.invoke('github:status', q),
     list: (q) => ipcRenderer.invoke('github:list', q),

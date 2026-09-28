@@ -26,6 +26,28 @@ function fixture() {
   return { claude, codex, accounts: createProviderAccounts({ claude, codex }) }
 }
 describe('account IPC coordinator', () => {
+  it('resolves private quota scope without launching or exposing it in account listings', async () => {
+    const f = fixture()
+    f.claude.usageScope = vi.fn(async () => ({
+      ok: true,
+      accountId: 'managed',
+      expectedIdentity: { account: 'private-id' }
+    }))
+    expect(await f.accounts.usageScope('claude', 'managed')).toMatchObject({
+      ok: true,
+      expectedIdentity: { account: 'private-id' }
+    })
+    expect(f.claude.usageScope).toHaveBeenCalledWith('managed')
+    expect(f.claude.launchEnv).not.toHaveBeenCalled()
+    expect(JSON.stringify(await f.accounts.list())).not.toContain('private-id')
+    expect(await f.accounts.usageScope('codex', null)).toMatchObject({ ok: true })
+    expect(f.codex.usageEnv).toHaveBeenCalledWith(null)
+    f.claude.usageScope.mockRejectedValue(new Error('private auth path'))
+    expect(await f.accounts.usageScope('claude')).toEqual({
+      ok: false,
+      error: 'The selected provider account could not be read.'
+    })
+  })
   it('shows an unconfirmed process stop as an error, never as a successful cancellation', async () => {
     const f = fixture()
     let fail

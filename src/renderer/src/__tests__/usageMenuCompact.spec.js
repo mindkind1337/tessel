@@ -44,7 +44,7 @@ describe('compact usage roster', () => {
     await row.trigger('click')
     expect(row.attributes('aria-expanded')).toBe('true')
     expect(wrapper.findAll('.usage-window')).toHaveLength(2)
-    expect(wrapper.text()).toContain('resets in 1 h 30 min')
+    expect(wrapper.text()).toContain('Resets in 1h 30m')
     await wrapper.get('[data-test="usage-mode-detailed"]').trigger('click')
     expect(wrapper.find('.usage-summary').exists()).toBe(false)
     expect(wrapper.findAll('.usage-window')).toHaveLength(2)
@@ -69,9 +69,11 @@ describe('compact usage roster', () => {
     expect(wrapper.get('.usage-old').text()).toBe('last seen')
     expect(wrapper.get('[data-test="usage-button"]').classes()).not.toContain('usage-bad')
     await wrapper.get('[data-test="usage-row-codex"]').trigger('click')
-    expect(wrapper.findAll('.usage-pct').map((node) => node.text())).toEqual(['99%', '20%'])
-    expect(wrapper.text()).toContain('reset time passed')
-    expect(wrapper.text()).toContain('last known reading')
+    expect(wrapper.findAll('.usage-pct').map((node) => node.text())).toEqual([
+      '99% used',
+      '20% used'
+    ])
+    expect(wrapper.text()).toContain('Last known reading')
   })
 
   it('adds installed agents honestly without inventing a quota, free plan, or refresh instruction', async () => {
@@ -113,6 +115,7 @@ describe('compact usage roster', () => {
     expect(wrapper.get('.usage-plan').text()).toContain('Free')
     expect(wrapper.find('select').exists()).toBe(false)
     await wrapper.get('[data-test="usage-row-codex"]').trigger('click')
+    await wrapper.get('[data-test="usage-account-toggle"]').trigger('click')
     expect(wrapper.find('[data-test="usage-account-codex"]').exists()).toBe(true)
     await wrapper.get('[data-test="usage-refresh"]').trigger('click')
     await flushPromises()

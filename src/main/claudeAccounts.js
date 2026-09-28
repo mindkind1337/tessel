@@ -556,6 +556,21 @@ export function createClaudeAccounts({
         }
         return result
       }),
+    // Main-process quota calls must verify the identity physically installed in
+    // the shared Claude runtime. History scope alone cannot prove that identity.
+    usageScope: (accountId = undefined) =>
+      safe(async () => {
+        const state = await readMetadata()
+        const id = accountId === undefined ? state.selectedId : accountId
+        if (id !== state.selectedId || !(await validSavedAccount(state, id)))
+          return { ok: false, error: 'The selected Claude account changed or is unavailable.' }
+        return {
+          ok: true,
+          env: override ? { CLAUDE_CONFIG_DIR: configDir } : {},
+          accountId: id,
+          expectedIdentity: id ? { ...state.accounts.find((row) => row.id === id).identity } : null
+        }
+      }),
     sessionEnv: (accountId = undefined) =>
       safe(async () => {
         // History inspection never materializes auth, repairs state, or switches
