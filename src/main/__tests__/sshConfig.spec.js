@@ -239,6 +239,38 @@ describe('one budget for the whole parse (Codex review, defect 3)', () => {
     expect(res.truncated).toBe(true)
   })
 
+  it('an Include glob reads a folder entry by entry and stops at the budget (never lists it in full)', async () => {
+    const big = join(home, '.ssh', 'big')
+    mkdirSync(big, { recursive: true })
+    for (let i = 0; i < 300; i++) writeFileSync(join(big, `f${i}.conf`), 'Host h' + i + '\n')
+    writeFileSync(join(home, '.ssh', 'config'), 'Include big/*.conf\nHost main\n')
+    let read = 0
+    let readdirCalls = 0
+    const promises = {
+      ...nodeFs.promises,
+      readdir: async (...a) => {
+        readdirCalls++
+        return nodeFs.promises.readdir(...a)
+      },
+      opendir: async (...a) => {
+        const dir = await nodeFs.promises.opendir(...a)
+        return {
+          read: async () => {
+            const e = await dir.read()
+            if (e) read++
+            return e
+          },
+          close: () => dir.close()
+        }
+      }
+    }
+    const fsApi = { ...nodeFs, promises }
+    const res = await loadUserSshConfigDetailed({ home, fsApi, limits: { maxGlobEntries: 4 } })
+    expect(readdirCalls).toBe(0)
+    expect(read).toBe(4)
+    expect(res.truncated).toBe(true)
+  })
+
   it('the parse is asynchronous: the caller gets a promise', () => {
     writeFileSync(join(home, '.ssh', 'config'), 'Host x\n')
     const p = loadUserSshConfig({ home })

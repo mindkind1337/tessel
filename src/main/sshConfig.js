@@ -391,18 +391,29 @@ async function globFiles(absPattern, context) {
         continue
       }
       const re = globSegmentRegex(part)
-      let names = []
+      // Entries are read one by one and the reading stops at the budget, so a
+      // huge folder is never listed in full (readdir would load every name).
+      const names = []
+      let dir = null
       try {
-        names = await fsp.readdir(base)
-      } catch {
-        names = []
-      }
-      for (const name of names) {
-        if (stats.globEntries >= limits.maxGlobEntries) {
-          overBudget(context)
-          break
+        dir = await fsp.opendir(base)
+        for (;;) {
+          if (stats.globEntries >= limits.maxGlobEntries) {
+            overBudget(context)
+            break
+          }
+          const entry = await dir.read()
+          if (!entry) break
+          stats.globEntries++
+          names.push(entry.name)
         }
-        stats.globEntries++
+      } catch {
+        /* unreadable folder: nothing matches */
+      } finally {
+        if (dir) await dir.close().catch(() => {})
+      }
+      names.sort((a, b) => a.localeCompare(b))
+      for (const name of names) {
         if (name.startsWith('.') && !part.startsWith('.')) continue
         if (last && isKeyFileName(name)) continue
         if (re.test(name)) next.push(pathApi.join(base, name))
