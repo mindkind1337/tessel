@@ -5,6 +5,7 @@ import { join } from 'path'
 import { claudeSessionExists, findCodexSession, listSessions } from './agentSessions'
 import { findAgentSession } from './agentResume'
 import { claudeSessionTitle, codexSessionTitle } from './sessionTitle'
+import { claudeSubagents } from './agentChildren'
 
 export function createAccountSessions({ accounts, home = os.homedir(), env = process.env }) {
   const root = (provider, result) =>
@@ -18,6 +19,14 @@ export function createAccountSessions({ accounts, home = os.homedir(), env = pro
   }
   return {
     find,
+    // The sub-agents a Claude Code conversation started (agentChildren.js),
+    // read in the home it came from.
+    async children({ agent, sessionId, accountId } = {}) {
+      if (agent !== 'claude') return []
+      const scope = await accounts.sessionEnv('claude', accountId)
+      if (!scope.ok) return []
+      return claudeSubagents(sessionId, root('claude', scope))
+    },
     // The conversation's own title, read in the home it came from.
     async title({ agent, sessionId, accountId } = {}) {
       if (agent !== 'claude' && agent !== 'codex') return ''

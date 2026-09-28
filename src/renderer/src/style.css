@@ -7086,3 +7086,115 @@ button.act-stat:hover,
   gap: 6px;
   margin-top: 8px;
 }
+
+/* Pane header: the sub-agents its conversation started (AgentChildren.vue). */
+.agent-children {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.agent-children-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 7px;
+  border: 0;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--text-dim) 18%, transparent);
+  color: var(--text-dim);
+  font-size: 10.5px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.agent-children-chip.running {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--text-strong);
+}
+
+.agent-children-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.6;
+}
+
+.agent-children-chip.running .agent-children-dot {
+  background: var(--accent);
+  opacity: 1;
+  animation: agent-children-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes agent-children-pulse {
+  50% {
+    opacity: 0.3;
+  }
+}
+
+.agent-children-list {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 60;
+  width: min(640px, 70vw);
+  max-height: 340px;
+  overflow: auto;
+  padding: 6px 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface-2);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.5);
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  font-size: 12px;
+}
+
+.agent-children-head {
+  padding: 2px 12px 6px;
+  color: var(--text-dim);
+  font-family: inherit;
+}
+
+.agent-child {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 3px 12px;
+  white-space: nowrap;
+}
+
+.agent-child-mark {
+  flex: 0 0 12px;
+  color: var(--accent);
+}
+
+.agent-child.done .agent-child-mark {
+  color: #73c991;
+}
+
+.agent-child.stopped .agent-child-mark {
+  color: var(--text-dim);
+}
+
+.agent-child-type {
+  flex: 0 0 auto;
+  color: var(--text-dim);
+}
+
+.agent-child-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+}
+
+.agent-child.done .agent-child-title,
+.agent-child.stopped .agent-child-title {
+  color: var(--text-dim);
+}
+
+.agent-child-stats {
+  flex: 0 0 auto;
+  color: var(--text-dim);
+}

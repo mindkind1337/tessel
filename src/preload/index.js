@@ -42,6 +42,7 @@ const api = {
   findCodexSession: (query) => ipcRenderer.invoke('sessions:findCodex', query),
   findAgentSession: (query) => ipcRenderer.invoke('sessions:find', query),
   sessionTitle: (query) => ipcRenderer.invoke('sessions:title', query),
+  agentChildren: (query) => ipcRenderer.invoke('agents:children', query),
   geminiSessionExists: (id) => ipcRenderer.invoke('sessions:geminiExists', id),
   qwenSessionExists: (id) => ipcRenderer.invoke('sessions:qwenExists', id),
   reportedSessions: () => ipcRenderer.invoke('sessions:reported'),

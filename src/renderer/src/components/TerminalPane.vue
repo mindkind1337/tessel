@@ -38,6 +38,7 @@ import { osc52Text } from '../../../shared/osc52'
 import { cacheCountdown } from '../promptCache'
 import { isViewed } from '../../../shared/fileKinds'
 import { paneModels } from '../paneModels'
+import AgentChildren from './AgentChildren.vue'
 
 const props = defineProps({
   node: { type: Object, required: true }
@@ -1487,6 +1488,12 @@ Named after its conversation. Double-click to rename` : 'Double-click to rename'
           :title="track.reason"
           >quiet {{ track.minutes }} min</span
         >
+        <AgentChildren
+          v-if="isAgent && node.agentId === 'claude' && node.sessionId && !node.sleeping"
+          :agent-id="node.agentId"
+          :session-id="node.sessionId"
+          :account-id="node.accountId"
+        />
         <span
           v-if="cache"
           class="pane-cache"

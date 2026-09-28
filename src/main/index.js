@@ -885,6 +885,15 @@ ipcMain.handle('logs:diagnostics', () => {
 })
 
 // Agent session lookups, for resuming conversations when panes reopen.
+// The sub-agents an agent pane's conversation started (title, time, tokens).
+ipcMain.handle('agents:children', async (_evt, q = {}) => {
+  try {
+    return await accountSessions.children(q)
+  } catch (err) {
+    log.warn('sessions', `children: ${err.message}`)
+    return []
+  }
+})
 // A pane's title from its conversation (Settings > Agents, automatic titles).
 ipcMain.handle('sessions:title', async (_evt, q = {}) => {
   try {
