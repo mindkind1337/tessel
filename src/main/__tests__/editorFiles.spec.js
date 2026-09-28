@@ -88,6 +88,48 @@ describe('editor files: read and write', () => {
     expect(res.ok).toBe(false)
     expect(fs.readFileSync(f, 'utf8')).toBe('safe')
   })
+
+  it('refuses to write over a change made on disk since the editor read the file', async () => {
+    const f = join(root, 'agent.txt')
+    fs.writeFileSync(f, 'original')
+    const r = readForEdit(f)
+    // An agent writes before the watcher tells the window.
+    fs.writeFileSync(f, 'IMPORTANT AGENT EDIT')
+    const bySig = await writeForEdit({ file: f, text: 'original MINE', expectSig: r.sig })
+    expect(bySig).toMatchObject({ ok: false, conflict: true, sig: statForEdit(f).sig })
+    const byHash = await writeForEdit({ file: f, text: 'original MINE', expectSig: r.sig, expectHash: r.hash })
+    expect(byHash).toMatchObject({ ok: false, conflict: true })
+    expect(fs.readFileSync(f, 'utf8')).toBe('IMPORTANT AGENT EDIT')
+    expect(fs.readdirSync(root)).toEqual(['agent.txt'])
+    // Written on purpose over the version now known (Keep My Edits, then Save).
+    const now = readForEdit(f)
+    const ok = await writeForEdit({ file: f, text: 'MINE', expectSig: now.sig, expectHash: now.hash })
+    expect(ok.ok).toBe(true)
+    expect(fs.readFileSync(f, 'utf8')).toBe('MINE')
+    // The next save goes with what that write returned.
+    expect((await writeForEdit({ file: f, text: 'MINE 2', expectSig: ok.sig, expectHash: ok.hash })).ok).toBe(true)
+  })
+
+  it('sees a change that kept the size and time (content hash), and not a mere touch', async () => {
+    const f = join(root, 'same.txt')
+    fs.writeFileSync(f, 'aaaa')
+    const r = readForEdit(f)
+    const st = fs.statSync(f)
+    fs.writeFileSync(f, 'bbbb')
+    fs.utimesSync(f, st.atime, st.mtime)
+    expect(statForEdit(f).sig).toBe(r.sig)
+    expect(await writeForEdit({ file: f, text: 'mine', expectSig: r.sig, expectHash: r.hash })).toMatchObject({ ok: false, conflict: true })
+    expect(fs.readFileSync(f, 'utf8')).toBe('bbbb')
+    // Touched only: the same bytes, written.
+    const r2 = readForEdit(f)
+    fs.utimesSync(f, new Date(Date.now() + 5000), new Date(Date.now() + 5000))
+    expect((await writeForEdit({ file: f, text: 'mine', expectSig: r2.sig, expectHash: r2.hash })).ok).toBe(true)
+    // A file deleted meanwhile has nothing to lose: written back.
+    const r3 = readForEdit(f)
+    fs.unlinkSync(f)
+    expect((await writeForEdit({ file: f, text: 'back', expectSig: r3.sig, expectHash: r3.hash })).ok).toBe(true)
+    expect(fs.readFileSync(f, 'utf8')).toBe('back')
+  })
 })
 
 describe('editor files: the committed version (HEAD)', () => {

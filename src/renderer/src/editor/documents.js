@@ -63,7 +63,18 @@ export function acquireDoc(path, owner) {
       sig: null,
       language: 'plaintext'
     }
-    inner.set(key, { model: null, savedAlt: 0, baseline: '', owners: new Set(), autoTimer: null, sub: null, applying: false, recentWrite: null, diskText: null })
+    inner.set(key, {
+      model: null,
+      savedAlt: 0,
+      baseline: '',
+      owners: new Set(),
+      autoTimer: null,
+      sub: null,
+      applying: false,
+      recentWrite: null,
+      diskText: null,
+      diskHash: null
+    })
     load(key)
     syncWatch()
   }
@@ -141,6 +152,7 @@ async function load(key) {
   i.baseline = model.getValue()
   d.bom = !!res.bom
   d.sig = res.sig || null
+  i.diskHash = res.hash || null
   d.language = lang
   d.deleted = false
   i.sub = model.onDidChangeContent(() => onEdit(key))
@@ -194,6 +206,10 @@ function scheduleAutoSave(key) {
 }
 
 // -> { ok } | { ok: false, error } | { ok: false, skipped: true }
+// | { ok: false, conflict: true, error }: the file changed on disk since this
+// window last knew it (before the watcher said so); nothing was written and
+// the document takes the change as one made on disk (reloaded when clean,
+// the banner when there are unsaved edits).
 export function saveDoc(path, { trigger = 'user' } = {}) {
   const key = pathKey(path)
   return queue.run(key, async () => {
@@ -201,17 +217,54 @@ export function saveDoc(path, { trigger = 'user' } = {}) {
     const i = inner.get(key)
     if (!d || !i || !i.model) return { ok: false, skipped: true, error: d && d.error ? d.error : 'The file is not open.' }
     if (trigger === 'autosave' && !autoSaveAllowed(d)) return { ok: false, skipped: true }
+    // Changed on disk under unsaved edits: not written over until the banner's
+    // "Keep My Edits" (or Reload) says which version wins.
+    if (d.external) {
+      hooks.toast(`${d.name} was changed on disk by another program: choose Compare, Reload or Keep My Edits before saving.`, {
+        kind: 'error',
+        timeout: 8000
+      })
+      return { ok: false, conflict: true, error: 'The file was changed on disk by another program.' }
+    }
     const text = i.model.getValue()
     const alt = i.model.getAlternativeVersionId()
+    // The disk as this window last knew it goes with the text: the main
+    // process refuses the write when the file changed since (never
+    // overwrites a change it has not seen).
+    const write = async () => {
+      try {
+        return await window.shellApi.editor.write({
+          file: d.path,
+          text,
+          bom: d.bom,
+          expectSig: d.sig || undefined,
+          expectHash: i.diskHash || undefined
+        })
+      } catch (err) {
+        return { ok: false, error: (err && err.message) || 'unknown error' }
+      }
+    }
     d.saving = true
-    let res
-    try {
-      res = await window.shellApi.editor.write({ file: d.path, text, bom: d.bom })
-    } catch (err) {
-      res = { ok: false, error: (err && err.message) || 'unknown error' }
+    let res = await write()
+    if (res && res.conflict && docs[key] === d) {
+      // Changed on disk before the watcher said so: taken as such.
+      absorbDisk(key, d, await readFile(d.path))
+      // The disk still holds what the edits started from (touched, or its
+      // BOM changed): nothing of theirs to lose, written now.
+      if (docs[key] === d && d.dirty && !d.external && !d.deleted && i.model) res = await write()
     }
     d.saving = false
     if (docs[key] !== d) return res || { ok: false }
+    if (res && res.conflict) {
+      if (trigger !== 'autosave')
+        hooks.toast(
+          d.external
+            ? `${d.name} was changed on disk by another program: your edits were not saved. Compare, reload or keep them.`
+            : `${d.name} was changed on disk by another program: reloaded.`,
+          { kind: 'error', timeout: 8000 }
+        )
+      return res
+    }
     if (!res || !res.ok) {
       hooks.toast(`Could not save ${d.name}: ${(res && res.error) || 'unknown error'}`, { kind: 'error', timeout: 8000 })
       return res || { ok: false, error: 'unknown error' }
@@ -223,6 +276,7 @@ export function saveDoc(path, { trigger = 'user' } = {}) {
     i.baseline = text
     i.diskText = null
     d.sig = res.sig || null
+    i.diskHash = res.hash || null
     d.external = false
     d.deleted = false
     updateDirty(key)
@@ -231,10 +285,16 @@ export function saveDoc(path, { trigger = 'user' } = {}) {
 }
 
 // Save every document of these paths that has unsaved changes. -> true when
-// all were saved.
+// all were saved and none is dirty now: an edit typed while a save was
+// writing is saved too (a few rounds), so closing after never loses it.
 export async function saveDocs(paths) {
-  const results = await Promise.all(dirtyPaths(paths).map((p) => saveDoc(p)))
-  return results.every((r) => r && r.ok)
+  for (let round = 0; round < 3; round++) {
+    const dirty = dirtyPaths(paths)
+    if (!dirty.length) return true
+    const results = await Promise.all(dirty.map((p) => saveDoc(p)))
+    if (!results.every((r) => r && r.ok)) return false
+  }
+  return !dirtyPaths(paths).length
 }
 
 export function dirtyPaths(paths) {
@@ -246,12 +306,14 @@ export function dirtyPaths(paths) {
   return out
 }
 
-// Documents with unsaved changes whose only tab is in this pane (closing it
-// would lose them).
-export function dirtyOnlyIn(owner, paths) {
+// Documents with unsaved changes whose every tab is in these panes (one pane
+// id, or the ids of all the panes closing together): closing them would
+// lose the edits. Two closing panes showing the same document count as one.
+export function dirtyOnlyIn(owners, paths) {
+  const set = new Set(Array.isArray(owners) || owners instanceof Set ? owners : [owners])
   return dirtyPaths(paths).filter((p) => {
     const o = ownersOf(p)
-    return o.length === 1 && o[0] === owner
+    return o.length > 0 && o.every((x) => set.has(x))
   })
 }
 
@@ -335,14 +397,22 @@ async function onDiskChange(change) {
   // Not in the middle of our own save.
   await queue.idle(key)
   if (docs[key] !== d) return
-  const res = await readFile(d.path)
-  if (docs[key] !== d || !i.model) return
+  await absorbDisk(key, d, await readFile(d.path))
+}
+
+// The file as just read from disk (changed by another program): a clean
+// document is reloaded; unsaved edits are kept and flagged (the banner offers
+// Compare, Reload, Keep) and auto-save waits.
+function absorbDisk(key, d, res) {
+  const i = inner.get(key)
+  if (docs[key] !== d || !i || !i.model) return
   if (!res || !res.ok) {
     if (res && res.code === 'missing') d.deleted = true
     return
   }
   d.sig = res.sig || null
   d.bom = !!res.bom
+  i.diskHash = res.hash || null
   const model = i.model
   const sameText = normEol(res.text, model.getEOL()) === normEol(i.baseline, model.getEOL())
   const sameEol = !mainEol(res.text) || mainEol(res.text) === model.getEOL()
@@ -372,6 +442,8 @@ export async function reloadFromDisk(path) {
   }
   d.sig = res.sig || null
   d.bom = !!res.bom
+  const i = inner.get(key)
+  if (i) i.diskHash = res.hash || null
   applyDiskText(key, res.text)
 }
 

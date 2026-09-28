@@ -19,6 +19,7 @@ import {
   diskTextOf,
   reconcileOwner,
   saveDoc,
+  saveDocs,
   reloadFromDisk,
   keepMyEdits,
   onDocEdited,
@@ -295,10 +296,9 @@ async function closeTab(path) {
         ? 'alt'
         : false
     if (!answer) return
-    if (answer === true) {
-      const r = await saveDoc(path)
-      if (!r || !r.ok) return
-    }
+    // Saved, and still clean after (an edit typed during the save is saved
+    // too): otherwise the tab stays open.
+    if (answer === true && !(await saveDocs([path]))) return
   }
   if (!files.value.some((f) => samePath(f.path, path))) return
   const res = closeTabData(files.value, props.node.activePath, path)
