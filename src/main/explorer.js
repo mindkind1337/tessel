@@ -3,13 +3,16 @@
 // Recycle Bin). Everything stays inside the project folder it was asked for.
 import fs from 'fs'
 import { join, resolve, relative, isAbsolute, dirname, basename } from 'path'
-import { execFile } from 'child_process'
+import { execFile, spawn } from 'child_process'
+import { StringDecoder } from 'string_decoder'
 
 const MAX_ENTRIES = 5000
 // Never listed (Orca hides the same by default): git's own folder.
 const HIDDEN = new Set(['.git'])
-// Not watched (too busy, and rebuilt by tools).
-const UNWATCHED = /(^|[\\/])(\.git|node_modules|dist|build|out|\.next|\.cache|target|\.venv|__pycache__)([\\/]|$)/
+// Heavy folders, rebuilt by tools: not watched, not searched.
+const HEAVY = ['.git', 'node_modules', 'dist', 'build', 'out', '.next', '.cache', 'target', '.venv', '__pycache__']
+const HEAVY_SET = new Set(HEAVY)
+const UNWATCHED = new RegExp(`(^|[\\\\/])(${HEAVY.map((h) => h.replace(/\./g, '\\.')).join('|')})([\\\\/]|$)`)
 
 // The path inside root, or null when it would leave it (.., another drive).
 export function inside(root, p) {
@@ -100,6 +103,193 @@ export async function projectStatus({ root, ignored = false } = {}) {
     execFile('git', args, { windowsHide: true, timeout: 15000, maxBuffer: 32 * 1024 * 1024 }, (err, stdout) => {
       if (err) return done({ ok: true, files: {}, repo: false })
       done({ ok: true, files: parsePorcelain(top, String(stdout)), repo: true })
+    })
+  })
+}
+
+// --- Search -------------------------------------------------------------------
+export const SEARCH_LIMIT = 500
+const MAX_WALK = 100000 // entries looked at, at most, per search
+const MAX_FILE = 2 * 1024 * 1024 // content search skips bigger files
+const MAX_TEXT = 240 // a result's line, cut around the match
+
+// Every folder and file of the project, breadth first, without the heavy
+// folders: fn(entry) returns true to stop.
+async function walk(root, { dotfiles = true } = {}, fn) {
+  const queue = [root]
+  let seen = 0
+  while (queue.length) {
+    const dir = queue.shift()
+    let items
+    try {
+      items = await fs.promises.readdir(dir, { withFileTypes: true })
+    } catch {
+      continue
+    }
+    items.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }))
+    for (const d of items) {
+      if (HEAVY_SET.has(d.name)) continue
+      if (!dotfiles && d.name.startsWith('.')) continue
+      if (++seen > MAX_WALK) return true
+      const full = join(dir, d.name)
+      // Links and junctions are not followed (they may loop or leave the project).
+      const isDir = d.isDirectory()
+      if (isDir) queue.push(full)
+      if (await fn({ name: d.name, path: full, dir: isDir, file: d.isFile() })) return true
+    }
+  }
+  return false
+}
+
+const relOf = (root, p) => relative(resolve(root), p)
+
+// Files and folders whose name has the query (case-insensitive), in folders
+// not opened yet too: -> { ok, results: [{ name, path, rel, dir }], truncated }
+export async function searchNames({ root, query, dotfiles = true, limit = SEARCH_LIMIT } = {}) {
+  if (!inside(root, root)) return { ok: false, error: 'Invalid folder.' }
+  const q = String(query || '').trim().toLowerCase()
+  if (!q) return { ok: true, results: [], truncated: false }
+  const results = []
+  let truncated = false
+  const stopped = await walk(root, { dotfiles }, (e) => {
+    if (!e.name.toLowerCase().includes(q)) return false
+    if (results.length >= limit) {
+      truncated = true
+      return true
+    }
+    results.push({ name: e.name, path: e.path, rel: relOf(root, e.path), dir: e.dir })
+    return false
+  })
+  return { ok: true, results, truncated: truncated || stopped }
+}
+
+// A result's line: trimmed, and cut around the match when it is long.
+export function clipLine(text, q) {
+  const t = String(text).replace(/\r$/, '').replace(/\t/g, '  ').trim()
+  if (t.length <= MAX_TEXT) return t
+  const at = Math.max(0, t.toLowerCase().indexOf(q))
+  const start = Math.max(0, Math.min(at - 60, t.length - MAX_TEXT))
+  return (start > 0 ? '…' : '') + t.slice(start, start + MAX_TEXT) + (start + MAX_TEXT < t.length ? '…' : '')
+}
+
+// Content search by walking the project (no git): plain text,
+// case-insensitive; binaries (a NUL in the first 8 KB) and files over 2 MB
+// are skipped. -> { ok, results: [{ path, rel, line, text }], truncated }
+export async function searchContentWalk({ root, query, limit = SEARCH_LIMIT } = {}) {
+  if (!inside(root, root)) return { ok: false, error: 'Invalid folder.' }
+  const q = String(query || '').toLowerCase()
+  if (!q.trim()) return { ok: true, results: [], truncated: false }
+  const results = []
+  let truncated = false
+  const stopped = await walk(root, {}, async (e) => {
+    if (!e.file) return false
+    let buf
+    try {
+      const st = await fs.promises.stat(e.path)
+      if (st.size > MAX_FILE) return false
+      buf = await fs.promises.readFile(e.path)
+    } catch {
+      return false
+    }
+    if (buf.subarray(0, 8192).includes(0)) return false
+    const lines = buf.toString('utf8').split('\n')
+    for (let i = 0; i < lines.length; i++) {
+      if (!lines[i].toLowerCase().includes(q)) continue
+      if (results.length >= limit) {
+        truncated = true
+        return true
+      }
+      results.push({ path: e.path, rel: relOf(root, e.path), line: i + 1, text: clipLine(lines[i], q) })
+    }
+    return false
+  })
+  return { ok: true, results, truncated: truncated || stopped }
+}
+
+// One `git grep -z -n` record ("path\0line\0text") -> a result, or null
+// (not one, or in a heavy folder).
+export function parseGrepRecord(root, rec, q) {
+  const a = rec.indexOf('\0')
+  const b = a < 0 ? -1 : rec.indexOf('\0', a + 1)
+  if (b < 0) return null
+  const rel = rec.slice(0, a).replace(/\//g, '\\')
+  if (UNWATCHED.test(rel)) return null
+  const line = Number(rec.slice(a + 1, b))
+  if (!Number.isInteger(line) || line < 1) return null
+  const path = join(resolve(root), rel)
+  if (!inside(root, path)) return null
+  return { path, rel: relOf(root, path), line, text: clipLine(rec.slice(b + 1), q) }
+}
+
+// Content search: `git grep` in a repository (tracked and untracked files,
+// not ignored ones), else the walk above.
+export async function searchContent({ root, query, limit = SEARCH_LIMIT } = {}) {
+  if (!inside(root, root)) return { ok: false, error: 'Invalid folder.' }
+  const q = String(query || '').toLowerCase()
+  if (!q.trim()) return { ok: true, results: [], truncated: false }
+  const top = await gitTop(root)
+  if (!top) return searchContentWalk({ root, query, limit })
+  return new Promise((done) => {
+    const results = []
+    const decoder = new StringDecoder('utf8')
+    let pending = ''
+    let finished = false
+    let child = null
+    let timer = 0
+    // Stopped early (enough results, or too slow): git is ended first, so it
+    // no longer holds the folder when the answer arrives.
+    const finish = (res) => {
+      if (finished) return
+      finished = true
+      clearTimeout(timer)
+      if (!child || child.exitCode !== null || child.signalCode !== null) return done(res)
+      const give = setTimeout(() => done(res), 2000)
+      child.once('close', () => {
+        clearTimeout(give)
+        done(res)
+      })
+      try {
+        child.kill()
+      } catch {
+        // gone already
+      }
+    }
+    // Complete records only (the last one may still be coming).
+    const take = (text, last) => {
+      pending += text
+      const recs = pending.split('\n')
+      pending = last ? '' : recs.pop()
+      for (const rec of recs) {
+        const r = parseGrepRecord(root, rec, q)
+        if (!r) continue
+        if (results.length >= limit) return true
+        results.push(r)
+      }
+      return false
+    }
+    try {
+      child = spawn('git', ['-C', root, 'grep', '-n', '-I', '-z', '-i', '-F', '--untracked', '--no-color', '-e', String(query), '--', '.'], {
+        windowsHide: true
+      })
+    } catch {
+      finished = true
+      return done(searchContentWalk({ root, query, limit }))
+    }
+    timer = setTimeout(() => finish({ ok: true, results, truncated: true }), 20000)
+    child.stdout.on('data', (chunk) => {
+      if (!finished && take(decoder.write(chunk), false)) finish({ ok: true, results, truncated: true })
+    })
+    child.stderr.on('data', () => {})
+    child.on('error', () => {
+      if (finished) return
+      finished = true
+      clearTimeout(timer)
+      done(searchContentWalk({ root, query, limit }))
+    })
+    child.on('close', () => {
+      if (finished) return
+      const full = take(decoder.end(), true)
+      finish({ ok: true, results, truncated: full })
     })
   })
 }

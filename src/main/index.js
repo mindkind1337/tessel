@@ -1577,6 +1577,9 @@ ipcMain.handle('files:open', async (_evt, q = {}) => {
 // watch per project (the window is told when files change).
 ipcMain.handle('explorer:list', safe((q) => explorer.listDir(q || {})))
 ipcMain.handle('explorer:status', safe((q) => explorer.projectStatus(q || {})))
+// Search the project: file names (also in folders not opened yet), or contents.
+ipcMain.handle('explorer:searchNames', safe((q) => explorer.searchNames(q || {})))
+ipcMain.handle('explorer:searchContent', safe((q) => explorer.searchContent(q || {})))
 ipcMain.handle('explorer:create', safe((q) => explorer.create(q || {})))
 ipcMain.handle('explorer:rename', safe((q) => explorer.rename(q || {})))
 ipcMain.handle('explorer:trash', safe((q) => explorer.trash(q || {}, (p) => shell.trashItem(p))))
