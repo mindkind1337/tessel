@@ -59,7 +59,8 @@ afterEach(() => {
   fs.rmSync(target, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
 })
 
-describe('advanced worktree creation', () => {
+// Real git commands: slow on Windows under a full parallel run.
+describe('advanced worktree creation', { timeout: 30000 }, () => {
   it('preserves old HEAD calls and leaves initialization disabled', async () => {
     write(
       join(repo, '.tessel', 'setup.ps1'),

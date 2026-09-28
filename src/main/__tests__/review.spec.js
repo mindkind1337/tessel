@@ -79,7 +79,8 @@ describe('diff parsers', () => {
 })
 
 // A real repo with a task copy, as createWorktree makes it.
-describe('review against git', () => {
+// Real git commands: slow on Windows under a full parallel run.
+describe('review against git', { timeout: 30000 }, () => {
   let dir, repo, copy
   const g = (cwd, ...args) => execFileSync('git', ['-C', cwd, ...args], { stdio: 'pipe' }).toString()
   const base = () => ({ root: repo, path: copy, branch: 'agent/fix', target: 'main' })
@@ -102,7 +103,7 @@ describe('review against git', () => {
     fs.writeFileSync(join(copy, 'c.txt'), 'new\n')
     g(copy, 'add', '.')
     g(copy, 'commit', '-q', '-m', 'Fix two', '-m', 'Tests: all pass')
-  })
+  }, 30000)
   afterAll(() => {
     try {
       fs.rmSync(dir, { recursive: true, force: true })
@@ -222,7 +223,7 @@ describe('review against git', () => {
   })
 })
 
-describe('review: commit and push the task branch', () => {
+describe('review: commit and push the task branch', { timeout: 30000 }, () => {
   let dir, repo, copy, origin
   const g = (cwd, ...args) => execFileSync('git', ['-C', cwd, ...args], { stdio: 'pipe' }).toString()
   const base = () => ({ root: repo, path: copy, branch: 'agent/cp', target: 'main' })
@@ -243,7 +244,7 @@ describe('review: commit and push the task branch', () => {
     g(repo, 'commit', '-q', '-m', 'init')
     g(repo, 'remote', 'add', 'origin', origin)
     g(repo, 'worktree', 'add', '-q', '-b', 'agent/cp', copy, 'HEAD')
-  })
+  }, 30000)
   afterAll(() => {
     try {
       fs.rmSync(dir, { recursive: true, force: true })
