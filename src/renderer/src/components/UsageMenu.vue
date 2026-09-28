@@ -1122,12 +1122,26 @@ function toggle() {
   opacity: 0.55;
   cursor: default;
 }
+/* The reset: its text on the left, "Reset now" on the right. */
+.usage-reset-credits {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 12px;
+  align-items: center;
+}
+.usage-reset-credits > strong,
+.usage-reset-credits > span {
+  grid-column: 1;
+}
 .usage-reset-credits .usage-action {
-  margin-top: 8px;
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: center;
+  white-space: nowrap;
 }
 .usage-action.primary {
   background: var(--accent);
-  color: var(--bg);
+  color: var(--chrome);
   border-color: var(--accent);
 }
 .usage-reset-confirm {
