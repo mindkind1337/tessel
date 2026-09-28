@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { settings } from '../settings'
 import { flushPromises, mount } from '@vue/test-utils'
 import UsageMenu from '../components/UsageMenu.vue'
 
 describe('usage menu account switching', () => {
   let wrapper, api, state, previousApi
   beforeEach(() => {
+    settings.hiddenUsageProviders = []
     previousApi = window.shellApi
     state = {
       ok: true,
@@ -18,6 +20,10 @@ describe('usage menu account switching', () => {
       ]
     }
     api = {
+      listAgents: vi.fn(async () => [
+        { id: 'codex', available: true },
+        { id: 'claude', available: true }
+      ]),
       getUsage: vi.fn(async () => ({ agents: [{ id: 'codex', windows: [] }] })),
       accounts: {
         list: vi.fn(async () => structuredClone(state)),

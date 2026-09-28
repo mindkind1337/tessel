@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { settings } from '../settings'
 import { flushPromises, mount } from '@vue/test-utils'
 import { toBlob } from 'html-to-image'
 import StatsUsage from '../components/StatsUsage.vue'
@@ -41,11 +42,16 @@ describe('Orca Stats & usage port', () => {
     }
   }
   beforeEach(() => {
+    settings.hiddenUsageProviders = []
     vi.useFakeTimers()
     vi.setSystemTime(epoch)
     localStorage.clear()
     previousApi = window.shellApi
     api = {
+      listAgents: vi.fn(async () => [
+        { id: 'codex', available: true },
+        { id: 'claude', available: true }
+      ]),
       claudeUsageReport: vi.fn(async (query) => report('claude', query)),
       codexUsageReport: vi.fn(async (query) => report('codex', query)),
       statsUsage: {
@@ -230,13 +236,11 @@ describe('Orca Stats & usage port', () => {
     expect(wrapper.find('[data-test="stats-provider-cards"]').exists()).toBe(true)
   })
 
-  it('reports unavailable providers honestly without false zeros, controls or API calls', async () => {
+  it('omits unsupported histories without false zeros or API calls', async () => {
     await open()
-    await provider('muse')
-    const pane = wrapper.get('[data-test="stats-pane-muse"]')
-    expect(pane.text()).toContain('No local Muse usage reader is available')
-    expect(pane.find('[data-test="stats-tracking-toggle"]').exists()).toBe(false)
-    expect(pane.find('.su-card').exists()).toBe(false)
+    await wrapper.get('[data-test="stats-provider-select"]').trigger('click')
+    for (const id of ['muse', 'grok', 'opencode'])
+      expect(wrapper.find(`[data-test="stats-provider-${id}"]`).exists()).toBe(false)
     expect(api.providerUsage.read).not.toHaveBeenCalled()
   })
 

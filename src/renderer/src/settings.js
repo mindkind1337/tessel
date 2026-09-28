@@ -2,6 +2,7 @@
 // every TerminalPane; App persists it with the workspace layout.
 import { reactive } from 'vue'
 import { isTheme } from './themes'
+import { validHiddenUsageProviders } from '../../shared/usageProviders'
 
 export const FONT_FAMILIES = [
   'Cascadia Mono',
@@ -14,6 +15,7 @@ export const FONT_FAMILIES = [
 
 export const DEFAULT_SETTINGS = Object.freeze({
   theme: 'classic',
+  hiddenUsageProviders: [],
   fontSize: 13,
   fontFamily: 'Cascadia Mono',
   cursorStyle: 'block', // 'block' | 'bar' | 'underline'
@@ -205,6 +207,7 @@ const fresh = () => ({
   customAgents: [],
   quickCommands: [],
   agentPrefs: {},
+  hiddenUsageProviders: [],
   sidebarFilterRepoIds: [],
   sidebarCollapsedGroups: [],
   worktreeCardProperties: [...DEFAULT_SETTINGS.worktreeCardProperties],
@@ -220,6 +223,10 @@ export function loadSettings(saved) {
   if (!saved || typeof saved !== 'object') return
   for (const [key, def] of Object.entries(DEFAULT_SETTINGS)) {
     const v = saved[key]
+    if (key === 'hiddenUsageProviders') {
+      settings.hiddenUsageProviders = validHiddenUsageProviders(v)
+      continue
+    }
     if (key === 'customAgents') {
       if (Array.isArray(v)) settings.customAgents = v.filter(validCustomAgent).slice(0, 30)
       continue

@@ -8,8 +8,10 @@
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import BrandIcon from './BrandIcon.vue'
 import ResetHistory from './ResetHistory.vue'
+import UsageVisibility from './UsageVisibility.vue'
 import { settings } from '../settings'
 import { displayedUsagePercent, usagePercentLabel } from '../usagePercent'
+import { loadUsageProviders } from '../usageProviders'
 
 const emit = defineEmits(['details', 'accounts'])
 const NAMES = {
@@ -40,6 +42,13 @@ const resetBusy = ref(false)
 const resetNotice = ref('')
 const historyRevision = ref(0)
 const installed = ref([])
+const unavailable = ref([])
+const trackedProviders = computed(() =>
+  installed.value.filter(
+    (p) =>
+      p.quota && !settings.hiddenUsageProviders.includes(p.id) && !unavailable.value.includes(p.id)
+  )
+)
 const rosterError = ref('')
 const loading = ref(false)
 const now = ref(Date.now())
@@ -76,13 +85,13 @@ async function load() {
   }
 }
 async function loadAgents() {
-  if (!window.shellApi.listAgents) return
   const request = ++agentsRequest
   try {
-    const result = await window.shellApi.listAgents()
+    const result = await loadUsageProviders()
     if (!alive || request !== agentsRequest) return
     if (!Array.isArray(result)) throw new Error('Could not read installed agents.')
-    installed.value = result.filter((agent) => agent?.available && typeof agent.id === 'string')
+    installed.value = result
+    unavailable.value = []
     rosterError.value = ''
   } catch {
     if (alive && request === agentsRequest)
@@ -126,7 +135,8 @@ function invalidateProvider(id) {
   resetConfirm.value = null
 }
 async function readProvider(id) {
-  if (!['claude', 'codex'].includes(id) || !window.shellApi.providerUsage?.read) return
+  if (!trackedProviders.value.some((p) => p.id === id) || !window.shellApi.providerUsage?.read)
+    return
   if (accountsReadFailed.value || providerAccounts(id)?.error || accountBusy.value[id]) return
   const accountId = selectedAccount(id)
   const request = (providerRequests.get(id) || 0) + 1
@@ -134,10 +144,15 @@ async function readProvider(id) {
   providerBusy.value[id] = true
   providerErrors.value[id] = ''
   resetConfirm.value = null
+  if (!['claude', 'codex'].includes(id)) delete providerReadings.value[id]
   try {
     const result = await window.shellApi.providerUsage.read({ provider: id, accountId })
     if (!alive || request !== providerRequests.get(id) || accountId !== selectedAccount(id)) return
-    if (!result?.ok) throw new Error(result?.error || 'Could not refresh provider usage.')
+    if (!result?.ok) {
+      if (result?.code === 'unavailable')
+        unavailable.value = [...new Set([...unavailable.value, id])]
+      throw new Error(result?.error || 'Could not refresh provider usage.')
+    }
     if (result.provider !== id || result.accountId !== accountId)
       throw new Error('The usage account changed. Refresh before continuing.')
     providerReadings.value[id] = {
@@ -234,15 +249,22 @@ const agents = computed(() => {
       )
     }
   }
-  for (const agent of installed.value) {
+  for (const agent of trackedProviders.value) {
     if (rows.has(agent.id)) rows.get(agent.id).name ||= agent.name
-    else rows.set(agent.id, { id: agent.id, name: agent.name, windows: [], source: 'unsupported' })
+    else
+      rows.set(agent.id, {
+        id: agent.id,
+        name: agent.name,
+        windows: [],
+        source: 'unavailable',
+        error: providerErrors.value[agent.id] || 'Open to read provider usage.'
+      })
   }
   for (const reading of Object.values(providerReadings.value)) {
     if (reading.accountId === selectedAccount(reading.id))
       rows.set(reading.id, { ...rows.get(reading.id), ...reading })
   }
-  return [...rows.values()]
+  return [...rows.values()].filter((row) => trackedProviders.value.some((p) => p.id === row.id))
 })
 function agentName(agent) {
   return agent.name || NAMES[agent.id] || agent.id
@@ -292,10 +314,9 @@ function planLabel(agent) {
     : ''
 }
 function unavailableText(agent) {
+  if (agent.unlimited) return 'Unlimited plan — no quota ceiling reported.'
   if (agent.error) return agent.error
-  return agent.source === 'unsupported'
-    ? 'No local usage data. Tessel does not collect subscription quotas for this agent yet.'
-    : 'Not available: its quota is not saved on this computer.'
+  return 'Open to read usage for this account.'
 }
 function expandedFor(id) {
   return selectedProvider.value === id
@@ -527,7 +548,11 @@ function closeMenu() {
 async function refresh() {
   if (resetBusy.value) return
   await Promise.all([load(), loadAccounts(), loadAgents()])
-  if (alive && open.value) await Promise.all(['claude', 'codex'].map(readProvider))
+  if (alive && open.value) await Promise.all(trackedProviders.value.map((p) => readProvider(p.id)))
+}
+function visibilityChanged({ id, show }) {
+  if (!show && selectedProvider.value === id) closeProvider()
+  if (show && open.value) readProvider(id)
 }
 onMounted(() => {
   document.addEventListener('pointerdown', onDocDown, true)
@@ -536,6 +561,7 @@ onMounted(() => {
   document.addEventListener('keydown', onKey, true)
   load()
   timer = setInterval(load, 60000)
+  loadAgents()
 })
 onBeforeUnmount(() => {
   alive = false
@@ -598,7 +624,7 @@ const quotaWord = computed(() => (settings.usagePercentageDisplay === 'remaining
       :aria-busy="refreshing"
     >
       <header class="usage-roster-head">
-        <strong>Usage</strong><span>all agents</span
+        <strong>Usage</strong><span>supported providers</span
         ><button
           type="button"
           class="usage-refresh"
@@ -644,11 +670,16 @@ const quotaWord = computed(() => (settings.usagePercentageDisplay === 'remaining
         </button>
       </div>
       <div class="usage-roster-body">
+        <UsageVisibility :providers="installed" @change="visibilityChanged" />
         <p v-if="usage && usage.error" class="usage-account-error" role="alert">
           Could not read usage: {{ usage.error }}
         </p>
         <p v-else-if="!agents.length" class="notif-empty">
-          {{ loading ? 'Reading usage...' : 'No agent usage available.' }}
+          {{
+            loading
+              ? 'Reading usage...'
+              : 'No configured usage providers to show. Install a supported agent, sign in, then refresh.'
+          }}
         </p>
         <p v-if="rosterError" class="usage-account-notice" role="status">{{ rosterError }}</p>
         <p v-if="accountsError" class="usage-account-error" role="alert">
@@ -674,7 +705,10 @@ const quotaWord = computed(() => (settings.usagePercentageDisplay === 'remaining
             @click="toggleProvider(a.id)"
           >
             <span class="usage-brand"
-              ><BrandIcon :kind="a.id" :size="16" :label="agentName(a)"
+              ><BrandIcon
+                :kind="a.id === 'opencode-go' ? 'opencode' : a.id"
+                :size="16"
+                :label="agentName(a)"
             /></span>
             <span class="usage-roster-name"
               >{{ agentName(a)
@@ -702,7 +736,15 @@ const quotaWord = computed(() => (settings.usagePercentageDisplay === 'remaining
                 >{{ shownPct(summaryWindow(a).usedPct) }}%</span
               >
             </span>
-            <span v-else-if="!windows(a).length" class="usage-no-data">No local usage data</span>
+            <span v-else-if="!windows(a).length" class="usage-no-data">{{
+              providerBusy[a.id]
+                ? 'Loading usage…'
+                : a.unlimited
+                  ? 'Unlimited'
+                  : providerErrors[a.id]
+                    ? 'Refresh needed'
+                    : 'Open for usage'
+            }}</span>
             <svg
               class="usage-chevron"
               :class="{ expanded: expandedFor(a.id) }"
@@ -1502,6 +1544,17 @@ const quotaWord = computed(() => (settings.usagePercentageDisplay === 'remaining
   }
   .usage-chevron {
     transition: none;
+  }
+}
+@media (max-height: 540px) {
+  .usage-roster.compact .usage-roster-row {
+    padding-top: 3px;
+    padding-bottom: 3px;
+  }
+  .usage-roster.compact .usage-brand {
+    flex-basis: 21px;
+    width: 21px;
+    height: 21px;
   }
 }
 @media (max-height: 300px) {

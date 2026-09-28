@@ -1,6 +1,9 @@
 // @vitest-environment node
 import { describe, it, expect, vi } from 'vitest'
-vi.mock('../providerUsage', () => ({ createProviderUsage: vi.fn() }))
+vi.mock('../providerUsage', async (original) => ({
+  ...(await original()),
+  createProviderUsage: vi.fn()
+}))
 import { registerProviderUsage } from '../providerUsageIpc'
 
 function setup() {

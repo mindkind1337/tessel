@@ -7,6 +7,10 @@ describe('the usage gauge', () => {
   it('shows each window with its % and reset; Claude says it is not available; colour by the highest', async () => {
     const soon = new Date(Date.now() + 90 * 60000).toISOString()
     window.shellApi = {
+      listAgents: vi.fn(async () => [
+        { id: 'codex', available: true },
+        { id: 'claude', available: true }
+      ]),
       getUsage: vi.fn(async () => ({
         agents: [
           {
@@ -28,7 +32,7 @@ describe('the usage gauge', () => {
     const [codex, claude] = w.findAll('[data-test="usage-agent"]')
     expect(codex.text()).toMatch(/Weekly\s*86%/)
     expect(codex.text()).toMatch(/resets in 1 h 30 min|resets in 1 h 29 min/)
-    expect(claude.text()).toMatch(/Not available/)
+    expect(claude.text()).toMatch(/Open for usage/)
     w.unmount()
   })
 

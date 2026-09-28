@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { settings } from '../settings'
 import { flushPromises, mount } from '@vue/test-utils'
 import UsageMenu from '../components/UsageMenu.vue'
 
@@ -26,12 +27,17 @@ describe('usage provider flyout', () => {
     }
   }
   beforeEach(() => {
+    settings.hiddenUsageProviders = []
     vi.useFakeTimers()
     vi.setSystemTime(epoch)
     previousApi = window.shellApi
     selectedId = null
     serial = 0
     api = {
+      listAgents: vi.fn(async () => [
+        { id: 'codex', available: true },
+        { id: 'claude', available: true }
+      ]),
       getUsage: vi.fn(async () => ({
         agents: [
           { id: 'codex', windows: [{ label: 'week', usedPct: 25 }] },

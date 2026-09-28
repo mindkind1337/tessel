@@ -3,12 +3,21 @@
 import { createProviderUsage } from './providerUsage'
 import { createResetHistory } from './resetHistory'
 import { join } from 'node:path'
+import { createExtraProviderUsage } from './extraProviderUsage'
 
-export function registerProviderUsage({ ipcMain, accounts, service, userData, log }) {
+export function registerProviderUsage({
+  ipcMain,
+  accounts,
+  service,
+  userData,
+  log,
+  listAgents = async () => []
+}) {
   const history = userData
     ? createResetHistory({ file: join(userData, 'reset-history.json'), log })
     : null
   const usage = service || createProviderUsage({ accounts, history, log })
+  const extra = createExtraProviderUsage({ listAgents })
   const handle = (name, action, error) => {
     ipcMain.handle(name, async (_event, query) => {
       try {
@@ -19,7 +28,17 @@ export function registerProviderUsage({ ipcMain, accounts, service, userData, lo
       }
     })
   }
-  handle('providerUsage:read', (query) => usage.read(query), 'Could not read provider usage.')
+  handle(
+    'providerUsage:capabilities',
+    () => extra.capabilities(),
+    'Could not detect usage providers.'
+  )
+  handle(
+    'providerUsage:read',
+    (query) =>
+      ['claude', 'codex'].includes(query.provider) ? usage.read(query) : extra.read(query),
+    'Could not read provider usage.'
+  )
   handle(
     'providerUsage:resetHistory',
     (query) => history?.read(query) || { ok: false, error: 'Local reset history is unavailable.' },

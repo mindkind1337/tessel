@@ -6,13 +6,16 @@ provided separately in [LICENSE](LICENSE).
 
 ## Orca
 
-The Stats & Usage interface and related usage-report implementations contain
-code and designs adapted from Orca by Lovecast Inc.
+The Stats & Usage interface, related usage-report implementations, provider
+visibility rules and subscription-quota collectors contain code and designs
+adapted from Orca by Lovecast Inc.
 
 - Project: https://github.com/stablyai/orca
 - Reference revision: `433986fa3be37911a0f13f7ffd454b831b87a64c` (package version `1.4.214`)
 - Referenced source: `src/renderer/src/components/stats`, related usage store and
-  settings navigation, and `src/main/claude-usage` / `src/main/codex-usage`
+  settings navigation, `src/main/claude-usage` / `src/main/codex-usage`,
+  `src/main/rate-limits` (Gemini, Kimi, Cursor, Grok, OpenCode Go, MiniMax), and
+  `src/renderer/src/components/status-bar/status-bar-provider-visibility.ts`
 - License source: https://github.com/stablyai/orca/blob/433986fa3be37911a0f13f7ffd454b831b87a64c/LICENSE
 
 ```text

@@ -185,7 +185,7 @@ async function inspect(file) {
   if (fold(await fs.realpath(absolute)) !== fold(absolute)) throw new Error('Unsafe auth path')
   return stat
 }
-async function boundedCredentialRead(file) {
+export async function boundedCredentialRead(file) {
   const before = await inspect(file)
   if (before.size > AUTH_LIMIT) throw new Error('Auth size limit')
   const handle = await fs.open(file, 'r')
@@ -214,6 +214,8 @@ async function boundedCredentialRead(file) {
     await handle.close()
   }
 }
+
+export { inspect as inspectCredentialPath }
 
 export function createProviderUsage({
   accounts,

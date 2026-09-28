@@ -5,6 +5,9 @@ import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { Check, ChevronDown } from 'lucide-vue-next'
 import BrandIcon from './BrandIcon.vue'
 import ResetHistory from './ResetHistory.vue'
+import UsageVisibility from './UsageVisibility.vue'
+import { settings } from '../settings'
+import { loadUsageProviders } from '../usageProviders'
 import StatsStatCard from './stats/StatsStatCard.vue'
 import StatsIcon from './stats/StatsIcon.vue'
 import StatsUsageOverview from './stats/StatsUsageOverview.vue'
@@ -18,14 +21,14 @@ const props = defineProps({
   worktreePaths: { type: Array, default: () => [] },
   statsSummary: { type: Object, default: null }
 })
-const PROVIDERS = [
+const catalog = ref([])
+const catalogError = ref('')
+const PROVIDERS = computed(() => [
   { id: 'overview', label: 'Overview' },
-  { id: 'claude', label: 'Claude' },
-  { id: 'codex', label: 'Codex' },
-  { id: 'opencode', label: 'OpenCode' },
-  { id: 'muse', label: 'Muse' },
-  { id: 'grok', label: 'Grok' }
-]
+  ...catalog.value
+    .filter((p) => p.report && !settings.hiddenUsageProviders.includes(p.id))
+    .map((p) => ({ id: p.id, label: p.id === 'claude' ? 'Claude' : p.name }))
+])
 const PREF_KEY = 'tessel:usage-analytics'
 function readPreferences() {
   try {
@@ -37,7 +40,7 @@ function readPreferences() {
 }
 const enabled = ref(readPreferences())
 const active = ref(
-  PROVIDERS.some((provider) => provider.id === props.initialProvider)
+  ['overview', 'claude', 'codex'].includes(props.initialProvider)
     ? props.initialProvider
     : 'overview'
 )
@@ -57,14 +60,15 @@ const requests = new Map()
 const pendingQueries = new Map()
 let disposed = false
 let statsRequest = 0
+let catalogRequest = 0
 const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
 const label = computed(
-  () => PROVIDERS.find((provider) => provider.id === active.value)?.label || 'Overview'
+  () => PROVIDERS.value.find((provider) => provider.id === active.value)?.label || 'Overview'
 )
 const summary = computed(() => props.statsSummary || stats.value)
 const available = (id) =>
   typeof window.shellApi?.[id === 'claude' ? 'claudeUsageReport' : 'codexUsageReport'] ===
-    'function' && ['claude', 'codex'].includes(id)
+    'function' && PROVIDERS.value.some((p) => p.id === id && id !== 'overview')
 const current = computed(
   () =>
     reports.value[active.value] ||
@@ -74,23 +78,46 @@ const overview = computed(() =>
   buildUsageOverview(
     Object.fromEntries(
       ['claude', 'codex']
-        .filter((id) => enabled.value[id])
+        .filter((id) => enabled.value[id] && available(id))
         .map((id) => [id, overviewReports.value[id]])
     ),
     { timezone, dayCount: 42 }
   )
 )
 const providerRows = computed(() =>
-  PROVIDERS.filter((provider) => !['overview', 'grok'].includes(provider.id)).map((provider) => ({
-    ...provider,
-    report: overviewReports.value[provider.id],
-    supported: available(provider.id),
-    enabled: enabled.value[provider.id] === true,
-    loading: loading.value[`provider:${provider.id}`],
-    error: errors.value[`provider:${provider.id}`]
-  }))
+  PROVIDERS.value
+    .filter((provider) => provider.id !== 'overview')
+    .map((provider) => ({
+      ...provider,
+      report: overviewReports.value[provider.id],
+      supported: available(provider.id),
+      enabled: enabled.value[provider.id] === true,
+      loading: loading.value[`provider:${provider.id}`],
+      error: errors.value[`provider:${provider.id}`]
+    }))
 )
 const overviewBusy = computed(() => Object.values(loading.value).some(Boolean))
+async function detectProviders() {
+  const request = ++catalogRequest
+  try {
+    const result = await loadUsageProviders()
+    if (disposed || request !== catalogRequest) return
+    catalog.value = result
+    catalogError.value = ''
+    if (!PROVIDERS.value.some((p) => p.id === active.value)) active.value = 'overview'
+  } catch {
+    if (!disposed && request === catalogRequest)
+      catalogError.value = 'Could not detect installed usage providers. Refresh to retry.'
+  }
+}
+watch(
+  () => settings.hiddenUsageProviders,
+  () => {
+    if (!PROVIDERS.value.some((p) => p.id === active.value)) active.value = 'overview'
+    for (const p of PROVIDERS.value) if (p.id !== 'overview') loadProvider(p.id)
+  },
+  { deep: true }
+)
 
 async function loadStats() {
   if (!window.shellApi?.statsUsage?.summary || props.statsSummary) return
@@ -145,6 +172,7 @@ async function loadProvider(id, { refresh = false } = {}) {
   }
 }
 async function refreshOverview() {
+  await detectProviders()
   await Promise.all([
     loadStats(),
     ...['claude', 'codex'].map((id) => loadProvider(id, { overview: true, refresh: true }))
@@ -242,7 +270,9 @@ watch(
   },
   { deep: true }
 )
-onMounted(() => {
+onMounted(async () => {
+  await detectProviders()
+  if (disposed) return
   loadStats()
   if (active.value === 'overview')
     ['claude', 'codex'].forEach((id) => loadProvider(id, { overview: true }))
@@ -294,6 +324,15 @@ onBeforeUnmount(() => {
       </template>
     </section>
     <p v-if="statsError" class="su-error" role="alert">{{ statsError }}</p>
+    <p v-if="catalogError" class="su-error" role="alert">
+      {{ catalogError }}
+      <button type="button" class="su-button" @click="refreshOverview">Retry</button>
+    </p>
+    <UsageVisibility :providers="catalog" />
+    <p v-if="PROVIDERS.length === 1 && !catalogError" class="su-muted">
+      No installed agents with a local usage history collector. Subscription quotas are available in
+      the Usage menu.
+    </p>
     <header class="su-analytics-head">
       <h3>Usage Analytics</h3>
       <div class="su-provider-control" @keydown="selectionKey">

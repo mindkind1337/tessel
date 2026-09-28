@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { settings } from '../settings'
 import { flushPromises, mount } from '@vue/test-utils'
 import UsageMenu from '../components/UsageMenu.vue'
 
@@ -11,10 +12,14 @@ describe('compact usage roster', () => {
   const hourly = { label: '5h', usedPct: 20, resetsAt: reset(90) }
 
   beforeEach(() => {
+    settings.hiddenUsageProviders = []
     vi.useFakeTimers()
     vi.setSystemTime(epoch)
     previousApi = window.shellApi
-    api = { getUsage: vi.fn(async () => readings([hourly, weekly])) }
+    api = {
+      listAgents: vi.fn(async () => [{ id: 'codex', available: true }]),
+      getUsage: vi.fn(async () => readings([hourly, weekly]))
+    }
     window.shellApi = api
   })
   afterEach(() => {
@@ -76,24 +81,17 @@ describe('compact usage roster', () => {
     expect(wrapper.text()).toContain('Last known reading')
   })
 
-  it('adds installed agents honestly without inventing a quota, free plan, or refresh instruction', async () => {
+  it('does not invent quota support for installed agents without a collector', async () => {
     api.listAgents = vi.fn(async () => [
-      { id: 'kimi', name: 'Kimi', available: true },
-      { id: 'qwen', name: 'Qwen', available: false }
+      { id: 'codex', available: true },
+      { id: 'kimi', available: true },
+      { id: 'qwen', available: true }
     ])
     await open()
-    expect(api.listAgents).toHaveBeenCalledTimes(1)
     expect(wrapper.find('[data-test="usage-row-codex"]').exists()).toBe(true)
-    const kimi = wrapper.get('[data-test="usage-row-kimi"]')
-    expect(kimi.text()).toContain('No local usage data')
-    expect(kimi.find('.usage-summary-pct').exists()).toBe(false)
+    expect(wrapper.find('[data-test="usage-row-kimi"]').exists()).toBe(false)
     expect(wrapper.find('[data-test="usage-row-qwen"]').exists()).toBe(false)
-    expect(wrapper.text()).not.toContain('Free')
-    expect(wrapper.text()).not.toContain('Run Kimi')
-    await kimi.trigger('click')
-    expect(wrapper.text()).toContain(
-      'Tessel does not collect subscription quotas for this agent yet'
-    )
+    expect(wrapper.text()).not.toContain('Open for usage')
   })
 
   it('displays only real plan metadata and keeps account switching behind an explicit selection', async () => {
@@ -133,7 +131,7 @@ describe('compact usage roster', () => {
       ])
     )
     await open()
-    expect(wrapper.get('[data-test="usage-row-codex"]').text()).toContain('No local usage data')
+    expect(wrapper.get('[data-test="usage-row-codex"]').text()).toContain('Open for usage')
     expect(wrapper.find('.usage-summary-pct').exists()).toBe(false)
     await wrapper.get('[data-test="usage-row-codex"]').trigger('click')
     expect(wrapper.find('.usage-fill').exists()).toBe(false)
