@@ -21,6 +21,9 @@ import {
   attention,
   limits,
   approvals,
+  applyAgentStates,
+  getAgentState,
+  agentStateKnown,
   clearAgentStatus,
   clearAttention
 } from './agentStatus'
@@ -520,6 +523,12 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
   // The account can't be used: never started on another one without saying
   // so. A saved pane stays in the layout, with the reason and Retry.
   let refused = null
+  // Install the system hook definition before a managed account mirrors it.
+  // A status setup failure does not prevent the user's agent from launching.
+  if (agent && !attached && window.shellApi.prepareAgentStatus) {
+    const statusSetup = await window.shellApi.prepareAgentStatus(agent.id).catch(() => null)
+    if (statusSetup?.needsReview) showToast('Codex status hooks were updated. Review them in /hooks to enable live status.', { timeout: 10000 })
+  }
   if (agent && !attached && window.shellApi.accounts && window.shellApi.accounts.launchEnv) {
     let acc = null
     try {
@@ -549,7 +558,7 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
     res = { ok: false, error: refused }
   } else if (!attached) {
     try {
-      res = await window.shellApi.createPty({ id, shellId, cols: 80, rows: 24, cwd, projectDir, extraEnv, accountEnv, unsetEnv })
+      res = await window.shellApi.createPty({ id, shellId, agentId: agent?.id, cols: 80, rows: 24, cwd, projectDir, extraEnv, accountEnv, unsetEnv })
     } catch (err) {
       res = { ok: false, error: err && err.message }
     }
@@ -603,6 +612,7 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
     startDir: res.cwd || cwd || null,
     sessionId: null,
     accountId,
+    agentLaunchToken: res.agentLaunchToken || null,
     launchedAt: Date.now(),
     teamTools: !attached && teamToolsReady,
     toolsVersion: !attached && teamToolsReady ? teamToolsVersion : null,
@@ -611,6 +621,7 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
     broadcast: true
   })
   leaf.attached = attached
+  if (res.agentStatusWarning) showToast(res.agentStatusWarning, { timeout: 10000 })
   if (attached) {
     // Still running: nothing to start. Keep the pane's conversation id, and
     // if Codex's id wasn't found yet, keep looking for it.
@@ -1961,10 +1972,11 @@ function inboxNote(kind, title, body, paneId) {
 function notifyAgentDone(node) {
   const ws = wsOfLeaf(node.id)
   const where = ws && workspaces.value.length > 1 ? ` in ${ws.name}` : ''
-  inboxNote('done', `${node.title} finished and is waiting for you`, ws ? `Workspace: ${ws.name}` : '', node.id)
+  const message = node.agentLaunchToken ? `${node.title} finished a response` : `${node.title} finished and is waiting for you`
+  inboxNote('done', message, ws ? `Workspace: ${ws.name}` : '', node.id)
   if (document.hasFocus()) {
     if (!settings.inAppAlerts) return
-    showToast(`${node.title} finished and is waiting for you${where}.`, {
+    showToast(`${message}${where}.`, {
       kind: 'attention',
       timeout: 8000,
       action: { label: 'Show', run: () => focusPane(node.id) }
@@ -2434,6 +2446,20 @@ const workspaceItems = computed(() =>
 )
 
 // Every open agent's state, for the activity log and the Activity view.
+// One subscription supplies the whole app. A slow initial snapshot must not
+// overwrite an update already received while IPC was awaiting the response.
+let agentStateRevision = 0
+const offAgentState = window.shellApi.onAgentState?.((states) => {
+  agentStateRevision++
+  applyAgentStates(states)
+})
+if (window.shellApi.agentStates) {
+  const revision = agentStateRevision
+  window.shellApi.agentStates().then((states) => {
+    if (revision === agentStateRevision) applyAgentStates(states)
+  }).catch(() => {})
+}
+onBeforeUnmount(() => offAgentState?.())
 const agentStates = computed(() => {
   const out = {}
   for (const ws of workspaces.value) {
@@ -2445,12 +2471,14 @@ const agentStates = computed(() => {
   return out
 })
 function addAgentState(out, leaf, wsId) {
-  let state = 'idle'
+  const observed = leaf.agentLaunchToken ? getAgentState(leaf.id, leaf.agentLaunchToken) : null
+  let state = observed?.state || (leaf.agentLaunchToken ? 'unknown' : 'idle')
   if (approvals[leaf.id]) state = 'approval'
   else if (limits[leaf.id]) state = 'limited'
   else if (agentStatus[leaf.id] === 'busy') state = 'working'
   out[leaf.id] = {
     state,
+    ...(observed ? { source: observed.source, confirmed: observed.confirmed, since: observed.since } : {}),
     title: leaf.title || 'Agent',
     agentId: leaf.agentId || null,
     reset: limits[leaf.id] ? limits[leaf.id].reset : '',
@@ -2573,12 +2601,16 @@ function logState(id, info, state) {
   // The tracking clock follows logged states only, so a short burst (a
   // pasted message echoing, a redraw) does not restart it.
   // Seen working: whatever it does next is observed from the start.
-  if (state === 'working') restoreDone[id] = true
+  if (state === 'working' || info?.confirmed) restoreDone[id] = true
   const early = Date.now() - appStartedAt < RESTORE_WINDOW_MS && !restoreDone[id]
   if (state === 'closed') {
     delete trackedState[id]
     delete lastStateEvent[id]
-  } else trackedState[id] = { state, since: Date.now(), sinceStart: early }
+  } else trackedState[id] = {
+    state,
+    since: info?.confirmed && Number.isFinite(info.since) ? info.since : Date.now(),
+    sinceStart: early && !info?.confirmed
+  }
   recordActivity({
     type: 'agent.state',
     paneId: id,
@@ -2600,11 +2632,11 @@ watch(
     for (const [id, info] of Object.entries(now)) {
       if (before[id] && before[id].state === info.state) continue
       clearTimeout(workingTimers[id])
-      if (info.state === 'working' && loggedState[id] !== 'working') {
+      if (info.state === 'working' && loggedState[id] !== 'working' && !(info.confirmed && info.source === 'hook')) {
         workingTimers[id] = setTimeout(() => {
           if (agentStates.value[id]?.state === 'working') logState(id, agentStates.value[id], 'working')
         }, 3000)
-      } else if (info.state !== 'working') {
+      } else {
         logState(id, info, info.state)
       }
     }
@@ -4212,6 +4244,8 @@ const wakeState = {} // leafId -> { since, woken, wokenAt, gen }
 // The user is not in this pane, has no line in progress there, and has not
 // typed there for 30 s.
 function wakeAllowed(id) {
+  const leaf = findLeaf(id)
+  if (leaf?.agentLaunchToken && !agentStateKnown(id, leaf.agentLaunchToken)) return false
   if (id === activeId.value && document.hasFocus()) return false
   // A draft Codex's screen proves gone (its empty-prompt placeholder is back:
   // sent, cleared, or never a draft at all) no longer holds reminders back.
@@ -4239,6 +4273,7 @@ function inputShownEmpty(id) {
   return pane.promptShowsPlaceholder('›')
 }
 function wakeIfNeeded(leaf) {
+  if (leaf.agentLaunchToken && !agentStateKnown(leaf.id, leaf.agentLaunchToken)) return
   const count = teamUnread[leaf.id] || 0
   if (!count) {
     delete wakeState[leaf.id]
@@ -4348,6 +4383,7 @@ async function restartForTeamTools() {
       const draftMaybe = !!userDraft[leaf.id] || (!!draftUnknown[leaf.id] && !inputShownEmpty(leaf.id))
       const inUse = (leaf.id === activeId.value && document.hasFocus()) || userIsTyping(leaf.id) || draftMaybe
       if (!quiet || inUse || approvals[leaf.id] || pendingMessages[leaf.id] || unsent[leaf.id] || delivering.has(leaf.id)) continue
+      if (leaf.agentLaunchToken && !agentStateKnown(leaf.id, leaf.agentLaunchToken)) continue
       // A reminder was typed there a moment ago: its Enter could reach the
       // new agent (Codex took one as "Update now").
       if (wakeState[leaf.id] && now - (wakeState[leaf.id].wokenAt || 0) < 60000) continue
@@ -5162,6 +5198,7 @@ function paneState(leaf) {
   if (leaf.kind !== 'agent') return 'ready'
   if (approvals[leaf.id]) return 'approval'
   if (limits[leaf.id]) return 'limited'
+  if (leaf.agentLaunchToken && agentStatus[leaf.id] === 'unknown') return 'unknown'
   if (attention[leaf.id]) return 'waiting'
   return agentStatus[leaf.id] === 'busy' ? 'working' : 'ready'
 }

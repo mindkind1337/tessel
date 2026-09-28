@@ -1,6 +1,6 @@
 // Live agent state keyed by pane id, kept out of the layout tree so these flips
 // never trigger a layout save.
-//   agentStatus[id]  -> 'busy' | 'idle'   (TerminalPane writes it)
+//   agentStatus[id]  -> 'busy' | 'idle' | 'unknown'
 //   attention[id]    -> true when an agent finished a stretch of work while you
 //                       were looking elsewhere, i.e. it is waiting on you.
 //   limits[id]       -> { reset } when the agent has hit its usage limit
@@ -9,11 +9,242 @@
 //                       ("Would you like to run...", see agentLimit.js).
 // The workspace sidebar reads both to badge workspaces.
 import { reactive } from 'vue'
+import { detectApproval, detectLimit } from './agentLimit'
+import { promptShowsPlaceholder } from './promptCheck'
 
 export const agentStatus = reactive({})
 export const attention = reactive({})
 export const limits = reactive({})
 export const approvals = reactive({})
+// Main-process observations carry execution identity and freshness. Screen
+// estimates remain useful for display but cannot authorize automatic actions.
+export const agentStates = reactive({})
+
+export function getAgentState(id, launchToken) {
+  const state = agentStates[id]
+  return state && (!launchToken || state.launchToken === launchToken) ? state : null
+}
+
+export function agentStateKnown(id, launchToken) {
+  const state = getAgentState(id, launchToken)
+  return !!(
+    state?.confirmed &&
+    state.hookSeen &&
+    !state.stale &&
+    !['unknown', 'closed'].includes(state.state)
+  )
+}
+
+export function managedAgentStatus(node) {
+  return !!node.agentLaunchToken && ['claude', 'codex'].includes(node.agentId)
+}
+
+function displayStatus(state) {
+  if (!state || state.stale || state.confirmed === false) return 'unknown'
+  if (state.state === 'working') return 'busy'
+  if (['idle', 'approval', 'limited'].includes(state.state)) return 'idle'
+  return 'unknown'
+}
+
+export function applyAgentStates(snapshot) {
+  if (!snapshot || typeof snapshot !== 'object') return
+  const entries = snapshot.paneId ? { [snapshot.paneId]: snapshot } : snapshot
+  if (!snapshot.paneId) {
+    for (const id of Object.keys(agentStates))
+      if (!entries[id]) {
+        delete agentStates[id]
+        agentStatus[id] = 'unknown'
+      }
+  }
+  for (const [id, state] of Object.entries(entries)) {
+    if (!state || state.paneId !== id || !state.launchToken) continue
+    agentStates[id] = { ...state }
+    agentStatus[id] = displayStatus(state)
+    setApproval(id, state.state === 'approval')
+    if (state.state === 'limited') setLimit(id, { reset: state.reset })
+    else if (!state.stale && state.confirmed !== false) clearLimit(id)
+  }
+}
+
+// Read the actual input cursor/cells, not a prompt-looking line in an answer.
+// A visible input can remain underneath an active turn, so the running footer
+// vetoes readiness. A main-process Stop candidate is still required for a
+// completion: this observation alone cannot finish known hook work.
+export function agentScreenObservation(term, provider, screen) {
+  const approval = detectApproval(screen)
+  const limit = detectLimit(screen)
+  const footer = String(screen || '')
+    .split(/\r?\n/)
+    .slice(-8)
+    .join('\n')
+  const busy = /\besc(?:ape)?\s+(?:to\s+)?(?:interrupt|cancel)\b/i.test(footer)
+  let ready = false
+  const prompt = provider === 'claude' ? '❯' : provider === 'codex' ? '›' : null
+  if (term && prompt && !approval && !limit && !busy) {
+    ready = promptShowsPlaceholder(term, prompt)
+    if (!ready) {
+      const buffer = term.buffer.active
+      const line = buffer.getLine(buffer.baseY + buffer.cursorY)
+      const text = line?.translateToString(true) || ''
+      const at = text.indexOf(prompt)
+      ready =
+        at >= 0 &&
+        !text.slice(0, at).trim() &&
+        !text.slice(at + prompt.length).trim() &&
+        buffer.cursorX === at + prompt.length + 1
+    }
+  }
+  return { screen, approval, limit, busy, ready }
+}
+
+// Shared by TerminalPane and clock-driven tests. Hook state owns the result;
+// output schedules a screen observation, never a synthetic successful Stop.
+export function createAgentActivityMonitor({
+  getNode,
+  readScreen,
+  report,
+  onStatus,
+  onWorking,
+  onCompleted,
+  onApproval,
+  onLimit,
+  now = Date.now
+}) {
+  const IDLE_MS = 1400
+  const WORK_MS = 4000
+  let timer = null
+  let workTimer = null
+  let busySince = 0
+  let localStatus = 'idle'
+  let previous = null
+  let lastCompleted = 0
+  let disposed = false
+  let lastRecheck = 0
+  function status(value) {
+    localStatus = value
+    onStatus(value)
+  }
+  function send(event, extra = {}) {
+    const node = getNode()
+    if (!managedAgentStatus(node)) return
+    try {
+      report?.({ paneId: node.id, launchToken: node.agentLaunchToken, event, ...extra })
+    } catch {
+      // An unavailable observer must never break terminal rendering/input.
+    }
+  }
+  function screenCheck() {
+    if (disposed) return
+    const node = getNode()
+    const observation = readScreen()
+    const managed = managedAgentStatus(node)
+    if (observation.limit) {
+      onLimit(observation.limit)
+      if (managed) send('ScreenLimit', { reset: observation.limit.reset })
+      return observation
+    }
+    if (observation.approval) {
+      onApproval(true)
+      if (managed) send('ScreenApproval')
+      return observation
+    }
+    if (managed) {
+      // Absence of matching text is not proof that a hook approval ended.
+      if (observation.ready) {
+        const hadApproval =
+          approvals[node.id] || getAgentState(node.id, node.agentLaunchToken)?.state === 'approval'
+        onApproval(false)
+        if (hadApproval) send('ScreenClearApproval')
+        send('ScreenReady')
+      } else if (observation.busy) send('ScreenBusy')
+    } else onApproval(false)
+    return observation
+  }
+  function checkIdle() {
+    timer = null
+    if (disposed) return
+    const node = getNode()
+    const observation = screenCheck()
+    if (managedAgentStatus(node)) {
+      status(displayStatus(getAgentState(node.id, node.agentLaunchToken)))
+      return
+    }
+    status('idle')
+    clearTimeout(workTimer)
+    const worked = now() - busySince - IDLE_MS
+    if (observation.approval || observation.limit) return
+    if (worked >= WORK_MS) onCompleted({ at: now(), screen: observation.screen, estimated: true })
+  }
+  function schedule() {
+    clearTimeout(timer)
+    timer = setTimeout(checkIdle, IDLE_MS)
+  }
+  return {
+    output({ redraw = false } = {}) {
+      if (disposed) return
+      const node = getNode()
+      if (managedAgentStatus(node)) {
+        status(displayStatus(getAgentState(node.id, node.agentLaunchToken)))
+        // Redraws can reveal readiness, but are never work/completion evidence.
+        schedule()
+        if (now() - lastRecheck > 1000) {
+          lastRecheck = now()
+          screenCheck()
+        }
+        return
+      }
+      if (redraw) return
+      if ((approvals[node.id] || limits[node.id]) && now() - lastRecheck > 1000) {
+        lastRecheck = now()
+        const observation = readScreen()
+        if (!observation.approval) onApproval(false)
+        if (!observation.limit) clearLimit(node.id)
+      }
+      if (localStatus !== 'busy') {
+        busySince = now()
+        clearTimeout(workTimer)
+        workTimer = setTimeout(() => onWorking({ estimated: true }), WORK_MS)
+      }
+      status('busy')
+      schedule()
+    },
+    stateChanged(state) {
+      if (disposed || !managedAgentStatus(getNode())) return
+      const token = getNode().agentLaunchToken
+      if (state?.launchToken !== token) state = null
+      status(displayStatus(state))
+      const sameExecution = previous && previous.launchToken === state?.launchToken
+      const changed =
+        !sameExecution ||
+        previous.observedAt !== state?.observedAt ||
+        previous.state !== state?.state ||
+        previous.reason !== state?.reason
+      if (!sameExecution) lastCompleted = state?.turnCompletedAt || 0
+      if (state?.confirmed && !state.stale && state.hookSeen) {
+        if (state.state === 'working' && (!sameExecution || previous.state !== 'working'))
+          onWorking({ estimated: false })
+        if (state.state === 'idle' && state.turnCompletedAt > lastCompleted) {
+          lastCompleted = state.turnCompletedAt
+          onCompleted({ at: state.turnCompletedAt, screen: readScreen().screen, estimated: false })
+        }
+      }
+      previous = state ? { ...state } : null
+      if (state?.state === 'closed') {
+        clearTimeout(timer)
+        clearTimeout(workTimer)
+      } else if (
+        changed &&
+        (state?.reason === 'settling' || state?.reason === 'decision' || state?.state === 'unknown')
+      )
+        schedule()
+    },
+    dispose() {
+      disposed = true
+      clearTimeout(timer)
+      clearTimeout(workTimer)
+    }
+  }
+}
 
 export function setApproval(id, on) {
   if (on) approvals[id] = true
@@ -30,7 +261,9 @@ export function clearLimit(id) {
   if (limits[id]) delete limits[id]
 }
 
-export function setAgentStatus(id, status) {
+export function setAgentStatus(id, status, launchToken) {
+  const state = getAgentState(id, launchToken)
+  if (state?.hookSeen) status = displayStatus(state)
   if (agentStatus[id] !== status) agentStatus[id] = status
 }
 
@@ -47,4 +280,5 @@ export function clearAgentStatus(id) {
   delete attention[id]
   delete limits[id]
   delete approvals[id]
+  delete agentStates[id]
 }

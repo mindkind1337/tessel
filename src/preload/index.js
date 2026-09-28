@@ -45,6 +45,14 @@ const api = {
   geminiSessionExists: (id) => ipcRenderer.invoke('sessions:geminiExists', id),
   qwenSessionExists: (id) => ipcRenderer.invoke('sessions:qwenExists', id),
   reportedSessions: () => ipcRenderer.invoke('sessions:reported'),
+  prepareAgentStatus: (provider) => ipcRenderer.invoke('agents:prepareStatus', provider),
+  agentStates: () => ipcRenderer.invoke('agents:states'),
+  reportAgentScreen: (observation) => ipcRenderer.send('agents:screen', observation),
+  onAgentState: (cb) => {
+    const handler = (_e, states) => cb(states)
+    ipcRenderer.on('agents:state', handler)
+    return () => ipcRenderer.removeListener('agents:state', handler)
+  },
   installLogStart: (q) => ipcRenderer.invoke('install:logStart', q),
   getPastedImage: (q) => ipcRenderer.invoke('images:get', q),
   // File references in a terminal: { cwd, paths } -> { path: absolute | null };

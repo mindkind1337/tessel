@@ -14,6 +14,8 @@ import { createAccountUsage } from './providerAccountUsage'
 import { createAccountSessions } from './providerAccountSessions'
 import { postToInbox } from './agentInbox'
 import { hooksStatus } from './teamHooksStatus'
+import { createAgentStateStore } from './agentStateStore'
+import { prepareAgentStateHooks } from './agentStateSetup'
 import { assessNeeds } from './tesselNeeds'
 import { createClaudeUsageReport } from './claudeUsageReport'
 import { resolveFiles, codeGotoArg, listProjectFiles } from './fileOpen'
@@ -902,6 +904,29 @@ ipcMain.handle('sessions:qwenExists', (_evt, id) => qwenSessionExists(id))
 // The conversation each agent pane is in now, as its hooks reported it
 // (teamMcp/server.cjs reportSession): { paneId: { agent, sessionId, source, at } }.
 const sessionsDir = () => join(app.getPath('appData'), 'tessel-team', 'sessions')
+const agentStateDir = join(app.getPath('userData'), 'agent-status')
+const agentStateStore = createAgentStateStore({
+  dir: agentStateDir,
+  onChange: (states) => send('agents:state', states)
+})
+let scanningAgentStates = false
+const agentStateTimer = setInterval(async () => {
+  if (scanningAgentStates) return
+  scanningAgentStates = true
+  try { await agentStateStore.scan() } catch { /* next bounded scan retries */ }
+  finally { scanningAgentStates = false }
+}, 500)
+agentStateTimer.unref()
+app.on('will-quit', () => { clearInterval(agentStateTimer); void agentStateStore.dispose() })
+ipcMain.handle('agents:states', () => agentStateStore.snapshot())
+ipcMain.on('agents:screen', (_evt, q) => {
+  if (!q || typeof q !== 'object') return
+  void agentStateStore.observe(q.paneId, q.launchToken, { event: q.event, reset: q.reset }).catch(() => {})
+})
+function prepareStatus(provider, env = process.env) {
+  return prepareAgentStateHooks({ provider, env, source: teamServerSource, sharedDir: join(app.getPath('appData'), 'tessel-team') })
+}
+ipcMain.handle('agents:prepareStatus', (_evt, provider) => prepareStatus(provider))
 ipcMain.handle('sessions:reported', () => {
   const dir = sessionsDir()
   const out = {}
@@ -1133,12 +1158,19 @@ function validateCodexConfig(text) {
 // How each agent gets its team messages (teamHooksStatus.js), read-only.
 ipcMain.handle(
   'team:hooksStatus',
-  safe(() =>
-    hooksStatus({
+  safe(async () => {
+    const codex = await accounts.sessionEnv('codex')
+    const claude = await accounts.sessionEnv('claude')
+    return hooksStatus({
       sessionsDir: sessionsDir(),
-      scriptPath: join(app.getPath('appData'), 'tessel-team', 'tessel-team-mcp.cjs')
+      scriptPath: join(app.getPath('appData'), 'tessel-team', 'tessel-team-mcp.cjs'),
+      configDirs: {
+        codex: codex.env?.CODEX_HOME || process.env.CODEX_HOME || join(os.homedir(), '.codex'),
+        claude: claude.env?.CLAUDE_CONFIG_DIR || process.env.CLAUDE_CONFIG_DIR || join(os.homedir(), '.claude')
+      },
+      states: agentStateStore.snapshot()
     })
-  )
+  })
 )
 
 // Team tools for agents (background messages, never typed into terminals):
@@ -1681,9 +1713,11 @@ const host = createPtyClient({
     queueData(id, data)
   },
   onExit: (id, exitCode, signal, pid) => {
+    const info = ptyInfo.get(id)
+    if (pid && info?.pid && pid !== info.pid) return // a delayed exit from the previous execution
+    void agentStateStore.unregister(id, info?.agentLaunchToken).catch(() => {})
     installLogs.onExit(id, exitCode)
     flushData() // deliver the last output before the exit notice
-    const info = ptyInfo.get(id)
     if (exitCode && info) {
       log.warn(
         'pty',
@@ -1696,7 +1730,10 @@ const host = createPtyClient({
     if (quitting) return
     log.error('pty', 'lost the connection to the terminal host')
     // Its terminals are gone with it: tell the panes.
-    for (const id of ptyInfo.keys()) send('pty:exit', { id, exitCode: -1, signal: 0 })
+    for (const id of ptyInfo.keys()) {
+      void agentStateStore.unregister(id).catch(() => {})
+      send('pty:exit', { id, exitCode: -1, signal: 0 })
+    }
     ptyInfo.clear()
   }
 })
@@ -1710,6 +1747,16 @@ ipcMain.handle('pty:create', async (_evt, opts = {}) => {
   const backend = useConpty ? 'conpty' : 'winpty'
   // Its agent's variables and its provider account's (see paneEnv.js).
   const env = paneEnv(freshEnv(), opts)
+  const agentProvider = ['claude', 'codex'].includes(opts.agentId) ? opts.agentId : null
+  const agentLaunchToken = agentProvider ? crypto.randomBytes(16).toString('hex') : null
+  const agentStartedAt = Date.now()
+  // Do not let inherited Tessel identity bind a nested app to another launch.
+  for (const key of Object.keys(env)) if (/^TESSEL_AGENT_/i.test(key)) delete env[key]
+  let agentStatusWarning = null
+  if (agentProvider) {
+    const setup = prepareStatus(agentProvider, env)
+    if (!setup.ok) agentStatusWarning = setup.error
+  }
   let res
   try {
     res = await host.request('create', {
@@ -1722,6 +1769,7 @@ ipcMain.handle('pty:create', async (_evt, opts = {}) => {
         // For the Tessel team tools (teamMcp/server.cjs): which pane this is,
         // and the project its team lives in.
         TESSEL_PANE_ID: String(id),
+        ...(agentProvider ? { TESSEL_AGENT_PROVIDER: agentProvider, TESSEL_AGENT_LAUNCH: agentLaunchToken, TESSEL_AGENT_STATE_DIR: agentStateDir } : {}),
         ...(projectDir && isAbsolute(projectDir) && fs.existsSync(projectDir) ? { TESSEL_PROJECT_DIR: projectDir } : {})
       },
       cols,
@@ -1729,7 +1777,7 @@ ipcMain.handle('pty:create', async (_evt, opts = {}) => {
       useConpty,
       // ConPTY is required for full-screen TUIs like Claude Code to redraw on
       // resize. Set TESSEL_USE_WINPTY=1 only as a fallback.
-      meta: { shellId: shell.id, shellName: shell.name, backend, cwd: startDir }
+      meta: { shellId: shell.id, shellName: shell.name, backend, cwd: startDir, agentProvider, agentLaunchToken, agentStartedAt }
     })
   } catch (err) {
     res = { ok: false, error: err.message }
@@ -1738,14 +1786,20 @@ ipcMain.handle('pty:create', async (_evt, opts = {}) => {
     log.error('pty', `failed to launch ${shell.name} (${shell.file}) in ${startDir}: ${res.error}`)
     return { ok: false, error: `Failed to launch ${shell.name}: ${res.error}` }
   }
-  ptyInfo.set(id, { shellId: shell.id, shellName: shell.name, backend })
+  ptyInfo.set(id, { shellId: shell.id, shellName: shell.name, backend, pid: res.pid, agentLaunchToken })
+  if (agentProvider) {
+    try { await agentStateStore.register({ paneId: id, provider: agentProvider, launchToken: agentLaunchToken, startedAt: agentStartedAt }) }
+    catch { agentStatusWarning = 'Agent status observations are unavailable.' }
+  }
   return {
     ok: true,
     shell: { id: shell.id, name: shell.name },
     backend,
     windowsBuild: windowsBuildNumber(),
     pid: res.pid,
-    cwd: startDir
+    cwd: startDir,
+    agentLaunchToken,
+    agentStatusWarning
   }
 })
 
@@ -1761,7 +1815,11 @@ ipcMain.handle('pty:attach', async (_evt, id) => {
   if (!res.ok) return { ok: false }
   // Output queued here but not sent yet is in the snapshot already.
   pendingData.delete(id)
-  ptyInfo.set(id, { shellId: res.shellId, shellName: res.shellName, backend: res.backend })
+  ptyInfo.set(id, { shellId: res.shellId, shellName: res.shellName, backend: res.backend, pid: res.pid, agentLaunchToken: res.agentLaunchToken })
+  if (res.agentProvider && res.agentLaunchToken && !res.exited) {
+    try { await agentStateStore.register({ paneId: id, provider: res.agentProvider, launchToken: res.agentLaunchToken, startedAt: res.agentStartedAt }) }
+    catch { /* renderer shows unknown until an observation can be read */ }
+  }
   return {
     ok: true,
     shell: { id: res.shellId, name: res.shellName },
@@ -1771,7 +1829,8 @@ ipcMain.handle('pty:attach', async (_evt, id) => {
     cwd: res.cwd,
     exited: !!res.exited,
     exitCode: res.exitCode,
-    buffer: res.buffer || ''
+    buffer: res.buffer || '',
+    agentLaunchToken: res.agentLaunchToken || null
   }
 })
 
