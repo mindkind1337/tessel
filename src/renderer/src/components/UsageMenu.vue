@@ -979,7 +979,11 @@ const emptyTitle = () => t('usage.menu.buttonTitleEmpty', "Usage of your agents'
         >
           {{ t('usage.menu.readingProvider', 'Reading provider usage...') }}
         </p>
-        <p v-else-if="!windows(detailAgent).length" class="usage-none">
+        <!-- Not the same error again under the red one. -->
+        <p
+          v-else-if="!windows(detailAgent).length && unavailableText(detailAgent) !== providerErrors[detailAgent.id]"
+          class="usage-none"
+        >
           {{ unavailableText(detailAgent) }}
         </p>
         <div
