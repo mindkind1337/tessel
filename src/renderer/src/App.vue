@@ -1986,6 +1986,15 @@ function onInstallResult(r) {
     onAgentUpdateResult(run.update, r)
       .catch((err) => logUpdate('error', `${run.label}: ${err && err.message}`))
       .finally(() => startQueuedUpdate())
+    // Updated: its pane closes by itself a moment later (the result is in the
+    // toast, the notifications and the log). Failed: it stays, with the error.
+    if (r.ok === true) {
+      const paneId = r.paneId
+      setTimeout(() => {
+        const leaf = findLeaf(paneId)
+        if (leaf && leaf.kind !== 'agent' && !userIsTyping(paneId)) closeLeaf(paneId, { force: true })
+      }, 5000)
+    }
     return
   }
   loadAgents(true)
