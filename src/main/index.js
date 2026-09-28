@@ -47,6 +47,8 @@ import {
   hklFromTip
 } from './agentTools'
 import { reviewInfo, reviewDiff, reviewMerge, reviewRemove, reviewCommit, reviewPush } from './review'
+import * as scm from './sourceControl'
+import { runHeadless, cancelHeadless } from './agentHeadless'
 import { takeTeamAcks } from './teamAcks'
 import { writeJsonSafe, readJsonSafe } from './safeJson'
 import { addNotices, writeCurrentTeams, retireOldTeams } from './teamNotices'
@@ -1116,6 +1118,33 @@ ipcMain.handle('review:merge', safe(reviewMerge))
 ipcMain.handle('review:remove', safe(reviewRemove))
 ipcMain.handle('review:commit', safe(reviewCommit))
 ipcMain.handle('review:push', safe(reviewPush))
+// Source control (the Changes tab, after Orca's): status, stage, unstage,
+// discard (untracked files to the Recycle Bin), commit, push, pull, and the
+// two sides of a file's diff. Any folder in a repository: the project or a
+// task's copy.
+ipcMain.handle('scm:status', safe((q) => scm.scmStatus(q || {})))
+ipcMain.handle('scm:stage', safe((q) => scm.scmStage(q || {})))
+ipcMain.handle('scm:unstage', safe((q) => scm.scmUnstage(q || {})))
+ipcMain.handle('scm:discard', safe((q) => scm.scmDiscard(q || {}, (p) => shell.trashItem(p))))
+ipcMain.handle('scm:commit', safe((q) => scm.scmCommit(q || {})))
+ipcMain.handle('scm:push', safe((q) => scm.scmPush(q || {})))
+ipcMain.handle('scm:pull', safe((q) => scm.scmPull(q || {})))
+ipcMain.handle('scm:fetch', safe((q) => scm.scmFetch(q || {})))
+ipcMain.handle('scm:sync', safe((q) => scm.scmSync(q || {})))
+ipcMain.handle('scm:fileVersions', safe((q) => scm.scmFileVersions(q || {})))
+// A commit message written by an agent from the staged diff (Orca's Generate).
+ipcMain.handle('scm:generate', safe(async (q) => {
+  const d = await scm.scmStagedDiff(q || {})
+  if (!d.ok) return d
+  const res = await runHeadless(q && q.agent, scm.commitPrompt(d.diff), { cwd: d.top, key: d.top })
+  if (!res.ok) return res
+  const message = scm.cleanGeneratedMessage(res.text)
+  return message ? { ok: true, message } : { ok: false, error: 'The agent gave no message.' }
+}))
+ipcMain.handle('scm:cancelGenerate', safe(async (q) => {
+  const r = await scm.repoOf(q && q.root)
+  return { ok: !r.error && cancelHeadless(r.top) }
+}))
 ipcMain.handle('lead:ensure', safe(ensureInbox))
 ipcMain.handle('lead:take', safe(takeInbox))
 ipcMain.handle('lead:remove', safe(removeInbox))

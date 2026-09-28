@@ -13,6 +13,24 @@ export function pathKey(p) {
 }
 export const samePath = (a, b) => pathKey(a) === pathKey(b)
 
+// A diff tab (after Orca's "diff" editor tabs, MIT, Copyright (c) 2026
+// Lovecast Inc.): its own tab next to the file's, so its path is the file's
+// with a suffix no real path can have (a NUL). Its tab entry carries
+// diff: { root, rel, oldRel, area, full }.
+export const DIFF_SEP = '\u0000'
+export function diffTabPath(full, area) {
+  return `${full}${DIFF_SEP}diff:${area === 'staged' ? 'staged' : 'unstaged'}`
+}
+export const isDiffTabPath = (p) => String(p || '').includes(DIFF_SEP)
+// The file a tab shows (a diff tab: its file on disk).
+export function docPathOf(f) {
+  if (!f) return null
+  if (f.diff && f.diff.full) return f.diff.full
+  const p = String(f.path || '')
+  const i = p.indexOf(DIFF_SEP)
+  return i >= 0 ? p.slice(0, i) : p
+}
+
 export function fileName(p) {
   const parts = String(p || '').split(/[\\/]/)
   return parts[parts.length - 1] || String(p || '')
@@ -76,6 +94,7 @@ export function validSavedFiles(files) {
   for (const f of Array.isArray(files) ? files : []) {
     if (!f || typeof f.path !== 'string' || f.path.length > 4000) continue
     if (!/^([A-Za-z]:[\\/]|\\\\|\/)/.test(f.path)) continue
+    if (isDiffTabPath(f.path)) continue // a diff tab is opened again from Changes
     if (out.some((o) => samePath(o.path, f.path))) continue
     out.push({ path: f.path, preview: f.preview === true })
     if (out.length >= 50) break

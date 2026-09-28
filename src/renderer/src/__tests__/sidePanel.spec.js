@@ -50,6 +50,27 @@ beforeEach(() => {
       watch: rec('watch', { ok: true }),
       unwatch: rec('unwatch', { ok: true }),
       onChanged: () => () => {}
+    },
+    scm: {
+      status: rec('scm.status', (q) =>
+        q.root === ROOT
+          ? {
+              ok: true,
+              repo: true,
+              top: ROOT,
+              branch: 'main',
+              hasUpstream: false,
+              ahead: 0,
+              behind: 0,
+              remotes: [],
+              entries: [
+                { path: 'a.js', area: 'unstaged', status: 'modified', added: 2, removed: 1 },
+                { path: 'gone.txt', area: 'unstaged', status: 'deleted' },
+                { path: 'new.md', area: 'untracked', status: 'untracked' }
+              ]
+            }
+          : { ok: true, repo: true, top: q.root, branch: 'tessel/fix', hasUpstream: false, remotes: [], entries: [] }
+      )
     }
   }
 })
@@ -146,20 +167,28 @@ describe('SidePanel.vue', () => {
     w.unmount()
   })
 
-  it('Changes: the changed files with their letters; a task copy opens the review', async () => {
+  it("Changes: Orca's groups with letters and a count badge; a file opens its diff; a task copy opens the review", async () => {
     const t = addTask({ title: 'Fix it', wsId: 'ws1' })
     t.worktree = { path: 'C:\\copies\\fix', branch: 'tessel/fix' }
     t.column = 'review'
     const w = make('changes')
     await flushPromises()
     await nextTick()
+    // The badge on the tab: every row listed.
+    expect(w.find('[data-test="changes-badge"]').text()).toBe('3')
     const rows = w.findAll('[data-test="changes-row"]')
     expect(rows.map((r) => r.find('.explorer-name').text())).toEqual(['a.js', 'gone.txt', 'new.md'])
-    expect(rows.map((r) => r.find('.explorer-git').text())).toEqual(['M', 'D', 'U'])
-    expect(w.find('[data-test="changes-count"]').text()).toBe('3')
+    expect(rows.map((r) => r.find('.sc-status').text())).toEqual(['M', 'D', 'U'])
+    expect(w.findAll('[data-test="changes-count"]').map((c) => c.text())).toEqual(['2', '1'])
     await rows[0].trigger('click')
-    await rows[1].trigger('click') // deleted: nothing to open
-    expect(w.emitted('open')).toEqual([[ROOT + '\\a.js']])
+    await rows[1].trigger('click') // deleted: its diff (an empty right side)
+    expect(w.emitted('open-diff').map(([r]) => [r.rel, r.area, r.file])).toEqual([
+      ['a.js', 'unstaged', ROOT + '\\a.js'],
+      ['gone.txt', 'unstaged', ROOT + '\\gone.txt']
+    ])
+    // A task's own copy: picked at the top, then Review & merge.
+    await w.find('[data-test="changes-target"]').setValue(t.id)
+    await flushPromises()
     await w.find('[data-test="review-changes"]').trigger('click')
     expect(w.emitted('review')).toEqual([[t.id]])
     w.unmount()

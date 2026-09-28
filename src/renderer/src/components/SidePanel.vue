@@ -3,8 +3,9 @@
 // Files (the explorer), Changes (source control), Tasks (the task board).
 // A tab is created the first time it is shown, then kept (its folders,
 // search and scroll stay as they were) while the panel is open.
-import { reactive, watch } from 'vue'
+import { reactive, watch, computed, onMounted, onBeforeUnmount } from 'vue'
 import ExplorerPanel from './ExplorerPanel.vue'
+import { refreshStatus, statusOf, changeCount, rootKey } from '../scmState'
 import ChangesPanel from './ChangesPanel.vue'
 import TaskBoard from './TaskBoard.vue'
 
@@ -28,12 +29,14 @@ const emit = defineEmits([
   'toast',
   'new-task',
   'focus-pane',
-  'review'
+  'review',
+  'open-diff',
+  'create-pr'
 ])
 
 const TABS = [
   { id: 'files', label: 'Files', shortcut: 'Ctrl+Shift+X' },
-  { id: 'changes', label: 'Changes', shortcut: '' },
+  { id: 'changes', label: 'Changes', shortcut: 'Ctrl+Shift+G' },
   { id: 'tasks', label: 'Tasks', shortcut: 'Ctrl+Shift+K' }
 ]
 const shown = reactive({})
@@ -45,6 +48,42 @@ watch(
   { immediate: true }
 )
 const current = () => (SIDE_TABS.includes(props.tab) ? props.tab : 'tasks')
+
+// The count on the Changes tab (like a source control badge): the project's
+// changed files, read again as its files change.
+const changes = computed(() => {
+  const s = statusOf(props.root)
+  return s && s.data ? changeCount(s.data) : 0
+})
+const badge = computed(() => (changes.value > 99 ? '99+' : String(changes.value)))
+const explorer = () => window.shellApi && window.shellApi.explorer
+let stop = null
+let timer = 0
+function reload() {
+  if (props.root && window.shellApi && window.shellApi.scm) refreshStatus(props.root)
+}
+watch(
+  () => props.root,
+  (r) => {
+    if (r && explorer()) explorer().watch(r)
+    reload()
+  }
+)
+onMounted(() => {
+  if (props.root && explorer()) explorer().watch(props.root)
+  reload()
+  if (explorer() && explorer().onChanged)
+    stop = explorer().onChanged((r) => {
+      if (!props.root || rootKey(r) !== rootKey(props.root)) return
+      clearTimeout(timer)
+      timer = setTimeout(reload, 250)
+    })
+})
+onBeforeUnmount(() => {
+  if (stop) stop()
+  clearTimeout(timer)
+  if (explorer()) explorer().unwatch()
+})
 </script>
 
 <template>
@@ -77,6 +116,13 @@ const current = () => (SIDE_TABS.includes(props.tab) ? props.tab : 'tasks')
           <path d="M5 6.2l1.3 1.3L8.6 5.2M5 10.3h6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
         </svg>
         <span class="side-tab-label">{{ t.label }}</span>
+        <span
+          v-if="t.id === 'changes' && changes > 0"
+          class="side-tab-badge"
+          :title="`${changes} changed file${changes === 1 ? '' : 's'}`"
+          data-test="changes-badge"
+          >{{ badge }}</span
+        >
       </button>
       <span class="side-tabs-fill"></span>
       <button class="tb-icon side-close" title="Close the panel" aria-label="Close the side panel" data-test="side-close" @click="emit('close')">
@@ -103,6 +149,9 @@ const current = () => (SIDE_TABS.includes(props.tab) ? props.tab : 'tasks')
         :root="root"
         :workspace-id="workspaceId"
         @open="(file) => emit('open', file)"
+        @open-diff="(req) => emit('open-diff', req)"
+        @create-pr="(q) => emit('create-pr', q)"
+        @toast="(t) => emit('toast', t)"
         @review="(id) => emit('review', id)"
       />
       <TaskBoard

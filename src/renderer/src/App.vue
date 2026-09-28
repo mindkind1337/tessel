@@ -64,7 +64,8 @@ import {
   startDiskWatch,
   autoSaveSettingsChanged
 } from './editor/documents'
-import { openTab, validSavedFiles, samePath, fileName } from './editor/editorTabs'
+import { openTab, validSavedFiles, samePath, fileName, docPathOf, diffTabPath } from './editor/editorTabs'
+import { setNotesDelivery } from './notesDelivery'
 
 const shells = ref([])
 const agents = ref([])
@@ -169,17 +170,21 @@ function openSettingsAt(section) {
   settingsSection.value = section
   settingsOpen.value = true
 }
-// The file viewer (FileViewer.vue): Markdown, diagrams, tables, JSON,
-// images and any text; PDFs in their own window (Chromium's viewer).
+// Markdown, diagrams, tables, JSON and images open as editor tabs with
+// Orca's view toggle (Preview | Source | Changes, Table, the picture); PDFs
+// in their own window (Chromium's viewer). The modal viewer (FileViewer.vue)
+// stays only as a fallback when no workspace can hold an editor pane.
 const fileView = ref(null) // { file, label, line }
-async function viewFile({ file, label = '', line = null }) {
+async function viewFile({ file, label = '', line = null, preview = true }) {
   if (!file) return
   if (fileKind(file) === 'pdf') {
     const res = window.shellApi.openPdf ? await window.shellApi.openPdf(file).catch(() => null) : null
     if (!res || !res.ok) showToast(`Could not open ${label || file}${res && res.error ? `: ${res.error}` : ''}`, { kind: 'error', timeout: 5000 })
     return
   }
-  fileView.value = { file, label, line: Number.isInteger(line) ? line : null }
+  const ln = Number.isInteger(line) ? line : null
+  if (openInTesselEditor({ file, line: ln, preview })) return
+  fileView.value = { file, label, line: ln }
 }
 // Outside Tessel: VS Code at the line when installed, else the file's own program.
 async function openExternally({ file, line, col }) {
@@ -221,6 +226,9 @@ function openInTesselEditor({ file, line = null, col = null, preview = true, ws 
     previewTabs: settings.editorPreviewTabs,
     isDirty: (p) => !!(getDoc(p) && getDoc(p).dirty)
   })
+  // A line in a Markdown, Mermaid or CSV file: its source, at that line.
+  if (Number.isInteger(line) && line > 0 && ['markdown', 'mermaid', 'table'].includes(fileKind(file)))
+    res.files = res.files.map((f) => (samePath(f.path, res.activePath) && !f.diff ? { ...f, mode: 'edit' } : f))
   leaf.files = res.files
   leaf.activePath = res.activePath
   leaf.reveal = {
@@ -271,7 +279,7 @@ async function askEditorClose(paths) {
 function dirtyEditorPaths(leaves) {
   const out = []
   for (const l of leaves) {
-    if (l && l.kind === 'editor') for (const p of dirtyOnlyIn(l.id, (l.files || []).map((f) => f.path))) if (!out.some((o) => samePath(o, p))) out.push(p)
+    if (l && l.kind === 'editor') for (const p of dirtyOnlyIn(l.id, (l.files || []).map((f) => docPathOf(f)))) if (!out.some((o) => samePath(o, p))) out.push(p)
   }
   return out
 }
@@ -538,7 +546,8 @@ const SHORTCUTS = [
       ['Ctrl+H', 'Replace'],
       ['Ctrl+G', 'Go to line'],
       ['Alt+Z', 'Word wrap on or off'],
-      ['F7', 'Next change (Changes view)']
+      ['F7 / Shift+F7', 'Next / previous change (a diff)'],
+      ['Ctrl+Shift+A', 'Add Review Note (a diff: the selected lines)']
     ]
   },
   {
@@ -547,6 +556,7 @@ const SHORTCUTS = [
       ['Ctrl+Shift+B', 'Broadcast typing to all panes'],
       ['Ctrl+Shift+K', 'Task board'],
       ['Ctrl+Shift+X', 'File explorer'],
+      ['Ctrl+Shift+G', 'Source Control (the git changes)'],
       ['Ctrl+,', 'Settings'],
       ['Win+H', 'Voice typing (Windows)'],
       ['F1', 'This help']
@@ -1430,8 +1440,30 @@ function toggleExplorer() {
 function openExplorerFile(file, arg = null) {
   const line = Number.isInteger(arg) ? arg : null
   const keep = !!(arg && typeof arg === 'object' && arg.keep)
-  if (isViewed(file)) viewFile({ file, line })
+  if (isViewed(file)) viewFile({ file, line, preview: !keep })
   else openInTesselEditor({ file, line, preview: !keep })
+}
+// A file of Source Control (the Changes tab): its diff, in its own editor tab
+// ("name (diff)" / "name (staged diff)"), like Orca's openDiff.
+function openScmDiff({ root, rel, oldRel = null, area, status = null, file, preview = true, line = null } = {}) {
+  if (!root || !rel || !file || !['staged', 'unstaged', 'untracked'].includes(area)) return null
+  const path = diffTabPath(file, area)
+  const leaf = openInTesselEditor({ file: path, line: Number.isInteger(line) ? line : null, preview })
+  if (!leaf) return null
+  leaf.files = leaf.files.map((f) =>
+    samePath(f.path, path) ? { ...f, mode: f.mode === 'rich' ? 'rich' : 'diff', diff: { root, rel, oldRel: oldRel || null, area, status, full: file } } : f
+  )
+  return leaf
+}
+// "Create PR" from Source Control: GitHub's pull request form for that folder.
+function openCreatePr({ cwd, taskId = null } = {}) {
+  const task = taskId ? boardTasks.find((t) => t.id === taskId) : null
+  if (task && task.worktree) return openGitHub(task)
+  closeMenus()
+  paletteOpen.value = false
+  issueWorkspaceId.value = currentWsId.value
+  githubTaskContext.value = cwd ? { cwd, base: '' } : null
+  githubOpen.value = true
 }
 // A path can go into the active pane when it is a terminal.
 const canInsertPath = computed(() => {
@@ -1717,8 +1749,9 @@ function buildCommands() {
     shortcut: 'Ctrl+Shift+X',
     hint: "The project's files, with their git status"
   })
-  add('Files', taskPanelOpen.value && sideTab.value === 'changes' ? 'Hide the git changes' : 'Show the git changes', () => toggleSideTab('changes'), {
-    hint: "The project's changed files (source control)"
+  add('Files', taskPanelOpen.value && sideTab.value === 'changes' ? 'Hide Source Control' : 'Show Source Control', () => toggleSideTab('changes'), {
+    shortcut: 'Ctrl+Shift+G',
+    hint: 'Stage, commit, push; review diffs and send notes to an agent'
   })
   add('Files', 'Jump to a file…', openFinder, {
     shortcut: 'Ctrl+Shift+J',
@@ -3744,6 +3777,54 @@ const reviewActions = {
     if (task && task.paneId) focusPane(task.paneId)
   }
 }
+
+// Review notes from Source Control / a diff tab (Orca's "Send notes to"):
+// the agents of the current workspace, and delivery through their message
+// queue: never typed while the agent works or waits for an approval,
+// confirmed when it takes the message; the notes are then cleared.
+const NOTE_TARGET_STATE = {
+  ready: 'Ready',
+  working: 'Working: sent when it is free',
+  waiting: 'Waiting for you',
+  limited: 'At its usage limit',
+  unknown: 'Starting'
+}
+setNotesDelivery({
+  targets() {
+    return (currentWs.value ? wsAgents(currentWs.value.id) : []).map((l) => {
+      const state = paneState(l)
+      const task = taskOfPane(l.id)
+      return {
+        id: l.id,
+        label: `#${l.num || '?'} ${l.title || 'Agent'}`,
+        stateLabel: NOTE_TARGET_STATE[state] || '',
+        disabledReason: state === 'approval' ? 'Agent needs permission' : '',
+        hint: task ? `Working on "${task.title}"` : ''
+      }
+    })
+  },
+  send(paneId, text, { onDelivered } = {}) {
+    const leaf = findLeaf(paneId)
+    if (!leaf || !text) {
+      showToast('Terminal is no longer available', { kind: 'error' })
+      return
+    }
+    showToast('Sending notes...', { timeout: 3000 })
+    deliverToAgent(leaf.id, text, {
+      source: 'you',
+      scope: 'notes',
+      waitIdle: true,
+      onDelivered: () => {
+        // A task waiting for review goes back to Doing: its agent works again.
+        const task = taskOfPane(leaf.id)
+        if (task && task.column === 'review') updateTask(task.id, { column: 'doing', leadReview: null, doingSince: Date.now() })
+        showToast('Notes sent.', { timeout: 3000 })
+        if (onDelivered) onDelivered()
+      },
+      onFailed: () => showToast(`The notes could not be sent to ${leaf.title}.`, { kind: 'error' })
+    })
+  }
+})
 
 // The agents (not plain shells) of a workspace.
 function wsAgents(wsId) {
@@ -5989,6 +6070,10 @@ function onKey(e, opts = {}) {
     } else if (k === 'x') {
       e.preventDefault()
       toggleExplorer()
+    } else if (k === 'g') {
+      // Orca's Show Source Control (Mod+Shift+G).
+      e.preventDefault()
+      toggleSideTab('changes')
     } else if (k === 'n') {
       e.preventDefault()
       createWorkspace()
@@ -6708,6 +6793,8 @@ onBeforeUnmount(() => {
           :workspace-id="currentWsId"
           @close="closeSidePanel"
           @open="openExplorerFile"
+          @open-diff="openScmDiff"
+          @create-pr="openCreatePr"
           @open-editor="(file) => openInTesselEditor({ file, preview: false })"
           @open-external="(file) => openExternally({ file })"
           @terminal-here="terminalHere"
