@@ -104,8 +104,29 @@
       "hostCount_one": "{{count}} hôte",
       "hostCount_other": "{{count}} hôtes",
       "sshHost": "Hôte SSH",
-      "disconnect": "Déconnecter",
+      "disconnect": "Se déconnecter",
       "manage": "Gérer les hôtes distants…"
+    },
+    "credential": {
+      "titlePassword": "Mot de passe SSH",
+      "titlePassphrase": "Phrase secrète de la clé SSH",
+      "titleVerification": "Vérification SSH",
+      "descPassword": "Saisissez le mot de passe pour",
+      "descPassphrase": "Saisissez la phrase secrète pour",
+      "descVerification": "Relevez le défi de vérification pour",
+      "passwordFor": "Mot de passe pour {{value0}}",
+      "passphraseFor": "Phrase secrète pour {{value0}}",
+      "placeholderPassword": "Saisissez le mot de passe",
+      "placeholderPassphrase": "Saisissez la phrase secrète",
+      "placeholderResponse": "Entrez la réponse",
+      "connect": "Se connecter",
+      "unlock": "Déverrouiller",
+      "continue": "Continuer",
+      "cancel": "Annuler",
+      "denied": "Autorisation refusée, veuillez réessayer.",
+      "badPassphrase": "Phrase secrète incorrecte, veuillez réessayer.",
+      "submitFailed": "Échec de l'envoi des identifiants SSH",
+      "cancelFailed": "Échec de l'annulation de la demande d'identifiants SSH"
     }
   }
 }

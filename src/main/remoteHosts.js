@@ -5,9 +5,10 @@
 // Phase 1: hosts detected in ~/.ssh/config or added by hand, and terminal
 // panes that run Windows' OpenSSH client (ssh.exe) on them through Tessel's
 // usual terminal host. The argv is built here from the saved host (never a
-// command line from the renderer). Passwords, passphrases and host key
-// questions are answered by the user in the terminal: nothing secret is
-// stored, and ssh's own host key checking is left as it is.
+// command line from the renderer). Passwords and passphrases are asked in a
+// dialog (sshPrompts.js) and written to that pane's terminal only; host key
+// questions are answered in the terminal. Nothing secret is stored, and ssh's
+// own host key checking is left as it is.
 import fs from 'fs'
 import os from 'os'
 import { join } from 'path'
@@ -343,7 +344,7 @@ export function createRemoteHosts({
   // --- Live state: which hosts have a terminal open --------------------------
   function snapshot() {
     const out = {}
-    for (const [id, s] of states) out[id] = { ...s, panes: [...panes].filter(([, h]) => h === id).map(([p]) => p) }
+    for (const [id, s] of states) out[id] = { ...s, panes: panesOf(id) }
     return out
   }
   function notify() {
@@ -353,17 +354,36 @@ export function createRemoteHosts({
       /* the window may be gone */
     }
   }
-  function paneStarted(paneId, hostId) {
+  // A host's state from its panes: connected when one of them got through,
+  // connecting while they all still wait (a password prompt, the network).
+  function paneState(hostId) {
+    const mine = [...panes.values()].filter((p) => p.hostId === hostId)
+    return mine.some((p) => p.connected) ? 'connected' : 'connecting'
+  }
+  // connected: false for a new ssh pane (sshPrompts.js calls paneConnected
+  // once the remote side answers); a re-attached pane is connected already.
+  function paneStarted(paneId, hostId, { connected = true } = {}) {
     if (!hostId) return
-    panes.set(paneId, hostId)
-    states.set(hostId, { status: 'connected' })
+    panes.set(paneId, { hostId, connected: !!connected })
+    states.set(hostId, { status: paneState(hostId) })
+    notify()
+  }
+  function paneConnected(paneId) {
+    const p = panes.get(paneId)
+    if (!p || p.connected) return
+    p.connected = true
+    states.set(p.hostId, { status: 'connected' })
     notify()
   }
   function paneExited(paneId, exitCode) {
-    const hostId = panes.get(paneId)
-    if (!hostId) return
+    const pane = panes.get(paneId)
+    if (!pane) return
+    const hostId = pane.hostId
     panes.delete(paneId)
-    if ([...panes.values()].includes(hostId)) return notify()
+    if ([...panes.values()].some((p) => p.hostId === hostId)) {
+      states.set(hostId, { status: paneState(hostId) })
+      return notify()
+    }
     if (!get(hostId)) {
       // Removed meanwhile: nothing to show for it.
       states.delete(hostId)
@@ -382,13 +402,13 @@ export function createRemoteHosts({
   }
   // Its terminals, to end them (Disconnect).
   function panesOf(hostId) {
-    return [...panes].filter(([, h]) => h === hostId).map(([p]) => p)
+    return [...panes].filter(([, p]) => p.hostId === hostId).map(([id]) => id)
   }
   function markDisconnecting(hostId) {
     disconnecting.add(hostId)
   }
 
-  return { list, importConfig, add, update, remove, get, launchFor, test, snapshot, paneStarted, paneExited, panesOf, markDisconnecting }
+  return { list, importConfig, add, update, remove, get, launchFor, test, snapshot, paneStarted, paneConnected, paneExited, panesOf, markDisconnecting }
 }
 
 // IPC: remoteHosts:* (the renderer sends ids and form fields, never argv).

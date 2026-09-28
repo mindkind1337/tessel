@@ -14,6 +14,7 @@ import {
   overallStatus,
   connectedHostCountLabel,
   canConnectStatus,
+  isConnectingStatus,
   connectVerb,
   connectRemoteHost,
   disconnectRemoteHost,
@@ -162,7 +163,13 @@ function manage() {
             <span>{{ statusLabel(row.status) }}</span>
           </div>
         </div>
-        <LoaderCircle v-if="busy[row.id]" :size="12" class="rh-spin sb-muted" aria-hidden="true" />
+        <LoaderCircle
+          v-if="busy[row.id] || isConnectingStatus(row.status)"
+          :size="12"
+          class="rh-spin sb-muted"
+          data-test="remote-host-connecting"
+          aria-hidden="true"
+        />
         <button
           v-else-if="canConnectStatus(row.status)"
           type="button"

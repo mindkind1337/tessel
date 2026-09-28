@@ -148,8 +148,6 @@
     },
     "update": {
       "notReady": "La mise à jour n'est pas encore prête à être installée.",
-      "readyToast": "Tessel {{version}} est prêt à être installé.",
-      "action": "Mettre à jour",
       "done": "Tessel est à jour ({{version}}). Vos panneaux ont été restaurés.",
       "title": "Mettre à jour vers Tessel {{version}}",
       "current": "Vous avez la version {{version}}. La nouvelle version est téléchargée et prête.",
@@ -608,6 +606,16 @@
       "reload": "Recharger",
       "openLogs": "Ouvrir le dossier des journaux",
       "devReload": "Cette fenêtre se recharge seule quand le code change."
+    },
+    "updateCard": {
+      "title": "Mise à jour disponible",
+      "ready": "Tessel v{{version}} est prête.",
+      "sessions": "Vos panneaux se rouvriront là où ils étaient.",
+      "releaseNotes": "Notes de version",
+      "update": "Mettre à jour",
+      "dismiss": "Ignorer la mise à jour",
+      "dismissTip": "Ignorer l'astuce",
+      "reassurance": "Vos panneaux se rouvriront là où ils étaient après la mise à jour, et Claude et Codex reprendront leurs conversations."
     }
   }
 }
