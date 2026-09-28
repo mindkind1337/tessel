@@ -30,7 +30,7 @@ describe('Settings modal accessibility', () => {
 
   it('wraps Tab and Shift+Tab within the modal, including from its initial focus', async () => {
     const dialog = wrapper.get('[role="dialog"]')
-    const first = wrapper.get('[aria-label="Close settings"]')
+    const first = wrapper.get('.set-back')
     const last = wrapper.get('.set-foot button')
     expect(document.activeElement).toBe(dialog.element)
     expect(dialog.attributes('aria-modal')).toBe('true')
@@ -69,9 +69,9 @@ describe('Settings modal accessibility', () => {
     expect(cursors.map((c) => c.attributes('aria-pressed'))).toEqual(['false', 'true', 'false'])
   })
 
-  it('keeps Escape and clicking the backdrop available to close Settings', async () => {
+  it('keeps Escape and "Back to app" available to close Settings', async () => {
     await wrapper.get('[role="dialog"]').trigger('keydown', { key: 'Escape' })
-    await wrapper.get('.help-backdrop').trigger('pointerdown')
+    await wrapper.get('.set-back').trigger('click')
     expect(wrapper.emitted('close')).toHaveLength(2)
   })
 })

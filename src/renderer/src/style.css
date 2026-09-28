@@ -2064,9 +2064,274 @@ kbd {
   outline: none;
 }
 
-/* ================= Settings dialog ================= */
-.settings-card {
-  width: min(560px, 100%);
+/* ================= Settings page ================= */
+/* A full page over the app's main area (below the toolbar): a sidebar with
+   the pages, then one page at a time, its settings in rounded cards. */
+.settings-page {
+  position: fixed;
+  top: 40px; /* the toolbar's height: it stays visible above */
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 400;
+  display: flex;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.settings-page:focus {
+  outline: none;
+}
+
+.settings-page [hidden] {
+  display: none !important;
+}
+
+.set-side {
+  flex: 0 0 290px;
+  display: flex;
+  flex-direction: column;
+  padding: 14px 12px 18px;
+  overflow-y: auto;
+  background: var(--chrome);
+  border-right: 1px solid var(--border);
+}
+
+.set-back {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.set-back:hover {
+  background: var(--surface-2);
+  color: var(--text-strong);
+}
+
+.set-search {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 32px;
+  margin: 10px 0 6px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text-dim);
+}
+
+.set-search:focus-within {
+  border-color: var(--accent);
+}
+
+.set-search input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--text-strong);
+  font: inherit;
+  font-size: 12.5px;
+  outline: none;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.set-nav-head {
+  margin: 16px 10px 5px;
+  color: var(--text-dim);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.set-nav-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.set-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.set-nav-item svg {
+  flex: 0 0 auto;
+  color: var(--text-dim);
+}
+
+.set-nav-item:hover {
+  background: var(--surface-2);
+}
+
+.set-nav-item.on {
+  background: var(--surface-3);
+  color: var(--text-strong);
+}
+
+.set-nav-item.on svg {
+  color: var(--accent);
+}
+
+.set-nav-item.dim {
+  opacity: 0.45;
+}
+
+.set-back:focus-visible,
+.set-nav-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.set-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-y: auto;
+}
+
+.set-content {
+  max-width: 870px;
+  margin: 0 auto;
+  padding: 34px 40px 60px;
+}
+
+.set-page-head h2 {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.set-page-desc {
+  margin: 5px 0 24px;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+/* Search results: every matching page, one after the other, by name. */
+.settings-page.searching .set-page + .set-page {
+  margin-top: 28px;
+}
+
+.settings-page.searching .set-page-head h2 {
+  margin-bottom: 12px;
+  font-size: 16px;
+}
+
+.settings-page.searching .set-page-desc {
+  display: none;
+}
+
+.set-empty {
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.set-group {
+  margin-bottom: 22px;
+}
+
+.set-group-title {
+  margin: 0 0 8px;
+  color: var(--text-strong);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.set-card {
+  padding: 2px 18px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+
+.set-card.set-card-pad {
+  padding: 14px 18px;
+}
+
+.set-card .set-row {
+  min-height: 58px;
+  padding: 10px 0;
+  font-size: 13px;
+}
+
+.set-card .set-row > .set-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--text-strong);
+}
+
+.set-card .set-row > .set-label .set-hint {
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+.set-card .set-row > :not(.set-label) {
+  flex: 0 0 auto;
+}
+
+.set-card > .set-row:last-child,
+.set-card > .agent-set:last-child .set-row {
+  border-bottom: 0;
+}
+
+.set-card .set-foot {
+  margin-top: 0;
+}
+
+.set-card-text {
+  margin: 12px 0 6px;
+  line-height: 1.45;
+}
+
+.set-card .agents-head {
+  margin: 12px 0 4px;
+}
+
+.set-card .agents-warn {
+  margin: 0 0 8px;
+}
+
+.set-card .orch-tools {
+  padding: 12px 0 12px 18px;
+  line-height: 1.6;
+}
+
+.set-card .custom-agent-form {
+  margin: 12px 0 14px;
+}
+
+@media (max-width: 760px) {
+  .set-side {
+    flex-basis: 210px;
+  }
+
+  .set-content {
+    padding: 24px 20px 40px;
+  }
 }
 
 .set-section h3 {
@@ -2221,9 +2486,6 @@ label.set-row {
   margin-top: 14px;
 }
 
-.settings-card:focus {
-  outline: none;
-}
 
 /* ================= Pane drag & drop ================= */
 .pane-nav {
