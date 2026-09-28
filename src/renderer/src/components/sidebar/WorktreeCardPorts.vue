@@ -7,7 +7,7 @@
 import { ref, nextTick, onBeforeUnmount } from 'vue'
 import { Plug } from 'lucide-vue-next'
 import PortRow from './PortRow.vue'
-import { closeOpenHoverCard } from './useHoverCard'
+import { closeOpenHoverCard } from '../hover/useHoverCard'
 import { t } from '../../i18n'
 
 const props = defineProps({

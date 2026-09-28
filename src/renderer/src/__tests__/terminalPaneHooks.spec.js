@@ -207,11 +207,11 @@ describe('TerminalPane status integration', () => {
     expect(wrapper.find('.pane-cache').exists()).toBe(false)
   })
 
-  it('labels the actual approval state in the status tooltip', async () => {
+  it('labels the actual approval state in the status description (the hover card shows it)', async () => {
     ctx.hook('UserPromptSubmit')
     ctx.hook('Notification', { notificationType: 'permission_prompt' })
     await nextTick()
-    expect(wrapper.get('.pane-icon').attributes('title')).toContain('Main agent state: approval.')
+    expect(wrapper.get('.pane-icon').attributes('aria-description')).toContain('Main agent state: approval.')
     expect(wrapper.text()).toContain('approve?')
   })
 

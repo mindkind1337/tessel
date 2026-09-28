@@ -14,8 +14,8 @@ import AgentStateDot from './AgentStateDot.vue'
 import CompactAgentRow from './CompactAgentRow.vue'
 import WorktreeCardPorts from './WorktreeCardPorts.vue'
 import PortRow from './PortRow.vue'
-import HoverCardContent from './HoverCardContent.vue'
-import { useHoverCard } from './useHoverCard'
+import HoverCardContent from '../hover/HoverCardContent.vue'
+import { useHoverCard } from '../hover/useHoverCard'
 import {
   buildSummaryAgentGroups,
   selectSummaryGroupIconAgents,

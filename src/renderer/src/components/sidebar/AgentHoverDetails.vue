@@ -6,7 +6,8 @@
 // Tessel's own sections (team, pane) with Orca's section header and inset
 // body. It replaces the row's native tooltip.
 import { computed } from 'vue'
-import { Users, SquareTerminal, Bot, MousePointerClick } from 'lucide-vue-next'
+import { Users, SquareTerminal, Bot, MousePointerClick, Cpu } from 'lucide-vue-next'
+import { paneModels } from '../../paneModels'
 import BrandIcon from '../BrandIcon.vue'
 import AgentStateDot from './AgentStateDot.vue'
 import { agentStateLabel } from '../../sidebarModel'
@@ -20,6 +21,11 @@ const props = defineProps({
   runningCount: { type: Number, default: 0 }
 })
 
+// The model the agent's pane header finds (TerminalPane writes paneModels).
+const modelLine = computed(() => {
+  const model = props.row.kind === 'agent' ? paneModels[props.row.id] : ''
+  return model ? t('pane.model.title', 'Model: {{model}}', { model }) : ''
+})
 const heading = computed(() => props.row.primary || props.row.title)
 const showAgentLine = computed(() => !!props.row.title && props.row.title !== heading.value)
 const stateLabel = computed(() => {
@@ -61,6 +67,10 @@ const childLine = computed(() => {
       <div v-if="showAgentLine" class="hc-agent">
         <BrandIcon :kind="row.iconKind" :accent="row.accent" :label="null" :size="12" />
         <span>{{ row.title }}</span>
+      </div>
+      <div v-if="modelLine" class="hc-agent hc-model" data-hover-model="">
+        <Cpu :size="12" aria-hidden="true" />
+        <span v-text="modelLine"></span>
       </div>
     </div>
 
