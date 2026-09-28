@@ -76,7 +76,9 @@ export function publishTeamTasks({ dir, teamId, board, tasks } = {}) {
       title: t.title.slice(0, MAX_TITLE),
       column: t.column,
       assignee: typeof t.assignee === 'string' && /^#\d{1,3}$/.test(t.assignee) ? t.assignee : null,
-      since: Number.isFinite(t.since) ? t.since : null
+      since: Number.isFinite(t.since) ? t.since : null,
+      // Orchestration: what it waits for, a decision asked, its report.
+      ...orchestration(t)
     }))
   const file = join(root, 'tasks.json')
   let old = null
@@ -88,6 +90,30 @@ export function publishTeamTasks({ dir, teamId, board, tasks } = {}) {
   if (old && JSON.stringify(old.tasks) === JSON.stringify(clean)) return { ok: true, changed: false }
   writeAtomic(file, { version: 1, tasks: clean })
   return { ok: true, changed: true }
+}
+
+function orchestration(t) {
+  const out = {}
+  const deps = cleanIds(t.deps)
+  if (deps && deps.length) out.deps = deps
+  const waiting = cleanIds(t.waitingOn)
+  if (waiting && waiting.length) out.waitingOn = waiting
+  const g = t.gate
+  if (g && typeof g.question === 'string' && (g.status === 'pending' || g.status === 'resolved'))
+    out.gate = {
+      question: g.question.slice(0, 500),
+      options: Array.isArray(g.options) ? g.options.filter((o) => typeof o === 'string').slice(0, 6) : [],
+      status: g.status,
+      ...(g.status === 'resolved' && typeof g.answer === 'string' ? { answer: g.answer.slice(0, 500) } : {})
+    }
+  const r = t.report
+  if (r && (r.outcome === 'succeeded' || r.outcome === 'failed') && typeof r.summary === 'string')
+    out.report = {
+      outcome: r.outcome,
+      summary: r.summary.slice(0, 2000),
+      files: Array.isArray(r.files) ? r.files.filter((f) => typeof f === 'string').slice(0, 50) : []
+    }
+  return out
 }
 
 // Validated requests, oldest first (their files stay until
@@ -168,6 +194,35 @@ export function finishTeamRequests({ dir, teamId, board, files } = {}) {
   return { ok: true, removed }
 }
 
+// Who is who in a team, for the team tools (group addresses like "@codex"
+// or "@idle", team_members): members: { <paneId>: { agent, model, state } }.
+// Rewritten only when it changes.
+const ROSTER_STATES = ['working', 'idle', 'approval', 'limited']
+export function writeRoster({ dir, teamId, members } = {}) {
+  const root = teamRoot(dir, teamId)
+  if (!root || !members || typeof members !== 'object') return { ok: false, error: 'Invalid team location.' }
+  if (!fs.existsSync(root)) return { ok: true, changed: false }
+  const clean = {}
+  for (const [id, m] of Object.entries(members).slice(0, 40)) {
+    if (!ID_RE.test(id) || !m) continue
+    clean[id] = {
+      agent: typeof m.agent === 'string' && /^[a-z0-9-]{1,30}$/.test(m.agent) ? m.agent : null,
+      model: typeof m.model === 'string' ? m.model.slice(0, 60) : null,
+      state: ROSTER_STATES.includes(m.state) ? m.state : null
+    }
+  }
+  const file = join(root, 'roster.json')
+  let old = null
+  try {
+    old = JSON.parse(fs.readFileSync(file, 'utf8'))
+  } catch {
+    old = null
+  }
+  if (old && JSON.stringify(old.members) === JSON.stringify(clean)) return { ok: true, changed: false }
+  writeAtomic(file, { version: 1, at: Date.now(), members: clean })
+  return { ok: true, changed: true }
+}
+
 // Which panes have their team tools running (the tools say so every 30 s,
 // see teamMcp/server.cjs): -> { ok, alive: { paneId: { at, version } | null } }
 export function toolsAlive({ dir, ids } = {}) {
@@ -204,6 +259,13 @@ export function messageStatuses({ dir, teamId, ids } = {}) {
   return { ok: true, statuses }
 }
 
+// Card ids (at most 10, no repeats); null when not valid.
+function cleanIds(v) {
+  if (v == null) return []
+  if (!Array.isArray(v) || v.length > 10 || v.some((x) => typeof x !== 'string' || !ID_RE.test(x))) return null
+  return [...new Set(v)]
+}
+
 export function parseRequest(data) {
   if (!data || typeof data !== 'object') return { error: 'the request is not readable' }
   const column = data.column == null ? null : String(data.column).toLowerCase()
@@ -215,7 +277,27 @@ export function parseRequest(data) {
     if (title.length > MAX_TITLE) return { error: `the title is too long (at most ${MAX_TITLE} characters)` }
     const assignee = data.assignee == null || data.assignee === '' ? null : String(data.assignee).trim()
     if (assignee !== null && !/^#\d{1,3}$/.test(assignee)) return { error: '"assignee" must be a teammate like "#3"' }
-    return { action: 'add', title, assignee, column: column || 'todo' }
+    const deps = cleanIds(data.deps)
+    if (deps === null) return { error: '"after" must be up to 10 card ids' }
+    return { action: 'add', title, assignee, column: column || 'todo', ...(deps.length ? { deps } : {}) }
+  }
+  if (data.action === 'report') {
+    if (typeof data.id !== 'string' || !ID_RE.test(data.id)) return { error: 'the card id is not valid' }
+    const outcome = data.outcome === 'failed' ? 'failed' : data.outcome === 'succeeded' || data.outcome == null ? 'succeeded' : null
+    if (!outcome) return { error: 'the outcome must be "succeeded" or "failed"' }
+    const summary = typeof data.summary === 'string' ? data.summary.trim() : ''
+    if (!summary || summary.length > 2000) return { error: 'a report needs a summary of at most 2000 characters' }
+    const files = Array.isArray(data.files) ? data.files.filter((f) => typeof f === 'string' && f.trim() && f.length <= 300).slice(0, 50) : []
+    return { action: 'report', id: data.id, outcome, summary, files }
+  }
+  if (data.action === 'gate') {
+    if (typeof data.id !== 'string' || !ID_RE.test(data.id)) return { error: 'the card id is not valid' }
+    const question = typeof data.question === 'string' ? data.question.replace(/\s+/g, ' ').trim() : ''
+    if (!question || question.length > 500) return { error: 'a decision needs a question of at most 500 characters' }
+    const options = Array.isArray(data.options)
+      ? data.options.filter((o) => typeof o === 'string' && o.trim() && o.length <= 80).map((o) => o.trim()).slice(0, 6)
+      : []
+    return { action: 'gate', id: data.id, question, options }
   }
   if (data.action === 'move') {
     if (typeof data.id !== 'string' || !ID_RE.test(data.id)) return { error: 'the card id is not valid' }

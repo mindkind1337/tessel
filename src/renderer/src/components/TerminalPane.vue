@@ -31,6 +31,7 @@ import { modelFromScreen } from '../../../shared/screenModel'
 import { findFileRefs } from '../../../shared/fileLinks'
 import { osc52Text } from '../../../shared/osc52'
 import { cacheCountdown } from '../promptCache'
+import { paneModels } from '../paneModels'
 
 const props = defineProps({
   node: { type: Object, required: true }
@@ -65,6 +66,16 @@ const modelText = computed(() => {
   if (!m || !m.model) return ''
   return modelLabel(m.model) + (m.effort ? ` · ${m.effort}` : '')
 })
+// For the team roster (team_members): the model this pane shows.
+watch(
+  modelText,
+  (t) => {
+    if (t) paneModels[props.node.id] = t
+    else delete paneModels[props.node.id]
+  },
+  { immediate: true }
+)
+onBeforeUnmount(() => delete paneModels[props.node.id])
 const modelTitle = computed(() => {
   const m = agentModel.value
   if (!m) return ''

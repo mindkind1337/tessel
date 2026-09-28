@@ -46,7 +46,7 @@ import { writeJsonSafe, readJsonSafe } from './safeJson'
 import { addNotices, writeCurrentTeams, retireOldTeams } from './teamNotices'
 import { JSON_AGENTS, setJsonAgentServer, teamToolsEntry } from './jsonAgents'
 import { detectAgents } from './agentDetect'
-import { publishTeamTasks, takeTeamRequests, finishTeamRequests, messageStatuses, writeBoardPanes, toolsAlive } from './teamTasks'
+import { publishTeamTasks, takeTeamRequests, finishTeamRequests, messageStatuses, writeBoardPanes, toolsAlive, writeRoster } from './teamTasks'
 import {
   writeServerScript,
   installClaudeHooks,
@@ -1093,6 +1093,7 @@ const TEAM_OWNER = crypto.createHash('sha1').update(app.getPath('userData').toLo
 ipcMain.handle('team:current', safe((args) => writeCurrentTeams({ ...args, owner: TEAM_OWNER })))
 ipcMain.handle('team:retire', safe((args) => retireOldTeams({ ...args, owner: TEAM_OWNER })))
 ipcMain.handle('team:tasks', safe(publishTeamTasks))
+ipcMain.handle('team:roster', safe(writeRoster))
 ipcMain.handle('team:requests', safe(takeTeamRequests))
 ipcMain.handle('team:requests-done', safe(finishTeamRequests))
 ipcMain.handle('team:board-panes', safe((args) => writeBoardPanes({ ...args, owner: TEAM_OWNER })))

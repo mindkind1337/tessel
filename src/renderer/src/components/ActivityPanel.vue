@@ -178,6 +178,15 @@ function taskLine(x) {
       return { who: 'You', text: `discarded ${t}`, note: x.detail }
     case 'done':
       return { who: 'You', text: `marked ${t} as done`, note: '' }
+    // Orchestration: a report, a decision asked and given, a card free to start.
+    case 'reported':
+      return { who: x.by || x.title, text: `reported ${t}: ${x.detail}`, note: '' }
+    case 'gate':
+      return { who: x.by || x.title, text: `asks your decision on ${t}`, note: x.detail }
+    case 'decided':
+      return { who: 'You', text: `decided on ${t}`, note: x.detail }
+    case 'ready':
+      return { who: x.title, text: `can start ${t}`, note: 'the cards it waited for are done' }
     default:
       return { who: x.title, text: `started the task ${t}`, note: x.branch ? `branch ${x.branch}` : '' }
   }

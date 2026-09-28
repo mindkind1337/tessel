@@ -1,7 +1,7 @@
 <script setup>
 // Preferences dialog. Edits the shared `settings` store directly, so every
 // change applies live to all panes and is saved automatically.
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import BrandIcon from './BrandIcon.vue'
 import ProviderAccounts from './ProviderAccounts.vue'
 import { settings, FONT_FAMILIES, resetSettings, clamp } from '../settings'
@@ -10,6 +10,7 @@ import { playAlertSound } from '../notificationsStore'
 import { parseEnvText, YOLO_ARGS, YOLO_ENV, agentEnabled } from '../../../shared/agentPrefs'
 import { AGENT_DOCS } from '../../../shared/agentDocs'
 import { CACHE_TTLS } from '../promptCache'
+import { ORCHESTRATION_EXAMPLES, ORCHESTRATION_TOOLS } from '../orchestrationGuide'
 
 const props = defineProps({
   shells: { type: Array, default: () => [] },
@@ -38,7 +39,48 @@ function removeQuickCommand(id) {
   const i = settings.quickCommands.findIndex((q) => q.id === id)
   if (i >= 0) settings.quickCommands.splice(i, 1)
 }
-const emit = defineEmits(['close', 'set-default-shell', 'check-updates', 'open-update', 'detect-agents'])
+const emit = defineEmits(['close', 'set-default-shell', 'check-updates', 'open-update', 'detect-agents', 'open-connections'])
+
+// Settings > Orchestration: which agents can work as a team (Tessel's team
+// tools and hooks set up in them), and how to ask for it.
+const coverage = ref(null) // [{ id, name, state: 'ready'|'missing'|'approval' }] | { error }
+async function loadCoverage() {
+  if (!window.shellApi.teamHooksStatus) return
+  try {
+    const res = await window.shellApi.teamHooksStatus()
+    const rows = (res && Array.isArray(res.agents) ? res.agents : [])
+      .filter((r) => props.agents.some((a) => a.id === r.id && a.available))
+      .map((r) => ({
+        id: r.id,
+        name: (props.agents.find((a) => a.id === r.id) || {}).name || r.id,
+        state:
+          r.error || r.hooks !== 'installed'
+            ? 'missing'
+            : r.approval === 'needs-approval' || r.approval === 'changed'
+              ? 'approval'
+              : 'ready'
+      }))
+    coverage.value = rows
+  } catch (err) {
+    coverage.value = { error: (err && err.message) || 'unknown error' }
+  }
+}
+const coverageSummary = computed(() => {
+  const c = coverage.value
+  if (!c) return 'Checking your agents…'
+  if (c.error) return `Could not check: ${c.error}`
+  if (!c.length) return 'No agent with team tools found. Install agents in Settings > Agents, then check again.'
+  const ready = c.filter((r) => r.state === 'ready').length
+  return ready === c.length ? `All ${c.length} agents can work as a team.` : `${ready} of ${c.length} agents can work as a team.`
+})
+const copiedExample = ref('')
+function copyExample(ex) {
+  if (navigator.clipboard) navigator.clipboard.writeText(ex.prompt).catch(() => {})
+  copiedExample.value = ex.id
+  setTimeout(() => {
+    if (copiedExample.value === ex.id) copiedExample.value = ''
+  }, 1500)
+}
 
 // Settings > Agents: each detected agent's own command, arguments and
 // variables, whether it is offered, and the one a new pane starts.
@@ -156,6 +198,7 @@ onMounted(async () => {
   }
   document.addEventListener('focusin', containFocus)
   focusCard()
+  loadCoverage()
   if (props.section) {
     const el = document.getElementById(`set-${props.section}`)
     if (el) el.scrollIntoView({ block: 'start' })
@@ -563,6 +606,43 @@ const CURSORS = [
           </div>
           <input v-model="settings.resumeAgents" type="checkbox" class="set-switch" />
         </label>
+      </section>
+
+      <section id="set-orchestration" class="set-section">
+        <h3>Orchestration</h3>
+        <p class="set-hint">
+          Agents in a team (Sessions) coordinate through Tessel: they give each other cards, wait for the
+          cards before theirs, ask and answer, report when done, and ask you to decide. You follow it on
+          the task board.
+        </p>
+        <div class="agents-head">
+          <span class="set-hint">{{ coverageSummary }}</span>
+          <span class="agent-set-actions">
+            <button class="exit-btn" type="button" @click="loadCoverage">Check again</button>
+            <button class="exit-btn" type="button" @click="emit('open-connections')">Details</button>
+          </span>
+        </div>
+        <div v-if="Array.isArray(coverage) && coverage.length" class="orch-coverage">
+          <span v-for="r in coverage" :key="r.id" class="orch-chip" :class="r.state" :data-agent="r.id">
+            <BrandIcon :kind="r.id" :size="13" />{{ r.name }}:
+            {{ r.state === 'ready' ? 'ready' : r.state === 'approval' ? 'needs your approval' : 'not set up' }}
+          </span>
+        </div>
+        <h4 class="orch-sub">The team tools</h4>
+        <ul class="orch-tools">
+          <li v-for="[name, what] in ORCHESTRATION_TOOLS" :key="name"><code>{{ name }}</code> {{ what }}</li>
+        </ul>
+        <h4 class="orch-sub">How to use it</h4>
+        <p class="set-hint">Tell the agent that leads the team, in your own words, for example:</p>
+        <div v-for="ex in ORCHESTRATION_EXAMPLES" :key="ex.id" class="orch-example">
+          <div class="set-label">
+            {{ ex.title }}
+            <span class="set-hint">{{ ex.prompt }}</span>
+          </div>
+          <button class="exit-btn" type="button" @click="copyExample(ex)">
+            {{ copiedExample === ex.id ? 'Copied' : 'Copy' }}
+          </button>
+        </div>
       </section>
 
       <section id="set-accounts" class="set-section">

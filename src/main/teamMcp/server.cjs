@@ -25,7 +25,7 @@ const fs = require('fs')
 const path = require('path')
 const { randomUUID } = require('crypto')
 
-const VERSION = '1.6.11'
+const VERSION = '1.7.0'
 const MAX_TEXT = 6000
 
 // --- Finding my team and me ---------------------------------------------------
@@ -247,17 +247,28 @@ function readInbox(ctx) {
 
 // --- Send ----------------------------------------------------------------------
 
-function send(ctx, to, text, replyTo) {
+function send(ctx, to, text, replyTo, extra = null) {
   const body = String(text || '').trim()
   if (!body) return { error: 'Nothing to send: "text" is empty.' }
   const target = String(to || '').trim().toLowerCase()
-  if (!/^(#\d{1,3}|team)$/.test(target)) return { error: '"to" must be a teammate like "#3", or "team".' }
+  // A group: one message to each of its members.
+  if (/^@[a-z0-9-]{1,30}$/.test(target)) {
+    const targets = groupTargets(ctx, target)
+    if (targets.error) return targets
+    for (const t of targets) {
+      const r = send(ctx, t, text, replyTo, extra)
+      if (r.error) return r
+    }
+    return { ok: true, to: targets }
+  }
+  if (!/^(#\d{1,3}|team)$/.test(target))
+    return { error: '"to" must be a teammate like "#3", "team", or a group: "@claude", "@codex" (an agent), "@idle", "@all".' }
   const box = path.join(ctx.root, 'outbox', ctx.me.token)
   fs.mkdirSync(box, { recursive: true })
   const name = `mcp-${Date.now()}-${process.pid}-${Math.random().toString(36).slice(2, 8)}`
   if (body.length > MAX_TEXT)
     return { error: `The message is too long (${body.length} characters, at most ${MAX_TEXT}): nothing was sent. Split it in several messages.` }
-  const payload = { to: target, text: body }
+  const payload = { to: target, text: body, ...(extra || {}) }
   if (replyTo) payload.reply_to = String(replyTo).slice(0, 80)
   fs.writeFileSync(path.join(box, `${name}.tmp`), JSON.stringify(payload))
   fs.renameSync(path.join(box, `${name}.tmp`), path.join(box, `${name}.json`))
@@ -271,6 +282,17 @@ function send(ctx, to, text, replyTo) {
 const COLUMNS = ['todo', 'doing', 'review', 'done']
 const COLUMN_NAMES = { todo: 'To do', doing: 'Doing', review: 'Review', done: 'Done' }
 
+// What else a card says: what it waits for, a decision asked, its report.
+function cardNotes(t) {
+  const out = []
+  if (Array.isArray(t.waitingOn) && t.waitingOn.length) out.push(`waits for ${t.waitingOn.join(', ')}`)
+  else if (Array.isArray(t.deps) && t.deps.length) out.push(`after ${t.deps.join(', ')}: can start`)
+  if (t.gate && t.gate.status === 'pending') out.push(`waits for the user's decision: ${t.gate.question}`)
+  if (t.gate && t.gate.status === 'resolved') out.push(`the user decided: ${t.gate.answer}`)
+  if (t.report) out.push(`${t.report.outcome}: ${String(t.report.summary || '').slice(0, 160)}`)
+  return out.length ? `  [${out.join('; ')}]` : ''
+}
+
 function listTasks(ctx) {
   const data = readJson(path.join(ctx.root, 'tasks.json'))
   const tasks = data && Array.isArray(data.tasks) ? data.tasks : []
@@ -278,7 +300,7 @@ function listTasks(ctx) {
   return COLUMNS.map((c) => {
     const here = tasks.filter((t) => t.column === c)
     if (!here.length) return null
-    return `${COLUMN_NAMES[c]}:\n${here.map((t) => `  ${t.id}  ${t.title}${t.assignee ? `  (${t.assignee})` : ''}`).join('\n')}`
+    return `${COLUMN_NAMES[c]}:\n${here.map((t) => `  ${t.id}  ${t.title}${t.assignee ? `  (${t.assignee})` : ''}${cardNotes(t)}`).join('\n')}`
   })
     .filter(Boolean)
     .join('\n')
@@ -306,6 +328,15 @@ function taskRequest(ctx, data) {
   fs.renameSync(path.join(folder, `${name}.tmp`), path.join(folder, `${name}.json`))
 }
 
+const CARD_ID = /^[A-Za-z0-9._-]{1,100}$/
+
+// A list given as an array or as "a, b" text.
+function listArg(v) {
+  if (Array.isArray(v)) return v.map((x) => String(x).trim()).filter(Boolean)
+  if (typeof v === 'string') return v.split(',').map((x) => x.trim()).filter(Boolean)
+  return []
+}
+
 function addTask(ctx, args) {
   const title = String(args.title || '').replace(/\s+/g, ' ').trim()
   if (!title) return { error: 'A card needs a "title".' }
@@ -314,8 +345,69 @@ function addTask(ctx, args) {
   if (!/^#\d{1,3}$/.test(assignee)) return { error: '"assignee" must be a teammate like "#3".' }
   const column = String(args.column || 'todo').toLowerCase()
   if (!COLUMNS.includes(column)) return { error: `"column" must be one of ${COLUMNS.join(', ')}.` }
-  taskRequest(ctx, { action: 'add', title, assignee, column })
+  // Cards that must be done first: the card waits, and its agent is told
+  // when it can start.
+  const deps = listArg(args.after)
+  if (deps.length > 10 || deps.some((d) => !CARD_ID.test(d))) return { error: '"after" must be up to 10 card ids (see team_tasks).' }
+  taskRequest(ctx, deps.length ? { action: 'add', title, assignee, column, deps } : { action: 'add', title, assignee, column })
   return { ok: true }
+}
+
+// The structured end of a card: what was done, found or left, and the files
+// changed. Succeeded: the card goes to Done; failed: it stays where it is,
+// marked failed. Whoever gave the card is told.
+function reportTask(ctx, args) {
+  const id = String(args.id || '').trim()
+  if (!CARD_ID.test(id)) return { error: 'Give the card "id" (see team_tasks).' }
+  const outcome = String(args.outcome || 'succeeded').toLowerCase()
+  if (outcome !== 'succeeded' && outcome !== 'failed') return { error: '"outcome" must be "succeeded" or "failed".' }
+  const summary = String(args.summary || '').trim()
+  if (!summary) return { error: 'Give a "summary": what you did, what you found, what is left (a few sentences).' }
+  if (summary.length > 2000) return { error: 'The summary is too long (at most 2000 characters).' }
+  const files = listArg(args.files)
+  if (files.length > 50 || files.some((f) => f.length > 300)) return { error: '"files": at most 50 paths.' }
+  taskRequest(ctx, { action: 'report', id, outcome, summary, files })
+  return { ok: true }
+}
+
+// A decision only the user makes: the card waits, its question and choices
+// shown on the board; the answer comes back as a team message.
+function gateTask(ctx, args) {
+  const id = String(args.id || '').trim()
+  if (!CARD_ID.test(id)) return { error: 'Give the card "id" (see team_tasks).' }
+  const question = String(args.question || '').replace(/\s+/g, ' ').trim()
+  if (!question) return { error: 'Give the "question" the user decides.' }
+  if (question.length > 500) return { error: 'The question is too long (at most 500 characters).' }
+  const options = listArg(args.options)
+  if (options.length > 6 || options.some((o) => o.length > 80)) return { error: '"options": at most 6 choices of 80 characters.' }
+  taskRequest(ctx, { action: 'gate', id, question, options })
+  return { ok: true }
+}
+
+// --- Who is who ------------------------------------------------------------------
+// Tessel writes roster.json in the team's folder: each member's agent, model
+// and state (working, idle, approval, limited), for group addresses and
+// team_members. Missing (an older Tessel): only "#3" and "team" work.
+function roster(ctx) {
+  const data = readJson(path.join(ctx.root, 'roster.json'))
+  return data && data.members && typeof data.members === 'object' ? data.members : null
+}
+
+// "@claude", "@codex" (an agent kind), "@idle" (not working now), "@all"
+// -> ["#3", ...] without me, or { error }.
+function groupTargets(ctx, group) {
+  const g = group.slice(1)
+  const active = Object.entries(ctx.state.members).filter(([id, m]) => m.active && id !== ctx.meId)
+  if (g === 'all') return active.length ? active.map(([, m]) => `#${m.num}`) : { error: 'You are the only one in your team.' }
+  const r = roster(ctx)
+  if (!r) return { error: 'Tessel has not said yet which agent is which: send to "#3" or "team" for now.' }
+  const hits = active.filter(([id]) => {
+    const who = r[id]
+    if (!who) return false
+    return g === 'idle' ? who.state === 'idle' : who.agent === g
+  })
+  if (!hits.length) return { error: g === 'idle' ? 'No teammate is idle right now.' : `No teammate is ${group} (see team_members).` }
+  return hits.map(([, m]) => `#${m.num}`)
 }
 
 function moveTask(ctx, args) {
@@ -327,11 +419,78 @@ function moveTask(ctx, args) {
   return { ok: true }
 }
 
+// Each member, with its agent, model and state, and its open cards.
 function members(ctx) {
+  const r = roster(ctx) || {}
+  const data = readJson(path.join(ctx.root, 'tasks.json'))
+  const tasks = data && Array.isArray(data.tasks) ? data.tasks : []
   return Object.entries(ctx.state.members)
     .filter(([, m]) => m.active)
-    .map(([id, m]) => `#${m.num} ${m.title}${id === ctx.meId ? ' (you)' : ''}`)
+    .map(([id, m]) => {
+      const who = r[id] || {}
+      const about = [who.agent, who.model, who.state].filter((x) => typeof x === 'string' && x).join(', ')
+      const cards = tasks.filter((t) => t.assignee === `#${m.num}` && t.column !== 'done').map((t) => t.id)
+      return `#${m.num} ${m.title}${id === ctx.meId ? ' (you)' : ''}${about ? ` [${about}]` : ''}${cards.length ? `, cards: ${cards.join(', ')}` : ''}`
+    })
     .join('\n')
+}
+
+// --- Asking and waiting for the answer ---------------------------------------------
+// team_ask sends a question to one teammate and waits for their answer (a
+// message sent with reply_to the question). Waited too long: the question
+// stays open, and team_ask with `resume` waits again without asking twice.
+const ASK_DEFAULT_S = 50 // under the 60 s some agents give a tool
+const ASK_MAX_S = 600
+const ASK_ID = /^q-[a-z0-9-]{4,40}$/
+
+function answerTo(ctx, qid) {
+  const state = readJson(path.join(ctx.root, 'state.json'))
+  const messages = (state && Array.isArray(state.messages) && state.messages) || []
+  const asked = messages.filter((m) => m.fromId === ctx.meId && m.askId === qid)
+  const ids = new Set(asked.map((m) => m.id))
+  const answer = messages.find((m) => m.toId === ctx.meId && m.replyTo && ids.has(m.replyTo))
+  const refused = messages.find((m) => m.toId === ctx.meId && m.fromId === 'tessel' && m.askId === qid)
+  return { asked: asked.length > 0, answer, refused, state }
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+async function ask(ctx, args) {
+  let qid = args.resume ? String(args.resume).trim() : ''
+  if (qid && !ASK_ID.test(qid)) return { error: '"resume" must be the question id team_ask gave you.' }
+  const waitS = Math.min(ASK_MAX_S, Math.max(5, Number(args.wait_seconds) || ASK_DEFAULT_S))
+  let to = ''
+  if (!qid) {
+    to = String(args.to || '').trim()
+    if (!/^#\d{1,3}$/.test(to)) return { error: '"to" must be one teammate like "#3" (a question has one person who answers).' }
+    const question = String(args.question || '').trim()
+    if (!question) return { error: 'Give the "question".' }
+    const options = listArg(args.options).slice(0, 6)
+    qid = `q-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+    const text = `QUESTION, ${label(ctx, ctx.meId)} waits for your answer: reply with team_send, reply_to this message's id.\n${question}${
+      options.length ? `\nChoices: ${options.join(' / ')}` : ''
+    }`
+    const sent = send(ctx, to, text, null, { ask: qid })
+    if (sent.error) return sent
+  }
+  const until = Date.now() + waitS * 1000
+  const startedAt = Date.now()
+  for (;;) {
+    const r = answerTo(ctx, qid)
+    if (r.answer) {
+      markRead(ctx, [r.answer])
+      return { ok: true, text: `Answer from ${label(ctx, r.answer.fromId)} (message ${r.answer.id}): ${r.answer.text}` }
+    }
+    if (r.refused) return { error: `The question was not sent: ${r.refused.text}` }
+    // Tessel takes a message in within seconds: not there, it is not running.
+    if (!r.asked && Date.now() - startedAt > 15000) return { error: 'Tessel did not take the question in: is Tessel running? Nothing was asked.' }
+    if (Date.now() >= until) break
+    await sleep(1000)
+  }
+  return {
+    ok: true,
+    text: `No answer yet after ${waitS} s. The question stays open: wait again with team_ask {"resume":"${qid}"} (do not ask again), or go on with other work; the answer also arrives in team_inbox.`
+  }
 }
 
 // --- MCP over stdio ---------------------------------------------------------------
@@ -349,11 +508,11 @@ const TOOLS = [
   {
     name: 'team_send',
     description:
-      'Send a message to a Tessel teammate ("#3") or your whole team ("team"). It is delivered in the background, never typed into anyone\'s terminal.',
+      'Send a message to a Tessel teammate ("#3"), your whole team ("team"), or a group: "@claude", "@codex" (every teammate running that agent), "@idle" (those not working now), "@all". It is delivered in the background, never typed into anyone\'s terminal.',
     inputSchema: {
       type: 'object',
       properties: {
-        to: { type: 'string', description: 'A teammate like "#3", or "team"' },
+        to: { type: 'string', description: 'A teammate like "#3", "team", or a group like "@codex", "@idle", "@all"' },
         text: { type: 'string', description: 'The message' },
         reply_to: { type: 'string', description: 'Optional: the id of the message you answer' },
         ...ME_ARG
@@ -363,7 +522,7 @@ const TOOLS = [
   },
   {
     name: 'team_members',
-    description: 'List who is in your Tessel team.',
+    description: 'List who is in your Tessel team: each teammate’s agent, model, state (working, idle, approval, limited) and open cards. Use it to pick who gets a task.',
     inputSchema: { type: 'object', properties: { ...ME_ARG } }
   },
   {
@@ -382,6 +541,12 @@ const TOOLS = [
         title: { type: 'string', description: 'What the task is, in a few words' },
         assignee: { type: 'string', description: 'Who does it, like "#3" (default: you)' },
         column: { type: 'string', enum: COLUMNS, description: 'Where it starts (default: todo)' },
+        after: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            'Optional: ids of cards that must be done first. The card waits, and its agent is told when it can start (phases: plan, then backend, then UI, then tests).'
+        },
         ...ME_ARG
       },
       required: ['title']
@@ -399,6 +564,53 @@ const TOOLS = [
         ...ME_ARG
       },
       required: ['id', 'column']
+    }
+  },
+  {
+    name: 'team_task_done',
+    description:
+      'Finish a card with a report: succeeded (the card goes to Done) or failed (it stays, marked failed), what you did, found and left, and the files you changed. Whoever gave you the card is told. Use it instead of just moving the card to Done when you finish work a teammate gave you.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'The card id (see team_tasks)' },
+        outcome: { type: 'string', enum: ['succeeded', 'failed'], description: 'Default: succeeded' },
+        summary: { type: 'string', description: 'A few sentences: what you did, what you found, what is left' },
+        files: { type: 'array', items: { type: 'string' }, description: 'Optional: the files you changed' },
+        ...ME_ARG
+      },
+      required: ['id', 'summary']
+    }
+  },
+  {
+    name: 'team_task_gate',
+    description:
+      'Ask the user to decide something before a card goes on (a choice only they make: a design, a risky change, spending). The card shows the question and your choices on the board; the answer comes back as a team message. Meanwhile, do other work or wait.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'The card id (see team_tasks)' },
+        question: { type: 'string', description: 'What the user decides' },
+        options: { type: 'array', items: { type: 'string' }, description: 'Optional: up to 6 choices' },
+        ...ME_ARG
+      },
+      required: ['id', 'question']
+    }
+  },
+  {
+    name: 'team_ask',
+    description:
+      'Ask one teammate a question and wait for the answer (they reply with team_send and reply_to). Waits up to wait_seconds (default 50); with no answer by then the question stays open: call team_ask again with "resume" set to its id to keep waiting, never ask again.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        to: { type: 'string', description: 'One teammate like "#3"' },
+        question: { type: 'string', description: 'The question' },
+        options: { type: 'array', items: { type: 'string' }, description: 'Optional: choices to offer' },
+        wait_seconds: { type: 'number', description: 'How long to wait (5 to 600, default 50)' },
+        resume: { type: 'string', description: 'Keep waiting for a question asked before (its id)' },
+        ...ME_ARG
+      }
     }
   }
 ]
@@ -428,7 +640,7 @@ function boardLocate(start) {
   return null
 }
 
-const BOARD_TOOLS = ['team_tasks', 'team_task_add', 'team_task_move']
+const BOARD_TOOLS = ['team_tasks', 'team_task_add', 'team_task_move', 'team_task_done', 'team_task_gate']
 
 function callTool(name, args = {}) {
   let ctx = locate(args.me)
@@ -438,15 +650,22 @@ function callTool(name, args = {}) {
   if (name === 'team_inbox') return { text: readInbox(ctx) || 'No new messages.' }
   if (name === 'team_members') return { text: members(ctx) }
   if (name === 'team_tasks') return { text: listTasks(ctx) }
-  if (name === 'team_task_add' || name === 'team_task_move') {
-    const r = name === 'team_task_add' ? addTask(ctx, args) : moveTask(ctx, args)
+  const boardOps = { team_task_add: addTask, team_task_move: moveTask, team_task_done: reportTask, team_task_gate: gateTask }
+  if (boardOps[name]) {
+    const r = boardOps[name](ctx, args)
     return r.error
       ? { text: r.error, isError: true }
       : { text: 'Sent to Tessel: the board shows it within a few seconds (check with team_tasks).' }
   }
   if (name === 'team_send') {
     const r = send(ctx, args.to, args.text, args.reply_to)
-    return r.error ? { text: r.error, isError: true } : { text: `Sent to ${args.to}. Tessel delivers it in the background.` }
+    if (r.error) return { text: r.error, isError: true }
+    return { text: `Sent to ${r.to ? r.to.join(', ') : args.to}. Tessel delivers it in the background.` }
+  }
+  if (name === 'team_ask') {
+    // Only in a team: someone must be there to answer.
+    if (!ctx.state) return { text: 'You are not in a Tessel team: nobody can answer.', isError: true }
+    return ask(ctx, args).then((r) => (r.error ? { text: r.error, isError: true } : { text: r.text }))
   }
   return { text: `Unknown tool ${name}.`, isError: true }
 }
@@ -459,19 +678,21 @@ function handle(msg) {
       capabilities: { tools: {} },
       serverInfo: { name: 'tessel-team', version: VERSION },
       instructions:
-        'You work in Tessel: the user follows everything you do on its task board, so keep it up to date yourself, without being asked. Add a card (team_task_add) for every piece of work the moment you start it (what the user asks, each step you decide to take, each task you give a teammate), and move your cards as they go (team_task_move: "done" as soon as one is finished). Only a quick question or a short answer needs no card. If you are in a team, call team_inbox when you start and after each step to read messages from teammates, answer them with team_send, and never ask the user to pass messages between agents.'
+        'You work in Tessel: the user follows everything you do on its task board, so keep it up to date yourself, without being asked. Add a card (team_task_add) for every piece of work the moment you start it (what the user asks, each step you decide to take, each task you give a teammate), and move your cards as they go (team_task_move: "done" as soon as one is finished). Only a quick question or a short answer needs no card. If you are in a team, call team_inbox when you start and after each step to read messages from teammates, answer them with team_send, and never ask the user to pass messages between agents. To work together: give a teammate a card (team_task_add, with "after" when it must wait for other cards), finish work you were given with team_task_done and a short report, ask one teammate and wait for the answer with team_ask, ask the user to decide with team_task_gate, and send to groups like "@codex" or "@idle"; team_members shows who is idle.'
     }
   }
   if (method === 'ping') return {}
   if (method === 'tools/list') return { tools: TOOLS }
   if (method === 'tools/call') {
-    let r
+    const done = (r) => ({ content: [{ type: 'text', text: r.text }], isError: !!r.isError })
+    const failed = (err) => done({ text: `Tessel team tool failed: ${err.message}`, isError: true })
     try {
-      r = callTool(params && params.name, (params && params.arguments) || {})
+      const r = callTool(params && params.name, (params && params.arguments) || {})
+      // Only a tool that waits (team_ask) answers later.
+      return r && typeof r.then === 'function' ? r.then(done, failed) : done(r)
     } catch (err) {
-      r = { text: `Tessel team tool failed: ${err.message}`, isError: true }
+      return failed(err)
     }
-    return { content: [{ type: 'text', text: r.text }], isError: !!r.isError }
   }
   if (id === undefined) return undefined // a notification
   throw Object.assign(new Error(`Method not found: ${method}`), { code: -32601 })
@@ -495,12 +716,17 @@ function serve() {
         write({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } })
         continue
       }
-      try {
-        const result = handle(msg)
-        if (msg.id !== undefined && result !== undefined) write({ jsonrpc: '2.0', id: msg.id, result })
-      } catch (err) {
-        if (msg.id !== undefined) write({ jsonrpc: '2.0', id: msg.id, error: { code: err.code || -32603, message: err.message } })
-      }
+      // A tool may wait (team_ask): answered when done, the others meanwhile.
+      Promise.resolve()
+        .then(() => handle(msg))
+        .then(
+          (result) => {
+            if (msg.id !== undefined && result !== undefined) write({ jsonrpc: '2.0', id: msg.id, result })
+          },
+          (err) => {
+            if (msg.id !== undefined) write({ jsonrpc: '2.0', id: msg.id, error: { code: err.code || -32603, message: err.message } })
+          }
+        )
     }
   })
 }
@@ -740,4 +966,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { locate, readInbox, send, members, handle, candidateDirs, ackPath, markRead, unread, listTasks, addTask, moveTask }
+module.exports = { locate, readInbox, send, members, handle, candidateDirs, ackPath, markRead, unread, listTasks, addTask, moveTask, reportTask, gateTask, ask, groupTargets }

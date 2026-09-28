@@ -7,7 +7,7 @@
 // its siblings to re-render.
 
 import { ref, computed, nextTick, inject, watch } from 'vue'
-import { updateTask, removeTask, assignAgent, moveTask } from '../taskBoardStore'
+import { updateTask, removeTask, assignAgent, moveTask, tasks as allTasks } from '../taskBoardStore'
 import { COLUMNS } from '../../../shared/taskModel'
 import BrandIcon from './BrandIcon.vue'
 import { formatDuration, formatWhen } from '../../../shared/activity'
@@ -144,6 +144,23 @@ const timingTitle = computed(() => {
   return parts.join('\n')
 })
 
+// --- Orchestration --------------------------------------------------------------
+// The cards this one waits for (team_task_add "after"), those not done yet.
+const waitsFor = computed(() =>
+  (props.task.deps || [])
+    .map((id) => allTasks.find((t) => t.id === id))
+    .filter((t) => t && t.column !== 'done')
+)
+const hadDeps = computed(() => (props.task.deps || []).length > 0)
+// A decision the agent asked you for (team_task_gate).
+const resolveDecision = inject('resolveDecision', null)
+const gateDraft = ref('')
+function decide(answer) {
+  if (resolveDecision) resolveDecision(props.task.id, answer)
+  gateDraft.value = ''
+}
+const reportOpen = ref(false)
+
 // Display label for a pane: its title, falling back to the agent id.
 function paneLabel(pane) {
   const name = pane.title || pane.agentId || pane.id
@@ -264,6 +281,41 @@ function paneLabel(pane) {
     <div v-if="assignedPane && assignedPane.track && task.column === 'doing'" class="task-track" :class="'track-' + assignedPane.track.level">
       <span>{{ assignedPane.track.text }}<template v-if="assignedPane.track.onTask"> · on this task {{ assignedPane.track.onTask }}</template></span>
       <span v-if="assignedPane.track.reason" class="task-track-reason">{{ assignedPane.track.reason }}</span>
+    </div>
+
+    <div v-if="hadDeps && task.column !== 'done'" class="task-deps" data-test="task-deps">
+      <template v-if="waitsFor.length">
+        Waits for: <span v-for="d in waitsFor" :key="d.id" class="task-dep" :title="d.id">{{ d.title }}</span>
+      </template>
+      <template v-else>Ready: the cards it waited for are done</template>
+    </div>
+
+    <div v-if="task.gate && task.gate.status === 'pending'" class="task-gate" data-test="task-gate">
+      <div class="task-gate-q"><strong>Your decision:</strong> {{ task.gate.question }}</div>
+      <div class="task-gate-options">
+        <button v-for="o in task.gate.options || []" :key="o" class="task-btn" @click="decide(o)">{{ o }}</button>
+      </div>
+      <form class="task-gate-own" @submit.prevent="decide(gateDraft)">
+        <input v-model="gateDraft" class="task-gate-input" placeholder="Or your own answer" aria-label="Your own answer" />
+        <button class="task-btn" type="submit" :disabled="!gateDraft.trim()">Answer</button>
+      </form>
+    </div>
+    <div v-else-if="task.gate && task.gate.status === 'resolved'" class="task-gate done" :title="task.gate.question">
+      Decided: {{ task.gate.answer }}
+    </div>
+
+    <div v-if="task.report" class="task-report" :class="task.report.outcome" data-test="task-report">
+      <button class="task-report-head" type="button" :aria-expanded="reportOpen" @click="reportOpen = !reportOpen">
+        {{ task.report.outcome === 'succeeded' ? 'Report' : 'Failed' }}<template v-if="task.report.files && task.report.files.length">
+          · {{ task.report.files.length }} file{{ task.report.files.length > 1 ? 's' : '' }}</template
+        >
+      </button>
+      <div v-if="reportOpen" class="task-report-body">
+        <p>{{ task.report.summary }}</p>
+        <ul v-if="task.report.files && task.report.files.length">
+          <li v-for="f in task.report.files" :key="f">{{ f }}</li>
+        </ul>
+      </div>
     </div>
 
     <div v-if="task.worktree || task.brief" class="task-card-extra">

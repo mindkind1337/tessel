@@ -169,6 +169,8 @@ function appendError(state, id, toId, error) {
   })
 }
 
+const askId = (data) => (data && typeof data.ask === 'string' && /^q-[a-z0-9-]{4,40}$/.test(data.ask) ? data.ask : null)
+
 function ingest(root, state) {
   let changed = false
   for (const sender of activeMembers(state)) {
@@ -231,6 +233,9 @@ function ingest(root, state) {
                 toId,
                 text,
                 replyTo,
+                // A question its sender waits on (team_ask): the answer is
+                // the reply to this message.
+                ...(askId(data) ? { askId: askId(data) } : {}),
                 status: 'pending',
                 createdAt: Date.now(),
                 deliveredAt: null
@@ -238,7 +243,11 @@ function ingest(root, state) {
           }
         }
       }
-      if (error) appendError(state, id, sender.id, error)
+      if (error) {
+        appendError(state, id, sender.id, error)
+        // The waiting team_ask learns its question was not sent.
+        if (askId(data)) state.messages[state.messages.length - 1].askId = askId(data)
+      }
       state.seen[id] = true
       saveState(root, state)
       changed = true

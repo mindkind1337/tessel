@@ -16,7 +16,9 @@ import { MCP_CATALOG, MCP_CATEGORIES, catalogSpec } from '../mcpCatalog'
 
 const props = defineProps({
   cwd: { type: String, default: null }, // current workspace's project folder
-  agents: { type: Array, default: () => [] }
+  agents: { type: Array, default: () => [] },
+  // Open on this tab ('connections' from Settings > Orchestration).
+  initialTab: { type: String, default: 'installed' }
 })
 const emit = defineEmits(['close', 'run', 'tools'])
 
@@ -38,7 +40,8 @@ const SCOPE_LABEL = {
 }
 
 const cardEl = ref(null)
-const tab = ref('installed')
+const tab = ref(props.initialTab === 'connections' ? 'connections' : 'installed')
+if (tab.value === 'connections') onMounted(() => loadHooks())
 const loading = ref(true)
 // One (empty until read) list per agent in ALL_AGENTS: the dialog draws before
 // the lists arrive, so every agent it names must have one.

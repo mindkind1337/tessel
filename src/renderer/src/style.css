@@ -2669,6 +2669,59 @@ body.pane-dragging * {
   word-break: break-all;
 }
 
+/* Settings > Orchestration */
+.orch-coverage {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0 4px;
+}
+
+.orch-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--text-dim) 14%, transparent);
+  font-size: 11.5px;
+}
+
+.orch-chip.missing {
+  color: #ff9b9e;
+}
+
+.orch-chip.approval {
+  color: #ffd98f;
+}
+
+.orch-sub {
+  margin: 12px 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.orch-tools {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.orch-tools code {
+  color: var(--text);
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  font-size: 11.5px;
+}
+
+.orch-example {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 0;
+}
+
 /* Settings > Agents */
 .agents-warn {
   margin: 4px 0 8px;
@@ -4877,6 +4930,95 @@ button.act-stat:hover,
   gap: 3px;
   margin: 4px 0 2px;
   min-width: 0;
+}
+
+/* Orchestration on a card: what it waits for, a decision, its report. */
+.task-deps {
+  margin: 4px 0 2px;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.task-dep {
+  display: inline-block;
+  margin: 0 4px 2px 0;
+  padding: 0 6px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--text-dim) 16%, transparent);
+  color: var(--text);
+}
+
+.task-gate {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 6px 0 2px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--warn) 16%, transparent);
+  font-size: 11.5px;
+}
+
+.task-gate.done {
+  background: none;
+  padding: 0;
+  color: var(--text-dim);
+}
+
+.task-gate-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.task-gate-options:empty {
+  display: none;
+}
+
+.task-gate-own {
+  display: flex;
+  gap: 4px;
+}
+
+.task-gate-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 11.5px;
+}
+
+.task-report {
+  margin: 4px 0 2px;
+  font-size: 11px;
+}
+
+.task-report-head {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-dim);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.task-report.failed .task-report-head {
+  color: #ff9b9e;
+}
+
+.task-report-body p {
+  margin: 4px 0;
+  white-space: pre-wrap;
+}
+
+.task-report-body ul {
+  margin: 0;
+  padding-left: 16px;
+  color: var(--text-dim);
+  word-break: break-all;
 }
 
 .task-branch {

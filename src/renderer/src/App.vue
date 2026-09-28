@@ -42,6 +42,7 @@ import { trackAgent } from '../../shared/tracking'
 import { pasteAndConfirm } from './deliver'
 import { dropBuffer, seedBuffer } from './ptyStore'
 import { tasks as boardTasks, setTasks, updateTask, removeTask, addTask } from './taskBoardStore'
+import { paneModels } from './paneModels'
 
 const shells = ref([])
 const agents = ref([])
@@ -145,6 +146,10 @@ function runQuickCommand(id, q) {
   focusPane(id)
 }
 const mcpOpen = ref(false)
+const mcpTab = ref('installed') // the tab it opens on
+watch(mcpOpen, (open) => {
+  if (!open) mcpTab.value = 'installed'
+})
 const toolsOpen = ref(false)
 const sessionsOpen = ref(false)
 // Launcher's "separate copy" (git worktree) option for agents.
@@ -4429,6 +4434,7 @@ function logTeamMessages(team, res) {
 // workspace) are published back for them to read. A refused request is
 // told to its agent in the background.
 function syncTeamBoard(team, dir, members, round = teamRound) {
+  writeTeamRoster(team, dir, members)
   return syncBoard({ key: team.id, dir, target: { teamId: team.id }, wsId: teamWsId(team.id), members, teamId: team.id }, round)
 }
 
@@ -4456,6 +4462,119 @@ async function syncSoloBoards(round) {
     await window.shellApi.team.boardPanes({ dir, panes })
     if (roundGone(round)) return
   }
+}
+
+// --- Orchestration on the board --------------------------------------------------
+// A card's report (team_task_done): kept on the card; succeeded moves it to
+// Done. Whoever gave the card is told, in the background.
+function applyReport(task, r, from, teamId) {
+  updateTask(task.id, {
+    report: { outcome: r.outcome, summary: r.summary, files: r.files || [], by: from.id, at: Date.now() },
+    ...(r.outcome === 'succeeded' ? { column: 'done' } : {})
+  })
+  recordActivity({
+    type: 'task',
+    action: 'reported',
+    paneId: from.id,
+    agent: agentInfo(from),
+    title: task.title,
+    wsId: task.wsId,
+    by: paneLabel(from),
+    detail: r.outcome === 'succeeded' ? 'succeeded' : 'failed'
+  })
+  const giver = task.createdBy && task.createdBy !== from.id ? findLeaf(task.createdBy) : null
+  if (giver && teamId && giver.team === teamId) {
+    const files = r.files && r.files.length ? `
+Files: ${r.files.slice(0, 20).join(', ')}${r.files.length > 20 ? ' …' : ''}` : ''
+    tellAgents([giver], `[Tessel] ${paneLabel(from)} finished card ${task.id} "${task.title}": ${r.outcome}.
+${r.summary}${files}`, teamId)
+  }
+  if (r.outcome === 'failed') {
+    inboxNote('attention', `${paneLabel(from)} could not finish "${task.title}"`, r.summary.slice(0, 200), from.id)
+  }
+}
+
+// A decision only the user makes (team_task_gate): shown on the card with
+// its choices; the answer goes back to the agent that asked.
+function askDecision(task, r, from) {
+  updateTask(task.id, { gate: { question: r.question, options: r.options || [], status: 'pending', by: from.id, askedAt: Date.now() } })
+  recordActivity({ type: 'task', action: 'gate', paneId: from.id, agent: agentInfo(from), title: task.title, wsId: task.wsId, by: paneLabel(from), detail: r.question })
+  inboxNote('attention', `${paneLabel(from)} needs your decision`, r.question, from.id)
+  const text = `${paneLabel(from)} needs your decision on "${task.title}": ${r.question}`
+  if (document.hasFocus()) {
+    if (settings.inAppAlerts)
+      showToast(text, { kind: 'attention', timeout: 12000, action: { label: 'Show the board', run: () => !taskPanelOpen.value && toggleTaskPanel() } })
+  } else if (window.shellApi.notify && settings.desktopNotifications) {
+    window.shellApi.notify({ title: `${paneLabel(from)} needs your decision`, body: r.question, paneId: from.id })
+  }
+}
+
+function resolveDecision(taskId, answer) {
+  const task = boardTasks.find((t) => t.id === taskId)
+  const text = String(answer || '').trim()
+  if (!task || !task.gate || task.gate.status !== 'pending' || !text) return
+  updateTask(task.id, { gate: { ...task.gate, status: 'resolved', answer: text.slice(0, 500), resolvedAt: Date.now() } })
+  recordActivity({ type: 'task', action: 'decided', paneId: task.gate.by, title: task.title, wsId: task.wsId, detail: text })
+  const asker = task.gate.by ? findLeaf(task.gate.by) : null
+  if (asker) {
+    const msg = `[Tessel] The user decided on card ${task.id} "${task.title}" (${task.gate.question}): ${text}`
+    if (asker.team && teamById(asker.team)) tellAgents([asker], msg, asker.team)
+    // Alone (no team channel): nothing is typed into its terminal; you
+    // pass it on (the text is copied).
+    else {
+      if (navigator.clipboard) navigator.clipboard.writeText(msg.replace(/^\[Tessel\] /, '')).catch(() => {})
+      showToast(`Tell ${asker.title} your decision (copied): ${text}`, {
+        timeout: 12000,
+        action: { label: 'Show', run: () => focusPane(asker.id) }
+      })
+    }
+  }
+  scheduleTaskSave()
+}
+provide('resolveDecision', resolveDecision)
+
+// Dependencies: a card whose prerequisite cards are all done can start; its
+// agent is told once (in the background in a team).
+const waitingOn = (task) => (task.deps || []).filter((d) => {
+  const dep = boardTasks.find((t) => t.id === d)
+  return dep && dep.column !== 'done'
+})
+watch(
+  () => boardTasks.map((t) => `${t.id}:${t.column}`).join('|'),
+  () => {
+    for (const t of boardTasks) {
+      if (!t.deps || !t.deps.length) continue
+      const waiting = waitingOn(t)
+      const key = waiting.join(',')
+      if (t.waitingKey === key) continue
+      const wasWaiting = !!t.waitingKey
+      updateTask(t.id, { waitingKey: key })
+      if (!waiting.length && wasWaiting && t.column === 'todo' && t.paneId) {
+        const leaf = findLeaf(t.paneId)
+        recordActivity({ type: 'task', action: 'ready', paneId: t.paneId, title: t.title, wsId: t.wsId })
+        if (leaf && leaf.team && teamById(leaf.team))
+          tellAgents([leaf], `[Tessel] Card ${t.id} "${t.title}" can start now: the cards it waited for are done.`, leaf.team)
+      }
+    }
+  }
+)
+
+// Who is who in a team, for its tools: each member's agent, model and state
+// ("@codex", "@idle", team_members). Written when it changes.
+const rosterSigs = {}
+function writeTeamRoster(team, dir, members) {
+  if (!window.shellApi.team || !window.shellApi.team.roster) return
+  const out = {}
+  for (const m of members) {
+    const st = agentStates.value[m.id]
+    out[m.id] = { agent: m.agentId || null, model: paneModels[m.id] || null, state: st ? st.state : null }
+  }
+  const sig = JSON.stringify(out)
+  if (rosterSigs[team.id] === sig) return
+  rosterSigs[team.id] = sig
+  window.shellApi.team.roster({ dir, teamId: team.id, members: out }).catch(() => {
+    delete rosterSigs[team.id]
+  })
 }
 
 // b: { key (ledger and cache key), dir, target ({ teamId } or { board }),
@@ -4491,7 +4610,18 @@ async function syncBoard(b, round = teamRound) {
         }
         const task = addTask({ title: r.title, wsId })
         updateTask(task.id, { paneId: who.id, column: r.column, createdBy: from.id })
+        // Cards it waits for (only this board's).
+        const deps = (r.deps || []).filter((d) => boardTasks.some((t) => t.id === d && t.wsId === wsId))
+        if (deps.length) updateTask(task.id, { deps })
         recordActivity({ type: 'task', action: 'added', paneId: who.id, agent: agentInfo(who), title: r.title, wsId, by: paneLabel(from) })
+      } else if (r.action === 'report' || r.action === 'gate') {
+        const task = boardTasks.find((t) => t.id === r.id)
+        if (!task || task.wsId !== wsId) {
+          refusals.push({ fromId: from.id, text: `No card ${r.id} on your team's board (see team_tasks).` })
+          continue
+        }
+        if (r.action === 'report') applyReport(task, r, from, b.teamId)
+        else askDecision(task, r, from)
       } else if (r.action === 'move') {
         const task = boardTasks.find((t) => t.id === r.id)
         if (!task || task.wsId !== wsId) {
@@ -4542,10 +4672,21 @@ async function syncBoard(b, round = teamRound) {
   }
   const cards = boardTasks
     .filter((t) => t.wsId === wsId)
-    .map((t) => ({ id: t.id, title: t.title, column: t.column, assignee: label(t.paneId), since: t.doingSince || null }))
+    .map((t) => ({
+      id: t.id,
+      title: t.title,
+      column: t.column,
+      assignee: label(t.paneId),
+      since: t.doingSince || null,
+      // Orchestration: what it waits for, a decision, its report.
+      ...(t.deps && t.deps.length ? { deps: t.deps, waitingOn: waitingOn(t) } : {}),
+      ...(t.gate ? { gate: { question: t.gate.question, options: t.gate.options, status: t.gate.status, answer: t.gate.answer } } : {}),
+      ...(t.report ? { report: { outcome: t.report.outcome, summary: t.report.summary, files: t.report.files } } : {})
+    }))
   const sig = JSON.stringify(cards)
   if (boardSigs[boardKey] === sig) return
-  const pub = await window.shellApi.team.tasks({ dir, ...target, tasks: cards })
+  // A plain copy: the cards' lists are reactive and cannot cross to main.
+  const pub = await window.shellApi.team.tasks({ dir, ...target, tasks: JSON.parse(sig) })
   if (!roundGone(round) && pub && pub.ok) boardSigs[boardKey] = sig
 }
 const boardSigs = {} // board key -> the cards last published
@@ -6060,6 +6201,7 @@ onBeforeUnmount(() => {
 
     <McpDialog
       v-if="mcpOpen"
+      :initial-tab="mcpTab"
       :cwd="currentWs ? currentWs.cwd : null"
       :agents="agents"
       @run="
@@ -6163,6 +6305,7 @@ onBeforeUnmount(() => {
       :section="settingsSection"
       :agents="agents"
       @detect-agents="(done) => loadAgents(true).finally(done)"
+      @open-connections="((settingsOpen = false), (mcpTab = 'connections'), (mcpOpen = true))"
       @check-updates="checkForUpdates"
       @open-update="((settingsOpen = false), (updateOpen = true))"
       @set-default-shell="setDefaultShell"

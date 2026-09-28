@@ -123,6 +123,7 @@ const api = {
     current: (args) => ipcRenderer.invoke('team:current', args),
     retire: (args) => ipcRenderer.invoke('team:retire', args),
     tasks: (args) => ipcRenderer.invoke('team:tasks', args),
+    roster: (args) => ipcRenderer.invoke('team:roster', args),
     requests: (args) => ipcRenderer.invoke('team:requests', args),
     requestsDone: (args) => ipcRenderer.invoke('team:requests-done', args),
     boardPanes: (args) => ipcRenderer.invoke('team:board-panes', args),
