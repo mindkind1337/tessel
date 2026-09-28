@@ -401,14 +401,14 @@ function newUuid() {
 
 // The command that starts an agent: a fresh conversation, or the pane's own
 // previous one when `resume` is set and it exists.
-async function agentStartLine(agent, sessionId, resume, accountId = null) {
+async function agentStartLine(agent, sessionId, resume, accountId) {
   const kind = sessionKind(agent)
   if (kind === 'claude') {
     if (sessionId && resume) {
       // Resume if the conversation exists. If we can't check (older app
       // version), try resuming anyway rather than reusing an id in use.
       const exists = window.shellApi.claudeSessionExists
-        ? await window.shellApi.claudeSessionExists(sessionId, accountId ? { accountId } : undefined)
+        ? await window.shellApi.claudeSessionExists(sessionId, accountId !== undefined ? { accountId } : undefined)
         : true
       if (exists)
         return { line: `${agent.command} --resume ${sessionId}`, sessionId, resumed: true }
@@ -451,7 +451,7 @@ async function agentStartLine(agent, sessionId, resume, accountId = null) {
 // next time.
 function watchFoundSession(leaf, kind) {
   const find = window.shellApi.findAgentSession
-    ? (q) => window.shellApi.findAgentSession({ ...q, agent: kind, ...(leaf.accountId ? { accountId: leaf.accountId } : {}) })
+    ? (q) => window.shellApi.findAgentSession({ ...q, agent: kind, ...(leaf.accountId !== undefined ? { accountId: leaf.accountId } : {}) })
     : kind === 'codex'
       ? window.shellApi.findCodexSession
       : null
@@ -513,12 +513,14 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
   // by the agent's (at most 50 each).
   let accountEnv = {}
   // The pane keeps the account it started with (saved with the layout): a
-  // restart or resume uses that one, not whichever is chosen now.
-  let accountId = typeof opts.accountId === 'string' ? opts.accountId : null
+  // restart or resume uses that one, not whichever is chosen now. null = the
+  // system's own sign-in, chosen on purpose; undefined = not recorded (an
+  // older layout, or a new pane): the account chosen now.
+  let accountId = typeof opts.accountId === 'string' || opts.accountId === null ? opts.accountId : undefined
   if (agent && !attached && window.shellApi.accounts && window.shellApi.accounts.launchEnv) {
     let acc = null
     try {
-      acc = await window.shellApi.accounts.launchEnv(agent.id, accountId || undefined)
+      acc = await window.shellApi.accounts.launchEnv(agent.id, accountId)
     } catch (err) {
       acc = { ok: false, error: err && err.message }
     }
@@ -716,7 +718,8 @@ function serializeNode(node) {
       accent: node.accent || null,
       worktree: node.worktree || null,
       sessionId: node.sessionId || null,
-      accountId: node.detected ? null : node.accountId || null,
+      // Left out when not recorded (see createLeaf); null is kept.
+      accountId: node.detected ? undefined : node.accountId,
       launchedAt: node.launchedAt || null,
       startDir: node.startDir || null,
       num: node.num || null,
@@ -751,7 +754,10 @@ async function deserializeNode(snap, cwd = null) {
       id: typeof snap.id === 'string' && /^pane-[\w-]+$/.test(snap.id) ? snap.id : null,
       savedOutput: snap.id ? savedOutput[snap.id] || '' : '',
       sessionId: snap.sessionId || null,
-      accountId: typeof snap.accountId === 'string' && /^[\w.-]{1,80}$/.test(snap.accountId) ? snap.accountId : null,
+      accountId:
+        snap.accountId === null || (typeof snap.accountId === 'string' && /^[\w.-]{1,80}$/.test(snap.accountId))
+          ? snap.accountId
+          : undefined,
       launchedAt: Number.isFinite(snap.launchedAt) ? snap.launchedAt : null,
       startDir: typeof snap.startDir === 'string' ? snap.startDir : null,
       resume: settings.resumeAgents,
@@ -1888,7 +1894,7 @@ async function restartLeaf(leafId) {
       : null
   const fresh = await createLeaf(old.shellId, agent, old.startDir || ws.cwd, old.worktree, {
     sessionId: old.sessionId,
-    accountId: old.accountId || null,
+    accountId: old.accountId,
     resume: settings.resumeAgents
   })
   if (!fresh) return
@@ -4105,7 +4111,7 @@ async function restartInPlaceNow(leafId, opts) {
   const fresh = await createLeaf(old.shellId, agent, old.startDir || (wsOfLeaf(leafId) || {}).cwd, old.worktree, {
     id: leafId,
     sessionId: old.sessionId,
-    accountId: old.accountId || null,
+    accountId: old.accountId,
     resume: !!old.sessionId && opts.resume !== false
   })
   if (!fresh) return false
