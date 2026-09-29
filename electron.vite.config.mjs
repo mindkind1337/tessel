@@ -20,7 +20,11 @@ export default defineConfig({
         // starts as a separate background process.
         input: {
           index: 'src/main/index.js',
-          ptyHost: 'src/main/ptyHost.js'
+          ptyHost: 'src/main/ptyHost.js',
+          // The tessel command (Settings > General > Tessel CLI), run by
+          // Tessel's executable as Node; self-contained, unpacked from the
+          // app archive (package.json asarUnpack).
+          cli: 'src/cli/main.js'
         },
         // Stay CommonJS (index.js / ptyHost.js), as with a single entry.
         output: {

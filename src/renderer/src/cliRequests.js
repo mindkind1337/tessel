@@ -1,0 +1,142 @@
+// What the window does for the tessel command (src/cli/tessel.js; the main
+// process checks each request first, src/main/cliServer.js): open a folder as
+// a project, a file in the editor, a new terminal or agent pane, list the
+// panes, add a card to the task board. Nothing here types into a terminal or
+// answers a confirmation; a pane it opens is an ordinary pane, started the
+// way the new-pane menu starts it (your agent settings apply).
+import { t } from './i18n'
+
+export class CliRequestError extends Error {
+  constructor(code, message) {
+    super(message)
+    this.code = code
+  }
+}
+
+const norm = (p) => String(p || '').replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase()
+
+// Is `p` the folder `root` or inside it?
+export function insideFolder(p, root) {
+  const a = norm(p)
+  const b = norm(root)
+  if (!a || !b) return false
+  return a === b || a.startsWith(`${b}\\`)
+}
+
+export function folderName(p) {
+  const parts = String(p || '').replace(/[\\/]+$/, '').split(/[\\/]/)
+  return parts[parts.length - 1] || String(p || '')
+}
+
+// deps:
+//   workspaces(): the projects; currentWs(); selectWorkspace(id)
+//   addProjects({ projects, source }): as the Add project dialog
+//   openInEditor({ file, line, col, ws }) -> leaf | null; viewFile({ file, line })
+//   agentFor(id) -> agent | null (launchable and installed); agentIds() -> [ids]
+//   shellFor(id) -> shell id | null; openPane({ ws, agent, shellId, sessionOptions }) -> leaf
+//   focusPane(id); paneLabel(leaf); forEachLeaf(tree, fn); agentState(leafId) -> state
+//   addCard({ title, note, ws }) -> task; notify(text)
+export function createCliRequests(deps) {
+  // The project the folder is in (the deepest one), a local one.
+  function projectFor(p) {
+    if (!p) return null
+    let best = null
+    for (const ws of deps.workspaces()) {
+      if (ws.remote || !ws.cwd || !insideFolder(p, ws.cwd)) continue
+      if (!best || norm(ws.cwd).length > norm(best.cwd).length) best = ws
+    }
+    return best
+  }
+  const projectOrCurrent = (p) => projectFor(p) || deps.currentWs() || null
+
+  async function openProject({ path }) {
+    let ws = deps.workspaces().find((w) => !w.remote && w.cwd && norm(w.cwd) === norm(path))
+    const created = !ws
+    if (!ws) {
+      await deps.addProjects({ projects: [{ cwd: path, name: folderName(path) }], source: 'cli' })
+      ws = deps.workspaces().find((w) => !w.remote && w.cwd && norm(w.cwd) === norm(path))
+      if (!ws) throw new CliRequestError('failed', t('app.cli.projectFailed', 'Tessel could not open {{path}} as a project.', { path }))
+    } else deps.selectWorkspace(ws.id)
+    return { kind: 'folder', project: ws.name, created }
+  }
+
+  function openFile({ path, line, col }) {
+    const ws = projectOrCurrent(path)
+    if (ws) deps.selectWorkspace(ws.id)
+    const leaf = ws ? deps.openInEditor({ file: path, line: line || null, col: col || null, ws }) : null
+    if (!leaf) deps.viewFile({ file: path, line: line || null })
+    return { kind: 'file', file: folderName(path), project: ws ? ws.name : null }
+  }
+
+  async function newPane({ cwd, agent: agentId, model, effort, shell }) {
+    const ws = projectOrCurrent(cwd)
+    if (!ws) throw new CliRequestError('no_project', t('app.cli.noProject', 'No project is open in Tessel. Open one first (tessel open <folder>).'))
+    let agent = null
+    if (agentId) {
+      agent = deps.agentFor(agentId)
+      if (!agent) {
+        const ids = deps.agentIds()
+        throw new CliRequestError(
+          'unknown_agent',
+          t('app.cli.unknownAgent', 'No agent “{{id}}” is installed and turned on. Available: {{list}}', { id: agentId, list: ids.length ? ids.join(', ') : '—' })
+        )
+      }
+    }
+    let shellId = null
+    if (shell) {
+      shellId = deps.shellFor(shell)
+      if (!shellId) throw new CliRequestError('unknown_shell', t('app.cli.unknownShell', 'No shell “{{id}}” in Tessel.', { id: shell }))
+    }
+    const sessionOptions = agent && model ? { model, ...(effort ? { effort } : {}) } : null
+    deps.selectWorkspace(ws.id)
+    const leaf = await deps.openPane({ ws, agent, shellId, sessionOptions })
+    if (!leaf) throw new CliRequestError('failed', t('app.cli.paneFailed', 'Tessel could not open the pane.'))
+    deps.focusPane(leaf.id)
+    deps.notify(t('app.cli.paneOpened', 'Opened from the command line: {{pane}}', { pane: deps.paneLabel(leaf) }))
+    return { project: ws.name, pane: deps.paneLabel(leaf), id: leaf.id, kind: agent ? 'agent' : 'terminal', agent: agent ? agent.id : null }
+  }
+
+  function status() {
+    const current = deps.currentWs()
+    const projects = deps.workspaces().map((ws) => {
+      const panes = []
+      deps.forEachLeaf(ws.tree, (leaf) => {
+        const kind = leaf.kind === 'agent' ? 'agent' : leaf.kind === 'editor' ? 'editor' : 'terminal'
+        panes.push({
+          id: leaf.id,
+          num: leaf.num || null,
+          kind,
+          title: String(leaf.title || '').slice(0, 200),
+          ...(kind === 'agent' ? { agentId: leaf.agentId || null, state: deps.agentState(leaf.id) || null } : {}),
+          active: ws.activeId === leaf.id
+        })
+      })
+      return {
+        name: ws.name,
+        path: ws.cwd || (ws.remote ? `ssh:${ws.remote.hostId}:${ws.remote.path}` : null),
+        active: ws === current,
+        panes
+      }
+    })
+    return { projects }
+  }
+
+  function addTask({ title, note, cwd }) {
+    const ws = projectOrCurrent(cwd)
+    const task = deps.addCard({ title, note: note || '', ws })
+    deps.notify(t('app.cli.cardAdded', 'Card added from the command line: {{title}}', { title }))
+    return { id: task.id, title: task.title, project: ws ? ws.name : null }
+  }
+
+  const METHODS = { openProject, openFile, newPane, status, addTask }
+
+  // -> the result, or throws CliRequestError.
+  async function handle(req) {
+    const fn = req && METHODS[req.method]
+    if (!fn) throw new CliRequestError('unknown_method', t('app.cli.unknownRequest', 'Unknown request.'))
+    const params = req.params && typeof req.params === 'object' ? req.params : {}
+    return fn(params)
+  }
+
+  return { handle, projectFor }
+}

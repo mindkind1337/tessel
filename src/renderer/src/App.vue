@@ -62,6 +62,7 @@ import { workerLaunchArgs, wakeLaunchArgs } from '../../shared/orchestration'
 import { createOrchestrator } from './orchestrator'
 import { automationLaunchArgs, AUTOMATION_AGENTS } from '../../shared/automations'
 import { createAutomationRunner } from './automationRunner'
+import { createCliRequests, CliRequestError } from './cliRequests'
 import { automationsState, applySnapshot as applyAutomations, subscribeAutomations } from './automationsStore'
 import { trackAgent } from '../../shared/tracking'
 import { pasteAndConfirm } from './deliver'
@@ -6644,6 +6645,63 @@ provide('automations', {
   },
   openAgentSettings: () => openSettingsAt('agents')
 })
+// The tessel command (cliRequests.js): what it asks the window, once the
+// workspaces and the board are back.
+const cliRequests = createCliRequests({
+  workspaces: () => workspaces.value,
+  currentWs: () => currentWs.value,
+  selectWorkspace,
+  addProjects,
+  openInEditor: ({ file, line, col, ws }) => openInTesselEditor({ file, line, col, preview: false, ws }),
+  viewFile,
+  agentFor: (id) => launchableAgents.value.find((a) => a.id === id && a.available !== false) || null,
+  agentIds: () => launchableAgents.value.filter((a) => a.available !== false).map((a) => a.id),
+  shellFor: (id) => (shells.value.some((s) => s.id === id) ? id : null),
+  async openPane({ ws, agent, shellId, sessionOptions }) {
+    if (!workspaces.value.includes(ws)) return null
+    const shell = shellId || selectedShell.value
+    const target = ws.tree ? largestLeaf(ws.tree) : null
+    const opts = sessionOptions ? { sessionOptions } : {}
+    let leaf
+    if (target && target.id) leaf = await splitLeaf(target.id, target.dir, agent, shell, null, opts)
+    else {
+      leaf = await createLeaf(shell, agent, ws.cwd, null, wsLeafOpts(ws, opts))
+      if (leaf && !ws.tree) {
+        ws.tree = leaf
+        ws.activeId = leaf.id
+      }
+    }
+    numberPanes()
+    return leaf || null
+  },
+  focusPane,
+  paneLabel,
+  forEachLeaf,
+  agentState: (id) => (agentStates.value[id] ? agentStates.value[id].state : null),
+  addCard({ title, note, ws }) {
+    if (boardLocked) throw new CliRequestError('board_locked', t('app.board.lockedAtStart', 'The saved board could not be read at start.'))
+    const task = addTask({ title, wsId: ws ? ws.id : null })
+    if (note) updateTask(task.id, { brief: note })
+    scheduleTaskSave()
+    return task
+  },
+  notify: (text) => showToast(text, { timeout: 5000 })
+})
+function startCliRequests() {
+  const api = window.shellApi.cli
+  if (!api) return
+  api.onRequest(async (req) => {
+    if (!req || typeof req.id !== 'string') return
+    let msg
+    try {
+      msg = { id: req.id, ok: true, result: await cliRequests.handle(req) }
+    } catch (err) {
+      msg = { id: req.id, ok: false, error: { code: (err && err.code) || 'failed', message: (err && err.message) || '' } }
+    }
+    api.reply(msg).catch(() => {})
+  })
+  api.ready().catch(() => {})
+}
 async function startAutomations() {
   const api = window.shellApi.automations
   if (!api) return
@@ -7944,6 +8002,8 @@ onMounted(async () => {
   // there to run them (and to follow the runs still going).
   startStep = 'automations'
   await startAutomations()
+  // The tessel command's requests (open, new pane, status, card) from now on.
+  startCliRequests()
 
   window.addEventListener('keydown', onKey)
   window.addEventListener('pointerdown', onDocPointerDown, true)

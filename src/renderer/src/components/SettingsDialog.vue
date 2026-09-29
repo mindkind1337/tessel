@@ -10,6 +10,7 @@ import ProviderAccounts from './ProviderAccounts.vue'
 import StatsUsage from './StatsUsage.vue'
 import RemoteHostsSettings from './remote/RemoteHostsSettings.vue'
 import AutomationsPage from './AutomationsPage.vue'
+import CliSettings from './CliSettings.vue'
 import { BarChart3, Cable, LoaderCircle } from 'lucide-vue-next'
 import { updateFailureText, updateKindLabel } from '../agentUpdateErrors'
 import { settings, FONT_FAMILIES, resetSettings, clamp, MAX_LEFT_SIDEBAR_TINT_OPACITY, limitNumber, DEFAULT_SETTINGS, LIMITS } from '../settings'
@@ -1714,6 +1715,8 @@ function previewSound() {
               </label>
             </div>
           </div>
+          <!-- The tessel command (Settings > General, as Orca's CLI section). -->
+          <CliSettings v-if="page === 'general' || searching" />
           <div class="set-group">
             <h3 class="set-group-title">{{ t('settings.general.workspace', 'Workspace') }}</h3>
             <div class="set-card">

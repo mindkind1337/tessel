@@ -34,6 +34,23 @@ if (!files.some((f) => f.endsWith('ptyHost.js'))) {
   console.error('check-bundle: out/main/ptyHost.js is missing')
   failed = true
 }
+// The tessel command (src/cli): one file, unpacked from the archive, so it
+// must not load a shared chunk (which stays inside app.asar).
+const cliFile = path.join(dir, 'cli.js')
+if (!fs.existsSync(cliFile)) {
+  console.error('check-bundle: out/main/cli.js is missing (the tessel command)')
+  failed = true
+} else {
+  const cli = fs.readFileSync(cliFile, 'utf8')
+  if (/require\(["']\.\.?\//.test(cli)) {
+    console.error('check-bundle: out/main/cli.js loads another bundle file; it must be self-contained')
+    failed = true
+  }
+  if (/require\(["']electron["']\)/.test(cli)) {
+    console.error('check-bundle: out/main/cli.js loads electron; it runs as plain Node')
+    failed = true
+  }
+}
 // The SSH askpass helper (scripts/build-askpass.mjs): without it, SSH
 // passwords fall back to the terminal; a release must carry it.
 if (process.platform === 'win32' && !fs.existsSync(path.join(dir, 'tessel-askpass.exe'))) {
