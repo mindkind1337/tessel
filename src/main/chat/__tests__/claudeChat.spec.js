@@ -52,6 +52,15 @@ afterEach(async () => {
 })
 
 describe('claudeChat: start', () => {
+  it('publishes commands again on resume and sends slash text unchanged', async () => {
+    const { chat, events, sent } = setup({ sessionId: undefined, resume: randomUUID() })
+    expect((await chat.start()).ok).toBe(true)
+    expect(ofType(events, 'commands')).toEqual([{ type: 'commands', commands: [{ name: 'compact', kind: 'command', kindUnspecified: true, description: 'Compact the conversation' }] }])
+    await chat.send({ text: '/compact preserve API details' })
+    await waitFor(() => sent().some(frame => frame.type === 'user'))
+    expect(sent().find(frame => frame.type === 'user').message.content).toEqual([{ type: 'text', text: '/compact preserve API details' }])
+  })
+
   it('is ready on the initialize answer, without waiting for system/init', async () => {
     const { chat, events, sent } = setup()
     const r = await chat.start()

@@ -15,6 +15,8 @@
 // process stopped and turns 'asleep' (no 'ended'). A message sent to it
 // waits (queued) and asks the window once to open it again ('wake'); that
 // open resumes the same conversation and sends what waited.
+import { discoverClaudeSkills } from './skills.js'
+import { normalizeCommands } from './commands.js'
 import { randomBytes, randomUUID as nodeUUID } from 'crypto'
 import fs from 'fs'
 import { isAbsolute } from 'path'
@@ -105,6 +107,7 @@ export function createChatSessions(deps) {
     state,
     trust,
     trustRoots = () => [],
+    discoverSkills = discoverClaudeSkills,
     log = null,
     now = Date.now,
     randomUUID = nodeUUID
@@ -342,6 +345,7 @@ export function createChatSessions(deps) {
       markAccepted(s, s.turn)
     })
     const provenance = e => ({ ...(e.agentId ? { agentId: e.agentId } : {}), ...(e.parentToolUseId ? { parentToolUseId: e.parentToolUseId } : {}) })
+    on('commands', e => emit(s.paneId, { type: 'commands', commands: normalizeCommands(e.commands) }))
     on('subagent', e => {
       emit(s.paneId, { ...e, type: 'subagent' })
       if (e.phase !== 'end' || !e.id) return
@@ -671,6 +675,7 @@ export function createChatSessions(deps) {
       permissionMode: null,
       cwd,
       projectDir: projectDir || null,
+      worker: opts.worker === true,
       status: 'starting',
       ready: false,
       closing: false,
@@ -1056,6 +1061,7 @@ export function createChatSessions(deps) {
       events,
       seq: seqs.get(paneId),
       meta: j.readMeta(),
+      commands: j.readCommands(),
       // A live session (starting, idle, working, approval): do not open it again.
       open: !!s && !s.finished && !s.closing && !s.asleep,
       // Asleep (its process stopped when idle): open false, live set (status
@@ -1066,6 +1072,32 @@ export function createChatSessions(deps) {
         ? { status: s.status, agent: s.agent, sessionId: s.sessionId, launchToken: s.launchToken, model: s.model, queued: s.userQueue.length + s.teamQueue.length }
         : null
     }
+  }
+
+  async function skills({ paneId, refresh = false }) {
+    const s = sessions.get(paneId)
+    const unavailable = () => ({ ok: false, error: t('main.chat.skillsUnavailable', 'Skill discovery is unavailable.') })
+    if (!s || s.closing || s.finished) return unavailable()
+    let roots
+    try {
+      roots = trustRoots(s.cwd, { worker: s.worker === true }) || []
+      if (!trust?.isTrusted(s.cwd, roots)) return unavailable()
+    } catch { return unavailable() }
+    if (s.skillScan) return s.skillScan
+    if (!refresh && s.skillCache) return s.skillCache
+    s.skillScan = Promise.resolve().then(async () => {
+      try {
+        const result = s.agent === 'codex'
+          ? await s.adapter?.skills?.({ refresh })
+          : { ok: true, result: await discoverSkills({ cwd: s.cwd, projectDir: s.projectDir && trust.isTrusted(s.projectDir, roots) ? s.projectDir : undefined }) }
+        if (sessions.get(paneId) !== s || s.closing || s.finished || !trust.isTrusted(s.cwd, trustRoots(s.cwd, { worker: s.worker === true }) || [])) return unavailable()
+        if (!result?.ok) return unavailable()
+        s.skillCache = result
+        return result
+      } catch { return unavailable() }
+      finally { s.skillScan = null }
+    })
+    return s.skillScan
   }
 
   function list() {
@@ -1152,6 +1184,11 @@ export function createChatSessions(deps) {
       if (!validPaneId(paneId)) return invalid()
       return close({ paneId, forget: forget === true })
     })
+    ipcMain.handle('chat:skills', (_e, q) => {
+      const { paneId, refresh } = obj(q)
+      if (!validPaneId(paneId) || (refresh != null && typeof refresh !== 'boolean')) return invalid()
+      return skills({ paneId, refresh: refresh === true })
+    })
     ipcMain.handle('chat:history', (_e, q) => {
       const { paneId, tail } = obj(q)
       if (!validPaneId(paneId)) return invalid()
@@ -1160,5 +1197,5 @@ export function createChatSessions(deps) {
     })
   }
 
-  return { open, send: sendUser, sendTeam, interrupt, approve, approvalInput, setOption, close, closeAll, history, list, register }
+  return { open, send: sendUser, sendTeam, interrupt, approve, approvalInput, setOption, close, closeAll, history, skills, list, register }
 }
