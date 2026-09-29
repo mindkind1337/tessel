@@ -220,6 +220,26 @@ export function workerLaunchArgs(agentId, launchOptions, { ownArgs = '', models 
   return args.length ? ` ${args.join(' ')}` : ''
 }
 
+// The first prompt Tessel gives an agent it launches or relaunches itself
+// (resumed in place, restarted for the team tools or after an update, a dead
+// pane resumed when Tessel starts) while team messages wait for it: nothing
+// is typed, it is on the command line. Fixed, plain words only.
+export const WAKE_LAUNCH_PROMPT = 'Tessel: you have team messages waiting. Read them with team_inbox, then continue.' // i18n-ignore
+
+// The launch prompt's arguments: ' "prompt"' when `waiting` > 0 and the
+// agent's CLI takes a first prompt that starts a turn, fresh and resumed
+// alike; '' otherwise (never when nothing waits). Checked with the CLIs:
+// Codex takes it as its positional prompt both ways (`codex [OPTIONS]
+// [PROMPT]`, `codex resume [OPTIONS] [SESSION_ID] [PROMPT]`). The others are
+// left out: Claude Code has its own inbox for this, and Gemini CLI (-i),
+// Qwen Code and OpenCode (--prompt) are not known to take one with their
+// resume flag.
+export function wakeLaunchArgs(agentId, waiting) {
+  if (!(Number(waiting) > 0)) return ''
+  if (agentId === 'codex') return ` "${WAKE_LAUNCH_PROMPT}"`
+  return ''
+}
+
 // The last lines a terminal shows, for team_worker_read: no control codes,
 // no trailing blanks, at most `lines` lines and 6000 characters.
 export function outputTail(text, lines = 60) {

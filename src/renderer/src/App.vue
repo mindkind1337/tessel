@@ -57,7 +57,7 @@ import NotesPanel from './components/NotesPanel.vue'
 import NewTaskDialog from './components/NewTaskDialog.vue'
 import ReviewPanel from './components/ReviewPanel.vue'
 import { parseLeadRequest, findTaskRef, leadGuide, memberGuide } from '../../shared/leadRequests'
-import { workerLaunchArgs } from '../../shared/orchestration'
+import { workerLaunchArgs, wakeLaunchArgs } from '../../shared/orchestration'
 import { createOrchestrator } from './orchestrator'
 import { trackAgent } from '../../shared/tracking'
 import { pasteAndConfirm } from './deliver'
@@ -923,7 +923,21 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
     const workerOpts = opts.launchOptions && start.resumed ? { model: opts.launchOptions.model, effort: opts.launchOptions.effort } : opts.launchOptions
     const extra = workerOpts ? workerLaunchArgs(agent.id, workerOpts, { ownArgs, models: agentModels }) : ''
     if (opts.launchOptions) leaf.launchOptions = { model: opts.launchOptions.model || null, effort: opts.launchOptions.effort || null }
-    const full = (launch.args ? `${start.line} ${launch.args}` : start.line) + extra
+    // Relaunched by Tessel itself (opts.wake: resumed in place, restarted for
+    // the team tools or an update, a dead pane resumed at start) while team
+    // messages wait for it: its first prompt says so, on the command line
+    // (nothing typed). Only when messages wait, never over a worker's own
+    // first prompt, only with the team tools set up to read them.
+    let wakeArg = ''
+    if (opts.wake && teamToolsReady && !(workerOpts && workerOpts.initialPrompt) && wakeLaunchArgs(agent.id, 1)) {
+      const waiting = await unreadAtLaunch(id, opts.wake.teamId)
+      wakeArg = wakeLaunchArgs(agent.id, waiting)
+      if (wakeArg) {
+        noteLaunchWake(id, opts.wake.gen || 0)
+        if (window.shellApi.log) window.shellApi.log('info', `team tools: ${agent.name || agent.id} (${id}) relaunched with a first prompt for ${waiting} waiting message(s)`)
+      }
+    }
+    const full = (launch.args ? `${start.line} ${launch.args}` : start.line) + extra + wakeArg
     const line = opts.wrap ? opts.wrap(full) : full
     setTimeout(() => window.shellApi.writePty(id, `${line}\r`), 600)
     if (FOUND_AFTER_START.includes(sessionKind(agent)) && !leaf.sessionId) watchFoundSession(leaf, agent.id)
@@ -1128,7 +1142,10 @@ async function deserializeNode(snap, cwd = null) {
       resume: settings.resumeAgents,
       remoteHostId: typeof snap.remoteHostId === 'string' && /^ssh-[\w-]{1,60}$/.test(snap.remoteHostId) ? snap.remoteHostId : undefined,
       remotePath: typeof snap.remotePath === 'string' && snap.remotePath.length <= 1024 ? snap.remotePath : undefined,
-      keepOnFailure: true
+      keepOnFailure: true,
+      // A team member started again (its terminal was gone): team messages
+      // waiting for it go in its first prompt (see createLeaf).
+      ...(typeof snap.team === 'string' ? { wake: { teamId: snap.team, gen: 0 } } : {})
     })
     if (!leaf) return null
     if (Number.isInteger(snap.num) && snap.num > 0) leaf.num = snap.num
@@ -5207,7 +5224,9 @@ async function restartInPlaceNow(leafId, opts) {
     sessionId: old.sessionId,
     accountId: old.accountId,
     sessionOptions: old.sessionOptions,
-    resume: !!old.sessionId && opts.resume !== false
+    resume: !!old.sessionId && opts.resume !== false,
+    // Team messages waiting for it: its first prompt says so (see createLeaf).
+    wake: { teamId: old.team || null, gen: (old.gen || 0) + 1 }
   })
   if (!fresh) return false
   if (findLeaf(leafId) !== old) {
@@ -5348,10 +5367,11 @@ const WAKE_AFTER_RESTART_MS = 2 * 60 * 1000
 const WAKE_LINE = /\[Tessel\] You have \d+ new team messages?/
 const wakeState = {} // leafId -> { since, woken, wokenAt, gen }
 // The user is not in this pane, has no line in progress there, and has not
-// typed there for 30 s.
-function wakeAllowed(id) {
+// typed there for 30 s. anyState: also when its state is not confirmed
+// (Settings > Orchestration, wake agents even without confirmation).
+function wakeAllowed(id, anyState = false) {
   const leaf = findLeaf(id)
-  if (leaf?.agentLaunchToken && !agentStateKnown(id, leaf.agentLaunchToken)) return false
+  if (!anyState && leaf?.agentLaunchToken && !agentStateKnown(id, leaf.agentLaunchToken)) return false
   if (id === activeId.value && document.hasFocus()) return false
   // A draft Codex's screen proves gone (its empty-prompt placeholder is back:
   // sent, cleared, or never a draft at all) no longer holds reminders back.
@@ -5380,7 +5400,8 @@ function inputShownEmpty(id) {
 }
 // Messages wait for an agent whose state Tessel cannot confirm (a Codex
 // relaunched in place reports nothing before its next turn): Tessel does not
-// type into it on its own, it asks you once (a toast with a button).
+// type into it on its own, it asks you once (a toast with a button), unless
+// Settings > Orchestration says to wake agents even without confirmation.
 function offerWake(leaf, count) {
   if (!settings.teamWakeUps || leaf.kind !== 'agent' || !leaf.teamTools) return
   const w = (wakeState[leaf.id] = wakeState[leaf.id] || { since: Date.now(), woken: false, gen: leaf.gen || 0 })
@@ -5448,11 +5469,39 @@ function inboxWake(leaf, count) {
     })
   return true
 }
+// Tessel launched this pane with a first prompt about its waiting messages
+// (createLeaf, opts.wake): that was its reminder for them, so neither a
+// typed one nor the toast follows for the same messages (a new one only
+// after it has read everything, or REWAKE_AFTER_MS later if they still wait).
+function noteLaunchWake(id, gen) {
+  const now = Date.now()
+  wakeState[id] = { since: now, woken: true, wokenAt: now, gen: gen || 0, offered: true, launchPrompt: true }
+}
+// How many team messages wait for a pane Tessel is about to launch: the
+// last count seen, else (Tessel just started, nothing polled yet) its
+// team's channel read now. 0 when unknown.
+async function unreadAtLaunch(id, teamId) {
+  if (teamUnread[id]) return teamUnread[id]
+  const team = teamId ? teams.value.find((x) => x.id === teamId) : null
+  const dir = team && team.channelDir
+  if (!dir || !window.shellApi.channel || !window.shellApi.channel.poll) return 0
+  try {
+    // availableIds []: only the counts, nothing handed out for delivery.
+    const res = await window.shellApi.channel.poll({ dir, teamId: team.id, availableIds: [] })
+    return (res && res.ok && res.unreadCounts && res.unreadCounts[id]) || 0
+  } catch {
+    return 0
+  }
+}
 function wakeIfNeeded(leaf) {
   if (leaf.agentLaunchToken && !agentStateKnown(leaf.id, leaf.agentLaunchToken)) {
     const waiting = teamUnread[leaf.id] || 0
     if (!waiting) delete wakeState[leaf.id]
-    else if (!inboxWake(leaf, waiting)) offerWake(leaf, waiting)
+    else if (inboxWake(leaf, waiting)) return
+    // Settings > Orchestration: typed like for a confirmed agent (the same
+    // checks, again right before typing), else the user is asked.
+    else if (settings.teamWakeUnconfirmed) typeWake(leaf, waiting, true)
+    else offerWake(leaf, waiting)
     return
   }
   const count = teamUnread[leaf.id] || 0
@@ -5460,6 +5509,13 @@ function wakeIfNeeded(leaf) {
     delete wakeState[leaf.id]
     return
   }
+  typeWake(leaf, count, false)
+}
+// The reminder typed into the agent's terminal. unconfirmed: its state is
+// not confirmed by its hooks (only with the setting on): it must not look
+// busy on screen, gets no inbox try (inboxWake had it) and waits a moment
+// after its launch.
+function typeWake(leaf, count, unconfirmed) {
   // Off in Settings: the messages stay in the background, never typed into
   // the terminal; the agent reads them when it next works.
   if (!settings.teamWakeUps) return
@@ -5472,7 +5528,12 @@ function wakeIfNeeded(leaf) {
   // Only an agent that has the team tools to read them.
   if (leaf.kind !== 'agent' || !leaf.teamTools) return
   const t = trackedState[leaf.id]
-  if (!t || t.state !== 'idle') return
+  if (unconfirmed) {
+    // Not confirmed: at least nothing on its screen says it is working,
+    // waiting for an approval or out of usage.
+    if (t && !['idle', 'unknown'].includes(t.state)) return
+    if (awaitingApproval(leaf.id)) return
+  } else if (!t || t.state !== 'idle') return
   if (approvals[leaf.id] || limits[leaf.id] || pendingMessages[leaf.id] || unsent[leaf.id] || delivering.has(leaf.id)) return
   if (restartingLeaves.has(leaf.id)) return // being restarted right now
   const reminder = `[Tessel] You have ${count} new team message${count > 1 ? 's' : ''}: read ${count > 1 ? 'them' : 'it'} with team_inbox.`
@@ -5480,6 +5541,7 @@ function wakeIfNeeded(leaf) {
   // by itself), so the user's input line and prompts are never touched. It
   // failed lately (older Claude Code, process gone): typed as before.
   if (
+    !unconfirmed &&
     leaf.agentId === 'claude' &&
     leaf.sessionId &&
     agentInboxes[leaf.id] === leaf.sessionId &&
@@ -5502,9 +5564,11 @@ function wakeIfNeeded(leaf) {
       .catch((err) => failed(err && err.message))
     return
   }
-  if (!wakeAllowed(leaf.id)) return
+  if (!wakeAllowed(leaf.id, unconfirmed)) return
   // Just restarted: it is still loading (a line typed now can stay unsent).
-  if (leaf.restartedAt && Date.now() - leaf.restartedAt < WAKE_AFTER_RESTART_MS) return
+  // Not confirmed: also just after any launch.
+  const startedAt = unconfirmed ? leaf.restartedAt || leaf.launchedAt : leaf.restartedAt
+  if (startedAt && Date.now() - startedAt < WAKE_AFTER_RESTART_MS) return
   w.woken = true
   w.wokenAt = Date.now()
   // A reminder typed before is still in its input line, not sent: send that
@@ -5515,6 +5579,17 @@ function wakeIfNeeded(leaf) {
     pane.submit()
     if (window.shellApi.log) window.shellApi.log('info', `team tools: sent the waiting reminder in ${paneLabel(leaf)} (${leaf.id})`)
     return
+  }
+  // Not confirmed: the same launch, session and team, the setting still on,
+  // nothing to approve, no line left unsent, at the moment it is typed.
+  const launchToken = leaf.agentLaunchToken
+  const sessionId = leaf.sessionId
+  const team = leaf.team
+  const samePane = () => {
+    if (!unconfirmed) return true
+    const now = findLeaf(leaf.id)
+    if (!now || now.agentLaunchToken !== launchToken || now.sessionId !== sessionId || now.team !== team) return false
+    return !!settings.teamWakeUnconfirmed && !approvals[leaf.id] && !awaitingApproval(leaf.id) && !userDraft[leaf.id] && !unsent[leaf.id]
   }
   deliverToAgent(
     leaf.id,
@@ -5527,14 +5602,14 @@ function wakeIfNeeded(leaf) {
       // Still unread and still safe at the moment it is typed; otherwise the
       // reminder (and its count) is dropped, and a fresh one comes later if
       // messages still wait.
-      guard: () => (teamUnread[leaf.id] || 0) > 0 && wakeAllowed(leaf.id),
+      guard: () => (teamUnread[leaf.id] || 0) > 0 && samePane() && wakeAllowed(leaf.id, unconfirmed),
       dropIfNotNow: true,
       onDropped: () => {
         if (wakeState[leaf.id]) wakeState[leaf.id].woken = false
       }
     }
   )
-  if (window.shellApi.log) window.shellApi.log('info', `team tools: reminded ${paneLabel(leaf)} (${leaf.id}) of ${count} waiting message(s)`)
+  if (window.shellApi.log) window.shellApi.log('info', `team tools: reminded ${paneLabel(leaf)} (${leaf.id}) of ${count} waiting message(s)${unconfirmed ? ' (state not confirmed, typed as set in Settings)' : ''}`)
 }
 
 const restartedForTools = new Set()

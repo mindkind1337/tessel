@@ -41,6 +41,11 @@ export const DEFAULT_SETTINGS = Object.freeze({
   // messages wait for it (nothing else can start an idle agent's turn). Off:
   // messages stay in the background only, read when the agent next works.
   teamWakeUps: true,
+  // Also type that reminder into an agent whose state its hooks have not
+  // confirmed yet (a Codex relaunched in place), with the same checks (never
+  // while you type there, over a draft, an approval or an unsent line). Off:
+  // Tessel asks you first (a toast with a button).
+  teamWakeUnconfirmed: false,
   // Settings > Orchestration (Orca's coordinator and workers): ask before an
   // agent starts workers (on by default), how many workers one coordinator
   // runs at a time (the rest wait in a queue), how deep workers may nest

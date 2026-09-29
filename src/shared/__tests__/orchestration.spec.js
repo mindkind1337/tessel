@@ -11,6 +11,8 @@ import {
   resolveMaxDepth,
   depthExceededMessage,
   WORKER_START_PROMPT,
+  WAKE_LAUNCH_PROMPT,
+  wakeLaunchArgs,
   START_RATE,
   TOTAL_WORKERS_LIMIT
 } from '../orchestration'
@@ -111,6 +113,16 @@ describe('limits', () => {
 })
 
 describe('launch', () => {
+  it('a relaunched Codex with team messages waiting gets a first prompt about them; none when nothing waits', () => {
+    expect(wakeLaunchArgs('codex', 2)).toBe(` "${WAKE_LAUNCH_PROMPT}"`)
+    expect(wakeLaunchArgs('codex', 0)).toBe('')
+    expect(wakeLaunchArgs('codex', undefined)).toBe('')
+    // Plain words only: safe between double quotes in every shell.
+    expect(WAKE_LAUNCH_PROMPT).toMatch(/^[A-Za-z0-9 .,:_-]{1,300}$/)
+    // Claude Code has its own inbox; the others are not known to take one when resumed.
+    for (const id of ['claude', 'gemini', 'qwen', 'opencode', 'cline', 'copilot', 'kimi']) expect(wakeLaunchArgs(id, 3)).toBe('')
+  })
+
   it('the first prompt goes on the command line, nothing is typed later', () => {
     const o = { initialPrompt: WORKER_START_PROMPT }
     expect(workerLaunchArgs('claude', o)).toBe(` "${WORKER_START_PROMPT}"`)

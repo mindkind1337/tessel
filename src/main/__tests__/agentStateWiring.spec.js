@@ -8,6 +8,7 @@ import { join, resolve, sep, isAbsolute } from 'path'
 import { createAgentStateStore } from '../agentStateStore'
 import { paneEnv } from '../paneEnv'
 import { newTeamSecret, setTeamSecret, revokeTeamSecret, teamSecretOf, _resetTeamAuth } from '../teamAuth'
+import { wakeLaunchArgs, WAKE_LAUNCH_PROMPT } from '../../shared/orchestration'
 
 // Exercise the actual IPC handlers with an inert terminal host. No Electron
 // instance or real CLI/user configuration is touched by this harness.
@@ -328,4 +329,198 @@ it("each launch gets its own team secret, only in the pane's environment and mai
   await one.handlers['pty:create'](null, opts)
   expect(teamSecretOf(opts.id)).not.toBe(secret)
   _resetTeamAuth()
+})
+
+// The wake-up code (offerWake .. typeWake, noteLaunchWake, unreadAtLaunch)
+// and, for launches, agentStartLine and createLeaf's launch block, run in a
+// sandbox with inert stand-ins (nothing is started, nothing typed).
+function wakeSandbox(over = {}) {
+  const start = appSource.indexOf('// Messages wait for an agent whose state')
+  const end = appSource.indexOf('\nconst restartedForTools', start)
+  const lineStart = appSource.indexOf('async function agentStartLine(')
+  const lineEnd = appSource.indexOf('\n// Codex, OpenCode, Cline and Copilot pick', lineStart)
+  const launchStart = appSource.indexOf('  // Launch the agent CLI once the shell has had a moment')
+  const launchEnd = appSource.indexOf('  return leaf', launchStart)
+  expect(start).toBeGreaterThan(0)
+  expect(lineStart).toBeGreaterThan(0)
+  expect(launchStart).toBeGreaterThan(0)
+  const written = []
+  const ctx = {
+    agentStateKnown: () => false,
+    teamUnread: {},
+    settings: { teamWakeUps: true, agentPrefs: {} },
+    wakeState: {},
+    trackedState: {},
+    approvals: {},
+    limits: {},
+    pendingMessages: {},
+    unsent: {},
+    delivering: new Set(),
+    restartingLeaves: new Set(),
+    agentInboxes: {},
+    inboxDownAt: {},
+    teams: { value: [] },
+    window: {
+      shellApi: {
+        agentInbox: vi.fn(async () => ({ ok: true })),
+        codexNoDaemon: async () => true,
+        writePty: (id, text) => written.push(text),
+        channel: { poll: vi.fn(async () => ({ ok: true, unreadCounts: {} })) }
+      }
+    },
+    WAKE_AFTER_MS: 0,
+    REWAKE_AFTER_MS: 600000,
+    WAKE_AFTER_RESTART_MS: 120000,
+    WAKE_LINE: /\[Tessel\] You have \d+ new team messages?/,
+    wakeAllowed: vi.fn(() => true),
+    deliverToAgent: vi.fn(),
+    showToast: vi.fn(),
+    t: (_k, english) => english,
+    paneLabel: () => '#2 Codex',
+    findLeaf: () => null,
+    awaitingApproval: () => false,
+    inputShownEmpty: () => false,
+    getPane: () => null,
+    userDraft: {},
+    teamToolsReady: true,
+    sessionKind: (a) => a.id,
+    safeSessionId: () => true,
+    newUuid: () => 'new-uuid',
+    FOUND_AFTER_START: [],
+    watchFoundSession: () => {},
+    workerLaunchArgs: () => '',
+    wakeLaunchArgs,
+    setTimeout: (fn) => fn(),
+    ...over
+  }
+  const api = vm.runInNewContext(
+    appSource.slice(lineStart, lineEnd) +
+      appSource.slice(start, end) +
+      '\n;({ wakeIfNeeded, noteLaunchWake, launch: async (leaf, agent, opts, id, launch, accountId, agentModels) => {\n' +
+      appSource.slice(launchStart, launchEnd) +
+      '\n} })',
+    ctx
+  )
+  // Launches the agent in pane opts.id the way createLeaf does; -> the line typed to start it.
+  const launchLine = async (agentId, opts) => {
+    written.length = 0
+    const leaf = { id: opts.id }
+    await api.launch(leaf, { id: agentId, name: agentId, command: agentId }, opts, opts.id, { command: agentId, args: '' }, undefined, null)
+    return written[0]
+  }
+  return { ctx, api, launchLine }
+}
+
+it('Tessel relaunching a Codex with team messages waiting: a first prompt on its command line, fresh or resumed; none when nothing waits', async () => {
+  const { ctx, launchLine } = wakeSandbox({ teamUnread: { 'pane-2': 2 } })
+  const prompt = `"${WAKE_LAUNCH_PROMPT}"`
+  // Resumed in place: `codex resume [OPTIONS] [SESSION_ID] [PROMPT]` (codex resume --help).
+  expect(await launchLine('codex', { id: 'pane-2', sessionId: 's-2', resume: true, wake: { teamId: 'team-1', gen: 1 } })).toBe(
+    `codex resume s-2 --no-daemon -c check_for_update_on_startup=false ${prompt}\r`
+  )
+  // Its reminder is given: recorded for this launch.
+  expect(ctx.wakeState['pane-2']).toMatchObject({ woken: true, offered: true, launchPrompt: true, gen: 1 })
+  // Fresh: `codex [OPTIONS] [PROMPT]`.
+  expect(await launchLine('codex', { id: 'pane-2', wake: { teamId: 'team-1', gen: 0 } })).toBe(
+    `codex --no-daemon -c check_for_update_on_startup=false ${prompt}\r`
+  )
+  // Nothing waiting: no prompt, nothing recorded.
+  expect(await launchLine('codex', { id: 'pane-9', sessionId: 's-9', resume: true, wake: { teamId: 'team-1', gen: 1 } })).toBe(
+    'codex resume s-9 --no-daemon -c check_for_update_on_startup=false\r'
+  )
+  expect(ctx.wakeState['pane-9']).toBeUndefined()
+  // Not relaunched by Tessel as a team member (no opts.wake): never.
+  expect(await launchLine('codex', { id: 'pane-2', sessionId: 's-2', resume: true })).not.toContain(WAKE_LAUNCH_PROMPT)
+  // Claude Code has its own inbox: no first prompt.
+  ctx.teamUnread['pane-c'] = 1
+  expect(await launchLine('claude', { id: 'pane-c', wake: { teamId: 'team-1', gen: 1 } })).not.toContain(WAKE_LAUNCH_PROMPT)
+  // Team tools not set up: it could not read them.
+  ctx.teamToolsReady = false
+  expect(await launchLine('codex', { id: 'pane-2', sessionId: 's-2', resume: true, wake: { teamId: 'team-1', gen: 1 } })).not.toContain(WAKE_LAUNCH_PROMPT)
+})
+
+it('Tessel just started (nothing polled yet): the count comes from the team channel, only counts asked', async () => {
+  const poll = vi.fn(async () => ({ ok: true, unreadCounts: { 'pane-4': 3 } }))
+  const { ctx, launchLine } = wakeSandbox({ teams: { value: [{ id: 'team-1', channelDir: 'C:\\proj' }] } })
+  ctx.window.shellApi.channel.poll = poll
+  expect(await launchLine('codex', { id: 'pane-4', sessionId: 's-4', resume: true, wake: { teamId: 'team-1', gen: 0 } })).toContain(`"${WAKE_LAUNCH_PROMPT}"`)
+  expect(poll).toHaveBeenCalledWith({ dir: 'C:\\proj', teamId: 'team-1', availableIds: [] })
+  // Another team (none recorded): no count, no prompt.
+  expect(await launchLine('codex', { id: 'pane-4', sessionId: 's-4', resume: true, wake: { teamId: 'team-x', gen: 0 } })).not.toContain(WAKE_LAUNCH_PROMPT)
+})
+
+it('launched with the prompt: no toast and nothing typed for the same messages, whatever the setting', async () => {
+  for (const teamWakeUnconfirmed of [false, true]) {
+    const node = { id: 'pane-2', agentLaunchToken: 'f'.repeat(32), agentId: 'codex', sessionId: 's-2', kind: 'agent', teamTools: true, gen: 1, launchedAt: 0 }
+    const { ctx, launchLine, api } = wakeSandbox({ teamUnread: { 'pane-2': 2 }, findLeaf: () => node, trackedState: { 'pane-2': { state: 'unknown' } } })
+    ctx.settings.teamWakeUnconfirmed = teamWakeUnconfirmed
+    await launchLine('codex', { id: 'pane-2', sessionId: 's-2', resume: true, wake: { teamId: 'team-1', gen: 1 } })
+    api.wakeIfNeeded(node)
+    api.wakeIfNeeded(node)
+    expect(ctx.showToast).not.toHaveBeenCalled()
+    expect(ctx.deliverToAgent).not.toHaveBeenCalled()
+    // All read: the next messages get a reminder again.
+    ctx.teamUnread['pane-2'] = 0
+    api.wakeIfNeeded(node)
+    expect(ctx.wakeState['pane-2']).toBeUndefined()
+  }
+})
+
+it('setting on: an unconfirmed Codex gets the reminder typed, with the same checks and the guard right before typing', () => {
+  const node = { id: 'pane-5', agentLaunchToken: 'a'.repeat(32), agentId: 'codex', sessionId: 's-5', team: 'team-1', kind: 'agent', teamTools: true, launchedAt: 0 }
+  const { ctx, api } = wakeSandbox({ teamUnread: { 'pane-5': 1 }, findLeaf: () => node, trackedState: { 'pane-5': { state: 'unknown' } } })
+  ctx.settings.teamWakeUnconfirmed = true
+  // You are typing there (wakeAllowed without the launch-state requirement says no): nothing.
+  ctx.wakeAllowed.mockReturnValue(false)
+  api.wakeIfNeeded(node)
+  expect(ctx.wakeAllowed).toHaveBeenCalledWith('pane-5', true)
+  expect(ctx.deliverToAgent).not.toHaveBeenCalled()
+  // Working, an approval, or just launched: nothing either.
+  ctx.wakeAllowed.mockReturnValue(true)
+  ctx.trackedState['pane-5'].state = 'working'
+  api.wakeIfNeeded(node)
+  ctx.trackedState['pane-5'].state = 'unknown'
+  ctx.approvals['pane-5'] = true
+  api.wakeIfNeeded(node)
+  delete ctx.approvals['pane-5']
+  node.launchedAt = Date.now()
+  api.wakeIfNeeded(node)
+  expect(ctx.deliverToAgent).not.toHaveBeenCalled()
+  node.launchedAt = 0
+  api.wakeIfNeeded(node)
+  expect(ctx.showToast).not.toHaveBeenCalled()
+  expect(ctx.deliverToAgent).toHaveBeenCalledTimes(1)
+  const [id, text, meta] = ctx.deliverToAgent.mock.calls[0]
+  expect(id).toBe('pane-5')
+  expect(text).toBe('[Tessel] You have 1 new team message: read it with team_inbox.')
+  expect(meta).toMatchObject({ source: 'tessel', scope: 'wake', dropIfNotNow: true, waitIdle: true })
+  expect(meta.guard()).toBe(true)
+  // Right before typing: a draft, an unsent line, the setting turned off,
+  // another launch or nothing left unread drop it.
+  ctx.userDraft['pane-5'] = true
+  expect(meta.guard()).toBe(false)
+  delete ctx.userDraft['pane-5']
+  ctx.unsent['pane-5'] = {}
+  expect(meta.guard()).toBe(false)
+  delete ctx.unsent['pane-5']
+  ctx.settings.teamWakeUnconfirmed = false
+  expect(meta.guard()).toBe(false)
+  ctx.settings.teamWakeUnconfirmed = true
+  node.agentLaunchToken = 'b'.repeat(32)
+  expect(meta.guard()).toBe(false)
+  node.agentLaunchToken = 'a'.repeat(32)
+  ctx.teamUnread['pane-5'] = 0
+  expect(meta.guard()).toBe(false)
+  // One reminder per batch.
+  ctx.teamUnread['pane-5'] = 1
+  api.wakeIfNeeded(node)
+  expect(ctx.deliverToAgent).toHaveBeenCalledTimes(1)
+})
+
+it('setting off (the default): an unconfirmed Codex is not typed into, the user is asked', () => {
+  const node = { id: 'pane-6', agentLaunchToken: 'a'.repeat(32), agentId: 'codex', sessionId: 's-6', kind: 'agent', teamTools: true, launchedAt: 0 }
+  const { ctx, api } = wakeSandbox({ teamUnread: { 'pane-6': 2 }, findLeaf: () => node, trackedState: { 'pane-6': { state: 'unknown' } } })
+  api.wakeIfNeeded(node)
+  expect(ctx.deliverToAgent).not.toHaveBeenCalled()
+  expect(ctx.showToast).toHaveBeenCalledTimes(1)
 })

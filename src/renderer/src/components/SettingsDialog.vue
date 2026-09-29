@@ -1543,6 +1543,14 @@ function previewSound() {
                 </div>
                 <input v-model="settings.teamWakeUps" type="checkbox" class="set-switch" />
               </label>
+              <label class="set-row" :class="{ 'set-disabled': !settings.teamWakeUps }">
+                <div class="set-label">
+                  {{ t('settings.orchestration.wakeUnconfirmed', 'Wake agents even without confirmation (like other tools)') }}
+                  <span class="set-hint">{{ t('settings.orchestration.wakeUnconfirmedHint', 'Also types the reminder into an agent whose hooks have not confirmed it is idle yet (a Codex relaunched in place), with the same checks: never while you type there, over a draft, an approval or an unsent line. Off: Tessel asks you first') }}</span>
+                  <span v-if="settings.teamWakeUnconfirmed" class="set-hint set-warn" data-wake-unconfirmed-warning="">{{ t('settings.orchestration.wakeUnconfirmedWarn', 'Risk: without that confirmation the line could land in a program that crashed or at a bad moment in the agent.') }}</span>
+                </div>
+                <input v-model="settings.teamWakeUnconfirmed" type="checkbox" class="set-switch" data-setting="teamWakeUnconfirmed" :disabled="!settings.teamWakeUps" />
+              </label>
             </div>
           </div>
           <!-- Coordinator and workers (Orca's orchestration): the setup card,

@@ -2512,6 +2512,13 @@ label.set-row {
   font-size: 11px;
 }
 
+/* A setting's risk, shown while it is on. */
+.set-hint.set-warn {
+  display: block;
+  margin-top: 3px;
+  color: var(--warn);
+}
+
 .set-select,
 .set-number {
   height: 28px;
