@@ -230,7 +230,9 @@ it('blocks both native-inbox and typed wake paths when managed status is not con
     showToast,
     t: (_k, english) => english,
     paneLabel: () => '#1 Claude Code',
-    findLeaf: () => node
+    findLeaf: () => node,
+    awaitingApproval: () => false,
+    userDraft: {}
   })
   run(node)
   expect(agentInbox).not.toHaveBeenCalled()
@@ -239,6 +241,12 @@ it('blocks both native-inbox and typed wake paths when managed status is not con
   expect(showToast).toHaveBeenCalledTimes(1)
   run(node)
   expect(showToast).toHaveBeenCalledTimes(1)
+  // A stale toast does nothing: relaunched meanwhile (another launch token).
+  const token = node.agentLaunchToken
+  node.agentLaunchToken = 'c'.repeat(32)
+  showToast.mock.calls[0][1].action.run()
+  expect(deliverToAgent).not.toHaveBeenCalled()
+  node.agentLaunchToken = token
   showToast.mock.calls[0][1].action.run()
   expect(deliverToAgent).toHaveBeenCalledTimes(1)
   expect(deliverToAgent.mock.calls[0][2]).toMatchObject({ source: 'user', scope: 'wake' })

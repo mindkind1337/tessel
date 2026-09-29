@@ -5373,6 +5373,8 @@ function offerWake(leaf, count) {
   const w = (wakeState[leaf.id] = wakeState[leaf.id] || { since: Date.now(), woken: false, gen: leaf.gen || 0 })
   if (w.offered || Date.now() - w.since < WAKE_AFTER_MS) return
   w.offered = true
+  const launchToken = leaf.agentLaunchToken
+  const sessionId = leaf.sessionId
   const reminder = `[Tessel] You have ${count} new team message${count > 1 ? 's' : ''}: read ${count > 1 ? 'them' : 'it'} with team_inbox.` // i18n-ignore
   showToast(
     t('app.team.wakeOffer', '{{name}} has team messages waiting, but Tessel cannot confirm it is idle (it was just restarted), so it did not type anything.', {
@@ -5384,7 +5386,11 @@ function offerWake(leaf, count) {
       action: {
         label: t('app.team.wakeOfferAction', 'Send it the reminder'),
         run: () => {
-          if (!findLeaf(leaf.id)) return
+          // Checked again at the click: the same launch, messages still
+          // unread, nothing to approve, no line of yours waiting there.
+          const now = findLeaf(leaf.id)
+          if (!now || now.agentLaunchToken !== launchToken || now.sessionId !== sessionId) return
+          if (!(teamUnread[leaf.id] || 0) || approvals[leaf.id] || awaitingApproval(leaf.id) || userDraft[leaf.id] || unsent[leaf.id]) return
           deliverToAgent(leaf.id, reminder, { source: 'user', scope: 'wake', teamId: leaf.team })
           if (window.shellApi.log) window.shellApi.log('info', `team tools: reminder sent to ${paneLabel(leaf)} (${leaf.id}) at the user's request`)
         }
