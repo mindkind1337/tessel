@@ -317,6 +317,35 @@ describe.skipIf(!gitSh())('review: a repository config never runs code unasked; 
     rfs.close()
   }, 60000)
 
+  it('hooks in .git/hooks: asked about, and not run on commit until trusted', async () => {
+    const hook = join(proj, '.git', 'hooks', 'pre-commit')
+    fs.writeFileSync(hook, `#!/bin/sh\necho HOOK_RAN >> '${posixPath(marks)}'\n`)
+    fs.chmodSync(hook, 0o755)
+    const commit = async (rfs, name) => {
+      fs.writeFileSync(join(proj, name), 'x\n')
+      const st = await rfs.scm.scmStage({ root, paths: [name] })
+      if (!st.ok) throw new Error('stage: ' + st.error)
+      const res = await rfs.scm.scmCommit({ root, message: `add ${name}` })
+      if (!res.ok) throw new Error('commit: ' + res.error)
+      return res
+    }
+    const asks = []
+    const untrusted = make(false, asks)
+    untrusted.setRoots([root])
+    fs.writeFileSync(marks, '')
+    expect((await commit(untrusted, 'h1.txt')).ok).toBe(true)
+    expect(readMarks()).toBe('')
+    expect(asks[0].keys).toContain('hook')
+    untrusted.close()
+    const trusted = make(true, [])
+    trusted.setRoots([root])
+    fs.writeFileSync(marks, '')
+    await commit(trusted, 'h2.txt')
+    expect(readMarks()).toMatch(/HOOK_RAN/)
+    trusted.close()
+    fs.rmSync(hook)
+  }, 120000)
+
   it('F2: a root the window names is not a project: nothing outside the saved ones is reached', async () => {
     const rfs = make(false, [])
     rfs.setRoots([root])

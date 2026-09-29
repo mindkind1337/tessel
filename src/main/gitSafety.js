@@ -1,8 +1,11 @@
 // Git settings a repository carries in its own config that run programs:
 // core.fsmonitor (run by git status / diff), filter.<x>.clean / smudge /
 // process (run on files git reads or writes), diff.<x>.textconv / command
-// (run to show a diff), core.hooksPath (hooks on commit, merge...),
-// core.sshCommand (run by push / pull / fetch). A folder copied from
+// (run to show a diff), core.hooksPath and the hooks in $GIT_DIR/hooks (on
+// commit, merge...), core.sshCommand, remote.<x>.uploadpack / receivepack,
+// ext:: remote URLs and protocol.ext.allow (run by push / pull / fetch).
+// Until a repository is trusted, git also runs with no hooks at all and
+// protocol.ext.allow=never. A folder copied from
 // elsewhere (a tarball, a shared drive, a server) can bring them, and Tessel
 // reads a project's git status by itself, without a click.
 //
@@ -17,11 +20,11 @@
 // repository's: they are left alone.
 import fs from 'fs'
 import crypto from 'crypto'
-import { dirname } from 'path'
+import { dirname, join, resolve } from 'path'
 import { run } from './agentTools'
 
 export const SAFE_ARGS = ['-c', 'core.fsmonitor=false']
-export const RISKY_PATTERN = '^(core\\.fsmonitor|core\\.hookspath|core\\.sshcommand|filter\\..+\\.(clean|smudge|process)|diff\\..+\\.(textconv|command))$'
+export const RISKY_PATTERN = '^(core\\.fsmonitor|core\\.hookspath|core\\.sshcommand|protocol\\.ext\\.allow|remote\\..+\\.(url|pushurl|uploadpack|receivepack)|filter\\..+\\.(clean|smudge|process)|diff\\..+\\.(textconv|command))$'
 const RISKY_RE = new RegExp(RISKY_PATTERN, 'i')
 // The git arguments that list them (the repository's own config file and
 // what it includes).
@@ -40,9 +43,41 @@ export function parseRisky(out) {
     if (!RISKY_RE.test(key)) continue
     if (/^core\.fsmonitor$/i.test(key) && /^(false|no|off|0|)$/i.test(value.trim())) continue
     if (!value.trim()) continue
+    // A remote's URL runs something only through the ext:: transport.
+    if (/^remote\..+\.(url|pushurl)$/i.test(key) && !/^\s*ext::/i.test(value)) continue
+    if (/^protocol\.ext\.allow$/i.test(key) && /^never$/i.test(value.trim())) continue
     list.push({ key, value })
   }
   return list
+}
+
+// Hooks in the repository's own hooks folder ($GIT_DIR/hooks): names of the
+// files git would run (not the *.sample ones it ships), as risky entries.
+export function hookEntries(names) {
+  return (Array.isArray(names) ? names : [])
+    .filter((n) => typeof n === 'string' && n && !n.endsWith('.sample') && !/[\u0000-\u001f\u007f/\\]/.test(n))
+    .slice(0, 50)
+    .sort()
+    .map((n) => ({ key: 'hook', value: n }))
+}
+// The local hooks folder's runnable files.
+function localHooks(gitCommonDir) {
+  const dir = join(gitCommonDir, 'hooks')
+  let names = []
+  try {
+    names = fs.readdirSync(dir, { withFileTypes: true }).filter((d) => {
+      if (!d.isFile()) return false
+      if (process.platform === 'win32') return true // git for Windows runs any hook file
+      try {
+        return (fs.statSync(join(dir, d.name)).mode & 0o111) !== 0
+      } catch {
+        return false
+      }
+    }).map((d) => d.name)
+  } catch {
+    names = []
+  }
+  return hookEntries(names)
 }
 
 export function riskHash(list) {
@@ -53,8 +88,10 @@ export function riskHash(list) {
   return crypto.createHash('sha256').update(text).digest('hex')
 }
 
-// -c overrides that turn the listed settings off. hooksDir: a folder with no
-// hooks (never created), for core.hooksPath.
+// -c overrides that turn the listed settings off, for a repository not
+// trusted. Always: no hooks at all (core.hooksPath to a folder that does not
+// exist: neither a set hooksPath nor $GIT_DIR/hooks runs) and no ext::
+// transport. hooksDir: that folder.
 export function neutralize(list, { hooksDir } = {}) {
   const out = [...SAFE_ARGS]
   const seen = new Set()
@@ -63,6 +100,8 @@ export function neutralize(list, { hooksDir } = {}) {
     seen.add(k)
     out.push('-c', `${k}=${v}`)
   }
+  add('core.hooksPath', hooksDir || '/nonexistent-tessel-no-hooks')
+  add('protocol.ext.allow', 'never')
   for (const { key } of list) {
     const k = key.toLowerCase()
     let m
@@ -75,8 +114,9 @@ export function neutralize(list, { hooksDir } = {}) {
     } else if ((m = /^diff\.(.+)\.(textconv|command)$/i.exec(key))) {
       add(`diff.${m[1]}.textconv`, '')
       add(`diff.${m[1]}.command`, '')
-    } else if (k === 'core.hookspath') add('core.hooksPath', hooksDir || '/nonexistent-tessel-no-hooks')
-    else if (k === 'core.sshcommand') add('core.sshCommand', 'ssh')
+    } else if (k === 'core.sshcommand') add('core.sshCommand', 'ssh')
+    else if ((m = /^remote\.(.+)\.uploadpack$/i.exec(key))) add(`remote.${m[1]}.uploadpack`, 'git-upload-pack')
+    else if ((m = /^remote\.(.+)\.receivepack$/i.exec(key))) add(`remote.${m[1]}.receivepack`, 'git-receive-pack')
   }
   return out
 }
@@ -149,6 +189,7 @@ export function createGitTrust({ file = null, ask = null, fsApi = fs } = {}) {
 let current = createGitTrust()
 export function setGitTrust(trust) {
   current = trust || createGitTrust()
+  localCache.clear()
 }
 export function gitTrust() {
   return current
@@ -163,11 +204,19 @@ export async function localGitArgs(top, { ask = true, hooksDir } = {}) {
   const key = `local:${String(top).toLowerCase()}`
   const hit = localCache.get(key)
   if (hit && Date.now() - hit.at < LOCAL_TTL_MS) return hit.args
-  const res = await run('git', ['-C', top, ...RISKY_CONFIG_ARGS], { timeout: 10000 })
-  // Exit 1: none set. Anything else unreadable: treated as risky settings off.
-  const risky = res.ok ? parseRisky(res.stdout) : []
+  const [res, common] = await Promise.all([
+    run('git', ['-C', top, ...RISKY_CONFIG_ARGS], { timeout: 10000 }),
+    run('git', ['-C', top, 'rev-parse', '--git-common-dir'], { timeout: 10000 })
+  ])
+  // Exit 1: none set. Anything else (unreadable): everything off.
+  const unreadable = !res.ok && res.code !== 1
+  const risky = [
+    ...(res.ok ? parseRisky(res.stdout) : []),
+    ...(common.ok && common.stdout.trim() ? localHooks(resolve(top, common.stdout.trim())) : [])
+  ]
   let args
-  if (!risky.length) args = [...SAFE_ARGS]
+  if (unreadable) args = neutralize([], { hooksDir })
+  else if (!risky.length) args = [...SAFE_ARGS]
   else {
     const trusted = await gitTrust().decide(key, risky, { name: top, where: '', mayAsk: ask })
     args = trusted ? [...SAFE_ARGS] : neutralize(risky, { hooksDir })

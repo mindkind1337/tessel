@@ -106,6 +106,7 @@ export const FUNCTIONS = new Set([
   '__t_top',
   '__t_gitin',
   '__t_gitop',
+  '__t_hooks',
   '__t_wcl',
   '__t_findn',
   '__t_grep',
@@ -302,6 +303,18 @@ __t_gitop() {
   __t_in "$2" "$__R" || return 90
   __gd=$(__t_git "$2" rev-parse --absolute-git-dir 2>/dev/null) || return 0
   if [ -e "$__gd/rebase-merge" ] || [ -e "$__gd/rebase-apply" ]; then echo rebase; elif [ -e "$__gd/MERGE_HEAD" ]; then echo merge; elif [ -e "$__gd/CHERRY_PICK_HEAD" ]; then echo cherry-pick; fi
+}
+__t_hooks() {
+  __t_root "$1" || return $?
+  __t_in "$2" "$__R" || return 90
+  __gd=$(__t_git "$2" rev-parse --git-common-dir 2>/dev/null) || return 0
+  case $__gd in /*) ;; *) __gd="\${2%/}/$__gd" ;; esac
+  [ -d "$__gd/hooks" ] || return 0
+  for __f in "$__gd/hooks"/*; do
+    [ -f "$__f" ] && [ -x "$__f" ] || continue
+    case $__f in *.sample) continue ;; esac
+    printf '%s\\000' "\${__f##*/}"
+  done
 }
 __t_wcl() {
   __t_root "$1" || return $?

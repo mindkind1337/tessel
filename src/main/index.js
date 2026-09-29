@@ -1290,7 +1290,10 @@ setGitTrust(
     ask: async ({ name, where, risky }) => {
       const shown = risky
         .slice(0, 8)
-        .map((r) => `${r.key} = ${String(r.value).replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, 160)}`)
+        .map((r) => {
+          const value = String(r.value).replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, 160)
+          return r.key === 'hook' ? t('main.gitTrust.hook', 'hook: {{name}}', { name: value }) : `${r.key} = ${value}`
+        })
         .join('\n')
       const opts = {
         type: 'warning',
