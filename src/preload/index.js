@@ -203,7 +203,10 @@ const api = {
     resetHistory: (query) => ipcRenderer.invoke('providerUsage:resetHistory', query),
     creditHistory: (query) => ipcRenderer.invoke('providerUsage:creditHistory', query),
     read: (query) => ipcRenderer.invoke('providerUsage:read', query),
-    redeemReset: (query) => ipcRenderer.invoke('providerUsage:redeemReset', query)
+    redeemReset: (query) => ipcRenderer.invoke('providerUsage:redeemReset', query),
+    // { hidden, intervalMs } (0 = off); readings then arrive on onUpdate.
+    autoRefresh: (query) => ipcRenderer.invoke('providerUsage:autoRefresh', query),
+    onUpdate: (cb) => subscribe('providerUsage:update', cb)
   },
   github: {
     status: (q) => ipcRenderer.invoke('github:status', q),

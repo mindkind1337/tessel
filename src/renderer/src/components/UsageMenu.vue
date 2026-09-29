@@ -1,11 +1,14 @@
 <script setup>
-// Local quota observations update the toolbar without network polling.
-// Authenticated provider reads happen only on menu/open/refresh actions;
-// redeeming an actual reset credit additionally requires confirmation.
+// Local quota observations update the toolbar. Authenticated provider reads
+// happen on menu/open/refresh actions, and from the main process's automatic
+// refresh (usagePoller.js: every 15 min while the window is in use, on focus
+// when older than 5 min), whose readings arrive on providerUsage.onUpdate and
+// colour the icon without a click. Redeeming an actual reset credit
+// additionally requires confirmation.
 // Roster and provider flyout patterns inspired by Orca UsageRosterPanel,
 // ProviderPanel and CodexSwitcherMenu (MIT, Lovecast, 2026); independent Vue UI.
 // Amber from 66 %, red from 95 %; an old reading says so.
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import BrandIcon from './BrandIcon.vue'
 import ResetHistory from './ResetHistory.vue'
 import UsageVisibility from './UsageVisibility.vue'
@@ -64,6 +67,7 @@ const accountsReadFailed = ref(false)
 const hasAccounts = computed(() => !!window.shellApi.accounts?.list)
 const refreshing = computed(() => loading.value || Object.values(providerBusy.value).some(Boolean))
 let timer = null
+let stopPush = null
 let alive = true
 let accountsRequest = 0
 let usageRequest = 0
@@ -169,17 +173,7 @@ async function readProvider(id) {
       throw new Error(
         t('usage.menu.accountChanged', 'The usage account changed. Refresh before continuing.')
       )
-    providerReadings.value[id] = {
-      ...result,
-      id,
-      source: 'provider',
-      stale: false,
-      error: null,
-      resetToken: result.resetToken || null,
-      resetCredits: result.resetCredits || null,
-      resetCreditsError: result.resetCreditsError || null
-    }
-    now.value = Date.now()
+    applyReading(id, result)
   } catch (err) {
     if (alive && request === providerRequests.get(id)) {
       providerErrors.value[id] =
@@ -201,6 +195,68 @@ async function readProvider(id) {
   } finally {
     if (alive && request === providerRequests.get(id)) providerBusy.value[id] = false
   }
+}
+function applyReading(id, result) {
+  providerReadings.value[id] = {
+    ...result,
+    id,
+    source: 'provider',
+    stale: false,
+    error: null,
+    resetToken: result.resetToken || null,
+    resetCredits: result.resetCredits || null,
+    resetCreditsError: result.resetCreditsError || null
+  }
+  now.value = Date.now()
+}
+// A reading pushed by the automatic refresh, for the selected account only.
+// A read in progress here wins: its own result follows.
+let accountsLoaded = false
+async function pushed(result) {
+  const id = result?.provider
+  if (!alive || typeof id !== 'string') return
+  // Pushed readings are for the selected account only: know it first.
+  if (['claude', 'codex'].includes(id) && hasAccounts.value && !accountsLoaded && !accounts.value.length) {
+    accountsLoaded = true
+    await loadAccounts()
+    if (!alive) return
+  }
+  if (!trackedProviders.value.some((p) => p.id === id)) return
+  const accountId = result.accountId ?? null
+  if (providerBusy.value[id] || accountBusy.value[id] || accountId !== selectedAccount(id)) return
+  if (accountsReadFailed.value || providerAccounts(id)?.error) return
+  providerRequests.set(id, (providerRequests.get(id) || 0) + 1)
+  if (typeof result.plan === 'string') providerPlans.value[id] = { accountId, plan: result.plan }
+  if (result.ok && result.kept) {
+    // A recent reading kept through a failed refresh: shown as last known.
+    providerErrors.value[id] = typeof result.error === 'string' ? result.error : ''
+    providerReadings.value[id] = {
+      ...result,
+      id,
+      source: 'provider',
+      stale: true,
+      resetToken: null
+    }
+    now.value = Date.now()
+    return
+  }
+  if (result.ok) {
+    providerErrors.value[id] = ''
+    applyReading(id, result)
+    return
+  }
+  if (result.code === 'unavailable') unavailable.value = [...new Set([...unavailable.value, id])]
+  providerErrors.value[id] =
+    (typeof result.error === 'string' && result.error) ||
+    t('usage.menu.providerError', 'Could not refresh provider usage.')
+  const previous = providerReadings.value[id]
+  if (previous && previous.accountId === accountId)
+    providerReadings.value[id] = {
+      ...previous,
+      stale: true,
+      resetToken: null,
+      windows: windows(previous).map((window) => ({ ...window, stale: true }))
+    }
 }
 async function selectAccount(provider, event) {
   const selection = event.target.value || null
@@ -509,11 +565,18 @@ function shortReset(iso) {
   if (hours < 24) return t('usage.time.hoursMinutes', '{{h}}h {{m}}m', { h: hours, m: minutes % 60 })
   return t('usage.time.daysHours', '{{d}}d {{h}}h', { d: Math.floor(hours / 24), h: hours % 24 })
 }
+// A kept reading (the automatic refresh failed, the reading is recent) still
+// counts for the icon until its window resets.
+function counts(agent, window) {
+  if (!stale(agent, window)) return true
+  const reset = timestamp(window.resetsAt)
+  return agent.kept === true && window.stale !== true && !(Number.isFinite(reset) && reset <= now.value)
+}
 // The highest fresh window, for the icon's colour.
 const worst = computed(() => {
   let max = -1
   for (const a of agents.value)
-    for (const w of windows(a)) if (!stale(a, w) && w.usedPct > max) max = w.usedPct
+    for (const w of windows(a)) if (counts(a, w) && w.usedPct > max) max = w.usedPct
   return max
 })
 const level = (pct) => (pct >= 95 ? 'bad' : pct >= 66 ? 'warn' : 'ok')
@@ -739,7 +802,23 @@ onMounted(() => {
   load()
   timer = setInterval(load, 60000)
   loadAgents()
+  stopPush = window.shellApi.providerUsage?.onUpdate?.(pushed) || null
+  configureAutoRefresh()
 })
+// Settings > Usage refresh, and the providers hidden from this menu.
+function configureAutoRefresh() {
+  const minutes = settings.usageRefreshMinutes
+  window.shellApi.providerUsage
+    ?.autoRefresh?.({
+      hidden: [...settings.hiddenUsageProviders],
+      intervalMs: minutes > 0 ? minutes * 60000 : 0
+    })
+    ?.catch?.(() => {})
+}
+watch(
+  () => [settings.usageRefreshMinutes, settings.hiddenUsageProviders.join(',')],
+  configureAutoRefresh
+)
 onBeforeUnmount(() => {
   alive = false
   document.removeEventListener('pointerdown', onDocDown, true)
@@ -747,6 +826,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', positionMenu)
   document.removeEventListener('keydown', onKey, true)
   clearInterval(timer)
+  stopPush?.()
 })
 function toggle() {
   if (resetBusy.value) return

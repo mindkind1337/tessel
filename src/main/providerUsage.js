@@ -1,12 +1,14 @@
 // Independent implementation informed by stablyai/orca's rate-limits clients
 // (MIT, Lovecast Inc., 2026). These first-party OAuth endpoints are an Orca
-// implementation contract, not a documented public API. No OAuth refresh,
-// background polling, credential writes, or automatic redemption retries.
+// implementation contract, not a documented public API. No OAuth refresh, credential
+// writes or automatic redemption retries; background reads come only from
+// usagePoller.js (every 15 min at most while the window is in use).
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { t } from './i18n'
+import { retryAfterMs } from './usagePoller'
 
 const ENDPOINTS = Object.freeze({
   codex: 'https://chatgpt.com/backend-api/wham/usage',
@@ -512,6 +514,15 @@ export function createProviderUsage({
         }
         if (!response.ok) {
           await response.body?.cancel().catch(() => {})
+          // 429: the service says when to come back; automatic refresh waits for it.
+          if (response.status === 429) {
+            const error = new UsageError(
+              'rate-limited',
+              t('main.usage.rateLimited', 'The usage service is limiting requests. Tessel will try again later.')
+            )
+            error.retryAfterMs = retryAfterMs(response.headers, clock())
+            throw error
+          }
           fail(
             response.status === 401 || response.status === 403 ? 'auth' : 'upstream',
             response.status === 401 || response.status === 403
@@ -557,7 +568,10 @@ export function createProviderUsage({
     ok: false,
     ...extra,
     code: error instanceof UsageError ? error.code : 'network',
-    error: error instanceof UsageError ? error.message : t('main.usage.requestFailed', 'The usage request could not be completed.')
+    error: error instanceof UsageError ? error.message : t('main.usage.requestFailed', 'The usage request could not be completed.'),
+    ...(error instanceof UsageError && Number.isFinite(error.retryAfterMs)
+      ? { retryAfterMs: error.retryAfterMs }
+      : {})
   })
   function mint(snapshot, fingerprint, credit, windows) {
     if (redeeming.has(`${snapshot.provider}:${snapshot.accountId}`)) return null

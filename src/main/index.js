@@ -1500,7 +1500,17 @@ const accounts = createProviderAccounts({
   codex: createCodexAccounts(accountOptions)
 })
 ipcMain.handle('accounts:list', safe(() => accounts.list()))
-registerProviderUsage({ ipcMain, accounts, userData: app.getPath('userData'), log, listAgents: () => getAgents() })
+// Usage refresh: every 15 min while the window is in use, and on focus when older
+// than 5 min (usagePoller.js); results are pushed on providerUsage:update.
+registerProviderUsage({
+  ipcMain,
+  accounts,
+  userData: app.getPath('userData'),
+  log,
+  listAgents: () => getAgents(),
+  send,
+  getWindow: () => mainWindow
+})
 ipcMain.handle('accounts:loginStatus', safe((id) => accounts.loginStatus(id)))
 ipcMain.handle('accounts:launchEnv', safe((query) => typeof query === 'string'
   ? accounts.launchEnv(query) : accounts.launchEnv(query?.provider, query?.accountId)))
