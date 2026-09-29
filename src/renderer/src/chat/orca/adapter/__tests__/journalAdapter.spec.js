@@ -138,6 +138,33 @@ describe('journal adapter', () => {
     expect(live.find((i) => i.itemId === 'm1').revision).toBe(2)
   })
 
+  it("subagents: the engine's roster is one row revised in place; children's rows carry their agent", () => {
+    const { state, states } = run([
+      { type: 'user', id: 'u1', text: 'go', status: 'accepted' },
+      { type: 'subagents', groupId: 'root-turn', agents: [{ id: 'child', label: 'Inspect fixtures', state: 'working', startedAt: 1000 }] },
+      { type: 'assistantDelta', messageId: 'a', text: 'Child', agentId: 'child', parentToolUseId: 'spawn-tool' },
+      { type: 'tool', id: 't1', name: 'Read', input: { file_path: 'x' }, status: 'running', parentToolUseId: 'spawn-tool' },
+      { type: 'subagents', groupId: 'root-turn', agents: [{ id: 'child', label: 'Inspect fixtures', state: 'completed', tokens: 25, startedAt: 1000, settledAt: 1500 }] }
+    ])
+    const rows = state.items.filter((i) => i.itemId === 'subagents:root-turn')
+    expect(rows.length).toBe(1)
+    expect(rows[0].agentId).toBeUndefined()
+    expect(rows[0].body.blocks[0]).toEqual({ type: 'text', text: 'Ran 1 subagent' })
+    expect(rows[0].body.blocks[1]).toEqual({ type: 'subagent-group', groupId: 'root-turn', agents: [{ id: 'child', label: 'Inspect fixtures', state: 'completed', tokens: 25, startedAt: 1000, settledAt: 1500 }] })
+    expect(states[1].items.find((i) => i.itemId === 'subagents:root-turn').body.blocks[0].text).toBe('Kicked off 1 subagent')
+    expect(state.items.find((i) => i.itemId === 'a')).toMatchObject({ agentId: 'child', providerParentRef: 'spawn-tool' })
+    // Older events without agentId: the provider reference stands in.
+    expect(state.items.find((i) => i.itemId === 'tool:t1')).toMatchObject({ agentId: 'spawn-tool', providerParentRef: 'spawn-tool' })
+  })
+
+  it('an empty roster removes its row (never "Ran 0")', () => {
+    const { state } = run([
+      { type: 'subagents', groupId: 'g', agents: [{ id: 'c', label: 'x', state: 'working' }] },
+      { type: 'subagents', groupId: 'g', agents: [] }
+    ])
+    expect(state.items.find((i) => i.itemId === 'subagents:g')).toBeUndefined()
+  })
+
   it('session facts outside the journal: agent, model, session, rate limits', () => {
     const { adapter } = run([
       { type: 'status', state: 'idle', agent: 'codex', model: 'gpt-6', sessionId: 'thread-1' },

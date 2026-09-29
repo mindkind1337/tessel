@@ -12,6 +12,7 @@
 // apply(event) returns the subscribe event to feed the reducer: a 'batch'
 // with the items and submissions that changed, or null when nothing did.
 import { agentJournalSubmissionKey } from '../shared/agent-session-journal-item-key.js'
+import { normalizeSubagentState, MAX_SUBAGENT_FIELD_CHARS, subagentGroupFallbackText } from '../shared/native-chat-subagent-summary.js'
 
 // Output kept in a tool row: the same bound as the main process's journal.
 const MAX_OUTPUT = 8 * 1024
@@ -28,6 +29,25 @@ const APPROVAL_OPTION = { allowed: 'allow', allowedSession: 'allowSession', deni
 function bounded(text) {
   const s = String(text ?? '')
   return { head: s.length > MAX_OUTPUT ? s.slice(0, MAX_OUTPUT) : s, byteLength: s.length, digest: '', truncated: s.length > MAX_OUTPUT }
+}
+
+// A row a subagent produced: its child id (the roster's agents[].id) and the
+// provider's parent reference (provenance only). The session's own rows have
+// neither.
+function childLinkage(ev) {
+  const agentId = ev.agentId ?? ev.parentToolUseId
+  if (agentId == null || agentId === '') return {}
+  return { agentId: String(agentId), ...(ev.parentToolUseId ? { providerParentRef: String(ev.parentToolUseId) } : {}) }
+}
+
+// One roster entry from the engine, bounded like the reference's.
+function subagentEntry(a) {
+  if (!a || typeof a !== 'object' || a.id == null) return null
+  const entry = { id: String(a.id), label: String(a.label ?? a.id).slice(0, MAX_SUBAGENT_FIELD_CHARS), state: normalizeSubagentState(String(a.state ?? '')) }
+  if (Number.isFinite(a.tokens)) entry.tokens = a.tokens
+  if (Number.isFinite(a.startedAt)) entry.startedAt = a.startedAt
+  if (Number.isFinite(a.settledAt)) entry.settledAt = a.settledAt
+  return entry
 }
 
 function parseInput(input) {
@@ -52,6 +72,7 @@ export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence =
 
   let changedItems = new Set()
   let changedSubs = new Set()
+  let removedItems = new Set()
 
   function put(itemId, body, extra = {}, at = now()) {
     const prior = items.get(itemId)
@@ -60,6 +81,7 @@ export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence =
       : { itemId, revision: 1, body, sequence: ++sequence, observedAt: at, ...extra }
     items.set(itemId, item)
     changedItems.add(itemId)
+    removedItems.delete(itemId)
     return item
   }
   function revise(itemId, patch) {
@@ -166,7 +188,7 @@ export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence =
         const text = (streamed.get(ev.messageId) || '') + String(ev.text ?? '')
         streamed.set(ev.messageId, text)
         openTurnFor(lastUserItemId, at)
-        put(String(ev.messageId), { kind: 'message', role: 'assistant', blocks: [{ type: 'text', text }] }, {}, at)
+        put(String(ev.messageId), { kind: 'message', role: 'assistant', blocks: [{ type: 'text', text }] }, childLinkage(ev), at)
         break
       }
       case 'assistant': {
@@ -174,12 +196,12 @@ export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence =
         const text = String(ev.text ?? '')
         streamed.set(ev.messageId, text)
         openTurnFor(lastUserItemId, at)
-        put(String(ev.messageId), { kind: 'message', role: 'assistant', blocks: [{ type: 'text', text }] }, {}, at)
+        put(String(ev.messageId), { kind: 'message', role: 'assistant', blocks: [{ type: 'text', text }] }, childLinkage(ev), at)
         break
       }
       case 'thinking': {
         if (!ev.messageId || !ev.text) break
-        put(`reasoning:${ev.messageId}`, { kind: 'message', role: 'reasoning', blocks: [{ type: 'text', text: String(ev.text) }] }, {}, at) // i18n-ignore
+        put(`reasoning:${ev.messageId}`, { kind: 'message', role: 'reasoning', blocks: [{ type: 'text', text: String(ev.text) }] }, childLinkage(ev), at) // i18n-ignore
         break
       }
       case 'tool': {
@@ -192,7 +214,7 @@ export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence =
           revise(itemId, { state })
           break
         }
-        const linkage = ev.parentToolUseId ? { agentId: String(ev.parentToolUseId), providerParentRef: String(ev.parentToolUseId) } : {}
+        const linkage = childLinkage(ev)
         openTurnFor(lastUserItemId, at)
         put(itemId, { kind: 'tool-call', name: String(ev.name ?? ''), input: parseInput(ev.input), callId: String(ev.id), state, ...(prior && prior.body.output ? { output: prior.body.output } : {}) }, linkage, at)
         break
@@ -200,7 +222,7 @@ export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence =
       case 'toolResult': {
         if (!ev.id) break
         const itemId = `tool:${ev.id}` // i18n-ignore
-        if (!items.has(itemId)) put(itemId, { kind: 'tool-call', name: '', input: null, callId: String(ev.id), state: 'running' }, {}, at)
+        if (!items.has(itemId)) put(itemId, { kind: 'tool-call', name: '', input: null, callId: String(ev.id), state: 'running' }, childLinkage(ev), at)
         revise(itemId, { state: ev.isError ? 'failed' : 'completed', output: bounded(ev.text) })
         break
       }
@@ -251,6 +273,22 @@ export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence =
         put(`status:notice-${sequence + 1}`, { kind: 'status', text: String(ev.text), tone }, {}, at) // i18n-ignore
         break
       }
+      case 'subagents': {
+        // The engine's full roster of one spawn group, revised in place; the
+        // session's own row (never a child's). An empty roster removes it.
+        if (ev.groupId == null) break
+        const itemId = `subagents:${ev.groupId}` // i18n-ignore
+        const agents = (Array.isArray(ev.agents) ? ev.agents : []).map(subagentEntry).filter(Boolean)
+        if (!agents.length) {
+          if (items.delete(itemId)) {
+            changedItems.delete(itemId)
+            removedItems.add(itemId)
+          }
+          break
+        }
+        put(itemId, { kind: 'message', role: 'system', blocks: [{ type: 'text', text: subagentGroupFallbackText(agents) }, { type: 'subagent-group', groupId: String(ev.groupId), agents }] }, {}, at)
+        break
+      }
       case 'rateLimit':
         meta.rateLimit = { fiveHour: ev.fiveHour || null, sevenDay: ev.sevenDay || null }
         break
@@ -279,6 +317,7 @@ export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence =
     snapshotEvent() {
       changedItems = new Set()
       changedSubs = new Set()
+      removedItems = new Set()
       const list = [...items.values()].sort((a, b) => a.sequence - b.sequence)
       return {
         type: 'snapshot',
@@ -300,15 +339,16 @@ export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence =
     apply(ev) {
       if (!ev || typeof ev !== 'object') return null
       applyEvent(ev)
-      if (!changedItems.size && !changedSubs.size) return null
+      if (!changedItems.size && !changedSubs.size && !removedItems.size) return null
       const batch = {
         cursor: cursor(),
         items: [...changedItems].map((id) => items.get(id)),
-        removedItemIds: [],
+        removedItemIds: [...removedItems],
         submissions: [...changedSubs].map((id) => submissions.get(id))
       }
       changedItems = new Set()
       changedSubs = new Set()
+      removedItems = new Set()
       return { type: 'batch', fence, batch }
     },
     // Several events (a history replay) into items, without batches.
@@ -316,6 +356,7 @@ export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence =
       for (const ev of events || []) if (ev && typeof ev === 'object') applyEvent(ev)
       changedItems = new Set()
       changedSubs = new Set()
+      removedItems = new Set()
     },
     items: () => [...items.values()].sort((a, b) => a.sequence - b.sequence),
     submissions: () => [...submissions.values()],
