@@ -16,7 +16,7 @@ import SshPasswordDialog from './components/remote/SshPasswordDialog.vue'
 import { settings, loadSettings, DEFAULT_SETTINGS } from './settings'
 import { effectiveAgent, agentEnabled, launchSignature, launchIsYolo, launchSessionValues, launchPermissions, sameFolder } from '../../shared/agentPrefs'
 import { validPaneSessionOptions } from '../../shared/agentSessionOptions'
-import { loadModelLists, modelsFor } from './agentModels'
+import { loadModelLists, modelsFor, refreshModels } from './agentModels'
 import { THEMES } from './themes'
 import McpDialog from './components/McpDialog.vue'
 import CommandPalette from './components/CommandPalette.vue'
@@ -6568,6 +6568,8 @@ async function onAgentUpdateResult(agentId, r) {
   job.detail = r.detail || ''
   if (r.ok === true) {
     await loadAgents(true)
+    // A new version can list new models: its list is asked again.
+    void refreshModels(agentId, (settings.agentPrefs[agentId] && settings.agentPrefs[agentId].command) || '')
     // The main process checked the version after a background update.
     const res = r.row ? null : await checkAgentUpdates({ force: false, quiet: true })
     const row = r.row || (res && res.agents ? res.agents[agentId] : null)
