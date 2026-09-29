@@ -26,7 +26,7 @@ const hint = computed(() => {
 
 const examples = computed(() => {
   const n = name.value
-  const list = [`${n} .`, `${n} new --agent claude`, `${n} status`, `${n} --help`].join('  ·  ') // i18n-ignore command lines
+  const list = [`${n} .`, `${n} new --agent claude`, `${n} status`, `${n} --help`].join('  ·  ') // i18n-ignore
   return t('settings.cli.examples', 'In a terminal: {{examples}}', { examples: list })
 })
 
