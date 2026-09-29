@@ -70,6 +70,7 @@ import { detectAgents } from './agentDetect'
 import { createPortScanner } from './workspacePorts'
 import { createResourceCollector } from './resourceUsage'
 import { newTeamSecret, setTeamSecret, revokeTeamSecret } from './teamAuth'
+import { registerLaunch, endLaunch } from './launchReady'
 import { publishTeamTasks, takeTeamRequests, finishTeamRequests, releaseTeamRequests, messageStatuses, writeBoardPanes, toolsAlive, writeRoster, writeTeamAnswer, publishWorkers } from './teamTasks'
 import {
   writeServerScript,
@@ -2189,6 +2190,7 @@ const host = createPtyClient({
     if (pid && info?.pid && pid !== info.pid) return // a delayed exit from the previous execution
     void agentStateStore.unregister(id, info?.agentLaunchToken).catch(() => {})
     revokeTeamSecret(id)
+    endLaunch(id)
     installLogs.onExit(id, exitCode)
     sshAskpass.paneExited(id)
     remoteHosts.paneExited(id, exitCode)
@@ -2305,6 +2307,10 @@ ipcMain.handle('pty:create', async (_evt, opts = {}) => {
   ptyInfo.set(id, { shellId: shell.id, shellName: shell.name, backend, pid: res.pid, agentLaunchToken })
   // A relaunch replaces the previous secret: the old one is void.
   setTeamSecret(id, teamSecret)
+  // Its ready handshake (launchReady.js) counts only for this launch, and
+  // only when Tessel started it without a first prompt (it waits at its prompt).
+  if (agentProvider) registerLaunch(id, agentLaunchToken, { startsIdle: opts.startsIdle === true })
+  else endLaunch(id)
   if (remote) {
     // "Connecting…" while ssh logs in (sshAskpass.js decides when it is
     // through); without askpass, connected at once as before.
@@ -2342,8 +2348,10 @@ ipcMain.handle('pty:attach', async (_evt, id) => {
   pendingData.delete(id)
   ptyInfo.set(id, { shellId: res.shellId, shellName: res.shellName, backend: res.backend, pid: res.pid, agentLaunchToken: res.agentLaunchToken })
   // Still running since before: its team secret comes back from the host.
-  if (res.exited) revokeTeamSecret(id)
-  else setTeamSecret(id, res.teamSecret)
+  if (res.exited) {
+    revokeTeamSecret(id)
+    endLaunch(id)
+  } else setTeamSecret(id, res.teamSecret)
   if (res.remoteHostId && !res.exited) remoteHosts.paneStarted(id, res.remoteHostId)
   if (res.agentProvider && res.agentLaunchToken && !res.exited) {
     try { await agentStateStore.register({ paneId: id, provider: res.agentProvider, launchToken: res.agentLaunchToken, startedAt: res.agentStartedAt }) }
@@ -2389,6 +2397,7 @@ ipcMain.handle('pty:reconcile', async (_evt, liveIds = []) => {
       host.send('kill', { id })
       ptyInfo.delete(id)
       revokeTeamSecret(id)
+      endLaunch(id)
       closed++
     }
   }
@@ -2409,6 +2418,7 @@ ipcMain.on('pty:kill', (_evt, { id }) => {
   host.send('kill', { id })
   ptyInfo.delete(id)
   revokeTeamSecret(id)
+  endLaunch(id)
 })
 
 // Settings > General, "Confirm before closing running terminals": is a
@@ -2458,6 +2468,7 @@ ipcMain.handle('pty:stopAndWait', async (_evt, { ids = [], timeoutMs = 15000 } =
     host.send('kill', { id })
     ptyInfo.delete(id)
     revokeTeamSecret(id)
+    endLaunch(id)
   }
   const res = await waitForExit({
     entries: Object.values(trees).flat(),
