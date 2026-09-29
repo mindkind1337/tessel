@@ -637,6 +637,16 @@
       "dismiss": "Ignorer la mise à jour",
       "dismissTip": "Ignorer l'astuce",
       "reassurance": "Vos panneaux se rouvriront là où ils étaient après la mise à jour, et Claude et Codex reprendront leurs conversations."
+    },
+    "cli": {
+      "projectFailed": "Tessel n'a pas pu ouvrir {{path}} comme projet.",
+      "noProject": "Aucun projet n'est ouvert dans Tessel. Ouvrez-en un d'abord (tessel open <dossier>).",
+      "unknownAgent": "Aucun agent « {{id}} » n'est installé et activé. Disponibles : {{list}}",
+      "unknownShell": "Aucun shell « {{id}} » dans Tessel.",
+      "paneFailed": "Tessel n'a pas pu ouvrir le panneau.",
+      "paneOpened": "Ouvert depuis la ligne de commande : {{pane}}",
+      "cardAdded": "Carte ajoutée depuis la ligne de commande : {{title}}",
+      "unknownRequest": "Demande inconnue."
     }
   }
 }

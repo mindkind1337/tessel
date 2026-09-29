@@ -660,7 +660,37 @@
       "busy": "Cette automatisation est déjà en cours.",
       "notLoaded": "Vos automatisations n'ont pas pu être lues. Redémarrez Tessel.",
       "invalid": "Cette automatisation n'est pas valide.",
-      "scheduleTooFrequent": "Les exécutions doivent être espacées d'au moins {{min}} minutes : chacune ouvre un volet (et une copie du projet)."
+      "scheduleTooFrequent": "Les exécutions doivent être espacées d'au moins {{min}} minutes : chacune ouvre un volet (et une copie du projet).",
+      "remotePromptTooLong": "Sur un projet distant, le prompt va sur la ligne de commande : au plus 3000 caractères."
+    },
+    "cli": {
+      "tooLarge": "La demande est trop grande.",
+      "badRequest": "Ce n'est pas une demande de la commande tessel.",
+      "badParams": "Les paramètres de la demande ne sont pas valides.",
+      "badNumber": "{{name}} doit être un nombre entier positif.",
+      "badPath": "Ce n'est pas un chemin local complet : {{path}}",
+      "badId": "Identifiant de {{name}} non valide : {{value}}",
+      "badValue": "Valeur de {{name}} non valide : {{value}}",
+      "modelNeedsAgent": "--model et --effort vont avec --agent.",
+      "effortNeedsModel": "--effort va avec --model.",
+      "agentOrShell": "Choisissez --agent ou --shell, pas les deux.",
+      "noTitle": "La carte doit avoir un titre.",
+      "unknownMethod": "Demande inconnue : {{method}}",
+      "unauthorized": "Le jeton de la commande tessel a été refusé. Enregistrez de nouveau la commande dans Paramètres > Général.",
+      "failed": "Tessel n'a pas pu le faire.",
+      "replyTooLarge": "La réponse est trop grande.",
+      "busy": "Tessel est occupé par d'autres commandes. Réessayez.",
+      "windowTimeout": "La fenêtre de Tessel n'a pas répondu à temps.",
+      "windowReloaded": "La fenêtre de Tessel s'est rechargée avant de répondre. Réessayez.",
+      "noWindow": "La fenêtre de Tessel n'est pas ouverte.",
+      "notFound": "Introuvable : {{path}}",
+      "badInstallPath": "Le dossier de Tessel contient un caractère que la commande ne peut pas utiliser.",
+      "unsupported": "La commande tessel n'est disponible que sous Windows.",
+      "notOurs": "{{path}} existe et n'a pas été écrit par Tessel. Rien n'a été modifié.",
+      "pathDenied": "Windows a bloqué la modification de votre PATH utilisateur (accès refusé) ; votre organisation le gère peut-être. Ajoutez vous-même ce dossier à votre PATH : {{dir}}",
+      "pathUnreadable": "Tessel n'a pas pu lire votre PATH utilisateur. Rien n'a été modifié.",
+      "pathWriteFailed": "Tessel n'a pas pu modifier votre PATH utilisateur. Rien n'a été modifié.",
+      "pathChanged": "Votre PATH utilisateur a changé entre-temps. Rien n'a été modifié ; réessayez."
     }
   }
 }

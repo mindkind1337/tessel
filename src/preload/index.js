@@ -369,6 +369,23 @@ const api = {
     }
   },
 
+  // The tessel command (src/main/cliServer.js, cliInstall.js): registering it
+  // (Settings > General), and the requests the window answers (onRequest,
+  // answered with reply; ready once the workspaces are back).
+  cli: {
+    installStatus: () => ipcRenderer.invoke('cli:installStatus'),
+    install: () => ipcRenderer.invoke('cli:install'),
+    uninstall: () => ipcRenderer.invoke('cli:uninstall'),
+    reveal: () => ipcRenderer.invoke('cli:reveal'),
+    ready: () => ipcRenderer.invoke('cli:ready'),
+    reply: (msg) => ipcRenderer.invoke('cli:reply', msg),
+    onRequest: (cb) => {
+      const handler = (_e, payload) => cb(payload)
+      ipcRenderer.on('cli:request', handler)
+      return () => ipcRenderer.removeListener('cli:request', handler)
+    }
+  },
+
   // Updates (see src/main/updater.js).
   // Remote hosts over SSH (src/main/remoteHosts.js): ids and form fields only.
   remoteHosts: {

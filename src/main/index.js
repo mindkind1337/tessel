@@ -91,7 +91,10 @@ import {
 } from './teamInstall'
 import teamServerSource from './teamMcp/server.cjs?raw'
 import { ensureInbox, takeInbox, removeInbox } from './leadInbox'
-import { t, setLanguage as setMainLanguage } from './i18n'
+import { t, setLanguage as setMainLanguage, currentLocale, onLanguageChange } from './i18n'
+import { createCliServer, CliError } from './cliServer'
+import { createCliBridge } from './cliBridge'
+import { createCliInstaller, createUserPathRegistry, cliBinDir, cliCommandName, cliScriptPath, shimText } from './cliInstall'
 import {
   ensureTeamChannel,
   pollTeamChannel,
@@ -2804,15 +2807,18 @@ function createWindow() {
       editorDirtyCount = 0
       // A reloading page starts no run until it says it is ready again.
       automations.setWindowReady(false)
+      cliBridge.windowGone()
     }
   })
   mainWindow.webContents.on('render-process-gone', () => {
     editorDirtyCount = 0
     automations.setWindowReady(false)
+    cliBridge.windowGone()
   })
   mainWindow.on('closed', () => {
     mainWindow = null
     automations.setWindowReady(false)
+    cliBridge.windowGone()
   })
 }
 
@@ -2884,6 +2890,163 @@ function ensureDevShortcut() {
   return repaired
 }
 
+// --- The tessel command (Settings > General > Tessel CLI) ---------------------------
+// cliServer.js: the pipe (current user only, served by the askpass helper), its
+// token and the checks; cliBridge.js: what the window answers; cliInstall.js:
+// tessel.cmd and the user PATH. What the command can do is listed in cliServer.js.
+let cliUserSid = null
+function restrictToUser(file) {
+  if (process.platform !== 'win32') return
+  const sys32 = join(process.env.SystemRoot || 'C:\\Windows', 'System32')
+  const apply = (sid) =>
+    execFile(join(sys32, 'icacls.exe'), [file, '/inheritance:r', '/grant:r', `*${sid}:F`], { windowsHide: true, timeout: 15000 }, (err) => {
+      if (err) log.warn('cli', `icacls: ${err.message}`)
+    })
+  if (cliUserSid) return apply(cliUserSid)
+  execFile(join(sys32, 'whoami.exe'), ['/user', '/fo', 'csv', '/nh'], { windowsHide: true, timeout: 15000 }, (err, stdout) => {
+    const m = /"(S-1-[0-9-]+)"/.exec(String(stdout || ''))
+    if (err || !m) return log.warn('cli', 'user SID not found: the command files keep their folder permissions')
+    cliUserSid = m[1]
+    apply(cliUserSid)
+  })
+}
+const cliBridge = createCliBridge({ send })
+ipcMain.handle('cli:ready', (event) => {
+  if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return false
+  cliBridge.setReady(true)
+  return true
+})
+ipcMain.handle('cli:reply', (event, msg) => {
+  if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return false
+  return cliBridge.reply(msg)
+})
+function cliFocusWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) throw new CliError('no_window', t('main.cli.noWindow', 'Tessel’s window is not open.'))
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  mainWindow.show()
+  // Windows keeps a background program from taking the focus: on top for a
+  // moment brings the window to the front all the same.
+  mainWindow.setAlwaysOnTop(true)
+  mainWindow.focus()
+  mainWindow.setAlwaysOnTop(false)
+}
+const cliHandlers = {
+  ping: async () => ({ version: app.getVersion(), pid: process.pid }),
+  focus: async () => {
+    cliFocusWindow()
+    return { focused: true }
+  },
+  open: async ({ path, line, col }) => {
+    let st
+    try {
+      st = await fs.promises.stat(path)
+    } catch {
+      throw new CliError('not_found', t('main.cli.notFound', 'Not found: {{path}}', { path }))
+    }
+    const result = st.isDirectory()
+      ? await cliBridge.ask('openProject', { path })
+      : await cliBridge.ask('openFile', { path, line, col })
+    cliFocusWindow()
+    return result
+  },
+  new: async (params) => {
+    if (params.cwd) {
+      const st = await fs.promises.stat(params.cwd).catch(() => null)
+      if (!st || !st.isDirectory()) params = { ...params, cwd: null }
+    }
+    const result = await cliBridge.ask('newPane', params)
+    cliFocusWindow()
+    return result
+  },
+  status: async () => ({ version: app.getVersion(), ...(await cliBridge.ask('status', {})) }),
+  'task.add': async (params) => cliBridge.ask('addTask', params),
+  usage: async () => accountUsage.usage()
+}
+const cliServer = createCliServer({
+  userData: app.getPath('userData'),
+  netApi: createAskpassPipeHost({ exePath: () => askpassExePath(__dirname) }),
+  handlers: cliHandlers,
+  log,
+  restrict: restrictToUser,
+  info: () => ({ appVersion: app.getVersion(), locale: currentLocale() }),
+  onDown: () => scheduleCliStart(5000)
+})
+let cliStartTimer = null
+let cliStartTries = 0
+function scheduleCliStart(delay) {
+  if (process.platform !== 'win32' || appQuitting || cliStartTimer) return
+  cliStartTimer = setTimeout(() => {
+    cliStartTimer = null
+    cliServer.start().then((ok) => {
+      if (ok) cliStartTries = 0
+      // The helper may still be building (dev) or blocked: try a few more times.
+      else if (++cliStartTries < 10) scheduleCliStart(Math.min(60000, 3000 * cliStartTries))
+    })
+  }, delay)
+}
+app.on('will-quit', () => {
+  if (cliStartTimer) clearTimeout(cliStartTimer)
+  cliServer.stop()
+})
+// The runtime file tells the command the interface's language.
+// A registered command gets it too, for its messages while Tessel is closed.
+onLanguageChange(() => {
+  cliServer.refreshInfo()
+  try {
+    cliInstaller.refresh()
+  } catch {
+    /* kept as it was */
+  }
+})
+
+const cliInstaller = createCliInstaller({
+  binDir: cliBinDir(process.env, os.homedir()),
+  name: cliCommandName(app.isPackaged),
+  shim: () =>
+    shimText({
+      execPath: process.execPath,
+      scriptPath: cliScriptPath(__dirname),
+      userData: app.getPath('userData'),
+      // The installed app is started by the command when needed; the dev
+      // build is not (it needs electron-vite).
+      appPath: app.isPackaged ? process.execPath : '',
+      name: cliCommandName(app.isPackaged),
+      lang: currentLocale()
+    }),
+  registry: createUserPathRegistry()
+})
+const fromWindow = (event) => !!mainWindow && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents
+ipcMain.handle('cli:installStatus', async (event) => {
+  if (!fromWindow(event)) return null
+  try {
+    return { ok: true, status: await cliInstaller.status() }
+  } catch (err) {
+    return { ok: false, error: err.message }
+  }
+})
+// Register / Remove: the window asks first (a confirmation dialog).
+for (const [channel, fn] of [
+  ['cli:install', () => cliInstaller.install()],
+  ['cli:uninstall', () => cliInstaller.uninstall()]
+]) {
+  ipcMain.handle(channel, async (event) => {
+    if (!fromWindow(event)) return { ok: false }
+    try {
+      const status = await fn()
+      log.info('cli', `${channel === 'cli:install' ? 'registered' : 'removed'} ${cliInstaller.commandPath}`)
+      return { ok: true, status }
+    } catch (err) {
+      log.warn('cli', `${channel}: ${err.message}`)
+      return { ok: false, error: err.message }
+    }
+  })
+}
+ipcMain.handle('cli:reveal', (event) => {
+  if (!fromWindow(event)) return false
+  if (fs.existsSync(cliInstaller.commandPath)) shell.showItemInFolder(cliInstaller.commandPath)
+  return true
+})
+
 // One running copy per data folder: two copies on the same data would
 // overwrite each other's layout and saved output, so opening a second copy
 // focuses the first instead. The installed app and the dev build have their
@@ -2926,6 +3089,15 @@ Promise.all([acquireInstanceLock(), app.whenReady()]).then(([gotInstanceLock]) =
   ensureDevShortcut()
   createWindow()
   updater.start()
+  // The tessel command's pipe; a registered command follows this Tessel.
+  if (process.platform === 'win32') {
+    scheduleCliStart(0)
+    try {
+      if (cliInstaller.refresh()) log.info('cli', `updated ${cliInstaller.commandPath}`)
+    } catch (err) {
+      log.warn('cli', `command not updated: ${err.message}`)
+    }
+  }
   // A model changed in an agent: its panes read it again (header).
   const stopModelWatch = watchModelFiles((agentId) => send('agents:modelChanged', agentId))
   app.on('will-quit', stopModelWatch)

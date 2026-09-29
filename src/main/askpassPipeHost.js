@@ -1,4 +1,4 @@
-// The askpass pipe, served by the helper itself ("tessel-askpass.exe --serve
+// The askpass pipe (and the command-line pipe, cliServer.js), served by the helper itself ("tessel-askpass.exe --serve
 // <name>", src/main/askpass/TesselAskpass.cs) so the pipe gets an explicit
 // DACL: full control for the current Windows user only, network logons
 // denied. A pipe made by Node (net.createServer) cannot be given one, and its
@@ -116,7 +116,7 @@ export function createAskpassPipeHost({
           err.code = code
           srv.emit('error', err)
         }
-        if (!exe || !PIPE_PREFIX.test(path) || !/^tessel-askpass-[0-9a-f]{32}$/.test(name)) {
+        if (!exe || !PIPE_PREFIX.test(path) || !/^tessel-(askpass|cli)-[0-9a-f]{32}$/.test(name)) {
           setImmediate(() => fail('ENOHELPER'))
           return srv
         }

@@ -1,4 +1,5 @@
-// Tessel's SSH_ASKPASS helper (see src/main/sshAskpass.js).
+// Tessel's SSH_ASKPASS helper (see src/main/sshAskpass.js), and the server of
+// Tessel's command-line pipe (src/main/cliServer.js).
 //
 // OpenSSH runs it when it needs an answer from the user: a password, a key
 // passphrase, a keyboard-interactive challenge, the host key question. The
@@ -122,7 +123,9 @@ static class Server
 
     public static int Run(string name)
     {
-        if (!Regex.IsMatch(name, "^tessel-askpass-[0-9a-f]{32}$")) return 2;
+        // Two pipes use this server: the askpass pipe, and the command-line
+        // pipe (src/main/cliServer.js, for the tessel command).
+        if (!Regex.IsMatch(name, "^tessel-(askpass|cli)-[0-9a-f]{32}$")) return 2;
         var stdout = Console.OpenStandardOutput();
         Out = new StreamWriter(stdout, new UTF8Encoding(false)) { AutoFlush = true, NewLine = "\n" };
         PipeSecurity security = MakeSecurity();
