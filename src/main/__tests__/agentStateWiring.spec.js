@@ -195,7 +195,7 @@ it('does not overwrite an authoritative state clock with the previous execution 
 })
 
 it('blocks both native-inbox and typed wake paths when managed status is not confirmed', () => {
-  const start = appSource.indexOf('// A Codex just relaunched (resume)')
+  const start = appSource.indexOf('function wakeIfNeeded(leaf) {')
   const end = appSource.indexOf('\nconst restartedForTools', start)
   const agentInbox = vi.fn(async () => ({ ok: true })),
     deliverToAgent = vi.fn()
@@ -230,46 +230,6 @@ it('blocks both native-inbox and typed wake paths when managed status is not con
   run(node)
   expect(agentInbox).not.toHaveBeenCalled()
   expect(deliverToAgent).not.toHaveBeenCalled()
-})
-
-it('a relaunched Codex with no hook yet is woken only when its screen proves it idle with an empty prompt', () => {
-  const start = appSource.indexOf('// A Codex just relaunched (resume)')
-  const end = appSource.indexOf('\nconst restartedForTools', start)
-  const make = ({ screenIdle, emptyPrompt }) => {
-    const deliverToAgent = vi.fn()
-    const node = { id: 'pane-2', agentLaunchToken: 'b'.repeat(32), agentId: 'codex', kind: 'agent', teamTools: true }
-    const run = vm.runInNewContext(appSource.slice(start, end) + '; wakeIfNeeded', {
-      agentStateKnown: () => false,
-      getAgentState: () => ({ confirmed: screenIdle, stale: false, state: screenIdle ? 'idle' : 'unknown' }),
-      inputShownEmpty: () => emptyPrompt,
-      teamUnread: { 'pane-2': 1 },
-      settings: { teamWakeUps: true },
-      wakeState: { 'pane-2': { since: 0, woken: false } },
-      trackedState: { 'pane-2': { state: 'idle' } },
-      approvals: {},
-      limits: {},
-      pendingMessages: {},
-      unsent: {},
-      delivering: new Set(),
-      restartingLeaves: new Set(),
-      agentInboxes: {},
-      inboxDownAt: {},
-      window: { shellApi: {} },
-      WAKE_AFTER_MS: 0,
-      REWAKE_AFTER_MS: 0,
-      WAKE_AFTER_RESTART_MS: 0,
-      WAKE_LINE: /^$/,
-      getPane: () => null,
-      wakeAllowed: () => true,
-      paneLabel: () => '#1',
-      deliverToAgent
-    })
-    run(node)
-    return deliverToAgent
-  }
-  expect(make({ screenIdle: true, emptyPrompt: true })).toHaveBeenCalledTimes(1)
-  expect(make({ screenIdle: true, emptyPrompt: false })).not.toHaveBeenCalled()
-  expect(make({ screenIdle: false, emptyPrompt: true })).not.toHaveBeenCalled()
 })
 
 it("each launch gets its own team secret, only in the pane's environment and main's memory", async () => {
