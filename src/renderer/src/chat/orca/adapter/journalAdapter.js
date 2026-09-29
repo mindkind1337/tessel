@@ -417,7 +417,11 @@ export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence =
     // One chat event -> the batch for the reducer, or null.
     apply(ev) {
       if (!ev || typeof ev !== 'object') return null
-      applyEvent(ev)
+      return this.applyMany([ev])
+    },
+    // Several live events (an imported history) -> ONE batch, or null.
+    applyMany(events) {
+      for (const ev of events || []) if (ev && typeof ev === 'object') applyEvent(ev)
       if (!changedItems.size && !changedSubs.size && !removedItems.size) return null
       const batch = {
         cursor: cursor(),

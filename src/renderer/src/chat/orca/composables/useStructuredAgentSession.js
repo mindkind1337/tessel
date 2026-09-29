@@ -41,6 +41,21 @@ export function useStructuredAgentSession({ paneId, api = typeof window !== 'und
     Object.assign(meta, adapter.meta)
   }
   function applyLive(ev, seq) {
+    // An imported history (sessions.js emitHistory): its events, each with
+    // its own seq, drawn in one batch and never announced.
+    if (ev && ev.type === 'history') {
+      const fresh = []
+      for (const item of Array.isArray(ev.events) ? ev.events : []) {
+        if (!item || !item.event || typeof item.seq !== 'number' || item.seq <= lastSeq) continue
+        lastSeq = item.seq
+        fresh.push(item.event)
+      }
+      if (typeof seq === 'number') lastSeq = Math.max(lastSeq, seq)
+      const out = fresh.length ? adapter.applyMany(fresh) : null
+      if (out) feed(out)
+      syncMeta()
+      return
+    }
     if (typeof seq === 'number') {
       if (seq <= lastSeq) return
       lastSeq = seq

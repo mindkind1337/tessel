@@ -1551,3 +1551,78 @@ describe('idle stop', () => {
     expect((await handlers['chat:open']({ paneId, cwd: tmp, permissions: 'manual', idleMinutes: 0 })).ok).toBe(true)
   })
 })
+
+describe('earlier history of a resumed conversation', () => {
+  const id = '0b8f3c2e-1111-4222-8333-944445555666'
+  const line = (r) => JSON.stringify(r)
+  function claudeFolder() {
+    const home = join(tmp, 'claude-home')
+    fs.mkdirSync(join(home, 'projects', 'C--p'), { recursive: true })
+    fs.writeFileSync(
+      join(home, 'projects', 'C--p', `${id}.jsonl`),
+      [
+        line({ type: 'user', uuid: 'u1', timestamp: '2026-09-01T10:00:00.000Z', message: { content: 'Earlier prompt' } }),
+        line({ type: 'assistant', uuid: 'a1', timestamp: '2026-09-01T10:00:05.000Z', message: { id: 'm1', content: [{ type: 'text', text: 'Earlier answer' }] } })
+      ].join('\n') + '\n'
+    )
+    return home
+  }
+
+  it('is journaled once, before the chat starts, and sent as one history event', async () => {
+    const home = claudeFolder()
+    const transcriptHome = vi.fn(() => home)
+    deps = makeDeps({ transcriptHome })
+    const chat = createChatSessions(deps)
+    await openOk(chat, { resumeId: id })
+    expect(transcriptHome).toHaveBeenCalledWith('claude', expect.any(Object))
+    const batches = events('history')
+    expect(batches).toHaveLength(1)
+    const imported = batches[0].events.map((x) => x.event)
+    expect(imported.map((e) => e.type)).toEqual(['notice', 'user', 'assistant', 'turnEnd'])
+    expect(imported.every((e) => e.imported)).toBe(true)
+    expect(imported[0].at).toBe(Date.parse('2026-09-01T10:00:00.000Z'))
+    // Never sent one by one (no turn-end reminder for these).
+    expect(events('turnEnd')).toHaveLength(0)
+    const seqs = batches[0].events.map((x) => x.seq)
+    expect(seqs).toEqual([...seqs].sort((a, b) => a - b))
+    // The journal holds them, in order, before the live status.
+    const stored = chat.history({ paneId }).events.map((row) => row.event.type)
+    expect(stored.indexOf('user')).toBeLessThan(stored.lastIndexOf('status'))
+    expect(chat.history({ paneId }).events.find((row) => row.event.type === 'assistant').event).toMatchObject({ text: 'Earlier answer', at: Date.parse('2026-09-01T10:00:05.000Z') })
+    // Opened again (a reload, Tessel restarted): the journal has it, the file is not read again.
+    await chat.close({ paneId })
+    sent = []
+    const again = createChatSessions(deps)
+    await openOk(again, { resumeId: id })
+    expect(events('history')).toHaveLength(0)
+    expect(again.history({ paneId }).events.filter((row) => row.event.type === 'user')).toHaveLength(1)
+  })
+
+  it('reads nothing without a resume id, without an allowed folder, or when the file is missing', async () => {
+    const home = claudeFolder()
+    deps = makeDeps({ transcriptHome: vi.fn(() => home) })
+    let chat = createChatSessions(deps)
+    await openOk(chat)
+    expect(events('history')).toHaveLength(0)
+    await chat.close({ paneId, forget: true })
+
+    deps = makeDeps({ transcriptHome: vi.fn(() => null) })
+    chat = createChatSessions(deps)
+    await openOk(chat, { resumeId: id })
+    expect(events('history')).toHaveLength(0)
+    await chat.close({ paneId, forget: true })
+
+    deps = makeDeps({ transcriptHome: vi.fn(() => join(tmp, 'empty-home')) })
+    chat = createChatSessions(deps)
+    await openOk(chat, { resumeId: '9b8f3c2e-1111-4222-8333-944445555666' })
+    expect(events('history')).toHaveLength(0)
+    expect(adapters.at(-1).start).toHaveBeenCalled()
+  })
+
+  it('a reader that throws never stops the chat', async () => {
+    deps = makeDeps({ transcriptHome: () => tmp, readHistory: () => { throw new Error('boom') } })
+    const chat = createChatSessions(deps)
+    await openOk(chat, { resumeId: id })
+    expect(events('history')).toHaveLength(0)
+  })
+})

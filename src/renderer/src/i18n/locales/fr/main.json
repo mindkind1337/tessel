@@ -746,7 +746,9 @@
       "turnFailedNoReason": "Le tour a échoué.",
       "notOffered": "L'agent ne propose pas ce choix ici.",
       "inputUnseen": "Affichez l'intégralité de la demande avant de l'autoriser.",
-      "asleepOther": "Ce panneau contient une autre conversation (en veille). Fermez-la d'abord."
+      "asleepOther": "Ce panneau contient une autre conversation (en veille). Fermez-la d'abord.",
+      "historyImported": "Conversation précédente, tirée de l’historique que garde {{agent}}.",
+      "historyImportedPart": "Conversation précédente, tirée de l’historique que garde {{agent}} (seulement sa partie la plus récente)."
     }
   }
 }
