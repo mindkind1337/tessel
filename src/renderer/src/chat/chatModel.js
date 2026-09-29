@@ -40,6 +40,19 @@ export function isBusy(status) {
 
 // --- Helpers -----------------------------------------------------------------------------------
 
+// Bearer tokens, key=value secrets, long hex or base64-like runs. Always
+// before a text is cut: a cut secret would leave its start visible.
+export function maskSecrets(text) {
+  return String(text ?? '')
+    .replace(/\b(bearer|basic|token)\s+[^\s"']+/gi, '$1 ***')
+    .replace(
+      /\b([\w.-]*(?:key|token|secret|password|passwd|pwd|auth|credential|signature)[\w.-]*)(\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s&;|,]+)/gi,
+      (all, name, sep, value) => (/^\*+$/.test(value) ? all : `${name}${sep}***`)
+    )
+    .replace(/\b[a-f0-9]{24,}\b/gi, '***')
+    .replace(/(?<![\w/\\.-])(?=[\w+=-]*\d)(?=[\w+=-]*[A-Za-z])[\w+=-]{32,}/g, '***')
+}
+
 export function truncate(text, max = MAX_SUMMARY) {
   const s = String(text ?? '')
   return s.length > max ? `${s.slice(0, Math.max(0, max - 1))}…` : s
@@ -87,20 +100,20 @@ export function toolSummary(name, input, { cwd = '', max = MAX_SUMMARY } = {}) {
   if (value && typeof value === 'object' && !Array.isArray(value)) {
     if (tool === 'Bash' || tool === 'PowerShell') {
       const cmd = firstLine(value.command || value.cmd)
-      return truncate(cmd ? `${label}: ${cmd}` : label, max)
+      return truncate(maskSecrets(cmd ? `${label}: ${cmd}` : label), max)
     }
     const isSearch = tool === 'Grep' || tool === 'Glob'
     if (!isSearch) {
       for (const k of FILE_KEYS) {
-        if (typeof value[k] === 'string' && value[k]) return truncate(`${label} ${shortPath(value[k], cwd)}`, max)
+        if (typeof value[k] === 'string' && value[k]) return truncate(maskSecrets(`${label} ${shortPath(value[k], cwd)}`), max)
       }
     }
     for (const k of PRIMARY_KEYS) {
-      if (typeof value[k] === 'string' && value[k].trim()) return truncate(`${label} ${firstLine(value[k])}`, max)
+      if (typeof value[k] === 'string' && value[k].trim()) return truncate(maskSecrets(`${label} ${firstLine(value[k])}`), max)
     }
     return truncate(label, max)
   }
-  if (typeof value === 'string' && value.trim()) return truncate(`${label} ${firstLine(value)}`, max)
+  if (typeof value === 'string' && value.trim()) return truncate(maskSecrets(`${label} ${firstLine(value)}`), max)
   return truncate(label, max)
 }
 
@@ -321,7 +334,7 @@ export function chatReducer(state, event, { cwd = '' } = {}) {
       const name = String(event.name || '')
       const patch = {
         name,
-        summary: event.summary ? truncate(event.summary) : toolSummary(name, event.input, { cwd }),
+        summary: event.summary ? truncate(maskSecrets(event.summary)) : toolSummary(name, event.input, { cwd }),
         input: event.input ?? null,
         status: ['running', 'done', 'error'].includes(event.status) ? event.status : 'running'
       }

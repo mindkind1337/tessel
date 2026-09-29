@@ -676,4 +676,64 @@ describe('ChatPane.vue', () => {
     expect(wrapper.find('[data-test="chat-model-menu"]').exists()).toBe(false)
     expect(document.activeElement).toBe(input)
   })
+
+  describe('permission mode (header)', () => {
+    const options = () => wrapper.findAll('[data-test="chat-mode"] option').map((o) => ({ id: o.element.value, disabled: o.element.disabled }))
+
+    it('Claude: its modes; Yolo only for a chat started in Yolo', async () => {
+      await mountPane({ chatPermissionMode: 'default', chatLaunchYolo: false }, { chatSetOption: vi.fn(async () => ({ ok: true })) })
+      expect(options()).toEqual([
+        { id: 'default', disabled: false },
+        { id: 'acceptEdits', disabled: false },
+        { id: 'plan', disabled: false },
+        { id: 'auto', disabled: false },
+        { id: 'bypassPermissions', disabled: true }
+      ])
+      expect(wrapper.find('[data-test="chat-mode"]').attributes('aria-label')).toMatch(/Manual/)
+    })
+
+    it('a choice goes through ctx.chatSetOption (so the worker cap follows); shown only once confirmed', async () => {
+      const chatSetOption = vi.fn(async (leaf, p) => {
+        leaf.chatPermissionMode = p.permissionMode
+        return { ok: true, permissionMode: p.permissionMode, permissions: 'manual' }
+      })
+      await mountPane({ chatPermissionMode: 'default', chatLaunchYolo: true }, { chatSetOption })
+      const sel = wrapper.find('[data-test="chat-mode"]')
+      await sel.setValue('plan')
+      await flushPromises()
+      expect(chatSetOption).toHaveBeenCalledWith(node, { permissionMode: 'plan' })
+      expect(sel.element.value).toBe('plan')
+    })
+
+    it('refused: stays as it was, and says so', async () => {
+      const chatSetOption = vi.fn(async () => ({ ok: false, error: 'no' }))
+      await mountPane({ chatPermissionMode: 'default', chatLaunchYolo: true }, { chatSetOption })
+      await wrapper.find('[data-test="chat-mode"]').setValue('acceptEdits')
+      await flushPromises()
+      expect(wrapper.find('[data-test="chat-mode"]').element.value).toBe('default')
+      expect(ctx.toast).toHaveBeenCalled()
+    })
+
+    it('a capped worker: no Yolo and no Auto, even started in Yolo', async () => {
+      await mountPane({ chatPermissionMode: 'default', chatLaunchYolo: true, maxPermissions: 'manual' }, { chatSetOption: vi.fn() })
+      const o = options()
+      expect(o.find((x) => x.id === 'bypassPermissions').disabled).toBe(true)
+      expect(o.find((x) => x.id === 'auto').disabled).toBe(true)
+    })
+
+    it('Codex: Manual and Yolo; never Yolo during a turn (it would stop the turn)', async () => {
+      const chatSetOption = vi.fn(async () => ({ ok: true }))
+      await mountPane({ agentId: 'codex', chatPermissionMode: 'default', chatLaunchYolo: true }, { chatSetOption })
+      expect(options()).toEqual([
+        { id: 'default', disabled: false },
+        { id: 'bypassPermissions', disabled: false }
+      ])
+      emit({ type: 'status', state: 'working' })
+      await nextTick()
+      expect(options().find((x) => x.id === 'bypassPermissions').disabled).toBe(true)
+      await wrapper.find('[data-test="chat-mode"]').setValue('bypassPermissions')
+      await flushPromises()
+      expect(chatSetOption).not.toHaveBeenCalled()
+    })
+  })
 })

@@ -104,6 +104,80 @@ const iconState = computed(() => (status.value === 'approval' ? 'attention' : st
 
 const permissions = computed(() => (typeof ctx.chatPermissions === 'function' ? ctx.chatPermissions(props.node) : null))
 
+// --- Permission mode (header) ------------------------------------------------------------
+// What the agent may do without asking. Claude has several modes; Codex two
+// (Manual, Yolo). Yolo only for a chat started in Yolo and not capped (a
+// worker never gets more than its coordinator); Codex in Manual never goes
+// more permissive during a turn (that would stop the turn). Through
+// ctx.chatSetOption, so leaf.chatPermissions follows (workers' cap).
+const MODES = { claude: ['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions'], codex: ['default', 'bypassPermissions'] }
+const permissionMode = computed(() => props.node.chatPermissionMode || (permissions.value === 'yolo' ? 'bypassPermissions' : 'default'))
+function modeLabel(mode) {
+  switch (mode) {
+    case 'acceptEdits':
+      return t('chat.mode.acceptEdits', 'Accept edits')
+    case 'plan':
+      return t('chat.mode.plan', 'Plan')
+    case 'auto':
+      return t('chat.mode.auto', 'Auto')
+    case 'bypassPermissions':
+      return t('chat.mode.yolo', 'Yolo')
+    default:
+      return t('chat.mode.manual', 'Manual')
+  }
+}
+function modeHint(mode) {
+  switch (mode) {
+    case 'acceptEdits':
+      return t('chat.mode.acceptEditsHint', 'Changes files without asking; still asks before running commands')
+    case 'plan':
+      return t('chat.mode.planHint', 'Only reads and plans: changes nothing until you accept its plan')
+    case 'auto':
+      return t('chat.mode.autoHint', 'Claude runs the actions it judges safe and asks for the others')
+    case 'bypassPermissions':
+      return t('chat.mode.yoloHint', 'Runs commands and changes files without ever asking')
+    default:
+      return agentId.value === 'codex'
+        ? t('chat.mode.manualCodexHint', 'Works in the project folder; asks before anything outside it or with network access')
+        : t('chat.mode.manualHint', 'Asks before running commands or changing files')
+  }
+}
+// -> '' when this mode may be chosen now, else why not.
+function modeBlocked(mode) {
+  if (mode === permissionMode.value) return ''
+  if (mode === 'bypassPermissions' && !props.node.chatLaunchYolo)
+    return t('chat.mode.yoloOnlyAtStart', 'Yolo only for a chat started in Yolo (Settings > Agents)')
+  if ((mode === 'bypassPermissions' || mode === 'auto') && props.node.maxPermissions === 'manual')
+    return t('chat.mode.capped', 'Not more than its coordinator allows')
+  if (agentId.value === 'codex' && busy.value && mode === 'bypassPermissions')
+    return t('chat.mode.codexBusy', 'Wait for the end of the turn: switching now would stop it')
+  return ''
+}
+const modeOptions = computed(() =>
+  (MODES[agentId.value] || MODES.claude).map((id) => {
+    const why = modeBlocked(id)
+    return { id, label: modeLabel(id), title: why ? `${modeHint(id)}. ${why}` : modeHint(id), disabled: !!why }
+  })
+)
+const modeTitle = computed(() => t('chat.mode.current', 'Permission mode: {{mode}}. {{hint}}', { mode: modeLabel(permissionMode.value), hint: modeHint(permissionMode.value) }))
+const modePending = ref(false)
+async function onModePick(e) {
+  const mode = e.target.value
+  // Shown as it is until the agent confirms.
+  e.target.value = permissionMode.value
+  if (!mode || mode === permissionMode.value || modeBlocked(mode) || typeof ctx.chatSetOption !== 'function') return
+  modePending.value = true
+  let res
+  try {
+    res = await ctx.chatSetOption(props.node, { permissionMode: mode })
+  } catch (err) {
+    res = { ok: false, error: (err && err.message) || String(err) }
+  }
+  modePending.value = false
+  if (!res || res.ok === false)
+    toast(t('chat.mode.failed', 'The permission mode did not change: {{error}}', { error: (res && res.error) || t('chat.error.unknown', 'unknown error') }))
+}
+
 const modelText = computed(() => {
   const m = state.value.model || props.node.model
   if (!m) return ''
@@ -650,8 +724,22 @@ defineExpose({ start, send, interrupt, focusPendingApproval })
         >
           {{ modelText }}
         </button>
+        <select
+          class="chat-mode"
+          :class="{ yolo: permissionMode === 'bypassPermissions' }"
+          data-test="chat-mode"
+          :value="permissionMode"
+          :disabled="modePending || stopped || status === 'starting' || !ctx.chatSetOption"
+          :title="modeTitle"
+          :aria-label="modeTitle"
+          @mousedown.stop
+          @keydown.esc.stop
+          @change="onModePick"
+        >
+          <option v-for="m in modeOptions" :key="m.id" :value="m.id" :disabled="m.disabled" :title="m.title">{{ m.label }}</option>
+        </select>
         <span
-          v-if="permissions === 'yolo'"
+          v-if="permissions === 'yolo' && !ctx.chatSetOption"
           class="chat-badge yolo"
           data-test="chat-permissions"
           :title="t('chat.pane.yoloHint', 'Tools run without asking (Settings)')"
@@ -1238,5 +1326,29 @@ defineExpose({ start, send, interrupt, focusPendingApproval })
 .chat-state-btn:disabled {
   opacity: 0.5;
   cursor: default;
+}
+.chat-mode {
+  flex: none;
+  max-width: 140px;
+  height: 20px;
+  padding: 0 4px;
+  font-size: 11px;
+  color: var(--muted, inherit);
+  background: transparent;
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.35));
+  border-radius: 4px;
+  cursor: pointer;
+}
+.chat-mode.yolo {
+  color: var(--danger, #e5484d);
+  border-color: currentColor;
+}
+.chat-mode:focus-visible {
+  outline: 2px solid var(--accent, #4c8dff);
+  outline-offset: 1px;
+}
+.chat-mode:disabled {
+  cursor: default;
+  opacity: 0.6;
 }
 </style>

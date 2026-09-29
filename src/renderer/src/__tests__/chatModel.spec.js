@@ -270,3 +270,20 @@ describe('chatModel helpers', () => {
     expect(rateLimitParts({ fiveHour: { utilization: 'x' } })).toEqual([])
   })
 })
+
+describe('secrets masked before a summary is cut', () => {
+  it('a token across the 80-character cut leaves none of it visible', async () => {
+    const { toolSummary, maskSecrets } = await import('../chat/chatModel')
+    const token = 'sk-ant-' + 'Ab3'.repeat(20)
+    // Its start falls before the cut, its end after.
+    const cmd = 'curl -H "Authorization: Bearer ' + token + '" https://example.com'
+    const s = toolSummary('Bash', { command: cmd })
+    expect(s.length).toBeLessThanOrEqual(80)
+    expect(s).not.toMatch(/sk-ant|Ab3Ab3/)
+    const key = 'api_key=' + 'Zz9'.repeat(30)
+    const r = toolSummary('WebFetch', { url: 'https://example.com/some/long/path/for/the/cut?x=1&' + key })
+    expect(r).not.toMatch(/Zz9Zz9/)
+    expect(maskSecrets('token=abc')).toBe('token=***')
+  })
+})
+

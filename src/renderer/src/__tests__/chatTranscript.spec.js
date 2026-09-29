@@ -109,7 +109,7 @@ describe('formatChatTranscript', () => {
       '▸ Bash: ls (done)',
       '▸ WebFetch https://api.x.com/v1?api_key=***&q=1 (done)',
       '▸ Grep Bearer *** (done)',
-      '▸ Task use *** and ***… (done)', // the summary was cut first
+      '▸ Task use *** and *** (done)', // masked before the cut: short enough, not cut
       "? Waiting for the user's approval: Bash: export … (arguments hidden)"
     ])
     expect(text).not.toMatch(/sk-live|abc\b|s3cr3t|API_KEY|npm publish|ghp_/)
@@ -121,3 +121,18 @@ describe('formatChatTranscript', () => {
     expect(formatChatTranscript([{ type: 'thinking', messageId: 'm', text: 'hmm' }, { type: 'rateLimit', fiveHour: { utilization: 0.4 } }])).toBe('')
   })
 })
+
+describe('secrets across a cut (read by a coordinator)', () => {
+  it('a tool row whose secret straddles the cut shows none of it', async () => {
+    const { formatChatTranscript } = await import('../chat/chatTranscript')
+    const secret = 'ghp_' + 'Q1w'.repeat(20)
+    const events = [
+      { type: 'tool', id: 't1', name: 'WebFetch', input: { url: 'https://api.example.com/v1/items/very/long/path?access_token=' + secret }, status: 'done' },
+      { type: 'approval', requestId: 'r1', toolName: 'WebFetch', displayName: 'Fetch with token=' + secret, input: {}, status: 'pending' }
+    ]
+    const text = formatChatTranscript(events, 20)
+    expect(text).not.toMatch(/Q1wQ1w/)
+    expect(text).not.toMatch(/ghp_/)
+  })
+})
+

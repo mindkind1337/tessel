@@ -455,6 +455,9 @@ async function chatOpen(leaf, { askTrust = true } = {}) {
   }
   if (res && res.ok) {
     leaf.chatPermissions = permissions
+    // For the header's mode choice: Yolo is offered only to a chat started in Yolo.
+    leaf.chatLaunchYolo = permissions === 'yolo'
+    leaf.chatPermissionMode = permissions === 'yolo' ? 'bypassPermissions' : ownMode && !narrowed ? ownMode[1] : 'default'
     if (res.sessionId) leaf.sessionId = res.sessionId
     if (res.launchToken) leaf.agentLaunchToken = res.launchToken
     if (res.model) leaf.model = res.model
@@ -471,6 +474,7 @@ async function chatSetOption(leaf, payload) {
   const res = await api.setOption({ ...payload, paneId: leaf.id })
   if (res && res.ok && payload.permissionMode != null && (res.permissions === 'yolo' || res.permissions === 'manual')) {
     leaf.chatPermissions = res.permissions
+    if (typeof res.permissionMode === 'string') leaf.chatPermissionMode = res.permissionMode
     scheduleSave()
   }
   return res
@@ -2225,7 +2229,11 @@ provide('panelCtx', {
   // the first time), and the permissions it runs with.
   chatOpen: (leaf, opts) => chatOpen(leaf, opts),
   chatSetOption: (leaf, payload) => chatSetOption(leaf, payload),
-  chatPermissions: (leaf) => launchPermissions(null, [leaf && leaf.projectDir, leaf && leaf.cwd], settings.yoloFolders, settings.agentPermissions),
+  // What the chat runs with now (its mode switches included), else what it would start with.
+  chatPermissions: (leaf) =>
+    leaf && (leaf.chatPermissions === 'yolo' || leaf.chatPermissions === 'manual')
+      ? leaf.chatPermissions
+      : launchPermissions(null, [leaf && leaf.projectDir, leaf && leaf.cwd], settings.yoloFolders, settings.agentPermissions),
   openExternal: (url) => openExternalUrl(url),
   // Tessel's shortcuts pressed in an editor pane (it keeps them from Monaco).
   appShortcut: (e) => onKey(e, { fromEditor: true })

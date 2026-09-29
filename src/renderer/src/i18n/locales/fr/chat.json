@@ -145,6 +145,24 @@
     "history": {
       "failed": "Impossible de charger la conversation",
       "retry": "Réessayer"
+    },
+    "mode": {
+      "manual": "Manuel",
+      "acceptEdits": "Accepter les modifications",
+      "plan": "Plan",
+      "auto": "Auto",
+      "yolo": "Yolo",
+      "manualHint": "Demande avant d'exécuter des commandes ou de modifier des fichiers",
+      "manualCodexHint": "Travaille dans le dossier du projet ; demande avant tout ce qui en sort ou utilise le réseau",
+      "acceptEditsHint": "Modifie les fichiers sans demander ; demande toujours avant d'exécuter des commandes",
+      "planHint": "Lit et planifie seulement : ne modifie rien tant que vous n'acceptez pas son plan",
+      "autoHint": "Claude exécute les actions qu'il juge sûres et demande pour les autres",
+      "yoloHint": "Exécute des commandes et modifie des fichiers sans jamais demander",
+      "yoloOnlyAtStart": "Yolo seulement pour un chat démarré en Yolo (Réglages > Agents)",
+      "capped": "Pas plus que ce que son coordinateur autorise",
+      "codexBusy": "Attendez la fin du tour : changer maintenant l'arrêterait",
+      "current": "Mode de permission : {{mode}}. {{hint}}",
+      "failed": "Le mode de permission n'a pas changé : {{error}}"
     }
   }
 }

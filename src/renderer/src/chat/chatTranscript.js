@@ -13,7 +13,7 @@
 // an approval, or one of Tessel's own. Bidi and zero-width characters are
 // removed. Commands are never shown (their program only), and what looks
 // like a secret in a summary is masked.
-import { chatReducer, initialChatState, toolSummary, parseInput, STOPPED_STATES } from './chatModel'
+import { chatReducer, initialChatState, toolSummary, parseInput, maskSecrets, STOPPED_STATES } from './chatModel'
 import { outputTail } from '../../../shared/orchestration'
 
 export const MAX_MESSAGE = 2000 // characters kept of one message
@@ -43,17 +43,8 @@ function block(head, text, cont) {
     .join('\n')
 }
 
-// Bearer tokens, key=value secrets, long hex or base64-like runs.
-export function maskSecrets(text) {
-  return String(text ?? '')
-    .replace(/\b(bearer|basic|token)\s+[^\s"']+/gi, '$1 ***')
-    .replace(
-      /\b([\w.-]*(?:key|token|secret|password|passwd|pwd|auth|credential|signature)[\w.-]*)(\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s&;|,]+)/gi,
-      (all, name, sep, value) => (/^\*+$/.test(value) ? all : `${name}${sep}***`)
-    )
-    .replace(/\b[a-f0-9]{24,}\b/gi, '***')
-    .replace(/(?<![\w/\\.-])(?=[\w+=-]*\d)(?=[\w+=-]*[A-Za-z])[\w+=-]{32,}/g, '***')
-}
+// maskSecrets lives in chatModel.js (the pane's tool rows use it too).
+export { maskSecrets }
 
 // A command line: its program only (never its arguments, which may hold
 // paths, text or secrets).
@@ -76,7 +67,8 @@ const COMMAND_TOOLS = new Set(['Bash', 'PowerShell'])
 function toolLine(name, input, summary) {
   const tool = String(name || '')
   const text = COMMAND_TOOLS.has(tool) ? commandHint(tool, input, summary) : summary || toolSummary(tool, input)
-  return maskSecrets(oneLine(text, 200))
+  // Masked before it is cut: a cut secret would leave its start visible.
+  return oneLine(maskSecrets(text), 200)
 }
 
 const STOPPED_LABEL = {
@@ -101,13 +93,13 @@ function rowText(r) {
       return `▸ ${summary} (${r.status || 'running'})` // i18n-ignore
     }
     case 'approval': {
-      const what = toolLine(r.toolName, r.input, '') || maskSecrets(oneLine(r.displayName, 80)) || 'a tool'
+      const what = toolLine(r.toolName, r.input, '') || oneLine(maskSecrets(r.displayName), 80) || 'a tool'
       return r.status === 'pending'
         ? `? Waiting for the user's approval: ${what}` // i18n-ignore
         : `? Approval ${r.status}: ${what}` // i18n-ignore
     }
     case 'turn':
-      if (r.status === 'failed') return `[turn failed${r.error ? `: ${maskSecrets(oneLine(r.error, 500))}` : ''}]` // i18n-ignore
+      if (r.status === 'failed') return `[turn failed${r.error ? `: ${oneLine(maskSecrets(r.error), 500)}` : ''}]` // i18n-ignore
       if (r.status === 'interrupted') return '[turn interrupted]'
       return '[turn ended]'
     case 'notice': {
@@ -131,7 +123,7 @@ export function formatChatTranscript(events, lines = 60, { cwd = '' } = {}) {
     const ev = item && item.event && !item.type ? item.event : item
     state = chatReducer(state, ev, { cwd })
     if (ev && ev.type === 'status' && STOPPED_STATES.has(ev.state)) {
-      const why = ev.error ? `: ${maskSecrets(oneLine(ev.error, 300))}` : ''
+      const why = ev.error ? `: ${oneLine(maskSecrets(ev.error), 300)}` : ''
       stops.push({ at: state.rows.length, text: `[stopped: ${STOPPED_LABEL[ev.state]}${why}]` }) // i18n-ignore
     }
   }
