@@ -9,6 +9,7 @@ import { ref, computed, inject, watch } from 'vue'
 import { COLUMNS } from '../../../shared/taskModel'
 import { tasks, addTask, moveTask, removeTask } from '../taskBoardStore'
 import TaskCard from './TaskCard.vue'
+import OrchestrationCard from './OrchestrationCard.vue'
 import { t } from '../i18n'
 
 const props = defineProps({
@@ -148,6 +149,9 @@ const deleteLabel = computed(() =>
       />
       <button class="task-board-add-btn" type="submit">{{ t('tasks.board.add', 'Add') }}</button>
     </form>
+
+    <!-- Orchestration: a lead's workers (allow, stop, go to them). -->
+    <OrchestrationCard :workspace-id="workspaceId" />
 
     <div class="task-board-columns">
       <section

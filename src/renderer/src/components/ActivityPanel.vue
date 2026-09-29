@@ -230,6 +230,25 @@ function taskLine(x) {
       return { who: x.by || x.title, text: t('activity.task.gate', 'asks your decision on {{task}}', { task }), note: x.detail }
     case 'decided':
       return { who: you, text: t('activity.task.decided', 'decided on {{task}}', { task }), note: x.detail }
+    // Coordinator and workers.
+    case 'worker-requested':
+      return { who: x.by || x.title, text: t('activity.task.workerRequested', 'asked for a worker on {{task}}', { task }), note: x.detail }
+    case 'worker-allowed':
+      return { who: you, text: t('activity.task.workerAllowed', 'allowed the worker for {{task}}', { task }), note: '' }
+    case 'worker-started':
+      return {
+        who: x.title,
+        text: t('activity.task.workerStarted', 'started as a worker on {{task}}', { task }),
+        note: x.by ? t('activity.task.workerOf', 'worker of {{coordinator}}', { coordinator: x.by }) : x.detail
+      }
+    case 'worker-refused':
+      return { who: you, text: t('activity.task.workerRefused', 'refused the worker for {{task}}', { task }), note: '' }
+    case 'worker-stopped':
+      return { who: x.by || 'Tessel', text: t('activity.task.workerStopped', 'ended the worker on {{task}}', { task }), note: x.detail }
+    case 'worker-released':
+      return { who: x.by || x.title, text: t('activity.task.workerReleased', 'released the worker on {{task}}', { task }), note: '' }
+    case 'worker-failed':
+      return { who: 'Tessel', text: t('activity.task.workerFailed', 'could not start the worker for {{task}}', { task }), note: x.detail }
     case 'ready':
       return {
         who: x.title,

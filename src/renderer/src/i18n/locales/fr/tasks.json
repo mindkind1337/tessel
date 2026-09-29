@@ -101,8 +101,57 @@
         "ask": "Demander à un coéquipier et attendre la réponse",
         "gate": "Vous demander de décider, sur la carte",
         "send": "Un message à « #3 », « team » ou un groupe : « @claude », « @codex », « @idle », « @all »",
-        "members": "Qui est dans l'équipe : agent, modèle, au travail ou inactif, cartes ouvertes"
-      }
+        "members": "Qui est dans l'équipe : agent, modèle, au travail ou inactif, cartes ouvertes",
+        "workerStart": "Le chef lance un exécutant : un nouvel agent dans un nouveau panneau, avec sa carte et ses consignes",
+        "workerList": "Les exécutants : état, carte, copie à part, dernier signal de vie ; les limites",
+        "workerRead": "Ce qu'un exécutant affiche en ce moment, lu sans le déranger",
+        "workerStop": "Arrêter un exécutant (son panneau se ferme) ou annuler un exécutant encore en attente",
+        "workerRelease": "Un exécutant redevient un coéquipier ordinaire ; sa place se libère",
+        "workerDone": "Un exécutant rend compte de son résultat, une fois ; son coordinateur est prévenu",
+        "heartbeat": "Un exécutant signale qu’il travaille encore, toutes les 5 minutes",
+        "gates": "Les décisions demandées sur les cartes, en attente ou tranchées"
+      },
+      "workers": "Coordonner des exécutants"
+    },
+    "orch": {
+      "confirm": {
+        "title": "{{pane}} veut lancer un agent exécutant",
+        "toast": "{{pane}} veut lancer un agent exécutant ({{agent}}) pour « {{title}} ». Autorisez-le ou refusez-le dans le panneau Tâches."
+      },
+      "failed": "L'agent exécutant pour « {{title}} » n'a pas été lancé : {{why}}",
+      "phase": {
+        "decomposing": "Découpe du travail",
+        "dispatching": "Lancement des exécutants",
+        "monitoring": "Exécutants au travail",
+        "merging": "À examiner et fusionner",
+        "done": "Terminé"
+      },
+      "status": {
+        "confirming": "Attend votre accord",
+        "queued": "En file d'attente",
+        "starting": "Démarrage",
+        "running": "En cours",
+        "done": "Terminé",
+        "failed": "Échoué",
+        "stopped": "Arrêté",
+        "released": "Libéré",
+        "refused": "Refusé"
+      },
+      "noHeartbeat": "aucun signal de vie pour l’instant",
+      "justNow": "à l'instant",
+      "minAgo_one": "il y a {{count}} min",
+      "minAgo_other": "il y a {{count}} min",
+      "heartbeatPhase": "signal de vie {{when}} ({{phase}})",
+      "heartbeat": "signal de vie {{when}}",
+      "ownCopyBranch": "copie à part, {{branch}}",
+      "ownCopy": "copie à part",
+      "projectFolder": "dossier du projet",
+      "counts": "{{running}} en cours · {{waiting}} en attente · au plus {{max}} à la fois par coordinateur",
+      "cardLabel": "Exécutants de {{team}}",
+      "allow": "Autoriser",
+      "refuse": "Refuser",
+      "cancel": "Annuler",
+      "stop": "Arrêter"
     }
   },
   "review": {
@@ -255,7 +304,15 @@
       "canStart": "peut commencer {{task}}",
       "depsDone": "les cartes qu'elle attendait sont terminées",
       "started": "a commencé la tâche {{task}}",
-      "branch": "branche {{branch}}"
+      "branch": "branche {{branch}}",
+      "workerRequested": "a demandé un exécutant pour {{task}}",
+      "workerAllowed": "a autorisé l'exécutant pour {{task}}",
+      "workerStarted": "a démarré comme exécutant sur {{task}}",
+      "workerOf": "exécutant de {{coordinator}}",
+      "workerRefused": "a refusé l'exécutant pour {{task}}",
+      "workerStopped": "a arrêté l'exécutant sur {{task}}",
+      "workerReleased": "a libéré l'exécutant sur {{task}}",
+      "workerFailed": "n'a pas pu lancer l'exécutant pour {{task}}"
     },
     "msg": {
       "read": "lu",

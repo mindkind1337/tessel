@@ -269,7 +269,10 @@ const api = {
     requestsDone: (args) => ipcRenderer.invoke('team:requests-done', args),
     boardPanes: (args) => ipcRenderer.invoke('team:board-panes', args),
     messageStatus: (args) => ipcRenderer.invoke('team:message-status', args),
-    toolsAlive: (args) => ipcRenderer.invoke('team:tools-alive', args)
+    toolsAlive: (args) => ipcRenderer.invoke('team:tools-alive', args),
+    // Orchestration (src/shared/orchestration.js).
+    answer: (args) => ipcRenderer.invoke('team:answer', args),
+    workers: (args) => ipcRenderer.invoke('team:workers', args)
   },
   review: {
     info: (args) => ipcRenderer.invoke('review:info', args),

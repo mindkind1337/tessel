@@ -68,7 +68,7 @@ import { JSON_AGENTS, setJsonAgentServer, teamToolsEntry } from './jsonAgents'
 import { detectAgents } from './agentDetect'
 import { createPortScanner } from './workspacePorts'
 import { createResourceCollector } from './resourceUsage'
-import { publishTeamTasks, takeTeamRequests, finishTeamRequests, messageStatuses, writeBoardPanes, toolsAlive, writeRoster } from './teamTasks'
+import { publishTeamTasks, takeTeamRequests, finishTeamRequests, messageStatuses, writeBoardPanes, toolsAlive, writeRoster, writeTeamAnswer, publishWorkers } from './teamTasks'
 import {
   writeServerScript,
   installClaudeHooks,
@@ -1230,6 +1230,9 @@ ipcMain.handle('team:requests-done', safe(finishTeamRequests))
 ipcMain.handle('team:board-panes', safe((args) => writeBoardPanes({ ...args, owner: TEAM_OWNER })))
 ipcMain.handle('team:message-status', safe(messageStatuses))
 ipcMain.handle('team:tools-alive', safe(toolsAlive))
+// Orchestration: answers to a coordinator's worker requests, the workers list.
+ipcMain.handle('team:answer', safe(writeTeamAnswer))
+ipcMain.handle('team:workers', safe(publishWorkers))
 
 // A Codex config.toml Tessel is about to write, checked by Codex itself in a
 // throwaway CODEX_HOME. -> { ok, error }

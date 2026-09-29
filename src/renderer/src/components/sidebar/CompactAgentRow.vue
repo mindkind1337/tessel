@@ -147,10 +147,22 @@ const rowLabel = computed(() => {
     parts.push(
       r.lead ? t('sidebar.card.teamLead', 'Team: {{team}} (lead)', { team }) : t('sidebar.card.team', 'Team: {{team}}', { team })
     )
+  if (r.workerOf) parts.push(workerOfLabel.value)
   if (r.num) parts.push(t('sidebar.card.pane', 'Pane {{num}}', { num: r.num }))
   if (props.picking && props.pickHint) parts.push(props.pickHint)
   return parts.join(', ')
 })
+const workerTag = computed(() => {
+  const w = props.row.workerOf
+  if (!w) return ''
+  return w.num ? t('sidebar.agentRow.workerOf', 'worker of #{{num}}', { num: w.num }) : t('sidebar.agentRow.worker', 'worker')
+})
+// A worker's coordinator, for its link.
+const workerOfLabel = computed(() =>
+  props.row.workerOf
+    ? t('sidebar.agentRow.workerOfHint', 'Worker of {{coordinator}}: go to it', { coordinator: props.row.workerOf.label || `#${props.row.workerOf.num || '?'}` })
+    : ''
+)
 </script>
 
 <template>
@@ -189,6 +201,16 @@ const rowLabel = computed(() => {
       >
     </span>
     <span v-if="row.lead" class="car-tag">{{ t('sidebar.agentRow.lead', 'lead') }}</span>
+    <!-- A worker: linked to its coordinator (click: go to it). -->
+    <button
+      v-if="row.workerOf"
+      type="button"
+      class="car-tag car-worker-tag"
+      data-worker-of=""
+      :aria-label="workerOfLabel"
+      @click.stop="emit('activate', { id: row.workerOf.id })"
+      v-text="workerTag"
+    ></button>
     <span v-if="row.teamUnread" class="car-tag">✉ {{ row.teamUnread }}</span>
     <span v-if="row.toolsDown" class="car-tag">⚠ {{ t('sidebar.agentRow.toolsDown', 'tools') }}</span>
     <span v-if="hasChildren && folded" class="car-time" :class="{ focused: row.focused }">+{{ children.length }}</span>

@@ -4,6 +4,7 @@ import { reactive } from 'vue'
 import { isTheme } from './themes'
 import { UI_LANGUAGES } from './i18n'
 import { validHiddenUsageProviders } from '../../shared/usageProviders'
+import { MAX_CONCURRENT_LIMIT, NESTED_DEPTH_LIMIT } from '../../shared/orchestration'
 
 // Font names: the same in every language.
 export const FONT_FAMILIES = [
@@ -39,6 +40,13 @@ export const DEFAULT_SETTINGS = Object.freeze({
   // messages wait for it (nothing else can start an idle agent's turn). Off:
   // messages stay in the background only, read when the agent next works.
   teamWakeUps: true,
+  // Settings > Orchestration (Orca's coordinator and workers): ask before an
+  // agent starts workers (on by default), how many workers one coordinator
+  // runs at a time (the rest wait in a queue), how deep workers may nest
+  // (1: the lead's workers cannot start more).
+  orchestrationConfirmWorkers: true,
+  orchestrationMaxWorkers: 4,
+  orchestrationMaxDepth: 1,
   restoreWorkspaces: true,
   resumeAgents: true,
   // Windows input method tip for voice typing ('' = whatever is active).
@@ -244,6 +252,8 @@ export function loadSettings(saved) {
     if (key === 'keepAwake' && !['off', 'agents', 'on'].includes(v)) continue
     if (key === 'promptCacheTtlMs' && ![300000, 3600000].includes(v)) continue
     if (key === 'agentSleepMinutes' && !(Number.isInteger(v) && v >= 1 && v <= 1440)) continue
+    if (key === 'orchestrationMaxWorkers' && !(Number.isInteger(v) && v >= 1 && v <= MAX_CONCURRENT_LIMIT)) continue
+    if (key === 'orchestrationMaxDepth' && !(Number.isInteger(v) && v >= 1 && v <= NESTED_DEPTH_LIMIT)) continue
     if (
       key === 'editorAutoSaveDelayMs' &&
       !(Number.isInteger(v) && v >= EDITOR_AUTOSAVE_MIN_MS && v <= EDITOR_AUTOSAVE_MAX_MS)

@@ -21,6 +21,7 @@ import { parseEnvText, YOLO_ARGS, YOLO_ENV, agentEnabled } from '../../../shared
 import { AGENT_DOCS } from '../../../shared/agentDocs'
 import { CACHE_TTLS } from '../promptCache'
 import { ORCHESTRATION_EXAMPLES, ORCHESTRATION_TOOLS } from '../orchestrationGuide'
+import { WORKER_AGENTS, MAX_CONCURRENT_LIMIT, NESTED_DEPTH_LIMIT } from '../../../shared/orchestration'
 
 const props = defineProps({
   shells: { type: Array, default: () => [] },
@@ -544,6 +545,27 @@ const coverageSummary = computed(() => {
     ? t('settings.orchestration.allReady', 'All {{count}} agents can work as a team.', { count: c.length })
     : t('settings.orchestration.someReady', '{{ready}} of {{count}} agents can work as a team.', { ready, count: c.length })
 })
+// Coordinator and workers: the agents that can be started as workers (their
+// team tools ready), and the limits (whole numbers in their range).
+const workerAgentsReady = computed(() =>
+  Array.isArray(coverage.value) ? coverage.value.filter((r) => r.state === 'ready' && WORKER_AGENTS.includes(r.id)).map((r) => r.name) : []
+)
+const workerAgentsLine = computed(() =>
+  workerAgentsReady.value.length
+    ? t('settings.orchestration.setupAgents', 'Agents that can be workers: {{agents}}', { agents: workerAgentsReady.value.join(', ') })
+    : t('settings.orchestration.setupNoAgents', 'No agent that can be a worker is ready (Claude Code, Codex, Gemini or Qwen, with the team tools)')
+)
+const maxWorkersHint = computed(() =>
+  t('settings.orchestration.maxWorkersHint', 'Per coordinator (1 to {{max}}); the others wait in a queue and start when one ends', { max: MAX_CONCURRENT_LIMIT })
+)
+const maxDepthHint = computed(() =>
+  t('settings.orchestration.maxDepthHint', "1: the lead's workers cannot start workers of their own; 2: they can, once; up to {{max}}", { max: NESTED_DEPTH_LIMIT })
+)
+function setOrchestrationNumber(key, max, e) {
+  const n = parseInt(e.target.value, 10)
+  if (Number.isFinite(n)) settings[key] = clamp(n, 1, max)
+  e.target.value = settings[key]
+}
 const copiedExample = ref('')
 function copyExample(ex) {
   if (navigator.clipboard) navigator.clipboard.writeText(ex.prompt).catch(() => {})
@@ -1385,6 +1407,60 @@ function previewSound() {
                 </div>
                 <input v-model="settings.teamWakeUps" type="checkbox" class="set-switch" />
               </label>
+            </div>
+          </div>
+          <!-- Coordinator and workers (Orca's orchestration): the setup card,
+               then the limits and the confirmation. -->
+          <div class="set-group" data-orch-workers="">
+            <h3 class="set-group-title">{{ t('settings.orchestration.workers', 'Coordinator and workers') }}</h3>
+            <div class="set-card">
+              <p class="set-hint set-card-text">
+                {{ t('settings.orchestration.workersIntro', 'A team lead can start workers: new agents in new panes of its project, each with its own card, brief and, by default, its own copy of the project. They join the team, report when done and send a heartbeat while they work. You see each start on the board and in Activity.') }}
+              </p>
+              <ol class="orch-setup" data-orch-setup="">
+                <li :class="{ ok: workerAgentsReady.length > 0 }" v-text="workerAgentsLine"></li>
+                <li>{{ t('settings.orchestration.setupTeam', 'Make a team in Sessions and choose its lead (right-click an agent, Make Lead)') }}</li>
+                <li>{{ t('settings.orchestration.setupAsk', 'Ask the lead to coordinate workers (see "Coordinate workers" below)') }}</li>
+              </ol>
+              <label class="set-row">
+                <div class="set-label">
+                  {{ t('settings.orchestration.confirmWorkers', 'Ask before an agent starts workers') }}
+                  <span class="set-hint">{{ t('settings.orchestration.confirmWorkersHint', 'Each worker waits in the Tasks panel until you allow it. Off: workers start at once, within the limits below') }}</span>
+                </div>
+                <input v-model="settings.orchestrationConfirmWorkers" type="checkbox" class="set-switch" data-setting="orchestrationConfirmWorkers" />
+              </label>
+              <div class="set-row">
+                <label class="set-label" for="settings-orch-max">
+                  {{ t('settings.orchestration.maxWorkers', 'Workers at a time') }}
+                  <span class="set-hint" v-text="maxWorkersHint"></span>
+                </label>
+                <input
+                  id="settings-orch-max"
+                  class="set-number"
+                  type="number"
+                  min="1"
+                  :max="MAX_CONCURRENT_LIMIT"
+                  :value="settings.orchestrationMaxWorkers"
+                  data-setting="orchestrationMaxWorkers"
+                  @change="setOrchestrationNumber('orchestrationMaxWorkers', MAX_CONCURRENT_LIMIT, $event)"
+                />
+              </div>
+              <div class="set-row">
+                <label class="set-label" for="settings-orch-depth">
+                  {{ t('settings.orchestration.maxDepth', 'Nested worker depth') }}
+                  <span class="set-hint" v-text="maxDepthHint"></span>
+                </label>
+                <input
+                  id="settings-orch-depth"
+                  class="set-number"
+                  type="number"
+                  min="1"
+                  :max="NESTED_DEPTH_LIMIT"
+                  :value="settings.orchestrationMaxDepth"
+                  data-setting="orchestrationMaxDepth"
+                  @change="setOrchestrationNumber('orchestrationMaxDepth', NESTED_DEPTH_LIMIT, $event)"
+                />
+              </div>
             </div>
           </div>
           <div class="set-group">

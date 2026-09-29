@@ -10322,3 +10322,158 @@ button.act-stat:hover,
   background: var(--surface-2);
   cursor: pointer;
 }
+
+/* Tasks panel: a lead's workers (OrchestrationCard.vue). */
+.orch-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 0 8px;
+}
+
+.orch-card {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--team-color, var(--accent));
+  border-radius: 6px;
+  background: var(--surface-2);
+  font-size: 12px;
+}
+
+.orch-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.orch-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--team-color, var(--accent));
+}
+
+.orch-team {
+  font-weight: 600;
+}
+
+.orch-counts,
+.orch-meta {
+  color: var(--text-dim);
+  font-size: 11.5px;
+}
+
+.orch-coord {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.orch-phase {
+  padding: 0 6px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  font-size: 11px;
+}
+
+.orch-workers {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.orch-worker {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  grid-template-areas: 'status title actions' 'meta meta meta';
+  align-items: center;
+  gap: 2px 6px;
+  padding: 4px 0;
+  border-top: 1px solid var(--border);
+}
+
+.orch-status {
+  grid-area: status;
+  padding: 0 6px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--text-dim) 16%, transparent);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+
+.orch-status[data-status='confirming'] {
+  background: color-mix(in srgb, #ffd98f 30%, transparent);
+}
+
+.orch-status[data-status='running'],
+.orch-status[data-status='starting'] {
+  background: color-mix(in srgb, #7ad17a 26%, transparent);
+}
+
+.orch-status[data-status='failed'],
+.orch-status[data-status='refused'] {
+  background: color-mix(in srgb, #ff9b9e 26%, transparent);
+}
+
+.orch-title {
+  grid-area: title;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.orch-meta {
+  grid-area: meta;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.orch-actions {
+  grid-area: actions;
+  display: flex;
+  gap: 4px;
+}
+
+.orch-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
+
+.orch-link:hover {
+  text-decoration: underline;
+}
+
+/* Sessions: a worker's link to its coordinator. */
+.car-worker-tag {
+  padding: 0 4px;
+  border: 1px solid color-mix(in srgb, var(--wts-muted, #888) 40%, transparent);
+  border-radius: 4px;
+  background: none;
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.car-worker-tag:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* Settings > Orchestration: the workers' setup steps. */
+.orch-setup {
+  margin: 4px 0 8px;
+  padding-left: 20px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.orch-setup li.ok::marker {
+  color: #7ad17a;
+}

@@ -55,6 +55,8 @@ import NotesPanel from './components/NotesPanel.vue'
 import NewTaskDialog from './components/NewTaskDialog.vue'
 import ReviewPanel from './components/ReviewPanel.vue'
 import { parseLeadRequest, findTaskRef, leadGuide, memberGuide } from '../../shared/leadRequests'
+import { workerLaunchArgs } from '../../shared/orchestration'
+import { createOrchestrator } from './orchestrator'
 import { trackAgent } from '../../shared/tracking'
 import { pasteAndConfirm } from './deliver'
 import { dropBuffer, seedBuffer } from './ptyStore'
@@ -886,7 +888,11 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
     const start = await agentStartLine({ ...agent, command: launch.command }, opts.sessionId || null, !!opts.resume, accountId)
     leaf.sessionId = start.sessionId
     // Its arguments (or the Yolo flag) at the end: they work with resuming too.
-    const full = launch.args ? `${start.line} ${launch.args}` : start.line
+    // A worker's launch options (model, effort, its first prompt) only on a
+    // fresh start, through the one helper (src/shared/orchestration.js).
+    const extra = opts.launchOptions && !start.resumed ? workerLaunchArgs(agent.id, opts.launchOptions) : ''
+    if (opts.launchOptions) leaf.launchOptions = { model: opts.launchOptions.model || null, effort: opts.launchOptions.effort || null }
+    const full = (launch.args ? `${start.line} ${launch.args}` : start.line) + extra
     const line = opts.wrap ? opts.wrap(full) : full
     setTimeout(() => window.shellApi.writePty(id, `${line}\r`), 600)
     if (FOUND_AFTER_START.includes(sessionKind(agent)) && !leaf.sessionId) watchFoundSession(leaf, agent.id)
@@ -3158,6 +3164,8 @@ const sidebarProjects = computed(() =>
         toolsDown: !!toolsDown[leaf.id],
         team: leaf.team || null,
         lead: !!(leaf.team && teamById(leaf.team)?.leadId === leaf.id),
+        // A worker of a coordinator (orchestration): linked to it.
+        workerOf: workerOfRow(leaf),
         task: leaf.kind === 'agent' ? task?.title || null : null,
         track: leaf.kind === 'agent' ? trackOf(leaf.id) : null,
         pid: Number.isInteger(leaf.pid) ? leaf.pid : null,
@@ -4704,6 +4712,13 @@ async function pollTeams() {
         handOffLeadReviews(team.id)
       }
       const members = teamMembers(team.id).filter((l) => l.kind === 'agent')
+      // Orchestration: closed or silent workers, the queue, the workers list.
+      teamStepIs('workers', team)
+      try {
+        orchestrator.tick(team, teams.value)
+      } catch (err) {
+        if (window.shellApi.log) window.shellApi.log('error', `orchestration: ${err && err.message}`)
+      }
       // Inboxes of agents no longer in the team go away.
       for (const id of Object.keys(team.inboxes || {})) {
         if (!members.some((m) => m.id === id) && !inboxesBeingMade.has(team.inboxes[id])) dropInbox(team, id, dir)
@@ -6155,6 +6170,140 @@ function resolveDecision(taskId, answer) {
 }
 provide('resolveDecision', resolveDecision)
 
+// --- Orchestration: coordinators and workers --------------------------------------
+// A team's lead starts workers in new panes (team_worker_start and the other
+// worker tools); src/renderer/src/orchestrator.js keeps their records
+// (team.workers), limits and queue. Here: how Tessel does each step.
+const workersSigs = {} // team id -> the workers list last published
+const orchestrator = createOrchestrator({
+  settings,
+  findLeaf,
+  label: paneLabel,
+  isLead: (team, id) => team.leadId === id && !!teamLead(team.id),
+  wsOfLeaf,
+  agentAvailable: (id) => (launchableAgents.value.some((a) => a.id === id && a.available !== false) ? agentById(id) : null),
+  cardColumn: (id) => boardTasks.find((x) => x.id === id)?.column ?? null,
+  createCard({ title, brief, wsId, by, teamId, deps, workerId }) {
+    // On the team's board (the one its tools read).
+    const task = addTask({ title, wsId: teamWsId(teamId) || wsId })
+    updateTask(task.id, { brief, column: 'todo', createdBy: by, teamId, worker: workerId, ...(deps && deps.length ? { deps: [...deps] } : {}) })
+    scheduleTaskSave()
+    return task.id
+  },
+  updateCard(id, patch) {
+    const task = boardTasks.find((x) => x.id === id)
+    if (!task) return
+    updateTask(id, patch.column === 'doing' && task.column !== 'doing' ? { ...patch, startedAt: Date.now(), doingSince: Date.now() } : patch)
+    scheduleTaskSave()
+  },
+  removeCard(id) {
+    if (boardTasks.some((x) => x.id === id)) removeTask(id)
+  },
+  reportCard(id, report, from, teamId) {
+    const task = boardTasks.find((x) => x.id === id)
+    if (!task) return
+    applyReport(task, report, from, teamId)
+    // Its own copy: the work waits in Review for the user to merge it.
+    if (report.outcome === 'succeeded' && task.worktree && !task.mergedAt && task.column === 'done') updateTask(task.id, { column: 'review', doneAt: Date.now() })
+    scheduleTaskSave()
+  },
+  async createWorktree(ws, title) {
+    const res = await window.shellApi.createWorktree(ws.cwd, title, worktreeSettings()).catch((err) => ({ ok: false, error: err && err.message }))
+    if (!res || !res.ok) return { error: (res && res.error) || t('app.common.unknownError', 'unknown error') }
+    if (res.setup && res.setup.ran && !res.setup.ok)
+      showToast(t('app.task.setupFailed', 'The copy is ready, but .tessel/setup.ps1 failed: {{error}}.', { error: res.setup.error || t('app.task.seeScript', 'see the script') }), { kind: 'error', timeout: 9000 })
+    return { worktree: { path: res.path, branch: res.branch, baseBranch: res.baseBranch || null, root: res.root || ws.cwd } }
+  },
+  // A new pane in the coordinator's workspace (its largest pane is split),
+  // launched with the user's settings for that agent (permissions, Yolo,
+  // account). The pane you are in stays the active one.
+  async openWorkerPane({ ws, agent, worktree, launchOptions }) {
+    if (!workspaces.value.includes(ws)) return null
+    const keep = ws.activeId
+    const target = ws.tree ? largestLeaf(ws.tree) : null
+    const leaf =
+      target && target.id
+        ? await splitLeaf(target.id, target.dir, agent, selectedShell.value, worktree, { launchOptions })
+        : await createLeaf(selectedShell.value, agent, ws.cwd, worktree, wsLeafOpts(ws, { launchOptions }))
+    if (!leaf) return null
+    if (!ws.tree) {
+      ws.tree = leaf
+      ws.activeId = leaf.id
+    } else if (keep && findLeaf(keep)) ws.activeId = keep
+    numberPanes()
+    return leaf
+  },
+  async joinTeam(leaf, team) {
+    leaf.team = team.id
+    logMembership(leaf, team.id)
+    await syncChannel(team, { quiet: [leaf.id] })
+    await publishCurrentTeams()
+  },
+  closePane: (id, { byUser } = {}) => closeLeaf(id, byUser ? {} : { force: true }),
+  notice: (leaves, text, teamId) => noticeAgents(leaves, text, teamId),
+  answer(team, rid, ok, text) {
+    const dir = channelDir(team)
+    if (dir && window.shellApi.team && window.shellApi.team.answer) window.shellApi.team.answer({ dir, teamId: team.id, rid, ok, text }).catch(() => {})
+  },
+  readScreen(id, lines) {
+    const pane = findLeaf(id) ? getPane(id) : null
+    return pane && pane.screenText ? pane.screenText(Math.max(20, lines)) : null
+  },
+  activity(e) {
+    recordActivity({ ...e, agent: agentInfo(findLeaf(e.paneId)) })
+  },
+  attention(title, body, paneId) {
+    inboxNote('attention', title, body, paneId)
+    nativeNotify({ title, body, paneId })
+  },
+  toast(text, opts = {}) {
+    showToast(text, {
+      kind: opts.kind,
+      timeout: opts.timeout,
+      ...(opts.showTasks ? { action: { label: t('app.board.showBoard', 'Show the board'), run: () => showSideTab('tasks') } } : {})
+    })
+  },
+  publish(team, payload) {
+    const dir = channelDir(team)
+    if (!dir || !window.shellApi.team || !window.shellApi.team.workers) return
+    const sig = JSON.stringify(payload)
+    if (workersSigs[team.id] === sig) return
+    // Only when it changed: remembered once written.
+    window.shellApi.team
+      .workers({ dir, teamId: team.id, ...JSON.parse(sig) })
+      .then((res) => {
+        if (res && res.ok) workersSigs[team.id] = sig
+      })
+      .catch(() => {})
+  }
+})
+
+// A sidebar row's worker mark: { id, label, status } of its coordinator.
+function workerOfRow(leaf) {
+  if (leaf.kind !== 'agent' || !leaf.team) return null
+  let info = null
+  try {
+    info = orchestrator.workerInfo(teamById(leaf.team), leaf.id)
+  } catch {
+    return null // asked before the orchestrator is set up (setup order)
+  }
+  const coord = info ? findLeaf(info.coordinatorId) : null
+  return info ? { id: info.coordinatorId, label: coord ? paneLabel(coord) : '', num: coord ? coord.num || null : null, status: info.status } : null
+}
+
+// The Tasks panel's orchestration card (OrchestrationCard.vue): each team of
+// a workspace that has workers, and the user's actions on them.
+const orchestrationView = computed(() =>
+  teams.value.filter((tm) => Array.isArray(tm.workers) && tm.workers.length).map((tm) => ({ ...orchestrator.summary(tm), wsId: teamWsId(tm.id) }))
+)
+provide('orchestration', {
+  view: orchestrationView,
+  allow: (teamId, id) => teamById(teamId) && orchestrator.allow(teamById(teamId), id, teams.value),
+  refuse: (teamId, id) => teamById(teamId) && orchestrator.refuse(teamById(teamId), id),
+  stop: (teamId, id) => teamById(teamId) && orchestrator.stopByUser(teamById(teamId), id),
+  focus: (paneId) => paneId && findLeaf(paneId) && focusPane(paneId)
+})
+
 // Dependencies: a card whose prerequisite cards are all done can start; its
 // agent is told once (in the background in a team).
 const waitingOn = (task) => (task.deps || []).filter((d) => {
@@ -6240,6 +6389,14 @@ async function syncBoard(b, round = teamRound) {
       const key = `${boardKey}/${r.file}`
       if (appliedRequests.has(key)) continue
       appliedRequests.add(key)
+      // Orchestration: workers started, stopped, read; their reports and
+      // heartbeats (src/renderer/src/orchestrator.js). Only in a team.
+      if (/^worker-|^heartbeat$/.test(r.action)) {
+        const team = b.teamId ? teamById(b.teamId) : null
+        if (team) orchestrator.handleRequest(team, from, r, { teams: teams.value })
+        else refusals.push({ fromId: from.id, text: 'Workers belong to a team: you are in none.' }) // i18n-ignore
+        continue
+      }
       if (r.action === 'add') {
         const who = r.assignee ? byNum(r.assignee) : from
         if (!who) {

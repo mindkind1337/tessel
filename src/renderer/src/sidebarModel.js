@@ -251,6 +251,9 @@ export function paneRow(pane, now = Date.now()) {
     unvisited: !!pane.attention,
     team: pane.team || null,
     lead: !!pane.lead,
+    // A worker started by a coordinator (orchestration): { id, label, num,
+    // status } of that coordinator, for the row's link to it.
+    workerOf: agent && pane.workerOf && pane.workerOf.id ? { ...pane.workerOf } : null,
     teamUnread: pane.teamUnread || 0,
     toolsDown: !!pane.toolsDown,
     activityAt: pane.activityAt || 0,
