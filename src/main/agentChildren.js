@@ -218,6 +218,16 @@ export function uuidTime(id) {
 const str = (v, max) => (typeof v === 'string' && v ? v.slice(0, max) : null)
 const modelName = (v) => (typeof v === 'string' && /^[\w.[\]:/@-]{1,80}$/.test(v) ? v : null)
 
+const effortName = (v) => (typeof v === 'string' && /^[a-z]{1,20}$/.test(v) ? v : null)
+// Its reasoning effort: turn_context { effort }, or the thread settings.
+function codexEffortOf(e) {
+  const p = e && e.payload
+  if (!p) return null
+  if (e.type === 'turn_context') return effortName(p.effort) || effortName(p.reasoning_effort)
+  if (p.type === 'thread_settings_applied' && p.thread_settings) return effortName(p.thread_settings.reasoning_effort)
+  return null
+}
+
 function codexModelOf(e) {
   const p = e && e.payload
   if (!p) return null
@@ -245,10 +255,13 @@ export function parseCodexHead(text) {
   // The last model it was set to in the lines read (a forked one starts with
   // its parent's history, then its own settings).
   let model = null
+  let effort = null
   for (const l of text.slice(nl + 1).split('\n')) {
     if (!l.includes('"model"')) continue
     try {
-      model = codexModelOf(JSON.parse(l)) || model
+      const o = JSON.parse(l)
+      model = codexModelOf(o) || model
+      effort = codexEffortOf(o) || effort
     } catch {
       // cut at the end
     }
@@ -263,7 +276,8 @@ export function parseCodexHead(text) {
     path: str(p.agent_path, 200) || str(spawn.agent_path, 200),
     role: str(spawn.agent_role, 60) || str(p.agent_role, 60),
     startedAt: (typeof at === 'string' && Date.parse(at)) || null,
-    model
+    model,
+    effort
   }
 }
 
@@ -302,6 +316,7 @@ export function summarizeCodexTail(lines) {
   let last = null
   let tokens = null
   let model = null
+  let effort = null
   for (let i = lines.length - 1; i >= 0; i--) {
     let o
     try {
@@ -325,9 +340,10 @@ export function summarizeCodexTail(lines) {
       if (n > 0) tokens = n
     }
     if (model === null) model = codexModelOf(o)
-    if (decided && last && tokens !== null && model !== null) break
+    if (effort === null) effort = codexEffortOf(o)
+    if (decided && last && tokens !== null && model !== null && effort !== null) break
   }
-  return { done, last, tokens, model }
+  return { done, last, tokens, model, effort }
 }
 
 function dayDir(sessions, ms) {
@@ -407,7 +423,8 @@ export function codexSubagents(sessionId, codexDir = join(os.homedir(), '.codex'
         endedAt: state === 'done' ? last : null,
         lastAt,
         tokens: tail.tokens,
-        model: tail.model || head.model || null
+        model: tail.model || head.model || null,
+        effort: tail.effort || head.effort || null
       })
     }
   }

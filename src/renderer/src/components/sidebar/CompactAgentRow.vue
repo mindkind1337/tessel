@@ -50,7 +50,7 @@ onBeforeUnmount(() => feed.value && feed.value.release())
 const clock = ref(Date.now())
 let clockTimer = 0
 const children = computed(() => (feed.value ? feed.value.state.list : []))
-const split = computed(() => splitChildren(children.value, clock.value))
+const split = computed(() => splitChildren(children.value))
 const hasChildren = computed(() => children.value.length > 0)
 const folded = computed(() => !!childrenFolded[props.row.id])
 const showOlder = computed(() => !!olderShown[props.row.id])
@@ -111,7 +111,7 @@ const disclosureLabel = computed(() => {
     : t('sidebar.agentRow.hideChildren', 'Hide {{count}} child agents', { count })
 })
 function moreLabel(count) {
-  return t('sidebar.agentRow.more', '{{count}} more', { count })
+  return t('sidebar.agentRow.more', '+ {{count}} more', { count })
 }
 
 // --- Hover cards (Orca's HoverCard: opens after 250 ms, closes 120 ms) --------
@@ -268,8 +268,6 @@ const workerOfLabel = computed(() =>
       <span class="car-text">
         <span class="car-lead">{{ c.title || noTitle() }}</span>
       </span>
-      <span v-if="c.type" class="car-tag car-child-type" data-child-type="">{{ c.type }}</span>
-      <span v-if="c.model" class="car-tag car-child-model" data-child-model="">{{ modelLabel(c.model) }}</span>
       <span class="car-time">{{ childStats(c) }}</span>
     </div>
     <template v-if="showOlder">
@@ -289,8 +287,6 @@ const workerOfLabel = computed(() =>
         <span class="car-text">
           <span class="car-lead">{{ c.title || noTitle() }}</span>
         </span>
-        <span v-if="c.type" class="car-tag car-child-type" data-child-type="">{{ c.type }}</span>
-        <span v-if="c.model" class="car-tag car-child-model" data-child-model="">{{ modelLabel(c.model) }}</span>
         <span class="car-time">{{ childStats(c) }}</span>
       </div>
     </template>
@@ -318,6 +314,7 @@ const workerOfLabel = computed(() =>
       </div>
       <div v-if="hoveredChild.type" class="hc-detail" data-hover-type="" v-text="t('sidebar.agentRow.childType', 'Type: {{type}}', { type: hoveredChild.type })"></div>
       <div v-if="hoveredChild.model" class="hc-detail" data-hover-model="" v-text="t('sidebar.agentRow.childModel', 'Model: {{model}}', { model: modelLabel(hoveredChild.model) })"></div>
+      <div v-if="hoveredChild.effort" class="hc-detail" data-hover-effort="" v-text="t('sidebar.agentRow.childEffort', 'Effort: {{effort}}', { effort: hoveredChild.effort })"></div>
       <div class="hc-detail" v-text="childStatsLong(hoveredChild)"></div>
     </div>
   </HoverCardContent>
