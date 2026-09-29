@@ -18,6 +18,11 @@
     "dist:dir": "npm run build && electron-builder --win --x64 --dir --publish never"
   },
   "dependencies": {
+    "@tanstack/vue-virtual": "^3.13.39",
+    "@tiptap/extension-placeholder": "^3.31.3",
+    "@tiptap/pm": "^3.31.3",
+    "@tiptap/starter-kit": "^3.31.3",
+    "@tiptap/vue-3": "^3.31.3",
     "electron-updater": "^6.8.9",
     "node-pty": "^1.1.0"
   },
