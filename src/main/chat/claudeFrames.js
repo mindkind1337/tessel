@@ -6,16 +6,18 @@
 // are the adapter's business (they need answers); everything else goes
 // through normalizeFrame(frame, state) -> [{ type, ...payload }].
 
+import { createClaudeSubagents, observeClaudeSubagents } from './claudeSubagents.js'
 export const TOOL_OUTPUT_MAX_BYTES = 8 * 1024
 
 // The state the normalizer keeps between frames of one process.
-export function createFrameState() {
+export function createFrameState({ now = Date.now } = {}) {
   return {
     streamMessageId: null, // stream_event message_start id, for text deltas
     sent: new Set(), // uuids of our user messages (the adapter adds them)
     accepted: new Set(), // uuids already reported accepted (once each)
     interruptRequested: false, // set by the adapter when it sends interrupt
-    sessionId: null
+    sessionId: null,
+    subagents: createClaudeSubagents(now)
   }
 }
 
@@ -173,6 +175,20 @@ function accept(state, uuid, out) {
 
 // One frame -> zero or more events.
 export function normalizeFrame(m, state) {
+  if (!m || typeof m !== 'object') return []
+  const child = observeClaudeSubagents(m, state)
+  // Child lifecycle/results must not settle or reconfigure the parent session.
+  const events = m.parent_tool_use_id && (!['assistant', 'stream_event', 'user'].includes(m.type) || (m.type === 'user' && m.isReplay))
+    ? [] : normalizeClaudeFrame(m, state)
+  for (const event of events) {
+    if (!child.agentId) continue
+    event.agentId = child.agentId
+    if (event.type === 'textDelta' && !event.messageId) event.messageId = child.childMessageId
+  }
+  return [...child.out, ...events.filter(event => !m.parent_tool_use_id || ['assistant', 'textDelta', 'toolResult'].includes(event.type))]
+}
+
+function normalizeClaudeFrame(m, state) {
   const out = []
   if (!m || typeof m !== 'object') return out
   const parentToolUseId = typeof m.parent_tool_use_id === 'string' ? m.parent_tool_use_id : null

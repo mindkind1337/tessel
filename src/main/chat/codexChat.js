@@ -18,6 +18,8 @@ import { spawn as nodeSpawn } from 'child_process'
 import { randomUUID } from 'crypto'
 import { killClaudeTree } from './claudeChat'
 import { clipText, toolResultText, TOOL_OUTPUT_MAX_BYTES } from './claudeFrames'
+import { createSubagentTracker, subagentTokens } from './subagents.js'
+import { observeCodexSubagents } from './codexSubagents.js'
 
 export const PERMISSION_MODES = ['default', 'bypassPermissions', 'acceptEdits', 'plan']
 // quitKill: how long a kill on quit waits for the exit before giving up.
@@ -138,9 +140,10 @@ export function isCodexAuthError(err) {
 // ---- pure frame normalization -------------------------------------------------
 
 // The state the normalizer keeps between notifications of one process.
-export function createCodexState({ threadId = null, model = null, permissionMode = 'default' } = {}) {
+export function createCodexState({ threadId = null, model = null, permissionMode = 'default', now = Date.now } = {}) {
   return {
     threadId,
+    subagents: createSubagentTracker(now),
     model,
     permissionMode,
     cliVersion: null,
@@ -187,6 +190,8 @@ function changesOf(item) {
 
 function toolUseOf(item, state) {
   switch (item.type) {
+    case 'collabAgentToolCall':
+      return { name: item.tool === 'spawnAgent' || item.tool === 'spawn_agent' ? 'Agent' : str(item.tool), input: { description: str(item.prompt), model: item.model ?? null, receiverThreadIds: Array.isArray(item.receiverThreadIds) ? item.receiverThreadIds.slice(0, 64) : [] } }
     case 'commandExecution':
       return { name: 'Bash', input: commandInput(item.command, item.cwd, item.commandActions) }
     case 'fileChange': {
@@ -214,6 +219,8 @@ function toolUseOf(item, state) {
 function toolResultOf(item) {
   const status = str(item.status)
   switch (item.type) {
+    case 'collabAgentToolCall':
+      return { isError: status === 'failed', text: JSON.stringify(item.agentsStates || {}) }
     case 'commandExecution': {
       const out = str(item.aggregatedOutput)
       const failed = status === 'failed' || status === 'declined' || (typeof item.exitCode === 'number' && item.exitCode !== 0)
@@ -309,7 +316,10 @@ export function settleTurn(state, status, { error = null, durationMs = null, tur
   state.tools.clear()
   state.fileChanges.clear()
   const message = error ? str(error.message) : ''
+  const subagentEvents = []
+  state.subagents.settle(turn.id, status, subagentEvents)
   return [
+    ...subagentEvents,
     {
       type: 'turnEnd',
       status,
@@ -355,8 +365,9 @@ export function rateLimitFromCodex(snapshot) {
 export function normalizeCodexNotification(method, params, state) {
   const out = []
   const p = obj(params)
-  // Another thread's traffic (a sub-agent's) is not this chat's.
-  if (typeof p.threadId === 'string' && state.threadId && p.threadId !== state.threadId) return out
+  // Only a child explicitly linked by this parent's collab item may contribute.
+  if (typeof p.threadId === 'string' && state.threadId && p.threadId !== state.threadId) return normalizeCodexChild(method, p, state)
+  out.push(...observeCodexSubagents(method, p, state))
   const turn = state.turn && !state.turn.settled ? state.turn : null
   if (turn && typeof p.turnId === 'string' && p.turnId === turn.id && method !== 'error') state.retrying = false
   switch (method) {
@@ -472,6 +483,44 @@ export function normalizeCodexNotification(method, params, state) {
     }
     default:
       break // hooks, deltas of tools, plans, warnings, unknown notifications
+  }
+  return out
+}
+
+function normalizeCodexChild(method, p, state) {
+  const entry = state.subagents.get(p.threadId)
+  if (!entry) return []
+  const out = [], provenance = { agentId: entry.id, parentToolUseId: entry.parentToolUseId || entry.id }
+  if (method === 'turn/completed') {
+    const turn = obj(p.turn)
+    const status = turn.status === 'completed' ? 'completed' : turn.status === 'interrupted' ? 'stopped' : 'failed'
+    state.subagents.upsert(entry.id, entry.groupId, { state: status, durationMs: turn.durationMs }, out)
+  } else if (method === 'thread/tokenUsage/updated') {
+    state.subagents.upsert(entry.id, entry.groupId, { tokens: subagentTokens(p.tokenUsage?.total) }, out)
+  } else if (method === 'thread/settings/updated') {
+    state.subagents.upsert(entry.id, entry.groupId, { model: obj(p.threadSettings || p.settings).model }, out)
+  } else if (method === 'item/agentMessage/delta' && typeof p.delta === 'string' && p.delta) {
+    out.push({ type: 'textDelta', messageId: str(p.itemId) || null, index: 0, text: p.delta, ...provenance })
+  } else if (method === 'item/started' || method === 'item/completed') {
+    const item = obj(p.item), id = str(item.id), completed = method === 'item/completed'
+    if (completed && item.type === 'agentMessage') {
+      if (item.text) out.push({ type: 'assistant', messageId: id, blocks: [{ type: 'text', text: str(item.text) }], ...provenance })
+    } else if (completed && item.type === 'reasoning') {
+      const parts = (Array.isArray(item.summary) && item.summary.length ? item.summary : Array.isArray(item.content) ? item.content : []).filter(value => typeof value === 'string')
+      if (parts.length) out.push({ type: 'assistant', messageId: id, blocks: [{ type: 'thinking', text: parts.join('\n\n') }], ...provenance })
+    } else if (id && entry.state === 'working') {
+      // Scratch state prevents a child's file metadata affecting parent approvals.
+      const use = toolUseOf(item, { fileChanges: new Map() })
+      if (use) {
+        const previous = entry.tools.get(id)
+        if (previous === 'completed' || previous === 'failed') return out
+        if (!previous) out.push({ type: 'assistant', messageId: id, blocks: [{ type: 'tool_use', id, name: use.name, input: use.input }], ...provenance })
+        const result = completed ? toolResultOf(item) : null
+        const status = result ? result.isError ? 'failed' : 'completed' : 'running'
+        state.subagents.progress(entry.id, { id, name: use.name, status }, out)
+        if (result && previous !== status) out.push({ type: 'toolResult', toolUseId: id, isError: result.isError, text: clipText(result.text), ...provenance })
+      }
+    }
   }
   return out
 }
@@ -593,7 +642,7 @@ export function createCodexChat(opts) {
   let effort = opts.effort || null
   let permissions = opts.permissions === 'yolo' ? 'yolo' : 'manual'
   const chat = new EventEmitter()
-  const state = createCodexState({ threadId: null, model, permissionMode: permissions === 'yolo' ? 'bypassPermissions' : 'default' })
+  const state = createCodexState({ threadId: null, model, permissionMode: permissions === 'yolo' ? 'bypassPermissions' : 'default', now })
 
   let child = null
   let startPromise = null
@@ -888,6 +937,9 @@ export function createCodexChat(opts) {
     }
     pending.clear()
     cancelPermissions()
+    const subagentEvents = []
+    state.subagents.settle(null, closing ? 'interrupted' : 'failed', subagentEvents)
+    dispatchEvents(subagentEvents)
     const normal = closing || code === 0
     logAt(normal ? 'info' : 'warn', `exited code=${code} signal=${signal}${error ? ' error=' + error : ''}`)
     emit('exit', { code, signal, stderrTail, crashed: !normal, error: error || null })
