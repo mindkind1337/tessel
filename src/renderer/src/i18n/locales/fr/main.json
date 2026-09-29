@@ -90,7 +90,8 @@
       "noSsh": "Le client OpenSSH (ssh.exe) est introuvable. Installez-le depuis Paramètres Windows > Fonctionnalités facultatives.",
       "testTimeout": "Le test de connexion a expiré.",
       "testExit": "ssh s'est terminé avec le code {{code}}.",
-      "sshFailed": "ssh n'a pas pu se connecter (code de sortie 255). Voir son terminal pour les détails."
+      "sshFailed": "ssh n'a pas pu se connecter (code de sortie 255). Voir son terminal pour les détails.",
+      "launchCancelled": "Le terminal a été fermé avant le démarrage de ssh."
     }
   }
 }

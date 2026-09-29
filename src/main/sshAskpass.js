@@ -137,6 +137,7 @@ export function createSshAskpass({
   // Each preparation of a pane gets a generation; a newer preparation, a
   // release or close() makes the older ones void, checked after every await.
   const generations = new Map() // paneId -> number
+  const releasedAt = new Map() // paneId -> the generation its release made
   let generationSeq = 0
   let closed = false
   let server = null
@@ -335,17 +336,43 @@ export function createSshAskpass({
 
   // Before ssh starts: the variables that send its questions here, or null
   // (no helper, an old ssh, no pipe: the terminal asks, as ssh does alone).
-  // The token in the result names this launch: paneStarted / releasePane
-  // with it only ever touch this launch, never one that replaced it.
-  async function preparePane(paneId, { hostId, label, sshExe } = {}) {
-    const generation = ++generationSeq
-    generations.set(paneId, generation)
+  // A launch of ssh in a pane -> { lease, status }:
+  //   'ready'     env (with the launch's token) to give ssh;
+  //   'fallback'  no askpass (no helper, old ssh, no pipe): ssh asks in the
+  //               terminal, as it does alone;
+  //   'cancelled' the pane was closed (releasePane) or launched again while
+  //               this was being prepared: do not start ssh at all.
+  // The lease stays valid until the pane is released or launched again;
+  // launchState(paneId, lease) tells, e.g. once the terminal is created.
+  async function prepareLaunch(paneId, { hostId, label, sshExe } = {}) {
+    const lease = ++generationSeq
+    generations.set(paneId, lease)
     dropPane(paneId)
-    const current = () => !closed && generations.get(paneId) === generation
+    const current = () => !closed && generations.get(paneId) === lease
+    const end = (status) => ({ lease, status: current() ? status : 'cancelled' })
     const exe = helperPath()
-    if (!exe) return null
-    if (!(await sshSupportsAskpass(sshExe)) || !current()) return null
-    if (!(await ensureServer()) || !current()) return null
+    if (!exe) return end('fallback')
+    if (!(await sshSupportsAskpass(sshExe)) || !current()) return end('fallback')
+    if (!(await ensureServer()) || !current()) return end('fallback')
+    const env = register(paneId, { hostId, label, exe })
+    return { lease, status: 'ready', env }
+  }
+
+  // 'current' | 'released' (the pane was closed since) | 'replaced' (launched again)
+  function launchState(paneId, lease) {
+    if (closed) return 'released'
+    const g = generations.get(paneId)
+    if (g === lease) return 'current'
+    return releasedAt.get(paneId) === g ? 'released' : 'replaced'
+  }
+
+  // The same, env or null (cancelled or fallback).
+  async function preparePane(paneId, opts) {
+    const launch = await prepareLaunch(paneId, opts)
+    return launch.status === 'ready' ? launch.env : null
+  }
+
+  function register(paneId, { hostId, label, exe }) {
     const token = randomBytes(32).toString('hex')
     panes.set(paneId, {
       paneId,
@@ -384,7 +411,11 @@ export function createSshAskpass({
     if (token !== undefined) {
       const pane = panes.get(paneId)
       if (!pane || pane.token !== token) return
-    } else generations.set(paneId, ++generationSeq)
+    } else {
+      const g = ++generationSeq
+      generations.set(paneId, g)
+      releasedAt.set(paneId, g)
+    }
     dropPane(paneId)
   }
 
@@ -460,6 +491,8 @@ export function createSshAskpass({
   }
 
   return {
+    prepareLaunch,
+    launchState,
     preparePane,
     paneStarted,
     releasePane,

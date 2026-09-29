@@ -18,7 +18,15 @@ import { spawn } from 'child_process'
 const PIPE_PREFIX = /^\\\\\.\\pipe\\/
 const MAX_STDOUT_LINE = 300 * 1024
 
-export function createAskpassPipeHost({ exePath, spawnImpl = spawn, env = process.env } = {}) {
+export const READY_TIMEOUT_MS = 10_000
+
+export function createAskpassPipeHost({
+  exePath,
+  spawnImpl = spawn,
+  env = process.env,
+  timers = { setTimeout, clearTimeout },
+  readyTimeoutMs = READY_TIMEOUT_MS
+} = {}) {
   return {
     createServer(onConnection) {
       const srv = new EventEmitter()
@@ -84,7 +92,26 @@ export function createAskpassPipeHost({ exePath, spawnImpl = spawn, env = proces
         const path = String((opts && opts.path) || '')
         const name = path.replace(PIPE_PREFIX, '')
         const exe = exePath()
+        // One outcome for the start (READY, or a failure), and one end: a
+        // program that cannot start emits 'error' and 'close', never 'exit'.
+        let ended = false
+        let readyTimer = null
         const fail = (code) => {
+          if (ended) return
+          ended = true
+          if (readyTimer) timers.clearTimeout(readyTimer)
+          readyTimer = null
+          const proc = child
+          child = null
+          for (const sock of [...socks.values()]) sock.gone()
+          if (proc) {
+            try {
+              proc.kill()
+            } catch {
+              /* already gone */
+            }
+          }
+          if (closed) return
           const err = new Error(`askpass pipe host: ${code}`)
           err.code = code
           srv.emit('error', err)
@@ -93,7 +120,11 @@ export function createAskpassPipeHost({ exePath, spawnImpl = spawn, env = proces
           setImmediate(() => fail('ENOHELPER'))
           return srv
         }
-        srv.once('listening', () => cb && cb())
+        srv.once('listening', () => {
+          if (readyTimer) timers.clearTimeout(readyTimer)
+          readyTimer = null
+          if (cb) cb()
+        })
         try {
           child = spawnImpl(exe, ['--serve', name], {
             stdio: ['pipe', 'pipe', 'ignore'],
@@ -105,26 +136,30 @@ export function createAskpassPipeHost({ exePath, spawnImpl = spawn, env = proces
           setImmediate(() => fail('ESPAWN'))
           return srv
         }
+        const proc = child
+        readyTimer = timers.setTimeout(() => {
+          readyTimer = null
+          if (!ready) fail('ETIMEDOUT')
+        }, readyTimeoutMs)
         let buf = ''
-        child.stdout.setEncoding('utf8')
-        child.stdout.on('data', (chunk) => {
-          buf += chunk
-          let nl
-          while ((nl = buf.indexOf('\n')) >= 0) {
-            const line = buf.slice(0, nl).replace(/\r$/, '')
-            buf = buf.slice(nl + 1)
-            onLine(line)
-          }
-          if (buf.length > MAX_STDOUT_LINE) buf = ''
-        })
-        child.on('error', () => {})
-        child.on('exit', () => {
-          const wasReady = ready
-          child = null
-          for (const sock of [...socks.values()]) sock.gone()
-          if (!closed) fail(wasReady ? 'EEXITED' : 'ESTART')
-        })
-        if (child.stdin) child.stdin.on('error', () => {})
+        if (proc.stdout) {
+          proc.stdout.setEncoding('utf8')
+          proc.stdout.on('data', (chunk) => {
+            if (ended || child !== proc) return
+            buf += chunk
+            let nl
+            while ((nl = buf.indexOf('\n')) >= 0) {
+              const line = buf.slice(0, nl).replace(/\r$/, '')
+              buf = buf.slice(nl + 1)
+              onLine(line)
+            }
+            if (buf.length > MAX_STDOUT_LINE) buf = ''
+          })
+        }
+        if (proc.stdin) proc.stdin.on('error', () => {})
+        proc.on('error', () => fail(ready ? 'EEXITED' : 'ESPAWN'))
+        proc.on('exit', () => fail(ready ? 'EEXITED' : 'ESTART'))
+        proc.on('close', () => fail(ready ? 'EEXITED' : 'ESTART'))
         return srv
       }
 

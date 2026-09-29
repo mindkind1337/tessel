@@ -2168,6 +2168,11 @@ const host = createPtyClient({
 })
 
 ipcMain.handle('pty:create', async (_evt, opts = {}) => {
+  const launchCancelled = () => ({
+    ok: false,
+    cancelled: true,
+    error: t('main.remote.launchCancelled', 'The terminal was closed before ssh started.')
+  })
   const { id, shellId, cols = 80, rows = 24, cwd, projectDir } = opts
   if (!id) throw new Error('pty:create requires an id')
   const shell = getShells().find((s) => s.id === shellId) || defaultShell()
@@ -2194,9 +2199,12 @@ ipcMain.handle('pty:create', async (_evt, opts = {}) => {
     const setup = prepareStatus(agentProvider, env)
     if (!setup.ok) agentStatusWarning = setup.error
   }
-  // ssh's questions go to Tessel's askpass helper (sshAskpass.js); null when
-  // it can't (old ssh, no helper): ssh then asks in the terminal.
-  const askpassEnv = remote ? await sshAskpass.preparePane(id, { hostId: remote.target.id, label: remote.name, sshExe: remote.file }) : null
+  // ssh's questions go to Tessel's askpass helper (sshAskpass.js). 'fallback'
+  // (old ssh, no helper): ssh asks in the terminal. 'cancelled': the pane was
+  // closed or launched again meanwhile: ssh is not started at all.
+  const launch = remote ? await sshAskpass.prepareLaunch(id, { hostId: remote.target.id, label: remote.name, sshExe: remote.file }) : null
+  if (launch && launch.status === 'cancelled') return launchCancelled()
+  const askpassEnv = launch && launch.status === 'ready' ? launch.env : null
   // This launch's own token: its success / failure touches only it.
   const askpassToken = askpassEnv ? askpassEnv.TESSEL_ASKPASS_TOKEN : undefined
   let res
@@ -2229,6 +2237,17 @@ ipcMain.handle('pty:create', async (_evt, opts = {}) => {
     if (askpassToken) sshAskpass.releasePane(id, askpassToken)
     log.error('pty', `failed to launch ${shell.name} (${shell.file}) in ${startDir}: ${res.error}`)
     return { ok: false, error: t('main.error.launchShell', 'Failed to launch {{shell}}: {{error}}', { shell: shell.name, error: res.error }) }
+  }
+  // Closed while the terminal was being created: end the ssh it started (the
+  // kill went to the host before this terminal existed). Launched again
+  // meanwhile: the newer launch owns the pane, left alone.
+  if (launch) {
+    const state = sshAskpass.launchState(id, launch.lease)
+    if (state !== 'current') {
+      if (askpassToken) sshAskpass.releasePane(id, askpassToken)
+      if (state === 'released') host.send('kill', { id })
+      return launchCancelled()
+    }
   }
   ptyInfo.set(id, { shellId: shell.id, shellName: shell.name, backend, pid: res.pid, agentLaunchToken })
   if (remote) {
