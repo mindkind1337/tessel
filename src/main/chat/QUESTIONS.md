@@ -141,16 +141,21 @@ Normal `turn/completed` still settles it, including nonblocking questions.
 
 - Up to 8 pending requests, each with 8 questions and 32 options per question.
 - Question/header/description: 2 KiB each; option label: 512 bytes; identifiers:
-  120 bytes; custom answer: 64 KiB UTF-8 per question. Oversize values are refused,
+  120 bytes; custom answer: 8 KiB UTF-8 per question. Oversize values are refused,
   not silently truncated. Claude's original questions are capped at 1 MiB.
 - At most 4096 question request ids are tracked per adapter process, including
   completed ids to ignore retransmissions. Further requests are cancelled.
+- Invalid raw request ids receive a cancellation reply as well; only a duplicate
+  already-seen id is ignored. Session-level cancellation also asks the adapter to
+  cancel, even if its provider turn id did not match the turn that just ended.
 - Requests stay pending until a user response, provider cancellation, turn end,
   interrupt, close or process exit. Late asynchronous writes cannot resurrect them.
 - A pending question prevents idle sleep and delivery of another queued user/team
   turn. It does not add an approval or modify the permission posture.
 - User answers are ordinary conversation data in the journal. Secret-entry
   questions are refused; raw provider request ids never reach the renderer.
+  Both question events and answer-status events use the journal's recursive
+  8 KiB string clipping, in addition to validation at the live question boundary.
 
 ## Verification
 
@@ -175,3 +180,9 @@ Validation on 2026-09-29: full suite, 420 files passed / 39 skipped;
 After the final system-error and malformed-secret-flag checks, the five affected
 adapter/session/question suites passed again (222 tests). Final build:
 `check-bundle: ok (4 files)`. No unexpected failures.
+
+Review follow-up: provider cancellation is also sent from session teardown;
+malformed raw ids get explicit replies; question journal fields and free-text
+answers are bounded at 8 KiB. Validation after these corrections: 144 targeted
+tests, then the complete suite (420 files, 5468 passed; the same 1 expected
+failure, 2 skipped and 38 todos). Build: `check-bundle: ok (4 files)`.

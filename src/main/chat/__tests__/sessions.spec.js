@@ -152,7 +152,7 @@ describe('question IPC and lifecycle', () => {
     await openOk(chat)
     const a = adapters[0]
     let resolve
-    a.answerQuestion.mockImplementation(() => new Promise(r => { resolve = r }))
+    a.answerQuestion.mockImplementationOnce(() => new Promise(r => { resolve = r }))
     a.emit('question', question)
     const pending = chat.answer({ paneId, requestId: question.requestId, answers })
     expect(await chat.answer({ paneId, requestId: question.requestId, answers })).toMatchObject({ code: 'unknown' })
@@ -160,7 +160,24 @@ describe('question IPC and lifecycle', () => {
     resolve({ ok: true })
     await pending
     expect(events('questionStatus')).toEqual([{ type: 'questionStatus', requestId: question.requestId, status: 'cancelled' }])
-    expect(a.answerQuestion).toHaveBeenCalledTimes(1)
+    expect(a.answerQuestion).toHaveBeenCalledTimes(2)
+    expect(a.answerQuestion).toHaveBeenLastCalledWith(question.requestId, { cancel: true })
+    await chat.close({ paneId })
+  })
+  it('relays turn-end cancellations even when adapter turn ownership did not match', async () => {
+    const chat = createChatSessions(deps)
+    await openOk(chat)
+    const a = adapters[0]
+    a.emit('question', question)
+    a.emit('question', { ...question, requestId: 'question_second' })
+    a.emit('turnEnd', { turnId: 'another-turn', status: 'completed' })
+    expect(a.answerQuestion.mock.calls).toEqual([
+      [question.requestId, { cancel: true }],
+      ['question_second', { cancel: true }]
+    ])
+    expect(chat.history({ paneId }).questions).toEqual([])
+    a.emit('questionStatus', { requestId: question.requestId, status: 'cancelled' })
+    expect(events('questionStatus')).toHaveLength(2)
     await chat.close({ paneId })
   })
   it('does not sleep or send queued messages while waiting for a question', async () => {

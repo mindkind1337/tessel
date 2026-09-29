@@ -570,7 +570,14 @@ export function createChatSessions(deps) {
   }
 
   function cancelQuestions(s) {
-    for (const requestId of [...s.questions.keys()]) settleQuestion(s, requestId, 'cancelled')
+    for (const requestId of [...s.questions.keys()]) {
+      // Resolve even an adapter request whose provider turn id did not match
+      // the turnEnd. Settle locally first so a synchronous callback is harmless.
+      settleQuestion(s, requestId, 'cancelled')
+      try {
+        Promise.resolve(s.adapter?.answerQuestion?.(requestId, { cancel: true })).catch(() => {})
+      } catch { /* adapter already stopped */ }
+    }
   }
 
   function finish(s, e = {}) {

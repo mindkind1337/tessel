@@ -202,7 +202,12 @@ export function createClaudeChat(opts) {
   function onControlRequest(m) {
     const id = m.request_id
     const r = m.request || {}
-    if (typeof id !== 'string') return
+    if (typeof id !== 'string') {
+      if (r.subtype === 'can_use_tool' && r.tool_name === 'AskUserQuestion') {
+        answerControl(id, { behavior: 'deny', message: 'The question request id is invalid.' }) // i18n-ignore sent to the agent
+      }
+      return
+    }
     if (r.subtype === 'can_use_tool') {
       if (r.tool_name === 'AskUserQuestion') {
         const normalized = !closing && !finished && !frames.interruptRequested && Buffer.byteLength(JSON.stringify(r.input?.questions) || '', 'utf8') <= 1024 * 1024

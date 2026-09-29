@@ -41,10 +41,10 @@ describe('question boundary', () => {
     const clean = validateQuestionAnswers(qs, value)
     expect(providerAnswers(qs, clean, 'claude')).toEqual({ 'Which format?': 'Same, Same, Autre' })
     expect(
-      validateQuestionAnswers(qs, [{ questionId: 'q0', optionIds: [], other: 'é'.repeat(32768) }])
+      validateQuestionAnswers(qs, [{ questionId: 'q0', optionIds: [], other: 'é'.repeat(4096) }])
     ).not.toBeNull()
     expect(
-      validateQuestionAnswers(qs, [{ questionId: 'q0', optionIds: [], other: 'é'.repeat(32769) }])
+      validateQuestionAnswers(qs, [{ questionId: 'q0', optionIds: [], other: 'é'.repeat(4097) }])
     ).toBeNull()
   })
   it.each([
@@ -116,6 +116,16 @@ describe('question boundary', () => {
 })
 
 describe('pending question lifecycle', () => {
+  it.each(['x'.repeat(257), 1.5, null, {}, '', Number.MAX_SAFE_INTEGER + 1])(
+    'rejects invalid raw ids with a provider reply: %j',
+    (rawId) => {
+      const emit = vi.fn(),
+        reply = vi.fn(async () => true)
+      createQuestionRequests(emit).add({ rawId, questions: normalized(), reply })
+      expect(reply).toHaveBeenCalledExactlyOnceWith(null)
+      expect(emit).not.toHaveBeenCalled()
+    }
+  )
   function setup() {
     const emit = vi.fn(),
       reply = vi.fn(async () => true),

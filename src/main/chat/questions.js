@@ -6,7 +6,7 @@ export const QUESTION_LIMITS = {
   options: 32,
   text: 2048,
   label: 512,
-  other: 65536,
+  other: 8192,
   pending: 8,
   requests: 4096
 }
@@ -123,7 +123,10 @@ export function createQuestionRequests(emit) {
   const rawKey = (raw) => JSON.stringify(raw)
   const validRaw = (raw) => (typeof raw === 'number' && Number.isSafeInteger(raw)) || text(raw, 256)
   function add({ rawId, questions, turnId = '', reply }) {
-    if (!validRaw(rawId)) return
+    if (!validRaw(rawId)) {
+      void reply(null)
+      return
+    }
     const key = rawKey(rawId)
     if (seen.has(key)) return
     if (seen.size >= QUESTION_LIMITS.requests) {

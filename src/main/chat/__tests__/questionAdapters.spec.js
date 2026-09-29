@@ -151,6 +151,21 @@ async function setup(provider) {
 }
 
 describe.each(['claude', 'codex'])('%s questions over stdio', (provider) => {
+  it.each(['r'.repeat(257), 1.5])(
+    'answers malformed raw ids instead of leaving the provider waiting: %j',
+    async (rawId) => {
+      const s = await setup(provider)
+      s.ask({}, rawId)
+      expect(s.events.filter((e) => e.type === 'question')).toEqual([])
+      expect(s.replies()).toHaveLength(1)
+      if (provider === 'claude')
+        expect(s.replies()[0].response).toMatchObject({
+          request_id: rawId,
+          response: { behavior: 'deny' }
+        })
+      else expect(s.replies()[0]).toEqual({ id: rawId, result: { answers: {} } })
+    }
+  )
   it('waits, sends the documented reply, and does not route the question to approvals', async () => {
     const s = await setup(provider)
     const question = s.ask()

@@ -12,6 +12,19 @@ beforeEach(() => {
 afterEach(() => fs.rmSync(tmp, { recursive: true, force: true }))
 
 describe('chat journal', () => {
+  it('clips question and answer text while retaining ordinary 8 KiB answers exactly', () => {
+    const j = createChatJournal({ dir: tmp, paneId: 'p1' })
+    const big = 'x'.repeat(CLIP_BYTES * 3)
+    j.append(1, { type: 'question', requestId: 'r', questions: [{ id: 'q', question: big, options: [{ id: 'o', label: big }] }] })
+    j.append(2, { type: 'questionStatus', requestId: 'r', status: 'answered', answers: [{ questionId: 'q', optionIds: [], other: big }] })
+    const exact = 'é'.repeat(CLIP_BYTES / 2)
+    j.append(3, { type: 'questionStatus', requestId: 'r2', status: 'answered', answers: [{ questionId: 'q', optionIds: [], other: exact }] })
+    const rows = j.read().map(row => row.event)
+    expect(rows[0].questions[0].question).toBe(clipString(big))
+    expect(rows[0].questions[0].options[0].label).toBe(clipString(big))
+    expect(rows[1].answers[0].other).toBe(clipString(big))
+    expect(rows[2].answers[0].other).toBe(exact)
+  })
   it('preserves the latest full command snapshot after journal rotation and restart', () => {
     const j = createChatJournal({ dir: tmp, paneId: 'p1', rotateBytes: 150 })
     const commands = [{ name: 'review', kind: 'skill', description: 'Inspect' }]
