@@ -16,7 +16,6 @@ import { writeFileAtomic } from './safeJson'
 import { parseWorkerRequest } from '../shared/orchestration'
 import { createHash } from 'crypto'
 import { verifyRequest, teamSecretOf, sealAnswer, finishRequestFile, releaseRequestFile } from './teamAuth'
-import { markReady } from './launchReady'
 
 const ID_RE = /^(?!\.)(?!.*\.\.)[A-Za-z0-9._-]{1,100}$/
 export const TASK_COLUMNS = ['todo', 'doing', 'review', 'done']
@@ -177,27 +176,11 @@ export function takeTeamRequests({ dir, teamId, board } = {}) {
     const v = verifyRequest(data, f.fromId, teamKey, Date.now(), { name: f.name, hash: createHash('sha256').update(text).digest('hex') })
     let body = v.body
     if (v.unsigned) {
-      if (teamSecretOf(f.fromId) || parseWorkerRequest(data) || (data && data.action === 'ready'))
+      if (teamSecretOf(f.fromId) || parseWorkerRequest(data))
         v.error = 'the request is not signed by its pane: restart the agent to update its team tools'
       else body = data
     }
     const req = v.error ? { error: v.error } : parseRequest(body)
-    // The ready handshake (launchReady.js): only a team's, only the first of
-    // the current launch, only for a launch without a first prompt. Anything
-    // else is dropped quietly (an MCP server restarted mid-session).
-    if (!req.error && req.action === 'ready') {
-      const ok = board == null && markReady(f.fromId, req.launchToken, `${teamKey}|${f.name}|${data.auth && data.auth.nonce}`)
-      if (ok && ok.ok) {
-        requests.push({ file: f.name, fromId: f.fromId, action: 'ready', launchToken: req.launchToken, at: ok.at })
-        continue
-      }
-      try {
-        fs.rmSync(file, { force: true })
-      } catch {
-        // dropped next round
-      }
-      continue
-    }
     if (!req.error) {
       requests.push({ file: f.name, fromId: f.fromId, ...req })
       continue
@@ -395,10 +378,6 @@ export function parseRequest(data) {
   // heartbeats (src/shared/orchestration.js). Tessel's renderer decides.
   const worker = parseWorkerRequest(data)
   if (worker) return worker
-  if (data.action === 'ready') {
-    if (typeof data.launch !== 'string' || !/^[A-Za-z0-9_-]{16,100}$/.test(data.launch)) return { error: 'the ready handshake needs its launch token' }
-    return { action: 'ready', launchToken: data.launch }
-  }
   const column = data.column == null ? null : String(data.column).toLowerCase()
   if (column !== null && !TASK_COLUMNS.includes(column))
     return { error: `unknown column "${data.column}" (use ${TASK_COLUMNS.join(', ')})` }

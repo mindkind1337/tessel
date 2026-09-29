@@ -31,7 +31,7 @@ const path = require('path')
 const crypto = require('crypto')
 const { randomUUID } = crypto
 
-const VERSION = '1.10.0'
+const VERSION = '1.9.0'
 const MAX_TEXT = 6000
 
 // --- Finding my team and me ---------------------------------------------------
@@ -1359,46 +1359,12 @@ function startAlive() {
   process.stdin.on('end', () => process.exit(0))
 }
 
-// --- Ready handshake (src/main/launchReady.js) ----------------------------------------
-// Once per start of this server: a signed "ready" for this pane's launch
-// (TESSEL_AGENT_LAUNCH), so Tessel may wake an agent it cannot otherwise
-// confirm idle (a Codex resumed in place reports nothing before its next
-// turn). Tessel counts only the first one of a launch, and only for a launch
-// it started without a first prompt; the MAC binds it to this pane, team and
-// launch. Not in a team yet (being set up): tried again for a minute.
-const READY_TRIES = 12
-const READY_EVERY_MS = 5000
-function sendReady(tries = READY_TRIES, locateFn = locate) {
-  const launch = String(process.env.TESSEL_AGENT_LAUNCH || '')
-  if (!teamSecret() || !/^[A-Za-z0-9_-]{16,100}$/.test(launch)) return false
-  let ctx = null
-  try {
-    ctx = locateFn(null)
-  } catch {
-    ctx = null
-  }
-  if (ctx && !ctx.error && ctx.state) {
-    try {
-      taskRequest(ctx, { action: 'ready', launch })
-      return true
-    } catch {
-      // tried again below
-    }
-  }
-  if (tries > 1) {
-    const timer = setTimeout(() => sendReady(tries - 1, locateFn), READY_EVERY_MS)
-    if (timer.unref) timer.unref()
-  }
-  return false
-}
-
 if (require.main === module) {
   if (process.argv.includes('--hook')) hookMain()
   else {
     serve()
     startAlive()
-    sendReady()
   }
 }
 
-module.exports = { sendReady, taskRequest, locate, readInbox, send, members, handle, candidateDirs, ackPath, markRead, unread, listTasks, addTask, moveTask, reportTask, gateTask, ask, groupTargets, listWorkers, listGates, TOOLS, VERSION }
+module.exports = { taskRequest, locate, readInbox, send, members, handle, candidateDirs, ackPath, markRead, unread, listTasks, addTask, moveTask, reportTask, gateTask, ask, groupTargets, listWorkers, listGates, TOOLS, VERSION }
