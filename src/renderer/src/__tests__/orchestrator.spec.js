@@ -2,7 +2,7 @@
 // panes, cards and team tools: no terminal, no agent is ever started.
 import { describe, it, expect, beforeEach } from 'vitest'
 import { reactive } from 'vue'
-import { createOrchestrator } from '../orchestrator'
+import { createOrchestrator, TURN_END_GRACE_MS, CHAT_REMINDER } from '../orchestrator'
 import { WORKER_START_PROMPT, STALE_MS } from '../../../shared/orchestration'
 
 function world({ confirm = true, max = 2, depth = 1 } = {}) {
@@ -423,5 +423,220 @@ describe('orchestrator: review fixes', () => {
     const w = world({ confirm: true })
     w.start({}, w.lead, 'r-test-to0001')
     expect(w.log.answers[0]).toMatchObject({ rid: 'r-test-to0001', toId: 'lead' })
+  })
+})
+
+// Workers started as chats (Settings > Orchestration): Claude and Codex only.
+describe('orchestrator: chat workers', () => {
+  function chatWorld(opts = {}) {
+    const w = world({ confirm: false, ...opts })
+    w.settings.orchestrationWorkerMode = 'chat'
+    w.log.chats = []
+    w.log.turns = []
+    w.log.order = []
+    w.log.reads = []
+    w.working = new Set()
+    let n = 20
+    w.deps.openWorkerChat = async (o) => {
+      w.log.chats.push(o)
+      if (w.chatFails !== undefined) return w.chatFails
+      const l = { id: `chat-${++n}`, num: n, title: o.agent.id === 'codex' ? 'Codex' : 'Claude', kind: 'chat', team: null }
+      w.leaves.set(l.id, l)
+      return l
+    }
+    w.deps.sendChatTurn = async (paneId, text) => {
+      w.log.turns.push({ paneId, text })
+      w.log.order.push('turn')
+      return w.sendFails || { ok: true }
+    }
+    const notice = w.deps.notice
+    w.deps.notice = (list, text, teamId) => {
+      w.log.order.push('notice')
+      notice(list, text, teamId)
+    }
+    w.deps.readChat = async (paneId, lines) => {
+      w.log.reads.push({ paneId, lines })
+      return w.leaves.has(paneId) ? '> User: go\n▸ Bash: npm test (done)\nAll green.' : null
+    }
+    w.deps.chatWorking = (paneId) => w.working.has(paneId)
+    return w
+  }
+  const started = async (w, extra = {}) => {
+    w.start({ model: 'claude-sonnet-5', effort: 'high', agent: 'claude', ...extra }, w.lead, 'r-chat-000001')
+    await w.flush()
+    await w.flush()
+    await w.flush()
+    return w.team.workers.at(-1)
+  }
+  const told = (w, re) => w.log.notices.filter((x) => x.to[0] === 'lead' && re.test(x.text))
+  const turnEnd = (w, r, ev) => {
+    w.o.chatTurnEnded(r.paneId, ev)
+    w.advance(TURN_END_GRACE_MS + 1)
+    w.tick()
+  }
+
+  it('starts a chat with the worker model, effort and coordinator; the first prompt is a turn, then the brief', async () => {
+    const w = chatWorld()
+    const r = await started(w)
+    expect(w.log.opened).toHaveLength(0) // no terminal pane
+    expect(w.log.chats).toHaveLength(1)
+    const o = w.log.chats[0]
+    expect(o).toMatchObject({ ws: w.ws, model: 'claude-sonnet-5', effort: 'high', coordinator: w.lead })
+    expect(o.agent.id).toBe('claude')
+    expect(o.worktree.branch).toBe('agent/x')
+    expect(r).toMatchObject({ status: 'running', chat: true, paneId: 'chat-21' })
+    expect(w.leaves.get('chat-21').team).toBe('tm1')
+    expect(w.log.turns).toEqual([{ paneId: 'chat-21', text: WORKER_START_PROMPT }])
+    // The turn first, then the brief (a team turn), then the coordinator told.
+    expect(w.log.order.slice(0, 2)).toEqual(['turn', 'notice'])
+    expect(w.log.notices[0]).toMatchObject({ to: ['chat-21'] })
+    expect(w.log.notices[0].text).toMatch(/\[Tessel worker brief\]/)
+    expect(w.log.answers.at(-1)).toMatchObject({ rid: 'r-chat-000001', ok: true })
+    expect(w.log.answers.at(-1).text).toMatch(/^Started worker #21 \(claude\)/)
+    expect(w.cards.get(r.taskId)).toMatchObject({ column: 'doing', paneId: 'chat-21' })
+    expect(w.o.summary(w.team).workers[0]).toMatchObject({ chat: true })
+    w.tick()
+    expect(w.log.published.at(-1).workers[0]).toMatchObject({ chat: true })
+  })
+
+  it('a chat that cannot start: the worker fails, its slot is free, its coordinator told', async () => {
+    const w = chatWorld()
+    w.chatFails = { error: 'the folder is not approved', code: 'untrusted' }
+    const r = await started(w)
+    expect(r).toMatchObject({ status: 'failed', reason: 'its chat could not start (the folder is not approved)' })
+    expect(w.log.answers.at(-1)).toMatchObject({ rid: 'r-chat-000001', ok: false })
+    expect(w.log.answers.at(-1).text).toMatch(/was not started: its chat could not start \(the folder is not approved\)/)
+    expect(w.cards.get(r.taskId).column).toBe('todo')
+    expect(w.log.turns).toHaveLength(0)
+    // null too.
+    w.chatFails = null
+    const r2 = await started(w, { title: 'Other' })
+    expect(r2).toMatchObject({ status: 'failed', reason: 'its chat could not start (unknown error)' })
+  })
+
+  it('its first turn not sent: the chat is closed and the worker fails', async () => {
+    const w = chatWorld()
+    w.sendFails = { ok: false, error: 'the agent exited' }
+    const r = await started(w)
+    expect(r).toMatchObject({ status: 'failed', reason: 'its chat could not start (the agent exited)' })
+    expect(w.log.closed.at(-1)).toMatchObject({ id: 'chat-21', byUser: false })
+    expect(w.log.notices.some((x) => /worker brief/.test(x.text))).toBe(false)
+  })
+
+  it('other agents stay terminals in chat mode; terminal mode (the default) never opens a chat', async () => {
+    const w = chatWorld()
+    w.deps.agentAvailable = (id) => ({ id, name: id, command: id })
+    const r = await started(w, { agent: 'gemini' })
+    expect(w.log.chats).toHaveLength(0)
+    expect(w.log.opened[0].launchOptions.initialPrompt).toBe(WORKER_START_PROMPT)
+    expect(r.chat).toBeUndefined()
+    const t = chatWorld()
+    t.settings.orchestrationWorkerMode = 'terminal'
+    const r2 = await started(t)
+    expect(t.log.chats).toHaveLength(0)
+    expect(t.log.opened).toHaveLength(1)
+    // Not a chat worker: its turn ends mean nothing here.
+    t.o.chatTurnEnded(r2.paneId, { status: 'completed' })
+    t.advance(TURN_END_GRACE_MS + 1)
+    t.tick()
+    expect(t.log.notices.some((x) => x.text === CHAT_REMINDER)).toBe(false)
+    expect(r2.turnEnds).toBeUndefined()
+  })
+
+  it('a turn ended without a report: one reminder, then its coordinator told once, then nothing', async () => {
+    const w = chatWorld()
+    const r = await started(w)
+    w.o.chatTurnEnded(r.paneId, { status: 'completed' })
+    w.tick() // too soon: its team_worker_done may still come
+    expect(w.log.notices.filter((x) => x.text === CHAT_REMINDER)).toHaveLength(0)
+    w.advance(TURN_END_GRACE_MS + 1)
+    w.tick()
+    expect(w.log.notices.filter((x) => x.text === CHAT_REMINDER)).toEqual([{ to: ['chat-21'], text: CHAT_REMINDER }])
+    expect(r.reminded).toBe(true)
+    turnEnd(w, r, { status: 'completed' })
+    const silent = told(w, /stopped without reporting/)
+    expect(silent).toHaveLength(1)
+    expect(silent[0].text).toBe(
+      '[Tessel] Worker #21 "Fix the cart" (card task-1) stopped without reporting, even after a reminder. Look at it (team_worker_read), ask it (team_ask), or stop it (team_worker_stop).'
+    )
+    turnEnd(w, r, { status: 'completed' })
+    turnEnd(w, r, { status: 'completed' })
+    expect(w.log.notices.filter((x) => x.text === CHAT_REMINDER)).toHaveLength(1)
+    expect(told(w, /stopped without reporting/)).toHaveLength(1)
+    expect(r.status).toBe('running') // nothing reset or stopped by itself
+  })
+
+  it('a failed turn: its coordinator told with the error, once per error', async () => {
+    const w = chatWorld()
+    const r = await started(w)
+    turnEnd(w, r, { status: 'failed', error: 'usage limit reached' })
+    turnEnd(w, r, { status: 'failed', error: 'usage limit reached' })
+    const failed = told(w, /its turn failed/)
+    expect(failed.map((x) => x.text)).toEqual(['[Tessel] Worker #21 "Fix the cart" (card task-1): its turn failed: usage limit reached.'])
+    turnEnd(w, r, { status: 'failed', error: 'content filtered' })
+    expect(told(w, /its turn failed/)).toHaveLength(2)
+    // A failure is no silence: no reminder for it.
+    expect(w.log.notices.some((x) => x.text === CHAT_REMINDER)).toBe(false)
+  })
+
+  it('reported (even just after its turn ended), interrupted or working again: nothing is said', async () => {
+    const w = chatWorld()
+    const r = await started(w)
+    const before = w.log.notices.length
+    // Interrupted (the user or a stop).
+    turnEnd(w, r, { status: 'interrupted' })
+    // Working again when judged: the next turn end is the one that counts.
+    w.o.chatTurnEnded(r.paneId, { status: 'completed' })
+    w.working.add(r.paneId)
+    w.advance(TURN_END_GRACE_MS + 1)
+    w.tick()
+    expect(w.log.notices.length).toBe(before)
+    w.working.delete(r.paneId)
+    // Its team_worker_done arrives after the turn end, within the grace.
+    w.o.chatTurnEnded(r.paneId, { status: 'completed' })
+    w.o.handleRequest(w.team, w.leaves.get(r.paneId), { action: 'worker-done', outcome: 'succeeded', summary: 'Done.', files: [] })
+    expect(r.status).toBe('done')
+    w.advance(TURN_END_GRACE_MS + 1)
+    w.tick()
+    turnEnd(w, r, { status: 'completed' })
+    const said = w.log.notices.slice(before).filter((x) => x.text === CHAT_REMINDER || /stopped without reporting|turn failed/.test(x.text))
+    expect(said).toEqual([])
+  })
+
+  it('team_worker_read of a chat worker reads its conversation', async () => {
+    const w = chatWorld()
+    const r = await started(w)
+    w.o.handleRequest(w.team, w.lead, { action: 'worker-read', rid: 'r-read-chat01', worker: '#21', lines: 20 })
+    await w.flush()
+    expect(w.log.reads).toEqual([{ paneId: r.paneId, lines: 20 }])
+    expect(w.log.answers.at(-1)).toMatchObject({ rid: 'r-read-chat01', ok: true, toId: 'lead' })
+    expect(w.log.answers.at(-1).text).toBe('#21 "Fix the cart" is running. No heartbeat yet. Its conversation now:\n> User: go\n▸ Bash: npm test (done)\nAll green.')
+    // Not open (readChat -> null).
+    w.deps.readChat = async () => null
+    w.o.handleRequest(w.team, w.lead, { action: 'worker-read', rid: 'r-read-chat02', worker: '#21' })
+    await w.flush()
+    expect(w.log.answers.at(-1)).toMatchObject({ rid: 'r-read-chat02', ok: false, text: "#21's chat is not open." })
+    // Another agent may not read it; nothing is read for it.
+    const reads = w.log.reads.length
+    w.o.handleRequest(w.team, w.mate, { action: 'worker-read', rid: 'r-read-chat03', worker: '#21' })
+    await w.flush()
+    expect(w.log.answers.at(-1)).toMatchObject({ rid: 'r-read-chat03', ok: false })
+    expect(w.log.reads).toHaveLength(reads)
+  })
+
+  it('stop closes it the usual way; a chat at work is never "silent"', async () => {
+    const w = chatWorld({ max: 3 })
+    const r = await started(w)
+    const r2 = await started(w, { title: 'B' })
+    w.working.add(r.paneId)
+    w.advance(STALE_MS + 1000)
+    w.tick()
+    const stale = w.log.notices.filter((x) => /sent no heartbeat/.test(x.text))
+    expect(stale).toHaveLength(1)
+    expect(stale[0].text).toMatch(/"B"/)
+    w.o.handleRequest(w.team, w.lead, { action: 'worker-stop', rid: 'r-stop-chat1', worker: `#${w.leaves.get(r.paneId).num}` })
+    expect(r.status).toBe('stopped')
+    expect(w.log.closed.at(-1)).toMatchObject({ id: r.paneId, byUser: false })
+    expect(r2.status).toBe('running')
   })
 })

@@ -49,6 +49,7 @@ import { createChatSessions } from './chat/sessions'
 import { createClaudeChat } from './chat/claudeChat'
 import { createCodexChat } from './chat/codexChat'
 import { createChatTrust } from './chat/chatTrust'
+import { worktreeProjectRoot } from './chat/worktreeTrust'
 import { createLogger, describe } from './logger'
 import { guardIpc, mainFrameSender } from './ipcGuard'
 import { cleanEnv } from './cleanEnv'
@@ -1023,6 +1024,11 @@ const chatSessions = createChatSessions({
   team: { newSecret: newTeamSecret, setSecret: setTeamSecret, revokeSecret: revokeTeamSecret },
   state: agentStateStore,
   trust: chatTrust,
+  // A git worktree (a worker's copy) counts as its project, trusted or not:
+  // the folders it names are checked both ways (its .git file names the
+  // project's worktrees/<name>, and that entry names this folder back), so a
+  // folder cannot claim a trusted project by a .git file alone.
+  trustRoots: (cwd) => worktreeProjectRoot(cwd),
   log
 })
 chatSessions.register(ipcMain)

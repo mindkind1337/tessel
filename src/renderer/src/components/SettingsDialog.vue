@@ -1636,6 +1636,18 @@ function previewSound() {
                   @change="setOrchestrationNumber('orchestrationMaxDepth', NESTED_DEPTH_LIMIT, $event)"
                 />
               </div>
+              <div class="set-row">
+                <label class="set-label" for="settings-orch-mode">
+                  {{ t('settings.orchestration.workerMode', 'Start workers as') }}
+                  <span class="set-hint">{{
+                    t('settings.orchestration.workerModeHint', 'Chat: a Claude or Codex worker runs without a terminal; its brief and team messages reach it as turns, and Tessel knows exactly when it stops. Other agents always start in a terminal')
+                  }}</span>
+                </label>
+                <select id="settings-orch-mode" v-model="settings.orchestrationWorkerMode" class="set-select" data-setting="orchestrationWorkerMode">
+                  <option value="terminal">{{ t('settings.orchestration.workerModeTerminal', 'A terminal pane') }}</option>
+                  <option value="chat">{{ t('settings.orchestration.workerModeChat', 'A chat (Claude, Codex)') }}</option>
+                </select>
+              </div>
             </div>
           </div>
           <div class="set-group">
