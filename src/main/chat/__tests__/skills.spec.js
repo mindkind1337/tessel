@@ -1,9 +1,14 @@
 // @vitest-environment node
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
-import { discoverClaudeSkills, codexSkillDiscovery, skillFrontmatter } from '../skills.js'
+import {
+  discoverClaudeSkills,
+  codexSkillDiscovery,
+  skillFrontmatter,
+  publicSkillDiscovery
+} from '../skills.js'
 let temp, cwd, home
 beforeEach(async () => {
   temp = await fs.mkdtemp(path.join(os.tmpdir(), 'tessel-skills-'))
@@ -23,6 +28,72 @@ async function fixture(
   await fs.writeFile(file, content)
 }
 describe('read-only skill discovery', () => {
+  it('skips 64 KiB frontmatter lines promptly and strips scalar comments linearly', () => {
+    const started = performance.now()
+    expect(
+      skillFrontmatter('---\nname: safe\ndescription: x' + ' '.repeat(65536) + 'x\n---', 'fallback')
+    ).toEqual({ name: 'safe', description: null })
+    expect(performance.now() - started).toBeLessThan(500)
+    expect(
+      skillFrontmatter('---\nname: safe # note\ndescription: issue#42\t# hidden\n---', 'fallback')
+    ).toEqual({ name: 'safe', description: 'issue#42' })
+  })
+
+  it('refuses hard-linked skill files before opening their contents', async () => {
+    const outside = path.join(temp, 'outside.md'),
+      file = path.join(cwd, '.claude/skills/linked/SKILL.md')
+    await fixture(outside)
+    await fs.mkdir(path.dirname(file), { recursive: true })
+    await fs.link(outside, file)
+    const open = vi.fn((...args) => fs.open(...args))
+    const result = await discoverClaudeSkills({ cwd, home, io: { ...fs, open } })
+    expect(result.skills).toEqual([])
+    expect(open).not.toHaveBeenCalled()
+  })
+
+  it.each(['dev', 'ino', 'nlink'])(
+    'refuses an opened file with changed %s without reading, and closes it',
+    async (field) => {
+      await fixture(path.join(cwd, '.claude/skills/review/SKILL.md'))
+      const read = vi.fn(),
+        close = vi.fn()
+      const open = async (...args) => {
+        const handle = await fs.open(...args)
+        return {
+          stat: async () => {
+            const stat = await handle.stat()
+            stat[field] += 1
+            return stat
+          },
+          read,
+          close: async () => {
+            close()
+            await handle.close()
+          }
+        }
+      }
+      const result = await discoverClaudeSkills({ cwd, home, io: { ...fs, open } })
+      expect(result.skills).toEqual([])
+      expect(read).not.toHaveBeenCalled()
+      expect(close).toHaveBeenCalledTimes(1)
+    }
+  )
+
+  it('uses consistent opaque references and preserves only the directory basename', async () => {
+    await fixture(path.join(cwd, '.claude/skills/example/SKILL.md'))
+    const raw = await discoverClaudeSkills({ cwd, home })
+    raw.skills[0].rootPaths = [raw.skills[0].rootPath]
+    const result = publicSkillDiscovery(raw)
+    const skill = result.skills[0]
+    expect(JSON.stringify(result)).not.toContain(temp)
+    expect(JSON.stringify(result)).not.toContain('.claude')
+    expect(result.sources.some((source) => source.path === skill.rootPath)).toBe(true)
+    expect(skill.rootPaths).toEqual([skill.rootPath])
+    expect(skill.directoryPath.endsWith('/example')).toBe(true)
+    expect(skill.id).toBe(skill.skillFilePath)
+    expect(publicSkillDiscovery(raw)).toEqual(result)
+  })
+
   it('reads only frontmatter from approved root layouts, including shared and legacy commands', async () => {
     await fixture(path.join(cwd, '.claude/skills/example/SKILL.md'))
     await fixture(
@@ -72,14 +143,33 @@ describe('read-only skill discovery', () => {
     const bounded = await discoverClaudeSkills({ cwd, home, limits: { bytes: 40, depth: 1 } })
     expect(bounded.skills).toEqual([])
     expect(bounded.sources.some((source) => source.skippedReason === 'unavailable')).toBe(true)
-    const timed = await discoverClaudeSkills({
-      cwd,
-      home,
-      limits: { time: 15 },
-      io: { ...fs, realpath: () => new Promise(() => {}) }
-    })
-    expect(timed.skills).toEqual([])
-    expect(timed.sources.every((source) => source.skippedReason === 'unavailable')).toBe(true)
+    let release
+    const realpath = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          release = resolve
+        })
+    )
+    try {
+      const timed = await discoverClaudeSkills({
+        cwd,
+        home,
+        limits: { time: 15 },
+        io: { ...fs, realpath }
+      })
+      expect(timed.skills).toEqual([])
+      expect(timed.sources.every((source) => source.skippedReason === 'unavailable')).toBe(true)
+      for (let i = 0; i < 5; i++) {
+        await expect(
+          discoverClaudeSkills({ cwd: home, home, io: { ...fs, realpath } })
+        ).rejects.toMatchObject({ code: 'SKILL_SCAN_BUSY' })
+      }
+      expect(realpath).toHaveBeenCalledTimes(1)
+    } finally {
+      release(cwd)
+      await new Promise((resolve) => setImmediate(resolve))
+    }
+    expect((await discoverClaudeSkills({ cwd, home })).sources.length).toBeGreaterThan(0)
   })
   it('parses scalar and folded metadata without YAML evaluation or body fallback', () => {
     expect(

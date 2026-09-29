@@ -755,6 +755,45 @@ describe('history and seq', () => {
 })
 
 describe('IPC', () => {
+  it.each(['cached', 'pending'])('removes revoked project metadata from %s discovery while retaining trusted cwd skills', async phase => {
+    const projectDir = tmp, cwd = join(tmp, 'worktree')
+    fs.mkdirSync(cwd)
+    let trusted = true, finish
+    deps.trust.isTrusted.mockImplementation(folder => folder !== projectDir || trusted)
+    const skill = (base, name) => {
+      const rootPath = join(base, '.claude', 'skills'), directoryPath = join(rootPath, name), skillFilePath = join(directoryPath, 'SKILL.md')
+      return { id: skillFilePath, name, description: name, rootPath, directoryPath, skillFilePath, installed: true, providers: ['claude'], sourceKind: 'repo', updatedAt: null }
+    }
+    const skills = [skill(projectDir, 'revoked'), skill(cwd, 'retained')]
+    const result = { skills, sources: skills.map(row => ({ id: row.rootPath, path: row.rootPath, sourceKind: 'repo', providers: ['claude'], owner: 'claude', exists: true })), scannedAt: 42 }
+    const discoverSkills = vi.fn(() => phase === 'cached' ? Promise.resolve(result) : new Promise(resolve => { finish = resolve }))
+    const chat = createChatSessions({ ...deps, discoverSkills }), h = wire(chat)
+    await openOk(chat, { cwd, projectDir })
+    const first = h['chat:skills']({ paneId })
+    await flush()
+    expect(discoverSkills).toHaveBeenCalledWith({ cwd, projectDir })
+    if (phase === 'cached') expect((await first).result.skills).toHaveLength(2)
+    trusted = false
+    if (phase === 'pending') finish(result)
+    const response = phase === 'pending' ? await first : await h['chat:skills']({ paneId })
+    expect(response.result.skills.map(row => row.name)).toEqual(['retained'])
+    expect(response.result.sources).toHaveLength(1)
+    expect(JSON.stringify(response)).not.toContain(tmp)
+    expect((await h['chat:skills']({ paneId })).result.skills.map(row => row.name)).toEqual(['retained'])
+    expect(discoverSkills).toHaveBeenCalledTimes(1)
+  })
+
+  it('returns the checked cache when a global scan is busy, otherwise unavailable', async () => {
+    const result = { skills: [], sources: [], scannedAt: 42 }
+    const discoverSkills = vi.fn().mockResolvedValueOnce(result).mockRejectedValue(Object.assign(new Error('busy'), { code: 'SKILL_SCAN_BUSY' }))
+    const chat = createChatSessions({ ...deps, discoverSkills }), h = wire(chat)
+    await openOk(chat)
+    expect(await h['chat:skills']({ paneId })).toEqual({ ok: true, result })
+    expect(await h['chat:skills']({ paneId, refresh: true })).toEqual({ ok: true, result })
+    await openOk(chat, { paneId: 'other-pane' })
+    expect(await h['chat:skills']({ paneId: 'other-pane' })).toMatchObject({ ok: false })
+  })
+
   it('discovers skills only for an approved existing pane, ignores caller paths, caches and refreshes', async () => {
     const result = { skills: [], sources: [], scannedAt: 42 }
     let finish

@@ -35,11 +35,17 @@ The result is `{ok:true, result:{skills, sources, scannedAt}}`, or `{ok:false,
 error}`. A skill looks like:
 
 ```json
-{"id":"C:/project/.claude/skills/review/SKILL.md","name":"review","description":"Review changes","providers":["claude"],"sourceKind":"repo","sourceLabel":"C:/project/.claude/skills","rootPath":"C:/project/.claude/skills","directoryPath":"C:/project/.claude/skills/review","skillFilePath":"C:/project/.claude/skills/review/SKILL.md","installed":true,"updatedAt":1790700000000}
+{"id":"skill-opaque-id","name":"review","description":"Review changes","providers":["claude"],"sourceKind":"repo","sourceLabel":"Project skills","rootPath":"source-opaque-id","directoryPath":"directory-opaque-id/review","skillFilePath":"skill-opaque-id","installed":true,"updatedAt":1790700000000}
 ```
 
 Sources contain `id`, `label`, `path`, `sourceKind`, `providers`, `owner`, `exists`
-and optional `skippedReason` (`missing` or `unavailable`). Labels are source paths.
+and optional `skippedReason` (`missing` or `unavailable`). Source labels are localized.
+Absolute filesystem paths stay in main's private cache. Public `id`, `rootPath`,
+`rootPaths`, `skillFilePath` and source `path` fields are opaque keyed references,
+stable during the main-process lifetime, including refreshes. The same root always
+has the same reference. `directoryPath` keeps only an opaque prefix and the actual
+folder basename needed by the picker. References are for comparison only: the UI
+neither opens them nor inserts them in a prompt. They are not filesystem handles.
 `scannedAt` and `updatedAt` are epoch milliseconds; provider-only modification
 times are `null`. The menu handles loading, retry and insertion (`/name` for
 Claude, `$name` for Codex).
@@ -50,7 +56,10 @@ protects the handler. Renderer paths, agents, roots and home directories are
 ignored. Main takes cwd/projectDir from the session and home from the OS; an
 additional project directory must also pass trust. Concurrent requests share one
 pending result per pane; successful results are cached until `refresh:true` or a
-new session. A revoked trust decision also blocks cached results.
+new session. Both cwd and projectDir trust are checked again for cached results
+and after the scan. Revoking cwd trust blocks the result; revoking an additional
+project removes its sources and skills from the private cache and public result,
+while independently approved cwd skills remain available.
 
 Claude reads `.claude/skills`, `.claude/commands` and `.agents/skills` under cwd,
 an approved project directory, and home. Shared `.agents` sources have owner
@@ -58,12 +67,18 @@ an approved project directory, and home. Shared `.agents` sources have owner
 Only frontmatter `name` and `description` are returned, never the body. Missing
 names fall back to directory/file names. The small parser supports plain/quoted
 scalars and folded/literal descriptions, not arbitrary YAML or executable tags.
-No code is run. Links/junctions are skipped; root components and canonical paths
-are checked before reading. Limits are 512 skills, 1024 directories, 4096 directory
+No code is run. Links/junctions and multiply hard-linked files are skipped; root
+components and canonical paths are checked before reading. After opening a file,
+its device/inode must match the prior lstat, and its link count must still be one.
+POSIX opens use O_NONBLOCK as well as O_NOFOLLOW. Frontmatter lines above 2 KiB
+are ignored; scalar comments are stripped in linear time. Limits are 512 skills, 1024 directories, 4096 directory
 entries, depth 4, 64 KiB per file and 2 seconds per scan. Sources that exceed a
-limit are `unavailable`. A timeout stops scheduling further filesystem work;
-already pending OS operations may complete later, with results discarded and
-opened handles closed. Partial results are returned for available sources.
+limit are `unavailable`. A timeout stops scheduling further filesystem work; already pending OS operations
+may complete later, with results discarded and opened handles closed. One global
+scan lock remains held until that real work finishes, not merely until the response
+timeout. While it is held, later requests get their trust-checked cache or an
+unavailable response instead of starting more filesystem work. Partial results are
+returned for available sources.
 
 Codex queries the running app-server `skills/list` with exactly the session cwd
 and `forceReload: refresh`. Its `SkillMetadata` is converted to the same result;

@@ -2,6 +2,8 @@ import fs from 'node:fs/promises'
 import { constants } from 'node:fs'
 import path from 'node:path'
 import { homedir } from 'node:os'
+import { createHmac, randomBytes } from 'node:crypto'
+import { t } from '../i18n.js'
 import { commandName } from './commands.js'
 
 export const SKILL_LIMITS = {
@@ -10,8 +12,12 @@ export const SKILL_LIMITS = {
   files: 4096,
   depth: 4,
   bytes: 65536,
+  line: 2048,
   time: 2000
 }
+// Held until the real filesystem work ends, even after its response times out.
+let activeScan = null
+
 const clean = (value) =>
   typeof value === 'string'
     ? value
@@ -29,15 +35,23 @@ export function skillFrontmatter(text, fallback) {
   const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/)
   const values = {}
   if (lines[0]?.trim() === '---') {
-    const end = lines.findIndex((line, i) => i > 0 && /^---\s*$/.test(line))
+    const end = lines.findIndex(
+      (line, i) => i > 0 && line.length <= SKILL_LIMITS.line && /^---\s*$/.test(line)
+    )
     if (end < 0) return null
     for (let i = 1; i < end; i++) {
-      const match = /^(name|description):\s*(.*?)\s*$/.exec(lines[i])
-      if (!match) continue
-      let value = match[2]
+      const line = lines[i]
+      if (line.length > SKILL_LIMITS.line) continue
+      const colon = line.indexOf(':')
+      const key = line.slice(0, colon)
+      if (colon < 0 || (key !== 'name' && key !== 'description')) continue
+      let value = line.slice(colon + 1).trim()
       if (/^[>|][-+]?\s*$/.test(value)) {
         const parts = []
-        while (i + 1 < end && /^\s+\S/.test(lines[i + 1])) parts.push(lines[++i].trim())
+        while (i + 1 < end && /^[ \t]/.test(lines[i + 1])) {
+          const continuation = lines[++i]
+          if (continuation.length <= SKILL_LIMITS.line) parts.push(continuation.trim())
+        }
         value = parts.join(' ')
       } else if (value.startsWith('"')) {
         try {
@@ -47,8 +61,14 @@ export function skillFrontmatter(text, fallback) {
         }
       } else if (value.startsWith("'") && value.endsWith("'"))
         value = value.slice(1, -1).replace(/''/g, "'")
-      else value = value.replace(/\s+#.*$/, '')
-      values[match[1]] = clean(value)
+      else {
+        const space = value.indexOf(' #'),
+          tab = value.indexOf('\t#')
+        const comment = space < 0 ? tab : tab < 0 ? space : Math.min(space, tab)
+        if (value.startsWith('#')) value = ''
+        else if (comment >= 0) value = value.slice(0, comment).trimEnd()
+      }
+      values[key] = clean(value)
     }
   }
   const name = commandName(values.name || fallback)
@@ -62,6 +82,11 @@ export async function discoverClaudeSkills({
   limits = SKILL_LIMITS,
   io = fs
 }) {
+  if (activeScan) {
+    const error = new Error('skill scan busy') // i18n-ignore internal
+    error.code = 'SKILL_SCAN_BUSY'
+    throw error
+  }
   const cap = { ...SKILL_LIMITS, ...limits },
     sources = [],
     skills = [],
@@ -116,7 +141,8 @@ export async function discoverClaudeSkills({
     let handle
     try {
       const stat = await io.lstat(file)
-      if (!stat.isFile() || stat.isSymbolicLink()) {
+      if (!active()) return
+      if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink > 1) {
         source.skippedReason = 'unavailable'
         return
       }
@@ -125,15 +151,30 @@ export async function discoverClaudeSkills({
         return
       }
       if (!active()) return
-      handle = await io.open(file, constants.O_RDONLY | (constants.O_NOFOLLOW || 0))
+      handle = await io.open(
+        file,
+        constants.O_RDONLY |
+          (constants.O_NOFOLLOW || 0) |
+          (process.platform === 'win32' ? 0 : constants.O_NONBLOCK || 0)
+      )
       const opened = await handle.stat()
-      if (!opened.isFile() || opened.size > cap.bytes || !active()) return
+      if (
+        !opened.isFile() ||
+        opened.size > cap.bytes ||
+        opened.dev !== stat.dev ||
+        opened.ino !== stat.ino ||
+        opened.nlink > 1 ||
+        !active()
+      ) {
+        source.skippedReason = 'unavailable'
+        return
+      }
       const buffer = Buffer.alloc(cap.bytes + 1)
       const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0)
       if (
+        !active() ||
         bytesRead > cap.bytes ||
-        !inside(source.canonical, await io.realpath(file)) ||
-        !active()
+        !inside(source.canonical, await io.realpath(file))
       ) {
         source.skippedReason = 'unavailable'
         return
@@ -167,6 +208,7 @@ export async function discoverClaudeSkills({
     let entries
     try {
       const stat = await io.lstat(dir)
+      if (!active()) return
       if (
         !stat.isDirectory() ||
         stat.isSymbolicLink() ||
@@ -175,7 +217,12 @@ export async function discoverClaudeSkills({
         source.skippedReason = 'unavailable'
         return
       }
+      if (!active()) return
       entries = await io.opendir(dir)
+      if (!active()) {
+        await entries.close()
+        return
+      }
       for await (const entry of entries) {
         files++
         if (!active()) {
@@ -212,11 +259,14 @@ export async function discoverClaudeSkills({
         // Check every root component: a junction at .claude must not escape.
         let current = source.base
         const base = await io.realpath(current)
+        if (!active()) break
         for (const part of path.relative(source.base, source.path).split(path.sep)) {
+          if (!active()) break
           current = path.join(current, part)
           const stat = await io.lstat(current)
           if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error('linked root') // i18n-ignore internal
         }
+        if (!active()) break
         source.canonical = await io.realpath(source.path)
         if (!inside(base, source.canonical)) throw new Error('outside root') // i18n-ignore internal
         source.exists = true
@@ -228,8 +278,14 @@ export async function discoverClaudeSkills({
       delete source.canonical
     }
   }
+  const work = Promise.resolve().then(scan)
+  activeScan = work
+  const release = () => {
+    if (activeScan === work) activeScan = null
+  }
+  work.then(release, release)
   await Promise.race([
-    scan(),
+    work,
     new Promise((resolve) => {
       timer = setTimeout(() => {
         stopped = true
@@ -298,4 +354,75 @@ export function codexSkillDiscovery(response, cwd, now = Date.now) {
     if (skills.length >= SKILL_LIMITS.entries) break
   }
   return { skills, sources: [...sources.values()], scannedAt: now() }
+}
+
+// Main-process cache filtering: no new disk access is needed after revocation.
+export function withoutProjectSkills(result, projectDir, cwd) {
+  const scoped = (value) =>
+    typeof value === 'string' &&
+    path.isAbsolute(value) &&
+    inside(projectDir, value) &&
+    !inside(cwd, value)
+  const sources = result.sources.filter((source) => !scoped(source.path))
+  const skills = result.skills.flatMap((skill) => {
+    const roots = (skill.rootPaths?.length ? skill.rootPaths : [skill.rootPath]).filter(
+      (root) => !scoped(root)
+    )
+    if (!roots.length || scoped(skill.directoryPath) || scoped(skill.skillFilePath)) return []
+    return [{ ...skill, rootPath: roots[0], ...(skill.rootPaths ? { rootPaths: roots } : {}) }]
+  })
+  return { ...result, skills, sources }
+}
+
+// Opaque references are stable for this main-process lifetime, including refreshes.
+// The menu uses equality/deduplication only; these are never filesystem handles.
+const referenceKey = randomBytes(32)
+const pathsFor = (value) => (/^[A-Za-z]:[\\/]|^\\\\/.test(value) ? path.win32 : path.posix)
+function reference(kind, value) {
+  const paths = pathsFor(value)
+  const normalized = paths.normalize(String(value))
+  const canonical = paths === path.win32 ? normalized.toLowerCase() : normalized
+  return kind + '-' + createHmac('sha256', referenceKey).update(canonical).digest('hex')
+}
+function sourceLabel(kind) {
+  if (kind === 'home') return t('main.chat.skillsSourceHome', 'User skills')
+  if (kind === 'bundled') return t('main.chat.skillsSourceBundled', 'Built-in skills')
+  if (kind === 'plugin') return t('main.chat.skillsSourcePlugin', 'Plugin skills')
+  return t('main.chat.skillsSourceRepo', 'Project skills')
+}
+export function publicSkillDiscovery(result) {
+  const providers = (values) =>
+    (values || []).filter((value) => ['claude', 'codex', 'agent-skills'].includes(value))
+  const sources = result.sources.map((source) => ({
+    id: reference('source', source.path),
+    path: reference('source', source.path),
+    label: sourceLabel(source.sourceKind),
+    sourceKind: source.sourceKind,
+    providers: providers(source.providers),
+    owner: source.owner,
+    exists: source.exists === true,
+    ...(['missing', 'unavailable', 'remote-repo'].includes(source.skippedReason)
+      ? { skippedReason: source.skippedReason }
+      : {})
+  }))
+  const skills = result.skills.map((skill) => ({
+    id: reference('skill', skill.skillFilePath),
+    name: skill.name,
+    description: clean(skill.description),
+    providers: providers(skill.providers),
+    sourceKind: skill.sourceKind,
+    sourceLabel: sourceLabel(skill.sourceKind),
+    rootPath: reference('source', skill.rootPath),
+    ...(skill.rootPaths
+      ? { rootPaths: skill.rootPaths.map((root) => reference('source', root)) }
+      : {}),
+    directoryPath:
+      reference('directory', skill.directoryPath) +
+      '/' +
+      clean(pathsFor(skill.directoryPath).basename(skill.directoryPath)),
+    skillFilePath: reference('skill', skill.skillFilePath),
+    installed: skill.installed === true,
+    updatedAt: Number.isFinite(skill.updatedAt) ? skill.updatedAt : null
+  }))
+  return { skills, sources, scannedAt: result.scannedAt }
 }

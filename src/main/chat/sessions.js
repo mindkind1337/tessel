@@ -15,7 +15,7 @@
 // process stopped and turns 'asleep' (no 'ended'). A message sent to it
 // waits (queued) and asks the window once to open it again ('wake'); that
 // open resumes the same conversation and sends what waited.
-import { discoverClaudeSkills } from './skills.js'
+import { discoverClaudeSkills, withoutProjectSkills, publicSkillDiscovery } from './skills.js'
 import { normalizeCommands } from './commands.js'
 import { randomBytes, randomUUID as nodeUUID } from 'crypto'
 import fs from 'fs'
@@ -1083,18 +1083,28 @@ export function createChatSessions(deps) {
       roots = trustRoots(s.cwd, { worker: s.worker === true }) || []
       if (!trust?.isTrusted(s.cwd, roots)) return unavailable()
     } catch { return unavailable() }
+    const checked = value => {
+      try {
+        const currentRoots = trustRoots(s.cwd, { worker: s.worker === true }) || []
+        if (sessions.get(paneId) !== s || s.closing || s.finished || !trust.isTrusted(s.cwd, currentRoots)) return unavailable()
+        const result = s.projectDir && !trust.isTrusted(s.projectDir, currentRoots)
+          ? withoutProjectSkills(value.result, s.projectDir, s.cwd) : value.result
+        s.skillCache = { ok: true, result }
+        return { ok: true, result: publicSkillDiscovery(result) }
+      } catch { return unavailable() }
+    }
     if (s.skillScan) return s.skillScan
-    if (!refresh && s.skillCache) return s.skillCache
+    if (!refresh && s.skillCache) return checked(s.skillCache)
     s.skillScan = Promise.resolve().then(async () => {
       try {
         const result = s.agent === 'codex'
           ? await s.adapter?.skills?.({ refresh })
           : { ok: true, result: await discoverSkills({ cwd: s.cwd, projectDir: s.projectDir && trust.isTrusted(s.projectDir, roots) ? s.projectDir : undefined }) }
-        if (sessions.get(paneId) !== s || s.closing || s.finished || !trust.isTrusted(s.cwd, trustRoots(s.cwd, { worker: s.worker === true }) || [])) return unavailable()
         if (!result?.ok) return unavailable()
-        s.skillCache = result
-        return result
-      } catch { return unavailable() }
+        return checked(result)
+      } catch (error) {
+        return error.code === 'SKILL_SCAN_BUSY' && s.skillCache ? checked(s.skillCache) : unavailable()
+      }
       finally { s.skillScan = null }
     })
     return s.skillScan
