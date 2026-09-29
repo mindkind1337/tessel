@@ -3,14 +3,29 @@ import fs from 'fs'
 import os from 'os'
 import { join } from 'path'
 import { execFileSync } from 'child_process'
-import { parseRisky, neutralize, riskHash, createGitTrust, setGitTrust } from '../gitSafety'
-import { scmStatus, scmFileVersions } from '../sourceControl'
+import { parseRisky, neutralize, riskHash, createGitTrust, setGitTrust, hookEntries } from '../gitSafety'
+import { scmStatus, scmFileVersions, scmStage, scmCommit } from '../sourceControl'
 import { projectStatus } from '../explorer'
 
 describe('risky repository settings', () => {
   it('lists the settings that run programs (fsmonitor off is not one)', () => {
     const out = 'core.fsmonitor\nfalse\0filter.lfs.process\ngit-lfs filter-process\0diff.x.textconv\nsh -c evil\0core.hookspath\n.husky\0user.name\nme\0'
     expect(parseRisky(out).map((r) => r.key)).toEqual(['filter.lfs.process', 'diff.x.textconv', 'core.hookspath'])
+  })
+  it('ext:: remote URLs, upload/receive-pack and protocol.ext.allow count; plain URLs do not', () => {
+    const out =
+      'remote.origin.url\nhttps://github.com/x/y\0remote.evil.url\next::sh -c touch% /tmp/pwned\0remote.origin.uploadpack\nsh -c evil\0protocol.ext.allow\nalways\0protocol.ext.allow\nnever\0'
+    expect(parseRisky(out).map((r) => r.key)).toEqual(['remote.evil.url', 'remote.origin.uploadpack', 'protocol.ext.allow'])
+    expect(hookEntries(['pre-commit', 'pre-push.sample', 'post-checkout'])).toEqual([
+      { key: 'hook', value: 'post-checkout' },
+      { key: 'hook', value: 'pre-commit' }
+    ])
+  })
+  it('a repository not trusted never runs hooks nor the ext:: transport, whatever is set', () => {
+    const args = neutralize([])
+    expect(args).toContain('core.hooksPath=/nonexistent-tessel-no-hooks')
+    expect(args).toContain('protocol.ext.allow=never')
+    expect(neutralize([{ key: 'remote.o.uploadpack' }])).toContain('remote.o.uploadpack=git-upload-pack')
   })
   it('turns them off with -c overrides', () => {
     const args = neutralize(
@@ -77,5 +92,50 @@ describe('local repositories: nothing of their config runs until trusted', () =>
     expect((await scmFileVersions({ root: dir, path: 'a.txt', area: 'unstaged' })).ok).toBe(true)
     expect(readMarks()).toBe('')
     expect(asks).toHaveLength(1)
+  }, 60000)
+})
+
+describe('local repositories: hooks in .git/hooks', () => {
+  let dir
+  let marks
+  const g = (...a) => execFileSync('git', ['-C', dir, ...a], { stdio: 'pipe' }).toString()
+  beforeAll(() => {
+    dir = fs.mkdtempSync(join(os.tmpdir(), 'tessel-githooks-'))
+    marks = join(os.tmpdir(), `tessel-githooks-marks-${process.pid}.txt`)
+    g('init', '-q')
+    g('config', 'user.email', 't@example.com')
+    g('config', 'user.name', 'T')
+    fs.writeFileSync(join(dir, 'a.txt'), 'one\n')
+    g('add', '-A')
+    g('commit', '-q', '-m', 'first')
+    const hook = join(dir, '.git', 'hooks', 'pre-commit')
+    fs.writeFileSync(hook, `#!/bin/sh\necho HOOK_RAN >> '${marks.replace(/\\/g, '/')}'\n`)
+    fs.chmodSync(hook, 0o755)
+  })
+  afterEach(() => setGitTrust(null))
+  afterAll(() => {
+    fs.rmSync(dir, { recursive: true, force: true })
+    fs.rmSync(marks, { force: true })
+  })
+  const commitOnce = async (name) => {
+    fs.writeFileSync(join(dir, name), 'x\n')
+    expect((await scmStage({ root: dir, paths: [name] })).ok).toBe(true)
+    return scmCommit({ root: dir, message: `add ${name}` })
+  }
+
+  it('not trusted: the commit is made without running them, after asking', async () => {
+    const asks = []
+    setGitTrust(createGitTrust({ ask: async (q) => (asks.push(q), false) }))
+    fs.writeFileSync(marks, '')
+    expect((await commitOnce('b.txt')).ok).toBe(true)
+    expect(fs.readFileSync(marks, 'utf8')).toBe('')
+    expect(asks[0].risky).toEqual([{ key: 'hook', value: 'pre-commit' }])
+  }, 60000)
+
+  it('trusted: they run as git runs them', async () => {
+    setGitTrust(createGitTrust({ ask: async () => true }))
+    fs.writeFileSync(marks, '')
+    expect((await commitOnce('c.txt')).ok).toBe(true)
+    expect(fs.readFileSync(marks, 'utf8')).toMatch(/HOOK_RAN/)
   }, 60000)
 })

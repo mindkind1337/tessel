@@ -670,7 +670,8 @@
       "messageRemote": "Les réglages git de {{repo}} sur {{host}} lancent des programmes sur cet hôte quand Tessel lit son statut.",
       "detail": "Faites-lui confiance seulement si vous savez d'où vient ce dossier. En attendant, Tessel lance git avec ces réglages désactivés.",
       "trust": "Faire confiance et les lancer",
-      "dontTrust": "Les laisser désactivés"
+      "dontTrust": "Les laisser désactivés",
+      "hook": "hook : {{name}}"
     }
   }
 }

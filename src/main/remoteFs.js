@@ -26,7 +26,7 @@ import { createRemoteSession, sessionArgs, remotePathArg, rawArg, RC } from './r
 import { createScm } from './sourceControl'
 import { looksBinary, MAX_EDIT_BYTES, MAX_HEAD_BYTES } from './editorFiles'
 import { cleanEnv } from './cleanEnv'
-import { RISKY_CONFIG_ARGS, parseRisky, neutralize, gitTrust } from './gitSafety'
+import { RISKY_CONFIG_ARGS, parseRisky, hookEntries, neutralize, gitTrust } from './gitSafety'
 import { parseRemotePath, remoteRoot, relativeTo, childPath, isRemotePath } from '../shared/remotePath'
 import { fileKind, extOf, IMAGE_MIME } from '../shared/fileKinds'
 import { t } from './i18n'
@@ -434,10 +434,16 @@ export function createRemoteFs({
         loc.root.real = lines[0]
         const cfg = await call(loc.hostId, '__t_gitin', [arg(loc.root.path), arg(lines[1]), ...RISKY_CONFIG_ARGS], { cap: 256 * 1024, op: 'status' })
         if (cfg.error) return { error: cfg.error }
+        // Its runnable hooks ($GIT_DIR/hooks, not the *.sample ones) count too.
+        const hooks = await call(loc.hostId, '__t_hooks', [arg(loc.root.path), arg(lines[1])], { cap: 64 * 1024, op: 'status' })
+        if (hooks.error) return { error: hooks.error }
         // Exit 1: none of them set. Unreadable: everything they could be stays off.
-        const risky = cfg.rc === 0 ? parseRisky(cfg.out.toString('utf8')) : []
+        const risky = [
+          ...(cfg.rc === 0 ? parseRisky(cfg.out.toString('utf8')) : []),
+          ...(hooks.rc === 0 ? hookEntries(hooks.out.toString('utf8').split('\0')) : [])
+        ]
         let gitArgs = []
-        if (cfg.rc !== 0 && cfg.rc !== 1) gitArgs = neutralize([], { hooksDir: NO_HOOKS })
+        if ((cfg.rc !== 0 && cfg.rc !== 1) || hooks.rc !== 0) gitArgs = neutralize([], { hooksDir: NO_HOOKS })
         else if (risky.length) {
           const trusted = await trust().decide(`${loc.hostId}:${lines[1]}`, risky, { name: lines[1], where: hostLabel(loc.hostId) })
           if (!trusted) gitArgs = neutralize(risky, { hooksDir: NO_HOOKS })
@@ -926,7 +932,10 @@ export function createRemoteFs({
         list = ['-F', 'commit', ...args.slice(3)]
       }
       const slow = ['push', 'pull', 'fetch', 'commit'].includes(list[0] === '-F' ? list[1] : list[0])
-      const res = await call(top.hostId, '__t_gitin', [arg(top.rootPath), arg(top.real), ...top.args, ...list], {
+      // "-F" (the uploaded message) must come first for __t_gitin; the -c
+      // overrides go right after it, before the git command.
+      const gitArgs = list[0] === '-F' ? ['-F', ...top.args, ...list.slice(1)] : [...top.args, ...list]
+      const res = await call(top.hostId, '__t_gitin', [arg(top.rootPath), arg(top.real), ...gitArgs], {
         cap: maxBuffer + 1,
         timeoutMs: opts.timeout || 30000,
         upload,
