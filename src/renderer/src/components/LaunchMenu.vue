@@ -102,15 +102,23 @@ function defaultLabelFor(agent) {
     ? t('pane.sessionOptions.settingsDefault', 'Default from Settings ({{model}})', { model: sessionPillLabel(modelsFor(agent.id), d) })
     : t('pane.sessionOptions.agentDefault', "Agent's own default")
 }
+// The list's default model: its effort is offered before any model is chosen.
+function fallbackModelFor(agent) {
+  const list = modelsFor(agent.id)
+  if (!list.length) return null
+  return (list.find((m) => m.isDefault) || list[0]).id
+}
 function onPick(agent, { optionId, value }) {
-  const current = picked.value[agent.id] || null
+  // What the picker shows: a choice made here, else the Settings default.
+  const current = valuesFor(agent)
   let next
   if (optionId === 'model') next = value ? { model: value } : null
-  else if (current) {
+  else if (current && current.model) {
     next = { ...current }
     if (value === null || value === undefined) delete next[optionId]
     else next[optionId] = value
-  } else next = null
+  } else if (value !== null && value !== undefined && fallbackModelFor(agent)) next = { model: fallbackModelFor(agent), [optionId]: value }
+  else next = picked.value[agent.id] || null
   const all = { ...picked.value }
   if (next) all[agent.id] = next
   else delete all[agent.id]
@@ -262,6 +270,7 @@ onMounted(async () => {
           :agent-id="agent.id"
           :models="modelsFor(agent.id)"
           :values="picked[agent.id] || null"
+          :fallback-model="(valuesFor(agent) && valuesFor(agent).model) || fallbackModelFor(agent)"
           :default-label="defaultLabelFor(agent)"
           @set="(e) => onPick(agent, e)"
         />

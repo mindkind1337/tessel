@@ -26,7 +26,7 @@ import ChatToolRow from './ChatToolRow.vue'
 import ChatApprovalCard, { isFocusApprovalKey } from './ChatApprovalCard.vue'
 import ChatComposer from './ChatComposer.vue'
 import { chatReducer, initialChatState, isBusy, pendingApproval, rateLimitParts, STOPPED_STATES } from '../../chat/chatModel'
-import { modelsFor } from '../../agentModels'
+import { modelsFor, refreshIfStale } from '../../agentModels'
 import { modelLabel } from '../../../../shared/modelLabel'
 import { t } from '../../i18n'
 
@@ -178,11 +178,38 @@ async function onModePick(e) {
     toast(t('chat.mode.failed', 'The permission mode did not change: {{error}}', { error: (res && res.error) || t('chat.error.unknown', 'unknown error') }))
 }
 
+// The effort when the pane chose none: what the agent's own settings or its
+// conversation say (the same lookup as a terminal pane's header).
+const settledEffort = ref(null)
+let effortBusy = false
+async function refreshEffort() {
+  const ask = typeof window !== 'undefined' && window.shellApi ? window.shellApi.agentModel : null
+  if (typeof ask !== 'function' || effortBusy) return
+  effortBusy = true
+  try {
+    const model = state.value.model || props.node.model
+    const res = await ask({
+      agentId: agentId.value,
+      sessionId: props.node.sessionId || undefined,
+      cwd: props.node.cwd || undefined,
+      chosenModel: typeof model === 'string' ? model : undefined
+    })
+    if (!alive) return
+    const effort = res && (res.chosenEffort || res.effort)
+    settledEffort.value = typeof effort === 'string' && effort ? effort : null
+  } catch {
+    /* keep what it showed */
+  } finally {
+    effortBusy = false
+  }
+}
+
 const modelText = computed(() => {
   const m = state.value.model || props.node.model
   if (!m) return ''
   const name = modelLabel(m)
-  return props.node.effort ? `${name} · ${props.node.effort}` : name
+  const effort = props.node.effort || settledEffort.value
+  return effort ? `${name} · ${effort}` : name
 })
 
 const rateText = computed(() =>
@@ -265,7 +292,9 @@ function dispatch(event) {
     else if (prev.status === 'asleep') resuming.value = true
     if (event.sessionId && props.node.sessionId !== event.sessionId) props.node.sessionId = event.sessionId
     if (event.model && props.node.model !== event.model) props.node.model = event.model
+    if (event.state === 'ready' || event.state === 'idle') refreshEffort()
   }
+  if (event.type === 'turnEnd') refreshEffort()
 }
 
 // Live events wait until the history is drawn; seq drops what it already had.
@@ -524,6 +553,7 @@ async function onModelPick({ optionId, value }) {
 // Opens with the focus on its first choice; closes back to the chip (Esc, a
 // choice) or leaves the focus where the user went (a click, Tab away).
 function openModelMenu() {
+  refreshIfStale(agentId.value)
   modelMenu.visible = true
   nextTick(() => {
     const el = modelMenuEl.value

@@ -18,6 +18,19 @@ const run = (events, opts) => reduceAll(initialChatState(), events, opts)
 const kinds = (s) => s.rows.map((r) => r.kind)
 
 describe('chatModel reducer', () => {
+  it("keeps a sub-agent's text out of the main agent's reply, even with a shared message id", () => {
+    const child = { agentId: 'child', parentToolUseId: 'spawn' }
+    const s = run([
+      { type: 'assistantDelta', messageId: 'm1', text: 'Parent ' },
+      { type: 'assistantDelta', messageId: 'm1', text: 'child delta', ...child },
+      { type: 'thinking', messageId: 'm1', text: 'child thinking', ...child },
+      { type: 'assistant', messageId: 'm1', text: 'child final', ...child },
+      { type: 'assistantDelta', messageId: 'm1', text: 'reply' },
+      { type: 'assistantDelta', messageId: 'c2', text: 'other child', agentId: 'child-2' }
+    ])
+    expect(s.rows).toEqual([expect.objectContaining({ kind: 'assistant', messageId: 'm1', text: 'Parent reply', streaming: true })])
+  })
+
   it('streams deltas, then the final text replaces them', () => {
     let s = run([
       { type: 'assistantDelta', messageId: 'm1', text: 'Hel' },

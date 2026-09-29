@@ -5,7 +5,8 @@
 // <dir>/chats/<paneId>/journal.jsonl   one { seq, at, event } per line
 //                     journal.1.jsonl  the previous one (rotated at 20 MB)
 //                     meta.json        { sessionId, agent, cwd }
-// Streaming deltas are not kept (the final 'assistant' text replaces them).
+// Streaming deltas are not kept (the final 'assistant' text replaces them),
+// nor a sub-agent's tool-level progress events.
 // Strings in tool input/output are clipped to 8 KB: a journal is for reading
 // back a conversation, not for storing whole files a tool printed.
 import fs from 'fs'
@@ -71,6 +72,9 @@ export function createChatJournal({ dir, paneId, rotateBytes = ROTATE_BYTES, now
 
   function append(seq, event) {
     if (!event || typeof event !== 'object' || SKIPPED.has(event.type)) return false
+    // A sub-agent's tool-level progress is live only: replay needs its roster
+    // (the 'subagents' snapshots and start/end), not every tool it ran.
+    if (event.type === 'subagent' && event.phase === 'progress' && event.tool) return false
     let stored = CLIPPED.has(event.type) ? clipDeep(event) : event
     // An approval's preview is already bounded, and its hidden count is
     // counted from it: kept whole.

@@ -25,6 +25,16 @@ describe('chat journal', () => {
     expect(fs.existsSync(join(tmp, 'chats', 'p1', 'journal.jsonl'))).toBe(true)
   })
 
+  it("does not keep a sub-agent's tool-level progress, only its roster and lifecycle", () => {
+    const j = createChatJournal({ dir: tmp, paneId: 'p1', now: () => 7 })
+    j.append(1, { type: 'subagent', phase: 'start', id: 'c', groupId: 'g', status: 'working' })
+    j.append(2, { type: 'subagent', phase: 'progress', id: 'c', groupId: 'g', status: 'working', tool: { id: 't', name: 'Read', status: 'running' } })
+    j.append(3, { type: 'subagent', phase: 'progress', id: 'c', groupId: 'g', status: 'working', model: 'm' })
+    j.append(4, { type: 'subagents', groupId: 'g', agents: [] })
+    j.append(5, { type: 'subagent', phase: 'end', id: 'c', groupId: 'g', status: 'completed' })
+    expect(j.read().map((r) => r.seq)).toEqual([1, 3, 4, 5])
+  })
+
   it('clips strings in tool input and results to 8 KB', () => {
     const j = createChatJournal({ dir: tmp, paneId: 'p1' })
     const big = 'x'.repeat(CLIP_BYTES * 3)

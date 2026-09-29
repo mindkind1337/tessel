@@ -7,7 +7,8 @@
 // an agent whose running session changes model in its own picker (Codex)
 // offers "Choose in agent picker…". Used by the new pane menu and a pane's
 // … menu; the caller decides what a pick does.
-import { computed } from 'vue'
+import { computed, onMounted } from 'vue'
+import { refreshIfStale } from '../agentModels'
 import { getAgentSessionOptionCatalog, modelOptions } from '../../../shared/agentSessionOptions'
 import { sessionOptionLabel, sessionChoiceLabel, modelDescription } from '../sessionOptionLabels'
 import { t } from '../i18n'
@@ -22,6 +23,9 @@ const props = defineProps({
   defaultHint: { type: String, default: '' },
   // The pane runs this agent now (a pick may apply at once).
   live: { type: Boolean, default: false },
+  // The model the agent runs with when none is chosen: its options (effort)
+  // are offered too, a choice then keeps that model.
+  fallbackModel: { type: String, default: null },
   // Why picks cannot be applied now (e.g. while it works), or ''.
   disabledReason: { type: String, default: '' },
   // A line under the title (e.g. "Applies when the agent restarts").
@@ -31,8 +35,11 @@ const props = defineProps({
 const emit = defineEmits(['set', 'action'])
 
 const catalog = computed(() => getAgentSessionOptionCatalog(props.agentId))
+// Shown: a missing or old model list is refreshed in the background.
+onMounted(() => refreshIfStale(props.agentId))
 const chosenModel = computed(() => (props.values && props.values.model) || null)
-const options = computed(() => (catalog.value && chosenModel.value ? modelOptions(catalog.value, props.models, chosenModel.value) : []))
+const optionsModel = computed(() => chosenModel.value || props.fallbackModel || null)
+const options = computed(() => (catalog.value && optionsModel.value ? modelOptions(catalog.value, props.models, optionsModel.value) : []))
 // The chosen model is listed even when the list does not have it (a model
 // chosen before, or one the CLI no longer lists).
 const rows = computed(() => {

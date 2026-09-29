@@ -6,6 +6,17 @@ import { formatChatTranscript, MAX_MESSAGE } from '../chat/chatTranscript'
 const history = (events) => events.map((event, i) => ({ seq: i + 1, event }))
 
 describe('formatChatTranscript', () => {
+  it("never presents a sub-agent's text as the worker's own", () => {
+    const text = formatChatTranscript(
+      history([
+        { type: 'assistant', messageId: 'c1', text: 'CHILD SAYS HI', agentId: 'child', parentToolUseId: 'spawn' },
+        { type: 'assistantDelta', messageId: 'c2', text: 'CHILD STREAM', agentId: 'child' },
+        { type: 'assistant', messageId: 'm1', text: 'Worker answer' }
+      ])
+    )
+    expect(text).toBe('| Worker answer')
+  })
+
   it('messages, tools as one line, approvals, failed turns, notices and stops', () => {
     const text = formatChatTranscript(
       history([
