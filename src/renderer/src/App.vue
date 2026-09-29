@@ -5338,7 +5338,7 @@ const wakeState = {} // leafId -> { since, woken, wokenAt, gen }
 // typed there for 30 s.
 function wakeAllowed(id) {
   const leaf = findLeaf(id)
-  if (leaf?.agentLaunchToken && !agentStateKnown(id, leaf.agentLaunchToken)) return false
+  if (leaf && !launchStateOk(leaf)) return false
   if (id === activeId.value && document.hasFocus()) return false
   // A draft Codex's screen proves gone (its empty-prompt placeholder is back:
   // sent, cleared, or never a draft at all) no longer holds reminders back.
@@ -5365,8 +5365,21 @@ function inputShownEmpty(id) {
   // is drawn dim (the placeholder, not the same words typed).
   return pane.promptShowsPlaceholder('›')
 }
+// A Codex just relaunched (resume) reports nothing through its hooks until
+// its next turn, so its state stays unconfirmed and it was never woken for
+// team messages. Proof enough that it waits for input: the screen says idle
+// (confirmed screen observation for this launch) and its prompt shows the
+// empty placeholder, read from the terminal itself.
+function codexIdleOnScreen(leaf) {
+  if (leaf.agentId !== 'codex' || !leaf.agentLaunchToken) return false
+  const st = getAgentState(leaf.id, leaf.agentLaunchToken)
+  return !!(st && st.confirmed && !st.stale && st.state === 'idle' && inputShownEmpty(leaf.id))
+}
+function launchStateOk(leaf) {
+  return !leaf.agentLaunchToken || agentStateKnown(leaf.id, leaf.agentLaunchToken) || codexIdleOnScreen(leaf)
+}
 function wakeIfNeeded(leaf) {
-  if (leaf.agentLaunchToken && !agentStateKnown(leaf.id, leaf.agentLaunchToken)) return
+  if (!launchStateOk(leaf)) return
   const count = teamUnread[leaf.id] || 0
   if (!count) {
     delete wakeState[leaf.id]
