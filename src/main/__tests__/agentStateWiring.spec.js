@@ -376,7 +376,7 @@ function wakeSandbox(over = {}) {
     WAKE_AFTER_MS: 0,
     REWAKE_AFTER_MS: 600000,
     WAKE_AFTER_RESTART_MS: 120000,
-    WAKE_LINE: /\[Tessel\] You have \d+ new team messages?/,
+    teamPointer: { notify: vi.fn(), state: () => null },
     wakeAllowed: vi.fn(() => true),
     deliverToAgent: vi.fn(),
     showToast: vi.fn(),
@@ -401,7 +401,7 @@ function wakeSandbox(over = {}) {
   const api = vm.runInNewContext(
     appSource.slice(lineStart, lineEnd) +
       appSource.slice(start, end) +
-      '\n;({ wakeIfNeeded, noteLaunchWake, launch: async (leaf, agent, opts, id, launch, accountId, agentModels) => {\n' +
+      '\n;({ wakeIfNeeded, noteLaunchWake, pointerBlocked, launch: async (leaf, agent, opts, id, launch, accountId, agentModels) => {\n' +
       appSource.slice(launchStart, launchEnd) +
       '\n} })',
     ctx
@@ -470,7 +470,7 @@ it('team wake-ups off: no launch prompt, checked before and after counting and w
   expect(late.ctx.wakeState['pane-2']).toBeUndefined()
 })
 
-it('the typing guard vetoes a reminder once team wake-ups are off, a usage limit shows, or it works', () => {
+it('the pointer is blocked once team wake-ups are off, a usage limit shows, or it works', () => {
   for (const unconfirmed of [false, true]) {
     const node = { id: 'pane-7', agentLaunchToken: 'a'.repeat(32), agentId: 'codex', sessionId: 's-7', team: 'team-1', kind: 'agent', teamTools: true, launchedAt: 0 }
     const { ctx, api } = wakeSandbox({
@@ -481,22 +481,36 @@ it('the typing guard vetoes a reminder once team wake-ups are off, a usage limit
     })
     ctx.settings.teamWakeUnconfirmed = unconfirmed
     api.wakeIfNeeded(node)
-    expect(ctx.deliverToAgent).toHaveBeenCalledTimes(1)
-    const meta = ctx.deliverToAgent.mock.calls[0][2]
+    // Typed by the pointer delivery (src/renderer/src/teamDelivery.js), never
+    // as a queued message.
+    expect(ctx.teamPointer.notify).toHaveBeenCalledWith('pane-7')
+    expect(ctx.deliverToAgent).not.toHaveBeenCalled()
     const state = ctx.trackedState['pane-7'].state
-    expect(meta.guard()).toBe(true)
+    expect(api.pointerBlocked('pane-7')).toBe('')
     ctx.settings.teamWakeUps = false
-    expect(meta.guard()).toBe(false)
+    expect(api.pointerBlocked('pane-7')).not.toBe('')
     ctx.settings.teamWakeUps = true
     ctx.limits['pane-7'] = { reset: '' }
-    expect(meta.guard()).toBe(false)
+    expect(api.pointerBlocked('pane-7')).not.toBe('')
     delete ctx.limits['pane-7']
     for (const s of ['limited', 'working', 'approval']) {
       ctx.trackedState['pane-7'].state = s
-      expect(meta.guard()).toBe(false)
+      expect(api.pointerBlocked('pane-7')).not.toBe('')
     }
     ctx.trackedState['pane-7'].state = state
-    expect(meta.guard()).toBe(true)
+    expect(api.pointerBlocked('pane-7')).toBe('')
+    // Never into a pane that is not an agent's (a plain terminal, a chat).
+    node.kind = 'terminal'
+    expect(api.pointerBlocked('pane-7')).not.toBe('')
+    node.kind = 'agent'
+    // Another message is being typed there, or one is left unsent.
+    ctx.delivering.add('pane-7')
+    expect(api.pointerBlocked('pane-7')).not.toBe('')
+    ctx.delivering.delete('pane-7')
+    ctx.unsent['pane-7'] = {}
+    expect(api.pointerBlocked('pane-7')).not.toBe('')
+    delete ctx.unsent['pane-7']
+    expect(api.pointerBlocked('pane-7')).toBe('')
   }
 })
 
@@ -520,6 +534,7 @@ it('launched with the prompt: no toast and nothing typed for the same messages, 
     api.wakeIfNeeded(node)
     expect(ctx.showToast).not.toHaveBeenCalled()
     expect(ctx.deliverToAgent).not.toHaveBeenCalled()
+    if (teamWakeUnconfirmed) expect(api.pointerBlocked('pane-2')).toMatch(/launched with a prompt/)
     // All read: the next messages get a reminder again.
     ctx.teamUnread['pane-2'] = 0
     api.wakeIfNeeded(node)
@@ -527,55 +542,37 @@ it('launched with the prompt: no toast and nothing typed for the same messages, 
   }
 })
 
-it('setting on: an unconfirmed Codex gets the reminder typed, with the same checks and the guard right before typing', () => {
+it('setting on: an unconfirmed Codex gets the pointer typed, with the same checks', () => {
   const node = { id: 'pane-5', agentLaunchToken: 'a'.repeat(32), agentId: 'codex', sessionId: 's-5', team: 'team-1', kind: 'agent', teamTools: true, launchedAt: 0 }
   const { ctx, api } = wakeSandbox({ teamUnread: { 'pane-5': 1 }, findLeaf: () => node, trackedState: { 'pane-5': { state: 'unknown' } } })
   ctx.settings.teamWakeUnconfirmed = true
-  // You are typing there (wakeAllowed without the launch-state requirement says no): nothing.
-  ctx.wakeAllowed.mockReturnValue(false)
-  api.wakeIfNeeded(node)
-  expect(ctx.wakeAllowed).toHaveBeenCalledWith('pane-5', true)
-  expect(ctx.deliverToAgent).not.toHaveBeenCalled()
-  // Working, an approval, or just launched: nothing either.
-  ctx.wakeAllowed.mockReturnValue(true)
-  ctx.trackedState['pane-5'].state = 'working'
-  api.wakeIfNeeded(node)
-  ctx.trackedState['pane-5'].state = 'unknown'
-  ctx.approvals['pane-5'] = true
-  api.wakeIfNeeded(node)
-  delete ctx.approvals['pane-5']
-  node.launchedAt = Date.now()
-  api.wakeIfNeeded(node)
-  expect(ctx.deliverToAgent).not.toHaveBeenCalled()
-  node.launchedAt = 0
   api.wakeIfNeeded(node)
   expect(ctx.showToast).not.toHaveBeenCalled()
-  expect(ctx.deliverToAgent).toHaveBeenCalledTimes(1)
-  const [id, text, meta] = ctx.deliverToAgent.mock.calls[0]
-  expect(id).toBe('pane-5')
-  expect(text).toBe('[Tessel] You have 1 new team message: read it with team_inbox.')
-  expect(meta).toMatchObject({ source: 'tessel', scope: 'wake', dropIfNotNow: true, waitIdle: true })
-  expect(meta.guard()).toBe(true)
-  // Right before typing: a draft, an unsent line, the setting turned off,
-  // another launch or nothing left unread drop it.
-  ctx.userDraft['pane-5'] = true
-  expect(meta.guard()).toBe(false)
-  delete ctx.userDraft['pane-5']
+  expect(ctx.teamPointer.notify).toHaveBeenCalledWith('pane-5')
+  expect(api.pointerBlocked('pane-5')).toBe('')
+  // You are typing there (wakeAllowed without the launch-state requirement says no).
+  ctx.wakeAllowed.mockReturnValue(false)
+  expect(api.pointerBlocked('pane-5')).not.toBe('')
+  expect(ctx.wakeAllowed).toHaveBeenCalledWith('pane-5', true)
+  ctx.wakeAllowed.mockReturnValue(true)
+  // Working, an approval, or just launched: nothing either.
+  ctx.trackedState['pane-5'].state = 'working'
+  expect(api.pointerBlocked('pane-5')).not.toBe('')
+  ctx.trackedState['pane-5'].state = 'unknown'
+  ctx.approvals['pane-5'] = true
+  expect(api.pointerBlocked('pane-5')).not.toBe('')
+  delete ctx.approvals['pane-5']
+  node.launchedAt = Date.now()
+  expect(api.pointerBlocked('pane-5')).not.toBe('')
+  node.launchedAt = 0
   ctx.unsent['pane-5'] = {}
-  expect(meta.guard()).toBe(false)
+  expect(api.pointerBlocked('pane-5')).not.toBe('')
   delete ctx.unsent['pane-5']
+  // The setting turned off meanwhile: not typed.
   ctx.settings.teamWakeUnconfirmed = false
-  expect(meta.guard()).toBe(false)
+  expect(api.pointerBlocked('pane-5')).not.toBe('')
   ctx.settings.teamWakeUnconfirmed = true
-  node.agentLaunchToken = 'b'.repeat(32)
-  expect(meta.guard()).toBe(false)
-  node.agentLaunchToken = 'a'.repeat(32)
-  ctx.teamUnread['pane-5'] = 0
-  expect(meta.guard()).toBe(false)
-  // One reminder per batch.
-  ctx.teamUnread['pane-5'] = 1
-  api.wakeIfNeeded(node)
-  expect(ctx.deliverToAgent).toHaveBeenCalledTimes(1)
+  expect(api.pointerBlocked('pane-5')).toBe('')
 })
 
 it('setting off (the default): an unconfirmed Codex is not typed into, the user is asked', () => {
