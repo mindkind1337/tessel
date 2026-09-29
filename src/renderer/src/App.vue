@@ -5125,6 +5125,13 @@ async function detectShellAgents() {
       if (agentId && !l.detected && l.kind !== 'agent') becomeAgent(l, agentId)
       else if (agentId && l.detected && l.agentId !== agentId) becomeAgent(l, agentId)
       else if (!agentId && l.detected) becomeShell(l)
+      // Started by hand with its skip-approvals option (claude
+      // --dangerously-skip-permissions...): the red Yolo ring, as when Tessel
+      // starts it in Yolo.
+      if (agentId && l.detected) {
+        const yolo = launchIsYolo(agentId, { args: cmd || '' })
+        if (!!l.launchYolo !== yolo) l.launchYolo = yolo
+      }
     }
   } finally {
     detectBusy = false
@@ -5152,6 +5159,7 @@ function becomeShell(leaf) {
   delete leaf.sessionOptions
   delete leaf.modelChoice
   delete leaf.detectedCommand
+  delete leaf.launchYolo
   clearAgentStatus(leaf.id)
 }
 const detectTimer = setInterval(detectShellAgents, 4000)

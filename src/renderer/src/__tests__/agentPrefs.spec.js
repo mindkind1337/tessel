@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseEnvText, effectiveAgent, agentEnabled, inYoloFolder, sameFolder, launchPermissions } from '../../../shared/agentPrefs'
+import { parseEnvText, effectiveAgent, agentEnabled, inYoloFolder, sameFolder, launchPermissions, launchIsYolo } from '../../../shared/agentPrefs'
 
 const claude = { id: 'claude', command: 'claude' }
 const goose = { id: 'goose', command: 'goose' }
@@ -64,6 +64,11 @@ describe('Yolo folders and a pane\'s own permission mode', () => {
     expect(launchPermissions('manual', ['C:\\Waveshield'], folders, 'yolo')).toBe('manual')
     expect(launchPermissions('yolo', ['C:\\Other'], [], 'manual')).toBe('yolo')
     expect(launchPermissions('bogus', 'C:\\Other', [], 'yolo')).toBe('yolo')
+  })
+  it('Claude Code started by hand with --dangerously-skip-permissions counts as Yolo', () => {
+    const cmd = '"C:\\npm\\claude-code\\bin\\claude.exe"    --continue --dangerously-skip-permissions'
+    expect(launchIsYolo('claude', { args: cmd })).toBe(true)
+    expect(launchIsYolo('claude', { args: '"claude.exe" --resume abc' })).toBe(false)
   })
   it('a Yolo pane of Claude Code starts with --dangerously-skip-permissions', () => {
     const agent = { id: 'claude', command: 'claude' }
