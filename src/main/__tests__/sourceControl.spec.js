@@ -9,8 +9,6 @@ import os from 'os'
 import { join } from 'path'
 import {
 
-// Real git in temp repos (publish, push, pull): slow on a busy Windows PC.
-vi.setConfig({ testTimeout: 30000, hookTimeout: 30000 })
   scmStatus,
   scmStage,
   scmUnstage,
@@ -36,6 +34,9 @@ vi.setConfig({ testTimeout: 30000, hookTimeout: 30000 })
   compareUrl,
   githubRepoOf
 } from '../sourceControl'
+
+// Real git in temp repos (publish, push, pull): slow on a busy Windows PC.
+vi.setConfig({ testTimeout: 30000, hookTimeout: 30000 })
 
 const g = (cwd, ...args) => execFileSync('git', ['-C', cwd, ...args], { stdio: 'pipe' }).toString()
 let dir
