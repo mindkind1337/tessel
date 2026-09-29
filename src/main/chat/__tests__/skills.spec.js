@@ -60,9 +60,9 @@ describe('read-only skill discovery', () => {
       const open = async (...args) => {
         const handle = await fs.open(...args)
         return {
-          stat: async () => {
-            const stat = await handle.stat()
-            stat[field] += 1
+          stat: async (options) => {
+            const stat = await handle.stat(options)
+            stat[field] += 1n
             return stat
           },
           read,
@@ -76,6 +76,60 @@ describe('read-only skill discovery', () => {
       expect(result.skills).toEqual([])
       expect(read).not.toHaveBeenCalled()
       expect(close).toHaveBeenCalledTimes(1)
+    }
+  )
+
+  it.each(['dev', 'ino'])(
+    'compares adjacent large %s values exactly and keeps metadata serializable',
+    async (field) => {
+      const file = path.join(cwd, '.claude/skills/review/SKILL.md')
+      await fixture(file)
+      const identity = 2n ** 60n
+      expect(Number(identity)).toBe(Number(identity + 1n))
+      for (const changed of [false, true]) {
+        const lstat = vi.fn(async (target, options) => {
+          const stat = await fs.lstat(target, options)
+          if (target === file) stat[field] = options?.bigint ? identity : Number(identity)
+          return stat
+        })
+        const read = vi.fn(),
+          close = vi.fn(),
+          statOptions = []
+        const open = async (...args) => {
+          const handle = await fs.open(...args)
+          return {
+            stat: async (options) => {
+              statOptions.push(options)
+              const stat = await handle.stat(options)
+              const value = identity + (changed ? 1n : 0n)
+              stat[field] = options?.bigint ? value : Number(value)
+              return stat
+            },
+            read: (...args) => {
+              read()
+              return handle.read(...args)
+            },
+            close: async () => {
+              close()
+              await handle.close()
+            }
+          }
+        }
+        const result = await discoverClaudeSkills({ cwd, home, io: { ...fs, lstat, open } })
+        expect(lstat).toHaveBeenCalledWith(file, { bigint: true })
+        expect(statOptions).toEqual([{ bigint: true }])
+        expect(close).toHaveBeenCalledTimes(1)
+        if (changed) {
+          expect(result.skills).toEqual([])
+          expect(read).not.toHaveBeenCalled()
+        } else {
+          expect(read).toHaveBeenCalledTimes(1)
+          expect(result.skills).toHaveLength(1)
+          expect(result.skills[0].updatedAt).toBeTypeOf('number')
+          expect(Number.isFinite(result.skills[0].updatedAt)).toBe(true)
+          expect(() => JSON.stringify(result)).not.toThrow()
+        }
+      }
     }
   )
 
