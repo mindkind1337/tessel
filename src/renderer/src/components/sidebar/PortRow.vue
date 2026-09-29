@@ -2,8 +2,8 @@
 // One live port with its Open / Copy / Stop actions, ported from Orca's
 // WorktreePortRow (sidebar/WorktreeCardPorts.tsx) and the status bar's
 // PortRow (status-bar/ports-status-popover-rows.tsx); MIT, Copyright (c)
-// 2026 Lovecast Inc. Tessel has no built-in browser: Open uses the system
-// browser.
+// 2026 Lovecast Inc. Open shows the page in Tessel's built-in browser
+// (App.openPort).
 import { computed } from 'vue'
 import { Copy, ExternalLink, Trash2 } from 'lucide-vue-next'
 import { addressForPort } from '../../portScanner'

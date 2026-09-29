@@ -302,7 +302,7 @@ export function buildProjectCards(project, now = Date.now()) {
   }
   for (const c of project.copies || []) if (c && c.path) copyCard(c.path, c.branch, c.title, c.taskId)
   for (const pane of project.panes || []) {
-    if (pane.kind === 'editor') continue
+    if (pane.kind === 'editor' || pane.kind === 'browser') continue
     const card =
       pane.copyPath && !samePath(pane.copyPath, project.cwd) ? copyCard(pane.copyPath, pane.copyBranch, null, null) : main
     card.panes.push(paneRow(pane, now))
