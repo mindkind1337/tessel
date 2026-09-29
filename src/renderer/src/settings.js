@@ -76,6 +76,9 @@ export const DEFAULT_SETTINGS = Object.freeze({
   // 'manual' (agents ask before acting) or 'yolo' (each agent's own
   // skip-approvals flag, unless you set its arguments yourself).
   agentPermissions: 'manual',
+  // Folders where agents always start in Yolo (pane menu > Yolo in this
+  // folder), whatever agentPermissions says.
+  yoloFolders: [],
   // Keep the computer from sleeping: 'off' | 'agents' (while an agent is
   // working) | 'on' (while Tessel is open).
   keepAwake: 'off',
@@ -233,6 +236,7 @@ const fresh = () => ({
   quickCommands: [],
   agentPrefs: {},
   agentSessionOptions: {},
+  yoloFolders: [],
   hiddenUsageProviders: [],
   sidebarFilterRepoIds: [],
   sidebarCollapsedGroups: [],
@@ -263,6 +267,11 @@ export function loadSettings(saved) {
     }
     if (key === 'agentSessionOptions') {
       settings.agentSessionOptions = validSessionOptionSettings(v)
+      continue
+    }
+    if (key === 'yoloFolders') {
+      if (Array.isArray(v))
+        settings.yoloFolders = [...new Set(v.filter((f) => typeof f === 'string' && f.trim() && f.length <= 1024).map((f) => f.trim()))].slice(0, 100)
       continue
     }
     if (key === 'agentPermissions' && !['manual', 'yolo'].includes(v)) continue

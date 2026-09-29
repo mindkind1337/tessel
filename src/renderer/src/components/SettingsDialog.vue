@@ -1106,6 +1106,21 @@ function previewSound() {
               <p v-if="settings.agentPermissions === 'yolo'" class="mcp-error agents-warn">
                 {{ t('settings.agents.yoloWarning', 'Yolo: agents run commands and change files without asking you first (each agent\'s own skip-approvals option, unless you set its arguments yourself). Use it only in projects you can restore.') }}
               </p>
+              <!-- Folders where agents always start in Yolo (pane menu > Yolo in this folder). -->
+              <div v-if="(settings.yoloFolders || []).length" class="set-row yolo-folders" data-test="settings-yolo-folders">
+                <div class="set-label">
+                  {{ t('settings.agents.yoloFolders', 'Yolo folders') }}
+                  <span class="set-hint">{{ t('settings.agents.yoloFoldersHint', 'Agents started in these folders always start in Yolo (pane menu > Yolo in this folder)') }}</span>
+                </div>
+                <div class="yolo-folder-list">
+                  <div v-for="f in settings.yoloFolders || []" :key="f" class="yolo-folder">
+                    <span class="yolo-folder-path" :title="f">{{ f }}</span>
+                    <button class="exit-btn" :title="t('settings.agents.yoloFolderRemoveHint', 'Agents started here ask first again (unless Yolo is on above)')" @click="settings.yoloFolders = settings.yoloFolders.filter((x) => x !== f)">
+                      {{ t('settings.agents.yoloFolderRemove', 'Remove') }}
+                    </button>
+                  </div>
+                </div>
+              </div>
               <label class="set-row">
                 <div class="set-label">
                   {{ t('settings.agents.resume', 'Resume conversations when panes reopen') }}

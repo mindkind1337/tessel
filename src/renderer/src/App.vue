@@ -13,7 +13,7 @@ import UpdateDialog from './components/UpdateDialog.vue'
 import UpdateCard from './components/UpdateCard.vue'
 import SshPasswordDialog from './components/remote/SshPasswordDialog.vue'
 import { settings, loadSettings, DEFAULT_SETTINGS } from './settings'
-import { effectiveAgent, agentEnabled, launchSignature, launchIsYolo, launchSessionValues } from '../../shared/agentPrefs'
+import { effectiveAgent, agentEnabled, launchSignature, launchIsYolo, launchSessionValues, launchPermissions, sameFolder } from '../../shared/agentPrefs'
 import { validPaneSessionOptions } from '../../shared/agentSessionOptions'
 import { loadModelLists, modelsFor } from './agentModels'
 import { THEMES } from './themes'
@@ -759,11 +759,15 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
   const paneChoice = agent ? validPaneSessionOptions(opts.sessionOptions) || workerChoice : null
   const sessionValues = agent ? launchSessionValues(paneChoice, settings.agentSessionOptions, agent.id) : null
   const agentModels = agent ? modelsFor(agent.id) : null
+  // Ask first or Yolo: the pane's own choice (pane menu > Restart in Yolo),
+  // else Yolo in a Yolo folder, else Settings > Agents.
+  const panePermissions = opts.permissions === 'manual' || opts.permissions === 'yolo' ? opts.permissions : null
+  const permissions = launchPermissions(panePermissions, [projectDir, cwd], settings.yoloFolders, settings.agentPermissions)
   // What it runs with, flags included (for the signature and the header).
-  const launchAll = agent ? effectiveAgent(agent, settings.agentPrefs, settings.agentPermissions, sessionValues, agentModels) : null
-  const launch = workerChoice ? effectiveAgent(agent, settings.agentPrefs, settings.agentPermissions, null, agentModels) : launchAll
+  const launchAll = agent ? effectiveAgent(agent, settings.agentPrefs, permissions, sessionValues, agentModels) : null
+  const launch = workerChoice ? effectiveAgent(agent, settings.agentPrefs, permissions, null, agentModels) : launchAll
   // The model flags really added (none when your own arguments set them).
-  const modelApplied = !!(launchAll && sessionValues && launchAll.args !== effectiveAgent(agent, settings.agentPrefs, settings.agentPermissions).args)
+  const modelApplied = !!(launchAll && sessionValues && launchAll.args !== effectiveAgent(agent, settings.agentPrefs, permissions).args)
   const extraEnv = launch ? { ...launch.env } : {}
   let unsetEnv = []
   // The account's own variables go separately, so they are never crowded out
@@ -845,6 +849,7 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
       sessionId: opts.sessionId || null,
       accountId,
       ...(paneChoice ? { sessionOptions: paneChoice } : {}),
+      ...(panePermissions ? { permissions: panePermissions } : {}),
       remoteHostId: opts.remoteHostId || null,
       remotePath: (opts.remoteHostId && opts.remotePath) || null,
       failed: msg,
@@ -880,6 +885,8 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
     launchYolo: !attached && launch ? launchIsYolo(agent.id, launch) : false,
     // The pane's own model choice (kept with the layout and for restarts).
     ...(paneChoice ? { sessionOptions: paneChoice } : {}),
+    // Its own Ask first / Yolo choice (pane menu), for its restarts.
+    ...(panePermissions ? { permissions: panePermissions } : {}),
     // Started with a chosen model: the header shows it until the agent's
     // conversation answers with another one.
     ...(!attached && modelApplied
@@ -1064,6 +1071,7 @@ function serializeNode(node) {
       toolsVersion: node.toolsVersion || null,
       // Its own model choice (pane menu > Model), for the next start.
       sessionOptions: node.detected ? undefined : node.sessionOptions || undefined,
+      permissions: node.detected ? undefined : node.permissions || undefined,
       launchSig: node.detected ? undefined : node.launchSig || undefined,
       launchYolo: node.detected ? undefined : node.launchYolo || undefined
     }
@@ -1127,6 +1135,7 @@ async function deserializeNode(snap, cwd = null) {
             : undefined,
         launchedAt: Number.isFinite(snap.launchedAt) ? snap.launchedAt : null,
         ...(validPaneSessionOptions(snap.sessionOptions) ? { sessionOptions: validPaneSessionOptions(snap.sessionOptions) } : {}),
+        ...(snap.permissions === 'manual' || snap.permissions === 'yolo' ? { permissions: snap.permissions } : {}),
         restoredText: savedOutput[savedId] || '',
         sleeping: { at: snap.sleeping.at },
         broadcast: snap.broadcast !== false
@@ -1147,6 +1156,7 @@ async function deserializeNode(snap, cwd = null) {
       launchedAt: Number.isFinite(snap.launchedAt) ? snap.launchedAt : null,
       startDir: typeof snap.startDir === 'string' ? snap.startDir : null,
       sessionOptions: snap.sessionOptions,
+      permissions: snap.permissions,
       resume: settings.resumeAgents,
       remoteHostId: typeof snap.remoteHostId === 'string' && /^ssh-[\w-]{1,60}$/.test(snap.remoteHostId) ? snap.remoteHostId : undefined,
       remotePath: typeof snap.remotePath === 'string' && snap.remotePath.length <= 1024 ? snap.remotePath : undefined,
@@ -1787,6 +1797,10 @@ provide('panelCtx', {
   splitLeaf,
   closeLeaf,
   restartLeaf,
+  restartWithPermissions,
+  toggleYoloFolder,
+  permissionsOf,
+  paneFolder: (leaf) => paneFolders(leaf)[0] || null,
   wakeLeaf: (id) => wakeLeaf(id),
   setActive,
   toggleMaximize,
@@ -2565,6 +2579,7 @@ async function restartLeaf(leafId) {
     sessionId: old.sessionId,
     accountId: old.accountId,
     sessionOptions: old.sessionOptions,
+    permissions: old.permissions,
     resume: settings.resumeAgents,
     ...(old.remoteHostId ? { remoteHostId: old.remoteHostId } : {}),
     ...(old.remoteHostId && old.remotePath ? { remotePath: old.remotePath } : {})
@@ -2594,6 +2609,37 @@ async function restartLeaf(leafId) {
   window.shellApi.killPty(leafId)
   dropBuffer(leafId)
   clearAgentStatus(leafId)
+}
+
+// Pane menu > Restart in Yolo / Restart asking first: the pane keeps that
+// choice (for its next restarts too) and restarts, its conversation resumed.
+async function restartWithPermissions(leafId, mode) {
+  const leaf = findLeaf(leafId)
+  if (!leaf || leaf.kind !== 'agent' || !leaf.agentCommand || !['manual', 'yolo'].includes(mode)) return
+  if (restartingLeaves.has(leafId)) return
+  leaf.permissions = mode
+  // Always resumed (whatever Settings > Agents > Resume says): the point is
+  // to carry on the same conversation with the other mode.
+  const ok = await restartInPlace(leafId, { resume: true })
+  if (!ok && findLeaf(leafId) === leaf)
+    showToast(t('app.restart.failed', '{{name}} could not be restarted: its terminal did not stop. Try again.', { name: leaf.title }), { kind: 'error', timeout: 8000 })
+}
+// The folders a pane counts as working in, for Yolo folders: its project
+// (the workspace's folder), where it started, its task copy.
+function paneFolders(leaf) {
+  const ws = leaf ? wsOfLeaf(leaf.id) : null
+  return [ws && ws.cwd, leaf && leaf.startDir, leaf && leaf.worktree && leaf.worktree.path].filter(Boolean)
+}
+// The permission mode a pane would start with now (for "Restart to apply").
+function permissionsOf(leaf) {
+  return launchPermissions(leaf && leaf.permissions, paneFolders(leaf), settings.yoloFolders, settings.agentPermissions)
+}
+// Pane menu > Yolo in this folder: agents started there (or in a folder
+// inside it) always start in Yolo. Panes already running are not changed.
+function toggleYoloFolder(dir) {
+  if (!dir) return
+  const list = settings.yoloFolders || []
+  settings.yoloFolders = list.some((f) => sameFolder(f, dir)) ? list.filter((f) => !sameFolder(f, dir)) : [...list, dir]
 }
 
 function restartActive() {
@@ -5232,6 +5278,7 @@ async function restartInPlaceNow(leafId, opts) {
     sessionId: old.sessionId,
     accountId: old.accountId,
     sessionOptions: old.sessionOptions,
+    permissions: old.permissions,
     resume: !!old.sessionId && opts.resume !== false,
     // Team messages waiting for it: its first prompt says so (see createLeaf).
     wake: { teamId: old.team || null, gen: (old.gen || 0) + 1 }

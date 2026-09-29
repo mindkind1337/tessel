@@ -198,7 +198,11 @@
       "refreshModelsHint": "Demander à {{name}} quels modèles il propose (il peut utiliser sa connexion et le réseau ; aucune requête n'est envoyée au modèle)",
       "refreshModels": "Actualiser les modèles",
       "fastModeLive": "Le mode rapide se change dans un panneau en cours d'exécution (menu du panneau > Modèle).",
-      "modelApplies": "S'applique aux panneaux que vous démarrez désormais ; ceux en cours affichent Redémarrer pour appliquer."
+      "modelApplies": "S'applique aux panneaux que vous démarrez désormais ; ceux en cours affichent Redémarrer pour appliquer.",
+      "yoloFolders": "Dossiers Yolo",
+      "yoloFoldersHint": "Les agents lancés dans ces dossiers démarrent toujours en Yolo (menu du panneau > Yolo dans ce dossier)",
+      "yoloFolderRemove": "Retirer",
+      "yoloFolderRemoveHint": "Les agents lancés ici demandent à nouveau d'abord (sauf si Yolo est activé plus haut)"
     },
     "orchestration": {
       "yourTeam": "Votre équipe",

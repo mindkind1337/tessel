@@ -108,3 +108,34 @@ export function launchIsYolo(agentId, launch) {
   const env = YOLO_ENV[agentId]
   return !!env && Object.entries(env).every(([k, v]) => (launch.env || {})[k] === v)
 }
+
+// Folders where agents always start in Yolo (pane menu > Yolo in this
+// folder): a pane started in one, or anywhere inside it, gets Yolo whatever
+// Settings > Agents says.
+function folderKey(dir) {
+  return String(dir || '')
+    .replace(/[\\/]+$/, '')
+    .replace(/\//g, '\\')
+    .toLowerCase()
+}
+export function inYoloFolder(dir, folders) {
+  const d = folderKey(dir)
+  if (!d || !Array.isArray(folders)) return false
+  return folders.some((f) => {
+    const k = folderKey(f)
+    return !!k && (d === k || d.startsWith(k + '\\'))
+  })
+}
+export function sameFolder(a, b) {
+  return !!folderKey(a) && folderKey(a) === folderKey(b)
+}
+
+// The permission mode a pane's agent starts with: the pane's own choice
+// (pane menu > Restart in Yolo / Restart asking first), else Yolo in a Yolo
+// folder, else Settings > Agents. dirs: its project folder and the folder it
+// runs in (a task copy of the project runs elsewhere).
+export function launchPermissions(paneChoice, dirs, yoloFolders, global) {
+  if (paneChoice === 'manual' || paneChoice === 'yolo') return paneChoice
+  if ([].concat(dirs).some((d) => inYoloFolder(d, yoloFolders))) return 'yolo'
+  return global === 'yolo' ? 'yolo' : 'manual'
+}
