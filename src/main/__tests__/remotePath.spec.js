@@ -10,6 +10,7 @@ describe('remote virtual paths', () => {
     expect(remoteRoot('../x', '/srv')).toBe(null)
     expect(remoteRoot('ssh-1a', 'rel')).toBe(null)
     expect(remoteRoot('ssh-1a', '/a/../b')).toBe(null)
+    expect(remoteRoot('ssh-1a', '/srv/a\\b')).toBe(null)
   })
   it('files below it, joined with \\ or /', () => {
     const root = remoteRoot('ssh-1a', '~/app')

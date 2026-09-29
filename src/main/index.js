@@ -27,7 +27,8 @@ import { remoteProjectLaunch } from './remoteProject'
 import { createAddProject, registerAddProject } from './addProject'
 import { createSshAskpass, registerSshAskpass, askpassExePath } from './sshAskpass'
 import { createAskpassPipeHost } from './askpassPipeHost'
-import { createRemoteFs, registerRemoteFs, SESSION_PREFIX as REMOTE_FS_PREFIX } from './remoteFs'
+import { createRemoteFs, registerRemoteFs, remoteRootsOfLayout, SESSION_PREFIX as REMOTE_FS_PREFIX } from './remoteFs'
+import { createGitTrust, setGitTrust } from './gitSafety'
 import { isRemotePath } from '../shared/remotePath'
 import { prepareAgentStateHooks } from './agentStateSetup'
 import { assessNeeds } from './tesselNeeds'
@@ -686,6 +687,9 @@ ipcMain.handle('layout:load', () => {
 })
 
 ipcMain.on('layout:save', (_evt, data) => {
+  // Its remote projects are the only remote folders Files, Changes and the
+  // editor may reach (remoteFs.js).
+  if (isLayout(data)) remoteFs.setRoots(remoteRootsOfLayout(data))
   try {
     writeJsonSafe(layoutFile(), data, isLayout)
   } catch {
@@ -1276,10 +1280,47 @@ const sshAskpass = createSshAskpass({
   log
 })
 registerSshAskpass({ ipcMain, broker: sshAskpass })
+// A repository whose own git config runs programs (core.fsmonitor, filters,
+// textconv, hooksPath, sshCommand): asked once whether to trust it, the
+// answer kept per repository and settings (gitSafety.js); until then git
+// runs with them off.
+setGitTrust(
+  createGitTrust({
+    file: join(app.getPath('userData'), 'git-trust.json'),
+    ask: async ({ name, where, risky }) => {
+      const shown = risky
+        .slice(0, 8)
+        .map((r) => `${r.key} = ${String(r.value).replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, 160)}`)
+        .join('\n')
+      const opts = {
+        type: 'warning',
+        title: t('main.gitTrust.title', 'Trust this repository?'),
+        message: where
+          ? t('main.gitTrust.messageRemote', 'The git settings of {{repo}} on {{host}} run programs on that host when Tessel reads its status.', { repo: name, host: where })
+          : t('main.gitTrust.message', 'The git settings of {{repo}} run programs on this computer when Tessel reads its status.', { repo: name }),
+        detail: `${shown}${risky.length > 8 ? '\n…' : ''}\n\n${t('main.gitTrust.detail', 'Trust it only if you know where this folder comes from. Until then Tessel runs git with these settings turned off.')}`,
+        buttons: [t('main.gitTrust.trust', 'Trust and run them'), t('main.gitTrust.dontTrust', 'Keep them off')],
+        defaultId: 1,
+        cancelId: 1,
+        noLink: true
+      }
+      const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null
+      const res = win ? await dialog.showMessageBox(win, opts) : await dialog.showMessageBox(opts)
+      return res.response === 0
+    }
+  })
+)
 // Files, Changes and the editor of remote projects (remoteFs.js): one ssh
 // session per host, the same askpass dialog.
 const remoteFs = createRemoteFs({ hosts: remoteHosts, askpass: sshAskpass, send: (channel, payload) => send(channel, payload), log })
 registerRemoteFs({ ipcMain, service: remoteFs })
+// The saved remote projects (the layout on disk; each save updates them).
+try {
+  const saved = readJsonSafe(layoutFile(), isLayout)
+  remoteFs.setRoots(remoteRootsOfLayout(saved && saved.data))
+} catch {
+  /* none yet: the first save brings them */
+}
 app.on('will-quit', () => remoteFs.close())
 // A remote project's path (ssh://…) in a call made for local files.
 const remoteArg = (q) => (q && typeof q === 'object' ? isRemotePath(q.root) || isRemotePath(q.file) || isRemotePath(q.path) : isRemotePath(q))

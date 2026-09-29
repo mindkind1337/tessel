@@ -32,12 +32,15 @@ describe('remote folder path', () => {
   it('refuses empty, relative, Windows and control-character paths', () => {
     expect(validateRemotePath('').error).toBe('path-required')
     expect(validateRemotePath('app').error).toBe('path-not-absolute')
-    expect(validateRemotePath('C:\\work').error).toBe('path-not-absolute')
+    expect(validateRemotePath('C:\\work').error).toBe('path-invalid')
     expect(validateRemotePath('-oProxyCommand=calc').error).toBe('path-not-absolute')
     expect(validateRemotePath('~user/x').error).toBe('path-not-absolute')
     expect(validateRemotePath('/tmp/a\nrm -rf ~').error).toBe('path-invalid')
     expect(validateRemotePath('/tmp/\u0000x').error).toBe('path-invalid')
     expect(validateRemotePath('/' + 'a'.repeat(1100)).error).toBe('path-invalid')
+    // fish reads \' inside quotes as a quote: a backslash is refused (review F3).
+    expect(validateRemotePath("/srv/a\\';touch /tmp/PWNED;#").error).toBe('path-invalid')
+    expect(validateRemotePath("/srv/it's").path).toBe("/srv/it's")
     expect(validateRemotePath(42).error).toBe('path-required')
   })
 })

@@ -6,6 +6,7 @@ import { execFileSync } from 'child_process'
 import { createRemoteFs } from '../remoteFs'
 import { createRemotePromptWriter } from '../automationRemotePrompt'
 import { gitSh, fakeSpawn, posixPath } from './fixtures/fakeSsh'
+import { remoteRoot } from '../../shared/remotePath'
 
 const HOST = 'ssh-test2'
 const hosts = {
@@ -135,8 +136,20 @@ describe.skipIf(!gitSh())("a remote project's automation prompt over a fake ssh 
     g('add', '-A')
     g('commit', '-q', '-m', 'first')
     rfs = createRemoteFs({ hosts, send: () => {}, spawnImpl: fakeSpawn({ home }) })
+    // The saved layout's remote projects are the only roots (remoteRootsOfLayout).
+    rfs.setRoots(['proj', join('other', 'proj2'), 'proj3'].map((p) => remoteRoot(HOST, posixPath(join(base, p)))))
     writer = createRemotePromptWriter(rfs)
   })
+
+  it('a project that is not a saved remote project is refused', async () => {
+    const stray = join(base, 'stray')
+    fs.mkdirSync(stray, { recursive: true })
+    const res = await writer.write({ hostId: HOST, path: posixPath(stray), file: FILE, text: 'x' })
+    expect(res.ok).toBe(false)
+    expect(fs.existsSync(join(stray, '.tessel'))).toBe(false)
+    // Its clearing waits (the project may come back), never writes elsewhere.
+    expect((await writer.clear({ hostId: HOST, path: posixPath(stray), file: FILE })).ok).toBe(false)
+  }, 60000)
   afterAll(() => {
     rfs.close()
     fs.rmSync(base, { recursive: true, force: true })

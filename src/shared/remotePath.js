@@ -46,6 +46,9 @@ function join({ home, segs }) {
 // { hostId, path } of a remote project -> its virtual root, or null.
 export function remoteRoot(hostId, path) {
   if (typeof hostId !== 'string' || !HOST_ID_RE.test(hostId)) return null
+  // A backslash is a separator in virtual paths: a host path holding one
+  // (refused when a project is added) has no virtual root.
+  if (typeof path === 'string' && path.includes('\\')) return null
   const parts = segmentsOf(typeof path === 'string' ? path.trim() : '')
   if (!parts) return null
   const p = join(parts)

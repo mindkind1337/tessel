@@ -6,6 +6,7 @@ import { join, resolve, relative, isAbsolute, dirname, basename, sep } from 'pat
 import { execFile, spawn } from 'child_process'
 import { StringDecoder } from 'string_decoder'
 import { t } from './i18n'
+import { localGitArgs } from './gitSafety'
 
 const MAX_ENTRIES = 5000
 // Never listed (Orca hides the same by default): git's own folder.
@@ -110,8 +111,10 @@ export async function projectStatus({ root, ignored = false } = {}) {
   if (typeof root !== 'string' || !isAbsolute(root)) return { ok: false, error: t('main.explorer.invalidFolder', 'Invalid folder.') }
   const top = await gitTop(root)
   if (!top) return { ok: true, files: {}, repo: false }
+  // The repository's own settings that run programs stay off until trusted.
+  const safety = await localGitArgs(top)
   return new Promise((done) => {
-    const args = ['-C', top, 'status', '--porcelain=v1', '-z', '--untracked-files=all']
+    const args = ['-C', top, ...safety, 'status', '--porcelain=v1', '-z', '--untracked-files=all']
     if (ignored) args.push('--ignored=matching')
     execFile('git', args, { windowsHide: true, timeout: 15000, maxBuffer: 32 * 1024 * 1024 }, (err, stdout, stderr) => {
       // A repository whose status failed is not a clean one: said as an error.
@@ -308,6 +311,7 @@ export function grepFileCheck(root) {
 export function grepArgs(root, query) {
   return [
     '-C', root,
+    '-c', 'core.fsmonitor=false',
     '-c', 'grep.fullName=false',
     '-c', 'grep.lineNumber=true',
     '-c', 'grep.column=false',

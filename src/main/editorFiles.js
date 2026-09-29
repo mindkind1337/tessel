@@ -196,11 +196,12 @@ export async function writeForEdit({ file, text, bom = false, expectSig, expectH
   return { ok: true, size: st.size, mtimeMs: st.mtimeMs, sig: st.sig, hash: hashOf(data) }
 }
 
+// core.fsmonitor off: a repository's own settings never run a program here.
 function git(args, opts = {}) {
   return new Promise((done) =>
     execFile(
       'git',
-      args,
+      ['-c', 'core.fsmonitor=false', ...args],
       { windowsHide: true, timeout: 20000, maxBuffer: opts.maxBuffer || 1024 * 1024, encoding: 'buffer' },
       (err, stdout, stderr) => done({ err, stdout: stdout || Buffer.alloc(0), stderr: String(stderr || '') })
     )
@@ -225,7 +226,7 @@ export async function headContent(file) {
   if (!rel || rel.startsWith('..') || isAbsolute(rel))
     return { ok: true, repo: false, isNew: true, text: '', note: t('main.editor.noteOutside', 'Outside the repository: there is no committed version to compare with.') }
   const spec = `HEAD:${rel.split(sep).join('/')}`
-  const res = await git(['-C', resolve(top), '-c', 'core.quotepath=off', 'show', spec], { maxBuffer: MAX_HEAD_BYTES + 1 })
+  const res = await git(['-C', resolve(top), '-c', 'core.quotepath=off', 'show', '--no-textconv', spec], { maxBuffer: MAX_HEAD_BYTES + 1 })
   if (res.err) {
     if (/maxBuffer/i.test(String(res.err.message || '')) || res.err.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER')
       return { ok: false, error: t('main.editor.headTooLarge', 'The committed version is too large to compare (over 10 MB).') }

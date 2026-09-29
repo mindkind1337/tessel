@@ -1755,7 +1755,9 @@ const sideRemote = computed(() => {
   const ws = currentWs.value
   return ws && ws.remote ? { hostId: ws.remote.hostId, host: remoteHostLabel(ws.remote.hostId), path: ws.remote.path } : null
 })
-// The main process only reads files below the remote projects it was told of.
+// The main process reads files only below the remote projects of the saved
+// layout: a remote project added or removed is saved at once (not after the
+// usual short delay), so its Files tab can read it right away.
 watch(
   () =>
     workspaces.value
@@ -1763,10 +1765,7 @@ watch(
       .map((w) => remoteRoot(w.remote.hostId, w.remote.path))
       .filter(Boolean)
       .join('\n'),
-  (list) => {
-    if (window.shellApi.remoteFs) window.shellApi.remoteFs.setRoots(list ? list.split('\n') : []).catch(() => {})
-  },
-  { immediate: true }
+  () => saveLayoutNow()
 )
 function insertPathInPane(text) {
   const id = activeId.value
