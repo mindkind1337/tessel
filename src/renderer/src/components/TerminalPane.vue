@@ -217,21 +217,14 @@ const modelBusyReason = computed(() =>
   paneRunning.value && paneBusy.value ? t('pane.sessionOptions.waitIdle', 'It is working: its model can change once it is idle.') : ''
 )
 // The header's model chip: the short name in use (the session's, else the
-// launch choice), its effort only when it is not the model's default.
+// launch choice), with its effort whenever it is known (medium included:
+// the user wants to see it).
 const headerModelText = computed(() => {
   const m = agentModel.value
   if (!isAgent.value || !m || !m.model) return ''
   const name = modelLabel(m.model)
-  return m.effort && !effortIsDefault(m) ? `${name} · ${m.effort}` : name
+  return m.effort ? `${name} · ${m.effort}` : name
 })
-function effortIsDefault(m) {
-  const catalog = getAgentSessionOptionCatalog(props.node.agentId)
-  if (!catalog) return false
-  const choice = props.node.modelChoice
-  const id = (m.source === 'chosen' && choice && choice.model) || m.model
-  const effort = modelOptions(catalog, paneModelList.value, id).find((o) => o.id === 'effort')
-  return !!effort && effort.kind.defaultValue === m.effort
-}
 function openModelMenuAtChip(e) {
   const r = e.currentTarget.getBoundingClientRect()
   openModelMenuAt(r.left, r.bottom + 2)

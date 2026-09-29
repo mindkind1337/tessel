@@ -242,7 +242,7 @@ describe('pane menu > Model', () => {
     mountPane({ modelChoice: { model: 'opus', effort: 'high' } })
     await flushPromises()
     const chip = () => wrapper.get('[data-test="pane-model-chip"]')
-    expect(chip().text()).toBe('Opus')
+    expect(chip().text()).toBe('Opus · high')
     wrapper.props('node').modelChoice = { model: 'opus', effort: 'max' }
     await wrapper.vm.$nextTick()
     // The header refreshes its model on its own schedule; ask now.
@@ -264,7 +264,7 @@ describe('pane menu > Model', () => {
     window.shellApi.agentModel.mockResolvedValue({ model: 'gpt-5.5', effort: 'medium', source: 'session' })
     await wrapper.setProps({ node: { ...wrapper.props('node'), sessionId: 's3' } })
     await flushPromises()
-    expect(wrapper.get('[data-test="pane-model-chip"]').text()).toBe('gpt-5.5')
+    expect(wrapper.get('[data-test="pane-model-chip"]').text()).toBe('gpt-5.5 · medium')
   })
 
   it('a pane asleep keeps the choice for its next start; the default from Settings is named', async () => {
