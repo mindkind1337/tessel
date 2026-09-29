@@ -10643,3 +10643,11 @@ button.act-stat:hover,
 .car-tag.car-team-tag.lead {
   border-color: color-mix(in srgb, var(--accent) 55%, transparent);
 }
+
+/* An agent row's model: dim, cut with an ellipsis when long. */
+.car-tag.car-model-tag {
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

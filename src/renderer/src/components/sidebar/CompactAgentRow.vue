@@ -19,6 +19,7 @@ import { useHoverCard } from '../hover/useHoverCard'
 import { acquireChildren, childrenKey, splitChildren, childDotState } from '../../agentChildrenFeed'
 import { childTime, formatTokens } from '../../agentChildrenView'
 import { modelLabel } from '../../../../shared/modelLabel'
+import { paneModels } from '../../paneModels'
 import { childrenFolded, olderShown } from './agentRowState'
 import { t } from '../../i18n'
 
@@ -140,6 +141,8 @@ const childState = computed(() => {
   return split.value.older.includes(c) ? t('sidebar.agentRow.finished', 'Finished') : stateTitle(c.state)
 })
 // What the old native tooltip said, for screen readers.
+// The model its pane shows (TerminalPane writes paneModels).
+const rowModel = computed(() => (props.row.kind === 'agent' ? paneModels[props.row.id] || '' : ''))
 // The team tag on the row: its name, with "lead" when it leads it.
 const teamTag = computed(() =>
   props.row.lead ? t('sidebar.agentRow.teamLead', '{{team}} · lead', { team: props.teamLabel }) : props.teamLabel
@@ -206,6 +209,8 @@ const workerOfLabel = computed(() =>
         - {{ row.secondary }}</span
       >
     </span>
+    <!-- The model it uses (the same text as its pane header). -->
+    <span v-if="rowModel" class="car-tag car-model-tag" data-test="car-model" :title="rowModel">{{ rowModel }}</span>
     <!-- Its team, by name (and "lead" when it leads it). -->
     <span v-if="row.team && teamLabel" class="car-tag car-team-tag" data-test="car-team" :class="{ lead: row.lead }" v-text="teamTag"></span>
     <span v-else-if="row.lead" class="car-tag">{{ t('sidebar.agentRow.lead', 'lead') }}</span>
