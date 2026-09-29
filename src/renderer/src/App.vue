@@ -36,7 +36,8 @@ import {
   managedAgentStatus,
   clearAgentStatus,
   clearAttention,
-  setAttention
+  setAttention,
+  paneAgentState
 } from './agentStatus'
 import { detectApproval } from './agentLimit'
 import { activity, recordActivity, loadActivity, saveActivityNow, activityChanged } from './activityStore'
@@ -8342,13 +8343,7 @@ function startWsMessage(wsId) {
 // something) | 'limited' (usage limit reached) | 'working' | 'waiting' (done,
 // waiting for you) | 'ready'.
 function paneState(leaf) {
-  if (!isAgentLeaf(leaf)) return 'ready'
-  if (approvals[leaf.id]) return 'approval'
-  if (limits[leaf.id]) return 'limited'
-  if (childrenRunning[leaf.id]) return 'working'
-  if (managedAgentStatus(leaf) && agentStatus[leaf.id] === 'unknown') return 'unknown'
-  if (attention[leaf.id]) return 'waiting'
-  return agentStatus[leaf.id] === 'busy' ? 'working' : 'ready'
+  return paneAgentState(leaf, { agent: isAgentLeaf(leaf), childrenRunning: childrenRunning[leaf.id] || 0 })
 }
 
 // The status bar's left side (Tessel's former footer): where typing goes,

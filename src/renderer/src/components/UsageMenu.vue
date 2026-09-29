@@ -36,6 +36,8 @@ const accountChooser = ref(false)
 const flyoutPosition = ref({})
 const stacked = ref(false)
 const providerReadings = ref({})
+// provider -> { accountId, plan }: the plan its last read found (Claude: from its login).
+const providerPlans = ref({})
 const providerErrors = ref({})
 const providerBusy = ref({})
 const resetConfirm = ref(null)
@@ -154,6 +156,8 @@ async function readProvider(id) {
   try {
     const result = await window.shellApi.providerUsage.read({ provider: id, accountId })
     if (!alive || request !== providerRequests.get(id) || accountId !== selectedAccount(id)) return
+    // Its plan (from its login) even when its usage could not be read.
+    if (typeof result?.plan === 'string') providerPlans.value[id] = { accountId, plan: result.plan }
     if (!result?.ok) {
       if (result?.code === 'unavailable')
         unavailable.value = [...new Set([...unavailable.value, id])]
@@ -321,7 +325,12 @@ function planLabel(agent) {
   const selected = provider?.selectedId
     ? provider.accounts?.find((account) => account.id === provider.selectedId)
     : provider?.system
-  const plan = agent.plan || agent.planType || (matching ? selected?.plan : null)
+  const known = providerPlans.value[agent.id]
+  const plan =
+    agent.plan ||
+    agent.planType ||
+    (known && known.accountId === (agent.accountId ?? selectedAccount(agent.id)) ? known.plan : null) ||
+    (matching ? selected?.plan : null)
   return typeof plan === 'string'
     ? plan
         .trim()

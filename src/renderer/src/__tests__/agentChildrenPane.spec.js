@@ -78,7 +78,11 @@ describe('sub-agents chip', () => {
     const w = mountChip({ agentId: 'claude', sessionId: 'A' })
     requests[0].resolve(done)
     await vi.advanceTimersByTimeAsync(0)
-    expect(w.text()).toContain('1 done')
+    // Shown (click for the list), with no number: none runs.
+    expect(w.find('[data-test="agent-children"]').exists()).toBe(true)
+    expect(w.find('.agent-children-count').exists()).toBe(false)
+    expect(w.text()).toContain('none running')
+    expect(w.get('[data-test="agent-children"]').attributes('title')).toContain('1 done')
     vi.setSystemTime(t0 + 31 * 60000)
     // The next poll (every 20 s while none runs) answers the same list.
     await vi.advanceTimersByTimeAsync(20000)
@@ -93,7 +97,9 @@ describe('sub-agents chip', () => {
     const w = mountChip({ agentId: 'claude', sessionId: 'A' })
     requests[0].resolve([{ id: 'q', title: 'long tool', state: 'quiet', startedAt: now - 40 * 60000, lastAt: now - 16 * 60000, endedAt: null }])
     await flushPromises()
-    expect(w.text()).toContain('1 quiet')
+    expect(w.find('.agent-children-count').exists()).toBe(false)
+    expect(w.get('[data-test="agent-children"]').attributes('title')).toContain('1 quiet')
+    expect(w.emitted('running').at(-1)[0]).toBe(0)
     await w.find('[data-test="agent-children"]').trigger('click')
     expect(w.text()).toContain('quiet 16m')
     expect(w.text()).not.toContain('✓')
@@ -136,6 +142,39 @@ describe('sub-agents chip', () => {
     expect(document.body.querySelector('[data-test="agent-children-list"]')).toBeNull()
     w.unmount()
     host.remove()
+  })
+
+  it("a sub-agent silent for over 10 minutes, or since its parent's turn ended, is not counted as running", async () => {
+    vi.useFakeTimers()
+    const t0 = Date.now()
+    const w = mountChip({ agentId: 'claude', sessionId: 'A' })
+    requests[0].resolve([
+      { id: 'live', title: 'live', state: 'running', startedAt: t0 - 60000, lastAt: t0 - 1000 },
+      // Stopped 11 min ago: its files still say running (under the 15 min quiet).
+      { id: 'stopped', title: 'stopped', state: 'running', startedAt: t0 - 20 * 60000, lastAt: t0 - 11 * 60000 }
+    ])
+    await vi.advanceTimersByTimeAsync(0)
+    expect(w.get('.agent-children-count').text()).toBe('1')
+    expect(w.emitted('running').at(-1)[0]).toBe(1)
+    // The parent ends its turn: the one that wrote nothing since stops counting.
+    await w.setProps({ parentIdleSince: t0 })
+    expect(w.find('.agent-children-count').exists()).toBe(false)
+    expect(w.emitted('running').at(-1)[0]).toBe(0)
+    await w.find('[data-test="agent-children"]').trigger('click')
+    expect(w.findAll('.agent-child.running')).toHaveLength(0)
+    expect(w.findAll('.agent-child.quiet')).toHaveLength(2)
+    w.unmount()
+  })
+
+  it("a background sub-agent that writes after its parent's turn ended still runs", async () => {
+    vi.useFakeTimers()
+    const t0 = Date.now()
+    const w = mountChip({ agentId: 'claude', sessionId: 'A', parentIdleSince: t0 - 60000 })
+    requests[0].resolve([{ id: 'bg', state: 'running', startedAt: t0 - 120000, lastAt: t0 - 2000 }])
+    await vi.advanceTimersByTimeAsync(0)
+    expect(w.get('.agent-children-count').text()).toBe('1')
+    expect(w.emitted('running').at(-1)[0]).toBe(1)
+    w.unmount()
   })
 
   it('tells its pane how many sub-agents run (the pane counts as working meanwhile), 0 when gone', async () => {

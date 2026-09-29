@@ -113,6 +113,19 @@ describe('Claude usage flyout details', () => {
     expect(flyout.find('[data-test="usage-locked"]').exists()).toBe(false)
   })
 
+  it("shows Claude's plan beside its name, like Codex's, also when its usage could not be read", async () => {
+    reading = { ...claudeReading(), plan: 'Max 20x' }
+    await openClaude()
+    expect(wrapper.get('[data-test="usage-row-claude"]').get('.usage-plan').text()).toContain('Max 20x')
+    wrapper.unmount()
+    reading = { ok: false, provider: 'claude', accountId: null, code: 'network', error: 'offline', plan: 'Pro' }
+    wrapper = mount(UsageMenu, { attachTo: document.body })
+    await flushPromises()
+    await wrapper.get('[data-test="usage-button"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-test="usage-row-claude"]').get('.usage-plan').text()).toContain('Pro')
+  })
+
   it('speaks French', async () => {
     setMessages('fr', fr)
     reading.extraUsage = { ...reading.extraUsage, limitReached: false }

@@ -347,6 +347,7 @@
     "subAgents": {
       "running": "en cours",
       "quiet": "silencieux",
+      "noneRunning": "aucun en cours",
       "done": "terminé",
       "runningCount": "{{count}} en cours",
       "quietCount_one": "{{count}} silencieux",

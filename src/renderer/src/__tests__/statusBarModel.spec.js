@@ -209,9 +209,26 @@ describe('sub-agents feed', () => {
       ],
       now
     )
-    expect(shown.map((c) => c.id)).toEqual(['run', 'quiet'])
-    expect(older.map((c) => c.id)).toEqual(['recent', 'old'])
+    expect(shown.map((c) => c.id)).toEqual(['run'])
+    // A quiet one (stopped or crashed: it never writes that it finished) folds too.
+    expect(older.map((c) => c.id)).toEqual(['recent', 'quiet', 'old'])
     expect(childDotState({ state: 'running' })).toBe('working')
     expect(childDotState({ state: 'quiet' })).toBe('unverifiable')
+  })
+
+  it("folds a running one that stopped writing, or wrote nothing since its parent's turn ended", () => {
+    const now = 10_000_000
+    const list = [
+      { id: 'live', state: 'running', startedAt: 3, lastAt: now - 1000 },
+      { id: 'stale', state: 'running', startedAt: 2, lastAt: now - 11 * 60000 },
+      { id: 'before', state: 'running', startedAt: 1, lastAt: now - 60000 }
+    ]
+    expect(splitChildren(list, { now }).shown.map((c) => c.id)).toEqual(['live', 'before'])
+    const { shown, older } = splitChildren(list, { now, parentIdleSince: now - 30000 })
+    expect(shown.map((c) => c.id)).toEqual(['live'])
+    expect(older.map((c) => [c.id, c.state])).toEqual([
+      ['stale', 'quiet'],
+      ['before', 'quiet']
+    ])
   })
 })

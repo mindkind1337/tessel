@@ -8,7 +8,7 @@ import { reactive } from 'vue'
 
 const feeds = new Map() // key -> feed
 
-import { listsChildren } from './agentChildrenView'
+import { listsChildren, childShownState } from './agentChildrenView'
 export { CHILD_AGENTS, listsChildren } from './agentChildrenView'
 
 export function childrenKey({ agent, sessionId, accountId } = {}) {
@@ -83,21 +83,27 @@ export function acquireChildren(args, { api = typeof window !== 'undefined' ? wi
   }
 }
 
-// Only the active children show at once (running, then quiet: unfinished);
-// every finished one folds under "+ N more", newest first.
-const RANK = { running: 0, quiet: 1, done: 2 }
-export function splitChildren(list) {
-  const sorted = [...(list || [])].sort(
+// Only the active children show at once (running: see childActive); every
+// other one (finished, or quiet: stopped, crashed, or its parent's turn is
+// over) folds under "+ N more", newest first.
+const RANK = { running: 0, quiet: 1, done: 1 }
+export function splitChildren(list, ctx = {}) {
+  const now = typeof ctx === 'number' ? ctx : ctx.now ?? Date.now()
+  const opts = { now, parentIdleSince: typeof ctx === 'number' ? null : ctx.parentIdleSince ?? null }
+  const rows = (list || []).map((c) => {
+    const state = childShownState(c, opts)
+    return state === c.state ? c : { ...c, state }
+  })
+  const sorted = rows.sort(
     (a, b) => (RANK[a.state] ?? 3) - (RANK[b.state] ?? 3) || (b.startedAt || 0) - (a.startedAt || 0)
   )
   const shown = []
   const older = []
   for (const c of sorted) {
-    ;(c.state === 'done' ? older : shown).push(c)
+    ;(c.state === 'running' ? shown : older).push(c)
   }
   return { shown, older }
 }
-
 // A child's state as Orca's dot: running works, done is done, quiet has no
 // recent update.
 export function childDotState(c) {

@@ -13,7 +13,9 @@ import {
   setLimit,
   agentScreenObservation,
   createAgentActivityMonitor,
-  managedAgentStatus
+  managedAgentStatus,
+  paneAgentState,
+  turnEndedSince
 } from '../agentStatus'
 import {
   createAgentState,
@@ -155,6 +157,55 @@ describe('terminal activity and authoritative agent events', () => {
     }
   )
 
+  it('a settled turn shows idle in the pane and the sidebar with no new event', async () => {
+    hook('UserPromptSubmit')
+    hook('Stop')
+    const stopAt = Date.now()
+    // The pane is not looked at: no screen observation, no hook. Main
+    // publishes its snapshot on each scan; only the clock moves.
+    for (let i = 0; i < 50; i++) {
+      await vi.advanceTimersByTimeAsync(500)
+      publish()
+    }
+    expect(agentStates[node.id]).toMatchObject({ state: 'idle', reason: 'ready', since: stopAt })
+    expect(agentStatus[node.id]).toBe('idle')
+    expect(callbacks.onStatus).toHaveBeenLastCalledWith('idle')
+    expect(paneAgentState(node)).toBe('ready')
+    expect(turnEndedSince(node.id, node.agentLaunchToken)).toBe(stopAt)
+  })
+
+  it('an interrupted Claude turn (no Stop hook) is idle once its screen says so', async () => {
+    hook('UserPromptSubmit')
+    hook('PreToolUse', { toolId: 'tool-1' })
+    screen = { ...screen, ready: true, interrupted: true }
+    monitor.output()
+    await vi.advanceTimersByTimeAsync(1400)
+    expect(agentStates[node.id]).toMatchObject({ state: 'idle', reason: 'interrupted' })
+    expect(agentStatus[node.id]).toBe('idle')
+    expect(paneAgentState(node)).toBe('ready')
+    expect(callbacks.onCompleted).not.toHaveBeenCalled()
+  })
+
+  it('a stale running footer after the turn ended does not keep the pane working', async () => {
+    hook('UserPromptSubmit')
+    hook('Stop')
+    screen = { ...screen, ready: true }
+    monitor.output()
+    await vi.advanceTimersByTimeAsync(1400)
+    expect(agentStatus[node.id]).toBe('idle')
+    screen = { ...screen, ready: false, busy: true }
+    monitor.output({ redraw: true })
+    await vi.advanceTimersByTimeAsync(1400)
+    expect(agentStatus[node.id]).toBe('busy')
+    // The footer is not seen again: after a minute the work is over.
+    for (let i = 0; i < 130; i++) {
+      await vi.advanceTimersByTimeAsync(500)
+      publish()
+    }
+    expect(agentStatus[node.id]).toBe('idle')
+    expect(paneAgentState(node)).toBe('ready')
+  })
+
   it('keeps a Stop continued by another hook working even with a visible prompt', async () => {
     hook('UserPromptSubmit')
     hook('Stop', { continuing: true })
@@ -294,6 +345,19 @@ describe('actual terminal prompt evidence', () => {
     ).toBe(false)
     expect(
       agentScreenObservation(terminal('❯ ', 2), 'claude', 'Working… esc to interrupt\n❯ ').ready
+    ).toBe(false)
+  })
+  it("recognizes Claude's interruption above a ready prompt", () => {
+    const observed = agentScreenObservation(
+      terminal('❯ ', 2),
+      'claude',
+      '> fix it\n  ⎿  Interrupted · What should Claude do instead?\n\n❯ '
+    )
+    expect(observed).toMatchObject({ ready: true, interrupted: true })
+    expect(agentScreenObservation(terminal('❯ ', 2), 'claude', 'Answer\n❯ ').interrupted).toBe(false)
+    expect(
+      agentScreenObservation(terminal('❯ ', 2), 'claude', '  ⎿  Interrupted by user\nWorking… esc to interrupt\n❯ ')
+        .interrupted
     ).toBe(false)
   })
   it('keeps approval and quota evidence ahead of prompt readiness', () => {
