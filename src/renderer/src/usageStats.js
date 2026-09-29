@@ -4,8 +4,9 @@
 // totals from a page of conversations, or add cached/reasoning subsets twice.
 import { t } from './i18n'
 
-const PROVIDERS = ['claude', 'codex']
-const LABELS = { claude: 'Claude Code', codex: 'Codex' } // product names // i18n-ignore
+export const USAGE_REPORT_PROVIDERS = ['claude', 'codex', 'opencode']
+const PROVIDERS = USAGE_REPORT_PROVIDERS
+const LABELS = { claude: 'Claude Code', codex: 'Codex', opencode: 'OpenCode' } // product names // i18n-ignore
 const object = (v) => v !== null && typeof v === 'object' && !Array.isArray(v)
 const count = (v) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 0)
 const optionalCount = (v) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null)
@@ -64,7 +65,46 @@ export function usageDateRange(
   return { from: shiftDay(end, 1 - Number.parseInt(preset, 10)), to: end }
 }
 
+// OpenCode records reasoning and cache tokens next to input and output; they
+// are shown as Codex shows its own (cached input inside input, reasoning
+// inside output), with the cost OpenCode itself recorded.
+function openCodeMetrics(value) {
+  const read = count(value.cacheRead)
+  const write = count(value.cacheWrite)
+  const reasoning = count(value.reasoning)
+  const input = count(value.input) + read + write
+  const output = count(value.output) + reasoning
+  const activity = count(value.turns)
+  const unpriced = Math.min(activity, count(value.unpriced))
+  const cost = !(activity > 0 && unpriced >= activity) ? optionalCount(value.cost) : null
+  return {
+    inputTokens: input,
+    newInputTokens: input - read,
+    outputTokens: output,
+    cacheReadTokens: read,
+    cacheWriteTokens: write,
+    cacheWrite1hTokens: 0,
+    cachedInputTokens: read,
+    cacheTokens: read + write,
+    reasoningTokens: reasoning,
+    reasoningOutputTokens: reasoning,
+    totalTokens: input + output,
+    activityCount: activity,
+    activityLabel: t('usage.report.events', 'events'),
+    turns: null,
+    events: activity,
+    sessions: optionalCount(value.sessions),
+    estimatedCostUsd: cost,
+    unpricedCount: unpriced,
+    hasUnpricedModels: unpriced > 0,
+    hasPartialCost: cost !== null && unpriced > 0,
+    cacheReuseRate: input > 0 ? read / input : null,
+    zeroCacheReadTurns: null
+  }
+}
+
 function normalizeMetrics(provider, value = {}) {
+  if (provider === 'opencode') return openCodeMetrics(value)
   const input = count(value.input)
   const output = count(value.output)
   const activity = count(value.turns)
@@ -199,7 +239,7 @@ export function normalizeUsageReport(provider, raw, options = {}) {
   })).filter((row) => row.id)
   // Legacy Claude returns only its 50 costliest sessions: never call that the
   // exact conversation count. Updated backends supply totals.sessions.
-  if (summary.sessions === null && ready && provider === 'codex') summary.sessions = sessions.length
+  if (summary.sessions === null && ready && provider !== 'claude') summary.sessions = sessions.length
   const warnings =
     ready && Array.isArray(raw.warnings) ? raw.warnings.filter((v) => typeof v === 'string') : []
   if (legacyClaude)
@@ -229,7 +269,9 @@ export function normalizeUsageReport(provider, raw, options = {}) {
         ? t('usage.report.scopeTessel', 'Tessel worktrees only')
         : provider === 'claude'
           ? t('usage.report.scopeClaude', 'Shared Claude history on this computer')
-          : t('usage.report.scopeCodex', 'Selected Codex account’s local history'),
+          : provider === 'opencode'
+            ? t('usage.report.scopeOpenCode', 'OpenCode history on this computer')
+            : t('usage.report.scopeCodex', 'Selected Codex account’s local history'),
     accountId:
       provider === 'codex' && (raw?.accountId === null || typeof raw?.accountId === 'string')
         ? raw.accountId
@@ -251,11 +293,13 @@ export function normalizeUsageReport(provider, raw, options = {}) {
     topProject: byProject[0]?.label || null,
     turnsMeaning:
       text(raw?.turnsMeaning) ||
-      (provider === 'codex'
-        ? t('usage.report.codexTurns', 'Observed model usage events; not user prompts.')
-        : t('usage.report.claudeTurns', 'Deduplicated assistant replies.')),
+      (provider === 'opencode'
+        ? t('usage.report.opencodeTurns', 'Recorded usage rows: one per session where OpenCode keeps session totals, else one per reply.')
+        : provider === 'codex'
+          ? t('usage.report.codexTurns', 'Observed model usage events; not user prompts.')
+          : t('usage.report.claudeTurns', 'Deduplicated assistant replies.')),
     tokenSemantics:
-      provider === 'codex'
+      provider === 'codex' || provider === 'opencode'
         ? t('usage.report.codexTokens', 'Cached input and reasoning output are subsets, not additional tokens.'
           )
         : t('usage.report.claudeTokens', 'Cache reads and cache writes are additional to input; one-hour cache writes are a subset of all cache writes.'
@@ -316,6 +360,7 @@ export function buildUsageOverview(
         day: row.day,
         claudeTokens: 0,
         codexTokens: 0,
+        opencodeTokens: 0,
         rows: []
       }
       current[`${provider.provider}Tokens`] += row.totalTokens // i18n-ignore
@@ -347,6 +392,7 @@ export function buildUsageOverview(
         day,
         claudeTokens: 0,
         codexTokens: 0,
+        opencodeTokens: 0,
         ...combineMetrics([]),
         intensity: 0
       }

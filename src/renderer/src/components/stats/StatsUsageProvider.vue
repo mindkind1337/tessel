@@ -172,7 +172,9 @@ const recentHint = () =>
     ? t('stats.provider.cacheReuseValue', 'Cache reuse rate: {{value}}', {
         value: percent(summary.value.cacheReuseRate)
       })
-    : t('stats.provider.recentCodex', 'Most recent local Codex sessions in this scope.')
+    : props.provider === 'codex'
+      ? t('stats.provider.recentCodex', 'Most recent local Codex sessions in this scope.')
+      : t('stats.provider.recentOther', 'Most recent local {{name}} sessions in this scope.', { name: props.label })
 function chooseFilter(kind, value) {
   emit('filter', { kind, value })
   filtersOpen.value = false
@@ -335,6 +337,9 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', outside))
             t('stats.provider.codexCost', 'API-equivalent cost is unavailable: no verified Codex pricing is provided by this local report.'
             )
           }}
+        </p>
+        <p v-else-if="provider === 'opencode'" class="su-muted">
+          {{ t('stats.provider.opencodeCost', 'The cost is the one OpenCode recorded for each reply, not your subscription bill.') }}
         </p>
         <p v-else class="su-muted">
           {{ t('stats.provider.claudeCost', 'API-equivalent cost is an estimate, not your subscription bill.')

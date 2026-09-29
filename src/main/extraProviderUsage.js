@@ -24,6 +24,11 @@ export const USAGE_URLS = Object.freeze({
   'opencode-go': 'https://opencode.ai/zen/go/v1/usage',
   minimax: 'https://platform.minimax.io/v1/api/openplatform/coding_plan/remains'
 })
+// Providers read through another one's quota: Antigravity shares Google Code
+// Assist's with Gemini CLI, and keeps its own token in the OS keyring, so its
+// quota is Gemini's (after Orca's src/main/rate-limits/antigravity-usage-mirror.ts,
+// MIT, Copyright (c) 2026 Lovecast Inc.). Only a successful read is shown.
+export const USAGE_MIRRORS = Object.freeze({ antigravity: 'gemini' })
 export function createExtraProviderUsage({
   listAgents,
   sources = createUsageProviderSources(),
@@ -35,7 +40,10 @@ export function createExtraProviderUsage({
   async function capabilities() {
     const installed = installedUsageProviders(await listAgents())
     const providers = await Promise.all(
-      installed.map(async (p) => ({ ...p, quota: p.report || (await sources.present(p.id)) }))
+      installed.map(async (p) => ({
+        ...p,
+        quota: p.quota !== false && (p.report || (await sources.present(USAGE_MIRRORS[p.id] || p.id)))
+      }))
     )
     return { ok: true, providers: providers.filter((p) => p.report || p.quota) }
   }
@@ -96,7 +104,7 @@ export function createExtraProviderUsage({
       const sequence = (sequences.get(provider) || 0) + 1
       if (
         typeof provider !== 'string' ||
-        !Object.hasOwn(USAGE_URLS, provider) ||
+        !(Object.hasOwn(USAGE_URLS, provider) || Object.hasOwn(USAGE_MIRRORS, provider)) ||
         ['geminiProject', 'cursorLegacy', 'grokMonthly'].includes(provider) ||
         accountId !== null
       )
@@ -106,20 +114,24 @@ export function createExtraProviderUsage({
           error: t('main.usage.chooseProvider', 'Choose a supported provider and its local login.')
         }
       sequences.set(provider, sequence)
+      // The provider whose quota answers (itself, or the one it mirrors).
+      const source = USAGE_MIRRORS[provider] || provider
       const controller = new AbortController()
-      let timer
+      let timer,
+        asked = false // the source's login was reached
       const work = async () => {
         const installed = installedUsageProviders(await listAgents())
         if (!installed.some((p) => p.id === provider))
           refuse('unavailable', t('main.usage.agentNotInstalled', 'The matching agent is not installed.'))
-        const login = await sources.auth(provider)
+        asked = true
+        const login = await sources.auth(source)
         const fetch = (key, body) => {
           if (controller.signal.aborted) refuse('timeout', t('main.usage.timedOut', 'The usage request timed out.'))
           return json(key, login.headers, controller.signal, body)
         }
         let windows = [],
           unlimited = false
-        if (provider === 'gemini') {
+        if (source === 'gemini') {
           const project = await fetch('geminiProject', {
             metadata: { ideType: 'GEMINI_CLI', pluginType: 'GEMINI' }
           })
@@ -151,7 +163,7 @@ export function createExtraProviderUsage({
             windows = mapMiniMax(data, clock())
           }
         }
-        const current = await sources.auth(provider)
+        const current = await sources.auth(source)
         if (login.fingerprint !== current.fingerprint || sequences.get(provider) !== sequence)
           refuse('stale', t('main.usage.loginChanged', 'The provider login or usage request changed. Refresh usage.'))
         if (!windows.length && !unlimited)
@@ -180,11 +192,29 @@ export function createExtraProviderUsage({
           })
         ])
       } catch (error) {
+        const code = error instanceof ProviderReadError ? error.code : 'network'
+        if (source !== provider && asked && code !== 'stale')
+          return {
+            ok: false,
+            provider,
+            accountId: null,
+            code: 'unavailable',
+            // Its own words: the request was Gemini's, not a failed Antigravity sign-in.
+            error: ['unavailable', 'auth', 'expired'].includes(code)
+              ? t(
+                  'main.usage.antigravityNoGemini',
+                  'Antigravity usage is shown from the shared Google Code Assist quota, which needs a Gemini CLI sign-in.'
+                )
+              : t(
+                  'main.usage.antigravityUnreadable',
+                  'Antigravity usage comes from the shared Google Code Assist quota, which could not be read right now.'
+                )
+          }
         return {
           ok: false,
           provider,
           accountId: null,
-          code: error instanceof ProviderReadError ? error.code : 'network',
+          code,
           error:
             error instanceof ProviderReadError
               ? error.message

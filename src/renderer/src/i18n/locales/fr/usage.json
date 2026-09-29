@@ -205,7 +205,9 @@
       "codexTurns": "Événements d'utilisation du modèle observés ; pas les messages de l'utilisateur.",
       "claudeTurns": "Réponses de l'assistant dédoublonnées.",
       "codexTokens": "Les entrées en cache et la sortie de raisonnement sont des sous-ensembles, pas des tokens supplémentaires.",
-      "claudeTokens": "Les lectures et écritures en cache s'ajoutent aux entrées ; les écritures en cache d'une heure sont un sous-ensemble de toutes les écritures en cache."
+      "claudeTokens": "Les lectures et écritures en cache s'ajoutent aux entrées ; les écritures en cache d'une heure sont un sous-ensemble de toutes les écritures en cache.",
+      "scopeOpenCode": "Historique OpenCode sur cet ordinateur",
+      "opencodeTurns": "Lignes d’utilisation enregistrées : une par session quand OpenCode garde les totaux de session, sinon une par réponse."
     },
     "percent": {
       "used": "{{n}} % utilisés",
@@ -344,7 +346,9 @@
       "events": "Événements",
       "total": "Total",
       "unknownProject": "Projet inconnu",
-      "unknown": "Inconnu"
+      "unknown": "Inconnu",
+      "opencodeCost": "Le coût est celui qu’OpenCode a enregistré pour chaque réponse, pas votre facture d’abonnement.",
+      "recentOther": "Sessions locales {{name}} les plus récentes dans ce périmètre."
     },
     "share": {
       "title": "Partager l'utilisation",

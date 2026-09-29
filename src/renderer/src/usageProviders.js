@@ -11,5 +11,5 @@ export async function loadUsageProviders() {
     throw new Error('Usage provider detection is unavailable. Restart Tessel.')
   return installedUsageProviders(await window.shellApi.listAgents())
     .filter((p) => p.report)
-    .map((p) => ({ ...p, quota: true }))
+    .map((p) => ({ ...p, quota: p.quota !== false }))
 }

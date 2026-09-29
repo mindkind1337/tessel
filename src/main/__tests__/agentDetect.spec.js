@@ -97,6 +97,61 @@ describe('which agent runs in a shell pane', () => {
     expect(agentOf({ name: 'node.exe', cmd: `node app.js "${script}"` })).toBe(null)
   })
 
+  it.each([
+    ['openclaude', 'openclaude'],
+    ['antigravity', 'agy'],
+    ['kilo', 'kilo'],
+    ['kiro', 'kiro-cli'],
+    ['continue', 'cn'],
+    ['codebuff', 'codebuff'],
+    ['vibe', 'vibe'],
+    ['vibe', 'mistral-vibe'],
+    ['rovo', 'rovo'],
+    ['hermes', 'hermes'],
+    ['devin', 'devin'],
+    ['trae', 'traecli'],
+    ['zcode', 'zcode'],
+    ['zcode', 'zcode-cli'],
+    ['autohand', 'autohand'],
+    ['commandcode', 'command-code'],
+    ['openclaw', 'openclaw'],
+    ['kimi', 'kimi-code'],
+    ['ante', 'ante'],
+    ['omp', 'omp'],
+    ['muse', 'muse'],
+    ['muse', 'muse-bin-1.3.0'],
+    ['opencode2', 'opencode2'],
+    ['mimocode', 'mimo'],
+    ['primeagent', 'prime-agent']
+  ])('recognises %s from its command %s', (id, executable) => {
+    expect(
+      agentOf({ name: `${executable}.exe`, cmd: `"C:\Tools\${executable}.exe" "ask claude"` })
+    ).toBe(id)
+    expect(agentOf({ name: executable, cmd: `/usr/local/bin/${executable} --x` })).toBe(id)
+  })
+
+  it.each([
+    ['openclaude', win`C:\npm\node_modules\@gitlawb\openclaude\bin\openclaude`],
+    ['continue', win`C:\npm\node_modules\@continuedev\cli\dist\index.js`],
+    ['kilo', win`C:\npm\node_modules\@kilocode\cli\bin\kilo.js`],
+    ['zcode', win`C:\npm\node_modules\@zcode\cli\dist\zcode.cjs`],
+    ['primeagent', win`C:\npm\node_modules\prime-agent\dist\bundle\cli.js`],
+    ['openclaw', '/usr/lib/node_modules/openclaw/bin/openclaw']
+  ])('recognises the %s npm install as a runtime entrypoint', (id, script) => {
+    expect(agentOf({ name: 'node.exe', cmd: `node "${script}" chat` })).toBe(id)
+    expect(agentOf({ name: 'git.exe', cmd: `git "${script}"` })).toBe(null)
+  })
+
+  it('keeps the short command names from matching other programs', () => {
+    expect(agentOf({ name: 'cmd.exe', cmd: 'cmd /c continue' })).toBe(null)
+    expect(agentOf({ name: 'node.exe', cmd: win`node C:\proj\cn` })).toBe(null)
+    expect(agentOf({ name: 'node.exe', cmd: win`node C:\proj\scripts\omp.js` })).toBe(null)
+    expect(agentOf({ name: 'antelope.exe', cmd: 'antelope' })).toBe(null)
+    expect(agentOf({ name: 'museum.exe', cmd: 'museum' })).toBe(null)
+    expect(agentOf({ name: 'opencode.exe', cmd: 'opencode' })).toBe('opencode')
+    expect(agentOf({ name: 'kimi.exe', cmd: 'kimi' })).toBe('kimi')
+  })
+
   it('recognises the current native Amp distribution', () => {
     expect(
       agentOf({ name: 'amp.exe', cmd: win`"C:\npm\node_modules\@ampcode\cli\bin\amp.exe"` })

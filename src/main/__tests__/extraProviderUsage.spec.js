@@ -89,10 +89,17 @@ describe('explicit additional quota collectors', () => {
       'gemini',
       'cursor',
       'grok',
+      'opencode',
       'opencode-go',
       'minimax'
     ])
-    expect(result.providers.filter((p) => p.report).map((p) => p.id)).toEqual(['claude', 'codex'])
+    expect(result.providers.filter((p) => p.report).map((p) => p.id)).toEqual([
+      'claude',
+      'codex',
+      'opencode'
+    ])
+    // OpenCode's token stats are local: no quota row of their own.
+    expect(result.providers.find((p) => p.id === 'opencode').quota).toBe(false)
     expect(sources.auth).not.toHaveBeenCalled()
     expect(request).not.toHaveBeenCalled()
   })
@@ -235,6 +242,51 @@ describe('explicit additional quota collectors', () => {
         USAGE_URLS[provider === 'cursor' ? 'cursorLegacy' : 'grokMonthly']
       )
     }
+  })
+})
+describe('Antigravity quota, from the shared Gemini quota', () => {
+  const withAntigravity = async () =>
+    ['antigravity'].map((id) => ({ id, available: true }))
+  it('is offered when Antigravity is installed and a Gemini login exists', async () => {
+    const { service, sources } = setup({ listAgents: withAntigravity })
+    sources.present.mockImplementation(async (id) => id === 'gemini')
+    const result = await service.capabilities()
+    expect(result.providers.map((p) => p.id)).toEqual(['antigravity'])
+    expect(sources.present).toHaveBeenCalledWith('gemini')
+    expect(sources.auth).not.toHaveBeenCalled()
+  })
+  it('reads Gemini quota endpoints and labels them Antigravity', async () => {
+    const { service, sources, request } = setup({ listAgents: withAntigravity })
+    const result = await read(service, 'antigravity')
+    expect(result).toMatchObject({ ok: true, provider: 'antigravity', source: 'live' })
+    expect(result.windows).toEqual(mapGemini(fixtures.gemini))
+    expect(sources.auth).toHaveBeenCalledWith('gemini')
+    expect(request.mock.calls.map(([url]) => url)).toEqual([USAGE_URLS.geminiProject, USAGE_URLS.gemini])
+    expect(JSON.stringify(result)).not.toContain('fixture-only')
+  })
+  it('says a Gemini sign-in is needed, not that Antigravity failed', async () => {
+    const { service, sources, request } = setup({ listAgents: withAntigravity })
+    sources.auth.mockRejectedValue(new ProviderReadError('unavailable', 'Sign in with Gemini CLI.'))
+    const result = await read(service, 'antigravity')
+    expect(result).toMatchObject({ ok: false, provider: 'antigravity', code: 'unavailable' })
+    expect(result.error).toMatch(/Gemini CLI sign-in/)
+    expect(request).not.toHaveBeenCalled()
+  })
+  it('says the shared quota could not be read when Gemini answers badly', async () => {
+    const { service, request } = setup({ listAgents: withAntigravity })
+    request.mockResolvedValue(new Response('', { status: 500 }))
+    const result = await read(service, 'antigravity')
+    expect(result).toMatchObject({ ok: false, code: 'unavailable' })
+    expect(result.error).toMatch(/could not be read/)
+  })
+  it('refuses when Antigravity itself is not installed', async () => {
+    const { service, sources } = setup()
+    expect(await read(service, 'antigravity')).toMatchObject({
+      ok: false,
+      code: 'unavailable',
+      error: 'The matching agent is not installed.'
+    })
+    expect(sources.auth).not.toHaveBeenCalled()
   })
 })
 describe('Orca quota mappings', () => {

@@ -33,5 +33,11 @@ export const AGENT_DOCS = {
   zcode: 'https://zcode.z.ai/en/docs',
   autohand: 'https://github.com/autohandai/code-cli',
   commandcode: 'https://commandcode.ai/docs/quickstart',
-  openclaw: 'https://github.com/openclaw/openclaw'
+  openclaw: 'https://github.com/openclaw/openclaw',
+  omp: 'https://omp.sh',
+  muse: 'https://dev.meta.ai/docs/muse-code',
+  opencode2: 'https://opencode.ai/v2/docs/',
+  mimocode: 'https://mimo.xiaomi.com/coder',
+  primeagent: 'https://github.com/PrimeIntellect-ai/prime-agent',
+  ante: 'https://github.com/AntigmaLabs/ante-preview'
 }

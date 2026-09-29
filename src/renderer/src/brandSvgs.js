@@ -3,6 +3,8 @@
 // ollama = its llama). Generated: { viewBox, SVG body }; "__UID__" in ids is
 // replaced per icon on screen, so two icons never share a gradient or clip.
 export const BRAND_SVGS = {
+  // OMP: its mark (omp.sh), after Orca's src/renderer/src/lib/agent-icon-glyphs.tsx, MIT, Copyright (c) 2026 Lovecast Inc.
+  "omp": {"box":"0 0 64 64","body":"<defs><linearGradient id=\"__UID__-omp\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\"><stop offset=\"0\" stop-color=\"#ec4899\"/><stop offset=\".5\" stop-color=\"#8b5cf6\"/><stop offset=\"1\" stop-color=\"#38d0e0\"/></linearGradient></defs><path fill=\"url(#__UID__-omp)\" d=\"M10 14h44v9H43v33h-9V23h-9v22h-9V23H10z\"/>"},
   // Pi, Kilo Code and Aider: as Orca draws them (src/renderer/src/lib/agent-icon-glyphs.tsx, MIT).
   "pi": {"box":"0 0 800 800","body":"<path fill=\"#e6e6e6\" fill-rule=\"evenodd\" d=\"M165.29 165.29 H517.36 V400 H400 V517.36 H282.65 V634.72 H165.29 Z M282.65 282.65 V400 H400 V282.65 Z\"/><path fill=\"#e6e6e6\" d=\"M517.36 400 H634.72 V634.72 H517.36 Z\"/>"},
   "kilo": {"box":"0 0 512 512","body":"<path d=\"M512 0H0V512H512V0Z\" fill=\"black\"/><path d=\"M322 377H377V421H307.857L278 391.143V322H322V377ZM421 307.857L391.143 278H322V322L377 322V377H421V307.857ZM234 278H190V322H234V278ZM91 391.143L120.857 421H234V377H135V278H91V391.143ZM371.172 189.999V120.856L341.315 90.9995H278V135H327.172V189.999H278V233.999H421V189.999H371.172ZM135 91H91V233.999H135V184.5H190V233.999H234V184.5L190 140.5H135V91ZM234 91H190V140.5H234V91Z\" fill=\"#FAF74F\"/>"},
