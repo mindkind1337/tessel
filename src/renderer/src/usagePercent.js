@@ -1,5 +1,6 @@
-// Settings > Appearance, "Usage percentages" (Orca's usage-percentage-display):
+// Settings > Appearance, "Usage percentages":
 // quota bars and numbers show the part used, or the part left.
+import { t } from './i18n'
 
 // The number shown: used rounded first, then its complement for 'remaining',
 // so a bar and its label always agree. Invalid data is never shown as 100 %
@@ -12,5 +13,7 @@ export function displayedUsagePercent(usedPct, display) {
 
 export function usagePercentLabel(usedPct, display) {
   const n = displayedUsagePercent(usedPct, display)
-  return display === 'remaining' ? `${n}% left` : `${n}% used`
+  return display === 'remaining'
+    ? t('usage.percent.left', '{{n}}% left', { n })
+    : t('usage.percent.used', '{{n}}% used', { n })
 }

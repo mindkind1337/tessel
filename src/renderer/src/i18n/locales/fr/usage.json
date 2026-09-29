@@ -206,6 +206,10 @@
       "claudeTurns": "Réponses de l'assistant dédoublonnées.",
       "codexTokens": "Les entrées en cache et la sortie de raisonnement sont des sous-ensembles, pas des tokens supplémentaires.",
       "claudeTokens": "Les lectures et écritures en cache s'ajoutent aux entrées ; les écritures en cache d'une heure sont un sous-ensemble de toutes les écritures en cache."
+    },
+    "percent": {
+      "used": "{{n}} % utilisés",
+      "left": "{{n}} % restants"
     }
   },
   "stats": {
