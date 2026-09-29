@@ -686,6 +686,8 @@ function modelListText(a) {
   const probe = probeFor(a.id)
   if (probe.busy) return t('settings.agents.modelsListing', 'Asking {{name}} for its models…', { name: a.name })
   if (probe.error) return probeErrorText(probe.error, a.name)
+  // No built-in list (OpenCode: its providers are the account's own).
+  if (!list && !modelsFor(a.id).length) return t('settings.agents.modelsNone', 'No list yet. Refresh asks {{name}} for the models it offers.', { name: a.name })
   if (!list) return t('settings.agents.modelsBuiltIn', 'Built-in list. Refresh asks {{name}} for the models your account has.', { name: a.name })
   return t('settings.agents.modelsListed', '{{count}} models listed by {{name}} on {{date}}.', {
     count: list.models.length,

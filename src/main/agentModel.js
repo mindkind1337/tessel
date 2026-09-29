@@ -441,10 +441,12 @@ function agentModelFound({ agentId, sessionId, command, cwd, launchedAt = 0 } = 
       if (m) return { ...m, source: 'session' }
     }
   }
-  const flag = modelFromCommand(command)
-  if (flag) return { model: flag, effort: null, source: 'command' }
+  // A model picked in OpenCode (its /models picker) since the pane started
+  // beats even the --model it was launched with.
   const picked = agentId === 'opencode' ? opencodeRecent(home) : null
   if (picked && launchedAt && picked.mtime >= launchedAt) return { model: picked.model, effort: null, source: 'picked' }
+  const flag = modelFromCommand(command)
+  if (flag) return { model: flag, effort: null, source: 'command' }
   const s = settingsModel(agentId, cwd, home)
   if (s) {
     const effort = s.effort || (agentId === 'claude' ? claudeSettingsEffort(s.model, cwd, home) : null)
