@@ -12,7 +12,8 @@ import {
   watch,
   watchPostEffect,
 } from 'vue'
-import { elementScroll, useVirtualizer } from '@tanstack/vue-virtual'
+import { elementScroll } from '@tanstack/vue-virtual'
+import { useVirtualizer } from '../lib/use-post-render-virtualizer.js'
 import { createProgrammaticScrollMarks } from '../lib/programmatic-scroll-marks.js'
 import { NATIVE_CHAT_ROW_GAP_PX } from '../native-chat-row-height-estimate.js'
 import {

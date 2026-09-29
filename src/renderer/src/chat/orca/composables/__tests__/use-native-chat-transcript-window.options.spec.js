@@ -21,10 +21,10 @@ const virtualizerMock = vi.hoisted(() => {
   }
 })
 
-vi.mock('@tanstack/vue-virtual', async () => {
+vi.mock('@tanstack/vue-virtual', () => ({ elementScroll: vi.fn() }))
+vi.mock('../../lib/use-post-render-virtualizer.js', async () => {
   const { shallowRef, watchEffect, unref } = await import('vue')
   return {
-    elementScroll: vi.fn(),
     useVirtualizer: (options) => {
       watchEffect(
         () => {

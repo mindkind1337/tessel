@@ -669,5 +669,18 @@
   "chat.orca.composer.permissionMode": "Mode de permission",
   "chat.orca.contextUsage.label": "Contexte : {{used}} sur {{window}} jetons, {{percent}} % utilisés",
   "chat.orca.contextUsage.title": "Contexte",
-  "chat.orca.contextUsage.estimated": "Estimé d'après la dernière réponse."
+  "chat.orca.contextUsage.estimated": "Estimé d'après la dernière réponse.",
+  "chat.orca.jumpToLatest": "Aller au dernier message",
+  "chat.orca.loadingEarlierMessages": "Chargement des messages précédents…",
+  "chat.orca.loadingEarlier": "Chargement…",
+  "chat.orca.loadEarlier": "Charger les messages précédents",
+  "chat.orca.railLabel": "Vos messages",
+  "chat.orca.railImageMessage": "Image jointe",
+  "chat.orca.railEmptyMessage": "Message",
+  "chat.orca.status.working": "En cours…",
+  "chat.orca.status.thinking": "Réflexion",
+  "chat.orca.status.workingFor": "En cours depuis {{value0}}",
+  "chat.orca.status.workedFor": "A travaillé pendant {{value0}}",
+  "chat.orca.status.toggleDetails": "Afficher ou masquer les détails du tour",
+  "chat.orca.status.responding": "L'agent répond"
 }
