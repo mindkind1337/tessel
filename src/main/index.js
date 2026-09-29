@@ -1238,6 +1238,11 @@ ipcMain.handle('scm:pull', safe((q) => scm.scmPull(q || {})))
 ipcMain.handle('scm:fetch', safe((q) => scm.scmFetch(q || {})))
 ipcMain.handle('scm:sync', safe((q) => scm.scmSync(q || {})))
 ipcMain.handle('scm:fileVersions', safe((q) => scm.scmFileVersions(q || {})))
+// The branch against its base (Orca's branch context row), the Commits
+// section and the files of one commit.
+ipcMain.handle('scm:branchCompare', safe((q) => scm.scmBranchCompare(q || {})))
+ipcMain.handle('scm:history', safe((q) => scm.scmHistory(q || {})))
+ipcMain.handle('scm:commitFiles', safe((q) => scm.scmCommitFiles(q || {})))
 // A commit message written by an agent from the staged diff (Orca's Generate).
 ipcMain.handle('scm:generate', safe(async (q) => {
   const d = await scm.scmStagedDiff(q || {})

@@ -196,6 +196,78 @@ function operationOf(dir) {
   return null
 }
 
+// --- Line counts of untracked files (Orca's git-uncommitted-line-stats.ts) ------------
+// git diff ignores untracked files, so their lines are counted from the file
+// itself: bounded (at most 2 MB read per file, 8 at a time, 2,000 files and
+// 32 MB per call), binaries and larger files get no count, and the result is
+// kept per file (size, mtime) so an unchanged file is never read again.
+export const MAX_UNTRACKED_LINE_COUNT_BYTES = 2 * 1024 * 1024
+const UNTRACKED_READ_CONCURRENCY = 8
+const MAX_UNTRACKED_COUNTED = 2000
+const UNTRACKED_READ_BUDGET = 32 * 1024 * 1024
+const UNTRACKED_CACHE_MAX = 4000
+const untrackedStatsCache = new Map() // full path -> { size, mtimeMs, ctimeMs, stats }
+
+function rememberUntracked(full, st, stats) {
+  untrackedStatsCache.delete(full)
+  untrackedStatsCache.set(full, { size: st.size, mtimeMs: st.mtimeMs, ctimeMs: st.ctimeMs, stats })
+  if (untrackedStatsCache.size > UNTRACKED_CACHE_MAX) untrackedStatsCache.delete(untrackedStatsCache.keys().next().value)
+  return stats
+}
+
+async function readHead(full, limit) {
+  const fh = await fs.promises.open(full, 'r')
+  try {
+    const buf = Buffer.alloc(limit)
+    let n = 0
+    while (n < limit) {
+      const { bytesRead } = await fh.read(buf, n, limit - n, n)
+      if (!bytesRead) break
+      n += bytesRead
+    }
+    return buf.subarray(0, n)
+  } finally {
+    await fh.close()
+  }
+}
+
+// -> { added } | {} (unknown: binary, too large, unreadable, over budget).
+async function countFileAdditions(full, budget) {
+  try {
+    const st = await fs.promises.lstat(full)
+    const cached = untrackedStatsCache.get(full)
+    if (cached && cached.size === st.size && cached.mtimeMs === st.mtimeMs && cached.ctimeMs === st.ctimeMs) {
+      untrackedStatsCache.delete(full)
+      untrackedStatsCache.set(full, cached)
+      return cached.stats
+    }
+    if (st.isSymbolicLink()) return rememberUntracked(full, st, { added: 1 })
+    if (!st.isFile() || st.size > MAX_UNTRACKED_LINE_COUNT_BYTES) return rememberUntracked(full, st, {})
+    if (st.size > budget.left) return {} // not remembered: counted on a later pass
+    budget.left -= st.size
+    const buf = await readHead(full, st.size)
+    if (buf.subarray(0, 8000).includes(0)) return rememberUntracked(full, st, {})
+    if (!buf.length) return rememberUntracked(full, st, { added: 0 })
+    let lines = 0
+    for (let i = 0; i < buf.length; i++) if (buf[i] === 10) lines++
+    return rememberUntracked(full, st, { added: buf[buf.length - 1] === 10 ? lines : lines + 1 })
+  } catch {
+    return {}
+  }
+}
+
+// rels: untracked paths relative to `top` -> Map rel -> { added? }.
+export async function collectUntrackedAdditions(top, rels) {
+  const out = new Map()
+  const list = (rels || []).slice(0, MAX_UNTRACKED_COUNTED)
+  const budget = { left: UNTRACKED_READ_BUDGET }
+  for (let i = 0; i < list.length; i += UNTRACKED_READ_CONCURRENCY) {
+    const chunk = list.slice(i, i + UNTRACKED_READ_CONCURRENCY)
+    await Promise.all(chunk.map(async (rel) => out.set(rel, await countFileAdditions(join(top, ...rel.split('/')), budget))))
+  }
+  return out
+}
+
 // Everything the Changes tab shows about a folder's repository.
 // -> { ok, repo, top, branch, detached, upstream, hasUpstream, ahead, behind,
 //      hasCommits, operation, remotes, entries } | { ok: true, repo: false } | { ok: false, error }
@@ -214,7 +286,15 @@ export async function scmStatus({ root } = {}) {
   if (!st.ok) return { ok: false, error: gitMessage(st, t('main.scm.statusFailed', 'Git status failed.')) }
   const info = parseStatusV2(st.stdout)
   const counts = { unstaged: un.ok ? parseNumstatZ(un.stdout) : {}, staged: stg.ok ? parseNumstatZ(stg.stdout) : {} }
+  const untracked = await collectUntrackedAdditions(
+    top,
+    info.entries.filter((e) => e.area === 'untracked').map((e) => e.path)
+  )
   const entries = info.entries.map((e) => {
+    if (e.area === 'untracked') {
+      const u = untracked.get(e.path)
+      return u && typeof u.added === 'number' ? { ...e, added: u.added, removed: 0 } : e
+    }
     const c = counts[e.area] && counts[e.area][e.path]
     return c ? { ...e, added: c.added, removed: c.removed, binary: c.binary } : e
   })
@@ -427,6 +507,274 @@ export async function scmSync({ root } = {}) {
   return scmPush({ root })
 }
 
+// --- Branch compare (Orca's branch context row and line-total chip) -------------------
+// HEAD against its base (the remote's default branch, origin/main): commits
+// ahead / behind, and the lines of the whole branch's work — committed, staged,
+// unstaged and untracked — as one `git diff <merge-base>` (Orca's
+// git-branch-line-total.ts, so a line touched in two areas counts once).
+const OID_RE = /^[0-9a-f]{7,64}$/
+export const isCommitId = (v) => typeof v === 'string' && OID_RE.test(v)
+const BRANCH_TOTAL_TIMEOUT = 15000
+
+async function refExists(top, ref) {
+  const res = await git(top, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`])
+  return res.ok && !!res.stdout.trim()
+}
+
+// The ref to compare with: <remote>/HEAD's target, else <remote>/main or
+// /master, else the branch's upstream. -> 'origin/main' | null
+export async function resolveCompareBase(top, branch) {
+  let remote = (branch && (await config(top, `branch.${branch}.remote`))) || 'origin'
+  if (!NAME_RE.test(remote) || remote === '.') remote = 'origin'
+  const candidates = []
+  const head = await git(top, ['symbolic-ref', '--quiet', `refs/remotes/${remote}/HEAD`])
+  if (head.ok && head.stdout.trim().startsWith('refs/remotes/')) candidates.push(head.stdout.trim().slice('refs/remotes/'.length))
+  candidates.push(`${remote}/main`, `${remote}/master`)
+  for (const c of candidates) if (NAME_RE.test(c) && (await refExists(top, `refs/remotes/${c}`))) return c
+  const up = await git(top, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'])
+  const name = up.ok ? up.stdout.trim() : ''
+  return name && NAME_RE.test(name) ? name : null
+}
+
+// A GitHub remote URL -> { owner, repo } (https, ssh, git@).
+export function githubRepoOf(url) {
+  const m = /github\.com[:/]+([^/\s:]+)\/([^/\s]+?)(?:\.git)?\/?$/i.exec(String(url || '').trim())
+  return m ? { owner: m[1], repo: m[2] } : null
+}
+
+// The review page Orca's external-link button opens (review/manual-review-url.ts,
+// GitHub only here): the compare page of the pushed branch against the base.
+export function compareUrl({ remoteUrl, base, upstream }) {
+  const repo = githubRepoOf(remoteUrl)
+  if (!repo || !base || !upstream) return null
+  const [baseRemote, ...baseRest] = base.split('/')
+  const [upRemote, ...upRest] = upstream.split('/')
+  if (!baseRest.length || !upRest.length || baseRemote !== upRemote) return null
+  const enc = (b) => b.split('/').map(encodeURIComponent).join('/')
+  return `https://github.com/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}/compare/${enc(baseRest.join('/'))}...${enc(upRest.join('/'))}`
+}
+
+const compareInFlight = new Map() // top -> Promise
+
+// -> { ok, base, mergeBase, ahead, behind, added, removed, reviewUrl }
+//  | { ok: true, base: null } (nothing to compare with) | { ok: false, error }
+export async function scmBranchCompare({ root } = {}) {
+  const r = await repoOf(root)
+  if (r.error) return { ok: false, error: r.error }
+  const key = r.top.toLowerCase()
+  if (compareInFlight.has(key)) return compareInFlight.get(key)
+  const p = branchCompare(r.top).finally(() => compareInFlight.delete(key))
+  compareInFlight.set(key, p)
+  return p
+}
+
+async function branchCompare(top) {
+  const branch = await currentBranch(top)
+  const base = await resolveCompareBase(top, branch)
+  if (!base) return { ok: true, base: null }
+  const mb = await git(top, ['merge-base', 'HEAD', `refs/remotes/${base}`])
+  const mbAny = mb.ok ? mb : await git(top, ['merge-base', 'HEAD', base])
+  const mergeBase = mbAny.ok ? mbAny.stdout.trim() : ''
+  if (!isCommitId(mergeBase)) return { ok: false, base, error: t('main.scm.compareUnavailable', 'Branch compare unavailable') }
+  const [diff, st, up] = await Promise.all([
+    git(top, ['diff', '-z', '--numstat', '-M', '--no-ext-diff', mergeBase, '--'], { timeout: BRANCH_TOTAL_TIMEOUT }),
+    git(top, ['status', '--porcelain=v2', '-z', '--untracked-files=all'], { timeout: 20000 }),
+    git(top, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'])
+  ])
+  const behindAhead = await git(top, ['rev-list', '--left-right', '--count', `${base}...HEAD`])
+  const m = /^(\d+)\s+(\d+)/.exec(behindAhead.ok ? behindAhead.stdout.trim() : '')
+  let added = null
+  let removed = null
+  if (diff.ok && st.ok) {
+    added = 0
+    removed = 0
+    for (const c of Object.values(parseNumstatZ(diff.stdout))) {
+      added += c.added || 0
+      removed += c.removed || 0
+    }
+    const untracked = parseStatusV2(st.stdout)
+      .entries.filter((e) => e.area === 'untracked')
+      .map((e) => e.path)
+    for (const s of (await collectUntrackedAdditions(top, untracked)).values()) added += s.added || 0
+  }
+  const upstream = up.ok ? up.stdout.trim() : ''
+  const remoteName = base.split('/')[0]
+  const url = await git(top, ['remote', 'get-url', remoteName])
+  return {
+    ok: true,
+    base,
+    mergeBase,
+    ahead: m ? Number(m[2]) : 0,
+    behind: m ? Number(m[1]) : 0,
+    added,
+    removed,
+    reviewUrl: url.ok ? compareUrl({ remoteUrl: url.stdout.trim(), base, upstream }) : null
+  }
+}
+
+// --- Commits (Orca's shared/git-history.ts and git-history-log-parser.ts) -------------
+export const HISTORY_DEFAULT_LIMIT = 50
+const HISTORY_MAX_LIMIT = 200
+const DECORATION_SEPARATOR = '\x1f'
+export const HISTORY_COMMIT_FORMAT = '%H%n%aN%n%aE%n%at%n%ct%n%P%n%(decorate:prefix=,suffix=,separator=%x1f)%n%D%n%B'
+const UNEXPANDED_DECORATE = `%(decorate:prefix=,suffix=,separator=${DECORATION_SEPARATOR})`
+
+const shortHash = (h) => String(h || '').slice(0, 7)
+
+function refOrder(ref) {
+  if (ref.id.startsWith('refs/heads/')) return 1
+  if (ref.id.startsWith('refs/remotes/')) return 2
+  if (ref.id.startsWith('refs/tags/')) return 3
+  return 99
+}
+const byCategory = (a, b) => refOrder(a) - refOrder(b) || a.name.localeCompare(b.name)
+
+function parseDecorations(raw, revision, separator) {
+  if (!raw.trim()) return []
+  const refs = []
+  for (const part of raw.split(separator)) {
+    const ref = part.trim()
+    if (!ref || ref === 'HEAD' || /^refs\/remotes\/[^/]+\/HEAD(?:\s|$)/.test(ref)) continue
+    if (ref.startsWith('HEAD -> refs/heads/'))
+      refs.push({ id: ref.slice('HEAD -> '.length), name: ref.slice('HEAD -> refs/heads/'.length), revision, category: 'branches' })
+    else if (ref.startsWith('refs/heads/')) refs.push({ id: ref, name: ref.slice('refs/heads/'.length), revision, category: 'branches' })
+    else if (ref.startsWith('refs/remotes/')) refs.push({ id: ref, name: ref.slice('refs/remotes/'.length), revision, category: 'remote branches' })
+    else if (ref.startsWith('tag: refs/tags/')) refs.push({ id: ref.slice('tag: '.length), name: ref.slice('tag: refs/tags/'.length), revision, category: 'tags' })
+  }
+  return refs.sort(byCategory)
+}
+
+// `git log --format=HISTORY_COMMIT_FORMAT -z --decorate=full` -> items.
+export function parseHistoryLog(stdout) {
+  const items = []
+  for (const rawRecord of String(stdout || '').split('\0')) {
+    const record = rawRecord.replace(/^\n+/, '')
+    if (!record.trim()) continue
+    const lines = []
+    let messageStart = 0
+    for (let field = 0; field < 8; field++) {
+      const nl = record.indexOf('\n', messageStart)
+      if (nl === -1) {
+        lines.push(record.slice(messageStart))
+        messageStart = record.length
+        break
+      }
+      lines.push(record.slice(messageStart, nl))
+      messageStart = nl + 1
+    }
+    const hash = (lines[0] || '').trim()
+    if (!/^[0-9a-fA-F]{40,64}$/.test(hash)) continue
+    const at = Number.parseInt(lines[3] || '', 10)
+    const parents = (lines[5] || '').trim()
+    const decorateField = lines[6] || ''
+    const legacy = decorateField === UNEXPANDED_DECORATE
+    const message = record.slice(messageStart).replace(/\n$/, '')
+    items.push({
+      id: hash,
+      parentIds: parents ? parents.split(' ') : [],
+      subject: message.split(/\r?\n/, 1)[0].trim() || t('main.scm.noCommitSubject', '(no commit message)'),
+      message,
+      author: lines[1] || undefined,
+      authorEmail: lines[2] || undefined,
+      displayId: shortHash(hash),
+      timestamp: Number.isFinite(at) ? at * 1000 : undefined,
+      references: parseDecorations(legacy ? lines[7] || '' : decorateField, hash, legacy ? ',' : DECORATION_SEPARATOR)
+    })
+  }
+  return items
+}
+
+function refFromFullName(fullName, fallbackName, revision) {
+  const id = fullName || fallbackName
+  if (id.startsWith('refs/heads/')) return { id, name: id.slice('refs/heads/'.length), revision, category: 'branches' }
+  if (id.startsWith('refs/remotes/')) return { id, name: id.slice('refs/remotes/'.length), revision, category: 'remote branches' }
+  if (id.startsWith('refs/tags/')) return { id, name: id.slice('refs/tags/'.length), revision, category: 'tags' }
+  return { id, name: fallbackName || shortHash(revision), revision, category: 'commits' }
+}
+
+async function commitOf(top, ref) {
+  if (!ref || ref.startsWith('-')) return null
+  const res = await git(top, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`])
+  return res.ok ? res.stdout.trim() || null : null
+}
+
+// -> { ok, items, currentRef, remoteRef, baseRef, mergeBase, hasMore, limit }
+export async function scmHistory({ root, limit, base } = {}) {
+  const r = await repoOf(root)
+  if (r.error) return { ok: false, error: r.error }
+  const top = r.top
+  const n = Number.isFinite(limit) ? Math.min(HISTORY_MAX_LIMIT, Math.max(1, Math.trunc(limit))) : HISTORY_DEFAULT_LIMIT
+  const headOid = await commitOf(top, 'HEAD')
+  if (!headOid) return { ok: true, items: [], hasMore: false, limit: n }
+  const branch = await currentBranch(top)
+  const currentRef = branch
+    ? { id: `refs/heads/${branch}`, name: branch, revision: headOid, category: 'branches' }
+    : { id: headOid, name: shortHash(headOid), revision: headOid, category: 'commits' }
+  let remoteRef
+  if (branch) {
+    const up = await git(top, ['for-each-ref', '--format=%(upstream)%00%(upstream:short)', `refs/heads/${branch}`])
+    const [full, short] = up.ok ? up.stdout.split('\0') : []
+    if (full && full.trim() && short && short.trim()) {
+      const oid = await commitOf(top, full.trim())
+      if (oid) remoteRef = refFromFullName(full.trim(), short.trim(), oid)
+    }
+  }
+  let baseRef
+  if (typeof base === 'string' && NAME_RE.test(base)) {
+    const oid = await commitOf(top, `refs/remotes/${base}`)
+    const ref = oid ? refFromFullName(`refs/remotes/${base}`, base, oid) : null
+    if (ref && ref.id !== (remoteRef && remoteRef.id) && ref.id !== currentRef.id) baseRef = ref
+  }
+  let mergeBase
+  if (remoteRef && remoteRef.revision !== headOid) {
+    const mb = await git(top, ['merge-base', headOid, remoteRef.revision])
+    mergeBase = mb.ok ? mb.stdout.trim() || undefined : undefined
+  }
+  const log = await git(top, ['log', `--format=${HISTORY_COMMIT_FORMAT}`, '-z', '--topo-order', '--decorate=full', `-n${n + 1}`, headOid])
+  if (!log.ok) return { ok: false, error: gitMessage(log, t('main.scm.logFailed', 'git log failed.')) }
+  const parsed = parseHistoryLog(log.stdout)
+  return { ok: true, items: parsed.slice(0, n), currentRef, remoteRef, baseRef, mergeBase, hasMore: parsed.length > n, limit: n }
+}
+
+// `git diff-tree --name-status -z` -> [{ path, oldPath?, status }].
+export function parseNameStatusZ(out) {
+  const parts = String(out || '').split('\0')
+  const list = []
+  for (let i = 0; i < parts.length; i++) {
+    const code = parts[i]
+    if (!code) continue
+    const letter = code[0]
+    if (letter === 'R' || letter === 'C') {
+      const oldPath = parts[++i]
+      const path = parts[++i]
+      if (path) list.push({ path, oldPath, status: letter === 'R' ? 'renamed' : 'copied' })
+    } else {
+      const path = parts[++i]
+      if (path) list.push({ path, status: LETTER[letter] || 'modified' })
+    }
+  }
+  return list
+}
+
+// The files a commit changed (against its first parent). -> { ok, entries }
+export async function scmCommitFiles({ root, commit } = {}) {
+  const r = await repoOf(root)
+  if (r.error) return { ok: false, error: r.error }
+  if (!isCommitId(commit)) return { ok: false, error: t('main.scm.badCommit', 'Unknown commit.') }
+  const parents = await git(r.top, ['rev-list', '--parents', '-n', '1', commit])
+  if (!parents.ok) return { ok: false, error: t('main.scm.badCommit', 'Unknown commit.') }
+  const ids = parents.stdout.trim().split(/\s+/)
+  const range = ids.length > 1 ? [ids[1], ids[0]] : ['--root', ids[0]]
+  const [ns, num] = await Promise.all([
+    git(r.top, ['diff-tree', '-r', '-z', '-M', '--no-commit-id', '--name-status', ...range]),
+    git(r.top, ['diff-tree', '-r', '-z', '-M', '--no-commit-id', '--numstat', ...range])
+  ])
+  if (!ns.ok) return { ok: false, error: gitMessage(ns, t('main.scm.diffFailed', 'git diff failed.')) }
+  const counts = num.ok ? parseNumstatZ(num.stdout) : {}
+  const entries = parseNameStatusZ(ns.stdout).map((e) => (counts[e.path] ? { ...e, added: counts[e.path].added, removed: counts[e.path].removed } : e))
+  return { ok: true, entries, commit: ids[0], parent: ids.length > 1 ? ids[1] : null }
+}
+
 // --- The two sides of a file's diff -------------------------------------------------
 async function show(top, spec) {
   const res = await git(top, ['show', '--no-textconv', spec], { maxBuffer: MAX_FILE + 1024 })
@@ -447,13 +795,25 @@ function clean(v) {
 // area 'staged': HEAD -> index (read-only); 'unstaged': index -> the file on
 // disk; 'untracked': nothing -> the file on disk. oldPath: a staged rename's
 // old name. -> { ok, original, modified, binary, exists, rel, full }
-export async function scmFileVersions({ root, path, area, oldPath } = {}) {
+export async function scmFileVersions({ root, path, area, oldPath, commit } = {}) {
   const r = await repoOf(root)
   if (r.error) return { ok: false, error: r.error }
   const rel = relIn(r.top, path)
   if (!rel) return { ok: false, error: t('main.scm.notRepoFile', 'Not a file of this repository.') }
   const oldRel = oldPath ? relIn(r.top, oldPath) : null
   if (oldPath && !oldRel) return { ok: false, error: t('main.scm.notRepoFile', 'Not a file of this repository.') }
+  // A file of a commit (the Commits section): its first parent -> the commit, read-only.
+  if (area === 'commit') {
+    if (!isCommitId(commit)) return { ok: false, error: t('main.scm.badCommit', 'Unknown commit.') }
+    const before = await show(r.top, `${commit}^:${oldRel || rel}`)
+    const after = await show(r.top, `${commit}:${rel}`)
+    const o = clean(before.missing ? { text: '' } : before)
+    const m = clean(after.missing ? { text: '' } : after)
+    if (o.error || m.error) return { ok: false, error: o.error || m.error }
+    const full = join(r.top, ...rel.split('/'))
+    if (o.binary || m.binary) return { ok: true, binary: true, rel, full, exists: false, top: r.top }
+    return { ok: true, original: o.text, modified: m.text, rel, full, exists: false, top: r.top }
+  }
   const full = join(r.top, ...rel.split('/'))
   let exists = false
   try {

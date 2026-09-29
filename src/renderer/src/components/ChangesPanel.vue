@@ -13,7 +13,18 @@
 // box with Generate, Commit and the remote actions, and the review notes left
 // on diff lines. A click on a file opens its diff in the editor. Git runs in
 // the main process (src/main/sourceControl.js).
+//
+// Also after Orca: panel/branch-context-row.tsx and branch-line-total-chip.tsx
+// (the branch, its line total, → its base), listing/tree-directory-rows.tsx
+// and source-control-tree.ts (files as a folder tree, or a list),
+// panel/header-overflow-menu.tsx (View as tree / list), "View all" on each
+// section, and sync/git-history-panel.tsx (the Commits section,
+// ScmHistoryPanel.vue).
 import { ref, computed, watch, inject, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { ExternalLink, Folder, FolderOpen, List, ListTree, Loader2, RefreshCw } from 'lucide-vue-next'
+import { sectionTreeRows, sectionListRows, getSourceControlDirectoryActionPaths } from '../../../shared/sourceControlTree'
+import { getFileTypeIcon } from '../fileTypeIcons'
+import ScmHistoryPanel from './ScmHistoryPanel.vue'
 import { tasks } from '../taskBoardStore'
 import { settings } from '../settings'
 import { refreshStatus, statusOf, bumpRevision, rootKey } from '../scmState'
@@ -49,7 +60,7 @@ import {
 } from '../scmLabels'
 import LucideIcon from './LucideIcon.vue'
 import NotesSendMenu from './NotesSendMenu.vue'
-import { t } from '../i18n'
+import { t, intlLocale } from '../i18n'
 
 const props = defineProps({
   root: { type: String, default: null },
@@ -119,6 +130,40 @@ function toggleSection(id) {
   else next.add(id)
   collapsed.value = next
 }
+
+// --- Tree or list (Orca's sourceControlViewMode), folders collapsed -------------------
+const viewMode = computed(() => (settings.sourceControlViewMode === 'list' ? 'list' : 'tree'))
+function toggleViewMode() {
+  closeMore()
+  settings.sourceControlViewMode = viewMode.value === 'tree' ? 'list' : 'tree'
+}
+const collapsedDirs = ref(new Set())
+function toggleDir(key) {
+  const next = new Set(collapsedDirs.value)
+  if (next.has(key)) next.delete(key)
+  else next.add(key)
+  collapsedDirs.value = next
+}
+const rowsBySection = computed(() => {
+  const out = {}
+  for (const s of displaySections.value) out[s.id] = viewMode.value === 'tree' ? sectionTreeRows(s, collapsedDirs.value) : sectionListRows(s)
+  return out
+})
+// A folder's stage / unstage / discard; hidden while filtering (the folder
+// shows only part of what it holds).
+function dirActions(node) {
+  const a = getSourceControlDirectoryActionPaths(node)
+  const f = !!normalizedFilter.value
+  return {
+    canStage: !f && a.stagePaths.length > 0,
+    canUnstage: !f && a.unstagePaths.length > 0,
+    canDiscard: !f && a.discardPaths.length > 0,
+    ...a
+  }
+}
+const TREE_INDENT = 12
+const dirPad = (node) => ({ paddingLeft: `${node.depth * TREE_INDENT + 8}px` })
+const filePad = (node) => ({ paddingLeft: `${node.depth * TREE_INDENT + 20}px` })
 
 const stagedEntries = computed(() => entries.value.filter((e) => e.area === 'staged'))
 const unresolved = computed(() => entries.value.filter((e) => e.conflictStatus === 'unresolved'))
@@ -240,6 +285,147 @@ const openKey = ref(null)
 function openDiff(entry, pinned = false) {
   openKey.value = rowKey(entry)
   emit('open-diff', diffRequest(entry, { preview: !pinned }))
+}
+
+// "View all" (Orca opens the section in one combined diff; Tessel has no
+// combined view yet, so each file's diff opens in its own tab, at most
+// VIEW_ALL_MAX of them).
+const VIEW_ALL_MAX = 20
+function viewAll(section) {
+  const items = (unfilteredSectionsById.value.get(section.id) || section).items
+  const shown = items.slice(0, VIEW_ALL_MAX)
+  for (const entry of shown) emit('open-diff', diffRequest(entry, { preview: false }))
+  if (items.length > shown.length)
+    emit(
+      'toast',
+      t('changes.viewAll.capped', 'Opened the first {{shown}} of {{count}} diffs.', { shown: shown.length, count: items.length })
+    )
+}
+
+// A file of a commit (the Commits section): its diff, read-only.
+function openCommitFile({ commit, entry, preview }) {
+  emit('open-diff', {
+    root: top.value,
+    rel: entry.path,
+    oldRel: entry.oldPath || null,
+    area: 'commit',
+    commit,
+    status: entry.status,
+    file: fullPath(entry.path),
+    preview
+  })
+}
+
+// --- Keyboard: arrows move between rows, Enter opens, left / right fold ----------------
+const listEl = ref(null)
+function rowEls() {
+  return listEl.value ? [...listEl.value.querySelectorAll('[data-scm-row]')] : []
+}
+function onListKeydown(e) {
+  if (e.target && /^(TEXTAREA|INPUT|SELECT)$/.test(e.target.tagName)) return
+  const els = rowEls()
+  if (!els.length) return
+  const at = els.indexOf(document.activeElement)
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    if (at < 0 && !(document.activeElement && listEl.value.contains(document.activeElement))) return
+    e.preventDefault()
+    const next = at < 0 ? 0 : Math.max(0, Math.min(els.length - 1, at + (e.key === 'ArrowDown' ? 1 : -1)))
+    els[next].focus()
+  }
+}
+function onRowKeydown(e, node) {
+  if (e.key === 'Enter' || e.key === ' ') {
+    e.preventDefault()
+    if (node.type === 'directory') toggleDir(node.key)
+    else openDiff(node.entry, e.key === 'Enter' && (e.ctrlKey || e.metaKey))
+  } else if (node.type === 'directory' && e.key === 'ArrowLeft' && !collapsedDirs.value.has(node.key)) {
+    e.preventDefault()
+    toggleDir(node.key)
+  } else if (node.type === 'directory' && e.key === 'ArrowRight' && collapsedDirs.value.has(node.key)) {
+    e.preventDefault()
+    toggleDir(node.key)
+  }
+}
+
+// --- The branch against its base (branch-context-row.tsx) ---------------------------
+const compare = ref(null) // { base, ahead, behind, added, removed, reviewUrl, error }
+let compareSeq = 0
+let compareTimer = 0
+async function loadCompare() {
+  const root = repoRoot.value
+  if (!root || !api() || !api().branchCompare) return
+  const token = ++compareSeq
+  let res = null
+  try {
+    res = await api().branchCompare({ root })
+  } catch (err) {
+    res = { ok: false, error: err && err.message }
+  }
+  if (token !== compareSeq || disposed || root !== repoRoot.value) return
+  if (res && res.ok) compare.value = res.base ? res : null
+  else compare.value = { base: (res && res.base) || (compare.value && compare.value.base) || null, error: (res && res.error) || unknownError() }
+}
+function scheduleCompare() {
+  clearTimeout(compareTimer)
+  compareTimer = setTimeout(loadCompare, 300)
+}
+// Read again when what it measures changes: HEAD, the files, the upstream.
+const compareSignature = computed(() => {
+  const d = data.value
+  if (!d || !d.repo) return ''
+  return [d.head, d.branch, d.upstream, d.ahead, d.behind, ...entries.value.map((e) => `${e.area}:${e.path}:${e.added}:${e.removed}`)].join('|')
+})
+watch(compareSignature, (sig) => {
+  if (sig) scheduleCompare()
+})
+const baseLabel = computed(() =>
+  compare.value && compare.value.base ? compare.value.base.replace(/^refs\/(remotes|heads|tags)\//, '') : ''
+)
+const hasLineTotal = computed(() => !!compare.value && !compare.value.error && ((compare.value.added || 0) > 0 || (compare.value.removed || 0) > 0))
+const lineTotalAria = computed(() => {
+  const c = compare.value
+  if (!c) return ''
+  const added = c.added || 0
+  const removed = c.removed || 0
+  if (added > 0 && removed > 0) return t('changes.lineTotal.both', '{{added}} lines added, {{removed}} lines deleted', { added, removed })
+  if (added > 0) return t('changes.lineTotal.added', '{{added}} lines added', { added })
+  return t('changes.lineTotal.removed', '{{removed}} lines deleted', { removed })
+})
+const fmtCount = (n) => {
+  try {
+    return Number(n || 0).toLocaleString(intlLocale())
+  } catch {
+    return String(n || 0)
+  }
+}
+const compareStats = computed(() => {
+  const c = compare.value
+  if (!c || c.error) return []
+  const ref = baseLabel.value
+  const out = []
+  if (c.ahead > 0)
+    out.push({
+      key: 'ahead',
+      label: `↑${c.ahead}`,
+      title:
+        c.ahead === 1
+          ? t('changes.compare.aheadOne', '1 commit ahead of {{ref}}', { ref })
+          : t('changes.compare.ahead', '{{count}} commits ahead of {{ref}}', { count: c.ahead, ref })
+    })
+  if (c.behind > 0)
+    out.push({
+      key: 'behind',
+      label: `↓${c.behind}`,
+      title:
+        c.behind === 1
+          ? t('changes.compare.behindOne', '1 commit behind {{ref}}', { ref })
+          : t('changes.compare.behind', '{{count}} commits behind {{ref}}', { count: c.behind, ref })
+    })
+  return out
+})
+function openReviewPage() {
+  const url = compare.value && compare.value.reviewUrl
+  if (url && window.shellApi && window.shellApi.openExternal) window.shellApi.openExternal(url)
 }
 
 // --- Stage, unstage, discard -----------------------------------------------------------
@@ -565,13 +751,17 @@ watch(repoRoot, () => {
   remoteActionError.value = ''
   generateError.value = ''
   openKey.value = null
+  compare.value = null
+  collapsedDirs.value = new Set()
   load()
+  scheduleCompare()
 })
 function onFocus() {
   schedule()
 }
 onMounted(() => {
   load()
+  scheduleCompare()
   poll = setInterval(() => {
     if (copyTask.value && !document.hidden) load()
   }, 4000)
@@ -581,11 +771,17 @@ onBeforeUnmount(() => {
   disposed = true
   clearTimeout(timer)
   clearTimeout(copiedTimer)
+  clearTimeout(compareTimer)
   clearInterval(poll)
   window.removeEventListener('focus', onFocus)
   closeMenu()
   closeMore()
 })
+function refreshAll() {
+  closeMore()
+  load()
+  loadCompare()
+}
 defineExpose({ load })
 </script>
 
@@ -601,6 +797,7 @@ function draftStore() {
 
 <template>
   <div class="changes sc-root" :aria-label="t('changes.title', 'Source Control')" data-test="changes-panel" @keydown="onRootKeydown">
+    <!-- Header (panel/header-toolbar.tsx): Create PR at the left, filter and more at the right. -->
     <div class="sc-header">
       <div v-if="!filterExpanded" class="sc-header-row">
         <select
@@ -614,12 +811,10 @@ function draftStore() {
           <option value="project">{{ t('changes.target.project', 'Project') }}</option>
           <option v-for="k in copies" :key="k.id" :value="k.id">{{ k.title }}</option>
         </select>
-        <span v-else class="sc-title">{{ t('changes.title', 'Source Control') }}</span>
-        <span class="sc-fill" aria-hidden="true"></span>
         <button
           v-if="copyTask"
           type="button"
-          class="sc-btn-xs sc-review-btn"
+          class="sc-pr-btn"
           :title="t('changes.review.hint', 'Review this task\'s branch: its commits, then merge or discard')"
           data-test="review-changes"
           @click="emit('review', copyTask.id)"
@@ -629,7 +824,7 @@ function draftStore() {
         <button
           v-else-if="canCreatePr"
           type="button"
-          class="sc-btn-xs"
+          class="sc-pr-btn"
           :title="t('changes.pr.hint', 'Create a pull request for this branch')"
           data-test="sc-create-pr"
           @click="createPr"
@@ -637,6 +832,7 @@ function draftStore() {
           <LucideIcon name="gitPullRequestArrow" :size="14" />
           {{ t('changes.pr.create', 'Create PR') }}
         </button>
+        <span class="sc-fill" aria-hidden="true"></span>
         <button
           type="button"
           class="sc-icon-btn"
@@ -645,6 +841,7 @@ function draftStore() {
           :aria-label="
             normalizedFilter ? t('changes.filter.active', 'Filter: {{query}}', { query: filterQuery }) : t('changes.filter.byName', 'Filter files by name')
           "
+          :aria-expanded="false"
           data-test="source-control-filter-toggle"
           @click="expandFilter"
         >
@@ -660,6 +857,8 @@ function draftStore() {
           class="sc-icon-btn"
           :title="t('changes.moreActions', 'More source control actions')"
           :aria-label="t('changes.moreActions', 'More source control actions')"
+          aria-haspopup="menu"
+          :aria-expanded="moreOpen"
           data-test="sc-more"
           @click="toggleMore"
         >
@@ -691,27 +890,81 @@ function draftStore() {
           <LucideIcon name="x" :size="14" />
         </button>
       </div>
-      <div v-if="data && data.repo" class="sc-branch-row" data-test="sc-branch">
-        <LucideIcon name="gitBranch" :size="12" class="sc-dim" />
-        <span class="sc-branch-name" :title="branchTitle" :aria-label="t('changes.branch.current', 'Current branch: {{branch}}', { branch: branchTitle })">{{
-          branchTitle
-        }}</span>
-        <template v-if="data.hasUpstream">
-          <span class="sc-upstream" :title="t('changes.branch.tracking', 'Tracking {{upstream}}', { upstream: data.upstream })">
-            <span v-if="data.ahead" :title="t('changes.branch.toPush', 'Commits to push')">↑{{ data.ahead }}</span>
-            <span v-if="data.behind" :title="t('changes.branch.toPull', 'Commits to pull')">↓{{ data.behind }}</span>
-            <span v-if="!data.ahead && !data.behind" class="sc-dim">{{ data.upstream }}</span>
+
+      <!-- Branch context (panel/branch-context-row.tsx): the branch and its line
+           total, then → the base it is compared with. -->
+      <div
+        v-if="data && data.repo"
+        class="sc-branch"
+        role="group"
+        :aria-label="baseLabel ? t('changes.compare.flow', '{{head}} → {{base}}', { head: branchTitle, base: baseLabel }) : undefined"
+        data-test="sc-branch"
+      >
+        <div class="sc-branch-head">
+          <span
+            class="sc-branch-name"
+            :class="{ detached: !data.branch }"
+            tabindex="0"
+            :title="branchTitle"
+            :aria-label="t('changes.branch.current', 'Current branch: {{branch}}', { branch: branchTitle })"
+            data-test="source-control-head-identity"
+            >{{ branchTitle }}</span
+          >
+          <span
+            v-if="hasLineTotal"
+            class="sc-line-total"
+            role="group"
+            :aria-label="lineTotalAria"
+            :title="lineTotalAria"
+            data-test="source-control-branch-line-total"
+          >
+            <span v-if="compare.added > 0" aria-hidden="true" class="sc-plus">+{{ fmtCount(compare.added) }}</span>
+            <span v-if="compare.removed > 0" aria-hidden="true" class="sc-minus">-{{ fmtCount(compare.removed) }}</span>
           </span>
-        </template>
-        <span v-else-if="data.branch" class="sc-upstream sc-dim" :title="t('changes.branch.noUpstream', 'This branch has no upstream yet')">{{
-          t('changes.branch.notPublished', 'not published')
-        }}</span>
+        </div>
+        <div v-if="baseLabel" class="sc-branch-base">
+          <span class="sc-arrow" aria-hidden="true">→</span>
+          <span class="sc-base-ref" :title="t('changes.compare.base', 'Compared with {{base}}', { base: compare.base })" data-test="sc-base">{{
+            baseLabel
+          }}</span>
+          <span v-for="stat in compareStats" :key="stat.key" class="sc-stat" tabindex="0" :title="stat.title" :aria-label="stat.title">{{
+            stat.label
+          }}</span>
+          <button
+            v-if="compare.error"
+            type="button"
+            class="sc-icon-btn sm"
+            :title="t('changes.compare.retry', 'Retry')"
+            :aria-label="t('changes.compare.retry', 'Retry')"
+            @click="loadCompare"
+          >
+            <RefreshCw :size="12" />
+          </button>
+          <button
+            v-if="compare.reviewUrl"
+            type="button"
+            class="sc-icon-btn sm"
+            :title="t('changes.compare.openReview', 'Open review page in browser')"
+            :aria-label="t('changes.compare.openReview', 'Open review page in browser')"
+            data-test="sc-review-page"
+            @click="openReviewPage"
+          >
+            <ExternalLink :size="12" />
+          </button>
+        </div>
+        <div v-if="compare && compare.error" class="sc-compare-error" :title="compare.error">{{ compare.error }}</div>
       </div>
     </div>
 
     <Teleport to="body">
       <div v-if="moreOpen" ref="moreEl" class="ctx-menu sc-menu" role="menu" :style="{ top: morePos.top + 'px', right: morePos.right + 'px' }" data-test="sc-more-menu">
-        <button type="button" class="ctx-menu-item" role="menuitem" @click="closeMore(), load()">
+        <button type="button" class="ctx-menu-item" role="menuitem" data-test="sc-view-mode" @click="toggleViewMode">
+          <span class="sc-menu-row">
+            <component :is="viewMode === 'tree' ? List : ListTree" :size="14" />
+            {{ viewMode === 'tree' ? t('changes.menu.viewList', 'View as list') : t('changes.menu.viewTree', 'View as tree') }}
+          </span>
+        </button>
+        <button type="button" class="ctx-menu-item" role="menuitem" @click="refreshAll">
           <span class="sc-menu-row"><LucideIcon name="refreshCw" :size="14" />{{ t('changes.menu.refresh', 'Refresh') }}</span>
         </button>
         <button type="button" class="ctx-menu-item" role="menuitem" :disabled="!canCreatePr" @click="createPr">
@@ -826,7 +1079,7 @@ function draftStore() {
       </div>
     </div>
 
-    <div class="sc-scroll explorer-tree">
+    <div ref="listEl" class="sc-scroll explorer-tree" @keydown="onListKeydown">
       <div v-if="!root && !copyTask" class="explorer-empty">
         {{
           t(
@@ -959,7 +1212,7 @@ function draftStore() {
           </div>
         </Teleport>
 
-        <!-- Changes / Staged Changes / Untracked Files -->
+        <!-- Changes / Staged Changes / Untracked Files (listing/uncommitted-sections.tsx) -->
         <div v-for="section in displaySections" :key="section.id" class="sc-section" :data-section="section.id">
           <div class="sc-section-header">
             <div class="sc-section-row">
@@ -975,6 +1228,7 @@ function draftStore() {
                     type="button"
                     class="sc-action"
                     :class="{ disabled: isExecutingBulk }"
+                    :aria-disabled="isExecutingBulk"
                     :title="section.area === 'untracked' ? t('changes.action.deleteAllUntracked', 'Delete all untracked') : t('changes.discard.discardAll', 'Discard all')"
                     :aria-label="
                       section.area === 'untracked' ? t('changes.action.deleteAllUntracked', 'Delete all untracked') : t('changes.discard.discardAll', 'Discard all')
@@ -989,6 +1243,7 @@ function draftStore() {
                     type="button"
                     class="sc-action"
                     :class="{ disabled: isExecutingBulk }"
+                    :aria-disabled="isExecutingBulk"
                     :title="t('changes.action.stageAll', 'Stage all')"
                     :aria-label="t('changes.action.stageAll', 'Stage all')"
                     data-test="sc-stage-all"
@@ -1001,6 +1256,7 @@ function draftStore() {
                     type="button"
                     class="sc-action"
                     :class="{ disabled: isExecutingBulk }"
+                    :aria-disabled="isExecutingBulk"
                     :title="t('changes.action.unstageAll', 'Unstage all')"
                     :aria-label="t('changes.action.unstageAll', 'Unstage all')"
                     data-test="sc-unstage-all"
@@ -1008,82 +1264,157 @@ function draftStore() {
                   >
                     <LucideIcon name="minus" :size="14" />
                   </button>
+                  <button
+                    type="button"
+                    class="sc-view-all"
+                    :title="t('changes.viewAll.hint', 'Open the diff of every file of this section')"
+                    data-test="sc-view-all"
+                    @click.stop="viewAll(section)"
+                  >
+                    {{ t('changes.viewAll.label', 'View all') }}
+                  </button>
                 </template>
               </span>
             </div>
           </div>
           <template v-if="!collapsed.has(section.id)">
-            <div
-              v-for="entry in section.items"
-              :key="rowKey(entry)"
-              class="sc-row"
-              :class="{ current: openKey === rowKey(entry) }"
-              :data-path="entry.path"
-              :data-area="entry.area"
-              :title="t('changes.row.title', '{{path}} ({{status}})', { path: entry.path, status: statusTitle(entry.status) })"
-              data-test="changes-row"
-              @click="openDiff(entry)"
-              @dblclick="openDiff(entry, true)"
-            >
-              <LucideIcon name="file" :size="14" class="sc-file-icon" :style="{ color: STATUS_COLORS[entry.status] }" />
-              <div class="sc-row-text">
-                <span class="sc-row-line">
-                  <span class="sc-row-name explorer-name">{{ fileName(entry.path) }}</span>
-                  <span v-if="dirName(entry.path)" class="sc-row-dir explorer-hit-dir">{{ dirName(entry.path) }}</span>
-                </span>
-                <div v-if="entry.conflictKind" class="sc-row-sub">{{ conflictKindLabel(entry.conflictKind) }}</div>
+            <template v-for="node in rowsBySection[section.id]" :key="node.key">
+              <!-- A folder (listing/tree-directory-rows.tsx) -->
+              <div
+                v-if="node.type === 'directory'"
+                class="sc-dir"
+                :style="dirPad(node)"
+                :data-path="node.path"
+                data-test="sc-dir"
+                data-scm-row
+                tabindex="-1"
+                role="treeitem"
+                :aria-expanded="!collapsedDirs.has(node.key)"
+                @keydown="onRowKeydown($event, node)"
+              >
+                <button type="button" class="sc-dir-toggle" tabindex="-1" :title="node.path" @click="toggleDir(node.key)">
+                  <LucideIcon name="chevronDown" :size="12" :class="{ 'sc-rot': collapsedDirs.has(node.key) }" />
+                  <component :is="collapsedDirs.has(node.key) ? Folder : FolderOpen" :size="12" class="sc-dir-icon" />
+                  <span class="sc-dir-name">{{ node.name }}</span>
+                </button>
+                <span class="sc-dir-count" data-test="sc-dir-count">{{ node.fileCount }}</span>
+                <template v-for="d in [dirActions(node)]" :key="'d'">
+                  <div v-if="d.canDiscard || d.canStage || d.canUnstage" class="sc-row-actions" @click.stop @dblclick.stop>
+                    <button
+                      v-if="d.canDiscard"
+                      type="button"
+                      class="sc-action"
+                      :class="{ disabled: isExecutingBulk }"
+                      :title="node.area === 'untracked' ? t('changes.action.deleteUntrackedInFolder', 'Delete untracked in folder') : t('changes.action.discardFolder', 'Discard folder')"
+                      :aria-label="node.area === 'untracked' ? t('changes.action.deleteUntrackedInFolder', 'Delete untracked in folder') : t('changes.action.discardFolder', 'Discard folder')"
+                      data-test="sc-dir-discard"
+                      @click="requestDiscardAllInArea(node.area, d.discardPaths)"
+                    >
+                      <LucideIcon :name="node.area === 'untracked' ? 'trash' : 'undo2'" :size="14" />
+                    </button>
+                    <button
+                      v-if="d.canStage"
+                      type="button"
+                      class="sc-action"
+                      :class="{ disabled: isExecutingBulk }"
+                      :title="t('changes.action.stageFolder', 'Stage folder')"
+                      :aria-label="t('changes.action.stageFolder', 'Stage folder')"
+                      data-test="sc-dir-stage"
+                      @click="stagePaths(d.stagePaths)"
+                    >
+                      <LucideIcon name="plus" :size="14" />
+                    </button>
+                    <button
+                      v-if="d.canUnstage"
+                      type="button"
+                      class="sc-action"
+                      :class="{ disabled: isExecutingBulk }"
+                      :title="t('changes.action.unstageFolder', 'Unstage folder')"
+                      :aria-label="t('changes.action.unstageFolder', 'Unstage folder')"
+                      data-test="sc-dir-unstage"
+                      @click="unstagePaths(d.unstagePaths)"
+                    >
+                      <LucideIcon name="minus" :size="14" />
+                    </button>
+                  </div>
+                </template>
               </div>
-              <span v-if="noteCountByPath.get(entry.path)" class="sc-row-notes" :title="notesCountTitle(noteCountByPath.get(entry.path))">
-                <LucideIcon name="messageSquare" :size="12" />
-                <span>{{ noteCountByPath.get(entry.path) }}</span>
-              </span>
-              <span v-if="entry.conflictStatus === 'unresolved'" class="sc-conflict-badge" role="status">
-                <LucideIcon name="triangleAlert" :size="12" /><span>{{ t('changes.row.unresolved', 'Unresolved') }}</span>
-              </span>
-              <template v-else>
-                <span v-if="entry.added > 0 || entry.removed > 0" class="sc-counts">
-                  <span v-if="entry.added > 0" class="sc-plus">+{{ entry.added }}</span>
-                  <span v-if="entry.added > 0 && entry.removed > 0">{{ ' ' }}</span>
-                  <span v-if="entry.removed > 0" class="sc-minus">-{{ entry.removed }}</span>
+              <!-- A changed file (listing/uncommitted-entry-row.tsx) -->
+              <div
+                v-else
+                class="sc-row"
+                :class="{ current: openKey === rowKey(node.entry) }"
+                :style="filePad(node)"
+                :data-path="node.entry.path"
+                :data-area="node.entry.area"
+                :title="t('changes.row.title', '{{path}} ({{status}})', { path: node.entry.path, status: statusTitle(node.entry.status) })"
+                data-test="changes-row"
+                data-scm-row
+                tabindex="-1"
+                @click="openDiff(node.entry)"
+                @dblclick="openDiff(node.entry, true)"
+                @keydown="onRowKeydown($event, node)"
+              >
+                <component :is="getFileTypeIcon(node.entry.path)" :size="14" class="sc-file-icon" :style="{ color: STATUS_COLORS[node.entry.status] }" />
+                <div class="sc-row-text">
+                  <span class="sc-row-line">
+                    <span class="sc-row-name explorer-name">{{ fileName(node.entry.path) }}</span>
+                    <span v-if="viewMode === 'list' && dirName(node.entry.path)" class="sc-row-dir explorer-hit-dir">{{ dirName(node.entry.path) }}</span>
+                  </span>
+                  <div v-if="node.entry.conflictKind" class="sc-row-sub">{{ conflictKindLabel(node.entry.conflictKind) }}</div>
+                </div>
+                <span v-if="noteCountByPath.get(node.entry.path)" class="sc-row-notes" :title="notesCountTitle(noteCountByPath.get(node.entry.path))">
+                  <LucideIcon name="messageSquare" :size="12" />
+                  <span>{{ noteCountByPath.get(node.entry.path) }}</span>
                 </span>
-                <span class="sc-status" :style="{ color: STATUS_COLORS[entry.status] }">{{ STATUS_LABELS[entry.status] }}</span>
-              </template>
-              <div class="sc-row-actions" @click.stop @dblclick.stop>
-                <button
-                  v-if="canDiscardStatusEntry(entry)"
-                  type="button"
-                  class="sc-action"
-                  :title="discardTitle(entry)"
-                  :aria-label="discardTitle(entry)"
-                  data-test="sc-discard"
-                  @click="requestDiscardEntry(entry)"
-                >
-                  <LucideIcon :name="entry.area === 'untracked' ? 'trash' : 'undo2'" :size="14" />
-                </button>
-                <button
-                  v-if="canStageStatusEntry(entry)"
-                  type="button"
-                  class="sc-action"
-                  :title="t('changes.action.stage', 'Stage')"
-                  :aria-label="t('changes.action.stage', 'Stage')"
-                  data-test="sc-stage"
-                  @click="stage(entry.path)"
-                >
-                  <LucideIcon name="plus" :size="14" />
-                </button>
-                <button
-                  v-if="canUnstageStatusEntry(entry)"
-                  type="button"
-                  class="sc-action"
-                  :title="t('changes.action.unstage', 'Unstage')"
-                  :aria-label="t('changes.action.unstage', 'Unstage')"
-                  data-test="sc-unstage"
-                  @click="unstage(entry.path)"
-                >
-                  <LucideIcon name="minus" :size="14" />
-                </button>
+                <span v-if="node.entry.conflictStatus === 'unresolved'" class="sc-conflict-badge" role="status">
+                  <LucideIcon name="triangleAlert" :size="12" /><span>{{ t('changes.row.unresolved', 'Unresolved') }}</span>
+                </span>
+                <template v-else>
+                  <span v-if="node.entry.added > 0 || node.entry.removed > 0" class="sc-counts">
+                    <span v-if="node.entry.added > 0" class="sc-plus">+{{ node.entry.added }}</span>
+                    <span v-if="node.entry.added > 0 && node.entry.removed > 0">{{ ' ' }}</span>
+                    <span v-if="node.entry.removed > 0" class="sc-minus">-{{ node.entry.removed }}</span>
+                  </span>
+                  <span class="sc-status" :style="{ color: STATUS_COLORS[node.entry.status] }">{{ STATUS_LABELS[node.entry.status] }}</span>
+                </template>
+                <div class="sc-row-actions" @click.stop @dblclick.stop>
+                  <button
+                    v-if="canDiscardStatusEntry(node.entry)"
+                    type="button"
+                    class="sc-action"
+                    :title="discardTitle(node.entry)"
+                    :aria-label="discardTitle(node.entry)"
+                    data-test="sc-discard"
+                    @click="requestDiscardEntry(node.entry)"
+                  >
+                    <LucideIcon :name="node.entry.area === 'untracked' ? 'trash' : 'undo2'" :size="14" />
+                  </button>
+                  <button
+                    v-if="canStageStatusEntry(node.entry)"
+                    type="button"
+                    class="sc-action"
+                    :title="t('changes.action.stage', 'Stage')"
+                    :aria-label="t('changes.action.stage', 'Stage')"
+                    data-test="sc-stage"
+                    @click="stage(node.entry.path)"
+                  >
+                    <LucideIcon name="plus" :size="14" />
+                  </button>
+                  <button
+                    v-if="canUnstageStatusEntry(node.entry)"
+                    type="button"
+                    class="sc-action"
+                    :title="t('changes.action.unstage', 'Unstage')"
+                    :aria-label="t('changes.action.unstage', 'Unstage')"
+                    data-test="sc-unstage"
+                    @click="unstage(node.entry.path)"
+                  >
+                    <LucideIcon name="minus" :size="14" />
+                  </button>
+                </div>
               </div>
-            </div>
+            </template>
           </template>
         </div>
 
@@ -1096,6 +1427,11 @@ function draftStore() {
           <div class="sc-empty-text" v-text="noMatchText()"></div>
         </div>
         <div v-if="!loaded" class="explorer-empty">{{ t('changes.reading', 'Reading git status…') }}</div>
+
+        <!-- Commits, docked at the bottom as the list scrolls (sync/git-history-panel.tsx). -->
+        <div v-if="data && data.repo" class="sc-history-dock">
+          <ScmHistoryPanel :root="repoRoot" :head="data.head || ''" :base="compare && compare.base ? compare.base : null" @open-file="openCommitFile" />
+        </div>
       </template>
     </div>
   </div>

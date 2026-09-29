@@ -10,6 +10,7 @@ import ChangesPanel from './ChangesPanel.vue'
 import TaskBoard from './TaskBoard.vue'
 import RemoteUnavailable from './project/RemoteUnavailable.vue'
 import { t } from '../i18n'
+import { Files, GitBranch, ListChecks } from 'lucide-vue-next'
 
 const SIDE_TABS = ['files', 'changes', 'tasks']
 
@@ -40,10 +41,13 @@ const emit = defineEmits([
 ])
 
 // Labels are translated where shown (the language can change while open).
+// Icon tabs like Orca's top activity bar (right-sidebar-top-activity-bar.tsx,
+// activity-bar-buttons.tsx): Files, Source Control (git branch), Tasks; the
+// name is in the tooltip.
 const TABS = [
-  { id: 'files', key: 'explorer.side.files', label: 'Files', shortcut: 'Ctrl+Shift+X' },
-  { id: 'changes', key: 'explorer.side.changes', label: 'Changes', shortcut: 'Ctrl+Shift+G' },
-  { id: 'tasks', key: 'explorer.side.tasks', label: 'Tasks', shortcut: 'Ctrl+Shift+K' }
+  { id: 'files', key: 'explorer.side.files', label: 'Files', shortcut: 'Ctrl+Shift+X', icon: Files },
+  { id: 'changes', key: 'explorer.side.changes', label: 'Changes', shortcut: 'Ctrl+Shift+G', icon: GitBranch },
+  { id: 'tasks', key: 'explorer.side.tasks', label: 'Tasks', shortcut: 'Ctrl+Shift+K', icon: ListChecks }
 ]
 const tabLabel = (tab) => t(tab.key, tab.label)
 const shown = reactive({})
@@ -108,21 +112,7 @@ onBeforeUnmount(() => {
         :data-test="'side-tab-' + tab.id"
         @click="emit('update:tab', tab.id)"
       >
-        <svg v-if="tab.id === 'files'" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-          <path d="M4 1.8h5l3 3v9.4H4z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" />
-          <path d="M9 1.8v3h3" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" />
-        </svg>
-        <svg v-else-if="tab.id === 'changes'" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-          <circle cx="4.5" cy="3.5" r="1.6" stroke="currentColor" stroke-width="1.3" />
-          <circle cx="4.5" cy="12.5" r="1.6" stroke="currentColor" stroke-width="1.3" />
-          <circle cx="11.5" cy="5.5" r="1.6" stroke="currentColor" stroke-width="1.3" />
-          <path d="M4.5 5.1v5.8M11.5 7.1c0 2.6-2.2 3.2-5.6 4.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
-        </svg>
-        <svg v-else width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-          <rect x="2" y="2.5" width="12" height="11" rx="2" stroke="currentColor" stroke-width="1.3" />
-          <path d="M5 6.2l1.3 1.3L8.6 5.2M5 10.3h6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
-        </svg>
-        <span class="side-tab-label">{{ tabLabel(tab) }}</span>
+        <component :is="tab.icon" :size="16" aria-hidden="true" />
         <span
           v-if="tab.id === 'changes' && changes > 0"
           class="side-tab-badge"

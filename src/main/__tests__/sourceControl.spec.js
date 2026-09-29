@@ -22,7 +22,16 @@ import {
   relIn,
   cleanGeneratedMessage,
   truncateDiff,
-  commitPrompt
+  commitPrompt,
+  collectUntrackedAdditions,
+  MAX_UNTRACKED_LINE_COUNT_BYTES,
+  scmBranchCompare,
+  scmHistory,
+  scmCommitFiles,
+  parseHistoryLog,
+  parseNameStatusZ,
+  compareUrl,
+  githubRepoOf
 } from '../sourceControl'
 
 const g = (cwd, ...args) => execFileSync('git', ['-C', cwd, ...args], { stdio: 'pipe' }).toString()
@@ -357,5 +366,124 @@ describe('a task copy (git worktree)', () => {
     expect((await scmCommit({ root: copy, message: 'In the copy' })).ok).toBe(true)
     expect(g(copy, 'log', '-1', '--format=%s').trim()).toBe('In the copy')
     expect(g(repo, 'log', '-1', '--format=%s').trim()).toBe('first')
+  })
+})
+
+describe('untracked line counts (bounded)', () => {
+  it('counts lines of new text files; binaries and files over 2 MB get no count', async () => {
+    write('new/a.txt', 'one\ntwo\nthree\n')
+    write('new/no newline.txt', 'x\ny')
+    write('new/empty.txt', '')
+    fs.writeFileSync(join(repo, 'new', 'bin.dat'), Buffer.from([1, 0, 2, 10, 3]))
+    fs.writeFileSync(join(repo, 'new', 'big.txt'), Buffer.alloc(MAX_UNTRACKED_LINE_COUNT_BYTES + 10, 10))
+    const counts = await collectUntrackedAdditions(repo, ['new/a.txt', 'new/no newline.txt', 'new/empty.txt', 'new/bin.dat', 'new/big.txt', 'new/gone.txt'])
+    expect(counts.get('new/a.txt')).toEqual({ added: 3 })
+    expect(counts.get('new/no newline.txt')).toEqual({ added: 2 })
+    expect(counts.get('new/empty.txt')).toEqual({ added: 0 })
+    expect(counts.get('new/bin.dat')).toEqual({})
+    expect(counts.get('new/big.txt')).toEqual({})
+    expect(counts.get('new/gone.txt')).toEqual({})
+  })
+
+  it('a changed file is counted again (the cache follows size and time)', async () => {
+    write('c.txt', 'a\n')
+    expect((await collectUntrackedAdditions(repo, ['c.txt'])).get('c.txt')).toEqual({ added: 1 })
+    write('c.txt', 'a\nb\nc\n')
+    const later = new Date(Date.now() + 5000)
+    fs.utimesSync(join(repo, 'c.txt'), later, later)
+    expect((await collectUntrackedAdditions(repo, ['c.txt'])).get('c.txt')).toEqual({ added: 3 })
+  })
+
+  it('status gives untracked files their +N', async () => {
+    write('folder/new.js', 'a\nb\n')
+    const st = await scmStatus({ root: repo })
+    expect(find(st, 'folder/new.js', 'untracked')).toMatchObject({ added: 2, removed: 0 })
+  })
+})
+
+describe('branch compare, commits and commit files', () => {
+  let remote
+  beforeEach(() => {
+    remote = join(dir, 'remote.git')
+    execFileSync('git', ['init', '-q', '--bare', '-b', 'main', remote])
+    g(repo, 'remote', 'add', 'origin', remote)
+    g(repo, 'push', '-q', '-u', 'origin', 'main')
+    g(repo, 'remote', 'set-head', 'origin', 'main')
+  })
+
+  it('compares HEAD with origin/main: commits ahead, and every line of the work (committed, staged, unstaged, untracked)', async () => {
+    g(repo, 'checkout', '-q', '-b', 'feature')
+    write('feat.txt', '1\n2\n')
+    g(repo, 'add', '-A')
+    g(repo, 'commit', '-q', '-m', 'feat')
+    write('a.txt', 'one\n') // one line removed, unstaged
+    write('untracked.txt', 'u1\nu2\nu3\n')
+    const c = await scmBranchCompare({ root: repo })
+    expect(c).toMatchObject({ ok: true, base: 'origin/main', ahead: 1, behind: 0, added: 5, removed: 1 })
+    expect(c.mergeBase).toMatch(/^[0-9a-f]{40}$/)
+    expect(c.reviewUrl).toBe(null) // not a GitHub remote
+  })
+
+  it('no remote: nothing to compare with', async () => {
+    g(repo, 'remote', 'remove', 'origin')
+    expect(await scmBranchCompare({ root: repo })).toEqual({ ok: true, base: null })
+  })
+
+  it('the GitHub compare page of the pushed branch', () => {
+    expect(githubRepoOf('git@github.com:me/my-repo.git')).toEqual({ owner: 'me', repo: 'my-repo' })
+    expect(githubRepoOf('https://github.com/me/r')).toEqual({ owner: 'me', repo: 'r' })
+    expect(githubRepoOf('https://gitlab.com/me/r')).toBe(null)
+    expect(compareUrl({ remoteUrl: 'https://github.com/me/r.git', base: 'origin/main', upstream: 'origin/feat/x' })).toBe(
+      'https://github.com/me/r/compare/main...feat/x'
+    )
+    expect(compareUrl({ remoteUrl: 'https://github.com/me/r.git', base: 'origin/main', upstream: '' })).toBe(null)
+  })
+
+  it('reads the commits with their refs, then the files of one commit and its two sides', async () => {
+    write('a.txt', 'one\ntwo\nthree\n')
+    g(repo, 'mv', 'old name.txt', 'new name.txt')
+    g(repo, 'add', '-A')
+    g(repo, 'commit', '-q', '-m', 'second\n\nbody line')
+    const h = await scmHistory({ root: repo })
+    expect(h.ok).toBe(true)
+    expect(h.items.map((i) => i.subject)).toEqual(['second', 'first'])
+    expect(h.items[0].message).toBe('second\n\nbody line')
+    expect(h.currentRef).toMatchObject({ id: 'refs/heads/main', name: 'main' })
+    expect(h.remoteRef).toMatchObject({ id: 'refs/remotes/origin/main', name: 'origin/main' })
+    expect(h.items[1].references.map((r) => r.name)).toContain('origin/main')
+    expect(h.items[0].references.map((r) => r.name)).toEqual(['main'])
+    const files = await scmCommitFiles({ root: repo, commit: h.items[0].id })
+    expect(files.ok).toBe(true)
+    expect(files.entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: 'a.txt', status: 'modified', added: 1, removed: 0 }),
+        expect.objectContaining({ path: 'new name.txt', oldPath: 'old name.txt', status: 'renamed' })
+      ])
+    )
+    const first = await scmCommitFiles({ root: repo, commit: h.items[1].id })
+    expect(first.entries.map((e) => e.status)).toEqual(['added', 'added', 'added'])
+    const v = await scmFileVersions({ root: repo, path: 'a.txt', area: 'commit', commit: h.items[0].id })
+    expect(v).toMatchObject({ ok: true, original: 'one\ntwo\n', modified: 'one\ntwo\nthree\n' })
+    const r = await scmFileVersions({ root: repo, path: 'new name.txt', oldPath: 'old name.txt', area: 'commit', commit: h.items[0].id })
+    expect(r).toMatchObject({ ok: true, original: 'rename me\n', modified: 'rename me\n' })
+    expect(await scmFileVersions({ root: repo, path: 'a.txt', area: 'commit', commit: '--output=x' })).toMatchObject({ ok: false })
+    expect(await scmCommitFiles({ root: repo, commit: 'HEAD' })).toMatchObject({ ok: false })
+  })
+
+  it('parses log records, legacy decorations and name-status', () => {
+    const hash = 'a'.repeat(40)
+    const rec = [hash, 'Ann', 'a@x', '1700000000', '1700000000', 'b'.repeat(40), 'HEAD -> refs/heads/main\x1frefs/remotes/origin/main\x1ftag: refs/tags/v1', '', 'Subject\n\nBody\n'].join('\n')
+    const [item] = parseHistoryLog(`${rec}\0`)
+    expect(item).toMatchObject({ id: hash, displayId: 'aaaaaaa', subject: 'Subject', author: 'Ann', timestamp: 1700000000000, parentIds: ['b'.repeat(40)] })
+    expect(item.references.map((r) => [r.name, r.category])).toEqual([
+      ['main', 'branches'],
+      ['origin/main', 'remote branches'],
+      ['v1', 'tags']
+    ])
+    expect(parseNameStatusZ('M\0a b.js\0R087\0old.js\0new.js\0D\0gone.js\0')).toEqual([
+      { path: 'a b.js', status: 'modified' },
+      { path: 'new.js', oldPath: 'old.js', status: 'renamed' },
+      { path: 'gone.js', status: 'deleted' }
+    ])
   })
 })

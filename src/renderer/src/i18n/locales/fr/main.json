@@ -296,7 +296,11 @@
       "notRepoFile": "Ce n'est pas un fichier de ce dépôt.",
       "unknownGroup": "Groupe de modifications inconnu.",
       "diffFailed": "Échec de git diff.",
-      "nothingStagedMessage": "Indexez au moins un fichier pour générer un message."
+      "nothingStagedMessage": "Indexez au moins un fichier pour générer un message.",
+      "compareUnavailable": "Comparaison de branches indisponible",
+      "logFailed": "Échec de git log.",
+      "badCommit": "Commit inconnu.",
+      "noCommitSubject": "(aucun message de commit)"
     },
     "explorer": {
       "outside": "Hors du projet.",
