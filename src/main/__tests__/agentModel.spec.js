@@ -148,6 +148,11 @@ describe('command and settings', () => {
       expect(agentModel({ agentId: 'opencode', launchedAt: t + 60000 }, home).model).toBe('anthropic/claude-sonnet-5')
       // Picked while it runs: that one.
       expect(agentModel({ agentId: 'opencode', launchedAt: t - 60000 }, home).source).toBe('picked')
+      // Launched with --model, then switched in its /models picker: the pick.
+      const cmd = 'opencode --model opencode/nemotron-3-ultra-free'
+      expect(agentModel({ agentId: 'opencode', command: cmd, launchedAt: t - 60000 }, home)).toEqual({ model: 'opencode/big-pickle', effort: null, source: 'picked' })
+      // Nothing picked since it started: the launch flag.
+      expect(agentModel({ agentId: 'opencode', command: cmd, launchedAt: t + 60000 }, home)).toEqual({ model: 'opencode/nemotron-3-ultra-free', effort: null, source: 'command' })
     } finally {
       if (old !== undefined) process.env.XDG_CONFIG_HOME = old
       if (oldState !== undefined) process.env.XDG_STATE_HOME = oldState

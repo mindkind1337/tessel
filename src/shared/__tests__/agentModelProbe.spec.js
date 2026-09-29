@@ -10,6 +10,8 @@ import {
   parseClaudeModelList,
   parseCodexModelList,
   parseGrokModelList,
+  parseOpenCodeModelList,
+  OPENCODE_MODEL_LIST_ARGS,
   finalizeProbeOutput,
   listedToCatalogModels,
   validListedModels,
@@ -73,6 +75,45 @@ describe('Grok: grok models', () => {
       { id: 'grok-4.5', label: 'Grok 4.5' }
     ])
     expect(labelFromModelId('gpt-5.5-codex')).toBe('GPT 5.5 Codex')
+  })
+})
+
+describe('OpenCode: opencode models', () => {
+  it('runs `opencode models` with stdin closed (no prompt)', () => {
+    expect(OPENCODE_MODEL_LIST_ARGS).toEqual(['models'])
+    expect(MODEL_PROBES.opencode).toMatchObject({ exe: 'opencode', args: ['models'], stdin: null })
+  })
+
+  it('reads one provider/model per line; skips log lines and duplicates', () => {
+    const models = parseOpenCodeModelList(fixture('opencode-models.txt'))
+    expect(models[0]).toEqual({ id: 'opencode/big-pickle', label: 'Opencode Big Pickle' })
+    expect(models.map((m) => m.id)).toEqual([
+      'opencode/big-pickle',
+      'opencode/ling-3.0-flash-fin-free',
+      'opencode/longcat-2.5-preview-free',
+      'opencode/mimo-v2.6-flash-free',
+      'opencode/muse-spark-1.3-contributor-free',
+      'opencode/nemotron-3-ultra-free',
+      'opencode/nemotron-3.5-lightning-free',
+      'opencode/space-bunny-free',
+      'openrouter/qwen/qwen3-coder:free'
+    ])
+    expect(parseOpenCodeModelList('a/b\r\nc/d\re/f')).toHaveLength(3)
+    expect(parseOpenCodeModelList('no-slash\n/nope\nx/y z\n-x/y\n{"id":"a/b"}')).toEqual([])
+  })
+
+  it('bounded: at most 300 rows, and nothing from an oversized output', () => {
+    const many = Array.from({ length: 400 }, (_, i) => `p/m-${i}`).join('\n')
+    expect(parseOpenCodeModelList(many)).toHaveLength(300)
+    expect(parseOpenCodeModelList('p/m\n' + 'x'.repeat(5 * 1024 * 1024))).toEqual([])
+  })
+
+  it('catalog rows have no options (no effort at launch); the checked rows keep the ids', () => {
+    const listed = validListedModels(parseOpenCodeModelList(fixture('opencode-models.txt')))
+    expect(listed).toHaveLength(9)
+    expect(listedToCatalogModels('opencode', listed).every((m) => m.options.length === 0)).toBe(true)
+    expect(finalizeProbeOutput('opencode', fixture('opencode-models.txt'), '', 0).models).toHaveLength(9)
+    expect(finalizeProbeOutput('opencode', '', 'Error: something\n', 0)).toEqual({ ok: false, reason: 'empty', detail: '' })
   })
 })
 

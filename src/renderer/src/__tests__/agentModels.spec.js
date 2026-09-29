@@ -250,3 +250,75 @@ describe("Claude's /model confirmation (Orca's observer)", () => {
     expect(await silent.result).toBe('unknown')
   })
 })
+
+describe('OpenCode: models from `opencode models`', () => {
+  let prev
+  beforeEach(() => {
+    resetSettings()
+    settings.agentSessionOptions = {}
+    resetModelListsForTests()
+    prev = window.shellApi
+  })
+  afterEach(() => {
+    resetSettings()
+    settings.agentSessionOptions = {}
+    resetModelListsForTests()
+    window.shellApi = prev
+  })
+  const listed = [
+    { id: 'opencode/big-pickle', label: 'Opencode Big Pickle' },
+    { id: 'opencode/nemotron-3-ultra-free', label: 'Opencode Nemotron 3 Ultra Free' }
+  ]
+
+  it('opening its model menu asks the CLI once; the picker lists them, no effort', async () => {
+    const probe = vi.fn(async () => ({ ok: true, fetchedAt: Date.now(), models: listed }))
+    window.shellApi = { agentModelLists: async () => ({}), probeAgentModels: probe }
+    expect(modelsFor('opencode')).toEqual([])
+    const w = mount(SessionOptionPicker, { props: { agentId: 'opencode', models: [], values: null, defaultLabel: "Agent's own default" } })
+    await flushPromises()
+    expect(probe).toHaveBeenCalledTimes(1)
+    expect(probe.mock.calls[0][0]).toEqual({ agent: 'opencode', command: '' })
+    await w.setProps({ models: modelsFor('opencode'), values: { model: 'opencode/big-pickle' } })
+    expect(w.findAll('[data-test="sop-model"]').map((b) => b.attributes('data-model'))).toEqual(['opencode/big-pickle', 'opencode/nemotron-3-ultra-free'])
+    expect(w.find('[data-option="effort"]').exists()).toBe(false)
+    expect(w.find('[data-test="sop-agent-picker"]').exists()).toBe(false)
+    await w.get('[data-model="opencode/nemotron-3-ultra-free"]').trigger('click')
+    expect(w.emitted('set')[0][0]).toEqual({ optionId: 'model', value: 'opencode/nemotron-3-ultra-free' })
+    w.unmount()
+  })
+
+  it('a running OpenCode changes model in its own /models picker', async () => {
+    window.shellApi = { agentModelLists: async () => ({ opencode: { models: listed, fetchedAt: Date.now() } }), probeAgentModels: vi.fn() }
+    await loadModelLists()
+    const w = mount(SessionOptionPicker, { props: { agentId: 'opencode', models: modelsFor('opencode'), values: null, live: true } })
+    await w.get('[data-test="sop-agent-picker"]').trigger('click')
+    expect(w.emitted('action')[0][0]).toEqual({ optionId: 'model' })
+    expect(window.shellApi.probeAgentModels).not.toHaveBeenCalled()
+    w.unmount()
+  })
+
+  it('new pane menu: a picked model goes with the launch', async () => {
+    window.shellApi = { agentModelLists: async () => ({ opencode: { models: listed, fetchedAt: Date.now() } }), probeAgentModels: vi.fn() }
+    await loadModelLists()
+    const oc = [{ id: 'opencode', name: 'OpenCode', command: 'opencode', available: true }]
+    const w = mount(LaunchMenu, { props: { agents: oc, shells: [] }, attachTo: document.body })
+    const pill = w.get('[data-test="launch-model-pill"]')
+    expect(pill.attributes('data-agent')).toBe('opencode')
+    await pill.trigger('click')
+    await w.get('[data-test="launch-model-picker"] [data-model="opencode/big-pickle"]').trigger('click')
+    expect(w.get('[data-test="launch-model-pill"]').text()).toContain('Opencode Big Pickle')
+    await w.findAll('.launch-item').find((b) => b.text() === 'OpenCode').trigger('click')
+    expect(w.emitted('launch')[0][0]).toEqual({ kind: 'agent', id: 'opencode', sessionOptions: { model: 'opencode/big-pickle' } })
+    w.unmount()
+  })
+
+  it('Settings > Agents: no built-in list, Refresh models is offered', async () => {
+    window.shellApi = { openExternal() {}, probeAgentModels: vi.fn(async () => ({ ok: true, fetchedAt: Date.now(), models: listed })) }
+    const w = mount(SettingsDialog, { props: { agents: [{ id: 'opencode', name: 'OpenCode', command: 'opencode', available: true }] }, attachTo: document.body })
+    expect(w.get('[data-test="agent-models-status-opencode"]').text()).toContain('No list yet')
+    await w.get('[data-test="agent-models-refresh-opencode"]').trigger('click')
+    await flushPromises()
+    expect(w.get('[data-test="agent-model-opencode"]').findAll('option').map((o) => o.attributes('value'))).toEqual(['', 'opencode/big-pickle', 'opencode/nemotron-3-ultra-free'])
+    w.unmount()
+  })
+})

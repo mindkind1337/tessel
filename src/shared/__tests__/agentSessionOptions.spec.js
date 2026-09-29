@@ -139,6 +139,32 @@ describe('restart to apply', () => {
   })
 })
 
+describe('OpenCode', () => {
+  it('--model provider/model at launch, no effort, its own -m/--model wins', () => {
+    expect(sessionOptionLaunchText('opencode', { model: 'opencode/big-pickle' })).toBe('--model opencode/big-pickle')
+    expect(sessionOptionLaunchText('opencode', { model: 'openrouter/qwen/qwen3-coder:free' })).toBe('--model openrouter/qwen/qwen3-coder:free')
+    expect(sessionOptionLaunchText('opencode', { model: 'opencode/big-pickle', effort: 'high' })).toBe('--model opencode/big-pickle')
+    expect(sessionOptionLaunchText('opencode', { model: 'opencode/big-pickle' }, '-m x/y')).toBe('')
+    expect(sessionOptionLaunchText('opencode', { model: 'opencode/big-pickle' }, '--model=x/y')).toBe('')
+    expect(sessionOptionLaunchText('opencode', null)).toBe('')
+  })
+
+  it('a running session opens its own /models picker (typed)', () => {
+    const catalog = getAgentSessionOptionCatalog('opencode')
+    expect(catalog.modelApply.midSession).toEqual({ kind: 'agent-picker', command: '/models', delivery: 'type' })
+    expect(modelOptions(catalog, catalog.models, 'opencode/big-pickle')).toEqual([])
+  })
+
+  it('no seed: the picker lists what `opencode models` listed', () => {
+    expect(catalogModelsFor('opencode', null)).toEqual([])
+    const listed = listedToCatalogModels('opencode', [
+      { id: 'opencode/big-pickle', label: 'Opencode Big Pickle' },
+      { id: 'anthropic/claude-sonnet-5', label: 'Anthropic Claude Sonnet 5' }
+    ])
+    expect(catalogModelsFor('opencode', listed).map((m) => m.id)).toEqual(['opencode/big-pickle', 'anthropic/claude-sonnet-5'])
+  })
+})
+
 describe('model lists', () => {
   it("Claude's listed models replace the seed; others merge; Grok's list decides", () => {
     const listed = listedToCatalogModels('claude', [{ id: 'opus[1m]', label: 'Opus (1M context)', effortLevels: ['low', 'high'], supportsFastMode: true }])

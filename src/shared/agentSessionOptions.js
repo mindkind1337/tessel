@@ -394,6 +394,26 @@ export const ANTIGRAVITY_SESSION_OPTION_CATALOG = {
   unknownModelOptions: [ANTIGRAVITY_EFFORT]
 }
 
+// --- OpenCode (Orca's commit-message-agent-specs-primary.ts: `--model
+// provider/model`, models from `opencode models`) ---------------------------
+
+export const OPENCODE_SESSION_OPTION_CATALOG = {
+  // Which providers and models exist depends on the user's sign-ins and
+  // config (the free opencode/* ones rotate): no seed, the CLI's list only.
+  models: [],
+  modelApply: {
+    // The TUI (`opencode [project]`) takes -m/--model provider/model. Its
+    // --variant (effort) exists on `opencode run` only, so no effort option.
+    launchArgs: (value) => ['--model', String(value)],
+    agentArgsOverride: (tokens) => hasFlag(tokens, ['-m', '--model']),
+    removeAgentArgs: (tokens) => removeAgentArgOption(tokens, ['-m', '--model']),
+    // A running TUI switches model in its own /models picker.
+    midSession: { kind: 'agent-picker', command: '/models', delivery: 'type' }
+  },
+  unknownModelOptions: [],
+  probed: true
+}
+
 // --- Catalog lookups (agent-session-option-catalog.ts) ----------------------
 
 const CATALOGS = {
@@ -402,7 +422,8 @@ const CATALOGS = {
   codex: CODEX_SESSION_OPTION_CATALOG,
   gemini: GEMINI_SESSION_OPTION_CATALOG,
   cursor: CURSOR_SESSION_OPTION_CATALOG,
-  grok: GROK_SESSION_OPTION_CATALOG
+  grok: GROK_SESSION_OPTION_CATALOG,
+  opencode: OPENCODE_SESSION_OPTION_CATALOG
 }
 
 export function getAgentSessionOptionCatalog(agent) {

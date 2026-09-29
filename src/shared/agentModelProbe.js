@@ -2,7 +2,8 @@
 // (github.com/stablyai/orca, MIT, Copyright (c) 2026 Lovecast Inc.):
 // src/shared/claude-model-list-probe.ts, commit-message-model-parsers.ts
 // (parseCodexModels), grok-model-list-probe.ts, model-id-label.ts,
-// agent-model-probe-spec.ts and
+// agent-model-probe-spec.ts, commit-message-agent-specs-primary.ts
+// (OpenCode's modelDiscovery, parseLineModels) and
 // src/main/text-generation/commit-message-model-discovery-policy.ts.
 //
 // Never an interactive session, never a prompt:
@@ -10,6 +11,7 @@
 //   returns the CLI's /model picker catalog without starting an API turn.
 // - Codex: `codex debug models` renders its model catalog as JSON.
 // - Grok: `grok models` prints its listing.
+// - OpenCode: `opencode models` prints one provider/model id per line.
 // The CLI may use its own sign-in and network to answer, so Tessel runs a
 // probe only when asked (Settings > Agents > Refresh models) and keeps the
 // answer (agentModelList.js).
@@ -29,6 +31,7 @@ export const CLAUDE_MODEL_LIST_ARGS = ['-p', '--input-format', 'stream-json', '-
 
 export const CODEX_MODEL_LIST_ARGS = ['debug', 'models']
 export const GROK_MODEL_LIST_ARGS = ['models']
+export const OPENCODE_MODEL_LIST_ARGS = ['models']
 
 // Orca's limits (source-control-generation-limits.ts).
 export const MODEL_PROBE_TIMEOUT_MS = 60_000
@@ -146,12 +149,31 @@ export function parseGrokModelList(stdout) {
   return [...byId.values()]
 }
 
+// `opencode models` -> [{ id, label }] (Orca's parseLineModels): one
+// provider/model id per line; any other line (a log line, a hint, a line
+// with spaces) is skipped. At most 300 rows.
+const OPENCODE_MODEL_ID = /^[A-Za-z0-9][\w.@+-]*\/[A-Za-z0-9._:/@[\]=+-]{1,150}$/
+export function parseOpenCodeModelList(stdout) {
+  const text = String(stdout || '')
+  if (text.length > MODEL_PROBE_MAX_OUTPUT) return []
+  const seen = new Set()
+  const out = []
+  for (const rawLine of text.split(/\r\n|\n|\r/)) {
+    const id = rawLine.trim()
+    if (!id || id.length > 160 || !OPENCODE_MODEL_ID.test(id) || seen.has(id)) continue
+    seen.add(id)
+    out.push({ id, label: labelFromModelId(id) })
+    if (out.length >= 300) break
+  }
+  return out
+}
 
 // How each agent is asked: its program, arguments, what goes on stdin.
 export const MODEL_PROBES = {
   claude: { exe: 'claude', args: CLAUDE_MODEL_LIST_ARGS, stdin: CLAUDE_MODEL_LIST_STDIN, parse: parseClaudeModelList },
   codex: { exe: 'codex', args: CODEX_MODEL_LIST_ARGS, stdin: null, parse: parseCodexModelList },
-  grok: { exe: 'grok', args: GROK_MODEL_LIST_ARGS, stdin: null, parse: parseGrokModelList }
+  grok: { exe: 'grok', args: GROK_MODEL_LIST_ARGS, stdin: null, parse: parseGrokModelList },
+  opencode: { exe: 'opencode', args: OPENCODE_MODEL_LIST_ARGS, stdin: null, parse: parseOpenCodeModelList }
 }
 
 export function canProbeModels(agent) {

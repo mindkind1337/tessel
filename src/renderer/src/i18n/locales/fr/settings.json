@@ -197,6 +197,7 @@
       "viaAuto": "automatique",
       "defaultModel": "Modèle",
       "modelsListing": "Demande de ses modèles à {{name}}…",
+      "modelsNone": "Pas encore de liste. Actualiser demande à {{name}} les modèles qu'il propose.",
       "modelsBuiltIn": "Liste intégrée. Actualiser demande à {{name}} les modèles de votre compte.",
       "modelsListed": "{{count}} modèles listés par {{name}} le {{date}}.",
       "refreshModelsHint": "Demander à {{name}} quels modèles il propose (il peut utiliser sa connexion et le réseau ; aucune requête n'est envoyée au modèle)",
