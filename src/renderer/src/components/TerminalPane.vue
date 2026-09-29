@@ -498,12 +498,15 @@ const activityMonitor = createAgentActivityMonitor({
     // A successful turn boundary is not a completed task: keep the explicit
     // standalone TASK_COMPLETE signal as the separate task contract.
     if (detectTaskDone(screen) && ctx.agentReportedDone) ctx.agentReportedDone(props.node.id)
+    // A scheduled automation's run ends with its agent's turn (it tells you
+    // itself, in place of the usual notice).
+    const automationRun = ctx.automationTurnDone ? ctx.automationTurnDone(props.node.id) : false
     // Settings > Notifications, "Suppress While Focused": nothing for the
     // pane you are looking at (off: you are told there too).
     const looking = isActive.value && document.hasFocus()
     if (!looking || settings.notifySuppressWhenFocused === false) {
       if (!looking) setAttention(props.node.id)
-      ctx.notifyAgentDone(props.node)
+      if (!automationRun) ctx.notifyAgentDone(props.node)
     }
   }
 })

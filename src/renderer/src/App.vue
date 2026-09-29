@@ -59,6 +59,9 @@ import ReviewPanel from './components/ReviewPanel.vue'
 import { parseLeadRequest, findTaskRef, leadGuide, memberGuide } from '../../shared/leadRequests'
 import { workerLaunchArgs, wakeLaunchArgs } from '../../shared/orchestration'
 import { createOrchestrator } from './orchestrator'
+import { automationLaunchArgs, AUTOMATION_AGENTS } from '../../shared/automations'
+import { createAutomationRunner } from './automationRunner'
+import { automationsState, applySnapshot as applyAutomations, subscribeAutomations } from './automationsStore'
 import { trackAgent } from '../../shared/tracking'
 import { pasteAndConfirm } from './deliver'
 import { dropBuffer, seedBuffer } from './ptyStore'
@@ -936,7 +939,16 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
       waiting = await unreadAtLaunch(id, opts.wake.teamId)
       if (settings.teamWakeUps) wakeArg = wakeLaunchArgs(agent.id, waiting)
     }
-    const base = (launch.args ? `${start.line} ${launch.args}` : start.line) + extra
+    // A scheduled automation's run: its first prompt on the command line
+    // (automationRunner.js), only on a fresh start.
+    const automationArgs =
+      opts.automationLaunch && !start.resumed ? automationLaunchArgs(agent.id, { ...opts.automationLaunch, shellId: res.shell && res.shell.id }) : ''
+    if (opts.automationLaunch && !automationArgs && !start.resumed) {
+      // Checked before the pane opened (the run then fails); never started without it.
+      window.shellApi.killPty(id)
+      return null
+    }
+    const base = (launch.args ? `${start.line} ${launch.args}` : start.line) + extra + automationArgs
     setTimeout(() => {
       const withWake = !!wakeArg && !!settings.teamWakeUps
       const full = base + (withWake ? wakeArg : '')
@@ -1814,6 +1826,7 @@ provide('panelCtx', {
   unsent,
   resolveUnsent,
   agentReportedDone,
+  automationTurnDone,
   copied: (what) => showToast(t('app.toast.copied', '{{what}} copied.', { what }), { timeout: 2000 }),
   toast: (text, opts) => showToast(text, opts),
   showImage: (img) => (imageView.value = img),
@@ -1946,6 +1959,9 @@ function buildCommands() {
   add(t('app.cmd.group.settings', 'Settings'), t('app.cmd.stats', 'Stats & Usage'), () => openSettingsAt('stats'), { hint: t('app.cmd.statsHint', 'Token analytics, daily usage, models, projects and conversations') })
 
   add(t('app.cmd.group.task', 'Task'), t('app.cmd.newTask', 'New task…'), openNewTask, { hint: t('app.cmd.newTaskHint', 'Give an agent a task, in its own copy of the project') })
+  add(t('app.cmd.group.task', 'Task'), t('app.cmd.automations', 'Automations'), () => openSettingsAt('automations'), {
+    hint: t('app.cmd.automationsHint', 'Run an agent task on a schedule while Tessel is open')
+  })
   const issues = t('app.cmd.group.issues', 'Issues')
   add(issues, t('app.cmd.github', 'GitHub issues and pull requests'), () => openGitHub(), { hint: t('app.cmd.githubHint', 'Browse, create, check and start a task from GitHub') })
   add(issues, t('app.cmd.linear', 'Linear issues'), openLinear, { hint: t('app.cmd.linearHint', 'Assigned issues, teams, states and new agent tasks') })
@@ -6386,6 +6402,35 @@ provide('resolveDecision', resolveDecision)
 // worker tools); src/renderer/src/orchestrator.js keeps their records
 // (team.workers), limits and queue. Here: how Tessel does each step.
 const workersSigs = {} // team id -> the workers list last published
+// A task's own copy of the project (git worktree), for a worker or an
+// automation's run. -> { worktree } | { error }
+async function makeTaskCopy(ws, title) {
+  const res = await window.shellApi.createWorktree(ws.cwd, title, worktreeSettings()).catch((err) => ({ ok: false, error: err && err.message }))
+  if (!res || !res.ok) return { error: (res && res.error) || t('app.common.unknownError', 'unknown error') }
+  if (res.setup && res.setup.ran && !res.setup.ok)
+    showToast(t('app.task.setupFailed', 'The copy is ready, but .tessel/setup.ps1 failed: {{error}}.', { error: res.setup.error || t('app.task.seeScript', 'see the script') }), { kind: 'error', timeout: 9000 })
+  return { worktree: { path: res.path, branch: res.branch, baseBranch: res.baseBranch || null, root: res.root || ws.cwd } }
+}
+// A new pane in a workspace (its largest pane is split), launched with the
+// user's settings for that agent (permissions, Yolo, account): a worker, or
+// an automation's run. The pane you are in stays the active one.
+async function openBackgroundAgentPane({ ws, agent, worktree, launchOptions, automationLaunch = null }) {
+  if (!workspaces.value.includes(ws)) return null
+  const keep = ws.activeId
+  const target = ws.tree ? largestLeaf(ws.tree) : null
+  const extra = { launchOptions, ...(automationLaunch ? { automationLaunch } : {}) }
+  const leaf =
+    target && target.id
+      ? await splitLeaf(target.id, target.dir, agent, selectedShell.value, worktree, extra)
+      : await createLeaf(selectedShell.value, agent, ws.cwd, worktree, wsLeafOpts(ws, extra))
+  if (!leaf) return null
+  if (!ws.tree) {
+    ws.tree = leaf
+    ws.activeId = leaf.id
+  } else if (keep && findLeaf(keep)) ws.activeId = keep
+  numberPanes()
+  return leaf
+}
 const orchestrator = createOrchestrator({
   settings,
   // One scheduler for every team (the global cap and queue).
@@ -6420,32 +6465,8 @@ const orchestrator = createOrchestrator({
     if (report.outcome === 'succeeded' && task.worktree && !task.mergedAt && task.column === 'done') updateTask(task.id, { column: 'review', doneAt: Date.now() })
     scheduleTaskSave()
   },
-  async createWorktree(ws, title) {
-    const res = await window.shellApi.createWorktree(ws.cwd, title, worktreeSettings()).catch((err) => ({ ok: false, error: err && err.message }))
-    if (!res || !res.ok) return { error: (res && res.error) || t('app.common.unknownError', 'unknown error') }
-    if (res.setup && res.setup.ran && !res.setup.ok)
-      showToast(t('app.task.setupFailed', 'The copy is ready, but .tessel/setup.ps1 failed: {{error}}.', { error: res.setup.error || t('app.task.seeScript', 'see the script') }), { kind: 'error', timeout: 9000 })
-    return { worktree: { path: res.path, branch: res.branch, baseBranch: res.baseBranch || null, root: res.root || ws.cwd } }
-  },
-  // A new pane in the coordinator's workspace (its largest pane is split),
-  // launched with the user's settings for that agent (permissions, Yolo,
-  // account). The pane you are in stays the active one.
-  async openWorkerPane({ ws, agent, worktree, launchOptions }) {
-    if (!workspaces.value.includes(ws)) return null
-    const keep = ws.activeId
-    const target = ws.tree ? largestLeaf(ws.tree) : null
-    const leaf =
-      target && target.id
-        ? await splitLeaf(target.id, target.dir, agent, selectedShell.value, worktree, { launchOptions })
-        : await createLeaf(selectedShell.value, agent, ws.cwd, worktree, wsLeafOpts(ws, { launchOptions }))
-    if (!leaf) return null
-    if (!ws.tree) {
-      ws.tree = leaf
-      ws.activeId = leaf.id
-    } else if (keep && findLeaf(keep)) ws.activeId = keep
-    numberPanes()
-    return leaf
-  },
+  createWorktree: makeTaskCopy,
+  openWorkerPane: openBackgroundAgentPane,
   async joinTeam(leaf, team) {
     leaf.team = team.id
     logMembership(leaf, team.id)
@@ -6491,6 +6512,124 @@ const orchestrator = createOrchestrator({
       .catch(() => {})
   }
 })
+
+// --- Scheduled automations -------------------------------------------------------
+// The scheduler runs in the main process (src/main/automations.js) while
+// Tessel is open; here each run opens its agent's pane like a worker's (a
+// new pane in the project, the user's settings for that agent, its first
+// prompt on the command line) with a card on the board (automationRunner.js).
+function automationWorkspace(a) {
+  const ws = wsById(a.wsId)
+  if (!ws) return null
+  if (a.remote) return ws.remote && ws.remote.hostId === a.remote.hostId && ws.remote.path === a.remote.path ? ws : null
+  return !ws.remote && ws.cwd && samePath(ws.cwd, a.projectCwd) ? ws : null
+}
+function automationAgent(id) {
+  if (!AUTOMATION_AGENTS.includes(id)) return null
+  return launchableAgents.value.some((a) => a.id === id && a.available !== false) ? agentById(id) : null
+}
+const automationRunner = createAutomationRunner({
+  findWorkspace: automationWorkspace,
+  agentFor: automationAgent,
+  shellFor: () => selectedShell.value,
+  createWorktree: makeTaskCopy,
+  // The run's pane: a new pane of the project, the one you are in stays active.
+  openPane: openBackgroundAgentPane,
+  createCard({ title, brief, wsId, paneId, worktree, automation }) {
+    const task = addTask({ title, wsId })
+    updateTask(task.id, { brief, column: 'doing', paneId, startedAt: Date.now(), doingSince: Date.now(), automation, ...(worktree ? { worktree } : {}) })
+    scheduleTaskSave()
+    const leaf = findLeaf(paneId)
+    recordActivity({ type: 'task', action: 'started', taskId: task.id, title, paneId, agent: agentInfo(leaf), wsId, branch: worktree ? worktree.branch : null })
+    return task.id
+  },
+  updateCard(id, patch) {
+    if (!boardTasks.some((x) => x.id === id)) return
+    updateTask(id, patch.column === 'review' || patch.column === 'done' ? { ...patch, doneAt: Date.now() } : patch)
+    scheduleTaskSave()
+  },
+  cardOf: (id) => boardTasks.find((x) => x.id === id) || null,
+  findLeaf,
+  // After the pane has shown its last answer (and outside its own callback).
+  closePane: (id) => setTimeout(() => findLeaf(id) && closeLeaf(id, { force: true }), 1500),
+  report: (result) => (window.shellApi.automations ? window.shellApi.automations.markResult(result).catch(() => null) : Promise.resolve(null)),
+  notify({ kind, title, body, paneId }) {
+    inboxNote(kind, title, body, paneId)
+    nativeNotify({ title, body, paneId })
+    if (document.hasFocus() && settings.inAppAlerts)
+      showToast(title, { kind: kind === 'attention' ? 'attention' : undefined, timeout: 8000, ...(paneId ? { action: { label: t('app.common.show', 'Show'), run: () => focusPane(paneId) } } : {}) })
+  },
+  automationById: (id) => automationsState.automations.find((a) => a.id === id) || null
+})
+// TerminalPane: an agent ended its turn.
+function automationTurnDone(paneId) {
+  return automationRunner.turnDone(paneId)
+}
+watch(
+  () => Object.keys(approvals).filter((id) => approvals[id] && automationRunner.runOfPane(id)),
+  (ids) => {
+    for (const id of ids) automationRunner.approval(id, true)
+  }
+)
+// What Settings > Automations shows and does (AutomationsPage.vue).
+function automationPermissions(agentId) {
+  const agent = agentById(agentId)
+  if (!agent) return null
+  const launch = effectiveAgent(agent, settings.agentPrefs, settings.agentPermissions)
+  const own = typeof (settings.agentPrefs[agentId] || {}).args === 'string' ? settings.agentPrefs[agentId].args.trim() : ''
+  return { yolo: launchIsYolo(agentId, launch), args: launch.args || '', ownArgs: !!own, mode: settings.agentPermissions }
+}
+provide('automations', {
+  projects: computed(() =>
+    workspaces.value
+      .filter((ws) => ws.cwd || ws.remote)
+      .map((ws) => ({
+        wsId: ws.id,
+        name: ws.name,
+        cwd: ws.remote ? null : ws.cwd,
+        remote: ws.remote ? { hostId: ws.remote.hostId, path: ws.remote.path } : null,
+        hostLabel: ws.remote ? remoteHostLabel(ws.remote.hostId) : ''
+      }))
+  ),
+  agents: computed(() =>
+    launchableAgents.value.filter((a) => AUTOMATION_AGENTS.includes(a.id)).map((a) => ({ id: a.id, name: a.name, accent: a.accent || null, available: a.available !== false }))
+  ),
+  permissions: automationPermissions,
+  paneOpen: (id) => !!(id && findLeaf(id)),
+  cardOpen: (id) => !!(id && boardTasks.some((x) => x.id === id)),
+  showPane(id) {
+    settingsOpen.value = false
+    focusPane(id)
+  },
+  showCard(id) {
+    const task = boardTasks.find((x) => x.id === id)
+    if (!task) return
+    settingsOpen.value = false
+    if (task.wsId) selectWorkspace(task.wsId)
+    showSideTab('tasks')
+  },
+  openAgentSettings: () => openSettingsAt('agents')
+})
+async function startAutomations() {
+  const api = window.shellApi.automations
+  if (!api) return
+  subscribeAutomations()
+  api.onDispatch((payload) => {
+    automationRunner.dispatch(payload).catch((err) => {
+      if (window.shellApi.log) window.shellApi.log('error', `automation run could not start: ${err && err.message}`)
+    })
+  })
+  try {
+    const ids = []
+    forEachWsLeaf((l) => l.kind !== 'editor' && ids.push(l.id))
+    automationRunner.resume(await api.reconcile(ids))
+    applyAutomations(await api.windowReady())
+  } catch (err) {
+    if (window.shellApi.log) window.shellApi.log('error', `automations: ${err && err.message}`)
+  }
+  // A run's pane closed before its agent finished: that run failed.
+  watch(workspaces, () => automationRunner.check(), { deep: true })
+}
 
 // A sidebar row's worker mark: { id, label, status } of its coordinator.
 function workerOfRow(leaf) {
@@ -7767,6 +7906,10 @@ onMounted(async () => {
   reconcileTaskPanes()
   if (!boardLocked) watch(boardTasks, scheduleTaskSave, { deep: true })
   teamsReady = true
+  // Scheduled automations start only now: panes, agents and the board are
+  // there to run them (and to follow the runs still going).
+  startStep = 'automations'
+  await startAutomations()
 
   window.addEventListener('keydown', onKey)
   window.addEventListener('pointerdown', onDocPointerDown, true)

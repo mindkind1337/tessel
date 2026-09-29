@@ -4,6 +4,7 @@ import os from 'os'
 import fs from 'fs'
 import { spawn, execFile } from 'child_process'
 import { loadTasks, loadBoard, saveTasks } from './taskBoardPersistence'
+import { createAutomations } from './automations'
 import { trimEvents, isEvent } from '../shared/activity'
 import { agentModelLive, watchModelFiles } from './agentModel'
 import { createCodexAccounts } from './codexAccounts'
@@ -969,6 +970,29 @@ app.whenReady().then(() => {
 app.whenReady().then(() => {
   powerMonitor.on('suspend', () => { void usageStats.suspend() })
   powerMonitor.on('resume', () => { void usageStats.resume() })
+  // Back from sleep: due automations are looked at now, not a minute later.
+  powerMonitor.on('resume', () => automations.tick())
+})
+
+// ---------------------------------------------------------------------------
+// Scheduled automations (src/main/automations.js): the scheduler runs here,
+// only while Tessel is open; the window starts each run's pane and reports.
+// ---------------------------------------------------------------------------
+const automations = createAutomations({ dir: app.getPath('userData'), send, log })
+app.whenReady().then(() => automations.start())
+app.on('will-quit', () => automations.stop())
+ipcMain.handle('automations:list', () => automations.snapshot())
+ipcMain.handle('automations:create', (_evt, input) => automations.create(input))
+ipcMain.handle('automations:update', (_evt, id, input) => automations.update(String(id || ''), input || {}))
+ipcMain.handle('automations:setEnabled', (_evt, id, enabled, confirmed) => automations.setEnabled(String(id || ''), !!enabled, confirmed === true))
+ipcMain.handle('automations:remove', (_evt, id) => automations.remove(String(id || '')))
+ipcMain.handle('automations:runNow', (_evt, id, confirmed) => automations.runNow(String(id || ''), confirmed === true))
+ipcMain.handle('automations:setSettings', (_evt, patch) => automations.setSettings(patch || {}))
+ipcMain.handle('automations:markResult', (_evt, result) => automations.markResult(result || {}))
+ipcMain.handle('automations:reconcile', (_evt, paneIds) => automations.reconcile(paneIds))
+ipcMain.handle('automations:windowReady', () => {
+  automations.setWindowReady(true)
+  return automations.snapshot()
 })
 let scanningAgentStates = false
 const agentStateTimer = setInterval(async () => {
@@ -2686,13 +2710,19 @@ function createWindow() {
   })
   // A new page (reload) or a crashed one has no unsaved editor files.
   mainWindow.webContents.on('did-start-navigation', (details) => {
-    if (details && details.isMainFrame && !details.isSameDocument) editorDirtyCount = 0
+    if (details && details.isMainFrame && !details.isSameDocument) {
+      editorDirtyCount = 0
+      // A reloading page starts no run until it says it is ready again.
+      automations.setWindowReady(false)
+    }
   })
   mainWindow.webContents.on('render-process-gone', () => {
     editorDirtyCount = 0
+    automations.setWindowReady(false)
   })
   mainWindow.on('closed', () => {
     mainWindow = null
+    automations.setWindowReady(false)
   })
 }
 

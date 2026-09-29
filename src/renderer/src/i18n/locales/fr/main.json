@@ -618,6 +618,24 @@
       "noUsableLogin": "Codex n'a pas enregistré de connexion utilisable. La connexion précédente du compte a été conservée.",
       "identityMismatch": "L'identité Codex connectée ne correspond pas à ce compte. La connexion précédente a été conservée ; utilisez Ajouter un compte pour une autre identité.",
       "loginUnavailable": "Cette connexion Codex n'est pas disponible. Reconnectez-vous avant de la sélectionner."
+    },
+    "automations": {
+      "unreadable": "Vos automatisations n'ont pas pu être lues : {{error}}. Rien ne s'exécute tant que Tessel ne les a pas lues.",
+      "nameRequired": "Donnez un nom à l'automatisation.",
+      "nameTooLong": "Le nom est trop long.",
+      "promptRequired": "Saisissez un prompt avant d'enregistrer.",
+      "promptTooLong": "Le prompt est trop long.",
+      "agentInvalid": "Choisissez un agent capable d'exécuter des automatisations.",
+      "projectRequired": "Choisissez un projet.",
+      "remoteWorktree": "Un projet distant s'exécute dans son dossier de projet (pas de copie séparée).",
+      "remotePromptTooLong": "Sur un projet distant, le prompt va sur la ligne de commande : au plus 3000 caractères.",
+      "scheduleInvalid": "Saisissez une planification valide avant d'enregistrer.",
+      "tooMany": "Vous avez le maximum d'automatisations que Tessel conserve ({{max}}).",
+      "notFound": "Automatisation introuvable.",
+      "needsConfirm": "Confirmez d'abord que cette automatisation peut s'exécuter sans surveillance.",
+      "busy": "Cette automatisation est déjà en cours.",
+      "notLoaded": "Vos automatisations n'ont pas pu être lues. Redémarrez Tessel.",
+      "invalid": "Cette automatisation n'est pas valide."
     }
   }
 }

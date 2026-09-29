@@ -238,7 +238,9 @@
       "help": "Raccourcis clavier et aide",
       "installUpdate": "Installer la mise à jour {{version}}",
       "checkUpdates": "Rechercher des mises à jour",
-      "openLogs": "Ouvrir le dossier des journaux"
+      "openLogs": "Ouvrir le dossier des journaux",
+      "automations": "Automatisations",
+      "automationsHint": "Exécuter une tâche d'agent selon une planification quand Tessel est ouvert"
     },
     "worktree": {
       "createFailed": "Impossible de créer une copie séparée.",
