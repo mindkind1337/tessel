@@ -17,6 +17,8 @@ import { join, dirname } from 'path'
 import { readJson } from './fileRead'
 import { writeFileAtomic as writeAtomic } from './safeJson'
 import { t } from './i18n'
+import { hookNode, hookCommand, pluginNodeSource } from './nodePath'
+import { removeKimiHooks } from './kimiHooks'
 export { installKimiHooks, KIMI_HOOK_EVENTS } from './kimiHooks'
 
 export const SERVER_NAME = 'tessel-team'
@@ -52,13 +54,16 @@ export function writeServerScript(sharedDir, source) {
   return file
 }
 
-const quote = (p) => `"${p}"`
 const isOurs = (h) => h && typeof h === 'object' && String(h.command || '').includes(OURS)
 
 // Claude Code hooks in ~/.claude/settings.json.
 // -> { changed: bool } or { error }
-export function installClaudeHooks(scriptPath, home = os.homedir(), { configDir = join(home, '.claude') } = {}) {
-  return installHooks(join(configDir, 'settings.json'), HOOK_EVENTS, `node ${quote(scriptPath)} --hook`)
+// Every hook command runs an absolute node (nodePath.js), found at install
+// time unless `node` is given; none found: nothing is installed.
+export function installClaudeHooks(scriptPath, home = os.homedir(), { configDir = join(home, '.claude'), node } = {}) {
+  const found = hookNode(scriptPath, node)
+  if (found.error) return found
+  return installHooks(join(configDir, 'settings.json'), HOOK_EVENTS, hookCommand(found.node, scriptPath, '--hook'))
 }
 
 // Codex hooks in ~/.codex/hooks.json (the same format; hooks are on by
@@ -66,8 +71,10 @@ export function installClaudeHooks(scriptPath, home = os.homedir(), { configDir 
 // conversation; Stop can continue once with unread team messages. Codex
 // requires the updated hook definition to be reviewed/trusted in /hooks.
 export const CODEX_HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PermissionRequest', 'PostToolUse', 'Stop', 'Interrupt', 'SessionEnd', 'SubagentStart', 'SubagentStop']
-export function installCodexHooks(scriptPath, home = os.homedir(), { configDir = join(home, '.codex') } = {}) {
-  const command = `node ${quote(scriptPath)} --hook --codex`
+export function installCodexHooks(scriptPath, home = os.homedir(), { configDir = join(home, '.codex'), node } = {}) {
+  const found = hookNode(scriptPath, node)
+  if (found.error) return found
+  const command = hookCommand(found.node, scriptPath, '--hook --codex')
   return installHooks(join(configDir, 'hooks.json'), CODEX_HOOK_EVENTS, command, { commandWindows: command })
 }
 
@@ -78,8 +85,10 @@ export function installCodexHooks(scriptPath, home = os.homedir(), { configDir =
 // status: a tool starting (BeforeTool), a permission asked (Notification), the
 // session's end.
 export const GEMINI_HOOK_EVENTS = ['SessionStart', 'BeforeAgent', 'BeforeTool', 'AfterTool', 'AfterAgent', 'Notification', 'SessionEnd']
-export function installGeminiHooks(scriptPath, home = os.homedir()) {
-  return installHooks(join(home, '.gemini', 'settings.json'), GEMINI_HOOK_EVENTS, `node ${quote(scriptPath)} --hook --gemini`)
+export function installGeminiHooks(scriptPath, home = os.homedir(), { node } = {}) {
+  const found = hookNode(scriptPath, node)
+  if (found.error) return found
+  return installHooks(join(home, '.gemini', 'settings.json'), GEMINI_HOOK_EVENTS, hookCommand(found.node, scriptPath, '--hook --gemini'))
 }
 
 // Copilot CLI hooks: Tessel's own file in ~/.copilot/hooks/ (its settings and
@@ -92,11 +101,13 @@ export function installGeminiHooks(scriptPath, home = os.homedir()) {
 // MIT, Copyright (c) 2026 Lovecast Inc.
 export const COPILOT_HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'Notification', 'ErrorOccurred', 'subagentStart', 'SubagentStop', 'Stop', 'SessionEnd']
 export const COPILOT_HOOKS_FILE = 'tessel-team.json'
-export function installCopilotHooks(scriptPath, home = os.homedir()) {
+export function installCopilotHooks(scriptPath, home = os.homedir(), { node } = {}) {
+  const found = hookNode(scriptPath, node)
+  if (found.error) return found
   const file = join(home, '.copilot', 'hooks', COPILOT_HOOKS_FILE)
   const hooks = {}
   for (const event of COPILOT_HOOK_EVENTS) {
-    const command = `node ${quote(scriptPath)} --hook --copilot --event=${event}`
+    const command = hookCommand(found.node, scriptPath, `--hook --copilot --event=${event}`)
     hooks[event] = [{ type: 'command', bash: command, powershell: command, timeoutSec: 30 }]
   }
   const text = JSON.stringify({ version: 1, hooks }, null, 2) + '\n'
@@ -119,18 +130,21 @@ export function installCopilotHooks(scriptPath, home = os.homedir()) {
 // anything typed into its terminal, and reads its messages with team_inbox.
 export const OPENCODE_PLUGIN_FILE = 'tessel-team.js'
 export const OPENCODE_MARKER = '// Tessel team tools: OpenCode plugin'
-export function opencodePlugin(scriptPath) {
+export function opencodePlugin(scriptPath, node) {
   return `${OPENCODE_MARKER}. Written by Tessel and replaced when it updates; delete it to remove.
 import { spawn, spawnSync } from 'node:child_process'
 
 const SCRIPT = ${JSON.stringify(scriptPath)}
+// Never "node" by name: run from the project folder, it could be a node.exe
+// planted there.
+const NODE = ${pluginNodeSource(node)}
 const IDLE_CHECK_MS = 15000
 
 export const TesselTeam = async ({ client, directory }) => {
   if (!process.env.TESSEL_PANE_ID) return {}
   const hook = (event, sessionId) => {
     try {
-      const r = spawnSync('node', [SCRIPT, '--hook', '--opencode'], {
+      const r = spawnSync(NODE, [SCRIPT, '--hook', '--opencode'], {
         input: JSON.stringify({ hook_event_name: event, session_id: sessionId || '', cwd: directory, stop_hook_active: false }),
         encoding: 'utf8',
         windowsHide: true,
@@ -155,7 +169,7 @@ export const TesselTeam = async ({ client, directory }) => {
     }
     statusRunning = true
     try {
-      const child = spawn('node', [SCRIPT, '--hook', '--opencode', '--status'], { stdio: ['pipe', 'ignore', 'ignore'], windowsHide: true })
+      const child = spawn(NODE, [SCRIPT, '--hook', '--opencode', '--status'], { stdio: ['pipe', 'ignore', 'ignore'], windowsHide: true })
       const timer = setTimeout(() => child.kill(), 20000)
       child.on('error', () => {})
       child.on('close', () => {
@@ -269,9 +283,11 @@ export const TesselTeam = async ({ client, directory }) => {
 }
 `
 }
-export function installOpencodePlugin(scriptPath, home = os.homedir()) {
+export function installOpencodePlugin(scriptPath, home = os.homedir(), { node } = {}) {
+  const found = hookNode(scriptPath, node)
+  if (found.error) return found
   const file = join(home, '.config', 'opencode', 'plugins', OPENCODE_PLUGIN_FILE)
-  const text = opencodePlugin(scriptPath)
+  const text = opencodePlugin(scriptPath, found.node)
   try {
     if (fs.existsSync(file)) {
       const old = fs.readFileSync(file, 'utf8')
@@ -327,6 +343,98 @@ function installHooks(file, events, command, extra = {}) {
   return { changed: true }
 }
 
+// Tessel's entries out of a hooks file ({ hooks: { Event: [{ hooks: [...] }] } }):
+// only its own handlers; the user's, and their groups, stay. The copy Tessel
+// kept of the file (<file>.before-tessel) goes once its hooks are gone.
+// -> { changed } or { error }
+function removeHooksFrom(file) {
+  const backup = `${file}.before-tessel`
+  const dropBackup = () => {
+    try {
+      fs.rmSync(backup, { force: true })
+    } catch {
+      // harmless, shown in Settings
+    }
+  }
+  if (!fs.existsSync(file)) {
+    dropBackup()
+    return { changed: false }
+  }
+  const settings = readJson(file)
+  if (!settings || typeof settings !== 'object' || Array.isArray(settings))
+    return { error: t('main.hooks.unreadable', '{{file}} could not be read, so Tessel did not change it.', { file }) }
+  const hooks = settings.hooks
+  let changed = false
+  if (hooks && typeof hooks === 'object' && !Array.isArray(hooks)) {
+    for (const event of Object.keys(hooks)) {
+      const list = hooks[event]
+      if (!Array.isArray(list)) continue
+      const kept = []
+      for (const g of list) {
+        if (!g || !Array.isArray(g.hooks)) {
+          kept.push(g)
+          continue
+        }
+        const others = g.hooks.filter((h) => !isOurs(h))
+        if (others.length === g.hooks.length) kept.push(g)
+        else if (others.length) kept.push({ ...g, hooks: others })
+      }
+      if (kept.length === list.length && kept.every((g, i) => g === list[i])) continue
+      changed = true
+      if (kept.length) hooks[event] = kept
+      else delete hooks[event]
+    }
+  }
+  if (changed) writeAtomic(file, JSON.stringify(settings, null, 2) + '\n')
+  dropBackup()
+  return { changed }
+}
+
+// Tessel's own file, when it is still Tessel's. -> { changed } or { error }
+function removeOwnFile(file, isTessels) {
+  try {
+    if (!fs.existsSync(file)) return { changed: false }
+    if (!isTessels(fs.readFileSync(file, 'utf8'))) return { changed: false }
+    fs.rmSync(file, { force: true })
+    return { changed: true }
+  } catch (err) {
+    return { error: `${file}: ${err.message}` }
+  }
+}
+
+// Settings > "Remove Tessel hooks": Tessel's team hooks out of every agent
+// (Claude Code, Codex, Gemini CLI, Copilot CLI, OpenCode, Kimi Code). Its MCP
+// servers stay (Settings > MCP removes them). Tessel adds its hooks back the
+// next time it sets up the team tools or starts one of these agents.
+// -> { changed: [file], errors: [message] }
+export async function removeTeamHooks(home = os.homedir(), { configDirs = {}, kimiHome = process.env.KIMI_CODE_HOME } = {}) {
+  const changed = []
+  const errors = []
+  const note = (file, r) => {
+    if (r.error) errors.push(r.error)
+    else if (r.changed) changed.push(file)
+  }
+  for (const file of [
+    join(configDirs.claude || join(home, '.claude'), 'settings.json'),
+    join(configDirs.codex || join(home, '.codex'), 'hooks.json'),
+    join(home, '.gemini', 'settings.json')
+  ]) {
+    try {
+      note(file, removeHooksFrom(file))
+    } catch (err) {
+      errors.push(`${file}: ${err.message}`)
+    }
+  }
+  const copilot = join(home, '.copilot', 'hooks', COPILOT_HOOKS_FILE)
+  note(copilot, removeOwnFile(copilot, (text) => text.includes(OURS)))
+  const opencode = join(home, '.config', 'opencode', 'plugins', OPENCODE_PLUGIN_FILE)
+  note(opencode, removeOwnFile(opencode, (text) => text.startsWith(OPENCODE_MARKER)))
+  const kimi = await removeKimiHooks(home, { kimiHome })
+  if (kimi.error) errors.push(kimi.error)
+  else if (kimi.changed) changed.push(kimi.file)
+  return { changed, errors }
+}
+
 // The lines of Tessel's own table in a Codex config.toml (any spelling of the
 // key, with its sub-tables), or null.
 const OUR_HEADER = /^\s*\[\s*mcp_servers\s*\.\s*(?:tessel-team|"tessel-team"|'tessel-team')\s*(?:\.[^\]]*)?\]\s*(?:#.*)?$/
@@ -343,10 +451,10 @@ export function splitCodexConfig(text) {
   return { kept: kept.join('\n'), ours: ours.join('\n') }
 }
 
-export function codexTable(scriptPath) {
+export function codexTable(scriptPath, node) {
   return (
     `[mcp_servers.${SERVER_NAME}]\n` +
-    `command = 'node'\n` +
+    `command = '${node}'\n` +
     `args = ['${scriptPath}']\n` +
     `env_vars = ["TESSEL_PANE_ID", "TESSEL_PROJECT_DIR", "TESSEL_TEAM_SECRET"]\n` +
     // Only the team tools run without asking (they read and send team
@@ -359,15 +467,17 @@ export function codexTable(scriptPath) {
 // checked with Codex itself (`validate(text)` -> { ok, error }) before it
 // replaces the old one.
 // -> { changed: bool } or { error }
-export async function installCodexServer(scriptPath, validate, home = os.homedir()) {
+export async function installCodexServer(scriptPath, validate, home = os.homedir(), { node } = {}) {
   const dir = join(home, '.codex')
   if (!fs.existsSync(dir)) return { changed: false } // Codex not set up here
+  const found = hookNode(scriptPath, node)
+  if (found.error) return found
   const file = join(dir, 'config.toml')
   const text = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : ''
   // TOML literal strings ('...') keep Windows backslashes as they are.
-  if (scriptPath.includes("'")) return { error: t('main.hooks.quoteInPath', 'The Tessel data folder has a quote in its path.') }
+  if (scriptPath.includes("'") || found.node.includes("'")) return { error: t('main.hooks.quoteInPath', 'The Tessel data folder has a quote in its path.') }
   const { kept, ours } = splitCodexConfig(text)
-  const want = codexTable(scriptPath)
+  const want = codexTable(scriptPath, found.node)
   if (ours.trim() === want.trim()) return { changed: false }
   const next = kept.replace(/\s*$/, '\n') + '\n' + want
   if (validate) {
@@ -387,8 +497,9 @@ export function claudeServerExists(home = os.homedir()) {
   return !!(cfg && cfg.mcpServers && cfg.mcpServers[SERVER_NAME])
 }
 
-export function claudeServerPresent(scriptPath, home = os.homedir()) {
+// ... with this script, run by this node (an older bare "node" is replaced).
+export function claudeServerPresent(scriptPath, home = os.homedir(), node) {
   const cfg = readJson(join(home, '.claude.json'))
   const s = cfg && cfg.mcpServers && cfg.mcpServers[SERVER_NAME]
-  return !!(s && Array.isArray(s.args) && s.args.includes(scriptPath))
+  return !!(s && Array.isArray(s.args) && s.args.includes(scriptPath) && (node === undefined || s.command === node))
 }

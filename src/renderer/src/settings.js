@@ -46,6 +46,10 @@ export const DEFAULT_SETTINGS = Object.freeze({
   // while you type there, over a draft, an approval or an unsent line). Off:
   // Tessel asks you first (a toast with a button).
   teamWakeUnconfirmed: false,
+  // Cursor's status hooks (~/.cursor/hooks.json, read by both its CLI and
+  // its editor): off unless turned on. Its prompt hook must answer for every
+  // prompt; a failing or left-behind one could block them all.
+  cursorStatusHooks: false,
   // Settings > Orchestration (Orca's coordinator and workers): ask before an
   // agent starts workers (on by default), how many workers one coordinator
   // runs at a time (the rest wait in a queue), how deep workers may nest

@@ -31,7 +31,7 @@ const path = require('path')
 const crypto = require('crypto')
 const { randomUUID } = crypto
 
-const VERSION = '1.9.1'
+const VERSION = '1.9.2'
 const MAX_TEXT = 6000
 
 // --- Finding my team and me ---------------------------------------------------
@@ -1088,8 +1088,11 @@ const STATUS_EVENTS = {
 // Agents whose hooks (agentStatusHooks.js) only report their status: the hook
 // answers nothing, or the neutral answer their CLI waits for.
 const STATUS_AGENTS = ['cursor', 'droid', 'grok', 'antigravity', 'openclaude', 'commandcode', 'amp', 'pi']
-// Cursor reads an empty answer to its prompt hook as a refusal.
-const STATUS_ANSWERS = { cursor: { beforeSubmitPrompt: '{"continue":true}' } }
+// Cursor's prompt hook answers {"continue":true} (it takes the AND of every
+// hook's answer: never a refusal of Tessel's). Antigravity's PreInvocation can
+// only add context (its result has no decision): an explicit empty result, as
+// its documentation shows, never a silence it could read otherwise.
+const STATUS_ANSWERS = { cursor: { beforeSubmitPrompt: '{"continue":true}' }, antigravity: { PreInvocation: '{}' } }
 // The events Tessel's own plugins and extensions (OpenCode, Amp, Pi) send.
 const STATUS_PLUGIN_EVENTS = new Set(['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'Stop', 'StopFailure', 'Interrupt', 'SessionEnd', 'Elicitation', 'ElicitationResult', 'SubagentStart', 'SubagentStop'])
 const str = (v) => (typeof v === 'string' ? v : '')
@@ -1240,7 +1243,10 @@ function reportAgentState(data, provider, continuing = false) {
   if (!/^[A-Za-z0-9_-][A-Za-z0-9._-]{0,99}$/.test(paneId) || !/^[A-Za-z0-9_-]{16,100}$/.test(launchToken)) return
   let sessionId = String(data.session_id || '')
   // An agent whose events carry no usable conversation id: one per launch.
-  if (!/^[A-Za-z0-9_-]{6,100}$/.test(sessionId) && provider !== 'claude' && provider !== 'codex') sessionId = `launch-${launchToken.slice(0, 16)}`
+  // Derived from the launch token, never a piece of it (the token binds events
+  // to this launch; the session id is written where other processes read it).
+  if (!/^[A-Za-z0-9_-]{6,100}$/.test(sessionId) && provider !== 'claude' && provider !== 'codex')
+    sessionId = `launch-${crypto.createHash('sha256').update(launchToken).digest('hex').slice(0, 16)}`
   if (!/^[A-Za-z0-9_-]{6,100}$/.test(sessionId) || !path.isAbsolute(root)) return
   const dir = path.join(root, 'events')
   let tmp
@@ -1292,6 +1298,10 @@ function reportAgentState(data, provider, continuing = false) {
 // id recorded at launch that the user left since.
 function reportSession(data, agent) {
   const paneId = process.env.TESSEL_PANE_ID || ''
+  // Another agent started inside the pane's agent (it inherits the pane's
+  // environment): its conversation is not the pane's, never recorded over it.
+  const paneAgent = process.env.TESSEL_AGENT_PROVIDER || ''
+  if (paneAgent && paneAgent !== agent) return
   const id = String((data && data.session_id) || '')
   if (!/^[A-Za-z0-9._-]{1,100}$/.test(paneId) || paneId.startsWith('.')) return
   if (!/^[A-Za-z0-9_-]{6,80}$/.test(id)) return

@@ -42,13 +42,40 @@ function sleepSync(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
 }
 
+// The file a write really replaces, and its mode. A symbolic link (a
+// dotfiles setup linking ~/.claude/settings.json elsewhere) is written through
+// to its target, never replaced by a plain file; a link whose target is gone
+// is refused (the error propagates, nothing is written).
+function writeTarget(file) {
+  let stat
+  try {
+    stat = fs.lstatSync(file)
+  } catch (err) {
+    if (err.code === 'ENOENT') return { file, mode: null }
+    throw err
+  }
+  if (!stat.isSymbolicLink()) return { file, mode: stat.mode }
+  const real = fs.realpathSync(file)
+  return { file: real, mode: fs.statSync(real).mode }
+}
+
 // Write `text` to `file` through a temp file + rename. On Windows the rename
 // fails for a moment while another process (a team tool reading the file, an
 // antivirus scan) has the file open: tried again for about half a second.
-// The temp file never stays behind.
-export function writeFileAtomic(file, text) {
+// The temp file never stays behind. The file keeps its mode (permissions,
+// where the system has them), and a symbolic link its target (see above).
+export function writeFileAtomic(path, text) {
+  const { file, mode } = writeTarget(path)
   const tmp = `${file}.${process.pid}.tmp`
-  fs.writeFileSync(tmp, text, 'utf8')
+  fs.writeFileSync(tmp, text, mode === null ? 'utf8' : { encoding: 'utf8', mode: mode & 0o7777 })
+  if (mode !== null) {
+    try {
+      // The mode given at creation is reduced by the umask: set it again.
+      fs.chmodSync(tmp, mode & 0o7777)
+    } catch {
+      // not supported here: the default mode
+    }
+  }
   for (let i = 0; ; i++) {
     try {
       fs.renameSync(tmp, file)

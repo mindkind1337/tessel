@@ -97,8 +97,11 @@ import {
   installCodexServer,
   claudeServerPresent,
   claudeServerExists,
+  removeTeamHooks,
   SERVER_NAME
 } from './teamInstall'
+import { findNode, noNodeError } from './nodePath'
+import { removeStatusHooks, STATUS_HOOK_AGENTS } from './agentStatusHooks'
 import teamServerSource from './teamMcp/server.cjs?raw'
 import { ensureInbox, takeInbox, removeInbox } from './leadInbox'
 import { t, setLanguage as setMainLanguage, currentLocale, onLanguageChange } from './i18n'
@@ -1197,10 +1200,13 @@ ipcMain.on('agents:screen', (_evt, q) => {
   if (!q || typeof q !== 'object') return
   void agentStateStore.observe(q.paneId, q.launchToken, { event: q.event, reset: q.reset }).catch(() => {})
 })
-function prepareStatus(provider, env = process.env) {
-  return prepareAgentStateHooks({ provider, env, source: teamServerSource, sharedDir: join(app.getPath('appData'), 'tessel-team') })
+// optIn: the agents whose status hooks the user turned on in Settings (only
+// Cursor's are off by default), from the renderer: { cursor: true }.
+const hookOptIn = (value) => ({ cursor: !!(value && typeof value === 'object' && value.cursor === true) })
+function prepareStatus(provider, env = process.env, optIn = {}) {
+  return prepareAgentStateHooks({ provider, env, optIn: hookOptIn(optIn), source: teamServerSource, sharedDir: join(app.getPath('appData'), 'tessel-team') })
 }
-ipcMain.handle('agents:prepareStatus', (_evt, provider) => prepareStatus(provider))
+ipcMain.handle('agents:prepareStatus', (_evt, provider, optIn) => prepareStatus(provider, process.env, optIn))
 ipcMain.handle('sessions:reported', () => {
   const dir = sessionsDir()
   const out = {}
@@ -1627,17 +1633,47 @@ function validateCodexConfig(text) {
 ipcMain.handle(
   'team:hooksStatus',
   safe(async () => {
-    const codex = await accounts.sessionEnv('codex')
-    const claude = await accounts.sessionEnv('claude')
     return hooksStatus({
       sessionsDir: sessionsDir(),
       scriptPath: join(app.getPath('appData'), 'tessel-team', 'tessel-team-mcp.cjs'),
-      configDirs: {
-        codex: codex.env?.CODEX_HOME || process.env.CODEX_HOME || join(os.homedir(), '.codex'),
-        claude: claude.env?.CLAUDE_CONFIG_DIR || process.env.CLAUDE_CONFIG_DIR || join(os.homedir(), '.claude')
-      },
-      states: agentStateStore.snapshot()
+      configDirs: await hookConfigDirs(),
+      states: agentStateStore.snapshot(),
+      env: freshEnv()
     })
+  })
+)
+// Where Claude Code's and Codex's hooks are (their account's folder, if any).
+async function hookConfigDirs() {
+  const codex = await accounts.sessionEnv('codex')
+  const claude = await accounts.sessionEnv('claude')
+  return {
+    codex: codex.env?.CODEX_HOME || process.env.CODEX_HOME || join(os.homedir(), '.codex'),
+    claude: claude.env?.CLAUDE_CONFIG_DIR || process.env.CLAUDE_CONFIG_DIR || join(os.homedir(), '.claude')
+  }
+}
+
+// Settings > "Remove Tessel hooks": every hook, plugin and extension Tessel
+// added to the agents (status and team messages), and the copies it kept of
+// their files (<file>.before-tessel). Its MCP servers stay. They come back
+// the next time Tessel sets up the team tools or starts one of these agents.
+// -> { ok, changed: [file], errors: [message] }
+ipcMain.handle(
+  'team:removeHooks',
+  safe(async () => {
+    const changed = []
+    const errors = []
+    const env = freshEnv()
+    for (const agent of STATUS_HOOK_AGENTS) {
+      const r = removeStatusHooks(agent, { env })
+      if (r.error) errors.push(r.error)
+      else if (r.changed) changed.push(agent)
+    }
+    const team = await removeTeamHooks(os.homedir(), { configDirs: await hookConfigDirs() })
+    changed.push(...team.changed)
+    errors.push(...team.errors)
+    if (changed.length) log.info('team', `Tessel hooks removed: ${changed.join('; ')}`)
+    if (errors.length) log.error('team', `Tessel hooks removal: ${errors.join('; ')}`)
+    return { ok: errors.length === 0, changed, errors }
   })
 )
 
@@ -1651,7 +1687,21 @@ ipcMain.handle(
     const script = writeServerScript(join(app.getPath('appData'), 'tessel-team'), teamServerSource)
     const changed = []
     const errors = []
-    if (!claudeServerPresent(script)) {
+    // Hooks and MCP servers run node by its absolute path, never by name (a
+    // node.exe in the project folder would run instead): none found, nothing
+    // is set up.
+    const node = findNode({ env: freshEnv() })
+    if (!node) {
+      log.error('team', 'team tools: no absolute node on PATH, nothing set up')
+      let installed = teamServerSource
+      try {
+        installed = fs.readFileSync(script, 'utf8')
+      } catch {
+        // not readable: ours
+      }
+      return { ok: false, script, changed, errors: [noNodeError()], version: (/const VERSION = '([^']+)'/.exec(installed) || [])[1] || null }
+    }
+    if (!claudeServerPresent(script, undefined, node)) {
       // Registered with another path (an older version, the other build):
       // replaced, since Claude Code refuses to add a name that exists.
       // The old entry is put back if the new one cannot be added, so Claude
@@ -1669,7 +1719,7 @@ ipcMain.handle(
         agent: 'claude',
         name: SERVER_NAME,
         transport: 'stdio',
-        commandLine: `node "${script}"`,
+        commandLine: `"${node}" "${script}"`,
         scope: 'user'
       })
       if (res.ok) changed.push('Claude Code: MCP server tessel-team')
@@ -1688,14 +1738,14 @@ ipcMain.handle(
       }
     }
     try {
-      const r = installClaudeHooks(script)
+      const r = installClaudeHooks(script, undefined, { node })
       if (r.error) errors.push(t('main.hooks.claudeFailed', 'Claude Code hooks: {{error}}', { error: r.error }))
       else if (r.changed) changed.push('Claude Code: hooks for team messages')
     } catch (err) {
       errors.push(t('main.hooks.claudeFailed', 'Claude Code hooks: {{error}}', { error: err.message }))
     }
     try {
-      const r = await installCodexServer(script, validateCodexConfig)
+      const r = await installCodexServer(script, validateCodexConfig, undefined, { node })
       if (r.error) errors.push(`Codex: ${r.error}`)
       else if (r.changed) changed.push('Codex: MCP server tessel-team')
     } catch (err) {
@@ -1706,7 +1756,7 @@ ipcMain.handle(
     try {
       const codex = (await getAgents()).find((a) => a.id === 'codex')
       if (codex && codex.available) {
-        const r = installCodexHooks(script)
+        const r = installCodexHooks(script, undefined, { node })
         if (r.error) errors.push(t('main.hooks.codexFailed', 'Codex hooks: {{error}}', { error: r.error }))
         else if (r.changed) changed.push('Codex: hooks (current conversation)')
       }
@@ -1718,7 +1768,7 @@ ipcMain.handle(
     try {
       const gemini = (await getAgents()).find((a) => a.id === 'gemini')
       if (gemini && gemini.available) {
-        const r = installGeminiHooks(script)
+        const r = installGeminiHooks(script, undefined, { node })
         if (r.error) errors.push(t('main.hooks.geminiFailed', 'Gemini CLI hooks: {{error}}', { error: r.error }))
         else if (r.changed) changed.push('Gemini CLI: hooks (team messages, current conversation)')
       }
@@ -1729,7 +1779,7 @@ ipcMain.handle(
     try {
       const copilot = (await getAgents()).find((a) => a.id === 'copilot')
       if (copilot && copilot.available) {
-        const r = installCopilotHooks(script)
+        const r = installCopilotHooks(script, undefined, { node })
         if (r.error) errors.push(t('main.hooks.copilotFailed', 'Copilot CLI hooks: {{error}}', { error: r.error }))
         else if (r.changed) changed.push('Copilot CLI: hooks (team messages, current conversation)')
       }
@@ -1741,7 +1791,7 @@ ipcMain.handle(
     try {
       const opencode = (await getAgents()).find((a) => a.id === 'opencode')
       if (opencode && opencode.available) {
-        const r = installOpencodePlugin(script)
+        const r = installOpencodePlugin(script, undefined, { node })
         if (r.error) errors.push(t('main.hooks.opencodeFailed', 'OpenCode plugin: {{error}}', { error: r.error }))
         else if (r.changed) changed.push('OpenCode: plugin (team messages, current conversation)')
       }
@@ -1751,7 +1801,7 @@ ipcMain.handle(
     try {
       const kimi = (await getAgents()).find((a) => a.id === 'kimi')
       if (kimi && kimi.available) {
-        const r = await installKimiHooks(script)
+        const r = await installKimiHooks(script, undefined, { node })
         if (r.error) errors.push(t('main.hooks.kimiFailed', 'Kimi Code hooks: {{error}}', { error: r.error }))
         else if (r.changed) changed.push('Kimi Code: hooks (team messages, current conversation)')
       }
@@ -1763,7 +1813,7 @@ ipcMain.handle(
     for (const agent of JSON_AGENTS) {
       const preset = (await getAgents()).find((a) => a.id === agent)
       if (!preset || !preset.available) continue
-      const r = setJsonAgentServer(agent, SERVER_NAME, teamToolsEntry(agent, script))
+      const r = setJsonAgentServer(agent, SERVER_NAME, teamToolsEntry(agent, script, node))
       if (!r.ok) errors.push(`${preset.name}: ${r.error}`)
       else if (r.changed) changed.push(`${preset.name}: MCP server tessel-team`)
     }
@@ -2138,7 +2188,7 @@ ipcMain.handle(
     }
     let hooks
     try {
-      hooks = hooksStatus({ sessionsDir: sessionsDir(), scriptPath })
+      hooks = hooksStatus({ sessionsDir: sessionsDir(), scriptPath, env: freshEnv() })
     } catch (err) {
       hooks = { error: err.message }
     }
@@ -2602,7 +2652,7 @@ ipcMain.handle('pty:create', async (_evt, opts = {}) => {
   for (const key of Object.keys(env)) if (/^TESSEL_AGENT_|^TESSEL_TEAM_SECRET$/i.test(key)) delete env[key]
   let agentStatusWarning = null
   if (agentProvider) {
-    const setup = await prepareStatus(agentProvider, env)
+    const setup = await prepareStatus(agentProvider, env, opts.hookOptIn)
     if (!setup.ok) agentStatusWarning = setup.error
   }
   // ssh's questions go to Tessel's askpass helper (sshAskpass.js). 'fallback'

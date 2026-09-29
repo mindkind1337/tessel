@@ -536,10 +536,16 @@ function jobActive(id) {
 // Settings > Orchestration: which agents can work as a team (Tessel's team
 // tools and hooks set up in them), and how to ask for it.
 const coverage = ref(null) // [{ id, name, state: 'ready'|'missing'|'approval' }] | { error }
+// Agent hooks: the node they run ({ found, path, error }), and the copies
+// Tessel kept of the agents' files before its first change.
+const hookNode = ref(null)
+const hookBackups = ref([])
 async function loadCoverage() {
   if (!window.shellApi.teamHooksStatus) return
   try {
     const res = await window.shellApi.teamHooksStatus()
+    hookNode.value = res && res.node ? res.node : null
+    hookBackups.value = res && Array.isArray(res.backups) ? res.backups : []
     const rows = (res && Array.isArray(res.agents) ? res.agents : [])
       // Status-only hooks bring no team messages (agentStatusHooks.js).
       .filter((r) => !r.statusOnly && props.agents.some((a) => a.id === r.id && a.available))
@@ -557,6 +563,35 @@ async function loadCoverage() {
   } catch (err) {
     coverage.value = { error: (err && err.message) || t('settings.orchestration.unknownError', 'unknown error') }
   }
+}
+// Settings > Orchestration > Agent hooks: remove every hook Tessel added.
+const removingHooks = ref(false)
+const removeHooksResult = ref('')
+async function removeTesselHooks() {
+  if (!window.shellApi.teamRemoveHooks || removingHooks.value) return
+  removingHooks.value = true
+  removeHooksResult.value = ''
+  try {
+    const res = await window.shellApi.teamRemoveHooks()
+    const errors = res && Array.isArray(res.errors) ? res.errors : []
+    removeHooksResult.value = errors.length
+      ? t('settings.orchestration.removeHooksFailed', 'Some hooks could not be removed: {{errors}}', { errors: errors.join(' ') })
+      : t('settings.orchestration.removeHooksDone', 'Tessel hooks removed.')
+  } catch (err) {
+    removeHooksResult.value = t('settings.orchestration.removeHooksFailed', 'Some hooks could not be removed: {{errors}}', { errors: (err && err.message) || '' })
+  } finally {
+    removingHooks.value = false
+    loadCoverage()
+  }
+}
+const hookBackupsLine = computed(() =>
+  t('settings.orchestration.hooksBackups', 'Copies kept: {{files}}', { files: hookBackups.value.join(', ') })
+)
+// Cursor's status hooks turned off: Tessel's entries leave its hooks.json now.
+function setCursorHooks(e) {
+  settings.cursorStatusHooks = !!e.target.checked
+  if (!settings.cursorStatusHooks && window.shellApi.prepareAgentStatus)
+    window.shellApi.prepareAgentStatus('cursor', { cursor: false }).catch(() => {})
 }
 const coverageSummary = computed(() => {
   const c = coverage.value
@@ -1618,6 +1653,33 @@ function previewSound() {
                 </div>
                 <input v-model="settings.teamWakeUnconfirmed" type="checkbox" class="set-switch" data-setting="teamWakeUnconfirmed" :disabled="!settings.teamWakeUps" />
               </label>
+            </div>
+          </div>
+          <!-- The hooks Tessel adds to the agents: Cursor's opt-in, and
+               removing them all (before uninstalling Tessel). -->
+          <div class="set-group" data-agent-hooks="">
+            <h3 class="set-group-title">{{ t('settings.orchestration.hooksTitle', 'Agent hooks') }}</h3>
+            <div class="set-card">
+              <p class="set-hint set-card-text">
+                {{ t('settings.orchestration.hooksIntro', "Tessel adds small hooks to your agents' settings so it can show what each agent is doing and hand it team messages. Only Tessel's own entries are added; your other hooks and settings stay as they are.") }}
+              </p>
+              <p v-if="hookNode && !hookNode.found" class="set-hint set-warn set-card-text" data-hooks-no-node="">{{ hookNode.error }}</p>
+              <label class="set-row">
+                <div class="set-label">
+                  {{ t('settings.orchestration.cursorHooks', 'Cursor status hooks') }}
+                  <span class="set-hint">{{ t('settings.orchestration.cursorHooksHint', "Shows whether Cursor is working or waiting for you. Its hooks file (~/.cursor/hooks.json) is read by both the Cursor CLI and the Cursor editor, and its prompt hook must answer before every prompt: if it failed, or stayed behind after Tessel is gone, Cursor could refuse your prompts. Off by default; turning it off removes Tessel's entries.") }}</span>
+                </div>
+                <input :checked="settings.cursorStatusHooks" type="checkbox" class="set-switch" data-setting="cursorStatusHooks" @change="setCursorHooks" />
+              </label>
+              <div class="set-row">
+                <div class="set-label">
+                  {{ t('settings.orchestration.removeHooks', 'Remove Tessel hooks') }}
+                  <span class="set-hint">{{ t('settings.orchestration.removeHooksHint', "Removes every hook, plugin and extension Tessel added to your agents, and the copies it kept of their files before its first change (files ending in .before-tessel). Do this before uninstalling Tessel: the uninstaller does not touch your agents' settings. Tessel adds them back the next time it starts one of these agents.") }}</span>
+                  <span v-if="hookBackups.length" class="set-hint" data-hooks-backups="" v-text="hookBackupsLine"></span>
+                  <span v-if="removeHooksResult" class="set-hint" data-hooks-removed="">{{ removeHooksResult }}</span>
+                </div>
+                <button class="exit-btn" type="button" data-remove-hooks="" :disabled="removingHooks" @click="removeTesselHooks">{{ t('settings.orchestration.removeHooksButton', 'Remove') }}</button>
+              </div>
             </div>
           </div>
           <!-- Coordinator and workers (Orca's orchestration): the setup card,

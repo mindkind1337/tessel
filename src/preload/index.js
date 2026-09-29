@@ -86,7 +86,7 @@ const api = {
   qwenSessionExists: (id) => ipcRenderer.invoke('sessions:qwenExists', id),
   agentResumeTarget: (query) => ipcRenderer.invoke('sessions:resumeTarget', query),
   reportedSessions: () => ipcRenderer.invoke('sessions:reported'),
-  prepareAgentStatus: (provider) => ipcRenderer.invoke('agents:prepareStatus', provider),
+  prepareAgentStatus: (provider, optIn) => ipcRenderer.invoke('agents:prepareStatus', provider, optIn),
   agentStates: () => ipcRenderer.invoke('agents:states'),
   reportAgentScreen: (observation) => ipcRenderer.send('agents:screen', observation),
   onAgentState: (cb) => {
@@ -262,6 +262,7 @@ const api = {
   installTeamTools: () => ipcRenderer.invoke('team:install'),
   // How each agent gets team messages: its hooks, approval, last signal.
   teamHooksStatus: () => ipcRenderer.invoke('team:hooksStatus'),
+  teamRemoveHooks: () => ipcRenderer.invoke('team:removeHooks'),
   // Whether the installed Codex can run without its shared daemon.
   codexNoDaemon: () => ipcRenderer.invoke('agents:codex-no-daemon'),
   // { shells: { paneId: shellPid } } -> { ok, agents: { paneId: agentId | null } }

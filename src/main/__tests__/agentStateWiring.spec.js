@@ -114,7 +114,8 @@ it('uses account-scoped environment after all overlays for hook setup', async ()
   })
   expect(app.setup).toHaveBeenCalledWith(
     'codex',
-    expect.objectContaining({ CODEX_HOME: join(dir, 'managed') })
+    expect.objectContaining({ CODEX_HOME: join(dir, 'managed') }),
+    undefined // no Settings opt-in sent (Cursor's status hooks stay off)
   )
   expect(app.setup.mock.calls[0][1]).not.toHaveProperty('codex_home')
   // Its rollout is read in that home (codexTurnEnd.js), also after a reattach.
