@@ -70,7 +70,10 @@ export function createChatJournal({ dir, paneId, rotateBytes = ROTATE_BYTES, now
 
   function append(seq, event) {
     if (!event || typeof event !== 'object' || SKIPPED.has(event.type)) return false
-    const stored = CLIPPED.has(event.type) ? clipDeep(event) : event
+    let stored = CLIPPED.has(event.type) ? clipDeep(event) : event
+    // An approval's preview is already bounded, and its hidden count is
+    // counted from it: kept whole.
+    if (event.type === 'approval' && typeof event.detail === 'string') stored = { ...stored, detail: event.detail }
     const line = `${JSON.stringify({ seq, at: now(), event: stored })}\n`
     try {
       ensure()
@@ -145,5 +148,17 @@ export function createChatJournal({ dir, paneId, rotateBytes = ROTATE_BYTES, now
     }
   }
 
-  return { append, read, lastSeq, readMeta, writeMeta, folder }
+  // The pane is closed for good: its whole folder goes.
+  function remove() {
+    try {
+      fs.rmSync(folder, { recursive: true, force: true })
+      size = null
+      return true
+    } catch (err) {
+      warn('remove', err)
+      return false
+    }
+  }
+
+  return { append, read, lastSeq, readMeta, writeMeta, remove, folder }
 }

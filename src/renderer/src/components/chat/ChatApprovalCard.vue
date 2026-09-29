@@ -1,13 +1,18 @@
 <script setup>
 // The agent asks before running a tool: its name, why, the command or input
 // (plain text), and Allow / Allow for this session / Deny (with an optional
-// reason). Y / A / N answer while the card has the focus. A decided or
+// reason). Y / A / N answer while the card has the focus (not in its first
+// moments, so typing meant for the composer never answers it). A decided or
 // cancelled card stays in the chat, disabled, with what was decided.
+// An input too long to show says how much is hidden: Allow waits until the
+// whole input was shown (the whole input is what runs), and the keys do
+// nothing on that card. "Allow for this session" lists what it adds.
 // After Orca's NativeChatApprovalCard.tsx (MIT, Copyright (c) 2026
 // Lovecast Inc.), written for Vue.
 import { computed, onMounted, ref, watch } from 'vue'
 import { ShieldQuestion, Check, X } from 'lucide-vue-next'
-import { approvalDetail } from '../../chat/chatModel'
+import { approvalDetail, parseInput, KEY_GRACE_MS } from '../../chat/chatModel'
+import { approvalText } from '../../../../shared/chatApproval'
 import { t } from '../../i18n'
 
 const props = defineProps({
@@ -15,7 +20,10 @@ const props = defineProps({
   // Take the focus when it appears (the pane is active, nothing typed).
   autoFocus: { type: Boolean, default: false },
   // ({ requestId, decision, message }) -> Promise<boolean>: false = not sent.
-  answer: { type: Function, required: true }
+  answer: { type: Function, required: true },
+  // ({ requestId }) -> Promise<input | null>: the whole input of a request
+  // whose card shows only its start.
+  fetchInput: { type: Function, default: null }
 })
 
 const cardEl = ref(null)
@@ -23,10 +31,30 @@ const reason = ref('')
 const showReason = ref(false)
 // Answer sent, waiting for the main process to confirm it.
 const sending = ref(false)
+// The whole input's text, once fetched ("Show all").
+const fullText = ref(null)
+const loadingFull = ref(false)
+const fullFailed = ref(false)
+let shownAt = Date.now()
 
 const pending = computed(() => props.row.status === 'pending')
 const disabled = computed(() => !pending.value || sending.value)
-const detail = computed(() => approvalDetail(props.row.toolName, props.row.input))
+const hidden = computed(() => (Number.isSafeInteger(props.row.hidden) && props.row.hidden > 0 ? props.row.hidden : 0))
+// Characters of the input not seen yet: Allow waits for them.
+const unseen = computed(() => hidden.value > 0 && fullText.value == null)
+const allowDisabled = computed(() => disabled.value || unseen.value)
+const detail = computed(() => {
+  if (fullText.value != null) return fullText.value
+  if (typeof props.row.detail === 'string') return props.row.detail
+  return approvalDetail(props.row.toolName, props.row.input)
+})
+const hiddenText = computed(() => t('chat.approval.hidden', '{{count}} characters hidden', { count: hidden.value }))
+const rules = computed(() => (Array.isArray(props.row.sessionRules) ? props.row.sessionRules : []))
+function ruleText(r) {
+  if (r.kind === 'mode') return t('chat.approval.ruleMode', 'Switch this session to the {{mode}} mode', { mode: r.mode })
+  if (r.kind === 'directories') return t('chat.approval.ruleDirs', 'Give access to {{dirs}}', { dirs: r.directories.join(', ') })
+  return r.content ? `${r.tool}(${r.content})` : r.tool
+}
 const title = computed(() => t('chat.approval.title', 'Allow {{tool}}?', { tool: props.row.displayName || props.row.toolName }))
 const decidedText = computed(() => {
   switch (props.row.status) {
@@ -50,8 +78,24 @@ watch(
   }
 )
 
+async function showAll() {
+  if (!props.fetchInput || loadingFull.value || !pending.value) return
+  loadingFull.value = true
+  fullFailed.value = false
+  let input = null
+  try {
+    input = await props.fetchInput({ requestId: props.row.requestId })
+  } catch {
+    input = null
+  }
+  loadingFull.value = false
+  if (input == null) fullFailed.value = true
+  else fullText.value = approvalText(parseInput(input))
+}
+
 async function decide(decision) {
   if (disabled.value) return
+  if (decision !== 'deny' && unseen.value) return
   sending.value = true
   const message = decision === 'deny' ? reason.value.trim() : ''
   let ok = false
@@ -66,6 +110,8 @@ async function decide(decision) {
 
 function onKeydown(e) {
   if (disabled.value || e.ctrlKey || e.metaKey || e.altKey) return
+  // No keys on a card whose input is not all shown, nor right after it appeared.
+  if (hidden.value > 0 || Date.now() - shownAt < KEY_GRACE_MS) return
   // Typing a reason is not an answer.
   if (e.target && e.target.closest && e.target.closest('input, textarea')) return
   const k = e.key.toLowerCase()
@@ -76,8 +122,15 @@ function onKeydown(e) {
   decide(decision)
 }
 
+// Something is being typed in (the composer): the focus stays there.
+function typingElsewhere() {
+  const el = typeof document !== 'undefined' ? document.activeElement : null
+  return !!(el && el.matches && el.matches('textarea, input, [contenteditable=""], [contenteditable="true"]'))
+}
+
 onMounted(() => {
-  if (props.autoFocus && pending.value && cardEl.value) cardEl.value.focus({ preventScroll: true })
+  shownAt = Date.now()
+  if (props.autoFocus && pending.value && cardEl.value && !typingElsewhere()) cardEl.value.focus({ preventScroll: true })
 })
 
 defineExpose({ focus: () => cardEl.value && cardEl.value.focus() })
@@ -105,15 +158,22 @@ defineExpose({ focus: () => cardEl.value && cardEl.value.focus() })
     </div>
     <p v-if="row.description" class="chat-approval-desc">{{ row.description }}</p>
     <pre v-if="detail" class="chat-approval-detail">{{ detail }}</pre>
+    <div v-if="hidden > 0 && fullText == null" class="chat-approval-hidden" data-test="chat-approval-hidden">
+      <span>{{ hiddenText }}</span>
+      <button v-if="pending && fetchInput" type="button" class="chat-link" data-test="chat-approval-show-all" :disabled="loadingFull" @click="showAll">
+        {{ t('chat.approval.showAll', 'Show all') }}
+      </button>
+      <span v-if="pending">{{ fullFailed ? t('chat.approval.fullFailed', 'The whole input could not be read.') : t('chat.approval.seeAllFirst', 'Allow waits until you have seen it all.') }}</span>
+    </div>
     <div v-if="pending" class="chat-approval-actions">
-      <button type="button" class="chat-btn primary" data-test="chat-approve-allow" :disabled="disabled" :title="t('chat.approval.allowHint', 'Allow once (Y)')" @click="decide('allow')">
+      <button type="button" class="chat-btn primary" data-test="chat-approve-allow" :disabled="allowDisabled" :title="t('chat.approval.allowHint', 'Allow once (Y)')" @click="decide('allow')">
         {{ t('chat.approval.allow', 'Allow') }}
       </button>
       <button
         type="button"
         class="chat-btn"
         data-test="chat-approve-session"
-        :disabled="disabled"
+        :disabled="allowDisabled"
         :title="t('chat.approval.allowSessionHint', 'Allow this for the rest of the session (A)')"
         @click="decide('allowSession')"
       >
@@ -135,6 +195,15 @@ defineExpose({ focus: () => cardEl.value && cardEl.value.focus() })
         :aria-label="t('chat.approval.reason', 'Reason')"
         @keydown.enter.prevent="decide('deny')"
       />
+    </div>
+    <div v-if="pending" class="chat-approval-rules" data-test="chat-approval-rules">
+      <template v-if="rules.length">
+        <span>{{ t('chat.approval.rulesTitle', 'Allow for this session also allows:') }}</span>
+        <ul>
+          <li v-for="(r, i) in rules" :key="i">{{ ruleText(r) }}</li>
+        </ul>
+      </template>
+      <span v-else>{{ t('chat.approval.noRules', 'Allow for this session adds no rule here: the same as Allow.') }}</span>
     </div>
   </div>
 </template>
@@ -223,6 +292,32 @@ defineExpose({ focus: () => cardEl.value && cardEl.value.focus() })
   font-size: 11.5px;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.chat-approval-hidden {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 5px;
+  color: var(--warn);
+  font-size: 11.5px;
+}
+
+.chat-approval-rules {
+  margin-top: 7px;
+  color: var(--text-dim);
+  font-size: 11.5px;
+}
+
+.chat-approval-rules ul {
+  margin: 3px 0 0;
+  padding-left: 18px;
+}
+
+.chat-approval-rules li {
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  word-break: break-all;
 }
 
 .chat-approval-actions {

@@ -11,8 +11,11 @@ import { randomUUID } from 'crypto'
 import { listProcesses, treeOf, killPids } from '../processTree'
 import { createFrameState, normalizeFrame, permissionFromRequest, sessionPermissions, initializeAuthProblem, isAuthErrorText } from './claudeFrames'
 
-export const PERMISSION_MODES = ['default', 'bypassPermissions', 'acceptEdits', 'plan']
-export const DEFAULT_TIMEOUTS = { start: 30000, control: 30000, close: 3000, exitFlush: 1000 }
+// The CLI's --permission-mode values (auto and dontAsk too: a user's own
+// arguments may ask for them).
+export const PERMISSION_MODES = ['default', 'bypassPermissions', 'acceptEdits', 'plan', 'auto', 'dontAsk']
+// quitKill: how long a kill on quit waits for the exit before giving up.
+export const DEFAULT_TIMEOUTS = { start: 30000, control: 30000, close: 3000, exitFlush: 1000, quitKill: 1500 }
 const STDERR_TAIL = 8 * 1024
 const MAX_LINE = 64 * 1024 * 1024 // a line longer than this is dropped (runaway output)
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -429,31 +432,43 @@ export function createClaudeChat(opts) {
     return simpleControl({ subtype: 'set_permission_mode', mode })
   }
 
+  async function killNow() {
+    try {
+      await killTree(child)
+    } catch (err) {
+      logAt('error', `tree kill failed: ${err && err.message}`)
+      try {
+        child.kill()
+      } catch {
+        /* gone */
+      }
+    }
+  }
+
   // End stdin (the CLI exits by itself), else kill the tree after timeouts.close.
-  async function close() {
+  // { kill: true } (Tessel quits): the tree is killed at once, and the wait
+  // for its exit is bounded (timeouts.quitKill) so quitting never hangs.
+  async function close({ kill = false } = {}) {
     closing = true
     if (!child || finished) return { ok: true }
     const done = new Promise((resolve) => (finished ? resolve() : chat.once('exit', resolve)))
+    let timer
+    const within = (ms) => Promise.race([done.then(() => false), new Promise((r) => (timer = setTimeout(() => r(true), ms)))]).finally(() => clearTimeout(timer))
+    if (kill) {
+      logAt('info', 'quitting: killing the tree')
+      await killNow()
+      await within(timeouts.quitKill)
+      return { ok: true, killed: true }
+    }
     try {
       if (child.stdin && !child.stdin.writableEnded) child.stdin.end()
     } catch {
       /* already closed */
     }
-    let timer
-    const timedOut = await Promise.race([done.then(() => false), new Promise((r) => (timer = setTimeout(() => r(true), timeouts.close)))])
-    clearTimeout(timer)
+    const timedOut = await within(timeouts.close)
     if (timedOut) {
       logAt('warn', `no exit ${timeouts.close} ms after stdin end, killing the tree`)
-      try {
-        await killTree(child)
-      } catch (err) {
-        logAt('error', `tree kill failed: ${err && err.message}`)
-        try {
-          child.kill()
-        } catch {
-          /* gone */
-        }
-      }
+      await killNow()
       await done
     }
     return { ok: true, killed: timedOut }

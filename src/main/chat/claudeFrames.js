@@ -64,12 +64,50 @@ export function initializeAuthProblem(response) {
 
 // "Allow for this session": the CLI's suggestions, stored for the session only.
 // A suggestion's own destination (localSettings writes the project's
-// .claude/settings.local.json) is never kept.
+// .claude/settings.local.json) is never kept. Only what the approval card can
+// show is kept (sessionRuleItems): allow rules, a mode other than bypass, and
+// folders to add; anything else (replace/remove rules or folders, a rule or a
+// path too long to show) is dropped, so the card shows all that is added.
+const MAX_SUGGESTIONS = 20
+const MAX_RULES = 20
+const MAX_RULE_TEXT = 2000
+const MAX_DIR = 4096
+const SESSION_MODES = ['default', 'acceptEdits', 'plan', 'auto', 'dontAsk']
+const showable = (v, max) => typeof v === 'string' && v.length > 0 && v.length <= max
+
 export function sessionPermissions(suggestions) {
   if (!Array.isArray(suggestions)) return []
-  return suggestions
-    .filter((s) => s && typeof s === 'object' && typeof s.type === 'string')
-    .map((s) => ({ ...s, destination: 'session' }))
+  const out = []
+  for (const s of suggestions) {
+    if (out.length >= MAX_SUGGESTIONS) break
+    if (!s || typeof s !== 'object' || typeof s.type !== 'string') continue
+    if (s.type === 'addRules') {
+      if (s.behavior !== 'allow' || !Array.isArray(s.rules)) continue
+      const rules = s.rules
+        .filter((r) => r && typeof r === 'object' && showable(r.toolName, 200) && (r.ruleContent == null || showable(r.ruleContent, MAX_RULE_TEXT)))
+        .slice(0, MAX_RULES)
+        .map((r) => (r.ruleContent == null ? { toolName: r.toolName } : { toolName: r.toolName, ruleContent: r.ruleContent }))
+      if (rules.length) out.push({ type: 'addRules', behavior: 'allow', rules, destination: 'session' })
+    } else if (s.type === 'setMode') {
+      if (SESSION_MODES.includes(s.mode)) out.push({ type: 'setMode', mode: s.mode, destination: 'session' })
+    } else if (s.type === 'addDirectories') {
+      const directories = Array.isArray(s.directories) ? s.directories.filter((d) => showable(d, MAX_DIR)).slice(0, MAX_RULES) : []
+      if (directories.length) out.push({ type: 'addDirectories', directories, destination: 'session' })
+    }
+  }
+  return out
+}
+
+// What the card shows for sessionPermissions(...): one item per rule, mode
+// or folder list.
+export function sessionRuleItems(perms) {
+  const out = []
+  for (const p of Array.isArray(perms) ? perms : []) {
+    if (p.type === 'addRules') for (const r of p.rules) out.push({ kind: 'rule', tool: r.toolName, content: r.ruleContent ?? '' })
+    else if (p.type === 'setMode') out.push({ kind: 'mode', mode: p.mode })
+    else if (p.type === 'addDirectories') out.push({ kind: 'directories', directories: [...p.directories] })
+  }
+  return out
 }
 
 export function permissionFromRequest(requestId, r) {
@@ -80,6 +118,8 @@ export function permissionFromRequest(requestId, r) {
     input: r.input && typeof r.input === 'object' ? r.input : {},
     description: typeof r.description === 'string' ? r.description : '',
     suggestions: Array.isArray(r.permission_suggestions) ? r.permission_suggestions : [],
+    // What "Allow for this session" adds, for the card (the same filter as the answer).
+    sessionRules: sessionRuleItems(sessionPermissions(r.permission_suggestions)),
     toolUseId: typeof r.tool_use_id === 'string' ? r.tool_use_id : null,
     reason: typeof r.decision_reason === 'string' ? r.decision_reason : ''
   }

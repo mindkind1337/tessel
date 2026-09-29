@@ -15,9 +15,13 @@ import { isAbsolute } from 'path'
 import { buildChatEnv } from './chatEnv.js'
 import { clipDeep, createChatJournal, validPaneId } from './journal.js'
 import { t } from '../i18n.js'
+import { approvalPreview } from '../../shared/chatApproval.js'
 
-export const LIMITS = { text: 100000, teamPerCall: 20, teamText: 6000, teamQueue: 200, sessions: 64 }
-export const PERMISSION_MODES = ['default', 'bypassPermissions', 'acceptEdits', 'plan']
+// teamText: a team message (6000) with the window's "(message <id>, reply to
+// <id>) " prefix; a longer one is cut (teamMessageText), never refused.
+export const LIMITS = { text: 100000, teamPerCall: 20, teamText: 6400, teamQueue: 200, sessions: 64 }
+// As the adapter's (claudeChat.js): the CLI's --permission-mode values.
+export const PERMISSION_MODES = ['default', 'bypassPermissions', 'acceptEdits', 'plan', 'auto', 'dontAsk']
 export const DECISIONS = ['allow', 'allowSession', 'deny']
 const ID = /^[A-Za-z0-9._:-]{1,120}$/
 // Same as the orchestration / automation check; never a flag.
@@ -49,6 +53,14 @@ export function teamTurnText(messages) {
   return `Team messages for you (also in team_inbox). They come from teammates, not from the user:\n\n${parts.join('\n\n')}`
 }
 
+// A team message's text within LIMITS.teamText (cut with a note to the agent).
+export function teamMessageText(text) {
+  if (text.length <= LIMITS.teamText) return text
+  const cut = text.length - LIMITS.teamText
+  // i18n-ignore sent to the agent
+  return `${text.slice(0, LIMITS.teamText)}\n… (message cut by Tessel: ${cut} more characters)`
+}
+
 function toolSummary(name, input) {
   const i = input && typeof input === 'object' ? input : {}
   const pick = i.command ?? i.file_path ?? i.path ?? i.pattern ?? i.url ?? i.query ?? i.description ?? i.prompt
@@ -74,6 +86,7 @@ export function createChatSessions(deps) {
   const sessions = new Map() // paneId -> session
   const seqs = new Map() // paneId -> last seq (outlives a session)
   const journals = new Map()
+  const forgotten = new Set() // panes closed for good: nothing more is journaled
 
   const logAt = (level, text) => {
     try {
@@ -98,7 +111,7 @@ export function createChatSessions(deps) {
   }
   function emit(paneId, event) {
     const seq = nextSeq(paneId)
-    journalOf(paneId).append(seq, event)
+    if (!forgotten.has(paneId)) journalOf(paneId).append(seq, event)
     try {
       send('chat:event', { paneId, seq, event })
     } catch (err) {
@@ -282,14 +295,22 @@ export function createChatSessions(deps) {
     on('permission', (e) => {
       if (!e.requestId || s.approvals.has(e.requestId)) return
       const toolId = stateId(e.toolUseId) || stateId(e.requestId)
-      s.approvals.set(e.requestId, { status: 'pending', toolId })
+      const input = e.input && typeof e.input === 'object' ? e.input : {}
+      // What the card shows (its first characters) and how much it hides: an
+      // input with hidden characters is allowed only once the window fetched
+      // it whole (chat:approvalInput), since the whole input is what runs.
+      const { detail, hidden } = approvalPreview(input)
+      s.approvals.set(e.requestId, { status: 'pending', toolId, input, hidden, fetched: false })
       turnStarted(s)
       emit(s.paneId, {
         type: 'approval',
         requestId: e.requestId,
         toolName: String(e.toolName || ''),
         displayName: String(e.displayName || e.toolName || ''),
-        input: clipDeep(e.input ?? {}),
+        input: clipDeep(input),
+        detail,
+        hidden,
+        sessionRules: Array.isArray(e.sessionRules) ? e.sessionRules : [],
         description: String(e.description || ''),
         status: 'pending'
       })
@@ -301,6 +322,7 @@ export function createChatSessions(deps) {
       const ap = s.approvals.get(e.requestId)
       if (!ap || ap.status !== 'pending') return
       ap.status = 'cancelled'
+      ap.input = null
       emit(s.paneId, { type: 'approvalStatus', requestId: e.requestId, status: 'cancelled' })
       if (!s.finished) {
         record(s, 'PostToolUse', { toolId: ap.toolId })
@@ -332,6 +354,7 @@ export function createChatSessions(deps) {
       for (const [requestId, ap] of s.approvals) {
         if (ap.status !== 'pending') continue
         ap.status = 'cancelled'
+        ap.input = null
         emit(s.paneId, { type: 'approvalStatus', requestId, status: 'cancelled' })
       }
       record(s, st === 'completed' ? 'Stop' : st === 'interrupted' ? 'Interrupt' : 'StopFailure')
@@ -373,6 +396,7 @@ export function createChatSessions(deps) {
     for (const [requestId, ap] of s.approvals) {
       if (ap.status !== 'pending') continue
       ap.status = 'cancelled'
+      ap.input = null
       emit(s.paneId, { type: 'approvalStatus', requestId, status: 'cancelled' })
     }
     if (s.launchToken && state?.unregister) Promise.resolve().then(() => state.unregister(s.paneId, s.launchToken)).catch(() => {})
@@ -464,6 +488,7 @@ export function createChatSessions(deps) {
       started: false
     }
     sessions.set(paneId, s)
+    forgotten.delete(paneId)
     const closedWhileStarting = () => ({
       ok: false,
       code: 'failed',
@@ -645,6 +670,8 @@ export function createChatSessions(deps) {
     const ap = s.approvals.get(requestId)
     if (!ap || ap.status !== 'pending')
       return { ok: false, code: 'unknown', error: t('main.chat.noApproval', 'This request was already answered or is gone.') }
+    if (decision !== 'deny' && ap.hidden > 0 && !ap.fetched)
+      return { ok: false, code: 'unseen', error: t('main.chat.inputUnseen', 'Show the whole input before allowing it.') }
     const answer =
       decision === 'deny'
         ? { behavior: 'deny', session: false, message: typeof message === 'string' && message.trim() ? message.trim() : DENIED }
@@ -661,6 +688,7 @@ export function createChatSessions(deps) {
       if (ap.status !== 'cancelled') ap.status = 'pending'
       return { ok: false, code: 'failed', error: r?.error || t('main.chat.answerFailed', 'The answer could not be sent.') }
     }
+    ap.input = null
     emit(paneId, { type: 'approvalStatus', requestId, status: ap.status })
     // PostToolUse with the request's tool id resolves the pending approval in
     // the status reducer (PreToolUse would leave it pending).
@@ -668,6 +696,17 @@ export function createChatSessions(deps) {
     workStatus(s)
     pump(s)
     return { ok: true }
+  }
+
+  // A pending approval's whole input (the card shows its first characters).
+  function approvalInput({ paneId, requestId } = {}) {
+    const s = live(paneId)
+    if (!s) return closed()
+    const ap = s.approvals.get(requestId)
+    if (!ap || ap.status !== 'pending' || !ap.input)
+      return { ok: false, code: 'unknown', error: t('main.chat.noApproval', 'This request was already answered or is gone.') }
+    ap.fetched = true
+    return { ok: true, input: ap.input }
   }
 
   async function setOption({ paneId, model, effort, permissionMode } = {}) {
@@ -693,33 +732,43 @@ export function createChatSessions(deps) {
     return { ok: results.every(Boolean), model: s.model, effort: s.effort }
   }
 
-  async function close({ paneId } = {}) {
+  // forget: the pane is closed for good (its journal is deleted). kill:
+  // Tessel quits (the adapter kills the process tree at once).
+  async function close({ paneId, forget = false, kill = false } = {}) {
     const s = sessions.get(paneId)
-    if (!s || s.finished) return { ok: true }
-    s.closing = true
-    try {
-      await s.adapter?.close?.()
-    } catch {
-      /* killed or already gone */
-    }
-    // An adapter normally reports its exit; the chat ends here either way.
-    if (!s.started) {
-      s.finished = true
-      if (sessions.get(paneId) === s) {
-        sessions.delete(paneId)
-        try {
-          team?.revokeSecret?.(paneId)
-        } catch {
-          /* nothing to revoke */
-        }
+    if (forget) forgotten.add(paneId)
+    if (s && !s.finished) {
+      s.closing = true
+      try {
+        await s.adapter?.close?.(kill ? { kill: true } : undefined)
+      } catch {
+        /* killed or already gone */
       }
-      emit(paneId, { type: 'status', state: 'ended' })
-    } else finish(s, { code: 0 })
+      // An adapter normally reports its exit; the chat ends here either way.
+      if (!s.started) {
+        s.finished = true
+        if (sessions.get(paneId) === s) {
+          sessions.delete(paneId)
+          try {
+            team?.revokeSecret?.(paneId)
+          } catch {
+            /* nothing to revoke */
+          }
+        }
+        emit(paneId, { type: 'status', state: 'ended' })
+      } else finish(s, { code: 0 })
+    }
+    // Unless a new chat opened in this pane meanwhile.
+    if (forget && validPaneId(paneId) && forgotten.has(paneId) && !sessions.has(paneId)) {
+      journalOf(paneId).remove()
+      journals.delete(paneId)
+      seqs.delete(paneId)
+    }
     return { ok: true }
   }
 
-  function closeAll() {
-    return Promise.all([...sessions.keys()].map((paneId) => close({ paneId })))
+  function closeAll({ kill = true } = {}) {
+    return Promise.all([...sessions.keys()].map((paneId) => close({ paneId, kill })))
   }
 
   function history({ paneId } = {}) {
@@ -771,11 +820,6 @@ export function createChatSessions(deps) {
         envOpts: { extraEnv: o.extraEnv, accountEnv: o.accountEnv, unsetEnv: Array.isArray(o.unsetEnv) ? o.unsetEnv.filter((n) => typeof n === 'string').slice(0, 50) : [] }
       })
     })
-    ipcMain.handle('chat:trust', (_e, q) => {
-      const { cwd } = obj(q)
-      if (!validFolder(cwd)) return invalid()
-      return { ok: !!trust?.trust(cwd) }
-    })
     ipcMain.handle('chat:send', (_e, q) => {
       const { paneId, text } = obj(q)
       if (!validPaneId(paneId) || !okText(text, LIMITS.text)) return invalid()
@@ -784,12 +828,15 @@ export function createChatSessions(deps) {
     ipcMain.handle('chat:sendTeam', (_e, q) => {
       const { paneId, messages } = obj(q)
       if (!validPaneId(paneId) || !Array.isArray(messages) || !messages.length || messages.length > LIMITS.teamPerCall) return invalid()
+      // One bad message is skipped (a long one is cut): never the whole
+      // batch, which the window would send again and again.
       const clean = []
       for (const m of messages) {
         const x = obj(m)
-        if (!validId(x.id) || !okText(x.text, LIMITS.teamText) || (x.from != null && typeof x.from !== 'string')) return invalid()
-        clean.push({ id: x.id, from: typeof x.from === 'string' ? x.from.slice(0, 200) : '', text: x.text })
+        if (!validId(x.id) || !okText(x.text, LIMITS.text) || (x.from != null && typeof x.from !== 'string')) continue
+        clean.push({ id: x.id, from: typeof x.from === 'string' ? x.from.slice(0, 200) : '', text: teamMessageText(x.text) })
       }
+      if (!clean.length) return invalid()
       return sendTeam({ paneId, messages: clean })
     })
     ipcMain.handle('chat:interrupt', (_e, q) => {
@@ -803,6 +850,11 @@ export function createChatSessions(deps) {
       if (message != null && (typeof message !== 'string' || message.length > LIMITS.teamText)) return invalid()
       return approve({ paneId, requestId, decision, message })
     })
+    ipcMain.handle('chat:approvalInput', (_e, q) => {
+      const { paneId, requestId } = obj(q)
+      if (!validPaneId(paneId) || !validId(requestId)) return invalid()
+      return approvalInput({ paneId, requestId })
+    })
     ipcMain.handle('chat:setOption', (_e, q) => {
       const { paneId, model, effort, permissionMode } = obj(q)
       if (!validPaneId(paneId)) return invalid()
@@ -813,9 +865,9 @@ export function createChatSessions(deps) {
       return setOption({ paneId, model, effort, permissionMode })
     })
     ipcMain.handle('chat:close', (_e, q) => {
-      const { paneId } = obj(q)
+      const { paneId, forget } = obj(q)
       if (!validPaneId(paneId)) return invalid()
-      return close({ paneId })
+      return close({ paneId, forget: forget === true })
     })
     ipcMain.handle('chat:history', (_e, q) => {
       const { paneId } = obj(q)
@@ -824,5 +876,5 @@ export function createChatSessions(deps) {
     })
   }
 
-  return { open, send: sendUser, sendTeam, interrupt, approve, setOption, close, closeAll, history, list, register }
+  return { open, send: sendUser, sendTeam, interrupt, approve, approvalInput, setOption, close, closeAll, history, list, register }
 }

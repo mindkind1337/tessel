@@ -373,11 +373,11 @@ const api = {
   // window opens, messages, answers approvals and follows each chat's events.
   chat: {
     open: (opts) => ipcRenderer.invoke('chat:open', opts),
-    trust: (opts) => ipcRenderer.invoke('chat:trust', opts),
     send: (opts) => ipcRenderer.invoke('chat:send', opts),
     sendTeam: (opts) => ipcRenderer.invoke('chat:sendTeam', opts),
     interrupt: (opts) => ipcRenderer.invoke('chat:interrupt', opts),
     approve: (opts) => ipcRenderer.invoke('chat:approve', opts),
+    approvalInput: (opts) => ipcRenderer.invoke('chat:approvalInput', opts),
     setOption: (opts) => ipcRenderer.invoke('chat:setOption', opts),
     close: (opts) => ipcRenderer.invoke('chat:close', opts),
     history: (opts) => ipcRenderer.invoke('chat:history', opts),

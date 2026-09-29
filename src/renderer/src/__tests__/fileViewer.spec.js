@@ -51,6 +51,16 @@ describe('Markdown rendering is sanitized', () => {
     expect(html).toContain('href="https://example.com"')
   })
 
+  it('untrusted (chat) markdown loses style and class; the file viewer keeps them', () => {
+    const src = '<div style="position:fixed;inset:0;z-index:9999" class="modal-backdrop">cover</div>\n\n```js\nx\n```'
+    const chat = renderMarkdown(src, { untrusted: true })
+    expect(chat).toContain('cover')
+    expect(chat).not.toMatch(/style=|class=/)
+    const file = renderMarkdown(src)
+    expect(file).toMatch(/style="position:fixed/)
+    expect(file).toMatch(/class="modal-backdrop"/)
+  })
+
   it('mermaid blocks become placeholders; local images are kept aside to be read', () => {
     const html = renderMarkdown('```mermaid\ngraph TD; A-->B\n```\n\n![logo](img/logo.png) ![web](https://x.y/a.png)')
     expect(html).toContain(`class="md-mermaid" data-mermaid="${encodeURIComponent('graph TD; A-->B\n')}"`)

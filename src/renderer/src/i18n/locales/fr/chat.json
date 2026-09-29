@@ -69,7 +69,15 @@
       "allowed": "Autorisé",
       "allowedSession": "Autorisé pour cette session",
       "denied": "Refusé",
-      "cancelled": "Plus nécessaire"
+      "cancelled": "Plus nécessaire",
+      "hidden": "{{count}} caractères masqués",
+      "showAll": "Tout afficher",
+      "fullFailed": "L'entrée complète n'a pas pu être lue.",
+      "seeAllFirst": "Autoriser attend que vous ayez tout vu.",
+      "ruleMode": "Passer cette session en mode {{mode}}",
+      "ruleDirs": "Donner accès à {{dirs}}",
+      "rulesTitle": "Autoriser pour cette session autorise aussi :",
+      "noRules": "Autoriser pour cette session n'ajoute aucune règle ici : comme Autoriser."
     },
     "tool": {
       "result": "Résultat",

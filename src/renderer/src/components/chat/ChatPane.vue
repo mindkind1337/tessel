@@ -241,6 +241,18 @@ async function answer({ requestId, decision, message }) {
   return true
 }
 
+// The whole input of a request whose card shows only its start.
+async function fetchApprovalInput({ requestId }) {
+  const a = api()
+  if (!a || typeof a.approvalInput !== 'function') return null
+  try {
+    const res = await a.approvalInput({ paneId: props.node.id, requestId })
+    return res && res.ok ? res.input : null
+  } catch {
+    return null
+  }
+}
+
 // --- Model -----------------------------------------------------------------------------------
 const modelList = computed(() => (modelMenu.visible ? modelsFor('claude') : []))
 const modelValues = computed(() => ({ model: state.value.model || props.node.model || null, effort: props.node.effort || undefined }))
@@ -465,7 +477,7 @@ defineExpose({ start, send, interrupt })
           </div>
           <template v-for="row in shownRows" :key="row.key">
             <ChatToolRow v-if="row.kind === 'tool'" :row="row" />
-            <ChatApprovalCard v-else-if="row.kind === 'approval'" :row="row" :auto-focus="approvalFocus" :answer="answer" />
+            <ChatApprovalCard v-else-if="row.kind === 'approval'" :row="row" :auto-focus="approvalFocus" :answer="answer" :fetch-input="fetchApprovalInput" />
             <ChatMessage v-else :row="row" />
           </template>
           <div v-if="status === 'working'" class="chat-working" data-test="chat-working">

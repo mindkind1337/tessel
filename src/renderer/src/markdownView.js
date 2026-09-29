@@ -34,13 +34,17 @@ function onElement(node) {
   if (node.nodeName === 'A' && node.hasAttribute('href')) node.setAttribute('rel', 'noreferrer')
 }
 
-export function renderMarkdown(text) {
+// { untrusted: true }: text Tessel did not open itself (an agent's chat
+// answer): no style or class attributes either, so it cannot be positioned
+// or styled over Tessel's own interface.
+export function renderMarkdown(text, { untrusted = false } = {}) {
   const html = md.render(String(text || ''))
   DOMPurify.addHook('afterSanitizeAttributes', onElement)
   try {
     return DOMPurify.sanitize(html, {
       ADD_ATTR: ['data-mermaid', 'data-local-src'],
-      FORBID_TAGS: ['style', 'form', 'input', 'button', 'textarea', 'select', 'iframe', 'object', 'embed']
+      FORBID_TAGS: ['style', 'form', 'input', 'button', 'textarea', 'select', 'iframe', 'object', 'embed'],
+      ...(untrusted ? { FORBID_ATTR: ['style', 'class'] } : {})
     })
   } finally {
     DOMPurify.removeHook('afterSanitizeAttributes')

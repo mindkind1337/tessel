@@ -727,7 +727,8 @@
       "trustMessage": "Un agent de chat exécute Claude dans {{dir}} sans son terminal : Claude exécute alors les hooks et les serveurs MCP que ce dossier définit (.claude/settings.json, .mcp.json) sans demander.",
       "trustDetail": "Ne l'approuvez que si vous savez d'où vient ce dossier. Un panneau terminal Claude vous le demande lui-même.",
       "trustYes": "Approuver ce dossier",
-      "trustNo": "Annuler"
+      "trustNo": "Annuler",
+      "inputUnseen": "Affichez toute l'entrée avant de l'autoriser."
     }
   }
 }

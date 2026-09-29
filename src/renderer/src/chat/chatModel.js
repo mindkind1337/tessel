@@ -6,8 +6,12 @@
 // Tool summaries after Orca's native chat (src/shared/native-chat-tool-summary.ts,
 // MIT, Copyright (c) 2026 Lovecast Inc.), much simplified.
 
+import { approvalText, MAX_DETAIL } from '../../../shared/chatApproval'
+
+export { MAX_DETAIL }
 export const MAX_SUMMARY = 80
-export const MAX_DETAIL = 8000
+// An approval card ignores its answer keys this long after it appears.
+export const KEY_GRACE_MS = 600
 
 export function initialChatState() {
   return {
@@ -112,16 +116,25 @@ export function formatInput(input, max = MAX_DETAIL) {
   return truncate(text, max)
 }
 
-// The command an approval is about: Bash's command, else the file, else the input.
+// The command an approval is about: Bash's command, else the input.
 export function approvalDetail(toolName, input) {
-  const value = parseInput(input)
-  if (value && typeof value === 'object' && !Array.isArray(value)) {
-    if (typeof value.command === 'string') return truncate(value.command, MAX_DETAIL)
-    if ((toolName === 'Edit' || toolName === 'Write' || toolName === 'MultiEdit') && typeof value.file_path === 'string') {
-      return formatInput(value)
-    }
+  return truncate(approvalText(parseInput(input)), MAX_DETAIL)
+}
+
+// "Allow for this session" adds these (checked by the main process): rules
+// ({ kind:'rule', tool, content }), a mode ({ kind:'mode', mode }) or folders
+// ({ kind:'directories', directories }). Anything else is not kept.
+export function sessionRuleList(list) {
+  if (!Array.isArray(list)) return []
+  const out = []
+  for (const r of list.slice(0, 50)) {
+    if (!r || typeof r !== 'object') continue
+    if (r.kind === 'rule' && typeof r.tool === 'string') out.push({ kind: 'rule', tool: r.tool, content: typeof r.content === 'string' ? r.content : '' })
+    else if (r.kind === 'mode' && typeof r.mode === 'string') out.push({ kind: 'mode', mode: r.mode })
+    else if (r.kind === 'directories' && Array.isArray(r.directories))
+      out.push({ kind: 'directories', directories: r.directories.filter((d) => typeof d === 'string') })
   }
-  return formatInput(value)
+  return out
 }
 
 // "5 h: 42% · 7 d: 10%" parts ({ label, pct }); utilization is 0..1 (or 0..100).
@@ -299,7 +312,12 @@ export function chatReducer(state, event, { cwd = '' } = {}) {
         displayName: String(event.displayName || event.toolName || ''),
         input: event.input ?? null,
         description: String(event.description || ''),
-        status: APPROVAL_STATUSES.has(event.status) ? event.status : 'pending'
+        status: APPROVAL_STATUSES.has(event.status) ? event.status : 'pending',
+        // The main process's preview: its first characters and how many it
+        // does not show (the card fetches them before Allow).
+        detail: typeof event.detail === 'string' ? event.detail : null,
+        hidden: Number.isSafeInteger(event.hidden) && event.hidden > 0 ? event.hidden : 0,
+        sessionRules: sessionRuleList(event.sessionRules)
       }
       const i = findLast(s.rows, (r) => r.kind === 'approval' && r.requestId === requestId)
       if (i >= 0) return withRow(s, i, row)
