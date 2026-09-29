@@ -572,6 +572,17 @@ function menuSwitchYolo() {
   closeCtxMenu()
   if (ctx.restartWithPermissions) ctx.restartWithPermissions(props.node.id, props.node.launchYolo ? 'manual' : 'yolo')
 }
+// Pane menu > Open as chat: a Claude or Codex agent Tessel started, with a
+// known conversation, on this computer: the same conversation goes on in a
+// chat pane (no terminal), in the same place.
+const canOpenAsChat = computed(() => {
+  const n = props.node
+  return n.kind === 'agent' && ['claude', 'codex'].includes(n.agentId) && !!n.sessionId && !n.detected && !n.remoteHostId && !!ctx.switchToChat
+})
+function menuOpenAsChat() {
+  closeCtxMenu()
+  if (ctx.switchToChat) ctx.switchToChat(props.node.id)
+}
 function menuYoloFolder() {
   closeCtxMenu()
   if (ctx.toggleYoloFolder) ctx.toggleYoloFolder(yoloFolder.value)
@@ -2449,6 +2460,15 @@ onBeforeUnmount(() => {
       <div class="ctx-menu-sep"></div>
       <button class="ctx-menu-item" @click="menuRestart">
         {{ t('pane.restart', 'Restart') }}<span class="ctx-menu-shortcut">Ctrl+Shift+R</span>
+      </button>
+      <button
+        v-if="canOpenAsChat"
+        class="ctx-menu-item"
+        data-test="menu-open-as-chat"
+        :title="t('pane.menu.openAsChatHint', 'Continue this conversation in a chat pane (no terminal): same pane, same permissions or fewer')"
+        @click="menuOpenAsChat"
+      >
+        {{ t('pane.menu.openAsChat', 'Open as chat') }}
       </button>
       <template v-if="canSwitchYolo">
         <button

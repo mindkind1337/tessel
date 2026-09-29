@@ -244,3 +244,53 @@ describe('port probes', () => {
     ])
   })
 })
+
+describe('chat agents (no terminal) in the sidebar', () => {
+  const chat = (id, extra = {}) => pane(id, { kind: 'chat', title: 'Claude (chat)', ...extra })
+
+  it('a chat pane is an agent row: its icon, its state dot like a terminal agent, never a shell', () => {
+    const row = paneRow(chat('x', { num: 4, state: 'working', since: NOW - 60000 }), NOW)
+    expect(row).toMatchObject({ kind: 'agent', chat: true, iconKind: 'claude', num: 4, dotState: 'working', stateLabel: 'Working', time: '1m' })
+    expect(paneRow(chat('x', { agentId: 'codex' }), NOW).iconKind).toBe('codex')
+    expect(paneDotState(chat('x', { state: 'approval' }))).toBe('waiting')
+    expect(paneDotState(chat('x', { state: 'limited' }))).toBe('blocked')
+    expect(paneDotState(chat('x', { state: 'waiting' }))).toBe('done')
+    expect(paneDotState(chat('x', { state: 'ready' }))).toBe('idle')
+    expect(paneDotState(chat('x', { state: 'unknown' }))).toBe('unverifiable')
+    expect(paneDotState(chat('x', { state: 'stopped' }))).toBe('interrupted')
+    // Asleep: idle, like a sleeping terminal agent.
+    expect(paneRow(chat('x', { state: 'working', sleeping: true }), NOW)).toMatchObject({ dotState: 'idle', sleeping: true, secondary: 'Sleeping' })
+    expect(paneRow(chat('x', { state: 'approval' }), NOW).secondary).toBe('Asks your approval')
+    expect(paneRow(chat('x', { state: 'limited', reset: 'resets 4pm' }), NOW).secondary).toBe('Usage limit · resets 4pm')
+  })
+
+  it('a stopped chat says why', () => {
+    expect(paneRow(chat('x', { state: 'stopped' }), NOW)).toMatchObject({ secondary: 'Stopped', stateLabel: 'Stopped', dotState: 'interrupted' })
+    expect(paneRow(chat('x', { state: 'stopped', chatStatus: 'signin' }), NOW).secondary).toBe('Not signed in')
+    expect(paneRow(chat('x', { state: 'stopped', chatStatus: 'untrusted' }), NOW).secondary).toBe('Folder not trusted')
+  })
+
+  it('carries its model and effort, its team, its task and its sub-agents; nothing terminal-only', () => {
+    const row = paneRow(
+      chat('x', { model: 'claude-opus-4-7', effort: 'high', team: 'tm1', lead: true, task: 'Fix it', sessionId: 's1', pid: 99, toolsDown: true }),
+      NOW
+    )
+    expect(row).toMatchObject({ model: 'Opus 4.7 · high', team: 'tm1', lead: true, subline: 'Fix it', pid: null, toolsDown: false })
+    expect(row.children).toEqual({ agent: 'claude', sessionId: 's1' })
+    expect(paneRow(chat('x', { model: 'claude-sonnet-4-5' }), NOW).model).toBe('Sonnet 4.5')
+    expect(paneRow(chat('x'), NOW).model).toBe('')
+    // Terminal rows are unchanged: no chat mark, the model comes from their header.
+    expect(paneRow(pane('t', { pid: 7, toolsDown: true }), NOW)).toMatchObject({ kind: 'agent', chat: false, model: '', pid: 7, toolsDown: true })
+    expect(paneRow(pane('s', { kind: 'shell' }), NOW)).toMatchObject({ kind: 'shell', chat: false })
+  })
+
+  it("counts as an agent of its workspace (status, attention, summary) and has no shell to scan", () => {
+    const p = project({ copies: [], panes: [pane('a', { pid: 11 }), chat('ch', { num: 2, state: 'approval', since: NOW - 1000 }), pane('t', { kind: 'shell', pid: 12 })] })
+    const [main] = buildProjectCards(p, NOW)
+    expect(main.panes.map((r) => r.id)).toEqual(['a', 'ch', 't'])
+    expect(main.agentCount).toBe(2)
+    expect(main.status).toBe('permission')
+    expect(main.attention.cls).toBe(1)
+    expect(portProbes([p])).toEqual([{ id: 'ws1::', pids: [11, 12], path: 'C:\\repo' }])
+  })
+})

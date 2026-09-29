@@ -206,7 +206,9 @@
       "yoloFolders": "Dossiers Yolo",
       "yoloFoldersHint": "Les agents lancés dans ces dossiers démarrent toujours en Yolo (menu du panneau > Yolo dans ce dossier)",
       "yoloFolderRemove": "Retirer",
-      "yoloFolderRemoveHint": "Les agents lancés ici demandent à nouveau d'abord (sauf si Yolo est activé plus haut)"
+      "yoloFolderRemoveHint": "Les agents lancés ici demandent à nouveau d'abord (sauf si Yolo est activé plus haut)",
+      "chatIdle": "Arrêter un agent de chat inactif après",
+      "chatIdleHint": "Minutes sans tour (0 : jamais). Son prochain message le relance, sa conversation reprise"
     },
     "orchestration": {
       "yourTeam": "Votre équipe",

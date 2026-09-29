@@ -8,6 +8,7 @@
 // raw workspaces, the sidebar renders the rows.
 import { t, intlLocale } from './i18n'
 import { listsChildren } from './agentChildrenView'
+import { modelLabel } from '../../shared/modelLabel'
 
 // --- Orca's agent state vocabulary (AgentStateDot.tsx) ------------------------
 export function agentStateLabel(state) {
@@ -36,11 +37,18 @@ export function agentStateLabel(state) {
   return t('sidebar.agentState.idle', 'Idle')
 }
 
+// An agent pane: a terminal agent, or a chat agent (no terminal: ChatPane).
+export function isAgentPane(pane) {
+  return !!pane && (pane.kind === 'agent' || pane.kind === 'chat')
+}
+
 // Tessel's pane state -> Orca's dot state. Tessel: 'approval' (asks you),
 // 'limited' (usage limit), 'working', 'waiting' (done, waiting for you),
-// 'ready', 'unknown' (no report yet); sleeping panes are idle.
+// 'ready', 'unknown' (no report yet), 'stopped' (a chat whose session is not
+// running: ended, crashed, not signed in, folder not trusted); sleeping
+// panes are idle.
 export function paneDotState(pane) {
-  if (!pane || pane.kind !== 'agent' || pane.sleeping) return 'idle'
+  if (!isAgentPane(pane) || pane.sleeping) return 'idle'
   switch (pane.state) {
     case 'working':
       return 'working'
@@ -52,8 +60,25 @@ export function paneDotState(pane) {
       return 'done'
     case 'unknown':
       return 'unverifiable'
+    case 'stopped':
+      return 'interrupted'
   }
   return 'idle'
+}
+
+// A stopped chat, in words: why its session is not running (ChatPane's
+// status when the app passes it).
+function chatStoppedLabel(pane) {
+  if (pane.chatStatus === 'signin') return t('sidebar.row.chatSignin', 'Not signed in')
+  if (pane.chatStatus === 'untrusted') return t('sidebar.row.chatUntrusted', 'Folder not trusted')
+  return t('sidebar.row.chatStopped', 'Stopped')
+}
+
+// A chat's model as its header shows it ("Opus 4.7 · high").
+function chatModelText(pane) {
+  const name = modelLabel(pane.model)
+  if (!name) return ''
+  return pane.effort ? `${name} · ${pane.effort}` : name // i18n-ignore
 }
 
 // Orca's worktree-card-agent-summary.ts.
@@ -211,14 +236,19 @@ function samePath(a, b) {
 }
 
 // One pane -> one agent row (Orca's CompactAgentRow data).
+// A chat agent (kind 'chat') is an agent row too, marked chat: it has no
+// terminal (no shell process, no team tools to restart).
 export function paneRow(pane, now = Date.now()) {
-  const agent = pane.kind === 'agent'
+  const chat = pane.kind === 'chat'
+  const agent = pane.kind === 'agent' || chat
   const dotState = paneDotState(pane)
+  const stopped = chat && !pane.sleeping && pane.state === 'stopped'
   let secondary
   const terminal = t('sidebar.row.terminal', 'Terminal')
   const agentName = t('sidebar.row.agent', 'Agent')
   if (!agent) secondary = terminal
   else if (pane.sleeping) secondary = t('sidebar.status.sleeping', 'Sleeping')
+  else if (stopped) secondary = chatStoppedLabel(pane)
   else if (pane.state === 'limited')
     secondary = pane.reset
       ? t('sidebar.row.usageLimitReset', 'Usage limit · {{reset}}', { reset: pane.reset })
@@ -235,13 +265,16 @@ export function paneRow(pane, now = Date.now()) {
     id: pane.id,
     num: pane.num || 0,
     kind: agent ? 'agent' : 'shell',
+    chat,
     iconKind: agent ? pane.agentId || 'agent' : pane.shellId || 'shell',
     accent: agent ? pane.accent || null : null,
     typeLabel: pane.title || (agent ? agentName : terminal),
     title: pane.title || (agent ? agentName : terminal),
     primary,
     secondary: primary === secondary ? '' : secondary,
-    stateLabel: agent ? agentStateLabel(dotState) : '',
+    stateLabel: stopped ? t('sidebar.row.chatStopped', 'Stopped') : agent ? agentStateLabel(dotState) : '',
+    // A chat's model (a terminal agent's comes from its pane header: paneModels).
+    model: chat ? chatModelText(pane) : '',
     subline,
     dotState,
     sleeping: !!pane.sleeping,
@@ -256,9 +289,9 @@ export function paneRow(pane, now = Date.now()) {
     // status } of that coordinator, for the row's link to it.
     workerOf: agent && pane.workerOf && pane.workerOf.id ? { ...pane.workerOf } : null,
     teamUnread: pane.teamUnread || 0,
-    toolsDown: !!pane.toolsDown,
+    toolsDown: !chat && !!pane.toolsDown,
     activityAt: pane.activityAt || 0,
-    pid: pane.pid || null,
+    pid: chat ? null : pane.pid || null,
     trackLevel: pane.track ? pane.track.level : null,
     // Sub-agents (Claude Code, Codex, OpenCode, Cline) are listed under its row.
     children:

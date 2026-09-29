@@ -807,6 +807,14 @@ function stepFont(d) {
   settings.fontSize = clamp(settings.fontSize + d, 8, 28)
 }
 
+// Settings > Agents > chat agents: minutes idle before a chat's process
+// stops (0: never).
+function setChatIdleMinutes(e) {
+  const n = parseInt(e.target.value, 10)
+  if (Number.isFinite(n)) settings.chatIdleMinutes = clamp(n, 0, 1440)
+  e.target.value = settings.chatIdleMinutes
+}
+
 function setSleepMinutes(e) {
   const n = parseInt(e.target.value, 10)
   if (Number.isFinite(n)) settings.agentSleepMinutes = clamp(n, 1, 1440)
@@ -1209,6 +1217,24 @@ function previewSound() {
                   max="1440"
                   :value="settings.agentSleepMinutes"
                   @change="setSleepMinutes"
+                />
+              </div>
+              <div class="set-row">
+                <label class="set-label" for="settings-chat-idle">
+                  {{ t('settings.agents.chatIdle', 'Stop an idle chat agent after') }}
+                  <span class="set-hint">{{
+                    t('settings.agents.chatIdleHint', 'Minutes without a turn (0: never). Its next message starts it again, its conversation resumed')
+                  }}</span>
+                </label>
+                <input
+                  id="settings-chat-idle"
+                  class="set-number"
+                  type="number"
+                  min="0"
+                  max="1440"
+                  data-setting="chatIdleMinutes"
+                  :value="settings.chatIdleMinutes"
+                  @change="setChatIdleMinutes"
                 />
               </div>
             </div>

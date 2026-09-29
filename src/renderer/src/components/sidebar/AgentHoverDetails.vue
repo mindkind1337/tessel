@@ -6,7 +6,7 @@
 // Tessel's own sections (team, pane) with Orca's section header and inset
 // body. It replaces the row's native tooltip.
 import { computed } from 'vue'
-import { Users, SquareTerminal, Bot, MousePointerClick, Cpu } from 'lucide-vue-next'
+import { Users, SquareTerminal, MessageSquare, Bot, MousePointerClick, Cpu } from 'lucide-vue-next'
 import { paneModels } from '../../paneModels'
 import BrandIcon from '../BrandIcon.vue'
 import AgentStateDot from './AgentStateDot.vue'
@@ -22,15 +22,17 @@ const props = defineProps({
 })
 
 const heading = computed(() => props.row.subline || props.row.primary || props.row.title)
-// The model the agent's pane header finds (TerminalPane writes paneModels).
+// The model the agent's pane header finds (TerminalPane writes paneModels; a
+// chat's row carries it, with its effort).
 const modelLine = computed(() => {
-  const model = props.row.kind === 'agent' ? paneModels[props.row.id] : ''
+  const model = props.row.model || (props.row.kind === 'agent' ? paneModels[props.row.id] : '')
   return model ? t('pane.model.title', 'Model: {{model}}', { model }) : ''
 })
 const showAgentLine = computed(() => !!props.row.title && props.row.title !== heading.value)
 const stateLabel = computed(() => {
   if (props.row.kind !== 'agent') return t('sidebar.row.terminal', 'Terminal')
-  return props.row.sleeping ? t('sidebar.status.sleeping', 'Sleeping') : agentStateLabel(props.row.dotState)
+  if (props.row.sleeping) return t('sidebar.status.sleeping', 'Sleeping')
+  return props.row.stateLabel || agentStateLabel(props.row.dotState)
 })
 const stateLine = computed(() =>
   props.row.time ? t('sidebar.hover.stateSince', '{{state}} · {{time}}', { state: stateLabel.value, time: props.row.time }) : stateLabel.value
@@ -57,7 +59,13 @@ const unreadLine = computed(() => {
     ? t('sidebar.agentRow.unread', '{{count}} team messages this agent has not read yet (it reads them with its team tools)', { count })
     : t('sidebar.agentRow.unread', '{{count}} team message this agent has not read yet (it reads them with its team tools)', { count })
 })
-const paneLine = computed(() => (props.row.num ? t('sidebar.card.pane', 'Pane {{num}}', { num: props.row.num }) : ''))
+// A chat agent's pane has no terminal: its footer says so.
+const paneLine = computed(() => {
+  const num = props.row.num
+  if (props.row.chat)
+    return num ? t('sidebar.hover.chatPane', 'Chat pane {{num}} (no terminal)', { num }) : t('sidebar.hover.chat', 'Chat (no terminal)')
+  return num ? t('sidebar.card.pane', 'Pane {{num}}', { num }) : ''
+})
 const childLine = computed(() => {
   const count = props.childCount
   if (!count) return ''
@@ -120,8 +128,9 @@ const childLine = computed(() => {
       <div class="hc-section-body" v-text="childLine"></div>
     </section>
 
-    <div v-if="paneLine" class="hc-footer">
-      <SquareTerminal :size="12" aria-hidden="true" />
+    <div v-if="paneLine" class="hc-footer" :data-hover-chat="row.chat ? '' : undefined">
+      <MessageSquare v-if="row.chat" :size="12" aria-hidden="true" />
+      <SquareTerminal v-else :size="12" aria-hidden="true" />
       <span v-text="paneLine"></span>
     </div>
   </div>

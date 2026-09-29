@@ -26,7 +26,8 @@ export function initialChatState() {
 }
 
 // Status values of the contract; anything else is ignored.
-const STATES = new Set(['starting', 'idle', 'working', 'approval', 'ended', 'crashed', 'signin', 'untrusted'])
+// asleep: its process stopped after a while idle; the next message wakes it.
+const STATES = new Set(['starting', 'idle', 'working', 'approval', 'asleep', 'ended', 'crashed', 'signin', 'untrusted'])
 // The composer cannot send in these.
 export const STOPPED_STATES = new Set(['ended', 'crashed', 'signin', 'untrusted'])
 

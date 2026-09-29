@@ -9,7 +9,7 @@
 // NativeChatMessageList.tsx, NativeChatComposer.tsx; MIT, Copyright (c) 2026
 // Lovecast Inc.), written for Vue.
 import { computed, inject, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from 'vue'
-import { ArrowDown, FolderLock, LogIn, RotateCcw, TriangleAlert } from 'lucide-vue-next'
+import { ArrowDown, FolderLock, LogIn, RotateCcw, SquareTerminal, TriangleAlert } from 'lucide-vue-next'
 import BrandIcon from '../BrandIcon.vue'
 import SessionOptionPicker from '../SessionOptionPicker.vue'
 import ChatMessage from './ChatMessage.vue'
@@ -68,6 +68,8 @@ const statusLabel = computed(() => {
       return t('chat.status.working', 'Working')
     case 'approval':
       return t('chat.status.approval', 'Needs approval')
+    case 'asleep':
+      return t('chat.status.asleep', 'Asleep (wakes on the next message)')
     case 'signin':
       return t('chat.status.signin', 'Not signed in')
     case 'untrusted':
@@ -364,8 +366,10 @@ onMounted(async () => {
   const res = await loadHistory()
   if (!alive) return
   nextTick(scrollToBottom)
-  // A session already running in the main process keeps going.
-  if (!(res && (res.open || res.live))) await start()
+  // A session already running in the main process keeps going; one asleep
+  // (stopped while idle) wakes on its next message, not now.
+  if (res && res.asleep) dispatch({ type: 'status', state: 'asleep' })
+  else if (!(res && (res.open || res.live))) await start()
 })
 
 onBeforeUnmount(() => {
@@ -449,6 +453,17 @@ defineExpose({ start, send, interrupt })
         <span v-if="rateText" class="chat-rate" data-test="chat-rate" :title="t('chat.rate.hint', '{{agent}} usage limits (5 hours, 7 days)', { agent: agentName })">{{ rateText }}</span>
       </div>
       <div class="pane-nav-actions" @mousedown.stop>
+        <button
+          v-if="ctx.switchToTerminal && node.sessionId"
+          class="pane-nav-btn"
+          data-test="chat-open-terminal"
+          :title="t('chat.pane.openInTerminalHint', 'Continue this conversation in a terminal pane: same pane, same permissions or fewer')"
+          :aria-label="t('chat.pane.openInTerminal', 'Open in terminal')"
+          :disabled="busy"
+          @click="ctx.switchToTerminal(node.id)"
+        >
+          <SquareTerminal :size="14" aria-hidden="true" />
+        </button>
         <button
           class="pane-nav-btn"
           :title="isMaximized ? t('editor.pane.restore', 'Restore pane') : t('editor.pane.maximize', 'Maximize pane')"

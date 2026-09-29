@@ -174,6 +174,57 @@ describe('sidebar hover cards', () => {
     expect(w.emitted('port-open')[0][0].port).toBe(5173)
   })
 
+  it("a chat agent's row opens the same card: task, model and effort, state, team, its chat pane", async () => {
+    settings.agentActivityDisplayMode = 'full' // each agent on its own row
+    const list = projects()
+    list[0].panes.push(
+      pane('ch', {
+        num: 5,
+        kind: 'chat',
+        agentId: 'claude',
+        title: 'Claude (chat)',
+        task: 'Write the tests',
+        state: 'working',
+        since: NOW - 180000,
+        model: 'claude-opus-4-7',
+        effort: 'high',
+        team: 'tm1',
+        pid: 77,
+        toolsDown: true
+      }),
+      pane('st', { num: 6, kind: 'chat', agentId: 'codex', title: 'Codex (chat)', state: 'stopped', chatStatus: 'signin' })
+    )
+    const w = mount(WorkspaceSidebar, {
+      props: { projects: list, currentId: 'ws1', ports: PORTS, now: NOW, teams: [{ id: 'tm1', name: 'Team 2' }] },
+      attachTo: document.body
+    })
+    mounted.push(w)
+    const row = agentRow(w, 'ch')
+    expect(row.exists()).toBe(true)
+    expect(row.find('[data-test="car-model"]').text()).toBe('Opus 4.7 · high')
+    await row.trigger('pointerover')
+    await wait(260)
+    const [card] = cards('.agent-hover-card')
+    const text = card.textContent
+    expect(text).toContain('Write the tests')
+    expect(text).toContain('Claude (chat)')
+    expect(text).toContain('Model: Opus 4.7 · high')
+    expect(text).toContain('Working · 3m')
+    expect(text).toContain('Team 2')
+    expect(card.querySelector('[data-hover-chat]').textContent).toContain('Chat pane 5 (no terminal)')
+    // Terminal-only lines are hidden.
+    expect(text).not.toContain('Pane 5')
+    expect(text).not.toContain('tessel-team')
+
+    await row.trigger('pointerleave')
+    await wait(200)
+    await agentRow(w, 'st').trigger('pointerover')
+    await wait(260)
+    const stopped = cards('.agent-hover-card')[0].textContent
+    expect(stopped).toContain('Stopped')
+    expect(stopped).toContain('Not signed in')
+  })
+
   it('resting on an agent row inside the workspace does not open the workspace card', async () => {
     const w = mountSidebar()
     const main = cardFor(w, 'repo')

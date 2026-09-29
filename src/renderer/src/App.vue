@@ -362,6 +362,18 @@ function makeChatLeaf({ id = null, agentId = 'claude', cwd = null, projectDir = 
     broadcast: false
   })
 }
+// Each chat pane's status as its events say (starting, idle, working,
+// approval, asleep, ended, crashed, signin, untrusted): for the sidebar.
+const chatStatus = reactive({})
+function chatPaneState(leaf) {
+  const st = chatStatus[leaf.id]
+  if (limits[leaf.id]) return 'limited'
+  if (st === 'working') return 'working'
+  if (st === 'approval') return 'approval'
+  if (!st || st === 'starting') return 'unknown'
+  if (st === 'idle' || st === 'asleep') return attention[leaf.id] ? 'waiting' : 'ready'
+  return 'stopped'
+}
 // A new chat agent next to the active pane (split to the right).
 function openChatAgent({ ws = currentWs.value, agent = 'claude' } = {}) {
   if (!ws) return null
@@ -427,6 +439,8 @@ async function chatOpen(leaf, { askTrust = true } = {}) {
       permissionMode: ownMode && !narrowed ? ownMode[1] : null,
       // A worker never asks: its folder is trusted already (its project), or it does not start.
       askTrust: askTrust && !leaf.worker,
+      // Settings > Agents: stopped after this many idle minutes (0: never).
+      idleMinutes: Number.isInteger(settings.chatIdleMinutes) ? settings.chatIdleMinutes : 30,
       extraEnv,
       accountEnv,
       unsetEnv
@@ -1684,6 +1698,7 @@ function closeLeaf(leafId, opts = {}) {
   // A chat agent: its Claude ends (the conversation can be resumed later
   // from Agent sessions); the pane's own journal is deleted (forget).
   if (closing && closing.kind === 'chat' && window.shellApi.chat) window.shellApi.chat.close({ paneId: leafId, forget: true }).catch(() => {})
+  if (closing && closing.kind === 'chat') delete chatStatus[leafId]
   if (!noTerminal) {
     window.shellApi.killPty(leafId)
     dropBuffer(leafId)
@@ -2143,6 +2158,9 @@ provide('panelCtx', {
   closeLeaf,
   restartLeaf,
   restartWithPermissions,
+  // Chat <-> terminal (the same conversation).
+  switchToChat: (id) => switchToChat(id),
+  switchToTerminal: (id) => switchToTerminal(id),
   toggleYoloFolder,
   permissionsOf,
   paneFolder: (leaf) => paneFolders(leaf)[0] || null,
@@ -3627,7 +3645,9 @@ const sidebarProjects = computed(() =>
   workspaces.value.map((w) => {
     const panes = []
     forEachLeaf(w.tree, (leaf) => {
-      if (hasNoTerminal(leaf)) return
+      // A chat agent is listed like any agent (no terminal: no process, no ports).
+      if (hasNoTerminal(leaf) && leaf.kind !== 'chat') return
+      const chat = leaf.kind === 'chat'
       const task = taskOfPane(leaf.id)
       const tracked = trackedState[leaf.id]
       panes.push({
@@ -3638,8 +3658,9 @@ const sidebarProjects = computed(() =>
         agentId: leaf.agentId || null,
         shellId: leaf.shellId || null,
         accent: leaf.accent || null,
-        state: paneState(leaf),
-        sleeping: !!leaf.sleeping,
+        state: chat ? chatPaneState(leaf) : paneState(leaf),
+        sleeping: chat ? chatStatus[leaf.id] === 'asleep' : !!leaf.sleeping,
+        ...(chat ? { chatStatus: chatStatus[leaf.id] || null, model: leaf.model || null, effort: leaf.effort || null } : {}),
         attention: !!attention[leaf.id],
         reset: limits[leaf.id] ? limits[leaf.id].reset : '',
         held: !!pendingMessages[leaf.id],
@@ -3650,8 +3671,8 @@ const sidebarProjects = computed(() =>
         lead: !!(leaf.team && teamById(leaf.team)?.leadId === leaf.id),
         // A worker of a coordinator (orchestration): linked to it.
         workerOf: workerOfRow(leaf),
-        task: leaf.kind === 'agent' ? task?.title || null : null,
-        track: leaf.kind === 'agent' ? trackOf(leaf.id) : null,
+        task: isAgentLeaf(leaf) ? task?.title || null : null,
+        track: isAgentLeaf(leaf) ? trackOf(leaf.id) : null,
         pid: Number.isInteger(leaf.pid) ? leaf.pid : null,
         copyPath: leaf.worktree && leaf.worktree.path ? leaf.worktree.path : null,
         copyBranch: leaf.worktree ? leaf.worktree.branch || '' : '',
@@ -5753,6 +5774,110 @@ async function restartInPlaceNow(leafId, opts) {
   return true
 }
 
+// --- Chat <-> terminal (pane menu > Open as chat, chat header > Open in terminal) ------
+// The same conversation goes on in the other kind of pane: same pane id (its
+// number, team, lead role, cards and messages stay addressed to it), same
+// folder, model and effort, resumed by its id. Only one side runs it at a
+// time: the old side is stopped before the new one resumes. Never more
+// permissions: a pane that asked first keeps asking first.
+async function switchToTerminal(leafId) {
+  const old = findLeaf(leafId)
+  if (!old || old.kind !== 'chat' || switchingLeaves.has(leafId)) return false
+  const agent = agentById(old.agentId)
+  if (!agent || agent.available === false || !agent.command) {
+    showToast(t('app.switch.noAgent', '{{name}} is not available in a terminal here.', { name: old.agentId }), { kind: 'error' })
+    return false
+  }
+  if (!old.sessionId) {
+    showToast(t('app.switch.noSession', 'This chat has no conversation to continue yet.'), { kind: 'error' })
+    return false
+  }
+  switchingLeaves.add(leafId)
+  try {
+    // Its journal goes too: the conversation goes on in the terminal.
+    if (window.shellApi.chat) await window.shellApi.chat.close({ paneId: leafId, forget: true }).catch(() => {})
+    clearAgentStatus(leafId)
+    const ws = wsOfLeaf(leafId)
+    if (!ws || findLeaf(leafId) !== old) return false
+    const sessionOptions = validPaneSessionOptions({ model: old.model || undefined, ...(old.effort ? { effort: old.effort } : {}) })
+    const fresh = await createLeaf(selectedShell.value, agent, old.cwd || ws.cwd, old.worktree || null, {
+      id: leafId,
+      sessionId: old.sessionId,
+      accountId: old.accountId,
+      ...(sessionOptions ? { sessionOptions } : {}),
+      // Asked first as a chat (or a worker capped to it): asks first in the terminal.
+      ...(old.chatPermissions === 'yolo' && old.maxPermissions !== 'manual' ? {} : { permissions: 'manual' }),
+      resume: true,
+      wake: { teamId: old.team || null, gen: 1 }
+    })
+    if (!fresh) return false
+    if (findLeaf(leafId) !== old) {
+      window.shellApi.killPty(leafId)
+      return false
+    }
+    Object.assign(fresh, { num: old.num, team: old.team, broadcast: false, restartedAt: Date.now() })
+    const now = wsOfLeaf(leafId)
+    if (!now) {
+      window.shellApi.killPty(leafId)
+      return false
+    }
+    now.tree = replaceNode(now.tree, leafId, () => fresh)
+    scheduleSave()
+    return true
+  } finally {
+    switchingLeaves.delete(leafId)
+  }
+}
+async function switchToChat(leafId) {
+  const old = findLeaf(leafId)
+  if (!old || old.kind !== 'agent' || !['claude', 'codex'].includes(old.agentId) || !old.sessionId || old.detected || old.remoteHostId) return false
+  if (switchingLeaves.has(leafId) || restartingLeaves.has(leafId)) return false
+  const ws = wsOfLeaf(leafId)
+  if (!ws) return false
+  switchingLeaves.add(leafId)
+  try {
+    // Its terminal must be gone before the chat resumes the conversation.
+    window.shellApi.killPty(leafId)
+    let gone = false
+    for (let i = 0; i < 40 && !gone; i++) {
+      await new Promise((r) => setTimeout(r, 250))
+      const a = await window.shellApi.attachPty(leafId).catch(() => null)
+      gone = !a || !a.ok
+      if (!gone) window.shellApi.killPty(leafId)
+    }
+    if (!gone || findLeaf(leafId) !== old) {
+      if (!gone) showToast(t('app.switch.stillRunning', '{{name}} could not be opened as a chat: its terminal did not stop. Try again.', { name: old.title }), { kind: 'error', timeout: 8000 })
+      return false
+    }
+    dropBuffer(leafId)
+    clearAgentStatus(leafId)
+    const now = wsOfLeaf(leafId)
+    if (!now) return false
+    const leaf = makeChatLeaf({
+      id: leafId,
+      agentId: old.agentId,
+      cwd: old.startDir || (old.worktree && old.worktree.path) || now.cwd,
+      projectDir: now.cwd || null,
+      sessionId: old.sessionId,
+      team: old.team || null
+    })
+    leaf.num = old.num
+    leaf.accountId = old.accountId
+    if (old.worktree) leaf.worktree = old.worktree
+    const choice = old.modelChoice || old.sessionOptions || null
+    if (choice && choice.model) leaf.model = choice.model
+    if (choice && typeof choice.effort === 'string') leaf.effort = choice.effort
+    // It did not run in Yolo: the chat asks first too.
+    if (!old.launchYolo) leaf.maxPermissions = 'manual'
+    now.tree = replaceNode(now.tree, leafId, () => leaf)
+    scheduleSave()
+    return true
+  } finally {
+    switchingLeaves.delete(leafId)
+  }
+}
+const switchingLeaves = new Set()
+
 // --- Agent sleep (Settings > Agents, after Orca's) ---------------------------------
 // An agent idle for a while (its conversation saved, not in a team, nothing
 // typed in it, not the pane you are in) has its terminal stopped to free
@@ -7654,6 +7779,13 @@ onMounted(() => {
   offChatEvents = chat.onEvent((e) => {
     const ev = e && e.event
     if (!ev) return
+    if (ev.type === 'status' && e.paneId && typeof ev.state === 'string') chatStatus[e.paneId] = ev.state
+    // An asleep chat got a message: open it again (resumed), with the
+    // permissions and settings of now.
+    if (ev.type === 'wake' && e.paneId) {
+      const leaf = findLeaf(e.paneId)
+      if (leaf && leaf.kind === 'chat') chatOpen(leaf, { askTrust: false }).catch(() => {})
+    }
     // A chat worker's turn ended (orchestrator: reminded once if it did not report).
     if (ev.type === 'turnEnd' && e.paneId && findLeaf(e.paneId)?.worker) orchestrator.chatTurnEnded(e.paneId, { status: ev.status, error: ev.error || null })
     if (ev.type === 'teamAccepted' && Array.isArray(ev.ids)) for (const id of ev.ids) acceptChatTeam(id)

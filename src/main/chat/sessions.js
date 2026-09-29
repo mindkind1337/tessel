@@ -10,6 +10,11 @@
 // with no user message waiting; then all waiting team messages go as ONE
 // turn. An interrupt ends the running turn only: waiting messages stay
 // queued and go after it.
+//
+// Idle stop: a chat idle for idleMinutes (open option, 0 = never) has its
+// process stopped and turns 'asleep' (no 'ended'). A message sent to it
+// waits (queued) and asks the window once to open it again ('wake'); that
+// open resumes the same conversation and sends what waited.
 import { randomBytes, randomUUID as nodeUUID } from 'crypto'
 import fs from 'fs'
 import { isAbsolute } from 'path'
@@ -170,6 +175,71 @@ export function createChatSessions(deps) {
     status(s, st)
   }
 
+  // ---- idle stop -------------------------------------------------------------
+  // An idle chat's process is stopped after idleMinutes (0 = never); the
+  // session stays as 'asleep' and a later open() resumes its conversation.
+
+  const idleStoppable = (s) =>
+    s.idleMinutes > 0 &&
+    s.started &&
+    s.ready &&
+    !s.finished &&
+    !s.closing &&
+    !s.asleep &&
+    !!s.sessionId && // nothing to resume otherwise
+    !s.turn &&
+    !pendingApprovals(s) &&
+    !s.userQueue.length &&
+    !s.teamQueue.length
+
+  // Called after every change: any activity restarts (or stops) the count.
+  function idleCheck(s) {
+    if (s.idleTimer) clearTimeout(s.idleTimer)
+    s.idleTimer = null
+    if (!idleStoppable(s)) return
+    s.idleTimer = setTimeout(() => void sleep(s), s.idleMinutes * 60000)
+    // Never what keeps Tessel (or a test run) alive.
+    s.idleTimer.unref?.()
+  }
+
+  // Released as on a normal exit (status store, team secret), but the
+  // session stays in the map and no 'ended' is told.
+  async function sleep(s) {
+    s.idleTimer = null
+    if (!idleStoppable(s)) return
+    const a = s.adapter
+    s.asleep = true
+    s.ready = false
+    // Its exit, and anything else it still says, is ignored from now on.
+    s.adapter = null
+    s.wakeAsked = false
+    s.tools.clear()
+    s.messages.clear()
+    s.approvals.clear()
+    if (s.launchToken && state?.unregister) {
+      const token = s.launchToken
+      Promise.resolve().then(() => state.unregister(s.paneId, token)).catch(() => {})
+    }
+    s.launchToken = null
+    try {
+      team?.revokeSecret?.(s.paneId)
+    } catch {
+      /* nothing to revoke */
+    }
+    status(s, 'asleep')
+    // A wake waits for this: never two processes on one conversation.
+    s.sleptAdapter = a
+    s.stopping = (async () => {
+      try {
+        await a?.close?.()
+      } catch {
+        /* already gone */
+      }
+      s.sleptAdapter = null
+    })()
+    await s.stopping
+  }
+
   // ---- turns ---------------------------------------------------------------
 
   function turnStarted(s) {
@@ -196,6 +266,7 @@ export function createChatSessions(deps) {
 
   async function deliver(s, turn) {
     s.turn = turn
+    idleCheck(s)
     if (turn.kind === 'user') for (const id of turn.ids) if (turn.wasQueued) emit(s.paneId, { type: 'userStatus', id, status: 'sent' })
     workStatus(s)
     let r
@@ -210,6 +281,7 @@ export function createChatSessions(deps) {
     s.turn = null
     workStatus(s)
     pump(s)
+    idleCheck(s)
   }
 
   // Starts the next turn when the agent is free.
@@ -252,6 +324,7 @@ export function createChatSessions(deps) {
         // A turn the agent started by itself (e.g. a background task ended).
         s.turn = { kind: 'auto', uuid: null, ids: [], accepted: true }
         workStatus(s)
+        idleCheck(s)
       }
       turnStarted(s)
     })
@@ -335,6 +408,7 @@ export function createChatSessions(deps) {
       record(s, 'PermissionRequest', { toolId })
       record(s, 'Notification', { toolId, notificationType: 'permission_prompt' })
       workStatus(s)
+      idleCheck(s)
     })
     on('permissionCancelled', (e) => {
       const ap = s.approvals.get(e.requestId)
@@ -345,6 +419,7 @@ export function createChatSessions(deps) {
       if (!s.finished) {
         record(s, 'PostToolUse', { toolId: ap.toolId })
         workStatus(s)
+        idleCheck(s)
       }
     })
     on('turnEnd', (e) => {
@@ -394,6 +469,7 @@ export function createChatSessions(deps) {
       s.turn = null
       workStatus(s)
       pump(s)
+      idleCheck(s)
     })
     on('rateLimit', (e) => {
       emit(s.paneId, {
@@ -429,12 +505,11 @@ export function createChatSessions(deps) {
   function finish(s, e = {}) {
     if (s.finished) return
     s.finished = true
+    if (s.idleTimer) clearTimeout(s.idleTimer)
+    s.idleTimer = null
     if (s.turn) markFailed(s, s.turn)
     s.turn = null
-    for (const m of s.userQueue) emit(s.paneId, { type: 'userStatus', id: m.id, status: 'failed' })
-    s.userQueue = []
-    if (s.teamQueue.length) emit(s.paneId, { type: 'teamFailed', ids: s.teamQueue.map((m) => m.id) })
-    s.teamQueue = []
+    failQueued(s)
     for (const [requestId, ap] of s.approvals) {
       if (ap.status !== 'pending') continue
       ap.status = 'cancelled'
@@ -486,10 +561,34 @@ export function createChatSessions(deps) {
     return { ok: true, agent: s.agent, sessionId: s.sessionId, launchToken: s.launchToken, model: s.model || null }
   }
 
-  async function open(opts = {}) {
+  // from: internal, the asleep session this open wakes (see below).
+  async function open(opts = {}, from = null) {
     const { paneId, cwd, projectDir, resumeId, model, effort, permissions = 'manual', permissionMode, accountEnv, askTrust, envOpts } = opts
     const agent = opts.agent ?? 'claude'
+    const idleMinutes = opts.idleMinutes ?? 30
+    const asleep = !from && validPaneId(paneId) ? sessions.get(paneId) : null
+    if (asleep?.asleep) {
+      // Waking: its own conversation, folder and agent; the permissions and
+      // variables are the caller's (read again from the settings at each open).
+      if ((opts.agent != null && opts.agent !== asleep.agent) || (resumeId != null && resumeId !== asleep.sessionId))
+        return { ok: false, code: 'busy', error: t('main.chat.asleepOther', 'This pane holds another conversation (asleep). Close it first.') }
+      return open(
+        {
+          ...opts,
+          agent: asleep.agent,
+          cwd: asleep.cwd,
+          projectDir: asleep.projectDir || undefined,
+          resumeId: asleep.sessionId,
+          model: model ?? (validFlag(asleep.model) ? asleep.model : undefined),
+          effort: effort ?? (validFlag(asleep.effort) ? asleep.effort : undefined)
+        },
+        asleep
+      )
+    }
     if (
+      !Number.isInteger(idleMinutes) ||
+      idleMinutes < 0 ||
+      idleMinutes > 1440 ||
       !validPaneId(paneId) ||
       !AGENTS.includes(agent) ||
       !validFolder(cwd) ||
@@ -503,14 +602,15 @@ export function createChatSessions(deps) {
       return { ok: false, code: 'invalid', error: t('main.chat.invalid', 'Invalid chat request.') }
 
     const existing = sessions.get(paneId)
-    if (existing) {
+    if (existing && existing !== from) {
       // Live (a remounted pane opening again): harmless, the running session.
       if (!existing.closing && !existing.finished) return existing.ready ? current(existing) : existing.opening
       return { ok: false, code: 'busy', error: t('main.chat.busy', 'This chat is still closing.') }
     }
-    if (resumeId && [...sessions.values()].some((x) => x.agent === agent && x.sessionId === resumeId))
+    if (resumeId && [...sessions.values()].some((x) => x !== from && x.agent === agent && x.sessionId === resumeId))
       return { ok: false, code: 'busy', error: t('main.chat.sessionOpen', 'This conversation is already open in another pane.') }
-    if (sessions.size >= LIMITS.sessions)
+    // A wake takes its asleep session's place.
+    if (!from && sessions.size >= LIMITS.sessions)
       return { ok: false, code: 'failed', error: t('main.chat.tooMany', 'Too many chats are open.') }
 
     // Placeholder first: a second open meanwhile shares this start.
@@ -531,13 +631,18 @@ export function createChatSessions(deps) {
       closing: false,
       finished: false,
       turn: null,
-      userQueue: [],
-      teamQueue: [],
+      // A wake goes on with what was sent while it was asleep.
+      userQueue: from ? from.userQueue : [],
+      teamQueue: from ? from.teamQueue : [],
       approvals: new Map(),
       tools: new Set(),
       messages: new Map(), // messageId -> { text, thinking } merged so far
       lastInterrupted: false,
-      started: false
+      started: false,
+      idleMinutes,
+      idleTimer: null,
+      asleep: false,
+      resumed: !!from
     }
     sessions.set(paneId, s)
     forgotten.delete(paneId)
@@ -552,6 +657,8 @@ export function createChatSessions(deps) {
 
     // One start per pane: a second open while it starts gets the same result.
     s.opening = (async () => {
+      // The asleep process first ends: never two on one conversation.
+      if (from?.stopping) await from.stopping
       let roots = []
       try {
         roots = trustRoots(cwd) || []
@@ -682,9 +789,21 @@ export function createChatSessions(deps) {
       s.ready = true
       status(s, 'idle')
       pump(s)
+      idleCheck(s)
       return current(s)
-    })()
+    })().then((r) => {
+      // A failed wake: what waited for it will not go.
+      if (!r?.ok) failQueued(s)
+      return r
+    })
     return s.opening
+  }
+
+  function failQueued(s) {
+    for (const m of s.userQueue) emit(s.paneId, { type: 'userStatus', id: m.id, status: 'failed' })
+    s.userQueue = []
+    if (s.teamQueue.length) emit(s.paneId, { type: 'teamFailed', ids: s.teamQueue.map((m) => m.id) })
+    s.teamQueue = []
   }
 
   function live(paneId) {
@@ -692,22 +811,35 @@ export function createChatSessions(deps) {
     return s && s.ready && !s.finished && !s.closing ? s : null
   }
   const closed = () => ({ ok: false, code: 'closed', error: t('main.chat.notOpen', 'This chat is not running.') })
+  // Asleep, or woken and still starting: a message waits for the process.
+  function waiting(paneId) {
+    const s = sessions.get(paneId)
+    return s && !s.finished && !s.closing && (s.asleep || (s.resumed && !s.ready)) ? s : null
+  }
+  // Told once per sleep: the window opens the chat again (chat:open).
+  function askWake(s) {
+    if (!s.asleep || s.wakeAsked) return
+    s.wakeAsked = true
+    emit(s.paneId, { type: 'wake' })
+  }
 
   // A user message (origin 'user'); team messages go through sendTeam.
   function sendUser({ paneId, text } = {}) {
-    const s = live(paneId)
+    const s = live(paneId) || waiting(paneId)
     if (!s) return closed()
     const id = randomUUID()
     const now_ = now()
-    const idle = !s.turn && !pendingApprovals(s) && !s.userQueue.length
+    const idle = s.ready && !s.turn && !pendingApprovals(s) && !s.userQueue.length
     emit(paneId, { type: 'user', id, text, origin: 'user', status: idle ? 'sent' : 'queued', at: now_ })
     if (idle) void deliver(s, { kind: 'user', uuid: id, ids: [id], text })
     else s.userQueue.push({ id, text })
+    askWake(s)
+    idleCheck(s)
     return { ok: true, id, queued: !idle }
   }
 
   function sendTeam({ paneId, messages } = {}) {
-    const s = live(paneId)
+    const s = live(paneId) || waiting(paneId)
     if (!s) return closed()
     const known = new Set([...s.teamQueue.map((m) => m.id), ...(s.turn?.kind === 'team' ? s.turn.ids : [])])
     const added = []
@@ -719,6 +851,8 @@ export function createChatSessions(deps) {
       emit(paneId, { type: 'user', id: m.id, text: m.text, origin: 'team', from: fromLabel(m.from), status: 'queued', at: now() })
     }
     pump(s)
+    if (added.length) askWake(s)
+    idleCheck(s)
     return { ok: true, ids: added }
   }
 
@@ -766,6 +900,7 @@ export function createChatSessions(deps) {
     record(s, 'PostToolUse', { toolId: ap.toolId })
     workStatus(s)
     pump(s)
+    idleCheck(s)
     return { ok: true }
   }
 
@@ -781,6 +916,13 @@ export function createChatSessions(deps) {
   }
 
   async function setOption({ paneId, model, effort, permissionMode } = {}) {
+    const z = sessions.get(paneId)
+    if (z?.asleep && permissionMode == null) {
+      // Kept for the wake (a model or effort the caller does not give then).
+      if (model != null) z.model = model
+      if (effort != null) z.effort = effort
+      return { ok: true, model: z.model, effort: z.effort }
+    }
     const s = live(paneId)
     if (!s) return closed()
     const results = []
@@ -815,6 +957,8 @@ export function createChatSessions(deps) {
       s.closing = true
       try {
         await s.adapter?.close?.(kill ? { kill: true } : undefined)
+        // Asleep: no process, unless Tessel quits while it still stops.
+        if (kill) await s.sleptAdapter?.close?.({ kill: true })
       } catch {
         /* killed or already gone */
       }
@@ -857,7 +1001,11 @@ export function createChatSessions(deps) {
       seq: seqs.get(paneId),
       meta: j.readMeta(),
       // A live session (starting, idle, working, approval): do not open it again.
-      open: !!s && !s.finished && !s.closing,
+      open: !!s && !s.finished && !s.closing && !s.asleep,
+      // Asleep (its process stopped when idle): open false, live set (status
+      // 'asleep'), so a remounted pane does not start it; chat:open resumes
+      // it when needed (a message sent to it asks with a 'wake' event).
+      asleep: !!s?.asleep,
       live: s
         ? { status: s.status, agent: s.agent, sessionId: s.sessionId, launchToken: s.launchToken, model: s.model, queued: s.userQueue.length + s.teamQueue.length }
         : null
@@ -877,10 +1025,13 @@ export function createChatSessions(deps) {
   function register(ipcMain) {
     ipcMain.handle('chat:open', (_e, q) => {
       const o = obj(q)
+      // Minutes idle before its process is stopped (0 = never).
+      if (o.idleMinutes != null && !(Number.isInteger(o.idleMinutes) && o.idleMinutes >= 0 && o.idleMinutes <= 1440)) return invalid()
       // Only these fields: never a command. The variables come as for a
       // terminal pane (pty:create): Settings > Agents and the provider
       // account's, checked by paneEnv (names only, never TESSEL_*).
       return open({
+        idleMinutes: o.idleMinutes ?? undefined,
         paneId: o.paneId,
         agent: o.agent,
         cwd: o.cwd,

@@ -38,3 +38,29 @@ describe('an agent row shows its model', () => {
     expect(none.find('[data-test="car-model"]').exists()).toBe(false)
   })
 })
+
+describe('a chat agent row (no terminal)', () => {
+  const chat = (extra = {}) => row({ chat: true, title: 'Reviewer', primary: 'Reviewer', model: 'Opus 4.7 · high', ...extra })
+
+  it('shows its model and effort from the row, its team, and a chat tag unless its name says chat', () => {
+    window.shellApi = {}
+    const w = mount(CompactAgentRow, { props: { row: chat({ team: 't1', lead: true }), teamLabel: 'Team 2' } })
+    expect(w.get('[data-test="car-model"]').text()).toBe('Opus 4.7 · high')
+    expect(w.get('[data-test="car-team"]').text()).toBe('Team 2 · lead')
+    expect(w.get('[data-test="car-chat"]').text()).toBe('chat')
+    expect(w.get('.compact-agent-row').attributes('aria-label')).toContain('Chat, no terminal')
+    const named = mount(CompactAgentRow, { props: { row: chat({ title: 'Claude (chat)', primary: 'Claude (chat)' }) } })
+    expect(named.find('[data-test="car-chat"]').exists()).toBe(false)
+    // A terminal agent has no chat tag.
+    const terminal = mount(CompactAgentRow, { props: { row: row() } })
+    expect(terminal.find('[data-test="car-chat"]').exists()).toBe(false)
+    expect(terminal.get('.compact-agent-row').attributes('aria-label')).not.toContain('Chat')
+  })
+
+  it('a click goes to its pane like a terminal row', async () => {
+    window.shellApi = {}
+    const w = mount(CompactAgentRow, { props: { row: chat() } })
+    await w.get('.compact-agent-row').trigger('click')
+    expect(w.emitted('activate')[0][0]).toMatchObject({ id: 'p1', chat: true })
+  })
+})
