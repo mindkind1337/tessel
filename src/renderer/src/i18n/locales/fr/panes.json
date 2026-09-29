@@ -121,7 +121,8 @@
       "worker": "exécutant",
       "workerOfHint": "Exécutant de {{coordinator}} : y aller",
       "childType": "Type : {{type}}",
-      "childModel": "Modèle : {{model}}"
+      "childModel": "Modèle : {{model}}",
+      "teamLead": "{{team}} · responsable"
     },
     "card": {
       "markReadTooltip": "Marquer comme lu · {{status}}",

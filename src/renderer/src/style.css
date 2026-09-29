@@ -10628,3 +10628,18 @@ button.act-stat:hover,
   color: var(--text-dim);
   font-size: 11px;
 }
+
+/* An agent row's team: a small outlined pill. */
+.car-tag.car-team-tag {
+  max-width: 90px;
+  overflow: hidden;
+  padding: 0 5px;
+  border: 1px solid color-mix(in srgb, var(--wts-muted) 35%, transparent);
+  border-radius: 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.car-tag.car-team-tag.lead {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+}

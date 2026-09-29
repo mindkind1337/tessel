@@ -140,6 +140,10 @@ const childState = computed(() => {
   return split.value.older.includes(c) ? t('sidebar.agentRow.finished', 'Finished') : stateTitle(c.state)
 })
 // What the old native tooltip said, for screen readers.
+// The team tag on the row: its name, with "lead" when it leads it.
+const teamTag = computed(() =>
+  props.row.lead ? t('sidebar.agentRow.teamLead', '{{team}} · lead', { team: props.teamLabel }) : props.teamLabel
+)
 const rowLabel = computed(() => {
   const r = props.row
   const team = props.teamLabel || r.team
@@ -202,7 +206,9 @@ const workerOfLabel = computed(() =>
         - {{ row.secondary }}</span
       >
     </span>
-    <span v-if="row.lead" class="car-tag">{{ t('sidebar.agentRow.lead', 'lead') }}</span>
+    <!-- Its team, by name (and "lead" when it leads it). -->
+    <span v-if="row.team && teamLabel" class="car-tag car-team-tag" data-test="car-team" :class="{ lead: row.lead }" v-text="teamTag"></span>
+    <span v-else-if="row.lead" class="car-tag">{{ t('sidebar.agentRow.lead', 'lead') }}</span>
     <!-- A worker: linked to its coordinator (click: go to it). -->
     <button
       v-if="row.workerOf"
