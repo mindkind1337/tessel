@@ -387,10 +387,10 @@ const api = {
   },
   // Files, Changes and the editor of remote projects (src/main/remoteFs.js):
   // their files go through the usual explorer / editor / scm calls with
-  // ssh://… paths; here only the project folders, cancel, and the session's
+  // ssh://… paths (only below the saved remote projects, which the main
+  // process reads from the layout); here only cancel and the session's
   // activity (connecting, busy) for the remote badge.
   remoteFs: {
-    setRoots: (roots) => ipcRenderer.invoke('remoteFs:setRoots', roots),
     cancel: (hostId) => ipcRenderer.invoke('remoteFs:cancel', hostId),
     state: () => ipcRenderer.invoke('remoteFs:state'),
     onActivity: (cb) => {

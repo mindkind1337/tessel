@@ -242,6 +242,134 @@ describe.skipIf(!gitSh())('remote project over a fake ssh (Git for Windows sh)',
   }, 30000)
 })
 
+// The security review's probes, kept as regression tests.
+describe.skipIf(!gitSh())('review: a repository config never runs code unasked; roots are the saved ones', () => {
+  let base
+  let proj
+  let home
+  let marks
+  let root
+  const g = (...a) => execFileSync('git', ['-C', proj, ...a], { stdio: 'pipe' }).toString()
+  const readMarks = () => (fs.existsSync(marks) ? fs.readFileSync(marks, 'utf8') : '')
+  const make = (trusted, asks) =>
+    createRemoteFs({
+      hosts: stubHosts([]),
+      spawnImpl: fakeSpawn({ home }),
+      trust: () => ({
+        decide: async (key, risky) => {
+          asks.push({ key, keys: risky.map((r) => r.key) })
+          return trusted
+        }
+      })
+    })
+
+  beforeAll(() => {
+    base = fs.mkdtempSync(join(os.tmpdir(), 'tessel-rfs-review-'))
+    proj = join(base, 'proj')
+    home = join(base, 'home')
+    marks = join(base, 'marks.txt')
+    for (const d of [proj, home, join(base, 'outside')]) fs.mkdirSync(d)
+    fs.writeFileSync(join(base, 'outside', 'secret.txt'), 'TOP SECRET\n')
+    g('init', '-q', '-b', 'main')
+    g('config', 'user.email', 't@example.com')
+    g('config', 'user.name', 'T')
+    g('config', 'core.autocrlf', 'false')
+    fs.writeFileSync(join(proj, 'a.txt'), 'one\n')
+    fs.writeFileSync(join(proj, '.gitattributes'), 'a.txt filter=evil diff=evil\n')
+    g('add', '-A')
+    g('commit', '-q', '-m', 'first')
+    const m = posixPath(marks)
+    g('config', 'core.fsmonitor', `echo FSMONITOR >> '${m}'; false`)
+    g('config', 'filter.evil.clean', `echo CLEAN_FILTER >> '${m}'; cat`)
+    fs.appendFileSync(join(proj, 'a.txt'), 'dirty\n')
+    root = remoteRoot(HOST, posixPath(proj))
+  })
+  afterAll(() => fs.rmSync(base, { recursive: true, force: true }))
+
+  it('F1: Files status, Changes status and the background check run none of its programs until trusted', async () => {
+    const asks = []
+    const rfs = make(false, asks)
+    rfs.setRoots([root])
+    fs.writeFileSync(marks, '')
+    expect((await rfs.projectStatus({ root })).ok).toBe(true)
+    const s = await rfs.scm.scmStatus({ root })
+    expect(s.ok).toBe(true)
+    expect(s.entries.find((e) => e.path === 'a.txt')).toMatchObject({ area: 'unstaged' })
+    expect((await rfs.headContent(childPath(root, 'a.txt'))).ok).toBe(true)
+    rfs.watchRoot(root)
+    await rfs.poll()
+    await rfs.poll()
+    await rfs.poll()
+    rfs.unwatchRoots()
+    expect(readMarks()).toBe('')
+    // Asked once for the repository, naming what would run.
+    expect(asks).toHaveLength(1)
+    expect(asks[0].keys.map((k) => k.toLowerCase()).sort()).toEqual(['core.fsmonitor', 'filter.evil.clean'])
+    rfs.close()
+  }, 120000)
+
+  it('F1: once trusted, its settings run as git would run them', async () => {
+    const rfs = make(true, [])
+    rfs.setRoots([root])
+    fs.writeFileSync(marks, '')
+    await rfs.scm.scmStatus({ root })
+    expect(readMarks()).toMatch(/CLEAN_FILTER/)
+    rfs.close()
+  }, 60000)
+
+  it('F2: a root the window names is not a project: nothing outside the saved ones is reached', async () => {
+    const rfs = make(false, [])
+    rfs.setRoots([root])
+    const secret = remoteRoot(HOST, posixPath(join(base, 'outside', 'secret.txt')))
+    expect((await rfs.readForEdit(secret)).ok).toBe(false)
+    expect((await rfs.listDir({ root: remoteRoot(HOST, '/') })).ok).toBe(false)
+    expect((await rfs.listDir({ root: remoteRoot(HOST, posixPath(base)) })).ok).toBe(false)
+    expect((await rfs.scm.scmStatus({ root: remoteRoot(HOST, posixPath(base)) })).ok).toBe(false)
+    expect((await rfs.readForEdit(secret)).ok).toBe(false)
+    expect((await rfs.writeForEdit({ file: secret, text: 'overwritten\n' })).ok).toBe(false)
+    expect(fs.readFileSync(join(base, 'outside', 'secret.txt'), 'utf8')).toBe('TOP SECRET\n')
+    rfs.close()
+  }, 60000)
+
+  it('F2: a repository whose top is above the project gives git its top, never the editor', async () => {
+    const top = join(base, 'outer')
+    fs.mkdirSync(join(top, 'app'), { recursive: true })
+    execFileSync('git', ['-C', top, 'init', '-q'])
+    fs.writeFileSync(join(top, 'private.txt'), 'outside the project\n')
+    fs.writeFileSync(join(top, 'app', 'x.txt'), 'x\n')
+    const appRoot = remoteRoot(HOST, posixPath(join(top, 'app')))
+    const rfs = make(false, [])
+    rfs.setRoots([appRoot])
+    const s = await rfs.scm.scmStatus({ root: appRoot })
+    expect(s.ok).toBe(true)
+    expect(s.top).not.toBe(appRoot)
+    // Files of the project, reached through the repository's top: fine.
+    expect((await rfs.readForEdit(childPath(s.top, 'app/x.txt'))).ok).toBe(true)
+    // A file of the repository outside the project: not for the editor, nor
+    // for a diff's right side.
+    expect((await rfs.readForEdit(childPath(s.top, 'private.txt'))).ok).toBe(false)
+    const v = await rfs.scm.scmFileVersions({ root: appRoot, path: 'private.txt', area: 'untracked' })
+    expect(v.ok && v.modified).toBeFalsy()
+    rfs.close()
+  }, 60000)
+
+  it('saving over a FIFO is refused (it would block the session)', async () => {
+    const fifo = join(proj, 'pipe')
+    try {
+      execFileSync(gitSh(), ['-c', `mkfifo '${posixPath(fifo)}'`])
+    } catch {
+      return // no FIFOs here
+    }
+    const rfs = make(false, [])
+    rfs.setRoots([root])
+    const w = await rfs.writeForEdit({ file: childPath(root, 'pipe'), text: 'x', expectHash: 'sha256:' + '0'.repeat(64) })
+    expect(w.ok).toBe(false)
+    expect((await rfs.readForEdit(childPath(root, 'pipe'))).ok).toBe(false)
+    rfs.close()
+    fs.rmSync(fifo, { force: true })
+  }, 60000)
+})
+
 describe.skipIf(!gitSh())('connection failures', () => {
   it('says why ssh could not connect', async () => {
     const rfs = createRemoteFs({ hosts: stubHosts([]), spawnImpl: fakeSpawn({ exit: true }) })
@@ -255,6 +383,7 @@ describe.skipIf(!gitSh())('connection failures', () => {
   it('without askpass, ssh runs in batch mode (it may not ask anything)', async () => {
     const argvFile = join(os.tmpdir(), `tessel-argv-${process.pid}.json`)
     const rfs = createRemoteFs({ hosts: stubHosts([]), spawnImpl: fakeSpawn({ exit: true, argvFile }) })
+    rfs.setRoots([remoteRoot(HOST, '/srv/app')])
     await rfs.listDir({ root: remoteRoot(HOST, '/srv/app') })
     const { argv } = JSON.parse(fs.readFileSync(argvFile, 'utf8'))
     expect(argv).toContain('BatchMode=yes')
