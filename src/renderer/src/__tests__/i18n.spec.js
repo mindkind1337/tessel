@@ -1,11 +1,81 @@
 import { describe, it, expect, afterEach } from 'vitest'
 import { join } from 'node:path'
-import { readFileSync, readdirSync } from 'node:fs'
+import { readFileSync, readdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { t, setMessages, resolveLocale, flatten, setUiLanguage, currentLocale } from '../i18n'
 import { untranslatedIn, rendererFiles, relPath, usedKeys } from '../i18n/audit'
 
 const root = join(__dirname, '..')
 const PENDING = /i18n-pending/
+
+describe('template literal audit', () => {
+  const dirs = []
+  afterEach(() => dirs.splice(0).forEach((dir) => rmSync(dir, { recursive: true, force: true })))
+  function audit(source, ext = 'js') {
+    const dir = mkdtempSync(join(tmpdir(), 'tessel-i18n-'))
+    dirs.push(dir)
+    const file = join(dir, `fixture.${ext}`)
+    writeFileSync(file, source)
+    return untranslatedIn(file)
+  }
+
+  it('finds lowercase text after interpolations, including nested and multiline expressions', () => {
+    const hits = audit([
+      'const a = `${n}% used`',
+      'const b = `${get({ nested: { n }, text: "}" })} left`',
+      'const c = `${n}',
+      'remaining`',
+      'const d = `${ok ? `${n} files` : n}`',
+      'const e = `ready`'
+    ].join('\n'))
+    expect(hits.map((hit) => hit.line)).toEqual([1, 2, 3, 5, 6])
+    expect(hits.map((hit) => hit.text)).toContain('`${n}% used`')
+  })
+
+  it('checks only literal text, preserves whole words, and skips translated fallbacks and logs', () => {
+    expect(audit([
+      'const a = `${englishWords({ nested: true })}%`',
+      'const b = `${n} MB / ${m} ms`',
+      'const c = `${n} x`',
+      'const d = t("usage.used", `${n}% used`)',
+      'const e = t(`settings.themes.${id}.description`, description)',
+      'console.warn(`failed ${n}`)',
+      'window.shellApi.log("info", `failed ${n}`)',
+      'throw new Error(`failed ${n}`)',
+      '// const ignored = `${n} files`'
+    ].join('\n'))).toEqual([])
+    // Joining fragments must not invent a word from single letters.
+    expect(audit('const value = `a${n}b`')).toEqual([])
+  })
+
+  it('allows explicit technical exemptions without suppressing other statements', () => {
+    const hits = audit([
+      'const css = `pane-${id}` // i18n-ignore',
+      'const path = `${dir}/file.txt` // i18n-ignore',
+      'const command = `git diff ${ref}` // i18n-ignore',
+      'const prompt = `Tell the agent ${task}` // i18n-ignore',
+      'const multiline = `agent ${id}',
+      'instructions` // i18n-ignore',
+      'const shown = `${n} files`',
+      'const last = `key-${id}` // i18n-ignore'
+    ].join('\n'))
+    expect(hits).toEqual([{ line: 7, text: '`${n} files`' }])
+    expect(audit('const shown = `${n} files // i18n-ignore`')).toHaveLength(1)
+  })
+
+  it('finds displayed Vue expressions with accurate file lines', () => {
+    const hits = audit([
+      '<script setup>',
+      'const label = `${n} left`',
+      '</script>',
+      '<template>',
+      '  <span :title="`${n} remaining`">{{ `${n}% used` }}</span>',
+      '  <span>{{ `key-${id}` /* i18n-ignore */ }}</span>',
+      '</template>'
+    ].join('\n'), 'vue')
+    expect(hits.map((hit) => hit.line).sort()).toEqual([2, 5, 5])
+  })
+})
 
 describe('t()', () => {
   afterEach(() => setMessages('en', {}))

@@ -7,7 +7,7 @@ export function chainCommands(steps, shellId) {
     .filter(Boolean)
   if (list.length <= 1) return list[0] || ''
   if (shellId === 'powershell') {
-    return list.reduceRight((rest, step) => (rest ? `${step}; if ($?) { ${rest} }` : step), '')
+    return list.reduceRight((rest, step) => (rest ? `${step}; if ($?) { ${rest} }` : step), '') // i18n-ignore
   }
   // cmd, PowerShell 7, Git Bash and WSL all understand &&.
   return list.join(' && ')
@@ -29,7 +29,7 @@ export function installChain(steps, start, shellId) {
     const ok = "Write-Host ('TESSEL-INSTALL' + '-OK')"
     const bad = "Write-Host ('TESSEL-INSTALL' + '-FAILED')"
     const last = then ? `${ok}; ${then}` : ok
-    return list.reduceRight((rest, step) => `${step}; if ($?) { ${rest} } else { ${bad} }`, last)
+    return list.reduceRight((rest, step) => `${step}; if ($?) { ${rest} } else { ${bad} }`, last) // i18n-ignore
   }
   const [ok, bad] =
     shellId === 'cmd'

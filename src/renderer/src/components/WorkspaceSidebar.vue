@@ -188,7 +188,7 @@ const sidebarStyle = computed(() => {
   if (mode === 'match-terminal') bg = 'var(--term)'
   else if (mode === 'tinted') {
     const pct = Number((settings.leftSidebarTintOpacity * 100).toFixed(2))
-    bg = `color-mix(in srgb, ${settings.leftSidebarTintColor} ${pct}%, var(--surface))`
+    bg = `color-mix(in srgb, ${settings.leftSidebarTintColor} ${pct}%, var(--surface))` // i18n-ignore
   }
   if (bg) s['--wts'] = bg
   return s

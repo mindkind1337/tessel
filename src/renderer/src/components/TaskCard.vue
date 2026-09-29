@@ -90,7 +90,7 @@ function onCardKey(e) {
   moveTask(props.task.id, COLUMNS[j])
   nextTick(() => {
     // It moved to another column (a new card element): keep the focus on it.
-    const el = document.querySelector(`[data-task-id="${props.task.id}"]`)
+    const el = document.querySelector(`[data-task-id="${props.task.id}"]`) // i18n-ignore
     if (el) el.focus()
   })
 }

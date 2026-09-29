@@ -654,11 +654,11 @@ async function agentStartLine(agent, sessionId, resume, accountId) {
         ? await window.shellApi.claudeSessionExists(sessionId, accountId !== undefined ? { accountId } : undefined)
         : true
       if (exists)
-        return { line: `${agent.command} --resume ${sessionId}`, sessionId, resumed: true }
+        return { line: `${agent.command} --resume ${sessionId}`, sessionId, resumed: true } // i18n-ignore
     }
     // No transcript yet (you never messaged it): start fresh, same id.
     const id = sessionId || newUuid()
-    return { line: `${agent.command} --session-id ${id}`, sessionId: id, resumed: false }
+    return { line: `${agent.command} --session-id ${id}`, sessionId: id, resumed: false } // i18n-ignore
   }
   if (kind === 'codex') {
     // Without Codex's shared daemon: with it, the team tools lose the pane's
@@ -668,7 +668,7 @@ async function agentStartLine(agent, sessionId, resume, accountId) {
       // No update check at start: its menu takes keystrokes (a reminder's
       // Enter chose "Update now" and Codex quit). Updates: Settings > Agents.
       ' -c check_for_update_on_startup=false'
-    if (sessionId && resume) return { line: `${agent.command} resume ${sessionId}${own}`, sessionId, resumed: true }
+    if (sessionId && resume) return { line: `${agent.command} resume ${sessionId}${own}`, sessionId, resumed: true } // i18n-ignore
     return { line: `${agent.command}${own}`, sessionId: null, resumed: false }
   }
   if (kind === 'gemini' || kind === 'qwen') {
@@ -676,10 +676,10 @@ async function agentStartLine(agent, sessionId, resume, accountId) {
     if (sessionId && resume) {
       const check = kind === 'gemini' ? window.shellApi.geminiSessionExists : window.shellApi.qwenSessionExists
       const exists = check ? await check(sessionId).catch(() => false) : false
-      if (exists) return { line: `${agent.command} --resume ${sessionId}`, sessionId, resumed: true }
+      if (exists) return { line: `${agent.command} --resume ${sessionId}`, sessionId, resumed: true } // i18n-ignore
     }
     const id = sessionId || newUuid()
-    return { line: `${agent.command} --session-id ${id}`, sessionId: id, resumed: false }
+    return { line: `${agent.command} --session-id ${id}`, sessionId: id, resumed: false } // i18n-ignore
   }
   const flag = { opencode: '--session', cline: '--id', copilot: '--resume', kimi: '--session' }[kind]
   if (flag && sessionId && resume && safeSessionId(sessionId)) {
@@ -1765,7 +1765,7 @@ const updateOpen = ref(false)
 const updateInstalling = ref(false)
 // This version's GitHub release page ("Release notes" on the update card).
 const updateReleaseUrl = computed(() =>
-  updateStatus.value.version ? `https://github.com/mindkind1337/tessel/releases/tag/v${updateStatus.value.version}` : ''
+  updateStatus.value.version ? `https://github.com/mindkind1337/tessel/releases/tag/v${updateStatus.value.version}` : '' // i18n-ignore
 )
 let unsubUpdate = null
 
@@ -2469,7 +2469,7 @@ function otherPanes(paneId) {
 // Where a pane sits in the visible layout, in words ("top left", "right").
 function paneWhere(paneId) {
   const layer = document.querySelector('.ws-layer:not(.hidden)')
-  const el = layer && layer.querySelector(`.pane[data-pane-id="${paneId}"]`)
+  const el = layer && layer.querySelector(`.pane[data-pane-id="${paneId}"]`) // i18n-ignore
   if (!layer || !el) return ''
   const L = layer.getBoundingClientRect()
   const r = el.getBoundingClientRect()
@@ -3999,7 +3999,7 @@ function taskPrompt(task, ws) {
       '\n\n'
     : ''
   return (
-    `[Tessel task] ${task.title}\n\n` +
+    `[Tessel task] ${task.title}\n\n` + // i18n-ignore
     (task.brief ? `${task.brief}\n\n` : '') +
     team +
     `${where}\n\n` +
@@ -4034,7 +4034,7 @@ async function startTask(spec, opts = {}) {
     if (why) {
       removeTask(task.id)
       showToast(t('app.task.cannotTake', '{{name}} cannot take this task: {{why}}.', { name: leaf ? leaf.title : t('app.task.thatAgent', 'That agent'), why: busyReasonText(leaf) }), { kind: 'error', timeout: 7000 })
-      return { error: `${leaf ? paneLabel(leaf) : 'that agent'} cannot take it: ${why}` }
+      return { error: `${leaf ? paneLabel(leaf) : 'that agent'} cannot take it: ${why}` } // i18n-ignore
     }
   } else {
     const agent = agentById(spec.agent.id)
@@ -4057,7 +4057,7 @@ async function startTask(spec, opts = {}) {
           kind: 'error',
           timeout: 9000
         })
-        return { error: `could not make a separate copy: ${(res && res.error) || 'unknown error'}` }
+        return { error: `could not make a separate copy: ${(res && res.error) || 'unknown error'}` } // i18n-ignore
       }
       worktree = { path: res.path, branch: res.branch, baseBranch: res.baseBranch || null, root: res.root || ws.cwd }
       updateTask(task.id, { worktree })
@@ -4088,7 +4088,7 @@ async function startTask(spec, opts = {}) {
     leaf.team = opts.teamId
     logMembership(leaf, opts.teamId)
     await syncChannel(teamById(opts.teamId), { quiet: [leaf.id] })
-    tellAgents(before, `[Tessel] Team "${teamById(opts.teamId).name}": ${paneLabel(leaf)} joined the team.`, opts.teamId)
+    tellAgents(before, `[Tessel] Team "${teamById(opts.teamId).name}": ${paneLabel(leaf)} joined the team.`, opts.teamId) // i18n-ignore
   }
   updateTask(task.id, { paneId: leaf.id })
   const started = boardTasks.find((x) => x.id === task.id)
@@ -4201,7 +4201,7 @@ function sendBackToAgent(task, text, action, detail, by = null) {
   const wt = task.worktree
   deliverToAgent(
     leaf.id,
-    `[Tessel review] ${task.title}\n\n${text}\n\n` +
+    `[Tessel review] ${task.title}\n\n${text}\n\n` + // i18n-ignore
       (wt ? `Work in ${wt.path} on branch ${wt.branch}, commit the changes there (say which checks you ran in the commit message), and do not merge. ` : '') + // i18n-ignore
       'When it is done and checked, end your last message with a line that contains only the words TASK and COMPLETE joined by an underscore.', // i18n-ignore
     by ? { source: 'lead', scope: 'task', from: by } : { source: 'you', scope: 'task' }
@@ -4551,13 +4551,13 @@ async function changeTeamLead(teamId, leafId) {
   // Still in the team after the wait: its inbox stays, for messages only.
   if (old && findLeaf(old.id) && findLeaf(old.id).team === teamId) {
     await assignInbox(team, old)
-    tellAgents([old], `[Tessel] You no longer lead the team "${team.name}". Your inbox now takes messages only.`, teamId)
+    tellAgents([old], `[Tessel] You no longer lead the team "${team.name}". Your inbox now takes messages only.`, teamId) // i18n-ignore
   }
   if (!leaf) {
     handOffLeadReviews(teamId)
     if (old) {
       recordActivity({ type: 'team', action: 'lead-removed', teamId, wsId: teamWsId(teamId), name: team.name, detail: old.title })
-      tellAgents(teamMembers(teamId).filter((l) => l.id !== old.id), `[Tessel] Team "${team.name}": ${paneLabel(old)} no longer leads the team.`, teamId)
+      tellAgents(teamMembers(teamId).filter((l) => l.id !== old.id), `[Tessel] Team "${team.name}": ${paneLabel(old)} no longer leads the team.`, teamId) // i18n-ignore
     }
     return
   }
@@ -4634,7 +4634,7 @@ async function restoreLeadInbox(team, leaf) {
   const box = await assignLeadInbox(team, leaf)
   if (!box || team.leadId !== leaf.id) return
   delete leadInboxRetry[team.id]
-  tellAgents([leaf], `[Tessel] Your lead inbox was made again. ${box.guide}`, team.id)
+  tellAgents([leaf], `[Tessel] Your lead inbox was made again. ${box.guide}`, team.id) // i18n-ignore
 }
 
 // Inbox folders being made right now: the poll leaves them alone.
@@ -4690,12 +4690,12 @@ function handOffLeadReviews(teamId, newLead = null) {
 function leadReviewPrompt(task, worker) {
   const wt = task.worktree
   const where = wt
-    ? `in its own copy ${wt.path} (branch ${wt.branch}, from ${wt.baseBranch || 'main'}). See the changes with: git -C "${wt.path}" log ${wt.baseBranch || 'main'}..HEAD and git -C "${wt.path}" diff ${wt.baseBranch || 'main'}...HEAD`
+    ? `in its own copy ${wt.path} (branch ${wt.branch}, from ${wt.baseBranch || 'main'}). See the changes with: git -C "${wt.path}" log ${wt.baseBranch || 'main'}..HEAD and git -C "${wt.path}" diff ${wt.baseBranch || 'main'}...HEAD` // i18n-ignore
     : 'in the project folder (see git status and git diff there)' // i18n-ignore
   return (
-    `[Tessel] ${paneLabel(worker)} finished the task "${task.title}" (task id ${task.id}) ${where}.\n` +
+    `[Tessel] ${paneLabel(worker)} finished the task "${task.title}" (task id ${task.id}) ${where}.\n` + // i18n-ignore
     'Review it: correctness, scope, tests. Do not edit its files. Then write to your lead inbox either ' + // i18n-ignore
-    `{"action":"approve","task":"${task.id}","note":"..."} or {"action":"changes","task":"${task.id}","text":"what to fix"}.`
+    `{"action":"approve","task":"${task.id}","note":"..."} or {"action":"changes","task":"${task.id}","text":"what to fix"}.` // i18n-ignore
   )
 }
 
@@ -4736,7 +4736,7 @@ async function runLeadRequest(team, lead, req) {
     if (found.error) return `Not done: ${found.error}.` // i18n-ignore
     return (
       `No task of your team waits for review under "${req.task}".` + // i18n-ignore
-      (inReview.length ? ` In review: ${inReview.map((t) => `${t.id} "${t.title}"`).join(', ')}.` : '')
+      (inReview.length ? ` In review: ${inReview.map((t) => `${t.id} "${t.title}"`).join(', ')}.` : '') // i18n-ignore
     )
   }
   if (req.action === 'approve') {
@@ -4772,11 +4772,11 @@ function runMemberMessage(team, from, req) {
   if (!to.length) {
     if (req.to === 'team') return 'Nobody else is in your team yet.' // i18n-ignore
     if (req.to === 'lead') return 'Your team has no lead.' // i18n-ignore
-    return `#${req.num} is not in your team. Teammates: ${others.map(paneLabel).join(', ') || 'none'}.`
+    return `#${req.num} is not in your team. Teammates: ${others.map(paneLabel).join(', ') || 'none'}.` // i18n-ignore
   }
   log.push(now)
   const isLead = lead && lead.id === from.id
-  const head = isLead ? `[From your lead ${paneLabel(from)}]` : `[From ${paneLabel(from)}, team "${team.name}"]`
+  const head = isLead ? `[From your lead ${paneLabel(from)}]` : `[From ${paneLabel(from)}, team "${team.name}"]` // i18n-ignore
   const meta = { source: isLead ? 'lead' : 'agent', scope: 'team', teamId: team.id, from: from.title, waitIdle: true }
   const skipped = []
   for (const l of to) {
@@ -4884,9 +4884,9 @@ async function pollTeams() {
         const answers = []
         for (const item of res.items) {
           const req = item.error ? { ok: false, error: item.error } : parseLeadRequest(item.data)
-          if (!req.ok) answers.push(`${item.file}: not done, ${req.error}.`)
+          if (!req.ok) answers.push(`${item.file}: not done, ${req.error}.`) // i18n-ignore
           else if (req.action === 'message') answers.push(runMemberMessage(team, leaf, req))
-          else if (!isLead) answers.push(`${item.file}: only the team lead can use "${req.action}". Send a message instead.`)
+          else if (!isLead) answers.push(`${item.file}: only the team lead can use "${req.action}". Send a message instead.`) // i18n-ignore
           else answers.push(await runLeadRequest(team, leaf, req))
         }
         const text = answers.filter(Boolean)
@@ -5007,7 +5007,7 @@ async function syncChannel(team, opts = {}) {
     team.channelTold[m.id] = box.outbox
     if (opts.quiet && opts.quiet.includes(m.id)) continue
     if (!TEAM_MESSAGES_IN_TERMINALS) continue
-    tellAgents([m], `[Tessel] Team "${team.name}": talk to your teammates directly through the team channel, not through the user.\n${box.guide}`, team.id)
+    tellAgents([m], `[Tessel] Team "${team.name}": talk to your teammates directly through the team channel, not through the user.\n${box.guide}`, team.id) // i18n-ignore
   }
   for (const id of Object.keys(team.channelTold)) if (!boxes[id]) delete team.channelTold[id]
   return boxes
@@ -5596,7 +5596,7 @@ function typeWake(leaf, count, unconfirmed) {
   } else if (!t || t.state !== 'idle') return
   if (approvals[leaf.id] || limits[leaf.id] || pendingMessages[leaf.id] || unsent[leaf.id] || delivering.has(leaf.id)) return
   if (restartingLeaves.has(leaf.id)) return // being restarted right now
-  const reminder = `[Tessel] You have ${count} new team message${count > 1 ? 's' : ''}: read ${count > 1 ? 'them' : 'it'} with team_inbox.`
+  const reminder = `[Tessel] You have ${count} new team message${count > 1 ? 's' : ''}: read ${count > 1 ? 'them' : 'it'} with team_inbox.` // i18n-ignore
   // Claude Code with its own inbox: the reminder goes there (it starts a turn
   // by itself), so the user's input line and prompts are never touched. It
   // failed lately (older Claude Code, process gone): typed as before.
@@ -5962,7 +5962,7 @@ function closeAndReopenForUpdate(agentId) {
   job.toldWaiting = false
   const queued = updateQueue.indexOf(agentId)
   if (queued >= 0) updateQueue.splice(queued, 1)
-  logUpdate('info', `${job.name}: closing and reopening its panes to finish the update`)
+  logUpdate('info', `${job.name}: closing and reopening its panes to finish the update`) // i18n-ignore
   agentUpdateTick()
 }
 
@@ -5986,7 +5986,7 @@ async function onAgentUpdateResult(agentId, r) {
     // copy elsewhere on PATH runs first, or the update did nothing): no pane
     // is restarted for nothing; stopped ones are relaunched as they were.
     if (row && row.installed && job.from && row.installed === job.from) {
-      logUpdate('warn', `${job.name}: the update finished but it still reports ${version}`)
+      logUpdate('warn', `${job.name}: the update finished but it still reports ${version}`) // i18n-ignore
       if (job.paused.length) await relaunchPaused(job, 'resumed (still on the same version)', t('app.agentUpdate.what.sameVersion', 'resumed (still on the same version)')) // i18n-ignore
       job.phase = 'failed'
       job.kind = 'same-version'
@@ -5996,9 +5996,9 @@ async function onAgentUpdateResult(agentId, r) {
       showToast(text, { kind: 'attention', timeout: 15000, action: logAction(r.file) })
       return
     }
-    logUpdate('info', `${job.name} updated to ${version}`)
+    logUpdate('info', `${job.name} updated to ${version}`) // i18n-ignore
     if (job.paused.length) {
-      await relaunchPaused(job, `updated to ${version} and resumed`, t('app.agentUpdate.what.updated', 'updated to {{version}} and resumed', { version }))
+      await relaunchPaused(job, `updated to ${version} and resumed`, t('app.agentUpdate.what.updated', 'updated to {{version}} and resumed', { version })) // i18n-ignore
       job.phase = 'done'
       inboxNote('done', t('app.agentUpdate.updatedTo', '{{name}} updated to {{version}}', { name: job.name, version }), job.report || '', null)
       return
@@ -6069,7 +6069,7 @@ async function onAgentUpdateResult(agentId, r) {
       return
     }
     job.phase = 'waiting-stop'
-    logUpdate('info', `${job.name}: files in use; waiting to stop ${plan.running.length} pane(s) safely`)
+    logUpdate('info', `${job.name}: files in use; waiting to stop ${plan.running.length} pane(s) safely`) // i18n-ignore
     showToast(
       plan.running.length === 1
         ? t('app.agentUpdate.stopOne', "{{name}}'s files are in use by its running agents. Tessel stops it when idle, updates, then resumes its conversation.", { name: job.name })
@@ -6182,7 +6182,7 @@ async function agentUpdateTick() {
       delete restartAfterUpdate[id]
       const label = paneLabel(leaf)
       const ok = await restartInPlace(id, { resume: true })
-      logUpdate(ok ? 'info' : 'error', `${label} ${ok ? `restarted on ${q.version}, conversation resumed` : 'could not be restarted'}`)
+      logUpdate(ok ? 'info' : 'error', `${label} ${ok ? `restarted on ${q.version}, conversation resumed` : 'could not be restarted'}`) // i18n-ignore
       if (ok) {
         showToast(t('app.agentUpdate.paneResumedDot', '{{pane}} updated to {{version}} and resumed.', { pane: label, version: q.version }), { timeout: 7000 })
         inboxNote('done', t('app.agentUpdate.paneResumed', '{{pane}} updated to {{version}} and resumed', { pane: label, version: q.version }), '', id)
@@ -6352,7 +6352,7 @@ async function syncSoloBoards(round) {
     for (const l of solo) panes[l.id] = { ws: ws.id, num: l.num }
     if (!solo.length && !soloBoardsSeen.has(ws.id)) continue
     soloBoardsSeen.add(ws.id)
-    await syncBoard({ key: `ws/${ws.id}`, dir: ws.cwd, target: { board: ws.id }, wsId: ws.id, members: solo, teamId: null }, round)
+    await syncBoard({ key: `ws/${ws.id}`, dir: ws.cwd, target: { board: ws.id }, wsId: ws.id, members: solo, teamId: null }, round) // i18n-ignore
     if (roundGone(round)) return
   }
   for (const [dir, panes] of Object.entries(byDir)) {
@@ -6373,7 +6373,7 @@ function applyReport(task, r, from, teamId) {
     ...(r.outcome === 'succeeded' && !blocked ? { column: 'done' } : {})
   })
   if (blocked && teamId && from.team === teamId)
-    tellAgents([from], `[Tessel] Your report on card ${task.id} is kept, but the card stays in ${task.column}: ${blocked}.`, teamId)
+    tellAgents([from], `[Tessel] Your report on card ${task.id} is kept, but the card stays in ${task.column}: ${blocked}.`, teamId) // i18n-ignore
   recordActivity({
     type: 'task',
     action: 'reported',
@@ -6387,9 +6387,9 @@ function applyReport(task, r, from, teamId) {
   const giver = task.createdBy && task.createdBy !== from.id ? findLeaf(task.createdBy) : null
   if (giver && teamId && giver.team === teamId) {
     const files = r.files && r.files.length ? `
-Files: ${r.files.slice(0, 20).join(', ')}${r.files.length > 20 ? ' …' : ''}` : ''
+Files: ${r.files.slice(0, 20).join(', ')}${r.files.length > 20 ? ' …' : ''}` : '' // i18n-ignore
     tellAgents([giver], `[Tessel] ${paneLabel(from)} finished card ${task.id} "${task.title}": ${r.outcome}.
-${r.summary}${files}`, teamId)
+${r.summary}${files}`, teamId) // i18n-ignore
   }
   if (r.outcome === 'failed') {
     inboxNote('attention', t('app.board.couldNotFinish', '{{pane}} could not finish "{{title}}"', { pane: paneLabel(from), title: task.title }), r.summary.slice(0, 200), from.id)
@@ -6417,7 +6417,7 @@ function resolveDecision(taskId, answer) {
   recordActivity({ type: 'task', action: 'decided', paneId: task.gate.by, title: task.title, wsId: task.wsId, detail: text })
   const asker = task.gate.by ? findLeaf(task.gate.by) : null
   if (asker) {
-    const msg = `[Tessel] The user decided on card ${task.id} "${task.title}" (${task.gate.question}): ${text}`
+    const msg = `[Tessel] The user decided on card ${task.id} "${task.title}" (${task.gate.question}): ${text}` // i18n-ignore
     if (asker.team && teamById(asker.team)) tellAgents([asker], msg, asker.team)
     // Alone (no team channel): nothing is typed into its terminal; you
     // pass it on (the text is copied).
@@ -6746,8 +6746,8 @@ const waitingOn = (task) => (task.deps || []).filter((d) => {
 // Why an agent cannot move a card on yet ('' when it can).
 function blockedReason(task) {
   const waiting = waitingOn(task)
-  if (waiting.length) return `it waits for ${waiting.join(', ')}`
-  if (task.gate && task.gate.status === 'pending') return `it waits for the user's decision (${task.gate.question})`
+  if (waiting.length) return `it waits for ${waiting.join(', ')}` // i18n-ignore
+  if (task.gate && task.gate.status === 'pending') return `it waits for the user's decision (${task.gate.question})` // i18n-ignore
   return ''
 }
 watch(
@@ -6764,7 +6764,7 @@ watch(
         const leaf = findLeaf(t.paneId)
         recordActivity({ type: 'task', action: 'ready', paneId: t.paneId, title: t.title, wsId: t.wsId })
         if (leaf && leaf.team && teamById(leaf.team))
-          tellAgents([leaf], `[Tessel] Card ${t.id} "${t.title}" can start now: the cards it waited for are done.`, leaf.team)
+          tellAgents([leaf], `[Tessel] Card ${t.id} "${t.title}" can start now: the cards it waited for are done.`, leaf.team) // i18n-ignore
       }
     }
   }
@@ -7011,7 +7011,7 @@ async function deliverChannel(team, members, round = teamRound) {
     const from = who[d.fromId]
     return d.fromId === 'tessel'
       ? `[Tessel] ${d.text}`
-      : `[From #${from ? from.num : '?'} ${from ? from.title : 'teammate'}, team "${team.name}", message ${d.id}${d.replyTo ? `, reply to ${d.replyTo}` : ''}] ${d.text}`
+      : `[From #${from ? from.num : '?'} ${from ? from.title : 'teammate'}, team "${team.name}", message ${d.id}${d.replyTo ? `, reply to ${d.replyTo}` : ''}] ${d.text}` // i18n-ignore
   }
   const api = window.shellApi.channel
   const where = { dir, teamId: team.id }
@@ -7133,7 +7133,7 @@ function createTeam(leafIds) {
   }
   pruneTeams()
   for (const [oldId, names] of leftFrom) {
-    if (teamById(oldId)) tellTeam(oldId, `${names.join(', ')} left the team.`)
+    if (teamById(oldId)) tellTeam(oldId, `${names.join(', ')} left the team.`) // i18n-ignore
   }
   recordActivity({
     type: 'team',
@@ -7161,7 +7161,7 @@ function addToTeam(teamId, leafIds) {
   const names = joining.map((l) => l.title).join(', ')
   recordActivity({ type: 'team', action: 'joined', teamId, wsId: teamWsId(teamId), name: team.name, detail: names })
   if (before.length) {
-    tellAgents(before, `[Tessel] Team "${team.name}": ${names} joined the team.`, teamId)
+    tellAgents(before, `[Tessel] Team "${team.name}": ${names} joined the team.`, teamId) // i18n-ignore
   }
   tellTeam(teamId, null, { welcome: true, only: joining.map((l) => l.id) })
 }
@@ -7187,9 +7187,9 @@ function leaveTeam(leafId) {
   leaf.team = null
   logMembership(leaf, null)
   pruneTeams()
-  tellAgents([leaf], `[Tessel] You are no longer in team "${name}".`, teamId)
+  tellAgents([leaf], `[Tessel] You are no longer in team "${name}".`, teamId) // i18n-ignore
   recordActivity({ type: 'team', action: 'left', teamId, wsId, name, detail: leaf.title })
-  if (teamById(teamId)) tellTeam(teamId, `${leaf.title} left the team.`)
+  if (teamById(teamId)) tellTeam(teamId, `${leaf.title} left the team.`) // i18n-ignore
 }
 
 // "Ungroup": the team goes away at once, its panes stay where they are. For a
@@ -7213,7 +7213,7 @@ function disbandTeam(teamId) {
       return leaf && !leaf.team
     })
     for (const leaf of still) logMembership(leaf, null)
-    tellAgents(still, `[Tessel] Team "${team.name}" was ungrouped: you now work on your own.`, teamId)
+    tellAgents(still, `[Tessel] Team "${team.name}" was ungrouped: you now work on your own.`, teamId) // i18n-ignore
     recordActivity({ type: 'team', action: 'ungrouped', teamId, wsId, name: team.name })
     const home = wsById(wsId)
     for (const id of Object.keys(team.inboxes || {})) dropInbox(team, id, home && home.cwd)
@@ -7248,7 +7248,7 @@ async function tellTeam(teamId, text, opts = {}) {
   const members = teamMembers(teamId).filter((l) => l.kind === 'agent')
   if (!members.length) return
   if (!opts.welcome) {
-    tellAgents(members, `[Tessel] Team "${team.name}": ${text}`, teamId)
+    tellAgents(members, `[Tessel] Team "${team.name}": ${text}`, teamId) // i18n-ignore
     return
   }
   const boxes = (await syncChannel(team, { quiet: members.map((l) => l.id) })) || {}
@@ -7265,13 +7265,13 @@ async function tellTeam(teamId, text, opts = {}) {
     const box = boxes[leaf.id]
     tellAgents(
       [leaf],
-      `[Tessel] You are now in team "${team.name}"` +
-        (mates.length ? ` with ${mates.join(', ')}.` : ' (no other agent yet).') +
+      `[Tessel] You are now in team "${team.name}"` + // i18n-ignore
+        (mates.length ? ` with ${mates.join(', ')}.` : ' (no other agent yet).') + // i18n-ignore
         (notes
-          ? ` Shared notes: ${notes} . Read them, agree there on who does what, and add a dated line to their Journal for each notable change.`
+          ? ` Shared notes: ${notes} . Read them, agree there on who does what, and add a dated line to their Journal for each notable change.` // i18n-ignore
           : '') +
         ' Before editing a file a teammate may be editing, check with them. Do not commit the notes file.' + // i18n-ignore
-        (box ? `\nTalk to your teammates directly through the team channel, not through the user.\n${box.guide}` : ''),
+        (box ? `\nTalk to your teammates directly through the team channel, not through the user.\n${box.guide}` : ''), // i18n-ignore
       teamId
     )
   }
@@ -7451,7 +7451,7 @@ ${members || '- (none yet)'}
 ## Journal
 
 - ${today} Tessel: notes created.
-`
+` // i18n-ignore
 }
 
 // Create the workspace's shared notes file (once) and tell each agent who the
@@ -7488,8 +7488,8 @@ async function shareProjectNotes(wsId) {
       .join(', ')
     deliverToAgent(
       leaf.id,
-      `[Tessel] Other agents in this project: ${others || 'none yet'}.` +
-        ` Shared notes: ${res.path} . Read that file now, agree there on who does what, ` +
+      `[Tessel] Other agents in this project: ${others || 'none yet'}.` + // i18n-ignore
+        ` Shared notes: ${res.path} . Read that file now, agree there on who does what, ` + // i18n-ignore
         'and add a dated line to its Journal section for each notable change. ' + // i18n-ignore
         'Before editing a file another agent may be editing, check the notes. Do not commit that file.', // i18n-ignore
       { source: 'tessel', scope: 'notes' }

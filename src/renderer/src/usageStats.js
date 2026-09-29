@@ -318,7 +318,7 @@ export function buildUsageOverview(
         codexTokens: 0,
         rows: []
       }
-      current[`${provider.provider}Tokens`] += row.totalTokens
+      current[`${provider.provider}Tokens`] += row.totalTokens // i18n-ignore
       current.rows.push(row)
       byDay.set(row.day, current)
     }

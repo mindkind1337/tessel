@@ -392,7 +392,7 @@ export function validCustomAgent(a) {
 }
 
 export function fontStack(family) {
-  return `"${family}", "Cascadia Mono", Consolas, "Courier New", monospace`
+  return `"${family}", "Cascadia Mono", Consolas, "Courier New", monospace` // i18n-ignore
 }
 
 // The editor's font: its own when set (a CSS font list is taken as it is,
@@ -401,7 +401,7 @@ export function editorFontStack(s) {
   const own = String(s.editorFontFamily || '').trim()
   if (!own) return fontStack(s.fontFamily)
   const first = own.includes(',') || /^["']/.test(own) ? own : `"${own.replace(/"/g, '')}"`
-  return `${first}, "Cascadia Mono", Consolas, "Courier New", monospace`
+  return `${first}, "Cascadia Mono", Consolas, "Courier New", monospace` // i18n-ignore
 }
 
 export { clamp }

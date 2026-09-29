@@ -176,7 +176,7 @@ function onResizeKey(e) {
   else return
   e.preventDefault()
 }
-const bodyStyle = computed(() => ({ height: `min(${height.value}px, 33vh)` }))
+const bodyStyle = computed(() => ({ height: `min(${height.value}px, 33vh)` })) // i18n-ignore
 
 // Read when opened, and again when HEAD or the repository changes while open.
 watch(

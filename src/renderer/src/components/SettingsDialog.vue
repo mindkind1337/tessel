@@ -381,7 +381,7 @@ function addQuickCommand() {
     d.error = t('settings.quick.missing', 'Give it a name and the text to send.')
     return
   }
-  settings.quickCommands.push({ id: `qc-${Date.now().toString(36)}`, name, text, enter: !!d.enter })
+  settings.quickCommands.push({ id: `qc-${Date.now().toString(36)}`, name, text, enter: !!d.enter }) // i18n-ignore
   quickDraft.value = { name: '', text: '', enter: d.enter, error: '' }
 }
 function removeQuickCommand(id) {

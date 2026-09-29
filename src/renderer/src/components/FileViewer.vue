@@ -122,7 +122,7 @@ async function afterRender() {
     }
   }
   if (props.line && showPlain.value) {
-    const el = root.querySelector(`[data-line="${props.line}"]`)
+    const el = root.querySelector(`[data-line="${props.line}"]`) // i18n-ignore
     if (el) el.scrollIntoView({ block: 'center' })
   }
 }

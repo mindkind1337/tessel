@@ -903,7 +903,7 @@ function quotePath(path) {
   if ((shell === 'wsl' || shell === 'gitbash') && m) {
     const rest = m[2].replace(/\\/g, '/')
     const unix =
-      shell === 'wsl' ? `/mnt/${m[1].toLowerCase()}/${rest}` : `/${m[1].toLowerCase()}/${rest}`
+      shell === 'wsl' ? `/mnt/${m[1].toLowerCase()}/${rest}` : `/${m[1].toLowerCase()}/${rest}` // i18n-ignore
     return `'${unix.replace(/'/g, `'\\''`)}'`
   }
   // PowerShell expands $var and $(...) inside "…" and in bare words: a

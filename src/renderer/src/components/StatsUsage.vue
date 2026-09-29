@@ -95,8 +95,8 @@ const providerRows = computed(() =>
       report: overviewReports.value[provider.id],
       supported: available(provider.id),
       enabled: enabled.value[provider.id] === true,
-      loading: loading.value[`provider:${provider.id}`],
-      error: errors.value[`provider:${provider.id}`]
+      loading: loading.value[`provider:${provider.id}`], // i18n-ignore
+      error: errors.value[`provider:${provider.id}`] // i18n-ignore
     }))
 )
 const overviewBusy = computed(() => Object.values(loading.value).some(Boolean))
@@ -143,7 +143,7 @@ async function loadStats() {
 }
 async function loadProvider(id, { refresh = false } = {}) {
   if (!available(id) || !enabled.value[id]) return
-  const key = `provider:${id}`
+  const key = `provider:${id}` // i18n-ignore
   const selectedRange = range.value[id]
   const selectedScope = scope.value[id]
   const dates = usageDateRange(selectedRange, { timezone })
