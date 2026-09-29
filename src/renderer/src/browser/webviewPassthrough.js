@@ -12,7 +12,9 @@
 // 2026 Lovecast Inc.), written for Tessel's Vue panes.
 
 const tokens = new Set()
-const webviews = new Set()
+// page element -> how many panes hold it (a pane built again takes the
+// page of the one it replaces, which may let go after).
+const webviews = new Map()
 
 export function passthroughActive() {
   return tokens.size > 0
@@ -23,15 +25,20 @@ function apply(el) {
 }
 function applyAll() {
   // Copied: a page may come or go while this runs.
-  for (const el of Array.from(webviews)) apply(el)
+  for (const el of Array.from(webviews.keys())) apply(el)
 }
 
 // A page shown in a pane: it follows the drags from now on. -> unregister
 export function registerWebview(el) {
   if (!el) return () => {}
-  webviews.add(el)
+  webviews.set(el, (webviews.get(el) || 0) + 1)
   apply(el)
+  let done = false
   return () => {
+    if (done) return
+    done = true
+    const n = (webviews.get(el) || 1) - 1
+    if (n > 0) return webviews.set(el, n)
     webviews.delete(el)
     if (el.style) el.style.pointerEvents = ''
   }

@@ -1275,6 +1275,38 @@ button {
   pointer-events: none;
 }
 
+/* The browser panes' pages (browser/pageHost.js): each laid over its pane's
+   page area, above the panes' own content (z-index 1) but under their
+   headers, toolbars and menus (5), the active ring (6), the dividers (2) and
+   a maximized pane (100, which shows its own page through its page area). */
+.browser-host {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.bp-box {
+  position: absolute;
+  display: flex;
+  overflow: hidden;
+  background: var(--term);
+  pointer-events: auto;
+}
+
+/* The pane's overlays over its page (find, failure, blank page, Design
+   Mode): only they take the pointer, never the space between them. */
+.bp-box-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.bp-box-overlay > * {
+  pointer-events: auto;
+}
+
 /* ================= Workspace sidebar ================= */
 .ws-sidebar {
   flex: 0 0 216px;

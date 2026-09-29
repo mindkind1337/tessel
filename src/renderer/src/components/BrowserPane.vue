@@ -18,7 +18,7 @@
 // Orca's host-guest/browser-page-webview.ts, browser-page-viewport.ts,
 // webview-drag-passthrough.ts and assemble-chrome/BrowserFind.tsx (MIT,
 // Copyright (c) 2026 Lovecast Inc.).
-import { ref, computed, watch, inject, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import { ref, shallowRef, computed, watch, inject, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import {
   ArrowLeft,
   ArrowRight,
@@ -52,6 +52,7 @@ import {
   portAddress
 } from '../browser/browserPage'
 import { registerWebview } from '../browser/webviewPassthrough'
+import { claimPage, releasePage, placePage, createWebview } from '../browser/pageHost'
 import DesignModePanel from './DesignModePanel.vue'
 import { t } from '../i18n'
 
@@ -66,7 +67,13 @@ const isActive = computed(() => ctx.activeId.value === props.node.id)
 const isMaximized = computed(() => ctx.maximizedId.value === props.node.id)
 
 const rootEl = ref(null)
-const webviewEl = ref(null)
+// The page (a <webview>): made in onMounted, in the workspace's page layer
+// when there is one (browser/pageHost.js), else in the pane itself.
+const webviewEl = shallowRef(null)
+const pageEl = ref(null) // the pane's page area, where the page is laid
+const overlayTarget = shallowRef(null) // where the overlays over the page go
+let page = null // pageHost's entry
+const pageOwner = Symbol('pane')
 const addressEl = ref(null)
 const design = ref(null)
 
@@ -85,22 +92,11 @@ const designActive = ref(false)
 let ready = false // loadURL needs the webview attached and its first dom-ready
 let pendingUrl = null
 
-// The page fills its area whatever the pane's size (a flex item that may
-// shrink: min-width/min-height 0), inline so no stylesheet can undo it.
-// pointer-events is left to browser/webviewPassthrough.js (Tessel's drags).
-const WEBVIEW_STYLE = {
-  display: 'flex',
-  flex: '1 1 auto',
-  width: '100%',
-  height: '100%',
-  minWidth: '0',
-  minHeight: '0',
-  border: 'none'
-}
 
 // --- Scroll kept when the pane is rebuilt ------------------------------------------------------
-// Splitting the pane, moving it or closing its neighbour builds it again, and
-// Electron loads its page again: where the page was scrolled is noted (when
+// A layout change keeps the page itself (browser/pageHost.js); a pane moved
+// to another workspace, or shown without a page layer, gets a new one, which
+// Electron loads again: where the page was scrolled is noted (when
 // the pointer or the keyboard leaves the page, before a link opens in a new
 // pane) and put back once the same page is loaded.
 const MAX_SCROLL = 10000000
@@ -136,7 +132,7 @@ const showEmpty = computed(() => isBlank.value && !failure.value && !loading.val
 
 // --- The webview ---------------------------------------------------------------------------
 function wv() {
-  return webviewEl.value && webviewEl.value.$el ? webviewEl.value.$el : webviewEl.value
+  return webviewEl.value
 }
 // The webview's methods throw before it is attached; a failed call changes nothing.
 function call(name, ...args) {
@@ -189,6 +185,10 @@ function onDomReady() {
   ready = true
   const id = call('getWebContentsId')
   if (id != null) guestId.value = id
+  if (page) {
+    page.ready = true
+    page.guestId = guestId.value
+  }
   call('setZoomLevel', clampZoom(props.node.zoom || 0))
   syncHistory()
   if (first && pendingUrl) {
@@ -675,8 +675,76 @@ function subscribe(api) {
   })
 }
 
+// --- The page's place (browser/pageHost.js) -------------------------------------------------
+// The workspace's page layer: a sibling of the split tree in its .ws-layer.
+function pageLayer() {
+  const layer = rootEl.value && rootEl.value.closest ? rootEl.value.closest('.ws-layer') : null
+  if (!layer) return null
+  for (const child of layer.children) if (child.classList.contains('browser-host')) return child
+  return null
+}
+const hosted = shallowRef(false)
+// Hidden under another pane that is maximized.
+const coveredByMaximized = computed(() => !!ctx.maximizedId.value && ctx.maximizedId.value !== props.node.id)
+function place() {
+  if (page) placePage(page, pageEl.value, { hidden: coveredByMaximized.value })
+}
+let placeFrame = 0
+function placeSoon() {
+  if (placeFrame) return
+  placeFrame = requestAnimationFrame(() => {
+    placeFrame = 0
+    place()
+  })
+}
+watch([coveredByMaximized, isMaximized], () => nextTick(place))
+let resizeObserver = null
+// A click on the page's overlays (the failure page, Design Mode) activates the pane.
+function onBoxMouseDown() {
+  if (!isActive.value) ctx.setActive(props.node.id)
+}
+// A page taken back: what it shows now.
+function adoptLivePage() {
+  ready = page.ready
+  if (page.guestId != null) guestId.value = page.guestId
+  loading.value = !!call('isLoading')
+  syncHistory()
+  const url = allowedBrowserUrl(call('getURL'))
+  if (url && url !== BLANK_URL) {
+    setPage(url)
+    setTitle(pageTitleFor(call('getTitle'), url))
+  }
+  scrollToRestore = null
+}
+function mountPage() {
+  const host = pageLayer()
+  if (host) {
+    const claimed = claimPage(props.node.id, host, initialSrc, pageOwner)
+    page = claimed.page
+    webviewEl.value = page.webview
+    overlayTarget.value = page.overlay
+    hosted.value = true
+    page.box.addEventListener('mousedown', onBoxMouseDown)
+    if (claimed.adopted) adoptLivePage()
+    if (typeof ResizeObserver === 'function') {
+      resizeObserver = new ResizeObserver(() => place())
+      if (pageEl.value) resizeObserver.observe(pageEl.value)
+      resizeObserver.observe(host)
+    }
+    window.addEventListener('resize', placeSoon)
+    window.addEventListener('terminal-layout-change', placeSoon)
+    place()
+    return
+  }
+  // No page layer (a pane shown on its own): the page in the pane.
+  const el = createWebview(initialSrc)
+  if (pageEl.value) pageEl.value.insertBefore(el, pageEl.value.firstChild)
+  webviewEl.value = el
+}
+
 let unregisterWebview = null
 onMounted(() => {
+  mountPage()
   const el = wv()
   if (el) for (const [name, fn] of Object.entries(WEBVIEW_EVENTS)) el.addEventListener(name, fn)
   unregisterWebview = registerWebview(el)
@@ -688,6 +756,16 @@ onMounted(() => {
 onBeforeUnmount(() => {
   const el = wv()
   if (el) for (const [name, fn] of Object.entries(WEBVIEW_EVENTS)) el.removeEventListener(name, fn)
+  if (resizeObserver) resizeObserver.disconnect()
+  window.removeEventListener('resize', placeSoon)
+  window.removeEventListener('terminal-layout-change', placeSoon)
+  if (placeFrame) cancelAnimationFrame(placeFrame)
+  if (page) {
+    page.box.removeEventListener('mousedown', onBoxMouseDown)
+    // Kept a moment: this pane built again elsewhere takes it back as it is.
+    releasePage(props.node.id, pageOwner)
+    page = null
+  }
   for (const off of unsubscribers.splice(0)) {
     try {
       off()
@@ -709,6 +787,7 @@ defineExpose({ navigate, focusAddress })
     ref="rootEl"
     class="pane browser-pane"
     :class="{
+      hosted,
       active: isActive,
       maximized: isMaximized,
       highlighted: ctx.highlightId.value === node.id
@@ -931,17 +1010,9 @@ defineExpose({ navigate, focusAddress })
         </button>
       </div>
 
-      <div class="bp-page" data-test="browser-page" @pointerleave="saveScroll">
-        <component
-          is="webview"
-          ref="webviewEl"
-          class="bp-webview"
-          partition="persist:tessel-browser"
-          allowpopups="true"
-          webpreferences="contextIsolation=yes,sandbox=yes,nodeIntegration=no"
-          :style="WEBVIEW_STYLE"
-          :src="initialSrc"
-        />
+      <div ref="pageEl" class="bp-page" :class="{ hosted }" data-test="browser-page" @pointerleave="saveScroll">
+        <!-- Over the page: in its box when it lives in the page layer. -->
+        <Teleport :to="overlayTarget" :disabled="!overlayTarget">
 
         <!-- Orca's find bar: top right of the page. -->
         <div v-if="findOpen" class="bp-find" role="search" data-test="browser-find" @mousedown.stop>
@@ -1063,6 +1134,7 @@ defineExpose({ navigate, focusAddress })
         <div class="bp-zoom" :class="{ shown: zoomShown }" role="status" aria-live="polite" :aria-hidden="!zoomShown" data-test="browser-zoom">
           {{ zoomText }}
         </div>
+        </Teleport>
       </div>
     </div>
   </div>
@@ -1375,7 +1447,9 @@ defineExpose({ navigate, focusAddress })
 }
 
 /* The page area: the webview fills it (a flex item in a flex box, every
-   level allowed to shrink), Design Mode and the overlays sit over it. */
+   level allowed to shrink), Design Mode and the overlays sit over it. With
+   the page in the workspace's page layer (browser/pageHost.js) it is only a
+   place: see-through, so a maximized pane shows its page there. */
 .bp-page {
   position: relative;
   display: flex;
@@ -1384,6 +1458,11 @@ defineExpose({ navigate, focusAddress })
   min-height: 0;
   overflow: hidden;
   background: var(--term);
+}
+
+.browser-pane.hosted,
+.bp-page.hosted {
+  background: transparent;
 }
 
 .bp-webview {

@@ -9297,6 +9297,9 @@ onBeforeUnmount(() => {
           :aria-hidden="ws.id !== currentWsId"
         >
           <SplitNode v-if="ws.tree" :node="ws.tree" />
+          <!-- The browser panes' pages, outside the split tree so a layout
+               change never reloads them (browser/pageHost.js). -->
+          <div class="browser-host"></div>
         </div>
         <div v-if="!tree" class="startup-message">
           {{ initError || t('app.main.starting', 'Starting...') }}

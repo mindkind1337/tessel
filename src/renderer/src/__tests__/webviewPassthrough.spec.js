@@ -128,3 +128,20 @@ describe('SplitNode divider drag', () => {
     off()
   })
 })
+
+describe('a page held by two panes (one built again, the other not gone yet)', () => {
+  it('follows the drags until both let go', () => {
+    const el = document.createElement('webview')
+    const first = registerWebview(el)
+    const second = registerWebview(el)
+    first()
+    first()
+    const release = acquirePassthrough()
+    expect(el.style.pointerEvents).toBe('none')
+    release()
+    second()
+    const r2 = acquirePassthrough()
+    expect(el.style.pointerEvents).toBe('')
+    r2()
+  })
+})

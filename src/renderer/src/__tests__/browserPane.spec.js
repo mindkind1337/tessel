@@ -590,7 +590,10 @@ describe('BrowserPane.vue: layout, input and browser behaviour', () => {
 
   it("the pane's stylesheet: a flex column down to the page, nothing that scales it or takes its pointer", () => {
     const file = resolve(process.cwd(), 'src/renderer/src/components/BrowserPane.vue')
-    const css = parseSfc(readFileSync(file, 'utf8')).descriptor.styles.map((b) => b.content).join('\n')
+    const css = parseSfc(readFileSync(file, 'utf8')).descriptor.styles
+      .map((b) => b.content)
+      .join('\n')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
     const rule = (sel) => {
       const m = css.match(new RegExp(`(^|\\n)${sel.replace('.', '\\.')}\\s*\\{([^}]*)\\}`))
       return m ? m[2] : ''
