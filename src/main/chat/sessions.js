@@ -221,6 +221,7 @@ export function createChatSessions(deps) {
     s.adapter = null
     s.wakeAsked = false
     s.tools.clear()
+    s.toolAgents.clear()
     s.messages.clear()
     s.approvals.clear()
     if (s.launchToken && state?.unregister) {
@@ -340,37 +341,42 @@ export function createChatSessions(deps) {
       turnStarted(s)
       markAccepted(s, s.turn)
     })
+    const provenance = e => ({ ...(e.agentId ? { agentId: e.agentId } : {}), ...(e.parentToolUseId ? { parentToolUseId: e.parentToolUseId } : {}) })
+    on('subagent', e => emit(s.paneId, { ...e, type: 'subagent' }))
+    on('subagents', e => emit(s.paneId, { ...e, type: 'subagents' }))
     on('textDelta', (e) => {
-      if (!e.messageId || e.parentToolUseId) return
-      emit(s.paneId, { type: 'assistantDelta', messageId: e.messageId, text: String(e.text ?? '') })
+      if (!e.messageId || (e.parentToolUseId && !e.agentId)) return
+      emit(s.paneId, { type: 'assistantDelta', messageId: e.messageId, text: String(e.text ?? ''), ...provenance(e) })
     })
     on('assistant', (e) => {
       const sub = typeof e.parentToolUseId === 'string' && e.parentToolUseId ? e.parentToolUseId : null
       const blocks = Array.isArray(e.blocks) ? e.blocks : []
       const text = blocks.filter((b) => b?.type === 'text').map((b) => b.text).join('')
       const thinking = blocks.filter((b) => b?.type === 'thinking').map((b) => b.text).join('\n')
-      // A subagent's own words stay inside its tool; its tool calls are shown.
-      if (!sub && e.messageId && (text || thinking)) {
+      // Canonical child provenance lets the renderer group these separately.
+      if ((!sub || e.agentId) && e.messageId && (text || thinking)) {
         // The CLI sends one frame per content block, all with the message's
         // id: the renderer gets the message's text so far, merged.
-        let m = s.messages.get(e.messageId)
+        const messageKey = JSON.stringify([e.agentId || '', e.messageId])
+        let m = s.messages.get(messageKey)
         if (!m) {
           if (s.messages.size >= 200) s.messages.delete(s.messages.keys().next().value)
           m = { text: '', thinking: '' }
-          s.messages.set(e.messageId, m)
+          s.messages.set(messageKey, m)
         }
         if (thinking) {
           m.thinking = m.thinking ? `${m.thinking}\n${thinking}` : thinking
-          emit(s.paneId, { type: 'thinking', messageId: e.messageId, text: m.thinking })
+          emit(s.paneId, { type: 'thinking', messageId: e.messageId, text: m.thinking, ...provenance(e) })
         }
         if (text) {
           m.text = m.text ? `${m.text}\n\n${text}` : text
-          emit(s.paneId, { type: 'assistant', messageId: e.messageId, text: m.text })
+          emit(s.paneId, { type: 'assistant', messageId: e.messageId, text: m.text, ...provenance(e) })
         }
       }
       for (const b of blocks) {
         if (b?.type !== 'tool_use' || !b.id) continue
         s.tools.add(b.id)
+        if (e.agentId) s.toolAgents.set(b.id, provenance(e))
         emit(s.paneId, {
           type: 'tool',
           id: b.id,
@@ -378,14 +384,16 @@ export function createChatSessions(deps) {
           summary: toolSummary(b.name, b.input),
           input: clipDeep(b.input ?? {}),
           status: 'running',
-          ...(sub ? { parentToolUseId: sub } : {})
+          ...provenance(e)
         })
       }
     })
     on('toolResult', (e) => {
       if (!e.toolUseId) return
       s.tools.delete(e.toolUseId)
-      emit(s.paneId, { type: 'toolResult', id: e.toolUseId, isError: e.isError === true, text: String(e.text ?? '') })
+      const owner = s.toolAgents.get(e.toolUseId) || provenance(e)
+      s.toolAgents.delete(e.toolUseId)
+      emit(s.paneId, { type: 'toolResult', id: e.toolUseId, isError: e.isError === true, text: String(e.text ?? ''), ...owner })
     })
     on('permission', (e) => {
       if (!e.requestId || s.approvals.has(e.requestId)) return
@@ -461,8 +469,9 @@ export function createChatSessions(deps) {
         })
       }
       // Tools of the turn that never reported a result.
-      for (const id of s.tools) emit(s.paneId, { type: 'tool', id, status: st === 'completed' ? 'done' : 'error' })
+      for (const id of s.tools) emit(s.paneId, { type: 'tool', id, status: st === 'completed' ? 'done' : 'error', ...s.toolAgents.get(id) })
       s.tools.clear()
+      s.toolAgents.clear()
       s.messages.clear()
       for (const [requestId, ap] of s.approvals) {
         if (ap.status !== 'pending') continue
@@ -655,6 +664,7 @@ export function createChatSessions(deps) {
       teamQueue: from ? from.teamQueue : [],
       approvals: new Map(),
       tools: new Set(),
+      toolAgents: new Map(),
       messages: new Map(), // messageId -> { text, thinking } merged so far
       lastInterrupted: false,
       started: false,

@@ -101,7 +101,7 @@ export function createClaudeChat(opts) {
   } = opts
   const timeouts = { ...DEFAULT_TIMEOUTS, ...(opts.timeouts || {}) }
   const chat = new EventEmitter()
-  const frames = createFrameState()
+  const frames = createFrameState({ now })
   frames.sessionId = sessionId || resume
 
   let child = null
@@ -274,6 +274,9 @@ export function createClaudeChat(opts) {
     pending.clear()
     for (const id of permissions.keys()) emit('permissionCancelled', { requestId: id })
     permissions.clear()
+    const subagentEvents = []
+    frames.subagents.tracker.settle(null, closing || lastTurnInterrupted ? 'interrupted' : 'failed', subagentEvents)
+    for (const { type, ...payload } of subagentEvents) emit(type, payload)
     // Code 1 after an interrupted last turn, or anything after our close, is a normal end.
     const normal = closing || code === 0 || (code === 1 && lastTurnInterrupted)
     logAt(normal ? 'info' : 'warn', `exited code=${code} signal=${signal}${error ? ' error=' + error : ''}`)
