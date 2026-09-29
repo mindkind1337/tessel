@@ -308,8 +308,8 @@ describe('clone from URL', () => {
     await flushPromises()
     await w.find('[data-test="clone-url"]').setValue('https://github.com/user/none.git')
     await w.find('[data-test="clone-go"]').trigger('click')
-    await flushPromises()
-    expect(w.find('[data-test="clone-error"]').text()).toBe('Clone failed: fatal: repository not found')
+    await vi.waitFor(() =>
+      expect(w.find('[data-test="clone-error"]').text()).toBe('Clone failed: fatal: repository not found'))
     // A slow clone, then Back.
     let cloneStarted = false
     window.shellApi.addProject.clone = () => {
