@@ -74,6 +74,8 @@ export function useStructuredAgentSession({ paneId, api = typeof window !== 'und
     }
     if (typeof res.seq === 'number') lastSeq = Math.max(lastSeq, res.seq)
     adapter.replay(events)
+    // The last "/" catalog, kept apart from the journal (a short tail can miss it).
+    if (adapter.meta.commands === null && Array.isArray(res.commands)) adapter.apply({ type: 'commands', commands: res.commands })
     feed(adapter.snapshotEvent())
     syncMeta()
     meta.open = !!(res.open || (res.live && res.live.status && res.live.status !== 'asleep'))
@@ -141,6 +143,15 @@ export function useStructuredAgentSession({ paneId, api = typeof window !== 'und
       return { ok: false, error: (err && err.message) || String(err) }
     }
   }
+  // Skill discovery for the composer's menu: the engine scans the pane's
+  // trusted folders (opaque references, never paths); a refusal is an error.
+  async function discoverSkills({ refresh } = {}) {
+    if (!api || !api.skills) throw new Error('skills unavailable') // i18n-ignore the menu words it
+    const res = await api.skills({ paneId, ...(refresh ? { refresh: true } : {}) })
+    if (!res || res.ok === false || !res.result) throw new Error((res && res.error) || 'skills unavailable') // i18n-ignore shown through the menu
+    return res.result
+  }
+
   // An approval item and { kind: 'option', optionId } -> Tessel's approve.
   async function respond(item, response, { message } = {}) {
     const requestId = item && item.body && item.body.tessel ? item.body.tessel.requestId : null
@@ -187,6 +198,10 @@ export function useStructuredAgentSession({ paneId, api = typeof window !== 'und
     respond,
     // Tessel's own: the rate limits for the header, the adapter (tests).
     rateLimit: computed(() => meta.rateLimit),
+    // The session's "/" commands and skills as the engine reports them
+    // (undefined until it did), and its skills on disk (discover()).
+    sessionCommands: computed(() => (Array.isArray(meta.commands) ? meta.commands : undefined)),
+    discoverSkills,
     adapter
   }
 }

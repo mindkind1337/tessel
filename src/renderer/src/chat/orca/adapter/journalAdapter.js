@@ -83,7 +83,7 @@ export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence =
   let openTurn = null
   let lastUserItemId = null
   // Session facts the UI reads outside the journal (header, pickers).
-  const meta = { agent: null, model: null, sessionId: null, status: 'starting', error: '', rateLimit: null }
+  const meta = { agent: null, model: null, sessionId: null, status: 'starting', error: '', rateLimit: null, commands: null }
 
   let changedItems = new Set()
   let changedSubs = new Set()
@@ -326,6 +326,10 @@ export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence =
         put(itemId, { kind: 'message', role: 'system', blocks: [{ type: 'text', text: subagentGroupFallbackText(agents) }, { type: 'subagent-group', groupId: String(ev.groupId), agents }] }, {}, at)
         break
       }
+      case 'commands':
+        // The session's "/" catalog: a full snapshot each time (outside the journal).
+        if (Array.isArray(ev.commands)) meta.commands = ev.commands.filter((c) => c && typeof c.name === 'string' && c.name)
+        break
       case 'rateLimit':
         meta.rateLimit = { fiveHour: ev.fiveHour || null, sevenDay: ev.sevenDay || null }
         break

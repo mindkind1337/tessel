@@ -147,6 +147,8 @@ function onOptionCommand(name) {
   return { ok: true }
 }
 const contextUsage = useStructuredAgentSessionContextUsage(c.journalItems, null)
+// The composer's skills menu: the engine's discovery (none without it).
+const skillsOptions = computed(() => (c.discoverSkills ? { discover: (q) => c.discoverSkills(q) } : undefined))
 
 // --- The pane's actions ---------------------------------------------------------------------
 function onComposerError(message) {
@@ -276,6 +278,8 @@ defineExpose({
       :chat-launch-yolo="!!node.chatLaunchYolo"
       :max-permissions="node.maxPermissions"
       :context-usage="contextUsage"
+      :commands="c.sessionCommands ? c.sessionCommands.value : undefined"
+      :skills-options="skillsOptions"
       :session-options-surface="optionSurface"
       :session-options-snapshot="optionSnapshot"
       :session-options-picker-request="optionPickerRequest"

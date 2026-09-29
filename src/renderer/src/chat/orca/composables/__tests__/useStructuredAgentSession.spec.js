@@ -88,6 +88,22 @@ describe('useStructuredAgentSession (Tessel engine)', () => {
     expect(s.messages.value.find((m) => failed.includes(m.id)).blocks[0].text).toBe('lost')
   })
 
+  it('the "/" catalog: from the history, then each live snapshot; skills come from the engine or fail', async () => {
+    const skills = vi.fn(async () => ({ ok: true, result: { skills: [{ id: 's1', name: 'review' }], sources: [], scannedAt: 1 } }))
+    const { session, emit, api } = setup({ ok: true, seq: 0, events: [], commands: [{ name: 'compact', kind: 'command' }] }, { skills })
+    const s = session()
+    expect(s.sessionCommands.value).toBeUndefined()
+    await s.load()
+    expect(s.sessionCommands.value).toEqual([{ name: 'compact', kind: 'command' }])
+    emit({ type: 'commands', commands: [] }, 1)
+    await nextTick()
+    expect(s.sessionCommands.value).toEqual([])
+    expect(await s.discoverSkills({ refresh: true })).toMatchObject({ skills: [{ name: 'review' }] })
+    expect(api.skills).toHaveBeenCalledWith({ paneId: 'p1', refresh: true })
+    skills.mockResolvedValueOnce({ ok: false, error: 'untrusted' })
+    await expect(s.discoverSkills()).rejects.toThrow('untrusted')
+  })
+
   it('send and cancel go to the IPC; a failed history is an error state', async () => {
     const { session, api } = setup({ ok: false, error: 'boom' })
     const s = session()
