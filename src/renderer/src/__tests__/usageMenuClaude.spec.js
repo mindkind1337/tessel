@@ -87,7 +87,7 @@ describe('Claude usage flyout details', () => {
   it('shows the week by category with bars and the as-of time', async () => {
     const flyout = await openClaude()
     const section = flyout.get('[data-test="usage-breakdown"]')
-    expect(section.text()).toContain('This week by category')
+    expect(section.text()).toContain("Share of this week's usage")
     expect(section.text()).toContain('as of')
     const rows = section.findAll('[data-test="usage-breakdown-row"]')
     expect(rows.map((r) => r.text())).toEqual(['Claude Code49%', 'Chat20%'])
@@ -119,7 +119,7 @@ describe('Claude usage flyout details', () => {
     const flyout = await openClaude()
     const labels = flyout.findAll('.usage-flyout-window .usage-line').map((n) => n.text())
     expect(labels).toEqual(['5 heures', 'Hebdomadaire', 'Opus hebdomadaire', 'Haiku 4.5 hebdomadaire'])
-    expect(flyout.text()).toContain('Cette semaine par catégorie')
+    expect(flyout.text()).toContain('Répartition de votre usage cette semaine')
     expect(flyout.text()).toContain('Bloqué : Weekly limit reached.')
     const amount = flyout.get('[data-test="usage-extra-amount"]').text().replace(/\s/g, ' ')
     expect(amount).toBe('12,34 $ US sur 50,00 $ US ce mois-ci')

@@ -10622,3 +10622,9 @@ button.act-stat:hover,
 .orch-setup li.ok::marker {
   color: #7ad17a;
 }
+
+.usage-breakdown-hint {
+  margin: 2px 0 6px;
+  color: var(--text-dim);
+  font-size: 11px;
+}

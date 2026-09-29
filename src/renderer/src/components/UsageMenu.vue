@@ -1148,9 +1148,12 @@ const emptyTitle = () => t('usage.menu.buttonTitleEmpty', "Usage of your agents'
         </div>
         <div v-if="breakdown" class="usage-breakdown" data-test="usage-breakdown">
           <div class="usage-section-head">
-            <h4>{{ t('usage.menu.weekByCategory', 'This week by category') }}</h4>
+            <h4>{{ t('usage.menu.weekShare', "Share of this week's usage") }}</h4>
             <span v-if="Number.isFinite(breakdown.asOf)">{{ asOfText(breakdown.asOf) }}</span>
           </div>
+          <p class="usage-breakdown-hint">{{
+            t('usage.menu.weekShareHint', 'Where your usage went, not how much of your limit is used.')
+          }}</p>
           <div
             v-for="(row, index) in breakdown.rows"
             :key="index"
