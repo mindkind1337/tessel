@@ -9,6 +9,7 @@ import {
   toolResultText,
   permissionFromRequest,
   sessionPermissions,
+  sessionRuleItems,
   rateLimitFrom,
   initializeAuthProblem,
   isAuthErrorText
@@ -148,6 +149,7 @@ describe('claudeFrames against real frames', () => {
       input: { command: 'node -e "console.log(6*7)"', description: 'Run Node.js command to output 6*7' },
       description: 'Run Node.js command to output 6*7',
       suggestions: [{ type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: 'node -e "console.log(6*7)"' }], behavior: 'allow', destination: 'localSettings' }],
+      sessionRules: [{ kind: 'rule', tool: 'Bash', content: 'node -e "console.log(6*7)"' }],
       toolUseId: 'toolu_015fbvz2WN4AHR5u6EP8ooY5',
       reason: 'This command requires approval'
     })
@@ -159,6 +161,36 @@ describe('claudeFrames against real frames', () => {
     expect(out).toEqual([{ type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: 'node -e "console.log(6*7)"' }], behavior: 'allow', destination: 'session' }])
     expect(sessionPermissions([{ type: 'setMode', mode: 'acceptEdits', destination: 'projectSettings' }, null, 'x'])).toEqual([{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }])
     expect(sessionPermissions(undefined)).toEqual([])
+  })
+
+  it('session permissions keep only what the card shows: allow rules, a mode (never bypass), folders', () => {
+    const long = 'x'.repeat(2001)
+    const out = sessionPermissions([
+      { type: 'addRules', behavior: 'allow', rules: [{ toolName: 'Read' }, { toolName: 'Bash', ruleContent: 'npm test:*' }, { toolName: 'Bash', ruleContent: long }, { ruleContent: 'no tool' }], destination: 'userSettings' },
+      { type: 'addRules', behavior: 'deny', rules: [{ toolName: 'Bash' }] },
+      { type: 'replaceRules', behavior: 'allow', rules: [{ toolName: 'Bash' }] },
+      { type: 'removeRules', behavior: 'allow', rules: [{ toolName: 'Bash' }] },
+      { type: 'setMode', mode: 'bypassPermissions' },
+      { type: 'setMode', mode: 'acceptEdits' },
+      { type: 'addDirectories', directories: ['C:\\other', 5] },
+      { type: 'removeDirectories', directories: ['C:\\x'] },
+      { type: 'addRules', behavior: 'allow', rules: [], destination: 'session' }
+    ])
+    expect(out).toEqual([
+      { type: 'addRules', behavior: 'allow', rules: [{ toolName: 'Read' }, { toolName: 'Bash', ruleContent: 'npm test:*' }], destination: 'session' },
+      { type: 'setMode', mode: 'acceptEdits', destination: 'session' },
+      { type: 'addDirectories', directories: ['C:\\other'], destination: 'session' }
+    ])
+    expect(sessionRuleItems(out)).toEqual([
+      { kind: 'rule', tool: 'Read', content: '' },
+      { kind: 'rule', tool: 'Bash', content: 'npm test:*' },
+      { kind: 'mode', mode: 'acceptEdits' },
+      { kind: 'directories', directories: ['C:\\other'] }
+    ])
+    // What the card is told is what the answer adds.
+    const p = permissionFromRequest('r', { tool_name: 'Bash', input: {}, permission_suggestions: [{ type: 'setMode', mode: 'bypassPermissions' }, { type: 'addDirectories', directories: ['D:\\x'] }] })
+    expect(p.sessionRules).toEqual(sessionRuleItems(sessionPermissions(p.suggestions)))
+    expect(p.sessionRules).toEqual([{ kind: 'directories', directories: ['D:\\x'] }])
   })
 
   it('initialize response: signed in (real, account redacted) vs tokenSource none', () => {

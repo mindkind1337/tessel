@@ -15,7 +15,7 @@ const props = defineProps({
 
 const thinkingOpen = ref(false)
 
-const html = computed(() => (props.row.kind === 'assistant' ? renderMarkdown(props.row.text) : ''))
+const html = computed(() => (props.row.kind === 'assistant' ? renderMarkdown(props.row.text, { untrusted: true }) : ''))
 
 const fromLabel = computed(() => {
   const from = String(props.row.from || '').trim()
@@ -168,7 +168,11 @@ function onBodyClick(e) {
   margin: 4px 0;
 }
 
+/* The model's markdown stays inside its own box (never over the interface). */
 .chat-md {
+  position: relative;
+  contain: paint;
+  overflow: hidden;
   max-width: none;
   margin: 0;
   padding: 0;

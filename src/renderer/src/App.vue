@@ -1620,8 +1620,9 @@ function closeLeaf(leafId, opts = {}) {
       return
     }
   }
-  // A chat agent: its Claude ends (the conversation can be resumed later).
-  if (closing && closing.kind === 'chat' && window.shellApi.chat) window.shellApi.chat.close({ paneId: leafId }).catch(() => {})
+  // A chat agent: its Claude ends (the conversation can be resumed later
+  // from Agent sessions); the pane's own journal is deleted (forget).
+  if (closing && closing.kind === 'chat' && window.shellApi.chat) window.shellApi.chat.close({ paneId: leafId, forget: true }).catch(() => {})
   if (!noTerminal) {
     window.shellApi.killPty(leafId)
     dropBuffer(leafId)
@@ -3456,7 +3457,7 @@ function removeWorkspace(id, confirmed = false, editorChecked = false) {
   forEachLeaf(ws.tree, (leaf) => {
     if (hasNoTerminal(leaf)) {
       if (leaf.kind === 'editor') releaseOwner(leaf.id)
-      if (leaf.kind === 'chat' && window.shellApi.chat) window.shellApi.chat.close({ paneId: leaf.id }).catch(() => {})
+      if (leaf.kind === 'chat' && window.shellApi.chat) window.shellApi.chat.close({ paneId: leaf.id, forget: true }).catch(() => {})
       return
     }
     window.shellApi.killPty(leaf.id)

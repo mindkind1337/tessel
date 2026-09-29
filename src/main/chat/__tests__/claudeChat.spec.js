@@ -402,7 +402,7 @@ describe('claudeChat: controls', () => {
     await chat.start()
     expect((await chat.setModel('--x')).ok).toBe(false)
     expect((await chat.setEffort('')).ok).toBe(false)
-    expect((await chat.setPermissionMode('dontAsk')).ok).toBe(false)
+    expect((await chat.setPermissionMode('yolo')).ok).toBe(false)
     expect(sent().filter((m) => m.type === 'control_request').length).toBe(1)
   })
 
@@ -471,6 +471,31 @@ describe('claudeChat: exit and close', () => {
     const r = await chat.close()
     expect(r).toEqual({ ok: true, killed: true })
     expect(ofType(events, 'exit')[0].crashed).toBe(false)
+  }, 30000)
+
+  it('close({ kill: true }) (Tessel quits): the tree is killed at once, no 3 s grace', async () => {
+    const killTree = vi.fn((c) => killClaudeTree(c))
+    const { chat, events, readLog } = setup({ env: { FAKE_CLAUDE_MODE: 'hang' }, timeouts: { close: 20000 }, killTree })
+    await chat.start()
+    const t0 = Date.now()
+    const r = await chat.close({ kill: true })
+    expect(r).toEqual({ ok: true, killed: true })
+    expect(killTree).toHaveBeenCalledTimes(1)
+    expect(Date.now() - t0).toBeLessThan(DEFAULT_TIMEOUTS.close)
+    expect(readLog().some((x) => x.t === 'stdin-end')).toBe(false)
+    await waitFor(() => ofType(events, 'exit')[0], 5000, 'exit')
+    expect(chat.running).toBe(false)
+  }, 30000)
+
+  it('close({ kill: true }) never hangs on a process that does not exit', async () => {
+    // A kill that does nothing: close still returns after quitKill.
+    const killTree = vi.fn(async () => {})
+    const { chat } = setup({ env: { FAKE_CLAUDE_MODE: 'hang' }, timeouts: { quitKill: 100, close: 200 }, killTree })
+    await chat.start()
+    expect(await chat.close({ kill: true })).toEqual({ ok: true, killed: true })
+    expect(chat.running).toBe(true)
+    // The clean-up (afterEach) kills it for real.
+    killTree.mockImplementation((c) => killClaudeTree(c))
   }, 30000)
 
   it('killClaudeTree: root through its handle, descendants from the checked listing', async () => {

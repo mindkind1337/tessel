@@ -4,7 +4,7 @@ import { EventEmitter } from 'events'
 import fs from 'fs'
 import os from 'os'
 import { join } from 'path'
-import { createChatSessions, teamTurnText, LIMITS } from '../sessions'
+import { createChatSessions, teamTurnText, teamMessageText, LIMITS } from '../sessions'
 import { createAgentStateStore } from '../../agentStateStore'
 
 const flush = () => new Promise((r) => setImmediate(r))
@@ -173,6 +173,12 @@ describe('open', () => {
     await chat.close({ paneId })
     await openOk(chat, { permissionMode: 'bypassPermissions' })
     expect(adapters[2].opts.permissionMode).toBe('default')
+    // The modes a user's own --permission-mode may give (App.vue reads them too).
+    for (const mode of ['auto', 'dontAsk', 'acceptEdits']) {
+      await chat.close({ paneId })
+      await openOk(chat, { permissionMode: mode })
+      expect(adapters.at(-1).opts.permissionMode).toBe(mode)
+    }
   })
 
   it('opening a live pane again is harmless (while starting too): one process', async () => {
@@ -211,7 +217,7 @@ describe('open', () => {
       { model: 'a b' },
       { effort: 'x'.repeat(61) },
       { permissions: 'all' },
-      { permissionMode: 'dontAsk' },
+      { permissionMode: 'yolo' },
       { agent: 'gemini' },
       { agent: 'codex', resumeId: '-x' },
       { agent: 'codex', resumeId: 'thread 1' }
@@ -412,7 +418,18 @@ describe('approvals', () => {
   it('pending approval feeds the status; allow answers once', async () => {
     const chat = createChatSessions(deps)
     const a = await withPermission(chat)
-    expect(last('approval')).toEqual({ type: 'approval', requestId: 'req-1', toolName: 'Bash', displayName: 'Bash', input: { command: 'rm x' }, description: 'Remove', status: 'pending' })
+    expect(last('approval')).toEqual({
+      type: 'approval',
+      requestId: 'req-1',
+      toolName: 'Bash',
+      displayName: 'Bash',
+      input: { command: 'rm x' },
+      detail: 'rm x',
+      hidden: 0,
+      sessionRules: [],
+      description: 'Remove',
+      status: 'pending'
+    })
     expect(last('status')).toMatchObject({ state: 'approval' })
     expect(stateCalls).toEqual([['PermissionRequest', 'toolu_9'], ['Notification', 'permission_prompt', 'toolu_9']])
     expect(await chat.approve({ paneId, requestId: 'req-1', decision: 'allow' })).toEqual({ ok: true })
@@ -449,6 +466,39 @@ describe('approvals', () => {
     a.emit('permissionCancelled', { requestId: 'req-1' })
     expect(last('approvalStatus')).toEqual({ type: 'approvalStatus', requestId: 'req-1', status: 'cancelled' })
     expect(await chat.approve({ paneId, requestId: 'req-1', decision: 'allow' })).toMatchObject({ ok: false, code: 'unknown' })
+  })
+
+  it('a long input: the card gets its start and the hidden count; Allow waits until the whole input was fetched', async () => {
+    const chat = createChatSessions(deps)
+    await openOk(chat)
+    const a = adapters[0]
+    const command = 'echo safe && ' + 'x'.repeat(20000) + ' && rm -rf C:\\'
+    a.emit('permission', { requestId: 'big', toolName: 'Bash', input: { command }, sessionRules: [{ kind: 'rule', tool: 'Bash', content: 'echo:*' }] })
+    const ev = last('approval')
+    expect(ev.detail).toBe(command.slice(0, 8000))
+    expect(ev.hidden).toBe(command.length - 8000)
+    expect(ev.sessionRules).toEqual([{ kind: 'rule', tool: 'Bash', content: 'echo:*' }])
+    // Not seen: allow is refused (deny is not).
+    expect(await chat.approve({ paneId, requestId: 'big', decision: 'allow' })).toMatchObject({ ok: false, code: 'unseen' })
+    expect(await chat.approve({ paneId, requestId: 'big', decision: 'allowSession' })).toMatchObject({ ok: false, code: 'unseen' })
+    expect(a.answerPermission).not.toHaveBeenCalled()
+    expect(chat.approvalInput({ paneId, requestId: 'nope' })).toMatchObject({ ok: false, code: 'unknown' })
+    expect(chat.approvalInput({ paneId, requestId: 'big' })).toEqual({ ok: true, input: { command } })
+    expect(await chat.approve({ paneId, requestId: 'big', decision: 'allow' })).toEqual({ ok: true })
+    // Answered: the input is no longer kept.
+    expect(chat.approvalInput({ paneId, requestId: 'big' })).toMatchObject({ ok: false })
+    // The journal keeps the preview and its count whole.
+    const stored = chat.history({ paneId }).events.find((e) => e.event.type === 'approval').event
+    expect(stored.detail).toBe(command.slice(0, 8000))
+    expect(stored.hidden).toBe(command.length - 8000)
+  })
+
+  it('a short input can be denied or allowed at once', async () => {
+    const chat = createChatSessions(deps)
+    const a = await withPermission(chat)
+    a.emit('permission', { requestId: 'req-2', toolName: 'Bash', input: { command: 'x'.repeat(9000) } })
+    expect(await chat.approve({ paneId, requestId: 'req-2', decision: 'deny' })).toEqual({ ok: true })
+    expect(await chat.approve({ paneId, requestId: 'req-1', decision: 'allow' })).toEqual({ ok: true })
   })
 
   it('queued messages wait while an approval is pending', async () => {
@@ -502,13 +552,36 @@ describe('interrupt, close, exit', () => {
     expect(await chat.close({ paneId })).toEqual({ ok: true })
   })
 
-  it('closeAll closes every chat', async () => {
+  it('closeAll (Tessel quits) closes every chat, killing at once', async () => {
     const chat = createChatSessions(deps)
     await openOk(chat)
     await chat.open({ paneId: 'pane-2', cwd: tmp, permissions: 'manual' })
     await chat.closeAll()
     expect(adapters.every((a) => a.close.mock.calls.length === 1)).toBe(true)
+    expect(adapters.every((a) => a.close.mock.calls[0][0]?.kill === true)).toBe(true)
     expect(chat.list()).toEqual([])
+  })
+
+  it('a pane closed for good (forget) loses its journal; a plain close keeps it', async () => {
+    const chat = createChatSessions(deps)
+    await openOk(chat)
+    chat.send({ paneId, text: 'hi' })
+    const folder = join(tmp, 'chats', paneId)
+    await chat.close({ paneId })
+    expect(adapters[0].close.mock.calls[0][0]).toBeUndefined()
+    expect(fs.existsSync(join(folder, 'journal.jsonl'))).toBe(true)
+    await openOk(chat)
+    await chat.close({ paneId, forget: true })
+    expect(fs.existsSync(folder)).toBe(false)
+    // Opened again later: a fresh journal from seq 1.
+    sent = []
+    await openOk(chat)
+    expect(sent[0].seq).toBe(1)
+    expect(fs.existsSync(join(folder, 'journal.jsonl'))).toBe(true)
+    // A pane with no running chat (never started, or untrusted) is deleted too.
+    await chat.close({ paneId })
+    await chat.close({ paneId, forget: true })
+    expect(fs.existsSync(folder)).toBe(false)
   })
 
   it('close while starting: nothing is left running or registered', async () => {
@@ -584,7 +657,7 @@ describe('IPC', () => {
   it('registers the chat channels', () => {
     const h = wire(createChatSessions(deps))
     expect(Object.keys(h).sort()).toEqual(
-      ['chat:approve', 'chat:close', 'chat:history', 'chat:interrupt', 'chat:open', 'chat:send', 'chat:sendTeam', 'chat:setOption', 'chat:trust'].sort()
+      ['chat:approvalInput', 'chat:approve', 'chat:close', 'chat:history', 'chat:interrupt', 'chat:open', 'chat:send', 'chat:sendTeam', 'chat:setOption'].sort()
     )
   })
 
@@ -605,10 +678,9 @@ describe('IPC', () => {
     expect(await h['chat:setOption']({ paneId })).toMatchObject(bad)
     const many = Array.from({ length: LIMITS.teamPerCall + 1 }, (_, i) => ({ id: `m${i}`, from: '#1', text: 't' }))
     expect(await h['chat:sendTeam']({ paneId, messages: many })).toMatchObject(bad)
-    expect(await h['chat:sendTeam']({ paneId, messages: [{ id: 'm', from: '#1', text: 'x'.repeat(LIMITS.teamText + 1) }] })).toMatchObject(bad)
     expect(await h['chat:sendTeam']({ paneId, messages: [{ id: 'bad id', text: 't' }] })).toMatchObject(bad)
-    expect(await h['chat:trust']({ cwd: 'relative' })).toMatchObject(bad)
-    expect(await h['chat:trust']({ cwd: tmp })).toEqual({ ok: true })
+    expect(await h['chat:approvalInput']({ paneId, requestId: 'r r' })).toMatchObject(bad)
+    expect(await h['chat:approvalInput']({ paneId: '..', requestId: 'r' })).toMatchObject(bad)
     expect(await h['chat:open']({ paneId: 'p2', cwd: tmp, permissions: 'root' })).toMatchObject(bad)
     expect(await h['chat:open']({ paneId: 'p2', cwd: tmp, permissions: 'manual', model: '--foo' })).toMatchObject(bad)
     expect(await h['chat:history']({ paneId: '..' })).toMatchObject(bad)
@@ -807,6 +879,49 @@ describe('codex', () => {
     await until({ state: 'idle' })
     await chat.close({ paneId })
     await store.dispose()
+  })
+})
+
+describe('team messages over IPC', () => {
+  function wire(chat) {
+    const handlers = {}
+    chat.register({ handle: (ch, fn) => (handlers[ch] = (q) => fn({}, q)) })
+    return handlers
+  }
+
+  it('the limit covers a full message with the window prefix', () => {
+    const prefix = '(message msg-0123456789abcdef, reply to msg-0123456789abcdef) '
+    expect(LIMITS.teamText).toBeGreaterThanOrEqual(6000 + prefix.length)
+  })
+
+  it('one bad message is skipped and a long one cut: the others still go (no whole-batch refusal)', async () => {
+    const chat = createChatSessions(deps)
+    const h = wire(chat)
+    await h['chat:open']({ paneId, cwd: tmp, permissions: 'manual' })
+    await flush()
+    const long = 'y'.repeat(LIMITS.teamText + 500)
+    const r = await h['chat:sendTeam']({
+      paneId,
+      messages: [
+        { id: 'ok1', from: '#1', text: 'hello' },
+        { id: 'bad id', from: '#1', text: 'skipped' },
+        { id: 'empty', from: '#1', text: '   ' },
+        { id: 'long', from: '#2', text: long }
+      ]
+    })
+    expect(r).toEqual({ ok: true, ids: ['ok1', 'long'] })
+    const text = adapters[0].send.mock.calls[0][0].text
+    expect(text).toContain('hello')
+    expect(text).toContain(teamMessageText(long))
+    expect(teamMessageText(long)).toMatch(/message cut by Tessel: 500 more characters/)
+    expect(teamMessageText('short')).toBe('short')
+    // Nothing usable at all: refused.
+    expect(await h['chat:sendTeam']({ paneId, messages: [{ id: 'bad id', text: 't' }] })).toMatchObject({ ok: false, code: 'invalid' })
+  })
+
+  it('chat:trust is gone (trusting a folder always asks, from chat:open)', () => {
+    const h = wire(createChatSessions(deps))
+    expect(h['chat:trust']).toBeUndefined()
   })
 })
 

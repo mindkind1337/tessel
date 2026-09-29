@@ -54,6 +54,7 @@ describe('ChatPane.vue', () => {
       send: vi.fn(async () => ({ ok: true, id: 'u9' })),
       interrupt: vi.fn(async () => ({ ok: true })),
       approve: vi.fn(async () => ({ ok: true })),
+      approvalInput: vi.fn(async () => ({ ok: true, input: { command: 'FULL COMMAND' } })),
       setOption: vi.fn(async () => ({ ok: true }))
     }
     prevApi = window.shellApi
@@ -204,8 +205,18 @@ describe('ChatPane.vue', () => {
     emit(ask('r2'))
     await nextTick()
     card = wrapper.findAll('[data-test="chat-approval"]')[1]
+    // Right after it appeared, a key is typing meant elsewhere: no answer.
     await card.trigger('keydown', { key: 'y' })
     await flushPromises()
+    expect(api.approve).toHaveBeenCalledTimes(1)
+    const later = Date.now() + 1000
+    const spy = vi.spyOn(Date, 'now').mockReturnValue(later)
+    try {
+      await card.trigger('keydown', { key: 'y' })
+      await flushPromises()
+    } finally {
+      spy.mockRestore()
+    }
     expect(api.approve).toHaveBeenLastCalledWith({ paneId: 'c1', requestId: 'r2', decision: 'allow', message: '' })
 
     emit(ask('r3'))
@@ -219,6 +230,70 @@ describe('ChatPane.vue', () => {
     await card.find('[data-test="chat-approve-deny"]').trigger('click')
     await flushPromises()
     expect(api.approve).toHaveBeenLastCalledWith({ paneId: 'c1', requestId: 'r3', decision: 'deny', message: 'not now' })
+  })
+
+  it('a truncated input: hidden count shown, Allow and the keys wait until Show all fetched the whole input', async () => {
+    await mountPane()
+    emit({ type: 'status', state: 'approval' })
+    emit({ type: 'approval', requestId: 'big', toolName: 'Bash', displayName: 'Bash', input: { command: 'x' }, detail: 'echo safe', hidden: 12345, status: 'pending' })
+    await nextTick()
+    const card = wrapper.find('[data-test="chat-approval"]')
+    expect(card.find('pre').text()).toBe('echo safe')
+    expect(card.find('[data-test="chat-approval-hidden"]').text()).toContain('12345 characters hidden')
+    expect(card.find('[data-test="chat-approve-allow"]').element.disabled).toBe(true)
+    expect(card.find('[data-test="chat-approve-session"]').element.disabled).toBe(true)
+    expect(card.find('[data-test="chat-approve-deny"]').element.disabled).toBe(false)
+    const spy = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 5000)
+    try {
+      await card.trigger('keydown', { key: 'y' })
+      await card.trigger('keydown', { key: 'n' })
+      await flushPromises()
+      expect(api.approve).not.toHaveBeenCalled()
+      await card.find('[data-test="chat-approval-show-all"]').trigger('click')
+      await flushPromises()
+      expect(api.approvalInput).toHaveBeenCalledWith({ paneId: 'c1', requestId: 'big' })
+      expect(card.find('pre').text()).toBe('FULL COMMAND')
+      expect(card.find('[data-test="chat-approval-hidden"]').exists()).toBe(false)
+      expect(card.find('[data-test="chat-approve-allow"]').element.disabled).toBe(false)
+      // Still no single-key answers on that card.
+      await card.trigger('keydown', { key: 'y' })
+      await flushPromises()
+      expect(api.approve).not.toHaveBeenCalled()
+    } finally {
+      spy.mockRestore()
+    }
+    await card.find('[data-test="chat-approve-allow"]').trigger('click')
+    await flushPromises()
+    expect(api.approve).toHaveBeenLastCalledWith({ paneId: 'c1', requestId: 'big', decision: 'allow', message: '' })
+  })
+
+  it('the card lists what Allow for this session adds', async () => {
+    await mountPane()
+    emit({
+      type: 'approval',
+      requestId: 'r1',
+      toolName: 'Bash',
+      input: { command: 'npm test' },
+      sessionRules: [{ kind: 'rule', tool: 'Bash', content: 'npm test:*' }, { kind: 'mode', mode: 'acceptEdits' }, { kind: 'directories', directories: ['C:\\other'] }],
+      status: 'pending'
+    })
+    emit({ type: 'approval', requestId: 'r2', toolName: 'Read', input: { file_path: 'a' }, status: 'pending' })
+    await nextTick()
+    const [one, two] = wrapper.findAll('[data-test="chat-approval-rules"]')
+    const items = one.findAll('li').map((li) => li.text())
+    expect(items).toEqual(['Bash(npm test:*)', 'Switch this session to the acceptEdits mode', 'Give access to C:\\other'])
+    expect(two.text()).toContain('adds no rule')
+  })
+
+  it('a new approval never takes the focus from the composer', async () => {
+    await mountPane()
+    const input = wrapper.find('[data-test="chat-input"]').element
+    input.focus()
+    expect(document.activeElement).toBe(input)
+    emit({ type: 'approval', requestId: 'r1', toolName: 'Bash', input: { command: 'ls' }, status: 'pending' })
+    await nextTick()
+    await flushPromises()
+    expect(document.activeElement).toBe(input)
   })
 
   it('not signed in: the message, the composer disabled, Start again opens again', async () => {

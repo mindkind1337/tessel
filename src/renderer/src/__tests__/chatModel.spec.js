@@ -82,6 +82,29 @@ describe('chatModel reducer', () => {
     expect(chatReducer(s, { type: 'approvalStatus', requestId: 'zz', status: 'denied' })).toBe(s)
   })
 
+  it('approval: the main preview, its hidden count and the session rules', () => {
+    const s = run([
+      {
+        type: 'approval',
+        requestId: 'r1',
+        toolName: 'Bash',
+        input: { command: 'short … (9 more bytes)' },
+        detail: 'abc',
+        hidden: 12000,
+        sessionRules: [{ kind: 'rule', tool: 'Bash', content: 'npm:*' }, { kind: 'mode', mode: 'acceptEdits' }, { kind: 'directories', directories: ['C:\\x', 3] }, { kind: 'evil' }, null],
+        status: 'pending'
+      },
+      { type: 'approval', requestId: 'r2', toolName: 'Bash', input: { command: 'ls' }, hidden: -3, sessionRules: 'x', status: 'pending' }
+    ])
+    expect(s.rows[0]).toMatchObject({ detail: 'abc', hidden: 12000 })
+    expect(s.rows[0].sessionRules).toEqual([
+      { kind: 'rule', tool: 'Bash', content: 'npm:*' },
+      { kind: 'mode', mode: 'acceptEdits' },
+      { kind: 'directories', directories: ['C:\\x'] }
+    ])
+    expect(s.rows[1]).toMatchObject({ detail: null, hidden: 0, sessionRules: [] })
+  })
+
   it('a user message queued, then accepted', () => {
     let s = run([{ type: 'user', id: 'u1', text: 'do it', origin: 'user', status: 'queued', at: 1 }])
     expect(s.rows[0]).toMatchObject({ kind: 'user', origin: 'user', status: 'queued', text: 'do it' })

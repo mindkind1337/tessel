@@ -1026,8 +1026,10 @@ const chatSessions = createChatSessions({
   log
 })
 chatSessions.register(ipcMain)
+// Quitting kills the chat agents' process trees at once (before-quit below
+// waits for it); this one only catches a quit that skipped before-quit.
 app.on('will-quit', () => {
-  void Promise.resolve(chatSessions.closeAll()).catch(() => {})
+  void Promise.resolve(chatSessions.closeAll({ kill: true })).catch(() => {})
 })
 ipcMain.handle('statsUsage:summary', () => usageStats.summary())
 ipcMain.handle('statsUsage:copyImage', (_event, bytes) => copyUsageImage(bytes, { nativeImage, clipboard }))
@@ -2814,7 +2816,8 @@ const updater = createUpdater({
   send,
   beforeInstall: async (version) => {
     fs.writeFileSync(updateNoteFile(), JSON.stringify({ from: app.getVersion(), to: version }))
-    await shutdownTerminals()
+    // The chat agents too: before-quit skips its shutdown after this one.
+    await Promise.allSettled([shutdownTerminals(), chatSessions.closeAll({ kill: true })])
     shutdownDone = true
   },
   // The installer never started: back to a normal running app (the
@@ -3294,5 +3297,5 @@ app.on('before-quit', (event) => {
   if (shutdownDone) return
   event.preventDefault()
   shutdownDone = true
-  Promise.allSettled([accounts.close(), usageStats.close(), shutdownTerminals()]).finally(() => app.quit())
+  Promise.allSettled([accounts.close(), usageStats.close(), shutdownTerminals(), chatSessions.closeAll({ kill: true })]).finally(() => app.quit())
 })
