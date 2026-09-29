@@ -615,7 +615,7 @@ export function createCodexChat(opts) {
     if (!log) return
     try {
       if (typeof log === 'function') log(level, `[codexChat] ${msg}`)
-      else if (typeof log[level] === 'function') log[level](`[codexChat] ${msg}`)
+      else if (typeof log[level] === 'function') log[level]('chat', `codex: ${msg}`)
     } catch {
       /* logging never breaks the chat */
     }

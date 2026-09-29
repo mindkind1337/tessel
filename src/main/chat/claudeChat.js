@@ -120,7 +120,7 @@ export function createClaudeChat(opts) {
     if (!log) return
     try {
       if (typeof log === 'function') log(level, `[claudeChat] ${msg}`)
-      else if (typeof log[level] === 'function') log[level](`[claudeChat] ${msg}`)
+      else if (typeof log[level] === 'function') log[level]('chat', `claude: ${msg}`)
     } catch {
       /* logging never breaks the chat */
     }
