@@ -292,6 +292,22 @@ onMounted(async () => {
         <span class="launch-name">{{ t('pane.launch.chatCodex', 'Codex (chat)') }}</span>
       </button>
     </div>
+    <!-- Tessel's browser (BrowserPane.vue): a web page next to the terminals. -->
+    <div class="launch-row">
+      <button
+        class="launch-item"
+        role="menuitem"
+        data-test="launch-browser"
+        :title="t('pane.launch.browserHint', 'A web page next to your terminals (your dev server, docs)')"
+        @click="emit('launch', { kind: 'browser' })"
+      >
+        <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+          <circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" stroke-width="1.3" />
+          <path d="M1.5 8h13M8 1.5c2 2 2.8 4.2 2.8 6.5S10 12.5 8 14.5M8 1.5C6 3.5 5.2 5.7 5.2 8S6 12.5 8 14.5" fill="none" stroke="currentColor" stroke-width="1.1" />
+        </svg>
+        <span class="launch-name">{{ t('pane.launch.browser', 'Browser') }}</span>
+      </button>
+    </div>
     <p v-if="!installedAgents.length" class="launch-empty">{{ t('pane.launch.noAgents', 'No AI agents installed yet.') }}</p>
     <div v-if="missingAgents.length" class="launch-install">
       <span class="launch-install-label">{{ t('pane.launch.install', 'Install:') }}</span>

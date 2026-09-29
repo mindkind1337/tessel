@@ -397,7 +397,9 @@
       "chat": "Claude Code (chat)",
       "chatHint": "Claude dans un pane de chat : sans terminal ; les messages d'équipe lui arrivent comme des tours à part entière",
       "chatCodex": "Codex (chat)",
-      "chatCodexHint": "Codex dans un pane de chat : sans terminal ; les messages d'équipe lui arrivent comme des tours à part entière"
+      "chatCodexHint": "Codex dans un pane de chat : sans terminal ; les messages d'équipe lui arrivent comme des tours à part entière",
+      "browser": "Navigateur",
+      "browserHint": "Une page web à côté de vos terminaux (votre serveur de dev, une doc)"
     },
     "model": {
       "fromSession": "d'après sa dernière réponse",

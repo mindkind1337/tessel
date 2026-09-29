@@ -2444,6 +2444,10 @@ function agentById(id) {
 async function launch({ kind, id, sessionOptions = null }, targetId = activeId.value, where = placement.value) {
   closeMenus()
   // A chat agent (Claude): a pane of its own next to the active one.
+  if (kind === 'browser') {
+    openInBrowser({ ws: (targetId && wsOfLeaf(targetId)) || currentWs.value, newPane: true, focusAddress: true })
+    return
+  }
   if (kind === 'chat') {
     const baseWs = (targetId && wsOfLeaf(targetId)) || currentWs.value
     openChatAgent({ ws: baseWs, agent: id === 'codex' ? 'codex' : 'claude' })
