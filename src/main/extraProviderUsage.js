@@ -1,5 +1,6 @@
 // Transport and provider mappings adapted from Orca (MIT, Lovecast Inc., 2026).
-// Explicit requests only. No polling, token refresh, credential writes or logs.
+// Reads on request, or from the automatic refresh (usagePoller.js). No token
+// refresh, credential writes or logs.
 import { installedUsageProviders } from '../shared/usageProviders'
 import { createUsageProviderSources, ProviderReadError, refuse } from './usageProviderSources'
 import {
@@ -12,6 +13,7 @@ import {
   mapMiniMax
 } from './usageProviderMapping'
 import { t } from './i18n'
+import { retryAfterMs } from './usagePoller'
 
 export const USAGE_URLS = Object.freeze({
   geminiProject: 'https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist',
@@ -67,6 +69,14 @@ export function createExtraProviderUsage({
     }
     if (!response.ok) {
       await response.body?.cancel().catch(() => {})
+      if (response.status === 429) {
+        const error = new ProviderReadError(
+          'rate-limited',
+          t('main.usage.rateLimited', 'The usage service is limiting requests. Tessel will try again later.')
+        )
+        error.retryAfterMs = retryAfterMs(response.headers, clock())
+        throw error
+      }
       if (key === 'opencode-go' && response.status === 403)
         refuse('unavailable', t('main.usage.noOpenCodeGo', 'This OpenCode account has no Go subscription.'))
       refuse(
@@ -193,7 +203,7 @@ export function createExtraProviderUsage({
         ])
       } catch (error) {
         const code = error instanceof ProviderReadError ? error.code : 'network'
-        if (source !== provider && asked && code !== 'stale')
+        if (source !== provider && asked && code !== 'stale' && code !== 'rate-limited')
           return {
             ok: false,
             provider,
@@ -218,7 +228,10 @@ export function createExtraProviderUsage({
           error:
             error instanceof ProviderReadError
               ? error.message
-              : t('main.usage.readRetry', 'Could not read provider usage. Try again.')
+              : t('main.usage.readRetry', 'Could not read provider usage. Try again.'),
+          ...(error instanceof ProviderReadError && Number.isFinite(error.retryAfterMs)
+            ? { retryAfterMs: error.retryAfterMs }
+            : {})
         }
       } finally {
         clearTimeout(timer)

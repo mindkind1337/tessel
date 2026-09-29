@@ -334,7 +334,11 @@
       "cardLayout": "Disposition des cartes d'espace de travail",
       "cardLayoutHint": "Les cartes d'espace de travail peuvent adopter une disposition compacte ou détaillée.",
       "detailed": "Détaillée",
-      "compact": "Compacte"
+      "compact": "Compacte",
+      "usageRefresh": "Actualisation de l’utilisation",
+      "usageRefreshHint": "Fréquence à laquelle les limites des fournisseurs sont relues pendant que vous utilisez Tessel. Désactivée : seulement à l’ouverture d’Utilisation.",
+      "usageRefreshOff": "Désactivée",
+      "usageRefreshMinutes": "{{count}} min"
     },
     "text": {
       "font": "Police",

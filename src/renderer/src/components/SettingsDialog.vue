@@ -13,7 +13,7 @@ import AutomationsPage from './AutomationsPage.vue'
 import CliSettings from './CliSettings.vue'
 import { BarChart3, Cable, LoaderCircle } from 'lucide-vue-next'
 import { updateFailureText, updateKindLabel } from '../agentUpdateErrors'
-import { settings, FONT_FAMILIES, resetSettings, clamp, MAX_LEFT_SIDEBAR_TINT_OPACITY, limitNumber, DEFAULT_SETTINGS, LIMITS } from '../settings'
+import { settings, FONT_FAMILIES, resetSettings, clamp, MAX_LEFT_SIDEBAR_TINT_OPACITY, limitNumber, DEFAULT_SETTINGS, LIMITS, USAGE_REFRESH_MINUTES } from '../settings'
 import { THEMES } from '../themes'
 import { playAlertSound } from '../notificationsStore'
 import { uiZoomPercent, stepUiZoom } from '../appearance'
@@ -34,6 +34,11 @@ import { sessionOptionLabel, sessionChoiceLabel, probeErrorText } from '../sessi
 import { CACHE_TTLS } from '../promptCache'
 import { ORCHESTRATION_EXAMPLES, ORCHESTRATION_TOOLS } from '../orchestrationGuide'
 import { WORKER_AGENTS, MAX_CONCURRENT_LIMIT, NESTED_DEPTH_LIMIT } from '../../../shared/orchestration'
+// Settings > Appearance, "Usage refresh": Off, or every N minutes.
+const usageRefreshLabel = (m) =>
+  m === 0
+    ? t('settings.appearance.usageRefreshOff', 'Off')
+    : t('settings.appearance.usageRefreshMinutes', '{{count}} min', { count: m })
 
 const props = defineProps({
   shells: { type: Array, default: () => [] },
@@ -2069,6 +2074,25 @@ function previewSound() {
                     @click="settings.usagePercentageDisplay = o.id"
                   >
                     {{ o.label }}
+                  </button>
+                </div>
+              </div>
+              <div class="set-row">
+                <div id="settings-usage-refresh-label" class="set-label">
+                  {{ t('settings.appearance.usageRefresh', 'Usage refresh') }}
+                  <span class="set-hint">{{ t('settings.appearance.usageRefreshHint', 'How often provider limits are read again while Tessel is in use. Off: only when you open Usage.') }}</span>
+                </div>
+                <div class="launch-seg set-seg" role="group" aria-labelledby="settings-usage-refresh-label">
+                  <button
+                    v-for="m in USAGE_REFRESH_MINUTES"
+                    :key="m"
+                    type="button"
+                    class="launch-seg-btn"
+                    :class="{ on: settings.usageRefreshMinutes === m }"
+                    :aria-pressed="settings.usageRefreshMinutes === m"
+                    @click="settings.usageRefreshMinutes = m"
+                  >
+                    {{ usageRefreshLabel(m) }}
                   </button>
                 </div>
               </div>

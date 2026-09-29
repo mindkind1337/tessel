@@ -929,3 +929,15 @@ describe('Claude usage details (fixture shaped like the live response)', () => {
     expect(line).not.toMatch(/Claude Code|1234|Weekly limit reached/)
   })
 })
+
+describe('rate limiting', () => {
+  it('reports a 429 with its Retry-After and no token', async () => {
+    const { service, request } = fixture()
+    request.mockResolvedValue(
+      new Response('fixture throttled', { status: 429, headers: { 'Retry-After': '90' } })
+    )
+    const result = await service.read({ provider: 'claude', accountId: null })
+    expect(result).toMatchObject({ ok: false, code: 'rate-limited', retryAfterMs: 90000 })
+    expect(JSON.stringify(result)).not.toContain('fixture-claude-token')
+  })
+})
