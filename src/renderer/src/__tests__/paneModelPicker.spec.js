@@ -55,6 +55,8 @@ vi.mock('@xterm/addon-webgl', () => ({ WebglAddon: class {} }))
 import TerminalPane from '../components/TerminalPane.vue'
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+// Tessel types a command, then Enter on its own (a busy test run can be slow).
+const ENTER = '\r'
 const sigWithout = (agentId) => launchSignature(effectiveAgent({ id: agentId, command: agentId }, {}, 'manual', null))
 
 describe('pane menu > Model', () => {
@@ -138,6 +140,7 @@ describe('pane menu > Model', () => {
     return modelMenu()
   }
   const emit = (data) => listeners.forEach((l) => l({ id: 'mp', data }))
+  const typed = () => vi.waitFor(() => expect(writes.at(-1)).toEqual(['mp', ENTER]), { timeout: 3000 })
 
   it('a running Claude: /model typed, "Switch model?" answered with Enter, applied without a restart', async () => {
     const node = mountPane()
@@ -145,7 +148,7 @@ describe('pane menu > Model', () => {
     expect(m).not.toBeNull()
     expect(m.querySelector('[data-test="sop-model-default"]').getAttribute('aria-checked')).toBe('true')
     m.querySelector('[data-model="sonnet"]').click()
-    await wait(160)
+    await typed()
     expect(writes).toEqual([
       ['mp', '/model sonnet'],
       ['mp', '\r']
@@ -169,7 +172,7 @@ describe('pane menu > Model', () => {
     const node = mountPane()
     const m = await openModelMenu()
     m.querySelector('[data-model="opus"]').click()
-    await wait(160)
+    await typed()
     emit('Kept model as Sonnet')
     await flushPromises()
     expect(node.sessionOptions).toBeUndefined()
@@ -180,7 +183,7 @@ describe('pane menu > Model', () => {
     const node = mountPane({ sessionOptions: { model: 'opus' } })
     let m = await openModelMenu()
     m.querySelector('[data-option="effort"][data-value="max"]').click()
-    await wait(160)
+    await typed()
     expect(writes).toEqual([
       ['mp', '/effort max'],
       ['mp', '\r']
@@ -189,7 +192,7 @@ describe('pane menu > Model', () => {
     expect(node.sessionOptions).toEqual({ model: 'opus', effort: 'max' })
     m = await openModelMenu()
     m.querySelector('[data-test="sop-toggle"]').click()
-    await wait(160)
+    await typed()
     expect(writes.slice(2)).toEqual([
       ['mp', '/fast'],
       ['mp', '\r']
@@ -202,7 +205,7 @@ describe('pane menu > Model', () => {
     const m = await openModelMenu()
     expect(m.querySelector('[data-test="sop-disabled"]').textContent).toContain('It is working')
     m.querySelector('[data-model="sonnet"]').click()
-    await wait(160)
+    await wait(200)
     expect(writes).toEqual([])
   })
 
@@ -230,9 +233,38 @@ describe('pane menu > Model', () => {
     ctxMenu().querySelector('[data-test="pane-model"]').click()
     await nextTick()
     modelMenu().querySelector('[data-test="sop-agent-picker"]').click()
-    await wait(300)
+    await typed()
     expect(writes.map((w) => w[1]).join('')).toBe('/model\r')
     expect(writes.length).toBe(7)
+  })
+
+  it('the header chip: the model in use, effort only when not the default; a click opens the picker', async () => {
+    mountPane({ modelChoice: { model: 'opus', effort: 'high' } })
+    await flushPromises()
+    const chip = () => wrapper.get('[data-test="pane-model-chip"]')
+    expect(chip().text()).toBe('Opus')
+    wrapper.props('node').modelChoice = { model: 'opus', effort: 'max' }
+    await wrapper.vm.$nextTick()
+    // The header refreshes its model on its own schedule; ask now.
+    window.shellApi.agentModel.mockResolvedValueOnce(null)
+    await wrapper.setProps({ node: { ...wrapper.props('node'), sessionId: 's2' } })
+    await flushPromises()
+    expect(chip().text()).toBe('Opus · max')
+    await chip().trigger('click')
+    await nextTick()
+    expect(modelMenu()).not.toBeNull()
+  })
+
+  it("the chip shows what the session reports (Codex's turn), its effort when not the default", async () => {
+    mountPane({ agentId: 'codex' })
+    window.shellApi.agentModel.mockResolvedValue({ model: 'gpt-5.5', effort: 'high', source: 'session' })
+    await wrapper.setProps({ node: { ...wrapper.props('node'), sessionId: 's1' } })
+    await flushPromises()
+    expect(wrapper.get('[data-test="pane-model-chip"]').text()).toBe('gpt-5.5 · high')
+    window.shellApi.agentModel.mockResolvedValue({ model: 'gpt-5.5', effort: 'medium', source: 'session' })
+    await wrapper.setProps({ node: { ...wrapper.props('node'), sessionId: 's3' } })
+    await flushPromises()
+    expect(wrapper.get('[data-test="pane-model-chip"]').text()).toBe('gpt-5.5')
   })
 
   it('a pane asleep keeps the choice for its next start; the default from Settings is named', async () => {

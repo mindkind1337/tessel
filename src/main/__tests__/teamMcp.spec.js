@@ -155,7 +155,15 @@ describe('Tessel team tools (background messages)', () => {
       'team_task_move',
       'team_task_done',
       'team_task_gate',
-      'team_ask'
+      'team_ask',
+      'team_worker_start',
+      'team_worker_list',
+      'team_worker_read',
+      'team_worker_stop',
+      'team_worker_release',
+      'team_worker_done',
+      'team_heartbeat',
+      'team_gates'
     ])
     expect(byId[3].result.content[0].text).toMatch(/Sent to #4/)
     expect(byId[4].result.content[0].text).toMatch(/#1 Codex CLI \(you\)/)

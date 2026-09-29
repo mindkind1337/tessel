@@ -73,7 +73,8 @@ export function askpassPlugin() {
   let outDir = path.join(root, 'out', 'main')
   return {
     name: 'tessel-askpass-helper',
-    apply: 'build',
+    // No `apply`: `npm run dev` builds the main process too and needs the
+    // helper next to it (with apply: 'build' only packaged builds had it).
     configResolved(config) {
       if (config.build && config.build.outDir) outDir = path.resolve(config.root || root, config.build.outDir)
     },

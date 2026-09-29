@@ -116,7 +116,10 @@
       "toolsDownHint": "Ses outils d'équipe (tessel-team) ne sont pas connectés : il ne peut ni lire ni envoyer de messages d'équipe. Redémarrez-le (clic droit sur son panneau, Redémarrer).",
       "toolsDown": "outils",
       "subAgentsOf": "Sous-agents de {{name}}",
-      "showLess": "Afficher moins"
+      "showLess": "Afficher moins",
+      "workerOf": "exécutant de #{{num}}",
+      "worker": "exécutant",
+      "workerOfHint": "Exécutant de {{coordinator}} : y aller"
     },
     "card": {
       "markReadTooltip": "Marquer comme lu · {{status}}",
@@ -320,7 +323,10 @@
       "team": "Équipe",
       "subAgentsTitle": "Sous-agents",
       "statusUnread": "{{status}} · Non lu",
-      "folder": "Dossier"
+      "folder": "Dossier",
+      "workerDone": "Exécutant de {{coordinator}} : a terminé",
+      "workerFailed": "Exécutant de {{coordinator}} : a échoué",
+      "workerOf": "Exécutant de {{coordinator}}"
     }
   },
   "pane": {
@@ -595,7 +601,9 @@
         "unsupported": "{{agent}} ne peut pas lister ses modèles.",
         "failedDetail": "{{agent}} n'a pas pu lister ses modèles : {{detail}}",
         "failed": "{{agent}} n'a pas pu lister ses modèles."
-      }
+      },
+      "chipLabel": "Modèle : {{model}}. Choisir le modèle",
+      "chipStatic": "Modèle : {{model}}"
     }
   }
 }

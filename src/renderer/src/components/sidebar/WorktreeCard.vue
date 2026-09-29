@@ -117,12 +117,13 @@ function rowLine(r) {
   return [r.primary, r.subline, r.secondary].filter(Boolean).join(' - ')
 }
 
-function onRow(r) {
+// target: what the row asked to go to (a worker's mark: its coordinator).
+function onRow(r, target) {
   if (props.picking && props.picking.active) {
     if (props.picking.canPick(r)) emit('pick', r.id)
     return
   }
-  emit('focus-pane', r.id)
+  emit('focus-pane', target && target.id && target.id !== r.id ? target.id : r.id)
 }
 
 function onCardClick(e) {

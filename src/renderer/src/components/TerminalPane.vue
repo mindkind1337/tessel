@@ -215,10 +215,34 @@ const modelMenuNote = computed(() => {
 const modelBusyReason = computed(() =>
   paneRunning.value && paneBusy.value ? t('pane.sessionOptions.waitIdle', 'It is working: its model can change once it is idle.') : ''
 )
-async function menuModel() {
+// The header's model chip: the short name in use (the session's, else the
+// launch choice), its effort only when it is not the model's default.
+const headerModelText = computed(() => {
+  const m = agentModel.value
+  if (!isAgent.value || !m || !m.model) return ''
+  const name = modelLabel(m.model)
+  return m.effort && !effortIsDefault(m) ? `${name} · ${m.effort}` : name
+})
+function effortIsDefault(m) {
+  const catalog = getAgentSessionOptionCatalog(props.node.agentId)
+  if (!catalog) return false
+  const choice = props.node.modelChoice
+  const id = (m.source === 'chosen' && choice && choice.model) || m.model
+  const effort = modelOptions(catalog, paneModelList.value, id).find((o) => o.id === 'effort')
+  return !!effort && effort.kind.defaultValue === m.effort
+}
+function openModelMenuAtChip(e) {
+  const r = e.currentTarget.getBoundingClientRect()
+  openModelMenuAt(r.left, r.bottom + 2)
+}
+function menuModel() {
   const x = ctxMenu.x
   const y = ctxMenu.y
   closeCtxMenu()
+  openModelMenuAt(x, y)
+}
+async function openModelMenuAt(x, y) {
+  headerHover.dismiss()
   modelMenu.x = x
   modelMenu.y = y
   modelMenu.visible = true
@@ -1963,7 +1987,26 @@ onBeforeUnmount(() => {
           >{{ paneTitle }}</span
         >
         <!-- The header shows only the agent's name: the conversation's title
-             is in the hover card. -->
+             is in the hover card. Then the model it uses, one dim chip (the
+             model picker on a click; hidden when the pane is narrow). -->
+        <button
+          v-if="headerModelText && hasModelChoice"
+          class="pane-model-chip"
+          type="button"
+          data-test="pane-model-chip"
+          :aria-label="t('pane.sessionOptions.chipLabel', 'Model: {{model}}. Choose the model', { model: headerModelText })"
+          @mousedown.stop
+          @click.stop="openModelMenuAtChip"
+        >
+          {{ headerModelText }}
+        </button>
+        <span
+          v-else-if="headerModelText"
+          class="pane-model-chip static"
+          data-test="pane-model-chip"
+          :aria-label="t('pane.sessionOptions.chipStatic', 'Model: {{model}}', { model: headerModelText })"
+          >{{ headerModelText }}</span
+        >
         <!-- One badge: the most urgent state (all of them are in the … menu). -->
         <span v-if="badge === 'asleep'" class="exit-tag" data-test="pane-badge" :title="t('pane.badge.asleepHint', 'Asleep: open the pane to wake it')">{{ t('pane.badge.asleep', 'asleep') }}</span>
         <span v-else-if="badge === 'exited'" class="exit-tag" data-test="pane-badge">{{ t('pane.badge.exited', 'exited') }}</span>

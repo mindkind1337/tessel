@@ -41,6 +41,15 @@ const teamLine = computed(() => {
   const team = props.teamLabel || props.row.team
   return props.row.lead ? t('sidebar.hover.teamLead', '{{team}} (lead)', { team }) : team
 })
+// A worker started by a coordinator (orchestration).
+const workerLine = computed(() => {
+  const w = props.row.workerOf
+  if (!w) return ''
+  const coordinator = w.label || (w.num ? `#${w.num}` : '')
+  if (w.status === 'done') return t('sidebar.hover.workerDone', 'Worker of {{coordinator}}: reported done', { coordinator })
+  if (w.status === 'failed') return t('sidebar.hover.workerFailed', 'Worker of {{coordinator}}: reported failed', { coordinator })
+  return t('sidebar.hover.workerOf', 'Worker of {{coordinator}}', { coordinator })
+})
 const unreadLine = computed(() => {
   const count = props.row.teamUnread || 0
   if (!count) return ''
@@ -98,6 +107,7 @@ const childLine = computed(() => {
       </div>
       <div class="hc-section-body hc-lines">
         <div class="hc-strong" v-text="teamLine"></div>
+        <div v-if="workerLine" class="hc-muted" data-hover-worker="" v-text="workerLine"></div>
         <div v-if="unreadLine" class="hc-muted" v-text="unreadLine"></div>
       </div>
     </section>

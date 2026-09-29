@@ -13,6 +13,7 @@
 import fs from 'fs'
 import { join, resolve, isAbsolute } from 'path'
 import { writeFileAtomic } from './safeJson'
+import { parseWorkerRequest } from '../shared/orchestration'
 
 const ID_RE = /^(?!\.)(?!.*\.\.)[A-Za-z0-9._-]{1,100}$/
 export const TASK_COLUMNS = ['todo', 'doing', 'review', 'done']
@@ -259,6 +260,77 @@ export function messageStatuses({ dir, teamId, ids } = {}) {
   return { ok: true, statuses }
 }
 
+// --- Orchestration ---------------------------------------------------------------
+// The answer to one request an agent's tool waits for (team_worker_start,
+// _read, _stop, ...): <team>/answers/<rid>.json, read and removed by the
+// tool. Answers nobody took within 10 minutes are cleaned up here.
+const RID_RE = /^r-[a-z0-9-]{4,40}$/
+const ANSWER_KEPT_MS = 10 * 60 * 1000
+export function writeTeamAnswer({ dir, teamId, rid, ok, text } = {}) {
+  const root = teamRoot(dir, teamId)
+  if (!root || typeof rid !== 'string' || !RID_RE.test(rid) || typeof text !== 'string') return { ok: false, error: 'Invalid answer.' }
+  if (!fs.existsSync(root)) return { ok: false, error: 'The team channel is not set up.' }
+  const folder = join(root, 'answers')
+  fs.mkdirSync(folder, { recursive: true })
+  try {
+    for (const name of fs.readdirSync(folder)) {
+      const file = join(folder, name)
+      if (Date.now() - fs.statSync(file).mtimeMs > ANSWER_KEPT_MS) fs.rmSync(file, { force: true })
+    }
+  } catch {
+    // cleaned up next time
+  }
+  writeAtomic(join(folder, `${rid}.json`), { rid, ok: ok !== false, text: text.slice(0, 8000), at: Date.now() })
+  return { ok: true }
+}
+
+// The team's workers, for team_worker_list: <team>/workers.json. workers:
+// [{ id, handle, coordinator, title, card, agent, status, isolation, branch,
+// depth, startedAt, heartbeatAt, phase, note }], limits, phases by
+// coordinator. Rewritten only when it changes.
+const WORKER_STATUSES = ['confirming', 'queued', 'starting', 'running', 'done', 'failed', 'stopped', 'released', 'refused']
+export function publishWorkers({ dir, teamId, workers, limits, phases } = {}) {
+  const root = teamRoot(dir, teamId)
+  if (!root || !Array.isArray(workers)) return { ok: false, error: 'Invalid team location.' }
+  if (!fs.existsSync(root)) return { ok: true, changed: false }
+  const s = (v, max) => (typeof v === 'string' ? v.slice(0, max) : null)
+  const n = (v) => (Number.isFinite(v) ? v : null)
+  const clean = workers
+    .slice(0, 100)
+    .filter((w) => w && ID_RE.test(String(w.id)) && WORKER_STATUSES.includes(w.status))
+    .map((w) => ({
+      id: w.id,
+      handle: typeof w.handle === 'string' && /^#\d{1,3}$/.test(w.handle) ? w.handle : null,
+      coordinator: typeof w.coordinator === 'string' && /^#\d{1,3}$/.test(w.coordinator) ? w.coordinator : null,
+      title: s(w.title, MAX_TITLE) || '',
+      card: typeof w.card === 'string' && ID_RE.test(w.card) ? w.card : null,
+      agent: typeof w.agent === 'string' && /^[a-z0-9-]{1,30}$/.test(w.agent) ? w.agent : null,
+      status: w.status,
+      isolation: w.isolation === 'project' ? 'project' : 'worktree',
+      branch: s(w.branch, 200),
+      depth: Number.isInteger(w.depth) ? w.depth : 1,
+      startedAt: n(w.startedAt),
+      heartbeatAt: n(w.heartbeatAt),
+      phase: s(w.phase, 20),
+      note: s(w.note, 200)
+    }))
+  const lim = limits && typeof limits === 'object' ? { maxConcurrent: n(limits.maxConcurrent), maxDepth: n(limits.maxDepth), confirm: !!limits.confirm } : null
+  const ph = {}
+  for (const [k, v] of Object.entries((phases && typeof phases === 'object' && phases) || {}).slice(0, 40))
+    if (/^#\d{1,3}$/.test(k) && typeof v === 'string' && /^[a-z]{1,20}$/.test(v)) ph[k] = v
+  const file = join(root, 'workers.json')
+  let old = null
+  try {
+    old = JSON.parse(fs.readFileSync(file, 'utf8'))
+  } catch {
+    old = null
+  }
+  const body = { workers: clean, limits: lim, phases: ph }
+  if (old && JSON.stringify({ workers: old.workers, limits: old.limits, phases: old.phases }) === JSON.stringify(body)) return { ok: true, changed: false }
+  writeAtomic(file, { version: 1, ...body })
+  return { ok: true, changed: true }
+}
+
 // Card ids (at most 10, no repeats); null when not valid.
 function cleanIds(v) {
   if (v == null) return []
@@ -268,6 +340,10 @@ function cleanIds(v) {
 
 export function parseRequest(data) {
   if (!data || typeof data !== 'object') return { error: 'the request is not readable' }
+  // Orchestration: workers started, stopped, read, their reports and
+  // heartbeats (src/shared/orchestration.js). Tessel's renderer decides.
+  const worker = parseWorkerRequest(data)
+  if (worker) return worker
   const column = data.column == null ? null : String(data.column).toLowerCase()
   if (column !== null && !TASK_COLUMNS.includes(column))
     return { error: `unknown column "${data.column}" (use ${TASK_COLUMNS.join(', ')})` }

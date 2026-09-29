@@ -122,12 +122,13 @@ describe('terminal pane header', () => {
     const h = header()
     expect(h.get('.pane-title').text()).toBe('Claude')
     expect(h.find('.pane-icon .pane-status-dot').exists()).toBe(true)
-    // Model, branch, team and Yolo are no longer in the header.
+    // Branch, team and Yolo are no longer in the header.
     for (const gone of ['.pane-model', '.pane-branch', '.pane-team', '[data-test="pane-yolo"]', '.mic-lang', '.mic-caret'])
       expect(h.find(gone).exists(), gone).toBe(false)
     expect(h.text()).not.toContain('feat/header')
     expect(h.text()).not.toContain('Blue')
-    expect(h.text()).not.toContain('Opus')
+    // The model it uses: one dim chip after the name (a click opens the picker).
+    expect(h.get('[data-test="pane-model-chip"]').text()).toBe('Opus')
     expect(h.text()).not.toContain('FR')
     // Several states at once (a message not confirmed, quiet 12 min,
     // unknown): one badge, the most urgent.
