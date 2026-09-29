@@ -663,7 +663,8 @@
     "chat": {
       "title": "Claude (chat)",
       "needFolder": "Un agent de chat travaille dans un dossier de projet sur cet ordinateur : ouvrez-en un d'abord.",
-      "titleCodex": "Codex (chat)"
+      "titleCodex": "Codex (chat)",
+      "workerNoFolder": "un worker en chat a besoin d'un dossier de projet sur cet ordinateur"
     }
   }
 }

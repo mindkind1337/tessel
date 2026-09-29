@@ -62,6 +62,7 @@ import ReviewPanel from './components/ReviewPanel.vue'
 import { parseLeadRequest, findTaskRef, leadGuide, memberGuide } from '../../shared/leadRequests'
 import { workerLaunchArgs, wakeLaunchArgs } from '../../shared/orchestration'
 import { createOrchestrator } from './orchestrator'
+import { formatChatTranscript } from './chat/chatTranscript'
 import { automationLaunchArgs, AUTOMATION_AGENTS, permissionFingerprint, quoteGlobArgs } from '../../shared/automations'
 import { createAutomationRunner, probeRunAgent } from './automationRunner'
 import { createCliRequests, CliRequestError } from './cliRequests'
@@ -390,7 +391,9 @@ async function chatOpen(leaf, { askTrust = true } = {}) {
   if (!api || !leaf || leaf.kind !== 'chat') return { ok: false, code: 'failed' }
   const agentId = CHAT_AGENTS.includes(leaf.agentId) ? leaf.agentId : 'claude'
   const agent = agentById(agentId) || { id: agentId, name: agentId === 'codex' ? 'Codex' : 'Claude Code' } // i18n-ignore
-  const permissions = launchPermissions(null, [leaf.projectDir, leaf.cwd], settings.yoloFolders, settings.agentPermissions)
+  // A worker never runs with more than its coordinator did (maxPermissions).
+  const narrowed = leaf.maxPermissions === 'manual'
+  const permissions = narrowed ? 'manual' : launchPermissions(null, [leaf.projectDir, leaf.cwd], settings.yoloFolders, settings.agentPermissions)
   const sessionValues = launchSessionValues(null, settings.agentSessionOptions, agentId)
   const launch = effectiveAgent(agent, settings.agentPrefs, permissions, null, modelsFor(agentId))
   // A permission mode set in your own arguments (--permission-mode plan).
@@ -421,8 +424,9 @@ async function chatOpen(leaf, { askTrust = true } = {}) {
       model: leaf.model || (sessionValues && sessionValues.model) || null,
       effort: leaf.effort || (sessionValues && sessionValues.effort) || null,
       permissions,
-      permissionMode: ownMode ? ownMode[1] : null,
-      askTrust,
+      permissionMode: ownMode && !narrowed ? ownMode[1] : null,
+      // A worker never asks: its folder is trusted already (its project), or it does not start.
+      askTrust: askTrust && !leaf.worker,
       extraEnv,
       accountEnv,
       unsetEnv
@@ -431,6 +435,7 @@ async function chatOpen(leaf, { askTrust = true } = {}) {
     res = { ok: false, code: 'failed', error: err && err.message }
   }
   if (res && res.ok) {
+    leaf.chatPermissions = permissions
     if (res.sessionId) leaf.sessionId = res.sessionId
     if (res.launchToken) leaf.agentLaunchToken = res.launchToken
     if (res.model) leaf.model = res.model
@@ -453,6 +458,56 @@ function deliverToChat(leafId, text, meta = {}) {
   Promise.resolve(call)
     .then((r) => done(!!(r && r.ok)))
     .catch(() => done(false))
+}
+// --- Orchestration workers as chat agents (orchestrator.js) ---------------------------
+// A worker's chat: a pane of its own in its project (or its copy), opened in
+// the background like a terminal worker (the pane you are in stays active),
+// never with more permissions than its coordinator runs with, never asking to
+// trust a folder (a copy counts as its project, trusted or not).
+function coordinatorPermissions(coord) {
+  if (!coord) return 'manual'
+  if (coord.kind === 'chat') return coord.chatPermissions === 'yolo' ? 'yolo' : 'manual'
+  return coord.launchYolo ? 'yolo' : 'manual'
+}
+async function openWorkerChat({ ws, agent, worktree, model, effort, coordinator }) {
+  if (!ws || !workspaces.value.includes(ws) || ws.remote || !ws.cwd) return { error: t('app.chat.workerNoFolder', 'a chat worker needs a project folder on this computer'), code: 'failed' }
+  const keep = ws.activeId
+  const agentId = typeof agent === 'string' ? agent : agent && agent.id
+  const leaf = makeChatLeaf({ agentId, cwd: worktree ? worktree.path : ws.cwd, projectDir: ws.cwd })
+  leaf.worker = true
+  leaf.model = model || null
+  leaf.effort = effort || null
+  if (worktree) leaf.worktree = worktree
+  if (coordinatorPermissions(coordinator) !== 'yolo') leaf.maxPermissions = 'manual'
+  const target = ws.tree ? largestLeaf(ws.tree) : null
+  const split = (orig) => reactive({ type: 'split', id: newId('split'), dir: (target && target.dir) || 'row', sizes: [50, 50], children: [orig, leaf] })
+  if (target && target.id) ws.tree = replaceNode(ws.tree, target.id, split)
+  else ws.tree = ws.tree ? split(ws.tree) : leaf
+  if (!ws.activeId) ws.activeId = leaf.id
+  else if (keep && findLeaf(keep)) ws.activeId = keep
+  numberPanes()
+  refitSoon()
+  const res = await chatOpen(leaf, { askTrust: false })
+  if (!res || !res.ok) {
+    if (findLeaf(leaf.id)) closeLeaf(leaf.id, { force: true })
+    return { error: (res && res.error) || (res && res.code) || '', code: (res && res.code) || 'failed' }
+  }
+  return leaf
+}
+// The first turn of a chat worker (the fixed start prompt): at once.
+function sendChatTurn(paneId, text) {
+  const api = window.shellApi.chat
+  return api ? api.send({ paneId, text }).catch(() => ({ ok: false })) : Promise.resolve({ ok: false })
+}
+// team_worker_read for a chat worker: its conversation as text (no more than
+// the chat pane itself shows).
+async function readChat(paneId, lines) {
+  const api = window.shellApi.chat
+  if (!api || !findLeaf(paneId)) return null
+  const h = await api.history({ paneId }).catch(() => null)
+  if (!h || !h.ok) return null
+  const events = (h.events || []).map((e) => (e && e.event ? e.event : e))
+  return formatChatTranscript(events, lines)
 }
 // The file viewer's "Open in editor": Tessel's editor (a kept tab).
 function openViewedInEditor({ file, line }) {
@@ -1248,7 +1303,10 @@ function serializeNode(node) {
       model: node.model || null,
       effort: node.effort || null,
       accountId: node.accountId,
-      team: node.team || null
+      team: node.team || null,
+      worker: node.worker ? true : undefined,
+      maxPermissions: node.maxPermissions === 'manual' ? 'manual' : undefined,
+      worktree: node.worktree || undefined
     }
   }
   // A browser pane: its page (no terminal).
@@ -1337,6 +1395,9 @@ async function deserializeNode(snap, cwd = null) {
     const flag = (v) => (typeof v === 'string' && /^[A-Za-z0-9._:[\]-]{1,60}$/.test(v) ? v : null)
     leaf.model = flag(snap.model)
     leaf.effort = flag(snap.effort)
+    if (snap.worker === true) leaf.worker = true
+    if (snap.maxPermissions === 'manual') leaf.maxPermissions = 'manual'
+    if (snap.worktree && typeof snap.worktree === 'object' && typeof snap.worktree.path === 'string') leaf.worktree = snap.worktree
     return leaf
   }
   // A browser pane comes back on its page (http(s) only).
@@ -6874,6 +6935,14 @@ const orchestrator = createOrchestrator({
   },
   createWorktree: makeTaskCopy,
   openWorkerPane: openBackgroundAgentPane,
+  // A worker as a chat agent (Settings > Orchestration > Start workers as).
+  openWorkerChat: (opts) => openWorkerChat(opts),
+  sendChatTurn: (paneId, text) => sendChatTurn(paneId, text),
+  readChat: (paneId, lines) => readChat(paneId, lines),
+  chatWorking: (paneId) => {
+    const leaf = findLeaf(paneId)
+    return !!leaf && getAgentState(paneId, leaf.agentLaunchToken)?.state === 'working'
+  },
   async joinTeam(leaf, team) {
     leaf.team = team.id
     logMembership(leaf, team.id)
@@ -7585,6 +7654,8 @@ onMounted(() => {
   offChatEvents = chat.onEvent((e) => {
     const ev = e && e.event
     if (!ev) return
+    // A chat worker's turn ended (orchestrator: reminded once if it did not report).
+    if (ev.type === 'turnEnd' && e.paneId && findLeaf(e.paneId)?.worker) orchestrator.chatTurnEnded(e.paneId, { status: ev.status, error: ev.error || null })
     if (ev.type === 'teamAccepted' && Array.isArray(ev.ids)) for (const id of ev.ids) acceptChatTeam(id)
     else if (ev.type === 'teamFailed' && Array.isArray(ev.ids)) for (const id of ev.ids) releaseChatTeam(id)
   })

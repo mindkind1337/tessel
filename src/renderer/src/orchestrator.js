@@ -14,6 +14,9 @@
 // { id, rid, by (coordinator pane id), agent, title, brief, model, effort,
 //   isolation, deps, depth, wsId, status, requestedAt, startedAt, endedAt,
 //   paneId, taskId, branch, heartbeatAt, phase, note, reason }
+// A chat worker (Settings > Orchestration: workers start as chats) also has
+// chat: true, and what its turn ends led to: turnEnds (waiting to be
+// settled), lastTurnAt, reminded, silentTold, failsTold.
 //
 // App.vue gives it what it needs (deps, below), so it is tested with fakes.
 // Text for agents stays English; the user's through t().
@@ -37,6 +40,12 @@ import { t } from './i18n'
 
 const KEEP_ENDED = 40 // ended records kept per team (the latest)
 const ANSWER_WINDOW_MS = 25000 // under the 30 s a worker tool waits for its answer
+// A chat worker's turn end is judged this long after it: its team_worker_done
+// (a request file the team loop applies every few seconds) may come after.
+export const TURN_END_GRACE_MS = 8000
+const CHAT_AGENTS = ['claude', 'codex']
+export const CHAT_REMINDER =
+  '[Tessel] Your turn ended but you have not reported. When the work is finished call team_worker_done (outcome, summary, files); if you are blocked, say why with team_worker_done outcome failed or ask your coordinator with team_ask.'
 
 // deps: {
 //   settings, t,
@@ -50,7 +59,13 @@ const ANSWER_WINDOW_MS = 25000 // under the 30 s a worker tool waits for its ans
 //   notice(leaves, text, teamId), answer(team, rid, ok, text),
 //   readScreen(paneId, lines) -> string | null,
 //   activity(event), attention(title, body, paneId), toast(text, opts),
-//   publish(team, { workers, limits, phases }), now()
+//   publish(team, { workers, limits, phases }), now(),
+//   chat workers (settings.orchestrationWorkerMode 'chat', Claude or Codex):
+//   openWorkerChat({ ws, agent, worktree, model, effort, coordinator })
+//     -> Promise<leaf | { error, code } | null>,
+//   sendChatTurn(paneId, text) -> Promise<{ ok, error }> (a user turn),
+//   readChat(paneId, lines) -> Promise<string | null> (formatChatTranscript),
+//   chatWorking(paneId) -> boolean (optional: a turn is running)
 // }
 export function createOrchestrator(deps) {
   const now = () => (deps.now ? deps.now() : Date.now())
@@ -67,6 +82,8 @@ export function createOrchestrator(deps) {
     if (!Array.isArray(team.workers)) team.workers = []
     return team.workers
   }
+  // Started as a chat? Only Claude and Codex have one; the rest stay terminals.
+  const chatMode = (r) => deps.settings.orchestrationWorkerMode === 'chat' && CHAT_AGENTS.includes(r.agent)
   const handleOf = (leaf) => (leaf && leaf.num ? `#${leaf.num}` : null)
   const labelOf = (id) => {
     const leaf = id ? deps.findLeaf(id) : null
@@ -304,11 +321,23 @@ export function createOrchestrator(deps) {
       null
     if (!r) return answerNow(team, req, from, false, `${req.worker} is not a worker of your team (see team_worker_list).`) // i18n-ignore
     if (!mayControl(team, from, r)) return answerNow(team, req, from, false, `${req.worker} is not your worker: only its coordinator (or the lead) can read it.`) // i18n-ignore
-    const screen = r.paneId ? deps.readScreen(r.paneId, req.lines || 60) : null
+    const lines = req.lines || 60
+    const hb = () => (r.heartbeatAt ? ` Last heartbeat ${Math.round((now() - r.heartbeatAt) / 60000)} min ago${r.phase ? ` (${r.phase})` : ''}.` : ' No heartbeat yet.') // i18n-ignore
+    if (r.chat) {
+      // A chat has no screen: its conversation, as text (chatTranscript.js).
+      const read = r.paneId ? Promise.resolve(deps.readChat(r.paneId, lines)).catch(() => null) : Promise.resolve(null)
+      return read.then((text) => {
+        // Checked again after the wait: still its coordinator's to read.
+        if (!mayControl(team, from, r)) return answerNow(team, req, from, false, `${req.worker} is not your worker: only its coordinator (or the lead) can read it.`) // i18n-ignore
+        if (text == null) return answerNow(team, req, from, false, `${req.worker}'s chat is not open.`) // i18n-ignore
+        const tail = outputTail(text, lines)
+        answerNow(team, req, from, true, `${req.worker} "${r.title}" is ${r.status}.${hb()} Its conversation now:\n${tail || '(empty)'}`) // i18n-ignore
+      })
+    }
+    const screen = r.paneId ? deps.readScreen(r.paneId, lines) : null
     if (screen == null) return answerNow(team, req, from, false, `${req.worker}'s terminal is not open (its pane was closed or is asleep).`) // i18n-ignore
-    const tail = outputTail(screen, req.lines || 60)
-    const hb = r.heartbeatAt ? ` Last heartbeat ${Math.round((now() - r.heartbeatAt) / 60000)} min ago${r.phase ? ` (${r.phase})` : ''}.` : ' No heartbeat yet.' // i18n-ignore
-    answerNow(team, req, from, true, `${req.worker} "${r.title}" is ${r.status}.${hb} Its screen now:\n${tail || '(empty)'}`) // i18n-ignore
+    const tail = outputTail(screen, lines)
+    answerNow(team, req, from, true, `${req.worker} "${r.title}" is ${r.status}.${hb()} Its screen now:\n${tail || '(empty)'}`) // i18n-ignore
   }
 
   function doneRequest(team, from, req) {
@@ -458,13 +487,23 @@ export function createOrchestrator(deps) {
       worktree = res.worktree
       r.branch = worktree.branch || null
     }
-    const leaf = await deps.openWorkerPane({
-      ws,
-      agent,
-      worktree,
-      launchOptions: { model: r.model, effort: r.effort, initialPrompt: WORKER_START_PROMPT }
-    })
-    if (!leaf) return fail(team, r, 'its pane could not be opened') // i18n-ignore
+    const chat = chatMode(r)
+    let leaf
+    if (chat) {
+      // A chat worker: no command line; its first prompt is its first turn.
+      r.chat = true
+      const res = await deps.openWorkerChat({ ws, agent, worktree, model: r.model, effort: r.effort, coordinator: coord })
+      if (!res || res.error || !res.id) return fail(team, r, `its chat could not start (${(res && res.error) || 'unknown error'})`) // i18n-ignore
+      leaf = res
+    } else {
+      leaf = await deps.openWorkerPane({
+        ws,
+        agent,
+        worktree,
+        launchOptions: { model: r.model, effort: r.effort, initialPrompt: WORKER_START_PROMPT }
+      })
+      if (!leaf) return fail(team, r, 'its pane could not be opened') // i18n-ignore
+    }
     if (!stillValid(team, r, leaf, worktree)) return
     r.paneId = leaf.id
     r.status = 'running'
@@ -472,6 +511,20 @@ export function createOrchestrator(deps) {
     if (r.taskId) deps.updateCard(r.taskId, { paneId: leaf.id, column: 'doing', ...(worktree ? { worktree } : {}) })
     await deps.joinTeam(leaf, team)
     if (!stillValid(team, r, leaf, worktree)) return
+    if (chat) {
+      // Sent at once (a user turn); the brief below follows as a team turn.
+      let sent
+      try {
+        sent = await deps.sendChatTurn(leaf.id, WORKER_START_PROMPT)
+      } catch (err) {
+        sent = { ok: false, error: (err && err.message) || 'unknown error' } // i18n-ignore
+      }
+      if (sent && sent.ok === false) {
+        deps.closePane(leaf.id, { byUser: false })
+        return fail(team, r, `its chat could not start (${sent.error || 'its first message was not sent'})`) // i18n-ignore
+      }
+      if (!stillValid(team, r, leaf, worktree)) return
+    }
     const lim = limits()
     const handle = handleOf(leaf) || '#?'
     deps.notice(
@@ -508,6 +561,64 @@ export function createOrchestrator(deps) {
     )
   }
 
+  // --- Chat workers' turns ------------------------------------------------------
+  // App calls it on each turnEnd of a chat pane ({ status: 'completed' |
+  // 'interrupted' | 'failed', error }). Judged in tick once TURN_END_GRACE_MS
+  // passed, so a team_worker_done sent at the end of that turn counts.
+  function chatTurnEnded(paneId, { status, error } = {}) {
+    for (const team of allTeams()) {
+      const r = records(team).find((x) => x.paneId === paneId && x.chat && x.status === 'running')
+      if (!r) continue
+      r.lastTurnAt = now()
+      // Interrupted: by the user or a stop; nothing to tell.
+      if (status !== 'completed' && status !== 'failed') return
+      if (!Array.isArray(r.turnEnds)) r.turnEnds = []
+      if (r.turnEnds.length < 10) r.turnEnds.push({ status, error: error ? String(error).slice(0, 500) : '', at: now() })
+      return
+    }
+  }
+
+  // A failed turn: its coordinator told (once per error). A turn ended with
+  // no report: one reminder to the worker, then its coordinator told once;
+  // never more (no loop).
+  function settleTurnEnds(team, r) {
+    if (!Array.isArray(r.turnEnds) || !r.turnEnds.length) return
+    if (r.status !== 'running') {
+      r.turnEnds = []
+      return
+    }
+    const leaf = deps.findLeaf(r.paneId)
+    const h = handleOf(leaf)
+    const who = `Worker ${h ? `${h} ` : ''}"${r.title}" (card ${r.taskId})` // i18n-ignore
+    while (r.turnEnds.length && now() - r.turnEnds[0].at >= TURN_END_GRACE_MS) {
+      const end = r.turnEnds.shift()
+      if (end.status === 'failed') {
+        const why = end.error || 'no reason given' // i18n-ignore
+        const told = r.failsTold || (r.failsTold = [])
+        if (told.includes(why)) continue
+        told.push(why)
+        if (told.length > 10) told.shift()
+        tell(team, r, false, `${who}: its turn failed: ${why}.`) // i18n-ignore
+        continue
+      }
+      // Working again (a message it got): that turn's end is the one to judge.
+      if (deps.chatWorking && deps.chatWorking(r.paneId)) continue
+      if (!r.reminded) {
+        r.reminded = true
+        if (leaf) deps.notice([leaf], CHAT_REMINDER, team.id)
+      } else if (!r.silentTold) {
+        r.silentTold = true
+        tell(team, r, true, `${who} stopped without reporting, even after a reminder. Look at it (team_worker_read), ask it (team_ask), or stop it (team_worker_stop).`) // i18n-ignore
+      }
+    }
+  }
+
+  // A worker's last sign of life: its heartbeat (a chat's turn end too).
+  const lastSign = (r) =>
+    r.chat ? Math.max(r.heartbeatAt || 0, r.lastTurnAt || 0) || r.startedAt || now() : r.heartbeatAt || r.startedAt || now()
+  // A chat at work is never "silent"; one already told as silent, not twice.
+  const chatBusyOrTold = (r) => !!r.silentTold || !!(deps.chatWorking && deps.chatWorking(r.paneId))
+
   // --- Every round (App's team loop) ---------------------------------------------
   // Closed workers, silent ones, coordinators gone; then the queue; then the
   // list the tools read.
@@ -543,7 +654,8 @@ export function createOrchestrator(deps) {
         tell(team, r, false, `Worker "${r.title}" (card ${r.taskId}) ended before it reported: ${r.reason}.`) // i18n-ignore
         continue
       }
-      if (r.status === 'running' && !r.staleTold && now() - (r.heartbeatAt || r.startedAt || now()) > STALE_MS) {
+      if (r.chat) settleTurnEnds(team, r)
+      if (r.status === 'running' && !r.staleTold && now() - lastSign(r) > STALE_MS && !(r.chat && chatBusyOrTold(r))) {
         r.staleTold = true
         const leaf = deps.findLeaf(r.paneId)
         tell(
@@ -590,7 +702,8 @@ export function createOrchestrator(deps) {
         startedAt: r.startedAt,
         heartbeatAt: r.heartbeatAt || null,
         phase: r.phase || null,
-        note: r.note || null
+        note: r.note || null,
+        ...(r.chat ? { chat: true } : {})
       })),
       limits: lim,
       phases: phases(team)
@@ -668,7 +781,8 @@ export function createOrchestrator(deps) {
           heartbeatAt: r.heartbeatAt || null,
           phase: r.phase || null,
           reason: r.reason || null,
-          requestedAt: r.requestedAt
+          requestedAt: r.requestedAt,
+          ...(r.chat ? { chat: true } : {})
         }
       }),
       running: list.filter((r) => WORKER_ACTIVE.includes(r.status)).length,
@@ -683,5 +797,5 @@ export function createOrchestrator(deps) {
     return { coordinatorId: r.by, status: r.status, taskId: r.taskId, depth: r.depth }
   }
 
-  return { handleRequest, tick, allow, refuse, stopByUser, summary, workerInfo, depthOf, limits }
+  return { handleRequest, tick, allow, refuse, stopByUser, summary, workerInfo, depthOf, limits, chatTurnEnded }
 }
