@@ -3,7 +3,9 @@ import { mount } from '@vue/test-utils'
 import SettingsDialog from '../components/SettingsDialog.vue'
 import { resetSettings } from '../settings'
 
-describe('Settings modal accessibility', () => {
+// Mounting the whole settings dialog is CPU work (no timer or real time in
+// these cases); on a fully loaded machine it can pass the default 5 s.
+describe('Settings modal accessibility', { timeout: 30_000 }, () => {
   let wrapper, host, opener, terminal, alreadyInert, previousApi
 
   beforeEach(() => {
@@ -19,7 +21,7 @@ describe('Settings modal accessibility', () => {
     alreadyInert = host.querySelector('[inert]')
     opener.focus()
     wrapper = mount(SettingsDialog, { attachTo: host.querySelector('.modal-host') })
-  })
+  }, 30_000)
 
   afterEach(() => {
     wrapper?.unmount()

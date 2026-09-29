@@ -815,16 +815,17 @@ describe('ChatPane.vue', () => {
     }
     const item = (menu, label) => [...menu.querySelectorAll('[role="menuitem"]')].find((el) => el.textContent.includes(label))
 
-    // The composer claims the focus on a frame after mount (reveal focus); give
-    // it the focus now, so a late claim cannot move the selection made below.
-    input().focus()
-    await settle()
-    // A selection in the chat: Copy takes it.
+    // A mouse selection, as a user makes it: pointerdown (the composer's
+    // frame-late focus claim stands down once the user interacts, so it cannot
+    // move the selection), the range, then mouseup (the chat remembers the
+    // selection there).
     const text = [...document.querySelectorAll('.nc-row-markdown p')].find((p) => p.textContent === 'copy me')
+    text.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0 }))
     const range = document.createRange()
     range.selectNodeContents(text)
     window.getSelection().removeAllRanges()
     window.getSelection().addRange(range)
+    text.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
     let menu = await openMenu()
     expect(menu).not.toBeNull()
     expect([...menu.querySelectorAll('[role="menuitem"]')].map((el) => el.textContent.replace(/Ctrl\+\S+/, '').trim())).toEqual([
