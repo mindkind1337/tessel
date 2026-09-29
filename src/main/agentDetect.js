@@ -61,9 +61,69 @@ const RULES = [
     re: /(^|[\\/])auggie(\.exe)?$/i,
     script: /(^|[\\/])@augmentcode[\\/]auggie[\\/]augment\.mjs$/i
   },
-  { id: 'kimi', re: /(^|[\\/])kimi(\.exe)?$/i },
-  { id: 'aider', re: /(^|[\\/])aider(\.exe)?$/i }
+  // Kimi Code's launcher runs as `kimi-code`.
+  { id: 'kimi', re: /(^|[\\/])kimi(-code)?(\.exe)?$/i },
+  { id: 'aider', re: /(^|[\\/])aider(\.exe)?$/i },
+  // The other agents' command names (and their aliases), after Orca's
+  // src/shared/tui-agent-config.ts and agent-process-recognition.ts, MIT,
+  // Copyright (c) 2026 Lovecast Inc. An npm install runs the same name as a
+  // script under node_modules (npmBin below).
+  { id: 'openclaude', ...named('openclaude') },
+  { id: 'antigravity', ...named('agy') },
+  { id: 'kilo', ...named('kilo', /(^|[\\/])@kilocode[\\/]cli[\\/]/i) },
+  // Kiro's installer ships `kiro-cli`, not `kiro`.
+  { id: 'kiro', ...named('kiro-cli') },
+  // Continue's CLI is `cn` (`continue` is a shell keyword).
+  { id: 'continue', ...named('cn', /(^|[\\/])@continuedev[\\/]cli[\\/]/i) },
+  { id: 'codebuff', ...named('codebuff') },
+  { id: 'vibe', ...named('vibe', 'mistral-vibe') },
+  { id: 'rovo', ...named('rovo') },
+  { id: 'hermes', ...named('hermes') },
+  { id: 'devin', ...named('devin') },
+  // TRAE CN's CLI: `traecli` (the unrelated trae-agent also installs `trae-cli`).
+  { id: 'trae', ...named('traecli') },
+  // ZCode names its process `zcode-cli`; its npm bin is dist/zcode.cjs.
+  { id: 'zcode', ...named('zcode', 'zcode-cli', /(^|[\\/])@zcode[\\/]cli[\\/]/i) },
+  { id: 'autohand', ...named('autohand') },
+  // The full name: its `cmd` alias is Windows' own cmd.exe.
+  { id: 'commandcode', ...named('command-code') },
+  { id: 'openclaw', ...named('openclaw') },
+  { id: 'ante', ...named('ante') },
+  { id: 'omp', ...named('omp') },
+  // The `muse` launcher runs a versioned `muse-bin-<version>` binary.
+  { id: 'muse', re: /(^|[\\/])muse(-bin-[^\\/]+)?(\.exe)?$/i, script: npmBin('muse') },
+  { id: 'opencode2', ...named('opencode2') },
+  { id: 'mimocode', ...named('mimo') },
+  {
+    id: 'primeagent',
+    re: exe('prime-agent'),
+    // Its npm shim runs a generic bundled cli.js: only the package path says which.
+    script: /(^|[\\/])node_modules[\\/]prime-agent[\\/]dist[\\/]bundle[\\/]cli\.js$|(^|[\\/])node_modules[\\/](?:.+[\\/])?prime-agent$/i
+  }
 ]
+
+function escape(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+// The executable itself: name(.exe), nothing more.
+function exe(...names) {
+  return new RegExp(`(^|[\\\\/])(?:${names.map(escape).join('|')})(\\.exe)?$`, 'i')
+}
+// A runtime's script named like the command (no extension), inside
+// node_modules: how an npm install starts it.
+function npmBin(...names) {
+  return new RegExp(`(^|[\\\\/])node_modules[\\\\/](?:.+[\\\\/])?(?:${names.map(escape).join('|')})$`, 'i')
+}
+// names: its command names; a RegExp among them: its npm package's folder too.
+function named(...names) {
+  const words = names.filter((n) => typeof n === 'string')
+  const packages = names.filter((n) => n instanceof RegExp)
+  const bin = npmBin(...words)
+  return {
+    re: exe(...words),
+    script: packages.length ? new RegExp([bin, ...packages].map((r) => r.source).join('|'), 'i') : bin
+  }
+}
 
 export function agentOf(proc) {
   const name = String(proc.name || '')

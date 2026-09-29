@@ -12,7 +12,12 @@ import StatsStatCard from './stats/StatsStatCard.vue'
 import StatsIcon from './stats/StatsIcon.vue'
 import StatsUsageOverview from './stats/StatsUsageOverview.vue'
 import StatsUsageProvider from './stats/StatsUsageProvider.vue'
-import { normalizeUsageReport, buildUsageOverview, usageDateRange } from '../usageStats'
+import {
+  normalizeUsageReport,
+  buildUsageOverview,
+  usageDateRange,
+  USAGE_REPORT_PROVIDERS
+} from '../usageStats'
 import { duration } from './stats/statsFormat'
 import './stats/statsUsage.css'
 import { t, intlLocale } from '../i18n'
@@ -30,18 +35,24 @@ const PROVIDERS = computed(() => [
     .filter((p) => p.report && !settings.hiddenUsageProviders.includes(p.id))
     .map((p) => ({ id: p.id, label: p.id === 'claude' ? 'Claude' : p.name }))
 ])
+// Each local report and the shellApi call that reads it.
+const REPORTERS = {
+  claude: 'claudeUsageReport',
+  codex: 'codexUsageReport',
+  opencode: 'opencodeUsageReport'
+}
 const PREF_KEY = 'tessel:usage-analytics'
 function readPreferences() {
   try {
     const saved = JSON.parse(localStorage.getItem(PREF_KEY) || '{}')
-    return { claude: saved.claude !== false, codex: saved.codex !== false }
+    return Object.fromEntries(USAGE_REPORT_PROVIDERS.map((id) => [id, saved[id] !== false]))
   } catch {
-    return { claude: true, codex: true }
+    return Object.fromEntries(USAGE_REPORT_PROVIDERS.map((id) => [id, true]))
   }
 }
 const enabled = ref(readPreferences())
 const active = ref(
-  ['overview', 'claude', 'codex'].includes(props.initialProvider)
+  ['overview', ...USAGE_REPORT_PROVIDERS].includes(props.initialProvider)
     ? props.initialProvider
     : 'overview'
 )
@@ -53,8 +64,8 @@ const loading = ref({})
 const errors = ref({})
 const stats = ref(null)
 const statsError = ref('')
-const range = ref({ claude: '30d', codex: '30d' })
-const scope = ref({ claude: 'tessel', codex: 'tessel' })
+const range = ref(Object.fromEntries(USAGE_REPORT_PROVIDERS.map((id) => [id, '30d'])))
+const scope = ref(Object.fromEntries(USAGE_REPORT_PROVIDERS.map((id) => [id, 'tessel'])))
 const root = ref(null)
 const queryKeys = new Map()
 const requests = new Map()
@@ -70,18 +81,18 @@ const label = computed(
 )
 const summary = computed(() => props.statsSummary || stats.value)
 const available = (id) =>
-  typeof window.shellApi?.[id === 'claude' ? 'claudeUsageReport' : 'codexUsageReport'] ===
-    'function' && PROVIDERS.value.some((p) => p.id === id && id !== 'overview')
+  !!REPORTERS[id] &&
+  typeof window.shellApi?.[REPORTERS[id]] === 'function' &&
+  PROVIDERS.value.some((p) => p.id === id && id !== 'overview')
 const current = computed(
   () =>
     reports.value[active.value] ||
-    (['claude', 'codex'].includes(active.value) ? normalizeUsageReport(active.value, null) : null)
+    (USAGE_REPORT_PROVIDERS.includes(active.value) ? normalizeUsageReport(active.value, null) : null)
 )
 const overview = computed(() =>
   buildUsageOverview(
     Object.fromEntries(
-      ['claude', 'codex']
-        .filter((id) => enabled.value[id] && available(id))
+      USAGE_REPORT_PROVIDERS.filter((id) => enabled.value[id] && available(id))
         .map((id) => [id, overviewReports.value[id]])
     ),
     { timezone, dayCount: 42 }
@@ -164,7 +175,7 @@ async function loadProvider(id, { refresh = false } = {}) {
   errors.value[key] = ''
   try {
     const raw =
-      await window.shellApi[id === 'claude' ? 'claudeUsageReport' : 'codexUsageReport'](query)
+      await window.shellApi[REPORTERS[id]](query)
     if (disposed || request !== requests.get(key)) return
     if (!raw?.ok)
       throw new Error(raw?.error || t('stats.providerError', 'Could not read {{id}} usage.', { id }))
@@ -184,7 +195,7 @@ async function refreshOverview() {
   await detectProviders()
   await Promise.all([
     loadStats(),
-    ...['claude', 'codex'].map((id) => loadProvider(id, { overview: true, refresh: true }))
+    ...USAGE_REPORT_PROVIDERS.map((id) => loadProvider(id, { overview: true, refresh: true }))
   ])
 }
 async function chooseProvider(id) {
@@ -266,13 +277,13 @@ function onOutside(event) {
 }
 watch(active, (id) =>
   id === 'overview'
-    ? Promise.all(['claude', 'codex'].map((provider) => loadProvider(provider, { overview: true })))
+    ? Promise.all(USAGE_REPORT_PROVIDERS.map((provider) => loadProvider(provider, { overview: true })))
     : loadProvider(id)
 )
 watch(
   () => props.worktreePaths,
   () => {
-    for (const id of ['claude', 'codex']) {
+    for (const id of USAGE_REPORT_PROVIDERS) {
       if (scope.value[id] === 'tessel' && (active.value === 'overview' || active.value === id))
         loadProvider(id)
     }
@@ -284,7 +295,7 @@ onMounted(async () => {
   if (disposed) return
   loadStats()
   if (active.value === 'overview')
-    ['claude', 'codex'].forEach((id) => loadProvider(id, { overview: true }))
+    USAGE_REPORT_PROVIDERS.forEach((id) => loadProvider(id, { overview: true }))
   else loadProvider(active.value)
   window.addEventListener('tessel:accounts-changed', accountChanged)
   document.addEventListener('pointerdown', onOutside)

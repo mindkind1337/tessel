@@ -537,7 +537,10 @@
       "malformedSkipped": "Certains enregistrements de journal mal formés ont été ignorés.",
       "baselinesOnly": "Les relevés cumulatifs hérités ou incomplets n'ont servi que de points de départ.",
       "codexTurns": "Événements d'utilisation du modèle observés ; pas des requêtes de l'utilisateur.",
-      "codexTokens": "Les jetons en cache sont inclus dans l'entrée ; les jetons de raisonnement sont inclus dans la sortie."
+      "codexTokens": "Les jetons en cache sont inclus dans l'entrée ; les jetons de raisonnement sont inclus dans la sortie.",
+      "antigravityNoGemini": "L’utilisation d’Antigravity est affichée à partir du quota Google Code Assist partagé, qui demande une connexion à Gemini CLI.",
+      "antigravityUnreadable": "L’utilisation d’Antigravity provient du quota Google Code Assist partagé, qui n’a pas pu être lu pour le moment.",
+      "opencodeReportFailed": "Impossible de lire l’utilisation d’OpenCode."
     },
     "reset": {
       "notSaved": "Le résultat de la réinitialisation n'a pas pu être enregistré dans l'historique local.",

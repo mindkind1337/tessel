@@ -32,7 +32,9 @@ export const YOLO_ARGS = {
   continue: '--allow "*"',
   zcode: '--mode yolo',
   vibe: '--agent auto-approve',
-  devin: '--permission-mode bypass --respect-workspace-trust false'
+  devin: '--permission-mode bypass --respect-workspace-trust false',
+  muse: '--yolo',
+  ante: '--yolo'
 }
 export const YOLO_ENV = { goose: { GOOSE_MODE: 'auto' } }
 

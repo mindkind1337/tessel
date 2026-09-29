@@ -408,3 +408,39 @@ describe('usage conversation table', () => {
     expect(JSON.stringify(list)).toBe(copy)
   })
 })
+
+describe('OpenCode usage report', () => {
+  it('shows cache inside input and reasoning inside output, with its recorded cost', () => {
+    const report = normalizeUsageReport('opencode', {
+      ok: true,
+      generatedAt: '2026-09-28T12:00:00Z',
+      totals: {
+        turns: 2,
+        input: 100,
+        output: 20,
+        reasoning: 5,
+        cacheRead: 300,
+        cacheWrite: 10,
+        cost: 0.5,
+        unpriced: 1,
+        sessions: 1
+      },
+      byDay: [{ day: '2026-09-20', turns: 2, input: 100, output: 20, reasoning: 5, cacheRead: 300 }],
+      sessions: [{ id: 'ses_1', title: 'Fixture', cwd: '/work/a', first: 1, last: 2 }]
+    })
+    expect(report.summary).toMatchObject({
+      inputTokens: 410,
+      newInputTokens: 110,
+      cachedInputTokens: 300,
+      outputTokens: 25,
+      reasoningTokens: 5,
+      totalTokens: 435,
+      estimatedCostUsd: 0.5,
+      hasPartialCost: true,
+      sessions: 1
+    })
+    expect(report.label).toBe('OpenCode')
+    expect(report.sessions[0]).toMatchObject({ id: 'ses_1', provider: 'opencode' })
+    expect(report.byDay[0].totalTokens).toBe(425)
+  })
+})

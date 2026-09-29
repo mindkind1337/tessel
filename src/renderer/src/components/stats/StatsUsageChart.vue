@@ -91,7 +91,7 @@ function segmentTitle(day, segment) {
         ><i :class="'su-color-' + segment.color"></i>{{ segment.label }}</span
       >
     </div>
-    <p v-if="provider === 'codex'" class="su-muted su-chart-note">
+    <p v-if="provider !== 'claude'" class="su-muted su-chart-note">
       {{
         t('stats.chart.codexNote', 'Cached input and reasoning are included in the totals, not added twice.'
         )

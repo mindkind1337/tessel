@@ -29,6 +29,7 @@ const KNOWN = new Set([
   'codex',
   'openai',
   'opencode',
+  'opencode2',
   ...Object.keys(BRAND_SVGS),
   ...Object.keys(PNG_ICONS),
   'gemini',
@@ -112,8 +113,8 @@ const png = computed(() => PNG_ICONS[k.value] || null)
     <!-- Codex / OpenAI blossom -->
     <path v-else-if="k === 'codex' || k === 'openai'" :d="OPENAI_PATH" fill="#ececec" />
 
-    <!-- OpenCode: its "O" (opencode.ai/brand, dark version), as tall as the others -->
-    <g v-else-if="k === 'opencode'">
+    <!-- OpenCode (and OpenCode 2): its "O" (opencode.ai/brand, dark version), as tall as the others -->
+    <g v-else-if="k === 'opencode' || k === 'opencode2'">
       <path d="M8 10h8v8H8Z" fill="#4b4646" />
       <path fill-rule="evenodd" d="M4 2h16v20H4ZM8 6v12h8V6Z" fill="#f1ecec" />
     </g>

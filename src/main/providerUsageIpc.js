@@ -4,6 +4,7 @@ import { createProviderUsage } from './providerUsage'
 import { createResetHistory } from './resetHistory'
 import { join } from 'node:path'
 import { createExtraProviderUsage } from './extraProviderUsage'
+import { createOpencodeUsageReport } from './opencodeUsageReport'
 import { t } from './i18n'
 
 export function registerProviderUsage({
@@ -12,7 +13,8 @@ export function registerProviderUsage({
   service,
   userData,
   log,
-  listAgents = async () => []
+  listAgents = async () => [],
+  opencodeReport = createOpencodeUsageReport()
 }) {
   const history = userData
     ? createResetHistory({ file: join(userData, 'reset-history.json'), log })
@@ -41,6 +43,22 @@ export function registerProviderUsage({
       ['claude', 'codex'].includes(query.provider) ? usage.read(query) : extra.read(query),
     () => t('main.usage.readFailed', 'Could not read provider usage.')
   )
+  // OpenCode's usage report (tokens and recorded cost), from its own
+  // databases on this computer. Only its filter errors (Tessel's own words)
+  // cross IPC.
+  ipcMain.handle('usage:opencodeReport', async (_event, query) => {
+    try {
+      return await opencodeReport(query || {})
+    } catch (error) {
+      return {
+        ok: false,
+        error:
+          error instanceof Error && error.message
+            ? error.message
+            : t('main.usage.opencodeReportFailed', 'Could not read OpenCode usage.')
+      }
+    }
+  })
   handle(
     'providerUsage:resetHistory',
     (query) => history?.read(query) || { ok: false, error: t('main.reset.historyUnavailable', 'Local reset history is unavailable.') },

@@ -538,6 +538,49 @@ const AGENT_PRESETS = [
     command: 'openclaw',
     accent: '#ef6b5b',
     install: null
+  },
+  {
+    id: 'omp',
+    name: 'OMP',
+    command: 'omp',
+    accent: '#c04fd8',
+    install: null
+  },
+  {
+    id: 'muse',
+    name: 'Muse',
+    // Skips its first-run "trust this folder?" question.
+    command: 'muse --trust-workspace',
+    accent: '#0668e1',
+    install: null
+  },
+  {
+    id: 'opencode2',
+    name: 'OpenCode 2',
+    command: 'opencode2',
+    accent: '#e8e8e8',
+    install: null
+  },
+  {
+    id: 'mimocode',
+    name: 'MiMo Code',
+    command: 'mimo',
+    accent: '#ff6900',
+    install: null
+  },
+  {
+    id: 'primeagent',
+    name: 'Prime Agent',
+    command: 'prime-agent',
+    accent: '#8b8bf5',
+    install: null
+  },
+  {
+    id: 'ante',
+    name: 'Ante',
+    command: 'ante',
+    accent: '#22c55e',
+    install: null
   }
 ]
 
