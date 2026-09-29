@@ -20,9 +20,16 @@ import { approvalPreview } from '../../shared/chatApproval.js'
 
 // teamText: a team message (6000) with the window's "(message <id>, reply to
 // <id>) " prefix; a longer one is cut (teamMessageText), never refused.
-export const LIMITS = { text: 100000, teamPerCall: 20, teamText: 6400, teamQueue: 200, sessions: 64 }
+export const LIMITS = { text: 100000, teamPerCall: 20, teamText: 6400, teamQueue: 200, sessions: 64, historyTail: 2000 }
 // As the adapter's (claudeChat.js): the CLI's --permission-mode values.
 export const PERMISSION_MODES = ['default', 'bypassPermissions', 'acceptEdits', 'plan', 'auto', 'dontAsk']
+// A chat capped at Manual (a worker of a Manual coordinator): never bypass,
+// and for Claude never auto (it approves on its own).
+export function modeAllowed(agent, mode, maxPermissions) {
+  if (maxPermissions !== 'manual') return true
+  if (mode === 'bypassPermissions') return false
+  return !(agent !== 'codex' && mode === 'auto')
+}
 export const DECISIONS = ['allow', 'allowSession', 'deny']
 export const AGENTS = ['claude', 'codex']
 const ID = /^[A-Za-z0-9._:-]{1,120}$/
@@ -487,8 +494,17 @@ export function createChatSessions(deps) {
   }
 
   async function open(opts = {}) {
-    const { paneId, cwd, projectDir, resumeId, model, effort, permissions = 'manual', permissionMode, accountEnv, askTrust, envOpts } = opts
+    const { paneId, cwd, projectDir, resumeId, model, effort, accountEnv, askTrust, envOpts } = opts
+    let { permissions = 'manual', permissionMode } = opts
     const agent = opts.agent ?? 'claude'
+    // A worker never runs with more than its coordinator (maxPermissions).
+    const capped = opts.maxPermissions === 'manual'
+    if (opts.maxPermissions != null && !capped)
+      return { ok: false, code: 'invalid', error: t('main.chat.invalid', 'Invalid chat request.') }
+    if (capped) {
+      if (permissions === 'yolo') permissions = 'manual'
+      if (permissionMode != null && !modeAllowed(agent, permissionMode, 'manual')) permissionMode = 'default'
+    }
     if (
       !validPaneId(paneId) ||
       !AGENTS.includes(agent) ||
@@ -524,6 +540,8 @@ export function createChatSessions(deps) {
       model: model || null,
       effort: effort || null,
       permissions,
+      maxPermissions: capped ? 'manual' : null,
+      permissionMode: null,
       cwd,
       projectDir: projectDir || null,
       status: 'starting',
@@ -554,7 +572,7 @@ export function createChatSessions(deps) {
     s.opening = (async () => {
       let roots = []
       try {
-        roots = trustRoots(cwd) || []
+        roots = trustRoots(cwd, { worker: opts.worker === true }) || []
       } catch {
         roots = []
       }
@@ -602,6 +620,7 @@ export function createChatSessions(deps) {
         log
       }
       const permissionModeUsed = permissions === 'yolo' ? 'bypassPermissions' : permissionMode && permissionMode !== 'bypassPermissions' ? permissionMode : 'default'
+      s.permissionMode = permissionModeUsed
 
       try {
         // Codex: the adapter maps yolo/manual to its approval policy and
@@ -797,13 +816,20 @@ export function createChatSessions(deps) {
     if (permissionMode != null) {
       // Bypass needs the launch flag: only a 'yolo' launch may switch to it.
       if (permissionMode === 'bypassPermissions' && s.permissions !== 'yolo') results.push(false)
+      // A worker capped at its coordinator's Manual: never a permissive mode.
+      else if (!modeAllowed(s.agent, permissionMode, s.maxPermissions)) results.push(false)
       // Codex has two (the adapter maps them): bypassPermissions = yolo,
       // default = manual; plan / acceptEdits do not exist there.
       else if (s.agent === 'codex' && !['bypassPermissions', 'default'].includes(permissionMode)) results.push(false)
-      else results.push(!!(await s.adapter.setPermissionMode(permissionMode).catch(() => ({ ok: false })))?.ok)
+      else {
+        const ok = !!(await s.adapter.setPermissionMode(permissionMode).catch(() => ({ ok: false })))?.ok
+        if (ok) s.permissionMode = permissionMode
+        results.push(ok)
+      }
     }
     if (model != null && s.ready) workStatus(s)
-    return { ok: results.every(Boolean), model: s.model, effort: s.effort }
+    // permissions: what the chat runs with now (a coordinator's workers get no more).
+    return { ok: results.every(Boolean), model: s.model, effort: s.effort, permissionMode: s.permissionMode, permissions: s.permissionMode === 'bypassPermissions' ? 'yolo' : 'manual' }
   }
 
   // forget: the pane is closed for good (its journal is deleted). kill:
@@ -845,10 +871,12 @@ export function createChatSessions(deps) {
     return Promise.all([...sessions.keys()].map((paneId) => close({ paneId, kill })))
   }
 
-  function history({ paneId } = {}) {
+  // tail: only the last N events, read from the end of the journal
+  // (team_worker_read needs no more).
+  function history({ paneId, tail } = {}) {
     if (!validPaneId(paneId)) return { ok: false, code: 'invalid', events: [], seq: 0, open: false }
     const j = journalOf(paneId)
-    const events = j.read()
+    const events = tail ? j.readTail(tail) : j.read()
     if (!seqs.has(paneId)) seqs.set(paneId, events.length ? events[events.length - 1].seq : 0)
     const s = sessions.get(paneId)
     return {
@@ -890,6 +918,8 @@ export function createChatSessions(deps) {
         effort: o.effort || undefined,
         permissions: o.permissions,
         permissionMode: o.permissionMode || undefined,
+        maxPermissions: o.maxPermissions === 'manual' ? 'manual' : undefined,
+        worker: o.worker === true,
         askTrust: o.askTrust === true,
         envOpts: { extraEnv: o.extraEnv, accountEnv: o.accountEnv, unsetEnv: Array.isArray(o.unsetEnv) ? o.unsetEnv.filter((n) => typeof n === 'string').slice(0, 50) : [] }
       })
@@ -944,9 +974,10 @@ export function createChatSessions(deps) {
       return close({ paneId, forget: forget === true })
     })
     ipcMain.handle('chat:history', (_e, q) => {
-      const { paneId } = obj(q)
+      const { paneId, tail } = obj(q)
       if (!validPaneId(paneId)) return invalid()
-      return history({ paneId })
+      if (tail != null && !(Number.isSafeInteger(tail) && tail > 0 && tail <= LIMITS.historyTail)) return invalid()
+      return history({ paneId, ...(tail ? { tail } : {}) })
     })
   }
 

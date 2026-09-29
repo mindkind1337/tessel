@@ -108,6 +108,49 @@ describe('open', () => {
     const chat = createChatSessions({ ...deps, trustRoots })
     await openOk(chat)
     expect(deps.trust.isTrusted).toHaveBeenCalledWith(tmp, ['C:\\proj'])
+    // Not a worker: said so to the trust roots.
+    expect(trustRoots).toHaveBeenCalledWith(tmp, { worker: false })
+  })
+
+  it('a worker open says so to the trust roots (only a worker may inherit its copy\'s project)', async () => {
+    const trustRoots = vi.fn(() => [])
+    const chat = createChatSessions({ ...deps, trustRoots })
+    const h = {}
+    chat.register({ handle: (ch, fn) => (h[ch] = (q) => fn({}, q)) })
+    expect((await h['chat:open']({ paneId, cwd: tmp, permissions: 'manual', worker: true })).ok).toBe(true)
+    expect(trustRoots).toHaveBeenCalledWith(tmp, { worker: true })
+    expect((await h['chat:open']({ paneId: 'p2', cwd: tmp, permissions: 'manual', worker: 'yes' })).ok).toBe(true)
+    expect(trustRoots).toHaveBeenLastCalledWith(tmp, { worker: false })
+  })
+
+  it('maxPermissions manual: a yolo or permissive request starts in default, never bypass or auto', async () => {
+    const chat = createChatSessions(deps)
+    await openOk(chat, { permissions: 'yolo', maxPermissions: 'manual' })
+    expect(adapters[0].opts.permissionMode).toBe('default')
+    await openOk(chat, { paneId: 'p2', permissionMode: 'auto', maxPermissions: 'manual' })
+    expect(adapters[1].opts.permissionMode).toBe('default')
+    await openOk(chat, { paneId: 'p3', permissionMode: 'plan', maxPermissions: 'manual' })
+    expect(adapters[2].opts.permissionMode).toBe('plan')
+    // Codex: yolo becomes manual.
+    const codex = createChatSessions({ ...deps, resolveCodex: async () => ({ exe: 'C:\\bin\\codex.exe' }) })
+    await openOk(codex, { paneId: 'p4', agent: 'codex', permissions: 'yolo', maxPermissions: 'manual' })
+    expect(adapters[3].opts.permissions).toBe('manual')
+    expect((await chat.open({ paneId: 'p5', cwd: tmp, permissions: 'manual', maxPermissions: 'yolo' })).code).toBe('invalid')
+  })
+
+  it('maxPermissions manual holds on later mode switches too', async () => {
+    const chat = createChatSessions(deps)
+    await openOk(chat, { maxPermissions: 'manual' })
+    const a = adapters[0]
+    expect(await chat.setOption({ paneId, permissionMode: 'auto' })).toMatchObject({ ok: false, permissions: 'manual' })
+    expect(await chat.setOption({ paneId, permissionMode: 'bypassPermissions' })).toMatchObject({ ok: false, permissions: 'manual' })
+    expect(a.setPermissionMode).not.toHaveBeenCalled()
+    expect(await chat.setOption({ paneId, permissionMode: 'acceptEdits' })).toMatchObject({ ok: true, permissionMode: 'acceptEdits', permissions: 'manual' })
+    // Uncapped: auto is allowed, and a yolo chat switched down reports manual.
+    const free = createChatSessions(deps)
+    await openOk(free, { paneId: 'p2', permissions: 'yolo' })
+    expect(await free.setOption({ paneId: 'p2', permissionMode: 'auto' })).toMatchObject({ ok: true, permissions: 'manual' })
+    expect(await free.setOption({ paneId: 'p2', permissionMode: 'bypassPermissions' })).toMatchObject({ ok: true, permissions: 'yolo' })
   })
 
   it('no Claude found', async () => {
@@ -613,7 +656,7 @@ describe('interrupt, close, exit', () => {
     const chat = createChatSessions(deps)
     await openOk(chat)
     const a = adapters[0]
-    expect(await chat.setOption({ paneId, model: 'opus', effort: 'max' })).toEqual({ ok: true, model: 'opus', effort: 'max' })
+    expect(await chat.setOption({ paneId, model: 'opus', effort: 'max' })).toEqual({ ok: true, model: 'opus', effort: 'max', permissionMode: 'default', permissions: 'manual' })
     expect(a.setModel).toHaveBeenCalledWith('opus')
     expect(a.setEffort).toHaveBeenCalledWith('max')
     expect(last('status')).toMatchObject({ model: 'opus' })
@@ -644,6 +687,21 @@ describe('history and seq', () => {
     await again.open({ paneId, cwd: tmp, permissions: 'manual' })
     expect(sent[0].seq).toBe(before + 1)
     expect(again.history({ paneId: '../x' })).toMatchObject({ ok: false, open: false })
+  })
+
+  it('a tail read returns only the last events (team_worker_read)', async () => {
+    const chat = createChatSessions(deps)
+    await openOk(chat)
+    for (let i = 0; i < 30; i++) chat.send({ paneId, text: 'm' + i })
+    await flush()
+    const all = chat.history({ paneId }).events
+    const tail = chat.history({ paneId, tail: 5 })
+    expect(tail.events).toEqual(all.slice(-5))
+    expect(tail.seq).toBe(all.at(-1).seq)
+    const h = {}
+    chat.register({ handle: (ch, fn) => (h[ch] = (q) => fn({}, q)) })
+    expect((await h['chat:history']({ paneId, tail: 3 })).events).toEqual(all.slice(-3))
+    for (const bad of [0, -1, 1.5, '3', LIMITS.historyTail + 1]) expect(await h['chat:history']({ paneId, tail: bad })).toMatchObject({ ok: false, code: 'invalid' })
   })
 })
 
