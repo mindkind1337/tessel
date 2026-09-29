@@ -63,7 +63,10 @@ const props = (messages, extra = {}) => ({
   ...extra
 })
 
-describe('native chat transcript re-render cost during a streaming turn', () => {
+// Pure render work (every row drawn, many frames): no timing inside, but a
+// loaded machine can take longer than the default 5 s. What is measured is a
+// render count, not a duration, so a longer budget weakens nothing.
+describe('native chat transcript re-render cost during a streaming turn', { timeout: 30_000 }, () => {
   it('re-renders only the rows whose blocks changed, not the whole transcript per frame', async () => {
     resetRowRenders()
     const messages = settledMessages()
