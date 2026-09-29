@@ -119,36 +119,120 @@ function codexWindows(data) {
   }
   return windows
 }
+// Provider text shown as is (a model name, a lock reason, a category): one
+// line, no control characters, bounded.
+function shortText(value, max) {
+  const clean = text(value)
+    ?.replace(/[\u0000-\u001f\u007f-\u009f]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return clean ? (clean.length > max ? `${clean.slice(0, max - 1)}…` : clean) : null
+}
+const percent = (value) => (finite(value) ? Math.min(100, Math.max(0, value)) : null)
+// A Claude window, with Anthropic's lock reason when it gives one.
+function claudeWindow(label, raw) {
+  if (!object(raw)) return null
+  const mapped = window(label, raw.utilization ?? raw.used_percentage, raw.resets_at)
+  const locked = mapped && shortText(raw.locked_reason, 200)
+  if (locked) mapped.lockedReason = locked
+  return mapped
+}
+// limits[]: the per-model weekly limits (kind "weekly_scoped"), keyed by the
+// lower-case model name. Inactive, unscoped or malformed entries are ignored.
+function scopedWeekly(limits) {
+  const models = new Map()
+  if (!Array.isArray(limits)) return models
+  for (const entry of limits.slice(0, 50)) {
+    if (!object(entry) || entry.is_active === false) continue
+    const kind = typeof entry.kind === 'string' ? entry.kind.toLowerCase() : ''
+    if (!/^(weekly|seven_day)_?scoped$/.test(kind)) continue
+    const name = shortText(entry.scope?.model?.display_name, 40)
+    if (!name || models.has(name.toLowerCase())) continue
+    const mapped = window(`${name} weekly`, entry.percent, entry.resets_at)
+    if (mapped) models.set(name.toLowerCase(), mapped)
+  }
+  return models
+}
 function claudeWindows(data) {
   const windows = []
   for (const [key, label] of [
     ['five_hour', '5-hour'],
-    ['seven_day', 'Weekly'],
-    ['seven_day_sonnet', 'Sonnet weekly'],
-    ['seven_day_opus', 'Opus weekly']
+    ['seven_day', 'Weekly']
   ]) {
-    const raw = data[key]
-    const mapped = window(label, raw?.utilization ?? raw?.used_percentage, raw?.resets_at)
+    const mapped = claudeWindow(label, data[key])
     if (mapped) windows.push(mapped)
   }
-  const scoped =
-    Array.isArray(data.limits) &&
-    data.limits.find(
-      (value) =>
-        value?.kind === 'weekly_scoped' &&
-        text(value?.scope?.model?.display_name)?.toLowerCase() === 'fable' &&
-        finite(value.percent)
-    )
-  const fable = scoped
-    ? { utilization: scoped.percent, resets_at: scoped.resets_at }
-    : (data.fable_weekly ?? data.fable_seven_day ?? data.seven_day_fable)
-  const mapped = window(
-    'Fable weekly',
-    fable?.utilization ?? fable?.used_percentage,
-    fable?.resets_at
-  )
-  if (mapped) windows.push(mapped)
+  // limits[] wins over the older seven_day_<model> objects for the same model.
+  const models = scopedWeekly(data.limits)
+  for (const [model, key, label] of [
+    ['sonnet', 'seven_day_sonnet', 'Sonnet weekly'],
+    ['opus', 'seven_day_opus', 'Opus weekly'],
+    ['fable', null, 'Fable weekly']
+  ]) {
+    const scoped = models.get(model)
+    models.delete(model)
+    const mapped =
+      scoped ||
+      claudeWindow(
+        label,
+        key ? data[key] : (data.fable_weekly ?? data.fable_seven_day ?? data.seven_day_fable)
+      )
+    if (mapped) windows.push(mapped)
+  }
+  windows.push(...models.values())
   return windows
+}
+// seven_day_breakdown: this week's share by category, as Anthropic names them.
+function claudeBreakdown(data) {
+  const raw = data.seven_day_breakdown
+  if (!object(raw) || !Array.isArray(raw.rows)) return null
+  const rows = []
+  for (const row of raw.rows.slice(0, 20)) {
+    const label = shortText(row?.display_name, 60)
+    const pct = percent(row?.percent)
+    if (label && pct !== null) rows.push({ label, pct })
+  }
+  return rows.length ? { asOf: timestamp(raw.as_of), rows } : null
+}
+// Paid extra usage. extra_usage is the source: it says plainly whether it is
+// on and whether the spend limit is reached. spend{} carries the same money in
+// a newer form and is read only when extra_usage is missing. Amounts are in
+// minor units (cents for 2 decimal places).
+function claudeExtraUsage(data) {
+  const currency = (value) =>
+    typeof value === 'string' && /^[A-Za-z]{3}$/.test(value.trim()) ? value.trim().toUpperCase() : null
+  const places = (value) => (Number.isInteger(value) && value >= 0 && value <= 4 ? value : 2)
+  const amount = (value) => (finite(value) && value >= 0 && value < 1e15 ? value : null)
+  let result = null
+  const extra = data.extra_usage
+  if (object(extra)) {
+    if (extra.is_enabled !== true) return null
+    result = {
+      currency: currency(extra.currency),
+      decimals: places(extra.decimal_places),
+      used: amount(extra.used_credits),
+      limit: amount(extra.monthly_limit),
+      pct: percent(extra.utilization),
+      limitReached: extra.spend_limit_reached === true
+    }
+  } else if (object(data.spend)) {
+    const spend = data.spend
+    if (spend.enabled !== true) return null
+    const used = object(spend.used) ? spend.used : {}
+    const limit = object(spend.limit) ? spend.limit : {}
+    result = {
+      currency: currency(used.currency ?? limit.currency),
+      decimals: places(used.exponent ?? limit.exponent),
+      used: amount(used.amount_minor),
+      limit: amount(limit.amount_minor),
+      pct: percent(spend.percent),
+      limitReached: false
+    }
+  } else return null
+  if (result.used === null) return null
+  if (result.pct === null && result.limit)
+    result.pct = percent((result.used / result.limit) * 100)
+  return result
 }
 function credits(data, now) {
   if (!object(data)) return null
@@ -690,6 +774,12 @@ export function createProviderUsage({
         }
         const selectedPlan = plan(data.plan_type) || snapshot.plan
         if (selectedPlan) result.plan = selectedPlan
+        if (provider === 'claude') {
+          const breakdown = claudeBreakdown(data)
+          if (breakdown) result.breakdown = breakdown
+          const extraUsage = claudeExtraUsage(data)
+          if (extraUsage) result.extraUsage = extraUsage
+        }
         if (resetCreditsError) result.resetCreditsError = resetCreditsError
         if (provider === 'codex' && resetCredits) {
           const resetToken =

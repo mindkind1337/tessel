@@ -540,19 +540,88 @@ function windowLabel(l) {
     case 'week':
     case 'Weekly':
       return t('usage.window.weekly', 'Weekly')
-    case 'Sonnet weekly': // i18n-ignore
-      return t('usage.window.modelWeekly', '{{model}} weekly', { model: 'Sonnet' })
-    case 'Opus weekly': // i18n-ignore
-      return t('usage.window.modelWeekly', '{{model}} weekly', { model: 'Opus' })
-    case 'Fable weekly': // i18n-ignore
-      return t('usage.window.modelWeekly', '{{model}} weekly', { model: 'Fable' })
     case 'Primary window': // i18n-ignore
       return t('usage.window.primary', 'Primary window')
     case 'Secondary window': // i18n-ignore
       return t('usage.window.secondary', 'Secondary window')
   }
   const minutes = /^(\d+) min$/.exec(String(l || ''))
-  return minutes ? t('usage.window.minutes', '{{count}} min', { count: Number(minutes[1]) }) : l
+  if (minutes) return t('usage.window.minutes', '{{count}} min', { count: Number(minutes[1]) })
+  // A model's weekly limit ("Opus weekly", "Sonnet weekly", …), named by the provider.
+  const model = /^(.{1,40}) weekly$/.exec(String(l || '')) // i18n-ignore
+  return model ? t('usage.window.modelWeekly', '{{model}} weekly', { model: model[1] }) : l
+}
+// Anthropic's own words for a locked window, shown as is (bounded).
+function lockedText(w) {
+  return typeof w?.lockedReason === 'string' && w.lockedReason.trim()
+    ? w.lockedReason.trim().slice(0, 200)
+    : ''
+}
+// Claude: this week's usage by category (seven_day_breakdown).
+const breakdown = computed(() => {
+  const value = detailAgent.value?.breakdown
+  const rows = (Array.isArray(value?.rows) ? value.rows : [])
+    .filter(
+      (row) =>
+        typeof row?.label === 'string' &&
+        row.label.trim() &&
+        typeof row.pct === 'number' &&
+        Number.isFinite(row.pct)
+    )
+    .slice(0, 20)
+    .map((row) => ({
+      label: row.label.trim().slice(0, 60),
+      pct: Math.min(100, Math.max(0, row.pct))
+    }))
+  return rows.length ? { asOf: timestamp(value.asOf), rows } : null
+})
+function asOfText(value) {
+  return t('usage.menu.asOf', 'as of {{time}}', {
+    time: new Date(value).toLocaleString(intlLocale(), {
+      weekday: 'short',
+      hour: '2-digit',
+      minute: '2-digit'
+    })
+  })
+}
+// Claude: paid extra usage, only when it is on. Amounts in minor units.
+const extraUsage = computed(() => {
+  const value = detailAgent.value?.extraUsage
+  const amount = (n) => (typeof n === 'number' && Number.isFinite(n) && n >= 0 ? n : null)
+  if (!value || amount(value.used) === null) return null
+  const decimals = Number.isInteger(value.decimals) && value.decimals >= 0 && value.decimals <= 4 ? value.decimals : 2
+  const pct = amount(value.pct)
+  return {
+    currency: typeof value.currency === 'string' && /^[A-Z]{3}$/.test(value.currency) ? value.currency : null,
+    decimals,
+    used: value.used,
+    limit: amount(value.limit),
+    pct: pct === null ? null : Math.min(100, pct),
+    limitReached: value.limitReached === true
+  }
+})
+function money(minor, extra) {
+  const options = {
+    minimumFractionDigits: extra.decimals,
+    maximumFractionDigits: extra.decimals
+  }
+  const value = minor / 10 ** extra.decimals
+  try {
+    return new Intl.NumberFormat(
+      intlLocale(),
+      extra.currency ? { ...options, style: 'currency', currency: extra.currency } : options
+    ).format(value)
+  } catch {
+    return value.toFixed(extra.decimals)
+  }
+}
+function extraUsageText(extra) {
+  return extra.limit !== null
+    ? t('usage.menu.extraUsageOf', '{{used}} of {{limit}} this month', {
+        used: money(extra.used, extra),
+        limit: money(extra.limit, extra)
+      })
+    : t('usage.menu.extraUsageUsed', '{{used}} used this month', { used: money(extra.used, extra) })
 }
 // "5-hour quota used", or "left" when Settings shows what remains.
 function quotaText(label) {
@@ -1039,6 +1108,61 @@ const emptyTitle = () => t('usage.menu.buttonTitleEmpty', "Usage of your agents'
               "
             ></span>
           </div>
+          <p
+            v-if="lockedText(w)"
+            class="usage-locked"
+            role="note"
+            data-test="usage-locked"
+            v-text="t('usage.menu.locked', 'Locked: {{reason}}', { reason: lockedText(w) })"
+          ></p>
+        </div>
+        <div v-if="extraUsage" class="usage-extra" data-test="usage-extra">
+          <div class="usage-section-head">
+            <h4>{{ t('usage.menu.extraUsage', 'Extra usage') }}</h4>
+            <span
+              v-if="extraUsage.pct !== null"
+              class="usage-pct"
+              :class="'usage-level-' + level(extraUsage.pct)"
+              >{{ Math.round(extraUsage.pct) }}%</span
+            >
+          </div>
+          <div
+            v-if="extraUsage.pct !== null"
+            class="usage-bar"
+            role="meter"
+            :aria-label="t('usage.menu.extraUsageSpent', 'Extra usage spent')"
+            aria-valuemin="0"
+            aria-valuemax="100"
+            :aria-valuenow="Math.round(extraUsage.pct)"
+          >
+            <div
+              class="usage-fill"
+              :class="level(extraUsage.pct)"
+              :style="{ width: extraUsage.pct + '%' }"
+            ></div>
+          </div>
+          <p class="usage-extra-amount" data-test="usage-extra-amount">{{ extraUsageText(extraUsage) }}</p>
+          <p v-if="extraUsage.limitReached" class="usage-locked" role="alert" data-test="usage-extra-limit">
+            {{ t('usage.menu.extraUsageLimitReached', 'Monthly spend limit reached.') }}
+          </p>
+        </div>
+        <div v-if="breakdown" class="usage-breakdown" data-test="usage-breakdown">
+          <div class="usage-section-head">
+            <h4>{{ t('usage.menu.weekByCategory', 'This week by category') }}</h4>
+            <span v-if="Number.isFinite(breakdown.asOf)">{{ asOfText(breakdown.asOf) }}</span>
+          </div>
+          <div
+            v-for="(row, index) in breakdown.rows"
+            :key="index"
+            class="usage-breakdown-row"
+            data-test="usage-breakdown-row"
+          >
+            <span class="usage-breakdown-label" :title="row.label">{{ row.label }}</span
+            ><span class="usage-breakdown-pct">{{ Math.round(row.pct) }}%</span>
+            <div class="usage-bar">
+              <div class="usage-fill ok" :style="{ width: row.pct + '%' }"></div>
+            </div>
+          </div>
         </div>
         <div v-if="credits" class="usage-reset-credits" data-test="usage-reset-credits">
           <strong>{{ creditsText(credits.availableCount) }}</strong>
@@ -1278,6 +1402,58 @@ const emptyTitle = () => t('usage.menu.buttonTitleEmpty', "Usage of your agents'
 .usage-flyout .usage-account-notice {
   margin: 10px 0 0;
 }
+.usage-locked {
+  margin: 6px 0 0;
+  font-size: 10px;
+  line-height: 1.45;
+  color: var(--warn);
+  overflow-wrap: anywhere;
+}
+.usage-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 7px;
+}
+.usage-section-head h4 {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 10px;
+  font-weight: 500;
+}
+.usage-section-head > span {
+  font-size: 10px;
+  color: var(--text-dim);
+}
+.usage-extra-amount {
+  margin: 6px 0 0;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.usage-breakdown-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 8px;
+  margin-top: 7px;
+  font-size: 11px;
+}
+.usage-breakdown-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.usage-breakdown-pct {
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.usage-flyout .usage-breakdown-row .usage-bar {
+  grid-column: 1 / -1;
+  height: 3px;
+  margin-top: 4px;
+}
+.usage-extra,
+.usage-breakdown,
 .usage-reset-credits,
 .usage-flyout-accounts {
   margin-top: 14px;

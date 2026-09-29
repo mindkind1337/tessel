@@ -81,7 +81,15 @@
       "cancel": "Annuler",
       "agentAccount": "Compte {{name}}",
       "account": "Compte",
-      "signInNeeded": "{{account}} - connexion requise"
+      "signInNeeded": "{{account}} - connexion requise",
+      "locked": "Bloqué : {{reason}}",
+      "asOf": "au {{time}}",
+      "weekByCategory": "Cette semaine par catégorie",
+      "extraUsage": "Utilisation supplémentaire",
+      "extraUsageSpent": "Utilisation supplémentaire dépensée",
+      "extraUsageOf": "{{used}} sur {{limit}} ce mois-ci",
+      "extraUsageUsed": "{{used}} utilisés ce mois-ci",
+      "extraUsageLimitReached": "Limite de dépense mensuelle atteinte."
     },
     "time": {
       "minutes": "{{m}} min",

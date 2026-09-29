@@ -740,3 +740,191 @@ describe('fieldNames (logged once for Claude, names only)', () => {
     expect(names.join(' ')).not.toContain('secret-value')
   })
 })
+
+// A response shaped like Anthropic's current answer (field names observed
+// once, values invented here).
+const window5h = {
+  utilization: 41,
+  resets_at: '2026-09-28T21:00:00Z',
+  limit_dollars: null,
+  used_dollars: null,
+  remaining_dollars: null,
+  locked_reason: null
+}
+const fullClaude = () => ({
+  five_hour: window5h,
+  seven_day: {
+    ...window5h,
+    utilization: 63,
+    resets_at: '2026-10-02T18:00:00Z',
+    locked_reason: '  Weekly limit reached.\nUpgrade\u0007 for more.  '
+  },
+  seven_day_oauth_apps: null,
+  seven_day_opus: { utilization: 5, resets_at: '2026-10-02T18:00:00Z' },
+  seven_day_sonnet: { utilization: 22, resets_at: '2026-10-02T18:00:00Z' },
+  seven_day_cowork: null,
+  seven_day_omelette: null,
+  iguana_necktie: { ...window5h, utilization: 99 },
+  nimbus_quill: { ...window5h, utilization: 98 },
+  some_codename_flag: true,
+  extra_usage: {
+    is_enabled: true,
+    monthly_limit: 5000,
+    used_credits: 1234,
+    utilization: 24.68,
+    currency: 'usd',
+    decimal_places: 2,
+    disabled_reason: null,
+    user_disabled: false,
+    spend_limit_reached: true,
+    credits_ever_enabled: true,
+    daily: null,
+    weekly: null
+  },
+  limits: [
+    {
+      kind: 'weekly_scoped',
+      group: 'models',
+      percent: 71,
+      severity: 'warning',
+      resets_at: epoch / 1000 + 7200,
+      scope: { model: { display_name: 'Opus' } },
+      is_active: true
+    },
+    {
+      kind: 'weekly_scoped',
+      percent: 33,
+      resets_at: epoch / 1000 + 7200,
+      scope: { model: { display_name: 'Fable' } },
+      is_active: true
+    },
+    {
+      kind: 'weekly_scoped',
+      percent: 12,
+      scope: { model: { display_name: 'Haiku' } },
+      is_active: true
+    },
+    { kind: 'weekly_scoped', percent: 50, scope: { model: { display_name: 'Opus' } } },
+    { kind: 'weekly_scoped', percent: 90, scope: { model: { display_name: 'Retired' } }, is_active: false },
+    { kind: 'weekly', percent: 63, scope: null, is_active: true },
+    { kind: 'weekly_scoped', percent: 'lots', scope: { model: { display_name: 'Bad' } } },
+    { kind: 'weekly_scoped', percent: Number.NaN, scope: { model: { display_name: 'Nan' } } },
+    { kind: 'weekly_scoped', percent: 10, scope: { model: { display_name: 42 } } },
+    'junk',
+    null
+  ],
+  spend: {
+    used: { amount_minor: 999999, currency: 'EUR', exponent: 2 },
+    limit: null,
+    percent: 80,
+    severity: 'ok',
+    enabled: true
+  },
+  member_dashboard_available: false,
+  seven_day_breakdown: {
+    as_of: '2026-09-28T17:30:00Z',
+    window_started_at: '2026-09-25T18:00:00Z',
+    rows: [
+      { key: 'code', display_name: 'Claude Code', percent: 48.5 },
+      { key: 'chat', display_name: 'Chat', percent: 140 },
+      { key: 'x', display_name: '', percent: 3 },
+      { key: 'y', display_name: 'No number', percent: '4' },
+      { key: 'z', display_name: 'x'.repeat(500), percent: 1 }
+    ]
+  }
+})
+async function readClaude(data) {
+  const { service, request } = fixture()
+  request.mockResolvedValue(reply(data))
+  return service.read({ provider: 'claude', accountId: null })
+}
+
+describe('Claude usage details (fixture shaped like the live response)', () => {
+  it('maps every active per-model weekly limit once, preferring limits[] over seven_day_<model>', async () => {
+    const result = await readClaude(fullClaude())
+    expect(result.ok).toBe(true)
+    expect(result.windows.map((w) => [w.label, w.usedPct])).toEqual([
+      ['5-hour', 41],
+      ['Weekly', 63],
+      ['Sonnet weekly', 22],
+      ['Opus weekly', 71],
+      ['Fable weekly', 33],
+      ['Haiku weekly', 12]
+    ])
+    expect(result.windows.find((w) => w.label === 'Opus weekly').resetsAt).toBe(epoch + 7200000)
+    // Codenamed objects of unknown meaning are never shown.
+    expect(JSON.stringify(result)).not.toMatch(/iguana|nimbus|codename|99|Retired/)
+  })
+  it('keeps the older seven_day_<model> objects when limits[] is absent or malformed', async () => {
+    const data = fullClaude()
+    data.limits = { not: 'an array' }
+    const result = await readClaude(data)
+    expect(result.windows.map((w) => w.label)).toEqual([
+      '5-hour',
+      'Weekly',
+      'Sonnet weekly',
+      'Opus weekly'
+    ])
+  })
+  it('reports a lock reason as one bounded line, only when there is one', async () => {
+    const data = fullClaude()
+    data.five_hour = { ...window5h, locked_reason: 'y'.repeat(1000) }
+    const result = await readClaude(data)
+    expect(result.windows[0].lockedReason).toHaveLength(200)
+    expect(result.windows[1].lockedReason).toBe('Weekly limit reached. Upgrade for more.')
+    expect(result.windows[2]).not.toHaveProperty('lockedReason')
+  })
+  it('returns the week breakdown, valid rows only, bounded', async () => {
+    const result = await readClaude(fullClaude())
+    expect(result.breakdown.asOf).toBe(Date.parse('2026-09-28T17:30:00Z'))
+    expect(result.breakdown.rows).toEqual([
+      { label: 'Claude Code', pct: 48.5 },
+      { label: 'Chat', pct: 100 },
+      { label: `${'x'.repeat(59)}…`, pct: 1 }
+    ])
+    const data = fullClaude()
+    data.seven_day_breakdown = { rows: [{ display_name: 'Only bad', percent: null }] }
+    expect(await readClaude(data)).not.toHaveProperty('breakdown')
+  })
+  it('reads paid extra usage from extra_usage (minor units), ignoring spend{} then', async () => {
+    const result = await readClaude(fullClaude())
+    expect(result.extraUsage).toEqual({
+      currency: 'USD',
+      decimals: 2,
+      used: 1234,
+      limit: 5000,
+      pct: 24.68,
+      limitReached: true
+    })
+  })
+  it('shows no extra usage when it is off, and falls back to spend{} only without extra_usage', async () => {
+    const off = fullClaude()
+    off.extra_usage.is_enabled = false
+    expect(await readClaude(off)).not.toHaveProperty('extraUsage')
+    const newer = fullClaude()
+    delete newer.extra_usage
+    newer.spend.limit = { amount_minor: 2000000, currency: 'EUR', exponent: 2 }
+    expect((await readClaude(newer)).extraUsage).toEqual({
+      currency: 'EUR',
+      decimals: 2,
+      used: 999999,
+      limit: 2000000,
+      pct: 80,
+      limitReached: false
+    })
+    const bad = fullClaude()
+    bad.extra_usage = { is_enabled: true, used_credits: -3, currency: '<b>' }
+    expect(await readClaude(bad)).not.toHaveProperty('extraUsage')
+  })
+  it('still logs only the field names once', async () => {
+    const log = { info: vi.fn(), warn: vi.fn() }
+    const { service, request } = fixture({ log })
+    request.mockImplementation(async () => reply(fullClaude()))
+    await service.read({ provider: 'claude', accountId: null })
+    await service.read({ provider: 'claude', accountId: null })
+    expect(log.info).toHaveBeenCalledTimes(1)
+    const line = log.info.mock.calls[0][1]
+    expect(line).toContain('extra_usage.spend_limit_reached')
+    expect(line).not.toMatch(/Claude Code|1234|Weekly limit reached/)
+  })
+})
