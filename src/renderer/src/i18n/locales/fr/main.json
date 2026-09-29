@@ -690,7 +690,9 @@
       "pathDenied": "Windows a bloqué la modification de votre PATH utilisateur (accès refusé) ; votre organisation le gère peut-être. Ajoutez vous-même ce dossier à votre PATH : {{dir}}",
       "pathUnreadable": "Tessel n'a pas pu lire votre PATH utilisateur. Rien n'a été modifié.",
       "pathWriteFailed": "Tessel n'a pas pu modifier votre PATH utilisateur. Rien n'a été modifié.",
-      "pathChanged": "Votre PATH utilisateur a changé entre-temps. Rien n'a été modifié ; réessayez."
+      "pathChanged": "Votre PATH utilisateur a changé entre-temps. Rien n'a été modifié ; réessayez.",
+      "noLauncher": "Le lanceur de la commande de Tessel est absent de cette installation.",
+      "uncRefused": "{{path}} est un chemin réseau : ajoutez --allow-unc pour l'ouvrir (Windows se connecte à ce serveur avec votre compte)."
     }
   }
 }

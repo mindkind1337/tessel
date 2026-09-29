@@ -9,7 +9,7 @@
 // helper chunk with the app's bundle.
 import { existsSync, readFileSync } from 'node:fs'
 import { createConnection } from 'node:net'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { spawn } from 'node:child_process'
 
 // Same values as cliServer.js (a test checks they agree).
@@ -53,7 +53,9 @@ const FR = {
   'agent': 'agent',
   'editor': 'éditeur',
   'active': 'actif',
-  'The request is too long.': 'La demande est trop longue.'
+  'The request is too long.': 'La demande est trop longue.',
+  '{{path}} is a network path: add --allow-unc to open it (Windows signs in to that server with your account).':
+    '{{path}} est un chemin réseau : ajoutez --allow-unc pour l’ouvrir (Windows se connecte à ce serveur avec votre compte).'
 }
 
 let locale = 'en'
@@ -83,8 +85,8 @@ export function helpText(name = 'tessel') {
   })
   const head = fr ? `Utilisation : ${name} <commande> [options]` : `Usage: ${name} <command> [options]`
   const foot = fr
-    ? ['Options : --start (ouvrir Tessel s’il ne l’est pas), --no-start, --json, --help, --version', 'Le projet courant est celui qui contient le dossier où vous êtes, sinon le projet actif.']
-    : ['Options: --start (start Tessel when it is not running), --no-start, --json, --help, --version', 'The current project is the one containing the folder you are in, else the active project.']
+    ? ['Options : --start (ouvrir Tessel s’il ne l’est pas), --no-start, --json, --allow-unc (chemins réseau), --help, --version', 'Le projet courant est celui qui contient le dossier où vous êtes, sinon le projet actif.']
+    : ['Options: --start (start Tessel when it is not running), --no-start, --json, --allow-unc (network paths), --help, --version', 'The current project is the one containing the folder you are in, else the active project.']
   return [head, '', ...lines, '', ...foot].join('\n')
 }
 
@@ -93,7 +95,7 @@ export function helpText(name = 'tessel') {
 export class UsageError extends Error {}
 
 const VALUE_OPTS = new Set(['--agent', '--model', '--effort', '--shell', '--note', '--line', '--col'])
-const FLAG_OPTS = new Set(['--start', '--no-start', '--json', '--help', '-h', '--version', '-v'])
+const FLAG_OPTS = new Set(['--start', '--no-start', '--json', '--help', '-h', '--version', '-v', '--allow-unc'])
 
 // -> { cmd, args: [...], opts: { agent, … , start, json } }
 export function parseArgs(argv) {
@@ -120,6 +122,7 @@ export function parseArgs(argv) {
       if (a === '-h' || a === '--help') opts.help = true
       else if (a === '-v' || a === '--version') opts.version = true
       else if (a === '--no-start') opts.start = false
+      else if (a === '--allow-unc') opts.allowUnc = true
       else opts[a.slice(2)] = true
       continue
     }
@@ -144,21 +147,33 @@ export function resolveTarget(input, cwd, exists = existsSync) {
 
 const positiveInt = (v) => (v == null ? null : /^\d{1,8}$/.test(String(v)) && Number(v) > 0 ? Number(v) : NaN)
 
+// A network path (\\server\share, WebDAV \\host@SSL\...): opening one makes
+// Windows sign in to that server with your account, so only with --allow-unc.
+export function isUncPath(p) {
+  return /^[\\/]{2}/.test(String(p || ''))
+}
+
 // -> { method, params, autoStart } (throws UsageError).
 export function buildRequest({ cmd, args, opts }, cwd, exists = existsSync) {
+  const unc = opts.allowUnc ? { allowUnc: true } : {}
+  // The folder you are in, when it is a network one, is left out (not an error).
+  const where = isUncPath(cwd) && !opts.allowUnc ? null : cwd
   switch (cmd) {
     case 'open': {
       if (args.length > 1) throw new UsageError(tr('Unknown command: {{cmd}}', { cmd: args.slice(1).join(' ') }))
+      const asked = args[0] == null || args[0] === '' ? cwd : resolve(cwd, String(args[0]))
+      if (isUncPath(asked) && !opts.allowUnc)
+        throw new UsageError(tr('{{path}} is a network path: add --allow-unc to open it (Windows signs in to that server with your account).', { path: asked }))
       const target = resolveTarget(args[0], cwd, exists)
       if (target.missing) throw new UsageError(tr('Not found: {{path}}', { path: target.path }))
       const line = opts.line != null ? positiveInt(opts.line) : target.line
       const col = opts.col != null ? positiveInt(opts.col) : target.col
       if (Number.isNaN(line) || Number.isNaN(col)) throw new UsageError(tr('{{opt}} needs a value.', { opt: Number.isNaN(line) ? '--line' : '--col' }))
-      return { method: 'open', params: { path: target.path, ...(line ? { line } : {}), ...(col ? { col } : {}) }, autoStart: true }
+      return { method: 'open', params: { path: target.path, ...(line ? { line } : {}), ...(col ? { col } : {}), ...unc }, autoStart: true }
     }
     case 'new': {
       if (args.length) throw new UsageError(tr('Unknown command: {{cmd}}', { cmd: args.join(' ') }))
-      const params = { cwd }
+      const params = { ...(where ? { cwd: where } : {}), ...unc }
       for (const k of ['agent', 'model', 'effort', 'shell']) if (opts[k] != null) params[k] = opts[k]
       return { method: 'new', params, autoStart: true }
     }
@@ -173,7 +188,7 @@ export function buildRequest({ cmd, args, opts }, cwd, exists = existsSync) {
       if (sub !== 'add') throw new UsageError(tr('Unknown command: {{cmd}}', { cmd: `task ${sub || ''}`.trim() }))
       const title = args.join(' ').trim()
       if (!title) throw new UsageError(tr('The card needs a title.'))
-      return { method: 'task.add', params: { title, cwd, ...(opts.note != null ? { note: opts.note } : {}) }, autoStart: false }
+      return { method: 'task.add', params: { title, ...(where ? { cwd: where } : {}), ...(opts.note != null ? { note: opts.note } : {}), ...unc }, autoStart: false }
     }
     default: {
       // `tessel .`, `tessel <folder>`, `tessel <file>[:line]`: open it.
@@ -269,14 +284,34 @@ export function sendRequest(runtime, method, params, { timeoutMs = 60000, netImp
   })
 }
 
+// The standard variables of a Windows session, kept for the started app.
+export const LAUNCH_ENV_KEYS = [
+  'ALLUSERSPROFILE', 'APPDATA', 'CommonProgramFiles', 'CommonProgramFiles(x86)', 'CommonProgramW6432', 'COMPUTERNAME', 'ComSpec',
+  'DriverData', 'HOMEDRIVE', 'HOMEPATH', 'LOCALAPPDATA', 'LOGONSERVER', 'NUMBER_OF_PROCESSORS', 'OneDrive', 'OS', 'PATHEXT',
+  'PROCESSOR_ARCHITECTURE', 'PROCESSOR_IDENTIFIER', 'PROCESSOR_LEVEL', 'PROCESSOR_REVISION', 'ProgramData', 'ProgramFiles',
+  'ProgramFiles(x86)', 'ProgramW6432', 'PUBLIC', 'SESSIONNAME', 'SystemDrive', 'SystemRoot', 'TEMP', 'TMP', 'USERDOMAIN',
+  'USERDOMAIN_ROAMINGPROFILE', 'USERNAME', 'USERPROFILE', 'windir'
+]
+export function launchEnv(env) {
+  const out = {}
+  const lower = new Map(Object.keys(env).map((k) => [k.toLowerCase(), k]))
+  for (const k of LAUNCH_ENV_KEYS) {
+    const real = lower.get(k.toLowerCase())
+    if (real && env[real] != null) out[k] = env[real]
+  }
+  out.TESSEL_STARTED_BY_CLI = '1'
+  return out
+}
+
 // Starts the installed Tessel (TESSEL_CLI_APP) and waits until its pipe is up.
 export async function startTessel(env, userData, { spawnImpl = spawn, wait = (ms) => new Promise((r) => setTimeout(r, ms)), read = readRuntime, timeoutMs = 45000, log = () => {} } = {}) {
   const app = env.TESSEL_CLI_APP
   if (!app) throw new NotRunning(tr('Start Tessel first (the development build is not started by the command).'))
-  const childEnv = { ...env }
-  for (const k of Object.keys(childEnv)) if (k === 'ELECTRON_RUN_AS_NODE' || k.startsWith('TESSEL_CLI_')) delete childEnv[k]
   log(tr('Starting Tessel…'))
-  const child = spawnImpl(app, [], { detached: true, stdio: 'ignore', env: childEnv, windowsHide: false })
+  // As from the Start menu: its own folder, and only the session's standard
+  // variables (no terminal PATH, NODE_OPTIONS, …; Tessel reads PATH from the
+  // registry when TESSEL_STARTED_BY_CLI is set).
+  const child = spawnImpl(app, [], { detached: true, stdio: 'ignore', env: launchEnv(env), cwd: dirname(app), windowsHide: false })
   if (child && child.on) child.on('error', () => {})
   if (child && child.unref) child.unref()
   const until = Date.now() + timeoutMs
@@ -290,6 +325,12 @@ export async function startTessel(env, userData, { spawnImpl = spawn, wait = (ms
 
 // --- Output ------------------------------------------------------------------------
 
+// Text from Tessel shown in the terminal: no control characters (escape
+// sequences, bidirectional overrides) from a pane title or a project name.
+export function clean(value) {
+  return String(value == null ? '' : value).replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, '')
+}
+
 function kindWord(kind) {
   return tr(kind === 'agent' ? 'agent' : kind === 'editor' ? 'editor' : 'terminal')
 }
@@ -298,14 +339,14 @@ export function formatStatus(result) {
   const projects = (result && Array.isArray(result.projects) && result.projects) || []
   if (!projects.length) return tr('No project is open.')
   const panes = projects.reduce((n, p) => n + ((p.panes && p.panes.length) || 0), 0)
-  const lines = [`Tessel ${result.version || ''} · ${tr('{{count}} projects, {{panes}} panes', { count: projects.length, panes })}`.trim()]
+  const lines = [`Tessel ${clean(result.version)} · ${tr('{{count}} projects, {{panes}} panes', { count: projects.length, panes })}`.trim()]
   for (const p of projects) {
-    lines.push(`${p.active ? '*' : ' '} ${p.name}${p.path ? `  ${p.path}` : ''}`)
+    lines.push(`${p.active ? '*' : ' '} ${clean(p.name)}${p.path ? `  ${clean(p.path)}` : ''}`)
     for (const pane of p.panes || []) {
       const num = pane.num ? `#${pane.num}` : '  '
-      const state = pane.kind === 'agent' && pane.state ? `  [${pane.state}]` : ''
+      const state = pane.kind === 'agent' && pane.state ? `  [${clean(pane.state)}]` : ''
       const active = pane.active ? `  (${tr('active')})` : ''
-      lines.push(`    ${num.padEnd(4)} ${kindWord(pane.kind).padEnd(9)} ${pane.title || ''}${state}${active}`)
+      lines.push(`    ${clean(num).padEnd(4)} ${kindWord(pane.kind).padEnd(9)} ${clean(pane.title)}${state}${active}`)
     }
   }
   return lines.join('\n')
@@ -318,21 +359,22 @@ export function formatUsage(result) {
   for (const a of agents) {
     const windows = Array.isArray(a.windows) ? a.windows : []
     if (!windows.length) {
-      lines.push(`${a.id}: ${a.error || tr('not available')}`)
+      lines.push(`${clean(a.id)}: ${clean(a.error) || tr('not available')}`)
       continue
     }
-    lines.push(`${a.id}:`)
+    lines.push(`${clean(a.id)}:`)
     for (const w of windows) {
       const pct = typeof w.usedPct === 'number' ? `${Math.round(w.usedPct)}%` : '?'
       const reset = w.resetsAt ? `  ${tr('resets {{when}}', { when: new Date(w.resetsAt).toLocaleString(locale === 'fr' ? 'fr-CA' : 'en-US') })}` : ''
-      lines.push(`  ${String(w.label || '').padEnd(14)} ${pct.padStart(4)}${reset}${w.stale ? ' *' : ''}`)
+      lines.push(`  ${clean(w.label).padEnd(14)} ${pct.padStart(4)}${reset}${w.stale ? ' *' : ''}`)
     }
   }
   return lines.join('\n')
 }
 
 export function formatResult(method, result) {
-  const r = result || {}
+  const r = {}
+  for (const [k, v] of Object.entries(result || {})) r[k] = typeof v === 'string' ? clean(v) : v
   switch (method) {
     case 'open':
       return r.kind === 'file' ? tr('Opened {{file}} in the editor.', { file: r.file || '' }) : tr('Opened the project {{name}}.', { name: r.project || '' })
@@ -407,7 +449,7 @@ export async function run(argv, deps = {}) {
     }
     if (!reply.ok) {
       const code = reply.error && reply.error.code
-      err(code === 'unauthorized' ? tr('The tessel command is not registered correctly: register it again in Tessel (Settings > General > Tessel CLI).') : (reply.error && reply.error.message) || '?')
+      err(code === 'unauthorized' ? tr('The tessel command is not registered correctly: register it again in Tessel (Settings > General > Tessel CLI).') : clean(reply.error && reply.error.message) || '?')
       return code === 'invalid_argument' ? EXIT.usage : EXIT.failed
     }
     out(parsed.opts.json ? JSON.stringify(reply.result, null, 2) : formatResult(req.method, reply.result))

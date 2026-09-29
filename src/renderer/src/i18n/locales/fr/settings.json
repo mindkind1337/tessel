@@ -577,7 +577,8 @@
       "register": "Enregistrer",
       "removeTitle": "Retirer `{{name}}` du PATH ?",
       "removeText": "Cela supprime la commande shell et retire son dossier de votre PATH utilisateur. Tessel reste installé.",
-      "remove": "Retirer"
+      "remove": "Retirer",
+      "agentsNote": "Les programmes qui tournent sous votre compte, y compris les agents des panneaux de Tessel, peuvent aussi utiliser la commande : elle ouvre des projets, des fichiers et des panneaux et ajoute des cartes, mais ne tape jamais dans un terminal et ne répond jamais à une confirmation."
     }
   }
 }

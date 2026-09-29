@@ -3,17 +3,20 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import {
+  INI_MARK,
   SHIM_MARK,
   addPathEntry,
   cliBinDir,
   cliCommandName,
+  cliLauncherPath,
   cliScriptPath,
   createCliInstaller,
   createUserPathRegistry,
   hasPathEntry,
+  iniText,
+  readRegistryPathSync,
   removePathEntry,
-  samePathEntry,
-  shimText
+  samePathEntry
 } from '../cliInstall'
 
 // Never the real user PATH: a registry double with the same contract.
@@ -48,29 +51,30 @@ describe('names and paths', () => {
     expect(cliBinDir(env)).toBe(path.join('C:\\Users\\me\\AppData\\Local', 'Tessel', 'bin'))
   })
 
-  it('the script is taken outside the app archive', () => {
+  it('the script and the launcher are taken outside the app archive', () => {
     expect(cliScriptPath('C:\\Tessel\\resources\\app.asar\\out\\main')).toBe(path.join('C:\\Tessel\\resources\\app.asar.unpacked\\out\\main', 'cli.js'))
+    expect(cliLauncherPath('C:\\Tessel\\resources\\app.asar\\out\\main')).toBe(path.join('C:\\Tessel\\resources\\app.asar.unpacked\\out\\main', 'tessel-cli.exe'))
     expect(cliScriptPath('C:\\dev\\out\\main')).toBe(path.join('C:\\dev\\out\\main', 'cli.js'))
   })
 })
 
-describe('shimText', () => {
-  it('runs Tessel’s executable as Node with the script and its data folder', () => {
-    const text = shimText({ execPath: 'C:\\P\\Tessel.exe', scriptPath: 'C:\\P\\cli.js', userData: 'C:\\U\\tessel', appPath: 'C:\\P\\Tessel.exe' })
-    expect(text).toContain(SHIM_MARK)
-    expect(text).toContain('set "ELECTRON_RUN_AS_NODE=1"')
-    expect(text).toContain('set "TESSEL_CLI_USER_DATA=C:\\U\\tessel"')
-    expect(text).toContain('"C:\\P\\Tessel.exe" "C:\\P\\cli.js" %*')
-    expect(text.startsWith('@echo off\r\n')).toBe(true)
+describe('iniText (the launcher’s settings)', () => {
+  it('names Tessel’s executable, the script, the data folder and the language', () => {
+    const text = iniText({ execPath: 'C:\\P\\Tessel.exe', scriptPath: 'C:\\P\\cli.js', userData: 'C:\\U\\données', appPath: 'C:\\P\\Tessel.exe', lang: 'fr', name: 'tessel' })
+    expect(text.startsWith(INI_MARK)).toBe(true)
+    expect(text).toContain('exec=C:\\P\\Tessel.exe\r\n')
+    expect(text).toContain('script=C:\\P\\cli.js\r\n')
+    expect(text).toContain('userData=C:\\U\\données\r\n')
+    expect(text).toContain('lang=fr\r\n')
   })
 
-  it('keeps a % in a folder name literal', () => {
-    expect(shimText({ execPath: 'C:\\100%\\T.exe', scriptPath: 'c', userData: 'u' })).toContain('"C:\\100%%\\T.exe"')
+  it('keeps % and & as they are (no batch file reads them)', () => {
+    expect(iniText({ execPath: 'C:\\100%&x\\T.exe', scriptPath: 'c', userData: 'u' })).toContain('exec=C:\\100%&x\\T.exe')
   })
 
-  it('refuses characters a batch file cannot hold', () => {
-    expect(() => shimText({ execPath: 'C:\\a"b', scriptPath: 'c', userData: 'u' })).toThrow()
-    expect(() => shimText({ execPath: 'C:\\a', scriptPath: 'c\nx', userData: 'u' })).toThrow()
+  it('refuses characters that would break a line or a quoted path', () => {
+    expect(() => iniText({ execPath: 'C:\\a"b', scriptPath: 'c', userData: 'u' })).toThrow()
+    expect(() => iniText({ execPath: 'C:\\a', scriptPath: 'c\nexec=evil', userData: 'u' })).toThrow()
   })
 })
 
@@ -94,29 +98,45 @@ describe('PATH values', () => {
 })
 
 describe('createCliInstaller', () => {
+  let launcherFile
+  beforeEach(() => {
+    launcherFile = path.join(dir, 'tessel-cli.exe')
+    fs.writeFileSync(launcherFile, 'MZ launcher v1')
+  })
+  const bin = () => path.join(dir, 'bin')
   const make = (reg, over = {}) =>
     createCliInstaller({
-      binDir: path.join(dir, 'bin'),
+      binDir: bin(),
       name: 'tessel',
-      shim: () => shimText({ execPath: 'C:\\P\\Tessel.exe', scriptPath: 'C:\\P\\cli.js', userData: 'C:\\U' }),
+      config: () => iniText({ execPath: 'C:\\P\\Tessel.exe', scriptPath: 'C:\\P\\cli.js', userData: 'C:\\U' }),
+      launcher: () => launcherFile,
       registry: reg,
       env,
       platform: 'win32',
       ...over
     })
 
-  it('Register writes the command and adds its folder to the user PATH, keeping the value’s kind', async () => {
+  it('Register copies the launcher, writes its settings and adds the folder to the user PATH, keeping the value’s kind', async () => {
     const reg = fakeRegistry()
     const inst = make(reg)
     expect((await inst.status()).state).toBe('not_installed')
     const st = await inst.install()
-    expect(st).toMatchObject({ state: 'installed', onPath: true, shim: true, current: true, commandPath: path.join(dir, 'bin', 'tessel.cmd') })
-    expect(reg.state.value).toBe(`%USERPROFILE%\\AppData\\Local\\Microsoft\\WindowsApps;C:\\tools;${path.join(dir, 'bin')}`)
+    expect(st).toMatchObject({ state: 'installed', onPath: true, shim: true, current: true, commandPath: path.join(bin(), 'tessel.exe') })
+    expect(fs.readFileSync(path.join(bin(), 'tessel.exe'), 'utf8')).toBe('MZ launcher v1')
+    expect(fs.readFileSync(path.join(bin(), 'tessel.ini'), 'utf8')).toContain('exec=C:\\P\\Tessel.exe')
+    expect(fs.existsSync(path.join(bin(), 'tessel.cmd'))).toBe(false)
+    expect(reg.state.value).toBe(`%USERPROFILE%\\AppData\\Local\\Microsoft\\WindowsApps;C:\\tools;${bin()}`)
     expect(reg.state.kind).toBe('ExpandString')
     expect(reg.writes[0].expected.value).toBe('%USERPROFILE%\\AppData\\Local\\Microsoft\\WindowsApps;C:\\tools')
-    // Again: nothing more is written to the PATH.
     await inst.install()
     expect(reg.writes).toHaveLength(1)
+  })
+
+  it('replaces the batch file an earlier build wrote', async () => {
+    fs.mkdirSync(bin())
+    fs.writeFileSync(path.join(bin(), 'tessel.cmd'), `@echo off\r\n${SHIM_MARK}\r\n`)
+    await make(fakeRegistry()).install()
+    expect(fs.existsSync(path.join(bin(), 'tessel.cmd'))).toBe(false)
   })
 
   it('Remove undoes both and leaves the other entries as they were', async () => {
@@ -127,13 +147,13 @@ describe('createCliInstaller', () => {
     expect(st.state).toBe('not_installed')
     expect(reg.state.value).toBe('C:\\a;C:\\b')
     expect(reg.state.kind).toBe('String')
-    expect(fs.existsSync(path.join(dir, 'bin'))).toBe(false)
+    expect(fs.existsSync(bin())).toBe(false)
   })
 
   it('a user without a PATH value gets an expandable one', async () => {
     const reg = fakeRegistry({ exists: false, value: '', kind: 'ExpandString' })
     await make(reg).install()
-    expect(reg.state).toEqual({ exists: true, value: path.join(dir, 'bin'), kind: 'ExpandString' })
+    expect(reg.state).toEqual({ exists: true, value: bin(), kind: 'ExpandString' })
   })
 
   it('keeps the folder on the PATH while the other build’s command is in it', async () => {
@@ -142,19 +162,26 @@ describe('createCliInstaller', () => {
     const dev = make(reg, { name: 'tessel-dev' })
     await dev.install()
     await dev.uninstall()
-    expect(hasPathEntry(reg.state.value, path.join(dir, 'bin'), env)).toBe(true)
-    expect(fs.existsSync(path.join(dir, 'bin', 'tessel.cmd'))).toBe(true)
+    expect(hasPathEntry(reg.state.value, bin(), env)).toBe(true)
+    expect(fs.existsSync(path.join(bin(), 'tessel.exe'))).toBe(true)
+    expect(fs.existsSync(path.join(bin(), 'tessel-dev.exe'))).toBe(false)
   })
 
-  it('never overwrites a tessel.cmd it did not write', async () => {
+  it('never overwrites a tessel.exe it did not write', async () => {
     const reg = fakeRegistry()
-    fs.mkdirSync(path.join(dir, 'bin'))
-    fs.writeFileSync(path.join(dir, 'bin', 'tessel.cmd'), '@echo mine')
+    fs.mkdirSync(bin())
+    fs.writeFileSync(path.join(bin(), 'tessel.exe'), 'someone else')
     await expect(make(reg).install()).rejects.toThrow(/not written by Tessel/)
-    expect(fs.readFileSync(path.join(dir, 'bin', 'tessel.cmd'), 'utf8')).toBe('@echo mine')
+    expect(fs.readFileSync(path.join(bin(), 'tessel.exe'), 'utf8')).toBe('someone else')
     expect(reg.writes).toHaveLength(0)
     await make(reg).uninstall()
-    expect(fs.readFileSync(path.join(dir, 'bin', 'tessel.cmd'), 'utf8')).toBe('@echo mine')
+    expect(fs.readFileSync(path.join(bin(), 'tessel.exe'), 'utf8')).toBe('someone else')
+  })
+
+  it('a missing launcher is an error, nothing on the PATH', async () => {
+    const reg = fakeRegistry()
+    await expect(make(reg, { launcher: () => path.join(dir, 'nope.exe') }).install()).rejects.toThrow(/launcher is missing/)
+    expect(reg.writes).toHaveLength(0)
   })
 
   it('an access-denied PATH names the folder to add by hand', async () => {
@@ -162,21 +189,24 @@ describe('createCliInstaller', () => {
     reg.write = vi.fn(async () => {
       throw Object.assign(new Error('x'), { code: 'EDENIED' })
     })
-    await expect(make(reg).install()).rejects.toThrow(path.join(dir, 'bin'))
+    await expect(make(reg).install()).rejects.toThrow(bin())
   })
 
-  it('refresh points a registered command at this Tessel, and nothing else', async () => {
+  it('refresh points a registered command at this Tessel (settings and launcher), and nothing else', async () => {
     const reg = fakeRegistry()
     let exe = 'C:\\Old\\Tessel.exe'
-    const inst = make(reg, { shim: () => shimText({ execPath: exe, scriptPath: 'c', userData: 'u' }) })
+    const inst = make(reg, { config: () => iniText({ execPath: exe, scriptPath: 'c', userData: 'u' }) })
     expect(inst.refresh()).toBe(false) // not registered: not written
-    expect(fs.existsSync(path.join(dir, 'bin', 'tessel.cmd'))).toBe(false)
+    expect(fs.existsSync(bin())).toBe(false)
     await inst.install()
     expect(inst.refresh()).toBe(false)
     exe = 'C:\\New\\Tessel.exe'
     expect((await inst.status()).current).toBe(false)
     expect(inst.refresh()).toBe(true)
-    expect(fs.readFileSync(path.join(dir, 'bin', 'tessel.cmd'), 'utf8')).toContain('C:\\New\\Tessel.exe')
+    expect(fs.readFileSync(path.join(bin(), 'tessel.ini'), 'utf8')).toContain('C:\\New\\Tessel.exe')
+    fs.writeFileSync(launcherFile, 'MZ launcher v2')
+    expect(inst.refresh()).toBe(true)
+    expect(fs.readFileSync(path.join(bin(), 'tessel.exe'), 'utf8')).toBe('MZ launcher v2')
     expect(reg.writes).toHaveLength(1)
   })
 
@@ -186,6 +216,17 @@ describe('createCliInstaller', () => {
     expect((await inst.status()).state).toBe('unsupported')
     await expect(inst.install()).rejects.toThrow(/Windows only/)
     expect(reg.read).not.toHaveBeenCalled()
+  })
+})
+
+describe('readRegistryPathSync (PowerShell, faked)', () => {
+  it('reads machine then user PATH from the registry', () => {
+    const execFileSyncImpl = vi.fn(() => Buffer.from('C:\\Windows\\system32;C:\\é').toString('base64'))
+    expect(readRegistryPathSync({ execFileSyncImpl, env: { SystemRoot: 'C:\\Windows' } })).toBe('C:\\Windows\\system32;C:\\é')
+    const script = Buffer.from(execFileSyncImpl.mock.calls[0][1].at(-1), 'base64').toString('utf16le')
+    expect(script).toContain("GetEnvironmentVariable('Path', 'Machine')")
+    expect(script).toContain("GetEnvironmentVariable('Path', 'User')")
+    expect(readRegistryPathSync({ execFileSyncImpl: () => { throw new Error('x') }, env: {} })).toBeNull()
   })
 })
 

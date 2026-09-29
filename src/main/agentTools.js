@@ -156,11 +156,15 @@ export function slugify(text) {
 // Process helpers
 // ---------------------------------------------------------------------------
 
+// git never starts a repository's core.fsmonitor program for Tessel (a
+// folder from elsewhere could name any program there; see gitSafety.js).
+const isGit = (file) => /(^|[\\/])git(\.exe)?$/i.test(String(file || ''))
+
 export function run(file, args, opts = {}) {
   return new Promise((resolve) => {
     execFile(
       file,
-      args,
+      isGit(file) ? ['-c', 'core.fsmonitor=false', ...args] : args,
       {
         windowsHide: true,
         maxBuffer: 8 * 1024 * 1024,

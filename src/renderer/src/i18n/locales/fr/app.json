@@ -649,7 +649,11 @@
       "paneFailed": "Tessel n'a pas pu ouvrir le panneau.",
       "paneOpened": "Ouvert depuis la ligne de commande : {{pane}}",
       "cardAdded": "Carte ajoutée depuis la ligne de commande : {{title}}",
-      "unknownRequest": "Demande inconnue."
+      "unknownRequest": "Demande inconnue.",
+      "noModelChoice": "Tessel ne peut pas choisir le modèle de cet agent.",
+      "unknownModel": "Modèle inconnu « {{model}} ». Disponibles : {{list}}",
+      "unknownEffort": "Effort inconnu « {{effort}} » pour {{model}}. Disponibles : {{list}}",
+      "noEffort": "{{model}} n'a pas de choix d'effort."
     }
   }
 }

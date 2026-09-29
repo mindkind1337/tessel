@@ -121,3 +121,26 @@ describe('createCliRequests', () => {
     await expect(r.handle({ method: 'writePty', params: {} })).rejects.toMatchObject({ code: 'unknown_method' })
   })
 })
+
+describe('sessionChoiceError (model and effort from the command line)', () => {
+  it('only a listed model, and an effort among its choices', async () => {
+    const { sessionChoiceError } = await import('../cliRequests')
+    expect(sessionChoiceError('claude', 'opus', 'high', null)).toBeNull()
+    expect(sessionChoiceError('claude', 'opus', null, null)).toBeNull()
+    expect(sessionChoiceError('gemini', '--yolo', null, null)).toMatch(/Unknown model/)
+    expect(sessionChoiceError('claude', 'made-up', null, null)).toMatch(/Unknown model/)
+    expect(sessionChoiceError('claude', 'opus', '--x', null)).toMatch(/Unknown effort/)
+    expect(sessionChoiceError('claude', 'haiku', 'high', null)).toMatch(/no effort/)
+    expect(sessionChoiceError('codex', 'gpt-5.5', 'ultra', null)).toMatch(/Unknown effort/)
+    expect(sessionChoiceError('codex', 'gpt-5.5', 'xhigh', null)).toBeNull()
+    expect(sessionChoiceError('kimi', 'k2', null, null)).toMatch(/cannot choose/)
+    // The agent's own listed models (probed) count.
+    expect(sessionChoiceError('claude', 'claude-opus-9', null, [{ id: 'claude-opus-9', options: [] }])).toBeNull()
+  })
+
+  it('newPane refuses an unlisted model before opening anything', async () => {
+    const { r, deps } = setup()
+    await expect(r.handle({ method: 'newPane', params: { agent: 'claude', model: '--dangerously-skip-permissions' } })).rejects.toMatchObject({ code: 'invalid_argument' })
+    expect(deps.openPane).not.toHaveBeenCalled()
+  })
+})

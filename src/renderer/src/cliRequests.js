@@ -5,6 +5,7 @@
 // answers a confirmation; a pane it opens is an ordinary pane, started the
 // way the new-pane menu starts it (your agent settings apply).
 import { t } from './i18n'
+import { getAgentSessionOptionCatalog, modelOptions, safeSessionValue } from '../../shared/agentSessionOptions'
 
 export class CliRequestError extends Error {
   constructor(code, message) {
@@ -23,6 +24,27 @@ export function insideFolder(p, root) {
   return a === b || a.startsWith(`${b}\\`)
 }
 
+// A model / effort asked on the command line: only a model the agent lists
+// (its catalog, with what its CLI listed) and an effort among that model's
+// choices. -> null when fine, else the reason.
+export function sessionChoiceError(agentId, model, effort, models) {
+  if (!model) return null
+  const catalog = getAgentSessionOptionCatalog(agentId)
+  if (!catalog) return t('app.cli.noModelChoice', 'Tessel cannot choose the model of this agent.')
+  const list = Array.isArray(models) && models.length ? models : catalog.models
+  const ids = list.map((m) => m.id)
+  if (!safeSessionValue(model) || !ids.includes(model))
+    return t('app.cli.unknownModel', 'Unknown model “{{model}}”. Available: {{list}}', { model, list: ids.join(', ') || '—' })
+  if (!effort) return null
+  const option = modelOptions(catalog, list, model).find((o) => o.id === 'effort')
+  const choices = option && option.kind && option.kind.type === 'select' ? option.kind.choices.map((c) => c.value) : []
+  if (!choices.includes(effort))
+    return choices.length
+      ? t('app.cli.unknownEffort', 'Unknown effort “{{effort}}” for {{model}}. Available: {{list}}', { effort, model, list: choices.join(', ') })
+      : t('app.cli.noEffort', '{{model}} has no effort choice.', { model })
+  return null
+}
+
 export function folderName(p) {
   const parts = String(p || '').replace(/[\\/]+$/, '').split(/[\\/]/)
   return parts[parts.length - 1] || String(p || '')
@@ -33,6 +55,7 @@ export function folderName(p) {
 //   addProjects({ projects, source }): as the Add project dialog
 //   openInEditor({ file, line, col, ws }) -> leaf | null; viewFile({ file, line })
 //   agentFor(id) -> agent | null (launchable and installed); agentIds() -> [ids]
+//   modelsFor(agentId) -> the models its picker lists
 //   shellFor(id) -> shell id | null; openPane({ ws, agent, shellId, sessionOptions }) -> leaf
 //   focusPane(id); paneLabel(leaf); forEachLeaf(tree, fn); agentState(leafId) -> state
 //   addCard({ title, note, ws }) -> task; notify(text)
@@ -86,6 +109,10 @@ export function createCliRequests(deps) {
     if (shell) {
       shellId = deps.shellFor(shell)
       if (!shellId) throw new CliRequestError('unknown_shell', t('app.cli.unknownShell', 'No shell “{{id}}” in Tessel.', { id: shell }))
+    }
+    if (agent && model) {
+      const why = sessionChoiceError(agent.id, model, effort, deps.modelsFor ? deps.modelsFor(agent.id) : null)
+      if (why) throw new CliRequestError('invalid_argument', why)
     }
     const sessionOptions = agent && model ? { model, ...(effort ? { effort } : {}) } : null
     deps.selectWorkspace(ws.id)

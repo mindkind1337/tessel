@@ -84,6 +84,9 @@ onMounted(refresh)
       <p class="set-hint set-card-text">
         {{ t('settings.cli.intro', 'Use Tessel from your terminal to open projects and files, start terminals and agents, and see what is running.') }}
       </p>
+      <p class="set-hint set-card-text" data-cli-agents-note="">
+        {{ t('settings.cli.agentsNote', 'Programs running as you, including the agents in Tessel’s panes, can use the command too: it opens projects, files and panes and adds cards, but never types into a terminal or answers a confirmation.') }}
+      </p>
       <div class="set-row">
         <div class="set-label">
           {{ t('settings.cli.shellCommand', 'Shell command') }}

@@ -40,7 +40,7 @@ const MAX_NOTE = 4000
 const ID_RE = /^[A-Za-z0-9][\w.-]{0,63}$/
 // A model or effort value: what an agent's command line accepts as one
 // argument (the pane's session options re-check it).
-const VALUE_RE = /^[\w.:[\]/@+-]{1,100}$/
+const VALUE_RE = /^[A-Za-z0-9][\w.:[\]/@+-]{0,99}$/
 
 export class CliError extends Error {
   constructor(code, message) {
@@ -116,14 +116,19 @@ function multilineText(value, max) {
     .slice(0, max)
 }
 
-// A local absolute path: a drive path (C:\…) or a network share (\\server\share\…);
+// A local absolute path: a drive path (C:\…), or a network share
+// (\\server\share\…, WebDAV) only when the command asked with --allow-unc
+// (opening one makes Windows sign in to that server with your account);
 // never a device path (\\.\…, \\?\…).
-export function validAbsolutePath(value) {
+export function isUncPath(value) {
+  return typeof value === 'string' && /^[\\/]{2}/.test(value)
+}
+export function validAbsolutePath(value, { allowUnc = false } = {}) {
   if (typeof value !== 'string' || !value || value.length > MAX_PATH || value.includes('\0')) return null
   if (/^[\\/]{2}[.?][\\/]/.test(value)) return null
   const isDrive = /^[A-Za-z]:[\\/]/.test(value)
   const isShare = /^[\\/]{2}[^\\/.?][^\\/]*[\\/][^\\/]+/.test(value)
-  if (!isDrive && !isShare) return null
+  if (!isDrive && !(isShare && allowUnc)) return null
   return path.win32.normalize(value)
 }
 
@@ -135,7 +140,9 @@ function optionalInt(value, name) {
 
 function optionalCwd(params) {
   if (params.cwd == null) return null
-  const cwd = validAbsolutePath(params.cwd)
+  // A network folder you are in is left out, not an error (and never read).
+  if (isUncPath(params.cwd) && params.allowUnc !== true) return null
+  const cwd = validAbsolutePath(params.cwd, { allowUnc: params.allowUnc === true })
   if (!cwd) throw invalid(t('main.cli.badPath', 'Not a full local path: {{path}}', { path: String(params.cwd).slice(0, 200) }))
   return cwd
 }
@@ -149,7 +156,9 @@ export function validateParams(method, params = {}) {
     case 'usage':
       return {}
     case 'open': {
-      const p = validAbsolutePath(params.path)
+      if (isUncPath(params.path) && !/^[\\/]{2}[.?][\\/]/.test(params.path) && params.allowUnc !== true)
+        throw invalid(t('main.cli.uncRefused', '{{path}} is a network path: add --allow-unc to open it (Windows signs in to that server with your account).', { path: String(params.path).slice(0, 200) }))
+      const p = validAbsolutePath(params.path, { allowUnc: params.allowUnc === true })
       if (!p) throw invalid(t('main.cli.badPath', 'Not a full local path: {{path}}', { path: String(params.path ?? '').slice(0, 200) }))
       return { path: p, line: optionalInt(params.line, 'line'), col: optionalInt(params.col, 'column') }
     }

@@ -6811,6 +6811,7 @@ const cliRequests = createCliRequests({
   viewFile,
   agentFor: (id) => launchableAgents.value.find((a) => a.id === id && a.available !== false) || null,
   agentIds: () => launchableAgents.value.filter((a) => a.available !== false).map((a) => a.id),
+  modelsFor,
   shellFor: (id) => (shells.value.some((s) => s.id === id) ? id : null),
   async openPane({ ws, agent, shellId, sessionOptions }) {
     if (!workspaces.value.includes(ws)) return null

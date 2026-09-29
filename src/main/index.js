@@ -95,7 +95,7 @@ import { ensureInbox, takeInbox, removeInbox } from './leadInbox'
 import { t, setLanguage as setMainLanguage, currentLocale, onLanguageChange } from './i18n'
 import { createCliServer, CliError } from './cliServer'
 import { createCliBridge } from './cliBridge'
-import { createCliInstaller, createUserPathRegistry, cliBinDir, cliCommandName, cliScriptPath, shimText } from './cliInstall'
+import { createCliInstaller, createUserPathRegistry, cliBinDir, cliCommandName, cliScriptPath, cliLauncherPath, iniText, readRegistryPathSync } from './cliInstall'
 import {
   ensureTeamChannel,
   pollTeamChannel,
@@ -116,6 +116,15 @@ import {
 // real workspaces).
 const DATA_DIR = app.isPackaged ? 'tessel' : 'tessel-dev'
 app.setPath('userData', process.env.TESSEL_USER_DATA || join(app.getPath('appData'), DATA_DIR))
+// Started by the tessel command (src/cli/tessel.js): its environment is a
+// clean one without the terminal's PATH; PATH comes from the registry, as a
+// Start-menu launch has it, so panes and agents never inherit a terminal's.
+if (process.env.TESSEL_STARTED_BY_CLI === '1') {
+  delete process.env.TESSEL_STARTED_BY_CLI
+  const sysRoot = process.env.SystemRoot || 'C:\\Windows'
+  process.env.PATH =
+    readRegistryPathSync() || [join(sysRoot, 'System32'), sysRoot, join(sysRoot, 'System32', 'Wbem'), join(sysRoot, 'System32', 'WindowsPowerShell', 'v1.0')].join(';')
+}
 
 // Chromium caches and per-run files are never copied between data folders.
 const NOT_COPIED = [
@@ -1249,6 +1258,21 @@ if (!app.isPackaged && process.platform === 'win32' && !askpassExePath(__dirname
       (err) => {
         if (err) log.warn('ssh', `askpass helper not built: ${err.message}`)
         else log.info('ssh', 'askpass helper built for development')
+      }
+    )
+  }
+}
+// The same for the tessel command's launcher (Settings > General > Tessel CLI).
+if (!app.isPackaged && process.platform === 'win32' && !fs.existsSync(join(__dirname, 'tessel-cli.exe'))) {
+  const script = join(app.getAppPath(), 'scripts', 'build-askpass.mjs')
+  if (fs.existsSync(script)) {
+    execFile(
+      process.execPath,
+      [script, '--cli', join(__dirname, 'tessel-cli.exe')],
+      { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, windowsHide: true, timeout: 120000 },
+      (err) => {
+        if (err) log.warn('cli', `command launcher not built: ${err.message}`)
+        else log.info('cli', 'command launcher built for development')
       }
     )
   }
@@ -2909,20 +2933,21 @@ function ensureDevShortcut() {
 // cliServer.js: the pipe (current user only, served by the askpass helper), its
 // token and the checks; cliBridge.js: what the window answers; cliInstall.js:
 // tessel.cmd and the user PATH. What the command can do is listed in cliServer.js.
-let cliUserSid = null
+// The command's files with a secret (token, runtime file): this user only,
+// with a Medium integrity label that refuses reads from low-integrity
+// processes too (the helper's --protect mode; icacls as a fallback).
 function restrictToUser(file) {
   if (process.platform !== 'win32') return
-  const sys32 = join(process.env.SystemRoot || 'C:\\Windows', 'System32')
-  const apply = (sid) =>
-    execFile(join(sys32, 'icacls.exe'), [file, '/inheritance:r', '/grant:r', `*${sid}:F`], { windowsHide: true, timeout: 15000 }, (err) => {
+  const helper = askpassExePath(__dirname)
+  const icacls = () =>
+    execFile(join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'icacls.exe'), [file, '/inheritance:r', '/grant:r', `${os.userInfo().username}:F`], { windowsHide: true, timeout: 15000 }, (err) => {
       if (err) log.warn('cli', `icacls: ${err.message}`)
     })
-  if (cliUserSid) return apply(cliUserSid)
-  execFile(join(sys32, 'whoami.exe'), ['/user', '/fo', 'csv', '/nh'], { windowsHide: true, timeout: 15000 }, (err, stdout) => {
-    const m = /"(S-1-[0-9-]+)"/.exec(String(stdout || ''))
-    if (err || !m) return log.warn('cli', 'user SID not found: the command files keep their folder permissions')
-    cliUserSid = m[1]
-    apply(cliUserSid)
+  if (!helper) return icacls()
+  execFile(helper, ['--protect', file], { windowsHide: true, timeout: 15000, env: { SystemRoot: process.env.SystemRoot || 'C:\\Windows' } }, (err) => {
+    if (!err) return
+    log.warn('cli', `protect: ${err.code || err.message}`)
+    icacls()
   })
 }
 const cliBridge = createCliBridge({ send })
@@ -3017,8 +3042,9 @@ onLanguageChange(() => {
 const cliInstaller = createCliInstaller({
   binDir: cliBinDir(process.env, os.homedir()),
   name: cliCommandName(app.isPackaged),
-  shim: () =>
-    shimText({
+  launcher: () => cliLauncherPath(__dirname),
+  config: () =>
+    iniText({
       execPath: process.execPath,
       scriptPath: cliScriptPath(__dirname),
       userData: app.getPath('userData'),

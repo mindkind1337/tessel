@@ -92,7 +92,29 @@ describe('validateParams', () => {
     expect(() => validateParams('open', { path: '\\\\?\\C:\\x' })).toThrow(/full local path/)
     expect(() => validateParams('open', { path: 'C:\\x', line: 0 })).toThrow(/positive/)
     expect(() => validateParams('open', { path: 'C:\\x', line: '4' })).toThrow(/positive/)
-    expect(validAbsolutePath('\\\\server\\share\\dir')).toBe('\\\\server\\share\\dir')
+    expect(validAbsolutePath('\\\\server\\share\\dir')).toBeNull()
+    expect(validAbsolutePath('\\\\server\\share\\dir', { allowUnc: true })).toBe('\\\\server\\share\\dir')
+  })
+
+  it('network paths only with --allow-unc (Windows would sign in to that server)', () => {
+    for (const p of ['\\\\attacker\\share\\x', '//attacker/share/x', '\\\\host@SSL\\DavWWWRoot\\x']) {
+      expect(() => validateParams('open', { path: p })).toThrow(/--allow-unc/)
+    }
+    expect(validateParams('open', { path: '\\\\srv\\share\\x', allowUnc: true }).path).toBe('\\\\srv\\share\\x')
+    expect(() => validateParams('open', { path: '\\\\.\\pipe\\x' })).toThrow(/full local path/)
+    expect(() => validateParams('open', { path: '\\\\.\\pipe\\x', allowUnc: true })).toThrow()
+    // A network folder you are in is simply left out.
+    expect(validateParams('new', { cwd: '\\\\srv\\share' }).cwd).toBeNull()
+    expect(validateParams('task.add', { title: 'x', cwd: '\\\\srv\\share' }).cwd).toBeNull()
+    expect(validateParams('new', { cwd: '\\\\srv\\share\\p', allowUnc: true }).cwd).toBe('\\\\srv\\share\\p')
+  })
+
+  it('a model or effort never starts like a flag', () => {
+    for (const bad of ['--yolo', '-y', '--dangerously-skip-permissions', '+x', '.hidden']) {
+      expect(() => validateParams('new', { agent: 'gemini', model: bad })).toThrow(/valid model/)
+      expect(() => validateParams('new', { agent: 'claude', model: 'opus', effort: bad })).toThrow(/valid effort/)
+    }
+    expect(validateParams('new', { agent: 'codex', model: 'gpt-5.5', effort: 'high' }).model).toBe('gpt-5.5')
   })
 
   it('new: ids and values are checked', () => {
