@@ -1,0 +1,95 @@
+/*
+ * The ported chat's design tokens (after Orca's src/renderer/src/assets/
+ * main.css theme tokens, MIT, Copyright (c) 2026 Lovecast Inc.), pointed at
+ * Tessel's theme variables so every Tessel theme (dark, light, warp) colours
+ * the chat. Prefix --nc- (native chat): Tessel already uses --orca-* names
+ * elsewhere. Scope: .nc-root (NativeChatView's root) and the chat's own
+ * popovers (they render inside it, or add the class).
+ *
+ * Tailwind -> CSS, for every component of the port (same values):
+ *   text-[11px]/[10px]/[12px]/[13px]  font-size: 11px …   text-xs 12px/16px, text-sm 14px/20px, text-base 16px/24px
+ *   leading-5 20px, leading-6 24px     px-3 = 12px, py-1.5 = 6px, gap-2 = 8px (spacing unit 4px)
+ *   rounded-sm 2px? (v4: 4px), rounded-md 6px, rounded-lg 8px, rounded-xl 12px, rounded-full 9999px
+ *   max-w-4xl 56rem, max-w-[85%]        shadow-xs 0 1px 2px 0 rgb(0 0 0 / .05)
+ *   bg-muted/30 -> color-mix(in srgb, var(--nc-muted) 30%, transparent)
+ *   can-hover:… -> @media (hover: hover) { … }
+ *   group/x + group-hover/x:… -> .x:hover .child { … }
+ *   tw-animate (animate-in fade-in zoom-in-95 …) -> the keyframes below
+ */
+.nc-root {
+  --nc-background: var(--term);
+  --nc-foreground: var(--text-strong);
+  --nc-card: var(--surface);
+  --nc-card-foreground: var(--text-strong);
+  --nc-popover: var(--surface);
+  --nc-popover-foreground: var(--text-strong);
+  --nc-primary: var(--text-strong);
+  --nc-primary-foreground: var(--term);
+  --nc-secondary: color-mix(in srgb, var(--text) 10%, var(--term));
+  --nc-muted: color-mix(in srgb, var(--text) 9%, var(--term));
+  --nc-muted-foreground: var(--text-dim);
+  --nc-accent: color-mix(in srgb, var(--text) 14%, var(--term));
+  --nc-accent-foreground: var(--text-strong);
+  --nc-destructive: var(--danger);
+  --nc-border: var(--border);
+  --nc-input: var(--border-strong);
+  --nc-ring: color-mix(in srgb, var(--text-dim) 70%, transparent);
+  --nc-status-success: #3ddc84;
+  --nc-warning: var(--warn);
+  /* Diffs (the reference's --git-decoration-* and --diff-* values). */
+  --nc-git-added: #3fb950;
+  --nc-git-deleted: #f85149;
+  --nc-diff-added-ground: color-mix(in srgb, var(--nc-git-added) 12%, transparent);
+  --nc-diff-added-gutter: color-mix(in srgb, var(--nc-git-added) 22%, transparent);
+  --nc-diff-removed-ground: color-mix(in srgb, var(--nc-git-deleted) 12%, transparent);
+  --nc-diff-removed-gutter: color-mix(in srgb, var(--nc-git-deleted) 22%, transparent);
+  --nc-radius: 10px;
+  color: var(--nc-foreground);
+  background: var(--nc-background);
+}
+
+/* The reference's .scrollbar-sleek. */
+.nc-root .nc-scrollbar-sleek {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--text-dim) 40%, transparent) transparent;
+}
+.nc-root .nc-scrollbar-sleek::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.nc-root .nc-scrollbar-sleek::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text-dim) 40%, transparent);
+  border-radius: 9999px;
+}
+
+/* tw-animate-css equivalents used by the port. */
+@keyframes nc-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes nc-zoom-in-95 {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes nc-spin {
+  to { transform: rotate(360deg); }
+}
+@keyframes nc-pulse {
+  50% { opacity: 0.5; }
+}
+@keyframes nc-bounce {
+  0%, 100% { transform: translateY(-25%); animation-timing-function: cubic-bezier(0.8, 0, 1, 1); }
+  50% { transform: none; animation-timing-function: cubic-bezier(0, 0, 0.2, 1); }
+}
+.nc-root .nc-animate-spin {
+  animation: nc-spin 1s linear infinite;
+}
+.nc-root .nc-animate-pulse {
+  animation: nc-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .nc-root .nc-animate-spin,
+  .nc-root .nc-animate-pulse {
+    animation: none;
+  }
+}

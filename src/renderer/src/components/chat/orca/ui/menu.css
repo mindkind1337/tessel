@@ -1,0 +1,143 @@
+/*
+ * DropdownMenu styles (after Orca's components/ui/dropdown-menu.tsx,
+ * shadcn/ui, MIT, Copyright (c) 2026 Lovecast Inc.). Tessel's themes are
+ * dark: the reference's dark: values. One class per rule, so a consumer's
+ * scoped class (w-64 → its own width) wins.
+ */
+.nc-ui-menu-content {
+  box-sizing: border-box;
+  z-index: 70;
+  min-width: 11rem;
+  transform-origin: var(--nc-transform-origin);
+  overflow: hidden;
+  border-radius: 11px;
+  border: 1px solid rgb(255 255 255 / 0.14);
+  background: rgb(0 0 0 / 0.72);
+  padding: 4px;
+  color: var(--nc-foreground);
+  box-shadow: 0 16px 34px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(40px);
+  outline: none;
+  pointer-events: auto;
+  --nc-ui-enter-opacity: 0;
+  --nc-ui-enter-scale: 0.98;
+  --nc-ui-exit-opacity: 0;
+  --nc-ui-exit-scale: 0.95;
+  /* Electron's title-bar drag region would swallow clicks otherwise. */
+  -webkit-app-region: no-drag;
+}
+.nc-ui-menu-content--scroll {
+  max-height: var(--nc-available-height);
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.nc-ui-menu-item,
+.nc-ui-menu-check-item,
+.nc-ui-menu-sub-trigger {
+  box-sizing: border-box;
+  position: relative;
+  display: flex;
+  cursor: default;
+  align-items: center;
+  gap: 8px;
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+  line-height: 17px;
+  font-weight: 450;
+  outline: none;
+  user-select: none;
+}
+.nc-ui-menu-check-item {
+  padding-left: 28px;
+}
+.nc-ui-menu-item:focus,
+.nc-ui-menu-check-item:focus,
+.nc-ui-menu-sub-trigger:focus,
+.nc-ui-menu-sub-trigger[data-state='open'] {
+  background: rgb(255 255 255 / 0.14);
+  color: var(--nc-accent-foreground);
+}
+.nc-ui-menu-item[data-disabled],
+.nc-ui-menu-check-item[data-disabled],
+.nc-ui-menu-sub-trigger[data-disabled] {
+  pointer-events: none;
+  opacity: 0.5;
+}
+.nc-ui-menu-item[data-inset],
+.nc-ui-menu-sub-trigger[data-inset],
+.nc-ui-menu-label[data-inset] {
+  padding-left: 28px;
+}
+.nc-ui-menu-item[data-variant='destructive'] {
+  color: var(--nc-destructive);
+}
+.nc-ui-menu-item[data-variant='destructive']:focus {
+  background: color-mix(in srgb, var(--nc-destructive) 20%, transparent);
+  color: var(--nc-destructive);
+}
+.nc-ui-menu-item svg,
+.nc-ui-menu-check-item svg,
+.nc-ui-menu-sub-trigger svg {
+  pointer-events: none;
+  flex-shrink: 0;
+}
+.nc-ui-menu-item svg:not([class*='size-']),
+.nc-ui-menu-check-item svg:not([class*='size-']),
+.nc-ui-menu-sub-trigger svg:not([class*='size-']) {
+  width: 14px;
+  height: 14px;
+}
+.nc-ui-menu-item svg:not([class*='text-']),
+.nc-ui-menu-sub-trigger svg:not([class*='text-']) {
+  color: var(--nc-muted-foreground);
+}
+.nc-ui-menu-item[data-variant='destructive'] > svg {
+  color: var(--nc-destructive) !important;
+}
+
+.nc-ui-menu-indicator {
+  pointer-events: none;
+  position: absolute;
+  left: 8px;
+  display: flex;
+  width: 14px;
+  height: 14px;
+  align-items: center;
+  justify-content: center;
+}
+.nc-ui-menu-check-item .nc-ui-menu-indicator svg.nc-ui-menu-check {
+  width: 14px;
+  height: 14px;
+}
+.nc-ui-menu-check-item .nc-ui-menu-indicator svg.nc-ui-menu-dot {
+  width: 8px;
+  height: 8px;
+  fill: currentColor;
+}
+.nc-ui-menu-sub-trigger svg.nc-ui-menu-chevron {
+  margin-left: auto;
+  width: 16px;
+  height: 16px;
+}
+
+.nc-ui-menu-label {
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--nc-muted-foreground);
+}
+.nc-ui-menu-separator {
+  margin: 3px 0;
+  height: 1px;
+  background: color-mix(in srgb, var(--nc-border) 60%, transparent);
+}
+.nc-ui-menu-shortcut {
+  margin-left: auto;
+  flex-shrink: 0;
+  white-space: nowrap;
+  font-size: 11px;
+  letter-spacing: normal;
+  color: color-mix(in srgb, var(--nc-muted-foreground) 85%, transparent);
+}

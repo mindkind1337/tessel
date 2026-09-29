@@ -24,14 +24,14 @@ describe('chat journal', () => {
     expect(reopened.readCommands()).toEqual([])
   })
 
-  it('appends and reads back events with their seq, skipping deltas', () => {
+  it('appends and reads back events with their seq and write time, skipping deltas', () => {
     const j = createChatJournal({ dir: tmp, paneId: 'p1', now: () => 7 })
     j.append(1, { type: 'user', id: 'u', text: 'hi' })
     j.append(2, { type: 'assistantDelta', messageId: 'm', text: 'h' })
     j.append(3, { type: 'assistant', messageId: 'm', text: 'hello' })
     expect(j.read()).toEqual([
-      { seq: 1, event: { type: 'user', id: 'u', text: 'hi' } },
-      { seq: 3, event: { type: 'assistant', messageId: 'm', text: 'hello' } }
+      { seq: 1, at: 7, event: { type: 'user', id: 'u', text: 'hi' } },
+      { seq: 3, at: 7, event: { type: 'assistant', messageId: 'm', text: 'hello' } }
     ])
     expect(j.lastSeq()).toBe(3)
     expect(fs.existsSync(join(tmp, 'chats', 'p1', 'journal.jsonl'))).toBe(true)

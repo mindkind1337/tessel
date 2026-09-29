@@ -164,6 +164,11 @@ export function projectStructuredItemToNativeChat(item) {
         source: 'transcript',
         ...sentAs !== undefined && isAgentJournalMessageSendMode(sentAs) ? {
             sentAs
+        } : {},
+        // Tessel's addition: a teammate's message keeps its label and sender.
+        ...sentAs === 'team' ? {
+            sentAs,
+            ...typeof item.body.from === 'string' ? { from: item.body.from } : {}
         } : {}
     } : null;
     projectedItems.set(item, message);

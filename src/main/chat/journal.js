@@ -104,7 +104,7 @@ export function createChatJournal({ dir, paneId, rotateBytes = ROTATE_BYTES, now
     try {
       const item = JSON.parse(line)
       if (item && Number.isSafeInteger(item.seq) && item.event && typeof item.event.type === 'string')
-        out.push({ seq: item.seq, event: item.event })
+        out.push({ seq: item.seq, ...(Number.isFinite(item.at) ? { at: item.at } : {}), event: item.event })
     } catch {
       // a line cut by a crash: skipped
     }
@@ -174,7 +174,7 @@ export function createChatJournal({ dir, paneId, rotateBytes = ROTATE_BYTES, now
       try {
         const item = JSON.parse(line)
         if (item && Number.isSafeInteger(item.seq) && item.event && typeof item.event.type === 'string')
-          out.push({ seq: item.seq, event: item.event })
+          out.push({ seq: item.seq, ...(Number.isFinite(item.at) ? { at: item.at } : {}), event: item.event })
       } catch {
         // a line cut by a crash: skipped
       }
@@ -182,7 +182,8 @@ export function createChatJournal({ dir, paneId, rotateBytes = ROTATE_BYTES, now
     return out
   }
 
-  // -> the last `limit` entries, oldest first: [{ seq, event }].
+  // -> the last `limit` entries, oldest first: [{ seq, at?, event }] (at: when it
+  // was written, so a redrawn chat keeps its order and times).
   function read(limit = READ_LAST) {
     let items = readLines(file)
     if (items.length < limit) items = [...readLines(old), ...items]

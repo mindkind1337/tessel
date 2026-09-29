@@ -1,0 +1,71 @@
+/*
+ * Shared styles of the ui/ primitives (after Orca's components/ui/*.tsx,
+ * shadcn/ui, MIT, Copyright (c) 2026 Lovecast Inc.): tw-animate-css's
+ * animate-in / animate-out, driven by the same custom properties, so a
+ * content class only sets --nc-ui-enter-* / --nc-ui-exit-* values.
+ * Unscoped with nc-ui- class names: the primitives' classes also land on
+ * consumer elements (asChild) and on content teleported to <body>.
+ */
+@keyframes nc-ui-enter {
+  from {
+    opacity: var(--nc-ui-enter-opacity, 1);
+    transform: translate3d(var(--nc-ui-enter-x, 0), var(--nc-ui-enter-y, 0), 0)
+      scale3d(var(--nc-ui-enter-scale, 1), var(--nc-ui-enter-scale, 1), var(--nc-ui-enter-scale, 1));
+  }
+}
+@keyframes nc-ui-exit {
+  to {
+    opacity: var(--nc-ui-exit-opacity, 1);
+    transform: translate3d(var(--nc-ui-exit-x, 0), var(--nc-ui-exit-y, 0), 0)
+      scale3d(var(--nc-ui-exit-scale, 1), var(--nc-ui-exit-scale, 1), var(--nc-ui-exit-scale, 1));
+  }
+}
+
+/* animate-in / animate-out (tw-animate: 150ms ease by default). */
+.nc-ui-animate-in {
+  animation: nc-ui-enter var(--nc-ui-duration, 150ms) ease both;
+}
+.nc-ui-leave-active {
+  animation: nc-ui-exit var(--nc-ui-duration, 150ms) ease both;
+}
+
+/* slide-in-from-*-2 by the side the content was placed on. */
+.nc-ui-slide[data-side='bottom'] { --nc-ui-enter-y: -8px; }
+.nc-ui-slide[data-side='top'] { --nc-ui-enter-y: 8px; }
+.nc-ui-slide[data-side='left'] { --nc-ui-enter-x: 8px; }
+.nc-ui-slide[data-side='right'] { --nc-ui-enter-x: -8px; }
+
+/* sr-only */
+.nc-ui-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
+
+/* The reference's .scrollbar-sleek, for content that is itself the
+   .nc-root (orca-tokens.css only styles descendants of .nc-root). */
+.nc-ui-scrollbar-sleek {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--text-dim) 40%, transparent) transparent;
+}
+.nc-ui-scrollbar-sleek::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.nc-ui-scrollbar-sleek::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text-dim) 40%, transparent);
+  border-radius: 9999px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nc-ui-animate-in,
+  .nc-ui-leave-active {
+    animation: none;
+  }
+}
