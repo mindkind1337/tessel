@@ -15,7 +15,10 @@
 //   the same pane instead (the window is told); nothing is downloaded (the
 //   window offers the system browser instead); no permission is granted but
 //   writing to the clipboard (camera, microphone, location, notifications,
-//   screen sharing: refused, the window says so).
+//   screen sharing: refused, the window says so; full screen: refused
+//   silently, it would put all of Tessel's window in full screen).
+// - A new window only right after the user clicked or typed in the page (an
+//   ad frame opening one on its own is refused).
 // - Design Mode (pick an element, a screenshot) runs a script in the page
 //   (browserPicker.js); what comes back is untrusted and checked again here.
 import fs from 'fs'
@@ -31,9 +34,26 @@ const MAX_SCREENSHOT_BYTES = 8 * 1024 * 1024
 const CAPTURE_TIMEOUT_MS = 4000
 // Waiting for a click on the page.
 const PICK_TIMEOUT_MS = 10 * 60 * 1000
-// The only permissions a page gets: writing to the clipboard (a "Copy"
-// button) and full screen (a video player; it fills the pane, not the screen).
-const GRANTED_PERMISSIONS = new Set(['clipboard-sanitized-write', 'fullscreen'])
+// The only permission a page gets: writing to the clipboard (a "Copy"
+// button). Not full screen: it put the whole of Tessel's window in full screen.
+const GRANTED_PERMISSIONS = new Set(['clipboard-sanitized-write'])
+// Refused without telling the window: every video player asks for it.
+const SILENT_DENIALS = new Set(['fullscreen'])
+// A new window counts only this soon after the user's own click or key in
+// the page (a popup blocker's rule); later, or with none, it is refused.
+const POPUP_GESTURE_MS = 1500
+// The user's input that may open a window (what browsers call an activation).
+const GESTURE_INPUTS = new Set(['mouseDown', 'mouseUp', 'keyDown', 'rawKeyDown', 'touchStart', 'touchEnd', 'gestureTap', 'pointerDown', 'pointerUp'])
+// What the window may still choose for a page, the rest of its
+// webPreferences is dropped: display settings that grant nothing (zoom, spell
+// check, default text encoding, throttling when hidden) and two switches that
+// only take away (no dialogs, no popups).
+const KEPT_WEB_PREFERENCES = new Set(['zoomFactor', 'spellcheck', 'defaultEncoding', 'backgroundThrottling', 'disableDialogs', 'disablePopups'])
+// Screenshots and Design Mode messages (screenshotDir) kept this long.
+const KEEP_FILES_MS = 24 * 60 * 60 * 1000
+const OWN_FILE = /^browser-(?:\d+-[0-9a-f]{6}\.png|feedback-\d+-[0-9a-f]{6}\.md)$/i
+// A Design Mode message saved for an agent: at most this big (UTF-8).
+const MAX_FEEDBACK_BYTES = 512 * 1024
 // A page asking again and again: said once a minute per page and permission.
 const DENIED_NOTICE_MS = 60 * 1000
 // Keys the page keeps from the window (they would go to the page): the
@@ -76,7 +96,7 @@ export function createBrowserGuests({ getWindow, send, log = null, screenshotDir
     sessionReady = true
     ses.setPermissionRequestHandler((wc, permission, callback, details) => {
       const ok = GRANTED_PERMISSIONS.has(permission)
-      if (!ok && shouldTellDenied(wc, permission)) {
+      if (!ok && !SILENT_DENIALS.has(permission) && shouldTellDenied(wc, permission)) {
         send('browser:permissionDenied', {
           webContentsId: wc && !wc.isDestroyed() ? wc.id : null,
           permission: String(permission).slice(0, 60),
@@ -132,37 +152,81 @@ export function createBrowserGuests({ getWindow, send, log = null, screenshotDir
       return
     }
     browserSession()
-    delete webPreferences.preload
-    delete webPreferences.preloadURL
+    // Rebuilt from an allow-list rather than cleaned key by key: a setting
+    // Electron adds later (or one forgotten here) never reaches the page.
+    // Gone with it: preload, preloadURL, additionalArguments, session (only
+    // the partition below picks the page's session), enableBlinkFeatures...
+    for (const key of Object.keys(webPreferences)) {
+      if (!KEPT_WEB_PREFERENCES.has(key)) delete webPreferences[key]
+    }
     delete params.preload
-    delete webPreferences.additionalArguments
-    // Only the partition below picks the page's session.
-    delete webPreferences.session
-    webPreferences.nodeIntegration = false
-    webPreferences.nodeIntegrationInSubFrames = false
-    webPreferences.nodeIntegrationInWorker = false
-    webPreferences.contextIsolation = true
-    webPreferences.sandbox = true
-    webPreferences.webSecurity = true
-    webPreferences.allowRunningInsecureContent = false
-    webPreferences.experimentalFeatures = false
-    webPreferences.enableBlinkFeatures = ''
-    webPreferences.webviewTag = false
-    webPreferences.partition = BROWSER_PARTITION
-    webPreferences.disableHtmlFullscreenWindowResize = true
-    // alert() in a loop would hold Tessel's whole window: from the second
-    // dialog on, the page's dialogs can be turned off.
-    webPreferences.safeDialogs = true
+    Object.assign(webPreferences, {
+      nodeIntegration: false,
+      nodeIntegrationInSubFrames: false,
+      nodeIntegrationInWorker: false,
+      contextIsolation: true,
+      sandbox: true,
+      webSecurity: true,
+      allowRunningInsecureContent: false,
+      experimentalFeatures: false,
+      webviewTag: false,
+      plugins: false,
+      javascript: true,
+      partition: BROWSER_PARTITION,
+      disableHtmlFullscreenWindowResize: true,
+      // alert() in a loop would hold Tessel's whole window: from the second
+      // dialog on, the page's dialogs can be turned off.
+      safeDialogs: true
+    })
     params.src = src
   }
 
   // did-attach-webview: the page's own rules.
   function onDidAttach(_event, guest) {
+    // When the user last clicked or typed in the page, and whether Tessel's
+    // window was in full screen then (a page needs that click to ask for full
+    // screen, so it is the window's state from before the page's).
+    let gestureAt = 0
+    let windowWasFull = null
+    let popupWarned = false
+    const noteGesture = (type) => {
+      if (!GESTURE_INPUTS.has(type)) return
+      gestureAt = Date.now()
+      const win = getWindow()
+      windowWasFull = win && !win.isDestroyed() && typeof win.isFullScreen === 'function' ? win.isFullScreen() : null
+    }
+    guest.on('input-event', (_event, input) => noteGesture(input && input.type))
+    guest.on('before-mouse-event', (_event, mouse) => noteGesture(mouse && mouse.type))
+
     guest.setWindowOpenHandler(({ url }) => {
       // A link to a new window: opened in the same pane (the window decides).
       const target = allowedBrowserUrl(url)
-      if (target && target !== BLANK_URL) send('browser:popup', { webContentsId: guest.id, url: target })
+      if (!target || target === BLANK_URL) return { action: 'deny' }
+      // Only right after the user's own click or key, once per input: an ad
+      // frame opening windows on its own would take the pane away.
+      if (Date.now() - gestureAt > POPUP_GESTURE_MS) {
+        if (!popupWarned) warn(`blocked a new window without a click: ${target.slice(0, 200)}`)
+        popupWarned = true
+        return { action: 'deny' }
+      }
+      gestureAt = 0
+      send('browser:popup', { webContentsId: guest.id, url: target })
       return { action: 'deny' }
+    })
+
+    // Full screen is refused (the permission); a page that gets there anyway
+    // is taken out, and Tessel's window put back as it was.
+    const undoFullScreen = () => {
+      const win = getWindow()
+      if (!win || win.isDestroyed() || typeof win.isFullScreen !== 'function') return
+      if (windowWasFull !== true && win.isFullScreen()) win.setFullScreen(false)
+    }
+    guest.on('enter-html-full-screen', () => {
+      warn('a page went full screen: taken out of it')
+      if (!guest.isDestroyed()) guest.executeJavaScript('document.exitFullscreen && document.exitFullscreen()', false).catch(() => {})
+      undoFullScreen()
+      // The window may only get there a moment later.
+      setTimeout(undoFullScreen, 250)
     })
     const guard = (event, url) => {
       if (!allowedBrowserUrl(url)) {
@@ -177,6 +241,7 @@ export function createBrowserGuests({ getWindow, send, log = null, screenshotDir
       if (event.url && !allowedBrowserUrl(event.url) && !/^(about:|data:|blob:)/i.test(event.url)) event.preventDefault()
     })
     guest.on('before-input-event', (event, input) => {
+      if (input) noteGesture(input.type)
       const action = shortcutOf(input)
       if (!action) return
       event.preventDefault()
@@ -207,10 +272,17 @@ export function createBrowserGuests({ getWindow, send, log = null, screenshotDir
     win.webContents.on('did-attach-webview', onDidAttach)
   }
 
+  // Asked by Tessel's window, nothing else (browser:* channels are exempt
+  // from index.js's IPC guard: each handler checks here).
+  function fromWindow(event) {
+    const win = getWindow()
+    return !!(win && !win.isDestroyed() && event && event.sender === win.webContents)
+  }
+
   // A page of the browser shown in Tessel's window, asked for by the window.
   function guestFor(event, id) {
     const win = getWindow()
-    if (!win || win.isDestroyed() || event.sender !== win.webContents) return null
+    if (!fromWindow(event)) return null
     const guest = Number.isSafeInteger(id) ? webContents.fromId(id) : null
     if (!guest || guest.isDestroyed() || guest.getType() !== 'webview') return null
     if (guest.hostWebContents !== win.webContents) return null
@@ -219,6 +291,59 @@ export function createBrowserGuests({ getWindow, send, log = null, screenshotDir
   }
 
   // --- Design Mode ------------------------------------------------------------------
+  // Screenshots and saved messages older than a day go (they are only for
+  // pasting now): at start and at each new one.
+  function purgeOldFiles(now = Date.now()) {
+    let names
+    try {
+      names = fs.readdirSync(screenshotDir)
+    } catch {
+      return
+    }
+    for (const name of names) {
+      if (!OWN_FILE.test(name)) continue
+      const file = join(screenshotDir, name)
+      try {
+        const st = fs.lstatSync(file)
+        if (st.isFile() && now - st.mtimeMs > KEEP_FILES_MS) fs.unlinkSync(file)
+      } catch {}
+    }
+  }
+
+  // The Design Mode message, saved as a file the agent is told to read
+  // (rather than the page's text typed into its terminal).
+  // -> { ok: true, path } | { ok: false, code }
+  function saveFeedback(text) {
+    if (typeof text !== 'string' || !text.trim()) return { ok: false, code: 'invalid' }
+    if (text.length > MAX_FEEDBACK_BYTES || Buffer.byteLength(text, 'utf8') > MAX_FEEDBACK_BYTES) return { ok: false, code: 'too-big' }
+    try {
+      fs.mkdirSync(screenshotDir, { recursive: true })
+      purgeOldFiles()
+      const file = join(screenshotDir, `browser-feedback-${Date.now()}-${crypto.randomBytes(3).toString('hex')}.md`)
+      fs.writeFileSync(file, text, { encoding: 'utf8', flag: 'wx' })
+      return { ok: true, path: file }
+    } catch (err) {
+      warn(`saving a Design Mode message failed: ${err.message}`)
+      return { ok: false, code: 'failed' }
+    }
+  }
+
+  // Everything the browser's pages kept: cookies, storage, cache, HTTP
+  // authentication. Tessel's own session is not touched.
+  async function clearData() {
+    const ses = browserSession()
+    try {
+      await ses.clearStorageData()
+      await ses.clearCache()
+      await ses.clearAuthCache()
+      if (typeof ses.clearHostResolverCache === 'function') await ses.clearHostResolverCache()
+      return { ok: true }
+    } catch (err) {
+      warn(`clearing the browser data failed: ${err.message}`)
+      return { ok: false }
+    }
+  }
+
   function cancelPick(id) {
     const p = picking.get(id)
     if (p) p.cancel()
@@ -246,6 +371,7 @@ export function createBrowserGuests({ getWindow, send, log = null, screenshotDir
     const png = out.toPNG()
     if (png.length > MAX_SCREENSHOT_BYTES) return null
     fs.mkdirSync(screenshotDir, { recursive: true })
+    purgeOldFiles()
     const file = join(screenshotDir, `browser-${Date.now()}-${crypto.randomBytes(3).toString('hex')}.png`)
     fs.writeFileSync(file, png)
     const size = out.getSize()
@@ -326,10 +452,11 @@ export function createBrowserGuests({ getWindow, send, log = null, screenshotDir
       guest.openDevTools({ mode: 'detach' })
       return { ok: true }
     })
+    ipcMain.handle('browser:clearData', (event) => (fromWindow(event) ? clearData() : { ok: false }))
+    ipcMain.handle('browser:saveFeedback', (event, text) => (fromWindow(event) ? saveFeedback(text) : { ok: false, code: 'invalid' }))
     // A screenshot Tessel saved, onto the clipboard (paste it anywhere).
     ipcMain.handle('browser:copyImage', (event, file) => {
-      const win = getWindow()
-      if (!win || event.sender !== win.webContents) return { ok: false }
+      if (!fromWindow(event)) return { ok: false }
       if (!isScreenshot(file)) return { ok: false }
       const img = nativeImage.createFromPath(file)
       if (img.isEmpty()) return { ok: false }
@@ -345,7 +472,9 @@ export function createBrowserGuests({ getWindow, send, log = null, screenshotDir
     return /^browser-\d+-[0-9a-f]{6}\.png$/i.test(relative(screenshotDir, file)) && fs.existsSync(file)
   }
 
-  return { attachToWindow, register, onWillAttach, onDidAttach, guestFor, capture, pick, shortcutOf, isScreenshot, browserSession }
+  purgeOldFiles()
+
+  return { attachToWindow, register, onWillAttach, onDidAttach, guestFor, capture, pick, shortcutOf, isScreenshot, browserSession, purgeOldFiles, saveFeedback, clearData }
 }
 
 export { shortcutOf }

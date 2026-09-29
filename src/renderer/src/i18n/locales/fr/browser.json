@@ -35,7 +35,9 @@
       "screenshot": "Prendre une capture d'écran de la page",
       "devTools": "Ouvrir les outils de développement du navigateur (F12)",
       "devToolsLabel": "Ouvrir les outils de développement du navigateur",
-      "external": "Ouvrir dans le navigateur par défaut"
+      "external": "Ouvrir dans le navigateur par défaut",
+      "clearData": "Effacer les données de navigation (cookies, stockage des sites, cache)",
+      "clearDataLabel": "Effacer les données de navigation"
     },
     "empty": {
       "title": "Nouvel onglet",
@@ -82,6 +84,13 @@
     },
     "zoom": {
       "percent": "{{percent}} %"
+    },
+    "clearData": {
+      "title": "Effacer les données de navigation ?",
+      "text": "Les cookies, le stockage des sites et le cache du navigateur de Tessel sont supprimés pour tous les panneaux navigateur. Vous serez déconnecté des sites.",
+      "confirm": "Effacer",
+      "done": "Données de navigation effacées",
+      "failed": "Impossible d'effacer les données de navigation."
     }
   },
   "browserDesign": {
@@ -142,6 +151,7 @@
     "send": {
       "to": "Envoyer le retour à",
       "noAgent": "Aucun agent dans ce projet"
-    }
+    },
+    "saveFailed": "Impossible d'enregistrer le retour pour {{agent}}. Rien n'a été envoyé."
   }
 }

@@ -39,13 +39,40 @@ export const PICK_SAFE_ATTRIBUTES = Object.freeze([
   'title', 'placeholder', 'for', 'action', 'method'
 ])
 
-// Values containing one of these are replaced by '[redacted]'. Narrow on
-// purpose: broad words like 'code' or 'state' match ordinary class names.
+// Names and values containing one of these are replaced by '[redacted]'
+// (attribute names and values, ids, paths, labels, nearby text). Broad on
+// purpose: a class name or a label lost costs little, a leaked token a lot.
+// Still no 'code' or 'state': they match ordinary class names everywhere.
 export const PICK_SECRET_PATTERNS = Object.freeze([
-  'access_token', 'auth_token', 'api_key', 'apikey', 'client_secret',
-  'oauth_state', 'x-amz-', 'session_id', 'sessionid', 'csrf',
-  'secret', 'password', 'passwd'
+  'token', 'bearer', 'authorization', 'jwt', 'cookie',
+  'private_key', 'private-key', 'privatekey',
+  'accesstoken', 'access-token', 'access_token', 'auth_token',
+  'refresh_token', 'refresh-token', 'client_secret', 'client-secret',
+  'api_key', 'api-key', 'apikey', 'password', 'passwd', 'secret',
+  'session', 'csrf', 'xsrf', 'x-amz-', 'oauth_state'
 ])
+
+// Values that are secrets whatever they are called (API keys, tokens,
+// JWTs): cut out of any text, where they stand. Regex sources, shared with
+// the guest script.
+export const PICK_TOKEN_PATTERNS = Object.freeze([
+  String.raw`sk-ant-[A-Za-z0-9_-]{8,}`,
+  String.raw`\bsk-[A-Za-z0-9_-]{20,}`,
+  String.raw`\bgh[pousr]_[A-Za-z0-9]{20,}`,
+  String.raw`\bgithub_pat_[A-Za-z0-9_]{20,}`,
+  String.raw`\bxox[baprs]-[A-Za-z0-9-]{10,}`,
+  String.raw`\bAKIA[0-9A-Z]{16}\b`,
+  String.raw`\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]*`,
+  String.raw`\b(?:[Bb]earer|BEARER)\s+[A-Za-z0-9._~+/=-]{8,}`
+])
+
+// "password=hunter2", "token: abc", "Authorization: xyz": the value goes.
+// Bounded repeats: page text is long and must not make this slow.
+export const PICK_KEYED_PATTERN = String.raw`((?:token|secret|passw(?:or)?d|api[_-]?key|session|csrf|xsrf|jwt|cookie|authorization|private[_-]?key|credential|x-amz-[a-z-]{0,30})[A-Za-z0-9_-]{0,40})(\s{0,3}["']?\s{0,3}[:=]\s{0,3}["']?\s{0,3})([^\s"'<>&,;]{3,})`
+
+// A long unbroken run of letters and digits (a key, a hash, base64): redacted
+// when it mixes cases and digits or is hex (see looksLikeToken).
+export const PICK_RUN_PATTERN = String.raw`[A-Za-z0-9+_=-]{32,}`
 
 export const PICK_STYLE_PROPS = Object.freeze([
   'display', 'position', 'width', 'height', 'margin', 'padding',
@@ -67,6 +94,7 @@ const URL_ATTRIBUTES = ['href', 'src', 'action', 'formaction', 'poster']
 const GUEST_HELPERS = String.raw`
 var TEXT_NODE_SCAN_LIMIT = 80
 var NEARBY_ELEMENT_SCAN_LIMIT = 80
+var READ_SLACK = 80
 var SAFE_ATTR_SET = Object.create(null)
 for (var sai = 0; sai < SAFE_ATTRS.length; sai++) SAFE_ATTR_SET[SAFE_ATTRS[sai]] = true
 var URL_ATTR_SET = Object.create(null)
@@ -87,25 +115,72 @@ function containsSecret(value) {
   return false
 }
 
-// Page URL: http(s) only, without query or hash (tokens live there).
+var TOKEN_RE = new RegExp(TOKEN_SRC, 'g')
+var TOKEN_TEST = new RegExp(TOKEN_SRC)
+var KEYED_RE = new RegExp(KEYED_SRC, 'gi')
+var RUN_RE = new RegExp(RUN_SRC, 'g')
+// Never part of what an element says: code, styles, markup kept for later.
+var HIDDEN_TAGS = { script: true, style: true, noscript: true, template: true }
+
+function looksLikeToken(run) {
+  var hex = run.replace(/-/g, '')
+  if (hex.length >= 32 && /^[0-9a-f]+$/i.test(hex) && /\d/.test(hex) && /[a-f]/i.test(hex)) return true
+  return /\d/.test(run) && /[a-z]/.test(run) && /[A-Z]/.test(run)
+}
+
+// Tokens cut out of a text where they stand; the rest is kept.
+function redactTokens(value) {
+  var s = String(value || '')
+  if (!s) return s
+  s = s.replace(TOKEN_RE, '[redacted]')
+  s = s.replace(KEYED_RE, function (m, key, sep) { return key + sep + '[redacted]' })
+  return s.replace(RUN_RE, function (run) { return looksLikeToken(run) ? '[redacted]' : run })
+}
+
+// A path segment that is an id nobody should see (/reset/<token>, a hash).
+function looksLikePathToken(seg) {
+  if (seg.length < 20) return false
+  if (TOKEN_TEST.test(seg)) return true
+  if (!/^[A-Za-z0-9._~+=-]+$/.test(seg)) return false
+  var hex = seg.replace(/-/g, '')
+  if (/^[0-9a-f]+$/i.test(hex)) return true
+  return /\d/.test(seg) && /[a-z]/.test(seg) && /[A-Z]/.test(seg)
+}
+
+function redactPath(path) {
+  var parts = String(path).split('/')
+  for (var i = 0; i < parts.length; i++) {
+    if (looksLikePathToken(parts[i])) parts[i] = '[redacted]'
+  }
+  return parts.join('/')
+}
+
+// Page URL: http(s) only, without query, hash or user:password (tokens live
+// there), token-like path segments redacted.
 function sanitizeUrl(url) {
   try {
     var u = new URL(url)
     if (u.protocol !== 'http:' && u.protocol !== 'https:') return ''
-    u.search = ''
-    u.hash = ''
-    return clampStr(u.toString(), BUDGET.url)
+    return clampStr(u.origin + redactPath(u.pathname), BUDGET.url)
   } catch (e) {
     return ''
   }
 }
 
-// URL attribute (often relative): drop script/data schemes, cut query and hash.
+// URL attribute (often relative): drop script/data schemes, cut query, hash
+// and user:password, redact token-like path segments.
 function stripUrlAttr(value) {
   var v = String(value || '').trim()
   if (/^(?:javascript|vbscript|data):/i.test(v.replace(/[\s\u0000-\u001f]+/g, ''))) return ''
   var cut = v.search(/[?#]/)
-  return cut === -1 ? v : v.slice(0, cut)
+  if (cut !== -1) v = v.slice(0, cut)
+  v = v.replace(/^([a-z][a-z0-9+.-]*:)?\/\/[^\/@]*@/i, function (m, scheme) { return (scheme || '') + '//' })
+  return redactPath(v)
+}
+
+// srcset: "a.png?sig=1 1x, b.png 2x"; each URL cut like stripUrlAttr.
+function stripSrcset(value) {
+  return redactTokens(String(value || '').replace(/[?#][^\s,]*/g, ''))
 }
 
 function createTextAccumulator() {
@@ -124,7 +199,7 @@ function appendTextSeparator(acc) {
 }
 
 function appendNormalizedText(acc, text, max) {
-  var limit = max + 20
+  var limit = max + READ_SLACK
   var value = String(text || '')
   for (var i = 0; i < value.length && acc.text.length < limit; i++) {
     var code = value.charCodeAt(i)
@@ -141,21 +216,45 @@ function appendNormalizedText(acc, text, max) {
   }
 }
 
+// Redacted before it is cut, so a token cut in half is still found: the
+// text read goes READ_SLACK characters past the budget.
 function finishAccumulatedText(acc, max) {
-  return clampStr(acc.text, max)
+  return clampStr(redactTokens(acc.text), max)
 }
 
-// Whitespace-collapsed text of an element, reading only what fits the budget.
+function isHiddenTag(node) {
+  return !!(node && node.nodeType === 1 && HIDDEN_TAGS[String(node.tagName).toLowerCase()])
+}
+
+// A text node inside a script, style, noscript or template (up to root).
+function inHiddenTag(node, root) {
+  var current = node.parentNode
+  for (var depth = 0; current && depth < 100; depth++) {
+    if (isHiddenTag(current)) return true
+    if (current === root) return false
+    current = current.parentNode
+  }
+  return false
+}
+
+// Whitespace-collapsed text of an element, reading only what fits the budget,
+// never what a script, style, noscript or template holds.
 function getBoundedText(el, max) {
   try {
-    var walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT)
+    if (isHiddenTag(el)) return ''
+    var walker = document.createTreeWalker(el, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
+      acceptNode: function (node) {
+        if (node.nodeType === 3) return NodeFilter.FILTER_ACCEPT
+        return isHiddenTag(node) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_SKIP
+      }
+    })
     var acc = createTextAccumulator()
     var inspected = 0
     var node = walker.nextNode()
-    while (node && acc.text.length < max + 20 && inspected < TEXT_NODE_SCAN_LIMIT) {
+    while (node && acc.text.length < max + READ_SLACK && inspected < TEXT_NODE_SCAN_LIMIT) {
       inspected++
       appendTextSeparator(acc)
-      var remaining = max + 20 - acc.text.length - (acc.pendingSpace ? 1 : 0)
+      var remaining = max + READ_SLACK - acc.text.length - (acc.pendingSpace ? 1 : 0)
       if (remaining <= 0) break
       appendNormalizedText(acc, (node.nodeValue || '').slice(0, remaining), max)
       node = walker.nextNode()
@@ -173,21 +272,23 @@ function getSelectedText() {
     var acc = createTextAccumulator()
     var inspected = 0
     var max = BUDGET.selectedText
-    for (var i = 0; i < selection.rangeCount && acc.text.length < max + 20; i++) {
+    for (var i = 0; i < selection.rangeCount && acc.text.length < max + READ_SLACK; i++) {
       var range = selection.getRangeAt(i)
       var walkerRoot = range.commonAncestorContainer
       var walker = document.createTreeWalker(walkerRoot, NodeFilter.SHOW_TEXT, {
         acceptNode: function (node) {
           if (range.intersectsNode && !range.intersectsNode(node)) return NodeFilter.FILTER_REJECT
+          if (inHiddenTag(node, null)) return NodeFilter.FILTER_REJECT
           return NodeFilter.FILTER_ACCEPT
         }
       })
       var node = walkerRoot.nodeType === Node.TEXT_NODE ? walkerRoot : walker.nextNode()
-      while (node && acc.text.length < max + 20 && inspected < TEXT_NODE_SCAN_LIMIT) {
+      if (node && node === walkerRoot && inHiddenTag(node, null)) node = null
+      while (node && acc.text.length < max + READ_SLACK && inspected < TEXT_NODE_SCAN_LIMIT) {
         inspected++
         var value = node.nodeValue || ''
         appendTextSeparator(acc)
-        var remaining = max + 20 - acc.text.length - (acc.pendingSpace ? 1 : 0)
+        var remaining = max + READ_SLACK - acc.text.length - (acc.pendingSpace ? 1 : 0)
         if (remaining <= 0) break
         if (value) {
           var start = node === range.startContainer ? range.startOffset : 0
@@ -205,40 +306,53 @@ function getSelectedText() {
   }
 }
 
-// Scripts removed; secret-looking attributes, hidden/password input values
-// and URL queries scrubbed, since the snippet goes to an agent verbatim.
+// Scripts, styles, noscript, templates and comments removed; data-*
+// attributes dropped; values (what someone typed), secret-looking attributes,
+// URL queries and tokens scrubbed, since the snippet goes to an agent verbatim.
 function scrubClone(root) {
   var nodes = [root]
   var inner = root.querySelectorAll ? root.querySelectorAll('*') : []
   for (var i = 0; i < inner.length && nodes.length < 5000; i++) nodes.push(inner[i])
+  try {
+    var comments = document.createTreeWalker(root, NodeFilter.SHOW_COMMENT)
+    var dead = []
+    for (var c = comments.nextNode(); c && dead.length < 5000; c = comments.nextNode()) dead.push(c)
+    for (var d = 0; d < dead.length; d++) if (dead[d].parentNode) dead[d].parentNode.removeChild(dead[d])
+  } catch (e) {}
   for (var n = 0; n < nodes.length; n++) {
     var node = nodes[n]
     var tag = node.tagName ? node.tagName.toLowerCase() : ''
-    if (tag === 'script') {
+    if (HIDDEN_TAGS[tag]) {
       if (node.parentNode) node.parentNode.removeChild(node)
       continue
     }
+    if (tag === 'textarea' && node.textContent) node.textContent = '[redacted]'
     var attrs = node.attributes ? Array.prototype.slice.call(node.attributes) : []
-    var type = tag === 'input' ? String(node.getAttribute('type') || '').toLowerCase() : ''
     for (var a = 0; a < attrs.length; a++) {
       var name = attrs[a].name
       var lower = name.toLowerCase()
       var value = attrs[a].value
-      if (lower === 'value' && (type === 'password' || type === 'hidden')) {
+      if (lower.indexOf('data-') === 0) {
+        node.removeAttribute(name)
+      } else if (lower === 'value' || containsSecret(lower) || containsSecret(value)) {
         node.setAttribute(name, '[redacted]')
-      } else if (containsSecret(lower) || containsSecret(value)) {
-        node.setAttribute(name, '[redacted]')
+      } else if (lower === 'srcset') {
+        node.setAttribute(name, stripSrcset(value))
       } else if (URL_ATTR_SET[lower] && value) {
         node.setAttribute(name, stripUrlAttr(value))
+      } else if (value) {
+        var clean = redactTokens(value)
+        if (clean !== value) node.setAttribute(name, clean)
       }
     }
   }
 }
 
 function getHtmlSnippet(el) {
+  if (isHiddenTag(el)) return ''
   var clone = el.cloneNode(true)
   scrubClone(clone)
-  return clampStr(clone.outerHTML || '', BUDGET.html)
+  return clampStr(redactTokens(clone.outerHTML || ''), BUDGET.html)
 }
 
 function getSafeAttributes(el) {
@@ -250,14 +364,14 @@ function getSafeAttributes(el) {
     var isAria = name.indexOf('aria-') === 0
     if (!SAFE_ATTR_SET[name] && !isAria) continue
     var value = attr.value
-    if (containsSecret(value)) {
+    if (containsSecret(name) || containsSecret(value)) {
       attrs[name] = '[redacted]'
     } else if (URL_ATTR_SET[name] && value) {
       attrs[name] = clampStr(stripUrlAttr(value), BUDGET.attributeValue)
     } else if (name === 'class') {
-      attrs[name] = clampStr(value, BUDGET.classAttribute)
+      attrs[name] = clampStr(redactTokens(value), BUDGET.classAttribute)
     } else {
-      attrs[name] = clampStr(value, BUDGET.attributeValue)
+      attrs[name] = clampStr(redactTokens(value), BUDGET.attributeValue)
     }
     count++
   }
@@ -309,9 +423,10 @@ function getAccessibility(el) {
     }
   }
   if (accessibleName && containsSecret(accessibleName)) accessibleName = '[redacted]'
+  if (role && containsSecret(role)) role = '[redacted]'
   return {
-    role: clampStr(role, BUDGET.role) || null,
-    accessibleName: clampStr(accessibleName, BUDGET.accessibleName) || null
+    role: clampStr(redactTokens(role), BUDGET.role) || null,
+    accessibleName: clampStr(redactTokens(accessibleName), BUDGET.accessibleName) || null
   }
 }
 
@@ -442,8 +557,9 @@ function getNearbyText(el) {
   var results = []
   if (!el.parentElement) return results
   function addSiblingText(sibling) {
+    if (isHiddenTag(sibling)) return
     var text = getBoundedText(sibling, BUDGET.nearbyTextEntry)
-    if (text) results.push(text)
+    if (text) results.push(containsSecret(text) ? '[redacted]' : text)
   }
   var inspected = 0
   var previous = el.previousElementSibling
@@ -471,7 +587,8 @@ function getAncestorPath(el) {
   while (current && current !== document.documentElement && path.length < BUDGET.ancestors) {
     var tag = current.tagName.toLowerCase()
     var role = current.getAttribute('role')
-    path.push(clampStr(role ? tag + '[role=' + role + ']' : tag, BUDGET.ancestorEntry))
+    if (role && containsSecret(role)) role = null
+    path.push(clampStr(redactTokens(role ? tag + '[role=' + role + ']' : tag), BUDGET.ancestorEntry))
     current = current.parentElement
   }
   return path
@@ -565,9 +682,10 @@ function extractPayload(el) {
   var react = getReactMetadata(el)
   var a11y = getAccessibility(el)
   var classAttr = el.getAttribute('class') || ''
+  var selected = getSelectedText()
   return {
     url: sanitizeUrl(window.location.href),
-    title: clampStr(document.title || '', BUDGET.title),
+    title: clampStr(redactTokens(document.title || ''), BUDGET.title),
     viewport: { width: window.innerWidth, height: window.innerHeight },
     scroll: { x: window.scrollX, y: window.scrollY },
     devicePixelRatio: window.devicePixelRatio || 1,
@@ -576,11 +694,11 @@ function extractPayload(el) {
       selector: buildSelector(el),
       path: buildReadablePath(el),
       fullPath: buildFullPath(el),
-      classes: containsSecret(classAttr) ? '[redacted]' : clampStr(classAttr, BUDGET.classes),
+      classes: containsSecret(classAttr) ? '[redacted]' : clampStr(redactTokens(classAttr), BUDGET.classes),
       role: a11y.role,
       accessibleName: a11y.accessibleName,
       text: getBoundedText(el, BUDGET.text),
-      selectedText: getSelectedText() || null,
+      selectedText: selected ? (containsSecret(selected) ? '[redacted]' : selected) : null,
       html: getHtmlSnippet(el),
       attributes: getSafeAttributes(el),
       rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
@@ -698,7 +816,10 @@ return await new NativePromise(function (resolve) {
     if (!frame && !done) frame = raf(draw)
   }
 
+  // Only the user's own pointer and keys count (isTrusted): the page can
+  // dispatch events of its own, and must not move the pick nor make it.
   function onMove(e) {
+    if (!e.isTrusted) return
     hoverEl = hitTest(e.clientX, e.clientY)
     schedule()
   }
@@ -707,12 +828,13 @@ return await new NativePromise(function (resolve) {
     schedule()
   }
 
-  // The page never sees the pick: every pointer event stops at the overlay.
+  // The page never sees the pick: every pointer event stops at the overlay,
+  // the page's own too (they only never pick).
   function onBlock(e) {
     e.preventDefault()
     e.stopPropagation()
     e.stopImmediatePropagation()
-    if (e.type !== 'click' || done) return
+    if (!e.isTrusted || e.type !== 'click' || done) return
     var el = hoverEl && hoverEl.isConnected ? hoverEl : hitTest(e.clientX, e.clientY)
     if (!el) return
     var payload = null
@@ -726,7 +848,7 @@ return await new NativePromise(function (resolve) {
   }
 
   function onKey(e) {
-    if (e.key !== 'Escape' && e.key !== 'Esc') return
+    if (!e.isTrusted || (e.key !== 'Escape' && e.key !== 'Esc')) return
     e.preventDefault()
     e.stopPropagation()
     e.stopImmediatePropagation()
@@ -792,6 +914,9 @@ function wrap (body) {
     'var SECRET_PATTERNS = ' + JSON.stringify(PICK_SECRET_PATTERNS),
     'var STYLE_PROPS = ' + JSON.stringify(PICK_STYLE_PROPS),
     'var URL_ATTRS = ' + JSON.stringify(URL_ATTRIBUTES),
+    'var TOKEN_SRC = ' + JSON.stringify(PICK_TOKEN_PATTERNS.join('|')),
+    'var KEYED_SRC = ' + JSON.stringify(PICK_KEYED_PATTERN),
+    'var RUN_SRC = ' + JSON.stringify(PICK_RUN_PATTERN),
     'var HOST_ID = ' + JSON.stringify(PICK_HOST_ID),
     body,
     '})()'
@@ -817,6 +942,19 @@ export function pickerScript (action) {
 
 const SAFE_ATTRIBUTE_SET = new Set(PICK_SAFE_ATTRIBUTES)
 const URL_ATTRIBUTE_SET = new Set(URL_ATTRIBUTES)
+const TOKEN_RE = new RegExp(PICK_TOKEN_PATTERNS.join('|'), 'g')
+const TOKEN_TEST = new RegExp(PICK_TOKEN_PATTERNS.join('|'))
+const KEYED_RE = new RegExp(PICK_KEYED_PATTERN, 'gi')
+const RUN_RE = new RegExp(PICK_RUN_PATTERN, 'g')
+// What a string is read up to before it is redacted and cut to its budget
+// (redacted first, so a token cut in half is still found).
+const SCAN_MAX = 64 * 1024
+// Code, styles, markup kept for later and comments: never in the snippet.
+const HIDDEN_BLOCKS = /<(script|style|noscript|template)\b[\s\S]*?(?:<\/\1\s*>|$)/gi
+const COMMENTS = /<!--[\s\S]*?(?:-->|$)/g
+const TEXTAREAS = /(<textarea\b[^>]{0,2048}>)([\s\S]*?)(<\/textarea\s*>|$)/gi
+// name="value" / name='value' (bounded repeats: the html is untrusted).
+const HTML_ATTRIBUTES = /(\s)([^\s"'<>/=]{1,100})(\s{0,5}=\s{0,5})("[^"]{0,4096}"|'[^']{0,4096}')/g
 
 function isObject (value) {
   return !!value && typeof value === 'object' && !Array.isArray(value)
@@ -836,9 +974,35 @@ function containsSecret (value) {
   return PICK_SECRET_PATTERNS.some((p) => lower.includes(p))
 }
 
+function looksLikeToken (run) {
+  const hex = run.replace(/-/g, '')
+  if (hex.length >= 32 && /^[0-9a-f]+$/i.test(hex) && /\d/.test(hex) && /[a-f]/i.test(hex)) return true
+  return /\d/.test(run) && /[a-z]/.test(run) && /[A-Z]/.test(run)
+}
+
+// Tokens (API keys, JWTs, "password=..." values, long random runs) cut out
+// of a text where they stand; the rest is kept. The guest does the same, but
+// main never trusts it.
+export function redactSecrets (value) {
+  if (typeof value !== 'string' || !value) return ''
+  return value
+    .replace(TOKEN_RE, '[redacted]')
+    .replace(KEYED_RE, (_m, key, sep) => `${key}${sep}[redacted]`)
+    .replace(RUN_RE, (run) => (looksLikeToken(run) ? '[redacted]' : run))
+}
+
+function scanStr (value) {
+  return typeof value === 'string' ? value.slice(0, SCAN_MAX) : ''
+}
+
+// Free text (the element's text, the page title): tokens redacted, then cut.
+function textStr (value, max) {
+  return clampStr(redactSecrets(scanStr(value)), max)
+}
+
 // Metadata that could echo a secret is dropped whole, not trimmed.
 function metaStr (value, max) {
-  const s = clampStr(value, max)
+  const s = textStr(value, max)
   return s && containsSecret(s) ? '[redacted]' : s
 }
 
@@ -846,25 +1010,65 @@ function nullableMeta (value, max) {
   return metaStr(value, max) || null
 }
 
+// A path segment that is an id nobody should see (/reset/<token>, a hash).
+function looksLikePathToken (seg) {
+  if (seg.length < 20) return false
+  if (TOKEN_TEST.test(seg)) return true
+  if (!/^[A-Za-z0-9._~+=-]+$/.test(seg)) return false
+  if (/^[0-9a-f]+$/i.test(seg.replace(/-/g, ''))) return true
+  return /\d/.test(seg) && /[a-z]/.test(seg) && /[A-Z]/.test(seg)
+}
+
+function redactPath (path) {
+  return path.split('/').map((seg) => (looksLikePathToken(seg) ? '[redacted]' : seg)).join('/')
+}
+
+// http(s) only, without query, hash or user:password; token-like path
+// segments redacted.
 function sanitizeUrl (value) {
   // A huge string is not a URL anyone typed; do not parse it.
   if (typeof value !== 'string' || !value || value.length > 64 * 1024) return ''
   try {
     const url = new URL(value)
     if (url.protocol !== 'http:' && url.protocol !== 'https:') return ''
-    url.search = ''
-    url.hash = ''
-    return clampStr(url.toString(), PICK_BUDGET.url)
+    return clampStr(url.origin + redactPath(url.pathname), PICK_BUDGET.url)
   } catch {
     return ''
   }
 }
 
 function stripUrlAttr (value) {
-  const v = value.trim()
+  let v = value.trim()
   if (/^(?:javascript|vbscript|data):/i.test(v.replace(/[\s\u0000-\u001f]+/g, ''))) return ''
   const cut = v.search(/[?#]/)
-  return cut === -1 ? v : v.slice(0, cut)
+  if (cut !== -1) v = v.slice(0, cut)
+  v = v.replace(/^([a-z][a-z0-9+.-]*:)?\/\/[^/@]*@/i, (_m, scheme) => `${scheme || ''}//`)
+  return redactPath(v)
+}
+
+function stripSrcset (value) {
+  return redactSecrets(value.replace(/[?#][^\s,]*/g, ''))
+}
+
+// The snippet again, as a string: the rules of the guest's scrubClone.
+function scrubHtml (value) {
+  const html = scanStr(value)
+    .replace(COMMENTS, '')
+    .replace(HIDDEN_BLOCKS, '')
+    .replace(TEXTAREAS, (_m, open, body, close) => `${open}${body ? '[redacted]' : ''}${close}`)
+    .replace(HTML_ATTRIBUTES, (all, space, name, eq, quoted) => {
+      const lower = name.toLowerCase()
+      if (lower.startsWith('data-')) return ''
+      const q = quoted[0]
+      const v = quoted.slice(1, -1)
+      let out
+      if (lower === 'value' || containsSecret(lower) || containsSecret(v)) out = '[redacted]'
+      else if (lower === 'srcset') out = stripSrcset(v)
+      else if (URL_ATTRIBUTE_SET.has(lower)) out = stripUrlAttr(v)
+      else return all
+      return `${space}${name}${eq}${q}${out}${q}`
+    })
+  return clampStr(redactSecrets(html), PICK_BUDGET.html)
 }
 
 // Re-filter names (no event handlers or odd keys) and values.
@@ -879,10 +1083,10 @@ function safeAttributes (attrs) {
     if (!isAria && !SAFE_ATTRIBUTE_SET.has(name)) continue
     if (typeof value !== 'string') continue
     const long = value.length > 2000 ? value.slice(0, 2000) : value
-    if (containsSecret(long)) out[name] = '[redacted]'
+    if (containsSecret(name) || containsSecret(long)) out[name] = '[redacted]'
     else if (URL_ATTRIBUTE_SET.has(name) && long) out[name] = clampStr(stripUrlAttr(long), PICK_BUDGET.attributeValue)
-    else if (name === 'class') out[name] = clampStr(long, PICK_BUDGET.classAttribute)
-    else out[name] = clampStr(long, PICK_BUDGET.attributeValue)
+    else if (name === 'class') out[name] = textStr(long, PICK_BUDGET.classAttribute)
+    else out[name] = textStr(long, PICK_BUDGET.attributeValue)
     count++
   }
   return out
@@ -896,7 +1100,7 @@ function safeRect (rect) {
 function safeStyles (styles) {
   const s = isObject(styles) ? styles : {}
   const out = {}
-  for (const prop of PICK_STYLE_PROPS) out[prop] = clampStr(s[prop], PICK_BUDGET.styleValue)
+  for (const prop of PICK_STYLE_PROPS) out[prop] = textStr(s[prop], PICK_BUDGET.styleValue)
   return out
 }
 
@@ -920,21 +1124,21 @@ function clampUnsafe (raw) {
   const dpr = num(raw.devicePixelRatio, 1)
   return {
     url: sanitizeUrl(raw.url),
-    title: clampStr(raw.title, PICK_BUDGET.title),
+    title: textStr(raw.title, PICK_BUDGET.title),
     viewport: { width: num(viewport.width), height: num(viewport.height) },
     scroll: { x: num(scroll.x), y: num(scroll.y) },
     devicePixelRatio: dpr > 0 ? dpr : 1,
     element: {
       tag,
-      selector: clampStr(el.selector, PICK_BUDGET.selector),
+      selector: textStr(el.selector, PICK_BUDGET.selector),
       path: metaStr(el.path, PICK_BUDGET.path),
       fullPath: metaStr(el.fullPath, PICK_BUDGET.path),
       classes: metaStr(el.classes, PICK_BUDGET.classes),
       role: nullableMeta(el.role, PICK_BUDGET.role),
       accessibleName: nullableMeta(el.accessibleName, PICK_BUDGET.accessibleName),
-      text: clampStr(el.text, PICK_BUDGET.text),
+      text: textStr(el.text, PICK_BUDGET.text),
       selectedText: nullableMeta(el.selectedText, PICK_BUDGET.selectedText),
-      html: clampStr(el.html, PICK_BUDGET.html),
+      html: scrubHtml(el.html),
       attributes: safeAttributes(el.attributes),
       rect: safeRect(el.rect),
       styles: safeStyles(el.styles),
