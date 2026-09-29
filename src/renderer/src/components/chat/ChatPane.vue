@@ -410,7 +410,13 @@ defineExpose({ start, send, interrupt, focusPendingApproval })
     >
       <div class="pane-nav-left">
         <span v-if="node.num" class="pane-num" :title="t('editor.pane.number', 'Pane #{{num}}', { num: node.num })">{{ node.num }}</span>
-        <span class="pane-icon agent" :class="[iconState, { yolo }]" :aria-label="title">
+        <span
+          class="pane-icon agent"
+          :class="[iconState, { yolo }]"
+          :aria-label="title"
+          data-test="chat-icon"
+          :title="yolo ? t('chat.pane.yoloHint', 'Tools run without asking (Settings)') : undefined"
+        >
           <BrandIcon :kind="agentId" :size="15" />
           <span class="pane-status-dot"></span>
         </span>
@@ -419,7 +425,6 @@ defineExpose({ start, send, interrupt, focusPendingApproval })
           <span class="chat-status-dot" aria-hidden="true"></span>{{ statusLabel }}
         </span>
         <span v-if="modelText" class="chat-model" data-test="chat-model">{{ modelText }}</span>
-        <span v-if="yolo" class="chat-badge yolo" data-test="chat-permissions" :title="t('chat.pane.yoloHint', 'Tools run without asking (Settings)')">Yolo</span>
         <span
           v-if="agentId === 'codex' && !yolo"
           class="chat-badge mcp"
@@ -583,11 +588,6 @@ defineExpose({ start, send, interrupt, focusPendingApproval })
   background: color-mix(in srgb, var(--warn) 16%, transparent);
   color: var(--warn);
   white-space: nowrap;
-}
-
-.chat-badge.yolo {
-  background: color-mix(in srgb, var(--danger) 18%, transparent);
-  color: var(--danger);
 }
 
 .chat-rate {
