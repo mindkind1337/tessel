@@ -212,7 +212,19 @@
       "howTo": "Comment l'utiliser",
       "howToIntro": "Dites à l'agent qui mène l'équipe, dans vos propres mots, par exemple :",
       "copied": "Copié",
-      "copy": "Copier"
+      "copy": "Copier",
+      "workers": "Coordinateur et exécutants",
+      "workersIntro": "Le chef d'une équipe peut lancer des exécutants : de nouveaux agents dans de nouveaux panneaux de son projet, chacun avec sa carte, ses consignes et, par défaut, sa propre copie du projet. Ils rejoignent l'équipe, rendent compte une fois terminé et envoient un signal de vie pendant qu'ils travaillent. Chaque lancement apparaît sur le tableau et dans Activité.",
+      "setupAgents": "Agents qui peuvent être exécutants : {{agents}}",
+      "setupNoAgents": "Aucun agent pouvant être exécutant n'est prêt (Claude Code, Codex, Gemini ou Qwen, avec les outils d'équipe)",
+      "setupTeam": "Formez une équipe dans Sessions et choisissez son chef (clic droit sur un agent, Nommer chef)",
+      "setupAsk": "Demandez au chef de coordonner des exécutants (voir « Coordonner des exécutants » plus bas)",
+      "confirmWorkers": "Demander avant qu’un agent lance des exécutants",
+      "confirmWorkersHint": "Chaque exécutant attend dans le panneau Tâches que vous l'autorisiez. Désactivé : les exécutants démarrent aussitôt, dans les limites ci-dessous",
+      "maxWorkers": "Exécutants à la fois",
+      "maxWorkersHint": "Par coordinateur (1 à {{max}}) ; les autres attendent dans une file et démarrent quand l'un se termine",
+      "maxDepth": "Profondeur des exécutants imbriqués",
+      "maxDepthHint": "1 : les exécutants du chef ne peuvent pas lancer leurs propres exécutants ; 2 : ils le peuvent, une fois ; jusqu'à {{max}}"
     },
     "voice": {
       "language": "Langue",

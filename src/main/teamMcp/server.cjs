@@ -8,6 +8,11 @@
 //   team_members()           who is in my team
 //   team_tasks() / team_task_add({title, assignee, column}) / team_task_move({id, column})
 //                            the team's task board (applied by Tessel)
+//   team_worker_start / _list / _read / _stop / _release, team_worker_done,
+//   team_heartbeat, team_gates
+//                            orchestration: a coordinator (the team's lead)
+//                            starts workers in new panes (Orca's
+//                            coordinator and workers, the Tessel way)
 //
 // Tessel stays the only writer of the channel's state.json: this server only
 // reads it, sends by dropping a file into my outbox (Tessel takes it in), and
@@ -25,7 +30,7 @@ const fs = require('fs')
 const path = require('path')
 const { randomUUID } = require('crypto')
 
-const VERSION = '1.7.1'
+const VERSION = '1.8.0'
 const MAX_TEXT = 6000
 
 // --- Finding my team and me ---------------------------------------------------
@@ -496,6 +501,146 @@ async function ask(ctx, args, signal = null) {
   }
 }
 
+// --- Orchestration: workers -------------------------------------------------------
+// A coordinator (the team's lead, or a worker allowed to nest) asks Tessel to
+// start, stop, release or read its workers; a worker reports done and sends
+// heartbeats. Each is a request file like the board's; for the ones that
+// answer, Tessel writes <team>/answers/<rid>.json, which the tool waits for.
+// The rules (who may, how many at once, how deep, the user's confirmation)
+// are Tessel's (src/shared/orchestration.js); this only checks the shape.
+const WORKER_AGENTS = ['claude', 'codex', 'gemini', 'qwen']
+const HEARTBEAT_PHASES = ['investigating', 'implementing', 'reviewing', 'waiting']
+const ANSWER_WAIT_S = 30
+const FLAG_VALUE = /^[A-Za-z0-9._:[\]-]{1,60}$/
+
+const newRid = () => `r-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+
+// Tessel's answer to a request: its text, or null once `seconds` passed.
+async function waitAnswer(ctx, rid, seconds, signal = null) {
+  const file = path.join(ctx.root, 'answers', `${rid}.json`)
+  const until = Date.now() + seconds * 1000
+  for (;;) {
+    if (signal && signal.aborted) return { error: 'Cancelled.' }
+    const a = readJson(file)
+    if (a && a.rid === rid) {
+      try {
+        fs.rmSync(file, { force: true })
+      } catch {
+        // cleaned up by Tessel later
+      }
+      return a.ok === false ? { error: String(a.text || 'Refused.') } : { ok: true, text: String(a.text || 'Done.') }
+    }
+    if (Date.now() >= until) return { ok: true, text: null }
+    await sleep(500)
+  }
+}
+
+// Sent, then Tessel's answer (or, when it takes longer, where it will come).
+async function workerRequest(ctx, data, signal, later) {
+  const rid = newRid()
+  taskRequest(ctx, { ...data, rid })
+  const a = await waitAnswer(ctx, rid, ANSWER_WAIT_S, signal)
+  if (a.error) return a
+  return { ok: true, text: a.text || later }
+}
+
+function workerHandle(v) {
+  const m = /^#?(\d{1,3})$/.exec(String(v == null ? '' : v).trim())
+  return m ? `#${m[1]}` : null
+}
+
+function workerStart(ctx, args, signal) {
+  const agent = String(args.agent || '').trim().toLowerCase()
+  if (!WORKER_AGENTS.includes(agent)) return { error: `"agent" must be one of ${WORKER_AGENTS.join(', ')}.` }
+  const title = String(args.task || args.title || '').replace(/\s+/g, ' ').trim()
+  if (!title) return { error: 'Give the worker\'s "task": a short title for its card.' }
+  if (title.length > 200) return { error: 'The task title is too long (at most 200 characters).' }
+  const brief = String(args.brief || '').trim()
+  if (!brief) return { error: 'Give the worker a "brief": what to do, where, and how to check it.' }
+  if (brief.length > 4000) return { error: 'The brief is too long (at most 4000 characters).' }
+  const isolation = String(args.isolation || 'worktree').toLowerCase()
+  if (isolation !== 'worktree' && isolation !== 'project') return { error: '"isolation" must be "worktree" (its own copy) or "project".' }
+  for (const k of ['model', 'effort'])
+    if (args[k] != null && args[k] !== '' && !FLAG_VALUE.test(String(args[k]))) return { error: `"${k}" must be a plain name.` }
+  const deps = listArg(args.after)
+  if (deps.length > 10 || deps.some((d) => !CARD_ID.test(d))) return { error: '"after" must be up to 10 card ids (see team_tasks).' }
+  const data = { action: 'worker-start', agent, title, brief, isolation }
+  if (args.model) data.model = String(args.model)
+  if (args.effort) data.effort = String(args.effort)
+  if (deps.length) data.deps = deps
+  return workerRequest(ctx, data, signal, 'Sent to Tessel. It has not answered yet: you will hear in team_inbox when the worker starts (or why not). Check with team_worker_list.')
+}
+
+function workerAction(action, ctx, args, signal) {
+  const all = action === 'worker-stop' && String(args.worker || '').trim().toLowerCase() === 'all'
+  const worker = all ? 'all' : workerHandle(args.worker)
+  if (!worker) return { error: 'Give the "worker", like "#5" (see team_worker_list).' }
+  const data = { action, worker }
+  if (action === 'worker-stop' && args.reason) data.reason = String(args.reason).slice(0, 300)
+  if (action === 'worker-read') data.lines = Math.min(200, Math.max(1, Number(args.lines) || 60))
+  return workerRequest(ctx, data, signal, 'Sent to Tessel. It has not answered yet: check with team_worker_list in a moment.')
+}
+
+function workerDone(ctx, args) {
+  const outcome = String(args.outcome || 'succeeded').toLowerCase()
+  if (outcome !== 'succeeded' && outcome !== 'failed') return { error: '"outcome" must be "succeeded" or "failed".' }
+  const summary = String(args.summary || '').trim()
+  if (!summary) return { error: 'Give a "summary": what you did, what you found, what is left (3 sentences).' }
+  if (summary.length > 2000) return { error: 'The summary is too long (at most 2000 characters).' }
+  const files = listArg(args.files)
+  if (files.length > 50 || files.some((f) => f.length > 300)) return { error: '"files": at most 50 paths.' }
+  taskRequest(ctx, { action: 'worker-done', outcome, summary, files })
+  return { ok: true, text: 'Sent to Tessel: your coordinator is told. Your work on this task is complete: stop here and return to an idle prompt.' }
+}
+
+function heartbeat(ctx, args) {
+  const phase = args.phase ? String(args.phase).toLowerCase() : null
+  if (phase && !HEARTBEAT_PHASES.includes(phase)) return { error: `"phase" must be one of ${HEARTBEAT_PHASES.join(', ')}.` }
+  taskRequest(ctx, { action: 'heartbeat', phase, note: String(args.note || '').slice(0, 200) })
+  return { ok: true, text: 'Heartbeat sent.' }
+}
+
+const ago = (at) => {
+  if (!Number.isFinite(at)) return ''
+  const m = Math.round((Date.now() - at) / 60000)
+  return m < 1 ? 'just now' : `${m} min ago`
+}
+
+// The workers Tessel published (workers.json): who, whose, which card, how.
+function listWorkers(ctx) {
+  const data = readJson(path.join(ctx.root, 'workers.json'))
+  const workers = data && Array.isArray(data.workers) ? data.workers : []
+  const lim = data && data.limits
+  const head = lim
+    ? `Limits: ${lim.maxConcurrent} workers at a time per coordinator, nesting depth ${lim.maxDepth}${lim.confirm ? ', the user confirms each start' : ''}.`
+    : ''
+  const phases = data && data.phases ? Object.entries(data.phases).map(([k, v]) => `${k}: ${v}`) : []
+  if (!workers.length) return [head, 'No workers yet. A coordinator starts one with team_worker_start.'].filter(Boolean).join('\n')
+  const lines = workers.map((w) => {
+    const bits = [w.status, w.agent, w.isolation === 'worktree' ? (w.branch ? `own copy, branch ${w.branch}` : 'own copy') : 'project folder']
+    if (w.card) bits.push(`card ${w.card}`)
+    if (w.heartbeatAt) bits.push(`heartbeat ${ago(w.heartbeatAt)}${w.phase ? ` (${w.phase})` : ''}`)
+    if (w.note) bits.push(w.note)
+    return `  ${w.handle || '(not started)'} "${w.title}"${w.coordinator ? `, worker of ${w.coordinator}` : ''}  [${bits.filter(Boolean).join('; ')}]`
+  })
+  return [head, phases.length ? `Coordinator phase: ${phases.join(', ')}.` : '', 'Workers:', ...lines].filter(Boolean).join('\n')
+}
+
+// Orca's gate-list: the decisions asked on the team's cards.
+function listGates(ctx) {
+  const data = readJson(path.join(ctx.root, 'tasks.json'))
+  const tasks = data && Array.isArray(data.tasks) ? data.tasks : []
+  const gated = tasks.filter((t) => t.gate && (t.gate.status === 'pending' || t.gate.status === 'resolved'))
+  if (!gated.length) return 'No decisions asked. Ask one with team_task_gate; the user answers on the board.'
+  return gated
+    .map((t) =>
+      t.gate.status === 'pending'
+        ? `  pending   ${t.id} "${t.title}": ${t.gate.question}${t.gate.options && t.gate.options.length ? ` (choices: ${t.gate.options.join(' / ')})` : ''}`
+        : `  resolved  ${t.id} "${t.title}": ${t.gate.question} -> ${t.gate.answer}`
+    )
+    .join('\n')
+}
+
 // --- MCP over stdio ---------------------------------------------------------------
 
 const ME_ARG = {
@@ -615,6 +760,104 @@ const TOOLS = [
         ...ME_ARG
       }
     }
+  },
+  {
+    name: 'team_worker_start',
+    description:
+      'Coordinators only (the team lead, or a worker allowed to nest): start a worker, a new agent in a new Tessel pane of your project, with its own card on the board. It joins your team, gets your brief with its handle, yours and its card id, and reports back with team_worker_done. Tessel applies the user\'s limits: workers at a time (the rest wait in a queue), nesting depth, and, when set, the user confirms each start. Split the work first (team_task_add), then start one worker per independent piece.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agent: { type: 'string', enum: WORKER_AGENTS, description: 'Which agent CLI runs the worker' },
+        task: { type: 'string', description: 'A short title for the worker\'s card' },
+        brief: { type: 'string', description: 'What to do, where, how to check it, what to report (up to 4000 characters)' },
+        isolation: {
+          type: 'string',
+          enum: ['worktree', 'project'],
+          description: '"worktree" (default): its own git copy and branch of your project; "project": the project folder itself'
+        },
+        model: { type: 'string', description: 'Optional: the model the worker runs' },
+        effort: { type: 'string', description: 'Optional: its reasoning effort, like "high"' },
+        after: { type: 'array', items: { type: 'string' }, description: 'Optional: card ids that must be done before it starts (it waits in the queue)' },
+        ...ME_ARG
+      },
+      required: ['agent', 'task', 'brief']
+    }
+  },
+  {
+    name: 'team_worker_list',
+    description:
+      "List your team's workers: each one's handle, coordinator, card, status (confirming, queued, starting, running, done, failed, stopped, released), its own copy, last heartbeat; the limits and each coordinator's phase.",
+    inputSchema: { type: 'object', properties: { ...ME_ARG } }
+  },
+  {
+    name: 'team_worker_read',
+    description: "Read a worker's recent terminal output (the last lines on its screen), to see how it is doing without disturbing it. Only its coordinator (or the lead).",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        worker: { type: 'string', description: 'The worker, like "#5"' },
+        lines: { type: 'number', description: 'How many lines (1 to 200, default 60)' },
+        ...ME_ARG
+      },
+      required: ['worker']
+    }
+  },
+  {
+    name: 'team_worker_stop',
+    description:
+      'Stop one of your workers ("#5") or all of them ("all"): its pane is closed the way the user closes one; its card and its copy stay for review. A worker still waiting (confirming, queued) is cancelled.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        worker: { type: 'string', description: 'The worker, like "#5", or "all"' },
+        reason: { type: 'string', description: 'Optional: why, shown on the board' },
+        ...ME_ARG
+      },
+      required: ['worker']
+    }
+  },
+  {
+    name: 'team_worker_release',
+    description:
+      'Release one of your workers: it stays open as an ordinary teammate, no longer counted among your workers (its slot goes to the next one waiting).',
+    inputSchema: {
+      type: 'object',
+      properties: { worker: { type: 'string', description: 'The worker, like "#5"' }, ...ME_ARG },
+      required: ['worker']
+    }
+  },
+  {
+    name: 'team_worker_done',
+    description:
+      'Workers only: report the outcome of your task, exactly once. succeeded or failed, a 3-sentence summary (what you did, what you found, what is left), the files you changed. Your card is finished with it and your coordinator is told. Then stop and return to an idle prompt.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        outcome: { type: 'string', enum: ['succeeded', 'failed'], description: 'Default: succeeded' },
+        summary: { type: 'string', description: 'What you did, what you found, what is left' },
+        files: { type: 'array', items: { type: 'string' }, description: 'Optional: the files you changed' },
+        ...ME_ARG
+      },
+      required: ['summary']
+    }
+  },
+  {
+    name: 'team_heartbeat',
+    description: 'Workers only: say you are still working, every 5 minutes, with your phase. Your coordinator sees it in team_worker_list.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        phase: { type: 'string', enum: HEARTBEAT_PHASES },
+        note: { type: 'string', description: 'Optional: a few words on where you are' },
+        ...ME_ARG
+      }
+    }
+  },
+  {
+    name: 'team_gates',
+    description: "List the decisions asked on your team's cards (team_task_gate): pending ones wait for the user, who answers on Tessel's board; resolved ones with the answer.",
+    inputSchema: { type: 'object', properties: { ...ME_ARG } }
   }
 ]
 
@@ -670,6 +913,23 @@ function callTool(name, args = {}, signal = null) {
     if (!ctx.state) return { text: 'You are not in a Tessel team: nobody can answer.', isError: true }
     return ask(ctx, args, signal).then((r) => (r.error ? { text: r.error, isError: true } : { text: r.text }))
   }
+  // Orchestration: only in a team (a worker joins its coordinator's team).
+  const workerOps = {
+    team_worker_start: () => workerStart(ctx, args, signal),
+    team_worker_read: () => workerAction('worker-read', ctx, args, signal),
+    team_worker_stop: () => workerAction('worker-stop', ctx, args, signal),
+    team_worker_release: () => workerAction('worker-release', ctx, args, signal),
+    team_worker_done: () => workerDone(ctx, args),
+    team_heartbeat: () => heartbeat(ctx, args),
+    team_worker_list: () => ({ ok: true, text: listWorkers(ctx) }),
+    team_gates: () => ({ ok: true, text: listGates(ctx) })
+  }
+  if (workerOps[name]) {
+    if (!ctx.state) return { text: 'You are not in a Tessel team: workers belong to a team (see Sessions in Tessel).', isError: true }
+    const out = (r) => (r.error ? { text: r.error, isError: true } : { text: r.text })
+    const r = workerOps[name]()
+    return r && typeof r.then === 'function' ? r.then(out) : out(r)
+  }
   return { text: `Unknown tool ${name}.`, isError: true }
 }
 
@@ -682,7 +942,7 @@ function handle(msg, signal = null) {
       capabilities: { tools: {} },
       serverInfo: { name: 'tessel-team', version: VERSION },
       instructions:
-        'You work in Tessel: the user follows everything you do on its task board, so keep it up to date yourself, without being asked. Add a card (team_task_add) for every piece of work the moment you start it (what the user asks, each step you decide to take, each task you give a teammate), and move your cards as they go (team_task_move: "done" as soon as one is finished). Only a quick question or a short answer needs no card. If you are in a team, call team_inbox when you start and after each step to read messages from teammates, answer them with team_send, and never ask the user to pass messages between agents. To work together: give a teammate a card (team_task_add, with "after" when it must wait for other cards), finish work you were given with team_task_done and a short report, ask one teammate and wait for the answer with team_ask, ask the user to decide with team_task_gate, and send to groups like "@codex" or "@idle"; team_members shows who is idle.'
+        'You work in Tessel: the user follows everything you do on its task board, so keep it up to date yourself, without being asked. Add a card (team_task_add) for every piece of work the moment you start it (what the user asks, each step you decide to take, each task you give a teammate), and move your cards as they go (team_task_move: "done" as soon as one is finished). Only a quick question or a short answer needs no card. If you are in a team, call team_inbox when you start and after each step to read messages from teammates, answer them with team_send, and never ask the user to pass messages between agents. To work together: give a teammate a card (team_task_add, with "after" when it must wait for other cards), finish work you were given with team_task_done and a short report, ask one teammate and wait for the answer with team_ask, ask the user to decide with team_task_gate, and send to groups like "@codex" or "@idle"; team_members shows who is idle. A team lead can also coordinate workers: start new agents in new panes with team_worker_start (one per independent piece of work), follow them with team_worker_list and team_worker_read, and stop or release them; a worker reports with team_worker_done and sends team_heartbeat while it works.'
     }
   }
   if (method === 'ping') return {}
@@ -1050,4 +1310,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { locate, readInbox, send, members, handle, candidateDirs, ackPath, markRead, unread, listTasks, addTask, moveTask, reportTask, gateTask, ask, groupTargets }
+module.exports = { locate, readInbox, send, members, handle, candidateDirs, ackPath, markRead, unread, listTasks, addTask, moveTask, reportTask, gateTask, ask, groupTargets, listWorkers, listGates, TOOLS, VERSION }
