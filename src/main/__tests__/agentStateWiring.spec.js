@@ -195,10 +195,11 @@ it('does not overwrite an authoritative state clock with the previous execution 
 })
 
 it('blocks both native-inbox and typed wake paths when managed status is not confirmed', () => {
-  const start = appSource.indexOf('function wakeIfNeeded(leaf) {')
+  const start = appSource.indexOf('// Messages wait for an agent whose state')
   const end = appSource.indexOf('\nconst restartedForTools', start)
   const agentInbox = vi.fn(async () => ({ ok: true })),
-    deliverToAgent = vi.fn()
+    deliverToAgent = vi.fn(),
+    showToast = vi.fn()
   const node = {
     id: 'pane-1',
     agentLaunchToken: 'a'.repeat(32),
@@ -225,11 +226,22 @@ it('blocks both native-inbox and typed wake paths when managed status is not con
     WAKE_AFTER_MS: 0,
     REWAKE_AFTER_MS: 0,
     wakeAllowed: () => true,
-    deliverToAgent
+    deliverToAgent,
+    showToast,
+    t: (_k, english) => english,
+    paneLabel: () => '#1 Claude Code',
+    findLeaf: () => node
   })
   run(node)
   expect(agentInbox).not.toHaveBeenCalled()
   expect(deliverToAgent).not.toHaveBeenCalled()
+  // Instead it asks the user once; only their click sends the reminder.
+  expect(showToast).toHaveBeenCalledTimes(1)
+  run(node)
+  expect(showToast).toHaveBeenCalledTimes(1)
+  showToast.mock.calls[0][1].action.run()
+  expect(deliverToAgent).toHaveBeenCalledTimes(1)
+  expect(deliverToAgent.mock.calls[0][2]).toMatchObject({ source: 'user', scope: 'wake' })
 })
 
 it("each launch gets its own team secret, only in the pane's environment and main's memory", async () => {

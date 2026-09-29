@@ -459,7 +459,9 @@
       "defaultName": "Équipe {{n}}",
       "ungrouped": "{{name}} dissoute. Ses sessions restent où elles sont.",
       "toldOne": "1 agent a été informé qu’il fait partie de {{team}}.",
-      "told": "{{count}} agents ont été informés qu’ils font partie de {{team}}."
+      "told": "{{count}} agents ont été informés qu’ils font partie de {{team}}.",
+      "wakeOffer": "{{name}} a des messages d'équipe en attente, mais Tessel ne peut pas confirmer qu'il est inactif (il vient d'être redémarré) : il n'a rien tapé.",
+      "wakeOfferAction": "Lui envoyer le rappel"
     },
     "agentUpdate": {
       "availableFor": "Mise à jour disponible pour {{name}}",

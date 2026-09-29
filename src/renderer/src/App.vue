@@ -5365,8 +5365,40 @@ function inputShownEmpty(id) {
   // is drawn dim (the placeholder, not the same words typed).
   return pane.promptShowsPlaceholder('›')
 }
+// Messages wait for an agent whose state Tessel cannot confirm (a Codex
+// relaunched in place reports nothing before its next turn): Tessel does not
+// type into it on its own, it asks you once (a toast with a button).
+function offerWake(leaf, count) {
+  if (!settings.teamWakeUps || leaf.kind !== 'agent' || !leaf.teamTools) return
+  const w = (wakeState[leaf.id] = wakeState[leaf.id] || { since: Date.now(), woken: false, gen: leaf.gen || 0 })
+  if (w.offered || Date.now() - w.since < WAKE_AFTER_MS) return
+  w.offered = true
+  const reminder = `[Tessel] You have ${count} new team message${count > 1 ? 's' : ''}: read ${count > 1 ? 'them' : 'it'} with team_inbox.` // i18n-ignore
+  showToast(
+    t('app.team.wakeOffer', '{{name}} has team messages waiting, but Tessel cannot confirm it is idle (it was just restarted), so it did not type anything.', {
+      name: paneLabel(leaf)
+    }),
+    {
+      kind: 'attention',
+      timeout: 30000,
+      action: {
+        label: t('app.team.wakeOfferAction', 'Send it the reminder'),
+        run: () => {
+          if (!findLeaf(leaf.id)) return
+          deliverToAgent(leaf.id, reminder, { source: 'user', scope: 'wake', teamId: leaf.team })
+          if (window.shellApi.log) window.shellApi.log('info', `team tools: reminder sent to ${paneLabel(leaf)} (${leaf.id}) at the user's request`)
+        }
+      }
+    }
+  )
+}
 function wakeIfNeeded(leaf) {
-  if (leaf.agentLaunchToken && !agentStateKnown(leaf.id, leaf.agentLaunchToken)) return
+  if (leaf.agentLaunchToken && !agentStateKnown(leaf.id, leaf.agentLaunchToken)) {
+    const waiting = teamUnread[leaf.id] || 0
+    if (waiting) offerWake(leaf, waiting)
+    else delete wakeState[leaf.id]
+    return
+  }
   const count = teamUnread[leaf.id] || 0
   if (!count) {
     delete wakeState[leaf.id]
