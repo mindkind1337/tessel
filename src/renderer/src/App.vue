@@ -58,7 +58,6 @@ import NewTaskDialog from './components/NewTaskDialog.vue'
 import ReviewPanel from './components/ReviewPanel.vue'
 import { parseLeadRequest, findTaskRef, leadGuide, memberGuide } from '../../shared/leadRequests'
 import { workerLaunchArgs } from '../../shared/orchestration'
-import { handshakeAllowsWake } from './wakeHandshake'
 import { createOrchestrator } from './orchestrator'
 import { trackAgent } from '../../shared/tracking'
 import { pasteAndConfirm } from './deliver'
@@ -443,12 +442,6 @@ const teamUnread = reactive({})
 // what the user writes is the user's, and is never sent for them.
 const userDraft = reactive({}) // leafId -> true while a typed line is not sent
 const lastUserKey = {}
-// When Tessel last queued text for a pane (a task, a note, a reminder): a
-// ready handshake never counts after that (the agent would be working).
-const lastSentAt = {}
-// Verified ready handshakes (src/main/launchReady.js): leafId ->
-// { launchToken, at, spent }. Only for waking, see wakeHandshake.js.
-const readyWake = {}
 // Panes found running whose line state is not known (older layout).
 const draftUnknown = {}
 const USER_QUIET_MS = 8000
@@ -819,11 +812,7 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
     res = { ok: false, error: refused }
   } else if (!attached) {
     try {
-      // startsIdle: launched without a first prompt (a resume or a plain
-      // start waits at its prompt): only then does its ready handshake count
-      // (src/main/launchReady.js). A worker started with its prompt does not.
-      const startsIdle = !!agent && !(opts.launchOptions && opts.launchOptions.initialPrompt)
-      res = await window.shellApi.createPty({ id, shellId, agentId: agent?.id, cols: 80, rows: 24, cwd, projectDir, extraEnv, accountEnv, unsetEnv, startsIdle, ...(opts.remoteHostId ? { remoteHostId: opts.remoteHostId } : {}), ...(opts.remoteHostId && opts.remotePath ? { remotePath: opts.remotePath } : {}) })
+      res = await window.shellApi.createPty({ id, shellId, agentId: agent?.id, cols: 80, rows: 24, cwd, projectDir, extraEnv, accountEnv, unsetEnv, ...(opts.remoteHostId ? { remoteHostId: opts.remoteHostId } : {}), ...(opts.remoteHostId && opts.remotePath ? { remotePath: opts.remotePath } : {}) })
     } catch (err) {
       res = { ok: false, error: err && err.message }
     }
@@ -3693,7 +3682,6 @@ let pendingTimer = null
 // 'team-change', teamId } for the activity log.
 function deliverToAgent(leafId, text, meta = {}) {
   const item = { text, meta, held: false }
-  lastSentAt[leafId] = Date.now()
   if (!pendingMessages[leafId]) pendingMessages[leafId] = []
   pendingMessages[leafId].push(item)
   flushPending()
@@ -5349,30 +5337,9 @@ const WAKE_LINE = /\[Tessel\] You have \d+ new team messages?/
 const wakeState = {} // leafId -> { since, woken, wokenAt, gen }
 // The user is not in this pane, has no line in progress there, and has not
 // typed there for 30 s.
-// May Tessel wake it at all: its state confirmed by hooks, or its launch's
-// ready handshake with no sign of work since (wakeHandshake.js). The screen
-// can only veto.
-function wakeByHooks(leaf) {
-  return !leaf.agentLaunchToken || agentStateKnown(leaf.id, leaf.agentLaunchToken)
-}
-function wakeByHandshake(leaf) {
-  return handshakeAllowsWake({
-    ready: readyWake[leaf.id] || null,
-    leaf,
-    state: getAgentState(leaf.id, leaf.agentLaunchToken),
-    status: agentStatus[leaf.id],
-    approval: !!approvals[leaf.id] || awaitingApproval(leaf.id),
-    limit: !!limits[leaf.id],
-    lastUserKeyAt: lastUserKey[leaf.id] || 0,
-    lastSentAt: lastSentAt[leaf.id] || 0
-  })
-}
-function wakeConfirmed(leaf) {
-  return wakeByHooks(leaf) || wakeByHandshake(leaf)
-}
 function wakeAllowed(id) {
   const leaf = findLeaf(id)
-  if (leaf && !wakeConfirmed(leaf) && !(wakeInFlight[id] && wakeInFlight[id] === leaf.agentLaunchToken)) return false
+  if (leaf?.agentLaunchToken && !agentStateKnown(id, leaf.agentLaunchToken)) return false
   if (id === activeId.value && document.hasFocus()) return false
   // A draft Codex's screen proves gone (its empty-prompt placeholder is back:
   // sent, cleared, or never a draft at all) no longer holds reminders back.
@@ -5438,13 +5405,8 @@ function offerWake(leaf, count) {
     }
   )
 }
-// A reminder being typed on the strength of the handshake: its own guard
-// still holds while it is typed (its own delivery counts as sent text).
-const wakeInFlight = {} // leafId -> launch token
 function wakeIfNeeded(leaf) {
-  const byHooks = wakeByHooks(leaf)
-  const byHandshake = !byHooks && wakeByHandshake(leaf)
-  if (!byHooks && !byHandshake) {
+  if (leaf.agentLaunchToken && !agentStateKnown(leaf.id, leaf.agentLaunchToken)) {
     const waiting = teamUnread[leaf.id] || 0
     if (waiting) offerWake(leaf, waiting)
     else delete wakeState[leaf.id]
@@ -5466,9 +5428,8 @@ function wakeIfNeeded(leaf) {
   if (w.woken || Date.now() - w.since < WAKE_AFTER_MS) return
   // Only an agent that has the team tools to read them.
   if (leaf.kind !== 'agent' || !leaf.teamTools) return
-  // Hooks: idle as they say. Handshake: nothing seen since the launch.
   const t = trackedState[leaf.id]
-  if (byHooks && (!t || t.state !== 'idle')) return
+  if (!t || t.state !== 'idle') return
   if (approvals[leaf.id] || limits[leaf.id] || pendingMessages[leaf.id] || unsent[leaf.id] || delivering.has(leaf.id)) return
   if (restartingLeaves.has(leaf.id)) return // being restarted right now
   const reminder = `[Tessel] You have ${count} new team message${count > 1 ? 's' : ''}: read ${count > 1 ? 'them' : 'it'} with team_inbox.`
@@ -5500,23 +5461,15 @@ function wakeIfNeeded(leaf) {
   }
   if (!wakeAllowed(leaf.id)) return
   // Just restarted: it is still loading (a line typed now can stay unsent).
-  // A verified ready handshake says it is up: no need to wait then.
-  if (!byHandshake && leaf.restartedAt && Date.now() - leaf.restartedAt < WAKE_AFTER_RESTART_MS) return
+  if (leaf.restartedAt && Date.now() - leaf.restartedAt < WAKE_AFTER_RESTART_MS) return
   w.woken = true
   w.wokenAt = Date.now()
-  if (byHandshake) {
-    // One wake per handshake: from its turn on, hooks decide.
-    readyWake[leaf.id].spent = true
-    wakeInFlight[leaf.id] = leaf.agentLaunchToken
-    if (window.shellApi.log) window.shellApi.log('info', `team tools: waking ${paneLabel(leaf)} (${leaf.id}) on its ready handshake`)
-  }
   // A reminder typed before is still in its input line, not sent: send that
   // one (Enter) instead of typing a second one on top of it.
   const pane = getPane(leaf.id)
   const bottom = pane && pane.screenText ? pane.screenText(4) : ''
   if (pane && WAKE_LINE.test(bottom) && !(leaf.agentId === 'codex' && inputShownEmpty(leaf.id))) {
     pane.submit()
-    delete wakeInFlight[leaf.id]
     if (window.shellApi.log) window.shellApi.log('info', `team tools: sent the waiting reminder in ${paneLabel(leaf)} (${leaf.id})`)
     return
   }
@@ -5534,11 +5487,8 @@ function wakeIfNeeded(leaf) {
       guard: () => (teamUnread[leaf.id] || 0) > 0 && wakeAllowed(leaf.id),
       dropIfNotNow: true,
       onDropped: () => {
-        delete wakeInFlight[leaf.id]
         if (wakeState[leaf.id]) wakeState[leaf.id].woken = false
-      },
-      onDelivered: () => delete wakeInFlight[leaf.id],
-      onFailed: () => delete wakeInFlight[leaf.id]
+      }
     }
   )
   if (window.shellApi.log) window.shellApi.log('info', `team tools: reminded ${paneLabel(leaf)} (${leaf.id}) of ${count} waiting message(s)`)
@@ -6530,14 +6480,6 @@ async function syncBoard(b, round = teamRound) {
       appliedRequests.add(key)
       // Orchestration: workers started, stopped, read; their reports and
       // heartbeats (src/renderer/src/orchestrator.js). Only in a team.
-      // The ready handshake of this pane's current launch (verified in the
-      // main process): a first wake may go without a hook (see wakeConfirmed).
-      if (r.action === 'ready') {
-        const leaf = findLeaf(from.id)
-        if (b.teamId && leaf && leaf.agentLaunchToken && leaf.agentLaunchToken === r.launchToken && !readyWake[leaf.id]?.spent)
-          readyWake[leaf.id] = { launchToken: r.launchToken, at: r.at }
-        continue
-      }
       if (/^worker-|^heartbeat$/.test(r.action)) {
         const team = b.teamId ? teamById(b.teamId) : null
         if (team) orchestrator.handleRequest(team, from, r, { teams: teams.value })

@@ -8,7 +8,6 @@ import { join, resolve, sep, isAbsolute } from 'path'
 import { createAgentStateStore } from '../agentStateStore'
 import { paneEnv } from '../paneEnv'
 import { newTeamSecret, setTeamSecret, revokeTeamSecret, teamSecretOf, _resetTeamAuth } from '../teamAuth'
-import { registerLaunch, endLaunch, markReady, _resetLaunchReady } from '../launchReady'
 
 // Exercise the actual IPC handlers with an inert terminal host. No Electron
 // instance or real CLI/user configuration is touched by this harness.
@@ -67,8 +66,6 @@ function wire(hostRecords = new Map()) {
     newTeamSecret,
     setTeamSecret,
     revokeTeamSecret,
-    registerLaunch,
-    endLaunch,
     agentStateDir: dir,
     log: { error: vi.fn() }
   })
@@ -156,7 +153,6 @@ it('a delayed exit cannot close the new execution registered for the same pane',
     ptyInfo,
     agentStateStore: { unregister },
     revokeTeamSecret: vi.fn(),
-    endLaunch: vi.fn(),
     installLogs: { onExit: vi.fn() },
     remoteHosts: { paneExited: vi.fn() },
     sshAskpass: { paneExited: vi.fn() },
@@ -214,9 +210,6 @@ it('blocks both native-inbox and typed wake paths when managed status is not con
   }
   const run = vm.runInNewContext(appSource.slice(start, end) + '; wakeIfNeeded', {
     agentStateKnown: () => false,
-    wakeByHooks: () => false,
-    wakeByHandshake: () => false,
-    readyWake: {},
     teamUnread: { 'pane-1': 1 },
     settings: { teamWakeUps: true },
     wakeState: { 'pane-1': { since: 0, woken: false } },
@@ -284,74 +277,4 @@ it("each launch gets its own team secret, only in the pane's environment and mai
   await one.handlers['pty:create'](null, opts)
   expect(teamSecretOf(opts.id)).not.toBe(secret)
   _resetTeamAuth()
-})
-
-it('pty:create records each launch for its ready handshake: idle only when started without a first prompt', async () => {
-  _resetLaunchReady()
-  store = createAgentStateStore({ dir })
-  const one = wire()
-  const plain = await one.handlers['pty:create'](null, { id: 'pane-plain', shellId: 'fixture', agentId: 'codex', cwd: dir, startsIdle: true })
-  expect(markReady('pane-plain', plain.agentLaunchToken, 'k1')).toMatchObject({ ok: true })
-  const worker = await one.handlers['pty:create'](null, { id: 'pane-worker', shellId: 'fixture', agentId: 'codex', cwd: dir })
-  expect(markReady('pane-worker', worker.agentLaunchToken, 'k2').error).toMatch(/prompt/)
-  // Relaunched: the previous launch's handshake no longer counts.
-  const again = await one.handlers['pty:create'](null, { id: 'pane-plain', shellId: 'fixture', agentId: 'codex', cwd: dir, startsIdle: true })
-  expect(markReady('pane-plain', plain.agentLaunchToken, 'k3').error).toMatch(/current launch/)
-  expect(markReady('pane-plain', again.agentLaunchToken, 'k4')).toMatchObject({ ok: true })
-  _resetLaunchReady()
-})
-
-it("a verified ready handshake lets the first wake go without hooks, once; then it falls back to asking", () => {
-  const start = appSource.indexOf('// Messages wait for an agent whose state')
-  const end = appSource.indexOf('\nconst restartedForTools', start)
-  const deliverToAgent = vi.fn()
-  const showToast = vi.fn()
-  const node = { id: 'pane-2', agentLaunchToken: 'e'.repeat(32), agentId: 'codex', sessionId: 's-2', kind: 'agent', teamTools: true, restartedAt: Date.now() }
-  const readyWake = { 'pane-2': { launchToken: node.agentLaunchToken, at: Date.now() } }
-  // Only the handshake vouches for it (no hook yet); its state is still
-  // 'unknown' for display, which must not block this path.
-  const ctx = {
-    agentStateKnown: () => false,
-    wakeByHooks: () => false,
-    wakeByHandshake: (leaf) => !!readyWake[leaf.id] && !readyWake[leaf.id].spent,
-    readyWake,
-    teamUnread: { 'pane-2': 2 },
-    settings: { teamWakeUps: true },
-    wakeState: { 'pane-2': { since: 0, woken: false } },
-    trackedState: { 'pane-2': { state: 'unknown' } },
-    approvals: {},
-    limits: {},
-    pendingMessages: {},
-    unsent: {},
-    delivering: new Set(),
-    restartingLeaves: new Set(),
-    agentInboxes: {},
-    inboxDownAt: {},
-    window: { shellApi: {} },
-    WAKE_AFTER_MS: 0,
-    REWAKE_AFTER_MS: 60000,
-    WAKE_AFTER_RESTART_MS: 120000,
-    WAKE_LINE: /\[Tessel\] You have \d+ new team messages?/,
-    wakeAllowed: () => true,
-    getPane: () => null,
-    inputShownEmpty: () => false,
-    deliverToAgent,
-    showToast,
-    t: (_k, english) => english,
-    paneLabel: () => '#2 Codex',
-    findLeaf: () => node,
-    awaitingApproval: () => false,
-    userDraft: {}
-  }
-  const run = vm.runInNewContext(appSource.slice(start, end) + '; wakeIfNeeded', ctx)
-  run(node)
-  expect(showToast).not.toHaveBeenCalled()
-  expect(deliverToAgent).toHaveBeenCalledTimes(1)
-  expect(deliverToAgent.mock.calls[0][2]).toMatchObject({ source: 'tessel', scope: 'wake', dropIfNotNow: true })
-  expect(readyWake['pane-2'].spent).toBe(true)
-  // Spent: a later wake (no hooks yet) is the user's decision again.
-  ctx.wakeState['pane-2'] = { since: 0, woken: false }
-  run(node)
-  expect(deliverToAgent).toHaveBeenCalledTimes(1)
-  expect(showToast).toHaveBeenCalledTimes(1)
 })

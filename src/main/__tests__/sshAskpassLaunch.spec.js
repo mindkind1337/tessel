@@ -59,8 +59,6 @@ function harness({ helper = 'fake.exe', createDelay = null } = {}) {
     newTeamSecret: () => 'c'.repeat(64),
     setTeamSecret: () => {},
     revokeTeamSecret: () => {},
-    registerLaunch: () => {},
-    endLaunch: () => {},
     agentStateDir: 'C:/fixture/state',
     ptyInfo: new Map(),
     windowsBuildNumber: () => 22631,
