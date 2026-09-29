@@ -76,6 +76,10 @@
       "updates": {
         "title": "Mises à jour",
         "desc": "La version de Tessel et ses mises à jour."
+      },
+      "automations": {
+        "title": "Automatisations",
+        "desc": "Exécuter une tâche d'agent selon une planification, quand Tessel est ouvert."
       }
     },
     "groups": {
@@ -546,6 +550,10 @@
       "solarized-dark": {
         "description": "Le classique bleu-vert, reposant pour les yeux"
       }
+    },
+    "automations": {
+      "open": "Ouvrir les automatisations",
+      "openHint": "Créez des planifications et inspectez les exécutions récentes."
     }
   }
 }

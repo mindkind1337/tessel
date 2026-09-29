@@ -1,0 +1,145 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { mount } from '@vue/test-utils'
+import { computed, nextTick } from 'vue'
+import AutomationsPage from '../components/AutomationsPage.vue'
+import { applySnapshot } from '../automationsStore'
+
+const flush = async () => {
+  for (let i = 0; i < 6; i++) await nextTick()
+  await new Promise((r) => setTimeout(r, 0))
+}
+
+function mountPage({ yolo = false, confirm = true, snapshot = null } = {}) {
+  const api = {
+    list: vi.fn(async () => snapshot || { loaded: true, automations: [], runs: [], settings: { maxConcurrent: 2 } }),
+    create: vi.fn(async (input) => ({ ok: true, automation: { id: 'auto-1', ...input } })),
+    update: vi.fn(async () => ({ ok: true })),
+    setEnabled: vi.fn(async () => ({ ok: true })),
+    remove: vi.fn(async () => ({ ok: true })),
+    runNow: vi.fn(async () => ({ ok: true, run: { id: 'run-1' } })),
+    setSettings: vi.fn(async () => ({ ok: true })),
+    onChanged: () => () => {}
+  }
+  window.shellApi = { automations: api }
+  const askConfirm = vi.fn(async () => confirm)
+  const ctx = {
+    projects: computed(() => [
+      { wsId: 'ws-1', name: 'App', cwd: 'C:\\code\\app', remote: null, hostLabel: '' },
+      { wsId: 'ws-2', name: 'Server', cwd: null, remote: { hostId: 'h1', path: '/srv' }, hostLabel: 'box' }
+    ]),
+    agents: computed(() => [{ id: 'claude', name: 'Claude Code', available: true }]),
+    permissions: () => (yolo ? { yolo: true, args: '--dangerously-skip-permissions', ownArgs: false } : { yolo: false, args: '', ownArgs: false }),
+    paneOpen: (id) => id === 'pane-1',
+    cardOpen: () => false,
+    showPane: vi.fn(),
+    showCard: vi.fn(),
+    openAgentSettings: vi.fn()
+  }
+  const wrapper = mount(AutomationsPage, { global: { provide: { automations: ctx, askConfirm } }, attachTo: document.body })
+  return { wrapper, api, askConfirm, ctx }
+}
+
+describe('Settings > Automations', () => {
+  let wrapper
+  beforeEach(() => applySnapshot({ loaded: true, automations: [], runs: [], settings: { maxConcurrent: 2 } }))
+  afterEach(() => {
+    wrapper?.unmount()
+    wrapper = null
+  })
+
+  it('says that runs happen only while Tessel is open, and shows the empty state', async () => {
+    const m = mountPage()
+    wrapper = m.wrapper
+    await flush()
+    expect(wrapper.get('[data-test="au-only-open"]').text()).toMatch(/only while Tessel is open/)
+    expect(wrapper.find('[data-test="au-empty"]').exists()).toBe(true)
+  })
+
+  it('creates one from a template, with your confirmation that it may run unattended (Yolo shown)', async () => {
+    const m = mountPage({ yolo: true })
+    wrapper = m.wrapper
+    await flush()
+    await wrapper.get('[data-test="au-new"]').trigger('click')
+    await wrapper.get('[data-test="au-template"]').setValue('repo-health-weekday')
+    await flush()
+    expect(wrapper.get('[data-test="au-name"]').element.value).toBe('Weekday repo audit')
+    expect(wrapper.get('[data-test="au-yolo"]').text()).toMatch(/--dangerously-skip-permissions/)
+    expect(wrapper.get('[data-test="au-next"]').text()).toMatch(/Weekdays at/)
+    await wrapper.get('[data-test="automation-editor"]').trigger('submit')
+    await flush()
+    expect(m.askConfirm).toHaveBeenCalledTimes(1)
+    expect(m.askConfirm.mock.calls[0][0].text).toMatch(/Yolo is on/)
+    expect(m.api.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'Weekday repo audit',
+        agentId: 'claude',
+        wsId: 'ws-1',
+        projectCwd: 'C:\\code\\app',
+        isolation: 'worktree',
+        schedule: 'FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR;BYHOUR=9;BYMINUTE=0',
+        missedRunGraceMinutes: 720,
+        confirmed: true,
+        enabled: true
+      })
+    )
+  })
+
+  it('not confirmed: nothing is saved', async () => {
+    const m = mountPage({ confirm: false })
+    wrapper = m.wrapper
+    await flush()
+    await wrapper.get('[data-test="au-new"]').trigger('click')
+    await wrapper.get('[data-test="au-name"]').setValue('X')
+    await wrapper.get('[data-test="au-prompt"]').setValue('Do it')
+    await wrapper.get('[data-test="automation-editor"]').trigger('submit')
+    await flush()
+    expect(m.api.create).not.toHaveBeenCalled()
+    expect(wrapper.get('[data-test="au-error"]').text()).toMatch(/confirmation/)
+  })
+
+  it('a remote project runs in its folder only; a custom cron is checked', async () => {
+    const m = mountPage()
+    wrapper = m.wrapper
+    await flush()
+    await wrapper.get('[data-test="au-new"]').trigger('click')
+    await wrapper.get('[data-test="au-project"]').setValue('ws-2')
+    await flush()
+    expect(wrapper.get('[data-test="au-worktree"]').element.disabled).toBe(true)
+    await wrapper.get('[data-test="au-preset"]').setValue('custom')
+    await wrapper.get('[data-test="au-cron"]').setValue('*/90 * * * *')
+    await flush()
+    expect(wrapper.find('[data-test="au-cron-invalid"]').exists()).toBe(true)
+    expect(wrapper.get('[data-test="au-save"]').element.disabled).toBe(true)
+  })
+
+  it('lists automations with their history; Run Now asks first for one never confirmed', async () => {
+    const now = Date.now()
+    const snapshot = {
+      loaded: true,
+      settings: { maxConcurrent: 2 },
+      automations: [
+        { id: 'auto-1', name: 'Nightly', prompt: 'p', agentId: 'claude', wsId: 'ws-1', projectName: 'App', isolation: 'project', schedule: '0 9 * * 1-5', enabled: false, confirmedAt: null, nextRunAt: now + 3600_000, missedRunGraceMinutes: 720, after: { notify: true } }
+      ],
+      runs: [
+        { id: 'run-2', automationId: 'auto-1', runNumber: 2, trigger: 'scheduled', status: 'skipped_missed', errorCode: 'missed', scheduledFor: now - 1000, createdAt: now - 1000 },
+        { id: 'run-1', automationId: 'auto-1', runNumber: 1, trigger: 'manual', status: 'dispatched', paneId: 'pane-1', scheduledFor: now - 5000, createdAt: now - 5000 }
+      ]
+    }
+    const m = mountPage({ snapshot, confirm: true })
+    wrapper = m.wrapper
+    await flush()
+    expect(wrapper.text()).toMatch(/Weekdays at/)
+    await wrapper.get('.au-main').trigger('click')
+    await flush()
+    expect(wrapper.findAll('[data-run]')).toHaveLength(2)
+    expect(wrapper.text()).toMatch(/past its missed-run grace/)
+    await wrapper.get('[data-test="au-show-pane"]').trigger('click')
+    expect(m.ctx.showPane).toHaveBeenCalledWith('pane-1')
+    // A run is going: Run Now waits.
+    expect(wrapper.get('[data-test="au-run-now"]').element.disabled).toBe(true)
+    await wrapper.get('[data-test="au-toggle"]').trigger('change')
+    await flush()
+    expect(m.askConfirm).toHaveBeenCalled()
+    expect(m.api.setEnabled).toHaveBeenCalledWith('auto-1', true, true)
+  })
+})

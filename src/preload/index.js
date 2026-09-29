@@ -341,6 +341,32 @@ const api = {
     save: (tasks) => ipcRenderer.invoke('taskboard:save', tasks)
   },
 
+  // Scheduled automations (src/main/automations.js): the list and run
+  // history, changes, and the runs the scheduler asks the window to start
+  // (onDispatch), reported back with markResult.
+  automations: {
+    list: () => ipcRenderer.invoke('automations:list'),
+    create: (input) => ipcRenderer.invoke('automations:create', input),
+    update: (id, input) => ipcRenderer.invoke('automations:update', id, input),
+    setEnabled: (id, enabled, confirmed) => ipcRenderer.invoke('automations:setEnabled', id, enabled, confirmed),
+    remove: (id) => ipcRenderer.invoke('automations:remove', id),
+    runNow: (id, confirmed) => ipcRenderer.invoke('automations:runNow', id, confirmed),
+    setSettings: (patch) => ipcRenderer.invoke('automations:setSettings', patch),
+    markResult: (result) => ipcRenderer.invoke('automations:markResult', result),
+    reconcile: (paneIds) => ipcRenderer.invoke('automations:reconcile', paneIds),
+    windowReady: () => ipcRenderer.invoke('automations:windowReady'),
+    onChanged: (cb) => {
+      const handler = (_e, payload) => cb(payload)
+      ipcRenderer.on('automations:changed', handler)
+      return () => ipcRenderer.removeListener('automations:changed', handler)
+    },
+    onDispatch: (cb) => {
+      const handler = (_e, payload) => cb(payload)
+      ipcRenderer.on('automations:dispatch', handler)
+      return () => ipcRenderer.removeListener('automations:dispatch', handler)
+    }
+  },
+
   // Updates (see src/main/updater.js).
   // Remote hosts over SSH (src/main/remoteHosts.js): ids and form fields only.
   remoteHosts: {

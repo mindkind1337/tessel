@@ -1,0 +1,221 @@
+{
+  "automations": {
+    "schedule": {
+      "invalid": "Planification invalide",
+      "custom": "Planification personnalisée",
+      "hourlyAt": "Toutes les heures à :{{minute}}",
+      "dailyAt": "Chaque jour à {{time}}",
+      "weekdaysAt": "En semaine à {{time}}",
+      "weeklyAt": "Chaque {{day}} à {{time}}"
+    },
+    "preset": {
+      "hourly": "Toutes les heures",
+      "daily": "Chaque jour",
+      "weekdays": "En semaine",
+      "weekly": "Hebdomadaire",
+      "custom": "Cron personnalisé"
+    },
+    "grace": {
+      "none": "Pas de marge",
+      "30m": "30 minutes",
+      "1h": "1 heure",
+      "3h": "3 heures",
+      "12h": "12 heures",
+      "24h": "24 heures",
+      "48h": "48 heures"
+    },
+    "status": {
+      "pending": "En file d'attente",
+      "dispatching": "Démarrage",
+      "dispatched": "En cours",
+      "completed": "Terminé",
+      "skipped": "Ignorée",
+      "failed": "Échec"
+    },
+    "reason": {
+      "missed": "Cette exécution avait dépassé sa marge d'exécution manquée quand Tessel a vérifié.",
+      "overlap": "L'exécution précédente de cette automatisation n'était pas terminée.",
+      "paused": "L'automatisation a été mise en pause avant le début de cette exécution.",
+      "deleted": "L'automatisation a été supprimée avant le début de cette exécution.",
+      "interrupted": "Tessel s'est fermé pendant le démarrage de cette exécution.",
+      "paneGone": "Son volet n'existait plus à la réouverture de Tessel.",
+      "paneClosed": "Son volet a été fermé avant que l'agent ait terminé.",
+      "noAnswer": "La fenêtre n'a pas démarré cette exécution.",
+      "unevaluable": "Tessel n'a pas pu évaluer cette automatisation et a ignoré l'occurrence.",
+      "promptFile": "Le fichier du prompt n'a pas pu être écrit : {{error}}",
+      "projectGone": "Le projet cible n'est plus disponible.",
+      "agentUnavailable": "L'agent n'est pas disponible (désactivé dans Paramètres > Agents, ou pas installé).",
+      "copyFailed": "Sa copie du projet n'a pas pu être créée : {{error}}",
+      "paneFailed": "Son volet n'a pas pu être ouvert.",
+      "unsafePath": "Le prompt n'a pas pu être mis sans risque sur la ligne de commande de l'agent (le chemin du dossier de données de Tessel contient des caractères inhabituels)."
+    },
+    "trigger": {
+      "manual": "Exécuter maintenant",
+      "scheduled": "Planifiée"
+    },
+    "never": "Jamais",
+    "templates": {
+      "repoHealth": {
+        "label": "Audit du dépôt en semaine",
+        "description": "Vérifier chaque jour de semaine les dépendances, les tests en échec et les changements ouverts à risque.",
+        "name": "Audit du dépôt en semaine",
+        "prompt": "Passer en revue la santé du dépôt. Vérifier les mises à jour de dépendances, les tests en échec, l'état du lint/typecheck et les changements ouverts à risque. Résumer les constats et suggérer l'action suivante."
+      },
+      "releasePrep": {
+        "label": "Préparation de la release",
+        "description": "Préparer un résumé hebdomadaire des risques de release à partir de l'état actuel du projet.",
+        "name": "Revue de préparation de release",
+        "prompt": "Préparer un résumé de préparation de release. Rechercher les bloqueurs, les changements à risque non mergés, les validations manquantes et les lacunes de documentation. Terminer par une recommandation concise : release ou pas."
+      },
+      "recurringReview": {
+        "label": "Revue quotidienne des changements",
+        "description": "Analyser le travail récent et signaler les risques de justesse, d'UX et de couverture de tests.",
+        "name": "Revue quotidienne des changements",
+        "prompt": "Passer en revue les changements récents de cet espace de travail. Se concentrer sur les risques de justesse, les régressions UX, les tests manquants et les tâches de suivi. Garder le rapport court et actionnable."
+      },
+      "maintenance": {
+        "label": "Vérification horaire de la file d'attente",
+        "description": "Rechercher les travaux bloqués, les fichiers générés obsolètes et les validations locales en échec.",
+        "name": "Vérification de maintenance horaire",
+        "prompt": "Rechercher les travaux bloqués, les fichiers générés obsolètes, les validations en échec et tout ce qui requiert une attention humaine. Ne signaler que les problèmes actionnables."
+      }
+    },
+    "run": {
+      "title": "{{name}} · exécution {{number}}"
+    },
+    "notify": {
+      "doneTitle": "Automatisation « {{name}} » terminée",
+      "doneReview": "Son travail attend votre revue sur la branche {{branch}}.",
+      "doneBody": "Voyez sa carte sur le tableau.",
+      "approvalTitle": "L'automatisation « {{name}} » attend votre approbation",
+      "approvalBody": "L'exécution est arrêtée jusqu'à votre réponse dans son volet."
+    },
+    "editor": {
+      "needName": "Donnez un nom à l'automatisation.",
+      "needProject": "Choisissez un projet.",
+      "needAgent": "Choisissez un agent avant d'enregistrer.",
+      "needPrompt": "Saisissez un prompt avant d'enregistrer.",
+      "promptTooLong": "Le prompt est trop long (au plus {{max}} caractères ici).",
+      "needSchedule": "Saisissez une planification valide avant d'enregistrer.",
+      "projectGone": "{{name}} (plus ouvert)",
+      "remoteProject": "{{name}} (sur {{host}})",
+      "agentMissing": "{{name}} (pas installé)",
+      "promptRemoteHint": "Sur un projet distant, le prompt va sur la ligne de commande de l'agent, sur une seule ligne (au plus {{max}} caractères).",
+      "promptHint": "Chaque exécution démarre l'agent avec ce prompt (gardé dans un fichier qu'il lit ; rien n'est tapé dans son terminal).",
+      "nextRun": "{{schedule}} · prochaine exécution {{when}}",
+      "editTitle": "Modifier l'automatisation",
+      "createTitle": "Créer une automatisation",
+      "subtitle": "Une tâche d'agent récurrente",
+      "useTemplate": "Utiliser un modèle",
+      "noTemplate": "Aucun",
+      "name": "Nom de l'automatisation",
+      "namePlaceholder": "Audit du dépôt en semaine",
+      "project": "Projet",
+      "noProjects": "Ouvrez d'abord un projet : une automatisation s'exécute dans un de vos projets.",
+      "agent": "Agent",
+      "noAgents": "Aucun agent capable d'exécuter des automatisations n'est activé (Claude Code, Codex, Gemini ou Qwen).",
+      "model": "Modèle",
+      "defaultModel": "Le modèle par défaut de l'agent (Paramètres > Agents)",
+      "effort": "Effort",
+      "defaultEffort": "Par défaut",
+      "prompt": "Prompt",
+      "promptPlaceholder": "Exécuter l'audit hebdomadaire des dépendances et résumer les changements à risque.",
+      "where": "Où il travaille",
+      "ownCopy": "Dans sa propre copie, nouvelle à chaque exécution",
+      "ownCopyRemote": "Pas pour un projet distant : il s'exécute dans le dossier du projet.",
+      "ownCopyHint": "Une nouvelle branche git dans un dossier séparé à chaque exécution ; vous revoyez et fusionnez son travail.",
+      "direct": "Directement dans le dossier du projet",
+      "directHint": "Ses modifications arrivent tout de suite dans le projet. Idéal pour des rapports et des vérifications.",
+      "schedule": "Planification",
+      "cadence": "Cadence",
+      "day": "Jour",
+      "minute": "Minute",
+      "time": "Heure",
+      "cron": "Expression cron",
+      "cronFields": "Minute · Heure · Jour · Mois · Jour de la semaine",
+      "cronInvalid": "Saisissez une expression cron à cinq champs valide avant d'enregistrer.",
+      "cronEmpty": "Saisissez une expression cron à cinq champs.",
+      "grace": "Marge",
+      "graceHint": "Si Tessel était fermé (ou l'ordinateur en veille) à l'heure prévue, il exécute une occurrence manquée à son retour dans cette fenêtre. Les exécutions manquées plus anciennes sont ignorées.",
+      "after": "Après chaque exécution",
+      "notify": "Me notifier",
+      "closePane": "Fermer son volet",
+      "cardHint": "Chaque exécution est une carte sur le tableau du projet : dans Revue quand elle a travaillé dans sa propre copie, sinon dans Terminé.",
+      "enabled": "Exécuter selon sa planification",
+      "onceSaved": "Une fois enregistrée, elle s'exécute automatiquement jusqu'à sa mise en pause, seulement quand Tessel est ouvert.",
+      "cancel": "Annuler",
+      "saveChanges": "Enregistrer les modifications",
+      "create": "Créer"
+    },
+    "perms": {
+      "title": "Ce que {{agent}} peut faire sans surveillance",
+      "yolo": "Yolo est activé pour lui ({{args}}) : il agit sans vous demander, en lançant des commandes et en modifiant des fichiers pendant que vous êtes peut-être absent.",
+      "ownArgs": "Il démarre avec vos propres arguments : {{args}}",
+      "unknown": "Choisissez un agent pour voir ses permissions.",
+      "manual": "Manuel : il demande avant d'agir. Une exécution sans surveillance s'arrête à chaque approbation jusqu'à votre réponse dans son volet (vous êtes notifié).",
+      "account": "Il utilise le compte choisi pour lui dans Paramètres > Comptes de fournisseurs d'IA, et vos paramètres pour lui dans Paramètres > Agents.",
+      "change": "Modifier dans Paramètres > Agents"
+    },
+    "page": {
+      "projectMissing": "{{name}} (pas ouvert)",
+      "notConfirmed": "Non enregistrée : elle a besoin de votre confirmation pour s'exécuter seule. Décochez « Exécuter selon sa planification » pour l'enregistrer en pause.",
+      "saveFailed": "Échec de l'enregistrement de l'automatisation.",
+      "updated": "Automatisation mise à jour.",
+      "saved": "Automatisation enregistrée.",
+      "queued": "Exécution de l'automatisation en file d'attente.",
+      "next": "Prochaine exécution {{when}}",
+      "maxConcurrent": "Exécutions en même temps",
+      "maxConcurrentHint": "Toutes les automatisations ensemble ; les autres attendent leur tour. Une même automatisation ne s'exécute jamais deux fois à la fois.",
+      "title": "Automatisations",
+      "new": "Nouvelle automatisation",
+      "empty": "Créez une automatisation pour planifier le travail des agents.",
+      "paused": "En pause",
+      "last": "Dernière exécution",
+      "pause": "Mettre l'automatisation en pause",
+      "resume": "Reprendre l'automatisation",
+      "runNow": "Exécuter maintenant",
+      "edit": "Modifier",
+      "delete": "Supprimer"
+    },
+    "confirm": {
+      "title": "Laisser « {{name}} » s'exécuter sans surveillance ?",
+      "text": "Tessel démarrera {{agent}} dans {{project}} selon cette planification tant qu'il est ouvert, même en votre absence.",
+      "ok": "Autoriser"
+    },
+    "delete": {
+      "title": "Supprimer l'automatisation",
+      "text": "Supprimer « {{name}} » et son historique d'exécution. Les copies du projet et les cartes créées par les exécutions précédentes ne sont pas supprimées.",
+      "ok": "Supprimer"
+    },
+    "history": {
+      "times": "{{times}} fois",
+      "title": "Historique des exécutions",
+      "none": "Aucune exécution pour l'instant.",
+      "run": "Exécution",
+      "status": "Statut",
+      "when": "Quand",
+      "links": "Ouvrir",
+      "pane": "Volet",
+      "card": "Carte",
+      "more": "Afficher plus"
+    },
+    "how": {
+      "title": "Fonctionnement des automatisations",
+      "defineTitle": "Décrire le travail",
+      "defineText": "Choisissez un projet, un agent, un prompt et une planification.",
+      "runTitle": "Tessel lance chaque exécution",
+      "runText": "À l'échéance, l'agent démarre dans un nouveau volet du projet, dans sa propre copie ou dans le dossier du projet, avec une carte sur le tableau.",
+      "reviewTitle": "Consulter les résultats",
+      "reviewText": "Inspectez les exécutions récentes, ouvrez leur volet ou leur carte, et poursuivez le travail dès que nécessaire.",
+      "onlyOpen": "Les automatisations ne s'exécutent que lorsque Tessel est ouvert : rien n'est planifié dans Windows. Une exécution manquée pendant que Tessel était fermé ou l'ordinateur en veille s'exécute une fois au retour de Tessel, si elle est dans la marge de l'automatisation ; les plus anciennes sont ignorées."
+    },
+    "detail": {
+      "where": "Lieu d'exécution",
+      "ownCopy": "Sa propre copie, nouvelle à chaque exécution",
+      "projectFolder": "Le dossier du projet",
+      "grace": "Marge",
+      "permissions": "Permissions",
+      "prompt": "Prompt"
+    }
+  }
+}

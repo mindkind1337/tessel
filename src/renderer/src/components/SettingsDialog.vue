@@ -9,6 +9,7 @@ import BrandIcon from './BrandIcon.vue'
 import ProviderAccounts from './ProviderAccounts.vue'
 import StatsUsage from './StatsUsage.vue'
 import RemoteHostsSettings from './remote/RemoteHostsSettings.vue'
+import AutomationsPage from './AutomationsPage.vue'
 import { BarChart3, Cable, LoaderCircle } from 'lucide-vue-next'
 import { updateFailureText, updateKindLabel } from '../agentUpdateErrors'
 import { settings, FONT_FAMILIES, resetSettings, clamp, MAX_LEFT_SIDEBAR_TINT_OPACITY, limitNumber, DEFAULT_SETTINGS, LIMITS } from '../settings'
@@ -162,6 +163,16 @@ const PAGES = {
     },
     icon: 'M5 3v7M5 10a2 2 0 100 4 2 2 0 000-4zM11 3a2 2 0 100 4 2 2 0 000-4zM11 7c0 2.5-2 3-6 3'
   },
+  // Scheduled automations (Orca's Automations page): AutomationsPage.vue.
+  automations: {
+    get title() {
+      return t('settings.pages.automations.title', 'Automations')
+    },
+    get desc() {
+      return t('settings.pages.automations.desc', 'Run an agent task on a schedule, while Tessel is open.')
+    },
+    icon: 'M8 2a6 6 0 100 12A6 6 0 008 2zM8 4.5V8l2.5 1.5'
+  },
   'quick-commands': {
     get title() {
       return t('settings.pages.quickCommands.title', 'Quick commands')
@@ -211,7 +222,7 @@ const GROUPS = [
     get title() {
       return t('settings.groups.workflows', 'Workflows')
     },
-    pages: ['git', 'quick-commands']
+    pages: ['git', 'automations', 'quick-commands']
   },
   {
     id: 'interface',
@@ -249,6 +260,7 @@ const PAGE_TITLES_EN = {
   editor: 'Editor', // i18n-ignore
   alerts: 'Notifications', // i18n-ignore
   git: 'Git & Source Control', // i18n-ignore
+  automations: 'Automations', // i18n-ignore
   'quick-commands': 'Quick commands', // i18n-ignore
   updates: 'Updates', // i18n-ignore
   ssh: 'SSH Hosts', // i18n-ignore
@@ -2764,6 +2776,29 @@ function previewSound() {
                   </button>
                 </div>
               </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ============ Automations ============ -->
+        <section
+          id="set-automations"
+          class="set-page"
+          data-page="automations"
+          :hidden="!shown('automations')"
+          aria-labelledby="set-automations-title"
+        >
+          <header class="set-page-head">
+            <h2 id="set-automations-title">{{ PAGES.automations.title }}</h2>
+            <p class="set-page-desc">{{ PAGES.automations.desc }}</p>
+          </header>
+          <div class="set-group">
+            <AutomationsPage v-if="page === 'automations' && !searching" />
+            <div v-else class="set-row">
+              <div class="set-label">{{ t('settings.automations.open', 'Open Automations') }}
+                <span class="set-hint">{{ t('settings.automations.openHint', 'Create schedules and inspect recent runs.') }}</span>
+              </div>
+              <button type="button" class="exit-btn" @click="go('automations')">{{ t('settings.automations.open', 'Open Automations') }}</button>
             </div>
           </div>
         </section>
