@@ -3308,6 +3308,20 @@ function updateDropTarget(x, y) {
     }
     return
   }
+  // Near an outer edge of the workspace: the pane takes that whole side
+  // (across the top, down the left…), not just one pane's half.
+  const edge = workspaceEdgeAt(x, y)
+  if (edge) {
+    paneDrag.target = { kind: 'edge', id: edge.wsId, zone: edge.side }
+    paneDrag.zoneRect = edge.rect
+    paneDrag.label = {
+      top: t('app.drag.edgeTop', 'Place across the top'),
+      bottom: t('app.drag.edgeBottom', 'Place across the bottom'),
+      left: t('app.drag.edgeLeft', 'Place down the left side'),
+      right: t('app.drag.edgeRight', 'Place down the right side')
+    }[edge.side]
+    return
+  }
   const paneEl = els.find(
     (el) => el.classList && el.classList.contains('pane') && el.closest('.ws-layer:not(.hidden)')
   )
@@ -3365,6 +3379,32 @@ function detachLeaf(ws, leafId) {
   }
 }
 
+// The band along the visible workspace's outer edge where a dropped pane
+// takes that whole side. Only when the workspace has more than one pane
+// besides the dragged one (else a pane's own zones already do it).
+const EDGE_BAND = 28
+function workspaceEdgeAt(x, y) {
+  const layer = document.querySelector('.ws-layer:not(.hidden)')
+  const ws = currentWs.value
+  if (!layer || !ws || !ws.tree || ws.tree.type !== 'split') return null
+  const src = wsOfLeaf(paneDrag.srcId)
+  // Moving the only other pane of a two-pane split: its own zones do it.
+  if (src === ws && ws.tree.children.length === 2 && ws.tree.children.some((c) => c.type === 'leaf' && c.id === paneDrag.srcId)) return null
+  const r = layer.getBoundingClientRect()
+  if (x < r.left || x > r.right || y < r.top || y > r.bottom) return null
+  const d = { left: x - r.left, right: r.right - x, top: y - r.top, bottom: r.bottom - y }
+  const side = Object.keys(d).reduce((a, b) => (d[a] <= d[b] ? a : b))
+  if (d[side] > EDGE_BAND) return null
+  const band = { width: r.width / 3, height: r.height / 3 }
+  const rect = {
+    top: { left: r.left, top: r.top, width: r.width, height: band.height },
+    bottom: { left: r.left, top: r.bottom - band.height, width: r.width, height: band.height },
+    left: { left: r.left, top: r.top, width: band.width, height: r.height },
+    right: { left: r.right - band.width, top: r.top, width: band.width, height: r.height }
+  }[side]
+  return { wsId: ws.id, side, rect }
+}
+
 function movePane(srcId, target) {
   const srcWs = wsOfLeaf(srcId)
   const src = findLeaf(srcId)
@@ -3387,6 +3427,29 @@ function movePane(srcId, target) {
           })
         )
     selectWorkspace(dst.id)
+    dst.activeId = srcId
+    refitSoon()
+    return
+  }
+
+  if (target.kind === 'edge') {
+    const dst = wsById(target.id)
+    if (!dst) return
+    detachLeaf(srcWs, srcId)
+    if (!dst.tree) {
+      dst.tree = src
+    } else {
+      const dir = target.zone === 'left' || target.zone === 'right' ? 'row' : 'col'
+      const before = target.zone === 'left' || target.zone === 'top'
+      const root = dst.tree
+      dst.tree = reactive({
+        type: 'split',
+        id: newId('split'),
+        dir,
+        sizes: before ? [35, 65] : [65, 35],
+        children: before ? [src, root] : [root, src]
+      })
+    }
     dst.activeId = srcId
     refitSoon()
     return

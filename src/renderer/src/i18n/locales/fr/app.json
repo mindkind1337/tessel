@@ -314,7 +314,11 @@
       "above": "Placer au-dessus de {{pane}}",
       "below": "Placer sous {{pane}}",
       "leftOf": "Placer à gauche de {{pane}}",
-      "rightOf": "Placer à droite de {{pane}}"
+      "rightOf": "Placer à droite de {{pane}}",
+      "edgeTop": "Placer sur tout le haut",
+      "edgeBottom": "Placer sur tout le bas",
+      "edgeLeft": "Placer sur tout le côté gauche",
+      "edgeRight": "Placer sur tout le côté droit"
     },
     "folder": {
       "restart": "Redémarrez Tessel pour activer les dossiers de projet.",
