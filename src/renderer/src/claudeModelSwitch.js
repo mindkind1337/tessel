@@ -37,7 +37,7 @@ export function hasClaudeModelSwitchConfirmation(buffer) {
 
 export function hasClaudeModelSwitchSuccess(buffer, modelLabel) {
   const text = compact(buffer)
-  if (text.includes(`setmodelto${String(modelLabel).replace(/\s+/g, '').toLowerCase()}`)) return true
+  if (text.includes(`setmodelto${String(modelLabel).replace(/\s+/g, '').toLowerCase()}`)) return true // i18n-ignore
   // Why (Orca): resolved echoes insert a version ("Opus 5 (1M context)");
   // every picker token must appear, in order.
   const labelTokens = String(modelLabel).toLowerCase().match(/[a-z]+|\d+[a-z]*/g) || []
@@ -155,7 +155,7 @@ export async function switchClaudeModel(paneId, modelId, expectedModelLabel) {
   })
   observer.arm()
   try {
-    await typeCommand(paneId, `/model ${modelId}`)
+    await typeCommand(paneId, `/model ${modelId}`) // i18n-ignore
   } catch {
     observer.dispose()
   }

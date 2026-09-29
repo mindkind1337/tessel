@@ -100,7 +100,7 @@ const summaryGroups = computed(() => {
 // own cards, so resting on them closes this one.
 const cardHover = useHoverCard({ openDelay: 100, ignore: '.wtc-agents, .wcp' })
 const summaryHover = useHoverCard({ disabled: () => props.expanded })
-const descId = `wtc-desc-${useId()}`
+const descId = `wtc-desc-${useId()}` // i18n-ignore
 const hoverBranch = computed(() => (card.value.branch && card.value.branch !== card.value.title ? card.value.branch : ''))
 const statusLine = computed(() =>
   card.value.isUnread ? t('sidebar.hover.statusUnread', '{{status}} · Unread', { status: statusLabel.value }) : statusLabel.value

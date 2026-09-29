@@ -15,7 +15,7 @@ md.renderer.rules.fence = (tokens, idx, options, env, self) => {
   const lang = (token.info || '').trim().split(/\s+/)[0].toLowerCase()
   // Encoded: DOMPurify drops an attribute holding "-->" (a comment trick).
   if (lang === 'mermaid')
-    return `<div class="md-mermaid" data-mermaid="${escapeAttr(encodeURIComponent(token.content))}"></div>\n`
+    return `<div class="md-mermaid" data-mermaid="${escapeAttr(encodeURIComponent(token.content))}"></div>\n` // i18n-ignore
   return defaultFence(tokens, idx, options, env, self)
 }
 
@@ -75,7 +75,7 @@ export function renderMermaid(source, { dark = true } = {}) {
   const run = queue.then(async () => {
     try {
       const mermaid = await loadMermaid(dark)
-      const { svg } = await mermaid.render(`tessel-mmd-${++counter}`, String(source || ''))
+      const { svg } = await mermaid.render(`tessel-mmd-${++counter}`, String(source || '')) // i18n-ignore
       return { svg: DOMPurify.sanitize(svg, { USE_PROFILES: { svg: true, svgFilters: true } }) }
     } catch (err) {
       return { error: (err && err.message) || String(err) }

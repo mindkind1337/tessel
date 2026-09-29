@@ -5,7 +5,7 @@
 import { t } from './i18n'
 
 const winget = (id) =>
-  `winget install --id ${id} --exact --source winget --accept-package-agreements --accept-source-agreements`
+  `winget install --id ${id} --exact --source winget --accept-package-agreements --accept-source-agreements` // i18n-ignore
 
 export const DEV_TOOLS = [
   {

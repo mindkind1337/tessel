@@ -265,8 +265,8 @@ export function createOrchestrator(deps) {
       req.worker === 'all'
         ? records(team).filter((r) => r.by === from.id && !WORKER_ENDED.includes(r.status) && mayControl(team, from, r))
         : [recordByHandle(team, req.worker)].filter(Boolean)
-    if (req.worker !== 'all' && !list.length) return answerNow(team, req, from, false, `${req.worker} is not a worker of your team (see team_worker_list).`)
-    if (list.some((r) => !mayControl(team, from, r))) return answerNow(team, req, from, false, `${req.worker} is not your worker: only its coordinator (or the lead) can stop it.`)
+    if (req.worker !== 'all' && !list.length) return answerNow(team, req, from, false, `${req.worker} is not a worker of your team (see team_worker_list).`) // i18n-ignore
+    if (list.some((r) => !mayControl(team, from, r))) return answerNow(team, req, from, false, `${req.worker} is not your worker: only its coordinator (or the lead) can stop it.`) // i18n-ignore
     const done = []
     for (const r of list) {
       endWorker(team, r, 'stopped', req.reason || 'stopped by its coordinator', from) // i18n-ignore
@@ -278,15 +278,15 @@ export function createOrchestrator(deps) {
 
   function releaseRequest(team, from, req) {
     const r = recordByHandle(team, req.worker)
-    if (!r || !WORKER_ACTIVE.includes(r.status)) return answerNow(team, req, from, false, `${req.worker} is not a running worker of your team (see team_worker_list).`)
-    if (!mayControl(team, from, r)) return answerNow(team, req, from, false, `${req.worker} is not your worker.`)
+    if (!r || !WORKER_ACTIVE.includes(r.status)) return answerNow(team, req, from, false, `${req.worker} is not a running worker of your team (see team_worker_list).`) // i18n-ignore
+    if (!mayControl(team, from, r)) return answerNow(team, req, from, false, `${req.worker} is not your worker.`) // i18n-ignore
     r.status = 'released'
     r.endedAt = now()
     const leaf = deps.findLeaf(r.paneId)
     if (leaf)
       deps.notice(
         [leaf],
-        `[Tessel] ${deps.label(from)} released you: you are no longer its worker, just a teammate in the team. Finish or report card ${r.taskId} as it asks (team_task_done).`,
+        `[Tessel] ${deps.label(from)} released you: you are no longer its worker, just a teammate in the team. Finish or report card ${r.taskId} as it asks (team_task_done).`, // i18n-ignore
         team.id
       )
     deps.activity({ type: 'task', action: 'worker-released', paneId: r.paneId, title: r.title, wsId: r.wsId, by: deps.label(from) })
@@ -302,13 +302,13 @@ export function createOrchestrator(deps) {
         return !!leaf && leaf.team === team.id && handleOf(leaf) === req.worker
       }) ||
       null
-    if (!r) return answerNow(team, req, from, false, `${req.worker} is not a worker of your team (see team_worker_list).`)
-    if (!mayControl(team, from, r)) return answerNow(team, req, from, false, `${req.worker} is not your worker: only its coordinator (or the lead) can read it.`)
+    if (!r) return answerNow(team, req, from, false, `${req.worker} is not a worker of your team (see team_worker_list).`) // i18n-ignore
+    if (!mayControl(team, from, r)) return answerNow(team, req, from, false, `${req.worker} is not your worker: only its coordinator (or the lead) can read it.`) // i18n-ignore
     const screen = r.paneId ? deps.readScreen(r.paneId, req.lines || 60) : null
-    if (screen == null) return answerNow(team, req, from, false, `${req.worker}'s terminal is not open (its pane was closed or is asleep).`)
+    if (screen == null) return answerNow(team, req, from, false, `${req.worker}'s terminal is not open (its pane was closed or is asleep).`) // i18n-ignore
     const tail = outputTail(screen, req.lines || 60)
-    const hb = r.heartbeatAt ? ` Last heartbeat ${Math.round((now() - r.heartbeatAt) / 60000)} min ago${r.phase ? ` (${r.phase})` : ''}.` : ' No heartbeat yet.'
-    answerNow(team, req, from, true, `${req.worker} "${r.title}" is ${r.status}.${hb} Its screen now:\n${tail || '(empty)'}`)
+    const hb = r.heartbeatAt ? ` Last heartbeat ${Math.round((now() - r.heartbeatAt) / 60000)} min ago${r.phase ? ` (${r.phase})` : ''}.` : ' No heartbeat yet.' // i18n-ignore
+    answerNow(team, req, from, true, `${req.worker} "${r.title}" is ${r.status}.${hb} Its screen now:\n${tail || '(empty)'}`) // i18n-ignore
   }
 
   function doneRequest(team, from, req) {

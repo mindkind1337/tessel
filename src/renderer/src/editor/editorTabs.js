@@ -19,8 +19,8 @@ export const samePath = (a, b) => pathKey(a) === pathKey(b)
 // diff: { root, rel, oldRel, area, full }.
 export const DIFF_SEP = '\u0000'
 export function diffTabPath(full, area, commit = null) {
-  if (area === 'commit') return `${full}${DIFF_SEP}diff:commit:${String(commit || '')}`
-  return `${full}${DIFF_SEP}diff:${area === 'staged' ? 'staged' : 'unstaged'}`
+  if (area === 'commit') return `${full}${DIFF_SEP}diff:commit:${String(commit || '')}` // i18n-ignore
+  return `${full}${DIFF_SEP}diff:${area === 'staged' ? 'staged' : 'unstaged'}` // i18n-ignore
 }
 export const isDiffTabPath = (p) => String(p || '').includes(DIFF_SEP)
 // The file a tab shows (a diff tab: its file on disk).

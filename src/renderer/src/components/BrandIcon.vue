@@ -57,7 +57,7 @@ const badgeText = computed(() => {
   return lum > 150 ? '#14161b' : '#ffffff'
 })
 
-const gid = `bi-grad-${Math.random().toString(36).slice(2, 9)}`
+const gid = `bi-grad-${Math.random().toString(36).slice(2, 9)}` // i18n-ignore
 
 // The OpenAI blossom (Codex), as OpenAI draws it.
 const OPENAI_PATH =

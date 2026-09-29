@@ -34,7 +34,7 @@ function report(level, value) {
   }
 }
 window.addEventListener('error', (e) =>
-  report('error', e.error || `${e.message} at ${e.filename}:${e.lineno}`)
+  report('error', e.error || `${e.message} at ${e.filename}:${e.lineno}`) // i18n-ignore
 )
 window.addEventListener('unhandledrejection', (e) =>
   report('error', e.reason || 'unhandled promise rejection')

@@ -394,7 +394,7 @@ export function buildSidebarRows(projects, options = {}, now = Date.now()) {
   }
   if (opts.projectOrderBy === 'recent') groups.sort((a, b) => b.lastActivityAt - a.lastActivityAt || a.index - b.index)
   for (const g of groups) {
-    const key = `repo:${g.project.id}`
+    const key = `repo:${g.project.id}` // i18n-ignore
     rows.push({ type: 'header', key, label: g.project.name, project: g.project, count: g.cards.length, collapsed: collapsed.has(key) })
     if (collapsed.has(key)) continue
     for (const card of g.cards) rows.push({ type: 'card', key: card.key, card, project: g.project })

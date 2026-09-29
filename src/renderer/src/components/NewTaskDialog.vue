@@ -22,7 +22,7 @@ const emit = defineEmits(['start', 'close'])
 const title = ref('')
 const brief = ref('')
 // 'new:<kind id>' or 'pane:<pane id>'
-const who = ref(props.agentKinds[0] ? `new:${props.agentKinds[0].id}` : '')
+const who = ref(props.agentKinds[0] ? `new:${props.agentKinds[0].id}` : '') // i18n-ignore
 const isolated = ref(true)
 // Its own copy: from which branch, with the project's .env files, and its
 // setup script (.tessel/setup.ps1) run first.
@@ -35,7 +35,7 @@ const titleEl = ref(null)
 const isNew = computed(() => who.value.startsWith('new:'))
 const canIsolate = computed(() => isNew.value && props.isolation.available)
 const reviewers = computed(() =>
-  props.openAgents.filter((a) => `pane:${a.id}` !== who.value && a.state !== 'limited' && !a.task)
+  props.openAgents.filter((a) => `pane:${a.id}` !== who.value && a.state !== 'limited' && !a.task) // i18n-ignore
 )
 const ready = computed(() => title.value.trim() && who.value)
 

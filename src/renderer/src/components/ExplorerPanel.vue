@@ -148,7 +148,7 @@ async function revealInTree(p) {
   query.value = ''
   selected.value = p
   nextTick(() => {
-    const el = document.querySelector(`.explorer-row[data-path="${CSS.escape(p)}"]`)
+    const el = document.querySelector(`.explorer-row[data-path="${CSS.escape(p)}"]`) // i18n-ignore
     if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' })
   })
 }

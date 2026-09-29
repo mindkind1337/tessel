@@ -701,7 +701,7 @@ function onKey(event) {
     const id = selectedProvider.value
     closeProvider()
     Array.from(root.value?.querySelectorAll('[data-test]') || [])
-      .find((node) => node.dataset.test === `usage-row-${id}`)
+      .find((node) => node.dataset.test === `usage-row-${id}`) // i18n-ignore
       ?.focus()
     return
   }

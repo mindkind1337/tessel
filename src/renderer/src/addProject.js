@@ -128,7 +128,7 @@ export function savedGroup(raw) {
 
 // --- Nested repositories -------------------------------------------------------
 export function newScanId() {
-  return `scan-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+  return `scan-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}` // i18n-ignore
 }
 
 export function repoCountLabel(count) {

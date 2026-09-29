@@ -136,7 +136,7 @@ function addCustom() {
     return
   }
   settings.customAgents.push({
-    id: `custom-${Date.now().toString(36)}`,
+    id: `custom-${Date.now().toString(36)}`, // i18n-ignore
     name,
     command,
     accent: custom.accent

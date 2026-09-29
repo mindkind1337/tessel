@@ -185,7 +185,7 @@ async function copyTo(row, to) {
   const from = AGENTS.value.find((a) => a !== to && row.by[a])
   if (!from) return
   const src = row.by[from]
-  busy.value = `copy:${row.name}:${to}`
+  busy.value = `copy:${row.name}:${to}` // i18n-ignore
   try {
     const res = await window.shellApi.mcpCopy({
       from,
@@ -221,7 +221,7 @@ async function remove(agent, s) {
     danger: true
   })
   if (!ok) return
-  busy.value = `rm:${agent}:${s.name}`
+  busy.value = `rm:${agent}:${s.name}` // i18n-ignore
   try {
     const res = await window.shellApi.mcpRemove({
       agent,
@@ -241,7 +241,7 @@ async function remove(agent, s) {
 
 function signIn(agent, name) {
   if (agent === 'codex') {
-    emit('run', { label: t('mcp.signIn.pane', 'Sign in: {{name}}', { name }), command: `codex mcp login ${name}` })
+    emit('run', { label: t('mcp.signIn.pane', 'Sign in: {{name}}', { name }), command: `codex mcp login ${name}` }) // i18n-ignore
   } else if (agent !== 'claude') {
     say(
       t('mcp.signIn.other', 'Sign in to "{{name}}" from a {{agent}} pane (its own MCP command), or set the server\'s API key.', { name, agent: AGENT_NAME[agent] })
@@ -307,7 +307,7 @@ async function addFromCatalog(entry) {
       return
     }
   }
-  busy.value = `add:${entry.id}`
+  busy.value = `add:${entry.id}` // i18n-ignore
   const done = []
   try {
     for (const agent of chosen) {
@@ -640,7 +640,7 @@ onMounted(async () => {
                     :disabled="!!busy"
                     @click="copyTo(row, agent)"
                   >
-                    {{ busy === `copy:${row.name}:${agent}` ? t('mcp.adding', 'Adding…') : addToLabel(agent) }}
+                    {{ busy === `copy:${row.name}:${agent}` ? t('mcp.adding', 'Adding…') : addToLabel(agent) /* i18n-ignore */ }}
                   </button>
                   <span v-else class="set-hint">{{ t('mcp.installed.notInstalled', 'Not installed') }}</span>
                 </span>
@@ -883,7 +883,7 @@ onMounted(async () => {
             t('mcp.codexScope', 'Codex servers always apply to all projects.')
           }}</span>
               <button class="exit-btn primary" type="submit" :disabled="!!busy">
-                {{ busy === `add:${entry.id}` ? t('mcp.adding', 'Adding…') : addEntryLabel(entry) }}
+                {{ busy === `add:${entry.id}` ? t('mcp.adding', 'Adding…') : addEntryLabel(entry) /* i18n-ignore */ }}
               </button>
             </div>
           </form>

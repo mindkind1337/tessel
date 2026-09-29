@@ -46,7 +46,7 @@ export function resolveMinimumContrastRatio(background, override) {
 
 export function hexToRgba(hex, alpha) {
   const c = parseHex(hex)
-  return c ? `rgba(${c.r}, ${c.g}, ${c.b}, ${alpha})` : hex
+  return c ? `rgba(${c.r}, ${c.g}, ${c.b}, ${alpha})` : hex // i18n-ignore
 }
 
 // The theme with the cursor's opacity applied (hex cursors only, as Orca).

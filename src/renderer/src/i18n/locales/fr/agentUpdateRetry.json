@@ -1,0 +1,9 @@
+{
+  "agentUpdateRetry": {
+    "stuck": "{{names}} : arrêt incomplet ; la mise à jour n’a pas été lancée.",
+    "other": "{{names}} est également arrêté.",
+    "others": "{{names}} sont également arrêtés.",
+    "restartOne": "Redémarrez-le quand vous serez prêt.",
+    "restartMany": "Redémarrez-les quand vous serez prêt."
+  }
+}

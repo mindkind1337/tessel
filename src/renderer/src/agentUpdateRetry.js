@@ -14,6 +14,8 @@
 //   onStuck({ stuck, stopped }): tell the user
 //   log(level, text), label(id)
 // -> 'retried' | 'stuck' | 'failed'
+import { t } from './i18n'
+
 export const STOP_WAIT_MS = 15000
 
 export async function stopThenRetry(job, ids, deps) {
@@ -22,7 +24,7 @@ export async function stopThenRetry(job, ids, deps) {
   job.phase = 'retrying'
   job.retried = true
   job.paused = stopped
-  log('info', `${job.name}: stopping ${stopped.map(label).join(', ')} to update`)
+  log('info', `${job.name}: stopping ${stopped.map(label).join(', ')} to update`) // i18n-ignore
   let res = null
   try {
     res = await stopAndWait(stopped, timeoutMs)
@@ -36,11 +38,11 @@ export async function stopThenRetry(job, ids, deps) {
     job.paused = []
     job.stopped = stopped
     release(stopped)
-    log('error', `${job.name}: ${(stuck.length ? stuck : stopped).map(label).join(', ')} did not stop in time; update not run`)
+    log('error', `${job.name}: ${(stuck.length ? stuck : stopped).map(label).join(', ')} did not stop in time; update not run`) // i18n-ignore
     onStuck({ stuck: stuck.length ? stuck : stopped, stopped })
     return 'stuck'
   }
-  log('info', `${job.name}: ${stopped.map(label).join(', ')} stopped; updating`)
+  log('info', `${job.name}: ${stopped.map(label).join(', ')} stopped; updating`) // i18n-ignore
   const ok = await runUpdate()
   if (!ok) {
     job.phase = 'failed'
@@ -58,8 +60,12 @@ export function stuckMessage({ stuck, stopped }, label = String) {
   const others = stopped.filter((id) => !stuck.includes(id)).map(label)
   const n = stuck.length + others.length
   return (
-    `${names} could not be stopped cleanly; update not run.` +
-    (others.length ? ` ${others.join(', ')} ${others.length === 1 ? 'is' : 'are'} stopped too.` : '') +
-    ` Restart ${n === 1 ? 'it' : 'them'} when you are ready.`
+    t('agentUpdateRetry.stuck', '{{names}} could not be stopped cleanly; update not run.', { names }) +
+    (others.length ? ' ' + (others.length === 1
+      ? t('agentUpdateRetry.other', '{{names}} is stopped too.', { names: others.join(', ') })
+      : t('agentUpdateRetry.others', '{{names}} are stopped too.', { names: others.join(', ') })) : '') +
+    ' ' + (n === 1
+      ? t('agentUpdateRetry.restartOne', 'Restart it when you are ready.')
+      : t('agentUpdateRetry.restartMany', 'Restart them when you are ready.'))
   )
 }

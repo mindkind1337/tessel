@@ -34,7 +34,8 @@ export function detectLimit(text) {
     const m = re.exec(s)
     if (m) {
       const when = m[1].replace(/\s+/g, ' ').replace(/[\s,]+$/, '').trim()
-      return { reset: re === RESET_PATTERNS[1] ? `in ${when}` : when }
+      // Preserve the CLI's English reset phrase in the shared agent-state protocol.
+      return { reset: re === RESET_PATTERNS[1] ? `in ${when}` : when } // i18n-ignore
     }
   }
   return { reset: '' }

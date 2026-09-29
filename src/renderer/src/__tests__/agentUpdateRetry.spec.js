@@ -1,5 +1,6 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
 import { stopThenRetry, stuckMessage } from '../agentUpdateRetry'
+import { setUiLanguage } from '../i18n'
 
 const labels = { a: '#1 OpenCode', b: '#2 OpenCode' }
 const label = (id) => labels[id]
@@ -66,6 +67,21 @@ describe('stopThenRetry', () => {
 })
 
 describe('stuckMessage', () => {
+  afterEach(() => setUiLanguage('en'))
+
+  it('uses the French catalog and the appropriate restart and stopped-pane forms', async () => {
+    await setUiLanguage('fr')
+    expect(stuckMessage({ stuck: ['a'], stopped: ['a'] }, label)).toBe(
+      '#1 OpenCode : arrêt incomplet ; la mise à jour n’a pas été lancée. Redémarrez-le quand vous serez prêt.'
+    )
+    expect(stuckMessage({ stuck: ['a'], stopped: ['a', 'b'] }, label)).toContain(
+      '#2 OpenCode est également arrêté. Redémarrez-les quand vous serez prêt.'
+    )
+    expect(stuckMessage({ stuck: ['a'], stopped: ['a', 'b', 'c'] })).toContain(
+      'b, c sont également arrêtés. Redémarrez-les quand vous serez prêt.'
+    )
+  })
+
   it('names the pane and says the update did not run', () => {
     expect(stuckMessage({ stuck: ['a'], stopped: ['a'] }, label)).toBe(
       '#1 OpenCode could not be stopped cleanly; update not run. Restart it when you are ready.'
