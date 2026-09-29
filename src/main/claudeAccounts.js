@@ -5,6 +5,7 @@ import os from 'os'
 import fs from 'fs/promises'
 import { join, resolve, isAbsolute } from 'path'
 import { randomUUID } from 'crypto'
+import { t } from './i18n'
 import {
   authError,
   inspect,
@@ -61,7 +62,7 @@ function credentials(raw) {
   if (raw === null) return null
   const parsed = jsonObject(raw)
   if (!object(parsed.claudeAiOauth) || !text(parsed.claudeAiOauth.accessToken))
-    throw authError('Claude OAuth credentials are missing or invalid.')
+    throw authError(t('main.claudeAccount.credentialsInvalid', 'Claude OAuth credentials are missing or invalid.'))
   return parsed.claudeAiOauth
 }
 function metadata(raw) {
@@ -97,7 +98,7 @@ export function createClaudeAccounts({
   now = Date.now
 } = {}) {
   if (!text(userData) || !isAbsolute(userData) || !isAbsolute(home))
-    throw authError('Absolute account storage and home paths are required.')
+    throw authError(t('main.claudeAccount.absolutePaths', 'Absolute account storage and home paths are required.'))
   const data = resolve(userData)
   const accountsRoot = join(data, 'claude-accounts')
   const runtimeRoot = join(data, 'claude-runtime-auth')
@@ -105,7 +106,7 @@ export function createClaudeAccounts({
   const snapshotPath = join(runtimeRoot, 'system-default-auth.json')
   const journalPath = join(runtimeRoot, 'transaction.json')
   const override = text(env.CLAUDE_CONFIG_DIR)
-  if (override && !isAbsolute(override)) throw authError('CLAUDE_CONFIG_DIR must be absolute.')
+  if (override && !isAbsolute(override)) throw authError(t('main.claudeAccount.configDirAbsolute', 'CLAUDE_CONFIG_DIR must be absolute.'))
   const configDir = override || join(resolve(home), '.claude')
   const credentialsPath = join(configDir, '.credentials.json')
   // Claude config-dir logins use a colocated .claude.json (also used by Orca).
@@ -115,7 +116,7 @@ export function createClaudeAccounts({
   const binding = { credentialsPath, configPath }
   const queueKey = process.platform === 'win32' ? data.toLowerCase() : data
   const authPath = (id) => {
-    if (!UUID.test(id)) throw authError('Unknown Claude account.')
+    if (!UUID.test(id)) throw authError(t('main.claudeAccount.unknown', 'Unknown Claude account.'))
     return join(accountsRoot, id, 'auth')
   }
   const safe = async (fn) => {
@@ -217,11 +218,11 @@ export function createClaudeAccounts({
         typeof value.oauth.present !== 'boolean' ||
         (value.oauth.present && value.oauth.value !== null && !object(value.oauth.value))
       )
-        throw authError('The system-default Claude auth snapshot is unavailable or invalid.')
+        throw authError(t('main.claudeAccount.systemSnapshotInvalid', 'The system-default Claude auth snapshot is unavailable or invalid.'))
       if (value.credentials !== null) jsonObject(value.credentials)
       return value
     }
-    throw authError('The system-default Claude auth snapshot is missing.')
+    throw authError(t('main.claudeAccount.systemSnapshotMissing', 'The system-default Claude auth snapshot is missing.'))
   }
   async function slotPath(change) {
     if (change.kind === 'index') return indexPath
@@ -246,7 +247,7 @@ export function createClaudeAccounts({
     if (equal(current, value)) return
     if (!equal(current, expected))
       throw authError(
-        'Claude account files changed during the operation. Recovery requires the original files.'
+        t('main.claudeAccount.changedRecovery', 'Claude account files changed during the operation. Recovery requires the original files.')
       )
     if (change.kind === 'oauth') {
       const raw = await readText(configPath)
@@ -304,7 +305,7 @@ export function createClaudeAccounts({
       const before = await readSlot(change)
       if (Object.hasOwn(change, 'expected') && !equal(before, change.expected))
         throw authError(
-          'Claude account files changed during the operation. Retry after other logins finish.'
+          t('main.claudeAccount.changedRetry', 'Claude account files changed during the operation. Retry after other logins finish.')
         )
       if (!equal(before, change.after)) prepared.push({ ...change, before })
     }
@@ -321,10 +322,10 @@ export function createClaudeAccounts({
         await recover()
       } catch {
         throw authError(
-          'Claude account change could not be rolled back. Launch is blocked until recovery succeeds.'
+          t('main.claudeAccount.rollbackFailed', 'Claude account change could not be rolled back. Launch is blocked until recovery succeeds.')
         )
       }
-      throw authError('Claude account change failed; the previous login was restored.')
+      throw authError(t('main.claudeAccount.changeFailed', 'Claude account change failed; the previous login was restored.'))
     }
   }
   function accountChanges(id, auth) {
@@ -360,19 +361,19 @@ export function createClaudeAccounts({
     let oldAuth = old ? await managed(old.id) : null
     if (oldAuth?.status === 'unknown')
       throw authError(
-        'The selected Claude account is unreadable. No authentication files were changed.'
+        t('main.claudeAccount.selectedUnreadable', 'The selected Claude account is unreadable. No authentication files were changed.')
       )
     if (old && oldAuth.status === 'ready') {
       oldAuth = await refreshed(old, oldAuth)
       changes.push(...accountChanges(old.id, oldAuth))
     }
     const target = value === null ? null : state.accounts.find((a) => a.id === value)
-    if (value !== null && !target) throw authError('Unknown Claude account.')
+    if (value !== null && !target) throw authError(t('main.claudeAccount.unknown', 'Unknown Claude account.'))
     let auth
     if (target) {
       auth = target.id === old?.id ? oldAuth : await managed(target.id)
       if (auth?.status !== 'ready' || !matches(target.identity, identity(auth.oauth)))
-        throw authError('This Claude account needs a valid login before selection.')
+        throw authError(t('main.claudeAccount.needsLogin', 'This Claude account needs a valid login before selection.'))
       const original = await snapshot(state.selectedId === null)
       changes.push(
         {
@@ -406,11 +407,11 @@ export function createClaudeAccounts({
     await recover()
     const state = await readMetadata()
     const previous = id ? state.accounts.find((a) => a.id === id) : null
-    if (id && !previous) throw authError('Unknown Claude account.')
+    if (id && !previous) throw authError(t('main.claudeAccount.unknown', 'Unknown Claude account.'))
     if (id && (await managed(id)).status === 'unknown') throw authError()
     if (id && state.selectedId === id) await snapshot()
-    if (typeof runLogin !== 'function') throw authError('Claude login is unavailable.')
-    if (signal?.aborted) throw authError('Claude login was cancelled.')
+    if (typeof runLogin !== 'function') throw authError(t('main.claudeAccount.loginUnavailable', 'Claude login is unavailable.'))
+    if (signal?.aborted) throw authError(t('main.claudeAccount.loginCancelled', 'Claude login was cancelled.'))
     const loginId = randomUUID()
     const temporary = join(runtimeRoot, `login-${loginId}`)
     await ensureDirectory(temporary)
@@ -425,17 +426,17 @@ export function createClaudeAccounts({
       if (!cleanupSafe)
         throw Object.assign(
           authError(
-            'Claude sign-in could not be stopped. Temporary files were retained because process termination could not be confirmed.'
+            t('main.claudeAccount.stopFailed', 'Claude sign-in could not be stopped. Temporary files were retained because process termination could not be confirmed.')
           ),
           { cleanupSafe: false }
         )
-      if (signal?.aborted) throw authError('Claude login was cancelled.')
+      if (signal?.aborted) throw authError(t('main.claudeAccount.loginCancelled', 'Claude login was cancelled.'))
       if (!result?.ok)
-        throw authError('Claude login did not complete. The previous account was preserved.')
+        throw authError(t('main.claudeAccount.loginIncomplete', 'Claude login did not complete. The previous account was preserved.'))
       const status = result.status
       const raw = await readText(join(temporary, '.credentials.json'))
       const token = credentials(raw)
-      if (!token) throw authError('Claude login produced no credentials.')
+      if (!token) throw authError(t('main.claudeAccount.noCredentials', 'Claude login produced no credentials.'))
       const configRaw =
         (await readText(join(temporary, '.claude.json'))) ??
         (await readText(join(temporary, '.config.json')))
@@ -449,7 +450,7 @@ export function createClaudeAccounts({
         conflict(identity(token), who) ||
         (previous && !matches(previous.identity, who))
       )
-        throw authError('Claude login identity could not be verified for this account.')
+        throw authError(t('main.claudeAccount.identityUnverified', 'Claude login identity could not be verified for this account.'))
       const accountId = id || randomUUID()
       const path = authPath(accountId)
       if (!id) {
@@ -499,7 +500,7 @@ export function createClaudeAccounts({
   }
   const savedAccountRefusal = () => ({
     ok: false,
-    error: "Select this pane's saved Claude account in AI provider accounts before restarting it."
+    error: t('main.claudeAccount.selectSaved', "Select this pane's saved Claude account in AI provider accounts before restarting it.")
   })
   async function validSavedAccount(state, id) {
     if (id === null) return true
@@ -539,9 +540,9 @@ export function createClaudeAccounts({
       serialized(async () => {
         await recover()
         const state = await readMetadata()
-        if (!state.accounts.some((a) => a.id === id)) throw authError('Unknown Claude account.')
+        if (!state.accounts.some((a) => a.id === id)) throw authError(t('main.claudeAccount.unknown', 'Unknown Claude account.'))
         if ((await managed(id)).status === 'unknown')
-          throw authError('Managed Claude auth cannot be removed safely.')
+          throw authError(t('main.claudeAccount.removeUnsafe', 'Managed Claude auth cannot be removed safely.'))
         const result = await changeSelection(state.selectedId === id ? null : state.selectedId, id)
         try {
           await removeOwnedDirectory(accountsRoot, authPath(id), MARKER, id)
@@ -551,7 +552,7 @@ export function createClaudeAccounts({
         } catch {
           return {
             ...result,
-            warning: 'Account removed; its managed files could not be cleaned safely.'
+            warning: t('main.claudeAccount.removedNotCleaned', 'Account removed; its managed files could not be cleaned safely.')
           }
         }
         return result
@@ -563,7 +564,7 @@ export function createClaudeAccounts({
         const state = await readMetadata()
         const id = accountId === undefined ? state.selectedId : accountId
         if (id !== state.selectedId || !(await validSavedAccount(state, id)))
-          return { ok: false, error: 'The selected Claude account changed or is unavailable.' }
+          return { ok: false, error: t('main.claudeAccount.changedUnavailable', 'The selected Claude account changed or is unavailable.') }
         return {
           ok: true,
           env: override ? { CLAUDE_CONFIG_DIR: configDir } : {},
@@ -578,7 +579,7 @@ export function createClaudeAccounts({
         const state = await readMetadata()
         const id = accountId === undefined ? state.selectedId : accountId
         if (!(await validSavedAccount(state, id)))
-          return { ok: false, error: 'The saved Claude account is missing or unreadable.' }
+          return { ok: false, error: t('main.claudeAccount.savedMissing', 'The saved Claude account is missing or unreadable.') }
         return { ok: true, env: override ? { CLAUDE_CONFIG_DIR: configDir } : {}, accountId: id }
       }),
     launchEnv: (accountId = undefined) =>
@@ -598,18 +599,19 @@ export function createClaudeAccounts({
           const account = state.accounts.find((a) => a.id === id)
           const auth = account ? await managed(id) : { status: 'missing' }
           if (auth.status === 'unknown')
-            throw authError('Selected Claude authentication is unreadable; launch was refused.')
+            throw authError(t('main.claudeAccount.selectedAuthUnreadable', 'Selected Claude authentication is unreadable; launch was refused.'))
           if (auth.status === 'missing') {
             await changeSelection(null)
             return {
               ok: false,
-              error:
-                'The selected Claude account is missing. System default was restored; choose an account before launching.'
+              error: t(
+                'main.claudeAccount.missingRestored', 'The selected Claude account is missing. System default was restored; choose an account before launching.'
+              )
             }
           }
           await changeSelection(id)
         } else if (authStatus(await systemAuth()) === 'unknown')
-          throw authError('System Claude authentication is unreadable; launch was refused.')
+          throw authError(t('main.claudeAccount.systemAuthUnreadable', 'System Claude authentication is unreadable; launch was refused.'))
         // Reapply a configured override after the launch facade removes inherited
         // auth variables. Without an override, retain Claude's default config path.
         return {

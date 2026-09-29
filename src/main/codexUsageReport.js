@@ -15,6 +15,7 @@ import {
   matchesUsageRoots,
   usageScope
 } from './usageReportFilters'
+import { t } from './i18n'
 
 const FIELDS = ['input', 'cached', 'output', 'reasoning']
 const seenByState = new WeakMap()
@@ -307,16 +308,16 @@ export function aggregateCodexUsage(
       .sort((a, b) => b.total - a.total || a.cwd.localeCompare(b.cwd)),
     sessions: rows,
     warnings: [
-      ...(malformed ? ['Some malformed log records were skipped.'] : []),
+      ...(malformed ? [t('main.usage.malformedSkipped', 'Some malformed log records were skipped.')] : []),
       ...(baselines
-        ? ['Inherited or incomplete cumulative snapshots were used only as baselines.']
+        ? [t('main.usage.baselinesOnly', 'Inherited or incomplete cumulative snapshots were used only as baselines.')]
         : [])
     ],
     scan: { duplicated, malformed, baselines },
     // Cumulative-only legacy records can span several requests. The count is
     // therefore observations of model usage, not a count of user prompts.
-    turnsMeaning: 'Observed model usage events; not user prompts.',
-    tokenSemantics: 'Cached tokens are included in input; reasoning tokens are included in output.'
+    turnsMeaning: t('main.usage.codexTurns', 'Observed model usage events; not user prompts.'),
+    tokenSemantics: t('main.usage.codexTokens', 'Cached tokens are included in input; reasoning tokens are included in output.')
   }
 }
 

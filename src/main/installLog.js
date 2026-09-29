@@ -6,6 +6,7 @@
 import fs from 'fs'
 import os from 'os'
 import { join } from 'path'
+import { t } from './i18n'
 
 export const MARK_OK = 'TESSEL-INSTALL-OK'
 export const MARK_FAILED = 'TESSEL-INSTALL-FAILED'
@@ -73,7 +74,7 @@ export function createInstallLogs({ dir, notify, appVersion = '' }) {
     // agentUpdate: { agentId, from, to } when it updates an agent (told back
     // with the result, for the update history).
     start({ paneId, name, shell, steps, agentUpdate }) {
-      if (typeof paneId !== 'string' || !paneId) return { error: 'No pane.' }
+      if (typeof paneId !== 'string' || !paneId) return { error: t('main.agents.noPane', 'No pane.') }
       if (active.has(paneId)) finish(paneId, null, 'another run started in this pane')
       const folder = join(dir, 'installs')
       const file = join(folder, `${safeName(name)}-${stamp()}.log`)

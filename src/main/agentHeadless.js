@@ -11,6 +11,7 @@ import { dirname } from 'path'
 import { spawn } from 'child_process'
 import { run, shimTarget, psQuote } from './agentTools'
 import { cleanEnv } from './cleanEnv'
+import { t } from './i18n'
 
 // Orca's arguments for a text-only answer.
 export const HEADLESS = {
@@ -57,13 +58,13 @@ const running = new Map() // key -> child
 // { ok: false, error, cancelled }. key: one run per key; cancel(key) stops it.
 export async function runHeadless(agent, input, { cwd, key = 'default', timeout = 120000 } = {}) {
   const spec = HEADLESS[agent]
-  if (!spec) return { ok: false, error: 'Pick Claude or Codex to generate the message.' }
-  if (running.has(key)) return { ok: false, error: 'A message is already being generated.' }
+  if (!spec) return { ok: false, error: t('main.agents.pickAgent', 'Pick Claude or Codex to generate the message.') }
+  if (running.has(key)) return { ok: false, error: t('main.agents.alreadyGenerating', 'A message is already being generated.') }
   running.set(key, null)
   try {
     const prog = await resolveProgram(spec.exe)
-    if (!prog) return { ok: false, error: `${agent === 'claude' ? 'Claude Code' : 'Codex'} was not found on this computer.` }
-    if (!running.has(key)) return { ok: false, cancelled: true, error: 'Stopped.' }
+    if (!prog) return { ok: false, error: t('main.agents.notFound', '{{agent}} was not found on this computer.', { agent: agent === 'claude' ? 'Claude Code' : 'Codex' }) }
+    if (!running.has(key)) return { ok: false, cancelled: true, error: t('main.agents.stopped', 'Stopped.') }
     const env = { ...cleanEnv(process.env) }
     for (const k of Object.keys(env)) if (k.toLowerCase() === 'path') delete env[k]
     env.Path = prog.path || process.env.PATH || ''
@@ -90,7 +91,7 @@ export async function runHeadless(agent, input, { cwd, key = 'default', timeout 
         } catch {
           /* gone */
         }
-        end({ ok: false, error: 'The agent took too long to answer.' })
+        end({ ok: false, error: t('main.agents.tooLong', 'The agent took too long to answer.') })
       }, timeout)
       child.stdout.on('data', (d) => {
         if (out.length < 200000) out += d
@@ -98,12 +99,12 @@ export async function runHeadless(agent, input, { cwd, key = 'default', timeout 
       child.stderr.on('data', (d) => {
         if (err.length < 20000) err += d
       })
-      child.on('error', (e) => end({ ok: false, error: `Could not start ${spec.exe}: ${e.message}` }))
+      child.on('error', (e) => end({ ok: false, error: t('main.agents.couldNotStart', 'Could not start {{exe}}: {{error}}', { exe: spec.exe, error: e.message }) }))
       child.on('close', (code) => {
-        if (child.cancelled) return end({ ok: false, cancelled: true, error: 'Stopped.' })
+        if (child.cancelled) return end({ ok: false, cancelled: true, error: t('main.agents.stopped', 'Stopped.') })
         if (code === 0 && out.trim()) return end({ ok: true, text: out })
         const line = (err || out).trim().split(/\r?\n/).filter(Boolean).slice(-2).join(' ')
-        end({ ok: false, error: line.slice(0, 400) || `${spec.exe} gave no answer.` })
+        end({ ok: false, error: line.slice(0, 400) || t('main.agents.noAnswer', '{{exe}} gave no answer.', { exe: spec.exe }) })
       })
       child.stdin.on('error', () => {})
       child.stdin.end(input)

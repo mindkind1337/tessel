@@ -4,6 +4,7 @@ import fs from 'fs'
 import os from 'os'
 import { isAbsolute, join } from 'path'
 import { installClaudeHooks, installCodexHooks, writeServerScript } from './teamInstall'
+import { t } from './i18n'
 
 export function prepareAgentStateHooks({
   provider,
@@ -20,7 +21,7 @@ export function prepareAgentStateHooks({
   if (typeof root !== 'string' || !isAbsolute(root))
     return {
       ok: false,
-      error: 'Agent status hooks need an absolute provider configuration directory.'
+      error: t('main.hooks.statusAbsolute', 'Agent status hooks need an absolute provider configuration directory.')
     }
   try {
     const script = writeServerScript(sharedDir, source)
@@ -29,7 +30,7 @@ export function prepareAgentStateHooks({
     if (!fs.readFileSync(script, 'utf8').includes('const AGENT_STATE_PROTOCOL = 1'))
       return {
         ok: false,
-        error: 'The shared Tessel hook bridge needs updating before status hooks can run.'
+        error: t('main.hooks.bridgeOutdated', 'The shared Tessel hook bridge needs updating before status hooks can run.')
       }
     const result =
       provider === 'codex'
@@ -45,7 +46,7 @@ export function prepareAgentStateHooks({
   } catch {
     return {
       ok: false,
-      error: 'Agent status hooks could not be installed. Existing agent settings were kept.'
+      error: t('main.hooks.statusInstallFailed', 'Agent status hooks could not be installed. Existing agent settings were kept.')
     }
   }
 }

@@ -728,7 +728,7 @@ ipcMain.handle('activity:load', () => {
 })
 ipcMain.handle('activity:save', (_evt, events) => {
   try {
-    if (!Array.isArray(events)) return { ok: false, error: 'not a list' }
+    if (!Array.isArray(events)) return { ok: false, error: 'not a list' } // i18n-ignore internal: the renderer's own data, never shown
     const tmp = activityFile() + '.tmp'
     fs.writeFileSync(tmp, JSON.stringify(trimEvents(events.filter(isEvent))), 'utf8')
     fs.renameSync(tmp, activityFile())
@@ -1375,10 +1375,10 @@ ipcMain.handle(
     }
     try {
       const r = installClaudeHooks(script)
-      if (r.error) errors.push(`Claude Code hooks: ${r.error}`)
+      if (r.error) errors.push(t('main.hooks.claudeFailed', 'Claude Code hooks: {{error}}', { error: r.error }))
       else if (r.changed) changed.push('Claude Code: hooks for team messages')
     } catch (err) {
-      errors.push(`Claude Code hooks: ${err.message}`)
+      errors.push(t('main.hooks.claudeFailed', 'Claude Code hooks: {{error}}', { error: err.message }))
     }
     try {
       const r = await installCodexServer(script, validateCodexConfig)
@@ -1393,11 +1393,11 @@ ipcMain.handle(
       const codex = (await getAgents()).find((a) => a.id === 'codex')
       if (codex && codex.available) {
         const r = installCodexHooks(script)
-        if (r.error) errors.push(`Codex hooks: ${r.error}`)
+        if (r.error) errors.push(t('main.hooks.codexFailed', 'Codex hooks: {{error}}', { error: r.error }))
         else if (r.changed) changed.push('Codex: hooks (current conversation)')
       }
     } catch (err) {
-      errors.push(`Codex hooks: ${err.message}`)
+      errors.push(t('main.hooks.codexFailed', 'Codex hooks: {{error}}', { error: err.message }))
     }
     // Gemini CLI hooks: its conversation, and its team messages while it works
     // and when it finishes a turn (never typed). Only where it is installed.
@@ -1405,22 +1405,22 @@ ipcMain.handle(
       const gemini = (await getAgents()).find((a) => a.id === 'gemini')
       if (gemini && gemini.available) {
         const r = installGeminiHooks(script)
-        if (r.error) errors.push(`Gemini CLI hooks: ${r.error}`)
+        if (r.error) errors.push(t('main.hooks.geminiFailed', 'Gemini CLI hooks: {{error}}', { error: r.error }))
         else if (r.changed) changed.push('Gemini CLI: hooks (team messages, current conversation)')
       }
     } catch (err) {
-      errors.push(`Gemini CLI hooks: ${err.message}`)
+      errors.push(t('main.hooks.geminiFailed', 'Gemini CLI hooks: {{error}}', { error: err.message }))
     }
     // Copilot CLI hooks, in their own file: the same, where it is installed.
     try {
       const copilot = (await getAgents()).find((a) => a.id === 'copilot')
       if (copilot && copilot.available) {
         const r = installCopilotHooks(script)
-        if (r.error) errors.push(`Copilot CLI hooks: ${r.error}`)
+        if (r.error) errors.push(t('main.hooks.copilotFailed', 'Copilot CLI hooks: {{error}}', { error: r.error }))
         else if (r.changed) changed.push('Copilot CLI: hooks (team messages, current conversation)')
       }
     } catch (err) {
-      errors.push(`Copilot CLI hooks: ${err.message}`)
+      errors.push(t('main.hooks.copilotFailed', 'Copilot CLI hooks: {{error}}', { error: err.message }))
     }
     // OpenCode plugin: its conversation, messages after a tool, and when idle
     // (woken through its own API, never typed). Where it is installed.
@@ -1428,21 +1428,21 @@ ipcMain.handle(
       const opencode = (await getAgents()).find((a) => a.id === 'opencode')
       if (opencode && opencode.available) {
         const r = installOpencodePlugin(script)
-        if (r.error) errors.push(`OpenCode plugin: ${r.error}`)
+        if (r.error) errors.push(t('main.hooks.opencodeFailed', 'OpenCode plugin: {{error}}', { error: r.error }))
         else if (r.changed) changed.push('OpenCode: plugin (team messages, current conversation)')
       }
     } catch (err) {
-      errors.push(`OpenCode plugin: ${err.message}`)
+      errors.push(t('main.hooks.opencodeFailed', 'OpenCode plugin: {{error}}', { error: err.message }))
     }
     try {
       const kimi = (await getAgents()).find((a) => a.id === 'kimi')
       if (kimi && kimi.available) {
         const r = await installKimiHooks(script)
-        if (r.error) errors.push(`Kimi Code hooks: ${r.error}`)
+        if (r.error) errors.push(t('main.hooks.kimiFailed', 'Kimi Code hooks: {{error}}', { error: r.error }))
         else if (r.changed) changed.push('Kimi Code: hooks (team messages, current conversation)')
       }
     } catch {
-      errors.push('Kimi Code hooks: installation could not be completed.')
+      errors.push(t('main.hooks.kimiInstallIncomplete', 'Kimi Code hooks: installation could not be completed.'))
     }
     // Gemini CLI, Qwen Code, Copilot CLI, OpenCode, Cline: in their settings file,
     // for those installed here (a file Tessel cannot read is left alone).
@@ -1458,7 +1458,7 @@ ipcMain.handle(
     for (const preset of await getAgents()) {
       if (!preset.available || preset.custom) continue
       const r = writeBoardRule(preset.id)
-      if (r.error) errors.push(`${preset.name}: memory file ${r.file}: ${r.error}`)
+      if (r.error) errors.push(t('main.hooks.memoryFailed', '{{agent}}: memory file {{file}}: {{error}}', { agent: preset.name, file: r.file, error: r.error }))
       else if (r.changed) changed.push(`${preset.name}: task board rule in ${r.file}`)
     }
     if (changed.length) log.info('team', `team tools set up: ${changed.join('; ')}`)
@@ -1662,8 +1662,8 @@ ipcMain.handle('agentUpdates:run', async (_evt, q = {}) => {
   const agentId = q && typeof q.agentId === 'string' ? q.agentId : ''
   const status = agentUpdates.status()
   const row = status && status.agents ? status.agents[agentId] : null
-  if (!row || !Array.isArray(row.steps) || !row.steps.length) return { ok: false, kind: 'failed', reason: 'no update known for this agent' }
-  if (agentUpdateRunner.busy()) return { ok: false, kind: 'busy', reason: 'another agent is being updated' }
+  if (!row || !Array.isArray(row.steps) || !row.steps.length) return { ok: false, kind: 'failed', reason: t('main.agentUpdate.noneKnown', 'no update known for this agent') }
+  if (agentUpdateRunner.busy()) return { ok: false, kind: 'busy', reason: t('main.agentUpdate.otherBusy', 'another agent is being updated') }
   const from = row.installed || ''
   const to = row.latest || ''
   send('agentUpdates:progress', { agentId, state: 'running', from, to })
@@ -2222,7 +2222,7 @@ ipcMain.handle('pty:create', async (_evt, opts = {}) => {
     error: t('main.remote.launchCancelled', 'The terminal was closed before ssh started.')
   })
   const { id, shellId, cols = 80, rows = 24, cwd, projectDir } = opts
-  if (!id) throw new Error('pty:create requires an id')
+  if (!id) throw new Error('pty:create requires an id') // i18n-ignore internal: programming error
   const shell = getShells().find((s) => s.id === shellId) || defaultShell()
   // A pane on a remote host runs ssh.exe with the argv built from the saved host.
   let remote = opts.remoteHostId ? remoteHosts.launchFor(String(opts.remoteHostId)) : null
@@ -2313,7 +2313,7 @@ ipcMain.handle('pty:create', async (_evt, opts = {}) => {
   }
   if (agentProvider) {
     try { await agentStateStore.register({ paneId: id, provider: agentProvider, launchToken: agentLaunchToken, startedAt: agentStartedAt }) }
-    catch { agentStatusWarning = 'Agent status observations are unavailable.' }
+    catch { agentStatusWarning = t('main.agents.statusUnavailable', 'Agent status observations are unavailable.') }
   }
   return {
     ok: true,

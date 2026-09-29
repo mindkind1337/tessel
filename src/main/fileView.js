@@ -5,18 +5,19 @@ import fs from 'fs'
 import { isAbsolute } from 'path'
 import { pathToFileURL } from 'url'
 import { fileKind, extOf, IMAGE_MIME } from '../shared/fileKinds'
+import { t } from './i18n'
 
 export const MAX_TEXT_BYTES = 20 * 1024 * 1024
 export const MAX_IMAGE_BYTES = 30 * 1024 * 1024
 
 function statFile(file) {
-  if (typeof file !== 'string' || !isAbsolute(file)) return { error: 'Not a full file path.' }
+  if (typeof file !== 'string' || !isAbsolute(file)) return { error: t('main.file.notFullPath', 'Not a full file path.') }
   try {
     const st = fs.statSync(file)
-    if (!st.isFile()) return { error: 'This is not a file.' }
+    if (!st.isFile()) return { error: t('main.file.notFile', 'This is not a file.') }
     return { st }
   } catch {
-    return { error: 'The file was not found.' }
+    return { error: t('main.file.notFound', 'The file was not found.') }
   }
 }
 
@@ -33,21 +34,21 @@ export function readForView(file) {
   const kind = fileKind(file)
   if (kind === 'pdf') return { ok: true, kind, size: st.size }
   if (kind === 'image') {
-    if (st.size > MAX_IMAGE_BYTES) return { ok: false, kind, error: 'This image is too large to show here.' }
+    if (st.size > MAX_IMAGE_BYTES) return { ok: false, kind, error: t('main.file.imageTooLarge', 'This image is too large to show here.') }
     const mime = IMAGE_MIME[extOf(file)]
     const data = fs.readFileSync(file)
     return { ok: true, kind, size: st.size, dataUrl: `data:${mime};base64,${data.toString('base64')}` }
   }
-  if (st.size > MAX_TEXT_BYTES) return { ok: false, kind, error: 'This file is too large to show here (over 20 MB).' }
+  if (st.size > MAX_TEXT_BYTES) return { ok: false, kind, error: t('main.file.tooLarge', 'This file is too large to show here (over 20 MB).') }
   const buf = fs.readFileSync(file)
-  if (looksBinary(buf)) return { ok: false, kind: 'binary', error: 'This is a binary file: Tessel cannot show it.' }
+  if (looksBinary(buf)) return { ok: false, kind: 'binary', error: t('main.file.binary', 'This is a binary file: Tessel cannot show it.') }
   return { ok: true, kind, size: st.size, text: buf.toString('utf8') }
 }
 
 // An image a Markdown file points to (a relative path next to it), as a data
 // URL the viewer can show under Tessel's CSP (img-src 'self' data:).
 export function readImageForView(file) {
-  if (fileKind(file) !== 'image') return { ok: false, error: 'Not an image.' }
+  if (fileKind(file) !== 'image') return { ok: false, error: t('main.file.notImage', 'Not an image.') }
   return readForView(file)
 }
 
@@ -56,7 +57,7 @@ export function readImageForView(file) {
 export function openPdfWindow(BrowserWindow, file, { icon } = {}) {
   const { error } = statFile(file)
   if (error) return { ok: false, error }
-  if (fileKind(file) !== 'pdf') return { ok: false, error: 'Not a PDF.' }
+  if (fileKind(file) !== 'pdf') return { ok: false, error: t('main.file.notPdf', 'Not a PDF.') }
   const win = new BrowserWindow({
     width: 900,
     height: 1000,

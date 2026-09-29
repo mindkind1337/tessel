@@ -70,6 +70,7 @@ const writeAtomic = writeFileAtomic
 
 export function writeJsonSafe(file, data, valid = anyShape) {
   if (unloaded.has(resolve(file))) {
+    // i18n-ignore shared with the team tools (inlined in their process, no i18n there)
     throw Object.assign(new Error('Saved data has not been loaded; reload it before saving.'), {
       code: 'EJSONUNREAD'
     })

@@ -13,6 +13,7 @@ import fs from 'fs'
 import os from 'os'
 import { join, dirname } from 'path'
 import { writeFileAtomic } from './safeJson'
+import { t } from './i18n'
 
 export const JSON_AGENTS = ['gemini', 'qwen', 'copilot', 'opencode', 'cline', 'kimi']
 
@@ -52,15 +53,15 @@ function readSettings(file) {
   try {
     text = fs.readFileSync(file, 'utf8').replace(/^﻿/, '')
   } catch (err) {
-    return { error: `Could not read ${file}: ${err.message}` }
+    return { error: t('main.jsonAgents.readFailed', 'Could not read {{file}}: {{error}}', { file, error: err.message }) }
   }
   if (!text.trim()) return { data: null }
   try {
     const data = JSON.parse(text)
-    if (!data || typeof data !== 'object' || Array.isArray(data)) return { error: `${file} is not a settings object.` }
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return { error: t('main.jsonAgents.notObject', '{{file}} is not a settings object.', { file }) }
     return { data }
   } catch {
-    return { error: `${file} has comments or is not plain JSON: Tessel does not rewrite it. Edit it by hand.` }
+    return { error: t('main.jsonAgents.notPlainJson', '{{file}} has comments or is not plain JSON: Tessel does not rewrite it. Edit it by hand.', { file }) }
   }
 }
 
@@ -139,7 +140,7 @@ export function configToEntry(agent, cfg, extra = {}) {
 // -> { servers: [{ name, type, target }], error }
 export function listJsonAgent(agent, home) {
   const file = settingsFile(agent, home)
-  if (!file) return { servers: [], error: 'Unknown agent.' }
+  if (!file) return { servers: [], error: t('main.jsonAgents.unknownAgent', 'Unknown agent.') }
   const r = readSettings(file)
   if (r.error) return { servers: [], error: r.error }
   const map = (r.data && r.data[KEY[agent]]) || {}
@@ -156,7 +157,7 @@ export function listJsonAgent(agent, home) {
 
 export function jsonAgentConfig(agent, name, home) {
   const file = settingsFile(agent, home)
-  const r = file ? readSettings(file) : { error: 'Unknown agent.' }
+  const r = file ? readSettings(file) : { error: t('main.jsonAgents.unknownAgent', 'Unknown agent.') }
   if (r.error || !r.data) return null
   const e = (r.data[KEY[agent]] || {})[name]
   return e ? entryToConfig(agent, e) : null
@@ -165,27 +166,27 @@ export function jsonAgentConfig(agent, name, home) {
 // entry: the agent's own entry (configToEntry). -> { ok } or { ok: false, error }
 export function setJsonAgentServer(agent, name, entry, home) {
   const file = settingsFile(agent, home)
-  if (!file) return { ok: false, error: 'Unknown agent.' }
+  if (!file) return { ok: false, error: t('main.jsonAgents.unknownAgent', 'Unknown agent.') }
   const r = readSettings(file)
   if (r.error) return { ok: false, error: r.error }
   const data = r.data || (agent === 'opencode' ? { $schema: 'https://opencode.ai/config.json' } : {})
   const key = KEY[agent]
   if (agent === 'kimi' && Object.hasOwn(data, key) && (!data[key] || typeof data[key] !== 'object' || Array.isArray(data[key])))
-    return { ok: false, error: 'Kimi mcpServers is not an object; the existing file was left unchanged.' }
+    return { ok: false, error: t('main.jsonAgents.kimiNotObject', 'Kimi mcpServers is not an object; the existing file was left unchanged.') }
   if (!data[key] || typeof data[key] !== 'object' || Array.isArray(data[key])) data[key] = {}
   if (JSON.stringify(data[key][name]) === JSON.stringify(entry)) return { ok: true, changed: false }
   data[key][name] = entry
   try {
     writeSettings(file, data)
   } catch (err) {
-    return { ok: false, error: `Could not write ${file}: ${err.message}` }
+    return { ok: false, error: t('main.jsonAgents.writeFailed', 'Could not write {{file}}: {{error}}', { file, error: err.message }) }
   }
   return { ok: true, changed: true }
 }
 
 export function removeJsonAgentServer(agent, name, home) {
   const file = settingsFile(agent, home)
-  if (!file) return { ok: false, error: 'Unknown agent.' }
+  if (!file) return { ok: false, error: t('main.jsonAgents.unknownAgent', 'Unknown agent.') }
   const r = readSettings(file)
   if (r.error) return { ok: false, error: r.error }
   const map = r.data && r.data[KEY[agent]]
@@ -194,7 +195,7 @@ export function removeJsonAgentServer(agent, name, home) {
   try {
     writeSettings(file, r.data)
   } catch (err) {
-    return { ok: false, error: `Could not write ${file}: ${err.message}` }
+    return { ok: false, error: t('main.jsonAgents.writeFailed', 'Could not write {{file}}: {{error}}', { file, error: err.message }) }
   }
   return { ok: true, changed: true }
 }

@@ -15,6 +15,7 @@ import path, { join, dirname, basename } from 'path'
 import os from 'os'
 import fs from 'fs'
 import { readJson } from './fileRead'
+import { t } from './i18n'
 import { copyWorktreeEnv, resolveWorktreeBase, setupWorktree } from './worktreeCreate'
 import { branchPrefixFor, branchNameFor, worktreeBaseDir } from '../shared/worktreeNaming'
 
@@ -71,7 +72,7 @@ export function parseKeyValueLines(text, sep = '=') {
     const line = raw.trim()
     if (!line || line.startsWith('#')) continue
     const i = line.indexOf(sep)
-    if (i <= 0) throw new Error(`Expected KEY${sep}value, got "${line}"`)
+    if (i <= 0) throw new Error(t('main.mcp.expectedKeyValue', 'Expected KEY{{sep}}value, got "{{line}}"', { sep, line }))
     out[line.slice(0, i).trim()] = line.slice(i + 1).trim()
   }
   return out
@@ -291,7 +292,7 @@ export async function gitInfo(cwd) {
   if (!top.ok)
     return {
       isRepo: false,
-      error: top.error && /ENOENT/.test(top.error) ? 'Git is not installed' : null
+      error: top.error && /ENOENT/.test(top.error) ? t('main.agents.gitNotInstalled', 'Git is not installed') : null
     }
   const root = top.stdout.trim()
   const br = await run('git', ['-C', root, 'rev-parse', '--abbrev-ref', 'HEAD'])
@@ -382,14 +383,14 @@ export function normalizeGitUsername(value) {
 // Initialization is opt-in; a failed optional step never hides a created tree.
 export async function createWorktree(cwd, label, options = {}) {
   if (!options || typeof options !== 'object' || Array.isArray(options)) {
-    return { ok: false, error: 'Worktree options must be an object.' }
+    return { ok: false, error: t('main.agents.worktreeOptions', 'Worktree options must be an object.') }
   }
   const info = await gitInfo(cwd)
-  if (!info.isRepo) return { ok: false, error: 'The workspace folder is not a git repository.' }
+  if (!info.isRepo) return { ok: false, error: t('main.agents.notRepo', 'The workspace folder is not a git repository.') }
   if (!info.hasCommits)
     return {
       ok: false,
-      error: 'The repository has no commits yet. Make a first commit, then try again.'
+      error: t('main.agents.noCommits', 'The repository has no commits yet. Make a first commit, then try again.')
     }
   const selected = await resolveWorktreeBase(info.root, info.branch, options.baseBranch, run)
   if (!selected.ok) return selected
@@ -417,9 +418,9 @@ export async function createWorktree(cwd, label, options = {}) {
   const branch = branchNameFor(name, prefix)
   try {
     fs.mkdirSync(base, { recursive: true })
-    if (fs.lstatSync(base).isSymbolicLink()) return { ok: false, error: 'The worktree directory must not be a link.' }
+    if (fs.lstatSync(base).isSymbolicLink()) return { ok: false, error: t('main.agents.worktreeDirLink', 'The worktree directory must not be a link.') }
   } catch {
-    return { ok: false, error: 'Could not create the worktree directory.' }
+    return { ok: false, error: t('main.agents.worktreeDirCreate', 'Could not create the worktree directory.') }
   }
   const res = await run('git', ['-C', info.root, 'worktree', 'add', '-b', branch, wtPath, selected.commit])
   if (!res.ok) return { ok: false, error: cliError(res, 'git worktree add failed') }
@@ -446,12 +447,12 @@ export async function listMcp(cwd) {
       const start = res.stdout.indexOf('[')
       codex = codexServersFromList(JSON.parse(res.stdout.slice(start)))
     } catch {
-      codexError = 'Could not read the Codex server list.'
+      codexError = t('main.mcp.codexListUnreadable', 'Could not read the Codex server list.')
     }
   } else {
     codexError = /not recognized|CommandNotFound/i.test(res.stderr + res.stdout)
-      ? 'Codex is not installed.'
-      : cliError(res, 'Could not list Codex servers.')
+      ? t('main.mcp.codexNotInstalled', 'Codex is not installed.')
+      : cliError(res, t('main.mcp.codexListFailed', 'Could not list Codex servers.'))
   }
   // Gemini CLI, Qwen Code, Copilot CLI, OpenCode: their settings files.
   const others = {}
@@ -465,7 +466,7 @@ export async function listMcp(cwd) {
 export async function addMcp(spec) {
   const { agent, name, transport, cwd } = spec || {}
   if (!isValidServerName(name)) {
-    return { ok: false, error: 'Use letters, digits, - or _ for the name (no spaces).' }
+    return { ok: false, error: t('main.mcp.nameInvalid', 'Use letters, digits, - or _ for the name (no spaces).') }
   }
   let env
   let headers
@@ -480,18 +481,18 @@ export async function addMcp(spec) {
   if (agent === 'claude') {
     const scope = spec.scope === 'project' ? 'project' : 'user'
     if (scope === 'project' && !cwd) {
-      return { ok: false, error: 'Set a project folder on the workspace to use project scope.' }
+      return { ok: false, error: t('main.mcp.projectScopeNoFolder', 'Set a project folder on the workspace to use project scope.') }
     }
     args.push('-s', scope)
     if (transport === 'http') {
       if (!/^https?:\/\//i.test(spec.url || ''))
-        return { ok: false, error: 'Enter a URL starting with http:// or https://' }
+        return { ok: false, error: t('main.mcp.urlRequired', 'Enter a URL starting with http:// or https://') }
       // -H takes several values, so it goes after the name and URL.
       args.push('--transport', 'http', name, spec.url)
       for (const [k, v] of Object.entries(headers)) args.push('-H', `${k}: ${v}`)
     } else {
       const words = windowsSafeCommand(splitCommandLine(spec.commandLine))
-      if (!words.length) return { ok: false, error: 'Enter the command that starts the server.' }
+      if (!words.length) return { ok: false, error: t('main.mcp.commandRequired', 'Enter the command that starts the server.') }
       // -e takes several values, so it goes after the name; `--` ends it.
       args.push(name)
       for (const [k, v] of Object.entries(env)) args.push('-e', `${k}=${v}`)
@@ -505,12 +506,12 @@ export async function addMcp(spec) {
     args.push(name)
     if (transport === 'http') {
       if (!/^https?:\/\//i.test(spec.url || ''))
-        return { ok: false, error: 'Enter a URL starting with http:// or https://' }
+        return { ok: false, error: t('main.mcp.urlRequired', 'Enter a URL starting with http:// or https://') }
       args.push('--url', spec.url)
       if (spec.bearerEnvVar) args.push('--bearer-token-env-var', spec.bearerEnvVar)
     } else {
       const words = windowsSafeCommand(splitCommandLine(spec.commandLine))
-      if (!words.length) return { ok: false, error: 'Enter the command that starts the server.' }
+      if (!words.length) return { ok: false, error: t('main.mcp.commandRequired', 'Enter the command that starts the server.') }
       for (const [k, v] of Object.entries(env)) args.push('--env', `${k}=${v}`)
       args.push('--', ...words)
     }
@@ -521,20 +522,20 @@ export async function addMcp(spec) {
     let cfg
     if (transport === 'http') {
       if (!/^https?:\/\//i.test(spec.url || ''))
-        return { ok: false, error: 'Enter a URL starting with http:// or https://' }
+        return { ok: false, error: t('main.mcp.urlRequired', 'Enter a URL starting with http:// or https://') }
       cfg = { transport: 'http', url: spec.url, headers }
     } else {
       const words = splitCommandLine(spec.commandLine)
-      if (!words.length) return { ok: false, error: 'Enter the command that starts the server.' }
+      if (!words.length) return { ok: false, error: t('main.mcp.commandRequired', 'Enter the command that starts the server.') }
       cfg = { transport: 'stdio', command: words[0], args: words.slice(1), env }
     }
     return setJsonAgentServer(agent, name, configToEntry(agent, cfg))
   }
-  return { ok: false, error: 'Unknown agent.' }
+  return { ok: false, error: t('main.mcp.unknownAgent', 'Unknown agent.') }
 }
 
 export async function removeMcp({ agent, name, scope, cwd }) {
-  if (!isValidServerName(name)) return { ok: false, error: 'Invalid server name.' }
+  if (!isValidServerName(name)) return { ok: false, error: t('main.mcp.invalidServerName', 'Invalid server name.') }
   if (agent === 'claude') {
     const s = ['user', 'local', 'project'].includes(scope) ? scope : 'user'
     const res = await runAgentCli(
@@ -549,7 +550,7 @@ export async function removeMcp({ agent, name, scope, cwd }) {
     return res.ok ? { ok: true } : { ok: false, error: cliError(res, 'codex mcp remove failed') }
   }
   if (JSON_AGENTS.includes(agent)) return removeJsonAgentServer(agent, name)
-  return { ok: false, error: 'Unknown agent.' }
+  return { ok: false, error: t('main.mcp.unknownAgent', 'Unknown agent.') }
 }
 
 // ---------------------------------------------------------------------------
@@ -678,18 +679,18 @@ async function testHttp(cfg, baseEnv) {
       status: 'error',
       error:
         err.name === 'AbortError'
-          ? 'No answer after 20 seconds.'
-          : `Could not reach the server: ${err.message}`
+          ? t('main.mcp.noAnswer20', 'No answer after 20 seconds.')
+          : t('main.mcp.unreachable', 'Could not reach the server: {{error}}', { error: err.message })
     }
   }
   if (res.status === 401 || res.status === 403) {
-    return { ok: false, status: 'auth', error: 'The server is reachable but needs you to sign in.' }
+    return { ok: false, status: 'auth', error: t('main.mcp.needsSignIn', 'The server is reachable but needs you to sign in.') }
   }
   if (!res.ok)
-    return { ok: false, status: 'error', error: `The server answered HTTP ${res.status}.` }
+    return { ok: false, status: 'error', error: t('main.mcp.httpStatus', 'The server answered HTTP {{status}}.', { status: res.status }) }
   const init = parseRpcBody(await res.text(), 1)
   if (!init || !init.result) {
-    return { ok: false, status: 'error', error: 'The server did not answer like an MCP server.' }
+    return { ok: false, status: 'error', error: t('main.mcp.notMcp', 'The server did not answer like an MCP server.') }
   }
   const server = init.result.serverInfo && init.result.serverInfo.name
   const session = res.headers.get('mcp-session-id')
@@ -723,7 +724,7 @@ function testStdio(cfg, baseEnv, spawnFn) {
       [cfg.command, ...cfg.args].filter((w) => w !== undefined && w !== '')
     )
     if (!words.length)
-      return resolve({ ok: false, status: 'error', error: 'No command configured.' })
+      return resolve({ ok: false, status: 'error', error: t('main.mcp.noCommand', 'No command configured.') })
     let child
     try {
       child = spawnFn(words[0], words.slice(1), {
@@ -764,7 +765,7 @@ function testStdio(cfg, baseEnv, spawnFn) {
         finish({
           ok: false,
           status: 'error',
-          error: 'No answer after 60 seconds.',
+          error: t('main.mcp.noAnswer60', 'No answer after 60 seconds.'),
           log: tail(errText)
         }),
       60000
@@ -780,14 +781,14 @@ function testStdio(cfg, baseEnv, spawnFn) {
       finish({
         ok: false,
         status: 'error',
-        error: err.code === 'ENOENT' ? `Command not found: ${words[0]}` : err.message
+        error: err.code === 'ENOENT' ? t('main.mcp.commandNotFound', 'Command not found: {{command}}', { command: words[0] }) : err.message
       })
     )
     child.on('exit', (code) =>
       finish({
         ok: false,
         status: 'error',
-        error: `The server exited (code ${code}) before answering.`,
+        error: t('main.mcp.exitedEarly', 'The server exited (code {{code}}) before answering.', { code }),
         log: tail(errText)
       })
     )
@@ -809,7 +810,7 @@ function testStdio(cfg, baseEnv, spawnFn) {
         }
         if (msg.id === 1) {
           if (!msg.result)
-            return finish({ ok: false, status: 'error', error: 'Initialize was refused.' })
+            return finish({ ok: false, status: 'error', error: t('main.mcp.initRefused', 'Initialize was refused.') })
           server = msg.result.serverInfo && msg.result.serverInfo.name
           send({ jsonrpc: '2.0', method: 'notifications/initialized' })
           send({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} })
@@ -829,7 +830,7 @@ function testStdio(cfg, baseEnv, spawnFn) {
 
 export async function testMcp(ref, baseEnv = process.env, spawnFn = spawn) {
   const cfg = await fullConfig(ref)
-  if (!cfg) return { ok: false, status: 'error', error: 'Server not found in the configuration.' }
+  if (!cfg) return { ok: false, status: 'error', error: t('main.mcp.notInConfig', 'Server not found in the configuration.') }
   const started = Date.now()
   const res =
     cfg.transport === 'http' ? await testHttp(cfg, baseEnv) : await testStdio(cfg, baseEnv, spawnFn)
@@ -844,7 +845,7 @@ function quoteWord(w) {
 // leave the main process).
 export async function copyMcp({ from, to, name, scope, cwd }) {
   const cfg = await fullConfig({ agent: from, name, scope, cwd })
-  if (!cfg) return { ok: false, error: 'Server not found.' }
+  if (!cfg) return { ok: false, error: t('main.mcp.serverNotFound', 'Server not found.') }
   if (JSON_AGENTS.includes(to)) {
     const res = setJsonAgentServer(to, name, configToEntry(to, { ...cfg, args: cfg.args || [], env: cfg.env || {}, headers: cfg.headers || {} }))
     return res.ok ? { ok: true, note: null } : res
@@ -867,7 +868,7 @@ export async function copyMcp({ from, to, name, scope, cwd }) {
   const res = await addMcp(spec)
   const note =
     to === 'codex' && cfg.transport === 'http' && Object.keys(cfg.headers || {}).length
-      ? 'Codex cannot store custom headers. Sign in with codex mcp login if the server asks.'
+      ? t('main.mcp.codexNoHeaders', 'Codex cannot store custom headers. Sign in with codex mcp login if the server asks.')
       : null
   return res.ok ? { ok: true, note } : res
 }

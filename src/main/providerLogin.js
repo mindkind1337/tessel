@@ -9,6 +9,7 @@ import { execFile } from 'child_process'
 import { cleanEnv } from './cleanEnv'
 import { extraToolDirs } from './toolDirs'
 import { shimTarget } from './agentTools'
+import { t } from './i18n'
 
 export const ACCOUNT_AUTH_ENV = {
   codex: [
@@ -62,7 +63,7 @@ export function accountLoginUrl(provider, output) {
 }
 
 export function loginEnvironment(provider, home, base = process.env) {
-  if (!ACCOUNT_AUTH_ENV[provider] || !isAbsolute(home)) throw new Error('Invalid sign-in request.')
+  if (!ACCOUNT_AUTH_ENV[provider] || !isAbsolute(home)) throw new Error(t('main.login.invalidRequest', 'Invalid sign-in request.'))
   const env = cleanEnv(base)
   const remove = new Set(
     [
@@ -92,7 +93,7 @@ export function resolveAccountCommand(
     read = fs.readFileSync
   } = {}
 ) {
-  if (!ACCOUNT_AUTH_ENV[provider]) throw new Error('Unknown account provider.')
+  if (!ACCOUNT_AUTH_ENV[provider]) throw new Error(t('main.accounts.unknownProvider', 'Unknown account provider.'))
   const path = Object.entries(env).find(([key]) => key.toLowerCase() === 'path')?.[1] || ''
   const dirs = [...path.split(platform === 'win32' ? ';' : delimiter), ...toolDirs].filter(
     (dir) => dir && isAbsolute(dir)
@@ -108,13 +109,13 @@ export function resolveAccountCommand(
   const file = find(platform === 'win32' ? [`${provider}.exe`, `${provider}.cmd`] : [provider])
   if (!file)
     throw new Error(
-      `Install ${provider === 'claude' ? 'Claude Code' : 'Codex'} before adding an account.`
+      t('main.login.installFirst', 'Install {{agent}} before adding an account.', { agent: provider === 'claude' ? 'Claude Code' : 'Codex' })
     )
   if (platform !== 'win32' || /\.exe$/i.test(file)) return { file, pre: [] }
   // Resolve known npm launchers to a real executable; no cmd.exe or shell
   // interpolation of paths/arguments, regardless of PowerShell policy.
   const target = shimTarget(read(file, 'utf8'), dirname(file), find(['node.exe']), exists)
-  if (!target) throw new Error(`The ${provider} launcher could not be resolved. Reinstall its CLI.`)
+  if (!target) throw new Error(t('main.login.launcherUnresolved', 'The {{provider}} launcher could not be resolved. Reinstall its CLI.', { provider }))
   return target
 }
 
@@ -171,7 +172,7 @@ export function createProviderLogin({
   teardownMs = 10000
 } = {}) {
   return async ({ provider, home, signal, onProgress = () => {} }) => {
-    if (signal?.aborted) return { ok: false, error: 'Sign-in cancelled.' }
+    if (signal?.aborted) return { ok: false, error: t('main.login.cancelled', 'Sign-in cancelled.') }
     let command, child
     const childEnv = loginEnvironment(provider, home, env)
     try {
@@ -184,7 +185,7 @@ export function createProviderLogin({
     } catch {
       return {
         ok: false,
-        error: `Could not start ${provider} sign-in. Check that its CLI is installed.`
+        error: t('main.login.startFailed', 'Could not start {{provider}} sign-in. Check that its CLI is installed.', { provider })
       }
     }
     const loggedIn = await new Promise((resolve) => {
@@ -219,15 +220,15 @@ export function createProviderLogin({
             ? {
                 ok: false,
                 cleanupSafe: false,
-                error: 'Sign-in could not be stopped. Its temporary files were retained.'
+                error: t('main.login.stopFailed', 'Sign-in could not be stopped. Its temporary files were retained.')
               }
             : aborted
-              ? { ok: false, error: 'Sign-in cancelled.' }
+              ? { ok: false, error: t('main.login.cancelled', 'Sign-in cancelled.') }
               : timedOut
-                ? { ok: false, error: 'Sign-in timed out. Try again.' }
+                ? { ok: false, error: t('main.login.timedOut', 'Sign-in timed out. Try again.') }
                 : exitCode === 0
                   ? { ok: true }
-                  : { ok: false, error: 'Sign-in did not complete. Try again.' }
+                  : { ok: false, error: t('main.login.incomplete', 'Sign-in did not complete. Try again.') }
         )
       }
       exitSub = child.onExit(finish)
@@ -248,7 +249,7 @@ export function createProviderLogin({
       if (signal?.aborted) stop(false)
     })
     if (!loggedIn.ok || provider !== 'claude') return loggedIn
-    if (signal?.aborted) return { ok: false, error: 'Sign-in cancelled.' }
+    if (signal?.aborted) return { ok: false, error: t('main.login.cancelled', 'Sign-in cancelled.') }
     // Status is used privately to prove which account was authenticated.
     // Neither stdout nor tokens are ever sent to the renderer or the log.
     try {
@@ -257,9 +258,9 @@ export function createProviderLogin({
         env: childEnv,
         signal
       })
-      return result.ok ? result : { ok: false, error: 'Could not verify the signed-in account.' }
+      return result.ok ? result : { ok: false, error: t('main.login.verifyFailed', 'Could not verify the signed-in account.') }
     } catch {
-      return { ok: false, error: 'Could not verify the signed-in account.' }
+      return { ok: false, error: t('main.login.verifyFailed', 'Could not verify the signed-in account.') }
     }
   }
 }

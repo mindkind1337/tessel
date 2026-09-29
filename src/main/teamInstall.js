@@ -16,6 +16,7 @@ import os from 'os'
 import { join, dirname } from 'path'
 import { readJson } from './fileRead'
 import { writeFileAtomic as writeAtomic } from './safeJson'
+import { t } from './i18n'
 export { installKimiHooks, KIMI_HOOK_EVENTS } from './kimiHooks'
 
 export const SERVER_NAME = 'tessel-team'
@@ -205,7 +206,7 @@ export function installOpencodePlugin(scriptPath, home = os.homedir()) {
     if (fs.existsSync(file)) {
       const old = fs.readFileSync(file, 'utf8')
       if (old === text) return { changed: false }
-      if (!old.startsWith(OPENCODE_MARKER)) return { error: `${file} is not Tessel's, so it was left alone.` }
+      if (!old.startsWith(OPENCODE_MARKER)) return { error: t('main.hooks.notTessels', "{{file}} is not Tessel's, so it was left alone.", { file }) }
     }
     fs.mkdirSync(dirname(file), { recursive: true })
     writeAtomic(file, text)
@@ -223,7 +224,7 @@ function installHooks(file, events, command, extra = {}) {
   const exists = fs.existsSync(file)
   const settings = exists ? readJson(file) : {}
   if (!settings || typeof settings !== 'object' || Array.isArray(settings))
-    return { error: `${file} could not be read, so Tessel did not change it.` }
+    return { error: t('main.hooks.unreadable', '{{file}} could not be read, so Tessel did not change it.', { file }) }
   const hooks = settings.hooks && typeof settings.hooks === 'object' ? settings.hooks : {}
   let changed = false
   for (const event of events) {
@@ -294,14 +295,14 @@ export async function installCodexServer(scriptPath, validate, home = os.homedir
   const file = join(dir, 'config.toml')
   const text = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : ''
   // TOML literal strings ('...') keep Windows backslashes as they are.
-  if (scriptPath.includes("'")) return { error: 'The Tessel data folder has a quote in its path.' }
+  if (scriptPath.includes("'")) return { error: t('main.hooks.quoteInPath', 'The Tessel data folder has a quote in its path.') }
   const { kept, ours } = splitCodexConfig(text)
   const want = codexTable(scriptPath)
   if (ours.trim() === want.trim()) return { changed: false }
   const next = kept.replace(/\s*$/, '\n') + '\n' + want
   if (validate) {
     const v = await validate(next)
-    if (!v || !v.ok) return { error: `Codex would not accept the new settings, so Tessel left them as they were${v && v.error ? ` (${v.error})` : ''}.` }
+    if (!v || !v.ok) return { error: v && v.error ? t('main.hooks.codexRejectedWhy', 'Codex would not accept the new settings, so Tessel left them as they were ({{error}}).', { error: v.error }) : t('main.hooks.codexRejected', 'Codex would not accept the new settings, so Tessel left them as they were.') }
   }
   if (text && !fs.existsSync(`${file}.before-tessel`)) fs.copyFileSync(file, `${file}.before-tessel`)
   writeAtomic(file, next)

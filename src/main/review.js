@@ -94,7 +94,7 @@ export async function reviewInfo(args) {
   if (!(await refExists(repo, target))) return { ok: false, error: t('main.review.baseGone', 'The base branch {{branch}} no longer exists.', { branch: target }) }
 
   const mb = await git(repo, ['merge-base', target, branch])
-  if (!mb.ok) return { ok: false, error: `${branch} and ${target} have no common history.` }
+  if (!mb.ok) return { ok: false, error: t('main.review.noCommonHistoryWith', '{{branch}} and {{target}} have no common history.', { branch, target }) }
   const base = mb.stdout.trim()
 
   const [head, ns, num, log, merge, rootHead, rootStatus, behind, raw] = await Promise.all([
@@ -146,7 +146,7 @@ export async function reviewInfo(args) {
       ? t('main.review.checkFailed', 'Could not check for conflicts: {{error}}', {
           error: (merge.stderr || merge.error || '').trim().split(/\r?\n/)[0]
         })
-      : mergeBlocker(info)
+      : mergeBlocker(info, t)
   return info
 }
 
@@ -159,7 +159,7 @@ export async function reviewDiff(args = {}) {
   const mb = await git(c.repo, ['merge-base', c.target, c.branch])
   if (!mb.ok) return { ok: false, error: t('main.review.noCommonHistory', 'No common history.') }
   const res = await git(c.repo, ['diff', '--no-renames', '--no-color', '-U3', mb.stdout.trim(), c.branch, '--', file])
-  if (!res.ok) return { ok: false, error: (res.stderr || 'git diff failed').trim() }
+  if (!res.ok) return { ok: false, error: (res.stderr || t('main.review.gitFailed', '{{command}} failed', { command: 'git diff' })).trim() }
   const tooBig = res.stdout.length > MAX_DIFF
   return { ok: true, text: tooBig ? res.stdout.slice(0, MAX_DIFF) : res.stdout, truncated: tooBig }
 }
@@ -186,7 +186,7 @@ export async function reviewMerge(args = {}) {
         ok: false,
         error: t('main.review.noGitNameMerge', 'Git does not know your name yet. Run git config user.name and git config user.email in the project, then merge again.')
       }
-    return { ok: false, error: (res.stdout + res.stderr).trim().split(/\r?\n/).slice(-3).join(' ') || 'git merge failed' }
+    return { ok: false, error: (res.stdout + res.stderr).trim().split(/\r?\n/).slice(-3).join(' ') || t('main.review.gitFailed', '{{command}} failed', { command: 'git merge' }) }
   }
   const sha = await git(info.repo, ['rev-parse', 'HEAD'])
   return { ok: true, sha: sha.stdout.trim(), commits: info.commits.length, files: info.files.length }
@@ -197,7 +197,7 @@ export async function reviewMerge(args = {}) {
 export async function reviewCommit(args = {}) {
   const c = await check(args)
   if (c.error) return { ok: false, error: c.error }
-  if (!c.path || !c.listed) return { ok: false, error: "The agent's copy was not found." }
+  if (!c.path || !c.listed) return { ok: false, error: t('main.review.copyNotFound', "The agent's copy was not found.") }
   const message = String(args.message || '')
     .replace(/\r/g, '')
     .trim()
@@ -207,12 +207,12 @@ export async function reviewCommit(args = {}) {
   if (!status.ok) return { ok: false, error: t('main.review.readCopy', 'Could not read the copy.') }
   if (!status.stdout.trim()) return { ok: false, error: t('main.review.nothingToCommit', 'Nothing to commit: everything is committed.') }
   const add = await git(c.path, ['add', '-A'])
-  if (!add.ok) return { ok: false, error: (add.stderr || 'git add failed').trim().split(/\r?\n/)[0] }
+  if (!add.ok) return { ok: false, error: (add.stderr || t('main.review.gitFailed', '{{command}} failed', { command: 'git add' })).trim().split(/\r?\n/)[0] }
   const res = await git(c.path, ['commit', '-m', message])
   if (!res.ok) {
     if (/tell me who you are|unable to auto-detect email/i.test(res.stderr))
       return { ok: false, error: t('main.review.noGitNameCommit', 'Git does not know your name yet (Tools > Git > Set name & email), then commit again.') }
-    return { ok: false, error: (res.stdout + res.stderr).trim().split(/\r?\n/).slice(-2).join(' ') || 'git commit failed' }
+    return { ok: false, error: (res.stdout + res.stderr).trim().split(/\r?\n/).slice(-2).join(' ') || t('main.review.gitFailed', '{{command}} failed', { command: 'git commit' }) }
   }
   const sha = await git(c.path, ['rev-parse', 'HEAD'])
   return { ok: true, sha: sha.stdout.trim() }
@@ -238,7 +238,7 @@ export async function reviewPush(args = {}) {
         ok: false,
         error: t('main.review.pushAuth', 'Git could not sign in to origin. Sign in once (Tools > GitHub CLI > Sign in, or git push in a terminal), then push again.')
       }
-    return { ok: false, error: text.split(/\r?\n/).slice(-2).join(' ') || 'git push failed' }
+    return { ok: false, error: text.split(/\r?\n/).slice(-2).join(' ') || t('main.review.gitFailed', '{{command}} failed', { command: 'git push' }) }
   }
   return { ok: true, remote: remote.stdout.trim(), branch: c.branch }
 }
@@ -267,7 +267,7 @@ export async function reviewRemove(args = {}) {
       await wait(700)
     }
     if (!res.ok && (await stillListed(c.repo, c.path)))
-      return { ok: false, error: (res.stderr || 'git worktree remove failed').trim().split(/\r?\n/)[0] }
+      return { ok: false, error: (res.stderr || t('main.review.gitFailed', '{{command}} failed', { command: 'git worktree remove' })).trim().split(/\r?\n/)[0] }
     for (let i = 0; i < 8 && fs.existsSync(c.path); i++) {
       try {
         fs.rmSync(c.path, { recursive: true, force: true })
@@ -281,7 +281,7 @@ export async function reviewRemove(args = {}) {
   await git(c.repo, ['worktree', 'prune'])
   if (await refExists(c.repo, c.branch)) {
     const del = await git(c.repo, ['branch', args.force ? '-D' : '-d', c.branch])
-    if (!del.ok) return { ok: false, error: (del.stderr || 'git branch -d failed').trim().split(/\r?\n/)[0], copyRemoved: true }
+    if (!del.ok) return { ok: false, error: (del.stderr || t('main.review.gitFailed', '{{command}} failed', { command: 'git branch -d' })).trim().split(/\r?\n/)[0], copyRemoved: true }
   }
   return { ok: true }
 }

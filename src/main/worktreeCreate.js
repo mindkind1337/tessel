@@ -54,14 +54,14 @@ function inside(root, path) {
 function directoryRoot(path) {
   const absolute = resolve(path)
   const stat = fs.lstatSync(absolute)
-  if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error('Unsafe directory')
+  if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error('Unsafe directory') // i18n-ignore internal, caught and replaced
   return fs.realpathSync(absolute)
 }
 
 // Validate each existing component, including Windows junctions, before using
 // it. Missing destination directories are created one component at a time.
 function safeDirectory(root, path, create = false) {
-  if (!inside(root, path)) throw new Error('Outside worktree')
+  if (!inside(root, path)) throw new Error('Outside worktree') // i18n-ignore internal, caught and replaced
   let current = root
   for (const part of relative(root, path).split(sep).filter(Boolean)) {
     current = join(current, part)
@@ -74,7 +74,7 @@ function safeDirectory(root, path, create = false) {
       stat = fs.lstatSync(current)
     }
     if (!stat.isDirectory() || stat.isSymbolicLink() || !inside(root, fs.realpathSync(current))) {
-      throw new Error('Unsafe directory')
+      throw new Error('Unsafe directory') // i18n-ignore internal, caught and replaced
     }
   }
 }
@@ -190,7 +190,7 @@ async function gitPaths(root, paths, args, run) {
       timeout: 10000,
       maxBuffer: 256 * 1024
     })
-    if (!result.ok) throw new Error('Could not check ignored files')
+    if (!result.ok) throw new Error('Could not check ignored files') // i18n-ignore internal, caught and replaced
     for (const path of result.stdout.split('\0').filter(Boolean)) found.add(path)
   }
   return found
@@ -211,7 +211,7 @@ function ignoredDestinations(root, paths) {
         env: cleanEnv(process.env)
       },
       (error, stdout) => {
-        if (error && error.code !== 1) reject(new Error('Could not check destination ignore rules'))
+        if (error && error.code !== 1) reject(new Error('Could not check destination ignore rules')) // i18n-ignore internal, caught and replaced
         else resolveResult(new Set(String(stdout).split('\0').filter(Boolean)))
       }
     )
@@ -254,7 +254,7 @@ export async function copyWorktreeEnv(source, destination, run) {
     const sourceRoot = directoryRoot(source)
     const destinationRoot = directoryRoot(destination)
     if (inside(sourceRoot, destinationRoot) || inside(destinationRoot, sourceRoot))
-      throw new Error('Overlapping worktrees')
+      throw new Error('Overlapping worktrees') // i18n-ignore internal, caught and replaced
     const candidates = discoverEnv(sourceRoot, result)
     const ignored = await gitPaths(
       sourceRoot,
@@ -269,7 +269,7 @@ export async function copyWorktreeEnv(source, destination, run) {
       // Git emits only requested paths, but reject malformed output before
       // joining paths so this helper never follows a path outside either root.
       if (!candidates.includes(name) || isAbsolute(name) || name.split(/[\\/]/).includes('..'))
-        throw new Error('Unsafe path')
+        throw new Error('Unsafe path') // i18n-ignore internal, caught and replaced
       if (tracked.has(name) || !destinationIgnored.has(name)) {
         result.skipped++
         continue
@@ -410,7 +410,7 @@ export async function setupWorktree(path, baseCommit, run, execute = runWorktree
     safeDirectory(root, dirname(hook))
     const stat = fs.lstatSync(hook)
     if (!stat.isFile() || stat.isSymbolicLink() || !inside(root, fs.realpathSync(hook)))
-      throw new Error('Unsafe hook')
+      throw new Error('Unsafe hook') // i18n-ignore internal, caught and replaced
     const executed = await execute(
       process.platform === 'win32' ? 'powershell.exe' : 'pwsh',
       ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', hook],

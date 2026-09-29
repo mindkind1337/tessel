@@ -529,12 +529,30 @@ function resetText(iso) {
     })
   })
 }
+// The main process names windows in English (providerUsage.js,
+// usageProviderMapping.js): shown in the interface's language. The cases
+// below are those names, not text shown as is.
 function windowLabel(l) {
-  return l === '5h'
-    ? t('usage.window.fiveHour', '5-hour')
-    : l === 'week'
-      ? t('usage.window.weekly', 'Weekly')
-      : l
+  switch (l) {
+    case '5h':
+    case '5-hour':
+      return t('usage.window.fiveHour', '5-hour')
+    case 'week':
+    case 'Weekly':
+      return t('usage.window.weekly', 'Weekly')
+    case 'Sonnet weekly': // i18n-ignore
+      return t('usage.window.modelWeekly', '{{model}} weekly', { model: 'Sonnet' })
+    case 'Opus weekly': // i18n-ignore
+      return t('usage.window.modelWeekly', '{{model}} weekly', { model: 'Opus' })
+    case 'Fable weekly': // i18n-ignore
+      return t('usage.window.modelWeekly', '{{model}} weekly', { model: 'Fable' })
+    case 'Primary window': // i18n-ignore
+      return t('usage.window.primary', 'Primary window')
+    case 'Secondary window': // i18n-ignore
+      return t('usage.window.secondary', 'Secondary window')
+  }
+  const minutes = /^(\d+) min$/.exec(String(l || ''))
+  return minutes ? t('usage.window.minutes', '{{count}} min', { count: Number(minutes[1]) }) : l
 }
 // "5-hour quota used", or "left" when Settings shows what remains.
 function quotaText(label) {

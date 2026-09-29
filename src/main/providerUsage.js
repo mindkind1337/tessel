@@ -6,6 +6,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
+import { t } from './i18n'
 
 const ENDPOINTS = Object.freeze({
   codex: 'https://chatgpt.com/backend-api/wham/usage',
@@ -30,7 +31,7 @@ const fail = (code, message) => {
   throw new UsageError(code, message)
 }
 const stale = () =>
-  fail('stale', 'The selected account or login changed. Refresh usage and confirm again.')
+  fail('stale', t('main.usage.accountChanged', 'The selected account or login changed. Refresh usage and confirm again.'))
 const identity = (value) => ({
   account: text(value?.accountUuid ?? value?.accountId ?? value?.account),
   email: text(value?.emailAddress ?? value?.email)?.toLowerCase() || null,
@@ -60,8 +61,8 @@ function parse(raw, kind = 'auth') {
   fail(
     kind,
     kind === 'auth'
-      ? 'The selected login could not be read safely.'
-      : 'The usage service returned an unsupported response.'
+      ? t('main.usage.loginUnsafe', 'The selected login could not be read safely.')
+      : t('main.usage.unsupportedResponse', 'The usage service returned an unsupported response.')
   )
 }
 function timestamp(value, secondsOnly = false) {
@@ -180,19 +181,19 @@ async function inspect(file) {
       stat.isSymbolicLink() ||
       (index === parts.length - 1 ? !stat.isFile() || stat.nlink > 1 : !stat.isDirectory())
     )
-      throw new Error('Unsafe auth path')
+      throw new Error('Unsafe auth path') // i18n-ignore internal: callers show a fixed message
   }
-  if (fold(await fs.realpath(absolute)) !== fold(absolute)) throw new Error('Unsafe auth path')
+  if (fold(await fs.realpath(absolute)) !== fold(absolute)) throw new Error('Unsafe auth path') // i18n-ignore internal
   return stat
 }
 export async function boundedCredentialRead(file) {
   const before = await inspect(file)
-  if (before.size > AUTH_LIMIT) throw new Error('Auth size limit')
+  if (before.size > AUTH_LIMIT) throw new Error('Auth size limit') // i18n-ignore internal
   const handle = await fs.open(file, 'r')
   try {
     const opened = await handle.stat()
     if (opened.ino !== before.ino || opened.dev !== before.dev || !opened.isFile())
-      throw new Error('Auth changed')
+      throw new Error('Auth changed') // i18n-ignore internal
     const buffer = Buffer.alloc(AUTH_LIMIT + 1)
     let length = 0
     while (length < buffer.length) {
@@ -208,7 +209,7 @@ export async function boundedCredentialRead(file) {
       after.size !== before.size ||
       after.mtimeMs !== before.mtimeMs
     )
-      throw new Error('Auth changed')
+      throw new Error('Auth changed') // i18n-ignore internal
     return buffer.subarray(0, length).toString('utf8')
   } finally {
     await handle.close()
@@ -236,12 +237,12 @@ export function createProviderUsage({
   const timeout = finite(timeoutMs) ? Math.max(1, Math.min(30000, timeoutMs)) : 10000
   function validate(provider, accountId) {
     if (!['codex', 'claude'].includes(provider))
-      fail('validation', 'This provider does not support live usage.')
+      fail('validation', t('main.usage.noLiveUsage', 'This provider does not support live usage.'))
     if (
       accountId !== null &&
       (typeof accountId !== 'string' || !/^[A-Za-z0-9_-]{1,100}$/.test(accountId))
     )
-      fail('validation', 'Choose an explicit account before reading usage.')
+      fail('validation', t('main.usage.chooseAccount', 'Choose an explicit account before reading usage.'))
   }
   async function scope(provider, accountId) {
     validate(provider, accountId)
@@ -259,7 +260,7 @@ export function createProviderUsage({
     const account =
       accountId === null ? row.system : row.accounts?.find((item) => item.id === accountId)
     if (!account || account.status !== 'ready')
-      fail('auth', 'The selected account has no verified OAuth login. Check AI provider accounts.')
+      fail('auth', t('main.usage.noVerifiedLogin', 'The selected account has no verified OAuth login. Check AI provider accounts.'))
     const resolved = accounts.usageScope
       ? await accounts.usageScope(provider, accountId)
       : await accounts.sessionEnv(provider, accountId)
@@ -270,7 +271,7 @@ export function createProviderUsage({
         ? effective.CODEX_HOME || path.join(home, '.codex')
         : effective.CLAUDE_CONFIG_DIR || path.join(home, '.claude')
     if (typeof directory !== 'string' || !path.isAbsolute(directory))
-      fail('auth', 'The selected login location is unavailable.')
+      fail('auth', t('main.usage.loginLocation', 'The selected login location is unavailable.'))
     const authPath = path.join(
       path.resolve(directory),
       provider === 'codex' ? 'auth.json' : '.credentials.json'
@@ -295,10 +296,10 @@ export function createProviderUsage({
     try {
       raw = await readFile(file, 'utf8')
     } catch {
-      fail('auth', 'The selected login could not be read safely.')
+      fail('auth', t('main.usage.loginUnsafe', 'The selected login could not be read safely.'))
     }
     if (!(typeof raw === 'string' || Buffer.isBuffer(raw)) || Buffer.byteLength(raw) > AUTH_LIMIT)
-      fail('auth', 'The selected login could not be read safely.')
+      fail('auth', t('main.usage.loginUnsafe', 'The selected login could not be read safely.'))
     return String(raw)
   }
   async function auth(snapshot) {
@@ -311,7 +312,7 @@ export function createProviderUsage({
     if (typeof accessToken !== 'string' || !/^[\x21-\x7e]{1,16384}$/.test(accessToken))
       fail(
         'auth',
-        'The selected account has no usable OAuth token. Sign in again with the provider CLI.'
+        t('main.usage.noToken', 'The selected account has no usable OAuth token. Sign in again with the provider CLI.')
       )
     let who = null
     if (snapshot.provider === 'claude' && snapshot.accountId !== null) {
@@ -327,7 +328,7 @@ export function createProviderUsage({
       if (!matches(expected, who) || tokenConflict)
         fail(
           'identity',
-          'Claude runtime authentication does not match this selected account. Select the account again before refreshing usage.'
+          t('main.usage.claudeMismatch', 'Claude runtime authentication does not match this selected account. Select the account again before refreshing usage.')
         )
     }
     const headers =
@@ -346,7 +347,7 @@ export function createProviderUsage({
     if (snapshot.provider === 'codex' && parsed.tokens?.account_id !== undefined) {
       const id = parsed.tokens.account_id
       if (typeof id !== 'string' || !/^[\x21-\x7e]{1,256}$/.test(id))
-        fail('auth', 'The selected login has an invalid account identity.')
+        fail('auth', t('main.usage.invalidIdentity', 'The selected login has an invalid account identity.'))
       headers['ChatGPT-Account-Id'] = id
     }
     return {
@@ -382,7 +383,7 @@ export function createProviderUsage({
         })
         if (controller.signal.aborted) {
           await response.body?.cancel().catch(() => {})
-          fail('timeout', 'The usage request timed out.')
+          fail('timeout', t('main.usage.timedOut', 'The usage request timed out.'))
         }
         if (
           response.redirected ||
@@ -390,23 +391,23 @@ export function createProviderUsage({
           (response.status >= 300 && response.status < 400)
         ) {
           await response.body?.cancel().catch(() => {})
-          fail('redirect', 'The usage endpoint redirected; the request was refused.')
+          fail('redirect', t('main.usage.endpointRedirected', 'The usage endpoint redirected; the request was refused.'))
         }
         if (!response.ok) {
           await response.body?.cancel().catch(() => {})
           fail(
             response.status === 401 || response.status === 403 ? 'auth' : 'upstream',
             response.status === 401 || response.status === 403
-              ? 'Usage access was refused. Sign in again with the provider CLI; no token was refreshed.'
-              : 'The usage service is unavailable. Try again later.'
+              ? t('main.usage.accessRefused', 'Usage access was refused. Sign in again with the provider CLI; no token was refreshed.')
+              : t('main.usage.serviceUnavailable', 'The usage service is unavailable. Try again later.')
           )
         }
         if (Number(response.headers?.get('content-length')) > RESPONSE_LIMIT) {
           await response.body?.cancel().catch(() => {})
-          fail('response', 'The usage response exceeded its size limit.')
+          fail('response', t('main.usage.tooLarge', 'The usage response exceeded its size limit.'))
         }
         const reader = response.body?.getReader()
-        if (!reader) fail('response', 'The usage service returned an empty response.')
+        if (!reader) fail('response', t('main.usage.emptyResponse', 'The usage service returned an empty response.'))
         const chunks = []
         let length = 0
         try {
@@ -415,7 +416,7 @@ export function createProviderUsage({
             if (item.done) break
             length += item.value.byteLength
             if (length > RESPONSE_LIMIT)
-              fail('response', 'The usage response exceeded its size limit.')
+              fail('response', t('main.usage.tooLarge', 'The usage response exceeded its size limit.'))
             chunks.push(Buffer.from(item.value))
           }
           return parse(Buffer.concat(chunks).toString('utf8'), 'response')
@@ -426,7 +427,7 @@ export function createProviderUsage({
       const deadline = new Promise((_, reject) => {
         timer = setTimeout(() => {
           controller.abort()
-          reject(new UsageError('timeout', 'The usage request timed out.'))
+          reject(new UsageError('timeout', t('main.usage.timedOut', 'The usage request timed out.')))
         }, timeout)
       })
       return await Promise.race([work, deadline])
@@ -439,7 +440,7 @@ export function createProviderUsage({
     ok: false,
     ...extra,
     code: error instanceof UsageError ? error.code : 'network',
-    error: error instanceof UsageError ? error.message : 'The usage request could not be completed.'
+    error: error instanceof UsageError ? error.message : t('main.usage.requestFailed', 'The usage request could not be completed.')
   })
   function mint(snapshot, fingerprint, credit, windows) {
     if (redeeming.has(`${snapshot.provider}:${snapshot.accountId}`)) return null
@@ -500,7 +501,7 @@ export function createProviderUsage({
           { uncertain: result.uncertain, code: result.code }
         )
       } catch {
-        result.historyError = 'The reset result could not be saved to local history.'
+        result.historyError = t('main.reset.notSaved', 'The reset result could not be saved to local history.')
         try {
           log?.warn(
             'reset',
@@ -518,7 +519,7 @@ export function createProviderUsage({
       try {
         audit('pending')
       } catch {
-        fail('history', 'Could not save reset history. No reset was sent.')
+        fail('history', t('main.reset.historyNotSaved', 'Could not save reset history. No reset was sent.'))
       }
       if (ticket.expiresAt <= clock() || snapshot.epoch !== generation[snapshot.provider]) stale()
       const login = await stable(snapshot, ticket.fingerprint)
@@ -526,7 +527,7 @@ export function createProviderUsage({
       if (!available)
         fail(
           'response',
-          'Reset availability could not be verified. Refresh usage before trying again.'
+          t('main.reset.availabilityUnverified', 'Reset availability could not be verified. Refresh usage before trying again.')
         )
       before = available.availableCount
       if (!available.eligible) {
@@ -555,7 +556,7 @@ export function createProviderUsage({
         already_redeemed: 'alreadyRedeemed'
       }
       if (!Object.hasOwn(outcomes, data.code))
-        fail('response', 'The reset service returned an unknown outcome.')
+        fail('response', t('main.reset.unknownOutcome', 'The reset service returned an unknown outcome.'))
       await stable(snapshot, ticket.fingerprint)
       if (history) {
         // Optional observation after the explicit reset. Never infer before - 1.
@@ -581,8 +582,9 @@ export function createProviderUsage({
               provider: snapshot.provider,
               accountId: snapshot.accountId,
               uncertain: true,
-              error:
-                'The reset may have been applied to the confirmed account. Refresh usage before taking any further action.'
+              error: t(
+                'main.reset.mayHaveApplied', 'The reset may have been applied to the confirmed account. Refresh usage before taking any further action.'
+              )
             }
           : errorResult(error, { provider: snapshot.provider, accountId: snapshot.accountId })
       )
@@ -593,7 +595,7 @@ export function createProviderUsage({
     // expiry dates; these are not a dated redemption ledger.
     async creditHistory({ provider, accountId } = {}) {
       try {
-        if (provider !== 'codex') fail('validation', 'Credit history is available for Codex only.')
+        if (provider !== 'codex') fail('validation', t('main.usage.creditsCodexOnly', 'Credit history is available for Codex only.'))
         const snapshot = await scope(provider, accountId)
         const login = await auth(snapshot)
         const data = await network(snapshot, ENDPOINTS.credits, login.headers)
@@ -631,7 +633,7 @@ export function createProviderUsage({
         const data = await network(snapshot, ENDPOINTS[provider], login.headers)
         const windows = provider === 'codex' ? codexWindows(data) : claudeWindows(data)
         if (!windows.length && !(provider === 'codex' && typeof data.plan_type === 'string'))
-          fail('response', 'The usage service returned no recognized usage windows.')
+          fail('response', t('main.usage.noRecognizedWindows', 'The usage service returned no recognized usage windows.'))
         let resetCredits = null
         let resetCreditsError = null
         if (provider === 'codex') {
@@ -645,11 +647,11 @@ export function createProviderUsage({
                 await network(snapshot, ENDPOINTS.credits, login.headers),
                 clock()
               )
-              if (!fresh) throw new Error('Invalid credit response')
+              if (!fresh) throw new Error('Invalid credit response') // i18n-ignore caught below
               resetCredits = fresh
             } catch {
               resetCreditsError =
-                'Reset credit availability could not be refreshed. Refresh usage before resetting.'
+                t('main.reset.creditsNotRefreshed', 'Reset credit availability could not be refreshed. Refresh usage before resetting.')
             }
           }
         }
@@ -686,7 +688,7 @@ export function createProviderUsage({
       try {
         validate(provider, accountId)
         if (provider !== 'codex' || confirmed !== true)
-          fail('confirmation', 'Confirm a Codex reset before consuming a reset credit.')
+          fail('confirmation', t('main.reset.confirmFirst', 'Confirm a Codex reset before consuming a reset credit.'))
         const ticket = typeof resetToken === 'string' ? tickets.get(resetToken) : null
         if (
           !ticket ||
@@ -699,7 +701,7 @@ export function createProviderUsage({
         if (!ticket.promise) {
           const key = `${provider}:${accountId}`
           if (redeeming.has(key))
-            fail('busy', 'A reset for this account is already in progress. Wait for its result.')
+            fail('busy', t('main.reset.busy', 'A reset for this account is already in progress. Wait for its result.'))
           redeeming.set(key, ticket)
           ticket.promise = redeem(ticket).finally(() => {
             if (redeeming.get(key) === ticket) redeeming.delete(key)
@@ -721,7 +723,7 @@ export function createProviderUsage({
               code: result.code
             })
           } catch {
-            result.historyError = 'The reset result could not be saved to local history.'
+            result.historyError = t('main.reset.notSaved', 'The reset result could not be saved to local history.')
           }
         }
         return result

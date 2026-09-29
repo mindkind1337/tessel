@@ -7,6 +7,7 @@ import { execFile } from 'child_process'
 import { writeFileAtomic } from './safeJson'
 import { extraToolDirs, withToolDirs } from './toolDirs'
 import { cleanEnv } from './cleanEnv'
+import { t } from './i18n'
 
 export const KIMI_HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'Stop']
 const START = '# tessel:team-hooks:start'
@@ -28,10 +29,10 @@ function managedBlock(text) {
     const line = raw.trim()
     if (!quote && depth === 0 && (line === START || line === END)) {
       if (line === START) {
-        if (start !== null || end !== null) throw new Error('Ambiguous Tessel hook block.')
+        if (start !== null || end !== null) throw new Error('Ambiguous Tessel hook block.') // i18n-ignore internal parse error, caught and replaced
         start = offset
       } else {
-        if (start === null || end !== null) throw new Error('Ambiguous Tessel hook block.')
+        if (start === null || end !== null) throw new Error('Ambiguous Tessel hook block.') // i18n-ignore internal parse error, caught and replaced
         end = offset + raw.length
       }
     }
@@ -51,20 +52,20 @@ function managedBlock(text) {
           quote = ''
           continue
         }
-        if (c === '\n' && quote.length === 1) throw new Error('Unfinished TOML string.')
+        if (c === '\n' && quote.length === 1) throw new Error('Unfinished TOML string.') // i18n-ignore internal parse error, caught and replaced
       } else if (c === '#') break
       else if (c === '"' || c === "'") {
         quote = raw.slice(i, i + 3) === c.repeat(3) ? c.repeat(3) : c
         i += quote.length - 1
       } else if (c === '[' || c === '{') depth++
       else if (c === ']' || c === '}') {
-        if (--depth < 0) throw new Error('Unbalanced TOML.')
+        if (--depth < 0) throw new Error('Unbalanced TOML.') // i18n-ignore internal parse error, caught and replaced
       }
     }
     offset += raw.length
   }
   if (quote || depth || (start !== null && end === null))
-    throw new Error('Unfinished TOML or Tessel hook block.')
+    throw new Error('Unfinished TOML or Tessel hook block.') // i18n-ignore internal parse error, caught and replaced
   return start === null ? null : { start, end, text: text.slice(start, end) }
 }
 
@@ -82,14 +83,14 @@ function blockHooks(block) {
     }
     const m = /^(event|command|matcher|timeout)\s*=\s*(.+)$/.exec(line)
     if (!m || !current || Object.hasOwn(current, m[1]))
-      throw new Error('Unrecognized edit in Tessel hook block.')
+      throw new Error('Unrecognized edit in Tessel hook block.') // i18n-ignore internal parse error, caught and replaced
     if (m[1] === 'timeout') {
-      if (!/^\d+$/.test(m[2])) throw new Error('Invalid hook timeout.')
+      if (!/^\d+$/.test(m[2])) throw new Error('Invalid hook timeout.') // i18n-ignore internal parse error, caught and replaced
       current.timeout = Number(m[2])
     } else {
       const value = m[2]
       current[m[1]] = /^'[^']*'$/.test(value) ? value.slice(1, -1) : JSON.parse(value)
-      if (typeof current[m[1]] !== 'string') throw new Error('Invalid hook field.')
+      if (typeof current[m[1]] !== 'string') throw new Error('Invalid hook field.') // i18n-ignore internal parse error, caught and replaced
     }
   }
   return hooks
@@ -151,7 +152,7 @@ export function validateKimiConfig(text, executable = 'kimi') {
           error
             ? {
                 ok: false,
-                error: 'Kimi could not validate config.toml. Run kimi doctor config to inspect it.'
+                error: t('main.kimi.validateFailed', 'Kimi could not validate config.toml. Run kimi doctor config to inspect it.')
               }
             : { ok: true }
         )
@@ -170,7 +171,7 @@ export async function installKimiHooks(
     // The command is run by a shell. Reject paths requiring a different quoting
     // strategy rather than generating a command that can expand/interpolate.
     if (!scriptPath || /["`$%!\x00-\x1f]/.test(scriptPath))
-      return { error: 'The hook script path cannot be safely quoted for Kimi.' }
+      return { error: t('main.kimi.pathQuote', 'The hook script path cannot be safely quoted for Kimi.') }
     let before = null
     try {
       before = fs.readFileSync(file, 'utf8')
@@ -191,7 +192,7 @@ export async function installKimiHooks(
         )
       )
         return {
-          error: 'Tessel hook block contains custom changes; config.toml was left unchanged.'
+          error: t('main.kimi.customChanges', 'Tessel hook block contains custom changes; config.toml was left unchanged.')
         }
     }
     const nl = text.includes('\r\n') ? '\r\n' : '\n'
@@ -216,7 +217,7 @@ export async function installKimiHooks(
     const check = await validate(next)
     if (!check?.ok)
       return {
-        error: check?.error || 'Kimi rejected the candidate configuration; nothing changed.'
+        error: check?.error || t('main.kimi.rejected', 'Kimi rejected the candidate configuration; nothing changed.')
       }
     // Validation is asynchronous. Never overwrite an edit that arrived meanwhile.
     let current = null
@@ -226,7 +227,7 @@ export async function installKimiHooks(
       if (error.code !== 'ENOENT') throw error
     }
     if (current !== before)
-      return { error: 'Kimi configuration changed during validation. Try again.' }
+      return { error: t('main.kimi.changedDuring', 'Kimi configuration changed during validation. Try again.') }
     fs.mkdirSync(dirname(file), { recursive: true })
     if (before !== null) {
       try {
@@ -240,7 +241,7 @@ export async function installKimiHooks(
   } catch {
     return {
       error:
-        'Kimi config.toml could not be safely read or updated; existing settings were preserved.'
+        t('main.kimi.unsafe', 'Kimi config.toml could not be safely read or updated; existing settings were preserved.')
     }
   }
 }

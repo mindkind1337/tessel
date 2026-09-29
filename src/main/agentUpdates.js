@@ -18,6 +18,7 @@ import http from 'http'
 import https from 'https'
 import fs from 'fs'
 import { join, dirname } from 'path'
+import { t } from './i18n'
 
 export const DEFAULT_REGISTRY = 'https://registry.npmjs.org'
 export const LATEST_TTL_MS = 6 * 60 * 60 * 1000
@@ -44,11 +45,11 @@ export const NPM_PACKAGES = {
 const NPM_FLAGS = { pi: '--ignore-scripts ' }
 
 // How each agent installed another way updates, when Tessel does not update
-// it itself (shown as a hint).
+// it itself (shown as a hint). Functions: read in the interface's language.
 const OTHER_HINTS = {
-  kimi: 'Run its installer again to update it.',
-  ollama: 'Ollama updates itself (or: winget upgrade Ollama.Ollama).',
-  aider: 'Run aider-install again to update it.'
+  kimi: () => t('main.agentUpdate.hintKimi', 'Run its installer again to update it.'),
+  ollama: () => t('main.agentUpdate.hintOllama', 'Ollama updates itself (or: winget upgrade Ollama.Ollama).'),
+  aider: () => t('main.agentUpdate.hintAider', 'Run aider-install again to update it.')
 }
 
 export function npmUpdateSteps(id) {
@@ -144,14 +145,14 @@ export function registryUrl(registry, pkg) {
 // A plain public GET: no token, no cookie, no npmrc.
 export function fetchLatest(pkg, { registry = DEFAULT_REGISTRY, timeoutMs = 15000 } = {}) {
   return new Promise((resolve) => {
-    if (typeof pkg !== 'string' || !PKG_NAME.test(pkg)) return resolve({ error: 'not a package name' })
+    if (typeof pkg !== 'string' || !PKG_NAME.test(pkg)) return resolve({ error: t('main.agentUpdate.notPackage', 'not a package name') })
     let url
     try {
       url = new URL(registryUrl(registry, pkg))
     } catch {
-      return resolve({ error: 'bad registry address' })
+      return resolve({ error: t('main.agentUpdate.badRegistry', 'bad registry address') })
     }
-    if (url.protocol !== 'https:' && url.protocol !== 'http:') return resolve({ error: 'bad registry address' })
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') return resolve({ error: t('main.agentUpdate.badRegistry', 'bad registry address') })
     const lib = url.protocol === 'https:' ? https : http
     let done = false
     const finish = (r) => {
@@ -162,7 +163,7 @@ export function fetchLatest(pkg, { registry = DEFAULT_REGISTRY, timeoutMs = 1500
     const req = lib.get(url, { headers: { Accept: 'application/json', 'User-Agent': 'Tessel agent update check' } }, (res) => {
       if (res.statusCode !== 200) {
         res.resume()
-        return finish({ error: `registry answered ${res.statusCode}` })
+        return finish({ error: t('main.agentUpdate.registryStatus', 'registry answered {{status}}', { status: res.statusCode }) })
       }
       const chunks = []
       let size = 0
@@ -170,23 +171,23 @@ export function fetchLatest(pkg, { registry = DEFAULT_REGISTRY, timeoutMs = 1500
         size += c.length
         if (size > MAX_BODY) {
           req.destroy()
-          finish({ error: 'registry answer too large' })
+          finish({ error: t('main.agentUpdate.registryTooLarge', 'registry answer too large') })
         } else chunks.push(c)
       })
       res.on('end', () => {
         try {
           const data = JSON.parse(Buffer.concat(chunks).toString('utf8'))
           const version = data && typeof data.version === 'string' ? parseVersion(data.version) : null
-          finish(version ? { version } : { error: 'no version in the registry answer' })
+          finish(version ? { version } : { error: t('main.agentUpdate.registryNoVersion', 'no version in the registry answer') })
         } catch {
-          finish({ error: 'unreadable registry answer' })
+          finish({ error: t('main.agentUpdate.registryUnreadable', 'unreadable registry answer') })
         }
       })
       res.on('error', (err) => finish({ error: err.message }))
     })
     req.setTimeout(timeoutMs, () => {
       req.destroy()
-      finish({ error: 'registry did not answer in time' })
+      finish({ error: t('main.agentUpdate.registryTimeout', 'registry did not answer in time') })
     })
     req.on('error', (err) => finish({ error: err.message }))
   })
@@ -321,7 +322,7 @@ export function createAgentUpdates({
           pkg: c.source === 'other' ? null : c.pkg,
           installed,
           steps: c.steps || null,
-          ...(c.source === 'other' ? { note: OTHER_HINTS[a.id] || 'Installed outside npm: update it the way you installed it.' } : {})
+          ...(c.source === 'other' ? { note: OTHER_HINTS[a.id] ? OTHER_HINTS[a.id]() : t('main.agentUpdate.hintOther', 'Installed outside npm: update it the way you installed it.') } : {})
         }
       })
     )

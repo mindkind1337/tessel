@@ -4,6 +4,7 @@ import { join } from 'path'
 import { createHash } from 'crypto'
 import { getUsage, createUsageReader } from './agentUsage'
 import { createCodexUsageReport } from './codexUsageReport'
+import { t } from './i18n'
 
 export function createAccountUsage({
   accounts,
@@ -16,7 +17,7 @@ export function createAccountUsage({
   const readers = new Map()
   async function context() {
     const result = await accounts.usageEnv()
-    if (!result?.ok) throw new Error(result?.error || 'The selected Codex account is unavailable.')
+    if (!result?.ok) throw new Error(result?.error || t('main.accounts.codexUnavailable', 'The selected Codex account is unavailable.'))
     const selected = { ...env, ...result.env }
     const root = selected.CODEX_HOME || join(home, '.codex')
     const key = createHash('sha256').update(root).digest('hex').slice(0, 32)
@@ -51,7 +52,7 @@ export function createAccountUsage({
                 source: 'unavailable',
                 observedAt: null,
                 stale: false,
-                error: 'No verified local quota observation for this Claude account.'
+                error: t('main.usage.noClaudeObservation', 'No verified local quota observation for this Claude account.')
               }
             return agent
           })
@@ -65,7 +66,7 @@ export function createAccountUsage({
               source: 'unavailable',
               observedAt: null,
               stale: false,
-              error: 'The selected Codex account could not be read. Check AI provider accounts.'
+              error: t('main.usage.codexAccountUnreadable', 'The selected Codex account could not be read. Check AI provider accounts.')
             },
             { id: 'claude', windows: [], source: 'unavailable', observedAt: null, stale: false }
           ]

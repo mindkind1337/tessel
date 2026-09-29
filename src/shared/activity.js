@@ -17,6 +17,8 @@
 //                    teamId, wsId, name, detail?
 // agent.state and agent.team carry the pane's teamId and wsId at that time.
 
+import { english } from './i18nText'
+
 export const MAX_EVENTS = 20000
 export const MAX_AGE_MS = 30 * 24 * 3600 * 1000
 
@@ -308,14 +310,14 @@ export function cardsFor(rows) {
   }
 }
 
-// "4 min", "2 h 05", "3 d 4 h": short durations for the table.
 // A moment as the clock time, with the date when it is not today ("now" =
-// the time it is compared with, a reactive clock in views).
-export function formatWhen(t, now = Date.now()) {
-  const d = new Date(t)
-  const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+// the time it is compared with, a reactive clock in views). locale: the
+// interface's (the renderer's intlLocale(), see src/renderer/src/timeFormat.js).
+export function formatWhen(at, now = Date.now(), locale = []) {
+  const d = new Date(at)
+  const time = d.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })
   if (d.toDateString() === new Date(now).toDateString()) return time
-  return `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })} ${time}`
+  return `${d.toLocaleDateString(locale, { month: 'short', day: 'numeric' })} ${time}`
 }
 
 // The last folder of a path (C:\Proj\app\ -> app).
@@ -324,14 +326,16 @@ export function folderName(p) {
   return parts[parts.length - 1] || String(p || '')
 }
 
-export function formatDuration(ms) {
+// "4 min", "2 h 05", "3 d 4 h": short durations for the table. t: the
+// interface's t() (English without it).
+export function formatDuration(ms, t = english) {
   if (ms === null || ms === undefined) return '—'
   const s = Math.round(ms / 1000)
-  if (s < 60) return `${s} s`
+  if (s < 60) return t('activity.duration.seconds', '{{s}} s', { s })
   const m = Math.round(s / 60)
-  if (m < 60) return `${m} min`
+  if (m < 60) return t('activity.duration.minutes', '{{m}} min', { m })
   const h = Math.floor(m / 60)
-  if (h < 24) return `${h} h ${String(m % 60).padStart(2, '0')}`
+  if (h < 24) return t('activity.duration.hours', '{{h}} h {{mm}}', { h, mm: String(m % 60).padStart(2, '0') })
   const d = Math.floor(h / 24)
-  return `${d} d ${h % 24} h`
+  return t('activity.duration.days', '{{d}} d {{h}} h', { d, h: h % 24 })
 }

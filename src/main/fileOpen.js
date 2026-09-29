@@ -4,6 +4,7 @@
 import fs from 'fs'
 import { isAbsolute, resolve, join, relative } from 'path'
 import { execFile } from 'child_process'
+import { t } from './i18n'
 
 // { cwd, paths: [...] } -> { [path]: absolute path | null }. Only files that
 // exist (a folder or a name that merely looks like a file is not a link).
@@ -36,7 +37,7 @@ const SKIP_DIRS = new Set(['.git', 'node_modules', '.venv', 'venv', '__pycache__
 // ignores), else a walk that skips heavy folders. -> { ok, files, truncated, source }
 export async function listProjectFiles(root) {
   if (typeof root !== 'string' || !root || !fs.existsSync(root) || !fs.statSync(root).isDirectory())
-    return { ok: false, error: 'The project folder is missing.' }
+    return { ok: false, error: t('main.review.noProject', 'The project folder is missing.') }
   const fromGit = await new Promise((done) =>
     execFile(
       'git',

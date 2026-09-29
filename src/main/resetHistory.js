@@ -2,6 +2,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { t } from './i18n'
 
 const LIMIT = 500
 const MAX_BYTES = 1024 * 1024
@@ -60,13 +61,13 @@ export function createResetHistory({ file, log, clock = Date.now, io = fs } = {}
       return data.entries.map(entry).filter(Boolean).slice(-LIMIT)
     } catch (error) {
       if (error.code === 'ENOENT') return []
-      throw new Error('Reset history could not be read. Existing history was preserved.')
+      throw new Error(t('main.reset.historyUnreadable', 'Reset history could not be read. Existing history was preserved.'))
     }
   }
   return {
     record(value) {
       const row = entry({ at: clock(), ...value })
-      if (!row?.id) throw new Error('Invalid reset history entry.')
+      if (!row?.id) throw new Error('Invalid reset history entry.') // i18n-ignore internal: callers show their own message
       const rows = load().filter((old) => old.id !== row.id)
       rows.push(row)
       rows.sort((a, b) => a.at - b.at)
@@ -98,13 +99,13 @@ export function createResetHistory({ file, log, clock = Date.now, io = fs } = {}
     read({ provider, accountId } = {}) {
       try {
         if (provider !== undefined && !['codex', 'claude'].includes(provider))
-          throw new Error('Invalid provider.')
+          throw new Error('Invalid provider.') // i18n-ignore caught below
         if (
           accountId !== undefined &&
           accountId !== null &&
           (typeof accountId !== 'string' || !/^[A-Za-z0-9_-]{1,100}$/.test(accountId))
         )
-          throw new Error('Invalid account.')
+          throw new Error('Invalid account.') // i18n-ignore caught below
         return {
           ok: true,
           limit: LIMIT,
@@ -119,7 +120,7 @@ export function createResetHistory({ file, log, clock = Date.now, io = fs } = {}
       } catch {
         return {
           ok: false,
-          error: 'Reset history could not be read. Existing history was preserved.'
+          error: t('main.reset.historyUnreadable', 'Reset history could not be read. Existing history was preserved.')
         }
       }
     }

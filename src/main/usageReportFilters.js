@@ -1,6 +1,7 @@
 // Local calendar and project filters shared by the local usage reports.
 // These compare recorded metadata only: no directory traversal or auth reads.
 import { posix, win32 } from 'path'
+import { t } from './i18n'
 
 const object = (value) => value && typeof value === 'object' && !Array.isArray(value)
 const windowsPath = (value) =>
@@ -56,7 +57,7 @@ function validDay(value) {
 }
 
 export function usageQueryRange(query, today, days = 30) {
-  if (!object(query)) throw new Error('Usage filters must be an object.')
+  if (!object(query)) throw new Error(t('main.usage.filtersObject', 'Usage filters must be an object.'))
   const start = new Date(`${today}T00:00:00Z`)
   start.setUTCDate(start.getUTCDate() - days + 1)
   const from = query.from === undefined ? start.toISOString().slice(0, 10) : query.from
@@ -66,15 +67,15 @@ export function usageQueryRange(query, today, days = 30) {
     (to !== null && !validDay(to)) ||
     (from && to && from > to)
   )
-    throw new Error('Use an inclusive local date range (YYYY-MM-DD).')
+    throw new Error(t('main.usage.dateRange', 'Use an inclusive local date range (YYYY-MM-DD).'))
   for (const key of ['cwd', 'model'])
     if (query[key] != null && typeof query[key] !== 'string')
-      throw new Error('Project and model filters must be text.')
+      throw new Error(t('main.usage.filtersText', 'Project and model filters must be text.'))
   if (
     query.roots !== undefined &&
     (!Array.isArray(query.roots) || query.roots.length > 4096 || !query.roots.every(absolutePath))
   )
-    throw new Error('Project roots must be an array of absolute paths.')
+    throw new Error(t('main.usage.rootsAbsolute', 'Project roots must be an array of absolute paths.'))
   return {
     from,
     to,

@@ -11,6 +11,7 @@ import {
   mapOpenCodeGo,
   mapMiniMax
 } from './usageProviderMapping'
+import { t } from './i18n'
 
 export const USAGE_URLS = Object.freeze({
   geminiProject: 'https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist',
@@ -40,7 +41,7 @@ export function createExtraProviderUsage({
   }
   async function json(key, headers, signal, body) {
     const url = USAGE_URLS[key]
-    if (!url) refuse('validation', 'Unsupported usage endpoint.')
+    if (!url) refuse('validation', t('main.usage.unsupportedEndpoint', 'Unsupported usage endpoint.'))
     const response = await request(url, {
       method: body ? 'POST' : 'GET',
       headers: { ...headers, ...(body ? { 'Content-Type': 'application/json' } : {}) },
@@ -54,36 +55,36 @@ export function createExtraProviderUsage({
       (response.status >= 300 && response.status < 400)
     ) {
       await response.body?.cancel().catch(() => {})
-      refuse('redirect', 'The usage request redirected and was refused.')
+      refuse('redirect', t('main.usage.redirectRefused', 'The usage request redirected and was refused.'))
     }
     if (!response.ok) {
       await response.body?.cancel().catch(() => {})
       if (key === 'opencode-go' && response.status === 403)
-        refuse('unavailable', 'This OpenCode account has no Go subscription.')
+        refuse('unavailable', t('main.usage.noOpenCodeGo', 'This OpenCode account has no Go subscription.'))
       refuse(
         response.status === 401 || response.status === 403 ? 'auth' : 'network',
         response.status === 401 || response.status === 403
-          ? 'Provider access was refused. Sign in with its CLI and retry.'
-          : 'The provider usage service is temporarily unavailable.'
+          ? t('main.usage.providerRefused', 'Provider access was refused. Sign in with its CLI and retry.')
+          : t('main.usage.providerUnavailable', 'The provider usage service is temporarily unavailable.')
       )
     }
     const reader = response.body?.getReader()
-    if (!reader) refuse('response', 'The usage service returned no data.')
+    if (!reader) refuse('response', t('main.usage.noData', 'The usage service returned no data.'))
     let size = 0
     const chunks = []
     try {
       while (true) {
         const item = await reader.read()
         if (item.done) break
-        if (signal.aborted) refuse('timeout', 'The usage request timed out.')
+        if (signal.aborted) refuse('timeout', t('main.usage.timedOut', 'The usage request timed out.'))
         size += item.value.byteLength
-        if (size > 256 * 1024) refuse('response', 'The usage response exceeded its size limit.')
+        if (size > 256 * 1024) refuse('response', t('main.usage.tooLarge', 'The usage response exceeded its size limit.'))
         chunks.push(Buffer.from(item.value))
       }
       try {
         return JSON.parse(Buffer.concat(chunks).toString('utf8'))
       } catch {
-        refuse('response', 'The usage response could not be read.')
+        refuse('response', t('main.usage.unreadable', 'The usage response could not be read.'))
       }
     } finally {
       await reader.cancel().catch(() => {})
@@ -102,7 +103,7 @@ export function createExtraProviderUsage({
         return {
           ok: false,
           code: 'validation',
-          error: 'Choose a supported provider and its local login.'
+          error: t('main.usage.chooseProvider', 'Choose a supported provider and its local login.')
         }
       sequences.set(provider, sequence)
       const controller = new AbortController()
@@ -110,10 +111,10 @@ export function createExtraProviderUsage({
       const work = async () => {
         const installed = installedUsageProviders(await listAgents())
         if (!installed.some((p) => p.id === provider))
-          refuse('unavailable', 'The matching agent is not installed.')
+          refuse('unavailable', t('main.usage.agentNotInstalled', 'The matching agent is not installed.'))
         const login = await sources.auth(provider)
         const fetch = (key, body) => {
-          if (controller.signal.aborted) refuse('timeout', 'The usage request timed out.')
+          if (controller.signal.aborted) refuse('timeout', t('main.usage.timedOut', 'The usage request timed out.'))
           return json(key, login.headers, controller.signal, body)
         }
         let windows = [],
@@ -126,7 +127,7 @@ export function createExtraProviderUsage({
             typeof project?.cloudaicompanionProject !== 'string' ||
             !project.cloudaicompanionProject
           )
-            refuse('response', 'Gemini did not return a quota project.')
+            refuse('response', t('main.usage.geminiNoProject', 'Gemini did not return a quota project.'))
           windows = mapGemini(await fetch('gemini', { project: project.cloudaicompanionProject }))
         } else {
           const data = await fetch(provider)
@@ -145,16 +146,16 @@ export function createExtraProviderUsage({
             if (data?.base_resp?.status_code !== undefined && data.base_resp.status_code !== 0)
               refuse(
                 data.base_resp.status_code === 1004 ? 'auth' : 'response',
-                'MiniMax refused the usage request. Check its API key.'
+                t('main.usage.minimaxRefused', 'MiniMax refused the usage request. Check its API key.')
               )
             windows = mapMiniMax(data, clock())
           }
         }
         const current = await sources.auth(provider)
         if (login.fingerprint !== current.fingerprint || sequences.get(provider) !== sequence)
-          refuse('stale', 'The provider login or usage request changed. Refresh usage.')
+          refuse('stale', t('main.usage.loginChanged', 'The provider login or usage request changed. Refresh usage.'))
         if (!windows.length && !unlimited)
-          refuse('unavailable', 'This account did not return supported quota windows.')
+          refuse('unavailable', t('main.usage.noWindows', 'This account did not return supported quota windows.'))
         return {
           ok: true,
           provider,
@@ -172,7 +173,7 @@ export function createExtraProviderUsage({
             timer = setTimeout(
               () => {
                 controller.abort()
-                reject(new ProviderReadError('timeout', 'The usage request timed out.'))
+                reject(new ProviderReadError('timeout', t('main.usage.timedOut', 'The usage request timed out.')))
               },
               Math.max(1, Math.min(timeoutMs, 30000))
             )
@@ -187,7 +188,7 @@ export function createExtraProviderUsage({
           error:
             error instanceof ProviderReadError
               ? error.message
-              : 'Could not read provider usage. Try again.'
+              : t('main.usage.readRetry', 'Could not read provider usage. Try again.')
         }
       } finally {
         clearTimeout(timer)

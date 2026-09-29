@@ -4,6 +4,7 @@
 import fs from 'fs'
 import { randomUUID } from 'crypto'
 import { dirname, isAbsolute, join, parse, resolve, sep } from 'path'
+import { t } from './i18n'
 
 const ENDPOINT = 'https://api.linear.app/graphql'
 const MAX_RESPONSE = 2 * 1024 * 1024
@@ -40,13 +41,20 @@ const clone = (value) => JSON.parse(JSON.stringify(value))
 const string = (value, max = 500) => (typeof value === 'string' ? value.slice(0, max) : '')
 const validId = (value) => typeof value === 'string' && ID.test(value)
 const validKey = (key) => typeof key === 'string' && /^[\x21-\x7e]{8,4096}$/.test(key)
+// 'team' | 'state' | 'issue' -> the sentence (a whole one per label, for French genders).
+function chooseValid(label) {
+  if (label === 'team') return t('main.linear.chooseTeam', 'Choose a valid Linear team.')
+  if (label === 'state') return t('main.linear.chooseState', 'Choose a valid Linear state.')
+  if (label === 'issue') return t('main.linear.chooseIssue', 'Choose a valid Linear issue.')
+  return t('main.linear.chooseItem', 'Choose a valid Linear {{label}}.', { label })
+}
 const identifier = (value, label) => {
-  if (typeof value !== 'string' || !ID.test(value)) fail(`Choose a valid Linear ${label}.`)
+  if (typeof value !== 'string' || !ID.test(value)) fail(chooseValid(label))
   return value
 }
 function person(value, detailed = false) {
   if (!value || !validId(value.id) || typeof value.name !== 'string')
-    fail('Linear returned incomplete account data.')
+    fail(t('main.linear.incompleteAccount', 'Linear returned incomplete account data.'))
   return {
     id: value.id,
     name: string(value.name),
@@ -60,7 +68,7 @@ function person(value, detailed = false) {
 }
 function organization(value) {
   if (!value || !validId(value.id) || typeof value.name !== 'string')
-    fail('Linear returned incomplete workspace data.')
+    fail(t('main.linear.incompleteWorkspace', 'Linear returned incomplete workspace data.'))
   return { id: value.id, name: string(value.name), urlKey: string(value.urlKey, 100) }
 }
 function team(value) {
@@ -70,7 +78,7 @@ function team(value) {
     typeof value.name !== 'string' ||
     typeof value.key !== 'string'
   )
-    fail('Linear returned incomplete team data.')
+    fail(t('main.linear.incompleteTeam', 'Linear returned incomplete team data.'))
   return { id: value.id, name: string(value.name), key: string(value.key, 100) }
 }
 function state(value) {
@@ -80,7 +88,7 @@ function state(value) {
     typeof value.name !== 'string' ||
     typeof value.type !== 'string'
   )
-    fail('Linear returned incomplete state data.')
+    fail(t('main.linear.incompleteState', 'Linear returned incomplete state data.'))
   return {
     id: value.id,
     name: string(value.name),
@@ -96,12 +104,12 @@ function issue(value) {
     typeof value.title !== 'string' ||
     typeof value.identifier !== 'string'
   )
-    fail('Linear returned incomplete issue data.')
+    fail(t('main.linear.incompleteIssue', 'Linear returned incomplete issue data.'))
   let url
   try {
     url = new URL(value.url)
   } catch {
-    fail('Linear returned an invalid issue link.')
+    fail(t('main.linear.invalidLink', 'Linear returned an invalid issue link.'))
   }
   if (
     url.protocol !== 'https:' ||
@@ -110,7 +118,7 @@ function issue(value) {
     url.password ||
     url.port
   )
-    fail('Linear returned an invalid issue link.')
+    fail(t('main.linear.invalidLink', 'Linear returned an invalid issue link.'))
   return {
     id: value.id,
     identifier: string(value.identifier, 100),
@@ -136,7 +144,7 @@ function connection(value, mapper, field) {
     value.nodes.length > 100 ||
     typeof value.pageInfo?.hasNextPage !== 'boolean'
   )
-    fail('Linear returned an incomplete list. Refresh to try again.')
+    fail(t('main.linear.incompleteList', 'Linear returned an incomplete list. Refresh to try again.'))
   return {
     ok: true,
     [field]: value.nodes.map(mapper),
@@ -162,14 +170,14 @@ function inspect(path, missing = false) {
       throw error
     }
     if (stat.isSymbolicLink() || (index < parts.length - 1 && !stat.isDirectory()))
-      fail('Linear credential storage is not a regular local location.')
+      fail(t('main.linear.storageNotLocal', 'Linear credential storage is not a regular local location.'))
   }
   return stat || fs.lstatSync(base)
 }
 function directory(path) {
   const found = inspect(path, true)
   if (found) {
-    if (!found.isDirectory()) fail('Linear credential storage is not a directory.')
+    if (!found.isDirectory()) fail(t('main.linear.storageNotDir', 'Linear credential storage is not a directory.'))
     return
   }
   directory(dirname(path))
@@ -185,7 +193,7 @@ export function createLinearService({
   timeoutMs = 15000
 } = {}) {
   if (typeof dir !== 'string' || !isAbsolute(dir))
-    throw new TypeError('Linear storage requires an absolute directory.')
+    throw new TypeError('Linear storage requires an absolute directory.') // i18n-ignore programming error (constructor argument), never shown
   const folder = resolve(dir)
   const file = join(folder, 'credentials.json')
   let loaded = false
@@ -203,9 +211,9 @@ export function createLinearService({
         !safeStorage?.isEncryptionAvailable() ||
         safeStorage.getSelectedStorageBackend?.() === 'basic_text'
       )
-        fail('Secure credential storage is unavailable. Linear was not connected.')
+        fail(t('main.linear.noSecureStorage', 'Secure credential storage is unavailable. Linear was not connected.'))
     } catch {
-      fail('Secure credential storage is unavailable. Linear was not connected.')
+      fail(t('main.linear.noSecureStorage', 'Secure credential storage is unavailable. Linear was not connected.'))
     }
   }
   function load() {
@@ -217,7 +225,7 @@ export function createLinearService({
         return
       }
       if (!stat.isFile() || stat.size > MAX_FILE || stat.nlink !== 1)
-        fail('Linear credential storage is invalid.')
+        fail(t('main.linear.storageInvalid', 'Linear credential storage is invalid.'))
       encryption()
       const raw = JSON.parse(fs.readFileSync(file, 'utf8'))
       if (
@@ -225,10 +233,10 @@ export function createLinearService({
         typeof raw.ciphertext !== 'string' ||
         !/^[A-Za-z0-9+/]+={0,2}$/.test(raw.ciphertext)
       )
-        fail('Linear credentials could not be read. Reconnect or disconnect in Settings.')
+        fail(t('main.linear.credsUnreadable', 'Linear credentials could not be read. Reconnect or disconnect in Settings.'))
       const record = JSON.parse(safeStorage.decryptString(Buffer.from(raw.ciphertext, 'base64')))
       if (record.v !== 1 || !validKey(record.key))
-        fail('Linear credentials could not be read. Reconnect or disconnect in Settings.')
+        fail(t('main.linear.credsUnreadable', 'Linear credentials could not be read. Reconnect or disconnect in Settings.'))
       credentials = {
         key: record.key,
         viewer: person(record.viewer, true),
@@ -237,7 +245,7 @@ export function createLinearService({
       loaded = true
     } catch (error) {
       if (error instanceof LinearError) throw error
-      fail('Linear credentials could not be read. Reconnect or disconnect in Settings.')
+      fail(t('main.linear.credsUnreadable', 'Linear credentials could not be read. Reconnect or disconnect in Settings.'))
     }
   }
   function save(record) {
@@ -247,11 +255,11 @@ export function createLinearService({
       encryption()
       const encrypted = safeStorage.encryptString(JSON.stringify({ v: 1, ...record }))
       if (!Buffer.isBuffer(encrypted) || !encrypted.length || encrypted.length > 40000)
-        fail('Linear credentials could not be encrypted.')
+        fail(t('main.linear.encryptFailed', 'Linear credentials could not be encrypted.'))
       directory(folder)
       const existing = inspect(file, true)
       if (existing && (!existing.isFile() || existing.nlink !== 1))
-        fail('Linear credential storage is invalid.')
+        fail(t('main.linear.storageInvalid', 'Linear credential storage is invalid.'))
       temporary = join(folder, `credentials-${randomUUID()}.tmp`)
       handle = fs.openSync(temporary, 'wx', 0o600)
       fs.writeFileSync(handle, JSON.stringify({ v: 1, ciphertext: encrypted.toString('base64') }))
@@ -262,7 +270,7 @@ export function createLinearService({
       fs.renameSync(temporary, file)
     } catch (error) {
       if (error instanceof LinearError) throw error
-      fail('Linear credentials could not be saved securely. The previous connection was kept.')
+      fail(t('main.linear.saveFailed', 'Linear credentials could not be saved securely. The previous connection was kept.'))
     } finally {
       if (handle !== undefined) fs.closeSync(handle)
       if (temporary) {
@@ -292,7 +300,7 @@ export function createLinearService({
     for (const controller of controllers) controller.abort()
   }
   function current(expected) {
-    if (generation !== expected) fail('The Linear connection changed. Try again.')
+    if (generation !== expected) fail(t('main.linear.connectionChanged', 'The Linear connection changed. Try again.'))
   }
   async function request(key, query, variables, expected) {
     current(expected)
@@ -305,7 +313,7 @@ export function createLinearService({
       timer = setTimeout(() => {
         expired = true
         controller.abort()
-        reject(new LinearError('Linear did not respond in time. Try again.'))
+        reject(new LinearError(t('main.linear.timeout', 'Linear did not respond in time. Try again.')))
       }, timeout)
       controller.signal.addEventListener(
         'abort',
@@ -313,8 +321,8 @@ export function createLinearService({
           reject(
             new LinearError(
               expired
-                ? 'Linear did not respond in time. Try again.'
-                : 'The Linear connection changed. Try again.'
+                ? t('main.linear.timeout', 'Linear did not respond in time. Try again.')
+                : t('main.linear.connectionChanged', 'The Linear connection changed. Try again.')
             )
           ),
         { once: true }
@@ -332,40 +340,40 @@ export function createLinearService({
         },
         body: JSON.stringify({ query, variables })
       })
-      if (controller.signal.aborted) fail('The Linear connection changed. Try again.')
+      if (controller.signal.aborted) fail(t('main.linear.connectionChanged', 'The Linear connection changed. Try again.'))
       current(expected)
       if (!response?.ok || response.redirected) {
         if (response?.status === 401 || response?.status === 403)
-          fail('Linear refused this key or its permissions. Check the key in Settings.')
+          fail(t('main.linear.keyRefused', 'Linear refused this key or its permissions. Check the key in Settings.'))
         if (response?.status === 429)
-          fail('Linear rate limit reached. Wait a moment before refreshing.')
-        fail('Linear could not complete the request. Try again later.')
+          fail(t('main.linear.rateLimit', 'Linear rate limit reached. Wait a moment before refreshing.'))
+        fail(t('main.linear.requestFailed', 'Linear could not complete the request. Try again later.'))
       }
       const length = Number(response.headers?.get('content-length'))
       if (Number.isFinite(length) && length > MAX_RESPONSE)
-        fail('Linear returned too much data. Choose a narrower filter.')
-      if (!response.body?.getReader) fail('Linear returned an unreadable response.')
+        fail(t('main.linear.tooMuchData', 'Linear returned too much data. Choose a narrower filter.'))
+      if (!response.body?.getReader) fail(t('main.linear.unreadable', 'Linear returned an unreadable response.'))
       reader = response.body.getReader()
       let size = 0
       const chunks = []
       for (;;) {
         const { value, done } = await reader.read()
-        if (controller.signal.aborted) fail('The Linear connection changed. Try again.')
+        if (controller.signal.aborted) fail(t('main.linear.connectionChanged', 'The Linear connection changed. Try again.'))
         if (done) break
         size += value.byteLength
-        if (size > MAX_RESPONSE) fail('Linear returned too much data. Choose a narrower filter.')
+        if (size > MAX_RESPONSE) fail(t('main.linear.tooMuchData', 'Linear returned too much data. Choose a narrower filter.'))
         chunks.push(Buffer.from(value))
       }
       let data
       try {
         data = JSON.parse(Buffer.concat(chunks).toString('utf8'))
       } catch {
-        fail('Linear returned an unreadable response.')
+        fail(t('main.linear.unreadable', 'Linear returned an unreadable response.'))
       }
       if (data.errors != null && (!Array.isArray(data.errors) || data.errors.length))
-        fail('Linear rejected the request. Check this key’s permissions and try again.')
+        fail(t('main.linear.rejected', 'Linear rejected the request. Check this key’s permissions and try again.'))
       if (!data.data || typeof data.data !== 'object')
-        fail('Linear returned an incomplete response.')
+        fail(t('main.linear.incompleteResponse', 'Linear returned an incomplete response.'))
       current(expected)
       return data.data
     }
@@ -373,7 +381,7 @@ export function createLinearService({
       return await Promise.race([perform(), bounded])
     } catch (error) {
       if (error instanceof LinearError) throw error
-      fail('Unable to reach Linear. Check your connection and try again.')
+      fail(t('main.linear.unreachable', 'Unable to reach Linear. Check your connection and try again.'))
     } finally {
       clearTimeout(timer)
       controllers.delete(controller)
@@ -383,7 +391,7 @@ export function createLinearService({
   }
   function account() {
     load()
-    if (!credentials) fail('Connect Linear in Settings first.')
+    if (!credentials) fail(t('main.linear.connectFirst', 'Connect Linear in Settings first.'))
     return { ...credentials, generation }
   }
   async function cached(name, variables, refresh, ttl, query, map) {
@@ -397,7 +405,7 @@ export function createLinearService({
       const raw = await request(session.key, query, variables, session.generation)
       current(session.generation)
       if (name === 'issues' && revision !== issueRevision)
-        fail('Linear issues changed. Refresh to see the latest state.')
+        fail(t('main.linear.issuesChanged', 'Linear issues changed. Refresh to see the latest state.'))
       const value = map(raw)
       cache.set(key, { at: now(), value })
       while (cache.size > 128) cache.delete(cache.keys().next().value)
@@ -421,7 +429,7 @@ export function createLinearService({
           error:
             error instanceof LinearError
               ? error.message
-              : 'Linear could not complete this operation. Try again.'
+              : t('main.linear.operationFailed', 'Linear could not complete this operation. Try again.')
         }
       }
     }
@@ -429,7 +437,7 @@ export function createLinearService({
     status: safe(publicStatus),
     connect: safe(async ({ key } = {}) => {
       key = typeof key === 'string' ? key.trim() : ''
-      if (!validKey(key)) fail('Enter a valid Linear personal API key.')
+      if (!validKey(key)) fail(t('main.linear.invalidKey', 'Enter a valid Linear personal API key.'))
       encryption()
       changed()
       const expected = generation
@@ -453,12 +461,12 @@ export function createLinearService({
       try {
         const stat = inspect(file, true)
         if (stat) {
-          if (!stat.isFile() || stat.nlink !== 1) fail('Linear credential storage is invalid.')
+          if (!stat.isFile() || stat.nlink !== 1) fail(t('main.linear.storageInvalid', 'Linear credential storage is invalid.'))
           fs.unlinkSync(file)
         }
       } catch (error) {
         if (error instanceof LinearError) throw error
-        fail('Linear credentials could not be removed. The connection was kept; try again.')
+        fail(t('main.linear.removeFailed', 'Linear credentials could not be removed. The connection was kept; try again.'))
       }
       credentials = null
       loaded = true
@@ -466,7 +474,7 @@ export function createLinearService({
     }),
     issues: safe(
       async ({ filter = 'assigned', teamId, stateId, priority, refresh = false } = {}) => {
-        if (!FILTERS.has(filter)) fail('Choose a valid Linear issue filter.')
+        if (!FILTERS.has(filter)) fail(t('main.linear.invalidFilter', 'Choose a valid Linear issue filter.'))
         const session = account()
         const selection = {}
         if (filter === 'assigned') selection.assignee = { id: { eq: session.viewer.id } }
@@ -478,7 +486,7 @@ export function createLinearService({
           selection.state = { ...selection.state, id: { eq: identifier(stateId, 'state') } }
         if (priority != null && priority !== '') {
           if (!Number.isInteger(priority) || priority < 0 || priority > 4)
-            fail('Choose a Linear priority from 0 to 4.')
+            fail(t('main.linear.invalidPriority', 'Choose a Linear priority from 0 to 4.'))
           selection.priority = { eq: priority }
         }
         return cached('issues', { filter: selection }, refresh, 60000, ISSUES, (raw) =>
@@ -509,7 +517,7 @@ export function createLinearService({
       )
       current(session.generation)
       if (raw.issueUpdate?.success !== true)
-        fail('Linear did not update the issue. Refresh before trying again.')
+        fail(t('main.linear.notUpdated', 'Linear did not update the issue. Refresh before trying again.'))
       const updated = issue(raw.issueUpdate.issue)
       issueRevision++
       return { ok: true, issue: updated }
