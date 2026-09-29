@@ -6413,8 +6413,13 @@ async function syncBoard(b, round = teamRound) {
   const { key: boardKey, dir, target, wsId, members } = b
   const byNum = (n) => members.find((m) => m.num === Number(String(n).slice(1))) || null
   const res = await window.shellApi.team.requests({ dir, ...target })
-  // Replaced meanwhile: these requests are the new round's to apply.
-  if (roundGone(round)) return
+  // Replaced meanwhile: these requests are the new round's to apply (their
+  // reservations released, so it reads them again).
+  if (roundGone(round)) {
+    const files = res && res.ok ? (res.requests || []).map((r) => r.file) : []
+    if (files.length && window.shellApi.team.requestsRelease) window.shellApi.team.requestsRelease({ dir, ...target, files }).catch(() => {})
+    return
+  }
   const refusals = []
   const applied = [] // request files, removed once the board is saved
   if (res && res.ok) {

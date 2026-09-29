@@ -9,7 +9,7 @@ import { join } from 'path'
 import { createRequire } from 'module'
 import { ensureTeamChannel } from '../teamChannel'
 import { writeCurrentTeams } from '../teamNotices'
-import { publishTeamTasks, takeTeamRequests, finishTeamRequests, writeTeamAnswer, publishWorkers, parseRequest } from '../teamTasks'
+import { publishTeamTasks, takeTeamRequests, finishTeamRequests, writeTeamAnswer, publishWorkers, parseRequest, releaseTeamRequests } from '../teamTasks'
 import { setTeamSecret, newTeamSecret, revokeTeamSecret, _resetTeamAuth, openAnswer } from '../teamAuth'
 
 const require = createRequire(import.meta.url)
@@ -326,5 +326,59 @@ describe('worker tools', () => {
     setTeamSecret(LEAD.id, newTeamSecret()) // relaunched: the old agent's secret is void
     mcp.taskRequest(ctx, { action: 'heartbeat', phase: null, note: '' })
     expect(takeTeamRequests({ dir, teamId }).refused[0].error).toMatch(/does not match/)
+  })
+
+  // Codex's recheck of 8a004e6 ("unfinishedPoll"): a round can be abandoned
+  // after reading requests and before applying them.
+  it('a signed request read again before it is finished is returned again, not taken for a replay', () => {
+    as(LEAD)
+    mcp.taskRequest(mcp.locate(), { action: 'heartbeat', phase: null, note: '' })
+    const [name] = fs.readdirSync(reqDir())
+    const signed = fs.readFileSync(join(reqDir(), name), 'utf8')
+    const first = takeTeamRequests({ dir, teamId })
+    const second = takeTeamRequests({ dir, teamId })
+    expect(first.requests).toHaveLength(1)
+    expect(second.requests).toHaveLength(1)
+    expect(second.refused).toEqual([])
+    expect(fs.existsSync(join(reqDir(), name))).toBe(true)
+    // While it is reserved: the same nonce in another file, or the same file
+    // with other content, is a replay.
+    fs.writeFileSync(join(reqDir(), `${LEAD.id}__copy-1.json`), signed)
+    let res = takeTeamRequests({ dir, teamId })
+    expect(res.requests.map((r) => r.file)).toEqual([name])
+    expect(res.refused.map((r) => r.error)).toEqual([expect.stringMatching(/a replay/)])
+    const tampered = JSON.parse(signed)
+    tampered.note = 'changed'
+    fs.writeFileSync(join(reqDir(), name), JSON.stringify(tampered))
+    res = takeTeamRequests({ dir, teamId })
+    expect(res.requests).toEqual([])
+    expect(res.refused[0].error).toMatch(/does not match|a replay/)
+    // Put back as it was, released by an abandoned round, then finished: spent.
+    fs.writeFileSync(join(reqDir(), name), signed)
+    releaseTeamRequests({ dir, teamId, files: [name] })
+    expect(takeTeamRequests({ dir, teamId }).requests.map((r) => r.file)).toEqual([name])
+    expect(finishTeamRequests({ dir, teamId, files: [name] }).removed).toEqual([name])
+    fs.writeFileSync(join(reqDir(), name), signed)
+    res = takeTeamRequests({ dir, teamId })
+    expect(res.requests).toEqual([])
+    expect(res.refused[0].error).toMatch(/a replay/)
+  })
+
+  it('same nonce, other content, same file name: refused even with a valid MAC of another request', () => {
+    as(LEAD)
+    mcp.taskRequest(mcp.locate(), { action: 'heartbeat', phase: 'implementing', note: '' })
+    const [name] = fs.readdirSync(reqDir())
+    const a = JSON.parse(fs.readFileSync(join(reqDir(), name), 'utf8'))
+    expect(takeTeamRequests({ dir, teamId }).requests).toHaveLength(1)
+    // Another request signed by the lead that reuses a's nonce (a buggy or
+    // hostile writer): its MAC is right, but the nonce belongs to a's file.
+    const { auth, ...body } = a
+    const b = { ...body, phase: 'reviewing' }
+    const { requestMac } = require('../teamAuth')
+    const mac = requestMac(secrets[LEAD.id], LEAD.id, teamId, { ...b, nonce: auth.nonce, at: auth.at })
+    fs.writeFileSync(join(reqDir(), name), JSON.stringify({ ...b, auth: { ...auth, mac } }))
+    const res = takeTeamRequests({ dir, teamId })
+    expect(res.requests).toEqual([])
+    expect(res.refused[0].error).toMatch(/a replay/)
   })
 })

@@ -70,7 +70,7 @@ import { detectAgents } from './agentDetect'
 import { createPortScanner } from './workspacePorts'
 import { createResourceCollector } from './resourceUsage'
 import { newTeamSecret, setTeamSecret, revokeTeamSecret } from './teamAuth'
-import { publishTeamTasks, takeTeamRequests, finishTeamRequests, messageStatuses, writeBoardPanes, toolsAlive, writeRoster, writeTeamAnswer, publishWorkers } from './teamTasks'
+import { publishTeamTasks, takeTeamRequests, finishTeamRequests, releaseTeamRequests, messageStatuses, writeBoardPanes, toolsAlive, writeRoster, writeTeamAnswer, publishWorkers } from './teamTasks'
 import {
   writeServerScript,
   installClaudeHooks,
@@ -1252,6 +1252,7 @@ ipcMain.handle('team:tasks', safe(publishTeamTasks))
 ipcMain.handle('team:roster', safe(writeRoster))
 ipcMain.handle('team:requests', safe(takeTeamRequests))
 ipcMain.handle('team:requests-done', safe(finishTeamRequests))
+ipcMain.handle('team:requests-release', safe(releaseTeamRequests))
 ipcMain.handle('team:board-panes', safe((args) => writeBoardPanes({ ...args, owner: TEAM_OWNER })))
 ipcMain.handle('team:message-status', safe(messageStatuses))
 ipcMain.handle('team:tools-alive', safe(toolsAlive))

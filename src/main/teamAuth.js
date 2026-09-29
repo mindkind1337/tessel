@@ -33,7 +33,15 @@ const MAX_SKEW_MS = 2 * 60 * 1000 // ... and one from the future
 const MAX_NONCES = 20000
 
 const secrets = new Map() // pane id -> secret (hex)
-const seen = new Map() // nonce -> time it expires
+// Anti-replay: each nonce is bound to the one request file that carried it
+// (team, pane, file name, content hash). Read: reserved (the same file read
+// again before Tessel finished it is returned again, not a replay: a round
+// can be abandoned before it applies anything). Finished (applied, saved,
+// its file removed): used. The same nonce in another file, with other
+// content, or after it was used: a replay.
+// nonce -> { until, key, used }
+const seen = new Map()
+const byFile = new Map() // "team|file name" -> nonce
 
 export function newTeamSecret() {
   return crypto.randomBytes(32).toString('hex')
@@ -52,6 +60,7 @@ export function teamSecretOf(paneId) {
 export function _resetTeamAuth() {
   secrets.clear()
   seen.clear()
+  byFile.clear()
 }
 
 // The text a request's MAC covers: its pane, team and content, keys sorted
@@ -77,7 +86,8 @@ function sameHex(a, b) {
 // data: a request file's JSON. -> { ok, body } (the request without its
 // signature), { unsigned: true } (no signature), or { error }.
 //   teamKey: the team id (or "board:<workspace>" for a workspace board).
-export function verifyRequest(data, paneId, teamKey, now = Date.now()) {
+//   file: { name, hash } of the request file (its name and content hash).
+export function verifyRequest(data, paneId, teamKey, now = Date.now(), file = null) {
   if (!data || typeof data !== 'object' || data.auth == null) return { unsigned: true }
   const { auth, ...body } = data
   const secret = teamSecretOf(paneId)
@@ -87,13 +97,43 @@ export function verifyRequest(data, paneId, teamKey, now = Date.now()) {
   if (now - auth.at > MAX_AGE_MS || auth.at - now > MAX_SKEW_MS) return { error: 'the request is too old (or from the future)' }
   const want = requestMac(secret, paneId, teamKey, { ...body, nonce: auth.nonce, at: auth.at })
   if (!sameHex(auth.mac, want)) return { error: 'the request signature does not match its pane' }
-  for (const [n, until] of seen) {
-    if (until > now && seen.size <= MAX_NONCES) break
+  for (const [n, e] of seen) {
+    if (e.until > now && seen.size <= MAX_NONCES) break
     seen.delete(n)
+    if (byFile.get(e.fileKey) === n) byFile.delete(e.fileKey)
   }
-  if (seen.has(auth.nonce)) return { error: 'this request was already used (a replay)' }
-  seen.set(auth.nonce, now + MAX_AGE_MS + MAX_SKEW_MS)
+  const fileKey = `${teamKey}|${file && file.name ? file.name : ''}`
+  const key = `${fileKey}|${paneId}|${file && file.hash ? file.hash : ''}`
+  const had = seen.get(auth.nonce)
+  if (had) {
+    // The same file, not finished yet: the same reservation.
+    if (!had.used && had.key === key && file && file.name) return { ok: true, body }
+    return { error: 'this request was already used (a replay)' }
+  }
+  seen.set(auth.nonce, { until: now + MAX_AGE_MS + MAX_SKEW_MS, key, fileKey, used: false })
+  if (file && file.name) byFile.set(fileKey, auth.nonce)
   return { ok: true, body }
+}
+
+// The request file was applied and saved, and its file removed: its nonce
+// can never be used again.
+export function finishRequestFile(teamKey, name) {
+  const fileKey = `${teamKey}|${name}`
+  const n = byFile.get(fileKey)
+  if (!n) return
+  byFile.delete(fileKey)
+  const e = seen.get(n)
+  if (e) e.used = true
+}
+// A round was abandoned before it applied this file: its reservation goes
+// (the file is read and reserved again by the next round).
+export function releaseRequestFile(teamKey, name) {
+  const fileKey = `${teamKey}|${name}`
+  const n = byFile.get(fileKey)
+  if (!n) return
+  byFile.delete(fileKey)
+  const e = seen.get(n)
+  if (e && !e.used) seen.delete(n)
 }
 
 function answerKey(secret) {

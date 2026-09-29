@@ -271,6 +271,8 @@ const api = {
     roster: (args) => ipcRenderer.invoke('team:roster', args),
     requests: (args) => ipcRenderer.invoke('team:requests', args),
     requestsDone: (args) => ipcRenderer.invoke('team:requests-done', args),
+    // A round abandoned before applying them: read again next round.
+    requestsRelease: (args) => ipcRenderer.invoke('team:requests-release', args),
     boardPanes: (args) => ipcRenderer.invoke('team:board-panes', args),
     messageStatus: (args) => ipcRenderer.invoke('team:message-status', args),
     toolsAlive: (args) => ipcRenderer.invoke('team:tools-alive', args),

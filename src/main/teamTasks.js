@@ -14,7 +14,8 @@ import fs from 'fs'
 import { join, resolve, isAbsolute } from 'path'
 import { writeFileAtomic } from './safeJson'
 import { parseWorkerRequest } from '../shared/orchestration'
-import { verifyRequest, teamSecretOf, sealAnswer } from './teamAuth'
+import { createHash } from 'crypto'
+import { verifyRequest, teamSecretOf, sealAnswer, finishRequestFile, releaseRequestFile } from './teamAuth'
 
 const ID_RE = /^(?!\.)(?!.*\.\.)[A-Za-z0-9._-]{1,100}$/
 export const TASK_COLUMNS = ['todo', 'doing', 'review', 'done']
@@ -146,8 +147,10 @@ export function takeTeamRequests({ dir, teamId, board } = {}) {
   for (const f of files.slice(0, MAX_REQUESTS)) {
     const file = join(folder, f.name)
     let data = null
+    let text = ''
     try {
-      data = JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, ''))
+      text = fs.readFileSync(file, 'utf8')
+      data = JSON.parse(text.replace(/^\uFEFF/, ''))
     } catch (err) {
       // A locked or temporarily unavailable file must never be consumed as
       // a bad request. Only a successful read can establish invalid JSON.
@@ -168,7 +171,9 @@ export function takeTeamRequests({ dir, teamId, board } = {}) {
     // agent started before this version (no secret here) keeps sending
     // unsigned board requests, as before.
     const teamKey = board != null ? `board:${board}` : teamId
-    const v = verifyRequest(data, f.fromId, teamKey)
+    // Its nonce is reserved for this very file (name and content) until the
+    // request is finished: read again before that, it is returned again.
+    const v = verifyRequest(data, f.fromId, teamKey, Date.now(), { name: f.name, hash: createHash('sha256').update(text).digest('hex') })
     let body = v.body
     if (v.unsigned) {
       if (teamSecretOf(f.fromId) || parseWorkerRequest(data))
@@ -203,9 +208,22 @@ export function finishTeamRequests({ dir, teamId, board, files } = {}) {
     } catch {
       // removed next round (it is in the ledger: not applied again)
     }
-    if (!fs.existsSync(file)) removed.push(name)
+    if (!fs.existsSync(file)) {
+      removed.push(name)
+      // Applied, saved and gone: its nonce is spent.
+      finishRequestFile(board != null ? `board:${board}` : teamId, name)
+    }
   }
   return { ok: true, removed }
+}
+
+// A round that read these requests was abandoned before applying them:
+// their reservations go, the next round reads (and reserves) them again.
+export function releaseTeamRequests({ dir, teamId, board, files } = {}) {
+  const root = teamRoot(dir, teamId, board)
+  if (!root || !Array.isArray(files)) return { ok: false, error: 'Invalid team location.' }
+  for (const name of files) if (typeof name === 'string') releaseRequestFile(board != null ? `board:${board}` : teamId, name)
+  return { ok: true }
 }
 
 // Who is who in a team, for the team tools (group addresses like "@codex"
