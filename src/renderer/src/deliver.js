@@ -25,12 +25,14 @@ export const DELIVER = {
   retries: 2
 }
 
-// The end of the message is still in the last lines on screen.
+// The end of the message is still in the last lines on screen. Compared
+// without whitespace: an agent's input box wraps a long line itself (Codex,
+// Claude Code), with its own indentation, so the words can be cut anywhere.
 export function draftVisible(pane, text) {
   if (!pane || !pane.screenText) return false
-  const tail = String(text || '').replace(/\s+/g, ' ').trim().slice(-24)
+  const tail = String(text || '').replace(/\s+/g, '').slice(-20)
   if (tail.length < 8) return false
-  return pane.screenText(4).replace(/\s+/g, ' ').includes(tail)
+  return String(pane.screenText(4) || '').replace(/\s+/g, '').includes(tail)
 }
 
 async function watchAfterEnter(id, text, d) {

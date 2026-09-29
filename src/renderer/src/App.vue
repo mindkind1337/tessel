@@ -69,6 +69,7 @@ import { createCliRequests, CliRequestError } from './cliRequests'
 import { automationsState, applySnapshot as applyAutomations, subscribeAutomations } from './automationsStore'
 import { trackAgent } from '../../shared/tracking'
 import { pasteAndConfirm } from './deliver'
+import { createTeamDelivery } from './teamDelivery'
 import { dropBuffer, seedBuffer } from './ptyStore'
 import { tasks as boardTasks, setTasks, updateTask, removeTask, addTask } from './taskBoardStore'
 import { paneModels } from './paneModels'
@@ -4180,6 +4181,44 @@ function awaitingApproval(leafId) {
 const pendingMessages = reactive({})
 // Panes a message is being pasted into and confirmed right now.
 const delivering = new Set()
+// Team mail for terminal agents: a pointer typed when the agent is idle
+// (src/renderer/src/teamDelivery.js): text, then Enter apart, one flight per
+// pane, a watermark, a bounded retry. The rules of when it may type are
+// pointerBlocked's (near typeWake).
+const teamUnreadIds = {} // leafId -> ids of its unread team messages (as far as the poll lists them)
+const teamPointer = createTeamDelivery({
+  now: () => Date.now(),
+  setTimeout: (fn, ms) => setTimeout(fn, ms),
+  clearTimeout: (h) => clearTimeout(h),
+  unread: (id) => ({ count: teamUnread[id] || 0, ids: teamUnreadIds[id] || null }),
+  blocked: (id) => pointerBlocked(id),
+  getPane: (id) => {
+    const leaf = findLeaf(id)
+    return leaf && !leaf.sleeping ? getPane(id) || null : null
+  },
+  inputEmpty: (id) => (findLeaf(id)?.agentId === 'codex' ? inputShownEmpty(id) : null),
+  // Cursor Agent keeps typed text as an editable prompt: Enter stays the user's.
+  noSubmit: (id) => findLeaf(id)?.agentId === 'cursor',
+  generation: (id) => {
+    const leaf = findLeaf(id)
+    return leaf ? `${leaf.gen || 0}:${leaf.agentLaunchToken || ''}` : null
+  },
+  label: (id) => {
+    const leaf = findLeaf(id)
+    return `${leaf ? paneLabel(leaf) : 'pane'} (${id})`
+  },
+  log: (level, text) => {
+    if (window.shellApi.log) window.shellApi.log(level, `team delivery: ${text}`)
+  },
+  onPointed: (id) => {
+    const w = wakeState[id]
+    if (w) {
+      w.woken = true
+      w.wokenAt = Date.now()
+    }
+  }
+})
+onBeforeUnmount(() => teamPointer.dispose())
 
 // Ask the user what happened to an unconfirmed message, then go on.
 async function resolveUnsent(id) {
@@ -4305,7 +4344,7 @@ function flushPending() {
     // Tessel watches the agent take it (src/renderer/src/deliver.js) before
     // the next one goes.
     // The user is typing there: wait until the line is sent or cleared.
-    if (delivering.has(id) || unsent[id] || userIsTyping(id)) {
+    if (delivering.has(id) || unsent[id] || userIsTyping(id) || teamPointer.inFlight(id)) {
       waiting = true
       continue
     }
@@ -6005,8 +6044,9 @@ onBeforeUnmount(() => clearInterval(sleepTimer))
 // ONE short reminder line into its terminal, only when the agent is quiet
 // (no approval, no usage limit, nothing else being typed there) and the user
 // is not in that pane nor typed there in the last 30 s. The messages
-// themselves stay in the background. One reminder per batch: a new one only
-// after the agent has read everything.
+// themselves stay in the background. One pointer per batch of mail, Enter
+// pressed apart, tried again 3 times 30 s apart while the mail stays unread
+// and the agent idle (teamPointer, src/renderer/src/teamDelivery.js).
 const WAKE_AFTER_MS = 10000 // an idle agent does not read by itself: remind it soon
 const USER_AWAY_MS = 30000
 // A reminder that did not work (the messages are still unread 5 minutes
@@ -6014,8 +6054,6 @@ const USER_AWAY_MS = 30000
 // since (gen) gets one at once.
 const REWAKE_AFTER_MS = 5 * 60 * 1000
 const WAKE_AFTER_RESTART_MS = 2 * 60 * 1000
-// The reminder's own words, to find one left in an input line.
-const WAKE_LINE = /\[Tessel\] You have \d+ new team messages?/
 const wakeState = {} // leafId -> { since, woken, wokenAt, gen }
 // The user is not in this pane, has no line in progress there, and has not
 // typed there for 30 s. anyState: also when its state is not confirmed
@@ -6145,6 +6183,8 @@ async function unreadAtLaunch(id, teamId) {
   }
 }
 function wakeIfNeeded(leaf) {
+  // Its pointed mail is read: the pointer's delivery is confirmed (logged).
+  if (!teamUnread[leaf.id] && teamPointer.state(leaf.id)) teamPointer.notify(leaf.id)
   if (leaf.agentLaunchToken && !agentStateKnown(leaf.id, leaf.agentLaunchToken)) {
     const waiting = teamUnread[leaf.id] || 0
     if (!waiting) delete wakeState[leaf.id]
@@ -6162,32 +6202,22 @@ function wakeIfNeeded(leaf) {
   }
   typeWake(leaf, count, false)
 }
-// The reminder typed into the agent's terminal. unconfirmed: its state is
-// not confirmed by its hooks (only with the setting on): it must not look
-// busy on screen, gets no inbox try (inboxWake had it) and waits a moment
-// after its launch.
+// The reminder typed into the agent's terminal: a pointer to its inbox, by
+// teamPointer (text, then Enter apart, a watermark, a bounded retry, logged
+// step by step as "team delivery: ..."). unconfirmed: its state is not
+// confirmed by its hooks (only with the setting on).
 function typeWake(leaf, count, unconfirmed) {
   // Off in Settings: the messages stay in the background, never typed into
   // the terminal; the agent reads them when it next works.
   if (!settings.teamWakeUps) return
-  const w = (wakeState[leaf.id] = wakeState[leaf.id] || { since: Date.now(), woken: false, gen: leaf.gen || 0 })
-  if (w.woken && ((leaf.gen || 0) !== w.gen || Date.now() - (w.wokenAt || 0) >= REWAKE_AFTER_MS)) {
-    w.woken = false
-    w.gen = leaf.gen || 0
-  }
-  if (w.woken || Date.now() - w.since < WAKE_AFTER_MS) return
   // Only an agent that has the team tools to read them.
   if (leaf.kind !== 'agent' || !leaf.teamTools) return
-  const t = trackedState[leaf.id]
-  if (unconfirmed) {
-    // Not confirmed: at least nothing on its screen says it is working,
-    // waiting for an approval or out of usage.
-    if (t && !['idle', 'unknown'].includes(t.state)) return
-    if (awaitingApproval(leaf.id)) return
-  } else if (!t || t.state !== 'idle') return
-  if (approvals[leaf.id] || limits[leaf.id] || pendingMessages[leaf.id] || unsent[leaf.id] || delivering.has(leaf.id)) return
-  if (restartingLeaves.has(leaf.id)) return // being restarted right now
-  const reminder = `[Tessel] You have ${count} new team message${count > 1 ? 's' : ''}: read ${count > 1 ? 'them' : 'it'} with team_inbox.` // i18n-ignore
+  const w = (wakeState[leaf.id] = wakeState[leaf.id] || { since: Date.now(), woken: false, gen: leaf.gen || 0 })
+  if ((leaf.gen || 0) !== w.gen) {
+    w.gen = leaf.gen || 0
+    w.woken = false
+    w.launchPrompt = false
+  }
   // Claude Code with its own inbox: the reminder goes there (it starts a turn
   // by itself), so the user's input line and prompts are never touched. It
   // failed lately (older Claude Code, process gone): typed as before.
@@ -6199,8 +6229,14 @@ function typeWake(leaf, count, unconfirmed) {
     window.shellApi.agentInbox &&
     Date.now() - (inboxDownAt[leaf.id] || 0) >= REWAKE_AFTER_MS
   ) {
+    if (w.woken && Date.now() - (w.wokenAt || 0) < REWAKE_AFTER_MS) return
+    if (Date.now() - w.since < WAKE_AFTER_MS) return
+    const t = trackedState[leaf.id]
+    if (!t || t.state !== 'idle') return
+    if (approvals[leaf.id] || limits[leaf.id] || pendingMessages[leaf.id] || unsent[leaf.id] || delivering.has(leaf.id) || restartingLeaves.has(leaf.id)) return
     w.woken = true
     w.wokenAt = Date.now()
+    const reminder = `[Tessel] You have ${count} new team message${count > 1 ? 's' : ''}: read ${count > 1 ? 'them' : 'it'} with team_inbox.` // i18n-ignore
     const failed = (why) => {
       inboxDownAt[leaf.id] = Date.now()
       if (wakeState[leaf.id]) wakeState[leaf.id].woken = false // typed on the next round
@@ -6215,56 +6251,45 @@ function typeWake(leaf, count, unconfirmed) {
       .catch((err) => failed(err && err.message))
     return
   }
-  if (!wakeAllowed(leaf.id, unconfirmed)) return
-  // Just restarted: it is still loading (a line typed now can stay unsent).
-  // Not confirmed: also just after any launch.
-  const startedAt = unconfirmed ? leaf.restartedAt || leaf.launchedAt : leaf.restartedAt
-  if (startedAt && Date.now() - startedAt < WAKE_AFTER_RESTART_MS) return
-  w.woken = true
-  w.wokenAt = Date.now()
-  // A reminder typed before is still in its input line, not sent: send that
-  // one (Enter) instead of typing a second one on top of it.
-  const pane = getPane(leaf.id)
-  const bottom = pane && pane.screenText ? pane.screenText(4) : ''
-  if (pane && WAKE_LINE.test(bottom) && !(leaf.agentId === 'codex' && inputShownEmpty(leaf.id))) {
-    pane.submit()
-    if (window.shellApi.log) window.shellApi.log('info', `team tools: sent the waiting reminder in ${paneLabel(leaf)} (${leaf.id})`)
-    return
+  teamPointer.notify(leaf.id)
+}
+// Why a pointer cannot be typed into this pane now ('' when it can). Only an
+// agent pane (never the user's own terminal) with the team tools, whose idle
+// was observed (its hooks, or Codex's rollout turn end), with nothing on
+// screen to approve, no usage limit, no other message being typed there,
+// and the user away from it. A state not confirmed yet: only with
+// Settings > Orchestration > wake agents even without confirmation, and not
+// just after its launch.
+function pointerBlocked(id) {
+  const leaf = findLeaf(id)
+  if (!leaf) return 'pane closed'
+  if (!settings.teamWakeUps) return 'wake-ups are off in Settings'
+  if (leaf.kind !== 'agent' || !leaf.teamTools) return 'not an agent pane with the team tools'
+  if (leaf.sleeping) return 'asleep'
+  if (restartingLeaves.has(id)) return 'being restarted'
+  const now = Date.now()
+  const w = wakeState[id]
+  if (w && now - w.since < WAKE_AFTER_MS) return 'the messages are new (it may read them by itself)'
+  // Launched with a first prompt about these messages (noteLaunchWake).
+  if (w && w.launchPrompt && w.woken && now - (w.wokenAt || 0) < REWAKE_AFTER_MS) return 'launched with a prompt about these messages'
+  const unconfirmed = !!(leaf.agentLaunchToken && !agentStateKnown(id, leaf.agentLaunchToken))
+  const t = trackedState[id]
+  if (unconfirmed) {
+    if (!settings.teamWakeUnconfirmed) return 'its state is not confirmed (Settings: wake agents even without confirmation is off)'
+    if (t && !['idle', 'unknown'].includes(t.state)) return `state ${t.state}` // i18n-ignore
+    if (awaitingApproval(id)) return 'waiting for an approval'
+    const startedAt = leaf.restartedAt || leaf.launchedAt
+    if (startedAt && now - startedAt < WAKE_AFTER_RESTART_MS) return 'just started'
+  } else {
+    if (!t || t.state !== 'idle') return `not idle (${t ? t.state : 'no state yet'})` // i18n-ignore
+    // Just restarted: it is still loading (a line typed now can stay unsent).
+    if (leaf.restartedAt && now - leaf.restartedAt < WAKE_AFTER_RESTART_MS) return 'just restarted'
   }
-  // At the moment it is typed. Not confirmed: also the same launch, session
-  // and team, nothing to approve, no line left unsent.
-  const launchToken = leaf.agentLaunchToken
-  const sessionId = leaf.sessionId
-  const team = leaf.team
-  const samePane = () => {
-    // Both switches still on, and no usage limit or work under way (waitIdle
-    // waits for a busy screen, not for a quota).
-    if (!settings.teamWakeUps || (unconfirmed && !settings.teamWakeUnconfirmed)) return false
-    if (limits[leaf.id] || ['limited', 'working', 'approval'].includes(trackedState[leaf.id] && trackedState[leaf.id].state)) return false
-    if (!unconfirmed) return true
-    const now = findLeaf(leaf.id)
-    if (!now || now.agentLaunchToken !== launchToken || now.sessionId !== sessionId || now.team !== team) return false
-    return !!settings.teamWakeUnconfirmed && !approvals[leaf.id] && !awaitingApproval(leaf.id) && !userDraft[leaf.id] && !unsent[leaf.id]
-  }
-  deliverToAgent(
-    leaf.id,
-    reminder,
-    {
-      source: 'tessel',
-      scope: 'wake',
-      teamId: leaf.team,
-      waitIdle: true,
-      // Still unread and still safe at the moment it is typed; otherwise the
-      // reminder (and its count) is dropped, and a fresh one comes later if
-      // messages still wait.
-      guard: () => (teamUnread[leaf.id] || 0) > 0 && samePane() && wakeAllowed(leaf.id, unconfirmed),
-      dropIfNotNow: true,
-      onDropped: () => {
-        if (wakeState[leaf.id]) wakeState[leaf.id].woken = false
-      }
-    }
-  )
-  if (window.shellApi.log) window.shellApi.log('info', `team tools: reminded ${paneLabel(leaf)} (${leaf.id}) of ${count} waiting message(s)${unconfirmed ? ' (state not confirmed, typed as set in Settings)' : ''}`)
+  if (approvals[id]) return 'waiting for an approval'
+  if (limits[id]) return 'at its usage limit'
+  if (pendingMessages[id] || unsent[id] || delivering.has(id)) return 'another message is being typed there'
+  if (!wakeAllowed(id, unconfirmed)) return 'the user is in this pane or typed there lately'
+  return ''
 }
 
 const restartedForTools = new Set()
@@ -7654,9 +7679,18 @@ async function deliverChannel(team, members, round = teamRound) {
           counts[d.toId] = (counts[d.toId] || 0) + 1
         }
       }
+      // The unread ids each member has (the watermark of its pointers).
+      const ids = {}
+      for (const d of [...(res.held || []), ...(res.deliveries || [])]) {
+        if (!d || !d.id || (d.fromId === 'tessel' && /^Delivered to /.test(d.text))) continue
+        if (!ids[d.toId]) ids[d.toId] = []
+        ids[d.toId].push(d.id)
+      }
       for (const m of members) {
         if (counts[m.id]) teamUnread[m.id] = counts[m.id]
         else delete teamUnread[m.id]
+        if (ids[m.id]) teamUnreadIds[m.id] = ids[m.id]
+        else delete teamUnreadIds[m.id]
       }
       for (const m of members) wakeIfNeeded(m)
       await pushToChats(team, dir, res)
