@@ -1,6 +1,11 @@
 // After Orca's NativeChatMessageList.growth-windowing.test.tsx (MIT, Copyright (c) 2026 Lovecast Inc.)
 // Exercises the real virtualizer while a streaming row grows and messages append.
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
+
+// Many frames over a large virtualized transcript: pure CPU work (no real time
+// left in it: frames run on the harness clock), which a fully loaded machine
+// can stretch past the default 5 s. The cases check positions, not durations.
+vi.setConfig({ testTimeout: 30_000 })
 import {
   NATIVE_CHAT_BOTTOM_THRESHOLD_PX,
   NATIVE_CHAT_FOLLOW_REARM_PX

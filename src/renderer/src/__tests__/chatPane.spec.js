@@ -815,6 +815,10 @@ describe('ChatPane.vue', () => {
     }
     const item = (menu, label) => [...menu.querySelectorAll('[role="menuitem"]')].find((el) => el.textContent.includes(label))
 
+    // The composer claims the focus on a frame after mount (reveal focus); give
+    // it the focus now, so a late claim cannot move the selection made below.
+    input().focus()
+    await settle()
     // A selection in the chat: Copy takes it.
     const text = [...document.querySelectorAll('.nc-row-markdown p')].find((p) => p.textContent === 'copy me')
     const range = document.createRange()
