@@ -194,7 +194,7 @@ it('does not overwrite an authoritative state clock with the previous execution 
   expect(restoreSince).not.toHaveBeenCalled()
 })
 
-it('blocks both native-inbox and typed wake paths when managed status is not confirmed', () => {
+it('unconfirmed state without an inbox for its session: no typing, the user is asked', () => {
   const start = appSource.indexOf('// Messages wait for an agent whose state')
   const end = appSource.indexOf('\nconst restartedForTools', start)
   const agentInbox = vi.fn(async () => ({ ok: true })),
@@ -220,7 +220,7 @@ it('blocks both native-inbox and typed wake paths when managed status is not con
     unsent: {},
     delivering: new Set(),
     restartingLeaves: new Set(),
-    agentInboxes: { 'pane-1': 'session-1' },
+    agentInboxes: { 'pane-1': 'an-older-session' },
     inboxDownAt: {},
     window: { shellApi: { agentInbox } },
     WAKE_AFTER_MS: 0,
@@ -255,6 +255,57 @@ it('blocks both native-inbox and typed wake paths when managed status is not con
   expect(meta.guard()).toBe(true)
   node.agentLaunchToken = 'd'.repeat(32)
   expect(meta.guard()).toBe(false)
+})
+
+it("unconfirmed Claude with its current session's inbox: the reminder goes to the inbox, never typed; a failed inbox asks the user", async () => {
+  const start = appSource.indexOf('// Messages wait for an agent whose state')
+  const end = appSource.indexOf('\nconst restartedForTools', start)
+  const make = (inboxResult) => {
+    const agentInbox = vi.fn(async () => inboxResult)
+    const deliverToAgent = vi.fn()
+    const showToast = vi.fn()
+    const node = { id: 'pane-3', agentLaunchToken: 'e'.repeat(32), agentId: 'claude', sessionId: 's-3', kind: 'agent', teamTools: true }
+    const run = vm.runInNewContext(appSource.slice(start, end) + '; wakeIfNeeded', {
+      agentStateKnown: () => false,
+      teamUnread: { 'pane-3': 1 },
+      settings: { teamWakeUps: true },
+      wakeState: {},
+      trackedState: {},
+      approvals: {},
+      limits: {},
+      pendingMessages: {},
+      unsent: {},
+      delivering: new Set(),
+      restartingLeaves: new Set(),
+      agentInboxes: { 'pane-3': 's-3' },
+      inboxDownAt: {},
+      window: { shellApi: { agentInbox } },
+      WAKE_AFTER_MS: 0,
+      REWAKE_AFTER_MS: 600000,
+      wakeAllowed: () => true,
+      deliverToAgent,
+      showToast,
+      t: (_k, english) => english,
+      paneLabel: () => '#3 Claude Code',
+      findLeaf: () => node,
+      awaitingApproval: () => false,
+      userDraft: {}
+    })
+    return { run, node, agentInbox, deliverToAgent, showToast }
+  }
+  const ok = make({ ok: true })
+  ok.run(ok.node)
+  ok.run(ok.node)
+  await new Promise((r) => setTimeout(r, 0))
+  expect(ok.agentInbox).toHaveBeenCalledTimes(1)
+  expect(ok.agentInbox.mock.calls[0][0]).toMatchObject({ paneId: 'pane-3', sessionId: 's-3' })
+  expect(ok.deliverToAgent).not.toHaveBeenCalled()
+  expect(ok.showToast).not.toHaveBeenCalled()
+  const down = make({ ok: false, error: 'gone' })
+  down.run(down.node)
+  await new Promise((r) => setTimeout(r, 0))
+  expect(down.deliverToAgent).not.toHaveBeenCalled()
+  expect(down.showToast).toHaveBeenCalledTimes(1)
 })
 
 it("each launch gets its own team secret, only in the pane's environment and main's memory", async () => {

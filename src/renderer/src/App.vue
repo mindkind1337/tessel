@@ -5417,11 +5417,42 @@ function offerWake(leaf, count) {
     }
   )
 }
+// A Claude Code whose state is not confirmed yet (just started, no turn):
+// its own inbox queues the reminder inside Claude (nothing typed), so it
+// is used when it belongs to the pane's current session. Its state stays
+// unconfirmed; a failed inbox never falls back to typing (the toast asks
+// you instead). One try per episode, again after REWAKE_AFTER_MS.
+function inboxWake(leaf, count) {
+  if (!settings.teamWakeUps || leaf.agentId !== 'claude' || !leaf.teamTools) return false
+  if (!leaf.sessionId || agentInboxes[leaf.id] !== leaf.sessionId || !window.shellApi.agentInbox) return false
+  if (Date.now() - (inboxDownAt[leaf.id] || 0) < REWAKE_AFTER_MS) return false
+  const w = (wakeState[leaf.id] = wakeState[leaf.id] || { since: Date.now(), woken: false, gen: leaf.gen || 0 })
+  if (w.inboxAt && Date.now() - w.inboxAt < REWAKE_AFTER_MS) return true
+  if (Date.now() - w.since < WAKE_AFTER_MS) return true
+  w.inboxAt = Date.now()
+  const sessionId = leaf.sessionId
+  const reminder = `[Tessel] You have ${count} new team message${count > 1 ? 's' : ''}: read ${count > 1 ? 'them' : 'it'} with team_inbox.` // i18n-ignore
+  window.shellApi
+    .agentInbox({ paneId: leaf.id, sessionId, text: reminder })
+    .then((res) => {
+      if (res && res.ok) {
+        if (window.shellApi.log) window.shellApi.log('info', `team tools: reminded ${paneLabel(leaf)} (${leaf.id}) of ${count} waiting message(s) through its inbox (state not confirmed yet)`)
+        return
+      }
+      inboxDownAt[leaf.id] = Date.now()
+      offerWake(leaf, count)
+    })
+    .catch(() => {
+      inboxDownAt[leaf.id] = Date.now()
+      offerWake(leaf, count)
+    })
+  return true
+}
 function wakeIfNeeded(leaf) {
   if (leaf.agentLaunchToken && !agentStateKnown(leaf.id, leaf.agentLaunchToken)) {
     const waiting = teamUnread[leaf.id] || 0
-    if (waiting) offerWake(leaf, waiting)
-    else delete wakeState[leaf.id]
+    if (!waiting) delete wakeState[leaf.id]
+    else if (!inboxWake(leaf, waiting)) offerWake(leaf, waiting)
     return
   }
   const count = teamUnread[leaf.id] || 0
