@@ -267,6 +267,18 @@ describe('pane menu > Model', () => {
     expect(wrapper.get('[data-test="pane-model-chip"]').text()).toBe('gpt-5.5 · medium')
   })
 
+  it('a pane launched with its own model shows it over the default from settings, until its session says otherwise', async () => {
+    mountPane({ sessionOptions: { model: 'opus' } })
+    window.shellApi.agentModel.mockResolvedValue({ model: 'claude-sonnet-5', effort: null, source: 'settings' })
+    await wrapper.setProps({ node: { ...wrapper.props('node'), sessionId: 's1' } })
+    await flushPromises()
+    expect(wrapper.get('[data-test="pane-model-chip"]').text()).toContain('Opus')
+    window.shellApi.agentModel.mockResolvedValue({ model: 'claude-haiku-4-5', effort: null, source: 'session' })
+    await wrapper.setProps({ node: { ...wrapper.props('node'), sessionId: 's2' } })
+    await flushPromises()
+    expect(wrapper.get('[data-test="pane-model-chip"]').text()).toContain('Haiku')
+  })
+
   it('a pane asleep keeps the choice for its next start; the default from Settings is named', async () => {
     const node = mountPane({ sleeping: { at: 1 } })
     settings.agentSessionOptions = { claude: { model: 'haiku', valuesByModel: {} } }

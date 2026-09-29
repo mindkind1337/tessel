@@ -123,6 +123,13 @@ const modelTitle = computed(() => {
 // its conversation showed first after that (an older answer), so a newer
 // answer with another model takes over.
 function chosenShown(n, res) {
+  // Launched with a model of its own (--model from the pane's choice,
+  // saved with the layout): that one until its session says otherwise.
+  if ((!n.modelChoice || !n.modelChoice.model) && n.sessionOptions && typeof n.sessionOptions.model === 'string' && n.sessionOptions.model) {
+    if (res && res.source === 'session') return res
+    const effort = typeof n.sessionOptions.effort === 'string' ? n.sessionOptions.effort : null
+    return { model: modelChoiceLabel(modelsFor(n.agentId), n.sessionOptions.model), effort, source: 'chosen' }
+  }
   const c = n.modelChoice
   if (!c || !c.model) return res
   if (res && res.source === 'session') {
