@@ -1,0 +1,75 @@
+/*
+ * Switch and SwitchIndicator geometry (after Orca's components/ui/switch.tsx,
+ * shadcn/ui, MIT, Copyright (c) 2026 Lovecast Inc.): a 36x20 track with a
+ * symmetric 2px inset around a 14px thumb; compact is 24x14 with a 10px thumb.
+ */
+.nc-ui-switch-track {
+  box-sizing: border-box;
+  position: relative;
+  display: inline-flex;
+  height: 20px;
+  width: 36px;
+  flex-shrink: 0;
+  align-items: center;
+  border-radius: 9999px;
+  border: 1px solid transparent;
+  padding: 2px;
+  transition-property: color, background-color, border-color;
+  transition-duration: 150ms;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+.nc-ui-switch-track[data-state='checked'] {
+  background-color: var(--nc-foreground);
+}
+.nc-ui-switch-track[data-state='unchecked'] {
+  background-color: color-mix(in srgb, var(--nc-muted-foreground) 30%, transparent);
+}
+.nc-ui-switch-track--compact {
+  height: 14px;
+  width: 24px;
+  border-width: 0;
+  padding: 2px;
+}
+.nc-ui-switch-thumb {
+  pointer-events: none;
+  display: block;
+  width: 14px;
+  height: 14px;
+  transform: translateX(0);
+  border-radius: 9999px;
+  background-color: var(--nc-background);
+  box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+  transition: transform 150ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.nc-ui-switch-thumb[data-state='checked'] {
+  transform: translateX(16px);
+}
+.nc-ui-switch-thumb--compact {
+  width: 10px;
+  height: 10px;
+}
+.nc-ui-switch-thumb--compact[data-state='checked'] {
+  transform: translateX(10px);
+}
+
+/* The interactive Switch (a button). */
+button.nc-ui-switch-track {
+  margin: 0;
+  cursor: pointer;
+  outline: none;
+  font: inherit;
+  color: inherit;
+}
+button.nc-ui-switch-track:focus-visible {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--nc-ring) 50%, transparent);
+}
+button.nc-ui-switch-track:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+@media (prefers-reduced-motion: reduce) {
+  .nc-ui-switch-track,
+  .nc-ui-switch-thumb {
+    transition: none;
+  }
+}
