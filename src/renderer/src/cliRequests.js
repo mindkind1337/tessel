@@ -113,7 +113,7 @@ export function createCliRequests(deps) {
       })
       return {
         name: ws.name,
-        path: ws.cwd || (ws.remote ? `ssh:${ws.remote.hostId}:${ws.remote.path}` : null),
+        path: ws.cwd || (ws.remote ? `ssh:${ws.remote.hostId}:${ws.remote.path}` : null), // i18n-ignore
         active: ws === current,
         panes
       }
