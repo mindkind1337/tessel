@@ -68,6 +68,7 @@ import { JSON_AGENTS, setJsonAgentServer, teamToolsEntry } from './jsonAgents'
 import { detectAgents } from './agentDetect'
 import { createPortScanner } from './workspacePorts'
 import { createResourceCollector } from './resourceUsage'
+import { newTeamSecret, setTeamSecret, revokeTeamSecret } from './teamAuth'
 import { publishTeamTasks, takeTeamRequests, finishTeamRequests, messageStatuses, writeBoardPanes, toolsAlive, writeRoster, writeTeamAnswer, publishWorkers } from './teamTasks'
 import {
   writeServerScript,
@@ -2144,6 +2145,7 @@ const host = createPtyClient({
     const info = ptyInfo.get(id)
     if (pid && info?.pid && pid !== info.pid) return // a delayed exit from the previous execution
     void agentStateStore.unregister(id, info?.agentLaunchToken).catch(() => {})
+    revokeTeamSecret(id)
     installLogs.onExit(id, exitCode)
     sshAskpass.paneExited(id)
     remoteHosts.paneExited(id, exitCode)
@@ -2194,9 +2196,13 @@ ipcMain.handle('pty:create', async (_evt, opts = {}) => {
   const env = paneEnv(freshEnv(), opts)
   const agentProvider = ['claude', 'codex'].includes(opts.agentId) ? opts.agentId : null
   const agentLaunchToken = agentProvider ? crypto.randomBytes(16).toString('hex') : null
+  // This launch's team secret (teamAuth.js): the team tools MAC their
+  // requests with it. Only in the pane's environment and in memory (here and
+  // in the terminal host), never on disk or in a log.
+  const teamSecret = newTeamSecret()
   const agentStartedAt = Date.now()
   // Do not let inherited Tessel identity bind a nested app to another launch.
-  for (const key of Object.keys(env)) if (/^TESSEL_AGENT_/i.test(key)) delete env[key]
+  for (const key of Object.keys(env)) if (/^TESSEL_AGENT_|^TESSEL_TEAM_SECRET$/i.test(key)) delete env[key]
   let agentStatusWarning = null
   if (agentProvider) {
     const setup = prepareStatus(agentProvider, env)
@@ -2222,6 +2228,7 @@ ipcMain.handle('pty:create', async (_evt, opts = {}) => {
         // For the Tessel team tools (teamMcp/server.cjs): which pane this is,
         // and the project its team lives in.
         TESSEL_PANE_ID: String(id),
+        TESSEL_TEAM_SECRET: teamSecret,
         ...(agentProvider ? { TESSEL_AGENT_PROVIDER: agentProvider, TESSEL_AGENT_LAUNCH: agentLaunchToken, TESSEL_AGENT_STATE_DIR: agentStateDir } : {}),
         ...(projectDir && isAbsolute(projectDir) && fs.existsSync(projectDir) ? { TESSEL_PROJECT_DIR: projectDir } : {}),
         ...(askpassEnv || {})
@@ -2231,7 +2238,7 @@ ipcMain.handle('pty:create', async (_evt, opts = {}) => {
       useConpty,
       // ConPTY is required for full-screen TUIs like Claude Code to redraw on
       // resize. Set TESSEL_USE_WINPTY=1 only as a fallback.
-      meta: { shellId: shell.id, shellName: shell.name, backend, cwd: startDir, agentProvider, agentLaunchToken, agentStartedAt, remoteHostId: remote ? remote.target.id : null }
+      meta: { shellId: shell.id, shellName: shell.name, backend, cwd: startDir, agentProvider, agentLaunchToken, agentStartedAt, teamSecret, remoteHostId: remote ? remote.target.id : null }
     })
   } catch (err) {
     res = { ok: false, error: err.message }
@@ -2253,6 +2260,8 @@ ipcMain.handle('pty:create', async (_evt, opts = {}) => {
     }
   }
   ptyInfo.set(id, { shellId: shell.id, shellName: shell.name, backend, pid: res.pid, agentLaunchToken })
+  // A relaunch replaces the previous secret: the old one is void.
+  setTeamSecret(id, teamSecret)
   if (remote) {
     // "Connecting…" while ssh logs in (sshAskpass.js decides when it is
     // through); without askpass, connected at once as before.
@@ -2289,6 +2298,9 @@ ipcMain.handle('pty:attach', async (_evt, id) => {
   // Output queued here but not sent yet is in the snapshot already.
   pendingData.delete(id)
   ptyInfo.set(id, { shellId: res.shellId, shellName: res.shellName, backend: res.backend, pid: res.pid, agentLaunchToken: res.agentLaunchToken })
+  // Still running since before: its team secret comes back from the host.
+  if (res.exited) revokeTeamSecret(id)
+  else setTeamSecret(id, res.teamSecret)
   if (res.remoteHostId && !res.exited) remoteHosts.paneStarted(id, res.remoteHostId)
   if (res.agentProvider && res.agentLaunchToken && !res.exited) {
     try { await agentStateStore.register({ paneId: id, provider: res.agentProvider, launchToken: res.agentLaunchToken, startedAt: res.agentStartedAt }) }
@@ -2333,6 +2345,7 @@ ipcMain.handle('pty:reconcile', async (_evt, liveIds = []) => {
     if (!keep.has(id)) {
       host.send('kill', { id })
       ptyInfo.delete(id)
+      revokeTeamSecret(id)
       closed++
     }
   }
@@ -2352,6 +2365,7 @@ ipcMain.on('pty:kill', (_evt, { id }) => {
   sshAskpass.releasePane(id)
   host.send('kill', { id })
   ptyInfo.delete(id)
+  revokeTeamSecret(id)
 })
 
 // Settings > General, "Confirm before closing running terminals": is a
@@ -2400,6 +2414,7 @@ ipcMain.handle('pty:stopAndWait', async (_evt, { ids = [], timeoutMs = 15000 } =
   for (const id of list) {
     host.send('kill', { id })
     ptyInfo.delete(id)
+    revokeTeamSecret(id)
   }
   const res = await waitForExit({
     entries: Object.values(trees).flat(),

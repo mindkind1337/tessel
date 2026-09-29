@@ -25,6 +25,7 @@ import {
   outputTail,
   resolveMaxConcurrent,
   resolveMaxDepth,
+  depthExceededMessage,
   WORKER_START_PROMPT,
   WORKER_ACTIVE,
   WORKER_WAITING,
@@ -82,15 +83,23 @@ export function createOrchestrator(deps) {
     const r = records(team).find((x) => x.paneId === paneId && WORKER_ACTIVE.includes(x.status))
     return r ? r.depth : null
   }
-  function activeTotal(teams) {
+  // Every team Tessel has now: the global cap and the queue are one
+  // scheduler for all of them, whoever calls it.
+  const allTeams = () => (deps.teams ? deps.teams() : []) || []
+  function activeTotal() {
     let n = 0
-    for (const tm of teams || []) for (const r of records(tm)) if (WORKER_ACTIVE.includes(r.status)) n++
+    for (const tm of allTeams()) for (const r of records(tm)) if (WORKER_ACTIVE.includes(r.status)) n++
     return n
   }
-  // The worker "#5" of this team (an active or waiting record).
+  // The worker "#5" of this team (an active or waiting record), only while
+  // its pane is still in this team.
   function recordByHandle(team, handle) {
     return (
-      records(team).find((r) => r.paneId && !WORKER_ENDED.includes(r.status) && handleOf(deps.findLeaf(r.paneId)) === handle) || null
+      records(team).find((r) => {
+        if (!r.paneId || WORKER_ENDED.includes(r.status)) return false
+        const leaf = deps.findLeaf(r.paneId)
+        return !!leaf && leaf.team === team.id && handleOf(leaf) === handle
+      }) || null
     )
   }
 
@@ -98,14 +107,15 @@ export function createOrchestrator(deps) {
   function tell(team, r, ok, text) {
     if (r.rid && !r.answered && now() - (r.requestedAt || 0) < ANSWER_WINDOW_MS) {
       r.answered = true
-      deps.answer(team, r.rid, ok, text)
+      deps.answer(team, r.rid, ok, text, r.by)
       return
     }
     const coord = deps.findLeaf(r.by)
     if (coord) deps.notice([coord], `[Tessel] ${text}`, team.id)
   }
-  const answerNow = (team, req, ok, text) => {
-    if (req.rid) deps.answer(team, req.rid, ok, text)
+  // Sealed by Tessel's main process for the requester only (teamAuth.js).
+  const answerNow = (team, req, from, ok, text) => {
+    if (req.rid) deps.answer(team, req.rid, ok, text, from.id)
   }
 
   function prune(team) {
@@ -153,20 +163,23 @@ export function createOrchestrator(deps) {
       depth,
       maxDepth: lim.maxDepth,
       running,
-      total: activeTotal(ctx.teams || [team]),
+      total: activeTotal(),
       maxConcurrent: lim.maxConcurrent,
       recent,
       now: now()
     })
-    if (decision.error) return answerNow(team, req, false, decision.error)
+    if (decision.error) return answerNow(team, req, from, false, decision.error)
     if (!deps.agentAvailable(req.agent))
-      return answerNow(team, req, false, `The agent "${req.agent}" is not installed or is turned off in Tessel (Settings > Agents). Pick another one.`) // i18n-ignore
+      return answerNow(team, req, from, false, `The agent "${req.agent}" is not installed or is turned off in Tessel (Settings > Agents). Pick another one.`) // i18n-ignore
     const ws = deps.wsOfLeaf(from.id)
-    if (!ws || !ws.cwd) return answerNow(team, req, false, 'Your workspace has no project folder: a worker cannot be started there.') // i18n-ignore
-    if (ws.remote) return answerNow(team, req, false, 'Workers cannot be started in a remote project yet. Do this work yourself.') // i18n-ignore
+    if (!ws || !ws.cwd) return answerNow(team, req, from, false, 'Your workspace has no project folder: a worker cannot be started there.') // i18n-ignore
+    if (ws.remote) return answerNow(team, req, from, false, 'Workers cannot be started in a remote project yet. Do this work yourself.') // i18n-ignore
     const unknown = (req.deps || []).filter((d) => deps.cardColumn(d) == null)
-    if (unknown.length) return answerNow(team, req, false, `No card ${unknown.join(', ')} on your team's board to wait for (see team_tasks).`) // i18n-ignore
+    if (unknown.length) return answerNow(team, req, from, false, `No card ${unknown.join(', ')} on your team's board to wait for (see team_tasks).`) // i18n-ignore
     recent.push(now())
+    // The context the request is approved in (by the settings or by the
+    // user), frozen: at the start it must still be the same.
+    const context = { wsId: ws.id, cwd: ws.cwd, remote: !!ws.remote, coordinatorId: from.id, role: depth === 0 ? 'lead' : 'worker', coordDepth: depth }
     const r = {
       id: `w-${now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
       rid: req.rid || null,
@@ -180,6 +193,10 @@ export function createOrchestrator(deps) {
       deps: req.deps || [],
       depth: decision.depth,
       wsId: ws.id,
+      context,
+      // The proof it may start: given by the settings (confirmation off) or
+      // by the user (Allow), for this context.
+      approval: lim.confirm ? null : { by: 'settings', at: now(), context: contextKey(context) },
       status: lim.confirm ? 'confirming' : 'queued',
       requestedAt: now(),
       startedAt: null,
@@ -198,23 +215,28 @@ export function createOrchestrator(deps) {
       answerNow(
         team,
         req,
+        from,
         true,
         `Worker request ${r.id} for "${r.title}" (card ${r.taskId}) waits for the user's confirmation in Tessel. You will hear in team_inbox when it starts or is refused; meanwhile go on with other work.` // i18n-ignore
       )
-      const title = t('tasks.orch.confirm.title', '{{pane}} wants to start a worker', { pane: deps.label(from) })
-      deps.attention(title, r.title, from.id)
-      deps.toast(t('tasks.orch.confirm.toast', '{{pane}} wants to start a worker ({{agent}}) for "{{title}}". Allow or refuse it in the Tasks panel.', { pane: deps.label(from), agent: r.agent, title: r.title }), {
-        kind: 'attention',
-        timeout: 15000,
-        showTasks: true
-      })
+      askUser(r, from)
       return
     }
-    pump(team, ctx.teams)
+    pump()
     if (r.status === 'queued') {
       r.answered = true
-      answerNow(team, req, true, queuedText(team, r))
+      answerNow(team, req, from, true, queuedText(team, r))
     }
+  }
+
+  function askUser(r, from) {
+    const title = t('tasks.orch.confirm.title', '{{pane}} wants to start a worker', { pane: deps.label(from) })
+    deps.attention(title, r.title, from.id)
+    deps.toast(t('tasks.orch.confirm.toast', '{{pane}} wants to start a worker ({{agent}}) for "{{title}}". Allow or refuse it in the Tasks panel.', { pane: deps.label(from), agent: r.agent, title: r.title }), {
+      kind: 'attention',
+      timeout: 15000,
+      showTasks: true
+    })
   }
 
   function queuedText(team, r) {
@@ -225,31 +247,39 @@ export function createOrchestrator(deps) {
     return `Worker request ${r.id} for "${r.title}" (card ${r.taskId}) is queued: ${why}. You will hear in team_inbox when it starts.` // i18n-ignore
   }
 
-  // May `from` act on this worker? Its coordinator, or the team's lead.
+  // May `from` act on this worker now? Both still in this team, and `from`
+  // its coordinator still coordinating (the lead, or a running worker), or
+  // the team's current lead.
   function mayControl(team, from, r) {
-    return r.by === from.id || deps.isLead(team, from.id)
+    if (!from || from.team !== team.id) return false
+    if (r.paneId) {
+      const leaf = deps.findLeaf(r.paneId)
+      if (!leaf || leaf.team !== team.id) return false
+    }
+    if (deps.isLead(team, from.id)) return true
+    return r.by === from.id && depthOf(team, from.id) !== null
   }
 
   function stopRequest(team, from, req) {
     const list =
       req.worker === 'all'
-        ? records(team).filter((r) => r.by === from.id && !WORKER_ENDED.includes(r.status))
+        ? records(team).filter((r) => r.by === from.id && !WORKER_ENDED.includes(r.status) && mayControl(team, from, r))
         : [recordByHandle(team, req.worker)].filter(Boolean)
-    if (req.worker !== 'all' && !list.length) return answerNow(team, req, false, `${req.worker} is not a worker of your team (see team_worker_list).`)
-    if (list.some((r) => !mayControl(team, from, r))) return answerNow(team, req, false, `${req.worker} is not your worker: only its coordinator (or the lead) can stop it.`)
+    if (req.worker !== 'all' && !list.length) return answerNow(team, req, from, false, `${req.worker} is not a worker of your team (see team_worker_list).`)
+    if (list.some((r) => !mayControl(team, from, r))) return answerNow(team, req, from, false, `${req.worker} is not your worker: only its coordinator (or the lead) can stop it.`)
     const done = []
     for (const r of list) {
       endWorker(team, r, 'stopped', req.reason || 'stopped by its coordinator', from) // i18n-ignore
       done.push(r.paneId ? handleOf(deps.findLeaf(r.paneId)) || r.id : r.id)
     }
-    pump(team)
-    answerNow(team, req, true, done.length ? `Stopped: ${done.join(', ')}. Their cards and copies stay for review.` : 'You have no worker to stop.') // i18n-ignore
+    pump()
+    answerNow(team, req, from, true, done.length ? `Stopped: ${done.join(', ')}. Their cards and copies stay for review.` : 'You have no worker to stop.') // i18n-ignore
   }
 
   function releaseRequest(team, from, req) {
     const r = recordByHandle(team, req.worker)
-    if (!r || !WORKER_ACTIVE.includes(r.status)) return answerNow(team, req, false, `${req.worker} is not a running worker of your team (see team_worker_list).`)
-    if (!mayControl(team, from, r)) return answerNow(team, req, false, `${req.worker} is not your worker.`)
+    if (!r || !WORKER_ACTIVE.includes(r.status)) return answerNow(team, req, from, false, `${req.worker} is not a running worker of your team (see team_worker_list).`)
+    if (!mayControl(team, from, r)) return answerNow(team, req, from, false, `${req.worker} is not your worker.`)
     r.status = 'released'
     r.endedAt = now()
     const leaf = deps.findLeaf(r.paneId)
@@ -260,19 +290,25 @@ export function createOrchestrator(deps) {
         team.id
       )
     deps.activity({ type: 'task', action: 'worker-released', paneId: r.paneId, title: r.title, wsId: r.wsId, by: deps.label(from) })
-    pump(team)
-    answerNow(team, req, true, `Released ${req.worker}: it stays in the team as an ordinary teammate; its slot is free.`) // i18n-ignore
+    pump()
+    answerNow(team, req, from, true, `Released ${req.worker}: it stays in the team as an ordinary teammate; its slot is free.`) // i18n-ignore
   }
 
   function readRequest(team, from, req) {
-    const r = recordByHandle(team, req.worker) || records(team).find((x) => x.paneId && handleOf(deps.findLeaf(x.paneId)) === req.worker) || null
-    if (!r) return answerNow(team, req, false, `${req.worker} is not a worker of your team (see team_worker_list).`)
-    if (!mayControl(team, from, r)) return answerNow(team, req, false, `${req.worker} is not your worker: only its coordinator (or the lead) can read it.`)
+    const r =
+      recordByHandle(team, req.worker) ||
+      records(team).find((x) => {
+        const leaf = x.paneId ? deps.findLeaf(x.paneId) : null
+        return !!leaf && leaf.team === team.id && handleOf(leaf) === req.worker
+      }) ||
+      null
+    if (!r) return answerNow(team, req, from, false, `${req.worker} is not a worker of your team (see team_worker_list).`)
+    if (!mayControl(team, from, r)) return answerNow(team, req, from, false, `${req.worker} is not your worker: only its coordinator (or the lead) can read it.`)
     const screen = r.paneId ? deps.readScreen(r.paneId, req.lines || 60) : null
-    if (screen == null) return answerNow(team, req, false, `${req.worker}'s terminal is not open (its pane was closed or is asleep).`)
+    if (screen == null) return answerNow(team, req, from, false, `${req.worker}'s terminal is not open (its pane was closed or is asleep).`)
     const tail = outputTail(screen, req.lines || 60)
     const hb = r.heartbeatAt ? ` Last heartbeat ${Math.round((now() - r.heartbeatAt) / 60000)} min ago${r.phase ? ` (${r.phase})` : ''}.` : ' No heartbeat yet.'
-    answerNow(team, req, true, `${req.worker} "${r.title}" is ${r.status}.${hb} Its screen now:\n${tail || '(empty)'}`)
+    answerNow(team, req, from, true, `${req.worker} "${r.title}" is ${r.status}.${hb} Its screen now:\n${tail || '(empty)'}`)
   }
 
   function doneRequest(team, from, req) {
@@ -285,7 +321,7 @@ export function createOrchestrator(deps) {
     r.endedAt = now()
     r.reason = req.outcome
     if (r.taskId) deps.reportCard(r.taskId, { outcome: req.outcome, summary: req.summary, files: req.files || [] }, from, team.id)
-    pump(team)
+    pump()
   }
 
   function heartbeatRequest(team, from, req) {
@@ -319,20 +355,68 @@ export function createOrchestrator(deps) {
     })
   }
 
-  // Start what can start now (slots, cards before them done).
-  function pump(team, teams = null) {
-    const list = records(team)
-    const ready = workersToStart(list, {
-      isDone: (id) => deps.cardColumn(id) === 'done',
-      maxConcurrent: limits().maxConcurrent,
-      total: activeTotal(teams || [team])
-    })
-    for (const r of ready) {
-      r.status = 'starting'
-      startingNow.add(r.id)
-      startWorker(team, r)
-        .catch((err) => fail(team, r, (err && err.message) || 'unknown error'))
-        .finally(() => startingNow.delete(r.id))
+  const contextKey = (c) => (c ? [c.wsId, c.cwd, c.remote ? 'remote' : 'local', c.coordinatorId, c.role, c.coordDepth].join('\n') : '')
+
+  // May this request start now, as it was approved? Checked when it leaves
+  // the queue and again after every wait while it starts: the coordinator
+  // still in the team with the same role, the depth allowed, the same
+  // project (workspace, folder, local), the agent available, and a proof of
+  // approval that still counts (confirmation on: only the user's Allow for
+  // this very context). -> { ok, coord, ws, agent } | { confirm: true } |
+  // { error }.
+  function validate(team, r) {
+    const c = r.context
+    if (!c) return { error: 'it was asked before an update of Tessel: ask again' } // i18n-ignore
+    const coord = deps.findLeaf(r.by)
+    if (!coord) return { error: 'its coordinator was closed' } // i18n-ignore
+    if (coord.team !== team.id) return { error: 'its coordinator left the team' } // i18n-ignore
+    const depth = depthOf(team, r.by)
+    if (depth == null) return { error: 'its coordinator no longer leads (nor is a running worker)' } // i18n-ignore
+    if ((depth === 0 ? 'lead' : 'worker') !== c.role || depth !== c.coordDepth) return { error: "its coordinator's role changed since it was asked" } // i18n-ignore
+    const lim = limits()
+    if (depth + 1 > lim.maxDepth) return { error: depthExceededMessage(depth + 1, lim.maxDepth) }
+    const ws = deps.wsOfLeaf(r.by)
+    if (!ws || ws.remote || ws.id !== c.wsId || ws.cwd !== c.cwd || !!ws.remote !== c.remote) return { error: 'the project changed since it was asked' } // i18n-ignore
+    const agent = deps.agentAvailable(r.agent)
+    if (!agent) return { error: `the agent "${r.agent}" is not available` } // i18n-ignore
+    const proof = r.approval
+    if (!proof || proof.context !== contextKey(c) || (lim.confirm && proof.by !== 'user')) return { confirm: true }
+    return { ok: true, coord, ws, agent }
+  }
+
+  // Start what can start now, for every team at once: slots per
+  // coordinator, the global cap (reserved as soon as one is starting), the
+  // cards before them done; each checked again as it leaves the queue.
+  function pump() {
+    let total = activeTotal()
+    for (const tm of allTeams()) {
+      const ready = workersToStart(records(tm), {
+        isDone: (id) => deps.cardColumn(id) === 'done',
+        maxConcurrent: limits().maxConcurrent,
+        total
+      })
+      for (const r of ready) {
+        const v = validate(tm, r)
+        if (v.confirm) {
+          // Confirmation is on now, or the approval was for another context.
+          r.status = 'confirming'
+          r.approval = null
+          const coord = deps.findLeaf(r.by)
+          if (coord) askUser(r, coord)
+          tell(tm, r, true, `Worker request ${r.id} for "${r.title}" now waits for the user's confirmation.`) // i18n-ignore
+          continue
+        }
+        if (v.error) {
+          fail(tm, r, v.error)
+          continue
+        }
+        r.status = 'starting'
+        total++
+        startingNow.add(r.id)
+        startWorker(tm, r)
+          .catch((err) => fail(tm, r, (err && err.message) || 'unknown error'))
+          .finally(() => startingNow.delete(r.id))
+      }
     }
   }
 
@@ -347,21 +431,33 @@ export function createOrchestrator(deps) {
     deps.toast(t('tasks.orch.failed', 'The worker for "{{title}}" was not started: {{why}}', { title: r.title, why }), { kind: 'error', timeout: 9000 })
   }
 
+  // After a wait: still allowed (see validate)? Else it ends here; a pane
+  // it opened is closed (a copy it made is kept, said in the reason).
+  function stillValid(team, r, leaf, worktree) {
+    if (r.status !== 'starting' && r.status !== 'running') {
+      if (leaf) deps.closePane(leaf.id, { byUser: false })
+      return false
+    }
+    const v = validate(team, r)
+    if (v.ok) return true
+    if (leaf) deps.closePane(leaf.id, { byUser: false })
+    const why = v.confirm ? 'its approval no longer holds' : v.error // i18n-ignore
+    fail(team, r, worktree ? `${why} (its copy ${worktree.path} is kept)` : why) // i18n-ignore
+    return false
+  }
+
   async function startWorker(team, r) {
-    const coord = deps.findLeaf(r.by)
-    if (!coord || coord.team !== team.id) return fail(team, r, 'its coordinator was closed or left the team') // i18n-ignore
-    const ws = deps.wsOfLeaf(coord.id)
-    if (!ws || !ws.cwd || ws.id !== r.wsId) return fail(team, r, "the coordinator's workspace changed") // i18n-ignore
-    const agent = deps.agentAvailable(r.agent)
-    if (!agent) return fail(team, r, `the agent "${r.agent}" is not available`) // i18n-ignore
+    const v = validate(team, r)
+    if (!v.ok) return fail(team, r, v.confirm ? 'its approval no longer holds' : v.error) // i18n-ignore
+    const { coord, ws, agent } = v
     let worktree = null
     if (r.isolation === 'worktree') {
       const res = await deps.createWorktree(ws, r.title)
+      if (!stillValid(team, r, null, res && res.worktree)) return
       if (!res || res.error || !res.worktree) return fail(team, r, `its own copy could not be made (${(res && res.error) || 'unknown error'})`) // i18n-ignore
       worktree = res.worktree
       r.branch = worktree.branch || null
     }
-    if (r.status !== 'starting') return // stopped meanwhile
     const leaf = await deps.openWorkerPane({
       ws,
       agent,
@@ -369,15 +465,13 @@ export function createOrchestrator(deps) {
       launchOptions: { model: r.model, effort: r.effort, initialPrompt: WORKER_START_PROMPT }
     })
     if (!leaf) return fail(team, r, 'its pane could not be opened') // i18n-ignore
+    if (!stillValid(team, r, leaf, worktree)) return
     r.paneId = leaf.id
-    if (r.status !== 'starting') {
-      deps.closePane(leaf.id, { byUser: false })
-      return
-    }
     r.status = 'running'
     r.startedAt = now()
     if (r.taskId) deps.updateCard(r.taskId, { paneId: leaf.id, column: 'doing', ...(worktree ? { worktree } : {}) })
     await deps.joinTeam(leaf, team)
+    if (!stillValid(team, r, leaf, worktree)) return
     const lim = limits()
     const handle = handleOf(leaf) || '#?'
     deps.notice(
@@ -417,9 +511,22 @@ export function createOrchestrator(deps) {
   // --- Every round (App's team loop) ---------------------------------------------
   // Closed workers, silent ones, coordinators gone; then the queue; then the
   // list the tools read.
-  function tick(team, teams = null) {
+  function tick(team) {
     const list = records(team)
     for (const r of list) {
+      // A worker moved to another team (or out of any): no longer this
+      // coordinator's; it stays open where it is.
+      if (WORKER_ACTIVE.includes(r.status) && r.paneId) {
+        const leaf = deps.findLeaf(r.paneId)
+        if (leaf && leaf.team !== team.id) {
+          r.status = 'released'
+          r.endedAt = now()
+          r.reason = 'it left the team' // i18n-ignore
+          deps.activity({ type: 'task', action: 'worker-released', paneId: r.paneId, title: r.title, wsId: r.wsId, detail: r.reason })
+          tell(team, r, false, `Worker "${r.title}" (card ${r.taskId}) left your team: it is no longer your worker.`) // i18n-ignore
+          continue
+        }
+      }
       // Tessel stopped while it was starting one: running if its pane is
       // there, else back in the queue.
       if (r.status === 'starting' && !startingNow.has(r.id)) {
@@ -451,7 +558,7 @@ export function createOrchestrator(deps) {
         if (!coord || coord.team !== team.id) endWorker(team, r, 'stopped', 'its coordinator was closed or left the team') // i18n-ignore
       }
     }
-    pump(team, teams)
+    pump()
     publish(team)
   }
 
@@ -491,12 +598,14 @@ export function createOrchestrator(deps) {
   }
 
   // --- The user's side (Tasks panel) ------------------------------------------------
-  function allow(team, id, teams = null) {
+  function allow(team, id) {
     const r = records(team).find((x) => x.id === id && x.status === 'confirming')
     if (!r) return false
+    // The user's Allow: the proof, for the context shown when it was asked.
+    r.approval = { by: 'user', at: now(), context: contextKey(r.context) }
     r.status = 'queued'
     deps.activity({ type: 'task', action: 'worker-allowed', paneId: r.by, title: r.title, wsId: r.wsId })
-    pump(team, teams)
+    pump()
     if (r.status === 'queued') tell(team, r, true, queuedText(team, r))
     return true
   }

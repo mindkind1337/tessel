@@ -97,7 +97,7 @@ describe('team setup preserves existing agent configuration', () => {
     const next = fs.readFileSync(configFile(), 'utf8')
     expect(next).toContain(other)
     expect(next).not.toContain('stale-pane')
-    expect(next).toContain('env_vars = ["TESSEL_PANE_ID", "TESSEL_PROJECT_DIR"]')
+    expect(next).toContain('env_vars = ["TESSEL_PANE_ID", "TESSEL_PROJECT_DIR", "TESSEL_TEAM_SECRET"]')
   })
 
   it('backs up the original configuration once and leaves an up-to-date setup untouched', async () => {

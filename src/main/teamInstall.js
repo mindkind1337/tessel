@@ -277,7 +277,7 @@ export function codexTable(scriptPath) {
     `[mcp_servers.${SERVER_NAME}]\n` +
     `command = 'node'\n` +
     `args = ['${scriptPath}']\n` +
-    `env_vars = ["TESSEL_PANE_ID", "TESSEL_PROJECT_DIR"]\n` +
+    `env_vars = ["TESSEL_PANE_ID", "TESSEL_PROJECT_DIR", "TESSEL_TEAM_SECRET"]\n` +
     // Only the team tools run without asking (they read and send team
     // messages); every other tool and command keeps Codex's own approvals.
     `default_tools_approval_mode = "approve"\n`

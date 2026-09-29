@@ -6177,6 +6177,8 @@ provide('resolveDecision', resolveDecision)
 const workersSigs = {} // team id -> the workers list last published
 const orchestrator = createOrchestrator({
   settings,
+  // One scheduler for every team (the global cap and queue).
+  teams: () => teams.value,
   findLeaf,
   label: paneLabel,
   isLead: (team, id) => team.leadId === id && !!teamLead(team.id),
@@ -6241,9 +6243,10 @@ const orchestrator = createOrchestrator({
   },
   closePane: (id, { byUser } = {}) => closeLeaf(id, byUser ? {} : { force: true }),
   notice: (leaves, text, teamId) => noticeAgents(leaves, text, teamId),
-  answer(team, rid, ok, text) {
+  // Sealed in the main process for the requester only (src/main/teamAuth.js).
+  answer(team, rid, ok, text, toId) {
     const dir = channelDir(team)
-    if (dir && window.shellApi.team && window.shellApi.team.answer) window.shellApi.team.answer({ dir, teamId: team.id, rid, ok, text }).catch(() => {})
+    if (dir && window.shellApi.team && window.shellApi.team.answer) window.shellApi.team.answer({ dir, teamId: team.id, rid, ok, text, toId }).catch(() => {})
   },
   readScreen(id, lines) {
     const pane = findLeaf(id) ? getPane(id) : null

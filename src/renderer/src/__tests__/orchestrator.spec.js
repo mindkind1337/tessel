@@ -17,6 +17,7 @@ function world({ confirm = true, max = 2, depth = 1 } = {}) {
   const lead = addLeaf('lead', 1, 'Claude Code')
   const mate = addLeaf('mate', 2, 'Codex CLI')
   const team = { id: 'tm1', name: 'Team 1', color: '#6c9cff', leadId: 'lead' }
+  const otherTeams = []
   const cards = new Map()
   let cardN = 0
   let paneN = 10
@@ -24,6 +25,7 @@ function world({ confirm = true, max = 2, depth = 1 } = {}) {
   const log = { answers: [], notices: [], activity: [], opened: [], closed: [], toasts: [], attention: [], published: [], reports: [], worktrees: [] }
   const deps = {
     settings,
+    teams: () => [team, ...otherTeams],
     now: () => clock,
     findLeaf: (id) => leaves.get(id) || null,
     label: (l) => `#${l.num} ${l.title}`,
@@ -60,7 +62,7 @@ function world({ confirm = true, max = 2, depth = 1 } = {}) {
       leaves.delete(id)
     },
     notice: (list, text) => log.notices.push({ to: list.map((l) => l.id), text }),
-    answer: (tm, rid, ok, text) => log.answers.push({ rid, ok, text }),
+    answer: (tm, rid, ok, text, toId) => log.answers.push({ rid, ok, text, toId }),
     readScreen: (id) => (leaves.has(id) ? 'line 1\nRunning npm test\n' : null),
     activity: (e) => log.activity.push(e),
     attention: (title, body) => log.attention.push({ title, body }),
@@ -71,7 +73,7 @@ function world({ confirm = true, max = 2, depth = 1 } = {}) {
   const flush = () => new Promise((r) => setTimeout(r, 0))
   const start = (extra = {}, from = lead, rid = `r-test-${Math.random().toString(36).slice(2, 8)}`) =>
     o.handleRequest(team, from, { action: 'worker-start', rid, agent: 'codex', title: 'Fix the cart', brief: 'Make it right.', isolation: 'worktree', ...extra }, { teams: [team] })
-  return { o, team, lead, mate, leaves, cards, log, settings, flush, start, tick: () => o.tick(team, [team]), advance: (ms) => (clock += ms) }
+  return { deps, ws, otherTeams, o, team, lead, mate, leaves, cards, log, settings, flush, start, tick: () => o.tick(team, [team]), advance: (ms) => (clock += ms) }
 }
 
 describe('orchestrator', () => {
@@ -286,5 +288,140 @@ describe('orchestrator', () => {
     w.settings.orchestrationMaxWorkers = 1
     w.tick()
     expect(w.team.workers.map((r) => r.status)).toEqual(['running', 'queued'])
+  })
+})
+
+// Codex's review of d370980 (C:/Tessel-codex/stabilize/design/check-orchestration-review.cjs).
+describe('orchestrator: review fixes', () => {
+  const active = (w) =>
+    [w.team, ...w.otherTeams].reduce((n, tm) => n + (tm.workers || []).filter((x) => ['starting', 'running'].includes(x.status)).length, 0)
+
+  it('the global cap holds on every path: a worker_done in one team never starts past it', async () => {
+    const w = world({ confirm: false, max: 4 })
+    w.start({ isolation: 'project' })
+    w.start({ isolation: 'project' })
+    await w.flush()
+    w.otherTeams.push({ id: 'other', workers: Array.from({ length: 10 }, (_, i) => ({ id: `other-${i}`, by: 'x', status: 'running' })) })
+    w.start({ title: 'q0', isolation: 'project' })
+    w.start({ title: 'q1', isolation: 'project' })
+    expect(w.team.workers.slice(2).map((x) => x.status)).toEqual(['queued', 'queued'])
+    const first = w.team.workers[0]
+    w.o.handleRequest(w.team, w.leaves.get(first.paneId), { action: 'worker-done', outcome: 'succeeded', summary: 'fixture', files: [] })
+    await w.flush()
+    await w.flush()
+    expect(w.team.workers.slice(2).map((x) => x.status)).toEqual(['running', 'queued'])
+    expect(active(w)).toBe(12)
+    w.tick()
+    await w.flush()
+    expect(active(w)).toBe(12)
+  })
+
+  it('a queued request is checked again when it leaves the queue: lead revoked', async () => {
+    const q = world({ confirm: false })
+    q.cards.set('dependency', { id: 'dependency', column: 'doing' })
+    q.start({ deps: ['dependency'], isolation: 'project' })
+    q.team.leadId = 'mate'
+    q.cards.get('dependency').column = 'done'
+    q.tick()
+    await q.flush()
+    expect(q.log.opened).toHaveLength(0)
+    expect(q.team.workers[0]).toMatchObject({ status: 'failed', reason: expect.stringMatching(/no longer leads/) })
+  })
+
+  it('confirmation turned on meanwhile: back to the user, who must allow it', async () => {
+    const q = world({ confirm: false })
+    q.cards.set('dependency', { id: 'dependency', column: 'doing' })
+    q.start({ deps: ['dependency'], isolation: 'project' })
+    q.settings.orchestrationConfirmWorkers = true
+    q.cards.get('dependency').column = 'done'
+    q.tick()
+    await q.flush()
+    const r = q.team.workers[0]
+    expect(r.status).toBe('confirming')
+    expect(q.log.opened).toHaveLength(0)
+    expect(q.log.attention).toHaveLength(1)
+    q.o.allow(q.team, r.id)
+    await q.flush()
+    await q.flush()
+    expect(r.status).toBe('running')
+    expect(r.approval).toMatchObject({ by: 'user' })
+  })
+
+  it('the approved context is frozen: another folder, a remote project or workspace is refused', async () => {
+    for (const change of [(w) => (w.ws.cwd = 'D:\\other'), (w) => (w.ws.remote = { hostId: 'ssh-1' }), (w) => (w.ws.id = 'ws2')]) {
+      const q = world({ confirm: true })
+      q.start({ isolation: 'project' })
+      const r = q.team.workers[0]
+      change(q)
+      q.o.allow(q.team, r.id)
+      await q.flush()
+      expect(q.log.opened).toHaveLength(0)
+      expect(r).toMatchObject({ status: 'failed', reason: expect.stringMatching(/project changed/) })
+    }
+  })
+
+  it("the coordinator's role is frozen too: a worker asking for a sub-worker, then made lead, is refused", async () => {
+    const q = world({ confirm: false, depth: 2 })
+    q.start({ isolation: 'project' })
+    await q.flush()
+    await q.flush()
+    const worker = q.leaves.get(q.team.workers[0].paneId)
+    q.cards.set('dep', { id: 'dep', column: 'doing' })
+    q.start({ deps: ['dep'], isolation: 'project' }, worker)
+    q.team.leadId = worker.id
+    q.cards.get('dep').column = 'done'
+    q.tick()
+    await q.flush()
+    expect(q.team.workers.at(-1)).toMatchObject({ status: 'failed', reason: expect.stringMatching(/role changed/) })
+  })
+
+  it('checked again after every wait: the folder changes while its copy is made, no pane opens', async () => {
+    const q = world({ confirm: false })
+    const make = q.deps.createWorktree
+    q.deps.createWorktree = async (ws, title) => {
+      const res = await make(ws, title)
+      q.ws.cwd = 'D:\\moved'
+      return res
+    }
+    q.start()
+    await q.flush()
+    await q.flush()
+    expect(q.log.opened).toHaveLength(0)
+    expect(q.team.workers[0]).toMatchObject({ status: 'failed', reason: expect.stringMatching(/project changed.*copy .* is kept/) })
+  })
+
+  it('a worker that moved to another team: its old lead can neither stop nor read it; it is released', async () => {
+    const s = world({ confirm: false })
+    s.start()
+    await s.flush()
+    await s.flush()
+    const r = s.team.workers[0]
+    const worker = s.leaves.get(r.paneId)
+    worker.team = 'another-team'
+    s.o.handleRequest(s.team, s.lead, { action: 'worker-stop', worker: `#${worker.num}`, rid: 'r-test-stop1' })
+    s.o.handleRequest(s.team, s.lead, { action: 'worker-read', worker: `#${worker.num}`, rid: 'r-test-read1' })
+    expect(s.log.closed).toEqual([])
+    expect(s.log.answers.slice(-2).map((a) => a.ok)).toEqual([false, false])
+    s.tick()
+    expect(r).toMatchObject({ status: 'released', reason: 'it left the team' })
+  })
+
+  it('a former lead cannot stop the workers it started; the current lead can', async () => {
+    const t = world({ confirm: false })
+    t.start()
+    await t.flush()
+    await t.flush()
+    const tw = t.leaves.get(t.team.workers[0].paneId)
+    t.team.leadId = 'mate'
+    t.o.handleRequest(t.team, t.lead, { action: 'worker-stop', worker: `#${tw.num}`, rid: 'r-test-stop2' })
+    expect(t.log.closed).toEqual([])
+    t.o.handleRequest(t.team, t.mate, { action: 'worker-stop', worker: `#${tw.num}`, rid: 'r-test-stop3' })
+    expect(t.log.closed.map((c) => c.id)).toEqual([tw.id])
+  })
+
+  it('answers go to the requester only (sealed for it by the main process)', () => {
+    const w = world({ confirm: true })
+    w.start({}, w.lead, 'r-test-to0001')
+    expect(w.log.answers[0]).toMatchObject({ rid: 'r-test-to0001', toId: 'lead' })
   })
 })

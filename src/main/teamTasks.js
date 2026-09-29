@@ -14,6 +14,7 @@ import fs from 'fs'
 import { join, resolve, isAbsolute } from 'path'
 import { writeFileAtomic } from './safeJson'
 import { parseWorkerRequest } from '../shared/orchestration'
+import { verifyRequest, teamSecretOf, sealAnswer } from './teamAuth'
 
 const ID_RE = /^(?!\.)(?!.*\.\.)[A-Za-z0-9._-]{1,100}$/
 export const TASK_COLUMNS = ['todo', 'doing', 'review', 'done']
@@ -162,7 +163,19 @@ export function takeTeamRequests({ dir, teamId, board } = {}) {
       refused.push({ fromId: f.fromId, error: 'the request file could not be read' })
       continue
     }
-    const req = parseRequest(data)
+    // Who sent it: the pane's MAC (teamAuth.js). Orchestration requests must
+    // be signed; board requests too from a pane that has a secret. Only an
+    // agent started before this version (no secret here) keeps sending
+    // unsigned board requests, as before.
+    const teamKey = board != null ? `board:${board}` : teamId
+    const v = verifyRequest(data, f.fromId, teamKey)
+    let body = v.body
+    if (v.unsigned) {
+      if (teamSecretOf(f.fromId) || parseWorkerRequest(data))
+        v.error = 'the request is not signed by its pane: restart the agent to update its team tools'
+      else body = data
+    }
+    const req = v.error ? { error: v.error } : parseRequest(body)
     if (!req.error) {
       requests.push({ file: f.name, fromId: f.fromId, ...req })
       continue
@@ -264,11 +277,14 @@ export function messageStatuses({ dir, teamId, ids } = {}) {
 // The answer to one request an agent's tool waits for (team_worker_start,
 // _read, _stop, ...): <team>/answers/<rid>.json, read and removed by the
 // tool. Answers nobody took within 10 minutes are cleaned up here.
-const RID_RE = /^r-[a-z0-9-]{4,40}$/
+const RID_RE = /^r-[A-Za-z0-9_-]{4,60}$/
 const ANSWER_KEPT_MS = 10 * 60 * 1000
-export function writeTeamAnswer({ dir, teamId, rid, ok, text } = {}) {
+export function writeTeamAnswer({ dir, teamId, rid, ok, text, toId } = {}) {
   const root = teamRoot(dir, teamId)
   if (!root || typeof rid !== 'string' || !RID_RE.test(rid) || typeof text !== 'string') return { ok: false, error: 'Invalid answer.' }
+  // Encrypted and authenticated for the requester only (teamAuth.js).
+  const sealed = typeof toId === 'string' && ID_RE.test(toId) ? sealAnswer(toId, rid, { rid, ok: ok !== false, text: text.slice(0, 8000) }) : null
+  if (!sealed) return { ok: false, error: 'The requester has no team secret: no answer can be written for it.' }
   if (!fs.existsSync(root)) return { ok: false, error: 'The team channel is not set up.' }
   const folder = join(root, 'answers')
   fs.mkdirSync(folder, { recursive: true })
@@ -280,7 +296,7 @@ export function writeTeamAnswer({ dir, teamId, rid, ok, text } = {}) {
   } catch {
     // cleaned up next time
   }
-  writeAtomic(join(folder, `${rid}.json`), { rid, ok: ok !== false, text: text.slice(0, 8000), at: Date.now() })
+  writeAtomic(join(folder, `${rid}.json`), { rid, sealed, at: Date.now() })
   return { ok: true }
 }
 

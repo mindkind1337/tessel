@@ -28,9 +28,10 @@
 'use strict'
 const fs = require('fs')
 const path = require('path')
-const { randomUUID } = require('crypto')
+const crypto = require('crypto')
+const { randomUUID } = crypto
 
-const VERSION = '1.8.0'
+const VERSION = '1.9.0'
 const MAX_TEXT = 6000
 
 // --- Finding my team and me ---------------------------------------------------
@@ -324,12 +325,61 @@ function boardReminder(ctx) {
   return `Tessel task board (the user follows your work there; keep it up to date yourself): add a card for every piece of work the moment you start it, what this message asks and each step you decide to take (team_task_add, column "doing"); move your cards as they go (team_task_move: "done" as soon as one is finished). Only a quick question or a short answer needs no card. ${open}`
 }
 
+// --- Who sent it (src/main/teamAuth.js) ---------------------------------------------
+// Tessel gives each pane it starts a secret (TESSEL_TEAM_SECRET, only in the
+// environment). A request is MACed with it (over the pane, the team, the
+// content, a random nonce and the time); the secret itself is never written
+// anywhere. Tessel's answers to a waiting tool are encrypted with a key
+// derived from it, so only this agent can read and trust them. All agents run
+// as the same Windows user: this stops cheap impersonation between agents,
+// not a determined local attacker.
+const teamSecret = () => (/^[a-f0-9]{64}$/.test(String(process.env.TESSEL_TEAM_SECRET || '')) ? process.env.TESSEL_TEAM_SECRET : null)
+
+function canonical(value) {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`
+  if (value && typeof value === 'object')
+    return `{${Object.keys(value)
+      .sort()
+      .map((k) => `${JSON.stringify(k)}:${canonical(value[k])}`)
+      .join(',')}}`
+  return JSON.stringify(value === undefined ? null : value)
+}
+
+// The request as written: signed when this agent has its pane's secret.
+function signed(ctx, data) {
+  const body = JSON.parse(JSON.stringify(data)) // exactly what Tessel will read
+  if (!teamSecret()) return body
+  const nonce = crypto.randomBytes(18).toString('base64url')
+  const at = Date.now()
+  const mac = crypto
+    .createHmac('sha256', Buffer.from(teamSecret(), 'hex'))
+    .update(canonical({ pane: String(ctx.meId), team: String(ctx.teamKey || ctx.teamId || ''), body: { ...body, nonce, at } }))
+    .digest('hex')
+  return { ...body, auth: { nonce, at, mac } }
+}
+
+// An answer Tessel sealed for this agent and this request, or null (not
+// ours, forged, or damaged).
+function openAnswer(ctx, rid, sealed) {
+  if (!teamSecret() || !sealed || typeof sealed !== 'object') return null
+  try {
+    const key = Buffer.from(crypto.hkdfSync('sha256', Buffer.from(teamSecret(), 'hex'), Buffer.alloc(0), Buffer.from('tessel-team-answer'), 32))
+    const d = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(String(sealed.iv), 'base64'))
+    d.setAAD(Buffer.from(`${ctx.meId}\n${rid}`))
+    d.setAuthTag(Buffer.from(String(sealed.tag), 'base64'))
+    const a = JSON.parse(Buffer.concat([d.update(Buffer.from(String(sealed.data), 'base64')), d.final()]).toString('utf8'))
+    return a && a.rid === rid ? a : null
+  } catch {
+    return null
+  }
+}
+
 function taskRequest(ctx, data) {
   const folder = path.join(ctx.root, 'requests')
   fs.mkdirSync(folder, { recursive: true })
   const safeId = String(ctx.meId).replace(/[^A-Za-z0-9._-]/g, '_')
   const name = `${safeId}__${Date.now()}-${process.pid}-${Math.random().toString(36).slice(2, 8)}`
-  fs.writeFileSync(path.join(folder, `${name}.tmp`), JSON.stringify(data))
+  fs.writeFileSync(path.join(folder, `${name}.tmp`), JSON.stringify(signed(ctx, data)))
   fs.renameSync(path.join(folder, `${name}.tmp`), path.join(folder, `${name}.json`))
 }
 
@@ -513,7 +563,7 @@ const HEARTBEAT_PHASES = ['investigating', 'implementing', 'reviewing', 'waiting
 const ANSWER_WAIT_S = 30
 const FLAG_VALUE = /^[A-Za-z0-9._:[\]-]{1,60}$/
 
-const newRid = () => `r-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+const newRid = () => `r-${crypto.randomBytes(16).toString('base64url')}`
 
 // Tessel's answer to a request: its text, or null once `seconds` passed.
 async function waitAnswer(ctx, rid, seconds, signal = null) {
@@ -521,8 +571,11 @@ async function waitAnswer(ctx, rid, seconds, signal = null) {
   const until = Date.now() + seconds * 1000
   for (;;) {
     if (signal && signal.aborted) return { error: 'Cancelled.' }
-    const a = readJson(file)
-    if (a && a.rid === rid) {
+    const raw = readJson(file)
+    // Only an answer sealed for this agent and this request counts; anything
+    // else in that file is ignored (and left for Tessel to clean up).
+    const a = raw && raw.rid === rid ? openAnswer(ctx, rid, raw.sealed) : null
+    if (a) {
       try {
         fs.rmSync(file, { force: true })
       } catch {
@@ -880,7 +933,7 @@ function boardLocate(start) {
       if (!data || !data.panes || typeof data.at !== 'number' || Date.now() - data.at > WINDOW_GONE_MS) continue
       const p = data.panes[paneId]
       if (p && /^[A-Za-z0-9._-]{1,100}$/.test(String(p.ws)) && !String(p.ws).startsWith('.'))
-        return { root: path.join(base, p.ws), meId: paneId, me: { num: p.num } }
+        return { root: path.join(base, p.ws), meId: paneId, me: { num: p.num }, teamKey: `board:${p.ws}` }
     }
   }
   return null
@@ -926,6 +979,10 @@ function callTool(name, args = {}, signal = null) {
   }
   if (workerOps[name]) {
     if (!ctx.state) return { text: 'You are not in a Tessel team: workers belong to a team (see Sessions in Tessel).', isError: true }
+    // Tessel only acts on signed orchestration requests (the lists are read
+    // here, they need no signature).
+    if (!teamSecret() && name !== 'team_worker_list' && name !== 'team_gates')
+      return { text: 'Tessel did not start this agent with its team secret: restart it from Tessel (right-click its pane, Restart) to use the worker tools.', isError: true }
     const out = (r) => (r.error ? { text: r.error, isError: true } : { text: r.text })
     const r = workerOps[name]()
     return r && typeof r.then === 'function' ? r.then(out) : out(r)
@@ -1310,4 +1367,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { locate, readInbox, send, members, handle, candidateDirs, ackPath, markRead, unread, listTasks, addTask, moveTask, reportTask, gateTask, ask, groupTargets, listWorkers, listGates, TOOLS, VERSION }
+module.exports = { taskRequest, locate, readInbox, send, members, handle, candidateDirs, ackPath, markRead, unread, listTasks, addTask, moveTask, reportTask, gateTask, ask, groupTargets, listWorkers, listGates, TOOLS, VERSION }

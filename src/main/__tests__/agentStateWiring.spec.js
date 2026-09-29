@@ -7,6 +7,7 @@ import crypto from 'crypto'
 import { join, resolve, sep, isAbsolute } from 'path'
 import { createAgentStateStore } from '../agentStateStore'
 import { paneEnv } from '../paneEnv'
+import { newTeamSecret, setTeamSecret, revokeTeamSecret, teamSecretOf, _resetTeamAuth } from '../teamAuth'
 
 // Exercise the actual IPC handlers with an inert terminal host. No Electron
 // instance or real CLI/user configuration is touched by this harness.
@@ -62,6 +63,9 @@ function wire(hostRecords = new Map()) {
     ptyInfo,
     pendingData: new Map(),
     agentStateStore: store,
+    newTeamSecret,
+    setTeamSecret,
+    revokeTeamSecret,
     agentStateDir: dir,
     log: { error: vi.fn() }
   })
@@ -148,6 +152,7 @@ it('a delayed exit cannot close the new execution registered for the same pane',
   const handler = vm.runInNewContext('({' + main.slice(start, end) + '})', {
     ptyInfo,
     agentStateStore: { unregister },
+    revokeTeamSecret: vi.fn(),
     installLogs: { onExit: vi.fn() },
     remoteHosts: { paneExited: vi.fn() },
     sshAskpass: { paneExited: vi.fn() },
@@ -225,4 +230,26 @@ it('blocks both native-inbox and typed wake paths when managed status is not con
   run(node)
   expect(agentInbox).not.toHaveBeenCalled()
   expect(deliverToAgent).not.toHaveBeenCalled()
+})
+
+it("each launch gets its own team secret, only in the pane's environment and main's memory", async () => {
+  _resetTeamAuth()
+  store = createAgentStateStore({ dir })
+  const one = wire()
+  const opts = { id: 'pane-secret', shellId: 'fixture', agentId: 'claude', cwd: dir }
+  const res = await one.handlers['pty:create'](null, opts)
+  const secret = one.records.get(opts.id).launchEnv.TESSEL_TEAM_SECRET
+  expect(secret).toMatch(/^[a-f0-9]{64}$/)
+  expect(teamSecretOf(opts.id)).toBe(secret)
+  // Never handed to the interface.
+  expect(JSON.stringify(res)).not.toContain(secret)
+  // Tessel restarted, the terminal kept running: its secret comes back from the host.
+  revokeTeamSecret(opts.id)
+  const attached = await wire(one.records).handlers['pty:attach'](null, opts.id)
+  expect(JSON.stringify(attached)).not.toContain(secret)
+  expect(teamSecretOf(opts.id)).toBe(secret)
+  // A relaunch: a new secret, the old one void.
+  await one.handlers['pty:create'](null, opts)
+  expect(teamSecretOf(opts.id)).not.toBe(secret)
+  _resetTeamAuth()
 })

@@ -169,6 +169,8 @@ describe('Settings > Orchestration: workers', () => {
     const group = w.find('[data-orch-workers]')
     expect(group.exists()).toBe(true)
     expect(group.find('[data-orch-setup]').findAll('li')).toHaveLength(3)
+    // The trust model, said plainly: same Windows user.
+    expect(group.find('[data-orch-trust]').text()).toMatch(/signed with a secret only its pane has.*your Windows user/)
     const confirm = group.find('[data-setting="orchestrationConfirmWorkers"]')
     expect(confirm.element.checked).toBe(true)
     await confirm.setValue(false)
