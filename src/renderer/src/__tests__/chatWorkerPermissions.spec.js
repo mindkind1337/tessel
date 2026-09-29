@@ -17,6 +17,7 @@ function slice(from, to) {
 
 function load(settingsMode) {
   const open = vi.fn(async () => ({ ok: true, sessionId: 's', launchToken: 'tok' }))
+  const setOption = vi.fn(async (q) => ({ ok: true, permissionMode: q.permissionMode, permissions: q.permissionMode === 'bypassPermissions' ? 'yolo' : 'manual' }))
   const ctx = {
     CHAT_AGENTS: ['claude', 'codex'],
     settings: { yoloFolders: [], agentPermissions: settingsMode, agentSessionOptions: {}, agentPrefs: {} },
@@ -26,16 +27,16 @@ function load(settingsMode) {
     agentById: (id) => ({ id }),
     modelsFor: () => null,
     scheduleSave: () => {},
-    window: { shellApi: { chat: { open } } }
+    window: { shellApi: { chat: { open, setOption } } }
   }
   vm.createContext(ctx)
   vm.runInContext(
     slice('function coordinatorPermissions(coord)', 'async function openWorkerChat(') +
       slice('async function chatOpen(leaf', '// A message for a chat agent') +
-      '\nthis.api = { coordinatorPermissions, chatOpen }',
+      '\nthis.api = { coordinatorPermissions, chatOpen, chatSetOption }',
     ctx
   )
-  return { api: ctx.api, open }
+  return { api: ctx.api, open, setOption }
 }
 
 describe('chat worker permissions', () => {
@@ -55,6 +56,28 @@ describe('chat worker permissions', () => {
     expect(q.permissions).toBe('manual')
     expect(q.permissionMode).toBeNull()
     expect(q.askTrust).toBe(false)
+    // Main enforces the cap too, and knows it is a worker (trust of its copy).
+    expect(q).toMatchObject({ maxPermissions: 'manual', worker: true })
+  })
+
+  it("a coordinator's permissions follow each successful mode switch, not only its launch", async () => {
+    const { api, open, setOption } = load('yolo')
+    const coord = { id: 'c1', kind: 'chat', agentId: 'claude', cwd: 'C:\\w' }
+    await api.chatOpen(coord)
+    expect(open.mock.calls[0][0]).toMatchObject({ worker: false })
+    expect(open.mock.calls[0][0]).not.toHaveProperty('maxPermissions')
+    expect(api.coordinatorPermissions(coord)).toBe('yolo')
+    await api.chatSetOption(coord, { permissionMode: 'default' })
+    expect(setOption).toHaveBeenCalledWith({ paneId: 'c1', permissionMode: 'default' })
+    expect(api.coordinatorPermissions(coord)).toBe('manual')
+    await api.chatSetOption(coord, { permissionMode: 'bypassPermissions' })
+    expect(api.coordinatorPermissions(coord)).toBe('yolo')
+    // A refused switch or a model change leaves it as it is.
+    setOption.mockResolvedValueOnce({ ok: false, permissions: 'manual' })
+    await api.chatSetOption(coord, { permissionMode: 'default' })
+    expect(api.coordinatorPermissions(coord)).toBe('yolo')
+    await api.chatSetOption(coord, { model: 'opus' })
+    expect(api.coordinatorPermissions(coord)).toBe('yolo')
   })
 
   it('not narrowed: the settings apply as for any chat; a worker still never asks to trust', async () => {

@@ -276,7 +276,7 @@ async function onModelPick({ optionId, value }) {
   let res = { ok: true }
   if (a && typeof a.setOption === 'function') {
     try {
-      res = await a.setOption(payload)
+      res = typeof ctx.chatSetOption === 'function' ? await ctx.chatSetOption(props.node, payload) : await a.setOption(payload)
     } catch (err) {
       res = { ok: false, error: (err && err.message) || String(err) }
     }

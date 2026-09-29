@@ -49,7 +49,7 @@ import { createChatSessions } from './chat/sessions'
 import { createClaudeChat } from './chat/claudeChat'
 import { createCodexChat } from './chat/codexChat'
 import { createChatTrust } from './chat/chatTrust'
-import { worktreeProjectRoot } from './chat/worktreeTrust'
+import { createWorkerCopies } from './chat/workerCopies'
 import { createLogger, describe } from './logger'
 import { guardIpc, mainFrameSender } from './ipcGuard'
 import { cleanEnv } from './cleanEnv'
@@ -984,6 +984,9 @@ const agentStateStore = createAgentStateStore({
 // terminal pane's, its state reported here (no hooks), its team messages
 // given as turns. In -p mode Claude runs the project's hooks and MCP servers
 // without asking: Tessel asks once per folder first (chatTrust.js).
+// The copies Tessel made from a project's own code (HEAD or a local branch):
+// only those count as their project for a worker's chat (workerCopies.js).
+const workerCopies = createWorkerCopies({ file: join(app.getPath('userData'), 'worker-copies.json') })
 const chatTrust = createChatTrust({
   file: join(app.getPath('userData'), 'chat-trust.json'),
   ask: async ({ dir }) => {
@@ -1024,11 +1027,10 @@ const chatSessions = createChatSessions({
   team: { newSecret: newTeamSecret, setSecret: setTeamSecret, revokeSecret: revokeTeamSecret },
   state: agentStateStore,
   trust: chatTrust,
-  // A git worktree (a worker's copy) counts as its project, trusted or not:
-  // the folders it names are checked both ways (its .git file names the
-  // project's worktrees/<name>, and that entry names this folder back), so a
-  // folder cannot claim a trusted project by a .git file alone.
-  trustRoots: (cwd) => worktreeProjectRoot(cwd),
+  // A worker's chat in a copy Tessel made from the project's own code counts
+  // as that project (verified both ways by git's links). Any other worktree,
+  // such as a pull request's copy, is trusted (or asked) like any folder.
+  trustRoots: (cwd, opts) => workerCopies.trustRoots(cwd, opts),
   log
 })
 chatSessions.register(ipcMain)
@@ -1305,7 +1307,13 @@ ipcMain.handle(
 )
 ipcMain.handle(
   'git:createWorktree',
-  safe(({ cwd, label, options } = {}) => createWorktree(cwd, label, options))
+  safe(async ({ cwd, label, options } = {}) => {
+    const res = await createWorktree(cwd, label, options)
+    // Recorded only when made from HEAD or a local branch (never a pinned
+    // commit such as a pull request's head, nor a remote branch).
+    if (res && res.ok) workerCopies.created({ path: res.path, project: res.root, baseKind: res.baseKind })
+    return res
+  })
 )
 const accountOptions = { userData: app.getPath('userData'), runLogin: createProviderLogin() }
 registerIssueServices({ ipcMain, dir: join(app.getPath('userData'), 'linear'), safeStorage, onPrCreated: (url) => usageStats.prCreated(url) })
@@ -1444,7 +1452,16 @@ ipcMain.handle('usage:codexReport', safe((query) => accountUsage.report(query)))
 ipcMain.handle('review:info', safe(reviewInfo))
 ipcMain.handle('review:diff', safe(reviewDiff))
 ipcMain.handle('review:merge', safe(reviewMerge))
-ipcMain.handle('review:remove', safe(reviewRemove))
+ipcMain.handle(
+  'review:remove',
+  safe(async (args) => {
+    const res = await reviewRemove(args)
+    // The copy is gone: so is its record (a new folder there is not it).
+    if (args && typeof args.path === 'string' && args.path && (res?.ok || res?.copyRemoved || !fs.existsSync(args.path)))
+      workerCopies.forget(args.path)
+    return res
+  })
+)
 ipcMain.handle('review:commit', safe(reviewCommit))
 ipcMain.handle('review:push', safe(reviewPush))
 // Source control (the Changes tab, after Orca's): status, stage, unstage,

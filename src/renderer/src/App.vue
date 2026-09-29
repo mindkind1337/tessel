@@ -437,6 +437,11 @@ async function chatOpen(leaf, { askTrust = true } = {}) {
       effort: leaf.effort || (sessionValues && sessionValues.effort) || null,
       permissions,
       permissionMode: ownMode && !narrowed ? ownMode[1] : null,
+      // The main process enforces the cap too (no bypass, no auto), also on
+      // later mode switches; a worker's copy counts as its project only if
+      // Tessel made it from the project's own code.
+      ...(narrowed ? { maxPermissions: 'manual' } : {}),
+      worker: leaf.worker === true,
       // A worker never asks: its folder is trusted already (its project), or it does not start.
       askTrust: askTrust && !leaf.worker,
       // Settings > Agents: stopped after this many idle minutes (0: never).
@@ -456,6 +461,19 @@ async function chatOpen(leaf, { askTrust = true } = {}) {
     scheduleSave()
   }
   return res || { ok: false, code: 'failed' }
+}
+// A chat's model, effort or permission mode changed. The permissions it runs
+// with follow each successful mode switch: a coordinator switched down to
+// Manual starts its next workers in Manual.
+async function chatSetOption(leaf, payload) {
+  const api = window.shellApi.chat
+  if (!api || !leaf || leaf.kind !== 'chat') return { ok: false }
+  const res = await api.setOption({ ...payload, paneId: leaf.id })
+  if (res && res.ok && payload.permissionMode != null && (res.permissions === 'yolo' || res.permissions === 'manual')) {
+    leaf.chatPermissions = res.permissions
+    scheduleSave()
+  }
+  return res
 }
 // A message for a chat agent (yours, a notice, a worker's brief): given to it
 // as a turn by the main process (at once when idle, else after its turn).
@@ -518,7 +536,9 @@ function sendChatTurn(paneId, text) {
 async function readChat(paneId, lines) {
   const api = window.shellApi.chat
   if (!api || !findLeaf(paneId)) return null
-  const h = await api.history({ paneId }).catch(() => null)
+  // Only the journal's end: enough events for the lines asked.
+  const tail = Math.min(2000, Math.max(200, (Number(lines) || 60) * 8))
+  const h = await api.history({ paneId, tail }).catch(() => null)
   if (!h || !h.ok) return null
   const events = (h.events || []).map((e) => (e && e.event ? e.event : e))
   return formatChatTranscript(events, lines)
@@ -2203,6 +2223,7 @@ provide('panelCtx', {
   // A chat agent pane: open or resume its Claude (asks to trust its folder
   // the first time), and the permissions it runs with.
   chatOpen: (leaf, opts) => chatOpen(leaf, opts),
+  chatSetOption: (leaf, payload) => chatSetOption(leaf, payload),
   chatPermissions: (leaf) => launchPermissions(null, [leaf && leaf.projectDir, leaf && leaf.cwd], settings.yoloFolders, settings.agentPermissions),
   openExternal: (url) => openExternalUrl(url),
   // Tessel's shortcuts pressed in an editor pane (it keeps them from Monaco).

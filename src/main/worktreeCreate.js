@@ -123,7 +123,11 @@ export async function resolveWorktreeBase(root, currentBranch, requested, run) {
   ) {
     return { ok: false, error: t('main.worktree.baseNoCommit', 'The selected base branch does not point to a commit.') }
   }
-  return { ok: true, commit, branch: selected === 'HEAD' ? currentBranch : selected }
+  // kind: where the code comes from. Only 'head' and 'local' are the
+  // project's own; a copy from them may count as the project for chat trust
+  // (chat/workerCopies.js), never one from a 'commit' or a 'remote' branch.
+  const kind = pinnedCommit ? 'commit' : selected === 'HEAD' ? 'head' : ref.startsWith('refs/heads/') ? 'local' : 'remote'
+  return { ok: true, commit, kind, branch: selected === 'HEAD' ? currentBranch : selected }
 }
 
 function discoverEnv(root, result) {

@@ -16,7 +16,8 @@
 //   paneId, taskId, branch, heartbeatAt, phase, note, reason }
 // A chat worker (Settings > Orchestration: workers start as chats) also has
 // chat: true, and what its turn ends led to: turnEnds (waiting to be
-// settled), lastTurnAt, reminded, silentTold, failsTold.
+// settled), lastTurnAt, reminded, silentTold, failsTold (failureKey of each
+// failure told), failNoticesAt (when they were told).
 //
 // App.vue gives it what it needs (deps, below), so it is tested with fakes.
 // Text for agents stays English; the user's through t().
@@ -44,6 +45,25 @@ const ANSWER_WINDOW_MS = 25000 // under the 30 s a worker tool waits for its ans
 // (a request file the team loop applies every few seconds) may come after.
 export const TURN_END_GRACE_MS = 8000
 const CHAT_AGENTS = ['claude', 'codex']
+// Failed-turn notices to a coordinator: at most this many per worker per window.
+export const FAIL_NOTICES_MAX = 3
+export const FAIL_NOTICES_WINDOW_MS = 10 * 60 * 1000
+
+// A failed turn's error without what changes from one try to the next (ids,
+// UUIDs, times, numbers), so the same failure is told once.
+export function failureKey(error) {
+  return String(error ?? '')
+    .toLowerCase()
+    .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, '#')
+    .replace(/\d{4}-\d{2}-\d{2}[t ]\d{1,2}:\d{2}(:\d{2}(\.\d+)?)?(z|[+-]\d{2}:?\d{2})?/g, '#')
+    .replace(/\d{1,2}:\d{2}(:\d{2}(\.\d+)?)?(\s*[ap]m)?/g, '#')
+    .replace(/\b(?=[a-z_-]*\d)[a-z0-9_-]{6,}\b/g, '#')
+    .replace(/\d+/g, '#')
+    .replace(/[\s#.,:;]*#[\s#.,:;]*/g, ' # ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 300)
+}
 export const CHAT_REMINDER =
   '[Tessel] Your turn ended but you have not reported. When the work is finished call team_worker_done (outcome, summary, files); if you are blocked, say why with team_worker_done outcome failed or ask your coordinator with team_ask.'
 
@@ -349,6 +369,9 @@ export function createOrchestrator(deps) {
     r.status = req.outcome === 'failed' ? 'failed' : 'done'
     r.endedAt = now()
     r.reason = req.outcome
+    // It reported: a later silence starts a fresh reminder.
+    r.reminded = false
+    r.silentTold = false
     if (r.taskId) deps.reportCard(r.taskId, { outcome: req.outcome, summary: req.summary, files: req.files || [] }, from, team.id)
     pump()
   }
@@ -360,6 +383,9 @@ export function createOrchestrator(deps) {
     r.phase = req.phase || r.phase || null
     r.note = req.note || ''
     r.staleTold = false
+    // A sign of life: the no-report reminder may come again after a later turn.
+    r.reminded = false
+    r.silentTold = false
   }
 
   // --- Ending and starting ----------------------------------------------------
@@ -594,9 +620,16 @@ export function createOrchestrator(deps) {
       const end = r.turnEnds.shift()
       if (end.status === 'failed') {
         const why = end.error || 'no reason given' // i18n-ignore
+        // The same error with other ids, numbers or times is the same error;
+        // and never more than FAIL_NOTICES_MAX notices per window (no loop).
+        const key = failureKey(why)
         const told = r.failsTold || (r.failsTold = [])
-        if (told.includes(why)) continue
-        told.push(why)
+        if (told.includes(key)) continue
+        const at = now()
+        const recent = (r.failNoticesAt = (r.failNoticesAt || []).filter((x) => at - x < FAIL_NOTICES_WINDOW_MS))
+        if (recent.length >= FAIL_NOTICES_MAX) continue
+        recent.push(at)
+        told.push(key)
         if (told.length > 10) told.shift()
         tell(team, r, false, `${who}: its turn failed: ${why}.`) // i18n-ignore
         continue

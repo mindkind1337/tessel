@@ -2,7 +2,7 @@
 // panes, cards and team tools: no terminal, no agent is ever started.
 import { describe, it, expect, beforeEach } from 'vitest'
 import { reactive } from 'vue'
-import { createOrchestrator, TURN_END_GRACE_MS, CHAT_REMINDER } from '../orchestrator'
+import { createOrchestrator, TURN_END_GRACE_MS, CHAT_REMINDER, FAIL_NOTICES_MAX, FAIL_NOTICES_WINDOW_MS, failureKey } from '../orchestrator'
 import { WORKER_START_PROMPT, STALE_MS } from '../../../shared/orchestration'
 
 function world({ confirm = true, max = 2, depth = 1 } = {}) {
@@ -577,6 +577,43 @@ describe('orchestrator: chat workers', () => {
     expect(told(w, /its turn failed/)).toHaveLength(2)
     // A failure is no silence: no reminder for it.
     expect(w.log.notices.some((x) => x.text === CHAT_REMINDER)).toBe(false)
+  })
+
+  it('the same failure with other ids, numbers or times is told once', async () => {
+    const w = chatWorld()
+    const r = await started(w)
+    turnEnd(w, r, { status: 'failed', error: 'API error 529 (request req_011CXa9Zk2) at 2026-09-29T10:00:01Z' })
+    turnEnd(w, r, { status: 'failed', error: 'API error 529 (request req_022DYb8Yj3) at 2026-09-29T10:00:09Z' })
+    turnEnd(w, r, { status: 'failed', error: 'API Error 503 (request 3f1c2a9e-1b2c-4d5e-8f90-123456789abc) at 10:01:17' })
+    expect(told(w, /its turn failed/)).toHaveLength(1)
+    expect(failureKey('Rate limit: retry in 42s, id abc123def')).toBe(failureKey('Rate limit: retry in 7s, id 99ffee00aa'))
+    expect(failureKey('usage limit reached')).not.toBe(failureKey('content filtered'))
+  })
+
+  it('failure notices: at most 3 per worker per 10 minutes, whatever the errors', async () => {
+    const w = chatWorld()
+    const r = await started(w)
+    for (const e of ['one', 'two', 'three', 'four', 'five']) turnEnd(w, r, { status: 'failed', error: 'failure ' + e })
+    expect(told(w, /its turn failed/)).toHaveLength(FAIL_NOTICES_MAX)
+    w.advance(FAIL_NOTICES_WINDOW_MS)
+    turnEnd(w, r, { status: 'failed', error: 'failure six' })
+    expect(told(w, /its turn failed/)).toHaveLength(FAIL_NOTICES_MAX + 1)
+  })
+
+  it('a heartbeat or a report resets the reminder flags: a later silence is reminded again', async () => {
+    const w = chatWorld()
+    const r = await started(w)
+    turnEnd(w, r, { status: 'completed' })
+    turnEnd(w, r, { status: 'completed' })
+    expect(r).toMatchObject({ reminded: true, silentTold: true })
+    w.o.handleRequest(w.team, w.leaves.get(r.paneId), { action: 'heartbeat', phase: 'testing', note: '' })
+    expect(r).toMatchObject({ reminded: false, silentTold: false })
+    turnEnd(w, r, { status: 'completed' })
+    expect(w.log.notices.filter((x) => x.text === CHAT_REMINDER)).toHaveLength(2)
+    turnEnd(w, r, { status: 'completed' })
+    expect(told(w, /stopped without reporting/)).toHaveLength(2)
+    w.o.handleRequest(w.team, w.leaves.get(r.paneId), { action: 'worker-done', outcome: 'succeeded', summary: 'Done.', files: [] })
+    expect(r).toMatchObject({ reminded: false, silentTold: false })
   })
 
   it('reported (even just after its turn ended), interrupted or working again: nothing is said', async () => {

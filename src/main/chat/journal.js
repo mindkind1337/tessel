@@ -15,6 +15,7 @@ import { readJsonSafe, writeJsonSafe } from '../safeJson.js'
 export const CLIP_BYTES = 8 * 1024
 export const ROTATE_BYTES = 20 * 1024 * 1024
 export const READ_LAST = 2000
+const TAIL_CHUNK = 64 * 1024
 const PANE = /^[A-Za-z0-9._-]{1,100}$/
 const SKIPPED = new Set(['assistantDelta'])
 const CLIPPED = new Set(['tool', 'toolResult', 'approval'])
@@ -91,6 +92,68 @@ export function createChatJournal({ dir, paneId, rotateBytes = ROTATE_BYTES, now
     }
   }
 
+  function parseLine(line, out) {
+    if (!line) return
+    try {
+      const item = JSON.parse(line)
+      if (item && Number.isSafeInteger(item.seq) && item.event && typeof item.event.type === 'string')
+        out.push({ seq: item.seq, event: item.event })
+    } catch {
+      // a line cut by a crash: skipped
+    }
+  }
+
+  // The last `limit` good entries of one file, read backwards from its end
+  // by chunks (never the whole 20 MB for a few lines).
+  function tailLines(path, limit) {
+    let fd
+    try {
+      fd = fs.openSync(path, 'r')
+    } catch {
+      return []
+    }
+    try {
+      let pos = fs.fstatSync(fd).size
+      let rest = Buffer.alloc(0) // the start of a line whose beginning is not read yet
+      const found = [] // newest first
+      while (pos > 0 && found.length < limit) {
+        const len = Math.min(TAIL_CHUNK, pos)
+        pos -= len
+        const chunk = Buffer.alloc(len)
+        fs.readSync(fd, chunk, 0, len, pos)
+        let buf = Buffer.concat([chunk, rest])
+        let end = buf.length
+        for (let i = buf.length - 1; i >= 0 && found.length < limit; i--) {
+          if (buf[i] !== 0x0a) continue
+          const one = []
+          parseLine(buf.subarray(i + 1, end).toString('utf8'), one)
+          if (one.length) found.push(one[0])
+          end = i
+        }
+        rest = buf.subarray(0, end)
+        buf = null
+      }
+      if (pos === 0 && found.length < limit && rest.length) {
+        const one = []
+        parseLine(rest.toString('utf8'), one)
+        if (one.length) found.push(one[0])
+      }
+      return found.reverse()
+    } catch {
+      return []
+    } finally {
+      fs.closeSync(fd)
+    }
+  }
+
+  // -> the last `limit` entries, oldest first, as read() gives them.
+  function readTail(limit = READ_LAST) {
+    const n = Math.max(1, Math.min(READ_LAST, Math.floor(Number(limit)) || READ_LAST))
+    let items = tailLines(file, n)
+    if (items.length < n) items = [...tailLines(old, n - items.length), ...items]
+    return items
+  }
+
   function readLines(path) {
     let text
     try {
@@ -120,7 +183,7 @@ export function createChatJournal({ dir, paneId, rotateBytes = ROTATE_BYTES, now
   }
 
   function lastSeq() {
-    const items = read(1)
+    const items = readTail(1)
     return items.length ? items[items.length - 1].seq : 0
   }
 
@@ -160,5 +223,5 @@ export function createChatJournal({ dir, paneId, rotateBytes = ROTATE_BYTES, now
     }
   }
 
-  return { append, read, lastSeq, readMeta, writeMeta, remove, folder }
+  return { append, read, readTail, lastSeq, readMeta, writeMeta, remove, folder }
 }
