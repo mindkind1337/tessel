@@ -4,6 +4,7 @@
 //   status: 'ok' | 'warn' (works, but something to fix) | 'missing' (a
 //   feature does not work) | 'optional' (only for some extras)
 //   fix: { install: <Tools catalog id> } | { where: <where to go in Tessel> }
+import { t } from './i18n'
 
 // Node.js runs the team tools and every agent's hooks (node "<script>" --hook).
 export const MIN_NODE = 18
@@ -38,20 +39,20 @@ export function assessNeeds(facts = {}) {
     add({
       id: 'node',
       name: 'Node.js',
-      why: 'Runs the team tools and the agents’ hooks: team messages and the task board.',
+      why: t('main.needs.nodeWhy', 'Runs the team tools and the agents’ hooks: team messages and the task board.'),
       status: 'missing',
-      detail: 'Not found on PATH.',
+      detail: t('main.needs.notOnPath', 'Not found on PATH.'),
       fix: { install: 'node' }
     })
   else
     add({
       id: 'node',
       name: 'Node.js',
-      why: 'Runs the team tools and the agents’ hooks: team messages and the task board.',
+      why: t('main.needs.nodeWhy', 'Runs the team tools and the agents’ hooks: team messages and the task board.'),
       status: versionAtLeast(node.version, String(MIN_NODE)) ? 'ok' : 'warn',
       detail: versionAtLeast(node.version, String(MIN_NODE))
         ? String(node.version || '').trim()
-        : `${String(node.version || 'Unknown version').trim()}: version ${MIN_NODE} or newer is needed.`,
+        : t('main.needs.nodeTooOld', '{{version}}: version {{min}} or newer is needed.', { version: String(node.version || t('main.needs.unknownVersion', 'Unknown version')).trim(), min: MIN_NODE }),
       fix: versionAtLeast(node.version, String(MIN_NODE)) ? null : { install: 'node' }
     })
 
@@ -59,43 +60,43 @@ export function assessNeeds(facts = {}) {
   const agents = (facts.agents || []).filter((a) => a && a.available && !a.custom)
   add({
     id: 'agents',
-    name: 'An AI agent',
-    why: 'Tessel runs agents such as Claude Code or Codex in its panes.',
+    name: t('main.needs.agentName', 'An AI agent'),
+    why: t('main.needs.agentWhy', 'Tessel runs agents such as Claude Code or Codex in its panes.'),
     status: agents.length ? 'ok' : 'missing',
-    detail: agents.length ? agents.map((a) => a.name || a.id).join(', ') : 'None installed.',
-    fix: agents.length ? null : { where: 'Tools > AI agents' }
+    detail: agents.length ? agents.map((a) => a.name || a.id).join(', ') : t('main.needs.noneInstalled', 'None installed.'),
+    fix: agents.length ? null : { where: t('main.needs.whereAgents', 'Tools > AI agents') }
   })
 
   // The team tools script (MCP server + hooks), set up by Tessel itself.
   const script = facts.script
   add({
     id: 'team-tools',
-    name: 'Team tools',
-    why: 'Lets agents send each other messages and put their work on the board.',
+    name: t('main.needs.teamName', 'Team tools'),
+    why: t('main.needs.teamWhy', 'Lets agents send each other messages and put their work on the board.'),
     status: script && script.exists ? 'ok' : 'missing',
-    detail: script && script.exists ? `Version ${script.version || 'unknown'}` : 'Not set up yet.',
-    fix: script && script.exists ? null : { where: 'MCP servers > Team connections > Set up again' }
+    detail: script && script.exists ? t('main.needs.version', 'Version {{version}}', { version: script.version || t('main.needs.unknown', 'unknown') }) : t('main.needs.notSetUp', 'Not set up yet.'),
+    fix: script && script.exists ? null : { where: t('main.needs.whereTeamSetUp', 'MCP servers > Team connections > Set up again') }
   })
 
   // Hooks of the installed agents that have them.
   const installed = new Set(agents.map((a) => a.id))
   const hookRows = (facts.hooks && Array.isArray(facts.hooks.agents) ? facts.hooks.agents : []).filter((r) => installed.has(r.id))
   if (facts.hooks && facts.hooks.error)
-    add({ id: 'hooks', name: 'Agent hooks', why: 'Deliver team messages without typing into terminals.', status: 'warn', detail: 'Could not be checked.', fix: { where: 'MCP servers > Team connections' } })
+    add({ id: 'hooks', name: t('main.needs.hooksName', 'Agent hooks'), why: t('main.needs.hooksWhy', 'Deliver team messages without typing into terminals.'), status: 'warn', detail: t('main.needs.notChecked', 'Could not be checked.'), fix: { where: t('main.needs.whereTeam', 'MCP servers > Team connections') } })
   else if (hookRows.length) {
     const notSet = hookRows.filter((r) => r.hooks !== 'installed').map((r) => NAMES[r.id] || r.id)
     const codex = hookRows.find((r) => r.id === 'codex')
     const approve = codex && codex.hooks === 'installed' && codex.approval !== 'approved'
     const problems = []
-    if (notSet.length) problems.push(`not set up for ${notSet.join(', ')}`)
-    if (approve) problems.push('Codex: approve them once with /hooks')
+    if (notSet.length) problems.push(t('main.needs.hooksNotSetFor', 'not set up for {{agents}}', { agents: notSet.join(', ') }))
+    if (approve) problems.push(t('main.needs.codexApprove', 'Codex: approve them once with /hooks'))
     add({
       id: 'hooks',
-      name: 'Agent hooks',
-      why: 'Deliver team messages without typing into terminals.',
+      name: t('main.needs.hooksName', 'Agent hooks'),
+      why: t('main.needs.hooksWhy', 'Deliver team messages without typing into terminals.'),
       status: problems.length ? 'warn' : 'ok',
       detail: problems.length ? problems.join('; ') + '.' : hookRows.map((r) => NAMES[r.id] || r.id).join(', '),
-      fix: problems.length ? { where: 'MCP servers > Team connections' } : null
+      fix: problems.length ? { where: t('main.needs.whereTeam', 'MCP servers > Team connections') } : null
     })
   }
 
@@ -104,12 +105,12 @@ export function assessNeeds(facts = {}) {
     const ok = versionAtLeast(facts.claudeVersion, MIN_CLAUDE_INBOX)
     add({
       id: 'claude-inbox',
-      name: 'Claude Code inbox',
-      why: 'Team reminders reach Claude Code without typing into its terminal.',
+      name: t('main.needs.inboxName', 'Claude Code inbox'),
+      why: t('main.needs.inboxWhy', 'Team reminders reach Claude Code without typing into its terminal.'),
       status: ok ? 'ok' : 'warn',
       detail: ok
         ? `Claude Code ${parseVersion(facts.claudeVersion).join('.')}`
-        : `${facts.claudeVersion ? `Claude Code ${String(facts.claudeVersion).trim()}` : 'Version unknown'}: ${MIN_CLAUDE_INBOX} or newer is needed (run "claude update"). Reminders are typed meanwhile.`,
+        : t('main.needs.inboxTooOld', '{{version}}: {{min}} or newer is needed (run "claude update"). Reminders are typed meanwhile.', { version: facts.claudeVersion ? `Claude Code ${String(facts.claudeVersion).trim()}` : t('main.needs.versionUnknown', 'Version unknown'), min: MIN_CLAUDE_INBOX }),
       fix: ok ? null : { run: 'claude update' }
     })
   }
@@ -119,19 +120,19 @@ export function assessNeeds(facts = {}) {
   add({
     id: 'git',
     name: 'Git',
-    why: 'Separate copies for agents, the changes view and code review.',
+    why: t('main.needs.gitWhy', 'Separate copies for agents, the changes view and code review.'),
     status: !git || !git.path ? 'warn' : git.configured ? 'ok' : 'warn',
-    detail: !git || !git.path ? 'Not installed: those features are off.' : git.configured ? 'Installed, name and email set.' : 'Installed, but no name and email for commits.',
-    fix: !git || !git.path ? { install: 'git' } : git.configured ? null : { where: 'Tools > Developer tools > Git > Set name & email' }
+    detail: !git || !git.path ? t('main.needs.gitMissing', 'Not installed: those features are off.') : git.configured ? t('main.needs.gitConfigured', 'Installed, name and email set.') : t('main.needs.gitNoIdentity', 'Installed, but no name and email for commits.'),
+    fix: !git || !git.path ? { install: 'git' } : git.configured ? null : { where: t('main.needs.whereGitIdentity', 'Tools > Developer tools > Git > Set name & email') }
   })
 
   // uvx: only for Python MCP servers.
   add({
     id: 'uvx',
     name: 'uv (uvx)',
-    why: 'Only for Python MCP servers such as Git, Fetch, Time or ElevenLabs.',
+    why: t('main.needs.uvWhy', 'Only for Python MCP servers such as Git, Fetch, Time or ElevenLabs.'),
     status: facts.uvx ? 'ok' : 'optional',
-    detail: facts.uvx ? 'Installed.' : 'Not installed: those MCP servers cannot start.',
+    detail: facts.uvx ? t('main.needs.installed', 'Installed.') : t('main.needs.uvMissing', 'Not installed: those MCP servers cannot start.'),
     fix: facts.uvx ? null : { install: 'uv' }
   })
   return rows

@@ -5,6 +5,7 @@
 // (main, renderers, other), and every terminal's whole process tree, each
 // process counted once.
 import { execFile } from 'child_process'
+import { t } from './i18n'
 
 // -> [{ pid, ppid, memory (bytes), privateMemory (bytes|undefined), ticks (100 ns, Windows) | pcpu }]
 export function parseCimProcesses(stdout) {
@@ -133,7 +134,7 @@ export function createResourceCollector({ sweepFn = sweep, now = () => Date.now(
     if (inFlight) return inFlight
     inFlight = (async () => {
       const procs = await sweepFn()
-      if (!procs) return { ok: false, error: 'Could not list the processes.' }
+      if (!procs) return { ok: false, error: t('main.agents.listProcesses', 'Could not list the processes.') }
       const at = now()
       const next = new Map()
       // Windows: CPU from tick deltas between two sweeps (as Orca); ps gives %.

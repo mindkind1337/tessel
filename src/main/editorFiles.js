@@ -9,6 +9,7 @@ import fs from 'fs'
 import { isAbsolute, dirname, basename, join, resolve, relative, sep } from 'path'
 import { execFile } from 'child_process'
 import crypto from 'crypto'
+import { t } from './i18n'
 
 export const MAX_EDIT_BYTES = 50 * 1024 * 1024
 export const MAX_HEAD_BYTES = 10 * 1024 * 1024
@@ -22,7 +23,7 @@ export function signatureOf(st) {
 }
 
 function checkPath(file) {
-  if (typeof file !== 'string' || !file || file.length > 4000 || !isAbsolute(file)) return 'Not a full file path.'
+  if (typeof file !== 'string' || !file || file.length > 4000 || !isAbsolute(file)) return t('main.editor.notFullPath', 'Not a full file path.')
   return ''
 }
 
@@ -41,18 +42,18 @@ export function readForEdit(file) {
     st = fs.statSync(file)
   } catch (err) {
     return err && err.code === 'ENOENT'
-      ? { ok: false, error: 'The file was not found.', code: 'missing' }
-      : { ok: false, error: (err && err.message) || 'The file could not be read.', code: 'error' }
+      ? { ok: false, error: t('main.editor.notFound', 'The file was not found.'), code: 'missing' }
+      : { ok: false, error: (err && err.message) || t('main.editor.readFailed', 'The file could not be read.'), code: 'error' }
   }
-  if (!st.isFile()) return { ok: false, error: 'This is not a file.', code: 'not-file' }
-  if (st.size > MAX_EDIT_BYTES) return { ok: false, error: 'This file is too large to edit here (over 50 MB).', code: 'too-large' }
+  if (!st.isFile()) return { ok: false, error: t('main.editor.notFile', 'This is not a file.'), code: 'not-file' }
+  if (st.size > MAX_EDIT_BYTES) return { ok: false, error: t('main.editor.tooLarge', 'This file is too large to edit here (over 50 MB).'), code: 'too-large' }
   let buf
   try {
     buf = fs.readFileSync(file)
   } catch (err) {
-    return { ok: false, error: (err && err.message) || 'The file could not be read.', code: 'error' }
+    return { ok: false, error: (err && err.message) || t('main.editor.readFailed', 'The file could not be read.'), code: 'error' }
   }
-  if (looksBinary(buf)) return { ok: false, error: BINARY_ERROR, code: 'binary' }
+  if (looksBinary(buf)) return { ok: false, error: t('main.editor.binary', 'Binary file: open it with its own program'), code: 'binary' }
   const bom = buf.length >= 3 && buf.subarray(0, 3).equals(BOM)
   const body = bom ? buf.subarray(3) : buf
   let text
@@ -60,7 +61,7 @@ export function readForEdit(file) {
     // Not UTF-8 (an old code page): refused rather than saved back mangled.
     text = new TextDecoder('utf-8', { fatal: true }).decode(body)
   } catch {
-    return { ok: false, error: 'This file is not UTF-8 text: open it with another editor.', code: 'encoding' }
+    return { ok: false, error: t('main.editor.notUtf8', 'This file is not UTF-8 text: open it with another editor.'), code: 'encoding' }
   }
   return { ok: true, text, bom, size: st.size, mtimeMs: st.mtimeMs, sig: signatureOf(st), hash: hashOf(buf) }
 }
@@ -134,7 +135,7 @@ async function renameOver(tmp, target) {
 export async function writeForEdit({ file, text, bom = false, expectSig, expectHash } = {}) {
   const bad = checkPath(file)
   if (bad) return { ok: false, error: bad }
-  if (typeof text !== 'string') return { ok: false, error: 'Nothing to write.' }
+  if (typeof text !== 'string') return { ok: false, error: t('main.editor.nothingToWrite', 'Nothing to write.') }
   let target = file
   let mode = null
   try {
@@ -142,15 +143,15 @@ export async function writeForEdit({ file, text, bom = false, expectSig, expectH
     // A link: the file it points to is written (the link stays a link).
     if (st.isSymbolicLink()) target = fs.realpathSync(file)
     const real = fs.statSync(target)
-    if (real.isDirectory()) return { ok: false, error: 'This is a folder.' }
+    if (real.isDirectory()) return { ok: false, error: t('main.editor.isFolder', 'This is a folder.') }
     mode = real.mode
   } catch (err) {
-    if (!err || err.code !== 'ENOENT') return { ok: false, error: (err && err.message) || 'The file could not be written.' }
+    if (!err || err.code !== 'ENOENT') return { ok: false, error: (err && err.message) || t('main.editor.writeFailed', 'The file could not be written.') }
   }
   const data = bom ? Buffer.concat([BOM, Buffer.from(text, 'utf8')]) : Buffer.from(text, 'utf8')
-  if (data.length > MAX_EDIT_BYTES) return { ok: false, error: 'The text is too large to save (over 50 MB).' }
+  if (data.length > MAX_EDIT_BYTES) return { ok: false, error: t('main.editor.textTooLarge', 'The text is too large to save (over 50 MB).') }
   const expect = { expectSig, expectHash }
-  const conflict = (sig) => ({ ok: false, conflict: true, sig, error: 'The file was changed on disk by another program.' })
+  const conflict = (sig) => ({ ok: false, conflict: true, sig, error: t('main.editor.changedOnDisk', 'The file was changed on disk by another program.') })
   const before = changedOnDisk(target, expect)
   if (before.changed) return conflict(before.sig)
   const dir = dirname(target)
@@ -170,7 +171,7 @@ export async function writeForEdit({ file, text, bom = false, expectSig, expectH
     } catch {
       // not created
     }
-    return { ok: false, error: (err && err.message) || 'The file could not be written.' }
+    return { ok: false, error: (err && err.message) || t('main.editor.writeFailed', 'The file could not be written.') }
   }
   // Checked again right before the file is replaced (the write took time).
   const late = changedOnDisk(target, expect)
@@ -189,7 +190,7 @@ export async function writeForEdit({ file, text, bom = false, expectSig, expectH
     } catch {
       // gone already
     }
-    return { ok: false, error: failed.message || 'The file could not be replaced.' }
+    return { ok: false, error: failed.message || t('main.editor.replaceFailed', 'The file could not be replaced.') }
   }
   const st = statForEdit(target)
   return { ok: true, size: st.size, mtimeMs: st.mtimeMs, sig: st.sig, hash: hashOf(data) }
@@ -219,27 +220,29 @@ export async function headContent(file) {
   }
   const topRes = await git(['-C', dirname(real), 'rev-parse', '--show-toplevel'])
   const top = topRes.err ? '' : String(topRes.stdout).trim()
-  if (!top) return { ok: true, repo: false, isNew: true, text: '', note: 'Not in a git repository: there is no committed version to compare with.' }
+  if (!top) return { ok: true, repo: false, isNew: true, text: '', note: t('main.editor.noteNotRepo', 'Not in a git repository: there is no committed version to compare with.') }
   const rel = relative(resolve(top), real)
   if (!rel || rel.startsWith('..') || isAbsolute(rel))
-    return { ok: true, repo: false, isNew: true, text: '', note: 'Outside the repository: there is no committed version to compare with.' }
+    return { ok: true, repo: false, isNew: true, text: '', note: t('main.editor.noteOutside', 'Outside the repository: there is no committed version to compare with.') }
   const spec = `HEAD:${rel.split(sep).join('/')}`
   const res = await git(['-C', resolve(top), '-c', 'core.quotepath=off', 'show', spec], { maxBuffer: MAX_HEAD_BYTES + 1 })
   if (res.err) {
     if (/maxBuffer/i.test(String(res.err.message || '')) || res.err.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER')
-      return { ok: false, error: 'The committed version is too large to compare (over 10 MB).' }
+      return { ok: false, error: t('main.editor.headTooLarge', 'The committed version is too large to compare (over 10 MB).') }
     const noHead = /bad revision|unknown revision|invalid object name 'HEAD'|ambiguous argument 'HEAD'/i.test(res.stderr)
     return {
       ok: true,
       repo: true,
       isNew: true,
       text: '',
-      note: noHead ? 'No commit yet: the left side is empty.' : 'Not in the last commit (a new file): the left side is empty.'
+      note: noHead
+        ? t('main.editor.noteNoCommit', 'No commit yet: the left side is empty.')
+        : t('main.editor.noteNewFile', 'Not in the last commit (a new file): the left side is empty.')
     }
   }
   const buf = res.stdout
-  if (buf.length > MAX_HEAD_BYTES) return { ok: false, error: 'The committed version is too large to compare (over 10 MB).' }
-  if (looksBinary(buf)) return { ok: false, error: 'The committed version is binary: it cannot be compared here.' }
+  if (buf.length > MAX_HEAD_BYTES) return { ok: false, error: t('main.editor.headTooLarge', 'The committed version is too large to compare (over 10 MB).') }
+  if (looksBinary(buf)) return { ok: false, error: t('main.editor.headBinary', 'The committed version is binary: it cannot be compared here.') }
   const body = buf.length >= 3 && buf.subarray(0, 3).equals(BOM) ? buf.subarray(3) : buf
   return { ok: true, repo: true, isNew: false, text: body.toString('utf8'), note: '' }
 }

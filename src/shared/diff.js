@@ -1,6 +1,7 @@
 // Pure helpers for the review screen: read git's output about a task branch
 // (changed files, commits, conflicts, a file's diff) into plain data. No git,
 // no DOM, so the main process and the tests share them.
+import { english } from './i18nText'
 
 // `git diff --name-status --no-renames` + `git diff --numstat --no-renames`
 // (+ `git diff --raw --no-abbrev` for each file's content id)
@@ -108,16 +109,27 @@ export function parseUnifiedDiff(text) {
   return result
 }
 
-// Can the task branch be merged now? -> { ok, reason } for the Merge button.
-export function mergeBlocker(info) {
-  if (!info || !info.ok) return (info && info.error) || 'Could not read the branch.'
-  if (info.uncommitted && info.uncommitted.length)
-    return `${info.uncommitted.length} file${info.uncommitted.length > 1 ? 's are' : ' is'} not committed in the agent's copy.`
-  if (!info.files || !info.files.length) return 'The branch has no changes to merge.'
+// Can the task branch be merged now? -> the reason it cannot ('' when it
+// can), for the Merge button. t: the main process's t() (review.js; English
+// without it).
+export function mergeBlocker(info, t = english) {
+  if (!info || !info.ok) return (info && info.error) || t('main.review.readBranch', 'Could not read the branch.')
+  if (info.uncommitted && info.uncommitted.length) {
+    const count = info.uncommitted.length
+    return count > 1
+      ? t('main.review.uncommitted', "{{count}} files are not committed in the agent's copy.", { count })
+      : t('main.review.uncommitted', "{{count}} file is not committed in the agent's copy.", { count })
+  }
+  if (!info.files || !info.files.length) return t('main.review.noChanges', 'The branch has no changes to merge.')
   if (info.rootBranch !== info.target)
-    return `The project folder is on branch ${info.rootBranch || '(none)'}, not ${info.target}.`
-  if (info.conflicts && info.conflicts.length) return `Conflicts with ${info.target}.`
+    return t('main.review.rootOnBranch', 'The project folder is on branch {{branch}}, not {{target}}.', {
+      branch: info.rootBranch || t('main.review.noBranch', '(none)'),
+      target: info.target
+    })
+  if (info.conflicts && info.conflicts.length) return t('main.review.conflictsWith', 'Conflicts with {{target}}.', { target: info.target })
   if (info.dirtyOverlap && info.dirtyOverlap.length)
-    return `Unsaved changes in the project folder touch the same files: ${info.dirtyOverlap.join(', ')}.`
+    return t('main.review.dirtyOverlap', 'Unsaved changes in the project folder touch the same files: {{files}}.', {
+      files: info.dirtyOverlap.join(', ')
+    })
   return ''
 }

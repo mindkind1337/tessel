@@ -4,6 +4,7 @@ import fs from 'fs'
 import os from 'os'
 import { kimiConfigFile, kimiHookEvents, KIMI_HOOK_EVENTS } from './kimiHooks'
 import { join } from 'path'
+import { t } from './i18n'
 import { HOOK_EVENTS, CODEX_HOOK_EVENTS, GEMINI_HOOK_EVENTS, COPILOT_HOOK_EVENTS, COPILOT_HOOKS_FILE, OPENCODE_PLUGIN_FILE, OPENCODE_MARKER, opencodePlugin } from './teamInstall'
 
 const record = (value) => value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -15,7 +16,7 @@ function readText(file, label) {
   } catch (error) {
     if (error.code === 'ENOENT') return { missing: true }
     // Never return source text or parser errors: these files can hold secrets.
-    return { error: `Cannot read ${label}.` }
+    return { error: t('main.hooks.cannotRead', 'Cannot read {{label}}.', { label }) }
   }
 }
 
@@ -91,7 +92,7 @@ function installation(home, id, scriptPath, events, configDir = join(home, `.${i
     if (agent.error) agent.hooks = 'error'
   } catch {
     agent.hooks = 'error'
-    addError(agent, data.error || `Cannot read ${id} hooks (invalid JSON or hook structure).`)
+    addError(agent, data.error || t('main.hooks.invalidHooks', 'Cannot read {{agent}} hooks (invalid JSON or hook structure).', { agent: id }))
   }
   return { agent, matches, file }
 }
@@ -235,7 +236,7 @@ function sessionSignals(sessionsDir, agents) {
   try {
     files = fs.readdirSync(sessionsDir, { withFileTypes: true })
   } catch (error) {
-    if (error.code !== 'ENOENT') agents.forEach((a) => addError(a, 'Cannot read session reports.'))
+    if (error.code !== 'ENOENT') agents.forEach((a) => addError(a, t('main.hooks.sessionReports', 'Cannot read session reports.')))
     return
   }
   for (const file of files) {
@@ -287,7 +288,7 @@ function copilotInstallation(home, scriptPath) {
   } catch (error) {
     agent.hooks = 'error'
     // Never the file's content or a parser message: generic only.
-    addError(agent, data.error || 'Cannot read copilot hooks.')
+    addError(agent, data.error || t('main.hooks.copilotUnreadable', 'Cannot read copilot hooks.'))
   }
   return agent
 }
@@ -303,7 +304,7 @@ function kimiInstallation(home, scriptPath) {
     agent.hooks = count === KIMI_HOOK_EVENTS.length ? 'installed' : count ? 'partial' : 'missing'
   } catch {
     agent.hooks = 'error'
-    addError(agent, data.error || 'Cannot determine Kimi hooks from config.toml. Run kimi doctor config.')
+    addError(agent, data.error || t('main.hooks.kimiUndetermined', 'Cannot determine Kimi hooks from config.toml. Run kimi doctor config.'))
   }
   return agent
 }
@@ -315,7 +316,7 @@ function opencodeInstallation(home, scriptPath) {
   if (data.missing) return agent
   if (data.error || !data.text.startsWith(OPENCODE_MARKER)) {
     agent.hooks = 'error'
-    addError(agent, data.error || 'The OpenCode plugin file is not managed by Tessel; it was left unchanged.')
+    addError(agent, data.error || t('main.hooks.opencodeNotManaged', 'The OpenCode plugin file is not managed by Tessel; it was left unchanged.'))
     return agent
   }
   agent.events.Plugin = !!scriptPath && data.text === opencodePlugin(scriptPath)

@@ -6,6 +6,7 @@
 import fs from 'fs/promises'
 import os from 'os'
 import { join } from 'path'
+import { t } from './i18n'
 
 const TAIL_BYTES = 512 * 1024
 const MAX_FILES = 32
@@ -42,7 +43,7 @@ function snapshot(id, windows, observedAt, source) {
     stale: windows.some((w) => w.stale),
     ...(windows.length
       ? {}
-      : { error: 'No supported quota window in the latest local observation.' })
+      : { error: t('main.usage.noQuotaWindow', 'No supported quota window in the latest local observation.') })
   }
 }
 
@@ -182,7 +183,7 @@ export async function getUsage({ home = os.homedir(), env = process.env, now = D
         source: 'codex-session',
         observedAt: null,
         stale: false,
-        error: 'No recent local Codex quota observation. Use Codex to refresh its session log.'
+        error: t('main.usage.noCodexObservation', 'No recent local Codex quota observation. Use Codex to refresh its session log.')
       }
     )
   }
@@ -202,8 +203,9 @@ export async function getUsage({ home = os.homedir(), env = process.env, now = D
       source: 'unavailable',
       observedAt: null,
       stale: false,
-      error:
-        'Claude Code does not save subscription quotas in its transcripts. No local usage snapshot is available.'
+      error: t(
+        'main.usage.noClaudeSnapshot', 'Claude Code does not save subscription quotas in its transcripts. No local usage snapshot is available.'
+      )
     }
   }
   return { agents: await Promise.all([claudeRead(), codexRead()]) }

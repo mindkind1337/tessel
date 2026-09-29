@@ -2,6 +2,7 @@
 // PowerShell, say), from the processes under the pane's shell. One process
 // list per call, read with CIM (Windows) or ps (elsewhere).
 import { execFile } from 'child_process'
+import { t } from './i18n'
 
 // Executable names and runtime entrypoints are separate: an agent name in a
 // prompt or another program's arguments is not an agent process.
@@ -189,9 +190,9 @@ function agentBelow(pid, children) {
 // shells: { paneId: shellPid }
 // -> { ok, agents: { paneId: agentId | null }, commands: { paneId: cmd } }
 export async function detectAgents({ shells } = {}) {
-  if (!shells || typeof shells !== 'object') return { ok: false, error: 'No panes.' }
+  if (!shells || typeof shells !== 'object') return { ok: false, error: t('main.agents.noPanes', 'No panes.') }
   const procs = await listProcesses()
-  if (!procs) return { ok: false, error: 'Could not list the processes.' }
+  if (!procs) return { ok: false, error: t('main.agents.listProcesses', 'Could not list the processes.') }
   const commands = {}
   const agents = agentsUnderShells(procs, shells, commands)
   return { ok: true, agents, commands }

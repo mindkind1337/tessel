@@ -17,6 +17,7 @@
 import { execFile } from 'child_process'
 import path from 'path'
 import os from 'os'
+import { t } from './i18n'
 
 const HTTP_PORTS = new Set([80, 3000, 3001, 4200, 5000, 5173, 5174, 8000, 8080, 8888])
 const HTTPS_PORTS = new Set([443, 8443])
@@ -352,7 +353,7 @@ export function createPortScanner({
   function startScan() {
     const run = (async () => {
       const [raw, procs] = await Promise.all([listeners(), processes()])
-      if (!raw) throw new Error('Could not list the listening ports.')
+      if (!raw) throw new Error(t('main.ports.listFailed', 'Could not list the listening ports.'))
       cache = { at: now(), raw, procs: procs || [] }
       return cache
     })()
@@ -404,41 +405,41 @@ export function createPortScanner({
   // -> { ok: true } | { ok: true, alreadyExited: true } | { ok: false, reason }
   async function kill({ probes, pid, port } = {}, opts = {}) {
     const { killer = (p) => process.kill(p), selfPids = [process.pid], terminalHostPids = [], selfExe = process.execPath, appRoots = [] } = opts
-    if (!Number.isSafeInteger(pid) || pid <= 0 || !validPort(port)) return refuse('Invalid process or port.')
+    if (!Number.isSafeInteger(pid) || pid <= 0 || !validPort(port)) return refuse(t('main.ports.invalid', 'Invalid process or port.'))
     const list = sanitizeProbes(probes)
     await settled()
     const procsLater = attempt(processes, null)
     const raw = await attempt(listeners, null)
-    if (!raw) return refuse('Could not list the listening ports, so nothing was stopped.')
-    if (!raw.some((r) => r.pid === pid && r.port === port)) return refuse('The port is no longer listening.')
+    if (!raw) return refuse(t('main.ports.listFailedNothing', 'Could not list the listening ports, so nothing was stopped.'))
+    if (!raw.some((r) => r.pid === pid && r.port === port)) return refuse(t('main.ports.notListening', 'The port is no longer listening.'))
     const procs = await procsLater
-    if (!Array.isArray(procs)) return refuse('Could not list the processes, so nothing was stopped.')
+    if (!Array.isArray(procs)) return refuse(t('main.ports.processesFailed', 'Could not list the processes, so nothing was stopped.'))
     const byPid = new Map(procs.map((p) => [p.pid, p]))
     const target = byPid.get(pid)
-    if (!target) return refuse('Could not find that process, so nothing was stopped.')
+    if (!target) return refuse(t('main.ports.processNotFound', 'Could not find that process, so nothing was stopped.'))
     const inCopy = Object.values(attributePorts(raw, procs, list).byProbe)
       .flat()
       .some((p) => p.pid === pid && p.port === port)
-    if (!inCopy) return refuse('That port does not belong to a workspace, so nothing was stopped.')
+    if (!inCopy) return refuse(t('main.ports.notWorkspace', 'That port does not belong to a workspace, so nothing was stopped.'))
     const shellPids = list.flatMap((p) => p.pids)
     if (isTesselProcess(target, byPid, { selfPids, terminalHostPids, shellPids, selfExe, appRoots }))
-      return refuse('Tessel cannot stop its own process.')
-    if (!target.created || !target.name) return refuse('Could not identify that process, so nothing was stopped.')
+      return refuse(t('main.ports.ownProcess', 'Tessel cannot stop its own process.'))
+    if (!target.created || !target.name) return refuse(t('main.ports.unidentified', 'Could not identify that process, so nothing was stopped.'))
 
     // Right before stopping it: the same process, still on that port.
     const [again, info] = await Promise.all([attempt(listeners, null), attempt(() => processInfo(pid), null)])
-    if (!again || !info || !info.ok) return refuse('Could not check the process again, so nothing was stopped.')
-    if (!info.proc) return refuse('The process has already exited.')
-    if (!sameProcess(info.proc, target)) return refuse('That process id now belongs to another process, so nothing was stopped.')
-    if (!again.some((r) => r.pid === pid && r.port === port)) return refuse('The port is no longer listening.')
+    if (!again || !info || !info.ok) return refuse(t('main.ports.recheckFailed', 'Could not check the process again, so nothing was stopped.'))
+    if (!info.proc) return refuse(t('main.ports.alreadyExited', 'The process has already exited.'))
+    if (!sameProcess(info.proc, target)) return refuse(t('main.ports.pidReused', 'That process id now belongs to another process, so nothing was stopped.'))
+    if (!again.some((r) => r.pid === pid && r.port === port)) return refuse(t('main.ports.notListening', 'The port is no longer listening.'))
 
     cache = null
     try {
       killer(pid)
     } catch (e) {
       if (e && e.code === 'ESRCH') return { ok: true, alreadyExited: true }
-      if (e && e.code === 'EPERM') return refuse('Access denied: the system would not let Tessel stop that process.')
-      return refuse((e && e.message) || 'Failed to stop the process.')
+      if (e && e.code === 'EPERM') return refuse(t('main.ports.accessDenied', 'Access denied: the system would not let Tessel stop that process.'))
+      return refuse((e && e.message) || t('main.ports.stopFailed', 'Failed to stop the process.'))
     }
     // Stopping is asynchronous: say it stopped only once it is gone.
     let unsure = false
@@ -451,7 +452,7 @@ export function createPortScanner({
       await sleep(200)
     }
     return refuse(
-      unsure ? 'Stop was requested, but Tessel could not confirm that the process exited.' : 'Stop was requested, but the process is still running.'
+      unsure ? t('main.ports.unconfirmed', 'Stop was requested, but Tessel could not confirm that the process exited.') : t('main.ports.stillRunning', 'Stop was requested, but the process is still running.')
     )
   }
 

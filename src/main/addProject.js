@@ -139,7 +139,7 @@ export function cloneFailureMessage(stderr, clonePath) {
   let line = lines.length ? lines[lines.length - 1] : ''
   for (let i = lines.length - 1; i >= 0; i--) {
     const f = lines[i].indexOf('fatal:')
-    const e = lines[i].indexOf('error:')
+    const e = lines[i].indexOf('error:') // i18n-ignore git's own output prefix, not a message
     if (f !== -1) {
       line = lines[i].slice(f)
       break

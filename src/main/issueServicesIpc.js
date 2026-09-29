@@ -1,6 +1,7 @@
 // Explicit operations only: the renderer cannot supply GraphQL or gh argv.
 import { createGithubService } from './githubService'
 import { createLinearService } from './linearService'
+import { t } from './i18n'
 
 export function registerIssueServices({ ipcMain, dir, safeStorage, github, linear, onPrCreated }) {
   const services = {
@@ -37,7 +38,7 @@ export function registerIssueServices({ ipcMain, dir, safeStorage, github, linea
         } catch {
           return {
             ok: false,
-            error: `${provider === 'github' ? 'GitHub' : 'Linear'} could not complete this request.`
+            error: t('main.issues.failed', '{{service}} could not complete this request.', { service: provider === 'github' ? 'GitHub' : 'Linear' })
           }
         }
       })

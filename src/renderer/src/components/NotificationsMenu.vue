@@ -3,7 +3,7 @@
 // an entry opens its pane; each entry can be marked read or unread.
 import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { notifications, unreadCount, setRead, markAllRead, clearNotifications } from '../notificationsStore'
-import { formatWhen } from '../../../shared/activity'
+import { formatWhen } from '../timeFormat'
 import { t } from '../i18n'
 
 const emit = defineEmits(['focus-pane'])

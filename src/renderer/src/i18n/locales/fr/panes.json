@@ -346,7 +346,15 @@
       "tokens": "{{tokens}}",
       "title": "Sous-agents",
       "typeTitle": "Type de sous-agent : {{type}}",
-      "modelTitle": "Modèle : {{model}}"
+      "modelTitle": "Modèle : {{model}}",
+      "elapsedHours": "{{h}} h {{m}} min",
+      "elapsedMinutes": "{{m}} min {{s}} s",
+      "elapsedSeconds": "{{s}} s",
+      "thousands": "{{n}} k",
+      "millions": "{{n}} M",
+      "quietHours": "{{h}} h {{m}} min",
+      "quietMinutes": "{{m}} min",
+      "quietFor": "silencieux depuis {{time}}"
     },
     "launch": {
       "left": "Gauche",

@@ -3,6 +3,7 @@
 import fs from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { createHash, randomUUID } from 'node:crypto'
+import { t } from './i18n'
 
 const initial = () => ({
   version: 1,
@@ -240,7 +241,7 @@ export function createUsageStatsTracker({ file, now = Date.now, saveDelay = 1000
       if (failed)
         return {
           ok: false,
-          error: 'Saved activity statistics could not be read. They were preserved.'
+          error: t('main.usage.statsUnreadable', 'Saved activity statistics could not be read. They were preserved.')
         }
       checkpoint(now())
       schedule()
@@ -248,7 +249,7 @@ export function createUsageStatsTracker({ file, now = Date.now, saveDelay = 1000
       return {
         ok: true,
         ...summary,
-        ...(writeFailed ? { warning: 'Activity statistics could not be saved yet.' } : {})
+        ...(writeFailed ? { warning: t('main.usage.statsNotSaved', 'Activity statistics could not be saved yet.') } : {})
       }
     },
     async suspend() {

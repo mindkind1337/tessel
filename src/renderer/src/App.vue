@@ -3458,15 +3458,16 @@ const clockTimer = setInterval(() => {
 onBeforeUnmount(() => clearInterval(clockTimer))
 
 function trackOf(leafId) {
-  const t = trackedState[leafId]
-  if (!t) return null
+  const tracked = trackedState[leafId]
+  if (!tracked) return null
   const info = agentStates.value[leafId]
   // Waiting for its running sub-agents is not being quiet.
-  const state = childrenRunning[leafId] && (t.state === 'idle' || t.state === 'unknown') ? 'working' : t.state
+  const state = childrenRunning[leafId] && (tracked.state === 'idle' || tracked.state === 'unknown') ? 'working' : tracked.state
   return trackAgent(
-    { state, since: t.since, sinceStart: t.sinceStart, reset: info ? info.reset : '' },
+    { state, since: tracked.since, sinceStart: tracked.sinceStart, reset: info ? info.reset : '' },
     taskOfPane(leafId),
-    clock.value
+    clock.value,
+    t
   )
 }
 

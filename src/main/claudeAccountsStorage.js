@@ -3,6 +3,7 @@
 import fs from 'fs/promises'
 import { dirname, isAbsolute, join, parse, relative, resolve, sep } from 'path'
 import { randomUUID } from 'crypto'
+import { t } from './i18n'
 
 const LIMIT = 8 * 1024 * 1024
 const fold = (path) => (process.platform === 'win32' ? path.toLowerCase() : path)
@@ -10,7 +11,7 @@ export const contained = (root, path) => {
   const rel = relative(root, path)
   return !!rel && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel)
 }
-export const authError = (message = 'Claude account storage is unavailable or invalid.') =>
+export const authError = (message = t('main.claudeAccount.storageInvalid', 'Claude account storage is unavailable or invalid.')) =>
   Object.assign(new Error(message), { safeClaudeAccountError: true })
 
 // Check every existing ancestor, including junctions, before reading or writing.
@@ -90,7 +91,7 @@ export async function writeText(path, contents, expected = undefined) {
   const before = await readText(path)
   if (expected !== undefined && before !== expected)
     throw authError(
-      'Claude account files changed during the operation. Retry after other logins finish.'
+      t('main.claudeAccount.changedRetry', 'Claude account files changed during the operation. Retry after other logins finish.')
     )
   if (before === contents) return
   if (contents === null) {
@@ -108,7 +109,7 @@ export async function writeText(path, contents, expected = undefined) {
     file = null
     if ((await readText(path)) !== before)
       throw authError(
-        'Claude account files changed during the operation. Retry after other logins finish.'
+        t('main.claudeAccount.changedRetry', 'Claude account files changed during the operation. Retry after other logins finish.')
       )
     await fs.rename(temporary, path)
   } finally {
@@ -121,7 +122,7 @@ export async function writeText(path, contents, expected = undefined) {
 
 export async function exclusiveText(path, contents) {
   await ensureDirectory(dirname(path))
-  if (await inspect(path)) throw authError('A Claude account operation is awaiting recovery.')
+  if (await inspect(path)) throw authError(t('main.claudeAccount.awaitingRecovery', 'A Claude account operation is awaiting recovery.'))
   let file
   try {
     file = await fs.open(path, 'wx', 0o600)

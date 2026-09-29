@@ -8,6 +8,8 @@
 // agent may be compiling and a spinner may turn without progress, so nothing
 // here claims an agent is stuck for sure.
 
+import { english } from './i18nText'
+
 export const TRACK = {
   approvalWarnMin: 2, // waiting for your approval
   approvalAlertMin: 10,
@@ -18,39 +20,50 @@ export const TRACK = {
 
 const MIN = 60 * 1000
 
-// 45 s -> '<1 min', 12 min -> '12 min', 65 min -> '1 h 05'
-export function formatSpan(ms) {
+// 45 s -> '<1 min', 12 min -> '12 min', 65 min -> '1 h 05'. t: the
+// interface's t() (English without it).
+export function formatSpan(ms, t = english) {
   const m = Math.floor(Math.max(0, ms) / MIN)
-  if (m < 1) return '<1 min'
-  if (m < 60) return `${m} min`
+  if (m < 1) return t('tracking.span.underMinute', '<1 min')
+  if (m < 60) return t('tracking.span.minutes', '{{m}} min', { m })
   const h = Math.floor(m / 60)
-  return `${h} h ${String(m % 60).padStart(2, '0')}`
+  return t('tracking.span.hours', '{{h}} h {{mm}}', { h, mm: String(m % 60).padStart(2, '0') })
 }
 
-const STATE_WORD = {
-  unknown: 'Status unknown',
-  working: 'Working',
-  idle: 'Idle',
-  approval: 'Waiting for your approval',
-  limited: 'Usage limit',
-  sleeping: 'Asleep'
+function stateWord(state, t) {
+  switch (state) {
+    case 'unknown':
+      return t('tracking.state.unknown', 'Status unknown')
+    case 'working':
+      return t('tracking.state.working', 'Working')
+    case 'approval':
+      return t('tracking.state.approval', 'Waiting for your approval')
+    case 'limited':
+      return t('tracking.state.limited', 'Usage limit')
+    case 'sleeping':
+      return t('tracking.state.sleeping', 'Asleep')
+    default:
+      return t('tracking.state.idle', 'Idle')
+  }
 }
 
 // agent: { state: 'working'|'idle'|'approval'|'limited', since (ms), reset,
 //          sinceStart: true when the state began before Tessel started and
 //          its real start is unknown (the time shown is a minimum) }
 // task: the task it is on ({ id, title, column, doingSince, startedAt }) or null
+// t: the interface's t() (English without it)
 // -> { text, level, kind ('approval'|'limit'|'quiet'|'long'|''), reason,
 //      minutes, task, onTask }
-export function trackAgent(agent, task, now = Date.now()) {
+export function trackAgent(agent, task, now = Date.now(), t = english) {
   const state = (agent && agent.state) || 'idle'
   const inState = now - ((agent && agent.since) || now)
   const mins = Math.floor(inState / MIN)
   const plus = agent && agent.sinceStart ? '+' : ''
-  let text = `${STATE_WORD[state] || 'Idle'} · ${formatSpan(inState)}${plus}`
+  const span = (ms) => formatSpan(ms, t)
+  let text = `${stateWord(state, t)} · ${span(inState)}${plus}`
   // The reset time the agent printed; it is not taken as over just because
   // that time has passed (the limit clears when the agent works again).
-  if (state === 'limited' && agent.reset) text = `Usage limit · resets ${agent.reset}`
+  if (state === 'limited' && agent.reset) text = t('tracking.limitResets', 'Usage limit · resets {{reset}}', { reset: agent.reset })
   let level = 'ok'
   let kind = ''
   let reason = ''
@@ -65,19 +78,24 @@ export function trackAgent(agent, task, now = Date.now()) {
   if (state === 'approval' && mins >= TRACK.approvalWarnMin) {
     level = mins >= TRACK.approvalAlertMin ? 'alert' : 'warn'
     kind = 'approval'
-    reason = `Waiting for your approval for ${formatSpan(inState)}${plus}.`
+    reason = t('tracking.reason.approval', 'Waiting for your approval for {{time}}.', { time: `${span(inState)}${plus}` })
   } else if (state === 'limited') {
     level = 'warn'
     kind = 'limit'
-    reason = agent.reset ? `Out of usage (reset shown: ${agent.reset}).` : 'Out of usage.'
+    reason = agent.reset
+      ? t('tracking.reason.limitReset', 'Out of usage (reset shown: {{reset}}).', { reset: agent.reset })
+      : t('tracking.reason.limit', 'Out of usage.')
   } else if (doing && state === 'idle' && quietMins >= TRACK.idleOnTaskWarnMin) {
     level = quietMins >= TRACK.idleOnTaskAlertMin ? 'alert' : 'warn'
     kind = 'quiet'
-    reason = `Quiet for ${formatSpan(quietOnTask)} while "${task.title}" is not finished: it may be stuck or waiting for you.`
+    reason = t('tracking.reason.quiet', 'Quiet for {{time}} while "{{task}}" is not finished: it may be stuck or waiting for you.', {
+      time: span(quietOnTask),
+      task: task.title
+    })
   } else if (doing && onTask >= TRACK.longTaskMin * MIN) {
     level = 'info'
     kind = 'long'
-    reason = `Long-running task: on "${task.title}" for ${formatSpan(onTask)}.`
+    reason = t('tracking.reason.long', 'Long-running task: on "{{task}}" for {{time}}.', { task: task.title, time: span(onTask) })
   }
   return {
     text,
@@ -87,6 +105,6 @@ export function trackAgent(agent, task, now = Date.now()) {
     minutes: kind === 'quiet' ? quietMins : mins,
     task: task ? task.title : '',
     taskId: task ? task.id || task.title : '',
-    onTask: doing ? formatSpan(onTask) : ''
+    onTask: doing ? span(onTask) : ''
   }
 }

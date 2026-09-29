@@ -5,6 +5,7 @@ import fs from 'fs'
 import { join, resolve, relative, isAbsolute, dirname, basename, sep } from 'path'
 import { execFile, spawn } from 'child_process'
 import { StringDecoder } from 'string_decoder'
+import { t } from './i18n'
 
 const MAX_ENTRIES = 5000
 // Never listed (Orca hides the same by default): git's own folder.
@@ -28,12 +29,15 @@ export function inside(root, p) {
 // -> { ok, entries: [{ name, path, dir }] } folders first, by name.
 export function listDir({ root, dir, dotfiles = true } = {}) {
   const full = inside(root, dir || root)
-  if (!full) return { ok: false, error: 'Outside the project.' }
+  if (!full) return { ok: false, error: t('main.explorer.outside', 'Outside the project.') }
   let items
   try {
     items = fs.readdirSync(full, { withFileTypes: true })
   } catch (err) {
-    return { ok: false, error: err.code === 'ENOENT' ? 'The folder is gone.' : 'The folder could not be read.' }
+    return {
+      ok: false,
+      error: err.code === 'ENOENT' ? t('main.explorer.folderGone', 'The folder is gone.') : t('main.explorer.folderUnreadable', 'The folder could not be read.')
+    }
   }
   const entries = []
   for (const d of items) {
@@ -103,7 +107,7 @@ export function gitTop(root) {
 // The git status of the project root is in (its repository may start above
 // it): -> { ok, files: { "<full path>": letter }, repo }. Not a repository: {}.
 export async function projectStatus({ root, ignored = false } = {}) {
-  if (typeof root !== 'string' || !isAbsolute(root)) return { ok: false, error: 'Invalid folder.' }
+  if (typeof root !== 'string' || !isAbsolute(root)) return { ok: false, error: t('main.explorer.invalidFolder', 'Invalid folder.') }
   const top = await gitTop(root)
   if (!top) return { ok: true, files: {}, repo: false }
   return new Promise((done) => {
@@ -111,7 +115,14 @@ export async function projectStatus({ root, ignored = false } = {}) {
     if (ignored) args.push('--ignored=matching')
     execFile('git', args, { windowsHide: true, timeout: 15000, maxBuffer: 32 * 1024 * 1024 }, (err, stdout, stderr) => {
       // A repository whose status failed is not a clean one: said as an error.
-      if (err) return done({ ok: false, error: gitError(stderr, err.killed ? 'Git status took too long.' : 'Git status failed.') })
+      if (err)
+        return done({
+          ok: false,
+          error: gitError(
+            stderr,
+            err.killed ? t('main.explorer.statusSlow', 'Git status took too long.') : t('main.scm.statusFailed', 'Git status failed.')
+          )
+        })
       done({ ok: true, files: parsePorcelain(top, String(stdout)), repo: true })
     })
   })
@@ -164,7 +175,7 @@ const relOf = (root, p) => relative(resolve(root), p)
 // Files and folders whose name has the query (case-insensitive), in folders
 // not opened yet too: -> { ok, results: [{ name, path, rel, dir }], truncated }
 export async function searchNames({ root, query, dotfiles = true, limit = SEARCH_LIMIT } = {}) {
-  if (!inside(root, root)) return { ok: false, error: 'Invalid folder.' }
+  if (!inside(root, root)) return { ok: false, error: t('main.explorer.invalidFolder', 'Invalid folder.') }
   limit = searchCap(limit)
   const q = String(query || '').trim().toLowerCase()
   if (!q) return { ok: true, results: [], truncated: false }
@@ -184,18 +195,18 @@ export async function searchNames({ root, query, dotfiles = true, limit = SEARCH
 
 // A result's line: trimmed, and cut around the match when it is long.
 export function clipLine(text, q) {
-  const t = String(text).replace(/\r$/, '').replace(/\t/g, '  ').trim()
-  if (t.length <= MAX_TEXT) return t
-  const at = Math.max(0, t.toLowerCase().indexOf(q))
-  const start = Math.max(0, Math.min(at - 60, t.length - MAX_TEXT))
-  return (start > 0 ? '…' : '') + t.slice(start, start + MAX_TEXT) + (start + MAX_TEXT < t.length ? '…' : '')
+  const s = String(text).replace(/\r$/, '').replace(/\t/g, '  ').trim()
+  if (s.length <= MAX_TEXT) return s
+  const at = Math.max(0, s.toLowerCase().indexOf(q))
+  const start = Math.max(0, Math.min(at - 60, s.length - MAX_TEXT))
+  return (start > 0 ? '…' : '') + s.slice(start, start + MAX_TEXT) + (start + MAX_TEXT < s.length ? '…' : '')
 }
 
 // Content search by walking the project (no git): plain text,
 // case-insensitive; binaries (a NUL in the first 8 KB) and files over 2 MB
 // are skipped. -> { ok, results: [{ path, rel, line, text }], truncated }
 export async function searchContentWalk({ root, query, limit = SEARCH_LIMIT } = {}) {
-  if (!inside(root, root)) return { ok: false, error: 'Invalid folder.' }
+  if (!inside(root, root)) return { ok: false, error: t('main.explorer.invalidFolder', 'Invalid folder.') }
   limit = searchCap(limit)
   const q = String(query || '').toLowerCase()
   if (!q.trim()) return { ok: true, results: [], truncated: false }
@@ -349,7 +360,7 @@ export function grepReader(onRecord) {
 // (no link or junction, 2 MB at most, no heavy folder); a git that fails is
 // said as an error, never as "no results".
 export async function searchContent({ root, query, limit = SEARCH_LIMIT } = {}) {
-  if (!inside(root, root)) return { ok: false, error: 'Invalid folder.' }
+  if (!inside(root, root)) return { ok: false, error: t('main.explorer.invalidFolder', 'Invalid folder.') }
   limit = searchCap(limit)
   const q = String(query || '').toLowerCase()
   if (!q.trim()) return { ok: true, results: [], truncated: false }
@@ -413,7 +424,7 @@ export async function searchContent({ root, query, limit = SEARCH_LIMIT } = {}) 
     child.on('close', (code) => {
       if (finished) return
       // 0: matches, 1: none; anything else is git failing.
-      if (code !== 0 && code !== 1) return finish({ ok: false, error: gitError(stderr, 'The search failed (git grep).') })
+      if (code !== 0 && code !== 1) return finish({ ok: false, error: gitError(stderr, t('main.explorer.grepFailed', 'The search failed (git grep).')) })
       const full = reader.write(decoder.end()) || reader.end()
       finish({ ok: true, results, truncated: full })
     })
@@ -424,9 +435,9 @@ const BAD_NAME = /[<>:"/\\|?*\x00-\x1f]|^\.\.?$|[. ]$/
 const RESERVED = /^(con|prn|aux|nul|com\d|lpt\d)(\..*)?$/i
 export function checkName(name) {
   const n = String(name || '').trim()
-  if (!n) return 'Give it a name.'
-  if (n.length > 200) return 'The name is too long.'
-  if (BAD_NAME.test(n) || RESERVED.test(n)) return `"${n}" is not a valid name on Windows.`
+  if (!n) return t('main.explorer.noName', 'Give it a name.')
+  if (n.length > 200) return t('main.explorer.nameTooLong', 'The name is too long.')
+  if (BAD_NAME.test(n) || RESERVED.test(n)) return t('main.explorer.badName', '"{{name}}" is not a valid name on Windows.', { name: n })
   return ''
 }
 
@@ -436,8 +447,8 @@ export function create({ root, dir, name, folder = false } = {}) {
   if (bad) return { ok: false, error: bad }
   const parent = inside(root, dir || root)
   const target = parent && inside(root, join(parent, name.trim()))
-  if (!target) return { ok: false, error: 'Outside the project.' }
-  if (fs.existsSync(target)) return { ok: false, error: `"${name.trim()}" already exists here.` }
+  if (!target) return { ok: false, error: t('main.explorer.outside', 'Outside the project.') }
+  if (fs.existsSync(target)) return { ok: false, error: t('main.explorer.exists', '"{{name}}" already exists here.', { name: name.trim() }) }
   try {
     if (folder) fs.mkdirSync(target)
     else fs.writeFileSync(target, '', { flag: 'wx' })
@@ -451,12 +462,12 @@ export function rename({ root, path: p, name } = {}) {
   const bad = checkName(name)
   if (bad) return { ok: false, error: bad }
   const from = inside(root, p)
-  if (!from || from === resolve(root)) return { ok: false, error: 'Outside the project.' }
+  if (!from || from === resolve(root)) return { ok: false, error: t('main.explorer.outside', 'Outside the project.') }
   const to = inside(root, join(dirname(from), name.trim()))
-  if (!to) return { ok: false, error: 'Outside the project.' }
+  if (!to) return { ok: false, error: t('main.explorer.outside', 'Outside the project.') }
   if (to === from) return { ok: true, path: to }
   // Only a change of case on Windows is the same file: allowed.
-  if (fs.existsSync(to) && to.toLowerCase() !== from.toLowerCase()) return { ok: false, error: `"${name.trim()}" already exists here.` }
+  if (fs.existsSync(to) && to.toLowerCase() !== from.toLowerCase()) return { ok: false, error: t('main.explorer.exists', '"{{name}}" already exists here.', { name: name.trim() }) }
   try {
     fs.renameSync(from, to)
     return { ok: true, path: to }
@@ -468,8 +479,8 @@ export function rename({ root, path: p, name } = {}) {
 // To the Recycle Bin (shell.trashItem, given by the caller): never deleted for good.
 export async function trash({ root, path: p } = {}, trashItem) {
   const target = inside(root, p)
-  if (!target || target === resolve(root)) return { ok: false, error: 'Outside the project.' }
-  if (!fs.existsSync(target)) return { ok: false, error: 'It is already gone.' }
+  if (!target || target === resolve(root)) return { ok: false, error: t('main.explorer.outside', 'Outside the project.') }
+  if (!fs.existsSync(target)) return { ok: false, error: t('main.explorer.gone', 'It is already gone.') }
   try {
     await trashItem(target)
     return { ok: true, name: basename(target) }

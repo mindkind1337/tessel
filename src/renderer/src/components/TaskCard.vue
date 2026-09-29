@@ -10,7 +10,7 @@ import { ref, computed, nextTick, inject, watch } from 'vue'
 import { updateTask, removeTask, assignAgent, moveTask, tasks as allTasks } from '../taskBoardStore'
 import { COLUMNS } from '../../../shared/taskModel'
 import BrandIcon from './BrandIcon.vue'
-import { formatDuration, formatWhen } from '../../../shared/activity'
+import { formatDuration, formatWhen } from '../timeFormat'
 import { t, intlLocale } from '../i18n'
 
 const props = defineProps({

@@ -4,6 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { execFile } from 'node:child_process'
 import { extraToolDirs, withToolDirs } from './toolDirs'
+import { t } from './i18n'
 
 // CLI contracts: https://cli.github.com/manual/gh_pr_create (explicit --head
 // never pushes/forks), gh_pr_checks (pending = exit 8), gh_pr_merge, gh_run_rerun.
@@ -44,26 +45,26 @@ function textInput(value, name, max, required = false) {
     value.includes('\0') ||
     (required && !value.trim())
   ) {
-    fail('validation', `Invalid ${name}.`)
+    fail('validation', t('main.github.invalidField', 'Invalid {{name}}.', { name }))
   }
   return value
 }
 function numberInput(value) {
-  if (!Number.isSafeInteger(value) || value < 1) fail('validation', 'Invalid GitHub item number.')
+  if (!Number.isSafeInteger(value) || value < 1) fail('validation', t('main.github.invalidNumber', 'Invalid GitHub item number.'))
   return String(value)
 }
 function kindInput(value) {
-  if (value !== 'issues' && value !== 'prs') fail('validation', 'Invalid GitHub item kind.')
+  if (value !== 'issues' && value !== 'prs') fail('validation', t('main.github.invalidKind', 'Invalid GitHub item kind.'))
   return value === 'issues' ? 'issue' : 'pr'
 }
 function branchInput(value, head = false) {
   if (typeof value !== 'string' || !value || value.length > 255)
-    fail('validation', 'Invalid branch name.')
+    fail('validation', t('main.github.invalidBranch', 'Invalid branch name.'))
   let branch = value
   if (head && value.includes(':')) {
     const pieces = value.split(':')
     if (pieces.length !== 2 || !/^[A-Za-z0-9][A-Za-z0-9-]{0,99}$/.test(pieces[0]))
-      fail('validation', 'Invalid head branch.')
+      fail('validation', t('main.github.invalidHead', 'Invalid head branch.'))
     branch = pieces[1]
   }
   if (
@@ -78,13 +79,13 @@ function branchInput(value, head = false) {
     /[\s\x00-\x1f\x7f~^:?*\[\\]/.test(branch) ||
     branch.split('/').some((part) => !part || part.startsWith('.') || part.endsWith('.lock'))
   ) {
-    fail('validation', 'Invalid branch name.')
+    fail('validation', t('main.github.invalidBranch', 'Invalid branch name.'))
   }
   return value
 }
 function shaInput(value) {
   if (typeof value !== 'string' || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(value))
-    fail('response', 'GitHub returned an invalid commit identity.')
+    fail('response', t('main.github.invalidCommit', 'GitHub returned an invalid commit identity.'))
   return value.toLowerCase()
 }
 
@@ -152,39 +153,39 @@ function json(result) {
   try {
     return JSON.parse(result.stdout)
   } catch {
-    fail('response', 'GitHub CLI returned an unreadable response. Update gh and try again.')
+    fail('response', t('main.github.unreadable', 'GitHub CLI returned an unreadable response. Update gh and try again.'))
   }
 }
 function commandError(result, writing = false) {
   if (result.code === 'ENOENT')
-    fail('unavailable', 'GitHub CLI is unavailable. Install gh and restart Tessel.')
+    fail('unavailable', t('main.github.noGh', 'GitHub CLI is unavailable. Install gh and restart Tessel.'))
   if (result.killed || result.code === 'ETIMEDOUT') {
     fail(
       'timeout',
       writing
-        ? 'GitHub request timed out. Refresh before retrying; the change may have completed.'
-        : 'GitHub request timed out. Try again.'
+        ? t('main.github.timeoutWrite', 'GitHub request timed out. Refresh before retrying; the change may have completed.')
+        : t('main.github.timeout', 'GitHub request timed out. Try again.')
     )
   }
   if (result.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' || result.code === 'output_limit') {
     fail(
       'output_limit',
       writing
-        ? 'GitHub response exceeded the size limit. Refresh before retrying the change.'
-        : 'GitHub response exceeded the size limit. Narrow the request.'
+        ? t('main.github.tooLargeWrite', 'GitHub response exceeded the size limit. Refresh before retrying the change.')
+        : t('main.github.tooLarge', 'GitHub response exceeded the size limit. Narrow the request.')
     )
   }
   fail(
     'command',
     writing
-      ? 'GitHub could not confirm the change. Refresh before retrying; check gh authentication and repository permissions.'
-      : 'GitHub request failed. Check gh authentication, repository access, and your connection.'
+      ? t('main.github.unconfirmed', 'GitHub could not confirm the change. Refresh before retrying; check gh authentication and repository permissions.')
+      : t('main.github.failed', 'GitHub request failed. Check gh authentication, repository access, and your connection.')
   )
 }
 
 function normalizeItem(value, kind) {
   if (!object(value) || !Number.isSafeInteger(value.number) || value.number < 1)
-    fail('response', 'GitHub returned an invalid item.')
+    fail('response', t('main.github.invalidItem', 'GitHub returned an invalid item.'))
   const item = {
     kind,
     number: value.number,
@@ -213,7 +214,7 @@ function normalizeItem(value, kind) {
   return item
 }
 function normalizeChecks(values) {
-  if (!Array.isArray(values)) fail('response', 'GitHub returned invalid checks.')
+  if (!Array.isArray(values)) fail('response', t('main.github.invalidChecks', 'GitHub returned invalid checks.'))
   return values.slice(0, 300).map((v) => ({
     name: str(v?.name),
     state: str(v?.state, 50),
@@ -281,7 +282,7 @@ export function createGithubService({
   const queue = []
   async function command(file, args, cwd, { writing = false, accept = [0], raw = false } = {}) {
     if (!file)
-      fail('unavailable', 'GitHub CLI or Git is unavailable. Install it and restart Tessel.')
+      fail('unavailable', t('main.github.noGhOrGit', 'GitHub CLI or Git is unavailable. Install it and restart Tessel.'))
     if (running >= 4) await new Promise((resolve) => queue.push(resolve))
     else running++
     try {
@@ -323,11 +324,11 @@ export function createGithubService({
   }
   async function cwdInput(cwd) {
     if (typeof cwd !== 'string' || !path.isAbsolute(cwd) || cwd.includes('\0'))
-      fail('validation', 'Choose a local Git working directory.')
+      fail('validation', t('main.github.chooseCwd', 'Choose a local Git working directory.'))
     try {
       if (!(await fsp.stat(cwd)).isDirectory()) throw new Error()
     } catch {
-      fail('validation', 'The Git working directory is unavailable.')
+      fail('validation', t('main.github.cwdUnavailable', 'The Git working directory is unavailable.'))
     }
     return cwd
   }
@@ -346,7 +347,7 @@ export function createGithubService({
       !/^[A-Za-z0-9][A-Za-z0-9_.-]*\/[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(name) ||
       !url
     )
-      fail('repository', 'The current directory has no supported GitHub repository.')
+      fail('repository', t('main.github.noRepo', 'The current directory has no supported GitHub repository.'))
     const parsed = new URL(url)
     if (
       parsed.pathname.replace(/\/$/, '') !== `/${name}` ||
@@ -354,7 +355,7 @@ export function createGithubService({
       parsed.hash ||
       parsed.port
     )
-      fail('repository', 'GitHub returned an invalid repository identity.')
+      fail('repository', t('main.github.invalidRepo', 'GitHub returned an invalid repository identity.'))
     return {
       nameWithOwner: name,
       defaultBranch: str(value.defaultBranchRef?.name, 255),
@@ -369,7 +370,7 @@ export function createGithubService({
   function itemInRepo(item, repo) {
     const expected = `${repo.url}/${item.kind === 'prs' ? 'pull' : 'issues'}/${item.number}`
     if (item.url.toLowerCase() !== expected.toLowerCase())
-      fail('repository', 'GitHub returned an item from a different repository.')
+      fail('repository', t('main.github.otherRepo', 'GitHub returned an item from a different repository.'))
     return item
   }
   async function bodyFile(body, work) {
@@ -397,7 +398,7 @@ export function createGithubService({
     if (!url)
       fail(
         'unknown_completion',
-        'GitHub may have created the item, but returned no usable URL. Refresh before retrying.'
+        t('main.github.noUrl', 'GitHub may have created the item, but returned no usable URL. Refresh before retrying.')
       )
     return url
   }
@@ -426,7 +427,7 @@ export function createGithubService({
     )
     const item = itemInRepo(normalizeItem(value, 'prs'), repo)
     if (String(item.number) !== number)
-      fail('response', 'GitHub returned a different pull request.')
+      fail('response', t('main.github.otherPr', 'GitHub returned a different pull request.'))
     return { ...item, headSha: shaInput(value.headRefOid) }
   }
   const safe =
@@ -437,7 +438,7 @@ export function createGithubService({
       } catch (error) {
         return error instanceof ServiceError
           ? { ok: false, code: error.code, error: error.message }
-          : { ok: false, code: 'internal', error: 'The GitHub operation could not be completed.' }
+          : { ok: false, code: 'internal', error: t('main.github.internal', 'The GitHub operation could not be completed.') }
       }
     }
   return {
@@ -475,12 +476,12 @@ export function createGithubService({
     list: safe(async ({ cwd, kind, preset = 'all', query = '' }) => {
       const type = kindInput(kind)
       if (!['all', 'mine', 'review'].includes(preset) || (kind === 'issues' && preset === 'review'))
-        fail('validation', 'Invalid GitHub list filter.')
-      textInput(query, 'search query', 1000)
+        fail('validation', t('main.github.invalidFilter', 'Invalid GitHub list filter.'))
+      textInput(query, t('main.github.field.searchQuery', 'search query'), 1000)
       if (/\b(?:repo|org|user)\s*:/i.test(query))
         fail(
           'validation',
-          'Search within the current repository without repo, org, or user qualifiers.'
+          t('main.github.searchQualifiers', 'Search within the current repository without repo, org, or user qualifiers.')
         )
       cwd = await cwdInput(cwd)
       const repo = await repository(cwd)
@@ -500,7 +501,7 @@ export function createGithubService({
         .join(' ')
       if (search) args.push('--search', search)
       const values = json(await command(executable, scoped(args, repo), cwd))
-      if (!Array.isArray(values)) fail('response', 'GitHub returned an invalid list.')
+      if (!Array.isArray(values)) fail('response', t('main.github.invalidList', 'GitHub returned an invalid list.'))
       return {
         ok: true,
         items: values.slice(0, LIMIT).map((v) => itemInRepo(normalizeItem(v, kind), repo)),
@@ -518,7 +519,7 @@ export function createGithubService({
         await command(executable, scoped([type, 'view', id, '--json', fields], repo), cwd)
       )
       const item = itemInRepo(normalizeItem(value, kind), repo)
-      if (item.number !== number) fail('response', 'GitHub returned a different item.')
+      if (item.number !== number) fail('response', t('main.github.otherItem', 'GitHub returned a different item.'))
       item.body = str(value.body, 131072)
       item.comments = array(value.comments)
         .slice(-100)
@@ -546,14 +547,14 @@ export function createGithubService({
           item.checks = result.checks
           truncated ||= result.truncated
         } catch {
-          item.checksError = 'Checks are unavailable. Refresh to try again.'
+          item.checksError = t('main.github.checksUnavailable', 'Checks are unavailable. Refresh to try again.')
         }
       }
       return { ok: true, item, truncated }
     }),
     createIssue: safe(async ({ cwd, title, body = '' }) => {
-      textInput(title, 'issue title', 256, true)
-      textInput(body, 'issue body', 65536)
+      textInput(title, t('main.github.field.issueTitle', 'issue title'), 256, true)
+      textInput(body, t('main.github.field.issueBody', 'issue body'), 65536)
       cwd = await cwdInput(cwd)
       const repo = await repository(cwd)
       const result = await bodyFile(body, (file) =>
@@ -567,18 +568,18 @@ export function createGithubService({
       return { ok: true, url: createdUrl(result.stdout, repo, 'issues') }
     }),
     createPr: safe(async ({ cwd, title, body = '', base, head, draft = false }) => {
-      textInput(title, 'pull request title', 256, true)
-      textInput(body, 'pull request body', 65536)
+      textInput(title, t('main.github.field.prTitle', 'pull request title'), 256, true)
+      textInput(body, t('main.github.field.prBody', 'pull request body'), 65536)
       branchInput(base)
       if (head !== undefined) branchInput(head, true)
-      if (typeof draft !== 'boolean') fail('validation', 'Invalid draft choice.')
+      if (typeof draft !== 'boolean') fail('validation', t('main.github.invalidDraft', 'Invalid draft choice.'))
       cwd = await cwdInput(cwd)
       const repo = await repository(cwd)
       if (!head)
         head = branchInput(
           (await command(git, ['symbolic-ref', '--quiet', '--short', 'HEAD'], cwd)).stdout.trim()
         )
-      if (head === base) fail('validation', 'Choose a base branch different from the head branch.')
+      if (head === base) fail('validation', t('main.github.sameBase', 'Choose a base branch different from the head branch.'))
       const args = ['pr', 'create', '--base', base, '--head', head, '--title', title]
       if (draft) args.push('--draft')
       const result = await bodyFile(body, (file) =>
@@ -600,19 +601,19 @@ export function createGithubService({
           action
         )
       )
-        fail('validation', 'Invalid GitHub action.')
+        fail('validation', t('main.github.invalidAction', 'Invalid GitHub action.'))
       if (kind !== 'prs' && ['merge', 'autoMerge', 'rerunFailed', 'rerunAll'].includes(action))
-        fail('validation', 'This action requires a pull request.')
-      if (action === 'comment') textInput(body, 'comment', 65536, true)
+        fail('validation', t('main.github.needsPr', 'This action requires a pull request.'))
+      if (action === 'comment') textInput(body, t('main.github.field.comment', 'comment'), 65536, true)
       if (body !== undefined && action !== 'comment')
-        fail('validation', 'Use the comment action to add text.')
+        fail('validation', t('main.github.useComment', 'Use the comment action to add text.'))
       if (!['merge', 'squash', 'rebase'].includes(method))
-        fail('validation', 'Invalid merge method.')
+        fail('validation', t('main.github.invalidMerge', 'Invalid merge method.'))
       if (
         reason !== undefined &&
         !(action === 'close' && kind === 'issues' && ['completed', 'not planned'].includes(reason))
       )
-        fail('validation', 'Invalid closing reason.')
+        fail('validation', t('main.github.invalidReason', 'Invalid closing reason.'))
       cwd = await cwdInput(cwd)
       const repo = await repository(cwd)
       if (action === 'comment') {
@@ -652,7 +653,7 @@ export function createGithubService({
         if (truncated)
           fail(
             'too_many_runs',
-            'Too many checks to restart safely here. Choose workflow runs on GitHub.'
+            t('main.github.tooManyChecks', 'Too many checks to restart safely here. Choose workflow runs on GitHub.')
           )
         const runIds = new Set()
         for (const check of checks) {
@@ -671,12 +672,12 @@ export function createGithubService({
         if (!runIds.size)
           fail(
             'no_runs',
-            'No matching GitHub Actions runs were found for these pull request checks.'
+            t('main.github.noRuns', 'No matching GitHub Actions runs were found for these pull request checks.')
           )
         if (runIds.size > 20)
           fail(
             'too_many_runs',
-            'Too many workflow runs to restart here. Choose workflow runs on GitHub.'
+            t('main.github.tooManyRuns', 'Too many workflow runs to restart here. Choose workflow runs on GitHub.')
           )
         let completed = 0
         for (const runId of runIds) {
@@ -696,7 +697,7 @@ export function createGithubService({
               return {
                 ok: false,
                 code: 'partial',
-                error: 'Some workflow runs were restarted. Refresh checks before retrying.',
+                error: t('main.github.partial', 'Some workflow runs were restarted. Refresh checks before retrying.'),
                 completed
               }
             throw error
@@ -743,7 +744,7 @@ export function createGithubService({
         (await command(git, ['rev-parse', '--verify', `${ref}^{commit}`], cwd)).stdout.trim()
       )
       if (sha !== item.headSha)
-        fail('changed', 'The pull request changed while fetching. Refresh and start it again.')
+        fail('changed', t('main.github.changed', 'The pull request changed while fetching. Refresh and start it again.'))
       return {
         ok: true,
         baseBranch: sha,

@@ -7,6 +7,7 @@ import os from 'os'
 import { createHash, randomUUID } from 'crypto'
 import { dirname, isAbsolute, join, parse, relative, resolve, sep } from 'path'
 import { writeJsonSafe } from './safeJson'
+import { t } from './i18n'
 
 const MARKER = '.tessel-managed-codex.json'
 const ID = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/
@@ -40,10 +41,10 @@ function noLinks(path, allowMissing = false) {
     }
     if (stat.isSymbolicLink() || (i < pieces.length - 1 && !stat.isDirectory()))
       throw problem(
-        'Codex account storage contains a link or an invalid directory. Restore its original location and retry.'
+        t('main.codexAccount.storageLink', 'Codex account storage contains a link or an invalid directory. Restore its original location and retry.')
       )
     if (!samePath(fs.realpathSync(current), resolve(current)))
-      throw problem('Codex account storage no longer resolves to its original location.')
+      throw problem(t('main.codexAccount.storageMoved', 'Codex account storage no longer resolves to its original location.'))
   }
   return true
 }
@@ -52,7 +53,7 @@ function readSmall(file, { missing = false } = {}) {
   if (!noLinks(file, missing)) return null
   const stat = fs.lstatSync(file)
   if (!stat.isFile() || stat.size > LIMIT)
-    throw problem('A Codex account file is invalid or too large.')
+    throw problem(t('main.codexAccount.fileInvalid', 'A Codex account file is invalid or too large.'))
   return fs.readFileSync(file, 'utf8')
 }
 
@@ -66,7 +67,7 @@ function mirrorConfig(contents) {
     const trimmed = line.trimStart()
     if (!multiline && /^(?:model_providers|"model_providers"|'model_providers')\s*=/.test(trimmed))
       throw problem(
-        'Inline Codex provider definitions cannot be mirrored safely. Use System default or ordinary provider tables before adding an account.'
+        t('main.codexAccount.inlineProviders', 'Inline Codex provider definitions cannot be mirrored safely. Use System default or ordinary provider tables before adding an account.')
       )
     if (
       !multiline &&
@@ -74,7 +75,7 @@ function mirrorConfig(contents) {
       /model_provider/.test(trimmed)
     )
       throw problem(
-        'A dotted or inline profile provider setting cannot be mirrored safely. Use System default or ordinary profile tables first.'
+        t('main.codexAccount.dottedProfile', 'A dotted or inline profile provider setting cannot be mirrored safely. Use System default or ordinary profile tables first.')
       )
     if (
       !multiline &&
@@ -84,7 +85,7 @@ function mirrorConfig(contents) {
         ))
     )
       throw problem(
-        'An escaped Codex provider key cannot be mirrored safely. Use System default or simplify that key first.'
+        t('main.codexAccount.escapedProviderKey', 'An escaped Codex provider key cannot be mirrored safely. Use System default or simplify that key first.')
       )
     if (
       !multiline &&
@@ -93,7 +94,7 @@ function mirrorConfig(contents) {
       )
     )
       throw problem(
-        'The system Codex config overrides the built-in OpenAI provider. Use System default for that provider before selecting a managed ChatGPT account.'
+        t('main.codexAccount.openAiOverride', 'The system Codex config overrides the built-in OpenAI provider. Use System default for that provider before selecting a managed ChatGPT account.')
       )
     if (!multiline && /^\[/.test(trimmed)) table = true
     const assignment =
@@ -103,11 +104,11 @@ function mirrorConfig(contents) {
       )
     if (!multiline && !assignment && /^[^#=]*cli_auth_credentials_store[^=]*=/.test(trimmed))
       throw problem(
-        'A dotted credential-store setting cannot be mirrored safely. Use System default or simplify that setting first.'
+        t('main.codexAccount.dottedCredentialStore', 'A dotted credential-store setting cannot be mirrored safely. Use System default or simplify that setting first.')
       )
     if (assignment && table)
       throw problem(
-        'The system Codex config sets credential storage inside a table or profile. Use System default or move that setting to the root before adding an account.'
+        t('main.codexAccount.credentialStoreTable', 'The system Codex config sets credential storage inside a table or profile. Use System default or move that setting to the root before adding an account.')
       )
     if (assignment && !table) {
       if (
@@ -116,7 +117,7 @@ function mirrorConfig(contents) {
         )
       )
         throw problem(
-          'The system credentials-store setting uses unsupported TOML syntax. Keep the system account or simplify that setting first.'
+          t('main.codexAccount.credentialStoreSyntax', 'The system credentials-store setting uses unsupported TOML syntax. Keep the system account or simplify that setting first.')
         )
       continue
     }
@@ -126,12 +127,12 @@ function mirrorConfig(contents) {
       !/^[^=]+=\s*(?:"openai"|'openai')\s*(?:#.*)?$/.test(trimmed)
     )
       throw problem(
-        'The system Codex config selects a custom provider. Use System default for that provider before adding a ChatGPT account.'
+        t('main.codexAccount.customProvider', 'The system Codex config selects a custom provider. Use System default for that provider before adding a ChatGPT account.')
       )
     // Root key encoded with TOML escapes cannot safely be edited without a parser.
     if (!multiline && /^"[^"\n]*\\[^"\n]*"\s*=/.test(trimmed))
       throw problem(
-        'The system Codex config has an escaped root key. Use System default or simplify that key before adding an account.'
+        t('main.codexAccount.escapedRootKey', 'The system Codex config has an escaped root key. Use System default or simplify that key before adding an account.')
       )
     kept.push(line)
     let quote = null
@@ -150,7 +151,7 @@ function mirrorConfig(contents) {
       } else if (line[i] === '"' || line[i] === "'") quote = line[i]
     }
   }
-  if (multiline) throw problem('The system Codex config contains an unfinished multiline string.')
+  if (multiline) throw problem(t('main.codexAccount.unfinishedMultiline', 'The system Codex config contains an unfinished multiline string.'))
   return 'cli_auth_credentials_store = "file"\n' + kept.join('\n')
 }
 
@@ -241,7 +242,7 @@ export function createCodexAccounts({
 
   function storage(create = false) {
     if (within(systemHome, base) || within(base, systemHome))
-      throw problem('Managed account storage must be separate from the system Codex home.')
+      throw problem(t('main.codexAccount.storageSeparate', 'Managed account storage must be separate from the system Codex home.'))
     const exists = noLinks(base, true)
     if (!exists && create) {
       fs.mkdirSync(base, { recursive: true, mode: 0o700 })
@@ -269,7 +270,7 @@ export function createCodexAccounts({
     if (recovered) return recovered
     if (primary !== null || backup !== null)
       throw problem(
-        'Saved Codex accounts could not be read. Restore the account metadata or retry; no accounts were changed.'
+        t('main.codexAccount.metadataUnreadable', 'Saved Codex accounts could not be read. Restore the account metadata or retry; no accounts were changed.')
       )
     return { version: 1, selectedId: null, accounts: [] }
   }
@@ -285,7 +286,7 @@ export function createCodexAccounts({
     writeJsonSafe(metadata, value, validStore)
   }
   function paths(id) {
-    if (typeof id !== 'string' || !ID.test(id)) throw problem('Choose a valid saved Codex account.')
+    if (typeof id !== 'string' || !ID.test(id)) throw problem(t('main.codexAccount.chooseValid', 'Choose a valid saved Codex account.'))
     return { directory: join(base, id), home: join(base, id, 'home') }
   }
   function owned(id) {
@@ -296,18 +297,18 @@ export function createCodexAccounts({
       !fs.lstatSync(target.home).isDirectory() ||
       !within(fs.realpathSync(base), fs.realpathSync(target.home))
     )
-      throw problem('The managed Codex account home is outside its original storage.')
+      throw problem(t('main.codexAccount.homeOutside', 'The managed Codex account home is outside its original storage.'))
     let marker
     try {
       marker = JSON.parse(readSmall(join(target.home, MARKER)))
     } catch (error) {
       if (error.accountError) throw error
       throw problem(
-        'The Codex account ownership marker is missing or unreadable. No files were changed.'
+        t('main.codexAccount.markerMissing', 'The Codex account ownership marker is missing or unreadable. No files were changed.')
       )
     }
     if (marker?.version !== 1 || marker?.provider !== 'codex' || marker?.id !== id)
-      throw problem('The Codex account ownership marker does not match. No files were changed.')
+      throw problem(t('main.codexAccount.markerMismatch', 'The Codex account ownership marker does not match. No files were changed.'))
     return target
   }
   function atomic(file, contents) {
@@ -344,7 +345,7 @@ export function createCodexAccounts({
         (previous[name] ? hash(existing) !== previous[name] : source !== null)
       )
         throw problem(
-          'A managed Codex hooks or instructions file was edited separately. Reconcile it with the system file before launching this account.'
+          t('main.codexAccount.fileEditedSeparately', 'A managed Codex hooks or instructions file was edited separately. Reconcile it with the system file before launching this account.')
         )
       if (source !== null) {
         next[name] = hash(source)
@@ -430,7 +431,7 @@ export function createCodexAccounts({
   function find(store, id) {
     paths(id)
     const account = store.accounts.find((item) => item.id === id)
-    if (!account) throw problem('This Codex account is no longer saved. Refresh the account list.')
+    if (!account) throw problem(t('main.codexAccount.noLongerSaved', 'This Codex account is no longer saved. Refresh the account list.'))
     return account
   }
   function erase(id, validateOnly = false) {
@@ -438,7 +439,7 @@ export function createCodexAccounts({
     function validateTree(path, depth = 0) {
       if (depth > 40)
         throw problem(
-          'The managed account contains a directory tree that cannot be removed safely.'
+          t('main.codexAccount.treeUnsafe', 'The managed account contains a directory tree that cannot be removed safely.')
         )
       noLinks(path)
       const stat = fs.lstatSync(path)
@@ -446,7 +447,7 @@ export function createCodexAccounts({
         for (const name of fs.readdirSync(path)) validateTree(join(path, name), depth + 1)
       else if (!stat.isFile())
         throw problem(
-          'The managed account contains an unsupported file type. No files were removed.'
+          t('main.codexAccount.unsupportedFile', 'The managed account contains an unsupported file type. No files were removed.')
         )
     }
     validateTree(target.directory)
@@ -465,7 +466,7 @@ export function createCodexAccounts({
     }
   }
   async function login(target, options) {
-    if (options.signal?.aborted) throw problem('Codex sign-in was cancelled.')
+    if (options.signal?.aborted) throw problem(t('main.codexAccount.signInCancelled', 'Codex sign-in was cancelled.'))
     let result
     try {
       result = await runLogin({
@@ -476,19 +477,19 @@ export function createCodexAccounts({
       })
     } catch (error) {
       const failed = problem(
-        'Codex sign-in did not complete. Retry; your existing accounts were preserved.'
+        t('main.codexAccount.signInIncomplete', 'Codex sign-in did not complete. Retry; your existing accounts were preserved.')
       )
       if (error?.cleanupSafe === false) failed.cleanupSafe = false
       throw failed
     }
     if (result?.cleanupSafe === false)
       throw Object.assign(
-        problem('Codex sign-in could not be stopped safely. Its temporary files were retained.'),
+        problem(t('main.codexAccount.stopFailed', 'Codex sign-in could not be stopped safely. Its temporary files were retained.')),
         { cleanupSafe: false }
       )
-    if (options.signal?.aborted) throw problem('Codex sign-in was cancelled.')
+    if (options.signal?.aborted) throw problem(t('main.codexAccount.signInCancelled', 'Codex sign-in was cancelled.'))
     if (!result?.ok)
-      throw problem('Codex sign-in did not complete. Retry; your existing accounts were preserved.')
+      throw problem(t('main.codexAccount.signInIncomplete', 'Codex sign-in did not complete. Retry; your existing accounts were preserved.'))
   }
   function serial(task) {
     const result = (queues.get(key) || Promise.resolve())
@@ -497,7 +498,7 @@ export function createCodexAccounts({
       .catch((error) => {
         if (error.accountError) throw error
         throw problem(
-          'Codex account files are unavailable or could not be saved. Retry; no system credentials were changed.'
+          t('main.codexAccount.filesUnavailable', 'Codex account files are unavailable or could not be saved. Retry; no system credentials were changed.')
         )
       })
     queues.set(
@@ -517,7 +518,7 @@ export function createCodexAccounts({
         return {
           ok: false,
           error:
-            'The selected Codex login is unavailable. Sign in again or explicitly select System default.'
+            t('main.codexAccount.loginUnavailableSelect', 'The selected Codex login is unavailable. Sign in again or explicitly select System default.')
         }
       if (refresh) config(target.home)
       return { ok: true, env: { CODEX_HOME: target.home }, accountId: id }
@@ -526,7 +527,7 @@ export function createCodexAccounts({
         ok: false,
         error: error.accountError
           ? error.message
-          : 'The selected Codex account cannot be opened safely. Restore its files or explicitly select System default.'
+          : t('main.codexAccount.openUnsafe', 'The selected Codex account cannot be opened safely. Restore its files or explicitly select System default.')
       }
     }
   }
@@ -538,7 +539,7 @@ export function createCodexAccounts({
         return view(load())
       } catch (error) {
         if (error.accountError) throw error
-        throw problem('Saved Codex account metadata is temporarily unavailable. Retry in a moment.')
+        throw problem(t('main.codexAccount.metadataBusy', 'Saved Codex account metadata is temporarily unavailable. Retry in a moment.'))
       }
     },
     add: (options = {}) =>
@@ -552,7 +553,7 @@ export function createCodexAccounts({
           const details = inspect(id, false)
           if (details.status !== 'ready' || !matchingIdentity(details.identity, details.identity))
             throw problem(
-              'Codex did not save a usable file login. Check your credential-store policy and retry.'
+              t('main.codexAccount.noFileLogin', 'Codex did not save a usable file login. Check your credential-store policy and retry.')
             )
           const account = entry(id, details)
           save({ ...store, accounts: [...store.accounts, account] })
@@ -579,7 +580,7 @@ export function createCodexAccounts({
           await login(stage, options)
           const details = inspect(stageId, false)
           if (details.status !== 'ready')
-            throw problem('Codex did not save a usable login. The previous account login was kept.')
+            throw problem(t('main.codexAccount.noUsableLogin', 'Codex did not save a usable login. The previous account login was kept.'))
           const raw = readSmall(join(owned(stageId).home, 'auth.json'))
           owned(id)
           const previous = readSmall(join(target.home, 'auth.json'), { missing: true })
@@ -587,7 +588,7 @@ export function createCodexAccounts({
           const baseline = savedAccount.identity || (previous && authDetails(previous).identity)
           if (!matchingIdentity(baseline, details.identity))
             throw problem(
-              'The signed-in Codex identity does not match this account. The previous login was kept; use Add account for a different identity.'
+              t('main.codexAccount.identityMismatch', 'The signed-in Codex identity does not match this account. The previous login was kept; use Add account for a different identity.')
             )
           atomic(join(target.home, 'auth.json'), raw)
           const next = {
@@ -630,7 +631,7 @@ export function createCodexAccounts({
           const account = find(store, id)
           const target = owned(id)
           if (currentIdentity(account).status !== 'ready')
-            throw problem('This Codex login is unavailable. Sign in again before selecting it.')
+            throw problem(t('main.codexAccount.loginUnavailable', 'This Codex login is unavailable. Sign in again before selecting it.'))
           config(target.home)
         }
         const next = { ...store, selectedId: id }

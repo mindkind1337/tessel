@@ -5,7 +5,8 @@
 // and review work, they do not rank agents.
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import BrandIcon from './BrandIcon.vue'
-import { summarize, cardsFor, parseJournal, formatDuration } from '../../../shared/activity'
+import { summarize, cardsFor, parseJournal } from '../../../shared/activity'
+import { formatDuration } from '../timeFormat'
 import { t, intlLocale } from '../i18n'
 
 const props = defineProps({

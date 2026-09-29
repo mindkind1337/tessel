@@ -5,6 +5,7 @@ import path from 'node:path'
 import fs from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { boundedCredentialRead, inspectCredentialPath } from './providerUsage'
+import { t } from './i18n'
 
 export class ProviderReadError extends Error {
   constructor(code, message) {
@@ -68,14 +69,14 @@ export function createUsageProviderSources({
     try {
       const raw = await readFile(file)
       if (typeof raw !== 'string' || Buffer.byteLength(raw) > 1024 * 1024)
-        refuse('credentials', 'The credential file is too large.')
+        refuse('credentials', t('main.usage.credentialTooLarge', 'The credential file is too large.'))
       const parsed = JSON.parse(raw)
       return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null
     } catch (error) {
       if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return null
       refuse(
         'credentials',
-        'The provider login could not be read safely. Run its CLI and try again.'
+        t('main.usage.loginUnreadable', 'The provider login could not be read safely. Run its CLI and try again.')
       )
     }
   }
@@ -151,14 +152,14 @@ export function createUsageProviderSources({
     let headers
     if (provider === 'gemini') {
       const creds = await json(paths.gemini[0])
-      headers = bearer(creds?.access_token, 'Sign in with Gemini CLI to read usage.')
+      headers = bearer(creds?.access_token, t('main.usage.signInGemini', 'Sign in with Gemini CLI to read usage.'))
       if (typeof creds.expiry_date !== 'number' || creds.expiry_date <= clock() + 5000)
-        refuse('expired', 'Run Gemini to refresh its login, then retry usage.')
+        refuse('expired', t('main.usage.refreshGemini', 'Run Gemini to refresh its login, then retry usage.'))
     } else if (provider === 'kimi') {
       const creds = await json(paths.kimi[0])
-      headers = bearer(creds?.access_token, 'Sign in with Kimi to read usage.')
+      headers = bearer(creds?.access_token, t('main.usage.signInKimi', 'Sign in with Kimi to read usage.'))
       if (typeof creds.expires_at !== 'number' || creds.expires_at * 1000 <= clock() + 5000)
-        refuse('expired', 'Run Kimi to refresh its login, then retry usage.')
+        refuse('expired', t('main.usage.refreshKimi', 'Run Kimi to refresh its login, then retry usage.'))
     } else if (provider === 'grok') {
       const data = (await json(paths.grok[0])) || {}
       const preferred = Object.entries(data).filter(
@@ -169,8 +170,8 @@ export function createUsageProviderSources({
         .filter((row) => token(row?.key))
       const fresh = (row) => !row.expires_at || Date.parse(row.expires_at) > clock() + 300000
       const creds = rows.find(fresh) || rows[0]
-      headers = bearer(creds?.key, 'Sign in with Grok to read usage.')
-      if (!fresh(creds)) refuse('expired', 'Run Grok to refresh its login, then retry usage.')
+      headers = bearer(creds?.key, t('main.usage.signInGrok', 'Sign in with Grok to read usage.'))
+      if (!fresh(creds)) refuse('expired', t('main.usage.refreshGrok', 'Run Grok to refresh its login, then retry usage.'))
       headers['X-XAI-Token-Auth'] = 'xai-grok-cli'
       if (token(creds.user_id)) headers['x-userid'] = creds.user_id
     } else if (provider === 'cursor') {
@@ -185,8 +186,8 @@ export function createUsageProviderSources({
         const candidate = cursorToken(rows[0]?.value)
         if (candidate && !candidate.expired) session = candidate
       }
-      if (!session) refuse('unavailable', 'Sign in with Cursor or cursor-agent to read usage.')
-      if (session.expired) refuse('expired', 'Run cursor-agent login to refresh Cursor usage.')
+      if (!session) refuse('unavailable', t('main.usage.signInCursor', 'Sign in with Cursor or cursor-agent to read usage.'))
+      if (session.expired) refuse('expired', t('main.usage.refreshCursor', 'Run cursor-agent login to refresh Cursor usage.'))
       headers = {
         Cookie: `WorkosCursorSessionToken=${encodeURIComponent(session.sub)}%3A%3A${session.raw}`,
         Accept: 'application/json',
@@ -219,14 +220,14 @@ export function createUsageProviderSources({
       }
       headers = bearer(
         key || env.OPENCODE_API_KEY,
-        'Connect an OpenCode Go subscription in OpenCode to read usage.'
+        t('main.usage.connectOpenCode', 'Connect an OpenCode Go subscription in OpenCode to read usage.')
       )
     } else if (provider === 'minimax') {
       headers = bearer(
         env.MINIMAX_API_KEY,
-        'Set MINIMAX_API_KEY in the environment running Tessel to read usage.'
+        t('main.usage.setMinimaxKey', 'Set MINIMAX_API_KEY in the environment running Tessel to read usage.')
       )
-    } else refuse('unavailable', 'This provider has no quota collector.')
+    } else refuse('unavailable', t('main.usage.noCollector', 'This provider has no quota collector.'))
     return {
       headers,
       fingerprint: createHash('sha256').update(JSON.stringify(headers)).digest('hex')

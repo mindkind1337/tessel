@@ -20,6 +20,7 @@
 // For tests and TESSEL_AGENT_UPDATES_FAKE, `spawn` is replaced (fakeSpawn):
 // nothing is ever installed by them.
 import { EventEmitter } from 'events'
+import { t } from './i18n'
 
 export const UPDATE_TIMEOUT_MS = 10 * 60 * 1000
 const KEEP_OUTPUT = 64 * 1024 // the end of the output, for classifyFailure
@@ -84,7 +85,7 @@ export function classifyFailure({ output = '', exitCode = null, timedOut = false
   if (NOT_FOUND.test(text)) return { kind: 'not-found', detail: lineMatching(text, NOT_FOUND) }
   // cmd's "not recognized" is exit code 9009.
   if (exitCode === 9009) return { kind: 'not-found', detail: lastErrorLine(text) }
-  return { kind: 'failed', detail: lastErrorLine(text) || (exitCode != null ? `exit code ${exitCode}` : '') }
+  return { kind: 'failed', detail: lastErrorLine(text) || (exitCode != null ? t('main.agentUpdate.exitCode', 'exit code {{code}}', { code: exitCode }) : '') }
 }
 
 // --- Runner ------------------------------------------------------------------------
@@ -152,11 +153,11 @@ export function createUpdateRunner({
     busy: () => (current ? current.agentId : null),
     // -> { ok, kind?, detail?, reason, file, exitCode }
     async run({ agentId, name, steps }) {
-      if (current) return { ok: false, kind: 'busy', detail: '', reason: `${current.agentId} is being updated`, file: null }
+      if (current) return { ok: false, kind: 'busy', detail: '', reason: t('main.agentUpdate.beingUpdated', '{{agent}} is being updated', { agent: current.agentId }), file: null }
       const list = Array.isArray(steps) ? steps.map(String) : []
       const argvs = list.map(stepArgv)
       if (!list.length || argvs.some((a) => !a)) {
-        return { ok: false, kind: 'failed', detail: 'not a command Tessel runs', reason: 'not a command Tessel runs', file: null }
+        return { ok: false, kind: 'failed', detail: t('main.agentUpdate.notCommand', 'not a command Tessel runs'), reason: t('main.agentUpdate.notCommand', 'not a command Tessel runs'), file: null }
       }
       current = { agentId }
       const runId = `agent-update-${agentId}-${Date.now()}`
@@ -185,10 +186,10 @@ export function createUpdateRunner({
       }
       const { kind, detail } = classifyFailure({ output, ...last })
       const reason = last.timedOut
-        ? `no end after ${Math.round(timeoutMs / 60000)} min`
+        ? t('main.agentUpdate.noEnd', 'no end after {{minutes}} min', { minutes: Math.round(timeoutMs / 60000) })
         : last.spawnError
-          ? `could not start: ${last.spawnError.message || last.spawnError.code}`
-          : `exit code ${last.exitCode}`
+          ? t('main.agentUpdate.couldNotStart', 'could not start: {{error}}', { error: last.spawnError.message || last.spawnError.code })
+          : t('main.agentUpdate.exitCode', 'exit code {{code}}', { code: last.exitCode })
       if (logs) logs.end(runId, false, `${kind}: ${reason}`)
       return { ok: false, kind, detail, reason, file, exitCode: last.exitCode }
     }

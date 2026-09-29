@@ -13,6 +13,7 @@ import fs from 'fs'
 import { resolve, relative, isAbsolute, join, sep } from 'path'
 import { run } from './agentTools'
 import { cleanEnv } from './cleanEnv'
+import { t } from './i18n'
 
 const MAX_FILE = 10 * 1024 * 1024 // a version larger than this is not shown
 const MAX_MESSAGE = 20000
@@ -40,10 +41,10 @@ function identityError(res) {
 
 // The repository a folder is in: -> { top } or { error }.
 export async function repoOf(root) {
-  if (typeof root !== 'string' || !root || !isAbsolute(root)) return { error: 'Invalid folder.' }
-  if (!fs.existsSync(root)) return { error: 'The folder is missing.' }
+  if (typeof root !== 'string' || !root || !isAbsolute(root)) return { error: t('main.scm.invalidFolder', 'Invalid folder.') }
+  if (!fs.existsSync(root)) return { error: t('main.scm.folderMissing', 'The folder is missing.') }
   const res = await run('git', ['-C', root, 'rev-parse', '--show-toplevel'], { timeout: 15000, env: gitEnv() })
-  if (!res.ok) return { error: 'This folder is not in a git repository.', notRepo: true }
+  if (!res.ok) return { error: t('main.scm.notRepo', 'This folder is not in a git repository.'), notRepo: true }
   return { top: resolve(res.stdout.trim()) }
 }
 
@@ -62,11 +63,11 @@ export function relIn(top, p) {
 
 function relList(top, paths) {
   const list = Array.isArray(paths) ? paths : [paths]
-  if (!list.length || list.length > 5000) return { error: 'No file.' }
+  if (!list.length || list.length > 5000) return { error: t('main.scm.noFile', 'No file.') }
   const out = []
   for (const p of list) {
     const r = relIn(top, p)
-    if (!r) return { error: `"${String(p).slice(0, 200)}" is not a file of this repository.` }
+    if (!r) return { error: t('main.scm.notRepoFileNamed', '"{{path}}" is not a file of this repository.', { path: String(p).slice(0, 200) }) }
     if (!out.includes(r)) out.push(r)
   }
   return { rels: out }
@@ -210,7 +211,7 @@ export async function scmStatus({ root } = {}) {
     gitDir(top),
     git(top, ['remote'])
   ])
-  if (!st.ok) return { ok: false, error: gitMessage(st, 'Git status failed.') }
+  if (!st.ok) return { ok: false, error: gitMessage(st, t('main.scm.statusFailed', 'Git status failed.')) }
   const info = parseStatusV2(st.stdout)
   const counts = { unstaged: un.ok ? parseNumstatZ(un.stdout) : {}, staged: stg.ok ? parseNumstatZ(stg.stdout) : {} }
   const entries = info.entries.map((e) => {
@@ -243,7 +244,7 @@ export async function scmStage({ root, paths } = {}) {
   if (l.error) return { ok: false, error: l.error }
   // -A: a file deleted on disk is staged as deleted too.
   const res = await inChunks(r.top, ['add', '-A'], l.rels)
-  return res.ok ? { ok: true } : { ok: false, error: gitMessage(res, 'git add failed.') }
+  return res.ok ? { ok: true } : { ok: false, error: gitMessage(res, t('main.scm.addFailed', 'git add failed.')) }
 }
 
 export async function scmUnstage({ root, paths } = {}) {
@@ -256,7 +257,7 @@ export async function scmUnstage({ root, paths } = {}) {
   const res = head.ok
     ? await inChunks(r.top, ['restore', '--staged'], l.rels)
     : await inChunks(r.top, ['rm', '--cached', '-r', '--quiet'], l.rels)
-  return res.ok ? { ok: true } : { ok: false, error: gitMessage(res, 'Unstage failed.') }
+  return res.ok ? { ok: true } : { ok: false, error: gitMessage(res, t('main.scm.unstageFailed', 'Unstage failed.')) }
 }
 
 function insideReal(topReal, p) {
@@ -275,23 +276,23 @@ export async function scmDiscard({ root, paths } = {}, trashItem) {
   const l = relList(r.top, paths)
   if (l.error) return { ok: false, error: l.error }
   const st = await git(r.top, ['status', '--porcelain=v2', '-z', '--untracked-files=all'])
-  if (!st.ok) return { ok: false, error: gitMessage(st, 'Git status failed.') }
+  if (!st.ok) return { ok: false, error: gitMessage(st, t('main.scm.statusFailed', 'Git status failed.')) }
   const entries = parseStatusV2(st.stdout).entries
   const tracked = []
   const untracked = []
   for (const rel of l.rels) {
     const mine = entries.filter((e) => e.path === rel)
-    if (mine.some((e) => e.conflict)) return { ok: false, error: `${rel} has a conflict: resolve it first.` }
+    if (mine.some((e) => e.conflict)) return { ok: false, error: t('main.scm.hasConflict', '{{path}} has a conflict: resolve it first.', { path: rel }) }
     if (mine.some((e) => e.area === 'untracked')) untracked.push(rel)
     else if (mine.some((e) => e.area === 'unstaged')) tracked.push(rel)
     // Nothing to discard for it (already clean, or only staged): skipped.
   }
-  if (untracked.length && typeof trashItem !== 'function') return { ok: false, error: 'The Recycle Bin is not available.' }
+  if (untracked.length && typeof trashItem !== 'function') return { ok: false, error: t('main.scm.noRecycleBin', 'The Recycle Bin is not available.') }
   let topReal
   try {
     topReal = fs.realpathSync(r.top)
   } catch {
-    return { ok: false, error: 'The repository folder could not be read.' }
+    return { ok: false, error: t('main.scm.repoUnreadable', 'The repository folder could not be read.') }
   }
   // Every untracked path is checked before anything is moved.
   const targets = []
@@ -303,12 +304,12 @@ export async function scmDiscard({ root, paths } = {}, trashItem) {
     } catch {
       continue // already gone
     }
-    if (!insideReal(topReal, real)) return { ok: false, error: `${rel} resolves outside the repository.` }
+    if (!insideReal(topReal, real)) return { ok: false, error: t('main.scm.outsideRepo', '{{path}} resolves outside the repository.', { path: rel }) }
     targets.push(full)
   }
   if (tracked.length) {
     const res = await inChunks(r.top, ['restore', '--worktree'], tracked)
-    if (!res.ok) return { ok: false, error: gitMessage(res, 'Discard failed.') }
+    if (!res.ok) return { ok: false, error: gitMessage(res, t('main.scm.discardFailed', 'Discard failed.')) }
   }
   let trashed = 0
   for (const full of targets) {
@@ -316,7 +317,12 @@ export async function scmDiscard({ root, paths } = {}, trashItem) {
       await trashItem(full)
       trashed++
     } catch (err) {
-      return { ok: false, error: `Could not move ${relative(r.top, full)} to the Recycle Bin: ${(err && err.message) || err}`, restored: tracked.length, trashed }
+      return {
+        ok: false,
+        error: t('main.scm.trashFailed', 'Could not move {{path}} to the Recycle Bin: {{error}}', { path: relative(r.top, full), error: (err && err.message) || err }),
+        restored: tracked.length,
+        trashed
+      }
     }
   }
   return { ok: true, restored: tracked.length, trashed }
@@ -332,13 +338,14 @@ export async function scmCommit({ root, message } = {}) {
     .replace(/\0/g, '')
     .trim()
     .slice(0, MAX_MESSAGE)
-  if (!msg) return { ok: false, error: 'Enter a commit message to commit.' }
+  if (!msg) return { ok: false, error: t('main.scm.noMessage', 'Enter a commit message to commit.') }
   const staged = await git(r.top, ['diff', '--cached', '--quiet'])
-  if (staged.ok) return { ok: false, error: 'Stage at least one file to commit.' }
+  if (staged.ok) return { ok: false, error: t('main.scm.nothingStaged', 'Stage at least one file to commit.') }
   const res = await git(r.top, ['commit', '-m', msg], { timeout: 180000 })
   if (!res.ok) {
-    if (identityError(res)) return { ok: false, error: 'Git does not know your name yet (Tools > Git > Set name & email), then commit again.' }
-    return { ok: false, error: gitMessage(res, 'Commit failed.') }
+    if (identityError(res))
+      return { ok: false, error: t('main.scm.noGitName', 'Git does not know your name yet (Tools > Git > Set name & email), then commit again.') }
+    return { ok: false, error: gitMessage(res, t('main.scm.commitFailed', 'Commit failed.')) }
   }
   const sha = await git(r.top, ['rev-parse', 'HEAD'])
   return { ok: true, sha: sha.stdout.trim() }
@@ -359,14 +366,16 @@ async function config(top, key) {
 function remoteError(res, op) {
   const text = `${res.stderr || ''}\n${res.stdout || ''}`
   if (/rejected|non-fast-forward|fetch first|failed to push some refs/i.test(text) && op === 'push')
-    return 'The remote branch has commits this one does not: pull (or sync) first. Nothing was pushed.'
+    return t('main.scm.pushRejected', 'The remote branch has commits this one does not: pull (or sync) first. Nothing was pushed.')
   if (/could not read username|authentication failed|permission denied|403|terminal prompts disabled/i.test(text))
-    return 'Git could not sign in to the remote. Sign in once (Tools > GitHub CLI > Sign in, or git push in a terminal), then try again.'
-  if (/could not resolve host|unable to access|network/i.test(text)) return `Could not reach the remote: ${gitMessage(res, op + ' failed.')}`
-  if (/CONFLICT|Automatic merge failed/i.test(text)) return 'The pull stopped on conflicts: resolve them in the files listed under Conflicts, then commit.'
+    return t('main.scm.remoteAuth', 'Git could not sign in to the remote. Sign in once (Tools > GitHub CLI > Sign in, or git push in a terminal), then try again.')
+  if (/could not resolve host|unable to access|network/i.test(text))
+    return t('main.scm.unreachable', 'Could not reach the remote: {{error}}', { error: gitMessage(res, t('main.scm.opFailed', '{{op}} failed.', { op })) })
+  if (/CONFLICT|Automatic merge failed/i.test(text))
+    return t('main.scm.pullConflicts', 'The pull stopped on conflicts: resolve them in the files listed under Conflicts, then commit.')
   if (/local changes .* would be overwritten|Please commit your changes or stash them/i.test(text))
-    return 'Your uncommitted changes touch the same files: commit or stash them first.'
-  return gitMessage(res, `git ${op} failed.`)
+    return t('main.scm.localChanges', 'Your uncommitted changes touch the same files: commit or stash them first.')
+  return gitMessage(res, t('main.scm.gitOpFailed', 'git {{op}} failed.', { op }))
 }
 
 // Push to the branch's upstream; without one, publish it to origin (or its
@@ -375,14 +384,16 @@ export async function scmPush({ root } = {}) {
   const r = await repoOf(root)
   if (r.error) return { ok: false, error: r.error }
   const branch = await currentBranch(r.top)
-  if (!branch) return { ok: false, error: 'Check out a branch before pushing commits.' }
+  if (!branch) return { ok: false, error: t('main.scm.pushNoBranch', 'Check out a branch before pushing commits.') }
   const remote = (await config(r.top, `branch.${branch}.remote`)) || 'origin'
-  if (!NAME_RE.test(remote) || remote === '.') return { ok: false, error: 'The branch pushes to an unusual remote: push it from a terminal.' }
+  if (!NAME_RE.test(remote) || remote === '.')
+    return { ok: false, error: t('main.scm.unusualRemote', 'The branch pushes to an unusual remote: push it from a terminal.') }
   const url = await git(r.top, ['remote', 'get-url', remote])
-  if (!url.ok) return { ok: false, error: `This repository has no remote named ${remote}.` }
+  if (!url.ok) return { ok: false, error: t('main.scm.noRemote', 'This repository has no remote named {{remote}}.', { remote }) }
   const merge = (await config(r.top, `branch.${branch}.merge`)).replace(/^refs\/heads\//, '')
   const target = merge && NAME_RE.test(merge) ? merge : branch
-  if (!NAME_RE.test(branch) || !NAME_RE.test(target)) return { ok: false, error: 'Unusual branch name: push it from a terminal.' }
+  if (!NAME_RE.test(branch) || !NAME_RE.test(target))
+    return { ok: false, error: t('main.scm.unusualBranch', 'Unusual branch name: push it from a terminal.') }
   const res = await git(r.top, ['push', '--set-upstream', remote, `HEAD:refs/heads/${target}`], { timeout: 180000 })
   if (!res.ok) return { ok: false, error: remoteError(res, 'push') }
   return { ok: true, remote, branch: target }
@@ -393,9 +404,9 @@ export async function scmPull({ root, ffOnly = false } = {}) {
   const r = await repoOf(root)
   if (r.error) return { ok: false, error: r.error }
   const branch = await currentBranch(r.top)
-  if (!branch) return { ok: false, error: 'Check out a branch before pulling commits.' }
+  if (!branch) return { ok: false, error: t('main.scm.pullNoBranch', 'Check out a branch before pulling commits.') }
   const up = await git(r.top, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'])
-  if (!up.ok) return { ok: false, error: 'Publish the branch first to pull commits.' }
+  if (!up.ok) return { ok: false, error: t('main.scm.pullNoUpstream', 'Publish the branch first to pull commits.') }
   const res = await git(r.top, ['pull', ...(ffOnly ? ['--ff-only'] : ['--no-edit'])], { timeout: 180000 })
   if (!res.ok) return { ok: false, error: remoteError(res, 'pull') }
   return { ok: true }
@@ -427,7 +438,7 @@ async function show(top, spec) {
 }
 
 function clean(v) {
-  if (v.tooBig) return { error: 'This version is too large to compare (over 10 MB).' }
+  if (v.tooBig) return { error: t('main.scm.versionTooLarge', 'This version is too large to compare (over 10 MB).') }
   const text = v.text || ''
   if (text.slice(0, 8000).includes('\0')) return { binary: true }
   return { text: text.charCodeAt(0) === 0xfeff ? text.slice(1) : text }
@@ -440,9 +451,9 @@ export async function scmFileVersions({ root, path, area, oldPath } = {}) {
   const r = await repoOf(root)
   if (r.error) return { ok: false, error: r.error }
   const rel = relIn(r.top, path)
-  if (!rel) return { ok: false, error: 'Not a file of this repository.' }
+  if (!rel) return { ok: false, error: t('main.scm.notRepoFile', 'Not a file of this repository.') }
   const oldRel = oldPath ? relIn(r.top, oldPath) : null
-  if (oldPath && !oldRel) return { ok: false, error: 'Not a file of this repository.' }
+  if (oldPath && !oldRel) return { ok: false, error: t('main.scm.notRepoFile', 'Not a file of this repository.') }
   const full = join(r.top, ...rel.split('/'))
   let exists = false
   try {
@@ -463,7 +474,7 @@ export async function scmFileVersions({ root, path, area, oldPath } = {}) {
       const head = await show(r.top, `HEAD:${rel}`)
       original = head.missing ? { text: '' } : head
     } else original = index
-  } else if (area !== 'untracked') return { ok: false, error: 'Unknown change group.' }
+  } else if (area !== 'untracked') return { ok: false, error: t('main.scm.unknownGroup', 'Unknown change group.') }
   if (!modified) {
     if (!exists) modified = { text: '' }
     else {
@@ -520,23 +531,23 @@ export function truncateDiff(diff, budget = STAGED_DIFF_BUDGET) {
 
 // What an agent answered -> the message (fences, quotes and trailers removed).
 export function cleanGeneratedMessage(text) {
-  let t = String(text || '').replace(/\r/g, '').trim()
-  const fence = /^```[a-z]*\n([\s\S]*?)\n```$/i.exec(t)
-  if (fence) t = fence[1].trim()
-  if ((t.startsWith('"') && t.endsWith('"')) || (t.startsWith("'") && t.endsWith("'"))) t = t.slice(1, -1).trim()
-  t = t
+  let msg = String(text || '').replace(/\r/g, '').trim()
+  const fence = /^```[a-z]*\n([\s\S]*?)\n```$/i.exec(msg)
+  if (fence) msg = fence[1].trim()
+  if ((msg.startsWith('"') && msg.endsWith('"')) || (msg.startsWith("'") && msg.endsWith("'"))) msg = msg.slice(1, -1).trim()
+  msg = msg
     .split('\n')
     .filter((l) => !/^(co-authored-by|signed-off-by):/i.test(l.trim()))
     .join('\n')
     .trim()
-  return t.slice(0, MAX_MESSAGE)
+  return msg.slice(0, MAX_MESSAGE)
 }
 
 export async function scmStagedDiff({ root } = {}) {
   const r = await repoOf(root)
   if (r.error) return { ok: false, error: r.error }
   const res = await git(r.top, ['diff', '--cached', '--no-color', '--no-ext-diff'], { maxBuffer: 64 * 1024 * 1024 })
-  if (!res.ok) return { ok: false, error: gitMessage(res, 'git diff failed.') }
-  if (!res.stdout.trim()) return { ok: false, error: 'Stage at least one file to generate a message.' }
+  if (!res.ok) return { ok: false, error: gitMessage(res, t('main.scm.diffFailed', 'git diff failed.')) }
+  if (!res.stdout.trim()) return { ok: false, error: t('main.scm.nothingStagedMessage', 'Stage at least one file to generate a message.') }
   return { ok: true, diff: truncateDiff(res.stdout), top: r.top }
 }

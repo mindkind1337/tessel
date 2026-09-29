@@ -391,6 +391,35 @@
     "noAgentFiltered": "Aucun agent pour ces filtres.",
     "timeline": "Chronologie",
     "eventTypes": "Types d'événements",
-    "noneFiltered": "Aucune activité pour ces filtres."
+    "noneFiltered": "Aucune activité pour ces filtres.",
+    "duration": {
+      "seconds": "{{s}} s",
+      "minutes": "{{m}} min",
+      "hours": "{{h}} h {{mm}}",
+      "days": "{{d}} j {{h}} h"
+    }
+  },
+  "tracking": {
+    "span": {
+      "underMinute": "<1 min",
+      "minutes": "{{m}} min",
+      "hours": "{{h}} h {{mm}}"
+    },
+    "state": {
+      "unknown": "État inconnu",
+      "working": "Au travail",
+      "idle": "Inactif",
+      "approval": "Attend votre approbation",
+      "limited": "Limite d'utilisation",
+      "sleeping": "En veille"
+    },
+    "limitResets": "Limite d'utilisation · réinitialisation {{reset}}",
+    "reason": {
+      "approval": "Attend votre approbation depuis {{time}}.",
+      "limitReset": "Utilisation épuisée (réinitialisation indiquée : {{reset}}).",
+      "limit": "Utilisation épuisée.",
+      "quiet": "Silencieux depuis {{time}} alors que « {{task}} » n'est pas terminée : il est peut-être bloqué ou vous attend.",
+      "long": "Tâche longue : sur « {{task}} » depuis {{time}}."
+    }
   }
 }
