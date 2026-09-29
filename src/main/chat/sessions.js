@@ -1,4 +1,5 @@
-// Chat panes' agent processes: one Claude adapter (claudeChat.js) per pane,
+// Chat panes' agent processes: one adapter per pane (claudeChat.js for
+// Claude, codexChat.js for Codex: the same API and events),
 // what the window is told (chat:event), the pane's journal, and the pane's
 // agent status (agentStateStore), fed from the stream since a chat process
 // has no status hooks of its own.
@@ -19,10 +20,14 @@ import { t } from '../i18n.js'
 export const LIMITS = { text: 100000, teamPerCall: 20, teamText: 6000, teamQueue: 200, sessions: 64 }
 export const PERMISSION_MODES = ['default', 'bypassPermissions', 'acceptEdits', 'plan']
 export const DECISIONS = ['allow', 'allowSession', 'deny']
+export const AGENTS = ['claude', 'codex']
 const ID = /^[A-Za-z0-9._:-]{1,120}$/
 // Same as the orchestration / automation check; never a flag.
 const FLAG = /^[A-Za-z0-9._:[\]-]{1,60}$/
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+// A Codex thread id (a UUID v7 today; codexChat's own check, at least 8
+// long); never starts with '-'.
+const THREAD = /^[A-Za-z0-9][A-Za-z0-9-]{7,99}$/
 const STATE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
 const DENIED = 'The user denied this.' // i18n-ignore sent to the agent
 
@@ -36,6 +41,14 @@ export function validFolder(dir) {
   }
 }
 const stateId = (v) => (typeof v === 'string' && STATE_ID.test(v) && !v.includes('..') ? v : undefined)
+export const validResumeId = (agent, v) => typeof v === 'string' && (agent === 'codex' ? THREAD : UUID).test(v)
+
+// Codex offers "allow for this session" only when its availableDecisions
+// hold acceptForSession; no list (Claude): every decision is offered.
+export function sessionAllowed(choices) {
+  if (!Array.isArray(choices) || !choices.length) return true
+  return choices.some((c) => c === 'acceptForSession' || (c && typeof c === 'object' && 'acceptForSession' in c))
+}
 
 // A teammate label for the batched turn: one line, no brackets.
 function fromLabel(from) {
@@ -62,6 +75,7 @@ export function createChatSessions(deps) {
     send = () => {},
     createAdapter,
     resolveClaude,
+    resolveCodex = async () => null,
     env: envDeps,
     team,
     state,
@@ -127,6 +141,7 @@ export function createChatSessions(deps) {
     emit(s.paneId, {
       type: 'status',
       state: st,
+      agent: s.agent,
       ...(s.model ? { model: s.model } : {}),
       ...(s.sessionId ? { sessionId: s.sessionId } : {}),
       ...(s.launchToken ? { launchToken: s.launchToken } : {}),
@@ -282,7 +297,9 @@ export function createChatSessions(deps) {
     on('permission', (e) => {
       if (!e.requestId || s.approvals.has(e.requestId)) return
       const toolId = stateId(e.toolUseId) || stateId(e.requestId)
-      s.approvals.set(e.requestId, { status: 'pending', toolId })
+      // Codex's availableDecisions: the window offers only these.
+      const choices = Array.isArray(e.choices) ? clipDeep(e.choices.slice(0, 20)) : null
+      s.approvals.set(e.requestId, { status: 'pending', toolId, choices })
       turnStarted(s)
       emit(s.paneId, {
         type: 'approval',
@@ -291,6 +308,7 @@ export function createChatSessions(deps) {
         displayName: String(e.displayName || e.toolName || ''),
         input: clipDeep(e.input ?? {}),
         description: String(e.description || ''),
+        ...(choices ? { choices } : {}),
         status: 'pending'
       })
       record(s, 'PermissionRequest', { toolId })
@@ -317,14 +335,27 @@ export function createChatSessions(deps) {
       if (turn) turnStarted(s)
       const st = ['completed', 'interrupted', 'failed'].includes(e.status) ? e.status : 'failed'
       s.lastInterrupted = st === 'interrupted'
+      const why = e.result || e.error
+      const error = st === 'failed' && why ? String(typeof why === 'object' ? why.message || JSON.stringify(why) : why).slice(0, 4000) : ''
       emit(s.paneId, {
         type: 'turnEnd',
         status: st,
         ...(e.usage ? { usage: e.usage } : {}),
         ...(typeof e.costUsd === 'number' ? { costUsd: e.costUsd } : {}),
         ...(typeof e.durationMs === 'number' ? { durationMs: e.durationMs } : {}),
-        ...(st === 'failed' && e.result ? { error: String(e.result).slice(0, 4000) } : {})
+        ...(error ? { error } : {})
       })
+      // A Codex turn can fail with no turn/completed (content filter, usage
+      // limit): said plainly; the queue goes on below.
+      if (st === 'failed' && s.agent === 'codex') {
+        emit(s.paneId, {
+          type: 'notice',
+          kind: 'error',
+          text: error
+            ? t('main.chat.turnFailed', 'The turn failed: {{error}}', { error })
+            : t('main.chat.turnFailedNoReason', 'The turn failed.')
+        })
+      }
       // Tools of the turn that never reported a result.
       for (const id of s.tools) emit(s.paneId, { type: 'tool', id, status: st === 'completed' ? 'done' : 'error' })
       s.tools.clear()
@@ -353,7 +384,10 @@ export function createChatSessions(deps) {
       emit(s.paneId, {
         type: 'notice',
         kind: 'error',
-        text: t('main.chat.authError', 'Claude is not signed in (or its sign-in expired). Sign in, then reopen this chat.')
+        text:
+          s.agent === 'codex'
+            ? t('main.chat.codexAuthError', 'Codex is not signed in (or its sign-in expired). Sign in, then reopen this chat.')
+            : t('main.chat.authError', 'Claude is not signed in (or its sign-in expired). Sign in, then reopen this chat.')
       })
     })
     on('stderr', (e) => logAt('info', `${s.paneId} stderr: ${String(e.text || '').slice(-500)}`))
@@ -400,7 +434,14 @@ export function createChatSessions(deps) {
   // ---- API -------------------------------------------------------------------
 
   // Shown text by the adapter's start failure code (its own text is English).
-  function startError(code) {
+  function startError(code, agent) {
+    if (agent === 'codex') {
+      if (code === 'signin') return t('main.chat.codexSignin', 'Codex is not signed in. Sign in to Codex, then try again.')
+      if (code === 'spawn') return t('main.chat.codexSpawnFailed', 'Codex could not be started.')
+      if (code === 'timeout') return t('main.chat.codexStartTimeout', 'Codex did not answer in time.')
+      if (code === 'exit') return t('main.chat.codexExitedAtStart', 'Codex stopped while starting.')
+      return t('main.chat.startFailed', 'The agent could not start.')
+    }
     if (code === 'signin') return t('main.chat.signin', 'Claude is not signed in. Sign in to Claude Code, then try again.')
     if (code === 'spawn') return t('main.chat.spawnFailed', 'Claude Code could not be started.')
     if (code === 'timeout') return t('main.chat.startTimeout', 'Claude Code did not answer in time.')
@@ -409,7 +450,7 @@ export function createChatSessions(deps) {
   }
 
   function current(s) {
-    return { ok: true, sessionId: s.sessionId, launchToken: s.launchToken, model: s.model || null }
+    return { ok: true, agent: s.agent, sessionId: s.sessionId, launchToken: s.launchToken, model: s.model || null }
   }
 
   async function open(opts = {}) {
@@ -417,10 +458,10 @@ export function createChatSessions(deps) {
     const agent = opts.agent ?? 'claude'
     if (
       !validPaneId(paneId) ||
-      agent !== 'claude' ||
+      !AGENTS.includes(agent) ||
       !validFolder(cwd) ||
       (projectDir != null && projectDir !== '' && !validFolder(projectDir)) ||
-      (resumeId != null && (typeof resumeId !== 'string' || !UUID.test(resumeId))) ||
+      (resumeId != null && !validResumeId(agent, resumeId)) ||
       (model != null && !validFlag(model)) ||
       (effort != null && !validFlag(effort)) ||
       !['yolo', 'manual'].includes(permissions) ||
@@ -434,7 +475,7 @@ export function createChatSessions(deps) {
       if (!existing.closing && !existing.finished) return existing.ready ? current(existing) : existing.opening
       return { ok: false, code: 'busy', error: t('main.chat.busy', 'This chat is still closing.') }
     }
-    if (resumeId && [...sessions.values()].some((x) => x.sessionId === resumeId))
+    if (resumeId && [...sessions.values()].some((x) => x.agent === agent && x.sessionId === resumeId))
       return { ok: false, code: 'busy', error: t('main.chat.sessionOpen', 'This conversation is already open in another pane.') }
     if (sessions.size >= LIMITS.sessions)
       return { ok: false, code: 'failed', error: t('main.chat.tooMany', 'Too many chats are open.') }
@@ -442,8 +483,10 @@ export function createChatSessions(deps) {
     // Placeholder first: a second open meanwhile shares this start.
     const s = {
       paneId,
+      agent,
       adapter: null,
-      sessionId: resumeId || randomUUID(),
+      // Codex names a new thread itself: known once it started.
+      sessionId: resumeId || (agent === 'codex' ? null : randomUUID()),
       launchToken: null,
       model: model || null,
       effort: effort || null,
@@ -486,48 +529,58 @@ export function createChatSessions(deps) {
         if (s.closing) return closedWhileStarting()
         if (!yes) {
           drop()
-          emit(paneId, { type: 'status', state: 'untrusted' })
+          emit(paneId, { type: 'status', state: 'untrusted', agent })
           return { ok: false, code: 'untrusted', error: t('main.chat.untrusted', 'This folder is not trusted for chat agents yet.') }
         }
       }
 
       if (s.closing) return closedWhileStarting()
-      let claude = null
+      let found = null
       try {
-        claude = await resolveClaude()
+        found = await (agent === 'codex' ? resolveCodex() : resolveClaude())
       } catch {
-        claude = null
+        found = null
       }
       if (s.closing) return closedWhileStarting()
-      if (!claude || typeof claude.exe !== 'string' || !claude.exe) {
+      if (!found || typeof found.exe !== 'string' || !found.exe) {
         drop()
-        emit(paneId, { type: 'status', state: 'crashed', error: t('main.chat.noClaude', 'Claude Code was not found. Install it, then try again.') })
-        return { ok: false, code: 'no-claude', error: t('main.chat.noClaude', 'Claude Code was not found. Install it, then try again.') }
+        const error =
+          agent === 'codex'
+            ? t('main.chat.noCodex', 'Codex was not found. Install it, then try again.')
+            : t('main.chat.noClaude', 'Claude Code was not found. Install it, then try again.')
+        emit(paneId, { type: 'status', state: 'crashed', agent, error })
+        return { ok: false, code: agent === 'codex' ? 'no-codex' : 'no-claude', error }
       }
 
-      emit(paneId, { type: 'status', state: 'starting', sessionId: s.sessionId })
+      emit(paneId, { type: 'status', state: 'starting', agent, ...(s.sessionId ? { sessionId: s.sessionId } : {}) })
       const teamSecret = team.newSecret()
       let base = envDeps.forPane({ paneId, cwd, projectDir: s.projectDir, accountEnv, ...(envOpts || {}) })
       if (base && typeof base === 'object' && base.env && typeof base.env === 'object') base = base.env
-      const childEnv = buildChatEnv(base, { paneId, teamSecret, projectDir: s.projectDir, pathEnv: claude.pathEnv })
+      const childEnv = buildChatEnv(base, { agent, paneId, teamSecret, projectDir: s.projectDir, pathEnv: found.pathEnv })
+      const common = {
+        agent,
+        exe: found.exe,
+        exeArgs: Array.isArray(found.exeArgs) ? found.exeArgs : [],
+        cwd,
+        env: childEnv,
+        ...(s.model ? { model: s.model } : {}),
+        ...(s.effort ? { effort: s.effort } : {}),
+        log
+      }
       const permissionModeUsed = permissions === 'yolo' ? 'bypassPermissions' : permissionMode && permissionMode !== 'bypassPermissions' ? permissionMode : 'default'
 
       try {
-        s.adapter = createAdapter({
-          exe: claude.exe,
-          exeArgs: Array.isArray(claude.exeArgs) ? claude.exeArgs : [],
-          cwd,
-          env: childEnv,
-          ...(resumeId ? { resume: resumeId } : { sessionId: s.sessionId }),
-          ...(s.model ? { model: s.model } : {}),
-          ...(s.effort ? { effort: s.effort } : {}),
-          permissionMode: permissionModeUsed,
-          log
-        })
+        // Codex: the adapter maps yolo/manual to its approval policy and
+        // sandbox, sent explicitly with every thread and turn.
+        s.adapter = createAdapter(
+          agent === 'codex'
+            ? { ...common, ...(resumeId ? { threadId: resumeId } : {}), permissions }
+            : { ...common, ...(resumeId ? { resume: resumeId } : { sessionId: s.sessionId }), permissionMode: permissionModeUsed }
+        )
       } catch (err) {
         drop()
         const error = String(err?.message || err)
-        emit(paneId, { type: 'status', state: 'crashed', error })
+        emit(paneId, { type: 'status', state: 'crashed', agent, error })
         return { ok: false, code: 'failed', error }
       }
       // Before the start: the team tools may call in as soon as they are up.
@@ -561,24 +614,31 @@ export function createChatSessions(deps) {
           /* already gone */
         }
         const signin = r?.code === 'signin'
-        const error = startError(r?.code)
+        const error = startError(r?.code, agent)
         // The adapter's own text (stderr tail) is internal English: a detail.
         const detail = typeof r?.error === 'string' && r.error ? r.error.slice(-2000) : undefined
-        emit(paneId, { type: 'status', state: signin ? 'signin' : 'crashed', error, ...(detail ? { detail } : {}) })
+        emit(paneId, { type: 'status', state: signin ? 'signin' : 'crashed', agent, error, ...(detail ? { detail } : {}) })
         return { ok: false, code: signin ? 'signin' : 'failed', error, ...(detail ? { detail } : {}) }
       }
       s.started = true
+      if (agent === 'codex') {
+        const info = r.info && typeof r.info === 'object' ? r.info : {}
+        // The thread Codex runs (a resume keeps its id): what a reopen resumes.
+        if (validResumeId('codex', info.threadId)) s.sessionId = info.threadId
+        else if (!s.sessionId) logAt('warn', `${paneId}: codex gave no thread id; this chat cannot be resumed`)
+        if (typeof info.model === 'string' && validFlag(info.model)) s.model = info.model
+      }
       s.launchToken = randomBytes(16).toString('hex')
       if (!s.finished) {
         try {
-          await state?.register?.({ paneId, provider: 'claude', launchToken: s.launchToken, startedAt: now() })
+          await state?.register?.({ paneId, provider: agent, launchToken: s.launchToken, startedAt: now() })
           record(s, 'SessionStart')
           observe(s, 'ScreenReady')
         } catch (err) {
           logAt('warn', `${paneId}: agent status unavailable: ${err?.message || err}`)
         }
       }
-      journalOf(paneId).writeMeta({ sessionId: s.sessionId, agent: 'claude', cwd })
+      journalOf(paneId).writeMeta({ sessionId: s.sessionId, agent, cwd })
       if (s.finished || s.closing) {
         // Gone (or closed) while its status was being registered.
         if (state?.unregister) Promise.resolve().then(() => state.unregister(paneId, s.launchToken)).catch(() => {})
@@ -588,7 +648,7 @@ export function createChatSessions(deps) {
       s.ready = true
       status(s, 'idle')
       pump(s)
-      return { ok: true, sessionId: s.sessionId, launchToken: s.launchToken, model: s.model || null }
+      return current(s)
     })()
     return s.opening
   }
@@ -645,6 +705,8 @@ export function createChatSessions(deps) {
     const ap = s.approvals.get(requestId)
     if (!ap || ap.status !== 'pending')
       return { ok: false, code: 'unknown', error: t('main.chat.noApproval', 'This request was already answered or is gone.') }
+    if (decision === 'allowSession' && !sessionAllowed(ap.choices))
+      return { ok: false, code: 'invalid', error: t('main.chat.notOffered', 'The agent does not offer this choice here.') }
     const answer =
       decision === 'deny'
         ? { behavior: 'deny', session: false, message: typeof message === 'string' && message.trim() ? message.trim() : DENIED }
@@ -687,6 +749,9 @@ export function createChatSessions(deps) {
     if (permissionMode != null) {
       // Bypass needs the launch flag: only a 'yolo' launch may switch to it.
       if (permissionMode === 'bypassPermissions' && s.permissions !== 'yolo') results.push(false)
+      // Codex has two (the adapter maps them): bypassPermissions = yolo,
+      // default = manual; plan / acceptEdits do not exist there.
+      else if (s.agent === 'codex' && !['bypassPermissions', 'default'].includes(permissionMode)) results.push(false)
       else results.push(!!(await s.adapter.setPermissionMode(permissionMode).catch(() => ({ ok: false })))?.ok)
     }
     if (model != null && s.ready) workStatus(s)
@@ -736,13 +801,13 @@ export function createChatSessions(deps) {
       // A live session (starting, idle, working, approval): do not open it again.
       open: !!s && !s.finished && !s.closing,
       live: s
-        ? { status: s.status, sessionId: s.sessionId, launchToken: s.launchToken, model: s.model, queued: s.userQueue.length + s.teamQueue.length }
+        ? { status: s.status, agent: s.agent, sessionId: s.sessionId, launchToken: s.launchToken, model: s.model, queued: s.userQueue.length + s.teamQueue.length }
         : null
     }
   }
 
   function list() {
-    return [...sessions.values()].map((s) => ({ paneId: s.paneId, sessionId: s.sessionId, status: s.status, model: s.model, launchToken: s.launchToken }))
+    return [...sessions.values()].map((s) => ({ paneId: s.paneId, agent: s.agent, sessionId: s.sessionId, status: s.status, model: s.model, launchToken: s.launchToken }))
   }
 
   // ---- IPC -------------------------------------------------------------------

@@ -61,10 +61,61 @@ describe('buildChatEnv', () => {
     expect(env.path).toBeUndefined()
   })
 
+  it('codex: drops a parent Codex session, keeps the account and user settings, sets the pane identity', () => {
+    const projectDir = os.tmpdir()
+    const env = buildChatEnv(
+      {
+        ...base,
+        CODEX_HOME: 'C:\\acct',
+        CODEX_API_KEY: 'ck',
+        OPENAI_API_KEY: 'ok',
+        CODEX_CA_CERTIFICATE: 'C:\\ca.pem',
+        CODEX_THREAD_ID: 't',
+        codex_sandbox: 'seatbelt',
+        CODEX_SANDBOX_NETWORK_DISABLED: '1',
+        CODEX_WINDOWS_SANDBOX_PROXY_PORTS: '1',
+        CODEX_MANAGED_BY_NPM: '1',
+        CODEX_MANAGED_PACKAGE_ROOT: 'C:\\npm',
+        CODEX_NETWORK_PROXY_ACTIVE: '1',
+        CODEX_INTERNAL_ORIGINATOR_OVERRIDE: 'vscode',
+        CODEX_EXEC_SERVER_URL: 'ws://x',
+        CODEX_PERMISSION_PROFILE: 'p',
+        CODEX_SESSION_ID: 's'
+      },
+      { agent: 'codex', paneId: 'p1', teamSecret: 'b'.repeat(64), projectDir, pathEnv: 'C:\\codex' }
+    )
+    expect(env).toEqual({
+      PATH: 'C:\\codex',
+      HOME: 'h',
+      ANTHROPIC_API_KEY: 'k',
+      CLAUDE_CODE_USE_BEDROCK: '1',
+      CLAUDE_CODE_OAUTH_TOKEN: 'acct',
+      CLAUDE_CODE_GIT_BASH_PATH: 'C:\\git\\bash.exe',
+      CODEX_HOME: 'C:\\acct',
+      CODEX_API_KEY: 'ck',
+      OPENAI_API_KEY: 'ok',
+      CODEX_CA_CERTIFICATE: 'C:\\ca.pem',
+      TESSEL_PANE_ID: 'p1',
+      TESSEL_TEAM_SECRET: 'b'.repeat(64),
+      TESSEL_PROJECT_DIR: projectDir,
+      TESSEL_CHAT: '1'
+    })
+  })
+
+  it('claude keeps the Codex variables as before', () => {
+    const env = buildChatEnv({ CODEX_THREAD_ID: 't', CODEX_SANDBOX: 'x' }, { paneId: 'p' })
+    expect(env).toMatchObject({ CODEX_THREAD_ID: 't', CODEX_SANDBOX: 'x', CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS: '1' })
+  })
+
   it('names', () => {
     expect(isDroppedName('Tessel_Anything')).toBe(true)
     expect(isDroppedName('CLAUDE_CODE_MAX_OUTPUT_TOKENS')).toBe(true)
     expect(isDroppedName('claude_code_use_vertex')).toBe(false)
     expect(isDroppedName('CLAUDE_CONFIG_DIR')).toBe(false)
+    expect(isDroppedName('CODEX_THREAD_ID')).toBe(false)
+    expect(isDroppedName('codex_thread_id', 'codex')).toBe(true)
+    expect(isDroppedName('CODEX_HOME', 'codex')).toBe(false)
+    expect(isDroppedName('CODEX_SANDBOX_NETWORK_DISABLED', 'codex')).toBe(true)
+    expect(isDroppedName('CLAUDE_CODE_SESSION_ID', 'codex')).toBe(true)
   })
 })

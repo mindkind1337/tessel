@@ -299,6 +299,8 @@ export function chatReducer(state, event, { cwd = '' } = {}) {
         displayName: String(event.displayName || event.toolName || ''),
         input: event.input ?? null,
         description: String(event.description || ''),
+        // The decisions the agent offers (Codex: availableDecisions); null = all.
+        sessionAllowed: sessionAllowedBy(event.choices),
         status: APPROVAL_STATUSES.has(event.status) ? event.status : 'pending'
       }
       const i = findLast(s.rows, (r) => r.kind === 'approval' && r.requestId === requestId)
@@ -359,4 +361,12 @@ export function reduceAll(state, events, opts) {
 // The pending approval the pane should answer first (oldest), or null.
 export function pendingApproval(state) {
   return (state.rows || []).find((r) => r.kind === 'approval' && r.status === 'pending') || null
+}
+
+// "Allow for this session" is offered unless the agent's own list of
+// decisions leaves it out (Codex's availableDecisions without
+// acceptForSession). No list (Claude): offered.
+export function sessionAllowedBy(choices) {
+  if (!Array.isArray(choices) || !choices.length) return true
+  return choices.some((c) => c === 'acceptForSession' || (c && typeof c === 'object' && 'acceptForSession' in c))
 }

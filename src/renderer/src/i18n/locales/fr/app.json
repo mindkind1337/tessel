@@ -245,7 +245,9 @@
       "newBrowser": "Nouveau panneau navigateur",
       "newBrowserHint": "Une page web à côté de vos terminaux (votre serveur de dev, une doc)",
       "newChat": "Nouvel agent Claude (chat)",
-      "newChatHint": "Claude sans terminal : les messages d'équipe lui arrivent comme des tours à part entière"
+      "newChatHint": "Claude sans terminal : les messages d'équipe lui arrivent comme des tours à part entière",
+      "newChatCodex": "Nouvel agent Codex (chat)",
+      "newChatCodexHint": "Codex sans terminal : les messages d'équipe lui arrivent comme des tours à part entière"
     },
     "worktree": {
       "createFailed": "Impossible de créer une copie séparée.",
@@ -660,7 +662,8 @@
     },
     "chat": {
       "title": "Claude (chat)",
-      "needFolder": "Un agent de chat travaille dans un dossier de projet sur cet ordinateur : ouvrez-en un d'abord."
+      "needFolder": "Un agent de chat travaille dans un dossier de projet sur cet ordinateur : ouvrez-en un d'abord.",
+      "titleCodex": "Codex (chat)"
     }
   }
 }

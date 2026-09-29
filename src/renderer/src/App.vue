@@ -341,13 +341,15 @@ function openExternalUrl(url) {
 // A Claude agent without a terminal: the main process runs claude in its
 // stream-json mode; messages (yours, its team's) are turns of their own,
 // never typed. Its state comes from the conversation itself.
-function makeChatLeaf({ id = null, cwd = null, projectDir = null, sessionId = null, title = null, team = null } = {}) {
+const CHAT_AGENTS = ['claude', 'codex']
+function makeChatLeaf({ id = null, agentId = 'claude', cwd = null, projectDir = null, sessionId = null, title = null, team = null } = {}) {
+  const agent = CHAT_AGENTS.includes(agentId) ? agentId : 'claude'
   return reactive({
     type: 'leaf',
     kind: 'chat',
     id: id || newId('pane'),
-    title: title || t('app.chat.title', 'Claude (chat)'),
-    agentId: 'claude',
+    title: title || (agent === 'codex' ? t('app.chat.titleCodex', 'Codex (chat)') : t('app.chat.title', 'Claude (chat)')),
+    agentId: agent,
     cwd,
     projectDir,
     // Its Claude conversation (resumed when Tessel opens it again).
@@ -360,7 +362,7 @@ function makeChatLeaf({ id = null, cwd = null, projectDir = null, sessionId = nu
   })
 }
 // A new chat agent next to the active pane (split to the right).
-function openChatAgent({ ws = currentWs.value } = {}) {
+function openChatAgent({ ws = currentWs.value, agent = 'claude' } = {}) {
   if (!ws) return null
   const active = ws.activeId ? findLeafIn(ws.tree, ws.activeId) : null
   const cwd = ws.cwd || (active && active.cwd) || null
@@ -368,7 +370,7 @@ function openChatAgent({ ws = currentWs.value } = {}) {
     showToast(t('app.chat.needFolder', 'A chat agent works in a project folder on this computer: open one first.'), { kind: 'error' })
     return null
   }
-  const leaf = makeChatLeaf({ cwd, projectDir: ws.cwd || null })
+  const leaf = makeChatLeaf({ agentId: agent, cwd, projectDir: ws.cwd || null })
   const split = (orig) => reactive({ type: 'split', id: newId('split'), dir: 'row', sizes: [50, 50], children: [orig, leaf] })
   if (active) ws.tree = replaceNode(ws.tree, active.id, split)
   else ws.tree = ws.tree ? split(ws.tree) : leaf
@@ -386,17 +388,18 @@ function openChatAgent({ ws = currentWs.value } = {}) {
 async function chatOpen(leaf, { askTrust = true } = {}) {
   const api = window.shellApi.chat
   if (!api || !leaf || leaf.kind !== 'chat') return { ok: false, code: 'failed' }
-  const agent = agentById('claude') || { id: 'claude', name: 'Claude Code' } // i18n-ignore
+  const agentId = CHAT_AGENTS.includes(leaf.agentId) ? leaf.agentId : 'claude'
+  const agent = agentById(agentId) || { id: agentId, name: agentId === 'codex' ? 'Codex' : 'Claude Code' } // i18n-ignore
   const permissions = launchPermissions(null, [leaf.projectDir, leaf.cwd], settings.yoloFolders, settings.agentPermissions)
-  const sessionValues = launchSessionValues(null, settings.agentSessionOptions, 'claude')
-  const launch = effectiveAgent(agent, settings.agentPrefs, permissions, null, modelsFor('claude'))
+  const sessionValues = launchSessionValues(null, settings.agentSessionOptions, agentId)
+  const launch = effectiveAgent(agent, settings.agentPrefs, permissions, null, modelsFor(agentId))
   // A permission mode set in your own arguments (--permission-mode plan).
-  const ownMode = /--permission-mode[ =](default|acceptEdits|plan|auto|dontAsk)/.exec((launch && launch.args) || '')
+  const ownMode = agentId === 'claude' ? /--permission-mode[ =](default|acceptEdits|plan|auto|dontAsk)/.exec((launch && launch.args) || '') : null
   const extraEnv = launch && launch.env ? { ...launch.env } : {}
   let accountEnv = {}
   let unsetEnv = []
   if (window.shellApi.accounts && window.shellApi.accounts.launchEnv) {
-    const acc = await window.shellApi.accounts.launchEnv('claude', leaf.accountId).catch(() => null)
+    const acc = await window.shellApi.accounts.launchEnv(agentId, leaf.accountId).catch(() => null)
     if (!acc || acc.ok === false) return { ok: false, code: 'account', error: (acc && acc.error) || '' }
     if (Array.isArray(acc.unsetEnv)) {
       unsetEnv = acc.unsetEnv.filter((n) => typeof n === 'string')
@@ -410,7 +413,7 @@ async function chatOpen(leaf, { askTrust = true } = {}) {
   try {
     res = await api.open({
       paneId: leaf.id,
-      agent: 'claude',
+      agent: agentId,
       cwd: leaf.cwd,
       projectDir: leaf.projectDir,
       resumeId: leaf.sessionId || null,
@@ -1238,7 +1241,7 @@ function serializeNode(node) {
       id: node.id,
       title: node.title || null,
       num: node.num || null,
-      agentId: 'claude',
+      agentId: node.agentId === 'codex' ? 'codex' : 'claude',
       cwd: node.cwd || null,
       projectDir: node.projectDir || null,
       sessionId: node.sessionId || null,
@@ -1324,10 +1327,10 @@ async function deserializeNode(snap, cwd = null) {
   // A chat agent comes back with its conversation (resumed when it opens).
   if (snap.type === 'leaf' && snap.kind === 'chat') {
     const id = typeof snap.id === 'string' && /^pane-[\w-]+$/.test(snap.id) ? snap.id : null
-    const sessionId = typeof snap.sessionId === 'string' && /^[0-9a-f-]{36}$/i.test(snap.sessionId) ? snap.sessionId : null
+    const sessionId = typeof snap.sessionId === 'string' && /^[0-9a-f-]{8,64}$/i.test(snap.sessionId) ? snap.sessionId : null
     const folder = (v) => (typeof v === 'string' && v.length <= 1000 ? v : null)
     if (!folder(snap.cwd)) return null
-    const leaf = makeChatLeaf({ id, cwd: folder(snap.cwd), projectDir: folder(snap.projectDir), sessionId, title: typeof snap.title === 'string' ? snap.title.slice(0, 200) : null })
+    const leaf = makeChatLeaf({ id, agentId: snap.agentId === 'codex' ? 'codex' : 'claude', cwd: folder(snap.cwd), projectDir: folder(snap.projectDir), sessionId, title: typeof snap.title === 'string' ? snap.title.slice(0, 200) : null })
     if (Number.isInteger(snap.num) && snap.num > 0) leaf.num = snap.num
     if (typeof snap.accountId === 'string' || snap.accountId === null) leaf.accountId = snap.accountId
     if (typeof snap.team === 'string') leaf.team = snap.team
@@ -2185,6 +2188,10 @@ function buildCommands() {
     add(t('app.cmd.group.new', 'New'), t('app.cmd.newChat', 'New Claude agent (chat)'), () => openChatAgent(), {
       hint: t('app.cmd.newChatHint', 'Claude without a terminal: team messages reach it as turns of their own')
     })
+  if (currentWs.value && currentWs.value.cwd && !currentWs.value.remote)
+    add(t('app.cmd.group.new', 'New'), t('app.cmd.newChatCodex', 'New Codex agent (chat)'), () => openChatAgent({ agent: 'codex' }), {
+      hint: t('app.cmd.newChatCodexHint', 'Codex without a terminal: team messages reach it as turns of their own')
+    })
   if (currentWs.value)
     add(t('app.cmd.group.new', 'New'), t('app.cmd.newBrowser', 'New browser pane'), () => openInBrowser({ newPane: true, focusAddress: true }), {
       hint: t('app.cmd.newBrowserHint', 'A web page next to your terminals (your dev server, docs)')
@@ -2329,7 +2336,7 @@ async function launch({ kind, id, sessionOptions = null }, targetId = activeId.v
   // A chat agent (Claude): a pane of its own next to the active one.
   if (kind === 'chat') {
     const baseWs = (targetId && wsOfLeaf(targetId)) || currentWs.value
-    openChatAgent({ ws: baseWs })
+    openChatAgent({ ws: baseWs, agent: id === 'codex' ? 'codex' : 'claude' })
     return
   }
   const agent = kind === 'agent' ? agentById(id) : null
