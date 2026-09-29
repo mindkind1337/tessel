@@ -2,7 +2,7 @@
 // Settings > General > Tessel CLI: registers the tessel command (a tessel.cmd
 // and its folder on your user PATH, src/main/cliInstall.js), after a
 // confirmation; Remove undoes both.
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, nextTick } from 'vue'
 import ConfirmDialog from './ConfirmDialog.vue'
 import { t } from '../i18n'
 
@@ -11,6 +11,7 @@ const status = ref(null)
 const busy = ref(false)
 const error = ref('')
 const confirm = ref(null) // 'install' | 'uninstall'
+const commandSwitch = ref(null)
 
 const name = computed(() => (status.value && status.value.name) || 'tessel')
 const supported = computed(() => !!(api && status.value && status.value.supported))
@@ -18,7 +19,7 @@ const installed = computed(() => !!(status.value && status.value.state === 'inst
 const hint = computed(() => {
   const s = status.value
   if (!api || (s && !s.supported)) return t('settings.cli.unsupported', 'The tessel command is available on Windows only.')
-  if (!s) return t('settings.cli.checking', 'Checking the command’s registration…')
+  if (!s) return error.value ? t('settings.cli.statusFailed', 'Failed to load the command’s status.') : t('settings.cli.checking', 'Checking the command’s registration…')
   if (s.state === 'installed') return t('settings.cli.installedHint', '`{{name}}` is registered. Open a new terminal if the command is not found yet.', { name: name.value })
   if (s.state === 'partial') return t('settings.cli.partialHint', '`{{name}}` is only partly registered. Register it again to repair it.', { name: name.value })
   return t('settings.cli.registerHint', 'Register `{{name}}` in your user PATH.', { name: name.value })
@@ -53,7 +54,11 @@ function ask() {
 async function onAnswer(yes) {
   const what = confirm.value
   confirm.value = null
-  if (!yes || !what) return
+  if (!yes || !what) {
+    await nextTick()
+    commandSwitch.value?.focus()
+    return
+  }
   busy.value = true
   error.value = ''
   try {
@@ -66,9 +71,13 @@ async function onAnswer(yes) {
           ? t('settings.cli.installFailed', 'Failed to register `{{name}}` in PATH.', { name: name.value })
           : t('settings.cli.removeFailed', 'Failed to remove `{{name}}` from PATH.', { name: name.value }))
   } catch {
-    error.value = t('settings.cli.installFailed', 'Failed to register `{{name}}` in PATH.', { name: name.value })
+    error.value = what === 'install'
+      ? t('settings.cli.installFailed', 'Failed to register `{{name}}` in PATH.', { name: name.value })
+      : t('settings.cli.removeFailed', 'Failed to remove `{{name}}` from PATH.', { name: name.value })
   } finally {
     busy.value = false
+    await nextTick()
+    commandSwitch.value?.focus()
   }
 }
 
@@ -90,7 +99,7 @@ onMounted(refresh)
       <div class="set-row">
         <div class="set-label">
           {{ t('settings.cli.shellCommand', 'Shell command') }}
-          <span class="set-hint">{{ hint }}</span>
+          <span class="set-hint" role="status">{{ hint }}</span>
         </div>
         <div class="set-inline">
           <button
@@ -103,6 +112,7 @@ onMounted(refresh)
             {{ t('settings.cli.refresh', 'Refresh') }}
           </button>
           <input
+            ref="commandSwitch"
             type="checkbox"
             class="set-switch"
             data-cli-switch=""

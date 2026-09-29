@@ -560,29 +560,29 @@
       "openHint": "Créez des planifications et inspectez les exécutions récentes."
     },
     "cli": {
-      "title": "Tessel CLI",
-      "intro": "Utilisez Tessel depuis votre terminal pour ouvrir des projets et des fichiers, lancer des terminaux et des agents, et voir ce qui tourne.",
-      "shellCommand": "Commande shell",
+      "title": "Commande tessel",
+      "intro": "Utilisez Tessel depuis votre terminal pour ouvrir des projets et des fichiers, lancer des terminaux et des agents, et consulter les tâches en cours.",
+      "shellCommand": "Activer la commande tessel",
       "unsupported": "La commande tessel n'est disponible que sous Windows.",
       "checking": "Vérification de l'enregistrement de la commande…",
-      "installedHint": "`{{name}}` est enregistrée. Ouvrez un nouveau terminal si la commande n'est pas encore trouvée.",
-      "partialHint": "`{{name}}` n'est enregistrée qu'en partie. Enregistrez-la de nouveau pour la réparer.",
-      "registerHint": "Enregistrer `{{name}}` dans votre PATH utilisateur.",
+      "installedHint": "La commande « {{name}} » est disponible. Si votre terminal ne la reconnaît pas, ouvrez-en un nouveau.",
+      "partialHint": "L’installation de la commande « {{name}} » est incomplète. Activez-la de nouveau pour la réparer.",
+      "registerHint": "Rendre la commande « {{name}} » disponible dans vos terminaux.",
       "statusFailed": "Impossible de charger l'état de la commande.",
-      "installFailed": "Impossible d'enregistrer `{{name}}` dans le PATH.",
-      "removeFailed": "Impossible de retirer `{{name}}` du PATH.",
+      "installFailed": "Impossible d’ajouter la commande « {{name}} » au PATH.",
+      "removeFailed": "Impossible de retirer la commande « {{name}} » du PATH.",
       "refreshLabel": "Actualiser l'état de la commande",
       "refresh": "Actualiser",
       "commandPath": "Chemin de la commande :",
       "examples": "Dans un terminal : {{examples}}",
       "showInExplorer": "Afficher dans l'Explorateur",
-      "registerTitle": "Enregistrer `{{name}}` dans le PATH ?",
-      "registerText": "Tessel va enregistrer {{path}} pour que la commande fonctionne depuis votre terminal. Son dossier est ajouté à votre PATH utilisateur (pas au PATH système) ; Retirer l'annule.",
-      "register": "Enregistrer",
-      "removeTitle": "Retirer `{{name}}` du PATH ?",
-      "removeText": "Cela supprime la commande shell et retire son dossier de votre PATH utilisateur. Tessel reste installé.",
+      "registerTitle": "Activer la commande « {{name}} » ?",
+      "registerText": "Tessel va installer la commande à cet emplacement : {{path}}. Son dossier sera ajouté au PATH de votre compte Windows pour que vos terminaux la trouvent. Vous pourrez la retirer ici à tout moment.",
+      "register": "Activer",
+      "removeTitle": "Retirer la commande « {{name}} » ?",
+      "removeText": "La commande sera supprimée et son dossier retiré du PATH de votre compte Windows. L’application Tessel restera installée.",
       "remove": "Retirer",
-      "agentsNote": "Les programmes qui tournent sous votre compte, y compris les agents des panneaux de Tessel, peuvent aussi utiliser la commande : elle ouvre des projets, des fichiers et des panneaux et ajoute des cartes, mais ne tape jamais dans un terminal et ne répond jamais à une confirmation."
+      "agentsNote": "Les programmes exécutés sous votre compte, y compris les agents des panes de Tessel, peuvent aussi utiliser cette commande pour ouvrir des projets, des fichiers et des panes, ou ajouter des cartes. Elle ne saisit aucun texte dans un terminal et ne répond à aucune demande de confirmation."
     }
   }
 }
