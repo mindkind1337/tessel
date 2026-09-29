@@ -50,6 +50,28 @@ describe('chat journal', () => {
     expect(j.read(3).map((e) => e.seq)).toEqual([10, 11, 12])
   })
 
+  it('readTail: the last events from the end of the file, across a rotation, as read() gives them', () => {
+    const j = createChatJournal({ dir: tmp, paneId: 'p1', rotateBytes: 4000 })
+    for (let i = 1; i <= 120; i++) j.append(i, { type: 'user', id: 'u' + i, text: 'é'.repeat(i % 7) + ' message ' + i })
+    expect(fs.existsSync(join(tmp, 'chats', 'p1', 'journal.1.jsonl'))).toBe(true)
+    const all = j.read()
+    for (const n of [1, 5, 30, all.length, all.length + 50]) expect(j.readTail(n)).toEqual(all.slice(-n))
+    expect(j.lastSeq()).toBe(120)
+    // A line cut by a crash at the end, and a damaged one in the middle: skipped.
+    const file = join(tmp, 'chats', 'p1', 'journal.jsonl')
+    fs.appendFileSync(file, '{"seq":999,"event":{"ty')
+    expect(j.readTail(2).map((x) => x.seq)).toEqual([119, 120])
+    expect(createChatJournal({ dir: tmp, paneId: 'none' }).readTail(5)).toEqual([])
+  })
+
+  it('readTail reads chunk by chunk (a long journal)', () => {
+    const j = createChatJournal({ dir: tmp, paneId: 'p2' })
+    const long = 'x'.repeat(5000)
+    for (let i = 1; i <= 60; i++) j.append(i, { type: 'assistant', messageId: 'm' + i, text: long + i })
+    expect(j.readTail(3).map((x) => x.seq)).toEqual([58, 59, 60])
+    expect(j.readTail(3).at(-1).event.text).toBe(long + 60)
+  })
+
   it('skips damaged lines', () => {
     const j = createChatJournal({ dir: tmp, paneId: 'p1' })
     j.append(1, { type: 'notice', kind: 'info', text: 'a' })

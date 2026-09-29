@@ -428,7 +428,7 @@ export async function createWorktree(cwd, label, options = {}) {
   }
   const res = await run('git', ['-C', info.root, 'worktree', 'add', '-b', branch, wtPath, selected.commit])
   if (!res.ok) return { ok: false, error: cliError(res, 'git worktree add failed') }
-  const result = { ok: true, path: wtPath, branch, baseBranch: selected.branch, baseCommit: selected.commit, root: info.root }
+  const result = { ok: true, path: wtPath, branch, baseBranch: selected.branch, baseCommit: selected.commit, baseKind: selected.kind, root: info.root }
   if (options.copyEnv === true) result.copyEnvResult = await copyWorktreeEnv(info.root, wtPath, run)
   if (options.runSetup === true) result.setup = await setupWorktree(wtPath, selected.commit, run)
   return result

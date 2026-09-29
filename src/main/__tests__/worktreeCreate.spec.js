@@ -73,7 +73,8 @@ describe('advanced worktree creation', { timeout: 30000 }, () => {
       ok: true,
       branch: 'agent/code-review',
       baseBranch: 'main',
-      baseCommit: head
+      baseCommit: head,
+      baseKind: 'head'
     })
     expect(resolve(result.root)).toBe(repo)
     expect(result).not.toHaveProperty('copyEnvResult')
@@ -96,12 +97,14 @@ describe('advanced worktree creation', { timeout: 30000 }, () => {
       ok: true,
       baseBranch: 'release;literal',
       baseCommit: release,
+      baseKind: 'local',
       branch: 'agent/work'
     })
     expect(remote).toMatchObject({
       ok: true,
       baseBranch: 'origin/release',
       baseCommit: release,
+      baseKind: 'remote',
       branch: 'agent/work-2'
     })
     expect(fs.readFileSync(join(local.path, 'README.md'), 'utf8')).toBe('fixture\n')
@@ -114,7 +117,8 @@ describe('advanced worktree creation', { timeout: 30000 }, () => {
     write(join(repo, 'README.md'), 'later main\n')
     const current = commit('main moved after PR discovery')
     const result = await createWorktree(repo, 'pinned PR', { baseBranch: pinned })
-    expect(result).toMatchObject({ ok: true, baseBranch: pinned, baseCommit: pinned })
+    // A pinned commit (a PR's head): never a copy that may inherit trust.
+    expect(result).toMatchObject({ ok: true, baseBranch: pinned, baseCommit: pinned, baseKind: 'commit' })
     expect(git('-C', result.path, 'rev-parse', 'HEAD')).toBe(pinned)
     expect(fs.readFileSync(join(result.path, 'README.md'), 'utf8')).toBe('fixture\n')
     expect(git('rev-parse', 'HEAD')).toBe(current)
