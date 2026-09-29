@@ -513,5 +513,22 @@
   "chat.orca.options.unavailable": "Les options de la session sont indisponibles.",
   "chat.orca.options.rejected": "L’option n’a pas été modifiée.",
   "chat.orca.skills.unavailable": "La recherche de skills est indisponible.",
-  "chat.orca.skills.timeout": "La recherche de skills a dépassé le délai prévu."
+  "chat.orca.skills.timeout": "La recherche de skills a dépassé le délai prévu.",
+  "chat.orca.copyMessage.copy": "Copier le message",
+  "chat.orca.copyMessage.copied": "Copié",
+  "chat.orca.copyCode": "Copier le code",
+  "chat.orca.scrollMessageToTop": "Faire défiler ce message en haut",
+  "chat.orca.goal.sentAsGoal": "Envoyé comme objectif",
+  "chat.orca.notices.compaction": "Contexte compacté",
+  "chat.orca.notices.plan": "Plan",
+  "chat.orca.notices.details": "Détails",
+  "chat.orca.providerFrame.byteLength": "{{value0}} octets",
+  "chat.orca.composer.pastedImageLabel": "Image collée",
+  "chat.orca.composer.viewAttachment": "Voir l’image",
+  "chat.orca.composer.imagePreview": "Aperçu de l’image en taille réelle",
+  "chat.orca.markdown.image": "Image",
+  "chat.orca.markdown.expandImage": "Agrandir l’image",
+  "chat.orca.markdown.close": "Fermer",
+  "chat.orca.markdown.diagram": "Diagramme",
+  "chat.orca.codeBlock.plainText": "Texte brut"
 }

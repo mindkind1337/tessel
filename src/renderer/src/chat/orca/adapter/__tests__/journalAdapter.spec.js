@@ -101,6 +101,9 @@ describe('journal adapter', () => {
     expect(state.submissions.find((s) => s.clientMessageId === 'team-1').dispatchState).toBe('unknown')
     expect(state.submissions.find((s) => s.clientMessageId === 'u2').dispatchState).toBe('unknown')
     expect(messages(state).map((m) => text(m))).toEqual(['Team messages…', 'mine'])
+    // The projection keeps the label and the sender for the row.
+    expect(messages(state)[0]).toMatchObject({ sentAs: 'team', from: '#2 Claude' })
+    expect(messages(state)[1].sentAs).toBeUndefined()
   })
 
   it('an interrupted or failed turn, a crash and notices', () => {
