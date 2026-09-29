@@ -434,6 +434,18 @@ defineExpose({ start, send, interrupt })
           :title="t('chat.pane.yoloHint', 'Tools run without asking (Settings)')"
           >Yolo</span
         >
+        <span
+          v-if="agentId === 'codex' && permissions !== 'yolo'"
+          class="chat-badge mcp"
+          data-test="chat-mcp-unsandboxed"
+          :title="
+            t(
+              'chat.pane.mcpUnsandboxedHint',
+              'Manual mode: commands and file changes are sandboxed and ask first. MCP tools from your Codex config are not sandboxed: they run with your rights, and Tessel asks only when Codex asks for approval.'
+            )
+          "
+          >{{ t('chat.pane.mcpUnsandboxed', 'MCP not sandboxed') }}</span
+        >
         <span v-if="rateText" class="chat-rate" data-test="chat-rate" :title="t('chat.rate.hint', '{{agent}} usage limits (5 hours, 7 days)', { agent: agentName })">{{ rateText }}</span>
       </div>
       <div class="pane-nav-actions" @mousedown.stop>
@@ -609,6 +621,12 @@ defineExpose({ start, send, interrupt })
   border-radius: 9px;
   font-size: 10.5px;
   line-height: 16px;
+}
+
+.chat-badge.mcp {
+  background: color-mix(in srgb, var(--warn) 16%, transparent);
+  color: var(--warn);
+  white-space: nowrap;
 }
 
 .chat-badge.yolo {

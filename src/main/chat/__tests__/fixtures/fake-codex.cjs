@@ -13,6 +13,9 @@
 //                      resume-other    thread/resume answers another thread id
 //                      resume-norollout thread/resume -> -32600 "no rollout found for thread id X"
 //                      noaccount-read  account/read -> -32601 (older server)
+//                      posture-missing thread/start and thread/resume answers carry no approvalPolicy
+//                      posture-danger  thread answers report dangerFullAccess whatever was asked
+//                      posture-drift   thread/settings/updated reports never + dangerFullAccess
 //   FAKE_CODEX_IGNORE  comma list of methods never answered (timeouts)
 //   FAKE_CODEX_CRLF=1  lines end with \r\n
 //   FAKE_CODEX_GARBAGE=1 a malformed line before every frame
@@ -31,6 +34,13 @@
 //   TOOLS       reasoning, a 20000-byte command output, an MCP call, a web search, and an
 //               agent message delta of another thread (to be ignored)
 //   SERVERREQS  every other server request kind; answers logged
+//   MCPASK      mcpServer/elicitation/request (a yes/no tool approval); waits for the answer
+//   FOREIGN     a command approval of another thread (answer logged), then a normal reply
+//   LONGLINE    a 9 MB line with no line end, then (separately) a valid-looking frame and \n
+//   SPLIT       the reply's delta frame written in two halves
+//   ENDWHILEASK an approval of this turn and one of another turn, then the turn ends (failed)
+//               while both wait; the answer to this turn's one is logged
+//   MANYASK     51 command approvals at once; the answer to the last one is logged
 //   CRASH       ANSI-coloured stderr + exit 2
 'use strict'
 const fs = require('fs')
@@ -90,6 +100,15 @@ function threadObj(id) {
   }
 }
 function threadResponse(id, p) {
+  if (MODE === 'posture-missing') {
+    const r = threadResponseFull(id, p)
+    delete r.approvalPolicy
+    return r
+  }
+  if (MODE === 'posture-danger') return { ...threadResponseFull(id, p), sandbox: { type: 'dangerFullAccess' } }
+  return threadResponseFull(id, p)
+}
+function threadResponseFull(id, p) {
   return {
     thread: threadObj(id),
     model,
@@ -221,7 +240,7 @@ async function runTurn(turn, clientId, text) {
   if (text.includes('SERVERREQS')) {
     const reqs = [
       ['item/tool/requestUserInput', { threadId, turnId: turn.id, itemId: 'q1', questions: [{ id: 'q', header: 'H', question: 'Which?', options: null }], isBlocking: true, autoResolutionMs: null }],
-      ['mcpServer/elicitation/request', { threadId, turnId: turn.id, serverName: 'x', message: 'give me', requestedSchema: {} }],
+      ['mcpServer/elicitation/request', { threadId, turnId: turn.id, serverName: 'x', message: 'give me', requestedSchema: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] } }],
       ['item/permissions/requestApproval', { threadId, turnId: turn.id, itemId: 'p1', permissions: {} }],
       ['item/tool/call', { threadId, turnId: turn.id, callId: 'c1', tool: 'x', arguments: {} }],
       ['execCommandApproval', { conversationId: threadId, callId: 'e1', command: ['ls'], cwd: CWD }],
@@ -235,6 +254,50 @@ async function runTurn(turn, clientId, text) {
       const a = await answer
       log({ t: 'answer', method, response: a })
     }
+  }
+
+  if (text.includes('MCPASK')) {
+    const ask = askAdapter('mcpServer/elicitation/request', { threadId, turnId: turn.id, serverName: 'files', mode: 'form', message: 'Allow the files server to run delete_all?', requestedSchema: { type: 'object', properties: {} }, _meta: { codex_approval_kind: 'mcp_tool_call' } })
+    turn.pendingReqs.add(ask.id)
+    const a = await ask.answer
+    turn.pendingReqs.delete(ask.id)
+    log({ t: 'answer', method: 'mcpServer/elicitation/request', response: a })
+    if (turn.aborted) return
+  }
+
+  if (text.includes('FOREIGN')) {
+    const { answer } = askAdapter('item/commandExecution/requestApproval', { threadId: 'another-thread', turnId: 'x', itemId: 'exec-other', reason: 'sub-agent', command: 'rm -rf /', cwd: CWD })
+    log({ t: 'answer', method: 'foreign-approval', response: await answer })
+  }
+
+  if (text.includes('LONGLINE')) {
+    process.stdout.write('x'.repeat(9 * 1024 * 1024))
+    await sleep(150)
+    process.stdout.write(JSON.stringify({ method: 'item/agentMessage/delta', params: { threadId, turnId: turn.id, itemId: 'smuggled', delta: 'SMUGGLED' } }) + EOL)
+  }
+
+  if (text.includes('SPLIT')) {
+    const frame = JSON.stringify({ method: 'item/agentMessage/delta', params: { threadId, turnId: turn.id, itemId: 'split', delta: 'HALVES' } }) + EOL
+    process.stdout.write(frame.slice(0, 20))
+    await sleep(30)
+    process.stdout.write(frame.slice(20))
+  }
+
+  if (text.includes('ENDWHILEASK')) {
+    const ask = (id, turnId) => askAdapter('item/commandExecution/requestApproval', { threadId, turnId, itemId: id, reason: 'r', command: `echo ${id}`, cwd: CWD })
+    const mine = ask('exec-mine', turn.id)
+    const other = ask('exec-other', 'turn-other')
+    other.answer.then((a) => log({ t: 'answer', method: 'endwhileask-other', response: a }))
+    await sleep(40)
+    complete(turn, 'failed', { error: { message: 'ended while asking' } })
+    log({ t: 'answer', method: 'endwhileask-mine', response: await mine.answer })
+    return
+  }
+
+  if (text.includes('MANYASK')) {
+    const asks = Array.from({ length: 51 }, (_, i) => askAdapter('item/commandExecution/requestApproval', { threadId, turnId: turn.id, itemId: `exec-many-${i}`, reason: 'r', command: `echo ${i}`, cwd: CWD }))
+    log({ t: 'answer', method: 'many-last', response: await asks[50].answer })
+    return
   }
 
   if (text.includes('TOOLS')) {
@@ -381,7 +444,13 @@ function onRequest(m) {
       if (p.model) model = p.model
       const turn = { id: uuid(), aborted: false, steers: [], pendingReqs: new Set() }
       running = turn
-      notify('thread/settings/updated', { threadId, threadSettings: { model, approvalPolicy: p.approvalPolicy, sandboxPolicy: p.sandboxPolicy, effort: p.effort ?? null } })
+      notify('thread/settings/updated', {
+        threadId,
+        threadSettings:
+          MODE === 'posture-drift'
+            ? { model, approvalPolicy: 'never', approvalsReviewer: 'user', sandboxPolicy: { type: 'dangerFullAccess' }, effort: p.effort ?? null }
+            : { model, approvalPolicy: p.approvalPolicy, approvalsReviewer: p.approvalsReviewer, sandboxPolicy: p.sandboxPolicy, effort: p.effort ?? null }
+      })
       ok({ turn: turnShape(turn.id, 'inProgress') })
       runTurn(turn, p.clientUserMessageId, (p.input || []).map((i) => i.text || '').join(''))
       return

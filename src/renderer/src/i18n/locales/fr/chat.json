@@ -2,7 +2,9 @@
   "chat": {
     "pane": {
       "titleHint": "{{title}}\nFaites glisser l'en-tête pour déplacer le volet",
-      "yoloHint": "Les outils s'exécutent sans demander (Paramètres)"
+      "yoloHint": "Les outils s'exécutent sans demander (Paramètres)",
+      "mcpUnsandboxed": "MCP hors bac à sable",
+      "mcpUnsandboxedHint": "Mode Manuel : les commandes et les modifications de fichiers sont en bac à sable et demandent d'abord. Les outils MCP de votre configuration Codex ne sont pas en bac à sable : ils s'exécutent avec vos droits, et Tessel ne demande que lorsque Codex demande une approbation."
     },
     "status": {
       "starting": "Démarrage",
@@ -72,6 +74,8 @@
       "denied": "Refusé",
       "cancelled": "Plus nécessaire",
       "hidden": "{{count}} caractères masqués",
+      "changesUnknown": "Modifications inconnues : Codex n'a pas dit ce que ceci écrit. Affichez tout pour confirmer, ou refusez.",
+      "mcpUnsandboxed": "Un outil MCP de votre configuration Codex : il s'exécute hors du bac à sable, avec vos droits.",
       "showAll": "Tout afficher",
       "fullFailed": "L'entrée complète n'a pas pu être lue.",
       "seeAllFirst": "Autoriser attend que vous ayez tout vu.",

@@ -18,6 +18,13 @@ import {
   permissionFromCodexRequest,
   rateLimitFromCodex,
   isCodexAuthError,
+  manualPostureProblem,
+  settleTurn,
+  newTurn,
+  elicitationAnswerable,
+  permissionFromElicitation,
+  MAX_LINE,
+  MAX_APPROVALS,
   DEFAULT_TIMEOUTS
 } from '../codexChat'
 
@@ -613,6 +620,13 @@ describe('codexChat: recorded frames (codex-cli 0.158.0)', () => {
     expect(declined).toMatchObject([{ type: 'toolResult', isError: true, text: 'The command was declined.' }])
     // the redacted tokenUsage value is tolerated
     expect(run('tokenUsage (value redacted by the spike)')).toEqual([])
+    // The interrupted turn is another turn of the recording: while the
+    // command's turn is open its end only marks it ended.
+    const endFrame = byLabel('turn/completed interrupted')
+    const cmdTurn = state.turn
+    expect(normalizeCodexNotification(endFrame.method, endFrame.params, { ...state, settledTurns: new Set() })).toEqual([])
+    expect(cmdTurn.settled).toBe(false)
+    state.turn = { id: endFrame.params.turn.id, started: true, settled: false, uuids: [], lastText: '', usageBase: null }
     const end = run('turn/completed interrupted')
     expect(end.map((e) => e.type)).toEqual(['turnEnd', 'state'])
     expect(end[0]).toMatchObject({ status: 'interrupted', durationMs: 2889 })
@@ -626,5 +640,236 @@ describe('codexChat: recorded frames (codex-cli 0.158.0)', () => {
     expect(isCodexAuthError({ message: 'Not logged in. Run codex login', codexErrorInfo: null })).toBe(true)
     expect(isCodexAuthError({ message: 'flagged', codexErrorInfo: 'other' })).toBe(false)
     expect(isCodexAuthError({ message: 'x', codexErrorInfo: { httpConnectionFailed: { httpStatusCode: 500 } } })).toBe(false)
+  })
+})
+
+describe('codexChat: security review fixes', () => {
+  const frames = readFileSync(REAL, 'utf8')
+    .split('\n')
+    .filter(Boolean)
+    .map((l) => JSON.parse(l))
+  const byLabel = (label) => frames.find((f) => f.label === label).m
+  const answersOf = (readLog, method) => readLog().filter((r) => r.t === 'answer' && r.method === method)
+  const quickKill = async (child) => child.kill('SIGKILL')
+
+  // M1: the card shows what runs
+  it('a command approval carries rawCommand, cwd and what widens it', () => {
+    const req = byLabel('requestApproval (server request id 0)')
+    const perm = permissionFromCodexRequest('p1', req.method, req.params, createCodexState({ threadId: req.params.threadId }))
+    expect(perm.input.rawCommand).toBe(req.params.command)
+    expect(perm.input.cwd).toBe(req.params.cwd)
+    expect(perm.input.proposedExecpolicyAmendment).toEqual(req.params.proposedExecpolicyAmendment)
+    const extra = permissionFromCodexRequest(
+      'p2',
+      'item/commandExecution/requestApproval',
+      { command: 'curl x', cwd: 'C:\\w', additionalPermissions: { network: true }, networkApprovalContext: { host: 'h' } },
+      createCodexState()
+    )
+    expect(extra.input).toMatchObject({ additionalPermissions: { network: true }, networkApprovalContext: { host: 'h' } })
+  })
+
+  // M2: the posture Codex applied
+  it('manualPostureProblem: the recorded start answer and settings pass; anything else is named', () => {
+    expect(manualPostureProblem(byLabel('thread/start response (on-request, read-only)').result, { strict: true })).toBe(null)
+    expect(manualPostureProblem(byLabel('thread/settings/updated after turn/start').params.threadSettings)).toBe(null)
+    expect(manualPostureProblem({ approvalPolicy: 'on-request', sandbox: { type: 'workspaceWrite' }, approvalsReviewer: 'user' }, { strict: true })).toBe(null)
+    expect(manualPostureProblem({ sandbox: { type: 'workspaceWrite' } }, { strict: true })).toMatch(/approvalPolicy missing/)
+    expect(manualPostureProblem({ approvalPolicy: 'on-request' }, { strict: true })).toMatch(/sandbox missing/)
+    expect(manualPostureProblem({ approvalPolicy: 'never', sandbox: { type: 'workspaceWrite' } }, { strict: true })).toMatch(/approvalPolicy/)
+    expect(manualPostureProblem({ approvalPolicy: { granular: {} }, sandbox: 'workspace-write' }, { strict: true })).toMatch(/approvalPolicy/)
+    expect(manualPostureProblem({ approvalPolicy: 'on-request', sandbox: { type: 'dangerFullAccess' } }, { strict: true })).toMatch(/dangerFullAccess/)
+    expect(manualPostureProblem({ approvalPolicy: 'on-request', sandbox: 'danger-full-access' }, { strict: true })).toMatch(/danger-full-access/)
+    expect(manualPostureProblem({ approvalPolicy: 'on-request', sandbox: { type: 'externalSandbox' } }, { strict: true })).toMatch(/externalSandbox/)
+    expect(manualPostureProblem({ approval_policy: 'never' })).toMatch(/approvalPolicy/)
+    expect(manualPostureProblem({ sandbox_policy: { type: 'dangerFullAccess' } })).toMatch(/sandbox/)
+    expect(manualPostureProblem({ sandboxPolicy: { type: 'dangerFullAccess' } })).toMatch(/sandbox/)
+    expect(manualPostureProblem({ approvalsReviewer: 'auto_review' })).toMatch(/approvalsReviewer/)
+    // settings updates: only the fields present are checked
+    expect(manualPostureProblem({ model: 'x' })).toBe(null)
+  })
+
+  it('Manual refuses to open when the start answer has no approvalPolicy (unverified); Yolo opens', async () => {
+    const { chat, events } = setup({ permissions: 'manual', env: { FAKE_CODEX_MODE: 'posture-missing' } })
+    const r = await chat.start()
+    expect(r).toMatchObject({ ok: false, code: 'posture' })
+    expect(r.error).toMatch(/approvalPolicy missing/)
+    await waitFor(() => ofType(events, 'exit').length === 1)
+    expect(chat.running).toBe(false)
+    const yolo = setup({ permissions: 'yolo', env: { FAKE_CODEX_MODE: 'posture-missing' } })
+    expect((await yolo.chat.start()).ok).toBe(true)
+  })
+
+  it('Manual refuses to open when Codex reports full access', async () => {
+    const { chat } = setup({ permissions: 'manual', env: { FAKE_CODEX_MODE: 'posture-danger' } })
+    const r = await chat.start()
+    expect(r).toMatchObject({ ok: false, code: 'posture' })
+    expect(r.error).toMatch(/dangerFullAccess/)
+  })
+
+  it('Manual: thread/settings/updated with another posture -> postureError, interrupt, closed', async () => {
+    const { chat, events } = setup({ permissions: 'manual', env: { FAKE_CODEX_MODE: 'posture-drift' }, killTree: quickKill })
+    expect((await chat.start()).ok).toBe(true)
+    await chat.send({ uuid: randomUUID(), text: 'SLOW' })
+    const err = await waitFor(() => ofType(events, 'postureError')[0], 5000, 'postureError')
+    expect(err.reason).toMatch(/approvalPolicy/)
+    await waitFor(() => ofType(events, 'exit').length === 1, 5000, 'exit')
+    expect(chat.running).toBe(false)
+    expect(await chat.send({ uuid: randomUUID(), text: 'x' })).toMatchObject({ ok: false })
+  })
+
+  it('Yolo does not check the posture of settings updates', async () => {
+    const { chat, events } = setup({ permissions: 'yolo', env: { FAKE_CODEX_MODE: 'posture-drift' } })
+    await chat.start()
+    await chat.send({ uuid: randomUUID(), text: 'hi' })
+    await waitFor(() => turnEnds(events).length === 1)
+    expect(ofType(events, 'postureError')).toHaveLength(0)
+    expect(chat.running).toBe(true)
+  })
+
+  // M3: quitting kills at once
+  it('close({ kill: true }) kills the tree at once, without the stdin-end wait', async () => {
+    const killed = []
+    const { chat, events } = setup({
+      env: { FAKE_CODEX_MODE: 'hang' },
+      timeouts: { close: 20000, quitKill: 3000 },
+      killTree: async (child) => {
+        killed.push(child.pid)
+        child.kill('SIGKILL')
+      }
+    })
+    const { pid } = await chat.start()
+    const t0 = Date.now()
+    expect(await chat.close({ kill: true })).toEqual({ ok: true, killed: true })
+    expect(Date.now() - t0).toBeLessThan(5000)
+    expect(killed).toEqual([pid])
+    expect(ofType(events, 'exit')).toHaveLength(1)
+  }, 30000)
+
+  // M4: MCP asks
+  it('an MCP elicitation is an approval card: allow -> accept, content {}', async () => {
+    const { chat, events, readLog } = setup()
+    await chat.start()
+    await chat.send({ uuid: randomUUID(), text: 'MCPASK' })
+    const perm = await waitFor(() => ofType(events, 'permission')[0], 5000, 'permission')
+    expect(perm).toMatchObject({ toolName: 'MCP', displayName: 'MCP files', choices: ['accept', 'decline'], description: 'Allow the files server to run delete_all?' })
+    expect(perm.input).toMatchObject({ server: 'files', message: 'Allow the files server to run delete_all?', meta: { codex_approval_kind: 'mcp_tool_call' } })
+    expect(await chat.answerPermission(perm.requestId, { behavior: 'allow', session: true })).toEqual({ ok: true, decision: 'accept' })
+    await waitFor(() => turnEnds(events).length === 1)
+    expect(answersOf(readLog, 'mcpServer/elicitation/request')[0].response.result).toEqual({ action: 'accept', content: {}, _meta: null })
+  })
+
+  it('an MCP elicitation denied -> decline', async () => {
+    const { chat, events, readLog } = setup()
+    await chat.start()
+    await chat.send({ uuid: randomUUID(), text: 'MCPASK' })
+    const perm = await waitFor(() => ofType(events, 'permission')[0], 5000, 'permission')
+    expect(await chat.answerPermission(perm.requestId, { behavior: 'deny' })).toEqual({ ok: true, decision: 'decline' })
+    await waitFor(() => turnEnds(events).length === 1)
+    expect(answersOf(readLog, 'mcpServer/elicitation/request')[0].response.result).toEqual({ action: 'decline', content: null, _meta: null })
+  })
+
+  it('elicitations Tessel cannot answer (a form, a URL) are declined', () => {
+    expect(elicitationAnswerable({ message: 'ok?', requestedSchema: { type: 'object', properties: {} } })).toBe(true)
+    expect(elicitationAnswerable({ message: 'ok?' })).toBe(true)
+    expect(elicitationAnswerable({ mode: 'url', url: 'https://x' })).toBe(false)
+    expect(elicitationAnswerable({ requestedSchema: { properties: { a: {} }, required: ['a'] } })).toBe(false)
+    expect(permissionFromElicitation('p', { serverName: 's', message: 'm' }).input).toEqual({ server: 's', message: 'm' })
+  })
+
+  // L1
+  it('a file approval with no known changes says so, the new write root first', () => {
+    const perm = permissionFromCodexRequest('p', 'item/fileChange/requestApproval', { threadId: 't', itemId: 'unknown', grantRoot: 'C:\\outside', reason: 'r' }, createCodexState({ threadId: 't' }))
+    expect(Object.keys(perm.input).slice(0, 2)).toEqual(['grantRoot', 'changesUnknown'])
+    expect(perm.input).toMatchObject({ grantRoot: 'C:\\outside', changesUnknown: true, changes: [] })
+  })
+
+  it("another thread's approval is declined, never shown", async () => {
+    const { chat, events, readLog } = setup()
+    await chat.start()
+    await chat.send({ uuid: randomUUID(), text: 'FOREIGN' })
+    await waitFor(() => turnEnds(events).length === 1)
+    expect(answersOf(readLog, 'foreign-approval')[0].response.result).toEqual({ decision: 'decline' })
+    expect(ofType(events, 'permission')).toHaveLength(0)
+  })
+
+  // L2
+  it("settleTurn: another turn's id only marks it ended; the open turn stays open", () => {
+    const state = createCodexState({ threadId: 't' })
+    const open = newTurn(state, 'turn-a')
+    expect(settleTurn(state, 'completed', { turnId: 'turn-b' })).toEqual([])
+    expect(state.turn).toBe(open)
+    expect(open.settled).toBe(false)
+    expect(state.settledTurns.has('turn-b')).toBe(true)
+    expect(settleTurn(state, 'completed', { turnId: 'turn-b' })).toEqual([])
+    expect(settleTurn(state, 'completed', { turnId: 'turn-a' }).map((e) => e.type)).toEqual(['turnEnd', 'state'])
+    expect(open.settled).toBe(true)
+  })
+
+  it("a turn's end cancels its own approvals (answered decline), not another turn's", async () => {
+    const { chat, events, readLog } = setup()
+    await chat.start()
+    await chat.send({ uuid: randomUUID(), text: 'ENDWHILEASK' })
+    await waitFor(() => ofType(events, 'permission').length === 2)
+    const [mine, other] = ofType(events, 'permission')
+    await waitFor(() => turnEnds(events).length === 1)
+    await waitFor(() => answersOf(readLog, 'endwhileask-mine').length === 1, 5000, 'decline of mine')
+    expect(answersOf(readLog, 'endwhileask-mine')[0].response.result).toEqual({ decision: 'decline' })
+    expect(ofType(events, 'permissionCancelled').map((e) => e.requestId)).toEqual([mine.requestId])
+    expect(chat.pendingPermissions()).toEqual([other.requestId])
+    expect(await chat.answerPermission(other.requestId, { behavior: 'deny' })).toMatchObject({ ok: true })
+    await waitFor(() => answersOf(readLog, 'endwhileask-other').length === 1)
+  })
+
+  // L3
+  it('switching to Manual during a Yolo turn interrupts it', async () => {
+    const { chat, events, requests } = setup({ permissions: 'yolo' })
+    await chat.start()
+    await chat.send({ uuid: randomUUID(), text: 'SLOW' })
+    await waitFor(() => ofType(events, 'textDelta').length > 0)
+    expect(await chat.setPermissionMode('default')).toEqual({ ok: true, response: { mode: 'default' }, interrupted: true })
+    await waitFor(() => turnEnds(events).length === 1)
+    expect(turnEnds(events)[0].status).toBe('interrupted')
+    expect(requests('turn/interrupt')).toHaveLength(1)
+  })
+
+  it('a message is not steered into a turn started under another posture', async () => {
+    const { chat, events, requests } = setup({ permissions: 'manual' })
+    await chat.start()
+    await chat.send({ uuid: randomUUID(), text: 'SLOW' })
+    await waitFor(() => ofType(events, 'textDelta').length > 0)
+    expect(await chat.setPermissionMode('bypassPermissions')).toEqual({ ok: true, response: { mode: 'bypassPermissions' } })
+    expect((await chat.send({ uuid: randomUUID(), text: 'more' })).ok).toBe(true)
+    expect(requests('turn/steer')).toHaveLength(0)
+    const starts = requests('turn/start').map((m) => m.params)
+    expect(starts).toHaveLength(2)
+    expect(starts[1]).toMatchObject({ approvalPolicy: 'never' })
+  })
+
+  // L4
+  it('line limits: 8 MB; an over-long line is dropped up to its line end', async () => {
+    expect(MAX_LINE).toBe(8 * 1024 * 1024)
+    const { chat, events } = setup()
+    await chat.start()
+    await chat.send({ uuid: randomUUID(), text: 'LONGLINE' })
+    await waitFor(() => turnEnds(events).length === 1, 10000)
+    expect(ofType(events, 'textDelta').some((e) => e.text === 'SMUGGLED')).toBe(false)
+    expect(turnEnds(events)[0].status).toBe('completed')
+  }, 30000)
+
+  it('a frame split across chunks is read once', async () => {
+    const { chat, events } = setup()
+    await chat.start()
+    await chat.send({ uuid: randomUUID(), text: 'SPLIT' })
+    await waitFor(() => turnEnds(events).length === 1)
+    expect(ofType(events, 'textDelta').filter((e) => e.text === 'HALVES')).toHaveLength(1)
+  })
+
+  it(`at most ${MAX_APPROVALS} approvals wait at once; more are declined`, async () => {
+    const { chat, events, readLog } = setup()
+    await chat.start()
+    await chat.send({ uuid: randomUUID(), text: 'MANYASK' })
+    await waitFor(() => answersOf(readLog, 'many-last').length === 1, 5000, 'decline of the 51st')
+    expect(answersOf(readLog, 'many-last')[0].response.result).toEqual({ decision: 'decline' })
+    expect(ofType(events, 'permission')).toHaveLength(MAX_APPROVALS)
   })
 })

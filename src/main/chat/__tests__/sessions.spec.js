@@ -828,6 +828,38 @@ describe('codex', () => {
     expect(a.answerPermission).toHaveBeenLastCalledWith('r2', { behavior: 'allow', session: true })
   })
 
+  it('Manual posture not confirmed at start: its own message; changed mid-chat: a notice', async () => {
+    startResult = { ok: false, code: 'posture', error: 'Codex did not apply the Manual permissions: approvalPolicy missing' }
+    const chat = createChatSessions(deps)
+    const r = await chat.open({ paneId, cwd: tmp, permissions: 'manual', agent: 'codex' })
+    expect(r).toMatchObject({ ok: false, code: 'failed', detail: 'Codex did not apply the Manual permissions: approvalPolicy missing' })
+    expect(r.error).toMatch(/Manual permissions/)
+    startResult = { ok: true, pid: 2, info: { threadId: thread, model: 'gpt-5.5' } }
+    await openCodex(chat)
+    adapters[1].emit('postureError', { reason: 'approvalPolicy "never"' })
+    await flush()
+    expect(last('notice')).toMatchObject({ type: 'notice', kind: 'error' })
+    expect(last('notice').text).toMatch(/no longer applied the Manual permissions/)
+  })
+
+  it('a Codex command approval: hidden counts the whole text (rawCommand, cwd), Allow waits for it', async () => {
+    const chat = createChatSessions(deps)
+    await openCodex(chat)
+    const a = adapters[0]
+    a.emit('state', { state: 'running' })
+    const rawCommand = 'powershell -Command "echo hi; ' + 'x'.repeat(9000) + '; del C:\\*"'
+    a.emit('permission', { requestId: 'rc', toolName: 'Bash', input: { command: 'echo hi', rawCommand, cwd: 'C:\\w' }, choices: ['accept', 'decline'] })
+    const ev = last('approval')
+    expect(ev.detail.startsWith('powershell -Command')).toBe(true)
+    expect(ev.hidden).toBeGreaterThan(1000)
+    expect(await chat.approve({ paneId, requestId: 'rc', decision: 'allow' })).toMatchObject({ ok: false, code: 'unseen' })
+    a.emit('permission', { requestId: 'fu', toolName: 'Edit', input: { grantRoot: 'C:\\x', changesUnknown: true, file_path: '', changes: [] } })
+    expect(last('approval').hidden).toBe(1)
+    expect(await chat.approve({ paneId, requestId: 'fu', decision: 'allow' })).toMatchObject({ ok: false, code: 'unseen' })
+    expect(chat.approvalInput({ paneId, requestId: 'fu' }).ok).toBe(true)
+    expect(await chat.approve({ paneId, requestId: 'fu', decision: 'allow' })).toEqual({ ok: true })
+  })
+
   it('a failed turn (no turn/completed): idle, a notice, the team batch released, the queue goes on', async () => {
     const chat = createChatSessions(deps)
     await openCodex(chat)

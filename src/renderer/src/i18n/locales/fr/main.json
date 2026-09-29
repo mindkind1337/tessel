@@ -734,6 +734,8 @@
       "codexSpawnFailed": "Codex n'a pas pu être lancé.",
       "codexStartTimeout": "Codex n'a pas répondu à temps.",
       "codexExitedAtStart": "Codex s'est arrêté pendant son démarrage.",
+      "codexPosture": "Codex n'a pas confirmé les permissions du mode Manuel (demander d'abord, en bac à sable) : le chat n'a pas été ouvert.",
+      "codexPostureChanged": "Codex n'appliquait plus les permissions du mode Manuel (demander d'abord, en bac à sable) : le tour a été arrêté et le chat fermé.",
       "turnFailed": "Le tour a échoué : {{error}}",
       "turnFailedNoReason": "Le tour a échoué.",
       "notOffered": "L'agent ne propose pas ce choix ici.",

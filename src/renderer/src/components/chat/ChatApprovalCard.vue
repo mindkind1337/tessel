@@ -48,7 +48,16 @@ const detail = computed(() => {
   if (typeof props.row.detail === 'string') return props.row.detail
   return approvalDetail(props.row.toolName, props.row.input)
 })
-const hiddenText = computed(() => t('chat.approval.hidden', '{{count}} characters hidden', { count: hidden.value }))
+// A Codex file approval whose changes are unknown: nothing says what it
+// writes, so Allow waits for "Show all" (the main process counts it hidden).
+const changesUnknown = computed(() => !!(props.row.input && typeof props.row.input === 'object' && props.row.input.changesUnknown === true))
+// An MCP tool of the user's Codex config: it runs outside Codex's sandbox.
+const mcp = computed(() => props.row.toolName === 'MCP')
+const hiddenText = computed(() =>
+  changesUnknown.value
+    ? t('chat.approval.changesUnknown', 'Changes unknown: Codex did not say what this writes. Show all to confirm, or deny.')
+    : t('chat.approval.hidden', '{{count}} characters hidden', { count: hidden.value })
+)
 const rules = computed(() => (Array.isArray(props.row.sessionRules) ? props.row.sessionRules : []))
 function ruleText(r) {
   if (r.kind === 'mode') return t('chat.approval.ruleMode', 'Switch this session to the {{mode}} mode', { mode: r.mode })
@@ -157,6 +166,9 @@ defineExpose({ focus: () => cardEl.value && cardEl.value.focus() })
       </span>
     </div>
     <p v-if="row.description" class="chat-approval-desc">{{ row.description }}</p>
+    <p v-if="mcp" class="chat-approval-warn" data-test="chat-approval-mcp">
+      {{ t('chat.approval.mcpUnsandboxed', 'An MCP tool from your Codex config: it runs outside the sandbox, with your rights.') }}
+    </p>
     <pre v-if="detail" class="chat-approval-detail">{{ detail }}</pre>
     <div v-if="hidden > 0 && fullText == null" class="chat-approval-hidden" data-test="chat-approval-hidden">
       <span>{{ hiddenText }}</span>
@@ -293,6 +305,12 @@ defineExpose({ focus: () => cardEl.value && cardEl.value.focus() })
   font-size: 11.5px;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.chat-approval-warn {
+  margin: 6px 0 0;
+  color: var(--warn);
+  font-size: 11.5px;
 }
 
 .chat-approval-hidden {

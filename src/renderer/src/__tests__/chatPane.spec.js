@@ -267,6 +267,29 @@ describe('ChatPane.vue', () => {
     expect(api.approve).toHaveBeenLastCalledWith({ paneId: 'c1', requestId: 'big', decision: 'allow', message: '' })
   })
 
+  it('Codex: changes unknown wait for Show all; an MCP card says it is not sandboxed; the Manual header says so too', async () => {
+    await mountPane({ agentId: 'codex', title: 'Codex' })
+    expect(wrapper.find('[data-test="chat-mcp-unsandboxed"]').text()).toBe('MCP not sandboxed')
+    emit({ type: 'approval', requestId: 'fu', toolName: 'Edit', input: { grantRoot: 'C:\\x', changesUnknown: true, file_path: '', changes: [] }, detail: '{ "grantRoot": "C:\\x" }', hidden: 1, status: 'pending' })
+    emit({ type: 'approval', requestId: 'mc', toolName: 'MCP', displayName: 'MCP files', input: { server: 'files', message: 'Run delete_all?' }, detail: 'x', hidden: 0, choices: ['accept', 'decline'], status: 'pending' })
+    await nextTick()
+    const [fu, mc] = wrapper.findAll('[data-test="chat-approval"]')
+    expect(fu.find('[data-test="chat-approval-hidden"]').text()).toContain('Changes unknown')
+    expect(fu.find('[data-test="chat-approval-hidden"]').text()).not.toContain('characters hidden')
+    expect(fu.find('[data-test="chat-approve-allow"]').element.disabled).toBe(true)
+    expect(fu.find('[data-test="chat-approval-mcp"]').exists()).toBe(false)
+    expect(mc.find('[data-test="chat-approval-mcp"]').text()).toContain('outside the sandbox')
+    expect(mc.find('[data-test="chat-approve-allow"]').element.disabled).toBe(false)
+  })
+
+  it('no MCP badge for Claude or in Yolo', async () => {
+    await mountPane()
+    expect(wrapper.find('[data-test="chat-mcp-unsandboxed"]').exists()).toBe(false)
+    wrapper.unmount()
+    await mountPane({ agentId: 'codex' }, { chatPermissions: () => 'yolo' })
+    expect(wrapper.find('[data-test="chat-mcp-unsandboxed"]').exists()).toBe(false)
+  })
+
   it('the card lists what Allow for this session adds', async () => {
     await mountPane()
     emit({

@@ -20,10 +20,12 @@ import { killClaudeTree } from './claudeChat'
 import { clipText, toolResultText, TOOL_OUTPUT_MAX_BYTES } from './claudeFrames'
 
 export const PERMISSION_MODES = ['default', 'bypassPermissions', 'acceptEdits', 'plan']
-export const DEFAULT_TIMEOUTS = { start: 30000, request: 30000, close: 3000, exitFlush: 1000, idleSettle: 10000, accountProbe: 5000 }
+// quitKill: how long a kill on quit waits for the exit before giving up.
+export const DEFAULT_TIMEOUTS = { start: 30000, request: 30000, close: 3000, exitFlush: 1000, idleSettle: 10000, accountProbe: 5000, quitKill: 1500 }
 export const killCodexTree = killClaudeTree
 const STDERR_TAIL = 8 * 1024
-const MAX_LINE = 64 * 1024 * 1024 // a line longer than this is dropped (runaway output)
+export const MAX_LINE = 8 * 1024 * 1024 // a line longer than this is dropped (runaway output)
+export const MAX_APPROVALS = 50 // pending approvals at once; more are declined
 const THREAD_ID = /^[A-Za-z0-9][A-Za-z0-9-]{0,99}$/
 // Model / effort names: plain words ("gpt-6-astra", "low"), never a flag.
 const NAME = /^[A-Za-z0-9][\w.:[\]/-]{0,99}$/
@@ -32,6 +34,7 @@ const SETTLED_KEEP = 50
 
 export const COMMAND_APPROVAL = 'item/commandExecution/requestApproval'
 export const FILE_APPROVAL = 'item/fileChange/requestApproval'
+export const MCP_ELICITATION = 'mcpServer/elicitation/request'
 const DEFAULT_CHOICES = ['accept', 'acceptForSession', 'decline', 'cancel']
 
 // ---- permission posture ------------------------------------------------------
@@ -52,6 +55,58 @@ export function codexPolicy(permissions) {
     sandboxPolicy: { type: 'workspaceWrite', writableRoots: [], networkAccess: false, excludeTmpdirEnvVar: false, excludeSlashTmp: false }
   }
 }
+// ---- what Codex applied (Manual) ------------------------------------------------
+
+// Manual's posture as Codex reports it back: approvals on request, a sandbox
+// that confines writes (an allow-list: full access, an external sandbox or an
+// unknown kind are refused), and the user as the reviewer.
+const SAFE_SANDBOXES = new Set(['workspaceWrite', 'workspace-write', 'workspace_write', 'readOnly', 'read-only', 'read_only'])
+const ON_REQUEST = new Set(['on-request', 'onRequest', 'on_request'])
+
+function field(o, camel, snake) {
+  if (o[camel] != null) return o[camel]
+  if (o[snake] != null) return o[snake]
+  return undefined
+}
+
+function sandboxKind(v) {
+  if (typeof v === 'string') return v
+  if (v && typeof v === 'object' && typeof v.type === 'string') return v.type
+  return null
+}
+
+function shortJson(v) {
+  try {
+    return String(JSON.stringify(v)).slice(0, 80)
+  } catch {
+    return '?'
+  }
+}
+
+// settings: a thread/start or thread/resume answer, or the threadSettings of
+// thread/settings/updated (sandbox or sandboxPolicy, camel or snake case).
+// strict (the start answer): approvalPolicy and the sandbox must be there,
+// else the posture is unverified; otherwise only the fields present count.
+// -> null when it is Manual's posture, else what is wrong (English, logged).
+export function manualPostureProblem(settings, { strict = false } = {}) {
+  const s = obj(settings)
+  const policy = field(s, 'approvalPolicy', 'approval_policy')
+  if (policy === undefined) {
+    if (strict) return 'approvalPolicy missing'
+  } else if (!ON_REQUEST.has(policy)) return `approvalPolicy ${shortJson(policy)}`
+  let sandbox = field(s, 'sandboxPolicy', 'sandbox_policy')
+  if (sandbox === undefined && s.sandbox != null) sandbox = s.sandbox
+  if (sandbox === undefined) {
+    if (strict) return 'sandbox missing'
+  } else {
+    const kind = sandboxKind(sandbox)
+    if (!kind || !SAFE_SANDBOXES.has(kind)) return `sandbox ${kind || shortJson(sandbox)}`
+  }
+  const reviewer = field(s, 'approvalsReviewer', 'approvals_reviewer')
+  if (reviewer !== undefined && reviewer !== 'user') return `approvalsReviewer ${shortJson(reviewer)}`
+  return null
+}
+
 const threadPolicy = (p) => ({ approvalPolicy: p.approvalPolicy, approvalsReviewer: p.approvalsReviewer, sandbox: p.sandbox })
 const turnPolicy = (p) => ({ approvalPolicy: p.approvalPolicy, approvalsReviewer: p.approvalsReviewer, sandboxPolicy: p.sandboxPolicy })
 
@@ -99,7 +154,8 @@ export function createCodexState({ threadId = null, model = null, permissionMode
     mcpServers: new Map(), // name -> status
     tools: new Set(), // tool items reported started
     fileChanges: new Map(), // fileChange itemId -> changes (for its approval card)
-    retrying: false
+    retrying: false,
+    postureCheck: false // Manual: every thread/settings/updated is checked (manualPostureProblem)
   }
 }
 
@@ -230,17 +286,24 @@ function initEvent(state) {
 }
 
 // The open turn ends: turnEnd then state idle. Once per turn id.
+function markSettled(state, id) {
+  if (!id) return
+  state.settledTurns.add(id)
+  if (state.settledTurns.size > SETTLED_KEEP) state.settledTurns.delete(state.settledTurns.values().next().value)
+}
+
+// A turnId that is not the open turn's only marks that turn as ended.
 export function settleTurn(state, status, { error = null, durationMs = null, turnId = null } = {}) {
-  let turn = state.turn
-  if (!turn || turn.settled || (turnId && turn.id !== turnId)) {
-    if (turnId && state.settledTurns.has(turnId)) return []
-    turn = newTurn(state, turnId)
+  if (turnId && state.settledTurns.has(turnId)) return []
+  let turn = state.turn && !state.turn.settled ? state.turn : null
+  if (turn && turnId && turn.id && turn.id !== turnId) {
+    markSettled(state, turnId)
+    return []
   }
+  if (!turn) turn = newTurn(state, turnId)
+  else if (!turn.id && turnId) turn.id = turnId
   turn.settled = true
-  if (turn.id) {
-    state.settledTurns.add(turn.id)
-    if (state.settledTurns.size > SETTLED_KEEP) state.settledTurns.delete(state.settledTurns.values().next().value)
-  }
+  markSettled(state, turn.id)
   state.interruptRequested = false
   state.retrying = false
   state.tools.clear()
@@ -394,8 +457,13 @@ export function normalizeCodexNotification(method, params, state) {
       break
     }
     case 'thread/settings/updated': {
-      const m = obj(p.threadSettings).model
+      const settings = obj(p.threadSettings || p.settings)
+      const m = settings.model
       if (typeof m === 'string' && m) state.model = m
+      if (state.postureCheck) {
+        const problem = manualPostureProblem(settings)
+        if (problem) out.push({ type: 'postureMismatch', reason: problem })
+      }
       break
     }
     case 'mcpServer/startupStatus/updated': {
@@ -409,17 +477,32 @@ export function normalizeCodexNotification(method, params, state) {
 }
 
 // An approval request -> the 'permission' event (claudeChat's fields + choices).
+// What a request adds beyond its command or changes: each is shown on the card.
+function requestExtras(p) {
+  const out = {}
+  for (const k of ['proposedExecpolicyAmendment', 'additionalPermissions', 'networkApprovalContext']) if (p[k] != null) out[k] = p[k]
+  return out
+}
+
 export function permissionFromCodexRequest(requestId, method, params, state) {
   const p = obj(params)
   const choices = Array.isArray(p.availableDecisions) && p.availableDecisions.length ? p.availableDecisions : DEFAULT_CHOICES
   const reason = str(p.reason)
   if (method === FILE_APPROVAL) {
     const changes = (state && state.fileChanges.get(p.itemId)) || []
+    // A new write root and unknown changes come first (JSON keeps this order);
+    // unknown changes wait for "Show all" (shared/chatApproval.js).
     return {
       requestId,
       toolName: 'Edit',
       displayName: 'Edit',
-      input: { file_path: changes.length ? changes[0].path : '', changes, ...(p.grantRoot ? { grantRoot: String(p.grantRoot) } : {}) },
+      input: {
+        ...(p.grantRoot ? { grantRoot: String(p.grantRoot) } : {}),
+        ...(changes.length ? {} : { changesUnknown: true }),
+        ...requestExtras(p),
+        file_path: changes.length ? changes[0].path : '',
+        changes
+      },
       description: reason,
       suggestions: [],
       choices,
@@ -431,12 +514,41 @@ export function permissionFromCodexRequest(requestId, method, params, state) {
     requestId,
     toolName: 'Bash',
     displayName: 'Bash',
-    input: commandInput(p.command, p.cwd, p.commandActions),
+    input: { ...commandInput(p.command, p.cwd, p.commandActions), ...requestExtras(p) },
     description: reason,
     suggestions: [],
     choices,
     toolUseId: typeof p.itemId === 'string' ? p.itemId : null,
     reason
+  }
+}
+
+// An MCP server asks (mcpServer/elicitation/request): a card when it only
+// needs a yes or no. A form to fill (required fields) or a URL to open is
+// declined: Tessel has no way to answer those.
+export function elicitationAnswerable(params) {
+  const p = obj(params)
+  if (p.mode != null && p.mode !== 'form') return false
+  const req = obj(p.requestedSchema).required
+  return !(Array.isArray(req) && req.length)
+}
+
+export function permissionFromElicitation(requestId, params) {
+  const p = obj(params)
+  const server = str(p.serverName) || 'mcp'
+  const message = str(p.message)
+  const schema = obj(p.requestedSchema)
+  const input = { server, message, ...(Object.keys(schema).length ? { requestedSchema: schema } : {}), ...(p._meta != null ? { meta: p._meta } : {}) }
+  return {
+    requestId,
+    toolName: 'MCP',
+    displayName: `MCP ${server}`,
+    input,
+    description: message,
+    suggestions: [],
+    choices: ['accept', 'decline'],
+    toolUseId: null,
+    reason: message
   }
 }
 
@@ -494,7 +606,9 @@ export function createCodexChat(opts) {
   let permN = 0
   let idleTimer = null
   const pending = new Map() // our requests: id -> { resolve, timer, method }
-  const approvals = new Map() // our permission id -> { rawId, choices }
+  const approvals = new Map() // our permission id -> { rawId, choices, turnId, kind }
+  const turnPosture = new Map() // turn id -> 'yolo' | 'manual' when its turn/start was sent
+  let postureFailed = false
   const permByRaw = new Map() // JSON of the server's request id -> our permission id
 
   function logAt(level, msg) {
@@ -566,25 +680,42 @@ export function createCodexChat(opts) {
     } else entry.resolve({ ok: true, result: m.result ?? null })
   }
 
+  const DECLINE_ELICITATION = { action: 'decline', content: null, _meta: null }
+
+  function addApproval(id, perm, params, kind) {
+    approvals.set(perm.requestId, { rawId: id, choices: perm.choices, turnId: str(params.turnId), kind })
+    permByRaw.set(JSON.stringify(id), perm.requestId)
+    emit('permission', perm)
+  }
+
   function onServerRequest(m) {
     const { id, method } = m
     const params = obj(m.params)
+    // Another thread's request (a sub-agent's) is not this chat's to allow.
+    const foreign = typeof params.threadId === 'string' && params.threadId !== state.threadId
     switch (method) {
       case COMMAND_APPROVAL:
       case FILE_APPROVAL: {
-        const permId = `codex_perm_${++permN}`
-        const perm = permissionFromCodexRequest(permId, method, params, state)
-        approvals.set(permId, { rawId: id, choices: perm.choices, turnId: str(params.turnId) })
-        permByRaw.set(JSON.stringify(id), permId)
-        emit('permission', perm)
+        if (foreign || approvals.size >= MAX_APPROVALS) {
+          logAt('warn', `${method} declined: ${foreign ? 'another thread' : 'too many pending approvals'}`)
+          return respond(id, { decision: 'decline' })
+        }
+        addApproval(id, permissionFromCodexRequest(`codex_perm_${++permN}`, method, params, state), params, 'decision')
+        return
+      }
+      case MCP_ELICITATION: {
+        // MCP tools run outside Codex's sandbox: asked like any approval.
+        if (foreign || approvals.size >= MAX_APPROVALS || !elicitationAnswerable(params)) {
+          logAt('info', `MCP elicitation declined (${foreign ? 'another thread' : approvals.size >= MAX_APPROVALS ? 'too many pending' : 'not a yes/no question'})`)
+          return respond(id, DECLINE_ELICITATION)
+        }
+        addApproval(id, permissionFromElicitation(`codex_perm_${++permN}`, params), params, 'elicitation')
         return
       }
       case 'item/tool/requestUserInput':
         // No question card yet: empty answers (the model goes on without them).
         logAt('info', 'requestUserInput answered with no answers')
         return respond(id, { answers: {} })
-      case 'mcpServer/elicitation/request':
-        return respond(id, { action: 'decline', content: null, _meta: null })
       case 'item/permissions/requestApproval':
         return respond(id, { permissions: {}, scope: 'turn', strictAutoReview: true })
       case 'item/tool/call':
@@ -602,11 +733,15 @@ export function createCodexChat(opts) {
     }
   }
 
-  function cancelPermissions(filter = () => true) {
+  const declineAnswer = (p) => (p.kind === 'elicitation' ? DECLINE_ELICITATION : { decision: 'decline' })
+
+  // decline: the server still waits on them (a turn ended): answered no.
+  function cancelPermissions(filter = () => true, { decline = false } = {}) {
     for (const [permId, p] of approvals) {
       if (!filter(p)) continue
       approvals.delete(permId)
       permByRaw.delete(JSON.stringify(p.rawId))
+      if (decline) respond(p.rawId, declineAnswer(p))
       emit('permissionCancelled', { requestId: permId })
     }
   }
@@ -637,13 +772,28 @@ export function createCodexChat(opts) {
   function dispatchEvents(events) {
     for (const ev of events) {
       const { type, ...payload } = ev
+      if (type === 'postureMismatch') {
+        postureMismatch(payload.reason)
+        continue
+      }
       if (type === 'turnEnd') {
         clearIdleTimer()
-        // The server stops waiting on a finished turn's approvals.
-        cancelPermissions()
+        // The finished turn's approvals only (answered no).
+        const ended = payload.turnId || ''
+        cancelPermissions((p) => p.turnId === ended, { decline: true })
       }
       emit(type, payload)
     }
+  }
+
+  // Codex reports a posture other than Manual's: the turn stops, the chat closes.
+  function postureMismatch(reason) {
+    if (postureFailed) return
+    postureFailed = true
+    logAt('error', `Manual posture not applied by Codex (${reason}): closing`)
+    emit('postureError', { reason })
+    interrupt().catch(() => {})
+    close({ kill: true }).catch(() => {})
   }
 
   function onNotification(m) {
@@ -671,15 +821,26 @@ export function createCodexChat(opts) {
     if (hasId) return onResponse(m)
   }
 
+  // Lines of JSON. Only the new text is searched for a line end; a line over
+  // MAX_LINE is dropped along with the rest of it, up to its line end.
   function attachStdout(stream) {
     let buf = ''
+    let discarding = false
     stream.setEncoding('utf8')
     stream.on('data', (d) => {
+      if (discarding) {
+        const j = d.indexOf('\n')
+        if (j < 0) return
+        d = d.slice(j + 1)
+        discarding = false
+      }
+      let scan = buf.length // the kept text has no line end
       buf += d
+      let from = 0
       let i
-      while ((i = buf.indexOf('\n')) >= 0) {
-        let line = buf.slice(0, i)
-        buf = buf.slice(i + 1)
+      while ((i = buf.indexOf('\n', scan)) >= 0) {
+        let line = buf.slice(from, i)
+        from = scan = i + 1
         if (line.endsWith('\r')) line = line.slice(0, -1)
         if (!line.trim()) continue
         let m
@@ -695,9 +856,11 @@ export function createCodexChat(opts) {
           logAt('error', `frame handling failed: ${err && err.message}`)
         }
       }
+      if (from) buf = buf.slice(from)
       if (buf.length > MAX_LINE) {
-        logAt('warn', `stdout line over ${MAX_LINE} bytes dropped`)
+        logAt('warn', `stdout line over ${MAX_LINE} characters dropped`)
         buf = ''
+        discarding = true
       }
     })
     stream.on('error', () => {})
@@ -846,6 +1009,16 @@ export function createCodexChat(opts) {
         await close()
         return { ok: false, code: 'failed', error: `codex app-server resumed ${threadId} instead of ${resumeId}` } // i18n-ignore internal
       }
+      if (permissions === 'manual') {
+        // What Codex applied, not what was asked: unverified is refused.
+        const problem = manualPostureProblem(res, { strict: true })
+        if (problem) {
+          logAt('error', `Manual posture not applied by Codex at start (${problem})`)
+          await close()
+          return { ok: false, code: 'posture', error: `Codex did not apply the Manual permissions: ${problem}` } // i18n-ignore code 'posture' is what the caller shows
+        }
+        state.postureCheck = true
+      }
       state.threadId = threadId
       if (typeof res.model === 'string' && res.model) state.model = res.model
       if (typeof thread.cliVersion === 'string') state.cliVersion = thread.cliVersion
@@ -863,7 +1036,7 @@ export function createCodexChat(opts) {
           reasoningEffort: typeof res.reasoningEffort === 'string' ? res.reasoningEffort : null,
           serviceTier: typeof res.serviceTier === 'string' ? res.serviceTier : null,
           approvalPolicy: res.approvalPolicy ?? null,
-          sandbox: res.sandbox && typeof res.sandbox === 'object' ? str(res.sandbox.type) || null : null,
+          sandbox: sandboxKind(res.sandbox != null ? res.sandbox : res.sandboxPolicy),
           cliVersion: state.cliVersion,
           rolloutPath: typeof thread.path === 'string' ? thread.path : null,
           historyMode: typeof thread.historyMode === 'string' ? thread.historyMode : null,
@@ -895,13 +1068,16 @@ export function createCodexChat(opts) {
   // A user message. Resolves once Codex has taken it (turn/start or
   // turn/steer answered); delivery shows as 'accepted' for this uuid.
   async function send({ uuid, text } = {}) {
-    if (!ready || !alive()) return { ok: false, error: 'not running' } // i18n-ignore internal
+    if (!ready || !alive() || postureFailed) return { ok: false, error: 'not running' } // i18n-ignore internal
     if (typeof text !== 'string' || !text.trim()) return { ok: false, error: 'empty' }
     const id = typeof uuid === 'string' && uuid ? uuid : randomUUID()
     state.sent.add(id) // before the write: the echo can beat the answer
     const input = [{ type: 'text', text, text_elements: [] }]
     const open = state.turn && !state.turn.settled && state.turn.id ? state.turn : null
-    if (open) {
+    // A turn started under another posture is not joined: a new turn/start
+    // carries the current one.
+    if (open && turnPosture.get(open.id) !== permissions) logAt('info', `turn ${open.id} started under another posture: new turn`)
+    else if (open) {
       // Mid-turn (the manager normally waits): joins the running turn.
       const r = await request('turn/steer', { threadId: state.threadId, expectedTurnId: open.id, clientUserMessageId: id, input })
       if (r.ok) {
@@ -914,6 +1090,8 @@ export function createCodexChat(opts) {
       }
       logAt('info', `turn/steer refused (${r.error}): new turn`)
     }
+    const posture = permissions
+    if (posture === 'manual') state.postureCheck = true
     const r = await request('turn/start', turnParams(id, input))
     if (!r.ok) {
       state.sent.delete(id)
@@ -921,6 +1099,10 @@ export function createCodexChat(opts) {
       return { ok: false, error: r.error }
     }
     const turnId = str(obj(obj(r.result).turn).id)
+    if (turnId && !turnPosture.has(turnId)) {
+      turnPosture.set(turnId, posture)
+      if (turnPosture.size > SETTLED_KEEP) turnPosture.delete(turnPosture.keys().next().value)
+    }
     // The answer can come before turn/started: the turn is known from here.
     if (turnId && !state.settledTurns.has(turnId) && (!state.turn || state.turn.settled || state.turn.id !== turnId)) newTurn(state, turnId)
     queued(id)
@@ -947,6 +1129,11 @@ export function createCodexChat(opts) {
     // Forget first: a second answer finds nothing rather than replying twice.
     approvals.delete(requestId)
     permByRaw.delete(JSON.stringify(p.rawId))
+    if (p.kind === 'elicitation') {
+      const action = value === 'decline' ? 'decline' : 'accept'
+      const sent = await respond(p.rawId, action === 'accept' ? { action, content: {}, _meta: null } : DECLINE_ELICITATION)
+      return sent ? { ok: true, decision: action } : { ok: false, error: 'stdin closed' } // i18n-ignore internal
+    }
     const ok = await respond(p.rawId, { decision: value })
     return ok ? { ok: true, decision: value } : { ok: false, error: 'stdin closed' } // i18n-ignore internal
   }
@@ -966,18 +1153,51 @@ export function createCodexChat(opts) {
   }
 
   // claudeChat's modes: bypassPermissions = yolo, anything else = manual.
-  function setPermissionMode(mode) {
-    if (!PERMISSION_MODES.includes(mode)) return Promise.resolve({ ok: false, error: 'bad mode' })
+  // Applied with the next turn/start; a turn running without prompts is
+  // interrupted when Manual is chosen.
+  async function setPermissionMode(mode) {
+    if (!PERMISSION_MODES.includes(mode)) return { ok: false, error: 'bad mode' }
+    const before = permissions
     permissions = mode === 'bypassPermissions' ? 'yolo' : 'manual'
     state.permissionMode = permissions === 'yolo' ? 'bypassPermissions' : 'default'
-    return Promise.resolve({ ok: true, response: { mode: state.permissionMode } })
+    // Checked again from the next turn/start sent under Manual.
+    if (before !== permissions) state.postureCheck = false
+    const open = state.turn && !state.turn.settled && state.turn.id ? state.turn : null
+    if (permissions === 'manual' && open && turnPosture.get(open.id) !== 'manual' && alive()) {
+      const r = await interrupt()
+      return { ok: true, response: { mode: state.permissionMode }, interrupted: !!r.ok }
+    }
+    return { ok: true, response: { mode: state.permissionMode } }
   }
 
-  // End stdin (app-server exits by itself), else kill the tree after timeouts.close.
-  async function close() {
+  async function killNow() {
+    try {
+      await killTree(child)
+    } catch (err) {
+      logAt('error', `tree kill failed: ${err && err.message}`)
+      try {
+        child.kill()
+      } catch {
+        /* gone */
+      }
+    }
+  }
+
+  // End stdin (app-server exits by itself), else kill the tree after
+  // timeouts.close. kill (Tessel quits): the tree is killed at once and the
+  // wait for its exit is bounded (timeouts.quitKill) so quitting never hangs.
+  async function close({ kill = false } = {}) {
     closing = true
     if (!child || finished) return { ok: true }
     const done = new Promise((resolve) => (finished ? resolve() : chat.once('exit', resolve)))
+    if (kill) {
+      logAt('info', 'killing the tree')
+      await killNow()
+      let t
+      await Promise.race([done, new Promise((r) => (t = setTimeout(r, timeouts.quitKill)))])
+      clearTimeout(t)
+      return { ok: true, killed: true }
+    }
     try {
       if (child.stdin && !child.stdin.writableEnded) child.stdin.end()
     } catch {
@@ -988,16 +1208,7 @@ export function createCodexChat(opts) {
     clearTimeout(timer)
     if (timedOut) {
       logAt('warn', `no exit ${timeouts.close} ms after stdin end, killing the tree`)
-      try {
-        await killTree(child)
-      } catch (err) {
-        logAt('error', `tree kill failed: ${err && err.message}`)
-        try {
-          child.kill()
-        } catch {
-          /* gone */
-        }
-      }
+      await killNow()
       await done
     }
     return { ok: true, killed: timedOut }
