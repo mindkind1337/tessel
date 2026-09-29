@@ -257,4 +257,41 @@ describe('left sidebar', () => {
     expect(w.findAll('[data-agent-child]')).toHaveLength(0)
     w.unmount()
   })
+
+  it("lists a Codex session's sub-agents too, each with its type and model as tags, and both in its hover card", async () => {
+    const now = Date.now()
+    const asked = []
+    window.shellApi = {
+      agentChildren: async (q) => {
+        asked.push(q)
+        return [
+          { id: 'x1', type: 'explorer', title: 'cli_research (Boole)', state: 'running', startedAt: now - 5000, model: 'gpt-6-astra', tokens: 4200 },
+          { id: 'x2', type: 'default', title: 'accounts_ui (Hubble)', state: 'done', startedAt: now - 90000, endedAt: now - 30000 },
+          { id: 'x3', type: 'Explore', title: 'Claude-made', state: 'running', startedAt: now - 1000, model: 'claude-opus-5-5' }
+        ]
+      }
+    }
+    settings.agentActivityDisplayMode = 'full'
+    const w = mountSidebar({
+      projects: [{ ...projects()[0], copies: [], panes: [pane('x', { agentId: 'codex', title: 'Codex', sessionId: 'sess-x', accountId: 'acc-1' })] }]
+    })
+    await flushPromises()
+    expect(asked[0]).toEqual({ agent: 'codex', sessionId: 'sess-x', accountId: 'acc-1' })
+    const kids = w.findAll('[data-agent-child]')
+    expect(kids.map((k) => k.find('.car-lead').text())).toEqual(['Claude-made', 'cli_research (Boole)', 'accounts_ui (Hubble)'])
+    // The type is a tag of its own, not a cut " - general-pu…" trail.
+    expect(kids.map((k) => k.find('[data-child-type]').text())).toEqual(['Explore', 'explorer', 'default'])
+    expect(kids[0].find('.car-trail').exists()).toBe(false)
+    expect(kids[0].find('[data-child-model]').text()).toBe('Opus 5.5')
+    expect(kids[1].find('[data-child-model]').text()).toBe('gpt-6-astra')
+    expect(kids[2].find('[data-child-model]').exists()).toBe(false)
+    await kids[0].trigger('pointerover')
+    await new Promise((r) => setTimeout(r, 320))
+    await flushPromises()
+    const card = document.querySelector('[data-agent-child-hover]')
+    expect(card).not.toBeNull()
+    expect(card.querySelector('[data-hover-type]').textContent).toBe('Type: Explore')
+    expect(card.querySelector('[data-hover-model]').textContent).toBe('Model: Opus 5.5')
+    w.unmount()
+  })
 })

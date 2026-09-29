@@ -150,4 +150,22 @@ describe('sub-agents chip', () => {
     w.unmount()
     expect(w.emitted('running').at(-1)[0]).toBe(0)
   })
+
+  it('a Codex pane asks for its sub-agents too (its account), shows type and model tags and counts as working', async () => {
+    const w = mountChip({ agentId: 'codex', sessionId: 'T', accountId: 'acc' })
+    await flushPromises()
+    expect(requests[0].q).toEqual({ agent: 'codex', sessionId: 'T', accountId: 'acc' })
+    requests[0].resolve([{ id: 'x', type: 'explorer', title: 'cli_research (Boole)', state: 'running', startedAt: Date.now(), model: 'gpt-6-astra' }])
+    await flushPromises()
+    expect(w.emitted('running').at(-1)[0]).toBe(1)
+    await w.find('[data-test="agent-children"]').trigger('click')
+    expect(w.find('.agent-child-type').text()).toBe('explorer')
+    expect(w.find('.agent-child-model').text()).toBe('gpt-6-astra')
+    w.unmount()
+    // Agents with no sub-agent records ask nothing.
+    const g = mountChip({ agentId: 'gemini', sessionId: 'G' })
+    await flushPromises()
+    expect(requests.some((r) => r.q.agent === 'gemini')).toBe(false)
+    g.unmount()
+  })
 })

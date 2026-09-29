@@ -5,7 +5,8 @@ import { join } from 'path'
 import { claudeSessionExists, findCodexSession, listSessions } from './agentSessions'
 import { findAgentSession } from './agentResume'
 import { claudeSessionTitle, codexSessionTitle } from './sessionTitle'
-import { claudeSubagents } from './agentChildren'
+import { claudeSubagents, codexSubagents, opencodeSubagents, clineSubagents } from './agentChildren'
+import { clineDataDir } from './jsonAgents'
 
 export function createAccountSessions({ accounts, home = os.homedir(), env = process.env }) {
   const root = (provider, result) =>
@@ -19,13 +20,19 @@ export function createAccountSessions({ accounts, home = os.homedir(), env = pro
   }
   return {
     find,
-    // The sub-agents a Claude Code conversation started (agentChildren.js),
-    // read in the home it came from.
+    // The sub-agents a Claude Code or Codex conversation started
+    // (agentChildren.js), read in the home it came from (a Codex pane's
+    // account CODEX_HOME).
     async children({ agent, sessionId, accountId } = {}) {
-      if (agent !== 'claude') return []
-      const scope = await accounts.sessionEnv('claude', accountId)
+      // OpenCode and Cline: one shared data folder (no managed logins).
+      if (agent === 'opencode') return opencodeSubagents(sessionId, env.XDG_DATA_HOME || join(home, '.local', 'share'))
+      if (agent === 'cline') return clineSubagents(sessionId, clineDataDir(home))
+      if (agent !== 'claude' && agent !== 'codex') return []
+      const scope = await accounts.sessionEnv(agent, accountId)
       if (!scope.ok) return []
-      return claudeSubagents(sessionId, root('claude', scope))
+      return agent === 'claude'
+        ? claudeSubagents(sessionId, root('claude', scope))
+        : codexSubagents(sessionId, root('codex', scope))
     },
     // The conversation's own title, read in the home it came from.
     async title({ agent, sessionId, accountId } = {}) {

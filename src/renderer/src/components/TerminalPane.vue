@@ -42,6 +42,7 @@ import { isViewed } from '../../../shared/fileKinds'
 import { effectiveAgent, launchSignature } from '../../../shared/agentPrefs'
 import { paneModels } from '../paneModels'
 import AgentChildren from './AgentChildren.vue'
+import { listsChildren } from '../agentChildrenFeed'
 import HoverCardContent from './hover/HoverCardContent.vue'
 import PaneHoverDetails from './PaneHoverDetails.vue'
 import { useHoverCard } from './hover/useHoverCard'
@@ -1888,7 +1889,7 @@ onBeforeUnmount(() => {
         </label>
         <!-- sub-agents: a compact count; click for the list -->
         <AgentChildren
-          v-if="isAgent && node.agentId === 'claude' && node.sessionId && !node.sleeping"
+          v-if="isAgent && listsChildren(node.agentId) && node.sessionId && !node.sleeping"
           :agent-id="node.agentId"
           :session-id="node.sessionId"
           :account-id="node.accountId"

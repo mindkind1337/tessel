@@ -1,12 +1,15 @@
 <script setup>
 // The sub-agents a Claude Code pane's conversation started (its Task / Agent
-// tool), like Claude Code's own list: each one's kind, title, time and
+// tool; a Codex pane's spawn_agent threads), like Claude Code's own list:
+// each one's kind (a tag), model, title, time and
 // tokens, running ones first. A compact indicator in the pane header (a
 // count, like Orca's); click for the list. The list opens in the page's top
 // layer (teleported to <body>, placed next to the indicator and kept inside
 // the window), so it is never hidden under a neighbouring pane or clipped.
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { childTime, formatTokens, childrenSummary } from '../agentChildrenView'
+import { listsChildren } from '../agentChildrenFeed'
+import { modelLabel } from '../../../shared/modelLabel'
 import { t } from '../i18n'
 
 const props = defineProps({
@@ -39,7 +42,7 @@ async function refresh() {
     list.value = []
   }
   const my = ++seq
-  if (props.agentId !== 'claude' || !props.sessionId || !window.shellApi.agentChildren) {
+  if (!listsChildren(props.agentId) || !props.sessionId || !window.shellApi.agentChildren) {
     list.value = []
     return
   }
@@ -222,7 +225,8 @@ function stateTitle(state) {
         <div class="agent-children-head">{{ t('pane.subAgents.title', 'Sub-agents') }} ({{ list.length }})</div>
         <div v-for="c in rows" :key="c.id" class="agent-child" :class="c.state" role="listitem">
           <span class="agent-child-mark" :title="stateTitle(c.state)">{{ MARK[c.state] || '·' }}</span>
-          <span class="agent-child-type">{{ c.type }}</span>
+          <span class="agent-child-type" :title="t('pane.subAgents.typeTitle', 'Sub-agent type: {{type}}', { type: c.type })">{{ c.type }}</span>
+          <span v-if="c.model" class="agent-child-model" :title="t('pane.subAgents.modelTitle', 'Model: {{model}}', { model: c.model })">{{ modelLabel(c.model) }}</span>
           <span class="agent-child-title" :title="c.title">{{ c.title || t('sidebar.agentRow.noTitle', '(no title)') }}</span>
           <span class="agent-child-stats">{{ childTime(c, now) }}<template v-if="formatTokens(c.tokens)"> · ↓ {{ tokensLabel(c.tokens) }}</template></span>
         </div>

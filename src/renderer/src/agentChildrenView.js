@@ -1,6 +1,12 @@
 // How a pane shows its agent's sub-agents (Claude Code's own list style):
 // "7m 57s · ↓ 105.8k tokens".
 
+// The agents whose sub-agents Tessel reads from their own files: Claude Code
+// (projects/<p>/<session>/subagents), Codex (spawned threads' rollouts),
+// OpenCode and Cline (child sessions in their databases).
+export const CHILD_AGENTS = ['claude', 'codex', 'opencode', 'cline']
+export const listsChildren = (agent) => CHILD_AGENTS.includes(agent)
+
 export function formatElapsed(ms) {
   const s = Math.max(0, Math.floor(ms / 1000))
   const h = Math.floor(s / 3600)

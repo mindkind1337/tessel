@@ -116,7 +116,9 @@
       "toolsDownHint": "Ses outils d'équipe (tessel-team) ne sont pas connectés : il ne peut ni lire ni envoyer de messages d'équipe. Redémarrez-le (clic droit sur son panneau, Redémarrer).",
       "toolsDown": "outils",
       "subAgentsOf": "Sous-agents de {{name}}",
-      "showLess": "Afficher moins"
+      "showLess": "Afficher moins",
+      "childType": "Type : {{type}}",
+      "childModel": "Modèle : {{model}}"
     },
     "card": {
       "markReadTooltip": "Marquer comme lu · {{status}}",
@@ -336,7 +338,9 @@
       "chipTitle": "Sous-agents lancés par cette conversation : {{list}}. Cliquez pour voir la liste",
       "none": "aucun",
       "tokens": "{{tokens}}",
-      "title": "Sous-agents"
+      "title": "Sous-agents",
+      "typeTitle": "Type de sous-agent : {{type}}",
+      "modelTitle": "Modèle : {{model}}"
     },
     "launch": {
       "left": "Gauche",

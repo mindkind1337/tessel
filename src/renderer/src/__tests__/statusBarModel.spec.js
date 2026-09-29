@@ -191,7 +191,11 @@ describe('sub-agents feed', () => {
     resolve([{ id: 'x', state: 'running' }])
     await Promise.resolve()
     expect(a.state.list).toEqual([])
-    expect(acquireChildren({ agent: 'codex', sessionId: 'S1' }, { api: { agentChildren }, doc })).toBeNull()
+    expect(acquireChildren({ agent: 'gemini', sessionId: 'S1' }, { api: { agentChildren }, doc })).toBeNull()
+    const codex = acquireChildren({ agent: 'codex', sessionId: 'S1', accountId: 'acc' }, { api: { agentChildren }, doc })
+    expect(codex).not.toBeNull()
+    expect(agentChildren).toHaveBeenLastCalledWith({ agent: 'codex', sessionId: 'S1', accountId: 'acc' })
+    codex.release()
   })
 
   it('folds children finished over 30 min ago under "N more"', () => {
