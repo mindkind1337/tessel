@@ -67,6 +67,24 @@ async function waitFor(fn, ms = 5000, label = 'condition') {
 }
 const ofType = (events, type) => events.filter((e) => e.type === type)
 const turnEnds = (events) => ofType(events, 'turnEnd')
+
+describe('Codex skill catalog', () => {
+  it('starts with no invented commands and queries skills/list on demand', async () => {
+    const { chat, events, requests, dir } = setup()
+    expect((await chat.start()).ok).toBe(true)
+    expect(ofType(events, 'commands')).toEqual([{ type: 'commands', commands: [] }])
+    expect(requests('skills/list')).toEqual([])
+    const result = await chat.skills({ refresh: true })
+    expect(result).toMatchObject({ ok: true, result: { skills: [expect.objectContaining({ name: 'review', providers: ['codex'], installed: true })] } })
+    expect(requests('skills/list')[0].params).toEqual({ cwds: [dir], forceReload: true })
+  })
+  it.each(['skills-unavailable', 'skills-timeout'])('keeps the session usable when discovery is %s', async mode => {
+    const { chat } = setup({ env: mode === 'skills-timeout' ? { FAKE_CODEX_IGNORE: 'skills/list' } : { FAKE_CODEX_MODE: mode }, timeouts: { catalog: 25 } })
+    expect((await chat.start()).ok).toBe(true)
+    expect(await chat.skills()).toEqual({ ok: false })
+    expect(chat.running).toBe(true)
+  })
+})
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 const YOLO = { approvalPolicy: 'never', sandbox: 'danger-full-access' }

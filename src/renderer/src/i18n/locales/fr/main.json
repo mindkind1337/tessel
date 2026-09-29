@@ -706,6 +706,11 @@
       "hook": "hook : {{name}}"
     },
     "chat": {
+      "skillsSourceHome": "Comp?tences utilisateur",
+      "skillsSourceRepo": "Comp?tences du projet",
+      "skillsSourceBundled": "Comp?tences int?gr?es",
+      "skillsSourcePlugin": "Comp?tences des extensions",
+      "skillsUnavailable": "La liste des comp?tences est indisponible.",
       "answerFailed": "La réponse n'a pas pu être envoyée.",
       "authError": "Claude n'est pas connecté (ou sa connexion a expiré). Connectez-vous, puis rouvrez ce chat.",
       "busy": "Ce chat est encore en train de se fermer.",

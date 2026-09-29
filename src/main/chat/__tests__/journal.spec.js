@@ -12,6 +12,18 @@ beforeEach(() => {
 afterEach(() => fs.rmSync(tmp, { recursive: true, force: true }))
 
 describe('chat journal', () => {
+  it('preserves the latest full command snapshot after journal rotation and restart', () => {
+    const j = createChatJournal({ dir: tmp, paneId: 'p1', rotateBytes: 150 })
+    const commands = [{ name: 'review', kind: 'skill', description: 'Inspect' }]
+    j.append(1, { type: 'commands', commands })
+    for (let i = 2; i < 20; i++) j.append(i, { type: 'assistant', messageId: String(i), text: 'x'.repeat(100) })
+    expect(j.read().some(row => row.event.type === 'commands')).toBe(false)
+    const reopened = createChatJournal({ dir: tmp, paneId: 'p1' })
+    expect(reopened.readCommands()).toEqual(commands)
+    reopened.append(20, { type: 'commands', commands: [] })
+    expect(reopened.readCommands()).toEqual([])
+  })
+
   it('appends and reads back events with their seq, skipping deltas', () => {
     const j = createChatJournal({ dir: tmp, paneId: 'p1', now: () => 7 })
     j.append(1, { type: 'user', id: 'u', text: 'hi' })
