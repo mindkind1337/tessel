@@ -112,7 +112,9 @@ describe('t()', () => {
   })
 })
 
-describe('nothing is forgotten', () => {
+// These read and parse every source file: on a loaded machine that can take
+// longer than the default 5 s; what they check does not depend on time.
+describe('nothing is forgotten', { timeout: 30_000 }, () => {
   const files = rendererFiles(root)
 
   it('every file without the i18n-pending mark shows no text outside t()', () => {
