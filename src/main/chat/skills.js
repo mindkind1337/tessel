@@ -140,9 +140,11 @@ export async function discoverClaudeSkills({
     }
     let handle
     try {
-      const stat = await io.lstat(file)
+      // Windows file ids can exceed Number's exact integer range. Preserve the
+      // filesystem's bits before comparing the path with the opened handle.
+      const stat = await io.lstat(file, { bigint: true })
       if (!active()) return
-      if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink > 1) {
+      if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink > 1n) {
         source.skippedReason = 'unavailable'
         return
       }
@@ -157,13 +159,13 @@ export async function discoverClaudeSkills({
           (constants.O_NOFOLLOW || 0) |
           (process.platform === 'win32' ? 0 : constants.O_NONBLOCK || 0)
       )
-      const opened = await handle.stat()
+      const opened = await handle.stat({ bigint: true })
       if (
         !opened.isFile() ||
         opened.size > cap.bytes ||
         opened.dev !== stat.dev ||
         opened.ino !== stat.ino ||
-        opened.nlink > 1 ||
+        opened.nlink > 1n ||
         !active()
       ) {
         source.skippedReason = 'unavailable'
@@ -191,7 +193,8 @@ export async function discoverClaudeSkills({
         directoryPath: path.dirname(file),
         skillFilePath: file,
         installed: true,
-        updatedAt: Number.isFinite(opened.mtimeMs) ? opened.mtimeMs : null
+        // Only display metadata becomes a Number; identity stays bigint.
+        updatedAt: Number.isFinite(Number(opened.mtimeMs)) ? Number(opened.mtimeMs) : null
       })
     } catch (error) {
       if (error.code !== 'ENOENT') source.skippedReason = 'unavailable'
