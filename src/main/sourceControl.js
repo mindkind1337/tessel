@@ -61,28 +61,6 @@ export function relIn(top, p) {
   return parts.join('/')
 }
 
-function relList(top, paths) {
-  const list = Array.isArray(paths) ? paths : [paths]
-  if (!list.length || list.length > 5000) return { error: t('main.scm.noFile', 'No file.') }
-  const out = []
-  for (const p of list) {
-    const r = relIn(top, p)
-    if (!r) return { error: t('main.scm.notRepoFileNamed', '"{{path}}" is not a file of this repository.', { path: String(p).slice(0, 200) }) }
-    if (!out.includes(r)) out.push(r)
-  }
-  return { rels: out }
-}
-
-const literal = (rel) => `:(literal)${rel}`
-
-async function inChunks(top, base, rels) {
-  for (let i = 0; i < rels.length; i += BULK) {
-    const res = await git(top, [...base, '--', ...rels.slice(i, i + BULK).map(literal)])
-    if (!res.ok) return res
-  }
-  return { ok: true }
-}
-
 // --- Status ----------------------------------------------------------------------
 const LETTER = { M: 'modified', T: 'modified', A: 'added', D: 'deleted', R: 'renamed', C: 'copied' }
 
@@ -195,7 +173,6 @@ function operationOf(dir) {
   if (has('CHERRY_PICK_HEAD')) return 'cherry-pick'
   return null
 }
-
 // --- Line counts of untracked files (Orca's git-uncommitted-line-stats.ts) ------------
 // git diff ignores untracked files, so their lines are counted from the file
 // itself: bounded (at most 2 MB read per file, 8 at a time, 2,000 files and
@@ -268,180 +245,13 @@ export async function collectUntrackedAdditions(top, rels) {
   return out
 }
 
-// Everything the Changes tab shows about a folder's repository.
-// -> { ok, repo, top, branch, detached, upstream, hasUpstream, ahead, behind,
-//      hasCommits, operation, remotes, entries } | { ok: true, repo: false } | { ok: false, error }
-export async function scmStatus({ root } = {}) {
-  const r = await repoOf(root)
-  if (r.notRepo) return { ok: true, repo: false }
-  if (r.error) return { ok: false, error: r.error }
-  const top = r.top
-  const [st, un, stg, dir, remotes] = await Promise.all([
-    git(top, ['status', '--porcelain=v2', '--branch', '-z', '--untracked-files=all'], { timeout: 20000 }),
-    git(top, ['diff', '--numstat', '-z', '--no-ext-diff']),
-    git(top, ['diff', '--cached', '--numstat', '-z', '--no-ext-diff']),
-    gitDir(top),
-    git(top, ['remote'])
-  ])
-  if (!st.ok) return { ok: false, error: gitMessage(st, t('main.scm.statusFailed', 'Git status failed.')) }
-  const info = parseStatusV2(st.stdout)
-  const counts = { unstaged: un.ok ? parseNumstatZ(un.stdout) : {}, staged: stg.ok ? parseNumstatZ(stg.stdout) : {} }
-  const untracked = await collectUntrackedAdditions(
-    top,
-    info.entries.filter((e) => e.area === 'untracked').map((e) => e.path)
-  )
-  const entries = info.entries.map((e) => {
-    if (e.area === 'untracked') {
-      const u = untracked.get(e.path)
-      return u && typeof u.added === 'number' ? { ...e, added: u.added, removed: 0 } : e
-    }
-    const c = counts[e.area] && counts[e.area][e.path]
-    return c ? { ...e, added: c.added, removed: c.removed, binary: c.binary } : e
-  })
-  return {
-    ok: true,
-    repo: true,
-    top,
-    branch: info.branch,
-    detached: !info.branch,
-    head: info.oid,
-    hasCommits: !!info.oid,
-    upstream: info.upstream,
-    hasUpstream: !!info.upstream,
-    ahead: info.ahead,
-    behind: info.behind,
-    operation: operationOf(dir),
-    remotes: remotes.ok ? remotes.stdout.split(/\r?\n/).map((s) => s.trim()).filter(Boolean) : [],
-    entries
-  }
-}
-
-// --- Stage, unstage, discard ----------------------------------------------------------
-export async function scmStage({ root, paths } = {}) {
-  const r = await repoOf(root)
-  if (r.error) return { ok: false, error: r.error }
-  const l = relList(r.top, paths)
-  if (l.error) return { ok: false, error: l.error }
-  // -A: a file deleted on disk is staged as deleted too.
-  const res = await inChunks(r.top, ['add', '-A'], l.rels)
-  return res.ok ? { ok: true } : { ok: false, error: gitMessage(res, t('main.scm.addFailed', 'git add failed.')) }
-}
-
-export async function scmUnstage({ root, paths } = {}) {
-  const r = await repoOf(root)
-  if (r.error) return { ok: false, error: r.error }
-  const l = relList(r.top, paths)
-  if (l.error) return { ok: false, error: l.error }
-  const head = await git(r.top, ['rev-parse', '--verify', '--quiet', 'HEAD'])
-  // No commit yet: there is nothing to restore from, the files leave the index.
-  const res = head.ok
-    ? await inChunks(r.top, ['restore', '--staged'], l.rels)
-    : await inChunks(r.top, ['rm', '--cached', '-r', '--quiet'], l.rels)
-  return res.ok ? { ok: true } : { ok: false, error: gitMessage(res, t('main.scm.unstageFailed', 'Unstage failed.')) }
-}
-
 function insideReal(topReal, p) {
   const rel = relative(topReal, p)
   return !!rel && !rel.startsWith('..') && !isAbsolute(rel)
 }
 
-// Discard the changes of files not staged. A tracked file gets back its staged
-// (index) version, so what was staged is kept; an untracked file goes to the
-// Recycle Bin (trashItem), never deleted for good. Files with a conflict are
-// refused (Orca hides Discard on them: it could lose the resolution).
-// trashItem(fullPath) -> Promise.
-export async function scmDiscard({ root, paths } = {}, trashItem) {
-  const r = await repoOf(root)
-  if (r.error) return { ok: false, error: r.error }
-  const l = relList(r.top, paths)
-  if (l.error) return { ok: false, error: l.error }
-  const st = await git(r.top, ['status', '--porcelain=v2', '-z', '--untracked-files=all'])
-  if (!st.ok) return { ok: false, error: gitMessage(st, t('main.scm.statusFailed', 'Git status failed.')) }
-  const entries = parseStatusV2(st.stdout).entries
-  const tracked = []
-  const untracked = []
-  for (const rel of l.rels) {
-    const mine = entries.filter((e) => e.path === rel)
-    if (mine.some((e) => e.conflict)) return { ok: false, error: t('main.scm.hasConflict', '{{path}} has a conflict: resolve it first.', { path: rel }) }
-    if (mine.some((e) => e.area === 'untracked')) untracked.push(rel)
-    else if (mine.some((e) => e.area === 'unstaged')) tracked.push(rel)
-    // Nothing to discard for it (already clean, or only staged): skipped.
-  }
-  if (untracked.length && typeof trashItem !== 'function') return { ok: false, error: t('main.scm.noRecycleBin', 'The Recycle Bin is not available.') }
-  let topReal
-  try {
-    topReal = fs.realpathSync(r.top)
-  } catch {
-    return { ok: false, error: t('main.scm.repoUnreadable', 'The repository folder could not be read.') }
-  }
-  // Every untracked path is checked before anything is moved.
-  const targets = []
-  for (const rel of untracked) {
-    const full = join(r.top, ...rel.split('/'))
-    let real
-    try {
-      real = fs.realpathSync(full)
-    } catch {
-      continue // already gone
-    }
-    if (!insideReal(topReal, real)) return { ok: false, error: t('main.scm.outsideRepo', '{{path}} resolves outside the repository.', { path: rel }) }
-    targets.push(full)
-  }
-  if (tracked.length) {
-    const res = await inChunks(r.top, ['restore', '--worktree'], tracked)
-    if (!res.ok) return { ok: false, error: gitMessage(res, t('main.scm.discardFailed', 'Discard failed.')) }
-  }
-  let trashed = 0
-  for (const full of targets) {
-    try {
-      await trashItem(full)
-      trashed++
-    } catch (err) {
-      return {
-        ok: false,
-        error: t('main.scm.trashFailed', 'Could not move {{path}} to the Recycle Bin: {{error}}', { path: relative(r.top, full), error: (err && err.message) || err }),
-        restored: tracked.length,
-        trashed
-      }
-    }
-  }
-  return { ok: true, restored: tracked.length, trashed }
-}
-
-// --- Commit ---------------------------------------------------------------------
-// Commits what is staged (like Orca: the Commit button needs staged files).
-export async function scmCommit({ root, message } = {}) {
-  const r = await repoOf(root)
-  if (r.error) return { ok: false, error: r.error }
-  const msg = String(message || '')
-    .replace(/\r/g, '')
-    .replace(/\0/g, '')
-    .trim()
-    .slice(0, MAX_MESSAGE)
-  if (!msg) return { ok: false, error: t('main.scm.noMessage', 'Enter a commit message to commit.') }
-  const staged = await git(r.top, ['diff', '--cached', '--quiet'])
-  if (staged.ok) return { ok: false, error: t('main.scm.nothingStaged', 'Stage at least one file to commit.') }
-  const res = await git(r.top, ['commit', '-m', msg], { timeout: 180000 })
-  if (!res.ok) {
-    if (identityError(res))
-      return { ok: false, error: t('main.scm.noGitName', 'Git does not know your name yet (Tools > Git > Set name & email), then commit again.') }
-    return { ok: false, error: gitMessage(res, t('main.scm.commitFailed', 'Commit failed.')) }
-  }
-  const sha = await git(r.top, ['rev-parse', 'HEAD'])
-  return { ok: true, sha: sha.stdout.trim() }
-}
-
 // --- Remote ---------------------------------------------------------------------
 const NAME_RE = /^(?!-)[^\0\s~^:?*[\\]{1,200}$/
-
-async function currentBranch(top) {
-  const res = await git(top, ['symbolic-ref', '--quiet', '--short', 'HEAD'])
-  return res.ok ? res.stdout.trim() : null
-}
-async function config(top, key) {
-  const res = await git(top, ['config', '--get', key])
-  return res.ok ? res.stdout.trim() : ''
-}
 
 function remoteError(res, op) {
   const text = `${res.stderr || ''}\n${res.stdout || ''}`
@@ -458,55 +268,6 @@ function remoteError(res, op) {
   return gitMessage(res, t('main.scm.gitOpFailed', 'git {{op}} failed.', { op }))
 }
 
-// Push to the branch's upstream; without one, publish it to origin (or its
-// configured remote) and set the upstream, like Orca's gitPush. Never forced.
-export async function scmPush({ root } = {}) {
-  const r = await repoOf(root)
-  if (r.error) return { ok: false, error: r.error }
-  const branch = await currentBranch(r.top)
-  if (!branch) return { ok: false, error: t('main.scm.pushNoBranch', 'Check out a branch before pushing commits.') }
-  const remote = (await config(r.top, `branch.${branch}.remote`)) || 'origin'
-  if (!NAME_RE.test(remote) || remote === '.')
-    return { ok: false, error: t('main.scm.unusualRemote', 'The branch pushes to an unusual remote: push it from a terminal.') }
-  const url = await git(r.top, ['remote', 'get-url', remote])
-  if (!url.ok) return { ok: false, error: t('main.scm.noRemote', 'This repository has no remote named {{remote}}.', { remote }) }
-  const merge = (await config(r.top, `branch.${branch}.merge`)).replace(/^refs\/heads\//, '')
-  const target = merge && NAME_RE.test(merge) ? merge : branch
-  if (!NAME_RE.test(branch) || !NAME_RE.test(target))
-    return { ok: false, error: t('main.scm.unusualBranch', 'Unusual branch name: push it from a terminal.') }
-  const res = await git(r.top, ['push', '--set-upstream', remote, `HEAD:refs/heads/${target}`], { timeout: 180000 })
-  if (!res.ok) return { ok: false, error: remoteError(res, 'push') }
-  return { ok: true, remote, branch: target }
-}
-
-// Pull with the user's own pull settings (merge by default), like Orca's gitPull.
-export async function scmPull({ root, ffOnly = false } = {}) {
-  const r = await repoOf(root)
-  if (r.error) return { ok: false, error: r.error }
-  const branch = await currentBranch(r.top)
-  if (!branch) return { ok: false, error: t('main.scm.pullNoBranch', 'Check out a branch before pulling commits.') }
-  const up = await git(r.top, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'])
-  if (!up.ok) return { ok: false, error: t('main.scm.pullNoUpstream', 'Publish the branch first to pull commits.') }
-  const res = await git(r.top, ['pull', ...(ffOnly ? ['--ff-only'] : ['--no-edit'])], { timeout: 180000 })
-  if (!res.ok) return { ok: false, error: remoteError(res, 'pull') }
-  return { ok: true }
-}
-
-export async function scmFetch({ root } = {}) {
-  const r = await repoOf(root)
-  if (r.error) return { ok: false, error: r.error }
-  const res = await git(r.top, ['fetch', '--prune'], { timeout: 180000 })
-  if (!res.ok) return { ok: false, error: remoteError(res, 'fetch') }
-  return { ok: true }
-}
-
-// Pull, then push (Orca's Sync).
-export async function scmSync({ root } = {}) {
-  const pull = await scmPull({ root })
-  if (!pull.ok) return pull
-  return scmPush({ root })
-}
-
 // --- Branch compare (Orca's branch context row and line-total chip) -------------------
 // HEAD against its base (the remote's default branch, origin/main): commits
 // ahead / behind, and the lines of the whole branch's work — committed, staged,
@@ -515,26 +276,6 @@ export async function scmSync({ root } = {}) {
 const OID_RE = /^[0-9a-f]{7,64}$/
 export const isCommitId = (v) => typeof v === 'string' && OID_RE.test(v)
 const BRANCH_TOTAL_TIMEOUT = 15000
-
-async function refExists(top, ref) {
-  const res = await git(top, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`])
-  return res.ok && !!res.stdout.trim()
-}
-
-// The ref to compare with: <remote>/HEAD's target, else <remote>/main or
-// /master, else the branch's upstream. -> 'origin/main' | null
-export async function resolveCompareBase(top, branch) {
-  let remote = (branch && (await config(top, `branch.${branch}.remote`))) || 'origin'
-  if (!NAME_RE.test(remote) || remote === '.') remote = 'origin'
-  const candidates = []
-  const head = await git(top, ['symbolic-ref', '--quiet', `refs/remotes/${remote}/HEAD`])
-  if (head.ok && head.stdout.trim().startsWith('refs/remotes/')) candidates.push(head.stdout.trim().slice('refs/remotes/'.length))
-  candidates.push(`${remote}/main`, `${remote}/master`)
-  for (const c of candidates) if (NAME_RE.test(c) && (await refExists(top, `refs/remotes/${c}`))) return c
-  const up = await git(top, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'])
-  const name = up.ok ? up.stdout.trim() : ''
-  return name && NAME_RE.test(name) ? name : null
-}
 
 // A GitHub remote URL -> { owner, repo } (https, ssh, git@).
 export function githubRepoOf(url) {
@@ -552,64 +293,6 @@ export function compareUrl({ remoteUrl, base, upstream }) {
   if (!baseRest.length || !upRest.length || baseRemote !== upRemote) return null
   const enc = (b) => b.split('/').map(encodeURIComponent).join('/')
   return `https://github.com/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}/compare/${enc(baseRest.join('/'))}...${enc(upRest.join('/'))}`
-}
-
-const compareInFlight = new Map() // top -> Promise
-
-// -> { ok, base, mergeBase, ahead, behind, added, removed, reviewUrl }
-//  | { ok: true, base: null } (nothing to compare with) | { ok: false, error }
-export async function scmBranchCompare({ root } = {}) {
-  const r = await repoOf(root)
-  if (r.error) return { ok: false, error: r.error }
-  const key = r.top.toLowerCase()
-  if (compareInFlight.has(key)) return compareInFlight.get(key)
-  const p = branchCompare(r.top).finally(() => compareInFlight.delete(key))
-  compareInFlight.set(key, p)
-  return p
-}
-
-async function branchCompare(top) {
-  const branch = await currentBranch(top)
-  const base = await resolveCompareBase(top, branch)
-  if (!base) return { ok: true, base: null }
-  const mb = await git(top, ['merge-base', 'HEAD', `refs/remotes/${base}`])
-  const mbAny = mb.ok ? mb : await git(top, ['merge-base', 'HEAD', base])
-  const mergeBase = mbAny.ok ? mbAny.stdout.trim() : ''
-  if (!isCommitId(mergeBase)) return { ok: false, base, error: t('main.scm.compareUnavailable', 'Branch compare unavailable') }
-  const [diff, st, up] = await Promise.all([
-    git(top, ['diff', '-z', '--numstat', '-M', '--no-ext-diff', mergeBase, '--'], { timeout: BRANCH_TOTAL_TIMEOUT }),
-    git(top, ['status', '--porcelain=v2', '-z', '--untracked-files=all'], { timeout: 20000 }),
-    git(top, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'])
-  ])
-  const behindAhead = await git(top, ['rev-list', '--left-right', '--count', `${base}...HEAD`])
-  const m = /^(\d+)\s+(\d+)/.exec(behindAhead.ok ? behindAhead.stdout.trim() : '')
-  let added = null
-  let removed = null
-  if (diff.ok && st.ok) {
-    added = 0
-    removed = 0
-    for (const c of Object.values(parseNumstatZ(diff.stdout))) {
-      added += c.added || 0
-      removed += c.removed || 0
-    }
-    const untracked = parseStatusV2(st.stdout)
-      .entries.filter((e) => e.area === 'untracked')
-      .map((e) => e.path)
-    for (const s of (await collectUntrackedAdditions(top, untracked)).values()) added += s.added || 0
-  }
-  const upstream = up.ok ? up.stdout.trim() : ''
-  const remoteName = base.split('/')[0]
-  const url = await git(top, ['remote', 'get-url', remoteName])
-  return {
-    ok: true,
-    base,
-    mergeBase,
-    ahead: m ? Number(m[2]) : 0,
-    behind: m ? Number(m[1]) : 0,
-    added,
-    removed,
-    reviewUrl: url.ok ? compareUrl({ remoteUrl: url.stdout.trim(), base, upstream }) : null
-  }
 }
 
 // --- Commits (Orca's shared/git-history.ts and git-history-log-parser.ts) -------------
@@ -692,50 +375,6 @@ function refFromFullName(fullName, fallbackName, revision) {
   return { id, name: fallbackName || shortHash(revision), revision, category: 'commits' }
 }
 
-async function commitOf(top, ref) {
-  if (!ref || ref.startsWith('-')) return null
-  const res = await git(top, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`])
-  return res.ok ? res.stdout.trim() || null : null
-}
-
-// -> { ok, items, currentRef, remoteRef, baseRef, mergeBase, hasMore, limit }
-export async function scmHistory({ root, limit, base } = {}) {
-  const r = await repoOf(root)
-  if (r.error) return { ok: false, error: r.error }
-  const top = r.top
-  const n = Number.isFinite(limit) ? Math.min(HISTORY_MAX_LIMIT, Math.max(1, Math.trunc(limit))) : HISTORY_DEFAULT_LIMIT
-  const headOid = await commitOf(top, 'HEAD')
-  if (!headOid) return { ok: true, items: [], hasMore: false, limit: n }
-  const branch = await currentBranch(top)
-  const currentRef = branch
-    ? { id: `refs/heads/${branch}`, name: branch, revision: headOid, category: 'branches' }
-    : { id: headOid, name: shortHash(headOid), revision: headOid, category: 'commits' }
-  let remoteRef
-  if (branch) {
-    const up = await git(top, ['for-each-ref', '--format=%(upstream)%00%(upstream:short)', `refs/heads/${branch}`])
-    const [full, short] = up.ok ? up.stdout.split('\0') : []
-    if (full && full.trim() && short && short.trim()) {
-      const oid = await commitOf(top, full.trim())
-      if (oid) remoteRef = refFromFullName(full.trim(), short.trim(), oid)
-    }
-  }
-  let baseRef
-  if (typeof base === 'string' && NAME_RE.test(base)) {
-    const oid = await commitOf(top, `refs/remotes/${base}`)
-    const ref = oid ? refFromFullName(`refs/remotes/${base}`, base, oid) : null
-    if (ref && ref.id !== (remoteRef && remoteRef.id) && ref.id !== currentRef.id) baseRef = ref
-  }
-  let mergeBase
-  if (remoteRef && remoteRef.revision !== headOid) {
-    const mb = await git(top, ['merge-base', headOid, remoteRef.revision])
-    mergeBase = mb.ok ? mb.stdout.trim() || undefined : undefined
-  }
-  const log = await git(top, ['log', `--format=${HISTORY_COMMIT_FORMAT}`, '-z', '--topo-order', '--decorate=full', `-n${n + 1}`, headOid])
-  if (!log.ok) return { ok: false, error: gitMessage(log, t('main.scm.logFailed', 'git log failed.')) }
-  const parsed = parseHistoryLog(log.stdout)
-  return { ok: true, items: parsed.slice(0, n), currentRef, remoteRef, baseRef, mergeBase, hasMore: parsed.length > n, limit: n }
-}
-
 // `git diff-tree --name-status -z` -> [{ path, oldPath?, status }].
 export function parseNameStatusZ(out) {
   const parts = String(out || '').split('\0')
@@ -754,103 +393,6 @@ export function parseNameStatusZ(out) {
     }
   }
   return list
-}
-
-// The files a commit changed (against its first parent). -> { ok, entries }
-export async function scmCommitFiles({ root, commit } = {}) {
-  const r = await repoOf(root)
-  if (r.error) return { ok: false, error: r.error }
-  if (!isCommitId(commit)) return { ok: false, error: t('main.scm.badCommit', 'Unknown commit.') }
-  const parents = await git(r.top, ['rev-list', '--parents', '-n', '1', commit])
-  if (!parents.ok) return { ok: false, error: t('main.scm.badCommit', 'Unknown commit.') }
-  const ids = parents.stdout.trim().split(/\s+/)
-  const range = ids.length > 1 ? [ids[1], ids[0]] : ['--root', ids[0]]
-  const [ns, num] = await Promise.all([
-    git(r.top, ['diff-tree', '-r', '-z', '-M', '--no-commit-id', '--name-status', ...range]),
-    git(r.top, ['diff-tree', '-r', '-z', '-M', '--no-commit-id', '--numstat', ...range])
-  ])
-  if (!ns.ok) return { ok: false, error: gitMessage(ns, t('main.scm.diffFailed', 'git diff failed.')) }
-  const counts = num.ok ? parseNumstatZ(num.stdout) : {}
-  const entries = parseNameStatusZ(ns.stdout).map((e) => (counts[e.path] ? { ...e, added: counts[e.path].added, removed: counts[e.path].removed } : e))
-  return { ok: true, entries, commit: ids[0], parent: ids.length > 1 ? ids[1] : null }
-}
-
-// --- The two sides of a file's diff -------------------------------------------------
-async function show(top, spec) {
-  const res = await git(top, ['show', '--no-textconv', spec], { maxBuffer: MAX_FILE + 1024 })
-  if (!res.ok) {
-    if (/maxBuffer/i.test(String(res.error || ''))) return { tooBig: true }
-    return { missing: true }
-  }
-  return { text: res.stdout }
-}
-
-function clean(v) {
-  if (v.tooBig) return { error: t('main.scm.versionTooLarge', 'This version is too large to compare (over 10 MB).') }
-  const text = v.text || ''
-  if (text.slice(0, 8000).includes('\0')) return { binary: true }
-  return { text: text.charCodeAt(0) === 0xfeff ? text.slice(1) : text }
-}
-
-// area 'staged': HEAD -> index (read-only); 'unstaged': index -> the file on
-// disk; 'untracked': nothing -> the file on disk. oldPath: a staged rename's
-// old name. -> { ok, original, modified, binary, exists, rel, full }
-export async function scmFileVersions({ root, path, area, oldPath, commit } = {}) {
-  const r = await repoOf(root)
-  if (r.error) return { ok: false, error: r.error }
-  const rel = relIn(r.top, path)
-  if (!rel) return { ok: false, error: t('main.scm.notRepoFile', 'Not a file of this repository.') }
-  const oldRel = oldPath ? relIn(r.top, oldPath) : null
-  if (oldPath && !oldRel) return { ok: false, error: t('main.scm.notRepoFile', 'Not a file of this repository.') }
-  // A file of a commit (the Commits section): its first parent -> the commit, read-only.
-  if (area === 'commit') {
-    if (!isCommitId(commit)) return { ok: false, error: t('main.scm.badCommit', 'Unknown commit.') }
-    const before = await show(r.top, `${commit}^:${oldRel || rel}`)
-    const after = await show(r.top, `${commit}:${rel}`)
-    const o = clean(before.missing ? { text: '' } : before)
-    const m = clean(after.missing ? { text: '' } : after)
-    if (o.error || m.error) return { ok: false, error: o.error || m.error }
-    const full = join(r.top, ...rel.split('/'))
-    if (o.binary || m.binary) return { ok: true, binary: true, rel, full, exists: false, top: r.top }
-    return { ok: true, original: o.text, modified: m.text, rel, full, exists: false, top: r.top }
-  }
-  const full = join(r.top, ...rel.split('/'))
-  let exists = false
-  try {
-    exists = fs.statSync(full).isFile()
-  } catch {
-    exists = false
-  }
-  let original = { text: '' }
-  let modified = null
-  if (area === 'staged') {
-    const head = await show(r.top, `HEAD:${oldRel || rel}`)
-    original = head.missing ? { text: '' } : head
-    const index = await show(r.top, `:${rel}`)
-    modified = index.missing ? { text: '' } : index
-  } else if (area === 'unstaged') {
-    const index = await show(r.top, `:${rel}`)
-    if (index.missing) {
-      const head = await show(r.top, `HEAD:${rel}`)
-      original = head.missing ? { text: '' } : head
-    } else original = index
-  } else if (area !== 'untracked') return { ok: false, error: t('main.scm.unknownGroup', 'Unknown change group.') }
-  if (!modified) {
-    if (!exists) modified = { text: '' }
-    else {
-      try {
-        const st = fs.statSync(full)
-        modified = st.size > MAX_FILE ? { tooBig: true } : { text: fs.readFileSync(full, 'utf8') }
-      } catch {
-        modified = { text: '' }
-      }
-    }
-  }
-  const o = clean(original)
-  const m = clean(modified)
-  if (o.error || m.error) return { ok: false, error: o.error || m.error }
-  if (o.binary || m.binary) return { ok: true, binary: true, rel, full, exists, top: r.top }
-  return { ok: true, original: o.text, modified: m.text, rel, full, exists, top: r.top }
 }
 
 // --- The staged diff, for a generated commit message --------------------------------
@@ -903,11 +445,556 @@ export function cleanGeneratedMessage(text) {
   return msg.slice(0, MAX_MESSAGE)
 }
 
-export async function scmStagedDiff({ root } = {}) {
-  const r = await repoOf(root)
-  if (r.error) return { ok: false, error: r.error }
-  const res = await git(r.top, ['diff', '--cached', '--no-color', '--no-ext-diff'], { maxBuffer: 64 * 1024 * 1024 })
-  if (!res.ok) return { ok: false, error: gitMessage(res, t('main.scm.diffFailed', 'git diff failed.')) }
-  if (!res.stdout.trim()) return { ok: false, error: t('main.scm.nothingStagedMessage', 'Stage at least one file to generate a message.') }
-  return { ok: true, diff: truncateDiff(res.stdout), top: r.top }
+// The git operations over a backend: the local one below (git.exe on this
+// machine's folders), or a remote project's (remoteScm.js: git run on an SSH
+// host). A backend gives: repoOf(root) -> { top } | { error, notRepo },
+// git(top, args, opts) -> { ok, stdout, stderr, error }, relIn(top, path),
+// key(top) (one repository whatever the spelling), present(top) (the top the
+// window gets), fullPath(top, rel), operation(top) (a merge, rebase or
+// cherry-pick stopped half way), untracked(top, rels) (their line counts),
+// working(top, rel) -> { exists, version }, prepareTrash / trash (untracked
+// files discarded), staged-diff support.
+export function createScm(b) {
+  const { git, repoOf, relIn } = b
+  function relList(top, paths) {
+    const list = Array.isArray(paths) ? paths : [paths]
+    if (!list.length || list.length > 5000) return { error: t('main.scm.noFile', 'No file.') }
+    const out = []
+    for (const p of list) {
+      const r = relIn(top, p)
+      if (!r) return { error: t('main.scm.notRepoFileNamed', '"{{path}}" is not a file of this repository.', { path: String(p).slice(0, 200) }) }
+      if (!out.includes(r)) out.push(r)
+    }
+    return { rels: out }
+  }
+
+  const literal = (rel) => `:(literal)${rel}`
+
+  async function inChunks(top, base, rels) {
+    for (let i = 0; i < rels.length; i += BULK) {
+      const res = await git(top, [...base, '--', ...rels.slice(i, i + BULK).map(literal)])
+      if (!res.ok) return res
+    }
+    return { ok: true }
+  }
+
+  // Everything the Changes tab shows about a folder's repository.
+  // -> { ok, repo, top, branch, detached, upstream, hasUpstream, ahead, behind,
+  //      hasCommits, operation, remotes, entries } | { ok: true, repo: false } | { ok: false, error }
+  async function scmStatus({ root } = {}) {
+    const r = await repoOf(root)
+    if (r.notRepo) return { ok: true, repo: false }
+    if (r.error) return { ok: false, error: r.error }
+    const top = r.top
+    const [st, un, stg, operation, remotes] = await Promise.all([
+      git(top, ['status', '--porcelain=v2', '--branch', '-z', '--untracked-files=all'], { timeout: 20000 }),
+      git(top, ['diff', '--numstat', '-z', '--no-ext-diff']),
+      git(top, ['diff', '--cached', '--numstat', '-z', '--no-ext-diff']),
+      b.operation(top),
+      git(top, ['remote'])
+    ])
+    if (!st.ok) return { ok: false, error: gitMessage(st, t('main.scm.statusFailed', 'Git status failed.')) }
+    const info = parseStatusV2(st.stdout)
+    const counts = { unstaged: un.ok ? parseNumstatZ(un.stdout) : {}, staged: stg.ok ? parseNumstatZ(stg.stdout) : {} }
+    const untracked = await b.untracked(
+      top,
+      info.entries.filter((e) => e.area === 'untracked').map((e) => e.path)
+    )
+    const entries = info.entries.map((e) => {
+      if (e.area === 'untracked') {
+        const u = untracked.get(e.path)
+        return u && typeof u.added === 'number' ? { ...e, added: u.added, removed: 0 } : e
+      }
+      const c = counts[e.area] && counts[e.area][e.path]
+      return c ? { ...e, added: c.added, removed: c.removed, binary: c.binary } : e
+    })
+    return {
+      ok: true,
+      repo: true,
+      top: b.present(top),
+      branch: info.branch,
+      detached: !info.branch,
+      head: info.oid,
+      hasCommits: !!info.oid,
+      upstream: info.upstream,
+      hasUpstream: !!info.upstream,
+      ahead: info.ahead,
+      behind: info.behind,
+      operation,
+      remotes: remotes.ok ? remotes.stdout.split(/\r?\n/).map((s) => s.trim()).filter(Boolean) : [],
+      entries
+    }
+  }
+
+  // --- Stage, unstage, discard ----------------------------------------------------------
+  async function scmStage({ root, paths } = {}) {
+    const r = await repoOf(root)
+    if (r.error) return { ok: false, error: r.error }
+    const l = relList(r.top, paths)
+    if (l.error) return { ok: false, error: l.error }
+    // -A: a file deleted on disk is staged as deleted too.
+    const res = await inChunks(r.top, ['add', '-A'], l.rels)
+    return res.ok ? { ok: true } : { ok: false, error: gitMessage(res, t('main.scm.addFailed', 'git add failed.')) }
+  }
+
+  async function scmUnstage({ root, paths } = {}) {
+    const r = await repoOf(root)
+    if (r.error) return { ok: false, error: r.error }
+    const l = relList(r.top, paths)
+    if (l.error) return { ok: false, error: l.error }
+    const head = await git(r.top, ['rev-parse', '--verify', '--quiet', 'HEAD'])
+    // No commit yet: there is nothing to restore from, the files leave the index.
+    const res = head.ok
+      ? await inChunks(r.top, ['restore', '--staged'], l.rels)
+      : await inChunks(r.top, ['rm', '--cached', '-r', '--quiet'], l.rels)
+    return res.ok ? { ok: true } : { ok: false, error: gitMessage(res, t('main.scm.unstageFailed', 'Unstage failed.')) }
+  }
+
+
+  // Discard the changes of files not staged. A tracked file gets back its staged
+  // (index) version, so what was staged is kept; an untracked file goes to the
+  // Recycle Bin (trashItem), never deleted for good. Files with a conflict are
+  // refused (Orca hides Discard on them: it could lose the resolution).
+  // trashItem(fullPath) -> Promise.
+  async function scmDiscard({ root, paths } = {}, trashItem) {
+    const r = await repoOf(root)
+    if (r.error) return { ok: false, error: r.error }
+    const l = relList(r.top, paths)
+    if (l.error) return { ok: false, error: l.error }
+    const st = await git(r.top, ['status', '--porcelain=v2', '-z', '--untracked-files=all'])
+    if (!st.ok) return { ok: false, error: gitMessage(st, t('main.scm.statusFailed', 'Git status failed.')) }
+    const entries = parseStatusV2(st.stdout).entries
+    const tracked = []
+    const untracked = []
+    for (const rel of l.rels) {
+      const mine = entries.filter((e) => e.path === rel)
+      if (mine.some((e) => e.conflict)) return { ok: false, error: t('main.scm.hasConflict', '{{path}} has a conflict: resolve it first.', { path: rel }) }
+      if (mine.some((e) => e.area === 'untracked')) untracked.push(rel)
+      else if (mine.some((e) => e.area === 'unstaged')) tracked.push(rel)
+      // Nothing to discard for it (already clean, or only staged): skipped.
+    }
+    // Every untracked path is checked before anything is moved.
+    const prep = await b.prepareTrash(r.top, untracked, trashItem)
+    if (prep.error) return { ok: false, error: prep.error }
+    if (tracked.length) {
+      const res = await inChunks(r.top, ['restore', '--worktree'], tracked)
+      if (!res.ok) return { ok: false, error: gitMessage(res, t('main.scm.discardFailed', 'Discard failed.')) }
+    }
+    const done = await b.trash(r.top, prep.targets, trashItem)
+    if (done.error) return { ok: false, error: done.error, restored: tracked.length, trashed: done.trashed }
+    return { ok: true, restored: tracked.length, trashed: done.trashed }
+  }
+
+  // --- Commit ---------------------------------------------------------------------
+  // Commits what is staged (like Orca: the Commit button needs staged files).
+  async function scmCommit({ root, message } = {}) {
+    const r = await repoOf(root)
+    if (r.error) return { ok: false, error: r.error }
+    const msg = String(message || '')
+      .replace(/\r/g, '')
+      .replace(/\0/g, '')
+      .trim()
+      .slice(0, MAX_MESSAGE)
+    if (!msg) return { ok: false, error: t('main.scm.noMessage', 'Enter a commit message to commit.') }
+    const staged = await git(r.top, ['diff', '--cached', '--quiet'])
+    if (staged.ok) return { ok: false, error: t('main.scm.nothingStaged', 'Stage at least one file to commit.') }
+    const res = await git(r.top, ['commit', '-m', msg], { timeout: 180000 })
+    if (!res.ok) {
+      if (identityError(res))
+        return { ok: false, error: t('main.scm.noGitName', 'Git does not know your name yet (Tools > Git > Set name & email), then commit again.') }
+      return { ok: false, error: gitMessage(res, t('main.scm.commitFailed', 'Commit failed.')) }
+    }
+    const sha = await git(r.top, ['rev-parse', 'HEAD'])
+    return { ok: true, sha: sha.stdout.trim() }
+  }
+
+  async function currentBranch(top) {
+    const res = await git(top, ['symbolic-ref', '--quiet', '--short', 'HEAD'])
+    return res.ok ? res.stdout.trim() : null
+  }
+  async function config(top, key) {
+    const res = await git(top, ['config', '--get', key])
+    return res.ok ? res.stdout.trim() : ''
+  }
+
+  // Push to the branch's upstream; without one, publish it to origin (or its
+  // configured remote) and set the upstream, like Orca's gitPush. Never forced.
+  async function scmPush({ root } = {}) {
+    const r = await repoOf(root)
+    if (r.error) return { ok: false, error: r.error }
+    const branch = await currentBranch(r.top)
+    if (!branch) return { ok: false, error: t('main.scm.pushNoBranch', 'Check out a branch before pushing commits.') }
+    const remote = (await config(r.top, `branch.${branch}.remote`)) || 'origin'
+    if (!NAME_RE.test(remote) || remote === '.')
+      return { ok: false, error: t('main.scm.unusualRemote', 'The branch pushes to an unusual remote: push it from a terminal.') }
+    const url = await git(r.top, ['remote', 'get-url', remote])
+    if (!url.ok) return { ok: false, error: t('main.scm.noRemote', 'This repository has no remote named {{remote}}.', { remote }) }
+    const merge = (await config(r.top, `branch.${branch}.merge`)).replace(/^refs\/heads\//, '')
+    const target = merge && NAME_RE.test(merge) ? merge : branch
+    if (!NAME_RE.test(branch) || !NAME_RE.test(target))
+      return { ok: false, error: t('main.scm.unusualBranch', 'Unusual branch name: push it from a terminal.') }
+    const res = await git(r.top, ['push', '--set-upstream', remote, `HEAD:refs/heads/${target}`], { timeout: 180000 })
+    if (!res.ok) return { ok: false, error: remoteError(res, 'push') }
+    return { ok: true, remote, branch: target }
+  }
+
+  // Pull with the user's own pull settings (merge by default), like Orca's gitPull.
+  async function scmPull({ root, ffOnly = false } = {}) {
+    const r = await repoOf(root)
+    if (r.error) return { ok: false, error: r.error }
+    const branch = await currentBranch(r.top)
+    if (!branch) return { ok: false, error: t('main.scm.pullNoBranch', 'Check out a branch before pulling commits.') }
+    const up = await git(r.top, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'])
+    if (!up.ok) return { ok: false, error: t('main.scm.pullNoUpstream', 'Publish the branch first to pull commits.') }
+    const res = await git(r.top, ['pull', ...(ffOnly ? ['--ff-only'] : ['--no-edit'])], { timeout: 180000 })
+    if (!res.ok) return { ok: false, error: remoteError(res, 'pull') }
+    return { ok: true }
+  }
+
+  async function scmFetch({ root } = {}) {
+    const r = await repoOf(root)
+    if (r.error) return { ok: false, error: r.error }
+    const res = await git(r.top, ['fetch', '--prune'], { timeout: 180000 })
+    if (!res.ok) return { ok: false, error: remoteError(res, 'fetch') }
+    return { ok: true }
+  }
+
+  // Pull, then push (Orca's Sync).
+  async function scmSync({ root } = {}) {
+    const pull = await scmPull({ root })
+    if (!pull.ok) return pull
+    return scmPush({ root })
+  }
+
+  async function refExists(top, ref) {
+    const res = await git(top, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`])
+    return res.ok && !!res.stdout.trim()
+  }
+
+  // The ref to compare with: <remote>/HEAD's target, else <remote>/main or
+  // /master, else the branch's upstream. -> 'origin/main' | null
+  async function resolveCompareBase(top, branch) {
+    let remote = (branch && (await config(top, `branch.${branch}.remote`))) || 'origin'
+    if (!NAME_RE.test(remote) || remote === '.') remote = 'origin'
+    const candidates = []
+    const head = await git(top, ['symbolic-ref', '--quiet', `refs/remotes/${remote}/HEAD`])
+    if (head.ok && head.stdout.trim().startsWith('refs/remotes/')) candidates.push(head.stdout.trim().slice('refs/remotes/'.length))
+    candidates.push(`${remote}/main`, `${remote}/master`)
+    for (const c of candidates) if (NAME_RE.test(c) && (await refExists(top, `refs/remotes/${c}`))) return c
+    const up = await git(top, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'])
+    const name = up.ok ? up.stdout.trim() : ''
+    return name && NAME_RE.test(name) ? name : null
+  }
+
+  const compareInFlight = new Map() // top -> Promise
+
+  // -> { ok, base, mergeBase, ahead, behind, added, removed, reviewUrl }
+  //  | { ok: true, base: null } (nothing to compare with) | { ok: false, error }
+  async function scmBranchCompare({ root } = {}) {
+    const r = await repoOf(root)
+    if (r.error) return { ok: false, error: r.error }
+    const key = b.key(r.top)
+    if (compareInFlight.has(key)) return compareInFlight.get(key)
+    const p = branchCompare(r.top).finally(() => compareInFlight.delete(key))
+    compareInFlight.set(key, p)
+    return p
+  }
+
+  async function branchCompare(top) {
+    const branch = await currentBranch(top)
+    const base = await resolveCompareBase(top, branch)
+    if (!base) return { ok: true, base: null }
+    const mb = await git(top, ['merge-base', 'HEAD', `refs/remotes/${base}`])
+    const mbAny = mb.ok ? mb : await git(top, ['merge-base', 'HEAD', base])
+    const mergeBase = mbAny.ok ? mbAny.stdout.trim() : ''
+    if (!isCommitId(mergeBase)) return { ok: false, base, error: t('main.scm.compareUnavailable', 'Branch compare unavailable') }
+    const [diff, st, up] = await Promise.all([
+      git(top, ['diff', '-z', '--numstat', '-M', '--no-ext-diff', mergeBase, '--'], { timeout: BRANCH_TOTAL_TIMEOUT }),
+      git(top, ['status', '--porcelain=v2', '-z', '--untracked-files=all'], { timeout: 20000 }),
+      git(top, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'])
+    ])
+    const behindAhead = await git(top, ['rev-list', '--left-right', '--count', `${base}...HEAD`])
+    const m = /^(\d+)\s+(\d+)/.exec(behindAhead.ok ? behindAhead.stdout.trim() : '')
+    let added = null
+    let removed = null
+    if (diff.ok && st.ok) {
+      added = 0
+      removed = 0
+      for (const c of Object.values(parseNumstatZ(diff.stdout))) {
+        added += c.added || 0
+        removed += c.removed || 0
+      }
+      const untracked = parseStatusV2(st.stdout)
+        .entries.filter((e) => e.area === 'untracked')
+        .map((e) => e.path)
+      for (const s of (await b.untracked(top, untracked)).values()) added += s.added || 0
+    }
+    const upstream = up.ok ? up.stdout.trim() : ''
+    const remoteName = base.split('/')[0]
+    const url = await git(top, ['remote', 'get-url', remoteName])
+    return {
+      ok: true,
+      base,
+      mergeBase,
+      ahead: m ? Number(m[2]) : 0,
+      behind: m ? Number(m[1]) : 0,
+      added,
+      removed,
+      reviewUrl: url.ok ? compareUrl({ remoteUrl: url.stdout.trim(), base, upstream }) : null
+    }
+  }
+
+  async function commitOf(top, ref) {
+    if (!ref || ref.startsWith('-')) return null
+    const res = await git(top, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`])
+    return res.ok ? res.stdout.trim() || null : null
+  }
+
+  // -> { ok, items, currentRef, remoteRef, baseRef, mergeBase, hasMore, limit }
+  async function scmHistory({ root, limit, base } = {}) {
+    const r = await repoOf(root)
+    if (r.error) return { ok: false, error: r.error }
+    const top = r.top
+    const n = Number.isFinite(limit) ? Math.min(HISTORY_MAX_LIMIT, Math.max(1, Math.trunc(limit))) : HISTORY_DEFAULT_LIMIT
+    const headOid = await commitOf(top, 'HEAD')
+    if (!headOid) return { ok: true, items: [], hasMore: false, limit: n }
+    const branch = await currentBranch(top)
+    const currentRef = branch
+      ? { id: `refs/heads/${branch}`, name: branch, revision: headOid, category: 'branches' }
+      : { id: headOid, name: shortHash(headOid), revision: headOid, category: 'commits' }
+    let remoteRef
+    if (branch) {
+      const up = await git(top, ['for-each-ref', '--format=%(upstream)%00%(upstream:short)', `refs/heads/${branch}`])
+      const [full, short] = up.ok ? up.stdout.split('\0') : []
+      if (full && full.trim() && short && short.trim()) {
+        const oid = await commitOf(top, full.trim())
+        if (oid) remoteRef = refFromFullName(full.trim(), short.trim(), oid)
+      }
+    }
+    let baseRef
+    if (typeof base === 'string' && NAME_RE.test(base)) {
+      const oid = await commitOf(top, `refs/remotes/${base}`)
+      const ref = oid ? refFromFullName(`refs/remotes/${base}`, base, oid) : null
+      if (ref && ref.id !== (remoteRef && remoteRef.id) && ref.id !== currentRef.id) baseRef = ref
+    }
+    let mergeBase
+    if (remoteRef && remoteRef.revision !== headOid) {
+      const mb = await git(top, ['merge-base', headOid, remoteRef.revision])
+      mergeBase = mb.ok ? mb.stdout.trim() || undefined : undefined
+    }
+    const log = await git(top, ['log', `--format=${HISTORY_COMMIT_FORMAT}`, '-z', '--topo-order', '--decorate=full', `-n${n + 1}`, headOid])
+    if (!log.ok) return { ok: false, error: gitMessage(log, t('main.scm.logFailed', 'git log failed.')) }
+    const parsed = parseHistoryLog(log.stdout)
+    return { ok: true, items: parsed.slice(0, n), currentRef, remoteRef, baseRef, mergeBase, hasMore: parsed.length > n, limit: n }
+  }
+
+  // The files a commit changed (against its first parent). -> { ok, entries }
+  async function scmCommitFiles({ root, commit } = {}) {
+    const r = await repoOf(root)
+    if (r.error) return { ok: false, error: r.error }
+    if (!isCommitId(commit)) return { ok: false, error: t('main.scm.badCommit', 'Unknown commit.') }
+    const parents = await git(r.top, ['rev-list', '--parents', '-n', '1', commit])
+    if (!parents.ok) return { ok: false, error: t('main.scm.badCommit', 'Unknown commit.') }
+    const ids = parents.stdout.trim().split(/\s+/)
+    const range = ids.length > 1 ? [ids[1], ids[0]] : ['--root', ids[0]]
+    const [ns, num] = await Promise.all([
+      git(r.top, ['diff-tree', '-r', '-z', '-M', '--no-commit-id', '--name-status', ...range]),
+      git(r.top, ['diff-tree', '-r', '-z', '-M', '--no-commit-id', '--numstat', ...range])
+    ])
+    if (!ns.ok) return { ok: false, error: gitMessage(ns, t('main.scm.diffFailed', 'git diff failed.')) }
+    const counts = num.ok ? parseNumstatZ(num.stdout) : {}
+    const entries = parseNameStatusZ(ns.stdout).map((e) => (counts[e.path] ? { ...e, added: counts[e.path].added, removed: counts[e.path].removed } : e))
+    return { ok: true, entries, commit: ids[0], parent: ids.length > 1 ? ids[1] : null }
+  }
+
+  // --- The two sides of a file's diff -------------------------------------------------
+  async function show(top, spec) {
+    const res = await git(top, ['show', '--no-textconv', spec], { maxBuffer: MAX_FILE + 1024 })
+    if (!res.ok) {
+      if (/maxBuffer/i.test(String(res.error || ''))) return { tooBig: true }
+      return { missing: true }
+    }
+    return { text: res.stdout }
+  }
+
+  function clean(v) {
+    if (v.tooBig) return { error: t('main.scm.versionTooLarge', 'This version is too large to compare (over 10 MB).') }
+    const text = v.text || ''
+    if (text.slice(0, 8000).includes('\0')) return { binary: true }
+    return { text: text.charCodeAt(0) === 0xfeff ? text.slice(1) : text }
+  }
+
+  // area 'staged': HEAD -> index (read-only); 'unstaged': index -> the file on
+  // disk; 'untracked': nothing -> the file on disk. oldPath: a staged rename's
+  // old name. -> { ok, original, modified, binary, exists, rel, full }
+  async function scmFileVersions({ root, path, area, oldPath, commit } = {}) {
+    const r = await repoOf(root)
+    if (r.error) return { ok: false, error: r.error }
+    const rel = relIn(r.top, path)
+    if (!rel) return { ok: false, error: t('main.scm.notRepoFile', 'Not a file of this repository.') }
+    const oldRel = oldPath ? relIn(r.top, oldPath) : null
+    if (oldPath && !oldRel) return { ok: false, error: t('main.scm.notRepoFile', 'Not a file of this repository.') }
+    // A file of a commit (the Commits section): its first parent -> the commit, read-only.
+    if (area === 'commit') {
+      if (!isCommitId(commit)) return { ok: false, error: t('main.scm.badCommit', 'Unknown commit.') }
+      const before = await show(r.top, `${commit}^:${oldRel || rel}`)
+      const after = await show(r.top, `${commit}:${rel}`)
+      const o = clean(before.missing ? { text: '' } : before)
+      const m = clean(after.missing ? { text: '' } : after)
+      if (o.error || m.error) return { ok: false, error: o.error || m.error }
+      const full = b.fullPath(r.top, rel)
+      if (o.binary || m.binary) return { ok: true, binary: true, rel, full, exists: false, top: b.present(r.top) }
+      return { ok: true, original: o.text, modified: m.text, rel, full, exists: false, top: b.present(r.top) }
+    }
+    const full = b.fullPath(r.top, rel)
+    // The file on disk (its text only when it is the right side).
+    const working = await b.working(r.top, rel, { content: area !== 'staged' })
+    if (working.error) return { ok: false, error: working.error }
+    const exists = working.exists
+    let original = { text: '' }
+    let modified = null
+    if (area === 'staged') {
+      const head = await show(r.top, `HEAD:${oldRel || rel}`)
+      original = head.missing ? { text: '' } : head
+      const index = await show(r.top, `:${rel}`)
+      modified = index.missing ? { text: '' } : index
+    } else if (area === 'unstaged') {
+      const index = await show(r.top, `:${rel}`)
+      if (index.missing) {
+        const head = await show(r.top, `HEAD:${rel}`)
+        original = head.missing ? { text: '' } : head
+      } else original = index
+    } else if (area !== 'untracked') return { ok: false, error: t('main.scm.unknownGroup', 'Unknown change group.') }
+    if (!modified) modified = working.version
+    const o = clean(original)
+    const m = clean(modified)
+    if (o.error || m.error) return { ok: false, error: o.error || m.error }
+    if (o.binary || m.binary) return { ok: true, binary: true, rel, full, exists, top: b.present(r.top) }
+    return { ok: true, original: o.text, modified: m.text, rel, full, exists, top: b.present(r.top) }
+  }
+
+  async function scmStagedDiff({ root } = {}) {
+    const r = await repoOf(root)
+    if (r.error) return { ok: false, error: r.error }
+    const res = await git(r.top, ['diff', '--cached', '--no-color', '--no-ext-diff'], { maxBuffer: 64 * 1024 * 1024 })
+    if (!res.ok) return { ok: false, error: gitMessage(res, t('main.scm.diffFailed', 'git diff failed.')) }
+    if (!res.stdout.trim()) return { ok: false, error: t('main.scm.nothingStagedMessage', 'Stage at least one file to generate a message.') }
+    return { ok: true, diff: truncateDiff(res.stdout), top: r.top }
+  }
+  return {
+    repoOf,
+    resolveCompareBase,
+    scmStatus,
+    scmStage,
+    scmUnstage,
+    scmDiscard,
+    scmCommit,
+    scmPush,
+    scmPull,
+    scmFetch,
+    scmSync,
+    scmBranchCompare,
+    scmHistory,
+    scmCommitFiles,
+    scmFileVersions,
+    scmStagedDiff
+  }
 }
+
+
+// --- The local backend -------------------------------------------------------------
+async function gitDirOperation(top) {
+  return operationOf(await gitDir(top))
+}
+
+// Every untracked path is checked before anything is moved: its real path
+// inside the repository's. -> { targets } | { error }
+function localPrepareTrash(top, untracked, trashItem) {
+  if (untracked.length && typeof trashItem !== 'function') return { error: t('main.scm.noRecycleBin', 'The Recycle Bin is not available.') }
+  let topReal
+  try {
+    topReal = fs.realpathSync(top)
+  } catch {
+    return { error: t('main.scm.repoUnreadable', 'The repository folder could not be read.') }
+  }
+  const targets = []
+  for (const rel of untracked) {
+    const full = join(top, ...rel.split('/'))
+    let real
+    try {
+      real = fs.realpathSync(full)
+    } catch {
+      continue // already gone
+    }
+    if (!insideReal(topReal, real)) return { error: t('main.scm.outsideRepo', '{{path}} resolves outside the repository.', { path: rel }) }
+    targets.push(full)
+  }
+  return { targets }
+}
+
+// -> { trashed } | { trashed, error }
+async function localTrash(top, targets, trashItem) {
+  let trashed = 0
+  for (const full of targets) {
+    try {
+      await trashItem(full)
+      trashed++
+    } catch (err) {
+      return {
+        trashed,
+        error: t('main.scm.trashFailed', 'Could not move {{path}} to the Recycle Bin: {{error}}', { path: relative(top, full), error: (err && err.message) || err })
+      }
+    }
+  }
+  return { trashed }
+}
+
+// The file on disk for a diff's right side (content: its text is wanted).
+// -> { exists, version }
+function localWorking(top, rel, { content = true } = {}) {
+  const full = join(top, ...rel.split('/'))
+  let exists = false
+  try {
+    exists = fs.statSync(full).isFile()
+  } catch {
+    exists = false
+  }
+  if (!exists || !content) return { exists, version: { text: '' } }
+  try {
+    const st = fs.statSync(full)
+    return { exists, version: st.size > MAX_FILE ? { tooBig: true } : { text: fs.readFileSync(full, 'utf8') } }
+  } catch {
+    return { exists, version: { text: '' } }
+  }
+}
+
+export const localScmBackend = {
+  git,
+  repoOf,
+  relIn,
+  key: (top) => top.toLowerCase(),
+  present: (top) => top,
+  fullPath: (top, rel) => join(top, ...rel.split('/')),
+  operation: gitDirOperation,
+  untracked: collectUntrackedAdditions,
+  prepareTrash: localPrepareTrash,
+  trash: localTrash,
+  working: localWorking
+}
+
+const local = createScm(localScmBackend)
+export const resolveCompareBase = local.resolveCompareBase
+export const scmStatus = local.scmStatus
+export const scmStage = local.scmStage
+export const scmUnstage = local.scmUnstage
+export const scmDiscard = local.scmDiscard
+export const scmCommit = local.scmCommit
+export const scmPush = local.scmPush
+export const scmPull = local.scmPull
+export const scmFetch = local.scmFetch
+export const scmSync = local.scmSync
+export const scmBranchCompare = local.scmBranchCompare
+export const scmHistory = local.scmHistory
+export const scmCommitFiles = local.scmCommitFiles
+export const scmFileVersions = local.scmFileVersions
+export const scmStagedDiff = local.scmStagedDiff

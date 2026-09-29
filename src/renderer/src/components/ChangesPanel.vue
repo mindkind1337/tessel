@@ -60,6 +60,7 @@ import {
 } from '../scmLabels'
 import LucideIcon from './LucideIcon.vue'
 import NotesSendMenu from './NotesSendMenu.vue'
+import { isRemotePath } from '../../../shared/remotePath'
 import { t, intlLocale } from '../i18n'
 
 const props = defineProps({
@@ -480,7 +481,7 @@ async function confirmDiscard(copy, pathText) {
   return (await askConfirm({ title: copy.title, text: `${copy.description}\n${pathText}`, confirmLabel: copy.confirmLabel, danger: true })) === true
 }
 async function requestDiscardEntry(entry) {
-  const copy = discardEntryCopy(entry)
+  const copy = discardEntryCopy(entry, { remote: remoteRepo.value })
   if (!(await confirmDiscard(copy, entry.path))) return
   await runGit(
     () => api().discard({ root: repoRoot.value, paths: [entry.path] }),
@@ -489,7 +490,7 @@ async function requestDiscardEntry(entry) {
 }
 async function requestDiscardAllInArea(area, paths) {
   if (!paths.length || isExecutingBulk.value) return
-  const copy = discardAreaCopy(area, paths.length)
+  const copy = discardAreaCopy(area, paths.length, { remote: remoteRepo.value })
   const n = paths.length
   const filesText = n === 1 ? t('changes.discard.files', '{{count}} file', { count: n }) : t('changes.discard.files', '{{count}} files', { count: n })
   if (!(await confirmDiscard(copy, filesText))) return
@@ -724,7 +725,10 @@ function onMoreOutside(e) {
   if ((moreEl.value && moreEl.value.contains(e.target)) || (moreBtn.value && moreBtn.value.contains(e.target))) return
   closeMore()
 }
-const canCreatePr = computed(() => !!(data.value && data.value.repo && data.value.branch && (data.value.remotes || []).length))
+// A project on a remote host: its git runs there (remoteFs.js); the GitHub
+// form and the message agents work on this machine's folders, so not yet.
+const remoteRepo = computed(() => isRemotePath(repoRoot.value))
+const canCreatePr = computed(() => !remoteRepo.value && !!(data.value && data.value.repo && data.value.branch && (data.value.remotes || []).length))
 function createPr() {
   closeMore()
   emit('create-pr', { cwd: top.value, taskId: copyTask.value ? copyTask.value.id : null })
@@ -1126,7 +1130,7 @@ function draftStore() {
             <textarea
               v-model="commitMessage"
               class="sc-commit-msg"
-              :class="{ 'with-generate': true }"
+              :class="{ 'with-generate': !remoteRepo }"
               :rows="rows"
               :disabled="commitFieldDisabled"
               :placeholder="t('changes.commit.placeholder', 'Message')"
@@ -1147,7 +1151,7 @@ function draftStore() {
               <LucideIcon name="square" :size="14" class="sc-gen-stop" />
             </button>
             <button
-              v-else
+              v-else-if="!remoteRepo"
               type="button"
               class="sc-generate"
               :class="{ disabled: isGenerateDisabled }"

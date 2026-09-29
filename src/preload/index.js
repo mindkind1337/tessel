@@ -357,6 +357,20 @@ const api = {
       return () => ipcRenderer.removeListener('remoteHosts:state', handler)
     }
   },
+  // Files, Changes and the editor of remote projects (src/main/remoteFs.js):
+  // their files go through the usual explorer / editor / scm calls with
+  // ssh://… paths; here only the project folders, cancel, and the session's
+  // activity (connecting, busy) for the remote badge.
+  remoteFs: {
+    setRoots: (roots) => ipcRenderer.invoke('remoteFs:setRoots', roots),
+    cancel: (hostId) => ipcRenderer.invoke('remoteFs:cancel', hostId),
+    state: () => ipcRenderer.invoke('remoteFs:state'),
+    onActivity: (cb) => {
+      const handler = (_e, payload) => cb(payload)
+      ipcRenderer.on('remoteFs:activity', handler)
+      return () => ipcRenderer.removeListener('remoteFs:activity', handler)
+    }
+  },
   // ssh's questions for a remote host pane: password, passphrase, challenge,
   // host key (src/main/sshAskpass.js, through OpenSSH's askpass). The answer
   // goes in this one call, bound to the pane and its one-time request id

@@ -186,7 +186,10 @@
       "discardAllText_other": "Les modifications non indexées de {{count}} fichiers seront annulées. Cette action est irréversible.",
       "discardAll": "Tout abandonner",
       "files_one": "{{count}} fichier",
-      "files_other": "{{count}} fichiers"
+      "files_other": "{{count}} fichiers",
+      "deleteTextRemote": "Ce fichier sera déplacé dans la corbeille de l'hôte distant.",
+      "deleteUntrackedTextRemote_one": "Ce fichier non suivi sera déplacé dans la corbeille de l'hôte distant.",
+      "deleteUntrackedTextRemote_other": "Ces {{count}} fichiers non suivis seront déplacés dans la corbeille de l'hôte distant."
     },
     "sc": {
       "commit": "Commit",
@@ -464,7 +467,11 @@
       "confirm": "Mettre {{name}} à la Corbeille ?",
       "cancel": "Annuler",
       "done": "« {{name}} » est dans la Corbeille.",
-      "failed": "« {{name}} » n'a pas pu être mis à la Corbeille : {{error}}"
+      "failed": "« {{name}} » n'a pas pu être mis à la Corbeille : {{error}}",
+      "actionRemote": "Mettre à la corbeille de l'hôte",
+      "confirmRemote": "Mettre {{name}} à la corbeille de l'hôte distant ?",
+      "doneRemote": "« {{name}} » est dans la corbeille de l'hôte distant.",
+      "failedRemote": "« {{name}} » n'a pas pu être mis à la corbeille de l'hôte distant : {{error}}"
     }
   },
   "notes": {

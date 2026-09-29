@@ -180,12 +180,15 @@ export function listLineLabel(c) {
 // --- Discard confirmations (shared getDiscard*ConfirmationCopy, translated) -------
 const baseName = (p) => String(p || '').split('/').pop()
 
-export function discardEntryCopy(entry) {
+// remote: a remote project's files go to the host's trash instead.
+export function discardEntryCopy(entry, { remote = false } = {}) {
   const name = baseName(entry.path)
   if (discardDeletesEntryFile(entry)) {
     return {
       title: t('changes.discard.deleteTitle', 'Delete "{{name}}"?', { name }),
-      description: t('changes.discard.deleteText', 'This will move this file to the Recycle Bin.'),
+      description: remote
+        ? t('changes.discard.deleteTextRemote', 'This will move this file to the trash on the remote host.')
+        : t('changes.discard.deleteText', 'This will move this file to the Recycle Bin.'),
       confirmLabel: t('changes.discard.delete', 'Delete')
     }
   }
@@ -203,19 +206,21 @@ export function discardEntryCopy(entry) {
   }
 }
 
-export function discardAreaCopy(area, count) {
+export function discardAreaCopy(area, count, { remote = false } = {}) {
   if (area === 'untracked') {
     return count === 1
       ? {
           title: t('changes.discard.deleteUntrackedTitle', 'Delete 1 untracked file?', { count }),
-          description: t('changes.discard.deleteUntrackedText', 'This will move this untracked file to the Recycle Bin.', { count }),
+          description: remote
+            ? t('changes.discard.deleteUntrackedTextRemote', 'This will move this untracked file to the trash on the remote host.', { count })
+            : t('changes.discard.deleteUntrackedText', 'This will move this untracked file to the Recycle Bin.', { count }),
           confirmLabel: t('changes.discard.delete', 'Delete')
         }
       : {
           title: t('changes.discard.deleteUntrackedTitle', 'Delete {{count}} untracked files?', { count }),
-          description: t('changes.discard.deleteUntrackedText', 'This will move these {{count}} untracked files to the Recycle Bin.', {
-            count
-          }),
+          description: remote
+            ? t('changes.discard.deleteUntrackedTextRemote', 'This will move these {{count}} untracked files to the trash on the remote host.', { count })
+            : t('changes.discard.deleteUntrackedText', 'This will move these {{count}} untracked files to the Recycle Bin.', { count }),
           confirmLabel: t('changes.discard.deleteCount', 'Delete {{count}}', { count })
         }
   }

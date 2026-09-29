@@ -42,6 +42,7 @@ import ConfirmDialog from './components/ConfirmDialog.vue'
 import ImageViewer from './components/ImageViewer.vue'
 import FileViewer from './components/FileViewer.vue'
 import { fileKind, isViewed } from '../../shared/fileKinds'
+import { remoteRoot, isRemotePath, parseRemotePath } from '../../shared/remotePath'
 import NotificationsMenu from './components/NotificationsMenu.vue'
 import FileFinder from './components/FileFinder.vue'
 import UsageMenu from './components/UsageMenu.vue'
@@ -1641,8 +1642,41 @@ const canInsertPath = computed(() => {
   return !!l && l.kind !== 'editor'
 })
 function terminalHere(dir) {
+  // A folder of a remote project: a terminal on its host, in that folder.
+  if (isRemotePath(dir)) {
+    const p = parseRemotePath(dir)
+    if (p) openPaneBelow(selectedShell.value, null, { remoteHostId: p.hostId, remotePath: p.path })
+    return
+  }
   openPaneBelow(selectedShell.value, null, { cwd: dir })
 }
+
+// The side panel's folder: the project's, or for a project on an SSH host its
+// virtual root (ssh://…), which Files, Changes and the editor read over SSH
+// (src/main/remoteFs.js).
+const sideRoot = computed(() => {
+  const ws = currentWs.value
+  if (!ws) return null
+  if (ws.remote) return remoteRoot(ws.remote.hostId, ws.remote.path)
+  return ws.cwd
+})
+const sideRemote = computed(() => {
+  const ws = currentWs.value
+  return ws && ws.remote ? { hostId: ws.remote.hostId, host: remoteHostLabel(ws.remote.hostId), path: ws.remote.path } : null
+})
+// The main process only reads files below the remote projects it was told of.
+watch(
+  () =>
+    workspaces.value
+      .filter((w) => w.remote)
+      .map((w) => remoteRoot(w.remote.hostId, w.remote.path))
+      .filter(Boolean)
+      .join('\n'),
+  (list) => {
+    if (window.shellApi.remoteFs) window.shellApi.remoteFs.setRoots(list ? list.split('\n') : []).catch(() => {})
+  },
+  { immediate: true }
+)
 function insertPathInPane(text) {
   const id = activeId.value
   const pane = id && getPane(id)
@@ -8244,11 +8278,11 @@ onBeforeUnmount(() => {
         ></div>
         <SidePanel
           v-model:tab="sideTab"
-          :root="currentWs ? currentWs.cwd : null"
+          :root="sideRoot"
           :can-insert="canInsertPath"
           :agent-panes="agentPanes"
           :workspace-id="currentWsId"
-          :remote="currentWs && currentWs.remote ? { host: remoteHostLabel(currentWs.remote.hostId), path: currentWs.remote.path } : null"
+          :remote="sideRemote"
           @close="closeSidePanel"
           @open="openExplorerFile"
           @open-diff="openScmDiff"

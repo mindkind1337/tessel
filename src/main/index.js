@@ -24,6 +24,8 @@ import { remoteProjectLaunch } from './remoteProject'
 import { createAddProject, registerAddProject } from './addProject'
 import { createSshAskpass, registerSshAskpass, askpassExePath } from './sshAskpass'
 import { createAskpassPipeHost } from './askpassPipeHost'
+import { createRemoteFs, registerRemoteFs, SESSION_PREFIX as REMOTE_FS_PREFIX } from './remoteFs'
+import { isRemotePath } from '../shared/remotePath'
 import { prepareAgentStateHooks } from './agentStateSetup'
 import { assessNeeds } from './tesselNeeds'
 import { createClaudeUsageReport } from './claudeUsageReport'
@@ -1163,7 +1165,14 @@ const accountOptions = { userData: app.getPath('userData'), runLogin: createProv
 registerIssueServices({ ipcMain, dir: join(app.getPath('userData'), 'linear'), safeStorage, onPrCreated: (url) => usageStats.prCreated(url) })
 // Remote hosts over SSH (remoteHosts.js): Settings > SSH Hosts, the status bar.
 const remoteHosts = createRemoteHosts({ dir: app.getPath('userData'), onChange: (states) => send('remoteHosts:state', states) })
-registerRemoteHosts({ ipcMain, service: remoteHosts, killPane: (id) => host.send('kill', { id }) })
+// A remote project's Files / Changes session (remoteFs.js) counts as one of
+// the host's connections: Disconnect ends it like a terminal.
+const isRemoteFsPane = (id) => typeof id === 'string' && id.startsWith(REMOTE_FS_PREFIX)
+registerRemoteHosts({
+  ipcMain,
+  service: remoteHosts,
+  killPane: (id) => (isRemoteFsPane(id) ? remoteFs.closePane(id) : host.send('kill', { id }))
+})
 // Its passwords, passphrases and host key questions come through OpenSSH's
 // npm run dev did not always leave the helper next to index.js (the build
 // plugin only covers it reliably in packaged builds): in development Tessel
@@ -1191,13 +1200,26 @@ const sshAskpass = createSshAskpass({
   netApi: createAskpassPipeHost({ exePath: () => askpassExePath(__dirname) }),
   send: (channel, payload) => send(channel, payload),
   // Ctrl+C when the user cancels (stops ssh); never an answer.
-  writePty: (id, data) => host.send('write', { id, data }),
+  // (A Files session has no terminal: cancelling ends it instead.)
+  writePty: (id, data) => {
+    if (!isRemoteFsPane(id)) host.send('write', { id, data })
+  },
   onConnected: (id) => remoteHosts.paneConnected(id),
   onConnecting: (id) => remoteHosts.paneConnecting(id),
-  onCancel: (_id, hostId) => hostId && remoteHosts.markDisconnecting(hostId),
+  onCancel: (id, hostId) => {
+    if (isRemoteFsPane(id)) remoteFs.closePane(id, 'auth-cancelled')
+    else if (hostId) remoteHosts.markDisconnecting(hostId)
+  },
   log
 })
 registerSshAskpass({ ipcMain, broker: sshAskpass })
+// Files, Changes and the editor of remote projects (remoteFs.js): one ssh
+// session per host, the same askpass dialog.
+const remoteFs = createRemoteFs({ hosts: remoteHosts, askpass: sshAskpass, send: (channel, payload) => send(channel, payload), log })
+registerRemoteFs({ ipcMain, service: remoteFs })
+app.on('will-quit', () => remoteFs.close())
+// A remote project's path (ssh://…) in a call made for local files.
+const remoteArg = (q) => (q && typeof q === 'object' ? isRemotePath(q.root) || isRemotePath(q.file) || isRemotePath(q.path) : isRemotePath(q))
 // Add a project (addProject.js): clone from a URL, create a new one, find the
 // repositories in a folder.
 registerAddProject({ ipcMain, service: createAddProject({ send: (channel, payload) => send(channel, payload) }) })
@@ -1228,23 +1250,28 @@ ipcMain.handle('review:push', safe(reviewPush))
 // discard (untracked files to the Recycle Bin), commit, push, pull, and the
 // two sides of a file's diff. Any folder in a repository: the project or a
 // task's copy.
-ipcMain.handle('scm:status', safe((q) => scm.scmStatus(q || {})))
-ipcMain.handle('scm:stage', safe((q) => scm.scmStage(q || {})))
-ipcMain.handle('scm:unstage', safe((q) => scm.scmUnstage(q || {})))
-ipcMain.handle('scm:discard', safe((q) => scm.scmDiscard(q || {}, (p) => shell.trashItem(p))))
-ipcMain.handle('scm:commit', safe((q) => scm.scmCommit(q || {})))
-ipcMain.handle('scm:push', safe((q) => scm.scmPush(q || {})))
-ipcMain.handle('scm:pull', safe((q) => scm.scmPull(q || {})))
-ipcMain.handle('scm:fetch', safe((q) => scm.scmFetch(q || {})))
-ipcMain.handle('scm:sync', safe((q) => scm.scmSync(q || {})))
-ipcMain.handle('scm:fileVersions', safe((q) => scm.scmFileVersions(q || {})))
+// A remote project's root (ssh://…) goes to the same operations run on its
+// host (remoteFs.js).
+const scmFor = (q) => (remoteArg(q) ? remoteFs.scm : scm)
+ipcMain.handle('scm:status', safe((q) => scmFor(q).scmStatus(q || {})))
+ipcMain.handle('scm:stage', safe((q) => scmFor(q).scmStage(q || {})))
+ipcMain.handle('scm:unstage', safe((q) => scmFor(q).scmUnstage(q || {})))
+ipcMain.handle('scm:discard', safe((q) => scmFor(q).scmDiscard(q || {}, (p) => shell.trashItem(p))))
+ipcMain.handle('scm:commit', safe((q) => scmFor(q).scmCommit(q || {})))
+ipcMain.handle('scm:push', safe((q) => scmFor(q).scmPush(q || {})))
+ipcMain.handle('scm:pull', safe((q) => scmFor(q).scmPull(q || {})))
+ipcMain.handle('scm:fetch', safe((q) => scmFor(q).scmFetch(q || {})))
+ipcMain.handle('scm:sync', safe((q) => scmFor(q).scmSync(q || {})))
+ipcMain.handle('scm:fileVersions', safe((q) => scmFor(q).scmFileVersions(q || {})))
 // The branch against its base (Orca's branch context row), the Commits
 // section and the files of one commit.
-ipcMain.handle('scm:branchCompare', safe((q) => scm.scmBranchCompare(q || {})))
-ipcMain.handle('scm:history', safe((q) => scm.scmHistory(q || {})))
-ipcMain.handle('scm:commitFiles', safe((q) => scm.scmCommitFiles(q || {})))
+ipcMain.handle('scm:branchCompare', safe((q) => scmFor(q).scmBranchCompare(q || {})))
+ipcMain.handle('scm:history', safe((q) => scmFor(q).scmHistory(q || {})))
+ipcMain.handle('scm:commitFiles', safe((q) => scmFor(q).scmCommitFiles(q || {})))
 // A commit message written by an agent from the staged diff (Orca's Generate).
+// The agents run on this machine: not for a remote project yet.
 ipcMain.handle('scm:generate', safe(async (q) => {
+  if (remoteArg(q)) return remoteFs.remoteOnly()
   const d = await scm.scmStagedDiff(q || {})
   if (!d.ok) return d
   const res = await runHeadless(q && q.agent, scm.commitPrompt(d.diff), { cwd: d.top, key: d.top })
@@ -1253,6 +1280,7 @@ ipcMain.handle('scm:generate', safe(async (q) => {
   return message ? { ok: true, message } : { ok: false, error: t('main.error.noCommitMessage', 'The agent gave no message.') }
 }))
 ipcMain.handle('scm:cancelGenerate', safe(async (q) => {
+  if (remoteArg(q)) return { ok: false }
   const r = await scm.repoOf(q && q.root)
   return { ok: !r.error && cancelHeadless(r.top) }
 }))
@@ -1929,6 +1957,7 @@ ipcMain.handle('files:resolve', (_evt, q = {}) => resolveFiles(q || {}))
 ipcMain.handle('files:list', safe((root) => listProjectFiles(root)))
 ipcMain.handle('files:open', async (_evt, q = {}) => {
   const file = q && typeof q.file === 'string' ? q.file : ''
+  if (isRemotePath(file)) return remoteFs.remoteOnly()
   let ok = false
   try {
     ok = !!file && fs.statSync(file).isFile()
@@ -1949,15 +1978,19 @@ ipcMain.handle('files:open', async (_evt, q = {}) => {
 })
 // The file explorer (explorer.js): folders, git status, a few changes, and a
 // watch per project (the window is told when files change).
-ipcMain.handle('explorer:list', safe((q) => explorer.listDir(q || {})))
-ipcMain.handle('explorer:status', safe((q) => explorer.projectStatus(q || {})))
+// A remote project (ssh://… root): the same operations on its host
+// (remoteFs.js); delete goes to the host user's trash.
+const explorerFor = (q) => (remoteArg(q) ? remoteFs : explorer)
+ipcMain.handle('explorer:list', safe((q) => explorerFor(q).listDir(q || {})))
+ipcMain.handle('explorer:status', safe((q) => explorerFor(q).projectStatus(q || {})))
 // Search the project: file names (also in folders not opened yet), or contents.
-ipcMain.handle('explorer:searchNames', safe((q) => explorer.searchNames(q || {})))
-ipcMain.handle('explorer:searchContent', safe((q) => explorer.searchContent(q || {})))
-ipcMain.handle('explorer:create', safe((q) => explorer.create(q || {})))
-ipcMain.handle('explorer:rename', safe((q) => explorer.rename(q || {})))
-ipcMain.handle('explorer:trash', safe((q) => explorer.trash(q || {}, (p) => shell.trashItem(p))))
+ipcMain.handle('explorer:searchNames', safe((q) => explorerFor(q).searchNames(q || {})))
+ipcMain.handle('explorer:searchContent', safe((q) => explorerFor(q).searchContent(q || {})))
+ipcMain.handle('explorer:create', safe((q) => explorerFor(q).create(q || {})))
+ipcMain.handle('explorer:rename', safe((q) => explorerFor(q).rename(q || {})))
+ipcMain.handle('explorer:trash', safe((q) => (remoteArg(q) ? remoteFs.trash(q) : explorer.trash(q || {}, (p) => shell.trashItem(p)))))
 ipcMain.handle('explorer:reveal', safe((q) => {
+  if (remoteArg(q)) return remoteFs.remoteOnly()
   const p = q && explorer.inside(q.root, q.path)
   if (!p || !fs.existsSync(p)) return { ok: false, error: t('main.error.notFound', 'Not found.') }
   shell.showItemInFolder(p)
@@ -1965,6 +1998,14 @@ ipcMain.handle('explorer:reveal', safe((q) => {
 }))
 const explorerWatches = new Map() // root -> stop
 ipcMain.handle('explorer:watch', (_evt, root) => {
+  // A remote project is polled (nothing like a file watch reaches over ssh);
+  // one project watched at a time, local or remote.
+  if (isRemotePath(root)) {
+    for (const stop of explorerWatches.values()) stop()
+    explorerWatches.clear()
+    return remoteFs.watchRoot(root)
+  }
+  remoteFs.unwatchRoots()
   if (typeof root !== 'string' || !isAbsolute(root) || !fs.existsSync(root)) return { ok: false }
   if (!explorerWatches.has(root)) {
     // One project watched at a time is enough (the one shown).
@@ -1984,26 +2025,28 @@ ipcMain.handle('explorer:watch', (_evt, root) => {
 ipcMain.handle('explorer:unwatch', () => {
   for (const stop of explorerWatches.values()) stop()
   explorerWatches.clear()
+  remoteFs.unwatchRoots()
   return { ok: true }
 })
 
 // The file viewer (fileView.js): read a file to show it; a PDF in its own window.
 ipcMain.handle('files:view', (_evt, file) => {
+  if (isRemotePath(file)) return remoteFs.remoteOnly()
   try {
     return readForView(file)
   } catch (err) {
     return { ok: false, error: err.message }
   }
 })
-ipcMain.handle('files:viewImage', (_evt, file) => {
+ipcMain.handle('files:viewImage', async (_evt, file) => {
   try {
-    return readImageForView(file)
+    return isRemotePath(file) ? await remoteFs.readImage(file) : readImageForView(file)
   } catch (err) {
     return { ok: false, error: err.message }
   }
 })
 ipcMain.handle('files:openPdf', (_evt, file) =>
-  openPdfWindow(BrowserWindow, file, { icon: fs.existsSync(appIconPath()) ? appIconPath() : null })
+  isRemotePath(file) ? remoteFs.remoteOnly() : openPdfWindow(BrowserWindow, file, { icon: fs.existsSync(appIconPath()) ? appIconPath() : null })
 )
 
 // Tessel's code editor (editorFiles.js): read, write (atomic), the last
@@ -2012,15 +2055,24 @@ ipcMain.handle('files:openPdf', (_evt, file) =>
 const editorWatcher = createFileWatcher((change) => {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('editor:changed', change)
 })
-ipcMain.handle('editor:read', safe((file) => readForEdit(file)))
-ipcMain.handle('editor:stat', safe((file) => statForEdit(file)))
+// A file of a remote project (ssh://…): read and written on its host
+// (remoteFs.js: size cap, conflict check, atomic replace there), watched by
+// polling.
+ipcMain.handle('editor:read', safe((file) => (isRemotePath(file) ? remoteFs.readForEdit(file) : readForEdit(file))))
+ipcMain.handle('editor:stat', safe((file) => (isRemotePath(file) ? remoteFs.statForEdit(file) : statForEdit(file))))
 ipcMain.handle('editor:write', safe(async (q) => {
+  if (remoteArg(q && q.file)) return remoteFs.writeForEdit(q || {})
   const res = await writeForEdit(q || {})
   if (res.ok) editorWatcher.noteWritten(q.file, res.sig)
   return res
 }))
-ipcMain.handle('editor:head', safe((file) => headContent(file)))
-ipcMain.handle('editor:watch', safe((paths) => ({ ok: true, count: editorWatcher.set(paths) })))
+ipcMain.handle('editor:head', safe((file) => (isRemotePath(file) ? remoteFs.headContent(file) : headContent(file))))
+ipcMain.handle('editor:watch', safe((paths) => {
+  const list = Array.isArray(paths) ? paths : []
+  const remote = list.filter((p) => isRemotePath(p))
+  const count = editorWatcher.set(list.filter((p) => !isRemotePath(p))) + remoteFs.watchFiles(remote)
+  return { ok: true, count }
+}))
 // Closing the window with unsaved editor files: the window asks first (Save,
 // Don't Save, Cancel). Quitting for an update was asked about beforehand.
 let editorDirtyCount = 0

@@ -609,7 +609,7 @@ defineExpose({ step, hostId })
             {{
               t(
                 'project.remote.hint',
-                "Its terminals open on this host with ssh, in this folder. Files, Changes and the editor are not available for a remote project yet."
+                'Its terminals open on this host with ssh, in this folder. Files, Changes and the editor read it over SSH.'
               )
             }}
           </p>

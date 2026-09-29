@@ -8,6 +8,7 @@
 import { ref, reactive, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { statusOf, folderStatus, ignoredSet, isIgnored } from '../explorerStatus'
 import { settings } from '../settings'
+import { isRemotePath, remoteHostPath } from '../../../shared/remotePath'
 import { t } from '../i18n'
 
 const props = defineProps({
@@ -32,6 +33,10 @@ const moreOpen = ref(false)
 const api = () => window.shellApi.explorer
 const key = (p) => String(p || '').toLowerCase()
 const rootName = computed(() => (props.root ? props.root.split(/[\\/]/).filter(Boolean).pop() : ''))
+// A project on a remote host (its root is an ssh://… path): the same tree,
+// read over ssh; paths shown, copied or typed are the host's (POSIX).
+const remote = computed(() => isRemotePath(props.root))
+const hostPath = (p) => (remote.value ? remoteHostPath(p) || p : p)
 
 async function loadDir(dir) {
   if (!api() || !props.root) return
@@ -180,15 +185,20 @@ function collapseAll() {
 }
 const relPath = (p) => {
   const r = props.root.replace(/[\\/]+$/, '')
-  return p.toLowerCase().startsWith(r.toLowerCase() + '\\') ? p.slice(r.length + 1) : p
+  if (!p.toLowerCase().startsWith(r.toLowerCase()) || !/^[\\/]/.test(p.slice(r.length))) return hostPath(p)
+  const rel = p.slice(r.length + 1)
+  return remote.value ? rel.replace(/\\/g, '/') : rel
 }
-const quoted = (p) => (/[\s&()^;,'"]/.test(p) ? `"${p}"` : p)
+// A path typed in a terminal: quoted for cmd / PowerShell, or for the
+// host's POSIX shell (single quotes) in a remote project.
+const posixQuoted = (p) => (/[^\w@%+=:,./-]/.test(p) ? `'${p.replace(/'/g, `'\\''`)}'` : p)
+const quoted = (p) => (remote.value ? posixQuoted(p) : /[\s&()^;,'"]/.test(p) ? `"${p}"` : p)
 
 // --- Drag a file to a terminal -------------------------------------------------
 function onDragStart(ev, e) {
   if (!ev.dataTransfer) return
-  ev.dataTransfer.setData('text/x-tessel-path', e.path)
-  ev.dataTransfer.setData('text/plain', e.path)
+  ev.dataTransfer.setData('text/x-tessel-path', hostPath(e.path))
+  ev.dataTransfer.setData('text/plain', hostPath(e.path))
   ev.dataTransfer.effectAllowed = 'copy'
 }
 
@@ -224,7 +234,7 @@ async function act(what) {
   else if (what === 'external' && e) emit('open-external', e.path)
   else if (what === 'terminal') emit('terminal-here', menuDir.value)
   else if (what === 'insert' && e) emit('insert-path', quoted(relPath(e.path)))
-  else if (what === 'copy' && e) copy(e.path)
+  else if (what === 'copy' && e) copy(hostPath(e.path))
   else if (what === 'copy-rel' && e) copy(relPath(e.path))
   else if (what === 'reveal') await api().reveal({ root: props.root, path: e ? e.path : props.root })
   else if (what === 'new-file' || what === 'new-folder') startNew(menuDir.value, what === 'new-folder')
@@ -284,9 +294,16 @@ async function commitEdit() {
 const confirmTrash = ref(null) // the entry waiting for a confirmation
 // The question around the name (shown in bold): [before, after].
 function trashQuestion() {
-  const parts = t('explorer.trash.confirm', 'Move {{name}} to the Recycle Bin?').split('{{name}}')
+  const parts = (
+    remote.value
+      ? t('explorer.trash.confirmRemote', 'Move {{name}} to the trash on the remote host?')
+      : t('explorer.trash.confirm', 'Move {{name}} to the Recycle Bin?')
+  ).split('{{name}}')
   return [parts[0] || '', parts.slice(1).join('')]
 }
+const trashLabel = computed(() =>
+  remote.value ? t('explorer.trash.actionRemote', 'Move to the host’s trash') : t('explorer.trash.action', 'Move to Recycle Bin')
+)
 function trashIt(e) {
   confirmTrash.value = e
 }
@@ -295,14 +312,20 @@ async function doTrash() {
   confirmTrash.value = null
   if (!e) return
   const res = await api().trash({ root: props.root, path: e.path }).catch((err) => ({ ok: false, error: err.message }))
-  if (res && res.ok) emit('toast', t('explorer.trash.done', '"{{name}}" is in the Recycle Bin.', { name: e.name }))
+  const why = (res && res.error) || t('explorer.unknownError', 'unknown error')
+  if (res && res.ok)
+    emit(
+      'toast',
+      remote.value
+        ? t('explorer.trash.doneRemote', '"{{name}}" is in the remote host’s trash.', { name: e.name })
+        : t('explorer.trash.done', '"{{name}}" is in the Recycle Bin.', { name: e.name })
+    )
   else
     emit(
       'toast',
-      t('explorer.trash.failed', '"{{name}}" could not be moved to the Recycle Bin: {{error}}', {
-        name: e.name,
-        error: (res && res.error) || t('explorer.unknownError', 'unknown error')
-      })
+      remote.value
+        ? t('explorer.trash.failedRemote', '"{{name}}" could not be moved to the remote host’s trash: {{error}}', { name: e.name, error: why })
+        : t('explorer.trash.failed', '"{{name}}" could not be moved to the Recycle Bin: {{error}}', { name: e.name, error: why })
     )
   refresh()
 }
@@ -566,7 +589,7 @@ function rowTitle(e) {
         <template v-if="menu.entry && !menu.entry.dir">
           <button role="menuitem" class="ctx-menu-item" @click="act('open')">{{ t('explorer.menu.open', 'Open') }}</button>
           <button role="menuitem" class="ctx-menu-item" @click="act('editor')">{{ t('explorer.menu.openInEditor', 'Open in editor') }}</button>
-          <button role="menuitem" class="ctx-menu-item" @click="act('external')">{{ t('explorer.menu.openInVsCode', 'Open in VS Code') }}</button>
+          <button v-if="!remote" role="menuitem" class="ctx-menu-item" @click="act('external')">{{ t('explorer.menu.openInVsCode', 'Open in VS Code') }}</button>
         </template>
         <button role="menuitem" class="ctx-menu-item" @click="act('terminal')">{{ t('explorer.menu.terminalHere', 'Open a terminal here') }}</button>
         <button v-if="menu.entry && canInsert" role="menuitem" @click="act('insert')">
@@ -577,22 +600,22 @@ function rowTitle(e) {
         <button role="menuitem" class="ctx-menu-item" @click="act('new-folder')">{{ t('explorer.newFolder', 'New folder') }}</button>
         <template v-if="menu.entry">
           <button role="menuitem" class="ctx-menu-item" @click="act('rename')">{{ t('explorer.menu.rename', 'Rename') }}</button>
-          <button role="menuitem" class="ctx-menu-item danger" @click="act('trash')">{{ t('explorer.trash.action', 'Move to Recycle Bin') }}</button>
+          <button role="menuitem" class="ctx-menu-item danger" @click="act('trash')">{{ trashLabel }}</button>
         </template>
         <div class="ctx-menu-sep"></div>
         <template v-if="menu.entry">
           <button role="menuitem" class="ctx-menu-item" @click="act('copy')">{{ t('explorer.menu.copyPath', 'Copy path') }}</button>
           <button role="menuitem" class="ctx-menu-item" @click="act('copy-rel')">{{ t('explorer.menu.copyRelPath', 'Copy relative path') }}</button>
         </template>
-        <button role="menuitem" class="ctx-menu-item" @click="act('reveal')">{{ t('explorer.menu.reveal', 'Reveal in File Explorer') }}</button>
+        <button v-if="!remote" role="menuitem" class="ctx-menu-item" @click="act('reveal')">{{ t('explorer.menu.reveal', 'Reveal in File Explorer') }}</button>
       </div>
     </div>
 
-    <div v-if="confirmTrash" class="explorer-confirm" role="alertdialog" :aria-label="t('explorer.trash.action', 'Move to Recycle Bin')">
+    <div v-if="confirmTrash" class="explorer-confirm" role="alertdialog" :aria-label="trashLabel">
       <div>{{ trashQuestion()[0] }}<strong>{{ confirmTrash.name }}</strong>{{ trashQuestion()[1] }}</div>
       <div class="explorer-confirm-actions">
         <button class="exit-btn" @click="confirmTrash = null">{{ t('explorer.trash.cancel', 'Cancel') }}</button>
-        <button class="exit-btn danger" @click="doTrash">{{ t('explorer.trash.action', 'Move to Recycle Bin') }}</button>
+        <button class="exit-btn danger" @click="doTrash">{{ trashLabel }}</button>
       </div>
     </div>
   </div>

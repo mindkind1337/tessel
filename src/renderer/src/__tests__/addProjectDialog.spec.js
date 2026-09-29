@@ -2,7 +2,8 @@
 // Host picker, Browse folder / Clone from URL / Create new project, Esc and ×,
 // the clone and create steps, a folder on an SSH host, and the repositories
 // found in a folder (import separately or as a group).
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { nextTick } from 'vue'
 import { mount, flushPromises } from '@vue/test-utils'
 import AddProjectDialog from '../components/project/AddProjectDialog.vue'
 import SidePanel from '../components/SidePanel.vue'
@@ -428,22 +429,51 @@ describe('side panel of a remote project', () => {
     setTasks([])
     window.shellApi = {}
   })
-  it('Files and Changes say they are not available yet', async () => {
-    const w = mount(SidePanel, { props: { tab: 'files', root: null, remote: { host: 'box', path: '/srv/app' } } })
-    expect(w.find('[data-test="remote-unavailable"]').text()).toContain('Not available for a remote project yet')
-    expect(w.find('[data-test="remote-unavailable"]').text()).toContain('box:/srv/app')
-    expect(w.findComponent({ name: 'ExplorerPanel' }).exists()).toBe(false)
-    await w.setProps({ tab: 'changes' })
-    expect(w.find('[data-test="remote-unavailable"]').exists()).toBe(true)
-    expect(w.findComponent({ name: 'ChangesPanel' }).exists()).toBe(false)
-    await w.setProps({ tab: 'tasks' })
+  const ROOT = 'ssh://ssh-x/srv/app'
+  it('Files and Changes work on the host, under a remote badge', async () => {
+    const w = mount(SidePanel, { props: { tab: 'files', root: ROOT, remote: { hostId: 'ssh-x', host: 'box', path: '/srv/app' } } })
     expect(w.find('[data-test="remote-unavailable"]').exists()).toBe(false)
+    expect(w.find('[data-test="remote-badge"]').text()).toContain('box:/srv/app')
+    expect(w.findComponent({ name: 'ExplorerPanel' }).props('root')).toBe(ROOT)
+    await w.setProps({ tab: 'changes' })
+    expect(w.find('[data-test="remote-badge"]').exists()).toBe(true)
+    expect(w.findComponent({ name: 'ChangesPanel' }).props('root')).toBe(ROOT)
+    await w.setProps({ tab: 'tasks' })
+    expect(w.find('[data-test="remote-badge"]').exists()).toBe(false)
+    w.unmount()
+  })
+  it('shows what its session does, with Cancel', async () => {
+    let onActivity = null
+    const cancel = vi.fn(() => Promise.resolve({ ok: true }))
+    window.shellApi = {
+      remoteFs: {
+        onActivity: (cb) => {
+          onActivity = cb
+          return () => {}
+        },
+        state: () => Promise.resolve({ ok: true, sessions: {} }),
+        cancel
+      }
+    }
+    vi.useFakeTimers()
+    const w = mount(SidePanel, { props: { tab: 'files', root: ROOT, remote: { hostId: 'ssh-x', host: 'box', path: '/srv/app' } } })
+    onActivity({ hostId: 'ssh-x', state: 'busy', pending: 1, op: 'push' })
+    await nextTick()
+    vi.advanceTimersByTime(500)
+    await nextTick()
+    expect(w.find('[data-test="remote-busy"]').text()).toContain('Pushing…')
+    await w.find('[data-test="remote-cancel"]').trigger('click')
+    expect(cancel).toHaveBeenCalledWith('ssh-x')
+    onActivity({ hostId: 'ssh-x', state: 'ready', pending: 0, op: '' })
+    await nextTick()
+    expect(w.find('[data-test="remote-busy"]').exists()).toBe(false)
+    vi.useRealTimers()
     w.unmount()
   })
   it('in French', () => {
-    setMessages('fr', { project: { remote: { unavailable: "Non disponible pour un projet distant pour l'instant" } } })
-    const w = mount(SidePanel, { props: { tab: 'files', root: null, remote: { host: 'box', path: '/srv' } } })
-    expect(w.text()).toContain("Non disponible pour un projet distant pour l'instant")
+    setMessages('fr', { project: { remote: { badge: 'Distant' } } })
+    const w = mount(SidePanel, { props: { tab: 'files', root: ROOT, remote: { hostId: 'ssh-x', host: 'box', path: '/srv' } } })
+    expect(w.find('[data-test="remote-badge"]').text()).toContain('Distant')
     w.unmount()
   })
 })

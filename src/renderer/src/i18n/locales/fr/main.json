@@ -618,6 +618,31 @@
       "noUsableLogin": "Codex n'a pas enregistré de connexion utilisable. La connexion précédente du compte a été conservée.",
       "identityMismatch": "L'identité Codex connectée ne correspond pas à ce compte. La connexion précédente a été conservée ; utilisez Ajouter un compte pour une autre identité.",
       "loginUnavailable": "Cette connexion Codex n'est pas disponible. Reconnectez-vous avant de la sélectionner."
+    },
+    "remoteFs": {
+      "connectFailed": "Impossible de se connecter à {{host}} : {{error}}",
+      "connectExit": "Impossible de se connecter à {{host}} (code de sortie ssh {{code}}).",
+      "connectTimeout": "La connexion à {{host}} a expiré.",
+      "timeout": "L'opération sur {{host}} a pris trop de temps et a été arrêtée.",
+      "cancelled": "Annulé.",
+      "signInCancelled": "La connexion à {{host}} a été annulée.",
+      "noBase64": "{{host}} n'a ni base64 ni openssl, dont Tessel a besoin pour transférer les fichiers.",
+      "noTemp": "{{host}} n'a pas de dossier temporaire accessible en écriture pour la session de Tessel.",
+      "tooMuch": "La réponse de {{host}} était trop volumineuse.",
+      "noSshStart": "ssh.exe n'a pas pu être démarré.",
+      "badPath": "Ce chemin contient des caractères que Tessel ne peut pas envoyer à l'hôte distant.",
+      "lost": "La connexion à {{host}} a été perdue.",
+      "outside": "Ce chemin mène hors du dossier du projet sur l'hôte (un lien ?) : refusé.",
+      "missing": "Introuvable sur l'hôte.",
+      "notFile": "Ce n'est pas un fichier.",
+      "badName": "« {{name}} » n'est pas un nom valide sur l'hôte distant.",
+      "createFailed": "Impossible de le créer sur l'hôte.",
+      "renameFailed": "Impossible de le renommer sur l'hôte.",
+      "trashFailedPlain": "Impossible de le mettre à la corbeille de l'hôte.",
+      "trashFailed": "Impossible de mettre {{path}} à la corbeille de l'hôte : {{error}}",
+      "noProject": "Ce fichier distant n'appartient à aucun projet distant ouvert.",
+      "localOnly": "Non disponible pour un projet sur un hôte distant.",
+      "searchFailed": "La recherche a échoué."
     }
   }
 }

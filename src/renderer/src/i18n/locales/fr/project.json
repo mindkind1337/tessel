@@ -69,13 +69,29 @@
       "description": "Saisissez le chemin vers un dépôt Git sur {{host}}.",
       "hostPath": "Chemin sur l'hôte",
       "pathPlaceholder": "/home/user/project",
-      "hint": "Ses terminaux s'ouvrent sur cet hôte avec ssh, dans ce dossier. Les fichiers, les modifications et l'éditeur ne sont pas encore disponibles pour un projet distant.",
+      "hint": "Ses terminaux s'ouvrent sur cet hôte avec ssh, dans ce dossier. Les fichiers, les modifications et l'éditeur y sont lus par SSH.",
       "go": "Ajouter un projet sur l'hôte SSH",
       "pathRequired": "Saisissez le chemin d'un dossier sur cet hôte.",
       "pathInvalid": "Ce chemin contient des caractères qui ne peuvent pas être utilisés.",
       "pathAbsolute": "Utilisez un chemin absolu comme /home/user/project ou ~/project.",
       "unavailable": "Non disponible pour un projet distant pour l'instant",
-      "unavailableHint": "Utilisez les terminaux de ce projet : ils s'exécutent sur l'hôte, dans son dossier."
+      "unavailableHint": "Utilisez les terminaux de ce projet : ils s'exécutent sur l'hôte, dans son dossier.",
+      "badge": "Distant",
+      "badgeHint": "Les fichiers et les modifications de ce projet sont sur {{host}}, lus par SSH.",
+      "connecting": "Connexion à {{host}}…",
+      "cancel": "Annuler (ferme la connexion)",
+      "op": {
+        "list": "Lecture du dossier…",
+        "read": "Lecture du fichier…",
+        "save": "Enregistrement…",
+        "status": "Lecture du statut git…",
+        "search": "Recherche…",
+        "commit": "Commit…",
+        "push": "Push…",
+        "pull": "Pull…",
+        "fetch": "Fetch…",
+        "working": "Opération sur l'hôte…"
+      }
     },
     "nested": {
       "title": "Importer des dépôts depuis un dossier",

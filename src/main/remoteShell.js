@@ -1,0 +1,564 @@
+// One SSH session per remote host for the Files, Changes and editor of remote
+// projects: Windows' OpenSSH client (ssh.exe) runs `exec /bin/sh` on the
+// host with no terminal (-T), and Tessel talks to that shell over its stdin /
+// stdout with a tiny line protocol. Nothing is installed on the host.
+//
+// Why one long-lived session and not one ssh per operation: Windows' OpenSSH
+// has no ControlMaster (connection sharing), so every ssh.exe run is a new
+// connection: a new handshake (hundreds of ms), and for a host signed in with
+// a password or a key passphrase, a new question for every folder opened or
+// file saved. One session per host signs in once (through the same askpass
+// dialog as the terminals: sshAskpass.js) and each operation is one round
+// trip. Its limit: the shell runs one command at a time, so operations are
+// queued (a push waits for the listing before it, and the reverse).
+//
+// Protocol. When the session starts, Tessel sends a prelude: shell functions
+// (the only commands Tessel ever runs there, below) and a random nonce. Each
+// request is ONE line
+//   __t_q <id> <cap> <function> '<arg>' '<arg>' ...
+// where id and cap are numbers Tessel makes, the function one of the
+// prelude's, and every argument single-quoted by sq() (a quote in it becomes
+// '\''; NUL and control characters are refused, so a request can never span
+// lines or end early). File contents and commit messages never go in an
+// argument: they are sent first, as base64 lines, into a file in the
+// session's private temporary folder (__t_up), and the function reads them
+// from there. Each command runs with stdin from /dev/null (it can never read
+// the protocol), its output bounded at the source (head -c <cap>), and the
+// answer comes back base64-encoded between marker lines carrying the nonce:
+//   @@T <nonce> <id> <exit code>
+//   <stdout, base64>
+//   @@T <nonce> <id> e
+//   <stderr, base64, 64 KB at most>
+//   @@T <nonce> <id> z
+// so nothing a command prints can be taken for a marker. Every request has a
+// time limit; past it (or on cancel) the session is ended, which ends its
+// commands with it, and the next operation starts a new one.
+import { spawn } from 'child_process'
+import crypto from 'crypto'
+
+export const READY_TIMEOUT_MS = 180_000 // a password question may wait 2 minutes
+export const DEFAULT_TIMEOUT_MS = 30_000
+export const MAX_RESPONSE = 96 * 1024 * 1024
+const MAX_STDERR_TAIL = 4096
+const UPLOAD_LINE = 16 * 1024
+
+// Exit codes of the prelude's functions (the rest are the commands' own).
+export const RC = {
+  OUTSIDE: 90, // resolves outside the project folder (a link, ..)
+  MISSING: 91,
+  NOT_FILE: 92,
+  TOO_LARGE: 93,
+  EXISTS: 94,
+  CONFLICT: 95,
+  IS_DIR: 96,
+  FAILED: 98,
+  NOT_REPO: 80,
+  PIPE: 141 // the output was cut at its cap
+}
+
+const CONTROL = /[\u0000-\u001f\u007f]/
+
+// POSIX single quotes: everything literal; a quote closes, is escaped, reopens.
+// Refuses what could break the one-line framing or hide in a path.
+export function sq(value) {
+  const s = String(value)
+  if (CONTROL.test(s)) throw new Error('control character in a remote argument') // i18n-ignore internal, caught and replaced
+  if (s.length > 8192) throw new Error('remote argument too long') // i18n-ignore internal, caught and replaced
+  return `'${s.replace(/'/g, `'\\''`)}'`
+}
+
+// An argument already quoted by this module (remotePathArg). Marked with a
+// private symbol: nothing from the window (plain strings and objects over
+// IPC) can pass for one.
+const RAW = Symbol('tessel-remote-raw')
+export function rawArg(quoted) {
+  return { [RAW]: String(quoted) }
+}
+export function isRawArg(a) {
+  return !!a && typeof a === 'object' && typeof a[RAW] === 'string'
+}
+
+// A path argument: "~" / "~/..." starts from the home folder ("$HOME" is
+// expanded by the remote shell, the rest stays quoted); else absolute.
+export function remotePathArg(path) {
+  const p = String(path)
+  if (p === '~') return '"$HOME"'
+  if (p.startsWith('~/')) return `"$HOME"${sq(p.slice(1))}`
+  if (!p.startsWith('/')) throw new Error('remote path not absolute') // i18n-ignore internal, caught and replaced
+  return sq(p)
+}
+
+// The functions Tessel may call (a request naming anything else is refused).
+export const FUNCTIONS = new Set([
+  '__t_ls',
+  '__t_stats',
+  '__t_read',
+  '__t_write',
+  '__t_mk',
+  '__t_mv',
+  '__t_trash',
+  '__t_top',
+  '__t_gitin',
+  '__t_gitop',
+  '__t_wcl',
+  '__t_findn',
+  '__t_grep',
+  '__t_fp',
+  '__t_nop'
+])
+
+// The prelude: POSIX sh, for Linux (GNU, busybox) and macOS / BSD tools.
+// Arguments of every function are absolute paths or fixed values from Tessel.
+export function prelude(nonce) {
+  if (!/^[0-9a-f]{32}$/.test(nonce)) throw new Error('bad nonce') // i18n-ignore internal
+  return `unset CDPATH
+__T_N=${nonce}
+__T_D=$(mktemp -d "\${TMPDIR:-/tmp}/tessel.XXXXXXXX" 2>/dev/null) || { printf '\\n@@R %s mktemp\\n' "$__T_N"; exit 97; }
+trap 'rm -rf "$__T_D"' EXIT
+trap 'exit 129' HUP
+trap 'exit 143' TERM
+if printf 'QQ==' | base64 -d >/dev/null 2>&1; then __T_B=d; elif printf 'QQ==' | base64 -D >/dev/null 2>&1; then __T_B=D; elif command -v openssl >/dev/null 2>&1; then __T_B=o; else __T_B=; fi
+__t_b64d() { case $__T_B in d) base64 -d ;; D) base64 -D ;; *) tr -d '\\n' | openssl base64 -d -A ;; esac; }
+__t_b64e() { case $__T_B in o) openssl base64 ;; *) base64 ;; esac; }
+if command -v sha256sum >/dev/null 2>&1; then __T_H=s; elif command -v shasum >/dev/null 2>&1; then __T_H=a; elif command -v openssl >/dev/null 2>&1; then __T_H=o; else __T_H=c; fi
+__t_hash() { case $__T_H in s) __h=$(sha256sum <"$1") ;; a) __h=$(shasum -a 256 <"$1") ;; o) __h=$(openssl dgst -sha256 -r <"$1") ;; *) __h=$(cksum <"$1"); printf 'cksum:%s\\n' "$(printf '%s' "$__h" | tr ' ' ':')"; return ;; esac; printf 'sha256:%s\\n' "\${__h%%[ *]*}"; }
+if stat -c %s / >/dev/null 2>&1; then __t_sig() { stat -L -c '%s %Y %i %a' "$1"; }; else __t_sig() { stat -L -f '%z %m %i %Lp' "$1"; }; fi
+__t_newmode() { printf '%o\\n' $(( 0666 & ~0$(umask) )); }
+__t_real() {
+  if [ -d "$1" ]; then (cd -P "$1" 2>/dev/null && pwd -P); return; fi
+  __d=\${1%/*}; __b=\${1##*/}; [ -n "$__d" ] || __d=/
+  __rd=$(cd -P "$__d" 2>/dev/null && pwd -P) || return 1
+  __p="\${__rd%/}/$__b"
+  if [ -L "$__p" ]; then
+    __r=$(readlink -f "$__p" 2>/dev/null) || __r=
+    [ -n "$__r" ] || __r=$(realpath "$__p" 2>/dev/null) || __r=
+    [ -n "$__r" ] || return 1
+    printf '%s\\n' "$__r"; return 0
+  fi
+  printf '%s\\n' "$__p"
+}
+__t_in() { case $2 in "$1") return 0 ;; "\${1%/}"/*) return 0 ;; esac; return 1; }
+__t_root() { [ -d "$1" ] || return 91; __R=$(__t_real "$1") || return 91; [ -n "$__R" ] || return 91; }
+__t_tgt() {
+  __t_root "$1" || return $?
+  [ -e "$2" ] || [ -L "$2" ] || return 91
+  __P=$(__t_real "$2") || return 90
+  [ -n "$__P" ] || return 90
+  __t_in "$__R" "$__P" || return 90
+}
+__t_ent() {
+  __t_root "$1" || return $?
+  __N=\${2##*/}; __d=\${2%/*}; [ -n "$__d" ] || __d=/
+  [ -n "$__N" ] || return 90
+  __PD=$(__t_real "$__d") || return 91
+  [ -d "$__PD" ] || return 91
+  __t_in "$__R" "$__PD" || return 90
+  __P="\${__PD%/}/$__N"
+  [ "$__P" = "$__R" ] && return 90
+  return 0
+}
+__t_git() { __g=$1; shift; LC_ALL=C LANGUAGE= GIT_TERMINAL_PROMPT=0 GIT_MERGE_AUTOEDIT=no GIT_EDITOR=: GIT_PAGER=cat PAGER=cat git -C "$__g" -c core.quotepath=off "$@"; }
+__t_up() { : >"$__T_D/u"; }
+__t_q() {
+  __id=$1; __cap=$2; shift 2
+  { ( "$@" ) </dev/null 2>"$__T_D/e"; echo $? >"$__T_D/r"; } | head -c "$__cap" >"$__T_D/o"
+  __rc=$(cat "$__T_D/r" 2>/dev/null); [ -n "$__rc" ] || __rc=141
+  printf '\\n@@T %s %s %s\\n' "$__T_N" "$__id" "$__rc"
+  __t_b64e <"$__T_D/o"
+  printf '\\n@@T %s %s e\\n' "$__T_N" "$__id"
+  head -c 65536 "$__T_D/e" | __t_b64e
+  printf '\\n@@T %s %s z\\n' "$__T_N" "$__id"
+  rm -f "$__T_D/o" "$__T_D/e" "$__T_D/r" "$__T_D/c"
+}
+__t_nop() { :; }
+__t_ls() {
+  __t_tgt "$1" "$2" || return $?
+  [ -d "$__P" ] || return 92
+  __n=0
+  for __f in "$__P"/* "$__P"/.[!.]* "$__P"/..?*; do
+    [ -e "$__f" ] || [ -L "$__f" ] || continue
+    __n=$((__n+1)); [ "$__n" -gt "$3" ] && break
+    if [ -L "$__f" ]; then if [ -d "$__f" ]; then __k=L; else __k=l; fi
+    elif [ -d "$__f" ]; then __k=d; elif [ -f "$__f" ]; then __k=f; else __k=o; fi
+    printf '%s %s\\000' "$__k" "\${__f##*/}"
+  done
+}
+__t_stats() {
+  __t_root "$1" || return $?; shift
+  for __f in "$@"; do
+    if __p=$(__t_real "$__f") && [ -n "$__p" ] && __t_in "$__R" "$__p" && [ -f "$__p" ] && __s=$(__t_sig "$__p"); then printf '%s\\n' "$__s"; else printf '%s\\n' -; fi
+  done
+}
+__t_read() {
+  __t_tgt "$1" "$2" || return $?
+  if [ ! -f "$__P" ]; then [ -d "$__P" ] && return 96; return 92; fi
+  __s=$(__t_sig "$__P") || return 91
+  [ "\${__s%% *}" -le "$3" ] || { printf '%s\\n' "$__s"; return 93; }
+  cat "$__P" >"$__T_D/c" || return 98
+  printf '%s %s\\n' "$(__t_sig "$__P")" "$(__t_hash "$__T_D/c")"
+  cat "$__T_D/c"
+}
+__t_same() {
+  [ -e "$1" ] || return 0
+  if [ -n "$2" ]; then [ "$(__t_hash "$1")" = "$2" ]; return; fi
+  if [ -n "$3" ]; then __s=$(__t_sig "$1") || return 1; [ "\${__s% *}" = "$3" ]; return; fi
+  return 0
+}
+__t_write() {
+  __t_root "$1" || return $?
+  __E=
+  if [ -e "$2" ] || [ -L "$2" ]; then
+    __t_tgt "$1" "$2" || return $?
+    [ -d "$__P" ] && return 96
+    __E=1
+  else
+    __t_ent "$1" "$2" || return $?
+  fi
+  __t_same "$__P" "$3" "$4" || { __t_sig "$__P"; return 95; }
+  __tmp=$(mktemp "\${__P%/*}/.\${__P##*/}.tessel-XXXXXX") || return 98
+  if ! __t_b64d <"$__T_D/u" >"$__tmp"; then rm -f "$__tmp"; return 98; fi
+  if [ -n "$__E" ]; then __m=$(__t_sig "$__P"); __m=\${__m##* }; else __m=$(__t_newmode); fi
+  chmod "$__m" "$__tmp" 2>/dev/null
+  __t_same "$__P" "$3" "$4" || { rm -f "$__tmp"; __t_sig "$__P"; return 95; }
+  mv -f "$__tmp" "$__P" || { rm -f "$__tmp"; return 98; }
+  rm -f "$__T_D/u"
+  printf '%s %s\\n' "$(__t_sig "$__P")" "$(__t_hash "$__P")"
+}
+__t_name() { case $1 in ''|.|..|*/*) return 1 ;; esac; return 0; }
+__t_mk() {
+  __t_ent "$1" "$2" || return $?
+  __t_name "$__N" || return 90
+  { [ -e "$__P" ] || [ -L "$__P" ]; } && return 94
+  if [ "$3" = 1 ]; then mkdir "$__P" || return 98; else (set -C; : >"$__P") || return 98; fi
+}
+__t_mv() {
+  __t_name "$3" || return 90
+  __t_ent "$1" "$2" || return $?
+  { [ -e "$__P" ] || [ -L "$__P" ]; } || return 91
+  __to="\${__PD%/}/$3"
+  { [ -e "$__to" ] || [ -L "$__to" ]; } && return 94
+  mv "$__P" "$__to" || return 98
+}
+__t_trash() {
+  __t_ent "$1" "$2" || return $?
+  { [ -e "$__P" ] || [ -L "$__P" ]; } || return 91
+  __tr="\${XDG_DATA_HOME:-$HOME/.local/share}/Trash"
+  mkdir -p "$__tr/files" "$__tr/info" || return 98
+  __b=$__N; __i=1
+  while [ -e "$__tr/files/$__b" ] || [ -L "$__tr/files/$__b" ] || [ -e "$__tr/info/$__b.trashinfo" ]; do __i=$((__i+1)); [ "$__i" -gt 999 ] && return 98; __b="$__N.$__i"; done
+  (set -C; printf '[Trash Info]\\nPath=%s\\nDeletionDate=%s\\n' "$3" "$4" >"$__tr/info/$__b.trashinfo") || return 98
+  mv "$__P" "$__tr/files/$__b" || { rm -f "$__tr/info/$__b.trashinfo"; return 98; }
+  printf '%s\\n' "$__tr/files/$__b"
+}
+__t_top() {
+  __t_root "$1" || return $?
+  __t=$(__t_git "$__R" rev-parse --show-toplevel 2>/dev/null) || { printf '%s\\n' "$__R"; return 80; }
+  __t=$(__t_real "$__t") || return 91
+  printf '%s\\n%s\\n' "$__R" "$__t"
+}
+__t_gitin() {
+  __t_root "$1" || return $?
+  __t_in "$2" "$__R" || return 90
+  __g=$2; shift 2
+  if [ "$1" = -F ]; then shift; __t_b64d <"$__T_D/u" >"$__T_D/m" || return 98; __t_git "$__g" "$@" -F "$__T_D/m"; return; fi
+  __t_git "$__g" "$@"
+}
+__t_gitop() {
+  __t_root "$1" || return $?
+  __t_in "$2" "$__R" || return 90
+  __gd=$(__t_git "$2" rev-parse --absolute-git-dir 2>/dev/null) || return 0
+  if [ -e "$__gd/rebase-merge" ] || [ -e "$__gd/rebase-apply" ]; then echo rebase; elif [ -e "$__gd/MERGE_HEAD" ]; then echo merge; elif [ -e "$__gd/CHERRY_PICK_HEAD" ]; then echo cherry-pick; fi
+}
+__t_wcl() {
+  __t_root "$1" || return $?
+  __t_in "$2" "$__R" || return 90
+  __g=$2; shift 2; __left=33554432
+  for __f in "$@"; do
+    __p="\${__g%/}/$__f"
+    if [ -L "$__p" ]; then echo 1; continue; fi
+    if [ -f "$__p" ] && __s=$(__t_sig "$__p") && __z=\${__s%% *} && [ "$__z" -le 2097152 ] && [ "$__z" -le "$__left" ]; then
+      __left=$((__left-__z))
+      if [ "$(tr -d '\\000' <"$__p" | wc -c)" -eq "$__z" ]; then awk 'END{print NR}' "$__p"; continue; fi
+    fi
+    echo -
+  done
+}
+__t_findn() {
+  __t_root "$1" || return $?
+  if [ "$3" = d ]; then
+    find "$__R/." \\( -name .git -o -name node_modules -o -name dist -o -name build -o -name out -o -name .next -o -name .cache -o -name target -o -name .venv -o -name __pycache__ \\) -prune -o -iname "$2" -type d -print0
+  else
+    find "$__R/." \\( -name .git -o -name node_modules -o -name dist -o -name build -o -name out -o -name .next -o -name .cache -o -name target -o -name .venv -o -name __pycache__ \\) -prune -o -iname "$2" ! -type d -print0
+  fi
+}
+__t_grep() {
+  __t_root "$1" || return $?
+  cd "$__R" || return 91
+  if [ "$2" = git ]; then shift 2; __t_git "$__R" "$@"; return; fi
+  LC_ALL=C grep -rnIiF --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=build --exclude-dir=out --exclude-dir=.next --exclude-dir=.cache --exclude-dir=target --exclude-dir=.venv --exclude-dir=__pycache__ -e "$3" .
+}
+__t_fp() {
+  __t_root "$1" || return $?
+  { ls -la "$__R" 2>/dev/null; __t_git "$__R" status --porcelain=v1 -z 2>/dev/null; } | cksum
+}
+if [ -z "$__T_B" ]; then printf '\\n@@R %s base64\\n' "$__T_N"; else printf '\\n@@R %s ok\\n' "$__T_N"; fi
+`
+}
+
+// The ssh.exe argv for a session on a host: launchArgs is remoteHosts'
+// argv (its options, then the destination); batch: no askpass available, so
+// ssh may not ask anything (keys or an agent only).
+export function sessionArgs(launchArgs, { batch = false } = {}) {
+  return [
+    '-T',
+    '-o', 'RequestTTY=no',
+    '-o', 'RemoteCommand=none',
+    '-o', 'ClearAllForwardings=yes',
+    '-o', 'ConnectTimeout=20',
+    '-o', 'ServerAliveInterval=15',
+    '-o', 'ServerAliveCountMax=3',
+    ...(batch ? ['-o', 'BatchMode=yes'] : []),
+    ...launchArgs,
+    'exec /bin/sh'
+  ]
+}
+
+function uploadLines(buf) {
+  const b64 = Buffer.from(buf).toString('base64')
+  const lines = ['__t_up']
+  for (let i = 0; i < b64.length; i += UPLOAD_LINE) lines.push(`printf '%s\\n' '${b64.slice(i, i + UPLOAD_LINE)}' >>"$__T_D/u"`)
+  return lines
+}
+
+// One request line (and the upload before it).
+export function requestScript(id, cap, fn, args = [], upload = null) {
+  if (!FUNCTIONS.has(fn)) throw new Error('unknown remote function') // i18n-ignore internal
+  if (!Number.isInteger(id) || id < 1 || !Number.isInteger(cap) || cap < 1) throw new Error('bad request') // i18n-ignore internal
+  const parts = args.map((a) => (isRawArg(a) ? a[RAW] : sq(a)))
+  const lines = upload ? uploadLines(upload) : []
+  lines.push(`__t_q ${id} ${cap} ${fn}${parts.length ? ' ' + parts.join(' ') : ''}`)
+  return lines.join('\n') + '\n'
+}
+
+// A session: start() once, then run() requests (queued, one at a time).
+// file / args: ssh.exe and sessionArgs(); env: its environment (askpass).
+export function createRemoteSession({
+  file,
+  args,
+  env,
+  spawnImpl = spawn,
+  timers = { setTimeout, clearTimeout },
+  readyTimeoutMs = READY_TIMEOUT_MS,
+  maxResponse = MAX_RESPONSE,
+  randomHex = () => crypto.randomBytes(16).toString('hex'),
+  onExit = () => {}
+} = {}) {
+  const nonce = randomHex()
+  let child = null
+  let state = 'new' // new | starting | ready | closed
+  let readyWait = null
+  let stderrTail = ''
+  let exitCode = null
+  let seq = 0
+  const queue = [] // waiting requests
+  let current = null // { id, resolve, reject, timer, sections, section, size }
+  let lineParts = []
+  let lineSize = 0
+  let closedReason = null
+  let lastUsed = Date.now()
+
+  const readyRe = new RegExp(`^@@R ${nonce} (\\S+)$`)
+  const markRe = new RegExp(`^@@T ${nonce} (\\d+) (\\S+)$`)
+
+  function fail(reason) {
+    if (state === 'closed') return
+    state = 'closed'
+    closedReason = reason
+    const err = sessionError(reason)
+    if (readyWait) {
+      timers.clearTimeout(readyWait.timer)
+      readyWait.reject(err)
+      readyWait = null
+    }
+    if (current) {
+      timers.clearTimeout(current.timer)
+      current.reject(err)
+      current = null
+    }
+    while (queue.length) queue.shift().reject(err)
+    if (child) {
+      try {
+        child.stdin.end()
+      } catch {
+        /* gone */
+      }
+      try {
+        child.kill()
+      } catch {
+        /* gone */
+      }
+    }
+    try {
+      onExit(reason)
+    } catch {
+      /* the owner is gone */
+    }
+  }
+
+  function sessionError(reason) {
+    const e = new Error(`remote session ${reason}`) // i18n-ignore internal: callers translate by code
+    e.code = reason
+    e.stderr = stderrTail.trim()
+    e.exitCode = exitCode
+    return e
+  }
+
+  function onLine(buf) {
+    const text = buf.toString('latin1').replace(/\r$/, '')
+    if (state === 'starting') {
+      const m = readyRe.exec(text)
+      if (!m) return // login banners, rc file output: ignored
+      if (m[1] !== 'ok') return fail(m[1] === 'base64' ? 'no-base64' : 'prelude')
+      state = 'ready'
+      if (readyWait) {
+        timers.clearTimeout(readyWait.timer)
+        readyWait.resolve()
+        readyWait = null
+      }
+      pump()
+      return
+    }
+    if (!current) return
+    const m = markRe.exec(text)
+    if (m && Number(m[1]) === current.id) {
+      const tag = m[2]
+      if (tag === 'e') current.section = 'err'
+      else if (tag === 'z') finish()
+      else if (/^\d+$/.test(tag)) {
+        current.rc = Number(tag)
+        current.section = 'out'
+      }
+      return
+    }
+    if (!current.section || !text) return
+    current.size += text.length
+    if (current.size > maxResponse) return fail('too-large')
+    current[current.section].push(text)
+  }
+
+  function finish() {
+    const c = current
+    current = null
+    timers.clearTimeout(c.timer)
+    lastUsed = Date.now()
+    const out = Buffer.from(c.out.join(''), 'base64')
+    const err = Buffer.from(c.err.join(''), 'base64').toString('utf8')
+    c.resolve({ rc: c.rc, out, err, truncated: out.length >= c.cap })
+    pump()
+  }
+
+  function onData(chunk) {
+    let start = 0
+    for (;;) {
+      const nl = chunk.indexOf(0x0a, start)
+      if (nl < 0) {
+        const rest = chunk.subarray(start)
+        lineSize += rest.length
+        if (lineSize > maxResponse) return fail('too-large')
+        if (rest.length) lineParts.push(rest)
+        return
+      }
+      const piece = chunk.subarray(start, nl)
+      const line = lineParts.length ? Buffer.concat([...lineParts, piece]) : piece
+      lineParts = []
+      lineSize = 0
+      start = nl + 1
+      onLine(line)
+      if (state === 'closed') return
+    }
+  }
+
+  function pump() {
+    if (state !== 'ready' || current || !queue.length) return
+    const req = queue.shift()
+    current = { ...req, out: [], err: [], section: null, size: 0, rc: null }
+    current.timer = timers.setTimeout(() => fail('timeout'), req.timeoutMs)
+    try {
+      child.stdin.write(req.script)
+    } catch {
+      fail('closed')
+    }
+  }
+
+  function start() {
+    if (state !== 'new') return readyWait ? readyWait.promise : state === 'ready' ? Promise.resolve() : Promise.reject(sessionError(closedReason || 'closed'))
+    state = 'starting'
+    let resolve
+    let reject
+    const promise = new Promise((res, rej) => {
+      resolve = res
+      reject = rej
+    })
+    readyWait = { promise, resolve, reject, timer: timers.setTimeout(() => fail('connect-timeout'), readyTimeoutMs) }
+    try {
+      child = spawnImpl(file, args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, env })
+    } catch {
+      fail('spawn')
+      return promise
+    }
+    child.on('error', () => fail('spawn'))
+    child.on('exit', (code) => {
+      exitCode = code
+      fail(state === 'starting' ? 'connect' : 'closed')
+    })
+    if (child.stdin) child.stdin.on('error', () => {})
+    child.stdout.on('data', onData)
+    child.stderr.on('data', (chunk) => {
+      stderrTail = (stderrTail + chunk.toString('utf8')).slice(-MAX_STDERR_TAIL)
+    })
+    try {
+      child.stdin.write(prelude(nonce))
+    } catch {
+      fail('spawn')
+    }
+    return promise
+  }
+
+  // -> Promise<{ rc, out: Buffer, err: string, truncated }>; rejects with an
+  // error whose code is the session's end (timeout, closed, cancelled…).
+  function run(fn, args = [], { cap = 4 * 1024 * 1024, timeoutMs = DEFAULT_TIMEOUT_MS, upload = null } = {}) {
+    if (state === 'closed') return Promise.reject(sessionError(closedReason || 'closed'))
+    let script
+    const id = ++seq
+    try {
+      script = requestScript(id, cap, fn, args, upload)
+    } catch (err) {
+      return Promise.reject(Object.assign(new Error(err.message), { code: 'bad-argument' }))
+    }
+    return new Promise((resolve, reject) => {
+      queue.push({ id, cap, script, timeoutMs, resolve, reject })
+      pump()
+    })
+  }
+
+  return {
+    start,
+    run,
+    close: (reason = 'cancelled') => fail(reason),
+    get state() {
+      return state
+    },
+    get busy() {
+      return !!current || queue.length > 0
+    },
+    get pending() {
+      return (current ? 1 : 0) + queue.length
+    },
+    get lastUsed() {
+      return lastUsed
+    },
+    get stderr() {
+      return stderrTail
+    }
+  }
+}

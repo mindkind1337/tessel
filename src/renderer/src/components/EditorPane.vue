@@ -39,6 +39,7 @@ import { pathKey, samePath, fileName, closeTab as closeTabData, pinTab, docPathO
 import { fileKind } from '../../../shared/fileKinds'
 import { pickLanguage } from '../../../shared/editorLanguage'
 import { formatDiffComments } from '../../../shared/sourceControl'
+import { isRemotePath, remoteHostPath } from '../../../shared/remotePath'
 import { notesFor, addNote, deleteNote, updateNote, clearDelivered } from '../reviewNotes'
 import { scmRevision } from '../scmState'
 import { installDiffNotes } from '../editor/diffNotes'
@@ -747,7 +748,8 @@ function openExternally() {
 function copyPath() {
   const p = activeDocPath.value
   if (p && window.shellApi.writeClipboard) {
-    window.shellApi.writeClipboard(p)
+    // A remote project's file: its path on the host.
+    window.shellApi.writeClipboard(isRemotePath(p) ? remoteHostPath(p) || p : p)
     if (ctx.copied) ctx.copied('Path')
   }
 }

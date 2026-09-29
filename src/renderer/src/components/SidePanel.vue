@@ -8,7 +8,7 @@ import ExplorerPanel from './ExplorerPanel.vue'
 import { refreshStatus, statusOf, changeCount, rootKey } from '../scmState'
 import ChangesPanel from './ChangesPanel.vue'
 import TaskBoard from './TaskBoard.vue'
-import RemoteUnavailable from './project/RemoteUnavailable.vue'
+import RemoteBadge from './project/RemoteBadge.vue'
 import { t } from '../i18n'
 import { Files, GitBranch, ListChecks } from 'lucide-vue-next'
 
@@ -20,8 +20,9 @@ const props = defineProps({
   canInsert: { type: Boolean, default: false },
   agentPanes: { type: Array, default: () => [] },
   workspaceId: { type: String, default: null },
-  // A project on a remote host: { host, path }. Files and Changes need local
-  // files, so they say they are not available yet (RemoteUnavailable).
+  // A project on a remote host: { hostId, host, path }. Its root is then an
+  // ssh://… path: Files and Changes read it over SSH (src/main/remoteFs.js),
+  // under a small badge naming the host.
   remote: { type: Object, default: null }
 })
 const emit = defineEmits([
@@ -131,13 +132,14 @@ onBeforeUnmount(() => {
       </button>
     </div>
     <div class="side-body">
-      <RemoteUnavailable
+      <RemoteBadge
         v-if="remote && (current() === 'files' || current() === 'changes')"
+        :host-id="remote.hostId"
         :host="remote.host"
         :path="remote.path"
       />
       <ExplorerPanel
-        v-if="shown.files && !remote"
+        v-if="shown.files"
         v-show="current() === 'files'"
         :root="root"
         :can-insert="canInsert"
@@ -150,7 +152,7 @@ onBeforeUnmount(() => {
         @close="emit('close')"
       />
       <ChangesPanel
-        v-if="shown.changes && !remote"
+        v-if="shown.changes"
         v-show="current() === 'changes'"
         :root="root"
         :workspace-id="workspaceId"
