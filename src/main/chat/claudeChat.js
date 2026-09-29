@@ -5,6 +5,7 @@
 //   each turn, so waiting for it would hang);
 // - a turn ends with `result` (then session_state_changed idle);
 // - delivery proof = command_lifecycle started or the replay echo (isReplay).
+import { claudeCommands } from './commands.js'
 import { EventEmitter } from 'events'
 import { spawn as nodeSpawn } from 'child_process'
 import { randomUUID } from 'crypto'
@@ -101,6 +102,7 @@ export function createClaudeChat(opts) {
   } = opts
   const timeouts = { ...DEFAULT_TIMEOUTS, ...(opts.timeouts || {}) }
   const chat = new EventEmitter()
+  let commands = []
   const frames = createFrameState({ now })
   frames.sessionId = sessionId || resume
   // A throttled roster snapshot still arrives when its window has passed.
@@ -222,6 +224,13 @@ export function createClaudeChat(opts) {
     if (m.type === 'control_response') return onControlResponse(m)
     if (m.type === 'control_request') return onControlRequest(m)
     if (m.type === 'control_cancel_request') return onCancelRequest(m)
+    if (m.type === 'system' && m.subtype === 'init' && !m.parent_tool_use_id) {
+      const next = claudeCommands(m, commands)
+      if (JSON.stringify(next) !== JSON.stringify(commands)) {
+        commands = next
+        emit('commands', { commands })
+      }
+    }
     let events
     try {
       events = normalizeFrame(m, frames)
@@ -361,6 +370,8 @@ export function createClaudeChat(opts) {
         if (!e.ok) logAt('warn', `initial effort ${effort} not applied: ${e.error}`)
       }
       ready = true
+      commands = claudeCommands(resp)
+      emit('commands', { commands })
       const account = resp.account && typeof resp.account === 'object' ? resp.account : {}
       return {
         ok: true,
@@ -369,7 +380,7 @@ export function createClaudeChat(opts) {
           startMs: now() - t0,
           cliPid: resp.pid ?? null,
           models: Array.isArray(resp.models) ? resp.models : [],
-          commands: Array.isArray(resp.commands) ? resp.commands.map((c) => ({ name: c.name, description: c.description })) : [],
+          commands,
           permissionMode: resp.current_permission_mode ?? null,
           sessionState: resp.session_state ?? null,
           fastModeState: resp.fast_mode_state ?? null,

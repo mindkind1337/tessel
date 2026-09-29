@@ -412,6 +412,9 @@ function onRequest(m) {
   const ok = (result) => out({ id, result })
   const err = (code, message) => out({ id, error: { code, message } })
   switch (method) {
+    case 'skills/list':
+      if (MODE === 'skills-unavailable') return err(-32601, 'method not found')
+      return ok({ data: [{ cwd: CWD, errors: [], skills: [{ name: 'review', description: 'Review fixtures', path: `${CWD}/skills/review/SKILL.md`, scope: 'repo', enabled: true }] }] })
     case 'initialize':
       if (MODE === 'noinit') return
       notify('remoteControl/status/changed', { status: 'disabled', serverName: 'fake', installationId: 'x', environmentId: null })

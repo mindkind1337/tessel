@@ -9,6 +9,7 @@
 // nor a sub-agent's tool-level progress events.
 // Strings in tool input/output are clipped to 8 KB: a journal is for reading
 // back a conversation, not for storing whole files a tool printed.
+import { normalizeCommands } from './commands.js'
 import fs from 'fs'
 import { join } from 'path'
 import { readJsonSafe, writeJsonSafe } from '../safeJson.js'
@@ -50,6 +51,7 @@ export function createChatJournal({ dir, paneId, rotateBytes = ROTATE_BYTES, now
   const file = join(folder, 'journal.jsonl')
   const old = join(folder, 'journal.1.jsonl')
   const metaFile = join(folder, 'meta.json')
+  const commandsFile = join(folder, 'commands.json')
   let size = null
 
   const warn = (what, err) => {
@@ -82,6 +84,7 @@ export function createChatJournal({ dir, paneId, rotateBytes = ROTATE_BYTES, now
     const line = `${JSON.stringify({ seq, at: now(), event: stored })}\n`
     try {
       ensure()
+      if (event.type === 'commands') writeJsonSafe(commandsFile, normalizeCommands(event.commands))
       if (size > 0 && size + Buffer.byteLength(line) > rotateBytes) {
         fs.rmSync(old, { force: true })
         fs.renameSync(file, old)
@@ -192,6 +195,13 @@ export function createChatJournal({ dir, paneId, rotateBytes = ROTATE_BYTES, now
     return items.length ? items[items.length - 1].seq : 0
   }
 
+  function readCommands() {
+    try {
+      const { data } = readJsonSafe(commandsFile, Array.isArray)
+      return normalizeCommands(data)
+    } catch { return [] }
+  }
+
   function readMeta() {
     try {
       const { data } = readJsonSafe(metaFile, (d) => !!d && typeof d === 'object')
@@ -228,5 +238,5 @@ export function createChatJournal({ dir, paneId, rotateBytes = ROTATE_BYTES, now
     }
   }
 
-  return { append, read, readTail, lastSeq, readMeta, writeMeta, remove, folder }
+  return { append, read, readTail, lastSeq, readCommands, readMeta, writeMeta, remove, folder }
 }

@@ -137,9 +137,9 @@ describe("a Codex conversation's sub-agents", () => {
       [
         line(childMeta('c', P, P, now)),
         line(ctx(now, 'parent-model')),
-        line({ type: 'event_msg', payload: { type: 'thread_settings_applied', thread_settings: { model: 'child-model' } } })
+        line({ type: 'event_msg', payload: { type: 'thread_settings_applied', thread_settings: { model: 'child-model', reasoning_effort: 'xhigh' } } })
       ].join('\n') + '\n{"type":"turn_con'
-    expect(parseCodexHead(text)).toMatchObject({ child: true, root: P, parent: P, nickname: 'Hubble', path: '/root/accounts_ui', role: null, model: 'child-model' })
+    expect(parseCodexHead(text)).toMatchObject({ child: true, root: P, parent: P, nickname: 'Hubble', path: '/root/accounts_ui', role: null, model: 'child-model', effort: 'xhigh' })
     expect(parseCodexHead('{"type":"session_meta","payload":{"id":"x"')).toBe(null) // first line not written yet
     expect(parseCodexHead(line({ type: 'session_meta', payload: { id: 'x', thread_source: 'user' } }) + '\n')).toEqual({ child: false })
   })
@@ -147,7 +147,7 @@ describe("a Codex conversation's sub-agents", () => {
   it('reads a turn from its end: started, completed, aborted', () => {
     const t0 = Date.parse('2026-09-28T10:00:00Z')
     expect(summarizeCodexTail([line(ev(t0, { type: 'task_complete' })), line(ev(t0 + 1000, { type: 'task_started' }))])).toMatchObject({ done: false, last: t0 + 1000 })
-    expect(summarizeCodexTail([line(ev(t0, { type: 'task_started' })), line(tokens(t0 + 500, 77)), line(ev(t0 + 1000, { type: 'task_complete' }))])).toEqual({ done: true, last: t0 + 1000, tokens: 77, model: null })
+    expect(summarizeCodexTail([line(ev(t0, { type: 'task_started' })), line(tokens(t0 + 500, 77)), line(ev(t0 + 1000, { type: 'task_complete' }))])).toEqual({ done: true, last: t0 + 1000, tokens: 77, model: null, effort: null })
     expect(summarizeCodexTail(['{broken', line(ev(t0, { type: 'turn_aborted' }))]).done).toBe(true)
   })
 

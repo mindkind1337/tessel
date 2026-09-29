@@ -13,6 +13,7 @@
 //
 // Protocol handling informed by Orca's Codex app-server client
 // (github.com/stablyai/orca, src/main/codex/, MIT licence).
+import { codexSkillDiscovery } from './skills.js'
 import { EventEmitter } from 'events'
 import { spawn as nodeSpawn } from 'child_process'
 import { randomUUID } from 'crypto'
@@ -23,7 +24,7 @@ import { observeCodexSubagents } from './codexSubagents.js'
 
 export const PERMISSION_MODES = ['default', 'bypassPermissions', 'acceptEdits', 'plan']
 // quitKill: how long a kill on quit waits for the exit before giving up.
-export const DEFAULT_TIMEOUTS = { start: 30000, request: 30000, close: 3000, exitFlush: 1000, idleSettle: 10000, accountProbe: 5000, quitKill: 1500 }
+export const DEFAULT_TIMEOUTS = { start: 30000, request: 30000, close: 3000, exitFlush: 1000, idleSettle: 10000, accountProbe: 5000, catalog: 1500, quitKill: 1500 }
 export const killCodexTree = killClaudeTree
 const STDERR_TAIL = 8 * 1024
 export const MAX_LINE = 8 * 1024 * 1024 // a line longer than this is dropped (runaway output)
@@ -1090,6 +1091,8 @@ export function createCodexChat(opts) {
       state.threadId = threadId
       if (typeof res.model === 'string' && res.model) state.model = res.model
       if (typeof thread.cliVersion === 'string') state.cliVersion = thread.cliVersion
+      const commands = []
+      emit('commands', { commands })
       ready = true
       return {
         ok: true,
@@ -1097,6 +1100,7 @@ export function createCodexChat(opts) {
         info: {
           startMs: now() - t0,
           threadId,
+          commands,
           ...(superseded ? { supersededThreadId: superseded } : {}),
           resumed: !!resumeId && !superseded,
           model: state.model,
@@ -1116,6 +1120,13 @@ export function createCodexChat(opts) {
       }
     })()
     return startPromise
+  }
+
+  async function skills({ refresh = false } = {}) {
+    if (!ready || !alive() || finished || closing) return { ok: false }
+    const response = await request('skills/list', { cwds: [cwd], forceReload: refresh === true }, timeouts.catalog)
+    if (!response.ok || finished || closing || !Array.isArray(response.result?.data)) return { ok: false }
+    return { ok: true, result: codexSkillDiscovery(response.result, cwd, now) }
   }
 
   function turnParams(id, input) {
@@ -1291,6 +1302,7 @@ export function createCodexChat(opts) {
     setEffort,
     setPermissionMode,
     close,
+    skills,
     pendingPermissions: () => [...approvals.keys()]
   })
   Object.defineProperties(chat, {

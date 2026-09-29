@@ -108,7 +108,7 @@
       "showChildren_other": "Afficher {{count}} agents enfants",
       "hideChildren_one": "Masquer {{count}} agent enfant",
       "hideChildren_other": "Masquer {{count}} agents enfants",
-      "more": "{{count}} de plus",
+      "more": "+ {{count}} de plus",
       "unread_one": "{{count}} message d'équipe que cet agent n'a pas encore lu (il les lit avec ses outils d'équipe)",
       "unread_other": "{{count}} messages d'équipe que cet agent n'a pas encore lus (il les lit avec ses outils d'équipe)",
       "leadHint": "Dirige l'équipe",
@@ -122,6 +122,7 @@
       "workerOfHint": "Exécutant de {{coordinator}} : y aller",
       "childType": "Type : {{type}}",
       "childModel": "Modèle : {{model}}",
+      "childEffort": "Effort : {{effort}}",
       "teamLead": "{{team}} · responsable",
       "chat": "chat",
       "chatHint": "Chat, sans terminal"

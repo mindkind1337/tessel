@@ -381,6 +381,7 @@ const api = {
     setOption: (opts) => ipcRenderer.invoke('chat:setOption', opts),
     close: (opts) => ipcRenderer.invoke('chat:close', opts),
     history: (opts) => ipcRenderer.invoke('chat:history', opts),
+    skills: (opts) => ipcRenderer.invoke('chat:skills', opts),
     onEvent: (cb) => subscribe('chat:event', cb)
   },
 

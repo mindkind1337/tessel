@@ -198,7 +198,7 @@ describe('sub-agents feed', () => {
     codex.release()
   })
 
-  it('folds children finished over 30 min ago under "N more"', () => {
+  it('shows only the active children; every finished one folds under "N more"', () => {
     const now = 10_000_000
     const { shown, older } = splitChildren(
       [
@@ -209,8 +209,8 @@ describe('sub-agents feed', () => {
       ],
       now
     )
-    expect(shown.map((c) => c.id)).toEqual(['run', 'quiet', 'recent'])
-    expect(older.map((c) => c.id)).toEqual(['old'])
+    expect(shown.map((c) => c.id)).toEqual(['run', 'quiet'])
+    expect(older.map((c) => c.id)).toEqual(['recent', 'old'])
     expect(childDotState({ state: 'running' })).toBe('working')
     expect(childDotState({ state: 'quiet' })).toBe('unverifiable')
   })

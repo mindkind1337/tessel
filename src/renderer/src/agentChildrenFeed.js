@@ -83,20 +83,17 @@ export function acquireChildren(args, { api = typeof window !== 'undefined' ? wi
   }
 }
 
-// Orca shows a parent's live children at once; Tessel keeps the whole
-// conversation's list, so those long finished (over 30 min) fold under
-// "N more". Running first, then quiet, then the newest.
-export const RECENT_CHILD_MS = 30 * 60 * 1000
+// Only the active children show at once (running, then quiet: unfinished);
+// every finished one folds under "+ N more", newest first.
 const RANK = { running: 0, quiet: 1, done: 2 }
-export function splitChildren(list, now = Date.now()) {
+export function splitChildren(list) {
   const sorted = [...(list || [])].sort(
     (a, b) => (RANK[a.state] ?? 3) - (RANK[b.state] ?? 3) || (b.startedAt || 0) - (a.startedAt || 0)
   )
   const shown = []
   const older = []
   for (const c of sorted) {
-    const old = c.state === 'done' && (!c.endedAt || now - c.endedAt >= RECENT_CHILD_MS)
-    ;(old ? older : shown).push(c)
+    ;(c.state === 'done' ? older : shown).push(c)
   }
   return { shown, older }
 }
