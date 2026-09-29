@@ -366,20 +366,19 @@
       "tools": "Ajouter votre propre agent ou installer des outils…",
       "keysMove": "pour naviguer,",
       "keysOpen": "pour ouvrir,",
-      "keysClose": "pour fermer"
+      "keysClose": "pour fermer",
+      "modelHint": "Le modèle avec lequel {{name}} démarre"
     },
     "model": {
       "fromSession": "d'après sa dernière réponse",
       "fromCommand": "d'après sa commande",
       "fromPicked": "le dernier modèle choisi dans l'agent",
-      "fromManual": "défini par vous (menu du panneau > Définir le modèle...)",
       "fromScreen": "lu à l'écran (barre d'état ou bannière)",
       "fromRunning": "le seul modèle qu'Ollama fait tourner",
       "fromSettings": "d'après ses paramètres (un changement fait dans l'agent peut ne pas apparaître)",
       "titleEffort": "Modèle : {{model}} (raisonnement {{effort}})",
       "title": "Modèle : {{model}}",
-      "placeholder": "Modèle (vide : automatique)",
-      "inputLabel": "Modèle utilisé par cet agent (vide : le trouver automatiquement)"
+      "fromChosen": "choisi dans Tessel (menu du panneau > Modèle, ou Paramètres > Agents)"
     },
     "status": {
       "noFresh": "Aucun état récent n'est confirmé pour cet agent.",
@@ -418,7 +417,8 @@
       "title": "Démarré en Yolo : cet agent exécute des commandes et modifie des fichiers sans vous demander"
     },
     "apply": {
-      "title": "Paramètres > Agents a changé depuis le démarrage de cet agent (Yolo, arguments ou variables). Redémarrez-le pour les appliquer : même panneau, sa conversation reprise"
+      "title": "Paramètres > Agents a changé depuis le démarrage de cet agent (Yolo, arguments ou variables). Redémarrez-le pour les appliquer : même panneau, sa conversation reprise",
+      "titleModel": "Paramètres > Agents ou son modèle a changé depuis le démarrage de cet agent (Yolo, arguments, variables ou modèle). Redémarrez-le pour les appliquer : même panneau, sa conversation reprise"
     },
     "title": {
       "namedAfter": "{{name}} : {{title}} (nommé d'après sa conversation)",
@@ -448,14 +448,13 @@
       "clear": "Effacer",
       "copySession": "Copier l'ID de session",
       "find": "Rechercher",
-      "setModelHint": "Indiquer le modèle qu'utilise cet agent",
-      "setModel": "Définir le modèle…",
-      "yours": " (le vôtre)",
       "sendSelection": "Envoyer la sélection à",
       "askReview": "Demander de réviser les changements de ce panneau",
       "openHere": "Ouvrir un terminal ou un agent ici…",
       "splitRight": "Diviser à droite",
-      "splitDown": "Diviser vers le bas"
+      "splitDown": "Diviser vers le bas",
+      "model": "Modèle…",
+      "modelHint": "Choisir le modèle utilisé par cet agent"
     },
     "badge": {
       "quiet": "silencieux depuis {{minutes}} min",
@@ -551,6 +550,52 @@
       "state": "État",
       "quiet": "Silencieux",
       "cache": "Cache de prompt"
+    },
+    "sessionOptions": {
+      "model": "Modèle",
+      "effort": "Effort",
+      "reasoningEffort": "Effort de raisonnement",
+      "fastMode": "Mode rapide",
+      "thinking": "Réflexion",
+      "value": {
+        "fast": "Rapide",
+        "minimal": "Minimal",
+        "low": "Basse",
+        "medium": "Moyenne",
+        "high": "Haute",
+        "xhigh": "Extra élevé",
+        "max": "Max",
+        "ultra": "Ultra"
+      },
+      "describe": {
+        "fable": "Le plus performant pour les tâches les plus difficiles et les plus longues",
+        "opus": "Idéal pour les tâches complexes du quotidien",
+        "sonnet": "Efficace pour les tâches courantes",
+        "haiku": "Le plus rapide pour des réponses brèves",
+        "grokLatest": "Le dernier modèle de pointe de xAI",
+        "grokPrevious": "Le précédent modèle de pointe de xAI"
+      },
+      "pillAccessibleName": "{{category}} {{value}}",
+      "chooseInAgentPicker": "Choisir dans le sélecteur d'agents…",
+      "toggleOption": "Basculer {{option}}",
+      "valueIsDefault": "Par défaut",
+      "settingsDefault": "Par défaut des paramètres ({{model}})",
+      "agentDefault": "Par défaut de l'agent",
+      "appliesAtStart": "S'applique au démarrage de l'agent.",
+      "appliesAtRestart": "Un modèle choisi ici s'applique au redémarrage de l'agent.",
+      "waitIdle": "Il travaille : son modèle pourra changer une fois qu'il sera inactif.",
+      "kept": "Claude a conservé le modèle actuel.",
+      "unverified": "Impossible de vérifier le changement de modèle ; ouvrez le terminal pour vérifier.",
+      "sentNotConfirmed": "Envoyé à l'agent — non confirmé",
+      "probe": {
+        "notFound": "{{agent}} est introuvable sur cet ordinateur.",
+        "timeout": "{{agent}} n'a pas listé ses modèles en 60 s.",
+        "tooMuch": "{{agent}} a renvoyé trop de données de modèles.",
+        "empty": "{{agent}} n'a listé aucun modèle ; la liste intégrée est conservée.",
+        "unsupported": "{{agent}} ne peut pas lister ses modèles.",
+        "failedDetail": "{{agent}} n'a pas pu lister ses modèles : {{detail}}",
+        "failed": "{{agent}} n'a pas pu lister ses modèles."
+      }
     }
   }
 }

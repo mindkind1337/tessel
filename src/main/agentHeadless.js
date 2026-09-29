@@ -22,7 +22,7 @@ const PS_PATH =
   "$env:Path = [Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User')"
 
 // The program behind a command name: -> { file, pre, path } or null.
-async function resolveProgram(exe) {
+export async function resolveProgram(exe) {
   if (process.platform !== 'win32') return { file: exe, pre: [], path: process.env.PATH || '' }
   const probe = [
     PS_PATH,

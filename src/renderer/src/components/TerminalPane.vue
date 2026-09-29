@@ -39,8 +39,13 @@ import { stripTerminalSelectionGutter } from '../../../shared/terminalSelectionG
 import { terminalSettingOptions, composeTerminalTheme, useWebgl, METRIC_OPTIONS } from '../terminalOptions'
 import { cacheCountdown } from '../promptCache'
 import { isViewed } from '../../../shared/fileKinds'
-import { effectiveAgent, launchSignature } from '../../../shared/agentPrefs'
+import { effectiveAgent, launchSignature, launchSessionValues } from '../../../shared/agentPrefs'
+import { getAgentSessionOptionCatalog, modelOptions, resolveSessionOptionDefaults } from '../../../shared/agentSessionOptions'
 import { paneModels } from '../paneModels'
+import { modelsFor } from '../agentModels'
+import { modelChoiceLabel, sessionPillLabel } from '../sessionOptionLabels'
+import { switchClaudeModel, typeCommand } from '../claudeModelSwitch'
+import SessionOptionPicker from './SessionOptionPicker.vue'
 import AgentChildren from './AgentChildren.vue'
 import HoverCardContent from './hover/HoverCardContent.vue'
 import PaneHoverDetails from './PaneHoverDetails.vue'
@@ -69,10 +74,11 @@ const isMember = computed(() => ctx.broadcast.value && props.node.broadcast)
 const isMaximized = computed(() => ctx.maximizedId.value === props.node.id)
 const isAgent = computed(() => props.node.kind === 'agent')
 
-// The model the agent uses, shown in the header: the one you set (pane menu
-// > Set model...), else read from its conversation file (so a /model change
-// shows up), its command or its settings, else from its screen (status bar
-// or banner, for agents Tessel has no file for). Checked every 20 s, each
+/// The model the agent uses, shown in the header: read from its conversation
+// file (so a /model change shows up), its command or its settings, else from
+// its screen (status bar or banner, for agents Tessel has no file for). The
+// model chosen for it (Tessel added the flag, or /model was applied) shows
+// until its conversation answers with another model. Checked every 20 s, each
 // time it finishes working, and when one of those files changes.
 const agentModel = ref(null) // { model, effort, source } | null
 const modelText = computed(() => {
@@ -100,8 +106,8 @@ const modelTitle = computed(() => {
         ? t('pane.model.fromCommand', 'from its command')
         : m.source === 'picked'
           ? t('pane.model.fromPicked', 'the model last picked in it')
-          : m.source === 'manual'
-            ? t('pane.model.fromManual', 'set by you (pane menu > Set model...)')
+          : m.source === 'chosen'
+            ? t('pane.model.fromChosen', 'chosen in Tessel (pane menu > Model, or Settings > Agents)')
             : m.source === 'screen'
               ? t('pane.model.fromScreen', 'read from its screen (status bar or banner)')
               : m.source === 'running'
@@ -112,6 +118,21 @@ const modelTitle = computed(() => {
     : t('pane.model.title', 'Model: {{model}}', { model: m.model })
   return `${head}\n${from}`
 })
+// The model this pane was given ({ model, effort, seen }): seen is the model
+// its conversation showed first after that (an older answer), so a newer
+// answer with another model takes over.
+function chosenShown(n, res) {
+  const c = n.modelChoice
+  if (!c || !c.model) return res
+  if (res && res.source === 'session') {
+    if (c.seen === undefined) c.seen = res.model
+    else if (res.model !== c.seen) {
+      delete n.modelChoice
+      return res
+    }
+  }
+  return { model: modelChoiceLabel(modelsFor(n.agentId), c.model), effort: c.effort || null, source: 'chosen' }
+}
 let modelBusy = false
 let modelAgain = false // asked while a check ran: one more after it
 async function refreshModel() {
@@ -126,10 +147,6 @@ async function refreshModel() {
   modelBusy = true
   try {
     const n = props.node
-    if (n.modelOverride) {
-      agentModel.value = { model: n.modelOverride, effort: null, source: 'manual' }
-      return
-    }
     let res = await window.shellApi.agentModel({
       agentId: n.agentId,
       sessionId: n.sessionId,
@@ -137,11 +154,11 @@ async function refreshModel() {
       cwd: n.startDir,
       launchedAt: n.launchedAt || 0
     })
-    if (!res) {
+    if (!res && !n.modelChoice) {
       const seen = modelOnScreen()
       if (seen) res = { model: seen, effort: null, source: 'screen' }
     }
-    if (!n.modelOverride) agentModel.value = res
+    agentModel.value = chosenShown(n, res)
   } catch {
     /* keep what it showed */
   } finally {
@@ -165,28 +182,146 @@ function modelOnScreen() {
   return modelFromScreen({ bottom: screenText(6).split('\n'), top })
 }
 
-// Pane menu > Set model...: your own name for it (empty: automatic again).
-const editingModel = ref(false)
-const modelDraft = ref('')
-const modelInputEl = ref(null)
-function menuSetModel() {
+// Pane menu > Model: Orca's per-session picker (SessionOptionPicker). The
+// pane keeps its own choice (node.sessionOptions, saved with the layout);
+// none = the agent's default from Settings > Agents, or its own.
+// In a running agent a pick applies the way Orca does it: Claude Code's
+// model with /model (its "Switch model?" question answered, the result read
+// from its screen), its effort with /effort, fast mode with /fast; an agent
+// that changes model in its own picker (Codex) gets /model typed for you;
+// the rest applies at the next start (Restart to apply).
+const modelMenu = reactive({ visible: false, x: 0, y: 0, pending: false })
+const modelMenuEl = ref(null)
+const hasModelChoice = computed(() => isAgent.value && !props.node.detected && !!getAgentSessionOptionCatalog(props.node.agentId))
+const paneModelList = computed(() => (hasModelChoice.value ? modelsFor(props.node.agentId) : []))
+// What the pane uses: its own choice, else the default from Settings.
+const paneValues = computed(() => launchSessionValues(props.node.sessionOptions, settings.agentSessionOptions, props.node.agentId))
+const settingsDefault = computed(() => resolveSessionOptionDefaults(settings.agentSessionOptions, props.node.agentId))
+const paneRunning = computed(() => isAgent.value && !exited.value && !props.node.sleeping && !props.node.failed)
+const paneBusy = computed(() => shownState.value === 'working' || agentStatus.value === 'busy' || asksApproval.value)
+const modelDefaultLabel = computed(() =>
+  settingsDefault.value
+    ? t('pane.sessionOptions.settingsDefault', 'Default from Settings ({{model}})', {
+        model: sessionPillLabel(paneModelList.value, settingsDefault.value)
+      })
+    : t('pane.sessionOptions.agentDefault', "Agent's own default")
+)
+const modelMenuNote = computed(() => {
+  if (!paneRunning.value) return t('pane.sessionOptions.appliesAtStart', 'Applies when the agent starts.')
+  const catalog = getAgentSessionOptionCatalog(props.node.agentId)
+  const mid = catalog && catalog.modelApply.midSession
+  return mid && mid.kind === 'command' ? '' : t('pane.sessionOptions.appliesAtRestart', 'A model picked here applies when the agent restarts.')
+})
+const modelBusyReason = computed(() =>
+  paneRunning.value && paneBusy.value ? t('pane.sessionOptions.waitIdle', 'It is working: its model can change once it is idle.') : ''
+)
+async function menuModel() {
+  const x = ctxMenu.x
+  const y = ctxMenu.y
   closeCtxMenu()
-  modelDraft.value = props.node.modelOverride || (agentModel.value && agentModel.value.model) || ''
-  editingModel.value = true
-  nextTick(() => modelInputEl.value && modelInputEl.value.select())
+  modelMenu.x = x
+  modelMenu.y = y
+  modelMenu.visible = true
+  await nextTick()
+  const el = modelMenuEl.value
+  if (!el) return
+  el.focus({ preventScroll: true })
+  const r = el.getBoundingClientRect()
+  if (modelMenu.x + r.width > window.innerWidth) modelMenu.x = window.innerWidth - r.width - 4
+  if (modelMenu.y + r.height > window.innerHeight) modelMenu.y = window.innerHeight - r.height - 4
+  modelMenu.x = Math.max(4, modelMenu.x)
+  modelMenu.y = Math.max(4, modelMenu.y)
 }
-function saveModel() {
-  if (!editingModel.value) return
-  editingModel.value = false
-  const v = modelDraft.value.trim().slice(0, 80)
-  if (v) props.node.modelOverride = v
-  else delete props.node.modelOverride
+function closeModelMenu(refocus = false) {
+  modelMenu.visible = false
+  if (refocus && term) term.focus()
+}
+// The pane's values after this pick (null = back to the default).
+function nextPaneValues(optionId, value) {
+  const current = paneValues.value
+  if (optionId === 'model') {
+    if (!value) return null
+    const next = { model: value }
+    const catalog = getAgentSessionOptionCatalog(props.node.agentId)
+    // An effort the new model also offers is kept.
+    const effort = current && current.effort
+    const offers = modelOptions(catalog, paneModelList.value, value).some(
+      (o) => o.id === 'effort' && o.kind.type === 'select' && o.kind.choices.some((c) => c.value === effort)
+    )
+    if (effort && offers) next.effort = effort
+    return next
+  }
+  if (!current || !current.model) return current
+  const next = { ...current }
+  if (value === null || value === undefined) delete next[optionId]
+  else next[optionId] = value
+  return next
+}
+// A change applied in the running agent: it now runs with these values, so
+// no restart is asked for them (unless other settings changed already).
+function adoptLive(next) {
+  const n = props.node
+  const wasCurrent = !!n.launchSig && signatureNow(n) === n.launchSig
+  setPaneChoice(next)
+  if (wasCurrent) n.launchSig = signatureNow(n)
+  if (next && next.model) n.modelChoice = { model: next.model, effort: typeof next.effort === 'string' ? next.effort : null }
   refreshModel()
-  if (term) term.focus()
 }
-function cancelModel() {
-  editingModel.value = false
-  if (term) term.focus()
+function setPaneChoice(next) {
+  const n = props.node
+  if (next) n.sessionOptions = next
+  else delete n.sessionOptions
+}
+function optionApply(catalog, optionId, modelId) {
+  if (optionId === 'model') return catalog.modelApply
+  const option = modelOptions(catalog, paneModelList.value, modelId).find((o) => o.id === optionId)
+  return option ? option.apply : null
+}
+async function onModelPick({ optionId, value }) {
+  const n = props.node
+  const catalog = getAgentSessionOptionCatalog(n.agentId)
+  if (!catalog) return
+  const next = nextPaneValues(optionId, value)
+  const apply = optionApply(catalog, optionId, next && next.model)
+  const mid = apply && apply.midSession
+  // Not running, a value going back to a default, or a change the running
+  // session takes only in its own picker: kept for the next start.
+  if (!paneRunning.value || value === null || value === undefined || !mid || mid.kind !== 'command') {
+    setPaneChoice(next)
+    if (!paneRunning.value) refreshModel()
+    return
+  }
+  if (paneBusy.value || modelMenu.pending) return
+  modelMenu.pending = true
+  try {
+    if (mid.detectAgentInteraction === 'claude-model-switch-confirmation') {
+      const outcome = await switchClaudeModel(n.id, value, modelChoiceLabel(paneModelList.value, value))
+      if (outcome === 'applied') adoptLive(next)
+      else if (outcome === 'rejected') ctx.toast && ctx.toast(t('pane.sessionOptions.kept', 'Claude kept the current model.'), { kind: 'error' })
+      else {
+        setPaneChoice(next)
+        if (ctx.toast) ctx.toast(t('pane.sessionOptions.unverified', 'Could not verify the model change; open the terminal to check.'), { kind: 'error', timeout: 8000 })
+      }
+    } else {
+      await typeCommand(n.id, mid.build(value), { delivery: mid.delivery === 'type' ? 'type' : 'write' })
+      adoptLive(next)
+      if (ctx.toast) ctx.toast(t('pane.sessionOptions.sentNotConfirmed', 'Sent to the agent — not confirmed'), { timeout: 3000 })
+    }
+  } finally {
+    modelMenu.pending = false
+    closeModelMenu(true)
+  }
+}
+// A flip-only option (/fast) or the agent's own picker (Codex's /model).
+async function onModelAction({ optionId }) {
+  const n = props.node
+  const catalog = getAgentSessionOptionCatalog(n.agentId)
+  if (!catalog || !paneRunning.value || paneBusy.value) return
+  const apply = optionApply(catalog, optionId, paneValues.value && paneValues.value.model)
+  const mid = apply && apply.midSession
+  if (!mid || (mid.kind !== 'toggle-command' && mid.kind !== 'agent-picker')) return
+  closeModelMenu(true)
+  await typeCommand(n.id, mid.command, { delivery: mid.delivery === 'type' ? 'type' : 'write' })
 }
 
 const modelTimer = setInterval(refreshModel, 20000)
@@ -361,11 +496,15 @@ const sleptAt = computed(() =>
 // How this agent was launched vs Settings > Agents now: Yolo shown, and a
 // restart offered when its settings changed since (Yolo on/off, arguments,
 // command, variables). Agents started by hand in a shell are not known.
+// The model chosen for it (its own, else Settings > Agents) counts too.
+function signatureNow(n, choice = n.sessionOptions) {
+  const values = launchSessionValues(choice, settings.agentSessionOptions, n.agentId)
+  return launchSignature(effectiveAgent({ id: n.agentId, command: n.agentCommand }, settings.agentPrefs, settings.agentPermissions, values, modelsFor(n.agentId)))
+}
 const launchStale = computed(() => {
   const n = props.node
   if (n.kind !== 'agent' || !n.launchSig || !n.agentCommand || n.detected) return false
-  const now = effectiveAgent({ id: n.agentId, command: n.agentCommand }, settings.agentPrefs, settings.agentPermissions)
-  return launchSignature(now) !== n.launchSig
+  return signatureNow(n) !== n.launchSig
 })
 function restartToApply() {
   if (ctx.restartLeaf) ctx.restartLeaf(props.node.id)
@@ -408,7 +547,7 @@ function yoloTitle() {
   return t('pane.yolo.title', 'Started in Yolo: this agent runs commands and changes files without asking you')
 }
 function applyTitle() {
-  return t('pane.apply.title', 'Settings > Agents changed since this agent started (Yolo, arguments or variables). Restart it to apply them: same pane, its conversation resumed')
+  return t('pane.apply.titleModel', 'Settings > Agents or its model changed since this agent started (Yolo, arguments, variables or model). Restart it to apply them: same pane, its conversation resumed')
 }
 
 // Like Orca's pane header, the header shows only what matters: the status
@@ -464,7 +603,7 @@ const headerHover = useHoverCard({
   openDelay: 400,
   disabled: () =>
     editingTitle.value ||
-    editingModel.value ||
+    modelMenu.visible ||
     ctxMenu.visible ||
     (typeof document !== 'undefined' && document.body.classList.contains('pane-dragging')),
   // Badges that keep their own one-line tooltip close the card.
@@ -1230,9 +1369,11 @@ function leaveTeamText() {
 
 function onDocPointerDownMenu(e) {
   if (ctxMenu.visible && ctxMenuEl.value && !ctxMenuEl.value.contains(e.target)) closeCtxMenu()
+  if (modelMenu.visible && modelMenuEl.value && !modelMenuEl.value.contains(e.target)) closeModelMenu()
 }
 function onEscapeMenu(e) {
   if (e.key === 'Escape' && ctxMenu.visible) closeCtxMenu()
+  if (e.key === 'Escape' && modelMenu.visible) closeModelMenu()
 }
 
 // A clicked link opens in the system browser (the main process only lets
@@ -1823,20 +1964,6 @@ onBeforeUnmount(() => {
         >
         <!-- The header shows only the agent's name: the conversation's title
              is in the hover card. -->
-        <!-- Pane menu > Set model...: edited in place, only while editing. -->
-        <input
-          v-if="isAgent && editingModel"
-          ref="modelInputEl"
-          v-model="modelDraft"
-          class="pane-tab-input pane-model-input"
-          :placeholder="t('pane.model.placeholder', 'Model (empty: automatic)')"
-          :aria-label="t('pane.model.inputLabel', 'Model this agent uses (empty: find it automatically)')"
-          @blur="saveModel"
-          @keydown.enter.prevent="saveModel"
-          @keydown.escape.prevent="cancelModel"
-          @mousedown.stop
-          @click.stop
-        />
         <!-- One badge: the most urgent state (all of them are in the … menu). -->
         <span v-if="badge === 'asleep'" class="exit-tag" data-test="pane-badge" :title="t('pane.badge.asleepHint', 'Asleep: open the pane to wake it')">{{ t('pane.badge.asleep', 'asleep') }}</span>
         <span v-else-if="badge === 'exited'" class="exit-tag" data-test="pane-badge">{{ t('pane.badge.exited', 'exited') }}</span>
@@ -2135,9 +2262,18 @@ onBeforeUnmount(() => {
       <button class="ctx-menu-item" @click="menuFind">
         {{ t('pane.menu.find', 'Find') }}<span class="ctx-menu-shortcut">Ctrl+Shift+F</span>
       </button>
-      <button v-if="isAgent" class="ctx-menu-item" data-test="pane-model" :title="modelTitle || t('pane.menu.setModelHint', 'Name the model this agent uses')" @click="menuSetModel">
-        {{ t('pane.menu.setModel', 'Set model…') }}<span class="ctx-menu-shortcut ctx-menu-model" :class="{ manual: node.modelOverride }">{{ modelText }}{{ node.modelOverride ? t('pane.menu.yours', ' (yours)') : '' }}</span>
+      <button
+        v-if="hasModelChoice"
+        class="ctx-menu-item"
+        data-test="pane-model"
+        :title="modelTitle || t('pane.menu.modelHint', 'Choose the model this agent uses')"
+        @click="menuModel"
+      >
+        {{ t('pane.menu.model', 'Model…') }}<span class="ctx-menu-shortcut ctx-menu-model" :class="{ manual: node.sessionOptions }">{{ modelText || sessionPillLabel(paneModelList, paneValues) }}</span>
       </button>
+      <div v-else-if="isAgent && modelText" class="ctx-menu-fact" data-test="pane-model-fact" :title="modelTitle">
+        <span class="ctx-fact-label">{{ t('pane.sessionOptions.model', 'Model') }}</span><span class="ctx-fact-value">{{ modelText }}</span>
+      </div>
       <div class="ctx-menu-sep"></div>
       <button class="ctx-menu-item" data-test="menu-voice" :title="t('pane.voice.menuHint', 'Speak instead of typing ({{language}}). Windows voice typing', { language: ctx.voiceName.value })" @click="menuVoice">
         {{ t('pane.voice.menu', 'Voice typing') }}<span class="ctx-menu-shortcut">{{ ctx.voiceLabel.value || 'Win+H' }}</span>
@@ -2220,6 +2356,30 @@ onBeforeUnmount(() => {
         {{ t('pane.restart', 'Restart') }}<span class="ctx-menu-shortcut">Ctrl+Shift+R</span>
       </button>
       <button class="ctx-menu-item danger" @click="menuClose">{{ t('pane.close', 'Close pane') }}</button>
+    </div>
+    <!-- Pane menu > Model: the model, effort and fast mode of this agent. -->
+    <div
+      v-if="modelMenu.visible"
+      ref="modelMenuEl"
+      class="ctx-menu pane-model-menu"
+      data-test="pane-model-menu"
+      :style="{ left: modelMenu.x + 'px', top: modelMenu.y + 'px' }"
+      tabindex="-1"
+      @mousedown.stop
+      @keydown.escape.prevent.stop="closeModelMenu(true)"
+    >
+      <SessionOptionPicker
+        :agent-id="node.agentId"
+        :models="paneModelList"
+        :values="node.sessionOptions || null"
+        :default-label="modelDefaultLabel"
+        :live="paneRunning"
+        :note="modelMenuNote"
+        :disabled-reason="modelBusyReason"
+        :pending="modelMenu.pending"
+        @set="onModelPick"
+        @action="onModelAction"
+      />
     </div>
   </Teleport>
 </template>

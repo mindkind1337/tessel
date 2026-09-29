@@ -168,6 +168,10 @@ const api = {
     return () => ipcRenderer.removeListener('install:result', handler)
   },
   agentModel: (query) => ipcRenderer.invoke('agents:model', query),
+  // The models each agent's CLI listed (kept), and asking it again:
+  // { agent, command } -> { ok, models, fetchedAt } | { ok: false, reason, detail }
+  agentModelLists: () => ipcRenderer.invoke('agents:modelLists'),
+  probeAgentModels: (query) => ipcRenderer.invoke('agents:probeModels', query),
   // { paneId, sessionId, text } -> { ok } | { ok: false, error }
   agentInbox: (query) => ipcRenderer.invoke('agents:inbox', query),
   onAgentModelChanged: (cb) => {

@@ -62,7 +62,8 @@ describe('terminal pane header', () => {
     title: 'Claude',
     shellName: 'Claude Code',
     agentId: 'claude',
-    modelOverride: 'Opus test',
+    sessionOptions: { model: 'opus' },
+    modelChoice: { model: 'opus' },
     launchYolo: true,
     team: 't1',
     worktree: { branch: 'feat/header', path: 'C:\\copies\\header' }
@@ -126,7 +127,7 @@ describe('terminal pane header', () => {
       expect(h.find(gone).exists(), gone).toBe(false)
     expect(h.text()).not.toContain('feat/header')
     expect(h.text()).not.toContain('Blue')
-    expect(h.text()).not.toContain('Opus test')
+    expect(h.text()).not.toContain('Opus')
     expect(h.text()).not.toContain('FR')
     // Several states at once (a message not confirmed, quiet 12 min,
     // unknown): one badge, the most urgent.
@@ -161,7 +162,7 @@ describe('terminal pane header', () => {
     expect(m.querySelector('[data-test="pane-team"]').textContent).toContain('Blue · lead')
     expect(m.querySelector('[data-test="pane-yolo"]').textContent).toContain('Yolo')
     expect(m.querySelector('[data-test="pane-stuck"]').textContent).toContain('12 min')
-    expect(m.querySelector('[data-test="pane-model"]').textContent).toContain('Opus test (yours)')
+    expect(m.querySelector('[data-test="pane-model"]').textContent).toContain('Opus')
     expect(text).toContain('Open terminal or agent here…')
     // The states the badge did not show stay reachable.
     m.querySelector('[data-test="menu-unsent"]').click()
