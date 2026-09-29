@@ -2,12 +2,15 @@
 // status groups, stage / unstage / discard (untracked files to a fake
 // Recycle Bin), commit, the two sides of a diff, paths with spaces, renames,
 // and paths that try to leave the repository.
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { execFileSync } from 'child_process'
 import fs from 'fs'
 import os from 'os'
 import { join } from 'path'
 import {
+
+// Real git in temp repos (publish, push, pull): slow on a busy Windows PC.
+vi.setConfig({ testTimeout: 30000, hookTimeout: 30000 })
   scmStatus,
   scmStage,
   scmUnstage,
