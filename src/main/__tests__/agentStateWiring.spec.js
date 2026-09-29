@@ -249,7 +249,12 @@ it('blocks both native-inbox and typed wake paths when managed status is not con
   node.agentLaunchToken = token
   showToast.mock.calls[0][1].action.run()
   expect(deliverToAgent).toHaveBeenCalledTimes(1)
-  expect(deliverToAgent.mock.calls[0][2]).toMatchObject({ source: 'user', scope: 'wake' })
+  const meta = deliverToAgent.mock.calls[0][2]
+  expect(meta).toMatchObject({ source: 'user', scope: 'wake', dropIfNotNow: true })
+  // The guard runs again right before typing: a relaunch meanwhile drops it.
+  expect(meta.guard()).toBe(true)
+  node.agentLaunchToken = 'd'.repeat(32)
+  expect(meta.guard()).toBe(false)
 })
 
 it("each launch gets its own team secret, only in the pane's environment and main's memory", async () => {

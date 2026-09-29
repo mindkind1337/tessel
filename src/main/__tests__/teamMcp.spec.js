@@ -9,6 +9,12 @@ import { takeTeamAcks } from '../teamAcks'
 import { writeCurrentTeams, retireOldTeams, addNotices } from '../teamNotices'
 import { publishTeamTasks, takeTeamRequests, finishTeamRequests, messageStatuses, writeBoardPanes, toolsAlive } from '../teamTasks'
 
+// Run inside a Tessel pane, these tests would inherit its team identity
+// (TESSEL_TEAM_SECRET / TESSEL_PANE_ID) and the tools would sign as that
+// pane: each test sets up its own.
+delete process.env.TESSEL_TEAM_SECRET
+delete process.env.TESSEL_PANE_ID
+
 const require = createRequire(import.meta.url)
 const SERVER = join(__dirname, '..', 'teamMcp', 'server.cjs')
 const mcp = require(SERVER)

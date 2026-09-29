@@ -5387,12 +5387,18 @@ function offerWake(leaf, count) {
       action: {
         label: t('app.team.wakeOfferAction', 'Send it the reminder'),
         run: () => {
-          // Checked again at the click: the same launch, messages still
-          // unread, nothing to approve, no line of yours waiting there.
-          const now = findLeaf(leaf.id)
-          if (!now || now.agentLaunchToken !== launchToken || now.sessionId !== sessionId) return
-          if (!(teamUnread[leaf.id] || 0) || approvals[leaf.id] || awaitingApproval(leaf.id) || userDraft[leaf.id] || unsent[leaf.id]) return
-          deliverToAgent(leaf.id, reminder, { source: 'user', scope: 'wake', teamId: leaf.team })
+          // Checked at the click AND again right before it is typed (it can
+          // wait while you type): the same launch, session and team,
+          // messages still unread, nothing to approve, no line of yours
+          // waiting there. Stale by then: dropped, never typed elsewhere.
+          const team = leaf.team
+          const stillFine = () => {
+            const now = findLeaf(leaf.id)
+            if (!now || now.agentLaunchToken !== launchToken || now.sessionId !== sessionId || now.team !== team) return false
+            return !!(teamUnread[leaf.id] || 0) && !approvals[leaf.id] && !awaitingApproval(leaf.id) && !userDraft[leaf.id] && !unsent[leaf.id]
+          }
+          if (!stillFine()) return
+          deliverToAgent(leaf.id, reminder, { source: 'user', scope: 'wake', teamId: team, guard: stillFine, dropIfNotNow: true })
           if (window.shellApi.log) window.shellApi.log('info', `team tools: reminder sent to ${paneLabel(leaf)} (${leaf.id}) at the user's request`)
         }
       }

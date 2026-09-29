@@ -7,6 +7,12 @@ import { ensureTeamChannel, pollTeamChannel } from '../teamChannel'
 import { writeCurrentTeams } from '../teamNotices'
 import { publishTeamTasks, takeTeamRequests, writeRoster, parseRequest } from '../teamTasks'
 
+// Run inside a Tessel pane, these tests would inherit its team identity
+// (TESSEL_TEAM_SECRET / TESSEL_PANE_ID) and the tools would sign as that
+// pane: each test sets up its own.
+delete process.env.TESSEL_TEAM_SECRET
+delete process.env.TESSEL_PANE_ID
+
 const require = createRequire(import.meta.url)
 const mcp = require('../teamMcp/server.cjs')
 
