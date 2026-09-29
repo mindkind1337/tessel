@@ -36,6 +36,7 @@ import {
   linkifyFilePaths as linkifyFilePathsInDom,
   linkifyGitHubReferences,
   parseSanitizedHtml,
+  protectLocalMarkdownLinks,
   renderMarkdownFragment
 } from './chat-markdown-render.js'
 
@@ -75,7 +76,7 @@ export default defineComponent({
     // The sanitized document, transformed; re-made only when the text or the
     // transforms change (not on every re-render).
     const fragment = computed(() => {
-      const parsed = parseSanitizedHtml(renderMarkdown(props.content))
+      const parsed = parseSanitizedHtml(renderMarkdown(protectLocalMarkdownLinks(props.content)))
       if (props.linkifyFilePaths) linkifyFilePathsInDom(parsed)
       if (props.githubRepo) linkifyGitHubReferences(parsed, props.githubRepo)
       return parsed

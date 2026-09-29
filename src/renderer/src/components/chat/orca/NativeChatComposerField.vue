@@ -159,6 +159,13 @@ const editorPlaceholder = computed(() =>
     : props.placeholder
 )
 const shownAttachments = computed(() => (props.allowImages ? props.imageAttachments : []))
+
+// The Send / Stop button's title: why Send waits, or (Tessel) what Stop does
+// to the queue.
+const criticalTitle = computed(() => {
+  if (props.isWorking) return t('chat.composer.interruptTurnHint', 'Interrupt the current turn (Esc). Queued messages are still sent afterwards.')
+  return props.sendBlockedReason || undefined
+})
 </script>
 
 <template>
@@ -242,7 +249,7 @@ const shownAttachments = computed(() => (props.allowImages ? props.imageAttachme
               :context-usage="contextUsage"
               :show-attach="allowImages"
               :show-dictation="showDictation"
-              :critical-title="!isWorking && sendBlockedReason ? sendBlockedReason : undefined"
+              :critical-title="criticalTitle"
               @attach="emit('attach')"
               @dictation-toggle="emit('dictationToggle')"
               @dictation-hold-start="emit('dictationHoldStart')"

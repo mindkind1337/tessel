@@ -668,3 +668,64 @@ export function renderMarkdownFragment(fragment, ctx) {
   }
   return out
 }
+
+// Tessel: an explicit Markdown link to a local file ([x](C:\p\x.js),
+// [x](file:///C:/p/x.js)) would lose its href to the sanitizer (neither is a
+// scheme it keeps). Before rendering, such a destination becomes the same
+// in-page file href the linkified text gets, so a click takes the same path:
+// the file viewer, under the pane's folders, never a navigation. Code (fenced
+// blocks, inline spans) is left as written.
+const LOCAL_DESTINATION = /^(?:[A-Za-z]:[\\/]|file:)/i
+const LINK_DESTINATION = /\]\(\s*(<[^<>\n]+>|[^\s()<>]+)(\s+(?:"[^"\n]*"|'[^'\n]*'))?\s*\)/g
+
+function localDestinationHref(destination) {
+  const raw = destination.startsWith('<') ? destination.slice(1, -1) : destination
+  if (!LOCAL_DESTINATION.test(raw)) return null
+  const route = routeNativeChatHref(raw)
+  if (route.kind !== 'file') return null
+  return createNativeChatFileHref(formatFileLinkLocation(route))
+}
+
+function rewriteProse(text) {
+  // Inline code spans stay as written.
+  return text
+    .split(/(`+[^`]*`+)/)
+    .map((part, i) =>
+      i % 2 === 1
+        ? part
+        : part.replace(LINK_DESTINATION, (whole, destination, title = '') => {
+            const href = localDestinationHref(destination)
+            return href ? `](${href}${title})` : whole
+          })
+    )
+    .join('')
+}
+
+export function protectLocalMarkdownLinks(markdown) {
+  const text = String(markdown ?? '')
+  if (!/\]\(/.test(text)) return text
+  const out = []
+  let fence = null
+  let prose = []
+  const flush = () => {
+    if (prose.length) out.push(rewriteProse(prose.join('\n')))
+    prose = []
+  }
+  for (const line of text.split('\n')) {
+    const marker = /^\s{0,3}(`{3,}|~{3,})/.exec(line)
+    if (fence) {
+      out.push(line)
+      if (marker && marker[1][0] === fence[0] && marker[1].length >= fence.length) fence = null
+      continue
+    }
+    if (marker) {
+      flush()
+      fence = marker[1]
+      out.push(line)
+      continue
+    }
+    prose.push(line)
+  }
+  flush()
+  return out.join('\n')
+}

@@ -20,7 +20,7 @@
  * through ChatMarkdown.
  */
 import { computed, shallowRef } from 'vue'
-import { Goal, Users } from 'lucide-vue-next'
+import { Clock, Goal, Users } from 'lucide-vue-next'
 import { t } from '../../../i18n'
 import { deriveNativeChatRowContent } from '../../../chat/orca/shared/native-chat-row-content.js'
 import ChatMarkdown from './ChatMarkdown.vue'
@@ -45,6 +45,8 @@ const props = defineProps({
   onLinkClick: { type: Function, default: undefined },
   allowFileUriLinks: { type: Boolean, default: false },
   deliveryFailed: { type: Boolean, default: false },
+  // Tessel: waiting in the engine's queue for the end of the turn.
+  queued: { type: Boolean, default: false },
   structuredActivityUi: { type: Boolean, default: true },
   folded: { type: Boolean, default: false },
   runtimeContext: { type: Object, default: undefined }
@@ -104,6 +106,9 @@ const teamFromLabel = computed(() => {
     ? t('chat.user.fromTeammate', 'From {{from}} (teammate)', { from: who })
     : t('chat.user.fromTeam', 'From a teammate')
 })
+const queuedText = computed(() =>
+  isTeam.value ? t('chat.user.teamQueued', 'Waiting: delivered when the turn ends') : t('chat.user.queued', 'Queued: will send when the turn ends')
+)
 const deliveryText = computed(() =>
   isTeam.value
     ? t('chat.user.teamFailed', 'Not delivered yet: will be sent again')
@@ -176,6 +181,10 @@ function scrollToTop() {
         data-test="nc-user-delivery"
       >
         {{ deliveryText }}
+      </div>
+      <div v-else-if="queued" class="nc-user-delivery is-queued" data-test="nc-user-queued">
+        <Clock class="nc-user-queued-icon" aria-hidden="true" />
+        {{ queuedText }}
       </div>
     </div>
 
@@ -293,6 +302,16 @@ function scrollToTop() {
   max-width: 85%;
   font-size: 11px;
   color: var(--nc-muted-foreground);
+}
+/* Tessel: the queued chip (a clock, then its words). */
+.nc-user-delivery.is-queued {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.nc-user-queued-icon {
+  width: 11px;
+  height: 11px;
 }
 .nc-user-delivery.is-error {
   color: color-mix(in srgb, var(--nc-destructive) 80%, transparent);

@@ -73,6 +73,31 @@ describe('journal adapter', () => {
     expect(blocks).toContain('tool-result')
   })
 
+  it("tool paths inside the chat's folder are shown relative; outside it, whole", () => {
+    const adapter = createJournalAdapter({ now: () => 1, cwd: 'C:\\proj' })
+    adapter.replay([
+      { type: 'tool', id: 't1', name: 'Read', input: { file_path: 'C:\\proj\\src\\x.js' }, status: 'running' },
+      { type: 'tool', id: 't2', name: 'Read', input: { file_path: 'C:\\other\\y.js' }, status: 'running' },
+      { type: 'tool', id: 't3', name: 'Edit', input: { changes: [{ path: 'c:/PROJ/a.md' }, { path: 'D:\\z' }] }, status: 'running' }
+    ])
+    const input = (id) => adapter.items().find((i) => i.itemId === `tool:${id}`).body.input
+    expect(input('t1').file_path).toBe('src/x.js')
+    expect(input('t2').file_path).toBe('C:\\other\\y.js')
+    expect(input('t3').changes.map((c) => c.path)).toEqual(['a.md', 'D:\\z'])
+  })
+
+  it('a queued message is listed until the engine takes it', () => {
+    const adapter = createJournalAdapter({ now: () => 1 })
+    adapter.replay([
+      { type: 'user', id: 'u1', text: 'next', status: 'queued' },
+      { type: 'user', id: 't1', text: 'team', origin: 'team', status: 'queued' }
+    ])
+    expect(adapter.meta.queuedIds).toEqual(['u1', 't1'])
+    adapter.apply({ type: 'userStatus', id: 'u1', status: 'accepted' })
+    adapter.apply({ type: 'teamAccepted', ids: ['t1'] })
+    expect(adapter.meta.queuedIds).toEqual([])
+  })
+
   it('an approval is a pending prompt, then a resolved one; Codex without acceptForSession offers no session option', () => {
     const { state, states } = run([
       { type: 'user', id: 'u1', text: 'go', status: 'accepted' },

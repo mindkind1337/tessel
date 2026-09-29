@@ -381,7 +381,7 @@ describe('ChatPane.vue', () => {
     expect(ctx.chatOpen).not.toHaveBeenCalled()
   })
 
-  it('a queued message is in the chat; team messages are set apart with their sender', async () => {
+  it('a queued message shows its chip; team messages are set apart with their sender', async () => {
     await mountPane()
     emit({ type: 'user', id: 'u1', text: 'next', origin: 'user', status: 'queued' })
     emit({ type: 'user', id: 'x1', text: 'build done', origin: 'team', from: '3', status: 'queued' })
@@ -393,9 +393,13 @@ describe('ChatPane.vue', () => {
     expect(mine.querySelector('[data-test="nc-team-from"]')).toBeNull()
     expect(team.classList.contains('is-team')).toBe(true)
     expect(team.querySelector('[data-test="nc-team-from"]').textContent.trim()).toBe('From #3 (teammate)')
+    expect(mine.querySelector('[data-test="nc-user-queued"]').textContent.trim()).toBe('Queued: will send when the turn ends')
+    expect(team.querySelector('[data-test="nc-user-queued"]').textContent.trim()).toBe('Waiting: delivered when the turn ends')
     emit({ type: 'teamAccepted', ids: ['x1'] })
+    emit({ type: 'userStatus', id: 'u1', status: 'accepted' })
     await settle()
     expect(document.querySelectorAll('[data-test="nc-user-row"]')).toHaveLength(2)
+    expect(document.querySelector('[data-test="nc-user-queued"]')).toBeNull()
   })
 
   it('Esc interrupts while working, not when idle; so does Stop', async () => {
@@ -628,6 +632,7 @@ describe('ChatPane.vue', () => {
     await settle()
     const btn = () => document.querySelector('[data-test="chat-interrupt"]')
     expect(btn().getAttribute('aria-label')).toBe('Stop the agent')
+    expect(btn().getAttribute('title')).toBe('Interrupt the current turn (Esc). Queued messages are still sent afterwards.')
     api.interrupt.mockResolvedValueOnce({ ok: false })
     await click(btn())
     expect(ctx.toast).toHaveBeenLastCalledWith('Could not interrupt the turn: unknown error', expect.any(Object))

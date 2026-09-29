@@ -69,6 +69,8 @@ const props = defineProps({
   onLinkClick: { type: Function, default: undefined },
   allowFileUriLinks: { type: Boolean, default: false },
   failedDeliveryMessageIds: { type: Set, default: undefined },
+  // Tessel: user messages waiting in the engine's queue ("Queued" chip).
+  queuedMessageIds: { type: Set, default: undefined },
   /** Turn timing and disclosure are available on structured agent sessions. */
   showTurnStatus: { type: Boolean, default: true },
   /** Whether the active turn's foreground activity row should be visible. */
@@ -279,6 +281,7 @@ const rowContext = computed(() => ({
   taskListPredecessors: taskListPredecessors.value,
   expandedTurnIds: expandedTurnIds.value,
   failedDeliveryMessageIds: props.failedDeliveryMessageIds,
+  queuedMessageIds: props.queuedMessageIds,
   allowFileUriLinks: props.allowFileUriLinks,
   runtimeContext: props.runtimeContext,
   onLinkClick: props.onLinkClick,

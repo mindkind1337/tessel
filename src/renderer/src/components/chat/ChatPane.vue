@@ -57,7 +57,7 @@ function api() {
 
 // The session (journal, live events, actions), and what a live event is
 // worth saying (a replayed history says nothing).
-const session = useStructuredAgentSession({ paneId: props.node.id, api: api(), onLive })
+const session = useStructuredAgentSession({ paneId: props.node.id, api: api(), onLive, cwd: () => props.node.cwd || props.node.projectDir || '' })
 const meta = session.meta
 
 const isActive = computed(() => ctx.activeId.value === props.node.id)

@@ -25,6 +25,9 @@ import { isBackgroundTaskBlock, isSubagentGroupBlock, isToolCallBlock } from "./
 import { nativeChatTurnFold } from "./shared/native-chat-turn-fold.js";
 import { deriveNativeChatRowContent, nativeChatRowRendersContent } from "./shared/native-chat-row-content.js";
 import { estimateNativeChatRowHeight, nativeChatRowContentMetrics } from "./native-chat-row-height-estimate.js";
+function isAlertNotice(message, block) {
+    return message.role === 'system' && block.type === 'text' && (block.tone === 'error' || block.tone === 'warning');
+}
 export function buildNativeChatTranscriptSlots(input) {
     const { messages, turnKeys, latestUserIndex, currentTurnKey, receipts, turnStatuses, turnDiffs, showTurnStatus, expandedTurnKeys, isWorking, lifecycleWorking } = input;
     const foldRows = messages.map((message, index)=>{
@@ -33,7 +36,8 @@ export function buildNativeChatTranscriptSlots(input) {
             turnKey: turnKeys[index],
             role: message.role,
             rendersProse: content.markdown.length > 0 || content.hasImages,
-            outlivesTurn: message.blocks.some((block)=>isSubagentGroupBlock(block) || isBackgroundTaskBlock(block))
+            // Tessel: an error or a warning stays in view when its turn folds.
+            outlivesTurn: message.blocks.some((block)=>isSubagentGroupBlock(block) || isBackgroundTaskBlock(block) || isAlertNotice(message, block))
         };
     });
     const trailingRunIndex = foldRows.findLastIndex((row, index)=>row.role !== 'user' && row.role !== 'reasoning' && receipts.get(messages[index].id)?.kind !== 'approval' && (row.rendersProse || messages[index].blocks.some(isToolCallBlock)));

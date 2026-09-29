@@ -24,9 +24,10 @@ const DECISIONS = { allow: 'allow', allowSession: 'allowSession', deny: 'deny' }
 
 // paneId: the chat pane; api: window.shellApi.chat (injectable for tests).
 // onLive(event, previousStatus): each live event once applied (never the
-// replayed history), e.g. for the pane's announcements.
-export function useStructuredAgentSession({ paneId, api = typeof window !== 'undefined' && window.shellApi ? window.shellApi.chat : null, now = Date.now, onLive = null } = {}) {
-  const adapter = createJournalAdapter({ now })
+// replayed history), e.g. for the pane's announcements. cwd: the chat's
+// folder (a value or a getter), for tool paths shown relative to it.
+export function useStructuredAgentSession({ paneId, api = typeof window !== 'undefined' && window.shellApi ? window.shellApi.chat : null, now = Date.now, onLive = null, cwd = '' } = {}) {
+  const adapter = createJournalAdapter({ now, cwd })
   const state = shallowRef(EMPTY_STRUCTURED_AGENT_SESSION)
   const meta = reactive({ ...adapter.meta, loaded: false, loadError: null, open: false, asleep: false })
   let lastSeq = 0
@@ -109,6 +110,8 @@ export function useStructuredAgentSession({ paneId, api = typeof window !== 'und
   const submissions = computed(() => state.value.submissions)
   // The user messages whose delivery was not confirmed (refused, or a
   // teammate's not delivered yet), by message id: their rows say so.
+  // The user messages waiting for the end of the turn (the engine's queue).
+  const queuedMessageIds = computed(() => new Set((meta.queuedIds || []).map((id) => agentJournalSubmissionKey(id))))
   const failedDeliveryMessageIds = computed(() => {
     const ids = new Set()
     for (const s of submissions.value) if (s.dispatchState === 'unknown') ids.add(agentJournalSubmissionKey(s.clientMessageId))
@@ -174,6 +177,7 @@ export function useStructuredAgentSession({ paneId, api = typeof window !== 'und
     journalItems,
     submissions,
     failedDeliveryMessageIds,
+    queuedMessageIds,
     messages,
     status: computed(() => (meta.loadError ? 'error' : state.value.status)),
     error: computed(() => meta.loadError),

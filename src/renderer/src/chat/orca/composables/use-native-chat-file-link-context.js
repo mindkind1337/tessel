@@ -1,7 +1,7 @@
 // After Orca's use-native-chat-file-link-context.ts (MIT, Copyright (c) 2026 Lovecast Inc.)
 // pane and options accept values, refs/computed or getters. Pass a Tessel leaf.
 // resolveContext(pane) may supply a local context instead of panelCtx.paneFolder.
-// Returns computed { worktreeId, worktreePath, runtimeEnvironmentId: null } or null.
+// Returns computed { worktreeId, worktreePath, roots, runtimeEnvironmentId: null } or null.
 import { computed, inject, toValue, unref } from 'vue'
 
 export function useNativeChatFileLinkContext(pane, options = {}) {
@@ -14,6 +14,8 @@ export function useNativeChatFileLinkContext(pane, options = {}) {
       : leaf && {
           worktreeId: leaf.id,
           worktreePath: panel?.paneFolder?.(leaf) || leaf.projectDir || leaf.cwd || leaf.startDir,
+          // Tessel: the folders a link may open a file in (the pane's own).
+          roots: [...new Set([panel?.paneFolder?.(leaf), leaf.projectDir, leaf.cwd, leaf.startDir].filter((p) => typeof p === 'string' && p))],
           runtimeEnvironmentId: null,
           remote: leaf.remote,
         }

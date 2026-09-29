@@ -9,6 +9,7 @@ import {
   resolveExplicitFileLinkTarget,
 } from '../lib/explicit-file-link-target.js'
 import { t } from '../../../i18n/index.js'
+import { isPathInsideOrEqual } from '../shared/cross-platform-path.js'
 
 export function useNativeChatFileLinkClick(context, options = {}) {
   const panel = inject('panelCtx', null)
@@ -16,7 +17,11 @@ export function useNativeChatFileLinkClick(context, options = {}) {
   function failure(verdict, path, error = '') {
     if (callback('onOpenFailure')) return callback('onOpenFailure')({ verdict, path, error })
     const message =
-      verdict === 'unresolved'
+      verdict === 'outside'
+        ? t('chat.orca.fileLinks.outside', "Only files in this chat's folders open from the chat: {{value0}}", {
+            value0: path,
+          })
+        : verdict === 'unresolved'
         ? t('chat.orca.fileLinks.unresolved', 'Could not resolve {{value0}} in this workspace', {
             value0: path,
           })
@@ -38,6 +43,9 @@ export function useNativeChatFileLinkClick(context, options = {}) {
         ? resolveExplicitFileLinkTarget(parsed, owner.worktreePath, owner.homePath)
         : null
     if (!target) return failure('unresolved', route.pathText)
+    // Tessel: agent text opens only files under the pane's folders.
+    const roots = Array.isArray(owner.roots) && owner.roots.length ? owner.roots : [owner.worktreePath]
+    if (!roots.some((root) => isPathInsideOrEqual(root, target.absolutePath))) return failure('outside', route.pathText)
     if (
       /[\0\r\n]/.test(target.absolutePath) ||
       /\.(?:exe|com|bat|cmd|msi|app|ps1|sh)$/i.test(target.absolutePath)
