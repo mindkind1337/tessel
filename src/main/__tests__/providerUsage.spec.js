@@ -731,3 +731,12 @@ describe('real disposable credential files', () => {
     }
   })
 })
+
+describe('fieldNames (logged once for Claude, names only)', () => {
+  it('lists dotted names, arrays as [], never values', async () => {
+    const { fieldNames } = await import('../providerUsage.js')
+    const names = fieldNames({ five_hour: { utilization: 42, resets_at: 'secret-value' }, items: [{ a: 1 }] })
+    expect(names).toEqual(['five_hour', 'five_hour.utilization', 'five_hour.resets_at', 'items', 'items[].a'])
+    expect(names.join(' ')).not.toContain('secret-value')
+  })
+})

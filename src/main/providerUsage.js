@@ -218,6 +218,22 @@ export async function boundedCredentialRead(file) {
 
 export { inspect as inspectCredentialPath }
 
+// Dotted field names of a JSON value (arrays as name[]), bounded; values are
+// never included.
+export function fieldNames(value, prefix = '', out = new Set(), depth = 0) {
+  if (out.size >= 200 || depth > 5 || !value || typeof value !== 'object') return [...out]
+  if (Array.isArray(value)) {
+    if (value.length) fieldNames(value[0], `${prefix}[]`, out, depth + 1)
+    return [...out]
+  }
+  for (const key of Object.keys(value).slice(0, 100)) {
+    const name = prefix ? `${prefix}.${key}` : key
+    out.add(name.replace(/[^\w.[\]-]/g, '?').slice(0, 120))
+    fieldNames(value[key], name, out, depth + 1)
+  }
+  return [...out]
+}
+
 export function createProviderUsage({
   accounts,
   home = os.homedir(),
@@ -229,6 +245,7 @@ export function createProviderUsage({
   log,
   timeoutMs = 10000
 } = {}) {
+  let loggedClaudeShape = false
   const generation = { codex: 0, claude: 0 }
   const readSequence = { codex: 0, claude: 0 }
   const tickets = new Map()
@@ -631,6 +648,12 @@ export function createProviderUsage({
         const snapshot = await scope(provider, accountId)
         const login = await auth(snapshot)
         const data = await network(snapshot, ENDPOINTS[provider], login.headers)
+        // Once per run: the NAMES of the fields Claude's usage answer has
+        // (never values), to learn whether it tells about limit resets.
+        if (provider === 'claude' && !loggedClaudeShape && log) {
+          loggedClaudeShape = true
+          log.info('usage', `claude usage fields: ${fieldNames(data).join(', ')}`) // i18n-ignore
+        }
         const windows = provider === 'codex' ? codexWindows(data) : claudeWindows(data)
         if (!windows.length && !(provider === 'codex' && typeof data.plan_type === 'string'))
           fail('response', t('main.usage.noRecognizedWindows', 'The usage service returned no recognized usage windows.'))
