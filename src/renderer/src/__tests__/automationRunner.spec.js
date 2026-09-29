@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { createAutomationRunner } from '../automationRunner'
+import { createAutomationRunner, probeRunAgent } from '../automationRunner'
 
 const B = '\\'
 const promptDir = ['C:', 'Users', 'me', 'AppData', 'Roaming', 'tessel-dev', 'automations', 'runs', 'run-abc123'].join(B)
@@ -35,8 +35,7 @@ function setup(over = {}) {
     cardOf: (id) => cards[id] || null,
     findLeaf: (id) => (leaves.has(id) ? { id } : null),
     closePane: vi.fn((id) => leaves.delete(id)),
-    agentStarted: vi.fn(() => false),
-    agentExited: vi.fn(() => false),
+    agentProbe: vi.fn(async () => ({ started: false, exited: false })),
     report: vi.fn(async (r) => ({ ok: true, run: { id: r.runId, status: r.status === 'ack' ? 'dispatching' : r.status } })),
     notify: vi.fn(),
     automationById: () => null,
@@ -184,7 +183,7 @@ describe('automation runs in the window', () => {
     const { runner, deps, cards, leaves } = setup()
     await runner.dispatch({ automation: automation(), run, promptFile, promptDir })
     leaves.delete('pane-9')
-    runner.check()
+    await runner.check()
     expect(deps.report).toHaveBeenLastCalledWith({ runId: run.id, status: 'dispatch_failed', errorCode: 'pane-closed' })
     expect(cards['task-1'].column).toBe('todo')
   })
@@ -194,21 +193,31 @@ describe('automation runs in the window', () => {
     let s = setup()
     await s.runner.dispatch({ automation: automation(), run, promptFile, promptDir })
     s.tick(4 * 60_000)
-    s.runner.check()
+    await s.runner.check()
     expect(statuses(s.deps)).not.toContain('dispatch_failed')
     s.tick(2 * 60_000)
-    s.runner.check()
+    await s.runner.check()
     expect(s.deps.report).toHaveBeenLastCalledWith({ runId: run.id, status: 'dispatch_failed', errorCode: 'agent-no-start' })
     expect(s.leaves.has('pane-9')).toBe(true) // left for you to look at
 
-    s = setup({ agentStarted: vi.fn(() => true) })
+    s = setup({ agentProbe: vi.fn(async () => ({ started: true, exited: false })) })
     await s.runner.dispatch({ automation: automation(), run, promptFile, promptDir })
     s.tick(60 * 60_000)
-    s.runner.check()
+    await s.runner.check()
     expect(statuses(s.deps)).not.toContain('dispatch_failed') // working a long time is fine
-    s.deps.agentExited.mockReturnValue(true)
-    s.runner.check()
+    s.deps.agentProbe.mockResolvedValue({ started: true, exited: true })
+    await s.runner.check()
     expect(s.deps.report).toHaveBeenLastCalledWith({ runId: run.id, status: 'dispatch_failed', errorCode: 'agent-exited' })
+  })
+
+  // Recheck A: a remote agent sends no hooks: never failed as "not started".
+  it('when nothing can tell (a remote agent), the run is never failed for not starting', async () => {
+    const s = setup({ agentProbe: vi.fn(async () => ({ started: null, exited: false })) })
+    await s.runner.dispatch({ automation: automation({ isolation: 'project', remote: { hostId: 'h', path: '/srv' } }), run, remoteFile: '.tessel/automations/auto-1.md' })
+    s.tick(10 * 60 * 60_000)
+    await s.runner.check()
+    expect(statuses(s.deps)).not.toContain('dispatch_failed')
+    expect(s.runner.runOfPane('pane-9')).not.toBe(null)
   })
 
   it('an approval is said once; runs are followed again after a restart', async () => {
@@ -220,5 +229,32 @@ describe('automation runs in the window', () => {
     expect(deps.notify.mock.calls[0][0]).toMatchObject({ kind: 'attention', paneId: 'pane-2' })
     expect(runner.turnDone('pane-2')).toBe(true)
     expect(deps.report).toHaveBeenLastCalledWith({ runId: 'run-old', status: 'completed' })
+  })
+})
+
+describe('is the run\'s agent there?', () => {
+  const now = 100_000
+  const work = (w) => vi.fn(async () => w)
+  it('remote and WSL panes: no way to tell', async () => {
+    const running = work({ running: false })
+    expect(await probeRunAgent({ leaf: { remoteHostId: 'h', launchedAt: 0 }, managed: true, now, runningWork: running })).toEqual({ started: null, exited: false })
+    expect(await probeRunAgent({ leaf: { shellId: 'wsl', launchedAt: 0 }, now, runningWork: running })).toEqual({ started: null, exited: false })
+    expect(running).not.toHaveBeenCalled()
+  })
+  it('an agent with hooks: their signs; closed = exited', async () => {
+    const running = work({ running: false })
+    expect(await probeRunAgent({ leaf: { launchedAt: 0 }, managed: true, state: { hookSeen: true, state: 'idle' }, now, runningWork: running })).toEqual({ started: true, exited: false })
+    expect(await probeRunAgent({ leaf: { launchedAt: 0 }, managed: true, state: { hookSeen: true, state: 'closed' }, now, runningWork: running })).toEqual({ started: true, exited: true })
+    // No word from its hooks: its program decides.
+    expect(await probeRunAgent({ leaf: { launchedAt: 0 }, managed: true, now, runningWork: work({ running: true }) })).toEqual({ started: true, exited: false })
+  })
+  it('without hooks: the program under the shell, not the screen; nothing in the first 2 seconds', async () => {
+    const running = work({ running: true })
+    expect(await probeRunAgent({ leaf: { launchedAt: now - 500 }, busy: true, now, runningWork: running })).toEqual({ started: false, exited: false })
+    expect(running).not.toHaveBeenCalled()
+    // Output on screen (the echoed line, a prompt) is not an agent: the shell runs nothing.
+    expect(await probeRunAgent({ leaf: { launchedAt: 0 }, busy: true, now, runningWork: work({ running: false }) })).toEqual({ started: false, exited: true })
+    expect(await probeRunAgent({ leaf: { launchedAt: 0 }, now, runningWork: work({ running: true }) })).toEqual({ started: true, exited: false })
+    expect(await probeRunAgent({ leaf: { launchedAt: 0 }, now, runningWork: work({ unknown: true }) })).toEqual({ started: null, exited: false })
   })
 })

@@ -26,6 +26,7 @@ function input(over = {}) {
 describe('automations scheduler (main)', () => {
   let dir, clock, sent, svc
   let remoteWrites = []
+  let remoteClears = []
   let remoteAnswer = { ok: true }
   const make = () =>
     createAutomations({
@@ -36,6 +37,10 @@ describe('automations scheduler (main)', () => {
       writeRemotePrompt: async (q) => {
         remoteWrites.push(q)
         return remoteAnswer
+      },
+      clearRemotePrompt: async (q) => {
+        remoteClears.push(q)
+        return { ok: true }
       }
     })
   const dispatches = () => sent.filter((s) => s.channel === 'automations:dispatch').map((s) => s.payload)
@@ -45,6 +50,7 @@ describe('automations scheduler (main)', () => {
     clock = at(8, 0)
     sent = []
     remoteWrites = []
+    remoteClears = []
     remoteAnswer = { ok: true }
     svc = make()
     svc.start()
@@ -347,5 +353,57 @@ describe('automations scheduler (main)', () => {
     const res = svc.create(input({ schedule: '* * * * *' }))
     expect(res).toMatchObject({ ok: false, code: 'schedule-too-frequent' })
     expect(res.error).toMatch(/15 minutes/)
+  })
+  // Recheck C: nothing of a remote prompt stays once its run ended.
+  it('a remote run\'s prompt is emptied on the host when the run ends, even after a restart', async () => {
+    svc.setWindowReady(true)
+    const a = svc.create(input({ projectCwd: null, remote: { hostId: 'ssh-host-1', path: '/srv/app' } })).automation
+    const { run } = svc.runNow(a.id)
+    await new Promise((r) => setTimeout(r, 0))
+    svc.markResult({ runId: run.id, status: 'dispatched', paneId: 'pane-r' })
+    expect(remoteClears).toEqual([])
+    svc.stop()
+    const again = make()
+    again.start()
+    again.reconcile([]) // its pane did not survive
+    expect(remoteClears).toEqual([{ hostId: 'ssh-host-1', path: '/srv/app', file: `.tessel/automations/${a.id}.md` }])
+    again.stop()
+  })
+
+  // Recheck B: the clock set back after a run never runs that occurrence again.
+  it('an occurrence already run is not run again after the clock goes back', () => {
+    svc.setWindowReady(true)
+    const a = svc.create(input({ schedule: 'FREQ=HOURLY;BYMINUTE=0' })).automation
+    clock = at(10, 0) + 1000
+    svc.tick()
+    const first = dispatches()[0].run
+    expect(first.scheduledFor).toBe(at(10, 0))
+    svc.markResult({ runId: first.id, status: 'completed' })
+    clock = at(9, 40)
+    svc.tick()
+    clock = at(10, 0) + 2000
+    svc.tick()
+    expect(dispatches()).toHaveLength(1)
+    clock = at(11, 0) + 1000
+    svc.tick()
+    expect(dispatches()).toHaveLength(2)
+    expect(dispatches()[1].run.scheduledFor).toBe(at(11, 0))
+    void a
+  })
+
+  it('after a jump far ahead and back, the schedule runs again from now', () => {
+    svc.setWindowReady(true)
+    svc.create(input({ schedule: 'FREQ=HOURLY;BYMINUTE=0', missedRunGraceMinutes: 30 }))
+    const real = clock
+    clock = new Date(2031, 0, 1, 12, 0, 30).getTime()
+    svc.tick()
+    expect(dispatches()).toHaveLength(1) // 2031-01-01 12:00
+    svc.markResult({ runId: dispatches()[0].run.id, status: 'completed' })
+    clock = real
+    svc.tick()
+    clock = at(9, 0) + 1000
+    svc.tick()
+    expect(dispatches()).toHaveLength(2)
+    expect(dispatches()[1].run.scheduledFor).toBe(at(9, 0))
   })
 })
