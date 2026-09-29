@@ -21,11 +21,18 @@
 //   ad frame opening one on its own is refused).
 // - Design Mode (pick an element, a screenshot) runs a script in the page
 //   (browserPicker.js); what comes back is untrusted and checked again here.
+// - A browser's everyday input: its keys (find, zoom, history, reload, stop),
+//   Ctrl+wheel zoom, the mouse's back/forward buttons and a right-click menu
+//   are handled here and told to the window; a middle-click or Ctrl+click on
+//   a link opens it in a new pane (the same popup rule). After Orca's
+//   src/main/browser/browser-guest-context-menu.ts and
+//   browser-guest-wheel-zoom.ts (MIT, Copyright (c) 2026 Lovecast Inc.).
 import fs from 'fs'
 import { join, relative } from 'path'
 import crypto from 'crypto'
 import { allowedBrowserUrl, BLANK_URL } from '../shared/browserUrl'
 import { pickerScript, clampPickPayload } from './browserPicker'
+import { t } from './i18n'
 
 export const BROWSER_PARTITION = 'persist:tessel-browser'
 // A picked element's screenshot, a page's: at most this big (PNG).
@@ -49,6 +56,8 @@ const GESTURE_INPUTS = new Set(['mouseDown', 'mouseUp', 'keyDown', 'rawKeyDown',
 // check, default text encoding, throttling when hidden) and two switches that
 // only take away (no dialogs, no popups).
 const KEPT_WEB_PREFERENCES = new Set(['zoomFactor', 'spellcheck', 'defaultEncoding', 'backgroundThrottling', 'disableDialogs', 'disablePopups'])
+// Ctrl+wheel: requests for the same zoom closer than this are one step.
+const ZOOM_REPEAT_MS = 60
 // Screenshots and Design Mode messages (screenshotDir) kept this long.
 const KEEP_FILES_MS = 24 * 60 * 60 * 1000
 const OWN_FILE = /^browser-(?:\d+-[0-9a-f]{6}\.png|feedback-\d+-[0-9a-f]{6}\.md)$/i
@@ -64,6 +73,7 @@ function shortcutOf(input) {
   const key = String(input.key || '')
   const k = key.toLowerCase()
   if (ctrl && !input.alt && k === 'l') return 'focusAddress'
+  if (ctrl && !input.alt && !input.shift && k === 'f') return 'find'
   if ((ctrl && !input.shift && k === 'r') || (key === 'F5' && !ctrl)) return 'reload'
   if ((ctrl && input.shift && k === 'r') || (key === 'F5' && ctrl)) return 'hardReload'
   if (input.alt && !ctrl && key === 'ArrowLeft') return 'back'
@@ -81,8 +91,61 @@ function shortcutOf(input) {
 }
 const APP_KEYS = ['e', 'o', 'w', 'b', 'k', 'x', 'g', 'n', 't', ' ', 'p', 'j']
 
-export function createBrowserGuests({ getWindow, send, log = null, screenshotDir, electron }) {
-  const { webContents, clipboard, nativeImage, session: electronSession } = electron
+// Middle-click or Ctrl+click on a link: a new pane (a browser's new tab).
+// The rest (target=_blank, window.open) stays in the same pane.
+export function wantsNewPane(disposition, mouse) {
+  if (disposition === 'background-tab') return true
+  if (disposition !== 'foreground-tab' && disposition !== 'new-window') return false
+  return !!mouse && (mouse.middle || mouse.ctrl)
+}
+
+// What a right-click in a page offers (Electron shows no menu of its own):
+// [{ id, label, enabled }] or { type: 'separator' }. params: Electron's
+// context-menu params; nav: { canGoBack, canGoForward }.
+export function contextMenuItems(params = {}, nav = {}) {
+  const items = []
+  const sep = () => {
+    if (items.length && items[items.length - 1].type !== 'separator') items.push({ type: 'separator' })
+  }
+  const link = params.linkURL ? allowedBrowserUrl(params.linkURL) : null
+  if (link && link !== BLANK_URL) {
+    items.push({ id: 'openLinkNewPane', label: t('main.browserMenu.openLinkNewPane', 'Open Link in New Pane') })
+    items.push({ id: 'openLinkExternal', label: t('main.browserMenu.openLinkExternal', 'Open Link in Default Browser') })
+    items.push({ id: 'copyLink', label: t('main.browserMenu.copyLink', 'Copy Link Address') })
+    sep()
+  }
+  const src = params.srcURL ? allowedBrowserUrl(params.srcURL) : null
+  if (params.mediaType === 'image' && params.hasImageContents !== false) {
+    items.push({ id: 'copyImage', label: t('main.browserMenu.copyImage', 'Copy Image') })
+    if (src && src !== BLANK_URL) items.push({ id: 'copyImageAddress', label: t('main.browserMenu.copyImageAddress', 'Copy Image Address') })
+    sep()
+  }
+  const flags = params.editFlags || {}
+  if (params.isEditable) {
+    items.push({ id: 'undo', label: t('main.browserMenu.undo', 'Undo'), enabled: !!flags.canUndo })
+    items.push({ id: 'redo', label: t('main.browserMenu.redo', 'Redo'), enabled: !!flags.canRedo })
+    sep()
+    items.push({ id: 'cut', label: t('main.browserMenu.cut', 'Cut'), enabled: !!flags.canCut })
+    items.push({ id: 'copy', label: t('main.browserMenu.copy', 'Copy'), enabled: !!flags.canCopy })
+    items.push({ id: 'paste', label: t('main.browserMenu.paste', 'Paste'), enabled: !!flags.canPaste })
+    items.push({ id: 'selectAll', label: t('main.browserMenu.selectAll', 'Select All'), enabled: flags.canSelectAll !== false })
+    sep()
+  } else if (params.selectionText && String(params.selectionText).trim()) {
+    items.push({ id: 'copy', label: t('main.browserMenu.copy', 'Copy') })
+    sep()
+  }
+  items.push({ id: 'back', label: t('main.browserMenu.back', 'Back'), enabled: !!nav.canGoBack })
+  items.push({ id: 'forward', label: t('main.browserMenu.forward', 'Forward'), enabled: !!nav.canGoForward })
+  items.push({ id: 'reload', label: t('main.browserMenu.reload', 'Reload') })
+  if (!params.isEditable) items.push({ id: 'selectAll', label: t('main.browserMenu.selectAll', 'Select All') })
+  sep()
+  // The page's devtools open from the toolbar too (F12).
+  items.push({ id: 'inspect', label: t('main.browserMenu.inspect', 'Inspect') })
+  return items
+}
+
+export function createBrowserGuests({ getWindow, send, log = null, screenshotDir, electron, openExternal = null }) {
+  const { webContents, clipboard, nativeImage, session: electronSession, Menu = null } = electron
   // guest id -> { cancel } while an element is being picked.
   const picking = new Map()
   let sessionReady = false
@@ -189,16 +252,26 @@ export function createBrowserGuests({ getWindow, send, log = null, screenshotDir
     let gestureAt = 0
     let windowWasFull = null
     let popupWarned = false
+    // The last mouse button pressed in the page: a middle-click or a
+    // Ctrl+click asks for a new pane. A key or a touch since forgets it.
+    let lastMouse = null
     const noteGesture = (type) => {
       if (!GESTURE_INPUTS.has(type)) return
       gestureAt = Date.now()
+      if (type !== 'mouseDown' && type !== 'mouseUp' && type !== 'pointerDown' && type !== 'pointerUp') lastMouse = null
       const win = getWindow()
       windowWasFull = win && !win.isDestroyed() && typeof win.isFullScreen === 'function' ? win.isFullScreen() : null
     }
     guest.on('input-event', (_event, input) => noteGesture(input && input.type))
-    guest.on('before-mouse-event', (_event, mouse) => noteGesture(mouse && mouse.type))
+    guest.on('before-mouse-event', (_event, mouse) => {
+      if (mouse && mouse.type === 'mouseDown') {
+        const mods = Array.isArray(mouse.modifiers) ? mouse.modifiers : []
+        lastMouse = { middle: mouse.button === 'middle', ctrl: mods.includes('control') || mods.includes('ctrl') || mods.includes('meta') }
+      }
+      noteGesture(mouse && mouse.type)
+    })
 
-    guest.setWindowOpenHandler(({ url }) => {
+    guest.setWindowOpenHandler(({ url, disposition }) => {
       // A link to a new window: opened in the same pane (the window decides).
       const target = allowedBrowserUrl(url)
       if (!target || target === BLANK_URL) return { action: 'deny' }
@@ -210,9 +283,27 @@ export function createBrowserGuests({ getWindow, send, log = null, screenshotDir
         return { action: 'deny' }
       }
       gestureAt = 0
-      send('browser:popup', { webContentsId: guest.id, url: target })
+      const newPane = wantsNewPane(disposition, lastMouse)
+      lastMouse = null
+      send('browser:popup', { webContentsId: guest.id, url: target, ...(newPane ? { newPane: true } : {}) })
       return { action: 'deny' }
     })
+
+    // Ctrl+wheel (or a touchpad pinch): Chromium asks, the pane zooms (its
+    // own level, kept with the pane).
+    // One wheel notch can come as two requests: one step each ZOOM_REPEAT_MS.
+    let lastZoom = { direction: null, at: 0 }
+    guest.on('zoom-changed', (event, direction) => {
+      if (direction !== 'in' && direction !== 'out') return
+      if (event && typeof event.preventDefault === 'function') event.preventDefault()
+      const now = Date.now()
+      if (lastZoom.direction === direction && now - lastZoom.at >= 0 && now - lastZoom.at < ZOOM_REPEAT_MS) return
+      lastZoom = { direction, at: now }
+      send('browser:shortcut', { webContentsId: guest.id, action: direction === 'in' ? 'zoomIn' : 'zoomOut' })
+    })
+
+    // A right-click: a browser's menu (Electron shows none).
+    guest.on('context-menu', (_event, params) => showContextMenu(guest, params || {}))
 
     // Full screen is refused (the permission); a page that gets there anyway
     // is taken out, and Tessel's window put back as it was.
@@ -242,6 +333,17 @@ export function createBrowserGuests({ getWindow, send, log = null, screenshotDir
     })
     guest.on('before-input-event', (event, input) => {
       if (input) noteGesture(input.type)
+      // Escape stops a page still loading; the page gets its Escape too.
+      if (input && input.type === 'keyDown' && input.key === 'Escape' && !input.control && !input.alt && !input.meta) {
+        // After the event, like the refused pages below (Electron 42 crashes
+        // on some page changes made from inside an event).
+        if (typeof guest.isLoading === 'function' && guest.isLoading()) {
+          setImmediate(() => {
+            if (!guest.isDestroyed()) guest.stop()
+          })
+        }
+        return
+      }
       const action = shortcutOf(input)
       if (!action) return
       event.preventDefault()
@@ -267,9 +369,99 @@ export function createBrowserGuests({ getWindow, send, log = null, screenshotDir
     guest.on('destroyed', () => cancelPick(guest.id))
   }
 
+  // --- The right-click menu ------------------------------------------------------------
+  function navState(guest) {
+    const h = guest.navigationHistory
+    try {
+      if (h && typeof h.canGoBack === 'function') return { canGoBack: h.canGoBack(), canGoForward: h.canGoForward() }
+      return { canGoBack: !!(guest.canGoBack && guest.canGoBack()), canGoForward: !!(guest.canGoForward && guest.canGoForward()) }
+    } catch {
+      return { canGoBack: false, canGoForward: false }
+    }
+  }
+  function goHistory(guest, dir) {
+    const h = guest.navigationHistory
+    if (h && typeof h.goBack === 'function') return dir < 0 ? h.goBack() : h.goForward()
+    if (dir < 0 && guest.goBack) guest.goBack()
+    else if (dir > 0 && guest.goForward) guest.goForward()
+  }
+  const at = (n) => (Number.isFinite(Number(n)) ? Math.round(Number(n)) : 0)
+  // What a menu item does. Link and image addresses: http(s) only, checked
+  // again here.
+  function runMenuItem(guest, id, params = {}) {
+    if (!guest || guest.isDestroyed()) return
+    const link = params.linkURL ? allowedBrowserUrl(params.linkURL) : null
+    const src = params.srcURL ? allowedBrowserUrl(params.srcURL) : null
+    switch (id) {
+      case 'openLinkNewPane':
+        if (link && link !== BLANK_URL) send('browser:popup', { webContentsId: guest.id, url: link, newPane: true })
+        return
+      case 'openLinkExternal':
+        if (link && link !== BLANK_URL && openExternal) openExternal(link)
+        return
+      case 'copyLink':
+        if (link && link !== BLANK_URL && clipboard.writeText) clipboard.writeText(link)
+        return
+      case 'copyImage':
+        if (typeof guest.copyImageAt === 'function') guest.copyImageAt(at(params.x), at(params.y))
+        return
+      case 'copyImageAddress':
+        if (src && src !== BLANK_URL && clipboard.writeText) clipboard.writeText(src)
+        return
+      case 'undo':
+      case 'redo':
+      case 'cut':
+      case 'copy':
+      case 'paste':
+      case 'selectAll':
+        if (typeof guest[id] === 'function') guest[id]()
+        return
+      case 'back':
+        return goHistory(guest, -1)
+      case 'forward':
+        return goHistory(guest, 1)
+      case 'reload':
+        return guest.reload()
+      case 'inspect':
+        // In its own window, like the toolbar's devtools.
+        guest.openDevTools({ mode: 'detach' })
+        if (typeof guest.inspectElement === 'function') guest.inspectElement(at(params.x), at(params.y))
+        return
+    }
+  }
+  function showContextMenu(guest, params = {}) {
+    const win = getWindow()
+    if (!Menu || !win || win.isDestroyed() || !guest || guest.isDestroyed()) return null
+    const template = contextMenuItems(params, navState(guest)).map((item) =>
+      item.type === 'separator' ? item : { label: item.label, enabled: item.enabled !== false, click: () => runMenuItem(guest, item.id, params) }
+    )
+    const menu = Menu.buildFromTemplate(template)
+    menu.popup({ window: win })
+    return menu
+  }
+
+  // The browser page that has the keyboard in Tessel's window, if one does.
+  function focusedGuest(win) {
+    const wc = typeof webContents.getFocusedWebContents === 'function' ? webContents.getFocusedWebContents() : null
+    if (!wc || wc.isDestroyed() || typeof wc.getType !== 'function' || wc.getType() !== 'webview') return null
+    if (wc.hostWebContents !== win.webContents || wc.session !== browserSession()) return null
+    return wc
+  }
+
   function attachToWindow(win) {
     win.webContents.on('will-attach-webview', onWillAttach)
     win.webContents.on('did-attach-webview', onDidAttach)
+    // The mouse's back and forward buttons (Windows gives them to the window
+    // as app commands): the page with the keyboard, else the active pane.
+    if (typeof win.on === 'function') {
+      win.on('app-command', (_event, command) => {
+        const action = command === 'browser-backward' ? 'back' : command === 'browser-forward' ? 'forward' : null
+        if (!action) return
+        const guest = focusedGuest(win)
+        if (guest) send('browser:shortcut', { webContentsId: guest.id, action })
+        else send('browser:appCommand', { action })
+      })
+    }
   }
 
   // Asked by Tessel's window, nothing else (browser:* channels are exempt
@@ -474,7 +666,7 @@ export function createBrowserGuests({ getWindow, send, log = null, screenshotDir
 
   purgeOldFiles()
 
-  return { attachToWindow, register, onWillAttach, onDidAttach, guestFor, capture, pick, shortcutOf, isScreenshot, browserSession, purgeOldFiles, saveFeedback, clearData }
+  return { attachToWindow, register, onWillAttach, onDidAttach, guestFor, capture, pick, shortcutOf, isScreenshot, browserSession, purgeOldFiles, saveFeedback, clearData, showContextMenu, runMenuItem }
 }
 
 export { shortcutOf }

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, clipboard, nativeImage, dialog, Notification, shell, powerSaveBlocker, powerMonitor, safeStorage, webContents, session } from 'electron'
+import { app, BrowserWindow, Menu, ipcMain, clipboard, nativeImage, dialog, Notification, shell, powerSaveBlocker, powerMonitor, safeStorage, webContents, session } from 'electron'
 import { join, isAbsolute, dirname } from 'path'
 import os from 'os'
 import fs from 'fs'
@@ -2260,7 +2260,11 @@ const browserGuests = createBrowserGuests({
   send,
   log,
   screenshotDir: PASTE_DIR,
-  electron: { webContents, clipboard, nativeImage, session }
+  electron: { webContents, clipboard, nativeImage, session, Menu },
+  // "Open Link in Default Browser" of a page's right-click menu (http(s)).
+  openExternal: (url) => {
+    if (isSafeExternal(url)) shell.openExternal(url).catch(() => {})
+  }
 })
 browserGuests.register(ipcMain)
 ipcMain.handle('clipboard:saveImage', () => {

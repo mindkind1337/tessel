@@ -14,11 +14,17 @@
 // navigate/browser-load-failure-overlay.tsx, navigate/browser-notices.ts and
 // src/renderer/src/components/status-bar/PortsStatusSegment.tsx,
 // ports-status-popover-rows.tsx, written for Vue.
-import { ref, computed, watch, inject, nextTick, onMounted, onBeforeUnmount } from 'vue'
+// The page's sizing, its input during Tessel's drags and its find bar after
+// Orca's host-guest/browser-page-webview.ts, browser-page-viewport.ts,
+// webview-drag-passthrough.ts and assemble-chrome/BrowserFind.tsx (MIT,
+// Copyright (c) 2026 Lovecast Inc.).
+import { ref, shallowRef, computed, watch, inject, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import {
   ArrowLeft,
   ArrowRight,
   Camera,
+  ChevronDown,
+  ChevronUp,
   Copy,
   Crosshair,
   Eraser,
@@ -27,6 +33,7 @@ import {
   Loader2,
   Plug,
   RefreshCw,
+  Search,
   ShieldAlert,
   SquareCode,
   X
@@ -44,6 +51,8 @@ import {
   shortcutAction,
   portAddress
 } from '../browser/browserPage'
+import { registerWebview } from '../browser/webviewPassthrough'
+import { claimPage, releasePage, placePage, createWebview } from '../browser/pageHost'
 import DesignModePanel from './DesignModePanel.vue'
 import { t } from '../i18n'
 
@@ -58,7 +67,13 @@ const isActive = computed(() => ctx.activeId.value === props.node.id)
 const isMaximized = computed(() => ctx.maximizedId.value === props.node.id)
 
 const rootEl = ref(null)
-const webviewEl = ref(null)
+// The page (a <webview>): made in onMounted, in the workspace's page layer
+// when there is one (browser/pageHost.js), else in the pane itself.
+const webviewEl = shallowRef(null)
+const pageEl = ref(null) // the pane's page area, where the page is laid
+const overlayTarget = shallowRef(null) // where the overlays over the page go
+let page = null // pageHost's entry
+const pageOwner = Symbol('pane')
 const addressEl = ref(null)
 const design = ref(null)
 
@@ -77,6 +92,39 @@ const designActive = ref(false)
 let ready = false // loadURL needs the webview attached and its first dom-ready
 let pendingUrl = null
 
+
+// --- Scroll kept when the pane is rebuilt ------------------------------------------------------
+// A layout change keeps the page itself (browser/pageHost.js); a pane moved
+// to another workspace, or shown without a page layer, gets a new one, which
+// Electron loads again: where the page was scrolled is noted (when
+// the pointer or the keyboard leaves the page, before a link opens in a new
+// pane) and put back once the same page is loaded.
+const MAX_SCROLL = 10000000
+function scrollNumber(n) {
+  const v = Math.round(Number(n))
+  return Number.isFinite(v) ? Math.min(MAX_SCROLL, Math.max(0, v)) : 0
+}
+async function saveScroll() {
+  if (!ready || isBlank.value) return
+  let pos
+  try {
+    pos = await call('executeJavaScript', '[window.scrollX, window.scrollY]', false)
+  } catch {
+    return
+  }
+  if (!Array.isArray(pos)) return
+  props.node.scroll = { url: currentUrl.value, x: scrollNumber(pos[0]), y: scrollNumber(pos[1]) }
+}
+let scrollToRestore = props.node.scroll && props.node.scroll.url === currentUrl.value ? props.node.scroll : null
+function restoreScroll() {
+  const s = scrollToRestore
+  scrollToRestore = null
+  if (props.node.scroll === s) props.node.scroll = null
+  if (!s || s.url !== currentUrl.value || (!s.x && !s.y)) return
+  const code = 'window.scrollTo(' + scrollNumber(s.x) + ', ' + scrollNumber(s.y) + ')'
+  Promise.resolve(call('executeJavaScript', code, false)).catch(() => {})
+}
+
 const isBlank = computed(() => !displayUrl(currentUrl.value))
 const headerTitle = computed(() => pageTitle.value || (isBlank.value ? '' : hostOf(currentUrl.value)) || t('browser.pane.title', 'Browser'))
 const failureView = computed(() => (failure.value ? loadFailureView(failure.value) : null))
@@ -84,7 +132,7 @@ const showEmpty = computed(() => isBlank.value && !failure.value && !loading.val
 
 // --- The webview ---------------------------------------------------------------------------
 function wv() {
-  return webviewEl.value && webviewEl.value.$el ? webviewEl.value.$el : webviewEl.value
+  return webviewEl.value
 }
 // The webview's methods throw before it is attached; a failed call changes nothing.
 function call(name, ...args) {
@@ -137,6 +185,10 @@ function onDomReady() {
   ready = true
   const id = call('getWebContentsId')
   if (id != null) guestId.value = id
+  if (page) {
+    page.ready = true
+    page.guestId = guestId.value
+  }
   call('setZoomLevel', clampZoom(props.node.zoom || 0))
   syncHistory()
   if (first && pendingUrl) {
@@ -152,8 +204,13 @@ function onStopLoading() {
   loading.value = false
   syncHistory()
 }
+function onFinishLoad() {
+  if (scrollToRestore) restoreScroll()
+}
 function onNavigate(e) {
   if (!e || !e.url) return
+  if (scrollToRestore && e.url !== scrollToRestore.url) scrollToRestore = null
+  closeFind()
   failure.value = null
   setPage(e.url)
   setTitle(pageTitleFor('', e.url))
@@ -197,8 +254,11 @@ const WEBVIEW_EVENTS = {
   'did-navigate-in-page': onNavigateInPage,
   'page-title-updated': onTitle,
   'did-fail-load': onFailLoad,
+  'did-finish-load': onFinishLoad,
   'render-process-gone': onGone,
-  focus: onPageFocus
+  'found-in-page': onFoundInPage,
+  focus: onPageFocus,
+  blur: saveScroll
 }
 
 // --- Navigation controls ---------------------------------------------------------------------
@@ -400,11 +460,104 @@ function zoom(dir) {
   zoomTimer = setTimeout(() => (zoomShown.value = false), 1500)
 }
 
+// --- Find in page (Orca's BrowserFind) --------------------------------------------------------
+const findEl = ref(null)
+const findOpen = ref(false)
+const findQuery = ref('')
+const findActive = ref(0)
+const findTotal = ref(0)
+let findSearched = null // the text of the search under way (Electron's findNext: a new one)
+let findTimer = null
+function openFind() {
+  if (isBlank.value) return
+  closeMenus()
+  findOpen.value = true
+  nextTick(() => {
+    const input = findEl.value
+    if (!input) return
+    input.focus()
+    input.select()
+  })
+  // Opened again on a text: its matches again.
+  if (findQuery.value && findSearched !== findQuery.value) runFind()
+}
+function closeFind() {
+  clearTimeout(findTimer)
+  if (!findOpen.value) return
+  findOpen.value = false
+  findSearched = null
+  findActive.value = 0
+  findTotal.value = 0
+  call('stopFindInPage', 'clearSelection')
+}
+function runFind(forward = true) {
+  clearTimeout(findTimer)
+  const text = findQuery.value
+  if (!text) {
+    findSearched = null
+    findActive.value = 0
+    findTotal.value = 0
+    call('stopFindInPage', 'clearSelection')
+    return
+  }
+  const fresh = findSearched !== text
+  findSearched = text
+  call('findInPage', text, { forward, findNext: fresh })
+}
+function onFindInput() {
+  // Searched as it is typed, a moment after the last key (no flashing).
+  clearTimeout(findTimer)
+  findTimer = setTimeout(() => runFind(), 200)
+}
+function onFindKeydown(e) {
+  if (e.key === 'Escape') {
+    e.preventDefault()
+    e.stopPropagation()
+    closeFind()
+    focusPage()
+  } else if (e.key === 'Enter') {
+    e.preventDefault()
+    e.stopPropagation()
+    runFind(!e.shiftKey)
+  } else if ((e.ctrlKey || e.metaKey) && !e.altKey && String(e.key).toLowerCase() === 'f') {
+    e.preventDefault()
+    e.stopPropagation()
+    if (findEl.value) findEl.value.select()
+  }
+}
+function onFoundInPage(e) {
+  const r = e && e.result
+  if (!r || !findOpen.value) return
+  if (Number.isFinite(r.activeMatchOrdinal)) findActive.value = r.activeMatchOrdinal
+  if (Number.isFinite(r.matches)) findTotal.value = r.matches
+}
+const findCount = computed(() =>
+  findTotal.value ? t('browser.find.count', '{{current}} of {{total}}', { current: findActive.value, total: findTotal.value }) : t('browser.find.none', 'No matches')
+)
+function focusPage() {
+  const el = wv()
+  if (el && typeof el.focus === 'function') el.focus()
+}
+
+// --- Links opened in a new pane (middle-click, Ctrl+click, the page's menu) --------------------
+async function openInNewPane(url) {
+  const target = allowedBrowserUrl(url)
+  if (!target || target === BLANK_URL) return
+  // Opening splits this pane, which builds it again: its scroll comes back.
+  await saveScroll()
+  if (ctx.openBrowserPane) ctx.openBrowserPane(target, { fromId: props.node.id, activate: false })
+  else navigate(target)
+}
+
 // --- Shortcuts (here, and from the page through the main process) -----------------------------
 function runAction(action) {
   switch (action) {
     case 'focusAddress':
       return focusAddress()
+    case 'find':
+      return openFind()
+    case 'stop':
+      return stop()
     case 'reload':
       return reload()
     case 'hardReload':
@@ -427,6 +580,13 @@ function onKeydown(e) {
   if (e.key === 'Escape' && (portsOpen.value || reloadMenu.value)) {
     e.stopPropagation()
     closeMenus()
+    return
+  }
+  // Escape stops a page still loading (a browser's Stop).
+  if (e.key === 'Escape' && loading.value && !e.ctrlKey && !e.altKey && !e.metaKey && e.target !== addressEl.value) {
+    e.preventDefault()
+    e.stopPropagation()
+    stop()
     return
   }
   // Fields of Design Mode's cards keep their keys.
@@ -491,9 +651,17 @@ function subscribe(api) {
     const off = api[name](forThisPage(fn))
     if (typeof off === 'function') unsubscribers.push(off)
   }
-  // A link to a new window opens here.
-  on('onPopup', (ev) => navigate(ev.url))
+  // A link to a new window opens here; a middle-click or a Ctrl+click, in a new pane.
+  on('onPopup', (ev) => (ev.newPane ? openInNewPane(ev.url) : navigate(ev.url)))
   on('onShortcut', (ev) => runAction(ev.action))
+  // The mouse's back/forward buttons while no page has the keyboard: the active pane's.
+  if (typeof api.onAppCommand === 'function') {
+    const off = api.onAppCommand((ev) => {
+      if (!ev || !isActive.value) return
+      if (ev.action === 'back' || ev.action === 'forward') runAction(ev.action)
+    })
+    if (typeof off === 'function') unsubscribers.push(off)
+  }
   on('onPermissionDenied', (ev) => {
     if (ctx.toast) ctx.toast(permissionNotice(ev), { timeout: 6000 })
   })
@@ -507,9 +675,79 @@ function subscribe(api) {
   })
 }
 
+// --- The page's place (browser/pageHost.js) -------------------------------------------------
+// The workspace's page layer: a sibling of the split tree in its .ws-layer.
+function pageLayer() {
+  const layer = rootEl.value && rootEl.value.closest ? rootEl.value.closest('.ws-layer') : null
+  if (!layer) return null
+  for (const child of layer.children) if (child.classList.contains('browser-host')) return child
+  return null
+}
+const hosted = shallowRef(false)
+// Hidden under another pane that is maximized.
+const coveredByMaximized = computed(() => !!ctx.maximizedId.value && ctx.maximizedId.value !== props.node.id)
+function place() {
+  if (page) placePage(page, pageEl.value, { hidden: coveredByMaximized.value })
+}
+let placeFrame = 0
+function placeSoon() {
+  if (placeFrame) return
+  placeFrame = requestAnimationFrame(() => {
+    placeFrame = 0
+    place()
+  })
+}
+watch([coveredByMaximized, isMaximized], () => nextTick(place))
+let resizeObserver = null
+// A click on the page's overlays (the failure page, Design Mode) activates the pane.
+function onBoxMouseDown() {
+  if (!isActive.value) ctx.setActive(props.node.id)
+}
+// A page taken back: what it shows now.
+function adoptLivePage() {
+  ready = page.ready
+  if (page.guestId != null) guestId.value = page.guestId
+  loading.value = !!call('isLoading')
+  syncHistory()
+  const url = allowedBrowserUrl(call('getURL'))
+  if (url && url !== BLANK_URL) {
+    setPage(url)
+    setTitle(pageTitleFor(call('getTitle'), url))
+  }
+  scrollToRestore = null
+}
+function mountPage() {
+  const host = pageLayer()
+  if (host) {
+    const claimed = claimPage(props.node.id, host, initialSrc, pageOwner)
+    page = claimed.page
+    webviewEl.value = page.webview
+    overlayTarget.value = page.overlay
+    hosted.value = true
+    page.box.addEventListener('mousedown', onBoxMouseDown)
+    if (claimed.adopted) adoptLivePage()
+    if (typeof ResizeObserver === 'function') {
+      resizeObserver = new ResizeObserver(() => place())
+      if (pageEl.value) resizeObserver.observe(pageEl.value)
+      resizeObserver.observe(host)
+    }
+    window.addEventListener('resize', placeSoon)
+    window.addEventListener('terminal-layout-change', placeSoon)
+    place()
+    return
+  }
+  // No page layer (a pane shown on its own): the page in the pane.
+  const el = createWebview(initialSrc)
+  if (pageEl.value) pageEl.value.insertBefore(el, pageEl.value.firstChild)
+  webviewEl.value = el
+}
+
+let unregisterWebview = null
 onMounted(() => {
+  mountPage()
   const el = wv()
   if (el) for (const [name, fn] of Object.entries(WEBVIEW_EVENTS)) el.addEventListener(name, fn)
+  unregisterWebview = registerWebview(el)
   const api = window.shellApi && window.shellApi.browser
   if (api) subscribe(api)
   document.addEventListener('mousedown', onDocMouseDown, true)
@@ -518,6 +756,16 @@ onMounted(() => {
 onBeforeUnmount(() => {
   const el = wv()
   if (el) for (const [name, fn] of Object.entries(WEBVIEW_EVENTS)) el.removeEventListener(name, fn)
+  if (resizeObserver) resizeObserver.disconnect()
+  window.removeEventListener('resize', placeSoon)
+  window.removeEventListener('terminal-layout-change', placeSoon)
+  if (placeFrame) cancelAnimationFrame(placeFrame)
+  if (page) {
+    page.box.removeEventListener('mousedown', onBoxMouseDown)
+    // Kept a moment: this pane built again elsewhere takes it back as it is.
+    releasePage(props.node.id, pageOwner)
+    page = null
+  }
   for (const off of unsubscribers.splice(0)) {
     try {
       off()
@@ -527,6 +775,8 @@ onBeforeUnmount(() => {
   }
   document.removeEventListener('mousedown', onDocMouseDown, true)
   clearTimeout(zoomTimer)
+  clearTimeout(findTimer)
+  if (unregisterWebview) unregisterWebview()
 })
 
 defineExpose({ navigate, focusAddress })
@@ -537,6 +787,7 @@ defineExpose({ navigate, focusAddress })
     ref="rootEl"
     class="pane browser-pane"
     :class="{
+      hosted,
       active: isActive,
       maximized: isMaximized,
       highlighted: ctx.highlightId.value === node.id
@@ -759,16 +1010,60 @@ defineExpose({ navigate, focusAddress })
         </button>
       </div>
 
-      <div class="bp-page" data-test="browser-page">
-        <component
-          is="webview"
-          ref="webviewEl"
-          class="bp-webview"
-          partition="persist:tessel-browser"
-          allowpopups="true"
-          webpreferences="contextIsolation=yes,sandbox=yes,nodeIntegration=no"
-          :src="initialSrc"
-        />
+      <div ref="pageEl" class="bp-page" :class="{ hosted }" data-test="browser-page" @pointerleave="saveScroll">
+        <!-- Over the page: in its box when it lives in the page layer. -->
+        <Teleport :to="overlayTarget" :disabled="!overlayTarget">
+
+        <!-- Orca's find bar: top right of the page. -->
+        <div v-if="findOpen" class="bp-find" role="search" data-test="browser-find" @mousedown.stop>
+          <Search :size="14" class="bp-find-icon" aria-hidden="true" />
+          <input
+            ref="findEl"
+            v-model="findQuery"
+            class="bp-find-input"
+            type="text"
+            spellcheck="false"
+            autocomplete="off"
+            data-test="browser-find-input"
+            :placeholder="t('browser.find.placeholder', 'Find in page...')"
+            :aria-label="t('browser.find.label', 'Find in page')"
+            @input="onFindInput"
+            @keydown="onFindKeydown"
+          />
+          <span v-if="findQuery" class="bp-find-count" data-test="browser-find-count">{{ findCount }}</span>
+          <button
+            type="button"
+            class="bp-btn bp-find-btn"
+            data-test="browser-find-prev"
+            :title="t('browser.find.previous', 'Previous match (Shift+Enter)')"
+            :aria-label="t('browser.find.previousLabel', 'Previous match')"
+            :disabled="!findQuery"
+            @click="runFind(false)"
+          >
+            <ChevronUp :size="14" />
+          </button>
+          <button
+            type="button"
+            class="bp-btn bp-find-btn"
+            data-test="browser-find-next"
+            :title="t('browser.find.next', 'Next match (Enter)')"
+            :aria-label="t('browser.find.nextLabel', 'Next match')"
+            :disabled="!findQuery"
+            @click="runFind(true)"
+          >
+            <ChevronDown :size="14" />
+          </button>
+          <button
+            type="button"
+            class="bp-btn bp-find-btn"
+            data-test="browser-find-close"
+            :title="t('browser.find.close', 'Close (Esc)')"
+            :aria-label="t('browser.find.closeLabel', 'Close find')"
+            @click="(closeFind(), focusPage())"
+          >
+            <X :size="14" />
+          </button>
+        </div>
 
         <DesignModePanel
           ref="design"
@@ -839,6 +1134,7 @@ defineExpose({ navigate, focusAddress })
         <div class="bp-zoom" :class="{ shown: zoomShown }" role="status" aria-live="polite" :aria-hidden="!zoomShown" data-test="browser-zoom">
           {{ zoomText }}
         </div>
+        </Teleport>
       </div>
     </div>
   </div>
@@ -857,6 +1153,7 @@ defineExpose({ navigate, focusAddress })
   bottom: 0;
   display: flex;
   flex-direction: column;
+  min-width: 0;
   min-height: 0;
 }
 
@@ -1149,22 +1446,81 @@ defineExpose({ navigate, focusAddress })
   font-size: 10px;
 }
 
-/* The page area: the webview, Design Mode and the overlays over it. */
+/* The page area: the webview fills it (a flex item in a flex box, every
+   level allowed to shrink), Design Mode and the overlays sit over it. With
+   the page in the workspace's page layer (browser/pageHost.js) it is only a
+   place: see-through, so a maximized pane shows its page there. */
 .bp-page {
   position: relative;
+  display: flex;
   flex: 1 1 auto;
+  min-width: 0;
   min-height: 0;
   overflow: hidden;
   background: var(--term);
 }
 
+.browser-pane.hosted,
+.bp-page.hosted {
+  background: transparent;
+}
+
 .bp-webview {
-  position: absolute;
-  inset: 0;
   display: flex;
+  flex: 1 1 auto;
   width: 100%;
   height: 100%;
+  min-width: 0;
+  min-height: 0;
   border: none;
+}
+
+/* Orca's find bar. */
+.bp-find {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 7;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: min(360px, calc(100% - 16px));
+  padding: 3px 4px 3px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface-2);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
+}
+
+.bp-find-icon {
+  flex: 0 0 auto;
+  color: var(--text-dim);
+}
+
+.bp-find-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 24px;
+  padding: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text-strong);
+  font: inherit;
+  font-size: 13px;
+}
+
+.bp-find-count {
+  flex: 0 0 auto;
+  color: var(--text-dim);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.bp-find-btn {
+  width: 24px;
+  height: 24px;
 }
 
 /* A drag over the page must reach Tessel, not the page. Plain descendant

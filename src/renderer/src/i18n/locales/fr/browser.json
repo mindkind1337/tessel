@@ -91,6 +91,18 @@
       "confirm": "Effacer",
       "done": "Données de navigation effacées",
       "failed": "Impossible d'effacer les données de navigation."
+    },
+    "find": {
+      "placeholder": "Rechercher dans la page...",
+      "label": "Rechercher dans la page",
+      "count": "{{current}} sur {{total}}",
+      "none": "Aucun résultat",
+      "previous": "Résultat précédent (Maj+Entrée)",
+      "previousLabel": "Résultat précédent",
+      "next": "Résultat suivant (Entrée)",
+      "nextLabel": "Résultat suivant",
+      "close": "Fermer (Échap)",
+      "closeLabel": "Fermer la recherche"
     }
   },
   "browserDesign": {

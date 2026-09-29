@@ -372,6 +372,8 @@ const api = {
     saveFeedback: (text) => ipcRenderer.invoke('browser:saveFeedback', text),
     onPopup: (cb) => subscribe('browser:popup', cb),
     onShortcut: (cb) => subscribe('browser:shortcut', cb),
+    // The mouse's back/forward buttons with no page focused: for the active pane.
+    onAppCommand: (cb) => subscribe('browser:appCommand', cb),
     onPermissionDenied: (cb) => subscribe('browser:permissionDenied', cb),
     onDownloadBlocked: (cb) => subscribe('browser:downloadBlocked', cb)
   },

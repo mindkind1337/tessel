@@ -35,6 +35,10 @@ vi.mock('../components/DesignModePanel.vue', async () => {
   }
 })
 import BrowserPane from '../components/BrowserPane.vue'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { parse as parseSfc } from '@vue/compiler-sfc'
+import { acquirePassthrough } from '../browser/webviewPassthrough'
 
 describe('browserPage.js', () => {
   it('zoom levels: -3..+5 by 0.5, as a percent', () => {
@@ -98,6 +102,8 @@ describe('browserPage.js', () => {
   it('keys: address, reload, history, devtools, zoom', () => {
     const k = (key, mods = {}) => shortcutAction({ key, ...mods })
     expect(k('l', { ctrlKey: true })).toBe('focusAddress')
+    expect(k('f', { ctrlKey: true })).toBe('find')
+    expect(k('F', { ctrlKey: true, shiftKey: true })).toBe(null)
     expect(k('r', { ctrlKey: true })).toBe('reload')
     expect(k('R', { ctrlKey: true, shiftKey: true })).toBe('hardReload')
     expect(k('F5')).toBe('reload')
@@ -136,6 +142,9 @@ describe('BrowserPane.vue', () => {
     el.setZoomLevel = vi.fn()
     el.isLoading = vi.fn(() => false)
     el.focus = vi.fn()
+    el.findInPage = vi.fn()
+    el.stopFindInPage = vi.fn()
+    el.executeJavaScript = vi.fn(async () => [0, 640])
     return el
   }
   function fire(name, props = {}) {
@@ -489,5 +498,281 @@ describe('BrowserPane.vue', () => {
     Object.defineProperty(down, 'button', { value: 0 })
     wrapper.find('.pane-title').element.dispatchEvent(down)
     expect(ctx.beginPaneDrag).toHaveBeenCalled()
+  })
+})
+
+describe('BrowserPane.vue: layout, input and browser behaviour', () => {
+  let wrapper, ctx, api, node, handlers, prevApi
+
+  function fakeWebview(el) {
+    Object.assign(el, {
+      loadURL: vi.fn(() => Promise.resolve()),
+      goBack: vi.fn(),
+      goForward: vi.fn(),
+      reload: vi.fn(),
+      reloadIgnoringCache: vi.fn(),
+      stop: vi.fn(),
+      canGoBack: vi.fn(() => true),
+      canGoForward: vi.fn(() => true),
+      getTitle: vi.fn(() => ''),
+      getWebContentsId: vi.fn(() => 42),
+      setZoomLevel: vi.fn(),
+      focus: vi.fn(),
+      findInPage: vi.fn(),
+      stopFindInPage: vi.fn(),
+      executeJavaScript: vi.fn(async () => [0, 640])
+    })
+    return el
+  }
+  const webview = () => wrapper.find('webview').element
+  function fire(name, props = {}) {
+    const ev = new Event(name)
+    Object.assign(ev, props)
+    webview().dispatchEvent(ev)
+  }
+  async function mountPane(url = 'https://example.com/', extra = {}) {
+    node = reactive({ type: 'leaf', kind: 'browser', id: 'b1', num: 2, title: '', url, zoom: 0, focusAddress: 0, ...extra })
+    wrapper = mount(BrowserPane, { props: { node }, attachTo: document.body, global: { provide: { panelCtx: ctx } } })
+    fakeWebview(webview())
+    fire('dom-ready')
+    await nextTick()
+  }
+  const key = (target, k, mods = {}) => target.trigger('keydown', { key: k, ...mods })
+
+  beforeEach(() => {
+    handlers = {}
+    const sub = (name) =>
+      vi.fn((cb) => {
+        handlers[name] = cb
+        return vi.fn()
+      })
+    api = {
+      onPopup: sub('popup'),
+      onShortcut: sub('shortcut'),
+      onPermissionDenied: sub('permission'),
+      onDownloadBlocked: sub('download'),
+      onAppCommand: sub('appCommand'),
+      openDevTools: vi.fn()
+    }
+    prevApi = window.shellApi
+    window.shellApi = { browser: api }
+    ctx = {
+      activeId: ref('b1'),
+      maximizedId: ref(null),
+      highlightId: ref(null),
+      setActive: vi.fn(),
+      closeLeaf: vi.fn(),
+      toggleMaximize: vi.fn(),
+      beginPaneDrag: vi.fn(),
+      toast: vi.fn(),
+      browserPorts: () => [],
+      openBrowserPane: vi.fn()
+    }
+  })
+  afterEach(() => {
+    if (wrapper) wrapper.unmount()
+    wrapper = null
+    window.shellApi = prevApi
+  })
+
+  it('the page fills its area at any size: a flex item allowed to shrink, inline', async () => {
+    await mountPane()
+    const style = webview().style
+    expect(style.display).toBe('flex')
+    expect(style.flex).toBe('1 1 auto')
+    expect(style.width).toBe('100%')
+    expect(style.height).toBe('100%')
+    expect(style.minWidth).toBe('0px')
+    expect(style.minHeight).toBe('0px')
+    expect(style.pointerEvents).toBe('')
+    expect(webview().parentElement.classList.contains('bp-page')).toBe(true)
+  })
+
+  it("the pane's stylesheet: a flex column down to the page, nothing that scales it or takes its pointer", () => {
+    const file = resolve(process.cwd(), 'src/renderer/src/components/BrowserPane.vue')
+    const css = parseSfc(readFileSync(file, 'utf8')).descriptor.styles
+      .map((b) => b.content)
+      .join('\n')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+    const rule = (sel) => {
+      const m = css.match(new RegExp(`(^|\\n)${sel.replace('.', '\\.')}\\s*\\{([^}]*)\\}`))
+      return m ? m[2] : ''
+    }
+    expect(rule('.bp-body')).toMatch(/display:\s*flex/)
+    expect(rule('.bp-body')).toMatch(/flex-direction:\s*column/)
+    expect(rule('.bp-body')).toMatch(/min-height:\s*0/)
+    expect(rule('.bp-page')).toMatch(/display:\s*flex/)
+    expect(rule('.bp-page')).toMatch(/flex:\s*1 1 auto/)
+    expect(rule('.bp-page')).toMatch(/min-height:\s*0/)
+    expect(rule('.bp-page')).toMatch(/min-width:\s*0/)
+    expect(rule('.bp-webview')).toMatch(/flex:\s*1 1 auto/)
+    // `:global(x) .bp-webview` compiles to a bare `x` (the whole window then
+    // ignores the pointer): plain descendant selectors only.
+    expect(css).not.toMatch(/:global\(/)
+    expect(css).not.toMatch(/(^|[^-])zoom:|transform:\s*scale/)
+  })
+
+  it("Tessel's drags let the pointer through the page, and give it back when they end", async () => {
+    await mountPane()
+    const release = acquirePassthrough()
+    expect(webview().style.pointerEvents).toBe('none')
+    release()
+    expect(webview().style.pointerEvents).toBe('')
+    // Unmounted mid-drag: the next pane is not held.
+    const r2 = acquirePassthrough()
+    const el = webview()
+    wrapper.unmount()
+    wrapper = null
+    expect(el.style.pointerEvents).toBe('')
+    r2()
+  })
+
+  it('Ctrl+F opens find: typing searches, Enter/Shift+Enter go through the matches, Escape closes', async () => {
+    vi.useFakeTimers()
+    try {
+      await mountPane()
+      await key(wrapper.find('.browser-pane'), 'f', { ctrlKey: true })
+      const bar = wrapper.find('[data-test="browser-find"]')
+      expect(bar.exists()).toBe(true)
+      const input = wrapper.find('[data-test="browser-find-input"]')
+      expect(document.activeElement).toBe(input.element)
+      await input.setValue('tessel')
+      vi.advanceTimersByTime(250)
+      expect(webview().findInPage).toHaveBeenLastCalledWith('tessel', { forward: true, findNext: true })
+      fire('found-in-page', { result: { activeMatchOrdinal: 1, matches: 5 } })
+      await nextTick()
+      expect(wrapper.find('[data-test="browser-find-count"]').text()).toBe('1 of 5')
+      await key(input, 'Enter')
+      expect(webview().findInPage).toHaveBeenLastCalledWith('tessel', { forward: true, findNext: false })
+      await key(input, 'Enter', { shiftKey: true })
+      expect(webview().findInPage).toHaveBeenLastCalledWith('tessel', { forward: false, findNext: false })
+      await key(input, 'Escape')
+      expect(wrapper.find('[data-test="browser-find"]').exists()).toBe(false)
+      expect(webview().stopFindInPage).toHaveBeenCalledWith('clearSelection')
+      expect(webview().focus).toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('find from the page (the main process) and a count with no match; a new page closes it', async () => {
+    await mountPane()
+    handlers.shortcut({ webContentsId: 42, action: 'find' })
+    await nextTick()
+    const input = wrapper.find('[data-test="browser-find-input"]')
+    await input.setValue('zz')
+    await key(input, 'Enter')
+    fire('found-in-page', { result: { activeMatchOrdinal: 0, matches: 0 } })
+    await nextTick()
+    expect(wrapper.find('[data-test="browser-find-count"]').text()).toBe('No matches')
+    fire('did-navigate', { url: 'https://example.com/next' })
+    await nextTick()
+    expect(wrapper.find('[data-test="browser-find"]').exists()).toBe(false)
+  })
+
+  it('no find on the blank page', async () => {
+    await mountPane('about:blank')
+    await key(wrapper.find('.browser-pane'), 'f', { ctrlKey: true })
+    expect(wrapper.find('[data-test="browser-find"]').exists()).toBe(false)
+  })
+
+  it('Escape stops a page still loading, and is not the app\'s Escape then', async () => {
+    await mountPane()
+    fire('did-start-loading')
+    await nextTick()
+    const e = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+    const seen = vi.fn()
+    document.body.addEventListener('keydown', seen)
+    wrapper.find('.browser-pane').element.dispatchEvent(e)
+    document.body.removeEventListener('keydown', seen)
+    expect(webview().stop).toHaveBeenCalled()
+    expect(seen).not.toHaveBeenCalled()
+    // Loaded: Escape is the app's again.
+    fire('did-stop-loading')
+    await nextTick()
+    webview().stop.mockClear()
+    await key(wrapper.find('.browser-pane'), 'Escape')
+    expect(webview().stop).not.toHaveBeenCalled()
+  })
+
+  it('reload, history and zoom keys act on the page, never on Tessel', async () => {
+    await mountPane()
+    const pane = wrapper.find('.browser-pane')
+    for (const [k, mods, method] of [
+      ['F5', {}, 'reload'],
+      ['r', { ctrlKey: true }, 'reload'],
+      ['ArrowLeft', { altKey: true }, 'goBack'],
+      ['ArrowRight', { altKey: true }, 'goForward']
+    ]) {
+      const e = new KeyboardEvent('keydown', { key: k, ...mods, bubbles: true, cancelable: true })
+      pane.element.dispatchEvent(e)
+      expect(e.defaultPrevented).toBe(true)
+      expect(webview()[method]).toHaveBeenCalled()
+    }
+    handlers.shortcut({ webContentsId: 42, action: 'zoomIn' })
+    expect(node.zoom).toBe(0.5)
+    expect(webview().setZoomLevel).toHaveBeenLastCalledWith(0.5)
+  })
+
+  it("the mouse's back/forward buttons go to the active browser pane only", async () => {
+    await mountPane()
+    handlers.appCommand({ action: 'back' })
+    expect(webview().goBack).toHaveBeenCalledTimes(1)
+    handlers.appCommand({ action: 'forward' })
+    expect(webview().goForward).toHaveBeenCalledTimes(1)
+    ctx.activeId.value = 'other'
+    handlers.appCommand({ action: 'back' })
+    handlers.appCommand({ action: 'reload' })
+    expect(webview().goBack).toHaveBeenCalledTimes(1)
+    expect(webview().reload).not.toHaveBeenCalled()
+  })
+
+  it('a middle-click or Ctrl+click link opens a new pane next to this one (its scroll noted first); others stay here', async () => {
+    await mountPane()
+    handlers.popup({ webContentsId: 42, url: 'https://example.com/other', newPane: true })
+    await flushPromises()
+    expect(webview().executeJavaScript).toHaveBeenCalledWith('[window.scrollX, window.scrollY]', false)
+    expect(node.scroll).toEqual({ url: 'https://example.com/', x: 0, y: 640 })
+    expect(ctx.openBrowserPane).toHaveBeenCalledWith('https://example.com/other', { fromId: 'b1', activate: false })
+    expect(webview().loadURL).not.toHaveBeenCalled()
+
+    handlers.popup({ webContentsId: 42, url: 'javascript:alert(1)', newPane: true })
+    await flushPromises()
+    expect(ctx.openBrowserPane).toHaveBeenCalledTimes(1)
+
+    handlers.popup({ webContentsId: 42, url: 'https://example.com/same' })
+    await flushPromises()
+    expect(webview().loadURL).toHaveBeenCalledWith('https://example.com/same')
+    expect(ctx.openBrowserPane).toHaveBeenCalledTimes(1)
+  })
+
+  it('rebuilt (a split, a move): the same page comes back where it was scrolled', async () => {
+    await mountPane('https://example.com/', { scroll: { url: 'https://example.com/', x: 0, y: 1200 } })
+    fire('did-finish-load')
+    await flushPromises()
+    expect(webview().executeJavaScript).toHaveBeenCalledWith('window.scrollTo(0, 1200)', false)
+    expect(node.scroll).toBe(null)
+    // Once only.
+    webview().executeJavaScript.mockClear()
+    fire('did-finish-load')
+    expect(webview().executeJavaScript).not.toHaveBeenCalled()
+  })
+
+  it('a scroll noted for another page, or odd numbers from the page, are not used as they are', async () => {
+    await mountPane('https://example.com/', { scroll: { url: 'https://other.test/', x: 0, y: 1200 } })
+    fire('did-finish-load')
+    await flushPromises()
+    expect(webview().executeJavaScript).not.toHaveBeenCalled()
+    webview().executeJavaScript.mockResolvedValueOnce(['1e99', 'NaN'])
+    fire('blur')
+    await flushPromises()
+    expect(node.scroll).toEqual({ url: 'https://example.com/', x: 10000000, y: 0 })
+  })
+
+  it('the keyboard or the pointer leaving the page notes its scroll', async () => {
+    await mountPane()
+    await wrapper.find('.bp-page').trigger('pointerleave')
+    await flushPromises()
+    expect(node.scroll).toEqual({ url: 'https://example.com/', x: 0, y: 640 })
   })
 })

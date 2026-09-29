@@ -175,6 +175,7 @@ export function shortcutAction(e) {
   }
   if (!ctrl || e.altKey) return null
   if (lower === 'l' && !e.shiftKey) return 'focusAddress'
+  if (lower === 'f' && !e.shiftKey) return 'find'
   if (lower === 'r') return e.shiftKey ? 'hardReload' : 'reload'
   if (e.shiftKey && key !== '+') return null
   if (key === '=' || key === '+') return 'zoomIn'
