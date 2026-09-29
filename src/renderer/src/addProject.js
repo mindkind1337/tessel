@@ -98,7 +98,8 @@ export function remotePathError(raw) {
   const path = String(raw || '').trim()
   if (!path) return t('project.remote.pathRequired', 'Enter the path of a folder on this host.')
   // eslint-disable-next-line no-control-regex
-  if (path.length > 1024 || /[\u0000-\u001f\u007f]/.test(path)) return t('project.remote.pathInvalid', 'This path has characters that cannot be used.')
+  // A backslash too (the host's login shell reads the path; see remoteProject.js).
+  if (path.length > 1024 || /[\u0000-\u001f\u007f\\]/.test(path)) return t('project.remote.pathInvalid', 'This path has characters that cannot be used.')
   if (!(path.startsWith('/') || path === '~' || path.startsWith('~/')))
     return t('project.remote.pathAbsolute', 'Use an absolute path like /home/user/project or ~/project.')
   return ''

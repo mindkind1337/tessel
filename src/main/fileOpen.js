@@ -41,7 +41,8 @@ export async function listProjectFiles(root) {
   const fromGit = await new Promise((done) =>
     execFile(
       'git',
-      ['-C', root, 'ls-files', '--cached', '--others', '--exclude-standard', '-z'],
+      // core.fsmonitor off: a repository's own settings never run a program here.
+      ['-C', root, '-c', 'core.fsmonitor=false', 'ls-files', '--cached', '--others', '--exclude-standard', '-z'],
       { windowsHide: true, maxBuffer: 64 * 1024 * 1024, timeout: 20000 },
       (err, stdout) => done(err ? null : String(stdout))
     )

@@ -642,7 +642,9 @@
       "trashFailed": "Impossible de mettre {{path}} à la corbeille de l'hôte : {{error}}",
       "noProject": "Ce fichier distant n'appartient à aucun projet distant ouvert.",
       "localOnly": "Non disponible pour un projet sur un hôte distant.",
-      "searchFailed": "La recherche a échoué."
+      "searchFailed": "La recherche a échoué.",
+      "hostTimeout": "Cela a pris trop de temps sur l'hôte et a été arrêté.",
+      "noTrash": "Cet élément est sur un autre disque que la corbeille de l'hôte, et ce disque n'a pas de corbeille utilisable par Tessel : rien n'a été déplacé. Supprimez-le depuis un terminal si vous êtes sûr."
     },
     "automations": {
       "unreadable": "Vos automatisations n'ont pas pu être lues : {{error}}. Rien ne s'exécute tant que Tessel ne les a pas lues.",
@@ -660,8 +662,7 @@
       "busy": "Cette automatisation est déjà en cours.",
       "notLoaded": "Vos automatisations n'ont pas pu être lues. Redémarrez Tessel.",
       "invalid": "Cette automatisation n'est pas valide.",
-      "scheduleTooFrequent": "Les exécutions doivent être espacées d'au moins {{min}} minutes : chacune ouvre un volet (et une copie du projet).",
-      "remotePromptTooLong": "Sur un projet distant, le prompt va sur la ligne de commande : au plus 3000 caractères."
+      "scheduleTooFrequent": "Les exécutions doivent être espacées d'au moins {{min}} minutes : chacune ouvre un volet (et une copie du projet)."
     },
     "cli": {
       "tooLarge": "La demande est trop grande.",
@@ -691,6 +692,14 @@
       "pathUnreadable": "Tessel n'a pas pu lire votre PATH utilisateur. Rien n'a été modifié.",
       "pathWriteFailed": "Tessel n'a pas pu modifier votre PATH utilisateur. Rien n'a été modifié.",
       "pathChanged": "Votre PATH utilisateur a changé entre-temps. Rien n'a été modifié ; réessayez."
+    },
+    "gitTrust": {
+      "title": "Faire confiance à ce dépôt ?",
+      "message": "Les réglages git de {{repo}} lancent des programmes sur cet ordinateur quand Tessel lit son statut.",
+      "messageRemote": "Les réglages git de {{repo}} sur {{host}} lancent des programmes sur cet hôte quand Tessel lit son statut.",
+      "detail": "Faites-lui confiance seulement si vous savez d'où vient ce dossier. En attendant, Tessel lance git avec ces réglages désactivés.",
+      "trust": "Faire confiance et les lancer",
+      "dontTrust": "Les laisser désactivés"
     }
   }
 }

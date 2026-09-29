@@ -15,7 +15,7 @@
 // Protocol. When the session starts, Tessel sends a prelude: shell functions
 // (the only commands Tessel ever runs there, below) and a random nonce. Each
 // request is ONE line
-//   __t_q <id> <cap> <function> '<arg>' '<arg>' ...
+//   __t_q <id> <cap> <seconds> <function> '<arg>' '<arg>' ...
 // where id and cap are numbers Tessel makes, the function one of the
 // prelude's, and every argument single-quoted by sq() (a quote in it becomes
 // '\''; NUL and control characters are refused, so a request can never span
@@ -31,13 +31,17 @@
 //   <stderr, base64, 64 KB at most>
 //   @@T <nonce> <id> z
 // so nothing a command prints can be taken for a marker. Every request has a
-// time limit; past it (or on cancel) the session is ended, which ends its
-// commands with it, and the next operation starts a new one.
+// time limit, kept on the host (a watchdog ends the command and what it
+// started, the answer is exit code 124, the session goes on) and here a
+// little later as a last resort (the session is ended; so does a cancel),
+// and the next operation starts a new one.
 import { spawn } from 'child_process'
 import crypto from 'crypto'
 
 export const READY_TIMEOUT_MS = 180_000 // a password question may wait 2 minutes
 export const DEFAULT_TIMEOUT_MS = 30_000
+// Past the host's own limit: the session itself is ended.
+const HARD_MARGIN_MS = 15_000
 export const MAX_RESPONSE = 96 * 1024 * 1024
 const MAX_STDERR_TAIL = 4096
 const UPLOAD_LINE = 16 * 1024
@@ -53,6 +57,8 @@ export const RC = {
   IS_DIR: 96,
   FAILED: 98,
   NOT_REPO: 80,
+  NO_TRASH: 99, // no trash on the same disk as the file
+  TIMEOUT: 124, // ended by the host-side watchdog
   PIPE: 141 // the output was cut at its cap
 }
 
@@ -122,7 +128,11 @@ __t_b64d() { case $__T_B in d) base64 -d ;; D) base64 -D ;; *) tr -d '\\n' | ope
 __t_b64e() { case $__T_B in o) openssl base64 ;; *) base64 ;; esac; }
 if command -v sha256sum >/dev/null 2>&1; then __T_H=s; elif command -v shasum >/dev/null 2>&1; then __T_H=a; elif command -v openssl >/dev/null 2>&1; then __T_H=o; else __T_H=c; fi
 __t_hash() { case $__T_H in s) __h=$(sha256sum <"$1") ;; a) __h=$(shasum -a 256 <"$1") ;; o) __h=$(openssl dgst -sha256 -r <"$1") ;; *) __h=$(cksum <"$1"); printf 'cksum:%s\\n' "$(printf '%s' "$__h" | tr ' ' ':')"; return ;; esac; printf 'sha256:%s\\n' "\${__h%%[ *]*}"; }
-if stat -c %s / >/dev/null 2>&1; then __t_sig() { stat -L -c '%s %Y %i %a' "$1"; }; else __t_sig() { stat -L -f '%z %m %i %Lp' "$1"; }; fi
+if stat -c %s / >/dev/null 2>&1; then __t_sig() { stat -L -c '%s %Y %i %a' "$1"; }; __t_dev() { stat -L -c %d "$1"; }; else __t_sig() { stat -L -f '%z %m %i %Lp' "$1"; }; __t_dev() { stat -L -f %d "$1"; }; fi
+if grep -D skip -e x /dev/null >/dev/null 2>&1; [ $? -le 1 ]; then __T_GD=1; else __T_GD=; fi
+if mv --help 2>&1 | grep -q -e --no-target-directory; then __T_MT=1; else __T_MT=; fi
+__t_kids() { { ps -A -o pid= -o ppid= 2>/dev/null || ps -o pid= -o ppid= 2>/dev/null; } | awk -v p="$1" '$2==p{print $1}'; }
+__t_killtree() { for __k in $(__t_kids "$1"); do __t_killtree "$__k"; done; kill -TERM "$1" 2>/dev/null; }
 __t_newmode() { printf '%o\\n' $(( 0666 & ~0$(umask) )); }
 __t_real() {
   if [ -d "$1" ]; then (cd -P "$1" 2>/dev/null && pwd -P); return; fi
@@ -157,18 +167,31 @@ __t_ent() {
   [ "$__P" = "$__R" ] && return 90
   return 0
 }
-__t_git() { __g=$1; shift; LC_ALL=C LANGUAGE= GIT_TERMINAL_PROMPT=0 GIT_MERGE_AUTOEDIT=no GIT_EDITOR=: GIT_PAGER=cat PAGER=cat git -C "$__g" -c core.quotepath=off "$@"; }
+__t_git() { __g=$1; shift; LC_ALL=C LANGUAGE= GIT_TERMINAL_PROMPT=0 GIT_MERGE_AUTOEDIT=no GIT_EDITOR=: GIT_PAGER=cat PAGER=cat git -C "$__g" -c core.fsmonitor=false -c core.quotepath=off "$@"; }
 __t_up() { : >"$__T_D/u"; }
+if mkfifo "$__T_D/p" 2>/dev/null; then __T_FIFO=1; else __T_FIFO=; fi
 __t_q() {
-  __id=$1; __cap=$2; shift 2
-  { ( "$@" ) </dev/null 2>"$__T_D/e"; echo $? >"$__T_D/r"; } | head -c "$__cap" >"$__T_D/o"
-  __rc=$(cat "$__T_D/r" 2>/dev/null); [ -n "$__rc" ] || __rc=141
+  __id=$1; __cap=$2; __to=$3; shift 3
+  rm -f "$__T_D/t"
+  if [ -n "$__T_FIFO" ]; then
+    head -c "$__cap" <"$__T_D/p" >"$__T_D/o" &
+    __h=$!
+    ( "$@" ) </dev/null >"$__T_D/p" 2>"$__T_D/e" &
+    __c=$!
+    ( __i=0; while [ "$__i" -lt "$__to" ]; do sleep 1; kill -0 "$__c" 2>/dev/null || exit 0; __i=$((__i+1)); done; : >"$__T_D/t"; __t_killtree "$__c" ) </dev/null >/dev/null 2>&1 &
+    wait "$__c"; __rc=$?
+    wait "$__h"
+    [ -e "$__T_D/t" ] && __rc=124
+  else
+    { ( "$@" ) </dev/null 2>"$__T_D/e"; echo $? >"$__T_D/r"; } | head -c "$__cap" >"$__T_D/o"
+    __rc=$(cat "$__T_D/r" 2>/dev/null); [ -n "$__rc" ] || __rc=141
+  fi
   printf '\\n@@T %s %s %s\\n' "$__T_N" "$__id" "$__rc"
   __t_b64e <"$__T_D/o"
   printf '\\n@@T %s %s e\\n' "$__T_N" "$__id"
   head -c 65536 "$__T_D/e" | __t_b64e
   printf '\\n@@T %s %s z\\n' "$__T_N" "$__id"
-  rm -f "$__T_D/o" "$__T_D/e" "$__T_D/r" "$__T_D/c"
+  rm -f "$__T_D/o" "$__T_D/e" "$__T_D/r" "$__T_D/c" "$__T_D/t" "$__T_D/u" "$__T_D/m"
 }
 __t_nop() { :; }
 __t_ls() {
@@ -205,11 +228,13 @@ __t_same() {
   return 0
 }
 __t_write() {
+  case $5 in ''|600) ;; *) return 90 ;; esac
   __t_root "$1" || return $?
   __E=
   if [ -e "$2" ] || [ -L "$2" ]; then
     __t_tgt "$1" "$2" || return $?
     [ -d "$__P" ] && return 96
+    [ -f "$__P" ] || return 92
     __E=1
   else
     __t_ent "$1" "$2" || return $?
@@ -217,7 +242,7 @@ __t_write() {
   __t_same "$__P" "$3" "$4" || { __t_sig "$__P"; return 95; }
   __tmp=$(mktemp "\${__P%/*}/.\${__P##*/}.tessel-XXXXXX") || return 98
   if ! __t_b64d <"$__T_D/u" >"$__tmp"; then rm -f "$__tmp"; return 98; fi
-  if [ -n "$__E" ]; then __m=$(__t_sig "$__P"); __m=\${__m##* }; else __m=$(__t_newmode); fi
+  if [ -n "$__E" ]; then __m=$(__t_sig "$__P"); __m=\${__m##* }; elif [ -n "$5" ]; then __m=$5; else __m=$(__t_newmode); fi
   chmod "$__m" "$__tmp" 2>/dev/null
   __t_same "$__P" "$3" "$4" || { rm -f "$__tmp"; __t_sig "$__P"; return 95; }
   mv -f "$__tmp" "$__P" || { rm -f "$__tmp"; return 98; }
@@ -237,13 +262,22 @@ __t_mv() {
   { [ -e "$__P" ] || [ -L "$__P" ]; } || return 91
   __to="\${__PD%/}/$3"
   { [ -e "$__to" ] || [ -L "$__to" ]; } && return 94
-  mv "$__P" "$__to" || return 98
+  if [ -n "$__T_MT" ]; then mv -T -n "$__P" "$__to" || return 98; else mv -n "$__P" "$__to" || return 98; fi
+  { [ -e "$__P" ] || [ -L "$__P" ]; } && return 94
+  return 0
 }
 __t_trash() {
   __t_ent "$1" "$2" || return $?
   { [ -e "$__P" ] || [ -L "$__P" ]; } || return 91
   __tr="\${XDG_DATA_HOME:-$HOME/.local/share}/Trash"
   mkdir -p "$__tr/files" "$__tr/info" || return 98
+  if [ "$(__t_dev "$__PD")" != "$(__t_dev "$__tr/files")" ]; then
+    __mt=$(df -P "$__PD" 2>/dev/null | awk 'NR==2{print $NF}')
+    [ -n "$__mt" ] || return 99
+    __tr="\${__mt%/}/.Trash-$(id -u)"
+    mkdir -p "$__tr/files" "$__tr/info" 2>/dev/null && chmod 700 "$__tr" 2>/dev/null
+    [ -d "$__tr/files" ] && [ "$(__t_dev "$__PD")" = "$(__t_dev "$__tr/files")" ] || return 99
+  fi
   __b=$__N; __i=1
   while [ -e "$__tr/files/$__b" ] || [ -L "$__tr/files/$__b" ] || [ -e "$__tr/info/$__b.trashinfo" ]; do __i=$((__i+1)); [ "$__i" -gt 999 ] && return 98; __b="$__N.$__i"; done
   (set -C; printf '[Trash Info]\\nPath=%s\\nDeletionDate=%s\\n' "$3" "$4" >"$__tr/info/$__b.trashinfo") || return 98
@@ -276,6 +310,7 @@ __t_wcl() {
   for __f in "$@"; do
     __p="\${__g%/}/$__f"
     if [ -L "$__p" ]; then echo 1; continue; fi
+    __q=$(__t_real "$__p") && __t_in "$__R" "$__q" || { echo -; continue; }
     if [ -f "$__p" ] && __s=$(__t_sig "$__p") && __z=\${__s%% *} && [ "$__z" -le 2097152 ] && [ "$__z" -le "$__left" ]; then
       __left=$((__left-__z))
       if [ "$(tr -d '\\000' <"$__p" | wc -c)" -eq "$__z" ]; then awk 'END{print NR}' "$__p"; continue; fi
@@ -295,11 +330,20 @@ __t_grep() {
   __t_root "$1" || return $?
   cd "$__R" || return 91
   if [ "$2" = git ]; then shift 2; __t_git "$__R" "$@"; return; fi
-  LC_ALL=C grep -rnIiF --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=build --exclude-dir=out --exclude-dir=.next --exclude-dir=.cache --exclude-dir=target --exclude-dir=.venv --exclude-dir=__pycache__ -e "$3" .
+  __q=$3
+  set -- -rnIiF
+  [ -n "$__T_GD" ] && set -- "$@" -D skip
+  LC_ALL=C grep "$@" --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=build --exclude-dir=out --exclude-dir=.next --exclude-dir=.cache --exclude-dir=target --exclude-dir=.venv --exclude-dir=__pycache__ -e "$__q" .
 }
 __t_fp() {
   __t_root "$1" || return $?
-  { ls -la "$__R" 2>/dev/null; __t_git "$__R" status --porcelain=v1 -z 2>/dev/null; } | cksum
+  case $2 in ''|*[!0-9]*) return 90 ;; esac
+  __m="$__T_D/fp$2"
+  if [ ! -e "$__m" ]; then : >"$__m"; echo init; return 0; fi
+  : >"$__m.n"
+  __x=$(find "$__R/." \\( -name node_modules -o -name dist -o -name build -o -name out -o -name .next -o -name .cache -o -name target -o -name .venv -o -name __pycache__ -o -path '*/.git/objects' -o -path '*/.git/logs' \\) -prune -o -newer "$__m" -print 2>/dev/null | head -n 1)
+  mv -f "$__m.n" "$__m"
+  if [ -n "$__x" ]; then echo changed; else echo same; fi
 }
 if [ -z "$__T_B" ]; then printf '\\n@@R %s base64\\n' "$__T_N"; else printf '\\n@@R %s ok\\n' "$__T_N"; fi
 `
@@ -317,6 +361,10 @@ export function sessionArgs(launchArgs, { batch = false } = {}) {
     '-o', 'ConnectTimeout=20',
     '-o', 'ServerAliveInterval=15',
     '-o', 'ServerAliveCountMax=3',
+    // Files and git need none of these (the terminals keep the user's own).
+    '-o', 'ForwardAgent=no',
+    '-o', 'ForwardX11=no',
+    '-o', 'PermitLocalCommand=no',
     ...(batch ? ['-o', 'BatchMode=yes'] : []),
     ...launchArgs,
     'exec /bin/sh'
@@ -331,12 +379,12 @@ function uploadLines(buf) {
 }
 
 // One request line (and the upload before it).
-export function requestScript(id, cap, fn, args = [], upload = null) {
+export function requestScript(id, cap, fn, args = [], upload = null, seconds = 30) {
   if (!FUNCTIONS.has(fn)) throw new Error('unknown remote function') // i18n-ignore internal
-  if (!Number.isInteger(id) || id < 1 || !Number.isInteger(cap) || cap < 1) throw new Error('bad request') // i18n-ignore internal
+  if (!Number.isInteger(id) || id < 1 || !Number.isInteger(cap) || cap < 1 || !Number.isInteger(seconds) || seconds < 1) throw new Error('bad request') // i18n-ignore internal
   const parts = args.map((a) => (isRawArg(a) ? a[RAW] : sq(a)))
   const lines = upload ? uploadLines(upload) : []
-  lines.push(`__t_q ${id} ${cap} ${fn}${parts.length ? ' ' + parts.join(' ') : ''}`)
+  lines.push(`__t_q ${id} ${cap} ${seconds} ${fn}${parts.length ? ' ' + parts.join(' ') : ''}`)
   return lines.join('\n') + '\n'
 }
 
@@ -482,7 +530,7 @@ export function createRemoteSession({
     if (state !== 'ready' || current || !queue.length) return
     const req = queue.shift()
     current = { ...req, out: [], err: [], section: null, size: 0, rc: null }
-    current.timer = timers.setTimeout(() => fail('timeout'), req.timeoutMs)
+    current.timer = timers.setTimeout(() => fail('timeout'), req.timeoutMs + HARD_MARGIN_MS)
     try {
       child.stdin.write(req.script)
     } catch {
@@ -531,7 +579,7 @@ export function createRemoteSession({
     let script
     const id = ++seq
     try {
-      script = requestScript(id, cap, fn, args, upload)
+      script = requestScript(id, cap, fn, args, upload, Math.max(1, Math.ceil(timeoutMs / 1000)))
     } catch (err) {
       return Promise.reject(Object.assign(new Error(err.message), { code: 'bad-argument' }))
     }

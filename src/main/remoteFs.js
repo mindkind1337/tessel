@@ -26,6 +26,7 @@ import { createRemoteSession, sessionArgs, remotePathArg, rawArg, RC } from './r
 import { createScm } from './sourceControl'
 import { looksBinary, MAX_EDIT_BYTES, MAX_HEAD_BYTES } from './editorFiles'
 import { cleanEnv } from './cleanEnv'
+import { RISKY_CONFIG_ARGS, parseRisky, neutralize, gitTrust } from './gitSafety'
 import { parseRemotePath, remoteRoot, relativeTo, childPath, isRemotePath } from '../shared/remotePath'
 import { fileKind, extOf, IMAGE_MIME } from '../shared/fileKinds'
 import { t } from './i18n'
@@ -43,6 +44,9 @@ const ROOT_POLL_TICKS = 2 // the project's fingerprint every other file poll
 const IDLE_CLOSE_MS = 20 * 60 * 1000
 const HEADER_SLACK = 64 * 1024
 const BOM = Buffer.from([0xef, 0xbb, 0xbf])
+// core.hooksPath of a repository not trusted: a folder that has no hooks.
+const NO_HOOKS = '/nonexistent-tessel-no-hooks'
+const ROOT_POLL_MAX_TICKS = 20 // a slow project is looked at less often (60 s at most)
 const CONTROL = /[\u0000-\u001f\u007f]/
 
 const arg = (path) => rawArg(remotePathArg(path))
@@ -140,7 +144,8 @@ export function createRemoteFs({
   spawnImpl,
   env = process.env,
   timers = { setTimeout, clearTimeout, setInterval, clearInterval },
-  now = () => Date.now()
+  now = () => Date.now(),
+  trust = gitTrust
 } = {}) {
   const sessions = new Map() // hostId -> entry
   const roots = new Map() // hostId\npath -> { hostId, path }
@@ -149,6 +154,7 @@ export function createRemoteFs({
   const watchedFiles = new Map() // hostId\npath -> { virtual, loc, sig }
   let pollTimer = null
   let pollTick = 0
+  let markerSeq = 0
   let polling = false
   let idleTimer = null
 
@@ -229,6 +235,10 @@ export function createRemoteFs({
         return t('main.remoteFs.notFile', 'This is not a file.')
       case RC.IS_DIR:
         return t('main.editor.isFolder', 'This is a folder.')
+      case RC.TIMEOUT:
+        return t('main.remoteFs.hostTimeout', 'It took too long on the host and was stopped.')
+      case RC.NO_TRASH:
+        return t('main.remoteFs.noTrash', 'This item is on another disk than the host’s trash, and that disk has no trash Tessel can use: nothing was moved. Delete it from a terminal if you are sure.')
       default: {
         const line = firstLine(res.err)
         return line ? `${fallback} ${line}` : fallback
@@ -364,50 +374,75 @@ export function createRemoteFs({
   }
 
   // --- Project folders -------------------------------------------------------------
-  function noteRoot(virtual) {
-    const p = parseRemotePath(virtual)
-    if (!p) return null
-    const key = `${p.hostId}\n${p.path}`
-    if (!roots.has(key)) {
-      if (roots.size >= MAX_ROOTS) roots.delete(roots.keys().next().value)
-      roots.set(key, { hostId: p.hostId, path: p.path })
-    }
-    return roots.get(key)
-  }
-  // The window's remote projects (App.vue), replacing the previous list.
+  // The remote projects are the saved ones (index.js reads them from the
+  // layout it stores): no call from the window adds a folder, and a git
+  // repository's top (which may be above the project, even the home folder)
+  // is never one. root: { hostId, path, real } (real: its real path on the
+  // host once known).
   function setRoots(list) {
+    const next = new Map()
+    for (const v of Array.isArray(list) ? list.slice(0, MAX_ROOTS) : []) {
+      const p = parseRemotePath(v)
+      if (!p) continue
+      const key = `${p.hostId}\n${p.path}`
+      next.set(key, roots.get(key) || { hostId: p.hostId, path: p.path, real: null })
+    }
     roots.clear()
-    for (const v of Array.isArray(list) ? list.slice(0, MAX_ROOTS) : []) noteRoot(v)
+    for (const [k, v] of next) roots.set(k, v)
     return roots.size
   }
-  // A path below `rootVirtual` (given) or below the deepest known project
-  // folder. -> { hostId, root, rel, path, virtual } | null
+  const rootOf = (virtual) => {
+    const p = parseRemotePath(virtual)
+    return p ? roots.get(`${p.hostId}\n${p.path}`) || null : null
+  }
+  // A path below `rootVirtual` (a saved project, given) or below the deepest
+  // saved project, by its saved path or its real one.
+  // -> { hostId, root, rel, path, virtual } | null
   function locate(virtual, rootVirtual = null) {
     const p = parseRemotePath(virtual)
     if (!p) return null
     let best = null
-    const candidates = rootVirtual ? [noteRoot(rootVirtual)] : [...roots.values()]
+    const candidates = rootVirtual ? [rootOf(rootVirtual)] : [...roots.values()]
     for (const r of candidates) {
       if (!r || r.hostId !== p.hostId) continue
-      const rel = relativeTo(r.path, p.path)
-      if (rel !== null && (!best || r.path.length > best.root.path.length)) best = { root: r, rel }
+      for (const base of [r.path, r.real]) {
+        if (!base) continue
+        const rel = relativeTo(base, p.path)
+        if (rel !== null && (!best || base.length > best.len)) best = { root: r, rel, len: base.length }
+      }
     }
-    return best ? { hostId: p.hostId, root: best.root, rel: best.rel, path: p.path, virtual } : null
+    return best ? { hostId: p.hostId, root: best.root, rel: best.rel, path: joinPath(best.root.path, best.rel), virtual } : null
   }
   const rootVirtualOf = (root) => remoteRoot(root.hostId, root.path)
 
-  // The folder's real path and its repository's top on the host.
-  // -> { realRoot, top | null } | { error } | { missing }
+  // The folder's real path, its repository's top on the host, and the -c
+  // arguments its git calls get (gitSafety.js: the repository's own settings
+  // that run programs stay off until the user trusts it).
+  // -> { realRoot, top | null, gitArgs } | { error } | { missing }
   function repoInfo(loc) {
     const key = `${loc.hostId}\n${loc.root.path}`
     if (!repoInfos.has(key)) {
-      const p = call(loc.hostId, '__t_top', [arg(loc.root.path)], { cap: 64 * 1024, op: 'status' }).then((res) => {
+      const p = call(loc.hostId, '__t_top', [arg(loc.root.path)], { cap: 64 * 1024, op: 'status' }).then(async (res) => {
         if (res.error) return { error: res.error }
         const lines = res.out.toString('utf8').split('\n')
-        if (res.rc === RC.NOT_REPO) return { realRoot: lines[0], top: null }
+        if (res.rc === RC.NOT_REPO) {
+          loc.root.real = lines[0] || null
+          return { realRoot: lines[0], top: null, gitArgs: [] }
+        }
         if (res.rc === RC.MISSING) return { missing: true }
         if (res.rc !== 0 || !lines[0] || !lines[1]) return { error: rcText(res, t('main.scm.statusFailed', 'Git status failed.')) }
-        return { realRoot: lines[0], top: lines[1] }
+        loc.root.real = lines[0]
+        const cfg = await call(loc.hostId, '__t_gitin', [arg(loc.root.path), arg(lines[1]), ...RISKY_CONFIG_ARGS], { cap: 256 * 1024, op: 'status' })
+        if (cfg.error) return { error: cfg.error }
+        // Exit 1: none of them set. Unreadable: everything they could be stays off.
+        const risky = cfg.rc === 0 ? parseRisky(cfg.out.toString('utf8')) : []
+        let gitArgs = []
+        if (cfg.rc !== 0 && cfg.rc !== 1) gitArgs = neutralize([], { hooksDir: NO_HOOKS })
+        else if (risky.length) {
+          const trusted = await trust().decide(`${loc.hostId}:${lines[1]}`, risky, { name: lines[1], where: hostLabel(loc.hostId) })
+          if (!trusted) gitArgs = neutralize(risky, { hooksDir: NO_HOOKS })
+        }
+        return { realRoot: lines[0], top: lines[1], gitArgs }
       })
       repoInfos.set(key, p)
       p.then((info) => {
@@ -416,18 +451,18 @@ export function createRemoteFs({
     }
     return repoInfos.get(key)
   }
-  // The top as the window addresses it: the project folder itself when they
-  // are the same folder, else its own virtual path (known from now on).
+  // The top as the window addresses it (for git paths only): the project
+  // folder itself when they are the same folder, else its own virtual path —
+  // which the editor can reach only below a saved project.
   function topVirtual(loc, info) {
     if (info.top === info.realRoot) return rootVirtualOf(loc.root)
-    const v = remoteRoot(loc.hostId, info.top)
-    noteRoot(v)
-    return v
+    return remoteRoot(loc.hostId, info.top)
   }
 
   // --- Explorer ------------------------------------------------------------------------
+  // A path below the saved project `root` (the window names it; it must be one).
   function under(root, p) {
-    if (!isRemotePath(root)) return null
+    if (!isRemotePath(root) || !rootOf(root)) return null
     return locate(p || root, root)
   }
 
@@ -464,7 +499,7 @@ export function createRemoteFs({
     if (info.error) return { ok: false, error: info.error }
     if (info.missing || !info.top) return { ok: true, files: {}, repo: false }
     const args = ['status', '--porcelain=v1', '-z', '--untracked-files=all', ...(ignored ? ['--ignored=matching'] : [])]
-    const res = await call(loc.hostId, '__t_gitin', [arg(loc.root.path), arg(info.top), ...args], { cap: 32 * 1024 * 1024, timeoutMs: 30000, op: 'status' })
+    const res = await call(loc.hostId, '__t_gitin', [arg(loc.root.path), arg(info.top), ...info.gitArgs, ...args], { cap: 32 * 1024 * 1024, timeoutMs: 30000, op: 'status' })
     if (res.error) return { ok: false, error: res.error }
     if (res.rc !== 0) return { ok: false, error: rcText(res, t('main.scm.statusFailed', 'Git status failed.')) }
     const files = {}
@@ -603,17 +638,19 @@ export function createRemoteFs({
   }
 
   // To the host user's trash (never rm): -> { ok, name } | { ok: false, error }
-  async function trashAt(hostId, rootPath, realRoot, rel) {
+  // rootPath: the saved project (the host checks the item is below it);
+  // entryPath: the item on the host; absPath: its absolute path (.trashinfo).
+  async function trashAt(hostId, rootPath, entryPath, absPath) {
     const res = await call(
       hostId,
       '__t_trash',
-      [arg(rootPath), arg(joinPath(rootPath, rel)), trashInfoPath(joinPath(realRoot, rel)), trashDate()],
+      [arg(rootPath), arg(entryPath), trashInfoPath(absPath), trashDate()],
       { cap: 8192, timeoutMs: 120000, op: 'save' }
     )
     if (res.error) return { ok: false, error: res.error }
     if (res.rc === RC.MISSING) return { ok: false, error: t('main.explorer.gone', 'It is already gone.'), gone: true }
     if (res.rc !== 0) return { ok: false, error: rcText(res, t('main.remoteFs.trashFailedPlain', 'It could not be moved to the host’s trash.')) }
-    return { ok: true, name: rel.split('/').pop(), trashPath: res.out.toString('utf8').trim() }
+    return { ok: true, name: entryPath.split('/').pop(), trashPath: res.out.toString('utf8').trim() }
   }
 
   async function trash({ root, path: p } = {}) {
@@ -622,7 +659,7 @@ export function createRemoteFs({
     const info = await repoInfo(loc)
     if (info.error) return { ok: false, error: info.error }
     if (info.missing) return { ok: false, error: t('main.explorer.folderGone', 'The folder is gone.') }
-    return trashAt(loc.hostId, loc.root.path, info.realRoot, loc.rel)
+    return trashAt(loc.hostId, loc.root.path, loc.path, joinPath(info.realRoot, loc.rel))
   }
 
   // --- Editor ----------------------------------------------------------------------------
@@ -675,14 +712,16 @@ export function createRemoteFs({
   }
 
   // { file, text, bom, expectSig, expectHash } -> like editorFiles.writeForEdit.
-  async function writeForEdit({ file, text, bom = false, expectSig, expectHash } = {}) {
+  // privateNew: a file created by this write is readable by its owner only
+  // (0600; an automation's prompt).
+  async function writeForEdit({ file, text, bom = false, expectSig, expectHash, privateNew = false } = {}) {
     const loc = locateFile(file)
     if (!loc) return { ok: false, error: notInProject() }
     if (typeof text !== 'string') return { ok: false, error: t('main.editor.nothingToWrite', 'Nothing to write.') }
     const data = bom ? Buffer.concat([BOM, Buffer.from(text, 'utf8')]) : Buffer.from(text, 'utf8')
     if (data.length > MAX_EDIT_BYTES) return { ok: false, error: t('main.editor.textTooLarge', 'The text is too large to save (over 50 MB).') }
     const hash = typeof expectHash === 'string' && HASH_RE.test(expectHash) ? expectHash : ''
-    const res = await call(loc.hostId, '__t_write', [arg(loc.root.path), arg(loc.path), hash, hash ? '' : sigForHost(expectSig)], {
+    const res = await call(loc.hostId, '__t_write', [arg(loc.root.path), arg(loc.path), hash, hash ? '' : sigForHost(expectSig), privateNew ? '600' : ''], {
       cap: 64 * 1024,
       upload: data,
       timeoutMs: 30000 + Math.ceil(data.length / (512 * 1024)) * 1000,
@@ -715,7 +754,7 @@ export function createRemoteFs({
     const fromTop = relativeTo(info.top, joinPath(info.realRoot, loc.rel))
     if (!fromTop)
       return { ok: true, repo: false, isNew: true, text: '', note: t('main.editor.noteOutside', 'Outside the repository: there is no committed version to compare with.') }
-    const res = await call(loc.hostId, '__t_gitin', [arg(loc.root.path), arg(info.top), 'show', `HEAD:${fromTop}`], { cap: MAX_HEAD_BYTES + 1, timeoutMs: 30000, op: 'read' })
+    const res = await call(loc.hostId, '__t_gitin', [arg(loc.root.path), arg(info.top), ...info.gitArgs, 'show', '--no-textconv', `HEAD:${fromTop}`], { cap: MAX_HEAD_BYTES + 1, timeoutMs: 30000, op: 'read' })
     if (res.error) return { ok: false, error: res.error }
     if (res.truncated) return { ok: false, error: t('main.editor.headTooLarge', 'The committed version is too large to compare (over 10 MB).') }
     if (res.rc !== 0) {
@@ -770,17 +809,28 @@ export function createRemoteFs({
     polling = true
     pollTick++
     try {
-      if (pollTick % ROOT_POLL_TICKS === 0) {
-        for (const [virtual, w] of watchedRoots) {
-          const res = await call(w.hostId, '__t_fp', [arg(w.root.path)], { cap: 4096, quiet: true, timeoutMs: 20000 })
-          if (res.skipped || res.error || res.rc !== 0) continue
-          const fp = res.out.toString('latin1').trim()
-          if (w.last !== null && fp !== w.last && watchedRoots.get(virtual) === w) {
-            // Its files or its git state changed: the window reads again.
-            repoInfos.delete(`${w.hostId}\n${w.root.path}`)
-            send('explorer:changed', virtual)
-          }
-          w.last = fp
+      // The project: anything newer than the last look (find -newer, no git:
+      // a repository's settings never run from a background check). Bounded
+      // on the host (10 s); a project too big for that is looked at less
+      // often, and the session goes on (no new sign-in).
+      for (const [virtual, w] of watchedRoots) {
+        if (pollTick < w.next) continue
+        const res = await call(w.hostId, '__t_fp', [arg(w.root.path), String(w.marker)], { cap: 4096, quiet: true, timeoutMs: 10000 })
+        if (res.skipped || res.error) {
+          w.next = pollTick + 1
+          continue
+        }
+        if (res.rc === RC.TIMEOUT) {
+          w.every = Math.min(w.every * 2, ROOT_POLL_MAX_TICKS)
+          w.next = pollTick + w.every
+          continue
+        }
+        w.every = ROOT_POLL_TICKS
+        w.next = pollTick + w.every
+        if (res.rc === 0 && res.out.toString('latin1').trim() === 'changed' && watchedRoots.get(virtual) === w) {
+          // Its files or its git state changed: the window reads again.
+          repoInfos.delete(`${w.hostId}\n${w.root.path}`)
+          send('explorer:changed', virtual)
         }
       }
       const groups = new Map()
@@ -818,7 +868,7 @@ export function createRemoteFs({
     if (!loc) return { ok: false }
     if (!watchedRoots.has(root)) {
       watchedRoots.clear()
-      watchedRoots.set(root, { hostId: loc.hostId, root: loc.root, last: null })
+      watchedRoots.set(root, { hostId: loc.hostId, root: loc.root, marker: ++markerSeq, every: ROOT_POLL_TICKS, next: 0 })
     }
     ensurePoll()
     return { ok: true }
@@ -843,8 +893,10 @@ export function createRemoteFs({
   }
 
   // --- Source control: sourceControl.js's operations over the session ---------
-  // A top: { hostId, rootPath (the project folder, for the host's checks),
-  // real (the repository's real path), virtual (as the window has it) }.
+  // A top: { hostId, rootPath (the saved project: every file read, counted or
+  // moved must be below it on the host), real (the repository's real path,
+  // for git -C only), virtual (as the window has it), args (the -c overrides
+  // of gitSafety.js until the repository is trusted) }.
   const gitResult = (res, maxBuffer) => {
     if (res.error) return { ok: false, code: -1, stdout: '', stderr: '', error: res.error }
     const truncated = res.out.length > maxBuffer
@@ -858,13 +910,13 @@ export function createRemoteFs({
   }
   const scmBackend = {
     async repoOf(root) {
-      const loc = isRemotePath(root) ? locate(root, root) : null
+      const loc = isRemotePath(root) && rootOf(root) ? locate(root, root) : null
       if (!loc) return { error: t('main.scm.invalidFolder', 'Invalid folder.') }
       const info = await repoInfo(loc)
       if (info.error) return { error: info.error }
       if (info.missing) return { error: t('main.scm.folderMissing', 'The folder is missing.') }
       if (!info.top) return { error: t('main.scm.notRepo', 'This folder is not in a git repository.'), notRepo: true }
-      return { top: { hostId: loc.hostId, rootPath: loc.root.path, real: info.top, virtual: topVirtual(loc, info) } }
+      return { top: { hostId: loc.hostId, rootPath: loc.root.path, real: info.top, virtual: topVirtual(loc, info), args: info.gitArgs } }
     },
     async git(top, args, opts = {}) {
       const maxBuffer = opts.maxBuffer || 32 * 1024 * 1024
@@ -876,7 +928,7 @@ export function createRemoteFs({
         list = ['-F', 'commit', ...args.slice(3)]
       }
       const slow = ['push', 'pull', 'fetch', 'commit'].includes(list[0] === '-F' ? list[1] : list[0])
-      const res = await call(top.hostId, '__t_gitin', [arg(top.rootPath), arg(top.real), ...list], {
+      const res = await call(top.hostId, '__t_gitin', [arg(top.rootPath), arg(top.real), ...top.args, ...list], {
         cap: maxBuffer + 1,
         timeoutMs: opts.timeout || 30000,
         upload,
@@ -925,7 +977,7 @@ export function createRemoteFs({
     async trash(top, rels) {
       let trashed = 0
       for (const rel of rels) {
-        const res = await trashAt(top.hostId, top.real, top.real, rel)
+        const res = await trashAt(top.hostId, top.rootPath, joinPath(top.real, rel), joinPath(top.real, rel))
         if (res.ok) trashed++
         else if (!res.gone)
           return { trashed, error: t('main.remoteFs.trashFailed', 'Could not move {{path}} to the host’s trash: {{error}}', { path: rel, error: res.error }) }
@@ -935,11 +987,11 @@ export function createRemoteFs({
     async working(top, rel, { content = true } = {}) {
       const file = joinPath(top.real, rel)
       if (!content) {
-        const res = await call(top.hostId, '__t_stats', [arg(top.real), arg(file)], { cap: 4096, op: 'read' })
+        const res = await call(top.hostId, '__t_stats', [arg(top.rootPath), arg(file)], { cap: 4096, op: 'read' })
         if (res.error) return { error: res.error }
         return { exists: res.rc === 0 && !!parseStat(res.out.toString('latin1')), version: { text: '' } }
       }
-      const res = await call(top.hostId, '__t_read', [arg(top.real), arg(file), String(MAX_VERSION)], { cap: MAX_VERSION + HEADER_SLACK, timeoutMs: 60000, op: 'read' })
+      const res = await call(top.hostId, '__t_read', [arg(top.rootPath), arg(file), String(MAX_VERSION)], { cap: MAX_VERSION + HEADER_SLACK, timeoutMs: 60000, op: 'read' })
       if (res.error) return { error: res.error }
       if (res.rc === RC.TOO_LARGE) return { exists: true, version: { tooBig: true } }
       if (res.rc === RC.OUTSIDE) return { error: rcText(res, '') }
@@ -995,6 +1047,19 @@ export function createRemoteFs({
   }
 }
 
+// The remote projects of a saved layout (the window's workspace-layout.json,
+// which index.js stores): their virtual roots. Only these are ever read.
+export function remoteRootsOfLayout(data) {
+  const list = data && typeof data === 'object' && Array.isArray(data.workspaces) ? data.workspaces : []
+  const out = []
+  for (const w of list.slice(0, MAX_ROOTS)) {
+    const r = w && w.remote
+    const v = r && typeof r === 'object' ? remoteRoot(r.hostId, r.path) : null
+    if (v && !out.includes(v)) out.push(v)
+  }
+  return out
+}
+
 // IPC of the remote session itself (the rest goes through the usual
 // explorer:*, editor:* and scm:* channels).
 export function registerRemoteFs({ ipcMain, service }) {
@@ -1005,7 +1070,6 @@ export function registerRemoteFs({ ipcMain, service }) {
       return { ok: false, error: 'failed' }
     }
   }
-  ipcMain.handle('remoteFs:setRoots', guard((list) => ({ ok: true, count: service.setRoots(list) })))
   ipcMain.handle('remoteFs:cancel', guard((hostId) => ({ ok: true, closed: service.closeHost(String(hostId || ''), 'cancelled') })))
   ipcMain.handle('remoteFs:state', guard(() => ({ ok: true, sessions: service.snapshot() })))
 }

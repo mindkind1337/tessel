@@ -13,6 +13,7 @@ import fs from 'fs'
 import { resolve, relative, isAbsolute, join, sep } from 'path'
 import { run } from './agentTools'
 import { cleanEnv } from './cleanEnv'
+import { localGitArgs } from './gitSafety'
 import { t } from './i18n'
 
 const MAX_FILE = 10 * 1024 * 1024 // a version larger than this is not shown
@@ -23,8 +24,15 @@ const BULK = 100 // pathspecs per git call (Orca's BULK_CHUNK_SIZE)
 function gitEnv() {
   return { ...cleanEnv(process.env), GIT_TERMINAL_PROMPT: '0', GIT_MERGE_AUTOEDIT: 'no', GCM_INTERACTIVE: 'never' }
 }
-const git = (top, args, opts = {}) =>
-  run('git', ['-C', top, '-c', 'core.quotepath=off', ...args], { timeout: 30000, env: gitEnv(), maxBuffer: 32 * 1024 * 1024, ...opts })
+// The repository's own settings that run programs (core.fsmonitor, filters,
+// textconv...) stay off until the user trusts it (gitSafety.js).
+const git = async (top, args, opts = {}) =>
+  run('git', ['-C', top, ...(await localGitArgs(top)), '-c', 'core.quotepath=off', ...args], {
+    timeout: 30000,
+    env: gitEnv(),
+    maxBuffer: 32 * 1024 * 1024,
+    ...opts
+  })
 
 // Git's message for the user: its last meaningful lines.
 function gitMessage(res, fallback) {
@@ -488,8 +496,8 @@ export function createScm(b) {
     const top = r.top
     const [st, un, stg, operation, remotes] = await Promise.all([
       git(top, ['status', '--porcelain=v2', '--branch', '-z', '--untracked-files=all'], { timeout: 20000 }),
-      git(top, ['diff', '--numstat', '-z', '--no-ext-diff']),
-      git(top, ['diff', '--cached', '--numstat', '-z', '--no-ext-diff']),
+      git(top, ['diff', '--numstat', '-z', '--no-ext-diff', '--no-textconv']),
+      git(top, ['diff', '--cached', '--numstat', '-z', '--no-ext-diff', '--no-textconv']),
       b.operation(top),
       git(top, ['remote'])
     ])
@@ -596,7 +604,7 @@ export function createScm(b) {
       .trim()
       .slice(0, MAX_MESSAGE)
     if (!msg) return { ok: false, error: t('main.scm.noMessage', 'Enter a commit message to commit.') }
-    const staged = await git(r.top, ['diff', '--cached', '--quiet'])
+    const staged = await git(r.top, ['diff', '--cached', '--quiet', '--no-ext-diff', '--no-textconv'])
     if (staged.ok) return { ok: false, error: t('main.scm.nothingStaged', 'Stage at least one file to commit.') }
     const res = await git(r.top, ['commit', '-m', msg], { timeout: 180000 })
     if (!res.ok) {
@@ -709,7 +717,7 @@ export function createScm(b) {
     const mergeBase = mbAny.ok ? mbAny.stdout.trim() : ''
     if (!isCommitId(mergeBase)) return { ok: false, base, error: t('main.scm.compareUnavailable', 'Branch compare unavailable') }
     const [diff, st, up] = await Promise.all([
-      git(top, ['diff', '-z', '--numstat', '-M', '--no-ext-diff', mergeBase, '--'], { timeout: BRANCH_TOTAL_TIMEOUT }),
+      git(top, ['diff', '-z', '--numstat', '-M', '--no-ext-diff', '--no-textconv', mergeBase, '--'], { timeout: BRANCH_TOTAL_TIMEOUT }),
       git(top, ['status', '--porcelain=v2', '-z', '--untracked-files=all'], { timeout: 20000 }),
       git(top, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'])
     ])
@@ -799,7 +807,7 @@ export function createScm(b) {
     const range = ids.length > 1 ? [ids[1], ids[0]] : ['--root', ids[0]]
     const [ns, num] = await Promise.all([
       git(r.top, ['diff-tree', '-r', '-z', '-M', '--no-commit-id', '--name-status', ...range]),
-      git(r.top, ['diff-tree', '-r', '-z', '-M', '--no-commit-id', '--numstat', ...range])
+      git(r.top, ['diff-tree', '-r', '-z', '-M', '--no-commit-id', '--numstat', '--no-textconv', ...range])
     ])
     if (!ns.ok) return { ok: false, error: gitMessage(ns, t('main.scm.diffFailed', 'git diff failed.')) }
     const counts = num.ok ? parseNumstatZ(num.stdout) : {}
@@ -876,7 +884,7 @@ export function createScm(b) {
   async function scmStagedDiff({ root } = {}) {
     const r = await repoOf(root)
     if (r.error) return { ok: false, error: r.error }
-    const res = await git(r.top, ['diff', '--cached', '--no-color', '--no-ext-diff'], { maxBuffer: 64 * 1024 * 1024 })
+    const res = await git(r.top, ['diff', '--cached', '--no-color', '--no-ext-diff', '--no-textconv'], { maxBuffer: 64 * 1024 * 1024 })
     if (!res.ok) return { ok: false, error: gitMessage(res, t('main.scm.diffFailed', 'git diff failed.')) }
     if (!res.stdout.trim()) return { ok: false, error: t('main.scm.nothingStagedMessage', 'Stage at least one file to generate a message.') }
     return { ok: true, diff: truncateDiff(res.stdout), top: r.top }

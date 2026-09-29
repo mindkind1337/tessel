@@ -18,7 +18,11 @@ export const MAX_REMOTE_PATH = 1024
 export function validateRemotePath(raw) {
   const path = typeof raw === 'string' ? raw.trim() : ''
   if (!path) return { error: 'path-required' }
-  if (path.length > MAX_REMOTE_PATH || CONTROL.test(path)) return { error: 'path-invalid' }
+  // A backslash is refused: the command line below is read by the user's
+  // login shell, and in fish "\'" inside single quotes is an escaped quote
+  // (it would end the quoting early). Without backslashes, '...' with '\''
+  // for a quote is literal in sh, bash, zsh, fish and csh alike.
+  if (path.length > MAX_REMOTE_PATH || CONTROL.test(path) || path.includes('\\')) return { error: 'path-invalid' }
   if (!(path.startsWith('/') || path === '~' || path.startsWith('~/'))) return { error: 'path-not-absolute' }
   return { path }
 }

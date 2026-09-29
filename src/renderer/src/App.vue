@@ -1755,7 +1755,9 @@ const sideRemote = computed(() => {
   const ws = currentWs.value
   return ws && ws.remote ? { hostId: ws.remote.hostId, host: remoteHostLabel(ws.remote.hostId), path: ws.remote.path } : null
 })
-// The main process only reads files below the remote projects it was told of.
+// The main process reads files only below the remote projects of the saved
+// layout: a remote project added or removed is saved at once (not after the
+// usual short delay), so its Files tab can read it right away.
 watch(
   () =>
     workspaces.value
@@ -1763,10 +1765,7 @@ watch(
       .map((w) => remoteRoot(w.remote.hostId, w.remote.path))
       .filter(Boolean)
       .join('\n'),
-  (list) => {
-    if (window.shellApi.remoteFs) window.shellApi.remoteFs.setRoots(list ? list.split('\n') : []).catch(() => {})
-  },
-  { immediate: true }
+  () => saveLayoutNow()
 )
 function insertPathInPane(text) {
   const id = activeId.value
@@ -6718,6 +6717,11 @@ const automationRunner = createAutomationRunner({
   },
   findLeaf,
   agentProbe: automationAgentProbe,
+  // What its pane's screen shows of the agent (TerminalPane's agentObservation).
+  screenProbe: (id) => {
+    const pane = findLeaf(id) ? getPane(id) : null
+    return pane && pane.agentObservation ? pane.agentObservation() : null
+  },
   // After the pane has shown its last answer (and outside its own callback).
   closePane: (id) => setTimeout(() => findLeaf(id) && closeLeaf(id, { force: true }), 1500),
   report: (result) => (window.shellApi.automations ? window.shellApi.automations.markResult(result).catch(() => null) : Promise.resolve(null)),
@@ -6877,7 +6881,7 @@ async function startAutomations() {
   // A run's pane closed before its agent finished, its agent exited or never
   // showed up: that run failed.
   watch(workspaces, () => automationRunner.check(), { deep: true })
-  automationCheckTimer = setInterval(() => automationRunner.check(), 30000)
+  automationCheckTimer = setInterval(() => automationRunner.check(), 10000)
 }
 
 // A sidebar row's worker mark: { id, label, status } of its coordinator.

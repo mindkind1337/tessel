@@ -27,6 +27,7 @@ describe('automations scheduler (main)', () => {
   let dir, clock, sent, svc
   let remoteWrites = []
   let remoteClears = []
+  let clearAnswer = { ok: true }
   let remoteAnswer = { ok: true }
   const make = () =>
     createAutomations({
@@ -40,7 +41,7 @@ describe('automations scheduler (main)', () => {
       },
       clearRemotePrompt: async (q) => {
         remoteClears.push(q)
-        return { ok: true }
+        return clearAnswer
       }
     })
   const dispatches = () => sent.filter((s) => s.channel === 'automations:dispatch').map((s) => s.payload)
@@ -51,6 +52,7 @@ describe('automations scheduler (main)', () => {
     sent = []
     remoteWrites = []
     remoteClears = []
+    clearAnswer = { ok: true }
     remoteAnswer = { ok: true }
     svc = make()
     svc.start()
@@ -366,8 +368,56 @@ describe('automations scheduler (main)', () => {
     const again = make()
     again.start()
     again.reconcile([]) // its pane did not survive
+    await new Promise((r) => setTimeout(r, 0))
     expect(remoteClears).toEqual([{ hostId: 'ssh-host-1', path: '/srv/app', file: `.tessel/automations/${a.id}.md` }])
     again.stop()
+  })
+
+  // Recheck C3: no connection is opened for it; kept for later, even across a restart.
+  it('a remote prompt whose host is not connected is emptied later, when it is', async () => {
+    svc.setWindowReady(true)
+    const a = svc.create(input({ projectCwd: null, remote: { hostId: 'ssh-host-1', path: '/srv/app' } })).automation
+    const { run } = svc.runNow(a.id)
+    await new Promise((r) => setTimeout(r, 0))
+    clearAnswer = { ok: false, later: true }
+    svc.markResult({ runId: run.id, status: 'dispatched', paneId: 'pane-r' })
+    svc.markResult({ runId: run.id, status: 'completed' })
+    await new Promise((r) => setTimeout(r, 0))
+    expect(remoteClears).toHaveLength(1)
+    svc.stop()
+    const again = make()
+    again.start()
+    again.setWindowReady(true)
+    await new Promise((r) => setTimeout(r, 0))
+    expect(remoteClears).toHaveLength(2) // still waiting for the host
+    clearAnswer = { ok: true }
+    clock += MIN
+    again.tick()
+    await new Promise((r) => setTimeout(r, 0))
+    expect(remoteClears).toHaveLength(3)
+    clock += MIN
+    again.tick()
+    await new Promise((r) => setTimeout(r, 0))
+    expect(remoteClears).toHaveLength(3) // done: not again
+    again.stop()
+  })
+
+  it('a new run of the same automation is never emptied by an old pending clear', async () => {
+    svc.setWindowReady(true)
+    const a = svc.create(input({ projectCwd: null, remote: { hostId: 'ssh-host-1', path: '/srv/app' } })).automation
+    const first = svc.runNow(a.id).run
+    await new Promise((r) => setTimeout(r, 0))
+    clearAnswer = { ok: false, later: true }
+    svc.markResult({ runId: first.id, status: 'completed' })
+    await new Promise((r) => setTimeout(r, 0))
+    const n = remoteClears.length
+    svc.runNow(a.id)
+    await new Promise((r) => setTimeout(r, 0))
+    clearAnswer = { ok: true }
+    clock += MIN
+    svc.tick()
+    await new Promise((r) => setTimeout(r, 0))
+    expect(remoteClears).toHaveLength(n) // the pending clear was dropped with the new write
   })
 
   // Recheck B: the clock set back after a run never runs that occurrence again.
@@ -405,5 +455,39 @@ describe('automations scheduler (main)', () => {
     svc.tick()
     expect(dispatches()).toHaveLength(2)
     expect(dispatches()[1].run.scheduledFor).toBe(at(9, 0))
+  })
+  // Recheck B2: occurrences passed during a jump forward, then back: said.
+  it('a jump forward of a few hours then back leaves a "clock change" row for the hours not run again', () => {
+    svc.setWindowReady(true)
+    const a = svc.create(input({ schedule: 'FREQ=HOURLY;BYMINUTE=0', missedRunGraceMinutes: 30 })).automation
+    const real = clock // 8:00
+    clock = at(13, 0) + 1000
+    svc.tick() // 13:00 runs
+    svc.markResult({ runId: dispatches()[0].run.id, status: 'completed' })
+    clock = real + MIN
+    svc.tick()
+    for (const h of [9, 10, 11, 12, 13]) {
+      clock = at(h, 0) + 1000
+      svc.tick()
+    }
+    expect(dispatches()).toHaveLength(1)
+    const row = svc.snapshot().runs.find((r) => r.automationId === a.id && r.errorCode === 'clock-change')
+    expect(row).toMatchObject({ status: 'skipped_unavailable', occurrenceCount: 5 })
+    clock = at(14, 0) + 1000
+    svc.tick()
+    expect(dispatches()).toHaveLength(2)
+  })
+
+  // Recheck B1: nothing new, nothing written.
+  it('a tick with nothing new writes nothing', () => {
+    svc.setWindowReady(true)
+    svc.create(input())
+    const changes = () => sent.filter((x) => x.channel === 'automations:changed').length
+    const n = changes()
+    for (let i = 0; i < 5; i++) {
+      clock += MIN
+      svc.tick()
+    }
+    expect(changes()).toBe(n)
   })
 })
