@@ -181,6 +181,7 @@ describe('Resource Manager keeps up on its own', () => {
 
   it('reads every 10 s with the popover closed, and stops when the indicator is removed', async () => {
     if (!settings.statusBarItems.includes('resource-usage')) settings.statusBarItems = [...settings.statusBarItems, 'resource-usage']
+    const focused = vi.spyOn(document, 'hasFocus').mockReturnValue(true)
     const w = mountBar()
     await flushPromises()
     const first = window.shellApi.resourceSnapshot.mock.calls.length
@@ -190,6 +191,25 @@ describe('Resource Manager keeps up on its own', () => {
     await flushPromises()
     await vi.advanceTimersByTimeAsync(30000)
     expect(window.shellApi.resourceSnapshot.mock.calls.length).toBe(first + 1)
+    focused.mockRestore()
+    w.unmount()
+  })
+
+  it('in the background, reads only while Tessel has the focus, and catches up when it gets it back', async () => {
+    if (!settings.statusBarItems.includes('resource-usage')) settings.statusBarItems = [...settings.statusBarItems, 'resource-usage']
+    const focus = vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+    const w = mountBar()
+    await flushPromises()
+    const first = window.shellApi.resourceSnapshot.mock.calls.length
+    await vi.advanceTimersByTimeAsync(60000)
+    expect(window.shellApi.resourceSnapshot.mock.calls.length).toBe(first)
+    focus.mockReturnValue(true)
+    window.dispatchEvent(new Event('focus'))
+    await flushPromises()
+    expect(window.shellApi.resourceSnapshot.mock.calls.length).toBe(first + 1)
+    await vi.advanceTimersByTimeAsync(10000)
+    expect(window.shellApi.resourceSnapshot.mock.calls.length).toBe(first + 2)
+    focus.mockRestore()
     w.unmount()
   })
 })

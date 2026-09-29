@@ -391,7 +391,9 @@ async function onModelAction({ optionId }) {
   await typeCommand(n.id, mid.command, { delivery: mid.delivery === 'type' ? 'type' : 'write' })
 }
 
-const modelTimer = setInterval(refreshModel, 20000)
+// Every 20 s while the window is on screen (a file read per agent pane; a
+// change of its model files is also told right away, below).
+const modelTimer = setInterval(() => document.visibilityState !== 'hidden' && refreshModel(), 20000)
 // Tessel watches the agents' model files: a change shows right away.
 const stopModelChanged = window.shellApi.onAgentModelChanged
   ? window.shellApi.onAgentModelChanged((agentId) => {
@@ -1491,9 +1493,67 @@ function openLink(uri) {
 // like VS Code: Settings > Terminal, GPU Acceleration (Auto / On / Off).
 // Falls back to the normal renderer if WebGL fails or its context is lost.
 let webgl = null
+// A pane off screen (in a hidden workspace) for a while gives its WebGL
+// context back: each one holds graphics memory, and Chromium keeps only 16
+// per window (the oldest is lost beyond that). It comes back when the pane is
+// shown again. After Orca's src/renderer/src/lib/pane-manager/
+// pane-rendering-control.ts and pane-webgl-renderer.ts (MIT, Copyright (c)
+// 2026 Lovecast Inc.).
+const WEBGL_RELEASE_MS = 30000
+let webglReleased = false
+let onScreen = true
+let releaseTimer = null
+let screenObserver = null
+function setOnScreen(visible) {
+  if (visible === onScreen) return
+  onScreen = visible
+  clearTimeout(releaseTimer)
+  releaseTimer = null
+  if (visible) {
+    if (webglReleased) {
+      webglReleased = false
+      applyRenderer()
+    }
+    return
+  }
+  // Off screen only because the window is minimized: kept (no rebuild of
+  // every terminal's drawing when you bring the window back).
+  const windowHidden = () => document.documentElement.classList.contains('window-hidden')
+  if (windowHidden()) return
+  const release = () => {
+    releaseTimer = null
+    if (onScreen || !webgl) return
+    // Minimized meanwhile: asked again later (the pane is in a hidden
+    // workspace, it will not be shown by bringing the window back).
+    if (windowHidden()) {
+      releaseTimer = setTimeout(release, WEBGL_RELEASE_MS)
+      return
+    }
+    webglReleased = true
+    applyRenderer()
+  }
+  releaseTimer = setTimeout(release, WEBGL_RELEASE_MS)
+}
+// xterm removes its canvas on dispose, but Windows (ANGLE) can keep the
+// driver's context alive a while longer: let it go now (Orca's
+// releaseXtermWebglContext).
+function releaseWebglContext(addon) {
+  try {
+    const renderer = addon && addon._renderer
+    const gl = renderer && renderer._gl
+    const lose = gl && gl.getExtension && gl.getExtension('WEBGL_lose_context')
+    if (lose) lose.loseContext()
+    if (renderer && renderer._canvas) {
+      renderer._canvas.width = 0
+      renderer._canvas.height = 0
+    }
+  } catch {
+    /* the normal dispose still runs */
+  }
+}
 function applyRenderer() {
   if (!term) return
-  const want = useWebgl(settings.gpuAcceleration)
+  const want = useWebgl(settings.gpuAcceleration) && !webglReleased
   if (want && !webgl) {
     try {
       const gl = new WebglAddon()
@@ -1512,12 +1572,14 @@ function applyRenderer() {
       /* no WebGL: keep the default renderer */
     }
   } else if (!want && webgl) {
+    const gl = webgl
+    webgl = null
+    releaseWebglContext(gl)
     try {
-      webgl.dispose()
+      gl.dispose()
     } catch {
       /* already gone */
     }
-    webgl = null
   }
 }
 
@@ -1883,6 +1945,15 @@ onMounted(() => {
   ro = new ResizeObserver(() => scheduleFit())
   ro.observe(hostEl.value)
   ro.observe(hostEl.value.parentElement)
+  // On screen or not (a hidden workspace is moved off screen, style.css): an
+  // off-screen pane gives its WebGL context back after a while.
+  if (typeof IntersectionObserver !== 'undefined') {
+    screenObserver = new IntersectionObserver((entries) => {
+      const last = entries[entries.length - 1]
+      if (last) setOnScreen(last.isIntersecting)
+    })
+    screenObserver.observe(hostEl.value)
+  }
   window.addEventListener('resize', onLayoutChange)
   window.addEventListener('terminal-layout-change', onLayoutChange)
   window.addEventListener('pointerdown', onDocPointerDownMenu, true)
@@ -1985,6 +2056,8 @@ watch(isMaximized, () => {
 onBeforeUnmount(() => {
   mounted = false
   if (ro) ro.disconnect()
+  if (screenObserver) screenObserver.disconnect()
+  clearTimeout(releaseTimer)
   if (fitTimer) clearTimeout(fitTimer)
   window.removeEventListener('resize', onLayoutChange)
   window.removeEventListener('terminal-layout-change', onLayoutChange)

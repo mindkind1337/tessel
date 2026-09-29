@@ -196,6 +196,49 @@ describe('TerminalPane and the terminal settings', () => {
     expect(fx.webgl).toHaveLength(2)
   })
 
+  it('an off-screen pane gives its WebGL context back after 30 s, and gets one again when shown', async () => {
+    const observers = []
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class {
+        constructor(cb) {
+          this.cb = cb
+          observers.push(this)
+        }
+        observe() {}
+        disconnect() {}
+      }
+    )
+    vi.useFakeTimers()
+    try {
+      settings.gpuAcceleration = 'on'
+      mountPane()
+      expect(fx.webgl).toHaveLength(1)
+      const see = (isIntersecting) => observers[observers.length - 1].cb([{ isIntersecting }])
+      see(false) // its workspace hidden
+      vi.advanceTimersByTime(29000)
+      expect(fx.webgl[0].disposed).toBe(false)
+      see(true) // shown again before: kept
+      see(false)
+      vi.advanceTimersByTime(29000)
+      expect(fx.webgl[0].disposed).toBe(false)
+      vi.advanceTimersByTime(1000)
+      expect(fx.webgl[0].disposed).toBe(true)
+      see(true)
+      expect(fx.webgl).toHaveLength(2)
+      expect(fx.webgl[1].disposed).toBe(false)
+
+      // Off screen only because the window is minimized: kept.
+      document.documentElement.classList.add('window-hidden')
+      see(false)
+      vi.advanceTimersByTime(60000)
+      expect(fx.webgl[1].disposed).toBe(false)
+    } finally {
+      document.documentElement.classList.remove('window-hidden')
+      vi.useRealTimers()
+    }
+  })
+
   it('OSC 52 copies only while allowed', () => {
     settings.gpuAcceleration = 'off'
     mountPane()

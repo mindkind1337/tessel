@@ -2928,6 +2928,12 @@ async function saveScrollback() {
   }
 }
 
+// Is the window on screen (shown, not minimized)?
+function windowShown() {
+  return !!mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible() && !mainWindow.isMinimized()
+}
+ipcMain.handle('window:shown', () => windowShown())
+
 // Also every 30 s, and when Windows signs out or shuts down, so a reboot or
 // power loss still leaves recent output to show next time.
 setInterval(() => {
@@ -3101,6 +3107,11 @@ function createWindow() {
   mainWindow.on('focus', () => {
     if (mainWindow) mainWindow.flashFrame(false)
   })
+  // Minimized or hidden: told to the window. With background throttling off
+  // (above), its page stays "visible" and keeps drawing at 60 frames a
+  // second while minimized; the page uses this to pause what nobody sees
+  // (windowVisibility.js), as Orca's window does with its visibility.
+  for (const name of ['minimize', 'restore', 'hide', 'show']) mainWindow.on(name, () => send('window:shown', windowShown()))
   // Unsaved files in the editor: the window asks before it closes (see
   // editor:dirty). Not while the app is quitting (an update asked already).
   mainWindow.on('close', (event) => {

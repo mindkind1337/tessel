@@ -497,6 +497,14 @@ const api = {
     }
   },
 
+  // Is the window on screen (shown, not minimized)? And its changes.
+  windowShown: () => ipcRenderer.invoke('window:shown'),
+  onWindowShown: (cb) => {
+    const handler = (_e, shown) => cb(shown)
+    ipcRenderer.on('window:shown', handler)
+    return () => ipcRenderer.removeListener('window:shown', handler)
+  },
+
   // Subscriptions return an unsubscribe function.
   onData: (cb) => {
     const handler = (_e, payload) => cb(payload)

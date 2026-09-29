@@ -8,10 +8,13 @@ import { settings } from './settings'
 import { applyTheme } from './themes'
 import { applyAppearance, applyUiZoom } from './appearance'
 import { startCapture } from './ptyStore'
+import { installWindowVisibility } from './windowVisibility'
 import { setUiLanguage, t } from './i18n'
 
 // Begin buffering PTY output before any pane mounts so nothing is lost.
 startCapture()
+// "Visible" means the window is on screen, not minimized (windowVisibility.js).
+installWindowVisibility()
 
 // Root-level styling also reaches dialogs rendered outside the main app tree.
 watch(() => settings.theme, applyTheme, { immediate: true, flush: 'sync' })
