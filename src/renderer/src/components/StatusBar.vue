@@ -142,22 +142,35 @@ async function fetchSnapshot() {
   return fetching
 }
 // Every 2 s while the popover is open (as Orca), and every 10 s otherwise,
-// so the badge and the graphs keep up without a click (never while the
-// window is hidden).
+// so the badge and the graphs keep up without a click. Never while the
+// window is minimized, and in the background only while Tessel is the
+// window you use: each reading starts PowerShell to list the processes,
+// which costs a lot on Windows (Orca reads only while its popover is open);
+// the badge catches up as soon as you come back.
 const OPEN_POLL_MS = 2000
 const BACKGROUND_POLL_MS = 10000
+const inUse = () => document.visibilityState !== 'hidden' && (resourcesOpen.value || document.hasFocus())
 function startPolling() {
   clearInterval(pollTimer)
   pollTimer = null
   if (!resourcesOpen.value && !shows('resource-usage')) return
-  pollTimer = setInterval(
-    () => document.visibilityState !== 'hidden' && fetchSnapshot(),
-    resourcesOpen.value ? OPEN_POLL_MS : BACKGROUND_POLL_MS
-  )
+  pollTimer = setInterval(() => inUse() && fetchSnapshot(), resourcesOpen.value ? OPEN_POLL_MS : BACKGROUND_POLL_MS)
+}
+let lastCatchUp = 0
+function catchUp() {
+  if (!shows('resource-usage') || !inUse() || Date.now() - lastCatchUp < OPEN_POLL_MS) return
+  lastCatchUp = Date.now()
+  fetchSnapshot()
 }
 onMounted(() => {
   if (shows('resource-usage')) fetchSnapshot()
   startPolling()
+  window.addEventListener('focus', catchUp)
+  document.addEventListener('visibilitychange', catchUp)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('focus', catchUp)
+  document.removeEventListener('visibilitychange', catchUp)
 })
 watch(resourcesOpen, (open) => {
   if (open) fetchSnapshot()

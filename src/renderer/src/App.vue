@@ -5682,6 +5682,8 @@ async function checkTeamTools(round) {
 // being a shell when the agent quits. Checked once for every shell pane at
 // startup (an agent may still run from before).
 const shellEnterAt = {} // paneId -> last Enter pressed there
+const shellCheckedAt = {} // paneId -> last check of what runs under its shell
+const SHELL_EAGER_MS = 12000
 let detectBusy = false
 let detectedAtStart = false
 const DETECTED_EVERY_MS = 20000
@@ -5696,12 +5698,20 @@ async function detectShellAgents() {
   const checkDetected = now - lastDetectedCheck >= DETECTED_EVERY_MS
   forEachWsLeaf((l) => {
     if (!l.pid) return
-    const watch =
-      (l.detected && checkDetected) ||
-      (l.kind !== 'agent' && (!detectedAtStart || now - (shellEnterAt[l.id] || 0) < 60000))
+    // After Enter in a shell: every 4 s for the first 12 s (an agent starts
+    // within a few seconds), then every 12 s until a minute has passed. Each
+    // check starts PowerShell, which costs a lot on Windows (Orca checks
+    // Windows panes less often for the same reason:
+    // src/renderer/src/components/terminal-pane/agent-process-inspection-cost.ts,
+    // MIT, Copyright (c) 2026 Lovecast Inc.).
+    const sinceEnter = now - (shellEnterAt[l.id] || 0)
+    const afterEnter =
+      sinceEnter < 60000 && (sinceEnter < SHELL_EAGER_MS || now - (shellCheckedAt[l.id] || 0) >= SHELL_EAGER_MS)
+    const watch = (l.detected && checkDetected) || (l.kind !== 'agent' && (!detectedAtStart || afterEnter))
     if (watch) {
       shells[l.id] = l.pid
       watched[l.id] = l
+      if (l.kind !== 'agent') shellCheckedAt[l.id] = now
     }
   })
   detectedAtStart = true

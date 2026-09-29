@@ -557,12 +557,18 @@ button {
   background: color-mix(in srgb, var(--accent) 45%, transparent);
 }
 
+/* The "working" animations (this sweep, the pulsing dots below) move in
+   steps, about 7-10 a second: a smooth one makes Chromium draw the whole
+   window 60 times a second for as long as any agent works (measured: 16 of
+   them cost about a sixth of a CPU core), a stepped one only redraws at each
+   step, like Orca's agent spinner (src/renderer/src/assets/main.css, MIT,
+   Copyright (c) 2026 Lovecast Inc.). */
 .pane-nav.agent.busy::after {
   height: 2px;
   background: linear-gradient(90deg, transparent 0%, var(--accent) 50%, transparent 100%);
   background-size: 50% 100%;
   background-repeat: no-repeat;
-  animation: agent-sweep 1.4s linear infinite;
+  animation: agent-sweep 1.4s steps(14) infinite;
 }
 
 @keyframes agent-sweep {
@@ -610,7 +616,7 @@ button {
 
 .pane-icon.busy .pane-status-dot {
   background: #3ddc84;
-  animation: agent-pulse 1.1s ease-in-out infinite;
+  animation: agent-pulse 1.1s steps(4) infinite;
 }
 
 @keyframes agent-pulse {
@@ -1264,7 +1270,14 @@ button {
 /* ================= Workspace layers ================= */
 /* Every workspace stays mounted. Hidden ones keep their full size (visibility,
    not display:none) so their terminals never refit to zero and running agents
-   never see a resize when you switch. */
+   never see a resize when you switch.
+   A hidden one is also moved off-screen (its size unchanged): xterm pauses
+   drawing a terminal that is not on screen (its own IntersectionObserver)
+   and redraws it in full when it comes back, so busy terminals in hidden
+   workspaces keep their output but cost no rendering, as a hidden tab does
+   after Orca's src/renderer/src/lib/pane-manager/pane-rendering-control.ts
+   (MIT, Copyright (c) 2026 Lovecast Inc.). visibility: hidden alone still
+   counts as on screen for that observer. */
 .ws-layer {
   position: absolute;
   inset: 0;
@@ -1273,6 +1286,25 @@ button {
 .ws-layer.hidden {
   visibility: hidden;
   pointer-events: none;
+  transform: translateX(-300vw);
+}
+
+/* Its animations (working dots, sweeps) wait until it is shown again. */
+.ws-layer.hidden *,
+.ws-layer.hidden *::before,
+.ws-layer.hidden *::after {
+  animation-play-state: paused !important;
+}
+
+/* The window minimized (windowVisibility.js): Chromium keeps drawing it, so
+   nothing moves and no terminal draws until it is back on screen. */
+html.window-hidden *,
+html.window-hidden *::before,
+html.window-hidden *::after {
+  animation-play-state: paused !important;
+}
+html.window-hidden .ws-layer {
+  transform: translateX(-300vw);
 }
 
 /* The browser panes' pages (browser/pageHost.js): each laid over its pane's
@@ -1460,7 +1492,7 @@ button {
   border-radius: 50%;
   background: #3ddc84;
   border: 2px solid var(--chrome);
-  animation: agent-pulse 1.1s ease-in-out infinite;
+  animation: agent-pulse 1.1s steps(4) infinite;
 }
 
 .ws-body {
@@ -1936,7 +1968,7 @@ kbd {
 
 .pane-icon.attention .pane-status-dot {
   background: var(--warn);
-  animation: attention-pulse 1.4s ease-in-out infinite;
+  animation: attention-pulse 1.4s steps(5) infinite;
 }
 
 .pane.needs-you:not(.active)::after {
@@ -1945,7 +1977,7 @@ kbd {
 
 .ws-busy.attention {
   background: var(--warn);
-  animation: attention-pulse 1.4s ease-in-out infinite;
+  animation: attention-pulse 1.4s steps(5) infinite;
 }
 
 @keyframes attention-pulse {
@@ -7759,7 +7791,7 @@ button.act-stat:hover,
 }
 
 .agent-children-chip.running .agent-children-icon {
-  animation: agent-children-pulse 1.2s ease-in-out infinite;
+  animation: agent-children-pulse 1.2s steps(4) infinite;
 }
 
 @keyframes agent-children-pulse {
@@ -9291,7 +9323,7 @@ button.act-stat:hover,
 /* Working: the flashing green dot of the pane header (agent-pulse). */
 .asd-dot.asd-working {
   background: #3ddc84;
-  animation: agent-pulse 1.1s ease-in-out infinite;
+  animation: agent-pulse 1.1s steps(4) infinite;
 }
 
 .asd-dot.red {
