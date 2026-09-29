@@ -167,7 +167,9 @@
       "kimiFailed": "Hooks de Kimi Code : {{error}}",
       "memoryFailed": "{{agent}} : fichier de mémoire {{file}} : {{error}}",
       "statusPath": "Le chemin du script de hook ne peut pas être cité sans risque pour cet agent.",
-      "pluginNotManaged": "Ce fichier n'est pas géré par Tessel ; il n'a pas été modifié : {{file}}"
+      "pluginNotManaged": "Ce fichier n'est pas géré par Tessel ; il n'a pas été modifié : {{file}}",
+      "noNode": "Node.js (node.exe) est introuvable dans les dossiers du PATH : Tessel n'a donc pas installé ses hooks d'agents. Installez Node.js, puis redémarrez Tessel.",
+      "notList": "{{file}} a un réglage pour {{event}} qui n'est pas une liste de hooks : Tessel ne l'a pas modifié."
     },
     "jsonAgents": {
       "kimiNotObject": "mcpServers de Kimi n'est pas un objet ; le fichier existant n'a pas été modifié.",

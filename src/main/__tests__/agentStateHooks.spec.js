@@ -161,6 +161,8 @@ describe('account-aware status hook installation', () => {
       provider,
       env,
       home: join(dir, 'home'),
+      // The absolute node the hook commands run (the fixture env has no PATH).
+      node: process.execPath,
       sharedDir: join(dir, 'shared'),
       source: fs.readFileSync(script, 'utf8')
     })

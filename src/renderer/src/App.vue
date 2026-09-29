@@ -1064,7 +1064,7 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
   // Install the system hook definition before a managed account mirrors it.
   // A status setup failure does not prevent the user's agent from launching.
   if (agent && !attached && window.shellApi.prepareAgentStatus) {
-    const statusSetup = await window.shellApi.prepareAgentStatus(agent.id).catch(() => null)
+    const statusSetup = await window.shellApi.prepareAgentStatus(agent.id, { cursor: settings.cursorStatusHooks === true }).catch(() => null)
     if (statusSetup?.needsReview) showToast(t('app.codexHooks.updated', 'Codex status hooks were updated. Review them in /hooks to enable live status.'), { timeout: 10000 })
   }
   if (agent && !attached && window.shellApi.accounts && window.shellApi.accounts.launchEnv) {
@@ -1096,7 +1096,7 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
     res = { ok: false, error: refused }
   } else if (!attached) {
     try {
-      res = await window.shellApi.createPty({ id, shellId, agentId: agent?.id, cols: 80, rows: 24, cwd, projectDir, extraEnv, accountEnv, unsetEnv, ...(opts.remoteHostId ? { remoteHostId: opts.remoteHostId } : {}), ...(opts.remoteHostId && opts.remotePath ? { remotePath: opts.remotePath } : {}) })
+      res = await window.shellApi.createPty({ id, shellId, agentId: agent?.id, cols: 80, rows: 24, cwd, projectDir, extraEnv, accountEnv, unsetEnv, hookOptIn: { cursor: settings.cursorStatusHooks === true }, ...(opts.remoteHostId ? { remoteHostId: opts.remoteHostId } : {}), ...(opts.remoteHostId && opts.remotePath ? { remotePath: opts.remotePath } : {}) })
     } catch (err) {
       res = { ok: false, error: err && err.message }
     }

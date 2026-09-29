@@ -14,6 +14,7 @@ import os from 'os'
 import { join, dirname } from 'path'
 import { writeFileAtomic } from './safeJson'
 import { t } from './i18n'
+import { findNode } from './nodePath'
 
 export const JSON_AGENTS = ['gemini', 'qwen', 'copilot', 'opencode', 'cline', 'kimi']
 
@@ -201,9 +202,11 @@ export function removeJsonAgentServer(agent, name, home) {
 }
 
 // The Tessel team tools entry for this agent: the pane's identity comes from
-// the pane's environment (each CLI's own way of passing it).
-export function teamToolsEntry(agent, scriptPath) {
-  const stdio = { transport: 'stdio', command: 'node', args: [scriptPath] }
+// the pane's environment (each CLI's own way of passing it). Node by its
+// absolute path (nodePath.js), never by name: a node.exe in the folder the
+// agent runs in would be started instead.
+export function teamToolsEntry(agent, scriptPath, node = findNode()) {
+  const stdio = { transport: 'stdio', command: node, args: [scriptPath] }
   // OpenCode puts {env:…} values into the file as raw text before reading it
   // as JSON: a Windows path (backslashes) would break the whole file. Only
   // the pane id (no backslash) goes that way; the project folder is found
