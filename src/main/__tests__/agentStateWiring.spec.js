@@ -55,6 +55,7 @@ function wire(hostRecords = new Map()) {
     os,
     crypto,
     isAbsolute,
+    join,
     paneEnv,
     freshEnv: () => ({ PATH: 'fixture' }),
     shouldUseConpty: () => true,
@@ -112,6 +113,10 @@ it('uses account-scoped environment after all overlays for hook setup', async ()
     expect.objectContaining({ CODEX_HOME: join(dir, 'managed') })
   )
   expect(app.setup.mock.calls[0][1]).not.toHaveProperty('codex_home')
+  // Its rollout is read in that home (codexTurnEnd.js), also after a reattach.
+  expect(app.ptyInfo.get('pane-account').agentCodexHome).toBe(join(dir, 'managed'))
+  await app.handlers['pty:attach'](null, 'pane-account')
+  expect(app.ptyInfo.get('pane-account').agentCodexHome).toBe(join(dir, 'managed'))
 })
 it('keeps the reset text from the real screen observation boundary', async () => {
   store = createAgentStateStore({ dir })

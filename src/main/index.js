@@ -17,6 +17,7 @@ import { createAccountSessions } from './providerAccountSessions'
 import { postToInbox } from './agentInbox'
 import { hooksStatus } from './teamHooksStatus'
 import { createAgentStateStore } from './agentStateStore'
+import { createCodexTurnEnd, allowedCodexHome, TURN_END_CHECK_MS } from './codexTurnEnd'
 import { createUsageStatsTracker } from './usageStatsTracker'
 import { copyUsageImage } from './usageClipboard'
 import { registerIssueServices } from './issueServicesIpc'
@@ -1005,6 +1006,24 @@ const agentStateTimer = setInterval(async () => {
 }, 500)
 agentStateTimer.unref()
 app.on('will-quit', () => { clearInterval(agentStateTimer); void agentStateStore.dispose() })
+// A Codex turn that ended without its Stop hook (an errored turn runs none):
+// its own session rollout says so (codexTurnEnd.js). Only the CODEX_HOME the
+// pane was started with, when it is the system home or a managed account's.
+const codexTurnEnd = createCodexTurnEnd({
+  store: agentStateStore,
+  homeFor: (paneId, token) => {
+    const info = ptyInfo.get(paneId)
+    if (!info || !token || info.agentLaunchToken !== token) return null
+    const home = info.agentCodexHome || process.env.CODEX_HOME || join(os.homedir(), '.codex')
+    return allowedCodexHome(home, {
+      systemHome: process.env.CODEX_HOME || join(os.homedir(), '.codex'),
+      accountsBase: join(app.getPath('userData'), 'codex-accounts')
+    }) ? home : null
+  }
+})
+const codexTurnEndTimer = setInterval(() => { void codexTurnEnd().catch(() => {}) }, TURN_END_CHECK_MS)
+codexTurnEndTimer.unref()
+app.on('will-quit', () => clearInterval(codexTurnEndTimer))
 ipcMain.handle('agents:states', () => agentStateStore.snapshot())
 ipcMain.on('agents:screen', (_evt, q) => {
   if (!q || typeof q !== 'object') return
@@ -2320,6 +2339,11 @@ ipcMain.handle('pty:create', async (_evt, opts = {}) => {
   const env = paneEnv(freshEnv(), opts)
   const agentProvider = ['claude', 'codex'].includes(opts.agentId) ? opts.agentId : null
   const agentLaunchToken = agentProvider ? crypto.randomBytes(16).toString('hex') : null
+  // The Codex home this launch reads and writes (its account's, if any): where
+  // its session rollout is (codexTurnEnd.js).
+  const agentCodexHome = agentProvider === 'codex'
+    ? Object.entries(env).find(([key]) => key.toUpperCase() === 'CODEX_HOME')?.[1] || join(os.homedir(), '.codex')
+    : null
   // This launch's team secret (teamAuth.js): the team tools MAC their
   // requests with it. Only in the pane's environment and in memory (here and
   // in the terminal host), never on disk or in a log.
@@ -2362,7 +2386,7 @@ ipcMain.handle('pty:create', async (_evt, opts = {}) => {
       useConpty,
       // ConPTY is required for full-screen TUIs like Claude Code to redraw on
       // resize. Set TESSEL_USE_WINPTY=1 only as a fallback.
-      meta: { shellId: shell.id, shellName: shell.name, backend, cwd: startDir, agentProvider, agentLaunchToken, agentStartedAt, teamSecret, remoteHostId: remote ? remote.target.id : null }
+      meta: { shellId: shell.id, shellName: shell.name, backend, cwd: startDir, agentProvider, agentLaunchToken, agentStartedAt, agentCodexHome, teamSecret, remoteHostId: remote ? remote.target.id : null }
     })
   } catch (err) {
     res = { ok: false, error: err.message }
@@ -2383,7 +2407,7 @@ ipcMain.handle('pty:create', async (_evt, opts = {}) => {
       return launchCancelled()
     }
   }
-  ptyInfo.set(id, { shellId: shell.id, shellName: shell.name, backend, pid: res.pid, agentLaunchToken })
+  ptyInfo.set(id, { shellId: shell.id, shellName: shell.name, backend, pid: res.pid, agentLaunchToken, agentCodexHome })
   // A relaunch replaces the previous secret: the old one is void.
   setTeamSecret(id, teamSecret)
   if (remote) {
@@ -2421,7 +2445,7 @@ ipcMain.handle('pty:attach', async (_evt, id) => {
   if (!res.ok) return { ok: false }
   // Output queued here but not sent yet is in the snapshot already.
   pendingData.delete(id)
-  ptyInfo.set(id, { shellId: res.shellId, shellName: res.shellName, backend: res.backend, pid: res.pid, agentLaunchToken: res.agentLaunchToken })
+  ptyInfo.set(id, { shellId: res.shellId, shellName: res.shellName, backend: res.backend, pid: res.pid, agentLaunchToken: res.agentLaunchToken, agentCodexHome: typeof res.agentCodexHome === 'string' ? res.agentCodexHome : null })
   // Still running since before: its team secret comes back from the host.
   if (res.exited) revokeTeamSecret(id)
   else setTeamSecret(id, res.teamSecret)
