@@ -45,6 +45,9 @@ import { createInstallLogs } from './installLog'
 import { writeBoardRule } from './agentMemory'
 import { claudeImageFile, isPastedImage, PASTE_DIR } from './pastedImages'
 import { createBrowserGuests } from './browserGuest'
+import { createChatSessions } from './chat/sessions'
+import { createClaudeChat } from './chat/claudeChat'
+import { createChatTrust } from './chat/chatTrust'
 import { createLogger, describe } from './logger'
 import { guardIpc, mainFrameSender } from './ipcGuard'
 import { cleanEnv } from './cleanEnv'
@@ -973,6 +976,51 @@ const agentStateStore = createAgentStateStore({
     send('agents:state', states)
     void usageStats.observe(states).catch(() => {})
   }
+})
+// Chat agents (src/main/chat): Claude without a terminal, in its stream-json
+// mode. Each chat is a pane of its own: its identity and team secret like a
+// terminal pane's, its state reported here (no hooks), its team messages
+// given as turns. In -p mode Claude runs the project's hooks and MCP servers
+// without asking: Tessel asks once per folder first (chatTrust.js).
+const chatTrust = createChatTrust({
+  file: join(app.getPath('userData'), 'chat-trust.json'),
+  ask: async ({ dir }) => {
+    const opts = {
+      type: 'warning',
+      title: t('main.chat.trustTitle', 'Trust this folder for a chat agent?'),
+      message: t('main.chat.trustMessage', 'A chat agent runs Claude in {{dir}} without its terminal: Claude then runs the hooks and MCP servers this folder sets up (.claude/settings.json, .mcp.json) without asking.', { dir: String(dir).replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, 300) }),
+      detail: t('main.chat.trustDetail', 'Trust it only if you know where this folder comes from. A Claude terminal pane asks you itself.'),
+      buttons: [t('main.chat.trustYes', 'Trust this folder'), t('main.chat.trustNo', 'Cancel')],
+      defaultId: 1,
+      cancelId: 1,
+      noLink: true
+    }
+    const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null
+    const res = win ? await dialog.showMessageBox(win, opts) : await dialog.showMessageBox(opts)
+    return res.response === 0
+  }
+})
+const chatSessions = createChatSessions({
+  dir: app.getPath('userData'),
+  send,
+  createAdapter: (opts) => createClaudeChat(opts),
+  // The installed claude (the npm shim resolved to what it runs), as for
+  // Tessel's headless calls.
+  resolveClaude: async () => {
+    const prog = await resolveProgram('claude')
+    return prog ? { exe: prog.file, exeArgs: prog.pre || [], pathEnv: prog.path || null } : null
+  },
+  // As a terminal pane's: Tessel's clean environment, then Settings > Agents
+  // variables and the provider account's (paneEnv checks them).
+  env: { forPane: ({ extraEnv, accountEnv, unsetEnv }) => paneEnv(freshEnv(), { extraEnv, accountEnv, unsetEnv }) },
+  team: { newSecret: newTeamSecret, setSecret: setTeamSecret, revokeSecret: revokeTeamSecret },
+  state: agentStateStore,
+  trust: chatTrust,
+  log
+})
+chatSessions.register(ipcMain)
+app.on('will-quit', () => {
+  void Promise.resolve(chatSessions.closeAll()).catch(() => {})
 })
 ipcMain.handle('statsUsage:summary', () => usageStats.summary())
 ipcMain.handle('statsUsage:copyImage', (_event, bytes) => copyUsageImage(bytes, { nativeImage, clipboard }))

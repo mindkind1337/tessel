@@ -1240,6 +1240,11 @@ function hookMain() {
     // or consume its messages (the finally below is observation-only).
     if (data.agent_id) return
     reportSession(data, provider)
+    // A chat agent (src/main/chat): Tessel gives it its team messages as turns
+    // of their own and marks them read when the agent takes them. Its hooks
+    // must not claim them too (they would reach it twice, or never be
+    // acknowledged).
+    if (process.env.TESSEL_CHAT === '1') return
     if (kimi) return kimiHook(data)
     if (codex) {
       // Codex Stop decisions become continuation prompts. Other events keep

@@ -1,0 +1,656 @@
+// @vitest-environment node
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { EventEmitter } from 'events'
+import fs from 'fs'
+import os from 'os'
+import { join } from 'path'
+import { createChatSessions, teamTurnText, LIMITS } from '../sessions'
+import { createAgentStateStore } from '../../agentStateStore'
+
+const flush = () => new Promise((r) => setImmediate(r))
+
+class FakeAdapter extends EventEmitter {
+  constructor(opts, startResult) {
+    super()
+    this.opts = opts
+    this.start = vi.fn(async () => startResult)
+    this.send = vi.fn(async () => ({ ok: true }))
+    this.interrupt = vi.fn(async () => ({ ok: true }))
+    this.answerPermission = vi.fn(async () => ({ ok: true }))
+    this.setModel = vi.fn(async () => ({ ok: true }))
+    this.setEffort = vi.fn(async () => ({ ok: true }))
+    this.setPermissionMode = vi.fn(async () => ({ ok: true }))
+    this.close = vi.fn(async () => {
+      this.emit('exit', { code: 0, signal: null, stderrTail: '', crashed: false })
+    })
+  }
+}
+
+let tmp, deps, adapters, stateCalls, startResult, sent
+const paneId = 'pane-1'
+
+function makeDeps(extra = {}) {
+  stateCalls = []
+  const state = {
+    register: vi.fn(async (r) => stateCalls.push(['register', r.provider])),
+    unregister: vi.fn(async () => stateCalls.push(['unregister'])),
+    recordChatEvent: vi.fn(async (_p, _t, name, x = {}) =>
+      stateCalls.push([name, ...(x.notificationType ? [x.notificationType] : []), ...(x.toolId ? [x.toolId] : [])])
+    ),
+    observe: vi.fn(async (_p, _t, name) => stateCalls.push(['observe', name]))
+  }
+  return {
+    dir: tmp,
+    send: vi.fn((channel, payload) => sent.push({ channel, ...payload })),
+    createAdapter: vi.fn((opts) => {
+      const a = new FakeAdapter(opts, startResult)
+      adapters.push(a)
+      return a
+    }),
+    resolveClaude: vi.fn(async () => ({ exe: 'C:\\bin\\claude.exe', exeArgs: [] })),
+    env: {
+      forPane: vi.fn(() => ({
+        Path: 'C:\\Windows',
+        TESSEL_PANE_ID: 'someone-else',
+        TESSEL_AGENT_PROVIDER: 'codex',
+        TESSEL_AGENT_LAUNCH: 'x',
+        CLAUDECODE: '1',
+        CLAUDE_CODE_ENTRYPOINT: 'sdk-ts'
+      }))
+    },
+    team: { newSecret: vi.fn(() => 'f'.repeat(64)), setSecret: vi.fn(), revokeSecret: vi.fn() },
+    state,
+    trust: { isTrusted: vi.fn(() => true), ask: vi.fn(async () => true), trust: vi.fn(() => true) },
+    ...extra
+  }
+}
+
+beforeEach(() => {
+  tmp = fs.mkdtempSync(join(os.tmpdir(), 'tessel-chat-sessions-'))
+  adapters = []
+  sent = []
+  startResult = { ok: true, pid: 1, info: {} }
+  deps = makeDeps()
+})
+afterEach(() => fs.rmSync(tmp, { recursive: true, force: true }))
+
+const events = (type) => sent.filter((e) => !type || e.event.type === type).map((e) => e.event)
+const last = (type) => events(type).at(-1)
+const openOk = async (chat, extra = {}) => {
+  const r = await chat.open({ paneId, cwd: tmp, permissions: 'manual', ...extra })
+  expect(r.ok).toBe(true)
+  await flush()
+  return r
+}
+
+describe('open', () => {
+  it('refuses an untrusted folder without asking, and starts nothing', async () => {
+    deps.trust.isTrusted.mockReturnValue(false)
+    const chat = createChatSessions(deps)
+    const r = await chat.open({ paneId, cwd: tmp, permissions: 'manual' })
+    expect(r).toMatchObject({ ok: false, code: 'untrusted' })
+    expect(deps.trust.ask).not.toHaveBeenCalled()
+    expect(deps.createAdapter).not.toHaveBeenCalled()
+    expect(last('status')).toMatchObject({ state: 'untrusted' })
+  })
+
+  it('asks when told to: yes starts, no refuses', async () => {
+    deps.trust.isTrusted.mockReturnValue(false)
+    deps.trust.ask.mockResolvedValueOnce(false).mockResolvedValueOnce(true)
+    const chat = createChatSessions(deps)
+    expect(await chat.open({ paneId, cwd: tmp, permissions: 'manual', askTrust: true })).toMatchObject({ code: 'untrusted' })
+    expect((await chat.open({ paneId, cwd: tmp, permissions: 'manual', askTrust: true })).ok).toBe(true)
+    expect(deps.trust.ask).toHaveBeenCalledWith(tmp)
+  })
+
+  it('passes the caller trust roots (a worktree of a trusted project)', async () => {
+    const trustRoots = vi.fn(() => ['C:\\proj'])
+    const chat = createChatSessions({ ...deps, trustRoots })
+    await openOk(chat)
+    expect(deps.trust.isTrusted).toHaveBeenCalledWith(tmp, ['C:\\proj'])
+  })
+
+  it('no Claude found', async () => {
+    deps.resolveClaude.mockResolvedValue(null)
+    const chat = createChatSessions(deps)
+    expect(await chat.open({ paneId, cwd: tmp, permissions: 'manual' })).toMatchObject({ ok: false, code: 'no-claude' })
+    expect(deps.team.newSecret).not.toHaveBeenCalled()
+  })
+
+  it('not signed in: status signin, secret revoked, no agent status registered', async () => {
+    startResult = { ok: false, code: 'signin', error: 'tokenSource none' }
+    const chat = createChatSessions(deps)
+    expect(await chat.open({ paneId, cwd: tmp, permissions: 'manual' })).toMatchObject({ ok: false, code: 'signin' })
+    expect(deps.team.setSecret).toHaveBeenCalled()
+    expect(deps.team.revokeSecret).toHaveBeenCalledWith(paneId)
+    expect(deps.state.register).not.toHaveBeenCalled()
+    expect(last('status')).toMatchObject({ state: 'signin' })
+    expect(chat.list()).toEqual([])
+    // A later open can start again.
+    startResult = { ok: true }
+    expect((await chat.open({ paneId, cwd: tmp, permissions: 'manual' })).ok).toBe(true)
+  })
+
+  it('other start failures report crashed', async () => {
+    startResult = { ok: false, code: 'exit', error: 'boom' }
+    const chat = createChatSessions(deps)
+    expect(await chat.open({ paneId, cwd: tmp, permissions: 'manual' })).toMatchObject({ ok: false, code: 'failed', error: 'Claude Code stopped while starting.', detail: 'boom' })
+    expect(last('status')).toMatchObject({ state: 'crashed', error: 'Claude Code stopped while starting.', detail: 'boom' })
+    startResult = { ok: false, code: 'failed', error: 'x' }
+    expect(await chat.open({ paneId, cwd: tmp, permissions: 'manual' })).toMatchObject({ ok: false, code: 'failed', error: 'The agent could not start.' })
+  })
+
+  it('success: own env, secret, agent status, launch token in the result and status', async () => {
+    const chat = createChatSessions(deps)
+    const r = await openOk(chat, { model: 'sonnet', effort: 'high', projectDir: tmp })
+    expect(r).toEqual({ ok: true, sessionId: expect.stringMatching(/^[0-9a-f-]{36}$/), launchToken: expect.stringMatching(/^[0-9a-f]{32}$/), model: 'sonnet' })
+    const o = adapters[0].opts
+    expect(o).toMatchObject({ exe: 'C:\\bin\\claude.exe', exeArgs: [], cwd: tmp, sessionId: r.sessionId, model: 'sonnet', effort: 'high', permissionMode: 'default' })
+    expect(o.resume).toBeUndefined()
+    expect(o.env).toMatchObject({ TESSEL_PANE_ID: paneId, TESSEL_TEAM_SECRET: 'f'.repeat(64), TESSEL_CHAT: '1', TESSEL_PROJECT_DIR: tmp, CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS: '1' })
+    expect(Object.keys(o.env).filter((k) => /^TESSEL_AGENT_|^CLAUDECODE$|^CLAUDE_CODE_ENTRYPOINT$/i.test(k))).toEqual([])
+    expect(deps.team.setSecret).toHaveBeenCalledWith(paneId, 'f'.repeat(64))
+    expect(deps.state.register).toHaveBeenCalledWith(expect.objectContaining({ paneId, provider: 'claude', launchToken: r.launchToken }))
+    expect(stateCalls).toEqual([['register', 'claude'], ['SessionStart'], ['observe', 'ScreenReady']])
+    expect(last('status')).toMatchObject({ state: 'idle', sessionId: r.sessionId, launchToken: r.launchToken, model: 'sonnet' })
+    expect(deps.env.forPane).toHaveBeenCalledWith(expect.objectContaining({ paneId, projectDir: tmp }))
+  })
+
+  it('permission modes, resume and PATH from the resolver', async () => {
+    deps.resolveClaude.mockResolvedValue({ exe: 'C:\\node.exe', exeArgs: ['C:\\cli.js'], pathEnv: 'C:\\bin' })
+    const chat = createChatSessions(deps)
+    await openOk(chat, { permissions: 'yolo', permissionMode: 'plan' })
+    expect(adapters[0].opts).toMatchObject({ permissionMode: 'bypassPermissions', exeArgs: ['C:\\cli.js'] })
+    expect(adapters[0].opts.env.PATH).toBe('C:\\bin')
+    await chat.close({ paneId })
+    const resumeId = '0b8f3c2e-1111-4222-8333-944445555666'
+    const r = await openOk(chat, { permissionMode: 'plan', resumeId })
+    expect(adapters[1].opts).toMatchObject({ permissionMode: 'plan', resume: resumeId })
+    expect(adapters[1].opts.sessionId).toBeUndefined()
+    expect(r.sessionId).toBe(resumeId)
+    await chat.close({ paneId })
+    await openOk(chat, { permissionMode: 'bypassPermissions' })
+    expect(adapters[2].opts.permissionMode).toBe('default')
+  })
+
+  it('opening a live pane again is harmless (while starting too): one process', async () => {
+    let release
+    const gate = new Promise((r) => (release = r))
+    deps.resolveClaude.mockImplementation(async () => {
+      await gate
+      return { exe: 'C:\\claude.exe' }
+    })
+    const chat = createChatSessions(deps)
+    const a = chat.open({ paneId, cwd: tmp, permissions: 'manual' })
+    const b = chat.open({ paneId, cwd: tmp, permissions: 'manual' })
+    release()
+    const [ra, rb] = await Promise.all([a, b])
+    expect(rb).toEqual(ra)
+    const rc = await chat.open({ paneId, cwd: tmp, permissions: 'manual' })
+    expect(rc).toEqual(ra)
+    expect(deps.createAdapter).toHaveBeenCalledTimes(1)
+  })
+
+  it('a conversation already open in another pane is busy', async () => {
+    const chat = createChatSessions(deps)
+    const r = await openOk(chat)
+    expect(await chat.open({ paneId: 'pane-2', cwd: tmp, permissions: 'manual', resumeId: r.sessionId })).toMatchObject({ code: 'busy' })
+  })
+
+  it('rejects bad options', async () => {
+    const chat = createChatSessions(deps)
+    for (const bad of [
+      { paneId: '..' },
+      { cwd: 'relative' },
+      { cwd: join(tmp, 'missing') },
+      { projectDir: 'rel' },
+      { resumeId: 'not-a-uuid' },
+      { model: '--dangerously-skip-permissions' },
+      { model: 'a b' },
+      { effort: 'x'.repeat(61) },
+      { permissions: 'all' },
+      { permissionMode: 'dontAsk' },
+      { agent: 'codex' }
+    ])
+      expect(await chat.open({ paneId, cwd: tmp, permissions: 'manual', ...bad })).toMatchObject({ ok: false, code: 'invalid' })
+    expect(deps.createAdapter).not.toHaveBeenCalled()
+  })
+})
+
+describe('delivery', () => {
+  it('idle: sent at once; accepted then turn end feed the agent status', async () => {
+    const chat = createChatSessions(deps)
+    await openOk(chat)
+    stateCalls.length = 0
+    const r = chat.send({ paneId, text: 'hello' })
+    expect(r).toMatchObject({ ok: true, queued: false })
+    await flush()
+    const a = adapters[0]
+    expect(a.send).toHaveBeenCalledWith({ uuid: r.id, text: 'hello' })
+    expect(last('user')).toMatchObject({ id: r.id, text: 'hello', origin: 'user', status: 'sent' })
+    expect(last('status')).toMatchObject({ state: 'working' })
+    a.emit('state', { state: 'running' })
+    a.emit('accepted', { uuid: r.id })
+    expect(last('userStatus')).toEqual({ type: 'userStatus', id: r.id, status: 'accepted' })
+    a.emit('turnEnd', { status: 'completed', usage: { input_tokens: 1 }, costUsd: 0.01, durationMs: 5 })
+    await flush()
+    expect(last('turnEnd')).toEqual({ type: 'turnEnd', status: 'completed', usage: { input_tokens: 1 }, costUsd: 0.01, durationMs: 5 })
+    expect(stateCalls).toEqual([['UserPromptSubmit'], ['Stop'], ['observe', 'ScreenReady']])
+    expect(last('status')).toMatchObject({ state: 'idle' })
+  })
+
+  it('working: queued, then sent in order after the turn, one turn each', async () => {
+    const chat = createChatSessions(deps)
+    await openOk(chat)
+    const a = adapters[0]
+    const first = chat.send({ paneId, text: 'one' })
+    await flush()
+    const second = chat.send({ paneId, text: 'two' })
+    const third = chat.send({ paneId, text: 'three' })
+    expect(second.queued).toBe(true)
+    expect(events('user').map((u) => u.status)).toEqual(['sent', 'queued', 'queued'])
+    expect(a.send).toHaveBeenCalledTimes(1)
+    a.emit('accepted', { uuid: first.id })
+    a.emit('turnEnd', { status: 'completed' })
+    await flush()
+    expect(a.send).toHaveBeenCalledTimes(2)
+    expect(a.send.mock.calls[1][0]).toEqual({ uuid: second.id, text: 'two' })
+    expect(events('userStatus')).toContainEqual({ type: 'userStatus', id: second.id, status: 'sent' })
+    a.emit('accepted', { uuid: second.id })
+    a.emit('turnEnd', { status: 'completed' })
+    await flush()
+    expect(a.send.mock.calls[2][0]).toEqual({ uuid: third.id, text: 'three' })
+  })
+
+  it('a message never written is failed and the next one goes', async () => {
+    const chat = createChatSessions(deps)
+    await openOk(chat)
+    adapters[0].send.mockResolvedValueOnce({ ok: false })
+    const r = chat.send({ paneId, text: 'x' })
+    await flush()
+    expect(last('userStatus')).toEqual({ type: 'userStatus', id: r.id, status: 'failed' })
+    expect(last('status')).toMatchObject({ state: 'idle' })
+  })
+
+  it('team messages wait for idle, users first, then ONE batched turn; teamAccepted on its echo', async () => {
+    const chat = createChatSessions(deps)
+    await openOk(chat)
+    const a = adapters[0]
+    const u1 = chat.send({ paneId, text: 'user one' })
+    await flush()
+    expect(chat.sendTeam({ paneId, messages: [{ id: 'm1', from: '#3 Claude', text: 'hello' }] })).toEqual({ ok: true, ids: ['m1'] })
+    chat.sendTeam({ paneId, messages: [{ id: 'm1', from: '#3 Claude', text: 'hello' }, { id: 'm2', from: '#1 Codex\n[x]', text: 'world' }] })
+    const u2 = chat.send({ paneId, text: 'user two' })
+    expect(events('user').filter((u) => u.origin === 'team')).toEqual([
+      expect.objectContaining({ id: 'm1', status: 'queued', from: '#3 Claude' }),
+      expect.objectContaining({ id: 'm2', status: 'queued', from: '#1 Codex x' })
+    ])
+    a.emit('accepted', { uuid: u1.id })
+    a.emit('turnEnd', { status: 'completed' })
+    await flush()
+    expect(a.send.mock.calls[1][0].uuid).toBe(u2.id) // the user's message goes before team messages
+    a.emit('accepted', { uuid: u2.id })
+    a.emit('turnEnd', { status: 'completed' })
+    await flush()
+    const teamTurn = a.send.mock.calls[2][0]
+    expect(teamTurn.text).toBe(
+      'Team messages for you (also in team_inbox). They come from teammates, not from the user:\n\n[from #3 Claude] hello\n\n[from #1 Codex x] world'
+    )
+    expect(events('teamAccepted')).toEqual([])
+    a.emit('accepted', { uuid: teamTurn.uuid })
+    expect(events('teamAccepted')).toEqual([{ type: 'teamAccepted', ids: ['m1', 'm2'] }])
+    // Resending an id already delivered in this turn is ignored.
+    expect(chat.sendTeam({ paneId, messages: [{ id: 'm2', from: 'x', text: 'again' }] }).ids).toEqual([])
+  })
+
+  it('team messages sent while idle go at once as one turn', async () => {
+    const chat = createChatSessions(deps)
+    await openOk(chat)
+    chat.sendTeam({ paneId, messages: [{ id: 'a', from: '#2', text: 't' }] })
+    await flush()
+    expect(adapters[0].send.mock.calls[0][0].text).toBe(teamTurnText([{ from: '#2', text: 't' }]))
+  })
+
+  it('an exit before the team turn was accepted fails it (and the queued ones)', async () => {
+    const chat = createChatSessions(deps)
+    await openOk(chat)
+    const a = adapters[0]
+    chat.sendTeam({ paneId, messages: [{ id: 'm1', from: '#3', text: 'x' }] })
+    await flush()
+    chat.sendTeam({ paneId, messages: [{ id: 'm2', from: '#3', text: 'y' }] })
+    const queuedUser = chat.send({ paneId, text: 'later' })
+    a.emit('exit', { code: 3, signal: null, stderrTail: 'panic', crashed: true })
+    await flush()
+    expect(events('teamFailed')).toEqual([
+      { type: 'teamFailed', ids: ['m1'] },
+      { type: 'teamFailed', ids: ['m2'] }
+    ])
+    expect(events('userStatus')).toContainEqual({ type: 'userStatus', id: queuedUser.id, status: 'failed' })
+    expect(last('status')).toMatchObject({ state: 'crashed', error: 'The agent stopped unexpectedly (exit code 3).', detail: 'panic' })
+    expect(deps.state.unregister).toHaveBeenCalled()
+    expect(deps.team.revokeSecret).toHaveBeenCalledWith(paneId)
+    expect(chat.send({ paneId, text: 'x' })).toMatchObject({ ok: false, code: 'closed' })
+  })
+
+  it('a turn the agent starts by itself shows working and ends idle', async () => {
+    const chat = createChatSessions(deps)
+    await openOk(chat)
+    stateCalls.length = 0
+    adapters[0].emit('state', { state: 'running' })
+    expect(last('status')).toMatchObject({ state: 'working' })
+    const queued = chat.send({ paneId, text: 'wait' })
+    expect(queued.queued).toBe(true)
+    adapters[0].emit('turnEnd', { status: 'completed' })
+    await flush()
+    expect(stateCalls.slice(0, 3)).toEqual([['UserPromptSubmit'], ['Stop'], ['observe', 'ScreenReady']])
+    expect(adapters[0].send).toHaveBeenCalledWith({ uuid: queued.id, text: 'wait' })
+  })
+})
+
+describe('stream events', () => {
+  it('maps text, thinking, tools and results; subagent text stays out', async () => {
+    const chat = createChatSessions(deps)
+    await openOk(chat)
+    const a = adapters[0]
+    a.emit('textDelta', { messageId: 'm1', index: 0, text: 'Hel' })
+    a.emit('textDelta', { messageId: null, text: 'sub', parentToolUseId: 't0' })
+    a.emit('assistant', { messageId: 'm1', blocks: [{ type: 'thinking', text: 'hmm' }, { type: 'text', text: 'Hello' }, { type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'ls  -la' } }] })
+    a.emit('assistant', { messageId: 'm2', parentToolUseId: 't0', blocks: [{ type: 'text', text: 'inside' }, { type: 'tool_use', id: 't2', name: 'Read', input: { file_path: 'a' } }] })
+    a.emit('toolResult', { toolUseId: 't1', isError: false, text: 'out' })
+    a.emit('rateLimit', { status: 'allowed', fiveHour: { utilization: 0.5, resetsAt: 1 }, sevenDay: null })
+    expect(events().filter((e) => e.type !== 'status')).toEqual([
+      { type: 'assistantDelta', messageId: 'm1', text: 'Hel' },
+      { type: 'thinking', messageId: 'm1', text: 'hmm' },
+      { type: 'assistant', messageId: 'm1', text: 'Hello' },
+      { type: 'tool', id: 't1', name: 'Bash', summary: 'ls -la', input: { command: 'ls  -la' }, status: 'running' },
+      { type: 'tool', id: 't2', name: 'Read', summary: 'a', input: { file_path: 'a' }, status: 'running', parentToolUseId: 't0' },
+      { type: 'toolResult', id: 't1', isError: false, text: 'out' },
+      { type: 'rateLimit', fiveHour: { utilization: 0.5, resetsAt: 1 } }
+    ])
+    a.emit('turnEnd', { status: 'failed', result: 'API error' })
+    expect(events('tool').at(-1)).toEqual({ type: 'tool', id: 't2', status: 'error' })
+    expect(last('turnEnd')).toMatchObject({ status: 'failed', error: 'API error' })
+  })
+})
+
+describe('one frame per block', () => {
+  it('merges the blocks of a message', async () => {
+    const chat = createChatSessions(deps)
+    await openOk(chat)
+    const a = adapters[0]
+    a.emit('assistant', { messageId: 'm1', blocks: [{ type: 'thinking', text: 'plan' }] })
+    a.emit('assistant', { messageId: 'm1', blocks: [{ type: 'text', text: 'First.' }] })
+    a.emit('assistant', { messageId: 'm1', blocks: [{ type: 'tool_use', id: 't1', name: 'Bash', input: {} }] })
+    a.emit('assistant', { messageId: 'm1', blocks: [{ type: 'text', text: 'Second.' }] })
+    expect(events('assistant')).toEqual([
+      { type: 'assistant', messageId: 'm1', text: 'First.' },
+      { type: 'assistant', messageId: 'm1', text: 'First.\n\nSecond.' }
+    ])
+    expect(events('thinking')).toEqual([{ type: 'thinking', messageId: 'm1', text: 'plan' }])
+    expect(events('tool')).toHaveLength(1)
+  })
+})
+
+describe('approvals', () => {
+  async function withPermission(chat, requestId = 'req-1') {
+    await openOk(chat)
+    const a = adapters[0]
+    const u = chat.send({ paneId, text: 'do it' })
+    await flush()
+    a.emit('accepted', { uuid: u.id })
+    await flush()
+    stateCalls.length = 0
+    a.emit('permission', { requestId, toolName: 'Bash', displayName: 'Bash', input: { command: 'rm x' }, description: 'Remove', suggestions: [], toolUseId: 'toolu_9' })
+    await flush()
+    return a
+  }
+
+  it('pending approval feeds the status; allow answers once', async () => {
+    const chat = createChatSessions(deps)
+    const a = await withPermission(chat)
+    expect(last('approval')).toEqual({ type: 'approval', requestId: 'req-1', toolName: 'Bash', displayName: 'Bash', input: { command: 'rm x' }, description: 'Remove', status: 'pending' })
+    expect(last('status')).toMatchObject({ state: 'approval' })
+    expect(stateCalls).toEqual([['PermissionRequest', 'toolu_9'], ['Notification', 'permission_prompt', 'toolu_9']])
+    expect(await chat.approve({ paneId, requestId: 'req-1', decision: 'allow' })).toEqual({ ok: true })
+    expect(a.answerPermission).toHaveBeenCalledWith('req-1', { behavior: 'allow', session: false })
+    expect(last('approvalStatus')).toEqual({ type: 'approvalStatus', requestId: 'req-1', status: 'allowed' })
+    expect(last('status')).toMatchObject({ state: 'working' })
+    await flush()
+    expect(stateCalls.at(-1)).toEqual(['PostToolUse', 'toolu_9'])
+    expect(await chat.approve({ paneId, requestId: 'req-1', decision: 'allow' })).toMatchObject({ ok: false, code: 'unknown' })
+    expect(await chat.approve({ paneId, requestId: 'nope', decision: 'deny' })).toMatchObject({ ok: false, code: 'unknown' })
+    expect(a.answerPermission).toHaveBeenCalledTimes(1)
+  })
+
+  it('allow for the session, and deny with the default or given message', async () => {
+    const chat = createChatSessions(deps)
+    const a = await withPermission(chat)
+    await chat.approve({ paneId, requestId: 'req-1', decision: 'allowSession' })
+    expect(a.answerPermission).toHaveBeenLastCalledWith('req-1', { behavior: 'allow', session: true })
+    expect(last('approvalStatus').status).toBe('allowedSession')
+    a.emit('permission', { requestId: 'req-2', toolName: 'Write', input: {} })
+    await chat.approve({ paneId, requestId: 'req-2', decision: 'deny' })
+    expect(a.answerPermission).toHaveBeenLastCalledWith('req-2', { behavior: 'deny', session: false, message: 'The user denied this.' })
+    a.emit('permission', { requestId: 'req-3', toolName: 'Write', input: {} })
+    await chat.approve({ paneId, requestId: 'req-3', decision: 'deny', message: 'Use the other file.' })
+    expect(a.answerPermission).toHaveBeenLastCalledWith('req-3', { behavior: 'deny', session: false, message: 'Use the other file.' })
+    expect(last('approvalStatus')).toEqual({ type: 'approvalStatus', requestId: 'req-3', status: 'denied' })
+  })
+
+  it('a failed answer can be tried again; a cancelled request cannot be answered', async () => {
+    const chat = createChatSessions(deps)
+    const a = await withPermission(chat)
+    a.answerPermission.mockResolvedValueOnce({ ok: false, error: 'stdin closed' })
+    expect(await chat.approve({ paneId, requestId: 'req-1', decision: 'allow' })).toMatchObject({ ok: false })
+    a.emit('permissionCancelled', { requestId: 'req-1' })
+    expect(last('approvalStatus')).toEqual({ type: 'approvalStatus', requestId: 'req-1', status: 'cancelled' })
+    expect(await chat.approve({ paneId, requestId: 'req-1', decision: 'allow' })).toMatchObject({ ok: false, code: 'unknown' })
+  })
+
+  it('queued messages wait while an approval is pending', async () => {
+    const chat = createChatSessions(deps)
+    const a = await withPermission(chat)
+    expect(chat.send({ paneId, text: 'meanwhile' }).queued).toBe(true)
+    await chat.approve({ paneId, requestId: 'req-1', decision: 'allow' })
+    expect(a.send).toHaveBeenCalledTimes(1) // the turn is still running
+  })
+})
+
+describe('interrupt, close, exit', () => {
+  it('interrupt keeps queued messages; they go after the interrupted turn', async () => {
+    const chat = createChatSessions(deps)
+    await openOk(chat)
+    const a = adapters[0]
+    const u = chat.send({ paneId, text: 'long' })
+    await flush()
+    a.emit('accepted', { uuid: u.id })
+    const q = chat.send({ paneId, text: 'next' })
+    await flush()
+    stateCalls.length = 0
+    expect(await chat.interrupt({ paneId })).toEqual({ ok: true })
+    expect(a.interrupt).toHaveBeenCalled()
+    a.emit('turnEnd', { status: 'interrupted' })
+    await flush()
+    expect(stateCalls.slice(0, 2)).toEqual([['Interrupt'], ['observe', 'ScreenReady']])
+    expect(a.send).toHaveBeenLastCalledWith({ uuid: q.id, text: 'next' })
+  })
+
+  it('exit code 1 after an interrupted turn is an end, not a crash', async () => {
+    const chat = createChatSessions(deps)
+    await openOk(chat)
+    const a = adapters[0]
+    a.emit('state', { state: 'running' })
+    a.emit('turnEnd', { status: 'interrupted' })
+    a.emit('exit', { code: 1, signal: null, stderrTail: '' })
+    expect(last('status')).toMatchObject({ state: 'ended' })
+  })
+
+  it('close ends the process, its status and its secret', async () => {
+    const chat = createChatSessions(deps)
+    const r = await openOk(chat)
+    expect(await chat.close({ paneId })).toEqual({ ok: true })
+    await flush()
+    expect(adapters[0].close).toHaveBeenCalled()
+    expect(deps.state.unregister).toHaveBeenCalledWith(paneId, r.launchToken)
+    expect(deps.team.revokeSecret).toHaveBeenCalledWith(paneId)
+    expect(events('status').filter((s) => s.state === 'ended')).toHaveLength(1)
+    expect(chat.list()).toEqual([])
+    expect(await chat.close({ paneId })).toEqual({ ok: true })
+  })
+
+  it('closeAll closes every chat', async () => {
+    const chat = createChatSessions(deps)
+    await openOk(chat)
+    await chat.open({ paneId: 'pane-2', cwd: tmp, permissions: 'manual' })
+    await chat.closeAll()
+    expect(adapters.every((a) => a.close.mock.calls.length === 1)).toBe(true)
+    expect(chat.list()).toEqual([])
+  })
+
+  it('close while starting: nothing is left running or registered', async () => {
+    let release
+    const gate = new Promise((r) => (release = r))
+    const chat = createChatSessions({
+      ...deps,
+      createAdapter: (opts) => {
+        const a = new FakeAdapter(opts, null)
+        a.start = vi.fn(async () => {
+          await gate
+          return { ok: false, code: 'exit', error: 'killed' }
+        })
+        a.close = vi.fn(async () => release())
+        adapters.push(a)
+        return a
+      }
+    })
+    const opening = chat.open({ paneId, cwd: tmp, permissions: 'manual' })
+    await flush()
+    await chat.close({ paneId })
+    expect((await opening).ok).toBe(false)
+    expect(deps.state.register).not.toHaveBeenCalled()
+    expect(events('status').map((s) => s.state)).toEqual(['starting', 'ended'])
+    expect(chat.list()).toEqual([])
+  })
+
+  it('setOption', async () => {
+    const chat = createChatSessions(deps)
+    await openOk(chat)
+    const a = adapters[0]
+    expect(await chat.setOption({ paneId, model: 'opus', effort: 'max' })).toEqual({ ok: true, model: 'opus', effort: 'max' })
+    expect(a.setModel).toHaveBeenCalledWith('opus')
+    expect(a.setEffort).toHaveBeenCalledWith('max')
+    expect(last('status')).toMatchObject({ model: 'opus' })
+    expect((await chat.setOption({ paneId, permissionMode: 'bypassPermissions' })).ok).toBe(false)
+    expect(a.setPermissionMode).not.toHaveBeenCalled()
+  })
+})
+
+describe('history and seq', () => {
+  it('every event has an increasing seq; history returns the journal and whether it is live', async () => {
+    const chat = createChatSessions(deps)
+    await openOk(chat)
+    chat.send({ paneId, text: 'hi' })
+    await flush()
+    const seqs = sent.map((e) => e.seq)
+    expect(seqs).toEqual(seqs.map((_, i) => i + 1))
+    expect(sent.every((e) => e.channel === 'chat:event' && e.paneId === paneId)).toBe(true)
+    const h = chat.history({ paneId })
+    expect(h).toMatchObject({ ok: true, seq: seqs.at(-1), open: true })
+    expect(h.events.map((e) => e.seq)).toEqual(seqs)
+    expect(h.meta).toMatchObject({ agent: 'claude', cwd: tmp })
+    await chat.close({ paneId })
+    expect(chat.history({ paneId }).open).toBe(false)
+    // A new manager (Tessel restarted) goes on from the journal's seq.
+    const before = chat.history({ paneId }).seq
+    sent = []
+    const again = createChatSessions(makeDeps())
+    await again.open({ paneId, cwd: tmp, permissions: 'manual' })
+    expect(sent[0].seq).toBe(before + 1)
+    expect(again.history({ paneId: '../x' })).toMatchObject({ ok: false, open: false })
+  })
+})
+
+describe('IPC', () => {
+  function wire(chat) {
+    const handlers = {}
+    chat.register({ handle: (ch, fn) => (handlers[ch] = (q) => fn({}, q)) })
+    return handlers
+  }
+
+  it('registers the chat channels', () => {
+    const h = wire(createChatSessions(deps))
+    expect(Object.keys(h).sort()).toEqual(
+      ['chat:approve', 'chat:close', 'chat:history', 'chat:interrupt', 'chat:open', 'chat:send', 'chat:sendTeam', 'chat:setOption', 'chat:trust'].sort()
+    )
+  })
+
+  it('validates every argument', async () => {
+    const chat = createChatSessions(deps)
+    const h = wire(chat)
+    await h['chat:open']({ paneId, cwd: tmp, permissions: 'manual' })
+    const bad = { ok: false, code: 'invalid' }
+    expect(await h['chat:send']({ paneId: 'a/b', text: 'x' })).toMatchObject(bad)
+    expect(await h['chat:send']({ paneId, text: 'x'.repeat(LIMITS.text + 1) })).toMatchObject(bad)
+    expect(await h['chat:send']({ paneId, text: '   ' })).toMatchObject(bad)
+    expect(await h['chat:send'](null)).toMatchObject(bad)
+    expect(await h['chat:approve']({ paneId, requestId: 'r', decision: 'always' })).toMatchObject(bad)
+    expect(await h['chat:approve']({ paneId, requestId: 'r r', decision: 'allow' })).toMatchObject(bad)
+    expect(await h['chat:setOption']({ paneId, model: '-x' })).toMatchObject(bad)
+    expect(await h['chat:setOption']({ paneId, model: 'a;b' })).toMatchObject(bad)
+    expect(await h['chat:setOption']({ paneId, permissionMode: 'yolo' })).toMatchObject(bad)
+    expect(await h['chat:setOption']({ paneId })).toMatchObject(bad)
+    const many = Array.from({ length: LIMITS.teamPerCall + 1 }, (_, i) => ({ id: `m${i}`, from: '#1', text: 't' }))
+    expect(await h['chat:sendTeam']({ paneId, messages: many })).toMatchObject(bad)
+    expect(await h['chat:sendTeam']({ paneId, messages: [{ id: 'm', from: '#1', text: 'x'.repeat(LIMITS.teamText + 1) }] })).toMatchObject(bad)
+    expect(await h['chat:sendTeam']({ paneId, messages: [{ id: 'bad id', text: 't' }] })).toMatchObject(bad)
+    expect(await h['chat:trust']({ cwd: 'relative' })).toMatchObject(bad)
+    expect(await h['chat:trust']({ cwd: tmp })).toEqual({ ok: true })
+    expect(await h['chat:open']({ paneId: 'p2', cwd: tmp, permissions: 'root' })).toMatchObject(bad)
+    expect(await h['chat:open']({ paneId: 'p2', cwd: tmp, permissions: 'manual', model: '--foo' })).toMatchObject(bad)
+    expect(await h['chat:history']({ paneId: '..' })).toMatchObject(bad)
+    expect(await h['chat:interrupt']({ paneId: '' })).toMatchObject(bad)
+    expect(await h['chat:close']({ paneId: 5 })).toMatchObject(bad)
+    expect(adapters[0].send).not.toHaveBeenCalled()
+  })
+
+  it('never a command or a whole environment from the window; its variables go to paneEnv as for a terminal pane', async () => {
+    const chat = createChatSessions(deps)
+    const h = wire(chat)
+    await h['chat:open']({ paneId, cwd: tmp, permissions: 'manual', accountEnv: { ACCOUNT: '1' }, extraEnv: { MINE: '2' }, unsetEnv: ['ANTHROPIC_API_KEY', 5], env: { EVIL: '1' }, exe: 'C:\\evil.exe' })
+    const call = deps.env.forPane.mock.calls[0][0]
+    expect(call).toMatchObject({ accountEnv: { ACCOUNT: '1' }, extraEnv: { MINE: '2' }, unsetEnv: ['ANTHROPIC_API_KEY'] })
+    expect(call.env).toBeUndefined()
+    expect(adapters[0].opts.exe).toBe('C:\\bin\\claude.exe')
+    expect(adapters[0].opts.env.EVIL).toBeUndefined()
+  })
+})
+
+describe('with the real agent status store', () => {
+  it('idle -> working -> approval -> working -> idle', async () => {
+    let tick = Date.now()
+    const store = createAgentStateStore({ dir: join(tmp, 'status'), now: () => tick })
+    const chat = createChatSessions({ ...deps, state: store, now: () => tick })
+    const r = await openOk(chat)
+    const st = () => store.snapshot()[paneId]
+    const until = (expected) => vi.waitFor(() => expect(st()).toMatchObject(expected), { timeout: 3000, interval: 5 })
+    await until({ state: 'idle', provider: 'claude', launchToken: r.launchToken })
+    const a = adapters[0]
+    const u = chat.send({ paneId, text: 'go' })
+    await flush()
+    tick++
+    a.emit('accepted', { uuid: u.id })
+    await until({ state: 'working', hookSeen: true, sessionId: r.sessionId })
+    tick++
+    a.emit('permission', { requestId: 'rq', toolName: 'Bash', input: {}, toolUseId: 'toolu_1' })
+    await until({ state: 'approval' })
+    tick++
+    await chat.approve({ paneId, requestId: 'rq', decision: 'allow' })
+    await until({ state: 'working' })
+    tick++
+    a.emit('turnEnd', { status: 'completed' })
+    await until({ state: 'idle', reason: 'ready' })
+    await chat.close({ paneId })
+    await vi.waitFor(() => expect(st()).toBeUndefined(), { timeout: 3000, interval: 5 })
+    await store.dispose()
+  })
+})

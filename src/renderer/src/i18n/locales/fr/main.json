@@ -704,6 +704,30 @@
       "trust": "Faire confiance et les lancer",
       "dontTrust": "Les laisser désactivés",
       "hook": "hook : {{name}}"
+    },
+    "chat": {
+      "answerFailed": "La réponse n'a pas pu être envoyée.",
+      "authError": "Claude n'est pas connecté (ou sa connexion a expiré). Connectez-vous, puis rouvrez ce chat.",
+      "busy": "Ce chat est encore en train de se fermer.",
+      "closedWhileStarting": "Le chat a été fermé pendant son démarrage.",
+      "crashed": "L'agent s'est arrêté de façon inattendue (code de sortie {{code}}).",
+      "exitedAtStart": "Claude Code s'est arrêté pendant son démarrage.",
+      "invalid": "Demande de chat non valide.",
+      "noApproval": "Cette demande a déjà reçu une réponse ou n'existe plus.",
+      "noClaude": "Claude Code est introuvable. Installez-le, puis réessayez.",
+      "notOpen": "Ce chat n'est pas en cours d'exécution.",
+      "sessionOpen": "Cette conversation est déjà ouverte dans un autre panneau.",
+      "signin": "Claude n'est pas connecté. Connectez-vous à Claude Code, puis réessayez.",
+      "spawnFailed": "Claude Code n'a pas pu être lancé.",
+      "startFailed": "L'agent n'a pas pu démarrer.",
+      "startTimeout": "Claude Code n'a pas répondu à temps.",
+      "tooMany": "Trop de chats sont ouverts.",
+      "untrusted": "Ce dossier n'est pas encore approuvé pour les agents de chat.",
+      "trustTitle": "Approuver ce dossier pour un agent de chat ?",
+      "trustMessage": "Un agent de chat exécute Claude dans {{dir}} sans son terminal : Claude exécute alors les hooks et les serveurs MCP que ce dossier définit (.claude/settings.json, .mcp.json) sans demander.",
+      "trustDetail": "Ne l'approuvez que si vous savez d'où vient ce dossier. Un panneau terminal Claude vous le demande lui-même.",
+      "trustYes": "Approuver ce dossier",
+      "trustNo": "Annuler"
     }
   }
 }
