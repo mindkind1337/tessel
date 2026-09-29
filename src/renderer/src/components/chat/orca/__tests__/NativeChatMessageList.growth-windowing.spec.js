@@ -1,12 +1,13 @@
 // After Orca's NativeChatMessageList.growth-windowing.test.tsx (MIT, Copyright (c) 2026 Lovecast Inc.)
 // Exercises the real virtualizer while a streaming row grows and messages append.
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import {
   NATIVE_CHAT_BOTTOM_THRESHOLD_PX,
   NATIVE_CHAT_FOLLOW_REARM_PX
 } from '../../../../chat/orca/native-chat-autoscroll.js'
 import { NATIVE_CHAT_ROW_GAP_PX } from '../../../../chat/orca/native-chat-row-height-estimate.js'
 import {
+  advanceFrame,
   BELOW_TRANSCRIPT_PX,
   deliverResizes,
   fireScroll,
@@ -28,6 +29,7 @@ import {
   stubResizeObserver,
   TRANSCRIPT_LENGTH,
   unmountAll,
+  useFrameClock,
   VIEWPORT_PX,
   windowState
 } from './native-chat-windowing-test-harness.js'
@@ -411,6 +413,9 @@ describe('transcript follow ownership across growth and appends', () => {
   })
 
   it('settles a pending end reconcile after the reader keeps scrolling away', async () => {
+    // Six frames of a simulated clock, not six real ones a loaded machine stretches.
+    const stopClock = useFrameClock()
+    onTestFinished(stopClock)
     setMeasuredTail(0)
     await mountList(streamingList(0))
     const scroller = scrollRoot()
@@ -427,9 +432,7 @@ describe('transcript follow ownership across growth and appends', () => {
     fireScroll(scroller)
     expect(scrollToSpy).toHaveBeenLastCalledWith({ behavior: 'auto', top: 1800 })
 
-    for (let frame = 0; frame < 6; frame += 1) {
-      await new Promise((resolve) => requestAnimationFrame(() => resolve()))
-    }
+    for (let frame = 0; frame < 6; frame += 1) await advanceFrame()
     await flush()
     const scheduledFrames = scheduleSpy.mock.calls.length
     scheduleSpy.mockRestore()

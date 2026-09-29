@@ -78,6 +78,10 @@ export function useNativeChatTranscriptWindow(options) {
       anchorTo: 'end',
       followOnAppend: false,
       scrollEndThreshold: -1,
+      // Tessel: a hidden pane lays nothing out (every row measures 0); rows keep
+      // their last size meanwhile, so the reader's place is not shifted by
+      // phantom shrinks that the reveal's re-measure then over-corrects.
+      useCachedMeasurements: !read('isVisible'),
       scrollToFn: (offset, settings, instance) => {
         const target = offset + (settings.adjustments ?? 0)
         const element = instance.scrollElement
