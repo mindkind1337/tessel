@@ -15,7 +15,7 @@ export const INTENTS = ['change', 'question']
 let seq = 0
 function newId() {
   seq += 1
-  return `dm-${Date.now().toString(36)}-${seq}`
+  return `dm-${Date.now().toString(36)}-${seq}` // i18n-ignore
 }
 
 // The comment as stored: trimmed, at most MAX_COMMENT characters.
@@ -125,15 +125,15 @@ export function buildFeedbackMessage({ url, title, viewport, items }, format = f
   } else if (shots.length) {
     const lines = [`## Design Feedback: ${inlineText(title) || inlineText(url)}`, ''] // i18n-ignore
     if (url) lines.push(`**URL:** ${inlineText(url)}`)
-    if (title) lines.push(`**Title:** ${inlineText(title)}`)
+    if (title) lines.push(`**Title:** ${inlineText(title)}`) // i18n-ignore
     parts.push(lines.join('\n').trimEnd())
   }
   shots.forEach((s, n) => {
     const lines = [`### ${elements.length + n + 1}. Page screenshot`] // i18n-ignore
     lines.push(`Screenshot of the page: ${inlineText(s.screenshot.path)}`) // i18n-ignore
     if (s.comment) {
-      lines.push(`**Intent:** ${s.intent === 'question' ? 'question' : 'change'}`)
-      lines.push(`**Feedback:** ${inlineText(s.comment)}`)
+      lines.push(`**Intent:** ${s.intent === 'question' ? 'question' : 'change'}`) // i18n-ignore
+      lines.push(`**Feedback:** ${inlineText(s.comment)}`) // i18n-ignore
     }
     parts.push(lines.join('\n'))
   })

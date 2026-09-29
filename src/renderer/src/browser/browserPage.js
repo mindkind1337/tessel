@@ -188,5 +188,5 @@ export function shortcutAction(e) {
 export function portAddress(port) {
   if (!port) return ''
   if (port.url) return String(port.url).replace(/^https?:\/\//, '').replace(/\/$/, '')
-  return port.port ? `localhost:${port.port}` : ''
+  return port.port ? `localhost:${port.port}` : '' // i18n-ignore
 }
