@@ -6,7 +6,7 @@ import SettingsDialog from '../components/SettingsDialog.vue'
 import LaunchMenu from '../components/LaunchMenu.vue'
 import SessionOptionPicker from '../components/SessionOptionPicker.vue'
 import { settings, resetSettings, loadSettings } from '../settings'
-import { modelLists, modelsFor, refreshModels, loadModelLists, resetModelListsForTests } from '../agentModels'
+import { modelLists, modelsFor, refreshModels, loadModelLists, resetModelListsForTests, refreshIfStale, MODEL_LIST_MAX_AGE_MS } from '../agentModels'
 import { createClaudeModelSwitchObserver, hasClaudeModelSwitchConfirmation, hasClaudeModelSwitchSuccess } from '../claudeModelSwitch'
 import { sessionPillLabel } from '../sessionOptionLabels'
 import { setMessages } from '../i18n'
@@ -105,6 +105,54 @@ describe('the model lists', () => {
     expect(probe).not.toHaveBeenCalled()
     expect((await refreshModels('aider')).reason).toBe('unsupported')
     window.shellApi = prev
+  })
+})
+
+describe('a model menu that opens refreshes a missing or old list', () => {
+  let prev
+  beforeEach(() => {
+    resetModelListsForTests()
+    prev = window.shellApi
+  })
+  afterEach(() => {
+    resetModelListsForTests()
+    window.shellApi = prev
+  })
+
+  it('missing: one background probe, and its models are listed', async () => {
+    const probe = vi.fn(async () => ({ ok: true, fetchedAt: Date.now(), models: [{ id: 'gpt-6-astra', label: 'GPT-6-Astra' }] }))
+    window.shellApi = { agentModelLists: async () => ({}), probeAgentModels: probe }
+    refreshIfStale('codex')
+    refreshIfStale('codex')
+    await flushPromises()
+    expect(probe).toHaveBeenCalledTimes(1)
+    expect(modelsFor('codex').map((m) => m.id)).toContain('gpt-6-astra')
+  })
+
+  it('fresh: no probe; a day old: probed again', async () => {
+    const probe = vi.fn(async () => ({ ok: true, fetchedAt: Date.now(), models: [{ id: 'gpt-7', label: 'GPT-7' }] }))
+    window.shellApi = { agentModelLists: async () => ({ codex: { models: [{ id: 'gpt-6', label: 'GPT-6' }], fetchedAt: Date.now() } }), probeAgentModels: probe }
+    await loadModelLists()
+    refreshIfStale('codex')
+    await flushPromises()
+    expect(probe).not.toHaveBeenCalled()
+    modelLists.codex.fetchedAt = Date.now() - MODEL_LIST_MAX_AGE_MS - 1
+    refreshIfStale('codex')
+    await flushPromises()
+    expect(probe).toHaveBeenCalledTimes(1)
+  })
+
+  it('a failure waits 30 s before the next try; an agent without a probe is left alone', async () => {
+    const probe = vi.fn(async () => ({ ok: false, reason: 'failed' }))
+    window.shellApi = { agentModelLists: async () => ({}), probeAgentModels: probe }
+    refreshIfStale('codex')
+    await flushPromises()
+    refreshIfStale('codex')
+    await flushPromises()
+    expect(probe).toHaveBeenCalledTimes(1)
+    refreshIfStale('aider')
+    await flushPromises()
+    expect(probe).toHaveBeenCalledTimes(1)
   })
 })
 

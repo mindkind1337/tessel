@@ -7,7 +7,8 @@
 // an agent whose running session changes model in its own picker (Codex)
 // offers "Choose in agent picker…". Used by the new pane menu and a pane's
 // … menu; the caller decides what a pick does.
-import { computed } from 'vue'
+import { computed, onMounted } from 'vue'
+import { refreshIfStale } from '../agentModels'
 import { getAgentSessionOptionCatalog, modelOptions } from '../../../shared/agentSessionOptions'
 import { sessionOptionLabel, sessionChoiceLabel, modelDescription } from '../sessionOptionLabels'
 import { t } from '../i18n'
@@ -31,6 +32,8 @@ const props = defineProps({
 const emit = defineEmits(['set', 'action'])
 
 const catalog = computed(() => getAgentSessionOptionCatalog(props.agentId))
+// Shown: a missing or old model list is refreshed in the background.
+onMounted(() => refreshIfStale(props.agentId))
 const chosenModel = computed(() => (props.values && props.values.model) || null)
 const options = computed(() => (catalog.value && chosenModel.value ? modelOptions(catalog.value, props.models, chosenModel.value) : []))
 // The chosen model is listed even when the list does not have it (a model
