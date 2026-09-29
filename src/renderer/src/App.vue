@@ -13,7 +13,9 @@ import UpdateDialog from './components/UpdateDialog.vue'
 import UpdateCard from './components/UpdateCard.vue'
 import SshPasswordDialog from './components/remote/SshPasswordDialog.vue'
 import { settings, loadSettings, DEFAULT_SETTINGS } from './settings'
-import { effectiveAgent, agentEnabled, launchSignature, launchIsYolo } from '../../shared/agentPrefs'
+import { effectiveAgent, agentEnabled, launchSignature, launchIsYolo, launchSessionValues } from '../../shared/agentPrefs'
+import { validPaneSessionOptions } from '../../shared/agentSessionOptions'
+import { loadModelLists, modelsFor } from './agentModels'
 import { THEMES } from './themes'
 import McpDialog from './components/McpDialog.vue'
 import CommandPalette from './components/CommandPalette.vue'
@@ -742,7 +744,26 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
   }
   // Settings > Agents: its command, arguments and variables; and the account
   // chosen for it (Settings > AI provider accounts), when there is one.
-  const launch = agent ? effectiveAgent(agent, settings.agentPrefs, settings.agentPermissions) : null
+  // Its model (and effort): the pane's own choice (new pane menu, pane menu >
+  // Model), else the agent's default (Settings > Agents), else no flag.
+  // A worker (orchestration) starts with the model its coordinator asked for:
+  // its flags come from workerLaunchArgs (the one place for a worker's launch
+  // options), and it becomes the pane's own choice for its restarts.
+  const workerChoice =
+    agent && opts.launchOptions
+      ? validPaneSessionOptions({
+          model: opts.launchOptions.model,
+          ...(typeof opts.launchOptions.effort === 'string' && opts.launchOptions.effort ? { effort: opts.launchOptions.effort } : {})
+        })
+      : null
+  const paneChoice = agent ? validPaneSessionOptions(opts.sessionOptions) || workerChoice : null
+  const sessionValues = agent ? launchSessionValues(paneChoice, settings.agentSessionOptions, agent.id) : null
+  const agentModels = agent ? modelsFor(agent.id) : null
+  // What it runs with, flags included (for the signature and the header).
+  const launchAll = agent ? effectiveAgent(agent, settings.agentPrefs, settings.agentPermissions, sessionValues, agentModels) : null
+  const launch = workerChoice ? effectiveAgent(agent, settings.agentPrefs, settings.agentPermissions, null, agentModels) : launchAll
+  // The model flags really added (none when your own arguments set them).
+  const modelApplied = !!(launchAll && sessionValues && launchAll.args !== effectiveAgent(agent, settings.agentPrefs, settings.agentPermissions).args)
   const extraEnv = launch ? { ...launch.env } : {}
   let unsetEnv = []
   // The account's own variables go separately, so they are never crowded out
@@ -823,6 +844,7 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
       backend: 'conpty',
       sessionId: opts.sessionId || null,
       accountId,
+      ...(paneChoice ? { sessionOptions: paneChoice } : {}),
       remoteHostId: opts.remoteHostId || null,
       remotePath: (opts.remoteHostId && opts.remotePath) || null,
       failed: msg,
@@ -854,8 +876,15 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
     agentLaunchToken: res.agentLaunchToken || null,
     // How it was launched (Settings > Agents), to show Yolo and whether a
     // restart is needed to apply changed settings.
-    launchSig: !attached && launch ? launchSignature(launch) : null,
+    launchSig: !attached && launchAll ? launchSignature(launchAll) : null,
     launchYolo: !attached && launch ? launchIsYolo(agent.id, launch) : false,
+    // The pane's own model choice (kept with the layout and for restarts).
+    ...(paneChoice ? { sessionOptions: paneChoice } : {}),
+    // Started with a chosen model: the header shows it until the agent's
+    // conversation answers with another one.
+    ...(!attached && modelApplied
+      ? { modelChoice: { model: sessionValues.model, effort: typeof sessionValues.effort === 'string' ? sessionValues.effort : null } }
+      : {}),
     launchedAt: Date.now(),
     teamTools: !attached && teamToolsReady,
     toolsVersion: !attached && teamToolsReady ? teamToolsVersion : null,
@@ -890,7 +919,9 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
     // Its arguments (or the Yolo flag) at the end: they work with resuming too.
     // A worker's launch options (model, effort, its first prompt) only on a
     // fresh start, through the one helper (src/shared/orchestration.js).
-    const extra = opts.launchOptions && !start.resumed ? workerLaunchArgs(agent.id, opts.launchOptions) : ''
+    const ownArgs = typeof (settings.agentPrefs[agent.id] || {}).args === 'string' ? settings.agentPrefs[agent.id].args : ''
+    const workerOpts = opts.launchOptions && start.resumed ? { model: opts.launchOptions.model, effort: opts.launchOptions.effort } : opts.launchOptions
+    const extra = workerOpts ? workerLaunchArgs(agent.id, workerOpts, { ownArgs, models: agentModels }) : ''
     if (opts.launchOptions) leaf.launchOptions = { model: opts.launchOptions.model || null, effort: opts.launchOptions.effort || null }
     const full = (launch.args ? `${start.line} ${launch.args}` : start.line) + extra
     const line = opts.wrap ? opts.wrap(full) : full
@@ -1009,7 +1040,8 @@ function serializeNode(node) {
       team: node.team || null,
       teamTools: !!node.teamTools,
       toolsVersion: node.toolsVersion || null,
-      modelOverride: node.detected ? null : node.modelOverride || null,
+      // Its own model choice (pane menu > Model), for the next start.
+      sessionOptions: node.detected ? undefined : node.sessionOptions || undefined,
       launchSig: node.detected ? undefined : node.launchSig || undefined,
       launchYolo: node.detected ? undefined : node.launchYolo || undefined
     }
@@ -1072,6 +1104,7 @@ async function deserializeNode(snap, cwd = null) {
             ? snap.accountId
             : undefined,
         launchedAt: Number.isFinite(snap.launchedAt) ? snap.launchedAt : null,
+        ...(validPaneSessionOptions(snap.sessionOptions) ? { sessionOptions: validPaneSessionOptions(snap.sessionOptions) } : {}),
         restoredText: savedOutput[savedId] || '',
         sleeping: { at: snap.sleeping.at },
         broadcast: snap.broadcast !== false
@@ -1091,6 +1124,7 @@ async function deserializeNode(snap, cwd = null) {
           : undefined,
       launchedAt: Number.isFinite(snap.launchedAt) ? snap.launchedAt : null,
       startDir: typeof snap.startDir === 'string' ? snap.startDir : null,
+      sessionOptions: snap.sessionOptions,
       resume: settings.resumeAgents,
       remoteHostId: typeof snap.remoteHostId === 'string' && /^ssh-[\w-]{1,60}$/.test(snap.remoteHostId) ? snap.remoteHostId : undefined,
       remotePath: typeof snap.remotePath === 'string' && snap.remotePath.length <= 1024 ? snap.remotePath : undefined,
@@ -1100,7 +1134,6 @@ async function deserializeNode(snap, cwd = null) {
     if (Number.isInteger(snap.num) && snap.num > 0) leaf.num = snap.num
     if (snap.teamTools) leaf.teamTools = true
     if (typeof snap.toolsVersion === 'string') leaf.toolsVersion = snap.toolsVersion
-    if (typeof snap.modelOverride === 'string' && snap.modelOverride) leaf.modelOverride = snap.modelOverride.slice(0, 80)
     // Still running since before: it keeps how it was launched.
     if (leaf.attached && typeof snap.launchSig === 'string') {
       leaf.launchSig = snap.launchSig.slice(0, 20000)
@@ -1949,7 +1982,7 @@ function agentById(id) {
 
 // Open a terminal (kind 'shell') or an agent next to `targetId`, per the
 // chosen placement. Agents run inside the default shell.
-async function launch({ kind, id }, targetId = activeId.value, where = placement.value) {
+async function launch({ kind, id, sessionOptions = null }, targetId = activeId.value, where = placement.value) {
   closeMenus()
   const agent = kind === 'agent' ? agentById(id) : null
   if (kind === 'agent' && (!agent || agent.available === false)) return
@@ -1983,7 +2016,7 @@ async function launch({ kind, id }, targetId = activeId.value, where = placement
     ws.remote = from && from.remote ? { ...from.remote } : null
     workspaces.value.push(ws)
     selectWorkspace(ws.id)
-    const leaf = await createLeaf(shellId, agent, ws.cwd, worktree, wsLeafOpts(ws))
+    const leaf = await createLeaf(shellId, agent, ws.cwd, worktree, wsLeafOpts(ws, { sessionOptions }))
     if (leaf) {
       ws.tree = leaf
       ws.activeId = leaf.id
@@ -1993,11 +2026,11 @@ async function launch({ kind, id }, targetId = activeId.value, where = placement
 
   const ws = (targetId && wsOfLeaf(targetId)) || currentWs.value
   if (targetId && ws && ws.tree) {
-    await splitLeaf(targetId, where === 'down' ? 'col' : 'row', agent, shellId, worktree, { before: where === 'left' })
+    await splitLeaf(targetId, where === 'down' ? 'col' : 'row', agent, shellId, worktree, { before: where === 'left', sessionOptions })
     return
   }
   if (!ws) return
-  const leaf = await createLeaf(shellId, agent, ws.cwd, worktree)
+  const leaf = await createLeaf(shellId, agent, ws.cwd, worktree, { sessionOptions })
   if (leaf) {
     ws.tree = leaf
     ws.activeId = leaf.id
@@ -2502,6 +2535,7 @@ async function restartLeaf(leafId) {
   const fresh = await createLeaf(old.shellId, agent, old.startDir || ws.cwd, old.worktree, {
     sessionId: old.sessionId,
     accountId: old.accountId,
+    sessionOptions: old.sessionOptions,
     resume: settings.resumeAgents,
     ...(old.remoteHostId ? { remoteHostId: old.remoteHostId } : {}),
     ...(old.remoteHostId && old.remotePath ? { remotePath: old.remotePath } : {})
@@ -5031,7 +5065,8 @@ function becomeShell(leaf) {
   leaf.title = leaf.shellTitle || leaf.title
   leaf.detected = false
   delete leaf.shellTitle
-  delete leaf.modelOverride
+  delete leaf.sessionOptions
+  delete leaf.modelChoice
   delete leaf.detectedCommand
   clearAgentStatus(leaf.id)
 }
@@ -5158,6 +5193,7 @@ async function restartInPlaceNow(leafId, opts) {
     id: leafId,
     sessionId: old.sessionId,
     accountId: old.accountId,
+    sessionOptions: old.sessionOptions,
     resume: !!old.sessionId && opts.resume !== false
   })
   if (!fresh) return false
@@ -7472,6 +7508,10 @@ onMounted(async () => {
   shells.value = await window.shellApi.listShells()
   startStep = 'agents list'
   agents.value = await window.shellApi.listAgents()
+  // The model lists the agents' CLIs gave last time (before any launch, so a
+  // pane's model flags are the same at launch and when compared later).
+  startStep = 'model lists'
+  await loadModelLists()
   startStep = 'layout'
   await restoreOrSeedLayout()
   startStep = 'terminals'

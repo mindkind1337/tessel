@@ -103,7 +103,7 @@ function mountPane(extra = {}) {
         agentLaunchToken: 'launch',
         accent: '#d97757',
         team: 'tm1',
-        modelOverride: MODEL,
+        modelChoice: { model: MODEL },
         autoTitle: 'Fix the cart',
         ...extra
       }

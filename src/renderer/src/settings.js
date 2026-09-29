@@ -4,6 +4,7 @@ import { reactive } from 'vue'
 import { isTheme } from './themes'
 import { UI_LANGUAGES } from './i18n'
 import { validHiddenUsageProviders } from '../../shared/usageProviders'
+import { validSessionOptionSettings } from '../../shared/agentSessionOptions'
 import { MAX_CONCURRENT_LIMIT, NESTED_DEPTH_LIMIT } from '../../shared/orchestration'
 
 // Font names: the same in every language.
@@ -61,6 +62,10 @@ export const DEFAULT_SETTINGS = Object.freeze({
   // Settings > Agents. { [agent id]: { enabled, command, args, env } }: its
   // own command, arguments, "NAME=value" variables; enabled false hides it.
   agentPrefs: {},
+  // Settings > Agents, each agent's default model and effort (Orca's
+  // nativeChatSessionOptions): { [agent id]: { model?, valuesByModel:
+  // { [model]: { effort } } } }. No model = the agent's own default, no flag.
+  agentSessionOptions: {},
   // The agent a new pane starts (Ctrl+Shift+T): '' = the default shell.
   defaultAgent: '',
   // 'manual' (agents ask before acting) or 'yolo' (each agent's own
@@ -220,6 +225,7 @@ const fresh = () => ({
   customAgents: [],
   quickCommands: [],
   agentPrefs: {},
+  agentSessionOptions: {},
   hiddenUsageProviders: [],
   sidebarFilterRepoIds: [],
   sidebarCollapsedGroups: [],
@@ -246,6 +252,10 @@ export function loadSettings(saved) {
     }
     if (key === 'agentPrefs') {
       settings.agentPrefs = validAgentPrefs(v)
+      continue
+    }
+    if (key === 'agentSessionOptions') {
+      settings.agentSessionOptions = validSessionOptionSettings(v)
       continue
     }
     if (key === 'agentPermissions' && !['manual', 'yolo'].includes(v)) continue
@@ -323,7 +333,12 @@ export function loadSettings(saved) {
 
 // Resets preferences; your custom agents and quick commands are kept.
 export function resetSettings() {
-  const keep = { customAgents: settings.customAgents, quickCommands: settings.quickCommands, agentPrefs: settings.agentPrefs }
+  const keep = {
+    customAgents: settings.customAgents,
+    quickCommands: settings.quickCommands,
+    agentPrefs: settings.agentPrefs,
+    agentSessionOptions: settings.agentSessionOptions
+  }
   Object.assign(settings, fresh(), keep)
 }
 

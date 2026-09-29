@@ -60,7 +60,8 @@ import {
 } from './agentTools'
 import { reviewInfo, reviewDiff, reviewMerge, reviewRemove, reviewCommit, reviewPush } from './review'
 import * as scm from './sourceControl'
-import { runHeadless, cancelHeadless } from './agentHeadless'
+import { runHeadless, cancelHeadless, resolveProgram } from './agentHeadless'
+import { createModelLister } from './agentModelList'
 import { takeTeamAcks } from './teamAcks'
 import { writeJsonSafe, readJsonSafe } from './safeJson'
 import { addNotices, writeCurrentTeams, retireOldTeams } from './teamNotices'
@@ -1030,6 +1031,29 @@ ipcMain.handle('agents:model', async (_evt, q = {}) => {
     return await agentModelLive(q || {})
   } catch {
     return null
+  }
+})
+
+// The models each agent's CLI listed (Settings > Agents > Refresh models):
+// the kept lists, and a probe run only when asked (agentModelList.js).
+let modelLister = null
+const getModelLister = () => (modelLister ||= createModelLister(app.getPath('userData'), { resolve: resolveProgram }))
+ipcMain.handle('agents:modelLists', () => {
+  try {
+    return getModelLister().list()
+  } catch {
+    return {}
+  }
+})
+ipcMain.handle('agents:probeModels', async (_evt, q = {}) => {
+  const agent = q && typeof q.agent === 'string' ? q.agent : ''
+  const command = q && typeof q.command === 'string' ? q.command.slice(0, 300) : ''
+  try {
+    const res = await getModelLister().probe(agent, command)
+    log.info('models', `model list for ${agent}: ${res.ok ? `${res.models.length} models` : `${res.reason} ${res.detail || ''}`}`)
+    return res
+  } catch (err) {
+    return { ok: false, reason: 'failed', detail: String((err && err.message) || err).slice(0, 300) }
   }
 })
 

@@ -637,6 +637,48 @@ button {
   color: var(--text-strong);
 }
 
+/* The model an agent pane uses: one dim chip after its name (a click opens
+   the model picker); hidden when the pane is narrow. */
+.pane-nav {
+  container-type: inline-size;
+}
+
+.pane-model-chip {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 140px;
+  height: 18px;
+  padding: 0 6px;
+  overflow: hidden;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--text-dim) 12%, transparent);
+  color: var(--text-dim);
+  cursor: pointer;
+  font: inherit;
+  font-size: 10.5px;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pane-model-chip:hover,
+.pane-model-chip:focus-visible {
+  border-color: var(--border-strong);
+  color: var(--text);
+  outline: none;
+}
+
+.pane-model-chip.static {
+  cursor: default;
+}
+
+@container (max-width: 340px) {
+  .pane-model-chip {
+    display: none;
+  }
+}
+
 .pane-working {
   flex: 0 0 auto;
   color: #6fe3a2;
@@ -1759,6 +1801,74 @@ body.ws-resizing * {
   border-color: var(--accent);
 }
 
+/* Settings > Agents: an agent's default model and effort. */
+.agent-models {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 6px 12px;
+  padding: 4px 0 6px 28px;
+}
+
+.agent-model-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 140px;
+}
+
+.agent-model-switch {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.agent-models-status {
+  flex: 1 1 100%;
+}
+
+/* New pane menu: the model an agent starts with (Orca's model pill). */
+.launch-model-pill {
+  flex: 0 1 auto;
+  max-width: 150px;
+  height: 22px;
+  margin-right: 6px;
+  padding: 0 8px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.launch-model-pill:hover,
+.launch-model-pill:focus-visible,
+.launch-model-pill[aria-expanded='true'] {
+  color: var(--text-strong);
+  border-color: var(--accent);
+  outline: none;
+}
+
+.launch-model-pill.chosen {
+  color: var(--text);
+}
+
+.launch-model-picker {
+  margin: 0 6px 4px 30px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface-2);
+}
+
+.pane-model-menu {
+  padding: 4px;
+}
+
 .launch-foot {
   margin-top: 4px;
   padding: 8px 8px 4px;
@@ -2708,11 +2818,6 @@ body.pane-dragging * {
 
 .pane-model.manual {
   font-style: italic;
-}
-
-.pane-model-input {
-  width: 150px;
-  flex: 0 1 150px;
 }
 
 .ctx-menu-label {

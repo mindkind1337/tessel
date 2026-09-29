@@ -123,10 +123,19 @@ describe('launch', () => {
     expect(workerLaunchArgs('claude', null)).toBe('')
   })
 
-  // TODO(claude/models): once the model catalog's flags helper lands, model
-  // and effort become flags here; until then they are kept, not passed.
-  it('model and effort are kept for the models branch, not passed yet', () => {
-    expect(workerLaunchArgs('claude', { model: 'opus', effort: 'high' })).toBe('')
+  it("model and effort become the agent's own flags (its model catalog), before the first prompt", () => {
+    expect(workerLaunchArgs('claude', { model: 'opus', effort: 'high' })).toBe(' --model opus --effort high')
+    expect(workerLaunchArgs('codex', { model: 'gpt-5.5', effort: 'xhigh', initialPrompt: WORKER_START_PROMPT })).toBe(
+      ` -m gpt-5.5 -c model_reasoning_effort=xhigh "${WORKER_START_PROMPT}"`
+    )
+    expect(workerLaunchArgs('claude', { model: 'sonnet' })).toBe(' --model sonnet')
+    // The user's own --model (Settings > Agents) wins; an own --effort drops only that flag.
+    expect(workerLaunchArgs('claude', { model: 'opus', effort: 'high' }, { ownArgs: '--model haiku' })).toBe('')
+    expect(workerLaunchArgs('claude', { model: 'opus', effort: 'high' }, { ownArgs: '--effort low' })).toBe(' --model opus')
+    // No catalog, an effort alone, or an id a shell could misread: nothing.
+    expect(workerLaunchArgs('aider', { model: 'gpt-4o' })).toBe('')
+    expect(workerLaunchArgs('claude', { effort: 'high' })).toBe('')
+    expect(workerLaunchArgs('claude', { model: 'opus && calc' })).toBe('')
   })
 
   it("Orca's preamble, adapted: handles, card, dispatch id, how to report", () => {

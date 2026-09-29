@@ -11,6 +11,8 @@
 // (teamTasks.js validates the requests) and the tests. Text sent to agents
 // stays English.
 
+import { sessionOptionLaunchText } from './agentSessionOptions'
+
 // Agents that can be started as workers: their CLI takes a first prompt on
 // its command line (see workerLaunchArgs), so nothing is typed into them.
 export const WORKER_AGENTS = ['claude', 'codex', 'gemini', 'qwen']
@@ -193,13 +195,21 @@ export const WORKER_START_PROMPT =
 
 // The single place where a worker's launch options become command-line
 // arguments: { model, effort, initialPrompt } -> ' arg arg' ('' when none).
-// model and effort: TODO(claude/models): the agent model catalog and its
-// launch flags are being built on that branch; plug its flags helper in
-// here. Until then they are kept on the pane (leaf.launchOptions) and shown,
-// not passed, so a wrong flag can never stop an agent from starting.
-export function workerLaunchArgs(agentId, launchOptions) {
+// model and effort: the agent's own flags from its model catalog
+// (agentSessionOptions.js, Orca's): --model/--effort for Claude Code,
+// -m/-c model_reasoning_effort= for Codex...; none for an agent without a
+// catalog, none when the user's own arguments (ownArgs, Settings > Agents)
+// set them, none for an id a shell could misread. models: the list the
+// model was picked from (the CLI's own listing).
+export function workerLaunchArgs(agentId, launchOptions, { ownArgs = '', models = null } = {}) {
   const o = launchOptions || {}
   const args = []
+  const model = typeof o.model === 'string' ? o.model.trim() : ''
+  if (model) {
+    const values = { model, ...(typeof o.effort === 'string' && o.effort.trim() ? { effort: o.effort.trim() } : {}) }
+    const flags = sessionOptionLaunchText(agentId, values, ownArgs, models)
+    if (flags) args.push(flags)
+  }
   const prompt = typeof o.initialPrompt === 'string' ? o.initialPrompt : ''
   if (prompt) {
     // Anything but plain words is refused, never quoted by guesswork.

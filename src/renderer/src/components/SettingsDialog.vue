@@ -19,6 +19,16 @@ import { LIGHT_BG_MIN_CONTRAST, DEFAULT_WORD_SEPARATOR } from '../terminalOption
 import { getBranchPrefixIssue, normalizeBranchPrefix } from '../../../shared/worktreeNaming'
 import { parseEnvText, YOLO_ARGS, YOLO_ENV, agentEnabled } from '../../../shared/agentPrefs'
 import { AGENT_DOCS } from '../../../shared/agentDocs'
+import {
+  getAgentSessionOptionCatalog,
+  modelOptions,
+  resolveSessionOptionDefaults,
+  updateSessionOptionDefaults,
+  clearSessionOptionModel,
+  clearSessionOptionValue
+} from '../../../shared/agentSessionOptions'
+import { modelsFor, modelLists, modelProbes, refreshModels, canProbeModels } from '../agentModels'
+import { sessionOptionLabel, sessionChoiceLabel, probeErrorText } from '../sessionOptionLabels'
 import { CACHE_TTLS } from '../promptCache'
 import { ORCHESTRATION_EXAMPLES, ORCHESTRATION_TOOLS } from '../orchestrationGuide'
 import { WORKER_AGENTS, MAX_CONCURRENT_LIMIT, NESTED_DEPTH_LIMIT } from '../../../shared/orchestration'
@@ -611,6 +621,69 @@ async function detectAgents() {
     detecting.value = false
   }
 }
+// Settings > Agents, each agent's default model and effort (Orca's catalogs
+// and the agent's own model list). Nothing chosen: the agent's own default,
+// and Tessel adds no flag (Orca's rule).
+function hasModelDefaults(id) {
+  return !!getAgentSessionOptionCatalog(id)
+}
+function modelDefaults(id) {
+  return resolveSessionOptionDefaults(settings.agentSessionOptions, id) || null
+}
+// The models offered, with the chosen one even when the list lacks it.
+function defaultModelRows(id) {
+  const list = modelsFor(id)
+  const d = modelDefaults(id)
+  return d && !list.some((m) => m.id === d.model) ? [...list, { id: d.model, label: d.model, options: [] }] : list
+}
+function setDefaultModel(id, modelId) {
+  settings.agentSessionOptions = modelId
+    ? updateSessionOptionDefaults({ persisted: settings.agentSessionOptions, agent: id, modelId, optionId: 'model', value: modelId })
+    : clearSessionOptionModel(settings.agentSessionOptions, id)
+}
+// The chosen model's options a launch can set (effort; Cursor's thinking and
+// fast mode, which go into its model name).
+function defaultOptionRows(id) {
+  const d = modelDefaults(id)
+  if (!d) return []
+  return modelOptions(getAgentSessionOptionCatalog(id), modelsFor(id), d.model).filter(
+    (o) => o.apply.launchArgs || o.apply.composedIntoModel
+  )
+}
+// A fast mode only a running session takes (Claude Code's /fast).
+function defaultHasLiveFast(id) {
+  const d = modelDefaults(id)
+  return !!d && modelOptions(getAgentSessionOptionCatalog(id), modelsFor(id), d.model).some(
+    (o) => o.id === 'fastMode' && !o.apply.launchArgs && !o.apply.composedIntoModel
+  )
+}
+function setDefaultOption(id, optionId, value) {
+  const d = modelDefaults(id)
+  if (!d) return
+  settings.agentSessionOptions =
+    value === '' || value === null
+      ? clearSessionOptionValue({ persisted: settings.agentSessionOptions, agent: id, modelId: d.model, optionId })
+      : updateSessionOptionDefaults({ persisted: settings.agentSessionOptions, agent: id, modelId: d.model, optionId, value })
+}
+function probeFor(id) {
+  return modelProbes[id] || { busy: false, error: null }
+}
+function modelListText(a) {
+  const list = modelLists[a.id]
+  const probe = probeFor(a.id)
+  if (probe.busy) return t('settings.agents.modelsListing', 'Asking {{name}} for its models…', { name: a.name })
+  if (probe.error) return probeErrorText(probe.error, a.name)
+  if (!list) return t('settings.agents.modelsBuiltIn', 'Built-in list. Refresh asks {{name}} for the models your account has.', { name: a.name })
+  return t('settings.agents.modelsListed', '{{count}} models listed by {{name}} on {{date}}.', {
+    count: list.models.length,
+    name: a.name,
+    date: new Date(list.fetchedAt).toLocaleString(intlLocale(), { dateStyle: 'medium', timeStyle: 'short' })
+  })
+}
+function refreshAgentModels(a) {
+  refreshModels(a.id, agentPref(a.id).command || '')
+}
+
 // The hint over an agent's variables (Yolo's own ones named).
 function envHint(id) {
   return YOLO_ENV[id]
@@ -1262,6 +1335,69 @@ function previewSound() {
                       :checked="agentEnabled(settings.agentPrefs, a.id)"
                       @change="setAgentPref(a.id, 'enabled', $event.target.checked)"
                     />
+                  </div>
+                </div>
+                <!-- Its default model and effort (Orca's model per agent). -->
+                <div v-if="a.available && hasModelDefaults(a.id)" class="agent-models" :data-test="`agent-models-${a.id}`">
+                  <label class="agent-model-field">
+                    <span class="set-hint">{{ t('settings.agents.defaultModel', 'Model') }}</span>
+                    <select
+                      class="set-select"
+                      :data-test="`agent-model-${a.id}`"
+                      @change="setDefaultModel(a.id, $event.target.value)"
+                    >
+                      <option value="" :selected="!modelDefaults(a.id)">{{ t('pane.sessionOptions.agentDefault', "Agent's own default") }}</option>
+                      <option
+                        v-for="m in defaultModelRows(a.id)"
+                        :key="m.id"
+                        :value="m.id"
+                        :selected="!!modelDefaults(a.id) && modelDefaults(a.id).model === m.id"
+                      >
+                        {{ m.label }}
+                      </option>
+                    </select>
+                  </label>
+                  <template v-for="o in defaultOptionRows(a.id)" :key="o.id">
+                    <label v-if="o.kind.type === 'select'" class="agent-model-field">
+                      <span class="set-hint">{{ sessionOptionLabel(o) }}</span>
+                      <select
+                        class="set-select"
+                        :data-test="`agent-option-${a.id}-${o.id}`"
+                        @change="setDefaultOption(a.id, o.id, $event.target.value)"
+                      >
+                        <option value="" :selected="modelDefaults(a.id)[o.id] === undefined">{{ t('pane.sessionOptions.valueIsDefault', 'Default') }}</option>
+                        <option v-for="c in o.kind.choices" :key="c.value" :value="c.value" :selected="modelDefaults(a.id)[o.id] === c.value">
+                          {{ sessionChoiceLabel(c) }}
+                        </option>
+                      </select>
+                    </label>
+                    <label v-else class="agent-model-field agent-model-switch">
+                      <span class="set-hint">{{ sessionOptionLabel(o) }}</span>
+                      <input
+                        type="checkbox"
+                        class="set-switch"
+                        :data-test="`agent-option-${a.id}-${o.id}`"
+                        :checked="modelDefaults(a.id)[o.id] === undefined ? o.kind.defaultValue : modelDefaults(a.id)[o.id] === true"
+                        @change="setDefaultOption(a.id, o.id, $event.target.checked)"
+                      />
+                    </label>
+                  </template>
+                  <button
+                    v-if="canProbeModels(a.id)"
+                    class="exit-btn"
+                    type="button"
+                    :data-test="`agent-models-refresh-${a.id}`"
+                    :disabled="probeFor(a.id).busy"
+                    :title="t('settings.agents.refreshModelsHint', 'Ask {{name}} which models it offers (it may use its sign-in and the network; no prompt is sent)', { name: a.name })"
+                    @click="refreshAgentModels(a)"
+                  >
+                    <LoaderCircle v-if="probeFor(a.id).busy" :size="11" class="sb-spin agent-update-spinner" aria-hidden="true" />
+                    {{ t('settings.agents.refreshModels', 'Refresh models') }}
+                  </button>
+                  <div class="set-hint agent-models-status" :class="{ 'agent-update-failed': !!probeFor(a.id).error }" :data-test="`agent-models-status-${a.id}`">
+                    {{ modelListText(a) }}
+                    <template v-if="defaultHasLiveFast(a.id)"> {{ t('settings.agents.fastModeLive', 'Fast mode is switched in a running pane (pane menu > Model).') }}</template>
+                    {{ modelDefaults(a.id) ? t('settings.agents.modelApplies', 'Applies to panes you start from now on; running ones show Restart to apply.') : '' }}
                   </div>
                 </div>
                 <div v-if="openAgent === a.id" class="agent-custom">

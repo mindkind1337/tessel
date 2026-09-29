@@ -62,7 +62,8 @@ describe('terminal pane header', () => {
     title: 'Claude',
     shellName: 'Claude Code',
     agentId: 'claude',
-    modelOverride: 'Opus test',
+    sessionOptions: { model: 'opus' },
+    modelChoice: { model: 'opus' },
     launchYolo: true,
     team: 't1',
     worktree: { branch: 'feat/header', path: 'C:\\copies\\header' }
@@ -121,12 +122,13 @@ describe('terminal pane header', () => {
     const h = header()
     expect(h.get('.pane-title').text()).toBe('Claude')
     expect(h.find('.pane-icon .pane-status-dot').exists()).toBe(true)
-    // Model, branch, team and Yolo are no longer in the header.
+    // Branch, team and Yolo are no longer in the header.
     for (const gone of ['.pane-model', '.pane-branch', '.pane-team', '[data-test="pane-yolo"]', '.mic-lang', '.mic-caret'])
       expect(h.find(gone).exists(), gone).toBe(false)
     expect(h.text()).not.toContain('feat/header')
     expect(h.text()).not.toContain('Blue')
-    expect(h.text()).not.toContain('Opus test')
+    // The model it uses: one dim chip after the name (a click opens the picker).
+    expect(h.get('[data-test="pane-model-chip"]').text()).toBe('Opus')
     expect(h.text()).not.toContain('FR')
     // Several states at once (a message not confirmed, quiet 12 min,
     // unknown): one badge, the most urgent.
@@ -161,7 +163,7 @@ describe('terminal pane header', () => {
     expect(m.querySelector('[data-test="pane-team"]').textContent).toContain('Blue · lead')
     expect(m.querySelector('[data-test="pane-yolo"]').textContent).toContain('Yolo')
     expect(m.querySelector('[data-test="pane-stuck"]').textContent).toContain('12 min')
-    expect(m.querySelector('[data-test="pane-model"]').textContent).toContain('Opus test (yours)')
+    expect(m.querySelector('[data-test="pane-model"]').textContent).toContain('Opus')
     expect(text).toContain('Open terminal or agent here…')
     // The states the badge did not show stay reachable.
     m.querySelector('[data-test="menu-unsent"]').click()

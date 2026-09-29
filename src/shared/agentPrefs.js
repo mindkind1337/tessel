@@ -1,3 +1,5 @@
+import { sessionOptionLaunchText, resolveSessionOptionDefaults } from './agentSessionOptions'
+
 // Per-agent settings (Settings > Agents), applied when a pane starts an
 // agent: its own command, extra arguments, environment variables, and the
 // permission mode. Yolo adds each agent's own "skip approvals" flag (table
@@ -59,14 +61,28 @@ export function parseEnvText(text) {
 
 // What a pane runs for this agent: { command, args, env } (args: text added
 // after the command; env: variables for the pane's shell).
-export function effectiveAgent(agent, prefs = {}, permissions = 'manual') {
+// sessionValues: the model (and effort) chosen for it ({ model, effort }, see
+// launchSessionValues), added as the agent's own flags before your
+// arguments; a flag your arguments set wins (agentSessionOptions.js).
+// models: the model list the choice was made from (the CLI's own listing).
+export function effectiveAgent(agent, prefs = {}, permissions = 'manual', sessionValues = null, models = null) {
   const p = (prefs && prefs[agent.id]) || {}
   const command = typeof p.command === 'string' && p.command.trim() ? p.command.trim() : agent.command
   const own = typeof p.args === 'string' ? p.args.trim() : ''
-  const args = own || (permissions === 'yolo' ? YOLO_ARGS[agent.id] || '' : '')
+  const base = own || (permissions === 'yolo' ? YOLO_ARGS[agent.id] || '' : '')
+  const chosen = sessionValues ? sessionOptionLaunchText(agent.id, sessionValues, own, models) : ''
+  const args = [chosen, base].filter(Boolean).join(' ')
   const parsed = parseEnvText(p.env)
   const env = { ...(permissions === 'yolo' && !own ? YOLO_ENV[agent.id] || {} : {}), ...(parsed.env || {}) }
   return { command, args, env }
+}
+
+// The model values a pane launches with: its own choice (pane menu or new
+// pane menu), else the agent's default (Settings > Agents), else none (the
+// agent's own configured default: no flag).
+export function launchSessionValues(paneChoice, persisted, agentId) {
+  if (paneChoice && typeof paneChoice.model === 'string' && paneChoice.model) return paneChoice
+  return resolveSessionOptionDefaults(persisted, agentId) || null
 }
 
 // Whether an agent is offered in Tessel's menus (on unless turned off).
