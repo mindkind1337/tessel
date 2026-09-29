@@ -358,6 +358,11 @@ const api = {
     screenshot: (id) => ipcRenderer.invoke('browser:screenshot', id),
     openDevTools: (id) => ipcRenderer.invoke('browser:openDevTools', id),
     copyImage: (file) => ipcRenderer.invoke('browser:copyImage', file),
+    // Cookies, storage, cache of the browser's pages only. -> { ok }
+    clearData: () => ipcRenderer.invoke('browser:clearData'),
+    // The Design Mode message as a file for the agent (text, at most 512 KB).
+    // -> { ok: true, path } | { ok: false, code: 'invalid' | 'too-big' | 'failed' }
+    saveFeedback: (text) => ipcRenderer.invoke('browser:saveFeedback', text),
     onPopup: (cb) => subscribe('browser:popup', cb),
     onShortcut: (cb) => subscribe('browser:shortcut', cb),
     onPermissionDenied: (cb) => subscribe('browser:permissionDenied', cb),

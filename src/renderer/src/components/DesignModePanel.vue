@@ -37,7 +37,8 @@ import {
   removeItems,
   payloadName,
   fileName,
-  buildFeedbackMessage
+  buildFeedbackMessage,
+  deliveryLine
 } from '../browser/designMode'
 
 const props = defineProps({
@@ -411,14 +412,34 @@ function onOutside(e) {
   closeSend()
 }
 
-function sendTo(target) {
+// The page content is untrusted: it is not typed into the terminal (a line
+// could run as a shell command). The message is saved to a file, and the
+// agent gets one line telling it to read that file.
+async function saveMessage(text) {
+  const b = api()
+  if (!b || typeof b.saveFeedback !== 'function') return null
+  try {
+    const r = await b.saveFeedback(text)
+    return r && r.ok && typeof r.path === 'string' && r.path ? r.path : null
+  } catch {
+    return null
+  }
+}
+
+async function sendTo(target) {
   const d = notesDelivery()
   if (!d || target.disabledReason || !items.length) return
   const ids = items.map((i) => i.id)
   const text = message()
   const agent = target.label
   closeSend()
-  d.send(target.id, text, {
+  const path = await saveMessage(text)
+  if (!alive) return
+  if (!path) {
+    showFlash(t('browserDesign.saveFailed', 'Could not save the feedback for {{agent}}. Nothing was sent.', { agent }), 'error')
+    return
+  }
+  d.send(target.id, deliveryLine(ids.length, path), {
     onDelivered: () => {
       removeItems(items, ids)
       for (const id of ids) delete thumbs[id]

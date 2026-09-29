@@ -447,7 +447,8 @@
       "sharedOne": "Notes du projet partagées avec 1 agent. {{path}}",
       "shared": "Notes du projet partagées avec {{count}} agents. {{path}}",
       "restartOpen": "Redémarrez Tessel pour ouvrir les notes du projet.",
-      "openFailed": "Impossible d'ouvrir les notes du projet : {{error}}"
+      "openFailed": "Impossible d'ouvrir les notes du projet : {{error}}",
+      "noBracketedPaste": "Ce terminal exécuterait chaque ligne comme une commande : l'agent n'est pas prêt pour un message de plusieurs lignes."
     },
     "lead": {
       "needFolder": "Définissez d'abord un dossier de projet pour cet espace de travail : le responsable travaille depuis celui-ci.",

@@ -88,6 +88,7 @@ import {
 } from './editor/documents'
 import { openTab, validSavedFiles, samePath, fileName, docPathOf, diffTabPath } from './editor/editorTabs'
 import { setNotesDelivery } from './notesDelivery'
+import { unsafeMultilinePaste } from './pasteSafety'
 import { t, intlLocale } from './i18n'
 
 const shells = ref([])
@@ -3969,6 +3970,12 @@ function flushPending() {
     const item = pendingMessages[id].shift()
     if (pendingMessages[id].length) waiting = true
     else delete pendingMessages[id]
+    // Notes (page text, code): never typed line by line into a terminal
+    // without bracketed paste, where each line would run as a command.
+    if (item.meta && item.meta.multilineSafe && unsafeMultilinePaste(item.text, pane)) {
+      failDelivery(item)
+      continue
+    }
     delivering.add(id)
     const deps = {
       getPane: (pid) => (findLeaf(pid) ? getPane(pid) : null),
@@ -4553,10 +4560,20 @@ setNotesDelivery({
       }
     })
   },
-  send(paneId, text, { onDelivered } = {}) {
+  send(paneId, text, { onDelivered, onFailed } = {}) {
     const leaf = findLeaf(paneId)
     if (!leaf || !text) {
       showToast(t('app.notes.terminalGone', 'Terminal is no longer available'), { kind: 'error' })
+      return
+    }
+    // Several lines into a terminal without bracketed paste: each line could
+    // run as a shell command (notes quote code and page text). Refused.
+    if (unsafeMultilinePaste(text, getPane(leaf.id))) {
+      showToast(
+        t('app.notes.noBracketedPaste', 'This terminal would run each line as a command: the agent is not ready for a multi-line message.'),
+        { kind: 'error', timeout: 8000 }
+      )
+      if (onFailed) onFailed()
       return
     }
     showToast(t('app.notes.sending', 'Sending notes...'), { timeout: 3000 })
@@ -4564,6 +4581,9 @@ setNotesDelivery({
       source: 'you',
       scope: 'notes',
       waitIdle: true,
+      // Checked again when it is typed: the agent may have gone back to its
+      // shell while the notes waited.
+      multilineSafe: true,
       onDelivered: () => {
         // A task waiting for review goes back to Doing: its agent works again.
         const task = taskOfPane(leaf.id)
@@ -4571,7 +4591,10 @@ setNotesDelivery({
         showToast(t('app.notes.sent', 'Notes sent.'), { timeout: 3000 })
         if (onDelivered) onDelivered()
       },
-      onFailed: () => showToast(t('app.notes.failed', 'The notes could not be sent to {{name}}.', { name: leaf.title }), { kind: 'error' })
+      onFailed: () => {
+        showToast(t('app.notes.failed', 'The notes could not be sent to {{name}}.', { name: leaf.title }), { kind: 'error' })
+        if (onFailed) onFailed()
+      }
     })
   }
 })

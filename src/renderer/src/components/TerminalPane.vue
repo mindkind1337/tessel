@@ -1835,6 +1835,9 @@ onMounted(() => {
 
   paneApi = {
     paste: pasteText,
+    // Did the program ask for bracketed paste? Without it, each line of a
+    // multi-line paste runs as its own command (null: no terminal yet).
+    bracketedPaste: () => (term && term.modes ? !!term.modes.bracketedPasteMode : null),
     submit: () => window.shellApi.writePty(props.node.id, '\r'),
     getSelection: () => (term ? term.getSelection() : ''),
     screenText,

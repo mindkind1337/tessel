@@ -16,6 +16,7 @@ function fakeSession() {
   ses.setPermissionRequestHandler = vi.fn((h) => (ses.request = h))
   ses.setPermissionCheckHandler = vi.fn((h) => (ses.check = h))
   ses.setDisplayMediaRequestHandler = vi.fn((h) => (ses.display = h))
+  for (const name of ['clearStorageData', 'clearCache', 'clearAuthCache', 'clearHostResolverCache']) ses[name] = vi.fn(() => Promise.resolve())
   return ses
 }
 
@@ -68,7 +69,9 @@ function setup() {
   const sent = []
   const ses = fakeSession()
   const winWc = new EventEmitter()
-  const win = { webContents: winWc, isDestroyed: () => false }
+  const win = { webContents: winWc, isDestroyed: () => false, full: false }
+  win.isFullScreen = vi.fn(() => win.full)
+  win.setFullScreen = vi.fn((flag) => (win.full = flag))
   const guests = new Map()
   const electron = {
     webContents: { fromId: vi.fn((id) => guests.get(id)) },
@@ -90,7 +93,9 @@ function setup() {
     return g
   }
   const call = (ch, ...args) => handlers[ch](fromWindow, ...args)
-  return { sent, ses, winWc, win, guests, electron, log, bg, handlers, fromWindow, attach, call }
+  // The user's own click in a page (what Electron reports).
+  const click = (g) => g.emit('input-event', ev(), { type: 'mouseDown' })
+  return { click, sent, ses, winWc, win, guests, electron, log, bg, handlers, fromWindow, attach, call }
 }
 
 describe('will-attach-webview', () => {
@@ -116,17 +121,28 @@ describe('will-attach-webview', () => {
       experimentalFeatures: true,
       enableBlinkFeatures: 'Everything',
       webviewTag: true,
-      partition: 'persist:other'
+      partition: 'persist:other',
+      // Settings nobody thought of: gone too.
+      plugins: true,
+      javascript: false,
+      enableWebSQL: true,
+      navigateOnDragDrop: true,
+      offscreen: true,
+      someFutureOption: 'x',
+      // Kept: they grant nothing.
+      zoomFactor: 1.5,
+      spellcheck: false,
+      disablePopups: false
     }
     const params = { src: 'http://localhost:5173', partition: BROWSER_PARTITION, preload: 'file:///C:/evil/preload.js' }
     const e = attachParams(params, prefs)
     expect(e.preventDefault).not.toHaveBeenCalled()
-    expect(prefs).not.toHaveProperty('preload')
-    expect(prefs).not.toHaveProperty('preloadURL')
-    expect(prefs).not.toHaveProperty('additionalArguments')
-    expect(prefs).not.toHaveProperty('session')
     expect(params).not.toHaveProperty('preload')
-    expect(prefs).toMatchObject({
+    // Exactly the allow-list and the fixed rules, nothing else.
+    expect(prefs).toEqual({
+      zoomFactor: 1.5,
+      spellcheck: false,
+      disablePopups: false,
       nodeIntegration: false,
       nodeIntegrationInSubFrames: false,
       nodeIntegrationInWorker: false,
@@ -135,9 +151,12 @@ describe('will-attach-webview', () => {
       webSecurity: true,
       allowRunningInsecureContent: false,
       experimentalFeatures: false,
-      enableBlinkFeatures: '',
       webviewTag: false,
-      partition: BROWSER_PARTITION
+      plugins: false,
+      javascript: true,
+      partition: BROWSER_PARTITION,
+      disableHtmlFullscreenWindowResize: true,
+      safeDialogs: true
     })
     expect(params.src).toBe('http://localhost:5173/')
     // The session's rules are in place before the page loads anything.
@@ -172,15 +191,66 @@ describe('will-attach-webview', () => {
 })
 
 describe('a page attached', () => {
-  it('opens no window: an http(s) popup is told to the window', () => {
+  it('opens no window: an http(s) popup right after a click is told to the window', () => {
     const g = t.attach()
+    t.click(g)
     expect(g.openHandler({ url: 'https://example.com/new' })).toEqual({ action: 'deny' })
     expect(t.sent).toEqual([['browser:popup', { webContentsId: 7, url: 'https://example.com/new' }]])
     t.sent.length = 0
     for (const url of ['file:///C:/x', 'javascript:alert(1)', 'about:blank', 'data:text/html,x', 'mailto:a@b.com']) {
+      t.click(g)
       expect(g.openHandler({ url })).toEqual({ action: 'deny' })
     }
     expect(t.sent).toEqual([])
+  })
+
+  it('a popup without the user\'s click or key (an ad frame) is refused silently, logged once', () => {
+    const g = t.attach()
+    g.emit('input-event', ev(), { type: 'mouseMove' })
+    g.emit('input-event', ev(), { type: 'mouseWheel' })
+    expect(g.openHandler({ url: 'https://ads.test/1' })).toEqual({ action: 'deny' })
+    expect(g.openHandler({ url: 'https://ads.test/2' })).toEqual({ action: 'deny' })
+    expect(t.sent).toEqual([])
+    expect(t.log.warn).toHaveBeenCalledTimes(1)
+  })
+
+  it('one popup per click, and only shortly after it', () => {
+    const now = vi.spyOn(Date, 'now')
+    try {
+      const g = t.attach()
+      now.mockReturnValue(10000)
+      t.click(g)
+      now.mockReturnValue(11500)
+      g.openHandler({ url: 'https://example.com/a' })
+      g.openHandler({ url: 'https://example.com/b' })
+      expect(t.sent.map(([, p]) => p.url)).toEqual(['https://example.com/a'])
+      now.mockReturnValue(20000)
+      t.click(g)
+      now.mockReturnValue(21501)
+      g.openHandler({ url: 'https://example.com/late' })
+      expect(t.sent).toHaveLength(1)
+    } finally {
+      now.mockRestore()
+    }
+  })
+
+  it('a key, a touch or a mouse button counts as the user\'s input', () => {
+    const g = t.attach()
+    const inputs = [
+      ['input-event', { type: 'keyDown' }],
+      ['input-event', { type: 'rawKeyDown' }],
+      ['input-event', { type: 'touchEnd' }],
+      ['input-event', { type: 'gestureTap' }],
+      ['before-mouse-event', { type: 'mouseDown' }],
+      ['before-mouse-event', { type: 'mouseUp' }],
+      ['before-input-event', { type: 'keyDown', key: 'Enter' }]
+    ]
+    for (const [name, input] of inputs) {
+      t.sent.length = 0
+      g.emit(name, ev(), input)
+      g.openHandler({ url: 'https://example.com/new' })
+      expect(t.sent).toHaveLength(1)
+    }
   })
 
   it('never leaves http(s) by a link or a redirect', () => {
@@ -312,9 +382,16 @@ describe('the browser session', () => {
     expect(t.sent[0][1]).toEqual({ webContentsId: 9, permission: 'media', origin: 'https://page.test' })
   })
 
+  it('refuses full screen without telling the window', () => {
+    const cb = vi.fn()
+    t.ses.request({ id: 7, isDestroyed: () => false, getURL: () => 'https://video.test/' }, 'fullscreen', cb, {})
+    expect(cb).toHaveBeenCalledWith(false)
+    expect(t.sent).toEqual([])
+  })
+
   it('checks agree with requests', () => {
     expect(t.ses.check(null, 'clipboard-sanitized-write')).toBe(true)
-    for (const p of ['media', 'geolocation', 'clipboard-read', 'hid', 'serial', 'usb', 'notifications']) {
+    for (const p of ['media', 'geolocation', 'clipboard-read', 'hid', 'serial', 'usb', 'notifications', 'fullscreen']) {
       expect(t.ses.check(null, p)).toBe(false)
     }
   })
@@ -589,5 +666,138 @@ describe('copyImage', () => {
     t.electron.nativeImage.createFromPath.mockReturnValue({ isEmpty: () => true })
     expect(t.call('browser:copyImage', file)).toEqual({ ok: false })
     expect(t.electron.clipboard.writeImage).not.toHaveBeenCalled()
+  })
+})
+
+describe('a page in full screen anyway', () => {
+  it('is taken out of it, and Tessel\'s window put back', async () => {
+    const g = t.attach()
+    t.click(g) // the page's click, with the window not in full screen
+    t.win.full = true // what the page's full screen did to the window
+    g.emit('enter-html-full-screen')
+    expect(g.executeJavaScript).toHaveBeenCalledWith('document.exitFullscreen && document.exitFullscreen()', false)
+    expect(t.win.setFullScreen).toHaveBeenCalledWith(false)
+    expect(t.win.full).toBe(false)
+  })
+
+  it('the window going full screen a moment later is put back too', async () => {
+    vi.useFakeTimers()
+    try {
+      const g = t.attach()
+      t.click(g)
+      g.emit('enter-html-full-screen')
+      expect(t.win.setFullScreen).not.toHaveBeenCalled()
+      t.win.full = true
+      await vi.advanceTimersByTimeAsync(300)
+      expect(t.win.full).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('a window the user had put in full screen stays so', async () => {
+    const g = t.attach()
+    t.win.full = true
+    t.click(g)
+    g.emit('enter-html-full-screen')
+    expect(g.executeJavaScript).toHaveBeenCalled()
+    expect(t.win.setFullScreen).not.toHaveBeenCalled()
+  })
+})
+
+describe('clearData', () => {
+  it('clears the browser session only, asked by the window', async () => {
+    expect(await t.call('browser:clearData')).toEqual({ ok: true })
+    for (const name of ['clearStorageData', 'clearCache', 'clearAuthCache', 'clearHostResolverCache']) expect(t.ses[name]).toHaveBeenCalledTimes(1)
+    expect(t.electron.session.fromPartition.mock.calls.every(([p]) => p === BROWSER_PARTITION)).toBe(true)
+  })
+
+  it('refuses another sender', async () => {
+    expect(await t.handlers['browser:clearData']({ sender: new EventEmitter() })).toEqual({ ok: false })
+    expect(t.ses.clearStorageData).not.toHaveBeenCalled()
+  })
+
+  it('a failure: not ok', async () => {
+    t.ses.clearCache.mockRejectedValue(new Error('busy'))
+    expect(await t.call('browser:clearData')).toEqual({ ok: false })
+  })
+})
+
+describe('saveFeedback', () => {
+  it('saves the message as a UTF-8 file in the screenshot folder', () => {
+    const text = '## Design Feedback\n\nMake it blue, café'
+    const res = t.call('browser:saveFeedback', text)
+    expect(res.ok).toBe(true)
+    expect(res.path.startsWith(dir)).toBe(true)
+    expect(res.path).toMatch(/[\\/]browser-feedback-\d+-[0-9a-f]{6}\.md$/)
+    expect(fs.readFileSync(res.path, 'utf8')).toBe(text)
+  })
+
+  it('refuses what is not a message, one too big, another sender', () => {
+    for (const text of [42, null, undefined, '', '   ', { text: 'x' }]) {
+      expect(t.call('browser:saveFeedback', text)).toEqual({ ok: false, code: 'invalid' })
+    }
+    // 512 KB counted in UTF-8 bytes: 262145 'é' are 524290 bytes.
+    expect(t.call('browser:saveFeedback', 'é'.repeat(262145))).toEqual({ ok: false, code: 'too-big' })
+    expect(t.call('browser:saveFeedback', 'x'.repeat(512 * 1024 + 1))).toEqual({ ok: false, code: 'too-big' })
+    expect(t.call('browser:saveFeedback', 'x'.repeat(512 * 1024)).ok).toBe(true)
+    expect(t.handlers['browser:saveFeedback']({ sender: new EventEmitter() }, 'hello').ok).toBe(false)
+    expect(fs.readdirSync(dir)).toHaveLength(1)
+  })
+
+  it('is never an image to copy', () => {
+    const { path } = t.call('browser:saveFeedback', 'hello')
+    expect(t.call('browser:copyImage', path)).toEqual({ ok: false })
+  })
+})
+
+describe('old screenshots and messages', () => {
+  const DAY = 24 * 60 * 60 * 1000
+  const put = (name, ageMs) => {
+    fs.mkdirSync(dir, { recursive: true })
+    const file = join(dir, name)
+    fs.writeFileSync(file, 'x')
+    const at = new Date(Date.now() - ageMs)
+    fs.utimesSync(file, at, at)
+    return file
+  }
+  const files = () => fs.readdirSync(dir).sort()
+
+  const seed = () => {
+    put('browser-1000000000000-aaaaaa.png', 2 * DAY)
+    put('browser-feedback-1000000000000-bbbbbb.md', 2 * DAY)
+    put('browser-1700000000000-cccccc.png', 60 * 1000)
+    put('browser-feedback-1700000000000-dddddd.md', 60 * 1000)
+    // Not the browser's: never touched, however old.
+    put('image-1000000000000.png', 2 * DAY)
+    put('browser-notes.txt', 2 * DAY)
+    fs.mkdirSync(join(dir, 'browser-1000000000000-eeeeee.png'))
+  }
+  const kept = [
+    'browser-1000000000000-eeeeee.png',
+    'browser-1700000000000-cccccc.png',
+    'browser-feedback-1700000000000-dddddd.md',
+    'browser-notes.txt',
+    'image-1000000000000.png'
+  ]
+
+  it('go at start', () => {
+    seed()
+    setup()
+    expect(files()).toEqual(kept)
+  })
+
+  it('go at each screenshot', async () => {
+    const g = t.attach()
+    seed()
+    g.capturePage.mockResolvedValue(fakeImage(800, 600))
+    const res = await t.call('browser:screenshot', 7)
+    expect(files()).toEqual([...kept, res.screenshot.path.split(/[\\/]/).pop()].sort())
+  })
+
+  it('go at each saved message', () => {
+    seed()
+    const res = t.call('browser:saveFeedback', 'hello')
+    expect(files()).toEqual([...kept, res.path.split(/[\\/]/).pop()].sort())
   })
 })

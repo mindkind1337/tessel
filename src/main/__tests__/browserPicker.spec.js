@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { pickerScript, clampPickPayload, PICK_BUDGET, PICK_HOST_ID } from '../browserPicker'
+import { pickerScript, clampPickPayload, redactSecrets, PICK_BUDGET, PICK_HOST_ID } from '../browserPicker'
 
 // Runs a picker script the way executeJavaScript does: an expression whose
 // value (a promise) is returned.
@@ -17,6 +17,16 @@ function stubRect (el, r) {
 
 function mouse (type, x = 15, y = 25) {
   return new MouseEvent(type, { bubbles: true, cancelable: true, composed: true, clientX: x, clientY: y })
+}
+
+// jsdom marks every dispatchEvent() untrusted, like a browser does for a
+// page's own events. The user's real input: dispatched the way jsdom does it
+// for its own events, with isTrusted set.
+function trusted (target, event) {
+  const impl = Object.getOwnPropertySymbols(event).find((s) => s.description === 'impl')
+  event[impl].isTrusted = true
+  target[impl]._dispatch(event[impl])
+  return event
 }
 
 const host = () => document.getElementById(PICK_HOST_ID)
@@ -84,16 +94,14 @@ describe('pickerScript', () => {
     }
     const p = run('arm')
     const h = host()
-    h.dispatchEvent(mouse('mousemove'))
+    trusted(h, mouse('mousemove'))
     expect(pointerDuringHitTest).toEqual(['none'])
     expect(h.style.getPropertyValue('pointer-events')).toBe('all')
     for (const type of ['pointerdown', 'mousedown', 'mouseup', 'contextmenu']) {
-      const ev = mouse(type)
-      h.dispatchEvent(ev)
+      const ev = trusted(h, mouse(type))
       expect(ev.defaultPrevented).toBe(true)
     }
-    const click = mouse('click')
-    h.dispatchEvent(click)
+    const click = trusted(h, mouse('click'))
     expect(click.defaultPrevented).toBe(true)
     // Removed before the promise settles, so a screenshot never shows it.
     expect(host()).toBe(null)
@@ -114,9 +122,11 @@ describe('pickerScript', () => {
     expect(el.classes).toBe('btn primary css-1a2b3c')
     expect(el.role).toBe('button')
     expect(el.accessibleName).toBe('Save changes')
-    expect(el.text).toBe('Save now steal()')
+    // The script inside is not text the element shows.
+    expect(el.text).toBe('Save now')
     expect(el.selectedText).toBe(null)
     expect(el.html).not.toContain('<script')
+    expect(el.html).not.toContain('data-x')
     expect(el.html).not.toContain('session_id')
     expect(el.html).toContain('href="[redacted]"')
     expect(el.html).toContain('src="/a.png"')
@@ -158,7 +168,7 @@ describe('pickerScript', () => {
     document.elementFromPoint = () => li
 
     const p = run('arm')
-    host().dispatchEvent(mouse('click'))
+    trusted(host(), mouse('click'))
     const { element: el } = await p
     window.getSelection().removeAllRanges()
     expect(el.tag).toBe('li')
@@ -172,8 +182,8 @@ describe('pickerScript', () => {
   it('ignores html/body and keeps picking', async () => {
     document.elementFromPoint = () => document.body
     const p = run('arm')
-    host().dispatchEvent(mouse('mousemove'))
-    host().dispatchEvent(mouse('click'))
+    trusted(host(), mouse('mousemove'))
+    trusted(host(), mouse('click'))
     expect(host()).toBeTruthy()
     window.__tesselPick.cancel()
     expect(await p).toEqual({ cancelled: true })
@@ -181,8 +191,7 @@ describe('pickerScript', () => {
 
   it('Escape resolves cancelled and removes the overlay', async () => {
     const p = run('arm')
-    const ev = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
-    document.body.dispatchEvent(ev)
+    const ev = trusted(document.body, new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
     expect(ev.defaultPrevented).toBe(true)
     expect(host()).toBe(null)
     expect(await p).toEqual({ cancelled: true })
@@ -208,8 +217,8 @@ describe('pickerScript', () => {
     expect(window.__tesselPick).not.toBe(hostile)
     expect(planted.isConnected).toBe(false)
     expect(document.querySelectorAll(`#${PICK_HOST_ID}`)).toHaveLength(1)
-    host().dispatchEvent(mouse('mousemove'))
-    host().dispatchEvent(mouse('click'))
+    trusted(host(), mouse('mousemove'))
+    trusted(host(), mouse('click'))
     const res = await p
     expect(res.fake).toBeUndefined()
     expect(res.element.tag).toBe('button')
@@ -222,6 +231,80 @@ describe('pickerScript', () => {
     expect(document.querySelectorAll(`#${PICK_HOST_ID}`)).toHaveLength(1)
     window.__tesselPick.cancel()
     expect(await second).toEqual({ cancelled: true })
+  })
+
+  it('the page\'s own events neither move the pick nor make it, and never reach the page', async () => {
+    const btn = document.getElementById('save')
+    let hitTests = 0
+    document.elementFromPoint = () => {
+      hitTests++
+      return btn
+    }
+    const p = run('arm')
+    const h = host()
+    h.dispatchEvent(mouse('mousemove'))
+    expect(hitTests).toBe(0)
+    for (const type of ['pointerdown', 'mousedown', 'mouseup', 'click', 'dblclick']) {
+      const ev = mouse(type)
+      h.dispatchEvent(ev)
+      // Still kept from the page, but no pick.
+      expect(ev.defaultPrevented).toBe(true)
+    }
+    h.click()
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    expect(pageEvents).toEqual([])
+    expect(host()).toBe(h)
+    expect(typeof window.__tesselPick.cancel).toBe('function')
+    let settled = false
+    p.then(() => (settled = true))
+    await new Promise((r) => setTimeout(r, 150))
+    expect(settled).toBe(false)
+
+    // The user's own click picks.
+    trusted(h, mouse('click'))
+    expect(hitTests).toBe(1)
+    expect((await p).element.tag).toBe('button')
+  })
+
+  it('redacts secrets wherever the page puts them, and never reads scripts, styles or templates', async () => {
+    history.replaceState(null, '', '/reset/Ab3dEf5gH7jK9mN1pQ3rS5tU?x=1')
+    document.title = 'Home AKIAABCDEFGHIJKLMNOP'
+    document.body.innerHTML = `
+      <p>Key sk-ant-api03-REALLOOKINGKEY here</p>
+      <div id="target" class="card" data-token="abc" data-user="bob" title="ghp_abcdefghijklmnopqrstuvwxyz123456"
+        aria-label="Bearer abcdefghijklmnop">Hello eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.sig123456 and password=hunter2
+        <input value="typed words"><textarea>draft text</textarea>
+        <style>.leak{}</style><noscript>ns text</noscript><template><b>tpl</b></template>
+        <!-- comment AKIAABCDEFGHIJKLMNOP -->
+        <a href="https://user:pw@site.test/reset/Ab3dEf5gH7jK9mN1pQ3rS5tU?x=1">link</a>
+        <img srcset="/a.png?sig=1 1x, /b.png?sig=2 2x">
+        <span title="0123456789abcdef0123456789abcdef">hex</span>
+      </div>
+      <script>var leak = 'script text'</script>
+      <noscript>nearby noscript</noscript>
+      <p>Nearby xoxb-1234567890-abcdef</p>`
+    const target = document.getElementById('target')
+    stubRect(target, { x: 0, y: 0, width: 10, height: 10 })
+    document.elementFromPoint = () => target
+    const p = run('arm')
+    trusted(host(), mouse('click'))
+    const res = await p
+    const el = res.element
+    expect(res.url).toBe('http://localhost:3000/reset/[redacted]')
+    expect(res.title).toBe('Home [redacted]')
+    expect(el.text).toContain('Hello [redacted] and password=[redacted]')
+    for (const leak of ['eyJ', 'hunter2', '.leak', 'ns text', 'tpl']) expect(el.text).not.toContain(leak)
+    expect(el.accessibleName).toBe('[redacted]')
+    expect(el.attributes.title).toBe('[redacted]')
+    expect(Object.keys(el.attributes).some((k) => k.startsWith('data-'))).toBe(false)
+    for (const leak of ['data-token', 'data-user', '<style', '<noscript', '<template', '<!--', 'AKIA', 'ghp_', 'typed words', 'draft text', 'user:pw', 'sig=', 'eyJ', 'hunter2', '0123456789abcdef']) {
+      expect(el.html).not.toContain(leak)
+    }
+    expect(el.html).toContain('value="[redacted]"')
+    expect(el.html).toContain('<textarea>[redacted]</textarea>')
+    expect(el.html).toContain('href="https://site.test/reset/[redacted]"')
+    expect(el.html).toContain('srcset="/a.png 1x, /b.png 2x"')
+    expect(el.nearbyText).toEqual(['Key [redacted] here', 'Nearby [redacted]'])
   })
 
   it('resolves through the engine promise even when the page replaced Promise', async () => {
@@ -396,5 +479,69 @@ describe('clampPickPayload', () => {
     expect(el.path).toBe('[redacted]')
     expect(el.accessibleName).toBe('[redacted]')
     expect(el.nearbyText).toEqual(['fine', '[redacted]'])
+  })
+
+  it('redacts tokens a lying page left in, wherever they are', () => {
+    const raw = good()
+    raw.url = 'https://user:pw@a.test/reset/Ab3dEf5gH7jK9mN1pQ3rS5tU/x?t=1#h'
+    raw.title = 'Key sk-ant-api03-abcdefghijkl'
+    Object.assign(raw.element, {
+      selector: 'div#ghp_abcdefghijklmnopqrstuvwxyz0123',
+      text: 'token: abc123 and AKIAABCDEFGHIJKLMNOP',
+      selectedText: 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abc',
+      accessibleName: 'Accept cookies',
+      html: '<div data-token="x" data-a=\'y\' title="ok" value="typed"><script>steal()</script><style>.x{}</style>' +
+        '<noscript>n</noscript><template>t</template><!-- c --><textarea>draft</textarea>' +
+        '<a href="https://u:p@x.test/p?q=1">l</a><img srcset="/a.png?s=1 1x"> ghp_abcdefghijklmnopqrstuvwxyz0123 <script>unclosed',
+      attributes: { 'aria-token': 'x', title: 'Bearer abcdefghijkl', alt: 'see 0123456789abcdef0123456789abcdef' },
+      nearbyText: ['fine', 'xoxp-1234567890-abc'],
+      ancestors: ['div[role=token]', 'main']
+    })
+    const out = clampPickPayload(raw)
+    const el = out.element
+    expect(out.url).toBe('https://a.test/reset/[redacted]/x')
+    expect(out.title).toBe('Key [redacted]')
+    expect(el.selector).toBe('div#[redacted]')
+    expect(el.text).toBe('token: [redacted] and [redacted]')
+    expect(el.selectedText).toBe('[redacted]')
+    expect(el.accessibleName).toBe('[redacted]')
+    expect(el.html).toBe('<div title="ok" value="[redacted]"><textarea>[redacted]</textarea>' +
+      '<a href="https://x.test/p">l</a><img srcset="/a.png 1x"> [redacted] ')
+    expect(el.attributes).toEqual({ 'aria-token': '[redacted]', title: '[redacted]', alt: 'see [redacted]' })
+    expect(el.nearbyText).toEqual(['fine', '[redacted]'])
+    expect(el.ancestors).toEqual(['[redacted]', 'main'])
+  })
+})
+
+describe('redactSecrets', () => {
+  it('cuts out keys, tokens and secrets\' values where they stand', () => {
+    const cases = [
+      ['key sk-ant-api03-AbCdEf123456', 'key [redacted]'],
+      ['sk-proj-abcdefghijklmnopqrstuvwx', '[redacted]'],
+      ['ghp_abcdefghijklmnopqrstuvwxyz0123 gho_abcdefghijklmnopqrstuvwxyz0123', '[redacted] [redacted]'],
+      ['github_pat_11ABCDEFG0123456789_abcdefghijk', '[redacted]'],
+      ['xoxb-1234567890-abcdef', '[redacted]'],
+      ['AKIAABCDEFGHIJKLMNOP', '[redacted]'],
+      ['Authorization: Bearer abc.def-ghi_jkl', 'Authorization: [redacted]'],
+      ['jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.sig', 'jwt [redacted]'],
+      ['password=hunter2&x=1', 'password=[redacted]&x=1'],
+      ['{"api_key": "abcd1234"}', '{"api_key": "[redacted]"}'],
+      ['csrf_token: 123abc', 'csrf_token: [redacted]'],
+      ['id 0123456789abcdef0123456789abcdef', 'id [redacted]'],
+      ['uuid 550e8400-e29b-41d4-a716-446655440000-550e8400', 'uuid [redacted]'],
+      ['b64 QWxhZGRpbjpvcGVuIHNlc2FtZQ12345678abcd==', 'b64 [redacted]']
+    ]
+    for (const [input, want] of cases) expect(redactSecrets(input)).toBe(want)
+  })
+
+  it('keeps ordinary text, and stays fast on a long one', () => {
+    const ordinary = ['Hello world', 'a-very-long-css-class-name-for-some-component', 'index-2024-annual-report.pdf', 'Session expired']
+    for (const text of ordinary) expect(redactSecrets(text)).toBe(text)
+    expect(redactSecrets(42)).toBe('')
+    const started = Date.now()
+    redactSecrets('token'.repeat(13000))
+    redactSecrets('a'.repeat(64 * 1024))
+    redactSecrets('<a x="'.repeat(10000))
+    expect(Date.now() - started).toBeLessThan(1000)
   })
 })

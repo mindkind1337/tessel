@@ -46,6 +46,7 @@ import { writeBoardRule } from './agentMemory'
 import { claudeImageFile, isPastedImage, PASTE_DIR } from './pastedImages'
 import { createBrowserGuests } from './browserGuest'
 import { createLogger, describe } from './logger'
+import { guardIpc, mainFrameSender } from './ipcGuard'
 import { cleanEnv } from './cleanEnv'
 import { createPtyClient } from './ptyClient'
 import { listProcesses, treeOf, waitForExit, killPids, listProcessNames, runningWork } from './processTree'
@@ -208,6 +209,12 @@ if (process.platform === 'win32') app.setAppUserModelId(APP_ID)
 
 // Logs: %APPDATA%\\tessel\\logs\\tessel.log (rotated, 1 MB x 4).
 const log = createLogger({ dir: join(app.getPath('userData'), 'logs') })
+
+// Every IPC channel below (and the register*(ipcMain) modules') answers only
+// the main window's own page, never a browser page or a frame (ipcGuard.js).
+// Installed before the first channel is registered. The built-in browser's
+// channels too (they check the window again themselves, browserGuest.js).
+guardIpc(ipcMain, { isTrustedSender: mainFrameSender(() => mainWindow), log })
 
 // Kept for older call sites: everything it reports is an error.
 function logCrashContext(message) {
@@ -2761,6 +2768,18 @@ ipcMain.handle('update:justInstalled', () => {
   } catch {
     return null
   }
+})
+
+// Every webContents Electron creates (the window, the built-in browser's
+// pages, the PDF viewer, DevTools): only Tessel's window may hold <webview>
+// pages (browserGuest.js then checks which), and no page opens a window. The
+// window and the browser's pages set their own window rule after this one,
+// which replaces it (setWindowOpenHandler keeps the last handler).
+app.on('web-contents-created', (_event, contents) => {
+  contents.on('will-attach-webview', (event) => {
+    if (!mainWindow || mainWindow.isDestroyed() || contents !== mainWindow.webContents) event.preventDefault()
+  })
+  contents.setWindowOpenHandler(() => ({ action: 'deny' }))
 })
 
 // ---------------------------------------------------------------------------

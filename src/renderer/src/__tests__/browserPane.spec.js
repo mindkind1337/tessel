@@ -119,7 +119,7 @@ describe('browserPage.js', () => {
 })
 
 describe('BrowserPane.vue', () => {
-  let wrapper, ctx, api, node, handlers, offs, ports, prevApi
+  let wrapper, ctx, api, node, handlers, offs, ports, prevApi, askConfirm
 
   function fakeWebview(el) {
     el.loadURL = vi.fn(() => Promise.resolve())
@@ -150,7 +150,7 @@ describe('BrowserPane.vue', () => {
     wrapper = mount(BrowserPane, {
       props: { node },
       attachTo: document.body,
-      global: { provide: { panelCtx: ctx } }
+      global: { provide: { panelCtx: ctx, askConfirm: (q) => askConfirm(q) } }
     })
     fakeWebview(webview())
     await nextTick()
@@ -201,6 +201,7 @@ describe('BrowserPane.vue', () => {
     }
     design.toggle = vi.fn()
     design.screenshot = vi.fn()
+    askConfirm = vi.fn(async () => true)
   })
 
   afterEach(() => {
@@ -223,6 +224,36 @@ describe('BrowserPane.vue', () => {
     expect(wv.attributes('webpreferences')).toContain('contextIsolation=yes')
     expect(wrapper.find('.bp-address-input').element.value).toBe('http://localhost:3000/')
     expect(wrapper.find('[data-test="browser-back"]').attributes('disabled')).toBeDefined()
+  })
+
+  it('Clear browsing data: asks first, clears the session, says so', async () => {
+    api.clearData = vi.fn(async () => ({ ok: true }))
+    await mountPane('http://localhost:3000/')
+    await ready()
+    const btn = wrapper.find('[data-test="browser-clear-data"]')
+    expect(btn.attributes('aria-label')).toBe('Clear browsing data')
+
+    askConfirm.mockResolvedValueOnce(false)
+    await btn.trigger('click')
+    await flushPromises()
+    expect(askConfirm).toHaveBeenCalledWith(expect.objectContaining({ title: 'Clear browsing data?', confirmLabel: 'Clear', danger: true }))
+    expect(api.clearData).not.toHaveBeenCalled()
+
+    await btn.trigger('click')
+    await flushPromises()
+    expect(api.clearData).toHaveBeenCalledTimes(1)
+    expect(ctx.toast).toHaveBeenLastCalledWith('Browsing data cleared', { timeout: 3000 })
+
+    api.clearData = vi.fn(async () => ({ ok: false }))
+    await btn.trigger('click')
+    await flushPromises()
+    expect(ctx.toast).toHaveBeenLastCalledWith('Could not clear the browsing data.', { kind: 'error' })
+
+    api.clearData = vi.fn(async () => { throw new Error('gone') })
+    ctx.toast.mockClear()
+    await btn.trigger('click')
+    await flushPromises()
+    expect(ctx.toast).toHaveBeenLastCalledWith('Could not clear the browsing data.', { kind: 'error' })
   })
 
   it('a blank page shows the New Tab state, with the active ports to open', async () => {

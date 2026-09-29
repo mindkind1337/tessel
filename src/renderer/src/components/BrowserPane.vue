@@ -21,6 +21,7 @@ import {
   Camera,
   Copy,
   Crosshair,
+  Eraser,
   ExternalLink,
   Globe,
   Loader2,
@@ -51,6 +52,7 @@ const props = defineProps({
 })
 
 const ctx = inject('panelCtx')
+const askConfirm = inject('askConfirm', null)
 
 const isActive = computed(() => ctx.activeId.value === props.node.id)
 const isMaximized = computed(() => ctx.maximizedId.value === props.node.id)
@@ -257,6 +259,30 @@ function retry() {
 function openDevTools() {
   const api = window.shellApi && window.shellApi.browser
   if (api && guestId.value != null) api.openDevTools(guestId.value)
+}
+// Cookies, site storage and cache of the browser session (shared by every
+// browser pane), after a confirm: it signs the user out of sites.
+async function clearData() {
+  closeMenus()
+  const api = window.shellApi && window.shellApi.browser
+  if (!api || typeof api.clearData !== 'function') return
+  const question = {
+    title: t('browser.clearData.title', 'Clear browsing data?'),
+    text: t('browser.clearData.text', "Cookies, site storage and the cache of Tessel's browser are deleted for every browser pane. You will be signed out of sites."),
+    confirmLabel: t('browser.clearData.confirm', 'Clear'),
+    danger: true
+  }
+  const ok = askConfirm ? await askConfirm(question) : window.confirm(question.title)
+  if (!ok) return
+  let r
+  try {
+    r = await api.clearData()
+  } catch {
+    r = null
+  }
+  if (!ctx.toast) return
+  if (r && r.ok) ctx.toast(t('browser.clearData.done', 'Browsing data cleared'), { timeout: 3000 })
+  else ctx.toast(t('browser.clearData.failed', 'Could not clear the browsing data.'), { kind: 'error' })
 }
 function openExternal(url = currentUrl.value) {
   if (!displayUrl(url)) return
@@ -709,6 +735,16 @@ defineExpose({ navigate, focusAddress })
           @click="openDevTools"
         >
           <SquareCode :size="16" />
+        </button>
+        <button
+          type="button"
+          class="bp-btn"
+          data-test="browser-clear-data"
+          :title="t('browser.tools.clearData', 'Clear browsing data (cookies, site storage, cache)')"
+          :aria-label="t('browser.tools.clearDataLabel', 'Clear browsing data')"
+          @click="clearData"
+        >
+          <Eraser :size="16" />
         </button>
         <button
           type="button"
