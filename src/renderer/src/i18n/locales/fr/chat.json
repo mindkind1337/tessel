@@ -500,5 +500,7 @@
   "chat.orca.background.done": "Terminé : {{subject}}",
   "chat.orca.background.blocked": "Échec : {{subject}}",
   "chat.orca.background.idle": "Arrêté : {{subject}}",
-  "chat.orca.background.unverifiable": "Aucune nouvelle reçue : {{subject}}"
+  "chat.orca.background.unverifiable": "Aucune nouvelle reçue : {{subject}}",
+  "chat.orca.composer.fileDropFailed": "Impossible d’insérer ces chemins. Déposez au maximum 256 fichiers locaux.",
+  "chat.orca.ui.close": "Fermer"
 }

@@ -88,8 +88,8 @@ export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence =
   // on its own; its row comes after the user message and before the answer.
   function openTurnFor(userItemId, at = now()) {
     if (openTurn) return
-    const turnId = `tessel-turn-${++turnSeq}`
-    openTurn = `turn:${turnId}`
+    const turnId = `tessel-turn-${++turnSeq}` // i18n-ignore
+    openTurn = `turn:${turnId}` // i18n-ignore
     put(openTurn, { kind: 'turn', turnId, state: 'running', ...(userItemId ? { userItemId } : {}), startedAt: at, requestedAt: at }, {}, at)
   }
   function closeTurn({ state = 'completed', outcome, durationMs, usage } = {}, at = now()) {
@@ -179,12 +179,12 @@ export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence =
       }
       case 'thinking': {
         if (!ev.messageId || !ev.text) break
-        put(`reasoning:${ev.messageId}`, { kind: 'message', role: 'reasoning', blocks: [{ type: 'text', text: String(ev.text) }] }, {}, at)
+        put(`reasoning:${ev.messageId}`, { kind: 'message', role: 'reasoning', blocks: [{ type: 'text', text: String(ev.text) }] }, {}, at) // i18n-ignore
         break
       }
       case 'tool': {
         if (!ev.id) break
-        const itemId = `tool:${ev.id}`
+        const itemId = `tool:${ev.id}` // i18n-ignore
         const prior = items.get(itemId)
         const state = TOOL_STATE[ev.status] || (prior ? prior.body.state : 'running')
         if (prior && ev.name == null) {
@@ -199,7 +199,7 @@ export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence =
       }
       case 'toolResult': {
         if (!ev.id) break
-        const itemId = `tool:${ev.id}`
+        const itemId = `tool:${ev.id}` // i18n-ignore
         if (!items.has(itemId)) put(itemId, { kind: 'tool-call', name: '', input: null, callId: String(ev.id), state: 'running' }, {}, at)
         revise(itemId, { state: ev.isError ? 'failed' : 'completed', output: bounded(ev.text) })
         break
@@ -215,9 +215,9 @@ export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence =
           ...(ev.description ? { description: String(ev.description) } : {}),
           detail: typeof ev.detail === 'string' ? ev.detail : null,
           options: [
-            { id: 'allow', label: 'Allow' }, // i18n-ignore data: the card shows t() by option id
-            ...(sessionOffered(ev.choices) ? [{ id: 'allowSession', label: 'Allow for this session' }] : []), // i18n-ignore data
-            { id: 'deny', label: 'Deny' } // i18n-ignore data
+            { id: 'allow', label: 'Allow' }, // i18n-ignore
+            ...(sessionOffered(ev.choices) ? [{ id: 'allowSession', label: 'Allow for this session' }] : []), // i18n-ignore
+            { id: 'deny', label: 'Deny' } // i18n-ignore
           ],
           resolution: resolutionOf(status, at),
           // Tessel's own fields (its approval card keeps its protections).
@@ -230,11 +230,11 @@ export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence =
             choices: Array.isArray(ev.choices) ? ev.choices : null
           }
         }
-        put(`approval:${ev.requestId}`, body, {}, at)
+        put(`approval:${ev.requestId}`, body, {}, at) // i18n-ignore
         break
       }
       case 'approvalStatus': {
-        const itemId = `approval:${ev.requestId}`
+        const itemId = `approval:${ev.requestId}` // i18n-ignore
         if (!items.has(itemId)) break
         revise(itemId, { resolution: resolutionOf(ev.status, at) })
         break
@@ -242,13 +242,13 @@ export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence =
       case 'turnEnd': {
         const outcome = ev.status === 'failed' ? 'failure' : ev.status === 'interrupted' ? 'cancellation' : 'success'
         closeTurn({ state: ev.status === 'interrupted' ? 'interrupted' : 'completed', outcome, durationMs: ev.durationMs, usage: ev.usage }, at)
-        if (ev.error) put(`status:turn-${sequence + 1}`, { kind: 'status', text: String(ev.error), tone: 'error' }, {}, at)
+        if (ev.error) put(`status:turn-${sequence + 1}`, { kind: 'status', text: String(ev.error), tone: 'error' }, {}, at) // i18n-ignore
         break
       }
       case 'notice': {
         if (!ev.text) break
         const tone = ev.kind === 'error' ? 'error' : ev.kind === 'warning' ? 'warning' : 'notice'
-        put(`status:notice-${sequence + 1}`, { kind: 'status', text: String(ev.text), tone }, {}, at)
+        put(`status:notice-${sequence + 1}`, { kind: 'status', text: String(ev.text), tone }, {}, at) // i18n-ignore
         break
       }
       case 'rateLimit':
