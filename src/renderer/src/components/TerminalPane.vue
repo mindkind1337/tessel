@@ -39,7 +39,7 @@ import { stripTerminalSelectionGutter } from '../../../shared/terminalSelectionG
 import { terminalSettingOptions, composeTerminalTheme, useWebgl, METRIC_OPTIONS } from '../terminalOptions'
 import { cacheCountdown } from '../promptCache'
 import { isViewed } from '../../../shared/fileKinds'
-import { effectiveAgent, launchSignature, launchSessionValues } from '../../../shared/agentPrefs'
+import { effectiveAgent, launchSignature, launchSessionValues, inYoloFolder, YOLO_ARGS, YOLO_ENV } from '../../../shared/agentPrefs'
 import { getAgentSessionOptionCatalog, modelOptions, resolveSessionOptionDefaults } from '../../../shared/agentSessionOptions'
 import { paneModels } from '../paneModels'
 import { modelsFor } from '../agentModels'
@@ -548,13 +548,34 @@ const sleptAt = computed(() =>
 // The model chosen for it (its own, else Settings > Agents) counts too.
 function signatureNow(n, choice = n.sessionOptions) {
   const values = launchSessionValues(choice, settings.agentSessionOptions, n.agentId)
-  return launchSignature(effectiveAgent({ id: n.agentId, command: n.agentCommand }, settings.agentPrefs, settings.agentPermissions, values, modelsFor(n.agentId)))
+  return launchSignature(effectiveAgent({ id: n.agentId, command: n.agentCommand }, settings.agentPrefs, ctx.permissionsOf ? ctx.permissionsOf(n) : settings.agentPermissions, values, modelsFor(n.agentId)))
 }
 const launchStale = computed(() => {
   const n = props.node
   if (n.kind !== 'agent' || !n.launchSig || !n.agentCommand || n.detected) return false
   return signatureNow(n) !== n.launchSig
 })
+// Pane menu > Restart in Yolo / Restart asking first (an agent Tessel
+// started, with a known skip-approvals option and no arguments of your own,
+// which would replace it), and Yolo in this folder.
+const canSwitchYolo = computed(() => {
+  const n = props.node
+  if (n.kind !== 'agent' || !n.agentCommand || n.detected || n.remoteHostId) return false
+  if (!YOLO_ARGS[n.agentId] && !YOLO_ENV[n.agentId]) return false
+  const own = (settings.agentPrefs[n.agentId] || {}).args
+  return !(typeof own === 'string' && own.trim())
+})
+const yoloFolder = computed(() => (ctx.paneFolder ? ctx.paneFolder(props.node) : null))
+const yoloFolderOn = computed(() => !!yoloFolder.value && inYoloFolder(yoloFolder.value, settings.yoloFolders))
+const folderName = (dir) => String(dir || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop()
+function menuSwitchYolo() {
+  closeCtxMenu()
+  if (ctx.restartWithPermissions) ctx.restartWithPermissions(props.node.id, props.node.launchYolo ? 'manual' : 'yolo')
+}
+function menuYoloFolder() {
+  closeCtxMenu()
+  if (ctx.toggleYoloFolder) ctx.toggleYoloFolder(yoloFolder.value)
+}
 function restartToApply() {
   if (ctx.restartLeaf) ctx.restartLeaf(props.node.id)
 }
@@ -2429,6 +2450,30 @@ onBeforeUnmount(() => {
       <button class="ctx-menu-item" @click="menuRestart">
         {{ t('pane.restart', 'Restart') }}<span class="ctx-menu-shortcut">Ctrl+Shift+R</span>
       </button>
+      <template v-if="canSwitchYolo">
+        <button
+          class="ctx-menu-item"
+          data-test="menu-switch-yolo"
+          :title="
+            node.launchYolo
+              ? t('pane.menu.restartManualHint', 'Restart this agent so it asks you before acting again: same pane, its conversation resumed')
+              : t('pane.menu.restartYoloHint', 'Restart this agent without permission prompts: it runs commands and changes files without asking you. Same pane, its conversation resumed')
+          "
+          @click="menuSwitchYolo"
+        >
+          {{ node.launchYolo ? t('pane.menu.restartManual', 'Restart asking first') : t('pane.menu.restartYolo', 'Restart in Yolo') }}
+        </button>
+        <button
+          v-if="yoloFolder"
+          class="ctx-menu-item"
+          data-test="menu-yolo-folder"
+          :aria-pressed="yoloFolderOn"
+          :title="t('pane.menu.yoloFolderHint', 'Agents started in {{folder}} (or a folder inside it) always start in Yolo. Agents already running there keep their mode.', { folder: yoloFolder })"
+          @click="menuYoloFolder"
+        >
+          {{ t('pane.menu.yoloFolder', 'Yolo in this folder') }}<span class="ctx-menu-shortcut">{{ yoloFolderOn ? '✓ ' : '' }}{{ folderName(yoloFolder) }}</span>
+        </button>
+      </template>
       <button class="ctx-menu-item danger" @click="menuClose">{{ t('pane.close', 'Close pane') }}</button>
     </div>
     <!-- Pane menu > Model: the model, effort and fast mode of this agent. -->

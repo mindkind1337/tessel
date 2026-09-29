@@ -473,7 +473,13 @@
       "splitRight": "Diviser à droite",
       "splitDown": "Diviser vers le bas",
       "model": "Modèle…",
-      "modelHint": "Choisir le modèle utilisé par cet agent"
+      "modelHint": "Choisir le modèle utilisé par cet agent",
+      "restartYolo": "Redémarrer en Yolo",
+      "restartYoloHint": "Redémarrer cet agent sans demandes de permission : il exécute des commandes et modifie des fichiers sans vous demander. Même panneau, sa conversation reprise",
+      "restartManual": "Redémarrer en demandant d'abord",
+      "restartManualHint": "Redémarrer cet agent pour qu'il vous demande à nouveau avant d'agir : même panneau, sa conversation reprise",
+      "yoloFolder": "Yolo dans ce dossier",
+      "yoloFolderHint": "Les agents lancés dans {{folder}} (ou un dossier à l'intérieur) démarrent toujours en Yolo. Les agents déjà lancés là gardent leur mode."
     },
     "badge": {
       "quiet": "silencieux depuis {{minutes}} min",

@@ -3187,6 +3187,31 @@ body.pane-dragging * {
   margin: 4px 0 8px;
 }
 
+.yolo-folder-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  max-width: 60%;
+}
+
+.yolo-folder {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.yolo-folder-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}
+
 .agents-head {
   display: flex;
   align-items: center;
