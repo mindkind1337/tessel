@@ -39,9 +39,13 @@ function api(scm) {
       sync: rec('sync', () => ({ ok: true })),
       fetch: rec('fetch', () => ({ ok: true })),
       generate: rec('generate', scm.generate || (() => ({ ok: true, message: 'Generated message' }))),
-      cancelGenerate: rec('cancelGenerate', () => ({ ok: true }))
+      cancelGenerate: rec('cancelGenerate', () => ({ ok: true })),
+      ...(scm.branchCompare ? { branchCompare: rec('branchCompare', scm.branchCompare) } : {}),
+      ...(scm.history ? { history: rec('history', scm.history) } : {}),
+      ...(scm.commitFiles ? { commitFiles: rec('commitFiles', scm.commitFiles) } : {})
     },
-    writeClipboard: vi.fn()
+    writeClipboard: vi.fn(),
+    openExternal: vi.fn()
   }
 }
 function make(props = {}) {
@@ -111,7 +115,10 @@ describe('Source Control: status', () => {
     expect(names()).toEqual(['a.js', 'b.js', 'new file.txt'])
     expect(rowOf('a.js', 'unstaged').find('.sc-status').text()).toBe('M')
     expect(rowOf('a.js', 'unstaged').find('.sc-counts').text()).toBe('+2 -1')
-    expect(rowOf('src/b.js', 'staged').find('.explorer-hit-dir').text()).toBe('src')
+    // Tree view (the default): the folder is its own row, with its file count.
+    const stagedDirs = w.find('[data-section="staged"]').findAll('[data-test="sc-dir"]')
+    expect(stagedDirs.map((d) => [d.find('.sc-dir-name').text(), d.find('.sc-dir-count').text()])).toEqual([['src', '1']])
+    expect(rowOf('src/b.js', 'staged').find('.explorer-hit-dir').exists()).toBe(false)
     expect(w.find('[data-test="sc-branch"]').text()).toContain('main')
     expect(w.find('[data-test="sc-empty"]').exists()).toBe(false)
   })
@@ -390,5 +397,155 @@ describe('Source Control: notes and task copies', () => {
     expect(calls.find(([n]) => n === 'stage')[1]).toEqual({ root: 'C:\\proj.worktrees\\fix', paths: ['copy.js'] })
     await w.find('[data-test="review-changes"]').trigger('click')
     expect(w.emitted('review')).toEqual([['t1']])
+  })
+})
+
+describe("Source Control: Orca's folder tree", () => {
+  const treeEntries = [
+    { path: 'src/renderer/a.js', area: 'unstaged', status: 'modified', added: 264, removed: 3 },
+    { path: 'src/renderer/b.js', area: 'unstaged', status: 'modified', added: 1, removed: 0 },
+    { path: 'src/main/c.js', area: 'unstaged', status: 'modified', added: 2, removed: 2 },
+    { path: 'top.md', area: 'unstaged', status: 'modified' },
+    { path: 'docs/guide/new.md', area: 'untracked', status: 'untracked', added: 12, removed: 0 }
+  ]
+  const rowsOf = (section) =>
+    w
+      .find(`[data-section="${section}"]`)
+      .findAll('[data-scm-row]')
+      .map((r) => (r.attributes('data-test') === 'sc-dir' ? `${r.find('.sc-dir-name').text()}/ ${r.find('.sc-dir-count').text()}` : r.find('.explorer-name').text()))
+
+  it('folders first with their file counts, chains of one folder in one row, indented by depth', async () => {
+    api({ status: () => status(treeEntries) })
+    make()
+    await flushPromises()
+    expect(rowsOf('unstaged')).toEqual(['src/ 3', 'main/ 1', 'c.js', 'renderer/ 2', 'a.js', 'b.js', 'top.md'])
+    expect(rowsOf('untracked')).toEqual(['docs/guide/ 1', 'new.md'])
+    const a = rowOf('src/renderer/a.js', 'unstaged')
+    expect(a.attributes('style')).toContain('padding-left: 44px') // depth 2: 2 * 12 + 20
+    expect(a.find('.sc-counts').text()).toBe('+264 -3')
+    expect(a.find('.sc-status').text()).toBe('M')
+    // Untracked files show their line count, green, and "U".
+    const n = rowOf('docs/guide/new.md', 'untracked')
+    expect(n.find('.sc-plus').text()).toBe('+12')
+    expect(n.find('.sc-status').text()).toBe('U')
+  })
+
+  it('a folder folds and unfolds; its actions stage or discard what it holds', async () => {
+    api({ status: () => status(treeEntries) })
+    make()
+    await flushPromises()
+    const renderer = () => w.findAll('[data-test="sc-dir"]').find((d) => d.find('.sc-dir-name').text() === 'renderer')
+    await renderer().find('.sc-dir-toggle').trigger('click')
+    expect(rowsOf('unstaged')).toEqual(['src/ 3', 'main/ 1', 'c.js', 'renderer/ 2', 'top.md'])
+    await renderer().trigger('keydown', { key: 'ArrowRight' })
+    expect(rowsOf('unstaged')).toContain('a.js')
+    await renderer().find('[data-test="sc-dir-stage"]').trigger('click')
+    await flushPromises()
+    expect(calls.find(([n]) => n === 'stage')[1].paths).toEqual(['src/renderer/a.js', 'src/renderer/b.js'])
+    const docs = w.findAll('[data-test="sc-dir"]').find((d) => d.find('.sc-dir-name').text() === 'docs/guide')
+    await docs.find('[data-test="sc-dir-discard"]').trigger('click')
+    await flushPromises()
+    expect(asked.pop()).toMatchObject({ title: 'Delete 1 untracked file?' })
+    expect(calls.find(([n]) => n === 'discard')[1].paths).toEqual(['docs/guide/new.md'])
+  })
+
+  it('View as list / View as tree from the more menu (kept in the settings)', async () => {
+    api({ status: () => status(treeEntries) })
+    try {
+      make()
+      await flushPromises()
+      await w.find('[data-test="sc-more"]').trigger('click')
+      const item = () => document.querySelector('[data-test="sc-view-mode"]')
+      expect(item().textContent).toContain('View as list')
+      item().click()
+      await flushPromises()
+      expect(settings.sourceControlViewMode).toBe('list')
+      expect(w.findAll('[data-test="sc-dir"]')).toHaveLength(0)
+      expect(rowOf('src/renderer/a.js', 'unstaged').find('.explorer-hit-dir').text()).toBe('src/renderer')
+    } finally {
+      resetSettings()
+    }
+  })
+
+  it('arrows move between rows, Enter opens a file', async () => {
+    api({ status: () => status(treeEntries.slice(3, 4)) })
+    make()
+    await flushPromises()
+    const row = rowOf('top.md', 'unstaged')
+    row.element.focus()
+    await row.trigger('keydown', { key: 'Enter' })
+    expect(w.emitted('open-diff')[0][0]).toMatchObject({ rel: 'top.md', area: 'unstaged' })
+  })
+
+  it('"View all" opens the diff of every file of the section', async () => {
+    api({ status: () => status(treeEntries) })
+    make()
+    await flushPromises()
+    await w.find('[data-section="unstaged"]').find('[data-test="sc-view-all"]').trigger('click')
+    const opened = w.emitted('open-diff').map((e) => [e[0].rel, e[0].preview])
+    expect(opened).toEqual([
+      ['src/main/c.js', false],
+      ['src/renderer/a.js', false],
+      ['src/renderer/b.js', false],
+      ['top.md', false]
+    ])
+  })
+})
+
+describe('Source Control: branch line and Commits', () => {
+  it('shows the branch, its line total, → its base with commits ahead, and opens the review page', async () => {
+    api({
+      status: () => status([{ path: 'a.js', area: 'unstaged', status: 'modified' }]),
+      branchCompare: () => ({ ok: true, base: 'origin/main', ahead: 2, behind: 0, added: 14485, removed: 715, reviewUrl: 'https://github.com/me/r/compare/main...main' })
+    })
+    make()
+    await flushPromises()
+    await new Promise((r) => setTimeout(r, 350))
+    await flushPromises()
+    expect(w.find('[data-test="source-control-head-identity"]').text()).toBe('main')
+    const total = w.find('[data-test="source-control-branch-line-total"]')
+    expect([total.find('.sc-plus').text(), total.find('.sc-minus').text()]).toEqual(['+14,485', '-715'])
+    expect(total.attributes('aria-label')).toBe('14485 lines added, 715 lines deleted')
+    expect(w.find('[data-test="sc-base"]').text()).toBe('origin/main')
+    expect(w.find('.sc-stat').text()).toBe('↑2')
+    expect(w.find('.sc-stat').attributes('title')).toBe('2 commits ahead of origin/main')
+    await w.find('[data-test="sc-review-page"]').trigger('click')
+    expect(window.shellApi.openExternal).toHaveBeenCalledWith('https://github.com/me/r/compare/main...main')
+  })
+
+  it('Commits: closed at first; opened, lists the commits with ref pills; a commit shows its files; a file opens its diff', async () => {
+    const hash = '1'.repeat(40)
+    api({
+      status: () => status([], { head: hash }),
+      history: () => ({
+        ok: true,
+        items: [
+          { id: hash, parentIds: ['2'.repeat(40)], subject: 'Second', message: 'Second', displayId: '1111111', author: 'Ann', timestamp: 1700000000000, references: [{ id: 'refs/heads/main', name: 'main', revision: hash, category: 'branches' }] },
+          { id: '2'.repeat(40), parentIds: [], subject: 'First', message: 'First', displayId: '2222222', references: [] }
+        ],
+        currentRef: { id: 'refs/heads/main', name: 'main', revision: hash, category: 'branches' },
+        hasMore: false,
+        limit: 50
+      }),
+      commitFiles: () => ({ ok: true, entries: [{ path: 'src/a.js', status: 'modified', added: 1, removed: 0 }] })
+    })
+    make()
+    await flushPromises()
+    expect(w.find('[data-test="sc-history-list"]').exists()).toBe(false)
+    expect(calls.some(([n]) => n === 'history')).toBe(false)
+    await w.find('[data-test="sc-history-toggle"]').trigger('click')
+    await flushPromises()
+    const rows = w.findAll('[data-test="git-history-row"]')
+    expect(rows.map((r) => r.find('.sch-subject').text())).toEqual(['Second', 'First'])
+    expect(w.find('[data-test="sc-history-count"]').text()).toBe('2')
+    expect(rows[0].find('.sch-ref').text()).toBe('main')
+    expect(rows[0].findAll('circle').length).toBe(2) // HEAD: ring
+    await rows[0].trigger('click')
+    await flushPromises()
+    expect(calls.find(([n]) => n === 'commitFiles')[1]).toEqual({ root: ROOT, commit: hash })
+    expect(w.find('[data-test="sc-history-files"]').text()).toContain('Ann')
+    await w.find('[data-test="git-history-commit-file"]').trigger('click')
+    expect(w.emitted('open-diff')[0][0]).toMatchObject({ root: ROOT, rel: 'src/a.js', area: 'commit', commit: hash, file: 'C:\\proj\\src\\a.js', preview: true })
+    await w.find('[data-test="sc-history-toggle"]').trigger('click') // closed again for the next tests
   })
 })

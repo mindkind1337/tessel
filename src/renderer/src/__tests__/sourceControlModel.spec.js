@@ -17,6 +17,21 @@ import {
 import { addNote, notesFor, updateNote, deleteNote, clearNotes, clearDelivered } from '../reviewNotes'
 import { diffTabPath, docPathOf, isDiffTabPath, validSavedFiles, openTab } from '../editor/editorTabs'
 import { selectionTarget, isAddReviewNoteChord } from '../editor/diffNotes'
+import {
+  buildSourceControlTree,
+  compactSourceControlTree,
+  flattenSourceControlTree,
+  sectionTreeRows,
+  getSourceControlDirectoryActionPaths
+} from '../../../shared/sourceControlTree'
+import {
+  buildGitHistoryViewModels,
+  buildDefaultGitHistoryColorMap,
+  gitHistoryGraphGeometry,
+  dedupeRemoteTrackingRefs
+} from '../../../shared/gitHistoryGraph'
+import { getFileTypeIcon } from '../fileTypeIcons'
+import { File, FileBox, FileCode, FileLock, FileText } from 'lucide-vue-next'
 
 describe('sections and row actions', () => {
   it('Changes first, conflicts pinned on top, each group sorted', () => {
@@ -133,5 +148,92 @@ describe('diff tabs and the Add Review Note chord', () => {
     expect(selectionTarget({ startLineNumber: 3, endLineNumber: 3, endColumn: 5 })).toEqual({ lineNumber: 3 })
     expect(selectionTarget({ startLineNumber: 3, endLineNumber: 6, endColumn: 1 })).toEqual({ lineNumber: 5, startLine: 3 })
     expect(selectionTarget(null)).toBeNull()
+  })
+})
+
+describe("Orca's source control tree (shared/sourceControlTree.js)", () => {
+  const e = (path, area = 'unstaged', extra = {}) => ({ path, area, status: 'modified', ...extra })
+  it('builds folders first, numeric order, file counts per folder', () => {
+    const tree = buildSourceControlTree('unstaged', [e('src/file10.js'), e('src/file2.js'), e('a/b/c.js'), e('root.js')])
+    expect(tree.map((n) => [n.type, n.name, n.fileCount])).toEqual([
+      ['directory', 'a', 1],
+      ['directory', 'src', 2],
+      ['file', 'root.js', undefined]
+    ])
+    expect(tree[1].children.map((n) => n.name)).toEqual(['file2.js', 'file10.js'])
+  })
+
+  it('compacts chains of single folders and flattens without collapsed folders', () => {
+    const roots = compactSourceControlTree(buildSourceControlTree('unstaged', [e('a/b/c.js'), e('a/b/d.js'), e('x.js')]))
+    expect(roots.map((n) => [n.name, n.depth])).toEqual([
+      ['a/b', 0],
+      ['x.js', 0]
+    ])
+    expect(flattenSourceControlTree(roots).map((n) => [n.name, n.depth])).toEqual([
+      ['a/b', 0],
+      ['c.js', 1],
+      ['d.js', 1],
+      ['x.js', 0]
+    ])
+    expect(flattenSourceControlTree(roots, new Set([roots[0].key])).map((n) => n.name)).toEqual(['a/b', 'x.js'])
+  })
+
+  it('conflicts first inside a folder; the Conflicts section has its own folder keys', () => {
+    const rows = sectionTreeRows({ id: 'conflicts', area: 'unstaged', items: [e('d/z.js', 'unstaged', { conflictStatus: 'unresolved' }), e('d/a.js')] }, new Set())
+    expect(rows.map((n) => n.name)).toEqual(['d', 'z.js', 'a.js'])
+    expect(rows[0].key).toBe('dir::conflicts::d')
+  })
+
+  it("a folder's actions: stage / unstage / discard what it holds", () => {
+    const [dir] = buildSourceControlTree('unstaged', [e('d/a.js'), e('d/c.js', 'unstaged', { conflictStatus: 'unresolved' })])
+    expect(getSourceControlDirectoryActionPaths(dir)).toEqual({ stagePaths: ['d/a.js'], unstagePaths: [], discardPaths: ['d/a.js'] })
+    const [staged] = buildSourceControlTree('staged', [e('d/s.js', 'staged')])
+    expect(getSourceControlDirectoryActionPaths(staged)).toEqual({ stagePaths: [], unstagePaths: ['d/s.js'], discardPaths: [] })
+  })
+})
+
+describe("Orca's commit graph (shared/gitHistoryGraph.js)", () => {
+  const item = (id, parentIds, references = []) => ({ id, parentIds, subject: id, references })
+  it('one lane for a straight history; HEAD marked; a merge opens a second lane', () => {
+    const currentRef = { id: 'refs/heads/main', name: 'main', revision: 'm' }
+    const items = [item('m', ['a', 'b'], [{ id: 'refs/heads/main', name: 'main', category: 'branches' }]), item('b', ['a']), item('a', [])]
+    const vms = buildGitHistoryViewModels(items, buildDefaultGitHistoryColorMap({ currentRef }), currentRef)
+    expect(vms.map((v) => v.kind)).toEqual(['HEAD', 'node', 'node'])
+    expect(vms[0].outputSwimlanes.map((n) => n.id)).toEqual(['a', 'b'])
+    expect(vms[0].outputSwimlanes[0].color).toBe('git-graph-ref')
+    expect(vms[0].historyItem.references[0].color).toBe('git-graph-ref')
+    const geo = gitHistoryGraphGeometry(vms[0])
+    expect(geo).toMatchObject({ cx: 11, cy: 12, isMerge: true, width: 33 })
+    expect(geo.paths.map((p) => p.key)).toEqual(['merge-parent-b', 'out-of-node'])
+    expect(gitHistoryGraphGeometry(vms[2]).paths.map((p) => p.key)).toEqual(['base-a', 'into-node']) // the merged lane joins back
+  })
+
+  it('drops origin/x when the local x is on the same commit', () => {
+    const refs = [
+      { id: 'refs/heads/main', name: 'main', category: 'branches' },
+      { id: 'refs/remotes/origin/main', name: 'origin/main', category: 'remote branches' },
+      { id: 'refs/remotes/origin/other', name: 'origin/other', category: 'remote branches' }
+    ]
+    expect(dedupeRemoteTrackingRefs(refs).map((r) => r.name)).toEqual(['main', 'origin/other'])
+    expect(dedupeRemoteTrackingRefs(refs, { preserveRefIds: ['refs/remotes/origin/main'] })).toHaveLength(3)
+  })
+})
+
+describe('file type icons (Orca lib/file-type-icons.ts)', () => {
+  it('by name, then by extension, else a plain file', () => {
+    expect(getFileTypeIcon('src/package.json')).toBe(FileBox)
+    expect(getFileTypeIcon('a\\b\\x.vue')).toBe(FileCode)
+    expect(getFileTypeIcon('notes.md')).toBe(FileText)
+    expect(getFileTypeIcon('.env.local')).toBe(FileLock)
+    expect(getFileTypeIcon('noext')).toBe(File)
+  })
+})
+
+describe('commit diff tabs', () => {
+  it('a file of a commit gets its own tab per commit', () => {
+    const p = diffTabPath('C:\\p\\a.js', 'commit', 'abc1234')
+    expect(isDiffTabPath(p)).toBe(true)
+    expect(p).not.toBe(diffTabPath('C:\\p\\a.js', 'commit', 'def5678'))
+    expect(p).not.toBe(diffTabPath('C:\\p\\a.js', 'unstaged'))
   })
 })

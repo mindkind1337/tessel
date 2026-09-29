@@ -301,6 +301,9 @@ const api = {
     fetch: (q) => ipcRenderer.invoke('scm:fetch', q),
     sync: (q) => ipcRenderer.invoke('scm:sync', q),
     fileVersions: (q) => ipcRenderer.invoke('scm:fileVersions', q),
+    branchCompare: (q) => ipcRenderer.invoke('scm:branchCompare', q),
+    history: (q) => ipcRenderer.invoke('scm:history', q),
+    commitFiles: (q) => ipcRenderer.invoke('scm:commitFiles', q),
     generate: (q) => ipcRenderer.invoke('scm:generate', q),
     cancelGenerate: (q) => ipcRenderer.invoke('scm:cancelGenerate', q)
   },

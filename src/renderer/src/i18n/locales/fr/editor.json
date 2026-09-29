@@ -27,7 +27,7 @@
     },
     "pr": {
       "hint": "Créer une pull request pour cette branche",
-      "create": "Créer une PR"
+      "create": "Créer PR"
     },
     "filter": {
       "active": "Filtre : {{query}}",
@@ -48,7 +48,9 @@
     },
     "menu": {
       "refresh": "Actualiser",
-      "createPr": "Créer une PR…"
+      "createPr": "Créer une PR…",
+      "viewList": "Afficher en liste",
+      "viewTree": "Afficher en arbre"
     },
     "notes": {
       "title": "Notes",
@@ -148,7 +150,11 @@
       "restore": "Restaurer le fichier",
       "discard": "Abandonner les modifications",
       "stage": "Indexer",
-      "unstage": "Désindexer"
+      "unstage": "Désindexer",
+      "deleteUntrackedInFolder": "Supprimer les non suivis du dossier",
+      "discardFolder": "Abandonner le dossier",
+      "stageFolder": "Indexer le dossier",
+      "unstageFolder": "Désindexer le dossier"
     },
     "row": {
       "title": "{{path}} ({{status}})",
@@ -238,6 +244,41 @@
       "syncCounts": "Synchroniser (↓{{behind}} ↑{{ahead}})",
       "withCount": "{{action}} ({{count}})",
       "inProgress": "{{action}} en cours…"
+    },
+    "viewAll": {
+      "label": "Tout afficher",
+      "hint": "Ouvrir le diff de chaque fichier de cette section",
+      "capped": "Les {{shown}} premiers diffs sur {{count}} ont été ouverts."
+    },
+    "lineTotal": {
+      "both": "{{added}} lignes ajoutées, {{removed}} lignes supprimées",
+      "added": "{{added}} lignes ajoutées",
+      "removed": "{{removed}} lignes supprimées"
+    },
+    "compare": {
+      "flow": "{{head}} → {{base}}",
+      "base": "Comparé à {{base}}",
+      "retry": "Réessayer",
+      "openReview": "Ouvrir la page de revue dans le navigateur",
+      "aheadOne": "1 commit d'avance sur {{ref}}",
+      "ahead": "{{count}} commits d'avance sur {{ref}}",
+      "behindOne": "1 commit de retard sur {{ref}}",
+      "behind": "{{count}} commits de retard sur {{ref}}"
+    },
+    "history": {
+      "title": "Commits",
+      "failed": "Impossible de lire les commits",
+      "filesFailed": "Échec du chargement des fichiers du commit",
+      "showFiles": "Afficher les fichiers du commit {{id}} : {{subject}}",
+      "hideFiles": "Masquer les fichiers du commit {{id}} : {{subject}}",
+      "resize": "Redimensionner les commits",
+      "refsHelp": "Que sont les refs ?",
+      "refsHelpText": "Les refs sont des noms de branche ou de tag pointant vers ce commit exact. Elles n'apparaissent que là où Git possède une ref nommée pour ce commit.",
+      "refresh": "Actualiser les commits",
+      "loading": "Chargement du graphe...",
+      "none": "Aucun commit pour le moment",
+      "loadingFiles": "Chargement des fichiers…",
+      "noFiles": "Aucune modification de fichier dans ce commit"
     }
   },
   "editor": {
@@ -308,7 +349,8 @@
     },
     "tab": {
       "diff": "{{name}} (diff)",
-      "stagedDiff": "{{name}} (diff indexé)"
+      "stagedDiff": "{{name}} (diff indexé)",
+      "commitDiff": "{{name}} ({{commit}})"
     },
     "tabs": {
       "aria": "Fichiers ouverts",

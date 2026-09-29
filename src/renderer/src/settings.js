@@ -178,7 +178,9 @@ export const DEFAULT_SETTINGS = Object.freeze({
   // keeps its own agent/ prefix by default.
   branchPrefix: 'custom',
   branchPrefixCustom: 'agent',
-  sourceControlGroupOrder: 'changes-first'
+  sourceControlGroupOrder: 'changes-first',
+  // The Changes tab shows files as a folder tree or a flat list (Orca's view mode).
+  sourceControlViewMode: 'tree'
 })
 
 export const SIDEBAR_SORTS = ['name', 'smart', 'recent', 'repo', 'manual']
@@ -318,6 +320,7 @@ export function loadSettings(saved) {
     if (key === 'alertSound' && !['none', 'chime', 'ping'].includes(v)) continue
     if (key === 'usagePercentageDisplay' && !['used', 'remaining'].includes(v)) continue
     if (key === 'sourceControlGroupOrder' && !SOURCE_CONTROL_GROUP_ORDERS.includes(v)) continue
+    if (key === 'sourceControlViewMode' && !['tree', 'list'].includes(v)) continue
     if (key === 'branchPrefix' && !BRANCH_PREFIX_MODES.includes(v)) continue
     if (['editorFontFamily', 'wordSeparator', 'branchPrefixCustom'].includes(key) && v.length > 200) continue
     if (key === 'workspaceDir' && v.length > 1000) continue

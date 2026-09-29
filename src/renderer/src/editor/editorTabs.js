@@ -18,7 +18,8 @@ export const samePath = (a, b) => pathKey(a) === pathKey(b)
 // with a suffix no real path can have (a NUL). Its tab entry carries
 // diff: { root, rel, oldRel, area, full }.
 export const DIFF_SEP = '\u0000'
-export function diffTabPath(full, area) {
+export function diffTabPath(full, area, commit = null) {
+  if (area === 'commit') return `${full}${DIFF_SEP}diff:commit:${String(commit || '')}`
   return `${full}${DIFF_SEP}diff:${area === 'staged' ? 'staged' : 'unstaged'}`
 }
 export const isDiffTabPath = (p) => String(p || '').includes(DIFF_SEP)

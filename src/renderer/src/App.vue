@@ -1586,13 +1586,17 @@ function openExplorerFile(file, arg = null) {
 }
 // A file of Source Control (the Changes tab): its diff, in its own editor tab
 // ("name (diff)" / "name (staged diff)"), like Orca's openDiff.
-function openScmDiff({ root, rel, oldRel = null, area, status = null, file, preview = true, line = null } = {}) {
-  if (!root || !rel || !file || !['staged', 'unstaged', 'untracked'].includes(area)) return null
-  const path = diffTabPath(file, area)
+// A file of a commit (area 'commit', its commit id): that commit's change, read-only.
+function openScmDiff({ root, rel, oldRel = null, area, status = null, file, preview = true, line = null, commit = null } = {}) {
+  if (!root || !rel || !file || !['staged', 'unstaged', 'untracked', 'commit'].includes(area)) return null
+  if (area === 'commit' && !/^[0-9a-f]{7,64}$/.test(String(commit || ''))) return null
+  const path = diffTabPath(file, area, commit)
   const leaf = openInTesselEditor({ file: path, line: Number.isInteger(line) ? line : null, preview })
   if (!leaf) return null
   leaf.files = leaf.files.map((f) =>
-    samePath(f.path, path) ? { ...f, mode: f.mode === 'rich' ? 'rich' : 'diff', diff: { root, rel, oldRel: oldRel || null, area, status, full: file } } : f
+    samePath(f.path, path)
+      ? { ...f, mode: f.mode === 'rich' ? 'rich' : 'diff', diff: { root, rel, oldRel: oldRel || null, area, status, full: file, ...(area === 'commit' ? { commit } : {}) } }
+      : f
   )
   return leaf
 }
