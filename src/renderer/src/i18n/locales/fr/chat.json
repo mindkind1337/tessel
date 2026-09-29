@@ -502,5 +502,16 @@
   "chat.orca.background.idle": "Arrêté : {{subject}}",
   "chat.orca.background.unverifiable": "Aucune nouvelle reçue : {{subject}}",
   "chat.orca.composer.fileDropFailed": "Impossible d’insérer ces chemins. Déposez au maximum 256 fichiers locaux.",
-  "chat.orca.ui.close": "Fermer"
+  "chat.orca.ui.close": "Fermer",
+  "chat.orca.catalog.model": "Choisir le modèle",
+  "chat.orca.catalog.effort": "Choisir l’effort de raisonnement",
+  "chat.orca.catalog.clear": "Commencer une nouvelle conversation",
+  "chat.orca.catalog.compact": "Compacter le contexte de la conversation",
+  "chat.orca.composer.textOnly": "Ce chat accepte uniquement du texte.",
+  "chat.orca.composer.sendRejected": "Le message n’a pas été envoyé. Votre brouillon a été conservé.",
+  "chat.orca.options.unsupported": "Cette option n’est pas disponible pour cet agent.",
+  "chat.orca.options.unavailable": "Les options de la session sont indisponibles.",
+  "chat.orca.options.rejected": "L’option n’a pas été modifiée.",
+  "chat.orca.skills.unavailable": "La recherche de skills est indisponible.",
+  "chat.orca.skills.timeout": "La recherche de skills a dépassé le délai prévu."
 }

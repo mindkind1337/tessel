@@ -22,7 +22,7 @@
  * SOFTWARE.
  */
 import { isSafeDisplayCharacter, stripUnsafeDisplayCharacters } from "./shared/skill-display-text.js";
-import { compareBaseSensitivityLocaleText } from '@/lib/locale-text-collators';
+import { compareBaseSensitivityLocaleText } from './lib/locale-text-collators.js';
 export { classifyNativeChatSend } from "./shared/native-chat-slash-commands.js";
 const PICKER_RESULT_LIMIT = 50;
 const SCOPE_PRIORITY = {
