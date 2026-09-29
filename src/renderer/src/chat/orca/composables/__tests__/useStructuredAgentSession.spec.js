@@ -68,6 +68,26 @@ describe('useStructuredAgentSession (Tessel engine)', () => {
     expect(await s.respond(s.prompts.value[0], { kind: 'option', optionId: 'weird' })).toBeNull()
   })
 
+  it("the journal's write times date the redrawn rows; an unconfirmed delivery is listed by message id", async () => {
+    const { session, emit } = setup({
+      ok: true,
+      seq: 2,
+      events: [
+        { seq: 1, at: 1000, event: { type: 'user', id: 'u1', text: 'hi', status: 'accepted' } },
+        { seq: 2, at: 2000, event: { type: 'assistant', messageId: 'm1', text: 'hello' } }
+      ]
+    })
+    const s = session()
+    await s.load()
+    expect(s.messages.value.map((m) => m.timestamp)).toEqual([1000, 2000])
+    emit({ type: 'user', id: 'u2', text: 'lost', status: 'sent' }, 3)
+    emit({ type: 'userStatus', id: 'u2', status: 'failed' }, 4)
+    await nextTick()
+    const failed = [...s.failedDeliveryMessageIds.value]
+    expect(failed.length).toBe(1)
+    expect(s.messages.value.find((m) => failed.includes(m.id)).blocks[0].text).toBe('lost')
+  })
+
   it('send and cancel go to the IPC; a failed history is an error state', async () => {
     const { session, api } = setup({ ok: false, error: 'boom' })
     const s = session()

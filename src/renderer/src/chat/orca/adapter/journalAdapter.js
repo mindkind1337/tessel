@@ -89,11 +89,19 @@ export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence =
   let changedSubs = new Set()
   let removedItems = new Set()
 
+  // Rows are ordered by time, then id: a new item's time never goes back nor
+  // ties with the previous one (events of one millisecond keep their order).
+  let lastObservedAt = -Infinity
   function put(itemId, body, extra = {}, at = now()) {
     const prior = items.get(itemId)
+    let observedAt = at
+    if (!prior) {
+      observedAt = Math.max(Number.isFinite(at) ? at : 0, lastObservedAt + 1)
+      lastObservedAt = observedAt
+    }
     const item = prior
       ? { ...prior, ...extra, body, revision: prior.revision + 1 }
-      : { itemId, revision: 1, body, sequence: ++sequence, observedAt: at, ...extra }
+      : { itemId, revision: 1, body, sequence: ++sequence, observedAt, ...extra }
     items.set(itemId, item)
     changedItems.add(itemId)
     removedItems.delete(itemId)

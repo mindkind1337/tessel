@@ -143,6 +143,18 @@ describe('journal adapter', () => {
     expect(adapter.meta.error).toBe('')
   })
 
+  it('rows keep their order when events share a millisecond; a replayed event keeps its journal time', () => {
+    const adapter = createJournalAdapter({ now: () => 5000 })
+    adapter.replay([
+      { type: 'user', id: 'u1', text: 'a', status: 'accepted', at: 1000 },
+      { type: 'assistant', messageId: 'm1', text: 'b', at: 1000 },
+      { type: 'notice', kind: 'info', text: 'c', at: 900 }
+    ])
+    const times = adapter.items().map((i) => i.observedAt)
+    expect(times[0]).toBe(1000)
+    for (let i = 1; i < times.length; i++) expect(times[i]).toBeGreaterThan(times[i - 1])
+  })
+
   it('revisions only go up; a replayed history gives the same items as live events', () => {
     const events = [
       { type: 'user', id: 'u1', text: 'x', status: 'accepted' },

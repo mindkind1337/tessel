@@ -11,6 +11,7 @@
 // provider's activity line, questions (they need an engine answer path).
 import { computed, onBeforeUnmount, reactive, shallowRef } from 'vue'
 import { createJournalAdapter } from '../adapter/journalAdapter'
+import { agentJournalSubmissionKey } from '../shared/agent-session-journal-item-key.js'
 import { reduceStructuredAgentSession, EMPTY_STRUCTURED_AGENT_SESSION } from '../shared/structured-agent-session-reducer.js'
 import { projectStructuredAgentSessionMessages, pendingStructuredSessionPrompts } from '../structured-agent-session-message-projection.js'
 import { activeStructuredAgentSessionTurnId } from '../shared/structured-agent-session-live-turn.js'
@@ -22,7 +23,9 @@ import { structuredSessionBackgroundTasksView } from '../structured-session-back
 const DECISIONS = { allow: 'allow', allowSession: 'allowSession', deny: 'deny' }
 
 // paneId: the chat pane; api: window.shellApi.chat (injectable for tests).
-export function useStructuredAgentSession({ paneId, api = typeof window !== 'undefined' && window.shellApi ? window.shellApi.chat : null, now = Date.now } = {}) {
+// onLive(event, previousStatus): each live event once applied (never the
+// replayed history), e.g. for the pane's announcements.
+export function useStructuredAgentSession({ paneId, api = typeof window !== 'undefined' && window.shellApi ? window.shellApi.chat : null, now = Date.now, onLive = null } = {}) {
   const adapter = createJournalAdapter({ now })
   const state = shallowRef(EMPTY_STRUCTURED_AGENT_SESSION)
   const meta = reactive({ ...adapter.meta, loaded: false, loadError: null, open: false, asleep: false })
@@ -41,9 +44,11 @@ export function useStructuredAgentSession({ paneId, api = typeof window !== 'und
       if (seq <= lastSeq) return
       lastSeq = seq
     }
+    const previousStatus = adapter.meta.status
     const out = adapter.apply(ev)
     if (out) feed(out)
     syncMeta()
+    if (typeof onLive === 'function') onLive(ev, previousStatus)
   }
 
   // Redraw from the main process's journal, then follow live events (those
@@ -63,7 +68,8 @@ export function useStructuredAgentSession({ paneId, api = typeof window !== 'und
     const events = []
     for (const item of res.events || []) {
       const wrapped = item && item.event && !item.type
-      events.push(wrapped ? item.event : item)
+      // The journal's write time orders and dates the redrawn rows.
+      events.push(wrapped && Number.isFinite(item.at) && !Number.isFinite(item.event.at) ? { ...item.event, at: item.at } : wrapped ? item.event : item)
       if (wrapped && typeof item.seq === 'number') lastSeq = Math.max(lastSeq, item.seq)
     }
     if (typeof res.seq === 'number') lastSeq = Math.max(lastSeq, res.seq)
@@ -99,6 +105,13 @@ export function useStructuredAgentSession({ paneId, api = typeof window !== 'und
 
   const journalItems = computed(() => state.value.items)
   const submissions = computed(() => state.value.submissions)
+  // The user messages whose delivery was not confirmed (refused, or a
+  // teammate's not delivered yet), by message id: their rows say so.
+  const failedDeliveryMessageIds = computed(() => {
+    const ids = new Set()
+    for (const s of submissions.value) if (s.dispatchState === 'unknown') ids.add(agentJournalSubmissionKey(s.clientMessageId))
+    return ids
+  })
   const messages = computed(() => projectStructuredAgentSessionMessages(journalItems.value, [], submissions.value))
   const prompts = computed(() => pendingStructuredSessionPrompts(journalItems.value))
   const turnId = computed(() => activeStructuredAgentSessionTurnId(journalItems.value))
@@ -148,6 +161,8 @@ export function useStructuredAgentSession({ paneId, api = typeof window !== 'und
     conversationCommands: computed(() => []),
     runConversationCommand: async () => null,
     journalItems,
+    submissions,
+    failedDeliveryMessageIds,
     messages,
     status: computed(() => (meta.loadError ? 'error' : state.value.status)),
     error: computed(() => meta.loadError),

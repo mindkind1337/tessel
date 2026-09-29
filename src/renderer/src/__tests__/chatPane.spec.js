@@ -1,16 +1,52 @@
-// The chat pane (components/chat/ChatPane.vue) with a fake
-// window.shellApi.chat: the history redrawn, events for this pane only,
-// sending (a refused message stays as "Not sent"), Send waiting while the
-// agent starts, a history that could not be read, interrupting, answering
-// approvals (Alt+A goes to the request), the live region, the model menu,
-// and the signed-out / untrusted / stopped states with "Start again".
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mount, flushPromises } from '@vue/test-utils'
-import { nextTick, reactive, ref } from 'vue'
+// The chat pane (components/chat/ChatPane.vue: Tessel's header over the
+// native chat view, components/chat/orca) with a fake window.shellApi.chat:
+// the history redrawn, events for this pane only, sending (a refused message
+// stays as "Not sent"), Send waiting while the agent starts, a history that
+// could not be read, interrupting, answering approvals (Alt+A goes to the
+// request), the live region, the composer's options pill, the signed-out /
+// untrusted / stopped states with "Start again", the right-click menu and a
+// dropped path.
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { config, mount, flushPromises } from '@vue/test-utils'
+import { reactive, ref } from 'vue'
 import ChatPane from '../components/chat/ChatPane.vue'
+import { changePrompt, promptValue } from '../components/chat/orca/__tests__/native-chat-prompt-editor.test-support.js'
+import { installElementScrollTo, stubLayout, stubResizeObserver, deliverResizes, flush } from '../components/chat/orca/__tests__/native-chat-windowing-test-harness.js'
+import { installNativeChatMessageListTestViewport } from '../chat/orca/native-chat-message-list-test-viewport.js'
+import { clearNativeChatDraftCacheForTests } from '../chat/orca/native-chat-draft-cache.js'
+import { clearNativeChatAttachmentCacheForTests } from '../chat/orca/composables/use-native-chat-composer-attachments.js'
+import { modelsFor } from '../agentModels.js'
+
+// Real <Transition> for the menus (the stub would wrap their teleported content).
+config.global.stubs.transition = false
+
+// PointerEvent is not in every jsdom: a MouseEvent with its fields.
+if (typeof globalThis.PointerEvent === 'undefined') {
+  globalThis.PointerEvent = class extends MouseEvent {}
+}
 
 describe('ChatPane.vue', () => {
   let wrapper, ctx, api, node, listeners, prevApi, history
+  let restoreViewport = () => {}
+  let restoreScrollTo = () => {}
+
+  // jsdom has no layout: ProseMirror asks a Range for its rectangles when it
+  // scrolls the caret into view.
+  const hadRangeRects = typeof Range.prototype.getClientRects === 'function'
+  beforeAll(() => {
+    restoreScrollTo = installElementScrollTo()
+    if (!hadRangeRects) {
+      Range.prototype.getClientRects = () => []
+      Range.prototype.getBoundingClientRect = () => ({ x: 0, y: 0, top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0 })
+    }
+  })
+  afterAll(() => {
+    restoreScrollTo()
+    if (!hadRangeRects) {
+      delete Range.prototype.getClientRects
+      delete Range.prototype.getBoundingClientRect
+    }
+  })
 
   function emit(event, { paneId = 'c1', seq } = {}) {
     for (const cb of listeners) cb({ paneId, seq, event })
@@ -38,11 +74,53 @@ describe('ChatPane.vue', () => {
       attachTo: document.body,
       global: { provide: { panelCtx: ctx } }
     })
+    await settle()
+  }
+
+  // Vue renders on the next tick; the list's virtualizer re-renders after that.
+  async function settle() {
     await flushPromises()
-    await nextTick()
+    await flush()
+  }
+
+  // The composer is a TipTap editor (contenteditable): typed through its editor.
+  const input = () => document.querySelector('[data-test="chat-input"]')
+  const draft = () => promptValue(input())
+  const sendBtn = () => document.querySelector('[data-test="chat-send"]')
+  const status = () => wrapper.find('[data-test="chat-status"]').text()
+  const card = () => document.querySelector('[data-test="chat-approval"]')
+  const inCard = (sel) => card().querySelector(sel)
+  const unsent = () => [...document.querySelectorAll('[data-test="chat-unsent"]')]
+  async function type(text) {
+    changePrompt(input(), text)
+    await settle()
+  }
+  async function key(target, init) {
+    const event = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init })
+    if ('keyCode' in init) Object.defineProperty(event, 'keyCode', { value: init.keyCode })
+    target.dispatchEvent(event)
+    await settle()
+    return event
+  }
+  const enter = (init = {}) => key(input(), { key: 'Enter', keyCode: 13, ...init })
+  async function click(el) {
+    el.click()
+    await settle()
+  }
+  // A key on the card some time after it appeared (single keys wait KEY_GRACE_MS).
+  async function lateKey(el, init, ms = 1000) {
+    const spy = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + ms)
+    try {
+      await key(el, init)
+    } finally {
+      spy.mockRestore()
+    }
   }
 
   beforeEach(() => {
+    clearNativeChatDraftCacheForTests()
+    clearNativeChatAttachmentCacheForTests()
+    restoreViewport = installNativeChatMessageListTestViewport()
     listeners = []
     history = { ok: true, events: [], seq: 0, open: true, live: { status: 'idle' } }
     api = {
@@ -67,6 +145,7 @@ describe('ChatPane.vue', () => {
       highlightId: ref(null),
       setActive: vi.fn(),
       closeLeaf: vi.fn(),
+      splitLeaf: vi.fn(),
       toggleMaximize: vi.fn(),
       beginPaneDrag: vi.fn(),
       toast: vi.fn(),
@@ -80,6 +159,10 @@ describe('ChatPane.vue', () => {
     if (wrapper) wrapper.unmount()
     wrapper = null
     window.shellApi = prevApi
+    restoreViewport()
+    vi.restoreAllMocks()
+    document.body.replaceChildren()
+    document.body.style.pointerEvents = ''
   })
 
   it('redraws the history on mount and does not reopen a running session', async () => {
@@ -98,17 +181,27 @@ describe('ChatPane.vue', () => {
     await mountPane()
     expect(api.history).toHaveBeenCalledWith({ paneId: 'c1' })
     expect(ctx.chatOpen).not.toHaveBeenCalled()
-    expect(wrapper.find('[data-test="chat-user"]').text()).toContain('hello')
-    expect(wrapper.find('[data-test="chat-assistant"]').html()).toContain('<strong>there</strong>')
-    expect(wrapper.find('[data-test="chat-tool"]').text()).toContain('Read')
-    expect(wrapper.find('[data-test="chat-tool"]').text()).toContain('src/x.js')
-    expect(wrapper.find('[data-test="chat-status"]').text()).toBe('Idle')
+    expect(document.querySelector('[data-test="nc-user-row"]').textContent).toContain('hello')
+    // Agent text is markdown (through ChatMarkdown).
+    const answer = [...document.querySelectorAll('[data-test="nc-agent-row"]')].find((row) => row.textContent.includes('there'))
+    expect(answer.querySelector('strong').textContent).toBe('there')
+    // The settled turn folds its work under "Worked for…"; opened, the tool is there.
+    const turn = document.querySelector('[data-native-chat-turn-status="settled"]')
+    expect(turn.textContent).toMatch(/Worked for/)
+    await click(turn)
+    const run = document.querySelector('.nc-tool-run__header')
+    expect(run.textContent).toContain('Read 1 file')
+    await click(run)
+    const line = document.querySelector('.nc-tool-line')
+    expect(line.textContent).toContain('Read')
+    expect(line.textContent).toContain('x.js')
+    expect(status()).toBe('Idle')
     expect(node.sessionId).toBe('s1')
     expect(node.model).toBe('claude-sonnet-4-6')
     // An event the history already had (seq <= 5) is dropped.
     emit({ type: 'notice', kind: 'info', text: 'old' }, { seq: 5 })
-    await nextTick()
-    expect(wrapper.find('[data-test="chat-notice"]').exists()).toBe(false)
+    await settle()
+    expect(document.querySelector('[data-test="nc-notice"]')).toBeNull()
   })
 
   it('opens the session through the app when it is not running', async () => {
@@ -116,45 +209,50 @@ describe('ChatPane.vue', () => {
     await mountPane()
     expect(ctx.chatOpen).toHaveBeenCalledWith(node)
     expect(node.sessionId).toBe('s-new')
-    expect(wrapper.find('[data-test="chat-status"]').text()).toBe('Idle')
+    expect(status()).toBe('Idle')
+    // An empty conversation says so.
+    expect(document.querySelector('[data-native-chat-empty-state="empty"]').textContent).toContain('Start a chat with Claude')
   })
 
   it('shows only the events of its own pane; streams and tool output as text', async () => {
     await mountPane()
+    emit({ type: 'user', id: 'u1', text: 'go', origin: 'user', status: 'accepted' })
     emit({ type: 'status', state: 'working' })
     emit({ type: 'assistantDelta', messageId: 'm1', text: 'Work' }, { paneId: 'other' })
     emit({ type: 'assistantDelta', messageId: 'm1', text: 'ing on it' })
     emit({ type: 'tool', id: 't1', name: 'Bash', input: { command: 'npm test' }, status: 'running' })
     emit({ type: 'toolResult', id: 't1', isError: false, text: '<b>not html</b>' })
-    await nextTick()
-    expect(wrapper.findAll('[data-test="chat-assistant"]')).toHaveLength(1)
-    expect(wrapper.find('[data-test="chat-assistant"]').text()).toBe('ing on it')
-    expect(wrapper.find('[data-test="chat-status"]').text()).toBe('Working')
-    const tool = wrapper.find('[data-test="chat-tool"]')
-    expect(tool.text()).toContain('npm test')
-    await tool.find('button').trigger('click')
-    const out = wrapper.find('[data-test="chat-tool-output"]')
-    expect(out.text()).toBe('<b>not html</b>')
-    expect(out.find('b').exists()).toBe(false)
+    await settle()
+    const answers = [...document.querySelectorAll('[data-test="nc-agent-row"] .nc-row-markdown')]
+    expect(answers).toHaveLength(1)
+    expect(answers[0].textContent.trim()).toBe('ing on it')
+    expect(status()).toBe('Working')
+    expect(document.querySelector('[data-native-chat-root]').getAttribute('data-native-chat-working')).toBe('true')
+    const run = document.querySelector('.nc-tool-run__header')
+    expect(run.textContent).toContain('npm test')
+    await click(run)
+    // The open run shows its lines expanded: the command's output is plain text.
+    const pres = [...document.querySelectorAll('.nc-tool-line__pre')]
+    const out = pres.find((pre) => pre.textContent.includes('not html'))
+    expect(out.textContent).toBe('<b>not html</b>')
+    expect(out.querySelector('b')).toBeNull()
   })
 
   it('Enter sends, Shift+Enter does not', async () => {
     await mountPane()
-    const input = wrapper.find('[data-test="chat-input"]')
-    await input.setValue('run the tests')
-    await input.trigger('keydown', { key: 'Enter', shiftKey: true })
+    await type('run the tests')
+    await enter({ shiftKey: true })
     expect(api.send).not.toHaveBeenCalled()
-    await input.trigger('keydown', { key: 'Enter' })
-    await flushPromises()
+    await type('run the tests')
+    await enter()
     expect(api.send).toHaveBeenCalledWith({ paneId: 'c1', text: 'run the tests' })
-    expect(input.element.value).toBe('')
-    expect(wrapper.find('[data-test="chat-unsent"]').exists()).toBe(false)
+    expect(draft()).toBe('')
+    expect(unsent()).toHaveLength(0)
   })
 
   it('a refused message stays as "Not sent" (copy, retry, discard); what was typed since is kept', async () => {
     await mountPane()
     window.shellApi.writeClipboard = vi.fn()
-    const input = wrapper.find('[data-test="chat-input"]')
     let resolveA
     api.send.mockImplementationOnce(
       () =>
@@ -162,54 +260,52 @@ describe('ChatPane.vue', () => {
           resolveA = r
         })
     )
-    await input.setValue('message A')
-    await input.trigger('keydown', { key: 'Enter' })
-    expect(input.element.value).toBe('')
-    // B is typed while A is on its way; A is refused.
-    await input.setValue('draft B')
+    await type('message A')
+    await enter()
+    expect(api.send).toHaveBeenCalledWith({ paneId: 'c1', text: 'message A' })
+    // The draft stays until the pane has the message (sent or kept as "Not sent").
+    expect(draft()).toBe('message A')
+    // B is typed over it while A is on its way; A is refused: B stays.
+    await type('draft B')
     resolveA({ ok: false, error: 'no session' })
-    await flushPromises()
-    expect(input.element.value).toBe('draft B')
-    let entries = wrapper.findAll('[data-test="chat-unsent"]')
+    await settle()
+    expect(draft()).toBe('draft B')
+    let entries = unsent()
     expect(entries).toHaveLength(1)
-    expect(entries[0].text()).toContain('Not sent')
-    expect(entries[0].find('[data-test="chat-unsent-text"]').text()).toBe('message A')
-    expect(entries[0].find('[data-test="chat-unsent-error"]').text()).toBe('no session')
+    expect(entries[0].textContent).toContain('Not sent')
+    expect(entries[0].querySelector('[data-test="chat-unsent-text"]').textContent).toBe('message A')
+    expect(entries[0].querySelector('[data-test="chat-unsent-error"]').textContent).toBe('no session')
     expect(ctx.toast).toHaveBeenCalledWith('Message not sent: no session', expect.any(Object))
 
-    await entries[0].find('[data-test="chat-unsent-copy"]').trigger('click')
-    await flushPromises()
+    await click(entries[0].querySelector('[data-test="chat-unsent-copy"]'))
     expect(window.shellApi.writeClipboard).toHaveBeenCalledWith('message A')
     expect(ctx.copied).toHaveBeenCalledWith('Message')
 
     // Retry takes the same path; refused again (a throw), it stays once.
     api.send.mockRejectedValueOnce(new Error('pipe closed'))
-    await entries[0].find('[data-test="chat-unsent-retry"]').trigger('click')
-    await flushPromises()
-    entries = wrapper.findAll('[data-test="chat-unsent"]')
+    await click(entries[0].querySelector('[data-test="chat-unsent-retry"]'))
+    entries = unsent()
     expect(entries).toHaveLength(1)
-    expect(entries[0].find('[data-test="chat-unsent-error"]').text()).toBe('pipe closed')
-    await entries[0].find('[data-test="chat-unsent-retry"]').trigger('click')
-    await flushPromises()
+    expect(entries[0].querySelector('[data-test="chat-unsent-error"]').textContent).toBe('pipe closed')
+    await click(entries[0].querySelector('[data-test="chat-unsent-retry"]'))
     expect(api.send).toHaveBeenLastCalledWith({ paneId: 'c1', text: 'message A' })
-    expect(wrapper.find('[data-test="chat-unsent"]').exists()).toBe(false)
-    expect(input.element.value).toBe('draft B')
+    expect(unsent()).toHaveLength(0)
+    expect(draft()).toBe('draft B')
 
     // Discard drops it without sending.
     api.send.mockResolvedValueOnce({ ok: false })
-    await input.setValue('message C')
-    await wrapper.find('[data-test="chat-send"]').trigger('click')
-    await flushPromises()
-    entries = wrapper.findAll('[data-test="chat-unsent"]')
-    expect(entries[0].find('[data-test="chat-unsent-error"]').text()).toBe('unknown error')
+    await type('message C')
+    await click(sendBtn())
+    entries = unsent()
+    expect(entries[0].querySelector('[data-test="chat-unsent-error"]').textContent).toBe('unknown error')
     const calls = api.send.mock.calls.length
-    entries[0].find('[data-test="chat-unsent-discard"]').element.focus()
-    await entries[0].find('[data-test="chat-unsent-discard"]').trigger('click')
-    await flushPromises()
-    expect(wrapper.find('[data-test="chat-unsent"]').exists()).toBe(false)
+    const discard = entries[0].querySelector('[data-test="chat-unsent-discard"]')
+    discard.focus()
+    await click(discard)
+    expect(unsent()).toHaveLength(0)
     expect(api.send.mock.calls.length).toBe(calls)
     // The focus went back to typing.
-    expect(document.activeElement).toBe(input.element)
+    expect(document.activeElement).toBe(input())
   })
 
   it('Send waits while the agent starts (typing works); not while asleep or waking from sleep', async () => {
@@ -222,146 +318,139 @@ describe('ChatPane.vue', () => {
         })
     )
     await mountPane()
-    expect(wrapper.find('[data-test="chat-status"]').text()).toBe('Starting')
-    const input = wrapper.find('[data-test="chat-input"]')
-    expect(input.element.disabled).toBe(false)
-    await input.setValue('early')
-    const sendBtn = wrapper.find('[data-test="chat-send"]')
-    expect(sendBtn.element.disabled).toBe(true)
-    expect(sendBtn.attributes('title')).toBe('Wait until Claude has started')
-    expect(wrapper.find('[data-test="chat-send-blocked"]').text()).toBe('Wait until Claude has started')
-    await input.trigger('keydown', { key: 'Enter' })
-    await flushPromises()
+    expect(status()).toBe('Starting')
+    expect(input().getAttribute('contenteditable')).toBe('true')
+    await type('early')
+    expect(sendBtn().disabled).toBe(true)
+    expect(sendBtn().getAttribute('title')).toBe('Wait until Claude has started')
+    expect(document.querySelector('[data-test="chat-send-blocked"]').textContent.trim()).toBe('Wait until Claude has started')
+    await enter()
     expect(api.send).not.toHaveBeenCalled()
-    expect(input.element.value).toBe('early')
+    expect(draft()).toBe('early')
     opened({ ok: true })
-    await flushPromises()
-    expect(sendBtn.element.disabled).toBe(false)
-    await input.trigger('keydown', { key: 'Enter' })
-    await flushPromises()
+    await settle()
+    expect(sendBtn().disabled).toBe(false)
+    await enter()
     expect(api.send).toHaveBeenCalledWith({ paneId: 'c1', text: 'early' })
 
     // Asleep, then waking up: the message waits in the main process.
     emit({ type: 'status', state: 'asleep' })
-    await nextTick()
-    await input.setValue('wake up')
-    expect(sendBtn.element.disabled).toBe(false)
+    await settle()
+    await type('wake up')
+    expect(sendBtn().disabled).toBe(false)
     emit({ type: 'status', state: 'starting' })
-    await nextTick()
-    expect(sendBtn.element.disabled).toBe(false)
-    await input.trigger('keydown', { key: 'Enter' })
-    await flushPromises()
+    await settle()
+    expect(sendBtn().disabled).toBe(false)
+    await enter()
     expect(api.send).toHaveBeenLastCalledWith({ paneId: 'c1', text: 'wake up' })
   })
 
   it('a history that could not be read: an explicit state with Retry, no empty chat, no start', async () => {
     api.history.mockRejectedValueOnce(new Error('journal locked'))
     await mountPane()
-    const box = wrapper.find('[data-test="chat-history-error"]')
-    expect(box.text()).toContain('Could not load the conversation')
-    expect(box.text()).toContain('journal locked')
-    expect(wrapper.find('[data-test="chat-empty"]').text()).not.toContain('Send a message to start.')
-    expect(wrapper.find('[data-test="chat-empty"]').text()).not.toContain('Starting')
+    const box = document.querySelector('[data-test="chat-history-error"]')
+    expect(box.textContent).toContain('Could not load conversation')
+    expect(box.textContent).toContain('journal locked')
+    expect(document.querySelector('[data-native-chat-empty-state="empty"]')).toBeNull()
+    expect(document.querySelector('[data-native-chat-empty-state="loading"]')).toBeNull()
     expect(ctx.chatOpen).not.toHaveBeenCalled()
-    await wrapper.find('[data-test="chat-input"]').setValue('hi')
-    expect(wrapper.find('[data-test="chat-send"]').element.disabled).toBe(true)
+    await type('hi')
+    expect(sendBtn().disabled).toBe(true)
     // Live events wait for the history.
     emit({ type: 'notice', kind: 'info', text: 'later' }, { seq: 3 })
-    await nextTick()
-    expect(wrapper.find('[data-test="chat-notice"]').exists()).toBe(false)
+    await settle()
+    expect(document.querySelector('[data-test="nc-notice"]')).toBeNull()
 
     history = { ok: true, seq: 2, events: [{ seq: 2, event: { type: 'user', id: 'u1', text: 'before', origin: 'user', status: 'accepted' } }] }
-    await wrapper.find('[data-test="chat-history-retry"]').trigger('click')
-    await flushPromises()
-    expect(wrapper.find('[data-test="chat-history-error"]').exists()).toBe(false)
-    expect(wrapper.find('[data-test="chat-user"]').text()).toContain('before')
-    expect(wrapper.find('[data-test="chat-notice"]').text()).toContain('later')
+    await click(document.querySelector('[data-test="chat-history-retry"]'))
+    expect(document.querySelector('[data-test="chat-history-error"]')).toBeNull()
+    expect(document.querySelector('[data-test="nc-user-row"]').textContent).toContain('before')
+    // The event that came meanwhile is drawn too (in the turn the journal
+    // left open, closed now: nothing runs it any more).
+    await click(document.querySelector('[data-native-chat-turn-status="settled"]'))
+    expect(document.querySelector('[data-test="nc-notice"]').textContent).toContain('later')
     // Not running: opened once the history is drawn.
     expect(ctx.chatOpen).toHaveBeenCalledTimes(1)
-    expect(wrapper.find('[data-test="chat-send"]').element.disabled).toBe(false)
+    expect(sendBtn().disabled).toBe(false)
   })
 
   it('a history refused by the main process ({ ok: false }) says so too', async () => {
     api.history.mockResolvedValueOnce({ ok: false, error: 'invalid pane' })
     await mountPane()
-    expect(wrapper.find('[data-test="chat-history-error"]').text()).toContain('invalid pane')
+    expect(document.querySelector('[data-test="chat-history-error"]').textContent).toContain('invalid pane')
     expect(ctx.chatOpen).not.toHaveBeenCalled()
   })
 
-  it('a queued message shows its chip; team messages are set apart', async () => {
+  it('a queued message is in the chat; team messages are set apart with their sender', async () => {
     await mountPane()
     emit({ type: 'user', id: 'u1', text: 'next', origin: 'user', status: 'queued' })
     emit({ type: 'user', id: 'x1', text: 'build done', origin: 'team', from: '3', status: 'queued' })
-    await nextTick()
-    const rows = wrapper.findAll('[data-test="chat-user"]')
-    expect(rows[0].find('[data-test="chat-user-status"]').text()).toBe('Queued: will send when the turn ends')
-    expect(rows[1].classes()).toContain('origin-team')
-    expect(rows[1].find('[data-test="chat-team-from"]').text()).toBe('From #3 (teammate)')
+    await settle()
+    const rows = [...document.querySelectorAll('[data-test="nc-user-row"]')]
+    const mine = rows.find((row) => row.textContent.includes('next'))
+    const team = rows.find((row) => row.textContent.includes('build done'))
+    expect(mine.classList.contains('is-team')).toBe(false)
+    expect(mine.querySelector('[data-test="nc-team-from"]')).toBeNull()
+    expect(team.classList.contains('is-team')).toBe(true)
+    expect(team.querySelector('[data-test="nc-team-from"]').textContent.trim()).toBe('From #3 (teammate)')
     emit({ type: 'teamAccepted', ids: ['x1'] })
-    await nextTick()
-    expect(wrapper.findAll('[data-test="chat-user"]')[1].find('[data-test="chat-user-status"]').exists()).toBe(false)
+    await settle()
+    expect(document.querySelectorAll('[data-test="nc-user-row"]')).toHaveLength(2)
   })
 
-  it('Esc interrupts while working, not when idle', async () => {
+  it('Esc interrupts while working, not when idle; so does Stop', async () => {
     await mountPane()
-    const input = wrapper.find('[data-test="chat-input"]')
-    await input.trigger('keydown', { key: 'Escape' })
+    await key(input(), { key: 'Escape' })
     expect(api.interrupt).not.toHaveBeenCalled()
-    expect(wrapper.find('[data-test="chat-interrupt"]').exists()).toBe(false)
+    expect(document.querySelector('[data-test="chat-interrupt"]')).toBeNull()
     emit({ type: 'status', state: 'working' })
-    await nextTick()
-    await input.trigger('keydown', { key: 'Escape' })
+    await settle()
+    await key(input(), { key: 'Escape' })
     expect(api.interrupt).toHaveBeenCalledWith({ paneId: 'c1' })
-    await wrapper.find('[data-test="chat-interrupt"]').trigger('click')
+    await click(document.querySelector('[data-test="chat-interrupt"]'))
     expect(api.interrupt).toHaveBeenCalledTimes(2)
   })
 
-  it('approval buttons and keys answer with the right decision; a decided card is disabled', async () => {
+  it('approval buttons and keys answer with the right decision; an answered request leaves its card', async () => {
     await mountPane()
     const ask = (requestId) => ({ type: 'approval', requestId, toolName: 'Bash', displayName: 'Bash', input: { command: 'rm x' }, description: 'Remove x', status: 'pending' })
     emit({ type: 'status', state: 'approval' })
     emit(ask('r1'))
-    await nextTick()
-    expect(wrapper.find('[data-test="chat-status"]').text()).toBe('Needs approval')
-    let card = wrapper.find('[data-test="chat-approval"]')
-    expect(card.text()).toContain('Allow Bash?')
-    expect(card.find('pre').text()).toBe('rm x')
-    await card.find('[data-test="chat-approve-session"]').trigger('click')
-    await flushPromises()
-    expect(api.approve).toHaveBeenLastCalledWith({ paneId: 'c1', requestId: 'r1', decision: 'allowSession', message: '' })
+    await settle()
+    expect(status()).toBe('Needs approval')
+    expect(card().textContent).toContain('Allow Bash?')
+    expect(inCard('[data-test="chat-approval-detail"]').textContent).toBe('rm x')
+    // The composer stays under the card.
+    expect(input()).not.toBeNull()
+    await click(inCard('[data-test="chat-approve-session"]'))
+    expect(api.approve).toHaveBeenLastCalledWith({ paneId: 'c1', requestId: 'r1', decision: 'allowSession' })
     emit({ type: 'approvalStatus', requestId: 'r1', status: 'allowedSession' })
-    await nextTick()
-    card = wrapper.findAll('[data-test="chat-approval"]')[0]
-    expect(card.find('[data-test="chat-approve-allow"]').exists()).toBe(false)
-    expect(card.find('[data-test="chat-approval-decided"]').text()).toBe('Allowed for this session')
+    await settle()
+    // Decided: no card any more, a receipt in the chat says what was chosen.
+    expect(card()).toBeNull()
+    expect(document.querySelector('[data-native-chat-receipt="approval"]').textContent).toContain('Allow for this session')
 
     emit(ask('r2'))
-    await nextTick()
-    card = wrapper.findAll('[data-test="chat-approval"]')[1]
+    await settle()
     // Right after it appeared, a key is typing meant elsewhere: no answer.
-    await card.trigger('keydown', { key: 'y' })
-    await flushPromises()
+    await key(card(), { key: 'y' })
     expect(api.approve).toHaveBeenCalledTimes(1)
-    const later = Date.now() + 1000
-    const spy = vi.spyOn(Date, 'now').mockReturnValue(later)
-    try {
-      await card.trigger('keydown', { key: 'y' })
-      await flushPromises()
-    } finally {
-      spy.mockRestore()
-    }
-    expect(api.approve).toHaveBeenLastCalledWith({ paneId: 'c1', requestId: 'r2', decision: 'allow', message: '' })
+    await lateKey(card(), { key: 'y' })
+    expect(api.approve).toHaveBeenLastCalledWith({ paneId: 'c1', requestId: 'r2', decision: 'allow' })
+    emit({ type: 'approvalStatus', requestId: 'r2', status: 'allowed' })
+    await settle()
 
     emit(ask('r3'))
-    await nextTick()
-    card = wrapper.findAll('[data-test="chat-approval"]')[2]
-    await card.find('.chat-link').trigger('click')
-    await card.find('[data-test="chat-approve-reason"]').setValue('not now')
+    await settle()
+    await click(inCard('[data-test="chat-approve-add-reason"]'))
+    const reason = inCard('[data-test="chat-approve-reason"]')
+    reason.value = 'not now'
+    reason.dispatchEvent(new Event('input', { bubbles: true }))
+    await settle()
     // Typing in the reason is not an answer.
-    await card.find('[data-test="chat-approve-reason"]').trigger('keydown', { key: 'n' })
+    await lateKey(reason, { key: 'n' })
     expect(api.approve).toHaveBeenCalledTimes(2)
-    await card.find('[data-test="chat-approve-deny"]').trigger('click')
-    await flushPromises()
+    await click(inCard('[data-test="chat-approve-deny"]'))
     expect(api.approve).toHaveBeenLastCalledWith({ paneId: 'c1', requestId: 'r3', decision: 'deny', message: 'not now' })
   })
 
@@ -369,35 +458,25 @@ describe('ChatPane.vue', () => {
     await mountPane()
     emit({ type: 'status', state: 'approval' })
     emit({ type: 'approval', requestId: 'big', toolName: 'Bash', displayName: 'Bash', input: { command: 'x' }, detail: 'echo safe', hidden: 12345, status: 'pending' })
-    await nextTick()
-    const card = wrapper.find('[data-test="chat-approval"]')
-    expect(card.find('pre').text()).toBe('echo safe')
-    expect(card.find('[data-test="chat-approval-hidden"]').text()).toContain('12345 characters hidden')
-    expect(card.find('[data-test="chat-approve-allow"]').element.disabled).toBe(true)
-    expect(card.find('[data-test="chat-approve-session"]').element.disabled).toBe(true)
-    expect(card.find('[data-test="chat-approve-deny"]').element.disabled).toBe(false)
-    const spy = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 5000)
-    try {
-      await card.trigger('keydown', { key: 'y' })
-      await card.trigger('keydown', { key: 'n' })
-      await flushPromises()
-      expect(api.approve).not.toHaveBeenCalled()
-      await card.find('[data-test="chat-approval-show-all"]').trigger('click')
-      await flushPromises()
-      expect(api.approvalInput).toHaveBeenCalledWith({ paneId: 'c1', requestId: 'big' })
-      expect(card.find('pre').text()).toBe('FULL COMMAND')
-      expect(card.find('[data-test="chat-approval-hidden"]').exists()).toBe(false)
-      expect(card.find('[data-test="chat-approve-allow"]').element.disabled).toBe(false)
-      // Still no single-key answers on that card.
-      await card.trigger('keydown', { key: 'y' })
-      await flushPromises()
-      expect(api.approve).not.toHaveBeenCalled()
-    } finally {
-      spy.mockRestore()
-    }
-    await card.find('[data-test="chat-approve-allow"]').trigger('click')
-    await flushPromises()
-    expect(api.approve).toHaveBeenLastCalledWith({ paneId: 'c1', requestId: 'big', decision: 'allow', message: '' })
+    await settle()
+    expect(inCard('[data-test="chat-approval-detail"]').textContent).toBe('echo safe')
+    expect(inCard('[data-test="chat-approval-hidden"]').textContent).toContain('12345 characters hidden')
+    expect(inCard('[data-test="chat-approve-allow"]').disabled).toBe(true)
+    expect(inCard('[data-test="chat-approve-session"]').disabled).toBe(true)
+    expect(inCard('[data-test="chat-approve-deny"]').disabled).toBe(false)
+    await lateKey(card(), { key: 'y' }, 5000)
+    await lateKey(card(), { key: 'n' }, 5000)
+    expect(api.approve).not.toHaveBeenCalled()
+    await click(inCard('[data-test="chat-approval-show-all"]'))
+    expect(api.approvalInput).toHaveBeenCalledWith({ paneId: 'c1', requestId: 'big' })
+    expect(inCard('[data-test="chat-approval-detail"]').textContent).toBe('FULL COMMAND')
+    expect(inCard('[data-test="chat-approval-hidden"]')).toBeNull()
+    expect(inCard('[data-test="chat-approve-allow"]').disabled).toBe(false)
+    // Still no single-key answers on that card.
+    await lateKey(card(), { key: 'y' }, 5000)
+    expect(api.approve).not.toHaveBeenCalled()
+    await click(inCard('[data-test="chat-approve-allow"]'))
+    expect(api.approve).toHaveBeenLastCalledWith({ paneId: 'c1', requestId: 'big', decision: 'allow' })
   })
 
   it('Codex: changes unknown wait for Show all; an MCP card says it is not sandboxed; the Manual header says so too', async () => {
@@ -405,14 +484,19 @@ describe('ChatPane.vue', () => {
     expect(wrapper.find('[data-test="chat-mcp-unsandboxed"]').text()).toBe('MCP not sandboxed')
     emit({ type: 'approval', requestId: 'fu', toolName: 'Edit', input: { grantRoot: 'C:\\x', changesUnknown: true, file_path: '', changes: [] }, detail: '{ "grantRoot": "C:\\x" }', hidden: 1, status: 'pending' })
     emit({ type: 'approval', requestId: 'mc', toolName: 'MCP', displayName: 'MCP files', input: { server: 'files', message: 'Run delete_all?' }, detail: 'x', hidden: 0, choices: ['accept', 'decline'], status: 'pending' })
-    await nextTick()
-    const [fu, mc] = wrapper.findAll('[data-test="chat-approval"]')
-    expect(fu.find('[data-test="chat-approval-hidden"]').text()).toContain('Changes unknown')
-    expect(fu.find('[data-test="chat-approval-hidden"]').text()).not.toContain('characters hidden')
-    expect(fu.find('[data-test="chat-approve-allow"]').element.disabled).toBe(true)
-    expect(fu.find('[data-test="chat-approval-mcp"]').exists()).toBe(false)
-    expect(mc.find('[data-test="chat-approval-mcp"]').text()).toContain('outside the sandbox')
-    expect(mc.find('[data-test="chat-approve-allow"]').element.disabled).toBe(false)
+    await settle()
+    // One request at a time: the oldest first.
+    expect(document.querySelectorAll('[data-test="chat-approval"]')).toHaveLength(1)
+    expect(inCard('[data-test="chat-approval-hidden"]').textContent).toContain('Changes unknown')
+    expect(inCard('[data-test="chat-approval-hidden"]').textContent).not.toContain('characters hidden')
+    expect(inCard('[data-test="chat-approve-allow"]').disabled).toBe(true)
+    expect(inCard('[data-test="chat-approval-mcp"]')).toBeNull()
+    await click(inCard('[data-test="chat-approve-deny"]'))
+    expect(api.approve).toHaveBeenLastCalledWith({ paneId: 'c1', requestId: 'fu', decision: 'deny' })
+    emit({ type: 'approvalStatus', requestId: 'fu', status: 'denied' })
+    await settle()
+    expect(inCard('[data-test="chat-approval-mcp"]').textContent).toContain('outside the sandbox')
+    expect(inCard('[data-test="chat-approve-allow"]').disabled).toBe(false)
   })
 
   it('no MCP badge for Claude or in Yolo', async () => {
@@ -434,64 +518,61 @@ describe('ChatPane.vue', () => {
       status: 'pending'
     })
     emit({ type: 'approval', requestId: 'r2', toolName: 'Read', input: { file_path: 'a' }, status: 'pending' })
-    await nextTick()
-    const [one, two] = wrapper.findAll('[data-test="chat-approval-rules"]')
-    const items = one.findAll('li').map((li) => li.text())
+    await settle()
+    const items = [...inCard('[data-test="chat-approval-rules"]').querySelectorAll('li')].map((li) => li.textContent.trim())
     expect(items).toEqual(['Bash(npm test:*)', 'Switch this session to the acceptEdits mode', 'Give access to C:\\other'])
-    expect(two.text()).toContain('adds no rule')
+    emit({ type: 'approvalStatus', requestId: 'r1', status: 'allowed' })
+    await settle()
+    expect(inCard('[data-test="chat-approval-rules"]').textContent).toContain('adds no rule')
   })
 
   it('a new approval never takes the focus from the composer', async () => {
     await mountPane()
-    const input = wrapper.find('[data-test="chat-input"]').element
-    input.focus()
-    expect(document.activeElement).toBe(input)
+    input().focus()
+    expect(document.activeElement).toBe(input())
     emit({ type: 'approval', requestId: 'r1', toolName: 'Bash', input: { command: 'ls' }, status: 'pending' })
-    await nextTick()
-    await flushPromises()
-    expect(document.activeElement).toBe(input)
+    await settle()
+    expect(card()).not.toBeNull()
+    expect(document.activeElement).toBe(input())
   })
 
   it('not signed in: the message, the composer disabled, Start again opens again', async () => {
     history = { ok: true, events: [] }
     ctx.chatOpen = vi.fn(async () => ({ ok: false, code: 'signin', error: 'Not logged in' }))
     await mountPane()
-    expect(wrapper.find('[data-test="chat-state"]').text()).toContain('Claude is not signed in. Open a Claude terminal pane and run /login, then start again.')
-    expect(wrapper.find('[data-test="chat-input"]').element.disabled).toBe(true)
-    expect(wrapper.find('[data-test="chat-status"]').text()).toBe('Not signed in')
+    expect(document.querySelector('[data-test="chat-state"]').textContent).toContain('Claude is not signed in. Open a Claude terminal pane and run /login, then start again.')
+    expect(input().getAttribute('contenteditable')).toBe('false')
+    expect(status()).toBe('Not signed in')
     ctx.chatOpen.mockResolvedValueOnce({ ok: true })
-    await wrapper.find('[data-test="chat-start-again"]').trigger('click')
-    await flushPromises()
+    await click(document.querySelector('[data-test="chat-start-again"]'))
     expect(ctx.chatOpen).toHaveBeenCalledTimes(2)
-    expect(wrapper.find('[data-test="chat-state"]').exists()).toBe(false)
-    expect(wrapper.find('[data-test="chat-input"]').element.disabled).toBe(false)
+    expect(document.querySelector('[data-test="chat-state"]')).toBeNull()
+    expect(input().getAttribute('contenteditable')).toBe('true')
   })
 
   it('untrusted folder: the button asks through ctx.chatOpen', async () => {
     history = { ok: true, events: [] }
     ctx.chatOpen = vi.fn(async () => ({ ok: false, code: 'untrusted' }))
     await mountPane()
-    expect(wrapper.find('[data-test="chat-state"]').text()).toContain('This folder is not trusted yet.')
-    await wrapper.find('[data-test="chat-trust"]').trigger('click')
-    await flushPromises()
+    expect(document.querySelector('[data-test="chat-state"]').textContent).toContain('This folder is not trusted yet.')
+    await click(document.querySelector('[data-test="chat-trust"]'))
     expect(ctx.chatOpen).toHaveBeenCalledTimes(2)
   })
 
   it('the agent stopped: its error and Start again', async () => {
     await mountPane()
     emit({ type: 'status', state: 'crashed', error: 'exit code 3' })
-    await nextTick()
-    expect(wrapper.find('[data-test="chat-state"]').text()).toContain('The agent stopped')
-    expect(wrapper.find('[data-test="chat-state-error"]').text()).toBe('exit code 3')
-    await wrapper.find('[data-test="chat-start-again"]').trigger('click')
-    await flushPromises()
+    await settle()
+    expect(document.querySelector('[data-test="chat-state"]').textContent).toContain('The agent stopped')
+    expect(document.querySelector('[data-test="chat-state-error"]').textContent).toBe('exit code 3')
+    await click(document.querySelector('[data-test="chat-start-again"]'))
     expect(ctx.chatOpen).toHaveBeenCalledWith(node)
   })
 
   it('header: rate limits, Yolo badge, maximize and close', async () => {
     await mountPane({}, { chatPermissions: () => 'yolo' })
     emit({ type: 'rateLimit', fiveHour: { utilization: 0.42 }, sevenDay: { utilization: 0.1 } })
-    await nextTick()
+    await settle()
     expect(wrapper.find('[data-test="chat-rate"]').text()).toBe('5 h: 42% · 7 d: 10%')
     expect(wrapper.find('[data-test="chat-permissions"]').text()).toBe('Yolo')
     const [maxBtn, closeBtn] = wrapper.findAll('.pane-nav-btn')
@@ -501,23 +582,33 @@ describe('ChatPane.vue', () => {
     expect(ctx.closeLeaf).toHaveBeenCalledWith('c1')
   })
 
-  it('long chats show the last rows and "Show earlier"', async () => {
-    history = {
-      ok: true,
-      open: true,
-      events: Array.from({ length: 320 }, (_, i) => ({ type: 'notice', kind: 'info', text: `n${i}` })) // i18n-ignore
+  it('long chats render only a window of their rows', async () => {
+    // A real viewport (600 px) instead of the endless one: the list windows.
+    restoreViewport()
+    restoreViewport = stubLayout()
+    const restoreObserver = stubResizeObserver()
+    try {
+      history = {
+        ok: true,
+        open: true,
+        events: Array.from({ length: 320 }, (_, i) => ({ type: 'notice', kind: 'info', text: `n${i}` })) // i18n-ignore
+      }
+      await mountPane()
+      deliverResizes()
+      await settle()
+      const drawn = document.querySelectorAll('[data-test="nc-notice"]').length
+      expect(drawn).toBeGreaterThan(0)
+      expect(drawn).toBeLessThan(100)
+    } finally {
+      restoreObserver()
     }
-    await mountPane()
-    expect(wrapper.findAll('[data-test="chat-notice"]')).toHaveLength(300)
-    expect(wrapper.find('[data-test="chat-earlier"]').text()).toBe('Show earlier (20)')
-    await wrapper.find('[data-test="chat-earlier"]').trigger('click')
-    expect(wrapper.findAll('[data-test="chat-notice"]')).toHaveLength(320)
   })
 
   it('works without window.shellApi.chat', async () => {
     window.shellApi = {}
     await mountPane({}, { chatOpen: undefined })
     expect(wrapper.find('[data-test="chat-composer"]').exists()).toBe(true)
+    expect(input()).not.toBeNull()
   })
 
   it('stops listening when unmounted', async () => {
@@ -528,24 +619,20 @@ describe('ChatPane.vue', () => {
     expect(listeners).toHaveLength(0)
   })
 
-  it('interrupt: says it is the current turn and that the queue goes on; a failure is shown', async () => {
+  it('interrupt: Stop names what it does; a failure is shown', async () => {
     await mountPane()
     emit({ type: 'status', state: 'working' })
-    await nextTick()
-    const btn = wrapper.find('[data-test="chat-interrupt"]')
-    expect(btn.attributes('title')).toBe('Interrupt the current turn (Esc). Queued messages are still sent afterwards.')
-    expect(btn.attributes('aria-label')).toBe('Interrupt the current turn')
+    await settle()
+    const btn = () => document.querySelector('[data-test="chat-interrupt"]')
+    expect(btn().getAttribute('aria-label')).toBe('Stop the agent')
     api.interrupt.mockResolvedValueOnce({ ok: false })
-    await btn.trigger('click')
-    await flushPromises()
+    await click(btn())
     expect(ctx.toast).toHaveBeenLastCalledWith('Could not interrupt the turn: unknown error', expect.any(Object))
     api.interrupt.mockRejectedValueOnce(new Error('not running'))
-    await wrapper.find('[data-test="chat-input"]').trigger('keydown', { key: 'Escape' })
-    await flushPromises()
+    await key(input(), { key: 'Escape' })
     expect(ctx.toast).toHaveBeenLastCalledWith('Could not interrupt the turn: not running', expect.any(Object))
     ctx.toast.mockClear()
-    await btn.trigger('click')
-    await flushPromises()
+    await click(btn())
     expect(ctx.toast).not.toHaveBeenCalled()
   })
 
@@ -564,159 +651,116 @@ describe('ChatPane.vue', () => {
     expect(live().text()).toBe('')
     emit({ type: 'status', state: 'working' })
     emit({ type: 'turnEnd', status: 'completed' })
-    await flushPromises()
+    await settle()
     expect(live().text()).toBe('Claude finished the turn')
     emit({ type: 'turnEnd', status: 'failed', error: 'boom' })
-    await flushPromises()
+    await settle()
     expect(live().text()).toBe('The turn failed')
     emit({ type: 'turnEnd', status: 'interrupted' })
-    await flushPromises()
+    await settle()
     expect(live().text()).toBe('Turn interrupted')
     // A new request: its card says it, not the pane.
     emit({ type: 'approval', requestId: 'r1', toolName: 'Bash', input: { command: 'ls' }, status: 'pending' })
-    await flushPromises()
+    await settle()
     expect(live().text()).toBe('Turn interrupted')
     emit({ type: 'status', state: 'signin' })
-    await flushPromises()
+    await settle()
     expect(live().text()).toBe('Claude is not signed in')
   })
 
-  it('Alt+A goes to the pending request, even from the composer; nothing happens by itself while typing', async () => {
+  it('Alt+A goes to the pending request, even from the composer; nothing happens without one', async () => {
     await mountPane()
-    const input = wrapper.find('[data-test="chat-input"]')
-    input.element.focus()
-    await input.setValue('typing')
+    input().focus()
+    await type('typing')
     // No request: the key is left alone.
-    const idle = new KeyboardEvent('keydown', { key: 'a', altKey: true, bubbles: true, cancelable: true })
-    input.element.dispatchEvent(idle)
+    const idle = await key(input(), { key: 'a', altKey: true })
     expect(idle.defaultPrevented).toBe(false)
-    expect(wrapper.find('[data-test="chat-goto-approval"]').exists()).toBe(false)
 
     emit({ type: 'status', state: 'approval' })
     emit({ type: 'approval', requestId: 'r1', toolName: 'Bash', displayName: 'Bash', input: { command: 'ls' }, status: 'pending' })
-    await flushPromises()
-    expect(document.activeElement).toBe(input.element)
-    const hint = wrapper.find('[data-test="chat-goto-approval"]')
-    expect(hint.text()).toBe('Bash waits for your answer (Alt+A)')
-    expect(hint.attributes('aria-keyshortcuts')).toBe('Alt+A')
-    const ev = new KeyboardEvent('keydown', { key: 'a', altKey: true, bubbles: true, cancelable: true })
-    input.element.dispatchEvent(ev)
-    await flushPromises()
+    await settle()
+    expect(document.activeElement).toBe(input())
+    const ev = await key(input(), { key: 'a', altKey: true })
     expect(ev.defaultPrevented).toBe(true)
-    expect(document.activeElement).toBe(wrapper.find('[data-test="chat-approval"]').element)
+    expect(document.activeElement).toBe(card())
     expect(api.approve).not.toHaveBeenCalled()
-    // The hint button does the same.
-    input.element.focus()
-    await hint.trigger('click')
-    await flushPromises()
-    expect(document.activeElement).toBe(wrapper.find('[data-test="chat-approval"]').element)
+    // What was typed is still there.
+    expect(draft()).toBe('typing')
     emit({ type: 'approvalStatus', requestId: 'r1', status: 'allowed' })
-    await nextTick()
-    expect(wrapper.find('[data-test="chat-goto-approval"]').exists()).toBe(false)
+    await settle()
+    input().focus()
+    const after = await key(input(), { key: 'a', altKey: true })
+    expect(after.defaultPrevented).toBe(false)
   })
 
-  it('model menu: aria-expanded and aria-controls, the focus goes in, Esc closes it back to the chip without interrupting', async () => {
-    await mountPane({ model: 'claude-sonnet-4-6' })
-    const chip = wrapper.find('[data-test="chat-model"]')
-    expect(chip.attributes('aria-expanded')).toBe('false')
-    await chip.trigger('click')
-    await flushPromises()
-    let menu = wrapper.find('[data-test="chat-model-menu"]')
-    expect(chip.attributes('aria-expanded')).toBe('true')
-    expect(chip.attributes('aria-controls')).toBe(menu.attributes('id'))
-    expect(menu.element.contains(document.activeElement)).toBe(true)
-    expect(document.activeElement.tagName).toBe('BUTTON')
-    const esc = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
-    const seen = vi.fn()
-    window.addEventListener('keydown', seen)
-    try {
-      document.activeElement.dispatchEvent(esc)
-      await flushPromises()
-    } finally {
-      window.removeEventListener('keydown', seen)
+  describe('the composer options (permission mode, model)', () => {
+    const trigger = (which) => document.querySelector(`[data-native-chat-picker="${which}"]`)
+    async function openMenu(which) {
+      trigger(which).dispatchEvent(new PointerEvent('pointerdown', { button: 0, bubbles: true, cancelable: true }))
+      await settle()
     }
-    expect(seen).not.toHaveBeenCalled()
-    expect(wrapper.find('[data-test="chat-model-menu"]').exists()).toBe(false)
-    expect(chip.attributes('aria-expanded')).toBe('false')
-    expect(document.activeElement).toBe(chip.element)
+    const menu = () => document.querySelector('[role="menu"]:not(.nc-ui-leave-active)')
+    const modeGroup = () => menu() && [...menu().querySelectorAll('[role="group"]')].find((g) => g.getAttribute('aria-label') === 'Permission mode')
+    const modes = () =>
+      [...modeGroup().querySelectorAll('[role="menuitemradio"]')].map((o) => ({ id: o.getAttribute('data-choice'), disabled: o.getAttribute('aria-disabled') === 'true' }))
+    const modeItem = (id) => modeGroup().querySelector(`[data-choice="${id}"]`)
 
-    // While a turn runs: its choices are disabled, the menu itself takes the focus; Esc is not an interrupt.
-    emit({ type: 'status', state: 'working' })
-    await nextTick()
-    await chip.trigger('click')
-    await flushPromises()
-    menu = wrapper.find('[data-test="chat-model-menu"]')
-    expect(document.activeElement).toBe(menu.element)
-    await menu.trigger('keydown', { key: 'Escape' })
-    await flushPromises()
-    expect(api.interrupt).not.toHaveBeenCalled()
-    expect(wrapper.find('[data-test="chat-model-menu"]').exists()).toBe(false)
-    expect(document.activeElement).toBe(chip.element)
-  })
-
-  it('model menu: a choice closes it back to the chip; Tab away closes it and leaves the focus there', async () => {
-    await mountPane({ model: 'claude-sonnet-4-6' })
-    const chip = wrapper.find('[data-test="chat-model"]')
-    await chip.trigger('click')
-    await flushPromises()
-    const other = wrapper.findAll('[data-test="sop-model"]').find((b) => b.attributes('data-model') !== 'claude-sonnet-4-6')
-    await other.trigger('click')
-    await flushPromises()
-    expect(api.setOption).toHaveBeenCalled()
-    expect(wrapper.find('[data-test="chat-model-menu"]').exists()).toBe(false)
-    expect(document.activeElement).toBe(chip.element)
-
-    await chip.trigger('click')
-    await flushPromises()
-    const input = wrapper.find('[data-test="chat-input"]').element
-    const menu = wrapper.find('[data-test="chat-model-menu"]')
-    await menu.trigger('focusout', { relatedTarget: input })
-    input.focus()
-    await flushPromises()
-    expect(wrapper.find('[data-test="chat-model-menu"]').exists()).toBe(false)
-    expect(document.activeElement).toBe(input)
-  })
-
-  describe('permission mode (header)', () => {
-    const options = () => wrapper.findAll('[data-test="chat-mode"] option').map((o) => ({ id: o.element.value, disabled: o.element.disabled }))
+    it('no pickers when the app cannot set options', async () => {
+      await mountPane()
+      expect(trigger('options')).toBeNull()
+    })
 
     it('Claude: its modes; Yolo only for a chat started in Yolo', async () => {
       await mountPane({ chatPermissionMode: 'default', chatLaunchYolo: false }, { chatSetOption: vi.fn(async () => ({ ok: true })) })
-      expect(options()).toEqual([
+      await openMenu('options')
+      expect(modes()).toEqual([
         { id: 'default', disabled: false },
         { id: 'acceptEdits', disabled: false },
         { id: 'plan', disabled: false },
         { id: 'auto', disabled: false },
         { id: 'bypassPermissions', disabled: true }
       ])
-      expect(wrapper.find('[data-test="chat-mode"]').attributes('aria-label')).toMatch(/Manual/)
+      expect(trigger('options').getAttribute('aria-label')).toMatch(/Manual/)
     })
 
     it('a choice goes through ctx.chatSetOption (so the worker cap follows); shown only once confirmed', async () => {
-      const chatSetOption = vi.fn(async (leaf, p) => {
-        leaf.chatPermissionMode = p.permissionMode
-        return { ok: true, permissionMode: p.permissionMode, permissions: 'manual' }
-      })
+      let confirm
+      const chatSetOption = vi.fn(
+        (leaf, p) =>
+          new Promise((r) => {
+            confirm = () => {
+              leaf.chatPermissionMode = p.permissionMode
+              r({ ok: true, permissionMode: p.permissionMode, permissions: 'manual' })
+            }
+          })
+      )
       await mountPane({ chatPermissionMode: 'default', chatLaunchYolo: true }, { chatSetOption })
-      const sel = wrapper.find('[data-test="chat-mode"]')
-      await sel.setValue('plan')
-      await flushPromises()
+      await openMenu('options')
+      await click(modeItem('plan'))
       expect(chatSetOption).toHaveBeenCalledWith(node, { permissionMode: 'plan' })
-      expect(sel.element.value).toBe('plan')
+      expect(trigger('options').textContent).toContain('Manual')
+      confirm()
+      await settle()
+      expect(trigger('options').textContent).toContain('Plan')
     })
 
     it('refused: stays as it was, and says so', async () => {
       const chatSetOption = vi.fn(async () => ({ ok: false, error: 'no' }))
       await mountPane({ chatPermissionMode: 'default', chatLaunchYolo: true }, { chatSetOption })
-      await wrapper.find('[data-test="chat-mode"]').setValue('acceptEdits')
-      await flushPromises()
-      expect(wrapper.find('[data-test="chat-mode"]').element.value).toBe('default')
+      await openMenu('options')
+      await click(modeItem('acceptEdits'))
+      expect(chatSetOption).toHaveBeenCalledWith(node, { permissionMode: 'acceptEdits' })
       expect(ctx.toast).toHaveBeenCalled()
+      await openMenu('options')
+      expect(modeItem('default').getAttribute('aria-checked')).toBe('true')
+      expect(modeItem('acceptEdits').getAttribute('aria-checked')).toBe('false')
     })
 
     it('a capped worker: no Yolo and no Auto, even started in Yolo', async () => {
-      await mountPane({ chatPermissionMode: 'default', chatLaunchYolo: true, maxPermissions: 'manual' }, { chatSetOption: vi.fn() })
-      const o = options()
+      const chatSetOption = vi.fn(async () => ({ ok: true }))
+      await mountPane({ chatPermissionMode: 'default', chatLaunchYolo: true, maxPermissions: 'manual' }, { chatSetOption })
+      await openMenu('options')
+      const o = modes()
       expect(o.find((x) => x.id === 'bypassPermissions').disabled).toBe(true)
       expect(o.find((x) => x.id === 'auto').disabled).toBe(true)
     })
@@ -724,16 +768,95 @@ describe('ChatPane.vue', () => {
     it('Codex: Manual and Yolo; never Yolo during a turn (it would stop the turn)', async () => {
       const chatSetOption = vi.fn(async () => ({ ok: true }))
       await mountPane({ agentId: 'codex', chatPermissionMode: 'default', chatLaunchYolo: true }, { chatSetOption })
-      expect(options()).toEqual([
+      await openMenu('options')
+      expect(modes()).toEqual([
         { id: 'default', disabled: false },
         { id: 'bypassPermissions', disabled: false }
       ])
       emit({ type: 'status', state: 'working' })
-      await nextTick()
-      expect(options().find((x) => x.id === 'bypassPermissions').disabled).toBe(true)
-      await wrapper.find('[data-test="chat-mode"]').setValue('bypassPermissions')
-      await flushPromises()
+      await settle()
+      expect(modes().find((x) => x.id === 'bypassPermissions').disabled).toBe(true)
+      await click(modeItem('bypassPermissions'))
       expect(chatSetOption).not.toHaveBeenCalled()
     })
+
+    it('a model goes through ctx.chatSetOption with the leaf, and the leaf follows', async () => {
+      const claude = modelsFor('claude')
+      const chatSetOption = vi.fn(async () => ({ ok: true }))
+      await mountPane({ model: claude[0].id }, { chatSetOption })
+      await openMenu('model')
+      const other = [...menu().querySelectorAll('[role="menuitemradio"]')].find((b) => b.getAttribute('data-choice') !== claude[0].id)
+      const id = other.getAttribute('data-choice')
+      await click(other)
+      expect(chatSetOption).toHaveBeenCalledWith(node, { model: id })
+      expect(node.model).toBe(id)
+      expect(trigger('model').textContent).toContain(claude.find((m) => m.id === id).label)
+    })
+  })
+
+  it('the right-click menu: Copy the selection, Paste into the composer, Split and Close the pane', async () => {
+    history = { ok: true, open: true, events: [{ type: 'assistant', messageId: 'm1', text: 'copy me' }] }
+    await mountPane()
+    window.shellApi.writeClipboard = vi.fn()
+    window.shellApi.readClipboard = vi.fn(async () => 'pasted')
+    const root = document.querySelector('[data-native-chat-root]')
+    const openMenu = async () => {
+      root.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 40, clientY: 50 }))
+      await settle()
+      return document.querySelector('[data-test="chat-context-menu"]')
+    }
+    const item = (menu, label) => [...menu.querySelectorAll('[role="menuitem"]')].find((el) => el.textContent.includes(label))
+
+    // A selection in the chat: Copy takes it.
+    const text = [...document.querySelectorAll('.nc-row-markdown p')].find((p) => p.textContent === 'copy me')
+    const range = document.createRange()
+    range.selectNodeContents(text)
+    window.getSelection().removeAllRanges()
+    window.getSelection().addRange(range)
+    let menu = await openMenu()
+    expect(menu).not.toBeNull()
+    expect([...menu.querySelectorAll('[role="menuitem"]')].map((el) => el.textContent.replace(/Ctrl\+\S+/, '').trim())).toEqual([
+      'Copy',
+      'Paste',
+      'Split Right',
+      'Split Down',
+      'Maximize Pane',
+      'Close Pane'
+    ])
+    await click(item(menu, 'Copy'))
+    expect(window.shellApi.writeClipboard).toHaveBeenCalledWith('copy me')
+    window.getSelection().removeAllRanges()
+
+    menu = await openMenu()
+    await click(item(menu, 'Paste'))
+    expect(draft()).toBe('pasted')
+    menu = await openMenu()
+    await click(item(menu, 'Split Right'))
+    expect(ctx.splitLeaf).toHaveBeenLastCalledWith('c1', 'row')
+    menu = await openMenu()
+    await click(item(menu, 'Split Down'))
+    expect(ctx.splitLeaf).toHaveBeenLastCalledWith('c1', 'col')
+    menu = await openMenu()
+    await click(item(menu, 'Close Pane'))
+    expect(ctx.closeLeaf).toHaveBeenCalledWith('c1')
+  })
+
+  it('a Tessel path dropped anywhere on the chat lands in the draft as text', async () => {
+    await mountPane()
+    const drop = new Event('drop', { bubbles: true, cancelable: true })
+    Object.defineProperty(drop, 'dataTransfer', {
+      value: {
+        types: ['text/x-tessel-path'],
+        effectAllowed: 'copy',
+        dropEffect: 'none',
+        files: [],
+        getData: (type) => (type === 'text/x-tessel-path' ? 'C:\\repo\\my file.txt' : '')
+      }
+    })
+    document.querySelector('[data-native-chat-empty-state]').dispatchEvent(drop)
+    await settle()
+    expect(drop.defaultPrevented).toBe(true)
+    expect(draft()).toBe('"C:\\\\repo\\\\my file.txt" ')
+    expect(api.send).not.toHaveBeenCalled()
   })
 })
