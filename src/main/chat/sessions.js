@@ -17,6 +17,7 @@
 // open resumes the same conversation and sends what waited.
 import { discoverClaudeSkills, withoutProjectSkills, publicSkillDiscovery } from './skills.js'
 import { normalizeCommands } from './commands.js'
+import { QUESTION_LIMITS, normalizeQuestions, validateQuestionAnswers } from './questions.js'
 import { randomBytes, randomUUID as nodeUUID } from 'crypto'
 import fs from 'fs'
 import { isAbsolute } from 'path'
@@ -177,9 +178,10 @@ export function createChatSessions(deps) {
     })
   }
   const pendingApprovals = (s) => [...s.approvals.values()].some((a) => a.status === 'pending')
+  const pendingQuestions = (s) => s.questions.size > 0
   function workStatus(s) {
     if (s.finished) return
-    const st = pendingApprovals(s) ? 'approval' : s.turn ? 'working' : 'idle'
+    const st = pendingApprovals(s) ? 'approval' : s.turn || pendingQuestions(s) ? 'working' : 'idle'
     // Only changes are told (the model is part of the status too).
     if (st === s.status && s.model === s.shownModel) return
     status(s, st)
@@ -199,6 +201,7 @@ export function createChatSessions(deps) {
     !!s.sessionId && // nothing to resume otherwise
     !s.turn &&
     !pendingApprovals(s) &&
+    !pendingQuestions(s) &&
     !s.userQueue.length &&
     !s.teamQueue.length
 
@@ -297,7 +300,7 @@ export function createChatSessions(deps) {
 
   // Starts the next turn when the agent is free.
   function pump(s) {
-    if (!s.ready || s.finished || s.closing || s.turn || pendingApprovals(s)) return
+    if (!s.ready || s.finished || s.closing || s.turn || pendingApprovals(s) || pendingQuestions(s)) return
     if (s.userQueue.length) {
       const m = s.userQueue.shift()
       void deliver(s, { kind: 'user', uuid: m.id, ids: [m.id], text: m.text, wasQueued: true })
@@ -411,6 +414,22 @@ export function createChatSessions(deps) {
       s.toolAgents.delete(e.toolUseId)
       emit(s.paneId, { type: 'toolResult', id: e.toolUseId, isError: e.isError === true, text: String(e.text ?? ''), ...owner })
     })
+    on('question', (e) => {
+      if (!validId(e.requestId) || s.questions.has(e.requestId)) return
+      const questions = normalizeQuestions(e.questions, 'normalized')
+      if (!questions || s.closing || s.finished || s.questions.size >= QUESTION_LIMITS.pending) {
+        void a.answerQuestion?.(e.requestId, { cancel: true })
+        return
+      }
+      s.questions.set(e.requestId, { questions, sending: false })
+      turnStarted(s)
+      emit(s.paneId, { type: 'question', requestId: e.requestId, questions, status: 'pending' })
+      workStatus(s)
+      idleCheck(s)
+    })
+    on('questionStatus', (e) => {
+      settleQuestion(s, e.requestId, e.status, e.answers)
+    })
     on('permission', (e) => {
       if (!e.requestId || s.approvals.has(e.requestId)) return
       const toolId = stateId(e.toolUseId) || stateId(e.requestId)
@@ -454,6 +473,7 @@ export function createChatSessions(deps) {
       }
     })
     on('turnEnd', (e) => {
+      cancelQuestions(s)
       const turn = s.turn
       if (turn && !turn.accepted) {
         const uuids = Array.isArray(e.userMessageUuids) ? e.userMessageUuids : []
@@ -539,9 +559,24 @@ export function createChatSessions(deps) {
   }
 
   // The process is gone (or given up on): everything tied to it is released.
+  function settleQuestion(s, requestId, status, answers) {
+    const q = s.questions.get(requestId)
+    if (!q || !['answered', 'cancelled'].includes(status)) return
+    const clean = status === 'answered' ? validateQuestionAnswers(q.questions, answers) : null
+    s.questions.delete(requestId)
+    emit(s.paneId, { type: 'questionStatus', requestId, status: clean ? 'answered' : 'cancelled', ...(clean ? { answers: clean } : {}) })
+    workStatus(s)
+    idleCheck(s)
+  }
+
+  function cancelQuestions(s) {
+    for (const requestId of [...s.questions.keys()]) settleQuestion(s, requestId, 'cancelled')
+  }
+
   function finish(s, e = {}) {
     if (s.finished) return
     s.finished = true
+    cancelQuestions(s)
     if (s.idleTimer) clearTimeout(s.idleTimer)
     s.idleTimer = null
     if (s.turn) markFailed(s, s.turn)
@@ -685,6 +720,7 @@ export function createChatSessions(deps) {
       userQueue: from ? from.userQueue : [],
       teamQueue: from ? from.teamQueue : [],
       approvals: new Map(),
+      questions: new Map(),
       tools: new Set(),
       toolAgents: new Map(),
       messages: new Map(), // messageId -> { text, thinking } merged so far
@@ -881,7 +917,7 @@ export function createChatSessions(deps) {
     if (!s) return closed()
     const id = randomUUID()
     const now_ = now()
-    const idle = s.ready && !s.turn && !pendingApprovals(s) && !s.userQueue.length
+    const idle = s.ready && !s.turn && !pendingApprovals(s) && !pendingQuestions(s) && !s.userQueue.length
     emit(paneId, { type: 'user', id, text, origin: 'user', status: idle ? 'sent' : 'queued', at: now_ })
     if (idle) void deliver(s, { kind: 'user', uuid: id, ids: [id], text })
     else s.userQueue.push({ id, text })
@@ -911,12 +947,32 @@ export function createChatSessions(deps) {
   async function interrupt({ paneId } = {}) {
     const s = live(paneId)
     if (!s) return closed()
+    cancelQuestions(s)
     try {
       const r = await s.adapter.interrupt()
       return { ok: !!r?.ok }
     } catch {
       return { ok: false }
     }
+  }
+
+  async function answer({ paneId, requestId, answers, cancel = false } = {}) {
+    if (!validPaneId(paneId) || !validId(requestId) || typeof cancel !== 'boolean' || (cancel && answers !== undefined)) return invalid()
+    const s = live(paneId)
+    if (!s) return closed()
+    const q = s.questions.get(requestId)
+    if (!q || q.sending) return { ok: false, code: 'unknown', error: t('main.chat.noQuestion', 'This question was already answered or is gone.') }
+    const clean = cancel ? null : validateQuestionAnswers(q.questions, answers)
+    if (!cancel && !clean) return invalid()
+    q.sending = true
+    let r
+    try { r = await s.adapter.answerQuestion(requestId, cancel ? { cancel: true } : { answers: clean }) } catch { r = { ok: false } }
+    // The adapter usually emitted its terminal event already. A close/turn end
+    // during the write wins: never resurrect a stale question or retry its reply.
+    if (s.questions.get(requestId) === q) settleQuestion(s, requestId, r?.ok && !cancel ? 'answered' : 'cancelled', clean)
+    pump(s)
+    if (!r?.ok) return { ok: false, code: 'failed', error: t('main.chat.answerFailed', 'The answer could not be sent.') }
+    return { ok: true }
   }
 
   async function approve({ paneId, requestId, decision, message } = {}) {
@@ -1014,6 +1070,7 @@ export function createChatSessions(deps) {
     if (forget) forgotten.add(paneId)
     if (s && !s.finished) {
       s.closing = true
+      cancelQuestions(s)
       try {
         await s.adapter?.close?.(kill ? { kill: true } : undefined)
         // Asleep: no process, unless Tessel quits while it still stops.
@@ -1062,6 +1119,9 @@ export function createChatSessions(deps) {
       seq: seqs.get(paneId),
       meta: j.readMeta(),
       commands: j.readCommands(),
+      // Authoritative live requests for remounts, even after journal rotation.
+      // Empty after restart: recorded questions can never become answerable again.
+      questions: s && !s.closing && !s.finished ? [...s.questions].map(([requestId, q]) => ({ type: 'question', requestId, questions: q.questions, status: 'pending' })) : [],
       // A live session (starting, idle, working, approval): do not open it again.
       open: !!s && !s.finished && !s.closing && !s.asleep,
       // Asleep (its process stopped when idle): open false, live set (status
@@ -1169,6 +1229,10 @@ export function createChatSessions(deps) {
       if (!validPaneId(paneId)) return invalid()
       return interrupt({ paneId })
     })
+    ipcMain.handle('chat:answer', (_e, q) => {
+      const { paneId, requestId, answers, cancel } = obj(q)
+      return answer({ paneId, requestId, answers, cancel })
+    })
     ipcMain.handle('chat:approve', (_e, q) => {
       const { paneId, requestId, decision, message } = obj(q)
       if (!validPaneId(paneId) || !validId(requestId) || !DECISIONS.includes(decision)) return invalid()
@@ -1207,5 +1271,5 @@ export function createChatSessions(deps) {
     })
   }
 
-  return { open, send: sendUser, sendTeam, interrupt, approve, approvalInput, setOption, close, closeAll, history, skills, list, register }
+  return { open, send: sendUser, sendTeam, interrupt, answer, approve, approvalInput, setOption, close, closeAll, history, skills, list, register }
 }

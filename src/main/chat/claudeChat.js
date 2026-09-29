@@ -6,6 +6,7 @@
 // - a turn ends with `result` (then session_state_changed idle);
 // - delivery proof = command_lifecycle started or the replay echo (isReplay).
 import { claudeCommands } from './commands.js'
+import { createQuestionRequests, normalizeQuestions, providerAnswers } from './questions.js'
 import { EventEmitter } from 'events'
 import { spawn as nodeSpawn } from 'child_process'
 import { randomUUID } from 'crypto'
@@ -121,6 +122,7 @@ export function createClaudeChat(opts) {
   let reqN = 0
   const pending = new Map() // our control requests: id -> { resolve, timer, subtype }
   const permissions = new Map() // the CLI's can_use_tool: requestId -> { input, suggestions }
+  const questions = createQuestionRequests(emit)
 
   function logAt(level, msg) {
     if (!log) return
@@ -202,6 +204,18 @@ export function createClaudeChat(opts) {
     const r = m.request || {}
     if (typeof id !== 'string') return
     if (r.subtype === 'can_use_tool') {
+      if (r.tool_name === 'AskUserQuestion') {
+        const normalized = !closing && !finished && !frames.interruptRequested && Buffer.byteLength(JSON.stringify(r.input?.questions) || '', 'utf8') <= 1024 * 1024
+          ? normalizeQuestions(r.input?.questions, 'claude') : null
+        questions.add({
+          rawId: id,
+          questions: normalized,
+          reply: answers => answerControl(id, answers
+            ? { behavior: 'allow', updatedInput: { questions: r.input.questions, answers: providerAnswers(normalized, answers, 'claude') } }
+            : { behavior: 'deny', message: 'The user declined to answer.' }) // i18n-ignore sent to the agent
+        })
+        return
+      }
       const perm = permissionFromRequest(id, r)
       permissions.set(id, { input: perm.input, suggestions: perm.suggestions })
       emit('permission', perm)
@@ -216,6 +230,7 @@ export function createClaudeChat(opts) {
 
   function onCancelRequest(m) {
     const id = m.request_id
+    questions.cancelRaw(id)
     if (permissions.delete(id)) emit('permissionCancelled', { requestId: id })
   }
 
@@ -241,7 +256,10 @@ export function createClaudeChat(opts) {
     }
     for (const ev of events) {
       const { type, ...payload } = ev
-      if (type === 'turnEnd') lastTurnInterrupted = payload.status === 'interrupted'
+      if (type === 'turnEnd') {
+        lastTurnInterrupted = payload.status === 'interrupted'
+        questions.cancel(() => true, true)
+      }
       emit(type, payload)
     }
   }
@@ -293,6 +311,7 @@ export function createClaudeChat(opts) {
       entry.resolve({ ok: false, code: 'exit', error: 'process exited' }) // i18n-ignore internal
     }
     pending.clear()
+    questions.cancel()
     for (const id of permissions.keys()) emit('permissionCancelled', { requestId: id })
     permissions.clear()
     const subagentEvents = []
@@ -412,6 +431,7 @@ export function createClaudeChat(opts) {
   async function interrupt() {
     if (!alive()) return { ok: false, error: 'not running' } // i18n-ignore internal
     frames.interruptRequested = true
+    questions.cancel(() => true, true)
     const r = await control({ subtype: 'interrupt' })
     if (!r.ok) return { ok: false, error: r.error }
     return { ok: true, stillQueued: (r.response && r.response.still_queued) || [] }
@@ -477,6 +497,7 @@ export function createClaudeChat(opts) {
   // for its exit is bounded (timeouts.quitKill) so quitting never hangs.
   async function close({ kill = false } = {}) {
     closing = true
+    questions.cancel(() => true, true)
     if (!child || finished) return { ok: true }
     const done = new Promise((resolve) => (finished ? resolve() : chat.once('exit', resolve)))
     let timer
@@ -506,6 +527,7 @@ export function createClaudeChat(opts) {
     send,
     interrupt,
     answerPermission,
+    answerQuestion: questions.answer,
     setModel,
     setEffort,
     setPermissionMode,
