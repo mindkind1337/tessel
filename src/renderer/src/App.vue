@@ -31,6 +31,7 @@ import {
   applyAgentStates,
   getAgentState,
   agentStateKnown,
+  managedAgentStatus,
   clearAgentStatus,
   clearAttention,
   setAttention
@@ -61,7 +62,7 @@ import { parseLeadRequest, findTaskRef, leadGuide, memberGuide } from '../../sha
 import { workerLaunchArgs, wakeLaunchArgs } from '../../shared/orchestration'
 import { createOrchestrator } from './orchestrator'
 import { automationLaunchArgs, AUTOMATION_AGENTS, permissionFingerprint, quoteGlobArgs } from '../../shared/automations'
-import { createAutomationRunner } from './automationRunner'
+import { createAutomationRunner, probeRunAgent } from './automationRunner'
 import { automationsState, applySnapshot as applyAutomations, subscribeAutomations } from './automationsStore'
 import { trackAgent } from '../../shared/tracking'
 import { pasteAndConfirm } from './deliver'
@@ -6602,9 +6603,7 @@ const automationRunner = createAutomationRunner({
     scheduleTaskSave()
   },
   findLeaf,
-  // Any sign of its agent: hooks, work, an approval or a limit.
-  agentStarted: (id) => agentStatus[id] === 'busy' || !!getAgentState(id)?.hookSeen || !!approvals[id] || !!limits[id],
-  agentExited: (id) => getAgentState(id)?.state === 'closed',
+  agentProbe: automationAgentProbe,
   // After the pane has shown its last answer (and outside its own callback).
   closePane: (id) => setTimeout(() => findLeaf(id) && closeLeaf(id, { force: true }), 1500),
   report: (result) => (window.shellApi.automations ? window.shellApi.automations.markResult(result).catch(() => null) : Promise.resolve(null)),
@@ -6616,6 +6615,19 @@ const automationRunner = createAutomationRunner({
   },
   automationById: (id) => automationsState.automations.find((a) => a.id === id) || null
 })
+// Is a run's agent there? (probeRunAgent, automationRunner.js)
+function automationAgentProbe(id) {
+  const leaf = findLeaf(id)
+  return probeRunAgent({
+    leaf,
+    managed: !!leaf && managedAgentStatus(leaf),
+    state: leaf ? getAgentState(id, leaf.agentLaunchToken) : null,
+    busy: agentStatus[id] === 'busy',
+    waiting: !!approvals[id] || !!limits[id],
+    now: Date.now(),
+    runningWork: () => probeRunningWork(id)
+  })
+}
 // TerminalPane: an agent ended its turn.
 function automationTurnDone(paneId) {
   return automationRunner.turnDone(paneId)

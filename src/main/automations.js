@@ -59,6 +59,11 @@ export const ACKED_TIMEOUT_MS = 60 * 60 * 1000
 // A started run that never ended.
 export const MAX_RUN_MS = 24 * 60 * 60 * 1000
 const AUTO_ID = /^auto-[A-Za-z0-9-]{1,80}$/
+const REMOTE_FILE = /^\.tessel\/automations\/auto-[A-Za-z0-9-]{1,80}\.md$/
+const HOST_ID = /^[A-Za-z0-9._-]{1,100}$/
+// An occurrence already handled is never run again after the clock went
+// back, unless it lies this far ahead (the clock had jumped forward).
+const DAY_MS = 24 * 60 * 60 * 1000
 const RUN_ID = /^run-[A-Za-z0-9-]{6,80}$/
 const PANE_ID = /^[A-Za-z0-9._-]{1,100}$/
 // What a changed automation must be confirmed for again.
@@ -76,7 +81,8 @@ export function createAutomations({
   log = null,
   tickMs = TICK_MS,
   timers = { setInterval, clearInterval },
-  writeRemotePrompt = null
+  writeRemotePrompt = null,
+  clearRemotePrompt = null
 } = {}) {
   if (!dir) throw new Error('createAutomations requires a folder') // i18n-ignore programming error
   const file = join(dir, AUTOMATIONS_FILE)
@@ -117,6 +123,7 @@ export function createAutomations({
       dtstart,
       nextRunAt,
       lastRunAt: num(a.lastRunAt),
+      lastScheduledFor: num(a.lastScheduledFor),
       missedRunPolicy: 'run_once_within_grace',
       createdAt: num(a.createdAt) ?? at,
       updatedAt: num(a.updatedAt) ?? at
@@ -143,6 +150,9 @@ export function createAutomations({
       branch: str(r.branch, 300),
       errorCode: str(r.errorCode, 60),
       error: str(r.error, 2000),
+      ...(typeof r.remoteFile === 'string' && REMOTE_FILE.test(r.remoteFile) && r.remoteHost && HOST_ID.test(String(r.remoteHost.hostId)) && typeof r.remoteHost.path === 'string'
+        ? { remoteFile: r.remoteFile, remoteHost: { hostId: r.remoteHost.hostId, path: r.remoteHost.path.slice(0, 1024) } }
+        : {}),
       ...(Number.isSafeInteger(r.occurrenceCount) && r.occurrenceCount > 1 ? { occurrenceCount: r.occurrenceCount } : {}),
       ...(num(r.lastOccurrenceAt) !== null ? { lastOccurrenceAt: r.lastOccurrenceAt } : {})
     }
@@ -352,6 +362,7 @@ export function createAutomations({
     }
     state.runs.push(run)
     a.lastRunAt = run.createdAt
+    if (trigger === 'scheduled') a.lastScheduledFor = Math.max(a.lastScheduledFor ?? -Infinity, scheduledFor)
     trimRuns()
     return run
   }
@@ -362,6 +373,10 @@ export function createAutomations({
     run.error = error
     run.finishedAt = now()
     if (!run.startedAt) run.startedAt = run.finishedAt
+    // Its prompt on a remote host: emptied (the .gitignore keeps it out of git).
+    if (run.remoteFile && run.remoteHost && clearRemotePrompt) {
+      Promise.resolve(clearRemotePrompt({ hostId: run.remoteHost.hostId, path: run.remoteHost.path, file: run.remoteFile })).catch(() => {})
+    }
   }
 
   // A skip that repeats (the same reason, run after run) folds into the
@@ -380,6 +395,7 @@ export function createAutomations({
     return latest
   }
   function recordSkip(a, scheduledFor, status, errorCode) {
+    a.lastScheduledFor = Math.max(a.lastScheduledFor ?? -Infinity, scheduledFor)
     const latest = foldTarget(a.id, status, errorCode)
     if (latest) return fold(latest, scheduledFor)
     const run = createRun(a, scheduledFor, 'scheduled')
@@ -505,6 +521,9 @@ export function createAutomations({
       return
     }
     payload.remoteFile = rel
+    run.remoteFile = rel
+    run.remoteHost = { hostId: a.remote.hostId, path: a.remote.path }
+    save()
     sendDispatch(a, run, payload)
   }
 
@@ -607,6 +626,10 @@ export function createAutomations({
             a.dtstart = at
             changed = true
           }
+          if (a.lastScheduledFor != null && a.lastScheduledFor > at + DAY_MS) {
+            a.lastScheduledFor = null
+            changed = true
+          }
           const expected = nextOccurrenceAfter(a.schedule, a.dtstart, at)
           if (a.nextRunAt > expected) {
             a.nextRunAt = expected
@@ -642,6 +665,8 @@ export function createAutomations({
   function evaluate(a, at) {
     const scheduledFor = latestOccurrenceAtOrBefore(a.schedule, a.dtstart, at)
     if (scheduledFor === null) return advance(a, at)
+    // Already handled (the clock went back after it): not again.
+    if (a.lastScheduledFor != null && scheduledFor <= a.lastScheduledFor) return advance(a, at)
     if (missedBeyondGrace({ graceMinutes: a.missedRunGraceMinutes, scheduledFor, now: at, tickMs })) {
       recordSkip(a, scheduledFor, 'skipped_missed', 'missed')
       return advance(a, at)

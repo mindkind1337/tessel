@@ -24,8 +24,10 @@
 // copiesOf(automationId), createWorktree(ws, title), removeCopy(worktree),
 // runStatus(runId), openPane({ ws, agent, worktree, launchOptions,
 // automationLaunch }), createCard(card), updateCard(id, patch),
-// removeCard(id), cardOf(id), findLeaf(id), closePane(id), agentStarted(id),
-// agentExited(id), report(result), notify(note), automationById(id), now().
+// removeCard(id), cardOf(id), findLeaf(id), closePane(id), agentProbe(id)
+// -> { started: true | false | null, exited } (null: no way to tell, as on a
+// remote host whose agent sends no hooks: only the scheduler's 24-hour limit
+// applies), report(result), notify(note), automationById(id), now().
 import { t } from './i18n'
 import {
   automationLaunchArgs,
@@ -33,6 +35,38 @@ import {
   MAX_OPEN_PANES_PER_AUTOMATION,
   MAX_COPIES_PER_AUTOMATION
 } from '../../shared/automations'
+
+// Is a run's agent there? -> { started: true | false | null, exited }.
+// - On a remote host: its hooks never reach Tessel (nothing is forwarded over
+//   ssh) and the terminal always runs ssh: no way to tell (null), only the
+//   scheduler's 24-hour limit applies.
+// - An agent with status hooks (Claude Code, Codex): any sign from them,
+//   and their "closed" when it exits; without any word from them (hooks not
+//   set up), as below.
+// - Otherwise: its program still running under the pane's shell (the
+//   process tree, not the screen: the echo of the launch line or a shell
+//   prompt is not an agent), looked at once the launch line had 2 seconds.
+//   { leaf, managed, state, busy, waiting, now, runningWork() -> { running, unknown } }
+export const LAUNCH_SETTLE_MS = 2000
+export async function probeRunAgent({ leaf, managed = false, state = null, busy = false, waiting = false, now = Date.now(), runningWork }) {
+  if (!leaf || leaf.remoteHostId) return { started: null, exited: false }
+  // WSL: the agent runs inside Linux, out of sight of Windows' process tree.
+  const inSight = !leaf.remoteHostId && leaf.shellId !== 'wsl'
+  if (managed) {
+    if (state && state.state === 'closed') return { started: true, exited: true }
+    if (busy || (state && state.hookSeen) || waiting) return { started: true, exited: false }
+  }
+  if (!inSight) return { started: null, exited: false }
+  if (now - (leaf.launchedAt || 0) < LAUNCH_SETTLE_MS) return { started: false, exited: false }
+  let work
+  try {
+    work = await runningWork()
+  } catch {
+    work = { unknown: true }
+  }
+  if (!work || work.unknown) return { started: null, exited: false }
+  return { started: !!work.running, exited: !work.running }
+}
 
 export function createAutomationRunner(deps) {
   const now = deps.now || Date.now
@@ -194,19 +228,33 @@ export function createAutomationRunner(deps) {
 
   // Runs whose pane closed, whose agent exited, or whose agent never showed
   // up: those runs failed (their pane, if any, stays for you to look at).
-  function check() {
-    const at = now()
-    for (const [paneId, f] of [...following]) {
-      if (!deps.findLeaf(paneId)) {
-        end(paneId, f, 'pane-closed')
-        continue
+  let checking = false
+  async function check() {
+    if (checking) return
+    checking = true
+    try {
+      for (const [paneId, f] of [...following]) {
+        if (!deps.findLeaf(paneId)) {
+          end(paneId, f, 'pane-closed')
+          continue
+        }
+        let probe
+        try {
+          probe = (await deps.agentProbe(paneId)) || {}
+        } catch {
+          probe = {}
+        }
+        // Ended meanwhile (its turn, its pane).
+        if (following.get(paneId) !== f) continue
+        if (probe.started === true) f.started = true
+        if (probe.exited && f.started) {
+          end(paneId, f, 'agent-exited')
+          continue
+        }
+        if (probe.started === false && !f.started && now() - f.dispatchedAt > AGENT_START_TIMEOUT_MS) end(paneId, f, 'agent-no-start')
       }
-      if (deps.agentExited(paneId)) {
-        end(paneId, f, 'agent-exited')
-        continue
-      }
-      if (!f.started && deps.agentStarted(paneId)) f.started = true
-      if (!f.started && at - f.dispatchedAt > AGENT_START_TIMEOUT_MS) end(paneId, f, 'agent-no-start')
+    } finally {
+      checking = false
     }
   }
 
@@ -225,7 +273,7 @@ export function createAutomationRunner(deps) {
         after: (a && a.after) || { notify: true, closePane: false },
         askedApproval: false,
         dispatchedAt: typeof r.dispatchedAt === 'number' ? r.dispatchedAt : now(),
-        started: !!deps.agentStarted(r.paneId)
+        started: false
       })
     }
   }

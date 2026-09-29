@@ -5,6 +5,7 @@ import fs from 'fs'
 import { spawn, execFile } from 'child_process'
 import { loadTasks, loadBoard, saveTasks } from './taskBoardPersistence'
 import { createAutomations } from './automations'
+import { createRemotePromptWriter } from './automationRemotePrompt'
 import { trimEvents, isEvent } from '../shared/activity'
 import { agentModelLive, watchModelFiles } from './agentModel'
 import { createCodexAccounts } from './codexAccounts'
@@ -26,7 +27,7 @@ import { createAddProject, registerAddProject } from './addProject'
 import { createSshAskpass, registerSshAskpass, askpassExePath } from './sshAskpass'
 import { createAskpassPipeHost } from './askpassPipeHost'
 import { createRemoteFs, registerRemoteFs, SESSION_PREFIX as REMOTE_FS_PREFIX } from './remoteFs'
-import { isRemotePath, remoteRoot, childPath } from '../shared/remotePath'
+import { isRemotePath } from '../shared/remotePath'
 import { prepareAgentStateHooks } from './agentStateSetup'
 import { assessNeeds } from './tesselNeeds'
 import { createClaudeUsageReport } from './claudeUsageReport'
@@ -981,21 +982,18 @@ app.whenReady().then(() => {
 // only while Tessel is open; the window starts each run's pane and reports.
 // ---------------------------------------------------------------------------
 // A remote project's prompt file, written through its Files session
-// (remoteFs.js: inside the project folder, contents over stdin), never typed
-// into the host's login shell.
-async function writeRemoteAutomationPrompt({ hostId, path, file, text }) {
-  const root = remoteRoot(hostId, path)
-  if (!root) return { ok: false, error: '' }
-  const parts = String(file || '').split('/').filter(Boolean)
-  let dir = root
-  for (const name of parts.slice(0, -1)) {
-    // Already there: fine; anything else shows when the file is written.
-    await remoteFs.create({ root, dir, name, folder: true })
-    dir = childPath(dir, name)
-  }
-  return remoteFs.writeForEdit({ file: childPath(dir, parts[parts.length - 1]), text })
-}
-const automations = createAutomations({ dir: app.getPath('userData'), send, log, writeRemotePrompt: (q) => writeRemoteAutomationPrompt(q) })
+// (automationRemotePrompt.js), never typed into the host's login shell.
+const remotePrompts = createRemotePromptWriter({
+  create: (q) => remoteFs.create(q),
+  writeForEdit: (q) => remoteFs.writeForEdit(q)
+})
+const automations = createAutomations({
+  dir: app.getPath('userData'),
+  send,
+  log,
+  writeRemotePrompt: (q) => remotePrompts.write(q),
+  clearRemotePrompt: (q) => remotePrompts.clear(q)
+})
 app.whenReady().then(() => automations.start())
 app.on('will-quit', () => automations.stop())
 ipcMain.handle('automations:list', () => automations.snapshot())
