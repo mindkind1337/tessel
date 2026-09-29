@@ -7,7 +7,7 @@ import { join } from 'path'
 
 vi.mock('../browserPicker', () => ({ pickerScript: (a) => `/*${a}*/`, clampPickPayload: (x) => x }))
 
-import { createBrowserGuests, BROWSER_PARTITION, shortcutOf } from '../browserGuest'
+import { createBrowserGuests, BROWSER_PARTITION, shortcutOf, contextMenuItems, wantsNewPane } from '../browserGuest'
 
 const ev = (extra = {}) => ({ preventDefault: vi.fn(), ...extra })
 
@@ -69,18 +69,27 @@ function setup() {
   const sent = []
   const ses = fakeSession()
   const winWc = new EventEmitter()
-  const win = { webContents: winWc, isDestroyed: () => false, full: false }
+  const win = Object.assign(new EventEmitter(), { webContents: winWc, isDestroyed: () => false, full: false })
   win.isFullScreen = vi.fn(() => win.full)
   win.setFullScreen = vi.fn((flag) => (win.full = flag))
   const guests = new Map()
+  const menus = []
   const electron = {
-    webContents: { fromId: vi.fn((id) => guests.get(id)) },
-    clipboard: { writeImage: vi.fn() },
+    webContents: { fromId: vi.fn((id) => guests.get(id)), getFocusedWebContents: vi.fn(() => null) },
+    clipboard: { writeImage: vi.fn(), writeText: vi.fn() },
+    Menu: {
+      buildFromTemplate: vi.fn((template) => {
+        const menu = { template, popup: vi.fn() }
+        menus.push(menu)
+        return menu
+      })
+    },
     nativeImage: { createFromPath: vi.fn(() => ({ isEmpty: () => false })) },
     session: { fromPartition: vi.fn(() => ses) }
   }
   const log = { warn: vi.fn() }
-  const bg = createBrowserGuests({ getWindow: () => win, send: (ch, payload) => sent.push([ch, payload]), log, screenshotDir: dir, electron })
+  const openExternal = vi.fn()
+  const bg = createBrowserGuests({ getWindow: () => win, send: (ch, payload) => sent.push([ch, payload]), log, screenshotDir: dir, electron, openExternal })
   bg.attachToWindow(win)
   const handlers = {}
   bg.register({ handle: (ch, fn) => (handlers[ch] = fn) })
@@ -95,7 +104,7 @@ function setup() {
   const call = (ch, ...args) => handlers[ch](fromWindow, ...args)
   // The user's own click in a page (what Electron reports).
   const click = (g) => g.emit('input-event', ev(), { type: 'mouseDown' })
-  return { click, sent, ses, winWc, win, guests, electron, log, bg, handlers, fromWindow, attach, call }
+  return { click, sent, ses, winWc, win, guests, electron, log, bg, handlers, fromWindow, attach, call, menus, openExternal }
 }
 
 describe('will-attach-webview', () => {
@@ -308,6 +317,7 @@ describe('a page attached', () => {
     const g = t.attach()
     const cases = [
       [{ key: 'l', control: true }, 'focusAddress'],
+      [{ key: 'f', control: true }, 'find'],
       [{ key: 'F5' }, 'reload'],
       [{ key: 'r', control: true }, 'reload'],
       [{ key: 'R', control: true, shift: true }, 'hardReload'],
@@ -799,5 +809,165 @@ describe('old screenshots and messages', () => {
     seed()
     const res = t.call('browser:saveFeedback', 'hello')
     expect(files()).toEqual([...kept, res.path.split(/[\\/]/).pop()].sort())
+  })
+})
+
+describe("a browser's everyday input", () => {
+  it('Escape stops a page still loading (after the event); the page gets its Escape too', async () => {
+    const g = t.attach()
+    g.isLoading = vi.fn(() => true)
+    const e = ev()
+    g.emit('before-input-event', e, { type: 'keyDown', key: 'Escape' })
+    expect(g.stop).not.toHaveBeenCalled()
+    await new Promise((r) => setImmediate(r))
+    expect(g.stop).toHaveBeenCalledTimes(1)
+    expect(e.preventDefault).not.toHaveBeenCalled()
+    g.isLoading = vi.fn(() => false)
+    g.emit('before-input-event', ev(), { type: 'keyDown', key: 'Escape' })
+    await new Promise((r) => setImmediate(r))
+    expect(g.stop).toHaveBeenCalledTimes(1)
+    expect(t.sent).toEqual([])
+  })
+
+  it('Ctrl+wheel zooms the pane (Chromium asks, the window zooms), one step per notch', () => {
+    const now = vi.spyOn(Date, 'now')
+    try {
+      const g = t.attach()
+      const e = ev()
+      now.mockReturnValue(1000)
+      g.emit('zoom-changed', e, 'in')
+      g.emit('zoom-changed', ev(), 'in') // the same notch, told twice
+      now.mockReturnValue(1100)
+      g.emit('zoom-changed', ev(), 'in')
+      g.emit('zoom-changed', ev(), 'out')
+      g.emit('zoom-changed', ev(), 'sideways')
+      expect(e.preventDefault).toHaveBeenCalled()
+      expect(t.sent).toEqual([
+        ['browser:shortcut', { webContentsId: 7, action: 'zoomIn' }],
+        ['browser:shortcut', { webContentsId: 7, action: 'zoomIn' }],
+        ['browser:shortcut', { webContentsId: 7, action: 'zoomOut' }]
+      ])
+    } finally {
+      now.mockRestore()
+    }
+  })
+
+  it('a middle-click or a Ctrl+click on a link asks for a new pane; target=_blank stays in the pane', () => {
+    const g = t.attach()
+    const down = (button, modifiers = []) => g.emit('before-mouse-event', ev(), { type: 'mouseDown', button, modifiers })
+    down('middle')
+    g.openHandler({ url: 'https://example.com/a', disposition: 'foreground-tab' })
+    down('left', ['control'])
+    g.openHandler({ url: 'https://example.com/b', disposition: 'foreground-tab' })
+    down('left')
+    g.openHandler({ url: 'https://example.com/c', disposition: 'background-tab' })
+    down('left')
+    g.openHandler({ url: 'https://example.com/d', disposition: 'foreground-tab' })
+    expect(t.sent).toEqual([
+      ['browser:popup', { webContentsId: 7, url: 'https://example.com/a', newPane: true }],
+      ['browser:popup', { webContentsId: 7, url: 'https://example.com/b', newPane: true }],
+      ['browser:popup', { webContentsId: 7, url: 'https://example.com/c', newPane: true }],
+      ['browser:popup', { webContentsId: 7, url: 'https://example.com/d' }]
+    ])
+    // Still one per click, and never another scheme.
+    expect(g.openHandler({ url: 'https://example.com/e', disposition: 'background-tab' })).toEqual({ action: 'deny' })
+    t.click(g)
+    expect(g.openHandler({ url: 'file:///C:/x', disposition: 'background-tab' })).toEqual({ action: 'deny' })
+    expect(t.sent).toHaveLength(4)
+    expect(wantsNewPane('new-window', null)).toBe(false)
+    expect(wantsNewPane('other', { middle: true })).toBe(false)
+  })
+
+  it("the mouse's back/forward buttons: the focused page, else the active pane", () => {
+    const g = t.attach()
+    t.electron.webContents.getFocusedWebContents.mockReturnValue(g)
+    t.win.emit('app-command', ev(), 'browser-backward')
+    t.win.emit('app-command', ev(), 'media-play-pause')
+    t.electron.webContents.getFocusedWebContents.mockReturnValue(null)
+    t.win.emit('app-command', ev(), 'browser-forward')
+    // A focused page of another session is not one of the browser's.
+    const other = fakeGuest({ id: 9, host: t.winWc, ses: {} })
+    t.electron.webContents.getFocusedWebContents.mockReturnValue(other)
+    t.win.emit('app-command', ev(), 'browser-backward')
+    expect(t.sent).toEqual([
+      ['browser:shortcut', { webContentsId: 7, action: 'back' }],
+      ['browser:appCommand', { action: 'forward' }],
+      ['browser:appCommand', { action: 'back' }]
+    ])
+  })
+})
+
+describe('the right-click menu', () => {
+  const ids = (items) => items.map((i) => i.id || '-')
+
+  it('a link: open it in a new pane, in the default browser, copy it; then history, reload, inspect', () => {
+    const items = contextMenuItems({ linkURL: 'https://example.com/x' }, { canGoBack: true, canGoForward: false })
+    expect(ids(items)).toEqual(['openLinkNewPane', 'openLinkExternal', 'copyLink', '-', 'back', 'forward', 'reload', 'selectAll', '-', 'inspect'])
+    expect(items[0].label).toBe('Open Link in New Pane')
+    expect(items.find((i) => i.id === 'back').enabled).toBe(true)
+    expect(items.find((i) => i.id === 'forward').enabled).toBe(false)
+  })
+
+  it('a link on another scheme offers nothing for it', () => {
+    for (const linkURL of ['javascript:alert(1)', 'file:///C:/x', 'mailto:a@b.com']) {
+      expect(ids(contextMenuItems({ linkURL }))).not.toContain('openLinkNewPane')
+    }
+  })
+
+  it('a field: undo, redo, cut, copy, paste, select all as the page allows', () => {
+    const items = contextMenuItems({ isEditable: true, editFlags: { canUndo: false, canRedo: false, canCut: true, canCopy: true, canPaste: true, canSelectAll: true } })
+    expect(ids(items)).toEqual(['undo', 'redo', '-', 'cut', 'copy', 'paste', 'selectAll', '-', 'back', 'forward', 'reload', '-', 'inspect'])
+    expect(items[0].enabled).toBe(false)
+    expect(items.find((i) => i.id === 'paste').enabled).toBe(true)
+  })
+
+  it('selected text: Copy; an image: Copy Image and its address', () => {
+    expect(ids(contextMenuItems({ selectionText: 'hello' }))[0]).toBe('copy')
+    expect(ids(contextMenuItems({ selectionText: '   ' }))[0]).toBe('back')
+    const img = ids(contextMenuItems({ mediaType: 'image', hasImageContents: true, srcURL: 'https://example.com/a.png' }))
+    expect(img.slice(0, 2)).toEqual(['copyImage', 'copyImageAddress'])
+    expect(ids(contextMenuItems({ mediaType: 'image', srcURL: 'data:image/png;base64,x' })).slice(0, 2)).toEqual(['copyImage', '-'])
+  })
+
+  it("a right-click in a page pops the menu in Tessel's window; its items act on that page", () => {
+    const g = t.attach()
+    Object.assign(g, {
+      navigationHistory: { canGoBack: () => true, canGoForward: () => false, goBack: vi.fn(), goForward: vi.fn() },
+      reload: vi.fn(),
+      copy: vi.fn(),
+      inspectElement: vi.fn()
+    })
+    g.emit('context-menu', ev(), { linkURL: 'https://example.com/x', x: 10.4, y: 20.6 })
+    expect(t.menus).toHaveLength(1)
+    const menu = t.menus[0]
+    expect(menu.popup).toHaveBeenCalledWith({ window: t.win })
+    const item = (label) => menu.template.find((i) => i.label === label)
+    item('Open Link in New Pane').click()
+    item('Copy Link Address').click()
+    item('Open Link in Default Browser').click()
+    item('Back').click()
+    item('Reload').click()
+    item('Inspect').click()
+    expect(t.sent).toEqual([['browser:popup', { webContentsId: 7, url: 'https://example.com/x', newPane: true }]])
+    expect(t.electron.clipboard.writeText).toHaveBeenCalledWith('https://example.com/x')
+    expect(t.openExternal).toHaveBeenCalledWith('https://example.com/x')
+    expect(g.navigationHistory.goBack).toHaveBeenCalled()
+    expect(g.reload).toHaveBeenCalled()
+    expect(g.openDevTools).toHaveBeenCalledWith({ mode: 'detach' })
+    expect(g.inspectElement).toHaveBeenCalledWith(10, 21)
+    expect(item('Forward').enabled).toBe(false)
+  })
+
+  it('a menu item on a page gone, or a link on another scheme, does nothing', () => {
+    const g = t.attach()
+    t.bg.runMenuItem(g, 'openLinkNewPane', { linkURL: 'javascript:alert(1)' })
+    t.bg.runMenuItem(g, 'openLinkExternal', { linkURL: 'file:///C:/x' })
+    g.reload = vi.fn()
+    g.destroyed = true
+    t.bg.runMenuItem(g, 'reload', {})
+    expect(g.reload).not.toHaveBeenCalled()
+    expect(t.sent).toEqual([])
+    expect(t.openExternal).not.toHaveBeenCalled()
+    expect(t.bg.showContextMenu(g, {})).toBe(null)
   })
 })

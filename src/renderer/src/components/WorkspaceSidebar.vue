@@ -40,6 +40,7 @@ import WorktreeCard from './sidebar/WorktreeCard.vue'
 import { settings } from '../settings'
 import { buildSidebarRows, neighborCard, cardTargetPane, isAgentPane } from '../sidebarModel'
 import { t } from '../i18n'
+import { trackPointerDrag } from '../browser/webviewPassthrough'
 
 const props = defineProps({
   // Tessel workspaces as projects: [{ id, name, cwd, branch, panes: [...],
@@ -162,16 +163,14 @@ function startResize(e) {
   const up = () => {
     resizing.value = false
     document.body.classList.remove('ws-resizing')
-    window.removeEventListener('pointermove', move)
-    window.removeEventListener('pointerup', up)
     if (wantsCollapse && !props.collapsed) {
       emit('resize', startWidth)
       emit('toggle')
     }
     emit('resize-end')
   }
-  window.addEventListener('pointermove', move)
-  window.addEventListener('pointerup', up)
+  // Ends even when let go over a browser page or outside the window.
+  trackPointerDrag(e, { onMove: move, onEnd: up })
 }
 
 function resetWidth() {

@@ -5,6 +5,7 @@ export default { name: 'SplitNode' }
 <script setup>
 import { ref } from 'vue'
 import { t } from '../i18n'
+import { trackPointerDrag } from '../browser/webviewPassthrough'
 import TerminalPane from './TerminalPane.vue'
 import EditorPane from './EditorPane.vue'
 import BrowserPane from './BrowserPane.vue'
@@ -78,8 +79,6 @@ function startDrag(e, i) {
   }
   const up = () => {
     dragIndex.value = -1
-    window.removeEventListener('pointermove', move)
-    window.removeEventListener('pointerup', up)
     if (layoutFrame) {
       cancelAnimationFrame(layoutFrame)
       layoutFrame = 0
@@ -87,8 +86,10 @@ function startDrag(e, i) {
     window.dispatchEvent(new Event('terminal-layout-change'))
     notifyLayoutChange()
   }
-  window.addEventListener('pointermove', move)
-  window.addEventListener('pointerup', up)
+  // Browser pages let the pointer through while it runs, and it ends even
+  // when the button is let go over a page or outside the window
+  // (browser/webviewPassthrough.js).
+  trackPointerDrag(e, { onMove: move, onEnd: up })
 }
 </script>
 

@@ -50,6 +50,7 @@ import { remoteRoot, isRemotePath, parseRemotePath } from '../../shared/remotePa
 import NotificationsMenu from './components/NotificationsMenu.vue'
 import FileFinder from './components/FileFinder.vue'
 import UsageMenu from './components/UsageMenu.vue'
+import { acquirePassthrough, trackPointerDrag } from './browser/webviewPassthrough'
 import GitHubDialog from './components/GitHubDialog.vue'
 import LinearDialog from './components/LinearDialog.vue'
 import { createExternalIssueStarter } from './externalIssues'
@@ -311,7 +312,9 @@ function makeBrowserLeaf(id = null, url = BLANK_URL) {
 // A page opens in the workspace's browser pane (the active pane when it is
 // one, else the first one); with none yet, or newPane, the active pane is
 // split to the right with a new one.
-function openInBrowser({ url = BLANK_URL, ws = currentWs.value, newPane = false, focusAddress = false } = {}) {
+// activate: false leaves the active pane as it is (a link opened in the
+// background from a page, like a browser's middle-click).
+function openInBrowser({ url = BLANK_URL, ws = currentWs.value, newPane = false, focusAddress = false, activate = true } = {}) {
   if (!ws) return null
   const target = allowedBrowserUrl(url) || BLANK_URL
   const active = ws.activeId ? findLeafIn(ws.tree, ws.activeId) : null
@@ -329,7 +332,7 @@ function openInBrowser({ url = BLANK_URL, ws = currentWs.value, newPane = false,
   if (focusAddress || target === BLANK_URL) leaf.focusAddress = (leaf.focusAddress || 0) + 1
   if (maximizedId.value && maximizedId.value !== leaf.id) maximizedId.value = null
   selectWorkspace(ws.id)
-  ws.activeId = leaf.id
+  if (activate || !ws.activeId) ws.activeId = leaf.id
   refitSoon()
   return leaf
 }
@@ -1887,13 +1890,6 @@ function startTaskResize(e) {
   }
   taskResizeLastDown = now
   const right = e.currentTarget.parentElement.getBoundingClientRect().right
-  // Keep receiving the pointer even outside the window, so letting go there
-  // still ends the resize.
-  try {
-    e.currentTarget.setPointerCapture(e.pointerId)
-  } catch {
-    // not capturable: the window listeners below still end it
-  }
   taskResizing.value = true
   document.body.classList.add('ws-resizing')
   const move = (ev) => {
@@ -1903,16 +1899,11 @@ function startTaskResize(e) {
   const up = () => {
     taskResizing.value = false
     document.body.classList.remove('ws-resizing')
-    window.removeEventListener('pointermove', move)
-    window.removeEventListener('pointerup', up)
-    window.removeEventListener('pointercancel', up)
-    window.removeEventListener('blur', up)
     refitSoon()
   }
-  window.addEventListener('pointermove', move)
-  window.addEventListener('pointerup', up)
-  window.addEventListener('pointercancel', up)
-  window.addEventListener('blur', up)
+  // Keeps the pointer even outside the window or over a browser page, so
+  // letting go there still ends the resize (browser/webviewPassthrough.js).
+  trackPointerDrag(e, { onMove: move, onEnd: up })
 }
 
 // Live list of agent panes, handed to the board so a task can be assigned to
@@ -2229,6 +2220,10 @@ provide('panelCtx', {
   openInEditor: (q) => openInTesselEditor(q),
   // The built-in browser: the active ports, a page in the system browser.
   browserPorts: () => browserPorts(),
+  // A link a page opens in a new pane (middle-click, Ctrl+click, its menu),
+  // in the workspace of the pane it came from, next to it.
+  openBrowserPane: (url, { fromId = null, activate = false } = {}) =>
+    openInBrowser({ url, ws: (fromId && wsOfLeaf(fromId)) || currentWs.value, newPane: true, activate }),
   // A chat agent pane: open or resume its Claude (asks to trust its folder
   // the first time), and the permissions it runs with.
   chatOpen: (leaf, opts) => chatOpen(leaf, opts),
@@ -3247,7 +3242,11 @@ function beginPaneDrag(srcId, e) {
   if (!leaf) return
   const startX = e.clientX
   const startY = e.clientY
+  // Browser pages let the pointer through until the drag ends.
+  const releasePages = acquirePassthrough()
   const move = (ev) => {
+    // The button was let go where the window did not see it.
+    if (ev.pointerType === 'mouse' && ev.buttons === 0) return cancel()
     if (!paneDrag.active) {
       if (Math.hypot(ev.clientX - startX, ev.clientY - startY) < DRAG_THRESHOLD) return
       paneDrag.active = true
@@ -3262,24 +3261,34 @@ function beginPaneDrag(srcId, e) {
     paneDrag.y = ev.clientY
     updateDropTarget(ev.clientX, ev.clientY)
   }
-  const up = () => {
+  const stopListening = () => {
     window.removeEventListener('pointermove', move)
     window.removeEventListener('pointerup', up)
+    window.removeEventListener('pointercancel', cancel)
+    window.removeEventListener('blur', cancel)
     window.removeEventListener('keydown', esc, true)
+    releasePages()
+  }
+  const up = () => {
+    stopListening()
     if (paneDrag.active && paneDrag.target) movePane(paneDrag.srcId, paneDrag.target)
+    endPaneDrag()
+  }
+  // Cancelled (the window lost focus, the pointer was taken): nothing moves.
+  const cancel = () => {
+    stopListening()
     endPaneDrag()
   }
   const esc = (ev) => {
     if (ev.key !== 'Escape') return
     ev.preventDefault()
     ev.stopPropagation()
-    window.removeEventListener('pointermove', move)
-    window.removeEventListener('pointerup', up)
-    window.removeEventListener('keydown', esc, true)
-    endPaneDrag()
+    cancel()
   }
   window.addEventListener('pointermove', move)
   window.addEventListener('pointerup', up)
+  window.addEventListener('pointercancel', cancel)
+  window.addEventListener('blur', cancel)
   window.addEventListener('keydown', esc, true)
 }
 

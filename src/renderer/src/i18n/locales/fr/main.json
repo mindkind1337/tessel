@@ -754,6 +754,23 @@
       "asleepOther": "Ce panneau contient une autre conversation (en veille). Fermez-la d'abord.",
       "historyImported": "Conversation précédente, tirée de l’historique que garde {{agent}}.",
       "historyImportedPart": "Conversation précédente, tirée de l’historique que garde {{agent}} (seulement sa partie la plus récente)."
+    },
+    "browserMenu": {
+      "openLinkNewPane": "Ouvrir le lien dans un nouveau volet",
+      "openLinkExternal": "Ouvrir le lien dans le navigateur par défaut",
+      "copyLink": "Copier l'adresse du lien",
+      "copyImage": "Copier l'image",
+      "copyImageAddress": "Copier l'adresse de l'image",
+      "undo": "Annuler",
+      "redo": "Rétablir",
+      "cut": "Couper",
+      "copy": "Copier",
+      "paste": "Coller",
+      "selectAll": "Tout sélectionner",
+      "back": "Retour",
+      "forward": "Suivant",
+      "reload": "Recharger",
+      "inspect": "Inspecter"
     }
   }
 }
