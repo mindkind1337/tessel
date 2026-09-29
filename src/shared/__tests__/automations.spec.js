@@ -80,6 +80,43 @@ describe('schedules (Orca dialect)', () => {
     expect(new Date(cron).getDate()).toBe(day.getDate())
   })
 
+  // Recheck B1: the repeated hour when clocks go back.
+  it('an hourly schedule runs in both copies of a repeated hour; a daily time once', () => {
+    let day = null
+    for (let d = 0; d < 400 && day === null; d++) {
+      const a = new Date(2026, 0, 1 + d, 0, 0).getTime()
+      const b = new Date(2026, 0, 2 + d, 0, 0).getTime()
+      if (b - a > 24 * 3600_000) day = new Date(2026, 0, 1 + d)
+    }
+    if (!day) return
+    const start = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 0, 0).getTime()
+    const end = new Date(day.getFullYear(), day.getMonth(), day.getDate() + 1, 0, 0).getTime()
+    const count = (schedule) => {
+      let n = 0
+      let at = start - 1
+      for (;;) {
+        const c = nextOccurrenceAfter(schedule, 0, at)
+        if (c >= end) return n
+        expect(c).toBeGreaterThan(at)
+        n++
+        at = c
+      }
+    }
+    expect(count('FREQ=HOURLY;BYMINUTE=0')).toBe(25)
+    expect(count('0 * * * *')).toBe(25)
+    const repeated = [...Array(24).keys()].find((h) => {
+      const t = new Date(day.getFullYear(), day.getMonth(), day.getDate(), h, 0).getTime()
+      return new Date(t + 3600_000).getHours() === h
+    })
+    expect(count(`0 ${repeated} * * *`)).toBe(1)
+    // Inside the second copy of that hour: the occurrence found is that one, and the next is ahead.
+    const first = new Date(day.getFullYear(), day.getMonth(), day.getDate(), repeated, 0).getTime()
+    const second = first + 3600_000
+    expect(latestOccurrenceAtOrBefore('FREQ=HOURLY;BYMINUTE=0', 0, second + 10_000)).toBe(second)
+    expect(nextOccurrenceAfter('FREQ=HOURLY;BYMINUTE=0', 0, second + 10_000)).toBe(second + 3600_000)
+    expect(latestOccurrenceAtOrBefore('0 * * * *', 0, second + 10_000)).toBe(second)
+  })
+
   it('measures the shortest time between runs', () => {
     expect(minIntervalMinutes('FREQ=HOURLY;BYMINUTE=0')).toBe(60)
     expect(minIntervalMinutes('*/15 * * * *')).toBe(15)

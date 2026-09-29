@@ -54,7 +54,9 @@
       "agentExited": "Son agent s'est arrêté avant d'avoir terminé.",
       "agentNoStart": "Son agent n'a pas démarré (aucun signe de lui après 5 minutes). Son volet reste ouvert pour que vous voyiez pourquoi.",
       "stale": "Elle n'était pas terminée après 24 heures.",
-      "remotePrompt": "Son prompt n'a pas pu être écrit sur l'hôte distant : {{error}}"
+      "remotePrompt": "Son prompt n'a pas pu être écrit sur l'hôte distant : {{error}}",
+      "clockChange": "Pas exécutée de nouveau : l'horloge de l'ordinateur est revenue en arrière après que cette heure avait déjà été traitée.",
+      "remotePromptLink": "Son prompt n'a pas été écrit sur l'hôte distant : .tessel/automations (ou un fichier dedans) est un lien dans le projet. Tessel n'écrit que dans un vrai dossier à cet endroit."
     },
     "trigger": {
       "manual": "Exécuter maintenant",

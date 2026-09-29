@@ -221,10 +221,10 @@ function startOfLocalDay(ts) {
   d.setHours(0, 0, 0, 0)
   return d.getTime()
 }
+// In real time: setting local fields inside an hour repeated when clocks go
+// back would jump to its first copy.
 function floorToMinute(ts) {
-  const d = new Date(ts)
-  d.setSeconds(0, 0)
-  return d.getTime()
+  return Math.floor(ts / 60000) * 60000
 }
 function atLocalTime(dayMs, hour, minute) {
   const d = new Date(dayMs)
@@ -254,7 +254,18 @@ function cronHasPossibleOccurrence(rule, anchor) {
 // (03:30), as the RRULE presets do; a repeated hour (clocks back) runs once.
 function cronDayTimes(rule, day) {
   const out = new Set()
-  for (const h of rule.hours) for (const m of rule.minutes) out.add(atLocalTime(day, h, m))
+  const everyHour = rule.hours.size === 24
+  for (const h of rule.hours)
+    for (const m of rule.minutes) {
+      const c = atLocalTime(day, h, m)
+      out.add(c)
+      // Clocks going back repeat an hour: a schedule that runs every hour
+      // runs in both (a daily time runs once).
+      if (everyHour) {
+        const again = new Date(c + HOUR_MS)
+        if (again.getHours() === h && again.getMinutes() === m) out.add(c + HOUR_MS)
+      }
+    }
   return [...out].sort((a, b) => a - b)
 }
 function nextCronMatch(rule, from) {
@@ -306,6 +317,20 @@ export function minIntervalMinutes(schedule, from = Date.now()) {
   return min
 }
 
+// Hourly runs follow real time, minute by minute: when clocks go back the
+// repeated hour runs too (01:00 EDT and 01:00 EST are two hours), and when
+// they go forward nothing is lost (the minute still comes each hour).
+function nextHourly(minute, from) {
+  let c = Math.floor(from / MINUTE_MS) * MINUTE_MS + MINUTE_MS
+  for (let i = 0; i <= 24 * 60; i++, c += MINUTE_MS) if (new Date(c).getMinutes() === minute) return c
+  throw new Error('Unable to compute next automation run.')
+}
+function prevHourly(minute, at) {
+  let c = Math.floor(at / MINUTE_MS) * MINUTE_MS
+  for (let i = 0; i <= 24 * 60; i++, c -= MINUTE_MS) if (new Date(c).getMinutes() === minute) return c
+  return null
+}
+
 function dayMatches(rule, ts) {
   if (rule.freq === 'DAILY') return true
   return rule.byDay.includes(DAY_CODES[new Date(ts).getDay()])
@@ -336,13 +361,7 @@ export function nextOccurrenceAfter(schedule, dtstart, after) {
     if (c === null) throw new Error('Unable to compute next automation run.')
     return c
   }
-  if (rule.freq === 'HOURLY') {
-    const base = new Date(Math.max(dtstart, after))
-    base.setMinutes(rule.byMinute, 0, 0)
-    let c = base.getTime()
-    if (c <= after || c < dtstart) c += HOUR_MS
-    return c
-  }
+  if (rule.freq === 'HOURLY') return nextHourly(rule.byMinute, Math.max(after, dtstart - 1))
   const c = scanDayCandidates(rule, Math.max(dtstart - 1, after), 1)
   if (c === null) throw new Error('Unable to compute next automation run.')
   return c
@@ -354,11 +373,8 @@ export function latestOccurrenceAtOrBefore(schedule, dtstart, now) {
   const rule = parseSchedule(schedule)
   if (rule.kind === 'cron') return prevCronMatch(rule, floorToMinute(now), dtstart)
   if (rule.freq === 'HOURLY') {
-    const base = new Date(now)
-    base.setMinutes(rule.byMinute, 0, 0)
-    let c = base.getTime()
-    if (c > now) c -= HOUR_MS
-    return c >= dtstart ? c : null
+    const c = prevHourly(rule.byMinute, now)
+    return c !== null && c >= dtstart ? c : null
   }
   const c = scanDayCandidates(rule, now, -1)
   return c !== null && c >= dtstart ? c : null

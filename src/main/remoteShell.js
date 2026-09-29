@@ -205,6 +205,7 @@ __t_same() {
   return 0
 }
 __t_write() {
+  case $5 in ''|600) ;; *) return 90 ;; esac
   __t_root "$1" || return $?
   __E=
   if [ -e "$2" ] || [ -L "$2" ]; then
@@ -217,7 +218,7 @@ __t_write() {
   __t_same "$__P" "$3" "$4" || { __t_sig "$__P"; return 95; }
   __tmp=$(mktemp "\${__P%/*}/.\${__P##*/}.tessel-XXXXXX") || return 98
   if ! __t_b64d <"$__T_D/u" >"$__tmp"; then rm -f "$__tmp"; return 98; fi
-  if [ -n "$__E" ]; then __m=$(__t_sig "$__P"); __m=\${__m##* }; else __m=$(__t_newmode); fi
+  if [ -n "$__E" ]; then __m=$(__t_sig "$__P"); __m=\${__m##* }; elif [ -n "$5" ]; then __m=$5; else __m=$(__t_newmode); fi
   chmod "$__m" "$__tmp" 2>/dev/null
   __t_same "$__P" "$3" "$4" || { rm -f "$__tmp"; __t_sig "$__P"; return 95; }
   mv -f "$__tmp" "$__P" || { rm -f "$__tmp"; return 98; }

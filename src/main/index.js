@@ -988,8 +988,10 @@ app.whenReady().then(() => {
 // A remote project's prompt file, written through its Files session
 // (automationRemotePrompt.js), never typed into the host's login shell.
 const remotePrompts = createRemotePromptWriter({
+  listDir: (q) => remoteFs.listDir(q),
   create: (q) => remoteFs.create(q),
-  writeForEdit: (q) => remoteFs.writeForEdit(q)
+  writeForEdit: (q) => remoteFs.writeForEdit(q),
+  snapshot: () => remoteFs.snapshot()
 })
 const automations = createAutomations({
   dir: app.getPath('userData'),

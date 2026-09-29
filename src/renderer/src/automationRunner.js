@@ -24,7 +24,8 @@
 // copiesOf(automationId), createWorktree(ws, title), removeCopy(worktree),
 // runStatus(runId), openPane({ ws, agent, worktree, launchOptions,
 // automationLaunch }), createCard(card), updateCard(id, patch),
-// removeCard(id), cardOf(id), findLeaf(id), closePane(id), agentProbe(id)
+// removeCard(id), cardOf(id), findLeaf(id), closePane(id), screenProbe(id)
+// -> { busy, ready, approval, limit } | null, agentProbe(id)
 // -> { started: true | false | null, exited } (null: no way to tell, as on a
 // remote host whose agent sends no hooks: only the scheduler's 24-hour limit
 // applies), report(result), notify(note), automationById(id), now().
@@ -36,37 +37,44 @@ import {
   MAX_COPIES_PER_AUTOMATION
 } from '../../shared/automations'
 
-// Is a run's agent there? -> { started: true | false | null, exited }.
-// - On a remote host: its hooks never reach Tessel (nothing is forwarded over
-//   ssh) and the terminal always runs ssh: no way to tell (null), only the
-//   scheduler's 24-hour limit applies.
-// - An agent with status hooks (Claude Code, Codex): any sign from them,
-//   and their "closed" when it exits; without any word from them (hooks not
-//   set up), as below.
+// Is a run's agent there? -> { started: true | false | null, exited, screen }.
+// - An agent with status hooks (Claude Code, Codex) that report: their signs,
+//   their "closed" when it exits, and they tell when its turn ends.
+// - The same agents where no hooks report (on a remote host: nothing comes
+//   back over ssh; in WSL; hooks not set up): screen = true, the screen
+//   tells when it works and when its prompt is back (see check below).
+// - On a remote host or in WSL the program cannot be seen from Windows:
+//   started null (the screen decides).
 // - Otherwise: its program still running under the pane's shell (the
 //   process tree, not the screen: the echo of the launch line or a shell
 //   prompt is not an agent), looked at once the launch line had 2 seconds.
 //   { leaf, managed, state, busy, waiting, now, runningWork() -> { running, unknown } }
 export const LAUNCH_SETTLE_MS = 2000
 export async function probeRunAgent({ leaf, managed = false, state = null, busy = false, waiting = false, now = Date.now(), runningWork }) {
-  if (!leaf || leaf.remoteHostId) return { started: null, exited: false }
-  // WSL: the agent runs inside Linux, out of sight of Windows' process tree.
-  const inSight = !leaf.remoteHostId && leaf.shellId !== 'wsl'
+  if (!leaf) return { started: null, exited: false, screen: false }
+  const hooks = !!(managed && state && state.hookSeen && !leaf.remoteHostId)
+  const screen = managed && !hooks
   if (managed) {
-    if (state && state.state === 'closed') return { started: true, exited: true }
-    if (busy || (state && state.hookSeen) || waiting) return { started: true, exited: false }
+    if (hooks && state.state === 'closed') return { started: true, exited: true, screen }
+    if (hooks || busy || waiting) return { started: true, exited: false, screen }
   }
-  if (!inSight) return { started: null, exited: false }
-  if (now - (leaf.launchedAt || 0) < LAUNCH_SETTLE_MS) return { started: false, exited: false }
+  // A remote host or WSL: out of sight of Windows' process tree.
+  if (leaf.remoteHostId || leaf.shellId === 'wsl') return { started: null, exited: false, screen }
+  if (now - (leaf.launchedAt || 0) < LAUNCH_SETTLE_MS) return { started: false, exited: false, screen }
   let work
   try {
     work = await runningWork()
   } catch {
     work = { unknown: true }
   }
-  if (!work || work.unknown) return { started: null, exited: false }
-  return { started: !!work.running, exited: !work.running }
+  if (!work || work.unknown) return { started: null, exited: false, screen }
+  return { started: !!work.running, exited: !work.running, screen }
 }
+
+// On screen, a turn is over once its prompt has been back (and nothing works)
+// at two checks in a row, and at least this long after the launch unless it
+// was seen working first.
+export const SCREEN_DONE_AFTER_MS = 60 * 1000
 
 export function createAutomationRunner(deps) {
   const now = deps.now || Date.now
@@ -251,7 +259,33 @@ export function createAutomationRunner(deps) {
           end(paneId, f, 'agent-exited')
           continue
         }
-        if (probe.started === false && !f.started && now() - f.dispatchedAt > AGENT_START_TIMEOUT_MS) end(paneId, f, 'agent-no-start')
+        // Where no hooks report: what the screen shows.
+        let seen = false
+        if (probe.started === null || probe.screen) {
+          let obs = null
+          try {
+            obs = deps.screenProbe ? deps.screenProbe(paneId) : null
+          } catch {
+            obs = null
+          }
+          if (obs) {
+            seen = true
+            if (obs.busy || obs.approval || obs.limit) {
+              f.started = true
+              f.sawBusy = f.sawBusy || !!obs.busy
+              f.readySeen = 0
+            } else if (obs.ready) {
+              f.started = true
+              f.readySeen = (f.readySeen || 0) + 1
+              if (probe.screen && f.readySeen >= 2 && (f.sawBusy || now() - f.dispatchedAt >= SCREEN_DONE_AFTER_MS)) {
+                turnDone(paneId)
+                continue
+              }
+            } else f.readySeen = 0
+          }
+        }
+        const unknown = probe.started === null && !seen
+        if (!unknown && probe.started !== true && !f.started && now() - f.dispatchedAt > AGENT_START_TIMEOUT_MS) end(paneId, f, 'agent-no-start')
       }
     } finally {
       checking = false

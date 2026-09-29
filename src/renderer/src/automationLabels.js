@@ -136,6 +136,10 @@ export function runReason(run) {
       return t('automations.reason.agentNoStart', 'Its agent did not start (no sign of it after 5 minutes). Its pane stays open so you can see why.')
     case 'stale':
       return t('automations.reason.stale', 'It had not finished after 24 hours.')
+    case 'clock-change':
+      return t('automations.reason.clockChange', "Not run again: the computer's clock went back after this time had already been handled.")
+    case 'remote-prompt-link':
+      return t('automations.reason.remotePromptLink', 'Its prompt was not written on the remote host: .tessel/automations (or a file in it) is a link in the project. Tessel writes only to a real folder there.')
     case 'remote-prompt':
       return t('automations.reason.remotePrompt', 'Its prompt could not be written on the remote host: {{error}}', { error: detail })
     default:

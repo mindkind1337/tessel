@@ -675,14 +675,16 @@ export function createRemoteFs({
   }
 
   // { file, text, bom, expectSig, expectHash } -> like editorFiles.writeForEdit.
-  async function writeForEdit({ file, text, bom = false, expectSig, expectHash } = {}) {
+  // privateNew: a file created by this write is readable by its owner only
+  // (0600; an automation's prompt).
+  async function writeForEdit({ file, text, bom = false, expectSig, expectHash, privateNew = false } = {}) {
     const loc = locateFile(file)
     if (!loc) return { ok: false, error: notInProject() }
     if (typeof text !== 'string') return { ok: false, error: t('main.editor.nothingToWrite', 'Nothing to write.') }
     const data = bom ? Buffer.concat([BOM, Buffer.from(text, 'utf8')]) : Buffer.from(text, 'utf8')
     if (data.length > MAX_EDIT_BYTES) return { ok: false, error: t('main.editor.textTooLarge', 'The text is too large to save (over 50 MB).') }
     const hash = typeof expectHash === 'string' && HASH_RE.test(expectHash) ? expectHash : ''
-    const res = await call(loc.hostId, '__t_write', [arg(loc.root.path), arg(loc.path), hash, hash ? '' : sigForHost(expectSig)], {
+    const res = await call(loc.hostId, '__t_write', [arg(loc.root.path), arg(loc.path), hash, hash ? '' : sigForHost(expectSig), privateNew ? '600' : ''], {
       cap: 64 * 1024,
       upload: data,
       timeoutMs: 30000 + Math.ceil(data.length / (512 * 1024)) * 1000,

@@ -64,6 +64,8 @@ const HOST_ID = /^[A-Za-z0-9._-]{1,100}$/
 // An occurrence already handled is never run again after the clock went
 // back, unless it lies this far ahead (the clock had jumped forward).
 const DAY_MS = 24 * 60 * 60 * 1000
+// Remote prompts waiting to be emptied (their host not connected then).
+const MAX_PENDING_CLEARS = 200
 const RUN_ID = /^run-[A-Za-z0-9-]{6,80}$/
 const PANE_ID = /^[A-Za-z0-9._-]{1,100}$/
 // What a changed automation must be confirmed for again.
@@ -87,7 +89,7 @@ export function createAutomations({
   if (!dir) throw new Error('createAutomations requires a folder') // i18n-ignore programming error
   const file = join(dir, AUTOMATIONS_FILE)
   const runsDir = join(dir, 'automations', 'runs')
-  let state = { version: 1, automations: [], runs: [], settings: { maxConcurrent: resolveMaxConcurrent(null) } }
+  let state = { version: 1, automations: [], runs: [], settings: { maxConcurrent: resolveMaxConcurrent(null) }, pendingClears: [] }
   let loaded = false
   let loadError = null
   let windowReady = false
@@ -158,6 +160,11 @@ export function createAutomations({
     }
   }
 
+  function restoreClear(c) {
+    if (!c || typeof c !== 'object' || !REMOTE_FILE.test(String(c.file)) || !HOST_ID.test(String(c.hostId)) || typeof c.path !== 'string') return null
+    return { hostId: c.hostId, path: c.path.slice(0, 1024), file: c.file }
+  }
+
   function load() {
     try {
       const res = readJsonSafe(file, isState)
@@ -167,7 +174,8 @@ export function createAutomations({
           version: 1,
           automations,
           runs: pruneRuns(res.data.runs.map(restoreRun).filter(Boolean)),
-          settings: { maxConcurrent: resolveMaxConcurrent(res.data.settings && res.data.settings.maxConcurrent) }
+          settings: { maxConcurrent: resolveMaxConcurrent(res.data.settings && res.data.settings.maxConcurrent) },
+          pendingClears: (Array.isArray(res.data.pendingClears) ? res.data.pendingClears : []).map(restoreClear).filter(Boolean).slice(-MAX_PENDING_CLEARS)
         }
       }
       loaded = true
@@ -373,18 +381,50 @@ export function createAutomations({
     run.error = error
     run.finishedAt = now()
     if (!run.startedAt) run.startedAt = run.finishedAt
-    // Its prompt on a remote host: emptied (the .gitignore keeps it out of git).
-    if (run.remoteFile && run.remoteHost && clearRemotePrompt) {
-      Promise.resolve(clearRemotePrompt({ hostId: run.remoteHost.hostId, path: run.remoteHost.path, file: run.remoteFile })).catch(() => {})
+    // Its prompt on a remote host: emptied, now if a session to that host is
+    // open, else later (the .gitignore keeps it out of git meanwhile).
+    if (run.remoteFile && run.remoteHost) {
+      queueClear({ hostId: run.remoteHost.hostId, path: run.remoteHost.path, file: run.remoteFile })
+      run.remoteFile = null
     }
+  }
+
+  const sameClear = (a, b) => a.hostId === b.hostId && a.path === b.path && a.file === b.file
+  function queueClear(c) {
+    state.pendingClears = state.pendingClears.filter((x) => !sameClear(x, c))
+    state.pendingClears.push(c)
+    if (state.pendingClears.length > MAX_PENDING_CLEARS) state.pendingClears = state.pendingClears.slice(-MAX_PENDING_CLEARS)
+    Promise.resolve().then(flushClears)
+  }
+  let flushing = false
+  async function flushClears() {
+    if (flushing || !clearRemotePrompt || !state.pendingClears.length) return
+    flushing = true
+    let changed = false
+    try {
+      for (const c of [...state.pendingClears]) {
+        let res
+        try {
+          res = await clearRemotePrompt(c)
+        } catch {
+          res = { ok: false, later: true }
+        }
+        if (res && res.later) continue
+        state.pendingClears = state.pendingClears.filter((x) => !sameClear(x, c))
+        changed = true
+      }
+    } finally {
+      flushing = false
+    }
+    if (changed) save()
   }
 
   // A skip that repeats (the same reason, run after run) folds into the
   // previous row instead of one row each (Orca's recordRepeatedAutomationSkip).
   function foldTarget(automationId, status, errorCode, except = null) {
-    const latest = runsOf(automationId)
-      .filter((r) => r !== except)
-      .reduce((n, r) => (!n || r.createdAt > n.createdAt ? r : n), null)
+    // The last row written (not the latest time: the clock may have gone back).
+    const rows = runsOf(automationId).filter((r) => r !== except)
+    const latest = rows.length ? rows[rows.length - 1] : null
     return latest && latest.status === status && latest.errorCode === errorCode && latest.trigger === 'scheduled' ? latest : null
   }
   function fold(latest, scheduledFor) {
@@ -504,6 +544,7 @@ export function createAutomations({
   // through the remote session (never typed into its shell).
   async function writeRemote(a, run, payload) {
     const rel = remotePromptFile(a.id)
+    state.pendingClears = state.pendingClears.filter((x) => !sameClear(x, { hostId: a.remote.hostId, path: a.remote.path, file: rel }))
     let res
     try {
       res = writeRemotePrompt
@@ -514,7 +555,8 @@ export function createAutomations({
     }
     if (run.status !== 'dispatching') return
     if (!res || !res.ok) {
-      finish(run, 'dispatch_failed', 'remote-prompt', (res && res.error) || '')
+      if (res && res.error === 'link') finish(run, 'dispatch_failed', 'remote-prompt-link')
+      else finish(run, 'dispatch_failed', 'remote-prompt', (res && res.error) || '')
       trimRuns()
       commit()
       pump()
@@ -602,6 +644,7 @@ export function createAutomations({
     if (!loaded || !windowReady || evaluating) return
     evaluating = true
     let changed = false
+    const before = JSON.stringify(state)
     try {
       const at = now()
       for (const r of state.runs) {
@@ -648,14 +691,26 @@ export function createAutomations({
           if (log) log.error('automations', `could not evaluate ${a.id}: ${err.message}`)
         }
       }
-      if (changed) {
-        trimRuns()
-        commit()
-      }
+      if (changed) trimRuns()
+      // Only when something really changed (a due automation may be looked
+      // at again without any news).
+      if (changed && JSON.stringify(state) !== before) commit()
       pump()
     } finally {
       evaluating = false
     }
+    flushClears()
+  }
+
+  // A row for an occurrence not run because of a clock change (folded).
+  function clockSkip(a, scheduledFor) {
+    const latest = foldTarget(a.id, 'skipped_unavailable', 'clock-change')
+    if (latest) return fold(latest, scheduledFor)
+    const keep = a.lastScheduledFor
+    const run = createRun(a, scheduledFor, 'scheduled')
+    finish(run, 'skipped_unavailable', 'clock-change')
+    a.lastScheduledFor = keep
+    return run
   }
 
   function advance(a, at) {
@@ -665,8 +720,11 @@ export function createAutomations({
   function evaluate(a, at) {
     const scheduledFor = latestOccurrenceAtOrBefore(a.schedule, a.dtstart, at)
     if (scheduledFor === null) return advance(a, at)
-    // Already handled (the clock went back after it): not again.
-    if (a.lastScheduledFor != null && scheduledFor <= a.lastScheduledFor) return advance(a, at)
+    // Already handled (the clock went back after it): not again, said once.
+    if (a.lastScheduledFor != null && scheduledFor <= a.lastScheduledFor) {
+      clockSkip(a, scheduledFor)
+      return advance(a, at)
+    }
     if (missedBeyondGrace({ graceMinutes: a.missedRunGraceMinutes, scheduledFor, now: at, tickMs })) {
       recordSkip(a, scheduledFor, 'skipped_missed', 'missed')
       return advance(a, at)

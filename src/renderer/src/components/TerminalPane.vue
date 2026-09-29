@@ -1839,7 +1839,10 @@ onMounted(() => {
     getSelection: () => (term ? term.getSelection() : ''),
     screenText,
     // Is its input prompt empty (see promptCheck.js)?
-    promptShowsPlaceholder: (promptChar) => promptShowsPlaceholder(term, promptChar)
+    promptShowsPlaceholder: (promptChar) => promptShowsPlaceholder(term, promptChar),
+    // What the screen shows of its agent: { busy, ready, approval, limit }
+    // (an automation's run where no hooks report, e.g. on a remote host).
+    agentObservation: () => (term ? agentScreenObservation(term, props.node.agentId, screenText(12)) : null)
   }
   registerPane(props.node.id, paneApi)
 

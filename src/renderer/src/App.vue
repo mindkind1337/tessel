@@ -6605,6 +6605,11 @@ const automationRunner = createAutomationRunner({
   },
   findLeaf,
   agentProbe: automationAgentProbe,
+  // What its pane's screen shows of the agent (TerminalPane's agentObservation).
+  screenProbe: (id) => {
+    const pane = findLeaf(id) ? getPane(id) : null
+    return pane && pane.agentObservation ? pane.agentObservation() : null
+  },
   // After the pane has shown its last answer (and outside its own callback).
   closePane: (id) => setTimeout(() => findLeaf(id) && closeLeaf(id, { force: true }), 1500),
   report: (result) => (window.shellApi.automations ? window.shellApi.automations.markResult(result).catch(() => null) : Promise.resolve(null)),
@@ -6764,7 +6769,7 @@ async function startAutomations() {
   // A run's pane closed before its agent finished, its agent exited or never
   // showed up: that run failed.
   watch(workspaces, () => automationRunner.check(), { deep: true })
-  automationCheckTimer = setInterval(() => automationRunner.check(), 30000)
+  automationCheckTimer = setInterval(() => automationRunner.check(), 10000)
 }
 
 // A sidebar row's worker mark: { id, label, status } of its coordinator.

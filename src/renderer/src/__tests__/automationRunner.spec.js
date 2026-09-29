@@ -235,26 +235,92 @@ describe('automation runs in the window', () => {
 describe('is the run\'s agent there?', () => {
   const now = 100_000
   const work = (w) => vi.fn(async () => w)
-  it('remote and WSL panes: no way to tell', async () => {
+  it('remote and WSL panes: not from Windows (the screen decides)', async () => {
     const running = work({ running: false })
-    expect(await probeRunAgent({ leaf: { remoteHostId: 'h', launchedAt: 0 }, managed: true, now, runningWork: running })).toEqual({ started: null, exited: false })
-    expect(await probeRunAgent({ leaf: { shellId: 'wsl', launchedAt: 0 }, now, runningWork: running })).toEqual({ started: null, exited: false })
+    expect(await probeRunAgent({ leaf: { remoteHostId: 'h', launchedAt: 0 }, managed: true, now, runningWork: running })).toEqual({ started: null, exited: false, screen: true })
+    expect(await probeRunAgent({ leaf: { shellId: 'wsl', launchedAt: 0 }, now, runningWork: running })).toEqual({ started: null, exited: false, screen: false })
     expect(running).not.toHaveBeenCalled()
   })
-  it('an agent with hooks: their signs; closed = exited', async () => {
+  it('an agent whose hooks report: their signs; closed = exited; they tell its turn end', async () => {
     const running = work({ running: false })
-    expect(await probeRunAgent({ leaf: { launchedAt: 0 }, managed: true, state: { hookSeen: true, state: 'idle' }, now, runningWork: running })).toEqual({ started: true, exited: false })
-    expect(await probeRunAgent({ leaf: { launchedAt: 0 }, managed: true, state: { hookSeen: true, state: 'closed' }, now, runningWork: running })).toEqual({ started: true, exited: true })
-    // No word from its hooks: its program decides.
-    expect(await probeRunAgent({ leaf: { launchedAt: 0 }, managed: true, now, runningWork: work({ running: true }) })).toEqual({ started: true, exited: false })
+    expect(await probeRunAgent({ leaf: { launchedAt: 0 }, managed: true, state: { hookSeen: true, state: 'idle' }, now, runningWork: running })).toEqual({ started: true, exited: false, screen: false })
+    expect(await probeRunAgent({ leaf: { launchedAt: 0 }, managed: true, state: { hookSeen: true, state: 'closed' }, now, runningWork: running })).toEqual({ started: true, exited: true, screen: false })
+    // No word from its hooks: its program decides, the screen tells its turn end.
+    expect(await probeRunAgent({ leaf: { launchedAt: 0 }, managed: true, now, runningWork: work({ running: true }) })).toEqual({ started: true, exited: false, screen: true })
+    // A remote host's hooks never count (a stale state from elsewhere).
+    expect(await probeRunAgent({ leaf: { remoteHostId: 'h', launchedAt: 0 }, managed: true, state: { hookSeen: true, state: 'closed' }, now, runningWork: running })).toEqual({ started: null, exited: false, screen: true })
   })
   it('without hooks: the program under the shell, not the screen; nothing in the first 2 seconds', async () => {
     const running = work({ running: true })
-    expect(await probeRunAgent({ leaf: { launchedAt: now - 500 }, busy: true, now, runningWork: running })).toEqual({ started: false, exited: false })
+    expect(await probeRunAgent({ leaf: { launchedAt: now - 500 }, busy: true, now, runningWork: running })).toEqual({ started: false, exited: false, screen: false })
     expect(running).not.toHaveBeenCalled()
     // Output on screen (the echoed line, a prompt) is not an agent: the shell runs nothing.
-    expect(await probeRunAgent({ leaf: { launchedAt: 0 }, busy: true, now, runningWork: work({ running: false }) })).toEqual({ started: false, exited: true })
-    expect(await probeRunAgent({ leaf: { launchedAt: 0 }, now, runningWork: work({ running: true }) })).toEqual({ started: true, exited: false })
-    expect(await probeRunAgent({ leaf: { launchedAt: 0 }, now, runningWork: work({ unknown: true }) })).toEqual({ started: null, exited: false })
+    expect(await probeRunAgent({ leaf: { launchedAt: 0 }, busy: true, now, runningWork: work({ running: false }) })).toEqual({ started: false, exited: true, screen: false })
+    expect(await probeRunAgent({ leaf: { launchedAt: 0 }, now, runningWork: work({ running: true }) })).toEqual({ started: true, exited: false, screen: false })
+    expect(await probeRunAgent({ leaf: { launchedAt: 0 }, now, runningWork: work({ unknown: true }) })).toEqual({ started: null, exited: false, screen: false })
+  })
+})
+
+// Recheck A1/A2: a remote (or hook-less) Claude or Codex run, followed on its screen.
+describe('runs followed on screen', () => {
+  const remote = { isolation: 'project', remote: { hostId: 'h', path: '/srv' } }
+  const start = async (over = {}, probe = { started: null, exited: false, screen: true }) => {
+    const obs = { current: null }
+    const s = setup({ agentProbe: vi.fn(async () => probe), screenProbe: vi.fn(() => obs.current), ...over })
+    await s.runner.dispatch({ automation: automation(remote), run, remoteFile: '.tessel/automations/auto-1.md' })
+    return { ...s, obs }
+  }
+  it('completes when its prompt is back after it worked (two checks in a row), freeing its slot', async () => {
+    const s = await start()
+    s.obs.current = { busy: true, ready: false }
+    s.tick(10_000)
+    await s.runner.check()
+    s.obs.current = { busy: false, ready: true }
+    s.tick(10_000)
+    await s.runner.check()
+    expect(statuses(s.deps)).not.toContain('completed') // once is not enough
+    s.tick(10_000)
+    await s.runner.check()
+    expect(s.deps.report).toHaveBeenLastCalledWith({ runId: run.id, status: 'completed' })
+    expect(s.runner.runOfPane('pane-9')).toBe(null)
+  })
+  it('a prompt back without any work seen counts only after a minute', async () => {
+    const s = await start()
+    s.obs.current = { busy: false, ready: true }
+    for (let i = 0; i < 3; i++) {
+      s.tick(10_000)
+      await s.runner.check()
+    }
+    expect(statuses(s.deps)).not.toContain('completed')
+    s.tick(40_000)
+    await s.runner.check()
+    expect(s.deps.report).toHaveBeenLastCalledWith({ runId: run.id, status: 'completed' })
+  })
+  it('an agent never seen (no work, no prompt) fails after 5 minutes', async () => {
+    const s = await start()
+    s.obs.current = { busy: false, ready: false } // a shell error, a password question
+    s.tick(6 * 60_000)
+    await s.runner.check()
+    expect(s.deps.report).toHaveBeenLastCalledWith({ runId: run.id, status: 'dispatch_failed', errorCode: 'agent-no-start' })
+  })
+  it('a pane whose screen cannot be read is never failed for that', async () => {
+    const s = await start()
+    s.obs.current = null
+    s.tick(6 * 60_000)
+    await s.runner.check()
+    expect(statuses(s.deps)).not.toContain('dispatch_failed')
+  })
+  it('a local agent whose hooks are not set up: its program says it started, its screen that it is done', async () => {
+    const obs = { current: { busy: true, ready: false } }
+    const s = setup({ agentProbe: vi.fn(async () => ({ started: true, exited: false, screen: true })), screenProbe: () => obs.current })
+    await s.runner.dispatch({ automation: automation({ isolation: 'project' }), run, promptFile, promptDir })
+    s.tick(10_000)
+    await s.runner.check()
+    obs.current = { busy: false, ready: true }
+    s.tick(10_000)
+    await s.runner.check()
+    s.tick(10_000)
+    await s.runner.check()
+    expect(s.deps.report).toHaveBeenLastCalledWith({ runId: run.id, status: 'completed' })
   })
 })
