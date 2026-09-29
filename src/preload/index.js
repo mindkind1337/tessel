@@ -1,5 +1,12 @@
 import { contextBridge, ipcRenderer, webUtils, webFrame } from 'electron'
 
+// An event from the main process: cb(payload); -> unsubscribe.
+function subscribe(channel, cb) {
+  const handler = (_e, payload) => cb(payload)
+  ipcRenderer.on(channel, handler)
+  return () => ipcRenderer.removeListener(channel, handler)
+}
+
 // Bridge a minimal, typed-ish API to the renderer. No node access leaks.
 const api = {
   // True in the dev build (not the installed app); the toolbar shows it.
@@ -339,6 +346,22 @@ const api = {
   taskBoard: {
     load: (opts) => ipcRenderer.invoke('taskboard:load', opts),
     save: (tasks) => ipcRenderer.invoke('taskboard:save', tasks)
+  },
+
+  // The built-in browser's pages (src/main/browserGuest.js), by the id of
+  // their <webview>'s contents: Design Mode (pick an element, a screenshot),
+  // devtools, and what a page asked for (a new window, a download, a
+  // permission, a browser shortcut pressed in it).
+  browser: {
+    pick: (id) => ipcRenderer.invoke('browser:pick', id),
+    cancelPick: (id) => ipcRenderer.invoke('browser:cancelPick', id),
+    screenshot: (id) => ipcRenderer.invoke('browser:screenshot', id),
+    openDevTools: (id) => ipcRenderer.invoke('browser:openDevTools', id),
+    copyImage: (file) => ipcRenderer.invoke('browser:copyImage', file),
+    onPopup: (cb) => subscribe('browser:popup', cb),
+    onShortcut: (cb) => subscribe('browser:shortcut', cb),
+    onPermissionDenied: (cb) => subscribe('browser:permissionDenied', cb),
+    onDownloadBlocked: (cb) => subscribe('browser:downloadBlocked', cb)
   },
 
   // Scheduled automations (src/main/automations.js): the list and run

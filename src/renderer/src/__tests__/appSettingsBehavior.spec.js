@@ -18,6 +18,8 @@ function slice(from, to) {
   return source.slice(a, b)
 }
 const flush = () => new Promise((r) => setTimeout(r, 0))
+// App.vue's own test for a pane without a terminal (an editor, a browser page).
+const hasNoTerminal = vm.runInNewContext(`(${slice('function hasNoTerminal(leaf)', 'function makeBrowserLeaf')})`)
 
 describe('notifications', () => {
   let ctx, focused
@@ -127,7 +129,7 @@ describe('Confirm before closing running terminals', () => {
       Promise,
       Array
     }
-    vm.createContext(Object.assign(ctx, { t })) // App.vue's interface text goes through t()
+    vm.createContext(Object.assign(ctx, { t, hasNoTerminal })) // App.vue's interface text goes through t()
     vm.runInContext(
       slice('// Asks the main process what runs under a terminal', '// Arrange the workspace as an even grid') +
         '\nthis.closeLeaf = closeLeaf',
@@ -194,7 +196,7 @@ describe('Ask Before Deleting Workspaces', () => {
       window: { shellApi: { killPty: vi.fn() } },
       Math
     }
-    vm.createContext(Object.assign(ctx, { t })) // App.vue's interface text goes through t()
+    vm.createContext(Object.assign(ctx, { t, hasNoTerminal })) // App.vue's interface text goes through t()
     vm.runInContext(slice('function removeWorkspace(', 'function cycleWorkspace(') + '\nthis.removeWorkspace = removeWorkspace', ctx)
     ctx.removeWorkspace('ws1')
     return ctx

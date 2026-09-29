@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, clipboard, nativeImage, dialog, Notification, shell, powerSaveBlocker, powerMonitor, safeStorage } from 'electron'
+import { app, BrowserWindow, ipcMain, clipboard, nativeImage, dialog, Notification, shell, powerSaveBlocker, powerMonitor, safeStorage, webContents, session } from 'electron'
 import { join, isAbsolute, dirname } from 'path'
 import os from 'os'
 import fs from 'fs'
@@ -43,6 +43,7 @@ import { extraToolDirs, withToolDirs } from './toolDirs'
 import { createInstallLogs } from './installLog'
 import { writeBoardRule } from './agentMemory'
 import { claudeImageFile, isPastedImage, PASTE_DIR } from './pastedImages'
+import { createBrowserGuests } from './browserGuest'
 import { createLogger, describe } from './logger'
 import { cleanEnv } from './cleanEnv'
 import { createPtyClient } from './ptyClient'
@@ -1972,6 +1973,16 @@ ipcMain.handle('clipboard:hasImage', () =>
 // Save the clipboard image as a PNG and return its path, so it can be pasted
 // into an agent as a file (instant, instead of the agent reading the
 // clipboard itself). Files older than a day are removed.
+// The built-in browser (browserGuest.js): its pages' rules, Design Mode
+// (pick an element, screenshots saved next to pasted images).
+const browserGuests = createBrowserGuests({
+  getWindow: () => mainWindow,
+  send,
+  log,
+  screenshotDir: PASTE_DIR,
+  electron: { webContents, clipboard, nativeImage, session }
+})
+browserGuests.register(ipcMain)
 ipcMain.handle('clipboard:saveImage', () => {
   const img = clipboard.readImage()
   if (img.isEmpty()) return null
@@ -2736,6 +2747,9 @@ function createWindow() {
       sandbox: false,
       contextIsolation: true,
       nodeIntegration: false,
+      // The built-in browser's pages (<webview>): each one is checked and
+      // locked down when it attaches (browserGuest.js).
+      webviewTag: true,
       // Tessel works while minimized or behind other windows: agents message
       // each other, get reminders, the board and the team map stay current.
       // Chromium's background throttling slowed its timers to about once a
@@ -2769,6 +2783,7 @@ function createWindow() {
       if (isSafeExternal(url)) shell.openExternal(url)
     }
   })
+  browserGuests.attachToWindow(mainWindow)
   mainWindow.maximize()
 
   if (process.env.ELECTRON_RENDERER_URL) {

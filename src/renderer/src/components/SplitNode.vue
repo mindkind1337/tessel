@@ -7,6 +7,7 @@ import { ref } from 'vue'
 import { t } from '../i18n'
 import TerminalPane from './TerminalPane.vue'
 import EditorPane from './EditorPane.vue'
+import BrowserPane from './BrowserPane.vue'
 
 const props = defineProps({
   node: { type: Object, required: true }
@@ -91,8 +92,9 @@ function startDrag(e, i) {
 </script>
 
 <template>
-  <!-- Leaf: a code editor (no terminal), or a real terminal -->
+  <!-- Leaf: a code editor or a browser page (no terminal), or a real terminal -->
   <EditorPane v-if="node.type === 'leaf' && node.kind === 'editor'" :key="node.id" :node="node" />
+  <BrowserPane v-else-if="node.type === 'leaf' && node.kind === 'browser'" :key="node.id" :node="node" />
   <TerminalPane v-else-if="node.type === 'leaf'" :key="node.id + ':' + (node.gen || 0)" :node="node" />
 
   <!-- Split: N children separated by draggable dividers -->
