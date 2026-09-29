@@ -777,11 +777,18 @@ onMounted(async () => {
   previousFocus = document.activeElement
   // Make every branch outside this page inert, including live xterm inputs.
   // Keep existing inert attributes intact when Settings closes.
+  // A previous Settings that never unmounted (a hot reload) leaves its marks:
+  // they are lifted first, so nothing stays unclickable.
+  for (const stale of document.querySelectorAll('[data-settings-inert]')) {
+    stale.removeAttribute('inert')
+    stale.removeAttribute('data-settings-inert')
+  }
   let branch = cardEl.value
   while (branch && branch !== document.body) {
     for (const sibling of branch.parentElement?.children || []) {
       if (sibling !== branch && !sibling.hasAttribute('inert')) {
         sibling.setAttribute('inert', '')
+        sibling.setAttribute('data-settings-inert', '')
         inertSiblings.push(sibling)
       }
     }
@@ -801,7 +808,10 @@ onMounted(async () => {
 
 onUnmounted(() => {
   document.removeEventListener('focusin', containFocus)
-  for (const sibling of inertSiblings) sibling.removeAttribute('inert')
+  for (const sibling of inertSiblings) {
+    sibling.removeAttribute('inert')
+    sibling.removeAttribute('data-settings-inert')
+  }
   if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true })
 })
 
