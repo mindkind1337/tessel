@@ -39,7 +39,9 @@ function unscopedSelectors(file) {
   return found
 }
 
-describe('scoped component styles', () => {
+// Compiling the scoped styles of every component is CPU work that a fully
+// loaded machine can stretch past the default 5 s; nothing here is timed.
+describe('scoped component styles', { timeout: 30_000 }, () => {
   it('BrowserPane keeps its drag rule on the webview, not on the body', () => {
     const file = join(root, 'components', 'BrowserPane.vue')
     const { descriptor } = parse(readFileSync(file, 'utf8'), { filename: file })

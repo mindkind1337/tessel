@@ -17,7 +17,9 @@ const settle = async () => {
   await nextTick()
 }
 
-describe('Settings pages', () => {
+// Mounting the whole settings dialog is CPU work (nothing here is timed); on a
+// fully loaded machine it can pass the default 5 s.
+describe('Settings pages', { timeout: 30_000 }, () => {
   let wrapper, previousApi
 
   beforeEach(() => {
