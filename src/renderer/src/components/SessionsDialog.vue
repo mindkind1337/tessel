@@ -17,7 +17,17 @@ const AGENT_NAME = {
   codex: 'Codex',
   gemini: 'Gemini',
   qwen: 'Qwen',
-  opencode: 'OpenCode'
+  opencode: 'OpenCode',
+  openclaude: 'OpenClaude',
+  copilot: 'Copilot',
+  kimi: 'Kimi',
+  cline: 'Cline',
+  cursor: 'Cursor',
+  droid: 'Droid',
+  grok: 'Grok',
+  pi: 'Pi',
+  antigravity: 'Antigravity',
+  devin: 'Devin'
 }
 
 const cardEl = ref(null)
@@ -41,6 +51,14 @@ async function load() {
     loading.value = false
   }
 }
+
+// Only the agents that have conversations here (Claude Code and Codex always).
+const filters = computed(() => [
+  'all',
+  ...Object.keys(AGENT_NAME).filter(
+    (a) => a === 'claude' || a === 'codex' || a === agentFilter.value || sessions.value.some((s) => s.agent === a)
+  )
+])
 
 const shown = computed(() => {
   const q = query.value.trim().toLowerCase()
@@ -125,7 +143,7 @@ onMounted(() => {
         />
         <div class="mcp-cats">
           <button
-            v-for="f in ['all', ...Object.keys(AGENT_NAME)]"
+            v-for="f in filters"
             :key="f"
             class="mcp-cat"
             :class="{ on: agentFilter === f }"

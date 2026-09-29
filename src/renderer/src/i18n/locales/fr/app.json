@@ -193,7 +193,7 @@
       "showSidebar": "Afficher la barre latérale",
       "hideSidebar": "Masquer la barre latérale",
       "resumeSession": "Reprendre une session",
-      "resumeSessionHint": "Rouvrir une conversation Claude ou Codex passée",
+      "resumeSessionHint": "Rouvrir une conversation passée d’un agent",
       "mcp": "Serveurs MCP",
       "mcpHint": "Donner des outils supplémentaires aux agents",
       "installTools": "Installer des outils",

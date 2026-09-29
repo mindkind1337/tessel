@@ -22,6 +22,7 @@ import McpDialog from './components/McpDialog.vue'
 import CommandPalette from './components/CommandPalette.vue'
 import ToolsDialog from './components/ToolsDialog.vue'
 import SessionsDialog from './components/SessionsDialog.vue'
+import { OWN_ID_AGENTS, FOUND_IN_FILES, resumeArgs, safeSessionId } from './agentResumeLine'
 import { getPane } from './paneRegistry'
 import { installChain } from './shellChain'
 import {
@@ -894,16 +895,14 @@ function newId(prefix) {
   return `${prefix}-${counter}-${Math.floor(Math.random() * 1e6)}`
 }
 
-// Which agents we can resume, and how. Claude Code, Gemini and Qwen take the
-// id we choose; Codex, OpenCode, Cline, Copilot and Kimi choose theirs, found
-// after they start (watchFoundSession).
-const RESUMABLE = ['claude', 'codex', 'gemini', 'qwen', 'opencode', 'cline', 'copilot', 'kimi']
-const FOUND_AFTER_START = ['codex', 'opencode', 'cline', 'copilot', 'kimi']
+// Which agents we can resume, and how. Claude Code, OpenClaude, Gemini and
+// Qwen take the id we choose; the others choose theirs, found after they start
+// (watchFoundSession) or reported by their hooks (agentResumeLine.js).
+const RESUMABLE = ['claude', 'openclaude', 'codex', 'gemini', 'qwen', ...OWN_ID_AGENTS]
+const FOUND_AFTER_START = ['codex', ...FOUND_IN_FILES]
 function sessionKind(agent) {
   return agent && RESUMABLE.includes(agent.id) ? agent.id : null
 }
-// Ids come from the agents' own files: only plain ones go into a command line.
-const safeSessionId = (id) => typeof id === 'string' && /^[A-Za-z0-9_-]{6,80}$/.test(id)
 
 function newUuid() {
   if (window.crypto && window.crypto.randomUUID) return window.crypto.randomUUID()
@@ -918,13 +917,18 @@ function newUuid() {
 // previous one when `resume` is set and it exists.
 async function agentStartLine(agent, sessionId, resume, accountId) {
   const kind = sessionKind(agent)
-  if (kind === 'claude') {
+  if (kind === 'claude' || kind === 'openclaude') {
     if (sessionId && resume) {
       // Resume if the conversation exists. If we can't check (older app
       // version), try resuming anyway rather than reusing an id in use.
-      const exists = window.shellApi.claudeSessionExists
-        ? await window.shellApi.claudeSessionExists(sessionId, accountId !== undefined ? { accountId } : undefined)
-        : true
+      const exists =
+        kind === 'openclaude'
+          ? window.shellApi.agentResumeTarget
+            ? !!(await window.shellApi.agentResumeTarget({ agent: kind, sessionId }).catch(() => null))
+            : true
+          : window.shellApi.claudeSessionExists
+            ? await window.shellApi.claudeSessionExists(sessionId, accountId !== undefined ? { accountId } : undefined)
+            : true
       if (exists)
         return { line: `${agent.command} --resume ${sessionId}`, sessionId, resumed: true } // i18n-ignore
     }
@@ -953,15 +957,13 @@ async function agentStartLine(agent, sessionId, resume, accountId) {
     const id = sessionId || newUuid()
     return { line: `${agent.command} --session-id ${id}`, sessionId: id, resumed: false } // i18n-ignore
   }
-  const flag = { opencode: '--session', cline: '--id', copilot: '--resume', kimi: '--session' }[kind]
-  if (flag && sessionId && resume && safeSessionId(sessionId)) {
-    return { line: `${agent.command} ${flag} ${sessionId}`, sessionId, resumed: true }
-  }
+  const args = sessionId && resume ? await resumeArgs(kind, sessionId, window.shellApi) : null
+  if (args) return { line: [agent.command, ...args].join(' '), sessionId, resumed: true }
   return { line: agent.command, sessionId: null, resumed: false }
 }
 
-// Codex, OpenCode, Cline and Copilot pick their own session id; find it from
-// their session files after the pane starts (some only create it with your
+// Codex, OpenCode, Cline and Copilot pick their own session id (so do Kimi,
+// Droid, Grok, Pi, Antigravity, Devin and Cursor); find it from their session files after the pane starts (some only create it with your
 // first message: looked for during 30 minutes), so the pane can resume it
 // next time.
 function watchFoundSession(leaf, kind) {
@@ -2320,7 +2322,7 @@ function buildCommands() {
 
   const agentsGroup = t('app.cmd.group.agents', 'Agents')
   add(agentsGroup, t('app.cmd.resumeSession', 'Resume a session'), openSessions, {
-    hint: t('app.cmd.resumeSessionHint', 'Reopen a past Claude or Codex conversation')
+    hint: t('app.cmd.resumeSessionHint', 'Reopen a past agent conversation')
   })
   add(agentsGroup, t('app.cmd.mcp', 'MCP servers'), () => (mcpOpen.value = true), { hint: t('app.cmd.mcpHint', 'Give agents extra tools') })
   add(agentsGroup, t('app.cmd.installTools', 'Install tools'), openTools, { hint: t('app.cmd.installToolsHint', 'Agents, Git, Node.js and more') })

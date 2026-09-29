@@ -11,6 +11,7 @@ import os from 'os'
 import { join } from 'path'
 import { normDir, readFirstLine, readHead } from './fileRead'
 import { geminiHistory, qwenHistory, opencodeHistory } from './agentHistory'
+import { moreAgentsHistory } from './agentSessionSources'
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -186,6 +187,46 @@ function sameDir(a, b) {
   return normDir(a) === normDir(b)
 }
 
+// Conversations in a Claude Code style config folder (<dir>/projects/<slug>/<uuid>.jsonl).
+function claudeLikeHistory(agent, configDir, { cwd, limit }) {
+  const root = join(configDir, 'projects')
+  let projects = []
+  try {
+    projects = fs.readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirectory())
+  } catch {
+    return [] // not used yet
+  }
+  const files = []
+  for (const d of projects) {
+    let names = []
+    try {
+      names = fs.readdirSync(join(root, d.name))
+    } catch {
+      continue
+    }
+    for (const f of names) {
+      const m = /^([0-9a-f-]{36})\.jsonl$/i.exec(f)
+      if (!m) continue
+      const full = join(root, d.name, f)
+      try {
+        files.push({ id: m[1], full, updated: fs.statSync(full).mtimeMs })
+      } catch {
+        /* vanished */
+      }
+    }
+  }
+  files.sort((a, b) => b.updated - a.updated)
+  const out = []
+  for (const f of files) {
+    if (out.length >= limit) break
+    const head = parseClaudeHead(readHead(f.full))
+    if (!head.title) continue // never messaged: nothing to resume
+    if (cwd && !sameDir(head.cwd, cwd)) continue
+    out.push({ agent, id: f.id, cwd: head.cwd, started: head.started, updated: f.updated, title: head.title })
+  }
+  return out
+}
+
 export function listSessions({ cwd = null, limit = 60 } = {}, home = os.homedir(), roots = {}) {
   limit = Number.isFinite(limit) ? Math.max(0, Math.min(200, Math.floor(limit))) : 60
   cwd = typeof cwd === 'string' && cwd ? cwd : null
@@ -193,47 +234,9 @@ export function listSessions({ cwd = null, limit = 60 } = {}, home = os.homedir(
   const out = []
 
   // Claude Code: ~/.claude/projects/<folder slug>/<uuid>.jsonl
-  const claudeRoot = roots.claude === null ? null : join(roots.claude || join(home, '.claude'), 'projects')
-  let projects = []
-  try {
-    projects = claudeRoot ? fs.readdirSync(claudeRoot, { withFileTypes: true }).filter((d) => d.isDirectory()) : []
-  } catch {
-    /* Claude not used yet */
-  }
-  const claudeFiles = []
-  for (const d of projects) {
-    let files = []
-    try {
-      files = fs.readdirSync(join(claudeRoot, d.name))
-    } catch {
-      continue
-    }
-    for (const f of files) {
-      const m = /^([0-9a-f-]{36})\.jsonl$/i.exec(f)
-      if (!m) continue
-      const full = join(claudeRoot, d.name, f)
-      try {
-        claudeFiles.push({ id: m[1], full, updated: fs.statSync(full).mtimeMs })
-      } catch {
-        /* vanished */
-      }
-    }
-  }
-  claudeFiles.sort((a, b) => b.updated - a.updated)
-  for (const f of claudeFiles) {
-    if (out.filter((s) => s.agent === 'claude').length >= limit) break
-    const head = parseClaudeHead(readHead(f.full))
-    if (!head.title) continue // never messaged: nothing to resume
-    if (cwd && !sameDir(head.cwd, cwd)) continue
-    out.push({
-      agent: 'claude',
-      id: f.id,
-      cwd: head.cwd,
-      started: head.started,
-      updated: f.updated,
-      title: head.title
-    })
-  }
+  if (roots.claude !== null) out.push(...claudeLikeHistory('claude', roots.claude || join(home, '.claude'), { cwd, limit }))
+  // OpenClaude, a Claude Code fork: the same layout under ~/.openclaude.
+  if (roots.others !== false) out.push(...claudeLikeHistory('openclaude', join(home, '.openclaude'), { cwd, limit }))
 
   // Codex: ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl
   const codexRoot = roots.codex === null ? null : join(roots.codex || join(home, '.codex'), 'sessions')
@@ -276,6 +279,12 @@ export function listSessions({ cwd = null, limit = 60 } = {}, home = os.homedir(
     codexCount++
   }
 
-  if (roots.others !== false) out.push(...geminiHistory({ cwd, limit }, home), ...qwenHistory({ cwd, limit }, home), ...opencodeHistory({ cwd, limit }, home))
+  if (roots.others !== false)
+    out.push(
+      ...geminiHistory({ cwd, limit }, home),
+      ...qwenHistory({ cwd, limit }, home),
+      ...opencodeHistory({ cwd, limit }, home),
+      ...moreAgentsHistory({ cwd, limit }, home)
+    )
   return out.sort((a, b) => b.updated - a.updated)
 }
