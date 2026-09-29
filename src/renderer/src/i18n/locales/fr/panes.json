@@ -338,7 +338,10 @@
       "workerOf": "Exécutant de {{coordinator}}",
       "chatPane": "Panneau de chat {{num}} (sans terminal)",
       "chat": "Chat (sans terminal)"
-    }
+    },
+    "clearFilters": "Effacer les filtres",
+    "hiddenByFilters_one": "{{count}} masqué par les filtres",
+    "hiddenByFilters_other": "{{count}} masqués par les filtres"
   },
   "pane": {
     "subAgents": {

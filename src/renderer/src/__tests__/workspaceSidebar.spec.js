@@ -298,3 +298,15 @@ describe('left sidebar', () => {
     w.unmount()
   })
 })
+
+describe('filters never leave the sidebar a dead end', () => {
+  it('a project whose workspaces are all hidden says so, and Clear filters brings them back', async () => {
+    const { buildSidebarRows } = await import('../sidebarModel')
+    const projects = [{ id: 'p1', name: 'Tessel', path: 'C:\Tessel', copies: [], panes: [] }]
+    const rows = buildSidebarRows(projects, { hideDefaultBranchWorkspace: true })
+    const hidden = rows.find((r) => r.type === 'hidden')
+    expect(hidden).toBeTruthy()
+    expect(hidden.count).toBeGreaterThan(0)
+    expect(buildSidebarRows(projects, { hideDefaultBranchWorkspace: false }).some((r) => r.type === 'hidden')).toBe(false)
+  })
+})

@@ -415,7 +415,7 @@ export function buildSidebarRows(projects, options = {}, now = Date.now()) {
     const cards = buildProjectCards(project, now)
     cards.forEach((c, i) => (c.order = i))
     const visible = cards.filter((c) => isCardVisible(c, opts)).sort(cmp)
-    return { project, index, cards: visible, lastActivityAt: Math.max(0, ...cards.map((c) => c.lastActivityAt)) }
+    return { project, index, cards: visible, hidden: cards.length - visible.length, lastActivityAt: Math.max(0, ...cards.map((c) => c.lastActivityAt)) }
   })
   const rows = []
   if (opts.groupBy === 'none') {
@@ -428,8 +428,10 @@ export function buildSidebarRows(projects, options = {}, now = Date.now()) {
   if (opts.projectOrderBy === 'recent') groups.sort((a, b) => b.lastActivityAt - a.lastActivityAt || a.index - b.index)
   for (const g of groups) {
     const key = `repo:${g.project.id}` // i18n-ignore
-    rows.push({ type: 'header', key, label: g.project.name, project: g.project, count: g.cards.length, collapsed: collapsed.has(key) })
+    rows.push({ type: 'header', key, label: g.project.name, project: g.project, count: g.cards.length, hidden: g.hidden, collapsed: collapsed.has(key) })
     if (collapsed.has(key)) continue
+    // Every workspace of it hidden by the filters: a way back, not a dead end.
+    if (!g.cards.length && g.hidden) rows.push({ type: 'hidden', key: `${key}:hidden`, project: g.project, count: g.hidden }) // i18n-ignore
     for (const card of g.cards) rows.push({ type: 'card', key: card.key, card, project: g.project })
   }
   return rows
