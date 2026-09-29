@@ -19,8 +19,9 @@ describe('useNativeChatFileLinkClick', () => {
     ['C:\\repo\\app.js:6', 'C:/repo/app.js', 6, null],
   ])('resolves %s through the viewer', async (href, file, line, col) => {
     const openFile = vi.fn()
+    // Tessel: the pane's folders (here also /other and the C: drive repo) bound what opens.
     const { result } = renderHook(() =>
-      useNativeChatFileLinkClick({ worktreePath: '/repo' }, { openFile }),
+      useNativeChatFileLinkClick({ worktreePath: '/repo', roots: ['/repo', '/other', 'C:\\repo'] }, { openFile }),
     )
     const click = event()
     await result.current(click, href)
@@ -28,6 +29,22 @@ describe('useNativeChatFileLinkClick', () => {
     expect(click.preventDefault).toHaveBeenCalled()
     expect(click.stopPropagation).toHaveBeenCalled()
   })
+  // Tessel: agent text opens only files under the pane's folders.
+  it.each(['../other/file.md', 'C:\\Windows\\system.ini', '/repo/../etc/passwd', 'file:///etc/hosts'])(
+    'refuses %s outside the pane folders',
+    async (href) => {
+      const openFile = vi.fn()
+      const onOpenFailure = vi.fn()
+      const { result } = renderHook(() =>
+        useNativeChatFileLinkClick({ worktreePath: '/repo', roots: ['/repo'] }, { openFile, onOpenFailure }),
+      )
+      const click = event()
+      await result.current(click, href)
+      expect(openFile).not.toHaveBeenCalled()
+      expect(click.preventDefault).toHaveBeenCalled()
+      expect(onOpenFailure).toHaveBeenCalledWith(expect.objectContaining({ verdict: 'outside' }))
+    },
+  )
   it('distinguishes unresolved paths from failed opens', async () => {
     const openFile = vi.fn().mockRejectedValue(new Error('unavailable'))
     const onOpenFailure = vi.fn()

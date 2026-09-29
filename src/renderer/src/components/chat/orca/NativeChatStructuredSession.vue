@@ -232,6 +232,7 @@ defineExpose({
         :on-link-click="onLinkClick"
         :allow-file-uri-links="true"
         :failed-delivery-message-ids="c.failedDeliveryMessageIds ? c.failedDeliveryMessageIds.value : undefined"
+        :queued-message-ids="c.queuedMessageIds ? c.queuedMessageIds.value : undefined"
       />
     </div>
     <NativeChatDeliveryRetry

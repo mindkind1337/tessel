@@ -615,27 +615,66 @@ describe('ChatMarkdown link click handler', () => {
     expect(event.defaultPrevented).toBe(true)
   })
 
-  // Tessel: a Windows drive target in a markdown link loses its href in
-  // renderMarkdown (DOMPurify refuses "C:" as a scheme); fenced paths stay text.
-  it('leaves fenced paths as source text and never keeps a Windows drive href', () => {
+  // Tessel: an explicit link to a Windows drive or file: target becomes the
+  // same in-page file link as linkified text (the sanitizer would drop it);
+  // fenced and inline code stay as written.
+  it('turns an explicit Windows drive or file: link into a file link; code stays source text', () => {
+    const onLinkClick = vi.fn()
     const root = render({
       variant: 'document',
       content: [
-        String.raw`[report](C:\Reports\summary.pdf)`,
+        String.raw`[report](C:\Reports\summary.pdf) and [spec](file:///C:/repo/spec.md "Spec")`,
+        '',
+        '`[inline](C:\\keep\\me.md)`',
         '',
         '```text',
+        String.raw`[fenced](C:\not\a\link.md)`,
         '/tmp/not-a-link.html',
         '```'
       ].join('\n'),
-      onLinkClick: vi.fn(),
-      linkifyFilePaths: true
+      onLinkClick
     })
-    expect(root.querySelectorAll('a[href]')).toHaveLength(0)
+    const anchors = [...root.querySelectorAll('a[href]')]
+    expect(anchors).toHaveLength(2)
+    expect(routeNativeChatHref(anchors[0].getAttribute('href'))).toMatchObject({ kind: 'file', pathText: String.raw`C:\Reports\summary.pdf` })
+    const spec = routeNativeChatHref(anchors[1].getAttribute('href'))
+    expect(spec.kind).toBe('file')
+    expect(spec.pathText).toMatch(/repo[\\/]spec\.md$/)
+    expect(anchors[1].getAttribute('title')).toBe('Spec')
+    expect(root.querySelector('p code').textContent).toContain('[inline]')
+    expect(root.querySelector('pre').textContent).toContain('[fenced]')
     expect(root.querySelector('pre').textContent).toContain('/tmp/not-a-link.html')
+    const event = click(anchors[0])
+    expect(event.defaultPrevented).toBe(true)
+    expect(onLinkClick).toHaveBeenCalledOnce()
   })
 })
 
 describe('ChatMarkdown safety (Tessel)', () => {
+  it('an explicit C:\\ link opens in the file viewer only under the pane folders', async () => {
+    const viewFile = vi.fn()
+    const toast = vi.fn()
+    wrapper = mount(ChatMarkdown, {
+      props: {
+        variant: 'document',
+        content: String.raw`[in](C:\proj\src\a.js) [out](C:\Windows\system.ini) [up](C:\proj\..\secret.txt)`,
+        fileLinkContext: { worktreeId: 'w', worktreePath: String.raw`C:\proj`, roots: [String.raw`C:\proj`] }
+      },
+      attachTo: document.body,
+      global: { provide: { panelCtx: { viewFile, toast } } }
+    })
+    const [inside, outside, up] = wrapper.element.querySelectorAll('a')
+    expect(click(inside).defaultPrevented).toBe(true)
+    await flushPromises()
+    expect(viewFile).toHaveBeenCalledTimes(1)
+    expect(viewFile.mock.calls[0][0].file.replace(/\\/g, '/').toLowerCase()).toBe('c:/proj/src/a.js')
+    expect(click(outside).defaultPrevented).toBe(true)
+    expect(click(up).defaultPrevented).toBe(true)
+    await flushPromises()
+    expect(viewFile).toHaveBeenCalledTimes(1)
+    expect(toast).toHaveBeenCalledTimes(2)
+  })
+
   it('a javascript: link and raw <script> / <img onerror> in agent markdown are inert', () => {
     window.__ncPwned = undefined
     const onLinkClick = vi.fn()

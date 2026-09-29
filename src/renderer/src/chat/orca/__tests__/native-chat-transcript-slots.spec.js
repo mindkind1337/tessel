@@ -326,3 +326,22 @@ describe('a send the host rejected', ()=>{
         ]);
     });
 });
+describe('a settled turn (Tessel)', ()=>{
+    it('folds its work but keeps its error and warning notices in view', ()=>{
+        const notice = (id, body, tone)=>({ ...text(id, body, 'system'), blocks: [{ type: 'text', text: body, ...(tone ? { tone } : {}) }] })
+        const messages = [
+            text('u', 'go', 'user'),
+            toolRun('a'),
+            notice('e', 'content filter', 'error'),
+            notice('w', 'careful', 'warning'),
+            notice('i', 'fyi'),
+            text('b', 'Done.')
+        ];
+        const slots = build(messages, {
+            turnStatuses: { active: null, completedByTurn: { u: { startedAt: 1, workedSeconds: 3 } } }
+        });
+        // A folded row gets no slot (its turn's status row stands in for it).
+        expect(slots.map((slot)=>slot.message.id)).toEqual(['u', 'e', 'w', 'b']);
+        expect(slots.every((slot)=>!slot.folded)).toBe(true);
+    });
+});

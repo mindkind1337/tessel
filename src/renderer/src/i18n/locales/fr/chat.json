@@ -692,5 +692,6 @@
   "chat.orca.contextMenu.expandPane": "Agrandir le pane",
   "chat.orca.contextMenu.closePane": "Fermer le pane",
   "chat.orca.drop.title": "Déposer pour joindre à ce chat",
-  "chat.orca.drop.subtitle": "Les fichiers sont ajoutés à votre message sous forme de chemins que l'agent peut lire."
+  "chat.orca.drop.subtitle": "Les fichiers sont ajoutés à votre message sous forme de chemins que l'agent peut lire.",
+  "chat.orca.fileLinks.outside": "Seuls les fichiers des dossiers de ce chat s'ouvrent depuis le chat : {{value0}}"
 }

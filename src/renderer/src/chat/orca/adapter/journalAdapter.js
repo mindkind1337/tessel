@@ -65,6 +65,31 @@ function subagentEntry(a) {
   return entry
 }
 
+// A tool's paths as the chat shows them: relative to the chat's folder when
+// inside it (src/x.js), whole when outside it (the reader must see where).
+const PATH_KEYS = ['file_path', 'filePath', 'notebook_path', 'path']
+export function relativeToolPath(path, cwd) {
+  if (typeof path !== 'string' || !path || !cwd) return path
+  const norm = (s) => s.replace(/\\/g, '/').replace(/\/+$/, '')
+  const base = norm(cwd)
+  const full = norm(path)
+  if (base && full.toLowerCase().startsWith(base.toLowerCase() + '/')) return full.slice(base.length + 1)
+  return path
+}
+function relativeToolInput(input, cwd) {
+  if (!cwd || !input || typeof input !== 'object' || Array.isArray(input)) return input
+  let out = input
+  for (const key of PATH_KEYS) {
+    const rel = relativeToolPath(input[key], cwd)
+    if (rel !== input[key]) out = { ...out, [key]: rel }
+  }
+  if (Array.isArray(input.changes)) {
+    const changes = input.changes.map((c) => (c && typeof c === 'object' && typeof c.path === 'string' ? { ...c, path: relativeToolPath(c.path, cwd) } : c))
+    if (changes.some((c, i) => c !== input.changes[i])) out = { ...out, changes }
+  }
+  return out
+}
+
 function parseInput(input) {
   if (typeof input !== 'string') return input ?? null
   try {
@@ -74,7 +99,9 @@ function parseInput(input) {
   }
 }
 
-export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence = 1 } = {}) {
+// cwd: the chat's folder (a value or a getter): tool paths inside it are shown relative.
+export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence = 1, cwd = '' } = {}) {
+  const folder = () => (typeof cwd === 'function' ? cwd() : cwd) || ''
   const items = new Map() // itemId -> render item
   const submissions = new Map() // clientMessageId -> submission
   let sequence = 0
@@ -83,7 +110,7 @@ export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence =
   let openTurn = null
   let lastUserItemId = null
   // Session facts the UI reads outside the journal (header, pickers).
-  const meta = { agent: null, model: null, sessionId: null, status: 'starting', error: '', rateLimit: null, commands: null }
+  const meta = { agent: null, model: null, sessionId: null, status: 'starting', error: '', rateLimit: null, commands: null, queuedIds: [] }
 
   let changedItems = new Set()
   let changedSubs = new Set()
@@ -127,6 +154,14 @@ export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence =
     if (prior && prior.dispatchState === next.dispatchState) return
     submissions.set(clientMessageId, next)
     changedSubs.add(clientMessageId)
+  }
+
+  // Messages waiting in the engine's queue for the end of the turn (Tessel's
+  // "Queued" chip), by client message id.
+  function setQueued(id, queued) {
+    const has = meta.queuedIds.includes(id)
+    if (queued && !has) meta.queuedIds = [...meta.queuedIds, id]
+    else if (!queued && has) meta.queuedIds = meta.queuedIds.filter((x) => x !== id)
   }
 
   // A turn opens once the agent took a message (its echo) or starts working
@@ -203,18 +238,21 @@ export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence =
         }
         put(itemId, body, {}, at)
         lastUserItemId = itemId
+        setQueued(String(ev.id), ev.status === 'queued')
         submit(String(ev.id), DISPATCH[ev.status] || 'pending', at)
         if (ev.status === 'accepted') openTurnFor(itemId, at)
         break
       }
       case 'userStatus': {
         if (!ev.id) break
+        setQueued(String(ev.id), ev.status === 'queued')
         submit(String(ev.id), DISPATCH[ev.status] || 'pending', at)
         if (ev.status === 'accepted') openTurnFor(agentJournalSubmissionKey(String(ev.id)), at)
         break
       }
       case 'teamAccepted':
       case 'teamFailed': {
+        for (const id of Array.isArray(ev.ids) ? ev.ids : []) setQueued(String(id), false)
         for (const id of Array.isArray(ev.ids) ? ev.ids : []) submit(String(id), ev.type === 'teamAccepted' ? 'accepted' : 'unknown', at)
         break
       }
@@ -253,7 +291,7 @@ export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence =
         }
         const linkage = childLinkage(ev)
         if (!isChild(ev)) openTurnFor(lastUserItemId, at)
-        put(itemId, { kind: 'tool-call', name: String(ev.name ?? ''), input: parseInput(ev.input), callId: String(ev.id), state, ...(prior && prior.body.output ? { output: prior.body.output } : {}) }, linkage, at)
+        put(itemId, { kind: 'tool-call', name: String(ev.name ?? ''), input: relativeToolInput(parseInput(ev.input), folder()), callId: String(ev.id), state, ...(prior && prior.body.output ? { output: prior.body.output } : {}) }, linkage, at)
         break
       }
       case 'toolResult': {

@@ -37,6 +37,7 @@ const revealedDiff = computed(() =>
 const deliveryFailed = computed(
   () => props.context.failedDeliveryMessageIds?.has(message.value.id) === true
 )
+const queued = computed(() => props.context.queuedMessageIds?.has(message.value.id) === true)
 // Stable per turn, so the status row does not re-render with every list render.
 const onToggleExpanded = computed(() => {
   const turnKey = props.slot.turnKey
@@ -66,6 +67,7 @@ const onToggleExpanded = computed(() => {
       @link-click="context.onLinkClick"
       :allow-file-uri-links="context.allowFileUriLinks"
       :delivery-failed="deliveryFailed"
+      :queued="queued"
       :structured-activity-ui="context.showTurnStatus"
       :folded="slot.folded"
       :runtime-context="context.runtimeContext"
