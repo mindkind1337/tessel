@@ -30,6 +30,9 @@ export function initialChatState() {
 const STATES = new Set(['starting', 'idle', 'working', 'approval', 'asleep', 'ended', 'crashed', 'signin', 'untrusted'])
 // The composer cannot send in these.
 export const STOPPED_STATES = new Set(['ended', 'crashed', 'signin', 'untrusted'])
+// No agent process runs in these (asleep included): nothing it started can
+// still be running.
+const NO_PROCESS_STATES = new Set([...STOPPED_STATES, 'asleep'])
 
 export function isBusy(status) {
   return status === 'working' || status === 'approval'
@@ -185,6 +188,26 @@ function closeStreaming(rows) {
   return changed ? out : rows
 }
 
+// The agent's process is gone: its streams close, a tool still running is
+// 'stopped' (neither done nor failed: nobody knows) and a question still
+// waiting is 'cancelled'. Untouched rows keep their object.
+function closeOpen(rows) {
+  const closed = closeStreaming(rows)
+  let changed = false
+  const out = closed.map((r) => {
+    if (r.kind === 'tool' && r.status === 'running') {
+      changed = true
+      return { ...r, status: 'stopped' }
+    }
+    if (r.kind === 'approval' && r.status === 'pending') {
+      changed = true
+      return { ...r, status: 'cancelled' }
+    }
+    return r
+  })
+  return changed ? out : closed
+}
+
 const USER_STATUSES = new Set(['queued', 'sent', 'accepted', 'failed'])
 const APPROVAL_STATUSES = new Set(['pending', 'allowed', 'allowedSession', 'denied', 'cancelled'])
 
@@ -198,8 +221,9 @@ export function chatReducer(state, event, { cwd = '' } = {}) {
       if (event.model) next.model = String(event.model)
       if (event.sessionId) next.sessionId = String(event.sessionId)
       next.error = event.error ? String(event.error) : STOPPED_STATES.has(event.state) ? s.error : ''
-      // A turn cut short leaves no stream open.
-      if (STOPPED_STATES.has(event.state)) next.rows = closeStreaming(s.rows)
+      // A stopped process leaves nothing open: no stream, no running tool,
+      // no question waiting.
+      if (NO_PROCESS_STATES.has(event.state)) next.rows = closeOpen(s.rows)
       return next
     }
 
@@ -235,6 +259,23 @@ export function chatReducer(state, event, { cwd = '' } = {}) {
         if (r.kind === 'user' && ids.has(r.id) && r.status !== 'accepted') {
           changed = true
           return { ...r, status: 'accepted' }
+        }
+        return r
+      })
+      return changed ? { ...s, rows } : s
+    }
+
+    // Team messages the agent did not take (its turn failed or it stopped):
+    // Tessel keeps them and delivers them again, so their rows are 'failed'
+    // (shown as not delivered yet), never lost.
+    case 'teamFailed': {
+      const ids = new Set((event.ids || []).map(String))
+      if (!ids.size) return s
+      let changed = false
+      const rows = s.rows.map((r) => {
+        if (r.kind === 'user' && r.origin === 'team' && ids.has(r.id) && r.status !== 'failed') {
+          changed = true
+          return { ...r, status: 'failed' }
         }
         return r
       })
@@ -336,8 +377,10 @@ export function chatReducer(state, event, { cwd = '' } = {}) {
 
     case 'turnEnd': {
       // Whatever the turn left open is over: streams, running tools, questions.
+      // A tool cut by an interruption is 'stopped', not failed.
+      const toolEnd = event.status === 'completed' ? 'done' : event.status === 'interrupted' ? 'stopped' : 'error'
       const rows = closeStreaming(s.rows).map((r) => {
-        if (r.kind === 'tool' && r.status === 'running') return { ...r, status: event.status === 'completed' ? 'done' : 'error' }
+        if (r.kind === 'tool' && r.status === 'running') return { ...r, status: toolEnd }
         if (r.kind === 'approval' && r.status === 'pending') return { ...r, status: 'cancelled' }
         return r
       })

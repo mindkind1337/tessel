@@ -395,9 +395,9 @@
       "keysClose": "pour fermer",
       "modelHint": "Le modèle avec lequel {{name}} démarre",
       "chat": "Claude Code (chat)",
-      "chatHint": "Claude dans un panneau de chat : sans terminal ; les messages d'équipe lui arrivent comme des tours à part entière",
+      "chatHint": "Claude dans un pane de chat : sans terminal ; les messages d'équipe lui arrivent comme des tours à part entière",
       "chatCodex": "Codex (chat)",
-      "chatCodexHint": "Codex dans un panneau de chat : sans terminal ; les messages d'équipe lui arrivent comme des tours à part entière"
+      "chatCodexHint": "Codex dans un pane de chat : sans terminal ; les messages d'équipe lui arrivent comme des tours à part entière"
     },
     "model": {
       "fromSession": "d'après sa dernière réponse",
@@ -492,7 +492,7 @@
       "yoloFolder": "Yolo dans ce dossier",
       "yoloFolderHint": "Les agents lancés dans {{folder}} (ou un dossier à l'intérieur) démarrent toujours en Yolo. Les agents déjà lancés là gardent leur mode.",
       "openAsChat": "Ouvrir en chat",
-      "openAsChatHint": "Poursuivre cette conversation dans un panneau de chat (sans terminal) : même panneau, mêmes permissions ou moins"
+      "openAsChatHint": "Poursuivre cette conversation dans un pane de chat (sans terminal) : même pane, mêmes permissions ou moins"
     },
     "badge": {
       "quiet": "silencieux depuis {{minutes}} min",

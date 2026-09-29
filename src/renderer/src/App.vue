@@ -844,6 +844,7 @@ const shortcuts = computed(() => [
     title: t('app.help.app', 'App'),
     rows: [
       ['Ctrl+Shift+B', t('app.help.broadcast', 'Broadcast typing to all panes')],
+      ['Alt+A', t('app.help.chatApproval', 'In a chat pane: go to the request waiting for your answer')],
       ['Ctrl+Shift+K', t('app.help.taskBoard', 'Task board')],
       ['Ctrl+Shift+X', t('app.help.fileExplorer', 'File explorer')],
       ['Ctrl+Shift+G', t('app.help.sourceControl', 'Source Control (the git changes)')],

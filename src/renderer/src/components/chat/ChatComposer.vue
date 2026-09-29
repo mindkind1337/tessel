@@ -1,10 +1,12 @@
 <script setup>
-// The chat's input: Enter sends, Shift+Enter makes a new line, Esc stops the
-// agent while it works. A message sent while it works waits for the end of
-// the turn (the main process queues it). After Orca's
+// The chat's input: Enter sends, Shift+Enter makes a new line, Esc
+// interrupts the current turn (the messages queued after it are still sent).
+// A message sent while it works waits for the end of the turn (the main
+// process queues it). While the agent starts, typing works but Send waits
+// (sendBlockedReason says why). After Orca's
 // NativeChatComposer.tsx (MIT, Copyright (c) 2026 Lovecast Inc.), written
 // for Vue.
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, ref, useId, watch } from 'vue'
 import { SendHorizontal, Square } from 'lucide-vue-next'
 import { t } from '../../i18n'
 
@@ -13,18 +15,24 @@ const props = defineProps({
   agentName: { type: String, default: 'Claude' }, // i18n-ignore product name
   modelValue: { type: String, default: '' },
   busy: { type: Boolean, default: false },
-  // Why nothing can be sent now ('' = it can).
-  disabledReason: { type: String, default: '' }
+  // Why nothing can be sent now ('' = it can): the input is disabled.
+  disabledReason: { type: String, default: '' },
+  // Why Send waits for now ('' = it does not): typing still works.
+  sendBlockedReason: { type: String, default: '' }
 })
 const emit = defineEmits(['update:modelValue', 'send', 'interrupt'])
 
 const inputEl = ref(null)
+// The id of the text that says why Send waits (aria-describedby).
+const blockedId = `chat-send-blocked-${useId()}` // i18n-ignore
 const composing = ref(false)
 
 const disabled = computed(() => !!props.disabledReason)
-const canSend = computed(() => !disabled.value && props.modelValue.trim().length > 0)
+const blocked = computed(() => disabled.value || !!props.sendBlockedReason)
+const canSend = computed(() => !blocked.value && props.modelValue.trim().length > 0)
 const placeholder = computed(() => {
   if (props.disabledReason) return props.disabledReason
+  if (props.sendBlockedReason) return props.sendBlockedReason
   if (props.busy) return t('chat.composer.placeholderBusy', 'Message {{agent}} (sent when the turn ends)…', { agent: props.agentName })
   return t('chat.composer.placeholder', 'Message {{agent}}…', { agent: props.agentName })
 })
@@ -81,20 +89,22 @@ defineExpose({
       :disabled="disabled"
       :placeholder="placeholder"
       :aria-label="t('chat.composer.label', 'Message')"
+      :aria-describedby="sendBlockedReason ? blockedId : undefined"
       spellcheck="true"
       @input="onInput"
       @keydown="onKeydown"
       @compositionstart="composing = true"
       @compositionend="composing = false"
     ></textarea>
+    <span v-if="sendBlockedReason" :id="blockedId" class="sr-only" data-test="chat-send-blocked">{{ sendBlockedReason }}</span>
     <div class="chat-composer-actions">
       <button
         v-if="busy"
         type="button"
         class="chat-icon-btn stop"
         data-test="chat-interrupt"
-        :title="t('chat.composer.interruptHint', 'Stop the agent (Esc)')"
-        :aria-label="t('chat.composer.interrupt', 'Interrupt')"
+        :title="t('chat.composer.interruptTurnHint', 'Interrupt the current turn (Esc). Queued messages are still sent afterwards.')"
+        :aria-label="t('chat.composer.interruptTurn', 'Interrupt the current turn')"
         @click="emit('interrupt')"
       >
         <Square :size="13" fill="currentColor" aria-hidden="true" />
@@ -104,7 +114,7 @@ defineExpose({
         class="chat-icon-btn send"
         data-test="chat-send"
         :disabled="!canSend"
-        :title="t('chat.composer.sendHint', 'Send (Enter) · new line: Shift+Enter')"
+        :title="sendBlockedReason || t('chat.composer.sendHint', 'Send (Enter) · new line: Shift+Enter')"
         :aria-label="t('chat.composer.send', 'Send')"
         @click="send"
       >

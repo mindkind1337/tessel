@@ -247,10 +247,10 @@
       "maxDepth": "Profondeur des exécutants imbriqués",
       "maxDepthHint": "1 : les exécutants du chef ne peuvent pas lancer leurs propres exécutants ; 2 : ils le peuvent, une fois ; jusqu'à {{max}}",
       "trust": "Chaque demande d'exécutant est signée avec un secret que seul son panneau possède, et Tessel vérifie qui l'a envoyée et si elle est encore permise ; les réponses (comme ce qu'affiche un exécutant) sont chiffrées pour l'agent qui les a demandées. Cela empêche un agent de se faire passer pour un autre par erreur ou à peu de frais. Tous les agents tournent sous votre utilisateur Windows : cela ne peut pas arrêter un programme déterminé qui tourne en votre nom.",
-      "workerMode": "Démarrer les workers comme",
-      "workerModeHint": "Chat : un worker Claude ou Codex tourne sans terminal ; ses consignes et les messages d'équipe lui arrivent comme des tours, et Tessel sait exactement quand il s'arrête. Les autres agents démarrent toujours dans un terminal",
-      "workerModeTerminal": "Un panneau terminal",
-      "workerModeChat": "Un chat (Claude, Codex)"
+      "workerMode": "Mode des nouveaux workers",
+      "workerModeHint": "Claude et Codex peuvent travailler dans un pane de chat, sans terminal. Les autres agents utilisent un pane terminal. Ce choix s'applique aux prochains workers ; il ne transforme pas ceux déjà ouverts.",
+      "workerModeTerminal": "Un pane terminal",
+      "workerModeChat": "Un pane de chat (Claude, Codex)"
     },
     "voice": {
       "language": "Langue",

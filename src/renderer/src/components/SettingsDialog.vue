@@ -1664,14 +1664,14 @@ function previewSound() {
               </div>
               <div class="set-row">
                 <label class="set-label" for="settings-orch-mode">
-                  {{ t('settings.orchestration.workerMode', 'Start workers as') }}
+                  {{ t('settings.orchestration.workerMode', 'Mode for new workers') }}
                   <span class="set-hint">{{
-                    t('settings.orchestration.workerModeHint', 'Chat: a Claude or Codex worker runs without a terminal; its brief and team messages reach it as turns, and Tessel knows exactly when it stops. Other agents always start in a terminal')
+                    t('settings.orchestration.workerModeHint', 'Claude and Codex can work in a chat pane, without a terminal. Other agents use a terminal pane. This applies to the next workers; it does not change those already open.')
                   }}</span>
                 </label>
                 <select id="settings-orch-mode" v-model="settings.orchestrationWorkerMode" class="set-select" data-setting="orchestrationWorkerMode">
                   <option value="terminal">{{ t('settings.orchestration.workerModeTerminal', 'A terminal pane') }}</option>
-                  <option value="chat">{{ t('settings.orchestration.workerModeChat', 'A chat (Claude, Codex)') }}</option>
+                  <option value="chat">{{ t('settings.orchestration.workerModeChat', 'A chat pane (Claude, Codex)') }}</option>
                 </select>
               </div>
             </div>

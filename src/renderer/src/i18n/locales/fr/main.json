@@ -739,7 +739,7 @@
       "turnFailed": "Le tour a échoué : {{error}}",
       "turnFailedNoReason": "Le tour a échoué.",
       "notOffered": "L'agent ne propose pas ce choix ici.",
-      "inputUnseen": "Affichez toute l'entrée avant de l'autoriser.",
+      "inputUnseen": "Affichez l'intégralité de la demande avant de l'autoriser.",
       "asleepOther": "Ce panneau contient une autre conversation (en veille). Fermez-la d'abord."
     }
   }

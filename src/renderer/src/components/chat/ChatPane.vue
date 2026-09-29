@@ -5,18 +5,27 @@
 // its history when it mounts, opens the session if it is not running
 // (ctx.chatOpen asks the user to trust the folder when needed), and shows
 // the status, the model and the rate limits in its header.
+// A message the main process refused stays as a "Not sent" entry (copy,
+// retry, discard); what was typed since is never overwritten. Send waits
+// while the agent starts (the main process refuses it before it is ready),
+// except when it wakes from sleep (the message waits for it there). A
+// history that could not be read says so, with Retry, instead of an empty
+// chat. One polite live region says what happened (the end of a turn,
+// sign-in needed; a new request is announced by its card); Alt+A goes to the
+// request waiting for an answer. Nothing takes the focus by itself while the
+// user types.
 // Look after Orca's native chat (src/renderer/src/components/native-chat/:
 // NativeChatMessageList.tsx, NativeChatComposer.tsx; MIT, Copyright (c) 2026
 // Lovecast Inc.), written for Vue.
-import { computed, inject, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from 'vue'
-import { ArrowDown, FolderLock, LogIn, RotateCcw, SquareTerminal, TriangleAlert } from 'lucide-vue-next'
+import { computed, inject, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef, useId, watch } from 'vue'
+import { ArrowDown, FolderLock, LogIn, RotateCcw, ShieldQuestion, SquareTerminal, TriangleAlert } from 'lucide-vue-next'
 import BrandIcon from '../BrandIcon.vue'
 import SessionOptionPicker from '../SessionOptionPicker.vue'
 import ChatMessage from './ChatMessage.vue'
 import ChatToolRow from './ChatToolRow.vue'
-import ChatApprovalCard from './ChatApprovalCard.vue'
+import ChatApprovalCard, { isFocusApprovalKey } from './ChatApprovalCard.vue'
 import ChatComposer from './ChatComposer.vue'
-import { chatReducer, initialChatState, isBusy, rateLimitParts, STOPPED_STATES } from '../../chat/chatModel'
+import { chatReducer, initialChatState, isBusy, pendingApproval, rateLimitParts, STOPPED_STATES } from '../../chat/chatModel'
 import { modelsFor } from '../../agentModels'
 import { modelLabel } from '../../../../shared/modelLabel'
 import { t } from '../../i18n'
@@ -38,7 +47,20 @@ const stick = ref(true)
 const rootEl = ref(null)
 const listEl = ref(null)
 const composerRef = ref(null)
+const modelBtnEl = ref(null)
+const modelMenuEl = ref(null)
 const modelMenu = reactive({ visible: false, pending: false })
+const modelMenuId = `chat-model-menu-${useId()}` // i18n-ignore
+// Messages the main process did not take: { key, text, error, sending }.
+const unsent = ref([])
+let unsentKey = 0
+// The history could not be read: its error ('' = read, or not read yet).
+const historyError = ref('')
+const historyLoading = ref(false)
+// Starting again after sleep: a message waits for it (the main process queues it).
+const resuming = ref(false)
+// The polite live region's text.
+const liveText = ref('')
 let alive = true
 
 const isActive = computed(() => ctx.activeId.value === props.node.id)
@@ -100,6 +122,9 @@ const hiddenCount = computed(() => Math.max(0, rows.value.length - limit.value))
 const earlierText = computed(() => t('chat.list.showEarlier', 'Show earlier ({{count}})', { count: hiddenCount.value }))
 const shownRows = computed(() => (hiddenCount.value ? rows.value.slice(-limit.value) : rows.value))
 
+// The request waiting for an answer (the oldest), or null.
+const pendingRow = computed(() => pendingApproval(state.value))
+
 // Why the composer cannot send ('' = it can).
 const disabledReason = computed(() => {
   switch (status.value) {
@@ -114,6 +139,40 @@ const disabledReason = computed(() => {
       return ''
   }
 })
+// Why Send waits for now (typing still works; '' = it does not).
+const sendBlockedReason = computed(() => {
+  if (historyError.value) return t('chat.composer.historyFailed', 'The conversation did not load: retry above')
+  if (status.value === 'starting' && !resuming.value) return t('chat.composer.starting', 'Wait until {{agent}} has started', { agent: agentName.value })
+  return ''
+})
+
+// --- Live region -----------------------------------------------------------------------------
+// Emptied first, so the same words said twice are read twice.
+function announce(text) {
+  liveText.value = ''
+  if (!text) return
+  nextTick(() => {
+    if (alive) liveText.value = text
+  })
+}
+
+// What a live event is worth saying (a replayed history says nothing). A new
+// request is announced by its card (ChatApprovalCard's own live region).
+function announceFor(event, prev) {
+  switch (event.type) {
+    case 'turnEnd':
+      if (event.status === 'failed') return t('chat.live.turnFailed', 'The turn failed')
+      if (event.status === 'interrupted') return t('chat.live.turnInterrupted', 'Turn interrupted')
+      return t('chat.live.turnDone', '{{agent}} finished the turn', { agent: agentName.value })
+    case 'status':
+      if (event.state === prev.status) return ''
+      if (event.state === 'signin') return t('chat.composer.signin', '{{agent}} is not signed in', { agent: agentName.value })
+      if (event.state === 'crashed' || event.state === 'ended') return t('chat.state.stopped', 'The agent stopped')
+      return ''
+    default:
+      return ''
+  }
+}
 
 // --- Events ----------------------------------------------------------------------------------
 function api() {
@@ -123,8 +182,13 @@ function api() {
 
 function dispatch(event) {
   if (!event || typeof event !== 'object') return
-  state.value = chatReducer(state.value, event, { cwd: props.node.cwd || '' })
+  const prev = state.value
+  state.value = chatReducer(prev, event, { cwd: props.node.cwd || '' })
+  const said = announceFor(event, prev)
+  if (said) announce(said)
   if (event.type === 'status') {
+    if (event.state !== 'starting') resuming.value = false
+    else if (prev.status === 'asleep') resuming.value = true
     if (event.sessionId && props.node.sessionId !== event.sessionId) props.node.sessionId = event.sessionId
     if (event.model && props.node.model !== event.model) props.node.model = event.model
   }
@@ -147,18 +211,31 @@ function onChatEvent(msg) {
   else applyMessage(msg)
 }
 
+// Resolves { ok: true, res } once drawn (res null: nothing to read), or
+// { ok: false } when the history could not be read (historyError says why;
+// the live events wait for a Retry that works).
 async function loadHistory() {
   const a = api()
   let res = null
   if (a && typeof a.history === 'function') {
+    historyError.value = ''
+    historyLoading.value = true
+    let error = ''
     try {
       res = await a.history({ paneId: props.node.id })
-    } catch {
+    } catch (err) {
       res = null
+      error = (err && err.message) || String(err)
+    }
+    historyLoading.value = false
+    if (!alive) return { ok: false }
+    if (!res || res.ok === false || !Array.isArray(res.events)) {
+      historyError.value = error || (res && res.error) || t('chat.error.unknown', 'unknown error')
+      return { ok: false }
     }
   }
-  if (!alive) return null
-  if (res && res.ok !== false && Array.isArray(res.events)) {
+  if (!alive) return { ok: false }
+  if (res) {
     let s = state.value
     for (const item of res.events) {
       const wrapped = item && item.event && !item.type
@@ -170,10 +247,27 @@ async function loadHistory() {
     if (typeof res.seq === 'number') lastSeq = Math.max(lastSeq, res.seq)
     if (s.sessionId && props.node.sessionId !== s.sessionId) props.node.sessionId = s.sessionId
     if (s.model && props.node.model !== s.model) props.node.model = s.model
+    // A running session whose journal said nothing of its status yet.
+    if (s.status === 'starting' && res.live && typeof res.live.status === 'string') state.value = chatReducer(s, { type: 'status', state: res.live.status })
   }
   loaded = true
   for (const msg of buffered.splice(0)) applyMessage(msg)
-  return res
+  return { ok: true, res }
+}
+
+// Draws the history, then opens the session if it is not running.
+async function load() {
+  const { ok, res } = await loadHistory()
+  if (!alive || !ok) return
+  nextTick(scrollToBottom)
+  // A session already running in the main process keeps going; one asleep
+  // (stopped while idle) wakes on its next message, not now.
+  if (res && res.asleep) dispatch({ type: 'status', state: 'asleep' })
+  else if (!(res && (res.open || res.live))) await start()
+}
+function retryHistory() {
+  if (historyLoading.value) return
+  load()
 }
 
 // Opens (or starts again) the session through the app.
@@ -207,32 +301,96 @@ function toast(text) {
   if (typeof ctx.toast === 'function') ctx.toast(text, { timeout: 6000 })
 }
 
-async function send(text) {
+function sendable() {
   const a = api()
+  return !!(a && typeof a.send === 'function') && !disabledReason.value && !sendBlockedReason.value
+}
+
+// Resolves true once the main process took it.
+async function send(text) {
   const body = String(text || '')
-  if (!a || typeof a.send !== 'function' || !body.trim()) return
+  if (!body.trim() || !sendable()) return false
   draft.value = ''
   stick.value = true
+  return deliver(reactive({ key: ++unsentKey, text: body, error: '', sending: false }))
+}
+
+// Sends one message (a new one, or a "Not sent" one again). Refused, it
+// stays in the chat as "Not sent"; the composer is left alone.
+async function deliver(entry) {
+  const a = api()
+  entry.sending = true
   let res
   try {
-    res = await a.send({ paneId: props.node.id, text: body })
+    res = await a.send({ paneId: props.node.id, text: entry.text })
   } catch (err) {
     res = { ok: false, error: (err && err.message) || String(err) }
   }
-  if (res && res.ok !== false) return
-  // Not sent: the text comes back unless something else was typed.
-  if (!draft.value) draft.value = body
-  toast(t('chat.error.send', 'Message not sent: {{error}}', { error: (res && res.error) || t('chat.error.unknown', 'unknown error') }))
+  entry.sending = false
+  if (!alive) return false
+  const i = unsent.value.findIndex((u) => u.key === entry.key)
+  if (res && res.ok !== false) {
+    if (i >= 0) unsent.value.splice(i, 1)
+    return true
+  }
+  entry.error = (res && res.error) || t('chat.error.unknown', 'unknown error')
+  if (i < 0) unsent.value.push(entry)
+  toast(t('chat.error.send', 'Message not sent: {{error}}', { error: entry.error }))
+  return false
 }
 
+function hasFocus() {
+  const root = rootEl.value
+  return !!(root && root.contains(document.activeElement))
+}
+// The focus left with a removed entry: back to typing.
+function refocusAfter(had) {
+  if (!had) return
+  nextTick(() => {
+    const root = rootEl.value
+    if (root && !root.contains(document.activeElement) && composerRef.value) composerRef.value.focus()
+  })
+}
+async function retryUnsent(entry) {
+  if (entry.sending || !sendable()) return
+  const had = hasFocus()
+  if (await deliver(entry)) refocusAfter(had)
+}
+function discardUnsent(entry) {
+  const i = unsent.value.findIndex((u) => u.key === entry.key)
+  if (i < 0) return
+  const had = hasFocus()
+  unsent.value.splice(i, 1)
+  refocusAfter(had)
+}
+async function copyUnsent(entry) {
+  let ok = true
+  try {
+    if (window.shellApi && typeof window.shellApi.writeClipboard === 'function') window.shellApi.writeClipboard(entry.text)
+    else if (navigator.clipboard) await navigator.clipboard.writeText(entry.text)
+    else ok = false
+  } catch {
+    ok = false
+  }
+  if (!ok) toast(t('chat.unsent.copyFailed', 'Could not copy the message.'))
+  else if (typeof ctx.copied === 'function') ctx.copied(t('chat.unsent.what', 'Message'))
+}
+
+// Interrupts the current turn (the queued messages are still sent after it).
 async function interrupt() {
   const a = api()
-  if (!a || typeof a.interrupt !== 'function') return
+  if (!a || typeof a.interrupt !== 'function') return false
+  let res
   try {
-    await a.interrupt({ paneId: props.node.id })
-  } catch {
-    // The status stays; the user can try again.
+    res = await a.interrupt({ paneId: props.node.id })
+  } catch (err) {
+    res = { ok: false, error: (err && err.message) || String(err) }
   }
+  if (res && res.ok === false) {
+    toast(t('chat.error.interrupt', 'Could not interrupt the turn: {{error}}', { error: res.error || t('chat.error.unknown', 'unknown error') }))
+    return false
+  }
+  return true
 }
 
 async function answer({ requestId, decision, message }) {
@@ -287,14 +445,47 @@ async function onModelPick({ optionId, value }) {
     return
   }
   props.node[optionId] = value
+  closeModelMenu(true)
+}
+// Opens with the focus on its first choice; closes back to the chip (Esc, a
+// choice) or leaves the focus where the user went (a click, Tab away).
+function openModelMenu() {
+  modelMenu.visible = true
+  nextTick(() => {
+    const el = modelMenuEl.value
+    if (!el) return
+    const first = el.querySelector('button:not(:disabled), input:not(:disabled), select:not(:disabled)')
+    ;(first || el).focus()
+  })
+}
+function closeModelMenu(refocus = false) {
+  if (!modelMenu.visible) return
   modelMenu.visible = false
+  if (refocus) nextTick(() => modelBtnEl.value && modelBtnEl.value.focus())
+}
+function toggleModelMenu() {
+  if (modelMenu.visible) closeModelMenu(false)
+  else openModelMenu()
+}
+function onModelMenuKeydown(e) {
+  if (e.key !== 'Escape') return
+  // Only the menu: not an interrupt, nor the app's Escape.
+  e.preventDefault()
+  e.stopPropagation()
+  closeModelMenu(true)
+}
+function onModelMenuFocusOut(e) {
+  const to = e.relatedTarget
+  if (!to) return
+  if (modelMenuEl.value && modelMenuEl.value.contains(to)) return
+  if (modelBtnEl.value && modelBtnEl.value.contains(to)) return
+  closeModelMenu(false)
 }
 function onDocMouseDown(e) {
   if (!modelMenu.visible) return
-  const el = rootEl.value && rootEl.value.querySelector('.chat-model-menu')
-  if (el && el.contains(e.target)) return
-  if (e.target.closest && e.target.closest('.pane-model-chip')) return
-  modelMenu.visible = false
+  if (modelMenuEl.value && modelMenuEl.value.contains(e.target)) return
+  if (modelBtnEl.value && modelBtnEl.value.contains(e.target)) return
+  closeModelMenu(false)
 }
 
 // --- Scrolling -------------------------------------------------------------------------------
@@ -324,7 +515,7 @@ function showEarlier() {
   })
 }
 watch(
-  rows,
+  [rows, () => unsent.value.length],
   () => {
     if (stick.value) nextTick(scrollToBottom)
   },
@@ -355,6 +546,35 @@ function onNavMouseDown(e) {
 // A new question takes the focus when nothing is being typed here.
 const approvalFocus = computed(() => isActive.value && !draft.value.trim())
 
+// The approval cards by request id (to focus one).
+const cardRefs = new Map()
+function setCardRef(requestId, el) {
+  if (el) cardRefs.set(requestId, el)
+  else cardRefs.delete(requestId)
+}
+// Alt+A (isFocusApprovalKey; asked for, so it may move the focus): the
+// request waiting for an answer, drawn first if "Show earlier" hid it.
+async function focusPendingApproval() {
+  const row = pendingRow.value
+  if (!row) return false
+  const i = rows.value.indexOf(row)
+  if (i >= 0 && i < rows.value.length - limit.value) limit.value = rows.value.length - i
+  await nextTick()
+  const card = cardRefs.get(row.requestId)
+  if (!card || typeof card.focus !== 'function') return false
+  return card.focus() !== false
+}
+function onPaneKeydown(e) {
+  // No request waiting: the key is left alone.
+  if (!isFocusApprovalKey(e) || !pendingRow.value) return
+  e.preventDefault()
+  e.stopPropagation()
+  focusPendingApproval()
+}
+const gotoApprovalText = computed(() =>
+  t('chat.pane.gotoApproval', '{{tool}} waits for your answer (Alt+A)', { tool: pendingRow.value ? pendingRow.value.displayName || pendingRow.value.toolName : '' })
+)
+
 let unsubscribe = null
 onMounted(async () => {
   const a = api()
@@ -363,13 +583,7 @@ onMounted(async () => {
     if (typeof off === 'function') unsubscribe = off
   }
   document.addEventListener('mousedown', onDocMouseDown, true)
-  const res = await loadHistory()
-  if (!alive) return
-  nextTick(scrollToBottom)
-  // A session already running in the main process keeps going; one asleep
-  // (stopped while idle) wakes on its next message, not now.
-  if (res && res.asleep) dispatch({ type: 'status', state: 'asleep' })
-  else if (!(res && (res.open || res.live))) await start()
+  await load()
 })
 
 onBeforeUnmount(() => {
@@ -384,7 +598,7 @@ onBeforeUnmount(() => {
   document.removeEventListener('mousedown', onDocMouseDown, true)
 })
 
-defineExpose({ start, send, interrupt })
+defineExpose({ start, send, interrupt, focusPendingApproval })
 </script>
 
 <template>
@@ -401,6 +615,7 @@ defineExpose({ start, send, interrupt })
     data-pane-kind="chat"
     tabindex="-1"
     @mousedown="onPaneMouseDown"
+    @keydown="onPaneKeydown"
   >
     <div
       class="pane-nav agent"
@@ -422,12 +637,16 @@ defineExpose({ start, send, interrupt })
         </span>
         <button
           v-if="modelText"
+          ref="modelBtnEl"
           class="pane-model-chip"
           type="button"
           data-test="chat-model"
+          aria-haspopup="true"
+          :aria-expanded="modelMenu.visible ? 'true' : 'false'"
+          :aria-controls="modelMenuId"
           :aria-label="t('pane.sessionOptions.chipLabel', 'Model: {{model}}. Choose the model', { model: modelText })"
           @mousedown.stop
-          @click.stop="modelMenu.visible = !modelMenu.visible"
+          @click.stop="toggleModelMenu"
         >
           {{ modelText }}
         </button>
@@ -489,7 +708,19 @@ defineExpose({ start, send, interrupt })
       </div>
     </div>
 
-    <div v-if="modelMenu.visible" class="chat-model-menu" data-test="chat-model-menu" @mousedown.stop>
+    <div
+      v-if="modelMenu.visible"
+      :id="modelMenuId"
+      ref="modelMenuEl"
+      class="chat-model-menu"
+      data-test="chat-model-menu"
+      role="dialog"
+      tabindex="-1"
+      :aria-label="t('pane.sessionOptions.model', 'Model')"
+      @mousedown.stop
+      @keydown="onModelMenuKeydown"
+      @focusout="onModelMenuFocusOut"
+    >
       <SessionOptionPicker
         :agent-id="agentId"
         :models="modelList"
@@ -507,16 +738,61 @@ defineExpose({ start, send, interrupt })
           <button v-if="hiddenCount" type="button" class="chat-earlier" data-test="chat-earlier" @click="showEarlier">
             {{ earlierText }}
           </button>
-          <div v-if="!rows.length" class="chat-empty" data-test="chat-empty">
+          <div v-if="!rows.length && !unsent.length" class="chat-empty" data-test="chat-empty">
             <BrandIcon :kind="agentId" :size="28" />
-            <span v-if="status === 'starting'">{{ startingText }}</span>
-            <span v-else-if="!stopped">{{ t('chat.empty.idle', 'Send a message to start.') }}</span>
+            <template v-if="!historyError">
+              <span v-if="status === 'starting'">{{ startingText }}</span>
+              <span v-else-if="!stopped">{{ t('chat.empty.idle', 'Send a message to start.') }}</span>
+            </template>
           </div>
           <template v-for="row in shownRows" :key="row.key">
             <ChatToolRow v-if="row.kind === 'tool'" :row="row" />
-            <ChatApprovalCard v-else-if="row.kind === 'approval'" :row="row" :auto-focus="approvalFocus" :answer="answer" :fetch-input="fetchApprovalInput" />
+            <ChatApprovalCard
+              v-else-if="row.kind === 'approval'"
+              :ref="(el) => setCardRef(row.requestId, el)"
+              :row="row"
+              :agent-id="agentId"
+              :cwd="node.cwd || ''"
+              :auto-focus="approvalFocus"
+              :answer="answer"
+              :fetch-input="fetchApprovalInput"
+            />
             <ChatMessage v-else :row="row" />
           </template>
+          <div
+            v-for="u in unsent"
+            :key="'unsent-' + u.key"
+            class="chat-unsent"
+            role="group"
+            :aria-label="t('chat.unsent.title', 'Not sent')"
+            data-test="chat-unsent"
+          >
+            <div class="chat-unsent-head">
+              <TriangleAlert :size="13" class="chat-unsent-icon" aria-hidden="true" />
+              <span class="chat-unsent-title">{{ u.sending ? t('chat.unsent.sending', 'Sending…') : t('chat.unsent.title', 'Not sent') }}</span>
+              <span v-if="u.error && !u.sending" class="chat-unsent-error" data-test="chat-unsent-error">{{ u.error }}</span>
+            </div>
+            <div class="chat-unsent-text" data-test="chat-unsent-text">{{ u.text }}</div>
+            <div class="chat-unsent-actions">
+              <button
+                type="button"
+                class="chat-state-btn"
+                data-test="chat-unsent-retry"
+                :disabled="u.sending || !!disabledReason || !!sendBlockedReason"
+                :title="disabledReason || sendBlockedReason || undefined"
+                @click="retryUnsent(u)"
+              >
+                <RotateCcw :size="13" aria-hidden="true" />
+                {{ t('chat.unsent.retry', 'Retry') }}
+              </button>
+              <button type="button" class="chat-state-btn" data-test="chat-unsent-copy" @click="copyUnsent(u)">
+                {{ t('chat.unsent.copy', 'Copy') }}
+              </button>
+              <button type="button" class="chat-state-btn" data-test="chat-unsent-discard" :disabled="u.sending" @click="discardUnsent(u)">
+                {{ t('chat.unsent.discard', 'Discard') }}
+              </button>
+            </div>
+          </div>
           <div v-if="status === 'working'" class="chat-working" data-test="chat-working">
             <span class="chat-working-dots" aria-hidden="true"><i></i><i></i><i></i></span>
             {{ t('chat.status.working', 'Working') }}
@@ -527,6 +803,30 @@ defineExpose({ start, send, interrupt })
       <button v-if="!stick" type="button" class="chat-jump" data-test="chat-jump" @click="jumpToLatest">
         <ArrowDown :size="13" aria-hidden="true" />
         {{ t('chat.list.jump', 'Jump to latest') }}
+      </button>
+
+      <div v-if="historyError" class="chat-state st-crashed" data-test="chat-history-error">
+        <TriangleAlert :size="15" class="chat-state-icon" aria-hidden="true" />
+        <div class="chat-state-text">
+          <div class="chat-state-title">{{ t('chat.history.failed', 'Could not load the conversation') }}</div>
+          <div class="chat-state-error">{{ historyError }}</div>
+        </div>
+        <button type="button" class="chat-state-btn" data-test="chat-history-retry" :disabled="historyLoading" @click="retryHistory">
+          <RotateCcw :size="13" aria-hidden="true" />
+          {{ t('chat.history.retry', 'Retry') }}
+        </button>
+      </div>
+
+      <button
+        v-if="pendingRow"
+        type="button"
+        class="chat-goto-approval"
+        data-test="chat-goto-approval"
+        aria-keyshortcuts="Alt+A"
+        @click="focusPendingApproval"
+      >
+        <ShieldQuestion :size="13" aria-hidden="true" />
+        {{ gotoApprovalText }}
       </button>
 
       <div v-if="stopped" class="chat-state" :class="'st-' + status" data-test="chat-state">
@@ -566,10 +866,12 @@ defineExpose({ start, send, interrupt })
         :busy="busy"
         :agent-name="agentName"
         :disabled-reason="disabledReason"
+        :send-blocked-reason="sendBlockedReason"
         @send="send"
         @interrupt="interrupt"
       />
     </div>
+    <div class="sr-only" role="status" aria-live="polite" aria-atomic="true" data-test="chat-live">{{ liveText }}</div>
   </div>
 </template>
 
@@ -783,6 +1085,83 @@ defineExpose({ start, send, interrupt })
   font-size: 11.5px;
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
   cursor: pointer;
+}
+
+.chat-unsent {
+  align-self: flex-end;
+  max-width: min(85%, 640px);
+  margin: 4px 0;
+  padding: 7px 10px;
+  border: 1px dashed color-mix(in srgb, var(--danger) 55%, var(--border-strong));
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: 12.5px;
+}
+
+.chat-unsent-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  color: var(--danger);
+  font-size: 11.5px;
+}
+
+.chat-unsent-icon {
+  flex: 0 0 auto;
+}
+
+.chat-unsent-title {
+  font-weight: 600;
+}
+
+.chat-unsent-error {
+  min-width: 0;
+  color: var(--text-dim);
+  word-break: break-word;
+}
+
+.chat-unsent-text {
+  margin: 5px 0 7px;
+  color: var(--text-strong);
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+}
+
+.chat-unsent-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chat-goto-approval {
+  display: inline-flex;
+  align-self: center;
+  align-items: center;
+  gap: 6px;
+  max-width: calc(100% - 20px);
+  margin: 0 10px 6px;
+  padding: 3px 10px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--warn) 55%, var(--border-strong));
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.chat-goto-approval svg {
+  flex: 0 0 auto;
+  color: var(--warn);
+}
+
+.chat-goto-approval:hover {
+  background: var(--surface-2);
 }
 
 .chat-state {

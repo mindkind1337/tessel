@@ -2,10 +2,12 @@
 // One row of a chat that is not a tool or an approval: the user's message
 // (or a teammate's, set apart), the agent's text as Markdown (sanitized by
 // markdownView.js), its thinking (folded), a notice, the end of a turn.
+// An error (a failed turn, an error notice) is shown whole, wrapped, with a
+// Copy button.
 // Look after Orca's NativeChatMessageRow.tsx (MIT, Copyright (c) 2026
 // Lovecast Inc.), written for Vue.
-import { computed, ref } from 'vue'
-import { Brain, ChevronRight, Clock, Users } from 'lucide-vue-next'
+import { computed, onBeforeUnmount, ref } from 'vue'
+import { Brain, ChevronRight, Clock, Copy, Users } from 'lucide-vue-next'
 import { renderMarkdown } from '../../markdownView'
 import { t, intlLocale } from '../../i18n'
 
@@ -30,7 +32,9 @@ const statusChip = computed(() => {
     return r.origin === 'team'
       ? t('chat.user.teamQueued', 'Waiting: delivered when the turn ends')
       : t('chat.user.queued', 'Queued: will send when the turn ends')
-  if (r.status === 'failed') return t('chat.user.failed', 'Not sent')
+  if (r.status === 'failed')
+    // A team message the agent did not take: Tessel delivers it again.
+    return r.origin === 'team' ? t('chat.user.teamFailed', 'Not delivered yet: will be sent again') : t('chat.user.failed', 'Not sent')
   return ''
 })
 
@@ -51,9 +55,28 @@ const turnText = computed(() => {
   const r = props.row
   if (r.kind !== 'turn') return ''
   if (r.status === 'interrupted') return t('chat.turn.interrupted', 'Interrupted')
-  if (r.status === 'failed') return r.error ? t('chat.turn.failedWith', 'Failed: {{error}}', { error: r.error }) : t('chat.turn.failed', 'Failed')
+  if (r.status === 'failed') return t('chat.turn.failed', 'Failed')
   return r.durationMs != null ? t('chat.turn.doneIn', 'Done in {{time}}', { time: seconds(r.durationMs) }) : t('chat.turn.done', 'Done')
 })
+
+// The error of a turn that did not complete, shown under its separator.
+const turnError = computed(() => (props.row.kind === 'turn' && props.row.status !== 'completed' ? String(props.row.error || '') : ''))
+
+// Copy an error; "Copied" is said for a moment (role=status: read aloud too).
+const copied = ref(false)
+let copiedTimer = null
+function canCopy() {
+  const api = window.shellApi
+  return !!(api && typeof api.writeClipboard === 'function')
+}
+function copy(text) {
+  if (!canCopy()) return
+  window.shellApi.writeClipboard(String(text ?? ''))
+  copied.value = true
+  clearTimeout(copiedTimer)
+  copiedTimer = setTimeout(() => (copied.value = false), 2000)
+}
+onBeforeUnmount(() => clearTimeout(copiedTimer))
 
 // Links: the web opens outside; nothing navigates the window.
 function onBodyClick(e) {
@@ -73,8 +96,8 @@ function onBodyClick(e) {
       {{ fromLabel }}
     </div>
     <div class="chat-bubble" :title="atTitle">{{ row.text }}</div>
-    <div v-if="statusChip" class="chat-chip" :class="{ err: row.status === 'failed' }" data-test="chat-user-status">
-      <Clock v-if="row.status === 'queued'" :size="11" aria-hidden="true" />
+    <div v-if="statusChip" class="chat-chip" :class="{ err: row.status === 'failed' && row.origin !== 'team' }" data-test="chat-user-status">
+      <Clock v-if="row.status === 'queued' || (row.status === 'failed' && row.origin === 'team')" :size="11" aria-hidden="true" />
       {{ statusChip }}
     </div>
   </div>
@@ -93,10 +116,34 @@ function onBodyClick(e) {
     <div v-if="thinkingOpen" class="chat-thinking-text">{{ row.text }}</div>
   </div>
 
+  <div v-else-if="row.kind === 'notice' && row.level === 'error'" class="chat-row chat-notice chat-error lv-error" data-test="chat-notice">
+    <div class="chat-error-text">{{ row.text }}</div>
+    <div v-if="canCopy()" class="chat-error-actions">
+      <button type="button" class="chat-copy" :aria-label="t('chat.error.copyLabel', 'Copy the error text')" data-test="chat-copy-error" @click="copy(row.text)">
+        <Copy :size="11" aria-hidden="true" />
+        {{ t('chat.error.copy', 'Copy') }}
+      </button>
+      <span class="chat-copied" role="status">{{ copied ? t('chat.error.copied', 'Copied') : '' }}</span>
+    </div>
+  </div>
+
   <div v-else-if="row.kind === 'notice'" class="chat-row chat-notice" :class="'lv-' + row.level" data-test="chat-notice">{{ row.text }}</div>
 
-  <div v-else-if="row.kind === 'turn'" class="chat-row chat-turn" :class="'st-' + row.status" data-test="chat-turn">
-    <span class="chat-turn-text">{{ turnText }}</span>
+  <div v-else-if="row.kind === 'turn'" class="chat-row" data-test="chat-turn">
+    <div class="chat-turn" :class="'st-' + row.status">
+      <span class="chat-turn-text">{{ turnText }}</span>
+    </div>
+    <!-- Whole and wrapped (long ones scroll), never cut to one line. -->
+    <div v-if="turnError" class="chat-error chat-turn-error" :class="'st-' + row.status" data-test="chat-turn-error">
+      <div class="chat-error-text">{{ turnError }}</div>
+      <div v-if="canCopy()" class="chat-error-actions">
+        <button type="button" class="chat-copy" :aria-label="t('chat.error.copyLabel', 'Copy the error text')" data-test="chat-copy-error" @click="copy(turnError)">
+          <Copy :size="11" aria-hidden="true" />
+          {{ t('chat.error.copy', 'Copy') }}
+        </button>
+        <span class="chat-copied" role="status">{{ copied ? t('chat.error.copied', 'Copied') : '' }}</span>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -307,5 +354,74 @@ function onBodyClick(e) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* An error: all of its text, wrapped; a long one scrolls in its box. */
+.chat-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.chat-error-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-height: 180px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+}
+
+.chat-turn-error {
+  margin: -4px 0 10px;
+  padding: 5px 9px;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--danger) 12%, var(--surface));
+  color: var(--danger);
+  font-size: 12px;
+}
+
+.chat-turn-error.st-interrupted {
+  background: color-mix(in srgb, var(--warn) 12%, var(--surface));
+  color: var(--warn);
+}
+
+.chat-error-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  white-space: normal;
+}
+
+.chat-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 10.5px;
+  cursor: pointer;
+}
+
+.chat-copy:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.chat-copy:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.chat-copied {
+  color: var(--text-dim);
+  font-size: 10px;
 }
 </style>

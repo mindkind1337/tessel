@@ -4,7 +4,7 @@
 // (never HTML). After Orca's NativeChatToolLine.tsx (MIT, Copyright (c)
 // 2026 Lovecast Inc.), written for Vue.
 import { computed, ref } from 'vue'
-import { ChevronRight, Loader2, TriangleAlert, Wrench } from 'lucide-vue-next'
+import { ChevronRight, CircleStop, Loader2, TriangleAlert, Wrench } from 'lucide-vue-next'
 import { formatInput, truncate, MAX_DETAIL } from '../../chat/chatModel'
 import { t } from '../../i18n'
 
@@ -28,6 +28,8 @@ const hasDetail = computed(() => props.row.input != null || !!(props.row.result 
 const statusText = computed(() => {
   if (props.row.status === 'running') return t('chat.tool.running', 'Running…')
   if (props.row.status === 'error') return t('chat.tool.failed', 'Failed')
+  // The agent stopped while it ran: its outcome is not known (not a success).
+  if (props.row.status === 'stopped') return t('chat.tool.stopped', 'Stopped')
   return ''
 })
 
@@ -48,6 +50,7 @@ function toggle() {
       <ChevronRight :size="13" class="chat-tool-chevron" :class="{ hidden: !hasDetail }" aria-hidden="true" />
       <Loader2 v-if="row.status === 'running'" :size="13" class="chat-tool-icon spin" aria-hidden="true" />
       <TriangleAlert v-else-if="row.status === 'error'" :size="13" class="chat-tool-icon err" aria-hidden="true" />
+      <CircleStop v-else-if="row.status === 'stopped'" :size="13" class="chat-tool-icon" aria-hidden="true" />
       <Wrench v-else :size="13" class="chat-tool-icon" aria-hidden="true" />
       <code class="chat-tool-name">{{ name }}</code>
       <span v-if="arg" class="chat-tool-arg">{{ arg }}</span>

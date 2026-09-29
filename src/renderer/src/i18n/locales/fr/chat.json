@@ -1,12 +1,13 @@
 {
   "chat": {
     "pane": {
-      "titleHint": "{{title}}\nFaites glisser l'en-tête pour déplacer le volet",
+      "titleHint": "{{title}}\nFaites glisser l'en-tête pour déplacer le pane",
       "yoloHint": "Les outils s'exécutent sans demander (Paramètres)",
       "mcpUnsandboxed": "MCP hors bac à sable",
       "mcpUnsandboxedHint": "Mode Manuel : les commandes et les modifications de fichiers sont en bac à sable et demandent d'abord. Les outils MCP de votre configuration Codex ne sont pas en bac à sable : ils s'exécutent avec vos droits, et Tessel ne demande que lorsque Codex demande une approbation.",
       "openInTerminal": "Ouvrir dans un terminal",
-      "openInTerminalHint": "Poursuivre cette conversation dans un panneau terminal : même panneau, mêmes permissions ou moins"
+      "openInTerminalHint": "Poursuivre cette conversation dans un pane terminal : même pane, mêmes permissions ou moins",
+      "gotoApproval": "{{tool}} attend votre réponse (Alt+A)"
     },
     "status": {
       "starting": "Démarrage",
@@ -35,12 +36,12 @@
       "idle": "Envoyez un message pour commencer."
     },
     "state": {
-      "signin": "Claude n'est pas connecté. Ouvrez un volet terminal Claude et lancez /login, puis redémarrez.",
+      "signin": "Claude n'est pas connecté. Ouvrez un pane terminal Claude et lancez /login, puis relancez.",
       "startAgain": "Redémarrer",
       "untrusted": "Ce dossier n'est pas encore approuvé.",
       "trust": "Approuver ce dossier…",
       "stopped": "L'agent s'est arrêté",
-      "signinCodex": "Codex n'est pas connecté. Ouvrez un panneau terminal Codex et connectez-vous (codex login), puis relancez."
+      "signinCodex": "Codex n'est pas connecté. Ouvrez un pane terminal Codex et connectez-vous (codex login), puis relancez."
     },
     "composer": {
       "placeholder": "Écrire à {{agent}}…",
@@ -48,18 +49,24 @@
       "label": "Message",
       "send": "Envoyer",
       "sendHint": "Envoyer (Entrée) · nouvelle ligne : Maj+Entrée",
-      "interrupt": "Interrompre",
-      "interruptHint": "Arrêter l'agent (Échap)",
       "signin": "{{agent}} n'est pas connecté",
       "untrusted": "Approuvez ce dossier pour commencer",
-      "stopped": "L'agent s'est arrêté : redémarrez-le"
+      "stopped": "L'agent s'est arrêté : redémarrez-le",
+      "starting": "Attendez que {{agent}} ait démarré",
+      "historyFailed": "La conversation n'a pas été chargée : réessayez ci-dessus",
+      "interruptTurn": "Interrompre le tour en cours",
+      "interruptTurnHint": "Interrompre le tour en cours (Échap). Les messages en attente seront quand même envoyés ensuite."
     },
     "error": {
       "open": "Impossible de démarrer {{agent}}.",
       "send": "Message non envoyé : {{error}}",
       "approve": "Réponse non envoyée : {{error}}",
       "option": "Modification impossible : {{error}}",
-      "unknown": "erreur inconnue"
+      "unknown": "erreur inconnue",
+      "copy": "Copier",
+      "copyLabel": "Copier le texte de l'erreur",
+      "copied": "Copié",
+      "interrupt": "Impossible d'interrompre le tour : {{error}}"
     },
     "approval": {
       "title": "Autoriser {{tool}} ?",
@@ -77,7 +84,7 @@
       "denied": "Refusé",
       "cancelled": "Plus nécessaire",
       "hidden": "{{count}} caractères masqués",
-      "changesUnknown": "Modifications inconnues : Codex n'a pas dit ce que ceci écrit. Affichez tout pour confirmer, ou refusez.",
+      "changesUnknown": "Modifications inconnues : Codex n'a pas fourni le détail des modifications.",
       "mcpUnsandboxed": "Un outil MCP de votre configuration Codex : il s'exécute hors du bac à sable, avec vos droits.",
       "showAll": "Tout afficher",
       "fullFailed": "L'entrée complète n'a pas pu être lue.",
@@ -85,7 +92,15 @@
       "ruleMode": "Passer cette session en mode {{mode}}",
       "ruleDirs": "Donner accès à {{dirs}}",
       "rulesTitle": "Autoriser pour cette session autorise aussi :",
-      "noRules": "Autoriser pour cette session n'ajoute aucune règle ici : comme Autoriser."
+      "noRules": "Autoriser pour cette session n'ajoute aucune règle ici : comme Autoriser.",
+      "scopeGrantRoot": "Codex demande aussi à écrire n'importe où dans {{dir}} pour le reste de cette session.",
+      "scopeUnknownIn": "Autoriser l'applique là où Codex écrit, peut-être hors de {{dir}}.",
+      "scopeUnknown": "Autoriser l'applique là où Codex écrit.",
+      "acceptUnknown": "Autoriser sans voir les modifications",
+      "codexSessionCommand": "Autoriser pour cette session : Codex ne demande plus à exécuter cette même commande jusqu'à la fin de la session.",
+      "codexSessionFiles": "Autoriser pour cette session : Codex ne demande plus à modifier ces fichiers jusqu'à la fin de la session.",
+      "announce": "{{agent}} demande à exécuter {{tool}}",
+      "announceAgent": "L'agent demande à exécuter {{tool}}"
     },
     "tool": {
       "result": "Résultat",
@@ -93,7 +108,8 @@
       "failed": "Échec",
       "input": "Entrée",
       "output": "Sortie",
-      "error": "Erreur"
+      "error": "Erreur",
+      "stopped": "Arrêté"
     },
     "thinking": "Réflexion",
     "user": {
@@ -101,16 +117,34 @@
       "fromTeam": "D'un coéquipier",
       "queued": "En file : envoyé à la fin du tour",
       "teamQueued": "En attente : remis à la fin du tour",
-      "failed": "Non envoyé"
+      "failed": "Non envoyé",
+      "teamFailed": "Pas encore remis : sera renvoyé"
     },
     "turn": {
       "done": "Terminé",
       "doneIn": "Terminé en {{time}}",
       "failed": "Échec",
-      "failedWith": "Échec : {{error}}",
       "interrupted": "Interrompu",
       "seconds": "{{n}} s",
       "minutes": "{{m}} min {{s}} s"
+    },
+    "live": {
+      "turnDone": "{{agent}} a terminé le tour",
+      "turnFailed": "Le tour a échoué",
+      "turnInterrupted": "Tour interrompu"
+    },
+    "unsent": {
+      "title": "Non envoyé",
+      "sending": "Envoi…",
+      "retry": "Réessayer",
+      "copy": "Copier",
+      "discard": "Abandonner",
+      "what": "Message",
+      "copyFailed": "Impossible de copier le message."
+    },
+    "history": {
+      "failed": "Impossible de charger la conversation",
+      "retry": "Réessayer"
     }
   }
 }

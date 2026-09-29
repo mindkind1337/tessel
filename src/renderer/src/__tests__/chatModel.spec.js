@@ -136,10 +136,77 @@ describe('chatModel reducer', () => {
     s = chatReducer(s, { type: 'turnEnd', status: 'interrupted', durationMs: 1500 })
     expect(kinds(s)).toEqual(['assistant', 'tool', 'approval', 'turn'])
     expect(s.rows[0].streaming).toBe(false)
-    expect(s.rows[1].status).toBe('error')
+    // Cut by the interruption: stopped, not failed (and never done).
+    expect(s.rows[1].status).toBe('stopped')
     expect(s.rows[2].status).toBe('cancelled')
     expect(s.rows[3]).toMatchObject({ status: 'interrupted', durationMs: 1500 })
     expect(s.status).toBe('idle')
+  })
+
+  it('turnEnd: a tool still running is done when the turn completed, an error when it failed', () => {
+    const tool = { type: 'tool', id: 't1', name: 'Bash', input: { command: 'x' }, status: 'running' }
+    expect(run([tool, { type: 'turnEnd', status: 'completed' }]).rows[0].status).toBe('done')
+    expect(run([tool, { type: 'turnEnd', status: 'failed', error: 'boom' }]).rows[0].status).toBe('error')
+  })
+
+  it('teamFailed: those team rows are not delivered yet, and come back when delivered again', () => {
+    let s = run([
+      { type: 'user', id: 'x1', text: 'build ok', origin: 'team', from: '#3', status: 'queued' },
+      { type: 'user', id: 'x2', text: 'tests ok', origin: 'team', from: '#4', status: 'queued' },
+      { type: 'user', id: 'x3', text: 'other', origin: 'team', from: '#4', status: 'queued' },
+      { type: 'user', id: 'u1', text: 'mine', origin: 'user', status: 'sent' }
+    ])
+    const before = s
+    s = chatReducer(s, { type: 'teamFailed', ids: ['x1', 'x2', 'u1', 'nope'] })
+    expect(s.rows.map((r) => r.status)).toEqual(['failed', 'failed', 'queued', 'sent'])
+    // Rows it does not touch keep their object.
+    expect(s.rows[2]).toBe(before.rows[2])
+    expect(s.rows[3]).toBe(before.rows[3])
+    // Again, empty or not a list: nothing changes.
+    expect(chatReducer(s, { type: 'teamFailed', ids: ['x1'] })).toBe(s)
+    expect(chatReducer(s, { type: 'teamFailed', ids: [] })).toBe(s)
+    expect(chatReducer(s, { type: 'teamFailed' })).toBe(s)
+    // Tessel delivers them again: queued, then accepted.
+    s = chatReducer(s, { type: 'user', id: 'x1', text: 'build ok', origin: 'team', from: '#3', status: 'queued' })
+    expect(s.rows).toHaveLength(4)
+    expect(s.rows[0].status).toBe('queued')
+    s = chatReducer(s, { type: 'teamAccepted', ids: ['x1', 'x2'] })
+    expect(s.rows.map((r) => r.status)).toEqual(['accepted', 'accepted', 'queued', 'sent'])
+  })
+
+  it('ended / crashed: running tools are stopped (never done), pending approvals cancelled', () => {
+    for (const state of ['ended', 'crashed', 'signin', 'untrusted']) {
+      let s = run([
+        { type: 'status', state: 'working' },
+        { type: 'tool', id: 't0', name: 'Read', input: { file_path: 'a.js' }, status: 'running' },
+        { type: 'toolResult', id: 't0', text: 'ok' },
+        { type: 'tool', id: 't1', name: 'Bash', input: { command: 'sleep 9' }, status: 'running' },
+        { type: 'approval', requestId: 'r0', toolName: 'Bash', input: {}, status: 'pending' },
+        { type: 'approvalStatus', requestId: 'r0', status: 'denied' },
+        { type: 'approval', requestId: 'r1', toolName: 'Bash', input: {}, status: 'pending' },
+        { type: 'assistantDelta', messageId: 'm1', text: 'partial' }
+      ])
+      const before = s
+      s = chatReducer(s, { type: 'status', state, error: 'exit 1' })
+      expect(s.status).toBe(state)
+      expect(s.rows.map((r) => r.status ?? r.streaming)).toEqual(['done', 'stopped', 'denied', 'cancelled', false])
+      expect(pendingApproval(s)).toBe(null)
+      // Finished rows keep their object; no turn separator is made up.
+      expect(s.rows[0]).toBe(before.rows[0])
+      expect(s.rows[2]).toBe(before.rows[2])
+      expect(kinds(s)).toEqual(['tool', 'tool', 'approval', 'approval', 'assistant'])
+    }
+  })
+
+  it('asleep closes what was left open; idle / working leave rows alone', () => {
+    let s = run([{ type: 'tool', id: 't1', name: 'Bash', input: { command: 'x' }, status: 'running' }])
+    const working = chatReducer(s, { type: 'status', state: 'working' })
+    expect(working.rows).toBe(s.rows)
+    expect(chatReducer(s, { type: 'status', state: 'idle' }).rows).toBe(s.rows)
+    s = chatReducer(s, { type: 'status', state: 'asleep' })
+    expect(s.rows[0].status).toBe('stopped')
+    // Nothing open: the rows stay the same list.
+    expect(chatReducer(s, { type: 'status', state: 'ended' }).rows).toBe(s.rows)
   })
 
   it('status carries the model, the session and the error', () => {

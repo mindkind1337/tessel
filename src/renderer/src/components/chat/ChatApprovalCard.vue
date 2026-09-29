@@ -6,10 +6,14 @@
 // cancelled card stays in the chat, disabled, with what was decided.
 // An input too long to show says how much is hidden: Allow waits until the
 // whole input was shown (the whole input is what runs), and the keys do
-// nothing on that card. "Allow for this session" lists what it adds.
+// nothing on that card. "Allow for this session" says what it adds (Claude:
+// its rules; Codex: it stops asking for the same request).
+// A new request is announced once to screen readers (a polite live region)
+// unless the card took the focus; Alt+A (isFocusApprovalKey, handled by the
+// pane) moves the focus to it, the only way it takes the focus while typing.
 // After Orca's NativeChatApprovalCard.tsx (MIT, Copyright (c) 2026
 // Lovecast Inc.), written for Vue.
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ShieldQuestion, Check, X } from 'lucide-vue-next'
 import { approvalDetail, parseInput, KEY_GRACE_MS } from '../../chat/chatModel'
 import { approvalText } from '../../../../shared/chatApproval'
@@ -23,12 +27,24 @@ const props = defineProps({
   answer: { type: Function, required: true },
   // ({ requestId }) -> Promise<input | null>: the whole input of a request
   // whose card shows only its start.
-  fetchInput: { type: Function, default: null }
+  fetchInput: { type: Function, default: null },
+  // The pane's agent ('claude' | 'codex'): what "Allow for this session"
+  // does, and who asks in the announcement.
+  agentId: { type: String, default: null },
+  // The pane's folder: where a Codex change with no details may write beyond.
+  cwd: { type: String, default: '' }
 })
 
 const cardEl = ref(null)
+const detailEl = ref(null)
+const reasonEl = ref(null)
 const reason = ref('')
 const showReason = ref(false)
+// Changes unknown (Codex): Allow waits for an explicit "yes, without seeing them".
+const acceptUnknown = ref(false)
+// The screen-reader announcement of a new request (a polite live region).
+const liveText = ref('')
+let liveTimer = null
 // Answer sent, waiting for the main process to confirm it.
 const sending = ref(false)
 // The whole input's text, once fetched ("Show all").
@@ -42,29 +58,55 @@ const disabled = computed(() => !pending.value || sending.value)
 const hidden = computed(() => (Number.isSafeInteger(props.row.hidden) && props.row.hidden > 0 ? props.row.hidden : 0))
 // Characters of the input not seen yet: Allow waits for them.
 const unseen = computed(() => hidden.value > 0 && fullText.value == null)
-const allowDisabled = computed(() => disabled.value || unseen.value)
 const detail = computed(() => {
   if (fullText.value != null) return fullText.value
   if (typeof props.row.detail === 'string') return props.row.detail
   return approvalDetail(props.row.toolName, props.row.input)
 })
 // A Codex file approval whose changes are unknown: nothing says what it
-// writes, so Allow waits for "Show all" (the main process counts it hidden).
+// writes. The main process counts it hidden (Allow waits for the whole
+// request), and seeing it is not enough: the warning stays, and Allow also
+// waits for an explicit "allow without seeing the changes".
 const changesUnknown = computed(() => !!(props.row.input && typeof props.row.input === 'object' && props.row.input.changesUnknown === true))
+const allowDisabled = computed(() => disabled.value || unseen.value || (changesUnknown.value && !acceptUnknown.value))
+// The folder the change may write in: the root Codex asks for, if any.
+const grantRoot = computed(() => {
+  const g = props.row.input && typeof props.row.input === 'object' ? props.row.input.grantRoot : null
+  return typeof g === 'string' ? g : ''
+})
+const scopeText = computed(() => {
+  if (grantRoot.value) return t('chat.approval.scopeGrantRoot', 'Codex also asks to write anywhere in {{dir}} for the rest of this session.', { dir: grantRoot.value })
+  if (props.cwd) return t('chat.approval.scopeUnknownIn', 'Allow applies it wherever Codex writes, possibly outside {{dir}}.', { dir: props.cwd })
+  return t('chat.approval.scopeUnknown', 'Allow applies it wherever Codex writes.')
+})
+const hiddenText = computed(() => t('chat.approval.hidden', '{{count}} characters hidden', { count: hidden.value }))
 // An MCP tool of the user's Codex config: it runs outside Codex's sandbox.
 const mcp = computed(() => props.row.toolName === 'MCP')
-const hiddenText = computed(() =>
-  changesUnknown.value
-    ? t('chat.approval.changesUnknown', 'Changes unknown: Codex did not say what this writes. Show all to confirm, or deny.')
-    : t('chat.approval.hidden', '{{count}} characters hidden', { count: hidden.value })
-)
 const rules = computed(() => (Array.isArray(props.row.sessionRules) ? props.row.sessionRules : []))
+// The pane says which agent asks; before it did, Codex's request ids said it.
+const agent = computed(() => {
+  if (props.agentId === 'claude' || props.agentId === 'codex') return props.agentId
+  return /^codex_/.test(String(props.row.requestId || '')) ? 'codex' : null
+})
+// Codex's "for this session" (acceptForSession) adds no rule: Codex itself
+// stops asking for the same command, or for changes to the same files.
+const codexSessionText = computed(() =>
+  props.row.toolName === 'Edit'
+    ? t('chat.approval.codexSessionFiles', 'Allow for this session: Codex stops asking to change these files until the session ends.')
+    : t('chat.approval.codexSessionCommand', 'Allow for this session: Codex stops asking to run this same command until the session ends.')
+)
 function ruleText(r) {
   if (r.kind === 'mode') return t('chat.approval.ruleMode', 'Switch this session to the {{mode}} mode', { mode: r.mode })
   if (r.kind === 'directories') return t('chat.approval.ruleDirs', 'Give access to {{dirs}}', { dirs: r.directories.join(', ') })
   return r.content ? `${r.tool}(${r.content})` : r.tool
 }
-const title = computed(() => t('chat.approval.title', 'Allow {{tool}}?', { tool: props.row.displayName || props.row.toolName }))
+const toolLabel = computed(() => props.row.displayName || props.row.toolName)
+const title = computed(() => t('chat.approval.title', 'Allow {{tool}}?', { tool: toolLabel.value }))
+function announceText() {
+  const tool = toolLabel.value
+  if (agent.value) return t('chat.approval.announce', '{{agent}} asks to run {{tool}}', { agent: agent.value === 'codex' ? 'Codex' : 'Claude', tool })
+  return t('chat.approval.announceAgent', 'The agent asks to run {{tool}}', { tool })
+}
 const decidedText = computed(() => {
   switch (props.row.status) {
     case 'allowed':
@@ -84,10 +126,14 @@ watch(
   () => props.row.status,
   () => {
     sending.value = false
+    // Answered or cancelled: nothing left to announce.
+    if (!pending.value) liveText.value = ''
   }
 )
 
-async function showAll() {
+// The whole input, fetched. `focus`: then the focus goes to the detail (the
+// "Show all" button that had it is gone).
+async function fetchAll(focus) {
   if (!props.fetchInput || loadingFull.value || !pending.value) return
   loadingFull.value = true
   fullFailed.value = false
@@ -99,7 +145,30 @@ async function showAll() {
   }
   loadingFull.value = false
   if (input == null) fullFailed.value = true
-  else fullText.value = approvalText(parseInput(input))
+  else {
+    fullText.value = approvalText(parseInput(input))
+    if (focus) {
+      await nextTick()
+      if (detailEl.value) detailEl.value.focus({ preventScroll: true })
+    }
+  }
+}
+
+function showAll() {
+  return fetchAll(true)
+}
+
+// "Allow without seeing the changes": the main process still wants the whole
+// request fetched first, so ticking it fetches it (the focus stays on the box).
+function onAcceptUnknown(e) {
+  acceptUnknown.value = !!e.target.checked
+  if (acceptUnknown.value && unseen.value) fetchAll(false)
+}
+
+async function addReason() {
+  showReason.value = true
+  await nextTick()
+  if (reasonEl.value) reasonEl.value.focus()
 }
 
 async function decide(decision) {
@@ -139,10 +208,44 @@ function typingElsewhere() {
 
 onMounted(() => {
   shownAt = Date.now()
-  if (props.autoFocus && pending.value && cardEl.value && !typingElsewhere()) cardEl.value.focus({ preventScroll: true })
+  if (!pending.value) return
+  if (props.autoFocus && cardEl.value && !typingElsewhere()) {
+    cardEl.value.focus({ preventScroll: true })
+    // The focus reads the card out: no announcement on top of it.
+    if (cardEl.value.contains(document.activeElement)) return
+  }
+  // Filled once the (empty) live region is in the page, so it is announced.
+  liveTimer = setTimeout(() => {
+    liveTimer = null
+    if (pending.value) liveText.value = announceText()
+  }, 150)
 })
 
-defineExpose({ focus: () => cardEl.value && cardEl.value.focus() })
+onBeforeUnmount(() => {
+  if (liveTimer) clearTimeout(liveTimer)
+  liveTimer = null
+})
+
+// The pane's shortcut (isFocusApprovalKey) calls this: the user asked for it,
+// so it takes the focus even from the composer. -> true when it did.
+function focus() {
+  const el = cardEl.value
+  if (!el) return false
+  el.focus({ preventScroll: true })
+  if (typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'nearest' })
+  return document.activeElement === el
+}
+
+defineExpose({ focus })
+</script>
+
+<script>
+// The key that moves the focus to the pane's pending approval card: Alt+A
+// (by its character, not its place: A is where Q is on AZERTY). AltGr is
+// Ctrl+Alt, so no character typed with it matches.
+export function isFocusApprovalKey(e) {
+  return !!e && e.altKey === true && !e.ctrlKey && !e.shiftKey && !e.metaKey && typeof e.key === 'string' && e.key.toLowerCase() === 'a'
+}
 </script>
 
 <template>
@@ -169,8 +272,21 @@ defineExpose({ focus: () => cardEl.value && cardEl.value.focus() })
     <p v-if="mcp" class="chat-approval-warn" data-test="chat-approval-mcp">
       {{ t('chat.approval.mcpUnsandboxed', 'An MCP tool from your Codex config: it runs outside the sandbox, with your rights.') }}
     </p>
-    <pre v-if="detail" class="chat-approval-detail">{{ detail }}</pre>
-    <div v-if="hidden > 0 && fullText == null" class="chat-approval-hidden" data-test="chat-approval-hidden">
+    <pre v-if="detail" ref="detailEl" class="chat-approval-detail" tabindex="-1" data-test="chat-approval-detail">{{ detail }}</pre>
+    <!-- Codex changes with no details: stays until answered, whatever was shown. -->
+    <div v-if="changesUnknown" class="chat-approval-hidden" data-test="chat-approval-hidden">
+      <span data-test="chat-approval-unknown">{{ t('chat.approval.changesUnknown', 'Changes unknown: Codex did not say which files this changes.') }}</span>
+      <span data-test="chat-approval-scope">{{ scopeText }}</span>
+      <button v-if="pending && fetchInput && unseen" type="button" class="chat-link" data-test="chat-approval-show-all" :disabled="loadingFull" @click="showAll">
+        {{ t('chat.approval.showAll', 'Show all') }}
+      </button>
+      <label v-if="pending" class="chat-approval-accept">
+        <input type="checkbox" data-test="chat-approval-accept-unknown" :checked="acceptUnknown" :disabled="disabled" @change="onAcceptUnknown" />
+        {{ t('chat.approval.acceptUnknown', 'Allow without seeing the changes') }}
+      </label>
+      <span v-if="pending && fullFailed">{{ t('chat.approval.fullFailed', 'The whole input could not be read.') }}</span>
+    </div>
+    <div v-else-if="unseen" class="chat-approval-hidden" data-test="chat-approval-hidden">
       <span>{{ hiddenText }}</span>
       <button v-if="pending && fetchInput" type="button" class="chat-link" data-test="chat-approval-show-all" :disabled="loadingFull" @click="showAll">
         {{ t('chat.approval.showAll', 'Show all') }}
@@ -195,11 +311,12 @@ defineExpose({ focus: () => cardEl.value && cardEl.value.focus() })
       <button type="button" class="chat-btn danger" data-test="chat-approve-deny" :disabled="disabled" :title="t('chat.approval.denyHint', 'Deny (N)')" @click="decide('deny')">
         {{ t('chat.approval.deny', 'Deny') }}
       </button>
-      <button v-if="!showReason" type="button" class="chat-link" :disabled="disabled" @click="showReason = true">
+      <button v-if="!showReason" type="button" class="chat-link" data-test="chat-approve-add-reason" :disabled="disabled" @click="addReason">
         {{ t('chat.approval.addReason', 'Add a reason') }}
       </button>
       <input
         v-else
+        ref="reasonEl"
         v-model="reason"
         class="chat-approval-reason"
         data-test="chat-approve-reason"
@@ -209,8 +326,10 @@ defineExpose({ focus: () => cardEl.value && cardEl.value.focus() })
         @keydown.enter.prevent="decide('deny')"
       />
     </div>
-    <div v-if="pending" class="chat-approval-rules" data-test="chat-approval-rules">
-      <template v-if="rules.length">
+    <!-- What "Allow for this session" does: nothing to say when it is not offered. -->
+    <div v-if="pending && row.sessionAllowed !== false" class="chat-approval-rules" data-test="chat-approval-rules">
+      <span v-if="agent === 'codex'" data-test="chat-approval-codex-session">{{ codexSessionText }}</span>
+      <template v-else-if="rules.length">
         <span>{{ t('chat.approval.rulesTitle', 'Allow for this session also allows:') }}</span>
         <ul>
           <li v-for="(r, i) in rules" :key="i">{{ ruleText(r) }}</li>
@@ -218,6 +337,7 @@ defineExpose({ focus: () => cardEl.value && cardEl.value.focus() })
       </template>
       <span v-else>{{ t('chat.approval.noRules', 'Allow for this session adds no rule here: the same as Allow.') }}</span>
     </div>
+    <span class="sr-only" role="status" aria-live="polite" aria-atomic="true" data-test="chat-approval-live">{{ liveText }}</span>
   </div>
 </template>
 
@@ -305,6 +425,18 @@ defineExpose({ focus: () => cardEl.value && cardEl.value.focus() })
   font-size: 11.5px;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.chat-approval-detail:focus-visible {
+  outline: 1px solid var(--ui-accent);
+}
+
+.chat-approval-accept {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text);
+  cursor: pointer;
 }
 
 .chat-approval-warn {

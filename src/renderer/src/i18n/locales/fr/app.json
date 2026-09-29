@@ -71,7 +71,8 @@
       "logsHint": "Un problème ? Les journaux aident à en trouver la cause.",
       "openLogs": "Ouvrir le dossier des journaux",
       "copyDiagnostics": "Copier les diagnostics",
-      "foot": "Déposez des fichiers sur un panneau pour coller leurs chemins. Sélectionnez du texte pour le copier, clic droit pour coller. Maj+clic droit sur un panneau pour plus d’options."
+      "foot": "Déposez des fichiers sur un panneau pour coller leurs chemins. Sélectionnez du texte pour le copier, clic droit pour coller. Maj+clic droit sur un panneau pour plus d’options.",
+      "chatApproval": "Dans un pane de chat : aller à la demande qui attend votre réponse"
     },
     "toolbar": {
       "updateVersion": "Mettre à jour {{version}}",
