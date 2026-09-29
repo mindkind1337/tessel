@@ -1,4 +1,4 @@
-// The sub-agents of a Claude Code conversation, polled once per conversation
+// The sub-agents of a Claude Code or Codex conversation, polled once per conversation
 // however many places show them (the sidebar's agent rows). Same data path
 // and guards as the pane header's AgentChildren.vue: window.shellApi
 // .agentChildren({ agent, sessionId, accountId }), an answer for another
@@ -8,8 +8,11 @@ import { reactive } from 'vue'
 
 const feeds = new Map() // key -> feed
 
+import { listsChildren } from './agentChildrenView'
+export { CHILD_AGENTS, listsChildren } from './agentChildrenView'
+
 export function childrenKey({ agent, sessionId, accountId } = {}) {
-  if (agent !== 'claude' || !sessionId) return null
+  if (!listsChildren(agent) || !sessionId) return null
   return JSON.stringify([agent, sessionId, accountId === undefined ? null : accountId])
 }
 
@@ -52,7 +55,7 @@ function makeFeed(key, args, api, doc) {
 }
 
 // -> { state: { list, at }, refresh, release } or null when this pane has no
-// sub-agents to show (not Claude Code, no conversation yet).
+// sub-agents to show (not Claude Code or Codex, no conversation yet).
 export function acquireChildren(args, { api = typeof window !== 'undefined' ? window.shellApi : null, doc = typeof document !== 'undefined' ? document : null } = {}) {
   const key = childrenKey(args || {})
   if (!key) return null

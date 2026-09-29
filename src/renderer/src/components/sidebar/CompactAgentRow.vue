@@ -4,7 +4,8 @@
 // Copyright (c) 2026 Lovecast Inc.): state glyph, agent icon, "prompt -
 // what it does", its age; the pane you are in is filled. Tessel adds the
 // pane number and its team marks (lead, unread team messages, tools down).
-// A Claude Code row lists its conversation's sub-agents under it, folded by
+// A Claude Code or Codex row lists its conversation's sub-agents under it
+// (each with its type and model as small tags), folded by
 // a chevron in the card gutter like Orca's child agents.
 // Hovering the row (or a sub-agent) opens a hover card with its details
 // instead of a native tooltip (HoverCardContent, AgentHoverDetails).
@@ -17,6 +18,7 @@ import HoverCardContent from '../hover/HoverCardContent.vue'
 import { useHoverCard } from '../hover/useHoverCard'
 import { acquireChildren, childrenKey, splitChildren, childDotState } from '../../agentChildrenFeed'
 import { childTime, formatTokens } from '../../agentChildrenView'
+import { modelLabel } from '../../../../shared/modelLabel'
 import { childrenFolded, olderShown } from './agentRowState'
 import { t } from '../../i18n'
 
@@ -245,8 +247,9 @@ const workerOfLabel = computed(() =>
       <AgentStateDot :state="childDotState(c)" :title="stateTitle(c.state)" :tooltip="false" />
       <span class="car-text">
         <span class="car-lead">{{ c.title || noTitle() }}</span>
-        <span v-if="c.type" class="car-trail"> - {{ c.type }}</span>
       </span>
+      <span v-if="c.type" class="car-tag car-child-type" data-child-type="">{{ c.type }}</span>
+      <span v-if="c.model" class="car-tag car-child-model" data-child-model="">{{ modelLabel(c.model) }}</span>
       <span class="car-time">{{ childStats(c) }}</span>
     </div>
     <template v-if="showOlder">
@@ -265,8 +268,9 @@ const workerOfLabel = computed(() =>
         <AgentStateDot :state="childDotState(c)" :title="t('sidebar.agentRow.finished', 'Finished')" :tooltip="false" />
         <span class="car-text">
           <span class="car-lead">{{ c.title || noTitle() }}</span>
-          <span v-if="c.type" class="car-trail"> - {{ c.type }}</span>
         </span>
+        <span v-if="c.type" class="car-tag car-child-type" data-child-type="">{{ c.type }}</span>
+        <span v-if="c.model" class="car-tag car-child-model" data-child-model="">{{ modelLabel(c.model) }}</span>
         <span class="car-time">{{ childStats(c) }}</span>
       </div>
     </template>
@@ -287,12 +291,13 @@ const workerOfLabel = computed(() =>
     <div class="hc-body" data-agent-child-hover="">
       <div class="hc-identity">
         <div class="hc-title">{{ hoveredChild.title || noTitle() }}</div>
-        <div v-if="hoveredChild.type" class="hc-branch">{{ hoveredChild.type }}</div>
       </div>
       <div class="hc-status">
         <AgentStateDot :state="childDotState(hoveredChild)" :tooltip="false" />
         <span class="hc-status-label" v-text="childState"></span>
       </div>
+      <div v-if="hoveredChild.type" class="hc-detail" data-hover-type="" v-text="t('sidebar.agentRow.childType', 'Type: {{type}}', { type: hoveredChild.type })"></div>
+      <div v-if="hoveredChild.model" class="hc-detail" data-hover-model="" v-text="t('sidebar.agentRow.childModel', 'Model: {{model}}', { model: modelLabel(hoveredChild.model) })"></div>
       <div class="hc-detail" v-text="childStatsLong(hoveredChild)"></div>
     </div>
   </HoverCardContent>

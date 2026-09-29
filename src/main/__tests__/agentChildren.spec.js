@@ -16,7 +16,7 @@ describe("a Claude Code conversation's sub-agents", () => {
 
   it('finished only when its last message ended the turn and nothing followed', () => {
     const a = { type: 'assistant', timestamp: '2026-09-28T10:05:00Z', message: { stop_reason: 'end_turn', usage: { input_tokens: 2, cache_read_input_tokens: 100000, cache_creation_input_tokens: 5000, output_tokens: 800 } } }
-    expect(summarizeTail([line(a), line({ type: 'attachment', timestamp: '2026-09-28T10:05:01Z' })])).toEqual({ done: true, last: Date.parse('2026-09-28T10:05:01Z'), tokens: 105802 })
+    expect(summarizeTail([line(a), line({ type: 'attachment', timestamp: '2026-09-28T10:05:01Z' })])).toEqual({ done: true, last: Date.parse('2026-09-28T10:05:01Z'), tokens: 105802, model: null })
     const working = [line({ ...a, message: { ...a.message, stop_reason: 'tool_use' } }), line({ type: 'user', timestamp: '2026-09-28T10:06:00Z' })]
     expect(summarizeTail(working).done).toBe(false)
   })

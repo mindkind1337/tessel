@@ -82,7 +82,9 @@ describe('states in Orca words', () => {
     expect(paneRow(pane('x', { kind: 'shell', title: 'pwsh' }), NOW)).toMatchObject({ primary: 'pwsh', secondary: 'Terminal' })
     expect(paneRow(pane('x', { task: 'Fix it', state: 'working' }), NOW)).toMatchObject({ primary: 'x', secondary: '', subline: 'Fix it', stateLabel: 'Working' })
     expect(paneRow(pane('x', { sessionId: 's1' }), NOW).children).toEqual({ agent: 'claude', sessionId: 's1' })
-    expect(paneRow(pane('x', { agentId: 'codex', sessionId: 's1' }), NOW).children).toBeNull()
+    expect(paneRow(pane('x', { agentId: 'codex', sessionId: 's1', accountId: null }), NOW).children).toEqual({ agent: 'codex', sessionId: 's1', accountId: null })
+    expect(paneRow(pane('x', { agentId: 'opencode', sessionId: 'ses_1' }), NOW).children).toEqual({ agent: 'opencode', sessionId: 'ses_1' })
+    expect(paneRow(pane('x', { agentId: 'gemini', sessionId: 's1' }), NOW).children).toBeNull()
   })
 })
 

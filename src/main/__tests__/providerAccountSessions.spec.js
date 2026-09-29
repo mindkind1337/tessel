@@ -89,6 +89,30 @@ describe('account-aware session paths', () => {
       accountLabel: 'Fixture account'
     })
   })
+  it("reads a Codex conversation's sub-agents in the pane's account CODEX_HOME", async () => {
+    const time = new Date()
+    const iso = time.toISOString()
+    const kid = '44444444-2222-4333-8444-555555555555'
+    put(
+      join(
+        managed,
+        'sessions',
+        String(time.getFullYear()),
+        String(time.getMonth() + 1).padStart(2, '0'),
+        String(time.getDate()).padStart(2, '0'),
+        `rollout-2026-09-28T10-00-00-${kid}.jsonl`
+      ),
+      [
+        { type: 'session_meta', timestamp: iso, payload: { id: kid, session_id: A, parent_thread_id: A, thread_source: 'subagent', agent_nickname: 'Boole', agent_path: '/root/research', timestamp: iso } },
+        { type: 'event_msg', timestamp: iso, payload: { type: 'task_started' } }
+      ]
+    )
+    const managedKids = await api.children({ agent: 'codex', sessionId: A, accountId: 'managed' })
+    expect(managedKids.map((c) => [c.id, c.title, c.state])).toEqual([[kid, 'research (Boole)', 'running']])
+    expect(await api.children({ agent: 'codex', sessionId: A, accountId: null })).toEqual([])
+    expect(await api.children({ agent: 'codex', sessionId: A, accountId: 'missing' })).toEqual([])
+    expect(await api.children({ agent: 'gemini', sessionId: A })).toEqual([])
+  })
   it('uses the configured Claude directory and refuses missing scoped accounts', async () => {
     put(join(claude, 'projects', 'fixture', `${C}.jsonl`), [
       {

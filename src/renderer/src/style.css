@@ -7621,9 +7621,27 @@ button.act-stat:hover,
   color: var(--text-dim);
 }
 
-.agent-child-type {
+.agent-child-type,
+.agent-child-model {
   flex: 0 0 auto;
   color: var(--text-dim);
+}
+
+/* The sub-agent's type and model as small tags (readable, never cut). */
+.agent-child-type,
+.agent-child-model,
+.car-child-type,
+.car-child-model {
+  padding: 0 4px;
+  border: 1px solid color-mix(in srgb, currentColor 35%, transparent);
+  border-radius: 4px;
+  line-height: 14px;
+  white-space: nowrap;
+}
+
+.agent-child-model,
+.car-child-model {
+  border-style: dashed;
 }
 
 .agent-child-title {

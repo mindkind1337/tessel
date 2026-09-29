@@ -119,7 +119,9 @@
       "showLess": "Afficher moins",
       "workerOf": "exécutant de #{{num}}",
       "worker": "exécutant",
-      "workerOfHint": "Exécutant de {{coordinator}} : y aller"
+      "workerOfHint": "Exécutant de {{coordinator}} : y aller",
+      "childType": "Type : {{type}}",
+      "childModel": "Modèle : {{model}}"
     },
     "card": {
       "markReadTooltip": "Marquer comme lu · {{status}}",
@@ -342,7 +344,9 @@
       "chipTitle": "Sous-agents lancés par cette conversation : {{list}}. Cliquez pour voir la liste",
       "none": "aucun",
       "tokens": "{{tokens}}",
-      "title": "Sous-agents"
+      "title": "Sous-agents",
+      "typeTitle": "Type de sous-agent : {{type}}",
+      "modelTitle": "Modèle : {{model}}"
     },
     "launch": {
       "left": "Gauche",

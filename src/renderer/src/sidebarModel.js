@@ -7,6 +7,7 @@
 // lib/worktree-status.ts, lib/short-time-ago.ts). Pure functions: App feeds
 // raw workspaces, the sidebar renders the rows.
 import { t, intlLocale } from './i18n'
+import { listsChildren } from './agentChildrenView'
 
 // --- Orca's agent state vocabulary (AgentStateDot.tsx) ------------------------
 export function agentStateLabel(state) {
@@ -259,10 +260,10 @@ export function paneRow(pane, now = Date.now()) {
     activityAt: pane.activityAt || 0,
     pid: pane.pid || null,
     trackLevel: pane.track ? pane.track.level : null,
-    // Claude Code's sub-agents are listed under its row.
+    // Sub-agents (Claude Code, Codex, OpenCode, Cline) are listed under its row.
     children:
-      agent && pane.agentId === 'claude' && pane.sessionId && !pane.sleeping
-        ? { agent: 'claude', sessionId: pane.sessionId, ...(pane.accountId !== undefined ? { accountId: pane.accountId } : {}) }
+      agent && listsChildren(pane.agentId) && pane.sessionId && !pane.sleeping
+        ? { agent: pane.agentId, sessionId: pane.sessionId, ...(pane.accountId !== undefined ? { accountId: pane.accountId } : {}) }
         : null
   }
 }
