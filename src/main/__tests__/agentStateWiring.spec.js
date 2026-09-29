@@ -408,7 +408,7 @@ function wakeSandbox(over = {}) {
     await api.launch(leaf, { id: agentId, name: agentId, command: agentId }, opts, opts.id, { command: agentId, args: '' }, undefined, null)
     return written[0]
   }
-  return { ctx, api, launchLine }
+  return { ctx, api, launchLine, written: () => written }
 }
 
 it('Tessel relaunching a Codex with team messages waiting: a first prompt on its command line, fresh or resumed; none when nothing waits', async () => {
@@ -437,6 +437,62 @@ it('Tessel relaunching a Codex with team messages waiting: a first prompt on its
   // Team tools not set up: it could not read them.
   ctx.teamToolsReady = false
   expect(await launchLine('codex', { id: 'pane-2', sessionId: 's-2', resume: true, wake: { teamId: 'team-1', gen: 1 } })).not.toContain(WAKE_LAUNCH_PROMPT)
+})
+
+it('team wake-ups off: no launch prompt, checked before and after counting and when the line is typed; nothing recorded', async () => {
+  const prompt = WAKE_LAUNCH_PROMPT
+  const opts = () => ({ id: 'pane-2', sessionId: 's-2', resume: true, wake: { teamId: 'team-1', gen: 1 } })
+  // Off from the start.
+  const off = wakeSandbox({ teamUnread: { 'pane-2': 2 } })
+  off.ctx.settings.teamWakeUps = false
+  expect(await off.launchLine('codex', opts())).not.toContain(prompt)
+  expect(off.ctx.wakeState['pane-2']).toBeUndefined()
+  // Turned off while the count was read (Tessel just started).
+  const during = wakeSandbox({ teams: { value: [{ id: 'team-1', channelDir: 'C:\\proj' }] } })
+  during.ctx.window.shellApi.channel.poll = vi.fn(async () => {
+    during.ctx.settings.teamWakeUps = false
+    return { ok: true, unreadCounts: { 'pane-2': 2 } }
+  })
+  expect(await during.launchLine('codex', opts())).not.toContain(prompt)
+  expect(during.ctx.wakeState['pane-2']).toBeUndefined()
+  // Turned off before the deferred line is typed.
+  const timers = []
+  const late = wakeSandbox({ teamUnread: { 'pane-2': 2 }, setTimeout: (fn) => timers.push(fn) })
+  expect(await late.launchLine('codex', opts())).toBeUndefined()
+  late.ctx.settings.teamWakeUps = false
+  timers.forEach((fn) => fn())
+  expect(late.written()[0]).toBe('codex resume s-2 --no-daemon -c check_for_update_on_startup=false\r')
+  expect(late.ctx.wakeState['pane-2']).toBeUndefined()
+})
+
+it('the typing guard vetoes a reminder once team wake-ups are off, a usage limit shows, or it works', () => {
+  for (const unconfirmed of [false, true]) {
+    const node = { id: 'pane-7', agentLaunchToken: 'a'.repeat(32), agentId: 'codex', sessionId: 's-7', team: 'team-1', kind: 'agent', teamTools: true, launchedAt: 0 }
+    const { ctx, api } = wakeSandbox({
+      teamUnread: { 'pane-7': 1 },
+      findLeaf: () => node,
+      agentStateKnown: () => !unconfirmed,
+      trackedState: { 'pane-7': { state: unconfirmed ? 'unknown' : 'idle' } }
+    })
+    ctx.settings.teamWakeUnconfirmed = unconfirmed
+    api.wakeIfNeeded(node)
+    expect(ctx.deliverToAgent).toHaveBeenCalledTimes(1)
+    const meta = ctx.deliverToAgent.mock.calls[0][2]
+    const state = ctx.trackedState['pane-7'].state
+    expect(meta.guard()).toBe(true)
+    ctx.settings.teamWakeUps = false
+    expect(meta.guard()).toBe(false)
+    ctx.settings.teamWakeUps = true
+    ctx.limits['pane-7'] = { reset: '' }
+    expect(meta.guard()).toBe(false)
+    delete ctx.limits['pane-7']
+    for (const s of ['limited', 'working', 'approval']) {
+      ctx.trackedState['pane-7'].state = s
+      expect(meta.guard()).toBe(false)
+    }
+    ctx.trackedState['pane-7'].state = state
+    expect(meta.guard()).toBe(true)
+  }
 })
 
 it('Tessel just started (nothing polled yet): the count comes from the team channel, only counts asked', async () => {

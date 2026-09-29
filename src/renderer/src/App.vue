@@ -927,19 +927,27 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
     // the team tools or an update, a dead pane resumed at start) while team
     // messages wait for it: its first prompt says so, on the command line
     // (nothing typed). Only when messages wait, never over a worker's own
-    // first prompt, only with the team tools set up to read them.
+    // first prompt, only with the team tools set up to read them, and only
+    // while team wake-ups are on (checked before and after counting, and
+    // again when the line is typed).
     let wakeArg = ''
-    if (opts.wake && teamToolsReady && !(workerOpts && workerOpts.initialPrompt) && wakeLaunchArgs(agent.id, 1)) {
-      const waiting = await unreadAtLaunch(id, opts.wake.teamId)
-      wakeArg = wakeLaunchArgs(agent.id, waiting)
-      if (wakeArg) {
+    let waiting = 0
+    if (opts.wake && settings.teamWakeUps && teamToolsReady && !(workerOpts && workerOpts.initialPrompt) && wakeLaunchArgs(agent.id, 1)) {
+      waiting = await unreadAtLaunch(id, opts.wake.teamId)
+      if (settings.teamWakeUps) wakeArg = wakeLaunchArgs(agent.id, waiting)
+    }
+    const base = (launch.args ? `${start.line} ${launch.args}` : start.line) + extra
+    setTimeout(() => {
+      const withWake = !!wakeArg && !!settings.teamWakeUps
+      const full = base + (withWake ? wakeArg : '')
+      const line = opts.wrap ? opts.wrap(full) : full
+      window.shellApi.writePty(id, `${line}\r`)
+      // Recorded only when the prompt really went: it was this launch's reminder.
+      if (withWake) {
         noteLaunchWake(id, opts.wake.gen || 0)
         if (window.shellApi.log) window.shellApi.log('info', `team tools: ${agent.name || agent.id} (${id}) relaunched with a first prompt for ${waiting} waiting message(s)`)
       }
-    }
-    const full = (launch.args ? `${start.line} ${launch.args}` : start.line) + extra + wakeArg
-    const line = opts.wrap ? opts.wrap(full) : full
-    setTimeout(() => window.shellApi.writePty(id, `${line}\r`), 600)
+    }, 600)
     if (FOUND_AFTER_START.includes(sessionKind(agent)) && !leaf.sessionId) watchFoundSession(leaf, agent.id)
   }
   return leaf
@@ -5580,12 +5588,16 @@ function typeWake(leaf, count, unconfirmed) {
     if (window.shellApi.log) window.shellApi.log('info', `team tools: sent the waiting reminder in ${paneLabel(leaf)} (${leaf.id})`)
     return
   }
-  // Not confirmed: the same launch, session and team, the setting still on,
-  // nothing to approve, no line left unsent, at the moment it is typed.
+  // At the moment it is typed. Not confirmed: also the same launch, session
+  // and team, nothing to approve, no line left unsent.
   const launchToken = leaf.agentLaunchToken
   const sessionId = leaf.sessionId
   const team = leaf.team
   const samePane = () => {
+    // Both switches still on, and no usage limit or work under way (waitIdle
+    // waits for a busy screen, not for a quota).
+    if (!settings.teamWakeUps || (unconfirmed && !settings.teamWakeUnconfirmed)) return false
+    if (limits[leaf.id] || ['limited', 'working', 'approval'].includes(trackedState[leaf.id] && trackedState[leaf.id].state)) return false
     if (!unconfirmed) return true
     const now = findLeaf(leaf.id)
     if (!now || now.agentLaunchToken !== launchToken || now.sessionId !== sessionId || now.team !== team) return false
