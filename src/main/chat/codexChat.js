@@ -14,6 +14,7 @@
 // Protocol handling informed by Orca's Codex app-server client
 // (github.com/stablyai/orca, src/main/codex/, MIT licence).
 import { codexSkillDiscovery } from './skills.js'
+import { createQuestionRequests, normalizeQuestions, providerAnswers } from './questions.js'
 import { EventEmitter } from 'events'
 import { spawn as nodeSpawn } from 'child_process'
 import { randomUUID } from 'crypto'
@@ -670,6 +671,7 @@ export function createCodexChat(opts) {
   const turnPosture = new Map() // turn id -> 'yolo' | 'manual' when its turn/start was sent
   let postureFailed = false
   const permByRaw = new Map() // JSON of the server's request id -> our permission id
+  const questions = createQuestionRequests(emit)
 
   function logAt(level, msg) {
     if (!log) return
@@ -772,10 +774,19 @@ export function createCodexChat(opts) {
         addApproval(id, permissionFromElicitation(`codex_perm_${++permN}`, params), params, 'elicitation')
         return
       }
-      case 'item/tool/requestUserInput':
-        // No question card yet: empty answers (the model goes on without them).
-        logAt('info', 'requestUserInput answered with no answers')
-        return respond(id, { answers: {} })
+      case 'item/tool/requestUserInput': {
+        const currentTurn = !closing && !finished && !state.interruptRequested && !foreign &&
+          params.threadId === state.threadId && typeof params.turnId === 'string' &&
+          params.turnId.length > 0 && params.turnId.length <= 120 &&
+          !state.settledTurns.has(params.turnId) && (!state.turn || state.turn.id === params.turnId)
+        const normalized = currentTurn ? normalizeQuestions(params.questions, 'codex') : null
+        if (normalized) clearIdleTimer()
+        questions.add({
+          rawId: id, questions: normalized, turnId: params.turnId,
+          reply: answers => respond(id, { answers: answers ? providerAnswers(normalized, answers, 'codex') : {} })
+        })
+        return
+      }
       case 'item/permissions/requestApproval':
         return respond(id, { permissions: {}, scope: 'turn', strictAutoReview: true })
       case 'item/tool/call':
@@ -817,10 +828,10 @@ export function createCodexChat(opts) {
   function armIdleSettle(kind) {
     clearIdleTimer()
     const turn = state.turn
-    if (!turn || turn.settled || state.retrying) return
+    if (!turn || turn.settled || state.retrying || (kind === 'idle' && questions.size())) return
     idleTimer = setTimeout(() => {
       idleTimer = null
-      if (state.turn !== turn || turn.settled || !alive()) return
+      if (state.turn !== turn || turn.settled || !alive() || (kind === 'idle' && questions.size())) return
       logAt('warn', `turn ${turn.id} settled from thread status ${kind} (no turn/completed)`)
       const status = kind === 'systemError' ? 'failed' : state.interruptRequested ? 'interrupted' : 'completed'
       // i18n-ignore internal
@@ -846,6 +857,7 @@ export function createCodexChat(opts) {
         // The finished turn's approvals only (answered no).
         const ended = payload.turnId || ''
         cancelPermissions((p) => p.turnId === ended, { decline: true })
+        questions.cancel(q => q.turnId === ended, true)
       }
       emit(type, payload)
     }
@@ -864,6 +876,7 @@ export function createCodexChat(opts) {
   function onNotification(m) {
     const params = obj(m.params)
     if (m.method === 'serverRequest/resolved') {
+      if (!params.threadId || params.threadId === state.threadId) questions.cancelRaw(params.requestId)
       const permId = permByRaw.get(JSON.stringify(params.requestId))
       if (permId) cancelPermissions((p) => JSON.stringify(p.rawId) === JSON.stringify(params.requestId))
       return
@@ -952,6 +965,7 @@ export function createCodexChat(opts) {
       entry.resolve({ ok: false, code: 'exit', error: 'process exited' }) // i18n-ignore internal
     }
     pending.clear()
+    questions.cancel()
     cancelPermissions()
     const subagentEvents = []
     state.subagents.deliverTo(null)
@@ -1191,8 +1205,9 @@ export function createCodexChat(opts) {
   async function interrupt() {
     if (!alive()) return { ok: false, error: 'not running' } // i18n-ignore internal
     const turn = state.turn && !state.turn.settled && state.turn.id ? state.turn : null
+    if (turn) state.interruptRequested = true
+    questions.cancel(() => true, true)
     if (!turn) return { ok: true, stillQueued: [] }
-    state.interruptRequested = true
     const r = await request('turn/interrupt', { threadId: state.threadId, turnId: turn.id })
     if (!r.ok) return { ok: false, error: r.error }
     return { ok: true, stillQueued: [] }
@@ -1267,6 +1282,7 @@ export function createCodexChat(opts) {
   // wait for its exit is bounded (timeouts.quitKill) so quitting never hangs.
   async function close({ kill = false } = {}) {
     closing = true
+    questions.cancel(() => true, true)
     if (!child || finished) return { ok: true }
     const done = new Promise((resolve) => (finished ? resolve() : chat.once('exit', resolve)))
     if (kill) {
@@ -1298,6 +1314,7 @@ export function createCodexChat(opts) {
     send,
     interrupt,
     answerPermission,
+    answerQuestion: questions.answer,
     setModel,
     setEffort,
     setPermissionMode,

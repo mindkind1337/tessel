@@ -506,10 +506,12 @@ describe('codexChat: approvals', () => {
     expect(await chat.answerPermission(perm.requestId, { behavior: 'allow' })).toMatchObject({ ok: false })
   })
 
-  it('other server requests are answered automatically', async () => {
+  it('other server requests are answered automatically; questions wait for explicit cancellation', async () => {
     const { chat, events, readLog } = setup()
     await chat.start()
     await chat.send({ uuid: randomUUID(), text: 'SERVERREQS' })
+    const question = await waitFor(() => ofType(events, 'question')[0])
+    expect(await chat.answerQuestion(question.requestId, { cancel: true })).toEqual({ ok: true })
     await waitFor(() => turnEnds(events).length === 1)
     const got = Object.fromEntries(readLog().filter((r) => r.t === 'answer').map((r) => [r.method, r.response]))
     expect(got['item/tool/requestUserInput'].result).toEqual({ answers: {} })

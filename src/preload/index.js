@@ -377,6 +377,7 @@ const api = {
     sendTeam: (opts) => ipcRenderer.invoke('chat:sendTeam', opts),
     interrupt: (opts) => ipcRenderer.invoke('chat:interrupt', opts),
     approve: (opts) => ipcRenderer.invoke('chat:approve', opts),
+    answer: (opts) => ipcRenderer.invoke('chat:answer', opts),
     approvalInput: (opts) => ipcRenderer.invoke('chat:approvalInput', opts),
     setOption: (opts) => ipcRenderer.invoke('chat:setOption', opts),
     close: (opts) => ipcRenderer.invoke('chat:close', opts),

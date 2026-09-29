@@ -20,7 +20,7 @@ export const READ_LAST = 2000
 const TAIL_CHUNK = 64 * 1024
 const PANE = /^[A-Za-z0-9._-]{1,100}$/
 const SKIPPED = new Set(['assistantDelta'])
-const CLIPPED = new Set(['tool', 'toolResult', 'approval'])
+const CLIPPED = new Set(['tool', 'toolResult', 'approval', 'question', 'questionStatus'])
 
 export function validPaneId(id) {
   return typeof id === 'string' && PANE.test(id) && id !== '.' && !id.includes('..')

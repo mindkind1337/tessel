@@ -18,6 +18,7 @@ class FakeAdapter extends EventEmitter {
     this.send = vi.fn(async () => ({ ok: true }))
     this.interrupt = vi.fn(async () => ({ ok: true }))
     this.answerPermission = vi.fn(async () => ({ ok: true }))
+    this.answerQuestion = vi.fn(async () => ({ ok: true }))
     this.setModel = vi.fn(async () => ({ ok: true }))
     this.setEffort = vi.fn(async () => ({ ok: true }))
     this.setPermissionMode = vi.fn(async () => ({ ok: true }))
@@ -83,6 +84,119 @@ const openOk = async (chat, extra = {}) => {
   await flush()
   return r
 }
+
+describe('question IPC and lifecycle', () => {
+  const question = { requestId: 'question_fixture', questions: [{ id: 'q0', question: 'Which?', multiSelect: false, options: [{ id: 'o0', label: 'One' }, { id: 'o1', label: 'Two' }] }], status: 'pending' }
+  const answers = [{ questionId: 'q0', optionIds: ['o0'] }]
+  function wire(chat) {
+    const handlers = {}
+    chat.register({ handle: (name, fn) => { handlers[name] = q => fn({}, q) } })
+    return handlers
+  }
+  it('validates in main, journals question/status, and exposes authoritative pending history', async () => {
+    const chat = createChatSessions(deps), h = wire(chat)
+    await openOk(chat)
+    const a = adapters[0]
+    a.emit('question', question)
+    a.emit('question', question)
+    expect(events('question')).toEqual([{ type: 'question', ...question }])
+    expect(events('approval')).toEqual([])
+    expect(chat.history({ paneId, tail: 1 }).questions).toEqual([{ type: 'question', ...question }])
+    expect(createChatSessions(deps).history({ paneId }).questions).toEqual([])
+    for (const bad of [null, { paneId: '../x', requestId: question.requestId, answers }, { paneId, requestId: 'bad id', answers }, { paneId, requestId: question.requestId, answers: [] }, { paneId, requestId: question.requestId, cancel: 'true' }, { paneId, requestId: question.requestId, cancel: true, answers }, { paneId, requestId: question.requestId, answers: [{ questionId: 'q0', optionIds: [], other: 'forged' }] }]) {
+      expect(await h['chat:answer'](bad)).toMatchObject({ ok: false, code: 'invalid' })
+    }
+    expect(a.answerQuestion).not.toHaveBeenCalled()
+    expect(await h['chat:answer']({ paneId, requestId: question.requestId, answers, updatedInput: { evil: true } })).toEqual({ ok: true })
+    expect(a.answerQuestion).toHaveBeenCalledExactlyOnceWith(question.requestId, { answers })
+    expect(a.answerPermission).not.toHaveBeenCalled()
+    expect(last('questionStatus')).toEqual({ type: 'questionStatus', requestId: question.requestId, status: 'answered', answers })
+    expect(chat.history({ paneId }).questions).toEqual([])
+    expect(chat.history({ paneId }).events.map(e => e.event).filter(e => e.type === 'questionStatus')).toEqual(events('questionStatus'))
+    expect(await chat.answer({ paneId, requestId: question.requestId, answers })).toMatchObject({ code: 'unknown' })
+    await chat.close({ paneId })
+  })
+  it('protects answers with ipcGuard and refuses another pane', async () => {
+    const registered = {}, ipc = { handle: (name, fn) => { registered[name] = fn } }
+    guardIpc(ipc, { isTrustedSender: event => event.main === true })
+    const chat = createChatSessions(deps)
+    chat.register(ipc)
+    await openOk(chat)
+    adapters[0].emit('question', question)
+    await openOk(chat, { paneId: 'pane-2' })
+    const value = { paneId, requestId: question.requestId, answers }
+    await expect(registered['chat:answer']({ main: false }, value)).rejects.toThrow(/refused/)
+    expect(await registered['chat:answer']({ main: true }, { ...value, paneId: 'pane-2' })).toMatchObject({ code: 'unknown' })
+    expect(adapters[0].answerQuestion).not.toHaveBeenCalled()
+    expect(await registered['chat:answer']({ main: true }, value)).toEqual({ ok: true })
+    await chat.closeAll()
+  })
+  it.each(['turnEnd', 'exit', 'close', 'interrupt', 'cancel'])('settles questions on %s without changing approvals or permissions', async how => {
+    const chat = createChatSessions(deps)
+    await openOk(chat)
+    const a = adapters[0]
+    a.emit('question', question)
+    if (how === 'turnEnd') a.emit('turnEnd', { status: 'completed' })
+    if (how === 'exit') a.emit('exit', { code: 0 })
+    if (how === 'close') await chat.close({ paneId })
+    if (how === 'interrupt') await chat.interrupt({ paneId })
+    if (how === 'cancel') expect(await chat.answer({ paneId, requestId: question.requestId, cancel: true })).toEqual({ ok: true })
+    expect(events('questionStatus')).toEqual([{ type: 'questionStatus', requestId: question.requestId, status: 'cancelled' }])
+    expect(await chat.answer({ paneId, requestId: question.requestId, answers })).toMatchObject({ ok: false })
+    expect(a.answerPermission).not.toHaveBeenCalled()
+    expect(a.setPermissionMode).not.toHaveBeenCalled()
+    await chat.close({ paneId })
+  })
+  it('refuses duplicate submissions and ignores a late success after turn end', async () => {
+    const chat = createChatSessions(deps)
+    await openOk(chat)
+    const a = adapters[0]
+    let resolve
+    a.answerQuestion.mockImplementationOnce(() => new Promise(r => { resolve = r }))
+    a.emit('question', question)
+    const pending = chat.answer({ paneId, requestId: question.requestId, answers })
+    expect(await chat.answer({ paneId, requestId: question.requestId, answers })).toMatchObject({ code: 'unknown' })
+    a.emit('turnEnd', { status: 'completed' })
+    resolve({ ok: true })
+    await pending
+    expect(events('questionStatus')).toEqual([{ type: 'questionStatus', requestId: question.requestId, status: 'cancelled' }])
+    expect(a.answerQuestion).toHaveBeenCalledTimes(2)
+    expect(a.answerQuestion).toHaveBeenLastCalledWith(question.requestId, { cancel: true })
+    await chat.close({ paneId })
+  })
+  it('relays turn-end cancellations even when adapter turn ownership did not match', async () => {
+    const chat = createChatSessions(deps)
+    await openOk(chat)
+    const a = adapters[0]
+    a.emit('question', question)
+    a.emit('question', { ...question, requestId: 'question_second' })
+    a.emit('turnEnd', { turnId: 'another-turn', status: 'completed' })
+    expect(a.answerQuestion.mock.calls).toEqual([
+      [question.requestId, { cancel: true }],
+      ['question_second', { cancel: true }]
+    ])
+    expect(chat.history({ paneId }).questions).toEqual([])
+    a.emit('questionStatus', { requestId: question.requestId, status: 'cancelled' })
+    expect(events('questionStatus')).toHaveLength(2)
+    await chat.close({ paneId })
+  })
+  it('does not sleep or send queued messages while waiting for a question', async () => {
+    vi.useFakeTimers()
+    try {
+      const chat = createChatSessions(deps)
+      expect((await chat.open({ paneId, cwd: tmp, permissions: 'manual', idleMinutes: 1 })).ok).toBe(true)
+      const a = adapters[0]
+      a.emit('question', question)
+      await vi.advanceTimersByTimeAsync(120000)
+      expect(a.close).not.toHaveBeenCalled()
+      expect(chat.send({ paneId, text: 'Next' })).toMatchObject({ queued: true })
+      expect(a.send).not.toHaveBeenCalled()
+      expect(await chat.answer({ paneId, requestId: question.requestId, answers })).toEqual({ ok: true })
+      expect(a.send).toHaveBeenCalledTimes(1)
+      await chat.close({ paneId })
+    } finally { vi.useRealTimers() }
+  })
+})
 
 describe('open', () => {
   it('refuses an untrusted folder without asking, and starts nothing', async () => {
@@ -852,7 +966,7 @@ describe('IPC', () => {
   it('registers the chat channels', () => {
     const h = wire(createChatSessions(deps))
     expect(Object.keys(h).sort()).toEqual(
-      ['chat:skills', 'chat:approvalInput', 'chat:approve', 'chat:close', 'chat:history', 'chat:interrupt', 'chat:open', 'chat:send', 'chat:sendTeam', 'chat:setOption'].sort()
+      ['chat:answer', 'chat:skills', 'chat:approvalInput', 'chat:approve', 'chat:close', 'chat:history', 'chat:interrupt', 'chat:open', 'chat:send', 'chat:sendTeam', 'chat:setOption'].sort()
     )
   })
 
