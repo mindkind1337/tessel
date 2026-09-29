@@ -3380,16 +3380,12 @@ function detachLeaf(ws, leafId) {
 }
 
 // The band along the visible workspace's outer edge where a dropped pane
-// takes that whole side. Only when the workspace has more than one pane
-// besides the dragged one (else a pane's own zones already do it).
+// takes that whole side (any pane, from any place in the layout).
 const EDGE_BAND = 28
 function workspaceEdgeAt(x, y) {
   const layer = document.querySelector('.ws-layer:not(.hidden)')
   const ws = currentWs.value
   if (!layer || !ws || !ws.tree || ws.tree.type !== 'split') return null
-  const src = wsOfLeaf(paneDrag.srcId)
-  // Moving the only other pane of a two-pane split: its own zones do it.
-  if (src === ws && ws.tree.children.length === 2 && ws.tree.children.some((c) => c.type === 'leaf' && c.id === paneDrag.srcId)) return null
   const r = layer.getBoundingClientRect()
   if (x < r.left || x > r.right || y < r.top || y > r.bottom) return null
   const d = { left: x - r.left, right: r.right - x, top: y - r.top, bottom: r.bottom - y }
