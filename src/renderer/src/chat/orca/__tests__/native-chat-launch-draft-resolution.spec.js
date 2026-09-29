@@ -1,0 +1,173 @@
+/*
+ * MIT License
+ *
+ * Copyright (c) 2026 Lovecast Inc.
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
+import { describe, expect, it } from 'vitest';
+import { launchDraftResolvedByTranscript, nativeChatLaunchDraftTurnBaseline } from "../native-chat-launch-draft-resolution.js";
+function userMessage(id, text) {
+    return {
+        id,
+        role: 'user',
+        blocks: [
+            {
+                type: 'text',
+                text
+            }
+        ],
+        timestamp: 1,
+        source: 'transcript'
+    };
+}
+function assistantMessage(id, text) {
+    return {
+        id,
+        role: 'assistant',
+        blocks: [
+            {
+                type: 'text',
+                text
+            }
+        ],
+        timestamp: 2,
+        source: 'transcript'
+    };
+}
+describe('launchDraftResolvedByTranscript', ()=>{
+    const SEEDED_AT = 100_000;
+    it('resolves on any user turn at or after the seed time, even with different text', ()=>{
+        const submitted = {
+            ...userMessage('u1', 'unrelated text'),
+            timestamp: SEEDED_AT + 5_000
+        };
+        expect(launchDraftResolvedByTranscript({
+            createdAt: SEEDED_AT
+        }, [
+            submitted
+        ])).toBe(true);
+    });
+    it('ignores assistant turns and user turns from before the seed', ()=>{
+        const early = {
+            ...userMessage('u1', 'old turn'),
+            timestamp: SEEDED_AT - 50_000
+        };
+        const reply = {
+            ...assistantMessage('a1', 'hello'),
+            timestamp: SEEDED_AT + 5_000
+        };
+        expect(launchDraftResolvedByTranscript({
+            createdAt: SEEDED_AT
+        }, [
+            early,
+            reply
+        ])).toBe(false);
+        expect(launchDraftResolvedByTranscript({
+            createdAt: SEEDED_AT
+        }, [])).toBe(false);
+    });
+    it('resolves on undated user turns (Grok omits row timestamps)', ()=>{
+        const undated = {
+            ...userMessage('u1', 'submitted in the TUI'),
+            timestamp: null
+        };
+        expect(launchDraftResolvedByTranscript({
+            createdAt: SEEDED_AT
+        }, [
+            undated
+        ])).toBe(true);
+    });
+    it('resolves when the executing host clock trails the renderer within the slack', ()=>{
+        const behind = {
+            ...userMessage('u1', 'submitted'),
+            timestamp: SEEDED_AT - 1_500
+        };
+        expect(launchDraftResolvedByTranscript({
+            createdAt: SEEDED_AT
+        }, [
+            behind
+        ])).toBe(true);
+    });
+    it('resolves past wider clock skew once a new tail user turn lands', ()=>{
+        const stale = {
+            ...userMessage('u1', 'earlier turn'),
+            timestamp: SEEDED_AT - 600_000
+        };
+        const baseline = {
+            userTurnCount: 1,
+            lastUserTurnId: 'u1'
+        };
+        expect(launchDraftResolvedByTranscript({
+            createdAt: SEEDED_AT
+        }, [
+            stale
+        ], baseline)).toBe(false);
+        const next = {
+            ...userMessage('u2', 'submitted'),
+            timestamp: SEEDED_AT - 600_000 + 10
+        };
+        expect(launchDraftResolvedByTranscript({
+            createdAt: SEEDED_AT
+        }, [
+            stale,
+            next
+        ], baseline)).toBe(true);
+    });
+    it('does not resolve when "load earlier" only prepends history', ()=>{
+        const tail = {
+            ...userMessage('u9', 'earlier turn'),
+            timestamp: SEEDED_AT - 600_000
+        };
+        const baseline = {
+            userTurnCount: 1,
+            lastUserTurnId: 'u9'
+        };
+        const paged = [
+            {
+                ...userMessage('u7', 'older'),
+                timestamp: SEEDED_AT - 900_000
+            },
+            {
+                ...userMessage('u8', 'older'),
+                timestamp: SEEDED_AT - 800_000
+            },
+            tail
+        ];
+        expect(launchDraftResolvedByTranscript({
+            createdAt: SEEDED_AT
+        }, paged, baseline)).toBe(false);
+    });
+});
+describe('nativeChatLaunchDraftTurnBaseline', ()=>{
+    it('snapshots the user-turn count and tail id, ignoring assistant turns', ()=>{
+        expect(nativeChatLaunchDraftTurnBaseline([
+            userMessage('u1', 'one'),
+            assistantMessage('a1', 'reply'),
+            userMessage('u2', 'two')
+        ])).toEqual({
+            userTurnCount: 2,
+            lastUserTurnId: 'u2'
+        });
+        expect(nativeChatLaunchDraftTurnBaseline([])).toEqual({
+            userTurnCount: 0,
+            lastUserTurnId: null
+        });
+    });
+});
