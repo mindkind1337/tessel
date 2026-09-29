@@ -80,12 +80,15 @@ export function codexModelFromText(text) {
   return null
 }
 
-const fileCache = new Map() // session id -> transcript path
+const fileCache = new Map() // folder + session id -> transcript path
 
-export function claudeTranscript(id, home = os.homedir()) {
-  const hit = fileCache.get(id)
+// The Claude transcript of a session in a Claude folder (~/.claude or a
+// CLAUDE_CONFIG_DIR): <dir>/projects/<project>/<id>.jsonl.
+export function claudeTranscriptIn(claudeDir, id) {
+  const key = `claude|${claudeDir}|${id}`
+  const hit = fileCache.get(key)
   if (hit && fs.existsSync(hit)) return hit
-  const root = join(home, '.claude', 'projects')
+  const root = join(claudeDir, 'projects')
   let dirs
   try {
     dirs = fs.readdirSync(root, { withFileTypes: true })
@@ -96,27 +99,51 @@ export function claudeTranscript(id, home = os.homedir()) {
     if (!d.isDirectory()) continue
     const f = join(root, d.name, `${id}.jsonl`)
     if (fs.existsSync(f)) {
-      fileCache.set(id, f)
+      fileCache.set(key, f)
       return f
     }
   }
   return null
 }
 
-function codexRollout(id, home, now = Date.now()) {
-  const hit = fileCache.get(id)
+export function claudeTranscript(id, home = os.homedir()) {
+  return claudeTranscriptIn(join(home, '.claude'), id)
+}
+
+function dayFolder(root, d) {
+  return join(root, String(d.getFullYear()), String(d.getMonth() + 1).padStart(2, '0'), String(d.getDate()).padStart(2, '0'))
+}
+
+// A UUID v7 starts with its creation time (ms): the day its rollout is in.
+function uuidV7Time(id) {
+  const s = String(id)
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s)) return null
+  const ms = parseInt(s.slice(0, 8) + s.slice(9, 13), 16)
+  return Number.isFinite(ms) && ms > 0 ? ms : null
+}
+
+// The rollout of a Codex thread in a Codex home (~/.codex or a CODEX_HOME):
+// <home>/sessions/YYYY/MM/DD/rollout-<time>-<id>.jsonl. The days around the
+// thread's creation first (a UUID v7 says when), then the last 30 days.
+export function codexRolloutIn(codexDir, id, now = Date.now()) {
+  const key = `codex|${codexDir}|${id}`
+  const hit = fileCache.get(key)
   if (hit && fs.existsSync(hit)) return hit
-  const root = join(home, '.codex', 'sessions')
+  const root = join(codexDir, 'sessions')
+  const days = []
+  const born = uuidV7Time(id)
+  if (born) for (const delta of [0, -1, 1]) days.push(new Date(born + delta * 86400000))
   const d = new Date(now)
   // Newest day first, at most 30 days back.
   for (let i = 0; i < 31; i++) {
-    const dir = join(
-      root,
-      String(d.getFullYear()),
-      String(d.getMonth() + 1).padStart(2, '0'),
-      String(d.getDate()).padStart(2, '0')
-    )
+    days.push(new Date(d))
     d.setDate(d.getDate() - 1)
+  }
+  const seen = new Set()
+  for (const day of days) {
+    const dir = dayFolder(root, day)
+    if (seen.has(dir)) continue
+    seen.add(dir)
     let files
     try {
       files = fs.readdirSync(dir)
@@ -125,11 +152,15 @@ function codexRollout(id, home, now = Date.now()) {
     }
     const f = files.find((n) => n.startsWith('rollout-') && n.endsWith(`${id}.jsonl`))
     if (f) {
-      fileCache.set(id, join(dir, f))
+      fileCache.set(key, join(dir, f))
       return join(dir, f)
     }
   }
   return null
+}
+
+function codexRollout(id, home, now = Date.now()) {
+  return codexRolloutIn(join(home, '.codex'), id, now)
 }
 
 // The model of the latest answer (or /model change) in a Copilot session's

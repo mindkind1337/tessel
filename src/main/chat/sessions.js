@@ -22,6 +22,7 @@ import fs from 'fs'
 import { isAbsolute } from 'path'
 import { buildChatEnv } from './chatEnv.js'
 import { clipDeep, createChatJournal, validPaneId } from './journal.js'
+import { readTranscriptHistory } from './transcriptHistory.js'
 import { t } from '../i18n.js'
 import { approvalPreview } from '../../shared/chatApproval.js'
 
@@ -110,7 +111,11 @@ export function createChatSessions(deps) {
     discoverSkills = discoverClaudeSkills,
     log = null,
     now = Date.now,
-    randomUUID = nodeUUID
+    randomUUID = nodeUUID,
+    // The folder the agent keeps its conversations in, from its variables
+    // (transcriptHistory.js transcriptHomeFor): null reads no earlier history.
+    transcriptHome = () => null,
+    readHistory = readTranscriptHistory
   } = deps || {}
   const sessions = new Map() // paneId -> session
   const seqs = new Map() // paneId -> last seq (outlives a session)
@@ -147,6 +152,58 @@ export function createChatSessions(deps) {
       logAt('warn', `send failed: ${err?.message || err}`)
     }
     return seq
+  }
+
+  // Several events at once (an imported history): each journaled with its
+  // own seq, and sent to the window as ONE 'history' event holding them
+  // (never announced one by one: no turn-end reminders, one redraw).
+  function emitHistory(paneId, list) {
+    const out = []
+    for (const event of list) {
+      const seq = nextSeq(paneId)
+      if (!forgotten.has(paneId)) journalOf(paneId).append(seq, event)
+      out.push({ seq, event })
+    }
+    if (!out.length) return
+    try {
+      send('chat:event', { paneId, seq: out[out.length - 1].seq, event: { type: 'history', events: out } })
+    } catch (err) {
+      logAt('warn', `send failed: ${err?.message || err}`)
+    }
+  }
+
+  // A chat opened on a conversation this pane's journal does not hold yet
+  // (a terminal's conversation, "Open in chat"; a resumed session id): its
+  // earlier turns, read from the agent's own transcript, go into the journal
+  // first, marked imported. Once: the journal's meta then names the session,
+  // so a reload or a later open replays the journal, never the file again.
+  function importHistory(s, env) {
+    if (!s.sessionId) return
+    const j = journalOf(s.paneId)
+    const meta = j.readMeta()
+    if (meta && meta.sessionId === s.sessionId) return
+    let home = null
+    try {
+      home = transcriptHome(s.agent, env)
+    } catch {
+      home = null
+    }
+    if (!home) return
+    let res = null
+    try {
+      res = readHistory({ agent: s.agent, sessionId: s.sessionId, home, now: now() })
+    } catch (err) {
+      logAt('warn', `${s.paneId}: earlier history not read: ${err?.message || err}`) // i18n-ignore log line
+    }
+    j.writeMeta({ sessionId: s.sessionId, agent: s.agent, cwd: s.cwd })
+    if (!res?.ok || !Array.isArray(res.events) || !res.events.length) return
+    const agentName = s.agent === 'codex' ? 'Codex' : 'Claude' // i18n-ignore product names
+    const first = res.events[0].at
+    const text = res.truncated
+      ? t('main.chat.historyImportedPart', 'Earlier conversation, from the history {{agent}} keeps (only its most recent part).', { agent: agentName })
+      : t('main.chat.historyImported', 'Earlier conversation, from the history {{agent}} keeps.', { agent: agentName })
+    emitHistory(s.paneId, [{ type: 'notice', kind: 'info', text, imported: true, ...(Number.isFinite(first) ? { at: first } : {}) }, ...res.events])
+    logAt('info', `${s.paneId}: ${res.events.length} earlier events imported${res.truncated ? ' (the most recent part)' : ''}`) // i18n-ignore log line
   }
 
   // The pane's agent status. Calls are serialized by the store in call order.
@@ -749,6 +806,8 @@ export function createChatSessions(deps) {
       let base = envDeps.forPane({ paneId, cwd, projectDir: s.projectDir, accountEnv, ...(envOpts || {}) })
       if (base && typeof base === 'object' && base.env && typeof base.env === 'object') base = base.env
       const childEnv = buildChatEnv(base, { agent, paneId, teamSecret, projectDir: s.projectDir, pathEnv: found.pathEnv })
+      // A resumed conversation: its earlier turns first (never on a wake).
+      if (resumeId && !from) importHistory(s, childEnv)
       const common = {
         agent,
         exe: found.exe,

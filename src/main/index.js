@@ -46,6 +46,7 @@ import { writeBoardRule } from './agentMemory'
 import { claudeImageFile, isPastedImage, PASTE_DIR } from './pastedImages'
 import { createBrowserGuests } from './browserGuest'
 import { createChatSessions } from './chat/sessions'
+import { transcriptHomeFor } from './chat/transcriptHistory'
 import { createClaudeChat } from './chat/claudeChat'
 import { createCodexChat } from './chat/codexChat'
 import { createChatTrust } from './chat/chatTrust'
@@ -1031,6 +1032,15 @@ const chatSessions = createChatSessions({
   // as that project (verified both ways by git's links). Any other worktree,
   // such as a pull request's copy, is trusted (or asked) like any folder.
   trustRoots: (cwd, opts) => workerCopies.trustRoots(cwd, opts),
+  // Where a resumed conversation's earlier history is read (its agent's own
+  // transcript): the system Claude folder, the system Codex home or a managed
+  // Codex account's, never another folder.
+  transcriptHome: (agent, env) =>
+    transcriptHomeFor(agent, env, {
+      systemClaude: process.env.CLAUDE_CONFIG_DIR || join(os.homedir(), '.claude'),
+      systemCodex: process.env.CODEX_HOME || join(os.homedir(), '.codex'),
+      codexAccountsBase: join(app.getPath('userData'), 'codex-accounts')
+    }),
   log
 })
 chatSessions.register(ipcMain)

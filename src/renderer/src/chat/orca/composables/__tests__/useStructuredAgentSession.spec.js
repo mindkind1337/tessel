@@ -115,4 +115,29 @@ describe('useStructuredAgentSession (Tessel engine)', () => {
     await s.cancel()
     expect(api.interrupt).toHaveBeenCalledWith({ paneId: 'p1' })
   })
+
+  it('an imported history (one event holding many) is drawn once, in order, and never announced', async () => {
+    const onLive = vi.fn()
+    let listener = null
+    const api = { history: vi.fn(async () => ({ ok: true, seq: 1, events: [{ seq: 1, event: { type: 'status', state: 'starting' } }] })), onEvent: (cb) => ((listener = cb), () => {}) }
+    let session
+    mount(defineComponent({ setup() { session = useStructuredAgentSession({ paneId: 'p1', api, onLive }); return () => h('div') } }))
+    await session.load()
+    const at = Date.parse('2026-09-01T10:00:00.000Z')
+    listener({ paneId: 'p1', seq: 5, event: { type: 'history', events: [
+      { seq: 1, event: { type: 'user', id: 'old', text: 'already there', status: 'accepted' } },
+      { seq: 2, event: { type: 'notice', kind: 'info', text: 'Earlier conversation', imported: true, at } },
+      { seq: 3, event: { type: 'user', id: 'hist-u1', text: 'Earlier prompt', status: 'accepted', imported: true, at } },
+      { seq: 4, event: { type: 'assistant', messageId: 'hist-m1', text: 'Earlier answer', imported: true, at: at + 5000 } },
+      { seq: 5, event: { type: 'turnEnd', status: 'completed', imported: true, at: at + 6000 } }
+    ] } })
+    await nextTick()
+    expect(onLive).not.toHaveBeenCalled()
+    expect(session.messages.value.map((m) => m.blocks[0].text)).toEqual(['Earlier conversation', 'Earlier prompt', 'Earlier answer'])
+    expect(session.turnId.value).toBeNull()
+    // Its seqs count: a live event already in it is not applied twice.
+    listener({ paneId: 'p1', seq: 4, event: { type: 'assistant', messageId: 'dup', text: 'dup' } })
+    await nextTick()
+    expect(session.messages.value).toHaveLength(3)
+  })
 })
