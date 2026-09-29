@@ -141,15 +141,29 @@ async function fetchSnapshot() {
   })()
   return fetching
 }
-// Orca: one snapshot when ready, then every 2 s only while the popover is open.
-onMounted(() => shows('resource-usage') && fetchSnapshot())
-watch(resourcesOpen, (open) => {
+// Every 2 s while the popover is open (as Orca), and every 10 s otherwise,
+// so the badge and the graphs keep up without a click (never while the
+// window is hidden).
+const OPEN_POLL_MS = 2000
+const BACKGROUND_POLL_MS = 10000
+function startPolling() {
   clearInterval(pollTimer)
-  if (open) {
-    fetchSnapshot()
-    pollTimer = setInterval(() => document.visibilityState !== 'hidden' && fetchSnapshot(), 2000)
-  }
+  pollTimer = null
+  if (!resourcesOpen.value && !shows('resource-usage')) return
+  pollTimer = setInterval(
+    () => document.visibilityState !== 'hidden' && fetchSnapshot(),
+    resourcesOpen.value ? OPEN_POLL_MS : BACKGROUND_POLL_MS
+  )
+}
+onMounted(() => {
+  if (shows('resource-usage')) fetchSnapshot()
+  startPolling()
 })
+watch(resourcesOpen, (open) => {
+  if (open) fetchSnapshot()
+  startPolling()
+})
+watch(() => shows('resource-usage'), () => startPolling())
 onBeforeUnmount(() => clearInterval(pollTimer))
 const metricLabel = computed(() => (snapshot.value && snapshot.value.processMemoryMetric === 'rss' ? 'RSS' : 'WS'))
 const memBadge = computed(() => (snapshot.value ? formatMemory(snapshot.value.totalMemory) : '—'))

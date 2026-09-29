@@ -167,3 +167,29 @@ describe('status bar', () => {
     expect(w.findAll('.sb-trigger')).toHaveLength(3)
   })
 })
+
+describe('Resource Manager keeps up on its own', () => {
+  beforeEach(() => {
+    resetSettings()
+    vi.useFakeTimers()
+    window.shellApi = {
+      ...(window.shellApi || {}),
+      resourceSnapshot: vi.fn(async () => ({ ok: true, at: Date.now(), totalMemory: 1024, processes: [] }))
+    }
+  })
+  afterEach(() => vi.useRealTimers())
+
+  it('reads every 10 s with the popover closed, and stops when the indicator is removed', async () => {
+    if (!settings.statusBarItems.includes('resource-usage')) settings.statusBarItems = [...settings.statusBarItems, 'resource-usage']
+    const w = mountBar()
+    await flushPromises()
+    const first = window.shellApi.resourceSnapshot.mock.calls.length
+    await vi.advanceTimersByTimeAsync(10000)
+    expect(window.shellApi.resourceSnapshot.mock.calls.length).toBe(first + 1)
+    settings.statusBarItems = settings.statusBarItems.filter((x) => x !== 'resource-usage')
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(30000)
+    expect(window.shellApi.resourceSnapshot.mock.calls.length).toBe(first + 1)
+    w.unmount()
+  })
+})
