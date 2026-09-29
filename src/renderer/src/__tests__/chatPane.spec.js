@@ -569,12 +569,15 @@ describe('ChatPane.vue', () => {
     expect(ctx.chatOpen).toHaveBeenCalledWith(node)
   })
 
-  it('header: rate limits, Yolo badge, maximize and close', async () => {
+  it('header: rate limits, Yolo on the icon ring only (no badge), maximize and close', async () => {
     await mountPane({}, { chatPermissions: () => 'yolo' })
     emit({ type: 'rateLimit', fiveHour: { utilization: 0.42 }, sevenDay: { utilization: 0.1 } })
     await settle()
     expect(wrapper.find('[data-test="chat-rate"]').text()).toBe('5 h: 42% · 7 d: 10%')
-    expect(wrapper.find('[data-test="chat-permissions"]').text()).toBe('Yolo')
+    expect(wrapper.find('[data-test="chat-permissions"]').exists()).toBe(false)
+    const icon = wrapper.get('[data-test="chat-icon"]')
+    expect(icon.classes()).toContain('yolo')
+    expect(icon.attributes('title')).toBe('Tools run without asking (Settings)')
     const [maxBtn, closeBtn] = wrapper.findAll('.pane-nav-btn')
     await maxBtn.trigger('click')
     await closeBtn.trigger('click')
