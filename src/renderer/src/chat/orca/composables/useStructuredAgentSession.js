@@ -78,6 +78,15 @@ export function useStructuredAgentSession({ paneId, api = typeof window !== 'und
     return res
   }
 
+  // An event the pane itself knows (e.g. 'starting' while it opens the
+  // session, or why the open failed): applied like a live one, without a seq.
+  function dispatchLocal(ev) {
+    if (!ev || typeof ev !== 'object') return
+    const out = adapter.apply(ev)
+    if (out) feed(out)
+    syncMeta()
+  }
+
   let off = null
   if (api && api.onEvent) {
     off = api.onEvent((msg) => {
@@ -134,6 +143,7 @@ export function useStructuredAgentSession({ paneId, api = typeof window !== 'und
   return {
     meta,
     load,
+    dispatchLocal,
     // The reference's fields.
     conversationCommands: computed(() => []),
     runConversationCommand: async () => null,

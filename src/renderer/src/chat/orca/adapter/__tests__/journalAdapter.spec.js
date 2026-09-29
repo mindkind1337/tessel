@@ -127,6 +127,22 @@ describe('journal adapter', () => {
     expect(activeStructuredAgentSessionTurnId(state.items)).toBeNull()
   })
 
+  it('a stopped process leaves nothing open: running tools stop, pending questions are cancelled; its error stays', () => {
+    const { state, adapter } = run([
+      { type: 'user', id: 'u1', text: 'go', status: 'accepted' },
+      { type: 'tool', id: 't1', name: 'Bash', input: { command: 'sleep 9' }, status: 'running' },
+      { type: 'approval', requestId: 'r1', toolName: 'Bash', input: { command: 'rm x' }, status: 'pending' },
+      { type: 'status', state: 'crashed', error: 'exit 1' },
+      { type: 'status', state: 'crashed' }
+    ])
+    expect(state.items.find((i) => i.itemId === 'tool:t1').body.state).toBe('interrupted')
+    expect(state.items.find((i) => i.itemId === 'approval:r1').body.resolution.state).toBe('cancelled')
+    expect(pendingStructuredSessionPrompts(state.items).length).toBe(0)
+    expect(adapter.meta).toMatchObject({ status: 'crashed', error: 'exit 1' })
+    adapter.apply({ type: 'status', state: 'idle' })
+    expect(adapter.meta.error).toBe('')
+  })
+
   it('revisions only go up; a replayed history gives the same items as live events', () => {
     const events = [
       { type: 'user', id: 'u1', text: 'x', status: 'accepted' },

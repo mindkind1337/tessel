@@ -24,6 +24,10 @@ const TOOL_STATE = { running: 'running', done: 'completed', completed: 'complete
 // hide the message; Tessel shows its own "Not sent" entry with Retry.
 const DISPATCH = { queued: 'pending', sent: 'pending', accepted: 'accepted', failed: 'unknown' }
 // Our approval status -> the chosen option (resolved) or a cancellation.
+// The agent's process is gone in these (asleep included); the composer
+// cannot send in the stopped ones.
+const STOPPED = new Set(['ended', 'crashed', 'signin', 'untrusted'])
+const NO_PROCESS = new Set([...STOPPED, 'asleep'])
 const APPROVAL_OPTION = { allowed: 'allow', allowedSession: 'allowSession', denied: 'deny' }
 
 function bounded(text) {
@@ -68,7 +72,7 @@ export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence =
   let openTurn = null
   let lastUserItemId = null
   // Session facts the UI reads outside the journal (header, pickers).
-  const meta = { agent: null, model: null, sessionId: null, status: 'starting', rateLimit: null }
+  const meta = { agent: null, model: null, sessionId: null, status: 'starting', error: '', rateLimit: null }
 
   let changedItems = new Set()
   let changedSubs = new Set()
@@ -151,10 +155,22 @@ export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence =
         if (ev.agent) meta.agent = ev.agent
         if (ev.model) meta.model = ev.model
         if (ev.sessionId) meta.sessionId = ev.sessionId
-        if (typeof ev.state === 'string') meta.status = ev.state
+        if (typeof ev.state === 'string') {
+          meta.status = ev.state
+          // The error of a stopped agent stays until it runs again.
+          meta.error = ev.error ? String(ev.error) : STOPPED.has(ev.state) ? meta.error : ''
+        }
         if (ev.state === 'working' || ev.state === 'approval') openTurnFor(lastUserItemId, at)
-        // No process any more: a turn still open did not end on its own.
-        if (['ended', 'crashed', 'asleep', 'signin', 'untrusted'].includes(ev.state)) closeTurn({ state: 'interrupted', outcome: 'cancellation' }, at)
+        // No process any more: nothing it started still runs (its tools
+        // stopped, its questions can no longer be answered), and a turn still
+        // open did not end on its own.
+        if (NO_PROCESS.has(ev.state)) {
+          for (const item of [...items.values()]) {
+            if (item.body.kind === 'tool-call' && item.body.state === 'running') revise(item.itemId, { state: 'interrupted' })
+            else if (item.body.kind === 'approval' && item.body.resolution && item.body.resolution.state === 'pending') revise(item.itemId, { resolution: resolutionOf('cancelled', at) })
+          }
+          closeTurn({ state: 'interrupted', outcome: 'cancellation' }, at)
+        }
         break
       }
       case 'user': {
