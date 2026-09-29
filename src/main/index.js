@@ -30,6 +30,7 @@ import { createAskpassPipeHost } from './askpassPipeHost'
 import { createRemoteFs, registerRemoteFs, remoteRootsOfLayout, SESSION_PREFIX as REMOTE_FS_PREFIX } from './remoteFs'
 import { createGitTrust, setGitTrust } from './gitSafety'
 import { isRemotePath } from '../shared/remotePath'
+import { STATUS_PROVIDERS } from '../shared/agentStateModel'
 import { prepareAgentStateHooks } from './agentStateSetup'
 import { assessNeeds } from './tesselNeeds'
 import { createClaudeUsageReport } from './claudeUsageReport'
@@ -2584,7 +2585,8 @@ ipcMain.handle('pty:create', async (_evt, opts = {}) => {
   const backend = useConpty ? 'conpty' : 'winpty'
   // Its agent's variables and its provider account's (see paneEnv.js).
   const env = paneEnv(freshEnv(), opts)
-  const agentProvider = ['claude', 'codex'].includes(opts.agentId) ? opts.agentId : null
+  // The agents whose own hooks report their status (agentStateModel.js).
+  const agentProvider = STATUS_PROVIDERS.includes(opts.agentId) ? opts.agentId : null
   const agentLaunchToken = agentProvider ? crypto.randomBytes(16).toString('hex') : null
   // The Codex home this launch reads and writes (its account's, if any): where
   // its session rollout is (codexTurnEnd.js).
@@ -2600,7 +2602,7 @@ ipcMain.handle('pty:create', async (_evt, opts = {}) => {
   for (const key of Object.keys(env)) if (/^TESSEL_AGENT_|^TESSEL_TEAM_SECRET$/i.test(key)) delete env[key]
   let agentStatusWarning = null
   if (agentProvider) {
-    const setup = prepareStatus(agentProvider, env)
+    const setup = await prepareStatus(agentProvider, env)
     if (!setup.ok) agentStatusWarning = setup.error
   }
   // ssh's questions go to Tessel's askpass helper (sshAskpass.js). 'fallback'

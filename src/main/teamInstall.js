@@ -74,8 +74,10 @@ export function installCodexHooks(scriptPath, home = os.homedir(), { configDir =
 // Gemini CLI hooks in ~/.gemini/settings.json (Claude Code's format and
 // answers; on by default, no approval step for user hooks): the conversation
 // (SessionStart), messages with each prompt (BeforeAgent) and after each tool
-// (AfterTool), and at the turn's end (AfterAgent).
-export const GEMINI_HOOK_EVENTS = ['SessionStart', 'BeforeAgent', 'AfterTool', 'AfterAgent']
+// (AfterTool), and at the turn's end (AfterAgent). The others only report its
+// status: a tool starting (BeforeTool), a permission asked (Notification), the
+// session's end.
+export const GEMINI_HOOK_EVENTS = ['SessionStart', 'BeforeAgent', 'BeforeTool', 'AfterTool', 'AfterAgent', 'Notification', 'SessionEnd']
 export function installGeminiHooks(scriptPath, home = os.homedir()) {
   return installHooks(join(home, '.gemini', 'settings.json'), GEMINI_HOOK_EVENTS, `node ${quote(scriptPath)} --hook --gemini`)
 }
@@ -83,9 +85,12 @@ export function installGeminiHooks(scriptPath, home = os.homedir()) {
 // Copilot CLI hooks: Tessel's own file in ~/.copilot/hooks/ (its settings and
 // the user's other hooks are never touched). Claude Code's event names, which
 // Copilot accepts with Claude's answers: the conversation (SessionStart),
-// messages after each tool (PostToolUse) and at the turn's end (Stop). Not its
-// prompt hook: it cannot add text there. The event is named in the command.
-export const COPILOT_HOOK_EVENTS = ['SessionStart', 'PostToolUse', 'Stop']
+// messages after each tool (PostToolUse) and at the turn's end (Stop). Its
+// prompt hook cannot add text: it, and the others, only report its status
+// (working, waiting for you, its sub-agents). The event is named in the
+// command. After Orca's src/main/copilot/copilot-managed-hook-definitions.ts,
+// MIT, Copyright (c) 2026 Lovecast Inc.
+export const COPILOT_HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'Notification', 'ErrorOccurred', 'subagentStart', 'SubagentStop', 'Stop', 'SessionEnd']
 export const COPILOT_HOOKS_FILE = 'tessel-team.json'
 export function installCopilotHooks(scriptPath, home = os.homedir()) {
   const file = join(home, '.copilot', 'hooks', COPILOT_HOOKS_FILE)
@@ -116,7 +121,7 @@ export const OPENCODE_PLUGIN_FILE = 'tessel-team.js'
 export const OPENCODE_MARKER = '// Tessel team tools: OpenCode plugin'
 export function opencodePlugin(scriptPath) {
   return `${OPENCODE_MARKER}. Written by Tessel and replaced when it updates; delete it to remove.
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 
 const SCRIPT = ${JSON.stringify(scriptPath)}
 const IDLE_CHECK_MS = 15000
@@ -136,10 +141,48 @@ export const TesselTeam = async ({ client, directory }) => {
       return null
     }
   }
+  // Its status (working, waiting for you, done), for Tessel's pane: sent in
+  // order, one at a time, never waited for by OpenCode. After Orca's
+  // src/main/opencode/status-plugin-lifecycle-source.ts, MIT, Copyright (c)
+  // 2026 Lovecast Inc.
+  const statusQueue = []
+  let statusRunning = false
+  const nextStatus = () => {
+    const input = statusQueue.shift()
+    if (!input) {
+      statusRunning = false
+      return
+    }
+    statusRunning = true
+    try {
+      const child = spawn('node', [SCRIPT, '--hook', '--opencode', '--status'], { stdio: ['pipe', 'ignore', 'ignore'], windowsHide: true })
+      const timer = setTimeout(() => child.kill(), 20000)
+      child.on('error', () => {})
+      child.on('close', () => {
+        clearTimeout(timer)
+        nextStatus()
+      })
+      child.stdin.on('error', () => {})
+      child.stdin.end(input)
+    } catch {
+      nextStatus()
+    }
+  }
+  // Each event a later time than the one before: Tessel applies them in that order.
+  let lastAt = 0
+  const status = (event, sessionId, extra) => {
+    if (!sessionId) return
+    lastAt = Math.max(Date.now(), lastAt + 1)
+    if (statusQueue.length >= 50) statusQueue.shift()
+    statusQueue.push(JSON.stringify({ hook_event_name: event, session_id: sessionId, cwd: directory, tessel_at: lastAt, ...(extra || {}) }))
+    if (!statusRunning) nextStatus()
+  }
   let current = null // the session this OpenCode works in
   let idle = false
+  let busy = false // its status as last reported
   let sending = false
   let reminded = { count: 0, at: 0 }
+  const asked = new Map() // a permission or question waiting -> its session
   // While the session is idle, messages waiting: a reminder is sent to it as a
   // new message, and the agent reads them with team_inbox. Nothing is read
   // here, so a failed send or OpenCode restarting never loses one. Again only
@@ -178,15 +221,42 @@ export const TesselTeam = async ({ client, directory }) => {
       if (event.type === 'session.created' || event.type === 'session.updated') {
         if (id && (!p.info || !p.info.parentID) && id !== current) {
           current = id
+          busy = false
+          // Also its status: the session opened.
           hook('SessionStart', id)
         }
       } else if (event.type === 'session.status') {
-        if (id === current) idle = !!(p.status && p.status.type === 'idle')
+        if (id !== current) return
+        const type = p.status && p.status.type
+        idle = type === 'idle'
+        if ((type === 'busy' || type === 'retry') && !busy) {
+          busy = true
+          status('UserPromptSubmit', id)
+        } else if (type === 'idle' && busy) {
+          busy = false
+          status('Stop', id)
+        }
       } else if (event.type === 'session.idle') {
         if (!id || (current && id !== current)) return
         current = id
         idle = true
+        if (busy) {
+          busy = false
+          status('Stop', id)
+        }
         await deliver()
+      } else if (event.type === 'permission.asked' || event.type === 'permission.updated' || event.type === 'question.asked') {
+        // Asked by this session or one of its sub-agents: the pane waits.
+        const request = p.id || p.requestID || p.permissionID
+        if (!current || !request || asked.has(request)) return
+        asked.set(request, current)
+        status('Elicitation', current, { tool_use_id: String(request) })
+      } else if (event.type === 'permission.replied' || event.type === 'question.replied' || event.type === 'question.rejected') {
+        const request = p.id || p.requestID || p.permissionID
+        const owner = request && asked.get(request)
+        if (!owner) return
+        asked.delete(request)
+        status('ElicitationResult', owner, { tool_use_id: String(request) })
       }
     },
     'tool.execute.after': async (input, output) => {

@@ -5,6 +5,29 @@ export const AGENT_STATE_STALE_MS = 30 * 60 * 1000
 // nobody is looking at (another workspace) may never report its screen: with
 // no event at all for this long after Stop, the turn is taken as finished.
 export const AGENT_SETTLE_MS = 20 * 1000
+// The agents whose own hooks, plugin or extension report their status
+// (teamMcp/server.cjs --hook, agentStatusHooks.js). Claude Code and Codex also
+// have their screens read for a positive "ready" prompt; for the others the
+// hooks alone decide: their turn's end is their idle state.
+export const STATUS_PROVIDERS = [
+  'claude',
+  'codex',
+  'gemini',
+  'copilot',
+  'kimi',
+  'opencode',
+  'cursor',
+  'droid',
+  'grok',
+  'antigravity',
+  'openclaude',
+  'commandcode',
+  'amp',
+  'pi'
+]
+export const SCREEN_READY_PROVIDERS = ['claude', 'codex']
+export const hooksAlone = (provider) =>
+  STATUS_PROVIDERS.includes(provider) && !SCREEN_READY_PROVIDERS.includes(provider)
 const MAX_SEEN = 256
 const MAX_CHILDREN = 32
 const MAX_PENDING = 32
@@ -290,10 +313,46 @@ function cancelCandidate(target) {
   target.continuing = false
 }
 
-function applyHook(target, event) {
+// A hooks-only agent (hooksAlone): an approval with no tool id (a screen
+// prompt, a permission notice) cannot be matched to the tool that ends it; the
+// agent moving on is the proof it was answered.
+function dropUnmatched(target) {
+  target.pendingApprovals = target.pendingApprovals.filter((entry) => entry.toolId)
+  target.pendingDecisions = target.pendingDecisions.filter((entry) => entry.toolId)
+  target.approvalOverflow = false
+  target.decisionOverflow = false
+}
+
+// A hooks-only agent's turn ended (Stop, a failure, an interrupt): idle at
+// once, since no screen confirms it (the hooks are the evidence).
+function endTurn(target, event, reason) {
+  clearPending(target)
+  cancelCandidate(target)
+  target.readyReason = reason
+  if (reason === 'ready') target.turnCompletedAt = event.at
+  if (target.state !== 'limited') transition(target, 'idle', reason, event)
+}
+
+function applyHook(target, event, alone = false) {
+  if (alone && ['UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'Stop'].includes(event.event))
+    dropUnmatched(target)
   switch (event.event) {
     case 'SessionStart':
     case 'SubagentStart':
+      // Its session opened, before any prompt: ready for one.
+      if (
+        alone &&
+        event.event === 'SessionStart' &&
+        !event.agentId &&
+        event.startSource !== 'compact' &&
+        ['unknown', 'closed'].includes(target.state)
+      ) {
+        cancelCandidate(target)
+        clearPending(target)
+        target.readyReason = 'startup'
+        transition(target, 'idle', 'startup', event)
+        return
+      }
       if (
         event.startSource !== 'compact' &&
         target.state === 'unknown' &&
@@ -357,6 +416,7 @@ function applyHook(target, event) {
       return
     case 'Stop':
     case 'SubagentStop':
+      if (alone && event.continuing !== true && !hasApproval(target)) return endTurn(target, event, 'ready')
       target.continuing = event.continuing === true
       target.stopCandidateAt = target.continuing ? null : event.at
       target.readyReason = target.continuing ? null : 'ready'
@@ -371,6 +431,7 @@ function applyHook(target, event) {
       return
     case 'StopFailure':
     case 'Interrupt':
+      if (alone) return endTurn(target, event, event.event === 'StopFailure' ? 'error' : 'interrupted')
       clearPending(target)
       cancelCandidate(target)
       target.readyReason = event.event === 'StopFailure' ? 'error' : 'interrupted'
@@ -401,7 +462,7 @@ function applyRollout(target, event) {
   target.lastHookAt = Math.max(target.lastHookAt ?? event.at, event.at)
 }
 
-function applyScreen(target, event) {
+function applyScreen(target, event, alone = false) {
   switch (event.event) {
     case 'ScreenLimit':
       target.limitedResetAt = isTime(event.reset) ? event.reset : null
@@ -431,7 +492,8 @@ function applyScreen(target, event) {
       // Keep a Stop candidate pending through its old footer; a later positive
       // ready prompt can still confirm it. No permission is resolved here.
       if (['approval', 'limited'].includes(target.state)) return false
-      if (target.hookSeen && target.state === 'working') return false
+      // A hooks-only agent's hooks say when it works and when it is done.
+      if (target.hookSeen && (target.state === 'working' || alone)) return false
       cancelCandidate(target)
       transition(target, 'working', 'processing', event)
       return true
@@ -571,7 +633,7 @@ export function reduceAgentState(state, event, now = Date.now()) {
   }
 
   if (event.source === 'screen') {
-    if (!applyScreen(target, event)) return state
+    if (!applyScreen(target, event, hooksAlone(state.provider))) return state
     target.lastScreenAt = event.at
     target.lastScreenEvent = event.event
   } else if (event.source === 'rollout') {
@@ -582,7 +644,7 @@ export function reduceAgentState(state, event, now = Date.now()) {
     transition(target, 'closed', 'ended', event)
     next.children = []
   } else {
-    applyHook(target, event)
+    applyHook(target, event, hooksAlone(state.provider))
     // A spool scan can deliver a hook after newer screen evidence. Its hook
     // ordering is still valid, but it cannot erase a currently visible prompt
     // or restore a permission already visibly resolved. Never reuse a cached

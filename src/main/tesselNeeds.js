@@ -80,7 +80,7 @@ export function assessNeeds(facts = {}) {
 
   // Hooks of the installed agents that have them.
   const installed = new Set(agents.map((a) => a.id))
-  const hookRows = (facts.hooks && Array.isArray(facts.hooks.agents) ? facts.hooks.agents : []).filter((r) => installed.has(r.id))
+  const hookRows = (facts.hooks && Array.isArray(facts.hooks.agents) ? facts.hooks.agents : []).filter((r) => installed.has(r.id) && !r.statusOnly)
   if (facts.hooks && facts.hooks.error)
     add({ id: 'hooks', name: t('main.needs.hooksName', 'Agent hooks'), why: t('main.needs.hooksWhy', 'Deliver team messages without typing into terminals.'), status: 'warn', detail: t('main.needs.notChecked', 'Could not be checked.'), fix: { where: t('main.needs.whereTeam', 'MCP servers > Team connections') } })
   else if (hookRows.length) {

@@ -11,6 +11,7 @@ import { spawn } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { createSshAskpass } from '../sshAskpass'
 import { createAskpassPipeHost } from '../askpassPipeHost'
+import { STATUS_PROVIDERS } from '../../shared/agentStateModel'
 
 const main = fs.readFileSync(join(__dirname, '..', 'index.js'), 'utf8')
 const handlerSource = main.slice(main.indexOf("ipcMain.handle('pty:create',"), main.indexOf('// Re-attach to a terminal'))
@@ -55,6 +56,7 @@ function harness({ helper = 'fake.exe', createDelay = null } = {}) {
     paneEnv: () => ({}),
     freshEnv: () => ({}),
     prepareStatus: () => ({ ok: true }),
+    STATUS_PROVIDERS,
     agentStateStore: { register: async () => {} },
     newTeamSecret: () => 'c'.repeat(64),
     setTeamSecret: () => {},

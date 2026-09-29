@@ -463,7 +463,9 @@ describe('setting up the team tools', () => {
     expect(installCopilotHooks(script, home)).toEqual({ changed: true })
     const h = JSON.parse(fs.readFileSync(join(home, '.copilot', 'hooks', 'tessel-team.json'), 'utf8'))
     expect(h.version).toBe(1)
-    expect(Object.keys(h.hooks)).toEqual(['SessionStart', 'PostToolUse', 'Stop'])
+    const { COPILOT_HOOK_EVENTS } = await import('../teamInstall')
+    expect(Object.keys(h.hooks)).toEqual(COPILOT_HOOK_EVENTS)
+    expect(COPILOT_HOOK_EVENTS).toEqual(expect.arrayContaining(['SessionStart', 'PostToolUse', 'Stop', 'subagentStart', 'SubagentStop']))
     const cmd = `node "${script}" --hook --copilot --event=Stop`
     expect(h.hooks.Stop).toEqual([{ type: 'command', bash: cmd, powershell: cmd, timeoutSec: 30 }])
     expect(fs.readFileSync(join(home, '.copilot', 'settings.json'), 'utf8')).toMatch(/theirs/)

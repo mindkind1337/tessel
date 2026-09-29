@@ -5,6 +5,8 @@ import os from 'os'
 import { kimiConfigFile, kimiHookEvents, KIMI_HOOK_EVENTS } from './kimiHooks'
 import { join } from 'path'
 import { t } from './i18n'
+import { statusHooksInstallation, STATUS_HOOK_AGENTS } from './agentStatusHooks'
+import { STATUS_PROVIDERS } from '../shared/agentStateModel'
 import { HOOK_EVENTS, CODEX_HOOK_EVENTS, GEMINI_HOOK_EVENTS, COPILOT_HOOK_EVENTS, COPILOT_HOOKS_FILE, OPENCODE_PLUGIN_FILE, OPENCODE_MARKER, opencodePlugin } from './teamInstall'
 
 const record = (value) => value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -324,15 +326,18 @@ function opencodeInstallation(home, scriptPath) {
   return agent
 }
 
-export function hooksStatus({ home = os.homedir(), sessionsDir, scriptPath, configDirs = {}, states } = {}) {
+export function hooksStatus({ home = os.homedir(), sessionsDir, scriptPath, configDirs = {}, states, env = process.env } = {}) {
   const claude = installation(home, 'claude', scriptPath, HOOK_EVENTS, configDirs.claude)
   const codex = installation(home, 'codex', scriptPath, CODEX_HOOK_EVENTS, configDirs.codex)
   const gemini = installation(home, 'gemini', scriptPath, GEMINI_HOOK_EVENTS)
   codexApproval(home, codex, configDirs.codex)
   const agents = [claude.agent, codex.agent, gemini.agent, copilotInstallation(home, scriptPath), kimiInstallation(home, scriptPath), opencodeInstallation(home, scriptPath)]
+  // The agents whose hooks only report their status (agentStatusHooks.js).
+  for (const id of STATUS_HOOK_AGENTS) agents.push(statusHooksInstallation(id, scriptPath, { home, env }))
   sessionSignals(sessionsDir, agents)
+  // What their hooks said about the panes they run in (working, idle...).
   if (states) for (const agent of agents) {
-    if (!['claude', 'codex'].includes(agent.id)) continue
+    if (!STATUS_PROVIDERS.includes(agent.id)) continue
     const observed = Object.values(states).filter((state) => state.provider === agent.id)
     agent.status = {
       observed: observed.some((state) => state.hookSeen && state.confirmed && !state.stale),

@@ -5,7 +5,8 @@ import {
   createAgentState,
   reduceAgentState,
   publicAgentState,
-  validateAgentState
+  validateAgentState,
+  STATUS_PROVIDERS
 } from '../shared/agentStateModel'
 
 const MAX_EVENT = 8192
@@ -75,7 +76,7 @@ const FIELDS = new Set([
 ])
 const clone = (value) => JSON.parse(JSON.stringify(value))
 const record = (value) => value && typeof value === 'object' && !Array.isArray(value)
-const provider = (value) => value === 'codex' || value === 'claude'
+const provider = (value) => STATUS_PROVIDERS.includes(value)
 const validId = (value) => typeof value === 'string' && ID.test(value) && !value.includes('..')
 const eqPath = (a, b) =>
   process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b

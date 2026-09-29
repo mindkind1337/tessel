@@ -429,6 +429,8 @@ const hookRows = computed(() =>
     (r) => installed.value[r.id] || r.hooks !== 'missing'
   )
 )
+// Its name: the known ones, else the agent's own (Settings > Agents).
+const hookAgentName = (id) => AGENT_NAME[id] || (props.agents.find((a) => a.id === id) || {}).name || id
 // Installed agents Tessel has no hooks for yet (they get the typed reminder).
 const noHookAgents = computed(() =>
   ALL_AGENTS.filter((a) => installed.value[a] && !hookRows.value.find((r) => r.id === a))
@@ -674,7 +676,7 @@ onMounted(async () => {
           <div class="mcp-server-head">
             <BrandIcon :kind="r.id" :size="22" />
             <div class="mcp-row-main">
-              <span class="mcp-name">{{ AGENT_NAME[r.id] || r.id }}</span>
+              <span class="mcp-name">{{ hookAgentName(r.id) }}</span>
               <span class="mcp-target">
                 <template v-if="r.lastSignal">{{ lastSignalLabel(r.lastSignal) }}</template>
                 <template v-else>{{ t('mcp.hooks.noSignal', 'No signal from its hooks yet') }}</template>
@@ -699,6 +701,11 @@ onMounted(async () => {
           <p v-else-if="r.id === 'codex'" class="set-hint">
             {{
               t('mcp.hooks.codexApproved', 'Approved (saved in Codex). If messages stop arriving, /hooks in Codex shows the current state.')
+            }}
+          </p>
+          <p v-if="r.statusOnly" class="set-hint">
+            {{
+              t('mcp.hooks.statusOnly', 'Its hooks tell Tessel when it works and when it is done. Team messages reach it as a typed reminder when it is idle.')
             }}
           </p>
           <p v-if="r.id === 'kimi'" class="set-hint">
