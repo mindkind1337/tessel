@@ -243,7 +243,9 @@
       "automations": "Automatisations",
       "automationsHint": "Exécuter une tâche d'agent selon une planification quand Tessel est ouvert",
       "newBrowser": "Nouveau panneau navigateur",
-      "newBrowserHint": "Une page web à côté de vos terminaux (votre serveur de dev, une doc)"
+      "newBrowserHint": "Une page web à côté de vos terminaux (votre serveur de dev, une doc)",
+      "newChat": "Nouvel agent Claude (chat)",
+      "newChatHint": "Claude sans terminal : les messages d'équipe lui arrivent comme des tours à part entière"
     },
     "worktree": {
       "createFailed": "Impossible de créer une copie séparée.",
@@ -655,6 +657,10 @@
       "unknownModel": "Modèle inconnu « {{model}} ». Disponibles : {{list}}",
       "unknownEffort": "Effort inconnu « {{effort}} » pour {{model}}. Disponibles : {{list}}",
       "noEffort": "{{model}} n'a pas de choix d'effort."
+    },
+    "chat": {
+      "title": "Claude (chat)",
+      "needFolder": "Un agent de chat travaille dans un dossier de projet sur cet ordinateur : ouvrez-en un d'abord."
     }
   }
 }

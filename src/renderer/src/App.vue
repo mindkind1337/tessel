@@ -279,10 +279,16 @@ function openInTesselEditor({ file, line = null, col = null, preview = true, ws 
   refitSoon()
   return leaf
 }
+// An agent pane: a terminal agent, or a chat agent (ChatPane.vue: Claude
+// driven by the main process, no terminal). Both are team members, have a
+// state, get messages; only a terminal agent is typed into or restarted.
+function isAgentLeaf(leaf) {
+  return !!leaf && (leaf.kind === 'agent' || leaf.kind === 'chat')
+}
 // --- Tessel's built-in browser (BrowserPane.vue) ---------------------------------------
-// Panes without a terminal: an editor, a browser page.
+// Panes without a terminal: an editor, a browser page, a chat agent.
 function hasNoTerminal(leaf) {
-  return !!leaf && (leaf.kind === 'editor' || leaf.kind === 'browser')
+  return !!leaf && (leaf.kind === 'editor' || leaf.kind === 'browser' || leaf.kind === 'chat')
 }
 function makeBrowserLeaf(id = null, url = BLANK_URL) {
   return reactive({
@@ -330,6 +336,120 @@ function openExternalUrl(url) {
       if (!ok) showToast(t('app.port.browserFailed', 'Failed to open browser'), { kind: 'error' })
     })
     .catch(() => showToast(t('app.port.browserFailed', 'Failed to open browser'), { kind: 'error' }))
+}
+// --- Chat agents (ChatPane.vue, src/main/chat) -----------------------------------------
+// A Claude agent without a terminal: the main process runs claude in its
+// stream-json mode; messages (yours, its team's) are turns of their own,
+// never typed. Its state comes from the conversation itself.
+function makeChatLeaf({ id = null, cwd = null, projectDir = null, sessionId = null, title = null, team = null } = {}) {
+  return reactive({
+    type: 'leaf',
+    kind: 'chat',
+    id: id || newId('pane'),
+    title: title || t('app.chat.title', 'Claude (chat)'),
+    agentId: 'claude',
+    cwd,
+    projectDir,
+    // Its Claude conversation (resumed when Tessel opens it again).
+    sessionId,
+    model: null,
+    effort: null,
+    agentLaunchToken: null,
+    team,
+    broadcast: false
+  })
+}
+// A new chat agent next to the active pane (split to the right).
+function openChatAgent({ ws = currentWs.value } = {}) {
+  if (!ws) return null
+  const active = ws.activeId ? findLeafIn(ws.tree, ws.activeId) : null
+  const cwd = ws.cwd || (active && active.cwd) || null
+  if (!cwd || ws.remote) {
+    showToast(t('app.chat.needFolder', 'A chat agent works in a project folder on this computer: open one first.'), { kind: 'error' })
+    return null
+  }
+  const leaf = makeChatLeaf({ cwd, projectDir: ws.cwd || null })
+  const split = (orig) => reactive({ type: 'split', id: newId('split'), dir: 'row', sizes: [50, 50], children: [orig, leaf] })
+  if (active) ws.tree = replaceNode(ws.tree, active.id, split)
+  else ws.tree = ws.tree ? split(ws.tree) : leaf
+  if (maximizedId.value && maximizedId.value !== leaf.id) maximizedId.value = null
+  selectWorkspace(ws.id)
+  ws.activeId = leaf.id
+  numberPanes()
+  refitSoon()
+  return leaf
+}
+// Opens (or resumes) a chat pane's Claude with what a Claude terminal would
+// get now: permissions (Ask first / Yolo, its folder), model and effort,
+// Settings > Agents variables and the provider account. Asked each time it
+// opens: never the ones of a previous launch.
+async function chatOpen(leaf, { askTrust = true } = {}) {
+  const api = window.shellApi.chat
+  if (!api || !leaf || leaf.kind !== 'chat') return { ok: false, code: 'failed' }
+  const agent = agentById('claude') || { id: 'claude', name: 'Claude Code' } // i18n-ignore
+  const permissions = launchPermissions(null, [leaf.projectDir, leaf.cwd], settings.yoloFolders, settings.agentPermissions)
+  const sessionValues = launchSessionValues(null, settings.agentSessionOptions, 'claude')
+  const launch = effectiveAgent(agent, settings.agentPrefs, permissions, null, modelsFor('claude'))
+  // A permission mode set in your own arguments (--permission-mode plan).
+  const ownMode = /--permission-mode[ =](default|acceptEdits|plan|auto|dontAsk)/.exec((launch && launch.args) || '')
+  const extraEnv = launch && launch.env ? { ...launch.env } : {}
+  let accountEnv = {}
+  let unsetEnv = []
+  if (window.shellApi.accounts && window.shellApi.accounts.launchEnv) {
+    const acc = await window.shellApi.accounts.launchEnv('claude', leaf.accountId).catch(() => null)
+    if (!acc || acc.ok === false) return { ok: false, code: 'account', error: (acc && acc.error) || '' }
+    if (Array.isArray(acc.unsetEnv)) {
+      unsetEnv = acc.unsetEnv.filter((n) => typeof n === 'string')
+      const drop = new Set(unsetEnv.map((n) => n.toUpperCase()))
+      for (const k of Object.keys(extraEnv)) if (drop.has(k.toUpperCase())) delete extraEnv[k]
+    }
+    if (acc.env && typeof acc.env === 'object') accountEnv = { ...acc.env }
+    leaf.accountId = typeof acc.accountId === 'string' ? acc.accountId : null
+  }
+  let res
+  try {
+    res = await api.open({
+      paneId: leaf.id,
+      agent: 'claude',
+      cwd: leaf.cwd,
+      projectDir: leaf.projectDir,
+      resumeId: leaf.sessionId || null,
+      // The pane's own choice (its model picker) first, else Settings > Agents.
+      model: leaf.model || (sessionValues && sessionValues.model) || null,
+      effort: leaf.effort || (sessionValues && sessionValues.effort) || null,
+      permissions,
+      permissionMode: ownMode ? ownMode[1] : null,
+      askTrust,
+      extraEnv,
+      accountEnv,
+      unsetEnv
+    })
+  } catch (err) {
+    res = { ok: false, code: 'failed', error: err && err.message }
+  }
+  if (res && res.ok) {
+    if (res.sessionId) leaf.sessionId = res.sessionId
+    if (res.launchToken) leaf.agentLaunchToken = res.launchToken
+    if (res.model) leaf.model = res.model
+    scheduleSave()
+  }
+  return res || { ok: false, code: 'failed' }
+}
+// A message for a chat agent (yours, a notice, a worker's brief): given to it
+// as a turn by the main process (at once when idle, else after its turn).
+function deliverToChat(leafId, text, meta = {}) {
+  const api = window.shellApi.chat
+  const origin = meta.source === 'you' ? 'user' : 'team'
+  const done = (ok) => {
+    logMessage(leafId, ok ? 'sent' : 'failed', text, meta)
+    if (ok && meta.onDelivered) meta.onDelivered()
+    if (!ok && meta.onFailed) meta.onFailed()
+  }
+  if (!api) return done(false)
+  const call = origin === 'user' ? api.send({ paneId: leafId, text }) : api.sendTeam({ paneId: leafId, messages: [{ id: newId('msg'), from: 'Tessel', text }] })
+  Promise.resolve(call)
+    .then((r) => done(!!(r && r.ok)))
+    .catch(() => done(false))
 }
 // The file viewer's "Open in editor": Tessel's editor (a kept tab).
 function openViewedInEditor({ file, line }) {
@@ -1110,6 +1230,24 @@ function serializeNode(node) {
       activePath: node.activePath || null
     }
   }
+  // A chat agent: its folder and Claude conversation (resumed on restore).
+  if (node.type === 'leaf' && node.kind === 'chat') {
+    return {
+      type: 'leaf',
+      kind: 'chat',
+      id: node.id,
+      title: node.title || null,
+      num: node.num || null,
+      agentId: 'claude',
+      cwd: node.cwd || null,
+      projectDir: node.projectDir || null,
+      sessionId: node.sessionId || null,
+      model: node.model || null,
+      effort: node.effort || null,
+      accountId: node.accountId,
+      team: node.team || null
+    }
+  }
   // A browser pane: its page (no terminal).
   if (node.type === 'leaf' && node.kind === 'browser') {
     return {
@@ -1181,6 +1319,21 @@ async function deserializeNode(snap, cwd = null) {
     leaf.files = files
     const active = files.find((f) => samePath(f.path, snap.activePath))
     leaf.activePath = (active || files[0]).path
+    return leaf
+  }
+  // A chat agent comes back with its conversation (resumed when it opens).
+  if (snap.type === 'leaf' && snap.kind === 'chat') {
+    const id = typeof snap.id === 'string' && /^pane-[\w-]+$/.test(snap.id) ? snap.id : null
+    const sessionId = typeof snap.sessionId === 'string' && /^[0-9a-f-]{36}$/i.test(snap.sessionId) ? snap.sessionId : null
+    const folder = (v) => (typeof v === 'string' && v.length <= 1000 ? v : null)
+    if (!folder(snap.cwd)) return null
+    const leaf = makeChatLeaf({ id, cwd: folder(snap.cwd), projectDir: folder(snap.projectDir), sessionId, title: typeof snap.title === 'string' ? snap.title.slice(0, 200) : null })
+    if (Number.isInteger(snap.num) && snap.num > 0) leaf.num = snap.num
+    if (typeof snap.accountId === 'string' || snap.accountId === null) leaf.accountId = snap.accountId
+    if (typeof snap.team === 'string') leaf.team = snap.team
+    const flag = (v) => (typeof v === 'string' && /^[A-Za-z0-9._:[\]-]{1,60}$/.test(v) ? v : null)
+    leaf.model = flag(snap.model)
+    leaf.effort = flag(snap.effort)
     return leaf
   }
   // A browser pane comes back on its page (http(s) only).
@@ -1437,7 +1590,7 @@ function closeLeaf(leafId, opts = {}) {
   // an agent pane, or a terminal where a program runs under the shell.
   if (!opts.force && settings.confirmCloseAgent && ws) {
     const leaf = findLeafIn(ws.tree, leafId)
-    if (leaf && leaf.kind === 'agent') {
+    if (leaf && isAgentLeaf(leaf)) {
       askConfirm({
         title: t('app.close.title', 'Close {{name}}?', { name: leaf.title }),
         text: t('app.close.agentText', 'The agent session will end. Its conversation can be resumed later from Agent sessions.'),
@@ -1464,6 +1617,8 @@ function closeLeaf(leafId, opts = {}) {
       return
     }
   }
+  // A chat agent: its Claude ends (the conversation can be resumed later).
+  if (closing && closing.kind === 'chat' && window.shellApi.chat) window.shellApi.chat.close({ paneId: leafId }).catch(() => {})
   if (!noTerminal) {
     window.shellApi.killPty(leafId)
     dropBuffer(leafId)
@@ -1658,7 +1813,7 @@ function startTaskResize(e) {
 const agentPanes = computed(() => {
   const out = []
   forEachLeaf(tree.value, (leaf) => {
-    if (leaf.kind === 'agent') {
+    if (isAgentLeaf(leaf)) {
       out.push({
         id: leaf.id,
         num: leaf.num || null,
@@ -1962,6 +2117,10 @@ provide('panelCtx', {
   openInEditor: (q) => openInTesselEditor(q),
   // The built-in browser: the active ports, a page in the system browser.
   browserPorts: () => browserPorts(),
+  // A chat agent pane: open or resume its Claude (asks to trust its folder
+  // the first time), and the permissions it runs with.
+  chatOpen: (leaf, opts) => chatOpen(leaf, opts),
+  chatPermissions: (leaf) => launchPermissions(null, [leaf && leaf.projectDir, leaf && leaf.cwd], settings.yoloFolders, settings.agentPermissions),
   openExternal: (url) => openExternalUrl(url),
   // Tessel's shortcuts pressed in an editor pane (it keeps them from Monaco).
   appShortcut: (e) => onKey(e, { fromEditor: true })
@@ -2022,6 +2181,10 @@ function buildCommands() {
   }
   add(t('app.cmd.group.new', 'New'), t('app.cmd.newWorkspace', 'New workspace'), createWorkspace, { shortcut: 'Ctrl+Shift+N' })
   add(t('app.cmd.group.new', 'New'), t('project.cmd.addProject', 'Add a project…'), openAddProject)
+  if (currentWs.value && currentWs.value.cwd && !currentWs.value.remote)
+    add(t('app.cmd.group.new', 'New'), t('app.cmd.newChat', 'New Claude agent (chat)'), () => openChatAgent(), {
+      hint: t('app.cmd.newChatHint', 'Claude without a terminal: team messages reach it as turns of their own')
+    })
   if (currentWs.value)
     add(t('app.cmd.group.new', 'New'), t('app.cmd.newBrowser', 'New browser pane'), () => openInBrowser({ newPane: true, focusAddress: true }), {
       hint: t('app.cmd.newBrowserHint', 'A web page next to your terminals (your dev server, docs)')
@@ -2163,6 +2326,12 @@ function agentById(id) {
 // chosen placement. Agents run inside the default shell.
 async function launch({ kind, id, sessionOptions = null }, targetId = activeId.value, where = placement.value) {
   closeMenus()
+  // A chat agent (Claude): a pane of its own next to the active one.
+  if (kind === 'chat') {
+    const baseWs = (targetId && wsOfLeaf(targetId)) || currentWs.value
+    openChatAgent({ ws: baseWs })
+    return
+  }
   const agent = kind === 'agent' ? agentById(id) : null
   if (kind === 'agent' && (!agent || agent.available === false)) return
   const shellId = kind === 'shell' ? id : selectedShell.value
@@ -3280,6 +3449,7 @@ function removeWorkspace(id, confirmed = false, editorChecked = false) {
   forEachLeaf(ws.tree, (leaf) => {
     if (hasNoTerminal(leaf)) {
       if (leaf.kind === 'editor') releaseOwner(leaf.id)
+      if (leaf.kind === 'chat' && window.shellApi.chat) window.shellApi.chat.close({ paneId: leaf.id }).catch(() => {})
       return
     }
     window.shellApi.killPty(leaf.id)
@@ -3605,7 +3775,7 @@ const agentStates = computed(() => {
   const out = {}
   for (const ws of workspaces.value) {
     forEachLeaf(ws.tree, (leaf) => {
-      if (leaf.kind !== 'agent') return
+      if (!isAgentLeaf(leaf)) return
       addAgentState(out, leaf, ws.id)
     })
   }
@@ -3726,7 +3896,7 @@ const alertedAgents = new Set()
 const agentAlerts = computed(() => {
   const out = []
   forEachWsLeaf((leaf) => {
-    if (leaf.kind !== 'agent') return
+    if (!isAgentLeaf(leaf)) return
     const t = trackOf(leaf.id)
     if (t && t.level === 'alert')
       out.push({ id: leaf.id, key: `${leaf.id}:${t.kind}:${t.taskId}`, title: paneLabel(leaf), reason: t.reason })
@@ -3930,6 +4100,8 @@ let pendingTimer = null
 // meta: { source: 'you' | 'tessel', scope: 'team' | 'workspace' | 'notes' |
 // 'team-change', teamId } for the activity log.
 function deliverToAgent(leafId, text, meta = {}) {
+  // A chat agent: nothing is typed; the main process gives it a turn.
+  if (findLeaf(leafId)?.kind === 'chat') return deliverToChat(leafId, text, meta)
   const item = { text, meta, held: false }
   if (!pendingMessages[leafId]) pendingMessages[leafId] = []
   pendingMessages[leafId].push(item)
@@ -3941,7 +4113,7 @@ function deliverToAgent(leafId, text, meta = {}) {
 
 // A pane joined (teamId) or left (null) a team.
 function logMembership(leaf, teamId) {
-  if (!leaf || leaf.kind !== 'agent') return
+  if (!leaf || !isAgentLeaf(leaf)) return
   recordActivity({
     type: 'agent.team',
     paneId: leaf.id,
@@ -4649,7 +4821,7 @@ setNotesDelivery({
 function wsAgents(wsId) {
   const ws = wsById(wsId)
   const out = []
-  if (ws) forEachLeaf(ws.tree, (l) => l.kind === 'agent' && out.push(l))
+  if (ws) forEachLeaf(ws.tree, (l) => isAgentLeaf(l) && out.push(l))
   return out
 }
 
@@ -4705,7 +4877,7 @@ async function changeTeamLead(teamId, leafId) {
   const dir = teamDir(teamId)
   const leaf = leafId ? findLeaf(leafId) : null
   if (leaf && old && old.id === leaf.id) return
-  if (leaf && (leaf.kind !== 'agent' || leaf.team !== teamId)) return
+  if (leaf && (!isAgentLeaf(leaf) || leaf.team !== teamId)) return
   if (leaf && !dir) {
     showToast(t('app.lead.needFolder', 'Set a project folder on this workspace first: the lead works from it.'), { kind: 'error' })
     return
@@ -4943,7 +5115,7 @@ function runMemberMessage(team, from, req) {
   const now = Date.now()
   const log = (sentLog[from.id] = (sentLog[from.id] || []).filter((t) => now - t < MESSAGE_BUDGET.perMs))
   if (log.length >= MESSAGE_BUDGET.max) return 'Not sent: too many messages in the last 10 minutes. Wait a little.' // i18n-ignore
-  const others = teamMembers(team.id).filter((l) => l.id !== from.id && l.kind === 'agent')
+  const others = teamMembers(team.id).filter((l) => l.id !== from.id && isAgentLeaf(l))
   const lead = teamLead(team.id)
   const to =
     req.to === 'team'
@@ -5017,7 +5189,7 @@ async function pollTeams() {
         tellTeam(team.id, 'The team has no lead any more.') // i18n-ignore
         handOffLeadReviews(team.id)
       }
-      const members = teamMembers(team.id).filter((l) => l.kind === 'agent')
+      const members = teamMembers(team.id).filter((l) => isAgentLeaf(l))
       // Orchestration: closed or silent workers, the queue, the workers list.
       teamStepIs('workers', team)
       try {
@@ -5124,7 +5296,7 @@ async function publishCurrentTeams() {
     if (!dir) continue
     teamDirsSeen.add(dir)
     const panes = (byDir[dir] = byDir[dir] || {})
-    for (const l of teamMembers(team.id)) if (l.kind === 'agent' && l.num) panes[l.id] = { team: team.id, num: l.num }
+    for (const l of teamMembers(team.id)) if (isAgentLeaf(l) && l.num) panes[l.id] = { team: team.id, num: l.num }
   }
   for (const dir of teamDirsSeen) {
     const cur = await window.shellApi.team.current({ dir, panes: byDir[dir] || {} })
@@ -5166,7 +5338,7 @@ async function syncChannel(team, opts = {}) {
   if (!team || !window.shellApi.channel) return null
   const dir = channelDir(team)
   if (!dir) return null
-  const members = teamMembers(team.id).filter((l) => l.kind === 'agent' && l.num)
+  const members = teamMembers(team.id).filter((l) => isAgentLeaf(l) && l.num)
   const sig = members.map((m) => `${m.id}:${m.num}:${m.title}`).join('|')
   if (channelSigs[team.id] !== sig || !channelBoxes[team.id]) {
     const res = await window.shellApi.channel.ensure({
@@ -6537,7 +6709,7 @@ async function syncSoloBoards(round) {
     if (!ws.cwd) continue
     const solo = []
     forEachLeaf(ws.tree, (l) => {
-      if (l.kind === 'agent' && l.num && !(l.team && teamById(l.team))) solo.push(l)
+      if (isAgentLeaf(l) && l.num && !(l.team && teamById(l.team))) solo.push(l)
     })
     const panes = (byDir[ws.cwd] = byDir[ws.cwd] || {})
     for (const l of solo) panes[l.id] = { ws: ws.id, num: l.num }
@@ -7249,6 +7421,8 @@ async function deliverChannel(team, members, round = teamRound) {
         else delete teamUnread[m.id]
       }
       for (const m of members) wakeIfNeeded(m)
+      await pushToChats(team, dir, res)
+      if (roundGone(round)) return
       logTeamMessages(team, res)
       teamStepIs('read status', team)
       await refreshOldUnread(team, dir, res.history, round)
@@ -7335,6 +7509,79 @@ async function deliverChannel(team, members, round = teamRound) {
     })
   }
 }
+// Chat agents (src/main/chat) get their team messages as turns of their own,
+// never typed: held in flight on disk, given to the chat (it waits for the
+// agent's turn to end), marked read once the agent took that turn
+// (teamAccepted), released for a later try if it could not (teamFailed).
+// A message held by an earlier session (Tessel stopped meanwhile) is
+// released: given again rather than lost.
+const chatTeamPending = new Map() // message id -> { dir, teamId, d, key }
+async function pushToChats(team, dir, res) {
+  const api = window.shellApi.channel
+  const chat = window.shellApi.chat
+  if (!chat || !chat.sendTeam || !api.hold) return
+  const who = Object.fromEntries((res.participants || []).map((p) => [p.id, p]))
+  for (const d of res.held || []) {
+    const leaf = findLeaf(d.toId)
+    if (!leaf || leaf.kind !== 'chat' || chatTeamPending.has(d.id)) continue
+    await api.release({ dir, teamId: team.id, id: d.id, toId: d.toId }).catch(() => null)
+  }
+  const byPane = {}
+  for (const d of res.deliveries || []) {
+    const leaf = findLeaf(d.toId)
+    if (!leaf || leaf.kind !== 'chat') continue
+    const key = `${team.id}:${d.id}:${d.toId}`
+    if (channelQueued.has(key)) continue
+    channelQueued.add(key)
+    if (d.fromId === 'tessel' && /^Delivered to /.test(d.text)) {
+      ackChannel(dir, team.id, d, key)
+      continue
+    }
+    const held = await api.hold({ dir, teamId: team.id, id: d.id, toId: d.toId, state: 'inflight' }).catch(() => null)
+    if (!held || !held.ok) {
+      channelQueued.delete(key)
+      continue
+    }
+    const from = who[d.fromId]
+    const label = d.fromId === 'tessel' ? 'Tessel' : `#${from ? from.num : '?'} ${from ? from.title : 'teammate'}` // i18n-ignore
+    chatTeamPending.set(d.id, { dir, teamId: team.id, d, key })
+    ;(byPane[d.toId] = byPane[d.toId] || []).push({
+      id: d.id,
+      from: label,
+      text: `(message ${d.id}${d.replyTo ? `, reply to ${d.replyTo}` : ''}) ${d.text}` // i18n-ignore
+    })
+  }
+  for (const [paneId, messages] of Object.entries(byPane)) {
+    const r = await chat.sendTeam({ paneId, messages }).catch(() => null)
+    if (!r || !r.ok) for (const m of messages) releaseChatTeam(m.id)
+  }
+}
+function acceptChatTeam(id) {
+  const p = chatTeamPending.get(id)
+  if (!p) return
+  chatTeamPending.delete(id)
+  ackChannel(p.dir, p.teamId, p.d, p.key)
+}
+function releaseChatTeam(id) {
+  const p = chatTeamPending.get(id)
+  if (!p) return
+  chatTeamPending.delete(id)
+  if (window.shellApi.channel && window.shellApi.channel.release)
+    window.shellApi.channel.release({ dir: p.dir, teamId: p.teamId, id: p.d.id, toId: p.d.toId }).catch(() => {})
+  channelQueued.delete(p.key)
+}
+let offChatEvents = null
+onMounted(() => {
+  const chat = window.shellApi.chat
+  if (!chat || !chat.onEvent) return
+  offChatEvents = chat.onEvent((e) => {
+    const ev = e && e.event
+    if (!ev) return
+    if (ev.type === 'teamAccepted' && Array.isArray(ev.ids)) for (const id of ev.ids) acceptChatTeam(id)
+    else if (ev.type === 'teamFailed' && Array.isArray(ev.ids)) for (const id of ev.ids) releaseChatTeam(id)
+  })
+})
+onBeforeUnmount(() => offChatEvents && offChatEvents())
 const leadTimer = setInterval(pollTeams, 2500)
 onBeforeUnmount(() => clearInterval(leadTimer))
 
@@ -7367,7 +7614,7 @@ function pruneTeams() {
 }
 
 function createTeam(leafIds) {
-  const ids = (leafIds || []).filter((id) => findLeaf(id)?.kind === 'agent' && !findLeaf(id).team)
+  const ids = (leafIds || []).filter((id) => isAgentLeaf(findLeaf(id)) && !findLeaf(id).team)
   if (!ids.length) return null
   const names = new Set(teams.value.map((t) => t.name))
   let n = 1
@@ -7405,7 +7652,7 @@ function createTeam(leafIds) {
 function addToTeam(teamId, leafIds) {
   const team = teamById(teamId)
   if (!team) return
-  const joining = (leafIds || []).map(findLeaf).filter((l) => l && l.kind === 'agent' && !l.team)
+  const joining = (leafIds || []).map(findLeaf).filter((l) => l && isAgentLeaf(l) && !l.team)
   if (!joining.length) return
   const before = teamMembers(teamId)
   for (const leaf of joining) {
@@ -7499,7 +7746,7 @@ function disbandTeam(teamId) {
 async function tellTeam(teamId, text, opts = {}) {
   const team = teamById(teamId)
   if (!team) return
-  const members = teamMembers(teamId).filter((l) => l.kind === 'agent')
+  const members = teamMembers(teamId).filter((l) => isAgentLeaf(l))
   if (!members.length) return
   if (!opts.welcome) {
     tellAgents(members, `[Tessel] Team "${team.name}": ${text}`, teamId) // i18n-ignore
@@ -7545,7 +7792,7 @@ function tellAgents(list, text, teamId = null) {
     return
   }
   for (const leaf of list) {
-    if (leaf.kind !== 'agent') continue
+    if (!isAgentLeaf(leaf)) continue
     if (limits[leaf.id]) logMessage(leaf.id, 'skipped', text, meta)
     else deliverToAgent(leaf.id, text, meta)
   }
@@ -7557,7 +7804,7 @@ function tellAgents(list, text, teamId = null) {
 function noticeAgents(list, text, teamId, meta = { source: 'tessel', scope: 'team', teamId }) {
   const team = teamById(teamId)
   const dir = team ? channelDir(team) : null
-  const agents = list.filter((l) => l && l.kind === 'agent')
+  const agents = list.filter((l) => l && isAgentLeaf(l))
   if (!dir || !window.shellApi.team) {
     for (const l of agents) logMessage(l.id, 'skipped', text, meta)
     return false
@@ -7603,7 +7850,7 @@ function messageWorkspace(wsId, text) {
 function messageAgents(list, text, where, meta = {}) {
   const body = String(text || '').trim()
   if (!body) return
-  const agents = list.filter((l) => l.kind === 'agent')
+  const agents = list.filter((l) => isAgentLeaf(l))
   if (!agents.length) {
     showToast(t('app.message.noAgent', '{{where}} has no agent to message.', { where }), { kind: 'error' })
     return
@@ -7811,7 +8058,7 @@ function startWsMessage(wsId) {
 // something) | 'limited' (usage limit reached) | 'working' | 'waiting' (done,
 // waiting for you) | 'ready'.
 function paneState(leaf) {
-  if (leaf.kind !== 'agent') return 'ready'
+  if (!isAgentLeaf(leaf)) return 'ready'
   if (approvals[leaf.id]) return 'approval'
   if (limits[leaf.id]) return 'limited'
   if (childrenRunning[leaf.id]) return 'working'

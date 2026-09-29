@@ -205,6 +205,26 @@ describe('Tessel team tools (background messages)', () => {
     expect(stop.reason).toMatch(/Another one/)
   })
 
+  it('in a chat agent (TESSEL_CHAT=1) the hook never claims messages: Tessel gives them as turns', async () => {
+    mcp.send(as(A), '#4', 'For the chat agent')
+    pollTeamChannel({ dir, teamId })
+    const run = (input, extra = {}) =>
+      new Promise((resolve) => {
+        const child = spawn(process.execPath, [SERVER, '--hook'], {
+          env: { ...process.env, TESSEL_PANE_ID: B.id, TESSEL_PROJECT_DIR: dir, ...extra }
+        })
+        let out = ''
+        child.stdout.on('data', (c) => (out += c))
+        child.on('close', () => resolve(out))
+        child.stdin.end(JSON.stringify(input))
+      })
+    expect(await run({ hook_event_name: 'PostToolUse', cwd: dir }, { TESSEL_CHAT: '1' })).toBe('')
+    expect(await run({ hook_event_name: 'Stop', cwd: dir }, { TESSEL_CHAT: '1' })).toBe('')
+    // Still unread: a terminal agent's hook shows it.
+    const shown = JSON.parse(await run({ hook_event_name: 'PostToolUse', cwd: dir }))
+    expect(shown.hookSpecificOutput.additionalContext).toMatch(/For the chat agent/)
+  })
+
   it('as a Gemini CLI hook: the same answers under its event names, and its conversation reported', async () => {
     const sessions = fs.mkdtempSync(join(os.tmpdir(), 'tessel-sessions-'))
     mcp.send(as(A), '#4', 'Gemini, after a tool')

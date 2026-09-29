@@ -267,6 +267,19 @@ onMounted(async () => {
         />
       </div>
     </template>
+    <!-- Claude as a chat (src/main/chat): no terminal, team messages as turns. -->
+    <div v-if="installedAgents.some((a) => a.id === 'claude' && a.available !== false)" class="launch-row">
+      <button
+        class="launch-item"
+        role="menuitem"
+        data-test="launch-chat"
+        :title="t('pane.launch.chatHint', 'Claude in a chat pane: no terminal; team messages reach it as turns of their own')"
+        @click="emit('launch', { kind: 'chat', id: 'claude' })"
+      >
+        <BrandIcon kind="claude" :label="t('pane.launch.chat', 'Claude Code (chat)')" :size="16" />
+        <span class="launch-name">{{ t('pane.launch.chat', 'Claude Code (chat)') }}</span>
+      </button>
+    </div>
     <p v-if="!installedAgents.length" class="launch-empty">{{ t('pane.launch.noAgents', 'No AI agents installed yet.') }}</p>
     <div v-if="missingAgents.length" class="launch-install">
       <span class="launch-install-label">{{ t('pane.launch.install', 'Install:') }}</span>

@@ -369,6 +369,21 @@ const api = {
     onDownloadBlocked: (cb) => subscribe('browser:downloadBlocked', cb)
   },
 
+  // Chat agents (src/main/chat/sessions.js): Claude without a terminal. The
+  // window opens, messages, answers approvals and follows each chat's events.
+  chat: {
+    open: (opts) => ipcRenderer.invoke('chat:open', opts),
+    trust: (opts) => ipcRenderer.invoke('chat:trust', opts),
+    send: (opts) => ipcRenderer.invoke('chat:send', opts),
+    sendTeam: (opts) => ipcRenderer.invoke('chat:sendTeam', opts),
+    interrupt: (opts) => ipcRenderer.invoke('chat:interrupt', opts),
+    approve: (opts) => ipcRenderer.invoke('chat:approve', opts),
+    setOption: (opts) => ipcRenderer.invoke('chat:setOption', opts),
+    close: (opts) => ipcRenderer.invoke('chat:close', opts),
+    history: (opts) => ipcRenderer.invoke('chat:history', opts),
+    onEvent: (cb) => subscribe('chat:event', cb)
+  },
+
   // Scheduled automations (src/main/automations.js): the list and run
   // history, changes, and the runs the scheduler asks the window to start
   // (onDispatch), reported back with markResult.

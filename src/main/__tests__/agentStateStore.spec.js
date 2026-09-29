@@ -453,3 +453,68 @@ describe('local agent status spool and snapshots', () => {
     expect(JSON.parse(fs.readFileSync(stateFile())).states[0].state.paneId).toBe(paneId)
   })
 })
+
+describe('chat pane events (recordChatEvent)', () => {
+  const chat = (extra = {}) => registered({ provider: 'claude', ...extra })
+  const session = { sessionId: 'chat-session-1' }
+
+  it('a submitted prompt shows the pane working, from hook evidence', async () => {
+    const store = make()
+    await store.register(chat())
+    const states = await store.recordChatEvent(paneId, token, 'UserPromptSubmit', session)
+    expect(states[paneId]).toMatchObject({
+      state: 'working',
+      confirmed: true,
+      hookSeen: true,
+      sessionId: 'chat-session-1',
+      provider: 'claude'
+    })
+  })
+
+  it('a permission request and its prompt show approval, its answer leaves it', async () => {
+    const store = make()
+    await store.register(chat())
+    await store.recordChatEvent(paneId, token, 'UserPromptSubmit', session)
+    await store.recordChatEvent(paneId, token, 'PermissionRequest', { ...session, toolId: 'toolu_1' })
+    const states = await store.recordChatEvent(paneId, token, 'Notification', {
+      ...session,
+      toolId: 'toolu_1',
+      notificationType: 'permission_prompt'
+    })
+    expect(states[paneId]).toMatchObject({ state: 'approval', reason: 'permission' })
+    const after = await store.recordChatEvent(paneId, token, 'PostToolUse', { ...session, toolId: 'toolu_1' })
+    expect(after[paneId]).toMatchObject({ state: 'working' })
+  })
+
+  it('Stop then a ready observation is idle at once (no settling wait)', async () => {
+    const store = make()
+    await store.register(chat())
+    await store.recordChatEvent(paneId, token, 'UserPromptSubmit', session)
+    await store.recordChatEvent(paneId, token, 'Stop', session)
+    const states = await store.observe(paneId, token, 'ScreenReady')
+    expect(states[paneId]).toMatchObject({ state: 'idle', reason: 'ready' })
+    expect(states[paneId].turnCompletedAt).toBe(tick)
+  })
+
+  it('refuses a wrong launch, an unknown pane, an event outside the list and a bad id', async () => {
+    const store = make()
+    await store.register(chat())
+    await store.recordChatEvent(paneId, 'other-token-000000', 'UserPromptSubmit', session)
+    await store.recordChatEvent('pane-9', token, 'UserPromptSubmit', session)
+    await store.recordChatEvent(paneId, token, 'SessionEnd', session)
+    await store.recordChatEvent(paneId, token, 'UserPromptSubmit', { sessionId: '../x' })
+    await store.recordChatEvent(paneId, token, 'UserPromptSubmit', { sessionId: 'a b' })
+    expect(store.snapshot()[paneId]).toMatchObject({ state: 'unknown', hookSeen: false })
+    expect(store.snapshot()['pane-9']).toBeUndefined()
+  })
+
+  it('keeps the session it started with', async () => {
+    const store = make()
+    await store.register(chat())
+    await store.recordChatEvent(paneId, token, 'UserPromptSubmit', session)
+    await store.recordChatEvent(paneId, token, 'Stop', { sessionId: 'another-session' })
+    expect(store.snapshot()[paneId]).toMatchObject({ state: 'working', sessionId: 'chat-session-1' })
+    await store.recordChatEvent(paneId, token, 'Interrupt')
+    expect(store.snapshot()[paneId]).toMatchObject({ state: 'unknown', reason: 'interrupted' })
+  })
+})

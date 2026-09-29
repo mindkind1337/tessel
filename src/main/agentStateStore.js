@@ -36,6 +36,18 @@ const HOOKS = new Set([
   'Elicitation',
   'ElicitationResult'
 ])
+// The hook events a chat pane's manager may report (recordChatEvent).
+const CHAT_EVENTS = new Set([
+  'SessionStart',
+  'UserPromptSubmit',
+  'PreToolUse',
+  'PostToolUse',
+  'PermissionRequest',
+  'Notification',
+  'Stop',
+  'StopFailure',
+  'Interrupt'
+])
 const SCREENS = new Set([
   'ScreenReady',
   'ScreenApproval',
@@ -611,6 +623,40 @@ export function createAgentStateStore({ dir, now = Date.now, onChange = () => {}
         }
         if (validId(end.turnId)) event.turnId = end.turnId
         const next = reduceAgentState(current.state, event, clock())
+        if (JSON.stringify(next) !== JSON.stringify(current.state)) {
+          current.state = next
+          current.observed = true
+          dirty = true
+          await persist()
+        }
+        return publish()
+      }),
+    // A chat pane (src/main/chat/sessions.js) has no hooks of its own: the
+    // manager reads the turn from Claude's stream and reports it here as the
+    // hook event it stands for. Same validation (hookEvent) and reducer as a
+    // spooled hook, so a chat pane follows exactly a terminal pane's states.
+    recordChatEvent: (paneId, token, eventName, { sessionId, toolId, notificationType } = {}) =>
+      serial(async () => {
+        const current = active.get(paneId)
+        if (!current || current.state.launchToken !== token || !CHAT_EVENTS.has(eventName))
+          return publish()
+        const at = clock()
+        const candidate = {
+          v: 1,
+          id: randomUUID(),
+          paneId,
+          provider: current.state.provider,
+          launchToken: token,
+          sessionId: sessionId ?? current.state.sessionId,
+          event: eventName,
+          at,
+          source: 'hook'
+        }
+        if (toolId !== undefined && toolId !== null) candidate.toolId = toolId
+        if (notificationType !== undefined) candidate.notificationType = notificationType
+        const event = hookEvent(candidate, at)
+        if (!event) return publish()
+        const next = reduceAgentState(current.state, event, at)
         if (JSON.stringify(next) !== JSON.stringify(current.state)) {
           current.state = next
           current.observed = true

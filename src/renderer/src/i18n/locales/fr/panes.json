@@ -386,7 +386,9 @@
       "keysMove": "pour naviguer,",
       "keysOpen": "pour ouvrir,",
       "keysClose": "pour fermer",
-      "modelHint": "Le modèle avec lequel {{name}} démarre"
+      "modelHint": "Le modèle avec lequel {{name}} démarre",
+      "chat": "Claude Code (chat)",
+      "chatHint": "Claude dans un panneau de chat : sans terminal ; les messages d'équipe lui arrivent comme des tours à part entière"
     },
     "model": {
       "fromSession": "d'après sa dernière réponse",
