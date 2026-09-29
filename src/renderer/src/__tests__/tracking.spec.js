@@ -62,3 +62,16 @@ describe('trackAgent (review fixes)', () => {
     expect(t).toMatchObject({ kind: 'approval', level: 'warn' })
   })
 })
+
+describe('an agent that answered is waiting for you, not stuck', () => {
+  it('idle on a Doing task after a completed turn: info "waiting", no warning', () => {
+    const now = 10 * 60 * 60 * 1000
+    const M = 60 * 1000
+    const doing = { id: 't1', title: 'Fix it', column: 'doing', doingSince: now - 60 * M }
+    const answered = trackAgent({ state: 'idle', since: now - 15 * M, answered: true }, doing, now)
+    expect(answered).toMatchObject({ level: 'info', kind: 'waiting' })
+    expect(answered.reason).toContain('Waiting for your answer')
+    // Stopped without a normal end (error, interruption, unknown): still a warning.
+    expect(trackAgent({ state: 'idle', since: now - 15 * M }, doing, now)).toMatchObject({ level: 'warn', kind: 'quiet' })
+  })
+})

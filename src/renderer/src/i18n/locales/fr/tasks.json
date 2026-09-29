@@ -419,7 +419,8 @@
       "limitReset": "Utilisation épuisée (réinitialisation indiquée : {{reset}}).",
       "limit": "Utilisation épuisée.",
       "quiet": "Silencieux depuis {{time}} alors que « {{task}} » n'est pas terminée : il est peut-être bloqué ou vous attend.",
-      "long": "Tâche longue : sur « {{task}} » depuis {{time}}."
+      "long": "Tâche longue : sur « {{task}} » depuis {{time}}.",
+      "waiting": "Attend votre réponse depuis {{time}} (« {{task}} » n'est pas terminée)."
     }
   }
 }

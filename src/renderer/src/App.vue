@@ -3468,7 +3468,15 @@ function trackOf(leafId) {
   // Waiting for its running sub-agents is not being quiet.
   const state = childrenRunning[leafId] && (tracked.state === 'idle' || tracked.state === 'unknown') ? 'working' : tracked.state
   return trackAgent(
-    { state, since: tracked.since, sinceStart: tracked.sinceStart, reset: info ? info.reset : '' },
+    {
+      state,
+      since: tracked.since,
+      sinceStart: tracked.sinceStart,
+      reset: info ? info.reset : '',
+      // Its last turn completed normally (hooks saw it answer, not an error
+      // or an interruption): idle then means it waits for you.
+      answered: !!(info && info.state === 'idle' && info.reason === 'ready' && info.turnCompletedAt)
+    },
     taskOfPane(leafId),
     clock.value,
     t

@@ -85,6 +85,15 @@ export function trackAgent(agent, task, now = Date.now(), t = english) {
     reason = agent.reset
       ? t('tracking.reason.limitReset', 'Out of usage (reset shown: {{reset}}).', { reset: agent.reset })
       : t('tracking.reason.limit', 'Out of usage.')
+  } else if (doing && state === 'idle' && quietMins >= TRACK.idleOnTaskWarnMin && agent && agent.answered) {
+    // Its turn ended normally (it answered): it waits for you, it is not
+    // stuck. Worth knowing, no warning, no notification.
+    level = 'info'
+    kind = 'waiting'
+    reason = t('tracking.reason.waiting', 'Waiting for your answer for {{time}} ("{{task}}" is not finished).', {
+      time: span(quietOnTask),
+      task: task.title
+    })
   } else if (doing && state === 'idle' && quietMins >= TRACK.idleOnTaskWarnMin) {
     level = quietMins >= TRACK.idleOnTaskAlertMin ? 'alert' : 'warn'
     kind = 'quiet'
