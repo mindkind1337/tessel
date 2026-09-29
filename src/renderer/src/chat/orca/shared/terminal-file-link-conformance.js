@@ -117,7 +117,7 @@ export const TERMINAL_FILE_LINK_TAP_CONFORMANCE_CASES = [
   },
   {
     name: 'bare filename with extension',
-    lineText: 'Here you go: README.md',
+    lineText: 'Here you go: README.md', // i18n-ignore
     tapText: 'README',
     expected: { pathText: 'README.md', line: null, column: null }
   },

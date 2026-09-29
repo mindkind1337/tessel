@@ -58,7 +58,7 @@ export function transcriptImageIdentity(block, runtimeContext) {
   const source = block.url?.trim() || block.path
   const filePath = block.path ?? source ?? ''
   if (renderableImageSource(source)) {
-    return `external\0${source ?? ''}`
+    return `external\0${source ?? ''}` // i18n-ignore
   }
   return `${source ?? ''}\0${filePath}\0${
     runtimeContext === null

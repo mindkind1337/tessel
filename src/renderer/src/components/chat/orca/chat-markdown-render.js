@@ -32,7 +32,7 @@ const ELEMENT_NODE = 1
 const GITHUB_REFERENCE_PATTERN = /(?:\b([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+))?#([1-9][0-9]*)\b/g
 
 function createGitHubIssueUrl(owner, repo, number) {
-  return `https://github.com/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues/${number}`
+  return `https://github.com/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues/${number}` // i18n-ignore
 }
 
 function isEmbeddedGitHubReference(value, index) {
@@ -464,7 +464,7 @@ export const ChatMarkdownMermaid = defineComponent({
       renderMermaid(props.content, { dark: pageIsDark() }).then((result) => {
         if (current !== run) return
         if (result?.svg) {
-          svgUrl.value = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(result.svg)}`
+          svgUrl.value = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(result.svg)}` // i18n-ignore
         } else failed.value = true
       })
     }
@@ -506,7 +506,7 @@ function compactHeading(level, weightClass) {
     h(
       'span',
       {
-        class: ['comment-md-h', level <= 3 ? `comment-md-h${level}` : null, weightClass],
+        class: ['comment-md-h', level <= 3 ? `comment-md-h${level}` : null, weightClass], // i18n-ignore
         role: 'heading',
         'aria-level': level
       },

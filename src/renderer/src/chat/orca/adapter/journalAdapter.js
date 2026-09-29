@@ -18,7 +18,7 @@ import { normalizeSubagentState, MAX_SUBAGENT_FIELD_CHARS, subagentGroupFallback
 const MAX_OUTPUT = 8 * 1024
 
 // Our tool status -> the journal's tool-call state.
-const TOOL_STATE = { running: 'running', done: 'completed', completed: 'completed', error: 'failed', failed: 'failed', stopped: 'failed' }
+const TOOL_STATE = { running: 'running', done: 'completed', completed: 'completed', error: 'failed', failed: 'failed', stopped: 'interrupted' }
 // Our user row status -> the journal's dispatch state. A failed send stays
 // visible ('unknown': delivery not confirmed), never 'rejected', which would
 // hide the message; Tessel shows its own "Not sent" entry with Retry.

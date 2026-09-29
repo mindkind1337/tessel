@@ -5,7 +5,7 @@
 import { t } from '../../../i18n'
 
 const LANGUAGE_ENTRIES = [
-  ['', 'chat.orca.codeBlock.plainText', 'Plain text'],
+  ['', 'chat.orca.codeBlock.plainText', 'Plain text'], // i18n-ignore
   ['bash', null, 'Bash'],
   ['c', null, 'C'],
   ['cpp', null, 'C++'],
