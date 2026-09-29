@@ -134,6 +134,11 @@ export function createSshAskpass({
   const panes = new Map() // paneId -> pane
   const tokens = new Map() // token -> paneId
   const versions = new Map() // ssh.exe path -> Promise<boolean>
+  // Each preparation of a pane gets a generation; a newer preparation, a
+  // release or close() makes the older ones void, checked after every await.
+  const generations = new Map() // paneId -> number
+  let generationSeq = 0
+  let closed = false
   let server = null
   let serverReady = null
   let pipeName = ''
@@ -154,10 +159,10 @@ export function createSshAskpass({
   }
 
   // --- The pipe ------------------------------------------------------------------
-  // A random name per app run; the default security of a pipe made by this
-  // process (only this Windows user, SYSTEM and administrators can write to
-  // it; readableAll / writableAll stay off); each connection carries one
-  // question and must name a live pane token.
+  // A random name per app run. In the app, netApi is askpassPipeHost.js: the
+  // helper serves the pipe with a DACL for the current user only (network
+  // logons denied). Each connection carries one question and must name a
+  // live pane token.
   function ensureServer() {
     if (serverReady) return serverReady
     pipeName = `tessel-askpass-${randomBytes(16).toString('hex')}`
@@ -194,19 +199,24 @@ export function createSshAskpass({
     sock.on('error', () => {})
     sock.on('data', (chunk) => {
       if (done) return // one question per connection
-      buf = Buffer.concat([buf, chunk])
-      const nl = buf.indexOf(0x0a)
+      // The line's length is checked before anything is copied or decoded,
+      // with or without its line feed in this chunk.
+      const nl = chunk.indexOf(0x0a)
+      const lineLength = buf.length + (nl < 0 ? chunk.length : nl)
+      if (lineLength > MAX_LINE) {
+        done = true
+        buf = null
+        timers.clearTimeout(first)
+        sock.destroy()
+        return
+      }
       if (nl < 0) {
-        if (buf.length > MAX_LINE) {
-          done = true
-          timers.clearTimeout(first)
-          sock.destroy()
-        }
+        buf = Buffer.concat([buf, chunk])
         return
       }
       done = true
       timers.clearTimeout(first)
-      const line = buf.subarray(0, nl).toString('ascii')
+      const line = Buffer.concat([buf, chunk.subarray(0, nl)]).toString('ascii')
       buf = null
       handleQuestion(sock, line)
     })
@@ -325,12 +335,17 @@ export function createSshAskpass({
 
   // Before ssh starts: the variables that send its questions here, or null
   // (no helper, an old ssh, no pipe: the terminal asks, as ssh does alone).
+  // The token in the result names this launch: paneStarted / releasePane
+  // with it only ever touch this launch, never one that replaced it.
   async function preparePane(paneId, { hostId, label, sshExe } = {}) {
-    releasePane(paneId)
+    const generation = ++generationSeq
+    generations.set(paneId, generation)
+    dropPane(paneId)
+    const current = () => !closed && generations.get(paneId) === generation
     const exe = helperPath()
     if (!exe) return null
-    if (!(await sshSupportsAskpass(sshExe))) return null
-    if (!(await ensureServer())) return null
+    if (!(await sshSupportsAskpass(sshExe)) || !current()) return null
+    if (!(await ensureServer()) || !current()) return null
     const token = randomBytes(32).toString('hex')
     panes.set(paneId, {
       paneId,
@@ -352,17 +367,30 @@ export function createSshAskpass({
     }
   }
 
-  // ssh is running: count towards "connected".
-  function paneStarted(paneId) {
+  // ssh is running: count towards "connected". token: the launch's own
+  // (TESSEL_ASKPASS_TOKEN); a replaced or released launch is left alone.
+  function paneStarted(paneId, token) {
     const pane = panes.get(paneId)
-    if (!pane) return false
+    if (!pane || (token !== undefined && pane.token !== token)) return false
     pane.started = true
     if (!pane.pending) armConnected(pane, CONNECTED_AFTER_START_MS)
     return true
   }
 
-  // The pane's ssh ended (or never started): its token dies with it.
-  function releasePane(paneId) {
+  // This launch did not start (token given: only if it is still the pane's
+  // current one), or the pane goes away (no token: any preparation still in
+  // flight for it is void too).
+  function releasePane(paneId, token) {
+    if (token !== undefined) {
+      const pane = panes.get(paneId)
+      if (!pane || pane.token !== token) return
+    } else generations.set(paneId, ++generationSeq)
+    dropPane(paneId)
+  }
+
+  // The pane's ssh ended: its token dies with it. (A new launch being
+  // prepared for the same pane is not touched.)
+  function dropPane(paneId) {
     const pane = panes.get(paneId)
     if (!pane) return
     withdraw(pane, 'gone')
@@ -418,7 +446,8 @@ export function createSshAskpass({
   }
 
   function close() {
-    for (const id of [...panes.keys()]) releasePane(id)
+    closed = true
+    for (const id of [...panes.keys()]) dropPane(id)
     if (server) {
       try {
         server.close()
@@ -434,7 +463,7 @@ export function createSshAskpass({
     preparePane,
     paneStarted,
     releasePane,
-    paneExited: releasePane,
+    paneExited: dropPane,
     submit,
     isPrepared,
     close,

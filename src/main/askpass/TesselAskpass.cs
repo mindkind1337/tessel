@@ -18,11 +18,22 @@
 // prompt starting with "--" as an option. This program reads its argument as
 // plain text and nothing else.
 //
+// The same program, started by Tessel as "tessel-askpass.exe --serve <name>",
+// is also the pipe's server: Node cannot set a pipe's security, and a pipe
+// made by Node lets every account (and the network) open it for reading. This
+// one is made with an explicit DACL: full control for the current user only,
+// network logons denied. It relays each question to Tessel on stdout and
+// takes the answers on stdin (private pipes to its parent), and ends when
+// Tessel does.
+//
 // Built with the C# compiler of the .NET Framework that ships with Windows
 // (scripts/build-askpass.mjs); C# 5, no dependencies.
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.IO.Pipes;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -35,6 +46,10 @@ static class TesselAskpass
 
     static int Main(string[] args)
     {
+        // Only Tessel starts the server mode (two arguments; ssh passes one,
+        // and ssh's helper has a pane token in its environment).
+        if (args.Length == 2 && args[0] == "--serve" && Environment.GetEnvironmentVariable("TESSEL_ASKPASS_TOKEN") == null)
+            return Server.Run(args[1]);
         try
         {
             var timer = new Timer(delegate { Environment.Exit(1); }, null, TimeoutMs, Timeout.Infinite);
@@ -91,5 +106,145 @@ static class TesselAskpass
             buf.WriteByte((byte)b);
         }
         return null;
+    }
+}
+
+// --- Server mode ---------------------------------------------------------------
+// stdout (to Tessel): "READY" | "Q <id> <question line>" | "C <id>" (the helper
+// went away). stdin (from Tessel): "A <id> <base64 reply>" | "D <id>" (drop).
+static class Server
+{
+    const int MaxLine = 256 * 1024;
+    const int FirstLineMs = 5000;
+    static readonly object Gate = new object();
+    static readonly Dictionary<long, NamedPipeServerStream> Waiting = new Dictionary<long, NamedPipeServerStream>();
+    static StreamWriter Out;
+
+    public static int Run(string name)
+    {
+        if (!Regex.IsMatch(name, "^tessel-askpass-[0-9a-f]{32}$")) return 2;
+        var stdout = Console.OpenStandardOutput();
+        Out = new StreamWriter(stdout, new UTF8Encoding(false)) { AutoFlush = true, NewLine = "\n" };
+        PipeSecurity security = MakeSecurity();
+        var reader = new Thread(ReadAnswers) { IsBackground = true };
+        reader.Start();
+        bool ready = false;
+        long nextId = 0;
+        while (true)
+        {
+            NamedPipeServerStream server;
+            try
+            {
+                server = new NamedPipeServerStream(name, PipeDirection.InOut, NamedPipeServerStream.MaxAllowedServerInstances,
+                    PipeTransmissionMode.Byte, PipeOptions.Asynchronous, 4096, 4096, security);
+            }
+            catch
+            {
+                return 3;
+            }
+            if (!ready)
+            {
+                Say("READY");
+                ready = true;
+            }
+            try
+            {
+                server.WaitForConnection();
+            }
+            catch
+            {
+                server.Dispose();
+                continue;
+            }
+            long id = ++nextId;
+            var client = server;
+            new Thread(delegate () { Handle(id, client); }) { IsBackground = true }.Start();
+        }
+    }
+
+    static PipeSecurity MakeSecurity()
+    {
+        var me = WindowsIdentity.GetCurrent().User;
+        var security = new PipeSecurity();
+        security.SetOwner(me);
+        security.SetAccessRuleProtection(true, false);
+        security.AddAccessRule(new PipeAccessRule(me, PipeAccessRights.FullControl, AccessControlType.Allow));
+        security.AddAccessRule(new PipeAccessRule(new SecurityIdentifier(WellKnownSidType.NetworkSid, null), PipeAccessRights.FullControl, AccessControlType.Deny));
+        return security;
+    }
+
+    static void Say(string line)
+    {
+        lock (Gate) Out.WriteLine(line);
+    }
+
+    // One question per connection: a line of printable ASCII, at most MaxLine
+    // bytes, within FirstLineMs; then wait for the answer or the helper's end.
+    static void Handle(long id, NamedPipeServerStream pipe)
+    {
+        var timer = new Timer(delegate { try { pipe.Dispose(); } catch { } }, null, FirstLineMs, Timeout.Infinite);
+        var line = new MemoryStream();
+        bool ok = false;
+        try
+        {
+            int b;
+            while ((b = pipe.ReadByte()) >= 0)
+            {
+                if (b == '\n') { ok = true; break; }
+                if (b < 0x20 || b > 0x7e || line.Length >= MaxLine) break;
+                line.WriteByte((byte)b);
+            }
+        }
+        catch { }
+        timer.Dispose();
+        if (!ok)
+        {
+            try { pipe.Dispose(); } catch { }
+            return;
+        }
+        lock (Gate) Waiting[id] = pipe;
+        Say("Q " + id + " " + Encoding.ASCII.GetString(line.ToArray()));
+        // Nothing more is read from the helper: this only notices its end.
+        try { while (pipe.ReadByte() >= 0) { } } catch { }
+        bool mine;
+        lock (Gate) mine = Waiting.Remove(id);
+        if (mine)
+        {
+            try { pipe.Dispose(); } catch { }
+            Say("C " + id);
+        }
+    }
+
+    static void ReadAnswers()
+    {
+        var stdin = new StreamReader(Console.OpenStandardInput(), Encoding.ASCII);
+        string line;
+        while ((line = stdin.ReadLine()) != null)
+        {
+            string[] parts = line.Split(' ');
+            long id;
+            if (parts.Length < 2 || !long.TryParse(parts[1], out id)) continue;
+            NamedPipeServerStream pipe;
+            lock (Gate)
+            {
+                if (!Waiting.TryGetValue(id, out pipe)) continue;
+                Waiting.Remove(id);
+            }
+            try
+            {
+                if (parts[0] == "A" && parts.Length == 3)
+                {
+                    byte[] reply = Convert.FromBase64String(parts[2]);
+                    pipe.Write(reply, 0, reply.Length);
+                    pipe.Flush();
+                    pipe.WaitForPipeDrain();
+                    Array.Clear(reply, 0, reply.Length);
+                }
+            }
+            catch { }
+            try { pipe.Dispose(); } catch { }
+        }
+        // Tessel is gone: so is the server.
+        Environment.Exit(0);
     }
 }

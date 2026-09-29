@@ -9,6 +9,7 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest'
 import fs from 'node:fs'
 import net from 'node:net'
+import { EventEmitter } from 'node:events'
 import { mkdtempSync, rmSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -26,7 +27,8 @@ import {
 } from '../sshAskpass'
 import { createRemoteHosts } from '../remoteHosts'
 import { createLogger } from '../logger'
-import { buildAskpass } from '../../../scripts/build-askpass.mjs'
+import { createAskpassPipeHost } from '../askpassPipeHost'
+import { buildAskpass, findCsc } from '../../../scripts/build-askpass.mjs'
 
 const HOSTKEY = [
   "The authenticity of host 'srv (10.0.0.5)' can't be established.",
@@ -418,6 +420,126 @@ describe('Codex repros: nothing leaks any more', () => {
   })
 })
 
+// --- Codex's audit of eeb04fc (design/check-ssh-askpass-audit.cjs) ------------------
+// A fake pipe server and a held `ssh -V`, so preparations can be interleaved.
+function heldFixture() {
+  let accept
+  let n = 0
+  const versions = new Map()
+  const events = []
+  const pty = []
+  const broker = createSshAskpass({
+    helperPath: () => 'fixture-helper.exe',
+    runFile: (exe, _args, _opts, cb) => versions.set(exe, cb),
+    send: (channel, data) => events.push({ channel, data }),
+    writePty: (...args) => pty.push(args),
+    timers: { setTimeout: () => ++n, clearTimeout: () => {} },
+    netApi: {
+      createServer(fn) {
+        accept = fn
+        const srv = new EventEmitter()
+        srv.listen = (_opts, cb) => cb()
+        srv.close = () => {}
+        return srv
+      }
+    }
+  })
+  const answerVersion = (exe) => versions.get(exe)(null, '', 'OpenSSH_for_Windows_9.5p2')
+  function connect(frame) {
+    const sock = new EventEmitter()
+    sock.responses = []
+    sock.end = (x) => {
+      sock.responses.push(x)
+      sock.emit('close')
+    }
+    sock.destroy = () => {
+      sock.destroyed = true
+      sock.emit('close')
+    }
+    accept(sock)
+    for (const part of Array.isArray(frame) ? frame : [frame]) sock.emit('data', Buffer.from(part))
+    return sock
+  }
+  const requests = () => events.filter((x) => x.channel === 'ssh:credential-request').map((x) => x.data)
+  return { broker, answerVersion, connect, requests, pty }
+}
+const frame = (env, q) => `TESSEL-ASKPASS 1 ${env.TESSEL_ASKPASS_TOKEN} ${B64('')} ${B64(q)}\n`
+
+describe('Codex audit of eeb04fc: preparations in flight and long frames', () => {
+  it('a pane released while ssh -V runs stays released: no token, no dialog', async () => {
+    const f = heldFixture()
+    const preparing = f.broker.preparePane('p', { sshExe: 'ssh-A', hostId: 'A', label: 'A' })
+    f.broker.releasePane('p')
+    f.answerVersion('ssh-A')
+    expect(await preparing).toBe(null)
+    expect(f.broker.isPrepared('p')).toBe(false)
+    f.broker.close()
+  })
+
+  it('close() voids preparations in flight', async () => {
+    const f = heldFixture()
+    const preparing = f.broker.preparePane('p', { sshExe: 'ssh-A' })
+    f.broker.close()
+    f.answerVersion('ssh-A')
+    expect(await preparing).toBe(null)
+    expect(f.broker.isPrepared('p')).toBe(false)
+  })
+
+  it('an older preparation finishing after a newer one is void; the newer launch keeps its token and host', async () => {
+    const f = heldFixture()
+    const old = f.broker.preparePane('p', { sshExe: 'ssh-old', hostId: 'old', label: 'Old host' })
+    const newer = f.broker.preparePane('p', { sshExe: 'ssh-new', hostId: 'new', label: 'New host' })
+    f.answerVersion('ssh-new')
+    const newEnv = await newer
+    f.answerVersion('ssh-old')
+    expect(await old).toBe(null)
+    const sock = f.connect(frame(newEnv, 'Password:'))
+    expect(sock.responses).toEqual([])
+    expect(f.requests().at(-1)).toMatchObject({ hostId: 'new', label: 'New host' })
+    f.broker.close()
+  })
+
+  it("a launch's success or failure touches only its own token, never the launch that replaced it", async () => {
+    const f = heldFixture()
+    const a = f.broker.preparePane('p', { sshExe: 'ssh', hostId: 'A' })
+    f.answerVersion('ssh')
+    const envA = await a
+    const envB = await f.broker.preparePane('p', { sshExe: 'ssh', hostId: 'B' })
+    // A's pty:create answers late: failure or success, B is untouched.
+    f.broker.releasePane('p', envA.TESSEL_ASKPASS_TOKEN)
+    expect(f.broker.paneStarted('p', envA.TESSEL_ASKPASS_TOKEN)).toBe(false)
+    expect(f.broker.isPrepared('p')).toBe(true)
+    expect(f.broker.paneStarted('p', envB.TESSEL_ASKPASS_TOKEN)).toBe(true)
+    expect(f.connect(frame(envA, 'Password:')).responses).toEqual(['NO\n'])
+    f.connect(frame(envB, 'Password:'))
+    expect(f.requests().at(-1)).toMatchObject({ hostId: 'B' })
+    f.broker.releasePane('p', envB.TESSEL_ASKPASS_TOKEN)
+    expect(f.broker.isPrepared('p')).toBe(false)
+    f.broker.close()
+  })
+
+  it('a frame longer than the limit is dropped even when its line feed arrives', async () => {
+    const f = heldFixture()
+    const p = f.broker.preparePane('p', { sshExe: 'ssh', hostId: 'H' })
+    f.answerVersion('ssh')
+    const env = await p
+    const big = frame(env, 'x'.repeat(200000))
+    expect(Buffer.byteLength(big)).toBeGreaterThan(262144)
+    const sock = f.connect([big.slice(0, 262144), big.slice(262144)])
+    expect(sock.destroyed).toBe(true)
+    expect(f.requests()).toEqual([])
+    // In one chunk too.
+    const one = f.connect(big)
+    expect(one.destroyed).toBe(true)
+    expect(f.requests()).toEqual([])
+    // A frame right under the limit still works.
+    const ok = f.connect(frame(env, 'y'.repeat(1000)))
+    expect(ok.destroyed).toBeFalsy()
+    expect(f.requests()).toHaveLength(1)
+    f.broker.close()
+  })
+})
+
 describe('ssh:submitCredential IPC and the secret', () => {
   let dir
   beforeAll(() => {
@@ -492,17 +614,72 @@ describe.runIf(onWindows)('the helper (tessel-askpass.exe)', () => {
     const res = buildAskpass(join(dir, 'tessel-askpass.exe'))
     exe = res.ok ? res.file : null
   }, 60_000)
-  afterAll(() => rmSync(dir, { recursive: true, force: true }))
+  // The served pipe's helper may take a moment to end after close().
+  afterAll(() => rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 }))
   const opened = []
   afterEach(() => {
     for (const b of opened.splice(0)) b.close()
   })
 
+  // As in the app: the pipe is served by the helper (askpassPipeHost.js).
   function realFixture() {
-    const f = fixture({ helperPath: () => exe, timers: { setTimeout, clearTimeout } })
+    const f = fixture({ helperPath: () => exe, timers: { setTimeout, clearTimeout }, netApi: createAskpassPipeHost({ exePath: () => exe }) })
     opened.push(f.broker)
     return f
   }
+
+  // A small .NET probe that opens the pipe and prints its DACL (SDDL).
+  let probe = null
+  function aclProbe() {
+    if (probe) return probe
+    const src = join(dir, 'probe.cs')
+    fs.writeFileSync(
+      src,
+      [
+        'using System; using System.IO.Pipes; using System.Security.AccessControl; using System.Security.Principal;',
+        'static class P { static int Main(string[] a) {',
+        '  try { using (var c = new NamedPipeClientStream(a[1], a[0], PipeAccessRights.ReadPermissions | PipeAccessRights.ReadData, PipeOptions.None, TokenImpersonationLevel.None, System.IO.HandleInheritability.None)) {',
+        '    c.Connect(3000);',
+        '    Console.WriteLine(c.GetAccessControl().GetSecurityDescriptorSddlForm(AccessControlSections.Access | AccessControlSections.Owner));',
+        '    Console.WriteLine(WindowsIdentity.GetCurrent().User.Value); } return 0; }',
+        '  catch (Exception e) { Console.WriteLine("REFUSED " + e.GetType().Name); return 1; } } }'
+      ].join('\n')
+    )
+    const out = join(dir, 'probe.exe')
+    execFileSync(findCsc(), ['-nologo', `-out:${out}`, src], { stdio: 'ignore', windowsHide: true })
+    probe = out
+    return probe
+  }
+  const runProbe = (name, server) =>
+    new Promise((resolve) => execFile(aclProbe(), [name, server], { windowsHide: true, timeout: 20_000 }, (err, stdout) => resolve({ code: err ? err.code : 0, out: String(stdout) })))
+
+  it('the pipe the helper serves: current user only, no Everyone / Anonymous, network denied', async () => {
+    const f = realFixture()
+    const env = await f.broker.preparePane('p', { hostId: 'h', sshExe: 'ssh.exe' })
+    expect(env).not.toBe(null)
+    const local = await runProbe(env.TESSEL_ASKPASS_PIPE, '.')
+    expect(local.code).toBe(0)
+    const [sddl, me] = local.out.trim().split(/\r?\n/)
+    // Protected (no inherited entries): network logons denied, then this user only.
+    expect(sddl).toBe(`O:${me}D:P(D;;0x1f019f;;;NU)(A;;0x1f019f;;;${me})`)
+    expect(sddl).not.toMatch(/;;;(WD|AN|BA|SY)\)/)
+    // (\\localhost\pipe\ is opened locally by Windows, not as a network logon,
+    // so the NETWORK deny cannot be exercised on one machine.)
+    expect(f.requests()).toEqual([])
+  }, 60_000)
+
+  it('the served pipe drops an overlong question, then still answers a good one', async () => {
+    const f = realFixture()
+    const env = await f.broker.preparePane('p', { hostId: 'h', sshExe: 'ssh.exe' })
+    f.broker.paneStarted('p')
+    const reply = await ask(env, 'x'.repeat(300 * 1024))
+    expect(reply).not.toMatch(/^OK/)
+    expect(f.requests()).toEqual([])
+    const good = ask(env, "u@h's password: ")
+    await until(() => f.requests().length === 1, 10_000)
+    f.broker.submit({ paneId: 'p', promptId: 'req-1', value: 'fine' })
+    expect(answerOf(await good)).toBe('fine')
+  }, 30_000)
   function runHelper(env, args) {
     return new Promise((resolve) => {
       execFile(exe, args, { env: { SystemRoot: sysRoot, ...env }, windowsHide: true, encoding: 'buffer' }, (err, stdout) =>

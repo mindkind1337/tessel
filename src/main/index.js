@@ -23,6 +23,7 @@ import { createRemoteHosts, registerRemoteHosts } from './remoteHosts'
 import { remoteProjectLaunch } from './remoteProject'
 import { createAddProject, registerAddProject } from './addProject'
 import { createSshAskpass, registerSshAskpass, askpassExePath } from './sshAskpass'
+import { createAskpassPipeHost } from './askpassPipeHost'
 import { prepareAgentStateHooks } from './agentStateSetup'
 import { assessNeeds } from './tesselNeeds'
 import { createClaudeUsageReport } from './claudeUsageReport'
@@ -1143,6 +1144,8 @@ registerRemoteHosts({ ipcMain, service: remoteHosts, killPane: (id) => host.send
 // ssh's helper, never to the terminal. Never logged.
 const sshAskpass = createSshAskpass({
   helperPath: () => askpassExePath(__dirname),
+  // The pipe is served by the helper, with a DACL for this user only.
+  netApi: createAskpassPipeHost({ exePath: () => askpassExePath(__dirname) }),
   send: (channel, payload) => send(channel, payload),
   // Ctrl+C when the user cancels (stops ssh); never an answer.
   writePty: (id, data) => host.send('write', { id, data }),
@@ -2194,6 +2197,8 @@ ipcMain.handle('pty:create', async (_evt, opts = {}) => {
   // ssh's questions go to Tessel's askpass helper (sshAskpass.js); null when
   // it can't (old ssh, no helper): ssh then asks in the terminal.
   const askpassEnv = remote ? await sshAskpass.preparePane(id, { hostId: remote.target.id, label: remote.name, sshExe: remote.file }) : null
+  // This launch's own token: its success / failure touches only it.
+  const askpassToken = askpassEnv ? askpassEnv.TESSEL_ASKPASS_TOKEN : undefined
   let res
   try {
     res = await host.request('create', {
@@ -2221,7 +2226,7 @@ ipcMain.handle('pty:create', async (_evt, opts = {}) => {
     res = { ok: false, error: err.message }
   }
   if (!res.ok) {
-    if (remote) sshAskpass.releasePane(id)
+    if (askpassToken) sshAskpass.releasePane(id, askpassToken)
     log.error('pty', `failed to launch ${shell.name} (${shell.file}) in ${startDir}: ${res.error}`)
     return { ok: false, error: t('main.error.launchShell', 'Failed to launch {{shell}}: {{error}}', { shell: shell.name, error: res.error }) }
   }
@@ -2230,7 +2235,7 @@ ipcMain.handle('pty:create', async (_evt, opts = {}) => {
     // "Connecting…" while ssh logs in (sshAskpass.js decides when it is
     // through); without askpass, connected at once as before.
     remoteHosts.paneStarted(id, remote.target.id, { connected: !askpassEnv })
-    if (askpassEnv) sshAskpass.paneStarted(id)
+    if (askpassToken) sshAskpass.paneStarted(id, askpassToken)
   }
   if (agentProvider) {
     try { await agentStateStore.register({ paneId: id, provider: agentProvider, launchToken: agentLaunchToken, startedAt: agentStartedAt }) }
@@ -2321,7 +2326,8 @@ ipcMain.on('pty:resize', (_evt, { id, cols, rows }) => {
 
 ipcMain.on('pty:kill', (_evt, { id }) => {
   remoteHosts.paneClosing(id)
-  sshAskpass.paneExited(id)
+  // Also voids a launch still being prepared for it.
+  sshAskpass.releasePane(id)
   host.send('kill', { id })
   ptyInfo.delete(id)
 })
