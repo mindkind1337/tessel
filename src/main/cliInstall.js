@@ -1,12 +1,15 @@
 // Settings > General > Tessel CLI: the tessel command.
 //
-// Register writes a small tessel.cmd in %LOCALAPPDATA%\Tessel\bin (the dev
-// build: tessel-dev.cmd) and adds that folder to the user PATH
-// (HKCU\Environment, never the system PATH, no administrator). Remove deletes
-// the command and takes the folder off the user PATH again (when no other
-// Tessel command is left in it). The shim starts Tessel's own executable as
-// Node (ELECTRON_RUN_AS_NODE) with the command's script (out/main/cli.js,
-// unpacked from the app archive), so nothing else needs to be installed.
+// Register copies Tessel's small launcher (out/main/tessel-cli.exe, built from
+// src/main/cliLauncher/TesselCli.cs) to %LOCALAPPDATA%\Tessel\bin\tessel.exe
+// (the dev build: tessel-dev.exe), writes tessel.ini next to it (where Tessel
+// is), and adds that folder to the user PATH (HKCU\Environment, never the
+// system PATH, no administrator). Remove deletes both and takes the folder off
+// the user PATH again (when no other Tessel command is left in it).
+// The launcher starts Tessel's own executable as Node (ELECTRON_RUN_AS_NODE)
+// with the command's script (out/main/cli.js, unpacked from the app archive)
+// and passes the command line through untouched: no batch file, so cmd.exe
+// never reads a card title or a path (| > & % stay text).
 //
 // The user PATH is read and written through `registry` ({ read(), write() }):
 // the real one runs PowerShell (createUserPathRegistry below), tests pass a
@@ -15,10 +18,13 @@
 // stays expandable, so %USERPROFILE%\… entries keep working).
 import fs from 'fs'
 import path from 'path'
-import { execFile } from 'child_process'
+import { execFile, execFileSync } from 'child_process'
 import { t } from './i18n'
 
+export const INI_MARK = '# Tessel command line (Settings > General > Tessel CLI).'
+// The batch file an earlier build wrote: removed when met.
 export const SHIM_MARK = 'rem Tessel command line (Settings > General > Tessel CLI).'
+export const LAUNCHER_EXE = 'tessel-cli.exe'
 
 export function cliCommandName(isPackaged) {
   return isPackaged ? 'tessel' : 'tessel-dev'
@@ -29,32 +35,32 @@ export function cliBinDir(env = process.env, home = '') {
   return path.join(local, 'Tessel', 'bin')
 }
 
-// The command's script next to the main bundle, outside the app archive.
+const unpacked = (dir) => String(dir || '').replace(/([\\/])app\.asar([\\/]|$)/, '$1app.asar.unpacked$2')
+
+// The command's script and launcher next to the main bundle, outside the app archive.
 export function cliScriptPath(mainDir) {
-  return path.join(String(mainDir || '').replace(/([\\/])app\.asar([\\/]|$)/, '$1app.asar.unpacked$2'), 'cli.js')
+  return path.join(unpacked(mainDir), 'cli.js')
+}
+export function cliLauncherPath(mainDir) {
+  return path.join(unpacked(mainDir), LAUNCHER_EXE)
 }
 
-// cmd.exe reads % in a batch file as a variable: doubled, it stays a %.
-const batchValue = (v) => String(v || '').replace(/%/g, '%%')
-
-export function shimText({ execPath, scriptPath, userData, appPath = '', name = 'tessel', lang = 'en' }) {
-  for (const v of [execPath, scriptPath, userData, appPath]) {
-    if (/["\r\n]/.test(String(v || ''))) throw new Error(t('main.cli.badInstallPath', 'Tessel’s folder has a character the command cannot use.'))
+// The launcher's settings (UTF-8, key=value; its first line marks it as Tessel's).
+export function iniText({ execPath, scriptPath, userData, appPath = '', name = 'tessel', lang = 'en' }) {
+  for (const v of [execPath, scriptPath, userData, appPath, name]) {
+    if (/["\r\n\0]/.test(String(v || ''))) throw new Error(t('main.cli.badInstallPath', 'Tessel’s folder has a character the command cannot use.'))
   }
   return [
-    '@echo off',
-    SHIM_MARK,
-    'rem Written by Tessel; Remove in the same place deletes it.',
-    'setlocal',
-    'set "ELECTRON_RUN_AS_NODE=1"',
-    `set "TESSEL_CLI_NAME=${batchValue(name)}"`,
-    `set "TESSEL_CLI_USER_DATA=${batchValue(userData)}"`,
-    // Tessel's language, for messages while it is closed (it tells its own when open).
-    `set "TESSEL_CLI_LANG=${lang === 'fr' ? 'fr' : 'en'}"`,
+    INI_MARK,
+    '# Written by Tessel; Remove in the same place deletes it.',
+    `exec=${execPath}`,
+    `script=${scriptPath}`,
+    `userData=${userData}`,
     // How the command starts Tessel when it is not running (empty: it asks you to).
-    `set "TESSEL_CLI_APP=${batchValue(appPath)}"`,
-    `"${batchValue(execPath)}" "${batchValue(scriptPath)}" %*`,
-    'exit /b %ERRORLEVEL%',
+    `app=${appPath || ''}`,
+    // Tessel's language, for messages while it is closed (it tells its own when open).
+    `lang=${lang === 'fr' ? 'fr' : 'en'}`,
+    `name=${name}`,
     ''
   ].join('\r\n')
 }
@@ -109,13 +115,16 @@ export function removePathEntry(value, dir, env) {
 export function createCliInstaller({
   binDir,
   name,
-  shim, // () => shim text
+  config, // () => the launcher's .ini text
+  launcher, // () => path of the launcher to copy (tessel-cli.exe)
   registry,
   fsImpl = fs,
   env = process.env,
   platform = process.platform
 }) {
-  const commandPath = path.join(binDir, `${name}.cmd`)
+  const commandPath = path.join(binDir, `${name}.exe`)
+  const iniPath = path.join(binDir, `${name}.ini`)
+  const legacyCmd = path.join(binDir, `${name}.cmd`)
   const writePath = async (change) => {
     try {
       await registry.write(change)
@@ -125,37 +134,65 @@ export function createCliInstaller({
       throw err
     }
   }
-
-  const shimOnDisk = () => {
+  const read = (file, enc) => {
     try {
-      return fsImpl.readFileSync(commandPath, 'utf8')
+      return fsImpl.readFileSync(file, enc)
     } catch {
       return null
     }
   }
+  const exists = (file) => read(file) != null
+  const ours = () => {
+    const text = read(iniPath, 'utf8')
+    return text != null && text.startsWith(INI_MARK)
+  }
+  const sameBytes = (a, b) => {
+    const x = read(a)
+    const y = read(b)
+    return !!(x && y && x.equals(y))
+  }
+  const removeLegacy = () => {
+    const text = read(legacyCmd, 'utf8')
+    if (text != null && text.includes(SHIM_MARK)) fsImpl.unlinkSync(legacyCmd)
+  }
   // Another Tessel command (the installed app's or the dev build's) in the folder.
-  const otherShims = () => {
+  const otherCommands = () => {
     try {
       return fsImpl
         .readdirSync(binDir)
-        .filter((f) => /\.cmd$/i.test(f) && f.toLowerCase() !== `${name}.cmd`.toLowerCase())
+        .filter((f) => /\.(ini|cmd)$/i.test(f) && f.replace(/\.(ini|cmd)$/i, '').toLowerCase() !== name.toLowerCase())
         .filter((f) => {
-          try {
-            return fsImpl.readFileSync(path.join(binDir, f), 'utf8').includes(SHIM_MARK)
-          } catch {
-            return false
-          }
+          const text = read(path.join(binDir, f), 'utf8') || ''
+          return text.startsWith(INI_MARK) || text.includes(SHIM_MARK)
         })
     } catch {
       return []
     }
   }
+  // The launcher copied in place (a running copy cannot be replaced: EBUSY).
+  const copyLauncher = () => {
+    const src = launcher()
+    if (!src || !exists(src)) throw new Error(t('main.cli.noLauncher', 'Tessel’s command launcher is missing from this installation.'))
+    if (sameBytes(src, commandPath)) return false
+    const tmp = `${commandPath}.${process.pid}.tmp`
+    fsImpl.copyFileSync(src, tmp)
+    try {
+      fsImpl.renameSync(tmp, commandPath)
+    } catch (err) {
+      try {
+        fsImpl.unlinkSync(tmp)
+      } catch {
+        /* gone */
+      }
+      throw err
+    }
+    return true
+  }
 
   async function status() {
     const base = { supported: platform === 'win32', name, commandPath, dir: binDir }
     if (!base.supported) return { ...base, state: 'unsupported', onPath: false, shim: false }
-    const text = shimOnDisk()
-    const shim = text != null && text.includes(SHIM_MARK)
+    const shim = ours() && exists(commandPath)
     let onPath = null
     let detail = null
     try {
@@ -166,25 +203,26 @@ export function createCliInstaller({
     }
     const state = shim && onPath ? 'installed' : shim || onPath ? 'partial' : 'not_installed'
     // current: the command points at this Tessel (false: refresh() rewrites it).
-    return { ...base, state, onPath, shim, current: shim ? text === safeShim() : false, detail }
-  }
-
-  function safeShim() {
-    try {
-      return shim()
-    } catch {
-      return null
+    let current = false
+    if (shim) {
+      try {
+        current = read(iniPath, 'utf8') === config() && sameBytes(launcher(), commandPath)
+      } catch {
+        current = false
+      }
     }
+    return { ...base, state, onPath, shim, current, detail }
   }
 
   async function install() {
     if (platform !== 'win32') throw new Error(t('main.cli.unsupported', 'The tessel command is available on Windows only.'))
-    const text = shim()
+    const text = config()
     fsImpl.mkdirSync(binDir, { recursive: true })
-    const existing = shimOnDisk()
-    if (existing != null && !existing.includes(SHIM_MARK))
-      throw new Error(t('main.cli.notOurs', '{{path}} exists and was not written by Tessel. Nothing was changed.', { path: commandPath }))
-    fsImpl.writeFileSync(commandPath, text)
+    if ((exists(commandPath) || exists(iniPath)) && !ours())
+      throw new Error(t('main.cli.notOurs', '{{path}} exists and was not written by Tessel. Nothing was changed.', { path: exists(commandPath) ? commandPath : iniPath }))
+    fsImpl.writeFileSync(iniPath, text)
+    copyLauncher()
+    removeLegacy()
     const cur = await registry.read()
     if (!hasPathEntry(cur.value, binDir, env)) {
       await writePath({ expected: cur, value: addPathEntry(cur.value, binDir, env), kind: cur.exists ? cur.kind : 'ExpandString' })
@@ -194,10 +232,13 @@ export function createCliInstaller({
 
   async function uninstall() {
     if (platform !== 'win32') throw new Error(t('main.cli.unsupported', 'The tessel command is available on Windows only.'))
-    const existing = shimOnDisk()
-    if (existing != null && existing.includes(SHIM_MARK)) fsImpl.unlinkSync(commandPath)
+    if (ours()) {
+      if (exists(commandPath)) fsImpl.unlinkSync(commandPath)
+      fsImpl.unlinkSync(iniPath)
+    }
+    removeLegacy()
     // The folder stays on the PATH while another Tessel command uses it.
-    if (!otherShims().length) {
+    if (!otherCommands().length) {
       const cur = await registry.read()
       if (hasPathEntry(cur.value, binDir, env)) {
         await writePath({ expected: cur, value: removePathEntry(cur.value, binDir, env), kind: cur.kind || 'ExpandString' })
@@ -211,15 +252,27 @@ export function createCliInstaller({
     return status()
   }
 
-  // At startup: a registered command points at this Tessel again (after an
-  // update moved it, or another dev folder). Never touches the PATH.
+  // At startup and when the language changes: a registered command points at
+  // this Tessel again (after an update, another dev folder). Never touches the PATH.
   function refresh() {
-    const existing = shimOnDisk()
-    if (existing == null || !existing.includes(SHIM_MARK)) return false
-    const text = shim()
-    if (existing === text) return false
-    fsImpl.writeFileSync(commandPath, text)
-    return true
+    if (!ours()) return false
+    let changed = false
+    const text = config()
+    if (read(iniPath, 'utf8') !== text) {
+      fsImpl.writeFileSync(iniPath, text)
+      changed = true
+    }
+    try {
+      if (copyLauncher()) changed = true
+    } catch {
+      /* in use right now: next time */
+    }
+    try {
+      removeLegacy()
+    } catch {
+      /* kept */
+    }
+    return changed
   }
 
   return { status, install, uninstall, refresh, commandPath }
@@ -269,6 +322,29 @@ $k.Close()
 
 const encodeCommand = (script) => Buffer.from(script, 'utf16le').toString('base64')
 const b64 = (s) => Buffer.from(String(s || ''), 'utf8').toString('base64')
+
+// Tessel started by the tessel command gets a clean environment without the
+// terminal's PATH (src/cli/tessel.js): main takes PATH from the registry, as
+// a Start-menu launch has it (machine, then user; expanded). null: unread.
+const PS_PATH = `
+$m = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+$u = [Environment]::GetEnvironmentVariable('Path', 'User')
+$v = (@($m, $u) | Where-Object { $_ }) -join ';'
+[Console]::Out.Write([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($v)))
+`
+export function readRegistryPathSync({ execFileSyncImpl = execFileSync, env = process.env } = {}) {
+  try {
+    const out = execFileSyncImpl(powershellExe(env), ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encodeCommand(PS_PATH)], {
+      windowsHide: true,
+      timeout: 10000,
+      env
+    })
+    const value = Buffer.from(String(out || '').trim(), 'base64').toString('utf8')
+    return value || null
+  } catch {
+    return null
+  }
+}
 
 function powershellExe(env) {
   const root = env.SystemRoot || env.windir || 'C:\\Windows'

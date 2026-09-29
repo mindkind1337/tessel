@@ -15,6 +15,9 @@ import { fileURLToPath } from 'url'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 export const ASKPASS_SOURCE = path.join(root, 'src', 'main', 'askpass', 'TesselAskpass.cs')
 export const ASKPASS_EXE = 'tessel-askpass.exe'
+// The tessel command's launcher (src/main/cliLauncher/TesselCli.cs), built the same way.
+export const CLI_LAUNCHER_SOURCE = path.join(root, 'src', 'main', 'cliLauncher', 'TesselCli.cs')
+export const CLI_LAUNCHER_EXE = 'tessel-cli.exe'
 
 export function findCsc(env = process.env) {
   const win = env.SystemRoot || env.windir || 'C:\\Windows'
@@ -35,10 +38,18 @@ function sameFile(a, b) {
 
 // -> { ok, file, cached? } or { ok: false, error }
 export function buildAskpass(outFile) {
-  if (process.platform !== 'win32') return { ok: false, error: 'the askpass helper is built on Windows only' }
+  return buildCsharp(ASKPASS_SOURCE, outFile)
+}
+
+export function buildCliLauncher(outFile) {
+  return buildCsharp(CLI_LAUNCHER_SOURCE, outFile)
+}
+
+export function buildCsharp(sourceFile, outFile) {
+  if (process.platform !== 'win32') return { ok: false, error: 'the helpers are built on Windows only' }
   const csc = findCsc()
   if (!csc) return { ok: false, error: 'csc.exe (.NET Framework 4) not found' }
-  const source = fs.readFileSync(ASKPASS_SOURCE)
+  const source = fs.readFileSync(sourceFile)
   const hash = crypto.createHash('sha256').update(source).digest('hex').slice(0, 16)
   const cacheDir = path.join(os.tmpdir(), 'tessel-askpass-build')
   const cached = path.join(cacheDir, `${hash}.exe`)
@@ -51,7 +62,7 @@ export function buildAskpass(outFile) {
   fs.mkdirSync(cacheDir, { recursive: true })
   const tmp = path.join(cacheDir, `${hash}-${process.pid}.exe`)
   try {
-    execFileSync(csc, ['-nologo', '-optimize+', '-target:exe', '-platform:anycpu', `-out:${tmp}`, ASKPASS_SOURCE], {
+    execFileSync(csc, ['-nologo', '-optimize+', '-target:exe', '-platform:anycpu', `-out:${tmp}`, sourceFile], {
       stdio: 'pipe',
       windowsHide: true
     })
@@ -81,12 +92,19 @@ export function askpassPlugin() {
     writeBundle() {
       const res = buildAskpass(path.join(outDir, ASKPASS_EXE))
       if (!res.ok) this.warn(`SSH askpass helper not built (${res.error}): SSH passwords will be typed in the terminal`)
+      const cli = buildCliLauncher(path.join(outDir, CLI_LAUNCHER_EXE))
+      if (!cli.ok) this.warn(`tessel command launcher not built (${cli.error})`)
     }
   }
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const res = buildAskpass(path.resolve(process.argv[2] || path.join(root, 'out', 'main', ASKPASS_EXE)))
+  // --cli: the tessel command's launcher instead of the askpass helper.
+  const cli = process.argv.includes('--cli')
+  const out = process.argv.slice(2).find((x) => x !== '--cli')
+  const res = cli
+    ? buildCliLauncher(path.resolve(out || path.join(root, 'out', 'main', CLI_LAUNCHER_EXE)))
+    : buildAskpass(path.resolve(out || path.join(root, 'out', 'main', ASKPASS_EXE)))
   if (!res.ok) {
     console.error(`build-askpass: ${res.error}`)
     process.exit(1)

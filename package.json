@@ -68,7 +68,8 @@
     "asarUnpack": [
       "node_modules/node-pty/**",
       "out/main/tessel-askpass.exe",
-      "out/main/cli.js"
+      "out/main/cli.js",
+      "out/main/tessel-cli.exe"
     ],
     "npmRebuild": false,
     "win": {

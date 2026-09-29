@@ -189,11 +189,11 @@ describe('run', () => {
 })
 
 describe('startTessel', () => {
-  it('starts the installed app without the command’s variables, and waits for its pipe', async () => {
+  it('starts the installed app as from the Start menu (its folder, a clean environment), and waits for its pipe', async () => {
     const spawnImpl = vi.fn(() => ({ on() {}, unref() {} }))
     let reads = 0
     const rt = await startTessel(
-      { TESSEL_CLI_APP: 'C:\\P\\Tessel.exe', ELECTRON_RUN_AS_NODE: '1', TESSEL_CLI_USER_DATA: 'u', PATH: 'x' },
+      { TESSEL_CLI_APP: 'C:\\P\\Tessel.exe', ELECTRON_RUN_AS_NODE: '1', TESSEL_CLI_USER_DATA: 'u', PATH: 'x', NODE_OPTIONS: '--require evil', systemroot: 'C:\\Windows', USERPROFILE: 'C:\\Users\\me' },
       'u',
       { spawnImpl, wait: async () => {}, read: () => (++reads > 2 ? { pipe: 'p' } : null) }
     )
@@ -201,7 +201,8 @@ describe('startTessel', () => {
     const [file, args, opts] = spawnImpl.mock.calls[0]
     expect(file).toBe('C:\\P\\Tessel.exe')
     expect(args).toEqual([])
-    expect(opts.env).toEqual({ PATH: 'x' })
+    expect(opts.env).toEqual({ SystemRoot: 'C:\\Windows', USERPROFILE: 'C:\\Users\\me', TESSEL_STARTED_BY_CLI: '1' })
+    expect(opts.cwd).toBe('C:\\P')
     expect(opts.detached).toBe(true)
   })
 

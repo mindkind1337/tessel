@@ -57,5 +57,10 @@ if (process.platform === 'win32' && !fs.existsSync(path.join(dir, 'tessel-askpas
   console.error('check-bundle: out/main/tessel-askpass.exe is missing (SSH askpass helper)')
   failed = true
 }
+// The tessel command's launcher (copied to the user's bin folder by Register).
+if (process.platform === 'win32' && !fs.existsSync(path.join(dir, 'tessel-cli.exe'))) {
+  console.error('check-bundle: out/main/tessel-cli.exe is missing (the tessel command launcher)')
+  failed = true
+}
 if (failed) process.exit(1)
 console.log(`check-bundle: ok (${files.length} files)`)

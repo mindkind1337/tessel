@@ -534,6 +534,12 @@ export function resolveAgentSessionOptionLaunch(agent, values, trailingAgentArgs
 // A value Tessel may type into a shell after the agent's command: model ids
 // and effort levels only ever look like this (never quotes, spaces, ; & | $).
 const SAFE_ARG = /^[A-Za-z0-9._:/@[\]=+-]{1,160}$/
+// A value (model id, option value) starts with a letter or digit: never a
+// flag of its own (--yolo, -y) slipped in as a "model".
+const SAFE_VALUE = /^[A-Za-z0-9][A-Za-z0-9._:/@[\]=+-]{0,159}$/
+export function safeSessionValue(v) {
+  return typeof v === 'string' && SAFE_VALUE.test(v)
+}
 
 // The flags Tessel adds to an agent's launch line for these values, as
 // text. Orca's rules: nothing without an explicitly selected model; an option
@@ -541,6 +547,8 @@ const SAFE_ARG = /^[A-Za-z0-9._:/@[\]=+-]{1,160}$/
 // default the user did not pick); a flag the user's own arguments set wins
 // (Tessel leaves its own out, so the CLI never sees it twice).
 export function sessionOptionLaunchText(agent, values, userArgs = '', models = null) {
+  if (!values || !safeSessionValue(values.model)) return ''
+  for (const [id, v] of Object.entries(values)) if (id !== 'model' && v != null && typeof v !== 'boolean' && !safeSessionValue(v)) return ''
   const userTokens = tokenizeArgs(userArgs)
   const { args } = resolveAgentSessionOptionLaunch(agent, values, userTokens, false, models)
   if (!args.length) return ''
@@ -642,7 +650,7 @@ export function validSessionOptionSettings(v) {
   for (const [agent, entry] of Object.entries(v).slice(0, 60)) {
     if (!ID_RE.test(agent) || !entry || typeof entry !== 'object' || Array.isArray(entry)) continue
     const e = {}
-    if (shortString(entry.model) && SAFE_ARG.test(entry.model)) e.model = entry.model
+    if (shortString(entry.model) && SAFE_VALUE.test(entry.model)) e.model = entry.model
     const byModel = {}
     if (entry.valuesByModel && typeof entry.valuesByModel === 'object' && !Array.isArray(entry.valuesByModel)) {
       for (const [modelId, values] of Object.entries(entry.valuesByModel).slice(0, 100)) {
@@ -650,7 +658,7 @@ export function validSessionOptionSettings(v) {
         const kept = {}
         for (const [id, value] of Object.entries(values).slice(0, 10)) {
           if (!VALUE_ID_RE.test(id)) continue
-          if (typeof value === 'boolean' || (shortString(value) && SAFE_ARG.test(value))) kept[id] = value
+          if (typeof value === 'boolean' || (shortString(value) && SAFE_VALUE.test(value))) kept[id] = value
         }
         byModel[modelId] = kept
       }
@@ -665,11 +673,11 @@ export function validSessionOptionSettings(v) {
 // or null.
 export function validPaneSessionOptions(v) {
   if (!v || typeof v !== 'object' || Array.isArray(v)) return null
-  if (!shortString(v.model) || !SAFE_ARG.test(v.model)) return null
+  if (!shortString(v.model) || !SAFE_VALUE.test(v.model)) return null
   const out = { model: v.model }
   for (const [id, value] of Object.entries(v).slice(0, 10)) {
     if (id === 'model' || !VALUE_ID_RE.test(id)) continue
-    if (typeof value === 'boolean' || (shortString(value) && SAFE_ARG.test(value))) out[id] = value
+    if (typeof value === 'boolean' || (shortString(value) && SAFE_VALUE.test(value))) out[id] = value
   }
   return out
 }

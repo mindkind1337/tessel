@@ -33,6 +33,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Pipes;
+using System.Runtime.InteropServices;
 using System.Security.AccessControl;
 using System.Security.Principal;
 using System.Text;
@@ -51,6 +52,11 @@ static class TesselAskpass
         // and ssh's helper has a pane token in its environment).
         if (args.Length == 2 && args[0] == "--serve" && Environment.GetEnvironmentVariable("TESSEL_ASKPASS_TOKEN") == null)
             return Server.Run(args[1]);
+        // Tessel's own files with a secret (the command line's token): this
+        // user only, and a Medium integrity label that also refuses reads
+        // from low-integrity processes (a sandboxed browser, a Low process).
+        if (args.Length == 2 && args[0] == "--protect" && Environment.GetEnvironmentVariable("TESSEL_ASKPASS_TOKEN") == null)
+            return Protect.File(args[1]);
         try
         {
             var timer = new Timer(delegate { Environment.Exit(1); }, null, TimeoutMs, Timeout.Infinite);
@@ -117,6 +123,10 @@ static class Server
 {
     const int MaxLine = 256 * 1024;
     const int FirstLineMs = 5000;
+    // Connections handled at once; more are closed at once (a flood of idle
+    // connections cannot pile up threads).
+    const int MaxActive = 64;
+    static int Active;
     static readonly object Gate = new object();
     static readonly Dictionary<long, NamedPipeServerStream> Waiting = new Dictionary<long, NamedPipeServerStream>();
     static StreamWriter Out;
@@ -159,9 +169,19 @@ static class Server
                 server.Dispose();
                 continue;
             }
+            if (Interlocked.Increment(ref Active) > MaxActive)
+            {
+                Interlocked.Decrement(ref Active);
+                try { server.Dispose(); } catch { }
+                continue;
+            }
             long id = ++nextId;
             var client = server;
-            new Thread(delegate () { Handle(id, client); }) { IsBackground = true }.Start();
+            new Thread(delegate ()
+            {
+                try { Handle(id, client); }
+                finally { Interlocked.Decrement(ref Active); }
+            }) { IsBackground = true }.Start();
         }
     }
 
@@ -249,5 +269,45 @@ static class Server
         }
         // Tessel is gone: so is the server.
         Environment.Exit(0);
+    }
+}
+
+// --- Protect mode ---------------------------------------------------------------
+static class Protect
+{
+    [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    static extern bool ConvertStringSecurityDescriptorToSecurityDescriptorW(string sddl, uint rev, out IntPtr sd, out uint size);
+    [DllImport("advapi32.dll", SetLastError = true)]
+    static extern bool GetSecurityDescriptorDacl(IntPtr sd, out bool present, out IntPtr dacl, out bool defaulted);
+    [DllImport("advapi32.dll", SetLastError = true)]
+    static extern bool GetSecurityDescriptorSacl(IntPtr sd, out bool present, out IntPtr sacl, out bool defaulted);
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode)]
+    static extern uint SetNamedSecurityInfoW(string name, int type, uint info, IntPtr owner, IntPtr group, IntPtr dacl, IntPtr sacl);
+    [DllImport("kernel32.dll")]
+    static extern IntPtr LocalFree(IntPtr h);
+
+    const int SE_FILE_OBJECT = 1;
+    const uint DACL_SECURITY_INFORMATION = 0x4, LABEL_SECURITY_INFORMATION = 0x10, PROTECTED_DACL_SECURITY_INFORMATION = 0x80000000;
+
+    public static int File(string path)
+    {
+        if (string.IsNullOrEmpty(path) || !System.IO.File.Exists(path)) return 2;
+        string sid = WindowsIdentity.GetCurrent().User.Value;
+        IntPtr sd;
+        uint size;
+        if (!ConvertStringSecurityDescriptorToSecurityDescriptorW("D:P(A;;FA;;;" + sid + ")S:(ML;;NRNWNX;;;ME)", 1, out sd, out size)) return 3;
+        try
+        {
+            bool present, defaulted;
+            IntPtr dacl, sacl;
+            if (!GetSecurityDescriptorDacl(sd, out present, out dacl, out defaulted)) return 3;
+            if (!GetSecurityDescriptorSacl(sd, out present, out sacl, out defaulted)) return 3;
+            uint err = SetNamedSecurityInfoW(path, SE_FILE_OBJECT, DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION | LABEL_SECURITY_INFORMATION, IntPtr.Zero, IntPtr.Zero, dacl, sacl);
+            return err == 0 ? 0 : 4;
+        }
+        finally
+        {
+            LocalFree(sd);
+        }
     }
 }
