@@ -11,11 +11,24 @@
 // scheduler; an occurrence missed while it was closed runs once when it
 // opens, within the grace); never two runs of the same automation at once;
 // at most `maxConcurrent` runs at a time, the others wait their turn; an
-// automation runs unattended only once you confirmed it (confirmedAt).
+// automation runs unattended only once you confirmed it (confirmedAt, with
+// the signature of the permissions you saw: confirmedSig), and a change of
+// its agent, project, isolation or prompt asks again.
 //
-// Kept in userData/automations.json (bounded: 100 automations, 100 runs each),
-// the prompt of each run in userData/automations/runs/<run id>/prompt.md (the
-// agent reads it there; removed with the run).
+// The window answers a run at once (ack) before the slow part (a copy of the
+// project, its setup script); a run it never answers fails after 3 minutes,
+// one it answered after an hour, and before it opens the pane the window
+// asks again whether the run is still wanted (status). A run that started
+// fails when its agent never shows up or exits early (window side), and in
+// any case after 24 hours, so a stuck run never blocks the others for good.
+//
+// Kept in userData/automations.json (bounded: 100 automations, 100 runs each,
+// checked again when read), the prompt of each run in
+// userData/automations/runs/<run id>/prompt.md (the agent reads it there;
+// removed with the run, never while it may still be read). A remote
+// project's prompt goes to <project>/.tessel/automations/<automation id>.md on
+// its host through the remote session (writeRemotePrompt), so nothing of it
+// is typed into the host's login shell.
 
 import fs from 'fs'
 import { join } from 'path'
@@ -31,21 +44,40 @@ import {
   nextRunNumber,
   isFinalRunStatus,
   resolveMaxConcurrent,
+  remotePromptFile,
   RUN_STATUSES,
   ACTIVE_STATUSES,
   MAX_AUTOMATIONS,
+  MIN_INTERVAL_MINUTES,
   TICK_MS,
   DISPATCH_TIMEOUT_MS
 } from '../shared/automations'
 
 export const AUTOMATIONS_FILE = 'automations.json'
+// A run the window answered (ack) but never started: an hour at most.
+export const ACKED_TIMEOUT_MS = 60 * 60 * 1000
+// A started run that never ended.
+export const MAX_RUN_MS = 24 * 60 * 60 * 1000
+const AUTO_ID = /^auto-[A-Za-z0-9-]{1,80}$/
 const RUN_ID = /^run-[A-Za-z0-9-]{6,80}$/
 const PANE_ID = /^[A-Za-z0-9._-]{1,100}$/
+// What a changed automation must be confirmed for again.
+const SENSITIVE = ['agentId', 'wsId', 'projectCwd', 'remote', 'isolation', 'prompt']
 
 const isState = (d) => !!d && typeof d === 'object' && Array.isArray(d.automations) && Array.isArray(d.runs)
 const str = (v, max) => (typeof v === 'string' ? v.slice(0, max) : null)
+const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null)
+const same = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null)
 
-export function createAutomations({ dir, send = () => {}, now = Date.now, log = null, tickMs = TICK_MS, timers = { setInterval, clearInterval } } = {}) {
+export function createAutomations({
+  dir,
+  send = () => {},
+  now = Date.now,
+  log = null,
+  tickMs = TICK_MS,
+  timers = { setInterval, clearInterval },
+  writeRemotePrompt = null
+} = {}) {
   if (!dir) throw new Error('createAutomations requires a folder') // i18n-ignore programming error
   const file = join(dir, AUTOMATIONS_FILE)
   const runsDir = join(dir, 'automations', 'runs')
@@ -56,14 +88,75 @@ export function createAutomations({ dir, send = () => {}, now = Date.now, log = 
   let timer = null
   let evaluating = false
 
+  // --- Reading the file: every record checked again ---------------------------------
+  function restoreAutomation(a) {
+    if (!a || typeof a !== 'object' || !AUTO_ID.test(String(a.id))) return null
+    const n = normalizeAutomationInput(a)
+    if (n.error) {
+      if (log) log.warn('automations', `dropped ${a.id} when reading: ${n.error}`)
+      return null
+    }
+    const at = now()
+    const confirmedAt = num(a.confirmedAt)
+    const dtstart = num(a.dtstart) ?? at
+    let nextRunAt = num(a.nextRunAt)
+    if (nextRunAt === null) {
+      try {
+        nextRunAt = nextOccurrenceAfter(n.value.schedule, dtstart, at)
+      } catch {
+        return null
+      }
+    }
+    return {
+      id: a.id,
+      ...n.value,
+      // Never on without a confirmation.
+      enabled: a.enabled === true && confirmedAt !== null,
+      confirmedAt,
+      confirmedSig: str(a.confirmedSig, 500),
+      dtstart,
+      nextRunAt,
+      lastRunAt: num(a.lastRunAt),
+      missedRunPolicy: 'run_once_within_grace',
+      createdAt: num(a.createdAt) ?? at,
+      updatedAt: num(a.updatedAt) ?? at
+    }
+  }
+  function restoreRun(r) {
+    if (!r || typeof r !== 'object' || !RUN_ID.test(String(r.id)) || !AUTO_ID.test(String(r.automationId)) || !RUN_STATUSES.includes(r.status)) return null
+    return {
+      id: r.id,
+      automationId: r.automationId,
+      runNumber: Number.isSafeInteger(r.runNumber) && r.runNumber > 0 ? r.runNumber : 1,
+      name: str(r.name, 200) || '',
+      scheduledFor: num(r.scheduledFor) ?? 0,
+      trigger: r.trigger === 'manual' ? 'manual' : 'scheduled',
+      status: r.status,
+      createdAt: num(r.createdAt) ?? 0,
+      startedAt: num(r.startedAt),
+      ackedAt: num(r.ackedAt),
+      dispatchedAt: num(r.dispatchedAt),
+      finishedAt: num(r.finishedAt),
+      paneId: typeof r.paneId === 'string' && PANE_ID.test(r.paneId) ? r.paneId : null,
+      wsId: typeof r.wsId === 'string' && PANE_ID.test(r.wsId) ? r.wsId : null,
+      taskId: str(r.taskId, 120),
+      branch: str(r.branch, 300),
+      errorCode: str(r.errorCode, 60),
+      error: str(r.error, 2000),
+      ...(Number.isSafeInteger(r.occurrenceCount) && r.occurrenceCount > 1 ? { occurrenceCount: r.occurrenceCount } : {}),
+      ...(num(r.lastOccurrenceAt) !== null ? { lastOccurrenceAt: r.lastOccurrenceAt } : {})
+    }
+  }
+
   function load() {
     try {
       const res = readJsonSafe(file, isState)
       if (res.data) {
+        const automations = res.data.automations.map(restoreAutomation).filter(Boolean).slice(0, MAX_AUTOMATIONS)
         state = {
           version: 1,
-          automations: res.data.automations.filter((a) => a && typeof a.id === 'string').slice(0, MAX_AUTOMATIONS),
-          runs: res.data.runs.filter((r) => r && typeof r.id === 'string' && RUN_STATUSES.includes(r.status)),
+          automations,
+          runs: pruneRuns(res.data.runs.map(restoreRun).filter(Boolean)),
           settings: { maxConcurrent: resolveMaxConcurrent(res.data.settings && res.data.settings.maxConcurrent) }
         }
       }
@@ -129,10 +222,10 @@ export function createAutomations({ dir, send = () => {}, now = Date.now, log = 
         return t('main.automations.projectRequired', 'Choose a project.')
       case 'remote-worktree':
         return t('main.automations.remoteWorktree', 'A remote project runs in its project folder (no separate copy).')
-      case 'remote-prompt-too-long':
-        return t('main.automations.remotePromptTooLong', 'On a remote project the prompt goes on the command line: at most 3000 characters.')
       case 'schedule-invalid':
         return t('main.automations.scheduleInvalid', 'Enter a valid schedule before saving.')
+      case 'schedule-too-frequent':
+        return t('main.automations.scheduleTooFrequent', 'Runs must be at least {{min}} minutes apart: each one opens a pane (and a copy of the project).', { min: MIN_INTERVAL_MINUTES })
       case 'too-many':
         return t('main.automations.tooMany', 'You have the most automations Tessel keeps ({{max}}).', { max: MAX_AUTOMATIONS })
       case 'not-found':
@@ -157,12 +250,14 @@ export function createAutomations({ dir, send = () => {}, now = Date.now, log = 
     if (state.automations.length >= MAX_AUTOMATIONS) return fail('too-many')
     const at = now()
     const enabled = input.enabled !== false
-    if (enabled && input.confirmed !== true) return fail('needs-confirm')
+    const confirmed = input.confirmed === true
+    if (enabled && !confirmed) return fail('needs-confirm')
     const a = {
       id: newId('auto'),
       ...n.value,
       enabled,
-      confirmedAt: input.confirmed === true ? at : null,
+      confirmedAt: confirmed ? at : null,
+      confirmedSig: confirmed ? str(input.confirmSig, 500) : null,
       dtstart: at,
       nextRunAt: nextOccurrenceAfter(n.value.schedule, at, at),
       lastRunAt: null,
@@ -182,12 +277,17 @@ export function createAutomations({ dir, send = () => {}, now = Date.now, log = 
     const n = normalizeAutomationInput({ ...a, ...input })
     if (n.error) return fail(n.error)
     const enabled = typeof input.enabled === 'boolean' ? input.enabled : a.enabled
+    const confirmed = input.confirmed === true
     const at = now()
-    if (enabled && !a.confirmedAt && input.confirmed !== true) return fail('needs-confirm')
+    // A different agent, project, place or prompt was not what you confirmed.
+    const changed = SENSITIVE.some((k) => !same(n.value[k], a[k]))
+    const confirmedAt = confirmed ? at : changed ? null : a.confirmedAt
+    if (enabled && !confirmedAt) return fail('needs-confirm')
     const scheduleChanged = n.value.schedule !== a.schedule
     Object.assign(a, n.value, {
       enabled,
-      confirmedAt: a.confirmedAt || (input.confirmed === true ? at : null),
+      confirmedAt,
+      confirmedSig: confirmed ? str(input.confirmSig, 500) : changed ? null : a.confirmedSig,
       updatedAt: at
     })
     // A new schedule starts now; turned back on, the next occurrence from now
@@ -200,17 +300,20 @@ export function createAutomations({ dir, send = () => {}, now = Date.now, log = 
     return { ok: true, automation: { ...a } }
   }
 
-  function setEnabled(id, enabled, confirmed = false) {
-    return update(id, { enabled: !!enabled, confirmed })
+  function setEnabled(id, enabled, confirmed = false, confirmSig = null) {
+    return update(id, { enabled: !!enabled, confirmed, confirmSig })
   }
 
+  // Its history goes with it; a run still starting or going keeps its row
+  // (and its prompt file, the agent may still read it) until it ends.
   function remove(id) {
     if (!loaded) return fail('unreadable')
     const a = find(id)
     if (!a) return fail('not-found')
     state.automations = state.automations.filter((x) => x.id !== id)
-    for (const r of runsOf(id)) removeRunFiles(r.id)
-    state.runs = state.runs.filter((r) => r.automationId !== id)
+    for (const r of runsOf(id)) if (r.status === 'pending') finish(r, 'skipped_unavailable', 'deleted')
+    for (const r of runsOf(id)) if (isFinalRunStatus(r.status)) removeRunFiles(r.id)
+    state.runs = state.runs.filter((r) => r.automationId !== id || !isFinalRunStatus(r.status))
     commit()
     pump()
     return { ok: true }
@@ -237,6 +340,7 @@ export function createAutomations({ dir, send = () => {}, now = Date.now, log = 
       status: 'pending',
       createdAt: now(),
       startedAt: null,
+      ackedAt: null,
       dispatchedAt: null,
       finishedAt: null,
       paneId: null,
@@ -262,15 +366,22 @@ export function createAutomations({ dir, send = () => {}, now = Date.now, log = 
 
   // A skip that repeats (the same reason, run after run) folds into the
   // previous row instead of one row each (Orca's recordRepeatedAutomationSkip).
-  function recordSkip(a, scheduledFor, status, errorCode) {
-    const latest = runsOf(a.id).reduce((n, r) => (!n || r.createdAt > n.createdAt ? r : n), null)
-    if (latest && latest.status === status && latest.errorCode === errorCode && latest.trigger === 'scheduled') {
-      if ((latest.lastOccurrenceAt ?? latest.scheduledFor) !== scheduledFor) {
-        latest.occurrenceCount = (latest.occurrenceCount || 1) + 1
-        latest.lastOccurrenceAt = scheduledFor
-      }
-      return latest
+  function foldTarget(automationId, status, errorCode, except = null) {
+    const latest = runsOf(automationId)
+      .filter((r) => r !== except)
+      .reduce((n, r) => (!n || r.createdAt > n.createdAt ? r : n), null)
+    return latest && latest.status === status && latest.errorCode === errorCode && latest.trigger === 'scheduled' ? latest : null
+  }
+  function fold(latest, scheduledFor) {
+    if ((latest.lastOccurrenceAt ?? latest.scheduledFor) !== scheduledFor) {
+      latest.occurrenceCount = (latest.occurrenceCount || 1) + 1
+      latest.lastOccurrenceAt = scheduledFor
     }
+    return latest
+  }
+  function recordSkip(a, scheduledFor, status, errorCode) {
+    const latest = foldTarget(a.id, status, errorCode)
+    if (latest) return fold(latest, scheduledFor)
     const run = createRun(a, scheduledFor, 'scheduled')
     finish(run, status, errorCode)
     return run
@@ -284,7 +395,8 @@ export function createAutomations({ dir, send = () => {}, now = Date.now, log = 
 
   function trimRuns() {
     const before = new Set(state.runs.map((r) => r.id))
-    state.runs = pruneRuns(state.runs)
+    // A finished run of a deleted automation is not kept.
+    state.runs = pruneRuns(state.runs.filter((r) => !isFinalRunStatus(r.status) || find(r.automationId)))
     const after = new Set(state.runs.map((r) => r.id))
     for (const id of before) if (!after.has(id)) removeRunFiles(id)
   }
@@ -303,13 +415,16 @@ export function createAutomations({ dir, send = () => {}, now = Date.now, log = 
   }
 
   // Run now (Orca's runNow): even when paused, never while one runs.
-  function runNow(id, confirmed = false) {
+  function runNow(id, confirmed = false, confirmSig = null) {
     if (!loaded) return fail('unreadable')
     const a = find(id)
     if (!a) return fail('not-found')
     if (!a.confirmedAt && confirmed !== true) return fail('needs-confirm')
     if (activeRunOf(id)) return fail('busy')
-    if (!a.confirmedAt) a.confirmedAt = now()
+    if (confirmed === true) {
+      a.confirmedAt = now()
+      a.confirmedSig = str(confirmSig, 500)
+    }
     const run = createRun(a, now(), 'manual')
     commit()
     pump()
@@ -335,40 +450,79 @@ export function createAutomations({ dir, send = () => {}, now = Date.now, log = 
       if (dispatch(a, run)) active++
       changed = true
     }
-    if (changed) commit()
+    if (changed) {
+      trimRuns()
+      commit()
+    }
   }
 
+  // The run holds its slot from here (dispatching) until it ends.
   function dispatch(a, run) {
-    const folder = runFolder(run.id)
-    let promptFile = null
-    if (!a.remote) {
-      try {
-        fs.mkdirSync(folder, { recursive: true })
-        promptFile = join(folder, 'prompt.md')
-        fs.writeFileSync(promptFile, `${a.prompt}\n`, 'utf8')
-      } catch (err) {
-        finish(run, 'dispatch_failed', 'prompt-file', err.message)
-        return false
-      }
-    }
     run.status = 'dispatching'
     run.startedAt = now()
-    send('automations:dispatch', {
-      automation: { ...a },
-      run: { ...run },
-      promptFile,
-      promptDir: promptFile ? folder : null
-    })
-    if (log) log.info('automations', `run ${run.id} of ${a.id} (${run.trigger}) sent to the window`)
+    const payload = { automation: { ...a }, run: { ...run }, promptFile: null, promptDir: null, remoteFile: null }
+    if (a.remote) {
+      writeRemote(a, run, payload)
+      return true
+    }
+    const folder = runFolder(run.id)
+    try {
+      fs.mkdirSync(folder, { recursive: true })
+      payload.promptFile = join(folder, 'prompt.md')
+      payload.promptDir = folder
+      fs.writeFileSync(payload.promptFile, `${a.prompt}\n`, 'utf8')
+    } catch (err) {
+      finish(run, 'dispatch_failed', 'prompt-file', err.message)
+      return false
+    }
+    sendDispatch(a, run, payload)
     return true
   }
 
+  function sendDispatch(a, run, payload) {
+    send('automations:dispatch', payload)
+    if (log) log.info('automations', `run ${run.id} of ${a.id} (${run.trigger}) sent to the window`)
+  }
+
+  // A remote project's prompt: a file in its folder on the host, written
+  // through the remote session (never typed into its shell).
+  async function writeRemote(a, run, payload) {
+    const rel = remotePromptFile(a.id)
+    let res
+    try {
+      res = writeRemotePrompt
+        ? await writeRemotePrompt({ hostId: a.remote.hostId, path: a.remote.path, file: rel, text: `${a.prompt}\n` })
+        : { ok: false, error: '' }
+    } catch (err) {
+      res = { ok: false, error: (err && err.message) || '' }
+    }
+    if (run.status !== 'dispatching') return
+    if (!res || !res.ok) {
+      finish(run, 'dispatch_failed', 'remote-prompt', (res && res.error) || '')
+      trimRuns()
+      commit()
+      pump()
+      return
+    }
+    payload.remoteFile = rel
+    sendDispatch(a, run, payload)
+  }
+
   // The window's report: { runId, status, paneId?, wsId?, taskId?, branch?,
-  // errorCode?, error? }. A run never leaves a final status.
+  // errorCode?, error? }. 'ack': the window took the run (no status change).
+  // A run never leaves a final status: the answer carries the run as it is,
+  // so a window that opened a pane for a run already ended closes it.
   function markResult(result = {}) {
     const run = state.runs.find((r) => r.id === result.runId)
     if (!run) return fail('not-found')
     if (isFinalRunStatus(run.status)) return { ok: true, run: { ...run } }
+    if (result.status === 'ack') {
+      if (run.status === 'dispatching' && !run.ackedAt) {
+        run.ackedAt = now()
+        save()
+      }
+      return { ok: true, run: { ...run } }
+    }
     if (!['dispatched', 'completed', 'dispatch_failed', 'skipped_unavailable'].includes(result.status)) return fail('invalid')
     if (typeof result.paneId === 'string' && PANE_ID.test(result.paneId)) run.paneId = result.paneId
     if (typeof result.wsId === 'string' && PANE_ID.test(result.wsId)) run.wsId = result.wsId
@@ -378,15 +532,30 @@ export function createAutomations({ dir, send = () => {}, now = Date.now, log = 
       run.status = 'dispatched'
       run.dispatchedAt = now()
     } else finish(run, result.status, str(result.errorCode, 60), str(result.error, 2000))
+    // The same refusal again and again (a limit, changed permissions): one row.
+    if (run.status === 'skipped_unavailable' && run.trigger === 'scheduled') {
+      const prev = foldTarget(run.automationId, run.status, run.errorCode, run)
+      if (prev) {
+        fold(prev, run.scheduledFor)
+        state.runs = state.runs.filter((r) => r !== run)
+        removeRunFiles(run.id)
+      }
+    }
     if (isFinalRunStatus(run.status)) trimRuns()
     commit()
     pump()
     return { ok: true, run: { ...run } }
   }
 
+  // The window asks before it opens a run's pane: is the run still wanted?
+  function status(runId) {
+    const run = state.runs.find((r) => r.id === runId)
+    return run ? run.status : null
+  }
+
   // After the window (re)loads its panes: a run whose pane is still there is
   // followed again; one that was starting, or whose pane is gone, ended when
-  // Tessel closed. -> the runs still going ({ id, automationId, paneId, taskId }).
+  // Tessel closed. -> the runs still going ({ id, automationId, paneId, taskId, dispatchedAt }).
   function reconcile(livePaneIds = []) {
     if (!loaded) return []
     const live = new Set((Array.isArray(livePaneIds) ? livePaneIds : []).filter((x) => typeof x === 'string'))
@@ -404,7 +573,9 @@ export function createAutomations({ dir, send = () => {}, now = Date.now, log = 
       trimRuns()
       commit()
     }
-    return state.runs.filter((r) => r.status === 'dispatched').map((r) => ({ id: r.id, automationId: r.automationId, paneId: r.paneId, taskId: r.taskId }))
+    return state.runs
+      .filter((r) => r.status === 'dispatched')
+      .map((r) => ({ id: r.id, automationId: r.automationId, paneId: r.paneId, taskId: r.taskId, dispatchedAt: r.dispatchedAt }))
   }
 
   // --- The tick ------------------------------------------------------------------------
@@ -414,15 +585,37 @@ export function createAutomations({ dir, send = () => {}, now = Date.now, log = 
     let changed = false
     try {
       const at = now()
-      // A run the window never answered for.
       for (const r of state.runs) {
-        if (r.status === 'dispatching' && at - (r.startedAt || at) > DISPATCH_TIMEOUT_MS) {
-          finish(r, 'dispatch_failed', 'no-answer')
+        // A run the window never answered for, or never started.
+        if (r.status === 'dispatching') {
+          const waited = at - (r.startedAt || at)
+          if ((!r.ackedAt && waited > DISPATCH_TIMEOUT_MS) || waited > ACKED_TIMEOUT_MS) {
+            finish(r, 'dispatch_failed', 'no-answer')
+            changed = true
+          }
+        } else if (r.status === 'dispatched' && at - (r.dispatchedAt || r.startedAt || at) > MAX_RUN_MS) {
+          finish(r, 'dispatch_failed', 'stale')
           changed = true
         }
       }
       for (const a of state.automations) {
-        if (!a.enabled || !(a.nextRunAt <= at)) continue
+        if (!a.enabled) continue
+        // The clock went back (after a jump forward): the schedule follows it
+        // instead of waiting for a date far ahead.
+        try {
+          if (a.dtstart > at) {
+            a.dtstart = at
+            changed = true
+          }
+          const expected = nextOccurrenceAfter(a.schedule, a.dtstart, at)
+          if (a.nextRunAt > expected) {
+            a.nextRunAt = expected
+            changed = true
+          }
+        } catch {
+          // unreadable schedule: said below
+        }
+        if (!(a.nextRunAt <= at)) continue
         changed = true
         try {
           evaluate(a, at)
@@ -493,6 +686,7 @@ export function createAutomations({ dir, send = () => {}, now = Date.now, log = 
     setSettings,
     runNow,
     markResult,
+    status,
     reconcile,
     setWindowReady,
     file

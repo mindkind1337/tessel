@@ -47,7 +47,14 @@
       "agentUnavailable": "L'agent n'est pas disponible (désactivé dans Paramètres > Agents, ou pas installé).",
       "copyFailed": "Sa copie du projet n'a pas pu être créée : {{error}}",
       "paneFailed": "Son volet n'a pas pu être ouvert.",
-      "unsafePath": "Le prompt n'a pas pu être mis sans risque sur la ligne de commande de l'agent (le chemin du dossier de données de Tessel contient des caractères inhabituels)."
+      "unsafePath": "Le prompt n'a pas pu être mis sans risque sur la ligne de commande de l'agent (le chemin du dossier de données de Tessel contient des caractères inhabituels).",
+      "permissionsChanged": "Les permissions de son agent ont changé depuis votre confirmation (Paramètres > Agents) : confirmez-la de nouveau pour qu'elle s'exécute.",
+      "tooManyPanes": "Des volets de ses exécutions précédentes sont encore ouverts ({{max}} au plus) : fermez-les pour qu'elle s'exécute de nouveau.",
+      "tooManyCopies": "Des copies faites par ses exécutions précédentes attendent votre revue ({{max}} au plus) : fusionnez-les ou abandonnez-les pour qu'elle s'exécute de nouveau.",
+      "agentExited": "Son agent s'est arrêté avant d'avoir terminé.",
+      "agentNoStart": "Son agent n'a pas démarré (aucun signe de lui après 5 minutes). Son volet reste ouvert pour que vous voyiez pourquoi.",
+      "stale": "Elle n'était pas terminée après 24 heures.",
+      "remotePrompt": "Son prompt n'a pas pu être écrit sur l'hôte distant : {{error}}"
     },
     "trigger": {
       "manual": "Exécuter maintenant",
@@ -88,7 +95,9 @@
       "doneReview": "Son travail attend votre revue sur la branche {{branch}}.",
       "doneBody": "Voyez sa carte sur le tableau.",
       "approvalTitle": "L'automatisation « {{name}} » attend votre approbation",
-      "approvalBody": "L'exécution est arrêtée jusqu'à votre réponse dans son volet."
+      "approvalBody": "L'exécution est arrêtée jusqu'à votre réponse dans son volet.",
+      "permsTitle": "L'automatisation « {{name}} » a de nouveau besoin de votre confirmation",
+      "permsBody": "Les permissions de son agent ont changé depuis votre confirmation (Paramètres > Agents). Elle est ignorée jusqu'à ce que vous la confirmiez dans Paramètres > Automatisations."
     },
     "editor": {
       "needName": "Donnez un nom à l'automatisation.",
@@ -100,7 +109,6 @@
       "projectGone": "{{name}} (plus ouvert)",
       "remoteProject": "{{name}} (sur {{host}})",
       "agentMissing": "{{name}} (pas installé)",
-      "promptRemoteHint": "Sur un projet distant, le prompt va sur la ligne de commande de l'agent, sur une seule ligne (au plus {{max}} caractères).",
       "promptHint": "Chaque exécution démarre l'agent avec ce prompt (gardé dans un fichier qu'il lit ; rien n'est tapé dans son terminal).",
       "nextRun": "{{schedule}} · prochaine exécution {{when}}",
       "editTitle": "Modifier l'automatisation",
@@ -145,7 +153,9 @@
       "onceSaved": "Une fois enregistrée, elle s'exécute automatiquement jusqu'à sa mise en pause, seulement quand Tessel est ouvert.",
       "cancel": "Annuler",
       "saveChanges": "Enregistrer les modifications",
-      "create": "Créer"
+      "create": "Créer",
+      "promptRemoteFileHint": "Sur un projet distant, chaque exécution écrit ce prompt dans .tessel/automations du dossier du projet sur l'hôte, où l'agent le lit (rien n'est tapé dans son terminal).",
+      "tooFrequent": "Les exécutions doivent être espacées d'au moins {{min}} minutes : chacune ouvre un volet (et une copie du projet)."
     },
     "perms": {
       "title": "Ce que {{agent}} peut faire sans surveillance",
@@ -175,7 +185,8 @@
       "resume": "Reprendre l'automatisation",
       "runNow": "Exécuter maintenant",
       "edit": "Modifier",
-      "delete": "Supprimer"
+      "delete": "Supprimer",
+      "needsConfirm": "Confirmation requise"
     },
     "confirm": {
       "title": "Laisser « {{name}} » s'exécuter sans surveillance ?",

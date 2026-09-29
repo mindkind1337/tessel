@@ -14,8 +14,9 @@ import {
   GRACE_MINUTES,
   DEFAULT_GRACE_MINUTES,
   MAX_PROMPT,
-  MAX_REMOTE_PROMPT,
   MAX_NAME,
+  MIN_INTERVAL_MINUTES,
+  minIntervalMinutes,
   scheduleToDraft,
   draftToSchedule,
   isValidSchedule,
@@ -131,7 +132,9 @@ function setPreset(preset) {
   draft.value = d
 }
 
-const promptMax = computed(() => (remote.value ? MAX_REMOTE_PROMPT : MAX_PROMPT))
+const promptMax = computed(() => MAX_PROMPT)
+// Each run opens a pane (and a copy): not more often than this.
+const tooFrequent = computed(() => scheduleValid.value && minIntervalMinutes(schedule.value) < MIN_INTERVAL_MINUTES)
 const missing = computed(() => {
   if (!name.value.trim()) return t('automations.editor.needName', 'Give the automation a name.')
   if (!project.value) return t('automations.editor.needProject', 'Choose a project.')
@@ -139,6 +142,7 @@ const missing = computed(() => {
   if (!prompt.value.trim()) return t('automations.editor.needPrompt', 'Enter a prompt before saving.')
   if (prompt.value.length > promptMax.value) return t('automations.editor.promptTooLong', 'The prompt is too long (at most {{max}} characters here).', { max: promptMax.value })
   if (!scheduleValid.value) return t('automations.editor.needSchedule', 'Enter a valid schedule before saving.')
+  if (tooFrequent.value) return tooFrequentText()
   return ''
 })
 
@@ -154,8 +158,11 @@ function agentLabel(ag) {
 }
 function promptHint() {
   return remote.value
-    ? t('automations.editor.promptRemoteHint', "On a remote project the prompt goes on the agent's command line, as one line (at most {{max}} characters).", { max: MAX_REMOTE_PROMPT })
+    ? t('automations.editor.promptRemoteFileHint', 'On a remote project each run writes this prompt to .tessel/automations in the project folder on the host, where the agent reads it (nothing is typed into its terminal).')
     : t('automations.editor.promptHint', 'Each run starts the agent with this prompt (kept in a file it reads; nothing is typed into its terminal).')
+}
+function tooFrequentText() {
+  return t('automations.editor.tooFrequent', 'Runs must be at least {{min}} minutes apart: each one opens a pane (and a copy of the project).', { min: MIN_INTERVAL_MINUTES })
 }
 function nextRunText() {
   return t('automations.editor.nextRun', '{{schedule}} · next run {{when}}', { schedule: scheduleLabel(schedule.value), when: formatDateTime(nextRun.value) })

@@ -4,7 +4,7 @@
 // AutomationMissedRunGraceField.tsx and automation-templates.ts, MIT,
 // Copyright (c) 2026 Lovecast Inc.).
 import { t, intlLocale } from './i18n'
-import { describeSchedule } from '../../shared/automations'
+import { describeSchedule, MAX_OPEN_PANES_PER_AUTOMATION, MAX_COPIES_PER_AUTOMATION } from '../../shared/automations'
 
 export function weekdayNames() {
   const fmt = new Intl.DateTimeFormat(intlLocale(), { weekday: 'long' })
@@ -124,6 +124,20 @@ export function runReason(run) {
       return t('automations.reason.paneFailed', 'Its pane could not be opened.')
     case 'unsafe-path':
       return t('automations.reason.unsafePath', 'The prompt could not be put on the agent\'s command line safely (the path of Tessel\'s data folder has unusual characters).')
+    case 'permissions-changed':
+      return t('automations.reason.permissionsChanged', "Its agent's permissions changed since you confirmed it (Settings > Agents): confirm it again to let it run.")
+    case 'too-many-panes':
+      return t('automations.reason.tooManyPanes', 'Panes of its previous runs are still open ({{max}} at most): close them to let it run again.', { max: MAX_OPEN_PANES_PER_AUTOMATION })
+    case 'too-many-copies':
+      return t('automations.reason.tooManyCopies', 'Copies made by its previous runs wait for your review ({{max}} at most): merge or discard them to let it run again.', { max: MAX_COPIES_PER_AUTOMATION })
+    case 'agent-exited':
+      return t('automations.reason.agentExited', 'Its agent exited before it finished.')
+    case 'agent-no-start':
+      return t('automations.reason.agentNoStart', 'Its agent did not start (no sign of it after 5 minutes). Its pane stays open so you can see why.')
+    case 'stale':
+      return t('automations.reason.stale', 'It had not finished after 24 hours.')
+    case 'remote-prompt':
+      return t('automations.reason.remotePrompt', 'Its prompt could not be written on the remote host: {{error}}', { error: detail })
     default:
       return detail
   }

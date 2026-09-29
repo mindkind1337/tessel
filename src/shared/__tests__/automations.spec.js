@@ -15,7 +15,10 @@ import {
   normalizeAutomationInput,
   automationLaunchArgs,
   wslPath,
-  posixQuote,
+  quoteGlobArgs,
+  minIntervalMinutes,
+  permissionFingerprint,
+  remotePromptFile,
   MAX_RUNS_PER_AUTOMATION
 } from '../automations'
 
@@ -56,6 +59,32 @@ describe('schedules (Orca dialect)', () => {
     // Not before its start.
     expect(latestOccurrenceAtOrBefore(daily, now, now)).toBe(null)
     expect(nextOccurrenceAfter('*/10 * * * *', 0, now)).toBe(at(2026, 9, 29, 10, 10))
+  })
+
+  it('a time skipped when clocks go forward runs an hour later, cron and RRULE alike', () => {
+    // Find a spring-forward day in this machine's time zone (none: nothing to check).
+    let day = null
+    for (let d = 0; d < 400 && day === null; d++) {
+      const a = new Date(2026, 0, 1 + d, 0, 0).getTime()
+      const b = new Date(2026, 0, 2 + d, 0, 0).getTime()
+      if (b - a < 24 * 3600_000) day = new Date(2026, 0, 1 + d)
+    }
+    if (!day) return
+    // The skipped hour: the one whose wall time does not exist that day.
+    let hour = 0
+    for (let h = 0; h < 24; h++) if (new Date(day.getFullYear(), day.getMonth(), day.getDate(), h, 30).getHours() !== h) hour = h
+    const before = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 0, 0).getTime()
+    const cron = nextOccurrenceAfter(`30 ${hour} * * *`, 0, before)
+    const rrule = nextOccurrenceAfter(`FREQ=DAILY;BYHOUR=${hour};BYMINUTE=30`, 0, before)
+    expect(cron).toBe(rrule)
+    expect(new Date(cron).getDate()).toBe(day.getDate())
+  })
+
+  it('measures the shortest time between runs', () => {
+    expect(minIntervalMinutes('FREQ=HOURLY;BYMINUTE=0')).toBe(60)
+    expect(minIntervalMinutes('*/15 * * * *')).toBe(15)
+    expect(minIntervalMinutes('* * * * *')).toBe(1)
+    expect(minIntervalMinutes('0 9 * * 1-5')).toBeGreaterThanOrEqual(24 * 60)
   })
 
   it('describes a schedule without words (the window words it)', () => {
@@ -118,7 +147,11 @@ describe('an automation from the window', () => {
     expect(normalizeAutomationInput({ ...base, schedule: '* *' }).error).toBe('schedule-invalid')
     expect(normalizeAutomationInput({ ...base, projectCwd: null }).error).toBe('project-required')
     expect(normalizeAutomationInput({ ...base, remote: { hostId: 'h1', path: '/srv/app' } }).error).toBe('remote-worktree')
-    expect(normalizeAutomationInput({ ...base, remote: { hostId: 'h1', path: '/srv/app' }, isolation: 'project', prompt: 'x'.repeat(4000) }).error).toBe('remote-prompt-too-long')
+    // A pane (and a copy) every minute: refused.
+    expect(normalizeAutomationInput({ ...base, schedule: '* * * * *' }).error).toBe('schedule-too-frequent')
+    expect(normalizeAutomationInput({ ...base, schedule: '0,5 9 * * *' }).error).toBe('schedule-too-frequent')
+    expect(normalizeAutomationInput({ ...base, schedule: '*/15 * * * *' }).error).toBeUndefined()
+    expect(normalizeAutomationInput({ ...base, remote: { hostId: 'h1', path: '/srv/app' }, isolation: 'project', prompt: 'x'.repeat(4000) }).error).toBeUndefined()
   })
 })
 
@@ -140,10 +173,34 @@ describe("the agent's command line", () => {
     expect(wslPath('C:\\Users\\me\\x.md')).toBe('/mnt/c/Users/me/x.md')
     expect(automationLaunchArgs('codex', { promptFile, promptDir, shellId: 'wsl' })).toContain('/mnt/c/Users/me/AppData/Roaming/tessel/automations/runs/run-1/prompt.md')
   })
-  it('quotes a remote prompt for a POSIX shell, on one line', () => {
-    expect(posixQuote("it's")).toBe(`'it'\\''s'`)
-    expect(automationLaunchArgs('claude', { inlinePrompt: "Fix it's\nbugs; rm -rf $HOME" })).toBe(` 'Fix it'\\''s bugs; rm -rf $HOME'`)
-    expect(automationLaunchArgs('gemini', { inlinePrompt: 'hi' })).toBe(" -i 'hi'")
-    expect(automationLaunchArgs('claude', { inlinePrompt: 'x'.repeat(4000) })).toBe('')
+  it('a remote project reads its prompt from a file in its folder: no prompt text on the command line', () => {
+    const rel = remotePromptFile('auto-1b2c-3d')
+    expect(rel).toBe('.tessel/automations/auto-1b2c-3d.md')
+    expect(automationLaunchArgs('claude', { remoteFile: rel })).toBe(' "Tessel automation run. Read the file .tessel/automations/auto-1b2c-3d.md and carry out the task it describes."')
+    expect(automationLaunchArgs('gemini', { remoteFile: rel })).toMatch(/^ -i "Tessel automation run/)
+    // The reviewer's fish/tcsh cases never reach a shell: only this shape is taken.
+    expect(automationLaunchArgs('claude', { remoteFile: ".tessel/automations/x\\' ; touch /tmp/pwned ; echo '.md" })).toBe('')
+    expect(automationLaunchArgs('claude', { remoteFile: '.tessel/automations/auto-a!b.md' })).toBe('')
+    expect(automationLaunchArgs('claude', { inlinePrompt: 'x' })).toBe('')
+  })
+  it('accepts accented, apostrophe and parenthesis folders (French user names), refuses shell metacharacters', () => {
+    const B = '\\'
+    const dir = ['C:', 'Users', "Jérôme O'Neil (perso)", 'AppData', 'Roaming', 'tessel', 'automations', 'runs', 'run-1'].join(B)
+    const out = automationLaunchArgs('claude', { promptFile: `${dir}${B}prompt.md`, promptDir: dir })
+    expect(out).toContain(`Read the file ${dir}${B}prompt.md`)
+    expect(automationLaunchArgs('codex', { promptFile: `${dir}${B}prompt.md`, promptDir: dir, shellId: 'wsl' })).toContain("/mnt/c/Users/Jérôme O'Neil (perso)/")
+    for (const bad of ['a%b', 'a&b', 'a`b', 'a!b', 'a;b', 'a^b', 'a$b', 'a"b', 'a’b']) {
+      expect(automationLaunchArgs('claude', { promptFile: `C:${B}Users${B}${bad}${B}p.md`, promptDir: `C:${B}Users${B}${bad}` })).toBe('')
+    }
+  })
+  it('quotes glob characters of launch flags for a remote shell (zsh "no matches found")', () => {
+    expect(quoteGlobArgs(' --model opus[1m] --effort high')).toBe(' --model "opus[1m]" --effort high')
+    expect(quoteGlobArgs(' -m gpt-5')).toBe(' -m gpt-5')
+  })
+  it('fingerprints the permissions without keeping their values', () => {
+    const a = permissionFingerprint('["claude","--dangerously-skip-permissions",["KEY=secret"]]')
+    expect(a).toMatch(/^p1:[0-9a-f]{8}:\d+$/)
+    expect(a).not.toContain('secret')
+    expect(permissionFingerprint('["claude","",[]]')).not.toBe(a)
   })
 })

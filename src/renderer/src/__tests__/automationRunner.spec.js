@@ -1,18 +1,27 @@
 import { describe, it, expect, vi } from 'vitest'
 import { createAutomationRunner } from '../automationRunner'
 
-const promptFile = 'C:\\Users\\me\\AppData\\Roaming\\tessel-dev\\automations\\runs\\run-abc123\\prompt.md'
-const promptDir = 'C:\\Users\\me\\AppData\\Roaming\\tessel-dev\\automations\\runs\\run-abc123'
+const B = '\\'
+const promptDir = ['C:', 'Users', 'me', 'AppData', 'Roaming', 'tessel-dev', 'automations', 'runs', 'run-abc123'].join(B)
+const promptFile = `${promptDir}${B}prompt.md`
+const SIG = 'p1:0badf00d:42'
 
 function setup(over = {}) {
   const leaves = new Set()
   const cards = {}
   const ws = { id: 'ws-1', cwd: 'C:\\code\\app' }
+  let clock = 1_000_000
   const deps = {
+    now: () => clock,
     findWorkspace: vi.fn(() => ws),
     agentFor: vi.fn((id) => ({ id, name: 'Claude Code', command: 'claude' })),
     shellFor: () => 'powershell',
+    permissionSig: vi.fn(() => SIG),
+    openPanesOf: vi.fn(() => 0),
+    copiesOf: vi.fn(() => 0),
     createWorktree: vi.fn(async () => ({ worktree: { path: 'C:\\code\\app.worktrees\\nightly', branch: 'agent/nightly' } })),
+    removeCopy: vi.fn(async () => {}),
+    runStatus: vi.fn(async () => 'dispatching'),
     openPane: vi.fn(async () => {
       leaves.add('pane-9')
       return { id: 'pane-9' }
@@ -22,15 +31,18 @@ function setup(over = {}) {
       return 'task-1'
     }),
     updateCard: vi.fn((id, patch) => Object.assign(cards[id], patch)),
+    removeCard: vi.fn((id) => delete cards[id]),
     cardOf: (id) => cards[id] || null,
     findLeaf: (id) => (leaves.has(id) ? { id } : null),
     closePane: vi.fn((id) => leaves.delete(id)),
-    report: vi.fn(async () => ({ ok: true })),
+    agentStarted: vi.fn(() => false),
+    agentExited: vi.fn(() => false),
+    report: vi.fn(async (r) => ({ ok: true, run: { id: r.runId, status: r.status === 'ack' ? 'dispatching' : r.status } })),
     notify: vi.fn(),
     automationById: () => null,
     ...over
   }
-  return { runner: createAutomationRunner(deps), deps, leaves, cards }
+  return { runner: createAutomationRunner(deps), deps, leaves, cards, tick: (ms) => (clock += ms) }
 }
 
 const automation = (over = {}) => ({
@@ -42,16 +54,20 @@ const automation = (over = {}) => ({
   effort: 'high',
   isolation: 'worktree',
   remote: null,
+  confirmedSig: SIG,
   after: { notify: true, closePane: false },
   ...over
 })
 const run = { id: 'run-abc123', runNumber: 4 }
+const statuses = (deps) => deps.report.mock.calls.map((c) => c[0].status)
 
 describe('automation runs in the window', () => {
-  it('opens the pane the normal way, with its first prompt on the command line, and a card', async () => {
+  it('takes the run at once, opens the pane the normal way with its first prompt on the command line, and a card', async () => {
     const { runner, deps, cards } = setup()
     await runner.dispatch({ automation: automation(), run, promptFile, promptDir })
+    expect(deps.report.mock.calls[0][0]).toEqual({ runId: run.id, status: 'ack' })
     expect(deps.createWorktree).toHaveBeenCalledWith(expect.objectContaining({ id: 'ws-1' }), 'Nightly')
+    expect(deps.runStatus).toHaveBeenCalledWith(run.id)
     expect(deps.openPane).toHaveBeenCalledWith(
       expect.objectContaining({
         launchOptions: { model: 'opus', effort: 'high' },
@@ -60,7 +76,27 @@ describe('automation runs in the window', () => {
       })
     )
     expect(cards['task-1']).toMatchObject({ title: 'Nightly · run 4', brief: 'Check it', paneId: 'pane-9', automation: { id: 'auto-1', runId: run.id } })
-    expect(deps.report).toHaveBeenCalledWith({ runId: run.id, status: 'dispatched', paneId: 'pane-9', wsId: 'ws-1', taskId: 'task-1', branch: 'agent/nightly' })
+    expect(deps.report).toHaveBeenLastCalledWith({ runId: run.id, status: 'dispatched', paneId: 'pane-9', wsId: 'ws-1', taskId: 'task-1', branch: 'agent/nightly' })
+  })
+
+  // Review 1: the run timed out while its copy was made: no pane is opened.
+  it('a run no longer wanted when its copy is ready opens no pane, and its copy is removed', async () => {
+    const { runner, deps } = setup({ runStatus: vi.fn(async () => 'dispatch_failed') })
+    await runner.dispatch({ automation: automation(), run, promptFile, promptDir })
+    expect(deps.openPane).not.toHaveBeenCalled()
+    expect(deps.removeCopy).toHaveBeenCalledWith(expect.objectContaining({ branch: 'agent/nightly' }))
+    expect(statuses(deps)).toEqual(['ack'])
+  })
+
+  it('a pane that opened for a run already ended is closed, its card and copy removed', async () => {
+    const { runner, deps, cards, leaves } = setup({
+      report: vi.fn(async (r) => ({ ok: true, run: { id: r.runId, status: r.status === 'ack' ? 'dispatching' : 'dispatch_failed' } }))
+    })
+    await runner.dispatch({ automation: automation(), run, promptFile, promptDir })
+    expect(leaves.has('pane-9')).toBe(false)
+    expect(cards['task-1']).toBeUndefined()
+    expect(deps.removeCopy).toHaveBeenCalled()
+    expect(runner.runOfPane('pane-9')).toBe(null)
   })
 
   it('its turn ending completes the run: card to Review, you are told', async () => {
@@ -83,34 +119,65 @@ describe('automation runs in the window', () => {
     expect(deps.notify).not.toHaveBeenCalled()
   })
 
-  it('fails with a reason when it cannot start', async () => {
+  it('fails with a reason when it cannot start, and removes a copy it made', async () => {
     let s = setup({ findWorkspace: () => null })
     await s.runner.dispatch({ automation: automation(), run, promptFile, promptDir })
-    expect(s.deps.report).toHaveBeenCalledWith(expect.objectContaining({ status: 'skipped_unavailable', errorCode: 'project-gone' }))
+    expect(s.deps.report).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'skipped_unavailable', errorCode: 'project-gone' }))
 
     s = setup({ agentFor: () => null })
     await s.runner.dispatch({ automation: automation(), run, promptFile, promptDir })
-    expect(s.deps.report).toHaveBeenCalledWith(expect.objectContaining({ status: 'dispatch_failed', errorCode: 'agent-unavailable' }))
+    expect(s.deps.report).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'dispatch_failed', errorCode: 'agent-unavailable' }))
 
     s = setup()
     await s.runner.dispatch({ automation: automation(), run, promptFile: 'C:\\Users\\a$b\\p.md', promptDir: 'C:\\Users\\a$b' })
-    expect(s.deps.report).toHaveBeenCalledWith(expect.objectContaining({ errorCode: 'unsafe-path' }))
+    expect(s.deps.report).toHaveBeenLastCalledWith(expect.objectContaining({ errorCode: 'unsafe-path' }))
     expect(s.deps.openPane).not.toHaveBeenCalled()
 
     s = setup({ createWorktree: async () => ({ error: 'not a git repository' }) })
     await s.runner.dispatch({ automation: automation(), run, promptFile, promptDir })
-    expect(s.deps.report).toHaveBeenCalledWith({ runId: run.id, status: 'dispatch_failed', errorCode: 'copy-failed', error: 'not a git repository' })
+    expect(s.deps.report).toHaveBeenLastCalledWith({ runId: run.id, status: 'dispatch_failed', errorCode: 'copy-failed', error: 'not a git repository' })
 
     s = setup({ openPane: async () => null })
-    await s.runner.dispatch({ automation: automation({ isolation: 'project' }), run, promptFile, promptDir })
-    expect(s.deps.report).toHaveBeenCalledWith(expect.objectContaining({ errorCode: 'pane-failed' }))
+    await s.runner.dispatch({ automation: automation(), run, promptFile, promptDir })
+    expect(s.deps.report).toHaveBeenLastCalledWith(expect.objectContaining({ errorCode: 'pane-failed' }))
     expect(s.deps.createCard).not.toHaveBeenCalled()
+    expect(s.deps.removeCopy).toHaveBeenCalled()
   })
 
-  it('a remote project gets its prompt inline', async () => {
+  // Review 6: Yolo turned on (or other arguments) after you confirmed it.
+  it('runs only with the permissions you confirmed; told once', async () => {
+    const { runner, deps } = setup({ permissionSig: vi.fn(() => 'p1:ffffffff:99') })
+    await runner.dispatch({ automation: automation(), run, promptFile, promptDir })
+    await runner.dispatch({ automation: automation(), run: { ...run, id: 'run-2' }, promptFile, promptDir })
+    expect(deps.openPane).not.toHaveBeenCalled()
+    expect(deps.report).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'skipped_unavailable', errorCode: 'permissions-changed' }))
+    expect(deps.notify).toHaveBeenCalledTimes(1)
+    const old = setup()
+    await old.runner.dispatch({ automation: automation({ confirmedSig: null }), run, promptFile, promptDir })
+    expect(old.deps.openPane).not.toHaveBeenCalled()
+  })
+
+  // Review 7: a schedule never piles up panes and copies.
+  it('waits while too many panes or copies of its previous runs are left', async () => {
+    let s = setup({ openPanesOf: () => 3 })
+    await s.runner.dispatch({ automation: automation(), run, promptFile, promptDir })
+    expect(s.deps.report).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'skipped_unavailable', errorCode: 'too-many-panes' }))
+    s = setup({ copiesOf: () => 3 })
+    await s.runner.dispatch({ automation: automation(), run, promptFile, promptDir })
+    expect(s.deps.report).toHaveBeenLastCalledWith(expect.objectContaining({ errorCode: 'too-many-copies' }))
+    expect(s.deps.createWorktree).not.toHaveBeenCalled()
+    // In the project folder no copy is made: copies do not count.
+    s = setup({ copiesOf: () => 3 })
+    await s.runner.dispatch({ automation: automation({ isolation: 'project' }), run, promptFile, promptDir })
+    expect(s.deps.openPane).toHaveBeenCalled()
+  })
+
+  // Review 3: a remote run's command line names only the prompt file.
+  it('a remote project gets the prompt file written on its host', async () => {
     const { runner, deps } = setup()
-    await runner.dispatch({ automation: automation({ isolation: 'project', remote: { hostId: 'h', path: '/srv' } }), run, promptFile: null, promptDir: null })
-    expect(deps.openPane).toHaveBeenCalledWith(expect.objectContaining({ automationLaunch: { inlinePrompt: 'Check it' }, worktree: null }))
+    const remoteFile = '.tessel/automations/auto-1.md'
+    await runner.dispatch({ automation: automation({ isolation: 'project', remote: { hostId: 'h', path: '/srv' } }), run, remoteFile })
+    expect(deps.openPane).toHaveBeenCalledWith(expect.objectContaining({ automationLaunch: { remoteFile }, worktree: null }))
   })
 
   it('a pane closed before the agent finished: the run failed, the card back to To do', async () => {
@@ -122,9 +189,31 @@ describe('automation runs in the window', () => {
     expect(cards['task-1'].column).toBe('todo')
   })
 
+  // Review 2: an agent that never starts, or exits, frees the run.
+  it('an agent that never shows up fails the run after 5 minutes; one that exits fails it at once', async () => {
+    let s = setup()
+    await s.runner.dispatch({ automation: automation(), run, promptFile, promptDir })
+    s.tick(4 * 60_000)
+    s.runner.check()
+    expect(statuses(s.deps)).not.toContain('dispatch_failed')
+    s.tick(2 * 60_000)
+    s.runner.check()
+    expect(s.deps.report).toHaveBeenLastCalledWith({ runId: run.id, status: 'dispatch_failed', errorCode: 'agent-no-start' })
+    expect(s.leaves.has('pane-9')).toBe(true) // left for you to look at
+
+    s = setup({ agentStarted: vi.fn(() => true) })
+    await s.runner.dispatch({ automation: automation(), run, promptFile, promptDir })
+    s.tick(60 * 60_000)
+    s.runner.check()
+    expect(statuses(s.deps)).not.toContain('dispatch_failed') // working a long time is fine
+    s.deps.agentExited.mockReturnValue(true)
+    s.runner.check()
+    expect(s.deps.report).toHaveBeenLastCalledWith({ runId: run.id, status: 'dispatch_failed', errorCode: 'agent-exited' })
+  })
+
   it('an approval is said once; runs are followed again after a restart', async () => {
     const { runner, deps } = setup({ automationById: () => automation({ isolation: 'project' }) })
-    runner.resume([{ id: 'run-old', automationId: 'auto-1', paneId: 'pane-2', taskId: null }])
+    runner.resume([{ id: 'run-old', automationId: 'auto-1', paneId: 'pane-2', taskId: null, dispatchedAt: 1 }])
     runner.approval('pane-2', true)
     runner.approval('pane-2', true)
     expect(deps.notify).toHaveBeenCalledTimes(1)

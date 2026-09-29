@@ -653,14 +653,14 @@
       "agentInvalid": "Choisissez un agent capable d'exécuter des automatisations.",
       "projectRequired": "Choisissez un projet.",
       "remoteWorktree": "Un projet distant s'exécute dans son dossier de projet (pas de copie séparée).",
-      "remotePromptTooLong": "Sur un projet distant, le prompt va sur la ligne de commande : au plus 3000 caractères.",
       "scheduleInvalid": "Saisissez une planification valide avant d'enregistrer.",
       "tooMany": "Vous avez le maximum d'automatisations que Tessel conserve ({{max}}).",
       "notFound": "Automatisation introuvable.",
       "needsConfirm": "Confirmez d'abord que cette automatisation peut s'exécuter sans surveillance.",
       "busy": "Cette automatisation est déjà en cours.",
       "notLoaded": "Vos automatisations n'ont pas pu être lues. Redémarrez Tessel.",
-      "invalid": "Cette automatisation n'est pas valide."
+      "invalid": "Cette automatisation n'est pas valide.",
+      "scheduleTooFrequent": "Les exécutions doivent être espacées d'au moins {{min}} minutes : chacune ouvre un volet (et une copie du projet)."
     }
   }
 }

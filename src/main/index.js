@@ -26,7 +26,7 @@ import { createAddProject, registerAddProject } from './addProject'
 import { createSshAskpass, registerSshAskpass, askpassExePath } from './sshAskpass'
 import { createAskpassPipeHost } from './askpassPipeHost'
 import { createRemoteFs, registerRemoteFs, SESSION_PREFIX as REMOTE_FS_PREFIX } from './remoteFs'
-import { isRemotePath } from '../shared/remotePath'
+import { isRemotePath, remoteRoot, childPath } from '../shared/remotePath'
 import { prepareAgentStateHooks } from './agentStateSetup'
 import { assessNeeds } from './tesselNeeds'
 import { createClaudeUsageReport } from './claudeUsageReport'
@@ -980,15 +980,31 @@ app.whenReady().then(() => {
 // Scheduled automations (src/main/automations.js): the scheduler runs here,
 // only while Tessel is open; the window starts each run's pane and reports.
 // ---------------------------------------------------------------------------
-const automations = createAutomations({ dir: app.getPath('userData'), send, log })
+// A remote project's prompt file, written through its Files session
+// (remoteFs.js: inside the project folder, contents over stdin), never typed
+// into the host's login shell.
+async function writeRemoteAutomationPrompt({ hostId, path, file, text }) {
+  const root = remoteRoot(hostId, path)
+  if (!root) return { ok: false, error: '' }
+  const parts = String(file || '').split('/').filter(Boolean)
+  let dir = root
+  for (const name of parts.slice(0, -1)) {
+    // Already there: fine; anything else shows when the file is written.
+    await remoteFs.create({ root, dir, name, folder: true })
+    dir = childPath(dir, name)
+  }
+  return remoteFs.writeForEdit({ file: childPath(dir, parts[parts.length - 1]), text })
+}
+const automations = createAutomations({ dir: app.getPath('userData'), send, log, writeRemotePrompt: (q) => writeRemoteAutomationPrompt(q) })
 app.whenReady().then(() => automations.start())
 app.on('will-quit', () => automations.stop())
 ipcMain.handle('automations:list', () => automations.snapshot())
 ipcMain.handle('automations:create', (_evt, input) => automations.create(input))
 ipcMain.handle('automations:update', (_evt, id, input) => automations.update(String(id || ''), input || {}))
-ipcMain.handle('automations:setEnabled', (_evt, id, enabled, confirmed) => automations.setEnabled(String(id || ''), !!enabled, confirmed === true))
+ipcMain.handle('automations:setEnabled', (_evt, id, enabled, confirmed, sig) => automations.setEnabled(String(id || ''), !!enabled, confirmed === true, typeof sig === 'string' ? sig : null))
 ipcMain.handle('automations:remove', (_evt, id) => automations.remove(String(id || '')))
-ipcMain.handle('automations:runNow', (_evt, id, confirmed) => automations.runNow(String(id || ''), confirmed === true))
+ipcMain.handle('automations:runNow', (_evt, id, confirmed, sig) => automations.runNow(String(id || ''), confirmed === true, typeof sig === 'string' ? sig : null))
+ipcMain.handle('automations:status', (_evt, runId) => automations.status(String(runId || '')))
 ipcMain.handle('automations:setSettings', (_evt, patch) => automations.setSettings(patch || {}))
 ipcMain.handle('automations:markResult', (_evt, result) => automations.markResult(result || {}))
 ipcMain.handle('automations:reconcile', (_evt, paneIds) => automations.reconcile(paneIds))

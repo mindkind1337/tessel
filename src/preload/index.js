@@ -348,9 +348,11 @@ const api = {
     list: () => ipcRenderer.invoke('automations:list'),
     create: (input) => ipcRenderer.invoke('automations:create', input),
     update: (id, input) => ipcRenderer.invoke('automations:update', id, input),
-    setEnabled: (id, enabled, confirmed) => ipcRenderer.invoke('automations:setEnabled', id, enabled, confirmed),
+    setEnabled: (id, enabled, confirmed, sig) => ipcRenderer.invoke('automations:setEnabled', id, enabled, confirmed, sig),
     remove: (id) => ipcRenderer.invoke('automations:remove', id),
-    runNow: (id, confirmed) => ipcRenderer.invoke('automations:runNow', id, confirmed),
+    runNow: (id, confirmed, sig) => ipcRenderer.invoke('automations:runNow', id, confirmed, sig),
+    // A run's status now (the window asks before it opens the run's pane).
+    status: (runId) => ipcRenderer.invoke('automations:status', runId),
     setSettings: (patch) => ipcRenderer.invoke('automations:setSettings', patch),
     markResult: (result) => ipcRenderer.invoke('automations:markResult', result),
     reconcile: (paneIds) => ipcRenderer.invoke('automations:reconcile', paneIds),

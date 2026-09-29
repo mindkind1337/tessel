@@ -40,9 +40,6 @@ export const MAX_RUNS_PER_AUTOMATION = 100
 export const MAX_AUTOMATIONS = 100
 export const MAX_NAME = 120
 export const MAX_PROMPT = 20000
-// A remote project gets its prompt on the command line of the remote shell:
-// one line, and short enough for the remote terminal's input line.
-export const MAX_REMOTE_PROMPT = 3000
 // How many runs go at once, all automations together (the others wait).
 export const MAX_CONCURRENT_DEFAULT = 2
 export const MAX_CONCURRENT_LIMIT = 8
@@ -50,6 +47,13 @@ export const MAX_CONCURRENT_LIMIT = 8
 export const TICK_MS = 60 * 1000
 // A run the window was asked to start and never answered for.
 export const DISPATCH_TIMEOUT_MS = 3 * 60 * 1000
+// A run whose agent never showed any sign of life in its pane.
+export const AGENT_START_TIMEOUT_MS = 5 * 60 * 1000
+// Panes still open, and copies of the project not merged or discarded yet,
+// left by previous runs of one automation: past this, a run waits (skipped)
+// until you close or review them, so a schedule never piles them up.
+export const MAX_OPEN_PANES_PER_AUTOMATION = 3
+export const MAX_COPIES_PER_AUTOMATION = 3
 
 export function resolveMaxConcurrent(v) {
   return Number.isSafeInteger(v) && v >= 1 ? Math.min(MAX_CONCURRENT_LIMIT, v) : MAX_CONCURRENT_DEFAULT
@@ -235,11 +239,6 @@ function cronDateMatches(rule, ts) {
   if (rule.dayOfMonthRestricted && rule.dayOfWeekRestricted) return dom || dow
   return dom && dow
 }
-function cronMatches(rule, ts) {
-  if (!cronDateMatches(rule, ts)) return false
-  const d = new Date(ts)
-  return rule.hours.has(d.getHours()) && rule.minutes.has(d.getMinutes())
-}
 function cronHasPossibleOccurrence(rule, anchor) {
   let day = startOfLocalDay(anchor)
   for (let i = 0; i < CRON_SCAN_DAYS; i++) {
@@ -249,17 +248,21 @@ function cronHasPossibleOccurrence(rule, anchor) {
   return false
 }
 
-// Days are walked by calendar date (DST-safe), then the time is set.
+// Days are walked by calendar date (DST-safe), then the times are set. A
+// time that does not exist that day (the hour skipped when clocks go
+// forward, e.g. 02:30) runs at the same wall-clock time an hour later
+// (03:30), as the RRULE presets do; a repeated hour (clocks back) runs once.
+function cronDayTimes(rule, day) {
+  const out = new Set()
+  for (const h of rule.hours) for (const m of rule.minutes) out.add(atLocalTime(day, h, m))
+  return [...out].sort((a, b) => a - b)
+}
 function nextCronMatch(rule, from) {
   let day = startOfLocalDay(from)
   for (let i = 0; i < CRON_SCAN_DAYS; i++) {
     if (cronDateMatches(rule, day)) {
-      for (const h of [...rule.hours].sort((a, b) => a - b)) {
-        for (const m of [...rule.minutes].sort((a, b) => a - b)) {
-          const c = atLocalTime(day, h, m)
-          if (c >= from && cronMatches(rule, c)) return c
-        }
-      }
+      const c = cronDayTimes(rule, day).find((x) => x >= from)
+      if (c !== undefined) return c
     }
     const d = new Date(day)
     d.setDate(d.getDate() + 1)
@@ -271,18 +274,36 @@ function prevCronMatch(rule, at, floor) {
   let day = startOfLocalDay(at)
   for (let i = 0; i < CRON_SCAN_DAYS && day + DAY_MS > floor; i++) {
     if (cronDateMatches(rule, day)) {
-      for (const h of [...rule.hours].sort((a, b) => b - a)) {
-        for (const m of [...rule.minutes].sort((a, b) => b - a)) {
-          const c = atLocalTime(day, h, m)
-          if (c <= at && c >= floor && cronMatches(rule, c)) return c
-        }
-      }
+      const times = cronDayTimes(rule, day).filter((x) => x <= at && x >= floor)
+      if (times.length) return times[times.length - 1]
     }
     const d = new Date(day)
     d.setDate(d.getDate() - 1)
     day = d.getTime()
   }
   return null
+}
+
+// The shortest time between two runs (minutes) over the next 8 days, to
+// refuse a schedule that would open a pane (and a copy) every few minutes.
+export const MIN_INTERVAL_MINUTES = 15
+export function minIntervalMinutes(schedule, from = Date.now()) {
+  let prev = null
+  let min = Infinity
+  let at = from
+  const end = from + 8 * DAY_MS
+  for (let i = 0; i < 800 && at < end; i++) {
+    let next
+    try {
+      next = nextOccurrenceAfter(schedule, from, at)
+    } catch {
+      break
+    }
+    if (prev !== null) min = Math.min(min, (next - prev) / MINUTE_MS)
+    prev = next
+    at = next
+  }
+  return min
 }
 
 function dayMatches(rule, ts) {
@@ -482,9 +503,9 @@ export function normalizeAutomationInput(input) {
   if (!remote && !projectCwd) return { error: 'project-required' }
   const isolation = ISOLATIONS.includes(input.isolation) ? input.isolation : 'worktree'
   if (remote && isolation === 'worktree') return { error: 'remote-worktree' }
-  if (remote && prompt.length > MAX_REMOTE_PROMPT) return { error: 'remote-prompt-too-long' }
   const schedule = typeof input.schedule === 'string' ? input.schedule.trim() : ''
   if (!isValidSchedule(schedule)) return { error: 'schedule-invalid' }
+  if (minIntervalMinutes(schedule) < MIN_INTERVAL_MINUTES) return { error: 'schedule-too-frequent' }
   const grace = Number(input.missedRunGraceMinutes)
   const missedRunGraceMinutes = GRACE_MINUTES.includes(grace) ? grace : DEFAULT_GRACE_MINUTES
   const after = input.after && typeof input.after === 'object' ? input.after : {}
@@ -508,13 +529,24 @@ export function normalizeAutomationInput(input) {
 }
 
 // --- The agent's command line -------------------------------------------------------
-// The first prompt of a run on this computer: fixed words and the path of
-// the file that holds the automation's prompt (written by the main process
-// for each run). The path goes between double quotes, so only characters that
-// no shell (PowerShell, cmd, Git Bash, WSL) and no .cmd launcher reads as
-// special are taken: anything else is refused, never quoted by guesswork.
-const WIN_PATH = /^[A-Za-z]:\\[A-Za-z0-9 ._\\-]{1,400}$/
-const WSL_PATH = /^\/mnt\/[a-z]\/[A-Za-z0-9 ._/-]{1,400}$/
+// The first prompt of a run: fixed words and the path of the file that
+// holds the automation's prompt (written by the main process for each run),
+// never the prompt itself. The path goes between double quotes, so only
+// characters that no shell (PowerShell, cmd, Git Bash, WSL, and on a remote
+// host sh, bash, zsh, fish, tcsh) and no .cmd launcher reads as special
+// inside double quotes are taken: letters and digits of any language, space,
+// . _ - ' ( ) and the folder separators. Anything else ($ ` " % ! & ; ...)
+// is refused, never quoted by guesswork.
+const WIN_PATH = /^[A-Za-z]:\\[\p{L}\p{N} ._'()\\-]{1,400}$/u
+const WSL_PATH = /^\/mnt\/[a-z]\/[\p{L}\p{N} ._'()/-]{1,400}$/u
+// A remote project's prompt file, relative to its folder (the terminal
+// starts there): always this shape, Tessel's own ids only.
+export const REMOTE_PROMPT_DIR = '.tessel/automations'
+const REMOTE_FILE = /^\.tessel\/automations\/auto-[A-Za-z0-9-]{1,80}\.md$/
+
+export function remotePromptFile(automationId) {
+  return `${REMOTE_PROMPT_DIR}/${automationId}.md`
+}
 
 export function wslPath(winPath) {
   const m = /^([A-Za-z]):\\(.*)$/.exec(String(winPath || ''))
@@ -526,24 +558,18 @@ export function automationStartPrompt(file) {
   return `Tessel automation run. Read the file ${file} and carry out the task it describes.` // i18n-ignore
 }
 
-// POSIX shell single quotes: everything literal (remote shells).
-export function posixQuote(s) {
-  return `'${String(s).replace(/'/g, `'\\''`)}'`
-}
-
 // The arguments a run adds after the agent's command: ' arg arg', or '' when
 // it cannot be given safely.
-//   agentId; { promptFile, promptDir } (this computer) or { inlinePrompt }
-//   (a remote project: its remote POSIX shell reads the line);
+//   agentId; { promptFile, promptDir } (this computer) or { remoteFile }
+//   (a remote project: the file in its folder, see remotePromptFile);
 //   shellId: the pane's shell ('wsl' reads /mnt/<drive>/ paths).
-export function automationLaunchArgs(agentId, { promptFile = null, promptDir = null, inlinePrompt = null, shellId = null } = {}) {
+export function automationLaunchArgs(agentId, { promptFile = null, promptDir = null, remoteFile = null, shellId = null } = {}) {
   if (!AUTOMATION_AGENTS.includes(agentId)) return ''
-  if (inlinePrompt != null) {
-    // One line: the remote terminal reads it as typed input.
-    const text = String(inlinePrompt).replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim()
-    if (!text || text.length > MAX_REMOTE_PROMPT) return ''
-    const q = posixQuote(text)
-    return agentId === 'gemini' || agentId === 'qwen' ? ` -i ${q}` : ` ${q}`
+  if (remoteFile != null) {
+    if (!REMOTE_FILE.test(String(remoteFile))) return ''
+    const prompt = `"${automationStartPrompt(remoteFile)}"`
+    // In the project folder: every agent reads it without more flags.
+    return agentId === 'gemini' || agentId === 'qwen' ? ` -i ${prompt}` : ` ${prompt}`
   }
   let file = promptFile
   let dir = promptDir
@@ -559,4 +585,27 @@ export function automationLaunchArgs(agentId, { promptFile = null, promptDir = n
   if (agentId === 'claude') return ` ${prompt} --add-dir "${dir}"`
   if (agentId === 'gemini' || agentId === 'qwen') return ` --include-directories "${dir}" -i ${prompt}`
   return ` ${prompt}`
+}
+
+// Launch flags typed into a remote login shell (bash, zsh, fish, tcsh...):
+// a token with glob characters (a model like opus[1m]) goes between double
+// quotes, where none of the characters flags can hold is special; zsh would
+// otherwise stop with "no matches found".
+export function quoteGlobArgs(text) {
+  return String(text || '').replace(/(^|\s)([^\s"']*[[\]*?{}][^\s"']*)/g, (m, sp, tok) => (/^[A-Za-z0-9._:/@[\]=+*?{}-]+$/.test(tok) ? `${sp}"${tok}"` : m))
+}
+
+// What you confirmed an automation may run with: a short fingerprint of its
+// agent's launch settings (command, arguments with the Yolo flag, variable
+// names and values) from launchSignature (agentPrefs.js). Only the
+// fingerprint is stored, never the values. A run whose fingerprint differs
+// waits for a new confirmation.
+export function permissionFingerprint(signature) {
+  let h = 0x811c9dc5
+  const s = String(signature || '')
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i)
+    h = Math.imul(h, 0x01000193) >>> 0
+  }
+  return `p1:${h.toString(16).padStart(8, '0')}:${s.length}`
 }

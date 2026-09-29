@@ -80,7 +80,21 @@ function permissionText(agentId) {
   return t('automations.perms.manual', 'Manual: it asks before acting. An unattended run stops at each approval until you answer it in its pane (you are notified).')
 }
 
-// The first time an automation may run on its own: said plainly, confirmed.
+// What a confirmation covers: a change of these asks again (the main
+// process clears it too), as does a change of the agent's permissions
+// (Yolo, its arguments) since.
+const SENSITIVE = ['agentId', 'wsId', 'projectCwd', 'remote', 'isolation', 'prompt']
+const same = (x, y) => JSON.stringify(x ?? null) === JSON.stringify(y ?? null)
+function permSig(agentId) {
+  const p = ctx.permissions(agentId)
+  return (p && p.sig) || ''
+}
+function needsConfirm(a) {
+  return !a.confirmedAt || !a.confirmedSig || a.confirmedSig !== permSig(a.agentId)
+}
+
+// Each time an automation may run on its own with something new: said
+// plainly, confirmed.
 async function confirmUnattended(a) {
   if (!askConfirm) return false
   return await askConfirm({
@@ -111,14 +125,16 @@ async function save(input) {
   try {
     const current = editingAutomation.value
     let confirmed = false
-    if (input.enabled && !(current && current.confirmedAt)) {
+    const changed = !current || SENSITIVE.some((k) => !same(input[k], current[k]))
+    if (input.enabled && (changed || needsConfirm(current))) {
       confirmed = await confirmUnattended({ ...input, projectName: input.projectName })
       if (!confirmed) {
         editorError.value = t('automations.page.notConfirmed', 'Not saved: it needs your confirmation to run on its own. Turn off "Run on its schedule" to save it paused.')
         return
       }
     }
-    const res = current ? await updateAutomation(current.id, { ...input, confirmed }) : await createAutomation({ ...input, confirmed })
+    const confirmSig = confirmed ? permSig(input.agentId) : null
+    const res = current ? await updateAutomation(current.id, { ...input, confirmed, confirmSig }) : await createAutomation({ ...input, confirmed, confirmSig })
     if (!res.ok) {
       editorError.value = res.error || t('automations.page.saveFailed', 'Failed to save automation.')
       return
@@ -133,11 +149,11 @@ async function save(input) {
 
 async function toggle(a) {
   let confirmed = false
-  if (!a.enabled && !a.confirmedAt) {
+  if (!a.enabled && needsConfirm(a)) {
     confirmed = await confirmUnattended(a)
     if (!confirmed) return
   }
-  const res = await setAutomationEnabled(a.id, !a.enabled, confirmed)
+  const res = await setAutomationEnabled(a.id, !a.enabled, confirmed, confirmed ? permSig(a.agentId) : null)
   notice.value = res.ok ? '' : res.error
 }
 
@@ -149,11 +165,11 @@ function onToggle(e, a) {
 
 async function runNow(a) {
   let confirmed = false
-  if (!a.confirmedAt) {
+  if (needsConfirm(a)) {
     confirmed = await confirmUnattended(a)
     if (!confirmed) return
   }
-  const res = await runAutomationNow(a.id, confirmed)
+  const res = await runAutomationNow(a.id, confirmed, confirmed ? permSig(a.agentId) : null)
   notice.value = res.ok ? t('automations.page.queued', 'Automation run queued.') : res.error
   if (res.ok) selectedId.value = a.id
 }
@@ -267,6 +283,9 @@ function select(a) {
                 <span class="au-meta">
                   <template v-if="a.enabled">{{ nextText(a) }}</template>
                   <template v-else>{{ t('automations.page.paused', 'Paused') }}</template>
+                  <template v-if="needsConfirm(a)">
+                    · <span class="au-badge failed" data-test="au-needs-confirm">{{ t('automations.page.needsConfirm', 'Needs your confirmation') }}</span>
+                  </template>
                   <template v-if="lastRun(a)">
                     · {{ t('automations.page.last', 'Last run') }}:
                     <span class="au-badge" :class="statusTone(lastRun(a).status)">{{ statusLabel(lastRun(a).status) }}</span>

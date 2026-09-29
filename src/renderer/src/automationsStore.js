@@ -60,9 +60,9 @@ async function call(name, ...args) {
 
 export const createAutomation = (input) => call('create', input)
 export const updateAutomation = (id, input) => call('update', id, input)
-export const setAutomationEnabled = (id, enabled, confirmed = false) => call('setEnabled', id, enabled, confirmed)
+export const setAutomationEnabled = (id, enabled, confirmed = false, sig = null) => call('setEnabled', id, enabled, confirmed, sig)
 export const removeAutomation = (id) => call('remove', id)
-export const runAutomationNow = (id, confirmed = false) => call('runNow', id, confirmed)
+export const runAutomationNow = (id, confirmed = false, sig = null) => call('runNow', id, confirmed, sig)
 export const setAutomationSettings = (patch) => call('setSettings', patch)
 
 export function runsOf(automationId) {

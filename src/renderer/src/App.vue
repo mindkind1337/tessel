@@ -60,7 +60,7 @@ import ReviewPanel from './components/ReviewPanel.vue'
 import { parseLeadRequest, findTaskRef, leadGuide, memberGuide } from '../../shared/leadRequests'
 import { workerLaunchArgs, wakeLaunchArgs } from '../../shared/orchestration'
 import { createOrchestrator } from './orchestrator'
-import { automationLaunchArgs, AUTOMATION_AGENTS } from '../../shared/automations'
+import { automationLaunchArgs, AUTOMATION_AGENTS, permissionFingerprint, quoteGlobArgs } from '../../shared/automations'
 import { createAutomationRunner } from './automationRunner'
 import { automationsState, applySnapshot as applyAutomations, subscribeAutomations } from './automationsStore'
 import { trackAgent } from '../../shared/tracking'
@@ -925,7 +925,8 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
     // fresh start, through the one helper (src/shared/orchestration.js).
     const ownArgs = typeof (settings.agentPrefs[agent.id] || {}).args === 'string' ? settings.agentPrefs[agent.id].args : ''
     const workerOpts = opts.launchOptions && start.resumed ? { model: opts.launchOptions.model, effort: opts.launchOptions.effort } : opts.launchOptions
-    const extra = workerOpts ? workerLaunchArgs(agent.id, workerOpts, { ownArgs, models: agentModels }) : ''
+    const workerArgs = workerOpts ? workerLaunchArgs(agent.id, workerOpts, { ownArgs, models: agentModels }) : ''
+    const extra = opts.remoteHostId ? quoteGlobArgs(workerArgs) : workerArgs
     if (opts.launchOptions) leaf.launchOptions = { model: opts.launchOptions.model || null, effort: opts.launchOptions.effort || null }
     // Relaunched by Tessel itself (opts.wake: resumed in place, restarted for
     // the team tools or an update, a dead pane resumed at start) while team
@@ -6566,7 +6567,20 @@ const automationRunner = createAutomationRunner({
   findWorkspace: automationWorkspace,
   agentFor: automationAgent,
   shellFor: () => selectedShell.value,
+  permissionSig: automationPermissionSig,
+  // Panes left open by its previous runs, and copies not merged or
+  // discarded yet (their cards not Done).
+  openPanesOf: (id) => boardTasks.filter((x) => x.automation && x.automation.id === id && x.paneId && findLeaf(x.paneId)).length,
+  copiesOf: (id) => boardTasks.filter((x) => x.automation && x.automation.id === id && x.worktree && !x.mergedAt && x.column !== 'done').length,
   createWorktree: makeTaskCopy,
+  // A copy made for a run that did not start: nothing in it yet.
+  async removeCopy(wt) {
+    const res = await window.shellApi.review
+      .remove({ root: wt.root, path: wt.path, branch: wt.branch, target: wt.baseBranch || 'main', force: true })
+      .catch((err) => ({ ok: false, error: err && err.message }))
+    if ((!res || res.ok === false) && window.shellApi.log) window.shellApi.log('warn', `automation copy not removed: ${wt.path}: ${(res && res.error) || '?'}`)
+  },
+  runStatus: (runId) => (window.shellApi.automations && window.shellApi.automations.status ? window.shellApi.automations.status(runId) : Promise.resolve('dispatching')),
   // The run's pane: a new pane of the project, the one you are in stays active.
   openPane: openBackgroundAgentPane,
   createCard({ title, brief, wsId, paneId, worktree, automation }) {
@@ -6583,7 +6597,14 @@ const automationRunner = createAutomationRunner({
     scheduleTaskSave()
   },
   cardOf: (id) => boardTasks.find((x) => x.id === id) || null,
+  removeCard(id) {
+    if (boardTasks.some((x) => x.id === id)) removeTask(id)
+    scheduleTaskSave()
+  },
   findLeaf,
+  // Any sign of its agent: hooks, work, an approval or a limit.
+  agentStarted: (id) => agentStatus[id] === 'busy' || !!getAgentState(id)?.hookSeen || !!approvals[id] || !!limits[id],
+  agentExited: (id) => getAgentState(id)?.state === 'closed',
   // After the pane has shown its last answer (and outside its own callback).
   closePane: (id) => setTimeout(() => findLeaf(id) && closeLeaf(id, { force: true }), 1500),
   report: (result) => (window.shellApi.automations ? window.shellApi.automations.markResult(result).catch(() => null) : Promise.resolve(null)),
@@ -6605,13 +6626,20 @@ watch(
     for (const id of ids) automationRunner.approval(id, true)
   }
 )
+// The fingerprint of what an agent runs with now (compared with the one you
+// confirmed for an automation).
+function automationPermissionSig(agentId) {
+  const agent = agentById(agentId)
+  if (!agent) return ''
+  return permissionFingerprint(launchSignature(effectiveAgent(agent, settings.agentPrefs, settings.agentPermissions)))
+}
 // What Settings > Automations shows and does (AutomationsPage.vue).
 function automationPermissions(agentId) {
   const agent = agentById(agentId)
   if (!agent) return null
   const launch = effectiveAgent(agent, settings.agentPrefs, settings.agentPermissions)
   const own = typeof (settings.agentPrefs[agentId] || {}).args === 'string' ? settings.agentPrefs[agentId].args.trim() : ''
-  return { yolo: launchIsYolo(agentId, launch), args: launch.args || '', ownArgs: !!own, mode: settings.agentPermissions }
+  return { yolo: launchIsYolo(agentId, launch), args: launch.args || '', ownArgs: !!own, mode: settings.agentPermissions, sig: automationPermissionSig(agentId) }
 }
 provide('automations', {
   projects: computed(() =>
@@ -6644,6 +6672,8 @@ provide('automations', {
   },
   openAgentSettings: () => openSettingsAt('agents')
 })
+let automationCheckTimer = 0
+onBeforeUnmount(() => clearInterval(automationCheckTimer))
 async function startAutomations() {
   const api = window.shellApi.automations
   if (!api) return
@@ -6661,8 +6691,10 @@ async function startAutomations() {
   } catch (err) {
     if (window.shellApi.log) window.shellApi.log('error', `automations: ${err && err.message}`)
   }
-  // A run's pane closed before its agent finished: that run failed.
+  // A run's pane closed before its agent finished, its agent exited or never
+  // showed up: that run failed.
   watch(workspaces, () => automationRunner.check(), { deep: true })
+  automationCheckTimer = setInterval(() => automationRunner.check(), 30000)
 }
 
 // A sidebar row's worker mark: { id, label, status } of its coordinator.

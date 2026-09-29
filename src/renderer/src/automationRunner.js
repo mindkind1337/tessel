@@ -7,39 +7,86 @@
 // Orca's renderer dispatch (src/renderer/src/hooks/automation-dispatch-
 // handler.ts, MIT, Copyright (c) 2026 Lovecast Inc.): dispatched when the
 // agent is launched, completed when its turn ends, failed when it cannot
-// start or its pane goes away first.
+// start, its agent never shows up or exits, or its pane goes away first.
+//
+// Safety held here:
+// - The run is acknowledged at once; right before its pane opens the window
+//   asks whether it is still wanted (it may have timed out meanwhile), and a
+//   pane opened for a run that already ended is closed again: never two runs
+//   of one automation, never more than the cap.
+// - It runs only with the permissions you confirmed (Yolo, arguments): if
+//   they changed since, the run is skipped until you confirm again.
+// - At most a few panes and copies left open by previous runs of one
+//   automation; a copy made for a run that could not start is removed.
 //
 // deps (App.vue): findWorkspace(automation), agentFor(agentId),
-// shellFor(ws), createWorktree(ws, title), openPane({ ws, agent, worktree,
-// launchOptions, automationLaunch }), createCard(card), updateCard(id,
-// patch), findLeaf(id), closePane(id), report(result), notify(note),
-// automationById(id), cardOf(id).
+// shellFor(ws), permissionSig(agentId), openPanesOf(automationId),
+// copiesOf(automationId), createWorktree(ws, title), removeCopy(worktree),
+// runStatus(runId), openPane({ ws, agent, worktree, launchOptions,
+// automationLaunch }), createCard(card), updateCard(id, patch),
+// removeCard(id), cardOf(id), findLeaf(id), closePane(id), agentStarted(id),
+// agentExited(id), report(result), notify(note), automationById(id), now().
 import { t } from './i18n'
-import { automationLaunchArgs } from '../../shared/automations'
+import {
+  automationLaunchArgs,
+  AGENT_START_TIMEOUT_MS,
+  MAX_OPEN_PANES_PER_AUTOMATION,
+  MAX_COPIES_PER_AUTOMATION
+} from '../../shared/automations'
 
 export function createAutomationRunner(deps) {
-  // paneId -> { runId, automationId, name, taskId, worktree, after, askedApproval }
+  const now = deps.now || Date.now
+  // paneId -> { runId, automationId, name, taskId, worktree, after, askedApproval, dispatchedAt, started }
   const following = new Map()
+  // Automations already told about changed permissions (once per session).
+  const toldPermissions = new Set()
 
+  const report = (result) => Promise.resolve(deps.report(result)).catch(() => null)
   function fail(run, status, errorCode, error = null) {
-    return deps.report({ runId: run.id, status, errorCode, error })
+    return report({ runId: run.id, status, errorCode, error })
+  }
+  async function dropCopy(worktree) {
+    if (!worktree) return
+    try {
+      await deps.removeCopy(worktree)
+    } catch {
+      // kept; the board has no card for it: said in the log by App
+    }
   }
 
   function runTitle(automation, run) {
     return t('automations.run.title', '{{name}} · run {{number}}', { name: automation.name, number: run.runNumber || 1 })
   }
 
-  async function dispatch({ automation, run, promptFile = null, promptDir = null } = {}) {
+  async function dispatch({ automation, run, promptFile = null, promptDir = null, remoteFile = null } = {}) {
     if (!automation || !run) return
+    // Taken: the scheduler no longer times it out for want of an answer.
+    await report({ runId: run.id, status: 'ack' })
     const ws = deps.findWorkspace(automation)
     if (!ws) return fail(run, 'skipped_unavailable', 'project-gone')
     const agent = deps.agentFor(automation.agentId)
     if (!agent) return fail(run, 'dispatch_failed', 'agent-unavailable')
-    const automationLaunch = automation.remote ? { inlinePrompt: automation.prompt } : { promptFile, promptDir }
+    // Only with the permissions you confirmed.
+    if (!automation.confirmedSig || automation.confirmedSig !== deps.permissionSig(automation.agentId)) {
+      if (!toldPermissions.has(automation.id)) {
+        toldPermissions.add(automation.id)
+        deps.notify({
+          kind: 'attention',
+          title: t('automations.notify.permsTitle', 'Automation "{{name}}" needs your confirmation again', { name: automation.name }),
+          body: t('automations.notify.permsBody', "Its agent's permissions changed since you confirmed it (Settings > Agents). It is skipped until you confirm it in Settings > Automations."),
+          paneId: null
+        })
+      }
+      return fail(run, 'skipped_unavailable', 'permissions-changed')
+    }
+    if (deps.openPanesOf(automation.id) >= MAX_OPEN_PANES_PER_AUTOMATION) return fail(run, 'skipped_unavailable', 'too-many-panes')
+    const isolated = automation.isolation === 'worktree' && !automation.remote
+    if (isolated && deps.copiesOf(automation.id) >= MAX_COPIES_PER_AUTOMATION) return fail(run, 'skipped_unavailable', 'too-many-copies')
+    const automationLaunch = automation.remote ? { remoteFile } : { promptFile, promptDir }
     if (!automationLaunchArgs(automation.agentId, { ...automationLaunch, shellId: deps.shellFor(ws) })) return fail(run, 'dispatch_failed', 'unsafe-path')
     const title = runTitle(automation, run)
     let worktree = null
-    if (automation.isolation === 'worktree' && !automation.remote) {
+    if (isolated) {
       let res
       try {
         res = await deps.createWorktree(ws, automation.name)
@@ -48,6 +95,17 @@ export function createAutomationRunner(deps) {
       }
       if (!res || res.error || !res.worktree) return fail(run, 'dispatch_failed', 'copy-failed', (res && res.error) || '')
       worktree = res.worktree
+    }
+    // Still wanted? (A long copy or setup script may have outlived it.)
+    let status = null
+    try {
+      status = await deps.runStatus(run.id)
+    } catch {
+      status = null
+    }
+    if (status !== 'dispatching') {
+      await dropCopy(worktree)
+      return
     }
     let leaf = null
     try {
@@ -61,7 +119,10 @@ export function createAutomationRunner(deps) {
     } catch {
       leaf = null
     }
-    if (!leaf) return fail(run, 'dispatch_failed', 'pane-failed', worktree ? worktree.path : null)
+    if (!leaf) {
+      await dropCopy(worktree)
+      return fail(run, 'dispatch_failed', 'pane-failed')
+    }
     const taskId = deps.createCard({
       title,
       brief: automation.prompt,
@@ -77,9 +138,18 @@ export function createAutomationRunner(deps) {
       taskId,
       worktree,
       after: automation.after || { notify: true, closePane: false },
-      askedApproval: false
+      askedApproval: false,
+      dispatchedAt: now(),
+      started: false
     })
-    await deps.report({ runId: run.id, status: 'dispatched', paneId: leaf.id, wsId: ws.id, taskId, branch: worktree ? worktree.branch : null })
+    const res = await report({ runId: run.id, status: 'dispatched', paneId: leaf.id, wsId: ws.id, taskId, branch: worktree ? worktree.branch : null })
+    // The run ended meanwhile (timed out): this pane must not run it.
+    if (res && res.run && res.run.status !== 'dispatched') {
+      following.delete(leaf.id)
+      deps.closePane(leaf.id)
+      if (taskId) deps.removeCard(taskId)
+      await dropCopy(worktree)
+    }
   }
 
   // The agent in a run's pane ended its turn: the run is done.
@@ -87,7 +157,7 @@ export function createAutomationRunner(deps) {
     const f = following.get(paneId)
     if (!f) return false
     following.delete(paneId)
-    deps.report({ runId: f.runId, status: 'completed' })
+    report({ runId: f.runId, status: 'completed' })
     // Its own copy: the work waits in Review, as for any task.
     if (f.taskId) deps.updateCard(f.taskId, { column: f.worktree ? 'review' : 'done' })
     if (f.after.notify !== false)
@@ -116,13 +186,27 @@ export function createAutomationRunner(deps) {
     })
   }
 
-  // Panes closed before their agent finished: those runs failed.
+  function end(paneId, f, errorCode) {
+    following.delete(paneId)
+    report({ runId: f.runId, status: 'dispatch_failed', errorCode })
+    if (f.taskId && deps.cardOf(f.taskId)?.column === 'doing') deps.updateCard(f.taskId, { column: 'todo' })
+  }
+
+  // Runs whose pane closed, whose agent exited, or whose agent never showed
+  // up: those runs failed (their pane, if any, stays for you to look at).
   function check() {
+    const at = now()
     for (const [paneId, f] of [...following]) {
-      if (deps.findLeaf(paneId)) continue
-      following.delete(paneId)
-      deps.report({ runId: f.runId, status: 'dispatch_failed', errorCode: 'pane-closed' })
-      if (f.taskId && deps.cardOf(f.taskId)?.column === 'doing') deps.updateCard(f.taskId, { column: 'todo' })
+      if (!deps.findLeaf(paneId)) {
+        end(paneId, f, 'pane-closed')
+        continue
+      }
+      if (deps.agentExited(paneId)) {
+        end(paneId, f, 'agent-exited')
+        continue
+      }
+      if (!f.started && deps.agentStarted(paneId)) f.started = true
+      if (!f.started && at - f.dispatchedAt > AGENT_START_TIMEOUT_MS) end(paneId, f, 'agent-no-start')
     }
   }
 
@@ -139,7 +223,9 @@ export function createAutomationRunner(deps) {
         taskId: r.taskId || null,
         worktree: card && card.worktree ? card.worktree : null,
         after: (a && a.after) || { notify: true, closePane: false },
-        askedApproval: false
+        askedApproval: false,
+        dispatchedAt: typeof r.dispatchedAt === 'number' ? r.dispatchedAt : now(),
+        started: !!deps.agentStarted(r.paneId)
       })
     }
   }

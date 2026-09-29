@@ -9,7 +9,7 @@ const flush = async () => {
   await new Promise((r) => setTimeout(r, 0))
 }
 
-function mountPage({ yolo = false, confirm = true, snapshot = null } = {}) {
+function mountPage({ yolo = false, confirm = true, snapshot = null, sig = 'p1:sig:1' } = {}) {
   const api = {
     list: vi.fn(async () => snapshot || { loaded: true, automations: [], runs: [], settings: { maxConcurrent: 2 } }),
     create: vi.fn(async (input) => ({ ok: true, automation: { id: 'auto-1', ...input } })),
@@ -28,7 +28,7 @@ function mountPage({ yolo = false, confirm = true, snapshot = null } = {}) {
       { wsId: 'ws-2', name: 'Server', cwd: null, remote: { hostId: 'h1', path: '/srv' }, hostLabel: 'box' }
     ]),
     agents: computed(() => [{ id: 'claude', name: 'Claude Code', available: true }]),
-    permissions: () => (yolo ? { yolo: true, args: '--dangerously-skip-permissions', ownArgs: false } : { yolo: false, args: '', ownArgs: false }),
+    permissions: () => (yolo ? { yolo: true, args: '--dangerously-skip-permissions', ownArgs: false, sig } : { yolo: false, args: '', ownArgs: false, sig }),
     paneOpen: (id) => id === 'pane-1',
     cardOpen: () => false,
     showPane: vi.fn(),
@@ -79,6 +79,7 @@ describe('Settings > Automations', () => {
         schedule: 'FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR;BYHOUR=9;BYMINUTE=0',
         missedRunGraceMinutes: 720,
         confirmed: true,
+        confirmSig: 'p1:sig:1',
         enabled: true
       })
     )
@@ -140,6 +141,38 @@ describe('Settings > Automations', () => {
     await wrapper.get('[data-test="au-toggle"]').trigger('change')
     await flush()
     expect(m.askConfirm).toHaveBeenCalled()
-    expect(m.api.setEnabled).toHaveBeenCalledWith('auto-1', true, true)
+    expect(m.api.setEnabled).toHaveBeenCalledWith('auto-1', true, true, 'p1:sig:1')
+  })
+
+  // Review 6: the agent's permissions changed since it was confirmed.
+  it('says an automation needs a new confirmation, and asks before Run Now', async () => {
+    const now = Date.now()
+    const base = { id: 'auto-2', name: 'Weekly', prompt: 'p', agentId: 'claude', wsId: 'ws-1', projectName: 'App', projectCwd: 'C:\\code\\app', isolation: 'project', schedule: '0 9 * * 1', enabled: true, confirmedAt: now - 1000, confirmedSig: 'p1:old:1', nextRunAt: now + 3600_000, missedRunGraceMinutes: 720, after: { notify: true } }
+    const m = mountPage({ snapshot: { loaded: true, settings: { maxConcurrent: 2 }, automations: [base], runs: [] }, sig: 'p1:new:2' })
+    wrapper = m.wrapper
+    await flush()
+    expect(wrapper.find('[data-test="au-needs-confirm"]').exists()).toBe(true)
+    await wrapper.get('[data-test="au-run-now"]').trigger('click')
+    await flush()
+    expect(m.askConfirm).toHaveBeenCalledTimes(1)
+    expect(m.api.runNow).toHaveBeenCalledWith('auto-2', true, 'p1:new:2')
+  })
+
+  it('editing its prompt asks for a new confirmation; renaming does not', async () => {
+    const now = Date.now()
+    const base = { id: 'auto-3', name: 'Daily', prompt: 'p', agentId: 'claude', wsId: 'ws-1', projectName: 'App', projectCwd: 'C:\\code\\app', remote: null, isolation: 'project', schedule: 'FREQ=DAILY;BYHOUR=9;BYMINUTE=0', enabled: true, confirmedAt: now - 1000, confirmedSig: 'p1:sig:1', nextRunAt: now + 3600_000, missedRunGraceMinutes: 720, after: { notify: true, closePane: false } }
+    const m = mountPage({ snapshot: { loaded: true, settings: { maxConcurrent: 2 }, automations: [base], runs: [] } })
+    wrapper = m.wrapper
+    await flush()
+    await wrapper.get('[data-test="au-edit"]').trigger('click')
+    await wrapper.get('[data-test="au-name"]').setValue('Daily 2')
+    await wrapper.get('[data-test="automation-editor"]').trigger('submit')
+    await flush()
+    expect(m.askConfirm).not.toHaveBeenCalled()
+    await wrapper.get('[data-test="au-edit"]').trigger('click')
+    await wrapper.get('[data-test="au-prompt"]').setValue('Do something else')
+    await wrapper.get('[data-test="automation-editor"]').trigger('submit')
+    await flush()
+    expect(m.askConfirm).toHaveBeenCalledTimes(1)
   })
 })

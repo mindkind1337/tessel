@@ -25,12 +25,18 @@ function input(over = {}) {
 
 describe('automations scheduler (main)', () => {
   let dir, clock, sent, svc
+  let remoteWrites = []
+  let remoteAnswer = { ok: true }
   const make = () =>
     createAutomations({
       dir,
       now: () => clock,
       send: (channel, payload) => sent.push({ channel, payload }),
-      timers: { setInterval: () => null, clearInterval: () => {} }
+      timers: { setInterval: () => null, clearInterval: () => {} },
+      writeRemotePrompt: async (q) => {
+        remoteWrites.push(q)
+        return remoteAnswer
+      }
     })
   const dispatches = () => sent.filter((s) => s.channel === 'automations:dispatch').map((s) => s.payload)
 
@@ -38,6 +44,8 @@ describe('automations scheduler (main)', () => {
     dir = fs.mkdtempSync(join(os.tmpdir(), 'automations-test-'))
     clock = at(8, 0)
     sent = []
+    remoteWrites = []
+    remoteAnswer = { ok: true }
     svc = make()
     svc.start()
   })
@@ -94,14 +102,14 @@ describe('automations scheduler (main)', () => {
 
   it('never two runs of the same automation: an occurrence while one runs is skipped (folded)', () => {
     svc.setWindowReady(true)
-    const { automation } = svc.create(input({ schedule: '*/10 * * * *' }))
-    clock = at(8, 10) + 1000
+    const { automation } = svc.create(input({ schedule: '*/15 * * * *' }))
+    clock = at(8, 15) + 1000
     svc.tick()
     const first = dispatches()[0].run
     svc.markResult({ runId: first.id, status: 'dispatched', paneId: 'p1' })
-    clock = at(8, 20) + 1000
-    svc.tick()
     clock = at(8, 30) + 1000
+    svc.tick()
+    clock = at(8, 45) + 1000
     svc.tick()
     expect(dispatches()).toHaveLength(1)
     const runs = svc.snapshot().runs.filter((r) => r.automationId === automation.id)
@@ -151,7 +159,7 @@ describe('automations scheduler (main)', () => {
     svc.stop()
     const again = make()
     again.start()
-    expect(again.reconcile(['pane-a'])).toEqual([{ id: ra.id, automationId: a.id, paneId: 'pane-a', taskId: null }])
+    expect(again.reconcile(['pane-a'])).toEqual([{ id: ra.id, automationId: a.id, paneId: 'pane-a', taskId: null, dispatchedAt: clock }])
     const runs = again.snapshot().runs
     expect(runs.find((r) => r.id === rb.id)).toMatchObject({ status: 'dispatch_failed', errorCode: 'pane-gone' })
     expect(JSON.parse(fs.readFileSync(join(dir, AUTOMATIONS_FILE), 'utf8')).automations).toHaveLength(2)
@@ -169,9 +177,10 @@ describe('automations scheduler (main)', () => {
   it('deleting an automation removes its history and prompt files', () => {
     svc.setWindowReady(true)
     const a = svc.create(input()).automation
-    svc.runNow(a.id)
+    const { run } = svc.runNow(a.id)
     const folder = dispatches()[0].promptDir
     expect(fs.existsSync(folder)).toBe(true)
+    svc.markResult({ runId: run.id, status: 'completed' })
     expect(svc.remove(a.id).ok).toBe(true)
     expect(fs.existsSync(folder)).toBe(false)
     expect(svc.snapshot()).toMatchObject({ automations: [], runs: [] })
@@ -190,10 +199,153 @@ describe('automations scheduler (main)', () => {
     expect(svc.snapshot().runs.find((r) => r.automationId === b.id)).toMatchObject({ status: 'skipped_unavailable', errorCode: 'paused' })
   })
 
-  it('a remote project gets no prompt file (its prompt goes on the remote command line)', () => {
+  it('a remote project: its prompt is written in its folder on the host first, then the run is sent', async () => {
     svc.setWindowReady(true)
-    const a = svc.create(input({ projectCwd: null, remote: { hostId: 'host-1', path: '/srv/app' } })).automation
+    const a = svc.create(input({ projectCwd: null, remote: { hostId: 'ssh-host-1', path: '/srv/app' } })).automation
     svc.runNow(a.id)
-    expect(dispatches()[0]).toMatchObject({ promptFile: null, promptDir: null })
+    await new Promise((r) => setTimeout(r, 0))
+    expect(remoteWrites).toEqual([{ hostId: 'ssh-host-1', path: '/srv/app', file: `.tessel/automations/${a.id}.md`, text: 'Check the repo.\nReport risks.\n' }])
+    expect(dispatches()[0]).toMatchObject({ promptFile: null, promptDir: null, remoteFile: `.tessel/automations/${a.id}.md` })
+    // The host refused the file: the run fails, nothing is sent.
+    remoteAnswer = { ok: false, error: 'Permission denied' }
+    svc.markResult({ runId: dispatches()[0].run.id, status: 'completed' })
+    svc.runNow(a.id)
+    await new Promise((r) => setTimeout(r, 0))
+    expect(dispatches()).toHaveLength(1)
+    expect(svc.snapshot().runs.find((r) => r.errorCode === 'remote-prompt')).toMatchObject({ status: 'dispatch_failed', error: 'Permission denied' })
+  })
+
+  // Review 1: a slow start (copy + setup script) must never let a second run
+  // of the same automation, or one over the cap, start meanwhile.
+  it('a run the window took (ack) is not timed out at 3 minutes; the late pane of a failed run is refused', () => {
+    svc.setWindowReady(true)
+    svc.create(input({ schedule: '*/15 * * * *' }))
+    clock = at(8, 15) + 1000
+    svc.tick()
+    const run = dispatches()[0].run
+    svc.markResult({ runId: run.id, status: 'ack' })
+    clock += 4 * MIN
+    svc.tick()
+    expect(svc.status(run.id)).toBe('dispatching')
+    clock = at(8, 30) + 1000
+    svc.tick()
+    expect(dispatches()).toHaveLength(1) // the next occurrence is an overlap
+    // Past an hour even an acknowledged start fails, and its late pane is told so.
+    clock += 61 * MIN
+    svc.tick()
+    expect(svc.status(run.id)).toBe('dispatch_failed')
+    const late = svc.markResult({ runId: run.id, status: 'dispatched', paneId: 'pane-late' })
+    expect(late.run.status).toBe('dispatch_failed')
+  })
+
+  it('an unanswered run fails after 3 minutes; the window then sees it is no longer wanted', () => {
+    svc.setWindowReady(true)
+    const a = svc.create(input()).automation
+    const { run } = svc.runNow(a.id)
+    clock += 4 * MIN
+    svc.tick()
+    expect(svc.status(run.id)).toBe('dispatch_failed')
+    expect(svc.markResult({ runId: run.id, status: 'dispatched', paneId: 'p' }).run.status).toBe('dispatch_failed')
+  })
+
+  // Review 2: a started run never holds its slot forever.
+  it('a started run that never ends fails after 24 hours and frees the automation', () => {
+    svc.setWindowReady(true)
+    const a = svc.create(input()).automation
+    const { run } = svc.runNow(a.id)
+    svc.markResult({ runId: run.id, status: 'dispatched', paneId: 'p' })
+    clock += 25 * 60 * MIN
+    svc.tick()
+    expect(svc.snapshot().runs.find((r) => r.id === run.id)).toMatchObject({ status: 'dispatch_failed', errorCode: 'stale' })
+    // Its next occurrence (9:00, within grace) runs again.
+    expect(dispatches()).toHaveLength(2)
+    expect(dispatches()[1].automation.id).toBe(a.id)
+  })
+
+  // Review 5: a clock that jumped forward and came back.
+  it('the schedule follows the clock back after a jump forward', () => {
+    svc.setWindowReady(true)
+    const a = svc.create(input()).automation
+    const real = clock
+    clock = new Date(2031, 0, 1, 12, 0).getTime()
+    svc.tick()
+    expect(svc.snapshot().automations[0].nextRunAt).toBeGreaterThan(new Date(2031, 0, 1).getTime())
+    clock = real + MIN
+    svc.tick()
+    const back = svc.snapshot().automations.find((x) => x.id === a.id)
+    expect(back.nextRunAt).toBe(at(9, 0))
+    expect(back.dtstart).toBeLessThanOrEqual(clock)
+  })
+
+  // Review 6: what you confirmed is what runs.
+  it('changing the agent, project, place or prompt asks for a new confirmation; the permissions you saw are kept', () => {
+    const a = svc.create(input({ confirmSig: 'p1:aaaa:10' })).automation
+    expect(a.confirmedSig).toBe('p1:aaaa:10')
+    expect(svc.update(a.id, { name: 'Renamed' }).ok).toBe(true)
+    expect(svc.snapshot().automations[0].confirmedAt).not.toBe(null)
+    for (const change of [{ agentId: 'codex' }, { prompt: 'Something else' }, { isolation: 'worktree' }, { wsId: 'ws-2' }, { projectCwd: 'C:\\other' }]) {
+      expect(svc.update(a.id, change).code).toBe('needs-confirm')
+    }
+    expect(svc.update(a.id, { agentId: 'codex', enabled: false }).ok).toBe(true)
+    expect(svc.snapshot().automations[0]).toMatchObject({ confirmedAt: null, confirmedSig: null, enabled: false })
+    expect(svc.setEnabled(a.id, true).code).toBe('needs-confirm')
+    expect(svc.setEnabled(a.id, true, true, 'p1:bbbb:12').ok).toBe(true)
+    expect(svc.snapshot().automations[0].confirmedSig).toBe('p1:bbbb:12')
+  })
+
+  it('the same refusal from the window, run after run, is one row', () => {
+    svc.setWindowReady(true)
+    const a = svc.create(input({ schedule: '*/15 * * * *' })).automation
+    for (const m of [15, 30, 45]) {
+      clock = at(8, m) + 1000
+      svc.tick()
+      const run = dispatches().at(-1).run
+      svc.markResult({ runId: run.id, status: 'skipped_unavailable', errorCode: 'permissions-changed' })
+    }
+    const rows = svc.snapshot().runs.filter((r) => r.automationId === a.id)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ errorCode: 'permissions-changed', occurrenceCount: 3 })
+  })
+
+  // Review 8: a deleted automation's running run keeps its prompt file.
+  it('deleting while a run starts keeps its prompt until the run ends', () => {
+    svc.setWindowReady(true)
+    const a = svc.create(input()).automation
+    const { run } = svc.runNow(a.id)
+    const file = dispatches()[0].promptFile
+    svc.remove(a.id)
+    expect(fs.existsSync(file)).toBe(true)
+    svc.markResult({ runId: run.id, status: 'dispatched', paneId: 'p' })
+    svc.markResult({ runId: run.id, status: 'completed' })
+    expect(fs.existsSync(file)).toBe(false)
+    expect(svc.snapshot().runs).toEqual([])
+  })
+
+  it('reading the file checks every record again', () => {
+    const good = svc.create(input()).automation
+    svc.stop()
+    const data = JSON.parse(fs.readFileSync(join(dir, AUTOMATIONS_FILE), 'utf8'))
+    data.automations.push({ ...good, id: 'auto-bad-1', agentId: 'rm -rf' })
+    data.automations.push({ ...good, id: 'not an id' })
+    data.automations.push({ ...good, id: 'auto-noconfirm-1', confirmedAt: null, enabled: true })
+    data.automations.push({ ...good, id: 'auto-often-1', schedule: '* * * * *' })
+    data.runs.push({ id: 'run-bogus-123456', automationId: good.id, status: 'hacked', createdAt: 1 })
+    data.runs.push({ id: 'run-okrun-123456', automationId: good.id, status: 'completed', createdAt: 1, paneId: 'a b;c', error: 'x'.repeat(5000) })
+    fs.writeFileSync(join(dir, AUTOMATIONS_FILE), JSON.stringify(data))
+    const again = make()
+    again.start()
+    const snap = again.snapshot()
+    expect(snap.automations.map((x) => x.id).sort()).toEqual([good.id, 'auto-noconfirm-1'].sort())
+    expect(snap.automations.find((x) => x.id === 'auto-noconfirm-1').enabled).toBe(false)
+    expect(snap.runs.map((r) => r.id)).toEqual(['run-okrun-123456'])
+    expect(snap.runs[0].paneId).toBe(null)
+    expect(snap.runs[0].error).toHaveLength(2000)
+    again.stop()
+  })
+
+  it('refuses a schedule that would open a pane every few minutes', () => {
+    const res = svc.create(input({ schedule: '* * * * *' }))
+    expect(res).toMatchObject({ ok: false, code: 'schedule-too-frequent' })
+    expect(res.error).toMatch(/15 minutes/)
   })
 })
