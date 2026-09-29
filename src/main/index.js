@@ -1165,6 +1165,24 @@ registerIssueServices({ ipcMain, dir: join(app.getPath('userData'), 'linear'), s
 const remoteHosts = createRemoteHosts({ dir: app.getPath('userData'), onChange: (states) => send('remoteHosts:state', states) })
 registerRemoteHosts({ ipcMain, service: remoteHosts, killPane: (id) => host.send('kill', { id }) })
 // Its passwords, passphrases and host key questions come through OpenSSH's
+// npm run dev did not always leave the helper next to index.js (the build
+// plugin only covers it reliably in packaged builds): in development Tessel
+// builds it itself when it is missing, with the same script, in the
+// background. Until then ssh asks in the terminal.
+if (!app.isPackaged && process.platform === 'win32' && !askpassExePath(__dirname)) {
+  const script = join(app.getAppPath(), 'scripts', 'build-askpass.mjs')
+  if (fs.existsSync(script)) {
+    execFile(
+      process.execPath,
+      [script, join(__dirname, 'tessel-askpass.exe')],
+      { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, windowsHide: true, timeout: 120000 },
+      (err) => {
+        if (err) log.warn('ssh', `askpass helper not built: ${err.message}`)
+        else log.info('ssh', 'askpass helper built for development')
+      }
+    )
+  }
+}
 // askpass channel (sshAskpass.js): only ssh can ask, the answer goes back to
 // ssh's helper, never to the terminal. Never logged.
 const sshAskpass = createSshAskpass({
