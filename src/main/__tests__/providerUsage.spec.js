@@ -840,7 +840,7 @@ async function readClaude(data) {
 }
 
 describe('Claude usage details (fixture shaped like the live response)', () => {
-  it('maps every active per-model weekly limit once, preferring limits[] over seven_day_<model>', async () => {
+  it('maps every per-model weekly limit once (also one marked not active), preferring limits[] over seven_day_<model>', async () => {
     const result = await readClaude(fullClaude())
     expect(result.ok).toBe(true)
     expect(result.windows.map((w) => [w.label, w.usedPct])).toEqual([
@@ -849,11 +849,12 @@ describe('Claude usage details (fixture shaped like the live response)', () => {
       ['Sonnet weekly', 22],
       ['Opus weekly', 71],
       ['Fable weekly', 33],
-      ['Haiku weekly', 12]
+      ['Haiku weekly', 12],
+      ['Retired weekly', 90]
     ])
     expect(result.windows.find((w) => w.label === 'Opus weekly').resetsAt).toBe(epoch + 7200000)
     // Codenamed objects of unknown meaning are never shown.
-    expect(JSON.stringify(result)).not.toMatch(/iguana|nimbus|codename|99|Retired/)
+    expect(JSON.stringify(result)).not.toMatch(/iguana|nimbus|codename|99/)
   })
   it('keeps the older seven_day_<model> objects when limits[] is absent or malformed', async () => {
     const data = fullClaude()

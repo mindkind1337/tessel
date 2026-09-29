@@ -138,12 +138,13 @@ function claudeWindow(label, raw) {
   return mapped
 }
 // limits[]: the per-model weekly limits (kind "weekly_scoped"), keyed by the
-// lower-case model name. Inactive, unscoped or malformed entries are ignored.
+// lower-case model name. Unscoped or malformed entries are ignored; one marked
+// not active is still shown (its usage and reset are real; Fable's is).
 function scopedWeekly(limits) {
   const models = new Map()
   if (!Array.isArray(limits)) return models
   for (const entry of limits.slice(0, 50)) {
-    if (!object(entry) || entry.is_active === false) continue
+    if (!object(entry)) continue
     const kind = typeof entry.kind === 'string' ? entry.kind.toLowerCase() : ''
     if (!/^(weekly|seven_day)_?scoped$/.test(kind)) continue
     const name = shortText(entry.scope?.model?.display_name, 40)
