@@ -413,6 +413,14 @@ export function createChatSessions(deps) {
             : t('main.chat.authError', 'Claude is not signed in (or its sign-in expired). Sign in, then reopen this chat.')
       })
     })
+    // Manual: Codex reported another posture mid-chat (the adapter closes it).
+    on('postureError', () => {
+      emit(s.paneId, {
+        type: 'notice',
+        kind: 'error',
+        text: t('main.chat.codexPostureChanged', 'Codex no longer applied the Manual permissions (ask first, sandboxed): the turn was stopped and the chat closed.')
+      })
+    })
     on('stderr', (e) => logAt('info', `${s.paneId} stderr: ${String(e.text || '').slice(-500)}`))
     on('exit', (e) => finish(s, e))
   }
@@ -464,6 +472,7 @@ export function createChatSessions(deps) {
       if (code === 'spawn') return t('main.chat.codexSpawnFailed', 'Codex could not be started.')
       if (code === 'timeout') return t('main.chat.codexStartTimeout', 'Codex did not answer in time.')
       if (code === 'exit') return t('main.chat.codexExitedAtStart', 'Codex stopped while starting.')
+      if (code === 'posture') return t('main.chat.codexPosture', 'Codex did not confirm the Manual permissions (ask first, sandboxed): the chat was not opened.')
       return t('main.chat.startFailed', 'The agent could not start.')
     }
     if (code === 'signin') return t('main.chat.signin', 'Claude is not signed in. Sign in to Claude Code, then try again.')
