@@ -14,6 +14,9 @@ import { publishTeamTasks, takeTeamRequests, finishTeamRequests, messageStatuses
 // pane: each test sets up its own.
 delete process.env.TESSEL_TEAM_SECRET
 delete process.env.TESSEL_PANE_ID
+// ... and its agent (TESSEL_AGENT_PROVIDER): a hook reports its conversation
+// only for the pane's own agent.
+delete process.env.TESSEL_AGENT_PROVIDER
 
 const require = createRequire(import.meta.url)
 const SERVER = join(__dirname, '..', 'teamMcp', 'server.cjs')
@@ -400,6 +403,9 @@ describe('Tessel team tools (background messages)', () => {
 describe('setting up the team tools', () => {
   let home
   const script = 'C:\\Users\\x\\AppData\\Roaming\\tessel\\tessel-team-mcp.cjs'
+  // The absolute node the commands run, and how it is written in them.
+  const NODE = 'C:\\Program Files\\nodejs\\node.exe'
+  const N = 'C:/"Program Files/nodejs/node.exe"'
   beforeEach(() => {
     home = fs.mkdtempSync(join(os.tmpdir(), 'tessel-home-'))
   })
@@ -410,15 +416,15 @@ describe('setting up the team tools', () => {
     fs.mkdirSync(join(home, '.claude'))
     const file = join(home, '.claude', 'settings.json')
     fs.writeFileSync(file, JSON.stringify({ model: 'x', hooks: { Stop: [{ matcher: '', hooks: [{ type: 'command', command: 'mine.sh' }] }] } }))
-    expect(installClaudeHooks(script, home)).toEqual({ changed: true })
+    expect(installClaudeHooks(script, home, { node: NODE })).toEqual({ changed: true })
     const s = JSON.parse(fs.readFileSync(file, 'utf8'))
     expect(s.model).toBe('x')
-    expect(s.hooks.Stop.map((g) => g.hooks[0].command)).toEqual(['mine.sh', `node "${script}" --hook`])
+    expect(s.hooks.Stop.map((g) => g.hooks[0].command)).toEqual(['mine.sh', `${N} "${script}" --hook`])
     expect(s.hooks.UserPromptSubmit[0].hooks[0].command).toMatch(/--hook$/)
     // SessionStart too: it tells Tessel the conversation after /clear, /resume.
     expect(s.hooks.SessionStart[0].hooks[0].command).toMatch(/--hook$/)
     expect(fs.existsSync(file + '.before-tessel')).toBe(true)
-    expect(installClaudeHooks(script, home)).toEqual({ changed: false }) // already there
+    expect(installClaudeHooks(script, home, { node: NODE })).toEqual({ changed: false }) // already there
   })
 
   it('adds the Codex session and Stop hooks, keeping the user own', async () => {
@@ -426,14 +432,14 @@ describe('setting up the team tools', () => {
     fs.mkdirSync(join(home, '.codex'))
     const file = join(home, '.codex', 'hooks.json')
     fs.writeFileSync(file, JSON.stringify({ hooks: { UserPromptSubmit: [{ hooks: [{ type: 'command', command: 'mine.py' }] }], Stop: [{ hooks: [{ type: 'command', command: 'my-stop.cmd' }] }] } }))
-    expect(installCodexHooks(script, home)).toEqual({ changed: true })
+    expect(installCodexHooks(script, home, { node: NODE })).toEqual({ changed: true })
     const h = JSON.parse(fs.readFileSync(file, 'utf8')).hooks
-    const cmd = `node "${script}" --hook --codex`
+    const cmd = `${N} "${script}" --hook --codex`
     expect(h.UserPromptSubmit.map((g) => g.hooks[0].command)).toEqual(['mine.py', cmd])
     expect(h.SessionStart[0].hooks[0]).toEqual({ type: 'command', command: cmd, commandWindows: cmd })
     expect(h.Stop.map((g) => g.hooks[0].command)).toEqual(['my-stop.cmd', cmd])
     expect(h.Stop[1].hooks[0]).toEqual({ type: 'command', command: cmd, commandWindows: cmd })
-    expect(installCodexHooks(script, home)).toEqual({ changed: false })
+    expect(installCodexHooks(script, home, { node: NODE })).toEqual({ changed: false })
   })
 
   it('adds the Gemini CLI hooks, keeping its servers and other entries (even ones Gemini ignores)', async () => {
@@ -445,44 +451,44 @@ describe('setting up the team tools', () => {
       file,
       JSON.stringify({ mcpServers: { x: { command: 'y' } }, hooks: { AfterAgent: [flat], AfterTool: [{ matcher: '*', hooks: [{ type: 'command', command: 'mine.sh' }] }] } })
     )
-    expect(installGeminiHooks(script, home)).toEqual({ changed: true })
+    expect(installGeminiHooks(script, home, { node: NODE })).toEqual({ changed: true })
     const s = JSON.parse(fs.readFileSync(file, 'utf8'))
-    const cmd = `node "${script}" --hook --gemini`
+    const cmd = `${N} "${script}" --hook --gemini`
     expect(s.mcpServers).toEqual({ x: { command: 'y' } })
     expect(s.hooks.AfterAgent[0]).toEqual(flat)
     expect(s.hooks.AfterAgent[1].hooks[0].command).toBe(cmd)
     expect(s.hooks.AfterTool.map((g) => g.hooks[0].command)).toEqual(['mine.sh', cmd])
     for (const ev of ['SessionStart', 'BeforeAgent']) expect(s.hooks[ev][0].hooks[0].command).toBe(cmd)
-    expect(installGeminiHooks(script, home)).toEqual({ changed: false })
+    expect(installGeminiHooks(script, home, { node: NODE })).toEqual({ changed: false })
   })
 
   it('writes the Copilot CLI hooks in their own file, once, never its settings', async () => {
     const { installCopilotHooks } = await import('../teamInstall')
     fs.mkdirSync(join(home, '.copilot'))
     fs.writeFileSync(join(home, '.copilot', 'settings.json'), '{"hooks":{"agentStop":[{"type":"command","bash":"theirs"}]}}')
-    expect(installCopilotHooks(script, home)).toEqual({ changed: true })
+    expect(installCopilotHooks(script, home, { node: NODE })).toEqual({ changed: true })
     const h = JSON.parse(fs.readFileSync(join(home, '.copilot', 'hooks', 'tessel-team.json'), 'utf8'))
     expect(h.version).toBe(1)
     const { COPILOT_HOOK_EVENTS } = await import('../teamInstall')
     expect(Object.keys(h.hooks)).toEqual(COPILOT_HOOK_EVENTS)
     expect(COPILOT_HOOK_EVENTS).toEqual(expect.arrayContaining(['SessionStart', 'PostToolUse', 'Stop', 'subagentStart', 'SubagentStop']))
-    const cmd = `node "${script}" --hook --copilot --event=Stop`
+    const cmd = `${N} "${script}" --hook --copilot --event=Stop`
     expect(h.hooks.Stop).toEqual([{ type: 'command', bash: cmd, powershell: cmd, timeoutSec: 30 }])
     expect(fs.readFileSync(join(home, '.copilot', 'settings.json'), 'utf8')).toMatch(/theirs/)
-    expect(installCopilotHooks(script, home)).toEqual({ changed: false })
+    expect(installCopilotHooks(script, home, { node: NODE })).toEqual({ changed: false })
   })
 
   it('writes the OpenCode plugin once, never over a file that is not Tessel’s', async () => {
     const { installOpencodePlugin, opencodePlugin } = await import('../teamInstall')
     const file = join(home, '.config', 'opencode', 'plugins', 'tessel-team.js')
-    expect(installOpencodePlugin(script, home)).toEqual({ changed: true })
+    expect(installOpencodePlugin(script, home, { node: NODE })).toEqual({ changed: true })
     const text = fs.readFileSync(file, 'utf8')
-    expect(text).toBe(opencodePlugin(script))
+    expect(text).toBe(opencodePlugin(script, NODE))
     expect(text).toContain(JSON.stringify(script))
     expect(text).toMatch(/if \(!process\.env\.TESSEL_PANE_ID\) return \{\}/) // nothing outside a Tessel pane
-    expect(installOpencodePlugin(script, home)).toEqual({ changed: false })
+    expect(installOpencodePlugin(script, home, { node: NODE })).toEqual({ changed: false })
     fs.writeFileSync(file, 'export const Mine = async () => ({})\n')
-    expect(installOpencodePlugin(script, home).error).toMatch(/not Tessel's/)
+    expect(installOpencodePlugin(script, home, { node: NODE }).error).toMatch(/not Tessel's/)
     expect(fs.readFileSync(file, 'utf8')).toMatch(/Mine/)
   })
 
@@ -490,27 +496,29 @@ describe('setting up the team tools', () => {
     const { installClaudeHooks } = await import('../teamInstall')
     fs.mkdirSync(join(home, '.claude'))
     fs.writeFileSync(join(home, '.claude', 'settings.json'), '{ broken')
-    expect(installClaudeHooks(script, home).error).toMatch(/could not be read/)
+    expect(installClaudeHooks(script, home, { node: NODE }).error).toMatch(/could not be read/)
     expect(fs.readFileSync(join(home, '.claude', 'settings.json'), 'utf8')).toBe('{ broken')
   })
 
   it('adds the Codex server once, forwarding the pane variables', async () => {
     const { installCodexServer } = await import('../teamInstall')
-    expect(await installCodexServer(script, null, home)).toEqual({ changed: false }) // no Codex here
+    expect(await installCodexServer(script, null, home, { node: NODE })).toEqual({ changed: false }) // no Codex here
     fs.mkdirSync(join(home, '.codex'))
     fs.writeFileSync(join(home, '.codex', 'config.toml'), 'model = "x"\n')
-    expect(await installCodexServer(script, async () => ({ ok: true }), home)).toEqual({ changed: true })
+    expect(await installCodexServer(script, async () => ({ ok: true }), home, { node: NODE })).toEqual({ changed: true })
     const t = fs.readFileSync(join(home, '.codex', 'config.toml'), 'utf8')
     expect(t).toMatch(/^model = "x"/)
     expect(t).toContain(`args = ['${script}']`)
+    // Node by its absolute path, never by name.
+    expect(t).toContain(`command = '${NODE}'`)
     expect(t).toContain('env_vars = ["TESSEL_PANE_ID", "TESSEL_PROJECT_DIR", "TESSEL_TEAM_SECRET"]')
     expect(t).toContain('default_tools_approval_mode = "approve"')
-    expect(await installCodexServer(script, async () => ({ ok: true }), home)).toEqual({ changed: false })
+    expect(await installCodexServer(script, async () => ({ ok: true }), home, { node: NODE })).toEqual({ changed: false })
     // A quoted key is ours too: replaced, not duplicated; refused = untouched.
     fs.writeFileSync(join(home, '.codex', 'config.toml'), 'model = "x"\n[mcp_servers."tessel-team"]\ncommand = "old"\n[mcp_servers."tessel-team".env]\nA = "1"\n[other]\nk = 1\n')
-    expect(await installCodexServer(script, async () => ({ ok: false, error: 'bad' }), home).then((r) => r.error)).toMatch(/would not accept/)
+    expect(await installCodexServer(script, async () => ({ ok: false, error: 'bad' }), home, { node: NODE }).then((r) => r.error)).toMatch(/would not accept/)
     expect(fs.readFileSync(join(home, '.codex', 'config.toml'), 'utf8')).toContain('command = "old"')
-    expect(await installCodexServer(script, async () => ({ ok: true }), home)).toEqual({ changed: true })
+    expect(await installCodexServer(script, async () => ({ ok: true }), home, { node: NODE })).toEqual({ changed: true })
     const t2 = fs.readFileSync(join(home, '.codex', 'config.toml'), 'utf8')
     expect(t2.match(/^\[mcp_servers\.[^\]\n]*tessel-team[^\]\n]*\]/gm)).toEqual(['[mcp_servers.tessel-team]'])
     expect(t2).toContain('[other]\nk = 1')
@@ -522,10 +530,10 @@ describe('setting up the team tools', () => {
     fs.mkdirSync(join(home, '.claude'))
     const file = join(home, '.claude', 'settings.json')
     fs.writeFileSync(file, JSON.stringify({ hooks: { Stop: [{ matcher: '', hooks: [{ type: 'command', command: 'node "C:/old/tessel-team-mcp.cjs" --hook' }, { type: 'command', command: 'my-existing-hook.cmd' }] }] } }))
-    installClaudeHooks(script, home)
+    installClaudeHooks(script, home, { node: NODE })
     const cmds = JSON.parse(fs.readFileSync(file, 'utf8')).hooks.Stop.flatMap((g) => g.hooks.map((h) => h.command))
     expect(cmds).toContain('my-existing-hook.cmd')
-    expect(cmds.filter((c) => c.includes('tessel-team-mcp.cjs'))).toEqual([`node "${script}" --hook`])
+    expect(cmds.filter((c) => c.includes('tessel-team-mcp.cjs'))).toEqual([`${N} "${script}" --hook`])
   })
 })
 

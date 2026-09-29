@@ -12,6 +12,9 @@ import { takeTeamAcks } from '../teamAcks'
 const require = createRequire(import.meta.url)
 const server = join(__dirname, '..', 'teamMcp', 'server.cjs')
 const mcp = require(server)
+// Run inside a Tessel pane, the hooks would inherit its agent: a hook reports
+// its conversation only for the pane's own agent.
+delete process.env.TESSEL_AGENT_PROVIDER
 
 describe('Codex Stop hook delivers team messages without terminal input', () => {
   let dir, root, outbox, payload

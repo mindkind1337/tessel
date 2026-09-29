@@ -1,11 +1,16 @@
-// Quota requests are explicit renderer actions. Registering this service neither
-// reads credentials nor starts a polling loop.
+// Quota requests: explicit renderer actions, and the automatic refresh
+// (usagePoller.js) once the renderer has configured it. Registering this service
+// neither reads credentials nor starts a polling loop.
 import { createProviderUsage } from './providerUsage'
 import { createResetHistory } from './resetHistory'
 import { join } from 'node:path'
 import { createExtraProviderUsage } from './extraProviderUsage'
 import { createOpencodeUsageReport } from './opencodeUsageReport'
 import { t } from './i18n'
+import { createUsagePoller } from './usagePoller'
+import { USAGE_PROVIDERS, validHiddenUsageProviders } from '../shared/usageProviders'
+
+const LIVE = ['claude', 'codex']
 
 export function registerProviderUsage({
   ipcMain,
@@ -14,13 +19,53 @@ export function registerProviderUsage({
   userData,
   log,
   listAgents = async () => [],
-  opencodeReport = createOpencodeUsageReport()
+  opencodeReport = createOpencodeUsageReport(),
+  send = () => {},
+  getWindow = () => null,
+  poller: givenPoller
 }) {
   const history = userData
     ? createResetHistory({ file: join(userData, 'reset-history.json'), log })
     : null
   const usage = service || createProviderUsage({ accounts, history, log })
   const extra = createExtraProviderUsage({ listAgents })
+  const readOne = (query) => (LIVE.includes(query.provider) ? usage.read(query) : extra.read(query))
+  // The providers the automatic refresh reads: shown in the Usage menu, with a
+  // login found (Claude and Codex: their selected account is signed in).
+  async function autoTargets(hidden) {
+    const caps = await extra.capabilities()
+    const ids = (caps?.providers || [])
+      .filter((p) => p.quota && !hidden.includes(p.id))
+      .map((p) => p.id)
+    let state = null
+    const out = []
+    for (const provider of ids) {
+      if (!LIVE.includes(provider)) {
+        out.push({ provider, accountId: null })
+        continue
+      }
+      state ??= await accounts.list()
+      const row = state?.ok ? state.providers?.find((item) => item.provider === provider) : null
+      if (!row || row.error) continue
+      const accountId = row.selectedId ?? null
+      const account =
+        accountId === null ? row.system : row.accounts?.find((item) => item.id === accountId)
+      if (account?.status === 'ready') out.push({ provider, accountId })
+    }
+    return out
+  }
+  const poller =
+    givenPoller ||
+    createUsagePoller({
+      read: readOne,
+      targets: autoTargets,
+      send: (result) => send('providerUsage:update', result),
+      getWindow,
+      log
+    })
+  const known = (query) =>
+    USAGE_PROVIDERS.some((p) => p.id === query.provider) &&
+    (query.accountId === null || query.accountId === undefined || typeof query.accountId === 'string')
   // error: a function, so the message is in the language of the moment.
   const handle = (name, action, error) => {
     ipcMain.handle(name, async (_event, query) => {
@@ -39,9 +84,19 @@ export function registerProviderUsage({
   )
   handle(
     'providerUsage:read',
-    (query) =>
-      ['claude', 'codex'].includes(query.provider) ? usage.read(query) : extra.read(query),
+    // Shares a read of the same provider already in flight (automatic or not).
+    (query) => (known(query) ? poller.read(query) : readOne(query)),
     () => t('main.usage.readFailed', 'Could not read provider usage.')
+  )
+  // Settings: the providers hidden from the Usage menu and the interval (0 = off).
+  handle(
+    'providerUsage:autoRefresh',
+    (query) =>
+      poller.configure({
+        hidden: validHiddenUsageProviders(query.hidden),
+        intervalMs: query.intervalMs === 0 ? 0 : Number(query.intervalMs)
+      }),
+    () => t('main.usage.autoRefreshFailed', 'Could not set the usage refresh.')
   )
   // OpenCode's usage report (tokens and recorded cost), from its own
   // databases on this computer. Only its filter errors (Tessel's own words)
@@ -81,6 +136,7 @@ export function registerProviderUsage({
       `accounts:${name}`,
       ({ provider, id }) => {
         usage.invalidate(provider)
+        poller.forget(provider)
         return accounts[name](provider, name === 'startLogin' && id === undefined ? null : id)
       },
       () => t('main.accounts.providerUpdateFailed', 'Could not update the provider account.')
@@ -90,6 +146,7 @@ export function registerProviderUsage({
     'accounts:cancelLogin',
     (id) => {
       usage.invalidate()
+      poller.forget()
       return accounts.cancelLogin(id)
     },
     () => t('main.login.cancelFailed', 'Could not cancel provider sign-in.')

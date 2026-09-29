@@ -80,4 +80,23 @@ describe('provider usage IPC', () => {
     expect(reset.ok).toBe(false)
     expect(JSON.stringify(reset)).not.toContain('fixture-secret')
   })
+
+  it('configures the automatic refresh with valid providers only, and forgets on a switch', async () => {
+    const handlers = new Map()
+    const poller = { configure: vi.fn(() => ({ ok: true })), read: vi.fn(), forget: vi.fn() }
+    const accounts = { select: vi.fn(async () => ({ ok: true })) }
+    registerProviderUsage({
+      ipcMain: { handle: (name, fn) => handlers.set(name, fn) },
+      accounts,
+      service: { read: vi.fn(), invalidate: vi.fn() },
+      poller
+    })
+    await handlers.get('providerUsage:autoRefresh')(null, { hidden: ['kimi', 'nope'], intervalMs: 0 })
+    expect(poller.configure).toHaveBeenCalledWith({ hidden: ['kimi'], intervalMs: 0 })
+    await handlers.get('providerUsage:read')(null, { provider: 'kimi', accountId: null })
+    expect(poller.read).toHaveBeenCalledWith({ provider: 'kimi', accountId: null })
+    await handlers.get('accounts:select')(null, { provider: 'claude', id: 'work' })
+    expect(poller.forget).toHaveBeenCalledWith('claude')
+  })
 })
+

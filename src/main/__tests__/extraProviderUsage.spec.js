@@ -189,6 +189,15 @@ describe('explicit additional quota collectors', () => {
       expect(JSON.stringify(result)).not.toMatch(/fixture-only|private-fixture-data/)
     }
   )
+  it('reports a 429 with its Retry-After, for the automatic refresh to wait', async () => {
+    const { service, request } = setup()
+    request.mockResolvedValue(
+      new Response('private-fixture-data', { status: 429, headers: { 'Retry-After': '120' } })
+    )
+    const result = await read(service, 'kimi')
+    expect(result).toMatchObject({ ok: false, code: 'rate-limited', retryAfterMs: 120000 })
+    expect(JSON.stringify(result)).not.toMatch(/fixture-only|private-fixture-data/)
+  })
   it('hides OpenCode accounts without a Go subscription', async () => {
     const { service, request } = setup()
     request.mockResolvedValue(new Response('', { status: 403 }))

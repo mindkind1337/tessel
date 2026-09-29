@@ -9,6 +9,7 @@ import { spawn } from 'child_process'
 import { pathToFileURL } from 'url'
 import { createRequire } from 'module'
 import { transformSync } from 'rolldown/experimental'
+import { createHash } from 'crypto'
 import {
   installStatusHooks,
   removeStatusHooks,
@@ -83,6 +84,8 @@ afterEach(() => {
 
 const JSON_AGENTS = STATUS_HOOK_AGENTS.filter((a) => STATUS_HOOKS[a].shape !== 'plugin')
 const scriptPath = 'C:\\Tessel data\\tessel-team-mcp.cjs'
+// The absolute node every hook command runs (never "node" by name).
+const NODE = 'C:\\Program Files\\nodejs\\node.exe'
 const put = (file, value) => {
   fs.mkdirSync(dirname(file), { recursive: true })
   fs.writeFileSync(file, typeof value === 'string' ? value : JSON.stringify(value))
@@ -97,22 +100,26 @@ describe('installing status hooks in the agents’ own files', () => {
     const theirs = spec.shape === 'flat' ? { command: 'mine.cmd' } : { matcher: '', hooks: [{ type: 'command', command: 'mine.cmd' }] }
     const user = spec.shape === 'bundle' ? { other: { [event]: [theirs] }, [spec.bundle]: { [event]: [theirs] }, model: 'x' } : { model: 'x', hooks: { [event]: [theirs], Custom: [theirs] } }
     put(file, user)
-    expect(installStatusHooks(agent, scriptPath, { home, env: {} })).toEqual({ changed: true })
+    expect(installStatusHooks(agent, scriptPath, { home, env: {}, node: NODE })).toEqual({ changed: true })
     const saved = read(file)
     expect(saved.model).toBe('x')
     const table = spec.shape === 'bundle' ? saved[spec.bundle] : saved.hooks
     if (spec.shape === 'bundle') expect(saved.other).toEqual(user.other)
     else expect(saved.hooks.Custom).toEqual([theirs])
-    expect(table[event][0]).toEqual(theirs)
-    for (const e of spec.events) expect(JSON.stringify(table[e])).toContain(JSON.stringify(statusCommand(scriptPath, agent, e)).slice(1, -1))
+    // Cursor's entry comes first (its answer never overrides the user's hook).
+    expect(table[event][spec.first ? 1 : 0]).toEqual(theirs)
+    if (spec.first) expect(table[event][0].command).toBe(statusCommand(scriptPath, agent, event, NODE))
+    for (const e of spec.events) expect(JSON.stringify(table[e])).toContain(JSON.stringify(statusCommand(scriptPath, agent, e, NODE)).slice(1, -1))
     expect(fs.readFileSync(`${file}.before-tessel`, 'utf8')).toBe(JSON.stringify(user))
-    expect(installStatusHooks(agent, scriptPath, { home, env: {} })).toEqual({ changed: false })
-    expect(statusHooksInstallation(agent, scriptPath, { home, env: {} })).toMatchObject({ id: agent, hooks: 'installed', statusOnly: true })
+    expect(installStatusHooks(agent, scriptPath, { home, env: {}, node: NODE })).toEqual({ changed: false })
+    expect(statusHooksInstallation(agent, scriptPath, { home, env: {}, node: NODE })).toMatchObject({ id: agent, hooks: 'installed', statusOnly: true })
     // A newer script path replaces Tessel's entries, never adds a second one.
-    expect(installStatusHooks(agent, 'C:\\new\\tessel-team-mcp.cjs', { home, env: {} })).toEqual({ changed: true })
+    expect(installStatusHooks(agent, 'C:\\new\\tessel-team-mcp.cjs', { home, env: {}, node: NODE })).toEqual({ changed: true })
     expect(fs.readFileSync(file, 'utf8')).not.toContain('Tessel data')
-    expect(statusHooksInstallation(agent, scriptPath, { home, env: {} }).hooks).toBe('missing')
+    expect(statusHooksInstallation(agent, scriptPath, { home, env: {}, node: NODE }).hooks).toBe('missing')
     expect(removeStatusHooks(agent, { home, env: {} })).toEqual({ changed: true })
+    // Tessel's copy of the user's file goes with its hooks.
+    expect(fs.existsSync(`${file}.before-tessel`)).toBe(false)
     const after = read(file)
     expect(fs.readFileSync(file, 'utf8')).not.toContain('tessel-team-mcp.cjs')
     expect(after.model).toBe('x')
@@ -124,35 +131,35 @@ describe('installing status hooks in the agents’ own files', () => {
     const spec = STATUS_HOOKS[agent]
     const file = spec.file(home, {})
     put(file, '{broken')
-    expect(installStatusHooks(agent, scriptPath, { home, env: {} }).error).toBeTruthy()
+    expect(installStatusHooks(agent, scriptPath, { home, env: {}, node: NODE }).error).toBeTruthy()
     expect(fs.readFileSync(file, 'utf8')).toBe('{broken')
-    expect(statusHooksInstallation(agent, scriptPath, { home, env: {} })).toMatchObject({ hooks: 'error' })
+    expect(statusHooksInstallation(agent, scriptPath, { home, env: {}, node: NODE })).toMatchObject({ hooks: 'error' })
     const odd = { [spec.shape === 'bundle' ? spec.bundle : 'hooks']: ['not', 'a', 'table'] }
     put(file, odd)
-    expect(installStatusHooks(agent, scriptPath, { home, env: {} }).error).toBeTruthy()
+    expect(installStatusHooks(agent, scriptPath, { home, env: {}, node: NODE }).error).toBeTruthy()
     expect(read(file)).toEqual(odd)
   })
 
   it('Cursor: its flat schema, version 1, and none of its permission gates', () => {
-    expect(installStatusHooks('cursor', scriptPath, { home, env: {} })).toEqual({ changed: true })
+    expect(installStatusHooks('cursor', scriptPath, { home, env: {}, node: NODE })).toEqual({ changed: true })
     const saved = read(join(home, '.cursor', 'hooks.json'))
     expect(saved.version).toBe(1)
-    expect(saved.hooks.stop).toEqual([{ command: statusCommand(scriptPath, 'cursor', 'stop') }])
+    expect(saved.hooks.stop).toEqual([{ command: statusCommand(scriptPath, 'cursor', 'stop', NODE) }])
     for (const gate of ['preToolUse', 'beforeShellExecution', 'beforeMCPExecution']) expect(saved.hooks[gate]).toBeUndefined()
   })
 
   it('Antigravity: its own bundle, and never PreToolUse (silence there refuses the tool)', () => {
-    installStatusHooks('antigravity', scriptPath, { home, env: {} })
+    installStatusHooks('antigravity', scriptPath, { home, env: {}, node: NODE })
     const saved = read(join(home, '.gemini', 'config', 'hooks.json'))
     expect(Object.keys(saved)).toEqual(['tessel-status'])
     expect(saved['tessel-status'].PreToolUse).toBeUndefined()
     expect(saved['tessel-status'].PostToolUse[0]).toMatchObject({ matcher: '*' })
-    expect(saved['tessel-status'].Stop[0]).toMatchObject({ type: 'command', command: statusCommand(scriptPath, 'antigravity', 'Stop') })
+    expect(saved['tessel-status'].Stop[0]).toMatchObject({ type: 'command', command: statusCommand(scriptPath, 'antigravity', 'Stop', NODE) })
   })
 
   it('Grok: its own file under GROK_HOME, removed whole', () => {
     const grokHome = join(dir, 'grok-home')
-    expect(installStatusHooks('grok', scriptPath, { home, env: { GROK_HOME: grokHome } })).toEqual({ changed: true })
+    expect(installStatusHooks('grok', scriptPath, { home, env: { GROK_HOME: grokHome }, node: NODE })).toEqual({ changed: true })
     const file = join(grokHome, 'hooks', 'tessel-status.json')
     expect(read(file).hooks.PreToolUse[0].matcher).toBe('.*')
     expect(fs.existsSync(join(home, '.grok'))).toBe(false)
@@ -162,28 +169,68 @@ describe('installing status hooks in the agents’ own files', () => {
 
   it.each(['amp', 'pi'])('%s: a file of Tessel’s own, never over the user’s', (agent) => {
     const file = STATUS_HOOKS[agent].file(home, {})
-    expect(installStatusHooks(agent, scriptPath, { home, env: {} })).toEqual({ changed: true })
+    expect(installStatusHooks(agent, scriptPath, { home, env: {}, node: NODE })).toEqual({ changed: true })
     expect(fs.readFileSync(file, 'utf8').startsWith(PLUGIN_MARKER)).toBe(true)
-    expect(installStatusHooks(agent, scriptPath, { home, env: {} })).toEqual({ changed: false })
-    expect(statusHooksInstallation(agent, scriptPath, { home, env: {} })).toMatchObject({ hooks: 'installed', events: { Plugin: true } })
+    expect(installStatusHooks(agent, scriptPath, { home, env: {}, node: NODE })).toEqual({ changed: false })
+    expect(statusHooksInstallation(agent, scriptPath, { home, env: {}, node: NODE })).toMatchObject({ hooks: 'installed', events: { Plugin: true } })
     expect(removeStatusHooks(agent, { home, env: {} })).toEqual({ changed: true })
     expect(fs.existsSync(file)).toBe(false)
     put(file, '// my own plugin')
-    expect(installStatusHooks(agent, scriptPath, { home, env: {} }).error).toBeTruthy()
+    expect(installStatusHooks(agent, scriptPath, { home, env: {}, node: NODE }).error).toBeTruthy()
     expect(removeStatusHooks(agent, { home, env: {} })).toEqual({ changed: false })
     expect(fs.readFileSync(file, 'utf8')).toBe('// my own plugin')
-    expect(statusHooksInstallation(agent, scriptPath, { home, env: {} }).hooks).toBe('error')
+    expect(statusHooksInstallation(agent, scriptPath, { home, env: {}, node: NODE }).hooks).toBe('error')
   })
 
   it('Pi: its extension goes where PI_CODING_AGENT_DIR says', () => {
     const agentDir = join(dir, 'pi-agent')
-    installStatusHooks('pi', scriptPath, { home, env: { PI_CODING_AGENT_DIR: agentDir } })
+    installStatusHooks('pi', scriptPath, { home, env: { PI_CODING_AGENT_DIR: agentDir }, node: NODE })
     expect(fs.existsSync(join(agentDir, 'extensions', 'tessel-status.ts'))).toBe(true)
     expect(fs.existsSync(join(home, '.pi'))).toBe(false)
   })
 
+  it.each(JSON_AGENTS)('%s: a user value that is not a list under one of its events is refused, never overwritten', (agent) => {
+    const spec = STATUS_HOOKS[agent]
+    const file = spec.file(home, {})
+    const event = spec.events[1]
+    const odd = spec.shape === 'bundle' ? { [spec.bundle]: { [event]: { mine: true } } } : { hooks: { [event]: 'mine.cmd' } }
+    put(file, odd)
+    expect(installStatusHooks(agent, scriptPath, { home, env: {}, node: NODE }).error).toMatch(/not a list/)
+    expect(read(file)).toEqual(odd)
+  })
+
+  it('every command runs node by its absolute path, quoted for cmd, PowerShell and bash', () => {
+    for (const agent of JSON_AGENTS) {
+      const command = statusCommand(scriptPath, agent, 'Stop', NODE)
+      expect(command.startsWith('C:/"Program Files/nodejs/node.exe" "C:\\Tessel data\\tessel-team-mcp.cjs" --hook')).toBe(true)
+      expect(command).not.toMatch(/^node /)
+    }
+    installStatusHooks('droid', scriptPath, { home, env: {}, node: NODE })
+    const text = fs.readFileSync(STATUS_HOOKS.droid.file(home, {}), 'utf8')
+    expect(text).not.toMatch(/"node /)
+  })
+
+  it('no absolute node found: nothing is installed, and the reason is given', () => {
+    const r = installStatusHooks('droid', scriptPath, { home, env: { PATH: '.;bin' } })
+    expect(r.error).toMatch(/Node\.js/)
+    expect(fs.existsSync(join(home, '.factory'))).toBe(false)
+    expect(installStatusHooks('droid', scriptPath, { home, env: {}, node: 'node' }).error).toBeTruthy()
+  })
+
+  it('an older entry running a bare "node" is upgraded in place, the user’s kept', () => {
+    const file = STATUS_HOOKS.cursor.file(home, {})
+    const old = `node "${scriptPath}" --hook --agent=cursor --event=beforeSubmitPrompt`
+    put(file, { version: 1, hooks: { beforeSubmitPrompt: [{ command: 'mine.cmd' }, { command: old }] } })
+    expect(statusHooksInstallation('cursor', scriptPath, { home, env: {}, node: NODE }).hooks).not.toBe('installed')
+    expect(installStatusHooks('cursor', scriptPath, { home, env: {}, node: NODE })).toEqual({ changed: true })
+    const list = read(file).hooks.beforeSubmitPrompt
+    expect(list).toEqual([{ command: statusCommand(scriptPath, 'cursor', 'beforeSubmitPrompt', NODE) }, { command: 'mine.cmd' }])
+    expect(fs.readFileSync(file, 'utf8')).not.toContain('"node ')
+    expect(statusHooksInstallation('cursor', scriptPath, { home, env: {}, node: NODE }).hooks).toBe('installed')
+  })
+
   it('refuses a script path it cannot quote safely', () => {
-    expect(installStatusHooks('droid', 'C:\\a"b\\tessel-team-mcp.cjs', { home, env: {} }).error).toBeTruthy()
+    expect(installStatusHooks('droid', 'C:\\a"b\\tessel-team-mcp.cjs', { home, env: {}, node: NODE }).error).toBeTruthy()
     expect(fs.existsSync(join(home, '.factory'))).toBe(false)
   })
 })
@@ -191,7 +238,7 @@ describe('installing status hooks in the agents’ own files', () => {
 describe('prepareAgentStateHooks for every status agent', () => {
   const source = fs.readFileSync(script, 'utf8')
   const prepare = (provider, extra = {}) =>
-    prepareAgentStateHooks({ provider, env: {}, home, sharedDir: join(dir, 'shared'), source, ...extra })
+    prepareAgentStateHooks({ provider, env: {}, node: NODE, optIn: { cursor: true }, home, sharedDir: join(dir, 'shared'), source, ...extra })
   it.each(['gemini', 'copilot', 'opencode', ...STATUS_HOOK_AGENTS])('%s: installs in the fake home', async (provider) => {
     expect(await prepare(provider)).toMatchObject({ ok: true, supported: true, changed: true })
     expect(await prepare(provider)).toMatchObject({ ok: true, changed: false })
@@ -207,6 +254,21 @@ describe('prepareAgentStateHooks for every status agent', () => {
     fs.writeFileSync(join(dir, 'shared', 'tessel-team-mcp.cjs'), "const VERSION = '99.0.0'\nconst AGENT_STATE_PROTOCOL = 1\n")
     expect(await prepare('cursor')).toMatchObject({ ok: false })
     expect(fs.existsSync(join(home, '.cursor'))).toBe(false)
+  })
+  it('cursor: off unless turned on in Settings, and turning it off removes Tessel’s entries', async () => {
+    expect(await prepare('cursor', { optIn: {} })).toMatchObject({ ok: true, supported: false, optedOut: true })
+    expect(fs.existsSync(join(home, '.cursor'))).toBe(false)
+    expect(await prepare('cursor')).toMatchObject({ ok: true, supported: true, changed: true })
+    expect(fs.readFileSync(join(home, '.cursor', 'hooks.json'), 'utf8')).toContain('tessel-team-mcp.cjs')
+    expect(await prepare('cursor', { optIn: { cursor: false } })).toMatchObject({ ok: true, supported: false })
+    expect(fs.readFileSync(join(home, '.cursor', 'hooks.json'), 'utf8')).not.toContain('tessel-team-mcp.cjs')
+    expect(statusHooksInstallation('cursor', scriptPath, { home, env: {}, node: NODE })).toMatchObject({ optIn: true, hooks: 'missing' })
+  })
+  it('no absolute node on the pane’s PATH: nothing installed', async () => {
+    const r = await prepare('droid', { node: undefined, env: { PATH: `.;${dir}` } })
+    expect(r).toMatchObject({ ok: false })
+    expect(r.error).toMatch(/Node\.js/)
+    expect(fs.existsSync(join(home, '.factory'))).toBe(false)
   })
   it('an agent without status hooks is not supported', async () => {
     expect(await prepare('aider')).toEqual({ ok: true, supported: false })
@@ -239,7 +301,10 @@ describe('the hook script turns each agent’s events into status events', () =>
   })
   it('an agent with no conversation id gets one per launch', async () => {
     await runHook(['--agent=antigravity', '--event=PreInvocation'], {}, paneEnv('antigravity'))
-    expect(reports()[0].sessionId).toBe(`launch-${launchToken.slice(0, 16)}`)
+    // A hash of the launch token, never a piece of it.
+    const id = `launch-${createHash('sha256').update(launchToken).digest('hex').slice(0, 16)}`
+    expect(reports()[0].sessionId).toBe(id)
+    expect(reports()[0].sessionId).not.toContain(launchToken.slice(0, 16))
   })
   it('ignores events with no status meaning, and Grok sub-agents’ own sessions', async () => {
     await runHook(['--agent=cursor', '--event=afterAgentResponse'], { conversation_id: 'cur-conv-1' }, paneEnv('cursor'))
@@ -254,6 +319,10 @@ describe('the hook script turns each agent’s events into status events', () =>
   it('Cursor gets the answer it waits for, in a Tessel pane or not, and nothing else', async () => {
     expect((await runHook(['--agent=cursor', '--event=beforeSubmitPrompt'], {})).out).toBe('{"continue":true}')
     expect((await runHook(['--agent=cursor', '--event=stop'], {}, paneEnv('cursor'))).out).toBe('')
+  })
+  it('Antigravity gets an explicit empty result before each invocation (it cannot refuse there)', async () => {
+    expect((await runHook(['--agent=antigravity', '--event=PreInvocation'], {})).out).toBe('{}')
+    expect((await runHook(['--agent=antigravity', '--event=PostToolUse'], {})).out).toBe('')
   })
   it('status needs the pane’s own launch: another provider or no token writes nothing', async () => {
     await runHook(['--agent=droid', '--event=Stop'], { session_id: 'droid-session' }, { ...paneEnv('droid'), TESSEL_AGENT_PROVIDER: 'claude' })
@@ -323,7 +392,7 @@ describe('plugins and extensions report through the hook script', () => {
   it('Pi: session, turn, tools, and a sub-agent holding the turn open', async () => {
     stubPane('pi')
     vi.stubEnv('TESSEL_PI_STATUS_OWNER', '')
-    const mod = await load(STATUS_HOOKS.pi.source(script), 'pi-status.ts')
+    const mod = await load(STATUS_HOOKS.pi.source(script, 'C:\\nowhere\\node.exe'), 'pi-status.ts')
     const handlers = {}
     const bus = {}
     const pi = { on: (name, fn) => (handlers[name] = fn), events: { on: (name, fn) => (bus[name] = fn) } }
@@ -348,7 +417,7 @@ describe('plugins and extensions report through the hook script', () => {
 
   it('Amp: its thread, its turn and its end', async () => {
     stubPane('amp')
-    const mod = await load(STATUS_HOOKS.amp.source(script), 'amp-status.ts')
+    const mod = await load(STATUS_HOOKS.amp.source(script, 'C:\\nowhere\\node.exe'), 'amp-status.ts')
     const handlers = {}
     mod.default({ on: (name, fn) => (handlers[name] = fn) })
     handlers['session.start']({ thread: { id: 'T-thread-0001' } })
@@ -363,7 +432,7 @@ describe('plugins and extensions report through the hook script', () => {
 
   it('OpenCode: busy and idle, and a permission until it is answered', async () => {
     stubPane('opencode')
-    const mod = await load(opencodePlugin(script), 'opencode-status.mjs')
+    const mod = await load(opencodePlugin(script, 'C:\\nowhere\\node.exe'), 'opencode-status.mjs')
     const plugin = await mod.TesselTeam({ client: { session: {} }, directory: dir })
     const send = (type, properties) => plugin.event({ event: { type, properties } })
     await send('session.created', { info: { id: 'ses_root_001' } })
@@ -376,5 +445,18 @@ describe('plugins and extensions report through the hook script', () => {
     await new Promise((r) => setTimeout(r, 300))
     expect(reports().map((r) => r.event)).toEqual(['SessionStart', 'UserPromptSubmit', 'Elicitation', 'ElicitationResult', 'Stop'])
     expect(reports()[2]).toMatchObject({ toolId: 'per_1', sessionId: 'ses_root_001' })
+  })
+})
+
+describe('the plugins never run "node" by name', () => {
+  it.each([
+    ['amp', (node) => STATUS_HOOKS.amp.source('C:\\s\\tessel-team-mcp.cjs', node)],
+    ['pi', (node) => STATUS_HOOKS.pi.source('C:\\s\\tessel-team-mcp.cjs', node)],
+    ['opencode', (node) => opencodePlugin('C:\\s\\tessel-team-mcp.cjs', node)]
+  ])('%s: the node running it when it is node, else the absolute one found at install', (_agent, source) => {
+    const text = source('C:\\Program Files\\nodejs\\node.exe')
+    expect(text).not.toMatch(/spawn(Sync)?\('node'/)
+    expect(text).toContain(JSON.stringify('C:\\Program Files\\nodejs\\node.exe'))
+    expect(text).toContain('process.execPath')
   })
 })
