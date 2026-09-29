@@ -396,6 +396,15 @@ function projectOrderOptions() {
   ]
 }
 
+// Orca's Clear Filters (sidebar-filter-actions.ts, MIT, Copyright (c) 2026
+// Lovecast Inc.): back to the defaults, only what is set.
+function clearFilters() {
+  if (settings.showSleepingWorkspaces !== true) settings.showSleepingWorkspaces = true
+  if (settings.hideDefaultBranchWorkspace) settings.hideDefaultBranchWorkspace = false
+  if (settings.alwaysShowDefaultBranchWorkspace === false) settings.alwaysShowDefaultBranchWorkspace = true
+  if (settings.sidebarFilterRepoIds.length) settings.sidebarFilterRepoIds = []
+}
+
 // Orca's useWorkspaceOptionsFilterBadge.
 const filterBadge = computed(() => {
   const selected = props.projects.filter((p) => settings.sidebarFilterRepoIds.includes(p.id)).length
@@ -1070,6 +1079,12 @@ defineExpose({
             </div>
           </div>
 
+          <div v-else-if="r.type === 'hidden'" class="osb-hidden-row" data-test="sidebar-hidden-row">
+            <span v-text="t('sidebar.hiddenByFilters', '{{count}} hidden by the filters', { count: r.count }) "></span>
+            <button type="button" class="osb-link" data-test="sidebar-clear-filters" @click="clearFilters">
+              {{ t('sidebar.clearFilters', 'Clear filters') }}
+            </button>
+          </div>
           <WorktreeCard
             v-else
             :card="r.card"
@@ -1098,6 +1113,9 @@ defineExpose({
         </template>
         <div v-if="!rows.some((x) => x.type === 'card') && projects.length" class="osb-empty">
           {{ t('sidebar.noMatch', 'No workspaces match these filters.') }}
+          <button v-if="filterBadge.count" type="button" class="osb-link" data-test="sidebar-empty-clear" @click="clearFilters">
+            {{ t('sidebar.clearFilters', 'Clear filters') }}
+          </button>
         </div>
       </div>
     </template>
