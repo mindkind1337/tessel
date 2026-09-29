@@ -143,10 +143,12 @@ describe('open', () => {
   it('success: own env, secret, agent status, launch token in the result and status', async () => {
     const chat = createChatSessions(deps)
     const r = await openOk(chat, { model: 'sonnet', effort: 'high', projectDir: tmp })
-    expect(r).toEqual({ ok: true, sessionId: expect.stringMatching(/^[0-9a-f-]{36}$/), launchToken: expect.stringMatching(/^[0-9a-f]{32}$/), model: 'sonnet' })
+    expect(r).toEqual({ ok: true, agent: 'claude', sessionId: expect.stringMatching(/^[0-9a-f-]{36}$/), launchToken: expect.stringMatching(/^[0-9a-f]{32}$/), model: 'sonnet' })
     const o = adapters[0].opts
     expect(o).toMatchObject({ exe: 'C:\\bin\\claude.exe', exeArgs: [], cwd: tmp, sessionId: r.sessionId, model: 'sonnet', effort: 'high', permissionMode: 'default' })
     expect(o.resume).toBeUndefined()
+    expect(o.agent).toBe('claude')
+    expect(o.permissions).toBeUndefined()
     expect(o.env).toMatchObject({ TESSEL_PANE_ID: paneId, TESSEL_TEAM_SECRET: 'f'.repeat(64), TESSEL_CHAT: '1', TESSEL_PROJECT_DIR: tmp, CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS: '1' })
     expect(Object.keys(o.env).filter((k) => /^TESSEL_AGENT_|^CLAUDECODE$|^CLAUDE_CODE_ENTRYPOINT$/i.test(k))).toEqual([])
     expect(deps.team.setSecret).toHaveBeenCalledWith(paneId, 'f'.repeat(64))
@@ -216,7 +218,9 @@ describe('open', () => {
       { effort: 'x'.repeat(61) },
       { permissions: 'all' },
       { permissionMode: 'yolo' },
-      { agent: 'codex' }
+      { agent: 'gemini' },
+      { agent: 'codex', resumeId: '-x' },
+      { agent: 'codex', resumeId: 'thread 1' }
     ])
       expect(await chat.open({ paneId, cwd: tmp, permissions: 'manual', ...bad })).toMatchObject({ ok: false, code: 'invalid' })
     expect(deps.createAdapter).not.toHaveBeenCalled()
@@ -694,6 +698,187 @@ describe('IPC', () => {
     expect(call.env).toBeUndefined()
     expect(adapters[0].opts.exe).toBe('C:\\bin\\claude.exe')
     expect(adapters[0].opts.env.EVIL).toBeUndefined()
+  })
+})
+
+describe('codex', () => {
+  const thread = '01a0ec89-63d4-7980-80ae-d21e469ea231'
+  const openCodex = async (chat, extra = {}) => {
+    const r = await chat.open({ paneId, cwd: tmp, permissions: 'manual', agent: 'codex', ...extra })
+    expect(r.ok).toBe(true)
+    await flush()
+    return r
+  }
+  beforeEach(() => {
+    deps.resolveCodex = vi.fn(async () => ({ exe: 'C:\\bin\\codex.exe', exeArgs: ['app-server'], pathEnv: 'C:\\codex' }))
+    deps.env.forPane.mockReturnValue({
+      Path: 'C:\\Windows',
+      TESSEL_PANE_ID: 'someone-else',
+      CODEX_THREAD_ID: 'parent-thread',
+      CODEX_SANDBOX: 'seatbelt',
+      CODEX_MANAGED_BY_NPM: '1',
+      CODEX_HOME: 'C:\\accounts\\work',
+      CODEX_API_KEY: 'acct',
+      OPENAI_API_KEY: 'k',
+      CLAUDECODE: '1'
+    })
+    startResult = { ok: true, pid: 2, info: { threadId: thread, model: 'gpt-5.5' } }
+  })
+
+  it('a new thread: its id comes from the start, into the result, status and journal', async () => {
+    const chat = createChatSessions(deps)
+    const r = await openCodex(chat, { model: 'gpt-5.5', effort: 'high', projectDir: tmp })
+    expect(r).toEqual({ ok: true, agent: 'codex', sessionId: thread, launchToken: expect.stringMatching(/^[0-9a-f]{32}$/), model: 'gpt-5.5' })
+    expect(deps.resolveClaude).not.toHaveBeenCalled()
+    const o = adapters[0].opts
+    expect(o).toMatchObject({ agent: 'codex', exe: 'C:\\bin\\codex.exe', exeArgs: ['app-server'], cwd: tmp, model: 'gpt-5.5', effort: 'high', permissions: 'manual' })
+    for (const k of ['threadId', 'sessionId', 'resume', 'permissionMode']) expect(o[k]).toBeUndefined()
+    expect(o.env).toMatchObject({
+      PATH: 'C:\\codex',
+      TESSEL_PANE_ID: paneId,
+      TESSEL_TEAM_SECRET: 'f'.repeat(64),
+      TESSEL_CHAT: '1',
+      TESSEL_PROJECT_DIR: tmp,
+      CODEX_HOME: 'C:\\accounts\\work',
+      CODEX_API_KEY: 'acct',
+      OPENAI_API_KEY: 'k'
+    })
+    for (const k of ['CODEX_THREAD_ID', 'CODEX_SANDBOX', 'CODEX_MANAGED_BY_NPM', 'CLAUDECODE', 'CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS']) expect(o.env[k]).toBeUndefined()
+    expect(events('status').find((e) => e.state === 'starting')).toEqual({ type: 'status', state: 'starting', agent: 'codex' })
+    expect(last('status')).toMatchObject({ state: 'idle', agent: 'codex', sessionId: thread, launchToken: r.launchToken })
+    expect(stateCalls).toEqual([['register', 'codex'], ['SessionStart'], ['observe', 'ScreenReady']])
+    expect(chat.history({ paneId })).toMatchObject({ meta: { sessionId: thread, agent: 'codex', cwd: tmp }, live: { agent: 'codex', sessionId: thread } })
+    expect(chat.list()).toEqual([expect.objectContaining({ agent: 'codex', sessionId: thread })])
+  })
+
+  it('no thread id from the start: runs, but nothing to resume', async () => {
+    startResult = { ok: true, pid: 2, info: {} }
+    const chat = createChatSessions(deps)
+    const r = await openCodex(chat)
+    expect(r.sessionId).toBeNull()
+    expect(chat.history({ paneId }).meta).toMatchObject({ sessionId: null, agent: 'codex' })
+  })
+
+  it('resume passes the thread id; the same thread in another pane is busy', async () => {
+    const chat = createChatSessions(deps)
+    const r = await openCodex(chat, { resumeId: thread, permissions: 'yolo' })
+    expect(adapters[0].opts).toMatchObject({ threadId: thread, permissions: 'yolo' })
+    expect(r.sessionId).toBe(thread)
+    expect(events('status').find((e) => e.state === 'starting')).toMatchObject({ sessionId: thread })
+    expect(await chat.open({ paneId: 'pane-2', cwd: tmp, permissions: 'manual', agent: 'codex', resumeId: thread })).toMatchObject({ code: 'busy' })
+  })
+
+  it('no Codex found', async () => {
+    deps.resolveCodex.mockResolvedValue(null)
+    const chat = createChatSessions(deps)
+    expect(await chat.open({ paneId, cwd: tmp, permissions: 'manual', agent: 'codex' })).toEqual({
+      ok: false,
+      code: 'no-codex',
+      error: 'Codex was not found. Install it, then try again.'
+    })
+    expect(last('status')).toMatchObject({ state: 'crashed', agent: 'codex' })
+    expect(deps.team.newSecret).not.toHaveBeenCalled()
+    // A manager given no Codex resolver: the same.
+    const noResolver = { ...deps }
+    delete noResolver.resolveCodex
+    expect(await createChatSessions(noResolver).open({ paneId: 'pane-2', cwd: tmp, permissions: 'manual', agent: 'codex' })).toMatchObject({ code: 'no-codex' })
+  })
+
+  it('start failures speak of Codex', async () => {
+    startResult = { ok: false, code: 'signin', error: 'not logged in' }
+    const chat = createChatSessions(deps)
+    expect(await chat.open({ paneId, cwd: tmp, permissions: 'manual', agent: 'codex' })).toMatchObject({
+      code: 'signin',
+      error: 'Codex is not signed in. Sign in to Codex, then try again.'
+    })
+    startResult = { ok: false, code: 'timeout', error: 'x' }
+    expect(await chat.open({ paneId, cwd: tmp, permissions: 'manual', agent: 'codex' })).toMatchObject({ code: 'failed', error: 'Codex did not answer in time.' })
+  })
+
+  it('permission mode: yolo <-> manual only, bypass only after a yolo launch', async () => {
+    const chat = createChatSessions(deps)
+    await openCodex(chat, { permissions: 'yolo' })
+    const a = adapters[0]
+    expect((await chat.setOption({ paneId, permissionMode: 'default' })).ok).toBe(true)
+    expect(a.setPermissionMode).toHaveBeenLastCalledWith('default')
+    expect((await chat.setOption({ paneId, permissionMode: 'bypassPermissions' })).ok).toBe(true)
+    expect(a.setPermissionMode).toHaveBeenLastCalledWith('bypassPermissions')
+    expect((await chat.setOption({ paneId, permissionMode: 'plan' })).ok).toBe(false)
+    expect(a.setPermissionMode).toHaveBeenCalledTimes(2)
+    await chat.close({ paneId })
+    await openCodex(chat)
+    expect((await chat.setOption({ paneId, permissionMode: 'bypassPermissions' })).ok).toBe(false)
+    expect(adapters[1].setPermissionMode).not.toHaveBeenCalled()
+  })
+
+  it('approvals forward the offered choices; allow for the session only when offered', async () => {
+    const chat = createChatSessions(deps)
+    await openCodex(chat)
+    const a = adapters[0]
+    a.emit('state', { state: 'running' })
+    a.emit('permission', { requestId: 'r1', toolName: 'shell', input: { command: 'ls' }, choices: ['accept', 'decline', 'cancel'] })
+    expect(last('approval')).toMatchObject({ requestId: 'r1', choices: ['accept', 'decline', 'cancel'], status: 'pending' })
+    expect(await chat.approve({ paneId, requestId: 'r1', decision: 'allowSession' })).toMatchObject({ ok: false, code: 'invalid' })
+    expect(a.answerPermission).not.toHaveBeenCalled()
+    expect(await chat.approve({ paneId, requestId: 'r1', decision: 'allow' })).toEqual({ ok: true })
+    const offered = ['accept', 'acceptForSession', { acceptWithExecpolicyAmendment: { execpolicy_amendment: ['ls'] } }, 'decline']
+    a.emit('permission', { requestId: 'r2', toolName: 'shell', input: {}, choices: offered })
+    expect(last('approval').choices).toEqual(offered)
+    expect(await chat.approve({ paneId, requestId: 'r2', decision: 'allowSession' })).toEqual({ ok: true })
+    expect(a.answerPermission).toHaveBeenLastCalledWith('r2', { behavior: 'allow', session: true })
+  })
+
+  it('a failed turn (no turn/completed): idle, a notice, the team batch released, the queue goes on', async () => {
+    const chat = createChatSessions(deps)
+    await openCodex(chat)
+    const a = adapters[0]
+    chat.sendTeam({ paneId, messages: [{ id: 'm1', from: '#3', text: 'x' }] })
+    await flush()
+    expect(a.send).toHaveBeenCalledTimes(1)
+    const u = chat.send({ paneId, text: 'after' })
+    expect(u.queued).toBe(true)
+    stateCalls.length = 0
+    a.emit('turnEnd', { status: 'failed', error: 'This content was flagged.' })
+    await flush()
+    expect(events('teamFailed')).toEqual([{ type: 'teamFailed', ids: ['m1'] }])
+    expect(last('turnEnd')).toEqual({ type: 'turnEnd', status: 'failed', error: 'This content was flagged.' })
+    expect(last('notice')).toEqual({ type: 'notice', kind: 'error', text: 'The turn failed: This content was flagged.' })
+    expect(stateCalls.slice(0, 3)).toEqual([['UserPromptSubmit'], ['StopFailure'], ['observe', 'ScreenReady']])
+    expect(a.send).toHaveBeenLastCalledWith({ uuid: u.id, text: 'after' })
+    a.emit('accepted', { uuid: u.id })
+    a.emit('turnEnd', { status: 'completed' })
+    await flush()
+    expect(last('status')).toMatchObject({ state: 'idle' })
+    // The released team message can come again.
+    expect(chat.sendTeam({ paneId, messages: [{ id: 'm1', from: '#3', text: 'x' }] }).ids).toEqual(['m1'])
+  })
+
+  it('a Claude failed turn has no extra notice (its turn row shows the error)', async () => {
+    const chat = createChatSessions(deps)
+    await openOk(chat)
+    adapters[0].emit('state', { state: 'running' })
+    adapters[0].emit('turnEnd', { status: 'failed', result: 'API error' })
+    expect(events('notice')).toEqual([])
+  })
+
+  it('a failed turn ends idle in the real status store', async () => {
+    let tick = Date.now()
+    const store = createAgentStateStore({ dir: join(tmp, 'status'), now: () => tick })
+    const chat = createChatSessions({ ...deps, state: store, now: () => tick })
+    const r = await openCodex(chat)
+    const st = () => store.snapshot()[paneId]
+    const until = (expected) => vi.waitFor(() => expect(st()).toMatchObject(expected), { timeout: 3000, interval: 5 })
+    await until({ state: 'idle', provider: 'codex', launchToken: r.launchToken })
+    const u = chat.send({ paneId, text: 'go' })
+    await flush()
+    tick++
+    adapters[0].emit('accepted', { uuid: u.id })
+    await until({ state: 'working', sessionId: thread })
+    tick++
+    adapters[0].emit('turnEnd', { status: 'failed', error: 'usage limit' })
+    await until({ state: 'idle' })
+    await chat.close({ paneId })
+    await store.dispose()
   })
 })
 

@@ -280,6 +280,18 @@ onMounted(async () => {
         <span class="launch-name">{{ t('pane.launch.chat', 'Claude Code (chat)') }}</span>
       </button>
     </div>
+    <div v-if="installedAgents.some((a) => a.id === 'codex' && a.available !== false)" class="launch-row">
+      <button
+        class="launch-item"
+        role="menuitem"
+        data-test="launch-chat-codex"
+        :title="t('pane.launch.chatCodexHint', 'Codex in a chat pane: no terminal; team messages reach it as turns of their own')"
+        @click="emit('launch', { kind: 'chat', id: 'codex' })"
+      >
+        <BrandIcon kind="codex" :label="t('pane.launch.chatCodex', 'Codex (chat)')" :size="16" />
+        <span class="launch-name">{{ t('pane.launch.chatCodex', 'Codex (chat)') }}</span>
+      </button>
+    </div>
     <p v-if="!installedAgents.length" class="launch-empty">{{ t('pane.launch.noAgents', 'No AI agents installed yet.') }}</p>
     <div v-if="missingAgents.length" class="launch-install">
       <span class="launch-install-label">{{ t('pane.launch.install', 'Install:') }}</span>

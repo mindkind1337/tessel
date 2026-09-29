@@ -47,6 +47,7 @@ import { claudeImageFile, isPastedImage, PASTE_DIR } from './pastedImages'
 import { createBrowserGuests } from './browserGuest'
 import { createChatSessions } from './chat/sessions'
 import { createClaudeChat } from './chat/claudeChat'
+import { createCodexChat } from './chat/codexChat'
 import { createChatTrust } from './chat/chatTrust'
 import { createLogger, describe } from './logger'
 import { guardIpc, mainFrameSender } from './ipcGuard'
@@ -988,8 +989,8 @@ const chatTrust = createChatTrust({
     const opts = {
       type: 'warning',
       title: t('main.chat.trustTitle', 'Trust this folder for a chat agent?'),
-      message: t('main.chat.trustMessage', 'A chat agent runs Claude in {{dir}} without its terminal: Claude then runs the hooks and MCP servers this folder sets up (.claude/settings.json, .mcp.json) without asking.', { dir: String(dir).replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, 300) }),
-      detail: t('main.chat.trustDetail', 'Trust it only if you know where this folder comes from. A Claude terminal pane asks you itself.'),
+      message: t('main.chat.trustMessage', 'A chat agent runs Claude or Codex in {{dir}} without its terminal: it then runs the hooks and MCP servers this folder sets up (.claude/settings.json, .mcp.json, .codex/config.toml) without asking.', { dir: String(dir).replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, 300) }),
+      detail: t('main.chat.trustDetail', 'Trust it only if you know where this folder comes from. In a terminal pane the agent asks you itself.'),
       buttons: [t('main.chat.trustYes', 'Trust this folder'), t('main.chat.trustNo', 'Cancel')],
       defaultId: 1,
       cancelId: 1,
@@ -1003,11 +1004,17 @@ const chatTrust = createChatTrust({
 const chatSessions = createChatSessions({
   dir: app.getPath('userData'),
   send,
-  createAdapter: (opts) => createClaudeChat(opts),
+  // Claude (stream-json) or Codex (codex app-server, JSON-RPC).
+  createAdapter: (opts) => (opts && opts.agent === 'codex' ? createCodexChat(opts) : createClaudeChat(opts)),
   // The installed claude (the npm shim resolved to what it runs), as for
   // Tessel's headless calls.
   resolveClaude: async () => {
     const prog = await resolveProgram('claude')
+    return prog ? { exe: prog.file, exeArgs: prog.pre || [], pathEnv: prog.path || null } : null
+  },
+  // Codex's npm shim runs `node codex.js`: the same, with app-server added by the adapter.
+  resolveCodex: async () => {
+    const prog = await resolveProgram('codex')
     return prog ? { exe: prog.file, exeArgs: prog.pre || [], pathEnv: prog.path || null } : null
   },
   // As a terminal pane's: Tessel's clean environment, then Settings > Agents

@@ -16,7 +16,7 @@
     "rate": {
       "fiveHour": "5 h : {{pct}} %",
       "sevenDay": "7 j : {{pct}} %",
-      "hint": "Limites d'utilisation de Claude (5 heures, 7 jours)"
+      "hint": "Limites d'utilisation de {{agent}} (5 heures, 7 jours)"
     },
     "model": {
       "busy": "Attendez la fin du tour"
@@ -26,7 +26,7 @@
       "jump": "Aller au dernier message"
     },
     "empty": {
-      "starting": "Démarrage de Claude…",
+      "starting": "Démarrage de {{agent}}…",
       "idle": "Envoyez un message pour commencer."
     },
     "state": {
@@ -34,22 +34,23 @@
       "startAgain": "Redémarrer",
       "untrusted": "Ce dossier n'est pas encore approuvé.",
       "trust": "Approuver ce dossier…",
-      "stopped": "L'agent s'est arrêté"
+      "stopped": "L'agent s'est arrêté",
+      "signinCodex": "Codex n'est pas connecté. Ouvrez un panneau terminal Codex et connectez-vous (codex login), puis relancez."
     },
     "composer": {
-      "placeholder": "Écrire à Claude…",
-      "placeholderBusy": "Écrire à Claude (envoyé à la fin du tour)…",
+      "placeholder": "Écrire à {{agent}}…",
+      "placeholderBusy": "Écrire à {{agent}} (envoyé à la fin du tour)…",
       "label": "Message",
       "send": "Envoyer",
       "sendHint": "Envoyer (Entrée) · nouvelle ligne : Maj+Entrée",
       "interrupt": "Interrompre",
       "interruptHint": "Arrêter l'agent (Échap)",
-      "signin": "Claude n'est pas connecté",
+      "signin": "{{agent}} n'est pas connecté",
       "untrusted": "Approuvez ce dossier pour commencer",
       "stopped": "L'agent s'est arrêté : redémarrez-le"
     },
     "error": {
-      "open": "Impossible de démarrer Claude.",
+      "open": "Impossible de démarrer {{agent}}.",
       "send": "Message non envoyé : {{error}}",
       "approve": "Réponse non envoyée : {{error}}",
       "option": "Modification impossible : {{error}}",

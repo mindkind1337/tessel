@@ -46,7 +46,17 @@ const isMaximized = computed(() => ctx.maximizedId.value === props.node.id)
 const status = computed(() => state.value.status)
 const busy = computed(() => isBusy(status.value))
 const stopped = computed(() => STOPPED_STATES.has(status.value))
-const title = computed(() => props.node.title || 'Claude')
+// Which agent: Claude or Codex (the leaf's agentId).
+const agentId = computed(() => (props.node.agentId === 'codex' ? 'codex' : 'claude'))
+const agentName = computed(() => (agentId.value === 'codex' ? 'Codex' : 'Claude')) // i18n-ignore product names
+const title = computed(() => props.node.title || agentName.value)
+const startingText = computed(() => t('chat.empty.starting', 'Starting {{agent}}…', { agent: agentName.value }))
+// How to sign in again: in a terminal pane of that agent.
+const signinText = computed(() =>
+  agentId.value === 'codex'
+    ? t('chat.state.signinCodex', 'Codex is not signed in. Open a Codex terminal pane and sign in (codex login), then start again.')
+    : t('chat.state.signin', 'Claude is not signed in. Open a Claude terminal pane and run /login, then start again.')
+)
 
 const statusLabel = computed(() => {
   switch (status.value) {
@@ -92,7 +102,7 @@ const shownRows = computed(() => (hiddenCount.value ? rows.value.slice(-limit.va
 const disabledReason = computed(() => {
   switch (status.value) {
     case 'signin':
-      return t('chat.composer.signin', 'Claude is not signed in')
+      return t('chat.composer.signin', '{{agent}} is not signed in', { agent: agentName.value })
     case 'untrusted':
       return t('chat.composer.untrusted', 'Trust this folder to start')
     case 'ended':
@@ -187,7 +197,7 @@ async function start() {
   if (code === 'busy') return // already opening elsewhere: its events will come
   if (code === 'untrusted') dispatch({ type: 'status', state: 'untrusted' })
   else if (code === 'signin') dispatch({ type: 'status', state: 'signin', error: (res && res.error) || '' })
-  else dispatch({ type: 'status', state: 'crashed', error: (res && res.error) || t('chat.error.open', 'Could not start Claude.') })
+  else dispatch({ type: 'status', state: 'crashed', error: (res && res.error) || t('chat.error.open', 'Could not start {{agent}}.', { agent: agentName.value }) })
 }
 
 // --- Actions ---------------------------------------------------------------------------------
@@ -254,7 +264,7 @@ async function fetchApprovalInput({ requestId }) {
 }
 
 // --- Model -----------------------------------------------------------------------------------
-const modelList = computed(() => (modelMenu.visible ? modelsFor('claude') : []))
+const modelList = computed(() => (modelMenu.visible ? modelsFor(agentId.value) : []))
 const modelValues = computed(() => ({ model: state.value.model || props.node.model || null, effort: props.node.effort || undefined }))
 async function onModelPick({ optionId, value }) {
   if (optionId !== 'model' && optionId !== 'effort') return
@@ -399,7 +409,7 @@ defineExpose({ start, send, interrupt })
       <div class="pane-nav-left">
         <span v-if="node.num" class="pane-num" :title="t('editor.pane.number', 'Pane #{{num}}', { num: node.num })">{{ node.num }}</span>
         <span class="pane-icon agent" :class="[iconState, { yolo: permissions === 'yolo' }]" :aria-label="title">
-          <BrandIcon kind="claude" :size="15" />
+          <BrandIcon :kind="agentId" :size="15" />
           <span class="pane-status-dot"></span>
         </span>
         <span class="pane-title" data-test="chat-title" :title="t('chat.pane.titleHint', '{{title}}\nDrag the header to move the pane', { title })">{{ title }}</span>
@@ -424,7 +434,7 @@ defineExpose({ start, send, interrupt })
           :title="t('chat.pane.yoloHint', 'Tools run without asking (Settings)')"
           >Yolo</span
         >
-        <span v-if="rateText" class="chat-rate" data-test="chat-rate" :title="t('chat.rate.hint', 'Claude usage limits (5 hours, 7 days)')">{{ rateText }}</span>
+        <span v-if="rateText" class="chat-rate" data-test="chat-rate" :title="t('chat.rate.hint', '{{agent}} usage limits (5 hours, 7 days)', { agent: agentName })">{{ rateText }}</span>
       </div>
       <div class="pane-nav-actions" @mousedown.stop>
         <button
@@ -454,7 +464,7 @@ defineExpose({ start, send, interrupt })
 
     <div v-if="modelMenu.visible" class="chat-model-menu" data-test="chat-model-menu" @mousedown.stop>
       <SessionOptionPicker
-        agent-id="claude"
+        :agent-id="agentId"
         :models="modelList"
         :values="modelValues"
         :live="false"
@@ -471,8 +481,8 @@ defineExpose({ start, send, interrupt })
             {{ earlierText }}
           </button>
           <div v-if="!rows.length" class="chat-empty" data-test="chat-empty">
-            <BrandIcon kind="claude" :size="28" />
-            <span v-if="status === 'starting'">{{ t('chat.empty.starting', 'Starting Claude…') }}</span>
+            <BrandIcon :kind="agentId" :size="28" />
+            <span v-if="status === 'starting'">{{ startingText }}</span>
             <span v-else-if="!stopped">{{ t('chat.empty.idle', 'Send a message to start.') }}</span>
           </div>
           <template v-for="row in shownRows" :key="row.key">
@@ -496,7 +506,7 @@ defineExpose({ start, send, interrupt })
         <template v-if="status === 'signin'">
           <LogIn :size="15" class="chat-state-icon" aria-hidden="true" />
           <div class="chat-state-text">
-            {{ t('chat.state.signin', 'Claude is not signed in. Open a Claude terminal pane and run /login, then start again.') }}
+            {{ signinText }}
           </div>
           <button type="button" class="chat-state-btn" data-test="chat-start-again" :disabled="opening" @click="start">
             <RotateCcw :size="13" aria-hidden="true" />
@@ -527,6 +537,7 @@ defineExpose({ start, send, interrupt })
         ref="composerRef"
         v-model="draft"
         :busy="busy"
+        :agent-name="agentName"
         :disabled-reason="disabledReason"
         @send="send"
         @interrupt="interrupt"

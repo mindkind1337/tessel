@@ -115,7 +115,7 @@ function onKeydown(e) {
   // Typing a reason is not an answer.
   if (e.target && e.target.closest && e.target.closest('input, textarea')) return
   const k = e.key.toLowerCase()
-  const decision = k === 'y' ? 'allow' : k === 'a' ? 'allowSession' : k === 'n' ? 'deny' : null
+  const decision = k === 'y' ? 'allow' : k === 'a' && props.row.sessionAllowed !== false ? 'allowSession' : k === 'n' ? 'deny' : null
   if (!decision) return
   e.preventDefault()
   e.stopPropagation()
@@ -170,6 +170,7 @@ defineExpose({ focus: () => cardEl.value && cardEl.value.focus() })
         {{ t('chat.approval.allow', 'Allow') }}
       </button>
       <button
+        v-if="row.sessionAllowed !== false"
         type="button"
         class="chat-btn"
         data-test="chat-approve-session"

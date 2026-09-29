@@ -388,7 +388,9 @@
       "keysClose": "pour fermer",
       "modelHint": "Le modèle avec lequel {{name}} démarre",
       "chat": "Claude Code (chat)",
-      "chatHint": "Claude dans un panneau de chat : sans terminal ; les messages d'équipe lui arrivent comme des tours à part entière"
+      "chatHint": "Claude dans un panneau de chat : sans terminal ; les messages d'équipe lui arrivent comme des tours à part entière",
+      "chatCodex": "Codex (chat)",
+      "chatCodexHint": "Codex dans un panneau de chat : sans terminal ; les messages d'équipe lui arrivent comme des tours à part entière"
     },
     "model": {
       "fromSession": "d'après sa dernière réponse",

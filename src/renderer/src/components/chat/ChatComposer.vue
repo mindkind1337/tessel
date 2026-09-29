@@ -9,6 +9,8 @@ import { SendHorizontal, Square } from 'lucide-vue-next'
 import { t } from '../../i18n'
 
 const props = defineProps({
+  // Who the messages go to (Claude, Codex).
+  agentName: { type: String, default: 'Claude' }, // i18n-ignore product name
   modelValue: { type: String, default: '' },
   busy: { type: Boolean, default: false },
   // Why nothing can be sent now ('' = it can).
@@ -23,8 +25,8 @@ const disabled = computed(() => !!props.disabledReason)
 const canSend = computed(() => !disabled.value && props.modelValue.trim().length > 0)
 const placeholder = computed(() => {
   if (props.disabledReason) return props.disabledReason
-  if (props.busy) return t('chat.composer.placeholderBusy', 'Message Claude (sent when the turn ends)…')
-  return t('chat.composer.placeholder', 'Message Claude…')
+  if (props.busy) return t('chat.composer.placeholderBusy', 'Message {{agent}} (sent when the turn ends)…', { agent: props.agentName })
+  return t('chat.composer.placeholder', 'Message {{agent}}…', { agent: props.agentName })
 })
 
 function onInput(e) {
