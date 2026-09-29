@@ -66,11 +66,11 @@ describe('MCP servers in agents settings files', () => {
     expect(teamToolsEntry('gemini', 'C:/t/tessel-team-mcp.cjs')).toEqual({
       command: 'node',
       args: ['C:/t/tessel-team-mcp.cjs'],
-      env: { TESSEL_PANE_ID: '$TESSEL_PANE_ID', TESSEL_PROJECT_DIR: '$TESSEL_PROJECT_DIR' },
+      env: { TESSEL_PANE_ID: '$TESSEL_PANE_ID', TESSEL_PROJECT_DIR: '$TESSEL_PROJECT_DIR', TESSEL_TEAM_SECRET: '$TESSEL_TEAM_SECRET' },
       trust: true
     })
     // No path through {env:}: OpenCode inserts it raw, and a backslash breaks its JSON.
-    expect(teamToolsEntry('opencode', 'C:/t/s.cjs').environment).toEqual({ TESSEL_PANE_ID: '{env:TESSEL_PANE_ID}' })
+    expect(teamToolsEntry('opencode', 'C:/t/s.cjs').environment).toEqual({ TESSEL_PANE_ID: '{env:TESSEL_PANE_ID}', TESSEL_TEAM_SECRET: '{env:TESSEL_TEAM_SECRET}' })
     // Cline hands the pane's environment on and never expands $VAR: no env.
     expect(teamToolsEntry('cline', 'C:/t/s.cjs')).toEqual({ command: 'node', args: ['C:/t/s.cjs'] })
   })

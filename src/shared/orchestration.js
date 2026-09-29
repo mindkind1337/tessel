@@ -42,7 +42,7 @@ export const WORKER_ENDED = ['done', 'failed', 'stopped', 'released', 'refused']
 const MAX_TITLE = 200
 const MAX_BRIEF = 4000
 const CARD_ID = /^(?!\.)(?!.*\.\.)[A-Za-z0-9._-]{1,100}$/
-const REQUEST_ID = /^r-[a-z0-9-]{4,40}$/
+const REQUEST_ID = /^r-[A-Za-z0-9_-]{4,60}$/
 
 function clampInt(v, lo, hi, def) {
   return typeof v === 'number' && Number.isSafeInteger(v) && v >= lo ? Math.min(hi, v) : def

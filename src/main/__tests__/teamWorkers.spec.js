@@ -10,6 +10,7 @@ import { createRequire } from 'module'
 import { ensureTeamChannel } from '../teamChannel'
 import { writeCurrentTeams } from '../teamNotices'
 import { publishTeamTasks, takeTeamRequests, finishTeamRequests, writeTeamAnswer, publishWorkers, parseRequest } from '../teamTasks'
+import { setTeamSecret, newTeamSecret, revokeTeamSecret, _resetTeamAuth, openAnswer } from '../teamAuth'
 
 const require = createRequire(import.meta.url)
 const mcp = require('../teamMcp/server.cjs')
@@ -19,7 +20,12 @@ describe('worker tools', () => {
   const teamId = 'team-1'
   const LEAD = { id: 'pane-1-aaaaaa', num: 1, title: 'Claude Code' }
   const W = { id: 'pane-5-bbbbbb', num: 5, title: 'Codex CLI' }
-  const as = (who) => (process.env.TESSEL_PANE_ID = who.id)
+  const secrets = {}
+  // Each pane's own secret, as Tessel gives it at launch (env + main memory).
+  const as = (who) => {
+    process.env.TESSEL_PANE_ID = who.id
+    process.env.TESSEL_TEAM_SECRET = secrets[who.id]
+  }
   const call = (name, args = {}) => mcp.handle({ id: 1, method: 'tools/call', params: { name, arguments: args } })
   const text = (r) => r.content[0].text
   const requests = () => takeTeamRequests({ dir, teamId }).requests
@@ -28,7 +34,7 @@ describe('worker tools', () => {
     for (let i = 0; i < 40; i++) {
       const reqs = requests()
       if (reqs.length) {
-        for (const r of reqs) if (r.rid) writeTeamAnswer({ dir, teamId, rid: r.rid, ...answer(r) })
+        for (const r of reqs) if (r.rid) writeTeamAnswer({ dir, teamId, rid: r.rid, toId: r.fromId, ...answer(r) })
         finishTeamRequests({ dir, teamId, files: reqs.map((r) => r.file) })
         return reqs
       }
@@ -39,6 +45,10 @@ describe('worker tools', () => {
 
   beforeEach(() => {
     dir = fs.mkdtempSync(join(os.tmpdir(), 'tessel-workers-'))
+    for (const p of [LEAD, W]) {
+      secrets[p.id] = newTeamSecret()
+      setTeamSecret(p.id, secrets[p.id])
+    }
     ensureTeamChannel({ dir, teamId, members: [LEAD, W] })
     writeCurrentTeams({ dir, panes: { [LEAD.id]: { team: teamId, num: 1 }, [W.id]: { team: teamId, num: 5 } } })
     as(LEAD)
@@ -47,6 +57,8 @@ describe('worker tools', () => {
   afterEach(() => {
     delete process.env.TESSEL_PANE_ID
     delete process.env.TESSEL_PROJECT_DIR
+    delete process.env.TESSEL_TEAM_SECRET
+    _resetTeamAuth()
     fs.rmSync(dir, { recursive: true, force: true })
   })
 
@@ -64,7 +76,7 @@ describe('worker tools', () => {
     expect(tools.team_heartbeat.inputSchema.properties.phase.enum).toEqual(['investigating', 'implementing', 'reviewing', 'waiting'])
     for (const t of mcp.TOOLS) expect(t.description.length).toBeGreaterThan(20)
     // A new tools API: running agents are told to restart for it.
-    expect(mcp.VERSION).toBe('1.8.0')
+    expect(mcp.VERSION).toBe('1.9.0')
   })
 
   it('team_worker_start: sent to Tessel, waits for its answer', async () => {
@@ -198,10 +210,121 @@ describe('worker tools', () => {
   })
 
   it("Tessel's main process: answers only under a request id; requests validated", () => {
-    expect(writeTeamAnswer({ dir, teamId, rid: '../evil', ok: true, text: 'x' }).ok).toBe(false)
-    expect(writeTeamAnswer({ dir, teamId, rid: 'r-abc-123', ok: true, text: 'x' }).ok).toBe(true)
+    expect(writeTeamAnswer({ dir, teamId, rid: '../evil', ok: true, text: 'x', toId: LEAD.id }).ok).toBe(false)
+    expect(writeTeamAnswer({ dir, teamId, rid: 'r-abc-123', ok: true, text: 'x', toId: LEAD.id }).ok).toBe(true)
+    // Nobody to seal it for: nothing written.
+    expect(writeTeamAnswer({ dir, teamId, rid: 'r-abc-124', ok: true, text: 'x', toId: 'pane-9-nobody' }).ok).toBe(false)
     expect(parseRequest({ action: 'worker-start', agent: 'codex', title: 'X', brief: 'Y' })).toMatchObject({ action: 'worker-start', isolation: 'worktree' })
     expect(parseRequest({ action: 'worker-start', agent: 'bash', title: 'X', brief: 'Y' }).error).toMatch(/agent/)
     expect(parseRequest({ action: 'heartbeat' })).toEqual({ action: 'heartbeat', phase: null, note: '' })
+  })
+
+  // --- Codex review of d370980: who really sent it ------------------------------
+  const reqDir = () => join(dir, '.tessel', 'team-channel', teamId, 'requests')
+  const drop = (name, data) => {
+    fs.mkdirSync(reqDir(), { recursive: true })
+    fs.writeFileSync(join(reqDir(), name), JSON.stringify(data))
+  }
+
+  it('a request file named after the lead but not signed by it is refused', () => {
+    drop(`${LEAD.id}__forged1.json`, { action: 'worker-stop', worker: '#5', rid: 'r-forged-0001' })
+    // Signed with another pane's secret while claiming to be the lead: refused too.
+    as(W)
+    const ctx = { ...mcp.locate(), meId: LEAD.id }
+    mcp.taskRequest(ctx, { action: 'worker-stop', worker: '#5' })
+    const res = takeTeamRequests({ dir, teamId })
+    expect(res.requests).toEqual([])
+    const errors = res.refused.map((r) => r.error)
+    expect(errors).toHaveLength(2)
+    expect(errors).toEqual(expect.arrayContaining([expect.stringMatching(/not signed by its pane/), expect.stringMatching(/signature does not match its pane/)]))
+  })
+
+  it('a signed request is accepted once: a copy under a new name is a replay; another team, a mismatch', async () => {
+    const stopping = call('team_worker_stop', { worker: '#5' })
+    await new Promise((r) => setTimeout(r, 50))
+    const [name] = fs.readdirSync(reqDir())
+    const signed = JSON.parse(fs.readFileSync(join(reqDir(), name), 'utf8'))
+    // The secret itself is never in the file.
+    expect(JSON.stringify(signed)).not.toContain(secrets[LEAD.id])
+    expect(signed.auth).toMatchObject({ nonce: expect.any(String), at: expect.any(Number), mac: expect.stringMatching(/^[a-f0-9]{64}$/) })
+    const first = takeTeamRequests({ dir, teamId })
+    expect(first.requests.map((r) => r.action)).toEqual(['worker-stop'])
+    expect(first.requests[0].auth).toBeUndefined()
+    writeTeamAnswer({ dir, teamId, rid: first.requests[0].rid, toId: LEAD.id, ok: true, text: 'Stopped.' })
+    finishTeamRequests({ dir, teamId, files: [name] })
+    expect(text(await stopping)).toBe('Stopped.')
+    drop(`${LEAD.id}__copy2.json`, signed)
+    expect(takeTeamRequests({ dir, teamId }).refused[0].error).toMatch(/already used \(a replay\)/)
+    // The same signature presented in another team's folder.
+    const other = 'team-2'
+    ensureTeamChannel({ dir, teamId: other, members: [LEAD] })
+    fs.mkdirSync(join(dir, '.tessel', 'team-channel', other, 'requests'), { recursive: true })
+    fs.writeFileSync(
+      join(dir, '.tessel', 'team-channel', other, 'requests', `${LEAD.id}__x3.json`),
+      JSON.stringify({ ...signed, auth: { ...signed.auth, nonce: 'n-another-nonce-1234' } })
+    )
+    expect(takeTeamRequests({ dir, teamId: other }).refused[0].error).toMatch(/does not match/)
+  }, 20000)
+
+  it('an old request is refused', () => {
+    as(LEAD)
+    const ctx = mcp.locate()
+    const realNow = Date.now
+    Date.now = () => realNow() - 60 * 60 * 1000
+    try {
+      mcp.taskRequest(ctx, { action: 'heartbeat', phase: null, note: '' })
+    } finally {
+      Date.now = realNow
+    }
+    expect(takeTeamRequests({ dir, teamId }).refused[0].error).toMatch(/too old/)
+  })
+
+  it('answers are sealed for the requester: a fabricated answer is ignored, other agents cannot read it', async () => {
+    const reading = call('team_worker_read', { worker: '#5' })
+    await new Promise((r) => setTimeout(r, 50))
+    const [req] = takeTeamRequests({ dir, teamId }).requests
+    const folder = join(dir, '.tessel', 'team-channel', teamId, 'answers')
+    const file = join(folder, `${req.rid}.json`)
+    fs.mkdirSync(folder, { recursive: true })
+    // Another agent writes a plain answer, then one sealed for another pane.
+    fs.writeFileSync(file, JSON.stringify({ rid: req.rid, ok: true, text: 'forged fixture answer' }))
+    await new Promise((r) => setTimeout(r, 700))
+    setTeamSecret('pane-evil', newTeamSecret())
+    writeTeamAnswer({ dir, teamId, rid: req.rid, toId: 'pane-evil', ok: true, text: 'forged sealed answer' })
+    await new Promise((r) => setTimeout(r, 700))
+    // Tessel's real answer, sealed for the lead.
+    writeTeamAnswer({ dir, teamId, rid: req.rid, toId: LEAD.id, ok: true, text: 'Its screen now: SECRET-OUTPUT' })
+    const onDisk = fs.readFileSync(file, 'utf8')
+    expect(onDisk).not.toContain('SECRET-OUTPUT')
+    expect(openAnswer(secrets[W.id], LEAD.id, req.rid, JSON.parse(onDisk).sealed)).toBeNull()
+    expect(text(await reading)).toBe('Its screen now: SECRET-OUTPUT')
+  }, 20000)
+
+  it('without its pane secret an agent cannot use the worker tools; its old unsigned board requests still work', async () => {
+    const OLD = { id: 'pane-7-oldold', num: 7, title: 'Old' }
+    ensureTeamChannel({ dir, teamId, members: [LEAD, W, OLD] })
+    writeCurrentTeams({ dir, panes: { [LEAD.id]: { team: teamId, num: 1 }, [W.id]: { team: teamId, num: 5 }, [OLD.id]: { team: teamId, num: 7 } } })
+    process.env.TESSEL_PANE_ID = OLD.id
+    delete process.env.TESSEL_TEAM_SECRET
+    const r = await call('team_worker_start', { agent: 'codex', task: 'X', brief: 'Y' })
+    expect(r.isError).toBe(true)
+    expect(text(r)).toMatch(/team secret: restart it/)
+    expect((await call('team_worker_list')).isError).toBe(false)
+    expect((await call('team_task_add', { title: 'legacy card' })).isError).toBe(false)
+    expect(takeTeamRequests({ dir, teamId }).requests.map((x) => x.title)).toEqual(['legacy card'])
+    // A pane that has a secret here never gets unsigned requests through.
+    drop(`${W.id}__unsigned.json`, { action: 'add', title: 'sneaky' })
+    expect(takeTeamRequests({ dir, teamId }).refused[0].error).toMatch(/not signed/)
+  })
+
+  it('a closed pane loses its secret; a relaunch replaces it', () => {
+    as(LEAD)
+    const ctx = mcp.locate()
+    revokeTeamSecret(LEAD.id)
+    mcp.taskRequest(ctx, { action: 'heartbeat', phase: null, note: '' })
+    expect(takeTeamRequests({ dir, teamId }).refused[0].error).toMatch(/no team secret/)
+    setTeamSecret(LEAD.id, newTeamSecret()) // relaunched: the old agent's secret is void
+    mcp.taskRequest(ctx, { action: 'heartbeat', phase: null, note: '' })
+    expect(takeTeamRequests({ dir, teamId }).refused[0].error).toMatch(/does not match/)
   })
 })

@@ -1553,6 +1553,9 @@ function previewSound() {
               <p class="set-hint set-card-text">
                 {{ t('settings.orchestration.workersIntro', 'A team lead can start workers: new agents in new panes of its project, each with its own card, brief and, by default, its own copy of the project. They join the team, report when done and send a heartbeat while they work. You see each start on the board and in Activity.') }}
               </p>
+              <p class="set-hint set-card-text" data-orch-trust="">
+                {{ t('settings.orchestration.trust', 'Each worker request is signed with a secret only its pane has, and Tessel checks who sent it and whether it may still do it; answers (like what a worker shows) are encrypted for the agent that asked. This keeps one agent from posing as another by mistake or on the cheap. All agents run as your Windows user, so it cannot stop a determined program running as you.') }}
+              </p>
               <ol class="orch-setup" data-orch-setup="">
                 <li :class="{ ok: workerAgentsReady.length > 0 }" v-text="workerAgentsLine"></li>
                 <li>{{ t('settings.orchestration.setupTeam', 'Make a team in Sessions and choose its lead (right-click an agent, Make Lead)') }}</li>

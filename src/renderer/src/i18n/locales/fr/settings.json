@@ -232,7 +232,8 @@
       "maxWorkers": "Exécutants à la fois",
       "maxWorkersHint": "Par coordinateur (1 à {{max}}) ; les autres attendent dans une file et démarrent quand l'un se termine",
       "maxDepth": "Profondeur des exécutants imbriqués",
-      "maxDepthHint": "1 : les exécutants du chef ne peuvent pas lancer leurs propres exécutants ; 2 : ils le peuvent, une fois ; jusqu'à {{max}}"
+      "maxDepthHint": "1 : les exécutants du chef ne peuvent pas lancer leurs propres exécutants ; 2 : ils le peuvent, une fois ; jusqu'à {{max}}",
+      "trust": "Chaque demande d'exécutant est signée avec un secret que seul son panneau possède, et Tessel vérifie qui l'a envoyée et si elle est encore permise ; les réponses (comme ce qu'affiche un exécutant) sont chiffrées pour l'agent qui les a demandées. Cela empêche un agent de se faire passer pour un autre par erreur ou à peu de frais. Tous les agents tournent sous votre utilisateur Windows : cela ne peut pas arrêter un programme déterminé qui tourne en votre nom."
     },
     "voice": {
       "language": "Langue",

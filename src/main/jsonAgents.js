@@ -207,7 +207,7 @@ export function teamToolsEntry(agent, scriptPath) {
   // as JSON: a Windows path (backslashes) would break the whole file. Only
   // the pane id (no backslash) goes that way; the project folder is found
   // from the folder OpenCode runs in.
-  if (agent === 'opencode') return configToEntry(agent, { ...stdio, env: { TESSEL_PANE_ID: '{env:TESSEL_PANE_ID}' } })
+  if (agent === 'opencode') return configToEntry(agent, { ...stdio, env: { TESSEL_PANE_ID: '{env:TESSEL_PANE_ID}', TESSEL_TEAM_SECRET: '{env:TESSEL_TEAM_SECRET}' } })
   // Kimi, Copilot and Cline hand their whole environment (the pane's) to the
   // server; Cline never expands $VAR in env values, so none is written.
   if (agent === 'copilot' || agent === 'cline' || agent === 'kimi') return configToEntry(agent, stdio)
@@ -215,7 +215,7 @@ export function teamToolsEntry(agent, scriptPath) {
   // so its tools run without asking each time (like Codex's "approve").
   return configToEntry(
     agent,
-    { ...stdio, env: { TESSEL_PANE_ID: '$TESSEL_PANE_ID', TESSEL_PROJECT_DIR: '$TESSEL_PROJECT_DIR' } },
+    { ...stdio, env: { TESSEL_PANE_ID: '$TESSEL_PANE_ID', TESSEL_PROJECT_DIR: '$TESSEL_PROJECT_DIR', TESSEL_TEAM_SECRET: '$TESSEL_TEAM_SECRET' } },
     { trust: true }
   )
 }
