@@ -7,6 +7,7 @@ import WorkspaceSidebar from './components/WorkspaceSidebar.vue'
 import StatusBar from './components/StatusBar.vue'
 import { buildProjectCards, cardTargetPane, portProbes } from './sidebarModel'
 import { createPortScanner, browserUrlForPort, addressForPort } from './portScanner'
+import { allowedBrowserUrl, BLANK_URL } from '../../shared/browserUrl'
 import LaunchMenu from './components/LaunchMenu.vue'
 import SettingsDialog from './components/SettingsDialog.vue'
 import UpdateDialog from './components/UpdateDialog.vue'
@@ -276,6 +277,58 @@ function openInTesselEditor({ file, line = null, col = null, preview = true, ws 
   ws.activeId = leaf.id
   refitSoon()
   return leaf
+}
+// --- Tessel's built-in browser (BrowserPane.vue) ---------------------------------------
+// Panes without a terminal: an editor, a browser page.
+function hasNoTerminal(leaf) {
+  return !!leaf && (leaf.kind === 'editor' || leaf.kind === 'browser')
+}
+function makeBrowserLeaf(id = null, url = BLANK_URL) {
+  return reactive({
+    type: 'leaf',
+    kind: 'browser',
+    id: id || newId('pane'),
+    title: t('app.pane.browser', 'Browser'),
+    url: allowedBrowserUrl(url) || BLANK_URL,
+    // Chromium's zoom level of the page (0: 100%).
+    zoom: 0,
+    // Bumped to put the keyboard in its address bar.
+    focusAddress: 0,
+    broadcast: false
+  })
+}
+// A page opens in the workspace's browser pane (the active pane when it is
+// one, else the first one); with none yet, or newPane, the active pane is
+// split to the right with a new one.
+function openInBrowser({ url = BLANK_URL, ws = currentWs.value, newPane = false, focusAddress = false } = {}) {
+  if (!ws) return null
+  const target = allowedBrowserUrl(url) || BLANK_URL
+  const active = ws.activeId ? findLeafIn(ws.tree, ws.activeId) : null
+  let leaf = null
+  if (!newPane) {
+    leaf = active && active.kind === 'browser' ? active : null
+    if (!leaf) forEachLeaf(ws.tree, (l) => !leaf && l.kind === 'browser' && (leaf = l))
+  }
+  if (!leaf) {
+    leaf = makeBrowserLeaf(null, target)
+    const split = (orig) => reactive({ type: 'split', id: newId('split'), dir: 'row', sizes: [50, 50], children: [orig, leaf] })
+    if (active) ws.tree = replaceNode(ws.tree, active.id, split)
+    else ws.tree = ws.tree ? split(ws.tree) : leaf
+  } else if (target !== BLANK_URL) leaf.url = target
+  if (focusAddress || target === BLANK_URL) leaf.focusAddress = (leaf.focusAddress || 0) + 1
+  if (maximizedId.value && maximizedId.value !== leaf.id) maximizedId.value = null
+  selectWorkspace(ws.id)
+  ws.activeId = leaf.id
+  refitSoon()
+  return leaf
+}
+// A page in the system browser (http and https only, checked again by main).
+function openExternalUrl(url) {
+  Promise.resolve(window.shellApi.openExternal ? window.shellApi.openExternal(url) : false)
+    .then((ok) => {
+      if (!ok) showToast(t('app.port.browserFailed', 'Failed to open browser'), { kind: 'error' })
+    })
+    .catch(() => showToast(t('app.port.browserFailed', 'Failed to open browser'), { kind: 'error' }))
 }
 // The file viewer's "Open in editor": Tessel's editor (a kept tab).
 function openViewedInEditor({ file, line }) {
@@ -1049,6 +1102,18 @@ function serializeNode(node) {
       activePath: node.activePath || null
     }
   }
+  // A browser pane: its page (no terminal).
+  if (node.type === 'leaf' && node.kind === 'browser') {
+    return {
+      type: 'leaf',
+      kind: 'browser',
+      id: node.id,
+      title: node.title || t('app.pane.browser', 'Browser'),
+      num: node.num || null,
+      url: allowedBrowserUrl(node.url) || BLANK_URL,
+      zoom: Number.isFinite(node.zoom) ? node.zoom : 0
+    }
+  }
   if (node.type === 'leaf') {
     return {
       type: 'leaf',
@@ -1107,6 +1172,15 @@ async function deserializeNode(snap, cwd = null) {
     leaf.files = files
     const active = files.find((f) => samePath(f.path, snap.activePath))
     leaf.activePath = (active || files[0]).path
+    return leaf
+  }
+  // A browser pane comes back on its page (http(s) only).
+  if (snap.type === 'leaf' && snap.kind === 'browser') {
+    const id = typeof snap.id === 'string' && /^pane-[\w-]+$/.test(snap.id) ? snap.id : null
+    const leaf = makeBrowserLeaf(id, typeof snap.url === 'string' ? snap.url : BLANK_URL)
+    if (typeof snap.title === 'string' && snap.title) leaf.title = snap.title.slice(0, 200)
+    if (Number.isInteger(snap.num) && snap.num > 0) leaf.num = snap.num
+    if (Number.isFinite(snap.zoom)) leaf.zoom = Math.max(-3, Math.min(5, snap.zoom))
     return leaf
   }
   if (snap.type === 'leaf') {
@@ -1346,6 +1420,8 @@ function closeLeaf(leafId, opts = {}) {
     releaseOwner(leafId)
   }
   const isEditor = !!(closing && closing.kind === 'editor')
+  // An editor or a browser pane: no terminal to stop.
+  const noTerminal = hasNoTerminal(closing)
   // Settings > General, "Confirm before closing running terminals" (Orca's):
   // an agent pane, or a terminal where a program runs under the shell.
   if (!opts.force && settings.confirmCloseAgent && ws) {
@@ -1359,7 +1435,7 @@ function closeLeaf(leafId, opts = {}) {
       }).then((ok) => ok && closeLeaf(leafId, { ...opts, force: true }))
       return
     }
-    if (leaf && !isEditor && !opts.probed && window.shellApi.ptyRunningWork) {
+    if (leaf && !noTerminal && !opts.probed && window.shellApi.ptyRunningWork) {
       probeRunningWork(leafId).then((work) => {
         if (!findLeaf(leafId)) return // closed meanwhile
         if (!work.running && !work.unknown) return closeLeaf(leafId, { ...opts, probed: true })
@@ -1377,7 +1453,7 @@ function closeLeaf(leafId, opts = {}) {
       return
     }
   }
-  if (!isEditor) {
+  if (!noTerminal) {
     window.shellApi.killPty(leafId)
     dropBuffer(leafId)
     clearAgentStatus(leafId)
@@ -1480,7 +1556,7 @@ function routeInput(sourceId, data) {
   const fanOut = broadcast.value && source && source.broadcast && !TERMINAL_REPLY.test(String(data))
   if (fanOut) {
     forEachLeaf(tree.value, (leaf) => {
-      if (!leaf.broadcast || leaf.kind === 'editor') return
+      if (!leaf.broadcast || hasNoTerminal(leaf)) return
       noteUserInput(leaf.id, data)
       window.shellApi.writePty(leaf.id, data)
     })
@@ -1654,7 +1730,7 @@ function openCreatePr({ cwd, taskId = null } = {}) {
 // A path can go into the active pane when it is a terminal.
 const canInsertPath = computed(() => {
   const l = activeId.value ? findLeaf(activeId.value) : null
-  return !!l && l.kind !== 'editor'
+  return !!l && !hasNoTerminal(l)
 })
 function terminalHere(dir) {
   // A folder of a remote project: a terminal on its host, in that folder.
@@ -1870,6 +1946,9 @@ provide('panelCtx', {
   viewFile: (f) => viewFile(f),
   // A file:line link into Tessel's editor ({ file, line, col }).
   openInEditor: (q) => openInTesselEditor(q),
+  // The built-in browser: the active ports, a page in the system browser.
+  browserPorts: () => browserPorts(),
+  openExternal: (url) => openExternalUrl(url),
   // Tessel's shortcuts pressed in an editor pane (it keeps them from Monaco).
   appShortcut: (e) => onKey(e, { fromEditor: true })
 })
@@ -1929,6 +2008,10 @@ function buildCommands() {
   }
   add(t('app.cmd.group.new', 'New'), t('app.cmd.newWorkspace', 'New workspace'), createWorkspace, { shortcut: 'Ctrl+Shift+N' })
   add(t('app.cmd.group.new', 'New'), t('project.cmd.addProject', 'Add a project…'), openAddProject)
+  if (currentWs.value)
+    add(t('app.cmd.group.new', 'New'), t('app.cmd.newBrowser', 'New browser pane'), () => openInBrowser({ newPane: true, focusAddress: true }), {
+      hint: t('app.cmd.newBrowserHint', 'A web page next to your terminals (your dev server, docs)')
+    })
 
   const layout = t('app.cmd.group.layout', 'Layout')
   add(layout, t('app.cmd.splitRight', 'Split right'), () => splitActive('row'), { shortcut: 'Ctrl+Shift+E' })
@@ -1969,7 +2052,7 @@ function buildCommands() {
 
   // Quick commands (Settings > Quick commands): sent to the active pane
   // (a terminal: an editor pane takes no command).
-  if (activeId.value && findLeaf(activeId.value)?.kind !== 'editor') {
+  if (activeId.value && findLeaf(activeId.value) && !hasNoTerminal(findLeaf(activeId.value))) {
     const id = activeId.value
     for (const q of settings.quickCommands || []) {
       add(t('app.cmd.group.quick', 'Quick commands'), t('app.cmd.runQuick', 'Run: {{name}}', { name: q.name }), () => runQuickCommand(id, q), {
@@ -2451,7 +2534,7 @@ function otherPanes(paneId) {
   if (!ws) return out
   forEachLeaf(ws.tree, (l) => {
     // Editor panes take no text from a terminal.
-    if (l.id !== paneId && l.kind !== 'editor') {
+    if (l.id !== paneId && !hasNoTerminal(l)) {
       out.push({
         id: l.id,
         num: l.num || null,
@@ -2598,7 +2681,7 @@ async function restartLeaf(leafId) {
   if (!ws) return
   let old = findLeafIn(ws.tree, leafId)
   // An editor pane has no process to restart.
-  if (!old || old.kind === 'editor') return
+  if (!old || hasNoTerminal(old)) return
   // An agent keeps its pane id: its team messages, lead role, tasks and
   // inbox stay addressed to it.
   if (old.kind === 'agent' && old.agentCommand) {
@@ -2830,7 +2913,7 @@ function beginPaneDrag(srcId, e) {
       paneDrag.active = true
       paneDrag.srcId = srcId
       paneDrag.title = leaf.title
-      paneDrag.kind = leaf.kind === 'agent' ? leaf.agentId : leaf.kind === 'editor' ? '' : leaf.shellId
+      paneDrag.kind = leaf.kind === 'agent' ? leaf.agentId : hasNoTerminal(leaf) ? '' : leaf.shellId
       maximizedId.value = null
       closeMenus()
       document.body.classList.add('pane-dragging')
@@ -3149,8 +3232,8 @@ function removeWorkspace(id, confirmed = false, editorChecked = false) {
   }
   for (const t of wsTasks) removeTask(t.id)
   forEachLeaf(ws.tree, (leaf) => {
-    if (leaf.kind === 'editor') {
-      releaseOwner(leaf.id)
+    if (hasNoTerminal(leaf)) {
+      if (leaf.kind === 'editor') releaseOwner(leaf.id)
       return
     }
     window.shellApi.killPty(leaf.id)
@@ -3259,7 +3342,7 @@ const sidebarProjects = computed(() =>
   workspaces.value.map((w) => {
     const panes = []
     forEachLeaf(w.tree, (leaf) => {
-      if (leaf.kind === 'editor') return
+      if (hasNoTerminal(leaf)) return
       const task = taskOfPane(leaf.id)
       const tracked = trackedState[leaf.id]
       panes.push({
@@ -3319,6 +3402,18 @@ const probeSignature = computed(() =>
     .join('|')
 )
 onMounted(() => portScanner.start(() => probeSignature.value))
+// Tessel's shortcuts pressed while a browser page has the keyboard: the page
+// would keep them, the main process sends them here (browserGuest.js).
+let offBrowserKeys = null
+onMounted(() => {
+  const api = window.shellApi.browser
+  if (!api || !api.onShortcut) return
+  offBrowserKeys = api.onShortcut((e) => {
+    if (!e || e.action !== 'app' || typeof e.key !== 'string') return
+    onKey({ key: e.key, ctrlKey: !!e.ctrl, shiftKey: !!e.shift, altKey: false, metaKey: false, target: document.body, preventDefault() {}, stopPropagation() {} })
+  })
+})
+onBeforeUnmount(() => offBrowserKeys && offBrowserKeys())
 onBeforeUnmount(() => portScanner.stop())
 
 function cardByKey(key) {
@@ -3329,13 +3424,31 @@ function cardByKey(key) {
   return null
 }
 
+// A port's Open: its page in Tessel's browser (the system browser when no
+// project is open).
 function openPort(port) {
   const url = browserUrlForPort(port)
-  Promise.resolve(window.shellApi.openExternal ? window.shellApi.openExternal(url) : false)
-    .then((ok) => {
-      if (!ok) showToast(t('app.port.browserFailed', 'Failed to open browser'), { kind: 'error' })
-    })
-    .catch(() => showToast(t('app.port.browserFailed', 'Failed to open browser'), { kind: 'error' }))
+  if (currentWs.value) openInBrowser({ url })
+  else openExternalUrl(url)
+}
+// The active ports for a browser pane's Ports menu: the current project's
+// first, then the others', then the rest of this computer's.
+function browserPorts() {
+  const out = []
+  const seen = new Set()
+  const push = (port, label) => {
+    const url = browserUrlForPort(port)
+    if (seen.has(url)) return
+    seen.add(url)
+    out.push({ id: port.id || url, url, port: port.port, processName: port.processName || '', label })
+  }
+  const cur = currentWsId.value
+  const projects = [...sidebarProjects.value].sort((a, b) => (b.id === cur) - (a.id === cur))
+  for (const p of projects) {
+    for (const card of buildProjectCards(p)) for (const port of portScanner.state.byCard[card.key] || []) push(port, `${p.name} / ${card.title}`)
+  }
+  for (const port of portScanner.state.external || []) push(port, '')
+  return out
 }
 function copyPort(port) {
   const address = addressForPort(port)
@@ -6760,7 +6873,7 @@ async function startAutomations() {
   })
   try {
     const ids = []
-    forEachWsLeaf((l) => l.kind !== 'editor' && ids.push(l.id))
+    forEachWsLeaf((l) => !hasNoTerminal(l) && ids.push(l.id))
     automationRunner.resume(await api.reconcile(ids))
     applyAutomations(await api.windowReady())
   } catch (err) {
@@ -7634,7 +7747,7 @@ function paneState(leaf) {
 const statusInfo = computed(() => {
   const items = []
   forEachLeaf(tree.value, (leaf) => {
-    if (leaf.kind === 'editor') return
+    if (hasNoTerminal(leaf)) return
     items.push({ state: paneState(leaf), title: leaf.title || leaf.shellName || t('app.pane.terminal', 'Terminal'), active: leaf.id === activeId.value })
   })
   const count = (state) => items.filter((s) => s.state === state).length
@@ -7980,7 +8093,7 @@ onMounted(async () => {
   startStep = 'terminals'
   if (window.shellApi.reconcilePtys) {
     const ids = []
-    forEachWsLeaf((l) => l.kind !== 'editor' && ids.push(l.id))
+    forEachWsLeaf((l) => !hasNoTerminal(l) && ids.push(l.id))
     window.shellApi.reconcilePtys(ids)
   }
   loadVoiceLanguages()

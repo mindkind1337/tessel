@@ -13,7 +13,8 @@
       "editor": "Éditeur",
       "startFailed": "Impossible de démarrer le terminal.",
       "terminal": "Terminal",
-      "agent": "Agent"
+      "agent": "Agent",
+      "browser": "Navigateur"
     },
     "unsaved": {
       "title": "Modifications non enregistrées",
@@ -240,7 +241,9 @@
       "checkUpdates": "Rechercher des mises à jour",
       "openLogs": "Ouvrir le dossier des journaux",
       "automations": "Automatisations",
-      "automationsHint": "Exécuter une tâche d'agent selon une planification quand Tessel est ouvert"
+      "automationsHint": "Exécuter une tâche d'agent selon une planification quand Tessel est ouvert",
+      "newBrowser": "Nouveau panneau navigateur",
+      "newBrowserHint": "Une page web à côté de vos terminaux (votre serveur de dev, une doc)"
     },
     "worktree": {
       "createFailed": "Impossible de créer une copie séparée.",

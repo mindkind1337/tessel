@@ -1,0 +1,147 @@
+{
+  "browser": {
+    "pane": {
+      "title": "Navigateur",
+      "titleHint": "{{url}}\nFaites glisser l'en-tête pour déplacer le volet"
+    },
+    "nav": {
+      "back": "Retour",
+      "backHint": "Retour (Alt+Gauche)",
+      "forward": "Suivant",
+      "forwardHint": "Suivant (Alt+Droite)",
+      "reload": "Recharger",
+      "reloadHint": "{{label}} (Ctrl+R) · clic droit pour un rechargement forcé",
+      "hardReload": "Rechargement forcé",
+      "stop": "Arrêter"
+    },
+    "address": {
+      "placeholder": "Rechercher ou saisir une adresse",
+      "label": "Adresse",
+      "invalid": "Saisissez une URL http(s) ou localhost valide."
+    },
+    "ports": {
+      "title": "Ports",
+      "hint": "Ports locaux : ouvrir un serveur de développement ici",
+      "count": "{{count}} actifs",
+      "count_one": "{{count}} actif",
+      "count_other": "{{count}} actifs",
+      "none": "Aucun port d'espace de travail détecté",
+      "openHint": "Ouvrir {{address}} dans ce volet",
+      "unknownProcess": "Processus inconnu"
+    },
+    "tools": {
+      "design": "Mode design : choisir un élément de la page à envoyer à un agent",
+      "designLabel": "Mode design",
+      "screenshot": "Prendre une capture d'écran de la page",
+      "devTools": "Ouvrir les outils de développement du navigateur (F12)",
+      "devToolsLabel": "Ouvrir les outils de développement du navigateur",
+      "external": "Ouvrir dans le navigateur par défaut"
+    },
+    "empty": {
+      "title": "Nouvel onglet",
+      "text": "Saisissez une URL ci-dessus pour commencer à naviguer.",
+      "ports": "Serveurs locaux"
+    },
+    "failure": {
+      "cantReach": "Impossible d'accéder à {{host}}",
+      "cantLoad": "Impossible de charger cette page",
+      "localServer": "Impossible de se connecter à votre serveur local.",
+      "page": "Impossible de se connecter à cette page.",
+      "localHint": "S'il s'agit d'une application locale, vérifiez que le serveur est lancé et qu'il écoute sur le port attendu.",
+      "crashTitle": "Page du navigateur arrêtée",
+      "crashText": "La page du navigateur s'est arrêtée de manière inattendue. Réessayez pour la restaurer.",
+      "notSecure": "La connexion n'est pas sécurisée",
+      "thisAddress": "cette adresse",
+      "certNameMismatch": "Le certificat ne correspond pas à {{host}}.",
+      "certDateInvalid": "Le certificat de {{host}} n'est pas valide à la date et à l'heure actuelles.",
+      "certAuthorityInvalid": "Tessel ne fait pas confiance à l'autorité qui a émis le certificat de {{host}}.",
+      "certFailed": "Tessel n'a pas pu vérifier le certificat de {{host}}.",
+      "trustedCertificate": "Pour le développement local, utilisez si possible un certificat local de confiance.",
+      "retry": "Réessayer",
+      "copyAddress": "Copier l'adresse",
+      "addressCopied": "Adresse de la page actuelle copiée.",
+      "openExternally": "Ouvrir en externe",
+      "tryHttps": "Essayer HTTPS"
+    },
+    "permission": {
+      "media": "l'accès à la caméra ou au micro",
+      "geolocation": "votre position",
+      "notifications": "les notifications",
+      "displayCapture": "le partage d'écran",
+      "clipboardRead": "la lecture de votre presse-papiers",
+      "midi": "l'accès à vos appareils MIDI",
+      "pointerLock": "le verrouillage du pointeur",
+      "unknown": "une autorisation"
+    },
+    "notice": {
+      "thisPage": "Cette page",
+      "thisFile": "ce fichier",
+      "permission": "{{origin}} a demandé {{what}} ; Tessel a refusé.",
+      "download": "Tessel ne télécharge pas de fichiers. Ouvrir {{name}} dans votre navigateur par défaut ?",
+      "openDefault": "Ouvrir dans le navigateur par défaut"
+    },
+    "zoom": {
+      "percent": "{{percent}} %"
+    }
+  },
+  "browserDesign": {
+    "notReady": "Cette page n'est pas encore prête pour la sélection d'éléments.",
+    "grabFailed": "Échec de la capture : {{error}}",
+    "unknownError": "Erreur inconnue",
+    "retry": "Réessayer",
+    "stopTitle": "Quitter le mode Design (Échap)",
+    "cancel": "Annuler",
+    "added": "Annotation ajoutée",
+    "copied": "Copié",
+    "copyFailed": "Impossible de copier dans le presse-papiers.",
+    "full": "Vous pouvez ajouter jusqu'à {{max}} annotations. Envoyez-en ou effacez-en d'abord.",
+    "screenshotFailed": "Impossible de faire une capture d'écran de la page.",
+    "screenshotAdded": "Capture d'écran ajoutée",
+    "imageCopied": "Image copiée",
+    "imageCopyFailed": "Impossible de copier l'image.",
+    "pageScreenshot": "Capture d'écran de la page",
+    "sent": "Retour envoyé à {{agent}}",
+    "sendFailed": "Le retour n'a pas pu être envoyé à {{agent}}.",
+    "banner": {
+      "idle": "Cliquez sur un élément pour ajouter un retour pour l'agent.",
+      "pending": "Ajoutez un retour pour l'élément sélectionné.",
+      "ready_one": "{{count}} annotation prête. Sélectionnez un autre élément ou envoyez tous les retours.",
+      "ready_other": "{{count}} annotations prêtes. Sélectionnez un autre élément ou envoyez tous les retours."
+    },
+    "intent": {
+      "title": "Intention",
+      "aria": "Intention d'annotation",
+      "change": "Modification",
+      "question": "Question"
+    },
+    "card": {
+      "aria": "Ajouter une annotation au navigateur",
+      "copyContext": "Copier cet élément pour un agent",
+      "shotAlt": "Capture d'écran de l'élément",
+      "shotSaved": "Capture d'écran enregistrée : {{name}}",
+      "placeholder": "Décrivez ce que l'agent doit modifier ici...",
+      "comment": "Commentaire d'annotation",
+      "addTitle": "Ajouter (Ctrl+Entrée)",
+      "add": "Ajouter"
+    },
+    "tray": {
+      "count_one": "{{count}} annotation",
+      "count_other": "{{count}} annotations",
+      "send": "Envoyer",
+      "sendTitle": "Envoyer le retour à un agent",
+      "copy": "Copier",
+      "copyTitle": "Copier tous les retours en texte",
+      "clear": "Effacer les annotations",
+      "save": "Enregistrer",
+      "optionalComment": "Ajoutez un commentaire (facultatif)",
+      "noComment": "Aucun commentaire",
+      "copyImage": "Copier l'image",
+      "edit": "Modifier l'annotation {{n}}",
+      "delete": "Supprimer l'annotation {{n}}"
+    },
+    "send": {
+      "to": "Envoyer le retour à",
+      "noAgent": "Aucun agent dans ce projet"
+    }
+  }
+}
