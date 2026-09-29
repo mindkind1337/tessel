@@ -5,6 +5,13 @@ export const AGENT_STATE_STALE_MS = 30 * 60 * 1000
 // nobody is looking at (another workspace) may never report its screen: with
 // no event at all for this long after Stop, the turn is taken as finished.
 export const AGENT_SETTLE_MS = 20 * 1000
+// Work known only from the screen's running footer (ScreenBusy) after the
+// hooks had ended the turn: a stale footer line (an answer quoting it, an
+// old spinner left above the prompt) must not show it working forever. The
+// footer is seen again while it really runs (SCREEN_BUSY_REFRESH_MS); with
+// no such sighting for this long, the work is over.
+export const SCREEN_WORK_MS = 60 * 1000
+const SCREEN_BUSY_REFRESH_MS = 5 * 1000
 // The agents whose own hooks, plugin or extension report their status
 // (teamMcp/server.cjs --hook, agentStatusHooks.js). Claude Code and Codex also
 // have their screens read for a positive "ready" prompt; for the others the
@@ -72,6 +79,7 @@ const HOOK_EVENTS = new Set([
 ])
 const SCREEN_EVENTS = new Set([
   'ScreenReady',
+  'ScreenInterrupted',
   'ScreenApproval',
   'ScreenBusy',
   'ScreenLimit',
@@ -462,6 +470,14 @@ function applyRollout(target, event) {
   target.lastHookAt = Math.max(target.lastHookAt ?? event.at, event.at)
 }
 
+// Working because the screen showed a running footer, not because a hook said so.
+const screenWork = (value) =>
+  value.hookSeen &&
+  value.state === 'working' &&
+  value.reason === 'processing' &&
+  value.source === 'screen' &&
+  value.lastScreenEvent === 'ScreenBusy'
+
 function applyScreen(target, event, alone = false) {
   switch (event.event) {
     case 'ScreenLimit':
@@ -492,11 +508,33 @@ function applyScreen(target, event, alone = false) {
       // Keep a Stop candidate pending through its old footer; a later positive
       // ready prompt can still confirm it. No permission is resolved here.
       if (['approval', 'limited'].includes(target.state)) return false
+      // Work only the screen showed: seeing its footer again keeps it alive
+      // (at most every few seconds, see SCREEN_WORK_MS).
+      if (screenWork(target)) return event.at - (target.lastScreenAt ?? 0) >= SCREEN_BUSY_REFRESH_MS
       // A hooks-only agent's hooks say when it works and when it is done.
       if (target.hookSeen && (target.state === 'working' || alone)) return false
       cancelCandidate(target)
       transition(target, 'working', 'processing', event)
       return true
+    case 'ScreenInterrupted':
+      // Claude Code runs no hook when you interrupt its turn (Esc): its
+      // screen says "Interrupted" above a ready prompt. Hooked work with no
+      // Stop ends there; anything else is an ordinary ready prompt (an old
+      // "Interrupted" line still in view after a later turn).
+      if (
+        target.hookSeen &&
+        target.readyReason === null &&
+        ['working', 'approval'].includes(target.state)
+      ) {
+        clearPending(target)
+        cancelCandidate(target)
+        target.readyReason = 'interrupted'
+        target.limitedResetAt = null
+        target.reset = null
+        transition(target, 'idle', 'interrupted', event)
+        return true
+      }
+    // falls through
     case 'ScreenReady': {
       // Positive ready evidence can resolve a prompt, but cannot manufacture a
       // completed turn when hooks still say work is underway.
@@ -659,6 +697,18 @@ export function reduceAgentState(state, event, now = Date.now()) {
         target.reset = existing.reset
         target.limitedResetAt = existing.limitedResetAt
         transition(target, 'limited', 'quota', screen)
+      } else if (
+        existing.lastScreenEvent === 'ScreenInterrupted' &&
+        existing.state === 'idle' &&
+        existing.reason === 'interrupted' &&
+        event.event !== 'UserPromptSubmit'
+      ) {
+        // A hook of the interrupted turn, delivered after its screen showed
+        // the interruption: the turn stays over.
+        clearPending(target)
+        cancelCandidate(target)
+        target.readyReason = 'interrupted'
+        if (target.state !== 'limited') transition(target, 'idle', 'interrupted', screen)
       } else if (['ScreenReady', 'ScreenClearApproval'].includes(existing.lastScreenEvent)) {
         clearPending(target)
         if (target.state === 'approval' || target.reason === 'decision') showWork(target, event)
@@ -692,11 +742,16 @@ function publicScope(value, now) {
     value.stopCandidateAt != null &&
     !value.continuing &&
     now - Math.max(value.stopCandidateAt, value.lastEventAt ?? 0) > AGENT_SETTLE_MS
+  // Screen-only work whose running footer has not been seen for a while.
+  const screenOver =
+    !unconfirmed && !stale && screenWork(value) && now - (value.lastEventAt ?? 0) > SCREEN_WORK_MS
+  const done = settled || screenOver
   return {
-    state: unconfirmed || stale ? 'unknown' : settled ? 'idle' : value.state,
-    reason: unconfirmed ? 'unconfirmed' : stale ? 'stale' : settled ? 'ready' : value.reason,
+    state: unconfirmed || stale ? 'unknown' : done ? 'idle' : value.state,
+    reason: unconfirmed ? 'unconfirmed' : stale ? 'stale' : done ? 'ready' : value.reason,
     source: value.source,
-    since: value.since,
+    // Idle since its turn ended, not since the work began.
+    since: settled ? value.stopCandidateAt : screenOver ? value.lastEventAt : value.since,
     observedAt: value.observedAt,
     hookSeen: value.hookSeen,
     confirmed: value.confirmed,

@@ -215,6 +215,22 @@ describe('TerminalPane status integration', () => {
     expect(wrapper.text()).toContain('approve?')
   })
 
+  it('the header stops showing working once the Stop settled, with no new event', async () => {
+    ctx.hook('UserPromptSubmit')
+    ctx.hook('Stop')
+    await nextTick()
+    expect(wrapper.find('.pane-working').exists()).toBe(true)
+    // Main publishes a snapshot on each scan; only the clock moves.
+    for (let i = 0; i < 44; i++) {
+      await vi.advanceTimersByTimeAsync(500)
+      applyAgentStates({ 'test-pane': publicAgentState(state, Date.now()) })
+    }
+    await nextTick()
+    expect(agentStatus['test-pane']).toBe('idle')
+    expect(wrapper.find('.pane-working').exists()).toBe(false)
+    expect(wrapper.get('.pane-icon').attributes('aria-description')).toContain('Main agent state: idle.')
+  })
+
   it('does not use a restored terminal prompt as fresh completion evidence', async () => {
     ctx.hook('UserPromptSubmit')
     ctx.hook('Stop')

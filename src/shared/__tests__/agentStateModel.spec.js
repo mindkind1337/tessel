@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   AGENT_SETTLE_MS,
   AGENT_STATE_STALE_MS,
+  SCREEN_WORK_MS,
   createAgentState,
   publicAgentState,
   reduceAgentState,
@@ -779,5 +780,70 @@ describe('agents whose hooks alone report their status (hooksAlone)', () => {
     s = f.send('SubagentStop', 105, { agentId: 'explore', continuing: false })
     expect(s.children[0]).toMatchObject({ state: 'idle' })
     expect(s.state).toBe('working')
+  })
+})
+
+describe('work that ends without a new event (finished agents never stay working)', () => {
+  it('a settled Stop is idle, since the Stop, with no later event', () => {
+    const f = fixture('claude')
+    f.send('UserPromptSubmit', 1000)
+    f.send('Stop', 5000)
+    expect(publicAgentState(f.state, 5000 + AGENT_SETTLE_MS)).toMatchObject({ state: 'working', reason: 'settling' })
+    // Only the clock moves (the pane is in another workspace: no screen).
+    expect(publicAgentState(f.state, 5001 + AGENT_SETTLE_MS)).toMatchObject({ state: 'idle', reason: 'ready', since: 5000 })
+    expect(publicAgentState(f.state, 5000 + 25 * 60 * 1000)).toMatchObject({ state: 'idle', reason: 'ready', since: 5000 })
+  })
+
+  it('a stale running footer cannot keep a finished hooked turn working', () => {
+    const f = fixture('claude')
+    f.send('UserPromptSubmit', 1000)
+    f.send('Stop', 2000)
+    f.send('ScreenReady', 3000)
+    // An old "esc to interrupt" line still in view on a redraw.
+    expect(f.send('ScreenBusy', 4000)).toMatchObject({ state: 'working', reason: 'processing', source: 'screen' })
+    expect(publicAgentState(f.state, 4000 + SCREEN_WORK_MS)).toMatchObject({ state: 'working' })
+    expect(publicAgentState(f.state, 4001 + SCREEN_WORK_MS)).toMatchObject({ state: 'idle', reason: 'ready', since: 4000 })
+  })
+
+  it('screen-only work stays working while its running footer is still seen', () => {
+    const f = fixture('claude')
+    f.send('UserPromptSubmit', 1000)
+    f.send('Stop', 2000)
+    f.send('ScreenReady', 3000)
+    f.send('ScreenBusy', 4000)
+    // Seen again within the refresh interval: not recorded (no write per frame).
+    const before = f.state
+    f.send('ScreenBusy', 5000)
+    expect(f.state.lastScreenAt).toBe(before.lastScreenAt)
+    let at = 4000
+    for (let i = 0; i < 30; i++) {
+      at += 6000
+      f.send('ScreenBusy', at)
+    }
+    expect(publicAgentState(f.state, at + SCREEN_WORK_MS - 1)).toMatchObject({ state: 'working', reason: 'processing' })
+    // A hook takes over as usual.
+    f.send('Stop', at + 1000)
+    expect(publicAgentState(f.state, at + 1001)).toMatchObject({ state: 'working', reason: 'settling' })
+  })
+
+  it('an interrupted Claude turn (no hook runs) ends when its screen says so', () => {
+    const f = fixture('claude')
+    f.send('UserPromptSubmit', 1000)
+    f.send('PreToolUse', 2000, { toolId: 'tool-1' })
+    // A ready prompt alone cannot end hooked work.
+    expect(f.send('ScreenReady', 3000)).toMatchObject({ state: 'working' })
+    expect(f.send('ScreenInterrupted', 4000)).toMatchObject({ state: 'idle', reason: 'interrupted' })
+    expect(f.state.turnCompletedAt).toBeNull()
+    // A hook of that turn delivered late does not bring it back.
+    expect(f.send('PostToolUseFailure', 3500, { toolId: 'tool-1' })).toMatchObject({ state: 'idle', reason: 'interrupted' })
+    // A new prompt works again.
+    expect(f.send('UserPromptSubmit', 5000)).toMatchObject({ state: 'working', reason: 'processing' })
+  })
+
+  it('an old "Interrupted" line after a finished turn is an ordinary ready prompt', () => {
+    const f = fixture('claude')
+    f.send('UserPromptSubmit', 1000)
+    f.send('Stop', 2000)
+    expect(f.send('ScreenInterrupted', 3000)).toMatchObject({ state: 'idle', reason: 'ready', turnCompletedAt: 3000 })
   })
 })

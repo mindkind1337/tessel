@@ -7,7 +7,7 @@
 // layer (teleported to <body>, placed next to the indicator and kept inside
 // the window), so it is never hidden under a neighbouring pane or clipped.
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
-import { childTime, formatTokens, childrenSummary } from '../agentChildrenView'
+import { childTime, formatTokens, childrenSummary, childShownState } from '../agentChildrenView'
 import { listsChildren } from '../agentChildrenFeed'
 import { modelLabel } from '../../../shared/modelLabel'
 import { t } from '../i18n'
@@ -15,7 +15,10 @@ import { t } from '../i18n'
 const props = defineProps({
   agentId: { type: String, default: null },
   sessionId: { type: String, default: null },
-  accountId: { type: [String, null], default: undefined }
+  accountId: { type: [String, null], default: undefined },
+  // When the pane's agent ended its turn (idle), or null: its unfinished
+  // sub-agents that wrote nothing since are not running (childActive).
+  parentIdleSince: { type: Number, default: null }
 })
 
 const list = ref([])
@@ -62,7 +65,7 @@ async function refresh() {
     // next time
   }
 }
-const summary = computed(() => childrenSummary(list.value, now.value))
+const summary = computed(() => childrenSummary(list.value, now.value, props.parentIdleSince))
 // The pane counts as working while one of its sub-agents runs.
 const emit = defineEmits(['running'])
 watch(
@@ -71,15 +74,14 @@ watch(
   { immediate: true }
 )
 onBeforeUnmount(() => emit('running', 0))
-const shown = computed(() => summary.value.running > 0 || summary.value.quiet > 0 || summary.value.recent > 0)
-// The indicator: a number, its state in words for screen readers and tests.
-const count = computed(() => summary.value.running || summary.value.quiet || summary.value.recent)
+// Shown while one runs, or for half an hour after the last one ended or went
+// quiet (click for the list).
+const shown = computed(() => summary.value.running > 0 || summary.value.recentQuiet > 0 || summary.value.recent > 0)
+// The indicator's number counts the running ones only; with none running it
+// is the icon alone. Its state in words for screen readers and tests.
+const count = computed(() => summary.value.running)
 const countWord = computed(() =>
-  summary.value.running
-    ? t('pane.subAgents.running', 'running')
-    : summary.value.quiet
-      ? t('pane.subAgents.quiet', 'quiet')
-      : t('pane.subAgents.done', 'done')
+  summary.value.running ? t('pane.subAgents.running', 'running') : t('pane.subAgents.noneRunning', 'none running')
 )
 const chipTitle = computed(() => {
   const s = summary.value
@@ -93,7 +95,12 @@ const chipTitle = computed(() => {
 })
 // Running first, then newest.
 const rows = computed(() =>
-  [...list.value].sort((a, b) => (b.state === 'running') - (a.state === 'running') || (b.startedAt || 0) - (a.startedAt || 0))
+  list.value
+    .map((c) => {
+      const state = childShownState(c, { now: now.value, parentIdleSince: props.parentIdleSince })
+      return state === c.state ? c : { ...c, state }
+    })
+    .sort((a, b) => (b.state === 'running') - (a.state === 'running') || (b.startedAt || 0) - (a.startedAt || 0))
 )
 
 // Placed under the indicator (above it when there is more room there), its
@@ -209,7 +216,7 @@ function stateTitle(state) {
         <path d="M7 11v4a2 2 0 0 0 2 2h4" />
         <rect width="8" height="8" x="13" y="13" rx="2" />
       </svg>
-      <span class="agent-children-count">{{ count }}</span><span class="sr-only">{{ ' ' + countWord }}</span>
+      <span v-if="count" class="agent-children-count">{{ count }}</span><span class="sr-only">{{ ' ' + countWord }}</span>
     </button>
     <Teleport to="body">
       <div

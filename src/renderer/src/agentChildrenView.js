@@ -49,13 +49,47 @@ export function childTime(c, now = Date.now()) {
   return formatElapsed(end - c.startedAt)
 }
 
-// Shown in the pane header: those running, the quiet ones, and those really
-// finished in the last half hour (older ones stay in the list only when you
-// open it).
+// A sub-agent that was stopped or crashed never writes that it finished: its
+// files say "running", then "quiet", forever. It is active only while it
+// really can be: it wrote in the last CHILD_STALE_MS, and, once its parent's
+// turn is over (the pane idle since parentIdleSince), it wrote after that end
+// (a background sub-agent keeps writing; a stopped one does not).
+export const CHILD_STALE_MS = 10 * 60 * 1000
+const PARENT_GRACE_MS = 5 * 1000
+export function childActive(c, { now = Date.now(), parentIdleSince = null } = {}) {
+  if (!c || c.state !== 'running') return false
+  if (Number.isFinite(c.lastAt) && now - c.lastAt > CHILD_STALE_MS) return false
+  if (Number.isFinite(parentIdleSince)) {
+    const at = c.lastAt || c.startedAt || 0
+    if (at <= parentIdleSince + PARENT_GRACE_MS) return false
+  }
+  return true
+}
+// Its state as shown: 'running' only while active; an unfinished one that is
+// not (quiet) is shown quiet and folds with the finished ones.
+export function childShownState(c, ctx) {
+  if (c.state === 'done') return 'done'
+  return childActive(c, ctx) ? 'running' : 'quiet'
+}
+
+// Shown in the pane header: those running (its count), and, folded, the quiet
+// ones and those finished in the last half hour (older ones stay in the list
+// only when you open it).
 export const RECENT_MS = 30 * 60 * 1000
-export function childrenSummary(list, now = Date.now()) {
-  const running = list.filter((c) => c.state === 'running').length
-  const quiet = list.filter((c) => c.state === 'quiet').length
-  const recent = list.filter((c) => c.state === 'done' && c.endedAt && now - c.endedAt < RECENT_MS).length
-  return { running, quiet, recent, total: list.length }
+export function childrenSummary(list, now = Date.now(), parentIdleSince = null) {
+  const ctx = { now, parentIdleSince }
+  let running = 0
+  let quiet = 0
+  let recent = 0
+  let recentQuiet = 0
+  for (const c of list) {
+    const state = childShownState(c, ctx)
+    if (state === 'running') running++
+    else if (state === 'quiet') {
+      quiet++
+      const at = c.lastAt || c.startedAt
+      if (Number.isFinite(at) && now - at < RECENT_MS) recentQuiet++
+    } else if (c.endedAt && now - c.endedAt < RECENT_MS) recent++
+  }
+  return { running, quiet, recent, recentQuiet, total: list.length }
 }

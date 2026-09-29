@@ -91,6 +91,17 @@ function plan(value) {
     ? normalized
     : undefined
 }
+// Claude's plan, from the two fields Claude Code keeps beside its login
+// (.credentials.json claudeAiOauth.subscriptionType and rateLimitTier, e.g.
+// "max" and "default_claude_max_20x"): "Max 20x", "Pro". Nothing else of that
+// file is looked at here, and neither value is ever logged.
+const CLAUDE_PLANS = { free: 'Free', pro: 'Pro', max: 'Max', team: 'Team', enterprise: 'Enterprise' }
+export function claudePlanLabel(subscriptionType, rateLimitTier) {
+  const name = CLAUDE_PLANS[text(subscriptionType)?.toLowerCase()]
+  if (!name) return undefined
+  const tier = typeof rateLimitTier === 'string' ? /(?:^|_)max_(\d{1,3})x(?:_|$)/i.exec(rateLimitTier) : null
+  return name === 'Max' && tier ? `Max ${Number(tier[1])}x` : name
+}
 function window(label, used, reset, secondsOnly = false) {
   return finite(used)
     ? { label, usedPct: Math.min(100, Math.max(0, used)), resetsAt: timestamp(reset, secondsOnly) }
@@ -454,7 +465,11 @@ export function createProviderUsage({
     }
     return {
       headers,
-      fingerprint: createHash('sha256').update(raw).update(JSON.stringify(who)).digest('hex')
+      fingerprint: createHash('sha256').update(raw).update(JSON.stringify(who)).digest('hex'),
+      plan:
+        snapshot.provider === 'claude'
+          ? claudePlanLabel(parsed.claudeAiOauth?.subscriptionType, parsed.claudeAiOauth?.rateLimitTier)
+          : undefined
     }
   }
   async function stable(snapshot, fingerprint) {
@@ -727,11 +742,13 @@ export function createProviderUsage({
       }
     },
     async read({ provider, accountId } = {}) {
+      let knownPlan
       try {
         validate(provider, accountId)
         const sequence = ++readSequence[provider]
         const snapshot = await scope(provider, accountId)
         const login = await auth(snapshot)
+        knownPlan = provider === 'claude' ? login.plan || snapshot.plan : undefined
         const data = await network(snapshot, ENDPOINTS[provider], login.headers)
         // Once per run: the NAMES of the fields Claude's usage answer has
         // (never values), to learn whether it tells about limit resets.
@@ -773,7 +790,8 @@ export function createProviderUsage({
           observedAt: clock(),
           windows
         }
-        const selectedPlan = plan(data.plan_type) || snapshot.plan
+        const selectedPlan =
+          provider === 'claude' ? login.plan || snapshot.plan : plan(data.plan_type) || snapshot.plan
         if (selectedPlan) result.plan = selectedPlan
         if (provider === 'claude') {
           const breakdown = claudeBreakdown(data)
@@ -792,10 +810,12 @@ export function createProviderUsage({
         }
         return result
       } catch (error) {
-        return errorResult(error, {
+        const result = errorResult(error, {
           provider: ['codex', 'claude'].includes(provider) ? provider : null,
           accountId: typeof accountId === 'string' ? accountId : null
         })
+        // Its plan is known from its login even when its usage is not.
+        return knownPlan && result && typeof result === 'object' ? { ...result, plan: knownPlan } : result
       }
     },
     async redeemReset({ provider, accountId, resetToken, confirmed } = {}) {

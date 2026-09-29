@@ -27,7 +27,8 @@ import {
   getAgentState,
   managedAgentStatus,
   agentScreenObservation,
-  createAgentActivityMonitor
+  createAgentActivityMonitor,
+  turnEndedSince
 } from '../agentStatus'
 import { promptShowsPlaceholder } from '../promptCheck'
 import { detectTaskDone } from '../agentLimit'
@@ -620,6 +621,8 @@ const track = computed(() => (ctx.trackOf ? ctx.trackOf(props.node.id) : null))
 // Sub-agents of this conversation running now (AgentChildren reports them):
 // the pane is at work even while the main agent waits for them.
 const subRunning = ref(0)
+// When its agent ended its turn: sub-agents silent since then are not running.
+const turnEndedAt = computed(() => (managedAgentStatus(props.node) ? turnEndedSince(props.node.id, props.node.agentLaunchToken) : null))
 function onSubRunning(n) {
   subRunning.value = n
   if (ctx.setChildrenRunning) ctx.setChildrenRunning(props.node.id, n)
@@ -2145,6 +2148,7 @@ onBeforeUnmount(() => {
           :agent-id="node.agentId"
           :session-id="node.sessionId"
           :account-id="node.accountId"
+          :parent-idle-since="turnEndedAt"
           @running="onSubRunning"
         />
         <!-- voice typing (its language: in the … menu) -->

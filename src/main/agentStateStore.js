@@ -51,6 +51,7 @@ const CHAT_EVENTS = new Set([
 ])
 const SCREENS = new Set([
   'ScreenReady',
+  'ScreenInterrupted',
   'ScreenApproval',
   'ScreenBusy',
   'ScreenLimit',

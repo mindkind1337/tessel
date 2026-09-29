@@ -17,7 +17,8 @@ import AgentHoverDetails from './AgentHoverDetails.vue'
 import HoverCardContent from '../hover/HoverCardContent.vue'
 import { useHoverCard } from '../hover/useHoverCard'
 import { acquireChildren, childrenKey, splitChildren, childDotState } from '../../agentChildrenFeed'
-import { childTime, formatTokens } from '../../agentChildrenView'
+import { childTime, formatTokens, childActive } from '../../agentChildrenView'
+import { turnEndedSince } from '../../agentStatus'
 import { modelLabel } from '../../../../shared/modelLabel'
 import { paneModels } from '../../paneModels'
 import { childrenFolded, olderShown } from './agentRowState'
@@ -50,11 +51,14 @@ onBeforeUnmount(() => feed.value && feed.value.release())
 const clock = ref(Date.now())
 let clockTimer = 0
 const children = computed(() => (feed.value ? feed.value.state.list : []))
-const split = computed(() => splitChildren(children.value))
+// When the row's agent ended its turn: sub-agents silent since then are not
+// running (agentChildrenView.js childActive).
+const parentIdleSince = computed(() => (props.row.kind === 'agent' ? turnEndedSince(props.row.id) : null))
+const split = computed(() => splitChildren(children.value, { now: clock.value, parentIdleSince: parentIdleSince.value }))
 const hasChildren = computed(() => children.value.length > 0)
 const folded = computed(() => !!childrenFolded[props.row.id])
 const showOlder = computed(() => !!olderShown[props.row.id])
-const running = computed(() => children.value.filter((c) => c.state === 'running').length)
+const running = computed(() => children.value.filter((c) => childActive(c, { now: clock.value, parentIdleSince: parentIdleSince.value })).length)
 watch(
   () => running.value > 0 && !folded.value,
   (tick) => {
@@ -121,7 +125,7 @@ const childHover = useHoverCard()
 const hoveredChild = ref(null)
 function pickChild(e) {
   const id = e.currentTarget && e.currentTarget.dataset.childId
-  const c = children.value.find((x) => x.id === id)
+  const c = [...split.value.shown, ...split.value.older].find((x) => x.id === id)
   if (c) hoveredChild.value = c
 }
 const childListeners = {
@@ -138,7 +142,7 @@ const childListeners = {
 const childState = computed(() => {
   const c = hoveredChild.value
   if (!c) return ''
-  return split.value.older.includes(c) ? t('sidebar.agentRow.finished', 'Finished') : stateTitle(c.state)
+  return stateTitle(c.state)
 })
 // What the old native tooltip said, for screen readers.
 // The model its pane shows (TerminalPane writes paneModels; a chat's row
@@ -274,16 +278,17 @@ const workerOfLabel = computed(() =>
       <div
         v-for="c in split.older"
         :key="c.id"
-        class="compact-agent-row worktree-agent-row-hover worktree-agent-lineage-child-row child-done"
+        class="compact-agent-row worktree-agent-row-hover worktree-agent-lineage-child-row"
+        :class="'child-' + c.state"
         role="button"
         tabindex="-1"
-        :aria-label="childTitle(c, t('sidebar.agentRow.finished', 'Finished'))"
+        :aria-label="childTitle(c, stateTitle(c.state))"
         :data-child-id="c.id"
         data-agent-child=""
         v-on="childListeners"
         @click.stop="emit('activate', row)"
       >
-        <AgentStateDot :state="childDotState(c)" :title="t('sidebar.agentRow.finished', 'Finished')" :tooltip="false" />
+        <AgentStateDot :state="childDotState(c)" :title="stateTitle(c.state)" :tooltip="false" />
         <span class="car-text">
           <span class="car-lead">{{ c.title || noTitle() }}</span>
         </span>

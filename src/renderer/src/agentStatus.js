@@ -107,7 +107,11 @@ export function agentScreenObservation(term, provider, screen) {
         buffer.cursorX === at + prompt.length + 1
     }
   }
-  return { screen, approval, limit, busy, ready }
+  // Claude Code runs no hook when its turn is interrupted (Esc): it says so
+  // just above its prompt ("⎿  Interrupted · What should Claude do instead?").
+  const interrupted =
+    ready && provider === 'claude' && /\bInterrupted\b\s*(?:by user|·\s*What should Claude do instead)/i.test(footer)
+  return { screen, approval, limit, busy, ready, interrupted }
 }
 
 // Shared by TerminalPane and clock-driven tests. Hook state owns the result;
@@ -180,7 +184,7 @@ export function createAgentActivityMonitor({
           approvals[node.id] || getAgentState(node.id, node.agentLaunchToken)?.state === 'approval'
         onApproval(false)
         if (hadApproval) send('ScreenClearApproval')
-        send('ScreenReady')
+        send(observation.interrupted ? 'ScreenInterrupted' : 'ScreenReady')
       } else if (observation.busy) send('ScreenBusy')
     } else onApproval(false)
     return observation
@@ -306,4 +310,28 @@ export function clearAgentStatus(id) {
   delete limits[id]
   delete approvals[id]
   delete agentStates[id]
+}
+
+// When this pane's agent ended its turn, by its own hooks (its published
+// state is idle), or null while it works or nothing confirms it. Its
+// unfinished sub-agents that wrote nothing since are not running
+// (agentChildrenView.js childActive).
+export function turnEndedSince(id, launchToken) {
+  const state = getAgentState(id, launchToken)
+  if (!state || !state.confirmed || state.stale || !state.hookSeen || state.state !== 'idle') return null
+  return Number.isFinite(state.since) ? state.since : null
+}
+
+// A pane's agent state for the sidebar and the status bar: 'approval' (asks
+// you to approve something) | 'limited' (usage limit reached) | 'working' |
+// 'unknown' | 'waiting' (done, waiting for you) | 'ready'. childrenRunning:
+// its sub-agents running now (the pane header counts them, running only).
+export function paneAgentState(leaf, { agent = true, childrenRunning = 0 } = {}) {
+  if (!agent) return 'ready'
+  if (approvals[leaf.id]) return 'approval'
+  if (limits[leaf.id]) return 'limited'
+  if (childrenRunning > 0) return 'working'
+  if (managedAgentStatus(leaf) && agentStatus[leaf.id] === 'unknown') return 'unknown'
+  if (attention[leaf.id]) return 'waiting'
+  return agentStatus[leaf.id] === 'busy' ? 'working' : 'ready'
 }

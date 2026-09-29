@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { formatElapsed, formatTokens, childTime, childrenSummary } from '../agentChildrenView'
+import { formatElapsed, formatTokens, childTime, childrenSummary, childActive, CHILD_STALE_MS } from '../agentChildrenView'
 
 describe('sub-agents in a pane', () => {
   it('shows times and tokens like Claude Code', () => {
@@ -23,7 +23,7 @@ describe('sub-agents in a pane', () => {
       { state: 'done', endedAt: now - 3600000 },
       { state: 'quiet', lastAt: now - 1000 }
     ]
-    expect(childrenSummary(list, now)).toEqual({ running: 1, quiet: 1, recent: 1, total: 4 })
+    expect(childrenSummary(list, now)).toEqual({ running: 1, quiet: 1, recent: 1, recentQuiet: 1, total: 4 })
   })
   it('a quiet one (unfinished, silent for a while) says for how long, never that it finished', () => {
     const now = 100_000_000
@@ -31,6 +31,19 @@ describe('sub-agents in a pane', () => {
     expect(childTime(quiet, now)).toBe('quiet 16m')
     expect(childTime({ ...quiet, lastAt: now - 125 * 60000 }, now)).toBe('quiet 2h 5m')
     // Even with an end date, only a done one counts as recently finished.
-    expect(childrenSummary([{ ...quiet, endedAt: now - 1000 }], now)).toEqual({ running: 0, quiet: 1, recent: 0, total: 1 })
+    expect(childrenSummary([{ ...quiet, endedAt: now - 1000 }], now)).toEqual({ running: 0, quiet: 1, recent: 0, recentQuiet: 1, total: 1 })
+  })
+  it('an unfinished one is running only while it writes, and after its parent ended its turn only if it wrote since', () => {
+    const now = 100_000_000
+    const run = { state: 'running', startedAt: now - 30 * 60000, lastAt: now - 60000 }
+    expect(childActive(run, { now })).toBe(true)
+    expect(childActive({ ...run, lastAt: now - CHILD_STALE_MS - 1 }, { now })).toBe(false)
+    expect(childActive({ state: 'quiet', lastAt: now - 16 * 60000 }, { now })).toBe(false)
+    expect(childActive({ state: 'done', lastAt: now }, { now })).toBe(false)
+    // Parent idle since 2 min ago; the child last wrote 1 min ago: a background one.
+    expect(childActive(run, { now, parentIdleSince: now - 120000 })).toBe(true)
+    // Parent idle since 30 s ago; the child last wrote before that: stopped with it.
+    expect(childActive(run, { now, parentIdleSince: now - 30000 })).toBe(false)
+    expect(childrenSummary([run, { ...run, lastAt: now - 10000 }], now, now - 30000)).toMatchObject({ running: 1, quiet: 1 })
   })
 })

@@ -518,3 +518,36 @@ describe('chat pane events (recordChatEvent)', () => {
     expect(store.snapshot()[paneId]).toMatchObject({ state: 'unknown', reason: 'interrupted' })
   })
 })
+
+describe('a finished turn with no later event', () => {
+  it('publishes idle once the Stop has settled, on a scan with nothing new', async () => {
+    const changed = vi.fn()
+    const store = make({ onChange: changed })
+    await store.register(registered({ provider: 'claude' }))
+    put(event('UserPromptSubmit', { provider: 'claude' }))
+    await store.scan()
+    tick += 1000
+    put(event('Stop', { provider: 'claude', at: tick }))
+    await store.scan()
+    expect(changed.mock.lastCall[0][paneId]).toMatchObject({ state: 'working', reason: 'settling' })
+    const stopAt = tick
+    tick += 21000
+    await store.scan()
+    expect(changed.mock.lastCall[0][paneId]).toMatchObject({ state: 'idle', reason: 'ready', since: stopAt })
+    // Nothing changes after: no repeated publish.
+    const calls = changed.mock.calls.length
+    tick += 25 * 60 * 1000
+    await store.scan()
+    expect(changed.mock.calls.length).toBe(calls)
+    expect(store.snapshot()[paneId]).toMatchObject({ state: 'idle' })
+  })
+  it('accepts the screen interruption observation', async () => {
+    const store = make()
+    await store.register(registered({ provider: 'claude' }))
+    put(event('UserPromptSubmit', { provider: 'claude' }))
+    await store.scan()
+    tick += 1000
+    await store.observe(paneId, token, 'ScreenInterrupted')
+    expect(store.snapshot()[paneId]).toMatchObject({ state: 'idle', reason: 'interrupted' })
+  })
+})
