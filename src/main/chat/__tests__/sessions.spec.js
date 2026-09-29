@@ -419,7 +419,13 @@ describe('stream events', () => {
     a.emit('toolResult', { toolUseId: 'child-tool', text: 'done', ...owner })
     expect(last('toolResult')).toMatchObject(owner)
     a.emit('assistant', { messageId: 'other', ...owner, blocks: [{ type: 'tool_use', id: 'pending-child-tool', name: 'Read', input: {} }] })
+    a.emit('assistant', { messageId: 'p', blocks: [{ type: 'tool_use', id: 'pending-parent-tool', name: 'Read', input: {} }] })
     a.emit('turnEnd', { status: 'interrupted' })
+    // The parent's open tool ends with its turn; a (background) child's stays open.
+    expect(last('tool')).toMatchObject({ id: 'pending-parent-tool', status: 'error' })
+    expect(events('tool').some(e => e.id === 'pending-child-tool' && e.status !== 'running')).toBe(false)
+    // Its end closes it.
+    a.emit('subagent', { phase: 'end', id: 'child', groupId: 'turn', status: 'stopped', startedAt: 1000 })
     expect(last('tool')).toMatchObject({ id: 'pending-child-tool', status: 'error', ...owner })
     a.emit('subagents', { ...roster, agents: [{ ...roster.agents[0], state: 'stopped', settledAt: 2000 }] })
     const stored = chat.history({ paneId }).events.map(row => row.event)
@@ -428,6 +434,19 @@ describe('stream events', () => {
     expect(stored.find(e => e.type === 'assistant' && e.agentId)).toMatchObject(owner)
     const reopened = createChatSessions(deps)
     expect(reopened.history({ paneId }).events.map(row => row.event).filter(e => e.type === 'subagents')).toEqual(events('subagents'))
+  })
+
+  it("keeps a background child's message open across the parent's turn end", async () => {
+    const chat = createChatSessions(deps)
+    await openOk(chat)
+    const a = adapters[0]
+    const owner = { agentId: 'bg', parentToolUseId: 'spawn' }
+    a.emit('assistant', { messageId: 'c1', ...owner, blocks: [{ type: 'text', text: 'First' }] })
+    a.emit('assistant', { messageId: 'p1', blocks: [{ type: 'text', text: 'Parent' }] })
+    a.emit('turnEnd', { status: 'completed' })
+    a.emit('assistant', { messageId: 'c1', ...owner, blocks: [{ type: 'text', text: 'Second' }] })
+    a.emit('assistant', { messageId: 'p1', blocks: [{ type: 'text', text: 'Next turn' }] })
+    expect(events('assistant').map(e => e.text)).toEqual(['First', 'Parent', 'First\n\nSecond', 'Next turn'])
   })
 
   it('maps text, thinking, tools and results; subagent text stays out', async () => {

@@ -17,6 +17,8 @@ export function observeCodexSubagents(method, params, state) {
   const tracker = state.subagents
   const groupId = subagentId(params.turnId) || subagentId(state.turn?.id) || subagentId(item.id)
   if (!groupId) return out
+  // The parent turn open now: its end settles the children first seen in it.
+  const owner = state.turn && !state.turn.settled ? state.turn : undefined
   if (item.type === 'collabAgentToolCall') {
     if (item.senderThreadId && state.threadId && item.senderThreadId !== state.threadId) return out
     const statuses =
@@ -30,10 +32,11 @@ export function observeCodexSubagents(method, params, state) {
     for (const id of ids) {
       if (!subagentId(id) || id === state.threadId) continue
       const known = tracker.get(id),
-        status = STATES.get(statuses[id]?.status)
+        status = Object.hasOwn(statuses, id) ? STATES.get(statuses[id]?.status) : undefined
       const spawn = item.tool === 'spawnAgent' || item.tool === 'spawn_agent'
       const fields = {
         state: status,
+        owner,
         ...(spawn
           ? {
               description: item.prompt,
@@ -58,6 +61,7 @@ export function observeCodexSubagents(method, params, state) {
       known?.groupId || groupId,
       {
         state: status,
+        owner,
         description: known?.description || item.agentPath,
         parentToolUseId: known?.parentToolUseId || item.id
       },

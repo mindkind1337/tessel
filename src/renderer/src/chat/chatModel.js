@@ -172,6 +172,8 @@ export function rateLimitParts(rateLimit) {
 
 // --- Reducer -----------------------------------------------------------------------------------
 
+const CHILD_TEXT = new Set(['assistantDelta', 'assistant', 'thinking'])
+
 function findLast(rows, pred) {
   for (let i = rows.length - 1; i >= 0; i--) if (pred(rows[i])) return i
   return -1
@@ -227,6 +229,10 @@ const APPROVAL_STATUSES = new Set(['pending', 'allowed', 'allowedSession', 'deni
 export function chatReducer(state, event, { cwd = '' } = {}) {
   if (!event || typeof event !== 'object') return state
   const s = state || initialChatState()
+  // A sub-agent's own text (agentId) is not the agent's answer: until the
+  // pane groups sub-agents, it stays out of the conversation (and of a
+  // worker's transcript) instead of reading as the main agent's reply.
+  if (event.agentId && CHILD_TEXT.has(event.type)) return s
   switch (event.type) {
     case 'status': {
       if (!STATES.has(event.state)) return s

@@ -11,7 +11,20 @@ answer approvals, or change session permissions.
 {"type":"subagents","groupId":"root-turn","agents":[{"id":"child","label":"Inspect fixtures","state":"completed","tokens":25,"startedAt":1000,"settledAt":1500}]}
 ```
 
-The journal persists these snapshots and provenance unchanged for replay.
+The journal persists these snapshots and provenance unchanged for replay,
+except `subagent` `progress` events that carry a `tool` (tool-level progress
+is live only; replay rebuilds the roster from snapshots and start/end).
+
+Snapshot volume: a snapshot is sent at once on a child's start, end and any
+state change, and on description/type/model changes. A working child's
+token- or duration-only change is throttled to one `progress` event and one
+group snapshot per second per group (`SUBAGENT_THROTTLE_MS`); a held-back
+change is carried by the group's next snapshot, which the adapters' timer
+(`tracker.deliverTo`) sends once the window has passed, so the latest
+metrics always arrive (and the end snapshot always has them). Consumers must
+therefore read tokens from snapshots or `end`, not expect one `progress` per
+provider update. Snapshot labels are at most 120 characters (with the
+` (2)` suffix for duplicates); `subagent` events keep the full description.
 `subagent` events additionally carry `phase` (`start`, `progress`, `end`),
 `id`, `groupId`, `status`, and observed description/type/model, timestamps,
 duration, token total, or tool update. Missing provider metrics remain absent.
@@ -24,12 +37,29 @@ message id. Codex ids are child thread ids; groups use the spawning turn id
 (parent item id only when no turn id is available). Known children retain their
 original group on late updates. A parent Task/Agent or collab call remains a
 regular tool row. Child content adds `agentId` and `parentToolUseId`.
+Codex child item ids (tool ids, message ids) are namespaced as
+`<agentId>:<itemId>` so they never meet the parent's or a sibling's ids;
+Claude rows are keyed by agentId + messageId in the session.
+
+Until the chat UI groups children, the renderer's reducer (`chatModel.js`)
+drops `assistantDelta`, `assistant` and `thinking` events that carry an
+`agentId`, so a child's text never reads as the main agent's reply (also in a
+worker's `team_worker_read` transcript). Child `tool`/`toolResult` rows are
+shown as before. The events themselves are still emitted and journaled.
+
+At the parent's turn end, open tools with an `agentId` are not swept (a
+background child goes on); they are closed when their child's `end` event
+arrives, or when the process stops. Child message merge state is kept too.
 
 Only `working` is in flight. `idle`, `completed`, `failed`, and `stopped` are
 latched. `unverifiable` can be corrected by an authoritative terminal status,
 but never returns to `working`. At parent turn end, remaining working children
-become `stopped` on interruption, otherwise `unverifiable`. Process exit also
-settles leftovers. A completed spawn/wait *call* alone does not complete a child.
+become `stopped` on interruption, otherwise `unverifiable`. For Codex this
+covers the ended turn's group and every child first seen while that turn was
+open, whatever its group. Process exit also settles all leftovers.
+
+In Manual, a linked Codex child's `thread/settings/updated` is checked like the
+parent's (`manualPostureProblem`): a mismatch interrupts and closes the chat. A completed spawn/wait *call* alone does not complete a child.
 Resuming an already settled child does not reopen its original roster entry.
 
 Tracking is bounded to 32 groups, 64 children per group, 128 recent tools per

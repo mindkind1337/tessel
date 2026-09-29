@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest'
 import { createFrameState, normalizeFrame } from '../claudeFrames.js'
 import { createCodexState, normalizeCodexNotification, newTurn } from '../codexChat.js'
-import { createSubagentTracker, subagentTokens } from '../subagents.js'
+import { createSubagentTracker, subagentTokens, SUBAGENT_THROTTLE_MS } from '../subagents.js'
 
 const task = (extra = {}) => ({
   type: 'assistant',
@@ -43,10 +43,11 @@ const collab = (status = 'running', extra = {}) => ({
   }
 })
 function codex() {
-  const state = createCodexState({ threadId: 'root', now: () => 1000 })
+  const clock = { t: 1000 }
+  const state = createCodexState({ threadId: 'root', now: () => clock.t })
   newTurn(state, 'root-turn')
   const frame = (method, params) => normalizeCodexNotification(method, params, state)
-  return { state, frame }
+  return { state, frame, clock }
 }
 
 describe('Claude subagent observations', () => {
@@ -168,7 +169,8 @@ describe('Claude subagent observations', () => {
   })
 
   it('keeps background launches working until an authoritative task notification', () => {
-    const state = createFrameState({ now: () => 1000 })
+    const clock = { t: 1000 }
+    const state = createFrameState({ now: () => clock.t })
     normalizeFrame(task({ run_in_background: true }), state)
     normalizeFrame(
       {
@@ -191,6 +193,7 @@ describe('Claude subagent observations', () => {
       state
     )
     expect(state.subagents.tracker.get('task-tool').state).toBe('working')
+    clock.t += 1000 // past the snapshot throttle window
     const progress = normalizeFrame(
       {
         type: 'system',
@@ -298,7 +301,7 @@ describe('Codex subagent observations', () => {
   })
 
   it('routes known child content and usage without altering parent state or approval metadata', () => {
-    const { state, frame } = codex()
+    const { state, frame, clock } = codex()
     frame('item/completed', collab())
     expect(
       frame('item/agentMessage/delta', { threadId: 'unknown', itemId: 'a', delta: 'ignored' })
@@ -308,7 +311,7 @@ describe('Codex subagent observations', () => {
     ).toEqual([
       {
         type: 'textDelta',
-        messageId: 'a',
+        messageId: 'child:a',
         index: 0,
         text: 'child text',
         agentId: 'child',
@@ -343,6 +346,7 @@ describe('Codex subagent observations', () => {
       threadId: 'child',
       tokenUsage: { total: { totalTokens: 20 } }
     })
+    clock.t += 1000 // past the snapshot throttle window
     const usage = frame('thread/tokenUsage/updated', {
       threadId: 'child',
       tokenUsage: { total: { totalTokens: 25 } }
@@ -423,6 +427,128 @@ describe('Codex subagent observations', () => {
   })
 })
 
+describe('review fixes', () => {
+  it("namespaces a child's item ids so they never meet the parent's or another child's", () => {
+    const { frame } = codex()
+    frame('item/completed', collab('running', { receiverThreadIds: ['child', 'child-2'], agentsStates: {} }))
+    const item = { type: 'commandExecution', id: 'call-1', command: 'echo x', status: 'inProgress' }
+    const one = frame('item/started', { threadId: 'child', item })
+    const two = frame('item/started', { threadId: 'child-2', item })
+    const toolIds = (events) =>
+      events.filter((e) => e.type === 'assistant').flatMap((e) => e.blocks.map((b) => b.id))
+    expect(toolIds(one)).toEqual(['child:call-1'])
+    expect(toolIds(two)).toEqual(['child-2:call-1'])
+    const message = frame('item/completed', {
+      threadId: 'child',
+      item: { type: 'agentMessage', id: 'msg', text: 'hi' }
+    })
+    expect(message[0]).toMatchObject({ messageId: 'child:msg', agentId: 'child' })
+  })
+
+  it('settles, at turn end, a working child first seen in that turn whatever its group', () => {
+    const { frame, state } = codex()
+    // Group from another turn id (the item said so), but first seen in root-turn.
+    frame('item/completed', { ...collab(), turnId: 'other-turn' })
+    expect(state.subagents.get('child')).toMatchObject({ groupId: 'other-turn', state: 'working' })
+    const end = frame('turn/completed', { threadId: 'root', turn: { id: 'root-turn', status: 'interrupted' } })
+    expect(lastAgent(end)).toMatchObject({ id: 'child', state: 'stopped' })
+    expect(end.some((e) => e.type === 'turnEnd')).toBe(true)
+  })
+
+  it('does not settle a child of another open turn at an unrelated turn end', () => {
+    const tracker = createSubagentTracker(() => 1),
+      out = []
+    const turnA = {},
+      turnB = {}
+    tracker.upsert('a', 'ga', { owner: turnA }, out)
+    tracker.upsert('b', 'gb', { owner: turnB }, out)
+    tracker.settle(null, 'completed', out, turnA)
+    expect(tracker.get('a').state).toBe('unverifiable')
+    expect(tracker.get('b').state).toBe('working')
+    tracker.settle(null, 'failed', out) // process exit: everything
+    expect(tracker.get('b').state).toBe('unverifiable')
+  })
+
+  it("Manual: a child thread's settings leaving the posture ask to close, as the parent's", () => {
+    const { frame, state } = codex()
+    frame('item/completed', collab())
+    const settings = { threadId: 'child', settings: { model: 'child-model', approvalPolicy: 'never' } }
+    expect(frame('thread/settings/updated', settings).some((e) => e.type === 'postureMismatch')).toBe(false)
+    state.postureCheck = true
+    const out = frame('thread/settings/updated', { ...settings, settings: { approvalPolicy: 'never' } })
+    expect(out).toContainEqual({ type: 'postureMismatch', reason: expect.stringContaining('approvalPolicy') })
+    const fine = frame('thread/settings/updated', {
+      threadId: 'child',
+      settings: { approvalPolicy: 'on-request' }
+    })
+    expect(fine.some((e) => e.type === 'postureMismatch')).toBe(false)
+  })
+
+  it('reads agentsStates by own property only', () => {
+    const { frame, state } = codex()
+    frame(
+      'item/completed',
+      collab('running', {
+        receiverThreadIds: ['constructor', 'toString'],
+        agentsStates: Object.assign(Object.create({ constructor: { status: 'completed' } }), {})
+      })
+    )
+    expect(state.subagents.get('constructor').state).toBe('working')
+    expect(state.subagents.get('toString').state).toBe('working')
+  })
+
+  it('throttles token-only snapshots per group, never state changes, and delivers the last one', () => {
+    let t = 0
+    const timers = []
+    const tracker = createSubagentTracker(() => t, {
+      setTimer: (fn, ms) => (timers.push({ fn, at: t + ms }), timers.length),
+      clearTimer: () => {}
+    })
+    const delivered = []
+    tracker.deliverTo((events) => delivered.push(...events))
+    const out = []
+    tracker.upsert('a', 'g', { description: 'x' }, out) // start: snapshot
+    expect(snapshots(out)).toHaveLength(1)
+    for (let i = 1; i <= 50; i++) {
+      t += 10
+      tracker.upsert('a', 'g', { tokens: i }, out)
+    }
+    // 500 ms of token updates: nothing more yet, one timer pending.
+    expect(snapshots(out)).toHaveLength(1)
+    expect(out.filter((e) => e.type === 'subagent' && e.phase === 'progress')).toHaveLength(0)
+    expect(timers).toHaveLength(1)
+    t = timers[0].at
+    timers[0].fn()
+    expect(snapshots(delivered)).toHaveLength(1)
+    expect(snapshots(delivered)[0].agents[0].tokens).toBe(50)
+    // A state change is never held back, even inside the window.
+    t += 1
+    tracker.upsert('a', 'g', { tokens: 60, state: 'completed' }, out)
+    expect(lastAgent(out)).toMatchObject({ state: 'completed', tokens: 60 })
+    expect(out.at(-2)).toMatchObject({ type: 'subagent', phase: 'end' })
+    // Past the window, a token change emits at once.
+    const tracker2 = createSubagentTracker(() => t)
+    const out2 = []
+    tracker2.upsert('b', 'g', {}, out2)
+    t += SUBAGENT_THROTTLE_MS
+    tracker2.upsert('b', 'g', { tokens: 5 }, out2)
+    expect(lastAgent(out2).tokens).toBe(5)
+  })
+
+  it('keeps a held-back change for the next event after its window without a timer', () => {
+    let t = 0
+    const tracker = createSubagentTracker(() => t),
+      out = []
+    tracker.upsert('a', 'g', {}, out)
+    t += 100
+    tracker.upsert('a', 'g', { tokens: 7 }, out)
+    expect(snapshots(out)).toHaveLength(1)
+    t += SUBAGENT_THROTTLE_MS
+    tracker.progress('a', { id: 'tool', name: 'Read' }, out)
+    expect(lastAgent(out).tokens).toBe(7)
+  })
+})
+
 describe('bounded lifecycle tracker', () => {
   it('bounds fields, groups and siblings, and disambiguates labels deterministically', () => {
     const tracker = createSubagentTracker(() => 42),
@@ -432,7 +558,7 @@ describe('bounded lifecycle tracker', () => {
     const agents = snapshots(out).at(-1).agents
     expect(agents).toHaveLength(64)
     expect(new Set(agents.map((a) => a.label)).size).toBe(64)
-    expect(agents.every((a) => a.label.length <= 512)).toBe(true)
+    expect(agents.every((a) => a.label.length <= 120)).toBe(true)
     for (let i = 0; i < 32; i++) tracker.upsert(`new-agent-${i}`, `group-${i}`, {}, out)
     expect(tracker.get('agent-0')).toBeUndefined()
     expect(tracker.upsert('bad\nidentifier', 'group', {}, out)).toBeNull()

@@ -317,7 +317,8 @@ export function settleTurn(state, status, { error = null, durationMs = null, tur
   state.fileChanges.clear()
   const message = error ? str(error.message) : ''
   const subagentEvents = []
-  state.subagents.settle(turn.id, status, subagentEvents)
+  // Its group, and every child first seen while it was open, whatever group.
+  state.subagents.settle(turn.id || null, status, subagentEvents, turn)
   return [
     ...subagentEvents,
     {
@@ -491,6 +492,9 @@ function normalizeCodexChild(method, p, state) {
   const entry = state.subagents.get(p.threadId)
   if (!entry) return []
   const out = [], provenance = { agentId: entry.id, parentToolUseId: entry.parentToolUseId || entry.id }
+  // Child item ids are namespaced: they must never meet the parent's or
+  // another child's row (tools, messages).
+  const scoped = (value) => (value ? `${entry.id}:${value}` : '')
   if (method === 'turn/completed') {
     const turn = obj(p.turn)
     const status = turn.status === 'completed' ? 'completed' : turn.status === 'interrupted' ? 'stopped' : 'failed'
@@ -498,11 +502,17 @@ function normalizeCodexChild(method, p, state) {
   } else if (method === 'thread/tokenUsage/updated') {
     state.subagents.upsert(entry.id, entry.groupId, { tokens: subagentTokens(p.tokenUsage?.total) }, out)
   } else if (method === 'thread/settings/updated') {
-    state.subagents.upsert(entry.id, entry.groupId, { model: obj(p.threadSettings || p.settings).model }, out)
+    const settings = obj(p.threadSettings || p.settings)
+    state.subagents.upsert(entry.id, entry.groupId, { model: settings.model }, out)
+    // Manual: a child thread must keep the parent's posture too.
+    if (state.postureCheck) {
+      const problem = manualPostureProblem(settings)
+      if (problem) out.push({ type: 'postureMismatch', reason: `sub-agent thread: ${problem}` })
+    }
   } else if (method === 'item/agentMessage/delta' && typeof p.delta === 'string' && p.delta) {
-    out.push({ type: 'textDelta', messageId: str(p.itemId) || null, index: 0, text: p.delta, ...provenance })
+    out.push({ type: 'textDelta', messageId: scoped(str(p.itemId)) || null, index: 0, text: p.delta, ...provenance })
   } else if (method === 'item/started' || method === 'item/completed') {
-    const item = obj(p.item), id = str(item.id), completed = method === 'item/completed'
+    const item = obj(p.item), id = scoped(str(item.id)), completed = method === 'item/completed'
     if (completed && item.type === 'agentMessage') {
       if (item.text) out.push({ type: 'assistant', messageId: id, blocks: [{ type: 'text', text: str(item.text) }], ...provenance })
     } else if (completed && item.type === 'reasoning') {
@@ -818,6 +828,11 @@ export function createCodexChat(opts) {
     }, timeouts.idleSettle)
   }
 
+  // A throttled roster snapshot still arrives when its window has passed.
+  state.subagents.deliverTo((events) => {
+    if (!finished) dispatchEvents(events)
+  })
+
   function dispatchEvents(events) {
     for (const ev of events) {
       const { type, ...payload } = ev
@@ -938,6 +953,7 @@ export function createCodexChat(opts) {
     pending.clear()
     cancelPermissions()
     const subagentEvents = []
+    state.subagents.deliverTo(null)
     state.subagents.settle(null, closing ? 'interrupted' : 'failed', subagentEvents)
     dispatchEvents(subagentEvents)
     const normal = closing || code === 0

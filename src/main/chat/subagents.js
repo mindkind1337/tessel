@@ -1,6 +1,9 @@
 // Bounded, provider-independent subagent lifecycle. Events describe observations;
 // they never start work, change permissions, or answer an approval.
-export const SUBAGENT_LIMITS = { groups: 32, agents: 64, field: 512, tools: 128 }
+export const SUBAGENT_LIMITS = { groups: 32, agents: 64, field: 512, tools: 128, label: 120 }
+// Token/duration-only changes of a working child: at most one progress event
+// and one group snapshot per this many ms (state changes are never held back).
+export const SUBAGENT_THROTTLE_MS = 1000
 const FINAL = new Set(['idle', 'completed', 'failed', 'stopped'])
 export const subagentId = (value) =>
   typeof value === 'string' && value.length > 0 && value.length <= 512 && !/[\0\r\n]/.test(value)
@@ -24,20 +27,28 @@ export function subagentTokens(usage) {
   return values.length ? values.reduce((a, b) => a + b, 0) : undefined
 }
 
-export function createSubagentTracker(now = Date.now) {
+// deliverTo(fn): held-back snapshots are then also sent by a timer once their
+// window has passed (fn gets the events), so the last one always arrives.
+export function createSubagentTracker(now = Date.now, { setTimer = setTimeout, clearTimer = clearTimeout } = {}) {
+  let deliver = null,
+    timer = null
   const groups = new Map(),
-    entries = new Map()
+    entries = new Map(),
+    lastSnapshot = new Map(), // groupId -> time of its last snapshot
+    dirty = new Set() // groupIds with a held-back metric change
   function snapshot(groupId, out) {
     const group = groups.get(groupId)
     if (!group) return
+    lastSnapshot.set(groupId, now())
+    dirty.delete(groupId)
     const labels = new Set()
     const agents = [...group.values()].map((entry) => {
-      const base = entry.description || entry.subagentType || entry.id
+      const base = (entry.description || entry.subagentType || entry.id).slice(0, SUBAGENT_LIMITS.label)
       let label = base,
         ordinal = 1
       while (labels.has(label)) {
         const suffix = ` (${++ordinal})`
-        label = base.slice(0, SUBAGENT_LIMITS.field - suffix.length) + suffix
+        label = base.slice(0, SUBAGENT_LIMITS.label - suffix.length) + suffix
       }
       labels.add(label)
       const { id, state, tokens, startedAt, settledAt } = entry
@@ -84,6 +95,8 @@ export function createSubagentTracker(now = Date.now) {
     })
   }
   function upsert(id, groupId, fields, out) {
+    // Its own group's held-back change goes with this update's snapshot.
+    if (dirty.size) flush(out, entries.get(id)?.groupId ?? groupId)
     if (!subagentId(id) || !subagentId(groupId)) return null
     let entry = entries.get(id),
       created = false
@@ -93,6 +106,8 @@ export function createSubagentTracker(now = Date.now) {
           const oldest = groups.keys().next().value
           for (const old of groups.get(oldest).keys()) entries.delete(old)
           groups.delete(oldest)
+          lastSnapshot.delete(oldest)
+          dirty.delete(oldest)
         }
         groups.set(groupId, new Map())
       }
@@ -102,13 +117,16 @@ export function createSubagentTracker(now = Date.now) {
         groupId,
         state: 'working',
         startedAt: number(fields.startedAt) ?? now(),
-        tools: new Map()
+        tools: new Map(),
+        // The parent turn open when it was first seen (never sent in events).
+        ...(fields.owner != null ? { owner: fields.owner } : {})
       }
       groups.get(groupId).set(id, entry)
       entries.set(id, entry)
       created = true
     }
-    let changed = created
+    let changed = created,
+      metricOnly = false
     for (const key of ['description', 'subagentType', 'model', 'parentToolUseId']) {
       const value = text(fields[key])
       if (value !== undefined && value !== entry[key]) {
@@ -116,14 +134,17 @@ export function createSubagentTracker(now = Date.now) {
         changed = true
       }
     }
+    const described = changed
     for (const key of ['tokens', 'durationMs']) {
       const value = number(fields[key])
       if (value !== undefined && value !== entry[key]) {
         entry[key] = value
+        metricOnly = !described
         changed = true
       }
     }
-    const requested = fields.state
+    const requested = fields.state,
+      previousState = entry.state
     let ended = false
     if (
       (requested === 'working' || FINAL.has(requested) || requested === 'unverifiable') &&
@@ -138,13 +159,51 @@ export function createSubagentTracker(now = Date.now) {
         entry.durationMs ??= Math.max(0, entry.settledAt - entry.startedAt)
       }
     }
+    // A working child's token/duration-only change is held back within the
+    // throttle window: the next snapshot (at the latest its end) carries it.
+    const stateChanged = created || entry.state !== previousState
+    if (changed && metricOnly && !stateChanged && entry.state === 'working') {
+      const last = lastSnapshot.get(entry.groupId)
+      if (last !== undefined && now() - last < SUBAGENT_THROTTLE_MS) {
+        dirty.add(entry.groupId)
+        schedule(SUBAGENT_THROTTLE_MS - (now() - last))
+        return entry
+      }
+    }
     if (created) event(entry, 'start', out)
     if (ended) event(entry, 'end', out)
     else if (changed && !created) event(entry, 'progress', out)
     if (changed) snapshot(entry.groupId, out)
     return entry
   }
+  function schedule(ms) {
+    if (!deliver || timer) return
+    timer = setTimer(() => {
+      timer = null
+      const out = []
+      flush(out)
+      if (out.length) deliver(out)
+      if (dirty.size) schedule(SUBAGENT_THROTTLE_MS)
+    }, Math.max(0, ms))
+    timer?.unref?.()
+  }
+  function deliverTo(fn) {
+    deliver = typeof fn === 'function' ? fn : null
+    if (!deliver && timer) {
+      clearTimer(timer)
+      timer = null
+    }
+  }
+  // Snapshots of groups with a held-back change whose window has passed.
+  function flush(out, except = undefined) {
+    for (const groupId of [...dirty]) {
+      if (groupId === except) continue
+      const last = lastSnapshot.get(groupId)
+      if (last === undefined || now() - last >= SUBAGENT_THROTTLE_MS) snapshot(groupId, out)
+    }
+  }
   function progress(id, tool, out) {
+    if (dirty.size) flush(out)
     const entry = entries.get(id)
     if (!entry || entry.state !== 'working' || !subagentId(tool?.id)) return
     const status = tool.status === 'completed' || tool.status === 'failed' ? tool.status : 'running'
@@ -155,9 +214,15 @@ export function createSubagentTracker(now = Date.now) {
     entry.tools.set(tool.id, status)
     event(entry, 'progress', out, { tool: { id: tool.id, name: text(tool.name) || '', status } })
   }
-  function settle(groupId, status, out) {
+  // groupId null: every child. owner: also the children first seen while that
+  // turn was open, whatever their group.
+  function settle(groupId, status, out, owner = undefined) {
     for (const entry of entries.values()) {
-      if ((groupId == null || entry.groupId === groupId) && entry.state === 'working') {
+      const mine =
+        (groupId == null && owner == null) ||
+        (groupId != null && entry.groupId === groupId) ||
+        (owner != null && entry.owner === owner)
+      if (mine && entry.state === 'working') {
         upsert(
           entry.id,
           entry.groupId,
@@ -167,5 +232,5 @@ export function createSubagentTracker(now = Date.now) {
       }
     }
   }
-  return { get: (id) => entries.get(id), upsert, progress, settle, snapshot }
+  return { get: (id) => entries.get(id), upsert, progress, settle, snapshot, flush, deliverTo }
 }

@@ -103,6 +103,10 @@ export function createClaudeChat(opts) {
   const chat = new EventEmitter()
   const frames = createFrameState({ now })
   frames.sessionId = sessionId || resume
+  // A throttled roster snapshot still arrives when its window has passed.
+  frames.subagents.tracker.deliverTo((events) => {
+    if (!finished) for (const { type, ...payload } of events) emit(type, payload)
+  })
 
   let child = null
   let startPromise = null
@@ -218,7 +222,15 @@ export function createClaudeChat(opts) {
     if (m.type === 'control_response') return onControlResponse(m)
     if (m.type === 'control_request') return onControlRequest(m)
     if (m.type === 'control_cancel_request') return onCancelRequest(m)
-    for (const ev of normalizeFrame(m, frames)) {
+    let events
+    try {
+      events = normalizeFrame(m, frames)
+    } catch (err) {
+      // One frame the normalizer could not read is skipped, never the stream.
+      logAt('warn', `frame ${String(m.type).slice(0, 40)} not normalized: ${err?.message || err}`)
+      return
+    }
+    for (const ev of events) {
       const { type, ...payload } = ev
       if (type === 'turnEnd') lastTurnInterrupted = payload.status === 'interrupted'
       emit(type, payload)
@@ -276,6 +288,7 @@ export function createClaudeChat(opts) {
     permissions.clear()
     const subagentEvents = []
     frames.subagents.tracker.settle(null, closing || lastTurnInterrupted ? 'interrupted' : 'failed', subagentEvents)
+    frames.subagents.tracker.deliverTo(null)
     for (const { type, ...payload } of subagentEvents) emit(type, payload)
     // Code 1 after an interrupted last turn, or anything after our close, is a normal end.
     const normal = closing || code === 0 || (code === 1 && lastTurnInterrupted)

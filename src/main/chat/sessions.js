@@ -342,7 +342,19 @@ export function createChatSessions(deps) {
       markAccepted(s, s.turn)
     })
     const provenance = e => ({ ...(e.agentId ? { agentId: e.agentId } : {}), ...(e.parentToolUseId ? { parentToolUseId: e.parentToolUseId } : {}) })
-    on('subagent', e => emit(s.paneId, { ...e, type: 'subagent' }))
+    on('subagent', e => {
+      emit(s.paneId, { ...e, type: 'subagent' })
+      if (e.phase !== 'end' || !e.id) return
+      // A settled child's tools that never reported are over too.
+      for (const id of [...s.tools]) {
+        const owner = s.toolAgents.get(id)
+        if (owner?.agentId !== e.id) continue
+        emit(s.paneId, { type: 'tool', id, status: e.status === 'completed' ? 'done' : 'error', ...owner })
+        s.tools.delete(id)
+        s.toolAgents.delete(id)
+      }
+      for (const [key, m] of [...s.messages]) if (m.agentId === e.id) s.messages.delete(key)
+    })
     on('subagents', e => emit(s.paneId, { ...e, type: 'subagents' }))
     on('textDelta', (e) => {
       if (!e.messageId || (e.parentToolUseId && !e.agentId)) return
@@ -361,7 +373,7 @@ export function createChatSessions(deps) {
         let m = s.messages.get(messageKey)
         if (!m) {
           if (s.messages.size >= 200) s.messages.delete(s.messages.keys().next().value)
-          m = { text: '', thinking: '' }
+          m = { text: '', thinking: '', ...(e.agentId ? { agentId: e.agentId } : {}) }
           s.messages.set(messageKey, m)
         }
         if (thinking) {
@@ -468,11 +480,16 @@ export function createChatSessions(deps) {
             : t('main.chat.turnFailedNoReason', 'The turn failed.')
         })
       }
-      // Tools of the turn that never reported a result.
-      for (const id of s.tools) emit(s.paneId, { type: 'tool', id, status: st === 'completed' ? 'done' : 'error', ...s.toolAgents.get(id) })
-      s.tools.clear()
-      s.toolAgents.clear()
-      s.messages.clear()
+      // Tools of the turn that never reported a result. A sub-agent's
+      // (agentId) are left open: a background child goes on after the
+      // parent's turn and reports them later (or its roster settles it).
+      for (const id of [...s.tools]) {
+        if (s.toolAgents.get(id)?.agentId) continue
+        emit(s.paneId, { type: 'tool', id, status: st === 'completed' ? 'done' : 'error', ...s.toolAgents.get(id) })
+        s.tools.delete(id)
+        s.toolAgents.delete(id)
+      }
+      for (const [key, m] of [...s.messages]) if (!m.agentId) s.messages.delete(key)
       for (const [requestId, ap] of s.approvals) {
         if (ap.status !== 'pending') continue
         ap.status = 'cancelled'
