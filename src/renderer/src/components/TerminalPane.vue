@@ -126,8 +126,8 @@ function chosenShown(n, res) {
   // Launched with a model of its own (--model from the pane's choice,
   // saved with the layout): that one until its session says otherwise.
   if ((!n.modelChoice || !n.modelChoice.model) && n.sessionOptions && typeof n.sessionOptions.model === 'string' && n.sessionOptions.model) {
-    if (res && res.source === 'session') return res
-    const effort = typeof n.sessionOptions.effort === 'string' ? n.sessionOptions.effort : null
+    if (res && res.source === 'session' && res.model) return res
+    const effort = typeof n.sessionOptions.effort === 'string' ? n.sessionOptions.effort : (res && res.chosenEffort) || null
     return { model: modelChoiceLabel(modelsFor(n.agentId), n.sessionOptions.model), effort, source: 'chosen' }
   }
   const c = n.modelChoice
@@ -160,7 +160,8 @@ async function refreshModel() {
       sessionId: n.sessionId,
       command: [n.agentCommand, n.detectedCommand].filter(Boolean).join(' '),
       cwd: n.startDir,
-      launchedAt: n.launchedAt || 0
+      launchedAt: n.launchedAt || 0,
+      chosenModel: n.sessionOptions && typeof n.sessionOptions.model === 'string' ? n.sessionOptions.model : undefined
     })
     if (!res && !n.modelChoice) {
       const seen = modelOnScreen()

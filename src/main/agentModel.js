@@ -324,6 +324,34 @@ function jsonModel(file, pick) {
 const plainModel = (o) => o.model
 const nestedModel = (o) => (o.model && typeof o.model === 'object' ? o.model.name : o.model)
 
+// Claude Code's effort from its settings: modelSettings[<model id>].effortLevel
+// for that model, else the top-level effortLevel; local, project, then user
+// settings, the first that says. model: the full id in use, or null.
+const CLAUDE_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']
+export function claudeSettingsEffort(model, cwd, home) {
+  const files = []
+  if (cwd) files.push(join(cwd, '.claude', 'settings.local.json'), join(cwd, '.claude', 'settings.json'))
+  files.push(join(home, '.claude', 'settings.json'))
+  const id = typeof model === 'string' ? model.replace(/\[1m\]$/i, '').toLowerCase() : ''
+  let general = null
+  for (const f of files) {
+    const o = parseLoose(readText(f))
+    if (!o || typeof o !== 'object') continue
+    const per = o.modelSettings && typeof o.modelSettings === 'object' ? o.modelSettings : null
+    if (id && per) {
+      for (const [key, value] of Object.entries(per)) {
+        const level = value && typeof value === 'object' ? value.effortLevel : null
+        const k = key.toLowerCase()
+        // An alias (fable, opus…) matches its full id (claude-fable-5-1).
+        const hit = k === id || (/^[a-z]+$/.test(id) && k.includes(`-${id}-`))
+        if (hit && CLAUDE_EFFORTS.includes(level)) return level
+      }
+    }
+    if (!general && CLAUDE_EFFORTS.includes(o.effortLevel)) general = o.effortLevel
+  }
+  return general
+}
+
 function settingsModel(agentId, cwd, home) {
   const files = []
   if (agentId === 'claude') {
@@ -369,7 +397,18 @@ function settingsModel(agentId, cwd, home) {
 // { model, effort, source: 'session' | 'command' | 'picked' | 'settings' } or null.
 // launchedAt (ms): when the pane started, so a model picked in OpenCode
 // since then beats its settings file.
-export function agentModel({ agentId, sessionId, command, cwd, launchedAt = 0 } = {}, home = os.homedir()) {
+export function agentModel(query = {}, home = os.homedir()) {
+  const res = agentModelFound(query, home)
+  // The pane's own model choice (launched with it): its effort from Claude's
+  // settings, for the header when the pane chose no effort itself.
+  const chosen = typeof query.chosenModel === 'string' && /^[\w.[\]-]{1,80}$/.test(query.chosenModel) ? query.chosenModel : null
+  if (query.agentId === 'claude' && chosen) {
+    const chosenEffort = claudeSettingsEffort(chosen, query.cwd, home)
+    return res ? { ...res, chosenEffort } : { model: null, effort: null, source: null, chosenEffort }
+  }
+  return res
+}
+function agentModelFound({ agentId, sessionId, command, cwd, launchedAt = 0 } = {}, home = os.homedir()) {
   if (!agentId) return null
   if (agentId === 'copilot') {
     const f = copilotLiveSession(cwd, home)
@@ -394,7 +433,7 @@ export function agentModel({ agentId, sessionId, command, cwd, launchedAt = 0 } 
         const set = settingsModel('claude', cwd, home)
         const big = set && /^(\w+)\[1m\]$/i.exec(set.model)
         const same = big && m.toLowerCase().includes(big[1].toLowerCase())
-        return { model: same ? m + '[1m]' : m, effort: null, source: 'session' }
+        return { model: same ? m + '[1m]' : m, effort: claudeSettingsEffort(m, cwd, home), source: 'session' }
       }
     } else if (agentId === 'codex') {
       const f = codexRollout(sessionId, home)
@@ -407,7 +446,10 @@ export function agentModel({ agentId, sessionId, command, cwd, launchedAt = 0 } 
   const picked = agentId === 'opencode' ? opencodeRecent(home) : null
   if (picked && launchedAt && picked.mtime >= launchedAt) return { model: picked.model, effort: null, source: 'picked' }
   const s = settingsModel(agentId, cwd, home)
-  if (s) return { model: s.model, effort: s.effort || null, source: 'settings' }
+  if (s) {
+    const effort = s.effort || (agentId === 'claude' ? claudeSettingsEffort(s.model, cwd, home) : null)
+    return { model: s.model, effort, source: 'settings' }
+  }
   return picked ? { model: picked.model, effort: null, source: 'picked' } : null
 }
 

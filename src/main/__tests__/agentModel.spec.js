@@ -294,3 +294,22 @@ describe('modelLabel', () => {
     expect(modelLabel('')).toBe('')
   })
 })
+
+describe("Claude Code's effort from its settings", () => {
+  it('per-model effort (full id or alias) before the general one; the pane choice gets its own', async () => {
+    const { claudeSettingsEffort, agentModel } = await import('../agentModel.js')
+    const home = fs.mkdtempSync(join(os.tmpdir(), 'tessel-effort-'))
+    fs.mkdirSync(join(home, '.claude'))
+    fs.writeFileSync(
+      join(home, '.claude', 'settings.json'),
+      JSON.stringify({ model: 'opus[1m]', effortLevel: 'xhigh', modelSettings: { 'claude-fable-5-1': { effortLevel: 'high' } } })
+    )
+    expect(claudeSettingsEffort('claude-fable-5-1', null, home)).toBe('high')
+    expect(claudeSettingsEffort('fable', null, home)).toBe('high')
+    expect(claudeSettingsEffort('opus[1m]', null, home)).toBe('xhigh')
+    expect(claudeSettingsEffort(null, null, home)).toBe('xhigh')
+    const res = agentModel({ agentId: 'claude', chosenModel: 'fable' }, home)
+    expect(res).toMatchObject({ model: 'opus[1m]', effort: 'xhigh', source: 'settings', chosenEffort: 'high' })
+    fs.rmSync(home, { recursive: true, force: true })
+  })
+})
