@@ -56,6 +56,9 @@ export const DEFAULT_SETTINGS = Object.freeze({
   // How a Claude or Codex worker starts: in a terminal pane (as always), or
   // as a chat agent (no terminal: its brief and messages are turns).
   orchestrationWorkerMode: 'terminal',
+  // A chat agent idle this many minutes has its process stopped (0: never);
+  // its next message starts it again, its conversation resumed.
+  chatIdleMinutes: 30,
   restoreWorkspaces: true,
   resumeAgents: true,
   // Windows input method tip for voice typing ('' = whatever is active).
@@ -284,6 +287,7 @@ export function loadSettings(saved) {
     if (key === 'orchestrationMaxWorkers' && !(Number.isInteger(v) && v >= 1 && v <= MAX_CONCURRENT_LIMIT)) continue
     if (key === 'orchestrationMaxDepth' && !(Number.isInteger(v) && v >= 1 && v <= NESTED_DEPTH_LIMIT)) continue
     if (key === 'orchestrationWorkerMode' && !['terminal', 'chat'].includes(v)) continue
+    if (key === 'chatIdleMinutes' && !(Number.isInteger(v) && v >= 0 && v <= 1440)) continue
     if (
       key === 'editorAutoSaveDelayMs' &&
       !(Number.isInteger(v) && v >= EDITOR_AUTOSAVE_MIN_MS && v <= EDITOR_AUTOSAVE_MAX_MS)

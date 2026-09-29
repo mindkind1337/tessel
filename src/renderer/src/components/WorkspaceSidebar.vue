@@ -38,7 +38,7 @@ import {
 import OrcaMenu from './OrcaMenu.vue'
 import WorktreeCard from './sidebar/WorktreeCard.vue'
 import { settings } from '../settings'
-import { buildSidebarRows, neighborCard, cardTargetPane } from '../sidebarModel'
+import { buildSidebarRows, neighborCard, cardTargetPane, isAgentPane } from '../sidebarModel'
 import { t } from '../i18n'
 
 const props = defineProps({
@@ -288,7 +288,7 @@ function pickingFor(wsId) {
   return { active: true, picked: picked.value, canPick, why: pickWhy }
 }
 function pickableCount(wsId) {
-  return projectPanes(wsId).filter((p) => p.kind === 'agent' && !p.team).length
+  return projectPanes(wsId).filter((p) => isAgentPane(p) && !p.team).length
 }
 
 // Rename a team (from its menu).
@@ -601,7 +601,7 @@ function projectActionItems(project) {
       type: 'item',
       icon: MessageSquare,
       label: t('sidebar.project.messageAll', 'Message All Agents…'),
-      disabled: !projectPanes(wsId).some((p) => p.kind === 'agent'),
+      disabled: !projectPanes(wsId).some((p) => isAgentPane(p)),
       onSelect: () => startMessage(wsId, wsId)
     },
     {
@@ -651,7 +651,8 @@ function cardMenuItems(card) {
     items.push({ type: 'item', icon: GitCompare, label: t('sidebar.card.review', 'Review Changes…'), onSelect: () => emit('review-task', card.taskId) })
   }
   items.push({ type: 'separator' })
-  const sleepable = card.panes.filter((r) => r.kind === 'agent' && !r.sleeping).map((r) => r.id)
+  // A chat agent has no terminal to stop (it stops by itself when idle).
+  const sleepable = card.panes.filter((r) => r.kind === 'agent' && !r.chat && !r.sleeping).map((r) => r.id)
   items.push({
     type: 'item',
     icon: Moon,
@@ -698,7 +699,7 @@ function rowMenuItems(row, card) {
     items.push({ type: 'separator' })
     const team = row.team ? teamById(row.team) : null
     if (team) {
-      const members = projectPanes(wsId).filter((p) => p.kind === 'agent' && p.team === team.id)
+      const members = projectPanes(wsId).filter((p) => isAgentPane(p) && p.team === team.id)
       items.push({ type: 'label', label: team.name })
       items.push({
         type: 'item',
@@ -753,8 +754,8 @@ function rowMenuItems(row, card) {
         })
       }
     }
-    items.push({ type: 'separator' })
-    items.push({
+    if (!row.chat) items.push({ type: 'separator' })
+    if (!row.chat) items.push({
       type: 'item',
       icon: Moon,
       label: t('sidebar.card.sleep', 'Sleep'),
@@ -838,7 +839,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onDocKey))
 // Collapsed rail: each project with its busy / needs-you dot.
 const railItems = computed(() =>
   props.projects.map((p) => {
-    const agents = (p.panes || []).filter((x) => x.kind === 'agent' && !x.sleeping)
+    const agents = (p.panes || []).filter((x) => isAgentPane(x) && !x.sleeping)
     return {
       id: p.id,
       name: p.name,

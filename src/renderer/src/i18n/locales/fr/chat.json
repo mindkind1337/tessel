@@ -4,7 +4,9 @@
       "titleHint": "{{title}}\nFaites glisser l'en-tête pour déplacer le volet",
       "yoloHint": "Les outils s'exécutent sans demander (Paramètres)",
       "mcpUnsandboxed": "MCP hors bac à sable",
-      "mcpUnsandboxedHint": "Mode Manuel : les commandes et les modifications de fichiers sont en bac à sable et demandent d'abord. Les outils MCP de votre configuration Codex ne sont pas en bac à sable : ils s'exécutent avec vos droits, et Tessel ne demande que lorsque Codex demande une approbation."
+      "mcpUnsandboxedHint": "Mode Manuel : les commandes et les modifications de fichiers sont en bac à sable et demandent d'abord. Les outils MCP de votre configuration Codex ne sont pas en bac à sable : ils s'exécutent avec vos droits, et Tessel ne demande que lorsque Codex demande une approbation.",
+      "openInTerminal": "Ouvrir dans un terminal",
+      "openInTerminalHint": "Poursuivre cette conversation dans un panneau terminal : même panneau, mêmes permissions ou moins"
     },
     "status": {
       "starting": "Démarrage",
@@ -13,7 +15,8 @@
       "approval": "Approbation requise",
       "signin": "Non connecté",
       "untrusted": "Non approuvé",
-      "stopped": "Arrêté"
+      "stopped": "Arrêté",
+      "asleep": "En veille (se réveille au prochain message)"
     },
     "rate": {
       "fiveHour": "5 h : {{pct}} %",

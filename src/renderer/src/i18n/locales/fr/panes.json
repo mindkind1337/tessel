@@ -122,7 +122,9 @@
       "workerOfHint": "Exécutant de {{coordinator}} : y aller",
       "childType": "Type : {{type}}",
       "childModel": "Modèle : {{model}}",
-      "teamLead": "{{team}} · responsable"
+      "teamLead": "{{team}} · responsable",
+      "chat": "chat",
+      "chatHint": "Chat, sans terminal"
     },
     "card": {
       "markReadTooltip": "Marquer comme lu · {{status}}",
@@ -202,7 +204,10 @@
       "typingHold": "Le message attend que vous envoyiez votre texte",
       "held": "Le message attend votre approbation",
       "goToPane": "Aller au panneau",
-      "sleepHint": "Arrête son terminal pour libérer de la mémoire ; rouvrir le panneau reprend la conversation."
+      "sleepHint": "Arrête son terminal pour libérer de la mémoire ; rouvrir le panneau reprend la conversation.",
+      "chatStopped": "Arrêté",
+      "chatSignin": "Non connecté",
+      "chatUntrusted": "Dossier non approuvé"
     },
     "groups": {
       "all": "Tous"
@@ -329,7 +334,9 @@
       "folder": "Dossier",
       "workerDone": "Exécutant de {{coordinator}} : a terminé",
       "workerFailed": "Exécutant de {{coordinator}} : a échoué",
-      "workerOf": "Exécutant de {{coordinator}}"
+      "workerOf": "Exécutant de {{coordinator}}",
+      "chatPane": "Panneau de chat {{num}} (sans terminal)",
+      "chat": "Chat (sans terminal)"
     }
   },
   "pane": {
@@ -483,7 +490,9 @@
       "restartManual": "Redémarrer en demandant d'abord",
       "restartManualHint": "Redémarrer cet agent pour qu'il vous demande à nouveau avant d'agir : même panneau, sa conversation reprise",
       "yoloFolder": "Yolo dans ce dossier",
-      "yoloFolderHint": "Les agents lancés dans {{folder}} (ou un dossier à l'intérieur) démarrent toujours en Yolo. Les agents déjà lancés là gardent leur mode."
+      "yoloFolderHint": "Les agents lancés dans {{folder}} (ou un dossier à l'intérieur) démarrent toujours en Yolo. Les agents déjà lancés là gardent leur mode.",
+      "openAsChat": "Ouvrir en chat",
+      "openAsChatHint": "Poursuivre cette conversation dans un panneau de chat (sans terminal) : même panneau, mêmes permissions ou moins"
     },
     "badge": {
       "quiet": "silencieux depuis {{minutes}} min",

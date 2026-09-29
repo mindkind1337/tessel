@@ -986,3 +986,259 @@ describe('with the real agent status store', () => {
     await store.dispose()
   })
 })
+
+describe('idle stop', () => {
+  const MIN = 60000
+  beforeEach(() => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] }))
+  afterEach(() => vi.useRealTimers())
+
+  const turn = async (a, uuid) => {
+    a.emit('accepted', { uuid })
+    a.emit('turnEnd', { status: 'completed' })
+    await flush()
+  }
+  const sleepNow = async (minutes) => {
+    vi.advanceTimersByTime(minutes * MIN)
+    await flush()
+  }
+  const ended = () => events('status').filter((s) => s.state === 'ended' || s.state === 'crashed')
+
+  it('idle N minutes after a turn: the process stops, asleep, released, no ended', async () => {
+    const chat = createChatSessions(deps)
+    const r = await openOk(chat, { idleMinutes: 5 })
+    const a = adapters[0]
+    const u = chat.send({ paneId, text: 'hi' })
+    await flush()
+    await sleepNow(10) // a running turn is never stopped
+    expect(a.close).not.toHaveBeenCalled()
+    await turn(a, u.id)
+    vi.advanceTimersByTime(5 * MIN - 1)
+    await flush()
+    expect(a.close).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(1)
+    await flush()
+    expect(a.close).toHaveBeenCalledTimes(1)
+    expect(a.close.mock.calls[0][0]).toBeUndefined() // graceful
+    expect(last('status')).toMatchObject({ type: 'status', state: 'asleep', agent: 'claude', sessionId: r.sessionId })
+    expect(last('status').launchToken).toBeUndefined()
+    expect(ended()).toEqual([])
+    expect(deps.state.unregister).toHaveBeenCalledWith(paneId, r.launchToken)
+    expect(deps.team.revokeSecret).toHaveBeenCalledWith(paneId)
+    expect(chat.list()).toEqual([expect.objectContaining({ paneId, status: 'asleep', sessionId: r.sessionId, launchToken: null })])
+    const h = chat.history({ paneId })
+    expect(h).toMatchObject({ open: false, asleep: true, live: { status: 'asleep', sessionId: r.sessionId, queued: 0 } })
+    expect(h.events.at(-1).event).toMatchObject({ type: 'status', state: 'asleep' })
+    // No process: nothing to interrupt.
+    expect(await chat.interrupt({ paneId })).toMatchObject({ code: 'closed' })
+  })
+
+  it('30 minutes by default, counted from the open too', async () => {
+    const chat = createChatSessions(deps)
+    await openOk(chat)
+    await sleepNow(29)
+    expect(adapters[0].close).not.toHaveBeenCalled()
+    await sleepNow(1)
+    expect(last('status').state).toBe('asleep')
+  })
+
+  it('any activity restarts the count', async () => {
+    const chat = createChatSessions(deps)
+    await openOk(chat, { idleMinutes: 5 })
+    const a = adapters[0]
+    await sleepNow(4)
+    chat.sendTeam({ paneId, messages: [{ id: 'm1', from: '#2', text: 'x' }] })
+    await flush()
+    await sleepNow(4)
+    await turn(a, a.send.mock.calls[0][0].uuid)
+    await sleepNow(4)
+    a.emit('state', { state: 'running' }) // a turn of its own
+    await sleepNow(4)
+    a.emit('turnEnd', { status: 'completed' })
+    await sleepNow(4)
+    expect(a.close).not.toHaveBeenCalled()
+    await sleepNow(1)
+    expect(a.close).toHaveBeenCalledTimes(1)
+  })
+
+  it('a pending approval or a waiting team message blocks it; answering starts the count again', async () => {
+    const chat = createChatSessions(deps)
+    await openOk(chat, { idleMinutes: 1 })
+    const a = adapters[0]
+    a.emit('permission', { requestId: 'r1', toolName: 'Bash', input: { command: 'ls' } })
+    await sleepNow(60)
+    expect(a.close).not.toHaveBeenCalled()
+    expect(await chat.approve({ paneId, requestId: 'r1', decision: 'allow' })).toEqual({ ok: true })
+    await sleepNow(1)
+    expect(a.close).toHaveBeenCalledTimes(1)
+
+    await chat.close({ paneId })
+    await openOk(chat, { idleMinutes: 1 })
+    const b = adapters[1]
+    b.emit('permission', { requestId: 'r2', toolName: 'Bash', input: {} })
+    chat.sendTeam({ paneId, messages: [{ id: 'm1', from: '#2', text: 'x' }] }) // waits for the approval
+    b.emit('permissionCancelled', { requestId: 'r2' })
+    await sleepNow(60)
+    expect(b.close).not.toHaveBeenCalled()
+  })
+
+  it('0 = never', async () => {
+    const chat = createChatSessions(deps)
+    await openOk(chat, { idleMinutes: 0 })
+    await sleepNow(1440 * 3)
+    expect(adapters[0].close).not.toHaveBeenCalled()
+    expect(last('status').state).toBe('idle')
+  })
+
+  it('the old process exiting after the sleep is ignored (no crashed, still asleep)', async () => {
+    const chat = createChatSessions(deps)
+    await openOk(chat, { idleMinutes: 1 })
+    await sleepNow(1)
+    adapters[0].emit('exit', { code: 3, signal: null, stderrTail: 'late', crashed: true })
+    adapters[0].emit('turnEnd', { status: 'failed' })
+    await flush()
+    expect(ended()).toEqual([])
+    expect(events('turnEnd')).toEqual([])
+    expect(chat.list()[0].status).toBe('asleep')
+  })
+
+  it('a message while asleep waits and asks for a wake once; the open resumes the same conversation and sends them in order', async () => {
+    const chat = createChatSessions(deps)
+    const r = await openOk(chat, { idleMinutes: 1 })
+    await sleepNow(1)
+    const u1 = chat.send({ paneId, text: 'one' })
+    expect(u1).toMatchObject({ ok: true, queued: true })
+    expect(chat.sendTeam({ paneId, messages: [{ id: 'm1', from: '#2', text: 'team' }] })).toEqual({ ok: true, ids: ['m1'] })
+    const u2 = chat.send({ paneId, text: 'two' })
+    expect(events('wake')).toEqual([{ type: 'wake' }])
+    expect(events('user').map((u) => u.status)).toEqual(['queued', 'queued', 'queued'])
+    expect(chat.history({ paneId })).toMatchObject({ open: false, asleep: true, live: { queued: 3 } })
+    // Another pane cannot take this conversation meanwhile.
+    expect(await chat.open({ paneId: 'pane-2', cwd: tmp, permissions: 'manual', resumeId: r.sessionId })).toMatchObject({ code: 'busy' })
+    deps.team.setSecret.mockClear()
+    const r2 = await chat.open({ paneId, cwd: tmp, permissions: 'yolo', idleMinutes: 2 })
+    await flush()
+    expect(r2).toMatchObject({ ok: true, agent: 'claude', sessionId: r.sessionId })
+    expect(r2.launchToken).not.toBe(r.launchToken)
+    const b = adapters[1]
+    expect(b.opts).toMatchObject({ resume: r.sessionId, permissionMode: 'bypassPermissions', cwd: tmp })
+    expect(b.opts.sessionId).toBeUndefined()
+    expect(deps.team.setSecret).toHaveBeenCalledWith(paneId, 'f'.repeat(64))
+    expect(deps.state.register).toHaveBeenCalledTimes(2)
+    expect(events('status').slice(-3).map((s) => s.state)).toEqual(['starting', 'idle', 'working'])
+    // Users first, one turn each, then the team batch.
+    expect(b.send.mock.calls[0][0]).toEqual({ uuid: u1.id, text: 'one' })
+    expect(events('userStatus')).toContainEqual({ type: 'userStatus', id: u1.id, status: 'sent' })
+    await turn(b, u1.id)
+    expect(b.send.mock.calls[1][0]).toEqual({ uuid: u2.id, text: 'two' })
+    await turn(b, u2.id)
+    const teamTurn = b.send.mock.calls[2][0]
+    expect(teamTurn.text).toBe(teamTurnText([{ from: '#2', text: 'team' }]))
+    await turn(b, teamTurn.uuid)
+    expect(events('teamAccepted')).toEqual([{ type: 'teamAccepted', ids: ['m1'] }])
+    expect(chat.history({ paneId })).toMatchObject({ open: true, asleep: false })
+    // Its own idle time now; a new sleep asks for a new wake.
+    await sleepNow(2)
+    expect(b.close).toHaveBeenCalledTimes(1)
+    chat.send({ paneId, text: 'three' })
+    expect(events('wake')).toHaveLength(2)
+  })
+
+  it('a wake refuses another conversation or agent; a message during the wake start still waits', async () => {
+    const chat = createChatSessions(deps)
+    const r = await openOk(chat, { idleMinutes: 1 })
+    await sleepNow(1)
+    const other = '0b8f3c2e-1111-4222-8333-944445555666'
+    expect(await chat.open({ paneId, cwd: tmp, permissions: 'manual', resumeId: other })).toMatchObject({ ok: false, code: 'busy' })
+    expect(await chat.open({ paneId, cwd: tmp, permissions: 'manual', agent: 'codex' })).toMatchObject({ ok: false, code: 'busy' })
+    expect(deps.createAdapter).toHaveBeenCalledTimes(1)
+    let release
+    const gate = new Promise((res) => (release = res))
+    deps.resolveClaude.mockImplementationOnce(async () => {
+      await gate
+      return { exe: 'C:\\claude.exe' }
+    })
+    const waking = chat.open({ paneId, cwd: tmp, permissions: 'manual', resumeId: r.sessionId })
+    await flush()
+    const u = chat.send({ paneId, text: 'meanwhile' })
+    expect(u).toMatchObject({ ok: true, queued: true })
+    expect(events('wake')).toEqual([]) // already waking
+    expect(chat.history({ paneId }).open).toBe(true)
+    release()
+    expect((await waking).sessionId).toBe(r.sessionId)
+    await flush()
+    expect(adapters[1].send).toHaveBeenCalledWith({ uuid: u.id, text: 'meanwhile' })
+  })
+
+  it('the wake waits for the old process to stop', async () => {
+    let stopped
+    const chat = createChatSessions({
+      ...deps,
+      createAdapter: (opts) => {
+        const a = new FakeAdapter(opts, startResult)
+        if (!adapters.length) a.close = vi.fn(() => new Promise((res) => (stopped = res)))
+        adapters.push(a)
+        return a
+      }
+    })
+    await openOk(chat, { idleMinutes: 1 })
+    await sleepNow(1)
+    const waking = chat.open({ paneId, cwd: tmp, permissions: 'manual' })
+    await flush()
+    expect(adapters).toHaveLength(1)
+    stopped()
+    expect((await waking).ok).toBe(true)
+    expect(adapters).toHaveLength(2)
+  })
+
+  it('a failed wake fails what waited, as a failed open', async () => {
+    const chat = createChatSessions(deps)
+    await openOk(chat, { idleMinutes: 1 })
+    await sleepNow(1)
+    const u = chat.send({ paneId, text: 'one' })
+    chat.sendTeam({ paneId, messages: [{ id: 'm1', from: '#2', text: 'x' }] })
+    startResult = { ok: false, code: 'exit', error: 'boom' }
+    expect(await chat.open({ paneId, cwd: tmp, permissions: 'manual' })).toMatchObject({ ok: false, code: 'failed', detail: 'boom' })
+    expect(events('userStatus')).toContainEqual({ type: 'userStatus', id: u.id, status: 'failed' })
+    expect(events('teamFailed')).toEqual([{ type: 'teamFailed', ids: ['m1'] }])
+    expect(last('status')).toMatchObject({ state: 'crashed' })
+    expect(chat.list()).toEqual([])
+    expect(chat.history({ paneId })).toMatchObject({ open: false, asleep: false, live: null })
+    expect(chat.send({ paneId, text: 'x' })).toMatchObject({ ok: false, code: 'closed' })
+  })
+
+  it('close while asleep: dropped, ended once, waiting messages failed', async () => {
+    const chat = createChatSessions(deps)
+    await openOk(chat, { idleMinutes: 1 })
+    await sleepNow(1)
+    const u = chat.send({ paneId, text: 'one' })
+    expect(await chat.close({ paneId })).toEqual({ ok: true })
+    expect(adapters[0].close).toHaveBeenCalledTimes(1) // the sleep's only
+    expect(events('status').filter((s) => s.state === 'ended')).toHaveLength(1)
+    expect(events('userStatus')).toContainEqual({ type: 'userStatus', id: u.id, status: 'failed' })
+    expect(chat.list()).toEqual([])
+    expect(chat.history({ paneId })).toMatchObject({ open: false, asleep: false })
+  })
+
+  it('a model chosen while asleep is used by the wake', async () => {
+    const chat = createChatSessions(deps)
+    await openOk(chat, { idleMinutes: 1, model: 'sonnet' })
+    await sleepNow(1)
+    expect(await chat.setOption({ paneId, model: 'opus' })).toMatchObject({ ok: true, model: 'opus' })
+    await chat.open({ paneId, cwd: tmp, permissions: 'manual' })
+    expect(adapters[1].opts.model).toBe('opus')
+  })
+
+  it('idleMinutes is checked (open and IPC)', async () => {
+    const chat = createChatSessions(deps)
+    const handlers = {}
+    chat.register({ handle: (ch, fn) => (handlers[ch] = (q) => fn({}, q)) })
+    for (const bad of [-1, 1441, 1.5, '5', NaN, true])
+      expect(await handlers['chat:open']({ paneId, cwd: tmp, permissions: 'manual', idleMinutes: bad })).toMatchObject({ ok: false, code: 'invalid' })
+    for (const bad of [-1, 1441, 2.5, '5'])
+      expect(await chat.open({ paneId, cwd: tmp, permissions: 'manual', idleMinutes: bad })).toMatchObject({ ok: false, code: 'invalid' })
+    expect(deps.createAdapter).not.toHaveBeenCalled()
+    expect((await handlers['chat:open']({ paneId, cwd: tmp, permissions: 'manual', idleMinutes: 1440 })).ok).toBe(true)
+    await chat.close({ paneId })
+    expect((await handlers['chat:open']({ paneId, cwd: tmp, permissions: 'manual', idleMinutes: 0 })).ok).toBe(true)
+  })
+})
