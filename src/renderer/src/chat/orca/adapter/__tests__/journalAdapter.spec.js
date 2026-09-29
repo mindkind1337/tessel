@@ -171,9 +171,21 @@ describe('journal adapter', () => {
     expect(rows[0].body.blocks[0]).toEqual({ type: 'text', text: 'Ran 1 subagent' })
     expect(rows[0].body.blocks[1]).toEqual({ type: 'subagent-group', groupId: 'root-turn', agents: [{ id: 'child', label: 'Inspect fixtures', state: 'completed', tokens: 25, startedAt: 1000, settledAt: 1500 }] })
     expect(states[1].items.find((i) => i.itemId === 'subagents:root-turn').body.blocks[0].text).toBe('Kicked off 1 subagent')
-    expect(state.items.find((i) => i.itemId === 'a')).toMatchObject({ agentId: 'child', providerParentRef: 'spawn-tool' })
+    // Keyed by agent and message id: never the parent's message 'a'.
+    expect(state.items.find((i) => i.itemId === 'child:child:a')).toMatchObject({ agentId: 'child', providerParentRef: 'spawn-tool' })
     // Older events without agentId: the provider reference stands in.
     expect(state.items.find((i) => i.itemId === 'tool:t1')).toMatchObject({ agentId: 'spawn-tool', providerParentRef: 'spawn-tool' })
+  })
+
+  it("a background child's text after the turn ended does not reopen the main agent's turn", () => {
+    const { state } = run([
+      { type: 'user', id: 'u1', text: 'go', status: 'accepted' },
+      { type: 'turnEnd', status: 'completed' },
+      { type: 'assistantDelta', messageId: 'm', text: 'still going', agentId: 'bg', parentToolUseId: 'spawn' },
+      { type: 'tool', id: 'bg:t', name: 'Bash', input: { command: 'ls' }, status: 'running', agentId: 'bg', parentToolUseId: 'spawn' }
+    ])
+    expect(activeStructuredAgentSessionTurnId(state.items)).toBeNull()
+    expect(state.items.filter((i) => i.body.kind === 'turn').length).toBe(1)
   })
 
   it('an empty roster removes its row (never "Ran 0")', () => {

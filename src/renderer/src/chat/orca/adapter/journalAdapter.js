@@ -44,6 +44,17 @@ function childLinkage(ev) {
   return { agentId: String(agentId), ...(ev.parentToolUseId ? { providerParentRef: String(ev.parentToolUseId) } : {}) }
 }
 
+// A child's content never opens (or keeps open) the main agent's turn: a
+// background child can go on after it.
+function isChild(ev) {
+  return ev.agentId != null && ev.agentId !== ''
+}
+// A message's item id: the engine keys a child's messages by agent and
+// message id, so they never meet the parent's.
+function messageKey(ev) {
+  return isChild(ev) ? `child:${ev.agentId}:${ev.messageId}` : String(ev.messageId) // i18n-ignore
+}
+
 // One roster entry from the engine, bounded like the reference's.
 function subagentEntry(a) {
   if (!a || typeof a !== 'object' || a.id == null) return null
@@ -201,23 +212,25 @@ export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence =
       }
       case 'assistantDelta': {
         if (!ev.messageId) break
-        const text = (streamed.get(ev.messageId) || '') + String(ev.text ?? '')
-        streamed.set(ev.messageId, text)
-        openTurnFor(lastUserItemId, at)
-        put(String(ev.messageId), { kind: 'message', role: 'assistant', blocks: [{ type: 'text', text }] }, childLinkage(ev), at)
+        const key = messageKey(ev)
+        const text = (streamed.get(key) || '') + String(ev.text ?? '')
+        streamed.set(key, text)
+        if (!isChild(ev)) openTurnFor(lastUserItemId, at)
+        put(key, { kind: 'message', role: 'assistant', blocks: [{ type: 'text', text }] }, childLinkage(ev), at)
         break
       }
       case 'assistant': {
         if (!ev.messageId) break
+        const key = messageKey(ev)
         const text = String(ev.text ?? '')
-        streamed.set(ev.messageId, text)
-        openTurnFor(lastUserItemId, at)
-        put(String(ev.messageId), { kind: 'message', role: 'assistant', blocks: [{ type: 'text', text }] }, childLinkage(ev), at)
+        streamed.set(key, text)
+        if (!isChild(ev)) openTurnFor(lastUserItemId, at)
+        put(key, { kind: 'message', role: 'assistant', blocks: [{ type: 'text', text }] }, childLinkage(ev), at)
         break
       }
       case 'thinking': {
         if (!ev.messageId || !ev.text) break
-        put(`reasoning:${ev.messageId}`, { kind: 'message', role: 'reasoning', blocks: [{ type: 'text', text: String(ev.text) }] }, childLinkage(ev), at) // i18n-ignore
+        put(`reasoning:${messageKey(ev)}`, { kind: 'message', role: 'reasoning', blocks: [{ type: 'text', text: String(ev.text) }] }, childLinkage(ev), at) // i18n-ignore
         break
       }
       case 'tool': {
@@ -231,7 +244,7 @@ export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence =
           break
         }
         const linkage = childLinkage(ev)
-        openTurnFor(lastUserItemId, at)
+        if (!isChild(ev)) openTurnFor(lastUserItemId, at)
         put(itemId, { kind: 'tool-call', name: String(ev.name ?? ''), input: parseInput(ev.input), callId: String(ev.id), state, ...(prior && prior.body.output ? { output: prior.body.output } : {}) }, linkage, at)
         break
       }
