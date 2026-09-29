@@ -562,6 +562,63 @@ export function createAgentStateStore({ dir, now = Date.now, onChange = () => {}
         await persist()
         return publish()
       }),
+    // Codex panes shown working with no hook for quietMs: their rollout may
+    // show a turn end whose Stop hook never ran (codexTurnEnd.js).
+    turnEndCandidates: (quietMs) => {
+      const at = clock()
+      const out = []
+      for (const [paneId, item] of active) {
+        const state = item.state
+        if (state.provider !== 'codex' || !state.sessionId || state.lastHookAt === null) continue
+        if (at - state.lastHookAt < quietMs) continue
+        if (publicAgentState(state, at).state !== 'working') continue
+        out.push({
+          paneId,
+          launchToken: state.launchToken,
+          sessionId: state.sessionId,
+          turnId: state.turnId,
+          lastEventAt: Math.max(state.lastEventAt, state.lastHookAt)
+        })
+      }
+      return out
+    },
+    // A turn end read from that pane's own session rollout. Bound to its
+    // launch and current session; the reducer rejects anything older.
+    rolloutTurnEnd: (paneId, token, end = {}) =>
+      serial(async () => {
+        const current = active.get(paneId)
+        if (
+          !current ||
+          current.state.launchToken !== token ||
+          current.state.provider !== 'codex' ||
+          !current.state.sessionId ||
+          end.sessionId !== current.state.sessionId ||
+          !Number.isSafeInteger(end.at) ||
+          !['complete', 'error', 'aborted'].includes(end.ended)
+        )
+          return publish()
+        const event = {
+          v: 1,
+          id: randomUUID(),
+          paneId,
+          provider: 'codex',
+          launchToken: token,
+          sessionId: current.state.sessionId,
+          event: 'RolloutTurnEnd',
+          source: 'rollout',
+          at: Math.min(end.at, clock()),
+          ended: end.ended
+        }
+        if (validId(end.turnId)) event.turnId = end.turnId
+        const next = reduceAgentState(current.state, event, clock())
+        if (JSON.stringify(next) !== JSON.stringify(current.state)) {
+          current.state = next
+          current.observed = true
+          dirty = true
+          await persist()
+        }
+        return publish()
+      }),
     snapshot: () => publicSnapshot(),
     warnings: () => [...warnings],
     dispose: () => {

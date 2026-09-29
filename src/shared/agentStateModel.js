@@ -54,7 +54,10 @@ const SCREEN_EVENTS = new Set([
   'ScreenLimit',
   'ScreenClearApproval'
 ])
-const SOURCES = ['hook', 'screen', 'lifecycle']
+// 'rollout': the end of a turn read from Codex's own session file, for a turn
+// whose Stop hook never ran (codexTurnEnd.js).
+const SOURCES = ['hook', 'screen', 'lifecycle', 'rollout']
+const ROLLOUT_ENDS = ['complete', 'error', 'aborted']
 const isObject = (value) => !!value && typeof value === 'object' && !Array.isArray(value)
 const isId = (value) => typeof value === 'string' && value.length > 0 && value.length <= MAX_ID
 const isTime = (value) => Number.isFinite(value) && value >= 0
@@ -216,6 +219,14 @@ function validEvent(state, event, now) {
       !event.agentId &&
       (event.sessionId == null || isId(event.sessionId))
     )
+  if (event.source === 'rollout')
+    return (
+      event.event === 'RolloutTurnEnd' &&
+      ROLLOUT_ENDS.includes(event.ended) &&
+      !event.agentId &&
+      isId(event.sessionId) &&
+      event.sessionId === state.sessionId
+    )
   return event.source === 'lifecycle' && event.event === 'PtyExit' && !event.agentId
 }
 
@@ -372,6 +383,24 @@ function applyHook(target, event) {
   }
 }
 
+// Codex's rollout says the turn ended: complete is a finished turn (no
+// settling wait: the client wrote it), error and aborted end it like
+// StopFailure and Interrupt. It also orders later hooks: an older hook
+// delivered late cannot bring the finished turn back.
+function applyRollout(target, event) {
+  clearPending(target)
+  cancelCandidate(target)
+  if (event.ended === 'complete') {
+    target.readyReason = 'ready'
+    target.turnCompletedAt = event.at
+    if (target.state !== 'limited') transition(target, 'idle', 'ready', event)
+  } else {
+    target.readyReason = event.ended === 'error' ? 'error' : 'interrupted'
+    if (target.state !== 'limited') transition(target, 'unknown', target.readyReason, event)
+  }
+  target.lastHookAt = Math.max(target.lastHookAt ?? event.at, event.at)
+}
+
 function applyScreen(target, event) {
   switch (event.event) {
     case 'ScreenLimit':
@@ -484,6 +513,15 @@ export function reduceAgentState(state, event, now = Date.now()) {
   const existing = childEvent ? knownChild : state
   const orderedAfter = event.source === 'hook' ? existing?.lastHookAt : existing?.lastEventAt
   if (event.at < (orderedAfter ?? state.startedAt)) return state
+  // A turn end read from the rollout must be newer than everything known,
+  // and only ends work still shown.
+  if (
+    event.source === 'rollout' &&
+    (state.state !== 'working' ||
+      event.at <= state.lastEventAt ||
+      (state.lastHookAt !== null && event.at <= state.lastHookAt))
+  )
+    return state
   if (
     existing?.turnId &&
     event.turnId &&
@@ -536,6 +574,8 @@ export function reduceAgentState(state, event, now = Date.now()) {
     if (!applyScreen(target, event)) return state
     target.lastScreenAt = event.at
     target.lastScreenEvent = event.event
+  } else if (event.source === 'rollout') {
+    applyRollout(target, event)
   } else if (event.event === 'PtyExit') {
     clearPending(target)
     cancelCandidate(target)
