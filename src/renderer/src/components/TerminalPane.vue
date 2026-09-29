@@ -32,7 +32,7 @@ import {
 import { promptShowsPlaceholder } from '../promptCheck'
 import { detectTaskDone } from '../agentLimit'
 import { modelLabel } from '../../../shared/modelLabel'
-import { modelFromScreen } from '../../../shared/screenModel'
+import { modelFromScreen, modelInLine } from '../../../shared/screenModel'
 import { findFileRefs } from '../../../shared/fileLinks'
 import { osc52Text } from '../../../shared/osc52'
 import { stripTerminalSelectionGutter } from '../../../shared/terminalSelectionGutter'
@@ -159,6 +159,12 @@ async function refreshModel() {
       const seen = modelOnScreen()
       if (seen) res = { model: seen, effort: null, source: 'screen' }
     }
+    // Only a default from its settings (no conversation written yet): a
+    // model switched in the session (/model → "Set model to …") is newer.
+    if (res && res.source === 'settings' && !n.modelChoice) {
+      const switched = modelSwitchedOnScreen()
+      if (switched) res = { model: switched, effort: res.effort || null, source: 'screen' }
+    }
     agentModel.value = chosenShown(n, res)
   } catch {
     /* keep what it showed */
@@ -172,6 +178,20 @@ async function refreshModel() {
 }
 // The model the agent prints: its status bar (last lines on screen) or
 // its welcome banner (first lines of its output).
+// The last "Set model to <name>" Claude Code printed (its /model result),
+// from the lines on screen and the recent scrollback; display only.
+function modelSwitchedOnScreen() {
+  if (!term || props.node.agentId !== 'claude') return null
+  const buf = term.buffer.active
+  const from = Math.max(0, buf.length - 400)
+  for (let y = buf.length - 1; y >= from; y--) {
+    const line = buf.getLine(y)
+    const text = line ? line.translateToString(true) : ''
+    const m = /Set model to\s+(.+?)\s*(?:\(|$)/.exec(text)
+    if (m) return modelInLine(m[1]) || m[1].trim().slice(0, 60)
+  }
+  return null
+}
 function modelOnScreen() {
   if (!term) return null
   const buf = term.buffer.active
