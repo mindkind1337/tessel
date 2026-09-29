@@ -7,7 +7,7 @@
 // (hourly, daily, weekdays, weekly or a custom cron), missed-run grace and
 // what happens after each run. It shows what the agent may do unattended
 // (Yolo or not, from Settings > Agents). The page saves it.
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { t } from '../i18n'
 import {
   SCHEDULE_PRESETS,
@@ -40,7 +40,7 @@ const props = defineProps({
 const emit = defineEmits(['save', 'cancel', 'agent-settings'])
 
 const a = props.automation
-const firstAgent = props.agents.find((x) => x.available) || props.agents[0]
+const firstAgent = props.agents.find((x) => x.available)
 const name = ref(a ? a.name : '')
 const prompt = ref(a ? a.prompt : '')
 const wsId = ref(a ? a.wsId : props.projects[0] ? props.projects[0].wsId : '')
@@ -54,6 +54,11 @@ const notify = ref(a ? a.after?.notify !== false : true)
 const closePane = ref(a ? a.after?.closePane === true : false)
 const enabled = ref(a ? a.enabled : true)
 const templateId = ref('')
+const nameInput = ref(null)
+onMounted(() => nameInput.value?.focus())
+function cancel() {
+  if (!props.busy) emit('cancel')
+}
 
 const templates = computed(() => automationTemplates())
 function useTemplate(id) {
@@ -72,7 +77,7 @@ const projectMissing = computed(() => !!a && !project.value)
 const remote = computed(() => !!(project.value && project.value.remote))
 watch(remote, (r) => {
   if (r) isolation.value = 'project'
-})
+}, { immediate: true })
 
 // Model and effort: the agent's catalog (Settings > Agents lists the same).
 const models = computed(() => (agentId.value ? modelsFor(agentId.value) : []))
@@ -165,7 +170,7 @@ function tooFrequentText() {
   return t('automations.editor.tooFrequent', 'Runs must be at least {{min}} minutes apart: each one opens a pane (and a copy of the project).', { min: MIN_INTERVAL_MINUTES })
 }
 function nextRunText() {
-  return t('automations.editor.nextRun', '{{schedule}} · next run {{when}}', { schedule: scheduleLabel(schedule.value), when: formatDateTime(nextRun.value) })
+  return t('automations.editor.nextRun', '{{schedule}} · next scheduled time {{when}}', { schedule: scheduleLabel(schedule.value), when: formatDateTime(nextRun.value) })
 }
 function permsTitle() {
   return t('automations.perms.title', 'What {{agent}} may do, unattended', { agent: agentName.value })
@@ -200,7 +205,7 @@ function save() {
 </script>
 
 <template>
-  <form class="au-editor" data-test="automation-editor" @submit.prevent="save" @keydown.escape.stop.prevent="emit('cancel')">
+  <form class="au-editor" data-test="automation-editor" :aria-busy="busy" @submit.prevent="save" @keydown.escape.stop.prevent="cancel">
     <header class="au-editor-head">
       <h3>{{ automation ? t('automations.editor.editTitle', 'Edit automation') : t('automations.editor.createTitle', 'Create automation') }}</h3>
       <p class="set-hint">{{ t('automations.editor.subtitle', 'A recurring agent task') }}</p>
@@ -212,11 +217,12 @@ function save() {
         <option value="">{{ t('automations.editor.noTemplate', 'None') }}</option>
         <option v-for="tpl in templates" :key="tpl.id" :value="tpl.id" :title="tpl.description">{{ tpl.label }}</option>
       </select>
+      <span class="set-hint">{{ t('automations.editor.templateHint', 'Choosing a template replaces the name, prompt, schedule and missed-run grace.') }}</span>
     </label>
 
     <label class="au-field">
       <span class="au-label">{{ t('automations.editor.name', 'Automation name') }}</span>
-      <input v-model="name" class="nt-input" data-test="au-name" :maxlength="MAX_NAME" :placeholder="t('automations.editor.namePlaceholder', 'Weekday repo audit')" />
+      <input ref="nameInput" v-model="name" class="nt-input" data-test="au-name" :maxlength="MAX_NAME" :placeholder="t('automations.editor.namePlaceholder', 'Weekday repo audit')" />
     </label>
 
     <div class="au-grid">
@@ -231,9 +237,11 @@ function save() {
       <label class="au-field">
         <span class="au-label">{{ t('automations.editor.agent', 'Agent') }}</span>
         <select v-model="agentId" class="set-select" data-test="au-agent">
+          <option v-if="!agentId" value="" disabled>{{ t('automations.editor.needAgent', 'Choose an agent before saving.') }}</option>
+          <option v-else-if="!agents.some((ag) => ag.id === agentId)" :value="agentId" disabled>{{ agentLabel({ name: agentId, available: false }) }}</option>
           <option v-for="ag in agents" :key="ag.id" :value="ag.id" :disabled="!ag.available">{{ agentLabel(ag) }}</option>
         </select>
-        <span v-if="!agents.length" class="set-hint set-warn">{{ t('automations.editor.noAgents', 'No agent that can run automations is on (Claude Code, Codex, Gemini or Qwen).') }}</span>
+        <span v-if="!agents.some((ag) => ag.available)" class="set-hint set-warn">{{ t('automations.editor.noAgents', 'No agent that can run automations is on (Claude Code, Codex, Gemini or Qwen).') }}</span>
       </label>
     </div>
 
@@ -320,6 +328,7 @@ function save() {
         <span v-else-if="!draft.custom.trim()" class="set-hint">{{ t('automations.editor.cronEmpty', 'Enter a five-field cron.') }}</span>
       </div>
       <span v-if="scheduleValid" class="set-hint" data-test="au-next">{{ nextRunText() }}</span>
+      <span class="set-hint">{{ t('automations.editor.localTime', 'Times use this computer’s local time zone, including for remote projects.') }}</span>
     </fieldset>
 
     <div class="au-grid">
@@ -359,11 +368,12 @@ function save() {
       <input v-model="enabled" type="checkbox" data-test="au-enabled" />
       {{ t('automations.editor.enabled', 'Run on its schedule') }}
     </label>
-    <p class="set-hint">{{ t('automations.editor.onceSaved', 'Once saved, runs automatically until paused, only while Tessel is open.') }}</p>
+    <p v-if="enabled" class="set-hint">{{ t('automations.editor.onceSaved', 'Once saved, runs automatically until paused, only while Tessel is open.') }}</p>
+    <p v-else class="set-hint">{{ t('automations.editor.savedPaused', 'Saved paused: nothing runs on a schedule until you enable it. You can still use Run Now.') }}</p>
 
     <p v-if="error || missing" class="set-hint set-warn" role="alert" data-test="au-error">{{ error || missing }}</p>
     <footer class="nt-actions">
-      <button type="button" class="nt-btn" @click="emit('cancel')">{{ t('automations.editor.cancel', 'Cancel') }}</button>
+      <button type="button" class="nt-btn" :disabled="busy" @click="cancel">{{ t('automations.editor.cancel', 'Cancel') }}</button>
       <button type="submit" class="nt-btn primary" data-test="au-save" :disabled="!!missing || busy">
         {{ automation ? t('automations.editor.saveChanges', 'Save Changes') : t('automations.editor.create', 'Create') }}
       </button>

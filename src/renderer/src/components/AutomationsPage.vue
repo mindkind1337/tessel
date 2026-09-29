@@ -6,7 +6,7 @@
 // Inc.): how they work, the list (schedule, project, agent, next and last
 // run, on or paused), Run Now, edit, delete, and each one's run history with
 // a link to its pane and its card. They run only while Tessel is open.
-import { ref, computed, inject, onMounted, onUnmounted } from 'vue'
+import { ref, computed, inject, onMounted, onUnmounted, nextTick } from 'vue'
 import { t } from '../i18n'
 import BrandIcon from './BrandIcon.vue'
 import AutomationEditor from './AutomationEditor.vue'
@@ -44,12 +44,29 @@ const busy = ref(false)
 const notice = ref('')
 const historyLimit = ref(20)
 const now = ref(Date.now())
+const page = ref(null)
+const loading = ref(true)
 let clock = 0
 onMounted(() => {
-  loadAutomations()
+  refresh()
   clock = setInterval(() => (now.value = Date.now()), 30000)
 })
 onUnmounted(() => clearInterval(clock))
+
+async function refresh() {
+  loading.value = true
+  await loadAutomations()
+  loading.value = false
+}
+
+async function closeEditor() {
+  const id = editing.value
+  editing.value = null
+  await nextTick()
+  const row = [...(page.value?.querySelectorAll('[data-automation]') || [])].find((el) => el.dataset.automation === id)
+  const target = row?.querySelector('[data-test="au-edit"]') || page.value?.querySelector('[data-test="au-new"]')
+  target?.focus()
+}
 
 const projects = computed(() => ctx.projects.value || [])
 const agents = computed(() => ctx.agents.value || [])
@@ -95,16 +112,21 @@ function needsConfirm(a) {
 
 // Each time an automation may run on its own with something new: said
 // plainly, confirmed.
-async function confirmUnattended(a) {
+async function confirmUnattended(a, manual = false) {
   if (!askConfirm) return false
   return await askConfirm({
     title: t('automations.confirm.title', 'Let "{{name}}" run unattended?', { name: a.name }),
     text:
-      t('automations.confirm.text', 'Tessel will start {{agent}} in {{project}} on this schedule while it is open, even when you are away.', {
-        agent: agentName(a.agentId),
-        project: a.projectName || projectName(a)
-      }) +
-      ' ' +
+      (manual
+        ? t('automations.confirm.runNowText', 'Tessel will start {{agent}} in {{project}} now. This does not change whether its schedule is enabled or paused.', { agent: agentName(a.agentId), project: a.projectName || projectName(a) })
+        : t('automations.confirm.text', 'Tessel will start {{agent}} in {{project}} on this schedule while it is open, even when you are away.', {
+            agent: agentName(a.agentId),
+            project: a.projectName || projectName(a)
+          })) +
+      ' ' + scheduleLabel(a.schedule) + '. ' +
+      (a.isolation === 'worktree'
+        ? t('automations.detail.ownCopy', 'Its own copy, new for each run')
+        : t('automations.editor.direct', 'Directly in the project folder')) + '. ' +
       permissionText(a.agentId),
     confirmLabel: t('automations.confirm.ok', 'Allow')
   })
@@ -140,8 +162,8 @@ async function save(input) {
       return
     }
     notice.value = current ? t('automations.page.updated', 'Automation updated.') : t('automations.page.saved', 'Automation saved.')
-    editing.value = null
     selectedId.value = res.automation ? res.automation.id : selectedId.value
+    await closeEditor()
   } finally {
     busy.value = false
   }
@@ -154,7 +176,7 @@ async function toggle(a) {
     if (!confirmed) return
   }
   const res = await setAutomationEnabled(a.id, !a.enabled, confirmed, confirmed ? permSig(a.agentId) : null)
-  notice.value = res.ok ? '' : res.error
+  notice.value = res.ok ? '' : res.error || t('automations.page.actionFailed', 'The change could not be applied. Try again.')
 }
 
 // The switch shows the saved state until the change is done (it may be refused).
@@ -166,11 +188,11 @@ function onToggle(e, a) {
 async function runNow(a) {
   let confirmed = false
   if (needsConfirm(a)) {
-    confirmed = await confirmUnattended(a)
+    confirmed = await confirmUnattended(a, true)
     if (!confirmed) return
   }
   const res = await runAutomationNow(a.id, confirmed, confirmed ? permSig(a.agentId) : null)
-  notice.value = res.ok ? t('automations.page.queued', 'Automation run queued.') : res.error
+  notice.value = res.ok ? t('automations.page.queued', 'Automation run queued.') : res.error || t('automations.page.runFailed', 'The run could not be queued. Try again.')
   if (res.ok) selectedId.value = a.id
 }
 
@@ -185,13 +207,15 @@ async function remove(a) {
     : true
   if (!ok) return
   const res = await removeAutomation(a.id)
-  notice.value = res.ok ? '' : res.error
-  if (selectedId.value === a.id) selectedId.value = null
+  notice.value = res.ok ? '' : res.error || t('automations.page.deleteFailed', 'The automation could not be deleted. Try again.')
+  if (res.ok && selectedId.value === a.id) selectedId.value = null
 }
 
 async function setMax(e) {
   const v = Number(e.target.value)
-  await setAutomationSettings({ maxConcurrent: v })
+  const res = await setAutomationSettings({ maxConcurrent: v })
+  if (!res.ok) e.target.value = automationsState.settings.maxConcurrent
+  notice.value = res.ok ? '' : res.error || t('automations.page.actionFailed', 'The change could not be applied. Try again.')
 }
 
 function nextText(a) {
@@ -208,7 +232,7 @@ function select(a) {
 </script>
 
 <template>
-  <div class="au-page" data-test="automations-page">
+  <div ref="page" class="au-page" data-test="automations-page">
     <div class="au-how">
       <h3 class="set-group-title">{{ t('automations.how.title', 'How Automations work') }}</h3>
       <ol class="au-steps">
@@ -236,13 +260,19 @@ function select(a) {
     </div>
 
     <p v-if="automationsState.error" class="set-hint set-warn" role="alert">{{ automationsState.error }}</p>
+    <p v-if="loading" class="set-hint" role="status">{{ t('automations.page.loading', 'Loading automations…') }}</p>
+    <div v-else-if="!automationsState.loaded" class="set-hint set-warn" role="alert">
+      {{ t('automations.page.loadFailed', 'Automations could not be loaded.') }}
+      <button type="button" class="exit-btn" @click="refresh">{{ t('automations.page.retry', 'Try again') }}</button>
+    </div>
+    <p v-if="notice" class="set-hint" role="status" data-test="au-notice">{{ notice }}</p>
 
     <div class="set-row">
       <div class="set-label">
         {{ t('automations.page.maxConcurrent', 'Runs at the same time') }}
         <span class="set-hint">{{ t('automations.page.maxConcurrentHint', 'All automations together; the others wait their turn. The same automation never runs twice at once.') }}</span>
       </div>
-      <select class="set-select au-max" :value="automationsState.settings.maxConcurrent" data-test="au-max" @change="setMax">
+      <select class="set-select au-max" :value="automationsState.settings.maxConcurrent" :aria-label="t('automations.page.maxConcurrent', 'Runs at the same time')" :disabled="loading || !automationsState.loaded" data-test="au-max" @change="setMax">
         <option v-for="n in MAX_CONCURRENT_LIMIT" :key="n" :value="n">{{ n }}</option>
       </select>
     </div>
@@ -257,18 +287,17 @@ function select(a) {
       :error="editorError"
       :busy="busy"
       @save="save"
-      @cancel="editing = null"
+      @cancel="closeEditor"
       @agent-settings="ctx.openAgentSettings()"
     />
 
     <template v-else>
       <div class="au-toolbar">
         <h3 class="set-group-title">{{ t('automations.page.title', 'Automations') }}</h3>
-        <button type="button" class="nt-btn primary" data-test="au-new" @click="openNew">{{ t('automations.page.new', 'New Automation') }}</button>
+        <button type="button" class="nt-btn primary" data-test="au-new" :disabled="loading || !automationsState.loaded" @click="openNew">{{ t('automations.page.new', 'New Automation') }}</button>
       </div>
-      <p v-if="notice" class="set-hint" role="status" data-test="au-notice">{{ notice }}</p>
 
-      <p v-if="!list.length" class="au-empty" data-test="au-empty">{{ t('automations.page.empty', 'Create an automation to start scheduling agent work.') }}</p>
+      <p v-if="!list.length && !loading && automationsState.loaded" class="au-empty" data-test="au-empty">{{ t('automations.page.empty', 'Create an automation to start scheduling agent work.') }}</p>
 
       <ul v-else class="au-list">
         <li v-for="a in list" :key="a.id" class="au-item" :class="{ open: selectedId === a.id, paused: !a.enabled }" :data-automation="a.id">
@@ -294,7 +323,7 @@ function select(a) {
               </span>
             </button>
             <label class="au-switch" :title="a.enabled ? t('automations.page.pause', 'Pause automation') : t('automations.page.resume', 'Resume automation')">
-              <input type="checkbox" class="set-switch" :checked="a.enabled" data-test="au-toggle" @change="onToggle($event, a)" />
+              <input type="checkbox" class="set-switch" :checked="a.enabled" :aria-label="t('automations.page.scheduleFor', 'Scheduled runs: {{name}}', { name: a.name })" data-test="au-toggle" @change="onToggle($event, a)" />
             </label>
             <button type="button" class="exit-btn" :disabled="!!activeRun(a)" data-test="au-run-now" @click="runNow(a)">{{ t('automations.page.runNow', 'Run Now') }}</button>
             <button type="button" class="exit-btn" data-test="au-edit" @click="openEdit(a)">{{ t('automations.page.edit', 'Edit') }}</button>
