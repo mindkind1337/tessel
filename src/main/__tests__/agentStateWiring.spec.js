@@ -9,6 +9,9 @@ import { createAgentStateStore } from '../agentStateStore'
 import { paneEnv } from '../paneEnv'
 import { newTeamSecret, setTeamSecret, revokeTeamSecret, teamSecretOf, _resetTeamAuth } from '../teamAuth'
 import { wakeLaunchArgs, WAKE_LAUNCH_PROMPT } from '../../shared/orchestration'
+import { STATUS_PROVIDERS } from '../../shared/agentStateModel'
+// Claude Code and Codex panes: status from their hooks from launch.
+const managedAgentStatus = (leaf) => !!leaf.agentLaunchToken
 
 // Exercise the actual IPC handlers with an inert terminal host. No Electron
 // instance or real CLI/user configuration is touched by this harness.
@@ -61,6 +64,7 @@ function wire(hostRecords = new Map()) {
     shouldUseConpty: () => true,
     windowsBuildNumber: () => 123,
     prepareStatus: setup,
+    STATUS_PROVIDERS,
     host,
     ptyInfo,
     pendingData: new Map(),
@@ -216,6 +220,7 @@ it('unconfirmed state without an inbox for its session: no typing, the user is a
   }
   const run = vm.runInNewContext(appSource.slice(start, end) + '; wakeIfNeeded', {
     agentStateKnown: () => false,
+    managedAgentStatus,
     teamUnread: { 'pane-1': 1 },
     settings: { teamWakeUps: true },
     wakeState: { 'pane-1': { since: 0, woken: false } },
@@ -273,6 +278,7 @@ it("unconfirmed Claude with its current session's inbox: the reminder goes to th
     const node = { id: 'pane-3', agentLaunchToken: 'e'.repeat(32), agentId: 'claude', sessionId: 's-3', kind: 'agent', teamTools: true }
     const run = vm.runInNewContext(appSource.slice(start, end) + '; wakeIfNeeded', {
       agentStateKnown: () => false,
+    managedAgentStatus,
       teamUnread: { 'pane-3': 1 },
       settings: { teamWakeUps: true },
       wakeState: {},
@@ -352,6 +358,7 @@ function wakeSandbox(over = {}) {
   const written = []
   const ctx = {
     agentStateKnown: () => false,
+    managedAgentStatus,
     teamUnread: {},
     settings: { teamWakeUps: true, agentPrefs: {} },
     wakeState: {},

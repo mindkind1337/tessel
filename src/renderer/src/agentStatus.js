@@ -11,6 +11,7 @@
 import { reactive } from 'vue'
 import { detectApproval, detectLimit } from './agentLimit'
 import { promptShowsPlaceholder } from './promptCheck'
+import { STATUS_PROVIDERS, SCREEN_READY_PROVIDERS } from '../../shared/agentStateModel'
 
 export const agentStatus = reactive({})
 export const attention = reactive({})
@@ -35,9 +36,18 @@ export function agentStateKnown(id, launchToken) {
   )
 }
 
+// Status from the agent's own hooks. Claude Code and Codex: from launch (their
+// screen confirms when they are ready). The other agents with status hooks
+// (agentStateModel.js): once their first hook arrived, so an agent whose hooks
+// never run (an older CLI, hooks turned off) keeps its status from its screen.
 export function managedAgentStatus(node) {
-  return !!node.agentLaunchToken && ['claude', 'codex'].includes(node.agentId)
+  if (!node || !node.agentLaunchToken) return false
+  if (SCREEN_READY_PROVIDERS.includes(node.agentId)) return true
+  const state = agentStates[node.id]
+  return STATUS_PROVIDERS.includes(node.agentId) && !!state?.hookSeen && state.launchToken === node.agentLaunchToken
 }
+// A state that drives the pane's status (see managedAgentStatus).
+const drives = (state) => SCREEN_READY_PROVIDERS.includes(state.provider) || !!state.hookSeen
 
 function displayStatus(state) {
   if (!state || state.stale || state.confirmed === false) return 'unknown'
@@ -52,13 +62,16 @@ export function applyAgentStates(snapshot) {
   if (!snapshot.paneId) {
     for (const id of Object.keys(agentStates))
       if (!entries[id]) {
+        const drove = drives(agentStates[id])
         delete agentStates[id]
-        agentStatus[id] = 'unknown'
+        if (drove) agentStatus[id] = 'unknown'
       }
   }
   for (const [id, state] of Object.entries(entries)) {
     if (!state || state.paneId !== id || !state.launchToken) continue
     agentStates[id] = { ...state }
+    // Not yet heard from its hooks: the screen keeps the status for now.
+    if (!drives(state)) continue
     agentStatus[id] = displayStatus(state)
     setApproval(id, state.state === 'approval')
     if (state.state === 'limited') setLimit(id, { reset: state.reset })
@@ -120,6 +133,9 @@ export function createAgentActivityMonitor({
   let lastCompleted = 0
   let disposed = false
   let lastRecheck = 0
+  // An approval this pane's screen reported (not its hooks): for an agent with
+  // no ready prompt to read, its disappearing from the screen is the answer.
+  let screenApproval = false
   function status(value) {
     localStatus = value
     onStatus(value)
@@ -145,7 +161,16 @@ export function createAgentActivityMonitor({
     }
     if (observation.approval) {
       onApproval(true)
-      if (managed) send('ScreenApproval')
+      if (managed) {
+        send('ScreenApproval')
+        screenApproval = true
+      }
+      return observation
+    }
+    if (managed && screenApproval && !SCREEN_READY_PROVIDERS.includes(node.agentId)) {
+      screenApproval = false
+      onApproval(false)
+      send('ScreenClearApproval')
       return observation
     }
     if (managed) {

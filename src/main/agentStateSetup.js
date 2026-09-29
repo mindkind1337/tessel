@@ -3,21 +3,48 @@
 import fs from 'fs'
 import os from 'os'
 import { isAbsolute, join } from 'path'
-import { installClaudeHooks, installCodexHooks, writeServerScript } from './teamInstall'
+import {
+  installClaudeHooks,
+  installCodexHooks,
+  installGeminiHooks,
+  installCopilotHooks,
+  installOpencodePlugin,
+  installKimiHooks,
+  writeServerScript
+} from './teamInstall'
+import { installStatusHooks, STATUS_HOOK_AGENTS } from './agentStatusHooks'
+import { STATUS_PROVIDERS } from '../shared/agentStateModel'
 import { t } from './i18n'
 
-export function prepareAgentStateHooks({
+// The agents whose own hooks (team messages and status) Tessel installs for
+// every launch, like Claude Code's and Codex's.
+const TEAM_HOOKS = {
+  gemini: (script, home) => installGeminiHooks(script, home),
+  copilot: (script, home) => installCopilotHooks(script, home),
+  opencode: (script, home) => installOpencodePlugin(script, home),
+  kimi: (script, home, env, kimiValidate) =>
+    installKimiHooks(script, home, {
+      kimiHome: Object.entries(env).find(([key]) => key.toUpperCase() === 'KIMI_CODE_HOME')?.[1],
+      ...(kimiValidate ? { validate: kimiValidate } : {})
+    })
+}
+
+// -> { ok, supported, changed?, needsReview? } or { ok: false, error }. Async:
+// Kimi's settings are checked by Kimi itself before they are written.
+export async function prepareAgentStateHooks({
   provider,
   sharedDir,
   source,
   home = os.homedir(),
-  env = process.env
+  env = process.env,
+  kimiValidate
 }) {
-  if (provider !== 'claude' && provider !== 'codex') return { ok: true, supported: false }
+  if (!STATUS_PROVIDERS.includes(provider)) return { ok: true, supported: false }
+  const classic = provider === 'claude' || provider === 'codex'
   const variable = provider === 'codex' ? 'CODEX_HOME' : 'CLAUDE_CONFIG_DIR'
-  const root =
-    Object.entries(env).find(([key]) => key.toUpperCase() === variable)?.[1] ||
-    join(home, `.${provider}`)
+  const root = classic
+    ? Object.entries(env).find(([key]) => key.toUpperCase() === variable)?.[1] || join(home, `.${provider}`)
+    : home
   if (typeof root !== 'string' || !isAbsolute(root))
     return {
       ok: false,
@@ -26,8 +53,10 @@ export function prepareAgentStateHooks({
   try {
     const script = writeServerScript(sharedDir, source)
     // Equal or newer shared scripts are intentionally not overwritten by an
-    // older app. Do not report a working installation without its protocol.
-    if (!fs.readFileSync(script, 'utf8').includes('const AGENT_STATE_PROTOCOL = 1'))
+    // older app. Do not report a working installation without its protocol
+    // (and, for the other agents, without their events).
+    const shared = fs.readFileSync(script, 'utf8')
+    if (!shared.includes('const AGENT_STATE_PROTOCOL = 1') || (!classic && !/const AGENT_STATUS_AGENTS = [2-9]/.test(shared)))
       return {
         ok: false,
         error: t('main.hooks.bridgeOutdated', 'The shared Tessel hook bridge needs updating before status hooks can run.')
@@ -35,7 +64,13 @@ export function prepareAgentStateHooks({
     const result =
       provider === 'codex'
         ? installCodexHooks(script, home, { configDir: root })
-        : installClaudeHooks(script, home, { configDir: root })
+        : provider === 'claude'
+          ? installClaudeHooks(script, home, { configDir: root })
+          : TEAM_HOOKS[provider]
+            ? await TEAM_HOOKS[provider](script, home, env, kimiValidate)
+            : STATUS_HOOK_AGENTS.includes(provider)
+              ? installStatusHooks(provider, script, { home, env })
+              : { changed: false }
     if (result.error) return { ok: false, error: result.error }
     return {
       ok: true,

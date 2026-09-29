@@ -166,7 +166,7 @@ describe('account-aware status hook installation', () => {
     })
   it.each(['claude', 'codex'])(
     'installs %s in the configured home, retaining unrelated hooks and settings',
-    (provider) => {
+    async (provider) => {
       const root = join(dir, 'configured')
       fs.mkdirSync(root)
       const file = join(root, provider === 'codex' ? 'hooks.json' : 'settings.json')
@@ -180,29 +180,29 @@ describe('account-aware status hook installation', () => {
         })
       )
       const env = { [provider === 'codex' ? 'CODEX_HOME' : 'CLAUDE_CONFIG_DIR']: root }
-      expect(install(provider, env)).toMatchObject({ ok: true, changed: true })
+      expect(await install(provider, env)).toMatchObject({ ok: true, changed: true })
       const saved = JSON.parse(fs.readFileSync(file, 'utf8'))
       expect(saved.model).toBe('mine')
       expect(saved.hooks.PreToolUse[0].hooks[0].command).toBe('mine.cmd')
       expect(Object.keys(saved.hooks)).toEqual(
         expect.arrayContaining(provider === 'codex' ? CODEX_HOOK_EVENTS : HOOK_EVENTS)
       )
-      expect(install(provider, env)).toMatchObject({ ok: true, changed: false })
+      expect(await install(provider, env)).toMatchObject({ ok: true, changed: false })
       expect(fs.existsSync(join(dir, 'home'))).toBe(false)
     }
   )
-  it('does not claim readiness when a same-version shared bridge lacks the protocol', () => {
+  it('does not claim readiness when a same-version shared bridge lacks the protocol', async () => {
     fs.mkdirSync(join(dir, 'shared'))
     fs.writeFileSync(join(dir, 'shared', 'tessel-team-mcp.cjs'), "const VERSION = '99.0.0'\n")
-    expect(install('codex')).toMatchObject({ ok: false })
+    expect(await install('codex')).toMatchObject({ ok: false })
     expect(fs.existsSync(join(dir, 'home'))).toBe(false)
   })
-  it('keeps unreadable settings untouched and refuses relative homes', () => {
+  it('keeps unreadable settings untouched and refuses relative homes', async () => {
     const root = join(dir, 'configured')
     fs.mkdirSync(root)
     fs.writeFileSync(join(root, 'hooks.json'), '{broken')
-    expect(install('codex', { CODEX_HOME: root }).ok).toBe(false)
+    expect((await install('codex', { CODEX_HOME: root })).ok).toBe(false)
     expect(fs.readFileSync(join(root, 'hooks.json'), 'utf8')).toBe('{broken')
-    expect(install('claude', { CLAUDE_CONFIG_DIR: '../relative' }).ok).toBe(false)
+    expect((await install('claude', { CLAUDE_CONFIG_DIR: '../relative' })).ok).toBe(false)
   })
 })

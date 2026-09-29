@@ -30,7 +30,7 @@ describe('read-only hook connection diagnostics', () => {
   const hooksFile = () => join(home, '.codex', 'hooks.json')
   const claudeFile = () => join(home, '.claude', 'settings.json')
   const geminiFile = () => join(home, '.gemini', 'settings.json')
-  const status = () => hooksStatus({ home, sessionsDir, scriptPath })
+  const status = () => hooksStatus({ home, sessionsDir, scriptPath, env: {} })
   const agent = (id = 'codex') => status().agents.find((a) => a.id === id)
   const install = () => {
     installClaudeHooks(scriptPath, home)
@@ -59,7 +59,12 @@ describe('read-only hook connection diagnostics', () => {
 
   it('reports missing setups without creating directories, using the installer event lists', () => {
     const result = status()
-    expect(result.agents.map((a) => a.hooks)).toEqual(['missing', 'missing', 'missing', 'missing', 'missing', 'missing'])
+    const team = result.agents.filter((a) => !a.statusOnly)
+    expect(team.map((a) => a.hooks)).toEqual(['missing', 'missing', 'missing', 'missing', 'missing', 'missing'])
+    // The agents whose hooks only report their status (agentStatusHooks.js).
+    expect(result.agents.filter((a) => a.statusOnly).map((a) => [a.id, a.hooks])).toEqual(
+      ['cursor', 'droid', 'grok', 'antigravity', 'openclaude', 'commandcode', 'amp', 'pi'].map((id) => [id, 'missing'])
+    )
     expect(Object.keys(result.agents[0].events)).toEqual(HOOK_EVENTS)
     expect(Object.keys(result.agents[1].events)).toEqual(CODEX_HOOK_EVENTS)
     expect(Object.keys(result.agents[2].events)).toEqual(GEMINI_HOOK_EVENTS)
@@ -86,7 +91,7 @@ describe('read-only hook connection diagnostics', () => {
   it('defaults home to os.homedir without reading the real user configuration', () => {
     install()
     vi.spyOn(os, 'homedir').mockReturnValue(home)
-    expect(hooksStatus({ scriptPath }).agents.map((a) => a.hooks)).toEqual([
+    expect(hooksStatus({ scriptPath, env: {} }).agents.filter((a) => !a.statusOnly).map((a) => a.hooks)).toEqual([
       'installed',
       'installed',
       'installed',
@@ -106,8 +111,9 @@ describe('read-only hook connection diagnostics', () => {
       throw new Error('unexpected mkdir')
     })
     const result = status()
-    expect(result.agents.map((a) => a.hooks)).toEqual(['installed', 'installed', 'installed', 'installed', 'missing', 'missing'])
-    expect(result.agents.map((a) => a.approval)).toEqual([null, 'needs-approval', null, null, null, null])
+    const team = result.agents.filter((a) => !a.statusOnly)
+    expect(team.map((a) => a.hooks)).toEqual(['installed', 'installed', 'installed', 'installed', 'missing', 'missing'])
+    expect(team.map((a) => a.approval)).toEqual([null, 'needs-approval', null, null, null, null])
     expect(writer).not.toHaveBeenCalled()
     expect(mkdir).not.toHaveBeenCalled()
     expect(fs.readFileSync(hooksFile(), 'utf8')).toBe(before)
@@ -159,7 +165,7 @@ describe('read-only hook connection diagnostics', () => {
     install()
     const s = JSON.parse(fs.readFileSync(geminiFile(), 'utf8'))
     s.hooks.AfterAgent.unshift({ type: 'command', command: 'node bs-agent-notify.cjs', timeout: 5000 })
-    s.hooks.Notification = [{ type: 'command', command: 'node bs-agent-notify.cjs' }]
+    s.hooks.Notification.unshift({ type: 'command', command: 'node bs-agent-notify.cjs' })
     json(geminiFile(), s)
     expect(agent('gemini')).toMatchObject({ hooks: 'installed' })
     expect(agent('gemini').error).toBeUndefined()
@@ -373,7 +379,7 @@ describe('read-only hook connection diagnostics', () => {
     expect(
       status().agents.every(
         (a) =>
-          a.hooks === (['kimi', 'opencode'].includes(a.id) ? 'missing' : 'installed') &&
+          a.hooks === (['kimi', 'opencode'].includes(a.id) || a.statusOnly ? 'missing' : 'installed') &&
           a.lastSignal === null &&
           a.error === 'Cannot read session reports.'
       )

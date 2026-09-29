@@ -541,7 +541,8 @@ async function loadCoverage() {
   try {
     const res = await window.shellApi.teamHooksStatus()
     const rows = (res && Array.isArray(res.agents) ? res.agents : [])
-      .filter((r) => props.agents.some((a) => a.id === r.id && a.available))
+      // Status-only hooks bring no team messages (agentStatusHooks.js).
+      .filter((r) => !r.statusOnly && props.agents.some((a) => a.id === r.id && a.available))
       .map((r) => ({
         id: r.id,
         name: (props.agents.find((a) => a.id === r.id) || {}).name || r.id,

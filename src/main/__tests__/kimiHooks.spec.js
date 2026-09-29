@@ -46,15 +46,14 @@ afterEach(() => {
 })
 
 describe('Kimi TOML installation and diagnostics', () => {
-  it('creates only the three useful events, validates once and is idempotent', async () => {
+  it('creates its team and status events, validates once and is idempotent', async () => {
     const validate = vi.fn(accepted)
     expect(await install(script, validate)).toEqual({ changed: true })
     const text = fs.readFileSync(file(), 'utf8')
     expect(kimiHookEvents(text, script)).toEqual(
       Object.fromEntries(KIMI_HOOK_EVENTS.map((e) => [e, true]))
     )
-    expect(text).not.toContain('PostToolUse')
-    expect(text).not.toContain('PreToolUse')
+    expect(KIMI_HOOK_EVENTS).toEqual(expect.arrayContaining(['SessionStart', 'UserPromptSubmit', 'Stop', 'PreToolUse', 'PermissionRequest']))
     expect(await install(script, validate)).toEqual({ changed: false })
     expect(validate).toHaveBeenCalledOnce()
   })

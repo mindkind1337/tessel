@@ -9,7 +9,10 @@ import { extraToolDirs, withToolDirs } from './toolDirs'
 import { cleanEnv } from './cleanEnv'
 import { t } from './i18n'
 
-export const KIMI_HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'Stop']
+// The conversation (SessionStart), team messages (UserPromptSubmit, Stop), and
+// the others for its status only. After Orca's
+// src/main/kimi/kimi-hook-config-toml.ts, MIT, Copyright (c) 2026 Lovecast Inc.
+export const KIMI_HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'PermissionRequest', 'Stop', 'StopFailure']
 const START = '# tessel:team-hooks:start'
 const END = '# tessel:team-hooks:end'
 export const kimiConfigFile = (home = os.homedir(), kimiHome = process.env.KIMI_CODE_HOME) =>

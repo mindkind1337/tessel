@@ -38,6 +38,7 @@ describe('notifications', () => {
       currentWsId: { value: 'ws1' },
       document: { hasFocus: () => focused },
       window: { shellApi: { notify: vi.fn() } },
+      managedAgentStatus: (leaf) => !!leaf.agentLaunchToken,
       Map,
       Date
     }

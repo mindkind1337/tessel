@@ -5,7 +5,10 @@ import {
   createAgentState,
   publicAgentState,
   reduceAgentState,
-  validateAgentState
+  validateAgentState,
+  hooksAlone,
+  STATUS_PROVIDERS,
+  SCREEN_READY_PROVIDERS
 } from '../agentStateModel.js'
 
 const identity = { paneId: 'pane-1', provider: 'codex', launchToken: 'launch-token-0123456789' }
@@ -700,5 +703,81 @@ describe('freshness, recovery, and private data', () => {
     expect(f.state.seenIds).toHaveLength(256)
     expect(f.state.since).toBe(101)
     expect(validateAgentState(JSON.parse(JSON.stringify(f.state)))).toBe(true)
+  })
+})
+
+describe('agents whose hooks alone report their status (hooksAlone)', () => {
+  it.each(['gemini', 'copilot', 'kimi', 'opencode', 'cursor', 'droid', 'grok', 'antigravity', 'openclaude', 'commandcode', 'amp', 'pi'])(
+    '%s: idle when its session opens, working on a prompt, idle again at its turn end',
+    (provider) => {
+      expect(hooksAlone(provider)).toBe(true)
+      const f = fixture(provider)
+      expect(f.send('SessionStart', 101, { startSource: 'startup' })).toMatchObject({ state: 'idle', reason: 'startup', confirmed: true })
+      expect(f.send('UserPromptSubmit', 102)).toMatchObject({ state: 'working', reason: 'processing' })
+      expect(f.send('PostToolUse', 103)).toMatchObject({ state: 'working' })
+      const done = f.send('Stop', 104, { continuing: false })
+      expect(done).toMatchObject({ state: 'idle', reason: 'ready', turnCompletedAt: 104 })
+    }
+  )
+  it('keeps Claude Code and Codex on their screen confirmation', () => {
+    expect(hooksAlone('claude')).toBe(false)
+    expect(hooksAlone('codex')).toBe(false)
+    expect(STATUS_PROVIDERS).toEqual(expect.arrayContaining(SCREEN_READY_PROVIDERS))
+    const f = fixture('claude')
+    f.send('SessionStart', 101)
+    f.send('UserPromptSubmit', 102)
+    expect(f.send('Stop', 103, { continuing: false })).toMatchObject({ state: 'working', reason: 'settling' })
+  })
+  it('a continuing Stop (team messages delivered) stays working', () => {
+    const f = fixture('gemini')
+    f.send('UserPromptSubmit', 101)
+    expect(f.send('Stop', 102, { continuing: true })).toMatchObject({ state: 'working', reason: 'continuing' })
+  })
+  it('an interrupted or failed turn is idle, with its reason', () => {
+    const f = fixture('kimi')
+    f.send('UserPromptSubmit', 101)
+    expect(f.send('Interrupt', 102)).toMatchObject({ state: 'idle', reason: 'interrupted' })
+    f.send('UserPromptSubmit', 103)
+    expect(f.send('StopFailure', 104)).toMatchObject({ state: 'idle', reason: 'error' })
+  })
+  it('a permission notice waits for the user; the agent moving on answers it', () => {
+    const f = fixture('copilot')
+    f.send('UserPromptSubmit', 101)
+    expect(f.send('Notification', 102, { notificationType: 'permission_prompt' })).toMatchObject({ state: 'approval' })
+    expect(f.send('PostToolUse', 103)).toMatchObject({ state: 'working', reason: 'processing' })
+    expect(f.send('Stop', 104, { continuing: false })).toMatchObject({ state: 'idle' })
+  })
+  it('a question tool waits for the answer, then work goes on', () => {
+    const f = fixture('pi')
+    f.send('UserPromptSubmit', 101)
+    expect(f.send('PreToolUse', 102, { toolName: 'AskUserQuestion' })).toMatchObject({ state: 'approval', reason: 'input' })
+    expect(f.send('PostToolUse', 103)).toMatchObject({ state: 'working' })
+  })
+  it('an elicitation is resolved by its own result (OpenCode permissions)', () => {
+    const f = fixture('opencode')
+    f.send('UserPromptSubmit', 101)
+    expect(f.send('Elicitation', 102, { toolId: 'perm-1' })).toMatchObject({ state: 'approval' })
+    expect(f.send('ElicitationResult', 103, { toolId: 'perm-1' })).toMatchObject({ state: 'working' })
+  })
+  it('a screen approval is cleared when the screen no longer shows it, and a stale busy footer cannot revive work', () => {
+    const f = fixture('gemini')
+    f.send('UserPromptSubmit', 101)
+    expect(f.send('ScreenApproval', 102)).toMatchObject({ state: 'approval' })
+    expect(f.send('ScreenClearApproval', 103)).toMatchObject({ state: 'working' })
+    expect(f.send('Stop', 104, { continuing: false })).toMatchObject({ state: 'idle' })
+    expect(f.send('ScreenBusy', 105)).toMatchObject({ state: 'idle' })
+  })
+  it('sub-agents (Copilot, Pi) are children of the pane, never its own state', () => {
+    const f = fixture('copilot')
+    f.send('SessionStart', 101)
+    f.send('UserPromptSubmit', 102)
+    f.send('SubagentStart', 103, { agentId: 'explore' })
+    f.send('PreToolUse', 104, { agentId: 'explore' })
+    let s = publicAgentState(f.state, 104)
+    expect(s.state).toBe('working')
+    expect(s.children).toEqual([expect.objectContaining({ agentId: 'explore', state: 'working' })])
+    s = f.send('SubagentStop', 105, { agentId: 'explore', continuing: false })
+    expect(s.children[0]).toMatchObject({ state: 'idle' })
+    expect(s.state).toBe('working')
   })
 })

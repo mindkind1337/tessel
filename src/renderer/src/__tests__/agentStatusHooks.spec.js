@@ -12,7 +12,8 @@ import {
   setApproval,
   setLimit,
   agentScreenObservation,
-  createAgentActivityMonitor
+  createAgentActivityMonitor,
+  managedAgentStatus
 } from '../agentStatus'
 import {
   createAgentState,
@@ -306,5 +307,91 @@ describe('actual terminal prompt evidence', () => {
         "You've hit your usage limit. Try again at 5 PM.\n› "
       )
     ).toMatchObject({ ready: false, limit: { reset: '5 PM' } })
+  })
+})
+
+describe('agents whose hooks alone report their status (Gemini, Droid...)', () => {
+  let monitor, node, state, screen, callbacks, sequence
+  const launch = 'launch-hooks-1'
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(200000)
+    for (const id of Object.keys(agentStatus)) clearAgentStatus(id)
+    for (const id of Object.keys(agentStates)) clearAgentStatus(id)
+    node = { id: 'pane-g', agentId: 'gemini', agentLaunchToken: launch }
+    state = createAgentState({ paneId: node.id, provider: 'gemini', launchToken: launch, startedAt: Date.now() })
+    screen = { screen: 'Working', ready: false, busy: false, approval: false, limit: null }
+    sequence = 0
+    callbacks = {
+      onStatus: vi.fn((value) => setAgentStatus(node.id, value, node.agentLaunchToken)),
+      onWorking: vi.fn(),
+      onCompleted: vi.fn(),
+      onApproval: vi.fn((value) => setApproval(node.id, value)),
+      onLimit: vi.fn((value) => setLimit(node.id, value))
+    }
+    monitor = createAgentActivityMonitor({
+      getNode: () => node,
+      readScreen: () => screen,
+      report: (event) => apply('screen', event.event, event),
+      ...callbacks
+    })
+    publish()
+  })
+  afterEach(() => {
+    monitor.dispose()
+    for (const id of Object.keys(agentStatus)) clearAgentStatus(id)
+    vi.useRealTimers()
+  })
+  function publish() {
+    applyAgentStates({ [node.id]: publicAgentState(state, Date.now()) })
+    monitor.stateChanged(getAgentState(node.id, node.agentLaunchToken))
+  }
+  function apply(source, event, extra = {}) {
+    const { event: _name, paneId: _pane, launchToken: _token, ...fields } = extra
+    state = reduceAgentState(
+      state,
+      { v: 1, id: `ev-${++sequence}`, paneId: node.id, provider: 'gemini', launchToken: launch, sessionId: 'gem-1', source, event, at: Date.now(), ...fields },
+      Date.now()
+    )
+    publish()
+  }
+
+  it('keeps the screen estimate until its first hook, then follows its hooks', async () => {
+    expect(managedAgentStatus(node)).toBe(false)
+    monitor.output()
+    expect(agentStatus[node.id]).toBe('busy')
+    await vi.advanceTimersByTimeAsync(1500)
+    expect(agentStatus[node.id]).toBe('idle')
+    apply('hook', 'SessionStart', { startSource: 'startup' })
+    expect(managedAgentStatus(node)).toBe(true)
+    expect(agentStateKnown(node.id, launch)).toBe(true)
+    await vi.advanceTimersByTimeAsync(1000)
+    apply('hook', 'UserPromptSubmit')
+    expect(agentStatus[node.id]).toBe('busy')
+    expect(callbacks.onWorking).toHaveBeenLastCalledWith({ estimated: false })
+    await vi.advanceTimersByTimeAsync(1000)
+    apply('hook', 'Stop', { continuing: false })
+    expect(agentStatus[node.id]).toBe('idle')
+    expect(callbacks.onCompleted).toHaveBeenLastCalledWith(expect.objectContaining({ estimated: false }))
+  })
+
+  it('an approval its screen showed ends when the screen no longer shows it', async () => {
+    apply('hook', 'UserPromptSubmit')
+    screen = { ...screen, approval: true }
+    monitor.output()
+    await vi.advanceTimersByTimeAsync(1500)
+    expect(getAgentState(node.id, launch).state).toBe('approval')
+    expect(approvals[node.id]).toBe(true)
+    screen = { ...screen, approval: false }
+    await vi.advanceTimersByTimeAsync(1100)
+    monitor.output()
+    await vi.advanceTimersByTimeAsync(1500)
+    expect(getAgentState(node.id, launch).state).toBe('working')
+    expect(approvals[node.id]).toBeUndefined()
+  })
+
+  it('an agent without status hooks keeps its screen estimate', () => {
+    node = { id: 'pane-a', agentId: 'aider', agentLaunchToken: 'x' }
+    expect(managedAgentStatus(node)).toBe(false)
   })
 })

@@ -165,7 +165,9 @@
       "copilotFailed": "Hooks de Copilot CLI : {{error}}",
       "opencodeFailed": "Plugin OpenCode : {{error}}",
       "kimiFailed": "Hooks de Kimi Code : {{error}}",
-      "memoryFailed": "{{agent}} : fichier de mémoire {{file}} : {{error}}"
+      "memoryFailed": "{{agent}} : fichier de mémoire {{file}} : {{error}}",
+      "statusPath": "Le chemin du script de hook ne peut pas être cité sans risque pour cet agent.",
+      "pluginNotManaged": "Ce fichier n'est pas géré par Tessel ; il n'a pas été modifié : {{file}}"
     },
     "jsonAgents": {
       "kimiNotObject": "mcpServers de Kimi n'est pas un objet ; le fichier existant n'a pas été modifié.",

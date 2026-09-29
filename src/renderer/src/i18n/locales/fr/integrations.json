@@ -90,7 +90,8 @@
       "eventOn": "configuré",
       "eventMissing": "manquant",
       "none": "Pas encore de hooks",
-      "noneHint": "Rappel tapé seulement, quand l'agent est inactif"
+      "noneHint": "Rappel tapé seulement, quand l'agent est inactif",
+      "statusOnly": "Ses hooks indiquent à Tessel quand il travaille et quand il a terminé. Les messages d'équipe lui parviennent par un rappel tapé quand il est inactif."
     },
     "ago": {
       "now": "à l'instant",

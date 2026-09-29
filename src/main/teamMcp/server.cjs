@@ -31,7 +31,7 @@ const path = require('path')
 const crypto = require('crypto')
 const { randomUUID } = crypto
 
-const VERSION = '1.9.0'
+const VERSION = '1.9.1'
 const MAX_TEXT = 6000
 
 // --- Finding my team and me ---------------------------------------------------
@@ -1073,18 +1073,174 @@ function serve() {
 // or return a permission decision. Keep this self-contained: this file is also
 // copied outside the application and run directly by the CLIs.
 const AGENT_STATE_PROTOCOL = 1
+// The agents this script reports the status of (see STATUS_AGENTS below):
+// agentStateSetup.js checks the shared copy knows them.
+const AGENT_STATUS_AGENTS = 2
 const HOOK_STARTED_AT = Date.now()
 const STATUS_EVENTS = {
   claude: new Set(['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'PermissionRequest', 'Notification', 'Stop', 'StopFailure', 'SessionEnd', 'SubagentStart', 'SubagentStop']),
   codex: new Set(['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PermissionRequest', 'PostToolUse', 'Stop', 'Interrupt', 'SessionEnd', 'SubagentStart', 'SubagentStop'])
 }
+// The other agents' own events, in the names above (status evidence only:
+// never a prompt, a tool's arguments or its output). Mapping after Orca's
+// src/shared/agent-hook-listener/providers/*-events.ts, MIT, Copyright (c)
+// 2026 Lovecast Inc.
+// Agents whose hooks (agentStatusHooks.js) only report their status: the hook
+// answers nothing, or the neutral answer their CLI waits for.
+const STATUS_AGENTS = ['cursor', 'droid', 'grok', 'antigravity', 'openclaude', 'commandcode', 'amp', 'pi']
+// Cursor reads an empty answer to its prompt hook as a refusal.
+const STATUS_ANSWERS = { cursor: { beforeSubmitPrompt: '{"continue":true}' } }
+// The events Tessel's own plugins and extensions (OpenCode, Amp, Pi) send.
+const STATUS_PLUGIN_EVENTS = new Set(['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'Stop', 'StopFailure', 'Interrupt', 'SessionEnd', 'Elicitation', 'ElicitationResult', 'SubagentStart', 'SubagentStop'])
+const str = (v) => (typeof v === 'string' ? v : '')
+const firstStr = (data, keys) => {
+  for (const key of keys) if (typeof data[key] === 'string' && data[key]) return data[key]
+  return ''
+}
+const compact = (v) => str(v).replace(/[^a-z0-9]/gi, '').toLowerCase()
+const snakeName = (v) =>
+  str(v)
+    .trim()
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .replace(/[-\s]+/g, '_')
+    .toLowerCase()
+// A question to the user: the pane waits for an answer.
+const isAskTool = (name) => ['askuserquestion', 'askuser', 'askquestion', 'requestuserinput'].includes(compact(name))
+const toolOf = (data) => firstStr(data, ['tool_name', 'toolName', 'name'])
+const askOr = (event, data) => (isAskTool(toolOf(data)) ? { event, toolName: 'AskUserQuestion' } : { event })
+const permission = () => ({ event: 'Notification', notificationType: 'permission_prompt' })
+const COPILOT_NAMES = {
+  sessionStart: 'SessionStart',
+  sessionEnd: 'SessionEnd',
+  userPromptSubmitted: 'UserPromptSubmit',
+  userPromptSubmit: 'UserPromptSubmit',
+  preToolUse: 'PreToolUse',
+  postToolUse: 'PostToolUse',
+  postToolUseFailure: 'PostToolUseFailure',
+  subagentStart: 'SubagentStart',
+  subagentStop: 'SubagentStop',
+  agentStop: 'Stop',
+  stop: 'Stop',
+  errorOccurred: 'ErrorOccurred',
+  permissionRequest: 'PermissionRequest',
+  notification: 'Notification'
+}
+const NORMALIZE = {
+  gemini(name, data) {
+    if (name === 'Notification') return data.notification_type === 'ToolPermission' ? permission() : null
+    const map = { SessionStart: 'SessionStart', BeforeAgent: 'UserPromptSubmit', BeforeTool: 'PreToolUse', AfterTool: 'PostToolUse', AfterAgent: 'Stop', SessionEnd: 'SessionEnd' }
+    return map[name] ? { event: map[name] } : null
+  },
+  copilot(raw, data) {
+    const name = COPILOT_NAMES[raw] || raw
+    if (name === 'Notification')
+      return ['permission_prompt', 'elicitation_dialog'].includes(firstStr(data, ['notification_type', 'notificationType'])) ? permission() : null
+    if (name === 'PreToolUse') return askOr('PreToolUse', data)
+    if (name === 'ErrorOccurred') return { event: data.recoverable === true ? 'PostToolUse' : 'StopFailure' }
+    if (name === 'SubagentStart' || name === 'SubagentStop') {
+      // A sub-agent Copilot runs: its name identifies it (there is no id).
+      const agentId = firstStr(data, ['agent_id', 'agentId', 'agentName', 'agent_name'])
+      return agentId ? { event: name, agentId } : null
+    }
+    return ['SessionStart', 'SessionEnd', 'UserPromptSubmit', 'PostToolUse', 'PostToolUseFailure', 'Stop'].includes(name) ? { event: name } : null
+  },
+  kimi(name, data) {
+    if (name === 'PreToolUse') return askOr('PreToolUse', data)
+    // Kimi asks before a tool runs: the pane waits for the user.
+    if (name === 'PermissionRequest') return permission()
+    if (name === 'Stop') return { event: data.is_interrupt === true ? 'Interrupt' : 'Stop' }
+    return ['SessionStart', 'UserPromptSubmit', 'PostToolUse', 'PostToolUseFailure', 'StopFailure', 'SessionEnd'].includes(name) ? { event: name } : null
+  },
+  opencode: (name) => (STATUS_PLUGIN_EVENTS.has(name) ? { event: name } : null),
+  amp: (name) => (STATUS_PLUGIN_EVENTS.has(name) ? { event: name } : null),
+  pi: (name, data) => (name === 'PreToolUse' ? askOr('PreToolUse', data) : STATUS_PLUGIN_EVENTS.has(name) ? { event: name } : null),
+  openclaude: (name) => (STATUS_EVENTS.claude.has(name) ? { event: name } : null),
+  cursor(name, data) {
+    if (name === 'beforeSubmitPrompt') return { event: 'UserPromptSubmit' }
+    if (name === 'postToolUse') return { event: 'PostToolUse' }
+    if (name === 'postToolUseFailure') return { event: 'PostToolUseFailure' }
+    if (name === 'stop') {
+      const status = str(data.status)
+      return { event: !status || status === 'completed' ? 'Stop' : status === 'error' ? 'StopFailure' : 'Interrupt' }
+    }
+    return null
+  },
+  droid(name, data) {
+    if (name === 'PreToolUse') {
+      // Droid asks before a high-risk tool (no Notification then).
+      const input = data.tool_input && typeof data.tool_input === 'object' ? data.tool_input : {}
+      const risk = str(data.riskLevel || data.risk_level || input.riskLevel || input.risk_level).trim().toLowerCase()
+      return risk === 'high' ? permission() : askOr('PreToolUse', data)
+    }
+    if (name === 'PermissionRequest') return permission()
+    if (name === 'Notification') {
+      const message = str(data.message).toLowerCase()
+      if (/permission|approve|approval/.test(message)) return permission()
+      // Droid runs no Stop hook when interrupted: only this idle notice.
+      if (/waiting for (your )?input/.test(message)) return { event: 'Stop' }
+      return null
+    }
+    return ['SessionStart', 'UserPromptSubmit', 'PostToolUse', 'Stop'].includes(name) ? { event: name } : null
+  },
+  grok(raw, data) {
+    // A sub-agent's own session: its lifecycle is not the pane's.
+    if (firstStr(data, ['subagentType', 'subagent_type'])) return null
+    const name = snakeName(raw)
+    const simple = {
+      session_start: 'SessionStart',
+      session_end: 'SessionEnd',
+      user_prompt_submit: 'UserPromptSubmit',
+      post_tool_use: 'PostToolUse',
+      post_tool_use_failure: 'PostToolUseFailure',
+      stop_failure: 'StopFailure',
+      stop_cancelled: 'Interrupt'
+    }
+    if (simple[name]) return { event: simple[name] }
+    if (name === 'pre_tool_use') return askOr('PreToolUse', data)
+    if (name === 'stop') {
+      if (['shutdown', 'channel_closed'].includes(str(data.reason))) return { event: 'SessionEnd' }
+      // Background sub-agents or shells still run: the pane still works, until
+      // Grok's idle notice.
+      const tasks = Array.isArray(data.backgroundTasks) ? data.backgroundTasks : Array.isArray(data.background_tasks) ? data.background_tasks : []
+      return { event: tasks.some((t) => t && (t.type === 'subagent' || t.type === 'shell')) ? 'PostToolUse' : 'Stop' }
+    }
+    if (name === 'notification') {
+      const type = snakeName(firstStr(data, ['notificationType', 'notification_type', 'type']))
+      const message = str(data.message).trim().toLowerCase()
+      if (type === 'idle_prompt') return { event: 'Stop' }
+      // Sent before each tool, even when nothing is asked.
+      if (type === 'permission_prompt' && message === 'tool permission requested') return null
+      if (/permission|approval|approve|allow|confirm|needs your|requires your|feedback|clarify|question/.test(message)) return permission()
+    }
+    return null
+  },
+  antigravity(name, data) {
+    if (name === 'PreInvocation') return { event: 'UserPromptSubmit' }
+    if (name === 'PostInvocation' || name === 'PostToolUse') return { event: 'PostToolUse' }
+    // A Stop between two steps (not fully idle) is not the turn's end.
+    if (name === 'Stop') return { event: data.fullyIdle === false || data.fully_idle === false ? 'PostToolUse' : 'Stop' }
+    return null
+  },
+  commandcode: (name) => (['PreToolUse', 'PostToolUse', 'Stop'].includes(name) ? { event: name } : null)
+}
+// -> the status event this hook stands for ({ event, ...fields }), or null.
+function statusEvent(provider, data) {
+  const name = data.hook_event_name
+  if (provider === 'claude' || provider === 'codex') return STATUS_EVENTS[provider].has(name) ? { event: name } : null
+  const normalize = Object.hasOwn(NORMALIZE, provider) ? NORMALIZE[provider] : null
+  return normalize && typeof name === 'string' ? normalize(name, data) : null
+}
 function reportAgentState(data, provider, continuing = false) {
   const paneId = process.env.TESSEL_PANE_ID || ''
   const launchToken = process.env.TESSEL_AGENT_LAUNCH || ''
   const root = process.env.TESSEL_AGENT_STATE_DIR || ''
-  const sessionId = String(data.session_id || '')
-  if (!STATUS_EVENTS[provider]?.has(data.hook_event_name) || process.env.TESSEL_AGENT_PROVIDER !== provider) return
+  if (process.env.TESSEL_AGENT_PROVIDER !== provider) return
+  const status = statusEvent(provider, data)
+  if (!status) return
   if (!/^[A-Za-z0-9_-][A-Za-z0-9._-]{0,99}$/.test(paneId) || !/^[A-Za-z0-9_-]{16,100}$/.test(launchToken)) return
+  let sessionId = String(data.session_id || '')
+  // An agent whose events carry no usable conversation id: one per launch.
+  if (!/^[A-Za-z0-9_-]{6,100}$/.test(sessionId) && provider !== 'claude' && provider !== 'codex') sessionId = `launch-${launchToken.slice(0, 16)}`
   if (!/^[A-Za-z0-9_-]{6,100}$/.test(sessionId) || !path.isAbsolute(root)) return
   const dir = path.join(root, 'events')
   let tmp
@@ -1095,23 +1251,30 @@ function reportAgentState(data, provider, continuing = false) {
     let count = 0
     const listing = fs.opendirSync(dir)
     try { while (listing.readSync()) if (++count >= 4096) return } finally { listing.closeSync() }
+    // A plugin (OpenCode, Amp, Pi) says when its event happened: it runs its
+    // hooks one after the other, but each process starts a little later.
+    const sent = Number(data.tessel_at)
+    const at = Number.isSafeInteger(sent) && sent <= Date.now() && sent > Date.now() - 60000 ? sent : HOOK_STARTED_AT
     const event = {
       v: AGENT_STATE_PROTOCOL, id: randomUUID(), paneId, provider, launchToken,
-      sessionId, event: data.hook_event_name, at: HOOK_STARTED_AT, source: 'hook'
+      sessionId, event: status.event, at, source: 'hook'
     }
     const identifier = (value) => typeof value === 'string' && /^[A-Za-z0-9_.:-]{1,160}$/.test(value) ? value : undefined
-    if (data.agent_id && !identifier(data.agent_id)) return // never turn an invalid child identity into the parent
+    const agentId = status.agentId !== undefined ? status.agentId : data.agent_id
+    if (agentId && !identifier(agentId)) return // never turn an invalid child identity into the parent
     const fields = {
-      agentId: data.agent_id,
+      agentId,
       toolId: data.tool_use_id || data.tool_call_id,
       turnId: data.prompt_id || data.turn_id
     }
     for (const [key, value] of Object.entries(fields)) if (identifier(value)) event[key] = value
-    if (['permission_prompt', 'idle_prompt'].includes(data.notification_type)) event.notificationType = data.notification_type
+    const notificationType = status.notificationType || data.notification_type
+    if (['permission_prompt', 'idle_prompt'].includes(notificationType)) event.notificationType = notificationType
     if (['startup', 'resume', 'clear', 'compact'].includes(data.source)) event.startSource = data.source
-    if (data.hook_event_name === 'Stop') event.continuing = continuing
+    if (status.event === 'Stop') event.continuing = continuing
     // Only a tool's identity, never its arguments or prompt text.
-    if (['AskUserQuestion', 'request_user_input'].includes(data.tool_name)) event.toolName = data.tool_name
+    const toolName = status.toolName || data.tool_name
+    if (['AskUserQuestion', 'request_user_input'].includes(toolName)) event.toolName = toolName
     const file = path.join(dir, `${event.at}-${event.id}.json`)
     tmp = file + '.tmp'
     fs.writeFileSync(tmp, JSON.stringify(event), { flag: 'wx', mode: 0o600 })
@@ -1202,7 +1365,9 @@ function kimiHook(data) {
     // Kimi's runner uses stderr as the continuation reason for exit code 2.
     process.stderr.write(note)
     process.exitCode = 2
-  } else process.stdout.write(note)
+    return true
+  }
+  process.stdout.write(note)
 }
 
 function hookMain() {
@@ -1222,9 +1387,23 @@ function hookMain() {
     // Copilot CLI (hooks in Claude Code's names, --event=<name> in its command
     // since its payload may not name the event): camelCase fields accepted too.
     const copilot = process.argv.includes('--copilot')
-    if (copilot) {
-      const named = process.argv.find((a) => a.startsWith('--event='))
-      data = { ...data, session_id: data.session_id || data.sessionId, hook_event_name: data.hook_event_name || (named ? named.slice(8) : '') }
+    // An agent whose hooks only report its status (agentStatusHooks.js,
+    // --agent=<id>), or a status event from Tessel's own plugins (--status).
+    const agentArg = process.argv.find((a) => a.startsWith('--agent='))
+    const statusAgent = agentArg ? agentArg.slice(8) : ''
+    const named = process.argv.find((a) => a.startsWith('--event='))
+    if (statusAgent) {
+      // The neutral answer its CLI waits for, in or out of Tessel.
+      const answer = STATUS_ANSWERS[statusAgent] && STATUS_ANSWERS[statusAgent][named ? named.slice(8) : data.hook_event_name]
+      if (answer) process.stdout.write(answer)
+      if (!STATUS_AGENTS.includes(statusAgent)) return
+    }
+    if (copilot || statusAgent) {
+      data = {
+        ...data,
+        session_id: data.session_id || data.sessionId || data.conversation_id || data.conversationId || '',
+        hook_event_name: statusAgent ? (named ? named.slice(8) : data.hook_event_name || data.hookEventName || '') : data.hook_event_name || (named ? named.slice(8) : '')
+      }
     }
     // Which conversation the agent is in: recorded first, team or not.
     const codex = process.argv.includes('--codex')
@@ -1233,19 +1412,25 @@ function hookMain() {
     // reads Claude's answers: only its conversation is reported as OpenCode's.
     const opencode = process.argv.includes('--opencode')
     const kimi = process.argv.includes('--kimi')
-    const provider = codex ? 'codex' : gemini ? 'gemini' : copilot ? 'copilot' : opencode ? 'opencode' : kimi ? 'kimi' : 'claude'
+    const provider = statusAgent || (codex ? 'codex' : gemini ? 'gemini' : copilot ? 'copilot' : opencode ? 'opencode' : kimi ? 'kimi' : 'claude')
+    const statusOnly = !!statusAgent || process.argv.includes('--status')
     let continuing = false
     try {
     // Children may report their own state, but never change the root session
     // or consume its messages (the finally below is observation-only).
     if (data.agent_id) return
     reportSession(data, provider)
+    // Status only: never a team message (they come as a typed reminder).
+    if (statusOnly) return
     // A chat agent (src/main/chat): Tessel gives it its team messages as turns
     // of their own and marks them read when the agent takes them. Its hooks
     // must not claim them too (they would reach it twice, or never be
     // acknowledged).
     if (process.env.TESSEL_CHAT === '1') return
-    if (kimi) return kimiHook(data)
+    if (kimi) {
+      continuing = kimiHook(data) === true
+      return
+    }
     if (codex) {
       // Codex Stop decisions become continuation prompts. Other events keep
       // reporting the session only; an already continued turn never loops.
@@ -1372,4 +1557,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { taskRequest, locate, readInbox, send, members, handle, candidateDirs, ackPath, markRead, unread, listTasks, addTask, moveTask, reportTask, gateTask, ask, groupTargets, listWorkers, listGates, TOOLS, VERSION }
+module.exports = { taskRequest, locate, readInbox, send, members, handle, candidateDirs, ackPath, markRead, unread, listTasks, addTask, moveTask, reportTask, gateTask, ask, groupTargets, listWorkers, listGates, TOOLS, VERSION, AGENT_STATUS_AGENTS, statusEvent }

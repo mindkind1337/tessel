@@ -3111,14 +3111,14 @@ function nativeNotify(payload) {
 function notifyAgentDone(node) {
   const ws = wsOfLeaf(node.id)
   const inWs = ws && workspaces.value.length > 1
-  const message = node.agentLaunchToken
+  const message = managedAgentStatus(node)
     ? t('app.notify.finishedResponse', '{{name}} finished a response', { name: node.title })
     : t('app.notify.finishedWaiting', '{{name}} finished and is waiting for you', { name: node.title })
   const wsLine = ws ? t('app.notify.workspace', 'Workspace: {{name}}', { name: ws.name }) : ''
   inboxNote('done', message, wsLine, node.id)
   if (document.hasFocus() && settings.inAppAlerts)
     showToast(
-      node.agentLaunchToken
+      managedAgentStatus(node)
         ? inWs
           ? t('app.notify.finishedResponseIn', '{{name}} finished a response in {{ws}}.', { name: node.title, ws: ws.name })
           : t('app.notify.finishedResponseDot', '{{name}} finished a response.', { name: node.title })
@@ -3906,8 +3906,9 @@ const agentStates = computed(() => {
   return out
 })
 function addAgentState(out, leaf, wsId) {
-  const observed = leaf.agentLaunchToken ? getAgentState(leaf.id, leaf.agentLaunchToken) : null
-  let state = observed?.state || (leaf.agentLaunchToken ? 'unknown' : 'idle')
+  const managed = managedAgentStatus(leaf)
+  const observed = managed ? getAgentState(leaf.id, leaf.agentLaunchToken) : null
+  let state = observed?.state || (managed ? 'unknown' : 'idle')
   if (leaf.sleeping) state = 'sleeping'
   else if (approvals[leaf.id]) state = 'approval'
   else if (limits[leaf.id]) state = 'limited'
@@ -6022,7 +6023,7 @@ const wakeState = {} // leafId -> { since, woken, wokenAt, gen }
 // (Settings > Orchestration, wake agents even without confirmation).
 function wakeAllowed(id, anyState = false) {
   const leaf = findLeaf(id)
-  if (!anyState && leaf?.agentLaunchToken && !agentStateKnown(id, leaf.agentLaunchToken)) return false
+  if (!anyState && leaf && managedAgentStatus(leaf) && !agentStateKnown(id, leaf.agentLaunchToken)) return false
   if (id === activeId.value && document.hasFocus()) return false
   // A draft Codex's screen proves gone (its empty-prompt placeholder is back:
   // sent, cleared, or never a draft at all) no longer holds reminders back.
@@ -6145,7 +6146,7 @@ async function unreadAtLaunch(id, teamId) {
   }
 }
 function wakeIfNeeded(leaf) {
-  if (leaf.agentLaunchToken && !agentStateKnown(leaf.id, leaf.agentLaunchToken)) {
+  if (managedAgentStatus(leaf) && !agentStateKnown(leaf.id, leaf.agentLaunchToken)) {
     const waiting = teamUnread[leaf.id] || 0
     if (!waiting) delete wakeState[leaf.id]
     else if (inboxWake(leaf, waiting)) return
@@ -6294,7 +6295,7 @@ async function restartForTeamTools() {
       const draftMaybe = !!userDraft[leaf.id] || (!!draftUnknown[leaf.id] && !inputShownEmpty(leaf.id))
       const inUse = (leaf.id === activeId.value && document.hasFocus()) || userIsTyping(leaf.id) || draftMaybe
       if (!quiet || inUse || approvals[leaf.id] || pendingMessages[leaf.id] || unsent[leaf.id] || delivering.has(leaf.id)) continue
-      if (leaf.agentLaunchToken && !agentStateKnown(leaf.id, leaf.agentLaunchToken)) continue
+      if (managedAgentStatus(leaf) && !agentStateKnown(leaf.id, leaf.agentLaunchToken)) continue
       // A reminder was typed there a moment ago: its Enter could reach the
       // new agent (Codex took one as "Update now").
       if (wakeState[leaf.id] && now - (wakeState[leaf.id].wokenAt || 0) < 60000) continue
@@ -6349,7 +6350,7 @@ function paneUpdateBlocker(leaf, ws, now = Date.now()) {
   return updateBlocker({
     pane: leaf,
     resumable: !!sessionKind({ id: leaf.agentId }) && safeSessionId(leaf.sessionId),
-    managed: !!leaf.agentLaunchToken,
+    managed: managedAgentStatus(leaf),
     confirmed: !!(leaf.agentLaunchToken && agentStateKnown(leaf.id, leaf.agentLaunchToken)),
     state: info ? info.state : null,
     trackedState: t ? t.state : null,
@@ -8309,7 +8310,7 @@ function paneState(leaf) {
   if (approvals[leaf.id]) return 'approval'
   if (limits[leaf.id]) return 'limited'
   if (childrenRunning[leaf.id]) return 'working'
-  if (leaf.agentLaunchToken && agentStatus[leaf.id] === 'unknown') return 'unknown'
+  if (managedAgentStatus(leaf) && agentStatus[leaf.id] === 'unknown') return 'unknown'
   if (attention[leaf.id]) return 'waiting'
   return agentStatus[leaf.id] === 'busy' ? 'working' : 'ready'
 }
