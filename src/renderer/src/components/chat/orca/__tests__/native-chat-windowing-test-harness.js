@@ -247,6 +247,22 @@ export function listProps(messages, isVisible = true) {
   }
 }
 
+/** A simulated frame clock, so what depends on time (animation frames, the
+ *  virtualizer's scroll-end debounce, idle timers) happens at the same point
+ *  of a case on any machine, however loaded: one frame is 16 ms of simulated
+ *  time, advanced only by the case. */
+export const FRAME_MS = 16
+export function useFrameClock() {
+  vi.useFakeTimers({
+    toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'requestAnimationFrame', 'cancelAnimationFrame', 'performance', 'Date']
+  })
+  return () => vi.useRealTimers()
+}
+/** Runs the timers and animation frames due in the next `ms` of simulated time. */
+export async function advanceFrame(ms = FRAME_MS) {
+  await vi.advanceTimersByTimeAsync(ms)
+}
+
 /** Vue renders on the next tick; a few ticks let the virtualizer's own
  *  re-renders (onChange → next render) settle too. */
 export async function flush(ticks = 4) {

@@ -1444,6 +1444,15 @@ defineExpose({ navigate, focusAddress })
   height: 24px;
 }
 
+/* A drag over the page must reach Tessel, not the page. Plain descendant
+   selectors: in scoped CSS, `:global(body.x) .bp-webview` compiles to just
+   `body.x` and made the whole window ignore the pointer during a pane drag. */
+body.pane-dragging .bp-webview,
+body.ws-resizing .bp-webview,
+.split:has(.divider.dragging) .bp-webview {
+  pointer-events: none;
+}
+
 .bp-empty,
 .bp-failure {
   position: absolute;

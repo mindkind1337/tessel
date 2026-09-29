@@ -5,7 +5,8 @@ import os from 'os'
 import { kimiConfigFile, kimiHookEvents, KIMI_HOOK_EVENTS } from './kimiHooks'
 import { join } from 'path'
 import { t } from './i18n'
-import { statusHooksInstallation, STATUS_HOOK_AGENTS } from './agentStatusHooks'
+import { statusHooksInstallation, STATUS_HOOK_AGENTS, STATUS_HOOKS } from './agentStatusHooks'
+import { findNode, hookCommand, noNodeError } from './nodePath'
 import { STATUS_PROVIDERS } from '../shared/agentStateModel'
 import { HOOK_EVENTS, CODEX_HOOK_EVENTS, GEMINI_HOOK_EVENTS, COPILOT_HOOK_EVENTS, COPILOT_HOOKS_FILE, OPENCODE_PLUGIN_FILE, OPENCODE_MARKER, opencodePlugin } from './teamInstall'
 
@@ -26,7 +27,7 @@ function addError(agent, error) {
   agent.error = agent.error ? `${agent.error} ${error}` : error
 }
 
-function installation(home, id, scriptPath, events, configDir = join(home, `.${id}`)) {
+function installation(home, id, scriptPath, events, configDir = join(home, `.${id}`), node) {
   const file = join(configDir, id === 'codex' ? 'hooks.json' : 'settings.json')
   const agent = {
     id,
@@ -59,12 +60,13 @@ function installation(home, id, scriptPath, events, configDir = join(home, `.${i
             id === 'codex' && process.platform === 'win32' && handler.commandWindows !== undefined
               ? handler.commandWindows
               : handler.command
-          const want = `node "${scriptPath}" --hook${id === 'claude' ? '' : ` --${id}`}`
+          const want = hookCommand(node, scriptPath, `--hook${id === 'claude' ? '' : ` --${id}`}`)
           if (
             handler.type !== 'command' ||
             typeof command !== 'string' ||
             command.trim() !== want ||
-            !scriptPath
+            !scriptPath ||
+            !node
           )
             return
           // A restricted matcher does not provide the unconditional installation
@@ -264,7 +266,7 @@ function sessionSignals(sessionsDir, agents) {
 }
 
 // Copilot CLI: Tessel's own hooks file, one command per event (--event=<name>).
-function copilotInstallation(home, scriptPath) {
+function copilotInstallation(home, scriptPath, node) {
   const agent = {
     id: 'copilot',
     hooks: 'missing',
@@ -280,10 +282,10 @@ function copilotInstallation(home, scriptPath) {
     const config = JSON.parse(data.text)
     if (!record(config) || !record(config.hooks)) throw new Error()
     for (const event of COPILOT_HOOK_EVENTS) {
-      const want = `node "${scriptPath}" --hook --copilot --event=${event}`
+      const want = hookCommand(node, scriptPath, `--hook --copilot --event=${event}`)
       const list = Array.isArray(config.hooks[event]) ? config.hooks[event] : []
       agent.events[event] =
-        !!scriptPath && list.some((h) => record(h) && h.type === 'command' && String(h.powershell || h.bash || '').trim() === want)
+        !!scriptPath && !!node && list.some((h) => record(h) && h.type === 'command' && String(h.powershell || h.bash || '').trim() === want)
     }
     const on = Object.values(agent.events).filter(Boolean).length
     agent.hooks = on === COPILOT_HOOK_EVENTS.length ? 'installed' : on ? 'partial' : 'missing'
@@ -295,13 +297,13 @@ function copilotInstallation(home, scriptPath) {
   return agent
 }
 
-function kimiInstallation(home, scriptPath) {
+function kimiInstallation(home, scriptPath, node) {
   const agent = { id: 'kimi', hooks: 'missing', events: Object.fromEntries(KIMI_HOOK_EVENTS.map((e) => [e, false])), approval: null, lastSignal: null, inbox: false }
   const data = readText(kimiConfigFile(home), 'Kimi config.toml')
   if (data.missing) return agent
   try {
     if (data.error) throw new Error()
-    agent.events = kimiHookEvents(data.text, scriptPath)
+    agent.events = kimiHookEvents(data.text, scriptPath, node)
     const count = Object.values(agent.events).filter(Boolean).length
     agent.hooks = count === KIMI_HOOK_EVENTS.length ? 'installed' : count ? 'partial' : 'missing'
   } catch {
@@ -311,7 +313,7 @@ function kimiInstallation(home, scriptPath) {
   return agent
 }
 
-function opencodeInstallation(home, scriptPath) {
+function opencodeInstallation(home, scriptPath, node) {
   const agent = { id: 'opencode', hooks: 'missing', events: { Plugin: false }, approval: null, lastSignal: null, inbox: false }
   const file = join(home, '.config', 'opencode', 'plugins', OPENCODE_PLUGIN_FILE)
   const data = readText(file, 'OpenCode plugin')
@@ -321,19 +323,42 @@ function opencodeInstallation(home, scriptPath) {
     addError(agent, data.error || t('main.hooks.opencodeNotManaged', 'The OpenCode plugin file is not managed by Tessel; it was left unchanged.'))
     return agent
   }
-  agent.events.Plugin = !!scriptPath && data.text === opencodePlugin(scriptPath)
+  agent.events.Plugin = !!scriptPath && !!node && data.text === opencodePlugin(scriptPath, node)
   agent.hooks = agent.events.Plugin ? 'installed' : 'partial'
   return agent
 }
 
-export function hooksStatus({ home = os.homedir(), sessionsDir, scriptPath, configDirs = {}, states, env = process.env } = {}) {
-  const claude = installation(home, 'claude', scriptPath, HOOK_EVENTS, configDirs.claude)
-  const codex = installation(home, 'codex', scriptPath, CODEX_HOOK_EVENTS, configDirs.codex)
-  const gemini = installation(home, 'gemini', scriptPath, GEMINI_HOOK_EVENTS)
+// The copies Tessel kept of the user's files before its first change
+// (<file>.before-tessel): listed in Settings, deleted with Tessel's hooks.
+function backups(home, configDirs, env) {
+  const files = [
+    join(configDirs.claude || join(home, '.claude'), 'settings.json'),
+    join(configDirs.codex || join(home, '.codex'), 'hooks.json'),
+    join(configDirs.codex || join(home, '.codex'), 'config.toml'),
+    join(home, '.gemini', 'settings.json'),
+    kimiConfigFile(home),
+    ...STATUS_HOOK_AGENTS.map((id) => STATUS_HOOKS[id].file(home, env))
+  ]
+  return [...new Set(files)].map((f) => `${f}.before-tessel`).filter((f) => {
+    try {
+      return fs.statSync(f).isFile()
+    } catch {
+      return false
+    }
+  })
+}
+
+// `node`: the absolute node Tessel's hook commands run (nodePath.js), found
+// on PATH when not given. None: no hook counts as installed, and `node` in
+// the result says why ({ found: false, error }).
+export function hooksStatus({ home = os.homedir(), sessionsDir, scriptPath, configDirs = {}, states, env = process.env, node = findNode({ env }) } = {}) {
+  const claude = installation(home, 'claude', scriptPath, HOOK_EVENTS, configDirs.claude, node)
+  const codex = installation(home, 'codex', scriptPath, CODEX_HOOK_EVENTS, configDirs.codex, node)
+  const gemini = installation(home, 'gemini', scriptPath, GEMINI_HOOK_EVENTS, undefined, node)
   codexApproval(home, codex, configDirs.codex)
-  const agents = [claude.agent, codex.agent, gemini.agent, copilotInstallation(home, scriptPath), kimiInstallation(home, scriptPath), opencodeInstallation(home, scriptPath)]
+  const agents = [claude.agent, codex.agent, gemini.agent, copilotInstallation(home, scriptPath, node), kimiInstallation(home, scriptPath, node), opencodeInstallation(home, scriptPath, node)]
   // The agents whose hooks only report their status (agentStatusHooks.js).
-  for (const id of STATUS_HOOK_AGENTS) agents.push(statusHooksInstallation(id, scriptPath, { home, env }))
+  for (const id of STATUS_HOOK_AGENTS) agents.push(statusHooksInstallation(id, scriptPath, { home, env, node }))
   sessionSignals(sessionsDir, agents)
   // What their hooks said about the panes they run in (working, idle...).
   if (states) for (const agent of agents) {
@@ -344,5 +369,9 @@ export function hooksStatus({ home = os.homedir(), sessionsDir, scriptPath, conf
       panes: observed.map(({ paneId, state, source, confirmed, stale, observedAt }) => ({ paneId, state, source, confirmed, stale, observedAt }))
     }
   }
-  return { agents }
+  return {
+    agents,
+    node: node ? { found: true, path: node } : { found: false, error: noNodeError() },
+    backups: backups(home, configDirs, env)
+  }
 }

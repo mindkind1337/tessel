@@ -21,6 +21,8 @@ describe('read-only hook connection diagnostics', () => {
   let home
   let sessionsDir
   const scriptPath = 'C:\\Tessel data\\tessel-team-mcp.cjs'
+  // The absolute node Tessel's hook commands run.
+  const NODE = 'C:\\Program Files\\nodejs\\node.exe'
   const write = (file, text) => {
     fs.mkdirSync(dirname(file), { recursive: true })
     fs.writeFileSync(file, text)
@@ -30,13 +32,13 @@ describe('read-only hook connection diagnostics', () => {
   const hooksFile = () => join(home, '.codex', 'hooks.json')
   const claudeFile = () => join(home, '.claude', 'settings.json')
   const geminiFile = () => join(home, '.gemini', 'settings.json')
-  const status = () => hooksStatus({ home, sessionsDir, scriptPath, env: {} })
+  const status = () => hooksStatus({ home, sessionsDir, scriptPath, env: {}, node: NODE })
   const agent = (id = 'codex') => status().agents.find((a) => a.id === id)
   const install = () => {
-    installClaudeHooks(scriptPath, home)
-    installCodexHooks(scriptPath, home)
-    installGeminiHooks(scriptPath, home)
-    installCopilotHooks(scriptPath, home)
+    installClaudeHooks(scriptPath, home, { node: NODE })
+    installCodexHooks(scriptPath, home, { node: NODE })
+    installGeminiHooks(scriptPath, home, { node: NODE })
+    installCopilotHooks(scriptPath, home, { node: NODE })
   }
   const trust = (event, group = 0, handler = 0, enabled, quoted = false) => {
     const name = event.replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase()
@@ -74,9 +76,35 @@ describe('read-only hook connection diagnostics', () => {
     expect(fs.readdirSync(home)).toEqual([])
   })
 
+  it('without an absolute node on PATH: nothing counts as installed, and Settings is told why', () => {
+    install()
+    const result = hooksStatus({ home, sessionsDir, scriptPath, env: { PATH: '.' }, node: undefined })
+    expect(result.node).toMatchObject({ found: false })
+    expect(result.node.error).toMatch(/Node\.js/)
+    expect(result.agents.every((a) => a.hooks !== 'installed')).toBe(true)
+    expect(status().node).toEqual({ found: true, path: NODE })
+  })
+
+  it('an older install running a bare "node" is not counted as installed (it is upgraded on the next install)', () => {
+    install()
+    const config = JSON.parse(fs.readFileSync(claudeFile(), 'utf8'))
+    config.hooks.Stop[0].hooks[0].command = `node "${scriptPath}" --hook`
+    json(claudeFile(), config)
+    expect(agent('claude')).toMatchObject({ hooks: 'partial', events: { Stop: false } })
+    expect(installClaudeHooks(scriptPath, home, { node: NODE })).toEqual({ changed: true })
+    expect(agent('claude').hooks).toBe('installed')
+    expect(fs.readFileSync(claudeFile(), 'utf8')).not.toContain('"node ')
+  })
+
+  it("lists the copies Tessel kept of the user's files", () => {
+    json(claudeFile(), { model: 'mine' })
+    installClaudeHooks(scriptPath, home, { node: NODE })
+    expect(status().backups).toEqual([`${claudeFile()}.before-tessel`])
+  })
+
   it("Copilot: Tessel's own hooks file, each event checked, never its content in an error", () => {
     expect(agent('copilot').hooks).toBe('missing')
-    installCopilotHooks(scriptPath, home)
+    installCopilotHooks(scriptPath, home, { node: NODE })
     expect(agent('copilot')).toMatchObject({ hooks: 'installed', events: { SessionStart: true, PostToolUse: true, Stop: true } })
     const file = join(home, '.copilot', 'hooks', 'tessel-team.json')
     const h = JSON.parse(fs.readFileSync(file, 'utf8'))
@@ -91,7 +119,7 @@ describe('read-only hook connection diagnostics', () => {
   it('defaults home to os.homedir without reading the real user configuration', () => {
     install()
     vi.spyOn(os, 'homedir').mockReturnValue(home)
-    expect(hooksStatus({ scriptPath, env: {} }).agents.filter((a) => !a.statusOnly).map((a) => a.hooks)).toEqual([
+    expect(hooksStatus({ scriptPath, env: {}, node: NODE }).agents.filter((a) => !a.statusOnly).map((a) => a.hooks)).toEqual([
       'installed',
       'installed',
       'installed',
@@ -131,7 +159,7 @@ describe('read-only hook connection diagnostics', () => {
       events: { SessionStart: true, UserPromptSubmit: false, Stop: false }
     })
     expect(
-      hooksStatus({ home, scriptPath: 'C:\\other\\tessel-team-mcp.cjs' }).agents.every(
+      hooksStatus({ home, scriptPath: 'C:\\other\\tessel-team-mcp.cjs', node: NODE }).agents.every(
         (a) => a.hooks === 'missing'
       )
     ).toBe(true)
@@ -345,9 +373,9 @@ describe('read-only hook connection diagnostics', () => {
   it('checks the exact OpenCode plugin without loading or modifying its source', () => {
     const file = join(home, '.config', 'opencode', 'plugins', 'tessel-team.js')
     expect(agent('opencode')).toMatchObject({ hooks: 'missing', events: { Plugin: false } })
-    installOpencodePlugin(scriptPath, home)
+    installOpencodePlugin(scriptPath, home, { node: NODE })
     expect(agent('opencode')).toMatchObject({ hooks: 'installed', events: { Plugin: true }, approval: null })
-    write(file, opencodePlugin('C:\\old\\tessel-team-mcp.cjs'))
+    write(file, opencodePlugin('C:\\old\\tessel-team-mcp.cjs', NODE))
     expect(agent('opencode')).toMatchObject({ hooks: 'partial', events: { Plugin: false } })
     write(file, `${OPENCODE_MARKER}\nthrow new Error('PRIVATE-PLUGIN-CONTENT')`)
     expect(agent('opencode').hooks).toBe('partial')

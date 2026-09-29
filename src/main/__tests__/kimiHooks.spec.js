@@ -21,8 +21,13 @@ import {
 const require = createRequire(import.meta.url)
 const server = join(__dirname, '..', 'teamMcp', 'server.cjs')
 const mcp = require(server)
+// Run inside a Tessel pane, the hooks would inherit its agent: a hook reports
+// its conversation only for the pane's own agent.
+delete process.env.TESSEL_AGENT_PROVIDER
 let home
 const script = 'C:\\Tessel data\\tessel-team-mcp.cjs'
+// The absolute node the hook command runs (never "node" by name).
+const NODE = 'C:\\Program Files\\nodejs\\node.exe'
 const accepted = async () => ({ ok: true })
 const file = () => kimiConfigFile(home, '')
 const put = (text) => {
@@ -30,7 +35,7 @@ const put = (text) => {
   fs.writeFileSync(file(), text)
 }
 const install = (path = script, validate = accepted) =>
-  installKimiHooks(path, home, { kimiHome: '', validate })
+  installKimiHooks(path, home, { kimiHome: '', validate, node: NODE })
 
 beforeEach(() => {
   home = fs.mkdtempSync(join(os.tmpdir(), 'tessel-kimi-test-'))
@@ -50,7 +55,7 @@ describe('Kimi TOML installation and diagnostics', () => {
     const validate = vi.fn(accepted)
     expect(await install(script, validate)).toEqual({ changed: true })
     const text = fs.readFileSync(file(), 'utf8')
-    expect(kimiHookEvents(text, script)).toEqual(
+    expect(kimiHookEvents(text, script, NODE)).toEqual(
       Object.fromEntries(KIMI_HOOK_EVENTS.map((e) => [e, true]))
     )
     expect(KIMI_HOOK_EVENTS).toEqual(expect.arrayContaining(['SessionStart', 'UserPromptSubmit', 'Stop', 'PreToolUse', 'PermissionRequest']))
@@ -73,6 +78,23 @@ describe('Kimi TOML installation and diagnostics', () => {
     expect(fs.readFileSync(file() + '.before-tessel', 'utf8')).toBe(original)
   })
 
+  it('upgrades an older block that ran a bare "node" to the absolute node', async () => {
+    const old = [
+      '# tessel:team-hooks:start',
+      ...KIMI_HOOK_EVENTS.flatMap((event) => ['[[hooks]]', `event = "${event}"`, `command = ${JSON.stringify(`node "${script}" --hook --kimi`)}`, 'matcher = ""', 'timeout = 30', '']),
+      '# tessel:team-hooks:end',
+      ''
+    ].join('\n')
+    put('default_model = "mine"\n' + old)
+    expect(Object.values(kimiHookEvents(fs.readFileSync(file(), 'utf8'), script, NODE)).some(Boolean)).toBe(false)
+    expect(await install()).toEqual({ changed: true })
+    const text = fs.readFileSync(file(), 'utf8')
+    expect(text.startsWith('default_model = "mine"\n')).toBe(true)
+    expect(text).not.toContain('"node \\"')
+    expect(text.match(/tessel:team-hooks:start/g)).toHaveLength(1)
+    expect(Object.values(kimiHookEvents(text, script, NODE)).every(Boolean)).toBe(true)
+  })
+
   it('does not confuse markers inside a multiline string with its own block', async () => {
     const original =
       'instructions = """\n# tessel:team-hooks:start\n[[hooks]]\n# tessel:team-hooks:end\n"""\n'
@@ -80,7 +102,7 @@ describe('Kimi TOML installation and diagnostics', () => {
     expect(await install()).toEqual({ changed: true })
     const text = fs.readFileSync(file(), 'utf8')
     expect(text.startsWith(original)).toBe(true)
-    expect(Object.values(kimiHookEvents(text, script)).every(Boolean)).toBe(true)
+    expect(Object.values(kimiHookEvents(text, script, NODE)).every(Boolean)).toBe(true)
   })
 
   it.each([
@@ -140,7 +162,7 @@ describe('Kimi TOML installation and diagnostics', () => {
 
   it('honors KIMI_CODE_HOME in installation and read-only diagnostics', async () => {
     vi.stubEnv('KIMI_CODE_HOME', join(home, 'custom-kimi'))
-    expect(await installKimiHooks(script, home, { validate: accepted })).toEqual({ changed: true })
+    expect(await installKimiHooks(script, home, { validate: accepted, node: NODE })).toEqual({ changed: true })
     expect(fs.existsSync(file())).toBe(false)
     const agent = hooksStatus({ home, scriptPath: script }).agents.find((a) => a.id === 'kimi')
     expect(agent).toMatchObject({ hooks: 'installed', approval: null, inbox: false })
@@ -172,8 +194,8 @@ describe('Kimi MCP configuration', () => {
       mcpServers: { personal: { command: 'other', env: { KEY: 'secret' } } }
     }
     fs.writeFileSync(file, JSON.stringify(original))
-    const entry = teamToolsEntry('kimi', script)
-    expect(entry).toEqual({ command: 'node', args: [script] })
+    const entry = teamToolsEntry('kimi', script, NODE)
+    expect(entry).toEqual({ command: NODE, args: [script] })
     expect(setJsonAgentServer('kimi', 'tessel-team', entry, home)).toEqual({
       ok: true,
       changed: true
@@ -221,7 +243,7 @@ describe('Kimi MCP configuration', () => {
       fs.mkdirSync(dirname(file), { recursive: true })
       fs.writeFileSync(file, original)
       expect(
-        setJsonAgentServer('kimi', 'tessel-team', teamToolsEntry('kimi', script), home).ok
+        setJsonAgentServer('kimi', 'tessel-team', teamToolsEntry('kimi', script, NODE), home).ok
       ).toBe(false)
       expect(fs.readFileSync(file, 'utf8')).toBe(original)
     }

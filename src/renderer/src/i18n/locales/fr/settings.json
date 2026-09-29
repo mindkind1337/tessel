@@ -251,7 +251,17 @@
       "workerMode": "Mode des nouveaux workers",
       "workerModeHint": "Claude et Codex peuvent travailler dans un pane de chat, sans terminal. Les autres agents utilisent un pane terminal. Ce choix s'applique aux prochains workers ; il ne transforme pas ceux déjà ouverts.",
       "workerModeTerminal": "Un pane terminal",
-      "workerModeChat": "Un pane de chat (Claude, Codex)"
+      "workerModeChat": "Un pane de chat (Claude, Codex)",
+      "hooksTitle": "Hooks des agents",
+      "hooksIntro": "Tessel ajoute de petits hooks aux réglages de vos agents pour montrer ce que fait chacun et lui remettre les messages de l'équipe. Seules les entrées de Tessel sont ajoutées ; vos autres hooks et réglages restent tels quels.",
+      "cursorHooks": "Hooks d'état de Cursor",
+      "cursorHooksHint": "Montre si Cursor travaille ou vous attend. Son fichier de hooks (~/.cursor/hooks.json) est lu à la fois par Cursor CLI et par l'éditeur Cursor, et son hook de prompt doit répondre avant chaque prompt : s'il échouait, ou restait après le départ de Tessel, Cursor pourrait refuser vos prompts. Désactivé par défaut ; le désactiver retire les entrées de Tessel.",
+      "removeHooks": "Retirer les hooks de Tessel",
+      "removeHooksHint": "Retire tous les hooks, plugins et extensions que Tessel a ajoutés à vos agents, ainsi que les copies de leurs fichiers qu'il a gardées avant sa première modification (fichiers finissant par .before-tessel). Faites-le avant de désinstaller Tessel : le programme de désinstallation ne touche pas aux réglages de vos agents. Tessel les rajoute la prochaine fois qu'il lance l'un de ces agents.",
+      "hooksBackups": "Copies gardées : {{files}}",
+      "removeHooksButton": "Retirer",
+      "removeHooksDone": "Hooks de Tessel retirés.",
+      "removeHooksFailed": "Certains hooks n'ont pas pu être retirés : {{errors}}"
     },
     "voice": {
       "language": "Langue",
@@ -324,7 +334,11 @@
       "cardLayout": "Disposition des cartes d'espace de travail",
       "cardLayoutHint": "Les cartes d'espace de travail peuvent adopter une disposition compacte ou détaillée.",
       "detailed": "Détaillée",
-      "compact": "Compacte"
+      "compact": "Compacte",
+      "usageRefresh": "Actualisation de l’utilisation",
+      "usageRefreshHint": "Fréquence à laquelle les limites des fournisseurs sont relues pendant que vous utilisez Tessel. Désactivée : seulement à l’ouverture d’Utilisation.",
+      "usageRefreshOff": "Désactivée",
+      "usageRefreshMinutes": "{{count}} min"
     },
     "text": {
       "font": "Police",

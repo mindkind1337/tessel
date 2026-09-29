@@ -8,6 +8,7 @@ import { writeFileAtomic } from './safeJson'
 import { extraToolDirs, withToolDirs } from './toolDirs'
 import { cleanEnv } from './cleanEnv'
 import { t } from './i18n'
+import { hookNode, hookCommand, findNode } from './nodePath'
 
 // The conversation (SessionStart), team messages (UserPromptSubmit, Stop), and
 // the others for its status only. After Orca's
@@ -99,11 +100,11 @@ function blockHooks(block) {
   return hooks
 }
 
-export function kimiHookEvents(text, scriptPath) {
+export function kimiHookEvents(text, scriptPath, node = findNode()) {
   const events = Object.fromEntries(KIMI_HOOK_EVENTS.map((e) => [e, false]))
   const block = managedBlock(text)
-  if (!block) return events
-  const want = `node "${scriptPath}" --hook --kimi`
+  if (!block || !node) return events
+  const want = hookCommand(node, scriptPath, '--hook --kimi')
   for (const hook of blockHooks(block.text)) {
     if (
       KIMI_HOOK_EVENTS.includes(hook.event) &&
@@ -167,14 +168,16 @@ export function validateKimiConfig(text, executable = 'kimi') {
 export async function installKimiHooks(
   scriptPath,
   home = os.homedir(),
-  { kimiHome = process.env.KIMI_CODE_HOME, validate = validateKimiConfig } = {}
+  { kimiHome = process.env.KIMI_CODE_HOME, validate = validateKimiConfig, node } = {}
 ) {
   const file = kimiConfigFile(home, kimiHome)
   try {
     // The command is run by a shell. Reject paths requiring a different quoting
-    // strategy rather than generating a command that can expand/interpolate.
-    if (!scriptPath || /["`$%!\x00-\x1f]/.test(scriptPath))
-      return { error: t('main.kimi.pathQuote', 'The hook script path cannot be safely quoted for Kimi.') }
+    // strategy rather than generating a command that can expand/interpolate
+    // (the same check as every other agent's hooks, nodePath.js). Node is an
+    // absolute path: never one planted in the project folder.
+    const found = hookNode(scriptPath, node)
+    if (found.error) return found
     let before = null
     try {
       before = fs.readFileSync(file, 'utf8')
@@ -189,7 +192,8 @@ export async function installKimiHooks(
         hooks.some(
           (h) =>
             !KIMI_HOOK_EVENTS.includes(h.event) ||
-            !/^node "[^"\r\n]+" --hook --kimi$/.test(h.command || '') ||
+            // Tessel's command, with an older bare "node" or an absolute one.
+            !/^(?:node|[A-Za-z]:\/"[^"\r\n]+"|"[^"\r\n]+") "[^"\r\n]+" --hook --kimi$/.test(h.command || '') ||
             (h.matcher !== undefined && h.matcher !== '') ||
             (h.timeout !== undefined && h.timeout !== 30)
         )
@@ -199,7 +203,7 @@ export async function installKimiHooks(
         }
     }
     const nl = text.includes('\r\n') ? '\r\n' : '\n'
-    const command = JSON.stringify(`node "${scriptPath}" --hook --kimi`)
+    const command = JSON.stringify(hookCommand(found.node, scriptPath, '--hook --kimi'))
     const block = [
       START,
       ...KIMI_HOOK_EVENTS.flatMap((event) => [
@@ -245,6 +249,45 @@ export async function installKimiHooks(
     return {
       error:
         t('main.kimi.unsafe', 'Kimi config.toml could not be safely read or updated; existing settings were preserved.')
+    }
+  }
+}
+
+// Tessel's block out of Kimi's config.toml (Settings > "Remove Tessel hooks"),
+// the rest kept byte for byte, and the copy Tessel kept of the file. A block
+// with the user's own changes in it is left alone. -> { changed, file } or { error }
+export async function removeKimiHooks(home = os.homedir(), { kimiHome = process.env.KIMI_CODE_HOME } = {}) {
+  const file = kimiConfigFile(home, kimiHome)
+  const dropBackup = () => {
+    try {
+      fs.rmSync(`${file}.before-tessel`, { force: true })
+    } catch {
+      // harmless, shown in Settings
+    }
+  }
+  try {
+    let text
+    try {
+      text = fs.readFileSync(file, 'utf8')
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error
+      dropBackup()
+      return { changed: false, file }
+    }
+    const block = managedBlock(text)
+    if (!block) {
+      dropBackup()
+      return { changed: false, file }
+    }
+    const hooks = blockHooks(block.text)
+    if (hooks.some((h) => !KIMI_HOOK_EVENTS.includes(h.event) || !/ "[^"\r\n]+" --hook --kimi$/.test(h.command || '')))
+      return { error: t('main.kimi.customChanges', 'Tessel hook block contains custom changes; config.toml was left unchanged.') }
+    writeFileAtomic(file, text.slice(0, block.start) + text.slice(block.end))
+    dropBackup()
+    return { changed: true, file }
+  } catch {
+    return {
+      error: t('main.kimi.unsafe', 'Kimi config.toml could not be safely read or updated; existing settings were preserved.')
     }
   }
 }

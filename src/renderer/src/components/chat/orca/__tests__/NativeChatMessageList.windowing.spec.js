@@ -5,6 +5,7 @@ import { projectStructuredItemsToNativeChat } from '../../../../chat/orca/shared
 import { NATIVE_CHAT_BOTTOM_THRESHOLD_PX } from '../../../../chat/orca/native-chat-autoscroll.js'
 import { NATIVE_CHAT_ROW_GAP_PX } from '../../../../chat/orca/native-chat-row-height-estimate.js'
 import {
+  advanceFrame,
   deliverResizes,
   fireScroll,
   flush,
@@ -25,6 +26,7 @@ import {
   stubResizeObserver,
   TRANSCRIPT_LENGTH,
   unmountAll,
+  useFrameClock,
   VIEWPORT_PX,
   windowState
 } from './native-chat-windowing-test-harness.js'
@@ -48,6 +50,10 @@ beforeAll(() => {
   restoreScrollTo = installElementScrollTo()
 })
 afterAll(() => restoreScrollTo())
+// Frames and timers run on a simulated clock the cases advance (see the harness).
+beforeEach(() => {
+  useFrameClock()
+})
 afterEach(() => {
   unmountAll()
   vi.useRealTimers()
@@ -75,7 +81,7 @@ async function paint() {
 async function settleVirtualizer() {
   for (let frame = 0; frame < 2; frame += 1) {
     await paint()
-    await new Promise((resolve) => requestAnimationFrame(() => resolve()))
+    await advanceFrame()
     await flush()
   }
   await paint()
@@ -385,13 +391,9 @@ describe('transcript with a hidden scroll root', () => {
     }
   })
 
-  // KNOWN DIFFERENCE (reported): under Vue the reader lands one row (24px) low.
-  // While hidden, mounted rows measure 0 and the virtualizer shifts its own
-  // offset up (writes the stub ignores); on reveal the offset is restored, but
-  // the re-measure that follows compensates one row more than the hide took
-  // away. Lives in useNativeChatTranscriptWindow + @tanstack/vue-virtual's
-  // timing, not in the list. `it.fails` flags the day it starts passing.
-  it.fails('preserves a detached viewport when a structured session catches up after reveal', async () => {
+  // While hidden, every row measures 0: rows keep their last size then
+  // (useCachedMeasurements), so the reveal lands the reader where they were.
+  it('preserves a detached viewport when a structured session catches up after reveal', async () => {
     let isVisible = true
     const restoreLayout = stubLayout({ scrollGeometry: true, isVisible: () => isVisible })
     const restoreResizeObserver = stubResizeObserver()

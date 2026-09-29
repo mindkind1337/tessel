@@ -46,6 +46,10 @@ export const DEFAULT_SETTINGS = Object.freeze({
   // while you type there, over a draft, an approval or an unsent line). Off:
   // Tessel asks you first (a toast with a button).
   teamWakeUnconfirmed: false,
+  // Cursor's status hooks (~/.cursor/hooks.json, read by both its CLI and
+  // its editor): off unless turned on. Its prompt hook must answer for every
+  // prompt; a failing or left-behind one could block them all.
+  cursorStatusHooks: false,
   // Settings > Orchestration (Orca's coordinator and workers): ask before an
   // agent starts workers (on by default), how many workers one coordinator
   // runs at a time (the rest wait in a queue), how deep workers may nest
@@ -159,6 +163,8 @@ export const DEFAULT_SETTINGS = Object.freeze({
   terminalPaddingY: 4,
   hideMouseWhileTyping: false,
   usagePercentageDisplay: 'used', // 'used' | 'remaining'
+  // Minutes between automatic usage refreshes while the window is in use; 0 = off.
+  usageRefreshMinutes: 15,
   showGitIgnoredFiles: true,
 
   // Terminal rendering and interaction. gpuAcceleration: 'auto' (WebGL
@@ -209,6 +215,8 @@ export const EDITOR_AUTOSAVE_MIN_MS = 250
 export const EDITOR_AUTOSAVE_MAX_MS = 10000
 
 // Ranges, as in Orca's settings.
+// The choices Settings offers for the automatic usage refresh (0 = off).
+export const USAGE_REFRESH_MINUTES = Object.freeze([0, 5, 15, 30, 60])
 export const LIMITS = Object.freeze({
   fontWeight: [100, 900],
   fontWeightBold: [100, 900],
@@ -341,6 +349,7 @@ export function loadSettings(saved) {
     if (key === 'cursorStyle' && !['block', 'bar', 'underline'].includes(v)) continue
     if (key === 'alertSound' && !['none', 'chime', 'ping'].includes(v)) continue
     if (key === 'usagePercentageDisplay' && !['used', 'remaining'].includes(v)) continue
+    if (key === 'usageRefreshMinutes' && !USAGE_REFRESH_MINUTES.includes(v)) continue
     if (key === 'sourceControlGroupOrder' && !SOURCE_CONTROL_GROUP_ORDERS.includes(v)) continue
     if (key === 'sourceControlViewMode' && !['tree', 'list'].includes(v)) continue
     if (key === 'branchPrefix' && !BRANCH_PREFIX_MODES.includes(v)) continue

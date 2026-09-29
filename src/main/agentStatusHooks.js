@@ -12,25 +12,29 @@
 // Only Tessel's own entries are added, replaced or removed (the command runs
 // Tessel's script); the user's other hooks and settings stay as they are. A
 // file Tessel cannot read is left alone. Writes are atomic, and the first
-// change keeps a copy of the user's file (<file>.before-tessel).
+// change keeps a copy of the user's file (<file>.before-tessel), deleted when
+// Tessel's hooks are removed.
+//
+// Every command runs node by its absolute path (nodePath.js), never by name:
+// hooks run in the project folder, where a planted node.exe would run instead.
 import fs from 'fs'
 import os from 'os'
 import { dirname, isAbsolute, join } from 'path'
 import { readJson } from './fileRead'
 import { writeFileAtomic } from './safeJson'
 import { t } from './i18n'
+import { hookNode, hookCommand, pluginNodeSource, findNode } from './nodePath'
 
 const OURS = 'tessel-team-mcp.cjs'
 const record = (v) => v !== null && typeof v === 'object' && !Array.isArray(v)
-const quote = (p) => `"${p}"`
 const envDir = (env, name) => {
   const value = Object.entries(env || {}).find(([key]) => key.toUpperCase() === name)?.[1]
   return typeof value === 'string' && isAbsolute(value) ? value : null
 }
 
-// Tessel's command for one of an agent's events.
-export const statusCommand = (scriptPath, agent, event) =>
-  `node ${quote(scriptPath)} --hook --agent=${agent}${event ? ` --event=${event}` : ''}`
+// Tessel's command for one of an agent's events (node: its absolute path).
+export const statusCommand = (scriptPath, agent, event, node) =>
+  hookCommand(node, scriptPath, `--hook --agent=${agent}${event ? ` --event=${event}` : ''}`)
 const isOurs = (command) => typeof command === 'string' && command.includes(OURS) && command.includes('--agent=')
 
 // shape: 'claude' = { hooks: { Event: [{ matcher, hooks: [{ type, command }] }] } }
@@ -43,7 +47,13 @@ export const STATUS_HOOKS = {
     file: (home) => join(home, '.cursor', 'hooks.json'),
     // Not its permission gates (beforeShellExecution...): an answer there would
     // decide for the user.
-    events: ['beforeSubmitPrompt', 'postToolUse', 'postToolUseFailure', 'stop']
+    events: ['beforeSubmitPrompt', 'postToolUse', 'postToolUseFailure', 'stop'],
+    // Tessel's entry comes first: its neutral answer to beforeSubmitPrompt
+    // ({"continue":true}) can then never override the user's own hook that
+    // blocks a prompt. Installed only when the user turns it on (Settings):
+    // a failing or left-behind prompt hook may block every Cursor prompt.
+    first: true,
+    optIn: true
   },
   droid: {
     shape: 'claude',
@@ -80,12 +90,12 @@ export const STATUS_HOOKS = {
   amp: {
     shape: 'plugin',
     file: (home) => join(home, '.config', 'amp', 'plugins', 'tessel-status.ts'),
-    source: (scriptPath) => ampPlugin(scriptPath)
+    source: (scriptPath, node) => ampPlugin(scriptPath, node)
   },
   pi: {
     shape: 'plugin',
     file: (home, env) => join(envDir(env, 'PI_CODING_AGENT_DIR') || join(home, '.pi', 'agent'), 'extensions', 'tessel-status.ts'),
-    source: (scriptPath) => piExtension(scriptPath)
+    source: (scriptPath, node) => piExtension(scriptPath, node)
   }
 }
 export const STATUS_HOOK_AGENTS = Object.keys(STATUS_HOOKS)
@@ -95,8 +105,11 @@ export const PLUGIN_MARKER = '// Tessel status: written by Tessel and replaced w
 // The status sender shared by the Amp plugin and the Pi extension: the hook
 // script is run for each event, in order, one at a time, never waited for by
 // the agent. Nothing but event names and ids is sent.
-function sender(scriptPath, agent) {
+function sender(scriptPath, agent, node) {
   return `const SCRIPT = ${JSON.stringify(scriptPath)}
+// Never "node" by name: run from the project folder, it could be a node.exe
+// planted there.
+const NODE: string = ${pluginNodeSource(node)}
 const queue: string[] = []
 let running = false
 function next(): void {
@@ -107,7 +120,7 @@ function next(): void {
   }
   running = true
   try {
-    const child = spawn('node', [SCRIPT, '--hook', '--agent=${agent}'], { stdio: ['pipe', 'ignore', 'ignore'], windowsHide: true })
+    const child = spawn(NODE, [SCRIPT, '--hook', '--agent=${agent}'], { stdio: ['pipe', 'ignore', 'ignore'], windowsHide: true })
     const timer = setTimeout(() => child.kill(), 20000)
     child.on('error', () => {})
     child.on('close', () => {
@@ -131,12 +144,12 @@ function status(event: string, sessionId: unknown, extra: Record<string, unknown
 `
 }
 
-export function ampPlugin(scriptPath) {
+export function ampPlugin(scriptPath, node) {
   return `${PLUGIN_MARKER}
 // Amp: its thread starting, working and done, for Tessel's pane.
 import { spawn } from 'node:child_process'
 
-${sender(scriptPath, 'amp')}
+${sender(scriptPath, 'amp', node)}
 export default function (amp: any) {
   if (!process.env.TESSEL_PANE_ID || !process.env.TESSEL_AGENT_LAUNCH) return
   const thread = (event: any) => (event && event.thread && typeof event.thread.id === 'string' ? event.thread.id : '')
@@ -152,14 +165,14 @@ export default function (amp: any) {
 `
 }
 
-export function piExtension(scriptPath) {
+export function piExtension(scriptPath, node) {
   return `${PLUGIN_MARKER}
 // Pi: its turn, its tools and its sub-agents (pi-subagents), for Tessel's
 // pane. Its turn is done only once it is idle and no sub-agent it started
 // still runs.
 import { spawn } from 'node:child_process'
 
-${sender(scriptPath, 'pi')}
+${sender(scriptPath, 'pi', node)}
 export default function (pi: any): void {
   if (!process.env.TESSEL_PANE_ID || !process.env.TESSEL_AGENT_LAUNCH) return
   // Its sub-agents inherit the pane's environment: only the pane's own Pi reports.
@@ -317,15 +330,17 @@ function eventTable(spec, settings, create) {
 }
 
 // Install (or update) an agent's status hooks. -> { changed } or { error }
-export function installStatusHooks(agent, scriptPath, { home = os.homedir(), env = process.env } = {}) {
+// `node`: the absolute node to run (found on PATH when not given; none found:
+// nothing is installed).
+export function installStatusHooks(agent, scriptPath, { home = os.homedir(), env = process.env, node } = {}) {
   const spec = STATUS_HOOKS[agent]
   if (!spec) return { error: `${agent}: no status hooks` } // i18n-ignore internal: programming error
-  if (!scriptPath || /["`$%!\r\n]/.test(scriptPath))
-    return { error: t('main.hooks.statusPath', 'The hook script path cannot be safely quoted for this agent.') }
+  const found = hookNode(scriptPath, node, env)
+  if (found.error) return found
   const file = spec.file(home, env)
   try {
     if (spec.shape === 'plugin') {
-      const text = spec.source(scriptPath)
+      const text = spec.source(scriptPath, found.node)
       if (fs.existsSync(file)) {
         const old = fs.readFileSync(file, 'utf8')
         if (old === text) return { changed: false }
@@ -341,6 +356,10 @@ export function installStatusHooks(agent, scriptPath, { home = os.homedir(), env
     const before = JSON.stringify(settings)
     const table = eventTable(spec, settings, true)
     if (!table) return { error: t('main.hooks.unreadable', '{{file}} could not be read, so Tessel did not change it.', { file }) }
+    // Something else than a list under one of Tessel's events: never replaced.
+    for (const event of spec.events)
+      if (table[event] !== undefined && !Array.isArray(table[event]))
+        return { error: t('main.hooks.notList', '{{file}} has a setting for {{event}} that is not a list of hooks, so Tessel did not change it.', { file, event }) }
     // Tessel's entries of events it no longer uses go too.
     for (const event of Object.keys(table)) {
       if (spec.events.includes(event) || !Array.isArray(table[event])) continue
@@ -349,14 +368,15 @@ export function installStatusHooks(agent, scriptPath, { home = os.homedir(), env
       else delete table[event]
     }
     for (const event of spec.events) {
-      const command = statusCommand(scriptPath, agent, event)
+      const command = statusCommand(scriptPath, agent, event, found.node)
       const list = Array.isArray(table[event]) ? table[event] : []
       const kept = list.map(withoutOurs).filter((d) => d !== null)
-      table[event] = [...kept, definition(spec, event, command)]
+      const ours = definition(spec, event, command)
+      table[event] = spec.first ? [ours, ...kept] : [...kept, ours]
     }
     if (spec.shape === 'flat' && settings.version === undefined) settings.version = 1
     // Nothing new: the file is left as it is (not even reformatted).
-    if (read.exists && sameEntries(spec, JSON.parse(before), scriptPath, agent)) return { changed: false }
+    if (read.exists && sameEntries(spec, JSON.parse(before), scriptPath, agent, found.node)) return { changed: false }
     save(file, settings, read.exists)
     return { changed: true }
   } catch (err) {
@@ -365,27 +385,30 @@ export function installStatusHooks(agent, scriptPath, { home = os.homedir(), env
 }
 
 // The file already has exactly Tessel's current entries (and no stale ones).
-function sameEntries(spec, settings, scriptPath, agent) {
-  const status = eventStatus(spec, settings, scriptPath, agent)
+function sameEntries(spec, settings, scriptPath, agent, node) {
+  const status = eventStatus(spec, settings, scriptPath, agent, node)
   return status.every && !status.stale
 }
 
 // -> { events: { Event: bool }, every, stale } for a parsed settings file.
-function eventStatus(spec, settings, scriptPath, agent) {
+function eventStatus(spec, settings, scriptPath, agent, node) {
   const table = eventTable(spec, settings, false) || {}
   const events = {}
   let stale = false
   for (const [event, list] of Object.entries(table)) {
     if (!Array.isArray(list)) continue
-    const want = statusCommand(scriptPath, agent, event)
-    for (const d of list) {
+    const want = node ? statusCommand(scriptPath, agent, event, node) : null
+    list.forEach((d, index) => {
       const commands = record(d) ? [d.command, ...(Array.isArray(d.hooks) ? d.hooks.map((h) => record(h) && h.command) : [])] : []
       for (const c of commands) {
         if (!isOurs(c)) continue
-        if (c === want && spec.events.includes(event) && !events[event]) events[event] = true
-        else stale = true
+        if (c === want && spec.events.includes(event) && !events[event]) {
+          events[event] = true
+          // Not first where it must be: moved there on the next install.
+          if (spec.first && index !== 0) stale = true
+        } else stale = true
       }
-    }
+    })
   }
   const out = Object.fromEntries(spec.events.map((e) => [e, !!events[e]]))
   if (spec.shape === 'flat' && settings.version === undefined) stale = true
@@ -398,6 +421,23 @@ export function removeStatusHooks(agent, { home = os.homedir(), env = process.en
   const spec = STATUS_HOOKS[agent]
   if (!spec) return { changed: false }
   const file = spec.file(home, env)
+  const result = removeEntries(spec, file)
+  // Tessel's copy of the user's file goes with its hooks (only once they are
+  // gone: a failed removal keeps it).
+  if (!result.error) dropBackup(file)
+  return result
+}
+
+// The copy of a user's file Tessel kept before its first change.
+export function dropBackup(file) {
+  try {
+    fs.rmSync(`${file}.before-tessel`, { force: true })
+  } catch {
+    // left in place: harmless, and shown in Settings
+  }
+}
+
+function removeEntries(spec, file) {
   try {
     if (!fs.existsSync(file)) return { changed: false }
     if (spec.shape === 'plugin') {
@@ -435,9 +475,9 @@ export function removeStatusHooks(agent, { home = os.homedir(), env = process.en
 
 // Read-only, for Settings (teamHooksStatus.js): the same row as the other
 // agents', marked statusOnly (its hooks bring no team messages).
-export function statusHooksInstallation(agent, scriptPath, { home = os.homedir(), env = process.env } = {}) {
+export function statusHooksInstallation(agent, scriptPath, { home = os.homedir(), env = process.env, node = findNode({ env }) } = {}) {
   const spec = STATUS_HOOKS[agent]
-  const row = { id: agent, hooks: 'missing', events: {}, approval: null, lastSignal: null, inbox: false, statusOnly: true }
+  const row = { id: agent, hooks: 'missing', events: {}, approval: null, lastSignal: null, inbox: false, statusOnly: true, ...(spec && spec.optIn ? { optIn: true } : {}) }
   if (!spec) return row
   const file = spec.file(home, env)
   let text
@@ -459,7 +499,7 @@ export function statusHooksInstallation(agent, scriptPath, { home = os.homedir()
       row.events = { Plugin: false }
       return row
     }
-    row.events = { Plugin: !!scriptPath && text === spec.source(scriptPath) }
+    row.events = { Plugin: !!scriptPath && !!node && text === spec.source(scriptPath, node) }
     row.hooks = row.events.Plugin ? 'installed' : 'partial'
     return row
   }
@@ -474,7 +514,7 @@ export function statusHooksInstallation(agent, scriptPath, { home = os.homedir()
     row.events = Object.fromEntries(spec.events.map((e) => [e, false]))
     return row
   }
-  const status = scriptPath ? eventStatus(spec, settings, scriptPath, agent) : { events: Object.fromEntries(spec.events.map((e) => [e, false])), every: false }
+  const status = scriptPath && node ? eventStatus(spec, settings, scriptPath, agent, node) : { events: Object.fromEntries(spec.events.map((e) => [e, false])), every: false }
   row.events = status.events
   const on = Object.values(status.events).filter(Boolean).length
   row.hooks = status.every ? 'installed' : on ? 'partial' : 'missing'

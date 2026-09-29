@@ -9,6 +9,7 @@ import {
 } from '../../../../chat/orca/native-chat-row-height-estimate.js'
 import NativeChatMessageList from '../NativeChatMessageList.vue'
 import {
+  advanceFrame,
   deliverResizes,
   fireScroll,
   flush,
@@ -22,7 +23,8 @@ import {
   scrollTranscript,
   session,
   stubLayout,
-  stubResizeObserver
+  stubResizeObserver,
+  useFrameClock
 } from './native-chat-windowing-test-harness.js'
 import { rollupFile } from './native-chat-list-stubs.js'
 
@@ -144,7 +146,9 @@ describe('jumping from the rail while following the end', () => {
   let scrollModel
   let lastEventScrollTop = 0
 
+  let stopClock = () => {}
   beforeEach(() => {
+    stopClock = useFrameClock()
     const undoLayout = stubLayout({ scrollGeometry: true, offsetChain: true })
     const stubbedHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetHeight')
     restore = [
@@ -185,6 +189,7 @@ describe('jumping from the rail while following the end', () => {
   })
 
   afterEach(() => {
+    stopClock()
     vi.restoreAllMocks()
     Object.defineProperty(layout, 'aboveTranscriptPx', { configurable: true, writable: true, value: 0 })
     for (const undo of restore.toReversed()) undo()
@@ -210,8 +215,8 @@ describe('jumping from the rail while following the end', () => {
       lastEventScrollTop = element.scrollTop
       fireScroll(element)
     }
-    await new Promise((resolve) => setTimeout(resolve, 0))
-    await new Promise((resolve) => requestAnimationFrame(() => resolve()))
+    // The timers and the animation frame of one simulated frame.
+    await advanceFrame()
     await flush()
   }
   async function settle(frames) {
@@ -251,9 +256,6 @@ describe('jumping from the rail while following the end', () => {
     expect(Math.abs(rowOffsetFromViewportTop(prompt))).toBeLessThanOrEqual(2)
   })
 
-  // KNOWN BUG (reported): the held page lands as a prepend, whose anchor write
-  // useNativeChatTranscriptWindow applies before the DOM grows (see the
-  // older-history spec). Passes with the verified fix; flip back to `it` then.
   it('lets a later pick of a loaded message win over a jump still paging', async () => {
     let releaseFirstPage = null
     let held = false
@@ -348,9 +350,6 @@ describe('jumping from the rail while following the end', () => {
     expect(distanceFromBottom()).toBe(0)
   })
 
-  // KNOWN BUG (reported): the held page lands as a prepend, whose anchor write
-  // useNativeChatTranscriptWindow applies before the DOM grows (see the
-  // older-history spec). Passes with the verified fix; flip back to `it` then.
   it('leaves the reader where they are after a wheel over the rail while the jump pages', async () => {
     const pages = holdFirstPage()
     wrapper = mount(PagedTranscript, { props: { holdPage: pages.holdPage }, attachTo: document.body })

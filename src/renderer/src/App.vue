@@ -1068,7 +1068,7 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
   // Install the system hook definition before a managed account mirrors it.
   // A status setup failure does not prevent the user's agent from launching.
   if (agent && !attached && window.shellApi.prepareAgentStatus) {
-    const statusSetup = await window.shellApi.prepareAgentStatus(agent.id).catch(() => null)
+    const statusSetup = await window.shellApi.prepareAgentStatus(agent.id, { cursor: settings.cursorStatusHooks === true }).catch(() => null)
     if (statusSetup?.needsReview) showToast(t('app.codexHooks.updated', 'Codex status hooks were updated. Review them in /hooks to enable live status.'), { timeout: 10000 })
   }
   if (agent && !attached && window.shellApi.accounts && window.shellApi.accounts.launchEnv) {
@@ -1100,7 +1100,7 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
     res = { ok: false, error: refused }
   } else if (!attached) {
     try {
-      res = await window.shellApi.createPty({ id, shellId, agentId: agent?.id, cols: 80, rows: 24, cwd, projectDir, extraEnv, accountEnv, unsetEnv, ...(opts.remoteHostId ? { remoteHostId: opts.remoteHostId } : {}), ...(opts.remoteHostId && opts.remotePath ? { remotePath: opts.remotePath } : {}) })
+      res = await window.shellApi.createPty({ id, shellId, agentId: agent?.id, cols: 80, rows: 24, cwd, projectDir, extraEnv, accountEnv, unsetEnv, hookOptIn: { cursor: settings.cursorStatusHooks === true }, ...(opts.remoteHostId ? { remoteHostId: opts.remoteHostId } : {}), ...(opts.remoteHostId && opts.remotePath ? { remotePath: opts.remotePath } : {}) })
     } catch (err) {
       res = { ok: false, error: err && err.message }
     }
@@ -3317,6 +3317,20 @@ function updateDropTarget(x, y) {
     }
     return
   }
+  // Near an outer edge of the workspace: the pane takes that whole side
+  // (across the top, down the left…), not just one pane's half.
+  const edge = workspaceEdgeAt(x, y)
+  if (edge) {
+    paneDrag.target = { kind: 'edge', id: edge.wsId, zone: edge.side }
+    paneDrag.zoneRect = edge.rect
+    paneDrag.label = {
+      top: t('app.drag.edgeTop', 'Place across the top'),
+      bottom: t('app.drag.edgeBottom', 'Place across the bottom'),
+      left: t('app.drag.edgeLeft', 'Place down the left side'),
+      right: t('app.drag.edgeRight', 'Place down the right side')
+    }[edge.side]
+    return
+  }
   const paneEl = els.find(
     (el) => el.classList && el.classList.contains('pane') && el.closest('.ws-layer:not(.hidden)')
   )
@@ -3374,6 +3388,28 @@ function detachLeaf(ws, leafId) {
   }
 }
 
+// The band along the visible workspace's outer edge where a dropped pane
+// takes that whole side (any pane, from any place in the layout).
+const EDGE_BAND = 28
+function workspaceEdgeAt(x, y) {
+  const layer = document.querySelector('.ws-layer:not(.hidden)')
+  const ws = currentWs.value
+  if (!layer || !ws || !ws.tree || ws.tree.type !== 'split') return null
+  const r = layer.getBoundingClientRect()
+  if (x < r.left || x > r.right || y < r.top || y > r.bottom) return null
+  const d = { left: x - r.left, right: r.right - x, top: y - r.top, bottom: r.bottom - y }
+  const side = Object.keys(d).reduce((a, b) => (d[a] <= d[b] ? a : b))
+  if (d[side] > EDGE_BAND) return null
+  const band = { width: r.width / 3, height: r.height / 3 }
+  const rect = {
+    top: { left: r.left, top: r.top, width: r.width, height: band.height },
+    bottom: { left: r.left, top: r.bottom - band.height, width: r.width, height: band.height },
+    left: { left: r.left, top: r.top, width: band.width, height: r.height },
+    right: { left: r.right - band.width, top: r.top, width: band.width, height: r.height }
+  }[side]
+  return { wsId: ws.id, side, rect }
+}
+
 function movePane(srcId, target) {
   const srcWs = wsOfLeaf(srcId)
   const src = findLeaf(srcId)
@@ -3396,6 +3432,29 @@ function movePane(srcId, target) {
           })
         )
     selectWorkspace(dst.id)
+    dst.activeId = srcId
+    refitSoon()
+    return
+  }
+
+  if (target.kind === 'edge') {
+    const dst = wsById(target.id)
+    if (!dst) return
+    detachLeaf(srcWs, srcId)
+    if (!dst.tree) {
+      dst.tree = src
+    } else {
+      const dir = target.zone === 'left' || target.zone === 'right' ? 'row' : 'col'
+      const before = target.zone === 'left' || target.zone === 'top'
+      const root = dst.tree
+      dst.tree = reactive({
+        type: 'split',
+        id: newId('split'),
+        dir,
+        sizes: before ? [35, 65] : [65, 35],
+        children: before ? [src, root] : [root, src]
+      })
+    }
     dst.activeId = srcId
     refitSoon()
     return

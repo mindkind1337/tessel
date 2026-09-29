@@ -603,9 +603,9 @@ describe('BrowserPane.vue: layout, input and browser behaviour', () => {
     expect(rule('.bp-page')).toMatch(/min-height:\s*0/)
     expect(rule('.bp-page')).toMatch(/min-width:\s*0/)
     expect(rule('.bp-webview')).toMatch(/flex:\s*1 1 auto/)
-    // No drag class left behind can take the page's wheel and clicks: the
-    // passthrough is set on the element by the drag itself.
-    expect(css).not.toMatch(/\.bp-webview[^{]*\{[^}]*pointer-events/)
+    // `:global(x) .bp-webview` compiles to a bare `x` (the whole window then
+    // ignores the pointer): plain descendant selectors only.
+    expect(css).not.toMatch(/:global\(/)
     expect(css).not.toMatch(/(^|[^-])zoom:|transform:\s*scale/)
   })
 

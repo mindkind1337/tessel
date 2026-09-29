@@ -63,8 +63,11 @@ describe('MCP servers in agents settings files', () => {
   })
 
   it('the Tessel team tools entry passes each pane identity its own way', () => {
-    expect(teamToolsEntry('gemini', 'C:/t/tessel-team-mcp.cjs')).toEqual({
-      command: 'node',
+    // Node by its absolute path, never by name (a node.exe in the folder the
+    // agent runs in would be started instead).
+    const NODE = 'C:\\Program Files\\nodejs\\node.exe'
+    expect(teamToolsEntry('gemini', 'C:/t/tessel-team-mcp.cjs', NODE)).toEqual({
+      command: NODE,
       args: ['C:/t/tessel-team-mcp.cjs'],
       env: { TESSEL_PANE_ID: '$TESSEL_PANE_ID', TESSEL_PROJECT_DIR: '$TESSEL_PROJECT_DIR', TESSEL_TEAM_SECRET: '$TESSEL_TEAM_SECRET' },
       trust: true
@@ -72,7 +75,7 @@ describe('MCP servers in agents settings files', () => {
     // No path through {env:}: OpenCode inserts it raw, and a backslash breaks its JSON.
     expect(teamToolsEntry('opencode', 'C:/t/s.cjs').environment).toEqual({ TESSEL_PANE_ID: '{env:TESSEL_PANE_ID}', TESSEL_TEAM_SECRET: '{env:TESSEL_TEAM_SECRET}' })
     // Cline hands the pane's environment on and never expands $VAR: no env.
-    expect(teamToolsEntry('cline', 'C:/t/s.cjs')).toEqual({ command: 'node', args: ['C:/t/s.cjs'] })
+    expect(teamToolsEntry('cline', 'C:/t/s.cjs', NODE)).toEqual({ command: NODE, args: ['C:/t/s.cjs'] })
   })
 
   it('Cline: its settings/cline_mcp_settings.json, http as streamableHttp', () => {
@@ -83,16 +86,16 @@ describe('MCP servers in agents settings files', () => {
     try {
       fs.mkdirSync(join(home, '.cline', 'data', 'settings'), { recursive: true })
       fs.writeFileSync(join(home, '.cline', 'data', 'settings', 'cline_mcp_settings.json'), JSON.stringify({ mcpServers: {} }))
-      expect(setJsonAgentServer('cline', 'tessel-team', teamToolsEntry('cline', 'C:/t/s.cjs'), home).ok).toBe(true)
+      expect(setJsonAgentServer('cline', 'tessel-team', teamToolsEntry('cline', 'C:/t/s.cjs', 'C:/nodejs/node.exe'), home).ok).toBe(true)
       const web = configToEntry('cline', { transport: 'http', url: 'https://x/mcp', headers: { A: 'b' } })
       expect(web).toEqual({ type: 'streamableHttp', url: 'https://x/mcp', headers: { A: 'b' } })
       expect(setJsonAgentServer('cline', 'web', web, home).ok).toBe(true)
       expect(read('.cline', 'data', 'settings', 'cline_mcp_settings.json').mcpServers['tessel-team']).toEqual({
-        command: 'node',
+        command: 'C:/nodejs/node.exe',
         args: ['C:/t/s.cjs']
       })
       expect(listJsonAgent('cline', home).servers.map((s) => [s.name, s.type, s.target])).toEqual([
-        ['tessel-team', 'stdio', 'node C:/t/s.cjs'],
+        ['tessel-team', 'stdio', 'C:/nodejs/node.exe C:/t/s.cjs'],
         ['web', 'http', 'https://x/mcp']
       ])
     } finally {
