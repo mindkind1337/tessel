@@ -311,10 +311,18 @@ describe('clone from URL', () => {
     await flushPromises()
     expect(w.find('[data-test="clone-error"]').text()).toBe('Clone failed: fatal: repository not found')
     // A slow clone, then Back.
-    window.shellApi.addProject.clone = () => new Promise(() => {})
+    let cloneStarted = false
+    window.shellApi.addProject.clone = () => {
+      cloneStarted = true
+      return new Promise(() => {})
+    }
     await w.find('[data-test="clone-go"]').trigger('click')
+    // Back only once the clone is really running (under load the click's
+    // async checks can take a few ticks).
+    await vi.waitFor(() => expect(cloneStarted).toBe(true))
+    await flushPromises()
     await w.find('[data-test="ap-back"]').trigger('click')
-    expect(calls.some((c) => c[0] === 'cloneAbort')).toBe(true)
+    await vi.waitFor(() => expect(calls.some((c) => c[0] === 'cloneAbort')).toBe(true))
     expect(w.find('#ap-heading').text()).toBe('Add a project')
     w.unmount()
   })
