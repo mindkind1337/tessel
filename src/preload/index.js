@@ -84,6 +84,7 @@ const api = {
   agentChildren: (query) => ipcRenderer.invoke('agents:children', query),
   geminiSessionExists: (id) => ipcRenderer.invoke('sessions:geminiExists', id),
   qwenSessionExists: (id) => ipcRenderer.invoke('sessions:qwenExists', id),
+  agentResumeTarget: (query) => ipcRenderer.invoke('sessions:resumeTarget', query),
   reportedSessions: () => ipcRenderer.invoke('sessions:reported'),
   prepareAgentStatus: (provider) => ipcRenderer.invoke('agents:prepareStatus', provider),
   agentStates: () => ipcRenderer.invoke('agents:states'),

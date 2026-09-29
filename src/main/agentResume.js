@@ -12,22 +12,28 @@
 //   Qwen Code   like Gemini (qwen --session-id / --resume <uuid>)
 //   Kimi Code   picks its own id: ~/.kimi-code/sessions/<workspace>/<id>/state.json,
 //               resumed with kimi --session <id>
+//   Droid, Grok, Pi, Antigravity, Devin, Cursor Agent: pick their own id,
+//               found in their session folders (agentSessionSources.js);
+//               resumed with the arguments of agent-session-resume.js
+//   OpenClaude  like Claude Code, transcripts under ~/.openclaude/projects
+//   ZCode       its id only comes from its hooks (reported sessions)
 // Each "find" takes the session started in the pane's folder at or after the
 // pane started, not already used by another pane (like findCodexSession).
 import fs from 'fs'
 import os from 'os'
 import { join } from 'path'
-import { findCodexSession, isUuid } from './agentSessions'
+import { claudeSessionExists, findCodexSession, isUuid } from './agentSessions'
 import { clineDataDir } from './jsonAgents'
 import { normDir, readFirstLine, readRows, readHead } from './fileRead'
 import { geminiFiles, parseGeminiHead, qwenProjectsRoot } from './agentHistory'
+import { agentSessionList, kimiHistorySessions, piResumeFile } from './agentSessionSources'
 
 const SLACK = 5000
 
-// Session ids an agent hands out: letters, digits, _ and -, nothing a shell
-// could read as anything else.
+// Session ids an agent hands out: letters, digits, _ and - (never first: it
+// would read as an option), nothing a shell could read as anything else.
 export function isSessionId(id) {
-  return typeof id === 'string' && /^[A-Za-z0-9_-]{6,80}$/.test(id)
+  return typeof id === 'string' && /^[A-Za-z0-9_][A-Za-z0-9_-]{5,79}$/.test(id)
 }
 
 // The choice, from { id, cwd, time (ms start), updated (ms) } candidates.
@@ -144,56 +150,8 @@ export function qwenSessionExists(id, home = os.homedir()) {
 // state.json (or session-meta/state.json) holds its folder and dates; resumed
 // with kimi --session <id>.
 
-function timeOf(v) {
-  if (typeof v === 'number' && Number.isFinite(v)) return v
-  const t = Date.parse(v || '')
-  return Number.isFinite(t) ? t : 0
-}
-
 export function kimiSessions(home = os.homedir(), since = 0) {
-  const root = join(process.env.KIMI_CODE_HOME || join(home, '.kimi-code'), 'sessions')
-  const out = []
-  let workspaces
-  try {
-    workspaces = fs.readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirectory() && !d.name.startsWith('.'))
-  } catch {
-    return out
-  }
-  for (const ws of workspaces) {
-    let sessions
-    try {
-      sessions = fs.readdirSync(join(root, ws.name), { withFileTypes: true }).filter((d) => d.isDirectory() && !d.name.startsWith('.'))
-    } catch {
-      continue
-    }
-    for (const s of sessions) {
-      for (const f of [join(root, ws.name, s.name, 'state.json'), join(root, ws.name, s.name, 'session-meta', 'state.json')]) {
-        let stat
-        try {
-          stat = fs.statSync(f)
-        } catch {
-          continue
-        }
-        if (stat.mtimeMs < since - SLACK) break // older than the pane
-        try {
-          let meta = JSON.parse(fs.readFileSync(f, 'utf8'))
-          if (meta && typeof meta.data === 'object' && meta.data && !meta.cwd && !meta.workDir) meta = meta.data
-          const custom = meta && typeof meta.custom === 'object' && meta.custom ? meta.custom : {}
-          const cwd = meta.cwd || meta.workDir || custom.cwd || ''
-          out.push({
-            id: s.name,
-            cwd,
-            time: timeOf(meta.createdAt) || timeOf(meta.createdAtMs) || stat.birthtimeMs || stat.mtimeMs,
-            updated: timeOf(meta.updatedAt) || timeOf(meta.updatedAtMs) || stat.mtimeMs
-          })
-        } catch {
-          /* not readable */
-        }
-        break
-      }
-    }
-  }
-  return out
+  return kimiHistorySessions(home, { since }).map((r) => ({ id: r.id, cwd: r.cwd, time: r.started, updated: r.updated }))
 }
 
 // --- All -------------------------------------------------------------------------------
@@ -207,5 +165,32 @@ export function findAgentSession(q = {}, home = os.homedir(), roots = {}) {
   if (agent === 'cline') return pickSession(clineSessions(home), q)
   if (agent === 'copilot') return pickSession(copilotSessions(home, q.since), q)
   if (agent === 'kimi') return pickSession(kimiSessions(home, q.since), q)
-  return null
+  // Droid, Grok, Pi, Antigravity, Devin, Cursor (agentSessionSources.js).
+  const list = agentSessionList(agent, home, { since: q.since })
+  return list ? pickSession(list.map((r) => ({ id: r.id, cwd: r.cwd, time: r.started, updated: r.updated })), q) : null
+}
+
+// --- Resuming ------------------------------------------------------------------------
+// What the renderer needs to resume a pane's conversation (the command line
+// is built there, from agent-session-resume.js's argument arrays):
+//   null                 nothing to resume: start fresh
+//   {}                   resume with the id
+//   { transcriptPath }   Pi: resume with its session file
+// Agents whose sessions we can read are only resumed when the session exists
+// (they refuse an unknown id); ZCode's id only comes from its hooks.
+const UNCHECKED = new Set(['opencode', 'cline', 'copilot', 'kimi', 'zcode'])
+
+export function resumeTarget({ agent, sessionId } = {}, home = os.homedir()) {
+  if (!isSessionId(sessionId)) return null
+  if (UNCHECKED.has(agent)) return {}
+  if (agent === 'openclaude') {
+    // A Claude Code fork: its transcripts are under ~/.openclaude/projects.
+    return claudeSessionExists(sessionId, home, join(home, '.openclaude')) ? {} : null
+  }
+  if (agent === 'pi') {
+    const transcriptPath = piResumeFile(sessionId, home)
+    return transcriptPath ? { transcriptPath } : null
+  }
+  const list = agentSessionList(agent, home)
+  return list && list.some((r) => r.id === sessionId) ? {} : null
 }

@@ -86,4 +86,15 @@ describe('multi-agent conversation history', () => {
     await flushPromises()
     expect(window.shellApi.listSessions).toHaveBeenLastCalledWith({ cwd: null, limit: 80 })
   })
+
+  it('shows a filter for each agent that has conversations', async () => {
+    const rows = [{ agent: 'droid', id: 'droid-session', cwd: 'C:/P', title: 'Droid task', updated: Date.now() }]
+    window.shellApi = { listSessions: vi.fn().mockResolvedValue(rows), writeClipboard: vi.fn() }
+    wrapper = mount(SessionsDialog)
+    await flushPromises()
+    const chips = wrapper.findAll('.mcp-cat').map((b) => b.text())
+    expect(chips).toContain('Droid')
+    expect(chips).toContain('Claude Code')
+    expect(chips).not.toContain('Grok')
+  })
 })

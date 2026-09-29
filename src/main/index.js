@@ -35,7 +35,7 @@ import { assessNeeds } from './tesselNeeds'
 import { createClaudeUsageReport } from './claudeUsageReport'
 import { resolveFiles, codeGotoArg, listProjectFiles } from './fileOpen'
 import { titleBarColors } from '../shared/themePalettes'
-import { geminiSessionExists, qwenSessionExists } from './agentResume'
+import { geminiSessionExists, qwenSessionExists, resumeTarget } from './agentResume'
 import { paneEnv } from './paneEnv'
 import { readForView, readImageForView, openPdfWindow } from './fileView'
 import { readForEdit, statForEdit, writeForEdit, headContent, createFileWatcher } from './editorFiles'
@@ -967,6 +967,15 @@ ipcMain.handle('sessions:findCodex', async (_evt, q = {}) => {
 // the session a pane started (they choose its id), found after it starts.
 ipcMain.handle('sessions:geminiExists', (_evt, id) => geminiSessionExists(id))
 ipcMain.handle('sessions:qwenExists', (_evt, id) => qwenSessionExists(id))
+// Resuming the other agents' conversations: null (start fresh), {} or
+// { transcriptPath } (Pi). The command line is built in the renderer.
+ipcMain.handle('sessions:resumeTarget', (_evt, q = {}) => {
+  try {
+    return resumeTarget({ agent: q && q.agent, sessionId: q && q.sessionId })
+  } catch {
+    return null
+  }
+})
 // The conversation each agent pane is in now, as its hooks reported it
 // (teamMcp/server.cjs reportSession): { paneId: { agent, sessionId, source, at } }.
 const sessionsDir = () => join(app.getPath('appData'), 'tessel-team', 'sessions')
