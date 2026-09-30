@@ -1,4 +1,5 @@
 <script setup>
+import { describeWaitingText } from '../agentUpdateWhy'
 import { t, intlLocale, UI_LANGUAGES } from '../i18n'
 // Settings, as a full page over the app's main area (like Orca's): a sidebar
 // with "Back to app", a search box and the pages, then one page at a time.
@@ -456,7 +457,7 @@ function versionText(a) {
 function jobText(id) {
   const j = props.agentUpdateJobs && props.agentUpdateJobs[id]
   if (!j) return props.agentUpdateQueue.includes(id) ? t('settings.agents.jobQueued', 'Waiting for the other updates') : ''
-  const waiting = (j.waiting || []).map((w) => `${w.label} (${w.why})`).join(', ')
+  const waiting = describeWaitingText(j.waiting)
   switch (j.phase) {
     case 'updating':
       return j.via === 'background'

@@ -79,7 +79,8 @@ import { dropBuffer, seedBuffer } from './ptyStore'
 import { tasks as boardTasks, setTasks, updateTask, removeTask, addTask } from './taskBoardStore'
 import { paneModels } from './paneModels'
 import { sleepBlocker } from '../../shared/agentSleep'
-import { updateBlocker, planUpdate, autoUpdateMoment, describeWaiting } from '../../shared/agentUpdatePlan'
+import { updateBlocker, planUpdate, autoUpdateMoment } from '../../shared/agentUpdatePlan'
+import { describeWaitingText } from './agentUpdateWhy'
 import { stopThenRetry, stuckMessage } from './agentUpdateRetry'
 import { updateFailureText, updateKindLabel } from './agentUpdateErrors'
 import {
@@ -7022,7 +7023,7 @@ async function agentUpdateTick() {
         if (!left.length) job.phase = 'done'
         else if (!job.toldWaiting && left.every(([, q]) => q.why)) {
           job.toldWaiting = true
-          showToast(t('app.agentUpdate.waitingRestart', '{{name}} is updated. Waiting to restart: {{list}}.', { name: job.name, list: describeWaiting(job.waiting) }), { timeout: 9000 })
+          showToast(t('app.agentUpdate.waitingRestart', '{{name}} is updated. Waiting to restart: {{list}}.', { name: job.name, list: describeWaitingText(job.waiting) }), { timeout: 9000 })
         }
       } else if (job.phase === 'waiting-stop') {
         const plan = updatePlanFor(job.agentId)
@@ -7031,7 +7032,7 @@ async function agentUpdateTick() {
           await stopAndRetryUpdate(job)
         } else if (!job.toldWaiting) {
           job.toldWaiting = true
-          showToast(t('app.agentUpdate.waitsFor', '{{name}} update waits for: {{list}}.', { name: job.name, list: describeWaiting(plan.waiting) }), { timeout: 9000 })
+          showToast(t('app.agentUpdate.waitsFor', '{{name}} update waits for: {{list}}.', { name: job.name, list: describeWaitingText(plan.waiting) }), { timeout: 9000 })
         }
       }
     }

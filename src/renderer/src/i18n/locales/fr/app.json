@@ -547,6 +547,24 @@
         "sameVersion": "La mise à jour s'est exécutée, mais {{name}} indique toujours l'ancienne version : une autre copie passe peut-être avant dans le PATH.",
         "busy": "Un autre agent était en cours de mise à jour. Réessayez quand il aura terminé.",
         "failed": "La mise à jour a échoué. Le journal montre ce qui n'a pas fonctionné."
+      },
+      "wait": {
+        "notAgent": "pas un panneau d’agent",
+        "restarting": "redémarrage en cours",
+        "noResume": "sa conversation ne peut pas être reprise",
+        "approval": "attend une approbation",
+        "limit": "à sa limite d’usage",
+        "unconfirmed": "pas encore confirmé inactif",
+        "working": "au travail",
+        "idleUnknown": "durée d’inactivité inconnue",
+        "justFinished": "vient de finir de travailler",
+        "draft": "du texte y est tapé",
+        "typedLately": "vous y avez tapé récemment",
+        "focused": "vous êtes dans ce panneau",
+        "delivering": "un message d’équipe y est livré",
+        "reminder": "un rappel vient d’y être tapé",
+        "waiting": "en attente",
+        "state": "état : {{state}}"
       }
     },
     "message": {
