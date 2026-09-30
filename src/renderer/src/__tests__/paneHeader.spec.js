@@ -51,6 +51,7 @@ vi.mock('@xterm/addon-web-links', () => ({ WebLinksAddon: class {} }))
 vi.mock('@xterm/addon-search', () => ({ SearchAddon: class { onDidChangeResults() {} } }))
 vi.mock('@xterm/addon-webgl', () => ({ WebglAddon: class {} }))
 import TerminalPane from '../components/TerminalPane.vue'
+import ChatPane from '../components/chat/ChatPane.vue'
 
 describe('terminal pane header', () => {
   let wrapper, ctx, previousApi, host
@@ -116,6 +117,45 @@ describe('terminal pane header', () => {
 
   const header = () => wrapper.get('[data-test="pane-header"]')
   const menu = () => document.body.querySelector(':scope > .ctx-menu')
+
+  it('terminal and chat header menus have the same sections and action order', async () => {
+    ctx.unsent = {}
+    ctx.trackOf = () => null
+    ctx.paneFolder = () => 'C:/project'
+    ctx.switchToChat = vi.fn()
+    ctx.switchToTerminal = vi.fn()
+    ctx.chatSetOption = vi.fn()
+    ctx.chatPermissions = () => 'yolo'
+    window.shellApi.chat = { history: async () => ({ ok: true, open: true, events: [], live: { status: 'idle' } }), onEvent: () => () => {} }
+    wrapper.unmount()
+    wrapper = mount(TerminalPane, { props: { node: { ...node(), sessionId: 'session-1', agentCommand: 'claude' } }, attachTo: host, global: { provide: { panelCtx: ctx } } })
+    await header().get('[data-test="pane-menu-btn"]').trigger('click')
+    await flushPromises()
+    const entries = element => [...element.children].filter(child => child.matches('.ctx-menu-item,.ctx-menu-sep,.ctx-menu-chips,.ctx-menu-facts')).map(child => {
+      if (!child.matches('.ctx-menu-item')) return child.className
+      const clone = child.cloneNode(true)
+      clone.querySelectorAll('.ctx-menu-shortcut').forEach(shortcut => shortcut.remove())
+      return clone.textContent.trim().replace('Continue in a terminal', 'Open as chat')
+    })
+    const terminalEntries = entries(menu())
+    const chat = mount(ChatPane, {
+      props: { node: { ...node(), kind: 'chat', sessionId: 'session-1', projectDir: 'C:/project' } },
+      attachTo: document.body,
+      global: { provide: { panelCtx: ctx }, stubs: { NativeChatView: true } }
+    })
+    try {
+      await flushPromises()
+      await chat.get('[data-test="chat-more"]').trigger('click')
+      await flushPromises()
+      const chatMenu = document.querySelector('[data-test="chat-header-menu"]')
+      expect(entries(chatMenu)).toEqual(terminalEntries)
+      for (const label of ['Copy output', 'Clear', 'Find', 'Restart asking first']) {
+        const button = [...chatMenu.querySelectorAll('button')].find(el => el.textContent.includes(label))
+        expect(button.disabled, label).toBe(true)
+        expect(button.title, label).not.toBe('')
+      }
+    } finally { chat.unmount() }
+  })
 
   it('shows its name, program and no number', async () => {
     await wrapper.setProps({ node: { ...node(), paneName: 'Bohr', num: 17 } })

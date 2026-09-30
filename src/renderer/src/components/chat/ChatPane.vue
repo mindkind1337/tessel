@@ -18,6 +18,9 @@
 // sign-in needed; a new request is announced by its card); Alt+A goes to the
 // request waiting for an answer. Nothing takes the focus by itself while the
 // user types.
+import PaneActionsMenu from '../PaneActionsMenu.vue'
+import { settings } from '../../settings'
+import { inYoloFolder } from '../../../../shared/agentPrefs'
 import { teamNumber } from '../../teamNumber'
 import { computed, inject, nextTick, onBeforeUnmount, onMounted, provide, reactive, ref, shallowRef, watch } from 'vue'
 import { SquareTerminal, Ellipsis } from 'lucide-vue-next'
@@ -47,10 +50,18 @@ const STOPPED_STATES = new Set(['ended', 'crashed', 'signin', 'untrusted'])
 const opening = ref(false)
 const rootEl = ref(null)
 const viewRef = shallowRef(null)
+const headerMenuRef = shallowRef(null)
 // The header's … button: the chat's menu, under the button.
-function openMore(event) {
+async function openMore(event) {
   const r = event.currentTarget.getBoundingClientRect()
-  if (viewRef.value && viewRef.value.openMenuAt) viewRef.value.openMenuAt(r.left, r.bottom + 4)
+  const selection = window.getSelection()
+  headerSelection.value = selection && rootEl.value?.contains(selection.anchorNode) && rootEl.value?.contains(selection.focusNode) ? selection.toString() : ''
+  headerMenu.x = r.left
+  headerMenu.y = r.bottom + 2
+  headerMenu.hasSelection = !!headerSelection.value.trim()
+  headerMenu.visible = true
+  await nextTick()
+  if (headerMenuRef.value) headerMenu.x = Math.max(4, r.right - headerMenuRef.value.getBoundingClientRect().width)
 }
 // Messages the main process did not take: { key, text, error, sending }.
 const unsent = ref([])
@@ -519,27 +530,8 @@ function onPaneKeydown(e) {
   focusPendingApproval()
 }
 
+// Right-click keeps the original lightweight chat menu.
 const contextMenuActions = computed(() => ({
-  title: title.value,
-  model: modelText.value,
-  facts: [
-    ...(props.node.worktree ? [{ label: t('pane.fact.branch', 'Branch'), value: props.node.worktree.branch }] : []),
-    ...(team.value ? [{ label: t('pane.fact.team', 'Team'), value: team.value.name + (isLead.value ? ' / ' + t('pane.fact.lead', 'lead') : '') }] : []),
-    ...(yolo.value ? [{ label: t('pane.fact.started', 'Started'), value: 'Yolo' }] : []),
-    { label: t('pane.fact.state', 'State'), value: statusLabel.value }
-  ],
-  onRename: beginRename,
-  ...(team.value && ctx.setTeamLead ? {
-    leadLabel: isLead.value ? t('pane.team.stopLeading', 'Stop leading {{team}}', { team: team.value.name }) : t('pane.team.makeLeadOf', 'Make lead of {{team}}', { team: team.value.name }),
-    onToggleLead: () => ctx.setTeamLead(team.value.id, isLead.value ? null : props.node.id)
-  } : {}),
-  ...(team.value && ctx.leaveTeam ? {
-    leaveLabel: t('pane.team.leave', 'Leave {{team}}', { team: team.value.name }),
-    onLeaveTeam: () => ctx.leaveTeam(props.node.id)
-  } : {}),
-  ...(ctx.openLauncherAt ? { onOpenHere: (position) => ctx.openLauncherAt(position, props.node.id) } : {}),
-  ...(ctx.restartLeaf ? { onRestart: () => ctx.restartLeaf(props.node.id) } : {}),
-  ...(props.node.sessionId ? { onCopySession: () => window.shellApi.writeClipboard(props.node.sessionId) } : {}),
   onSplitRight: () => ctx.splitLeaf(props.node.id, 'row'),
   onSplitDown: () => ctx.splitLeaf(props.node.id, 'col'),
   isPaneExpanded: isMaximized.value,
@@ -547,6 +539,68 @@ const contextMenuActions = computed(() => ({
   ...(ctx.switchToTerminal && props.node.sessionId ? { onSwitchToTerminal: () => ctx.switchToTerminal(props.node.id) } : {}),
   onClosePane: () => ctx.closeLeaf(props.node.id)
 }))
+const headerMenu = reactive({ visible: false, x: 0, y: 0, hasSelection: false })
+const headerSelection = ref('')
+function closeHeaderMenu() { headerMenu.visible = false; if (ctx.highlightId) ctx.highlightId.value = null }
+function headerAction(action) { return (...args) => { closeHeaderMenu(); return action(...args) } }
+const headerMenuBindings = computed(() => {
+  const folder = ctx.paneFolder ? ctx.paneFolder(props.node) : props.node.projectDir
+  const terminalOnly = t('pane.menu.terminalOnly', 'Only available in terminal mode')
+  return {
+    ctxMenu: headerMenu,
+    paneTitle: title.value,
+    node: { ...props.node, launchYolo: yolo.value, sleeping: status.value === 'asleep' },
+    ctx: { ...ctx, voiceName: ctx.voiceName || ref(''), voiceLabel: ctx.voiceLabel || ref(''), voiceLanguages: ctx.voiceLanguages || ref([]) },
+    settings,
+    isChat: true,
+    isAgent: true,
+    team: team.value,
+    isLead: isLead.value,
+    isMaximized: isMaximized.value,
+    statusTitle: statusLabel.value,
+    agentStatus: status.value === 'working' ? 'busy' : status.value,
+    exited: STOPPED_STATES.has(status.value),
+    asksApproval: session.prompts.value.length > 0,
+    teamFactTitle: () => team.value?.name || '',
+    yoloTitle: () => t('chat.pane.yoloHint', 'Tools run without asking (Settings)'),
+    closeCtxMenu: closeHeaderMenu,
+    closeCtxMenuAndRefocus: closeHeaderMenu,
+    menuCopy: headerAction(() => window.shellApi.writeClipboard(headerSelection.value)),
+    menuPaste: headerAction(() => viewRef.value?.pasteFromClipboard()),
+    menuCopySession: headerAction(() => window.shellApi.writeClipboard(props.node.sessionId)),
+    hasModelChoice: true,
+    modelText: modelText.value,
+    sessionPillLabel: () => '',
+    menuModel: headerAction(() => viewRef.value?.openModelPicker()),
+    menuVoice: headerAction(dictate),
+    menuPickVoice: headerAction(tip => ctx.voiceTypingIn?.(props.node.id, tip)),
+    otherPanes: ctx.otherPanes ? ctx.otherPanes(props.node.id) : [],
+    menuSendSelection: headerAction(target => ctx.sendToPane?.(props.node.id, target, 'selection', headerSelection.value)),
+    menuAskReview: headerAction(target => ctx.sendToPane?.(props.node.id, target, 'review')),
+    leadToggleText: () => isLead.value ? t('pane.team.stopLeading', 'Stop leading {{team}}', { team: team.value.name }) : t('pane.team.makeLeadOf', 'Make lead of {{team}}', { team: team.value.name }),
+    leaveTeamText: () => t('pane.team.leave', 'Leave {{team}}', { team: team.value.name }),
+    startEditTitle: beginRename,
+    menuOpenHere: headerAction(() => ctx.openLauncherAt?.({ left: headerMenu.x, bottom: headerMenu.y }, props.node.id)),
+    menuSplit: headerAction(dir => ctx.splitLeaf(props.node.id, dir)),
+    menuRestart: headerAction(() => ctx.restartLeaf?.(props.node.id)),
+    canOpenAsChat: true,
+    menuOpenAsChat: headerAction(() => ctx.switchToTerminal?.(props.node.id)),
+    canSwitchYolo: true,
+    yoloFolder: folder,
+    yoloFolderOn: !!folder && inYoloFolder(folder, settings.yoloFolders),
+    folderName: dir => String(dir || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop(),
+    menuYoloFolder: headerAction(() => ctx.toggleYoloFolder?.(folder)),
+    menuClose: headerAction(() => ctx.closeLeaf(props.node.id)),
+    disabledReasons: {
+      menuCopyOutput: terminalOnly,
+      menuClear: terminalOnly,
+      menuFind: terminalOnly,
+      menuSwitchYolo: t('pane.menu.chatPermissions', 'Change permissions in the chat composer'),
+      menuOpenAsChat: props.node.sessionId && ctx.switchToTerminal ? '' : t('pane.menu.noSession', 'Start a conversation first'),
+      menuModel: ctx.chatSetOption ? '' : t('pane.menu.modelUnavailable', 'Model selection is unavailable for this agent')
+    }
+  }
+})
 
 onMounted(load)
 onBeforeUnmount(() => {
@@ -694,6 +748,7 @@ defineExpose({ start, send, interrupt, focusPendingApproval, focusComposer: () =
     </div>
     <div class="sr-only" role="status" aria-live="polite" aria-atomic="true" data-test="chat-live">{{ liveText }}</div>
   </div>
+  <Teleport to="body"><PaneActionsMenu ref="headerMenuRef" v-bind="headerMenuBindings" data-test="chat-header-menu" /></Teleport>
 </template>
 
 <style scoped>

@@ -226,7 +226,6 @@ function onRespond(item, response, opts) {
 }
 const menuActions = computed(() => ({
   ...props.contextMenuActions,
-  ...(optionSurface.value ? { onModel: () => { focusComposer(); onOptionCommand('model') } } : {}),
   onPaste: () => composerRef.value && composerRef.value.pasteFromClipboard()
 }))
 function onContextMenu(event) {
@@ -256,12 +255,12 @@ async function focusPendingApproval() {
   return approvalRef.value ? approvalRef.value.focus() !== false : false
 }
 
-// The header's … button: the same menu as a right-click, at (x, y).
-function openMenuAt(x, y) {
-  if (contextMenuRef.value) contextMenuRef.value.onContextMenu({ preventDefault() {}, stopPropagation() {}, clientX: x, clientY: y })
-}
+// Header actions use the same composer operations as the chat menu.
+function openModelPicker() { focusComposer(); onOptionCommand('model') }
+function pasteFromClipboard() { return composerRef.value?.pasteFromClipboard() }
 defineExpose({
-  openMenuAt,
+  openModelPicker,
+  pasteFromClipboard,
   focusComposer,
   focusPendingApproval,
   hasPendingApproval: () => !!approvalItem.value,

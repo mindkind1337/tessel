@@ -26,7 +26,8 @@ function setNotice(message) {
 }
 
 defineExpose({
-  openMenuAt: (x, y) => sessionRef.value?.openMenuAt?.(x, y),
+  openModelPicker: () => sessionRef.value?.openModelPicker(),
+  pasteFromClipboard: () => sessionRef.value?.pasteFromClipboard(),
   focusComposer: () => sessionRef.value?.focusComposer() ?? false,
   focusPendingApproval: () => sessionRef.value?.focusPendingApproval() ?? false,
   hasPendingApproval: () => sessionRef.value?.hasPendingApproval() ?? false,

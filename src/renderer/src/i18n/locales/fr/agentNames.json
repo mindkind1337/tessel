@@ -3,5 +3,9 @@
   "app.agentName.taken": "Un autre agent porte déjà le nom « {{name}} ». Choisissez un autre nom.",
   "pane.renameAgent": "Nom de l’agent",
   "pane.menu.rename": "Renommer",
+  "pane.menu.terminalOnly": "Disponible uniquement en mode terminal",
+  "pane.menu.chatPermissions": "Modifiez les permissions dans la zone de saisie du chat",
+  "pane.menu.noSession": "Démarrez d’abord une conversation",
+  "pane.menu.modelUnavailable": "Le choix du modèle n’est pas disponible pour cet agent",
   "sidebar.agentRow.workerOfName": "worker de {{name}}"
 }
