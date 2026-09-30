@@ -31,7 +31,7 @@ const path = require('path')
 const crypto = require('crypto')
 const { randomUUID } = crypto
 
-const VERSION = '1.10.1'
+const VERSION = '1.10.2'
 const MAX_TEXT = 6000
 
 // --- Finding my team and me ---------------------------------------------------
@@ -1281,6 +1281,29 @@ function backgroundTaskIds(list) {
   }
   return ids
 }
+// Diagnosis of what Claude Code lists as background work (a task it keeps
+// listing that nothing runs): each task's id, type and status only, never its
+// description or command. One small file per pane, replaced at each Stop.
+function writeBackgroundDiag(root, paneId, list) {
+  if (!Array.isArray(list)) return
+  const word = (value) => str(value).trim().toLowerCase().replace(/[^a-z0-9_ .:-]/g, '').slice(0, 40)
+  const tasks = list.slice(0, 32).filter((task) => task && typeof task === 'object').map((task) => ({
+    id: typeof task.id === 'string' && /^[A-Za-z0-9._:-]{1,100}$/.test(task.id) ? task.id : '',
+    type: word(task.type),
+    status: word(task.status),
+    ambient: task.ambient === true
+  }))
+  try {
+    const dir = path.join(root, 'diag')
+    fs.mkdirSync(dir, { recursive: true })
+    const file = path.join(dir, `background-${paneId}.json`)
+    const tmp = `${file}.${process.pid}.tmp`
+    fs.writeFileSync(tmp, JSON.stringify({ at: Date.now(), tasks }), { mode: 0o600 })
+    fs.renameSync(tmp, file)
+  } catch {
+    /* diagnosis only */
+  }
+}
 function reportAgentState(data, provider, continuing = false) {
   const paneId = process.env.TESSEL_PANE_ID || ''
   const launchToken = process.env.TESSEL_AGENT_LAUNCH || ''
@@ -1331,6 +1354,7 @@ function reportAgentState(data, provider, continuing = false) {
     if (status.event === 'Stop' && !event.agentId && (provider === 'claude' || provider === 'openclaude')) {
       const background = backgroundTaskIds(data.background_tasks)
       if (background) event.background = background
+      writeBackgroundDiag(root, paneId, data.background_tasks)
     }
     // Only a tool's identity, never its arguments or prompt text.
     const toolName = status.toolName || data.tool_name
