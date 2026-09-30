@@ -129,6 +129,11 @@ describe('search in what was said (opt-in)', () => {
     const optin = wrapper.get('[data-test="sessions-optin"]')
     expect(optin.text()).toContain('Search every agent session')
     expect(optin.text()).toContain('nothing is sent anywhere')
+    // What the index is, plainly: full text (pasted keys included), not encrypted, kept until cleared.
+    expect(optin.text()).toContain('full text of the conversations, including what was pasted')
+    expect(optin.text()).toContain('not encrypted')
+    expect(optin.text()).toContain('until you clear it')
+    expect(wrapper.find('[data-test="sessions-left"]').exists()).toBe(false)
     await wrapper.get('[data-test="sessions-query"]').setValue('listed')
     await flushPromises()
     expect(s.search).not.toHaveBeenCalled()
@@ -156,7 +161,7 @@ describe('search in what was said (opt-in)', () => {
                 cwd: 'C:/P/sub',
                 updatedAt: Date.now() - 3600000,
                 messageCount: 14,
-                evidence: { snippet: 'the [[release]] <b>notes</b> use Bearer abcdef0123456789abcdef0123456789abcd …', role: 'assistant', ts: 1 }
+                evidence: { snippet: 'the release <b>notes</b> use Bearer abcdef0123456789abcdef0123456789abcd … [[not a mark]]', role: 'assistant', ts: 1 }
               }
             ]
           }))
@@ -174,6 +179,8 @@ describe('search in what was said (opt-in)', () => {
       expect(hit.find('b').exists()).toBe(false)
       expect(hit.text()).toContain('<b>notes</b>')
       expect(hit.text()).not.toContain('abcdef0123456789')
+      expect(hit.text()).toContain('[[not a mark]]')
+      expect(hit.findAll('mark')).toHaveLength(1)
       expect(hit.text()).toContain('Codex · 14 messages')
       await hit.get('.exit-btn.primary').trigger('click')
       expect(wrapper.emitted('resume')[0][0]).toMatchObject({ agent: 'codex', id: 'x1', cwd: 'C:/P/sub' })
@@ -191,6 +198,16 @@ describe('search in what was said (opt-in)', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('off with an index left on disk: its size is said on the opt-in, with a way to clear it', async () => {
+    const s = api({ sizeBytes: 7 * 1048576 })
+    wrapper = mount(SessionsDialog)
+    await flushPromises()
+    expect(wrapper.get('[data-test="sessions-left"]').text()).toBe('An index of 7 MB is still on this computer.')
+    await wrapper.get('[data-test="sessions-clear-left"]').trigger('click')
+    await flushPromises()
+    expect(s.clear).toHaveBeenCalled()
   })
 
   it('no search bridge (an older main process): the dialog is as before', async () => {

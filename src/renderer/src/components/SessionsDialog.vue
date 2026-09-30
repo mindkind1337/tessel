@@ -130,25 +130,31 @@ const hitRows = computed(() =>
     snippet: h.evidence && h.evidence.snippet ? snippetParts(h.evidence.snippet) : []
   }))
 )
+// The marks are private-use characters (never in a conversation's text: the
+// index takes them out). The index holds the text with its secrets masked;
+// masked once more here, on each part, so a mark cannot split one.
+const MARK_OPEN = '\uE000'
+const MARK_CLOSE = '\uE001'
 function snippetParts(snippet) {
   const out = []
   String(snippet)
-    .split('[[')
+    .split(MARK_OPEN)
     .forEach((piece, i) => {
-      const end = piece.indexOf(']]')
+      const end = piece.indexOf(MARK_CLOSE)
       if (i === 0 || end < 0) {
-        if (piece) out.push({ text: maskSecrets(piece), match: i > 0 })
+        if (piece) out.push({ text: maskSecrets(piece.replace(MARK_CLOSE, '')), match: false })
         return
       }
       out.push({ text: maskSecrets(piece.slice(0, end)), match: true })
-      if (piece.length > end + 2) out.push({ text: maskSecrets(piece.slice(end + 2)), match: false })
+      if (piece.length > end + 1) out.push({ text: maskSecrets(piece.slice(end + 1)), match: false })
     })
   return out
 }
+const sizeText = (n) => (n >= 1048576 ? `${Math.round(n / 1048576)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`) // i18n-ignore
 const indexLine = computed(() => {
   const i = index.value
   if (!i || !i.enabled) return ''
-  const size = i.sizeBytes >= 1048576 ? `${Math.round(i.sizeBytes / 1048576)} MB` : `${Math.max(1, Math.round(i.sizeBytes / 1024))} KB` // i18n-ignore
+  const size = sizeText(i.sizeBytes)
   if (i.phase === 'indexing') return t('app.sessions.indexing', 'Indexing… {{due}} conversations left ({{size}})', { due: i.filesDue, size })
   if (i.phase === 'paused') return t('app.sessions.indexPaused', 'Indexing waits while the window is hidden ({{due}} left)', { due: i.filesDue })
   return t('app.sessions.indexCurrent', 'Index up to date: {{count}} conversations ({{size}})', { count: i.sessions, size })
@@ -167,7 +173,14 @@ const keepOptions = computed(() => [
 const messagesText = (n) => t('app.sessions.messages', '{{n}} messages', { n })
 const searchPlaceholder = computed(() => (index.value && index.value.enabled ? t('app.sessions.searchFull', 'Search in what was said') : t('app.sessions.search', 'Search conversations')))
 // prettier-ignore
-const optinText = computed(() => t('app.sessions.optinText', 'Find a conversation by what was said in it. Tessel keeps a search index of your agents’ conversations on this computer (in its data folder); nothing is sent anywhere. You can turn it off or delete the index at any time.'))
+const optinText = computed(() => t('app.sessions.optinText', 'Find a conversation by what was said in it. Tessel builds a search index of your agents’ conversations on this computer; nothing is sent anywhere. Before you turn it on:'))
+// prettier-ignore
+const optinPoints = computed(() => [
+  t('app.sessions.optinKeeps', 'The index keeps the full text of the conversations, including what was pasted into them (keys, passwords…); it masks what it recognizes as a secret, not everything.'),
+  t('app.sessions.optinPlain', 'It is not encrypted: anyone who can read your files can read it.'),
+  t('app.sessions.optinStays', 'It stays on this computer after you turn the search off, until you clear it.')
+])
+const indexLeft = computed(() => (index.value && !index.value.enabled && index.value.sizeBytes > 0 ? t('app.sessions.optinLeft', 'An index of {{size}} is still on this computer.', { size: sizeText(index.value.sizeBytes) }) : ''))
 
 async function load() {
   loading.value = true
@@ -307,9 +320,16 @@ onMounted(() => {
         <div class="tool-main">
           <span class="session-title">{{ t('app.sessions.optinTitle', 'Search every agent session') }}</span>
           <span class="set-hint">{{ optinText }}</span>
+          <ul class="set-hint sessions-optin-points">
+            <li v-for="(p, i) in optinPoints" :key="i">{{ p }}</li>
+          </ul>
+          <span v-if="indexLeft" class="set-hint" data-test="sessions-left">{{ indexLeft }}</span>
         </div>
         <button class="exit-btn primary" data-test="sessions-enable" :disabled="indexBusy" @click="indexAction('enable')">
           {{ t('app.sessions.optinEnable', 'Turn on session search') }}
+        </button>
+        <button v-if="indexLeft" class="exit-btn" data-test="sessions-clear-left" :disabled="indexBusy" :title="t('app.sessions.clearTitle', 'Delete the search index (never your conversations)')" @click="indexAction('clear')">
+          {{ t('app.sessions.clear', 'Clear index') }}
         </button>
       </div>
       <div v-else-if="index && index.enabled" class="sessions-index" data-test="sessions-index">
@@ -323,7 +343,7 @@ onMounted(() => {
         <button class="exit-btn" data-test="sessions-disable" :disabled="indexBusy" :title="t('app.sessions.disableTitle', 'Stop indexing; the index is kept until you clear it')" @click="indexAction('disable')">
           {{ t('app.sessions.disable', 'Turn off') }}
         </button>
-        <button class="exit-btn" data-test="sessions-clear" :disabled="indexBusy" :title="t('app.sessions.clearTitle', 'Delete the search index (never your conversations)')" @click="indexAction('clear')">
+        <button class="exit-btn" data-test="sessions-clear" :disabled="indexBusy" :title="t('app.sessions.clearRebuildTitle', 'Delete the search index (never your conversations); while the search is on, it is built again from nothing')" @click="indexAction('clear')">
           {{ t('app.sessions.clear', 'Clear index') }}
         </button>
       </div>

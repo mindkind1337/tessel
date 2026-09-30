@@ -1,23 +1,42 @@
 // The session search index: a SQLite database (node:sqlite, FTS5) holding a
 // copy of what was said in the agents' conversations, so it can be searched.
 // A cache over the agents' own files, never a source: a database that cannot
-// be trusted (another schema version, a torn file) is removed and built again.
-// Local only (Tessel's data folder); nothing here is ever sent anywhere.
+// be trusted (another schema, missing columns, a failed integrity check, a
+// torn file) is removed and built again. Local only; never sent anywhere.
+// Secrets are masked BEFORE the text is indexed (maskSecrets), so no result
+// can bring one back, highlighted or not; what is deleted is overwritten
+// (secure_delete, and FTS5's own secure-delete).
 // After Orca's src/main/ai-vault-search (session-search-schema.ts,
 // session-search-retrieval.ts, session-search-store.ts), MIT, Copyright (c)
 // 2026 Lovecast Inc.
 import fs from 'fs'
 import { dirname } from 'path'
+import { maskSecrets } from '../../shared/maskSecrets.js'
 import { andExpression, identifierShadowText, orExpression, phraseExpression, planQuery } from './query.js'
 
-export const SCHEMA_VERSION = 1
+export const SCHEMA_VERSION = 2
 // Tool output beyond this many characters per row is not indexed.
 export const TOOL_TEXT_MAX = 3072
+// A match's marks in a passage: private-use characters, taken out of the text
+// when it is indexed, so nothing a conversation says can pass for a mark.
+export const MARK_OPEN = ''
+export const MARK_CLOSE = ''
+const MARKS = /[]/g
+// The agents a result may name, and the shape of a session id a result may
+// carry (what the resume accepts): anything else in the database is not shown.
+export const KNOWN_AGENTS = new Set(['claude', 'openclaude', 'codex', 'gemini', 'qwen', 'opencode', 'copilot', 'kimi', 'cline', 'cursor', 'droid', 'grok', 'pi', 'omp', 'antigravity', 'devin', 'zcode']) // i18n-ignore
+export const safeSessionId = (id) => typeof id === 'string' && /^[A-Za-z0-9_][A-Za-z0-9_-]{5,79}$/.test(id)
 
 // unicode61 keeps `_ . - / +` inside tokens, so paths and identifiers match
 // exactly; the identifiers column carries their split form.
 const TOKENIZER = `tokenize="unicode61 tokenchars '_.-/+'"` // i18n-ignore
 
+const COLUMNS = {
+  meta: ['key', 'value'],
+  sessions: ['id', 'agent', 'session_id', 'file_path', 'title', 'cwd', 'cwd_key', 'created_at', 'updated_at', 'message_count'],
+  files: ['path', 'agent', 'byte_offset', 'mtime_ms', 'size_bytes', 'head_hash', 'skipped', 'state', 'fail_count'],
+  messages: ['id', 'session_row_id', 'role', 'ts']
+}
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS sessions(
@@ -40,6 +59,8 @@ CREATE TABLE IF NOT EXISTS files(
   byte_offset INTEGER NOT NULL DEFAULT 0,
   mtime_ms REAL NOT NULL DEFAULT 0,
   size_bytes INTEGER NOT NULL DEFAULT 0,
+  head_hash TEXT,
+  skipped INTEGER NOT NULL DEFAULT 0,
   state TEXT NOT NULL DEFAULT 'due',
   fail_count INTEGER NOT NULL DEFAULT 0
 );
@@ -65,28 +86,32 @@ export function sqliteAvailable() {
   }
 }
 
+export const DATABASE_FILES = ['', '-wal', '-shm', '-journal']
+// -> true when none of the database's files is left.
 export function removeDatabase(path) {
-  for (const suffix of ['', '-wal', '-shm', '-journal']) {
+  for (const suffix of DATABASE_FILES) {
     try {
       fs.rmSync(path + suffix, { force: true })
     } catch {
-      // held by another process: the next open decides
+      // held by another process: said by the result
     }
   }
+  return DATABASE_FILES.every((suffix) => !fs.existsSync(path + suffix))
+}
+export function databaseSize(path) {
+  let n = 0
+  for (const suffix of DATABASE_FILES) {
+    try {
+      n += fs.statSync(path + suffix).size
+    } catch {
+      // not there
+    }
+  }
+  return n
 }
 
-function openRaw(path) {
-  const { DatabaseSync } = process.getBuiltinModule('node:sqlite')
-  const db = new DatabaseSync(path)
-  try {
-    db.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;') // i18n-ignore
-  } catch (err) {
-    // Not a database: the handle must go before the file can be removed.
-    db.close()
-    throw err
-  }
-  return db
-}
+// SQLITE_CORRUPT and SQLITE_NOTADB: the file, not the request.
+export const isCorruption = (err) => !!err && (err.errcode === 11 || err.errcode === 26 || /malformed|not a database/i.test(String(err.message || '')))
 
 // Folder keys compare folders whatever their case or slashes.
 export function cwdKey(cwd) {
@@ -94,50 +119,62 @@ export function cwdKey(cwd) {
   return s ? s.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase() : null
 }
 
-export function openStore(path) {
-  if (path !== ':memory:') fs.mkdirSync(dirname(path), { recursive: true })
-  let db
-  const fresh = () => {
-    db = openRaw(path)
-    db.exec(SCHEMA_SQL)
-    db.prepare('INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)').run('schema_version', String(SCHEMA_VERSION))
-  }
+// The text as it is indexed: secrets masked, the passage marks taken out.
+export const indexText = (text) => maskSecrets(String(text || '').replace(MARKS, ''))
+
+const rebuild = (why) => Object.assign(new Error(why), { rebuild: true })
+
+// Opens, checks and prepares the database; throws when it cannot be trusted
+// (the caller then removes it and builds a new one, once). The handle never
+// outlives a failure.
+function openChecked(path) {
+  const { DatabaseSync } = process.getBuiltinModule('node:sqlite')
+  const db = new DatabaseSync(path)
   try {
-    db = openRaw(path)
-    let version = null
-    try {
-      version = db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get()?.value ?? null
-    } catch {
-      version = null // no meta table yet
+    // Nothing in the file is trusted to run code of its own (a schema is ours
+    // to trust only because we wrote it, and it holds no functions anyway).
+    db.exec('PRAGMA trusted_schema = OFF; PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA secure_delete = ON;') // i18n-ignore
+    const hasTables = db.prepare("SELECT count(*) AS n FROM sqlite_master WHERE type = 'table'").get().n > 0
+    if (hasTables) {
+      let version = null
+      try {
+        version = db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get()?.value ?? null
+      } catch {
+        version = null
+      }
+      if (version !== String(SCHEMA_VERSION)) throw rebuild('another schema') // i18n-ignore
+      const check = db.prepare('PRAGMA quick_check').get()
+      if (!check || Object.values(check)[0] !== 'ok') throw rebuild('integrity check failed') // i18n-ignore
     }
-    if (version !== null && version !== String(SCHEMA_VERSION)) {
+    db.exec(SCHEMA_SQL)
+    db.exec("INSERT INTO messages_fts(messages_fts, rank) VALUES('secure-delete', 1)") // i18n-ignore
+    for (const [table, columns] of Object.entries(COLUMNS)) {
+      const have = db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name) // i18n-ignore
+      if (columns.some((c) => !have.includes(c))) throw rebuild(`${table}: missing columns`) // i18n-ignore
+    }
+    db.prepare('INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)').run('schema_version', String(SCHEMA_VERSION))
+    return { db, q: prepare(db) }
+  } catch (err) {
+    try {
       db.close()
-      removeDatabase(path)
-      fresh()
-    } else {
-      db.exec(SCHEMA_SQL)
-      db.prepare('INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)').run('schema_version', String(SCHEMA_VERSION))
-    }
-  } catch {
-    // A file SQLite cannot use: a cache, so it is built again.
-    try {
-      db?.close()
     } catch {
       // already closed
     }
-    removeDatabase(path)
-    fresh()
+    throw err
   }
+}
 
-  const q = {
+function prepare(db) {
+  return {
     fileGet: db.prepare('SELECT * FROM files WHERE path = ?'),
     fileUpsert: db.prepare(
       `INSERT INTO files(path, agent, mtime_ms, size_bytes, state) VALUES (?, ?, ?, ?, 'due')
        ON CONFLICT(path) DO UPDATE SET mtime_ms = excluded.mtime_ms, size_bytes = excluded.size_bytes, state = 'due', fail_count = 0`
     ),
-    fileReset: db.prepare("UPDATE files SET byte_offset = 0, state = 'due', fail_count = 0 WHERE path = ?"),
-    fileProgress: db.prepare('UPDATE files SET byte_offset = ?, state = ? WHERE path = ?'),
+    fileReset: db.prepare("UPDATE files SET byte_offset = 0, head_hash = NULL, skipped = 0, state = 'due', fail_count = 0 WHERE path = ?"),
+    fileProgress: db.prepare('UPDATE files SET byte_offset = ?, state = ?, skipped = ?, head_hash = coalesce(?, head_hash) WHERE path = ?'),
     fileFail: db.prepare("UPDATE files SET fail_count = fail_count + 1, state = CASE WHEN fail_count >= 2 THEN 'failed' ELSE 'due' END WHERE path = ?"),
+    fileFailNow: db.prepare("UPDATE files SET state = 'failed' WHERE path = ?"),
     fileDelete: db.prepare('DELETE FROM files WHERE path = ?'),
     filePaths: db.prepare('SELECT path FROM files'),
     nextDue: db.prepare("SELECT * FROM files WHERE state = 'due' ORDER BY mtime_ms DESC LIMIT 1"),
@@ -152,6 +189,44 @@ export function openStore(path) {
     ftsInsert: db.prepare('INSERT INTO messages_fts(rowid, user_text, assistant_text, tool_text, identifiers) VALUES (?, ?, ?, ?, ?)'),
     sessionCount: db.prepare('SELECT count(*) AS n FROM sessions')
   }
+}
+
+// Private to its owner (outside Windows, where the profile's own rights hold):
+// a folder only they can open, files only they can read.
+function makePrivateDir(dir) {
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
+  if (process.platform === 'win32') return
+  try {
+    fs.chmodSync(dir, 0o700)
+  } catch {
+    // not ours to change
+  }
+}
+export function makePrivateFiles(path) {
+  if (process.platform === 'win32') return
+  for (const suffix of DATABASE_FILES) {
+    try {
+      if (fs.existsSync(path + suffix)) fs.chmodSync(path + suffix, 0o600)
+    } catch {
+      // gone meanwhile
+    }
+  }
+}
+
+export function openStore(path) {
+  if (path !== ':memory:') makePrivateDir(dirname(path))
+  let opened
+  try {
+    opened = openChecked(path)
+  } catch (err) {
+    if (path === ':memory:') throw err
+    // A cache: removed and built again, once.
+    removeDatabase(path)
+    opened = openChecked(path)
+  }
+  if (path !== ':memory:') makePrivateFiles(path)
+  const { db, q } = opened
+  let purged = 0
 
   function dropSession(filePath) {
     const s = q.sessionByFile.get(filePath)
@@ -159,6 +234,7 @@ export function openStore(path) {
     q.ftsDelete.run(s.id)
     q.messagesDelete.run(s.id)
     q.sessionDelete.run(s.id)
+    purged++
   }
 
   const store = {
@@ -185,14 +261,31 @@ export function openStore(path) {
         throw err
       }
     },
-    // A file seen by a scan: new or changed -> due. Smaller than what was
-    // read (rewritten): its rows go and it is read again from the start.
-    noteFile({ path: file, agent, mtimeMs, size }) {
+    // After sessions left the index: the file gives their space back (and
+    // what they held is not left in it). -> true when it ran.
+    compact() {
+      if (!purged) return false
+      purged = 0
+      db.exec('VACUUM')
+      return true
+    },
+    // A file seen by a scan: new or changed -> due. Rewritten (smaller than
+    // what was read, or its first bytes not the ones read before: readHead()
+    // gives their fingerprint, asked only then): its rows go and it is read
+    // again from the start.
+    noteFile({ path: file, agent, mtimeMs, size, readHead = null }) {
       const prior = q.fileGet.get(file)
       if (prior && prior.mtime_ms === mtimeMs && prior.size_bytes === size) return false
-      if (prior && size < prior.byte_offset) {
-        dropSession(file)
-        q.fileReset.run(file)
+      if (prior && prior.byte_offset > 0) {
+        let rewritten = size < prior.byte_offset
+        if (!rewritten && prior.head_hash && typeof readHead === 'function') {
+          const head = readHead()
+          rewritten = !!head && head !== prior.head_hash
+        }
+        if (rewritten) {
+          dropSession(file)
+          q.fileReset.run(file)
+        }
       }
       q.fileUpsert.run(file, agent, mtimeMs, size)
       return true
@@ -203,28 +296,33 @@ export function openStore(path) {
     },
     knownPaths: () => q.filePaths.all().map((r) => r.path),
     sessionOf: (file) => q.sessionByFile.get(file) || null,
+    fileOf: (file) => q.fileGet.get(file) || null,
     nextDue: () => q.nextDue.get() || null,
     fileFailed: (file) => q.fileFail.run(file),
+    // Not to be read again (a line without end for too long).
+    fileGivenUp: (file) => q.fileFailNow.run(file),
     // One slice of a file: its rows, the session's facts, the new offset.
-    addSlice({ file, agent, rows, offset, done, session }) {
+    // skipped: bytes of one endless line passed over so far (0: none).
+    // head: the fingerprint of the file's first bytes (with its first slice).
+    addSlice({ file, agent, rows, offset, done, session, skipped = 0, head = null }) {
       let s = q.sessionByFile.get(file)
+      const title = indexText(session.title || '')
       if (!s) {
-        q.sessionInsert.run(agent, session.id || '', file, session.title || '', session.cwd || null, cwdKey(session.cwd), session.createdAt ?? null, session.updatedAt ?? null)
+        q.sessionInsert.run(agent, session.id || '', file, title, session.cwd || null, cwdKey(session.cwd), session.createdAt ?? null, session.updatedAt ?? null)
         s = q.sessionByFile.get(file)
       }
       let count = s.message_count
       for (const row of rows) {
-        const text = String(row.text || '')
-        if (!text.trim()) continue
         const tool = row.role === 'tool'
-        const body = tool ? text.slice(0, TOOL_TEXT_MAX) : text
+        const body = indexText(tool ? String(row.text || '').slice(0, TOOL_TEXT_MAX) : row.text)
+        if (!body.trim()) continue
         const id = Number(q.messageInsert.run(s.id, row.role, Number.isFinite(row.ts) ? row.ts : null).lastInsertRowid)
         q.ftsInsert.run(id, row.role === 'user' ? body : '', row.role === 'assistant' ? body : '', tool ? body : '', identifierShadowText(body))
         if (!tool) count++
       }
       q.sessionUpdate.run(
         session.id || s.session_id,
-        session.title || s.title,
+        title || s.title,
         session.cwd || s.cwd,
         cwdKey(session.cwd || s.cwd),
         s.created_at ?? session.createdAt ?? null,
@@ -232,7 +330,7 @@ export function openStore(path) {
         count,
         s.id
       )
-      q.fileProgress.run(offset, done ? 'current' : 'due', file)
+      q.fileProgress.run(offset, done ? 'current' : 'due', skipped, head, file)
     },
     counts() {
       const c = q.counts.get() || {}
@@ -241,7 +339,8 @@ export function openStore(path) {
 
     // -> { hits, route, truncated }. scope: { kind: 'all' | 'folder' |
     // 'project', path }, agents: [ids] or null. An empty query lists the
-    // newest sessions of the scope.
+    // newest sessions of the scope. A passage marks its matches with
+    // MARK_OPEN and MARK_CLOSE.
     search({ query = '', scope = { kind: 'all' }, agents = null, limit = 20 } = {}) {
       limit = Number.isInteger(limit) ? Math.max(1, Math.min(100, limit)) : 20
       const conditions = []
@@ -263,7 +362,7 @@ export function openStore(path) {
       if (!plan.phrase.length) {
         const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
         const rows = db.prepare(`SELECT * FROM sessions ${where} ORDER BY updated_at DESC, id DESC LIMIT ?`).all(...values, limit + 1)
-        return { hits: rows.slice(0, limit).map((s) => hitOf(s, null)), route: 'recent', truncated: rows.length > limit }
+        return { hits: rows.slice(0, limit).map((s) => hitOf(s, null)).filter(Boolean), route: 'recent', truncated: rows.length > limit }
       }
       const eligible = conditions.length ? ` AND m.session_row_id IN (SELECT id FROM sessions WHERE ${conditions.join(' AND ')})` : ''
       // One row per session (its best), before the limit: a long session
@@ -277,7 +376,8 @@ export function openStore(path) {
       const match = (expression) => {
         try {
           return db.prepare(sql).all(expression, ...values, limit + 1)
-        } catch {
+        } catch (err) {
+          if (isCorruption(err)) throw err
           return [] // an expression FTS5 refuses: no match, never an error
         }
       }
@@ -297,7 +397,7 @@ export function openStore(path) {
       }
       // From the row's own text column (never the split identifiers).
       const column = { user: 0, assistant: 1, tool: 2 }
-      const snippets = [0, 1, 2].map((c) => db.prepare(`SELECT snippet(messages_fts, ${c}, '[[', ']]', '…', 28) AS s FROM messages_fts WHERE messages_fts MATCH ? AND rowid = ?`))
+      const snippets = [0, 1, 2].map((c) => db.prepare(`SELECT snippet(messages_fts, ${c}, ?, ?, '…', 28) AS s FROM messages_fts WHERE messages_fts MATCH ? AND rowid = ?`))
       const session = db.prepare('SELECT * FROM sessions WHERE id = ?')
       const hits = []
       for (const row of rows.slice(0, limit)) {
@@ -305,11 +405,12 @@ export function openStore(path) {
         if (!s) continue
         let text = ''
         try {
-          text = snippets[column[row.role] ?? 1].get(expression, row.rowid)?.s || ''
+          text = snippets[column[row.role] ?? 1].get(MARK_OPEN, MARK_CLOSE, expression, row.rowid)?.s || ''
         } catch {
           text = ''
         }
-        hits.push(hitOf(s, { snippet: text, role: row.role, ts: row.ts }))
+        const hit = hitOf(s, { snippet: text, role: row.role, ts: row.ts })
+        if (hit) hits.push(hit)
       }
       return { hits, route, truncated: rows.length > limit || plan.truncated }
     }
@@ -317,7 +418,11 @@ export function openStore(path) {
   return store
 }
 
+// A result, or null for a row no resume could take (an agent Tessel does not
+// know, a session id of another shape): the database is never trusted to
+// name what the window will run.
 function hitOf(s, evidence) {
+  if (!KNOWN_AGENTS.has(s.agent) || !safeSessionId(s.session_id)) return null
   return {
     agent: s.agent,
     sessionId: s.session_id,

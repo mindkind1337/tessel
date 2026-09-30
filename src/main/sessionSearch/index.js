@@ -7,6 +7,7 @@
 // says when the window is hidden (the indexing then waits).
 import fs from 'fs'
 import { join } from 'path'
+import { databaseSize, removeDatabase } from './store.js'
 
 const METHODS = ['status', 'enable', 'disable', 'clear', 'setHistoryDays', 'search']
 const REPLY_MS = 15000
@@ -23,6 +24,7 @@ export function createSessionSearch({
   log = null
 } = {}) {
   const policyPath = join(dir, 'session-search', 'policy.json')
+  const dbPath = join(dir, 'session-search', 'index.sqlite')
   let child = null
   let nextId = 0
   const waiting = new Map() // id -> { resolve, timer }
@@ -124,9 +126,10 @@ export function createSessionSearch({
   }
 
   const api = {
-    // Off: answered here, without starting anything.
+    // Off: answered here, without starting anything (the index kept on disk,
+    // if any, by its size).
     async status() {
-      if (!child && !policyEnabled()) return { ...OFF, available: typeof fork === 'function', historyDays: historyDays() }
+      if (!child && !policyEnabled()) return { ...OFF, available: typeof fork === 'function', historyDays: historyDays(), sizeBytes: databaseSize(dbPath) }
       const res = await call('status')
       return res && typeof res.enabled === 'boolean' ? res : { ...OFF, available: false, historyDays: historyDays() }
     },
@@ -137,11 +140,11 @@ export function createSessionSearch({
       stopChild()
       return res && res.ok ? res : { ok: true }
     },
+    // Off: the files go from here, no process started. On: its process
+    // deletes them and starts over from nothing.
     async clear() {
-      const enabled = policyEnabled()
-      const res = await call('clear')
-      if (!enabled) stopChild()
-      return res
+      if (!child && !policyEnabled()) return removeDatabase(dbPath) ? { ok: true } : { ok: false, code: 'busy' }
+      return call('clear')
     },
     setHistoryDays: (days) => call('setHistoryDays', days),
     async search(q) {

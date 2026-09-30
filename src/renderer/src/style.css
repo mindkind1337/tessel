@@ -3704,6 +3704,13 @@ body.pane-dragging * {
 .sessions-index {
   padding: 4px 8px;
 }
+.sessions-optin-points {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+.sessions-optin-points li {
+  margin: 2px 0;
+}
 .sessions-index > .set-hint:first-child {
   flex: 1 1 auto;
   min-width: 0;

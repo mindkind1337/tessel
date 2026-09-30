@@ -5,10 +5,10 @@ import fs from 'fs'
 import os from 'os'
 import { join } from 'path'
 import { createSessionSearch } from '../index'
-import { createSessionSearchCore, maskSnippet } from '../core'
+import { createSessionSearchCore } from '../core'
 import { serve } from '../worker'
-import { listSources, readSlice, rowsFromLines } from '../indexer'
-import { openStore } from '../store'
+import { GIVE_UP_BYTES, SKIP_BYTES, headHash, indexNext, listSources, readSlice, rowsFromLines } from '../indexer'
+import { MARK_CLOSE, MARK_OPEN, indexText, isCorruption, openStore } from '../store'
 import { identifierShadowTerms, indexTokens, planQuery } from '../query'
 
 const C1 = '11111111-2222-4333-8444-555555555555'
@@ -88,6 +88,40 @@ describe('reading the agents files', () => {
     expect(small.next).toBe(8)
     expect(rowsFromLines('claude', [JSON.stringify({ type: 'user', message: { content: 'hi' } })])).toEqual([{ role: 'user', text: 'hi', ts: null }])
   })
+
+  it('an endless line is passed over a bounded run at a time, and the file given up past the limit', () => {
+    // 9 MB without a line end, then a line: SKIP_BYTES per call, never more.
+    const f = put('big.jsonl', 'x'.repeat(9 * 1024 * 1024) + '\n{"after":1}\n')
+    const one = readSlice(f, 0, 1024)
+    expect(one).toMatchObject({ lines: [], next: SKIP_BYTES, done: false, skipped: SKIP_BYTES })
+    const two = readSlice(f, one.next, 1024)
+    expect(two).toMatchObject({ next: 2 * SKIP_BYTES, skipped: SKIP_BYTES })
+    const three = readSlice(f, two.next, 1024)
+    expect(three).toMatchObject({ lines: [], next: 9 * 1024 * 1024 + 1, skipped: 0, done: false })
+    expect(readSlice(f, three.next, 1024).lines).toEqual(['{"after":1}'])
+    // Given up: a file whose endless line already ran to the limit.
+    const store = openStore(':memory:')
+    const g = put('.claude/projects/p/' + C1 + '.jsonl', 'y'.repeat(600 * 1024))
+    const root = join(home, '.claude', 'projects')
+    store.noteFile({ path: g, agent: 'claude', mtimeMs: 1, size: 600 * 1024 })
+    store.addSlice({ file: g, agent: 'claude', rows: [], offset: 0, done: false, skipped: GIVE_UP_BYTES - 1, session: {} })
+    expect(indexNext(store, { sources: new Map([[g, { root }]]) })).toBe(true)
+    expect(store.counts()).toMatchObject({ filesFailed: 1, filesDue: 0 })
+    store.close()
+  })
+
+  it('reads a plain file inside the agent folder only, checked on the open file, not the path', () => {
+    const f = put('.claude/projects/p/' + C1 + '.jsonl', '{"a":1}\n')
+    expect(readSlice(f, 0, 1024, { root: join(home, '.claude', 'projects') }).lines).toEqual(['{"a":1}'])
+    expect(() => readSlice(f, 0, 1024, { root: join(home, '.codex') })).toThrow()
+    expect(() => readSlice(join(home, '.claude', 'projects', 'p'), 0, 1024, { root: join(home, '.claude', 'projects') })).toThrow()
+    // A file the scan did not list (no folder known for it) is not read.
+    const store = openStore(':memory:')
+    store.noteFile({ path: f, agent: 'claude', mtimeMs: 1, size: 8 })
+    indexNext(store, { sources: new Map() })
+    expect(store.counts()).toMatchObject({ filesIndexed: 0 })
+    store.close()
+  })
 })
 
 describe('session search', () => {
@@ -120,7 +154,7 @@ describe('session search', () => {
     const phrase = s.search({ query: 'release notes' })
     expect(phrase.route).toBe('phrase')
     expect(phrase.hits[0]).toMatchObject({ agent: 'claude', sessionId: C2, title: 'Write the release notes', cwd: 'C:\\proj\\sub', messageCount: 2 })
-    expect(phrase.hits[0].evidence.snippet).toContain('[[release notes]]')
+    expect(phrase.hits[0].evidence.snippet).toContain(`${MARK_OPEN}release notes${MARK_CLOSE}`)
     // All the words, not adjacent; then any of them.
     expect(s.search({ query: 'notes version' }).route).toBe('and')
     expect(ids({ query: 'hounds notes' }).sort()).toEqual([X1, C2].sort())
@@ -165,6 +199,38 @@ describe('session search', () => {
     expect(s.status().sessions).toBe(0)
   })
 
+  it('a file rewritten at the same size (its first bytes changed) is read again from the start', () => {
+    const long = (word) => `${word} ${'lorem ipsum '.repeat(500)}`
+    const f = claude(C1, 'C:\\proj', [[long('pelicans'), 'ok']])
+    expect(headHash(f)).toMatch(/^[a-f0-9]{40}$/)
+    const s = service({ scanEveryMs: 0 })
+    s.enable()
+    drain(s)
+    expect(s.search({ query: 'pelicans' }).hits).toHaveLength(1)
+    const before = fs.statSync(f).size
+    claude(C1, 'C:\\proj', [[long('flamingo'), 'ok']], NOW + 5000)
+    expect(fs.statSync(f).size).toBe(before)
+    s.runOnce()
+    drain(s)
+    expect(s.search({ query: 'pelicans' }).hits).toEqual([])
+    expect(s.search({ query: 'flamingo' }).hits).toHaveLength(1)
+  })
+
+  it('a slow slice is followed by a longer pause', () => {
+    claude(C1, 'C:\\proj', [['slow', 'ok']])
+    let t = NOW
+    const pending = []
+    const s = createSessionSearchCore({ dir, home, now: () => (t += 40), sliceGapMs: 25, timers: { setTimeout: (fn, ms) => (pending.push({ fn, ms }), 1), clearTimeout: () => {} } })
+    search = s
+    s.enable()
+    const first = pending.pop()
+    expect(first.ms).toBe(25)
+    // The clock moves 40 ms at each look: a tick measures at least 80 ms, so
+    // the pause after it is at least three times that, not the 25 ms floor.
+    first.fn()
+    expect(pending.pop().ms).toBeGreaterThanOrEqual(240)
+  })
+
   it('paused while the window is hidden; turned off, it keeps the index; cleared, the index file goes (never the agent files)', () => {
     const f = claude(C1, 'C:\\proj', [['keep me', 'kept']])
     let paused = true
@@ -192,20 +258,67 @@ describe('session search', () => {
     expect(fs.existsSync(f)).toBe(true)
   })
 
-  it('a database it cannot use is built again', () => {
+  it('a database it cannot use is built again: not a database, another schema, a missing column, torn while in use', () => {
+    const db = join(dir, 'session-search', 'index.sqlite')
     fs.mkdirSync(join(dir, 'session-search'), { recursive: true })
-    fs.writeFileSync(join(dir, 'session-search', 'index.sqlite'), 'this is not a database, not at all, just text'.repeat(200))
+    fs.writeFileSync(db, 'this is not a database, not at all, just text'.repeat(200))
     claude(C1, 'C:\\proj', [['after the rebuild', 'ok']])
     const s = service()
     expect(s.enable()).toEqual({ ok: true })
     drain(s)
     expect(s.search({ query: 'rebuild' }).hits).toHaveLength(1)
+    s.disable()
+    // The right version, a column short: rebuilt, so every query it prepares holds.
+    const { DatabaseSync } = process.getBuiltinModule('node:sqlite')
+    let raw = new DatabaseSync(db)
+    raw.exec('ALTER TABLE files DROP COLUMN head_hash')
+    raw.close()
+    s.enable()
+    drain(s)
+    expect(s.search({ query: 'rebuild' }).hits).toHaveLength(1)
+    s.disable()
+    raw = new DatabaseSync(db)
+    raw.exec("UPDATE meta SET value = '999' WHERE key = 'schema_version'")
+    raw.close()
+    s.enable()
+    drain(s)
+    expect(s.search({ query: 'rebuild' }).hits).toHaveLength(1)
+    // What SQLite reports on a file torn under it, and nothing else.
+    expect(isCorruption({ errcode: 11, message: 'database disk image is malformed' })).toBe(true)
+    expect(isCorruption({ errcode: 26 })).toBe(true)
+    expect(isCorruption({ errcode: 1, message: 'no such table' })).toBe(false)
+  })
+
+  it('what it deletes is gone from the file too (secure delete, then the space given back)', () => {
+    const f = claude(C1, 'C:\\proj', [['the word okapisecret stays private', 'ok']])
+    const s = service({ scanEveryMs: 0 })
+    s.enable()
+    drain(s)
+    expect(s.search({ query: 'okapisecret' }).hits).toHaveLength(1)
+    fs.rmSync(f)
+    s.runOnce()
+    drain(s)
+    s.disable()
+    expect(fs.readFileSync(join(dir, 'session-search', 'index.sqlite'), 'latin1')).not.toContain('okapisecret')
+  })
+
+  it('clearing while a file is held says busy (Windows) instead of pretending', () => {
+    claude(C1, 'C:\\proj', [['held', 'ok']])
+    const s = service()
+    s.enable()
+    drain(s)
+    const { DatabaseSync } = process.getBuiltinModule('node:sqlite')
+    const other = new DatabaseSync(join(dir, 'session-search', 'index.sqlite'))
+    const res = s.clear()
+    other.close()
+    if (process.platform === 'win32') expect(res).toEqual({ ok: false, code: 'busy' })
+    else expect(res).toEqual({ ok: true })
   })
 
   it('tool output is indexed up to its cut; the store escapes LIKE wildcards in a folder', () => {
     const store = openStore(':memory:')
     store.noteFile({ path: 'f1', agent: 'claude', mtimeMs: 1, size: 1 })
-    store.addSlice({ file: 'f1', agent: 'claude', rows: [{ role: 'tool', text: `${'pad '.repeat(1000)} beyondthecut`, ts: 1 }, { role: 'tool', text: 'withinthecut', ts: 2 }], offset: 1, done: true, session: { id: 's1', title: 't', cwd: 'C:\\100%_done\\x' } })
+    store.addSlice({ file: 'f1', agent: 'claude', rows: [{ role: 'tool', text: `${'pad '.repeat(1000)} beyondthecut`, ts: 1 }, { role: 'tool', text: 'withinthecut', ts: 2 }], offset: 1, done: true, session: { id: 'session-1', title: 't', cwd: 'C:\\100%_done\\x' } })
     expect(store.search({ query: 'withinthecut' }).hits).toHaveLength(1)
     expect(store.search({ query: 'beyondthecut' }).hits).toHaveLength(0)
     expect(store.search({ query: 'withinthecut', scope: { kind: 'project', path: 'C:\\100%_done' } }).hits).toHaveLength(1)
@@ -246,6 +359,20 @@ describe('session search from the main process (its own process does the work)',
   }
   const noTimers = { setTimeout: () => 1, clearTimeout: () => {}, setInterval: () => 1, clearInterval: () => {} }
 
+  it('off with an index left on disk: its size is told and it can be cleared, without starting anything', async () => {
+    fs.mkdirSync(join(dir, 'session-search'), { recursive: true })
+    fs.writeFileSync(join(dir, 'session-search', 'index.sqlite'), 'x'.repeat(5000))
+    fs.writeFileSync(join(dir, 'session-search', 'index.sqlite-wal'), 'x'.repeat(1000))
+    const { fork, forks } = fakeFork()
+    const s = createSessionSearch({ dir, fork })
+    expect((await s.status()).sizeBytes).toBe(6000)
+    expect(await s.clear()).toEqual({ ok: true })
+    expect(fs.readdirSync(join(dir, 'session-search'))).toEqual([])
+    expect(forks).toHaveLength(0)
+    expect(fork).not.toHaveBeenCalled()
+    s.close()
+  })
+
   it('off: no process is started, a status and a search are answered here', async () => {
     const { fork } = fakeFork()
     const s = createSessionSearch({ dir, fork, timers: noTimers })
@@ -269,7 +396,7 @@ describe('session search from the main process (its own process does the work)',
     expect(res.ok).toBe(true)
     // Masked before it leaves the main side: neither the passage nor the title carries the secret.
     expect(JSON.stringify(res.hits)).not.toContain('abcdef0123456789')
-    expect(res.hits[0].evidence.snippet).toContain('[[')
+    expect(res.hits[0].evidence.snippet).toContain(MARK_OPEN)
     expect((await s.status()).enabled).toBe(true)
     expect(await s.disable()).toEqual({ ok: true })
     expect(forks[0].killed).toBe(true)
@@ -303,7 +430,33 @@ describe('session search from the main process (its own process does the work)',
     s.close()
   })
 
-  it('a passage keeps its marks and loses its secrets', () => {
-    expect(maskSnippet('use [[Bearer]] abcdef0123456789abcdef0123456789abcd now')).toBe('use [[Bearer]] *** now')
+})
+
+describe('what a result may carry', () => {
+  it('secrets are masked as the text is indexed: a match on the key\'s name never brings its value back, even highlighted', () => {
+    expect(indexText(`API_KEY=abcdef0123456789abcdef0123456789 ${MARK_OPEN}fake${MARK_CLOSE} mark`)).toBe('API_KEY=*** fake mark')
+    const store = openStore(':memory:')
+    store.noteFile({ path: 'f1', agent: 'claude', mtimeMs: 1, size: 1 })
+    store.addSlice({ file: 'f1', agent: 'claude', rows: [{ role: 'user', text: `please use API_KEY=abcdef0123456789abcdef0123456789 and Bearer abcdef0123456789abcdef0123456789abcd here`, ts: 1 }], offset: 1, done: true, session: { id: 'session-1', title: 'token=abcdef0123456789abcdef0123456789', cwd: 'C:\\p' } })
+    const [hit] = store.search({ query: 'API_KEY' }).hits
+    expect(hit.title).toBe('token=***')
+    expect(hit.evidence.snippet).toBe(`please use ${MARK_OPEN}API_KEY${MARK_CLOSE}=*** and Bearer *** here`)
+    expect(store.search({ query: 'abcdef0123456789' }).hits).toEqual([])
+    store.close()
+  })
+
+  it('a row naming an agent Tessel does not know, or a session id of another shape, is never a result', () => {
+    const store = openStore(':memory:')
+    const add = (file, agent, id) => {
+      store.noteFile({ path: file, agent, mtimeMs: 1, size: 1 })
+      store.addSlice({ file, agent, rows: [{ role: 'user', text: 'the same words', ts: 1 }], offset: 1, done: true, session: { id, title: 't', cwd: 'C:\\p' } })
+    }
+    add('f1', 'claude', C1)
+    add('f2', 'rm -rf', C2)
+    add('f3', 'codex', '--resume ../x')
+    add('f4', 'codex', 'ab')
+    expect(store.search({ query: 'same words' }).hits.map((h) => h.sessionId)).toEqual([C1])
+    expect(store.search({ query: '' }).hits.map((h) => h.sessionId)).toEqual([C1])
+    store.close()
   })
 })

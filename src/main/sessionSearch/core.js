@@ -14,21 +14,13 @@
 import fs from 'fs'
 import os from 'os'
 import { join } from 'path'
-import { openStore, removeDatabase, sqliteAvailable } from './store.js'
-import { indexNext, isTitleOnly, listSources } from './indexer.js'
-import { maskSecrets } from '../../shared/maskSecrets.js'
+import { databaseSize, isCorruption, openStore, removeDatabase, sqliteAvailable } from './store.js'
+import { headHash, indexNext, isTitleOnly, listSources } from './indexer.js'
 
 export const HISTORY_DAYS = [30, 90, 365, 0] // 0: everything
 const DEFAULT_POLICY = { enabled: false, historyDays: 90 }
 const DAY = 24 * 60 * 60 * 1000
-
-// A passage with its matches between [[ and ]]: each part masked, the marks kept.
-export function maskSnippet(snippet) {
-  return String(snippet || '')
-    .split(/(\[\[|\]\])/)
-    .map((part) => (part === '[[' || part === ']]' ? part : maskSecrets(part)))
-    .join('')
-}
+const PAUSE_FACTOR = 3
 
 export function createSessionSearchCore({
   dir,
@@ -37,7 +29,9 @@ export function createSessionSearchCore({
   isPaused = () => false,
   now = Date.now,
   timers = { setTimeout, clearTimeout },
-  // Between two slices; between two looks at the folders; while paused.
+  // Between two slices (at least: a slow slice is followed by a pause of
+  // PAUSE_FACTOR times its own length); between two looks at the folders;
+  // while paused.
   sliceGapMs = 25,
   scanEveryMs = 60 * 1000,
   // The other agents' titles (their readers open more files): less often.
@@ -83,10 +77,19 @@ export function createSessionSearchCore({
     const kept = withTitles ? [] : [...sources.values()].filter((s) => isTitleOnly(s.path))
     sources = new Map([...list, ...kept].map((s) => [s.path, s]))
     store.transaction(() => {
-      for (const s of list) store.noteFile(s)
+      for (const s of list) store.noteFile({ ...s, readHead: isTitleOnly(s.path) ? null : () => safeHead(s.path) })
       // Gone from the agent's folder, or older than what is kept: out of the index.
       for (const path of store.knownPaths()) if (!sources.has(path)) store.forgetFile(path)
     })
+    // Sessions that left: their space given back, their text not left behind.
+    store.compact()
+  }
+  function safeHead(path) {
+    try {
+      return headHash(path)
+    } catch {
+      return null
+    }
   }
 
   function stop() {
@@ -103,14 +106,23 @@ export function createSessionSearchCore({
     timer = null
     if (closed || !policy.enabled || !store) return
     if (isPaused()) return schedule(pausedRetryMs)
+    const started = now()
     try {
-      if (now() - lastScan >= scanEveryMs) scan()
+      if (started - lastScan >= scanEveryMs) scan()
       const more = indexNext(store, { sources })
-      schedule(more ? sliceGapMs : scanEveryMs)
+      schedule(more ? Math.max(sliceGapMs, PAUSE_FACTOR * (now() - started)) : scanEveryMs)
     } catch (err) {
+      if (isCorruption(err)) return rebuild(err)
       if (log) log.warn('sessionSearch', `indexing stopped for now: ${err && err.message}`) // i18n-ignore
       schedule(scanEveryMs)
     }
+  }
+  // A database SQLite finds torn while in use: a cache, built again.
+  function rebuild(err) {
+    if (log) log.warn('sessionSearch', `index rebuilt: ${err && err.message}`) // i18n-ignore
+    closeStore()
+    removeDatabase(dbPath)
+    start()
   }
 
   function start() {
@@ -131,17 +143,7 @@ export function createSessionSearchCore({
     store = null
   }
 
-  function sizeBytes() {
-    let n = 0
-    for (const suffix of ['', '-wal']) {
-      try {
-        n += fs.statSync(dbPath + suffix).size
-      } catch {
-        // not there
-      }
-    }
-    return n
-  }
+  const sizeBytes = () => databaseSize(dbPath)
 
   const api = {
     status() {
@@ -173,11 +175,13 @@ export function createSessionSearchCore({
       return { ok: true }
     },
     // Deletes the index (a copy: the agents' own files are never touched).
+    // Still turned on: built again from nothing. busy: a file is held by
+    // another process and stays.
     clear() {
       closeStore()
-      removeDatabase(dbPath)
+      const gone = removeDatabase(dbPath)
       start()
-      return { ok: true }
+      return gone ? { ok: true } : { ok: false, code: 'busy' }
     },
     search(q) {
       if (!policy.enabled) return { ok: false, code: 'disabled' }
@@ -187,16 +191,15 @@ export function createSessionSearchCore({
       const agents = Array.isArray(o.agents) ? o.agents.filter((a) => typeof a === 'string' && /^[a-z0-9-]{1,32}$/.test(a)).slice(0, 32) : null
       const started = now()
       try {
+        // The index holds the text with its secrets already masked (store.js,
+        // as it is written): a title or a passage never carries one.
         const res = store.search({ query: typeof o.query === 'string' ? o.query : '', scope, agents, limit: o.limit })
-        // Secrets are masked here, before anything leaves the main process
-        // (the index itself holds the text as the agents wrote it).
-        const hits = res.hits.map((h) => ({
-          ...h,
-          title: maskSecrets(h.title),
-          evidence: h.evidence ? { ...h.evidence, snippet: maskSnippet(h.evidence.snippet) } : null
-        }))
-        return { ok: true, ...res, hits, durationMs: now() - started }
+        return { ok: true, ...res, durationMs: now() - started }
       } catch (err) {
+        if (isCorruption(err)) {
+          rebuild(err)
+          return { ok: false, code: 'rebuilding' }
+        }
         if (log) log.warn('sessionSearch', `search failed: ${err && err.message}`) // i18n-ignore
         return { ok: false, code: 'failed' }
       }
@@ -204,8 +207,14 @@ export function createSessionSearchCore({
     // Tests and quitting.
     runOnce() {
       if (!store) return false
-      if (!lastScan || now() - lastScan >= scanEveryMs) scan()
-      return indexNext(store, { sources })
+      try {
+        if (!lastScan || now() - lastScan >= scanEveryMs) scan()
+        return indexNext(store, { sources })
+      } catch (err) {
+        if (!isCorruption(err)) throw err
+        rebuild(err)
+        return true
+      }
     },
     close() {
       closed = true

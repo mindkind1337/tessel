@@ -1,5 +1,5 @@
 import { app, BrowserWindow, Menu, ipcMain, clipboard, nativeImage, dialog, Notification, shell, powerSaveBlocker, powerMonitor, safeStorage, webContents, session, utilityProcess } from 'electron'
-import { join, isAbsolute, dirname } from 'path'
+import { join, isAbsolute, dirname, basename } from 'path'
 import os from 'os'
 import fs from 'fs'
 import { spawn, execFile } from 'child_process'
@@ -153,7 +153,8 @@ const NOT_COPIED = [
   'GPUCache',
   'DawnGraphiteCache',
   'DawnWebGPUCache',
-  'lockfile'
+  'lockfile',
+  'session-search'
 ]
 function copyUserData(from, to, skip) {
   const copyDir = (src, dest) => {
@@ -1135,8 +1136,15 @@ chatSessions.register(ipcMain)
 // Search in what was said in the agents' conversations: a local index, off
 // until the user turns it on; filled in the background by a process of its
 // own, not while the window is hidden or minimized (sessionSearch/index.js).
+function sessionSearchDir() {
+  const userData = app.getPath('userData')
+  const local = process.platform === 'win32' ? process.env.LOCALAPPDATA : ''
+  return local && !process.env.TESSEL_USER_DATA ? join(local, basename(userData)) : userData
+}
 const sessionSearch = createSessionSearch({
-  dir: app.getPath('userData'),
+  // Its index is local to this computer: under %LOCALAPPDATA% on Windows (not
+  // the roaming profile), else in the data folder (a private folder there).
+  dir: sessionSearchDir(),
   // Its own process: the index and the indexing never run in this one.
   fork: (dir) => utilityProcess.fork(join(__dirname, 'sessionSearchWorker.js'), [dir], { serviceName: 'Tessel session search' }),
   isPaused: () => !mainWindow || mainWindow.isDestroyed() || mainWindow.isMinimized() || !mainWindow.isVisible(),

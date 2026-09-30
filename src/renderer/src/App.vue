@@ -2764,12 +2764,10 @@ const openSessionIds = computed(() => {
 // Reopen a past conversation in a new pane, in the folder it ran in.
 async function resumeSession(s) {
   sessionsOpen.value = false
-  const agent = agentById(s.agent) || {
-    id: s.agent,
-    name: s.agent === 'claude' ? 'Claude Code' : 'Codex CLI', // i18n-ignore
-    command: s.agent,
-    accent: s.agent === 'claude' ? '#d97757' : '#10a37f'
-  }
+  // Only an agent of the catalog, by its id (a session list or a search index
+  // never names a command to run), with a session id of the expected shape.
+  const agent = s && agentById(s.agent)
+  if (!agent || !safeSessionId(s.id)) return
   const ws = currentWs.value
   if (!ws) return
   // A Codex session of a managed account resumes in that account (null: the
