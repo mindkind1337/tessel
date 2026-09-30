@@ -1454,7 +1454,9 @@ async function deserializeNode(snap, cwd = null) {
     leaf.model = flag(snap.model) || opencodeModel(snap.model)
     leaf.effort = flag(snap.effort)
     if (snap.worker === true) leaf.worker = true
-    if (snap.maxPermissions === 'manual') leaf.maxPermissions = 'manual'
+    // A worker's cap (its coordinator asked first) is kept; any other chat
+    // follows Settings again when Tessel starts (Yolo on: Yolo).
+    if (snap.maxPermissions === 'manual' && snap.worker === true) leaf.maxPermissions = 'manual'
     if (snap.worktree && typeof snap.worktree === 'object' && typeof snap.worktree.path === 'string') leaf.worktree = snap.worktree
     return leaf
   }
@@ -1501,7 +1503,9 @@ async function deserializeNode(snap, cwd = null) {
             : undefined,
         launchedAt: Number.isFinite(snap.launchedAt) ? snap.launchedAt : null,
         ...(validPaneSessionOptions(snap.sessionOptions) ? { sessionOptions: validPaneSessionOptions(snap.sessionOptions) } : {}),
-        ...(snap.permissions === 'manual' || snap.permissions === 'yolo' ? { permissions: snap.permissions } : {}),
+        // Only a Yolo pin survives a restart of Tessel: an "ask first" pane
+        // follows Settings again (Yolo on: every agent starts in Yolo).
+        ...(snap.permissions === 'yolo' ? { permissions: 'yolo' } : {}),
         restoredText: savedOutput[savedId] || '',
         sleeping: { at: snap.sleeping.at },
         broadcast: snap.broadcast !== false
@@ -1522,7 +1526,7 @@ async function deserializeNode(snap, cwd = null) {
       launchedAt: Number.isFinite(snap.launchedAt) ? snap.launchedAt : null,
       startDir: typeof snap.startDir === 'string' ? snap.startDir : null,
       sessionOptions: snap.sessionOptions,
-      permissions: snap.permissions,
+      permissions: snap.permissions === 'yolo' ? 'yolo' : undefined,
       resume: settings.resumeAgents,
       remoteHostId: typeof snap.remoteHostId === 'string' && /^ssh-[\w-]{1,60}$/.test(snap.remoteHostId) ? snap.remoteHostId : undefined,
       remotePath: typeof snap.remotePath === 'string' && snap.remotePath.length <= 1024 ? snap.remotePath : undefined,
