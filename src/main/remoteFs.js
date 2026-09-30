@@ -31,6 +31,7 @@ import { parseRemotePath, remoteRoot, relativeTo, childPath, isRemotePath } from
 import { fileKind, extOf, IMAGE_MIME } from '../shared/fileKinds'
 import { t } from './i18n'
 import { validateCloneUrl, deriveCloneRepoName, cloneFailureMessage, errorText as addProjectErrorText } from './addProject'
+import { parseWorktreeList, MAX_WORKTREES } from './worktreeList'
 
 export const SESSION_PREFIX = 'rfs:'
 const MAX_ENTRIES = 5000
@@ -55,6 +56,10 @@ export const MAX_BROWSE_ENTRIES = 2000
 const BROWSE_TIMEOUT_MS = 20_000
 const CLONE_TIMEOUT_MS = 10 * 60 * 1000
 const NEWPROJ_TIMEOUT_MS = 60_000
+// The sidebar's branch and worktrees of a remote project: bounded output
+// (a few hundred worktrees fit) and time.
+export const WORKTREES_OUTPUT = 256 * 1024
+const WORKTREES_TIMEOUT_MS = 15_000
 
 const arg = (path) => rawArg(remotePathArg(path))
 const joinPath = (base, rel) => (rel ? (base.endsWith('/') ? `${base}${rel}` : `${base}/${rel}`) : base)
@@ -117,6 +122,43 @@ export function parseBrowse(buf, max = MAX_BROWSE_ENTRIES) {
   }
   entries.sort((a, b) => (a.dir !== b.dir ? (a.dir ? -1 : 1) : a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })))
   return { path, entries, truncated: count > max }
+}
+
+// The host's answer to __t_wtl: a header ("tessel-wtl 1", root, top, branch,
+// head lines), a blank line, then `git worktree list --porcelain`.
+// truncated: the output was cut at its cap (its last, partial worktree is
+// left out). -> { root, top, branch, head, worktrees: [{ path, branch,
+// head, isMain, locked, prunable }] } | null when the header is not there.
+export function parseRemoteWorktrees(buf, { truncated = false, max = MAX_WORKTREES } = {}) {
+  const text = Buffer.isBuffer(buf) ? buf.toString('utf8') : String(buf || '')
+  const cut = text.indexOf('\n\n')
+  const head = (cut < 0 ? text : text.slice(0, cut)).split('\n')
+  if (head[0] !== 'tessel-wtl 1') return null
+  const field = (name) => {
+    const line = head.find((l) => l.startsWith(`${name} `) || l === name)
+    return line ? line.slice(name.length + 1) : null
+  }
+  const root = field('root')
+  const top = field('top')
+  if (!root || !top || !root.startsWith('/') || !top.startsWith('/')) return null
+  const branch = field('branch') || ''
+  const sha = field('head') || ''
+  let body = cut < 0 ? '' : text.slice(cut + 2)
+  // Cut at its cap: only whole worktrees (a block ends with a blank line).
+  if (truncated) {
+    const last = body.lastIndexOf('\n\n')
+    body = last < 0 ? '' : body.slice(0, last)
+  }
+  const worktrees = parseWorktreeList(body, max).filter(
+    (w) => w.path.startsWith('/') && !CONTROL.test(w.path) && !w.path.includes('\\') && !CONTROL.test(w.branch)
+  )
+  return {
+    root,
+    top,
+    branch: CONTROL.test(branch) ? '' : branch,
+    head: /^[0-9a-f]{7,64}$/.test(sha) ? sha : '',
+    worktrees
+  }
 }
 
 // A relative path from the window ("a/b", git's) -> clean "a/b", or null.
@@ -384,12 +426,14 @@ export function createRemoteFs({
   }
 
   // One operation: -> { rc, out, err, truncated } | { error }. quiet: a poll
-  // (never starts a session, never shows as activity).
-  async function call(hostId, fn, args, { cap, timeoutMs, upload, op = '', quiet = false } = {}) {
+  // (never starts a session, never shows as activity). ifOpen: like quiet,
+  // but waits its turn behind a busy session instead of being skipped.
+  async function call(hostId, fn, args, { cap, timeoutMs, upload, op = '', quiet = false, ifOpen = false } = {}) {
     let session
     const entry0 = sessions.get(hostId)
+    if (ifOpen) quiet = true
     if (quiet) {
-      if (!entry0 || !entry0.session || entry0.session.state !== 'ready' || entry0.session.busy) return { skipped: true }
+      if (!entry0 || !entry0.session || entry0.session.state !== 'ready' || (entry0.session.busy && !ifOpen)) return { skipped: true }
       session = entry0.session
     } else {
       try {
@@ -405,7 +449,7 @@ export function createRemoteFs({
       activity(hostId, entry)
     }
     try {
-      return await session.run(fn, args, { ...(cap ? { cap } : {}), ...(timeoutMs ? { timeoutMs } : {}), ...(upload ? { upload } : {}) })
+      return await session.run(fn, args, { ...(cap ? { cap } : {}), ...(timeoutMs ? { timeoutMs } : {}), ...(upload ? { upload } : {}), ...(ifOpen ? { touch: false } : {}) })
     } catch (err) {
       return { error: sessionErrorText(hostId, err) }
     } finally {
@@ -1063,6 +1107,38 @@ export function createRemoteFs({
     return out
   }
 
+  // --- The sidebar's branch and worktrees -------------------------------------------
+  // Like worktreeList.js for a local project, over the host's session, and
+  // only when that session is already signed in (never a password question
+  // from a background refresh: a host not connected keeps what was shown).
+  // Paths come back as the window addresses them (virtual). ->
+  // { ok: true, repo, branch, head, worktrees: [{ path, branch, head, isMain,
+  // locked, prunable, self }] } | { ok: false, error: 'invalid' |
+  // 'unknown-folder' | 'not-repo' | 'offline' | 'failed' }
+  async function gitWorktrees(root) {
+    if (!isRemotePath(root)) return { ok: false, error: 'invalid' }
+    const r = rootOf(root)
+    if (!r) return { ok: false, error: 'unknown-folder' }
+    const res = await call(r.hostId, '__t_wtl', [arg(r.path), String(MAX_WORKTREES + 1)], { cap: WORKTREES_OUTPUT, timeoutMs: WORKTREES_TIMEOUT_MS, ifOpen: true })
+    if (res.skipped) return { ok: false, error: 'offline' }
+    if (res.error) return { ok: false, error: 'failed' }
+    if (res.rc === RC.NOT_REPO || res.rc === RC.NO_GIT || res.rc === RC.MISSING) return { ok: true, repo: false, branch: '', head: '', worktrees: [] }
+    const truncated = !!res.truncated || res.rc === RC.PIPE
+    if (res.rc !== 0 && !truncated) return { ok: false, error: 'failed' }
+    const parsed = parseRemoteWorktrees(res.out, { truncated })
+    if (!parsed) return { ok: false, error: 'failed' }
+    r.real = parsed.root
+    const worktrees = []
+    for (const w of parsed.worktrees) {
+      const path = remoteRoot(r.hostId, w.path)
+      if (!path) continue
+      // The project's own checkout (its repository's top: the project
+      // folder or a folder above it) is the project's card, not another branch.
+      worktrees.push({ ...w, path, ...(w.path === parsed.top ? { self: true } : {}) })
+    }
+    return { ok: true, repo: true, branch: parsed.branch, head: parsed.head, truncated, worktrees }
+  }
+
   // --- Add a project on the host ------------------------------------------------
   // The one exception to "only below a saved project": the window picks a
   // folder on the host before any project exists. Only through the host's
@@ -1185,6 +1261,7 @@ export function createRemoteFs({
     // Discard sends untracked files to the host's trash (no Recycle Bin here).
     scm: { ...scm, scmDiscard: (q) => scm.scmDiscard(q) },
     remoteOnly,
+    gitWorktrees,
     connect,
     browse,
     cloneProject,

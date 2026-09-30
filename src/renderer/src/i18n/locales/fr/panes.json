@@ -144,6 +144,7 @@
       "unread": "Non lu :",
       "primaryHint": "Worktree principal (dossier du clone d'origine)",
       "primary": "principal",
+      "onHost": "Hôte SSH",
       "agentsLabel": "Agents",
       "collapse": "Réduire {{subject}}",
       "expand": "Développer {{summary}}. {{identities}}",

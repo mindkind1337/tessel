@@ -8,7 +8,7 @@
 // Its details (title, branch, status, folder, live ports) show in Orca's
 // WorktreeCardDetailsHover card instead of native tooltips.
 import { computed, useId } from 'vue'
-import { Bell, ChevronDown, Folder, Plug } from 'lucide-vue-next'
+import { Bell, ChevronDown, Folder, Plug, Server } from 'lucide-vue-next'
 import BrandIcon from '../BrandIcon.vue'
 import AgentStateDot from './AgentStateDot.vue'
 import CompactAgentRow from './CompactAgentRow.vue'
@@ -59,7 +59,7 @@ const hasPorts = computed(() => props.showPorts && props.ports.length > 0)
 // Orca: the branch shows under the title unless compact cards repeat it.
 const showBranch = computed(() => !!card.value.branch && (!props.compactCards || card.value.branch !== card.value.title))
 const hasMetaRow = computed(() =>
-  props.compactCards ? false : !!(showBranch.value || hasPorts.value || props.showProjectBadge)
+  props.compactCards ? false : !!(showBranch.value || hasPorts.value || props.showProjectBadge || card.value.host)
 )
 const showTitleRowIndicators = computed(() => props.compactCards && hasPorts.value)
 const showInlineAgents = computed(() => props.showAgents && rows.value.length > 0)
@@ -106,7 +106,7 @@ const statusLine = computed(() =>
   card.value.isUnread ? t('sidebar.hover.statusUnread', '{{status}} · Unread', { status: statusLabel.value }) : statusLabel.value
 )
 // The old native tooltips' text (branch, folder), for screen readers.
-const cardDescription = computed(() => [card.value.branch, card.value.path].filter(Boolean).join(', '))
+const cardDescription = computed(() => [card.value.host, card.value.branch, card.value.path].filter(Boolean).join(', '))
 function pickHint(r) {
   return props.picking && props.picking.active ? props.picking.why(r) || '' : ''
 }
@@ -208,6 +208,16 @@ function onCardClick(e) {
                 <span v-if="showProjectBadge" class="wtc-repo-badge">
                   <span class="wtc-repo-dot"></span>
                   <span class="wtc-repo-name">{{ projectName }}</span>
+                </span>
+                <!-- A project on an SSH host: a chip with its host. -->
+                <span
+                  v-if="card.host"
+                  class="wtc-repo-badge wtc-host-chip"
+                  data-test="card-remote-host"
+                >
+                  <Server :size="10" aria-hidden="true" />
+                  <span class="sr-only">{{ t('sidebar.card.onHost', 'SSH host') }}</span>
+                  <span class="wtc-repo-name wtc-host-name">{{ card.host }}</span>
                 </span>
                 <span v-if="showBranch" class="wtc-branch">{{
                   card.branch

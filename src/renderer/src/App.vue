@@ -3828,12 +3828,25 @@ watch(
 // The sidebar's projects (Orca's logic, see sidebarModel.js): each workspace
 // with its folder's git branch, its task copies and every pane (agent or
 // terminal) with its live state.
-const wsBranches = reactive({}) // ws.cwd -> git branch ('' when not a repo)
+const wsBranches = reactive({}) // ws.cwd (or a remote project's virtual root) -> git branch ('' when not a repo)
 // Each project's git worktrees (its "other branches" in the sidebar), read
 // when the branches are and only while the window is visible.
-const wsWorktrees = reactive({}) // ws.cwd -> [{ path, branch, head, isMain, locked, prunable }]
+const wsWorktrees = reactive({}) // ws.cwd (or virtual root) -> [{ path, branch, head, isMain, locked, prunable, self? }]
+// A project on an SSH host is keyed by its virtual root (ssh://…): its
+// branch comes with its worktrees, read over the host's session only when
+// it is already signed in (src/main/remoteFs.js gitWorktrees); a host not
+// connected keeps what was last shown.
+const gitKeyOf = (w) => (w.remote ? remoteRoot(w.remote.hostId, w.remote.path) : w.cwd)
 const projectWorktrees = createProjectWorktrees({
-  list: (cwd) => (window.shellApi.gitWorktrees ? window.shellApi.gitWorktrees(cwd) : Promise.resolve(null)),
+  list: async (key) => {
+    if (!window.shellApi.gitWorktrees) return null
+    const res = await window.shellApi.gitWorktrees(key)
+    if (isRemotePath(key) && res && res.ok) {
+      const branch = res.repo ? res.branch || '' : ''
+      if (wsBranches[key] !== branch) wsBranches[key] = branch
+    }
+    return res
+  },
   store: wsWorktrees
 })
 function onVisibleWorktrees() {
@@ -3841,9 +3854,31 @@ function onVisibleWorktrees() {
 }
 document.addEventListener('visibilitychange', onVisibleWorktrees)
 onBeforeUnmount(() => document.removeEventListener('visibilitychange', onVisibleWorktrees))
+// A host that signs in (a remote project's Files, a terminal, Add a
+// project): its projects' branches are read now.
+const remoteReady = new Set()
+let offRemoteBranches = null
+onMounted(() => {
+  const api = window.shellApi.remoteFs
+  if (!api || !api.onActivity) return
+  offRemoteBranches = api.onActivity((a) => {
+    if (!a || typeof a.hostId !== 'string') return
+    const ready = a.state === 'ready' || a.state === 'busy'
+    if (!ready) {
+      remoteReady.delete(a.hostId)
+      return
+    }
+    if (remoteReady.has(a.hostId)) return
+    remoteReady.add(a.hostId)
+    if (workspaces.value.some((w) => w.remote && w.remote.hostId === a.hostId)) refreshBranches()
+  })
+})
+onBeforeUnmount(() => offRemoteBranches && offRemoteBranches())
 async function refreshBranches() {
   const cwds = [...new Set(workspaces.value.map((w) => w.cwd).filter(Boolean))]
-  projectWorktrees.refresh(cwds)
+  const remotes = [...new Set(workspaces.value.filter((w) => w.remote).map(gitKeyOf).filter(Boolean))]
+  projectWorktrees.refresh([...cwds, ...remotes])
+  for (const key of Object.keys(wsBranches)) if (isRemotePath(key) && !remotes.includes(key)) delete wsBranches[key]
   if (!window.shellApi.gitInfo) return
   for (const cwd of cwds) {
     try {
@@ -3855,7 +3890,7 @@ async function refreshBranches() {
     }
   }
 }
-watch(() => workspaces.value.map((w) => w.cwd || '').join('|'), refreshBranches, { immediate: true })
+watch(() => workspaces.value.map((w) => gitKeyOf(w) || '').join('|'), refreshBranches, { immediate: true })
 function onWindowFocusBranches() {
   refreshBranches()
 }
@@ -3922,10 +3957,10 @@ const sidebarProjects = computed(() =>
       id: w.id,
       name: w.name,
       cwd: w.cwd || null,
-      branch: (w.cwd && wsBranches[w.cwd]) || '',
+      branch: (gitKeyOf(w) && wsBranches[gitKeyOf(w)]) || '',
       panes,
       copies,
-      worktrees: (w.cwd && wsWorktrees[w.cwd]) || [],
+      worktrees: (gitKeyOf(w) && wsWorktrees[gitKeyOf(w)]) || [],
       ...(w.remote ? { remote: { host: remoteHostLabel(w.remote.hostId), path: w.remote.path } } : {}),
       ...(w.group ? { repoCount: w.group.repos.length } : {})
     }
@@ -4005,6 +4040,23 @@ async function openCard({ wsId, path, isMain }) {
   const ws = wsById(wsId)
   if (!ws) return
   selectWorkspace(ws.id)
+  // One of a remote project's other branches (a worktree on its host): a
+  // terminal on that host, in that folder.
+  if (ws.remote && !isMain) {
+    const at = parseRemotePath(path)
+    if (!at || at.hostId !== ws.remote.hostId) return
+    const opts = { remoteHostId: ws.remote.hostId, remotePath: at.path }
+    if (!ws.tree) {
+      const leaf = await createLeaf(selectedShell.value, null, null, null, opts)
+      if (leaf && wsById(wsId)) {
+        ws.tree = leaf
+        ws.activeId = leaf.id
+      }
+      return
+    }
+    await splitLeaf(ws.activeId || largestLeaf(ws.tree).id, 'row', null, selectedShell.value, null, opts)
+    return
+  }
   const task = !isMain ? boardTasks.find((t) => t.wsId === ws.id && t.worktree && t.worktree.path === path) : null
   // One of the project's other branches (a git worktree with no task): its
   // pane is in that copy, so it gets its card like any copy with panes.

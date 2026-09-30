@@ -114,6 +114,8 @@ export const FUNCTIONS = new Set([
   '__t_grep',
   '__t_fp',
   '__t_nop',
+  // The sidebar's branch and worktrees of a remote project (read-only).
+  '__t_wtl',
   // Add a project on the host (remoteFs.js: browse, clone, create). Not
   // bound to a project folder: the folder picker lists any folder the
   // signed-in user can read (names and kinds only, never contents), and a
@@ -367,6 +369,30 @@ __t_fp() {
   mv -f "$__m.n" "$__m"
   if [ -n "$__x" ]; then echo changed; else echo same; fi
 }
+__t_wtl() {
+  __t_root "$1" || return $?
+  case $2 in ''|*[!0-9]*) return 90 ;; esac
+  command -v git >/dev/null 2>&1 || return 81
+  __t=$(__t_git "$__R" -c core.hooksPath=/nonexistent-tessel-no-hooks rev-parse --show-toplevel 2>/dev/null) || return 80
+  __q=$(__t_real "$__t") && [ -n "$__q" ] && __t=$__q
+  __b=$(__t_git "$__R" -c core.hooksPath=/nonexistent-tessel-no-hooks symbolic-ref -q --short HEAD 2>/dev/null) || __b=
+  __h=$(__t_git "$__R" -c core.hooksPath=/nonexistent-tessel-no-hooks rev-parse -q --verify HEAD 2>/dev/null) || __h=
+  printf 'tessel-wtl 1\\nroot %s\\ntop %s\\nbranch %s\\nhead %s\\n\\n' "$__R" "$__t" "$__b" "$__h"
+  __t_git "$__R" -c core.hooksPath=/nonexistent-tessel-no-hooks -c protocol.ext.allow=never worktree list --porcelain | {
+    __n=0
+    while IFS= read -r __l; do
+      case $__l in
+        'worktree '*)
+          __n=$((__n+1)); [ "$__n" -gt "$2" ] && break
+          __w=\${__l#worktree }
+          __q=$(cd -P "$__w" 2>/dev/null && pwd -P) || __q=
+          [ -n "$__q" ] || __q=$__w
+          printf 'worktree %s\\n' "$__q" ;;
+        *) printf '%s\\n' "$__l" ;;
+      esac
+    done
+  }
+}
 __t_dir() { [ -d "$1" ] || return 91; __PD=$(cd -P "$1" 2>/dev/null && pwd -P) || return 89; [ -n "$__PD" ] || return 91; }
 __t_browse() {
   __t_dir "$1" || return $?
@@ -562,7 +588,7 @@ export function createRemoteSession({
     const c = current
     current = null
     timers.clearTimeout(c.timer)
-    lastUsed = Date.now()
+    if (c.touch !== false) lastUsed = Date.now()
     const out = Buffer.from(c.out.join(''), 'base64')
     const err = Buffer.from(c.err.join(''), 'base64').toString('utf8')
     c.resolve({ rc: c.rc, out, err, truncated: out.length >= c.cap })
@@ -638,7 +664,7 @@ export function createRemoteSession({
 
   // -> Promise<{ rc, out: Buffer, err: string, truncated }>; rejects with an
   // error whose code is the session's end (timeout, closed, cancelled…).
-  function run(fn, args = [], { cap = 4 * 1024 * 1024, timeoutMs = DEFAULT_TIMEOUT_MS, upload = null } = {}) {
+  function run(fn, args = [], { cap = 4 * 1024 * 1024, timeoutMs = DEFAULT_TIMEOUT_MS, upload = null, touch = true } = {}) {
     if (state === 'closed') return Promise.reject(sessionError(closedReason || 'closed'))
     let script
     const id = ++seq
@@ -648,7 +674,7 @@ export function createRemoteSession({
       return Promise.reject(Object.assign(new Error(err.message), { code: 'bad-argument' }))
     }
     return new Promise((resolve, reject) => {
-      queue.push({ id, cap, script, timeoutMs, resolve, reject })
+      queue.push({ id, cap, script, timeoutMs, touch, resolve, reject })
       pump()
     })
   }

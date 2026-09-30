@@ -9086,6 +9086,16 @@ button.act-stat:hover,
   white-space: nowrap;
 }
 
+/* A project on an SSH host: its host's chip (a server and the host name). */
+.wtc-host-chip {
+  gap: 4px;
+  color: var(--wts-muted);
+}
+.wtc-host-name {
+  max-width: 8rem;
+  text-transform: none;
+}
+
 /* The agents and terminals of a workspace (Orca's compact agent list). */
 .wtc-agents {
   display: flex;

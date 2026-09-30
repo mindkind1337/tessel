@@ -325,6 +325,8 @@ export function buildProjectCards(project, now = Date.now()) {
     branch: project.branch || '',
     title: project.cwd ? folderName(project.cwd) : project.name,
     taskId: null,
+    // A project on an SSH host: its host, shown as a chip on the card.
+    ...(project.remote && project.remote.host ? { host: project.remote.host } : {}),
     panes: []
   }
   cards.push(main)
@@ -381,7 +383,8 @@ export function projectOtherBranches(project, cards = buildProjectCards(project)
   const out = []
   for (const w of project.worktrees || []) {
     if (!w || typeof w.path !== 'string' || !w.path || w.prunable) continue
-    if (samePath(w.path, project.cwd)) continue
+    // The project's own checkout (a remote project's: git's word, self).
+    if (w.self || samePath(w.path, project.cwd)) continue
     if (cards.some((c) => !c.isMain && samePath(c.path, w.path))) continue
     if (out.some((o) => samePath(o.path, w.path))) continue
     const head = typeof w.head === 'string' ? w.head.slice(0, 7) : ''

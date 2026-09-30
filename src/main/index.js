@@ -1463,7 +1463,8 @@ ipcMain.handle(
 const worktreeList = createWorktreeList()
 ipcMain.handle(
   'git:worktrees',
-  safe((cwd) => worktreeList.list(cwd))
+  // A remote project's (its virtual root): over its host's signed-in session.
+  safe((cwd) => (isRemotePath(cwd) ? remoteFs.gitWorktrees(cwd) : worktreeList.list(cwd)))
 )
 ipcMain.handle(
   'git:createWorktree',
