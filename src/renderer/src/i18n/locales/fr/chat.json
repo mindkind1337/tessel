@@ -47,8 +47,6 @@
     },
     "composer": {
       "placeholder": "Écrire à {{agent}}…",
-      "placeholderBusy": "Écrire à {{agent}} (envoyé à la fin du tour)…",
-      "placeholderSteer": "Écrire à {{agent}} (envoyé tout de suite, rejoint le tour en cours)…",
       "label": "Message",
       "send": "Envoyer",
       "sendHint": "Envoyer (Entrée) · nouvelle ligne : Maj+Entrée",

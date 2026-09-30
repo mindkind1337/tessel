@@ -31,8 +31,6 @@ import NativeChatComposerField from './NativeChatComposerField.vue'
 import { CHAT_IMAGE_ACCEPT } from '../../../chat/orca/native-chat-images.js'
 
 const props = defineProps(nativeChatComposerProps)
-// Agents whose chat sends a message typed during a turn at once (main: sessions.js steer).
-const STEER_AGENTS = new Set(['claude', 'codex'])
 const emit = defineEmits(nativeChatComposerEmits)
 
 // The draft is kept per pane (a pane switch restores its own text).
@@ -311,14 +309,8 @@ const contextUsageSummary = useNativeChatContextUsageSummary(structuredTransport
 const placeholder = computed(() => {
   if (props.disabledReason) return props.disabledReason
   if (props.sendBlockedReason) return props.sendBlockedReason
-  if (props.isWorking) {
-    // Claude and Codex take a message mid-turn (as in a terminal); OpenCode
-    // gets it when the turn ends.
-    if (STEER_AGENTS.has(props.agent)) {
-      return t('chat.composer.placeholderSteer', 'Message {{agent}} (sent now, joins the running turn)…', { agent: props.agentName })
-    }
-    return t('chat.composer.placeholderBusy', 'Message {{agent}} (sent when the turn ends)…', { agent: props.agentName })
-  }
+  // While it works, the same words: Claude and Codex take a message at once;
+  // OpenCode's waits, and its row says so ("Queued: sent when the turn ends").
   return t('chat.composer.placeholder', 'Message {{agent}}…', { agent: props.agentName })
 })
 
