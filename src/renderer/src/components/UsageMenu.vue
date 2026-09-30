@@ -7,7 +7,7 @@
 // additionally requires confirmation.
 // Roster and provider flyout patterns inspired by Orca UsageRosterPanel,
 // ProviderPanel and CodexSwitcherMenu (MIT, Lovecast, 2026); independent Vue UI.
-// Amber from 66 %, red from 95 %; an old reading says so.
+// Amber from 60 %, red from 80 % (the reference's thresholds); an old reading says so.
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import BrandIcon from './BrandIcon.vue'
 import UsageVisibility from './UsageVisibility.vue'
@@ -578,7 +578,7 @@ const worst = computed(() => {
     for (const w of windows(a)) if (counts(a, w) && w.usedPct > max) max = w.usedPct
   return max
 })
-const level = (pct) => (pct >= 95 ? 'bad' : pct >= 66 ? 'warn' : 'ok')
+const level = (pct) => (pct >= 80 ? 'bad' : pct >= 60 ? 'warn' : 'ok')
 
 function resetText(iso) {
   if (!iso) return ''

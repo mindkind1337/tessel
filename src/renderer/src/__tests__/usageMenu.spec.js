@@ -25,7 +25,7 @@ describe('the usage gauge', () => {
     }
     const w = mount(UsageMenu, { attachTo: document.body })
     await flushPromises()
-    expect(w.find('[data-test="usage-button"]').classes()).toContain('usage-warn')
+    expect(w.find('[data-test="usage-button"]').classes()).toContain('usage-bad') // 86 %: red from 80 %
     await w.find('[data-test="usage-button"]').trigger('click')
     await flushPromises()
     await w.get('[data-test="usage-mode-detailed"]').trigger('click')
@@ -62,7 +62,7 @@ describe('the usage gauge', () => {
       expect(codex.text()).toMatch(/Weekly\s*14%/)
       expect(codex.get('.usage-fill').attributes('style')).toContain('width: 14%')
       // Colour still follows what is used.
-      expect(codex.get('.usage-fill').classes()).toContain('warn')
+      expect(codex.get('.usage-fill').classes()).toContain('bad')
     } finally {
       w.unmount()
       resetSettings()
