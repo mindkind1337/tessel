@@ -2548,6 +2548,11 @@ async function launch({ kind, id, sessionOptions = null }, targetId = activeId.v
   // Optionally give the agent its own git worktree + branch.
   let worktree = null
   const baseWs = (targetId && wsOfLeaf(targetId)) || currentWs.value
+  // Worktree creation yields to navigation. Keep the launch's project and host,
+  // rather than borrowing whichever workspace is active when it finishes.
+  const launchCwd = baseWs ? baseWs.cwd : null
+  const launchRemote = baseWs && baseWs.remote ? { ...baseWs.remote } : null
+  const launchViewId = currentWs.value && currentWs.value.id
   if (agent && useWorktree.value && worktreeState.available && baseWs && baseWs.cwd) {
     const res = await window.shellApi.createWorktree(baseWs.cwd, agent.id, worktreeSettings())
     if (!res || !res.ok) {
@@ -2565,14 +2570,13 @@ async function launch({ kind, id, sessionOptions = null }, targetId = activeId.v
   }
 
   if (where === 'workspace') {
-    const from = currentWs.value
     const ws = makeWorkspace(
       agent ? agent.name.replace(/\s+(CLI|Code)$/i, '') : nextWorkspaceName()
     )
-    ws.cwd = from ? from.cwd : null
-    ws.remote = from && from.remote ? { ...from.remote } : null
+    ws.cwd = launchCwd
+    ws.remote = launchRemote
     workspaces.value.push(ws)
-    selectWorkspace(ws.id)
+    if (currentWs.value && currentWs.value.id === launchViewId) selectWorkspace(ws.id)
     const leaf = await createLeaf(shellId, agent, ws.cwd, worktree, wsLeafOpts(ws, { sessionOptions }))
     if (leaf) {
       ws.tree = leaf
