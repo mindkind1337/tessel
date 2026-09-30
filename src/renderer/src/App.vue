@@ -5996,7 +5996,9 @@ async function switchToTerminal(leafId) {
 }
 async function switchToChat(leafId) {
   const old = findLeaf(leafId)
-  if (!old || old.kind !== 'agent' || !['claude', 'codex'].includes(old.agentId) || !old.sessionId || old.detected || old.remoteHostId) return false
+  if (!old || old.kind !== 'agent' || !CHAT_AGENTS.includes(old.agentId) || !old.sessionId || old.detected || old.remoteHostId) return false
+  // OpenCode's chat resumes its own session ids only (ses_…).
+  if (old.agentId === 'opencode' && !/^ses_[A-Za-z0-9]{20,40}$/.test(old.sessionId)) return false
   if (switchingLeaves.has(leafId) || restartingLeaves.has(leafId)) return false
   const ws = wsOfLeaf(leafId)
   if (!ws) return false

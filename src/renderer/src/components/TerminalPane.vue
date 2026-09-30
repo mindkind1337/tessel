@@ -601,7 +601,9 @@ function menuSwitchYolo() {
 // chat pane (no terminal), in the same place.
 const canOpenAsChat = computed(() => {
   const n = props.node
-  return n.kind === 'agent' && ['claude', 'codex'].includes(n.agentId) && !!n.sessionId && !n.detected && !n.remoteHostId && !!ctx.switchToChat
+  if (n.kind !== 'agent' || !['claude', 'codex', 'opencode'].includes(n.agentId) || !n.sessionId || n.detected || n.remoteHostId || !ctx.switchToChat) return false
+  // OpenCode's chat resumes its own session ids only (ses_…).
+  return n.agentId !== 'opencode' || /^ses_[A-Za-z0-9]{20,40}$/.test(n.sessionId)
 })
 // Pane menu > See the conversation: an agent with no chat of its own (Grok,
 // OpenClaude, OMP) whose conversation is known: its session file shown as a

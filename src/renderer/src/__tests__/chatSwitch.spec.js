@@ -109,6 +109,14 @@ describe('terminal to chat', () => {
     expect(b.ws.tree.maxPermissions).toBeUndefined()
   })
 
+  it('OpenCode too, with its own session id (ses_…); another id is refused', async () => {
+    const ok = load(term({ agentId: 'opencode', sessionId: 'ses_' + 'a'.repeat(26), modelChoice: null }))
+    expect(await ok.api.switchToChat('pane-2')).toBe(true)
+    expect(ok.ws.tree).toMatchObject({ kind: 'chat', agentId: 'opencode', sessionId: 'ses_' + 'a'.repeat(26) })
+    const bad = load(term({ agentId: 'opencode', sessionId: 'not-a-session' }))
+    expect(await bad.api.switchToChat('pane-2')).toBe(false)
+  })
+
   it('a terminal that does not stop: the pane is left as it is', async () => {
     const { api, ctx, ws } = load(term())
     ctx.window.shellApi.attachPty.mockResolvedValue({ ok: true })
