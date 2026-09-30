@@ -317,10 +317,23 @@ function sendable() {
 // The composer's send: { ok: true } once the pane has the message (sent, or
 // kept as "Not sent" when the main process refused it: the composer is then
 // free for what comes next); { ok: false } when it cannot be sent now.
-async function send(text) {
+// With images (their ids, from the main process): a refusal keeps the draft
+// and its chips in the composer (a "Not sent" entry holds text only).
+async function send(text, opts = {}) {
   const body = String(text || '')
-  if (!body.trim()) return { ok: false }
+  const images = Array.isArray(opts?.images) ? opts.images.filter((id) => typeof id === 'string') : []
+  if (!body.trim() && !images.length) return { ok: false }
   if (!sendable()) return { ok: false, error: disabledReason.value || sendBlockedReason.value || undefined }
+  if (images.length) {
+    let res
+    try {
+      res = await api().send({ paneId: props.node.id, text: body, images })
+    } catch (err) {
+      res = { ok: false, error: (err && err.message) || String(err) }
+    }
+    if (res && res.ok !== false) return { ok: true }
+    return { ok: false, error: (res && res.error) || t('chat.error.unknown', 'unknown error') }
+  }
   await deliver(reactive({ key: ++unsentKey, text: body, error: '', sending: false }))
   return { ok: true }
 }
@@ -573,6 +586,7 @@ defineExpose({ start, send, interrupt, focusPendingApproval })
         :opening="opening"
         :history-loading="historyLoading"
         :send="send"
+        :allow-images="true"
         :interrupt="interrupt"
         :set-option="ctx.chatSetOption ? setOption : null"
         :respond="respond"

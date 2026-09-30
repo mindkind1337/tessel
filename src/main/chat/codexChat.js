@@ -41,6 +41,14 @@ export const FILE_APPROVAL = 'item/fileChange/requestApproval'
 export const MCP_ELICITATION = 'mcpServer/elicitation/request'
 const DEFAULT_CHOICES = ['accept', 'acceptForSession', 'decline', 'cancel']
 
+// A user message's turn/start input: the text, then each image as a
+// localImage (a file Codex reads when the turn starts).
+export function codexUserInput(text, images = []) {
+  const input = text.trim() || !images.length ? [{ type: 'text', text, text_elements: [] }] : []
+  for (const img of images) input.push({ type: 'localImage', path: img.path })
+  return input
+}
+
 // ---- permission posture ------------------------------------------------------
 
 // Yolo: no prompts, no sandbox. Manual: prompts on request, writes confined to
@@ -1160,12 +1168,15 @@ export function createCodexChat(opts) {
 
   // A user message. Resolves once Codex has taken it (turn/start or
   // turn/steer answered); delivery shows as 'accepted' for this uuid.
-  async function send({ uuid, text } = {}) {
+  // images: attached images (chatImages.js forAgent): localImage items (Codex
+  // reads Tessel's copy), after the text.
+  async function send({ uuid, text, images = [] } = {}) {
     if (!ready || !alive() || postureFailed) return { ok: false, error: 'not running' } // i18n-ignore internal
-    if (typeof text !== 'string' || !text.trim()) return { ok: false, error: 'empty' }
+    const pics = Array.isArray(images) ? images : []
+    if (typeof text !== 'string' || (!text.trim() && !pics.length)) return { ok: false, error: 'empty' }
     const id = typeof uuid === 'string' && uuid ? uuid : randomUUID()
     state.sent.add(id) // before the write: the echo can beat the answer
-    const input = [{ type: 'text', text, text_elements: [] }]
+    const input = codexUserInput(text, pics)
     const open = state.turn && !state.turn.settled && state.turn.id ? state.turn : null
     // A turn started under another posture is not joined: a new turn/start
     // carries the current one.

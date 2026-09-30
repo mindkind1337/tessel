@@ -786,5 +786,13 @@
       "reload": "Recharger",
       "inspect": "Inspecter"
     }
-  }
+  },
+  "main.chat.image.tooLarge": "Cette image dépasse {{mb}} Mo.",
+  "main.chat.image.notImage": "Seules les images PNG, JPEG, GIF et WebP peuvent être jointes.",
+  "main.chat.image.tooMany": "Trop d’images attendent dans ce chat. Envoyez-en ou retirez-en d’abord.",
+  "main.chat.image.saveFailed": "L’image n’a pas pu être enregistrée.",
+  "main.chat.image.unreadable": "Ce fichier n’a pas pu être lu.",
+  "main.chat.image.link": "Les liens ne peuvent pas être joints : déposez l’image elle-même.",
+  "main.chat.image.perMessage": "Au plus {{n}} images par message.",
+  "main.chat.image.gone": "Une image jointe n’est plus disponible. Joignez-la de nouveau."
 }

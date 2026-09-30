@@ -317,13 +317,14 @@ const criticalTitle = computed(() => {
   background: color-mix(in srgb, var(--nc-input) 40%, transparent);
   contain: paint;
 }
-/* mb-2 flex flex-wrap gap-2 px-1 pt-1.5 */
+/* Tessel: a row of compact chips above the text, set off by a hairline. */
 .nc-composer-attachments {
-  margin-bottom: 8px;
+  margin-bottom: 6px;
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  padding: 6px 4px 0;
+  gap: 6px;
+  padding: 2px 4px 8px;
+  border-bottom: 1px solid var(--nc-border);
 }
 /* The editable element (ProseMirror builds it: :deep).
    min-h-12 w-full bg-transparent px-2 py-1 text-sm outline-none pointer-coarse:min-h-14

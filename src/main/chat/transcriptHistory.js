@@ -41,6 +41,9 @@ export function validHistoryId(id) {
 
 const obj = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : null)
 const str = (v) => (typeof v === 'string' && v ? v : null)
+// A user message's text with one "[image]" per image it held (the images
+// themselves are never replayed).
+const withImages = (text, n) => (n > 0 ? [text, Array(n).fill('[image]').join(' ')].filter(Boolean).join('\n') : text) // i18n-ignore
 
 function toolSummary(input) {
   const i = obj(input) || {}
@@ -257,19 +260,22 @@ export function claudeHistoryEvents(lines, limits = HISTORY_LIMITS) {
     if (r.type === 'user') {
       const blocks = typeof content === 'string' ? [{ type: 'text', text: content }] : Array.isArray(content) ? content : []
       const texts = []
+      let pictures = 0
       for (const blk of blocks) {
         const o = obj(blk)
         if (!o) continue
         if (o.type === 'tool_result' && str(o.tool_use_id)) b.toolResult(o.tool_use_id, o.content, o.is_error, ts)
         else if (o.type === 'text' && str(o.text) && !meta) texts.push(o.text)
+        else if (o.type === 'image' && !meta) pictures++
       }
-      if (!texts.length) continue
+      if (!texts.length && !pictures) continue
       const joined = texts.join('\n')
       if (INTERRUPTED.test(joined.trim()) || str(r.interruptedMessageId)) {
         b.endTurn('interrupted', ts)
         continue
       }
-      const prompt = claudePrompt(joined)
+      // A terminal's pasted image already says "[Image #1]" in its text.
+      const prompt = /\[Image #\d+\]/.test(joined) ? claudePrompt(joined) : withImages(claudePrompt(joined), pictures)
       if (prompt && prompt.trim()) b.user(str(r.uuid) || b.nextId('u'), prompt, ts)
       continue
     }
@@ -288,18 +294,23 @@ export function claudeHistoryEvents(lines, limits = HISTORY_LIMITS) {
 
 // ---- Codex --------------------------------------------------------------------
 
+// The image items of a Codex user message (the app-server's, the rollout's).
+const CODEX_IMAGE_ITEMS = new Set(['image', 'localImage', 'local_image', 'input_image', 'Image', 'LocalImage'])
+
 // Context Codex adds to a user message for the model, not what was typed.
-const CODEX_CONTEXT = /^\s*<(skill|environment_context|user_instructions|permissions instructions|user_shell_command|turn_aborted|subagent_notification)\b/i
+const CODEX_CONTEXT = /^\s*<\/?(image|skill|environment_context|user_instructions|permissions instructions|user_shell_command|turn_aborted|subagent_notification)\b/i
 
 function codexText(content) {
   if (typeof content === 'string') return content
   if (!Array.isArray(content)) return ''
   const parts = []
+  let pictures = 0
   for (const c of content) {
     const o = obj(c)
     if (o && ['text', 'Text', 'input_text', 'output_text'].includes(o.type) && str(o.text) && !CODEX_CONTEXT.test(o.text)) parts.push(o.text)
+    else if (o && CODEX_IMAGE_ITEMS.has(o.type)) pictures++
   }
-  return parts.join('\n')
+  return withImages(parts.join('\n'), pictures)
 }
 
 function codexSummary(summary) {
@@ -397,7 +408,11 @@ export function codexHistoryEvents(lines, threadId, limits = HISTORY_LIMITS) {
         b.endTurn('interrupted', ts)
         break
       case 'user_message':
-        if (mode === 'events' && str(p.message) && !CODEX_CONTEXT.test(p.message)) b.user(b.nextId('u'), p.message, ts)
+        if (mode === 'events' && !CODEX_CONTEXT.test(str(p.message) || '')) {
+          const pictures = (Array.isArray(p.images) ? p.images.length : 0) + (Array.isArray(p.local_images) ? p.local_images.length : 0)
+          const body = withImages(str(p.message) || '', pictures)
+          if (body) b.user(b.nextId('u'), body, ts)
+        }
         break
       case 'agent_message':
         if (mode === 'events' && str(p.message)) b.message('assistant', b.nextId('a'), p.message, ts, '\n\n')
@@ -442,7 +457,9 @@ export function opencodeHistoryEvents(messages, limits = HISTORY_LIMITS) {
     const ts = obj(info.time)?.created
     if (info.role === 'user') {
       const typed = parts.filter((p) => p.type === 'text' && str(p.text) && p.synthetic !== true).map((p) => p.text)
-      if (typed.length) b.user(info.id, typed.join('\n'), ts)
+      const pictures = parts.filter((p) => p.type === 'file' && typeof p.mime === 'string' && p.mime.startsWith('image/')).length
+      const body = withImages(typed.join('\n'), pictures)
+      if (body) b.user(info.id, body, ts)
       continue
     }
     if (info.role !== 'assistant') continue

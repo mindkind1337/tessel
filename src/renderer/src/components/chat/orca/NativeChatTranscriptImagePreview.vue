@@ -6,13 +6,15 @@
  * stays the same when the thumbnail appears (one root div).
  * Props: block (image-ref), runtimeContext (worktree context; null =
  *   unresolved, undefined = pending).
- * The image source comes from ./native-chat-local-image-src.js (Tessel's
- * loader; it yields nothing today, the engine sends text only).
+ * Tessel: a sent image's thumbnail is a data: URL made in the window
+ * (chat/orca/native-chat-images.js); a click opens NativeChatImageLightbox.
+ * A path goes through ./native-chat-local-image-src.js (yields nothing).
  */
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
 import { Image as ImageIcon } from 'lucide-vue-next'
 import { t } from '../../../i18n'
-import { Dialog, DialogContent, DialogDescription, DialogTitle } from './ui'
+import NativeChatImageLightbox from './NativeChatImageLightbox.vue'
+import { fullImageUrlFor } from '../../../chat/orca/native-chat-images.js'
 import { useLocalImageSrc } from './native-chat-local-image-src.js'
 import {
   basename,
@@ -29,7 +31,6 @@ const props = defineProps({
 const open = ref(false)
 const near = ref(false)
 const thumbnailErrorSrc = ref(null)
-const dialogErrorSrc = ref(null)
 const root = shallowRef(null)
 
 const source = computed(() => props.block.url?.trim() || props.block.path)
@@ -58,9 +59,9 @@ const label = computed(
         : 'Image')
 )
 const viewImageLabel = computed(() => t('chat.orca.composer.viewAttachment', 'View image'))
-const previewDescription = computed(() =>
-  t('chat.orca.composer.imagePreview', 'Full-size image preview')
-)
+// Tessel: a sent image shows its thumbnail; the popup, the full image while
+// this window still has it.
+const fullSrc = computed(() => fullImageUrlFor(displaySrc.value) || displaySrc.value || '')
 
 let stopObserving = null
 onMounted(() => {
@@ -96,25 +97,7 @@ const showPreview = computed(
           @error="thumbnailErrorSrc = displaySrc ?? null"
         />
       </button>
-      <Dialog v-model:open="open">
-        <DialogContent class="nc-image-dialog">
-          <DialogTitle class="nc-image-dialog-title">{{ label }}</DialogTitle>
-          <DialogDescription class="nc-ui-sr-only">{{ previewDescription }}</DialogDescription>
-          <div class="nc-image-dialog-body nc-scrollbar-sleek">
-            <img
-              v-if="displaySrc && displaySrc !== dialogErrorSrc"
-              :src="displaySrc"
-              :alt="label"
-              class="nc-image-dialog-img"
-              @error="dialogErrorSrc = displaySrc"
-            />
-            <div v-else class="nc-image-chip" :title="label">
-              <ImageIcon class="nc-image-chip-icon" aria-hidden="true" />
-              <span class="nc-image-chip-name">{{ label }}</span>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <NativeChatImageLightbox v-model:open="open" :src="fullSrc" :label="label" />
     </template>
     <div v-else class="nc-image-chip" :title="label">
       <ImageIcon class="nc-image-chip-icon" aria-hidden="true" />
@@ -178,37 +161,5 @@ const showPreview = computed(
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.nc-image-dialog {
-  display: flex;
-  max-height: 90vh;
-  max-width: min(90vw, 56rem);
-  flex-direction: column;
-  gap: 12px;
-  border-color: var(--nc-border);
-  background: var(--nc-background);
-  padding: 12px;
-}
-.nc-image-dialog-title {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 14px;
-  line-height: 20px;
-}
-.nc-image-dialog-body {
-  display: flex;
-  min-height: 0;
-  align-items: center;
-  justify-content: center;
-  overflow: auto;
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--nc-muted) 20%, transparent);
-  padding: 8px;
-}
-.nc-image-dialog-img {
-  max-height: 75vh;
-  max-width: 100%;
-  object-fit: contain;
 }
 </style>

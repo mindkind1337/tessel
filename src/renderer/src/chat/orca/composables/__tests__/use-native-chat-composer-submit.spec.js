@@ -109,7 +109,7 @@ describe('composer goal mode', () => {
     const { hook, onError } = harness({
       draft: '/go',
       threadGoal: { setObjective },
-      imageAttachments: [{ id: 'a1', path: '/tmp/shot.png' }],
+      imageAttachments: [{ id: 'a1', imageId: 'img_000000000000000000000001', name: 'shot.png' }],
     })
     act(() => hook.result.current.goalMode.interceptPick(vi.fn())(GOAL_ITEM))
     hook.rerender({ draft: 'Ship the parser', caret: 0 })
@@ -117,7 +117,18 @@ describe('composer goal mode', () => {
     act(() => hook.result.current.send())
 
     expect(setObjective).not.toHaveBeenCalled()
-    expect(onError).toHaveBeenCalledWith('This chat accepts text only.')
+    expect(onError).toHaveBeenCalledWith('A goal is text only. Remove the images first.')
+  })
+
+  it('sends attached images (even with no text) and waits for one still saving', () => {
+    const images = harness({ draft: '', imageAttachments: [{ id: 'a1', imageId: 'img_000000000000000000000001', name: 'a.png' }] })
+    act(() => images.hook.result.current.send())
+    expect(images.calls.sendStructured).toHaveBeenCalledWith('', [{ id: 'a1', imageId: 'img_000000000000000000000001', name: 'a.png' }])
+
+    const saving = harness({ draft: 'look', imageAttachments: [{ id: 'a2', name: 'image.png', pending: true }] })
+    act(() => saving.hook.result.current.send())
+    expect(saving.calls.sendStructured).not.toHaveBeenCalled()
+    expect(saving.onError).toHaveBeenCalledWith('An image is still being attached. Send again in a moment.')
   })
 
   it('enters goal mode from a typed bare /goal, like the pick does', () => {

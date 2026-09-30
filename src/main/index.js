@@ -48,6 +48,7 @@ import { writeBoardRule } from './agentMemory'
 import { claudeImageFile, isPastedImage, PASTE_DIR } from './pastedImages'
 import { createBrowserGuests } from './browserGuest'
 import { createChatSessions } from './chat/sessions'
+import { createChatImages } from './chat/chatImages'
 import { transcriptHomeFor } from './chat/transcriptHistory'
 import { createTranscriptViews } from './chat/transcriptView'
 import { createClaudeChat } from './chat/claudeChat'
@@ -1079,8 +1080,12 @@ app.whenReady().then(() => {
     })
     .catch(() => {})
 })
+// Images attached to chat messages: Tessel's own copies (chat/chatImages.js).
+const chatImages = createChatImages({ nativeImage, log })
+chatImages.sweep()
 const chatSessions = createChatSessions({
   dir: app.getPath('userData'),
+  images: chatImages,
   send,
   // Claude (stream-json), Codex (codex app-server, JSON-RPC) or OpenCode
   // (opencode serve: HTTP + SSE on 127.0.0.1 with a password of its own).

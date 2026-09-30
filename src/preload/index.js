@@ -395,6 +395,11 @@ const api = {
     history: (opts) => ipcRenderer.invoke('chat:history', opts),
     historyOlder: (opts) => ipcRenderer.invoke('chat:historyOlder', opts),
     skills: (opts) => ipcRenderer.invoke('chat:skills', opts),
+    // Attached images: clipboard bytes, or a dropped/picked file (checked and
+    // copied by the main process) -> { ok, image: { id, name, width, height } }.
+    imageSave: (opts) => ipcRenderer.invoke('chat:imageSave', opts),
+    imageImport: (opts) => ipcRenderer.invoke('chat:imageImport', opts),
+    imageDiscard: (opts) => ipcRenderer.invoke('chat:imageDiscard', opts),
     onEvent: (cb) => subscribe('chat:event', cb)
   },
   // Read-only conversation views of terminal agents (src/main/chat/transcriptView.js).

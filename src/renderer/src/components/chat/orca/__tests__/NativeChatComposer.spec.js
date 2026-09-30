@@ -384,27 +384,56 @@ describe('NativeChatComposer (Tessel rules)', () => {
     expect(promptValue(input())).toBe('plain **text**')
   })
 
-  it('images are off by default: no Attach, no chips; allowImages shows them but a send with an image is refused', async () => {
+  it('images are off by default: no Attach, no chips; allowImages attaches them and sends their ids', async () => {
     const send = vi.fn(async () => ({ ok: true }))
     await render({ send })
-    expect(wrapper.find('button[aria-label="Attach file"]').exists()).toBe(false)
+    expect(wrapper.find('button[aria-label="Attach images"]').exists()).toBe(false)
     // A dropped image path is inserted as text.
     composer().vm.attachResolvedPaths(['C:\\shots\\a.png'])
     await flushPromises()
     expect(promptValue(input())).toBe('C:\\shots\\a.png ')
     wrapper.unmount()
 
-    await render({ send, paneKey: 'pane-images', allowImages: true })
-    await wrapper.find('button[aria-label="Attach file"]').trigger('click')
-    expect(pane().emitted('attach')).toHaveLength(1)
-    composer().vm.attachResolvedPaths(['C:\\shots\\a.png'])
-    await flushPromises()
-    expect(wrapper.find('button[aria-label="View image: a.png"]').exists()).toBe(true)
-    await type('look')
-    await key({ key: 'Enter', keyCode: 13 })
-    expect(send).not.toHaveBeenCalled()
-    expect(notice().text()).toBe('This chat accepts text only.')
-    expect(promptValue(input())).toBe('look')
+    let n = 0
+    const image = (name) => ({ id: `img_${String(++n).padStart(24, '0')}`, name, width: 688, height: 478 })
+    const chat = {
+      imageSave: vi.fn(async ({ name }) => ({ ok: true, image: image(name) })),
+      imageImport: vi.fn(async ({ path }) => ({ ok: true, image: image(path.split('\\').pop()) })),
+      imageDiscard: vi.fn(async () => ({ ok: true }))
+    }
+    const hadApi = 'shellApi' in window
+    const priorApi = window.shellApi
+    window.shellApi = { ...(priorApi || {}), chat }
+    try {
+      await render({ send, paneKey: 'pane-images', allowImages: true })
+      expect(wrapper.find('button[aria-label="Attach images"]').exists()).toBe(true)
+      composer().vm.attachResolvedPaths(['C:\\shots\\a.png'])
+      await flushPromises()
+      expect(chat.imageImport).toHaveBeenCalledWith({ paneId: 'pane-images', path: 'C:\\shots\\a.png', thumb: true })
+      // A pasted image: saved from its bytes, named image.png.
+      const file = { type: 'image/png', size: 4, arrayBuffer: async () => new ArrayBuffer(4) }
+      const event = new Event('paste', { bubbles: true, cancelable: true })
+      Object.defineProperty(event, 'clipboardData', {
+        value: { types: ['Files'], items: [{ kind: 'file', type: 'image/png', getAsFile: () => file }], getData: () => '' }
+      })
+      input().focus()
+      input().dispatchEvent(event)
+      await flushPromises()
+      expect(event.defaultPrevented).toBe(true)
+      expect(chat.imageSave).toHaveBeenCalledWith(expect.objectContaining({ paneId: 'pane-images', name: 'image.png' }))
+      expect(wrapper.find('button[aria-label="View image: a.png"]').exists()).toBe(true)
+      expect(wrapper.find('button[aria-label="View image: image.png"]').exists()).toBe(true)
+      expect(wrapper.findAll('[data-test="chat-attachment-size"]').map((w) => w.text())).toEqual(['688×478', '688×478'])
+      await type('look')
+      await key({ key: 'Enter', keyCode: 13 })
+      await flushPromises()
+      expect(send).toHaveBeenCalledWith('look', { images: ['img_000000000000000000000001', 'img_000000000000000000000002'] })
+      expect(wrapper.findAll('[data-test="chat-attachment"]')).toHaveLength(0)
+      expect(chat.imageDiscard).not.toHaveBeenCalled()
+    } finally {
+      if (hadApi) window.shellApi = priorApi
+      else delete window.shellApi
+    }
   })
 
   it('no "/" picker while the session offers nothing (commands empty, no skills)', async () => {

@@ -1,5 +1,6 @@
 // After Orca's use-native-chat-composer-paste.ts (MIT, Copyright (c) 2026 Lovecast Inc.)
-// Reactive options; insertTypedText receives plain text, never HTML or attachments.
+// Reactive options; insertTypedText receives plain text, never HTML. A pasted
+// image goes to attachImages([{ file }]) when allowImages.
 // readClipboardText() callback defaults to Tessel shellApi.readClipboard.
 // Disabled/scope changes invalidate asynchronous menu pastes.
 import { onScopeDispose } from 'vue'
@@ -20,11 +21,19 @@ export function useNativeChatComposerPaste(options) {
     if (event.defaultPrevented) return
     event.preventDefault()
     if (disabled()) return
+    // An image on the clipboard wins over its text (as the reference): with
+    // images allowed it becomes a chip, "image.png", "image-2.png"…
+    const imageItems = Array.from(event.clipboardData?.items || []).filter(
+      (item) => item.kind !== 'string' && item.type?.startsWith('image/'),
+    )
+    const images = imageItems.map((item) => item.getAsFile?.()).filter(Boolean)
+    if (images.length && read('allowImages', false) && fn('attachImages')) {
+      call('attachImages', images.map((file) => ({ file })))
+      return
+    }
     const text = event.clipboardData?.getData('text/plain') || ''
     if (text) insert(text)
-    else if (
-      Array.from(event.clipboardData?.items || []).some((item) => item.type?.startsWith('image/'))
-    ) {
+    else if (imageItems.length) {
       call('setNotice', t('chat.orca.composer.textOnly', 'This chat accepts text only.'))
     }
   }

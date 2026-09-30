@@ -85,6 +85,14 @@ export const SESSION_ID = /^ses_[A-Za-z0-9]{20,40}$/
 // provider/model: OpenCode's model ids contain one '/'.
 export const MODEL = /^[A-Za-z0-9._-]{1,80}\/[A-Za-z0-9._:-]{1,120}$/
 export const validOpencodeModel = (v) => typeof v === 'string' && MODEL.test(v) && !v.startsWith('-')
+
+// A prompt's parts: the text, then each image as a file part with a data:
+// URL (FilePartInput: type, mime, filename, url).
+export function opencodeParts(text, images = []) {
+  const parts = text.trim() || !images.length ? [{ type: 'text', text }] : []
+  for (const img of images) parts.push({ type: 'file', mime: img.mime, filename: img.name, url: `data:${img.mime};base64,${img.base64()}` })
+  return parts
+}
 const VARIANT = /^[A-Za-z0-9][\w.:-]{0,59}$/
 const LISTEN = /opencode server listening on (http:\/\/([^\s/:]+):(\d{1,5}))/
 const ANSI = /\u001b\[[0-9;?]*[ -/]*[@-~]|\u001b\][^\u0007]*\u0007/g
@@ -950,9 +958,12 @@ export function createOpencodeChat(opts) {
   // A user message. Resolves once OpenCode took it (204); delivery shows as
   // 'accepted' when its user message comes back on the stream. "/name args"
   // with a name from OpenCode's own catalog runs that command.
-  async function send({ uuid, text } = {}) {
+  // images: attached images (chatImages.js forAgent): file parts with a
+  // data: URL (OpenCode's FilePartInput), after the text.
+  async function send({ uuid, text, images = [] } = {}) {
     if (!ready || !alive() || postureFailed || closing) return { ok: false, error: 'not running' } // i18n-ignore internal
-    if (typeof text !== 'string' || !text.trim()) return { ok: false, error: 'empty' }
+    const pics = Array.isArray(images) ? images : []
+    if (typeof text !== 'string' || (!text.trim() && !pics.length)) return { ok: false, error: 'empty' }
     // Manual and Plan: checked again before each prompt (agents, session,
     // merged config), since another client of this server could change them.
     if (posture !== 'yolo') {
@@ -968,7 +979,7 @@ export function createOpencodeChat(opts) {
     state.pending.push(id) // before the POST: the echo can beat its answer
     const agent = agentOf(posture)
     const cmd = /^\/([^\s/]+)(?:\s+([\s\S]*))?$/.exec(text.trim())
-    if (cmd && commandNames.has(cmd[1])) {
+    if (cmd && commandNames.has(cmd[1]) && !pics.length) {
       // POST /session/:id/command answers at the end of the whole reply: the
       // turn's events come on the stream meanwhile.
       const body = { command: cmd[1], arguments: cmd[2] || '', agent, ...(model ? { model } : {}), ...(effort ? { variant: effort } : {}) }
@@ -985,7 +996,14 @@ export function createOpencodeChat(opts) {
       return { ok: true, uuid: id, command: cmd[1] }
     }
     const mp = modelParts()
-    const body = { parts: [{ type: 'text', text }], agent, ...(mp ? { model: mp } : {}), ...(effort ? { variant: effort } : {}) }
+    let parts
+    try {
+      parts = opencodeParts(text, pics)
+    } catch (err) {
+      unsend(id)
+      return { ok: false, error: `image: ${err?.message || err}` } // i18n-ignore internal
+    }
+    const body = { parts, agent, ...(mp ? { model: mp } : {}), ...(effort ? { variant: effort } : {}) }
     const r = await call('POST', `/session/${encodeURIComponent(state.sessionId)}/prompt_async`, body)
     if (!r.ok) {
       unsend(id)

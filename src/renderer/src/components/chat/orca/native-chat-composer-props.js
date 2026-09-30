@@ -37,7 +37,8 @@ export const nativeChatComposerProps = {
   conversationCommands: { type: Array, default: () => [] },
   // { discover({ agent, pane, refresh, signal }) => { skills, sources } }.
   skillsOptions: { type: Object, default: undefined },
-  // Tessel sends text only: false hides image chips and Attach, and a pasted
+  // Images (paste, drop, the + button): chips sent with the message as ids
+  // (send(text, { images })). false hides chips and Attach, and a pasted
   // image is refused with a notice.
   allowImages: { type: Boolean, default: false },
   // The session's context usage (StructuredAgentContextUsage) or null.

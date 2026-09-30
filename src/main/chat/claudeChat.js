@@ -46,6 +46,17 @@ export function buildClaudeArgs({ exeArgs = [], permissionMode = 'default', mode
   return args
 }
 
+// A user message's content blocks: the images (base64), then the text.
+export function claudeUserContent(text, images = []) {
+  const content = []
+  for (const img of images) {
+    const pic = typeof img.claudeImage === 'function' ? img.claudeImage() : { mime: img.mime, data: img.base64() }
+    content.push({ type: 'image', source: { type: 'base64', media_type: pic.mime, data: pic.data } })
+  }
+  if (text.trim() || !content.length) content.push({ type: 'text', text })
+  return content
+}
+
 function checkOptions(opts) {
   if (!opts || typeof opts.exe !== 'string' || !opts.exe) throw new TypeError('claudeChat: exe is required')
   if (!opts.env || typeof opts.env !== 'object') throw new TypeError('claudeChat: env is required')
@@ -418,9 +429,18 @@ export function createClaudeChat(opts) {
 
   // A user message. Resolves once the line is written to stdin; delivery
   // shows later as 'queued' then 'accepted' for this uuid.
-  async function send({ uuid, text } = {}) {
+  // images: attached images (chatImages.js forAgent), sent as base64 image
+  // blocks before the text.
+  async function send({ uuid, text, images = [] } = {}) {
     if (!ready || !alive()) return { ok: false, error: 'not running' } // i18n-ignore internal
-    if (typeof text !== 'string' || !text.trim()) return { ok: false, error: 'empty' }
+    const pics = Array.isArray(images) ? images : []
+    if (typeof text !== 'string' || (!text.trim() && !pics.length)) return { ok: false, error: 'empty' }
+    let content
+    try {
+      content = claudeUserContent(text, pics)
+    } catch (err) {
+      return { ok: false, error: `image: ${err?.message || err}` } // i18n-ignore internal
+    }
     const id = typeof uuid === 'string' && uuid ? uuid : randomUUID()
     frames.sent.add(id) // before the write: 'queued' comes ~3 ms later
     const ok = await writeFrame({
@@ -428,7 +448,7 @@ export function createClaudeChat(opts) {
       uuid: id,
       session_id: frames.sessionId || '',
       parent_tool_use_id: null,
-      message: { role: 'user', content: [{ type: 'text', text }] }
+      message: { role: 'user', content }
     })
     return ok ? { ok: true, uuid: id } : { ok: false, error: 'stdin closed' } // i18n-ignore internal
   }

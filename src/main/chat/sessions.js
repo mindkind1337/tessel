@@ -129,7 +129,9 @@ export function createChatSessions(deps) {
     // (transcriptHistory.js transcriptHomeFor): null reads no earlier history.
     transcriptHome = () => null,
     readHistory = readTranscriptHistory,
-    readOlder = readOlderHistory
+    readOlder = readOlderHistory,
+    // Attached images (chatImages.js): chat:send names them by id.
+    images = null
   } = deps || {}
   const sessions = new Map() // paneId -> session
   const seqs = new Map() // paneId -> last seq (outlives a session)
@@ -382,12 +384,14 @@ export function createChatSessions(deps) {
 
   async function deliver(s, turn) {
     s.turn = turn
+    if (turn.images?.length) (s.sentImages ||= []).push(...turn.images.map((img) => img.id))
     idleCheck(s)
     if (turn.kind === 'user') for (const id of turn.ids) if (turn.wasQueued) emit(s.paneId, { type: 'userStatus', id, status: 'sent' })
     workStatus(s)
     let r
     try {
-      r = await s.adapter.send({ uuid: turn.uuid, text: turn.text })
+      const pics = turn.images?.length && images ? turn.images.map((img) => images.forAgent(img)) : null
+      r = await s.adapter.send({ uuid: turn.uuid, text: turn.text, ...(pics ? { images: pics } : {}) })
     } catch (err) {
       r = { ok: false, error: err?.message }
     }
@@ -402,10 +406,12 @@ export function createChatSessions(deps) {
 
   // Starts the next turn when the agent is free.
   function pump(s) {
+    // The images of turns that ended are no longer needed (the agent has them).
+    if (!s.turn) releaseSentImages(s)
     if (!s.ready || s.finished || s.closing || s.turn || pendingApprovals(s) || pendingQuestions(s)) return
     if (s.userQueue.length) {
       const m = s.userQueue.shift()
-      void deliver(s, { kind: 'user', uuid: m.id, ids: [m.id], text: m.text, wasQueued: true })
+      void deliver(s, { kind: 'user', uuid: m.id, ids: [m.id], text: m.text, images: m.images, wasQueued: true })
       return
     }
     if (s.teamQueue.length) {
@@ -1036,7 +1042,14 @@ export function createChatSessions(deps) {
     return s.opening
   }
 
+  // Delivered images, removed once their turn is over.
+  function releaseSentImages(s) {
+    if (!s.sentImages?.length) return
+    images?.release(s.sentImages.splice(0))
+  }
   function failQueued(s) {
+    releaseSentImages(s)
+    images?.release(s.userQueue.flatMap((m) => (m.images || []).map((img) => img.id)))
     for (const m of s.userQueue) emit(s.paneId, { type: 'userStatus', id: m.id, status: 'failed' })
     s.userQueue = []
     if (s.teamQueue.length) emit(s.paneId, { type: 'teamFailed', ids: s.teamQueue.map((m) => m.id) })
@@ -1061,15 +1074,24 @@ export function createChatSessions(deps) {
   }
 
   // A user message (origin 'user'); team messages go through sendTeam.
-  function sendUser({ paneId, text } = {}) {
+  // imageIds: images saved for this pane (chatImages.js), in order.
+  function sendUser({ paneId, text, imageIds } = {}) {
     const s = live(paneId) || waiting(paneId)
     if (!s) return closed()
+    let pics = []
+    if (imageIds?.length) {
+      const r = images ? images.take(paneId, imageIds) : { ok: false, error: t('main.chat.invalid', 'Invalid chat request.') }
+      if (!r.ok) return { ok: false, code: 'image', error: r.error }
+      pics = r.images
+    }
     const id = randomUUID()
     const now_ = now()
     const idle = s.ready && !s.turn && !pendingApprovals(s) && !pendingQuestions(s) && !s.userQueue.length
-    emit(paneId, { type: 'user', id, text, origin: 'user', status: idle ? 'sent' : 'queued', at: now_ })
-    if (idle) void deliver(s, { kind: 'user', uuid: id, ids: [id], text })
-    else s.userQueue.push({ id, text })
+    // The journal keeps each image's name and size, never its data.
+    const shown = pics.map((img) => ({ id: img.id, name: img.name, width: img.width, height: img.height }))
+    emit(paneId, { type: 'user', id, text, origin: 'user', status: idle ? 'sent' : 'queued', at: now_, ...(shown.length ? { images: shown } : {}) })
+    if (idle) void deliver(s, { kind: 'user', uuid: id, ids: [id], text, ...(pics.length ? { images: pics } : {}) })
+    else s.userQueue.push({ id, text, ...(pics.length ? { images: pics } : {}) })
     askWake(s)
     idleCheck(s)
     return { ok: true, id, queued: !idle }
@@ -1244,6 +1266,7 @@ export function createChatSessions(deps) {
       } else finish(s, { code: 0 })
     }
     // Unless a new chat opened in this pane meanwhile.
+    if (forget && validPaneId(paneId)) images?.releasePane(paneId)
     if (forget && validPaneId(paneId) && forgotten.has(paneId) && !sessions.has(paneId)) {
       journalOf(paneId).remove()
       journals.delete(paneId)
@@ -1412,10 +1435,15 @@ export function createChatSessions(deps) {
       })
     })
     ipcMain.handle('chat:send', (_e, q) => {
-      const { paneId, text } = obj(q)
-      if (!validPaneId(paneId) || !okText(text, LIMITS.text)) return invalid()
-      return sendUser({ paneId, text })
+      const { paneId, text, images: imageIds } = obj(q)
+      if (!validPaneId(paneId)) return invalid()
+      if (imageIds != null && (!Array.isArray(imageIds) || imageIds.some((id) => typeof id !== 'string'))) return invalid()
+      const withImages = Array.isArray(imageIds) && imageIds.length > 0
+      // With images, the text may be empty.
+      if (!(okText(text, LIMITS.text) || (withImages && typeof text === 'string' && text.length <= LIMITS.text))) return invalid()
+      return sendUser({ paneId, text, ...(withImages ? { imageIds } : {}) })
     })
+    images?.register(ipcMain, validPaneId)
     ipcMain.handle('chat:sendTeam', (_e, q) => {
       const { paneId, messages } = obj(q)
       if (!validPaneId(paneId) || !Array.isArray(messages) || !messages.length || messages.length > LIMITS.teamPerCall) return invalid()

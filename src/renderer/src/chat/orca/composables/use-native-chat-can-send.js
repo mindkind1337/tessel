@@ -6,7 +6,11 @@ import { computed } from 'vue'
 import { composerOptions } from './composer-options.js'
 export function useNativeChatCanSend(options = {}) {
   const { read, blocked } = composerOptions(options)
+  // Tessel: attached images alone can be sent.
   return computed(
-    () => !blocked() && !read('isSending') && String(read('draft', '')).trim().length > 0,
+    () =>
+      !blocked() &&
+      !read('isSending') &&
+      (String(read('draft', '')).trim().length > 0 || read('hasImages', false) === true),
   )
 }

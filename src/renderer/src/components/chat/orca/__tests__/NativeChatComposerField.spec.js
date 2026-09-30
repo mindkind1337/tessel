@@ -321,7 +321,7 @@ describe('Tessel: the field', () => {
   })
 
   it('shows no image chips unless images are allowed', async () => {
-    const imageAttachments = [{ id: 'image-1', path: '/tmp/example.png' }]
+    const imageAttachments = [{ id: 'image-1', imageId: 'img_000000000000000000000001', name: 'example.png', width: 688, height: 478 }]
     await render(fieldProps({ imageAttachments }))
     expect(wrapper.find('button[aria-label="View image: example.png"]').exists()).toBe(false)
     await wrapper.setProps({ allowImages: true })

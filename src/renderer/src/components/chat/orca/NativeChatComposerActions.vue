@@ -53,7 +53,7 @@ const dictationLabel = computed(() =>
     ? t('chat.orca.composer.stopDictation', 'Stop dictation')
     : t('chat.orca.composer.startDictation', 'Start dictation')
 )
-const attachLabel = computed(() => t('chat.orca.composer.attach', 'Attach file'))
+const attachLabel = computed(() => t('chat.orca.composer.attachImages', 'Attach images'))
 const criticalLabel = computed(() =>
   props.isWorking ? t('chat.orca.stop', 'Stop the agent') : t('chat.orca.composer.send', 'Send')
 )

@@ -4,7 +4,9 @@
 // (Shift+Enter: new line; an IME composition never sends); Escape first closes
 // an open picker/hint, then interrupts only while the agent works; "/" opens
 // the command and skill picker when the session offers any; paste is literal
-// text. NativeChatComposer keys this on paneKey (a pane switch remounts it).
+// text, and with allowImages a pasted, dropped or picked (+) image becomes a
+// chip sent with the message by id. NativeChatComposer keys this on paneKey
+// (a pane switch remounts it).
 // Props, emits: native-chat-composer-props.js. Exposed: see NativeChatComposer.
 import { computed, ref, shallowRef, watch } from 'vue'
 import { t } from '../../../i18n'
@@ -26,6 +28,7 @@ import { useNativeChatWorkspaceFileDrop } from '../../../chat/orca/composables/u
 import { useImeEnterGestureOwnership } from './ime-composition-keyboard-event.js'
 import { nativeChatComposerEmits, nativeChatComposerProps } from './native-chat-composer-props.js'
 import NativeChatComposerField from './NativeChatComposerField.vue'
+import { CHAT_IMAGE_ACCEPT } from '../../../chat/orca/native-chat-images.js'
 
 const props = defineProps(nativeChatComposerProps)
 const emit = defineEmits(nativeChatComposerEmits)
@@ -157,7 +160,35 @@ const attachments = useNativeChatComposerAttachments(() => ({
   isComposing: imeEnterGesture.isComposing,
   insertTypedText
 }))
-const { imageAttachments, removeImageAttachment, clearImageAttachments, attachResolvedPaths } = attachments
+const { imageAttachments, removeImageAttachment, clearImageAttachments, attachResolvedPaths, attachImages } = attachments
+
+// The attach button (+): the system's file picker, images only. A picked
+// file is checked and copied by the main process (as a dropped one).
+function pickImages() {
+  if (disabled.value || !props.allowImages || typeof document === 'undefined') return
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.multiple = true
+  input.accept = CHAT_IMAGE_ACCEPT
+  input.addEventListener('change', () => {
+    const files = Array.from(input.files || [])
+    if (!files.length) return
+    const toPath = props.pathForFile || globalThis.window?.shellApi?.pathForFile
+    attachImages(
+      files.map((file) => {
+        let path = ''
+        try {
+          path = toPath?.(file) || ''
+        } catch {
+          path = ''
+        }
+        return { file, name: file.name, ...(path ? { path } : {}) }
+      })
+    )
+    focus()
+  })
+  input.click()
+}
 
 const drop = useNativeChatWorkspaceFileDrop(() => ({
   paneKey: props.paneKey,
@@ -169,6 +200,8 @@ const drop = useNativeChatWorkspaceFileDrop(() => ({
 
 const { handlePaste, pasteFromClipboard } = useNativeChatComposerPaste(() => ({
   ...composerOptions(),
+  allowImages: props.allowImages,
+  attachImages,
   insertTypedText,
   readClipboardText: props.readClipboardText
 }))
@@ -262,7 +295,8 @@ const canSend = useNativeChatCanSend(() => ({
   disabled: disabled.value,
   disabledReason: props.disabledReason,
   sendBlockedReason: props.sendBlockedReason,
-  isSending: sendStructured.isSending.value
+  isSending: sendStructured.isSending.value,
+  hasImages: imageAttachments.value.length > 0
 }))
 // A pasted image has no agent-readable path until its save lands; sending
 // mid-save would ship the message without the image the chip promises.
@@ -332,6 +366,8 @@ defineExpose({
   setDraft,
   send,
   attachResolvedPaths,
+  attachImages,
+  pickImages,
   el: () => textareaRef.value?.element ?? null
 })
 </script>
@@ -373,7 +409,7 @@ defineExpose({
     @retry-skills="picker.retrySkills"
     @accept-mention="onAcceptMention"
     @remove-image-attachment="removeImageAttachment"
-    @attach="emit('attach')"
+    @attach="pickImages"
     @send="send"
     @stop="onStopButton"
     @dragover.capture="drop.onDragOverCapture"

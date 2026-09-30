@@ -52,6 +52,8 @@ const props = defineProps({
   isFocusedGroup: { type: Boolean, default: false },
   disabledReason: { type: String, default: '' },
   sendBlockedReason: { type: String, default: '' },
+  // Tessel: image attachments in the composer (send(text, { images })).
+  allowImages: { type: Boolean, default: false },
   permissionMode: { type: String, default: 'default' },
   unsent: { type: Array, default: () => [] },
   launchStatus: { type: String, default: null },
@@ -356,6 +358,7 @@ defineExpose({
       :disabled-reason="disabledReason"
       :send-blocked-reason="sendBlockedReason"
       :send="send"
+      :allow-images="allowImages"
       :set-option="setOption ? (payload) => optionCommand.dispatch({ optionId: Object.keys(payload)[0], value: Object.values(payload)[0] }) : undefined"
       :on-option-command="onOptionCommand"
       :chat-launch-yolo="!!node.chatLaunchYolo"

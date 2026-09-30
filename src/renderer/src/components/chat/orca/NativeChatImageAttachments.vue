@@ -14,6 +14,7 @@ import NativeChatTranscriptImagePreview from './NativeChatTranscriptImagePreview
 import {
   basename,
   isNativeChatPastedImagePath,
+  renderableImageSource,
   transcriptImageIdentity
 } from './native-chat-transcript-visibility.js'
 
@@ -39,31 +40,21 @@ const images = computed(() => {
           : image.path
             ? basename(image.path)
             : label
-      return { image, label, name, keyBase, occurrence }
+      // Tessel: an image this window holds (a sent image's thumbnail) shows as one.
+      const preview = props.enablePreview || renderableImageSource(image.url)
+      return { image, label, name, keyBase, occurrence, preview }
     })
 })
 </script>
 
 <template>
   <div v-if="images.length > 0" class="nc-image-attachments">
-    <template v-if="!enablePreview">
-      <div
-        v-for="entry in images"
-        :key="`${entry.keyBase}-${entry.occurrence}`"
-        class="nc-image-chip"
-        :title="entry.label"
-      >
+    <template v-for="entry in images" :key="`${entry.keyBase}-${entry.preview ? transcriptImageIdentity(entry.image, runtimeContext) : ''}-${entry.occurrence}`">
+      <NativeChatTranscriptImagePreview v-if="entry.preview" :block="entry.image" :runtime-context="runtimeContext" />
+      <div v-else class="nc-image-chip" :title="entry.label" data-test="nc-image-chip">
         <ImageIcon class="nc-image-chip-icon" aria-hidden="true" />
         <span class="nc-image-chip-name">{{ entry.name }}</span>
       </div>
-    </template>
-    <template v-else>
-      <NativeChatTranscriptImagePreview
-        v-for="entry in images"
-        :key="`${entry.keyBase}-${transcriptImageIdentity(entry.image, runtimeContext)}-${entry.occurrence}`"
-        :block="entry.image"
-        :runtime-context="runtimeContext"
-      />
     </template>
   </div>
 </template>

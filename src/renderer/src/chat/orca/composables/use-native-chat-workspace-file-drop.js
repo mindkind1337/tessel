@@ -73,7 +73,7 @@ export function useNativeChatWorkspaceFileDrop(options) {
       if (!targetOwnerIsCurrent()) return
       const attach = callback('attachResolvedPaths')
       const result = attach
-        ? attach(paths, undefined, { targetOwnerIsCurrent })
+        ? attach(paths, undefined, { targetOwnerIsCurrent, files: path ? [] : files })
         : callback('insertText')?.(
             paths.map((value) => (/\s/.test(value) ? JSON.stringify(value) : value)).join(' ') +
               ' ',

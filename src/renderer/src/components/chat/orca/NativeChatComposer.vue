@@ -12,7 +12,7 @@
 //   sessionOptionsProps, readClipboardText, pathForFile.
 // Emits: update:modelValue(draft), interrupt (Stop, or Escape while working),
 //   error(message | null) (a refused send or option; null once one succeeds),
-//   attach (only with allowImages), slashCommand(command), sent(text) (the
+//   attach (unused: + opens the image picker itself), slashCommand(command), sent(text) (the
 //   session confirmed it: the draft was cleared if unchanged since).
 // Slot: session-options (replaces the default session option pickers).
 // Exposed: focus(), insertTypedText(text), handlePasteEvent(event),

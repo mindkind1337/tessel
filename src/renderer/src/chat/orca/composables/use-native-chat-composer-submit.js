@@ -37,9 +37,10 @@ export function useNativeChatComposerSubmit(options) {
     if (!alive || blocked() || pending.value || call('isComposing')) return { ok: false }
     const draft = read('draft', ''),
       attachments = read('imageAttachments', [])
-    if (attachments.length) {
+    // Tessel: a chip still saving is not sent without its image.
+    if (attachments.some((item) => item.pending)) {
       read('structuredTransport')?.onError?.(
-        t('chat.orca.composer.textOnly', 'This chat accepts text only.'),
+        t('chat.orca.composer.imageStillSaving', 'An image is still being attached. Send again in a moment.'),
       )
       return { ok: false }
     }
@@ -49,7 +50,17 @@ export function useNativeChatComposerSubmit(options) {
       entered.value = true
       return { ok: false }
     }
-    if (!active.value) return draft.trim() ? call('sendStructured', draft, []) : { ok: false }
+    // A goal is text only: its images are not dropped silently.
+    if (active.value && attachments.length) {
+      read('structuredTransport')?.onError?.(
+        t('chat.orca.composer.goalNoImages', 'A goal is text only. Remove the images first.'),
+      )
+      return { ok: false }
+    }
+    if (!active.value)
+      return draft.trim() || attachments.length
+        ? call('sendStructured', draft, attachments)
+        : { ok: false }
     const objective = draft.replace(/^\/goal\s+/i, '').trim(),
       owner = scope()
     if (!objective) return { ok: false }

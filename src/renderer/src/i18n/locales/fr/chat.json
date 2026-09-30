@@ -706,5 +706,13 @@
   "chat.orca.question.from": "{{agent}} vous pose une question",
   "chat.orca.question.kept": "Votre réponse est gardée dans l’historique de ce chat.",
   "chat.orca.question.incomplete": "Répondez à chaque question avant d’envoyer.",
-  "chat.orca.question.tooLong": "Une réponse est trop longue (8 Ko au plus)."
+  "chat.orca.question.tooLong": "Une réponse est trop longue (8 Ko au plus).",
+  "chat.orca.imageLightbox.close": "Fermer l’aperçu de l’image",
+  "chat.orca.composer.attachImages": "Joindre des images",
+  "chat.orca.composer.imageLimit": "Au plus {{n}} images par message.",
+  "chat.orca.composer.imageType": "Seules les images PNG, JPEG, GIF et WebP peuvent être jointes.",
+  "chat.orca.composer.imageTooLarge": "Cette image dépasse {{mb}} Mo.",
+  "chat.orca.composer.imageFailed": "L’image n’a pas pu être jointe.",
+  "chat.orca.composer.imageStillSaving": "Une image est encore en cours d’ajout. Renvoyez dans un instant.",
+  "chat.orca.composer.goalNoImages": "Un objectif est du texte seul. Retirez d’abord les images."
 }

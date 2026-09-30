@@ -1,6 +1,7 @@
 // After Orca's use-native-chat-structured-composer-send.ts (MIT, Copyright (c) 2026 Lovecast Inc.)
-// Reactive options; send(text) or structuredTransport.send(text) returns {ok:true}.
-// Returns an async function (with isSending ref). No images are sent to Tessel.
+// Reactive options; send(text, { images }) or structuredTransport.send returns {ok:true}.
+// Returns an async function (with isSending ref). Images go as the ids the
+// main process gave them (never paths or bytes); a confirmed send clears them.
 // Only confirmed sends clear an unchanged draft in the same live scope.
 import { ref, onScopeDispose, toValue } from 'vue'
 import { t } from '../../../i18n/index.js'
@@ -22,14 +23,15 @@ export function useNativeChatStructuredComposerSend(options) {
     onError: error,
   }))
   async function send(text, attachments = read('imageAttachments', [])) {
-    if (!alive || blocked() || isSending.value || !text.trim()) return { ok: false }
-    if (attachments.length) {
-      error(t('chat.orca.composer.textOnly', 'This chat accepts text only.'))
+    if (!alive || blocked() || isSending.value || (!text.trim() && !attachments.length)) return { ok: false }
+    if (attachments.some((item) => item.pending || !item.imageId)) {
+      error(t('chat.orca.composer.imageStillSaving', 'An image is still being attached. Send again in a moment.'))
       return { ok: false }
     }
+    const imageIds = attachments.map((item) => item.imageId)
     const transport = read('structuredTransport')
     const submit = fn('send') || transport?.send
-    const option = /^\/(model|effort|permissionMode)(?:\s+(.*))?$/i.exec(text.trim())
+    const option = imageIds.length ? null : /^\/(model|effort|permissionMode)(?:\s+(.*))?$/i.exec(text.trim())
     if (!submit && !option) return { ok: false }
     const owner = scope(),
       draft = read('draft')
@@ -42,7 +44,7 @@ export function useNativeChatStructuredComposerSend(options) {
         result = option[2]
           ? await optionCommands.dispatch({ optionId, value: option[2].trim() })
           : await call('onOptionCommand', optionId)
-      } else result = await submit(text)
+      } else result = imageIds.length ? await submit(text, { images: imageIds }) : await submit(text)
       if (!alive || scope() !== owner) return result || { ok: false }
       if (result?.ok !== true) {
         error(
@@ -52,8 +54,10 @@ export function useNativeChatStructuredComposerSend(options) {
         return result || { ok: false }
       }
       error(null)
-      call('setHistory', (previous) => pushHistory(previous, text))
+      if (text.trim()) call('setHistory', (previous) => pushHistory(previous, text))
       call('onAccepted', text)
+      // The sent images belong to the message now, whatever was typed since.
+      if (imageIds.length) call('clearImageAttachments')
       if (read('draft') === draft) {
         call('setDraft', '')
         call('setCaret', 0)
