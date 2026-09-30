@@ -8479,6 +8479,15 @@ button.act-stat:hover,
   color: var(--wts-muted);
 }
 
+.osb-section-host {
+  flex-shrink: 0;
+  margin-left: 6px;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 400;
+  white-space: nowrap;
+}
+
 .osb-section-label {
   min-width: 0;
   overflow: hidden;

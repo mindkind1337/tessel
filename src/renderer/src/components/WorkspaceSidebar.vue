@@ -16,6 +16,7 @@ import {
   Copy,
   Ellipsis,
   Folder,
+  Server,
   FolderOpen,
   FolderPlus,
   GitBranch,
@@ -822,6 +823,10 @@ function wsOptionsLabel(active) {
     ? t('sidebar.options.titleActive', 'Workspace options ({{filters}} active)', { filters: badge.label })
     : t('sidebar.options.titleFilters', 'Workspace options ({{filters}})', { filters: badge.label })
 }
+// "SSH · host" after a remote project's name (mustaches cannot sit in the template's).
+function remoteHostLabel(project) {
+  return t('project.sidebar.onHost', 'SSH · {{host}}', { host: project.remote.host })
+}
 function sectionTitle(project) {
   if (!project) return ''
   // A project on a remote host (Add a project): its host and folder there.
@@ -981,7 +986,9 @@ defineExpose({
             >
               <div class="osb-section-title">
                 <span v-if="r.project" class="osb-section-icon">
-                  <Folder :size="14" aria-hidden="true" />
+                  <!-- A project on an SSH host: a server, and its host after the name. -->
+                  <Server v-if="r.project.remote" :size="14" aria-hidden="true" data-test="project-remote-icon" />
+                  <Folder v-else :size="14" aria-hidden="true" />
                 </span>
                 <input
                   v-if="r.project && editingId === r.project.id"
@@ -1002,6 +1009,11 @@ defineExpose({
                   :title="sectionTitle(r.project)"
                   @dblclick.stop="r.project && startRename(r.project)"
                   >{{ r.label }}</span
+                ><span
+                  v-if="r.project && r.project.remote && editingId !== r.project.id"
+                  class="osb-section-host"
+                  data-test="project-remote-host"
+                  >{{ remoteHostLabel(r.project) }}</span
                 >
               </div>
               <div class="osb-section-actions" data-repo-header-actions="" @click.stop>

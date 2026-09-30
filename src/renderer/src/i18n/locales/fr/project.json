@@ -142,7 +142,8 @@
     },
     "sidebar": {
       "titleRemote": "{{name}}\n{{host}}:{{path}}\nDouble-cliquez pour renommer",
-      "titleGroup": "{{name}}\n{{path}}\nGroupe de {{count}} dépôts\nDouble-cliquez pour renommer"
+      "titleGroup": "{{name}}\n{{path}}\nGroupe de {{count}} dépôts\nDouble-cliquez pour renommer",
+      "onHost": "SSH · {{host}}"
     },
     "remoteBrowser": {
       "title": "Parcourir le système de fichiers distant",
