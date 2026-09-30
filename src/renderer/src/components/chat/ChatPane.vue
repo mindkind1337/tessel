@@ -26,6 +26,7 @@ import { isFocusApprovalKey } from './orca/native-chat-approval-card.js'
 import { useStructuredAgentSession } from '../../chat/orca/composables/useStructuredAgentSession'
 import { rateLimitParts } from '../../chat/chatModel'
 import { modelLabel } from '../../../../shared/modelLabel'
+import { modelsFor } from '../../agentModels'
 import { t } from '../../i18n'
 
 const props = defineProps({
@@ -104,10 +105,17 @@ const permissions = computed(() => (typeof ctx.chatPermissions === 'function' ? 
 const permissionMode = computed(() => props.node.chatPermissionMode || (permissions.value === 'yolo' ? 'bypassPermissions' : 'default'))
 const yolo = computed(() => permissionMode.value === 'bypassPermissions' || permissions.value === 'yolo')
 
+// The model's name as its list gives it ("opus" -> "Opus 5.5"), else the
+// short name read from its id.
+function chatModelName(id) {
+  const listed = modelsFor(agentId.value).find((x) => x.id === id)
+  const short = modelLabel(id)
+  return listed && listed.label && /\d/.test(listed.label) && !/\d/.test(short) ? listed.label : short
+}
 const modelText = computed(() => {
   const m = meta.model || props.node.model
   if (!m) return ''
-  const name = modelLabel(m)
+  const name = chatModelName(m)
   return props.node.effort ? `${name} · ${props.node.effort}` : name
 })
 

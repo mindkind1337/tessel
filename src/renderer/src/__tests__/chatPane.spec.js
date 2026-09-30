@@ -15,7 +15,7 @@ import { installElementScrollTo, stubLayout, stubResizeObserver, deliverResizes,
 import { installNativeChatMessageListTestViewport } from '../chat/orca/native-chat-message-list-test-viewport.js'
 import { clearNativeChatDraftCacheForTests } from '../chat/orca/native-chat-draft-cache.js'
 import { clearNativeChatAttachmentCacheForTests } from '../chat/orca/composables/use-native-chat-composer-attachments.js'
-import { modelsFor } from '../agentModels.js'
+import { modelsFor, modelLists, resetModelListsForTests } from '../agentModels.js'
 
 // Real <Transition> for the menus (the stub would wrap their teleported content).
 config.global.stubs.transition = false
@@ -571,6 +571,16 @@ describe('ChatPane.vue', () => {
     expect(document.querySelector('[data-test="chat-state-error"]').textContent).toBe('exit code 3')
     await click(document.querySelector('[data-test="chat-start-again"]'))
     expect(ctx.chatOpen).toHaveBeenCalledWith(node)
+  })
+
+  it('header: a model chosen by its alias shows the name its list gives it (opus -> Opus 5.5)', async () => {
+    modelLists.claude = { models: [{ id: 'opus', label: 'Opus 5.5', effortLevels: ['high'] }], fetchedAt: Date.now() }
+    try {
+      await mountPane({ model: 'opus' })
+      expect(wrapper.get('[data-test="chat-model"]').text()).toBe('Opus 5.5')
+    } finally {
+      resetModelListsForTests()
+    }
   })
 
   it('header: rate limits, Yolo on the icon ring only (no badge), maximize and close', async () => {
