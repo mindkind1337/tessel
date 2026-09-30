@@ -98,6 +98,8 @@
       "files": "Fichiers (Ctrl+Shift+X)",
       "fileExplorer": "Explorateur de fichiers",
       "taskBoardTitle": "Tableau des tâches (Ctrl+Shift+K)",
+      "toggleSidebar": "Afficher ou masquer la barre latérale gauche",
+      "toggleRightPanel": "Afficher ou masquer la barre latérale droite",
       "taskBoard": "Tableau des tâches",
       "layoutTitle": "Disposition : scinder et organiser les panneaux",
       "layout": "Disposition",

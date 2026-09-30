@@ -89,8 +89,8 @@ describe('SidePanel.vue', () => {
     expect(w.findComponent(ExplorerPanel).exists()).toBe(false) // not created before it is shown
     await w.find('[data-test="side-tab-files"]').trigger('click')
     expect(w.emitted('update:tab')).toEqual([['files']])
-    await w.find('[data-test="side-close"]').trigger('click')
-    expect(w.emitted('close')).toHaveLength(1)
+    // No × of its own: the toolbar's right sidebar button hides it.
+    expect(w.find('[data-test="side-close"]').exists()).toBe(false)
     w.unmount()
   })
 

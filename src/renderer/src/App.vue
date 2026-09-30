@@ -1978,6 +1978,11 @@ function showSideTab(tab) {
     nextTick(() => window.dispatchEvent(new Event('terminal-layout-change')))
   }
 }
+// The right sidebar, shown or hidden, on the tab it showed last.
+function toggleRightPanel() {
+  taskPanelOpen.value = !taskPanelOpen.value
+  nextTick(() => window.dispatchEvent(new Event('terminal-layout-change')))
+}
 function closeSidePanel() {
   taskPanelOpen.value = false
   nextTick(() => window.dispatchEvent(new Event('terminal-layout-change')))
@@ -9045,6 +9050,37 @@ onBeforeUnmount(() => {
           <span class="brand-name">Tessel</span>
           <span v-if="isDev" class="brand-dev" :title="t('app.toolbar.devBuild', 'Development build (npm run dev)')">{{ t('app.toolbar.dev', 'dev') }}</span>
         </div>
+        <!-- The two side panels, shown or hidden (filled half = shown). -->
+        <button
+          class="tb-icon tb-panel-toggle"
+          :class="{ on: !sidebarCollapsed }"
+          :title="t('app.toolbar.toggleSidebar', 'Toggle the left sidebar')"
+          :aria-label="t('app.toolbar.toggleSidebar', 'Toggle the left sidebar')"
+          :aria-pressed="!sidebarCollapsed"
+          data-test="left-panel-toggle"
+          @click="toggleSidebar"
+        >
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <rect x="1.75" y="2.25" width="12.5" height="11.5" rx="2.25" stroke="currentColor" stroke-width="1.3" />
+            <rect v-if="!sidebarCollapsed" x="2.4" y="2.9" width="4.1" height="10.2" rx="1.4" fill="currentColor" />
+            <path v-else d="M6.5 2.5v11" stroke="currentColor" stroke-width="1.3" />
+          </svg>
+        </button>
+        <button
+          class="tb-icon tb-panel-toggle"
+          :class="{ on: taskPanelOpen }"
+          :title="t('app.toolbar.toggleRightPanel', 'Toggle the right sidebar')"
+          :aria-label="t('app.toolbar.toggleRightPanel', 'Toggle the right sidebar')"
+          :aria-pressed="taskPanelOpen"
+          data-test="right-panel-toggle"
+          @click="toggleRightPanel"
+        >
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <rect x="1.75" y="2.25" width="12.5" height="11.5" rx="2.25" stroke="currentColor" stroke-width="1.3" />
+            <rect v-if="taskPanelOpen" x="9.5" y="2.9" width="4.1" height="10.2" rx="1.4" fill="currentColor" />
+            <path v-else d="M9.5 2.5v11" stroke="currentColor" stroke-width="1.3" />
+          </svg>
+        </button>
       </div>
 
       <!-- Middle: one search box that finds panes, workspaces and commands. -->
@@ -9148,47 +9184,6 @@ onBeforeUnmount(() => {
               stroke="currentColor"
               stroke-width="1.3"
               stroke-linecap="round"
-            />
-          </svg>
-        </button>
-        <button
-          class="tb-icon"
-          :class="{ on: explorerOpen }"
-          :title="t('app.toolbar.files', 'Files (Ctrl+Shift+X)')"
-          :aria-label="t('app.toolbar.fileExplorer', 'File explorer')"
-          :aria-pressed="explorerOpen"
-          data-test="explorer-button"
-          @click="toggleExplorer"
-        >
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <path d="M1.8 3.5h4.4l1.4 1.5h6.6v8.5H1.8z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" />
-          </svg>
-        </button>
-        <button
-          class="tb-icon"
-          :class="{ on: taskBoardShown }"
-          :title="t('app.toolbar.taskBoardTitle', 'Task board (Ctrl+Shift+K)')"
-          :aria-label="t('app.toolbar.taskBoard', 'Task board')"
-          :aria-pressed="taskBoardShown"
-          data-test="tasks-button"
-          @click="toggleTaskPanel"
-        >
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <rect
-              x="2"
-              y="2.5"
-              width="12"
-              height="11"
-              rx="2"
-              stroke="currentColor"
-              stroke-width="1.3"
-            />
-            <path
-              d="M5 6.2l1.3 1.3L8.6 5.2M5 10.3h6"
-              stroke="currentColor"
-              stroke-width="1.3"
-              stroke-linecap="round"
-              stroke-linejoin="round"
             />
           </svg>
         </button>

@@ -23,7 +23,6 @@ import {
   ListPlus,
   MessageSquare,
   Moon,
-  PanelLeft,
   Pencil,
   Plus,
   Search,
@@ -953,15 +952,6 @@ defineExpose({
           >
             <Plus :size="14" :stroke-width="2.25" aria-hidden="true" />
           </button>
-          <button
-            type="button"
-            class="osb-icon-btn"
-            :aria-label="t('sidebar.collapse', 'Collapse sidebar')"
-            :title="t('sidebar.collapse', 'Collapse sidebar')"
-            @click="emit('toggle')"
-          >
-            <PanelLeft :size="14" :stroke-width="2" aria-hidden="true" />
-          </button>
         </div>
       </div>
 
@@ -1167,15 +1157,6 @@ defineExpose({
     <!-- Collapsed: one badge per project. -->
     <template v-else>
       <div class="osb-rail">
-        <button
-          type="button"
-          class="osb-icon-btn"
-          :aria-label="t('sidebar.expand', 'Expand sidebar')"
-          :title="t('sidebar.expand', 'Expand sidebar')"
-          @click="emit('toggle')"
-        >
-          <PanelLeft :size="14" :stroke-width="2" aria-hidden="true" />
-        </button>
         <button
           v-for="p in railItems"
           :key="p.id"

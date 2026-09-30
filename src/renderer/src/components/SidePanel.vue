@@ -127,9 +127,6 @@ onBeforeUnmount(() => {
         >
       </button>
       <span class="side-tabs-fill"></span>
-      <button class="tb-icon side-close" :title="t('explorer.side.close', 'Close the panel')" :aria-label="t('explorer.side.closeAria', 'Close the side panel')" data-test="side-close" @click="emit('close')">
-        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" /></svg>
-      </button>
     </div>
     <div class="side-body">
       <RemoteBadge
