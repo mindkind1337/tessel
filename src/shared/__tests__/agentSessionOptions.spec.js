@@ -200,3 +200,17 @@ describe('saved values are checked', () => {
     expect(validPaneSessionOptions({ model: '$(calc)' })).toBeNull()
   })
 })
+
+describe("Codex: its own list decides which models are offered", () => {
+  it('a seed model Codex no longer lists is not shown; listed ones keep their description', async () => {
+    const { catalogModelsFor } = await import('../agentSessionOptions')
+    const models = catalogModelsFor('codex', [
+      { id: 'gpt-6.1-sol', label: 'GPT-6.1-Sol', description: 'Latest workhorse model', options: [] },
+      { id: 'gpt-5.5', label: 'GPT-5.5', options: [] }
+    ])
+    expect(models.map((m) => m.id)).toEqual(['gpt-6.1-sol', 'gpt-5.5'])
+    expect(models[0].description).toBe('Latest workhorse model')
+    // Nothing listed yet: the seed.
+    expect(catalogModelsFor('codex', null).map((m) => m.id)).toContain('gpt-5.2-codex')
+  })
+})

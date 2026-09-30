@@ -253,6 +253,10 @@ export const CODEX_SESSION_OPTION_CATALOG = {
     { id: 'gpt-5.5', label: 'GPT-5.5', options: [codexEffort('xhigh')] },
     { id: 'gpt-5.2-codex', label: 'GPT-5.2 Codex', options: [codexEffort('xhigh')] }
   ],
+  // Once Codex has listed its models (for this account and version), that
+  // list decides which are offered: a seed model it no longer lists (GPT-5.2
+  // Codex) is not shown. A pane's saved model still runs.
+  discoveredModelsAreAuthoritative: true,
   modelApply: {
     launchArgs: (value) => ['-m', String(value)],
     agentArgsOverride: (tokens) => hasFlag(tokens, ['-m', '--model']),
