@@ -34,3 +34,28 @@ describe('Settings makes the rest of the window inert, and always gives it back'
     expect(userInert.hasAttribute('inert')).toBe(true)
   })
 })
+
+describe('Settings > Agents order', () => {
+  let prev
+  beforeEach(() => {
+    prev = window.shellApi
+    window.shellApi = { openExternal() {} }
+  })
+  afterEach(() => {
+    document.body.innerHTML = ''
+    window.shellApi = prev
+  })
+
+  it('lists the installed agents first, then the ones not found', async () => {
+    const agents = [
+      { id: 'aider', name: 'Aider', command: 'aider', available: false },
+      { id: 'claude', name: 'Claude Code', command: 'claude', available: true },
+      { id: 'continue', name: 'Continue', command: 'cn', available: true },
+      { id: 'goose', name: 'Goose', command: 'goose', available: false }
+    ]
+    const w = mount(SettingsDialog, { props: { agents, section: 'agents' }, attachTo: document.body })
+    const ids = [...document.querySelectorAll('.agent-set')].map((el) => el.dataset.agent)
+    expect(ids).toEqual(['claude', 'continue', 'aider', 'goose'])
+    w.unmount()
+  })
+})

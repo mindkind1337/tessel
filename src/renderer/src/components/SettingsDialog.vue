@@ -643,6 +643,12 @@ function copyExample(ex) {
 // variables, whether it is offered, and the one a new pane starts.
 const openAgent = ref(null) // the agent whose "Customize" is open
 const envErrors = ref({})
+// Settings > Agents: the installed agents first, then the ones not found,
+// each group in its usual order.
+const agentsInstalledFirst = computed(() => [
+  ...props.agents.filter((a) => a.available),
+  ...props.agents.filter((a) => !a.available)
+])
 function agentPref(id) {
   return settings.agentPrefs[id] || {}
 }
@@ -1335,7 +1341,7 @@ function previewSound() {
                 </div>
                 <input v-model="settings.autoUpdateAgents" type="checkbox" class="set-switch" />
               </label>
-              <div v-for="a in agents" :key="a.id" class="agent-set" :data-agent="a.id">
+              <div v-for="a in agentsInstalledFirst" :key="a.id" class="agent-set" :data-agent="a.id">
                 <div class="set-row">
                   <div class="set-label agent-set-name">
                     <BrandIcon :kind="a.id" :size="15" />
