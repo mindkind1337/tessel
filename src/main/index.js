@@ -230,7 +230,7 @@ function appIconPath() {
 // button and notifications line up.
 const APP_ID = app.isPackaged
   ? 'com.jeanclaudetrottier.tessel'
-  : 'com.jeanclaudetrottier.tessel.devyellow'
+  : 'com.jeanclaudetrottier.tessel.devtiles'
 if (process.platform === 'win32') app.setAppUserModelId(APP_ID)
 
 // Logs: %APPDATA%\\tessel\\logs\\tessel.log (rotated, 1 MB x 4).
