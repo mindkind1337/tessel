@@ -676,6 +676,11 @@ export function createChatSessions(deps) {
     })
     const provenance = e => ({ ...(e.agentId ? { agentId: e.agentId } : {}), ...(e.parentToolUseId ? { parentToolUseId: e.parentToolUseId } : {}) })
     on('commands', e => emit(s.paneId, { type: 'commands', commands: normalizeCommands(e.commands) }))
+    on('retry', e => emit(s.paneId, {
+      type: 'retry',
+      message: String(e.message || '').slice(0, 2000),
+      ...(Number.isSafeInteger(e.attempt) && e.attempt > 0 ? { attempt: e.attempt } : {})
+    }))
     on('subagent', e => {
       emit(s.paneId, { ...e, type: 'subagent' })
       if (e.phase !== 'end' || !e.id) return

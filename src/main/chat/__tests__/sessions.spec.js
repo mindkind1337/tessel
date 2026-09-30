@@ -85,6 +85,15 @@ const openOk = async (chat, extra = {}) => {
   return r
 }
 
+it('publishes and journals provider retry progress for the chat instead of silently dropping it', async () => {
+  const chat = createChatSessions(deps)
+  await openOk(chat)
+  adapters[0].emit('retry', { message: 'Reconnecting 1/5', attempt: 1 })
+  expect(events('retry')).toEqual([{ type: 'retry', message: 'Reconnecting 1/5', attempt: 1 }])
+  expect(chat.history({ paneId }).events.some(row => row.event.type === 'retry')).toBe(true)
+  await chat.close({ paneId })
+})
+
 describe('question IPC and lifecycle', () => {
   const question = { requestId: 'question_fixture', questions: [{ id: 'q0', question: 'Which?', multiSelect: false, options: [{ id: 'o0', label: 'One' }, { id: 'o1', label: 'Two' }] }], status: 'pending' }
   const answers = [{ questionId: 'q0', optionIds: ['o0'] }]

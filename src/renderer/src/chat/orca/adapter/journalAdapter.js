@@ -14,6 +14,7 @@
 import { agentJournalSubmissionKey } from '../shared/agent-session-journal-item-key.js'
 import { normalizeSubagentState, MAX_SUBAGENT_FIELD_CHARS, subagentGroupFallbackText } from '../shared/native-chat-subagent-summary.js'
 import { fileRefBlocks, imageRefBlocks } from '../native-chat-images.js'
+import { t } from '../../../i18n'
 
 // Output kept in a tool row: the same bound as the main process's journal.
 const MAX_OUTPUT = 8 * 1024
@@ -117,6 +118,8 @@ export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence =
   let turnSeq = 0
   // The open turn item's id (null between turns), and the newest user item id.
   let openTurn = null
+  let retryItemId = null
+  let retryAttempt = 0
   let lastUserItemId = null
   // Session facts the UI reads outside the journal (header, pickers).
   // subagents: the children this conversation started, by id ({ id, title,
@@ -254,6 +257,24 @@ export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence =
 
   function applyEvent(ev) {
     const at = Number.isFinite(ev.at) ? ev.at : now()
+    // A successful response or a turn boundary ends the retry burst. Status
+    // updates between attempts do not multiply its warning in the transcript.
+    if (['user', 'assistant', 'assistantDelta', 'tool', 'turnEnd'].includes(ev.type) ||
+        (ev.type === 'status' && ['starting', 'idle', 'ended', 'crashed', 'asleep'].includes(ev.state))) retryItemId = null
+    if (ev.type === 'retry') {
+      if (!retryItemId) {
+        retryItemId = `status:${idTag}retry-${sequence + 1}` // i18n-ignore
+        retryAttempt = 0
+      }
+      retryAttempt = Number.isSafeInteger(ev.attempt) && ev.attempt > 0 ? ev.attempt : retryAttempt + 1
+      const message = typeof ev.message === 'string' ? ev.message.trim().slice(0, 2000) : ''
+      const progress = t('chat.retry.attempt', 'Reconnecting… attempt {{attempt}}', { attempt: retryAttempt })
+      const text = message
+        ? `${progress} — ${message}`
+        : progress
+      put(retryItemId, { kind: 'status', text, tone: 'warning' }, {}, at)
+      return
+    }
     switch (ev.type) {
       case 'status': {
         if (ev.agent) meta.agent = ev.agent

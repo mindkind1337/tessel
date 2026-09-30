@@ -166,6 +166,20 @@ describe('ChatPane.vue', () => {
     document.body.style.pointerEvents = ''
   })
 
+  it('shows one reconnecting row, updated with the latest attempt', async () => {
+    await mountPane()
+    emit({ type: 'status', state: 'working' })
+    emit({ type: 'retry', message: 'Network unavailable', attempt: 1 })
+    await settle()
+    expect(wrapper.text()).toContain('Reconnecting')
+    expect(wrapper.text()).toContain('attempt 1')
+    emit({ type: 'retry', message: 'Network unavailable', attempt: 2 })
+    await settle()
+    expect(wrapper.text()).toContain('attempt 2')
+    expect(wrapper.text()).not.toContain('attempt 1')
+    expect(wrapper.text().match(/Network unavailable/g)).toHaveLength(1)
+  })
+
   it('shows a persistent name and validates a keyboard rename', async () => {
     const renameAgent = vi.fn((id, name) => {
       if (name === 'Taken') return false

@@ -730,5 +730,6 @@
   "chat.context.compactHint": "Résumer la conversation jusqu’ici pour libérer le contexte",
   "chat.context.compacting": "Compactage…",
   "chat.context.compact": "Compacter",
-  "chat.context.dismiss": "Masquer cet avertissement"
+  "chat.context.dismiss": "Masquer cet avertissement",
+  "chat.retry.attempt": "Reconnexion… tentative {{attempt}}"
 }

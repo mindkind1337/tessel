@@ -24,6 +24,22 @@ const messages = (state) => projectStructuredAgentSessionMessages(state.items, [
 const text = (m) => m.blocks.filter((b) => b.type === 'text').map((b) => b.text).join('')
 
 describe('journal adapter', () => {
+  it('updates one warning per retry burst and puts a later burst after recovered content', () => {
+    const adapter = createJournalAdapter({ now: () => 1000 })
+    adapter.apply({ type: 'status', state: 'working' })
+    adapter.apply({ type: 'retry', message: 'Reconnecting 1/5' })
+    adapter.apply({ type: 'retry', message: 'Reconnecting 2/5' })
+    let warnings = adapter.items().filter(item => item.body.kind === 'status')
+    expect(warnings).toHaveLength(1)
+    expect(warnings[0]).toMatchObject({ revision: 2, body: { tone: 'warning' } })
+    expect(warnings[0].body.text).toContain('Reconnecting 2/5')
+    expect(warnings[0].body.text).toContain('attempt 2')
+    adapter.apply({ type: 'assistant', messageId: 'm1', text: 'Connection recovered' })
+    adapter.apply({ type: 'retry', message: 'Reconnecting 1/5' })
+    warnings = adapter.items().filter(item => item.body.kind === 'status')
+    expect(warnings).toHaveLength(2)
+    expect(warnings[1].sequence).toBeGreaterThan(adapter.items().find(item => item.itemId === 'm1').sequence)
+  })
   it('keeps the number of background tasks still running, cleared when the process goes', () => {
     const { adapter } = run([
       { type: 'status', state: 'idle', agent: 'claude', sessionId: 's1' },
