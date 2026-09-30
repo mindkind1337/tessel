@@ -123,7 +123,12 @@ const optionCommand = useNativeChatSessionOptionCommand({
   node: () => props.node,
   agent: () => props.agent,
   isWorking: turnRunning,
-  values: () => ({ model: c.meta.model || props.node.model || undefined, ...(props.node.effort ? { effort: props.node.effort } : {}) }),
+  // The effort chosen in the pane, else the one its header shows (the agent's
+  // own settings or conversation, ChatPane's shownEffort).
+  values: () => {
+    const effort = props.node.effort || props.node.shownEffort
+    return { model: c.meta.model || props.node.model || undefined, ...(effort ? { effort } : {}) }
+  },
   permissionMode: () => props.permissionMode,
   chatLaunchYolo: () => !!props.node.chatLaunchYolo,
   maxPermissions: () => props.node.maxPermissions,

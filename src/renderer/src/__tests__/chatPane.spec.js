@@ -593,6 +593,8 @@ describe('ChatPane.vue', () => {
       await settle()
       expect(wrapper.get('[data-test="chat-model"]').text()).toBe('Opus 5.5 · xhigh')
       expect(node.headerModel).toBe('Opus 5.5 · xhigh')
+      // The composer's effort picker reads the same effort.
+      expect(node.shownEffort).toBe('xhigh')
     } finally {
       window.shellApi.agentModel = prev
       resetModelListsForTests()

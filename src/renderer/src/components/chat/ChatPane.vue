@@ -131,6 +131,8 @@ async function refreshEffort() {
     if (!alive) return
     const effort = res && (res.chosenEffort || res.effort)
     settledEffort.value = typeof effort === 'string' && effort ? effort : null
+    // The composer's effort picker shows it too (not saved with the layout).
+    props.node.shownEffort = settledEffort.value || undefined
   } catch {
     /* keep what it showed */
   } finally {
