@@ -191,14 +191,15 @@ describe('pane header hover card', () => {
     expect(cards()).toHaveLength(1)
   })
 
-  it('a renamed pane shows its agent with the icon under its name', async () => {
+  it('a renamed pane keeps the program accessible without an extra text line', async () => {
     const w = mountPane({ title: 'Reviewer', titleSet: true })
     await wait(0)
     await w.find('[data-test="pane-hover-trigger"]').trigger('pointerover')
     await wait(410)
     const [card] = cards()
     expect(card.querySelector('[data-hover-heading]').textContent).toBe('Reviewer')
-    expect(card.querySelector('[data-hover-agent]').textContent).toBe('Claude Code')
+    expect(card.querySelector('[data-hover-agent]')).toBeNull()
+    expect(card.querySelector('[data-pane-hover-details]').getAttribute('aria-label')).toContain('Claude Code')
     // Named by you: no conversation title.
     expect(card.querySelector('[data-hover-conversation]')).toBeNull()
   })

@@ -2205,7 +2205,6 @@ onBeforeUnmount(() => {
           @dblclick="startEditTitle"
           >{{ paneTitle }}</span
         >
-        <span v-if="isAgent && node.paneName" class="pane-agent-label">{{ agentName }}</span>
         <!-- The header shows only the agent's name: the conversation's title
              is in the hover card. Then the model it uses, one dim chip (the
              model picker on a click; hidden when the pane is narrow). -->

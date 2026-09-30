@@ -139,7 +139,7 @@ export function summarizeAgents(rows, subjectLabel) {
 
 export function summarizeAgentIdentities(rows) {
   return rows
-    .map((r) => t('sidebar.summary.identity', '{{name}} {{state}}', { name: r.typeLabel, state: formatSummaryStateLabel(r.dotState) }))
+    .map((r) => t('sidebar.summary.identity', '{{name}} {{state}}', { name: r.primary, state: formatSummaryStateLabel(r.dotState) }))
     .join('; ')
 }
 
@@ -260,7 +260,7 @@ export function paneRow(pane, now = Date.now()) {
   else if (pane.held) secondary = t('sidebar.row.held', 'Message waits for your approval')
   // Beside the name: only what needs attention (the dot shows the state);
   // the task goes on a second line under it (subline).
-  else secondary = pane.paneName ? pane.agentLabel || pane.title || pane.agentId || '' : ''
+  else secondary = ''
   const subline = agent ? pane.task || (pane.track && pane.track.text) || '' : ''
   const primary = pane.paneName || pane.title || (agent ? agentName : terminal)
   return {

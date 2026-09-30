@@ -175,7 +175,7 @@ describe('ChatPane.vue', () => {
     await mountPane({ paneName: 'Ada' }, { renameAgent })
     expect(wrapper.get('[data-test="chat-title"]').text()).toBe('Ada')
     expect(wrapper.find('.pane-num').exists()).toBe(false)
-    expect(wrapper.get('.pane-agent-label').text()).toBe('Claude')
+    expect(wrapper.find('.pane-agent-label').exists()).toBe(false)
     await wrapper.get('[data-test="chat-title"]').trigger('keydown', { key: 'Enter' })
     const input = wrapper.get('.pane-tab-input')
     expect(document.activeElement).toBe(input.element)

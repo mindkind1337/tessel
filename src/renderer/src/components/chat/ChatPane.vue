@@ -532,7 +532,7 @@ defineExpose({ start, send, interrupt, focusPendingApproval, focusComposer: () =
         <span
           class="pane-icon agent"
           :class="[iconState, { yolo }]"
-          :aria-label="title"
+          :aria-label="`${title} (${agentName})`"
           data-test="chat-icon"
           :title="yolo ? t('chat.pane.yoloHint', 'Tools run without asking (Settings)') : undefined"
         >
@@ -541,7 +541,6 @@ defineExpose({ start, send, interrupt, focusPendingApproval, focusComposer: () =
         </span>
         <input v-if="editingName" ref="nameInput" v-model="nameDraft" class="pane-tab-input" :aria-label="t('pane.renameAgent', 'Agent name')" @mousedown.stop @click.stop @keydown.enter.prevent="saveName" @keydown.esc="editingName = false" @blur="saveName" />
         <span v-else tabindex="0" @dblclick.stop="beginRename" @keydown.enter.prevent="beginRename" class="pane-title" data-test="chat-title" :title="t('chat.pane.titleHint', '{{title}}\nDrag the header to move the pane', { title })">{{ title }}</span>
-        <span v-if="node.paneName" class="pane-agent-label">{{ agentName }}</span>
         <span class="chat-status" :class="'st-' + status" data-test="chat-status">
           <span class="chat-status-dot" aria-hidden="true"></span>{{ statusLabel }}
         </span>

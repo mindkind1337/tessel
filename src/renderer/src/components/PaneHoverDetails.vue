@@ -18,7 +18,6 @@ const props = defineProps({
   info: { type: Object, required: true }
 })
 
-const showAgentLine = computed(() => !!props.info.agentName && props.info.agentName !== props.info.heading)
 const modelLine = computed(() => (props.info.model ? t('pane.model.title', 'Model: {{model}}', { model: props.info.model }) : ''))
 const branchLine = computed(() =>
   props.info.branch ? t('pane.title.branch', 'Branch: {{branch}} (separate copy)', { branch: props.info.branch }) : ''
@@ -32,15 +31,11 @@ const sessionLine = computed(() => (props.info.session ? t('pane.status.session'
 </script>
 
 <template>
-  <div class="hc-body" data-pane-hover-details="">
+  <div class="hc-body" data-pane-hover-details="" role="group" :aria-label="info.agentName ? `${info.heading} (${info.agentName})` : info.heading">
     <div class="hc-identity">
       <div class="hc-title hc-title-row" data-hover-heading="">
-        <BrandIcon v-if="!showAgentLine" :kind="info.iconKind" :accent="info.accent" :label="info.agentName || null" :size="14" />
+        <BrandIcon :kind="info.iconKind" :accent="info.accent" :label="info.agentName || null" :size="14" />
         <span v-text="info.heading"></span>
-      </div>
-      <div v-if="showAgentLine" class="hc-agent" data-hover-agent="">
-        <BrandIcon :kind="info.iconKind" :accent="info.accent" :label="info.agentName || null" :size="12" />
-        <span v-text="info.agentName"></span>
       </div>
       <div v-if="modelLine" class="hc-agent hc-model" data-hover-model="">
         <Cpu :size="12" aria-hidden="true" />

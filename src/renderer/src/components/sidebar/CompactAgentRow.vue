@@ -155,7 +155,7 @@ const teamTag = computed(() =>
 const rowLabel = computed(() => {
   const r = props.row
   const team = props.teamLabel || r.team
-  const parts = [[r.primary, r.subline, r.secondary].filter(Boolean).join(' - ')]
+  const parts = [[r.primary, r.typeLabel !== r.primary ? r.typeLabel : null, r.subline, r.secondary].filter(Boolean).join(' - ')]
   if (r.stateLabel && r.stateLabel !== r.secondary) parts.push(r.stateLabel)
   if (r.chat) parts.push(t('sidebar.agentRow.chatHint', 'Chat, no terminal'))
   if (r.team)

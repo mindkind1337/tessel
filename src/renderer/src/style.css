@@ -10853,5 +10853,3 @@ button.act-stat:hover,
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-
-.pane-agent-label { color: var(--text-dim); font-size: 11px; flex-shrink: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

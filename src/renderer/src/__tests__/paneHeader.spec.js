@@ -120,7 +120,7 @@ describe('terminal pane header', () => {
   it('shows its name, program and no number', async () => {
     await wrapper.setProps({ node: { ...node(), paneName: 'Bohr', num: 17 } })
     expect(wrapper.get('[data-test="pane-title"]').text()).toBe('Bohr')
-    expect(wrapper.get('.pane-agent-label').text()).toBe('Claude')
+    expect(wrapper.find('.pane-agent-label').exists()).toBe(false)
     expect(wrapper.find('.pane-num').exists()).toBe(false)
   })
 
