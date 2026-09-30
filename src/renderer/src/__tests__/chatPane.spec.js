@@ -988,6 +988,8 @@ describe('ChatPane.vue', () => {
     for (const label of ['Rename', 'Model', 'Restart', 'Continue in a terminal', 'Split right', 'Split down', 'Maximize pane', 'Close pane', 'Copy session ID']) {
       expect(items.some(item => item.textContent.includes(label)), label).toBe(true)
     }
+    // The menu takes the focus once mounted; jsdom may not give it, so focus it here.
+    menu.focus()
     await key(menu, { key: 'ArrowDown' })
     expect(document.activeElement.textContent).toBe('Paste')
     await key(document.activeElement, { key: 'End' })

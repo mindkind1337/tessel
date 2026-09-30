@@ -730,6 +730,15 @@
       "cancelled": "{{name}} reste tel quel.",
       "waitTerminal": "{{name}} passera en terminal à la fin de son tour (recliquez pour annuler).",
       "waitChat": "{{name}} passera en chat à la fin de son tour (recliquez pour annuler)."
+    },
+    "where": {
+      "top": "en haut",
+      "bottom": "en bas",
+      "middle": "au milieu",
+      "left": "à gauche",
+      "right": "à droite",
+      "center": "au centre",
+      "full": "plein écran"
     }
   }
 }

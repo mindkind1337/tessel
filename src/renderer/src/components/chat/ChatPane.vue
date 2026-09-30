@@ -544,6 +544,15 @@ const contextMenuActions = computed(() => ({
 const headerMenu = reactive({ visible: false, x: 0, y: 0, hasSelection: false })
 const headerSelection = ref('')
 function closeHeaderMenu() { headerMenu.visible = false; if (ctx.highlightId) ctx.highlightId.value = null }
+// A press outside the … menu (and not on its button) closes it, as in a terminal pane.
+function onDocPointerDownHeaderMenu(e) {
+  if (!headerMenu.visible) return
+  if (headerMenuRef.value && headerMenuRef.value.contains(e.target)) return
+  if (moreButton && moreButton.contains(e.target)) return
+  closeHeaderMenu()
+}
+onMounted(() => window.addEventListener('pointerdown', onDocPointerDownHeaderMenu, true))
+onBeforeUnmount(() => window.removeEventListener('pointerdown', onDocPointerDownHeaderMenu, true))
 function headerAction(action) { return (...args) => { closeHeaderMenu(); return action(...args) } }
 const headerMenuBindings = computed(() => {
   const folder = ctx.paneFolder ? ctx.paneFolder(props.node) : props.node.projectDir

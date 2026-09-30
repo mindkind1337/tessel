@@ -2924,12 +2924,21 @@ function paneWhere(paneId) {
   if (!layer || !el) return ''
   const L = layer.getBoundingClientRect()
   const r = el.getBoundingClientRect()
-  if (r.width >= L.width - 4 && r.height >= L.height - 4) return 'full'
+  if (r.width >= L.width - 4 && r.height >= L.height - 4) return t('app.where.full', 'full')
   const fx = (r.left + r.width / 2 - L.left) / L.width
   const fy = (r.top + r.height / 2 - L.top) / L.height
   const v = r.height >= L.height - 4 ? '' : fy < 0.4 ? 'top' : fy > 0.6 ? 'bottom' : 'middle'
   const h = r.width >= L.width - 4 ? '' : fx < 0.4 ? 'left' : fx > 0.6 ? 'right' : 'center'
-  return [v, h].filter(Boolean).join(' ')
+  // In the app's language (shown in the pane menus).
+  const words = {
+    top: t('app.where.top', 'top'),
+    bottom: t('app.where.bottom', 'bottom'),
+    middle: t('app.where.middle', 'middle'),
+    left: t('app.where.left', 'left'),
+    right: t('app.where.right', 'right'),
+    center: t('app.where.center', 'center')
+  }
+  return [v, h].filter(Boolean).map((w) => words[w]).join(' ')
 }
 
 // Short label for a pane, like "#2 Claude Code".
