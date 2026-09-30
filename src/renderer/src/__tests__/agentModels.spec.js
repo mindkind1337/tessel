@@ -346,7 +346,7 @@ describe('OpenCode: models from `opencode models`', () => {
     expect(pill.attributes('data-agent')).toBe('opencode')
     await pill.trigger('click')
     await w.get('[data-test="launch-model-picker"] [data-model="opencode/big-pickle"]').trigger('click')
-    expect(w.get('[data-test="launch-model-pill"]').text()).toContain('Opencode Big Pickle')
+    expect(w.get('[data-test="launch-model-pill"]').text()).toContain('Big Pickle')
     await w.findAll('.launch-item').find((b) => b.text() === 'OpenCode').trigger('click')
     expect(w.emitted('launch')[0][0]).toEqual({ kind: 'agent', id: 'opencode', sessionOptions: { model: 'opencode/big-pickle' } })
     w.unmount()

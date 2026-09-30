@@ -156,6 +156,16 @@ export function parseGrokModelList(stdout) {
 // provider/model id per line; any other line (a log line, a hint, a line
 // with spaces) is skipped. At most 300 rows.
 const OPENCODE_MODEL_ID = /^[A-Za-z0-9][\w.@+-]*\/[A-Za-z0-9._:/@[\]=+-]{1,150}$/
+// "opencode/big-pickle" -> "Big Pickle": the model's own name; another
+// provider stays as a hint, "anthropic/claude-sonnet-5" -> "Claude Sonnet 5
+// (anthropic)".
+export function openCodeModelLabel(id) {
+  const slash = String(id).indexOf('/')
+  if (slash < 0) return labelFromModelId(id)
+  const provider = id.slice(0, slash)
+  const name = labelFromModelId(id.slice(slash + 1))
+  return provider.toLowerCase() === 'opencode' ? name : `${name} (${provider})`
+}
 export function parseOpenCodeModelList(stdout) {
   const text = String(stdout || '')
   if (text.length > MODEL_PROBE_MAX_OUTPUT) return []
@@ -165,7 +175,7 @@ export function parseOpenCodeModelList(stdout) {
     const id = rawLine.trim()
     if (!id || id.length > 160 || !OPENCODE_MODEL_ID.test(id) || seen.has(id)) continue
     seen.add(id)
-    out.push({ id, label: labelFromModelId(id) })
+    out.push({ id, label: openCodeModelLabel(id) })
     if (out.length >= 300) break
   }
   return out

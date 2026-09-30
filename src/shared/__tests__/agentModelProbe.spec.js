@@ -86,7 +86,8 @@ describe('OpenCode: opencode models', () => {
 
   it('reads one provider/model per line; skips log lines and duplicates', () => {
     const models = parseOpenCodeModelList(fixture('opencode-models.txt'))
-    expect(models[0]).toEqual({ id: 'opencode/big-pickle', label: 'Opencode Big Pickle' })
+    expect(models[0]).toEqual({ id: 'opencode/big-pickle', label: 'Big Pickle' })
+    expect(parseOpenCodeModelList('anthropic/claude-sonnet-5')[0].label).toBe('Claude Sonnet 5 (anthropic)')
     expect(models.map((m) => m.id)).toEqual([
       'opencode/big-pickle',
       'opencode/ling-3.0-flash-fin-free',

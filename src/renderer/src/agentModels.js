@@ -8,7 +8,7 @@
 import { reactive } from 'vue'
 import { settings } from './settings'
 import { catalogModelsFor, getAgentSessionOptionCatalog } from '../../shared/agentSessionOptions'
-import { listedToCatalogModels, validListedModels, canProbeModels } from '../../shared/agentModelProbe'
+import { listedToCatalogModels, validListedModels, canProbeModels, openCodeModelLabel } from '../../shared/agentModelProbe'
 
 // agent -> { models: listed rows, fetchedAt }
 export const modelLists = reactive({})
@@ -31,7 +31,9 @@ export function loadModelLists() {
 }
 
 function setList(agent, e) {
-  const models = validListedModels(e && e.models)
+  let models = validListedModels(e && e.models)
+  // A list kept from before: OpenCode's names without the provider prefix.
+  if (agent === 'opencode') models = models.map((m) => ({ ...m, label: openCodeModelLabel(m.id) }))
   if (models.length) modelLists[agent] = { models, fetchedAt: Number(e.fetchedAt) || 0 }
 }
 
