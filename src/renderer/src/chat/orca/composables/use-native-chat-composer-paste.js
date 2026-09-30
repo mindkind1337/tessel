@@ -1,7 +1,8 @@
 // After Orca's use-native-chat-composer-paste.ts (MIT, Copyright (c) 2026 Lovecast Inc.)
 // Reactive options; insertTypedText receives plain text, never HTML. A pasted
 // image goes to attachImages([{ file }]) when allowImages.
-// readClipboardText() callback defaults to Tessel shellApi.readClipboard.
+// readClipboardText() callback defaults to Tessel shellApi.readClipboard; the
+// menu's Paste attaches a clipboard image first (shellApi.saveClipboardImage).
 // Disabled/scope changes invalidate asynchronous menu pastes.
 import { onScopeDispose } from 'vue'
 import { t } from '../../../i18n/index.js'
@@ -41,7 +42,17 @@ export function useNativeChatComposerPaste(options) {
     if (disabled()) return false
     const owner = scope()
     try {
-      const get = fn('readClipboardText') || globalThis.window?.shellApi?.readClipboard
+      // An image on the clipboard wins (as Ctrl+V): saved by the main
+      // process, then attached like a dropped file.
+      const shell = globalThis.window?.shellApi
+      if (read('allowImages', false) && fn('attachImages') && shell?.clipboardHasImage && shell?.saveClipboardImage) {
+        if (await shell.clipboardHasImage()) {
+          const path = await shell.saveClipboardImage()
+          if (scope() !== owner || disabled()) return false
+          if (typeof path === 'string' && path) return call('attachImages', [{ path }]) > 0
+        }
+      }
+      const get = fn('readClipboardText') || shell?.readClipboard
       const text = await get?.()
       if (scope() !== owner || disabled()) return false
       return insert(typeof text === 'string' ? text : text?.text || '')

@@ -35,6 +35,27 @@ describe('plain text composer paste', () => {
     await result.current.pasteFromClipboard()
     expect(insertTypedText).toHaveBeenCalledWith('plain')
   })
+  it("menu paste attaches a clipboard image (saved by the main process) before any text", async () => {
+    const insertTypedText = vi.fn(),
+      attachImages = vi.fn(() => 1),
+      readClipboardText = vi.fn(async () => 'plain')
+    const prev = globalThis.window.shellApi
+    globalThis.window.shellApi = { clipboardHasImage: vi.fn(async () => true), saveClipboardImage: vi.fn(async () => 'C:/t/image-1.png') }
+    try {
+      const { result } = renderHook(() =>
+        useNativeChatComposerPaste({ insertTypedText, attachImages, readClipboardText, allowImages: true }),
+      )
+      expect(await result.current.pasteFromClipboard()).toBe(true)
+      expect(attachImages).toHaveBeenCalledWith([{ path: 'C:/t/image-1.png' }])
+      expect(insertTypedText).not.toHaveBeenCalled()
+      // Images not allowed: the text as before.
+      const other = renderHook(() => useNativeChatComposerPaste({ insertTypedText, attachImages, readClipboardText }))
+      await other.result.current.pasteFromClipboard()
+      expect(insertTypedText).toHaveBeenCalledWith('plain')
+    } finally {
+      globalThis.window.shellApi = prev
+    }
+  })
   it.each(['disabled', 'scope', 'unmount'])('drops an async paste after %s', async (change) => {
     let resolve
     const disabled = ref(false),
