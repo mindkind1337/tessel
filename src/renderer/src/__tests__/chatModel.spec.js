@@ -281,6 +281,10 @@ describe('chatModel helpers', () => {
     expect(rateLimitParts(null)).toEqual([])
     expect(rateLimitParts({ sevenDay: { utilization: 55 } })).toEqual([{ id: 'sevenDay', pct: 55, resetsAt: null }])
     expect(rateLimitParts({ fiveHour: { utilization: 'x' } })).toEqual([])
+    expect(rateLimitParts({ fiveHour: null, sevenDay: { utilization: 0.1, resetsAt: 5 } })).toEqual([
+      { id: 'sevenDay', pct: 10, resetsAt: 5 }
+    ])
+    expect(rateLimitParts({ fiveHour: { utilization: null }, sevenDay: null })).toEqual([])
   })
 })
 

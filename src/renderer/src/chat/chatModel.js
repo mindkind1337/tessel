@@ -150,7 +150,9 @@ export function rateLimitParts(rateLimit) {
   if (!rateLimit) return []
   const out = []
   const pct = (w) => {
-    const u = Number(w && w.utilization)
+    // A window the provider sends as null (or with no value) is skipped: Number(null) is 0.
+    if (!w || w.utilization == null || w.utilization === '') return null
+    const u = Number(w.utilization)
     if (!Number.isFinite(u)) return null
     return Math.round(Math.min(100, Math.max(0, u <= 1 ? u * 100 : u)))
   }
