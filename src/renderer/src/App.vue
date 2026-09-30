@@ -6,6 +6,7 @@ import SidePanel from './components/SidePanel.vue'
 import WorkspaceSidebar from './components/WorkspaceSidebar.vue'
 import StatusBar from './components/StatusBar.vue'
 import { buildProjectCards, cardTargetPane, portProbes } from './sidebarModel'
+import { createProjectWorktrees } from './projectWorktrees'
 import { createPortScanner, browserUrlForPort, addressForPort } from './portScanner'
 import { allowedBrowserUrl, BLANK_URL } from '../../shared/browserUrl'
 import LaunchMenu from './components/LaunchMenu.vue'
@@ -3739,9 +3740,22 @@ watch(
 // with its folder's git branch, its task copies and every pane (agent or
 // terminal) with its live state.
 const wsBranches = reactive({}) // ws.cwd -> git branch ('' when not a repo)
+// Each project's git worktrees (its "other branches" in the sidebar), read
+// when the branches are and only while the window is visible.
+const wsWorktrees = reactive({}) // ws.cwd -> [{ path, branch, head, isMain, locked, prunable }]
+const projectWorktrees = createProjectWorktrees({
+  list: (cwd) => (window.shellApi.gitWorktrees ? window.shellApi.gitWorktrees(cwd) : Promise.resolve(null)),
+  store: wsWorktrees
+})
+function onVisibleWorktrees() {
+  projectWorktrees.shown()
+}
+document.addEventListener('visibilitychange', onVisibleWorktrees)
+onBeforeUnmount(() => document.removeEventListener('visibilitychange', onVisibleWorktrees))
 async function refreshBranches() {
-  if (!window.shellApi.gitInfo) return
   const cwds = [...new Set(workspaces.value.map((w) => w.cwd).filter(Boolean))]
+  projectWorktrees.refresh(cwds)
+  if (!window.shellApi.gitInfo) return
   for (const cwd of cwds) {
     try {
       const info = await window.shellApi.gitInfo(cwd)
@@ -3822,6 +3836,7 @@ const sidebarProjects = computed(() =>
       branch: (w.cwd && wsBranches[w.cwd]) || '',
       panes,
       copies,
+      worktrees: (w.cwd && wsWorktrees[w.cwd]) || [],
       ...(w.remote ? { remote: { host: remoteHostLabel(w.remote.hostId), path: w.remote.path } } : {}),
       ...(w.group ? { repoCount: w.group.repos.length } : {})
     }
@@ -3902,7 +3917,14 @@ async function openCard({ wsId, path, isMain }) {
   if (!ws) return
   selectWorkspace(ws.id)
   const task = !isMain ? boardTasks.find((t) => t.wsId === ws.id && t.worktree && t.worktree.path === path) : null
-  const worktree = task ? { path: task.worktree.path, branch: task.worktree.branch } : null
+  // One of the project's other branches (a git worktree with no task): its
+  // pane is in that copy, so it gets its card like any copy with panes.
+  const listed = !isMain && !task && ws.cwd ? (wsWorktrees[ws.cwd] || []).find((x) => samePath(x.path, path)) : null
+  const worktree = task
+    ? { path: task.worktree.path, branch: task.worktree.branch }
+    : listed
+      ? { path: listed.path, branch: listed.branch || '' }
+      : null
   if (!ws.tree) {
     const leaf = await createLeaf(selectedShell.value, null, isMain ? ws.cwd : path, worktree, isMain ? wsLeafOpts(ws) : {})
     if (leaf && wsById(wsId)) {

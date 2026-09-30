@@ -343,7 +343,10 @@
     },
     "clearFilters": "Effacer les filtres",
     "hiddenByFilters_one": "{{count}} masqué par les filtres",
-    "hiddenByFilters_other": "{{count}} masqués par les filtres"
+    "hiddenByFilters_other": "{{count}} masqués par les filtres",
+    "otherBranches_one": "{{count}} autre branche",
+    "otherBranches_other": "{{count}} autres branches",
+    "otherBranchLocked": "{{path}}\nVerrouillé"
   },
   "pane": {
     "subAgents": {

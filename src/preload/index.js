@@ -193,6 +193,8 @@ const api = {
   openExternal: (url) => ipcRenderer.invoke('app:openExternal', url),
   keepAwake: (on) => ipcRenderer.invoke('power:keepAwake', on === true),
   gitInfo: (cwd) => ipcRenderer.invoke('git:info', cwd),
+  // The worktrees of an open project's repository (read-only).
+  gitWorktrees: (cwd) => ipcRenderer.invoke('git:worktrees', cwd),
   createWorktree: (cwd, label, options) =>
     ipcRenderer.invoke('git:createWorktree', { cwd, label, options }),
   // Last locally observed subscription quotas, with timestamps and stale flags.
