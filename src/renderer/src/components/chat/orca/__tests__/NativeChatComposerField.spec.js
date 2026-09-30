@@ -273,7 +273,7 @@ describe('native chat composer autogrow', () => {
   })
 
   it('keeps the touch-target minimum heights', () => {
-    expect(source).toContain('min-height: 48px;')
+    expect(source).toContain('min-height: 76px;')
     expect(source).toMatch(/@media \(pointer: coarse\) \{\s*\.nc-composer-box :deep\(\.nc-composer-input\) \{\s*min-height: 56px;/)
   })
 

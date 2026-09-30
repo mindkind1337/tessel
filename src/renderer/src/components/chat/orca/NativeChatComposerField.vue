@@ -199,6 +199,7 @@ const criticalTitle = computed(() => {
         6px and clears this box's padding by 4px — keep that slack. -->
         <div
           class="nc-composer-box"
+          :class="{ 'nc-composer-box--dictation': showDictation }"
           :data-native-file-drop-target="NATIVE_FILE_DROP_TARGET.composer"
           :data-composer-scope-key="composerScopeKey"
         >
@@ -312,10 +313,12 @@ const criticalTitle = computed(() => {
 }
 /* rounded-lg border border-border p-1.5 shadow-xs bg-muted/50 dark:bg-input/40 [contain:paint] */
 .nc-composer-box {
+  position: relative;
+  min-width: 0;
   box-sizing: border-box;
   border: 1px solid var(--nc-border);
-  border-radius: 8px;
-  padding: 6px;
+  border-radius: 16px;
+  padding: 0;
   box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
   background: color-mix(in srgb, var(--nc-input) 40%, transparent);
   contain: paint;
@@ -337,12 +340,12 @@ const criticalTitle = computed(() => {
    into internal scrolling, layout-driven, so a re-wrap on resize needs no measure pass. */
 .nc-composer-box :deep(.nc-composer-input) {
   box-sizing: border-box;
-  min-height: 48px;
+  min-height: 76px;
   width: 100%;
   max-height: calc(8lh + 0.5rem);
   overflow-y: auto;
   background: transparent;
-  padding: 4px 8px;
+  padding: 16px 14px;
   font-size: 14px;
   line-height: 20px;
   color: var(--nc-foreground);
@@ -363,6 +366,16 @@ const criticalTitle = computed(() => {
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-  padding-top: 2px;
+  border-top: 1px solid var(--nc-border);
+  padding: 8px 10px;
+}
+.nc-composer-box--dictation :deep(.nc-composer-input) {
+  padding-right: 52px;
+}
+.nc-composer-box:focus-within {
+  border-color: var(--nc-primary, var(--nc-foreground));
+}
+.nc-composer-attachments {
+  padding: 12px 52px 0 14px;
 }
 </style>

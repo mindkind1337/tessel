@@ -289,15 +289,29 @@ function stopEscape(event) {
 .nc-pickers {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 6px;
+  width: 100%;
   min-width: 0;
 }
 /* max-w-48 text-muted-foreground */
 .nc-picker-trigger {
+  min-width: 0;
+  flex: 0 1 auto;
   max-width: 12rem;
+  border-radius: 999px;
   color: var(--nc-muted-foreground);
 }
+.nc-picker-trigger[data-native-chat-picker='model'] {
+  flex: 0 1 auto;
+  background: var(--nc-muted);
+}
+.nc-picker-trigger[data-native-chat-picker='options'] {
+  flex: 0 0 auto;
+  max-width: 45%;
+  margin-left: auto;
+}
 .nc-picker-trigger-label {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

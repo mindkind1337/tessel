@@ -96,10 +96,10 @@ function onDictationPointerLeave(event) {
         </TooltipTrigger>
         <TooltipContent side="top" :side-offset="4">{{ attachLabel }}</TooltipContent>
       </Tooltip>
+      <NativeChatContextUsageRing v-if="contextUsage" :usage="contextUsage" />
     </div>
-    <div class="nc-actions-end">
-      <!-- Why: keep session controls beside the actions they affect; the model
-      trigger is ordered last so only the context ring separates it from dictation. -->
+    <div class="nc-actions-options">
+      <!-- Let long model labels shrink without pushing Send outside the pane. -->
       <slot name="session-options" :is-working="isWorking">
         <NativeChatSessionOptionPickers
           :surface="sessionOptionsSurface"
@@ -109,14 +109,15 @@ function onDictationPointerLeave(event) {
           v-bind="sessionOptionsProps"
         />
       </slot>
-      <NativeChatContextUsageRing v-if="contextUsage" :usage="contextUsage" />
+    </div>
+    <div class="nc-actions-end">
       <Tooltip v-if="showDictation">
         <TooltipTrigger as-child>
           <Button
             type="button"
             :variant="isDictating ? 'secondary' : 'ghost'"
             size="icon-sm"
-            class="nc-actions-touch"
+            class="nc-actions-touch nc-actions-dictation"
             :aria-label="dictationLabel"
             data-test="chat-dictation"
             :disabled="dictationDisabled"
@@ -162,6 +163,7 @@ function onDictationPointerLeave(event) {
 }
 /* flex min-w-0 items-center gap-0.5 */
 .nc-actions-start {
+  flex: 0 0 auto;
   display: flex;
   min-width: 0;
   align-items: center;
@@ -169,10 +171,19 @@ function onDictationPointerLeave(event) {
 }
 /* ml-auto flex items-center gap-1.5 */
 .nc-actions-end {
-  margin-left: auto;
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 6px;
+}
+.nc-actions-options {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.nc-actions-dictation {
+  position: absolute;
+  right: 10px;
+  top: 12px;
 }
 .nc-size-4 {
   width: 16px;
@@ -189,7 +200,8 @@ function onDictationPointerLeave(event) {
 .nc-actions-critical {
   width: 32px;
   height: 32px;
-  border-radius: 9999px;
+  flex-shrink: 0;
+  border-radius: 10px;
 }
 /* pointer-coarse:size-11 / pointer-coarse:size-10 */
 @media (pointer: coarse) {

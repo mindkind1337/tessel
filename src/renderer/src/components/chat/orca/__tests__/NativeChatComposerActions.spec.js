@@ -32,10 +32,11 @@ function render(props = {}) {
 const button = (label) => wrapper.find(`button[aria-label="${label}"]`)
 
 describe('NativeChatComposerActions', () => {
-  it('places session option pickers immediately beside dictation', () => {
+  it('keeps session options separate from the fixed send control', () => {
     render()
     const pickers = wrapper.find('[data-testid="session-option-pickers"]').element
-    expect(pickers.nextElementSibling).toBe(button('Start dictation').element)
+    expect(pickers.closest('.nc-actions-options')).not.toBeNull()
+    expect(button('Send').element.closest('.nc-actions-end')).not.toBeNull()
   })
 
   it('marks the streaming Stop control as the critical hit target', () => {
