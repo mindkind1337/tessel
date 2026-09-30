@@ -8457,8 +8457,11 @@ function paneState(leaf) {
 const statusInfo = computed(() => {
   const items = []
   forEachLeaf(tree.value, (leaf) => {
-    if (hasNoTerminal(leaf)) return
-    items.push({ state: paneState(leaf), title: leaf.title || leaf.shellName || t('app.pane.terminal', 'Terminal'), active: leaf.id === activeId.value })
+    // Terminals and chats (an agent in a chat counts too); not the editor
+    // or browser panes.
+    if (leaf.kind === 'editor' || leaf.kind === 'browser') return
+    const state = leaf.kind === 'chat' ? chatPaneState(leaf) : paneState(leaf)
+    items.push({ state, title: leaf.title || leaf.shellName || t('app.pane.terminal', 'Terminal'), active: leaf.id === activeId.value })
   })
   const count = (state) => items.filter((s) => s.state === state).length
   const parts = [items.length === 1 ? t('app.status.paneOne', '1 pane') : t('app.status.panes', '{{count}} panes', { count: items.length })]
