@@ -242,14 +242,14 @@ describe('pane menu > Model', () => {
     mountPane({ modelChoice: { model: 'opus', effort: 'high' } })
     await flushPromises()
     const chip = () => wrapper.get('[data-test="pane-model-chip"]')
-    expect(chip().text()).toBe('Opus · high')
+    expect(chip().text()).toBe('Opus · High')
     wrapper.props('node').modelChoice = { model: 'opus', effort: 'max' }
     await wrapper.vm.$nextTick()
     // The header refreshes its model on its own schedule; ask now.
     window.shellApi.agentModel.mockResolvedValueOnce(null)
     await wrapper.setProps({ node: { ...wrapper.props('node'), sessionId: 's2' } })
     await flushPromises()
-    expect(chip().text()).toBe('Opus · max')
+    expect(chip().text()).toBe('Opus · Max')
     await chip().trigger('click')
     await nextTick()
     expect(modelMenu()).not.toBeNull()
@@ -260,11 +260,11 @@ describe('pane menu > Model', () => {
     window.shellApi.agentModel.mockResolvedValue({ model: 'gpt-5.5', effort: 'high', source: 'session' })
     await wrapper.setProps({ node: { ...wrapper.props('node'), sessionId: 's1' } })
     await flushPromises()
-    expect(wrapper.get('[data-test="pane-model-chip"]').text()).toBe('gpt-5.5 · high')
+    expect(wrapper.get('[data-test="pane-model-chip"]').text()).toBe('gpt-5.5 · High')
     window.shellApi.agentModel.mockResolvedValue({ model: 'gpt-5.5', effort: 'medium', source: 'session' })
     await wrapper.setProps({ node: { ...wrapper.props('node'), sessionId: 's3' } })
     await flushPromises()
-    expect(wrapper.get('[data-test="pane-model-chip"]').text()).toBe('gpt-5.5 · medium')
+    expect(wrapper.get('[data-test="pane-model-chip"]').text()).toBe('gpt-5.5 · Medium')
   })
 
   it('a pane launched with its own model shows it over the default from settings, until its session says otherwise', async () => {

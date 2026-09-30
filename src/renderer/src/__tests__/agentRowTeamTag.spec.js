@@ -40,7 +40,7 @@ describe('an agent row shows its model', () => {
 })
 
 describe('a chat agent row (no terminal)', () => {
-  const chat = (extra = {}) => row({ chat: true, title: 'Reviewer', primary: 'Reviewer', model: 'Opus 4.7 · high', ...extra })
+  const chat = (extra = {}) => row({ chat: true, title: 'Reviewer', primary: 'Reviewer', model: 'Opus 4.7 · High', ...extra })
 
   it('shows its team; no model and no chat tag on the row (screen readers still hear it)', () => {
     window.shellApi = {}

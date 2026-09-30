@@ -55,6 +55,7 @@ import PaneHoverDetails from './PaneHoverDetails.vue'
 import { useHoverCard } from './hover/useHoverCard'
 import { agentStateLabel } from '../sidebarModel'
 import { t, intlLocale } from '../i18n'
+import { nativeChatSessionChoiceLabel } from '../chat/orca/native-chat-session-option-labels'
 
 const props = defineProps({
   node: { type: Object, required: true }
@@ -84,10 +85,12 @@ const isAgent = computed(() => props.node.kind === 'agent')
 // until its conversation answers with another model. Checked every 20 s, each
 // time it finishes working, and when one of those files changes.
 const agentModel = ref(null) // { model, effort, source } | null
+// An effort in the app's language, as the chat's composer says it ("Moyen").
+const effortName = (effort) => nativeChatSessionChoiceLabel({ value: effort, label: effort })
 const modelText = computed(() => {
   const m = agentModel.value
   if (!m || !m.model) return ''
-  return modelLabel(m.model) + (m.effort ? ` · ${m.effort}` : '')
+  return modelLabel(m.model) + (m.effort ? ` · ${effortName(m.effort)}` : '')
 })
 // For the team roster (team_members): the model this pane shows.
 watch(
@@ -117,7 +120,7 @@ const modelTitle = computed(() => {
                 ? t('pane.model.fromRunning', 'the only model Ollama has running')
               : t('pane.model.fromSettings', 'from its settings (a change inside the agent may not show)')
   const head = m.effort
-    ? t('pane.model.titleEffort', 'Model: {{model}} (reasoning {{effort}})', { model: m.model, effort: m.effort })
+    ? t('pane.model.titleEffort', 'Model: {{model}} (reasoning {{effort}})', { model: m.model, effort: effortName(m.effort) })
     : t('pane.model.title', 'Model: {{model}}', { model: m.model })
   return `${head}\n${from}`
 })
@@ -293,7 +296,7 @@ const headerModelText = computed(() => {
   const m = agentModel.value
   if (!isAgent.value || !m || !m.model) return ''
   const name = modelLabel(m.model)
-  return m.effort ? `${name} · ${m.effort}` : name
+  return m.effort ? `${name} · ${effortName(m.effort)}` : name
 })
 function openModelMenuAtChip(e) {
   const r = e.currentTarget.getBoundingClientRect()

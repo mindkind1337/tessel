@@ -210,7 +210,7 @@ describe('sidebar hover cards', () => {
     const text = card.textContent
     expect(text).toContain('Write the tests')
     expect(text).toContain('Claude (chat)')
-    expect(text).toContain('Model: Opus 4.7 · high')
+    expect(text).toContain('Model: Opus 4.7 · High')
     expect(text).toContain('Working')
     expect(text).toContain('Team 2')
     expect(card.querySelector('[data-hover-chat]').textContent).toContain('Chat (no terminal)')

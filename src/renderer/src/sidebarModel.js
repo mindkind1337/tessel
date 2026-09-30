@@ -7,6 +7,7 @@
 // lib/worktree-status.ts, lib/short-time-ago.ts). Pure functions: App feeds
 // raw workspaces, the sidebar renders the rows.
 import { t, intlLocale } from './i18n'
+import { nativeChatSessionChoiceLabel } from './chat/orca/native-chat-session-option-labels'
 import { listsChildren } from './agentChildrenView'
 import { modelLabel } from '../../shared/modelLabel'
 
@@ -80,7 +81,7 @@ function chatModelText(pane) {
   if (typeof pane.headerModel === 'string' && pane.headerModel) return pane.headerModel
   const name = modelLabel(pane.model)
   if (!name) return ''
-  return pane.effort ? `${name} · ${pane.effort}` : name // i18n-ignore
+  return pane.effort ? `${name} · ${nativeChatSessionChoiceLabel({ value: pane.effort, label: pane.effort })}` : name // i18n-ignore
 }
 
 // Orca's worktree-card-agent-summary.ts.

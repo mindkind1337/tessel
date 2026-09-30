@@ -275,7 +275,7 @@ describe('chat agents (no terminal) in the sidebar', () => {
       chat('x', { model: 'claude-opus-4-7', effort: 'high', team: 'tm1', lead: true, task: 'Fix it', sessionId: 's1', pid: 99, toolsDown: true }),
       NOW
     )
-    expect(row).toMatchObject({ model: 'Opus 4.7 · high', team: 'tm1', lead: true, subline: 'Fix it', pid: null, toolsDown: false })
+    expect(row).toMatchObject({ model: 'Opus 4.7 · High', team: 'tm1', lead: true, subline: 'Fix it', pid: null, toolsDown: false })
     expect(row.children).toEqual({ agent: 'claude', sessionId: 's1' })
     expect(paneRow(chat('x', { model: 'claude-sonnet-4-5' }), NOW).model).toBe('Sonnet 4.5')
     expect(paneRow(chat('x'), NOW).model).toBe('')
