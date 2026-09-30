@@ -125,6 +125,13 @@ const api = {
   resolveFiles: (q) => ipcRenderer.invoke('files:resolve', q),
   openFile: (q) => ipcRenderer.invoke('files:open', q),
   viewFile: (file) => ipcRenderer.invoke('files:view', file),
+  // Paths named in the native chat: [paths] -> { path: 'file' | 'dir' | null }
+  // (at most 64); open(path) a folder or a media / document file with the
+  // system (the main process re-checks it).
+  chatFiles: {
+    stat: (paths) => ipcRenderer.invoke('chatFiles:stat', { paths }),
+    open: (path) => ipcRenderer.invoke('chatFiles:open', { path })
+  },
   explorer: {
     list: (q) => ipcRenderer.invoke('explorer:list', q),
     status: (q) => ipcRenderer.invoke('explorer:status', q),

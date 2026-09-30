@@ -9,7 +9,7 @@
 // Props: agent ('grok' | 'openclaude' | 'omp'), sessionId, agentName,
 //   isVisible (the file is watched only while the view shows).
 // Emits: close (back to the terminal).
-import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, provide, ref, shallowRef, watch } from 'vue'
 import { MessagesSquare, SquareTerminal } from 'lucide-vue-next'
 import './orca-tokens.css'
 import NativeChatEmptyState from './NativeChatEmptyState.vue'
@@ -149,6 +149,7 @@ const fileLinkContext = computed(() => {
   return folder ? { worktreeId: n.id, worktreePath: folder, roots: [folder, n.projectDir].filter(Boolean) } : null
 })
 const { onLinkClick } = useNativeChatLinkActions(fileLinkContext, rootRef, () => ({ isVisible: props.isVisible }))
+provide('nativeChatFileLinkContext', fileLinkContext)
 
 const title = computed(() => t('chat.orca.transcriptView.title', 'Conversation of {{agent}}', { agent: props.agentName || props.agent }))
 </script>

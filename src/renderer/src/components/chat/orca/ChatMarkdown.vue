@@ -27,9 +27,10 @@
  * Clicking a link never navigates the window: the default action is always
  * prevented (a middle click too); a right click is left alone.
  */
-import { computed, defineComponent, h, shallowRef } from 'vue'
+import { computed, defineComponent, h, inject, shallowRef, toValue, watch } from 'vue'
 import { renderMarkdown } from '../../../markdownView'
 import { useNativeChatLinkActions } from '../../../chat/orca/composables/use-native-chat-link-actions.js'
+import { applyInlineCodeFileLinks, resolveInlineCodeFiles } from './chat-inline-code-files.js'
 import {
   createCompactRenderers,
   createDocumentRenderers,
@@ -75,12 +76,35 @@ export default defineComponent({
 
     // The sanitized document, transformed; re-made only when the text or the
     // transforms change (not on every re-render).
-    const fragment = computed(() => {
+    const baseFragment = computed(() => {
       const parsed = parseSanitizedHtml(renderMarkdown(protectLocalMarkdownLinks(props.content)))
       if (props.linkifyFilePaths) linkifyFilePathsInDom(parsed)
       if (props.githubRepo) linkifyGitHubReferences(parsed, props.githubRepo)
       return parsed
     })
+
+    // Tessel: inline code naming a file that exists becomes a link
+    // (chat-inline-code-files.js); looked up once per message, in main.
+    const injectedContext = inject('nativeChatFileLinkContext', null)
+    const linkContext = computed(() => props.fileLinkContext ?? toValue(injectedContext) ?? null)
+    const codeFiles = shallowRef(null)
+    let lookup = 0
+    watch(
+      [baseFragment, linkContext, () => props.linkifyFilePaths],
+      ([parsed, context, linkify]) => {
+        const run = ++lookup
+        codeFiles.value = null
+        const stat = globalThis.window?.shellApi?.chatFiles?.stat
+        if (!linkify || !context || !stat) return
+        resolveInlineCodeFiles({ fragment: parsed, content: props.content, context, stat }).then((found) => {
+          if (run === lookup && found.size) codeFiles.value = found
+        })
+      },
+      { immediate: true }
+    )
+    const fragment = computed(() =>
+      codeFiles.value ? applyInlineCodeFileLinks(baseFragment.value.cloneNode(true), codeFiles.value) : baseFragment.value
+    )
 
     return () => {
       const isDocument = props.variant === 'document'
@@ -143,6 +167,18 @@ export default defineComponent({
 }
 .cm-c-link:hover {
   color: var(--nc-foreground);
+}
+/* Inline code naming a file: the code's look, a link's underline on hover. */
+.chat-md .cm-code-link {
+  color: inherit;
+  text-decoration-line: none;
+  cursor: pointer;
+}
+.chat-md .cm-code-link:hover,
+.chat-md .cm-code-link:focus-visible {
+  color: inherit;
+  text-decoration-line: underline;
+  text-underline-offset: 2px;
 }
 .cm-c-code {
   border-radius: 4px;

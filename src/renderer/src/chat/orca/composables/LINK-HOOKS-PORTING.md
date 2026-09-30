@@ -17,7 +17,13 @@ in component setup; computed values are read with `.value` outside templates.
   `async (event, href) => void`. `options.openFile({file,line,col}, event)` defaults
   to injected `panelCtx.viewFile`. Relative paths, file URIs, line/column suffixes
   and encoded literal paths resolve without invoking a shell. Shift does not
-  open a file externally. Common executable extensions are refused.
+  open a file externally. Programs, scripts, network/UNC/device paths and
+  control characters are refused (src/shared/chatFileLinks.js); existence is
+  checked through `shellApi.chatFiles.stat` (or `options.statPath`). Outside the
+  chat's folders Tessel asks first (injected `askConfirm`, or
+  `options.confirmOpen`). Folders and media/documents open with the system
+  through `shellApi.chatFiles.open` (or `options.openSystem`), re-checked in main
+  (src/main/chatFileOpen.js); text and code open in Tessel's editor.
   Optional `onOpenFailure({verdict,path,error})` receives resolution/open failures;
   otherwise Tessel's toast is used. A missing context still consumes file clicks
   and reports an unresolved target, avoiding document navigation.

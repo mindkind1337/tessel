@@ -37,6 +37,7 @@ import { prepareAgentStateHooks } from './agentStateSetup'
 import { assessNeeds } from './tesselNeeds'
 import { createClaudeUsageReport } from './claudeUsageReport'
 import { resolveFiles, codeGotoArg, listProjectFiles } from './fileOpen'
+import { statChatPaths, openChatPath } from './chatFileOpen'
 import { titleBarColors } from '../shared/themePalettes'
 import { geminiSessionExists, qwenSessionExists, resumeTarget } from './agentResume'
 import { paneEnv } from './paneEnv'
@@ -2433,6 +2434,11 @@ ipcMain.handle('files:open', async (_evt, q = {}) => {
   const err = await shell.openPath(file)
   return err ? { ok: false, error: err } : { ok: true, with: 'default' }
 })
+// Paths named in the native chat (chatFileOpen.js): which exist (a bounded
+// batch), and a folder or a media / document file opened with the system,
+// re-checked here (local, absolute, never a program or a script).
+ipcMain.handle('chatFiles:stat', (_evt, q = {}) => statChatPaths(q || {}))
+ipcMain.handle('chatFiles:open', (_evt, q = {}) => openChatPath(q || {}, { shell }))
 // The file explorer (explorer.js): folders, git status, a few changes, and a
 // watch per project (the window is told when files change).
 // A remote project (ssh://… root): the same operations on its host

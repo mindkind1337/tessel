@@ -410,6 +410,15 @@ function anchorHandlers(href, ctx) {
   }
 }
 
+// Tessel: a link that is only inline code (a file name) looks like the code,
+// underlined on hover like a link.
+function isCodeLink(element) {
+  const kids = Array.from(element.childNodes).filter(
+    (n) => n.nodeType === ELEMENT_NODE || (n.nodeValue ?? '').trim()
+  )
+  return kids.length === 1 && kids[0].nodeType === ELEMENT_NODE && kids[0].localName === 'code'
+}
+
 function renderAnchor(element, ctx, state, className) {
   const href = safeHref(element.getAttribute('href'))
   return h(
@@ -419,7 +428,7 @@ function renderAnchor(element, ctx, state, className) {
       title: element.getAttribute('title') ?? undefined,
       target: '_blank',
       rel: 'noreferrer',
-      class: className,
+      class: isCodeLink(element) ? [className, 'cm-code-link'] : className,
       ...anchorHandlers(href, ctx)
     },
     renderChildren(element, ctx, state)

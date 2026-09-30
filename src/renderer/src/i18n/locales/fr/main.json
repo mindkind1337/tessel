@@ -3,8 +3,14 @@
     "dialog": {
       "pickFolder": "Choisir un dossier de projet"
     },
+    "chatFiles": {
+      "executable": "Tessel n'ouvre jamais de programmes ni de scripts depuis le chat.",
+      "network": "Les chemins réseau et de périphérique ne s'ouvrent jamais depuis le chat.",
+      "type": "Ce type de fichier ne s'ouvre pas avec le système depuis le chat.",
+      "invalid": "Ce chemin n'est pas valide."
+    },
     "error": {
-      "noProjectFolder": "Le dossier du projet n'existe pas.",
+      "noProjectFolder":"Le dossier du projet n'existe pas.",
       "openNotes": "Impossible d'ouvrir les notes : {{error}}",
       "noCommitMessage": "L'agent n'a donné aucun message.",
       "imageTooLarge": "L'image est trop grande pour être affichée.",

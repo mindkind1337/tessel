@@ -20,7 +20,7 @@
 //   ok }), start (Start again / Trust this folder…), history-retry.
 // Exposed: focusComposer(), focusPendingApproval(), hasPendingApproval(),
 //   insertTypedText(text), setNotice(message), composerEl().
-import { computed, nextTick, ref, shallowRef } from 'vue'
+import { computed, nextTick, provide, ref, shallowRef } from 'vue'
 import { RotateCcw } from 'lucide-vue-next'
 import NativeChatApprovalCard from './NativeChatApprovalCard.vue'
 import NativeChatComposer from './NativeChatComposer.vue'
@@ -108,6 +108,8 @@ const session = computed(() => {
 const viewState = computed(() => selectNativeChatViewState(session.value))
 const fontScale = useNativeChatFontScale(() => props.isFocusedGroup && viewState.value.kind === 'ready', () => ({ target: rootRef.value }))
 const fileLinkContext = useNativeChatFileLinkContext(() => props.node)
+// The chat's folders, for inline code that names a file (ChatMarkdown).
+provide('nativeChatFileLinkContext', fileLinkContext)
 const { onLinkClick } = useNativeChatLinkActions(fileLinkContext, rootRef, () => ({ isVisible: props.isVisible }))
 
 // The request waiting for an answer (the oldest); Tessel's engine asks
