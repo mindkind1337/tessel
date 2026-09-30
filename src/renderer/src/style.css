@@ -8504,6 +8504,11 @@ button.act-stat:hover,
   font-size: 12px;
 }
 
+/* Renaming: the field takes the whole header (no actions over its end). */
+.osb-section-header:has(.osb-rename) .osb-section-actions {
+  display: none;
+}
+
 /* Header actions show on hover, over the title's end (Orca's ProjectHeaderActions). */
 .osb-section-actions {
   position: absolute;
