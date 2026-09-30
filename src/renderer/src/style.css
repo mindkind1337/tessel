@@ -3689,6 +3689,45 @@ body.pane-dragging * {
   flex: 0 0 auto;
 }
 
+/* Session search: the opt-in, the index line, a result's passage. */
+.sessions-optin,
+.sessions-index {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.sessions-index {
+  padding: 4px 8px;
+}
+.sessions-index > .set-hint:first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.sessions-keep {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.session-snippet {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  color: var(--text);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.session-snippet mark {
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--warn) 35%, transparent);
+  color: var(--text-strong);
+}
+
 .session-title {
   overflow: hidden;
   color: var(--text-strong);

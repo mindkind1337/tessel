@@ -51,6 +51,7 @@ import { createChatSessions } from './chat/sessions'
 import { createChatImages } from './chat/chatImages'
 import { transcriptHomeFor } from './chat/transcriptHistory'
 import { createTranscriptViews } from './chat/transcriptView'
+import { createSessionSearch } from './sessionSearch/index.js'
 import { createClaudeChat } from './chat/claudeChat'
 import { createCodexChat } from './chat/codexChat'
 import { createOpencodeChat } from './chat/opencodeChat'
@@ -1131,6 +1132,16 @@ const chatSessions = createChatSessions({
 chatSessions.register(ipcMain)
 // Read-only chat views of the agents without a chat protocol (Grok,
 // OpenClaude, OMP): their session file, watched while the view is open.
+// Search in what was said in the agents' conversations: a local index, off
+// until the user turns it on; filled in the background, not while the window
+// is hidden or minimized (sessionSearch/index.js).
+const sessionSearch = createSessionSearch({
+  dir: app.getPath('userData'),
+  isPaused: () => !mainWindow || mainWindow.isDestroyed() || mainWindow.isMinimized() || !mainWindow.isVisible(),
+  log
+})
+sessionSearch.register(ipcMain)
+app.on('will-quit', () => sessionSearch.close())
 const transcriptViews = createTranscriptViews({ send, log })
 transcriptViews.register(ipcMain)
 app.on('will-quit', () => transcriptViews.closeAll())

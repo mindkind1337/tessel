@@ -98,3 +98,106 @@ describe('multi-agent conversation history', () => {
     expect(chips).not.toContain('Grok')
   })
 })
+
+describe('search in what was said (opt-in)', () => {
+  const rows = [{ agent: 'claude', id: 'c1', cwd: 'C:/P', title: 'Listed by title', updated: Date.now() }]
+  function api(status, extra = {}) {
+    let current = { available: true, enabled: false, phase: 'idle', filesIndexed: 0, filesDue: 0, sessions: 0, sizeBytes: 0, historyDays: 90, ...status }
+    const sessionSearch = {
+      status: vi.fn(async () => current),
+      enable: vi.fn(async () => {
+        current = { ...current, enabled: true, phase: 'current', sessions: 12, sizeBytes: 3 * 1048576 }
+        return { ok: true }
+      }),
+      disable: vi.fn(async () => {
+        current = { ...current, enabled: false }
+        return { ok: true }
+      }),
+      clear: vi.fn(async () => ({ ok: true })),
+      setHistoryDays: vi.fn(async () => ({ ok: true })),
+      search: vi.fn(async () => ({ ok: true, hits: [] })),
+      ...extra
+    }
+    window.shellApi = { listSessions: vi.fn().mockResolvedValue(rows), writeClipboard: vi.fn(), sessionSearch }
+    return sessionSearch
+  }
+
+  it('off: the opt-in says what it does and where the index stays; the box still filters titles; nothing is searched', async () => {
+    const s = api()
+    wrapper = mount(SessionsDialog, { props: { cwd: 'C:/P' } })
+    await flushPromises()
+    const optin = wrapper.get('[data-test="sessions-optin"]')
+    expect(optin.text()).toContain('Search every agent session')
+    expect(optin.text()).toContain('nothing is sent anywhere')
+    await wrapper.get('[data-test="sessions-query"]').setValue('listed')
+    await flushPromises()
+    expect(s.search).not.toHaveBeenCalled()
+    expect(wrapper.findAll('.session-row')).toHaveLength(1)
+    await wrapper.get('[data-test="sessions-enable"]').trigger('click')
+    await flushPromises()
+    expect(s.enable).toHaveBeenCalled()
+    expect(wrapper.find('[data-test="sessions-optin"]').exists()).toBe(false)
+    expect(wrapper.get('[data-test="sessions-index"]').text()).toContain('Index up to date: 12 conversations (3 MB)')
+  })
+
+  it('on: results show the passage with its matches marked, secrets masked, and resume the conversation; scopes and agents go to the search', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      const s = api(
+        { enabled: true, phase: 'current', sessions: 3 },
+        {
+          search: vi.fn(async () => ({
+            ok: true,
+            hits: [
+              {
+                agent: 'codex',
+                sessionId: 'x1',
+                title: 'Deploy with token=abcdef0123456789abcdef0123456789',
+                cwd: 'C:/P/sub',
+                updatedAt: Date.now() - 3600000,
+                messageCount: 14,
+                evidence: { snippet: 'the [[release]] <b>notes</b> use Bearer abcdef0123456789abcdef0123456789abcd …', role: 'assistant', ts: 1 }
+              }
+            ]
+          }))
+        }
+      )
+      wrapper = mount(SessionsDialog, { props: { cwd: 'C:/P' } })
+      await flushPromises()
+      await wrapper.get('[data-test="sessions-query"]').setValue('release')
+      await vi.advanceTimersByTimeAsync(200)
+      await flushPromises()
+      expect(s.search).toHaveBeenLastCalledWith({ query: 'release', scope: { kind: 'project', path: 'C:/P' }, agents: null, limit: 40 })
+      const hit = wrapper.get('[data-test="sessions-hit"]')
+      expect(hit.get('mark').text()).toBe('release')
+      // Text only, and no secret in the title or the passage.
+      expect(hit.find('b').exists()).toBe(false)
+      expect(hit.text()).toContain('<b>notes</b>')
+      expect(hit.text()).not.toContain('abcdef0123456789')
+      expect(hit.text()).toContain('Codex · 14 messages')
+      await hit.get('.exit-btn.primary').trigger('click')
+      expect(wrapper.emitted('resume')[0][0]).toMatchObject({ agent: 'codex', id: 'x1', cwd: 'C:/P/sub' })
+      // Another scope, another agent: asked again.
+      await wrapper.get('[data-test="sessions-scopes"]').findAll('button')[2].trigger('click')
+      await vi.advanceTimersByTimeAsync(200)
+      expect(s.search).toHaveBeenLastCalledWith(expect.objectContaining({ scope: { kind: 'all', path: 'C:/P' } }))
+      await wrapper.get('[data-test="sessions-clear"]').trigger('click')
+      await flushPromises()
+      expect(s.clear).toHaveBeenCalled()
+      await wrapper.get('[data-test="sessions-disable"]').trigger('click')
+      await flushPromises()
+      expect(s.disable).toHaveBeenCalled()
+      expect(wrapper.find('[data-test="sessions-optin"]').exists()).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('no search bridge (an older main process): the dialog is as before', async () => {
+    window.shellApi = { listSessions: vi.fn().mockResolvedValue(rows), writeClipboard: vi.fn() }
+    wrapper = mount(SessionsDialog)
+    await flushPromises()
+    expect(wrapper.find('[data-test="sessions-optin"]').exists()).toBe(false)
+    expect(wrapper.findAll('.session-row')).toHaveLength(1)
+  })
+})

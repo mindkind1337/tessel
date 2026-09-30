@@ -402,6 +402,15 @@ const api = {
     imageDiscard: (opts) => ipcRenderer.invoke('chat:imageDiscard', opts),
     onEvent: (cb) => subscribe('chat:event', cb)
   },
+  // Search in what was said in the agents' conversations (src/main/sessionSearch).
+  sessionSearch: {
+    status: () => ipcRenderer.invoke('sessionSearch:status'),
+    enable: () => ipcRenderer.invoke('sessionSearch:enable'),
+    disable: () => ipcRenderer.invoke('sessionSearch:disable'),
+    clear: () => ipcRenderer.invoke('sessionSearch:clear'),
+    setHistoryDays: (days) => ipcRenderer.invoke('sessionSearch:setHistoryDays', days),
+    search: (query) => ipcRenderer.invoke('sessionSearch:search', query)
+  },
   // Read-only conversation views of terminal agents (src/main/chat/transcriptView.js).
   transcriptView: {
     open: (opts) => ipcRenderer.invoke('transcriptView:open', opts),
