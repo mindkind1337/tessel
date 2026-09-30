@@ -6035,8 +6035,10 @@ async function switchToChat(leafId) {
     const choice = old.modelChoice || old.sessionOptions || null
     if (choice && choice.model) leaf.model = choice.model
     if (choice && typeof choice.effort === 'string') leaf.effort = choice.effort
-    // It did not run in Yolo: the chat asks first too.
-    if (!old.launchYolo) leaf.maxPermissions = 'manual'
+    // It did not run in Yolo: the chat asks first too. OpenCode's terminal
+    // has no Yolo switch (it runs with its own config's rules), so its chat
+    // follows Settings (Yolo, Yolo folders) like any new chat.
+    if (!old.launchYolo && old.agentId !== 'opencode') leaf.maxPermissions = 'manual'
     now.tree = replaceNode(now.tree, leafId, () => leaf)
     scheduleSave()
     return true

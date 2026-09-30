@@ -113,6 +113,8 @@ describe('terminal to chat', () => {
     const ok = load(term({ agentId: 'opencode', sessionId: 'ses_' + 'a'.repeat(26), modelChoice: null }))
     expect(await ok.api.switchToChat('pane-2')).toBe(true)
     expect(ok.ws.tree).toMatchObject({ kind: 'chat', agentId: 'opencode', sessionId: 'ses_' + 'a'.repeat(26) })
+    // No Yolo switch in OpenCode's terminal: its chat follows Settings.
+    expect(ok.ws.tree.maxPermissions).toBeUndefined()
     const bad = load(term({ agentId: 'opencode', sessionId: 'not-a-session' }))
     expect(await bad.api.switchToChat('pane-2')).toBe(false)
   })
