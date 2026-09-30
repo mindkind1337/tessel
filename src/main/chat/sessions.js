@@ -1,5 +1,6 @@
 // Chat panes' agent processes: one adapter per pane (claudeChat.js for
-// Claude, codexChat.js for Codex: the same API and events),
+// Claude, codexChat.js for Codex, opencodeChat.js for OpenCode: the same API
+// and events),
 // what the window is told (chat:event), the pane's journal, and the pane's
 // agent status (agentStateStore), fed from the stream since a chat process
 // has no status hooks of its own.
@@ -26,6 +27,7 @@ import { clipDeep, createChatJournal, validPaneId } from './journal.js'
 import { readTranscriptHistory } from './transcriptHistory.js'
 import { t } from '../i18n.js'
 import { approvalPreview } from '../../shared/chatApproval.js'
+import { validOpencodeModel } from './opencodeChat.js'
 
 // teamText: a team message (6000) with the window's "(message <id>, reply to
 // <id>) " prefix; a longer one is cut (teamMessageText), never refused.
@@ -40,7 +42,7 @@ export function modeAllowed(agent, mode, maxPermissions) {
   return !(agent !== 'codex' && mode === 'auto')
 }
 export const DECISIONS = ['allow', 'allowSession', 'deny']
-export const AGENTS = ['claude', 'codex']
+export const AGENTS = ['claude', 'codex', 'opencode']
 const ID = /^[A-Za-z0-9._:-]{1,120}$/
 // Same as the orchestration / automation check; never a flag.
 const FLAG = /^[A-Za-z0-9._:[\]-]{1,60}$/
@@ -48,6 +50,8 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 // A Codex thread id (a UUID v7 today; codexChat's own check, at least 8
 // long); never starts with '-'.
 const THREAD = /^[A-Za-z0-9][A-Za-z0-9-]{7,99}$/
+// An OpenCode session id (ses_ and 26 characters today).
+const OPENCODE_SESSION = /^ses_[A-Za-z0-9]{20,40}$/
 const STATE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
 const DENIED = 'The user denied this.' // i18n-ignore sent to the agent
 
@@ -61,7 +65,14 @@ export function validFolder(dir) {
   }
 }
 const stateId = (v) => (typeof v === 'string' && STATE_ID.test(v) && !v.includes('..') ? v : undefined)
-export const validResumeId = (agent, v) => typeof v === 'string' && (agent === 'codex' ? THREAD : UUID).test(v)
+export const validResumeId = (agent, v) => typeof v === 'string' && (agent === 'codex' ? THREAD : agent === 'opencode' ? OPENCODE_SESSION : UUID).test(v)
+// A model name: a plain flag word, or OpenCode's provider/model (one '/',
+// provider [A-Za-z0-9._-], model [A-Za-z0-9._:-]).
+export const validModel = (agent, v) => (agent === 'opencode' ? validOpencodeModel(v) : validFlag(v))
+const anyModel = (v) => validFlag(v) || validOpencodeModel(v)
+// OpenCode has Manual, Plan and Yolo (its session's rules and its plan agent).
+const OPENCODE_MODES = ['default', 'plan', 'bypassPermissions']
+const PRODUCT = { claude: 'Claude', codex: 'Codex', opencode: 'OpenCode' } // i18n-ignore product names
 
 // Codex offers "allow for this session" only when its availableDecisions
 // hold acceptForSession; no list (Claude): every decision is offered.
@@ -104,6 +115,7 @@ export function createChatSessions(deps) {
     createAdapter,
     resolveClaude,
     resolveCodex = async () => null,
+    resolveOpencode = async () => null,
     env: envDeps,
     team,
     state,
@@ -198,7 +210,7 @@ export function createChatSessions(deps) {
     }
     j.writeMeta({ sessionId: s.sessionId, agent: s.agent, cwd: s.cwd })
     if (!res?.ok || !Array.isArray(res.events) || !res.events.length) return
-    const agentName = s.agent === 'codex' ? 'Codex' : 'Claude' // i18n-ignore product names
+    const agentName = PRODUCT[s.agent] || 'Claude' // i18n-ignore product names
     const first = res.events[0].at
     const text = res.truncated
       ? t('main.chat.historyImportedPart', 'Earlier conversation, from the history {{agent}} keeps (only its most recent part).', { agent: agentName })
@@ -550,9 +562,10 @@ export function createChatSessions(deps) {
         ...(typeof e.durationMs === 'number' ? { durationMs: e.durationMs } : {}),
         ...(error ? { error } : {})
       })
-      // A Codex turn can fail with no turn/completed (content filter, usage
-      // limit): said plainly; the queue goes on below.
-      if (st === 'failed' && s.agent === 'codex') {
+      // A Codex or OpenCode turn can fail with no text of its own (content
+      // filter, usage limit, a provider error): said plainly; the queue goes
+      // on below.
+      if (st === 'failed' && (s.agent === 'codex' || s.agent === 'opencode')) {
         emit(s.paneId, {
           type: 'notice',
           kind: 'error',
@@ -600,7 +613,9 @@ export function createChatSessions(deps) {
         text:
           s.agent === 'codex'
             ? t('main.chat.codexAuthError', 'Codex is not signed in (or its sign-in expired). Sign in, then reopen this chat.')
-            : t('main.chat.authError', 'Claude is not signed in (or its sign-in expired). Sign in, then reopen this chat.')
+            : s.agent === 'opencode'
+              ? t('main.chat.opencodeAuthError', 'OpenCode has no working sign-in for this provider. Run opencode auth login, then reopen this chat.')
+              : t('main.chat.authError', 'Claude is not signed in (or its sign-in expired). Sign in, then reopen this chat.')
       })
     })
     // Manual: Codex reported another posture mid-chat (the adapter closes it).
@@ -608,7 +623,10 @@ export function createChatSessions(deps) {
       emit(s.paneId, {
         type: 'notice',
         kind: 'error',
-        text: t('main.chat.codexPostureChanged', 'Codex no longer applied the Manual permissions (ask first, sandboxed): the turn was stopped and the chat closed.')
+        text:
+          s.agent === 'opencode'
+            ? t('main.chat.opencodePostureChanged', 'OpenCode no longer applied the Manual permissions (ask before changes and commands): the turn was stopped and the chat closed.')
+            : t('main.chat.codexPostureChanged', 'Codex no longer applied the Manual permissions (ask first, sandboxed): the turn was stopped and the chat closed.')
       })
     })
     on('stderr', (e) => logAt('info', `${s.paneId} stderr: ${String(e.text || '').slice(-500)}`))
@@ -678,6 +696,14 @@ export function createChatSessions(deps) {
 
   // Shown text by the adapter's start failure code (its own text is English).
   function startError(code, agent) {
+    if (agent === 'opencode') {
+      if (code === 'signin') return t('main.chat.opencodeSignin', 'OpenCode has no provider signed in. Run opencode auth login, then try again.')
+      if (code === 'spawn') return t('main.chat.opencodeSpawnFailed', 'OpenCode could not be started.')
+      if (code === 'timeout') return t('main.chat.opencodeStartTimeout', 'OpenCode did not answer in time.')
+      if (code === 'exit') return t('main.chat.opencodeExitedAtStart', 'OpenCode stopped while starting.')
+      if (code === 'posture') return t('main.chat.opencodePosture', 'OpenCode did not confirm the Manual permissions (ask before changes and commands, for every agent): the chat was not opened.')
+      return t('main.chat.startFailed', 'The agent could not start.')
+    }
     if (agent === 'codex') {
       if (code === 'signin') return t('main.chat.codexSignin', 'Codex is not signed in. Sign in to Codex, then try again.')
       if (code === 'spawn') return t('main.chat.codexSpawnFailed', 'Codex could not be started.')
@@ -716,7 +742,7 @@ export function createChatSessions(deps) {
           cwd: asleep.cwd,
           projectDir: asleep.projectDir || undefined,
           resumeId: asleep.sessionId,
-          model: model ?? (validFlag(asleep.model) ? asleep.model : undefined),
+          model: model ?? (validModel(asleep.agent, asleep.model) ? asleep.model : undefined),
           effort: effort ?? (validFlag(asleep.effort) ? asleep.effort : undefined)
         },
         asleep
@@ -740,7 +766,7 @@ export function createChatSessions(deps) {
       !validFolder(cwd) ||
       (projectDir != null && projectDir !== '' && !validFolder(projectDir)) ||
       (resumeId != null && !validResumeId(agent, resumeId)) ||
-      (model != null && !validFlag(model)) ||
+      (model != null && !validModel(agent, model)) ||
       (effort != null && !validFlag(effort)) ||
       !['yolo', 'manual'].includes(permissions) ||
       (permissionMode != null && !PERMISSION_MODES.includes(permissionMode))
@@ -764,8 +790,8 @@ export function createChatSessions(deps) {
       paneId,
       agent,
       adapter: null,
-      // Codex names a new thread itself: known once it started.
-      sessionId: resumeId || (agent === 'codex' ? null : randomUUID()),
+      // Codex and OpenCode name a new conversation themselves: known once it started.
+      sessionId: resumeId || (agent === 'codex' || agent === 'opencode' ? null : randomUUID()),
       launchToken: null,
       model: model || null,
       effort: effort || null,
@@ -829,7 +855,7 @@ export function createChatSessions(deps) {
       if (s.closing) return closedWhileStarting()
       let found = null
       try {
-        found = await (agent === 'codex' ? resolveCodex() : resolveClaude())
+        found = await (agent === 'codex' ? resolveCodex() : agent === 'opencode' ? resolveOpencode() : resolveClaude())
       } catch {
         found = null
       }
@@ -839,9 +865,11 @@ export function createChatSessions(deps) {
         const error =
           agent === 'codex'
             ? t('main.chat.noCodex', 'Codex was not found. Install it, then try again.')
-            : t('main.chat.noClaude', 'Claude Code was not found. Install it, then try again.')
+            : agent === 'opencode'
+              ? t('main.chat.noOpencode', 'OpenCode was not found. Install it, then try again.')
+              : t('main.chat.noClaude', 'Claude Code was not found. Install it, then try again.')
         emit(paneId, { type: 'status', state: 'crashed', agent, error })
-        return { ok: false, code: agent === 'codex' ? 'no-codex' : 'no-claude', error }
+        return { ok: false, code: `no-${agent}`, error }
       }
 
       emit(paneId, { type: 'status', state: 'starting', agent, ...(s.sessionId ? { sessionId: s.sessionId } : {}) })
@@ -867,10 +895,14 @@ export function createChatSessions(deps) {
       try {
         // Codex: the adapter maps yolo/manual to its approval policy and
         // sandbox, sent explicitly with every thread and turn.
+        // OpenCode: yolo/manual set the session's own rules (Yolo is then
+        // the only way to its bypass); Plan is its plan agent.
         s.adapter = createAdapter(
           agent === 'codex'
             ? { ...common, ...(resumeId ? { threadId: resumeId } : {}), permissions }
-            : { ...common, ...(resumeId ? { resume: resumeId } : { sessionId: s.sessionId }), permissionMode: permissionModeUsed }
+            : agent === 'opencode'
+              ? { ...common, ...(resumeId ? { sessionId: resumeId } : {}), permissions, ...(permissionModeUsed === 'plan' ? { permissionMode: 'plan' } : {}) }
+              : { ...common, ...(resumeId ? { resume: resumeId } : { sessionId: s.sessionId }), permissionMode: permissionModeUsed }
         )
       } catch (err) {
         drop()
@@ -922,6 +954,14 @@ export function createChatSessions(deps) {
         if (validResumeId('codex', info.threadId)) s.sessionId = info.threadId
         else if (!s.sessionId) logAt('warn', `${paneId}: codex gave no thread id; this chat cannot be resumed`)
         if (typeof info.model === 'string' && validFlag(info.model)) s.model = info.model
+      }
+      if (agent === 'opencode') {
+        const info = r.info && typeof r.info === 'object' ? r.info : {}
+        // The session OpenCode runs (a resume keeps its id): what a reopen resumes.
+        if (validResumeId('opencode', info.sessionId)) s.sessionId = info.sessionId
+        else if (!s.sessionId) logAt('warn', `${paneId}: opencode gave no session id; this chat cannot be resumed`)
+        if (typeof info.model === 'string' && validOpencodeModel(info.model)) s.model = info.model
+        if (typeof info.version === 'string') logAt('info', `${paneId}: opencode ${info.version.slice(0, 40)}`) // i18n-ignore log line
       }
       s.launchToken = randomBytes(16).toString('hex')
       if (!s.finished) {
@@ -1100,7 +1140,8 @@ export function createChatSessions(deps) {
     const s = live(paneId)
     if (!s) return closed()
     const results = []
-    if (model != null) {
+    if (model != null && !validModel(s.agent, model)) results.push(false)
+    else if (model != null) {
       const r = await s.adapter.setModel(model).catch(() => ({ ok: false }))
       if (r?.ok) s.model = model
       results.push(!!r?.ok)
@@ -1118,6 +1159,7 @@ export function createChatSessions(deps) {
       // Codex has two (the adapter maps them): bypassPermissions = yolo,
       // default = manual; plan / acceptEdits do not exist there.
       else if (s.agent === 'codex' && !['bypassPermissions', 'default'].includes(permissionMode)) results.push(false)
+      else if (s.agent === 'opencode' && !OPENCODE_MODES.includes(permissionMode)) results.push(false)
       else {
         const ok = !!(await s.adapter.setPermissionMode(permissionMode).catch(() => ({ ok: false })))?.ok
         if (ok) s.permissionMode = permissionMode
@@ -1223,7 +1265,7 @@ export function createChatSessions(deps) {
     if (!refresh && s.skillCache) return checked(s.skillCache)
     s.skillScan = Promise.resolve().then(async () => {
       try {
-        const result = s.agent === 'codex'
+        const result = s.agent === 'codex' || s.agent === 'opencode'
           ? await s.adapter?.skills?.({ refresh })
           : { ok: true, result: await discoverSkills({ cwd: s.cwd, projectDir: s.projectDir && trust.isTrusted(s.projectDir, roots) ? s.projectDir : undefined }) }
         if (!result?.ok) return unavailable()
@@ -1313,7 +1355,7 @@ export function createChatSessions(deps) {
     ipcMain.handle('chat:setOption', (_e, q) => {
       const { paneId, model, effort, permissionMode } = obj(q)
       if (!validPaneId(paneId)) return invalid()
-      if (model != null && !validFlag(model)) return invalid()
+      if (model != null && !anyModel(model)) return invalid()
       if (effort != null && !validFlag(effort)) return invalid()
       if (permissionMode != null && !PERMISSION_MODES.includes(permissionMode)) return invalid()
       if (model == null && effort == null && permissionMode == null) return invalid()

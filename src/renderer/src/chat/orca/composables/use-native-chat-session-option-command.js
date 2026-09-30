@@ -29,7 +29,9 @@ export function useNativeChatSessionOptionCommand(options) {
     const choices =
       agent === 'codex'
         ? ['default', 'bypassPermissions']
-        : ['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions']
+        : agent === 'opencode'
+          ? ['default', 'plan', 'bypassPermissions']
+          : ['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions']
     if (!choices.includes(mode))
       return t('chat.orca.options.unsupported', 'This option is not available for this agent.')
     if (mode === 'bypassPermissions' && !read('chatLaunchYolo', node.chatLaunchYolo))

@@ -44,7 +44,7 @@ const ChatMarkdown = markdownModules['./ChatMarkdown.vue'] || null
 const props = defineProps({
   item: { type: Object, required: true },
   shouldFocus: { type: Boolean, default: false },
-  // The pane's agent ('claude' | 'codex'): what "Allow for this session"
+  // The pane's agent ('claude' | 'codex' | 'opencode'): what "Allow for this session"
   // does, and who asks in the announcement.
   agentId: { type: String, default: null },
   // The pane's folder: where a Codex change with no details may write beyond.
@@ -104,7 +104,7 @@ const hiddenText = computed(() => t('chat.approval.hidden', '{{count}} character
 const mcp = computed(() => row.value.toolName === 'MCP')
 // The pane says which agent asks; before it did, Codex's request ids said it.
 const agent = computed(() => {
-  if (props.agentId === 'claude' || props.agentId === 'codex') return props.agentId
+  if (props.agentId === 'claude' || props.agentId === 'codex' || props.agentId === 'opencode') return props.agentId
   return /^codex_/.test(row.value.requestId) ? 'codex' : null
 })
 // Codex's "for this session" (acceptForSession) adds no rule: Codex itself
@@ -125,7 +125,7 @@ const toolLabel = computed(() => row.value.displayName || row.value.toolName)
 const title = computed(() => (row.value.tessel ? t('chat.approval.title', 'Allow {{tool}}?', { tool: toolLabel.value }) : row.value.title))
 function announceText() {
   const tool = toolLabel.value || row.value.title
-  if (agent.value) return t('chat.approval.announce', '{{agent}} asks to run {{tool}}', { agent: agent.value === 'codex' ? 'Codex' : 'Claude', tool }) // i18n-ignore
+  if (agent.value) return t('chat.approval.announce', '{{agent}} asks to run {{tool}}', { agent: { codex: 'Codex', opencode: 'OpenCode' }[agent.value] || 'Claude', tool }) // i18n-ignore
   return t('chat.approval.announceAgent', 'The agent asks to run {{tool}}', { tool })
 }
 const decidedText = computed(() => {

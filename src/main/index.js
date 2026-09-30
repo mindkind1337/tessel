@@ -50,6 +50,7 @@ import { createChatSessions } from './chat/sessions'
 import { transcriptHomeFor } from './chat/transcriptHistory'
 import { createClaudeChat } from './chat/claudeChat'
 import { createCodexChat } from './chat/codexChat'
+import { createOpencodeChat } from './chat/opencodeChat'
 import { createChatTrust } from './chat/chatTrust'
 import { createWorkerCopies } from './chat/workerCopies'
 import { createLogger, describe } from './logger'
@@ -1050,7 +1051,7 @@ const chatTrust = createChatTrust({
     const opts = {
       type: 'warning',
       title: t('main.chat.trustTitle', 'Trust this folder for a chat agent?'),
-      message: t('main.chat.trustMessage', 'A chat agent runs Claude or Codex in {{dir}} without its terminal: it then runs the hooks and MCP servers this folder sets up (.claude/settings.json, .mcp.json, .codex/config.toml) without asking.', { dir: String(dir).replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, 300) }),
+      message: t('main.chat.trustMessage', 'A chat agent runs Claude, Codex or OpenCode in {{dir}} without its terminal: it then runs the hooks, plugins and MCP servers this folder sets up (.claude/settings.json, .mcp.json, .codex/config.toml, opencode.json, .opencode/) without asking.', { dir: String(dir).replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, 300) }),
       detail: t('main.chat.trustDetail', 'Trust it only if you know where this folder comes from. In a terminal pane the agent asks you itself.'),
       buttons: [t('main.chat.trustYes', 'Trust this folder'), t('main.chat.trustNo', 'Cancel')],
       defaultId: 1,
@@ -1065,8 +1066,9 @@ const chatTrust = createChatTrust({
 const chatSessions = createChatSessions({
   dir: app.getPath('userData'),
   send,
-  // Claude (stream-json) or Codex (codex app-server, JSON-RPC).
-  createAdapter: (opts) => (opts && opts.agent === 'codex' ? createCodexChat(opts) : createClaudeChat(opts)),
+  // Claude (stream-json), Codex (codex app-server, JSON-RPC) or OpenCode
+  // (opencode serve: HTTP + SSE on 127.0.0.1 with a password of its own).
+  createAdapter: (opts) => (opts && opts.agent === 'codex' ? createCodexChat(opts) : opts && opts.agent === 'opencode' ? createOpencodeChat(opts) : createClaudeChat(opts)),
   // The installed claude (the npm shim resolved to what it runs), as for
   // Tessel's headless calls.
   resolveClaude: async () => {
@@ -1076,6 +1078,12 @@ const chatSessions = createChatSessions({
   // Codex's npm shim runs `node codex.js`: the same, with app-server added by the adapter.
   resolveCodex: async () => {
     const prog = await resolveProgram('codex')
+    return prog ? { exe: prog.file, exeArgs: prog.pre || [], pathEnv: prog.path || null } : null
+  },
+  // OpenCode's npm shim runs its native opencode.exe: that exe, started
+  // directly (`serve` is added by the adapter).
+  resolveOpencode: async () => {
+    const prog = await resolveProgram('opencode')
     return prog ? { exe: prog.file, exeArgs: prog.pre || [], pathEnv: prog.path || null } : null
   },
   // As a terminal pane's: Tessel's clean environment, then Settings > Agents

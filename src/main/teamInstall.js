@@ -123,7 +123,7 @@ export function installCopilotHooks(scriptPath, home = os.homedir(), { node } = 
 
 // OpenCode: a plugin (it has no command hooks), ~/.config/opencode/plugins/
 // tessel-team.js, loaded by every OpenCode; it does nothing outside a Tessel
-// pane (no TESSEL_PANE_ID). It runs the same hook script (node, --opencode):
+// pane (no TESSEL_PANE_ID) nor in a chat pane (TESSEL_CHAT=1). It runs the same hook script (node, --opencode):
 // the conversation (session events), messages added to a tool's result, and,
 // when the session is idle (just finished, or waiting), a reminder sent to it
 // as a new message through its own API: an idle OpenCode is woken without
@@ -141,7 +141,9 @@ const NODE = ${pluginNodeSource(node)}
 const IDLE_CHECK_MS = 15000
 
 export const TesselTeam = async ({ client, directory }) => {
-  if (!process.env.TESSEL_PANE_ID) return {}
+  // Outside a Tessel pane, and in a chat pane's OpenCode (TESSEL_CHAT=1: the
+  // chat manager reports its state and delivers team messages itself).
+  if (!process.env.TESSEL_PANE_ID || process.env.TESSEL_CHAT === '1') return {}
   const hook = (event, sessionId) => {
     try {
       const r = spawnSync(NODE, [SCRIPT, '--hook', '--opencode'], {

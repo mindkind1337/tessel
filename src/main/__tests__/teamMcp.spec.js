@@ -485,7 +485,8 @@ describe('setting up the team tools', () => {
     const text = fs.readFileSync(file, 'utf8')
     expect(text).toBe(opencodePlugin(script, NODE))
     expect(text).toContain(JSON.stringify(script))
-    expect(text).toMatch(/if \(!process\.env\.TESSEL_PANE_ID\) return \{\}/) // nothing outside a Tessel pane
+    // Nothing outside a Tessel pane, nor in a chat pane's OpenCode.
+    expect(text).toMatch(/if \(!process\.env\.TESSEL_PANE_ID \|\| process\.env\.TESSEL_CHAT === '1'\) return \{\}/)
     expect(installOpencodePlugin(script, home, { node: NODE })).toEqual({ changed: false })
     fs.writeFileSync(file, 'export const Mine = async () => ({})\n')
     expect(installOpencodePlugin(script, home, { node: NODE }).error).toMatch(/not Tessel's/)

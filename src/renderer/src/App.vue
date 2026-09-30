@@ -348,14 +348,14 @@ function openExternalUrl(url) {
 // A Claude agent without a terminal: the main process runs claude in its
 // stream-json mode; messages (yours, its team's) are turns of their own,
 // never typed. Its state comes from the conversation itself.
-const CHAT_AGENTS = ['claude', 'codex']
+const CHAT_AGENTS = ['claude', 'codex', 'opencode']
 function makeChatLeaf({ id = null, agentId = 'claude', cwd = null, projectDir = null, sessionId = null, title = null, team = null } = {}) {
   const agent = CHAT_AGENTS.includes(agentId) ? agentId : 'claude'
   return reactive({
     type: 'leaf',
     kind: 'chat',
     id: id || newId('pane'),
-    title: title || (agent === 'codex' ? t('app.chat.titleCodex', 'Codex (chat)') : t('app.chat.title', 'Claude (chat)')),
+    title: title || (agent === 'codex' ? t('app.chat.titleCodex', 'Codex (chat)') : agent === 'opencode' ? t('app.chat.titleOpencode', 'OpenCode (chat)') : t('app.chat.title', 'Claude (chat)')),
     agentId: agent,
     cwd,
     projectDir,
@@ -408,7 +408,9 @@ async function chatOpen(leaf, { askTrust = true } = {}) {
   const api = window.shellApi.chat
   if (!api || !leaf || leaf.kind !== 'chat') return { ok: false, code: 'failed' }
   const agentId = CHAT_AGENTS.includes(leaf.agentId) ? leaf.agentId : 'claude'
-  const agent = agentById(agentId) || { id: agentId, name: agentId === 'codex' ? 'Codex' : 'Claude Code' } // i18n-ignore
+  const agent = agentById(agentId) || { id: agentId, name: { claude: 'Claude Code', codex: 'Codex', opencode: 'OpenCode' }[agentId] } // i18n-ignore
+  // OpenCode takes only a provider/model id.
+  const chatModelFor = (model) => (agentId !== 'opencode' || !model || /^[A-Za-z0-9._-]{1,80}\/[A-Za-z0-9._:-]{1,120}$/.test(model) ? model : null)
   // A worker never runs with more than its coordinator did (maxPermissions).
   const narrowed = leaf.maxPermissions === 'manual'
   const permissions = narrowed ? 'manual' : launchPermissions(null, [leaf.projectDir, leaf.cwd], settings.yoloFolders, settings.agentPermissions)
@@ -438,8 +440,9 @@ async function chatOpen(leaf, { askTrust = true } = {}) {
       cwd: leaf.cwd,
       projectDir: leaf.projectDir,
       resumeId: leaf.sessionId || null,
-      // The pane's own choice (its model picker) first, else Settings > Agents.
-      model: leaf.model || (sessionValues && sessionValues.model) || null,
+      // The pane's own choice (its model picker) first, else Settings > Agents
+      // (OpenCode: only a provider/model id, which is all it takes).
+      model: chatModelFor(leaf.model || (sessionValues && sessionValues.model) || null),
       effort: leaf.effort || (sessionValues && sessionValues.effort) || null,
       permissions,
       permissionMode: ownMode && !narrowed ? ownMode[1] : null,
@@ -1342,7 +1345,7 @@ function serializeNode(node) {
       id: node.id,
       title: node.title || null,
       num: node.num || null,
-      agentId: node.agentId === 'codex' ? 'codex' : 'claude',
+      agentId: CHAT_AGENTS.includes(node.agentId) ? node.agentId : 'claude',
       cwd: node.cwd || null,
       projectDir: node.projectDir || null,
       sessionId: node.sessionId || null,
@@ -1431,15 +1434,18 @@ async function deserializeNode(snap, cwd = null) {
   // A chat agent comes back with its conversation (resumed when it opens).
   if (snap.type === 'leaf' && snap.kind === 'chat') {
     const id = typeof snap.id === 'string' && /^pane-[\w-]+$/.test(snap.id) ? snap.id : null
-    const sessionId = typeof snap.sessionId === 'string' && /^[0-9a-f-]{8,64}$/i.test(snap.sessionId) ? snap.sessionId : null
+    // A Claude or Codex id (hex and dashes), or an OpenCode one (ses_…).
+    const sessionId = typeof snap.sessionId === 'string' && (/^[0-9a-f-]{8,64}$/i.test(snap.sessionId) || (snap.agentId === 'opencode' && /^ses_[A-Za-z0-9]{20,40}$/.test(snap.sessionId))) ? snap.sessionId : null
     const folder = (v) => (typeof v === 'string' && v.length <= 1000 ? v : null)
     if (!folder(snap.cwd)) return null
-    const leaf = makeChatLeaf({ id, agentId: snap.agentId === 'codex' ? 'codex' : 'claude', cwd: folder(snap.cwd), projectDir: folder(snap.projectDir), sessionId, title: typeof snap.title === 'string' ? snap.title.slice(0, 200) : null })
+    const leaf = makeChatLeaf({ id, agentId: CHAT_AGENTS.includes(snap.agentId) ? snap.agentId : 'claude', cwd: folder(snap.cwd), projectDir: folder(snap.projectDir), sessionId, title: typeof snap.title === 'string' ? snap.title.slice(0, 200) : null })
     if (Number.isInteger(snap.num) && snap.num > 0) leaf.num = snap.num
     if (typeof snap.accountId === 'string' || snap.accountId === null) leaf.accountId = snap.accountId
     if (typeof snap.team === 'string') leaf.team = snap.team
     const flag = (v) => (typeof v === 'string' && /^[A-Za-z0-9._:[\]-]{1,60}$/.test(v) ? v : null)
-    leaf.model = flag(snap.model)
+    // OpenCode's models are provider/model.
+    const opencodeModel = (v) => (snap.agentId === 'opencode' && typeof v === 'string' && /^[A-Za-z0-9._-]{1,80}\/[A-Za-z0-9._:-]{1,120}$/.test(v) ? v : null)
+    leaf.model = flag(snap.model) || opencodeModel(snap.model)
     leaf.effort = flag(snap.effort)
     if (snap.worker === true) leaf.worker = true
     if (snap.maxPermissions === 'manual') leaf.maxPermissions = 'manual'
@@ -2301,6 +2307,11 @@ function buildCommands() {
     add(t('app.cmd.group.new', 'New'), t('app.cmd.newChatCodex', 'New Codex agent (chat)'), () => openChatAgent({ agent: 'codex' }), {
       hint: t('app.cmd.newChatCodexHint', 'Codex without a terminal: team messages reach it as turns of their own')
     })
+  // Only when OpenCode is installed.
+  if (currentWs.value && currentWs.value.cwd && !currentWs.value.remote && agentById('opencode') && agentById('opencode').available !== false)
+    add(t('app.cmd.group.new', 'New'), t('app.cmd.newChatOpencode', 'New OpenCode agent (chat)'), () => openChatAgent({ agent: 'opencode' }), {
+      hint: t('app.cmd.newChatOpencodeHint', 'OpenCode without a terminal: team messages reach it as turns of their own')
+    })
   if (currentWs.value)
     add(t('app.cmd.group.new', 'New'), t('app.cmd.newBrowser', 'New browser pane'), () => openInBrowser({ newPane: true, focusAddress: true }), {
       hint: t('app.cmd.newBrowserHint', 'A web page next to your terminals (your dev server, docs)')
@@ -2449,7 +2460,7 @@ async function launch({ kind, id, sessionOptions = null }, targetId = activeId.v
   }
   if (kind === 'chat') {
     const baseWs = (targetId && wsOfLeaf(targetId)) || currentWs.value
-    openChatAgent({ ws: baseWs, agent: id === 'codex' ? 'codex' : 'claude' })
+    openChatAgent({ ws: baseWs, agent: CHAT_AGENTS.includes(id) ? id : 'claude' })
     return
   }
   const agent = kind === 'agent' ? agentById(id) : null

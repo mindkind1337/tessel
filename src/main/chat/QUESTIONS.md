@@ -137,6 +137,21 @@ selects an answer; the server's `serverRequest/resolved` notification cancels it
 card. A thread-idle fallback cannot settle a turn while a question is pending.
 Normal `turn/completed` still settles it, including nonblocking questions.
 
+## OpenCode
+
+Checked against the OpenAPI spec served by opencode 1.18.32 (`QuestionRequest`,
+`QuestionInfo`, `QuestionOption`, `QuestionAnswer`). `question.asked` on the SSE
+bus carries `{id:'que_…', sessionID, questions:[{question, header, options:
+[{label, description}], multiple?, custom?}], tool?}`. Questions have no ids:
+they get `q<i>` / `o<j>`; `multiple` is multi-select, and free text is accepted
+unless `custom:false`. An answer is `POST /question/:id/reply {answers}` with
+one array of chosen labels per question, in order; a cancellation is
+`POST /question/:id/reject`. Only the chat's own session, during an open turn,
+gets a card; other sessions' questions are rejected. `question.replied` /
+`question.rejected` cancel a card answered elsewhere. The chat's strict config
+allows the question tool (it asks, and runs nothing). No real question was
+recorded: the shapes come from the spec and the fake server.
+
 ## Lifetime and bounds
 
 - Up to 8 pending requests, each with 8 questions and 32 options per question.

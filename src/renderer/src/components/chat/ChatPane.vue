@@ -1,6 +1,6 @@
 <script setup>
 // An agent as a chat (no terminal): the main process drives Claude Code
-// (stream-json) or Codex (app-server) (src/main/chat) and sends the
+// (stream-json), Codex (app-server) or OpenCode (serve) (src/main/chat) and sends the
 // conversation as events (chat:event). The pane's session
 // (chat/orca/composables/useStructuredAgentSession.js) turns them into the
 // journal the chat UI reads (components/chat/orca, after Orca's native chat,
@@ -65,9 +65,10 @@ const isMaximized = computed(() => ctx.maximizedId.value === props.node.id)
 const status = computed(() => meta.status)
 const busy = computed(() => status.value === 'working' || status.value === 'approval')
 const stopped = computed(() => STOPPED_STATES.has(status.value))
-// Which agent: Claude or Codex (the leaf's agentId).
-const agentId = computed(() => (props.node.agentId === 'codex' ? 'codex' : 'claude'))
-const agentName = computed(() => (agentId.value === 'codex' ? 'Codex' : 'Claude')) // i18n-ignore product names
+// Which agent: Claude, Codex or OpenCode (the leaf's agentId).
+const AGENT_NAMES = { claude: 'Claude', codex: 'Codex', opencode: 'OpenCode' } // i18n-ignore product names
+const agentId = computed(() => (AGENT_NAMES[props.node.agentId] ? props.node.agentId : 'claude'))
+const agentName = computed(() => AGENT_NAMES[agentId.value])
 const title = computed(() => props.node.title || agentName.value)
 
 const statusLabel = computed(() => {

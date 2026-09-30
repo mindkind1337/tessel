@@ -39,7 +39,9 @@ const launchMessage = computed(() =>
 const signinText = computed(() =>
   props.agentId === 'codex'
     ? t('chat.state.signinCodex', 'Codex is not signed in. Open a Codex terminal pane and sign in (codex login), then start again.')
-    : t('chat.state.signin', 'Claude is not signed in. Open a Claude terminal pane and run /login, then start again.')
+    : props.agentId === 'opencode'
+      ? t('chat.state.signinOpencode', 'OpenCode has no provider signed in. Open an OpenCode terminal pane and run opencode auth login, then start again.')
+      : t('chat.state.signin', 'Claude is not signed in. Open a Claude terminal pane and run /login, then start again.')
 )
 </script>
 

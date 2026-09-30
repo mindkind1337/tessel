@@ -1,5 +1,5 @@
-// The environment of a chat agent's process (claude -p or codex app-server
-// behind a chat pane).
+// The environment of a chat agent's process (claude -p, codex app-server or
+// opencode serve behind a chat pane).
 //
 // `base` is what a terminal pane's shell would get (paneEnv(freshEnv(), …):
 // Tessel's clean environment + the agent's and account's variables). From it
@@ -51,10 +51,30 @@ const CODEX_PREFIXES = [
   'CODEX_SNAPSHOT_'
 ]
 
+// OpenCode: what the adapter sets itself for each chat (its server password,
+// its strict config and permissions), what would share or fake a session,
+// and what a parent OpenCode sets for the shells it starts. The user's own
+// (OPENCODE_CONFIG, OPENCODE_CONFIG_DIR, OPENCODE_GIT_BASH_PATH,
+// OPENCODE_DISABLE_*, provider keys) are kept.
+const OPENCODE_EXACT = new Set([
+  'OPENCODE',
+  'OPENCODE_PID',
+  'OPENCODE_CALLER',
+  'OPENCODE_CLIENT',
+  'OPENCODE_SERVER_PASSWORD',
+  'OPENCODE_SERVER_USERNAME',
+  'OPENCODE_CONFIG_CONTENT',
+  'OPENCODE_PERMISSION',
+  'OPENCODE_AUTO_SHARE',
+  'OPENCODE_FAKE_VCS'
+])
+const OPENCODE_PREFIXES = ['OPENCODE_SESSION', 'ORCA_']
+
 export function isDroppedName(name, agent = 'claude') {
   const up = String(name).toUpperCase()
   if (up.startsWith('TESSEL_') || EXACT.has(up)) return true
   if (up.startsWith('CLAUDE_CODE_') && !KEPT_CLAUDE_CODE.has(up)) return true
+  if (agent === 'opencode') return OPENCODE_EXACT.has(up) || OPENCODE_PREFIXES.some((p) => up.startsWith(p))
   return agent === 'codex' && (CODEX_EXACT.has(up) || CODEX_PREFIXES.some((p) => up.startsWith(p)))
 }
 
@@ -86,6 +106,8 @@ export function buildChatEnv(base, { agent = 'claude', paneId, teamSecret, proje
   if (isFolder(projectDir)) put(env, 'TESSEL_PROJECT_DIR', projectDir)
   put(env, 'TESSEL_CHAT', '1')
   // system/session_state_changed frames: the Claude adapter's 'state' events.
-  if (agent !== 'codex') put(env, 'CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS', '1')
+  if (agent === 'claude') put(env, 'CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS', '1')
+  // A chat's OpenCode never upgrades itself (the API moves between versions).
+  if (agent === 'opencode') put(env, 'OPENCODE_DISABLE_AUTOUPDATE', '1')
   return env
 }

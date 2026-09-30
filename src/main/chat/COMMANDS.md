@@ -22,6 +22,10 @@ classify names listed in `skills`, and exclude `terminal_slash_commands`. Child
 initialization cannot replace the parent catalog. Duplicate catalogs are omitted.
 Codex emits an empty command array: its inspected app-server v2 schema has no
 general slash-command or custom-prompt catalog. Skills use the second interface.
+OpenCode emits its `GET /command` catalog at startup (`source: 'skill'` rows
+are `kind: skill`, `hints` become the argument hint). A message `/name args`
+whose name is in that catalog runs through `POST /session/:id/command`;
+anything else is ordinary prompt text.
 
 Events are journaled. The latest normalized array is also persisted as
 `commands.json` next to the pane journal and returned as `chat:history.commands`,
@@ -87,6 +91,11 @@ User/repo/system-or-admin scopes map to home/repo/bundled. Provider paths are
 metadata only and are never opened by Tessel. No disk fallback invents a catalog
 when app-server is unavailable; timeout/method-not-found returns `ok:false` and
 the chat remains usable. Query timeout is 1500 ms by default.
+
+OpenCode queries the running server's `GET /skill` for the session's folder.
+Only name, description and the SKILL.md location are kept (never the body);
+a location inside the chat's folder is `repo`, inside home `home`, else
+`bundled`. Owner and provider are `opencode`; `/name` inserts it.
 
 ## Command dispatch and verification
 

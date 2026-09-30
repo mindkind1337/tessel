@@ -119,3 +119,46 @@ describe('buildChatEnv', () => {
     expect(isDroppedName('CLAUDE_CODE_SESSION_ID', 'codex')).toBe(true)
   })
 })
+
+describe('buildChatEnv for OpenCode', () => {
+  it('drops what the adapter sets itself and what a parent OpenCode sets, keeps the user config', () => {
+    const env = buildChatEnv(
+      {
+        OPENCODE_SERVER_PASSWORD: 'x',
+        opencode_server_username: 'y',
+        OPENCODE_CONFIG_CONTENT: '{}',
+        OPENCODE_PERMISSION: '"allow"',
+        OPENCODE_AUTO_SHARE: '1',
+        OPENCODE_FAKE_VCS: 'git',
+        OPENCODE_CLIENT: 'tui',
+        OPENCODE: '1',
+        OPENCODE_PID: '5',
+        OPENCODE_SESSION_ID: 'ses_x',
+        ORCA_TERMINAL: '1',
+        OPENCODE_CONFIG: 'C:\c.json',
+        OPENCODE_CONFIG_DIR: 'C:\c',
+        OPENCODE_DISABLE_LSP_DOWNLOAD: '1',
+        OPENCODE_GIT_BASH_PATH: 'C:\bash.exe',
+        OPENROUTER_API_KEY: 'k',
+        OPENCODE_DISABLE_AUTOUPDATE: '0'
+      },
+      { agent: 'opencode', paneId: 'p' }
+    )
+    expect(env).toEqual({
+      OPENCODE_CONFIG: 'C:\c.json',
+      OPENCODE_CONFIG_DIR: 'C:\c',
+      OPENCODE_DISABLE_LSP_DOWNLOAD: '1',
+      OPENCODE_GIT_BASH_PATH: 'C:\bash.exe',
+      OPENROUTER_API_KEY: 'k',
+      OPENCODE_DISABLE_AUTOUPDATE: '1',
+      TESSEL_PANE_ID: 'p',
+      TESSEL_CHAT: '1'
+    })
+  })
+
+  it('the OpenCode names are only dropped for OpenCode', () => {
+    expect(isDroppedName('OPENCODE_SERVER_PASSWORD', 'opencode')).toBe(true)
+    expect(isDroppedName('OPENCODE_SERVER_PASSWORD', 'claude')).toBe(false)
+    expect(isDroppedName('OPENCODE_CONFIG', 'opencode')).toBe(false)
+  })
+})

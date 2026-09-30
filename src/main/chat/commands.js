@@ -52,3 +52,20 @@ export function claudeCommands(frame, previous = []) {
   const terminal = new Set(normalizeCommands(frame.terminal_slash_commands).map((row) => row.name))
   return normalizeCommands(rows.filter((row) => !terminal.has(row.name)))
 }
+// OpenCode's GET /command: { name, description, source: 'command'|'mcp'|'skill',
+// hints[] }. Skills are listed there too (source 'skill'). Its $ARGUMENTS /
+// $1 hints become the argument hint.
+export function opencodeCommands(list) {
+  const rows = []
+  for (const value of Array.isArray(list) ? list.slice(0, COMMAND_LIMITS.entries * 2) : []) {
+    if (!value || typeof value !== 'object') continue
+    const hints = Array.isArray(value.hints) ? value.hints.filter((h) => typeof h === 'string' && h) : []
+    rows.push({
+      name: value.name,
+      kind: value.source === 'skill' ? 'skill' : 'command',
+      description: typeof value.description === 'string' ? value.description : undefined,
+      argumentHint: hints.length ? hints.join(' ') : undefined
+    })
+  }
+  return normalizeCommands(rows)
+}

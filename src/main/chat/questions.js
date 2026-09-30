@@ -34,17 +34,22 @@ export function normalizeQuestions(input, provider) {
       return null
     // No secret-entry UI or secret-safe journal yet; malformed flags also fail closed.
     if (q.isSecret != null && q.isSecret !== false) return null
-    const qid = provider === 'claude' ? `q${i}` : q.id
+    // Claude and OpenCode questions have no ids: positional ones.
+    const qid = provider === 'claude' || provider === 'opencode' ? `q${i}` : q.id
     if (!id(qid) || ids.has(qid) || (provider === 'claude' && prompts.has(q.question))) return null
     ids.add(qid)
     prompts.add(q.question)
     const options = q.options == null && provider === 'codex' ? [] : q.options
     if (!Array.isArray(options) || options.length > QUESTION_LIMITS.options) return null
-    if (q.multiSelect != null && typeof q.multiSelect !== 'boolean') return null
+    const multi = provider === 'opencode' ? q.multiple : q.multiSelect
+    if (multi != null && typeof multi !== 'boolean') return null
+    if (provider === 'opencode' && q.custom != null && typeof q.custom !== 'boolean') return null
     if (provider === 'codex' && q.isOther != null && typeof q.isOther !== 'boolean') return null
+    // OpenCode: a typed answer is accepted unless custom is false.
     const allowOther =
       provider === 'claude' ||
-      (provider === 'codex' ? !options.length || q.isOther === true : q.freeTextQuestionId != null)
+      (provider === 'opencode' && q.custom !== false) ||
+      (provider === 'codex' ? !options.length || q.isOther === true : provider !== 'opencode' && q.freeTextQuestionId != null)
     if (!options.length && !allowOther) return null
     const out = []
     const optionIds = new Set()
@@ -69,7 +74,7 @@ export function normalizeQuestions(input, provider) {
       id: qid,
       question: q.question,
       ...(q.header != null ? { header: q.header } : {}),
-      multiSelect: provider === 'codex' ? false : q.multiSelect === true,
+      multiSelect: provider === 'codex' ? false : multi === true,
       options: out,
       ...(allowOther ? { freeTextQuestionId: qid } : {})
     })
@@ -105,6 +110,15 @@ export function validateQuestionAnswers(questions, answers) {
 }
 
 export function providerAnswers(questions, answers, provider) {
+  // OpenCode: one array of labels per question, in the questions' order.
+  if (provider === 'opencode') {
+    return questions.map((q) => {
+      const answer = answers.find((a) => a.questionId === q.id)
+      const labels = answer ? answer.optionIds.map((oid) => q.options.find((o) => o.id === oid).label) : []
+      if (answer && answer.other) labels.push(answer.other)
+      return labels
+    })
+  }
   return Object.fromEntries(
     answers.map((answer) => {
       const q = questions.find((q) => q.id === answer.questionId)
