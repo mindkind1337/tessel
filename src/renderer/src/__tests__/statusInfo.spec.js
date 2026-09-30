@@ -5,7 +5,10 @@ import fs from 'fs'
 import vm from 'vm'
 import { join } from 'path'
 
-const source = fs.readFileSync(join(process.cwd(), 'src/renderer/src/App.vue'), 'utf8')
+// Line endings normalized: a CRLF checkout must find the same slice.
+const source = fs.readFileSync(join(process.cwd(), 'src/renderer/src/App.vue'), 'utf8').replace(/
+/g, '
+')
 const from = source.indexOf('const statusInfo = computed(')
 const to = source.indexOf('\n})\n', from) + 4
 
