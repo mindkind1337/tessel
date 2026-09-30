@@ -236,6 +236,9 @@ async function loadHistory() {
 async function load() {
   const { ok, res } = await loadHistory()
   if (!alive || !ok) return
+  // A chat already open (a reload, a remount) sends no new status: its
+  // effort is looked up now.
+  refreshEffort()
   // A session already running in the main process keeps going; one asleep
   // (stopped while idle) wakes on its next message, not now.
   if (res && res.asleep) session.dispatchLocal({ type: 'status', state: 'asleep' })
@@ -387,6 +390,8 @@ async function setOption(payload) {
   }
   if (res && res.ok) {
     for (const key of ['model', 'effort']) if (payload[key] != null) props.node[key] = payload[key]
+    // Another model: its own default effort.
+    if (payload.model != null && payload.effort == null) refreshEffort()
   }
   return res || { ok: false }
 }
