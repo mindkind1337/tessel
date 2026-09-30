@@ -297,6 +297,13 @@ describe('on-demand provider usage', () => {
       resetCredits: { eligible: false }
     })
   })
+  it('keeps a newer Codex plan name as it is (a tier such as pro_20x); refuses odd text', async () => {
+    const { service, request } = fixture()
+    request.mockResolvedValue(reply({ plan_type: 'Pro_20x', rate_limit: codexData.rate_limit, rate_limit_reset_credits: { available_count: 0 } }))
+    expect((await service.read(selection)).plan).toBe('pro_20x')
+    request.mockResolvedValue(reply({ plan_type: '<b>x</b>', rate_limit: codexData.rate_limit, rate_limit_reset_credits: { available_count: 0 } }))
+    expect((await service.read(selection)).plan).not.toBe('<b>x</b>')
+  })
   it('maps Claude windows without exposing a reset action', async () => {
     const { service, request } = fixture()
     request.mockResolvedValue(

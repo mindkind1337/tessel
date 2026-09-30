@@ -77,21 +77,11 @@ function timestamp(value, secondsOnly = false) {
   else if (!secondsOnly && typeof value === 'string') number = Date.parse(value)
   return finite(number) && number > 0 && number <= 8.64e15 ? number : null
 }
+// The plan the service names (free, plus, pro, team…, or a newer tier such
+// as "pro_20x"): any short plain name, shown as it is (the window formats it).
 function plan(value) {
   const normalized = text(value)?.toLowerCase()
-  return [
-    'free',
-    'plus',
-    'pro',
-    'max',
-    'team',
-    'business',
-    'enterprise',
-    'edu',
-    'education'
-  ].includes(normalized)
-    ? normalized
-    : undefined
+  return normalized && /^[a-z0-9][a-z0-9 _.-]{0,39}$/.test(normalized) ? normalized : undefined
 }
 // Claude's plan, from the two fields Claude Code keeps beside its login
 // (.credentials.json claudeAiOauth.subscriptionType and rateLimitTier, e.g.
