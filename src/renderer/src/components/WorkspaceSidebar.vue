@@ -38,13 +38,15 @@ import {
 import OrcaMenu from './OrcaMenu.vue'
 import WorktreeCard from './sidebar/WorktreeCard.vue'
 import { settings } from '../settings'
-import { buildSidebarRows, neighborCard, cardTargetPane, isAgentPane } from '../sidebarModel'
+import { buildSidebarRows, neighborCard, cardTargetPane, isAgentPane, otherBranchesLabel } from '../sidebarModel'
 import { t } from '../i18n'
 import { trackPointerDrag } from '../browser/webviewPassthrough'
 
 const props = defineProps({
   // Tessel workspaces as projects: [{ id, name, cwd, branch, panes: [...],
-  //   copies: [{ path, branch, title, taskId }] }] (see sidebarModel.js).
+  //   copies: [{ path, branch, title, taskId }],
+  //   worktrees: [{ path, branch, head, isMain, locked, prunable }] }]
+  // (see sidebarModel.js).
   projects: { type: Array, required: true },
   currentId: { type: String, default: null },
   collapsed: { type: Boolean, default: false },
@@ -102,7 +104,8 @@ const options = computed(() => ({
   alwaysShowDefaultBranchWorkspace: settings.alwaysShowDefaultBranchWorkspace,
   hideDefaultBranchWorkspace: settings.hideDefaultBranchWorkspace,
   filterRepoIds: settings.sidebarFilterRepoIds,
-  collapsedGroups: settings.sidebarCollapsedGroups
+  collapsedGroups: settings.sidebarCollapsedGroups,
+  expandedBranches: settings.sidebarExpandedBranches
 }))
 const rows = computed(() => buildSidebarRows(props.projects, options.value, props.now))
 const grouped = computed(() => settings.sidebarGroupBy !== 'none')
@@ -114,6 +117,20 @@ const activeCard = computed(() => rows.value.find((r) => r.type === 'card' && r.
 function toggleGroup(key) {
   const list = settings.sidebarCollapsedGroups
   settings.sidebarCollapsedGroups = list.includes(key) ? list.filter((k) => k !== key) : [...list, key]
+}
+
+// A project's "N other branches" line: folded unless unfolded here (kept
+// per project, like the collapsed groups).
+function toggleOthers(key) {
+  const list = settings.sidebarExpandedBranches
+  settings.sidebarExpandedBranches = list.includes(key) ? list.filter((k) => k !== key) : [...list, key]
+}
+// A row of it opens that folder like a copy card with no pane does.
+function openBranch(item) {
+  emit('open-card', { wsId: item.projectId, path: item.path, isMain: false })
+}
+function branchTitle(item) {
+  return item.locked ? t('sidebar.otherBranchLocked', '{{path}}\nLocked', { path: item.path }) : item.path
 }
 
 // "N agents" summaries: open or closed per card; the card you are in starts open.
@@ -1083,6 +1100,34 @@ defineExpose({
             <button type="button" class="osb-link" data-test="sidebar-clear-filters" @click="clearFilters">
               {{ t('sidebar.clearFilters', 'Clear filters') }}
             </button>
+          </div>
+          <!-- The project's other git worktrees: one folded line, a compact list when unfolded. -->
+          <div v-else-if="r.type === 'others'" class="osb-others" data-test="sidebar-others">
+            <button
+              type="button"
+              class="osb-others-toggle"
+              data-test="sidebar-others-toggle"
+              :aria-expanded="r.open"
+              @click="toggleOthers(r.groupKey)"
+            >
+              <ChevronDown :size="12" :class="{ collapsed: !r.open }" aria-hidden="true" />
+              <span v-text="otherBranchesLabel(r.count)"></span>
+            </button>
+            <div v-if="r.open" class="osb-others-list">
+              <button
+                v-for="item in r.items"
+                :key="item.key"
+                type="button"
+                class="osb-others-row"
+                data-test="sidebar-other-branch"
+                :title="branchTitle(item)"
+                @click="openBranch(item)"
+              >
+                <GitBranch :size="12" aria-hidden="true" />
+                <span class="osb-others-branch">{{ item.label }}</span>
+                <span v-if="item.folder !== item.label" class="osb-others-folder">{{ item.folder }}</span>
+              </button>
+            </div>
           </div>
           <WorktreeCard
             v-else

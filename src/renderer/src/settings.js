@@ -128,6 +128,8 @@ export const DEFAULT_SETTINGS = Object.freeze({
   hideDefaultBranchWorkspace: false,
   sidebarFilterRepoIds: [],
   sidebarCollapsedGroups: [],
+  // Projects whose "N other branches" line is unfolded (folded by default).
+  sidebarExpandedBranches: [],
   worktreeCardProperties: ['ports', 'inline-agents'],
   agentActivityDisplayMode: 'compact', // 'compact' | 'full'
   // Settings > Appearance > Window & Sidebar (Orca's).
@@ -254,6 +256,7 @@ const fresh = () => ({
   hiddenUsageProviders: [],
   sidebarFilterRepoIds: [],
   sidebarCollapsedGroups: [],
+  sidebarExpandedBranches: [],
   worktreeCardProperties: [...DEFAULT_SETTINGS.worktreeCardProperties],
   statusBarItems: [...DEFAULT_SETTINGS.statusBarItems]
 })
@@ -305,7 +308,7 @@ export function loadSettings(saved) {
       if (Array.isArray(v)) settings.quickCommands = v.filter(validQuickCommand).slice(0, 100)
       continue
     }
-    if (key === 'sidebarFilterRepoIds' || key === 'sidebarCollapsedGroups') {
+    if (key === 'sidebarFilterRepoIds' || key === 'sidebarCollapsedGroups' || key === 'sidebarExpandedBranches') {
       const list = idList(v)
       if (list) settings[key] = list
       continue

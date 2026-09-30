@@ -29,6 +29,7 @@ import { createSshAskpass, registerSshAskpass, askpassExePath } from './sshAskpa
 import { createAskpassPipeHost } from './askpassPipeHost'
 import { createRemoteFs, registerRemoteFs, remoteRootsOfLayout, SESSION_PREFIX as REMOTE_FS_PREFIX } from './remoteFs'
 import { createGitTrust, setGitTrust } from './gitSafety'
+import { createWorktreeList, localRootsOfLayout } from './worktreeList'
 import { isRemotePath } from '../shared/remotePath'
 import { STATUS_PROVIDERS } from '../shared/agentStateModel'
 import { prepareAgentStateHooks } from './agentStateSetup'
@@ -762,6 +763,8 @@ ipcMain.on('layout:save', (_evt, data) => {
   // Its remote projects are the only remote folders Files, Changes and the
   // editor may reach (remoteFs.js).
   if (isLayout(data)) remoteFs.setRoots(remoteRootsOfLayout(data))
+  // Its local project folders are the only ones whose worktrees are listed.
+  if (isLayout(data)) worktreeList.setRoots(localRootsOfLayout(data))
   try {
     writeJsonSafe(layoutFile(), data, isLayout)
   } catch {
@@ -1400,6 +1403,13 @@ ipcMain.handle(
   'git:info',
   safe((cwd) => gitInfo(cwd))
 )
+// The sidebar's "other branches": the worktrees of an open project's
+// repository (read-only, worktreeList.js).
+const worktreeList = createWorktreeList()
+ipcMain.handle(
+  'git:worktrees',
+  safe((cwd) => worktreeList.list(cwd))
+)
 ipcMain.handle(
   'git:createWorktree',
   safe(async ({ cwd, label, options } = {}) => {
@@ -1518,6 +1528,7 @@ registerRemoteFs({ ipcMain, service: remoteFs })
 try {
   const saved = readJsonSafe(layoutFile(), isLayout)
   remoteFs.setRoots(remoteRootsOfLayout(saved && saved.data))
+  worktreeList.setRoots(localRootsOfLayout(saved && saved.data))
 } catch {
   /* none yet: the first save brings them */
 }

@@ -8597,6 +8597,74 @@ button.act-stat:hover,
   font-size: 11.5px;
 }
 
+/* A project's other git worktrees: one folded line, then a compact list. */
+.osb-others {
+  padding: 0 8px 4px 22px;
+  font-size: 11.5px;
+}
+
+.osb-others-toggle,
+.osb-others-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--wts-muted);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.osb-others-toggle:hover,
+.osb-others-toggle:focus-visible,
+.osb-others-row:hover,
+.osb-others-row:focus-visible {
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+  color: var(--text);
+  outline: none;
+}
+
+.osb-others-toggle svg,
+.osb-others-row svg {
+  flex: none;
+}
+
+.osb-others-toggle svg {
+  transition: transform 0.12s;
+}
+
+.osb-others-toggle svg.collapsed {
+  transform: rotate(-90deg);
+}
+
+.osb-others-list {
+  max-height: 260px;
+  overflow-y: auto;
+  padding-left: 12px;
+}
+
+.osb-others-branch {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.osb-others-folder {
+  flex: none;
+  max-width: 45%;
+  margin-left: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.7;
+}
+
 .osb-link {
   padding: 0;
   border: 0;

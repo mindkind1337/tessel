@@ -336,6 +336,12 @@ export function buildProjectCards(project, now = Date.now()) {
     return c
   }
   for (const c of project.copies || []) if (c && c.path) copyCard(c.path, c.branch, c.title, c.taskId)
+  // A task copy git lists: its branch comes from git when the task has none.
+  for (const c of cards) {
+    if (c.isMain || c.branch) continue
+    const wt = (project.worktrees || []).find((w) => w && samePath(w.path, c.path))
+    if (wt && wt.branch) c.branch = wt.branch
+  }
   for (const pane of project.panes || []) {
     if (pane.kind === 'editor' || pane.kind === 'browser') continue
     const card =
@@ -354,6 +360,41 @@ export function buildProjectCards(project, now = Date.now()) {
     card.agentCount = card.panes.filter((r) => r.kind === 'agent').length
   }
   return cards
+}
+
+// The project's other git worktrees (project.worktrees, from `git worktree
+// list`): the ones with no card (no task, no pane), for the folded "N other
+// branches" line (after Orca's ImportedWorktreesVisibilityLine.tsx, MIT,
+// Copyright (c) 2026 Lovecast Inc.: discovered worktrees stay behind one
+// line, never one card each). Not the project folder itself, not a
+// registration whose folder is gone.
+export function projectOtherBranches(project, cards = buildProjectCards(project)) {
+  const out = []
+  for (const w of project.worktrees || []) {
+    if (!w || typeof w.path !== 'string' || !w.path || w.prunable) continue
+    if (samePath(w.path, project.cwd)) continue
+    if (cards.some((c) => !c.isMain && samePath(c.path, w.path))) continue
+    if (out.some((o) => samePath(o.path, w.path))) continue
+    const head = typeof w.head === 'string' ? w.head.slice(0, 7) : ''
+    out.push({
+      key: `${project.id}::${w.path}`,
+      projectId: project.id,
+      path: w.path,
+      branch: w.branch || '',
+      // Detached: its commit, short.
+      label: w.branch || head || folderName(w.path),
+      folder: folderName(w.path),
+      locked: !!w.locked
+    })
+  }
+  const locale = intlLocale()
+  return out.sort((a, b) => a.label.localeCompare(b.label, locale))
+}
+
+export function otherBranchesLabel(count) {
+  return count === 1
+    ? t('sidebar.otherBranches', '{{count}} other branch', { count })
+    : t('sidebar.otherBranches', '{{count}} other branches', { count })
 }
 
 // Orca's buildWorktreeComparator.
@@ -391,7 +432,8 @@ export const DEFAULT_SIDEBAR_OPTIONS = Object.freeze({
   alwaysShowDefaultBranchWorkspace: true,
   hideDefaultBranchWorkspace: false,
   filterRepoIds: [],
-  collapsedGroups: []
+  collapsedGroups: [],
+  expandedBranches: [] // projects whose other-branches line is unfolded
 })
 
 // Orca's visible-worktrees rules: sleeping ones hidden on request (the
@@ -405,11 +447,14 @@ export function isCardVisible(card, opts) {
 }
 
 // projects -> the list's rows: [{ type: 'header', key, project, count,
-// collapsed }] and [{ type: 'card', key, card, project }].
+// collapsed }], [{ type: 'card', key, card, project }] and, under a project
+// with other git worktrees, [{ type: 'others', key, project, count, open,
+// items }] (items only while unfolded).
 export function buildSidebarRows(projects, options = {}, now = Date.now()) {
   const opts = { ...DEFAULT_SIDEBAR_OPTIONS, ...options }
   const filter = new Set((opts.filterRepoIds || []).filter((id) => projects.some((p) => p.id === id)))
   const collapsed = new Set(opts.collapsedGroups || [])
+  const expanded = new Set(opts.expandedBranches || [])
   const names = Object.fromEntries(projects.map((p) => [p.id, p.name]))
   const cmp = compareCards(opts.sortBy, names)
   const shown = projects.filter((p) => !filter.size || filter.has(p.id))
@@ -417,7 +462,14 @@ export function buildSidebarRows(projects, options = {}, now = Date.now()) {
     const cards = buildProjectCards(project, now)
     cards.forEach((c, i) => (c.order = i))
     const visible = cards.filter((c) => isCardVisible(c, opts)).sort(cmp)
-    return { project, index, cards: visible, hidden: cards.length - visible.length, lastActivityAt: Math.max(0, ...cards.map((c) => c.lastActivityAt)) }
+    return {
+      project,
+      index,
+      cards: visible,
+      others: projectOtherBranches(project, cards),
+      hidden: cards.length - visible.length,
+      lastActivityAt: Math.max(0, ...cards.map((c) => c.lastActivityAt))
+    }
   })
   const rows = []
   if (opts.groupBy === 'none') {
@@ -435,6 +487,11 @@ export function buildSidebarRows(projects, options = {}, now = Date.now()) {
     // Every workspace of it hidden by the filters: a way back, not a dead end.
     if (!g.cards.length && g.hidden) rows.push({ type: 'hidden', key: `${key}:hidden`, project: g.project, count: g.hidden }) // i18n-ignore
     for (const card of g.cards) rows.push({ type: 'card', key: card.key, card, project: g.project })
+    // Its other branches: one folded line, never a card each.
+    if (g.others.length) {
+      const open = expanded.has(key)
+      rows.push({ type: 'others', key: `${key}:others`, groupKey: key, project: g.project, count: g.others.length, open, items: open ? g.others : [] }) // i18n-ignore
+    }
   }
   return rows
 }
