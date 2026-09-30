@@ -7,6 +7,7 @@ import { join } from 'path'
 import { createChatSessions, teamTurnText, teamMessageText, LIMITS } from '../sessions'
 import { createAgentStateStore } from '../../agentStateStore'
 import { guardIpc } from '../../ipcGuard'
+import { createFrameState, normalizeFrame } from '../claudeFrames'
 
 const flush = () => new Promise((r) => setImmediate(r))
 
@@ -879,6 +880,27 @@ describe('stream events', () => {
     a.emit('turnEnd', { status: 'failed', result: 'API error' })
     expect(events('tool').at(-1)).toEqual({ type: 'tool', id: 't2', status: 'error' })
     expect(last('turnEnd')).toMatchObject({ status: 'failed', error: 'API error' })
+  })
+
+  it('shows the errors from a Claude failed result even when there is no result string', async () => {
+    const chat = createChatSessions(deps)
+    await openOk(chat)
+    await chat.send({ paneId, text: 'try this', id: 'u-errors' })
+    const frame = { type: 'result', subtype: 'error_during_execution', is_error: true, errors: ['Provider unavailable', 'Please retry later'] }
+    for (const event of normalizeFrame(frame, createFrameState())) adapters[0].emit(event.type, event)
+    expect(last('turnEnd')).toMatchObject({ status: 'failed', error: 'Provider unavailable\nPlease retry later' })
+    expect(events('notice').filter((event) => event.kind === 'error')).toHaveLength(0)
+    await chat.close({ paneId })
+  })
+
+  it('shows a fallback for a Claude failed result without an explanation', async () => {
+    const chat = createChatSessions(deps)
+    await openOk(chat)
+    await chat.send({ paneId, text: 'try this', id: 'u-empty-error' })
+    const frame = { type: 'result', subtype: 'error_during_execution', is_error: true, errors: [] }
+    for (const event of normalizeFrame(frame, createFrameState())) adapters[0].emit(event.type, event)
+    expect(last('notice')).toMatchObject({ kind: 'error', text: 'The turn failed.' })
+    await chat.close({ paneId })
   })
 
   it('hands the rate-limit windows to the usage indicator with the chat login folder only', async () => {

@@ -861,7 +861,9 @@ export function createChatSessions(deps) {
       s.lastInterrupted = st === 'interrupted'
       const apiError = s.apiError
       s.apiError = null
-      const why = e.result || e.error || (apiError && apiError.message)
+      // Claude's failed result may carry only errors[], without a result string.
+      const resultErrors = Array.isArray(e.errors) ? e.errors.filter((message) => typeof message === 'string' && message.trim()).slice(0, 32).map((message) => message.slice(0, 4000)).join('\n') : ''
+      const why = e.result || e.error || (apiError && apiError.message) || resultErrors
       const error = st === 'failed' && why ? String(typeof why === 'object' ? why.message || JSON.stringify(why) : why).slice(0, 4000) : ''
       // The error is shown once, by the turn's end (the window's one red
       // notice): never again as a notice, never as the assistant's words.
@@ -893,10 +895,10 @@ export function createChatSessions(deps) {
         ...(typeof e.durationMs === 'number' ? { durationMs: e.durationMs } : {}),
         ...(shown ? { error: shown } : {})
       })
-      // A Codex or OpenCode turn can fail with no text of its own (content
+      // A turn can fail with no text of its own (content
       // filter, usage limit, a provider error): said plainly; the queue goes
       // on below.
-      if (st === 'failed' && !error && !after && (s.agent === 'codex' || s.agent === 'opencode')) {
+      if (st === 'failed' && !error && !after) {
         emit(s.paneId, { type: 'notice', kind: 'error', text: t('main.chat.turnFailedNoReason', 'The turn failed.') })
       }
       // Tools of the turn that never reported a result. A sub-agent's
