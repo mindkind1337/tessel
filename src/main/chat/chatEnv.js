@@ -66,9 +66,19 @@ const OPENCODE_EXACT = new Set([
   'OPENCODE_CONFIG_CONTENT',
   'OPENCODE_PERMISSION',
   'OPENCODE_AUTO_SHARE',
-  'OPENCODE_FAKE_VCS'
+  'OPENCODE_FAKE_VCS',
+  // A parent OpenCode's or its desktop's context for what it starts.
+  'OPENCODE_ROUTE',
+  'OPENCODE_WORKSPACE_ID',
+  'OPENCODE_TERMINAL',
+  'OPENCODE_EDITOR_SSE_PORT',
+  'OPENCODE_PLUGIN_META_FILE'
 ])
-const OPENCODE_PREFIXES = ['OPENCODE_SESSION', 'ORCA_']
+// OPENCODE_TEST_*: OPENCODE_TEST_MANAGED_CONFIG_DIR moves the managed config
+// (applied after ours) to any folder, OPENCODE_TEST_HOME the home folder.
+// OPENCODE_EXPERIMENTAL_*: switches Tessel never tested (no permission skip
+// found among the names 1.18.33 reads, but they change what runs).
+const OPENCODE_PREFIXES = ['OPENCODE_SESSION', 'OPENCODE_TEST_', 'OPENCODE_EXPERIMENTAL', 'ORCA_']
 
 export function isDroppedName(name, agent = 'claude') {
   const up = String(name).toUpperCase()

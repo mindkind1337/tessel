@@ -9,6 +9,7 @@ import http from 'node:http'
 import { mkdtempSync, readFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { createOpencodeChat, buildOpencodeArgs, listenAddress, opencodeEnv, validOpencodeModel } from '../opencodeChat'
 
 const FAKE = join(__dirname, 'fixtures', 'fake-opencode.cjs')
@@ -83,10 +84,13 @@ describe('OpenCode chat: start', () => {
     expect(config).toMatchObject({ share: 'disabled', autoupdate: false })
     expect(Object.keys(config.agent)).toEqual(['build', 'plan', 'general', 'explore'])
     expect(JSON.parse(start.permissionEnv)['*']).toBe('ask')
-    // Every request was authenticated, carried the folder and our Host.
+    // Every request was authenticated, carried the folder and our Host,
+    // except the one health check sent without the password on purpose.
     const all = readLog().filter((l) => l.t === 'req')
     expect(all.length).toBeGreaterThan(4)
-    expect(all.every((l) => l.authed && l.directory && /^127\.0\.0\.1:\d+$/.test(l.host))).toBe(true)
+    const unauthed = all.filter((l) => !l.authed)
+    expect(unauthed.map((l) => l.path)).toEqual(['/global/health'])
+    expect(all.every((l) => l.directory && /^127\.0\.0\.1:\d+$/.test(l.host))).toBe(true)
     expect(reqs('POST', /^\/session$/)[0].body.permission[0]).toEqual({ permission: '*', pattern: '*', action: 'ask' })
     expect(ofType(events, 'commands')[0].commands).toEqual([
       { name: 'review', kind: 'command', description: 'review changes', argumentHint: '$ARGUMENTS' },
@@ -350,5 +354,160 @@ describe('OpenCode chat: posture changes and close', () => {
     process.kill(chat.pid)
     await waitFor(() => ofType(events, 'exit').length, 8000, 'exit')
     expect(ofType(events, 'exit')[0].crashed).toBe(true)
+  })
+})
+
+describe('OpenCode chat: security review', () => {
+  const alive = (pid) => {
+    try {
+      process.kill(pid, 0)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  it('refuses a server that answers without its password (code auth)', async () => {
+    const { chat, killed } = setup({ env: { FAKE_OC_NO_AUTH: '1' } })
+    const r = await chat.start()
+    expect(r).toMatchObject({ ok: false, code: 'auth' })
+    expect(killed.length).toBe(1)
+  })
+
+  it('refuses an OpenCode older than the tested version (code version)', async () => {
+    const { chat } = setup({ env: { FAKE_OC_VERSION: '1.18.32' } })
+    const r = await chat.start()
+    expect(r).toMatchObject({ ok: false, code: 'version' })
+    expect(r.error).toMatch(/older than 1\.18\.33/)
+  })
+
+  it('a hidden agent that allows everything joins the strict config (one restart); task allows only checked sub-agents', async () => {
+    const { chat, readLog, reqs } = setup({ env: { FAKE_OC_HIDDEN_LOOSE: '1' } })
+    expect((await chat.start()).ok).toBe(true)
+    const starts = readLog().filter((l) => l.t === 'start')
+    expect(starts).toHaveLength(2)
+    expect(Object.keys(JSON.parse(starts[1].config).agent)).toContain('helper')
+    const rules = reqs('POST', /^\/session$/).at(-1).body.permission
+    expect(rules.filter((x) => x.permission === 'task')).toEqual([
+      { permission: 'task', pattern: '*', action: 'ask' },
+      { permission: 'task', pattern: 'general', action: 'allow' },
+      { permission: 'task', pattern: 'explore', action: 'allow' }
+    ])
+  })
+
+  it('"allow for this session" then Manual: the server restarts on the same conversation, its grants gone', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tessel-oc-grants-'))
+    const { chat, events, readLog, reqs, killed } = setup({ cwd: dir, env: { FAKE_OC_STATE: join(dir, 'state.json') } })
+    expect((await chat.start()).ok).toBe(true)
+    const sid = chat.sessionId
+    const firstPid = chat.pid
+    // No grant yet: a switch is a PATCH only.
+    expect(await chat.setPermissionMode('plan')).toMatchObject({ ok: true })
+    expect(readLog().filter((l) => l.t === 'start')).toHaveLength(1)
+    expect(await chat.setPermissionMode('default')).toMatchObject({ ok: true })
+    await chat.send({ uuid: 'g-1', text: 'Run the shell command `echo tessel` with the bash tool' })
+    const perm = await waitFor(() => ofType(events, 'permission')[0], 8000, 'permission')
+    expect(await chat.answerPermission(perm.requestId, { behavior: 'allow', session: true })).toMatchObject({ decision: 'always' })
+    await waitFor(() => ofType(events, 'turnEnd').length, 8000, 'turnEnd')
+    const r = await chat.setPermissionMode('plan')
+    expect(r).toMatchObject({ ok: true, restarted: true })
+    expect(readLog().filter((l) => l.t === 'start')).toHaveLength(2)
+    expect(killed).toContain(firstPid)
+    expect(chat.pid).not.toBe(firstPid)
+    expect(chat.sessionId).toBe(sid)
+    expect(ofType(events, 'exit')).toEqual([]) // the chat goes on
+    const patch = reqs('PATCH', /^\/session\//).at(-1)
+    expect(patch.body.permission.at(-1)).toEqual({ permission: 'edit', pattern: '*', action: 'deny' })
+    // And it still works.
+    await chat.send({ uuid: 'g-2', text: 'Reply with exactly: OK' })
+    await waitFor(() => ofType(events, 'turnEnd').length >= 2, 8000, 'second turnEnd')
+    // A second switch: no grant any more, no restart.
+    expect(await chat.setPermissionMode('default')).not.toHaveProperty('restarted')
+  })
+
+  it('leaving Yolo: a sub-agent ask is a card again', async () => {
+    const { chat, events } = setup({ permissions: 'yolo' })
+    expect((await chat.start()).ok).toBe(true)
+    expect(await chat.setPermissionMode('default')).toMatchObject({ ok: true })
+    await chat.send({ uuid: 'y-1', text: 'Use the task tool CHILDASK' })
+    const perm = await waitFor(() => ofType(events, 'permission')[0], 8000, 'permission')
+    expect(perm.toolUseId).toMatch(/call-child-1$/)
+  })
+
+  it('checks the posture again before each prompt (a config loosened behind the chat)', async () => {
+    const { chat, events, reqs } = setup({ env: { FAKE_OC_LOOSE_CONFIG_FROM: '2' } })
+    expect((await chat.start()).ok).toBe(true)
+    const r = await chat.send({ uuid: 'c-1', text: 'Reply with exactly: OK' })
+    expect(r.ok).toBe(false)
+    expect(r.error).toMatch(/config agent general: webfetch allow/)
+    expect(reqs('POST', /prompt_async$/)).toEqual([])
+    await waitFor(() => ofType(events, 'postureError').length, 8000, 'postureError')
+  })
+
+  it('refuses a GET /config that is loose at the start', async () => {
+    const { chat } = setup({ env: { FAKE_OC_LOOSE_CONFIG: '1' } })
+    expect(await chat.start()).toMatchObject({ ok: false, code: 'posture' })
+  })
+
+  it('refuses to grow a session past its rule cap', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tessel-oc-cap-'))
+    const id = 'ses_capcap0000000000000000001'
+    const permission = Array.from({ length: 1995 }, () => ({ permission: '*', pattern: '*', action: 'ask' }))
+    const { chat } = setup({ cwd: dir, sessionId: id, env: { FAKE_OC_SESSIONS: JSON.stringify([{ id, directory: dir, permission }]) } })
+    const r = await chat.start()
+    expect(r).toMatchObject({ ok: false })
+    expect(r.error).toMatch(/too many times/)
+  })
+
+  it('drops one event over the size cap and goes on', async () => {
+    const { chat, events } = setup()
+    expect((await chat.start()).ok).toBe(true)
+    await chat.send({ uuid: 'h-1', text: 'HUGE' })
+    await waitFor(() => ofType(events, 'turnEnd').length, 15000, 'turnEnd')
+    expect(ofType(events, 'turnEnd')[0]).toMatchObject({ status: 'completed', result: 'Small.' })
+    expect(ofType(events, 'assistant').every((e) => JSON.stringify(e).length < 100000)).toBe(true)
+  })
+
+  it('a close while it starts leaves no server (first boot and the restart)', async () => {
+    for (const env of [{}, { FAKE_OC_EXTRA_AGENT: 'reviewer' }]) {
+      const { chat, readLog } = setup({ env })
+      const started = chat.start()
+      await waitFor(() => readLog().filter((l) => l.t === 'listen').length >= (env.FAKE_OC_EXTRA_AGENT ? 2 : 1), 8000, 'listen')
+      await chat.close()
+      expect((await started).ok).toBe(false)
+      const listens = readLog().filter((l) => l.t === 'listen')
+      await new Promise((r) => setTimeout(r, 200))
+      for (const l of listens) expect(await rawGet(l.port, '/global/health').catch(() => 'gone')).toBe('gone')
+    }
+  })
+
+  it('records the server PID until it exits', async () => {
+    const added = []
+    const removed = []
+    const pids = { add: (p) => added.push(p), remove: (p) => removed.push(p) }
+    const { chat } = setup({ pids })
+    expect((await chat.start()).ok).toBe(true)
+    const pid = chat.pid
+    expect(added).toEqual([pid])
+    await chat.close()
+    await waitFor(() => removed.includes(pid), 5000, 'removed')
+    expect(alive(pid)).toBe(false)
+  })
+
+  it('loads the env plugin that empties the password for the shells of the agent', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tessel-oc-plugin-'))
+    const file = join(dir, 'p', 'tessel-chat-env.mjs')
+    const { chat, readLog } = setup({ envPluginFile: file })
+    expect((await chat.start()).ok).toBe(true)
+    const config = JSON.parse(readLog().find((l) => l.t === 'start').config)
+    expect(config.plugin).toEqual([pathToFileURL(file).href])
+    const text = readFileSync(file, 'utf8')
+    expect(text).toContain("'shell.env'")
+    expect(text).toContain("OPENCODE_SERVER_PASSWORD: ''")
+    const mod = await import(/* @vite-ignore */ pathToFileURL(file).href)
+    const hooks = await mod.TesselChatEnv()
+    const output = { env: { KEEP: '1' } }
+    await hooks['shell.env']({}, output)
+    expect(output.env).toEqual({ KEEP: '1', OPENCODE_SERVER_PASSWORD: '', OPENCODE_SERVER_USERNAME: '' })
   })
 })

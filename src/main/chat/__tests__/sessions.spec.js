@@ -1689,6 +1689,10 @@ describe('opencode', () => {
     deps.resolveOpencode.mockResolvedValue({ exe: 'C:\oc.exe' })
     startResult = { ok: false, code: 'posture', error: 'agent general: edit allow' }
     expect(await chat.open({ paneId, cwd: tmp, permissions: 'manual', agent: 'opencode' })).toMatchObject({ code: 'failed', error: expect.stringMatching(/OpenCode did not confirm the Manual permissions/), detail: 'agent general: edit allow' })
+    startResult = { ok: false, code: 'auth', error: 'answered 200' }
+    expect(await chat.open({ paneId, cwd: tmp, permissions: 'manual', agent: 'opencode' })).toMatchObject({ error: 'OpenCode answered without its password: the chat was not opened.' })
+    startResult = { ok: false, code: 'version', error: 'old' }
+    expect(await chat.open({ paneId, cwd: tmp, permissions: 'manual', agent: 'opencode' })).toMatchObject({ error: expect.stringMatching(/older than 1\.18\.33/) })
   })
 
   it('options: provider/model, Manual / Plan / Yolo only', async () => {
@@ -1701,6 +1705,17 @@ describe('opencode', () => {
     expect(await chat.setOption({ paneId, permissionMode: 'plan' })).toMatchObject({ ok: true })
     expect(await chat.setOption({ paneId, permissionMode: 'bypassPermissions' })).toMatchObject({ ok: true })
     expect(a.setPermissionMode.mock.calls.map((c) => c[0])).toEqual(['plan', 'bypassPermissions'])
+  })
+
+  it('clips the session rules a card shows', async () => {
+    const chat = createChatSessions(deps)
+    await chat.open({ paneId, cwd: tmp, permissions: 'manual', agent: 'opencode' })
+    await flush()
+    const many = Array.from({ length: 60 }, (_, i) => ({ kind: 'rule', tool: 'bash', content: 'x'.repeat(10000) + i }))
+    adapters[0].emit('permission', { requestId: 'oc_perm_1', toolName: 'Bash', input: { command: 'ls' }, choices: ['accept', 'acceptForSession', 'decline'], sessionRules: many })
+    const ev = last('approval')
+    expect(ev.sessionRules).toHaveLength(50)
+    expect(ev.sessionRules[0].content.length).toBeLessThan(10000)
   })
 
   it('a failed turn is said plainly', async () => {

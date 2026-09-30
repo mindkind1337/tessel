@@ -51,6 +51,7 @@ import { transcriptHomeFor } from './chat/transcriptHistory'
 import { createClaudeChat } from './chat/claudeChat'
 import { createCodexChat } from './chat/codexChat'
 import { createOpencodeChat } from './chat/opencodeChat'
+import { createServerPidFile, reapOpencodeServers } from './chat/opencodeServers'
 import { createChatTrust } from './chat/chatTrust'
 import { createWorkerCopies } from './chat/workerCopies'
 import { createLogger, describe } from './logger'
@@ -1063,12 +1064,23 @@ const chatTrust = createChatTrust({
     return res.response === 0
   }
 })
+// The OpenCode servers chat panes start, by PID: one a crash left behind is
+// stopped at the next start (opencodeServers.js checks it is ours first).
+const opencodePidsFile = join(app.getPath('userData'), 'opencode-chat', 'servers.json')
+const opencodePids = createServerPidFile({ file: opencodePidsFile })
+app.whenReady().then(() => {
+  reapOpencodeServers({ file: opencodePidsFile, log })
+    .then((stopped) => {
+      if (stopped.length) log.info?.('chat', `stopped ${stopped.length} OpenCode server(s) left by an earlier run`)
+    })
+    .catch(() => {})
+})
 const chatSessions = createChatSessions({
   dir: app.getPath('userData'),
   send,
   // Claude (stream-json), Codex (codex app-server, JSON-RPC) or OpenCode
   // (opencode serve: HTTP + SSE on 127.0.0.1 with a password of its own).
-  createAdapter: (opts) => (opts && opts.agent === 'codex' ? createCodexChat(opts) : opts && opts.agent === 'opencode' ? createOpencodeChat(opts) : createClaudeChat(opts)),
+  createAdapter: (opts) => (opts && opts.agent === 'codex' ? createCodexChat(opts) : opts && opts.agent === 'opencode' ? createOpencodeChat({ ...opts, pids: opencodePids, envPluginFile: join(app.getPath('userData'), 'opencode-chat', 'tessel-chat-env.js') }) : createClaudeChat(opts)),
   // The installed claude (the npm shim resolved to what it runs), as for
   // Tessel's headless calls.
   resolveClaude: async () => {

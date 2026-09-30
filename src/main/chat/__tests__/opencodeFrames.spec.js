@@ -21,7 +21,11 @@ import {
   isOpencodeAuthError,
   toolName,
   toolInput,
-  endsWithRules
+  endsWithRules,
+  guardedProblem,
+  taskAgents,
+  opencodeConfigProblem,
+  versionAtLeast
 } from '../opencodeFrames'
 
 const ROOT = 'ses_f106568edffeX593nuABwvaO1O'
@@ -120,6 +124,10 @@ describe('OpenCode frames: a bash call with a permission ask (recorded)', () => 
     })
     // No always patterns: "for this session" is not offered.
     expect(permissionFromOpencode('x', { ...ask, always: [] }).choices).toEqual(['accept', 'decline'])
+    // Nor when they cannot all be shown whole.
+    for (const always of [['echo *', ''], ['echo *', 3], Array(51).fill('a'), ['x'.repeat(301)], 'echo *', null])
+      expect(permissionFromOpencode('x', { ...ask, always })).toMatchObject({ choices: ['accept', 'decline'], sessionRules: [], always: [] })
+    expect(permissionFromOpencode('x', { ...ask, always: ['x'.repeat(300)] }).choices).toContain('acceptForSession')
   })
 
   it('maps the answers to OpenCode replies', () => {
@@ -227,7 +235,10 @@ describe('OpenCode posture', () => {
 
   it('session rulesets: Manual asks, Plan refuses edits, Yolo allows', () => {
     expect(lastMatch(sessionRuleset('manual'), 'edit')).toBe('ask')
-    expect(lastMatch(sessionRuleset('manual'), 'task')).toBe('allow')
+    expect(lastMatch(sessionRuleset('manual'), 'task', 'general')).toBe('ask')
+    expect(lastMatch(sessionRuleset('manual', ['general']), 'task', 'general')).toBe('allow')
+    expect(lastMatch(sessionRuleset('manual', ['general']), 'task', 'reviewer')).toBe('ask')
+    expect(sessionRuleset('manual', ['bad*name']).some((r) => r.pattern === 'bad*name')).toBe(false)
     expect(lastMatch(sessionRuleset('plan'), 'edit')).toBe('deny')
     expect(lastMatch(sessionRuleset('yolo'), 'bash')).toBe('allow')
   })
@@ -247,11 +258,16 @@ describe('OpenCode posture', () => {
     const general = AGENTS.find((a) => a.name === 'general')
     const loose = [...AGENTS.filter((a) => a.name !== 'general'), { ...general, permission: [...general.permission, { permission: 'edit', pattern: '*', action: 'allow' }] }]
     expect(opencodePostureProblem(loose, { sessionRules: sessionRuleset('manual') })).toMatch(/agent general: edit allow/)
-    // A specific allow rule is the user's own choice: only '*' is checked.
+    // ANY allow after the last catch-all fails, whatever its pattern.
     const specific = [...AGENTS.filter((a) => a.name !== 'general'), { ...general, permission: [...general.permission, { permission: 'bash', pattern: 'git *', action: 'allow' }] }]
-    expect(opencodePostureProblem(specific, { sessionRules: sessionRuleset('manual') })).toBe(null)
-    // Hidden agents are not reachable by a task call.
-    expect(opencodePostureProblem([...AGENTS, { name: 'title', mode: 'primary', hidden: true, permission: [{ permission: '*', pattern: '*', action: 'allow' }] }], { sessionRules: sessionRuleset('manual') })).toBe(null)
+    expect(opencodePostureProblem(specific, { sessionRules: sessionRuleset('manual') })).toMatch(/agent general: bash allow git \*/)
+    // Before our catch-all, it is overridden: fine.
+    const before = [...AGENTS.filter((a) => a.name !== 'general'), { ...general, permission: [{ permission: 'bash', pattern: 'git *', action: 'allow' }, ...general.permission] }]
+    expect(opencodePostureProblem(before, { sessionRules: sessionRuleset('manual') })).toBe(null)
+    // Hidden and primary agents are checked too; OpenCode's all-deny ones pass.
+    const deny = [{ permission: '*', pattern: '*', action: 'deny' }, { permission: 'external_directory', pattern: 'C:\\tool-output\\*', action: 'allow' }]
+    expect(opencodePostureProblem([...AGENTS, { name: 'title', mode: 'primary', hidden: true, permission: deny }], { sessionRules: sessionRuleset('manual') })).toBe(null)
+    expect(opencodePostureProblem([...AGENTS, { name: 'helper', mode: 'primary', hidden: true, permission: [{ permission: '*', pattern: '*', action: 'allow' }] }], { sessionRules: sessionRuleset('manual') })).toMatch(/agent helper/)
     expect(opencodePostureProblem([], {})).toMatch(/no agents/)
   })
 
@@ -269,7 +285,44 @@ describe('OpenCode posture', () => {
   })
 
   it('names the agents the strict config does not cover yet', () => {
-    expect(unknownAgents([{ name: 'build' }, { name: 'reviewer', mode: 'subagent' }, { name: 'title', hidden: true }])).toEqual(['reviewer'])
+    const allow = [{ permission: '*', pattern: '*', action: 'allow' }]
+    const deny = [{ permission: '*', pattern: '*', action: 'deny' }]
+    expect(unknownAgents([{ name: 'build', permission: allow }, { name: 'reviewer', mode: 'subagent', permission: allow }, { name: 'helper', hidden: true, permission: allow }, { name: 'title', hidden: true, permission: deny }])).toEqual(['reviewer', 'helper'])
+    expect(taskAgents([{ name: 'build', mode: 'primary' }, { name: 'general', mode: 'subagent' }, { name: 'x', mode: 'all' }, { name: 'h', mode: 'subagent', hidden: true }])).toEqual(['general', 'x'])
+  })
+
+  it('guarded permissions: the last catch-all must ask or deny, and no allow after it', () => {
+    const r = (permission, pattern, action) => ({ permission, pattern, action })
+    expect(guardedProblem([r('*', '*', 'ask')], 'bash')).toBe(null)
+    expect(guardedProblem([r('*', '*', 'allow')], 'bash')).toBe('bash allow')
+    expect(guardedProblem([r('*', '*', 'ask'), r('bash', 'rm *', 'allow')], 'bash')).toBe('bash allow rm *')
+    expect(guardedProblem([r('bash', 'rm *', 'allow'), r('*', '*', 'ask')], 'bash')).toBe(null)
+    expect(guardedProblem([r('*', '*', 'ask'), r('b*', 'x', 'allow')], 'bash')).toBe('bash allow x')
+    expect(guardedProblem([r('bash', 'x', 'allow')], 'bash')).toBe('bash allow x') // no catch-all: default ask, the allow wins
+    // OpenCode's own folders after the config: external_directory only.
+    expect(guardedProblem([r('*', '*', 'ask'), r('external_directory', 'C:/o/*', 'allow')], 'external_directory')).toBe(null)
+    expect(guardedProblem([r('*', '*', 'ask'), r('external_directory', '*', 'allow')], 'external_directory')).toBe('external_directory allow')
+  })
+
+  it('checks the merged config (GET /config)', () => {
+    const c = opencodeConfig({ extraAgents: [] })
+    expect(opencodeConfigProblem(c)).toBe(null)
+    expect(opencodeConfigProblem({ ...c, share: 'auto' })).toMatch(/share/)
+    const loose = JSON.parse(JSON.stringify(c))
+    loose.agent.general.permission.webfetch = { '*': 'ask', 'https://*': 'allow' }
+    expect(opencodeConfigProblem(loose)).toMatch(/config agent general: webfetch allow/)
+    // A user's map merged key by key: ours replaces the value in place.
+    expect(opencodeConfigProblem({ permission: { '*': 'ask', bash: 'allow' } })).toMatch(/config permission: bash allow/)
+  })
+
+  it('versions: at least the tested one', () => {
+    expect(versionAtLeast('1.18.33')).toBe(true)
+    expect(versionAtLeast('1.19.0')).toBe(true)
+    expect(versionAtLeast('2.0.0-beta')).toBe(true)
+    expect(versionAtLeast('1.18.32')).toBe(false)
+    expect(versionAtLeast('0.9.99')).toBe(false)
+    expect(versionAtLeast(null)).toBe(false)
+    expect(versionAtLeast('dev')).toBe(false)
   })
 })
 

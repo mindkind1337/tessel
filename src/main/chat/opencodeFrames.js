@@ -46,6 +46,13 @@ export const READ_RULES = { '*': 'allow', '*.env': 'ask', '*.env.*': 'ask', '*.e
 export function strictPermission() {
   return {
     '*': 'ask',
+    // Named too: a user's own map for these (merged key by key with ours)
+    // is then replaced, never left after our catch-all.
+    edit: 'ask',
+    bash: 'ask',
+    webfetch: 'ask',
+    websearch: 'ask',
+    codesearch: 'ask',
     read: { ...READ_RULES },
     glob: 'allow',
     grep: 'allow',
@@ -69,7 +76,7 @@ const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
 // the project's config files): the same strict rules for every agent, no
 // sharing, no self-update. extraAgents: user or project agents seen in
 // GET /agent (a restart adds them).
-export function opencodeConfig({ extraAgents = [] } = {}) {
+export function opencodeConfig({ extraAgents = [], plugins = [] } = {}) {
   const agent = {}
   const names = [...KNOWN_AGENTS, ...extraAgents.filter((n) => typeof n === 'string' && NAME.test(n) && !KNOWN_AGENTS.includes(n))]
   for (const name of names) {
@@ -78,7 +85,13 @@ export function opencodeConfig({ extraAgents = [] } = {}) {
     if (name === 'plan') permission.edit = 'deny'
     agent[name] = { permission }
   }
-  return { share: 'disabled', autoupdate: false, permission: strictPermission(), agent }
+  return {
+    share: 'disabled',
+    autoupdate: false,
+    permission: strictPermission(),
+    agent,
+    ...(plugins.length ? { plugin: plugins.filter((x) => typeof x === 'string' && x) } : {})
+  }
 }
 
 // A permission config map -> OpenCode's ordered rules.
@@ -92,13 +105,15 @@ export function rulesFromConfig(map) {
 }
 
 // The session's own ruleset (merged after the agent's when a tool runs, so it
-// decides for the root session): Manual asks like the config (a `task` call
-// itself is allowed: the child's tools still ask under its agent's rules);
-// Plan adds edit deny; Yolo allows everything.
-export function sessionRuleset(mode) {
+// decides for the root session): Manual asks like the config. A `task` call
+// asks too, except for the sub-agents the posture check verified (their tools
+// still ask under their own agent's rules); Plan adds edit deny; Yolo allows
+// everything.
+export function sessionRuleset(mode, taskAgents = []) {
   if (mode === 'yolo') return [{ permission: '*', pattern: '*', action: 'allow' }]
   const rules = rulesFromConfig(strictPermission())
-  rules.push({ permission: 'task', pattern: '*', action: 'allow' })
+  rules.push({ permission: 'task', pattern: '*', action: 'ask' })
+  for (const name of [...new Set(taskAgents)]) if (typeof name === 'string' && NAME.test(name)) rules.push({ permission: 'task', pattern: name, action: 'allow' })
   if (mode === 'plan') rules.push({ permission: 'edit', pattern: '*', action: 'deny' })
   return rules
 }
@@ -134,42 +149,104 @@ export function lastMatch(rules, permission, pattern = '*') {
 export const GUARDED = ['edit', 'bash', 'webfetch', 'websearch', 'codesearch', 'external_directory', 'tessel_unknown_tool']
 const SAFE = new Set(['ask', 'deny'])
 
-// agents: GET /agent. primary: the agents the chat itself runs (build, plan),
-// whose rules the session ruleset follows. -> null when Manual holds, else
-// what is wrong (English, logged).
+// One permission in one ordered rule list -> null when it can never run
+// without asking, else what allows it. The last catch-all rule (pattern '*')
+// must ask or deny, and NO allow rule may come after it, whatever its
+// pattern (a `bash "git *": allow` placed after it would win for those
+// commands). external_directory is the one exception for pattern-specific
+// allows: OpenCode itself appends its own folders (tool-output, skill
+// folders) after every config, and a tool leaving the project still asks
+// for its own permission (edit, bash).
+export function guardedProblem(rules, permission) {
+  const list = Array.isArray(rules) ? rules.filter((r) => r && typeof r === 'object') : []
+  let last = -1
+  list.forEach((r, i) => {
+    if (r.pattern === '*' && wildcardMatch(r.permission, permission)) last = i
+  })
+  if (last >= 0 && !SAFE.has(list[last].action)) return `${permission} ${String(list[last].action)}`
+  if (permission === 'external_directory') return null
+  for (let i = last + 1; i < list.length; i++) {
+    const r = list[i]
+    if (r.action === 'allow' && wildcardMatch(r.permission, permission)) return `${permission} allow ${String(r.pattern).slice(0, 80)}`
+  }
+  return null
+}
+function agentProblem(rules) {
+  for (const p of GUARDED) {
+    const why = guardedProblem(rules, p)
+    if (why) return why
+  }
+  return null
+}
+
+// agents: GET /agent, every one of them (hidden and primary ones included:
+// OpenCode's own all-deny agents pass). primary: the agents the chat runs
+// the session with (build, plan): the session's rules follow theirs. ->
+// null when Manual holds, else what is wrong (English, logged).
 export function opencodePostureProblem(agents, { sessionRules = null, primary = ['build', 'plan'] } = {}) {
   if (!Array.isArray(agents) || !agents.length) return 'no agents reported'
   const byName = new Map(agents.filter((a) => a && typeof a.name === 'string').map((a) => [a.name, a]))
-  for (const name of primary) {
-    const a = byName.get(name)
-    if (!a) {
-      if (name === 'build') return 'agent build missing'
-      continue
-    }
-    const rules = [...(Array.isArray(a.permission) ? a.permission : []), ...(Array.isArray(sessionRules) ? sessionRules : [])]
-    for (const p of GUARDED) {
-      const action = lastMatch(rules, p)
-      if (!SAFE.has(action)) return `agent ${name}: ${p} ${action}`
-    }
-  }
-  // Every agent a task call can reach runs under its own rules only.
+  if (!byName.has('build')) return 'agent build missing'
   for (const a of byName.values()) {
-    if (primary.includes(a.name) || a.hidden === true) continue
-    if (a.mode !== 'subagent' && a.mode !== 'all') continue
+    const own = Array.isArray(a.permission) ? a.permission : []
+    const rules = primary.includes(a.name) ? [...own, ...(Array.isArray(sessionRules) ? sessionRules : [])] : own
+    const why = agentProblem(rules)
+    if (why) return `agent ${a.name}: ${why}`
+  }
+  return null
+}
+
+// Agents our config does not name yet whose own rules fail the check: named
+// in the strict config at the one restart.
+export function unknownAgents(agents, known = KNOWN_AGENTS) {
+  return (Array.isArray(agents) ? agents : [])
+    .filter((a) => a && typeof a.name === 'string' && NAME.test(a.name) && !known.includes(a.name) && agentProblem(a.permission))
+    .map((a) => a.name)
+    .slice(0, 64)
+}
+
+// The sub-agents a `task` call may start without asking: every agent that
+// can be one (mode subagent or all, not hidden), all checked above.
+export function taskAgents(agents) {
+  return (Array.isArray(agents) ? agents : [])
+    .filter((a) => a && typeof a.name === 'string' && NAME.test(a.name) && a.hidden !== true && (a.mode === 'subagent' || a.mode === 'all'))
+    .map((a) => a.name)
+    .slice(0, 64)
+}
+
+// GET /config (the merged config, which PATCH /config could change behind
+// the chat): sharing still off, and the global and every agent's own map
+// still strict for the guarded permissions.
+export function opencodeConfigProblem(config) {
+  const c = obj(config)
+  if (c.share != null && c.share !== 'disabled') return `share ${String(c.share).slice(0, 20)}`
+  const global = rulesFromConfig(c.permission)
+  for (const p of GUARDED) {
+    const why = guardedProblem(global, p)
+    if (why) return `config permission: ${why}`
+  }
+  for (const [name, a] of Object.entries(obj(c.agent))) {
+    const rules = [...global, ...rulesFromConfig(obj(a).permission)]
     for (const p of GUARDED) {
-      const action = lastMatch(a.permission, p)
-      if (!SAFE.has(action)) return `agent ${a.name}: ${p} ${action}`
+      const why = guardedProblem(rules, p)
+      if (why) return `config agent ${name}: ${why}`
     }
   }
   return null
 }
 
-// Agents a task call can reach that our config does not name yet.
-export function unknownAgents(agents, known = KNOWN_AGENTS) {
-  return (Array.isArray(agents) ? agents : [])
-    .filter((a) => a && typeof a.name === 'string' && NAME.test(a.name) && a.hidden !== true && !known.includes(a.name))
-    .map((a) => a.name)
-    .slice(0, 64)
+// The version OpenCode reports -> true when it is at least `min`.
+export const MIN_VERSION = '1.18.33'
+export function versionAtLeast(version, min = MIN_VERSION) {
+  const parse = (v) => {
+    const m = /^(\d+)\.(\d+)\.(\d+)/.exec(String(v || ''))
+    return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null
+  }
+  const a = parse(version)
+  const b = parse(min)
+  if (!a || !b) return false
+  for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] > b[i]
+  return true
 }
 
 export const sameRules = (a, b) => JSON.stringify(Array.isArray(a) ? a : null) === JSON.stringify(Array.isArray(b) ? b : null)
@@ -265,7 +342,12 @@ export function permissionFromOpencode(requestId, ask, { scope = (v) => v } = {}
   const permission = str(a.permission) || 'unknown'
   const md = obj(a.metadata)
   const patterns = Array.isArray(a.patterns) ? a.patterns.filter((p) => typeof p === 'string').slice(0, 200) : []
-  const always = Array.isArray(a.always) ? a.always.filter((p) => typeof p === 'string' && p).slice(0, 50) : []
+  // "Allow for this session" answers 'always' with these patterns. Offered
+  // only when every one is a non-empty string of at most 300 characters, and
+  // there are at most 50: anything else could not be shown whole.
+  const rawAlways = a.always
+  const always =
+    Array.isArray(rawAlways) && rawAlways.length <= 50 && rawAlways.every((p) => typeof p === 'string' && p.length > 0 && p.length <= 300) ? [...rawAlways] : []
   let input
   if (permission === 'bash') input = { command: str(md.command) || patterns.join('\n'), patterns, metadata: md }
   else if (permission === 'edit') input = { file_path: str(md.filepath) || str(md.filePath) || patterns[0] || '', patterns, metadata: md }

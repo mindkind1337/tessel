@@ -23,6 +23,9 @@
 //   (`serve` never exits on its own).
 import { EventEmitter } from 'events'
 import http from 'http'
+import fs from 'fs'
+import { dirname } from 'path'
+import { pathToFileURL } from 'url'
 import { spawn as nodeSpawn } from 'child_process'
 import { randomBytes, randomUUID } from 'crypto'
 import { killClaudeTree } from './claudeChat'
@@ -40,6 +43,10 @@ import {
   sessionRuleset,
   opencodePostureProblem,
   unknownAgents,
+  taskAgents,
+  opencodeConfigProblem,
+  versionAtLeast,
+  MIN_VERSION,
   endsWithRules,
   isOpencodeAuthError,
   opencodeErrorMessage,
@@ -63,6 +70,11 @@ export const killOpencodeTree = killClaudeTree
 export const MAX_LINE = 8 * 1024 * 1024 // an SSE line longer than this is dropped
 export const MAX_BODY = 32 * 1024 * 1024 // a response body longer than this is refused
 export const MAX_APPROVALS = 50
+// One SSE event (all its data lines) longer than this is dropped.
+export const MAX_EVENT = 8 * 1024 * 1024
+// Each mode switch or resume APPENDS a ruleset to the session (OpenCode
+// 1.18.33): past this many rules a switch is refused (start a new chat).
+export const MAX_SESSION_RULES = 2000
 const STDERR_TAIL = 8 * 1024
 const SSE_RETRIES = 5
 export const SESSION_ID = /^ses_[A-Za-z0-9]{20,40}$/
@@ -89,6 +101,39 @@ export function opencodeEnv(base, { password, config }) {
   out.OPENCODE_CONFIG_CONTENT = JSON.stringify(config)
   out.OPENCODE_PERMISSION = JSON.stringify(strictPermission())
   return out
+}
+
+// A plugin of Tessel's, loaded by a chat's OpenCode only (through
+// OPENCODE_CONFIG_CONTENT): the commands the agent runs (bash tool, shells)
+// get the server's password and user name emptied (shell.env hook), so what
+// they start cannot call the chat's API with them.
+export const ENV_PLUGIN_MARKER = '// Tessel: OpenCode chat plugin'
+export const ENV_PLUGIN_SOURCE = `${ENV_PLUGIN_MARKER}. Written by Tessel for its chat panes; replaced when Tessel updates.
+export const TesselChatEnv = async () => ({
+  'shell.env': async (_input, output) => {
+    const env = output && output.env && typeof output.env === 'object' ? output.env : {}
+    output.env = { ...env, OPENCODE_SERVER_PASSWORD: '', OPENCODE_SERVER_USERNAME: '' }
+  }
+})
+`
+// -> the plugin's file URL, or null when it cannot be written.
+export function ensureEnvPlugin(file) {
+  try {
+    if (typeof file !== 'string' || !file) return null
+    let old = null
+    try {
+      old = fs.readFileSync(file, 'utf8')
+    } catch {
+      old = null
+    }
+    if (old !== ENV_PLUGIN_SOURCE) {
+      fs.mkdirSync(dirname(file), { recursive: true })
+      fs.writeFileSync(file, ENV_PLUGIN_SOURCE)
+    }
+    return pathToFileURL(file).href
+  } catch {
+    return null
+  }
 }
 
 // The address printed on stdout -> { port } when it is 127.0.0.1, else null.
@@ -121,7 +166,7 @@ function checkOptions(opts) {
 
 export function createOpencodeChat(opts) {
   checkOptions(opts)
-  const { exe, exeArgs = [], cwd, env, sessionId: resumeId = null, spawn = nodeSpawn, now = Date.now, log = null, killTree = killOpencodeTree } = opts
+  const { exe, exeArgs = [], cwd, env, sessionId: resumeId = null, spawn = nodeSpawn, now = Date.now, log = null, killTree = killOpencodeTree, pids = null, envPluginFile = null } = opts
   const timeouts = { ...DEFAULT_TIMEOUTS, ...(opts.timeouts || {}) }
   let model = opts.model || null
   let effort = opts.effort || null
@@ -150,6 +195,10 @@ export function createOpencodeChat(opts) {
   const acceptWaiters = new Map() // uuid -> resolve
   let commandNames = new Set()
   const questions = createQuestionRequests(emit)
+  let booting = null // a boot (start or restart) running now
+  let extraKnown = [] // user agents added to the strict config at a restart
+  let grants = false // an "allow for this session" reply was sent to this server
+  const envPlugin = envPluginFile ? ensureEnvPlugin(envPluginFile) : null
 
   function logAt(level, msg) {
     if (!log) return
@@ -178,9 +227,10 @@ export function createOpencodeChat(opts) {
   }
 
   // -> { ok, status, json, text, code? } (ok: a 2xx answer). ms 0: no timeout.
-  function call(method, path, body, ms = timeouts.request, { usePort = port, useAuth = auth } = {}) {
+  // noAuth: the request goes without the password (the enforcement check).
+  function call(method, path, body, ms = timeouts.request, { usePort = port, useAuth = auth, noAuth = false } = {}) {
     return new Promise((resolve) => {
-      if (!usePort || !useAuth) return resolve({ ok: false, status: 0, code: 'exit', error: 'not started' }) // i18n-ignore internal
+      if (!usePort || (!useAuth && !noAuth)) return resolve({ ok: false, status: 0, code: 'exit', error: 'not started' }) // i18n-ignore internal
       const data = body === undefined ? null : Buffer.from(JSON.stringify(body), 'utf8')
       let settled = false
       let timer = null
@@ -198,7 +248,7 @@ export function createOpencodeChat(opts) {
         path: withDir(path),
         agent: false,
         headers: {
-          authorization: useAuth,
+          ...(noAuth ? {} : { authorization: useAuth }),
           host: `127.0.0.1:${usePort}`,
           accept: 'application/json',
           ...(data ? { 'content-type': 'application/json', 'content-length': data.length } : {})
@@ -291,6 +341,8 @@ export function createOpencodeChat(opts) {
         res.setEncoding('utf8')
         let buf = ''
         let dataLines = []
+        let dataBytes = 0
+        let skipping = false // this event grew over MAX_EVENT: dropped up to its end
         let discarding = false
         res.on('data', (d) => {
           s.last = now()
@@ -307,9 +359,14 @@ export function createOpencodeChat(opts) {
             buf = buf.slice(i + 1)
             if (line.endsWith('\r')) line = line.slice(0, -1)
             if (line === '') {
-              if (dataLines.length) {
+              if (skipping) {
+                skipping = false
+                dataLines = []
+                dataBytes = 0
+              } else if (dataLines.length) {
                 const text = dataLines.join('\n')
                 dataLines = []
+                dataBytes = 0
                 let evt = null
                 try {
                   evt = JSON.parse(text)
@@ -328,12 +385,23 @@ export function createOpencodeChat(opts) {
                   }
                 }
               }
-            } else if (line.startsWith('data:')) dataLines.push(line.slice(line.startsWith('data: ') ? 6 : 5))
+            } else if (line.startsWith('data:') && !skipping) {
+              const part = line.slice(line.startsWith('data: ') ? 6 : 5)
+              dataBytes += part.length + 1
+              if (dataBytes > MAX_EVENT) {
+                logAt('warn', `event over ${MAX_EVENT} characters dropped`)
+                dataLines = []
+                dataBytes = 0
+                skipping = true
+              } else dataLines.push(part)
+            }
           }
           if (buf.length > MAX_LINE) {
             logAt('warn', `event line over ${MAX_LINE} characters dropped`)
             buf = ''
             dataLines = []
+            dataBytes = 0
+            skipping = true
             discarding = true
           }
         })
@@ -423,7 +491,8 @@ export function createOpencodeChat(opts) {
       return reject(rawId, 'permission')
     }
     // Yolo: sub-agent sessions still ask (their agent's rules): answered
-    // once for them. A repeated-call guard stays a card.
+    // once for them. A repeated-call guard stays a card. Leaving Yolo sets
+    // the posture before its PATCH is sent: nothing is auto-approved then.
     if (posture === 'yolo' && a.permission !== 'doom_loop') {
       logAt('info', `auto-approved in Yolo: ${str(a.permission)}`)
       byRaw.set(rawId, null)
@@ -579,9 +648,9 @@ export function createOpencodeChat(opts) {
   }
 
   // Spawns one server and reads its address. -> { ok, proc, port } | { ok:false, code, error }
-  function spawnServer(extraAgents) {
+  function spawnServer(extraAgents, resume) {
     const password = randomBytes(32).toString('hex')
-    const config = opencodeConfig({ extraAgents })
+    const config = opencodeConfig({ extraAgents, plugins: envPlugin ? [envPlugin] : [] })
     let proc
     try {
       proc = spawn(exe, buildOpencodeArgs({ exeArgs }), { cwd, env: opencodeEnv(env, { password, config }), stdio: ['ignore', 'pipe', 'pipe'], shell: false, windowsHide: true })
@@ -590,7 +659,16 @@ export function createOpencodeChat(opts) {
     }
     child = proc
     exited = null
-    logAt('info', `spawned pid=${proc.pid} posture=${posture} ${resumeId ? 'resume' : 'new'}`)
+    // Recorded until it exits: a Tessel that crashes leaves it behind, and
+    // the next start stops it (opencodeServers.js).
+    if (proc.pid) {
+      try {
+        pids?.add?.(proc.pid)
+      } catch {
+        /* the record is a safety net only */
+      }
+    }
+    logAt('info', `spawned pid=${proc.pid} posture=${posture} ${resume ? 'resume' : 'new'}`)
     return new Promise((resolve) => {
       let out = ''
       let answered = false
@@ -607,6 +685,11 @@ export function createOpencodeChat(opts) {
         if (!proc.pid && child === proc) finish(null, null, String((err && err.message) || err))
       })
       proc.once('exit', (code, signal) => {
+        try {
+          pids?.remove?.(proc.pid)
+        } catch {
+          /* the record is a safety net only */
+        }
         if (child !== proc) return
         exited = { code, signal }
         answer({ ok: false, code: 'exit', error: stderrTail.trim().slice(-2000) || `exited with code ${code}` }) // i18n-ignore internal
@@ -652,9 +735,13 @@ export function createOpencodeChat(opts) {
   }
 
   // One boot: spawn, address, health, stream, agents, session, posture.
-  async function boot(extraAgents, t0) {
-    const s = await spawnServer(extraAgents)
+  async function boot(extraAgents, t0, resume) {
+    const s = await spawnServer(extraAgents, resume)
     if (!s.ok) return s
+    if (closing) {
+      await killNow(s.proc)
+      return { ok: false, code: 'exit', error: 'closed while starting' } // i18n-ignore internal
+    }
     port = s.port
     auth = s.auth
     // Our child, not another server on that port: it knows our password.
@@ -663,8 +750,17 @@ export function createOpencodeChat(opts) {
     if (!health.ok || h.healthy !== true) {
       return { ok: false, code: health.code === 'timeout' ? 'timeout' : 'failed', error: health.status === 401 ? 'the server on that port refused our password' : `health check failed (${health.error || health.status})` } // i18n-ignore internal
     }
+    // And it enforces the password: the same route without it must be refused.
+    const open = await call('GET', '/global/health', undefined, timeouts.health, { noAuth: true })
+    if (open.status !== 401) {
+      logAt('error', `the server answered ${open.status || open.error} without the password`)
+      return { ok: false, code: 'auth', error: `OpenCode answered without its password (${open.status || open.error})` } // i18n-ignore code 'auth' is what the caller shows
+    }
     state.version = str(h.version) || null
     logAt('info', `opencode ${state.version || '?'} on 127.0.0.1:${port}`)
+    if (!versionAtLeast(state.version)) {
+      return { ok: false, code: 'version', error: `OpenCode ${state.version || '?'} is older than ${MIN_VERSION}, the version this chat was tested with` } // i18n-ignore code 'version' is what the caller shows
+    }
     const sse = await openStream()
     if (!sse.ok) return { ok: false, code: 'failed', error: sse.error }
     const ag = await call('GET', '/agent')
@@ -689,18 +785,22 @@ export function createOpencodeChat(opts) {
         if (typeof ctx === 'number') state.contextWindow = ctx
       }
     }
-    const rules = sessionRuleset(posture)
+    // A task call starts without asking only the sub-agents checked here.
+    state.taskAgents = taskAgents(agents)
+    const rules = sessionRuleset(posture, state.taskAgents)
     let sessionId
-    if (resumeId) {
-      const got = await call('GET', `/session/${encodeURIComponent(resumeId)}`)
-      if (!got.ok) return { ok: false, code: 'failed', error: got.status === 404 ? `no session ${resumeId}` : `GET /session: ${got.error}` } // i18n-ignore internal
+    if (resume) {
+      const got = await call('GET', `/session/${encodeURIComponent(resume)}`)
+      if (!got.ok) return { ok: false, code: 'failed', error: got.status === 404 ? `no session ${resume}` : `GET /session: ${got.error}` } // i18n-ignore internal
       const info = obj(got.json)
-      if (info.id !== resumeId) return { ok: false, code: 'failed', error: 'OpenCode answered another session' } // i18n-ignore internal
+      if (info.id !== resume) return { ok: false, code: 'failed', error: 'OpenCode answered another session' } // i18n-ignore internal
       if (normDir(info.directory) !== normDir(cwd)) return { ok: false, code: 'failed', error: 'that session belongs to another folder' } // i18n-ignore internal
-      state.sessionId = resumeId
-      const patched = await call('PATCH', `/session/${encodeURIComponent(resumeId)}`, { permission: rules })
+      const stored = Array.isArray(info.permission) ? info.permission.length : 0
+      if (stored + rules.length > MAX_SESSION_RULES) return { ok: false, code: 'failed', error: 'this conversation changed its permissions too many times: start a new chat' } // i18n-ignore internal
+      state.sessionId = resume
+      const patched = await call('PATCH', `/session/${encodeURIComponent(resume)}`, { permission: rules })
       if (!patched.ok) return { ok: false, code: 'failed', error: `PATCH /session: ${patched.error}` } // i18n-ignore internal
-      sessionId = resumeId
+      sessionId = resume
     } else {
       const created = await call('POST', '/session', { title: 'Tessel chat', permission: rules }) // i18n-ignore a title OpenCode keeps
       const info = obj(created.json)
@@ -720,6 +820,21 @@ export function createOpencodeChat(opts) {
     return { ok: true, sessionId, commands, startMs: now() - t0 }
   }
 
+  // A boot, with its one restart when user agents must join the strict config.
+  async function bootAll(resume) {
+    const t0 = now()
+    let r = await boot(extraKnown, t0, resume)
+    if (r.restart && !closing && !finished) {
+      logAt('info', `restarting with ${r.restart.length} more agent(s) in the strict config`)
+      await discard(child)
+      if (closing) return { ok: false, code: 'exit', error: 'closed while starting' } // i18n-ignore internal
+      extraKnown = r.restart
+      r = await boot(extraKnown, t0, resume)
+    }
+    if (r.restart) r = { ok: false, code: 'posture', error: 'OpenCode agents not covered by the strict config' } // i18n-ignore internal
+    return r
+  }
+
   // What OpenCode applies, not what was asked: every agent, and the session.
   async function checkPosture(agents, rules) {
     let list = agents
@@ -732,34 +847,37 @@ export function createOpencodeChat(opts) {
     if (problem) return problem
     const got = await call('GET', `/session/${encodeURIComponent(state.sessionId)}`)
     if (!got.ok) return 'session unreadable'
-    if (!endsWithRules(obj(got.json).permission, rules)) return 'session permission not applied'
-    return null
+    const stored = obj(got.json).permission
+    if (!endsWithRules(stored, rules)) return 'session permission not applied'
+    state.storedRules = stored.length
+    // The merged config (PATCH /config would change it behind the chat).
+    const cfg = await call('GET', '/config')
+    if (!cfg.ok) return 'config unreadable'
+    return opencodeConfigProblem(cfg.json)
   }
 
   // -> { ok:true, pid, info } | { ok:false, code:'spawn'|'exit'|'timeout'|'signin'|'posture'|'failed', error }
   function start() {
     if (startPromise) return startPromise
     startPromise = (async () => {
-      const t0 = now()
-      let r = await boot([], t0)
-      if (r.restart && !closing && !finished) {
-        logAt('info', `restarting with ${r.restart.length} more agent(s) in the strict config`)
-        const first = child
-        await discard(first)
-        r = await boot(r.restart, t0)
-      }
-      if (r.restart) r = { ok: false, code: 'posture', error: 'OpenCode agents not covered by the strict config' } // i18n-ignore internal
+      booting = bootAll(resumeId)
+      let r = await booting
+      booting = null
       if (!r.ok) {
         const text = `${r.error || ''}\n${stderrTail}`
         if (r.code === 'signin' || /opencode auth login|no provider/i.test(text)) {
           emit('authError', { message: String(r.error || '').slice(-500) })
           r = { ...r, code: 'signin' }
         }
-        if (r.code !== 'spawn') await close({ kill: true })
+        if (r.code !== 'spawn' || child) await shutdown({ kill: true })
         else finished = true
         return { ok: false, code: r.code || 'failed', error: r.error || r.code }
       }
-      if (closing || finished) return { ok: false, code: 'exit', error: 'closed while starting' } // i18n-ignore internal
+      if (closing || finished) {
+        // Closed meanwhile: never an orphan server.
+        await shutdown({ kill: true })
+        return { ok: false, code: 'exit', error: 'closed while starting' } // i18n-ignore internal
+      }
       ready = true
       return {
         ok: true,
@@ -816,6 +934,16 @@ export function createOpencodeChat(opts) {
   async function send({ uuid, text } = {}) {
     if (!ready || !alive() || postureFailed || closing) return { ok: false, error: 'not running' } // i18n-ignore internal
     if (typeof text !== 'string' || !text.trim()) return { ok: false, error: 'empty' }
+    // Manual and Plan: checked again before each prompt (agents, session,
+    // merged config), since another client of this server could change them.
+    if (posture !== 'yolo') {
+      const problem = await checkPosture(null, state.expectedRules)
+      if (problem) {
+        postureMismatch(problem)
+        return { ok: false, error: problem }
+      }
+    }
+    if (!ready || !alive() || closing) return { ok: false, error: 'not running' } // i18n-ignore internal
     const id = typeof uuid === 'string' && uuid ? uuid : randomUUID()
     state.sent.add(id)
     state.pending.push(id) // before the POST: the echo can beat its answer
@@ -868,6 +996,12 @@ export function createOpencodeChat(opts) {
     if (!body) return { ok: false, error: 'bad decision' } // i18n-ignore internal
     // Forget first: a second answer finds nothing rather than replying twice.
     approvals.delete(requestId)
+    // 'always' adds the patterns to the server's own approved list: checked
+    // AFTER the agent's and the session's rules (opencode 1.18.33
+    // Permission.ask: evaluate(permission, pattern, ruleset, approved), last
+    // match wins), for every session of that server, sub-agents included,
+    // until it restarts. Leaving Yolo for Manual or Plan restarts it.
+    if (body.reply === 'always') grants = true
     const r = await call('POST', `/permission/${encodeURIComponent(p.rawId)}/reply`, body)
     return r.ok ? { ok: true, decision: body.reply } : { ok: false, error: r.error }
   }
@@ -896,17 +1030,36 @@ export function createOpencodeChat(opts) {
     if (!ready || !alive()) return { ok: false, error: 'not running' } // i18n-ignore internal
     const next = postureOf(mode)
     const before = posture
-    const rules = sessionRuleset(next)
+    const rules = sessionRuleset(next, state.taskAgents || [])
+    if ((state.storedRules || 0) + rules.length > MAX_SESSION_RULES) return { ok: false, error: 'this conversation changed its permissions too many times: start a new chat' } // i18n-ignore internal
+    const open = state.turn && !state.turn.settled
+    // The posture first: an ask arriving during the PATCH is never
+    // auto-approved as Yolo's once Manual or Plan was chosen.
+    posture = next
     state.postureCheck = false
     state.expectedRules = rules
+    state.permissionMode = mode
+    // "Allow for this session" grants live in the server until it restarts,
+    // after every rule: Manual and Plan need a fresh server (the same
+    // conversation, resumed).
+    if (next !== 'yolo' && grants) {
+      if (open) {
+        state.interruptRequested = true
+        await call('POST', `/session/${encodeURIComponent(state.sessionId)}/abort`, undefined, timeouts.abort)
+        dispatchEvents(settleOpencodeTurn(state, 'interrupted'))
+      }
+      const r = await restartServer('clear the session grants')
+      if (!r.ok) return { ok: false, error: r.error }
+      return { ok: true, response: { mode }, restarted: true, ...(open ? { interrupted: true } : {}) }
+    }
     const r = await call('PATCH', `/session/${encodeURIComponent(state.sessionId)}`, { permission: rules })
     if (!r.ok) {
-      state.expectedRules = sessionRuleset(before)
+      posture = before
+      state.expectedRules = sessionRuleset(before, state.taskAgents || [])
       state.postureCheck = before !== 'yolo'
+      state.permissionMode = before === 'yolo' ? 'bypassPermissions' : before === 'plan' ? 'plan' : 'default'
       return { ok: false, error: r.error }
     }
-    posture = next
-    state.permissionMode = mode
     if (next !== 'yolo') {
       const problem = await checkPosture(null, rules)
       if (problem) {
@@ -914,28 +1067,65 @@ export function createOpencodeChat(opts) {
         return { ok: false, error: problem }
       }
       state.postureCheck = true
-      const open = state.turn && !state.turn.settled
       if (before === 'yolo' && open) {
         const i = await interrupt()
         return { ok: true, response: { mode }, interrupted: !!i.ok }
       }
+    } else {
+      const got = await call('GET', `/session/${encodeURIComponent(state.sessionId)}`)
+      if (got.ok && Array.isArray(obj(got.json).permission)) state.storedRules = got.json.permission.length
     }
     return { ok: true, response: { mode } }
+  }
+
+  // A new server on the same conversation (its grants gone). The old one is
+  // killed by its PID first; its exit is not the chat's.
+  async function restartServer(reason) {
+    logAt('info', `restarting the server (${reason})`)
+    ready = false
+    cancelPermissions()
+    questions.cancel(() => true, true)
+    const old = child
+    stopStream()
+    child = null
+    port = null
+    auth = null
+    await killNow(old)
+    if (closing || finished) return { ok: false, error: 'closed' } // i18n-ignore internal
+    booting = bootAll(state.sessionId)
+    const r = await booting
+    booting = null
+    if (!r.ok || closing) {
+      logAt('error', `restart failed: ${r.error || 'closed'}`)
+      await shutdown({ kill: true })
+      return { ok: false, error: r.error || 'closed' } // i18n-ignore internal
+    }
+    grants = false
+    ready = true
+    return { ok: true }
   }
 
   // Aborts the running turn, then kills the tree by the PID we started (the
   // server never exits on its own). kill (Tessel quits): a short abort.
   async function close({ kill = false } = {}) {
-    const wasClosing = closing
     closing = true
     questions.cancel(() => true, true)
+    // A boot running without a child yet (between two servers): it sees
+    // closing and stops what it started; wait for it, then kill what is left.
+    if (!child && booting) await booting.catch(() => {})
+    return shutdown({ kill, abort: true })
+  }
+
+  async function shutdown({ kill = false, abort = false } = {}) {
+    const wasClosing = closing && !abort
+    closing = true
     if (!child || finished) {
       finished = finished || !child
       return { ok: true }
     }
     const done = new Promise((resolve) => (finished ? resolve() : chat.once('exit', resolve)))
     const open = state.turn && !state.turn.settled
-    if (!wasClosing && port && auth && state.sessionId && (open || state.pending.length)) {
+    if (!wasClosing && abort && port && auth && state.sessionId && (open || state.pending.length)) {
       await call('POST', `/session/${encodeURIComponent(state.sessionId)}/abort`, undefined, kill ? Math.min(500, timeouts.abort) : timeouts.abort)
     }
     stopStream()

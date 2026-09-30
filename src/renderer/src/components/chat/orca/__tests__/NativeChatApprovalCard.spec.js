@@ -185,6 +185,19 @@ describe('NativeChatApprovalCard (Tessel: ChatApprovalCard cases)', () => {
       expect(wrapper.find('[data-test="chat-approval-rules"]').text()).not.toContain('adds no rule')
     })
 
+    it('OpenCode: explains what its always patterns allow, and lists them', () => {
+      mountCard({ agentId: 'opencode', item: approvalItem({ choices: ['accept', 'acceptForSession', 'decline'], sessionRules: [{ kind: 'rule', tool: 'bash', content: 'echo *' }] }) })
+      const rules = wrapper.find('[data-test="chat-approval-rules"]')
+      expect(rules.find('[data-test="chat-approval-opencode-session"]').text()).toContain('for every agent including sub-agents')
+      expect(rules.text()).toContain('* means everything of that kind')
+      expect(wrapper.findAll('[data-test="chat-approval-rules"] li').map((li) => li.text())).toEqual(['bash(echo *)'])
+      wrapper.unmount()
+      // Not offered (no always patterns): no session text at all.
+      mountCard({ agentId: 'opencode', item: approvalItem({ choices: ['accept', 'decline'] }) })
+      expect(wrapper.find('[data-test="chat-approval-rules"]').exists()).toBe(false)
+      expect(wrapper.find('[data-test="chat-approve-session"]').exists()).toBe(false)
+    })
+
     it('Claude: lists its rules, or says it adds none', () => {
       mountCard({ agentId: 'claude', item: approvalItem({ sessionRules: [{ kind: 'rule', tool: 'Bash', content: 'npm test:*' }] }) })
       expect(wrapper.findAll('[data-test="chat-approval-rules"] li').map((li) => li.text())).toEqual(['Bash(npm test:*)'])

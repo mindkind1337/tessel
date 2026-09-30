@@ -114,6 +114,10 @@ const codexSessionText = computed(() =>
     ? t('chat.approval.codexSessionFiles', 'Allow for this session: Codex stops asking to change these files until the session ends.')
     : t('chat.approval.codexSessionCommand', 'Allow for this session: Codex stops asking to run this same command until the session ends.')
 )
+// OpenCode's "always": its server allows these patterns after every rule, for
+// every agent (sub-agents too), until it restarts; Tessel restarts it when
+// the chat goes back to Manual or Plan.
+const opencodeSessionText = computed(() => t('chat.approval.opencodeSession', "Allow for this session: OpenCode then allows these patterns without asking, for every agent including sub-agents, until this chat's OpenCode restarts (switching to Manual or Plan restarts it). * means everything of that kind: every file, every command."))
 function ruleText(r) {
   if (r.kind === 'mode') return t('chat.approval.ruleMode', 'Switch this session to the {{mode}} mode', { mode: r.mode })
   if (r.kind === 'directories') return t('chat.approval.ruleDirs', 'Give access to {{dirs}}', { dirs: r.directories.join(', ') })
@@ -500,6 +504,12 @@ defineExpose({ focus })
         <!-- What "Allow for this session" does: nothing to say when it is not offered. -->
         <div v-if="pending && row.tessel && row.sessionAllowed" class="nc-approval-rules" data-test="chat-approval-rules">
           <span v-if="agent === 'codex'" data-test="chat-approval-codex-session">{{ codexSessionText }}</span>
+          <template v-else-if="agent === 'opencode' && row.sessionRules.length">
+            <span data-test="chat-approval-opencode-session">{{ opencodeSessionText }}</span>
+            <ul>
+              <li v-for="(r, i) in row.sessionRules" :key="i">{{ ruleText(r) }}</li>
+            </ul>
+          </template>
           <template v-else-if="row.sessionRules.length">
             <span>{{ t('chat.approval.rulesTitle', 'Allow for this session also allows:') }}</span>
             <ul>

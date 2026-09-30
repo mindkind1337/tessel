@@ -16,6 +16,11 @@
 //   FAKE_OC_NO_PROVIDERS=1 no provider configured
 //   FAKE_OC_SESSIONS       JSON [{id, directory}] that already exist
 //   FAKE_OC_WRONG_PASSWORD=1  expects another password (another server)
+//   FAKE_OC_NO_AUTH=1      answers without the password too (not enforced)
+//   FAKE_OC_VERSION        the version /global/health reports (1.18.33)
+//   FAKE_OC_STATE          a file keeping the sessions across servers (restarts)
+//   FAKE_OC_LOOSE_CONFIG=1 GET /config shows general allowing some webfetch
+//   FAKE_OC_HIDDEN_LOOSE=1 a hidden agent whose own rules allow everything
 const http = require('http')
 const fs = require('fs')
 const path = require('path')
@@ -31,6 +36,7 @@ if (!PASSWORD) {
   process.exit(3)
 }
 log({ t: 'start', argv: process.argv.slice(2), passwordInArgv: process.argv.some((a) => a.includes(PASSWORD)), config: process.env.OPENCODE_CONFIG_CONTENT || null, permissionEnv: process.env.OPENCODE_PERMISSION || null, autoupdate: process.env.OPENCODE_DISABLE_AUTOUPDATE || null, tesselChat: process.env.TESSEL_CHAT || null })
+const VERSION = process.env.FAKE_OC_VERSION || '1.18.33'
 const EXPECTED = 'Basic ' + Buffer.from(`${USER}:${process.env.FAKE_OC_WRONG_PASSWORD ? 'x' + PASSWORD : PASSWORD}`).toString('base64')
 
 // ---- recorded frames ----------------------------------------------------------
@@ -54,7 +60,12 @@ const RECORDED_AGENTS = lines.find((l) => l.kind === 'http' && l.path === '/agen
 
 // ---- state ------------------------------------------------------------------------
 const sessions = new Map()
-for (const s of JSON.parse(process.env.FAKE_OC_SESSIONS || '[]')) sessions.set(s.id, { id: s.id, directory: s.directory, title: 'old', permission: [] })
+for (const s of JSON.parse(process.env.FAKE_OC_SESSIONS || '[]')) sessions.set(s.id, { id: s.id, directory: s.directory, title: 'old', permission: s.permission || [] })
+const STATE = process.env.FAKE_OC_STATE
+if (STATE && fs.existsSync(STATE)) for (const s of JSON.parse(fs.readFileSync(STATE, 'utf8'))) sessions.set(s.id, s)
+const saveState = () => {
+  if (STATE) fs.writeFileSync(STATE, JSON.stringify([...sessions.values()]))
+}
 const clients = new Set()
 const pausedPermissions = new Map() // id -> { ask, resume }
 const pausedQuestions = new Map()
@@ -94,14 +105,17 @@ function agents() {
     { name: 'plan', mode: 'primary', extra: [{ permission: 'edit', pattern: '*', action: 'deny' }] },
     { name: 'general', mode: 'subagent' },
     { name: 'explore', mode: 'subagent' },
-    { name: 'title', mode: 'primary', hidden: true },
+    { name: 'title', mode: 'primary', hidden: true, extra: [{ permission: '*', pattern: '*', action: 'deny' }] },
+    ...(process.env.FAKE_OC_HIDDEN_LOOSE ? [{ name: 'helper', mode: 'primary', hidden: true, loose: true }] : []),
     ...(process.env.FAKE_OC_EXTRA_AGENT ? [{ name: process.env.FAKE_OC_EXTRA_AGENT, mode: 'subagent' }] : [])
   ]
   return list.map((a) => {
     const permission = [...builtin, ...(a.extra || []), ...rulesFrom(config.permission)]
     const own = config.agent && config.agent[a.name]
     if (own) permission.push(...rulesFrom(own.permission))
-    else if (a.name === process.env.FAKE_OC_EXTRA_AGENT) permission.push({ permission: '*', pattern: '*', action: 'allow' })
+    else if (a.name === process.env.FAKE_OC_EXTRA_AGENT || a.loose) permission.push({ permission: '*', pattern: '*', action: 'allow' })
+    // title: OpenCode's own all-deny agent keeps its deny after the config.
+    if (a.name === 'title') permission.push({ permission: '*', pattern: '*', action: 'deny' })
     // A managed config (applied after ours) loosening a sub-agent.
     if (a.name === 'general' && process.env.FAKE_OC_PERMISSIVE) permission.push({ permission: 'edit', pattern: '*', action: 'allow' })
     return { name: a.name, mode: a.mode, ...(a.hidden ? { hidden: true } : {}), permission }
@@ -109,8 +123,25 @@ function agents() {
 }
 void RECORDED_AGENTS
 
+// The merged config, as GET /config shows it (FAKE_OC_LOOSE_CONFIG_FROM=n:
+// loosened from the n-th read on, as a PATCH /config by another client would).
+let configReads = 0
+function mergedConfig() {
+  let config = {}
+  try {
+    config = JSON.parse(process.env.OPENCODE_CONFIG_CONTENT || '{}')
+  } catch {
+    config = {}
+  }
+  const out = JSON.parse(JSON.stringify(config))
+  configReads++
+  const from = Number(process.env.FAKE_OC_LOOSE_CONFIG_FROM || 0)
+  if ((process.env.FAKE_OC_LOOSE_CONFIG || (from && configReads >= from)) && out.agent && out.agent.general) out.agent.general.permission.webfetch = { '*': 'ask', 'https://*': 'allow' }
+  return out
+}
+
 function info(s) {
-  return { id: s.id, slug: 'lucky-falcon', projectID: 'global', directory: s.directory, title: s.title, ...(s.parentID ? { parentID: s.parentID } : {}), permission: process.env.FAKE_OC_DROP_SESSION_PERMISSION ? [] : s.permission, version: '1.18.33', time: { created: 1, updated: 2 } }
+  return { id: s.id, slug: 'lucky-falcon', projectID: 'global', directory: s.directory, title: s.title, ...(s.parentID ? { parentID: s.parentID } : {}), permission: process.env.FAKE_OC_DROP_SESSION_PERMISSION ? [] : s.permission, version: VERSION, time: { created: 1, updated: 2 } }
 }
 
 // ---- scripted turns -----------------------------------------------------------------
@@ -202,6 +233,14 @@ function script(sid, text) {
       { pause: new Promise(() => {}) }
     ]
   }
+  if (/HUGE/.test(text)) {
+    const msg = newId('msg_')
+    return [
+      ...echo(sid, text),
+      { type: 'message.part.updated', properties: { sessionID: sid, part: { id: newId('prt_'), type: 'text', text: 'x'.repeat(9 * 1024 * 1024), messageID: msg, sessionID: sid, time: { start: 1, end: 2 } } } },
+      ...stepEnd(sid, 'Small.')
+    ]
+  }
   if (/HANG/.test(text)) return [...echo(sid, text), { pause: new Promise(() => {}) }]
   if (/QUESTION/.test(text)) {
     let resume
@@ -238,7 +277,7 @@ const server = http.createServer((req, res) => {
     } catch {
       body = null
     }
-    const authed = req.headers.authorization === EXPECTED
+    const authed = req.headers.authorization === EXPECTED || !!process.env.FAKE_OC_NO_AUTH
     log({ t: 'req', method: req.method, path: url.pathname, directory: url.searchParams.get('directory'), body, authed, host: req.headers.host })
     if (!authed) {
       res.writeHead(401, { 'www-authenticate': 'Basic realm="opencode"' })
@@ -251,7 +290,8 @@ const server = http.createServer((req, res) => {
 function route(method, p, url, body, res) {
   const dir = url.searchParams.get('directory') || process.cwd()
   let m
-  if (method === 'GET' && p === '/global/health') return send(res, 200, { healthy: true, version: '1.18.33' })
+  if (method === 'GET' && p === '/global/health') return send(res, 200, { healthy: true, version: VERSION })
+  if (method === 'GET' && p === '/config') return send(res, 200, mergedConfig())
   if (method === 'GET' && p === '/event') {
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' })
     res.write(`data: ${JSON.stringify({ id: 'evt_1', type: 'server.connected', properties: {} })}\n\n`)
@@ -280,6 +320,7 @@ function route(method, p, url, body, res) {
   if (method === 'POST' && p === '/session') {
     const s = { id: newId('ses_'), directory: dir, title: (body && body.title) || 'New session', permission: (body && body.permission) || [] }
     sessions.set(s.id, s)
+    saveState()
     send(res, 200, info(s))
     setTimeout(() => {
       broadcast({ type: 'session.created', properties: { sessionID: s.id, info: info(s) } })
@@ -294,6 +335,7 @@ function route(method, p, url, body, res) {
     if (method === 'PATCH') {
       // Like opencode 1.18.33: the rules are APPENDED to the session's.
       if (body && Array.isArray(body.permission)) s.permission = [...s.permission, ...body.permission]
+      saveState()
       send(res, 200, info(s))
       setTimeout(() => broadcast({ type: 'session.updated', properties: { sessionID: s.id, info: info(s) } }), 1)
       return

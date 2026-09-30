@@ -101,7 +101,8 @@
       "codexSessionCommand": "Autoriser pour cette session : Codex ne demande plus à exécuter cette même commande jusqu'à la fin de la session.",
       "codexSessionFiles": "Autoriser pour cette session : Codex ne demande plus à modifier ces fichiers jusqu'à la fin de la session.",
       "announce": "{{agent}} demande à exécuter {{tool}}",
-      "announceAgent": "L'agent demande à exécuter {{tool}}"
+      "announceAgent": "L'agent demande à exécuter {{tool}}",
+      "opencodeSession": "Autoriser pour cette session : OpenCode autorise alors ces motifs sans demander, pour chaque agent y compris les sous-agents, jusqu'au redémarrage de l'OpenCode de ce chat (passer en Manuel ou en Plan le redémarre). * veut dire tout ce qui est de ce genre : chaque fichier, chaque commande."
     },
     "tool": {
       "result": "Résultat",

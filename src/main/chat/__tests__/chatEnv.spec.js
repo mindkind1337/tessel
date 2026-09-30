@@ -160,5 +160,8 @@ describe('buildChatEnv for OpenCode', () => {
     expect(isDroppedName('OPENCODE_SERVER_PASSWORD', 'opencode')).toBe(true)
     expect(isDroppedName('OPENCODE_SERVER_PASSWORD', 'claude')).toBe(false)
     expect(isDroppedName('OPENCODE_CONFIG', 'opencode')).toBe(false)
+    for (const n of ['OPENCODE_TEST_MANAGED_CONFIG_DIR', 'OPENCODE_TEST_HOME', 'OPENCODE_EXPERIMENTAL', 'OPENCODE_EXPERIMENTAL_PLAN_MODE', 'OPENCODE_ROUTE', 'OPENCODE_WORKSPACE_ID', 'OPENCODE_TERMINAL', 'OPENCODE_EDITOR_SSE_PORT', 'OPENCODE_PLUGIN_META_FILE'])
+      expect(isDroppedName(n, 'opencode')).toBe(true)
+    for (const n of ['OPENCODE_DISABLE_PROJECT_CONFIG', 'OPENCODE_DB', 'OPENCODE_API_KEY']) expect(isDroppedName(n, 'opencode')).toBe(false)
   })
 })

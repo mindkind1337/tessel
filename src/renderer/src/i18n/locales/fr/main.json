@@ -765,7 +765,9 @@
       "opencodeStartTimeout": "OpenCode n'a pas répondu à temps.",
       "opencodeExitedAtStart": "OpenCode s'est arrêté pendant son démarrage.",
       "opencodePosture": "OpenCode n'a pas confirmé les permissions Manuel (demander avant les modifications et les commandes, pour chaque agent) : le chat n'a pas été ouvert.",
-      "noOpencode": "OpenCode est introuvable. Installez-le, puis réessayez."
+      "noOpencode": "OpenCode est introuvable. Installez-le, puis réessayez.",
+      "opencodeAuthNotEnforced": "OpenCode a répondu sans son mot de passe : le chat n'a pas été ouvert.",
+      "opencodeVersion": "Cet OpenCode est plus ancien que {{version}}, la version avec laquelle Tessel a été testé. Mettez OpenCode à jour, puis réessayez."
     },
     "browserMenu": {
       "openLinkNewPane": "Ouvrir le lien dans un nouveau volet",

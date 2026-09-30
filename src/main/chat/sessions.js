@@ -519,7 +519,7 @@ export function createChatSessions(deps) {
         input: clipDeep(input),
         detail,
         hidden,
-        sessionRules: Array.isArray(e.sessionRules) ? e.sessionRules : [],
+        sessionRules: Array.isArray(e.sessionRules) ? clipDeep(e.sessionRules.slice(0, 50)) : [],
         description: String(e.description || ''),
         ...(choices ? { choices } : {}),
         status: 'pending'
@@ -702,6 +702,8 @@ export function createChatSessions(deps) {
       if (code === 'timeout') return t('main.chat.opencodeStartTimeout', 'OpenCode did not answer in time.')
       if (code === 'exit') return t('main.chat.opencodeExitedAtStart', 'OpenCode stopped while starting.')
       if (code === 'posture') return t('main.chat.opencodePosture', 'OpenCode did not confirm the Manual permissions (ask before changes and commands, for every agent): the chat was not opened.')
+      if (code === 'auth') return t('main.chat.opencodeAuthNotEnforced', 'OpenCode answered without its password: the chat was not opened.')
+      if (code === 'version') return t('main.chat.opencodeVersion', 'This OpenCode is older than {{version}}, the version Tessel was tested with. Update OpenCode, then try again.', { version: '1.18.33' })
       return t('main.chat.startFailed', 'The agent could not start.')
     }
     if (agent === 'codex') {
