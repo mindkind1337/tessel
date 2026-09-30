@@ -17,6 +17,46 @@ const agents = [
   { id: 'aider', name: 'Aider', command: 'aider', available: true }
 ]
 
+describe('additional agent catalogs in Settings', () => {
+  it('offers all six catalogs, refreshes only discovery agents and saves Pi thinking', async () => {
+    const previousApi = window.shellApi
+    resetSettings()
+    resetModelListsForTests()
+    const ids = ['pi', 'cursor', 'antigravity', 'amp', 'kimi', 'copilot']
+    window.shellApi = {
+      openExternal() {},
+      probeAgentModels: vi.fn(async ({ agent }) => ({
+        ok: true, fetchedAt: Date.now(), models: [{ id: `${agent}/sample`, label: 'Sample', effortLevels: ['off', 'high'] }]
+      }))
+    }
+    const w = mount(SettingsDialog, { props: { agents: ids.map((id) => ({ id, name: id, command: id, available: true })) } })
+    try {
+      for (const id of ids) {
+        expect(w.find(`[data-test="agent-model-${id}"]`).exists()).toBe(true)
+        expect(w.find(`[data-test="agent-models-refresh-${id}"]`).exists()).toBe(['pi', 'cursor', 'antigravity'].includes(id))
+      }
+      await w.get('[data-test="agent-models-refresh-pi"]').trigger('click')
+      await flushPromises()
+      await w.get('[data-test="agent-model-pi"]').setValue('pi/sample')
+      const effort = w.get('[data-test="agent-option-pi-effort"]')
+      expect(effort.findAll('option').map((o) => o.attributes('value'))).toEqual(['', 'off', 'high'])
+      await effort.setValue('off')
+      expect(settings.agentSessionOptions.pi.valuesByModel['pi/sample']).toEqual({ effort: 'off' })
+      await w.get('[data-test="agent-model-kimi"]').setValue('kimi-code/kimi-for-coding')
+      expect(w.find('[data-test="agent-option-kimi-effort"]').exists()).toBe(false)
+      await w.get('[data-test="agent-model-amp"]').setValue('deep')
+      expect(w.find('[data-test="agent-option-amp-effort"]').exists()).toBe(true)
+      await w.get('[data-test="agent-model-amp"]').setValue('smart')
+      expect(w.find('[data-test="agent-option-amp-effort"]').exists()).toBe(false)
+    } finally {
+      w.unmount()
+      window.shellApi = previousApi
+      resetSettings()
+      resetModelListsForTests()
+    }
+  })
+})
+
 describe('Settings > Agents: default model and effort', () => {
   let wrapper, previousApi, probes
   beforeEach(() => {

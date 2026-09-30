@@ -15,7 +15,7 @@
 // The CLI may use its own sign-in and network to answer, so Tessel runs a
 // probe only when asked (Settings > Agents > Refresh models) and keeps the
 // answer (agentModelList.js).
-import { createClaudeCatalogOptions, createCodexCatalogOptions } from './agentSessionOptions'
+import { createClaudeCatalogOptions, createCodexCatalogOptions, createPiCatalogOptions, ANTIGRAVITY_SESSION_OPTION_CATALOG } from './agentSessionOptions'
 
 // Why (Orca): the Claude CLI has no model-listing subcommand (`claude models`
 // starts a chat session). CLIs that predate the request answer
@@ -32,6 +32,9 @@ export const CLAUDE_MODEL_LIST_ARGS = ['-p', '--input-format', 'stream-json', '-
 export const CODEX_MODEL_LIST_ARGS = ['debug', 'models']
 export const GROK_MODEL_LIST_ARGS = ['models']
 export const OPENCODE_MODEL_LIST_ARGS = ['models']
+export const PI_MODEL_LIST_ARGS = ['--list-models']
+export const CURSOR_MODEL_LIST_ARGS = ['--list-models']
+export const ANTIGRAVITY_MODEL_LIST_ARGS = ['models']
 
 // Orca's limits (source-control-generation-limits.ts).
 export const MODEL_PROBE_TIMEOUT_MS = 60_000
@@ -168,12 +171,61 @@ export function parseOpenCodeModelList(stdout) {
   return out
 }
 
+// Pi, Cursor and Antigravity formats from commit-message-model-parsers.ts
+// (MIT, Copyright (c) 2026 Lovecast Inc.). Reject shell syntax in identifiers;
+// Antigravity's obsolete human-name-only format cannot be launched safely.
+const PROBED_MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:/@[\]=+-]{0,159}$/
+function parseModelLines(stdout, parseLine) {
+  const text = String(stdout || '')
+  if (text.length > MODEL_PROBE_MAX_OUTPUT) return []
+  const seen = new Set()
+  const out = []
+  for (const line of text.split(/\r\n|\n|\r/)) {
+    if (line.length > 4096) continue
+    const row = parseLine(line.trim())
+    if (!row || !PROBED_MODEL_ID.test(row.id) || seen.has(row.id)) continue
+    seen.add(row.id)
+    out.push({ ...row, label: row.label.slice(0, 120) })
+    if (out.length === 300) break
+  }
+  return out
+}
+
+export function parsePiModelList(stdout) {
+  return parseModelLines(stdout, (line) => {
+    const fields = line.split(/\s+/, 6)
+    if (fields.length !== 6 || fields[0].toLowerCase() === 'provider' || !/^(yes|no)$/i.test(fields[4])) return null
+    const id = `${fields[0]}/${fields[1]}`
+    return { id, label: labelFromModelId(id), effortLevels: /^yes$/i.test(fields[4]) ? ['off', 'low', 'medium', 'high', 'xhigh'] : [] }
+  })
+}
+
+export function parseCursorModelList(stdout) {
+  return parseModelLines(stdout, (line) => {
+    const match = /^(\S+)\s+-\s+(.+)$/.exec(line)
+    if (!match) return null
+    const label = match[2].replace(/\s*\((?:default|current)\)/g, '').trim()
+    return label ? { id: match[1], label, ...(/\(default\)/.test(match[2]) ? { isDefault: true } : {}) } : null
+  })
+}
+
+export function parseAntigravityModelList(stdout) {
+  return parseModelLines(stdout, (line) => {
+    const fields = line.split('\t')
+    if (fields.length !== 2 || /^(id|model)$/i.test(fields[0]) || !fields[1].trim()) return null
+    return { id: fields[0], label: fields[1].trim() }
+  })
+}
+
 // How each agent is asked: its program, arguments, what goes on stdin.
 export const MODEL_PROBES = {
   claude: { exe: 'claude', args: CLAUDE_MODEL_LIST_ARGS, stdin: CLAUDE_MODEL_LIST_STDIN, parse: parseClaudeModelList },
   codex: { exe: 'codex', args: CODEX_MODEL_LIST_ARGS, stdin: null, parse: parseCodexModelList },
   grok: { exe: 'grok', args: GROK_MODEL_LIST_ARGS, stdin: null, parse: parseGrokModelList },
-  opencode: { exe: 'opencode', args: OPENCODE_MODEL_LIST_ARGS, stdin: null, parse: parseOpenCodeModelList }
+  opencode: { exe: 'opencode', args: OPENCODE_MODEL_LIST_ARGS, stdin: null, parse: parseOpenCodeModelList },
+  pi: { exe: 'pi', args: PI_MODEL_LIST_ARGS, stdin: null, parse: parsePiModelList },
+  cursor: { exe: 'cursor-agent', args: CURSOR_MODEL_LIST_ARGS, stdin: null, parse: parseCursorModelList },
+  antigravity: { exe: 'agy', args: ANTIGRAVITY_MODEL_LIST_ARGS, stdin: null, parse: parseAntigravityModelList }
 }
 
 export function canProbeModels(agent) {
@@ -206,6 +258,8 @@ export function listedToCatalogModels(agent, rows) {
       return { ...base, options: createClaudeCatalogOptions({ effortLevelIds: row.effortLevels || [], supportsFastMode: !!row.supportsFastMode }) }
     if (agent === 'codex')
       return { ...base, options: row.effortLevels && row.effortLevels.length ? createCodexCatalogOptions({ effortLevelIds: row.effortLevels, defaultEffort: row.defaultEffort }) : [] }
+    if (agent === 'pi') return { ...base, options: createPiCatalogOptions(row.effortLevels || []) }
+    if (agent === 'antigravity') return { ...base, options: ANTIGRAVITY_SESSION_OPTION_CATALOG.unknownModelOptions }
     return { ...base, options: [] }
   })
 }

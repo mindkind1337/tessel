@@ -604,6 +604,7 @@
       "thinking": "Réflexion",
       "value": {
         "fast": "Rapide",
+        "off": "Désactivé",
         "minimal": "Minimal",
         "low": "Basse",
         "medium": "Moyenne",
