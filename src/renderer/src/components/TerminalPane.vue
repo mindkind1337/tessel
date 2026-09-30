@@ -1,4 +1,5 @@
 <script setup>
+import PaneContextMenu from './PaneContextMenu.vue'
 import { teamNumber } from '../teamNumber'
 import { ref, reactive, inject, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { Terminal } from '@xterm/xterm'
@@ -2474,9 +2475,11 @@ onBeforeUnmount(() => {
   </div>
 
   <Teleport to="body">
-    <div
+    <PaneContextMenu
       v-if="ctxMenu.visible"
       ref="ctxMenuEl"
+      :title="paneTitle"
+      @close="closeCtxMenuAndRefocus"
       class="ctx-menu"
       :style="{ left: ctxMenu.x + 'px', top: ctxMenu.y + 'px' }"
       tabindex="-1"
@@ -2623,6 +2626,8 @@ onBeforeUnmount(() => {
         </button>
         <div class="ctx-menu-sep"></div>
       </template>
+      <button class="ctx-menu-item" @click="(closeCtxMenu(), startEditTitle($event))">{{ t('pane.menu.rename', 'Rename') }}</button>
+      <button class="ctx-menu-item" @click="(closeCtxMenu(), ctx.toggleMaximize(node.id))">{{ isMaximized ? t('pane.restore', 'Restore pane') : t('pane.maximize', 'Maximize pane') }}</button>
       <button class="ctx-menu-item" @click="menuOpenHere">{{ t('pane.menu.openHere', 'Open terminal or agent here…') }}</button>
       <button class="ctx-menu-item" @click="menuSplit('row')">
         {{ t('pane.menu.splitRight', 'Split right') }}<span class="ctx-menu-shortcut">▥</span>
@@ -2677,7 +2682,7 @@ onBeforeUnmount(() => {
         </button>
       </template>
       <button class="ctx-menu-item danger" @click="menuClose">{{ t('pane.close', 'Close pane') }}</button>
-    </div>
+    </PaneContextMenu>
     <!-- Pane menu > Model: the model, effort and fast mode of this agent. -->
     <div
       v-if="modelMenu.visible"

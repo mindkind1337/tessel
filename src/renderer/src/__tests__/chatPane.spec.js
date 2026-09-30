@@ -972,6 +972,41 @@ describe('ChatPane.vue', () => {
     })
   })
 
+  it('the header menu shares terminal facts and actions and supports keyboard navigation', async () => {
+    const restartLeaf = vi.fn()
+    await mountPane({ paneName: 'Ada', sessionId: 'session-1' }, { restartLeaf, chatSetOption: vi.fn(async () => ({ ok: true })), switchToTerminal: vi.fn() })
+    const trigger = wrapper.find('[data-test="chat-more"]')
+    trigger.element.focus()
+    await trigger.trigger('click')
+    await settle()
+    let menu = document.querySelector('[data-test="chat-context-menu"]')
+    expect(menu.classList.contains('ctx-menu')).toBe(true)
+    expect(menu.getAttribute('role')).toBe('menu')
+    expect(menu.querySelector('.ctx-menu-title').textContent).toBe('Ada')
+    expect(menu.querySelector('[data-test="pane-menu-facts"]').textContent).toContain('State')
+    const items = [...menu.querySelectorAll('[role="menuitem"]')]
+    for (const label of ['Rename', 'Model', 'Restart', 'Continue in a terminal', 'Split right', 'Split down', 'Maximize pane', 'Close pane', 'Copy session ID']) {
+      expect(items.some(item => item.textContent.includes(label)), label).toBe(true)
+    }
+    await key(menu, { key: 'ArrowDown' })
+    expect(document.activeElement.textContent).toBe('Paste')
+    await key(document.activeElement, { key: 'End' })
+    expect(document.activeElement.textContent).toBe('Close pane')
+    await key(document.activeElement, { key: 'Escape' })
+    expect(document.querySelector('[data-test="chat-context-menu"]')).toBeNull()
+    expect(document.activeElement).toBe(trigger.element)
+    await trigger.trigger('click')
+    await settle()
+    menu = document.querySelector('[data-test="chat-context-menu"]')
+    await click([...menu.querySelectorAll('button')].find(item => item.textContent === 'Restart'))
+    expect(restartLeaf).toHaveBeenCalledWith('c1')
+    await trigger.trigger('click')
+    await settle()
+    await click(document.querySelector('[data-test="chat-context-menu"] [data-test="pane-model"]'))
+    expect(document.querySelector('[data-test="chat-context-menu"]')).toBeNull()
+    expect(document.querySelector('[data-native-chat-picker="model"]').getAttribute('aria-expanded')).toBe('true')
+  })
+
   it('the right-click menu: Copy the selection, Paste into the composer, Split and Close the pane', async () => {
     history = { ok: true, open: true, events: [{ type: 'assistant', messageId: 'm1', text: 'copy me' }] }
     await mountPane()
@@ -998,14 +1033,14 @@ describe('ChatPane.vue', () => {
     text.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
     let menu = await openMenu()
     expect(menu).not.toBeNull()
-    expect([...menu.querySelectorAll('[role="menuitem"]')].map((el) => el.textContent.replace(/Ctrl\+\S+/, '').trim())).toEqual([
+    expect([...menu.querySelectorAll('[role="menuitem"]')].map((el) => el.textContent.replace(/Ctrl\+\S+/, '').trim())).toEqual(expect.arrayContaining([
       'Copy',
       'Paste',
-      'Split Right',
-      'Split Down',
-      'Maximize Pane',
-      'Close Pane'
-    ])
+      'Split right',
+      'Split down',
+      'Maximize pane',
+      'Close pane'
+    ]))
     await click(item(menu, 'Copy'))
     expect(window.shellApi.writeClipboard).toHaveBeenCalledWith('copy me')
     window.getSelection().removeAllRanges()
@@ -1014,13 +1049,13 @@ describe('ChatPane.vue', () => {
     await click(item(menu, 'Paste'))
     expect(draft()).toBe('pasted')
     menu = await openMenu()
-    await click(item(menu, 'Split Right'))
+    await click(item(menu, 'Split right'))
     expect(ctx.splitLeaf).toHaveBeenLastCalledWith('c1', 'row')
     menu = await openMenu()
-    await click(item(menu, 'Split Down'))
+    await click(item(menu, 'Split down'))
     expect(ctx.splitLeaf).toHaveBeenLastCalledWith('c1', 'col')
     menu = await openMenu()
-    await click(item(menu, 'Close Pane'))
+    await click(item(menu, 'Close pane'))
     expect(ctx.closeLeaf).toHaveBeenCalledWith('c1')
   })
 

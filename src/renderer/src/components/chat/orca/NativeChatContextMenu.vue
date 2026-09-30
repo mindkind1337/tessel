@@ -12,8 +12,7 @@
 //   rememberSelection() (on mouseup/keyup: the selection a right-click would
 //   otherwise clear).
 import { computed, onBeforeUnmount, onMounted, reactive, watch } from 'vue'
-import { Clipboard, Copy, Maximize2, Minimize2, PanelBottomClose, PanelRightClose, SquareTerminal, X } from 'lucide-vue-next'
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuTrigger } from './ui/index.js'
+import PaneContextMenu from '../../PaneContextMenu.vue'
 import { isMacPlatform } from '../../../chat/orca/native-chat-shortcut.js'
 import { t } from '../../../i18n'
 
@@ -24,7 +23,6 @@ const props = defineProps({
 })
 
 const state = reactive({ open: false, x: 0, y: 0, selectedText: '' })
-let openedAt = 0
 let lastSelectedText = ''
 
 const copyShortcut = computed(() => (isMacPlatform() ? '⌘C' : 'Ctrl+C')) // i18n-ignore key names
@@ -47,16 +45,10 @@ function onContextMenu(event) {
   if (!props.enabled) return
   event.preventDefault()
   event.stopPropagation()
-  openedAt = Date.now()
   state.selectedText = selectedIn(props.rootEl) || lastSelectedText
   state.x = event.clientX
   state.y = event.clientY
   state.open = true
-}
-// The right button's own release must not close what it just opened.
-function setOpen(open) {
-  if (!open && Date.now() - openedAt < 100) return
-  state.open = open
 }
 watch(
   () => props.enabled,
@@ -66,14 +58,16 @@ watch(
 )
 
 function copy() {
+  state.open = false
   const text = state.selectedText
   if (!text.trim()) return
   if (window.shellApi && typeof window.shellApi.writeClipboard === 'function') window.shellApi.writeClipboard(text)
   else if (navigator.clipboard) navigator.clipboard.writeText(text).catch(() => {})
 }
 function run(name) {
+  state.open = false
   const action = props.actions && props.actions[name]
-  if (typeof action === 'function') action()
+  if (typeof action === 'function') action({ left: state.x, bottom: state.y })
 }
 
 onMounted(() => document.addEventListener('selectionchange', rememberSelection))
@@ -83,64 +77,32 @@ defineExpose({ onContextMenu, rememberSelection })
 </script>
 
 <template>
-  <DropdownMenu :open="enabled && state.open" :modal="false" @update:open="setOpen">
-    <DropdownMenuTrigger as-child>
-      <button aria-hidden="true" tabindex="-1" class="nc-context-anchor" :style="triggerStyle" type="button" />
-    </DropdownMenuTrigger>
-    <DropdownMenuContent class="nc-context-menu" :side-offset="0" align="start" data-test="chat-context-menu" @close-auto-focus="(e) => e.preventDefault()">
-      <DropdownMenuItem :disabled="!canCopy" @select="copy">
-        <Copy />
-        {{ t('chat.orca.contextMenu.copy', 'Copy') }}
-        <DropdownMenuShortcut>{{ copyShortcut }}</DropdownMenuShortcut>
-      </DropdownMenuItem>
-      <DropdownMenuItem @select="run('onPaste')">
-        <Clipboard />
-        {{ t('chat.orca.contextMenu.paste', 'Paste') }}
-      </DropdownMenuItem>
-      <DropdownMenuItem v-if="actions.onSwitchToTerminal" @select="run('onSwitchToTerminal')">
-        <SquareTerminal />
-        {{ t('chat.orca.contextMenu.switchToTerminal', 'Continue in a terminal') }}
-      </DropdownMenuItem>
-      <DropdownMenuSeparator />
-      <DropdownMenuItem @select="run('onSplitRight')">
-        <PanelRightClose />
-        {{ t('chat.orca.contextMenu.splitRight', 'Split Right') }}
-        <DropdownMenuShortcut>Ctrl+Shift+E</DropdownMenuShortcut>
-      </DropdownMenuItem>
-      <DropdownMenuItem @select="run('onSplitDown')">
-        <PanelBottomClose />
-        {{ t('chat.orca.contextMenu.splitDown', 'Split Down') }}
-        <DropdownMenuShortcut>Ctrl+Shift+O</DropdownMenuShortcut>
-      </DropdownMenuItem>
-      <DropdownMenuItem v-if="actions.onToggleExpand" @select="run('onToggleExpand')">
-        <Minimize2 v-if="actions.isPaneExpanded" />
-        <Maximize2 v-else />
-        {{ actions.isPaneExpanded ? t('chat.orca.contextMenu.collapsePane', 'Restore Pane') : t('chat.orca.contextMenu.expandPane', 'Maximize Pane') }}
-      </DropdownMenuItem>
-      <template v-if="actions.onClosePane">
-        <DropdownMenuSeparator />
-        <DropdownMenuItem variant="destructive" @select="run('onClosePane')">
-          <X />
-          {{ t('chat.orca.contextMenu.closePane', 'Close Pane') }}
-        </DropdownMenuItem>
+  <Teleport to="body">
+    <PaneContextMenu v-if="enabled && state.open" :title="actions.title" :style="triggerStyle" data-test="chat-context-menu" @close="state.open = false">
+      <div v-if="actions.title" class="ctx-menu-header"><span class="ctx-menu-title">{{ actions.title }}</span></div>
+      <div v-if="actions.facts?.length" class="ctx-menu-facts" data-test="pane-menu-facts">
+        <div v-for="fact in actions.facts" :key="fact.label" class="ctx-menu-fact"><span class="ctx-fact-label">{{ fact.label }}</span><span class="ctx-fact-value">{{ fact.value }}</span></div>
+      </div>
+      <div class="ctx-menu-sep" />
+      <button class="ctx-menu-item" :disabled="!canCopy" @click="copy">{{ t('pane.menu.copy', 'Copy') }}<span class="ctx-menu-shortcut">{{ copyShortcut }}</span></button>
+      <button class="ctx-menu-item" @click="run('onPaste')">{{ t('pane.menu.paste', 'Paste') }}</button>
+      <button v-if="actions.onCopySession" class="ctx-menu-item" @click="run('onCopySession')">{{ t('pane.menu.copySession', 'Copy session ID') }}</button>
+      <button v-if="actions.onModel" class="ctx-menu-item" data-test="pane-model" @click="run('onModel')">{{ t('pane.menu.model', 'Model…') }}<span class="ctx-menu-shortcut ctx-menu-model">{{ actions.model }}</span></button>
+      <div class="ctx-menu-sep" />
+      <template v-if="actions.onToggleLead || actions.onLeaveTeam">
+        <button v-if="actions.onToggleLead" class="ctx-menu-item" @click="run('onToggleLead')">{{ actions.leadLabel }}</button>
+        <button v-if="actions.onLeaveTeam" class="ctx-menu-item" @click="run('onLeaveTeam')">{{ actions.leaveLabel }}</button>
+        <div class="ctx-menu-sep" />
       </template>
-    </DropdownMenuContent>
-  </DropdownMenu>
+      <button v-if="actions.onRename" class="ctx-menu-item" @click="run('onRename')">{{ t('pane.menu.rename', 'Rename') }}</button>
+      <button v-if="actions.onToggleExpand" class="ctx-menu-item" @click="run('onToggleExpand')">{{ actions.isPaneExpanded ? t('pane.restore', 'Restore pane') : t('pane.maximize', 'Maximize pane') }}</button>
+      <button v-if="actions.onOpenHere" class="ctx-menu-item" @click="run('onOpenHere')">{{ t('pane.menu.openHere', 'Open terminal or agent here…') }}</button>
+      <button class="ctx-menu-item" @click="run('onSplitRight')">{{ t('pane.menu.splitRight', 'Split right') }}</button>
+      <button class="ctx-menu-item" @click="run('onSplitDown')">{{ t('pane.menu.splitDown', 'Split down') }}</button>
+      <div class="ctx-menu-sep" />
+      <button v-if="actions.onRestart" class="ctx-menu-item" @click="run('onRestart')">{{ t('pane.restart', 'Restart') }}</button>
+      <button v-if="actions.onSwitchToTerminal" class="ctx-menu-item" @click="run('onSwitchToTerminal')">{{ t('chat.orca.contextMenu.switchToTerminal', 'Continue in a terminal') }}</button>
+      <button v-if="actions.onClosePane" class="ctx-menu-item danger" @click="run('onClosePane')">{{ t('pane.close', 'Close pane') }}</button>
+    </PaneContextMenu>
+  </Teleport>
 </template>
-
-<style scoped>
-/* pointer-events-none fixed size-px opacity-0 */
-.nc-context-anchor {
-  pointer-events: none;
-  position: fixed;
-  width: 1px;
-  height: 1px;
-  opacity: 0;
-  padding: 0;
-  border: 0;
-}
-/* w-56 */
-.nc-context-menu {
-  width: 224px;
-}
-</style>

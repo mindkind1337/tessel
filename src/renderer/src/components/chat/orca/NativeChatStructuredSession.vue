@@ -226,6 +226,7 @@ function onRespond(item, response, opts) {
 }
 const menuActions = computed(() => ({
   ...props.contextMenuActions,
+  ...(optionSurface.value ? { onModel: () => { focusComposer(); onOptionCommand('model') } } : {}),
   onPaste: () => composerRef.value && composerRef.value.pasteFromClipboard()
 }))
 function onContextMenu(event) {

@@ -520,6 +520,26 @@ function onPaneKeydown(e) {
 }
 
 const contextMenuActions = computed(() => ({
+  title: title.value,
+  model: modelText.value,
+  facts: [
+    ...(props.node.worktree ? [{ label: t('pane.fact.branch', 'Branch'), value: props.node.worktree.branch }] : []),
+    ...(team.value ? [{ label: t('pane.fact.team', 'Team'), value: team.value.name + (isLead.value ? ' / ' + t('pane.fact.lead', 'lead') : '') }] : []),
+    ...(yolo.value ? [{ label: t('pane.fact.started', 'Started'), value: 'Yolo' }] : []),
+    { label: t('pane.fact.state', 'State'), value: statusLabel.value }
+  ],
+  onRename: beginRename,
+  ...(team.value && ctx.setTeamLead ? {
+    leadLabel: isLead.value ? t('pane.team.stopLeading', 'Stop leading {{team}}', { team: team.value.name }) : t('pane.team.makeLeadOf', 'Make lead of {{team}}', { team: team.value.name }),
+    onToggleLead: () => ctx.setTeamLead(team.value.id, isLead.value ? null : props.node.id)
+  } : {}),
+  ...(team.value && ctx.leaveTeam ? {
+    leaveLabel: t('pane.team.leave', 'Leave {{team}}', { team: team.value.name }),
+    onLeaveTeam: () => ctx.leaveTeam(props.node.id)
+  } : {}),
+  ...(ctx.openLauncherAt ? { onOpenHere: (position) => ctx.openLauncherAt(position, props.node.id) } : {}),
+  ...(ctx.restartLeaf ? { onRestart: () => ctx.restartLeaf(props.node.id) } : {}),
+  ...(props.node.sessionId ? { onCopySession: () => window.shellApi.writeClipboard(props.node.sessionId) } : {}),
   onSplitRight: () => ctx.splitLeaf(props.node.id, 'row'),
   onSplitDown: () => ctx.splitLeaf(props.node.id, 'col'),
   isPaneExpanded: isMaximized.value,

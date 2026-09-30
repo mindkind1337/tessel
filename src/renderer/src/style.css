@@ -885,7 +885,7 @@ button {
   text-align: left;
 }
 
-.ctx-menu-item:hover:not(:disabled) {
+.ctx-menu-item:hover:not(:disabled), .ctx-menu-item:focus-visible {
   background: var(--surface-3);
   color: var(--text-strong);
 }
