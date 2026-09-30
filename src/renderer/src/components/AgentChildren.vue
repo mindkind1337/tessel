@@ -206,7 +206,7 @@ function stateTitle(state) {
       type="button"
       :aria-expanded="open"
       aria-haspopup="true"
-      :title="chipTitle"
+      :aria-label="chipTitle"
       data-test="agent-children"
       @click.stop="toggle"
     >

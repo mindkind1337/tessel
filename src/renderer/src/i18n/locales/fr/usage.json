@@ -91,7 +91,8 @@
       "extraUsageUsed": "{{used}} utilisés ce mois-ci",
       "extraUsageLimitReached": "Limite de dépense mensuelle atteinte.",
       "weekShare": "Répartition de votre usage cette semaine",
-      "weekShareHint": "La part de chaque produit dans votre usage, pas la part de votre limite."
+      "weekShareHint": "La part de chaque produit dans votre usage, pas la part de votre limite.",
+      "reset": "Réinitialiser"
     },
     "time": {
       "minutes": "{{m}} min",

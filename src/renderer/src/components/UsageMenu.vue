@@ -10,7 +10,6 @@
 // Amber from 66 %, red from 95 %; an old reading says so.
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import BrandIcon from './BrandIcon.vue'
-import ResetHistory from './ResetHistory.vue'
 import UsageVisibility from './UsageVisibility.vue'
 import { settings } from '../settings'
 import { displayedUsagePercent, usagePercentLabel } from '../usagePercent'
@@ -1272,7 +1271,7 @@ const emptyTitle = () => t('usage.menu.buttonTitleEmpty', "Usage of your agents'
             @click="beginReset"
           >
             {{
-              resetBusy ? t('usage.menu.resetting', 'Resetting…') : t('usage.menu.resetNow', 'Reset now')
+              resetBusy ? t('usage.menu.resetting', 'Resetting…') : t('usage.menu.reset', 'Reset')
             }}
           </button>
         </div>
@@ -1299,7 +1298,7 @@ const emptyTitle = () => t('usage.menu.buttonTitleEmpty', "Usage of your agents'
               {{
                 resetBusy
                   ? t('usage.menu.resetting', 'Resetting…')
-                  : t('usage.menu.resetNow', 'Reset now')
+                  : t('usage.menu.reset', 'Reset')
               }}</button
             ><button
               type="button"
@@ -1320,13 +1319,6 @@ const emptyTitle = () => t('usage.menu.buttonTitleEmpty', "Usage of your agents'
         >
           {{ resetNotice }}
         </p>
-        <ResetHistory
-          v-if="detailAgent.id === 'codex'"
-          provider="codex"
-          :account-id="selectedAccount('codex')"
-          :revision="historyRevision"
-          compact
-        />
         <div v-if="providerAccounts(detailAgent.id)" class="usage-flyout-accounts">
           <h4
             v-text="t('usage.menu.agentAccount', '{{name}} account', { name: agentName(detailAgent) })"
@@ -1581,7 +1573,7 @@ const emptyTitle = () => t('usage.menu.buttonTitleEmpty', "Usage of your agents'
   opacity: 0.55;
   cursor: default;
 }
-/* The reset: its text on the left, "Reset now" on the right. */
+/* The reset: its text on the left, "Reset" on the right. */
 .usage-reset-credits {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
