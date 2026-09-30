@@ -98,6 +98,25 @@ describe('terminal activity and authoritative agent events', () => {
     expect(callbacks.onWorking).toHaveBeenCalledTimes(1)
   })
 
+  it('an answered approval clears once the agent works again (its running footer), not on an approval footer', async () => {
+    hook('UserPromptSubmit')
+    hook('PermissionRequest', { toolId: 'tool-1' })
+    screen = { ...screen, approval: true, screen: 'Do you want to proceed?\nEsc to cancel' }
+    monitor.output()
+    await vi.advanceTimersByTimeAsync(1400)
+    expect(approvals[node.id]).toBe(true)
+    // An approval's own "Esc to cancel" is no proof it was answered.
+    screen = { screen: 'Esc to cancel', ready: false, busy: true, approval: false, limit: null }
+    monitor.output()
+    await vi.advanceTimersByTimeAsync(1400)
+    expect(approvals[node.id]).toBe(true)
+    screen = { screen: '✻ Working… (esc to interrupt)', ready: false, busy: true, approval: false, limit: null }
+    monitor.output()
+    await vi.advanceTimersByTimeAsync(1400)
+    expect(approvals[node.id]).toBeFalsy()
+    expect(state.state).toBe('working')
+  })
+
   it('does not finish known work just because an input prompt is visible', async () => {
     hook('UserPromptSubmit')
     screen = { ...screen, ready: true }

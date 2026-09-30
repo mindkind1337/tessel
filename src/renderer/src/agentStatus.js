@@ -193,7 +193,18 @@ export function createAgentActivityMonitor({
         onApproval(false)
         if (hadApproval) send('ScreenClearApproval')
         send(observation.interrupted ? 'ScreenInterrupted' : 'ScreenReady')
-      } else if (observation.busy) send('ScreenBusy')
+      } else if (observation.busy) {
+        // Working again ("esc to interrupt", never an approval's "esc to
+        // cancel") with no approval on screen: the approval was answered.
+        const hadApproval =
+          approvals[node.id] || getAgentState(node.id, node.agentLaunchToken)?.state === 'approval'
+        const running = /\besc(?:ape)?\s+(?:to\s+)?interrupt\b/i.test(String(observation.screen || '').split(/\r?\n/).slice(-8).join('\n'))
+        if (hadApproval && running) {
+          onApproval(false)
+          send('ScreenClearApproval')
+        }
+        send('ScreenBusy')
+      }
     } else onApproval(false)
     return observation
   }
