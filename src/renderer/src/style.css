@@ -786,6 +786,19 @@ button {
 }
 
 /* Inactive Pane Opacity: panes other than the active one are dimmed. */
+/* An agent's conversation as a read-only chat, over its terminal
+   (TerminalPane's "See the conversation"). */
+.term-transcript {
+  position: absolute;
+  top: 30px;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 3;
+  display: flex;
+  background: var(--term);
+}
+
 .pane:not(.active) > .term-host {
   opacity: var(--inactive-pane-opacity, 1);
 }
