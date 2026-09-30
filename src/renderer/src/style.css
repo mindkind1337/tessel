@@ -9168,7 +9168,7 @@ button.act-stat:hover,
   color: color-mix(in srgb, var(--wts-muted) 85%, transparent);
 }
 
-/* The team number at the far left of an agent row (the lead's in the accent). */
+/* The team number at the far left of an agent row (the lead's underlined). */
 /* A pane's team number, at the far left of its header. */
 .pane-team-num {
   flex-shrink: 0;
@@ -9195,7 +9195,10 @@ button.act-stat:hover,
   text-align: center;
 }
 .car-team-num.lead {
-  color: var(--accent);
+  /* As in its pane header: the lead's number underlined, same colour. */
+  color: color-mix(in srgb, var(--wts-fg) 85%, transparent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 .car-pick {
