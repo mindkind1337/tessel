@@ -3788,7 +3788,7 @@ const sidebarProjects = computed(() =>
         accent: leaf.accent || null,
         state: chat ? chatPaneState(leaf) : paneState(leaf),
         sleeping: chat ? (chatStatus[leaf.id] || leaf.liveStatus) === 'asleep' : !!leaf.sleeping,
-        ...(chat ? { chatStatus: chatStatus[leaf.id] || leaf.liveStatus || null, model: leaf.model || null, effort: leaf.effort || null } : {}),
+        ...(chat ? { chatStatus: chatStatus[leaf.id] || leaf.liveStatus || null, model: leaf.model || null, effort: leaf.effort || leaf.shownEffort || null, headerModel: leaf.headerModel || null } : {}),
         attention: !!attention[leaf.id],
         reset: limits[leaf.id] ? limits[leaf.id].reset : '',
         held: !!pendingMessages[leaf.id],
