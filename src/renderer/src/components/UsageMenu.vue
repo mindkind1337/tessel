@@ -149,12 +149,6 @@ function invalidateProvider(id) {
 // the menu reads again only after 5 minutes; the refresh button always does).
 const MIN_REFETCH_MS = 5 * 60 * 1000
 const providerReadAt = new Map()
-// The flyout's refresh: the accounts again (an account chosen elsewhere),
-// then this provider.
-async function refreshProvider(id) {
-  await loadAccounts()
-  if (alive) await readProvider(id)
-}
 async function readProvider(id) {
   if (!trackedProviders.value.some((p) => p.id === id) || !window.shellApi.providerUsage?.read)
     return
@@ -795,7 +789,7 @@ function closeMenu() {
   open.value = false
   closeProvider()
 }
-// force: read every provider now; opening the menu reads only the
+// force: the refresh button (always reads); opening the menu reads only the
 // providers not read in the last 5 minutes, so opening it often never floods
 // the usage services (they answer "too many requests" and block).
 async function refresh(force = true) {
@@ -900,7 +894,33 @@ const emptyTitle = () => t('usage.menu.buttonTitleEmpty', "Usage of your agents'
     >
       <header class="usage-roster-head">
         <strong>{{ t('usage.menu.title', 'Usage') }}</strong
-        ><span>{{ t('usage.menu.allAgents', 'all agents') }}</span>
+        ><span>{{ t('usage.menu.allAgents', 'all agents') }}</span
+        ><button
+          type="button"
+          class="usage-refresh"
+          :aria-label="t('usage.menu.refresh', 'Refresh usage')"
+          :title="t('usage.menu.refresh', 'Refresh usage')"
+          :disabled="refreshing || resetBusy"
+          data-test="usage-refresh"
+          @click="refresh(true)"
+        >
+          <svg
+            :class="{ spinning: refreshing }"
+              width="14"
+              height="14"
+              viewBox="0 0 16 16"
+              fill="none"
+              aria-hidden="true"
+            >
+              <path
+                d="M13 6a5 5 0 10.1 3M13 2.5V6H9.5"
+                stroke="currentColor"
+                stroke-width="1.3"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+        </button>
       </header>
       <div class="usage-density" role="group" :aria-label="t('usage.menu.display', 'Usage display')">
         <button
@@ -1094,31 +1114,6 @@ const emptyTitle = () => t('usage.menu.buttonTitleEmpty', "Usage of your agents'
           >
           <span>{{ updatedText(detailAgent) }}</span>
         </div>
-        <button
-          type="button"
-          class="usage-refresh"
-          :disabled="providerBusy[detailAgent.id] || resetBusy"
-          :aria-label="t('usage.menu.refreshProvider', 'Refresh provider usage')"
-          data-test="usage-provider-refresh"
-          @click="refreshProvider(detailAgent.id)"
-        >
-          <svg
-            :class="{ spinning: providerBusy[detailAgent.id] }"
-            width="14"
-            height="14"
-            viewBox="0 0 16 16"
-            fill="none"
-            aria-hidden="true"
-          >
-            <path
-              d="M13 6a5 5 0 10.1 3M13 2.5V6H9.5"
-              stroke="currentColor"
-              stroke-width="1.3"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            />
-          </svg>
-        </button>
       </header>
       <div class="usage-flyout-body">
         <p

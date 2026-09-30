@@ -189,7 +189,7 @@ describe('usage provider flyout', () => {
   it('marks last known readings stale after a failed authenticated refresh and disables reset', async () => {
     await openProvider()
     api.providerUsage.read.mockResolvedValue({ ok: false, error: 'Sign-in expired' })
-    await flyout().get('[data-test="usage-provider-refresh"]').trigger('click')
+    await wrapper.get('[data-test="usage-refresh"]').trigger('click')
     await flushPromises()
     expect(flyout().get('[role="alert"]').text()).toContain('Sign-in expired')
     expect(flyout().get('.usage-window').classes()).toContain('stale')
@@ -209,7 +209,7 @@ describe('usage provider flyout', () => {
           finishOld = resolve
         })
     )
-    await flyout().get('[data-test="usage-provider-refresh"]').trigger('click')
+    await wrapper.get('[data-test="usage-refresh"]').trigger('click')
     await flyout().get('[data-test="usage-account-codex"]').setValue('work')
     await flushPromises()
     expect(flyout().find('[role="alertdialog"]').exists()).toBe(false)
@@ -272,7 +272,7 @@ describe('usage provider flyout', () => {
     selectedId = 'work'
     api.providerUsage.read.mockResolvedValue({ ok: false, error: 'Work sign-in expired' })
     // The external selection is discovered by list(), without an accounts-changed event.
-    await wrapper.get('[data-test="usage-provider-refresh"]').trigger('click')
+    await wrapper.get('[data-test="usage-refresh"]').trigger('click')
     await flushPromises()
     expect(flyout().get('[data-test="usage-account-toggle"]').text()).toContain('Work')
     expect(flyout().find('.usage-pct').exists()).toBe(false)

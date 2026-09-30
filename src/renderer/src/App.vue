@@ -9054,21 +9054,6 @@ onBeforeUnmount(() => {
           <span class="brand-name">Tessel</span>
           <span v-if="isDev" class="brand-dev" :title="t('app.toolbar.devBuild', 'Development build (npm run dev)')">{{ t('app.toolbar.dev', 'dev') }}</span>
         </div>
-        <!-- The two side panels, shown or hidden (filled half = shown). -->
-        <button
-          class="tb-icon tb-panel-toggle"
-          :title="t('app.toolbar.toggleSidebar', 'Toggle the left sidebar')"
-          :aria-label="t('app.toolbar.toggleSidebar', 'Toggle the left sidebar')"
-          :aria-pressed="!sidebarCollapsed"
-          data-test="left-panel-toggle"
-          @click="toggleSidebar"
-        >
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <rect x="1.75" y="2.25" width="12.5" height="11.5" rx="2.25" stroke="currentColor" stroke-width="1.3" />
-            <rect v-if="!sidebarCollapsed" x="2.4" y="2.9" width="4.1" height="10.2" rx="1.4" fill="currentColor" />
-            <path v-else d="M6.5 2.5v11" stroke="currentColor" stroke-width="1.3" />
-          </svg>
-        </button>
       </div>
 
       <!-- Middle: one search box that finds panes, workspaces and commands. -->
@@ -9242,6 +9227,35 @@ onBeforeUnmount(() => {
             </button>
           </div>
         </div>
+        <!-- The two side panels, shown or hidden (filled half = shown). -->
+        <button
+          class="tb-icon tb-panel-toggle"
+          :title="t('app.toolbar.toggleSidebar', 'Toggle the left sidebar')"
+          :aria-label="t('app.toolbar.toggleSidebar', 'Toggle the left sidebar')"
+          :aria-pressed="!sidebarCollapsed"
+          data-test="left-panel-toggle"
+          @click="toggleSidebar"
+        >
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <rect x="1.75" y="2.25" width="12.5" height="11.5" rx="2.25" stroke="currentColor" stroke-width="1.3" />
+            <rect v-if="!sidebarCollapsed" x="2.4" y="2.9" width="4.1" height="10.2" rx="1.4" fill="currentColor" />
+            <path v-else d="M6.5 2.5v11" stroke="currentColor" stroke-width="1.3" />
+          </svg>
+        </button>
+        <button
+          class="tb-icon tb-panel-toggle"
+          :title="t('app.toolbar.toggleRightPanel', 'Toggle the right sidebar')"
+          :aria-label="t('app.toolbar.toggleRightPanel', 'Toggle the right sidebar')"
+          :aria-pressed="taskPanelOpen"
+          data-test="right-panel-toggle"
+          @click="toggleRightPanel"
+        >
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <rect x="1.75" y="2.25" width="12.5" height="11.5" rx="2.25" stroke="currentColor" stroke-width="1.3" />
+            <rect v-if="taskPanelOpen" x="9.5" y="2.9" width="4.1" height="10.2" rx="1.4" fill="currentColor" />
+            <path v-else d="M9.5 2.5v11" stroke="currentColor" stroke-width="1.3" />
+          </svg>
+        </button>
         <button
           class="tb-icon"
           :title="t('app.toolbar.settingsTitle', 'Settings (Ctrl+,)')"
@@ -9257,20 +9271,6 @@ onBeforeUnmount(() => {
               stroke-linecap="round"
               stroke-linejoin="round"
             />
-          </svg>
-        </button>
-        <button
-          class="tb-icon tb-panel-toggle"
-          :title="t('app.toolbar.toggleRightPanel', 'Toggle the right sidebar')"
-          :aria-label="t('app.toolbar.toggleRightPanel', 'Toggle the right sidebar')"
-          :aria-pressed="taskPanelOpen"
-          data-test="right-panel-toggle"
-          @click="toggleRightPanel"
-        >
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <rect x="1.75" y="2.25" width="12.5" height="11.5" rx="2.25" stroke="currentColor" stroke-width="1.3" />
-            <rect v-if="taskPanelOpen" x="9.5" y="2.9" width="4.1" height="10.2" rx="1.4" fill="currentColor" />
-            <path v-else d="M9.5 2.5v11" stroke="currentColor" stroke-width="1.3" />
           </svg>
         </button>
       </div>
