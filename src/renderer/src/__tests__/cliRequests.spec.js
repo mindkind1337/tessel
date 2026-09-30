@@ -133,7 +133,9 @@ describe('sessionChoiceError (model and effort from the command line)', () => {
     expect(sessionChoiceError('claude', 'haiku', 'high', null)).toMatch(/no effort/)
     expect(sessionChoiceError('codex', 'gpt-5.5', 'ultra', null)).toMatch(/Unknown effort/)
     expect(sessionChoiceError('codex', 'gpt-5.5', 'xhigh', null)).toBeNull()
-    expect(sessionChoiceError('kimi', 'k2', null, null)).toMatch(/cannot choose/)
+    expect(sessionChoiceError('aider', 'k2', null, null)).toMatch(/cannot choose/)
+    expect(sessionChoiceError('kimi', 'k2', null, null)).toMatch(/Unknown model/)
+    expect(sessionChoiceError('kimi', 'kimi-code/kimi-for-coding', null, null)).toBeNull()
     // The agent's own listed models (probed) count.
     expect(sessionChoiceError('claude', 'claude-opus-9', null, [{ id: 'claude-opus-9', options: [] }])).toBeNull()
   })

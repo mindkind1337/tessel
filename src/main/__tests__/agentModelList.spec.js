@@ -56,6 +56,22 @@ describe('model lists from the agents themselves', () => {
 
   const resolve = async (exe) => (exe === 'missing' ? null : { file: `C:\\bin\\${exe}.exe`, pre: [], path: 'C:\\bin' })
 
+  it.each([
+    ['pi', 'pi', ['--list-models'], 'openai gpt-5.4 272k 32k yes text,image', 'openai/gpt-5.4'],
+    ['cursor', 'cursor-agent', ['--list-models'], 'auto - Auto (default)', 'auto'],
+    ['antigravity', 'agy', ['models'], 'gemini-3.5-flash\tGemini 3.5 Flash', 'gemini-3.5-flash']
+  ])('%s lists and caches models with closed stdin and no shell', async (agent, exe, args, stdout, id) => {
+    const calls = []
+    const lister = createModelLister(dir, { resolve, spawn: fakeSpawn({ stdout }, calls) })
+    expect((await lister.probe(agent)).ok).toBe(true)
+    expect(calls[0].file).toBe(`C:\\bin\\${exe}.exe`)
+    expect(calls[0].args).toEqual(args)
+    expect(calls[0].opts.stdio[0]).toBe('ignore')
+    expect(calls[0].opts.windowsHide).toBe(true)
+    expect(calls[0].opts.shell).toBeUndefined()
+    expect(loadModelLists(dir)[agent].models[0].id).toBe(id)
+  })
+
   it('Claude: its program, Orca arguments, the list_models request on stdin; the list is kept', async () => {
     const calls = []
     const lister = createModelLister(dir, { resolve, spawn: fakeSpawn({ stdout: CLAUDE_ANSWER }, calls), now: () => 1234 })

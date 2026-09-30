@@ -306,6 +306,7 @@ const CURSOR_THINKING = {
 }
 
 export const CURSOR_SESSION_OPTION_CATALOG = {
+  probed: true,
   models: [
     { id: 'auto', label: 'Auto', isDefault: true, options: [] },
     { id: 'gpt-5.3-codex', label: 'GPT-5.3 Codex', options: [CURSOR_EFFORT, CURSOR_FAST] },
@@ -391,7 +392,8 @@ export const ANTIGRAVITY_SESSION_OPTION_CATALOG = {
     removeAgentArgs: (tokens) => removeAgentArgOption(tokens, ['--model']),
     midSession: { kind: 'agent-picker', command: '/model' }
   },
-  unknownModelOptions: [ANTIGRAVITY_EFFORT]
+  unknownModelOptions: [ANTIGRAVITY_EFFORT],
+  probed: true
 }
 
 // --- OpenCode (Orca's commit-message-agent-specs-primary.ts: `--model
@@ -414,9 +416,82 @@ export const OPENCODE_SESSION_OPTION_CATALOG = {
   probed: true
 }
 
+// --- Pi, Amp, Kimi and Copilot (commit-message-agent-specs-primary.ts /
+// secondary.ts, MIT, Copyright (c) 2026 Lovecast Inc.). See MODEL_PICKERS.md
+// for CLI verification and deliberately omitted, unconfirmed options.
+
+function flagApply(flag, aliases = [flag], midSession) {
+  return {
+    launchArgs: (value) => [flag, String(value)],
+    agentArgsOverride: (tokens) => hasFlag(tokens, aliases),
+    removeAgentArgs: (tokens) => removeAgentArgOption(tokens, aliases),
+    ...(midSession ? { midSession } : {})
+  }
+}
+
+function flaggedEffort(choices, flag, aliases = [flag], midSession) {
+  return {
+    id: 'effort', label: 'Reasoning effort', category: 'thought_level',
+    kind: { type: 'select', choices, defaultValue: 'low' },
+    apply: flagApply(flag, aliases, midSession)
+  }
+}
+
+const PI_EFFORT_CHOICES = [{ value: 'off', label: 'Off' }, ...STANDARD_EFFORT_CHOICES, { value: 'xhigh', label: 'Extra high' }]
+export function createPiCatalogOptions(levels) {
+  const choices = PI_EFFORT_CHOICES.filter((choice) => levels.includes(choice.value))
+  return choices.length ? [flaggedEffort(choices, '--thinking', ['--thinking'], { kind: 'agent-picker', command: '/thinking' })] : []
+}
+
+export const PI_SESSION_OPTION_CATALOG = {
+  models: [], probed: true,
+  modelApply: flagApply('--model', ['--model'], { kind: 'agent-picker', command: '/model' }),
+  unknownModelOptions: []
+}
+
+export const AMP_SESSION_OPTION_CATALOG = {
+  models: ['smart', 'rush', 'large', 'deep'].map((id) => ({
+    id, label: id.charAt(0).toUpperCase() + id.slice(1),
+    options: ['large', 'deep'].includes(id) ? [flaggedEffort(STANDARD_EFFORT_CHOICES, '--effort')] : []
+  })),
+  modelApply: flagApply('--mode'),
+  unknownModelOptions: []
+}
+
+export const KIMI_SESSION_OPTION_CATALOG = {
+  models: [{ id: 'kimi-code/kimi-for-coding', label: 'Kimi K2.6', options: [] }],
+  modelApply: flagApply('--model', ['-m', '--model']),
+  unknownModelOptions: []
+}
+
+const COPILOT_MODELS = [
+  ['auto', 'Auto'], ['claude-haiku-4.5', 'Claude Haiku 4.5'],
+  ['claude-sonnet-4.5', 'Claude Sonnet 4.5'], ['claude-sonnet-4.6', 'Claude Sonnet 4.6'],
+  ['claude-opus-4.5', 'Claude Opus 4.5'], ['claude-opus-4.6', 'Claude Opus 4.6'],
+  ['claude-opus-4.6-fast', 'Claude Opus 4.6 Fast'], ['claude-opus-4.7', 'Claude Opus 4.7'],
+  ['gpt-4.1', 'GPT-4.1'], ['gpt-5-mini', 'GPT-5 mini'], ['gpt-5.2', 'GPT-5.2'],
+  ['gpt-5.2-codex', 'GPT-5.2 Codex'], ['gpt-5.3-codex', 'GPT-5.3 Codex'],
+  ['gpt-5.4', 'GPT-5.4'], ['gpt-5.4-mini', 'GPT-5.4 mini'], ['gpt-5.5', 'GPT-5.5']
+]
+export const COPILOT_SESSION_OPTION_CATALOG = {
+  models: COPILOT_MODELS.map(([id, label]) => ({
+    id, label,
+    options: id.startsWith('gpt-5') ? [flaggedEffort(
+      [...STANDARD_EFFORT_CHOICES, { value: 'xhigh', label: 'Extra high' }],
+      '--reasoning-effort', ['--reasoning-effort', '--effort']
+    )] : []
+  })),
+  modelApply: flagApply('--model', ['--model'], { kind: 'agent-picker', command: '/model' }),
+  unknownModelOptions: []
+}
+
 // --- Catalog lookups (agent-session-option-catalog.ts) ----------------------
 
 const CATALOGS = {
+  pi: PI_SESSION_OPTION_CATALOG,
+  amp: AMP_SESSION_OPTION_CATALOG,
+  kimi: KIMI_SESSION_OPTION_CATALOG,
+  copilot: COPILOT_SESSION_OPTION_CATALOG,
   antigravity: ANTIGRAVITY_SESSION_OPTION_CATALOG,
   claude: CLAUDE_SESSION_OPTION_CATALOG,
   codex: CODEX_SESSION_OPTION_CATALOG,
