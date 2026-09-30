@@ -24,7 +24,8 @@ export function useNativeChatComposerRevealFocus(options) {
         interacted = true
       }
       const key = (event) => {
-        if (event.key === 'Tab') interacted = true
+        // Tab moves the focus; Escape closes a menu that gives it back (Tessel).
+        if (event.key === 'Tab' || event.key === 'Escape') interacted = true
       }
       const stop = () => {
         doc?.removeEventListener('pointerdown', pointer, true)
@@ -43,7 +44,9 @@ export function useNativeChatComposerRevealFocus(options) {
         if (
           interacted ||
           read('rootRef')?.contains(active) ||
-          active?.matches?.('input,textarea,select,[contenteditable="true"],[role="textbox"]')
+          active?.matches?.('input,textarea,select,[contenteditable="true"],[role="textbox"]') ||
+          // Tessel: never taken from an open menu, list or dialog (the … menu).
+          active?.closest?.('[role="menu"],[role="listbox"],[role="dialog"]')
         ) {
           stop()
           return
