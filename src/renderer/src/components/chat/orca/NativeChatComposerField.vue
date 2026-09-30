@@ -11,6 +11,7 @@
 //   pickerListboxId, sessionOptionsSurface, sessionOptionsSnapshot,
 //   contextUsage, sessionOptionsPickerRequest, goalMode; Tessel's:
 //   allowImages (default false: no image chips, no Attach), showDictation,
+//   dictationTitle,
 //   sessionOptionsProps, sendBlockedReason (read out with the input and shown
 //   as the Send button's title).
 // Emits: draftChange(value, input), textareaSelect(input), keyDown(event),
@@ -54,6 +55,7 @@ const props = defineProps({
   goalMode: { type: Object, default: undefined },
   allowImages: { type: Boolean, default: false },
   showDictation: { type: Boolean, default: true },
+  dictationTitle: { type: String, default: undefined },
   sessionOptionsProps: { type: Object, default: () => ({}) },
   sendBlockedReason: { type: String, default: '' }
 })
@@ -249,6 +251,7 @@ const criticalTitle = computed(() => {
               :context-usage="contextUsage"
               :show-attach="allowImages"
               :show-dictation="showDictation"
+              :dictation-title="dictationTitle"
               :critical-title="criticalTitle"
               @attach="emit('attach')"
               @dictation-toggle="emit('dictationToggle')"

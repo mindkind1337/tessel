@@ -28,6 +28,12 @@ import { estimateNativeChatRowHeight, nativeChatRowContentMetrics } from "./nati
 function isAlertNotice(message, block) {
     return message.role === 'system' && block.type === 'text' && (block.tone === 'error' || block.tone === 'warning');
 }
+// Tessel: what changed the session itself (a compaction, a model or effort
+// change) is not a turn's work: it stays in view when the turn folds.
+const SESSION_NOTICES = new Set(['compaction', 'session-option']);
+function isSessionNotice(message, block) {
+    return message.role === 'system' && block.type === 'text' && SESSION_NOTICES.has(block.presentation);
+}
 export function buildNativeChatTranscriptSlots(input) {
     const { messages, turnKeys, latestUserIndex, currentTurnKey, receipts, turnStatuses, turnDiffs, showTurnStatus, expandedTurnKeys, isWorking, lifecycleWorking } = input;
     const foldRows = messages.map((message, index)=>{
@@ -37,7 +43,7 @@ export function buildNativeChatTranscriptSlots(input) {
             role: message.role,
             rendersProse: content.markdown.length > 0 || content.hasImages,
             // Tessel: an error or a warning stays in view when its turn folds.
-            outlivesTurn: message.blocks.some((block)=>isSubagentGroupBlock(block) || isBackgroundTaskBlock(block) || isAlertNotice(message, block))
+            outlivesTurn: message.blocks.some((block)=>isSubagentGroupBlock(block) || isBackgroundTaskBlock(block) || isAlertNotice(message, block) || isSessionNotice(message, block))
         };
     });
     const trailingRunIndex = foldRows.findLastIndex((row, index)=>row.role !== 'user' && row.role !== 'reasoning' && receipts.get(messages[index].id)?.kind !== 'approval' && (row.rendersProse || messages[index].blocks.some(isToolCallBlock)));

@@ -49,6 +49,10 @@ export const nativeChatComposerProps = {
   sessionOptionsSnapshot: { type: Array, default: () => [] },
   sessionOptionsPickerRequest: { type: Object, default: null },
   sessionOptionsProps: { type: Object, default: () => ({}) },
+  // Tessel: the mic starts Windows voice typing into the composer (focused
+  // first); undefined hides it. dictationTitle: its words (the language).
+  dictate: { type: Function, default: undefined },
+  dictationTitle: { type: String, default: undefined },
   // Clipboard text for pasteFromClipboard() (default: shellApi.readClipboard).
   readClipboardText: { type: Function, default: undefined },
   // A dropped OS file -> its path (default: shellApi.pathForFile).

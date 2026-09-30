@@ -21,6 +21,7 @@
 import { computed, inject, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from 'vue'
 import { SquareTerminal } from 'lucide-vue-next'
 import BrandIcon from '../BrandIcon.vue'
+import AgentChildren from '../AgentChildren.vue'
 import NativeChatView from './orca/NativeChatView.vue'
 import { isFocusApprovalKey } from './orca/native-chat-approval-card.js'
 import { useStructuredAgentSession } from '../../chat/orca/composables/useStructuredAgentSession'
@@ -59,7 +60,7 @@ function api() {
 
 // The session (journal, live events, actions), and what a live event is
 // worth saying (a replayed history says nothing).
-const session = useStructuredAgentSession({ paneId: props.node.id, api: api(), onLive, cwd: () => props.node.cwd || props.node.projectDir || '' })
+const session = useStructuredAgentSession({ paneId: props.node.id, api: api(), onLive, cwd: () => props.node.cwd || props.node.projectDir || '', agent: () => props.node.agentId || 'claude' })
 const meta = session.meta
 
 const isActive = computed(() => ctx.activeId.value === props.node.id)
@@ -432,6 +433,34 @@ async function setOption(payload) {
   return res || { ok: false }
 }
 
+// --- Voice typing, compaction, sub-agents ------------------------------------------------------
+// The composer's mic: Windows voice typing (Win+H, the terminal panes' own),
+// into the composer, which has the focus first.
+function dictate() {
+  if (viewRef.value) viewRef.value.focusComposer()
+  if (typeof ctx.voiceTyping === 'function') ctx.voiceTyping(props.node.id)
+}
+const dictationTitle = computed(() =>
+  ctx.voiceName && ctx.voiceName.value
+    ? t('pane.voice.label', 'Voice typing ({{language}})', { language: ctx.voiceName.value })
+    : t('chat.orca.composer.startDictation', 'Start dictation')
+)
+
+// Compacting frees the context: Claude's /compact is a message like any
+// other; Codex and OpenCode have their own (asked through the engine).
+const COMPACTS = new Set(['claude', 'codex', 'opencode'])
+const canCompact = computed(() => COMPACTS.has(agentId.value) && (agentId.value === 'claude' || !!(api() && typeof api().compact === 'function')))
+async function compact() {
+  if (agentId.value === 'claude') return send('/compact')
+  const res = await session.compact()
+  if (!res || res.ok === false) toast(t('chat.compact.failed', 'Could not compact the conversation: {{error}}', { error: (res && res.error) || t('chat.error.unknown', 'unknown error') }))
+  return res || { ok: false }
+}
+
+// The sub-agents this conversation started (the engine's roster), for the
+// header's list like a terminal pane's.
+const children = computed(() => Object.values(meta.subagents || {}))
+
 // --- Pane ------------------------------------------------------------------------------------
 function onPaneMouseDown() {
   ctx.setActive(props.node.id)
@@ -472,7 +501,7 @@ onBeforeUnmount(() => {
   alive = false
 })
 
-defineExpose({ start, send, interrupt, focusPendingApproval })
+defineExpose({ start, send, interrupt, focusPendingApproval, focusComposer: () => (viewRef.value ? viewRef.value.focusComposer() : false) })
 </script>
 
 <template>
@@ -529,6 +558,7 @@ defineExpose({ start, send, interrupt, focusPendingApproval })
           "
           >{{ t('chat.pane.mcpUnsandboxed', 'MCP not sandboxed') }}</span
         >
+        <AgentChildren v-if="children.length" :agent-id="agentId" :items="children" />
         <span v-if="rateText" class="chat-rate" data-test="chat-rate" :title="t('chat.rate.hint', '{{agent}} usage limits (5 hours, 7 days)', { agent: agentName })">{{ rateText }}</span>
       </div>
       <div class="pane-nav-actions" @mousedown.stop>
@@ -590,6 +620,9 @@ defineExpose({ start, send, interrupt, focusPendingApproval })
         :interrupt="interrupt"
         :set-option="ctx.chatSetOption ? setOption : null"
         :respond="respond"
+        :dictate="dictate"
+        :dictation-title="dictationTitle"
+        :compact="canCompact ? compact : null"
         :context-menu-actions="contextMenuActions"
         @retry-unsent="retryUnsent"
         @discard-unsent="discardUnsent"

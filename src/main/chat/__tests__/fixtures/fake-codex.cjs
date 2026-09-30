@@ -472,6 +472,21 @@ function onRequest(m) {
       }, 20)
       return
     }
+    case 'thread/compact/start': {
+      // A compaction runs as a turn of its own (its item, then the legacy notification).
+      if (running) return err(-32600, 'a turn is running')
+      const turn = { id: uuid(), aborted: false, steers: [], pendingReqs: new Set() }
+      running = turn
+      ok({})
+      status('active')
+      notify('turn/started', { threadId, turn: turnShape(turn.id, 'inProgress', { startedAt: 1 }) })
+      const it = { type: 'contextCompaction', id: uuid() }
+      item('item/started', it, turn)
+      item('item/completed', it, turn)
+      notify('thread/compacted', { threadId, turnId: turn.id })
+      complete(turn, 'completed')
+      return
+    }
     default:
       return err(-32601, `method not found: ${method}`)
   }

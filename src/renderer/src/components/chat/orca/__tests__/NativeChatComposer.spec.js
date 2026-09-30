@@ -601,4 +601,22 @@ describe('structured send racing the next IME composition', () => {
     expect(send).not.toHaveBeenCalled()
     expect(promptValue(input())).toBe('/model')
   })
+
+  // Tessel: Windows voice typing from the composer's mic.
+  it('the mic focuses the composer, then starts voice typing; hidden without it, disabled when nothing can be typed', async () => {
+    await render()
+    expect(wrapper.find('[data-test="chat-dictation"]').exists()).toBe(false)
+    wrapper.unmount()
+    const dictate = vi.fn(() => {
+      expect(document.activeElement).toBe(input())
+    })
+    await render({ dictate, dictationTitle: 'Voice typing (French)' })
+    const mic = wrapper.find('[data-test="chat-dictation"]')
+    expect(mic.attributes('aria-label')).toBe('Voice typing (French)')
+    await mic.trigger('click')
+    expect(dictate).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+    await render({ dictate, disabledReason: 'Stopped' })
+    expect(wrapper.find('[data-test="chat-dictation"]').attributes('disabled')).toBeDefined()
+  })
 })

@@ -168,6 +168,7 @@ export function createCodexState({ threadId = null, model = null, permissionMode
     tools: new Set(), // tool items reported started
     fileChanges: new Map(), // fileChange itemId -> changes (for its approval card)
     retrying: false,
+    compactedTurns: new Set(), // turns whose compaction was reported (once each)
     postureCheck: false // Manual: every thread/settings/updated is checked (manualPostureProblem)
   }
 }
@@ -372,6 +373,19 @@ export function rateLimitFromCodex(snapshot) {
   return { status: s.rateLimitReachedType ? 'rejected' : 'allowed', fiveHour, sevenDay, planType: typeof s.planType === 'string' ? s.planType : null }
 }
 
+// The thread's context was compacted (after the reference's
+// codex-structured-journal-compactions): the legacy thread/compacted and the
+// contextCompaction item say it once per turn.
+function compacted(state, p, turn, out) {
+  const key = str(p.turnId) || (turn && turn.id) || ''
+  if (key && state.compactedTurns.has(key)) return
+  if (key) {
+    state.compactedTurns.add(key)
+    if (state.compactedTurns.size > SETTLED_KEEP) state.compactedTurns.delete(state.compactedTurns.values().next().value)
+  }
+  out.push({ type: 'compacted' })
+}
+
 // One notification -> zero or more normalized events (claudeChat's names).
 export function normalizeCodexNotification(method, params, state) {
   const out = []
@@ -421,9 +435,16 @@ export function normalizeCodexNotification(method, params, state) {
       else out.push({ type: 'codexError', message: str(error.message) })
       break
     }
+    case 'thread/compacted':
+      compacted(state, p, turn, out)
+      break
     case 'item/started':
     case 'item/completed': {
       const item = obj(p.item)
+      if (item.type === 'contextCompaction') {
+        if (method === 'item/completed') compacted(state, p, turn, out)
+        break
+      }
       if (item.type === 'userMessage') {
         accept(state, item, out)
         break
@@ -1243,6 +1264,15 @@ export function createCodexChat(opts) {
     return ok ? { ok: true, decision: value } : { ok: false, error: 'stdin closed' } // i18n-ignore internal
   }
 
+  // Compacts the thread's context (thread/compact/start): Codex runs it as a
+  // turn of its own and reports it done (thread/compacted, a contextCompaction item).
+  async function compact() {
+    if (!ready || !alive() || postureFailed || !state.threadId) return { ok: false, error: 'not running' } // i18n-ignore internal
+    if (state.turn && !state.turn.settled) return { ok: false, code: 'busy', error: 'a turn is running' } // i18n-ignore internal
+    const r = await request('thread/compact/start', { threadId: state.threadId })
+    return r.ok ? { ok: true } : { ok: false, error: r.error }
+  }
+
   // Applied with the next turn/start (Codex keeps them for later turns too).
   function setModel(name) {
     if (typeof name !== 'string' || !NAME.test(name)) return Promise.resolve({ ok: false, error: 'bad model' })
@@ -1329,6 +1359,7 @@ export function createCodexChat(opts) {
     setModel,
     setEffort,
     setPermissionMode,
+    compact,
     close,
     skills,
     pendingPermissions: () => [...approvals.keys()]

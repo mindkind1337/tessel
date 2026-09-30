@@ -350,6 +350,14 @@ function onAcceptMention() {
   requestAnimationFrame(() => textarea?.setSelectionRange(result.caret, result.caret))
 }
 
+// Tessel: the mic starts Windows voice typing, which types into the focused
+// field: the composer takes the focus first (the reference's dictation actions).
+function onDictationToggle() {
+  if (typeof props.dictate !== 'function' || disabled.value) return
+  focus()
+  props.dictate()
+}
+
 // Tessel: the Stop button always interrupts a running turn (the interrupt hook
 // also ignores it while a picker is open, which only suits the Escape key).
 function onStopButton() {
@@ -386,10 +394,11 @@ defineExpose({
     :send-button-disabled="sendButtonDisabled"
     :is-working="isWorking"
     :attach-disabled="disabled"
-    :dictation-disabled="true"
+    :dictation-disabled="disabled"
     :is-dictating="false"
     :is-dictation-hold-mode="false"
-    :show-dictation="false"
+    :show-dictation="typeof dictate === 'function'"
+    :dictation-title="dictationTitle"
     :ime-enter-gesture="imeEnterGesture"
     :picker-listbox-id="picker.listboxId"
     :session-options-surface="sessionOptionsSurface"
@@ -410,6 +419,7 @@ defineExpose({
     @accept-mention="onAcceptMention"
     @remove-image-attachment="removeImageAttachment"
     @attach="pickImages"
+    @dictation-toggle="onDictationToggle"
     @send="send"
     @stop="onStopButton"
     @dragover.capture="drop.onDragOverCapture"

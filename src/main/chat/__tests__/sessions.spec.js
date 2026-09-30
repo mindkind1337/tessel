@@ -825,6 +825,60 @@ describe('interrupt, close, exit', () => {
     expect(last('status')).toMatchObject({ model: 'opus' })
     expect((await chat.setOption({ paneId, permissionMode: 'bypassPermissions' })).ok).toBe(false)
     expect(a.setPermissionMode).not.toHaveBeenCalled()
+    // The chat says what changed: one row each, journaled.
+    expect(events('option')).toEqual([
+      { type: 'option', option: 'model', value: 'opus', ok: true },
+      { type: 'option', option: 'effort', value: 'max', ok: true }
+    ])
+    a.setEffort.mockResolvedValueOnce({ ok: false })
+    expect((await chat.setOption({ paneId, effort: 'low' })).ok).toBe(false)
+    expect(last('option')).toEqual({ type: 'option', option: 'effort', value: 'low', ok: false })
+    expect(chat.history({ paneId }).events.map((e) => e.event.type)).toContain('option')
+  })
+
+  it('context usage: the newest facts, journaled at the end of a turn when they changed', async () => {
+    const chat = createChatSessions(deps)
+    await openOk(chat)
+    const a = adapters[0]
+    chat.send({ paneId, text: 'hi' })
+    a.emit('state', { state: 'running' })
+    // Codex's token usage mid-turn: kept, not journaled yet.
+    a.emit('usage', { total: { totalTokens: 900 }, last: { totalTokens: 300, inputTokens: 250, outputTokens: 50 }, contextWindow: 1000 })
+    expect(events('contextUsage')).toEqual([])
+    a.emit('turnEnd', { status: 'completed', userMessageUuids: [] })
+    expect(events('contextUsage')).toEqual([{ type: 'contextUsage', usedTokens: 300, windowTokens: 1000 }])
+    // Claude's comes after its turn's end: journaled at once; the same facts are not repeated.
+    a.emit('contextUsage', { usedTokens: 300, windowTokens: null })
+    a.emit('contextUsage', { usedTokens: 870, windowTokens: null })
+    expect(events('contextUsage').at(-1)).toEqual({ type: 'contextUsage', usedTokens: 870, windowTokens: 1000 })
+    expect(events('contextUsage')).toHaveLength(2)
+    // A compaction: its row, and the usage unknown until the next response.
+    a.emit('compacted', { trigger: 'manual', preTokens: 870 })
+    expect(last('compacted')).toEqual({ type: 'compacted', trigger: 'manual', preTokens: 870 })
+  })
+
+  it('compact: Claude sends /compact; Codex and OpenCode ask their adapter; refused mid-turn or unsupported', async () => {
+    const chat = createChatSessions(deps)
+    await openOk(chat)
+    expect(await chat.compact({ paneId })).toMatchObject({ ok: true })
+    expect(adapters[0].send).toHaveBeenCalledWith(expect.objectContaining({ text: '/compact' }))
+
+    const codex = createChatSessions({ ...deps, resolveCodex: async () => ({ exe: 'C:\\bin\\codex.exe' }) })
+    await codex.open({ paneId: 'p2', agent: 'codex', cwd: tmp, permissions: 'manual' })
+    await flush()
+    const b = adapters.at(-1)
+    expect(await codex.compact({ paneId: 'p2' })).toMatchObject({ ok: false, code: 'unsupported' })
+    b.compact = vi.fn(async () => ({ ok: true }))
+    expect(await codex.compact({ paneId: 'p2' })).toEqual({ ok: true })
+    expect(b.compact).toHaveBeenCalledTimes(1)
+    expect(last('notice')).toMatchObject({ kind: 'notice', text: 'Compacting the conversation…' })
+    codex.send({ paneId: 'p2', text: 'go' })
+    b.emit('state', { state: 'running' })
+    expect(await codex.compact({ paneId: 'p2' })).toMatchObject({ ok: false, code: 'busy' })
+    b.compact = vi.fn(async () => ({ ok: false, error: 'nope' }))
+    b.emit('turnEnd', { status: 'completed', userMessageUuids: [] })
+    expect(await codex.compact({ paneId: 'p2' })).toEqual({ ok: false, error: 'nope' })
+    expect(await codex.compact({ paneId: 'nobody' })).toMatchObject({ ok: false, code: 'closed' })
   })
 })
 
@@ -966,7 +1020,7 @@ describe('IPC', () => {
   it('registers the chat channels', () => {
     const h = wire(createChatSessions(deps))
     expect(Object.keys(h).sort()).toEqual(
-      ['chat:answer', 'chat:skills', 'chat:approvalInput', 'chat:approve', 'chat:close', 'chat:history', 'chat:historyOlder', 'chat:interrupt', 'chat:open', 'chat:send', 'chat:sendTeam', 'chat:setOption'].sort()
+      ['chat:answer', 'chat:skills', 'chat:approvalInput', 'chat:approve', 'chat:close', 'chat:compact', 'chat:history', 'chat:historyOlder', 'chat:interrupt', 'chat:open', 'chat:send', 'chat:sendTeam', 'chat:setOption'].sort()
     )
   })
 

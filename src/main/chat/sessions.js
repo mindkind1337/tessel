@@ -471,6 +471,23 @@ export function createChatSessions(deps) {
       for (const [key, m] of [...s.messages]) if (m.agentId === e.id) s.messages.delete(key)
     })
     on('subagents', e => emit(s.paneId, { ...e, type: 'subagents' }))
+    // The context window: the newest of what the agent reported (Claude and
+    // OpenCode: contextUsage; Codex: its token usage, the last request's
+    // total in the model's window). Journaled once a turn is over, only
+    // when it changed.
+    on('contextUsage', (e) => noteContext(s, e.usedTokens, e.windowTokens))
+    on('usage', (e) => {
+      const last = e.last && typeof e.last === 'object' ? e.last : null
+      const n = (v) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0)
+      const used = last ? n(last.totalTokens) || n(last.inputTokens) + n(last.outputTokens) : 0
+      noteContext(s, used || null, e.contextWindow)
+    })
+    on('compacted', (e) => {
+      // Its content is gone: unknown until the next response says it again.
+      s.context = { usedTokens: null, windowTokens: s.context?.windowTokens ?? null }
+      s.contextSent = s.context
+      emit(s.paneId, { type: 'compacted', ...(e.trigger ? { trigger: e.trigger } : {}), ...(Number.isFinite(e.preTokens) ? { preTokens: e.preTokens } : {}) })
+    })
     on('textDelta', (e) => {
       if (!e.messageId || (e.parentToolUseId && !e.agentId)) return
       emit(s.paneId, { type: 'assistantDelta', messageId: e.messageId, text: String(e.text ?? ''), ...provenance(e) })
@@ -633,6 +650,7 @@ export function createChatSessions(deps) {
       // No settling wait: the result frame is the turn's end.
       observe(s, 'ScreenReady')
       s.turn = null
+      flushContext(s)
       workStatus(s)
       pump(s)
       idleCheck(s)
@@ -670,6 +688,22 @@ export function createChatSessions(deps) {
     })
     on('stderr', (e) => logAt('info', `${s.paneId} stderr: ${String(e.text || '').slice(-500)}`))
     on('exit', (e) => finish(s, e))
+  }
+
+  // The newest context facts (a window not given keeps the last one known).
+  function noteContext(s, usedTokens, windowTokens) {
+    const pos = (v) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.round(v) : null)
+    const used = pos(usedTokens)
+    const window = pos(windowTokens) ?? s.context?.windowTokens ?? null
+    if (used === null && window === null) return
+    s.context = { usedTokens: used ?? s.context?.usedTokens ?? null, windowTokens: window }
+    if (!s.turn) flushContext(s)
+  }
+  function flushContext(s) {
+    const c = s.context
+    if (!c || (s.contextSent && s.contextSent.usedTokens === c.usedTokens && s.contextSent.windowTokens === c.windowTokens)) return
+    s.contextSent = c
+    emit(s.paneId, { type: 'contextUsage', usedTokens: c.usedTokens, windowTokens: c.windowTokens })
   }
 
   // The process is gone (or given up on): everything tied to it is released.
@@ -1200,21 +1234,29 @@ export function createChatSessions(deps) {
       // Kept for the wake (a model or effort the caller does not give then).
       if (model != null) z.model = model
       if (effort != null) z.effort = effort
+      if (model != null) emit(paneId, { type: 'option', option: 'model', value: String(model).slice(0, 200), ok: true })
+      if (effort != null) emit(paneId, { type: 'option', option: 'effort', value: String(effort).slice(0, 200), ok: true })
       return { ok: true, model: z.model, effort: z.effort }
     }
     const s = live(paneId)
     if (!s) return closed()
     const results = []
-    if (model != null && !validModel(s.agent, model)) results.push(false)
-    else if (model != null) {
+    // The chat says what changed (or did not): a row of its own, worded by the window.
+    const said = (option, value, ok) => emit(paneId, { type: 'option', option, value: String(value).slice(0, 200), ok })
+    if (model != null && !validModel(s.agent, model)) {
+      results.push(false)
+      said('model', model, false)
+    } else if (model != null) {
       const r = await s.adapter.setModel(model).catch(() => ({ ok: false }))
       if (r?.ok) s.model = model
       results.push(!!r?.ok)
+      said('model', model, !!r?.ok)
     }
     if (effort != null) {
       const r = await s.adapter.setEffort(effort).catch(() => ({ ok: false }))
       if (r?.ok) s.effort = effort
       results.push(!!r?.ok)
+      said('effort', effort, !!r?.ok)
     }
     if (permissionMode != null) {
       // Bypass needs the launch flag: only a 'yolo' launch may switch to it.
@@ -1234,6 +1276,26 @@ export function createChatSessions(deps) {
     if (model != null && s.ready) workStatus(s)
     // permissions: what the chat runs with now (a coordinator's workers get no more).
     return { ok: results.every(Boolean), model: s.model, effort: s.effort, permissionMode: s.permissionMode, permissions: s.permissionMode === 'bypassPermissions' ? 'yolo' : 'manual' }
+  }
+
+  // Compacts the conversation to free its context: Claude's own /compact (a
+  // message like any other), Codex's thread/compact/start, OpenCode's
+  // summarize. The agent says when it is done ('compacted').
+  async function compact({ paneId } = {}) {
+    const s = live(paneId)
+    if (!s) return closed()
+    if (s.agent === 'claude') return sendUser({ paneId, text: '/compact' })
+    if (typeof s.adapter.compact !== 'function') return { ok: false, code: 'unsupported', error: t('main.chat.compactUnsupported', 'This agent cannot compact its conversation.') }
+    if (s.turn || pendingApprovals(s) || pendingQuestions(s)) return { ok: false, code: 'busy', error: t('main.chat.compactBusy', 'Wait for the end of the turn to compact.') }
+    let r
+    try {
+      r = await s.adapter.compact()
+    } catch (err) {
+      r = { ok: false, error: err?.message || String(err) }
+    }
+    if (!r?.ok) return { ok: false, error: r?.error || t('main.chat.compactFailed', 'The conversation was not compacted.') }
+    emit(paneId, { type: 'notice', kind: 'notice', text: t('main.chat.compacting', 'Compacting the conversation…') })
+    return { ok: true }
   }
 
   // forget: the pane is closed for good (its journal is deleted). kill:
@@ -1487,6 +1549,11 @@ export function createChatSessions(deps) {
       if (model == null && effort == null && permissionMode == null) return invalid()
       return setOption({ paneId, model, effort, permissionMode })
     })
+    ipcMain.handle('chat:compact', (_e, q) => {
+      const { paneId } = obj(q)
+      if (!validPaneId(paneId)) return invalid()
+      return compact({ paneId })
+    })
     ipcMain.handle('chat:close', (_e, q) => {
       const { paneId, forget } = obj(q)
       if (!validPaneId(paneId)) return invalid()
@@ -1511,5 +1578,5 @@ export function createChatSessions(deps) {
     })
   }
 
-  return { historyOlder, open, send: sendUser, sendTeam, interrupt, answer, approve, approvalInput, setOption, close, closeAll, history, skills, list, register }
+  return { historyOlder, open, send: sendUser, sendTeam, interrupt, answer, approve, approvalInput, setOption, compact, close, closeAll, history, skills, list, register }
 }

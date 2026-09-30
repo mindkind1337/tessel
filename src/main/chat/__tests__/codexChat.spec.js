@@ -271,6 +271,16 @@ describe('codexChat: turns', () => {
     expect(idx('assistant')).toBeLessThan(idx('turnEnd'))
   })
 
+  it('compact: thread/compact/start, a turn of its own that says the context was compacted once', async () => {
+    const { chat, events, requests } = setup()
+    await chat.start()
+    expect(await chat.compact()).toEqual({ ok: true })
+    expect(requests('thread/compact/start')[0].params).toEqual({ threadId: chat.threadId })
+    await waitFor(() => turnEnds(events).length === 1, 5000, 'turnEnd')
+    expect(ofType(events, 'compacted')).toEqual([{ type: 'compacted' }])
+    expect(turnEnds(events)[0]).toMatchObject({ status: 'completed' })
+  })
+
   it('two turns; each turn/start carries the policy; per-turn usage; model/effort set for the next turn', async () => {
     const { chat, events, requests } = setup({ permissions: 'yolo' })
     const { pid } = await chat.start()
@@ -619,6 +629,18 @@ describe('codexChat: recorded frames (codex-cli 0.158.0)', () => {
     expect(events[6]).toMatchObject({ status: 'completed', result: 'OK', userMessageUuids: [echo.params.item.clientId], durationMs: 3338, usage: null })
     // the weekly window came as primary: sevenDay, no fiveHour
     expect(rateLimitFromCodex(byLabel('rateLimits (weekly window as primary)').params.rateLimits)).toEqual({ status: 'allowed', fiveHour: null, sevenDay: { utilization: 0.27, resetsAt: 1791226944 }, planType: 'prolite' })
+  })
+
+  it('a compaction (thread/compacted, or its contextCompaction item) is said once per turn', () => {
+    const state = createCodexState({ threadId: 't1' })
+    newTurn(state, 'turn-1')
+    const item = (method) => normalizeCodexNotification(method, { threadId: 't1', turnId: 'turn-1', item: { type: 'contextCompaction', id: 'c1' } }, state)
+    expect(item('item/started')).toEqual([])
+    expect(item('item/completed')).toEqual([{ type: 'compacted' }])
+    expect(normalizeCodexNotification('thread/compacted', { threadId: 't1', turnId: 'turn-1' }, state)).toEqual([])
+    expect(normalizeCodexNotification('thread/compacted', { threadId: 't1', turnId: 'turn-2' }, state)).toEqual([{ type: 'compacted' }])
+    // Another thread's (not a linked child) is not ours.
+    expect(normalizeCodexNotification('thread/compacted', { threadId: 'other', turnId: 'turn-3' }, state)).toEqual([])
   })
 
   it('recorded command items, the approval request and the interrupted end', () => {

@@ -790,12 +790,16 @@ export function createOpencodeChat(opts) {
     if (prov.ok) {
       const providers = Array.isArray(obj(prov.json).providers) ? prov.json.providers : null
       if (providers && !providers.length) return { ok: false, code: 'signin', error: 'OpenCode has no provider: run opencode auth login' } // i18n-ignore code 'signin' is what the caller shows
-      if (providers && model) {
-        const [pid, ...rest] = model.split('/')
-        const m = obj(obj(obj(providers.find((x) => x && x.id === pid)).models)[rest.join('/')])
-        const ctx = obj(m.limit).context
-        if (typeof ctx === 'number') state.contextWindow = ctx
+      // Every model's context limit: the window of the one the session runs
+      // (chosen now, later, or OpenCode's own default).
+      for (const pv of providers || []) {
+        if (!pv || typeof pv.id !== 'string') continue
+        for (const [mid, m] of Object.entries(obj(pv.models))) {
+          const ctx = obj(obj(m).limit).context
+          if (typeof ctx === 'number' && ctx > 0 && state.contextWindows.size < 4096) state.contextWindows.set(`${pv.id}/${mid}`, ctx)
+        }
       }
+      if (model && state.contextWindows.has(model)) state.contextWindow = state.contextWindows.get(model)
     }
     // A task call starts without asking only the sub-agents checked here.
     state.taskAgents = taskAgents(agents)
@@ -1048,7 +1052,26 @@ export function createOpencodeChat(opts) {
     if (!validOpencodeModel(name)) return Promise.resolve({ ok: false, error: 'bad model' })
     model = name
     state.model = name
+    if (state.contextWindows.has(name)) state.contextWindow = state.contextWindows.get(name)
     return Promise.resolve({ ok: true })
+  }
+
+  // Compacts the conversation (POST /session/:id/summarize, with the model
+  // the session runs): OpenCode answers once the summary is written, and says
+  // so on the stream (session.compacted). Taken once no error came quickly.
+  async function compact() {
+    if (!ready || !alive() || postureFailed || closing || !state.sessionId) return { ok: false, error: 'not running' } // i18n-ignore internal
+    if (state.turn && !state.turn.settled) return { ok: false, code: 'busy', error: 'a turn is running' } // i18n-ignore internal
+    const current = model || state.model
+    const i = typeof current === 'string' ? current.indexOf('/') : -1
+    if (i <= 0) return { ok: false, error: 'no model known yet' } // i18n-ignore internal
+    const resp = call('POST', `/session/${encodeURIComponent(state.sessionId)}/summarize`, { providerID: current.slice(0, i), modelID: current.slice(i + 1) }, 0)
+    let timer
+    const first = await Promise.race([resp, new Promise((r) => (timer = setTimeout(() => r(null), Math.min(timeouts.request, 3000))))])
+    clearTimeout(timer)
+    if (first && !first.ok) return { ok: false, error: first.error }
+    if (!first) resp.then((r) => r && !r.ok && logAt('warn', `summarize: ${r.error}`), () => {})
+    return { ok: true }
   }
 
   function setEffort(level) {
@@ -1184,6 +1207,7 @@ export function createOpencodeChat(opts) {
     setModel,
     setEffort,
     setPermissionMode,
+    compact,
     close,
     skills,
     history,

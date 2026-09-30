@@ -17,8 +17,54 @@ export function createFrameState({ now = Date.now } = {}) {
     accepted: new Set(), // uuids already reported accepted (once each)
     interruptRequested: false, // set by the adapter when it sends interrupt
     sessionId: null,
-    subagents: createClaudeSubagents(now)
+    subagents: createClaudeSubagents(now),
+    // The context window (after the reference's claude-context-facts): what
+    // the newest main-thread response read (its input, cache reads and
+    // writes), the window its result reports, and the models that name it.
+    contextTokens: null,
+    contextWindow: null,
+    initModel: null,
+    responseModel: null
   }
+}
+
+const positive = (v) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0)
+
+// What a main-thread response read: the live context size; null for the
+// all-zero usage the CLI stamps on rows it makes up.
+export function contextTokensOf(usage) {
+  if (!usage || typeof usage !== 'object') return null
+  const n = positive(usage.input_tokens) + positive(usage.cache_creation_input_tokens) + positive(usage.cache_read_input_tokens)
+  return n > 0 ? n : null
+}
+
+// "claude-opus-5[1m]" and "Claude-Opus-5" name the same model.
+const baseModel = (m) => String(m || '').replace(/\[[^\]]*\]$/, '').trim().toLowerCase()
+
+// The main thread's window from a result's per-model usage (which also counts
+// sub-agents and side calls): the entry of the model that answered, else the
+// init's, else the largest (after the reference's claudeContextWindowFromResult).
+export function contextWindowFromResult(modelUsage, { initModel = null, responseModel = null } = {}) {
+  if (!modelUsage || typeof modelUsage !== 'object') return null
+  const entries = []
+  for (const [key, u] of Object.entries(modelUsage)) {
+    const window = u && typeof u === 'object' ? positive(u.contextWindow) : 0
+    if (!window) continue
+    const bases = [baseModel(key)]
+    if (typeof u.canonicalModel === 'string') bases.push(baseModel(u.canonicalModel))
+    entries.push({ key, window, bases })
+  }
+  if (!entries.length) return null
+  // An init older than a response of another model names a model the session left.
+  const init = initModel && responseModel && baseModel(initModel) !== baseModel(responseModel) ? null : initModel
+  const name = baseModel(responseModel || init)
+  let pool = entries
+  const named = name ? entries.filter((e) => e.bases.includes(name)) : []
+  if (named.length) pool = named
+  // Responses drop "[1m]": only the init's exact key tells a 1M window apart.
+  const exact = entries.filter((e) => e.key === init)
+  if (exact.length) pool = exact
+  return pool.reduce((best, e) => Math.max(best, e.window), 0) || null
 }
 
 // Text over maxBytes (UTF-8) is cut, never in the middle of a character,
@@ -196,6 +242,10 @@ function normalizeClaudeFrame(m, state) {
     case 'system': {
       if (m.subtype === 'init') {
         if (typeof m.session_id === 'string') state.sessionId = m.session_id
+        if (!parentToolUseId && typeof m.model === 'string' && m.model) {
+          state.initModel = m.model
+          state.responseModel = null
+        }
         out.push({
           type: 'init',
           sessionId: m.session_id ?? null,
@@ -205,6 +255,16 @@ function normalizeClaudeFrame(m, state) {
           mcpServers: Array.isArray(m.mcp_servers) ? m.mcp_servers : [],
           tools: Array.isArray(m.tools) ? m.tools : [],
           version: m.claude_code_version ?? null
+        })
+      } else if (m.subtype === 'compact_boundary' && !parentToolUseId) {
+        // The CLI compacted the conversation (/compact, or on its own): what
+        // the context held is gone until the next response says it again.
+        const meta = m.compact_metadata && typeof m.compact_metadata === 'object' ? m.compact_metadata : {}
+        state.contextTokens = null
+        out.push({
+          type: 'compacted',
+          ...(meta.trigger === 'manual' || meta.trigger === 'auto' ? { trigger: meta.trigger } : {}),
+          ...(positive(meta.pre_tokens) ? { preTokens: meta.pre_tokens } : {})
         })
       } else if (m.subtype === 'session_state_changed') {
         if (['running', 'requires_action', 'idle'].includes(m.state)) out.push({ type: 'state', state: m.state })
@@ -258,6 +318,13 @@ function normalizeClaudeFrame(m, state) {
       const msg = m.message || {}
       if (m.error === 'authentication_failed') out.push({ type: 'authError', message: 'authentication_failed' })
       const blocks = assistantBlocks(msg.content)
+      if (!parentToolUseId) {
+        const used = contextTokensOf(msg.usage)
+        if (used !== null) {
+          state.contextTokens = used
+          if (typeof msg.model === 'string' && msg.model && msg.model !== '<synthetic>') state.responseModel = msg.model
+        }
+      }
       if (blocks.length) out.push({ type: 'assistant', messageId: msg.id ?? null, blocks, parentToolUseId })
       break
     }
@@ -280,6 +347,13 @@ function normalizeClaudeFrame(m, state) {
         permissionDenials: Array.isArray(m.permission_denials) ? m.permission_denials : [],
         errors: Array.isArray(m.errors) ? m.errors : []
       })
+      // After the turn's end: the context its last response read, in the
+      // window its result reports (the session keeps the newest of each).
+      const window = contextWindowFromResult(m.modelUsage, state)
+      if (window) state.contextWindow = window
+      if (state.contextTokens !== null || state.contextWindow) {
+        out.push({ type: 'contextUsage', usedTokens: state.contextTokens, windowTokens: state.contextWindow })
+      }
       break
     }
     case 'rate_limit_event': {

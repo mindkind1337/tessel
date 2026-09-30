@@ -6,6 +6,8 @@
 // count, like Orca's); click for the list. The list opens in the page's top
 // layer (teleported to <body>, placed next to the indicator and kept inside
 // the window), so it is never hidden under a neighbouring pane or clipped.
+// A chat pane gives its list itself (items: the engine's roster, from its
+// events): nothing is read from files then.
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { childTime, formatTokens, childrenSummary, childShownState } from '../agentChildrenView'
 import { listsChildren } from '../agentChildrenFeed'
@@ -18,7 +20,10 @@ const props = defineProps({
   accountId: { type: [String, null], default: undefined },
   // When the pane's agent ended its turn (idle), or null: its unfinished
   // sub-agents that wrote nothing since are not running (childActive).
-  parentIdleSince: { type: Number, default: null }
+  parentIdleSince: { type: Number, default: null },
+  // The list as the pane knows it ([{ id, title, type, model, state,
+  // startedAt, endedAt, tokens, lastAt }]), or null to read the agent's files.
+  items: { type: Array, default: null }
 })
 
 const list = ref([])
@@ -45,6 +50,11 @@ async function refresh() {
     list.value = []
   }
   const my = ++seq
+  if (props.items) {
+    list.value = props.items
+    now.value = Date.now()
+    return
+  }
   if (!listsChildren(props.agentId) || !props.sessionId || !window.shellApi.agentChildren) {
     list.value = []
     return
@@ -139,6 +149,7 @@ watch([rows, open], () => nextTick(place))
 function schedule() {
   clearTimeout(pollTimer)
   if (disposed) return
+  if (props.items) return
   pollTimer = setTimeout(async () => {
     await refresh()
     schedule()
@@ -152,6 +163,7 @@ watch(
   }
 )
 watch(keyOf, refresh)
+watch(() => props.items, refresh)
 function tokensLabel(tokens) {
   return t('pane.subAgents.tokens', '{{tokens}}', { tokens: formatTokens(tokens) })
 }
@@ -232,7 +244,7 @@ function stateTitle(state) {
         <div class="agent-children-head">{{ t('pane.subAgents.title', 'Sub-agents') }} ({{ list.length }})</div>
         <div v-for="c in rows" :key="c.id" class="agent-child" :class="c.state" role="listitem">
           <span class="agent-child-mark" :title="stateTitle(c.state)">{{ MARK[c.state] || '·' }}</span>
-          <span class="agent-child-type" :title="t('pane.subAgents.typeTitle', 'Sub-agent type: {{type}}', { type: c.type })">{{ c.type }}</span>
+          <span v-if="c.type" class="agent-child-type" :title="t('pane.subAgents.typeTitle', 'Sub-agent type: {{type}}', { type: c.type })">{{ c.type }}</span>
           <span v-if="c.model" class="agent-child-model" :title="t('pane.subAgents.modelTitle', 'Model: {{model}}', { model: c.model })">{{ modelLabel(c.model) }}</span>
           <span class="agent-child-title" :title="c.title">{{ c.title || t('sidebar.agentRow.noTitle', '(no title)') }}</span>
           <span class="agent-child-stats">{{ childTime(c, now) }}<template v-if="formatTokens(c.tokens)"> · ↓ {{ tokensLabel(c.tokens) }}</template></span>

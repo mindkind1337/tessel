@@ -78,6 +78,27 @@ describe('OpenCode frames: a plain turn (recorded)', () => {
     expect(of(out, 'init')[0]).toMatchObject({ sessionId: ROOT })
   })
 
+  it('context usage: each step says what the context holds, in the model window; a compaction says so', () => {
+    const state = createOpencodeState({ sessionId: ROOT })
+    state.contextWindow = 200000
+    const out = run(state, turns[1], 'u1')
+    const usage = of(out, 'contextUsage')
+    expect(usage.length).toBeGreaterThan(0)
+    // input + output + reasoning + cache (15090 + 0 + 36 + cache) for the recorded step.
+    expect(usage.at(-1).usedTokens).toBeGreaterThanOrEqual(15126)
+    expect(usage.at(-1).windowTokens).toBe(200000)
+    expect(normalizeOpencodeEvent({ type: 'session.compacted', properties: { sessionID: ROOT } }, state)).toEqual([{ type: 'compacted' }])
+    // Another session's compaction is not ours.
+    expect(normalizeOpencodeEvent({ type: 'session.compacted', properties: { sessionID: 'ses_other' } }, state)).toEqual([])
+  })
+
+  it('the window follows the model the session runs', () => {
+    const state = createOpencodeState({ sessionId: ROOT })
+    state.contextWindows.set('prov/big', 400000)
+    run(state, [{ type: 'message.updated', properties: { info: { id: 'msg_a', sessionID: ROOT, role: 'assistant', providerID: 'prov', modelID: 'big', time: {} } } }])
+    expect(state.contextWindow).toBe(400000)
+  })
+
   it('ignores duplicate final updates and the user message sent again', () => {
     const state = createOpencodeState({ sessionId: ROOT })
     const events = turns[1]

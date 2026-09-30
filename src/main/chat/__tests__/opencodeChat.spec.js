@@ -205,6 +205,17 @@ describe('OpenCode chat: turns', () => {
     expect(reqs('POST', /prompt_async$/)[0].body).toEqual({ parts: [{ type: 'text', text: 'Reply with exactly: OK' }], agent: 'build', model: { providerID: 'opencode', modelID: 'nemotron-3.5-lightning-free' }, variant: 'low' })
   })
 
+  it('compact: summarize with the session model; the stream says compacted; the window is the model limit', async () => {
+    const { chat, events, reqs } = setup({ model: 'opencode/nemotron-3.5-lightning-free' })
+    expect((await chat.start()).ok).toBe(true)
+    expect(await chat.compact()).toEqual({ ok: true })
+    expect(reqs('POST', /summarize$/)[0].body).toEqual({ providerID: 'opencode', modelID: 'nemotron-3.5-lightning-free' })
+    await waitFor(() => ofType(events, 'compacted').length, 8000, 'compacted')
+    await chat.send({ uuid: 'u-2', text: 'Reply with exactly: OK' })
+    await waitFor(() => ofType(events, 'turnEnd').length, 8000, 'turnEnd')
+    expect(ofType(events, 'contextUsage').at(-1).windowTokens).toBe(131072)
+  })
+
   it('a permission ask: a card, then allow once / for the session / deny', async () => {
     for (const [decision, reply] of [
       [{ behavior: 'allow' }, { reply: 'once' }],

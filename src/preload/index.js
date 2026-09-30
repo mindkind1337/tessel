@@ -391,6 +391,7 @@ const api = {
     answer: (opts) => ipcRenderer.invoke('chat:answer', opts),
     approvalInput: (opts) => ipcRenderer.invoke('chat:approvalInput', opts),
     setOption: (opts) => ipcRenderer.invoke('chat:setOption', opts),
+    compact: (opts) => ipcRenderer.invoke('chat:compact', opts),
     close: (opts) => ipcRenderer.invoke('chat:close', opts),
     history: (opts) => ipcRenderer.invoke('chat:history', opts),
     historyOlder: (opts) => ipcRenderer.invoke('chat:historyOlder', opts),

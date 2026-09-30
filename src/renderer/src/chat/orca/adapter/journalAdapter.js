@@ -103,7 +103,13 @@ function parseInput(input) {
 // cwd: the chat's folder (a value or a getter): tool paths inside it are shown relative.
 // idTag: a mark for the ids this adapter makes up itself (turns, notices),
 // so an older page's never meet the chat's own.
-export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence = 1, cwd = '', idTag = '' } = {}) {
+// optionText(ev): the words of a model or effort change ({ option, value, ok });
+// the pane gives translated ones (chat-option-notice.js).
+function defaultOptionText(ev) {
+  return `${ev.option}: ${ev.value}${ev.ok === false ? ' (not changed)' : ''}` // i18n-ignore fallback, the pane words it
+}
+
+export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence = 1, cwd = '', idTag = '', optionText = defaultOptionText } = {}) {
   const folder = () => (typeof cwd === 'function' ? cwd() : cwd) || ''
   const items = new Map() // itemId -> render item
   const submissions = new Map() // clientMessageId -> submission
@@ -113,7 +119,10 @@ export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence =
   let openTurn = null
   let lastUserItemId = null
   // Session facts the UI reads outside the journal (header, pickers).
-  const meta = { agent: null, model: null, sessionId: null, status: 'starting', error: '', rateLimit: null, commands: null, queuedIds: [] }
+  // subagents: the children this conversation started, by id ({ id, title,
+  // type, model, state: 'running' | 'done' | 'quiet', startedAt, endedAt,
+  // tokens, lastAt }), as the pane header's list shows them (AgentChildren).
+  const meta = { agent: null, model: null, sessionId: null, status: 'starting', error: '', rateLimit: null, commands: null, queuedIds: [], subagents: {} }
 
   let changedItems = new Set()
   let changedSubs = new Set()
@@ -182,7 +191,9 @@ export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence =
     const patch = { state, completedAt: at }
     if (outcome) patch.outcome = outcome
     if (Number.isFinite(durationMs)) patch.durationMs = durationMs
-    const estimate = usageEstimate(usage, at)
+    // A turn's usage is its total over every request: not the context. Only
+    // when nothing better said it (the engine's contextUsage follows).
+    const estimate = prior.body.contextUsage && prior.body.contextUsage.used ? null : usageEstimate(usage, at)
     if (estimate) patch.contextUsage = { ...(prior.body.contextUsage || {}), used: estimate }
     revise(openTurn, patch)
     openTurn = null
@@ -206,6 +217,39 @@ export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence =
   // The text of an assistant message so far (deltas, then the final text).
   const streamed = new Map()
 
+  // Context facts go on the open turn, else the newest turn held (like the
+  // reference's writeClaudeTurnRow); none yet: nothing to carry them.
+  function newestTurnId() {
+    if (openTurn) return openTurn
+    let best = null
+    for (const item of items.values()) if (item.body.kind === 'turn' && (!best || item.sequence > best.sequence)) best = item
+    return best ? best.itemId : null
+  }
+  function writeContext(facts) {
+    const id = newestTurnId()
+    if (!id) return
+    const prior = items.get(id)
+    revise(id, { contextUsage: { ...(prior.body.contextUsage || {}), ...facts } })
+  }
+
+  // The header's list of sub-agents: the roster's snapshots (state, times,
+  // tokens) and the lifecycle events (kind, model, full description).
+  const CHILD_STATE = { working: 'running', unverifiable: 'quiet' }
+  function noteChild(id, patch, at) {
+    if (id == null || id === '') return
+    const key = String(id)
+    const prior = meta.subagents[key] || { id: key, title: '', type: '', model: '', state: 'running' }
+    const next = { ...prior, lastAt: at }
+    for (const [k, v] of Object.entries(patch)) if (v !== undefined && v !== null && v !== '') next[k] = v
+    const ids = Object.keys(meta.subagents)
+    // Bounded like the engine's tracker (32 groups of 64).
+    const rest = !meta.subagents[key] && ids.length >= 512 ? Object.fromEntries(ids.slice(1).map((k) => [k, meta.subagents[k]])) : meta.subagents
+    meta.subagents = { ...rest, [key]: next }
+  }
+  function childState(state) {
+    return CHILD_STATE[state] || (state ? 'done' : undefined)
+  }
+
   function applyEvent(ev) {
     const at = Number.isFinite(ev.at) ? ev.at : now()
     switch (ev.type) {
@@ -228,6 +272,8 @@ export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence =
             else if ((item.body.kind === 'approval' || item.body.kind === 'question') && item.body.resolution && item.body.resolution.state === 'pending') revise(item.itemId, { resolution: resolutionOf('cancelled', at) })
           }
           closeTurn({ state: 'interrupted', outcome: 'cancellation' }, at)
+          // Nor its sub-agents (they ran in its process).
+          for (const [id, c] of Object.entries(meta.subagents)) if (c.state === 'running') noteChild(id, { state: 'quiet' }, c.lastAt)
         }
         break
       }
@@ -401,6 +447,9 @@ export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence =
         if (ev.groupId == null) break
         const itemId = `subagents:${ev.groupId}` // i18n-ignore
         const agents = (Array.isArray(ev.agents) ? ev.agents : []).map(subagentEntry).filter(Boolean)
+        for (const a of agents) {
+          noteChild(a.id, { title: meta.subagents[a.id] && meta.subagents[a.id].title ? undefined : a.label, state: childState(a.state), startedAt: a.startedAt, endedAt: a.state === 'working' ? undefined : a.settledAt, tokens: a.tokens }, at)
+        }
         if (!agents.length) {
           if (items.delete(itemId)) {
             changedItems.delete(itemId)
@@ -409,6 +458,50 @@ export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence =
           break
         }
         put(itemId, { kind: 'message', role: 'system', blocks: [{ type: 'text', text: subagentGroupFallbackText(agents) }, { type: 'subagent-group', groupId: String(ev.groupId), agents }] }, {}, at)
+        break
+      }
+      case 'subagent': {
+        // One child's lifecycle (start, progress, end): its kind, model and description.
+        if (ev.id == null) break
+        const str = (v, max = MAX_SUBAGENT_FIELD_CHARS) => (typeof v === 'string' && v ? v.slice(0, max) : undefined)
+        const settled = ev.phase === 'end' || (ev.status && ev.status !== 'working')
+        noteChild(
+          ev.id,
+          {
+            title: str(ev.description),
+            type: str(ev.subagentType, 120),
+            model: str(ev.model, 200),
+            ...(ev.phase === 'start' ? { state: 'running' } : settled ? { state: childState(normalizeSubagentState(String(ev.status ?? ''))) } : {}),
+            startedAt: Number.isFinite(ev.startedAt) ? ev.startedAt : undefined,
+            endedAt: settled ? (Number.isFinite(ev.settledAt) ? ev.settledAt : Number.isFinite(ev.endedAt) ? ev.endedAt : at) : undefined,
+            tokens: Number.isFinite(ev.tokens) ? ev.tokens : undefined
+          },
+          at
+        )
+        break
+      }
+      case 'contextUsage': {
+        // The engine's newest context facts: what the last response read,
+        // in the model's window (unknown: after a compaction).
+        const used = Number.isFinite(ev.usedTokens) && ev.usedTokens > 0 ? ev.usedTokens : null
+        const window = Number.isFinite(ev.windowTokens) && ev.windowTokens > 0 ? ev.windowTokens : null
+        writeContext({
+          used: used === null ? { kind: 'unknown', capturedAt: at } : { kind: 'estimate', usage: { inputTokens: used, cacheCreationInputTokens: 0, cacheReadInputTokens: 0, outputTokens: 0 }, capturedAt: at },
+          ...(window ? { window: { tokens: window, capturedAt: at } } : {})
+        })
+        break
+      }
+      case 'compacted': {
+        // The reference's compaction separator; what the context holds is unknown until the next response.
+        put(`status:${idTag}compacted-${sequence + 1}`, { kind: 'status', text: 'Context compacted', presentation: 'compaction' }, {}, at) // i18n-ignore
+        writeContext({ used: { kind: 'unknown', capturedAt: at } })
+        break
+      }
+      case 'option': {
+        // A model or effort change the agent took (or refused).
+        if (ev.option !== 'model' && ev.option !== 'effort') break
+        const text = optionText(ev, meta.agent)
+        if (text) put(`status:${idTag}option-${sequence + 1}`, { kind: 'status', text: String(text), tone: ev.ok === false ? 'error' : 'notice', presentation: 'session-option' }, {}, at) // i18n-ignore
         break
       }
       case 'commands':
@@ -494,7 +587,7 @@ export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence =
     // earlier sequences and times. -> { items, submissions } for the
     // reducer's 'older-page'.
     olderPage(events) {
-      const page = createJournalAdapter({ now, epoch, fence, cwd, idTag: `older${++olderPages}:` }) // i18n-ignore
+      const page = createJournalAdapter({ now, epoch, fence, cwd, optionText, idTag: `older${++olderPages}:` }) // i18n-ignore
       page.replay(events)
       const fresh = page.items().filter((item) => !items.has(item.itemId))
       if (!fresh.length) return { items: [], submissions: [] }

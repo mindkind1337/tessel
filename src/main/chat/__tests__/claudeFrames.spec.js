@@ -12,7 +12,9 @@ import {
   sessionRuleItems,
   rateLimitFrom,
   initializeAuthProblem,
-  isAuthErrorText
+  isAuthErrorText,
+  contextWindowFromResult,
+  contextTokensOf
 } from '../claudeFrames'
 
 // Frames recorded from the real Claude Code 2.1.284 (redacted).
@@ -110,6 +112,35 @@ describe('claudeFrames against real frames', () => {
     })
     expect(ev.usage.input_tokens).toBe(10)
     expect(Object.keys(ev.modelUsage)).toEqual(['claude-haiku-4-5-20251001'])
+  })
+
+  it('context usage: the last main-thread response in the window the result reports, after turnEnd', () => {
+    const s = createFrameState()
+    run('system-init', s)
+    run('assistant-text', s)
+    const out = run('result-success', s)
+    expect(out.map((e) => e.type)).toEqual(['turnEnd', 'contextUsage'])
+    // 10 input + 7881 cache writes + 18737 cache reads, in haiku's 200k.
+    expect(out[1]).toEqual({ type: 'contextUsage', usedTokens: 26628, windowTokens: 200000 })
+  })
+
+  it('context window: the model that answered, not a sub-agent or side call', () => {
+    const modelUsage = { 'claude-haiku-4-5-20251001': { contextWindow: 200000, canonicalModel: 'claude-haiku-4-5' }, 'claude-sonnet-5-5': { contextWindow: 1000000 } }
+    expect(contextWindowFromResult(modelUsage, { initModel: 'claude-sonnet-5-5', responseModel: 'claude-sonnet-5-5' })).toBe(1000000)
+    expect(contextWindowFromResult(modelUsage, { initModel: null, responseModel: 'claude-haiku-4-5' })).toBe(200000)
+    expect(contextWindowFromResult(modelUsage, {})).toBe(1000000)
+    expect(contextWindowFromResult(null)).toBeNull()
+    expect(contextTokensOf({ input_tokens: 0, output_tokens: 3 })).toBeNull()
+  })
+
+  it('compact_boundary -> compacted; the context is unknown until the next response', () => {
+    const s = createFrameState()
+    run('assistant-text', s)
+    expect(normalizeFrame({ type: 'system', subtype: 'compact_boundary', compact_metadata: { trigger: 'manual', pre_tokens: 26628 } }, s)).toEqual([
+      { type: 'compacted', trigger: 'manual', preTokens: 26628 }
+    ])
+    const out = normalizeFrame({ type: 'result', subtype: 'success', is_error: false, result: '', modelUsage: { x: { contextWindow: 200000 } } }, s)
+    expect(out.at(-1)).toEqual({ type: 'contextUsage', usedTokens: null, windowTokens: 200000 })
   })
 
   it('interrupted result -> turnEnd interrupted', () => {

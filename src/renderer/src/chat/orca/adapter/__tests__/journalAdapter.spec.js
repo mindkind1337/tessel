@@ -6,6 +6,7 @@ import { reduceStructuredAgentSession, EMPTY_STRUCTURED_AGENT_SESSION } from '..
 import { projectStructuredAgentSessionMessages, pendingStructuredSessionPrompts } from '../../structured-agent-session-message-projection.js'
 import { activeStructuredAgentSessionTurnId } from '../../shared/structured-agent-session-live-turn.js'
 import { agentJournalSubmissionKey } from '../../shared/agent-session-journal-item-key.js'
+import { selectStructuredAgentContextUsage } from '../../shared/structured-agent-session-context-usage.js'
 
 function run(events) {
   let t = 1000
@@ -300,5 +301,45 @@ describe('journal adapter: an older page', () => {
     expect(messages(state).map((m) => text(m)).filter(Boolean).slice(0, 2)).toEqual(['old one', 'old answer'])
     // The same page again adds nothing.
     expect(adapter.olderPage([{ type: 'user', id: 'hist-u1', text: 'old one', status: 'accepted', at: 1000 }]).items.filter((i) => i.body.kind === 'message')).toEqual([])
+  })
+
+  it("context facts: the engine's usage and window go on the turn; the turn's total never beats them; a compaction forgets", () => {
+    const { state, adapter } = run([
+      { type: 'user', id: 'u1', text: 'go', status: 'accepted' },
+      { type: 'contextUsage', usedTokens: 170000, windowTokens: 200000 },
+      { type: 'turnEnd', status: 'completed', usage: { input_tokens: 900000, output_tokens: 2 } }
+    ])
+    const facts = selectStructuredAgentContextUsage(state.items, null)
+    expect(facts).toMatchObject({ usedTokens: 170000, windowTokens: 200000, percentage: 85, estimated: true })
+    // After the turn (Claude's order): the newest turn takes it.
+    adapter.apply({ type: 'contextUsage', usedTokens: 180000, windowTokens: null })
+    expect(selectStructuredAgentContextUsage(adapter.items(), null)).toMatchObject({ usedTokens: 180000, windowTokens: 200000 })
+    adapter.apply({ type: 'compacted', trigger: 'manual' })
+    expect(adapter.items().find((i) => i.body.presentation === 'compaction').body).toMatchObject({ kind: 'status', presentation: 'compaction' })
+    expect(selectStructuredAgentContextUsage(adapter.items(), null)).toBeNull()
+  })
+
+  it('a model or effort change is a notice row in the pane words; a refused one an error row', () => {
+    const adapter = createJournalAdapter({ now: () => 1000, optionText: (ev) => `${ev.option}=${ev.value}` })
+    adapter.apply({ type: 'option', option: 'model', value: 'opus', ok: true })
+    adapter.apply({ type: 'option', option: 'effort', value: 'high', ok: false })
+    adapter.apply({ type: 'option', option: 'permissionMode', value: 'plan', ok: true })
+    const rows = adapter.items().filter((i) => i.body.kind === 'status')
+    expect(rows.map((i) => [i.body.text, i.body.tone])).toEqual([
+      ['model=opus', 'notice'],
+      ['effort=high', 'error']
+    ])
+  })
+
+  it('the header list of sub-agents: kind and model from their lifecycle, state from the roster; a stopped process leaves none running', () => {
+    const { adapter } = run([
+      { type: 'subagent', phase: 'start', id: 'c1', groupId: 'g', status: 'working', subagentType: 'Explore', description: 'Look around', model: 'haiku', startedAt: 1000 },
+      { type: 'subagents', groupId: 'g', agents: [{ id: 'c1', label: 'Look around', state: 'working', startedAt: 1000 }, { id: 'c2', label: 'Second', state: 'working', startedAt: 1100 }] },
+      { type: 'subagents', groupId: 'g', agents: [{ id: 'c1', label: 'Look around', state: 'completed', tokens: 42, startedAt: 1000, settledAt: 1900 }, { id: 'c2', label: 'Second', state: 'working', startedAt: 1100 }] }
+    ])
+    expect(adapter.meta.subagents.c1).toMatchObject({ id: 'c1', title: 'Look around', type: 'Explore', model: 'haiku', state: 'done', endedAt: 1900, tokens: 42 })
+    expect(adapter.meta.subagents.c2).toMatchObject({ title: 'Second', state: 'running' })
+    adapter.apply({ type: 'status', state: 'crashed' })
+    expect(adapter.meta.subagents.c2.state).toBe('quiet')
   })
 })

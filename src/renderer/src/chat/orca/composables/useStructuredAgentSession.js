@@ -18,6 +18,7 @@ import { activeStructuredAgentSessionTurnId } from '../shared/structured-agent-s
 import { hasUnansweredStructuredAgentSessionDispatch } from '../shared/structured-agent-session-projection.js'
 import { selectStructuredAgentSettledTurns, selectStructuredAgentRunningTurnTiming } from '../shared/structured-agent-session-turn-timing.js'
 import { structuredSessionBackgroundTasksView } from '../structured-session-background-tasks-view.js'
+import { chatOptionNoticeText } from '../chat-option-notice.js'
 
 // An approval option id -> Tessel's decision.
 const DECISIONS = { allow: 'allow', allowSession: 'allowSession', deny: 'deny' }
@@ -26,8 +27,10 @@ const DECISIONS = { allow: 'allow', allowSession: 'allowSession', deny: 'deny' }
 // onLive(event, previousStatus): each live event once applied (never the
 // replayed history), e.g. for the pane's announcements. cwd: the chat's
 // folder (a value or a getter), for tool paths shown relative to it.
-export function useStructuredAgentSession({ paneId, api = typeof window !== 'undefined' && window.shellApi ? window.shellApi.chat : null, now = Date.now, onLive = null, cwd = '' } = {}) {
-  const adapter = createJournalAdapter({ now, cwd })
+// agent: the pane's agent (a value or a getter), for the words of a model change.
+export function useStructuredAgentSession({ paneId, api = typeof window !== 'undefined' && window.shellApi ? window.shellApi.chat : null, now = Date.now, onLive = null, cwd = '', agent = null } = {}) {
+  const agentOf = (fallback) => (typeof agent === 'function' ? agent() : agent) || fallback
+  const adapter = createJournalAdapter({ now, cwd, optionText: (ev, known) => chatOptionNoticeText(ev, agentOf(known)) })
   const state = shallowRef(EMPTY_STRUCTURED_AGENT_SESSION)
   const meta = reactive({ ...adapter.meta, loaded: false, loadError: null, open: false, asleep: false })
   let lastSeq = 0
@@ -169,6 +172,16 @@ export function useStructuredAgentSession({ paneId, api = typeof window !== 'und
       return { ok: false, error: (err && err.message) || String(err) }
     }
   }
+  // Compacts the conversation (the engine asks the agent: Codex's compact,
+  // OpenCode's summarize; Claude's /compact goes as a message).
+  async function compact() {
+    if (!api || !api.compact) return { ok: false }
+    try {
+      return (await api.compact({ paneId })) || { ok: false }
+    } catch (err) {
+      return { ok: false, error: (err && err.message) || String(err) }
+    }
+  }
   async function cancel() {
     if (!api || !api.interrupt) return { ok: false }
     try {
@@ -285,6 +298,7 @@ export function useStructuredAgentSession({ paneId, api = typeof window !== 'und
     backgroundTasks,
     turnId,
     cancel,
+    compact,
     stopBackgroundTask: async () => null,
     respond,
     // Tessel's own: the rate limits for the header, the adapter (tests).

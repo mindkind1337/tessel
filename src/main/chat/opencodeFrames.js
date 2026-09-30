@@ -389,6 +389,7 @@ export function createOpencodeState({ sessionId = null, model = null, permission
     permissionMode,
     version: null,
     contextWindow: null,
+    contextWindows: new Map(), // 'provider/model' -> its context limit (GET /config/providers)
     subagents: createSubagentTracker(now),
     parts: new Map(), // partId -> { type, messageID }
     finalParts: new Set(), // text/reasoning parts already emitted final
@@ -548,6 +549,14 @@ function addStep(state, turn, part) {
   turn.usage.cacheWrite += num(c.write)
   turn.usage.total += num(t.total)
   turn.cost += num(part.cost)
+}
+
+// A step's tokens as OpenCode counts the context: what it read (input and
+// cache) and wrote (output, reasoning).
+export function stepContextTokens(part) {
+  const t = obj(part && part.tokens)
+  const c = obj(t.cache)
+  return num(t.input) + num(t.output) + num(t.reasoning) + num(c.read) + num(c.write)
 }
 
 // A tool part (root or child): tool_use once its input is known, the result
@@ -726,6 +735,7 @@ export function normalizeOpencodeEvent(evt, state) {
       const model = str(info.providerID) && str(info.modelID) ? `${info.providerID}/${info.modelID}` : null
       if (model && model !== state.model) {
         state.model = model
+        if (state.contextWindows.has(model)) state.contextWindow = state.contextWindows.get(model)
         out.push(initEvent(state))
       }
       if (!turn) break
@@ -761,6 +771,10 @@ export function normalizeOpencodeEvent(evt, state) {
         remember(state.steps, pid)
         addStep(state, turn, part)
         if (part.reason === 'stop') turn.stopSeen = true
+        // What this step's request read and wrote is the context now (the
+        // session keeps the newest; the window is the model's limit).
+        const used = stepContextTokens(part)
+        if (used) out.push({ type: 'contextUsage', usedTokens: used, windowTokens: typeof state.contextWindow === 'number' ? state.contextWindow : null })
       }
       break
     }
@@ -811,6 +825,10 @@ export function normalizeOpencodeEvent(evt, state) {
       else out.push({ type: 'opencodeError', message: opencodeErrorMessage(error) })
       break
     }
+    case 'session.compacted':
+      // OpenCode summarized the conversation (asked, or on its own).
+      out.push({ type: 'compacted' })
+      break
     case 'session.updated': {
       const info = obj(p.info)
       if (state.postureCheck && Array.isArray(info.permission) && !endsWithRules(info.permission, state.expectedRules))

@@ -362,6 +362,17 @@ function route(method, p, url, body, res) {
     setTimeout(() => replay(s.id, script(s.id, text)), 5)
     return
   }
+  if ((m = /^\/session\/([^/]+)\/summarize$/.exec(p)) && method === 'POST') {
+    // Answers once the summary is written; says so on the stream.
+    const s = sessions.get(m[1])
+    if (!s) return send(res, 404, {})
+    if (!body || !body.providerID || !body.modelID) return send(res, 400, { name: 'BadRequest', data: { message: 'providerID and modelID required' } })
+    setTimeout(() => {
+      broadcast({ type: 'session.compacted', properties: { sessionID: s.id } })
+      send(res, 200, true)
+    }, 5)
+    return
+  }
   if ((m = /^\/session\/([^/]+)\/command$/.exec(p)) && method === 'POST') {
     const s = sessions.get(m[1])
     if (!s) return send(res, 404, {})

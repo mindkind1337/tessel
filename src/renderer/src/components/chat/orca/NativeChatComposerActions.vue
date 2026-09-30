@@ -7,7 +7,9 @@
 //   sessionOptionsSnapshot, sessionOptionsPickerRequest, contextUsage (a
 //   summary, or null), and Tessel's: showAttach (default true; the composer
 //   hides it unless images are allowed), showDictation (default true; Tessel
-//   has no dictation), sessionOptionsProps (more props for the pickers),
+//   shows it when the pane can start Windows voice typing), dictationTitle
+//   (its words, e.g. the voice typing language), sessionOptionsProps (more
+//   props for the pickers),
 //   criticalTitle (the Send / Stop button's title, e.g. why Send waits).
 // Emits: attach, dictationToggle, dictationHoldStart, dictationHoldEnd, send, stop.
 // Slot: session-options (replaces the default pickers).
@@ -36,6 +38,7 @@ const props = defineProps({
   contextUsage: { type: Object, default: null },
   showAttach: { type: Boolean, default: true },
   showDictation: { type: Boolean, default: true },
+  dictationTitle: { type: String, default: undefined },
   criticalTitle: { type: String, default: undefined }
 })
 const emit = defineEmits(['attach', 'dictationToggle', 'dictationHoldStart', 'dictationHoldEnd', 'send', 'stop'])
@@ -51,7 +54,7 @@ function handleCriticalAction(event) {
 const dictationLabel = computed(() =>
   props.isDictating
     ? t('chat.orca.composer.stopDictation', 'Stop dictation')
-    : t('chat.orca.composer.startDictation', 'Start dictation')
+    : props.dictationTitle || t('chat.orca.composer.startDictation', 'Start dictation')
 )
 const attachLabel = computed(() => t('chat.orca.composer.attachImages', 'Attach images'))
 const criticalLabel = computed(() =>
@@ -115,6 +118,7 @@ function onDictationPointerLeave(event) {
             size="icon-sm"
             class="nc-actions-touch"
             :aria-label="dictationLabel"
+            data-test="chat-dictation"
             :disabled="dictationDisabled"
             @click="onDictationClick"
             @pointerdown="onDictationPointerDown"

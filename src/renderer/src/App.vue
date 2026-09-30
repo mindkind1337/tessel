@@ -618,7 +618,13 @@ function focusActiveInput() {
     return
   }
   const ta = document.querySelector('.ws-layer:not(.hidden) .pane.active .xterm-helper-textarea')
-  if (ta) ta.focus()
+  if (ta) {
+    ta.focus()
+    return
+  }
+  // A chat pane: its composer (voice typing types into it).
+  const composer = document.querySelector('.ws-layer:not(.hidden) .pane.active[data-pane-kind="chat"] [contenteditable="true"]')
+  if (composer) composer.focus()
 }
 
 // Jump to file (Ctrl+Shift+J): the current workspace's project files.

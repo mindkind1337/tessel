@@ -13,7 +13,9 @@
 //   sending }]), launchStatus ('signin' | 'untrusted' | 'crashed' | 'ended' |
 //   null), launchError, opening, historyLoading, and the pane's actions:
 //   send(text), interrupt(), setOption(payload), respond(item, response,
-//   opts), contextMenuActions.
+//   opts), contextMenuActions, dictate() (the composer's mic: Windows voice
+//   typing), dictationTitle, compact() (frees the context; null: the agent
+//   cannot, the low-context banner then only warns).
 // Emits: retry-unsent(entry), discard-unsent(entry), copied-unsent({ entry,
 //   ok }), start (Start again / Trust this folder…), history-retry.
 // Exposed: focusComposer(), focusPendingApproval(), hasPendingApproval(),
@@ -29,6 +31,7 @@ import NativeChatLaunchRetry from './NativeChatLaunchRetry.vue'
 import NativeChatMessageList from './NativeChatMessageList.vue'
 import NativeChatStructuredSessionStatus from './NativeChatStructuredSessionStatus.vue'
 import NativeChatQuestionCard from './NativeChatQuestionCard.vue'
+import NativeChatContextBanner from './NativeChatContextBanner.vue'
 import { MessageCircleQuestion } from 'lucide-vue-next'
 import { Button } from './ui/index.js'
 import { createApprovalInputFetcher } from './native-chat-approval-card.js'
@@ -64,7 +67,10 @@ const props = defineProps({
   interrupt: { type: Function, required: true },
   setOption: { type: Function, default: null },
   respond: { type: Function, required: true },
-  contextMenuActions: { type: Object, default: () => ({}) }
+  contextMenuActions: { type: Object, default: () => ({}) },
+  dictate: { type: Function, default: undefined },
+  dictationTitle: { type: String, default: undefined },
+  compact: { type: Function, default: null }
 })
 const emit = defineEmits(['retry-unsent', 'discard-unsent', 'copied-unsent', 'start', 'history-retry'])
 
@@ -348,6 +354,13 @@ defineExpose({
         @cancel="onQuestionCancel"
       />
     </div>
+    <NativeChatContextBanner
+      :usage="contextUsage"
+      :compact="compact"
+      :busy="turnRunning || !!prompt"
+      :disabled="!!disabledReason"
+      :agent-name="agentName"
+    />
     <NativeChatComposer
       ref="composerRef"
       v-model="draft"
@@ -369,6 +382,8 @@ defineExpose({
       :session-options-surface="optionSurface"
       :session-options-snapshot="optionSnapshot"
       :session-options-picker-request="optionPickerRequest"
+      :dictate="dictate"
+      :dictation-title="dictationTitle"
       @interrupt="interrupt()"
       @error="onComposerError"
     />
