@@ -52,7 +52,7 @@ export async function resolveProgram(exe) {
   return null
 }
 
-const running = new Map() // key -> child
+const running = new Map() // key -> run (identity survives cancellation)
 
 // Run `agent` ('claude' | 'codex') with `input` on stdin. -> { ok, text } |
 // { ok: false, error, cancelled }. key: one run per key; cancel(key) stops it.
@@ -60,11 +60,12 @@ export async function runHeadless(agent, input, { cwd, key = 'default', timeout 
   const spec = HEADLESS[agent]
   if (!spec) return { ok: false, error: t('main.agents.pickAgent', 'Pick Claude or Codex to generate the message.') }
   if (running.has(key)) return { ok: false, error: t('main.agents.alreadyGenerating', 'A message is already being generated.') }
-  running.set(key, null)
+  const current = { child: null, cancelled: false }
+  running.set(key, current)
   try {
     const prog = await resolveProgram(spec.exe)
+    if (current.cancelled) return { ok: false, cancelled: true, error: t('main.agents.stopped', 'Stopped.') }
     if (!prog) return { ok: false, error: t('main.agents.notFound', '{{agent}} was not found on this computer.', { agent: agent === 'claude' ? 'Claude Code' : 'Codex' }) }
-    if (!running.has(key)) return { ok: false, cancelled: true, error: t('main.agents.stopped', 'Stopped.') }
     const env = { ...cleanEnv(process.env) }
     for (const k of Object.keys(env)) if (k.toLowerCase() === 'path') delete env[k]
     env.Path = prog.path || process.env.PATH || ''
@@ -78,7 +79,7 @@ export async function runHeadless(agent, input, { cwd, key = 'default', timeout 
         windowsHide: true,
         stdio: ['pipe', 'pipe', 'pipe']
       })
-      running.set(key, child)
+      current.child = child
       const end = (res) => {
         if (finished) return
         finished = true
@@ -101,7 +102,7 @@ export async function runHeadless(agent, input, { cwd, key = 'default', timeout 
       })
       child.on('error', (e) => end({ ok: false, error: t('main.agents.couldNotStart', 'Could not start {{exe}}: {{error}}', { exe: spec.exe, error: e.message }) }))
       child.on('close', (code) => {
-        if (child.cancelled) return end({ ok: false, cancelled: true, error: t('main.agents.stopped', 'Stopped.') })
+        if (current.cancelled) return end({ ok: false, cancelled: true, error: t('main.agents.stopped', 'Stopped.') })
         if (code === 0 && out.trim()) return end({ ok: true, text: out })
         const line = (err || out).trim().split(/\r?\n/).filter(Boolean).slice(-2).join(' ')
         end({ ok: false, error: line.slice(0, 400) || t('main.agents.noAnswer', '{{exe}} gave no answer.', { exe: spec.exe }) })
@@ -110,16 +111,18 @@ export async function runHeadless(agent, input, { cwd, key = 'default', timeout 
       child.stdin.end(input)
     })
   } finally {
-    running.delete(key)
+    // A cancelled run may finish after a replacement has claimed this key.
+    if (running.get(key) === current) running.delete(key)
   }
 }
 
 export function cancelHeadless(key = 'default') {
   if (!running.has(key)) return false
-  const child = running.get(key)
+  const current = running.get(key)
+  current.cancelled = true
+  const child = current.child
   running.delete(key)
   if (child) {
-    child.cancelled = true
     try {
       child.kill()
     } catch {
