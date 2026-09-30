@@ -117,6 +117,14 @@ describe('terminal pane header', () => {
   const header = () => wrapper.get('[data-test="pane-header"]')
   const menu = () => document.body.querySelector(':scope > .ctx-menu')
 
+  it('a model chosen by its family name shows the version the agent reports (Opus 5.5)', async () => {
+    wrapper.unmount()
+    window.shellApi.agentModel = vi.fn(async () => ({ model: 'claude-opus-5-5', effort: null, source: 'session' }))
+    wrapper = mount(TerminalPane, { props: { node: node() }, attachTo: host, global: { provide: { panelCtx: ctx } } })
+    await flushPromises()
+    expect(header().get('[data-test="pane-model-chip"]').text()).toBe('Opus 5.5')
+  })
+
   it('shows only the status, icon, title and one badge', async () => {
     await flushPromises()
     const h = header()

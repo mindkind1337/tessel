@@ -143,6 +143,15 @@ function chosenShown(n, res) {
   }
   return { model: modelChoiceLabel(modelsFor(n.agentId), c.model), effort: c.effort || null, source: 'chosen' }
 }
+// { model } with a bare family name ("opus", "Opus", "opus[1m]"): the full id
+// of the same family from the agent's own report, when it has one.
+function withModelVersion(shown, ...reported) {
+  const bare = /^(opus|sonnet|haiku|fable)(\[1m\])?$/i.exec(String(shown.model || '').trim())
+  if (!bare) return shown
+  const family = bare[1].toLowerCase()
+  const full = reported.find((m) => typeof m === 'string' && new RegExp(`^(?:claude-)?${family}-\\d`, 'i').test(m.trim()))
+  return full ? { ...shown, model: full.trim() + (bare[2] && !/\[1m\]$/i.test(full) ? '[1m]' : '') } : shown
+}
 let modelBusy = false
 let modelAgain = false // asked while a check ran: one more after it
 async function refreshModel() {
@@ -175,7 +184,11 @@ async function refreshModel() {
       const switched = modelSwitchedOnScreen()
       if (switched) res = { model: switched, effort: res.effort || null, source: 'screen' }
     }
-    agentModel.value = chosenShown(n, res)
+    // A name without its version (an alias such as "opus", chosen in the pane
+    // or by /model): the version comes from what the agent itself reports,
+    // its latest answer or its /model line ("claude-opus-5-5" -> Opus 5.5).
+    const shown = chosenShown(n, res)
+    agentModel.value = shown && n.agentId === 'claude' ? withModelVersion(shown, res && res.source === 'session' ? res.model : null, modelSwitchedOnScreen()) : shown
   } catch {
     /* keep what it showed */
   } finally {
