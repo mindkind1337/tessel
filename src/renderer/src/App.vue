@@ -3700,6 +3700,12 @@ function numberPanes() {
     const used = new Set()
     const need = []
     forEachLeaf(ws.tree, (l) => {
+      // Only terminals and chats get a number (#n): a browser or an editor
+      // is never an agent you address.
+      if (l.kind === 'browser' || l.kind === 'editor') {
+        if (l.num) delete l.num
+        return
+      }
       if (Number.isInteger(l.num) && l.num > 0 && !used.has(l.num)) used.add(l.num)
       else need.push(l)
     })
