@@ -326,11 +326,6 @@ function goToWorktree(key) {
 <template>
   <footer ref="barEl" class="sb" :aria-label="t('statusBar.ariaLabel', 'Status bar')" @contextmenu="onContextMenu">
     <div class="sb-left">
-      <template v-if="info">
-        <span class="sb-info sb-target" :title="info.target">{{ info.target }}</span>
-        <span class="sb-info" :title="info.summary">{{ info.summary }}</span>
-        <span v-if="info.path && !compact" class="sb-info sb-path" :title="info.path">{{ info.path }}</span>
-      </template>
     </div>
     <div class="sb-spacer"></div>
     <div class="sb-right">
