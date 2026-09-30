@@ -747,6 +747,11 @@ describe('ChatPane.vue', () => {
     expect(icon.attributes('title')).toBe('Tools run without asking (Settings)')
     // … (the chat's menu), then maximize and close.
     expect(wrapper.find('[data-test="chat-more"]').exists()).toBe(true)
+    await wrapper.get('[data-test="chat-more"]').trigger('click')
+    await settle()
+    expect(document.querySelector('[data-test="chat-context-menu"]')).not.toBe(null)
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await settle()
     const [maxBtn, closeBtn] = wrapper.findAll('.pane-nav-btn').filter((b) => b.attributes('data-test') !== 'chat-more')
     await maxBtn.trigger('click')
     await closeBtn.trigger('click')
