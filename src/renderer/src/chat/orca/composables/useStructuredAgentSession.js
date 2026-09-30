@@ -90,6 +90,20 @@ export function useStructuredAgentSession({ paneId, api = typeof window !== 'und
     }
     if (typeof res.seq === 'number') lastSeq = Math.max(lastSeq, res.seq)
     adapter.replay(events)
+    // The questions still waiting are the main process's word (a question
+    // from a process that is gone can never be answered): the others close,
+    // and one the journal's tail no longer holds comes back.
+    if (Array.isArray(res.questions)) {
+      const live = new Map(res.questions.filter((q) => q && q.requestId).map((q) => [String(q.requestId), q]))
+      const settle = []
+      for (const item of adapter.items()) {
+        if (item.body.kind !== 'question' || item.body.resolution.state !== 'pending') continue
+        const id = item.body.tessel && item.body.tessel.requestId
+        if (live.has(id)) live.delete(id)
+        else settle.push({ type: 'questionStatus', requestId: id, status: 'cancelled' })
+      }
+      adapter.replay([...settle, ...[...live.values()].map((q) => ({ ...q, type: 'question', status: 'pending' }))])
+    }
     // The last "/" catalog, kept apart from the journal (a short tail can miss it).
     if (adapter.meta.commands === null && Array.isArray(res.commands)) adapter.apply({ type: 'commands', commands: res.commands })
     feed(adapter.snapshotEvent())
@@ -173,6 +187,18 @@ export function useStructuredAgentSession({ paneId, api = typeof window !== 'und
   // An approval item and { kind: 'option', optionId } -> Tessel's approve.
   async function respond(item, response, { message } = {}) {
     const requestId = item && item.body && item.body.tessel ? item.body.tessel.requestId : null
+    // A question: its answers ({ kind: 'answers', answers: [{ questionId,
+    // optionIds, other? }] }), or { kind: 'cancel' }.
+    if (item && item.body && item.body.kind === 'question') {
+      if (!api || !api.answer || !requestId) return null
+      const cancel = response && response.kind === 'cancel'
+      if (!cancel && !(response && response.kind === 'answers' && Array.isArray(response.answers))) return null
+      try {
+        return await api.answer(cancel ? { paneId, requestId, cancel: true } : { paneId, requestId, answers: response.answers })
+      } catch (err) {
+        return { ok: false, error: (err && err.message) || String(err) }
+      }
+    }
     const decision = response && response.kind === 'option' ? DECISIONS[response.optionId] : null
     if (!api || !api.approve || !requestId || !decision) return null
     try {

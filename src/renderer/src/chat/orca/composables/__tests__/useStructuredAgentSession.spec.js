@@ -141,3 +141,21 @@ describe('useStructuredAgentSession (Tessel engine)', () => {
     expect(session.messages.value).toHaveLength(3)
   })
 })
+
+describe('useStructuredAgentSession: questions', () => {
+  const ask = (id) => ({ type: 'question', requestId: id, status: 'pending', questions: [{ id: 'q0', question: 'Which?', multiSelect: false, options: [{ id: 'o0', label: 'A' }] }] })
+  it('answers and cancels through chat.answer; after a reload only the questions the main process still holds stay open', async () => {
+    const answer = vi.fn(async () => ({ ok: true }))
+    const { session, api } = setup({ ok: true, seq: 3, events: [{ seq: 1, event: { type: 'user', id: 'u1', text: 'go', status: 'accepted' } }, { seq: 2, event: ask('question_old') }, { seq: 3, event: ask('question_live') }], questions: [ask('question_live'), ask('question_tail')] }, { answer })
+    const s = session()
+    await s.load()
+    const ids = s.prompts.value.map((p) => p.body.tessel.requestId)
+    expect(ids.sort()).toEqual(['question_live', 'question_tail'])
+    const live = s.prompts.value.find((p) => p.body.tessel.requestId === 'question_live')
+    await s.respond(live, { kind: 'answers', answers: [{ questionId: 'q0', optionIds: ['o0'] }] })
+    expect(api.answer).toHaveBeenCalledWith({ paneId: 'p1', requestId: 'question_live', answers: [{ questionId: 'q0', optionIds: ['o0'] }] })
+    await s.respond(live, { kind: 'cancel' })
+    expect(api.answer).toHaveBeenLastCalledWith({ paneId: 'p1', requestId: 'question_live', cancel: true })
+    expect(await s.respond(live, { kind: 'option', optionId: 'allow' })).toBeNull()
+  })
+})
