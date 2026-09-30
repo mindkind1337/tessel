@@ -18,6 +18,7 @@
 // sign-in needed; a new request is announced by its card); Alt+A goes to the
 // request waiting for an answer. Nothing takes the focus by itself while the
 // user types.
+import { teamNumber } from '../../teamNumber'
 import { computed, inject, nextTick, onBeforeUnmount, onMounted, provide, reactive, ref, shallowRef, watch } from 'vue'
 import { SquareTerminal } from 'lucide-vue-next'
 import BrandIcon from '../BrandIcon.vue'
@@ -36,6 +37,9 @@ const props = defineProps({
 })
 
 const ctx = inject('panelCtx')
+// Its team (ctx.teamById), and whether it leads it.
+const team = computed(() => (ctx.teamById ? ctx.teamById(props.node.team) : null))
+const isLead = computed(() => !!(team.value && team.value.leadId === props.node.id))
 
 // Stopped states: the composer cannot send; no agent process runs.
 const STOPPED_STATES = new Set(['ended', 'crashed', 'signin', 'untrusted'])
@@ -552,6 +556,8 @@ defineExpose({ start, send, interrupt, focusPendingApproval, focusComposer: () =
       @pointerdown="onNavPointerDown"
     >
       <div class="pane-nav-left">
+        <!-- Its team, as a number (the lead's in the accent). -->
+        <span v-if="team" class="pane-team-num" :class="{ lead: isLead }" data-test="chat-team-num" aria-hidden="true">{{ teamNumber(team.name) }}</span>
         <span
           class="pane-icon agent"
           :class="[iconState, { yolo }]"

@@ -9,6 +9,7 @@
 // a chevron in the card gutter like Orca's child agents.
 // Hovering the row (or a sub-agent) opens a hover card with its details
 // instead of a native tooltip (HoverCardContent, AgentHoverDetails).
+import { teamNumber } from '../../teamNumber'
 import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { ChevronRight } from 'lucide-vue-next'
 import BrandIcon from '../BrandIcon.vue'
@@ -150,11 +151,7 @@ const childState = computed(() => {
 const rowModel = computed(() => props.row.model || (props.row.kind === 'agent' ? paneModels[props.row.id] || '' : ''))
 // Its team, as a number at the far left of the row ("Team 2" -> 2; a team
 // named otherwise: its first two letters). Its name is in the hover card.
-const teamNum = computed(() => {
-  const label = String(props.teamLabel || '').trim()
-  const n = /(\d+)\s*$/.exec(label)
-  return n ? n[1] : label.slice(0, 2)
-})
+const teamNum = computed(() => teamNumber(props.teamLabel))
 const rowLabel = computed(() => {
   const r = props.row
   const team = props.teamLabel || r.team

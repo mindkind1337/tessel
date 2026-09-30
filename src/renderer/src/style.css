@@ -9169,6 +9169,22 @@ button.act-stat:hover,
 }
 
 /* The team number at the far left of an agent row (the lead's in the accent). */
+/* A pane's team number, at the far left of its header. */
+.pane-team-num {
+  flex-shrink: 0;
+  margin-right: 2px;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.pane-team-num.lead {
+  /* Not --accent: a pane header sets that to its agent's colour. */
+  color: var(--text-strong);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 .car-team-num {
   flex-shrink: 0;
   min-width: 10px;

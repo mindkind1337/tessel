@@ -1,4 +1,5 @@
 <script setup>
+import { teamNumber } from '../teamNumber'
 import { ref, reactive, inject, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
@@ -2171,6 +2172,8 @@ onBeforeUnmount(() => {
       <!-- Resting on the number, icon, title or state shows the hover card
            (a press, Esc or a right-click closes it). -->
       <div class="pane-nav-left" data-test="pane-hover-trigger" v-on="headerHover.triggerListeners">
+        <!-- Its team, as a number (the lead's in the accent); named in the hover card. -->
+        <span v-if="team" class="pane-team-num" :class="{ lead: isLead }" data-test="pane-team-num" aria-hidden="true">{{ teamNumber(team.name) }}</span>
         <span
           class="pane-icon"
           :class="isAgent ? ['agent', needsYou ? 'attention' : subRunning > 0 ? 'busy' : agentStatus, { yolo: node.launchYolo }] : null"
