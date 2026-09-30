@@ -9053,31 +9053,21 @@ onBeforeUnmount(() => {
       <!-- Left: who and where (app, then the workspace switcher). -->
       <div class="tb-left">
         <div class="brand" :class="{ dev: isDev }">
+          <!-- The app icon (build/icon.png): a T of tiles, fading down, a cursor tile. -->
           <svg
             class="brand-logo"
             width="16"
             height="16"
             viewBox="0 0 24 24"
-            fill="none"
+            fill="currentColor"
             aria-hidden="true"
           >
-            <rect
-              x="2"
-              y="3"
-              width="20"
-              height="18"
-              rx="4"
-              stroke="currentColor"
-              stroke-width="1.8"
-            />
-            <path d="M12 3v18M12 12h10" stroke="currentColor" stroke-width="1.8" />
-            <path
-              d="M5.5 8.5l2 1.8-2 1.8"
-              stroke="currentColor"
-              stroke-width="1.6"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            />
+            <rect x="2" y="2.5" width="5.5" height="5.5" rx="1.2" />
+            <rect x="9.25" y="2.5" width="5.5" height="5.5" rx="1.2" />
+            <rect x="16.5" y="2.5" width="5.5" height="5.5" rx="1.2" />
+            <rect x="9.25" y="9.25" width="5.5" height="5.5" rx="1.2" opacity="0.8" />
+            <rect x="9.25" y="16" width="5.5" height="5.5" rx="1.2" opacity="0.55" />
+            <rect x="16.5" y="16" width="5.5" height="5.5" rx="1.2" opacity="0.35" />
           </svg>
           <span class="brand-name">Tessel</span>
           <span v-if="isDev" class="brand-dev" :title="t('app.toolbar.devBuild', 'Development build (npm run dev)')">{{ t('app.toolbar.dev', 'dev') }}</span>
