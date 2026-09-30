@@ -83,6 +83,7 @@ import {
 import { reviewInfo, reviewDiff, reviewMerge, reviewRemove, reviewCommit, reviewPush } from './review'
 import * as scm from './sourceControl'
 import { runHeadless, cancelHeadless, resolveProgram } from './agentHeadless'
+import { createCommitMessageGeneration } from './commitMessageGeneration'
 import { createModelLister } from './agentModelList'
 import { takeTeamAcks } from './teamAcks'
 import { writeJsonSafe, readJsonSafe } from './safeJson'
@@ -1673,19 +1674,14 @@ ipcMain.handle('scm:history', safe((q) => scmFor(q).scmHistory(q || {})))
 ipcMain.handle('scm:commitFiles', safe((q) => scmFor(q).scmCommitFiles(q || {})))
 // A commit message written by an agent from the staged diff (Orca's Generate).
 // The agents run on this machine: not for a remote project yet.
+const commitMessageGeneration = createCommitMessageGeneration({ scm, runHeadless, cancelHeadless })
 ipcMain.handle('scm:generate', safe(async (q) => {
   if (remoteArg(q)) return remoteFs.remoteOnly()
-  const d = await scm.scmStagedDiff(q || {})
-  if (!d.ok) return d
-  const res = await runHeadless(q && q.agent, scm.commitPrompt(d.diff), { cwd: d.top, key: d.top })
-  if (!res.ok) return res
-  const message = scm.cleanGeneratedMessage(res.text)
-  return message ? { ok: true, message } : { ok: false, error: t('main.error.noCommitMessage', 'The agent gave no message.') }
+  return commitMessageGeneration.generate(q || {})
 }))
 ipcMain.handle('scm:cancelGenerate', safe(async (q) => {
   if (remoteArg(q)) return { ok: false }
-  const r = await scm.repoOf(q && q.root)
-  return { ok: !r.error && cancelHeadless(r.top) }
+  return commitMessageGeneration.cancel(q || {})
 }))
 ipcMain.handle('lead:ensure', safe(ensureInbox))
 ipcMain.handle('lead:take', safe(takeInbox))
