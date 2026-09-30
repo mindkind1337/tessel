@@ -10,6 +10,11 @@ export default defineConfig({
     // next to index.js as tessel-askpass.exe.
     plugins: [externalizeDepsPlugin(), askpassPlugin()],
     build: {
+      // In dev (npm run dev), out/main is not emptied before a rebuild: the
+      // running app's helper (tessel-askpass.exe --serve) is open there and
+      // Windows refuses to delete it (EPERM), which failed every main
+      // rebuild. A packaged build (npm run build) still starts clean.
+      emptyOutDir: process.env.npm_lifecycle_event !== 'dev',
       rollupOptions: {
         // Never bundle Electron or native modules: they must be required at
         // runtime. (Setting rollupOptions replaces electron-vite's defaults,
