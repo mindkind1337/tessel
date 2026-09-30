@@ -9,7 +9,7 @@
 // What Tessel's engine does not provide yet stays empty: conversation
 // commands, older history pages, the rail outline, background tasks, the
 // provider's activity line, questions (they need an engine answer path).
-import { computed, onBeforeUnmount, reactive, shallowRef } from 'vue'
+import { computed, onBeforeUnmount, reactive, ref, shallowRef } from 'vue'
 import { createJournalAdapter } from '../adapter/journalAdapter'
 import { agentJournalSubmissionKey } from '../shared/agent-session-journal-item-key.js'
 import { reduceStructuredAgentSession, EMPTY_STRUCTURED_AGENT_SESSION } from '../shared/structured-agent-session-reducer.js'
@@ -108,6 +108,8 @@ export function useStructuredAgentSession({ paneId, api = typeof window !== 'und
     if (adapter.meta.commands === null && Array.isArray(res.commands)) adapter.apply({ type: 'commands', commands: res.commands })
     feed(adapter.snapshotEvent())
     syncMeta()
+    olderAvailable.value = res.older === true
+    olderCursor = null
     meta.open = !!(res.open || (res.live && res.live.status && res.live.status !== 'asleep'))
     meta.asleep = !!res.asleep
     loaded = true
@@ -175,6 +177,50 @@ export function useStructuredAgentSession({ paneId, api = typeof window !== 'und
       return { ok: false, error: (err && err.message) || String(err) }
     }
   }
+  // --- Older history ---------------------------------------------------------------------
+  // The journal holds the most recent part of a long conversation; older
+  // turns are read again from the agent's own history, a page at a time
+  // (chat:historyOlder), and go before what is shown. -> 'applied' |
+  // 'unchanged' | 'failed', as the list's older-history loader expects.
+  const olderAvailable = ref(false)
+  const loadingOlder = ref(false)
+  const olderGeneration = ref(0)
+  let olderCursor = null
+  async function loadOlder() {
+    if (loadingOlder.value || !olderAvailable.value || !api || !api.historyOlder) return 'unchanged'
+    loadingOlder.value = true
+    try {
+      // A page can hold nothing to show (one line too long to read): the next one then.
+      for (let tries = 0; tries < 8; tries++) {
+        const res = await api.historyOlder({ paneId, ...(olderCursor ? { cursor: olderCursor } : {}) })
+        if (!res || res.ok !== true) {
+          if (res && res.code === 'closed') olderAvailable.value = false
+          return 'failed'
+        }
+        olderCursor = res.cursor ?? null
+        const done = res.done === true || !olderCursor
+        const page = adapter.olderPage(Array.isArray(res.events) ? res.events : [])
+        if (page.items.length) {
+          const head = state.value.items[0]
+          state.value = reduceStructuredAgentSession(
+            state.value,
+            { type: 'older-page', requestedCursor: { epoch: state.value.epoch, sequence: head ? head.sequence : 0 }, page: { epoch: state.value.epoch, items: page.items, removedItemIds: [], submissions: page.submissions, hasOlder: !done } },
+            now()
+          )
+          olderGeneration.value++
+        }
+        olderAvailable.value = !done
+        if (page.items.length) return 'applied'
+        if (done) return 'unchanged'
+      }
+      return 'unchanged'
+    } catch {
+      return 'failed'
+    } finally {
+      loadingOlder.value = false
+    }
+  }
+
   // Skill discovery for the composer's menu: the engine scans the pane's
   // trusted folders (opaque references, never paths); a refusal is an error.
   async function discoverSkills({ refresh } = {}) {
@@ -222,11 +268,11 @@ export function useStructuredAgentSession({ paneId, api = typeof window !== 'und
     messages,
     status: computed(() => (meta.loadError ? 'error' : state.value.status)),
     error: computed(() => meta.loadError),
-    hasOlder: computed(() => false),
+    hasOlder: computed(() => olderAvailable.value),
     railOutline: computed(() => null),
-    loadingOlder: computed(() => false),
-    olderHistoryGeneration: computed(() => 0),
-    loadOlder: async () => {},
+    loadingOlder: computed(() => loadingOlder.value),
+    olderHistoryGeneration: computed(() => olderGeneration.value),
+    loadOlder,
     prompts,
     outbox: computed(() => []),
     blockedClientMessageId: computed(() => null),

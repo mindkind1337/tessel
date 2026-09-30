@@ -564,6 +564,39 @@ describe('ChatPane.vue', () => {
     expect(api.answer).toHaveBeenLastCalledWith({ paneId: 'c1', requestId: 'question_2', cancel: true })
   })
 
+  it('a long conversation: older turns load above the ones shown, read again from the agent’s history', async () => {
+    history = {
+      ok: true,
+      open: true,
+      older: true,
+      seq: 2,
+      events: [
+        { seq: 1, at: 5000, event: { type: 'user', id: 'hist-u9', text: 'recent prompt', origin: 'user', status: 'accepted', imported: true, at: 5000 } },
+        { seq: 2, at: 5100, event: { type: 'assistant', messageId: 'hist-a9', text: 'recent answer', imported: true, at: 5100 } }
+      ]
+    }
+    api.historyOlder = vi.fn(async () => ({
+      ok: true,
+      events: [
+        { type: 'user', id: 'hist-u1', text: 'older prompt', origin: 'user', status: 'accepted', imported: true, at: 1000 },
+        { type: 'assistant', messageId: 'hist-a1', text: 'older answer', imported: true, at: 1100 }
+      ],
+      cursor: null,
+      done: true
+    }))
+    await mountPane()
+    expect(document.body.textContent).not.toContain('older prompt')
+    const more = [...document.querySelectorAll('button')].find((b) => /load earlier messages/i.test(b.textContent))
+    // The list asks by itself when its top is in view; the button asks too.
+    if (more && !api.historyOlder.mock.calls.length) await click(more)
+    await settle()
+    expect(api.historyOlder).toHaveBeenCalledWith({ paneId: 'c1' })
+    const text = document.body.textContent
+    expect(text).toContain('older prompt')
+    expect(text.indexOf('older prompt')).toBeLessThan(text.indexOf('recent prompt'))
+    expect([...document.querySelectorAll('button')].some((b) => /load earlier messages/i.test(b.textContent))).toBe(false)
+  })
+
   it('a new approval never takes the focus from the composer', async () => {
     await mountPane()
     input().focus()

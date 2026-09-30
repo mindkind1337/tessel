@@ -269,3 +269,36 @@ describe('journal adapter: questions', () => {
     expect(stopped.state.items.find((i) => i.itemId === 'question:question_1').body.resolution.state).toBe('cancelled')
   })
 })
+
+describe('journal adapter: an older page', () => {
+  it('goes before everything held, in its order, with earlier sequences and times, ids of its own', () => {
+    const adapter = createJournalAdapter({ now: () => 9000 })
+    adapter.replay([
+      { type: 'notice', kind: 'info', text: 'Earlier conversation', imported: true, at: 5000 },
+      { type: 'user', id: 'hist-u9', text: 'recent', status: 'accepted', imported: true, at: 5000 },
+      { type: 'assistant', messageId: 'hist-a9', text: 'recent answer', imported: true, at: 5100 },
+      { type: 'turnEnd', status: 'completed', imported: true, at: 5200 }
+    ])
+    let state = reduceStructuredAgentSession(EMPTY_STRUCTURED_AGENT_SESSION, { type: 'event', event: adapter.snapshotEvent() }, 0)
+    const held = state.items.map((i) => i.itemId)
+    const page = adapter.olderPage([
+      { type: 'user', id: 'hist-u1', text: 'old one', status: 'accepted', imported: true, at: 1000 },
+      { type: 'assistant', messageId: 'hist-a1', text: 'old answer', imported: true, at: 1100 },
+      { type: 'turnEnd', status: 'completed', imported: true, at: 1200 },
+      { type: 'notice', kind: 'warning', text: 'old notice', imported: true, at: 7000 }
+    ])
+    state = reduceStructuredAgentSession(state, { type: 'older-page', requestedCursor: { epoch: state.epoch, sequence: state.items[0].sequence }, page: { epoch: state.epoch, items: page.items, removedItemIds: [], submissions: page.submissions, hasOlder: true } }, 0)
+    expect(state.hasOlder).toBe(true)
+    // The held items keep their place and ids; the page sits before them.
+    expect(state.items.slice(-held.length).map((i) => i.itemId)).toEqual(held)
+    expect(page.items.every((i) => !held.includes(i.itemId))).toBe(true)
+    const seqs = state.items.map((i) => i.sequence)
+    const times = state.items.map((i) => i.observedAt)
+    expect(seqs).toEqual([...seqs].sort((a, b) => a - b))
+    expect(new Set(seqs).size).toBe(seqs.length)
+    for (let i = 1; i < times.length; i++) expect(times[i]).toBeGreaterThan(times[i - 1])
+    expect(messages(state).map((m) => text(m)).filter(Boolean).slice(0, 2)).toEqual(['old one', 'old answer'])
+    // The same page again adds nothing.
+    expect(adapter.olderPage([{ type: 'user', id: 'hist-u1', text: 'old one', status: 'accepted', at: 1000 }]).items.filter((i) => i.body.kind === 'message')).toEqual([])
+  })
+})
