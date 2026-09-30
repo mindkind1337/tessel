@@ -101,6 +101,8 @@ import { t, intlLocale } from './i18n'
 const shells = ref([])
 const agents = ref([])
 // The agents offered in menus: not those turned off in Settings > Agents.
+// The program a named agent runs ("Claude Code"), shown beside its name.
+const programLabel = (pane) => agentProgramLabel(pane, agents.value)
 const launchableAgents = computed(() => agents.value.filter((a) => agentEnabled(settings.agentPrefs, a.id)))
 const selectedShell = ref(null)
 const broadcast = ref(false)
