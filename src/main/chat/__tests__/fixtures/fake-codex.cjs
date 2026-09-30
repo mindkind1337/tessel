@@ -438,6 +438,11 @@ function onRequest(m) {
       mcpStartup()
       status('idle')
       return ok(threadResponse(threadId, p))
+    case 'thread/compact/start':
+      if (MODE === 'compact-fails') return err(-32000, 'compaction failed')
+      ok({})
+      setTimeout(() => notify('thread/compacted', { threadId }), 5)
+      return
     case 'turn/start': {
       if (running) {
         // Folded into the running turn (recorded): same id, echo later.

@@ -150,9 +150,12 @@ describe('journal adapter', () => {
     const { state } = run([
       { type: 'user', id: 'u1', text: 'a', status: 'accepted' },
       { type: 'turnEnd', status: 'failed', error: 'content filter' },
+      // The same words as the turn's error: not shown twice.
+      { type: 'notice', kind: 'error', text: 'content filter' },
       { type: 'user', id: 'u2', text: 'b', status: 'accepted' },
       { type: 'status', state: 'crashed' },
-      { type: 'notice', kind: 'warning', text: 'careful' }
+      { type: 'notice', kind: 'warning', text: 'careful' },
+      { type: 'notice', kind: 'error', text: 'too long', action: 'newConversation' }
     ])
     const turns = state.items.filter((i) => i.body.kind === 'turn').map((i) => i.body)
     expect(turns.map((t) => [t.state, t.outcome])).toEqual([
@@ -162,7 +165,8 @@ describe('journal adapter', () => {
     const statuses = state.items.filter((i) => i.body.kind === 'status').map((i) => i.body)
     expect(statuses).toEqual([
       { kind: 'status', text: 'content filter', tone: 'error' },
-      { kind: 'status', text: 'careful', tone: 'warning' }
+      { kind: 'status', text: 'careful', tone: 'warning' },
+      { kind: 'status', text: 'too long', tone: 'error', action: 'newConversation' }
     ])
     expect(activeStructuredAgentSessionTurnId(state.items)).toBeNull()
   })

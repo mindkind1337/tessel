@@ -132,6 +132,8 @@ export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence =
   // ties with the previous one (events of one millisecond keep their order).
   let lastObservedAt = -Infinity
   let olderPages = 0
+  // The last failed turn's error: a notice saying the same is not shown twice.
+  let lastTurnError = ''
   function put(itemId, body, extra = {}, at = now()) {
     const prior = items.get(itemId)
     let observedAt = at
@@ -432,13 +434,17 @@ export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence =
       case 'turnEnd': {
         const outcome = ev.status === 'failed' ? 'failure' : ev.status === 'interrupted' ? 'cancellation' : 'success'
         closeTurn({ state: ev.status === 'interrupted' ? 'interrupted' : 'completed', outcome, durationMs: ev.durationMs, usage: ev.usage }, at)
+        lastTurnError = ev.error ? String(ev.error) : ''
         if (ev.error) put(`status:${idTag}turn-${sequence + 1}`, { kind: 'status', text: String(ev.error), tone: 'error' }, {}, at) // i18n-ignore
         break
       }
       case 'notice': {
         if (!ev.text) break
         const tone = ev.kind === 'error' ? 'error' : ev.kind === 'warning' ? 'warning' : 'notice'
-        put(`status:${idTag}notice-${sequence + 1}`, { kind: 'status', text: String(ev.text), tone }, {}, at) // i18n-ignore
+        if (tone === 'error' && String(ev.text) === lastTurnError) break
+        // action: what the notice offers (a button): 'newConversation'.
+        const action = typeof ev.action === 'string' && ev.action ? { action: ev.action } : {}
+        put(`status:${idTag}notice-${sequence + 1}`, { kind: 'status', text: String(ev.text), tone, ...action }, {}, at) // i18n-ignore
         break
       }
       case 'subagents': {

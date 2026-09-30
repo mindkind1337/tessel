@@ -757,6 +757,8 @@
       "codexPostureChanged": "Codex n'appliquait plus les permissions du mode Manuel (demander d'abord, en bac à sable) : le tour a été arrêté et le chat fermé.",
       "turnFailed": "Le tour a échoué : {{error}}",
       "turnFailedNoReason": "Le tour a échoué.",
+      "compacting": "Conversation trop longue : compactage, puis votre message est renvoyé…",
+      "tooLong": "La conversation est trop longue pour {{agent}} et n’a pas pu être compactée : commencez une nouvelle conversation.",
       "notOffered": "L'agent ne propose pas ce choix ici.",
       "inputUnseen": "Affichez l'intégralité de la demande avant de l'autoriser.",
       "asleepOther": "Ce panneau contient une autre conversation (en veille). Fermez-la d'abord.",

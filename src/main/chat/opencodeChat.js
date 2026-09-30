@@ -57,6 +57,7 @@ export const PERMISSION_MODES = ['default', 'bypassPermissions', 'plan']
 export const DEFAULT_TIMEOUTS = {
   start: 30000,
   request: 30000,
+  compact: 120000,
   health: 5000,
   catalog: 1500,
   abort: 3000,
@@ -1018,6 +1019,14 @@ export function createOpencodeChat(opts) {
     return { ok: true, uuid: id }
   }
 
+  // Compacts the session (OpenCode summarizes it in place, with the model it
+  // runs): resolves once done. -> { ok } | { ok: false, error }
+  async function compact() {
+    if (!alive() || !state.sessionId) return { ok: false, error: 'not running' } // i18n-ignore internal
+    const r = await call('POST', `/session/${encodeURIComponent(state.sessionId)}/summarize`, { ...(modelParts() || {}) }, timeouts.compact)
+    return r.ok ? { ok: true } : { ok: false, error: r.error }
+  }
+
   async function interrupt() {
     if (!alive() || !state.sessionId) return { ok: false, error: 'not running' } // i18n-ignore internal
     const turn = state.turn && !state.turn.settled ? state.turn : null
@@ -1202,6 +1211,7 @@ export function createOpencodeChat(opts) {
     start,
     send,
     interrupt,
+    compact,
     answerPermission,
     answerQuestion: questions.answer,
     setModel,

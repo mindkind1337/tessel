@@ -18,7 +18,7 @@
 // sign-in needed; a new request is announced by its card); Alt+A goes to the
 // request waiting for an answer. Nothing takes the focus by itself while the
 // user types.
-import { computed, inject, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from 'vue'
+import { computed, inject, nextTick, onBeforeUnmount, onMounted, provide, reactive, ref, shallowRef, watch } from 'vue'
 import { SquareTerminal } from 'lucide-vue-next'
 import BrandIcon from '../BrandIcon.vue'
 import AgentChildren from '../AgentChildren.vue'
@@ -61,6 +61,11 @@ function api() {
 // The session (journal, live events, actions), and what a live event is
 // worth saying (a replayed history says nothing).
 const session = useStructuredAgentSession({ paneId: props.node.id, api: api(), onLive, cwd: () => props.node.cwd || props.node.projectDir || '', agent: () => props.node.agentId || 'claude' })
+// A notice's way out (NativeChatNoticeRow): 'newConversation' keeps the pane
+// and starts a fresh session (the conversation was too long to go on).
+provide('chatNoticeAction', (action) => {
+  if (action === 'newConversation') void newConversation()
+})
 const meta = session.meta
 
 const isActive = computed(() => ctx.activeId.value === props.node.id)
@@ -277,6 +282,24 @@ async function load() {
 function retryHistory() {
   if (historyLoading.value) return
   load()
+}
+
+// The same pane, a new session: the old one is closed and its history left
+// behind; the agent starts again with an empty conversation.
+let renewing = false
+async function newConversation() {
+  const a = api()
+  if (renewing || !a || typeof a.close !== 'function') return
+  renewing = true
+  try {
+    await a.close({ paneId: props.node.id, forget: true })
+  } catch {
+    // already gone
+  }
+  renewing = false
+  if (!alive) return
+  props.node.sessionId = null
+  await load()
 }
 
 // Opens (or starts again) the session through the app.

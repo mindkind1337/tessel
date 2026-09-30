@@ -379,6 +379,10 @@ function route(method, p, url, body, res) {
     replay(s.id, [...echo(s.id, `/${body.command} ${body.arguments}`), ...stepEnd(s.id, 'Reviewed.')]).then(() => send(res, 200, { info: { id: 'msg_cmd', role: 'assistant' }, parts: [] }))
     return
   }
+  if ((m = /^\/session\/([^/]+)\/summarize$/.exec(p)) && method === 'POST') {
+    if (!sessions.has(m[1])) return send(res, 404, {})
+    return send(res, 200, true)
+  }
   if ((m = /^\/session\/([^/]+)\/abort$/.exec(p)) && method === 'POST') {
     const sid = m[1]
     if (running && running.sid === sid) running.stopped = true

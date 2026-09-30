@@ -273,6 +273,13 @@ describe('OpenCode chat: turns', () => {
     expect(ofType(events, 'retry').length).toBe(5)
   })
 
+  it('compact -> POST /session/:id/summarize', async () => {
+    const { chat, reqs } = setup()
+    expect((await chat.start()).ok).toBe(true)
+    expect(await chat.compact()).toEqual({ ok: true })
+    expect(reqs('POST', /\/summarize$/)).toHaveLength(1)
+  })
+
   it('interrupt aborts the turn: interrupted', async () => {
     const { chat, events, reqs } = setup()
     expect((await chat.start()).ok).toBe(true)

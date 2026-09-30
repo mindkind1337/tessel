@@ -400,6 +400,68 @@ export function createChatSessions(deps) {
     markFailed(s, turn)
     s.turn = null
     workStatus(s)
+    if (turn.kind === 'compact') return giveUpCompaction(s, r?.error)
+    pump(s)
+    idleCheck(s)
+  }
+
+  // ---- a conversation too long for the model ----------------------------------
+  // The model refused the turn for its length ("Prompt is too long", a context
+  // window overflow): the conversation is compacted, then the message sent
+  // again, once. Failing that, the user is told to start a new conversation.
+
+  const TOO_LONG = /prompt is too long|context.?(window|length)|too many tokens|maximum context|context_length_exceeded|contextoverflow|ran out of room/i
+  const isTooLong = (error) => TOO_LONG.test(String(error || ''))
+  const agentLabel = (s) => ({ claude: 'Claude', codex: 'Codex', opencode: 'OpenCode' })[s.agent] || s.agent // i18n-ignore
+
+  function startCompaction(s) {
+    if (s.agent === 'claude') {
+      // Claude's own command, as a turn of its own (no row in the chat).
+      void deliver(s, { kind: 'compact', uuid: randomUUID(), ids: [], text: '/compact' })
+      return
+    }
+    const compact = s.adapter?.compact
+    if (typeof compact !== 'function') return giveUpCompaction(s)
+    const turn = { kind: 'compact', uuid: null, ids: [], accepted: true }
+    s.turn = turn
+    workStatus(s)
+    Promise.resolve()
+      .then(() => compact.call(s.adapter))
+      .then(
+        (r) => {
+          if (s.turn !== turn) return // closed meanwhile
+          s.turn = null
+          if (r && r.ok) resendAfterCompaction(s)
+          else giveUpCompaction(s, r && r.error)
+        },
+        (err) => {
+          if (s.turn !== turn) return
+          s.turn = null
+          giveUpCompaction(s, err?.message)
+        }
+      )
+  }
+  function resendAfterCompaction(s) {
+    const c = s.compaction
+    if (!c || s.finished || s.closing) return pump(s)
+    c.phase = 'retrying'
+    void deliver(s, { kind: c.kind, uuid: randomUUID(), ids: c.ids, text: c.text, wasQueued: true })
+  }
+  function giveUpCompaction(s, error = '') {
+    const c = s.compaction
+    s.compaction = null
+    if (c && c.kind === 'user') for (const id of c.ids) emit(s.paneId, { type: 'userStatus', id, status: 'failed' })
+    else if (c && c.kind === 'team') emit(s.paneId, { type: 'teamFailed', ids: [...c.ids] })
+    if (!s.finished) {
+      emit(s.paneId, {
+        type: 'notice',
+        kind: 'error',
+        text: t('main.chat.tooLong', 'The conversation is too long for {{agent}} and could not be compacted: start a new conversation.', { agent: agentLabel(s) }),
+        action: 'newConversation',
+        ...(error ? { detail: String(error).slice(0, 500) } : {})
+      })
+    }
+    workStatus(s)
     pump(s)
     idleCheck(s)
   }
@@ -532,6 +594,11 @@ export function createChatSessions(deps) {
         })
       }
     })
+    // The API's own error message (Claude: "Prompt is too long"): kept for
+    // the turn's end, never shown as the assistant's words.
+    on('apiError', (e) => {
+      if (!e.parentToolUseId && !e.agentId) s.apiError = { code: String(e.code || ''), message: String(e.message || '') }
+    })
     on('toolResult', (e) => {
       if (!e.toolUseId) return
       s.tools.delete(e.toolUseId)
@@ -600,6 +667,9 @@ export function createChatSessions(deps) {
     on('turnEnd', (e) => {
       cancelQuestions(s)
       const turn = s.turn
+      // Codex's or OpenCode's compaction is not a turn of the chat: its own
+      // promise settles it (startCompaction).
+      if (turn && turn.kind === 'compact' && s.agent !== 'claude') return
       if (turn && !turn.accepted) {
         const uuids = Array.isArray(e.userMessageUuids) ? e.userMessageUuids : []
         if (turn.uuid && uuids.includes(turn.uuid)) markAccepted(s, turn)
@@ -608,27 +678,43 @@ export function createChatSessions(deps) {
       if (turn) turnStarted(s)
       const st = ['completed', 'interrupted', 'failed'].includes(e.status) ? e.status : 'failed'
       s.lastInterrupted = st === 'interrupted'
-      const why = e.result || e.error
+      const apiError = s.apiError
+      s.apiError = null
+      const why = e.result || e.error || (apiError && apiError.message)
       const error = st === 'failed' && why ? String(typeof why === 'object' ? why.message || JSON.stringify(why) : why).slice(0, 4000) : ''
+      // The error is shown once, by the turn's end (the window's one red
+      // notice): never again as a notice, never as the assistant's words.
+      let shown = error
+      let after = null
+      if (turn && turn.kind === 'compact') {
+        // Claude's /compact turn: done, the message goes again; failed, said below.
+        shown = ''
+        after = st === 'completed' ? () => resendAfterCompaction(s) : () => giveUpCompaction(s, error)
+      } else if (s.compaction) {
+        // The message sent again after the compaction.
+        if (st === 'failed' && isTooLong(error)) {
+          shown = ''
+          after = () => giveUpCompaction(s, error)
+        } else s.compaction = null
+      } else if (st === 'failed' && isTooLong(error) && turn && (turn.kind === 'user' || turn.kind === 'team')) {
+        s.compaction = { kind: turn.kind, ids: [...turn.ids], text: turn.text, phase: 'compacting' }
+        shown = ''
+        emit(s.paneId, { type: 'notice', kind: 'info', text: t('main.chat.compacting', 'Conversation too long: compacting, then your message is sent again…') })
+        after = () => startCompaction(s)
+      }
       emit(s.paneId, {
         type: 'turnEnd',
         status: st,
         ...(e.usage ? { usage: e.usage } : {}),
         ...(typeof e.costUsd === 'number' ? { costUsd: e.costUsd } : {}),
         ...(typeof e.durationMs === 'number' ? { durationMs: e.durationMs } : {}),
-        ...(error ? { error } : {})
+        ...(shown ? { error: shown } : {})
       })
       // A Codex or OpenCode turn can fail with no text of its own (content
       // filter, usage limit, a provider error): said plainly; the queue goes
       // on below.
-      if (st === 'failed' && (s.agent === 'codex' || s.agent === 'opencode')) {
-        emit(s.paneId, {
-          type: 'notice',
-          kind: 'error',
-          text: error
-            ? t('main.chat.turnFailed', 'The turn failed: {{error}}', { error })
-            : t('main.chat.turnFailedNoReason', 'The turn failed.')
-        })
+      if (st === 'failed' && !error && !after && (s.agent === 'codex' || s.agent === 'opencode')) {
+        emit(s.paneId, { type: 'notice', kind: 'error', text: t('main.chat.turnFailedNoReason', 'The turn failed.') })
       }
       // Tools of the turn that never reported a result. A sub-agent's
       // (agentId) are left open: a background child goes on after the
@@ -652,7 +738,8 @@ export function createChatSessions(deps) {
       s.turn = null
       flushContext(s)
       workStatus(s)
-      pump(s)
+      if (after) after()
+      else pump(s)
       idleCheck(s)
     })
     on('rateLimit', (e) => {
@@ -736,6 +823,7 @@ export function createChatSessions(deps) {
     s.idleTimer = null
     if (s.turn) markFailed(s, s.turn)
     s.turn = null
+    s.compaction = null
     failQueued(s)
     for (const [requestId, ap] of s.approvals) {
       if (ap.status !== 'pending') continue

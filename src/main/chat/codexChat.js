@@ -25,7 +25,7 @@ import { observeCodexSubagents } from './codexSubagents.js'
 
 export const PERMISSION_MODES = ['default', 'bypassPermissions', 'acceptEdits', 'plan']
 // quitKill: how long a kill on quit waits for the exit before giving up.
-export const DEFAULT_TIMEOUTS = { start: 30000, request: 30000, close: 3000, exitFlush: 1000, idleSettle: 10000, accountProbe: 5000, catalog: 1500, quitKill: 1500 }
+export const DEFAULT_TIMEOUTS = { start: 30000, request: 30000, close: 3000, exitFlush: 1000, idleSettle: 10000, accountProbe: 5000, catalog: 1500, quitKill: 1500, compact: 120000 }
 export const killCodexTree = killClaudeTree
 const STDERR_TAIL = 8 * 1024
 export const MAX_LINE = 8 * 1024 * 1024 // a line longer than this is dropped (runaway output)
@@ -736,6 +736,28 @@ export function createCodexChat(opts) {
   }
 
   // A request of ours -> { ok:true, result } | { ok:false, code:'timeout'|'exit'|'error', error, rpcCode? }.
+  // Compacts the thread (Codex summarizes its history in place): resolves
+  // once Codex says thread/compacted. -> { ok } | { ok: false, error }
+  const compactWaiters = []
+  async function compact() {
+    if (!alive() || !state.threadId) return { ok: false, error: 'not running' } // i18n-ignore internal
+    let settle
+    const done = new Promise((resolve) => {
+      settle = resolve
+      compactWaiters.push(resolve)
+    })
+    const r = await request('thread/compact/start', { threadId: state.threadId })
+    if (!r.ok) {
+      const i = compactWaiters.indexOf(settle)
+      if (i >= 0) compactWaiters.splice(i, 1)
+      return { ok: false, error: r.error }
+    }
+    const timer = setTimeout(() => settle({ ok: false, error: 'timeout' }), timeouts.compact) // i18n-ignore internal
+    const res = await done
+    clearTimeout(timer)
+    return res
+  }
+
   function request(method, params, ms = timeouts.request) {
     if (!alive()) return Promise.resolve({ ok: false, code: 'exit', error: 'process not running' }) // i18n-ignore internal
     const id = ++reqN
@@ -909,6 +931,9 @@ export function createCodexChat(opts) {
       const permId = permByRaw.get(JSON.stringify(params.requestId))
       if (permId) cancelPermissions((p) => JSON.stringify(p.rawId) === JSON.stringify(params.requestId))
       return
+    }
+    if (m.method === 'thread/compacted' && (!params.threadId || params.threadId === state.threadId)) {
+      for (const w of compactWaiters.splice(0)) w({ ok: true })
     }
     if (m.method === 'thread/status/changed' && (!params.threadId || params.threadId === state.threadId)) {
       const t = obj(params.status).type
@@ -1354,6 +1379,7 @@ export function createCodexChat(opts) {
     start,
     send,
     interrupt,
+    compact,
     answerPermission,
     answerQuestion: questions.answer,
     setModel,

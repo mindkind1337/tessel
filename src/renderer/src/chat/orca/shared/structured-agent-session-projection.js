@@ -128,6 +128,9 @@ function itemBlocks(item) {
                 ...body.tone !== undefined ? {
                     tone: body.tone
                 } : {},
+                ...body.action !== undefined ? {
+                    action: body.action
+                } : {},
                 ...body.providerFrame ? {
                     providerFrame: body.providerFrame
                 } : {}

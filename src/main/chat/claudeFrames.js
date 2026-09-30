@@ -325,6 +325,13 @@ function normalizeClaudeFrame(m, state) {
           if (typeof msg.model === 'string' && msg.model && msg.model !== '<synthetic>') state.responseModel = msg.model
         }
       }
+      // The API's own error, carried as an assistant frame (error:
+      // 'invalid_request', the text "Prompt is too long"): not something the
+      // assistant said. Once, as apiError; the result frame ends the turn.
+      if (typeof m.error === 'string' && m.error) {
+        out.push({ type: 'apiError', code: m.error, message: blocks.filter((b) => b.type === 'text').map((b) => b.text).join('\n').trim(), parentToolUseId })
+        break
+      }
       if (blocks.length) out.push({ type: 'assistant', messageId: msg.id ?? null, blocks, parentToolUseId })
       break
     }

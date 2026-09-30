@@ -70,6 +70,7 @@ const Block = z.union([
             text: z.string(),
             presentation: z.string().optional(),
             tone: z.string().optional(),
+            action: z.string().optional(),
             providerFrame: ProviderFrame.optional()
         }),
         z.object({
@@ -222,6 +223,7 @@ export const AgentJournalItemBodySchema = z.discriminatedUnion('kind', [
         text: z.string(),
         presentation: z.string().optional(),
         tone: z.string().optional(),
+        action: z.string().optional(),
         turnLifecycle: z.object({
             turnId: z.string(),
             state: z.string().min(1),

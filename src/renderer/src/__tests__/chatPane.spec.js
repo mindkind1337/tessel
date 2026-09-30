@@ -237,6 +237,24 @@ describe('ChatPane.vue', () => {
     expect(document.querySelector('[data-native-chat-empty-state="empty"]').textContent).toContain('Start a chat with Claude')
   })
 
+  it('a notice offering a new conversation: the pane stays, its session is closed and a fresh one started', async () => {
+    history = { ok: true, events: [], seq: 0 }
+    await mountPane()
+    api.close = vi.fn(async () => ({ ok: true }))
+    expect(ctx.chatOpen).toHaveBeenCalledTimes(1)
+    node.sessionId = 's-old'
+    emit({ type: 'notice', kind: 'error', text: 'The conversation is too long', action: 'newConversation' })
+    await settle()
+    const button = document.querySelector('[data-test="nc-notice-action"]')
+    expect(button.textContent).toContain('New conversation')
+    await click(button)
+    await flushPromises()
+    await settle()
+    expect(api.close).toHaveBeenCalledWith({ paneId: 'c1', forget: true })
+    expect(ctx.chatOpen).toHaveBeenCalledTimes(2)
+    expect(node.sessionId).toBe('s-new')
+  })
+
   it('shows only the events of its own pane; streams and tool output as text', async () => {
     await mountPane()
     emit({ type: 'user', id: 'u1', text: 'go', origin: 'user', status: 'accepted' })

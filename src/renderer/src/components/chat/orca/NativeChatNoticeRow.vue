@@ -10,7 +10,7 @@
  * bridge). Notice text is text, never HTML; only a plan goes through
  * ChatMarkdown.
  */
-import { computed } from 'vue'
+import { computed, inject } from 'vue'
 import { AlertCircle, AlertTriangle, Info } from 'lucide-vue-next'
 import { t } from '../../../i18n'
 import { Card, CardContent, CardHeader, CardTitle } from './ui'
@@ -28,6 +28,9 @@ const compactionLabel = computed(() => t('chat.orca.notices.compaction', 'Contex
 const planTitle = computed(() => t('chat.orca.notices.plan', 'Plan'))
 const detailsLabel = computed(() => t('chat.orca.notices.details', 'Details'))
 const copyErrorLabel = computed(() => t('chat.error.copyLabel', 'Copy the error text'))
+// Tessel: a notice can offer a way out (block.action), done by the pane.
+const onAction = inject('chatNoticeAction', null)
+const actionLabel = computed(() => (props.block.action === 'newConversation' ? t('chat.notice.newConversation', 'New conversation') : ''))
 
 const tone = computed(() => props.block.tone)
 const icon = computed(() =>
@@ -86,11 +89,17 @@ const icon = computed(() =>
         data-test="nc-copy-error"
       />
     </div>
+    <div v-if="actionLabel && onAction" class="nc-notice-actions">
+      <button type="button" class="exit-btn primary" data-test="nc-notice-action" @click="onAction(block.action)">{{ actionLabel }}</button>
+    </div>
     <ProviderFrameRow v-if="block.providerFrame" :block="block" :summary="detailsLabel" />
   </div>
 </template>
 
 <style scoped>
+.nc-notice-actions {
+  margin-top: 8px;
+}
 .nc-notice-separator {
   display: flex;
   align-items: center;

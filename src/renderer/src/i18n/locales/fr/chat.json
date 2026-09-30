@@ -523,6 +523,7 @@
   "chat.orca.scrollMessageToTop": "Faire défiler ce message en haut",
   "chat.orca.goal.sentAsGoal": "Envoyé comme objectif",
   "chat.orca.notices.compaction": "Contexte compacté",
+  "chat.notice.newConversation": "Nouvelle conversation",
   "chat.orca.notices.plan": "Plan",
   "chat.orca.notices.details": "Détails",
   "chat.orca.providerFrame.byteLength": "{{value0}} octets",

@@ -79,6 +79,15 @@ describe('claudeFrames against real frames', () => {
     expect(run('text-delta', s)).toEqual([{ type: 'textDelta', messageId: 'msg_011CfXWCXD7GpQFv3m9tyPmv', index: 1, text: 'OK', parentToolUseId: null }])
   })
 
+  it('the API\'s own error in an assistant frame ("Prompt is too long") is apiError, never the assistant\'s words; the result ends the turn', () => {
+    const s = createFrameState()
+    // As Claude Code 2.1.282 writes it (an assistant frame with error: 'invalid_request', then the result).
+    const frame = { type: 'assistant', error: 'invalid_request', isApiErrorMessage: true, message: { id: 'msg_err', role: 'assistant', model: '<synthetic>', content: [{ type: 'text', text: 'Prompt is too long' }], stop_reason: 'stop_sequence' }, session_id: 's', uuid: 'u1' }
+    expect(normalizeFrame(frame, s)).toEqual([{ type: 'apiError', code: 'invalid_request', message: 'Prompt is too long', parentToolUseId: null }])
+    const result = { type: 'result', subtype: 'success', is_error: true, result: 'Prompt is too long', duration_ms: 12, num_turns: 1, session_id: 's', uuid: 'u2' }
+    expect(normalizeFrame(result, s)[0]).toMatchObject({ type: 'turnEnd', status: 'failed', isError: true, result: 'Prompt is too long' })
+  })
+
   it('assistant frames -> blocks (empty thinking dropped, tool_use kept)', () => {
     expect(run('assistant-thinking-empty')).toEqual([])
     expect(run('assistant-text')).toEqual([{ type: 'assistant', messageId: 'msg_011CfXWCXD7GpQFv3m9tyPmv', blocks: [{ type: 'text', text: 'OK' }], parentToolUseId: null }])
@@ -268,7 +277,7 @@ describe('claudeFrames helpers', () => {
     expect(normalizeFrame({ type: 'system', subtype: 'api_retry', error: 'authentication_failed', error_status: 401 }, s)).toEqual([{ type: 'authError', message: 'authentication_failed' }])
     expect(normalizeFrame({ type: 'system', subtype: 'api_retry', error: 'rate_limit', error_status: 429 }, s)).toEqual([])
     const evs = normalizeFrame({ type: 'assistant', error: 'authentication_failed', message: { id: 'm', content: [{ type: 'text', text: 'x' }] } }, s)
-    expect(evs.map((e) => e.type)).toEqual(['authError', 'assistant'])
+    expect(evs.map((e) => e.type)).toEqual(['authError', 'apiError'])
   })
 
   it('subagent frames keep their parent tool use id and do not steal the stream id', () => {
