@@ -231,8 +231,11 @@ export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence =
         if (!ev.id) break
         const itemId = agentJournalSubmissionKey(String(ev.id))
         const body = { kind: 'message', role: 'user', blocks: [{ type: 'text', text: String(ev.text ?? '') }] }
-        // Tessel's addition: a teammate's message, labelled as such.
+        // Tessel's addition: a teammate's message, labelled as such. Its
+        // "(message <id>, reply to <id>) " header is for the agent (to answer
+        // with reply_to): the chat shows the message alone.
         if (ev.origin === 'team') {
+          body.blocks[0].text = body.blocks[0].text.replace(/^(?:\(message [\w.:-]{1,120}(?:, reply to [\w.:-]{1,120})?\)\s*)+/, '')
           body.sentAs = 'team'
           if (ev.from) body.from = String(ev.from)
         }

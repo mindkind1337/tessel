@@ -86,6 +86,20 @@ describe('journal adapter', () => {
     expect(input('t3').changes.map((c) => c.path)).toEqual(['a.md', 'D:\\z'])
   })
 
+  it("a team message shows without its id header (that header is for the agent's reply_to)", () => {
+    const { state } = run([
+      { type: 'user', id: 't9', origin: 'team', from: '#2 Claude Code', status: 'accepted', text: '(message db16-pane-12-383991, reply to 0225-pane-6-336010) Merci, fusionné.' },
+      { type: 'user', id: 't10', origin: 'team', from: '#1 Codex', status: 'accepted', text: '(message aa11-pane-1-1) Bien reçu.' },
+      { type: 'user', id: 'u9', status: 'accepted', text: '(message x) typed by the user: kept as it is' }
+    ])
+    const texts = JSON.stringify(messages(state))
+    expect(texts).toContain('Merci, fusionné.')
+    expect(texts).toContain('Bien reçu.')
+    expect(texts).not.toContain('db16-pane-12-383991')
+    expect(texts).not.toContain('aa11-pane-1-1')
+    expect(texts).toContain('(message x) typed by the user')
+  })
+
   it('a queued message is listed until the engine takes it', () => {
     const adapter = createJournalAdapter({ now: () => 1 })
     adapter.replay([
