@@ -550,3 +550,22 @@ describe('Source Control: branch line and Commits', () => {
     await w.find('[data-test="sc-history-toggle"]').trigger('click') // closed again for the next tests
   })
 })
+
+describe('Source Control: a project on an SSH host', () => {
+  const RROOT = 'ssh://ssh-box1/srv/app'
+  it('Create PR is offered and names the project folder (gh reads the host repository from it)', async () => {
+    api({ status: () => status([], { top: 'ssh://ssh-box1/srv' }) })
+    make({ root: RROOT })
+    await flushPromises()
+    expect(calls[0]).toEqual(['status', expect.objectContaining({ root: RROOT })])
+    await w.get('[data-test="sc-create-pr"]').trigger('click')
+    expect(w.emitted('create-pr')).toEqual([[{ cwd: RROOT, taskId: null }]])
+  })
+
+  it('no Create PR without a branch or a remote, as for a local project', async () => {
+    api({ status: () => status([], { branch: '', remotes: [] }) })
+    make({ root: RROOT })
+    await flushPromises()
+    expect(w.find('[data-test="sc-create-pr"]').exists()).toBe(false)
+  })
+})

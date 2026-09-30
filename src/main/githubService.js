@@ -57,6 +57,29 @@ function kindInput(value) {
   if (value !== 'issues' && value !== 'prs') fail('validation', t('main.github.invalidKind', 'Invalid GitHub item kind.'))
   return value === 'issues' ? 'issue' : 'pr'
 }
+// A git remote's URL (https://host/owner/repo(.git), ssh://[user@]host[:port]/owner/repo,
+// user@host:owner/repo) -> "host/owner/repo" for gh's --repo / repo view, or
+// null. Only the host name, owner and name are kept (never a user or a token).
+export function githubRepoSpec(url) {
+  if (typeof url !== 'string' || url.length > 2048 || /[\u0000- \u007f]/.test(url)) return null
+  let host
+  let rest
+  let m
+  if ((m = /^(?:https?|ssh|git):\/\/(?:[^@/]*@)?([^/:]+)(?::\d{1,5})?\/(.+)$/i.exec(url))) {
+    host = m[1]
+    rest = m[2]
+  } else if ((m = /^(?:[A-Za-z0-9._-]+@)?([A-Za-z0-9.-]+):(?!\/)(.+)$/.exec(url))) {
+    host = m[1]
+    rest = m[2]
+  } else return null
+  const parts = rest.replace(/\/+$/, '').replace(/\.git$/i, '').split('/')
+  if (parts.length !== 2) return null
+  const [owner, repo] = parts
+  const NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/
+  if (!/^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$/.test(host) || !NAME.test(owner) || !NAME.test(repo)) return null
+  return `${host.toLowerCase()}/${owner}/${repo}`
+}
+
 function branchInput(value, head = false) {
   if (typeof value !== 'string' || !value || value.length > 255)
     fail('validation', t('main.github.invalidBranch', 'Invalid branch name.'))
@@ -240,7 +263,10 @@ export function createGithubService({
   platform = process.platform,
   ghPath,
   gitPath,
-  tempDir = os.tmpdir()
+  tempDir = os.tmpdir(),
+  // Projects on an SSH host: { isRemote(cwd), context(cwd) -> { ok, remoteUrl,
+  // branch } | { ok: false, error } } (remoteFs.js githubContext).
+  remote = null
 } = {}) {
   const execute = runner || defaultRunner
   const local = env.LOCALAPPDATA || path.join(home, 'AppData', 'Local')
@@ -332,12 +358,32 @@ export function createGithubService({
     }
     return cwd
   }
-  async function repository(cwd) {
+  // Where a request runs: a local Git folder, or a project on an SSH host
+  // (its virtual root, ssh://…). The host's repository is named to gh from
+  // its remote's URL (read on the host through its session, remoteFs.js) and
+  // gh runs here in the home folder: nothing of the host runs on this computer.
+  // -> { cwd, spec?, branch?, remote? }
+  async function place(cwd) {
+    if (remote && typeof cwd === 'string' && remote.isRemote(cwd)) {
+      let ctx = null
+      try {
+        ctx = await remote.context(cwd)
+      } catch {
+        ctx = null
+      }
+      if (!ctx || !ctx.ok) fail('repository', (ctx && typeof ctx.error === 'string' && ctx.error) || t('main.github.noRepo', 'The current directory has no supported GitHub repository.'))
+      const spec = githubRepoSpec(ctx.remoteUrl)
+      if (!spec) fail('repository', t('main.github.noRepo', 'The current directory has no supported GitHub repository.'))
+      return { cwd: home, spec, branch: typeof ctx.branch === 'string' ? ctx.branch : '', remote: true }
+    }
+    return { cwd: await cwdInput(cwd) }
+  }
+  async function repository(at) {
     const value = json(
       await command(
         executable,
-        ['repo', 'view', '--json', 'nameWithOwner,defaultBranchRef,url'],
-        cwd
+        ['repo', 'view', ...(at.spec ? [at.spec] : []), '--json', 'nameWithOwner,defaultBranchRef,url'],
+        at.cwd
       )
     )
     const name = value?.nameWithOwner
@@ -443,14 +489,15 @@ export function createGithubService({
     }
   return {
     status: safe(async ({ cwd }) => {
-      cwd = await cwdInput(cwd)
+      const at = await place(cwd)
+      cwd = at.cwd
       if (!executable) return { ok: true, available: false, authenticated: false }
       const version = await command(executable, ['--version'], cwd, { raw: true })
       if (version.code === 'ENOENT') return { ok: true, available: false, authenticated: false }
       if (version.code !== 0) commandError(version)
       let repo
       try {
-        repo = await repository(cwd)
+        repo = await repository(at)
       } catch {
         /* Auth status remains useful outside a repo. */
       }
@@ -483,8 +530,9 @@ export function createGithubService({
           'validation',
           t('main.github.searchQualifiers', 'Search within the current repository without repo, org, or user qualifiers.')
         )
-      cwd = await cwdInput(cwd)
-      const repo = await repository(cwd)
+      const at = await place(cwd)
+      cwd = at.cwd
+      const repo = await repository(at)
       const args = [
         type,
         'list',
@@ -511,8 +559,9 @@ export function createGithubService({
     detail: safe(async ({ cwd, kind, number }) => {
       const type = kindInput(kind)
       const id = numberInput(number)
-      cwd = await cwdInput(cwd)
-      const repo = await repository(cwd)
+      const at = await place(cwd)
+      cwd = at.cwd
+      const repo = await repository(at)
       const fields =
         COMMON_FIELDS + ',body,comments' + (kind === 'prs' ? PR_FIELDS + ',mergeable,files' : '')
       const value = json(
@@ -555,8 +604,9 @@ export function createGithubService({
     createIssue: safe(async ({ cwd, title, body = '' }) => {
       textInput(title, t('main.github.field.issueTitle', 'issue title'), 256, true)
       textInput(body, t('main.github.field.issueBody', 'issue body'), 65536)
-      cwd = await cwdInput(cwd)
-      const repo = await repository(cwd)
+      const at = await place(cwd)
+      cwd = at.cwd
+      const repo = await repository(at)
       const result = await bodyFile(body, (file) =>
         command(
           executable,
@@ -573,11 +623,13 @@ export function createGithubService({
       branchInput(base)
       if (head !== undefined) branchInput(head, true)
       if (typeof draft !== 'boolean') fail('validation', t('main.github.invalidDraft', 'Invalid draft choice.'))
-      cwd = await cwdInput(cwd)
-      const repo = await repository(cwd)
+      const at = await place(cwd)
+      cwd = at.cwd
+      const repo = await repository(at)
       if (!head)
         head = branchInput(
-          (await command(git, ['symbolic-ref', '--quiet', '--short', 'HEAD'], cwd)).stdout.trim()
+          // A remote project: its branch as read on the host.
+          at.remote ? at.branch : (await command(git, ['symbolic-ref', '--quiet', '--short', 'HEAD'], cwd)).stdout.trim()
         )
       if (head === base) fail('validation', t('main.github.sameBase', 'Choose a base branch different from the head branch.'))
       const args = ['pr', 'create', '--base', base, '--head', head, '--title', title]
@@ -589,8 +641,9 @@ export function createGithubService({
     }),
     checks: safe(async ({ cwd, number }) => {
       const id = numberInput(number)
-      cwd = await cwdInput(cwd)
-      const repo = await repository(cwd)
+      const at = await place(cwd)
+      cwd = at.cwd
+      const repo = await repository(at)
       return { ok: true, ...(await readChecks(cwd, repo, id)) }
     }),
     action: safe(async ({ cwd, kind, number, action, body, reason, method = 'squash' }) => {
@@ -614,8 +667,9 @@ export function createGithubService({
         !(action === 'close' && kind === 'issues' && ['completed', 'not planned'].includes(reason))
       )
         fail('validation', t('main.github.invalidReason', 'Invalid closing reason.'))
-      cwd = await cwdInput(cwd)
-      const repo = await repository(cwd)
+      const at = await place(cwd)
+      cwd = at.cwd
+      const repo = await repository(at)
       if (action === 'comment') {
         await bodyFile(body, (file) =>
           command(executable, scoped([type, 'comment', id, '--body-file', file], repo), cwd, {
@@ -709,8 +763,11 @@ export function createGithubService({
     }),
     startPoint: safe(async ({ cwd, number }) => {
       const id = numberInput(number)
-      cwd = await cwdInput(cwd)
-      const repo = await repository(cwd)
+      const at = await place(cwd)
+      // It fetches into a local checkout: none for a project on a host.
+      if (at.remote) fail('validation', t('main.github.remoteStartPoint', 'Not available for a project on a remote host.'))
+      cwd = at.cwd
+      const repo = await repository(at)
       const item = await prHead(cwd, repo, id)
       const ref = `refs/tessel/pr/${id}`
       const remotes = (await command(git, ['remote', '-v'], cwd)).stdout

@@ -379,6 +379,7 @@
       "chooseCwd": "Choisissez un dossier de travail Git local.",
       "cwdUnavailable": "Le dossier de travail Git n'est pas disponible.",
       "noRepo": "Le dossier actuel n'a aucun dépôt GitHub pris en charge.",
+      "remoteStartPoint": "Non disponible pour un projet sur un hôte distant.",
       "invalidRepo": "GitHub a renvoyé une identité de dépôt non valide.",
       "otherRepo": "GitHub a renvoyé un élément d'un autre dépôt.",
       "noUrl": "GitHub a peut-être créé l'élément, mais n'a renvoyé aucune URL utilisable. Actualisez avant de réessayer.",

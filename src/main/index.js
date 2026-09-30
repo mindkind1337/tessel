@@ -22,6 +22,7 @@ import { createCodexTurnEnd, allowedCodexHome, TURN_END_CHECK_MS } from './codex
 import { createUsageStatsTracker } from './usageStatsTracker'
 import { copyUsageImage } from './usageClipboard'
 import { registerIssueServices } from './issueServicesIpc'
+import { createGithubService } from './githubService'
 import { createRemoteHosts, registerRemoteHosts } from './remoteHosts'
 import { remoteProjectLaunch } from './remoteProject'
 import { createAddProject, registerAddProject } from './addProject'
@@ -1477,7 +1478,15 @@ ipcMain.handle(
   })
 )
 const accountOptions = { userData: app.getPath('userData'), runLogin: createProviderLogin() }
-registerIssueServices({ ipcMain, dir: join(app.getPath('userData'), 'linear'), safeStorage, onPrCreated: (url) => usageStats.prCreated(url) })
+// A remote project's GitHub form and Create PR: its repository named from
+// its remote's URL, read on the host (remoteFs.js githubContext).
+registerIssueServices({
+  ipcMain,
+  dir: join(app.getPath('userData'), 'linear'),
+  safeStorage,
+  github: createGithubService({ remote: { isRemote: isRemotePath, context: (root) => remoteFs.githubContext(root) } }),
+  onPrCreated: (url) => usageStats.prCreated(url)
+})
 // Remote hosts over SSH (remoteHosts.js): Settings > SSH Hosts, the status bar.
 const remoteHosts = createRemoteHosts({ dir: app.getPath('userData'), onChange: (states) => send('remoteHosts:state', states) })
 // A remote project's Files / Changes session (remoteFs.js) counts as one of

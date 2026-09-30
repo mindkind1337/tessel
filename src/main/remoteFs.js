@@ -1139,6 +1139,34 @@ export function createRemoteFs({
     return { ok: true, repo: true, branch: parsed.branch, head: parsed.head, truncated, worktrees }
   }
 
+  // --- GitHub (Create PR, the GitHub form) ---------------------------------------
+  // What gh needs to work on a remote project's repository from this
+  // computer: its GitHub remote's URL and its branch, read on the host (the
+  // user asked: the session may sign in). Remotes in gh's own order
+  // (upstream, github, origin, then the first). -> { ok, remoteUrl, branch } |
+  // { ok: false, error }
+  async function githubContext(root) {
+    const loc = under(root, root)
+    if (!loc) return { ok: false, error: t('main.scm.invalidFolder', 'Invalid folder.') }
+    const info = await repoInfo(loc)
+    if (info.error) return { ok: false, error: info.error }
+    if (info.missing || !info.top) return { ok: false, error: t('main.scm.notRepo', 'This folder is not in a git repository.') }
+    const git = (args, cap = 64 * 1024) => call(loc.hostId, '__t_gitin', [arg(loc.root.path), arg(info.top), ...info.gitArgs, ...args], { cap, op: 'git' })
+    const rem = await git(['remote', '-v'])
+    if (rem.error) return { ok: false, error: rem.error }
+    const fetchUrls = new Map()
+    for (const line of rem.out.toString('utf8').split('\n')) {
+      const m = /^(\S+)\t(\S+) \(fetch\)$/.exec(line.replace(/\r$/, ''))
+      if (m && !fetchUrls.has(m[1])) fetchUrls.set(m[1], m[2])
+    }
+    const name = ['upstream', 'github', 'origin'].find((n) => fetchUrls.has(n)) || [...fetchUrls.keys()][0]
+    if (!name) return { ok: false, error: t('main.github.noRepo', 'The current directory has no supported GitHub repository.') }
+    const head = await git(['symbolic-ref', '--quiet', '--short', 'HEAD'], 4096)
+    if (head.error) return { ok: false, error: head.error }
+    const branch = head.rc === 0 ? head.out.toString('utf8').trim() : ''
+    return { ok: true, remoteUrl: fetchUrls.get(name), branch: CONTROL.test(branch) ? '' : branch }
+  }
+
   // --- Add a project on the host ------------------------------------------------
   // The one exception to "only below a saved project": the window picks a
   // folder on the host before any project exists. Only through the host's
@@ -1262,6 +1290,7 @@ export function createRemoteFs({
     scm: { ...scm, scmDiscard: (q) => scm.scmDiscard(q) },
     remoteOnly,
     gitWorktrees,
+    githubContext,
     connect,
     browse,
     cloneProject,

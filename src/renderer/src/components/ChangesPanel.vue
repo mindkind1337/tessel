@@ -726,13 +726,15 @@ function onMoreOutside(e) {
   if ((moreEl.value && moreEl.value.contains(e.target)) || (moreBtn.value && moreBtn.value.contains(e.target))) return
   closeMore()
 }
-// A project on a remote host: its git runs there (remoteFs.js); the GitHub
-// form and the message agents work on this machine's folders, so not yet.
+// A project on a remote host: its git runs there (remoteFs.js); the message
+// agents work on this machine's folders, so not yet. Create PR runs gh here on
+// the host's repository (named from its remote, githubService.js), so it
+// names the project folder (the one saved root the main process accepts).
 const remoteRepo = computed(() => isRemotePath(repoRoot.value))
-const canCreatePr = computed(() => !remoteRepo.value && !!(data.value && data.value.repo && data.value.branch && (data.value.remotes || []).length))
+const canCreatePr = computed(() => !!(data.value && data.value.repo && data.value.branch && (data.value.remotes || []).length))
 function createPr() {
   closeMore()
-  emit('create-pr', { cwd: top.value, taskId: copyTask.value ? copyTask.value.id : null })
+  emit('create-pr', { cwd: remoteRepo.value ? repoRoot.value : top.value, taskId: copyTask.value ? copyTask.value.id : null })
 }
 const branchTitle = computed(() => {
   const d = data.value

@@ -9665,7 +9665,7 @@ onBeforeUnmount(() => {
       @manage-hosts="manageHostsFromAddProject"
       @close="addProjectOpen = false"
     />
-    <GitHubDialog v-if="githubOpen" :cwd="issueWorkspace?.cwd || ''" :pr-cwd="githubTaskContext?.cwd || ''" :pr-base="githubTaskContext?.base || ''" :initial-mode="githubTaskContext ? 'createPr' : ''" :agents="taskAgentKinds" :default-agent="settings.defaultAgent || ''" :start-issue="prepareLinkedIssue" @busy="githubBusy = $event" @close="githubOpen = false" />
+    <GitHubDialog v-if="githubOpen" :cwd="(issueWorkspace && gitKeyOf(issueWorkspace)) || ''" :pr-cwd="githubTaskContext?.cwd || ''" :pr-base="githubTaskContext?.base || ''" :initial-mode="githubTaskContext ? 'createPr' : ''" :agents="taskAgentKinds" :default-agent="settings.defaultAgent || ''" :start-issue="prepareLinkedIssue" @busy="githubBusy = $event" @close="githubOpen = false" />
     <LinearDialog v-if="linearOpen" :cwd="issueWorkspace?.cwd || ''" :agents="taskAgentKinds" :default-agent="settings.defaultAgent || ''" :start-issue="prepareLinkedIssue" @busy="linearBusy = $event" @close="linearOpen = false" />
     <FileFinder
       v-if="finderOpen"
