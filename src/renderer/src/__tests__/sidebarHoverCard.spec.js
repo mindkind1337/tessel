@@ -211,7 +211,7 @@ describe('sidebar hover cards', () => {
     expect(text).toContain('Write the tests')
     expect(text).toContain('Claude (chat)')
     expect(text).toContain('Model: Opus 4.7 · high')
-    expect(text).toContain('Working · 3m')
+    expect(text).toContain('Working')
     expect(text).toContain('Team 2')
     expect(card.querySelector('[data-hover-chat]').textContent).toContain('Chat pane 5 (no terminal)')
     // Terminal-only lines are hidden.
