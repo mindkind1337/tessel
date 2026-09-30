@@ -31,8 +31,23 @@ import { realInside } from '../agentChildren.js'
 import { allowedCodexHome } from '../codexTurnEnd.js'
 import { clipDeep, clipString } from './journal.js'
 import { toolName as opencodeToolName, toolInput as opencodeToolInput } from './opencodeFrames.js'
+import {
+  ATTACHMENT_LIMITS,
+  fileCandidate,
+  imageFromBase64,
+  imageFromPath,
+  imageFromUrl,
+  imagePlaceholders,
+  localPath,
+  noteAttachments,
+  resolveHistoryAttachments
+} from './historyAttachments.js'
 
+// attachments (optional): the caps of the images and files a user message
+// shows (historyAttachments.js); without them (the search index) its images
+// are "[image]" text only and nothing is decoded or read.
 export const HISTORY_LIMITS = { bytes: 4 * 1024 * 1024, events: 2000, text: 64 * 1024 }
+export { ATTACHMENT_LIMITS, resolveHistoryAttachments }
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 export function validHistoryId(id) {
@@ -41,9 +56,9 @@ export function validHistoryId(id) {
 
 const obj = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : null)
 const str = (v) => (typeof v === 'string' && v ? v : null)
-// A user message's text with one "[image]" per image it held (the images
-// themselves are never replayed).
-const withImages = (text, n) => (n > 0 ? [text, Array(n).fill('[image]').join(' ')].filter(Boolean).join('\n') : text) // i18n-ignore
+// A user message's text with one "[image]" per image it held (without
+// attachment caps: the images themselves are not read).
+const withImages = imagePlaceholders
 
 function toolSummary(input) {
   const i = obj(input) || {}
@@ -177,10 +192,20 @@ export function createBuilder(limits) {
       turn = null
       messages.clear()
     },
-    user(id, body, ts) {
+    // attachments: what the message held (historyAttachments.js candidates),
+    // resolved once the page is final; without attachment caps, one "[image]"
+    // per image (unless marked: its text already names them) and no files.
+    user(id, body, ts, attachments = [], { marked = false } = {}) {
+      const list = Array.isArray(attachments) ? attachments : []
+      let shown = String(body ?? '')
+      if (!limits.attachments) {
+        if (!marked) shown = withImages(shown, list.filter((c) => c.kind === 'image').length)
+        if (!shown.trim()) return
+      } else if (!shown.trim() && !list.length) return
       // The turn before ended with its last line, not when this one came.
       b.endTurn('completed')
-      const e = push({ type: 'user', id: `hist-${id}`, text: text(body), origin: 'user', status: 'accepted' }, ts) // i18n-ignore id
+      const e = push({ type: 'user', id: `hist-${id}`, text: text(shown), origin: 'user', status: 'accepted' }, ts) // i18n-ignore id
+      if (limits.attachments) noteAttachments(e, list, { marked })
       turn = { at: e.at ?? null }
     },
     // Content with no prompt before it (the window started mid-turn).
@@ -246,6 +271,25 @@ function claudePrompt(textIn) {
   return s
 }
 
+// An image block: { source: { type: 'base64', media_type, data } } (a URL or
+// a file id: not shown).
+function claudeImage(o) {
+  const src = obj(o.source) || {}
+  if (src.type === 'base64') return imageFromBase64(src.data, src.media_type)
+  return imageFromUrl(null)
+}
+
+// A document block (a PDF, a text file): { source: { type: 'base64' | 'text',
+// media_type, data }, title }.
+function claudeDocument(o) {
+  const src = obj(o.source) || {}
+  const mediaType = str(src.media_type) || (src.type === 'text' ? 'text/plain' : '')
+  const name = str(o.title) || (mediaType === 'application/pdf' ? 'document.pdf' : mediaType === 'text/plain' ? 'document.txt' : 'document') // i18n-ignore
+  if (src.type === 'base64') return fileCandidate({ name, mediaType, base64: str(src.data) })
+  if (src.type === 'text') return fileCandidate({ name, mediaType, text: typeof src.data === 'string' ? src.data : '' })
+  return fileCandidate({ name, mediaType })
+}
+
 export function claudeHistoryEvents(lines, limits = HISTORY_LIMITS) {
   const b = createBuilder(limits)
   for (const line of lines) {
@@ -260,23 +304,25 @@ export function claudeHistoryEvents(lines, limits = HISTORY_LIMITS) {
     if (r.type === 'user') {
       const blocks = typeof content === 'string' ? [{ type: 'text', text: content }] : Array.isArray(content) ? content : []
       const texts = []
-      let pictures = 0
+      const attachments = []
       for (const blk of blocks) {
         const o = obj(blk)
         if (!o) continue
         if (o.type === 'tool_result' && str(o.tool_use_id)) b.toolResult(o.tool_use_id, o.content, o.is_error, ts)
         else if (o.type === 'text' && str(o.text) && !meta) texts.push(o.text)
-        else if (o.type === 'image' && !meta) pictures++
+        else if (o.type === 'image' && !meta) attachments.push(claudeImage(o))
+        else if (o.type === 'document' && !meta && limits.attachments) attachments.push(claudeDocument(o))
       }
-      if (!texts.length && !pictures) continue
+      if (!texts.length && !attachments.length) continue
       const joined = texts.join('\n')
       if (INTERRUPTED.test(joined.trim()) || str(r.interruptedMessageId)) {
         b.endTurn('interrupted', ts)
         continue
       }
+      const prompt = claudePrompt(joined)
+      if (prompt == null) continue
       // A terminal's pasted image already says "[Image #1]" in its text.
-      const prompt = /\[Image #\d+\]/.test(joined) ? claudePrompt(joined) : withImages(claudePrompt(joined), pictures)
-      if (prompt && prompt.trim()) b.user(str(r.uuid) || b.nextId('u'), prompt, ts)
+      b.user(str(r.uuid) || b.nextId('u'), prompt, ts, attachments, { marked: /\[Image #\d+\]/.test(joined) })
       continue
     }
     // assistant: one line per content block, all with the message's id.
@@ -296,21 +342,45 @@ export function claudeHistoryEvents(lines, limits = HISTORY_LIMITS) {
 
 // The image items of a Codex user message (the app-server's, the rollout's).
 const CODEX_IMAGE_ITEMS = new Set(['image', 'localImage', 'local_image', 'input_image', 'Image', 'LocalImage'])
+const CODEX_FILE_ITEMS = new Set(['input_file'])
 
 // Context Codex adds to a user message for the model, not what was typed.
 const CODEX_CONTEXT = /^\s*<\/?(image|skill|environment_context|user_instructions|permissions instructions|user_shell_command|turn_aborted|subagent_notification)\b/i
 
-function codexText(content) {
-  if (typeof content === 'string') return content
-  if (!Array.isArray(content)) return ''
+// One image item: a data: URL or a URL (image, input_image), or a local
+// path (localImage).
+function codexImage(o) {
+  const url = typeof o.image_url === 'string' ? o.image_url : str(obj(o.image_url)?.url) || str(o.url)
+  if (url) return imageFromUrl(url)
+  const path = str(o.path)
+  return path ? imageFromPath(path) : imageFromUrl(null)
+}
+
+// A file item (input_file): { filename, file_data (a data: URL), file_url }.
+function codexFile(o) {
+  const data = str(o.file_data)
+  const path = localPath(str(o.file_url)) || localPath(str(o.path))
+  return fileCandidate({
+    name: str(o.filename) || str(o.name),
+    mediaType: str(o.mime_type) || '',
+    ...(data && /^data:/i.test(data) ? { dataUrl: data } : data ? { base64: data } : {}),
+    ...(path ? { path } : {})
+  })
+}
+
+// -> { text, attachments }
+function codexContent(content) {
+  if (typeof content === 'string') return { text: content, attachments: [] }
+  if (!Array.isArray(content)) return { text: '', attachments: [] }
   const parts = []
-  let pictures = 0
+  const attachments = []
   for (const c of content) {
     const o = obj(c)
     if (o && ['text', 'Text', 'input_text', 'output_text'].includes(o.type) && str(o.text) && !CODEX_CONTEXT.test(o.text)) parts.push(o.text)
-    else if (o && CODEX_IMAGE_ITEMS.has(o.type)) pictures++
+    else if (o && CODEX_IMAGE_ITEMS.has(o.type)) attachments.push(codexImage(o))
+    else if (o && CODEX_FILE_ITEMS.has(o.type)) attachments.push(codexFile(o))
   }
-  return withImages(parts.join('\n'), pictures)
+  return { text: parts.join('\n'), attachments }
 }
 
 function codexSummary(summary) {
@@ -364,10 +434,9 @@ export function codexHistoryEvents(lines, threadId, limits = HISTORY_LIMITS) {
     const type = p.type
     if (type === 'message') {
       if (mode !== 'response') return
-      const body = codexText(p.content)
-      if (!body.trim()) return
-      if (p.role === 'user') b.user(str(p.id) || b.nextId('u'), body, ts)
-      else if (p.role === 'assistant') b.message('assistant', str(p.id) || b.nextId('a'), body, ts, '\n\n')
+      const { text: body, attachments } = codexContent(p.content)
+      if (p.role === 'user') b.user(str(p.id) || b.nextId('u'), body, ts, attachments)
+      else if (p.role === 'assistant' && body.trim()) b.message('assistant', str(p.id) || b.nextId('a'), body, ts, '\n\n')
       return
     }
     if (type === 'reasoning') {
@@ -409,9 +478,11 @@ export function codexHistoryEvents(lines, threadId, limits = HISTORY_LIMITS) {
         break
       case 'user_message':
         if (mode === 'events' && !CODEX_CONTEXT.test(str(p.message) || '')) {
-          const pictures = (Array.isArray(p.images) ? p.images.length : 0) + (Array.isArray(p.local_images) ? p.local_images.length : 0)
-          const body = withImages(str(p.message) || '', pictures)
-          if (body) b.user(b.nextId('u'), body, ts)
+          const attachments = [
+            ...(Array.isArray(p.images) ? p.images : []).map((u) => imageFromUrl(typeof u === 'string' ? u : str(obj(u)?.url))),
+            ...(Array.isArray(p.local_images) ? p.local_images : []).map((f) => imageFromPath(typeof f === 'string' ? f : str(obj(f)?.path)))
+          ]
+          b.user(b.nextId('u'), str(p.message) || '', ts, attachments)
         }
         break
       case 'agent_message':
@@ -421,10 +492,9 @@ export function codexHistoryEvents(lines, threadId, limits = HISTORY_LIMITS) {
         if (mode !== 'completed') break
         const item = obj(p.item)
         if (!item) break
-        const body = codexText(item.content)
-        if (!body.trim()) break
-        if (item.type === 'UserMessage' || item.type === 'user_message') b.user(str(item.id) || b.nextId('u'), body, ts)
-        else if (item.type === 'AgentMessage' || item.type === 'agent_message') b.message('assistant', str(item.id) || b.nextId('a'), body, ts, '\n\n')
+        const { text: body, attachments } = codexContent(item.content)
+        if (item.type === 'UserMessage' || item.type === 'user_message') b.user(str(item.id) || b.nextId('u'), body, ts, attachments)
+        else if ((item.type === 'AgentMessage' || item.type === 'agent_message') && body.trim()) b.message('assistant', str(item.id) || b.nextId('a'), body, ts, '\n\n')
         break
       }
       default:
@@ -448,6 +518,20 @@ export function codexHistoryEvents(lines, threadId, limits = HISTORY_LIMITS) {
 // Synthetic parts (OpenCode's own notes to the model) are not what anyone
 // typed or read: skipped. A message that failed with an abort ends its turn
 // as interrupted; another error as failed.
+// A file part: { mime, filename, url (a data: or file: URL), source: { path } }.
+function opencodeFile(p) {
+  const url = str(p.url)
+  const path = localPath(url) || localPath(str(obj(p.source)?.path))
+  const name = str(p.filename) || undefined
+  if (typeof p.mime === 'string' && p.mime.startsWith('image/')) {
+    if (url && /^data:/i.test(url)) return imageFromUrl(url, name)
+    return path ? imageFromPath(path, name) : imageFromUrl(null, name)
+  }
+  return fileCandidate({ name, mediaType: p.mime, ...(url && /^data:/i.test(url) ? { dataUrl: url } : {}), ...(path ? { path } : {}) })
+}
+
+// limits.attachments: the caller resolves the events it keeps
+// (resolveHistoryAttachments) once it has cut them to a page.
 export function opencodeHistoryEvents(messages, limits = HISTORY_LIMITS) {
   const b = createBuilder(limits)
   for (const m of Array.isArray(messages) ? messages : []) {
@@ -457,9 +541,8 @@ export function opencodeHistoryEvents(messages, limits = HISTORY_LIMITS) {
     const ts = obj(info.time)?.created
     if (info.role === 'user') {
       const typed = parts.filter((p) => p.type === 'text' && str(p.text) && p.synthetic !== true).map((p) => p.text)
-      const pictures = parts.filter((p) => p.type === 'file' && typeof p.mime === 'string' && p.mime.startsWith('image/')).length
-      const body = withImages(typed.join('\n'), pictures)
-      if (body) b.user(info.id, body, ts)
+      const attachments = parts.filter((p) => p.type === 'file').map(opencodeFile)
+      b.user(info.id, typed.join('\n'), ts, attachments)
       continue
     }
     if (info.role !== 'assistant') continue
@@ -508,13 +591,15 @@ export function readTranscriptHistory({ agent, sessionId, home, limits = HISTORY
   if (!file) return { ok: false, code: 'missing' }
   const read = readLastLines(file, limits.bytes)
   if (!read) return { ok: false, code: 'missing' }
-  let events = agent === 'codex' ? codexHistoryEvents(read.lines, sessionId, limits) : claudeHistoryEvents(read.lines, limits)
+  const caps = { ...limits, attachments: limits.attachments ?? ATTACHMENT_LIMITS }
+  let events = agent === 'codex' ? codexHistoryEvents(read.lines, sessionId, caps) : claudeHistoryEvents(read.lines, caps)
   let truncated = read.cut
   if (events.length > limits.events) {
     events = events.slice(-limits.events)
     truncated = true
   }
   if (!events.length) return { ok: false, code: 'empty' }
+  if (caps.attachments) resolveHistoryAttachments(events, caps.attachments)
   return { ok: true, events, truncated, file }
 }
 
@@ -527,7 +612,7 @@ export function readTranscriptHistory({ agent, sessionId, home, limits = HISTORY
 // halving the file (a dozen small reads), never by reading it whole (a
 // transcript can be hundreds of MB).
 
-export const OLDER_LIMITS = { bytes: 1024 * 1024, probe: 256 * 1024, maxLine: 32 * 1024 * 1024, text: HISTORY_LIMITS.text }
+export const OLDER_LIMITS = { bytes: 1024 * 1024, probe: 256 * 1024, maxLine: 32 * 1024 * 1024, text: HISTORY_LIMITS.text, attachments: ATTACHMENT_LIMITS }
 
 function readBytes(fd, start, length) {
   const buf = Buffer.alloc(Math.max(0, length))
@@ -657,8 +742,9 @@ export function readOlderHistory({ agent, sessionId, home, before = null, before
       break
     }
     const lines = text.split('\n').map((l) => (l.endsWith('\r') ? l.slice(0, -1) : l)).filter(Boolean)
-    const tagged = { ...HISTORY_LIMITS, text: limits.text, idTag: `p${start}-` } // i18n-ignore id
+    const tagged = { ...HISTORY_LIMITS, text: limits.text, attachments: limits.attachments ?? ATTACHMENT_LIMITS, idTag: `p${start}-` } // i18n-ignore id
     const events = agent === 'codex' ? codexHistoryEvents(lines, sessionId, tagged) : claudeHistoryEvents(lines, tagged)
+    if (tagged.attachments) resolveHistoryAttachments(events, tagged.attachments)
     return { ok: true, events, cursor: start > 0 ? start : null, done: start <= 0 }
   } catch {
     return { ok: false, code: 'missing' }

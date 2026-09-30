@@ -29,7 +29,7 @@ import fs from 'fs'
 import { isAbsolute } from 'path'
 import { buildChatEnv } from './chatEnv.js'
 import { clipDeep, createChatJournal, validPaneId } from './journal.js'
-import { readTranscriptHistory, readOlderHistory, opencodeHistoryEvents, HISTORY_LIMITS } from './transcriptHistory.js'
+import { readTranscriptHistory, readOlderHistory, opencodeHistoryEvents, resolveHistoryAttachments, ATTACHMENT_LIMITS, HISTORY_LIMITS } from './transcriptHistory.js'
 import { t } from '../i18n.js'
 import { approvalPreview } from '../../shared/chatApproval.js'
 import { validOpencodeModel } from './opencodeChat.js'
@@ -39,6 +39,8 @@ import { validOpencodeModel } from './opencodeChat.js'
 // A steered message the agent never starts: failed after this (its row can
 // still turn 'accepted' if the agent takes it later).
 export const STEER_WAIT_MS = 60000
+// OpenCode's history with its user messages' images and files (resolved per page).
+const OPENCODE_HISTORY = { ...HISTORY_LIMITS, attachments: ATTACHMENT_LIMITS }
 export const LIMITS = { text: 100000, teamPerCall: 20, teamText: 6400, teamQueue: 200, sessions: 64, historyTail: 2000 }
 // As the adapter's (claudeChat.js): the CLI's --permission-mode values.
 export const PERMISSION_MODES = ['default', 'bypassPermissions', 'acceptEdits', 'plan', 'auto', 'dontAsk']
@@ -253,12 +255,14 @@ export function createChatSessions(deps) {
       logAt('warn', `${s.paneId}: earlier history not read: ${err?.message || err}`) // i18n-ignore log line
     }
     if (!res?.ok) return
-    let events = opencodeHistoryEvents(res.messages)
+    let events = opencodeHistoryEvents(res.messages, OPENCODE_HISTORY)
     let truncated = res.truncated === true
     if (events.length > HISTORY_LIMITS.events) {
       events = events.slice(-HISTORY_LIMITS.events)
       truncated = true
     }
+    // Its images and files, for the events kept only.
+    resolveHistoryAttachments(events, ATTACHMENT_LIMITS)
     j.writeMeta({ sessionId: s.sessionId, agent: s.agent, cwd: s.cwd })
     if (!events.length || s.finished || s.closing) return
     const first = events[0].at
@@ -1693,14 +1697,16 @@ export function createChatSessions(deps) {
       // OpenCode: from its server again; the turns before the journal's, the last ones first.
       const res = await s.adapter.history()
       if (!res?.ok || sessions.get(paneId) !== s) return { ok: false, code: 'missing' }
-      const all = opencodeHistoryEvents(res.messages)
+      const all = opencodeHistoryEvents(res.messages, OPENCODE_HISTORY)
       let end = from ? Math.min(from.n, all.length) : all.findIndex((e) => Number.isFinite(e.at) && e.at >= journalStart(paneId))
       if (end < 0) end = all.length
       // A page starts at a prompt when it can (no turn cut in two).
       let start = Math.max(0, end - OLDER_PAGE_EVENTS)
       while (start > 0 && start < end && all[start].type !== 'user') start++
       if (start >= end) start = Math.max(0, end - OLDER_PAGE_EVENTS)
-      return { ok: true, events: all.slice(start, end), cursor: start > 0 ? { k: source, n: start } : null, done: start <= 0 }
+      // The page's own images and files (its own image budget).
+      const page = resolveHistoryAttachments(all.slice(start, end), ATTACHMENT_LIMITS)
+      return { ok: true, events: page, cursor: start > 0 ? { k: source, n: start } : null, done: start <= 0 }
     } catch (err) {
       logAt('warn', `${paneId}: older history not read: ${err?.message || err}`) // i18n-ignore log line
       return { ok: false, code: 'missing' }

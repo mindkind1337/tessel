@@ -2179,6 +2179,36 @@ describe('opencode earlier history', () => {
     expect(chat.history({ paneId }).events.filter((e) => e.event.imported).length).toBe(4)
   })
 
+  it('its user messages bring their images (data: URLs) and files; what cannot be shown stays "[image]"', async () => {
+    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64')
+    const pngUrl = `data:image/png;base64,${png.toString('base64')}`
+    const withFiles = [
+      {
+        info: { id: 'msg_1', role: 'user', sessionID: sid, time: { created: 5000 } },
+        parts: [
+          { type: 'text', text: 'look' },
+          { type: 'file', mime: 'image/png', filename: 'a.png', url: pngUrl },
+          { type: 'file', mime: 'image/png', filename: 'bad.png', url: 'data:image/png;base64,bm90IGFuIGltYWdl' },
+          { type: 'file', mime: 'application/pdf', filename: 'spec.pdf', url: 'data:application/pdf;base64,JVBERi0=' }
+        ]
+      },
+      messages[1]
+    ]
+    deps.createAdapter = vi.fn((opts) => {
+      const a = new FakeAdapter(opts, startResult)
+      a.history = vi.fn(async () => ({ ok: true, messages: withFiles, truncated: false }))
+      adapters.push(a)
+      return a
+    })
+    const chat = createChatSessions(deps)
+    expect((await chat.open({ paneId, cwd: tmp, permissions: 'manual', agent: 'opencode', resumeId: sid })).ok).toBe(true)
+    await flush()
+    const user = sent.find((e) => e.event.type === 'history').event.events.map((x) => x.event).find((e) => e.type === 'user')
+    expect(user).toMatchObject({ text: 'look\n[image]', images: [{ name: 'a.png', mediaType: 'image/png', dataUrl: pngUrl }], files: [{ name: 'spec.pdf', mediaType: 'application/pdf', size: 5 }] })
+    // The journal keeps them: a reload shows them again.
+    expect(chat.history({ paneId }).events.find((row) => row.event.type === 'user').event.images).toEqual(user.images)
+  })
+
   it('a new conversation reads nothing', async () => {
     const chat = createChatSessions(deps)
     await chat.open({ paneId, cwd: tmp, permissions: 'manual', agent: 'opencode' })

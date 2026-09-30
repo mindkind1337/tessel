@@ -529,6 +529,8 @@
   "chat.orca.providerFrame.byteLength": "{{value0}} octets",
   "chat.orca.composer.pastedImageLabel": "Image collée",
   "chat.orca.composer.viewAttachment": "Voir l’image",
+  "chat.orca.file.open": "Ouvrir le fichier",
+  "chat.orca.file.openFailed": "Le fichier n’a pas pu être ouvert.",
   "chat.orca.composer.imagePreview": "Aperçu de l’image en taille réelle",
   "chat.orca.markdown.image": "Image",
   "chat.orca.markdown.expandImage": "Agrandir l’image",

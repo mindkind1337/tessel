@@ -42,6 +42,8 @@ function nonTextBlockDigest(message) {
             parts.push(`result:${block.output}`); // i18n-ignore
         } else if (block.type === 'image-ref') {
             parts.push(`image:${block.path ?? block.url ?? block.alt ?? ''}`); // i18n-ignore
+        } else if (block.type === 'file-ref') {
+            parts.push(`file:${block.path ?? block.name ?? ''}`); // i18n-ignore
         }
     }
     return parts.join('|');

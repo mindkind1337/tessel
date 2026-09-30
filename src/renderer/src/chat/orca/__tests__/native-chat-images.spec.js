@@ -1,10 +1,13 @@
 // A sent message's images on the window's side: names, the registry of shown
 // images (blob:/data: made here, never a file path), the journal adapter's
 // image blocks, and the message row's thumbnails (a chip after a reload).
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
+import { nativeChatRowRendersContent } from '../shared/native-chat-row-content.js'
 import {
   clearChatImagesForTests,
+  fileRefBlocks,
+  fileSizeLabel,
   fullImageUrlFor,
   imagePixelSize,
   imageRefBlocks,
@@ -86,5 +89,79 @@ describe('chat images (window side)', () => {
     const box = document.querySelector('[data-test="chat-image-lightbox"]')
     expect(box.querySelector('img').getAttribute('src')).toBe('blob:full-a')
     wrapper.unmount()
+  })
+})
+
+describe('earlier-history messages (images and files read from the agent)', () => {
+  const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
+  const history = {
+    type: 'user',
+    id: 'hist-u1',
+    text: 'look\n[image]',
+    origin: 'user',
+    status: 'accepted',
+    imported: true,
+    images: [
+      { name: 'image.png', mediaType: 'image/png', dataUrl: PNG },
+      // Anything but a base64 image data: URL is never shown.
+      { name: 'evil.svg', mediaType: 'image/svg+xml', dataUrl: 'data:image/svg+xml;base64,PHN2Zz4=' },
+      { name: 'remote.png', dataUrl: 'https://example.invalid/x.png' }
+    ],
+    files: [
+      { name: 'report.pdf', mediaType: 'application/pdf', size: 2048, path: 'C:\\proj\\report.pdf' },
+      { name: 'inline.txt', mediaType: 'text/plain', size: 5 }
+    ]
+  }
+
+  it('the adapter gives its images and file chips, the "[image]" text kept for the rest', () => {
+    const message = userMessage(history)
+    expect(message.blocks).toEqual([
+      { type: 'image-ref', alt: 'image.png', url: PNG },
+      { type: 'image-ref', alt: 'evil.svg' },
+      { type: 'image-ref', alt: 'remote.png' },
+      { type: 'file-ref', name: 'report.pdf', mediaType: 'application/pdf', size: 2048, path: 'C:\\proj\\report.pdf' },
+      { type: 'file-ref', name: 'inline.txt', mediaType: 'text/plain', size: 5 },
+      { type: 'text', text: 'look\n[image]' }
+    ])
+  })
+
+  it('shows the thumbnail (opens the lightbox) and file chips (a local one opens with the system)', async () => {
+    const openFile = vi.fn(async () => ({ ok: true }))
+    window.shellApi = { openFile }
+    try {
+      const blocks = userMessage(history).blocks.filter((b) => b.type !== 'text')
+      const wrapper = mount(NativeChatImageAttachments, { props: { blocks }, attachTo: document.body })
+      await flushPromises()
+      const thumb = wrapper.find('button[aria-label="View image: image.png"]')
+      expect(thumb.find('img').attributes('src')).toBe(PNG)
+      expect(wrapper.findAll('[data-test="nc-image-chip"]').map((c) => c.text())).toEqual(['evil.svg', 'remote.png'])
+      await thumb.trigger('click')
+      await flushPromises()
+      const box = document.querySelector('[data-test="chat-image-lightbox"]')
+      expect(box.querySelector('img').getAttribute('src')).toBe(PNG)
+      const chips = wrapper.findAll('[data-test="nc-file-chip"]')
+      expect(chips.map((c) => c.text())).toEqual(['report.pdf2 KB', 'inline.txt5 B'])
+      expect(chips[0].element.tagName).toBe('BUTTON')
+      expect(chips[1].element.tagName).toBe('DIV')
+      await chips[0].trigger('click')
+      expect(openFile).toHaveBeenCalledWith({ file: 'C:\\proj\\report.pdf' })
+      wrapper.unmount()
+    } finally {
+      delete window.shellApi
+    }
+  })
+
+  it('a history message with only files still renders', () => {
+    const message = userMessage({ ...history, text: '', images: [] })
+    expect(message.blocks.map((b) => b.type)).toEqual(['file-ref', 'file-ref'])
+    expect(nativeChatRowRendersContent(message.blocks)).toBe(true)
+  })
+
+  it('sizes read as B, KB, MB', () => {
+    expect(fileSizeLabel(5)).toBe('5 B')
+    expect(fileSizeLabel(2048)).toBe('2 KB')
+    expect(fileSizeLabel(3.5 * 1024 * 1024)).toBe('3.5 MB')
+    expect(fileSizeLabel(undefined)).toBe('')
+    expect(fileRefBlocks([{ name: 'x', path: 'a\u0000b', size: -1 }])).toEqual([{ type: 'file-ref', name: 'x' }])
   })
 })

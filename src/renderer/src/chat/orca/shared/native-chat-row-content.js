@@ -39,7 +39,8 @@ function derive(blocks) {
         subagentGroups: groups,
         backgroundTasks: tasks,
         markdown: nativeChatProseToMarkdown(prose),
-        hasImages: prose.some((block)=>block.type === 'image-ref')
+        // Tessel: a history message's file chips (file-ref) show like its images.
+        hasImages: prose.some((block)=>block.type === 'image-ref' || block.type === 'file-ref')
     };
 }
 export function deriveNativeChatRowContent(blocks) {

@@ -102,14 +102,45 @@ export function clearChatImagesForTests() {
 // "688×478" (empty when unknown).
 export const imagePixelSize = (w, h) => (w > 0 && h > 0 ? `${w}×${h}` : '')
 
+// An image an earlier-history message carries (src/main/chat/historyAttachments.js):
+// a base64 data: URL of an image type shown here, else nothing.
+const HISTORY_IMAGE_URL = /^data:image\/(?:png|jpeg|gif|webp);base64,[A-Za-z0-9+/]+={0,2}$/
+export const historyImageUrl = (url) => (typeof url === 'string' && url.length <= 4 * 1024 * 1024 && HISTORY_IMAGE_URL.test(url) ? url : null)
+
 // A 'user' event's images as the message's image-ref blocks: the shown
-// thumbnail while this window has it, else a chip with the name.
+// thumbnail while this window has it (a sent image), the image itself for a
+// history message (its dataUrl), else a chip with the name.
 export function imageRefBlocks(images) {
   if (!Array.isArray(images)) return []
   return images.slice(0, CHAT_IMAGE_LIMITS.perMessage).map((image) => {
     const entry = image && typeof image.id === 'string' ? chatImageEntry(image.id) : null
     const name = typeof image?.name === 'string' && image.name ? image.name : 'image' // i18n-ignore
-    const url = entry?.thumbUrl || entry?.fullUrl
+    const url = entry?.thumbUrl || entry?.fullUrl || historyImageUrl(image?.dataUrl)
     return { type: 'image-ref', alt: name, ...(url ? { url } : {}) }
   })
+}
+
+// A history 'user' event's other files as file-ref blocks: a chip with the
+// name, type and size; path only for a file that existed as a plain local
+// file when the history was read (opened with the system on a click).
+export const CHAT_FILE_LIMITS = { perMessage: 8 }
+export function fileRefBlocks(files) {
+  if (!Array.isArray(files)) return []
+  return files.slice(0, CHAT_FILE_LIMITS.perMessage).flatMap((file) => {
+    if (!file || typeof file !== 'object') return []
+    const name = typeof file.name === 'string' && file.name ? file.name.slice(0, 200) : 'file' // i18n-ignore
+    const mediaType = typeof file.mediaType === 'string' ? file.mediaType.slice(0, 200) : ''
+    const size = Number.isSafeInteger(file.size) && file.size >= 0 ? file.size : null
+    const path = typeof file.path === 'string' && file.path && file.path.length <= 4096 && !file.path.includes('\0') ? file.path : null
+    return [{ type: 'file-ref', name, ...(mediaType ? { mediaType } : {}), ...(size !== null ? { size } : {}), ...(path ? { path } : {}) }]
+  })
+}
+
+// "12 KB", "3.4 MB" (empty when unknown).
+export function fileSizeLabel(size) {
+  if (!Number.isFinite(size) || size < 0) return ''
+  if (size < 1024) return `${size} B` // i18n-ignore unit
+  if (size < 1024 * 1024) return `${Math.round(size / 1024)} KB` // i18n-ignore unit
+  const mb = size / 1024 / 1024
+  return `${mb < 10 ? mb.toFixed(1) : Math.round(mb)} MB` // i18n-ignore unit
 }

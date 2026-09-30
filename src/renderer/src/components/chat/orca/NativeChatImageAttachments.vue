@@ -6,11 +6,14 @@
  *   runtimeContext (worktree context; null = unresolved; leave unset when
  *   unknown), enablePreview (default: runtimeContext was given).
  * Renders nothing without images.
+ * Tessel: a history message's other files (file-ref blocks) follow as file
+ * chips (NativeChatFileChip).
  */
 import { computed } from 'vue'
 import { Image as ImageIcon } from 'lucide-vue-next'
 import { t } from '../../../i18n'
 import NativeChatTranscriptImagePreview from './NativeChatTranscriptImagePreview.vue'
+import NativeChatFileChip from './NativeChatFileChip.vue'
 import {
   basename,
   isNativeChatPastedImagePath,
@@ -45,10 +48,11 @@ const images = computed(() => {
       return { image, label, name, keyBase, occurrence, preview }
     })
 })
+const files = computed(() => props.blocks.filter((block) => block.type === 'file-ref'))
 </script>
 
 <template>
-  <div v-if="images.length > 0" class="nc-image-attachments">
+  <div v-if="images.length > 0 || files.length > 0" class="nc-image-attachments">
     <template v-for="entry in images" :key="`${entry.keyBase}-${entry.preview ? transcriptImageIdentity(entry.image, runtimeContext) : ''}-${entry.occurrence}`">
       <NativeChatTranscriptImagePreview v-if="entry.preview" :block="entry.image" :runtime-context="runtimeContext" />
       <div v-else class="nc-image-chip" :title="entry.label" data-test="nc-image-chip">
@@ -56,6 +60,7 @@ const images = computed(() => {
         <span class="nc-image-chip-name">{{ entry.name }}</span>
       </div>
     </template>
+    <NativeChatFileChip v-for="(file, i) in files" :key="`file-${i}-${file.path ?? ''}-${file.name}`" :block="file" />
   </div>
 </template>
 

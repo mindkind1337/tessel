@@ -13,7 +13,7 @@
 // with the items and submissions that changed, or null when nothing did.
 import { agentJournalSubmissionKey } from '../shared/agent-session-journal-item-key.js'
 import { normalizeSubagentState, MAX_SUBAGENT_FIELD_CHARS, subagentGroupFallbackText } from '../shared/native-chat-subagent-summary.js'
-import { imageRefBlocks } from '../native-chat-images.js'
+import { fileRefBlocks, imageRefBlocks } from '../native-chat-images.js'
 
 // Output kept in a tool row: the same bound as the main process's journal.
 const MAX_OUTPUT = 8 * 1024
@@ -284,7 +284,8 @@ export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence =
         const itemId = agentJournalSubmissionKey(String(ev.id))
         const body = { kind: 'message', role: 'user', blocks: [{ type: 'text', text: String(ev.text ?? '') }] }
         // Tessel's addition: its attached images (thumbnails while this window has them).
-        const pictures = ev.origin === 'team' ? [] : imageRefBlocks(ev.images)
+        // A history message: its images (data: URLs) and its other files (chips).
+        const pictures = ev.origin === 'team' ? [] : [...imageRefBlocks(ev.images), ...fileRefBlocks(ev.files)]
         if (pictures.length) body.blocks = [...pictures, ...(body.blocks[0].text ? body.blocks : [])]
         // Tessel's addition: a teammate's message, labelled as such. Its
         // "(message <id>, reply to <id>) " header is for the agent (to answer
