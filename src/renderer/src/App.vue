@@ -5981,8 +5981,10 @@ async function switchToTerminal(leafId) {
       sessionId: old.sessionId,
       accountId: old.accountId,
       ...(sessionOptions ? { sessionOptions } : {}),
-      // Asked first as a chat (or a worker capped to it): asks first in the terminal.
-      ...(old.chatPermissions === 'yolo' && old.maxPermissions !== 'manual' ? {} : { permissions: 'manual' }),
+      // Asked first as a chat (or a worker capped to it): asks first in the
+      // terminal. OpenCode's terminal has no such switch (its own config
+      // decides), so nothing is pinned on its pane.
+      ...(old.agentId === 'opencode' || (old.chatPermissions === 'yolo' && old.maxPermissions !== 'manual') ? {} : { permissions: 'manual' }),
       resume: true,
       wake: { teamId: old.team || null, gen: 1 }
     })
