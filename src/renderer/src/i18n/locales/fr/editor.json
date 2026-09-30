@@ -535,5 +535,6 @@
       "loading": "Chargement…"
     }
   },
-  "changes.discard.repositoryChanged": "Le dépôt a changé. L’abandon a été annulé ; aucun fichier n’a été modifié."
+  "changes.discard.repositoryChanged": "Le dépôt a changé. L’abandon a été annulé ; aucun fichier n’a été modifié.",
+  "changes.commit.repositoryChanged": "Le commit est terminé, mais le dépôt a changé. L’envoi ou la synchronisation a été annulé."
 }

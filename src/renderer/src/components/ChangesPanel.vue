@@ -674,12 +674,16 @@ function onMenuOutside(e) {
   closeMenu()
 }
 async function onDropdownAction(kind) {
+  const root = repoRoot.value
   closeMenu()
   if (kind === 'commit') await commit()
-  else if (kind === 'commit_push') {
-    if (await commit()) await remote('push')
-  } else if (kind === 'commit_sync') {
-    if (await commit()) await remote('sync')
+  else if (kind === 'commit_push' || kind === 'commit_sync') {
+    if (!(await commit()) || disposed) return
+    if (root !== repoRoot.value) {
+      emit('toast', t('changes.commit.repositoryChanged', 'The commit finished, but the repository changed. Push or sync was cancelled.'))
+      return
+    }
+    await remote(kind === 'commit_push' ? 'push' : 'sync')
   } else await remote(kind)
 }
 

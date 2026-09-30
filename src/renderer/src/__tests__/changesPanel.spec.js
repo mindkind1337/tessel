@@ -358,6 +358,27 @@ describe('Source Control: commit', () => {
     expect(calls.map(([n]) => n).filter((n) => n === 'commit' || n === 'push')).toEqual(['commit', 'push'])
   })
 
+  it.each(['push', 'sync'])('Commit & %s cancels the remote step when navigation happens during the commit', async action => {
+    let finish
+    api({
+      status: q => status([{ path: 'a.js', area: 'staged', status: 'modified' }], { top: q.root }),
+      commit: () => new Promise(resolve => { finish = resolve })
+    })
+    make()
+    await flushPromises()
+    await w.find('[data-test="sc-commit-message"]').setValue('Original project change')
+    await w.find('[data-test="sc-chevron"]').trigger('click')
+    document.querySelector(`[data-kind="commit_${action}"]`).click()
+    await flushPromises()
+    expect(calls.find(([name]) => name === 'commit')[1].root).toBe(ROOT)
+    await w.setProps({ root: 'C:/other-project' })
+    await flushPromises()
+    finish({ ok: true, sha: 'a'.repeat(40) })
+    await flushPromises()
+    expect(calls.filter(([name]) => name === action)).toEqual([])
+    expect(w.emitted('toast').at(-1)[0]).toContain('repository changed')
+  })
+
   it('Generate fills an empty message from the staged changes (disabled with nothing staged)', async () => {
     let st = status([{ path: 'a.js', area: 'unstaged', status: 'modified' }])
     api({ status: () => st })
