@@ -75,7 +75,7 @@ function writeMerged(b) {
   const panes = {}
   for (const o of liveOwners(b)) {
     for (const [id, p] of Object.entries(o.panes)) {
-      if (p && ID_RE.test(id) && ID_RE.test(String(p.team))) panes[id] = { team: p.team, num: p.num, owner: o.owner }
+      if (p && ID_RE.test(id) && ID_RE.test(String(p.team))) panes[id] = { team: p.team, num: p.num, paneName: p.paneName, owner: o.owner }
     }
   }
   const file = join(b, 'current.json')
@@ -102,7 +102,7 @@ export function writeCurrentTeams({ dir, panes, owner } = {}) {
   if (owner != null && !OWNER_RE.test(String(owner))) return { ok: false, error: 'Invalid team location.' }
   const clean = {}
   for (const [id, p] of Object.entries(panes)) {
-    if (ID_RE.test(id) && p && ID_RE.test(String(p.team)) && Number.isInteger(p.num)) clean[id] = { team: p.team, num: p.num }
+    if (ID_RE.test(id) && p && ID_RE.test(String(p.team)) && Number.isInteger(p.num)) clean[id] = { team: p.team, num: p.num, paneName: p.paneName }
   }
   // A project that never had a team gets no folder just for an empty map.
   if (!Object.keys(clean).length && !fs.existsSync(b)) return { ok: true, changed: false, lost: [] }

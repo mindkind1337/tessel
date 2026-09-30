@@ -11,6 +11,8 @@
 //   <project>/.tessel/board/panes.<window>.json   which agents work alone in
 //     which workspace (written by each Tessel window, read by the team tools)
 import fs from 'fs'
+import { validAgentName } from '../shared/agentNames'
+const validAddress = (v) => validAgentName(v) || /^#\d{1,3}$/.test(v)
 import { join, resolve, isAbsolute } from 'path'
 import { writeFileAtomic } from './safeJson'
 import { parseWorkerRequest } from '../shared/orchestration'
@@ -43,7 +45,7 @@ export function writeBoardPanes({ dir, owner, panes } = {}) {
     return { ok: false, error: 'Invalid board location.' }
   const clean = {}
   for (const [id, p] of Object.entries(panes)) {
-    if (ID_RE.test(id) && p && ID_RE.test(String(p.ws)) && Number.isInteger(p.num)) clean[id] = { ws: p.ws, num: p.num }
+    if (ID_RE.test(id) && p && ID_RE.test(String(p.ws)) && Number.isInteger(p.num)) clean[id] = { ws: p.ws, num: p.num, paneName: p.paneName }
   }
   const base = join(resolve(dir), '.tessel', 'board')
   if (!Object.keys(clean).length && !fs.existsSync(base)) return { ok: true, changed: false }
@@ -78,7 +80,7 @@ export function publishTeamTasks({ dir, teamId, board, tasks } = {}) {
       id: t.id,
       title: t.title.slice(0, MAX_TITLE),
       column: t.column,
-      assignee: typeof t.assignee === 'string' && /^#\d{1,3}$/.test(t.assignee) ? t.assignee : null,
+      assignee: typeof t.assignee === 'string' && validAddress(t.assignee) ? t.assignee : null,
       since: Number.isFinite(t.since) ? t.since : null,
       // Orchestration: what it waits for, a decision asked, its report.
       ...orchestration(t)
@@ -334,8 +336,8 @@ export function publishWorkers({ dir, teamId, workers, limits, phases } = {}) {
     .filter((w) => w && ID_RE.test(String(w.id)) && WORKER_STATUSES.includes(w.status))
     .map((w) => ({
       id: w.id,
-      handle: typeof w.handle === 'string' && /^#\d{1,3}$/.test(w.handle) ? w.handle : null,
-      coordinator: typeof w.coordinator === 'string' && /^#\d{1,3}$/.test(w.coordinator) ? w.coordinator : null,
+      handle: typeof w.handle === 'string' && validAddress(w.handle) ? w.handle : null,
+      coordinator: typeof w.coordinator === 'string' && validAddress(w.coordinator) ? w.coordinator : null,
       title: s(w.title, MAX_TITLE) || '',
       card: typeof w.card === 'string' && ID_RE.test(w.card) ? w.card : null,
       agent: typeof w.agent === 'string' && /^[a-z0-9-]{1,30}$/.test(w.agent) ? w.agent : null,
@@ -351,7 +353,7 @@ export function publishWorkers({ dir, teamId, workers, limits, phases } = {}) {
   const lim = limits && typeof limits === 'object' ? { maxConcurrent: n(limits.maxConcurrent), maxDepth: n(limits.maxDepth), confirm: !!limits.confirm } : null
   const ph = {}
   for (const [k, v] of Object.entries((phases && typeof phases === 'object' && phases) || {}).slice(0, 40))
-    if (/^#\d{1,3}$/.test(k) && typeof v === 'string' && /^[a-z]{1,20}$/.test(v)) ph[k] = v
+    if (validAddress(k) && typeof v === 'string' && /^[a-z]{1,20}$/.test(v)) ph[k] = v
   const file = join(root, 'workers.json')
   let old = null
   try {
@@ -386,7 +388,7 @@ export function parseRequest(data) {
     if (!title) return { error: 'a card needs a title' }
     if (title.length > MAX_TITLE) return { error: `the title is too long (at most ${MAX_TITLE} characters)` }
     const assignee = data.assignee == null || data.assignee === '' ? null : String(data.assignee).trim()
-    if (assignee !== null && !/^#\d{1,3}$/.test(assignee)) return { error: '"assignee" must be a teammate like "#3"' }
+    if (assignee !== null && !validAddress(assignee)) return { error: '"assignee" must be a teammate like "Ada"' }
     const deps = cleanIds(data.deps)
     if (deps === null) return { error: '"after" must be up to 10 card ids' }
     return { action: 'add', title, assignee, column: column || 'todo', ...(deps.length ? { deps } : {}) }

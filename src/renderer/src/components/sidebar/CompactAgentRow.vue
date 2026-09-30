@@ -163,19 +163,18 @@ const rowLabel = computed(() => {
       r.lead ? t('sidebar.card.teamLead', 'Team: {{team}} (lead)', { team }) : t('sidebar.card.team', 'Team: {{team}}', { team })
     )
   if (r.workerOf) parts.push(workerOfLabel.value)
-  if (r.num) parts.push(t('sidebar.card.pane', 'Pane {{num}}', { num: r.num }))
   if (props.picking && props.pickHint) parts.push(props.pickHint)
   return parts.join(', ')
 })
 const workerTag = computed(() => {
   const w = props.row.workerOf
   if (!w) return ''
-  return w.num ? t('sidebar.agentRow.workerOf', 'worker of #{{num}}', { num: w.num }) : t('sidebar.agentRow.worker', 'worker')
+  return w.label ? t('sidebar.agentRow.workerOfName', 'worker of {{name}}', { name: w.label }) : t('sidebar.agentRow.worker', 'worker')
 })
 // A worker's coordinator, for its link.
 const workerOfLabel = computed(() =>
   props.row.workerOf
-    ? t('sidebar.agentRow.workerOfHint', 'Worker of {{coordinator}}: go to it', { coordinator: props.row.workerOf.label || `#${props.row.workerOf.num || '?'}` })
+    ? t('sidebar.agentRow.workerOfHint', 'Worker of {{coordinator}}: go to it', { coordinator: props.row.workerOf.label || '' })
     : ''
 )
 </script>
@@ -223,7 +222,6 @@ const workerOfLabel = computed(() =>
     <span v-if="row.toolsDown" class="car-tag">⚠ {{ t('sidebar.agentRow.toolsDown', 'tools') }}</span>
 
     <span v-if="row.time" class="car-time" :class="{ focused: row.focused }">{{ row.time }}</span>
-    <span v-if="row.num" class="car-num" :class="{ focused: row.focused }">{{ row.num }}</span>
   </div>
   <!-- The task on its own line under the agent (the row keeps its space). -->
   <div

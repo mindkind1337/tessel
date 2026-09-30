@@ -225,7 +225,7 @@ describe('BrowserPane.vue', () => {
     expect(root.attributes('data-pane-kind')).toBe('browser')
     expect(root.attributes('data-pane-id')).toBe('b1')
     expect(root.classes()).toContain('active')
-    expect(wrapper.find('.pane-nav .pane-num').text()).toBe('2')
+    expect(wrapper.find('.pane-nav .pane-num').exists()).toBe(false)
     expect(wrapper.find('[data-test="browser-title"]').text()).toBe('localhost:3000')
     const wv = wrapper.find('webview')
     expect(wv.attributes('partition')).toBe('persist:tessel-browser')

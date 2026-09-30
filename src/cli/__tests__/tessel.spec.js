@@ -216,13 +216,13 @@ describe('output', () => {
     const text = formatStatus({
       version: '1.5.0',
       projects: [
-        { name: 'tessel', path: 'C:\\Tessel', active: true, panes: [{ num: 1, kind: 'agent', title: 'Claude Code', state: 'working', active: true }, { num: 2, kind: 'terminal', title: 'PowerShell' }] },
+        { name: 'tessel', path: 'C:\\Tessel', active: true, panes: [{ name: 'Ada', kind: 'agent', title: 'Claude Code', state: 'working', active: true }, { num: 2, kind: 'terminal', title: 'PowerShell' }] },
         { name: 'other', path: 'D:\\o', panes: [] }
       ]
     })
     expect(text).toContain('2 projects, 2 panes')
     expect(text).toContain('* tessel  C:\\Tessel')
-    expect(text).toMatch(/#1\s+agent\s+Claude Code {2}\[working\] {2}\(active\)/)
+    expect(text).toMatch(/Ada\s+agent\s+Claude Code {2}\[working\] {2}\(active\)/)
     expect(formatStatus({ projects: [] })).toBe('No project is open.')
   })
 

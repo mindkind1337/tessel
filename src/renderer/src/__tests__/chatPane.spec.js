@@ -166,6 +166,28 @@ describe('ChatPane.vue', () => {
     document.body.style.pointerEvents = ''
   })
 
+  it('shows a persistent name and validates a keyboard rename', async () => {
+    const renameAgent = vi.fn((id, name) => {
+      if (name === 'Taken') return false
+      node.paneName = name
+      return true
+    })
+    await mountPane({ paneName: 'Ada' }, { renameAgent })
+    expect(wrapper.get('[data-test="chat-title"]').text()).toBe('Ada')
+    expect(wrapper.find('.pane-num').exists()).toBe(false)
+    expect(wrapper.get('.pane-agent-label').text()).toBe('Claude')
+    await wrapper.get('[data-test="chat-title"]').trigger('keydown', { key: 'Enter' })
+    const input = wrapper.get('.pane-tab-input')
+    expect(document.activeElement).toBe(input.element)
+    await input.setValue('Taken')
+    await input.trigger('keydown', { key: 'Enter' })
+    expect(node.paneName).toBe('Ada')
+    expect(wrapper.find('.pane-tab-input').exists()).toBe(true)
+    await input.setValue('Curie')
+    await input.trigger('keydown', { key: 'Enter' })
+    expect(wrapper.get('[data-test="chat-title"]').text()).toBe('Curie')
+  })
+
   it('redraws the history on mount and does not reopen a running session', async () => {
     history = {
       ok: true,
@@ -393,7 +415,7 @@ describe('ChatPane.vue', () => {
     expect(mine.classList.contains('is-team')).toBe(false)
     expect(mine.querySelector('[data-test="nc-team-from"]')).toBeNull()
     expect(team.classList.contains('is-team')).toBe(true)
-    expect(team.querySelector('[data-test="nc-team-from"]').textContent.trim()).toBe('From #3 (teammate)')
+    expect(team.querySelector('[data-test="nc-team-from"]').textContent.trim()).toBe('From a teammate')
     expect(mine.querySelector('[data-test="nc-user-queued"]').textContent.trim()).toBe('Queued: will send when the turn ends')
     expect(team.querySelector('[data-test="nc-user-queued"]').textContent.trim()).toBe('Waiting: delivered when the turn ends')
     emit({ type: 'teamAccepted', ids: ['x1'] })

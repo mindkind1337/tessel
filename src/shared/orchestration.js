@@ -11,6 +11,7 @@
 // (teamTasks.js validates the requests) and the tests. Text sent to agents
 // stays English.
 
+import { validAgentName } from './agentNames'
 import { sessionOptionLaunchText } from './agentSessionOptions'
 
 // Agents that can be started as workers: their CLI takes a first prompt on
@@ -67,7 +68,7 @@ export function depthExceededMessage(childDepth, maxDepth) {
 const str = (v, max) => (typeof v === 'string' ? v.replace(/\s+/g, ' ').trim().slice(0, max) : '')
 const handle = (v) => {
   const m = /^#?(\d{1,3})$/.exec(String(v == null ? '' : v).trim())
-  return m ? `#${m[1]}` : null
+  return m ? `#${m[1]}` : validAgentName(v) ? v.trim() : null
 }
 // A model or effort name for a command line: plain words only.
 const flagValue = (v) => (typeof v === 'string' && /^[A-Za-z0-9._:\[\]-]{1,60}$/.test(v.trim()) ? v.trim() : null)
@@ -110,7 +111,7 @@ export function parseWorkerRequest(data) {
     case 'worker-read': {
       const all = data.action === 'worker-stop' && String(data.worker || '').trim().toLowerCase() === 'all'
       const worker = all ? 'all' : handle(data.worker)
-      if (!worker) return { error: '"worker" must be a worker like "#5"' }
+      if (!worker) return { error: '"worker" must be a worker like "Ada"' }
       const out = { action: data.action, worker }
       if (data.action === 'worker-stop') out.reason = str(data.reason, 300)
       if (data.action === 'worker-read') out.lines = clampInt(Number(data.lines), 1, 200, 60)

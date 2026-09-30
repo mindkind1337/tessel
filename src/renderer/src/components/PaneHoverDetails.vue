@@ -3,7 +3,7 @@
 // card (AgentHoverDetails, after Orca's worktree details hover; MIT,
 // Copyright (c) 2026 Lovecast Inc.): the pane's name as the heading, the
 // agent (or shell) with its icon, its model and conversation under it, its
-// state with the dot, its team, then the pane number and a muted hint. It
+// state with the dot, its team and a muted hint. It
 // replaces the header title's native tooltip.
 import { computed } from 'vue'
 import { Users, SquareTerminal, Cpu, MessageSquareText, GitBranch } from 'lucide-vue-next'
@@ -14,7 +14,7 @@ import { t } from '../i18n'
 const props = defineProps({
   // Built by TerminalPane: { heading, agentName, iconKind, accent, model,
   // conversation, branch, state: { dot, label } | null, stateDetail, warn,
-  // yolo, team: { name, lead } | null, num, session }
+  // yolo, team: { name, lead } | null, session }
   info: { type: Object, required: true }
 })
 
@@ -28,7 +28,6 @@ const teamLine = computed(() => {
   if (!team) return ''
   return team.lead ? t('sidebar.hover.teamLead', '{{team}} (lead)', { team: team.name }) : team.name
 })
-const paneLine = computed(() => (props.info.num ? t('sidebar.card.pane', 'Pane {{num}}', { num: props.info.num }) : ''))
 const sessionLine = computed(() => (props.info.session ? t('pane.status.session', 'Session {{id}}', { id: props.info.session }) : ''))
 </script>
 
@@ -75,10 +74,8 @@ const sessionLine = computed(() => (props.info.session ? t('pane.status.session'
       <div class="hc-section-body hc-strong" v-text="teamLine"></div>
     </section>
 
-    <div v-if="paneLine || sessionLine" class="hc-footer" data-hover-pane="">
+    <div v-if="sessionLine" class="hc-footer" data-hover-pane="">
       <SquareTerminal :size="12" aria-hidden="true" />
-      <span v-if="paneLine" v-text="paneLine"></span>
-      <span v-if="paneLine && sessionLine" aria-hidden="true">·</span>
       <span v-if="sessionLine" class="hc-session" v-text="sessionLine"></span>
     </div>
     <div class="hc-hint" data-hover-hint="">

@@ -20,7 +20,7 @@ describe('team messages for a chat agent', () => {
   let ctx, channel, chat, leaves
   const team = { id: 'team-1', name: 'Team' }
   const res = (deliveries, held = []) => ({
-    participants: [{ id: 'pane-a', num: 1, title: 'Codex' }],
+    participants: [{ id: 'pane-a', num: 1, paneName: 'Ada', title: 'Codex' }],
     deliveries,
     held
   })
@@ -36,6 +36,7 @@ describe('team messages for a chat agent', () => {
     chat = { sendTeam: vi.fn(async () => ({ ok: true })) }
     ctx = {
       window: { shellApi: { channel, chat } },
+      paneLabel: (pane) => `${pane.paneName} (${pane.title})`,
       findLeaf: (id) => leaves[id] || null,
       channelQueued: new Set(),
       ackChannel: vi.fn(),
@@ -60,7 +61,7 @@ describe('team messages for a chat agent', () => {
     const sent = chat.sendTeam.mock.calls[0][0]
     expect(sent.paneId).toBe('pane-c')
     expect(sent.messages.map((m) => m.id)).toEqual(['m1', 'm2'])
-    expect(sent.messages[0].from).toBe('#1 Codex')
+    expect(sent.messages[0].from).toBe('Ada (Codex)')
     expect(sent.messages[0].text).toBe('(message m1, reply to m0) hello m1')
     expect(ctx.ackChannel).not.toHaveBeenCalled()
     ctx.api.acceptChatTeam('m1')

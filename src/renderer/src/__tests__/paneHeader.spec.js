@@ -117,6 +117,13 @@ describe('terminal pane header', () => {
   const header = () => wrapper.get('[data-test="pane-header"]')
   const menu = () => document.body.querySelector(':scope > .ctx-menu')
 
+  it('shows its name, program and no number', async () => {
+    await wrapper.setProps({ node: { ...node(), paneName: 'Bohr', num: 17 } })
+    expect(wrapper.get('[data-test="pane-title"]').text()).toBe('Bohr')
+    expect(wrapper.get('.pane-agent-label').text()).toBe('Claude')
+    expect(wrapper.find('.pane-num').exists()).toBe(false)
+  })
+
   it('a model chosen by its family name shows the version the agent reports (Opus 5.5)', async () => {
     wrapper.unmount()
     window.shellApi.agentModel = vi.fn(async () => ({ model: 'claude-opus-5-5', effort: null, source: 'session' }))

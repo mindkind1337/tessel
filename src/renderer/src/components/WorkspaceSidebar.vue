@@ -718,7 +718,7 @@ function cardMenuItems(card) {
 
 function rowMenuItems(row, card) {
   const wsId = card.projectId
-  const items = [{ type: 'label', label: row.num ? `#${row.num} ${row.title}` : row.title }]
+  const items = [{ type: 'label', label: row.paneName || row.title }]
   items.push({ type: 'item', icon: SquareTerminal, label: t('sidebar.row.goToPane', 'Go to Pane'), onSelect: () => focusRow(row.id) })
   if (row.kind === 'agent') {
     items.push({ type: 'separator' })

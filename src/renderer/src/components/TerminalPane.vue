@@ -735,7 +735,6 @@ const titleDescription = computed(() => {
       ? t('pane.title.namedAfter', '{{name}}: {{title}} (named after its conversation)', { name: paneTitle.value, title: autoTitle.value })
       : paneTitle.value
   ]
-  if (props.node.num) lines[0] = `#${props.node.num} ${lines[0]}`
   if (isAgent.value && modelText.value) lines.push(t('pane.model.title', 'Model: {{model}}', { model: modelText.value }))
   if (props.node.worktree) lines.push(t('pane.title.branch', 'Branch: {{branch}} (separate copy)', { branch: props.node.worktree.branch }))
   if (team.value)
@@ -1234,12 +1233,12 @@ function onPasteEvent(e) {
 
 // Editable pane title — stored on the node so it survives layout changes and
 // is captured by workspace persistence.
-const paneTitle = ref(props.node.title || props.node.shellName)
+const paneTitle = ref(props.node.paneName || props.node.title || props.node.shellName)
 const editingTitle = ref(false)
 // Keep the shown title in sync when it's changed from elsewhere (e.g. an
 // install pane renamed right after it opens), unless you're editing it.
 watch(
-  () => props.node.title,
+  () => props.node.paneName || props.node.title,
   (title) => {
     if (!editingTitle.value && title) paneTitle.value = title
   }
@@ -1249,7 +1248,7 @@ const titleInputEl = ref(null)
 function startEditTitle(e) {
   e.stopPropagation()
   editingTitle.value = true
-  nextTick(() => titleInputEl.value && titleInputEl.value.select())
+  nextTick(() => { titleInputEl.value?.focus(); titleInputEl.value?.select() })
 }
 
 // An agent pane is named after its conversation (Settings > Agents) until
@@ -1259,6 +1258,12 @@ const autoTitle = computed(() =>
 )
 
 function saveTitle() {
+  if (isAgent.value && ctx.renameAgent) {
+    if (!ctx.renameAgent(props.node.id, paneTitle.value)) return
+    editingTitle.value = false
+    if (term) term.focus()
+    return
+  }
   if (!paneTitle.value.trim()) {
     if (isAgent.value && props.node.titleSet) {
       props.node.titleSet = false
@@ -1276,6 +1281,7 @@ function saveTitle() {
 }
 
 function cancelEditTitle() {
+  paneTitle.value = props.node.paneName || props.node.title || props.node.shellName
   editingTitle.value = false
   if (term) term.focus()
 }
@@ -2162,7 +2168,6 @@ onBeforeUnmount(() => {
       <!-- Resting on the number, icon, title or state shows the hover card
            (a press, Esc or a right-click closes it). -->
       <div class="pane-nav-left" data-test="pane-hover-trigger" v-on="headerHover.triggerListeners">
-        <span v-if="node.num" class="pane-num" :aria-label="t('pane.number', 'Pane #{{num}}', { num: node.num })">{{ node.num }}</span>
         <span
           class="pane-icon"
           :class="isAgent ? ['agent', needsYou ? 'attention' : subRunning > 0 ? 'busy' : agentStatus, { yolo: node.launchYolo }] : null"
@@ -2183,6 +2188,7 @@ onBeforeUnmount(() => {
           ref="titleInputEl"
           v-model="paneTitle"
           class="pane-tab-input"
+          :aria-label="t('pane.renameAgent', 'Agent name')"
           @blur="saveTitle"
           @keydown.enter.prevent="saveTitle"
           @keydown.escape.prevent="cancelEditTitle"
@@ -2194,9 +2200,12 @@ onBeforeUnmount(() => {
           class="pane-title"
           data-test="pane-title"
           :aria-description="titleDescription"
+          tabindex="0"
+          @keydown.enter.prevent="startEditTitle"
           @dblclick="startEditTitle"
           >{{ paneTitle }}</span
         >
+        <span v-if="isAgent && node.paneName" class="pane-agent-label">{{ agentName }}</span>
         <!-- The header shows only the agent's name: the conversation's title
              is in the hover card. Then the model it uses, one dim chip (the
              model picker on a click; hidden when the pane is narrow). -->
@@ -2470,7 +2479,7 @@ onBeforeUnmount(() => {
       @keydown.escape.prevent.stop="closeCtxMenuAndRefocus"
     >
       <div class="ctx-menu-header">
-        <span class="ctx-menu-title">{{ node.num ? `#${node.num} ` : '' }}{{ paneTitle }}</span>
+        <span class="ctx-menu-title">{{ paneTitle }}</span>
         <span class="ctx-menu-subtitle">{{ node.shellName }}</span>
       </div>
       <!-- What the pane header does not show (Orca keeps its header to the
@@ -2570,9 +2579,9 @@ onBeforeUnmount(() => {
           @click="menuSendSelection(p.id)"
         >
           <span class="ctx-with-icon">
-            <span class="pane-num">{{ p.num }}</span>
+
             <BrandIcon :kind="p.kind" :accent="p.accent" :label="p.title" :size="13" />
-            <span class="pick-title">{{ p.title }}</span>
+            <span class="pick-title">{{ p.paneName || p.title }}</span>
           </span>
           <span class="ctx-menu-shortcut">{{ p.branch || p.where }}</span>
         </button>
@@ -2587,9 +2596,9 @@ onBeforeUnmount(() => {
             @click="menuAskReview(p.id)"
           >
             <span class="ctx-with-icon">
-              <span class="pane-num">{{ p.num }}</span>
+
               <BrandIcon :kind="p.kind" :accent="p.accent" :label="p.title" :size="13" />
-              <span class="pick-title">{{ p.title }}</span>
+              <span class="pick-title">{{ p.paneName || p.title }}</span>
             </span>
             <span class="ctx-menu-shortcut">{{ p.branch || p.where }}</span>
           </button>

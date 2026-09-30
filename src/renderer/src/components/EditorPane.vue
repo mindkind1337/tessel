@@ -865,7 +865,6 @@ onBeforeUnmount(() => {
   >
     <div class="pane-nav" data-test="pane-header" @mousedown.stop="onNavMouseDown" @pointerdown="onNavPointerDown">
       <div class="pane-nav-left">
-        <span v-if="node.num" class="pane-num" :title="t('editor.pane.number', 'Pane #{{num}}', { num: node.num })">{{ node.num }}</span>
         <span class="pane-icon" :title="t('editor.pane.title', 'Editor')">
           <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path d="M5.5 4.5L2 8l3.5 3.5M10.5 4.5L14 8l-3.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />

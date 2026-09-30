@@ -149,7 +149,7 @@ onMounted(() => nextTick(() => titleEl.value && titleEl.value.focus()))
           />
           <BrandIcon :kind="a.agentId" :accent="a.accent" :label="a.title" :size="18" />
           <span class="nt-agent-body">
-            <span class="nt-agent-name">#{{ a.num }} {{ a.title }}</span>
+            <span class="nt-agent-name">{{ a.paneName || a.title }}</span>
             <span class="nt-agent-sub">{{ alreadyOpen(a) }}</span>
           </span>
         </label>
@@ -200,7 +200,7 @@ onMounted(() => nextTick(() => titleEl.value && titleEl.value.focus()))
         <span>{{ t('tasks.new.reviewBy', 'When it is done, ask for a review by') }}</span>
         <select v-model="reviewerId" class="nt-select">
           <option value="">{{ t('tasks.new.nobody', 'nobody') }}</option>
-          <option v-for="r in reviewers" :key="r.id" :value="r.id">#{{ r.num }} {{ r.title }}</option>
+          <option v-for="r in reviewers" :key="r.id" :value="r.id">{{ r.paneName || r.title }}</option>
         </select>
       </label>
 

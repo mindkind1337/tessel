@@ -27,7 +27,7 @@ describe('lead requests', () => {
     expect(parseLeadRequest({ action: 'task', title: 'x', agent: 'rm -rf /' }).ok).toBe(false)
     expect(parseLeadRequest({ action: 'merge', task: 'x' }).error).toMatch(/unknown action/)
     expect(parseLeadRequest({ action: 'changes', task: 'x' }).error).toMatch(/text/)
-    expect(parseLeadRequest({ action: 'message', to: 'bob', text: 'hi' }).ok).toBe(false)
+    expect(parseLeadRequest({ action: 'message', to: 'bob', text: 'hi' })).toMatchObject({ ok: true, name: 'bob' })
   })
   it('reads messages, approvals and change requests', () => {
     expect(parseLeadRequest({ action: 'message', to: 'team', text: 'hi' })).toMatchObject({ ok: true, to: 'team' })

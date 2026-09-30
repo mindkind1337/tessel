@@ -184,7 +184,7 @@ function onTaskText(onTask) {
 // Display label for a pane: its title, falling back to the agent id.
 function paneLabel(pane) {
   const name = pane.title || pane.agentId || pane.id
-  return pane.num ? `#${pane.num} ${name}` : name
+  return pane.paneName || name
 }
 </script>
 

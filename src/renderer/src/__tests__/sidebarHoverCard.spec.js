@@ -82,7 +82,7 @@ describe('sidebar hover cards', () => {
     const w = mountSidebar()
     for (const row of w.findAll('.wtc-row')) expect(row.findAll('[title]').map((e) => e.attributes('title'))).toEqual([])
     const row = agentRow(w, 'a')
-    expect(row.attributes('aria-label')).toBe('Codex - Fix the cart, Working, Team: Team 2 (lead), Pane 1')
+    expect(row.attributes('aria-label')).toBe('Codex - Fix the cart, Working, Team: Team 2 (lead)')
     const copy = cardFor(w, 'Fix the login')
     const desc = document.getElementById(copy.attributes('aria-describedby'))
     expect(desc.textContent).toBe('tessel/fix-login, C:\\repo.worktrees\\fix-login')
@@ -104,7 +104,7 @@ describe('sidebar hover cards', () => {
     // The time is on the row, not repeated in the card.
     expect(text).not.toContain('· 2m')
     expect(text).toContain('Team 2 (lead)')
-    expect(text).toContain('Pane 1')
+    expect(text).not.toContain('Pane 1')
     // Beside the row, like Radix side="right".
     expect(card.dataset.side).toBe('right')
     expect(card.style.left).toMatch(/px$/)
@@ -213,7 +213,7 @@ describe('sidebar hover cards', () => {
     expect(text).toContain('Model: Opus 4.7 · high')
     expect(text).toContain('Working')
     expect(text).toContain('Team 2')
-    expect(card.querySelector('[data-hover-chat]').textContent).toContain('Chat pane 5 (no terminal)')
+    expect(card.querySelector('[data-hover-chat]').textContent).toContain('Chat (no terminal)')
     // Terminal-only lines are hidden.
     expect(text).not.toContain('Pane 5')
     expect(text).not.toContain('tessel-team')

@@ -10,7 +10,7 @@ function world({ confirm = true, max = 2, depth = 1 } = {}) {
   const ws = { id: 'ws1', cwd: 'C:\\repo', remote: null }
   const leaves = new Map()
   const addLeaf = (id, num, title, extra = {}) => {
-    const l = { id, num, title, kind: 'agent', team: 'tm1', ...extra }
+    const l = { id, num, paneName: `Agent ${num}`, title, kind: 'agent', team: 'tm1', ...extra }
     leaves.set(id, l)
     return l
   }
@@ -28,7 +28,7 @@ function world({ confirm = true, max = 2, depth = 1 } = {}) {
     teams: () => [team, ...otherTeams],
     now: () => clock,
     findLeaf: (id) => leaves.get(id) || null,
-    label: (l) => `#${l.num} ${l.title}`,
+    label: (l) => `${l.paneName} ${l.title}`,
     isLead: (tm, id) => tm.leadId === id,
     wsOfLeaf: () => ws,
     agentAvailable: (id) => (['claude', 'codex'].includes(id) ? { id, name: id, command: id } : null),
@@ -106,10 +106,10 @@ describe('orchestrator', () => {
     expect(w.leaves.get(opened.id).team).toBe('tm1')
     const brief = w.log.notices.find((n) => n.to[0] === opened.id)
     expect(brief.text).toMatch(/\[Tessel worker brief\]/)
-    expect(brief.text).toMatch(/Your coordinator is #1 Claude Code/)
+    expect(brief.text).toMatch(/Your coordinator is Agent 1 Claude Code/)
     expect(brief.text).toMatch(new RegExp(`Your task card is ${rec.taskId}\\. Your dispatch id is ${rec.id}\\.`))
     // The coordinator hears it started (its tool's answer was already given).
-    expect(w.log.notices.some((n) => n.to[0] === 'lead' && /Started worker #11 \(codex\)/.test(n.text))).toBe(true)
+    expect(w.log.notices.some((n) => n.to[0] === 'lead' && /Started worker Agent 11 \(codex\)/.test(n.text))).toBe(true)
     expect(w.log.activity.map((e) => e.action)).toContain('worker-started')
   })
 
@@ -133,7 +133,7 @@ describe('orchestrator', () => {
     await w.flush()
     const [a, b, c] = w.team.workers
     expect([a.status, b.status, c.status]).toEqual(['running', 'running', 'queued'])
-    expect(w.log.answers.find((x) => x.rid === 'r-a-000001').text).toMatch(/^Started worker #11 \(codex\) on card task-1 "A"/)
+    expect(w.log.answers.find((x) => x.rid === 'r-a-000001').text).toMatch(/^Started worker Agent 11 \(codex\) on card task-1 "A"/)
     expect(w.log.answers.find((x) => x.rid === 'r-c-000003').text).toMatch(/is queued: you already have 2 workers running/)
     // A worker reports done: its slot goes to the queued one.
     w.o.handleRequest(w.team, w.leaves.get(a.paneId), { action: 'worker-done', outcome: 'succeeded', summary: 'Done.', files: [] })
@@ -230,7 +230,7 @@ describe('orchestrator', () => {
     const pub = w.log.published.at(-1)
     expect(pub.limits).toEqual({ maxConcurrent: 4, maxDepth: 1, confirm: false })
     expect(pub.workers.map((x) => x.status)).toEqual(['stopped', 'released', 'stopped'])
-    expect(pub.phases['#1']).toBe('merging')
+    expect(pub.phases['Agent 1']).toBe('merging')
   })
 
   it('the user stops a running worker through the normal close, or cancels a waiting one', async () => {
@@ -274,8 +274,8 @@ describe('orchestrator', () => {
     const rec = w.team.workers[0]
     const s = w.o.summary(w.team)
     expect(s).toMatchObject({ teamId: 'tm1', running: 1, waiting: 0, limits: { maxConcurrent: 2 } })
-    expect(s.coordinators).toEqual([{ id: 'lead', label: '#1 Claude Code', phase: 'monitoring' }])
-    expect(s.workers[0]).toMatchObject({ status: 'running', label: '#11 Codex CLI', byLabel: '#1 Claude Code' })
+    expect(s.coordinators).toEqual([{ id: 'lead', label: 'Agent 1 Claude Code', phase: 'monitoring' }])
+    expect(s.workers[0]).toMatchObject({ status: 'running', label: 'Agent 11 Codex CLI', byLabel: 'Agent 1 Claude Code' })
     expect(w.o.workerInfo(w.team, rec.paneId)).toEqual({ coordinatorId: 'lead', status: 'running', taskId: rec.taskId, depth: 1 })
     expect(w.o.workerInfo(w.team, 'mate')).toBeNull()
   })
@@ -440,7 +440,7 @@ describe('orchestrator: chat workers', () => {
     w.deps.openWorkerChat = async (o) => {
       w.log.chats.push(o)
       if (w.chatFails !== undefined) return w.chatFails
-      const l = { id: `chat-${++n}`, num: n, title: o.agent.id === 'codex' ? 'Codex' : 'Claude', kind: 'chat', team: null }
+      const l = { id: `chat-${++n}`, num: n, paneName: `Agent ${n}`, title: o.agent.id === 'codex' ? 'Codex' : 'Claude', kind: 'chat', team: null }
       w.leaves.set(l.id, l)
       return l
     }
@@ -492,7 +492,7 @@ describe('orchestrator: chat workers', () => {
     expect(w.log.notices[0]).toMatchObject({ to: ['chat-21'] })
     expect(w.log.notices[0].text).toMatch(/\[Tessel worker brief\]/)
     expect(w.log.answers.at(-1)).toMatchObject({ rid: 'r-chat-000001', ok: true })
-    expect(w.log.answers.at(-1).text).toMatch(/^Started worker #21 \(claude\)/)
+    expect(w.log.answers.at(-1).text).toMatch(/^Started worker Agent 21 \(claude\)/)
     expect(w.cards.get(r.taskId)).toMatchObject({ column: 'doing', paneId: 'chat-21' })
     expect(w.o.summary(w.team).workers[0]).toMatchObject({ chat: true })
     w.tick()
@@ -557,7 +557,7 @@ describe('orchestrator: chat workers', () => {
     const silent = told(w, /stopped without reporting/)
     expect(silent).toHaveLength(1)
     expect(silent[0].text).toBe(
-      '[Tessel] Worker #21 "Fix the cart" (card task-1) stopped without reporting, even after a reminder. Look at it (team_worker_read), ask it (team_ask), or stop it (team_worker_stop).'
+      '[Tessel] Worker Agent 21 "Fix the cart" (card task-1) stopped without reporting, even after a reminder. Look at it (team_worker_read), ask it (team_ask), or stop it (team_worker_stop).'
     )
     turnEnd(w, r, { status: 'completed' })
     turnEnd(w, r, { status: 'completed' })
@@ -572,7 +572,7 @@ describe('orchestrator: chat workers', () => {
     turnEnd(w, r, { status: 'failed', error: 'usage limit reached' })
     turnEnd(w, r, { status: 'failed', error: 'usage limit reached' })
     const failed = told(w, /its turn failed/)
-    expect(failed.map((x) => x.text)).toEqual(['[Tessel] Worker #21 "Fix the cart" (card task-1): its turn failed: usage limit reached.'])
+    expect(failed.map((x) => x.text)).toEqual(['[Tessel] Worker Agent 21 "Fix the cart" (card task-1): its turn failed: usage limit reached.'])
     turnEnd(w, r, { status: 'failed', error: 'content filtered' })
     expect(told(w, /its turn failed/)).toHaveLength(2)
     // A failure is no silence: no reminder for it.
@@ -643,19 +643,19 @@ describe('orchestrator: chat workers', () => {
   it('team_worker_read of a chat worker reads its conversation', async () => {
     const w = chatWorld()
     const r = await started(w)
-    w.o.handleRequest(w.team, w.lead, { action: 'worker-read', rid: 'r-read-chat01', worker: '#21', lines: 20 })
+    w.o.handleRequest(w.team, w.lead, { action: 'worker-read', rid: 'r-read-chat01', worker: 'Agent 21', lines: 20 })
     await w.flush()
     expect(w.log.reads).toEqual([{ paneId: r.paneId, lines: 20 }])
     expect(w.log.answers.at(-1)).toMatchObject({ rid: 'r-read-chat01', ok: true, toId: 'lead' })
-    expect(w.log.answers.at(-1).text).toBe('#21 "Fix the cart" is running. No heartbeat yet. Its conversation now:\n> User: go\n▸ Bash: npm test (done)\nAll green.')
+    expect(w.log.answers.at(-1).text).toBe('Agent 21 "Fix the cart" is running. No heartbeat yet. Its conversation now:\n> User: go\n▸ Bash: npm test (done)\nAll green.')
     // Not open (readChat -> null).
     w.deps.readChat = async () => null
-    w.o.handleRequest(w.team, w.lead, { action: 'worker-read', rid: 'r-read-chat02', worker: '#21' })
+    w.o.handleRequest(w.team, w.lead, { action: 'worker-read', rid: 'r-read-chat02', worker: 'Agent 21' })
     await w.flush()
-    expect(w.log.answers.at(-1)).toMatchObject({ rid: 'r-read-chat02', ok: false, text: "#21's chat is not open." })
+    expect(w.log.answers.at(-1)).toMatchObject({ rid: 'r-read-chat02', ok: false, text: "Agent 21's chat is not open." })
     // Another agent may not read it; nothing is read for it.
     const reads = w.log.reads.length
-    w.o.handleRequest(w.team, w.mate, { action: 'worker-read', rid: 'r-read-chat03', worker: '#21' })
+    w.o.handleRequest(w.team, w.mate, { action: 'worker-read', rid: 'r-read-chat03', worker: 'Agent 21' })
     await w.flush()
     expect(w.log.answers.at(-1)).toMatchObject({ rid: 'r-read-chat03', ok: false })
     expect(w.log.reads).toHaveLength(reads)

@@ -185,7 +185,7 @@ describe('pane header hover card', () => {
     expect(card.querySelector('[data-hover-conversation]').textContent).toBe('Fix the cart')
     expect(card.querySelector('[data-hover-state]')).toBeTruthy()
     expect(card.querySelector('[data-hover-team]').textContent).toContain('Team 2')
-    expect(card.querySelector('[data-hover-pane]').textContent).toContain('Pane 2')
+    expect(card.textContent).not.toContain('Pane 2')
     expect(card.querySelector('[data-hover-hint]').textContent).toContain('Double-click to rename')
     // Only one card per pane.
     expect(cards()).toHaveLength(1)

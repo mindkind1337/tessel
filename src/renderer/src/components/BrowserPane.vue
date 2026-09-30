@@ -800,7 +800,6 @@ defineExpose({ navigate, focusAddress })
   >
     <div class="pane-nav" data-test="pane-header" @mousedown.stop="onNavMouseDown" @pointerdown="onNavPointerDown">
       <div class="pane-nav-left">
-        <span v-if="node.num" class="pane-num" :title="t('editor.pane.number', 'Pane #{{num}}', { num: node.num })">{{ node.num }}</span>
         <span class="pane-icon" :title="t('browser.pane.title', 'Browser')">
           <Globe :size="15" aria-hidden="true" />
         </span>

@@ -128,10 +128,10 @@ export function createCliRequests(deps) {
     const projects = deps.workspaces().map((ws) => {
       const panes = []
       deps.forEachLeaf(ws.tree, (leaf) => {
-        const kind = leaf.kind === 'agent' ? 'agent' : leaf.kind === 'editor' ? 'editor' : 'terminal'
+        const kind = (leaf.kind === 'agent' || leaf.kind === 'chat') ? 'agent' : leaf.kind === 'editor' ? 'editor' : 'terminal'
         panes.push({
           id: leaf.id,
-          num: leaf.num || null,
+          name: leaf.paneName || null,
           kind,
           title: String(leaf.title || '').slice(0, 200),
           ...(kind === 'agent' ? { agentId: leaf.agentId || null, state: deps.agentState(leaf.id) || null } : {}),

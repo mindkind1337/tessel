@@ -43,7 +43,7 @@ describe('Sessions: worker rows', () => {
             cwd: 'C:\\repo',
             branch: 'main',
             // The worker alone on the card (several agents fold into a summary).
-            panes: [pane('wk', { num: 5, title: 'Codex', workerOf: { id: 'lead', label: '#1 Claude', num: 1, status: 'running' } })],
+            panes: [pane('wk', { num: 5, title: 'Codex', workerOf: { id: 'lead', label: 'Ada', num: 1, status: 'running' } })],
             copies: []
           }
         ],
@@ -62,8 +62,8 @@ describe('Sessions: worker rows', () => {
     const w = mountSidebar()
     const row = w.find('.compact-agent-row[data-pane-id="wk"]')
     const tag = row.find('[data-worker-of]')
-    expect(tag.text()).toBe('worker of #1')
-    expect(row.attributes('aria-label')).toContain('Worker of #1 Claude: go to it')
+    expect(tag.text()).toBe('worker of Ada')
+    expect(row.attributes('aria-label')).toContain('Worker of Ada: go to it')
     await tag.trigger('click')
     expect(w.emitted('focus-pane').at(-1)).toEqual(['lead'])
     // The row itself still goes to the worker.
@@ -80,7 +80,7 @@ describe('Sessions: worker rows', () => {
       await nextTick()
       await nextTick()
       const card = document.querySelector('.agent-hover-card [data-hover-worker]')
-      expect(card && card.textContent).toBe('Worker of #1 Claude')
+      expect(card && card.textContent).toBe('Worker of Ada')
     } finally {
       vi.useRealTimers()
     }
@@ -108,7 +108,7 @@ describe('Tasks panel: the orchestration card', () => {
     name: 'Team 1',
     color: '#6c9cff',
     limits: { maxConcurrent: 4, maxDepth: 1, confirm: true },
-    coordinators: [{ id: 'lead', label: '#1 Claude', phase: 'dispatching' }],
+    coordinators: [{ id: 'lead', label: 'Ada', phase: 'dispatching' }],
     workers,
     running: workers.filter((x) => ['running', 'starting'].includes(x.status)).length,
     waiting: workers.filter((x) => ['confirming', 'queued'].includes(x.status)).length

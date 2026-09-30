@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { createCliRequests, insideFolder, folderName } from '../cliRequests'
 
 function setup(over = {}) {
-  const leafA = { id: 'a', num: 1, kind: 'agent', title: 'Claude Code', agentId: 'claude' }
+  const leafA = { id: 'a', name: 'Ada', paneName: 'Ada', kind: 'agent', title: 'Claude Code', agentId: 'claude' }
   const leafB = { id: 'b', num: 2, kind: 'terminal', title: 'PowerShell' }
   const wsList = [
     { id: 'w1', name: 'app', cwd: 'C:\\work\\app', tree: { type: 'split', children: [leafA, leafB] }, activeId: 'b' },
@@ -103,8 +103,8 @@ describe('createCliRequests', () => {
       path: 'C:\\work\\app',
       active: true,
       panes: [
-        { id: 'a', num: 1, kind: 'agent', title: 'Claude Code', agentId: 'claude', state: 'working', active: false },
-        { id: 'b', num: 2, kind: 'terminal', title: 'PowerShell', active: true }
+        { id: 'a', name: 'Ada', kind: 'agent', title: 'Claude Code', agentId: 'claude', state: 'working', active: false },
+        { id: 'b', name: null, kind: 'terminal', title: 'PowerShell', active: true }
       ]
     })
     expect(s.projects[2].path).toBe('ssh:h:/srv')

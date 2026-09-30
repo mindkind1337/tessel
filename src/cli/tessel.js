@@ -343,7 +343,7 @@ export function formatStatus(result) {
   for (const p of projects) {
     lines.push(`${p.active ? '*' : ' '} ${clean(p.name)}${p.path ? `  ${clean(p.path)}` : ''}`)
     for (const pane of p.panes || []) {
-      const num = pane.num ? `#${pane.num}` : '  '
+      const num = pane.name || ''
       const state = pane.kind === 'agent' && pane.state ? `  [${clean(pane.state)}]` : ''
       const active = pane.active ? `  (${tr('active')})` : ''
       lines.push(`    ${clean(num).padEnd(4)} ${kindWord(pane.kind).padEnd(9)} ${clean(pane.title)}${state}${active}`)

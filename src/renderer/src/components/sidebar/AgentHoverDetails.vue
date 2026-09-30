@@ -46,7 +46,7 @@ const teamLine = computed(() => {
 const workerLine = computed(() => {
   const w = props.row.workerOf
   if (!w) return ''
-  const coordinator = w.label || (w.num ? `#${w.num}` : '')
+  const coordinator = w.label || ''
   if (w.status === 'done') return t('sidebar.hover.workerDone', 'Worker of {{coordinator}}: reported done', { coordinator })
   if (w.status === 'failed') return t('sidebar.hover.workerFailed', 'Worker of {{coordinator}}: reported failed', { coordinator })
   return t('sidebar.hover.workerOf', 'Worker of {{coordinator}}', { coordinator })
@@ -59,12 +59,7 @@ const unreadLine = computed(() => {
     : t('sidebar.agentRow.unread', '{{count}} team message this agent has not read yet (it reads them with its team tools)', { count })
 })
 // A chat agent's pane has no terminal: its footer says so.
-const paneLine = computed(() => {
-  const num = props.row.num
-  if (props.row.chat)
-    return num ? t('sidebar.hover.chatPane', 'Chat pane {{num}} (no terminal)', { num }) : t('sidebar.hover.chat', 'Chat (no terminal)')
-  return num ? t('sidebar.card.pane', 'Pane {{num}}', { num }) : ''
-})
+const paneLine = computed(() => props.row.chat ? t('sidebar.hover.chat', 'Chat (no terminal)') : '')
 // Only the sub-agents running now (the conversation's whole history of
 // them, often dozens, is not worth a line).
 const childLine = computed(() => {

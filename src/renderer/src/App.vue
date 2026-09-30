@@ -1,4 +1,5 @@
 <script setup>
+import { ensureAgentNames, renameAgentName, resolveAgentAddress, agentProgramLabel } from '../../shared/agentNames'
 import { ref, reactive, provide, watch, computed, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import SplitNode from './components/SplitNode.vue'
 import BrandIcon from './components/BrandIcon.vue'
@@ -1339,6 +1340,7 @@ function serializeNode(node) {
       id: node.id,
       title: node.title || t('app.pane.editor', 'Editor'),
       num: node.num || null,
+      paneName: node.paneName || undefined,
       files: (node.files || []).map((f) => ({ path: f.path, preview: !!f.preview })),
       activePath: node.activePath || null
     }
@@ -1351,6 +1353,7 @@ function serializeNode(node) {
       id: node.id,
       title: node.title || null,
       num: node.num || null,
+      paneName: node.paneName || undefined,
       agentId: CHAT_AGENTS.includes(node.agentId) ? node.agentId : 'claude',
       cwd: node.cwd || null,
       projectDir: node.projectDir || null,
@@ -1372,6 +1375,7 @@ function serializeNode(node) {
       id: node.id,
       title: node.title || t('app.pane.browser', 'Browser'),
       num: node.num || null,
+      paneName: node.paneName || undefined,
       url: allowedBrowserUrl(node.url) || BLANK_URL,
       zoom: Number.isFinite(node.zoom) ? node.zoom : 0
     }
@@ -1402,6 +1406,7 @@ function serializeNode(node) {
       launchedAt: node.launchedAt || null,
       startDir: node.startDir || null,
       num: node.num || null,
+      paneName: node.paneName || undefined,
       team: node.team || null,
       teamTools: !!node.teamTools,
       toolsVersion: node.toolsVersion || null,
@@ -1431,6 +1436,7 @@ async function deserializeNode(snap, cwd = null) {
     const id = typeof snap.id === 'string' && /^pane-[\w-]+$/.test(snap.id) ? snap.id : null
     const leaf = makeEditorLeaf(id)
     if (typeof snap.title === 'string' && snap.title) leaf.title = snap.title.slice(0, 80)
+    if (snap.paneName) leaf.paneName = snap.paneName
     if (Number.isInteger(snap.num) && snap.num > 0) leaf.num = snap.num
     leaf.files = files
     const active = files.find((f) => samePath(f.path, snap.activePath))
@@ -1445,6 +1451,7 @@ async function deserializeNode(snap, cwd = null) {
     const folder = (v) => (typeof v === 'string' && v.length <= 1000 ? v : null)
     if (!folder(snap.cwd)) return null
     const leaf = makeChatLeaf({ id, agentId: CHAT_AGENTS.includes(snap.agentId) ? snap.agentId : 'claude', cwd: folder(snap.cwd), projectDir: folder(snap.projectDir), sessionId, title: typeof snap.title === 'string' && !OLD_CHAT_TITLE.test(snap.title) ? snap.title.slice(0, 200) : null })
+    if (snap.paneName) leaf.paneName = snap.paneName
     if (Number.isInteger(snap.num) && snap.num > 0) leaf.num = snap.num
     if (typeof snap.accountId === 'string' || snap.accountId === null) leaf.accountId = snap.accountId
     if (typeof snap.team === 'string') leaf.team = snap.team
@@ -1465,6 +1472,7 @@ async function deserializeNode(snap, cwd = null) {
     const id = typeof snap.id === 'string' && /^pane-[\w-]+$/.test(snap.id) ? snap.id : null
     const leaf = makeBrowserLeaf(id, typeof snap.url === 'string' ? snap.url : BLANK_URL)
     if (typeof snap.title === 'string' && snap.title) leaf.title = snap.title.slice(0, 200)
+    if (snap.paneName) leaf.paneName = snap.paneName
     if (Number.isInteger(snap.num) && snap.num > 0) leaf.num = snap.num
     if (Number.isFinite(snap.zoom)) leaf.zoom = Math.max(-3, Math.min(5, snap.zoom))
     return leaf
@@ -1510,6 +1518,7 @@ async function deserializeNode(snap, cwd = null) {
         sleeping: { at: snap.sleeping.at },
         broadcast: snap.broadcast !== false
       })
+      if (snap.paneName) asleep.paneName = snap.paneName
       if (Number.isInteger(snap.num) && snap.num > 0) asleep.num = snap.num
       if (snap.titleSet === true) asleep.titleSet = true
       if (typeof snap.autoTitle === 'string' && snap.autoTitle) asleep.autoTitle = snap.autoTitle.slice(0, 80)
@@ -1536,6 +1545,7 @@ async function deserializeNode(snap, cwd = null) {
       ...(typeof snap.team === 'string' ? { wake: { teamId: snap.team, gen: 0 } } : {})
     })
     if (!leaf) return null
+    if (snap.paneName) leaf.paneName = snap.paneName
     if (Number.isInteger(snap.num) && snap.num > 0) leaf.num = snap.num
     if (snap.teamTools) leaf.teamTools = true
     if (typeof snap.toolsVersion === 'string') leaf.toolsVersion = snap.toolsVersion
@@ -1718,7 +1728,7 @@ function closeLeaf(leafId, opts = {}) {
     const leaf = findLeafIn(ws.tree, leafId)
     if (leaf && isAgentLeaf(leaf)) {
       askConfirm({
-        title: t('app.close.title', 'Close {{name}}?', { name: leaf.title }),
+        title: t('app.close.title', 'Close {{name}}?', { name: leaf.paneName || leaf.title }),
         text: t('app.close.agentText', 'The agent session will end. Its conversation can be resumed later from Agent sessions.'),
         confirmLabel: t('app.close.confirm', 'Close'),
         danger: true
@@ -1730,7 +1740,7 @@ function closeLeaf(leafId, opts = {}) {
         if (!findLeaf(leafId)) return // closed meanwhile
         if (!work.running && !work.unknown) return closeLeaf(leafId, { ...opts, probed: true })
         askConfirm({
-          title: t('app.close.title', 'Close {{name}}?', { name: leaf.title }),
+          title: t('app.close.title', 'Close {{name}}?', { name: leaf.paneName || leaf.title }),
           text: work.unknown
             ? t('app.close.unknownWork', 'Tessel could not check whether a command is still running in it. Closing stops anything running.')
             : work.names.length === 1
@@ -1932,8 +1942,8 @@ const agentPanes = computed(() => {
     if (isAgentLeaf(leaf)) {
       out.push({
         id: leaf.id,
-        num: leaf.num || null,
-        title: leaf.title,
+        num: leaf.num || null, paneName: leaf.paneName,
+        title: leaf.paneName || leaf.title,
         agentId: leaf.agentId,
         accent: leaf.accent,
         track: trackOf(leaf.id)
@@ -2181,7 +2191,23 @@ async function initUpdates() {
   }
 }
 
+function renameAgent(id, name) {
+    const leaf = findLeaf(id)
+    if (!leaf || !isAgentLeaf(leaf)) return false
+    const panes = []
+    forEachWsLeaf((pane) => panes.push(pane))
+    const error = renameAgentName(panes, id, name)
+    if (error) {
+      showToast(error === 'taken'
+        ? t('app.agentName.taken', 'Another agent already uses "{{name}}". Choose a different name.', { name: String(name).trim() })
+        : t('app.agentName.invalid', 'Choose a name of 1-60 characters, without line breaks, # or @ prefixes, or reserved team addresses.'), { kind: 'error' })
+      return false
+    }
+    return true
+  }
+
 provide('panelCtx', {
+  renameAgent,
   broadcast,
   activeId,
   maximizedId,
@@ -2861,8 +2887,8 @@ function otherPanes(paneId) {
     if (l.id !== paneId && !hasNoTerminal(l)) {
       out.push({
         id: l.id,
-        num: l.num || null,
-        title: l.title,
+        num: l.num || null, paneName: l.paneName,
+        title: l.paneName || l.title,
         agent: l.kind === 'agent',
         kind: l.kind === 'agent' ? l.agentId : l.shellId,
         accent: l.kind === 'agent' ? l.accent : null,
@@ -2891,7 +2917,7 @@ function paneWhere(paneId) {
 
 // Short label for a pane, like "#2 Claude Code".
 function paneLabel(leaf) {
-  return leaf ? `${leaf.num ? `#${leaf.num} ` : ''}${leaf.title}` : ''
+  return leaf ? `${leaf.paneName || leaf.title}` : ''
 }
 
 function reviewPrompt(fromLeaf, ws) {
@@ -2918,7 +2944,7 @@ function sendToPane(fromId, toId, mode, text = '') {
     // Like every message to an agent: not over a line being typed there, not
     // during an approval, and Enter confirmed (deliver.js).
     const from = findLeaf(fromId)
-    deliverToAgent(toId, reviewPrompt(from, ws), { source: 'you', scope: 'review', from: from ? from.title : null })
+    deliverToAgent(toId, reviewPrompt(from, ws), { source: 'you', scope: 'review', from: from ? from.paneName || from.title : null })
   } else if (mode === 'review') {
     target.paste(reviewPrompt(findLeaf(fromId), ws))
     setTimeout(() => target.submit(), 150)
@@ -2959,7 +2985,7 @@ const launcherTargetTitle = computed(() => {
   if (!id) return null
   let title = null
   forEachWsLeaf((l) => {
-    if (l.id === id) title = l.title
+    if (l.id === id) title = l.paneName || l.title
   })
   return title
 })
@@ -3042,6 +3068,7 @@ async function restartLeaf(leafId) {
   if (old.titleSet) fresh.titleSet = true
   if (old.autoTitle && fresh.sessionId === old.sessionId) fresh.autoTitle = old.autoTitle
   fresh.broadcast = old.broadcast
+  fresh.paneName = old.paneName
   if (old.num) fresh.num = old.num
   if (old.team && teamById(old.team)) {
     fresh.team = old.team
@@ -3068,7 +3095,7 @@ async function restartWithPermissions(leafId, mode) {
   // to carry on the same conversation with the other mode.
   const ok = await restartInPlace(leafId, { resume: true })
   if (!ok && findLeaf(leafId) === leaf)
-    showToast(t('app.restart.failed', '{{name}} could not be restarted: its terminal did not stop. Try again.', { name: leaf.title }), { kind: 'error', timeout: 8000 })
+    showToast(t('app.restart.failed', '{{name}} could not be restarted: its terminal did not stop. Try again.', { name: leaf.paneName || leaf.title }), { kind: 'error', timeout: 8000 })
 }
 // The folders a pane counts as working in, for Yolo folders: its project
 // (the workspace's folder), where it started, its task copy.
@@ -3272,7 +3299,7 @@ function beginPaneDrag(srcId, e) {
       if (Math.hypot(ev.clientX - startX, ev.clientY - startY) < DRAG_THRESHOLD) return
       paneDrag.active = true
       paneDrag.srcId = srcId
-      paneDrag.title = leaf.title
+      paneDrag.title = leaf.paneName || leaf.title
       paneDrag.kind = leaf.kind === 'agent' ? leaf.agentId : hasNoTerminal(leaf) ? '' : leaf.shellId
       maximizedId.value = null
       closeMenus()
@@ -3702,10 +3729,14 @@ function toggleSidebar() {
   refitSoon()
 }
 
-// Every pane gets a small number within its workspace (#1, #2, ...), kept for
-// the pane's lifetime and saved, like tmux pane numbers or VS Code's "1: pwsh".
-// New panes take the smallest free number.
+// Names are global and persistent; workspace numbers remain hidden legacy aliases.
 function numberPanes() {
+  if (numberPanes.running) return
+  numberPanes.running = true
+  try {
+  const all = []
+  forEachWsLeaf((leaf) => all.push(leaf))
+  ensureAgentNames(all)
   for (const ws of workspaces.value) {
     const used = new Set()
     const need = []
@@ -3726,18 +3757,20 @@ function numberPanes() {
       used.add(n)
     }
   }
+  } finally { numberPanes.running = false }
 }
+
 watch(
   () =>
     workspaces.value
       .map((w) => {
         const ids = []
-        forEachLeaf(w.tree, (l) => ids.push(`${l.id}:${l.num || 0}`))
+        forEachLeaf(w.tree, (l) => ids.push(`${l.id}:${l.num || 0}:${l.kind}:${l.paneName || ""}`))
         return ids.join(',')
       })
       .join('|'),
   numberPanes,
-  { immediate: true }
+  { immediate: true, flush: 'sync' }
 )
 
 // The sidebar's projects (Orca's logic, see sidebarModel.js): each workspace
@@ -3798,9 +3831,9 @@ const sidebarProjects = computed(() =>
       const tracked = trackedState[leaf.id]
       panes.push({
         id: leaf.id,
-        num: leaf.num || 0,
+        num: leaf.num || 0, paneName: leaf.paneName, agentLabel: programLabel(leaf),
         kind: leaf.kind || 'shell',
-        title: leaf.title || leaf.shellName || t('app.pane.terminal', 'Terminal'),
+        title: leaf.paneName || leaf.title || leaf.shellName || t('app.pane.terminal', 'Terminal'),
         agentId: leaf.agentId || null,
         shellId: leaf.shellId || null,
         accent: leaf.accent || null,
@@ -4036,7 +4069,7 @@ function addAgentState(out, leaf, wsId) {
   out[leaf.id] = {
     state,
     ...(observed ? { source: observed.source, confirmed: observed.confirmed, since: observed.since } : {}),
-    title: leaf.title || t('app.pane.agent', 'Agent'),
+    title: leaf.paneName || leaf.title || t('app.pane.agent', 'Agent'),
     agentId: leaf.agentId || null,
     reset: limits[leaf.id] ? limits[leaf.id].reset : '',
     wsId,
@@ -4346,7 +4379,7 @@ async function resolveUnsent(id) {
   if (!u) return
   focusPane(id)
   const leaf = findLeaf(id)
-  const who = leaf ? leaf.title : t('app.unsent.theAgent', 'the agent')
+  const who = leaf ? leaf.paneName || leaf.title : t('app.unsent.theAgent', 'the agent')
   const answer = await askConfirm({
     title: t('app.unsent.title', 'Did {{who}} get the message?', { who }),
     text: t('app.unsent.text', 'Tessel pasted a message and pressed Enter, but {{who}} did not visibly take it: "{{message}}". Look at its input box. If the message is still there, press Enter in the terminal yourself, then choose "It was sent". If it is gone and was not received, choose "Send again".', { who, message: `${u.item.text.slice(0, 160)}${u.item.text.length > 160 ? '…' : ''}` }),
@@ -4413,7 +4446,7 @@ function teamWsId(teamId) {
 }
 
 function agentInfo(leaf) {
-  return leaf ? { title: leaf.title || t('app.pane.agent', 'Agent'), agentId: leaf.agentId || null } : null
+  return leaf ? { title: leaf.paneName || leaf.title || t('app.pane.agent', 'Agent'), agentId: leaf.agentId || null } : null
 }
 
 function logMessage(leafId, status, text, meta = {}) {
@@ -4514,7 +4547,7 @@ function flushPending() {
           unsent[id] = { item, at: Date.now() }
           if (item.meta && item.meta.onUncertain) item.meta.onUncertain()
           const leaf = findLeaf(id)
-          showToast(leaf ? t('app.unsent.toast', 'A message to {{name}} may not have been sent. Check its input box.', { name: leaf.title }) : t('app.unsent.toastAgent', 'A message to an agent may not have been sent. Check its input box.'), {
+          showToast(leaf ? t('app.unsent.toast', 'A message to {{name}} may not have been sent. Check its input box.', { name: leaf.paneName || leaf.title }) : t('app.unsent.toastAgent', 'A message to an agent may not have been sent. Check its input box.'), {
             kind: 'attention',
             timeout: 15000,
             action: { label: t('app.unsent.check', 'Check'), run: () => resolveUnsent(id) }
@@ -4565,8 +4598,8 @@ const taskAgentKinds = computed(() =>
 const taskOpenAgents = computed(() =>
   (currentWs.value ? wsAgents(currentWs.value.id) : []).map((l) => ({
     id: l.id,
-    num: l.num || 0,
-    title: l.title || t('app.pane.agent', 'Agent'),
+    num: l.num || 0, paneName: l.paneName,
+    title: l.paneName || l.title || t('app.pane.agent', 'Agent'),
     agentId: l.agentId || null,
     accent: l.accent || null,
     state: paneState(l),
@@ -4654,7 +4687,7 @@ async function startTask(spec, opts = {}) {
     const why = leaf ? busyReason(leaf) : 'gone'
     if (why) {
       removeTask(task.id)
-      showToast(t('app.task.cannotTake', '{{name}} cannot take this task: {{why}}.', { name: leaf ? leaf.title : t('app.task.thatAgent', 'That agent'), why: busyReasonText(leaf) }), { kind: 'error', timeout: 7000 })
+      showToast(t('app.task.cannotTake', '{{name}} cannot take this task: {{why}}.', { name: leaf ? leaf.paneName || leaf.title : t('app.task.thatAgent', 'That agent'), why: busyReasonText(leaf) }), { kind: 'error', timeout: 7000 })
       return { error: `${leaf ? paneLabel(leaf) : 'that agent'} cannot take it: ${why}` } // i18n-ignore
     }
   } else {
@@ -4732,8 +4765,8 @@ async function startTask(spec, opts = {}) {
   if (!taskPanelOpen.value) showSideTab('tasks')
   showToast(
     started.worktree
-      ? t('app.task.startedOnBranch', '{{name}} started "{{title}}" on branch {{branch}}.', { name: leaf.title, title: task.title, branch: started.worktree.branch })
-      : t('app.task.started', '{{name}} started "{{title}}".', { name: leaf.title, title: task.title }),
+      ? t('app.task.startedOnBranch', '{{name}} started "{{title}}" on branch {{branch}}.', { name: leaf.paneName || leaf.title, title: task.title, branch: started.worktree.branch })
+      : t('app.task.started', '{{name}} started "{{title}}".', { name: leaf.paneName || leaf.title, title: task.title }),
     { timeout: 5000 }
   )
   return { task: started, leaf }
@@ -4754,15 +4787,15 @@ function agentReportedDone(paneId) {
     paneId,
     agent: agentInfo(leaf),
     wsId: task.wsId,
-    detail: lead && lead.id !== paneId ? t('app.task.leadReviewsDetail', '{{lead}} (lead) reviews it first', { lead: lead.title }) : ''
+    detail: lead && lead.id !== paneId ? t('app.task.leadReviewsDetail', '{{lead}} (lead) reviews it first', { lead: lead.paneName || lead.title }) : ''
   })
   if (lead && lead.id !== paneId) {
     updateTask(task.id, { leadReview: 'pending', teamId: task.teamId || leaf.team })
     noticeAgents([lead], leadReviewPrompt(task, leaf), leaf.team, { source: 'tessel', scope: 'lead', teamId: leaf.team })
-    showToast(t('app.task.finishedLead', '{{name}} finished "{{title}}". {{lead}} (lead) reviews it first.', { name: leaf.title, title: task.title, lead: lead.title }), { timeout: 6000 })
+    showToast(t('app.task.finishedLead', '{{name}} finished "{{title}}". {{lead}} (lead) reviews it first.', { name: leaf.paneName || leaf.title, title: task.title, lead: lead.paneName || lead.title }), { timeout: 6000 })
     return
   }
-  showToast(t('app.task.finished', '{{name}} finished "{{title}}". It is ready for your review.', { name: leaf ? leaf.title : t('app.task.anAgent', 'An agent'), title: task.title }), {
+  showToast(t('app.task.finished', '{{name}} finished "{{title}}". It is ready for your review.', { name: leaf ? leaf.paneName || leaf.title : t('app.task.anAgent', 'An agent'), title: task.title }), {
     kind: 'attention',
     timeout: 10000,
     action: task.worktree
@@ -4831,7 +4864,7 @@ function sendBackToAgent(task, text, action, detail, by = null) {
   updateTask(task.id, { column: 'doing', leadReview: null, doingSince: Date.now() })
   taskEvent(task, action, detail, by)
   reviewTaskId.value = null
-  showToast(t('app.task.sentBack', 'Sent to {{name}}. "{{title}}" is back in Doing.', { name: leaf.title, title: task.title }), { timeout: 5000 })
+  showToast(t('app.task.sentBack', 'Sent to {{name}}. "{{title}}" is back in Doing.', { name: leaf.paneName || leaf.title, title: task.title }), { timeout: 5000 })
   return true
 }
 
@@ -4859,7 +4892,7 @@ async function deleteTask(taskId) {
     title: t('app.task.deleteTitle', 'Delete "{{title}}"?', { title: task.title }),
     text: wt
       ? leaf
-        ? t('app.task.deleteCopyAgent', '{{name}} closes, and its copy ({{path}}) and branch {{branch}} are deleted with any work not merged yet. To keep the work, open Review and merge it first. This cannot be undone.', { name: leaf.title, path: wt.path, branch: wt.branch })
+        ? t('app.task.deleteCopyAgent', '{{name}} closes, and its copy ({{path}}) and branch {{branch}} are deleted with any work not merged yet. To keep the work, open Review and merge it first. This cannot be undone.', { name: leaf.paneName || leaf.title, path: wt.path, branch: wt.branch })
         : t('app.task.deleteCopy', 'its copy ({{path}}) and branch {{branch}} are deleted with any work not merged yet. To keep the work, open Review and merge it first. This cannot be undone.', { path: wt.path, branch: wt.branch })
       : t('app.task.deleteCard', 'The card is removed from the board.'),
     confirmLabel: t('app.common.delete', 'Delete'),
@@ -4955,7 +4988,7 @@ const reviewActions = {
         (cleanup
           ? ' ' +
             (leaf
-              ? t('app.merge.cleanupAgent', 'Then {{name}} closes and its copy and branch are deleted.', { name: leaf.title })
+              ? t('app.merge.cleanupAgent', 'Then {{name}} closes and its copy and branch are deleted.', { name: leaf.paneName || leaf.title })
               : t('app.merge.cleanup', 'Then its copy and branch are deleted.'))
           : ''),
       confirmLabel: t('app.merge.confirm', 'Merge')
@@ -4993,7 +5026,7 @@ const reviewActions = {
     const ok = await askConfirm({
       title: t('app.discard.title', 'Discard "{{title}}"?', { title: task.title }),
       text: t('app.discard.text', '{{who}}its copy ({{path}}) and branch {{branch}} are deleted{{commits}}. This cannot be undone.', {
-        who: leaf ? t('app.discard.closes', '{{name}} closes, and ', { name: leaf.title }) : '',
+        who: leaf ? t('app.discard.closes', '{{name}} closes, and ', { name: leaf.paneName || leaf.title }) : '',
         path: task.worktree.path,
         branch: task.worktree.branch,
         commits: n ? (n === 1 ? t('app.discard.commitOne', ', with its 1 unmerged commit') : t('app.discard.commits', ', with its {{count}} unmerged commits', { count: n })) : ''
@@ -5054,7 +5087,7 @@ setNotesDelivery({
       const task = taskOfPane(l.id)
       return {
         id: l.id,
-        label: `#${l.num || '?'} ${l.title || t('app.pane.agent', 'Agent')}`,
+        label: l.paneName || l.title || t('app.pane.agent', 'Agent'),
         stateLabel: noteTargetState(state),
         disabledReason: state === 'approval' ? t('app.notes.needsPermission', 'Agent needs permission') : '',
         hint: task ? t('app.notes.workingOn', 'Working on "{{title}}"', { title: task.title }) : ''
@@ -5093,7 +5126,7 @@ setNotesDelivery({
         if (onDelivered) onDelivered()
       },
       onFailed: () => {
-        showToast(t('app.notes.failed', 'The notes could not be sent to {{name}}.', { name: leaf.title }), { kind: 'error' })
+        showToast(t('app.notes.failed', 'The notes could not be sent to {{name}}.', { name: leaf.paneName || leaf.title }), { kind: 'error' })
         if (onFailed) onFailed()
       }
     })
@@ -5109,7 +5142,7 @@ function wsAgents(wsId) {
 }
 
 function agentLabel(l) {
-  return `#${l.num || '?'} ${l.title}${l.agentId ? ` (${l.agentId})` : ''}`
+  return `${l.paneName || l.title}${l.paneName || l.agentId ? ` (${programLabel(l)})` : ''}`
 }
 
 // --- Team lead -------------------------------------------------------------------
@@ -5177,7 +5210,7 @@ async function changeTeamLead(teamId, leafId) {
     if (!box) {
       // Not the lead after all: the poll tells it about the channel instead.
       if (team.channelTold) delete team.channelTold[leaf.id]
-      showToast(t('app.lead.inboxFailed', "Could not make {{name}}'s inbox, so it is not the lead. Check that the project folder can be written to.", { name: leaf.title }), {
+      showToast(t('app.lead.inboxFailed', "Could not make {{name}}'s inbox, so it is not the lead. Check that the project folder can be written to.", { name: leaf.paneName || leaf.title }), {
         kind: 'error',
         timeout: 8000
       })
@@ -5198,14 +5231,14 @@ async function changeTeamLead(teamId, leafId) {
     }
     return
   }
-  recordActivity({ type: 'team', action: 'lead', teamId, wsId: teamWsId(teamId), name: team.name, detail: leaf.title })
+  recordActivity({ type: 'team', action: 'lead', teamId, wsId: teamWsId(teamId), name: team.name, detail: leaf.paneName || leaf.title })
   tellAgents([leaf], `[Tessel] ${box.guide}`, teamId)
   tellAgents(
     teamMembers(teamId).filter((l) => l.id !== leaf.id),
     `[Tessel] Team "${team.name}": ${paneLabel(leaf)} now leads the team. It may give you tasks; when you finish one, it reviews your work first.`, // i18n-ignore
     teamId
   )
-  showToast(t('app.lead.nowLeads', '{{name}} now leads {{team}}.', { name: leaf.title, team: team.name }), { timeout: 4000 })
+  showToast(t('app.lead.nowLeads', '{{name}} now leads {{team}}.', { name: leaf.paneName || leaf.title, team: team.name }), { timeout: 4000 })
   handOffLeadReviews(teamId, leaf)
 }
 
@@ -5345,9 +5378,9 @@ async function runLeadRequest(team, lead, req) {
     // Answers to a lead (an agent): English.
     if (active >= LEAD_MAX_ACTIVE) return `Not started "${req.title}": the team already has ${active} tasks in progress (limit ${LEAD_MAX_ACTIVE}).` // i18n-ignore
     let spec
-    if (req.num != null) {
-      const m = member(req.num)
-      if (!m) return `Not started "${req.title}": #${req.num} is not in your team.` // i18n-ignore
+    if (req.num != null || (req.name && resolveAgentAddress(teamMembers(team.id), req.name))) {
+      const m = req.name ? resolveAgentAddress(teamMembers(team.id), req.name) : member(req.num)
+      if (!m) return `Not started "${req.title}": unknown agent. Valid names: ${teamMembers(team.id).map((m) => m.paneName).join(", ")}.` // i18n-ignore
       spec = { title: req.title, brief: req.brief, agent: { kind: 'pane', id: m.id }, isolated: false }
     } else {
       const kind = taskAgentKinds.value.find((a) => a.id === req.kind)
@@ -5379,7 +5412,7 @@ async function runLeadRequest(team, lead, req) {
   if (req.action === 'approve') {
     updateTask(task.id, { leadReview: 'approved', leadNote: req.text || '' })
     taskEvent(task, 'approved', req.text, lead.title)
-    showToast(t('app.lead.approved', '{{lead}} (lead) approved "{{title}}". It is ready for you to merge.', { lead: lead.title, title: task.title }), {
+    showToast(t('app.lead.approved', '{{lead}} (lead) approved "{{title}}". It is ready for you to merge.', { lead: lead.paneName || lead.title, title: task.title }), {
       kind: 'attention',
       timeout: 10000,
       action: task.worktree ? { label: t('app.task.review', 'Review'), run: () => openReview(task.id) } : { label: t('app.common.show', 'Show'), run: () => focusPane(task.paneId) }
@@ -5405,16 +5438,16 @@ function runMemberMessage(team, from, req) {
       ? others
       : req.to === 'lead'
         ? others.filter((l) => lead && l.id === lead.id)
-        : others.filter((l) => l.num === req.num)
+        : others.filter((l) => req.name ? resolveAgentAddress(others, req.name) === l : l.num === req.num)
   if (!to.length) {
     if (req.to === 'team') return 'Nobody else is in your team yet.' // i18n-ignore
     if (req.to === 'lead') return 'Your team has no lead.' // i18n-ignore
-    return `#${req.num} is not in your team. Teammates: ${others.map(paneLabel).join(', ') || 'none'}.` // i18n-ignore
+    return `Unknown agent. Teammates: ${others.map(paneLabel).join(', ') || 'none'}.` // i18n-ignore
   }
   log.push(now)
   const isLead = lead && lead.id === from.id
   const head = isLead ? `[From your lead ${paneLabel(from)}]` : `[From ${paneLabel(from)}, team "${team.name}"]` // i18n-ignore
-  const meta = { source: isLead ? 'lead' : 'agent', scope: 'team', teamId: team.id, from: from.title, waitIdle: true }
+  const meta = { source: isLead ? 'lead' : 'agent', scope: 'team', teamId: team.id, from: from.paneName || from.title, waitIdle: true }
   const skipped = []
   for (const l of to) {
     if (limits[l.id]) {
@@ -5579,7 +5612,7 @@ async function publishCurrentTeams() {
     if (!dir) continue
     teamDirsSeen.add(dir)
     const panes = (byDir[dir] = byDir[dir] || {})
-    for (const l of teamMembers(team.id)) if (isAgentLeaf(l) && l.num) panes[l.id] = { team: team.id, num: l.num }
+    for (const l of teamMembers(team.id)) if (isAgentLeaf(l) && l.num) panes[l.id] = { team: team.id, num: l.num, paneName: l.paneName }
   }
   for (const dir of teamDirsSeen) {
     const cur = await window.shellApi.team.current({ dir, panes: byDir[dir] || {} })
@@ -5622,12 +5655,12 @@ async function syncChannel(team, opts = {}) {
   const dir = channelDir(team)
   if (!dir) return null
   const members = teamMembers(team.id).filter((l) => isAgentLeaf(l) && l.num)
-  const sig = members.map((m) => `${m.id}:${m.num}:${m.title}`).join('|')
+  const sig = members.map((m) => `${m.id}:${m.num}:${m.paneName}:${programLabel(m)}`).join('|')
   if (channelSigs[team.id] !== sig || !channelBoxes[team.id]) {
     const res = await window.shellApi.channel.ensure({
       dir,
       teamId: team.id,
-      members: members.map((m) => ({ id: m.id, num: m.num, title: m.title || 'Agent' }))
+      members: members.map((m) => ({ id: m.id, num: m.num, paneName: m.paneName, title: programLabel(m) || 'Agent' }))
     })
     if (!res || !res.ok) return null
     channelSigs[team.id] = sig
@@ -5955,7 +5988,7 @@ async function restartInPlaceNow(leafId, opts) {
     ...(old.titleSet ? { titleSet: true } : {}),
     ...(old.autoTitle && fresh.sessionId === old.sessionId ? { autoTitle: old.autoTitle } : {}),
     broadcast: old.broadcast,
-    num: old.num,
+    num: old.num, paneName: old.paneName,
     team: old.team,
     gen: (old.gen || 0) + 1,
     restartedAt: Date.now()
@@ -6020,7 +6053,7 @@ async function switchToTerminal(leafId) {
       window.shellApi.killPty(leafId)
       return false
     }
-    Object.assign(fresh, { num: old.num, team: old.team, broadcast: false, restartedAt: Date.now() })
+    Object.assign(fresh, { num: old.num, paneName: old.paneName, team: old.team, broadcast: false, restartedAt: Date.now() })
     const now = wsOfLeaf(leafId)
     if (!now) {
       window.shellApi.killPty(leafId)
@@ -6069,6 +6102,7 @@ async function switchToChat(leafId) {
       team: old.team || null
     })
     leaf.num = old.num
+    leaf.paneName = old.paneName
     leaf.accountId = old.accountId
     if (old.worktree) leaf.worktree = old.worktree
     const choice = old.modelChoice || old.sessionOptions || null
@@ -6160,7 +6194,7 @@ async function wakeLeaf(leafId) {
   const leaf = findLeaf(leafId)
   if (!leaf || !leaf.sleeping || restartingLeaves.has(leafId)) return
   const ok = await restartInPlace(leafId, { resume: true })
-  if (!ok && findLeaf(leafId) === leaf) showToast(t('app.sleep.wakeFailed', '{{name}} could not be woken: try Wake again.', { name: leaf.title }), { kind: 'error', timeout: 8000 })
+  if (!ok && findLeaf(leafId) === leaf) showToast(t('app.sleep.wakeFailed', '{{name}} could not be woken: try Wake again.', { name: leaf.paneName || leaf.title }), { kind: 'error', timeout: 8000 })
 }
 // A sleeping pane you open wakes up.
 watch(
@@ -7043,7 +7077,7 @@ function logTeamMessages(team, res) {
     const leaf = findLeaf(id)
     if (leaf) return paneLabel(leaf)
     const p = (res.participants || []).find((x) => x.id === id)
-    return p ? `${p.num ? `#${p.num} ` : ''}${p.title || t('app.pane.agent', 'Agent')}` : t('app.task.anAgent', 'An agent')
+    return p ? p.paneName || p.title || t('app.pane.agent', 'Agent') : t('app.task.anAgent', 'An agent')
   }
   let changed = false
   for (const m of res.history) {
@@ -7103,7 +7137,7 @@ async function syncSoloBoards(round) {
       if (isAgentLeaf(l) && l.num && !(l.team && teamById(l.team))) solo.push(l)
     })
     const panes = (byDir[ws.cwd] = byDir[ws.cwd] || {})
-    for (const l of solo) panes[l.id] = { ws: ws.id, num: l.num }
+    for (const l of solo) panes[l.id] = { ws: ws.id, num: l.num, paneName: l.paneName }
     if (!solo.length && !soloBoardsSeen.has(ws.id)) continue
     soloBoardsSeen.add(ws.id)
     await syncBoard({ key: `ws/${ws.id}`, dir: ws.cwd, target: { board: ws.id }, wsId: ws.id, members: solo, teamId: null }, round) // i18n-ignore
@@ -7628,7 +7662,7 @@ async function syncBoard(b, round = teamRound) {
   // wait in their files and nothing is published as the current board.
   if (boardLocked) return
   const { key: boardKey, dir, target, wsId, members } = b
-  const byNum = (n) => members.find((m) => m.num === Number(String(n).slice(1))) || null
+  const byNum = (n) => resolveAgentAddress(members, n)
   const res = await window.shellApi.team.requests({ dir, ...target })
   // Replaced meanwhile: these requests are the new round's to apply (their
   // reservations released, so it reads them again).
@@ -7741,7 +7775,7 @@ async function syncBoard(b, round = teamRound) {
   }
   const label = (paneId) => {
     const leaf = paneId ? findLeaf(paneId) : null
-    return leaf && leaf.num ? `#${leaf.num}` : null
+    return leaf ? leaf.paneName || null : null
   }
   const cards = boardTasks
     .filter((t) => t.wsId === wsId)
@@ -7847,7 +7881,7 @@ async function deliverChannel(team, members, round = teamRound) {
     const from = who[d.fromId]
     return d.fromId === 'tessel'
       ? `[Tessel] ${d.text}`
-      : `[From #${from ? from.num : '?'} ${from ? from.title : 'teammate'}, team "${team.name}", message ${d.id}${d.replyTo ? `, reply to ${d.replyTo}` : ''}] ${d.text}` // i18n-ignore
+      : `[From ${from ? paneLabel(from) : 'teammate'}, team "${team.name}", message ${d.id}${d.replyTo ? `, reply to ${d.replyTo}` : ''}] ${d.text}` // i18n-ignore
   }
   const api = window.shellApi.channel
   const where = { dir, teamId: team.id }
@@ -7911,7 +7945,7 @@ async function deliverChannel(team, members, round = teamRound) {
       source: d.fromId === 'tessel' ? 'tessel' : 'agent',
       scope: 'team',
       teamId: team.id,
-      from: from ? from.title : null,
+      from: from ? from.paneName || from.title : null,
       waitIdle: true,
       ...hooks(d, key)
     })
@@ -7951,7 +7985,7 @@ async function pushToChats(team, dir, res) {
       continue
     }
     const from = who[d.fromId]
-    const label = d.fromId === 'tessel' ? 'Tessel' : `#${from ? from.num : '?'} ${from ? from.title : 'teammate'}` // i18n-ignore
+    const label = d.fromId === 'tessel' ? 'Tessel' : `${from ? paneLabel(from) : 'teammate'}` // i18n-ignore
     chatTeamPending.set(d.id, { dir, teamId: team.id, d, key })
     ;(byPane[d.toId] = byPane[d.toId] || []).push({
       id: d.id,
@@ -8076,7 +8110,7 @@ function addToTeam(teamId, leafIds) {
     leaf.team = teamId
     logMembership(leaf, teamId)
   }
-  const names = joining.map((l) => l.title).join(', ')
+  const names = joining.map((l) => l.paneName || l.title).join(', ')
   recordActivity({ type: 'team', action: 'joined', teamId, wsId: teamWsId(teamId), name: team.name, detail: names })
   if (before.length) {
     tellAgents(before, `[Tessel] Team "${team.name}": ${names} joined the team.`, teamId) // i18n-ignore
@@ -8106,8 +8140,8 @@ function leaveTeam(leafId) {
   logMembership(leaf, null)
   pruneTeams()
   tellAgents([leaf], `[Tessel] You are no longer in team "${name}".`, teamId) // i18n-ignore
-  recordActivity({ type: 'team', action: 'left', teamId, wsId, name, detail: leaf.title })
-  if (teamById(teamId)) tellTeam(teamId, `${leaf.title} left the team.`) // i18n-ignore
+  recordActivity({ type: 'team', action: 'left', teamId, wsId, name, detail: leaf.paneName || leaf.title })
+  if (teamById(teamId)) tellTeam(teamId, `${leaf.paneName || leaf.title} left the team.`) // i18n-ignore
 }
 
 // "Ungroup": the team goes away at once, its panes stay where they are. For a
@@ -8278,7 +8312,7 @@ function messageAgents(list, text, where, meta = {}) {
   for (const leaf of reached) deliverToAgent(leaf.id, body, meta)
   for (const leaf of limited) logMessage(leaf.id, 'skipped', body, meta)
   const held = reached.filter((l) => pendingMessages[l.id])
-  const names = (list) => list.map((l) => l.title).join(', ')
+  const names = (list) => list.map((l) => l.paneName || l.title).join(', ')
   const parts = [t('app.message.sent', 'Sent to {{sent}} of {{count}} agents.', { sent: reached.length - held.length, count: agents.length })]
   if (held.length) {
     parts.push(
@@ -8289,7 +8323,7 @@ function messageAgents(list, text, where, meta = {}) {
   }
   if (limited.length) {
     parts.push(
-      t('app.message.skipped', 'Skipped {{list}}: usage limit reached.', { list: limited.map((l) => `${l.title}${limitWhen(l.id)}`).join(', ') })
+      t('app.message.skipped', 'Skipped {{list}}: usage limit reached.', { list: limited.map((l) => `${l.paneName || l.title}${limitWhen(l.id)}`).join(', ') })
     )
   }
   showToast(parts.join(' '), {
@@ -8311,7 +8345,7 @@ function notifyAgentLimit(node, hit) {
   const when = limitWhen(node.id) || (hit && hit.reset ? ' ' + t('app.limit.resets', '(resets {{when}})', { when: hit.reset }) : '')
   const others = ws ? wsAgents(ws.id).filter((l) => l.id !== node.id && !limits[l.id]) : []
   const handOver = others.length
-    ? ' ' + t('app.limit.takeOver', '{{names}} can take over.', { names: others.map((l) => l.title).join(', ') })
+    ? ' ' + t('app.limit.takeOver', '{{names}} can take over.', { names: others.map((l) => l.paneName || l.title).join(', ') })
     : ''
   const hitTitle = t('app.limit.hit', '{{name}} hit its usage limit', { name: node.title })
   const text = t('app.limit.hitWhen', '{{name}} hit its usage limit{{when}}.', { name: node.title, when }) + handOver
@@ -8424,7 +8458,7 @@ async function shareProjectNotes(wsId) {
         ? t('app.notes.sharedOne', 'Shared the project notes with 1 agent. {{path}}', { path: res.path })
         : t('app.notes.shared', 'Shared the project notes with {{count}} agents. {{path}}', { count: told, path: res.path })) +
       (limited.length
-        ? ' ' + t('app.message.skipped', 'Skipped {{list}}: usage limit reached.', { list: limited.map((l) => `${l.title}${limitWhen(l.id)}`).join(', ') })
+        ? ' ' + t('app.message.skipped', 'Skipped {{list}}: usage limit reached.', { list: limited.map((l) => `${l.paneName || l.title}${limitWhen(l.id)}`).join(', ') })
         : ''),
     { timeout: limited.length ? 8000 : 5000 }
   )
@@ -8487,7 +8521,7 @@ const statusInfo = computed(() => {
     // or browser panes.
     if (leaf.kind === 'editor' || leaf.kind === 'browser') return
     const state = leaf.kind === 'chat' ? chatPaneState(leaf) : paneState(leaf)
-    items.push({ state, title: leaf.title || leaf.shellName || t('app.pane.terminal', 'Terminal'), active: leaf.id === activeId.value })
+    items.push({ state, title: leaf.paneName || leaf.title || leaf.shellName || t('app.pane.terminal', 'Terminal'), active: leaf.id === activeId.value })
   })
   const count = (state) => items.filter((s) => s.state === state).length
   const parts = [items.length === 1 ? t('app.status.paneOne', '1 pane') : t('app.status.panes', '{{count}} panes', { count: items.length })]
@@ -8513,7 +8547,7 @@ const statusTerminals = computed(() => {
         out.push({
           id: r.id,
           pid: r.pid,
-          label: `${r.num ? '#' + r.num + ' ' : ''}${r.title}`,
+          label: r.paneName || r.title,
           group: `${p.name} / ${card.title}`,
           groupKey: card.key
         })

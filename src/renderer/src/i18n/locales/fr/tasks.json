@@ -100,7 +100,7 @@
         "done": "Terminer une carte avec un rapport : réussie ou échouée, ce qui a été fait, les fichiers",
         "ask": "Demander à un coéquipier et attendre la réponse",
         "gate": "Vous demander de décider, sur la carte",
-        "send": "Un message à « #3 », « team » ou un groupe : « @claude », « @codex », « @idle », « @all »",
+        "send": "Un message à « Ada », « team » ou un groupe : « @claude », « @codex », « @idle », « @all »",
         "members": "Qui est dans l'équipe : agent, modèle, au travail ou inactif, cartes ouvertes",
         "workerStart": "Le chef lance un exécutant : un nouvel agent dans un nouveau panneau, avec sa carte et ses consignes",
         "workerList": "Les exécutants : état, carte, copie à part, dernier signal de vie ; les limites",

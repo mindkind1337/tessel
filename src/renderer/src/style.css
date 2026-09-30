@@ -3763,31 +3763,6 @@ body.pane-dragging * {
 }
 
 /* ================= Pane numbers ================= */
-.pane-num {
-  display: inline-grid;
-  place-items: center;
-  flex: 0 0 auto;
-  min-width: 17px;
-  height: 17px;
-  padding: 0 4px;
-  border-radius: 5px;
-  background: var(--surface-3);
-  color: var(--text-dim);
-  font-family: 'Cascadia Mono', Consolas, monospace;
-  font-size: 10.5px;
-  font-weight: 600;
-  line-height: 1;
-}
-
-.pane.active .pane-nav .pane-num {
-  background: color-mix(in srgb, var(--accent) 30%, var(--surface-3));
-  color: var(--text-strong);
-}
-
-.ctx-menu-item .pane-num {
-  margin-right: 2px;
-}
-
 .pane-pick .pick-title {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -4811,16 +4786,6 @@ body.pane-dragging * {
   color: #ffb4b6;
 }
 
-/* The pane number, as in the pane header (.pane-num): a badge, lit on the
-   pane in use. */
-.ws-session-num {
-  margin-left: auto;
-}
-
-.ws-session.active .ws-session-num {
-  background: color-mix(in srgb, var(--accent) 30%, var(--surface-3));
-  color: var(--text-strong);
-}
 
 /* With "Sessions" below, the workspace list takes only the room it needs, so
    "New workspace" sits right under it instead of at the bottom. */
@@ -9142,25 +9107,6 @@ button.act-stat:hover,
   color: color-mix(in srgb, var(--wts-muted) 85%, transparent);
 }
 
-.car-num {
-  display: inline-grid;
-  flex-shrink: 0;
-  place-items: center;
-  min-width: 14px;
-  height: 14px;
-  padding: 0 3px;
-  border-radius: 4px;
-  background: color-mix(in srgb, var(--orca-accent) 70%, transparent);
-  color: var(--wts-muted);
-  font-family: 'Cascadia Mono', Consolas, monospace;
-  font-size: 9px;
-}
-
-.car-num.focused {
-  background: color-mix(in srgb, var(--wts-fg) 14%, transparent);
-  color: var(--wts-fg);
-}
-
 .car-pick {
   width: 12px;
   height: 12px;
@@ -10861,3 +10807,5 @@ button.act-stat:hover,
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+.pane-agent-label { color: var(--text-dim); font-size: 11px; flex-shrink: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

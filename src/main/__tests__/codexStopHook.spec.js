@@ -97,7 +97,7 @@ describe('Codex Stop hook delivers team messages without terminal input', () => 
     const output = JSON.parse(await hook())
     expect(output.decision).toBe('block')
     expect(output.reason).toContain('[Tessel] New team messages:')
-    expect(output.reason).toContain('#1 Claude')
+    expect(output.reason).toContain('Claude (Claude)')
     expect(output.reason).toContain(message.id)
     expect(output.reason).toContain('original-request')
     expect(output.reason).toContain(message.text)

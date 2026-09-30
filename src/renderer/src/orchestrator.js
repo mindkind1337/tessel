@@ -104,7 +104,7 @@ export function createOrchestrator(deps) {
   }
   // Started as a chat? Only Claude and Codex have one; the rest stay terminals.
   const chatMode = (r) => deps.settings.orchestrationWorkerMode === 'chat' && CHAT_AGENTS.includes(r.agent)
-  const handleOf = (leaf) => (leaf && leaf.num ? `#${leaf.num}` : null)
+  const handleOf = (leaf) => leaf ? leaf.paneName || null : null
   const labelOf = (id) => {
     const leaf = id ? deps.findLeaf(id) : null
     return leaf ? deps.label(leaf) : 'a closed agent'
@@ -135,7 +135,7 @@ export function createOrchestrator(deps) {
       records(team).find((r) => {
         if (!r.paneId || WORKER_ENDED.includes(r.status)) return false
         const leaf = deps.findLeaf(r.paneId)
-        return !!leaf && leaf.team === team.id && handleOf(leaf) === handle
+        return !!leaf && leaf.team === team.id && (String(handleOf(leaf) || '').toLowerCase() === String(handle).toLowerCase() || `#${leaf.num}` === handle)
       }) || null
     )
   }
@@ -166,6 +166,11 @@ export function createOrchestrator(deps) {
   // --- Requests from agents (the team's request files) ----------------------------
   // -> true when it was an orchestration request (handled here).
   function handleRequest(team, from, req, ctx = {}) {
+    if (req.worker && req.worker !== 'all') {
+      const candidates = records(team).map((r) => r.paneId && deps.findLeaf(r.paneId)).filter((l) => l && l.team === team.id)
+      const matches = candidates.filter((l) => String(l.paneName || '').toLowerCase() === String(req.worker).toLowerCase() || `#${l.num}` === req.worker)
+      if (matches.length === 1 && matches[0].paneName) req = { ...req, worker: matches[0].paneName }
+    }
     switch (req.action) {
       case 'worker-start':
         requestStart(team, from, req, ctx)
@@ -552,7 +557,7 @@ export function createOrchestrator(deps) {
       if (!stillValid(team, r, leaf, worktree)) return
     }
     const lim = limits()
-    const handle = handleOf(leaf) || '#?'
+    const handle = handleOf(leaf) || deps.label(leaf)
     deps.notice(
       [leaf],
       workerPreamble({

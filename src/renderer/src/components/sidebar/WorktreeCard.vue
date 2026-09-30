@@ -361,7 +361,6 @@ function onCardClick(e) {
             <AgentStateDot :state="r.dotState" :tooltip="false" />
             <BrandIcon :kind="r.iconKind" :accent="r.accent" :label="null" :size="12" />
             <span class="hc-agent-text" v-text="rowLine(r)"></span>
-            <span v-if="r.num" class="hc-count">{{ r.num }}</span>
           </div>
         </div>
       </div>

@@ -1,0 +1,6 @@
+{
+  "app.agentName.invalid": "Choisissez un nom de 1 à 60 caractères, sans retour à la ligne, préfixe # ou @, ni adresse d’équipe réservée.",
+  "app.agentName.taken": "Un autre agent porte déjà le nom « {{name}} ». Choisissez un autre nom.",
+  "pane.renameAgent": "Nom de l’agent",
+  "sidebar.agentRow.workerOfName": "worker de {{name}}"
+}

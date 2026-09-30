@@ -260,18 +260,19 @@ export function paneRow(pane, now = Date.now()) {
   else if (pane.held) secondary = t('sidebar.row.held', 'Message waits for your approval')
   // Beside the name: only what needs attention (the dot shows the state);
   // the task goes on a second line under it (subline).
-  else secondary = ''
+  else secondary = pane.paneName ? pane.agentLabel || pane.title || pane.agentId || '' : ''
   const subline = agent ? pane.task || (pane.track && pane.track.text) || '' : ''
-  const primary = pane.title || (agent ? agentName : terminal)
+  const primary = pane.paneName || pane.title || (agent ? agentName : terminal)
   return {
     id: pane.id,
     num: pane.num || 0,
+    paneName: pane.paneName,
     kind: agent ? 'agent' : 'shell',
     chat,
     iconKind: agent ? pane.agentId || 'agent' : pane.shellId || 'shell',
     accent: agent ? pane.accent || null : null,
-    typeLabel: pane.title || (agent ? agentName : terminal),
-    title: pane.title || (agent ? agentName : terminal),
+    typeLabel: pane.agentLabel || pane.title || (agent ? agentName : terminal),
+    title: pane.paneName || pane.title || (agent ? agentName : terminal),
     primary,
     secondary: primary === secondary ? '' : secondary,
     stateLabel: stopped ? t('sidebar.row.chatStopped', 'Stopped') : agent ? agentStateLabel(dotState) : '',

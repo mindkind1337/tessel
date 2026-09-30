@@ -79,10 +79,22 @@ const agentName = computed(() => AGENT_NAMES[agentId.value])
 // A chat saved with the old default title ("Claude (chat)", "Codex (chat)"…):
 // the agent's name alone (the pane already shows it is a chat).
 const title = computed(() => {
-  const own = props.node.title
+  const own = props.node.paneName || props.node.title
   if (!own) return agentName.value
   return /^\s*(claude|codex|opencode)\s*\(chat\)\s*$/i.test(own) ? agentName.value : own
 })
+
+const editingName = ref(false)
+const nameDraft = ref('')
+const nameInput = ref(null)
+function beginRename() {
+  nameDraft.value = props.node.paneName || title.value
+  editingName.value = true
+  nextTick(() => { nameInput.value?.focus(); nameInput.value?.select() })
+}
+function saveName() {
+  if (editingName.value && ctx.renameAgent && ctx.renameAgent(props.node.id, nameDraft.value)) editingName.value = false
+}
 
 const statusLabel = computed(() => {
   switch (status.value) {
@@ -475,7 +487,6 @@ defineExpose({ start, send, interrupt, focusPendingApproval })
       @pointerdown="onNavPointerDown"
     >
       <div class="pane-nav-left">
-        <span v-if="node.num" class="pane-num" :title="t('editor.pane.number', 'Pane #{{num}}', { num: node.num })">{{ node.num }}</span>
         <span
           class="pane-icon agent"
           :class="[iconState, { yolo }]"
@@ -486,7 +497,9 @@ defineExpose({ start, send, interrupt, focusPendingApproval })
           <BrandIcon :kind="agentId" :size="15" />
           <span class="pane-status-dot"></span>
         </span>
-        <span class="pane-title" data-test="chat-title" :title="t('chat.pane.titleHint', '{{title}}\nDrag the header to move the pane', { title })">{{ title }}</span>
+        <input v-if="editingName" ref="nameInput" v-model="nameDraft" class="pane-tab-input" :aria-label="t('pane.renameAgent', 'Agent name')" @mousedown.stop @click.stop @keydown.enter.prevent="saveName" @keydown.esc="editingName = false" @blur="saveName" />
+        <span v-else tabindex="0" @dblclick.stop="beginRename" @keydown.enter.prevent="beginRename" class="pane-title" data-test="chat-title" :title="t('chat.pane.titleHint', '{{title}}\nDrag the header to move the pane', { title })">{{ title }}</span>
+        <span v-if="node.paneName" class="pane-agent-label">{{ agentName }}</span>
         <span class="chat-status" :class="'st-' + status" data-test="chat-status">
           <span class="chat-status-dot" aria-hidden="true"></span>{{ statusLabel }}
         </span>

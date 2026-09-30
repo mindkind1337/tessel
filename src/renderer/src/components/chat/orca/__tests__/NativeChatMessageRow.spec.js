@@ -209,10 +209,10 @@ describe('MessageRow (Tessel protections)', () => {
   it('a team message is set apart with its sender', () => {
     mountRow({ message: user({ sentAs: 'team', from: '3' }) })
     expect(wrapper.find('.nc-row-user').classes()).toContain('is-team')
-    expect(wrapper.find('[data-test="nc-team-from"]').text()).toBe('From #3 (teammate)')
+    expect(wrapper.find('[data-test="nc-team-from"]').text()).toBe('From a teammate')
     wrapper.unmount()
     mountRow({ message: user({ sentAs: 'team', from: '#2 Codex' }) })
-    expect(wrapper.find('[data-test="nc-team-from"]').text()).toBe('From #2 Codex (teammate)')
+    expect(wrapper.find('[data-test="nc-team-from"]').text()).toBe('From Codex (teammate)')
     wrapper.unmount()
     mountRow({ message: user({ sentAs: 'team' }) })
     expect(wrapper.find('[data-test="nc-team-from"]').text()).toBe('From a teammate')

@@ -101,7 +101,8 @@ const imagePreview = computed(() => props.runtimeContext !== undefined)
 const isTeam = computed(() => props.message.sentAs === 'team')
 const teamFromLabel = computed(() => {
   const from = String(props.message.from || '').trim()
-  const who = /^\d+$/.test(from) ? `#${from}` : from
+  // Old transcripts may only know a numeric alias; do not revive its badge.
+  const who = /^#?\d+$/.test(from) ? '' : from.replace(/^#\d+\s+/, '')
   return who
     ? t('chat.user.fromTeammate', 'From {{from}} (teammate)', { from: who })
     : t('chat.user.fromTeam', 'From a teammate')

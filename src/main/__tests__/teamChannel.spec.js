@@ -22,7 +22,7 @@ describe('persistent team channel', () => {
     dir = fs.mkdtempSync(join(os.tmpdir(), 'tessel-channel-'))
     const ready = ensureTeamChannel({ dir, teamId, members })
     expect(ready.ok).toBe(true)
-    expect(ready.outboxes[0].guide).toMatch(/"to":"#2"/)
+    expect(ready.outboxes[0].guide).toMatch(/"to":"Ada"/)
     outboxes = Object.fromEntries(ready.outboxes.map((m) => [m.id, m.outbox]))
   })
   afterEach(() => {
@@ -98,7 +98,7 @@ describe('persistent team channel', () => {
     expect(ackTeamDelivery({ dir, teamId, id, toId: 'pane-b' }).ok).toBe(true)
     const receipt = pollTeamChannel({ dir, teamId }).deliveries[0]
     expect(receipt).toMatchObject({ fromId: 'tessel', toId: 'pane-a', replyTo: id })
-    expect(receipt.text).toMatch(/Delivered to #2 Claude/)
+    expect(receipt.text).toMatch(/Delivered to Claude/)
     expect(ackTeamDelivery({ dir, teamId, id: receipt.id, toId: 'pane-a' }).ok).toBe(true)
     expect(pollTeamChannel({ dir, teamId }).deliveries).toEqual([])
     put(outboxes['pane-b'], 'reply', { to: '#1', text: 'Looks good.', reply_to: id })

@@ -50,7 +50,7 @@ describe('Tessel team tools (background messages)', () => {
     expect(as(B).meId).toBe(B.id)
     delete process.env.TESSEL_PANE_ID
     expect(mcp.locate('#1', dir).meId).toBe(A.id)
-    expect(mcp.locate(null, dir).error).toMatch(/pass your pane number/)
+    expect(mcp.locate(null, dir).error).toMatch(/pass your agent name/)
   })
 
   it('a bound pane identity cannot be overridden by "me"', () => {
@@ -113,7 +113,7 @@ describe('Tessel team tools (background messages)', () => {
     expect(mcp.send(as(A), '#4', 'Hello from A').ok).toBe(true)
     pollTeamChannel({ dir, teamId }) // Tessel takes the outbox in
     const inbox = mcp.readInbox(as(B))
-    expect(inbox).toMatch(/\[#1 Codex CLI → you, message .+\] Hello from A/)
+    expect(inbox).toMatch(/\[Codex CLI \(Codex CLI\) → you, message .+\] Hello from A/)
     // Read once: not shown again.
     expect(mcp.readInbox(as(B))).toBe('')
     // Tessel turns the read note into the acknowledgement.
@@ -126,7 +126,7 @@ describe('Tessel team tools (background messages)', () => {
   })
 
   it('refuses a bad recipient and an empty text', () => {
-    expect(mcp.send(as(A), 'lead', 'x').error).toMatch(/must be a teammate/)
+    expect(mcp.send(as(A), 'lead', 'x').error).toMatch(/Valid names/)
     expect(mcp.send(as(A), '#4', '  ').error).toMatch(/empty/)
   })
 
@@ -174,8 +174,8 @@ describe('Tessel team tools (background messages)', () => {
       'team_heartbeat',
       'team_gates'
     ])
-    expect(byId[3].result.content[0].text).toMatch(/Sent to #4/)
-    expect(byId[4].result.content[0].text).toMatch(/#1 Codex CLI \(you\)/)
+    expect(byId[3].result.content[0].text).toMatch(/Sent to Claude Code/)
+    expect(byId[4].result.content[0].text).toMatch(/Codex CLI \(Codex CLI\) \(you\)/)
     expect(lines.some((l) => l.id === undefined)).toBe(false) // no reply to the notification
   })
 
@@ -637,9 +637,10 @@ describe('two Tessel windows in one project', () => {
 
   it('two processes writing at the same time lose no update', async () => {
     const url = (s) => 'data:text/javascript;base64,' + Buffer.from(s).toString('base64')
+    const agentNames = url(fs.readFileSync(join(__dirname, '..', '..', 'shared', 'agentNames.js'), 'utf8'))
     const safeJson = url(fs.readFileSync(join(__dirname, '..', 'safeJson.js'), 'utf8'))
     const channel = url(
-      fs.readFileSync(join(__dirname, '..', 'teamChannel.js'), 'utf8').replace("'./safeJson'", JSON.stringify(safeJson))
+      fs.readFileSync(join(__dirname, '..', 'teamChannel.js'), 'utf8').replace("'./safeJson'", JSON.stringify(safeJson)).replace("'../shared/agentNames'", JSON.stringify(agentNames))
     )
     const fileRead = url(fs.readFileSync(join(__dirname, '..', 'fileRead.js'), 'utf8'))
     const notices = url(

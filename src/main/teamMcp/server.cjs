@@ -31,7 +31,7 @@ const path = require('path')
 const crypto = require('crypto')
 const { randomUUID } = crypto
 
-const VERSION = '1.9.2'
+const VERSION = '1.10.0'
 const MAX_TEXT = 6000
 
 // --- Finding my team and me ---------------------------------------------------
@@ -134,9 +134,11 @@ function formerMember(paneId, start) {
 function locate(meArg, start) {
   const paneId = process.env.TESSEL_PANE_ID || ''
   const num = /^#?(\d{1,3})$/.exec(String(meArg || '').trim())
-  if (!paneId && !num)
-    return { error: 'Tessel does not know who you are: pass your pane number as "me", e.g. {"me":"#4"}.' }
+  const requestedName = String(meArg || '').trim().toLowerCase()
+  if (!paneId && !requestedName)
+    return { error: 'Tessel does not know who you are: pass your agent name as "me", e.g. {"me":"Ada"}.' }
   const hits = []
+  const validNames = new Set()
   const info = { unsure: false }
   for (const dir of candidateDirs(start)) {
     const base = path.join(dir, '.tessel', 'team-channel')
@@ -144,7 +146,8 @@ function locate(meArg, start) {
     if (!panes) continue
     for (const [id, p] of Object.entries(panes)) {
       if (!p || typeof p.team !== 'string') continue
-      const mine = paneId ? id === paneId : p.num === Number(num[1])
+      if (p.paneName) validNames.add(p.paneName)
+      const mine = paneId ? id === paneId : (num ? p.num === Number(num[1]) : String(p.paneName || '').toLowerCase() === requestedName)
       if (mine && !hits.some((h) => h.id === id)) hits.push({ id, team: p.team, base })
     }
     if (hits.length) break
@@ -160,9 +163,9 @@ function locate(meArg, start) {
         error:
           'You are no longer in a Tessel team: the user ungrouped it (or took you out). You now work alone: talk to the user directly, do not use the team tools and do not wait for teammates.'
       }
-    return { error: 'You are not in a Tessel team right now (see Sessions in Tessel).' }
+    return { error: requestedName && !paneId ? 'Unknown agent. Valid names: ' + [...validNames].join(', ') : 'You are not in a Tessel team right now (see Sessions in Tessel).' }
   }
-  if (hits.length > 1) return { error: `"${meArg}" matches several agents: Tessel cannot tell which one you are.` }
+  if (hits.length > 1) return { error: `Ambiguous agent name. Valid names: ${[...validNames].join(", ")}.` }
   const { id, team, base } = hits[0]
   const root = path.join(base, team)
   const state = readJson(path.join(root, 'state.json'))
@@ -233,10 +236,20 @@ function markRead(ctx, messages) {
   return done
 }
 
+function memberName(m) { return m.paneName || m.title || 'Agent' }
+function addressMember(ctx, address) {
+  const value = String(address || '').trim()
+  const legacy = /^#(\d{1,3})$/.exec(value)
+  const entries = Object.entries((ctx.state && ctx.state.members) || {}).filter(([, m]) => m.active)
+  const matches = entries.filter(([, m]) => legacy ? m.num === Number(legacy[1]) : String(m.paneName || '').toLowerCase() === value.toLowerCase())
+  if (matches.length !== 1) return { error: 'Unknown or ambiguous agent. Valid names: ' + entries.map(([, m]) => memberName(m)).join(', ') }
+  return { id: matches[0][0], member: matches[0][1], name: memberName(matches[0][1]) }
+}
+
 function label(ctx, id) {
   if (id === 'tessel') return 'Tessel'
   const m = ctx.state.members[id]
-  return m ? `#${m.num} ${m.title}` : 'a former teammate'
+  return m ? `${memberName(m)} (${m.title})` : 'a former teammate'
 }
 
 function isReceipt(m) {
@@ -256,7 +269,9 @@ function readInbox(ctx) {
 function send(ctx, to, text, replyTo, extra = null) {
   const body = String(text || '').trim()
   if (!body) return { error: 'Nothing to send: "text" is empty.' }
-  const target = String(to || '').trim().toLowerCase()
+  let target = String(to || '').trim()
+  if (target.startsWith('@')) target = target.toLowerCase()
+  if (target.toLowerCase() === 'team') target = 'team'
   // A group: one message to each of its members.
   if (/^@[a-z0-9-]{1,30}$/.test(target)) {
     const targets = groupTargets(ctx, target)
@@ -265,10 +280,13 @@ function send(ctx, to, text, replyTo, extra = null) {
       const r = send(ctx, t, text, replyTo, extra)
       if (r.error) return r
     }
-    return { ok: true, to: targets }
+    return { ok: true, to: targets.map((t) => addressMember(ctx, t).name || 'Agent') }
   }
-  if (!/^(#\d{1,3}|team)$/.test(target))
-    return { error: '"to" must be a teammate like "#3", "team", or a group: "@claude", "@codex" (an agent), "@idle", "@all".' }
+  if (target !== 'team') {
+    const resolved = addressMember(ctx, target)
+    if (resolved.error) return resolved
+    target = resolved.member.paneName || target
+  }
   const box = path.join(ctx.root, 'outbox', ctx.me.token)
   fs.mkdirSync(box, { recursive: true })
   const name = `mcp-${Date.now()}-${process.pid}-${Math.random().toString(36).slice(2, 8)}`
@@ -278,7 +296,7 @@ function send(ctx, to, text, replyTo, extra = null) {
   if (replyTo) payload.reply_to = String(replyTo).slice(0, 80)
   fs.writeFileSync(path.join(box, `${name}.tmp`), JSON.stringify(payload))
   fs.renameSync(path.join(box, `${name}.tmp`), path.join(box, `${name}.json`))
-  return { ok: true }
+  return { ok: true, recipient: target === 'team' ? 'team' : addressMember(ctx, target).name }
 }
 
 // --- Task board ------------------------------------------------------------------
@@ -317,8 +335,8 @@ function listTasks(ctx) {
 function boardReminder(ctx) {
   const data = readJson(path.join(ctx.root, 'tasks.json'))
   const tasks = data && Array.isArray(data.tasks) ? data.tasks : []
-  const me = `#${ctx.me.num}`
-  const mine = tasks.filter((t) => t.assignee === me && (t.column === 'doing' || t.column === 'todo' || t.column === 'review'))
+  const me = memberName(ctx.me)
+  const mine = tasks.filter((t) => (t.assignee === me || t.assignee === `#${ctx.me.num}`) && (t.column === 'doing' || t.column === 'todo' || t.column === 'review'))
   const open = mine.length
     ? `Your open cards: ${mine.slice(0, 6).map((t) => `${t.id} "${t.title}" (${COLUMN_NAMES[t.column]})`).join('; ')}${mine.length > 6 ? ' …' : ''}.`
     : 'You have no open card.'
@@ -396,8 +414,10 @@ function addTask(ctx, args) {
   const title = String(args.title || '').replace(/\s+/g, ' ').trim()
   if (!title) return { error: 'A card needs a "title".' }
   if (title.length > 200) return { error: 'The title is too long (at most 200 characters).' }
-  const assignee = args.assignee == null || args.assignee === '' ? `#${ctx.me.num}` : String(args.assignee).trim()
-  if (!/^#\d{1,3}$/.test(assignee)) return { error: '"assignee" must be a teammate like "#3".' }
+  const assigneeArg = args.assignee == null || args.assignee === '' ? ctx.me.paneName || `#${ctx.me.num}` : String(args.assignee).trim()
+  const resolved = ctx.state ? addressMember(ctx, assigneeArg) : { name: assigneeArg }
+  if (resolved.error) return resolved
+  const assignee = resolved.member ? resolved.member.paneName || assigneeArg : resolved.name
   const column = String(args.column || 'todo').toLowerCase()
   if (!COLUMNS.includes(column)) return { error: `"column" must be one of ${COLUMNS.join(', ')}.` }
   // Cards that must be done first: the card waits, and its agent is told
@@ -453,16 +473,16 @@ function roster(ctx) {
 function groupTargets(ctx, group) {
   const g = group.slice(1)
   const active = Object.entries(ctx.state.members).filter(([id, m]) => m.active && id !== ctx.meId)
-  if (g === 'all') return active.length ? active.map(([, m]) => `#${m.num}`) : { error: 'You are the only one in your team.' }
+  if (g === 'all') return active.length ? active.map(([, m]) => m.paneName || `#${m.num}`) : { error: 'You are the only one in your team.' }
   const r = roster(ctx)
-  if (!r) return { error: 'Tessel has not said yet which agent is which: send to "#3" or "team" for now.' }
+  if (!r) return { error: 'Tessel has not said yet which agent is which: send to a teammate name or "team" for now.' }
   const hits = active.filter(([id]) => {
     const who = r[id]
     if (!who) return false
     return g === 'idle' ? who.state === 'idle' : who.agent === g
   })
   if (!hits.length) return { error: g === 'idle' ? 'No teammate is idle right now.' : `No teammate is ${group} (see team_members).` }
-  return hits.map(([, m]) => `#${m.num}`)
+  return hits.map(([, m]) => m.paneName || `#${m.num}`)
 }
 
 function moveTask(ctx, args) {
@@ -484,8 +504,8 @@ function members(ctx) {
     .map(([id, m]) => {
       const who = r[id] || {}
       const about = [who.agent, who.model, who.state].filter((x) => typeof x === 'string' && x).join(', ')
-      const cards = tasks.filter((t) => t.assignee === `#${m.num}` && t.column !== 'done').map((t) => t.id)
-      return `#${m.num} ${m.title}${id === ctx.meId ? ' (you)' : ''}${about ? ` [${about}]` : ''}${cards.length ? `, cards: ${cards.join(', ')}` : ''}`
+      const cards = tasks.filter((t) => (t.assignee === memberName(m) || t.assignee === `#${m.num}`) && t.column !== 'done').map((t) => t.id)
+      return `${memberName(m)} (${m.title})${id === ctx.meId ? ' (you)' : ''}${about ? ` [${about}]` : ''}${cards.length ? `, cards: ${cards.join(', ')}` : ''}`
     })
     .join('\n')
 }
@@ -522,7 +542,9 @@ async function ask(ctx, args, signal = null) {
   let to = ''
   if (!qid) {
     to = String(args.to || '').trim()
-    if (!/^#\d{1,3}$/.test(to)) return { error: '"to" must be one teammate like "#3" (a question has one person who answers).' }
+    const resolved = addressMember(ctx, to)
+    if (resolved.error) return resolved
+    to = resolved.member.paneName || to
     const question = String(args.question || '').trim()
     if (!question) return { error: 'Give the "question".' }
     const options = listArg(args.options).slice(0, 6)
@@ -599,7 +621,7 @@ async function workerRequest(ctx, data, signal, later) {
 
 function workerHandle(v) {
   const m = /^#?(\d{1,3})$/.exec(String(v == null ? '' : v).trim())
-  return m ? `#${m[1]}` : null
+  return m ? `#${m[1]}` : (typeof v === 'string' && v.trim().length <= 60 && v.trim() ? v.trim() : null)
 }
 
 function workerStart(ctx, args, signal) {
@@ -626,8 +648,13 @@ function workerStart(ctx, args, signal) {
 
 function workerAction(action, ctx, args, signal) {
   const all = action === 'worker-stop' && String(args.worker || '').trim().toLowerCase() === 'all'
-  const worker = all ? 'all' : workerHandle(args.worker)
-  if (!worker) return { error: 'Give the "worker", like "#5" (see team_worker_list).' }
+  let worker = all ? 'all' : workerHandle(args.worker)
+  if (!all && worker) {
+    const resolved = addressMember(ctx, worker)
+    if (resolved.error) return resolved
+    worker = resolved.member.paneName || worker
+  }
+  if (!worker) return { error: 'Give the "worker", like "Bohr" (see team_worker_list).' }
   const data = { action, worker }
   if (action === 'worker-stop' && args.reason) data.reason = String(args.reason).slice(0, 300)
   if (action === 'worker-read') data.lines = Math.min(200, Math.max(1, Number(args.lines) || 60))
@@ -697,7 +724,7 @@ function listGates(ctx) {
 // --- MCP over stdio ---------------------------------------------------------------
 
 const ME_ARG = {
-  me: { type: 'string', description: 'Your pane number, e.g. "#4" (only needed if Tessel did not start you).' }
+  me: { type: 'string', description: 'Your agent name, e.g. "Ada" (only needed if Tessel did not start you).' }
 }
 const TOOLS = [
   {
@@ -709,11 +736,11 @@ const TOOLS = [
   {
     name: 'team_send',
     description:
-      'Send a message to a Tessel teammate ("#3"), your whole team ("team"), or a group: "@claude", "@codex" (every teammate running that agent), "@idle" (those not working now), "@all". It is delivered in the background, never typed into anyone\'s terminal.',
+      'Send a message to a Tessel teammate ("Ada"), your whole team ("team"), or a group: "@claude", "@codex" (every teammate running that agent), "@idle" (those not working now), "@all". It is delivered in the background, never typed into anyone\'s terminal.',
     inputSchema: {
       type: 'object',
       properties: {
-        to: { type: 'string', description: 'A teammate like "#3", "team", or a group like "@codex", "@idle", "@all"' },
+        to: { type: 'string', description: 'A teammate like "Ada", "team", or a group like "@codex", "@idle", "@all"' },
         text: { type: 'string', description: 'The message' },
         reply_to: { type: 'string', description: 'Optional: the id of the message you answer' },
         ...ME_ARG
@@ -740,7 +767,7 @@ const TOOLS = [
       type: 'object',
       properties: {
         title: { type: 'string', description: 'What the task is, in a few words' },
-        assignee: { type: 'string', description: 'Who does it, like "#3" (default: you)' },
+        assignee: { type: 'string', description: 'Who does it, like "Ada" (default: you)' },
         column: { type: 'string', enum: COLUMNS, description: 'Where it starts (default: todo)' },
         after: {
           type: 'array',
@@ -805,7 +832,7 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        to: { type: 'string', description: 'One teammate like "#3"' },
+        to: { type: 'string', description: 'One teammate like "Ada"' },
         question: { type: 'string', description: 'The question' },
         options: { type: 'array', items: { type: 'string' }, description: 'Optional: choices to offer' },
         wait_seconds: { type: 'number', description: 'How long to wait (5 to 600, default 50)' },
@@ -849,7 +876,7 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        worker: { type: 'string', description: 'The worker, like "#5"' },
+        worker: { type: 'string', description: 'The worker, like "Bohr"' },
         lines: { type: 'number', description: 'How many lines (1 to 200, default 60)' },
         ...ME_ARG
       },
@@ -859,11 +886,11 @@ const TOOLS = [
   {
     name: 'team_worker_stop',
     description:
-      'Stop one of your workers ("#5") or all of them ("all"): its pane is closed the way the user closes one; its card and its copy stay for review. A worker still waiting (confirming, queued) is cancelled.',
+      'Stop one of your workers ("Bohr") or all of them ("all"): its pane is closed the way the user closes one; its card and its copy stay for review. A worker still waiting (confirming, queued) is cancelled.',
     inputSchema: {
       type: 'object',
       properties: {
-        worker: { type: 'string', description: 'The worker, like "#5", or "all"' },
+        worker: { type: 'string', description: 'The worker, like "Bohr", or "all"' },
         reason: { type: 'string', description: 'Optional: why, shown on the board' },
         ...ME_ARG
       },
@@ -876,7 +903,7 @@ const TOOLS = [
       'Release one of your workers: it stays open as an ordinary teammate, no longer counted among your workers (its slot goes to the next one waiting).',
     inputSchema: {
       type: 'object',
-      properties: { worker: { type: 'string', description: 'The worker, like "#5"' }, ...ME_ARG },
+      properties: { worker: { type: 'string', description: 'The worker, like "Bohr"' }, ...ME_ARG },
       required: ['worker']
     }
   },
@@ -933,7 +960,7 @@ function boardLocate(start) {
       if (!data || !data.panes || typeof data.at !== 'number' || Date.now() - data.at > WINDOW_GONE_MS) continue
       const p = data.panes[paneId]
       if (p && /^[A-Za-z0-9._-]{1,100}$/.test(String(p.ws)) && !String(p.ws).startsWith('.'))
-        return { root: path.join(base, p.ws), meId: paneId, me: { num: p.num }, teamKey: `board:${p.ws}` }
+        return { root: path.join(base, p.ws), meId: paneId, me: { num: p.num, paneName: p.paneName }, teamKey: `board:${p.ws}` }
     }
   }
   return null
@@ -959,7 +986,7 @@ function callTool(name, args = {}, signal = null) {
   if (name === 'team_send') {
     const r = send(ctx, args.to, args.text, args.reply_to)
     if (r.error) return { text: r.error, isError: true }
-    return { text: `Sent to ${r.to ? r.to.join(', ') : args.to}. Tessel delivers it in the background.` }
+    return { text: `Sent to ${r.to ? r.to.join(', ') : r.recipient || args.to}. Tessel delivers it in the background.` }
   }
   if (name === 'team_ask') {
     // Only in a team: someone must be there to answer.
