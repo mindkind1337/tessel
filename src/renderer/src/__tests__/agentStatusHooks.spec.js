@@ -360,6 +360,16 @@ describe('actual terminal prompt evidence', () => {
         .interrupted
     ).toBe(false)
   })
+  it('finds the interruption above a tall status line, and Codex\'s too', () => {
+    const status = Array.from({ length: 9 }, (_, i) => `status line ${i}`).join('\n')
+    expect(
+      agentScreenObservation(terminal('❯ ', 2), 'claude', `  ⎿  Interrupted · What should Claude do instead?\n\n❯ \n${status}`).interrupted
+    ).toBe(true)
+    expect(
+      agentScreenObservation(terminal('› ', 2), 'codex', '■ Conversation interrupted - tell the model what to do differently.\n\n› ').interrupted
+    ).toBe(true)
+    expect(agentScreenObservation(terminal('› ', 2), 'codex', 'Done.\n\n› ').interrupted).toBe(false)
+  })
   it('keeps approval and quota evidence ahead of prompt readiness', () => {
     expect(
       agentScreenObservation(terminal('❯ ', 2), 'claude', 'Would you like to run this?\n❯ ')

@@ -108,9 +108,17 @@ export function agentScreenObservation(term, provider, screen) {
     }
   }
   // Claude Code runs no hook when its turn is interrupted (Esc): it says so
-  // just above its prompt ("⎿  Interrupted · What should Claude do instead?").
+  // just above its prompt ("⎿  Interrupted · What should Claude do instead?"),
+  // Codex too ("■ Conversation interrupted - tell the model what to do
+  // differently"). A status line can sit below the prompt: a few more lines.
+  const above = String(screen || '')
+    .split(/\r?\n/)
+    .slice(-16)
+    .join('\n')
   const interrupted =
-    ready && provider === 'claude' && /\bInterrupted\b\s*(?:by user|·\s*What should Claude do instead)/i.test(footer)
+    ready &&
+    ((provider === 'claude' && /\bInterrupted\b\s*(?:by user|·\s*What should Claude do instead)/i.test(above)) ||
+      (provider === 'codex' && /\bConversation interrupted\b/i.test(above)))
   return { screen, approval, limit, busy, ready, interrupted }
 }
 
