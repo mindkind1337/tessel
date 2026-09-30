@@ -148,12 +148,6 @@ const childState = computed(() => {
 // The model its pane shows (TerminalPane writes paneModels; a chat's row
 // carries it).
 const rowModel = computed(() => props.row.model || (props.row.kind === 'agent' ? paneModels[props.row.id] || '' : ''))
-// A chat agent has no terminal: a "chat" tag says so, unless its name does.
-const chatTag = computed(() => {
-  if (!props.row.chat) return ''
-  const word = t('sidebar.agentRow.chat', 'chat')
-  return String(props.row.primary || '').toLowerCase().includes(word.toLowerCase()) ? '' : word
-})
 // The team tag on the row: its name, with "lead" when it leads it.
 const teamTag = computed(() =>
   props.row.lead ? t('sidebar.agentRow.teamLead', '{{team}} · lead', { team: props.teamLabel }) : props.teamLabel
@@ -221,7 +215,6 @@ const workerOfLabel = computed(() =>
         - {{ row.secondary }}</span
       >
     </span>
-    <span v-if="chatTag" class="car-tag car-chat-tag" data-test="car-chat" v-text="chatTag"></span>
     <!-- The model it uses (the same text as its pane header). -->
     <span v-if="rowModel" class="car-tag car-model-tag" data-test="car-model" :title="rowModel">{{ rowModel }}</span>
     <!-- Its team, by name (and "lead" when it leads it). -->

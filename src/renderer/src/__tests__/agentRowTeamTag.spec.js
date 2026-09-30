@@ -42,12 +42,12 @@ describe('an agent row shows its model', () => {
 describe('a chat agent row (no terminal)', () => {
   const chat = (extra = {}) => row({ chat: true, title: 'Reviewer', primary: 'Reviewer', model: 'Opus 4.7 · high', ...extra })
 
-  it('shows its model and effort from the row, its team, and a chat tag unless its name says chat', () => {
+  it('shows its model and effort from the row and its team; no chat tag (screen readers still hear it)', () => {
     window.shellApi = {}
     const w = mount(CompactAgentRow, { props: { row: chat({ team: 't1', lead: true }), teamLabel: 'Team 2' } })
     expect(w.get('[data-test="car-model"]').text()).toBe('Opus 4.7 · high')
     expect(w.get('[data-test="car-team"]').text()).toBe('Team 2 · lead')
-    expect(w.get('[data-test="car-chat"]').text()).toBe('chat')
+    expect(w.find('[data-test="car-chat"]').exists()).toBe(false)
     expect(w.get('.compact-agent-row').attributes('aria-label')).toContain('Chat, no terminal')
     const named = mount(CompactAgentRow, { props: { row: chat({ title: 'Claude (chat)', primary: 'Claude (chat)' }) } })
     expect(named.find('[data-test="car-chat"]').exists()).toBe(false)
