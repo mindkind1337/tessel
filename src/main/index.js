@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, ipcMain, clipboard, nativeImage, dialog, Notification, shell, powerSaveBlocker, powerMonitor, safeStorage, webContents, session } from 'electron'
+import { app, BrowserWindow, Menu, ipcMain, clipboard, nativeImage, dialog, Notification, shell, powerSaveBlocker, powerMonitor, safeStorage, webContents, session, utilityProcess } from 'electron'
 import { join, isAbsolute, dirname } from 'path'
 import os from 'os'
 import fs from 'fs'
@@ -1133,14 +1133,17 @@ chatSessions.register(ipcMain)
 // Read-only chat views of the agents without a chat protocol (Grok,
 // OpenClaude, OMP): their session file, watched while the view is open.
 // Search in what was said in the agents' conversations: a local index, off
-// until the user turns it on; filled in the background, not while the window
-// is hidden or minimized (sessionSearch/index.js).
+// until the user turns it on; filled in the background by a process of its
+// own, not while the window is hidden or minimized (sessionSearch/index.js).
 const sessionSearch = createSessionSearch({
   dir: app.getPath('userData'),
+  // Its own process: the index and the indexing never run in this one.
+  fork: (dir) => utilityProcess.fork(join(__dirname, 'sessionSearchWorker.js'), [dir], { serviceName: 'Tessel session search' }),
   isPaused: () => !mainWindow || mainWindow.isDestroyed() || mainWindow.isMinimized() || !mainWindow.isVisible(),
   log
 })
 sessionSearch.register(ipcMain)
+app.whenReady().then(() => sessionSearch.start())
 app.on('will-quit', () => sessionSearch.close())
 const transcriptViews = createTranscriptViews({ send, log })
 transcriptViews.register(ipcMain)

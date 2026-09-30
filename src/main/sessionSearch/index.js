@@ -1,199 +1,165 @@
-// Session search: a full-text search over what was said in the agents'
-// conversations, from a local index (store.js) filled in the background
-// (indexer.js). Opt-in: nothing is read or indexed until the user turns it
-// on; turning it off stops the indexing and keeps the index; clearing deletes
-// it (never the agents' own files). The index stays in Tessel's data folder
-// and is never sent anywhere. Only the main window asks (the IPC guard).
-// Background work: one slice of one file at a time on a timer, paused while
-// the window is hidden, so it never takes more than part of one core.
-// After Orca's src/main/ai-vault-search (session-search-service.ts,
-// session-search-work-loop.ts, session-search-policy.ts), MIT, Copyright (c)
-// 2026 Lovecast Inc.
+// Session search, as the main process sees it: a full-text search over what
+// was said in the agents' conversations. Opt-in (nothing is read or indexed
+// until the user turns it on). The index and its background work run in a
+// separate utility process (worker.js, core.js), started only while the
+// search is on, so indexing never freezes the window; this side only passes
+// the window's requests (the IPC guard lets the main window alone ask) and
+// says when the window is hidden (the indexing then waits).
 import fs from 'fs'
-import os from 'os'
 import { join } from 'path'
-import { openStore, removeDatabase, sqliteAvailable } from './store.js'
-import { indexNext, listSources } from './indexer.js'
 
-export const HISTORY_DAYS = [30, 90, 365, 0] // 0: everything
-const DEFAULT_POLICY = { enabled: false, historyDays: 90 }
-const DAY = 24 * 60 * 60 * 1000
+const METHODS = ['status', 'enable', 'disable', 'clear', 'setHistoryDays', 'search']
+const REPLY_MS = 15000
+const OFF = { available: true, enabled: false, phase: 'idle', filesIndexed: 0, filesDue: 0, filesFailed: 0, sessions: 0, sizeBytes: 0 }
 
 export function createSessionSearch({
   dir,
-  home = os.homedir(),
-  // true while the window is hidden or minimized: the indexing waits.
+  // (dir) -> { postMessage(msg), on('message' | 'exit', fn), kill() }: the
+  // utility process (Electron's utilityProcess.fork of sessionSearchWorker.js).
+  fork,
   isPaused = () => false,
-  now = Date.now,
-  timers = { setTimeout, clearTimeout },
-  // Between two slices; between two looks at the folders; while paused.
-  sliceGapMs = 25,
-  scanEveryMs = 60 * 1000,
-  pausedRetryMs = 3000,
+  pausedCheckMs = 2000,
+  timers = { setTimeout, clearTimeout, setInterval, clearInterval },
   log = null
 } = {}) {
-  const folder = join(dir, 'session-search')
-  const dbPath = join(folder, 'index.sqlite')
-  const policyPath = join(folder, 'policy.json')
-  let policy = readPolicy()
-  let store = null
-  let timer = null
-  let lastScan = 0
-  let sources = new Map()
+  const policyPath = join(dir, 'session-search', 'policy.json')
+  let child = null
+  let nextId = 0
+  const waiting = new Map() // id -> { resolve, timer }
+  let pausedTimer = null
+  let lastPaused = null
   let closed = false
 
-  function readPolicy() {
+  function policyEnabled() {
     try {
-      const o = JSON.parse(fs.readFileSync(policyPath, 'utf8'))
-      return { enabled: o.enabled === true, historyDays: HISTORY_DAYS.includes(o.historyDays) ? o.historyDays : DEFAULT_POLICY.historyDays }
+      return JSON.parse(fs.readFileSync(policyPath, 'utf8')).enabled === true
     } catch {
-      return { ...DEFAULT_POLICY }
+      return false
     }
   }
-  function writePolicy() {
+  function historyDays() {
     try {
-      fs.mkdirSync(folder, { recursive: true })
-      fs.writeFileSync(policyPath, JSON.stringify(policy))
-    } catch (err) {
-      if (log) log.warn('sessionSearch', `policy not saved: ${err && err.message}`) // i18n-ignore
+      const n = JSON.parse(fs.readFileSync(policyPath, 'utf8')).historyDays
+      return Number.isInteger(n) ? n : 90
+    } catch {
+      return 90
     }
   }
 
-  function scan() {
-    lastScan = now()
-    const since = policy.historyDays ? lastScan - policy.historyDays * DAY : 0
-    const list = listSources({ home, since })
-    sources = new Map(list.map((s) => [s.path, s]))
-    store.transaction(() => {
-      for (const s of list) store.noteFile(s)
-      // Gone from the agent's folder, or older than what is kept: out of the index.
-      for (const path of store.knownPaths()) if (!sources.has(path)) store.forgetFile(path)
+  function settleAll(result) {
+    for (const [, w] of waiting) {
+      timers.clearTimeout(w.timer)
+      w.resolve(result)
+    }
+    waiting.clear()
+  }
+  function stopChild() {
+    if (pausedTimer) timers.clearInterval(pausedTimer)
+    pausedTimer = null
+    lastPaused = null
+    const c = child
+    child = null
+    settleAll({ ok: false, code: 'closed' })
+    if (c) {
+      try {
+        c.kill()
+      } catch {
+        // already gone
+      }
+    }
+  }
+  function tellPaused() {
+    if (!child) return
+    let paused = false
+    try {
+      paused = !!isPaused()
+    } catch {
+      paused = false
+    }
+    if (paused === lastPaused) return
+    lastPaused = paused
+    child.postMessage({ paused })
+  }
+  function ensureChild() {
+    if (child || closed || typeof fork !== 'function') return child
+    try {
+      const c = fork(dir)
+      c.on('message', (msg) => {
+        const w = msg && waiting.get(msg.id)
+        if (!w) return
+        waiting.delete(msg.id)
+        timers.clearTimeout(w.timer)
+        w.resolve(msg.result)
+      })
+      c.on('exit', () => {
+        if (child !== c) return
+        child = null
+        if (pausedTimer) timers.clearInterval(pausedTimer)
+        pausedTimer = null
+        lastPaused = null
+        settleAll({ ok: false, code: 'closed' })
+      })
+      child = c
+      tellPaused()
+      pausedTimer = timers.setInterval(tellPaused, pausedCheckMs)
+      if (pausedTimer && typeof pausedTimer.unref === 'function') pausedTimer.unref()
+    } catch (err) {
+      child = null
+      if (log) log.warn('sessionSearch', `its process did not start: ${err && err.message}`) // i18n-ignore
+    }
+    return child
+  }
+  function call(method, ...args) {
+    const c = ensureChild()
+    if (!c) return Promise.resolve({ ok: false, code: 'unavailable' })
+    return new Promise((resolve) => {
+      const id = ++nextId
+      const timer = timers.setTimeout(() => {
+        waiting.delete(id)
+        resolve({ ok: false, code: 'timeout' })
+      }, REPLY_MS)
+      waiting.set(id, { resolve, timer })
+      c.postMessage({ id, method, args })
     })
   }
 
-  function stop() {
-    if (timer) timers.clearTimeout(timer)
-    timer = null
-  }
-  function schedule(ms) {
-    stop()
-    if (closed || !policy.enabled || !store) return
-    timer = timers.setTimeout(tick, ms)
-    if (timer && typeof timer.unref === 'function') timer.unref()
-  }
-  function tick() {
-    timer = null
-    if (closed || !policy.enabled || !store) return
-    if (isPaused()) return schedule(pausedRetryMs)
-    try {
-      if (now() - lastScan >= scanEveryMs) scan()
-      const more = indexNext(store, { sources })
-      schedule(more ? sliceGapMs : scanEveryMs)
-    } catch (err) {
-      if (log) log.warn('sessionSearch', `indexing stopped for now: ${err && err.message}`) // i18n-ignore
-      schedule(scanEveryMs)
-    }
-  }
-
-  function start() {
-    if (!policy.enabled || store || !sqliteAvailable()) return
-    try {
-      store = openStore(dbPath)
-      lastScan = 0
-      schedule(sliceGapMs)
-    } catch (err) {
-      store = null
-      if (log) log.warn('sessionSearch', `index not opened: ${err && err.message}`) // i18n-ignore
-    }
-  }
-  function closeStore() {
-    stop()
-    if (store) store.close()
-    store = null
-  }
-
-  function sizeBytes() {
-    let n = 0
-    for (const suffix of ['', '-wal']) {
-      try {
-        n += fs.statSync(dbPath + suffix).size
-      } catch {
-        // not there
-      }
-    }
-    return n
-  }
-
   const api = {
-    status() {
-      const base = { available: sqliteAvailable(), enabled: policy.enabled, historyDays: policy.historyDays, sizeBytes: sizeBytes() }
-      if (!store) return { ...base, phase: 'idle', filesIndexed: 0, filesDue: 0, filesFailed: 0, sessions: 0 }
-      const c = store.counts()
-      return { ...base, ...c, phase: c.filesDue > 0 ? (isPaused() ? 'paused' : 'indexing') : 'current' }
+    // Off: answered here, without starting anything.
+    async status() {
+      if (!child && !policyEnabled()) return { ...OFF, available: typeof fork === 'function', historyDays: historyDays() }
+      const res = await call('status')
+      return res && typeof res.enabled === 'boolean' ? res : { ...OFF, available: false, historyDays: historyDays() }
     },
-    enable() {
-      if (!sqliteAvailable()) return { ok: false, code: 'unavailable' }
-      policy = { ...policy, enabled: true }
-      writePolicy()
-      start()
-      return { ok: !!store, ...(store ? {} : { code: 'unavailable' }) }
+    enable: () => call('enable'),
+    // Stops at once: the indexing's process ends with it (the index stays).
+    async disable() {
+      const res = child || policyEnabled() ? await call('disable') : { ok: true }
+      stopChild()
+      return res && res.ok ? res : { ok: true }
     },
-    // Stops the indexing; the index stays (clear() deletes it).
-    disable() {
-      policy = { ...policy, enabled: false }
-      writePolicy()
-      closeStore()
-      return { ok: true }
+    async clear() {
+      const enabled = policyEnabled()
+      const res = await call('clear')
+      if (!enabled) stopChild()
+      return res
     },
-    setHistoryDays(days) {
-      if (!HISTORY_DAYS.includes(days)) return { ok: false, code: 'invalid' }
-      policy = { ...policy, historyDays: days }
-      writePolicy()
-      lastScan = 0
-      if (store) schedule(sliceGapMs)
-      return { ok: true }
+    setHistoryDays: (days) => call('setHistoryDays', days),
+    async search(q) {
+      if (!child && !policyEnabled()) return { ok: false, code: 'disabled' }
+      return call('search', q)
     },
-    // Deletes the index (a copy: the agents' own files are never touched).
-    clear() {
-      closeStore()
-      removeDatabase(dbPath)
-      start()
-      return { ok: true }
-    },
-    search(q) {
-      if (!policy.enabled) return { ok: false, code: 'disabled' }
-      if (!store) return { ok: false, code: 'unavailable' }
-      const o = q && typeof q === 'object' ? q : {}
-      const scope = o.scope && typeof o.scope === 'object' ? { kind: ['folder', 'project', 'all'].includes(o.scope.kind) ? o.scope.kind : 'all', path: typeof o.scope.path === 'string' ? o.scope.path.slice(0, 1024) : '' } : { kind: 'all' }
-      const agents = Array.isArray(o.agents) ? o.agents.filter((a) => typeof a === 'string' && /^[a-z0-9-]{1,32}$/.test(a)).slice(0, 32) : null
-      const started = now()
-      try {
-        const res = store.search({ query: typeof o.query === 'string' ? o.query : '', scope, agents, limit: o.limit })
-        return { ok: true, ...res, durationMs: now() - started }
-      } catch (err) {
-        if (log) log.warn('sessionSearch', `search failed: ${err && err.message}`) // i18n-ignore
-        return { ok: false, code: 'failed' }
-      }
-    },
-    // Tests and quitting.
-    runOnce() {
-      if (!store) return false
-      if (!lastScan || now() - lastScan >= scanEveryMs) scan()
-      return indexNext(store, { sources })
+    // Turned on before: its process starts with the app (once Electron is
+    // ready), and indexes what changed since.
+    start() {
+      if (policyEnabled()) ensureChild()
     },
     close() {
       closed = true
-      closeStore()
+      stopChild()
     },
     register(ipcMain) {
-      ipcMain.handle('sessionSearch:status', () => api.status())
-      ipcMain.handle('sessionSearch:enable', () => api.enable())
-      ipcMain.handle('sessionSearch:disable', () => api.disable())
-      ipcMain.handle('sessionSearch:clear', () => api.clear())
-      ipcMain.handle('sessionSearch:setHistoryDays', (_e, days) => api.setHistoryDays(days))
-      ipcMain.handle('sessionSearch:search', (_e, q) => api.search(q))
+      for (const method of METHODS) ipcMain.handle(`sessionSearch:${method}`, (_e, arg) => api[method](arg)) // i18n-ignore
     }
   }
-  start()
   return api
 }

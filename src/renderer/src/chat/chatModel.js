@@ -7,6 +7,7 @@
 // MIT, Copyright (c) 2026 Lovecast Inc.), much simplified.
 
 import { approvalText, MAX_DETAIL } from '../../../shared/chatApproval'
+import { maskSecrets } from '../../../shared/maskSecrets.js'
 
 export { MAX_DETAIL }
 export const MAX_SUMMARY = 80
@@ -40,18 +41,8 @@ export function isBusy(status) {
 
 // --- Helpers -----------------------------------------------------------------------------------
 
-// Bearer tokens, key=value secrets, long hex or base64-like runs. Always
-// before a text is cut: a cut secret would leave its start visible.
-export function maskSecrets(text) {
-  return String(text ?? '')
-    .replace(/\b(bearer|basic|token)\s+[^\s"']+/gi, '$1 ***')
-    .replace(
-      /\b([\w.-]*(?:key|token|secret|password|passwd|pwd|auth|credential|signature)[\w.-]*)(\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s&;|,]+)/gi,
-      (all, name, sep, value) => (/^\*+$/.test(value) ? all : `${name}${sep}***`)
-    )
-    .replace(/\b[a-f0-9]{24,}\b/gi, '***')
-    .replace(/(?<![\w/\\.-])(?=[\w+=-]*\d)(?=[\w+=-]*[A-Za-z])[\w+=-]{32,}/g, '***')
-}
+// maskSecrets lives in shared/ (the main process masks with it too).
+export { maskSecrets }
 
 export function truncate(text, max = MAX_SUMMARY) {
   const s = String(text ?? '')

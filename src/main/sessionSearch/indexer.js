@@ -13,8 +13,9 @@ import { listSessions } from '../agentSessions.js'
 import { claudeHistoryEvents, codexHistoryEvents } from '../chat/transcriptHistory.js'
 import { grokViewEvents, ompViewEvents } from '../chat/transcriptView.js'
 
-export const SLICE_BYTES = 128 * 1024
-const MAX_LINE_BYTES = 2 * 1024 * 1024
+// Small on purpose: a slice runs on the main thread, between two timers.
+export const SLICE_BYTES = 32 * 1024
+const MAX_LINE_BYTES = 512 * 1024
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i
 // Whole messages are indexed (the history's own cut is for display).
 const LIMITS = { text: 256 * 1024, events: Infinity, bytes: Infinity }

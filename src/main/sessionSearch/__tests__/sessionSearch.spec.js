@@ -5,6 +5,8 @@ import fs from 'fs'
 import os from 'os'
 import { join } from 'path'
 import { createSessionSearch } from '../index'
+import { createSessionSearchCore, maskSnippet } from '../core'
+import { serve } from '../worker'
 import { listSources, readSlice, rowsFromLines } from '../indexer'
 import { openStore } from '../store'
 import { identifierShadowTerms, indexTokens, planQuery } from '../query'
@@ -44,7 +46,7 @@ function claude(id, cwd, turns, mtime) {
   return put(`.claude/projects/${cwd.replace(/[^A-Za-z0-9]/g, '-')}/${id}.jsonl`, lines(rows), mtime)
 }
 function service(extra = {}) {
-  search = createSessionSearch({ dir, home, now: () => NOW, timers: { setTimeout: () => null, clearTimeout: () => {} }, ...extra })
+  search = createSessionSearchCore({ dir, home, now: () => NOW, timers: { setTimeout: () => null, clearTimeout: () => {} }, ...extra })
   return search
 }
 function drain(s) {
@@ -180,7 +182,7 @@ describe('session search', () => {
     expect(fs.existsSync(db)).toBe(true)
     // The choice is remembered by the next start.
     s.close()
-    search = createSessionSearch({ dir, home, now: () => NOW, timers: { setTimeout: () => null, clearTimeout: () => {} } })
+    search = createSessionSearchCore({ dir, home, now: () => NOW, timers: { setTimeout: () => null, clearTimeout: () => {} } })
     expect(search.status().enabled).toBe(false)
     search.enable()
     expect(search.search({ query: 'keep' }).hits).toHaveLength(1)
@@ -211,12 +213,97 @@ describe('session search', () => {
     expect(store.search({ query: 'withinthecut' }).hits[0].messageCount).toBe(0)
     store.close()
   })
+})
 
-  it('registers its channels', () => {
+describe('session search from the main process (its own process does the work)', () => {
+  // The utility process, in this one: the worker's own serve() on a fake port.
+  function fakeFork() {
+    const forks = []
+    const fork = vi.fn((dataDir) => {
+      const toChild = []
+      const toParent = []
+      const port = { on: (name, fn) => name === 'message' && toChild.push(fn), postMessage: (msg) => queueMicrotask(() => toParent.forEach((fn) => fn(msg))) }
+      const core = serve(port, { dir: dataDir, home, createCore: (o) => createSessionSearchCore({ ...o, now: () => NOW, timers: { setTimeout: () => null, clearTimeout: () => {} } }) })
+      const child = {
+        core,
+        paused: [],
+        killed: false,
+        exit: [],
+        postMessage: (msg) => {
+          if (typeof msg.paused === 'boolean') child.paused.push(msg.paused)
+          toChild.forEach((fn) => fn({ data: msg }))
+        },
+        on: (name, fn) => (name === 'message' ? toParent.push(fn) : name === 'exit' ? child.exit.push(fn) : null),
+        kill: () => {
+          child.killed = true
+          core.close()
+        }
+      }
+      forks.push(child)
+      return child
+    })
+    return { fork, forks }
+  }
+  const noTimers = { setTimeout: () => 1, clearTimeout: () => {}, setInterval: () => 1, clearInterval: () => {} }
+
+  it('off: no process is started, a status and a search are answered here', async () => {
+    const { fork } = fakeFork()
+    const s = createSessionSearch({ dir, fork, timers: noTimers })
+    s.start()
+    expect(await s.status()).toMatchObject({ available: true, enabled: false, phase: 'idle', historyDays: 90 })
+    expect(await s.search({ query: 'x' })).toEqual({ ok: false, code: 'disabled' })
+    expect(fork).not.toHaveBeenCalled()
+    s.close()
+  })
+
+  it('on: its process starts, is told when the window hides, answers; turned off, it ends at once; turned on before, it starts with the app', async () => {
+    claude(C1, 'C:\\proj', [['the api key is token=abcdef0123456789abcdef0123456789 here', 'noted']])
+    const { fork, forks } = fakeFork()
+    let hidden = false
+    const s = createSessionSearch({ dir, fork, isPaused: () => hidden, timers: noTimers })
+    expect(await s.enable()).toEqual({ ok: true })
+    expect(fork).toHaveBeenCalledWith(dir)
+    expect(forks[0].paused).toEqual([false])
+    for (let i = 0; i < 200 && forks[0].core.runOnce(); i++);
+    const res = await s.search({ query: 'api key' })
+    expect(res.ok).toBe(true)
+    // Masked before it leaves the main side: neither the passage nor the title carries the secret.
+    expect(JSON.stringify(res.hits)).not.toContain('abcdef0123456789')
+    expect(res.hits[0].evidence.snippet).toContain('[[')
+    expect((await s.status()).enabled).toBe(true)
+    expect(await s.disable()).toEqual({ ok: true })
+    expect(forks[0].killed).toBe(true)
+    expect(await s.search({ query: 'api' })).toEqual({ ok: false, code: 'disabled' })
+    await s.enable()
+    s.close()
+    expect(forks[1].killed).toBe(true)
+    // The next launch: on already, so its process starts with the app.
+    const again = fakeFork()
+    const next = createSessionSearch({ dir, fork: again.fork, timers: noTimers })
+    expect(again.fork).not.toHaveBeenCalled()
+    next.start()
+    expect(again.fork).toHaveBeenCalledTimes(1)
+    next.close()
+  })
+
+  it('a process that ended answers "closed" and starts again on the next request; its channels are registered', async () => {
+    const { fork, forks } = fakeFork()
+    const s = createSessionSearch({ dir, fork, timers: noTimers })
+    await s.enable()
+    forks[0].core.close() // the process is gone, its database handle with it
+    forks[0].exit.forEach((fn) => fn())
+    expect((await s.status()).enabled).toBe(true)
+    expect(fork).toHaveBeenCalledTimes(2)
     const handlers = {}
-    service().register({ handle: (name, fn) => (handlers[name] = fn) })
+    s.register({ handle: (name, fn) => (handlers[name] = fn) })
     expect(Object.keys(handlers).sort()).toEqual(['sessionSearch:clear', 'sessionSearch:disable', 'sessionSearch:enable', 'sessionSearch:search', 'sessionSearch:setHistoryDays', 'sessionSearch:status'])
-    expect(handlers['sessionSearch:setHistoryDays']({}, 7)).toEqual({ ok: false, code: 'invalid' })
-    expect(handlers['sessionSearch:setHistoryDays']({}, 30)).toEqual({ ok: true })
+    expect(await handlers['sessionSearch:setHistoryDays']({}, 7)).toEqual({ ok: false, code: 'invalid' })
+    expect(await handlers['sessionSearch:setHistoryDays']({}, 30)).toEqual({ ok: true })
+    expect(await handlers['sessionSearch:clear']({})).toEqual({ ok: true })
+    s.close()
+  })
+
+  it('a passage keeps its marks and loses its secrets', () => {
+    expect(maskSnippet('use [[Bearer]] abcdef0123456789abcdef0123456789abcd now')).toBe('use [[Bearer]] *** now')
   })
 })

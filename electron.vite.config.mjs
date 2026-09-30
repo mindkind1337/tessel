@@ -26,6 +26,9 @@ export default defineConfig({
         input: {
           index: 'src/main/index.js',
           ptyHost: 'src/main/ptyHost.js',
+          // Session search's own process (its index and indexing; started
+          // only while the search is turned on).
+          sessionSearchWorker: 'src/main/sessionSearch/worker.js',
           // The tessel command (Settings > General > Tessel CLI), run by
           // Tessel's executable as Node; self-contained, unpacked from the
           // app archive (package.json asarUnpack).
