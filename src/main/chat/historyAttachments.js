@@ -69,6 +69,10 @@ export function localPath(value) {
       return null
     }
   }
+  // Never a network or device path (\\server\share, //server, \\?\, \\.\):
+  // touching one from a conversation's text could send Windows credentials
+  // to that server.
+  if (/^[\\/]{2}/.test(p)) return null
   return isAbsolute(p) ? p : null
 }
 

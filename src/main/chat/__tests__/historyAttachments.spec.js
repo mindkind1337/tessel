@@ -300,3 +300,13 @@ describe('OpenCode history images and files', () => {
     expect(u.text).toBe('[file] [file]')
   })
 })
+
+describe('network and device paths', () => {
+  it('are never touched', async () => {
+    const { localPath, plainFile } = await import('../historyAttachments.js')
+    for (const p of ['\\attacker\share\x.png', '//attacker/share/x.png', '\\?\C:\x.png', '\\.\pipe\x', 'file://attacker/share/x.png']) {
+      expect(localPath(p), p).toBe(null)
+      expect(plainFile(p), p).toBe(null)
+    }
+  })
+})
