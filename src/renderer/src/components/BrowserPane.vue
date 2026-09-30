@@ -417,10 +417,22 @@ function onAddressBlur() {
 // --- Ports (Orca's ports status popover) ----------------------------------------------------
 const portsOpen = ref(false)
 const portsTick = ref(0)
+const SYSTEM_PROCESSES = new Set(['system', 'system idle process', 'svchost.exe', 'lsass.exe', 'services.exe', 'wininit.exe', 'spoolsv.exe', 'smss.exe', 'csrss.exe'])
+const SYSTEM_PORTS = new Set([135, 137, 138, 139, 445, 5040])
 const ports = computed(() => {
   portsTick.value // re-read when the popover opens
   const list = ctx.browserPorts ? ctx.browserPorts() : []
-  return Array.isArray(list) ? list : []
+  if (!Array.isArray(list)) return []
+  // Windows' own listeners (file sharing, RPC…) are no local servers to
+  // browse; one row per port.
+  const seen = new Set()
+  return list.filter((p) => {
+    if (!p || SYSTEM_PROCESSES.has(String(p.processName || '').toLowerCase()) || SYSTEM_PORTS.has(Number(p.port))) return false
+    const key = `${p.port}:${p.url || ''}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
 })
 function togglePorts() {
   reloadMenu.value = false

@@ -535,6 +535,13 @@ body.popup-open .toolbar {
   inset: 0;
   z-index: 100;
 }
+/* A maximized pane can show a browser page through its page area (drawn in
+   a layer under the panes): the other panes and the dividers are hidden so
+   nothing shows through it. Their terminals keep running. */
+.ws-layer:has(.pane.maximized) .divider,
+.ws-layer:has(.pane.maximized) .pane:not(.maximized) {
+  visibility: hidden;
+}
 
 .pane-nav {
   position: absolute;
