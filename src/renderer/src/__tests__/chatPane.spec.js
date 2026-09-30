@@ -651,6 +651,16 @@ describe('ChatPane.vue', () => {
     }
   })
 
+  it('gives its status to the sidebar (the leaf), so a reload does not leave it unknown', async () => {
+    await mountPane()
+    emit({ type: 'status', state: 'working' })
+    await settle()
+    expect(node.liveStatus).toBe('working')
+    emit({ type: 'status', state: 'idle' })
+    await settle()
+    expect(node.liveStatus).toBe('idle')
+  })
+
   it('header: rate limits, Yolo on the icon ring only (no badge), maximize and close', async () => {
     await mountPane({}, { chatPermissions: () => 'yolo' })
     emit({ type: 'rateLimit', fiveHour: { utilization: 0.42 }, sevenDay: { utilization: 0.1 } })

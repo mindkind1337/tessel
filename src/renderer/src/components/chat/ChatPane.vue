@@ -64,6 +64,11 @@ const meta = session.meta
 const isActive = computed(() => ctx.activeId.value === props.node.id)
 const isMaximized = computed(() => ctx.maximizedId.value === props.node.id)
 const status = computed(() => meta.status)
+// The sidebar reads the pane's own status (App's copy only hears changes,
+// and forgets them on a reload); not saved with the layout.
+watch(status, (st) => {
+  if (props.node.liveStatus !== st) props.node.liveStatus = st
+}, { immediate: true })
 const busy = computed(() => status.value === 'working' || status.value === 'approval')
 const stopped = computed(() => STOPPED_STATES.has(status.value))
 // Which agent: Claude, Codex or OpenCode (the leaf's agentId).

@@ -376,7 +376,8 @@ function makeChatLeaf({ id = null, agentId = 'claude', cwd = null, projectDir = 
 // approval, asleep, ended, crashed, signin, untrusted): for the sidebar.
 const chatStatus = reactive({})
 function chatPaneState(leaf) {
-  const st = chatStatus[leaf.id]
+  // What the events said, else the pane's own status (after a reload).
+  const st = chatStatus[leaf.id] || leaf.liveStatus
   if (limits[leaf.id]) return 'limited'
   if (st === 'working') return 'working'
   if (st === 'approval') return 'approval'
@@ -3786,8 +3787,8 @@ const sidebarProjects = computed(() =>
         shellId: leaf.shellId || null,
         accent: leaf.accent || null,
         state: chat ? chatPaneState(leaf) : paneState(leaf),
-        sleeping: chat ? chatStatus[leaf.id] === 'asleep' : !!leaf.sleeping,
-        ...(chat ? { chatStatus: chatStatus[leaf.id] || null, model: leaf.model || null, effort: leaf.effort || null } : {}),
+        sleeping: chat ? (chatStatus[leaf.id] || leaf.liveStatus) === 'asleep' : !!leaf.sleeping,
+        ...(chat ? { chatStatus: chatStatus[leaf.id] || leaf.liveStatus || null, model: leaf.model || null, effort: leaf.effort || null } : {}),
         attention: !!attention[leaf.id],
         reset: limits[leaf.id] ? limits[leaf.id].reset : '',
         held: !!pendingMessages[leaf.id],
