@@ -469,6 +469,11 @@ describe('delivery', () => {
     expect(a.compact).toHaveBeenCalledTimes(1)
     expect(last('notice')).toMatchObject({ kind: 'info' })
     await flush()
+    // Not before the agent says it is done.
+    expect(a.send).toHaveBeenCalledTimes(1)
+    expect(last('status')).toMatchObject({ state: 'working' })
+    a.emit('compacted', {})
+    await flush()
     expect(a.send).toHaveBeenCalledTimes(2)
     expect(a.send.mock.calls[1][0]).toMatchObject({ text: 'hello' })
     a.emit('accepted', { uuid: a.send.mock.calls[1][0].uuid })
@@ -477,6 +482,18 @@ describe('delivery', () => {
     // The turn's end carries the error: no notice with the same words.
     expect(last('turnEnd')).toMatchObject({ status: 'failed', error: 'content filter' })
     expect(events('notice').filter((n) => n.text.includes('content filter'))).toEqual([])
+    // The compaction turn failing (Codex): the way out at once.
+    a.compact = vi.fn(async () => ({ ok: true }))
+    const r3 = await chat.send({ paneId, text: 'third' })
+    await flush()
+    a.emit('accepted', { uuid: r3.id })
+    a.emit('turnEnd', { status: 'failed', error: { message: 'maximum context length exceeded' } })
+    await flush()
+    await flush()
+    a.emit('turnEnd', { status: 'failed', error: { message: 'compaction failed' } })
+    await flush()
+    expect(last('notice')).toMatchObject({ kind: 'error', action: 'newConversation', detail: 'compaction failed' })
+    expect(a.send).toHaveBeenCalledTimes(3)
     // No compaction offered by the adapter: the way out at once.
     delete a.compact
     const r2 = await chat.send({ paneId, text: 'more' })

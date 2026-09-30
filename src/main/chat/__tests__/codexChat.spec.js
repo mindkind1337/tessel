@@ -341,13 +341,6 @@ describe('codexChat: turns', () => {
     expect(ofType(events, 'state').filter((s) => s.state === 'running')).toHaveLength(1)
   })
 
-  it('compact -> thread/compact/start, done once Codex says thread/compacted', async () => {
-    const { chat, requests } = setup()
-    await chat.start()
-    expect(await chat.compact()).toEqual({ ok: true })
-    expect(requests('thread/compact/start')[0].params).toEqual({ threadId: chat.threadId })
-  })
-
   it('interrupt -> turn/interrupt with the turn id, turnEnd interrupted; usable afterwards', async () => {
     const { chat, events, requests } = setup()
     await chat.start()

@@ -410,6 +410,7 @@ export function createChatSessions(deps) {
   // window overflow): the conversation is compacted, then the message sent
   // again, once. Failing that, the user is told to start a new conversation.
 
+  const COMPACT_WAIT_MS = 120000
   const TOO_LONG = /prompt is too long|context.?(window|length)|too many tokens|maximum context|context_length_exceeded|contextoverflow|ran out of room/i
   const isTooLong = (error) => TOO_LONG.test(String(error || ''))
   const agentLabel = (s) => ({ claude: 'Claude', codex: 'Codex', opencode: 'OpenCode' })[s.agent] || s.agent // i18n-ignore
@@ -420,9 +421,12 @@ export function createChatSessions(deps) {
       void deliver(s, { kind: 'compact', uuid: randomUUID(), ids: [], text: '/compact' })
       return
     }
+    // Codex (thread/compact/start) and OpenCode (summarize): the request is
+    // taken at once; the agent says 'compacted' when it is done (Codex runs
+    // it as a turn of its own, whose failure ends the wait).
     const compact = s.adapter?.compact
     if (typeof compact !== 'function') return giveUpCompaction(s)
-    const turn = { kind: 'compact', uuid: null, ids: [], accepted: true }
+    const turn = { kind: 'compact', uuid: null, ids: [], accepted: true, timer: null }
     s.turn = turn
     workStatus(s)
     Promise.resolve()
@@ -430,9 +434,16 @@ export function createChatSessions(deps) {
       .then(
         (r) => {
           if (s.turn !== turn) return // closed meanwhile
-          s.turn = null
-          if (r && r.ok) resendAfterCompaction(s)
-          else giveUpCompaction(s, r && r.error)
+          if (!(r && r.ok)) {
+            s.turn = null
+            return giveUpCompaction(s, r && r.error)
+          }
+          turn.timer = setTimeout(() => {
+            if (s.turn !== turn) return
+            s.turn = null
+            giveUpCompaction(s, 'timeout')
+          }, COMPACT_WAIT_MS)
+          if (typeof turn.timer.unref === 'function') turn.timer.unref()
         },
         (err) => {
           if (s.turn !== turn) return
@@ -440,6 +451,15 @@ export function createChatSessions(deps) {
           giveUpCompaction(s, err?.message)
         }
       )
+  }
+  function compactionDone(s, ok, error) {
+    const turn = s.turn
+    if (!turn || turn.kind !== 'compact' || s.agent === 'claude') return false
+    if (turn.timer) clearTimeout(turn.timer)
+    s.turn = null
+    if (ok) resendAfterCompaction(s)
+    else giveUpCompaction(s, error)
+    return true
   }
   function resendAfterCompaction(s) {
     const c = s.compaction
@@ -664,12 +684,18 @@ export function createChatSessions(deps) {
         idleCheck(s)
       }
     })
+    on('compacted', () => {
+      compactionDone(s, true)
+    })
     on('turnEnd', (e) => {
       cancelQuestions(s)
       const turn = s.turn
-      // Codex's or OpenCode's compaction is not a turn of the chat: its own
-      // promise settles it (startCompaction).
-      if (turn && turn.kind === 'compact' && s.agent !== 'claude') return
+      // Codex's compaction runs as a turn of its own, not one of the chat:
+      // done at 'compacted'; failed, the wait ends here.
+      if (turn && turn.kind === 'compact' && s.agent !== 'claude') {
+        if (e.status !== 'completed') compactionDone(s, false, e.error && typeof e.error === 'object' ? e.error.message : e.error || e.result)
+        return
+      }
       if (turn && !turn.accepted) {
         const uuids = Array.isArray(e.userMessageUuids) ? e.userMessageUuids : []
         if (turn.uuid && uuids.includes(turn.uuid)) markAccepted(s, turn)
@@ -822,6 +848,7 @@ export function createChatSessions(deps) {
     if (s.idleTimer) clearTimeout(s.idleTimer)
     s.idleTimer = null
     if (s.turn) markFailed(s, s.turn)
+    if (s.turn && s.turn.timer) clearTimeout(s.turn.timer)
     s.turn = null
     s.compaction = null
     failQueued(s)
