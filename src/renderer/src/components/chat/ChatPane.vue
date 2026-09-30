@@ -515,7 +515,7 @@ const contextMenuActions = computed(() => ({
   onSplitDown: () => ctx.splitLeaf(props.node.id, 'col'),
   isPaneExpanded: isMaximized.value,
   onToggleExpand: () => ctx.toggleMaximize(props.node.id),
-  ...(ctx.switchToTerminal && props.node.sessionId && !busy.value ? { onSwitchToTerminal: () => ctx.switchToTerminal(props.node.id) } : {}),
+  ...(ctx.switchToTerminal && props.node.sessionId ? { onSwitchToTerminal: () => ctx.switchToTerminal(props.node.id) } : {}),
   onClosePane: () => ctx.closeLeaf(props.node.id)
 }))
 
@@ -588,7 +588,6 @@ defineExpose({ start, send, interrupt, focusPendingApproval, focusComposer: () =
           data-test="chat-open-terminal"
           :title="t('chat.pane.openInTerminalHint', 'Continue this conversation in a terminal pane: same pane, same permissions or fewer')"
           :aria-label="t('chat.pane.openInTerminal', 'Open in terminal')"
-          :disabled="busy"
           @click="ctx.switchToTerminal(node.id)"
         >
           <SquareTerminal :size="14" aria-hidden="true" />

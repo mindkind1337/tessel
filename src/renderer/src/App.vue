@@ -18,7 +18,7 @@ import SshPasswordDialog from './components/remote/SshPasswordDialog.vue'
 import { settings, loadSettings, DEFAULT_SETTINGS } from './settings'
 import { effectiveAgent, agentEnabled, launchSignature, launchIsYolo, launchSessionValues, launchPermissions, sameFolder } from '../../shared/agentPrefs'
 import { validPaneSessionOptions } from '../../shared/agentSessionOptions'
-import { loadModelLists, modelsFor, refreshModels } from './agentModels'
+import { loadModelLists, modelsFor, refreshModels, canProbeModels } from './agentModels'
 import { THEMES } from './themes'
 import McpDialog from './components/McpDialog.vue'
 import CommandPalette from './components/CommandPalette.vue'
@@ -6593,9 +6593,36 @@ const agentUpdateCount = computed(() => {
   return rows.filter((r) => r.update).length
 })
 
+// An agent's new version can offer new models (Codex lists only those its
+// version knows): its model list is asked again once per installed version.
+const MODEL_VERSIONS_KEY = 'tessel.modelListVersions'
+function refreshModelsOnNewVersion(list) {
+  let seen = {}
+  try {
+    seen = JSON.parse(localStorage.getItem(MODEL_VERSIONS_KEY) || '{}') || {}
+  } catch {
+    seen = {}
+  }
+  let changed = false
+  for (const [id, a] of Object.entries(list || {})) {
+    const version = a && typeof a.installed === 'string' ? a.installed.slice(0, 40) : ''
+    if (!version || seen[id] === version || !canProbeModels(id)) continue
+    seen[id] = version
+    changed = true
+    const command = (settings.agentPrefs && settings.agentPrefs[id] && settings.agentPrefs[id].command) || ''
+    Promise.resolve(refreshModels(id, command)).catch(() => {})
+  }
+  if (!changed) return
+  try {
+    localStorage.setItem(MODEL_VERSIONS_KEY, JSON.stringify(seen))
+  } catch {
+    /* asked again next time */
+  }
+}
 function applyAgentUpdateInfo(r, { announce = true } = {}) {
   if (!r || !r.agents) return
   agentUpdateInfo.value = { checkedAt: r.checkedAt, agents: r.agents }
+  refreshModelsOnNewVersion(r.agents)
   // Told once per new version (the main process remembers which).
   const found = announce && Array.isArray(r.newlyFound) ? r.newlyFound : []
   if (!found.length) return
