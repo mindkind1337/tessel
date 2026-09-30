@@ -1726,3 +1726,50 @@ describe('opencode', () => {
     expect(last('notice')).toMatchObject({ kind: 'error', text: 'The turn failed: Upstream request failed' })
   })
 })
+
+describe('opencode earlier history', () => {
+  const sid = 'ses_f106568edffeX593nuABwvaO1O'
+  const messages = [
+    { info: { id: 'msg_1', role: 'user', sessionID: sid, time: { created: 5000 } }, parts: [{ type: 'text', text: 'hello' }] },
+    { info: { id: 'msg_2', role: 'assistant', sessionID: sid, time: { created: 5100, completed: 5200 } }, parts: [{ type: 'text', text: 'hi there' }] }
+  ]
+  beforeEach(() => {
+    deps.resolveOpencode = vi.fn(async () => ({ exe: 'C:\\oc.exe' }))
+    startResult = { ok: true, pid: 3, info: { sessionId: sid } }
+    deps.createAdapter = vi.fn((opts) => {
+      const a = new FakeAdapter(opts, startResult)
+      a.history = vi.fn(async () => ({ ok: true, messages, truncated: false }))
+      adapters.push(a)
+      return a
+    })
+  })
+
+  it('a resumed chat shows its earlier turns once; a reload replays the journal', async () => {
+    const chat = createChatSessions(deps)
+    expect((await chat.open({ paneId, cwd: tmp, permissions: 'manual', agent: 'opencode', resumeId: sid })).ok).toBe(true)
+    await flush()
+    expect(adapters[0].history).toHaveBeenCalledTimes(1)
+    const hist = sent.find((e) => e.event.type === 'history')
+    const evs = hist.event.events.map((x) => x.event)
+    expect(evs[0]).toMatchObject({ type: 'notice', kind: 'info', imported: true, text: 'Earlier conversation, from the history OpenCode keeps.', at: 5000 })
+    expect(evs.slice(1).map((e) => [e.type, e.text || e.status])).toEqual([
+      ['user', 'hello'],
+      ['assistant', 'hi there'],
+      ['turnEnd', 'completed']
+    ])
+    expect(chat.history({ paneId }).events.filter((e) => e.event.imported).length).toBe(4)
+    await chat.close({ paneId })
+    // Opened again on the same conversation: nothing fetched a second time.
+    await chat.open({ paneId, cwd: tmp, permissions: 'manual', agent: 'opencode', resumeId: sid })
+    await flush()
+    expect(adapters[1].history).not.toHaveBeenCalled()
+    expect(chat.history({ paneId }).events.filter((e) => e.event.imported).length).toBe(4)
+  })
+
+  it('a new conversation reads nothing', async () => {
+    const chat = createChatSessions(deps)
+    await chat.open({ paneId, cwd: tmp, permissions: 'manual', agent: 'opencode' })
+    await flush()
+    expect(adapters[0].history).not.toHaveBeenCalled()
+  })
+})
