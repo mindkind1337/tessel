@@ -4466,7 +4466,9 @@ body.pane-dragging * {
 }
 
 .tb-icon.tb-icon-narrow {
-  width: 18px;
+  /* Room on its right: the chevron sits off the edge of the hover fill. */
+  width: 24px;
+  padding-right: 4px;
   border-top-left-radius: 0;
   border-bottom-left-radius: 0;
 }
