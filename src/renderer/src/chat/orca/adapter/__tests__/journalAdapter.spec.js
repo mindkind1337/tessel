@@ -241,3 +241,17 @@ describe('journal adapter', () => {
     expect(adapter.meta).toMatchObject({ agent: 'codex', model: 'gpt-6', sessionId: 'thread-1', status: 'idle', rateLimit: { fiveHour: { utilization: 0.4 } } })
   })
 })
+
+describe('journal adapter: questions', () => {
+  const ask = { type: 'question', requestId: 'question_1', status: 'pending', questions: [{ id: 'q0', header: 'Format', question: 'Which format?', multiSelect: false, options: [{ id: 'o0', label: 'Short' }, { id: 'o1', label: 'Long', description: 'All of it' }], freeTextQuestionId: 'q0' }] }
+  it('a question is a pending prompt until answered or cancelled; a stopped process cancels it', () => {
+    const { state, states } = run([{ type: 'user', id: 'u1', text: 'go', status: 'accepted' }, ask, { type: 'questionStatus', requestId: 'question_1', status: 'answered', answers: [{ questionId: 'q0', optionIds: ['o1'] }] }])
+    expect(pendingStructuredSessionPrompts(states[1].items).map((i) => i.body.kind)).toEqual(['question'])
+    const body = states[1].items.find((i) => i.itemId === 'question:question_1').body
+    expect(body).toMatchObject({ question: 'Which format?', questions: [{ id: 'q0', freeTextQuestionId: 'q0', options: [{ id: 'o0' }, { id: 'o1', description: 'All of it' }] }], tessel: { requestId: 'question_1' } })
+    expect(pendingStructuredSessionPrompts(state.items)).toEqual([])
+    expect(state.items.find((i) => i.itemId === 'question:question_1').body.resolution.state).toBe('resolved')
+    const stopped = run([{ type: 'user', id: 'u1', text: 'go', status: 'accepted' }, ask, { type: 'status', state: 'crashed' }])
+    expect(stopped.state.items.find((i) => i.itemId === 'question:question_1').body.resolution.state).toBe('cancelled')
+  })
+})

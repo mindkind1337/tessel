@@ -702,5 +702,9 @@
   "chat.orca.transcriptView.truncated": "Dernière partie seulement",
   "chat.orca.transcriptView.back": "Revenir au terminal",
   "chat.orca.transcriptView.missing": "Pas encore de fichier de conversation : il apparaît avec le premier message.",
-  "chat.orca.transcriptView.error": "La conversation n'a pas pu être lue."
+  "chat.orca.transcriptView.error": "La conversation n'a pas pu être lue.",
+  "chat.orca.question.from": "{{agent}} vous pose une question",
+  "chat.orca.question.kept": "Votre réponse est gardée dans l’historique de ce chat.",
+  "chat.orca.question.incomplete": "Répondez à chaque question avant d’envoyer.",
+  "chat.orca.question.tooLong": "Une réponse est trop longue (8 Ko au plus)."
 }

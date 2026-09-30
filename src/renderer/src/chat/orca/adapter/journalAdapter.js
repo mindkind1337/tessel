@@ -221,7 +221,7 @@ export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence =
         if (NO_PROCESS.has(ev.state)) {
           for (const item of [...items.values()]) {
             if (item.body.kind === 'tool-call' && item.body.state === 'running') revise(item.itemId, { state: 'interrupted' })
-            else if (item.body.kind === 'approval' && item.body.resolution && item.body.resolution.state === 'pending') revise(item.itemId, { resolution: resolutionOf('cancelled', at) })
+            else if ((item.body.kind === 'approval' || item.body.kind === 'question') && item.body.resolution && item.body.resolution.state === 'pending') revise(item.itemId, { resolution: resolutionOf('cancelled', at) })
           }
           closeTurn({ state: 'interrupted', outcome: 'cancellation' }, at)
         }
@@ -328,6 +328,43 @@ export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence =
           }
         }
         put(`approval:${ev.requestId}`, body, {}, at) // i18n-ignore
+        break
+      }
+      case 'question': {
+        // An agent's question (Claude's AskUserQuestion, Codex's user input):
+        // a prompt card until answered here, cancelled, or its process gone.
+        if (!ev.requestId || !Array.isArray(ev.questions) || !ev.questions.length) break
+        const questions = ev.questions
+          .filter((q) => q && typeof q === 'object')
+          .map((q) => ({
+            id: String(q.id ?? ''),
+            question: String(q.question ?? ''),
+            ...(q.header ? { header: String(q.header) } : {}),
+            multiSelect: q.multiSelect === true,
+            options: (Array.isArray(q.options) ? q.options : []).filter((o) => o && typeof o === 'object').map((o) => ({ id: String(o.id ?? ''), label: String(o.label ?? ''), ...(o.description ? { description: String(o.description) } : {}) })),
+            ...(q.freeTextQuestionId ? { freeTextQuestionId: String(q.freeTextQuestionId) } : {})
+          }))
+        if (!questions.length) break
+        openTurnFor(lastUserItemId, at)
+        put(
+          `question:${ev.requestId}`, // i18n-ignore
+          {
+            kind: 'question',
+            question: questions[0].question,
+            options: questions[0].options,
+            questions,
+            resolution: resolutionOf(ev.status === 'cancelled' ? 'cancelled' : ev.status === 'answered' ? 'answered' : 'pending', at),
+            tessel: { requestId: String(ev.requestId) }
+          },
+          {},
+          at
+        )
+        break
+      }
+      case 'questionStatus': {
+        const itemId = `question:${ev.requestId}` // i18n-ignore
+        if (!items.has(itemId)) break
+        revise(itemId, { resolution: resolutionOf(ev.status === 'answered' ? 'answered' : 'cancelled', at), ...(Array.isArray(ev.answers) ? { answers: ev.answers } : {}) })
         break
       }
       case 'approvalStatus': {

@@ -134,6 +134,7 @@ describe('ChatPane.vue', () => {
       send: vi.fn(async () => ({ ok: true, id: 'u9' })),
       interrupt: vi.fn(async () => ({ ok: true })),
       approve: vi.fn(async () => ({ ok: true })),
+      answer: vi.fn(async () => ({ ok: true })),
       approvalInput: vi.fn(async () => ({ ok: true, input: { command: 'FULL COMMAND' } })),
       setOption: vi.fn(async () => ({ ok: true }))
     }
@@ -528,6 +529,39 @@ describe('ChatPane.vue', () => {
     emit({ type: 'approvalStatus', requestId: 'r1', status: 'allowed' })
     await settle()
     expect(inCard('[data-test="chat-approval-rules"]').textContent).toContain('adds no rule')
+  })
+
+  it("an agent's question shows its card (set apart, text only); an answer and a cancel go through chat.answer", async () => {
+    await mountPane()
+    emit({ type: 'user', id: 'u1', text: 'go', origin: 'user', status: 'accepted' })
+    emit({ type: 'status', state: 'working' })
+    emit({
+      type: 'question',
+      requestId: 'question_1',
+      status: 'pending',
+      questions: [{ id: 'q0', header: 'Format', question: '<b>Which</b> format?', multiSelect: false, options: [{ id: 'o0', label: 'Short' }, { id: 'o1', label: 'Long' }], freeTextQuestionId: 'q0' }]
+    })
+    await settle()
+    const box = document.querySelector('[data-test="chat-question"]')
+    expect(box).not.toBeNull()
+    expect(box.textContent).toContain('Claude asks you')
+    expect(box.textContent).toContain('kept in this chat')
+    expect(box.textContent).toContain('<b>Which</b> format?')
+    expect(box.querySelector('b')).toBeNull()
+    expect(card()).toBeNull()
+    const option = [...box.querySelectorAll('button')].find((b) => b.textContent.includes('Long'))
+    await click(option)
+    const send = [...box.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Submit')
+    await click(send)
+    expect(api.answer).toHaveBeenCalledWith({ paneId: 'c1', requestId: 'question_1', answers: [{ questionId: 'q0', optionIds: ['o1'] }] })
+    emit({ type: 'questionStatus', requestId: 'question_1', status: 'answered' })
+    await settle()
+    expect(document.querySelector('[data-test="chat-question"]')).toBeNull()
+
+    emit({ type: 'question', requestId: 'question_2', status: 'pending', questions: [{ id: 'q0', question: 'Again?', multiSelect: false, options: [{ id: 'o0', label: 'Yes' }] }] })
+    await settle()
+    await click(document.querySelector('[data-test="chat-question"] .nc-question-cancel'))
+    expect(api.answer).toHaveBeenLastCalledWith({ paneId: 'c1', requestId: 'question_2', cancel: true })
   })
 
   it('a new approval never takes the focus from the composer', async () => {

@@ -28,6 +28,8 @@ import NativeChatEmptyState from './NativeChatEmptyState.vue'
 import NativeChatLaunchRetry from './NativeChatLaunchRetry.vue'
 import NativeChatMessageList from './NativeChatMessageList.vue'
 import NativeChatStructuredSessionStatus from './NativeChatStructuredSessionStatus.vue'
+import NativeChatQuestionCard from './NativeChatQuestionCard.vue'
+import { MessageCircleQuestion } from 'lucide-vue-next'
 import { Button } from './ui/index.js'
 import { createApprovalInputFetcher } from './native-chat-approval-card.js'
 import { tesselSessionOptionSnapshot, tesselSessionOptionSurface } from './native-chat-session-option-pickers.js'
@@ -104,6 +106,58 @@ const { onLinkClick } = useNativeChatLinkActions(fileLinkContext, rootRef, () =>
 // approvals only (its questions have no answer path yet).
 const prompt = computed(() => c.prompts.value[0] ?? null)
 const approvalItem = computed(() => (prompt.value && prompt.value.body.kind === 'approval' ? prompt.value : null))
+// An agent's question (Claude's AskUserQuestion, Codex's user input): its
+// card waits above the composer until answered or cancelled.
+const questionItem = computed(() => (prompt.value && prompt.value.body.kind === 'question' ? prompt.value : null))
+const questionList = computed(() => (questionItem.value ? questionItem.value.body.questions || [] : []))
+const questionPrompt = computed(() => ({
+  questions: questionList.value.map((q) => ({
+    question: q.question,
+    ...(q.header ? { header: q.header } : {}),
+    multiSelect: q.multiSelect === true,
+    options: (q.options || []).map((o) => ({ label: o.label, ...(o.description ? { description: o.description } : {}) }))
+  }))
+}))
+const questionAllowOther = computed(() => questionList.value.map((q) => !!q.freeTextQuestionId))
+const questionSending = ref(false)
+const questionFrom = computed(() => t('chat.orca.question.from', '{{agent}} asks you', { agent: props.agentName }))
+// The main process accepts at most 8 KB of typed answer per question.
+const MAX_OTHER_BYTES = 8 * 1024
+async function onQuestionAnswer(selections) {
+  const item = questionItem.value
+  if (!item || questionSending.value) return
+  const answers = questionList.value.map((q, i) => {
+    const pick = selections[i] || {}
+    const other = typeof pick.other === 'string' ? pick.other.trim() : ''
+    const optionIds = (pick.indices || []).map((n) => q.options[n] && q.options[n].id).filter(Boolean)
+    return { questionId: q.id, optionIds, ...(other && q.freeTextQuestionId ? { other } : {}) }
+  })
+  if (!answers.every((a) => a.optionIds.length > 0 || a.other)) {
+    composerError.value = t('chat.orca.question.incomplete', 'Answer every question before sending.')
+    return
+  }
+  if (answers.some((a) => a.other && new TextEncoder().encode(a.other).length > MAX_OTHER_BYTES)) {
+    composerError.value = t('chat.orca.question.tooLong', 'An answer is too long (8 KB at most).')
+    return
+  }
+  composerError.value = null
+  questionSending.value = true
+  try {
+    await props.respond(item, { kind: 'answers', answers })
+  } finally {
+    questionSending.value = false
+  }
+}
+async function onQuestionCancel() {
+  const item = questionItem.value
+  if (!item || questionSending.value) return
+  questionSending.value = true
+  try {
+    await props.respond(item, { kind: 'cancel' })
+  } finally {
+    questionSending.value = false
+  }
+}
 const fetchApprovalInput = computed(() => createApprovalInputFetcher(props.node.id))
 // A new request takes the focus only in the active pane, and never from text
 // being typed.
@@ -181,6 +235,13 @@ function focusComposer() {
 }
 // Alt+A: the request waiting for an answer.
 async function focusPendingApproval() {
+  // A question waiting: its first choice.
+  if (questionItem.value) {
+    await nextTick()
+    const first = rootRef.value && rootRef.value.querySelector('[data-test="chat-question"] button:not(:disabled)')
+    if (first) first.focus()
+    return !!first
+  }
   if (!approvalItem.value) return false
   await nextTick()
   return approvalRef.value ? approvalRef.value.focus() !== false : false
@@ -269,6 +330,22 @@ defineExpose({
       :allow-file-uri-links="true"
       @link-click="onLinkClick"
     />
+    <div v-if="questionItem" class="nc-session-question" data-test="chat-question">
+      <!-- Set apart from an approval: the agent asks, it does not ask permission. -->
+      <p class="nc-session-question-head">
+        <MessageCircleQuestion class="nc-session-question-icon" aria-hidden="true" />
+        <span>{{ questionFrom }}</span>
+        <span class="nc-session-question-note">{{ t('chat.orca.question.kept', 'Your answer is kept in this chat’s history.') }}</span>
+      </p>
+      <NativeChatQuestionCard
+        :key="questionItem.itemId"
+        :prompt="questionPrompt"
+        :allow-other="questionAllowOther"
+        :is-submitting="questionSending"
+        @answer="onQuestionAnswer"
+        @cancel="onQuestionCancel"
+      />
+    </div>
     <NativeChatComposer
       ref="composerRef"
       v-model="draft"
@@ -297,6 +374,31 @@ defineExpose({
 </template>
 
 <style scoped>
+/* The question's own line: an accent border, not an approval's warning. */
+.nc-session-question {
+  flex-shrink: 0;
+  border-top: 2px solid color-mix(in srgb, var(--accent, #6aa0ff) 70%, transparent);
+}
+.nc-session-question-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  max-width: 56rem;
+  margin: 6px auto 0;
+  padding: 0 16px;
+  font-size: 12px;
+  font-weight: 500;
+}
+.nc-session-question-icon {
+  width: 14px;
+  height: 14px;
+  color: var(--accent, #6aa0ff);
+}
+.nc-session-question-note {
+  font-weight: 400;
+  color: var(--nc-muted-foreground);
+}
 /* flex h-full min-h-0 w-full flex-col bg-background focus:outline-none */
 .nc-session {
   display: flex;
