@@ -1,12 +1,15 @@
 # Tessel
 
+A Windows desktop app for working with **terminals and AI coding agents side by
+side**: split one window into as many panes as you need, run Claude Code,
+Codex, OpenCode and 20+ other agent CLIs in them, as a terminal or as a native
+chat, and let them work together as a team while you follow everything from a
+sidebar, a task board and a usage meter.
+
+Built with **Electron + Vue 3 + xterm.js + node-pty**. Interface in **English
+and French** (Settings → Appearance → Language).
+
 _Formerly **Shell Panels**._
-
-A Windows desktop app for running **multiple shells in one window**, split into
-resizable panels, with optional **multi-write (broadcast)** so you can type once
-and drive every pane at the same time.
-
-Built with **Electron + Vue 3 + xterm.js + node-pty**.
 
 ## Download
 
@@ -16,173 +19,111 @@ Built with **Electron + Vue 3 + xterm.js + node-pty**.
 no `npm`), and the app updates itself afterwards.
 
 The **Code → Download ZIP** button gives the source code instead: it is for
-working on Tessel itself (see [Build from source](#build-from-source)), and
-running it starts the development version.
+working on Tessel itself (see [Build from source](#build-from-source)).
 
 ## Features
 
-- **Multiple real shells in one window** — PowerShell, PowerShell 7, Command
-  Prompt, Git Bash and WSL are auto-detected (whichever are installed).
-- **Split into panels** — split any pane Right (side-by-side) or Down (stacked),
-  nested arbitrarily. Each pane is a full PTY-backed terminal.
-- **Even grid presets** — the **Grid…** menu lays everything out as a clean,
-  evenly-spaced grid (2×2, 3×2, 3×3, …) in one click.
-- **Drag-to-resize** — drag the divider between any two panes; terminals reflow
-  automatically (and on window resize).
-- **Multi-write / broadcast** — toggle Broadcast and your keystrokes go to every
-  pane whose "write" box is checked. Type a command once, run it everywhere.
-- **Robust lifecycle** — close a pane (the surviving sibling expands), processes
-  that exit show a notice, and closing the last pane spawns a fresh one. All
-  PTYs are killed when the window closes.
-- **Workspace persistence** — the split layout, divider sizes, the shell chosen
-  for each pane, pane titles and broadcast flags are saved automatically and
-  restored on the next launch. The _layout_ is restored (each pane reopens with
-  a fresh shell of the same type) — a PTY is a live process and can't be frozen
-  and thawed, the same constraint tmux-resurrect works under.
-- **AI coding agents in panes** — the **Agent** menu launches a coding-agent CLI
-  (Claude Code, Codex, Gemini) in a new pane. Installed agents are auto-detected
-  on `PATH`; missing ones are listed but greyed out. An agent pane carries its
-  own identity (accent colour, ◆ marker) and a live **Working / Idle** badge so a
-  grid of agents tells you at a glance which are busy and which are waiting on
-  you. Agent panes persist and re-launch with the workspace.
-- **One "New" menu** — the toolbar's New button (or the **+** on any pane)
-  opens a picker for every terminal and agent, with where to open it: to the
-  right, below, or in a new workspace. It also sets the default shell.
-- **Project folders** — give a workspace a folder and its new panes and agents
-  start there.
-- **"Needs you" alerts** — when an agent finishes a stretch of work while you
-  are looking elsewhere, you get a notification and an amber marker on the
-  pane and its workspace.
-- **Find, zoom, restart, drag and drop** — `Ctrl+Shift+F` finds text, `Ctrl+=`
-  and `Ctrl+-` zoom, exited panes offer Restart, and dropping files on a pane
-  types their paths.
-- **Settings** — the gear button (or `Ctrl+,`) sets the font, text size,
-  cursor, scrollback, default shell, copy-on-select, agent alerts, whether to
-  confirm before closing an agent, and whether to reopen workspaces at launch.
-- **Drag panes to rearrange** — drag a pane by its header onto another pane:
-  an edge places it on that side, the middle swaps the two, and a workspace in
-  the sidebar moves it there. `Esc` cancels.
-- **Tools** — the Tools button lists AI agents (Claude Code, Codex, Gemini,
-  OpenCode, Qwen Code, GitHub Copilot CLI, Amp, Aider) and developer tools
-  (Git, GitHub CLI, Node.js, Python, uv, ripgrep, PowerShell 7, VS Code,
-  Docker, Bun, jq), shows what's installed, and installs the rest in a pane
-  (npm or winget). You can also add any other agent command as your own.
-- **MCP servers** — the MCP button shows every server for Claude Code and Codex,
-  tests the real connection (and lists the server's tools), copies a server to
-  the other agent, helps you sign in, and has a searchable catalog of popular
-  servers (Playwright, Context7, GitHub, Sentry, Notion, Linear and more).
-- **Agents working together** — open an agent as a _separate copy_ (its own git
-  worktree and branch) so two agents can't overwrite each other, send selected
-  text from one pane to another, or ask one agent to review another's changes
-  (right-click a pane).
-- **Workspaces** — a left sidebar holds any number of workspaces, each with its
-  own split layout. Switching never stops or resizes a running shell or agent,
-  a green dot marks workspaces where an agent is working, and all workspaces are
-  restored on the next launch.
-- **Agent Task Board** — a built-in **kanban** side panel for tracking what each
-  agent is working on. Toggle it with **`Ctrl+Shift+K`**. Add tasks, and move
-  them across columns (e.g. _To Do → Doing → Done_) as the work progresses. The
-  board lives alongside the panes so you can see the plan and the running agents
-  at the same time, and its tasks are saved with the workspace so they survive a
-  restart.
+### Panes and workspaces
 
-## Task Board
+- **Real shells in one window**: PowerShell, PowerShell 7, Command Prompt, Git
+  Bash and WSL are found automatically.
+- **Split, drag and arrange**: split right or down, drag dividers, even grid
+  presets (2×2, 3×2, …), drag a pane by its header to any side of another pane
+  or of the whole workspace, maximize one pane.
+- **Workspaces and projects**: the left sidebar groups workspaces by project
+  folder. Switching never stops a running shell or agent, and everything
+  (layout, panes, conversations, tasks, terminal output) is restored on the
+  next launch.
+- **Git branches in the sidebar**: a project's other worktrees are listed under
+  one folded "N other branches" line; an agent can work in its own copy (its
+  own worktree and branch) so two agents never overwrite each other.
+- **Add a project**: browse a folder, clone from a URL, create one, or import
+  every repository in a folder.
+- **Remote hosts over SSH**: hosts from `~/.ssh/config` or Settings → SSH Hosts,
+  terminals on a host, passwords asked through OpenSSH's askpass.
+- **Broadcast**: type once into every pane you pick.
+- **Built-in browser pane**: a real browser in a pane, with a design mode to
+  pick an element and send feedback about it to an agent.
+- **Files, editor and Source Control**: a file explorer, an editor pane, and a
+  Source Control panel (changes by folder, stage per file, commit, commits
+  graph, create a pull request).
 
-The **Task Board** turns the multi-agent grid into a small command centre:
-plan the work in a kanban next to the terminals, then watch the agent panes
-chew through it.
+### Agents
 
-- **Toggle** the panel with **`Ctrl+Shift+K`** (it slides in beside the panes).
-- **Add** a task by typing into the new-task box and pressing **Enter**.
-- **Move** a task by dragging it to another column; rename it with the pencil.
-  Each card shows when the work started and when it was finished.
-- **Resize** the board by dragging its left edge.
-- **Agents use it too**: through Tessel's team tools they add and move their
-  own cards, so you see who does what.
-- **Persisted** — tasks are saved with the workspace and restored on the next
-  launch.
+- **20+ agent CLIs** detected on your computer (Claude Code, Codex, OpenCode,
+  Gemini CLI, GitHub Copilot CLI, Kimi, Cline, Cursor, Grok, Qwen Code, Amp,
+  Aider and more). Missing ones can be installed from Tessel.
+- **Unique names**: every agent gets its own name (Ada, Bohr, Curie…) shown in
+  its pane, the sidebar, the task board and team messages. Rename it any time.
+- **Model and effort per pane**: pick them when you start an agent or later
+  from the pane menu. The header shows the model and effort the agent really
+  runs with, read from its own conversation, in your language.
+- **Live state for every agent**: working, waiting for you, approval needed,
+  usage limit, interrupted, idle. It comes from the agents' own hooks, with the
+  screen as a fallback, and shows as a dot on the agent's logo in its pane and
+  in the sidebar.
+- **Sub-agents**: the ones an agent starts (Claude Code, Codex, OpenCode,
+  Cline…) show under it, with their type, model and state.
+- **Yolo mode**: run agents without permission prompts, everywhere or only in
+  chosen folders; it is kept when an agent or Tessel restarts.
+- **Resume and history**: agent panes come back with their conversation after
+  a restart; you can browse and reopen past sessions of every agent.
+- **Agent updates**: Tessel checks for new versions of your agents, updates
+  them in the background, and restarts each pane on the new version when it is
+  idle, with its conversation resumed. A new version's models appear by
+  themselves.
+- **MCP servers and tools**: see every MCP server for Claude Code and Codex,
+  test the connection, copy a server to another agent, and install from a
+  catalog of popular servers and developer tools.
 
-## Build from source
+### Native chat
 
-For developing Tessel. Requires Node.js 22+ on Windows.
+Claude Code, Codex and OpenCode can run as a **chat** instead of a terminal,
+on the same conversation:
 
-```sh
-npm install
-npm run dev          # the development version (hot reload)
-npm run dev:hidden   # the same, in the background with no console window
-npm test             # the unit tests
-```
+- A message list with Markdown, code, diffs and tool runs; a composer with
+  `/` commands and skills, image attachments (paste, drop or **+**), voice
+  typing, and model, effort and permission pickers.
+- Messages typed while the agent works go straight into its running turn, as
+  in a terminal.
+- Question and approval cards you answer in place.
+- A context ring, a **Compact** button when the context is almost full, and an
+  automatic compact-and-resend when a conversation gets too long.
+- Earlier history (images and files included), older pages on demand, and
+  sub-agents in the header.
+- **Switch a pane between chat and terminal** at any time: same conversation,
+  same pane. While the agent works, the switch waits for the end of its turn.
 
-If Electron's download was skipped during `npm install`, `npm run dev`
-fetches it by itself before starting.
+### Teams and the task board
 
-`test-taskboard.cjs` is an end-to-end check of the task board for developers:
-run it in a second terminal while `npm run dev` is running.
+- **Teams**: put agents in a team; they message each other with Tessel's team
+  tools, and a lead can start workers in new panes, hand out tasks and review
+  their work. A small number beside each agent shows its team.
+- **Task board**: a kanban beside the panes (`Ctrl+Shift+K`). You and the
+  agents add and move cards, so you can see who does what. Tasks are saved
+  with the workspace.
 
-To build your own installer instead of downloading it:
+### Usage and search
 
-```sh
-npm install
-npm run dist     # writes dist/Tessel-Setup-<version>.exe
-```
+- **Usage meter**: the quotas of Claude, Codex and other providers (5-hour and
+  weekly windows, plan, reset times), refreshed every 2 minutes and live from
+  running chats; the icon turns yellow at 60 % and red at 80 %.
+- **Session search** (opt-in): find a conversation by what was said in it,
+  across agents, from a local private index.
 
-The installer lets you choose the install folder and adds Start menu and
-desktop shortcuts. It is not code-signed, so Windows SmartScreen may warn the
-first time; choose **More info → Run anyway**. `npm run dist:dir` builds an
-unpacked copy in `dist/win-unpacked/` without the installer, which is quicker
-for testing.
+### Everyday comfort
 
-Saved workspaces, settings and tasks live in `%APPDATA%\tessel` for the
-installed app and `%APPDATA%\tessel-dev` for the dev build, so one of each can
-be open at the same time. The dev build shows a yellow logo and "(dev)".
-
-**Coming from Shell Panels?** Tessel is a separate app (new app id), so it
-installs next to Shell Panels instead of replacing it. On its first start it
-copies your workspaces, settings, tasks and saved terminal output from
-`%APPDATA%\shell-panels`. Once you have moved over, uninstall Shell Panels
-from Windows Settings → Apps.
-
-## Updates
-
-The installed app checks the GitHub releases of this repo 15 seconds after it
-starts, then every 4 hours (`src/main/updater.js`, using `electron-updater`).
-A newer version downloads in the background, then an **Update x.y.z** button
-appears in the toolbar (also under Settings → Updates). **Restart and update**
-saves the layout, task board and terminal output, stops the terminal host,
-installs silently and reopens the app, and each pane comes back where it was
-(Claude and Codex resume their conversations). Nothing installs until you click.
-Programs running in the terminals do stop.
-
-To publish a release:
-
-1. Bump `version` in `package.json`.
-2. `npm run dist`
-3. Create a GitHub release tagged `vX.Y.Z` and upload **all three** files from
-   `dist/`: `Tessel-Setup-X.Y.Z.exe`, its `.blockmap`, and `latest.yml`
-   (the app reads `latest.yml` to find the new version).
-
-Testing without publishing: create `dev-app-update.yml` (git-ignored) pointing
-at a local feed (`provider: generic`, `url: http://127.0.0.1:8765/`), and start
-a dev build with `TESSEL_UPDATE_TEST=1` (and `TESSEL_USER_DATA` /
-`TESSEL_PTYHOST_CHANNEL` so it doesn't touch your real app).
-
-## Run it
-
-```sh
-npm install
-npm run dev      # development (hot reload)
-# or
-npm run build && npm start   # build, then run the production bundle
-```
-
-A window titled **Tessel** opens with one PowerShell pane.
+- Command palette (`Ctrl+Shift+P`), find in terminal, zoom, copy on select,
+  notifications when an agent needs you, themed menus and lists everywhere.
+- Low CPU and GPU use: hidden terminals stop drawing while agents work.
 
 ## Keyboard shortcuts
 
-Press **F1** in the app for this list.
+Press **F1** in the app for the full list.
 
 | Shortcut                        | Action                            |
 | ------------------------------- | --------------------------------- |
+| `Ctrl+Shift+P`                  | Command palette                   |
 | `Ctrl+Shift+T`                  | New terminal (default shell)      |
 | `Ctrl+Shift+Space`              | Open a terminal or agent (picker) |
 | `Ctrl+Shift+E` / `Ctrl+Shift+O` | Split right / split down          |
@@ -195,46 +136,85 @@ Press **F1** in the app for this list.
 | `Ctrl+PageUp` / `Ctrl+PageDown` | Previous / next workspace         |
 | `Ctrl+Shift+B`                  | Toggle Broadcast                  |
 | `Ctrl+Shift+K`                  | Toggle Task Board                 |
+| `Ctrl+Shift+X`                  | Toggle the file explorer          |
 | `Ctrl+,`                        | Settings                          |
 | `F1`                            | Keyboard shortcuts                |
 
+## Updates
+
+The installed app checks this repo's GitHub releases shortly after it starts,
+then every few hours. A newer version downloads in the background, then an
+**Update x.y.z** button appears in the toolbar (also under Settings →
+Updates). **Restart and update** saves everything, installs silently and
+reopens the app; each pane comes back where it was and agents resume their
+conversations. Nothing installs until you click. Programs running in the
+terminals do stop.
+
+## Build from source
+
+For developing Tessel. Requires Node.js 22+ on Windows.
+
+```sh
+npm install
+npm run dev          # the development version (hot reload)
+npm run dev:hidden   # the same, in the background with no console window
+npm test             # the unit tests
+```
+
+If Electron's download was skipped during `npm install`, `npm run dev` fetches
+it by itself before starting.
+
+To build your own installer:
+
+```sh
+npm install
+npm run dist     # writes dist/Tessel-Setup-<version>.exe
+```
+
+The installer is not code-signed, so Windows SmartScreen may warn the first
+time; choose **More info → Run anyway**. `npm run dist:dir` builds an unpacked
+copy in `dist/win-unpacked/` without the installer.
+
+Saved workspaces, settings and tasks live in `%APPDATA%\tessel` for the
+installed app and `%APPDATA%\tessel-dev` for the dev build, so one of each can
+be open at the same time. The dev build shows a yellow icon and "(dev)".
+
+**Coming from Shell Panels?** Tessel installs next to it and, on its first
+start, copies your workspaces, settings, tasks and saved terminal output from
+`%APPDATA%\shell-panels`. Then uninstall Shell Panels from Windows Settings →
+Apps.
+
+### Publishing a release
+
+1. Bump `version` in `package.json`.
+2. `npm run dist` (from a clean checkout with its own `npm ci`).
+3. Create a GitHub release tagged `vX.Y.Z` and upload **all three** files from
+   `dist/`: `Tessel-Setup-X.Y.Z.exe`, its `.blockmap`, and `latest.yml` (the
+   app reads `latest.yml` to find the new version).
+
 ## How it works
 
-- **Main process** (`src/main/index.js`) owns the PTYs (one `node-pty` process
-  per pane) and exposes a small IPC API: `pty:create / write / resize / kill`,
-  plus `pty:data / pty:exit` events and `shells:list`.
+- **Terminal host**: terminals run in a separate process (`src/main/ptyHost.js`)
+  so they survive an app restart or crash; the app re-attaches and replays
+  their output.
+- **Main process** (`src/main/`): windows, the agent state store fed by the
+  agents' hooks, the native chat engine (`src/main/chat/`), usage readers,
+  session search (in its own utility process), updates, and a small IPC API
+  guarded so only the app's own page can call it.
 - **Preload** (`src/preload/index.js`) bridges that API to the renderer over
-  `contextBridge` — the renderer has no direct Node access.
-- **Renderer** (Vue) renders a recursive binary split-tree (`SplitNode.vue`);
-  each leaf is a `TerminalPane.vue` (an xterm.js terminal). Input is routed
-  through `App.vue`, which sends it to one pane or broadcasts it to all.
-- Output is buffered per-pane (`ptyStore.js`) so a terminal's history is
-  replayed if a split re-parents it in the component tree — the underlying PTY
-  is never killed by a layout change, only by an explicit close.
+  `contextBridge`; the renderer has no direct Node access.
+- **Renderer** (Vue 3): a split tree of panes (terminal, chat, browser,
+  editor), the sidebar, the task board and the menus.
 
-## Notes / decisions
+## Notes
 
-- **ConPTY by default, WinPTY as a fallback.** ConPTY is the modern Windows
-  console backend and is required for full-screen TUIs (e.g. Claude Code) to
-  redraw correctly on resize the way they do in Windows Terminal, so it is the
-  default. ConPTY's teardown is handled carefully — `terminatePty()` sends
-  `Ctrl+C` + `exit` and falls back to a `taskkill` tree after a short delay so a
-  pane never wedges the app. Set `TESSEL_USE_WINPTY=1` to force the older
-  WinPTY backend if needed. See `src/main/index.js`.
-- **`ELECTRON_RUN_AS_NODE`.** If this env var is set globally, Electron boots as
-  plain Node and no window appears. `launch.mjs` strips it before launching, so
-  `npm run dev` / `npm start` always open the GUI.
-- **No native compiler needed.** node-pty ships a prebuilt N-API binary that
-  loads under both Node and Electron, so no Visual Studio build tools are
-  required to install.
-- **Vite 8 with `legacy-peer-deps`.** The build runs Vite 8 deliberately: Vite 8
-  dropped its direct `esbuild` dependency, which clears the esbuild dev-server
-  advisories that Vite ≤7 still carries. `electron-vite` 5, however, caps its
-  Vite peer range at `^7` (no release declares Vite 8 support yet), and npm 10
-  treats that as a hard `ERESOLVE` error — so `.npmrc` sets
-  `legacy-peer-deps=true` to let `npm install` resolve it. The combination is
-  verified to work (build, the full test suite, and the app booting under
-  Electron 42 all pass). Remove that flag once `electron-vite` ships Vite 8
-  support. If a fresh `npm install` ever leaves the app failing to launch with
-  `Error: Electron uninstall`, Electron's binary download was skipped — run
-  `node node_modules/electron/install.js` to fetch it.
+- **ConPTY by default, WinPTY as a fallback.** ConPTY is needed for full-screen
+  TUIs such as Claude Code to redraw correctly; set `TESSEL_USE_WINPTY=1` to
+  force WinPTY.
+- **`ELECTRON_RUN_AS_NODE`.** If this variable is set globally, Electron starts
+  as plain Node and no window appears; `launch.mjs` removes it before starting.
+- **No native compiler needed.** node-pty ships prebuilt binaries.
+- **Vite 8 with `legacy-peer-deps`.** `electron-vite` 5 still declares Vite 7
+  as its peer, so `.npmrc` sets `legacy-peer-deps=true`. If a fresh install
+  fails to launch with `Error: Electron uninstall`, run
+  `node node_modules/electron/install.js`.
