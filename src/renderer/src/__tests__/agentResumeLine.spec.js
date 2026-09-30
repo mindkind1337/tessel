@@ -20,6 +20,13 @@ describe('resume arguments', () => {
       '--session',
       'C:/Users/x/.pi/agent/sessions/--C--P--/a.jsonl'
     ])
+    // OMP (a Pi fork) resumes by its session file too.
+    expect(await resumeArgs('omp', U, api({ transcriptPath: `C:/Users/x/.omp/agent/sessions/-C-P/t_${U}.jsonl` }))).toEqual([
+      '--resume',
+      `C:/Users/x/.omp/agent/sessions/-C-P/t_${U}.jsonl`
+    ])
+    expect(await resumeArgs('omp', U, api(null))).toBe(null)
+    expect(await resumeArgs('omp', U, api({ transcriptPath: 'C:/x.jsonl & calc' }))).toBe(null)
   })
   it('start fresh when there is nothing to resume or anything is unsafe', async () => {
     expect(await resumeArgs('droid', U, api(null))).toBe(null)

@@ -141,14 +141,22 @@ function envDir(v) {
   const t = typeof v === 'string' ? v.trim() : ''
   return t && isAbsolute(t) ? t : ''
 }
-export function piSessionsDir(home = os.homedir(), env = process.env) {
-  const raw = envDir(env.PI_CODING_AGENT_DIR).replace(/[\\/]+$/, '')
-  if (!raw) return join(home, '.pi', 'agent', 'sessions')
+// <override (its sessions, agent or .pi / .omp folder) or ~/<dot>/agent/sessions>.
+function agentSessionsDir(override, home, dot) {
+  const raw = envDir(override).replace(/[\\/]+$/, '')
+  if (!raw) return join(home, dot, 'agent', 'sessions')
   const leaf = basename(raw)
   if (leaf === 'sessions') return raw
   if (leaf === 'agent') return join(raw, 'sessions')
-  if (leaf === '.pi') return join(raw, 'agent', 'sessions')
+  if (leaf === dot) return join(raw, 'agent', 'sessions')
   return raw
+}
+export function piSessionsDir(home = os.homedir(), env = process.env) {
+  return agentSessionsDir(env.PI_CODING_AGENT_DIR, home, '.pi')
+}
+// OMP, a Pi fork: the same layout under ~/.omp (or OMP_CODING_AGENT_DIR).
+export function ompSessionsDir(home = os.homedir(), env = process.env) {
+  return agentSessionsDir(env.OMP_CODING_AGENT_DIR, home, '.omp')
 }
 export function sessionDirs(home = os.homedir(), env = process.env) {
   const devin =
@@ -161,6 +169,7 @@ export function sessionDirs(home = os.homedir(), env = process.env) {
     droid: [join(home, '.factory', 'sessions'), join(home, '.factory', 'projects')],
     grok: join(envDir(env.GROK_HOME) || join(home, '.grok'), 'sessions'),
     pi: piSessionsDir(home, env),
+    omp: ompSessionsDir(home, env),
     antigravity: join(home, '.gemini', 'antigravity-cli'),
     devin,
     cursor: join(home, '.cursor'),
@@ -293,6 +302,22 @@ export function piSessions(home = os.homedir(), { since = 0 } = {}) {
   for (const f of walk(root, { depth: 1, since, file: (n) => n.endsWith('.jsonl') })) {
     const head = parsePiHead(headIn(root, f.full))
     if (head) out.push({ agent: 'pi', ...head, started: head.started || f.born, updated: f.updated, file: f.full })
+  }
+  return out
+}
+
+// --- OMP ---------------------------------------------------------------------------
+// Pi's format in its own folder: <slug>/<time>_<uuid>.jsonl, starting with
+// session { id, cwd, timestamp }. A session's own sub-folder (its task
+// sub-agents' files) is one level deeper: not listed. Resumed by the file
+// (omp --resume <file>).
+
+export function ompSessions(home = os.homedir(), { since = 0 } = {}) {
+  const root = ompSessionsDir(home)
+  const out = []
+  for (const f of walk(root, { depth: 1, since, file: (n) => n.endsWith('.jsonl') })) {
+    const head = parsePiHead(headIn(root, f.full))
+    if (head) out.push({ agent: 'omp', ...head, started: head.started || f.born, updated: f.updated, file: f.full })
   }
   return out
 }
@@ -599,6 +624,7 @@ const READERS = {
   droid: droidSessions,
   grok: grokSessions,
   pi: piSessions,
+  omp: ompSessions,
   antigravity: antigravitySessions,
   devin: devinSessions
 }
@@ -636,13 +662,17 @@ export function agentSessionList(agent, home = os.homedir(), q = {}) {
   return agent === 'cursor' ? cursorSessions(home, q) : read(home, q)
 }
 
-// Pi resumes by its session file: only one inside its sessions folder, written
-// with forward slashes, and plain enough to put on a command line.
-export function piResumeFile(id, home = os.homedir()) {
-  if (!plainId(id)) return null
-  const root = piSessionsDir(home)
-  const hit = piSessions(home).find((s) => s.id === id)
+// Pi and OMP resume by their session file: only one inside their sessions
+// folder, written with forward slashes, and plain enough to put on a command line.
+function resumeFileIn(root, rows, id) {
+  const hit = rows.find((s) => s.id === id)
   if (!hit || !insideDir(root, hit.file)) return null
   const path = resolve(hit.file).replace(/\\/g, '/')
   return /^[A-Za-z0-9_.:\/-]+$/.test(path) ? path : null
+}
+export function piResumeFile(id, home = os.homedir()) {
+  return plainId(id) ? resumeFileIn(piSessionsDir(home), piSessions(home), id) : null
+}
+export function ompResumeFile(id, home = os.homedir()) {
+  return plainId(id) ? resumeFileIn(ompSessionsDir(home), ompSessions(home), id) : null
 }

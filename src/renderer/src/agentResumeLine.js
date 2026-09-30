@@ -9,9 +9,9 @@ import { getAgentResumeArgv } from './chat/orca/shared/agent-session-resume.js'
 
 // Resumable agents that choose their own id, found after they start
 // (watchFoundSession) or reported by their hooks (ZCode).
-export const OWN_ID_AGENTS = ['opencode', 'cline', 'copilot', 'kimi', 'droid', 'grok', 'pi', 'antigravity', 'devin', 'cursor', 'zcode']
+export const OWN_ID_AGENTS = ['opencode', 'cline', 'copilot', 'kimi', 'droid', 'grok', 'pi', 'omp', 'antigravity', 'devin', 'cursor', 'zcode']
 // Of those, the ones whose session is found in their files.
-export const FOUND_IN_FILES = ['opencode', 'cline', 'copilot', 'kimi', 'droid', 'grok', 'pi', 'antigravity', 'devin', 'cursor']
+export const FOUND_IN_FILES = ['opencode', 'cline', 'copilot', 'kimi', 'droid', 'grok', 'pi', 'omp', 'antigravity', 'devin', 'cursor']
 
 export const safeSessionId = (id) => typeof id === 'string' && /^[A-Za-z0-9_][A-Za-z0-9_-]{5,79}$/.test(id)
 const safeArg = (a) => typeof a === 'string' && /^[A-Za-z0-9_.:=\/-]+$/.test(a)

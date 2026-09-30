@@ -26,7 +26,7 @@ import { claudeSessionExists, findCodexSession, isUuid } from './agentSessions'
 import { clineDataDir } from './jsonAgents'
 import { normDir, readFirstLine, readRows, readHead } from './fileRead'
 import { geminiFiles, parseGeminiHead, qwenProjectsRoot } from './agentHistory'
-import { agentSessionList, kimiHistorySessions, piResumeFile } from './agentSessionSources'
+import { agentSessionList, kimiHistorySessions, ompResumeFile, piResumeFile } from './agentSessionSources'
 
 const SLACK = 5000
 
@@ -165,7 +165,7 @@ export function findAgentSession(q = {}, home = os.homedir(), roots = {}) {
   if (agent === 'cline') return pickSession(clineSessions(home), q)
   if (agent === 'copilot') return pickSession(copilotSessions(home, q.since), q)
   if (agent === 'kimi') return pickSession(kimiSessions(home, q.since), q)
-  // Droid, Grok, Pi, Antigravity, Devin, Cursor (agentSessionSources.js).
+  // Droid, Grok, Pi, OMP, Antigravity, Devin, Cursor (agentSessionSources.js).
   const list = agentSessionList(agent, home, { since: q.since })
   return list ? pickSession(list.map((r) => ({ id: r.id, cwd: r.cwd, time: r.started, updated: r.updated })), q) : null
 }
@@ -175,7 +175,7 @@ export function findAgentSession(q = {}, home = os.homedir(), roots = {}) {
 // is built there, from agent-session-resume.js's argument arrays):
 //   null                 nothing to resume: start fresh
 //   {}                   resume with the id
-//   { transcriptPath }   Pi: resume with its session file
+//   { transcriptPath }   Pi, OMP: resume with its session file
 // Agents whose sessions we can read are only resumed when the session exists
 // (they refuse an unknown id); ZCode's id only comes from its hooks.
 const UNCHECKED = new Set(['opencode', 'cline', 'copilot', 'kimi', 'zcode'])
@@ -187,8 +187,8 @@ export function resumeTarget({ agent, sessionId } = {}, home = os.homedir()) {
     // A Claude Code fork: its transcripts are under ~/.openclaude/projects.
     return claudeSessionExists(sessionId, home, join(home, '.openclaude')) ? {} : null
   }
-  if (agent === 'pi') {
-    const transcriptPath = piResumeFile(sessionId, home)
+  if (agent === 'pi' || agent === 'omp') {
+    const transcriptPath = agent === 'pi' ? piResumeFile(sessionId, home) : ompResumeFile(sessionId, home)
     return transcriptPath ? { transcriptPath } : null
   }
   const list = agentSessionList(agent, home)
