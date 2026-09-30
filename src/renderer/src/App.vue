@@ -349,13 +349,17 @@ function openExternalUrl(url) {
 // stream-json mode; messages (yours, its team's) are turns of their own,
 // never typed. Its state comes from the conversation itself.
 const CHAT_AGENTS = ['claude', 'codex', 'opencode']
+// The default title chats had before ("Claude (chat)"…): dropped on restore.
+const OLD_CHAT_TITLE = /^\s*(claude|codex|opencode)\s*\(chat\)\s*$/i
+const CHAT_AGENT_NAMES = { claude: 'Claude', codex: 'Codex', opencode: 'OpenCode' } // i18n-ignore product names
 function makeChatLeaf({ id = null, agentId = 'claude', cwd = null, projectDir = null, sessionId = null, title = null, team = null } = {}) {
   const agent = CHAT_AGENTS.includes(agentId) ? agentId : 'claude'
   return reactive({
     type: 'leaf',
     kind: 'chat',
     id: id || newId('pane'),
-    title: title || (agent === 'codex' ? t('app.chat.titleCodex', 'Codex (chat)') : agent === 'opencode' ? t('app.chat.titleOpencode', 'OpenCode (chat)') : t('app.chat.title', 'Claude (chat)')),
+    // The agent's name: the pane already shows it is a chat.
+    title: title || CHAT_AGENT_NAMES[agent],
     agentId: agent,
     cwd,
     projectDir,
@@ -1438,7 +1442,7 @@ async function deserializeNode(snap, cwd = null) {
     const sessionId = typeof snap.sessionId === 'string' && (/^[0-9a-f-]{8,64}$/i.test(snap.sessionId) || (snap.agentId === 'opencode' && /^ses_[A-Za-z0-9]{20,40}$/.test(snap.sessionId))) ? snap.sessionId : null
     const folder = (v) => (typeof v === 'string' && v.length <= 1000 ? v : null)
     if (!folder(snap.cwd)) return null
-    const leaf = makeChatLeaf({ id, agentId: CHAT_AGENTS.includes(snap.agentId) ? snap.agentId : 'claude', cwd: folder(snap.cwd), projectDir: folder(snap.projectDir), sessionId, title: typeof snap.title === 'string' ? snap.title.slice(0, 200) : null })
+    const leaf = makeChatLeaf({ id, agentId: CHAT_AGENTS.includes(snap.agentId) ? snap.agentId : 'claude', cwd: folder(snap.cwd), projectDir: folder(snap.projectDir), sessionId, title: typeof snap.title === 'string' && !OLD_CHAT_TITLE.test(snap.title) ? snap.title.slice(0, 200) : null })
     if (Number.isInteger(snap.num) && snap.num > 0) leaf.num = snap.num
     if (typeof snap.accountId === 'string' || snap.accountId === null) leaf.accountId = snap.accountId
     if (typeof snap.team === 'string') leaf.team = snap.team
