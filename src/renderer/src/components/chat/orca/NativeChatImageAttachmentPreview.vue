@@ -66,30 +66,32 @@ const viewLabel = computed(() =>
 </template>
 
 <style scoped>
-/* A rounded pill: subtle border, a slightly lighter background. */
+/* Compact image card: the reference uses small corners, not a pill. */
 .nc-attachment {
   position: relative;
   display: inline-flex;
   max-width: 100%;
   align-items: center;
-  border: 1px solid var(--nc-border);
-  border-radius: 9999px;
-  background: color-mix(in srgb, var(--nc-foreground) 6%, var(--nc-background));
-  font-size: 12px;
-  line-height: 16px;
+  border: 1px solid color-mix(in srgb, var(--nc-muted-foreground) 20%, var(--nc-border));
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--nc-foreground) 8%, var(--nc-background));
+  font-size: 14px;
+  line-height: 20px;
   transition: border-color 150ms;
 }
 .nc-attachment:hover {
   border-color: color-mix(in srgb, var(--nc-foreground) 25%, var(--nc-border));
 }
 .nc-attachment-chip {
+  box-sizing: border-box;
+  max-width: 100%;
   display: inline-flex;
   min-width: 0;
   align-items: center;
   gap: 6px;
-  padding: 3px 8px 3px 4px;
+  padding: 5px 8px 5px 6px;
   border: 0;
-  border-radius: 9999px;
+  border-radius: 5px;
   background: transparent;
   color: var(--nc-foreground);
   font: inherit;
@@ -110,7 +112,7 @@ const viewLabel = computed(() =>
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  border-radius: 4px;
+  border-radius: 2px;
 }
 .nc-attachment-img {
   width: 100%;
@@ -123,6 +125,7 @@ const viewLabel = computed(() =>
   color: var(--nc-muted-foreground);
 }
 .nc-attachment-name {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -144,7 +147,7 @@ const viewLabel = computed(() =>
   margin-right: 0;
   padding: 0;
   border: 0;
-  border-radius: 9999px;
+  border-radius: 5px;
   background: transparent;
   color: var(--nc-muted-foreground);
   opacity: 0;
