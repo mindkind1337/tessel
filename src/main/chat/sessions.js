@@ -686,6 +686,7 @@ export function createChatSessions(deps) {
     })
     on('compacted', () => {
       compactionDone(s, true)
+      askContext(s)
     })
     on('turnEnd', (e) => {
       cancelQuestions(s)
@@ -763,6 +764,7 @@ export function createChatSessions(deps) {
       observe(s, 'ScreenReady')
       s.turn = null
       flushContext(s)
+      askContext(s)
       workStatus(s)
       if (after) after()
       else pump(s)
@@ -803,6 +805,14 @@ export function createChatSessions(deps) {
     on('exit', (e) => finish(s, e))
   }
 
+  // Claude: its own context count, asked when the chat is ready, after each
+  // turn and each compaction (the others report it as they go).
+  function askContext(s) {
+    if (s.finished || typeof s.adapter?.refreshContext !== 'function') return
+    Promise.resolve()
+      .then(() => s.adapter.refreshContext())
+      .catch(() => {})
+  }
   // The newest context facts (a window not given keeps the last one known).
   function noteContext(s, usedTokens, windowTokens) {
     const pos = (v) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.round(v) : null)
@@ -1180,6 +1190,7 @@ export function createChatSessions(deps) {
       }
       s.ready = true
       status(s, 'idle')
+      askContext(s)
       pump(s)
       idleCheck(s)
       return current(s)

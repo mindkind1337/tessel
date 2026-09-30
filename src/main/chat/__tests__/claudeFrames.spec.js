@@ -288,3 +288,15 @@ describe('claudeFrames helpers', () => {
     expect(d.messageId).toBe('main')
   })
 })
+
+describe('get_context_usage answer', () => {
+  it('reads the used count and the raw window; refuses unusable answers', async () => {
+    const { contextFromControl } = await import('../claudeFrames')
+    expect(contextFromControl({ totalTokens: 45210, rawMaxTokens: 200000, maxTokens: 167000 })).toEqual({ usedTokens: 45210, windowTokens: 200000 })
+    expect(contextFromControl({ totalTokens: 10, maxTokens: 1000000 })).toEqual({ usedTokens: 10, windowTokens: 1000000 })
+    expect(contextFromControl({ totalTokens: 10 })).toBe(null)
+    expect(contextFromControl({ totalTokens: -1, maxTokens: 5 })).toBe(null)
+    expect(contextFromControl({ totalTokens: 'x', maxTokens: 5 })).toBe(null)
+    expect(contextFromControl(null)).toBe(null)
+  })
+})

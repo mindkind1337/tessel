@@ -11,7 +11,7 @@ import { EventEmitter } from 'events'
 import { spawn as nodeSpawn } from 'child_process'
 import { randomUUID } from 'crypto'
 import { listProcesses, treeOf, killPids } from '../processTree'
-import { createFrameState, normalizeFrame, permissionFromRequest, sessionPermissions, initializeAuthProblem, isAuthErrorText } from './claudeFrames'
+import { createFrameState, normalizeFrame, permissionFromRequest, sessionPermissions, initializeAuthProblem, isAuthErrorText, contextFromControl } from './claudeFrames'
 
 // The CLI's --permission-mode values (auto and dontAsk too: a user's own
 // arguments may ask for them).
@@ -489,6 +489,16 @@ export function createClaudeChat(opts) {
     return r.ok ? { ok: true, response: r.response } : { ok: false, code: r.code, error: r.error }
   }
 
+  // The CLI's own context count (get_context_usage), so the ring shows at
+  // once, a resumed conversation included (no turn needed). An older CLI
+  // answering an error changes nothing.
+  async function refreshContext() {
+    const r = await control({ subtype: 'get_context_usage' })
+    const usage = r.ok ? contextFromControl(r.response) : null
+    if (usage) emit('contextUsage', usage)
+    return usage
+  }
+
   function setModel(name) {
     if (typeof name !== 'string' || !NAME.test(name)) return Promise.resolve({ ok: false, error: 'bad model' })
     return simpleControl({ subtype: 'set_model', model: name })
@@ -556,6 +566,7 @@ export function createClaudeChat(opts) {
     setModel,
     setEffort,
     setPermissionMode,
+    refreshContext,
     close,
     pendingPermissions: () => [...permissions.keys()]
   })

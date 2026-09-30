@@ -44,6 +44,18 @@ const baseModel = (m) => String(m || '').replace(/\[[^\]]*\]$/, '').trim().toLow
 // The main thread's window from a result's per-model usage (which also counts
 // sub-agents and side calls): the entry of the model that answered, else the
 // init's, else the largest (after the reference's claudeContextWindowFromResult).
+// The answer to get_context_usage ({ totalTokens, rawMaxTokens | maxTokens }):
+// { usedTokens, windowTokens }, or null when unusable (after the reference's
+// claudeContextReportFromControl).
+export function contextFromControl(value) {
+  if (!value || typeof value !== 'object') return null
+  const count = (v) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 && v < 1e9 ? Math.round(v) : null)
+  const used = count(value.totalTokens)
+  const window = count(value.rawMaxTokens) || count(value.maxTokens)
+  if (used === null || !window) return null
+  return { usedTokens: used, windowTokens: window }
+}
+
 export function contextWindowFromResult(modelUsage, { initModel = null, responseModel = null } = {}) {
   if (!modelUsage || typeof modelUsage !== 'object') return null
   const entries = []
