@@ -145,3 +145,45 @@ describe('terminal to chat', () => {
     }
   })
 })
+
+describe('a switch asked while the agent works waits for the end of its turn', () => {
+  it('chat to terminal: nothing stopped while it works, done when it is idle; asked again: cancelled', async () => {
+    const leaf = { type: 'leaf', kind: 'chat', id: 'pane-1', agentId: 'claude', sessionId: 's1', cwd: 'C:\proj', paneName: 'Ada' }
+    let tick = null
+    let state = 'working'
+    const done = []
+    const ctx = {
+      t: (k, en, vars) => en.replace(/\{\{(\w+)\}\}/g, (_, n) => (vars && vars[n] != null ? vars[n] : '')),
+      reactive,
+      findLeaf: (id) => (id === leaf.id ? leaf : null),
+      chatPaneState: () => state,
+      paneState: () => state,
+      showToast: vi.fn(),
+      setInterval: (fn) => ((tick = fn), 1),
+      clearInterval: () => {},
+      onBeforeUnmount: () => {},
+      switchToTerminal: (id) => done.push(['terminal', id]),
+      switchToChat: (id) => done.push(['chat', id]),
+      Object
+    }
+    vm.createContext(ctx)
+    vm.runInContext(slice('// Chat <-> terminal while the agent works', 'async function switchToTerminal(leafId)') + '\nthis.requestSwitch = requestSwitch; this.pendingSwitch = pendingSwitch', ctx)
+    expect(ctx.requestSwitch('pane-1', 'terminal')).toBe(false)
+    tick()
+    expect(done).toEqual([])
+    expect(ctx.pendingSwitch['pane-1']).toBe('terminal')
+    state = 'ready'
+    tick()
+    expect(done).toEqual([['terminal', 'pane-1']])
+    // Asked twice while working: cancelled, nothing happens.
+    state = 'working'
+    ctx.requestSwitch('pane-1', 'terminal')
+    ctx.requestSwitch('pane-1', 'terminal')
+    state = 'ready'
+    tick()
+    expect(done).toHaveLength(1)
+    // Idle: at once.
+    ctx.requestSwitch('pane-1', 'terminal')
+    expect(done).toHaveLength(2)
+  })
+})

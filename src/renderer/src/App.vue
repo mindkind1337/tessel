@@ -2235,8 +2235,10 @@ provide('panelCtx', {
   restartLeaf,
   restartWithPermissions,
   // Chat <-> terminal (the same conversation).
-  switchToChat: (id) => switchToChat(id),
-  switchToTerminal: (id) => switchToTerminal(id),
+  // Asked while the agent works: done when its turn ends (never interrupted).
+  switchToChat: (id) => requestSwitch(id, 'chat'),
+  switchToTerminal: (id) => requestSwitch(id, 'terminal'),
+  pendingSwitch: (id) => pendingSwitch[id] || null,
   toggleYoloFolder,
   permissionsOf,
   paneFolder: (leaf) => paneFolders(leaf)[0] || null,
@@ -6031,6 +6033,52 @@ async function restartInPlaceNow(leafId, opts) {
 // folder, model and effort, resumed by its id. Only one side runs it at a
 // time: the old side is stopped before the new one resumes. Never more
 // permissions: a pane that asked first keeps asking first.
+// Chat <-> terminal while the agent works: the other side would stop it
+// mid-turn, so the switch waits for the end of its turn (checked every
+// second). Asked again while it waits: cancelled.
+const pendingSwitch = reactive({}) // leafId -> 'chat' | 'terminal'
+function switchBusy(leaf) {
+  const st = leaf.kind === 'chat' ? chatPaneState(leaf) : paneState(leaf)
+  return st === 'working' || st === 'approval'
+}
+function requestSwitch(leafId, to) {
+  const leaf = findLeaf(leafId)
+  if (!leaf) return false
+  const name = leaf.paneName || leaf.title
+  if (pendingSwitch[leafId] === to) {
+    delete pendingSwitch[leafId]
+    showToast(t('app.switch.cancelled', '{{name}} stays as it is.', { name }), { timeout: 4000 })
+    return false
+  }
+  if (!switchBusy(leaf)) {
+    delete pendingSwitch[leafId]
+    return to === 'terminal' ? switchToTerminal(leafId) : switchToChat(leafId)
+  }
+  pendingSwitch[leafId] = to
+  showToast(
+    to === 'terminal'
+      ? t('app.switch.waitTerminal', '{{name}} moves to a terminal when its turn ends (click again to cancel).', { name })
+      : t('app.switch.waitChat', '{{name}} moves to a chat when its turn ends (click again to cancel).', { name }),
+    { timeout: 6000 }
+  )
+  return false
+}
+const pendingSwitchTimer = setInterval(() => {
+  for (const [id, to] of Object.entries(pendingSwitch)) {
+    const leaf = findLeaf(id)
+    const from = to === 'terminal' ? 'chat' : 'agent'
+    if (!leaf || leaf.kind !== from) {
+      delete pendingSwitch[id]
+      continue
+    }
+    if (switchBusy(leaf)) continue
+    delete pendingSwitch[id]
+    if (to === 'terminal') switchToTerminal(id)
+    else switchToChat(id)
+  }
+}, 1000)
+onBeforeUnmount(() => clearInterval(pendingSwitchTimer))
+
 async function switchToTerminal(leafId) {
   const old = findLeaf(leafId)
   if (!old || old.kind !== 'chat' || switchingLeaves.has(leafId)) return false

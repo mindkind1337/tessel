@@ -726,7 +726,10 @@
     "switch": {
       "noAgent": "{{name}} n'est pas disponible dans un terminal ici.",
       "noSession": "Ce chat n'a pas encore de conversation à poursuivre.",
-      "stillRunning": "{{name}} n'a pas pu être ouvert en chat : son terminal ne s'est pas arrêté. Réessayez."
+      "stillRunning": "{{name}} n'a pas pu être ouvert en chat : son terminal ne s'est pas arrêté. Réessayez.",
+      "cancelled": "{{name}} reste tel quel.",
+      "waitTerminal": "{{name}} passera en terminal à la fin de son tour (recliquez pour annuler).",
+      "waitChat": "{{name}} passera en chat à la fin de son tour (recliquez pour annuler)."
     }
   }
 }
