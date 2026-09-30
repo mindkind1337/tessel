@@ -966,7 +966,7 @@ describe('IPC', () => {
   it('registers the chat channels', () => {
     const h = wire(createChatSessions(deps))
     expect(Object.keys(h).sort()).toEqual(
-      ['chat:answer', 'chat:skills', 'chat:approvalInput', 'chat:approve', 'chat:close', 'chat:history', 'chat:interrupt', 'chat:open', 'chat:send', 'chat:sendTeam', 'chat:setOption'].sort()
+      ['chat:answer', 'chat:skills', 'chat:approvalInput', 'chat:approve', 'chat:close', 'chat:history', 'chat:historyOlder', 'chat:interrupt', 'chat:open', 'chat:send', 'chat:sendTeam', 'chat:setOption'].sort()
     )
   })
 
@@ -1624,6 +1624,40 @@ describe('earlier history of a resumed conversation', () => {
     const chat = createChatSessions(deps)
     await openOk(chat, { resumeId: id })
     expect(events('history')).toHaveLength(0)
+  })
+})
+
+describe('older pages than the journal holds', () => {
+  const id = '0b8f3c2e-1111-4222-8333-944445555666'
+  it('asks the reader with the session, its folder and the time the journal starts; the cursor goes back as it came; nothing is journaled', async () => {
+    const readOlder = vi.fn(() => ({ ok: true, events: [{ type: 'user', id: 'hist-old', text: 'Older', status: 'accepted', imported: true, at: 5 }], cursor: 1234, done: false }))
+    deps = makeDeps({ transcriptHome: () => tmp, readHistory: () => ({ ok: true, truncated: true, events: [{ type: 'user', id: 'hist-u', text: 'Recent', status: 'accepted', imported: true, at: 1000 }] }), readOlder })
+    const chat = createChatSessions(deps)
+    await openOk(chat, { resumeId: id })
+    expect(chat.history({ paneId }).older).toBe(true)
+    const before = chat.history({ paneId }).events.length
+    const first = await chat.historyOlder({ paneId })
+    expect(first).toEqual({ ok: true, events: [expect.objectContaining({ text: 'Older' })], cursor: { k: 'file', n: 1234 }, done: false })
+    expect(readOlder).toHaveBeenLastCalledWith(expect.objectContaining({ agent: 'claude', sessionId: id, home: tmp, before: null, beforeAt: 1000 }))
+    readOlder.mockReturnValueOnce({ ok: true, events: [], cursor: null, done: true })
+    expect(await chat.historyOlder({ paneId, cursor: first.cursor })).toEqual({ ok: true, events: [], cursor: null, done: true })
+    expect(readOlder).toHaveBeenLastCalledWith(expect.objectContaining({ before: 1234, beforeAt: null }))
+    expect(chat.history({ paneId }).events.length).toBe(before)
+    // A cursor that is not ours (a path, another source) reads nothing.
+    for (const bad of [{ k: 'file', n: 'C:/x' }, { k: 'opencode', n: 3 }, { k: 'file', n: -1 }, 'C:/x']) {
+      readOlder.mockClear()
+      expect((await chat.historyOlder({ paneId, cursor: bad })).ok).toBe(false)
+      expect(readOlder).not.toHaveBeenCalled()
+    }
+  })
+
+  it('no session, no folder or no conversation id: nothing older to ask for', async () => {
+    deps = makeDeps({ transcriptHome: () => null })
+    const chat = createChatSessions(deps)
+    expect(await chat.historyOlder({ paneId })).toEqual({ ok: false, code: 'closed' })
+    await openOk(chat, { resumeId: id })
+    expect(chat.history({ paneId }).older).toBe(false)
+    expect(await chat.historyOlder({ paneId })).toEqual({ ok: false, code: 'closed' })
   })
 })
 

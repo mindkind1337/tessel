@@ -24,7 +24,7 @@ import fs from 'fs'
 import { isAbsolute } from 'path'
 import { buildChatEnv } from './chatEnv.js'
 import { clipDeep, createChatJournal, validPaneId } from './journal.js'
-import { readTranscriptHistory, opencodeHistoryEvents, HISTORY_LIMITS } from './transcriptHistory.js'
+import { readTranscriptHistory, readOlderHistory, opencodeHistoryEvents, HISTORY_LIMITS } from './transcriptHistory.js'
 import { t } from '../i18n.js'
 import { approvalPreview } from '../../shared/chatApproval.js'
 import { validOpencodeModel } from './opencodeChat.js'
@@ -128,7 +128,8 @@ export function createChatSessions(deps) {
     // The folder the agent keeps its conversations in, from its variables
     // (transcriptHistory.js transcriptHomeFor): null reads no earlier history.
     transcriptHome = () => null,
-    readHistory = readTranscriptHistory
+    readHistory = readTranscriptHistory,
+    readOlder = readOlderHistory
   } = deps || {}
   const sessions = new Map() // paneId -> session
   const seqs = new Map() // paneId -> last seq (outlives a session)
@@ -911,6 +912,12 @@ export function createChatSessions(deps) {
       let base = envDeps.forPane({ paneId, cwd, projectDir: s.projectDir, accountEnv, ...(envOpts || {}) })
       if (base && typeof base === 'object' && base.env && typeof base.env === 'object') base = base.env
       const childEnv = buildChatEnv(base, { agent, paneId, teamSecret, projectDir: s.projectDir, pathEnv: found.pathEnv })
+      // Where this agent keeps its conversations (for the older pages too).
+      try {
+        s.historyHome = transcriptHome(agent, childEnv) || null
+      } catch {
+        s.historyHome = null
+      }
       // A resumed conversation: its earlier turns first (never on a wake).
       if (resumeId && !from) importHistory(s, childEnv)
       const common = {
@@ -1263,6 +1270,8 @@ export function createChatSessions(deps) {
       seq: seqs.get(paneId),
       meta: j.readMeta(),
       commands: j.readCommands(),
+      // Older turns than these can be asked for (chat:historyOlder).
+      older: !!olderSource(s),
       // Authoritative live requests for remounts, even after journal rotation.
       // Empty after restart: recorded questions can never become answerable again.
       questions: s && !s.closing && !s.finished ? [...s.questions].map(([requestId, q]) => ({ type: 'question', requestId, questions: q.questions, status: 'pending' })) : [],
@@ -1275,6 +1284,59 @@ export function createChatSessions(deps) {
       live: s
         ? { status: s.status, agent: s.agent, sessionId: s.sessionId, launchToken: s.launchToken, model: s.model, queued: s.userQueue.length + s.teamQueue.length }
         : null
+    }
+  }
+
+  // Can this chat show older turns than its journal holds (read again from
+  // the agent's own history, a page at a time)?
+  function olderSource(s) {
+    if (!s || s.closing || s.finished || !s.sessionId) return null
+    if (s.agent === 'opencode') return typeof s.adapter?.history === 'function' ? 'opencode' : null
+    return s.historyHome ? 'file' : null
+  }
+  // The time of the oldest event the pane's journal holds.
+  function journalStart(paneId) {
+    // An imported part carries its own (older) times, written after the
+    // chat's first status: the oldest time, not the first row's.
+    let first = null
+    for (const row of journalOf(paneId).read()) {
+      const at = Number.isFinite(row.event?.at) ? row.event.at : row.at
+      if (Number.isFinite(at) && (first === null || at < first)) first = at
+    }
+    return first
+  }
+  // One page of older history: { ok, events, cursor, done }. cursor: what the
+  // next call gives back (opaque to the window: an offset or an index here,
+  // never a path). Nothing is written to the journal.
+  const OLDER_PAGE_EVENTS = 500
+  async function historyOlder({ paneId, cursor = null } = {}) {
+    const s = sessions.get(paneId)
+    const source = olderSource(s)
+    if (!source) return { ok: false, code: 'closed' }
+    const from = cursor == null ? null : cursor
+    if (from && !(typeof from === 'object' && Number.isSafeInteger(from.n) && from.n >= 0 && from.k === source)) return { ok: false, code: 'invalid' }
+    const beforeAt = from ? null : journalStart(paneId)
+    if (!from && !Number.isFinite(beforeAt)) return { ok: true, events: [], cursor: null, done: true }
+    try {
+      if (source === 'file') {
+        const res = readOlder({ agent: s.agent, sessionId: s.sessionId, home: s.historyHome, before: from ? from.n : null, beforeAt, now: now() })
+        if (!res?.ok) return { ok: false, code: res?.code || 'missing' }
+        return { ok: true, events: res.events, cursor: res.cursor == null ? null : { k: source, n: res.cursor }, done: res.done === true }
+      }
+      // OpenCode: from its server again; the turns before the journal's, the last ones first.
+      const res = await s.adapter.history()
+      if (!res?.ok || sessions.get(paneId) !== s) return { ok: false, code: 'missing' }
+      const all = opencodeHistoryEvents(res.messages)
+      let end = from ? Math.min(from.n, all.length) : all.findIndex((e) => Number.isFinite(e.at) && e.at >= journalStart(paneId))
+      if (end < 0) end = all.length
+      // A page starts at a prompt when it can (no turn cut in two).
+      let start = Math.max(0, end - OLDER_PAGE_EVENTS)
+      while (start > 0 && start < end && all[start].type !== 'user') start++
+      if (start >= end) start = Math.max(0, end - OLDER_PAGE_EVENTS)
+      return { ok: true, events: all.slice(start, end), cursor: start > 0 ? { k: source, n: start } : null, done: start <= 0 }
+    } catch (err) {
+      logAt('warn', `${paneId}: older history not read: ${err?.message || err}`) // i18n-ignore log line
+      return { ok: false, code: 'missing' }
     }
   }
 
@@ -1407,6 +1469,12 @@ export function createChatSessions(deps) {
       if (!validPaneId(paneId) || (refresh != null && typeof refresh !== 'boolean')) return invalid()
       return skills({ paneId, refresh: refresh === true })
     })
+    ipcMain.handle('chat:historyOlder', (_e, q) => {
+      const { paneId, cursor } = obj(q)
+      if (!validPaneId(paneId)) return invalid()
+      if (cursor != null && (typeof cursor !== 'object' || Array.isArray(cursor))) return invalid()
+      return historyOlder({ paneId, cursor: cursor ?? null })
+    })
     ipcMain.handle('chat:history', (_e, q) => {
       const { paneId, tail } = obj(q)
       if (!validPaneId(paneId)) return invalid()
@@ -1415,5 +1483,5 @@ export function createChatSessions(deps) {
     })
   }
 
-  return { open, send: sendUser, sendTeam, interrupt, answer, approve, approvalInput, setOption, close, closeAll, history, skills, list, register }
+  return { historyOlder, open, send: sendUser, sendTeam, interrupt, answer, approve, approvalInput, setOption, close, closeAll, history, skills, list, register }
 }

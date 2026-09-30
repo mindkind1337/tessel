@@ -159,3 +159,44 @@ describe('useStructuredAgentSession: questions', () => {
     expect(await s.respond(live, { kind: 'option', optionId: 'allow' })).toBeNull()
   })
 })
+
+describe('useStructuredAgentSession: older history', () => {
+  const recent = { ok: true, seq: 1, older: true, events: [{ seq: 1, at: 5000, event: { type: 'user', id: 'hist-u9', text: 'recent', status: 'accepted', imported: true, at: 5000 } }] }
+  it('loads pages before what is shown, with the cursor it was given, until there is no more', async () => {
+    const historyOlder = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, events: [{ type: 'user', id: 'hist-u2', text: 'older', status: 'accepted', at: 2000 }], cursor: { k: 'file', n: 77 }, done: false })
+      .mockResolvedValueOnce({ ok: true, events: [], cursor: { k: 'file', n: 50 }, done: false })
+      .mockResolvedValueOnce({ ok: true, events: [{ type: 'user', id: 'hist-u1', text: 'oldest', status: 'accepted', at: 1000 }], cursor: null, done: true })
+    const { session, api } = setup(recent, { historyOlder })
+    const s = session()
+    expect(s.hasOlder.value).toBe(false)
+    await s.load()
+    expect(s.hasOlder.value).toBe(true)
+    expect(await s.loadOlder()).toBe('applied')
+    expect(api.historyOlder).toHaveBeenLastCalledWith({ paneId: 'p1' })
+    expect(s.olderHistoryGeneration.value).toBe(1)
+    expect(s.messages.value.map((m) => m.blocks[0].text)).toEqual(['older', 'recent'])
+    // An empty page with more behind it: the next one in the same call.
+    expect(await s.loadOlder()).toBe('applied')
+    expect(api.historyOlder).toHaveBeenNthCalledWith(2, { paneId: 'p1', cursor: { k: 'file', n: 77 } })
+    expect(api.historyOlder).toHaveBeenNthCalledWith(3, { paneId: 'p1', cursor: { k: 'file', n: 50 } })
+    expect(s.messages.value.map((m) => m.blocks[0].text)).toEqual(['oldest', 'older', 'recent'])
+    expect(s.hasOlder.value).toBe(false)
+    expect(await s.loadOlder()).toBe('unchanged')
+    expect(api.historyOlder).toHaveBeenCalledTimes(3)
+  })
+
+  it('a failed page says so and can be asked again; a chat that closed has nothing older', async () => {
+    const historyOlder = vi.fn().mockResolvedValueOnce({ ok: false, code: 'missing' }).mockRejectedValueOnce(new Error('x')).mockResolvedValueOnce({ ok: false, code: 'closed' })
+    const { session } = setup(recent, { historyOlder })
+    const s = session()
+    await s.load()
+    expect(await s.loadOlder()).toBe('failed')
+    expect(s.hasOlder.value).toBe(true)
+    expect(await s.loadOlder()).toBe('failed')
+    expect(await s.loadOlder()).toBe('failed')
+    expect(s.hasOlder.value).toBe(false)
+    expect(s.loadingOlder.value).toBe(false)
+  })
+})

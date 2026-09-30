@@ -100,7 +100,9 @@ function parseInput(input) {
 }
 
 // cwd: the chat's folder (a value or a getter): tool paths inside it are shown relative.
-export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence = 1, cwd = '' } = {}) {
+// idTag: a mark for the ids this adapter makes up itself (turns, notices),
+// so an older page's never meet the chat's own.
+export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence = 1, cwd = '', idTag = '' } = {}) {
   const folder = () => (typeof cwd === 'function' ? cwd() : cwd) || ''
   const items = new Map() // itemId -> render item
   const submissions = new Map() // clientMessageId -> submission
@@ -119,6 +121,7 @@ export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence =
   // Rows are ordered by time, then id: a new item's time never goes back nor
   // ties with the previous one (events of one millisecond keep their order).
   let lastObservedAt = -Infinity
+  let olderPages = 0
   function put(itemId, body, extra = {}, at = now()) {
     const prior = items.get(itemId)
     let observedAt = at
@@ -168,7 +171,7 @@ export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence =
   // on its own; its row comes after the user message and before the answer.
   function openTurnFor(userItemId, at = now()) {
     if (openTurn) return
-    const turnId = `tessel-turn-${++turnSeq}` // i18n-ignore
+    const turnId = `${idTag}tessel-turn-${++turnSeq}` // i18n-ignore
     openTurn = `turn:${turnId}` // i18n-ignore
     put(openTurn, { kind: 'turn', turnId, state: 'running', ...(userItemId ? { userItemId } : {}), startedAt: at, requestedAt: at }, {}, at)
   }
@@ -379,13 +382,13 @@ export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence =
       case 'turnEnd': {
         const outcome = ev.status === 'failed' ? 'failure' : ev.status === 'interrupted' ? 'cancellation' : 'success'
         closeTurn({ state: ev.status === 'interrupted' ? 'interrupted' : 'completed', outcome, durationMs: ev.durationMs, usage: ev.usage }, at)
-        if (ev.error) put(`status:turn-${sequence + 1}`, { kind: 'status', text: String(ev.error), tone: 'error' }, {}, at) // i18n-ignore
+        if (ev.error) put(`status:${idTag}turn-${sequence + 1}`, { kind: 'status', text: String(ev.error), tone: 'error' }, {}, at) // i18n-ignore
         break
       }
       case 'notice': {
         if (!ev.text) break
         const tone = ev.kind === 'error' ? 'error' : ev.kind === 'warning' ? 'warning' : 'notice'
-        put(`status:notice-${sequence + 1}`, { kind: 'status', text: String(ev.text), tone }, {}, at) // i18n-ignore
+        put(`status:${idTag}notice-${sequence + 1}`, { kind: 'status', text: String(ev.text), tone }, {}, at) // i18n-ignore
         break
       }
       case 'subagents': {
@@ -482,6 +485,34 @@ export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence =
       removedItems = new Set()
     },
     items: () => [...items.values()].sort((a, b) => a.sequence - b.sequence),
+    // An older page of the conversation (events read again from the agent's
+    // own history): its items go BEFORE everything held, in their order, with
+    // earlier sequences and times. -> { items, submissions } for the
+    // reducer's 'older-page'.
+    olderPage(events) {
+      const page = createJournalAdapter({ now, epoch, fence, cwd, idTag: `older${++olderPages}:` }) // i18n-ignore
+      page.replay(events)
+      const fresh = page.items().filter((item) => !items.has(item.itemId))
+      if (!fresh.length) return { items: [], submissions: [] }
+      let floorSeq = Infinity
+      let floorAt = Infinity
+      for (const item of items.values()) {
+        if (item.sequence < floorSeq) floorSeq = item.sequence
+        if (item.observedAt < floorAt) floorAt = item.observedAt
+      }
+      if (!Number.isFinite(floorSeq)) floorSeq = 1
+      const placed = new Array(fresh.length)
+      let ceiling = floorAt
+      for (let i = fresh.length - 1; i >= 0; i--) {
+        const at = Number.isFinite(ceiling) ? Math.min(fresh[i].observedAt, ceiling - 1) : fresh[i].observedAt
+        ceiling = at
+        placed[i] = { ...fresh[i], sequence: floorSeq - (fresh.length - i), observedAt: at }
+      }
+      for (const item of placed) items.set(item.itemId, item)
+      const subs = page.submissions().filter((sub) => !submissions.has(sub.clientMessageId))
+      for (const sub of subs) submissions.set(sub.clientMessageId, sub)
+      return { items: placed, submissions: subs }
+    },
     submissions: () => [...submissions.values()],
     openTurnId: () => (openTurn ? items.get(openTurn).body.turnId : null)
   }

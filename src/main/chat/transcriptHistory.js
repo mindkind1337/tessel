@@ -163,7 +163,8 @@ export function createBuilder(limits) {
   }
   const text = (s) => clipString(String(s), limits.text)
   const b = {
-    nextId: (prefix) => `hist-${prefix}-${++n}`, // i18n-ignore id
+    // idTag: an older page's own mark, so its made-up ids never meet another page's.
+    nextId: (prefix) => `hist-${limits.idTag || ''}${prefix}-${++n}`, // i18n-ignore id
     endTurn(status = 'completed', ts) {
       if (!turn) return
       for (const id of openTools) push({ type: 'tool', id, status: status === 'interrupted' ? 'stopped' : 'done' }, ts)
@@ -498,4 +499,153 @@ export function readTranscriptHistory({ agent, sessionId, home, limits = HISTORY
   }
   if (!events.length) return { ok: false, code: 'empty' }
   return { ok: true, events, truncated, file }
+}
+
+// ---- Older pages ----------------------------------------------------------------
+// Going back in a long conversation: the chat's journal holds the most recent
+// part; older parts are read again from the agent's transcript, a page at a
+// time, never written to the journal. A page is the complete lines in at most
+// OLDER_LIMITS.bytes before a byte offset (the cursor). The first page ends
+// where the lines reach the time of the journal's first event: found by
+// halving the file (a dozen small reads), never by reading it whole (a
+// transcript can be hundreds of MB).
+
+export const OLDER_LIMITS = { bytes: 1024 * 1024, probe: 256 * 1024, maxLine: 32 * 1024 * 1024, text: HISTORY_LIMITS.text }
+
+function readBytes(fd, start, length) {
+  const buf = Buffer.alloc(Math.max(0, length))
+  let got = 0
+  while (got < buf.length) {
+    const n = fs.readSync(fd, buf, got, buf.length - got, start + got)
+    if (!n) break
+    got += n
+  }
+  return buf.subarray(0, got)
+}
+
+// The first complete line at or after `from` that has a time: { start, end,
+// time } (byte offsets), or null when there is none before `limit`.
+// atLineStart: `from` is where a line starts (else the line it falls in is skipped).
+function timedLineAfter(fd, from, limit, limits, atLineStart = from === 0) {
+  const stop = Math.min(limit, from + limits.maxLine)
+  let buf = Buffer.alloc(0)
+  let pos = from
+  let lineStart = atLineStart ? 0 : -1 // in buf
+  let scan = 0
+  while (pos < stop) {
+    const chunk = readBytes(fd, pos, Math.min(limits.probe, stop - pos))
+    if (!chunk.length) break
+    buf = buf.length ? Buffer.concat([buf, chunk]) : chunk
+    pos += chunk.length
+    for (;;) {
+      const nl = buf.indexOf(10, scan)
+      if (nl < 0) {
+        scan = buf.length
+        break
+      }
+      if (lineStart >= 0) {
+        const r = parse(buf.subarray(lineStart, nl).toString('utf8'))
+        const time = r ? timeOf(r.timestamp) : null
+        if (time != null) return { start: from + lineStart, end: from + nl + 1, time }
+      }
+      lineStart = nl + 1
+      scan = nl + 1
+    }
+  }
+  return null
+}
+
+// The byte offset of the first line whose time is at or after `target`
+// (the file's size when every line is older).
+export function offsetAtTime(file, target, limits = OLDER_LIMITS) {
+  let fd
+  try {
+    fd = fs.openSync(file, 'r')
+  } catch {
+    return null
+  }
+  try {
+    const size = fs.fstatSync(fd).size
+    let lo = 0 // a line start whose line is older than the target (or 0)
+    let hi = size
+    for (let guard = 0; hi - lo > limits.probe && guard < 64; guard++) {
+      const mid = lo + Math.floor((hi - lo) / 2)
+      const line = timedLineAfter(fd, mid, hi, limits)
+      if (!line || line.time >= target) hi = mid
+      else lo = line.end
+    }
+    // The last stretch, line by line.
+    let from = lo
+    for (let guard = 0; guard < 100000; guard++) {
+      const line = timedLineAfter(fd, from, size, limits, true)
+      if (!line) return size
+      if (line.time >= target) return line.start
+      from = line.end
+      if (from === line.start) return size
+    }
+    return size
+  } catch {
+    return null
+  } finally {
+    fs.closeSync(fd)
+  }
+}
+
+// -> { ok: true, events, cursor, done } | { ok: false, code }
+// cursor: null (the start of the file was reached) or the offset the next
+// page ends at. before: a cursor from an earlier page, or null with beforeAt
+// (ms): the time of the oldest event the chat already shows.
+export function readOlderHistory({ agent, sessionId, home, before = null, beforeAt = null, limits = OLDER_LIMITS, now = Date.now() } = {}) {
+  if ((agent !== 'claude' && agent !== 'codex') || !validHistoryId(sessionId)) return { ok: false, code: 'invalid' }
+  const file = findTranscript(agent, sessionId, home, now)
+  if (!file) return { ok: false, code: 'missing' }
+  let end = null
+  if (before != null) {
+    if (!Number.isSafeInteger(before) || before < 0) return { ok: false, code: 'invalid' }
+    end = before
+  } else {
+    if (!Number.isFinite(beforeAt)) return { ok: true, events: [], cursor: null, done: true }
+    end = offsetAtTime(file, beforeAt, limits)
+    if (end == null) return { ok: false, code: 'missing' }
+  }
+  let fd
+  try {
+    fd = fs.openSync(file, 'r')
+  } catch {
+    return { ok: false, code: 'missing' }
+  }
+  try {
+    const size = fs.fstatSync(fd).size
+    end = Math.min(end, size)
+    if (end <= 0) return { ok: true, events: [], cursor: null, done: true }
+    // The window grows (up to maxLine) until it holds one whole line.
+    let span = limits.bytes
+    let start = 0
+    let text = ''
+    for (;;) {
+      start = Math.max(0, end - span)
+      const buf = readBytes(fd, start, end - start)
+      let from = 0
+      if (start > 0) {
+        const nl = buf.indexOf(10)
+        if (nl < 0 || nl + 1 >= buf.length) {
+          if (span >= limits.maxLine) return { ok: true, events: [], cursor: start, done: false } // one giant line: passed over
+          span = Math.min(limits.maxLine, span * 4)
+          continue
+        }
+        from = nl + 1
+      }
+      start += from
+      text = buf.subarray(from).toString('utf8')
+      break
+    }
+    const lines = text.split('\n').map((l) => (l.endsWith('\r') ? l.slice(0, -1) : l)).filter(Boolean)
+    const tagged = { ...HISTORY_LIMITS, text: limits.text, idTag: `p${start}-` } // i18n-ignore id
+    const events = agent === 'codex' ? codexHistoryEvents(lines, sessionId, tagged) : claudeHistoryEvents(lines, tagged)
+    return { ok: true, events, cursor: start > 0 ? start : null, done: start <= 0 }
+  } catch {
+    return { ok: false, code: 'missing' }
+  } finally {
+    fs.closeSync(fd)
+  }
 }

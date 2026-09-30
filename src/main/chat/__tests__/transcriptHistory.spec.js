@@ -1,6 +1,6 @@
 // @vitest-environment node
 // Synthetic transcripts only: no real agent folder, no real agent.
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import fs from 'fs'
 import os from 'os'
 import { join } from 'path'
@@ -10,6 +10,8 @@ import {
   findTranscript,
   readLastLines,
   readTranscriptHistory,
+  readOlderHistory,
+  offsetAtTime,
   transcriptHomeFor,
   HISTORY_LIMITS
 } from '../transcriptHistory'
@@ -327,5 +329,79 @@ describe('OpenCode messages (GET /session/:id/message, recorded from 1.18.33)', 
     expect(events.at(-1).status).toBe('interrupted')
     expect(JSON.stringify(events)).not.toContain('hidden note')
     expect(JSON.stringify(events)).not.toContain('Summarize the task tool output')
+  })
+})
+
+describe('older pages of a long conversation', () => {
+  const at = (i) => new Date(Date.parse('2026-09-01T00:00:00Z') + i * 60000).toISOString()
+  // 400 turns, a prompt and an answer each; turn 150 has one very long line.
+  function longTranscript() {
+    const rows = []
+    for (let i = 0; i < 400; i++) {
+      rows.push({ type: 'user', uuid: `u${i}`, timestamp: at(i * 2), message: { role: 'user', content: `prompt ${i}` } })
+      rows.push({ type: 'summary', summary: 'no time on this line' })
+      rows.push({ type: 'assistant', uuid: `a${i}`, timestamp: at(i * 2 + 1), message: { id: `m${i}`, role: 'assistant', content: [{ type: 'text', text: i === 150 ? 'x'.repeat(300000) : `answer ${i} ${'y'.repeat(2000)}` }] } })
+    }
+    return lines(rows)
+  }
+  const prompts = (events) => events.filter((e) => e.type === 'user').map((e) => e.text)
+  const small = { bytes: 64 * 1024, probe: 8 * 1024, maxLine: 1024 * 1024, text: 64 * 1024 }
+
+  it('finds where a time starts by halving the file, never reading it whole', () => {
+    const home = claudeHome(longTranscript())
+    const file = findTranscript('claude', CLAUDE_ID, home)
+    const size = fs.statSync(file).size
+    const read = vi.spyOn(fs, 'readSync')
+    const offset = offsetAtTime(file, Date.parse(at(600)), small)
+    const bytes = read.mock.calls.reduce((n, c) => n + c[3], 0)
+    read.mockRestore()
+    expect(bytes).toBeLessThan(size / 2)
+    const rest = fs.readFileSync(file, 'utf8').slice(offset)
+    expect(JSON.parse(rest.slice(0, rest.indexOf('\n'))).uuid).toBe('u300')
+    expect(offsetAtTime(file, Date.parse(at(-5)), small)).toBe(0)
+    expect(offsetAtTime(file, Date.parse(at(99999)), small)).toBe(size)
+  })
+
+  it("pages back from the journal's first time to the start, in order, nothing twice, nothing lost", () => {
+    const home = claudeHome(longTranscript())
+    const seen = []
+    let page = readOlderHistory({ agent: 'claude', sessionId: CLAUDE_ID, home, beforeAt: Date.parse(at(600)), limits: small })
+    let pages = 0
+    for (;;) {
+      expect(page.ok).toBe(true)
+      pages++
+      seen.unshift(...prompts(page.events))
+      expect(page.events.every((e) => e.imported)).toBe(true)
+      if (page.done) break
+      expect(Number.isSafeInteger(page.cursor)).toBe(true)
+      page = readOlderHistory({ agent: 'claude', sessionId: CLAUDE_ID, home, before: page.cursor, limits: small })
+    }
+    expect(pages).toBeGreaterThan(5)
+    expect(seen).toEqual(Array.from({ length: 300 }, (_, i) => `prompt ${i}`))
+    expect(page.cursor).toBeNull()
+  })
+
+  it('made-up ids differ from page to page; a bad cursor or id reads nothing', () => {
+    const home = codexHome(lines([
+      { timestamp: at(1), type: 'event_msg', payload: { type: 'user_message', message: 'one' } },
+      { timestamp: at(2), type: 'event_msg', payload: { type: 'agent_message', message: 'first' } },
+      { timestamp: at(3), type: 'event_msg', payload: { type: 'user_message', message: 'two' } },
+      { timestamp: at(4), type: 'event_msg', payload: { type: 'agent_message', message: 'second' } }
+    ]))
+    const all = readOlderHistory({ agent: 'codex', sessionId: CODEX_ID, home, beforeAt: Date.parse(at(9)) })
+    expect(prompts(all.events)).toEqual(['one', 'two'])
+    expect(all.done).toBe(true)
+    const late = readOlderHistory({ agent: 'codex', sessionId: CODEX_ID, home, beforeAt: Date.parse(at(3)) })
+    expect(prompts(late.events)).toEqual(['one'])
+    const ids = (r) => r.events.map((e) => e.id || e.messageId).filter(Boolean)
+    // The part the chat imported at first has ids of its own: a page never reuses them.
+    const imported = readTranscriptHistory({ agent: 'codex', sessionId: CODEX_ID, home })
+    expect(ids(imported).length).toBeGreaterThan(0)
+    expect(ids(all).some((id) => ids(imported).includes(id))).toBe(false)
+    expect(ids(late).length).toBeGreaterThan(0)
+    expect(readOlderHistory({ agent: 'codex', sessionId: CODEX_ID, home, before: -1 })).toEqual({ ok: false, code: 'invalid' })
+    expect(readOlderHistory({ agent: 'codex', sessionId: '../x', home, before: 0 })).toEqual({ ok: false, code: 'invalid' })
+    expect(readOlderHistory({ agent: 'codex', sessionId: CODEX_ID, home, before: 0 })).toEqual({ ok: true, events: [], cursor: null, done: true })
+    expect(readOlderHistory({ agent: 'codex', sessionId: CODEX_ID, home })).toEqual({ ok: true, events: [], cursor: null, done: true })
   })
 })
