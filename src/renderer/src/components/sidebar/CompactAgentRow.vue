@@ -155,7 +155,6 @@ const teamNum = computed(() => {
   const n = /(\d+)\s*$/.exec(label)
   return n ? n[1] : label.slice(0, 2)
 })
-)
 const rowLabel = computed(() => {
   const r = props.row
   const team = props.teamLabel || r.team
