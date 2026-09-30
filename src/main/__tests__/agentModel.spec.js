@@ -318,3 +318,19 @@ describe("Claude Code's effort from its settings", () => {
     fs.rmSync(home, { recursive: true, force: true })
   })
 })
+
+describe("Claude Code's effort, whatever gave the model", () => {
+  it('a model from its command gets its --effort flag, else its settings effort', async () => {
+    const { agentModel, effortFromCommand } = await import('../agentModel.js')
+    const home = fs.mkdtempSync(join(os.tmpdir(), 'tessel-effort-'))
+    fs.mkdirSync(join(home, '.claude'))
+    fs.writeFileSync(join(home, '.claude', 'settings.json'), JSON.stringify({ effortLevel: 'xhigh' }))
+    expect(effortFromCommand('claude --model opus --effort high')).toBe('high')
+    expect(effortFromCommand('claude --effort=MAX')).toBe('max')
+    expect(effortFromCommand('claude --effort banana')).toBe(null)
+    expect(agentModel({ agentId: 'claude', command: 'claude --model opus' }, home)).toMatchObject({ model: 'opus', effort: 'xhigh', source: 'command' })
+    expect(agentModel({ agentId: 'claude', command: 'claude --model opus --effort low' }, home)).toMatchObject({ effort: 'low' })
+    expect(agentModel({ agentId: 'claude', chosenModel: 'opus' }, home).chosenEffort).toBe('xhigh')
+    fs.rmSync(home, { recursive: true, force: true })
+  })
+})

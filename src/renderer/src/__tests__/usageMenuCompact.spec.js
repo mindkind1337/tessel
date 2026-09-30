@@ -115,10 +115,7 @@ describe('compact usage roster', () => {
     await wrapper.get('[data-test="usage-row-codex"]').trigger('click')
     await wrapper.get('[data-test="usage-account-toggle"]').trigger('click')
     expect(wrapper.find('[data-test="usage-account-codex"]').exists()).toBe(true)
-    await wrapper.get('[data-test="usage-refresh"]').trigger('click')
-    await flushPromises()
     expect(api.accounts.select).not.toHaveBeenCalled()
-    expect(api.accounts.list).toHaveBeenCalledTimes(2)
   })
 
   it('rejects invalid quota values rather than displaying fabricated zero or overflowing bars', async () => {
@@ -153,15 +150,15 @@ describe('compact usage roster', () => {
           finishRefresh = resolve
         })
     )
-    await wrapper.get('[data-test="usage-refresh"]').trigger('click')
-    expect(wrapper.get('[data-test="usage-refresh"]').element.disabled).toBe(true)
+    // No refresh button: opening the menu again reads the local files again.
+    await wrapper.get('[data-test="usage-button"]').trigger('click')
+    await wrapper.get('[data-test="usage-button"]').trigger('click')
     expect(wrapper.get('[role="dialog"]').attributes('aria-busy')).toBe('true')
     finishRefresh(readings([{ ...weekly, usedPct: 73 }]))
     await flushPromises()
     finishInitial(readings([{ ...weekly, usedPct: 99 }]))
     await flushPromises()
     expect(wrapper.get('.usage-summary-pct').text()).toBe('73%')
-    expect(wrapper.get('[data-test="usage-refresh"]').element.disabled).toBe(false)
     expect(api.getUsage).toHaveBeenCalledTimes(3)
   })
 
@@ -203,7 +200,9 @@ describe('compact usage roster', () => {
     expect(wrapper.get('[role="alert"]').text()).toContain('Local reading unavailable')
     expect(wrapper.find('.usage-summary-pct').exists()).toBe(false)
     api.getUsage.mockResolvedValue(readings([weekly]))
-    await wrapper.get('[data-test="usage-refresh"]').trigger('click')
+    // No refresh button: opening the menu again reads the local files again.
+    await wrapper.get('[data-test="usage-button"]').trigger('click')
+    await wrapper.get('[data-test="usage-button"]').trigger('click')
     await flushPromises()
     expect(wrapper.find('[role="alert"]').exists()).toBe(false)
     expect(wrapper.get('.usage-summary-pct').text()).toBe('66%')

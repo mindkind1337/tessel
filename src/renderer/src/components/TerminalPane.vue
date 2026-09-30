@@ -141,7 +141,7 @@ function chosenShown(n, res) {
       return res
     }
   }
-  return { model: modelChoiceLabel(modelsFor(n.agentId), c.model), effort: c.effort || null, source: 'chosen' }
+  return { model: modelChoiceLabel(modelsFor(n.agentId), c.model), effort: c.effort || (res && (res.chosenEffort || res.effort)) || null, source: 'chosen' }
 }
 // { model } with a bare family name ("opus", "Opus", "opus[1m]"): the full id
 // of the same family from the agent's own report, when it has one.
@@ -172,11 +172,17 @@ async function refreshModel() {
       command: [n.agentCommand, n.detectedCommand].filter(Boolean).join(' '),
       cwd: n.startDir,
       launchedAt: n.launchedAt || 0,
-      chosenModel: n.sessionOptions && typeof n.sessionOptions.model === 'string' ? n.sessionOptions.model : undefined
+      chosenModel:
+        n.sessionOptions && typeof n.sessionOptions.model === 'string'
+          ? n.sessionOptions.model
+          : n.modelChoice && typeof n.modelChoice.model === 'string'
+            ? n.modelChoice.model
+            : undefined
     })
-    if (!res && !n.modelChoice) {
+    if ((!res || !res.model) && !n.modelChoice) {
       const seen = modelOnScreen()
-      if (seen) res = { model: seen, effort: null, source: 'screen' }
+      // The effort its settings give still shows (res.chosenEffort).
+      if (seen) res = { model: seen, effort: (res && res.chosenEffort) || null, source: 'screen' }
     }
     // Only a default from its settings (no conversation written yet): a
     // model switched in the session (/model → "Set model to …") is newer.

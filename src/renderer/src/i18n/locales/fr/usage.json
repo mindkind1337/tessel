@@ -49,7 +49,7 @@
       "buttonTitleEmpty": "Utilisation des quotas de vos agents",
       "buttonTitle": "Utilisation : jusqu'à {{pct}} % d'un quota utilisé",
       "title": "Utilisation",
-      "supportedProviders": "fournisseurs pris en charge",
+      "allAgents": "tous les agents",
       "refresh": "Actualiser l'utilisation",
       "display": "Affichage de l'utilisation",
       "detailed": "Détaillé",

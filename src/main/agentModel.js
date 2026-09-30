@@ -433,11 +433,21 @@ export function agentModel(query = {}, home = os.homedir()) {
   // The pane's own model choice (launched with it): its effort from Claude's
   // settings, for the header when the pane chose no effort itself.
   const chosen = typeof query.chosenModel === 'string' && /^[\w.[\]-]{1,80}$/.test(query.chosenModel) ? query.chosenModel : null
-  if (query.agentId === 'claude' && chosen) {
-    const chosenEffort = claudeSettingsEffort(chosen, query.cwd, home)
-    return res ? { ...res, chosenEffort } : { model: null, effort: null, source: null, chosenEffort }
+  if (query.agentId !== 'claude') return res
+  // Claude Code: an effort always, whatever gave the model (its --effort
+  // flag, else its settings for that model, else its general effortLevel).
+  const flagEffort = effortFromCommand(query.command)
+  const withEffort = res && !res.effort ? { ...res, effort: flagEffort || claudeSettingsEffort(res.model, query.cwd, home) } : res
+  if (chosen) {
+    const chosenEffort = flagEffort || claudeSettingsEffort(chosen, query.cwd, home)
+    return withEffort ? { ...withEffort, chosenEffort } : { model: null, effort: null, source: null, chosenEffort }
   }
-  return res
+  return withEffort
+}
+// --effort <level> on an agent's command line.
+export function effortFromCommand(command) {
+  const m = /(?:^|\s)--effort(?:=|\s+)["']?(low|medium|high|xhigh|max)\b/i.exec(String(command || ''))
+  return m ? m[1].toLowerCase() : null
 }
 function agentModelFound({ agentId, sessionId, command, cwd, launchedAt = 0 } = {}, home = os.homedir()) {
   if (!agentId) return null

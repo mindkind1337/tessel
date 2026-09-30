@@ -272,7 +272,7 @@ describe('usage provider flyout', () => {
     selectedId = 'work'
     api.providerUsage.read.mockResolvedValue({ ok: false, error: 'Work sign-in expired' })
     // The external selection is discovered by list(), without an accounts-changed event.
-    await wrapper.get('[data-test="usage-refresh"]').trigger('click')
+    await wrapper.get('[data-test="usage-provider-refresh"]').trigger('click')
     await flushPromises()
     expect(flyout().get('[data-test="usage-account-toggle"]').text()).toContain('Work')
     expect(flyout().find('.usage-pct').exists()).toBe(false)
