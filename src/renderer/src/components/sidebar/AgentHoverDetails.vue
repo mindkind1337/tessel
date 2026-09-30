@@ -34,9 +34,8 @@ const stateLabel = computed(() => {
   if (props.row.sleeping) return t('sidebar.status.sleeping', 'Sleeping')
   return props.row.stateLabel || agentStateLabel(props.row.dotState)
 })
-const stateLine = computed(() =>
-  props.row.time ? t('sidebar.hover.stateSince', '{{state}} · {{time}}', { state: stateLabel.value, time: props.row.time }) : stateLabel.value
-)
+// The time is on the row already: the card says the state only.
+const stateLine = computed(() => stateLabel.value)
 const detail = computed(() => (props.row.secondary && props.row.secondary !== stateLabel.value ? props.row.secondary : ''))
 const teamLine = computed(() => {
   if (!props.row.team) return ''
@@ -66,14 +65,14 @@ const paneLine = computed(() => {
     return num ? t('sidebar.hover.chatPane', 'Chat pane {{num}} (no terminal)', { num }) : t('sidebar.hover.chat', 'Chat (no terminal)')
   return num ? t('sidebar.card.pane', 'Pane {{num}}', { num }) : ''
 })
+// Only the sub-agents running now (the conversation's whole history of
+// them, often dozens, is not worth a line).
 const childLine = computed(() => {
-  const count = props.childCount
+  const count = props.runningCount
   if (!count) return ''
-  const total =
-    count === 1
-      ? t('sidebar.hover.subAgents', '{{count}} sub-agent', { count })
-      : t('sidebar.hover.subAgents', '{{count}} sub-agents', { count })
-  return props.runningCount ? t('sidebar.hover.subAgentsRunning', '{{total}} · {{running}} running', { total, running: props.runningCount }) : total
+  return count === 1
+    ? t('sidebar.hover.subAgentsRunningNow', '{{count}} sub-agent running', { count })
+    : t('sidebar.hover.subAgentsRunningNow', '{{count}} sub-agents running', { count })
 })
 </script>
 

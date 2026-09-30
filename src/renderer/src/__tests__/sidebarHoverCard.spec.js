@@ -100,7 +100,9 @@ describe('sidebar hover cards', () => {
     const text = card.textContent
     expect(text).toContain('Fix the cart')
     expect(text).toContain('Codex')
-    expect(text).toContain('Working · 2m')
+    expect(text).toContain('Working')
+    // The time is on the row, not repeated in the card.
+    expect(text).not.toContain('· 2m')
     expect(text).toContain('Team 2 (lead)')
     expect(text).toContain('Pane 1')
     // Beside the row, like Radix side="right".
@@ -201,7 +203,7 @@ describe('sidebar hover cards', () => {
     mounted.push(w)
     const row = agentRow(w, 'ch')
     expect(row.exists()).toBe(true)
-    expect(row.find('[data-test="car-model"]').text()).toBe('Opus 4.7 · high')
+    expect(row.find('[data-test="car-model"]').exists()).toBe(false)
     await row.trigger('pointerover')
     await wait(260)
     const [card] = cards('.agent-hover-card')
