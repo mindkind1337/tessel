@@ -74,11 +74,16 @@ describe('chat to terminal', () => {
     expect(ws.tree).toMatchObject({ kind: 'agent', id: 'pane-1', num: 3, team: 'team-1' })
   })
 
-  it('a chat that asked first (or a capped worker) asks first in the terminal', async () => {
-    for (const extra of [{ chatPermissions: 'manual' }, {}, { chatPermissions: 'yolo', maxPermissions: 'manual' }]) {
+  it('a chat that asked first (or a capped worker) asks first in the terminal; otherwise Settings decide', async () => {
+    for (const extra of [{ chatPermissions: 'manual' }, { chatPermissions: 'yolo', maxPermissions: 'manual' }]) {
       const { api, ctx } = load(chat(extra))
       await api.switchToTerminal('pane-1')
       expect(ctx.createLeaf.mock.calls[0][4].permissions).toBe('manual')
+    }
+    for (const extra of [{}, { chatPermissions: 'yolo' }]) {
+      const { api, ctx } = load(chat(extra))
+      await api.switchToTerminal('pane-1')
+      expect(ctx.createLeaf.mock.calls[0][4].permissions).toBeUndefined()
     }
   })
 

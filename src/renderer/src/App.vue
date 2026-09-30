@@ -3048,6 +3048,9 @@ async function restartLeaf(leafId) {
   // inbox stay addressed to it.
   if (old.kind === 'agent' && old.agentCommand) {
     if (restartingLeaves.has(leafId)) return // already restarting
+    // Restart follows Settings like a restart of Tessel does: an "ask first"
+    // pin is dropped (Restart asking first in the pane menu sets it again).
+    if (old.permissions === 'manual') delete old.permissions
     const ok = await restartInPlace(leafId, { resume: settings.resumeAgents })
     // Never a new id for an agent (its messages would stay addressed to the
     // old one): if its old terminal would not stop, say so and leave it.
@@ -6053,10 +6056,10 @@ async function switchToTerminal(leafId) {
       sessionId: old.sessionId,
       accountId: old.accountId,
       ...(sessionOptions ? { sessionOptions } : {}),
-      // Asked first as a chat (or a worker capped to it): asks first in the
-      // terminal. OpenCode's terminal has no such switch (its own config
-      // decides), so nothing is pinned on its pane.
-      ...(old.agentId === 'opencode' || (old.chatPermissions === 'yolo' && old.maxPermissions !== 'manual') ? {} : { permissions: 'manual' }),
+      // The terminal follows Settings (Yolo, Yolo folders) like a new one;
+      // a chat known to ask first, or a worker capped by its coordinator,
+      // keeps asking first. OpenCode's terminal has no such switch.
+      ...(old.agentId !== 'opencode' && (old.chatPermissions === 'manual' || old.maxPermissions === 'manual') ? { permissions: 'manual' } : {}),
       resume: true,
       wake: { teamId: old.team || null, gen: 1 }
     })
