@@ -75,6 +75,10 @@ export const MAX_EVENT = 8 * 1024 * 1024
 // Each mode switch or resume APPENDS a ruleset to the session (OpenCode
 // 1.18.33): past this many rules a switch is refused (start a new chat).
 export const MAX_SESSION_RULES = 2000
+// A resumed chat's earlier turns read from the server: at most this many
+// messages and bytes (the journal then keeps its last 2000 events).
+export const HISTORY_MESSAGES = 500
+export const HISTORY_BYTES = 4 * 1024 * 1024
 const STDERR_TAIL = 8 * 1024
 const SSE_RETRIES = 5
 export const SESSION_ID = /^ses_[A-Za-z0-9]{20,40}$/
@@ -228,7 +232,7 @@ export function createOpencodeChat(opts) {
 
   // -> { ok, status, json, text, code? } (ok: a 2xx answer). ms 0: no timeout.
   // noAuth: the request goes without the password (the enforcement check).
-  function call(method, path, body, ms = timeouts.request, { usePort = port, useAuth = auth, noAuth = false } = {}) {
+  function call(method, path, body, ms = timeouts.request, { usePort = port, useAuth = auth, noAuth = false, maxBody = MAX_BODY } = {}) {
     return new Promise((resolve) => {
       if (!usePort || (!useAuth && !noAuth)) return resolve({ ok: false, status: 0, code: 'exit', error: 'not started' }) // i18n-ignore internal
       const data = body === undefined ? null : Buffer.from(JSON.stringify(body), 'utf8')
@@ -265,9 +269,9 @@ export function createOpencodeChat(opts) {
         let size = 0
         res.on('data', (c) => {
           size += c.length
-          if (size > MAX_BODY) {
+          if (size > maxBody) {
             req.destroy()
-            done({ ok: false, status: res.statusCode, code: 'error', error: 'response too large' }) // i18n-ignore internal
+            done({ ok: false, status: res.statusCode, code: 'too-large', error: 'response too large' }) // i18n-ignore internal
             return
           }
           chunks.push(c)
@@ -902,6 +906,21 @@ export function createOpencodeChat(opts) {
     return { ok: true, result: opencodeSkillDiscovery(r.json, cwd, now) }
   }
 
+  // The conversation so far, from the server (a resumed chat's earlier
+  // turns): its last `limit` messages, at most maxBytes of JSON (fewer
+  // messages when they are larger). -> { ok, messages, truncated }
+  async function history({ limit = HISTORY_MESSAGES, maxBytes = HISTORY_BYTES } = {}) {
+    if (!ready || !alive() || !state.sessionId) return { ok: false }
+    let n = limit
+    while (n >= 1) {
+      const r = await call('GET', `/session/${encodeURIComponent(state.sessionId)}/message?limit=${n}`, undefined, timeouts.request, { maxBody: maxBytes })
+      if (r.ok && Array.isArray(r.json)) return { ok: true, messages: r.json, truncated: r.json.length >= n }
+      if (r.code !== 'too-large') return { ok: false }
+      n = Math.floor(n / 2)
+    }
+    return { ok: false }
+  }
+
   function waitAccepted(uuid, ms) {
     return new Promise((resolve) => {
       const t = setTimeout(() => {
@@ -1149,6 +1168,7 @@ export function createOpencodeChat(opts) {
     setPermissionMode,
     close,
     skills,
+    history,
     pendingPermissions: () => [...approvals.keys()]
   })
   Object.defineProperties(chat, {

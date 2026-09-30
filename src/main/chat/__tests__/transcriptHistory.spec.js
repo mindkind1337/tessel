@@ -274,3 +274,58 @@ describe('transcriptHomeFor', () => {
     expect(transcriptHomeFor('other', {}, opts)).toBeNull()
   })
 })
+
+describe('OpenCode messages (GET /session/:id/message, recorded from 1.18.33)', () => {
+  const recorded = fs
+    .readFileSync(join(__dirname, 'fixtures', 'opencode-real-frames.jsonl'), 'utf8')
+    .split('\n')
+    .filter(Boolean)
+    .map((l) => JSON.parse(l))
+    .find((l) => l.kind === 'http' && l.path === '/session/ses_f106568edffeX593nuABwvaO1O/message').response
+
+  it('turns the three recorded turns into imported events, in time order, turns finished', async () => {
+    const { opencodeHistoryEvents } = await import('../transcriptHistory.js')
+    const events = opencodeHistoryEvents(recorded)
+    expect(events.every((e) => e.imported === true && Number.isFinite(e.at))).toBe(true)
+    for (let i = 1; i < events.length; i++) expect(events[i].at).toBeGreaterThanOrEqual(events[i - 1].at)
+    expect(events.filter((e) => e.type === 'user').map((e) => e.text)).toEqual([
+      'Reply with exactly: OK',
+      'Run the shell command `echo tessel` with the bash tool, then reply with its output.',
+      'Use the task tool to start one general subagent with this instruction: "Reply with exactly: OK". Then reply with what it answered.'
+    ])
+    expect(events.filter((e) => e.type === 'assistant').map((e) => e.text)).toEqual(['OK', 'tessel', 'OK'])
+    expect(events.filter((e) => e.type === 'thinking').length).toBe(5)
+    const tools = events.filter((e) => e.type === 'tool' && e.name)
+    expect(tools.map((e) => [e.name, e.summary])).toEqual([
+      ['Bash', 'echo tessel'],
+      ['Agent', 'Reply with OK']
+    ])
+    expect(events.filter((e) => e.type === 'toolResult').map((e) => [e.isError, e.text.slice(0, 12)])).toEqual([
+      [false, 'tessel\n'],
+      [false, '<task id="se']
+    ])
+    expect(events.filter((e) => e.type === 'turnEnd').map((e) => e.status)).toEqual(['completed', 'completed', 'completed'])
+    // The sub-agent's own messages are in its child session: never here.
+    expect(JSON.stringify(events)).not.toContain('ses_f10653fd7ffeMgYqwu9LT2ywkK"')
+  })
+
+  it('skips synthetic parts, ends an aborted turn as interrupted, clips long output', async () => {
+    const { opencodeHistoryEvents } = await import('../transcriptHistory.js')
+    const m = (role, id, parts, extra = {}) => ({ info: { id, role, sessionID: 's', time: { created: 1000 + Number(id.slice(-1)) }, ...extra }, parts })
+    const events = opencodeHistoryEvents([
+      m('user', 'msg_1', [{ type: 'text', text: 'run it' }]),
+      m('assistant', 'msg_2', [
+        { type: 'tool', callID: 'c1', tool: 'bash', state: { status: 'completed', input: { command: 'big' }, output: 'x'.repeat(20000), metadata: { exit: 1 } } },
+        { type: 'text', text: 'hidden note', synthetic: true }
+      ]),
+      m('user', 'msg_3', [{ type: 'text', text: 'Summarize the task tool output above and continue with your task.', synthetic: true }]),
+      m('assistant', 'msg_4', [{ type: 'text', text: 'partial' }], { error: { name: 'MessageAbortedError', data: {} }, time: { created: 1004, completed: 1005 } })
+    ])
+    expect(events.map((e) => e.type)).toEqual(['user', 'tool', 'toolResult', 'assistant', 'turnEnd'])
+    expect(events.find((e) => e.type === 'toolResult')).toMatchObject({ isError: true })
+    expect(events.find((e) => e.type === 'toolResult').text.length).toBeLessThan(10000)
+    expect(events.at(-1).status).toBe('interrupted')
+    expect(JSON.stringify(events)).not.toContain('hidden note')
+    expect(JSON.stringify(events)).not.toContain('Summarize the task tool output')
+  })
+})

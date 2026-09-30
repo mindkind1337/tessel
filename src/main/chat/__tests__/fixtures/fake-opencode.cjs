@@ -57,6 +57,8 @@ const errorTurn = fs
   .filter((l) => l.event)
   .map((l) => l.event)
 const RECORDED_AGENTS = lines.find((l) => l.kind === 'http' && l.path === '/agent')
+// GET /session/:id/message as recorded after the 3 turns (root session).
+const RECORDED_MESSAGES = lines.find((l) => l.kind === 'http' && l.path === `/session/${REC_ROOT}/message`).response
 
 // ---- state ------------------------------------------------------------------------
 const sessions = new Map()
@@ -340,6 +342,16 @@ function route(method, p, url, body, res) {
       setTimeout(() => broadcast({ type: 'session.updated', properties: { sessionID: s.id, info: info(s) } }), 1)
       return
     }
+  }
+  if ((m = /^\/session\/([^/]+)\/message$/.exec(p)) && method === 'GET') {
+    const s = sessions.get(m[1])
+    if (!s) return send(res, 404, {})
+    // FAKE_OC_HISTORY=1: the recorded conversation; =big: each message padded
+    // (the reader asks again for fewer).
+    let list = process.env.FAKE_OC_HISTORY ? substitute(RECORDED_MESSAGES, s.id) : []
+    if (process.env.FAKE_OC_HISTORY === 'big') list = list.map((x) => ({ ...x, info: { ...x.info, pad: 'p'.repeat(700 * 1024) } }))
+    const limit = Number(url.searchParams.get('limit') || 0)
+    return send(res, 200, limit ? list.slice(-limit) : list)
   }
   if ((m = /^\/session\/([^/]+)\/prompt_async$/.exec(p)) && method === 'POST') {
     const s = sessions.get(m[1])

@@ -24,7 +24,7 @@ import fs from 'fs'
 import { isAbsolute } from 'path'
 import { buildChatEnv } from './chatEnv.js'
 import { clipDeep, createChatJournal, validPaneId } from './journal.js'
-import { readTranscriptHistory } from './transcriptHistory.js'
+import { readTranscriptHistory, opencodeHistoryEvents, HISTORY_LIMITS } from './transcriptHistory.js'
 import { t } from '../i18n.js'
 import { approvalPreview } from '../../shared/chatApproval.js'
 import { validOpencodeModel } from './opencodeChat.js'
@@ -217,6 +217,38 @@ export function createChatSessions(deps) {
       : t('main.chat.historyImported', 'Earlier conversation, from the history {{agent}} keeps.', { agent: agentName })
     emitHistory(s.paneId, [{ type: 'notice', kind: 'info', text, imported: true, ...(Number.isFinite(first) ? { at: first } : {}) }, ...res.events])
     logAt('info', `${s.paneId}: ${res.events.length} earlier events imported${res.truncated ? ' (the most recent part)' : ''}`) // i18n-ignore log line
+  }
+
+  // OpenCode keeps its conversations in its own database: a resumed chat
+  // reads its earlier turns from the server it just started (the chat's
+  // password), once, like importHistory: the journal's meta then names the
+  // session, so a reload or a later open replays the journal only.
+  async function importOpencodeHistory(s) {
+    if (!s.sessionId || typeof s.adapter?.history !== 'function') return
+    const j = journalOf(s.paneId)
+    const meta = j.readMeta()
+    if (meta && meta.sessionId === s.sessionId) return
+    let res = null
+    try {
+      res = await s.adapter.history()
+    } catch (err) {
+      logAt('warn', `${s.paneId}: earlier history not read: ${err?.message || err}`) // i18n-ignore log line
+    }
+    if (!res?.ok) return
+    let events = opencodeHistoryEvents(res.messages)
+    let truncated = res.truncated === true
+    if (events.length > HISTORY_LIMITS.events) {
+      events = events.slice(-HISTORY_LIMITS.events)
+      truncated = true
+    }
+    j.writeMeta({ sessionId: s.sessionId, agent: s.agent, cwd: s.cwd })
+    if (!events.length || s.finished || s.closing) return
+    const first = events[0].at
+    const text = truncated
+      ? t('main.chat.historyImportedPart', 'Earlier conversation, from the history {{agent}} keeps (only its most recent part).', { agent: 'OpenCode' })
+      : t('main.chat.historyImported', 'Earlier conversation, from the history {{agent}} keeps.', { agent: 'OpenCode' })
+    emitHistory(s.paneId, [{ type: 'notice', kind: 'info', text, imported: true, ...(Number.isFinite(first) ? { at: first } : {}) }, ...events])
+    logAt('info', `${s.paneId}: ${events.length} earlier OpenCode events imported${truncated ? ' (the most recent part)' : ''}`) // i18n-ignore log line
   }
 
   // The pane's agent status. Calls are serialized by the store in call order.
@@ -964,6 +996,8 @@ export function createChatSessions(deps) {
         else if (!s.sessionId) logAt('warn', `${paneId}: opencode gave no session id; this chat cannot be resumed`)
         if (typeof info.model === 'string' && validOpencodeModel(info.model)) s.model = info.model
         if (typeof info.version === 'string') logAt('info', `${paneId}: opencode ${info.version.slice(0, 40)}`) // i18n-ignore log line
+        // A resumed conversation: its earlier turns first (never on a wake).
+        if (resumeId && !from) await importOpencodeHistory(s)
       }
       s.launchToken = randomBytes(16).toString('hex')
       if (!s.finished) {

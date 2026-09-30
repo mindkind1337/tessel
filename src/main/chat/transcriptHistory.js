@@ -30,6 +30,7 @@ import { claudeTranscriptIn, codexRolloutIn } from '../agentModel.js'
 import { realInside } from '../agentChildren.js'
 import { allowedCodexHome } from '../codexTurnEnd.js'
 import { clipDeep, clipString } from './journal.js'
+import { toolName as opencodeToolName, toolInput as opencodeToolInput } from './opencodeFrames.js'
 
 export const HISTORY_LIMITS = { bytes: 4 * 1024 * 1024, events: 2000, text: 64 * 1024 }
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -422,6 +423,49 @@ export function codexHistoryEvents(lines, threadId, limits = HISTORY_LIMITS) {
 // account's (inside Tessel's codex-accounts folder); Claude: the system Claude
 // folder only (Tessel's Claude accounts swap the sign-in inside it). Anything
 // else (a folder named by some other setting): null, nothing is read.
+// ---- OpenCode -----------------------------------------------------------------
+
+// OpenCode keeps its conversations in its own database: a chat reads them
+// from its running server (GET /session/:id/message, opencodeChat.history),
+// never from a file. messages: [{ info, parts }] of the ROOT session only (a
+// sub-agent's messages live in its child session, never listed here).
+// Synthetic parts (OpenCode's own notes to the model) are not what anyone
+// typed or read: skipped. A message that failed with an abort ends its turn
+// as interrupted; another error as failed.
+export function opencodeHistoryEvents(messages, limits = HISTORY_LIMITS) {
+  const b = createBuilder(limits)
+  for (const m of Array.isArray(messages) ? messages : []) {
+    const info = obj(obj(m)?.info)
+    if (!info || !str(info.id)) continue
+    const parts = Array.isArray(m.parts) ? m.parts.map(obj).filter(Boolean) : []
+    const ts = obj(info.time)?.created
+    if (info.role === 'user') {
+      const typed = parts.filter((p) => p.type === 'text' && str(p.text) && p.synthetic !== true).map((p) => p.text)
+      if (typed.length) b.user(info.id, typed.join('\n'), ts)
+      continue
+    }
+    if (info.role !== 'assistant') continue
+    for (const p of parts) {
+      if (p.synthetic === true) continue
+      const pts = obj(p.time)?.start ?? ts
+      if (p.type === 'text' && str(p.text)) b.message('assistant', info.id, p.text, pts, '\n\n')
+      else if (p.type === 'reasoning' && str(p.text)) b.message('thinking', info.id, p.text, pts, '\n')
+      else if (p.type === 'tool' && str(p.callID)) {
+        const st = obj(p.state) || {}
+        if (st.status === 'pending') continue
+        b.tool(p.callID, opencodeToolName(p.tool), opencodeToolInput(p.tool, obj(st.input) || {}), obj(st.time)?.start ?? pts)
+        if (st.status === 'completed' || st.status === 'error') {
+          const exit = obj(st.metadata)?.exit
+          b.toolResult(p.callID, st.status === 'error' ? str(st.error) || '' : st.output ?? '', st.status === 'error' || (Number.isInteger(exit) && exit !== 0), obj(st.time)?.end ?? pts)
+        }
+      }
+    }
+    const error = obj(info.error)
+    if (error && obj(info.time)?.completed) b.endTurn(error.name === 'MessageAbortedError' ? 'interrupted' : 'failed', info.time.completed)
+  }
+  return b.finish()
+}
+
 export function transcriptHomeFor(agent, env, { systemClaude, systemCodex, codexAccountsBase } = {}) {
   const get = (name) => {
     const hit = Object.entries(env || {}).find(([k]) => k.toUpperCase() === name)

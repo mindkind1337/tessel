@@ -511,3 +511,25 @@ describe('OpenCode chat: security review', () => {
     expect(output.env).toEqual({ KEEP: '1', OPENCODE_SERVER_PASSWORD: '', OPENCODE_SERVER_USERNAME: '' })
   })
 })
+
+describe('OpenCode chat: earlier history', () => {
+  it('reads the conversation from the server with the password', async () => {
+    const { chat, reqs } = setup({ env: { FAKE_OC_HISTORY: '1' } })
+    expect((await chat.start()).ok).toBe(true)
+    const r = await chat.history()
+    expect(r).toMatchObject({ ok: true, truncated: false })
+    expect(r.messages).toHaveLength(8)
+    expect(r.messages[0].info.sessionID).toBe(chat.sessionId)
+    expect(reqs('GET', /\/message$/)[0]).toMatchObject({ authed: true })
+  })
+
+  it('asks for fewer messages when they are over the byte cap', async () => {
+    const { chat, reqs } = setup({ env: { FAKE_OC_HISTORY: 'big' } })
+    expect((await chat.start()).ok).toBe(true)
+    const r = await chat.history({ limit: 16, maxBytes: 4 * 1024 * 1024 })
+    expect(r.ok).toBe(true)
+    expect(r.truncated).toBe(true)
+    expect(r.messages.length).toBeLessThanOrEqual(4)
+    expect(reqs('GET', /\/message$/).length).toBeGreaterThan(1)
+  })
+})
