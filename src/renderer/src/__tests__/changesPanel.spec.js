@@ -235,6 +235,23 @@ describe('Source Control: stage, unstage, discard', () => {
     expect(calls.find(([n]) => n === 'discard')[1]).toEqual({ root: ROOT, paths: ['n.txt'] })
   })
 
+  it.each(['single', 'bulk'])('never discards in a different repository after a delayed %s confirmation', async mode => {
+    let confirm
+    confirmAnswer = new Promise(resolve => { confirm = resolve })
+    api({ status: () => status(entries.slice(0, 3)) })
+    make()
+    await flushPromises()
+    if (mode === 'single') await rowOf('a.js', 'unstaged').find('[data-test="sc-discard"]').trigger('click')
+    else await w.find('[data-section="unstaged"]').find('[data-test="sc-discard-all"]').trigger('click')
+    expect(asked).toHaveLength(1)
+    await w.setProps({ root: 'C:/another-project' })
+    await flushPromises()
+    confirm(true)
+    await flushPromises()
+    expect(calls.filter(([name]) => name === 'discard')).toEqual([])
+    expect(w.emitted('toast').at(-1)[0]).toContain('repository changed')
+  })
+
   it('section actions: Stage all, Unstage all, Discard all (asked)', async () => {
     api({ status: () => status(entries.slice(0, 3)) })
     make()
@@ -251,6 +268,25 @@ describe('Source Control: stage, unstage, discard', () => {
     await flushPromises()
     expect(asked.pop()).toMatchObject({ title: 'Delete 1 untracked file?' })
     expect(calls.find(([n]) => n === 'discard')[1].paths).toEqual(['n.txt'])
+  })
+
+  it('cancels discard when an agent finishes the task whose copy was selected', async () => {
+    const task = { id: 't1', title: 'Fix it', wsId: 'ws1', column: 'review', worktree: { path: 'C:/copy', branch: 'agent/fix' } }
+    setTasks([task])
+    api({ status: q => status([{ path: 'a.js', area: 'unstaged', status: 'modified' }], { top: q.root }) })
+    make({ workspaceId: 'ws1' })
+    await flushPromises()
+    await setSelectValue(w.find('[data-test="changes-target"]'), 't1')
+    await flushPromises()
+    let confirm
+    confirmAnswer = new Promise(resolve => { confirm = resolve })
+    await rowOf('a.js', 'unstaged').find('[data-test="sc-discard"]').trigger('click')
+    setTasks([{ ...task, column: 'done' }])
+    await flushPromises()
+    confirm(true)
+    await flushPromises()
+    expect(calls.filter(([name]) => name === 'discard')).toEqual([])
+    expect(w.emitted('toast').at(-1)[0]).toContain('repository changed')
   })
 
   it('a failed stage is said', async () => {

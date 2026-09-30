@@ -482,25 +482,36 @@ async function confirmDiscard(copy, pathText) {
   return (await askConfirm({ title: copy.title, text: `${copy.description}\n${pathText}`, confirmLabel: copy.confirmLabel, danger: true })) === true
 }
 async function requestDiscardEntry(entry) {
+  const root = repoRoot.value
   const copy = discardEntryCopy(entry, { remote: remoteRepo.value })
   if (!(await confirmDiscard(copy, entry.path))) return
+  if (!discardContextStillCurrent(root)) return
   await runGit(
-    () => api().discard({ root: repoRoot.value, paths: [entry.path] }),
+    () => api().discard({ root, paths: [entry.path] }),
     t('changes.git.discardFileFailed', 'Failed to discard {{name}}', { name: fileName(entry.path) })
   )
 }
 async function requestDiscardAllInArea(area, paths) {
   if (!paths.length || isExecutingBulk.value) return
+  const root = repoRoot.value
   const copy = discardAreaCopy(area, paths.length, { remote: remoteRepo.value })
   const n = paths.length
   const filesText = n === 1 ? t('changes.discard.files', '{{count}} file', { count: n }) : t('changes.discard.files', '{{count}} files', { count: n })
   if (!(await confirmDiscard(copy, filesText))) return
+  if (!discardContextStillCurrent(root)) return
   isExecutingBulk.value = true
   try {
-    await runGit(() => api().discard({ root: repoRoot.value, paths }), t('changes.git.discardFailed', 'Failed to discard'))
+    await runGit(() => api().discard({ root, paths }), t('changes.git.discardFailed', 'Failed to discard'))
   } finally {
     isExecutingBulk.value = false
   }
+}
+
+function discardContextStillCurrent(root) {
+  if (disposed) return false
+  if (root === repoRoot.value) return true
+  emit('toast', t('changes.discard.repositoryChanged', 'The repository changed. Discard was cancelled; no files were changed.'))
+  return false
 }
 
 function sectionActions(section) {

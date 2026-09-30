@@ -534,5 +534,6 @@
       "editorAria": "Notes du projet (Markdown)",
       "loading": "Chargement…"
     }
-  }
+  },
+  "changes.discard.repositoryChanged": "Le dépôt a changé. L’abandon a été annulé ; aucun fichier n’a été modifié."
 }
