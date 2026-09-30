@@ -9,6 +9,7 @@
 // a turn). The main process stays the authority.
 import { t } from '../../../i18n'
 import { getAgentSessionOptionCatalog, modelOptions } from '../../../../../shared/agentSessionOptions.js'
+import { modelLabel } from '../../../../../shared/modelLabel.js'
 
 // Each agent's permission modes, in the order ChatPane.vue lists them.
 export const TESSEL_PERMISSION_MODES = {
@@ -58,7 +59,13 @@ export function permissionModeHint(mode, agent) {
 // composable's); permissionModes: false to leave the mode picker out.
 export function tesselSessionOptionSnapshot({ agent, models = [], values = {}, modeBlocked = () => '', permissionModes = true } = {}) {
   const out = []
-  const model = typeof values.model === 'string' && values.model ? values.model : null
+  let model = typeof values.model === 'string' && values.model ? values.model : null
+  // The agent reports its full id (claude-opus-5-5) where the list has the
+  // alias it was chosen by (opus, "Opus 5.5"): that row is the current one.
+  if (model && !models.some((m) => m.id === model)) {
+    const same = models.find((m) => m.label && m.label === modelLabel(model))
+    if (same) model = same.id
+  }
   // The chosen model is listed even when the list does not have it.
   const rows = models.map((m) => ({ value: m.id, label: m.label || m.id, ...(m.description ? { description: m.description } : {}) }))
   if (model && !rows.some((r) => r.value === model)) rows.push({ value: model, label: model })

@@ -236,3 +236,16 @@ describe('model menu', () => {
     expect(menu()).toBeNull()
   })
 })
+
+describe('the reported full id and the listed alias', () => {
+  it('claude-opus-5-5 reported: the listed "Opus 5.5" (opus) row is the current one, no extra row', () => {
+    const models = [
+      { id: 'opus', label: 'Opus 5.5', options: [] },
+      { id: 'claude-fable-5-1', label: 'Fable 5.1', options: [] }
+    ]
+    const snap = tesselSessionOptionSnapshot({ agent: 'claude', models, values: { model: 'claude-opus-5-5' } })
+    const option = snap.options ? snap.options.find((o) => o.id === 'model') : snap.find((o) => o.id === 'model')
+    expect(option.kind.currentValue).toBe('opus')
+    expect(option.kind.choices.map((c) => c.value)).toEqual(['opus', 'claude-fable-5-1'])
+  })
+})
