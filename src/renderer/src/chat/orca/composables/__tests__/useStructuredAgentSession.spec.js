@@ -28,6 +28,41 @@ function setup(history, extra = {}) {
 }
 
 describe('useStructuredAgentSession (Tessel engine)', () => {
+  it('ignores an old history response after the conversation is reset', async () => {
+    let finish
+    const { session, api, emit, wrapper } = setup({ ok: true, seq: 0, events: [] })
+    const s = session()
+    api.history.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    const previous = s.load()
+    s.reset()
+    await s.load()
+    emit({ type: 'assistant', messageId: 'new', text: 'new conversation' }, 1)
+    finish({ ok: true, seq: 50, events: [{ seq: 50, event: { type: 'assistant', messageId: 'old', text: 'old conversation' } }] })
+    expect(await previous).toMatchObject({ ok: false, code: 'stale' })
+    expect(s.messages.value.map(message => message.blocks[0].text)).toEqual(['new conversation'])
+    emit({ type: 'assistant', messageId: 'new2', text: 'still live' }, 2)
+    expect(s.messages.value).toHaveLength(2)
+    wrapper.unmount()
+  })
+
+  it('ignores an older-page response from the previous conversation', async () => {
+    let finish
+    const { session, api, wrapper } = setup({ ok: true, seq: 0, events: [], older: true }, {
+      historyOlder: () => new Promise(resolve => { finish = resolve })
+    })
+    const s = session()
+    await s.load()
+    const pending = s.loadOlder()
+    s.reset()
+    api.history.mockResolvedValue({ ok: true, seq: 0, events: [], older: false })
+    await s.load()
+    finish({ ok: true, events: [{ type: 'assistant', messageId: 'old', text: 'old page' }], cursor: { k: 'file', n: 10 }, done: false })
+    expect(await pending).toBe('unchanged')
+    expect(s.messages.value).toEqual([])
+    expect(s.hasOlder.value).toBe(false)
+    expect(s.loadingOlder.value).toBe(false)
+    wrapper.unmount()
+  })
   it('redraws from the journal, then follows live events once (seq)', async () => {
     const { session, emit } = setup({
       ok: true,

@@ -30,12 +30,30 @@ const DECISIONS = { allow: 'allow', allowSession: 'allowSession', deny: 'deny' }
 // agent: the pane's agent (a value or a getter), for the words of a model change.
 export function useStructuredAgentSession({ paneId, api = typeof window !== 'undefined' && window.shellApi ? window.shellApi.chat : null, now = Date.now, onLive = null, cwd = '', agent = null } = {}) {
   const agentOf = (fallback) => (typeof agent === 'function' ? agent() : agent) || fallback
-  const adapter = createJournalAdapter({ now, cwd, optionText: (ev, known) => chatOptionNoticeText(ev, agentOf(known)) })
+  const makeAdapter = () => createJournalAdapter({ now, cwd, optionText: (ev, known) => chatOptionNoticeText(ev, agentOf(known)) })
+  let adapter = makeAdapter()
   const state = shallowRef(EMPTY_STRUCTURED_AGENT_SESSION)
   const meta = reactive({ ...adapter.meta, loaded: false, loadError: null, open: false, asleep: false })
   let lastSeq = 0
   let loaded = false
   const buffered = []
+  let generation = 0
+
+  // The main process deleted this pane's journal for a new conversation.
+  // Its event sequence starts over, and old in-flight reads must be ignored.
+  function reset() {
+    generation++
+    adapter = makeAdapter()
+    state.value = EMPTY_STRUCTURED_AGENT_SESSION
+    lastSeq = 0
+    loaded = false
+    buffered.length = 0
+    Object.assign(meta, adapter.meta, { loaded: false, loadError: null, open: false, asleep: false })
+    olderAvailable.value = false
+    olderCursor = null
+    loadingOlder.value = false
+    olderGeneration.value++
+  }
 
   function feed(event) {
     state.value = reduceStructuredAgentSession(state.value, { type: 'event', event }, now())
@@ -73,6 +91,7 @@ export function useStructuredAgentSession({ paneId, api = typeof window !== 'und
   // Redraw from the main process's journal, then follow live events (those
   // that came meanwhile wait, and what the journal had is not applied twice).
   async function load() {
+    const requestGeneration = generation
     meta.loadError = null
     let res = null
     try {
@@ -80,6 +99,7 @@ export function useStructuredAgentSession({ paneId, api = typeof window !== 'und
     } catch (err) {
       res = { ok: false, error: (err && err.message) || String(err) }
     }
+    if (requestGeneration !== generation) return { ok: false, code: 'stale' }
     if (!res || res.ok === false) {
       meta.loadError = (res && res.error) || 'history unavailable' // i18n-ignore shown through t() by the pane
       return res
@@ -202,10 +222,12 @@ export function useStructuredAgentSession({ paneId, api = typeof window !== 'und
   async function loadOlder() {
     if (loadingOlder.value || !olderAvailable.value || !api || !api.historyOlder) return 'unchanged'
     loadingOlder.value = true
+    const requestGeneration = generation
     try {
       // A page can hold nothing to show (one line too long to read): the next one then.
       for (let tries = 0; tries < 8; tries++) {
         const res = await api.historyOlder({ paneId, ...(olderCursor ? { cursor: olderCursor } : {}) })
+        if (requestGeneration !== generation) return 'unchanged'
         if (!res || res.ok !== true) {
           if (res && res.code === 'closed') olderAvailable.value = false
           return 'failed'
@@ -230,7 +252,7 @@ export function useStructuredAgentSession({ paneId, api = typeof window !== 'und
     } catch {
       return 'failed'
     } finally {
-      loadingOlder.value = false
+      if (requestGeneration === generation) loadingOlder.value = false
     }
   }
 
@@ -307,6 +329,7 @@ export function useStructuredAgentSession({ paneId, api = typeof window !== 'und
     // (undefined until it did), and its skills on disk (discover()).
     sessionCommands: computed(() => (Array.isArray(meta.commands) ? meta.commands : undefined)),
     discoverSkills,
-    adapter
+    reset,
+    get adapter() { return adapter }
   }
 }

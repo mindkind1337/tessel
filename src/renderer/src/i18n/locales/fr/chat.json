@@ -731,5 +731,6 @@
   "chat.context.compacting": "Compactage…",
   "chat.context.compact": "Compacter",
   "chat.context.dismiss": "Masquer cet avertissement",
-  "chat.retry.attempt": "Reconnexion… tentative {{attempt}}"
+  "chat.retry.attempt": "Reconnexion… tentative {{attempt}}",
+  "chat.newConversation.failed": "Impossible de démarrer une nouvelle conversation. Réessayez."
 }

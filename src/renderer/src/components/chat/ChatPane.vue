@@ -320,12 +320,16 @@ async function newConversation() {
   if (renewing || !a || typeof a.close !== 'function') return
   renewing = true
   try {
-    await a.close({ paneId: props.node.id, forget: true })
+    const result = await a.close({ paneId: props.node.id, forget: true })
+    if (!result || !result.ok) throw new Error(result?.error || '')
   } catch {
-    // already gone
+    ctx.toast(t('chat.newConversation.failed', 'Could not start a new conversation. Try again.'))
+    return
+  } finally {
+    renewing = false
   }
-  renewing = false
   if (!alive) return
+  session.reset()
   props.node.sessionId = null
   await load()
 }

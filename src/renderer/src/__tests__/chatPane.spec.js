@@ -257,7 +257,8 @@ describe('ChatPane.vue', () => {
     api.close = vi.fn(async () => ({ ok: true }))
     expect(ctx.chatOpen).toHaveBeenCalledTimes(1)
     node.sessionId = 's-old'
-    emit({ type: 'notice', kind: 'error', text: 'The conversation is too long', action: 'newConversation' })
+    emit({ type: 'user', id: 'old-prompt', text: 'OLD CONVERSATION', status: 'accepted' }, { seq: 10 })
+    emit({ type: 'notice', kind: 'error', text: 'The conversation is too long', action: 'newConversation' }, { seq: 11 })
     await settle()
     const button = document.querySelector('[data-test="nc-notice-action"]')
     expect(button.textContent).toContain('New conversation')
@@ -267,6 +268,24 @@ describe('ChatPane.vue', () => {
     expect(api.close).toHaveBeenCalledWith({ paneId: 'c1', forget: true })
     expect(ctx.chatOpen).toHaveBeenCalledTimes(2)
     expect(node.sessionId).toBe('s-new')
+    expect(wrapper.text()).not.toContain('OLD CONVERSATION')
+    expect(wrapper.text()).not.toContain('The conversation is too long')
+    emit({ type: 'assistant', messageId: 'fresh-answer', text: 'FRESH CONVERSATION' }, { seq: 1 })
+    await settle()
+    expect(wrapper.text()).toContain('FRESH CONVERSATION')
+  })
+
+  it('keeps the conversation when closing it for a fresh start fails', async () => {
+    history = { ok: true, open: true, seq: 1, events: [{ seq: 1, event: { type: 'user', id: 'old', text: 'KEEP THIS', status: 'accepted' } }] }
+    await mountPane({ sessionId: 's-old' })
+    api.close = vi.fn(async () => ({ ok: false, error: 'close failed' }))
+    emit({ type: 'notice', kind: 'error', text: 'Too long', action: 'newConversation' }, { seq: 2 })
+    await settle()
+    await click(document.querySelector('[data-test="nc-notice-action"]'))
+    expect(wrapper.text()).toContain('KEEP THIS')
+    expect(node.sessionId).toBe('s-old')
+    expect(ctx.chatOpen).not.toHaveBeenCalled()
+    expect(ctx.toast).toHaveBeenCalled()
   })
 
   it('shows only the events of its own pane; streams and tool output as text', async () => {
