@@ -685,6 +685,33 @@ describe('stream events', () => {
     expect(events('tool').at(-1)).toEqual({ type: 'tool', id: 't2', status: 'error' })
     expect(last('turnEnd')).toMatchObject({ status: 'failed', error: 'API error' })
   })
+
+  it('hands the rate-limit windows to the usage indicator with the chat login folder only', async () => {
+    const onRateLimit = vi.fn()
+    const chat = createChatSessions(
+      makeDeps({
+        onRateLimit,
+        env: { forPane: vi.fn(() => ({ Path: 'C:\\Windows', CLAUDE_CONFIG_DIR: 'C:\\fixture\\claude', SECRET_TOKEN: 'x' })) }
+      })
+    )
+    await openOk(chat)
+    adapters[0].emit('rateLimit', { status: 'allowed', fiveHour: { utilization: 0.5, resetsAt: 1 }, sevenDay: null })
+    expect(onRateLimit).toHaveBeenCalledTimes(1)
+    const arg = onRateLimit.mock.calls[0][0]
+    expect(arg).toMatchObject({
+      provider: 'claude',
+      env: { CLAUDE_CONFIG_DIR: 'C:\\fixture\\claude' },
+      rateLimit: { fiveHour: { utilization: 0.5, resetsAt: 1 }, sevenDay: null }
+    })
+    expect(Object.keys(arg.env)).toEqual(['CLAUDE_CONFIG_DIR'])
+    expect(Number.isFinite(arg.since)).toBe(true)
+    // A failing hook never breaks the chat.
+    onRateLimit.mockImplementation(() => {
+      throw new Error('boom')
+    })
+    adapters[0].emit('rateLimit', { fiveHour: { utilization: 0.6 } })
+    expect(events('rateLimit')).toHaveLength(2)
+  })
 })
 
 describe('one frame per block', () => {

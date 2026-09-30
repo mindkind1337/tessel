@@ -3,10 +3,18 @@
 // service-fetch-policy.ts and service-result-policy.ts, MIT, Copyright (c) 2026
 // Lovecast Inc.
 //
-// - A poll every 15 min (Settings can change or turn it off), only while the main
-//   window is visible, not minimized and focused.
-// - On focus, show or restore, and once shortly after startup: a refresh of the
-//   providers whose reading is older than 5 min.
+// - A poll every 2 min (Settings can change or turn it off), only while the main
+//   window is visible, not minimized and focused. A poll reads a provider whose
+//   last attempt is older than the interval (less a few seconds of timer slack).
+// - On focus, show or restore: a refresh of the providers whose reading is older
+//   than 5 min.
+// - Once shortly after startup, even when the window is shown but not focused
+//   yet (not while it is hidden or minimized: then at its first show or focus).
+// - Live readings: the rate-limit windows a running chat reports (Claude's
+//   rate_limit_event, Codex's account/rateLimits/updated) update the shown
+//   reading without a request (ingest). Deduped at 30 s, never over a newer
+//   reading; a fresh one lets the scheduled Claude read wait (its usage
+//   endpoint has a tight budget) when it covers every window shown.
 // - A failed provider waits 30 s, then twice as long after each failure (at most
 //   15 min); a 429's Retry-After is respected.
 // - A recent reading is kept (marked stale) through failures: 30 min, or 24 h when
@@ -15,7 +23,7 @@
 //   being read shares that read.
 // Tokens are never seen here: the readers take them at call time.
 
-export const DEFAULT_POLL_MS = 15 * 60 * 1000
+export const DEFAULT_POLL_MS = 2 * 60 * 1000
 // Renderer input can never make a tight loop.
 export const MIN_POLL_MS = 30 * 1000
 // The longest delay setInterval accepts before Node clamps it to 1 ms.
@@ -23,7 +31,12 @@ export const MAX_POLL_MS = 2_147_483_647
 // Debounces focus bursts and a manual refresh made just before.
 export const MIN_REFETCH_MS = 5 * 60 * 1000
 export const ACTIVE_FAILURE_REFETCH_MS = MIN_POLL_MS
-export const MAX_ACTIVE_FAILURE_REFETCH_MS = DEFAULT_POLL_MS
+export const MAX_ACTIVE_FAILURE_REFETCH_MS = 15 * 60 * 1000
+// setInterval fires a little late or early: a poll still reads a provider last
+// read one interval ago.
+export const POLL_SLACK_MS = 5 * 1000
+// A live reading identical to one taken less than this ago is not pushed again.
+export const LIVE_INGEST_DEDUPE_MS = 30 * 1000
 export const MAX_ACTIVE_FAILURE_STREAK = 8
 export const STALE_THRESHOLD_MS = 30 * 60 * 1000
 // A 429 window can outlast the usual threshold; a stale reading beats nothing.
@@ -61,6 +74,49 @@ export function failureBackoffMs(streak) {
 
 const hasWindows = (result) => Array.isArray(result?.windows) && result.windows.length > 0
 
+// The windows a live session reports, under the labels providerUsage.js gives
+// the same windows from the usage endpoint.
+const LIVE_WINDOWS = [
+  ['fiveHour', '5-hour'],
+  ['sevenDay', 'Weekly']
+]
+const LIVE_LABELS = new Set(LIVE_WINDOWS.map(([, label]) => label))
+const MAX_TIME_MS = 8.64e15
+
+// utilization: 0..1 (Claude's rate_limit_event, codexChat's mapping) or 0..100;
+// resetsAt: seconds or ms since the epoch. null when it is not a usable window.
+export function liveWindow(label, raw) {
+  if (!raw || typeof raw !== 'object') return null
+  const u = raw.utilization
+  if (typeof u !== 'number' || !Number.isFinite(u) || u < 0 || u > 100) return null
+  const usedPct = u <= 1 ? u * 100 : u
+  let resetsAt = null
+  const r = raw.resetsAt
+  if (typeof r === 'number' && Number.isFinite(r) && r > 0) {
+    const ms = r < 10_000_000_000 ? r * 1000 : r
+    if (ms <= MAX_TIME_MS) resetsAt = Math.round(ms)
+  }
+  return { label, usedPct: Math.round(usedPct * 100) / 100, resetsAt }
+}
+
+export function liveWindows(rateLimit) {
+  if (!rateLimit || typeof rateLimit !== 'object') return []
+  return LIVE_WINDOWS.map(([key, label]) => liveWindow(label, rateLimit[key])).filter(Boolean)
+}
+
+const sameWindows = (a, b) =>
+  a.length === b.length &&
+  a.every((w, i) => {
+    const o = b[i]
+    return (
+      !!o &&
+      w.label === o.label &&
+      w.usedPct === o.usedPct &&
+      (w.resetsAt ?? null) === (o.resetsAt ?? null) &&
+      !w.stale === !o.stale
+    )
+  })
+
 // read(query) -> result; targets(hidden) -> [{ provider, accountId }] (the providers
 // the user shows and has signed in to); send(result) pushes to the renderer.
 export function createUsagePoller({
@@ -80,6 +136,7 @@ export function createUsagePoller({
   let configured = false
   let timer = null
   let startupTimer = null
+  let startupPending = false
   let attached = null // { win, off }
 
   function windowActive() {
@@ -90,17 +147,28 @@ export function createUsagePoller({
     return win.isFocused()
   }
 
+  const blank = (accountId) => ({
+    accountId,
+    status: null,
+    snapshot: null,
+    updatedAt: 0,
+    attemptAt: 0,
+    streak: 0,
+    retryAtMs: 0,
+    liveAt: 0
+  })
+
   function record(provider, accountId, result) {
     if (!result || typeof result !== 'object' || result.code === 'stale') return null
     const now = clock()
     let entry = state.get(provider)
     if (!entry || entry.accountId !== accountId)
-      entry = { accountId, status: null, snapshot: null, updatedAt: 0, attemptAt: 0, streak: 0, retryAtMs: 0 }
+      entry = blank(accountId)
     entry.attemptAt = now
     if (result.ok) {
-      Object.assign(entry, { status: 'ok', snapshot: result, updatedAt: now, streak: 0, retryAtMs: 0 })
+      Object.assign(entry, { status: 'ok', snapshot: result, updatedAt: now, streak: 0, retryAtMs: 0, liveAt: 0 })
     } else if (result.code === 'unavailable') {
-      Object.assign(entry, { status: 'unavailable', snapshot: null, updatedAt: now, streak: 0, retryAtMs: 0 })
+      Object.assign(entry, { status: 'unavailable', snapshot: null, updatedAt: now, streak: 0, retryAtMs: 0, liveAt: 0 })
     } else {
       entry.status = 'error'
       entry.streak = Math.min(entry.streak + 1, MAX_ACTIVE_FAILURE_STREAK)
@@ -119,6 +187,9 @@ export function createUsagePoller({
     const threshold =
       result.code === 'rate-limited' ? RATE_LIMITED_STALE_THRESHOLD_MS : STALE_THRESHOLD_MS
     if (now - entry.updatedAt > threshold) return result
+    // A live reading from the last minutes: still current, shown as it is.
+    if (entry.liveAt && entry.liveAt === entry.updatedAt && now - entry.liveAt < MIN_REFETCH_MS)
+      return previous
     // Keep the recent reading through failures so the icon does not flap to empty.
     const { resetToken: _token, ...kept } = previous
     return {
@@ -130,13 +201,82 @@ export function createUsagePoller({
     }
   }
 
-  function due(provider, accountId, now) {
+  // A live Claude reading from the last 5 min that covers every window shown:
+  // the scheduled read waits (its usage endpoint answers 429 quickly).
+  function liveCovers(provider, entry, now) {
+    if (provider !== 'claude' || !entry.liveAt || now - entry.liveAt >= MIN_REFETCH_MS) return false
+    const shown = entry.snapshot?.windows
+    return Array.isArray(shown) && shown.every((w) => LIVE_LABELS.has(w?.label))
+  }
+
+  // reason 'poll': reads when the last attempt is one interval old; any other
+  // reason (focus, show, startup): only after MIN_REFETCH_MS.
+  function due(provider, accountId, now, reason) {
     if (inflight.has(provider)) return false
     const entry = state.get(provider)
-    if (!entry || entry.accountId !== accountId || !entry.status) return true
+    if (!entry || entry.accountId !== accountId) return true
     if (entry.retryAtMs > now) return false
+    if (liveCovers(provider, entry, now)) return false
+    if (!entry.attemptAt) return true
     if (entry.status === 'error') return now - entry.attemptAt >= failureBackoffMs(entry.streak)
-    return now - entry.attemptAt >= MIN_REFETCH_MS
+    const wait = reason === 'poll' ? Math.max(0, pollMs - POLL_SLACK_MS) : MIN_REFETCH_MS
+    return now - entry.attemptAt >= wait
+  }
+
+  // Rate-limit windows a running chat reported for this provider's shown
+  // account (the caller checked the account). Pushed like a read's result.
+  function ingest(provider, accountId, rateLimit, observedAt = clock()) {
+    if (provider !== 'claude' && provider !== 'codex') return null
+    if (accountId !== null && typeof accountId !== 'string') return null
+    const fresh = liveWindows(rateLimit)
+    if (!fresh.length) return null
+    const now = clock()
+    const at = Number.isFinite(observedAt) ? Math.min(observedAt, now) : now
+    let entry = state.get(provider)
+    if (!entry || entry.accountId !== accountId) entry = blank(accountId)
+    // A newer reading (a read that ended after this event) is kept.
+    if (entry.updatedAt > at) return null
+    const previous = entry.snapshot && hasWindows(entry.snapshot) ? entry.snapshot : null
+    // A window absent from the event is not cleared: the other readings stay.
+    const kept = (previous?.windows || []).filter((w) => !fresh.some((f) => f.label === w.label))
+    const merged = [...fresh, ...kept.filter((w) => LIVE_LABELS.has(w.label))]
+    const order = (w) => {
+      const i = LIVE_WINDOWS.findIndex(([, label]) => label === w.label)
+      return i < 0 ? LIVE_WINDOWS.length : i
+    }
+    merged.sort((a, b) => order(a) - order(b))
+    const windows = [...merged, ...kept.filter((w) => !LIVE_LABELS.has(w.label))]
+    if (
+      previous &&
+      entry.liveAt &&
+      at - entry.liveAt < LIVE_INGEST_DEDUPE_MS &&
+      sameWindows(windows, previous.windows)
+    )
+      return null
+    const snapshot = {
+      ...(previous || {}),
+      ok: true,
+      provider,
+      accountId,
+      source: 'live',
+      live: true,
+      observedAt: at,
+      windows
+    }
+    delete snapshot.stale
+    delete snapshot.kept
+    delete snapshot.error
+    delete snapshot.code
+    // The endpoint's Retry-After and failure streak stand: a live reading does
+    // not make the next request welcome sooner.
+    Object.assign(entry, { status: entry.status === 'error' ? 'error' : 'ok', snapshot, updatedAt: at, liveAt: at })
+    state.set(provider, entry)
+    try {
+      send?.(snapshot)
+    } catch {
+      /* the window may be gone */
+    }
+    return snapshot
   }
 
   function run(provider, accountId, automatic) {
@@ -189,8 +329,21 @@ export function createUsagePoller({
     return raw
   }
 
+  // The startup read: the window shown (focused or not yet), not minimized.
+  function windowShown() {
+    const win = attached?.win
+    if (!win || win.isDestroyed?.()) return false
+    return win.isVisible() && !win.isMinimized()
+  }
+
   async function refresh(reason) {
-    if (!enabled || !configured || !windowActive()) return
+    if (!enabled || !configured) return
+    if (reason === 'startup' ? !windowShown() : !windowActive()) {
+      // Hidden or minimized at startup: its first show or focus reads.
+      if (reason === 'startup') startupPending = true
+      return
+    }
+    if (reason === 'startup') startupPending = false
     let list
     try {
       list = await targets(hidden)
@@ -201,7 +354,7 @@ export function createUsagePoller({
     const now = clock()
     await Promise.all(
       (Array.isArray(list) ? list : [])
-        .filter((item) => item && due(item.provider, item.accountId ?? null, now))
+        .filter((item) => item && due(item.provider, item.accountId ?? null, now, reason))
         .map((item) => run(item.provider, item.accountId ?? null, true))
     )
   }
@@ -227,12 +380,13 @@ export function createUsagePoller({
     attached = null
     stopTimer()
     clearStartup()
+    startupPending = false
   }
 
   function attach(win) {
     if (!win || attached?.win === win) return
     detach()
-    const onResume = () => void refresh('activate')
+    const onResume = () => void refresh(startupPending ? 'startup' : 'activate')
     const onClosed = () => detach()
     for (const name of ['focus', 'show', 'restore']) win.on(name, onResume)
     win.on('closed', onClosed)
@@ -257,8 +411,10 @@ export function createUsagePoller({
       const win = getWindow()
       if (win && !win.isDestroyed?.()) attach(win)
       startTimer()
-      if (!enabled) clearStartup()
-      else if (first && attached) {
+      if (!enabled) {
+        clearStartup()
+        startupPending = false
+      } else if (first && attached) {
         clearStartup()
         startupTimer = timers.setTimeout(() => {
           startupTimer = null
@@ -276,6 +432,7 @@ export function createUsagePoller({
       if (provider === undefined) state.clear()
       else state.delete(provider)
     },
+    ingest,
     attach,
     stop: detach,
     refresh,

@@ -3,7 +3,8 @@
 // neither reads credentials nor starts a polling loop.
 import { createProviderUsage } from './providerUsage'
 import { createResetHistory } from './resetHistory'
-import { join } from 'node:path'
+import { join, resolve, isAbsolute } from 'node:path'
+import os from 'node:os'
 import { createExtraProviderUsage } from './extraProviderUsage'
 import { createOpencodeUsageReport } from './opencodeUsageReport'
 import { t } from './i18n'
@@ -11,6 +12,85 @@ import { createUsagePoller } from './usagePoller'
 import { USAGE_PROVIDERS, validHiddenUsageProviders } from '../shared/usageProviders'
 
 const LIVE = ['claude', 'codex']
+const HOME_VARS = { claude: 'CLAUDE_CONFIG_DIR', codex: 'CODEX_HOME' }
+// How long the shown account's folder is remembered between live readings.
+const LIVE_SCOPE_TTL_MS = 30 * 1000
+
+// A login folder, compared as the file system does (Windows: any case).
+function folderKey(dir, platform = process.platform) {
+  if (typeof dir !== 'string' || !dir || !isAbsolute(dir)) return null
+  const full = resolve(dir) // no trailing separator
+  return platform === 'win32' ? full.toLowerCase() : full
+}
+
+// The folder a provider keeps its login in, from a set of variables.
+export function loginFolder(provider, env, { home = os.homedir(), base = process.env } = {}) {
+  const name = HOME_VARS[provider]
+  if (!name) return null
+  const own = env && typeof env[name] === 'string' && env[name] ? env[name] : null
+  const inherited = typeof base?.[name] === 'string' && base[name] ? base[name] : null
+  return folderKey(own || inherited || join(home, provider === 'codex' ? '.codex' : '.claude'))
+}
+
+// Live readings from chats (sessions.js onRateLimit) for the usage poller:
+// kept only when the chat runs under the account the indicator shows (same
+// login folder) and started after the last account change.
+export function createLiveUsageIngest({ accounts, poller, clock = Date.now, home, base, log } = {}) {
+  const scopes = new Map() // provider -> { at, accountId, folder } | pending promise
+  const changedAt = { claude: 0, codex: 0 }
+  async function shown(provider) {
+    const cached = scopes.get(provider)
+    if (cached && clock() - cached.at < LIVE_SCOPE_TTL_MS) return cached
+    const state = await accounts.list()
+    const row = state?.ok ? state.providers?.find((item) => item.provider === provider) : null
+    if (!row || row.error) return null
+    const accountId = row.selectedId ?? null
+    const account =
+      accountId === null ? row.system : row.accounts?.find((item) => item.id === accountId)
+    if (account?.status !== 'ready') return null
+    const resolved = accounts.usageScope
+      ? await accounts.usageScope(provider, accountId)
+      : await accounts.sessionEnv?.(provider, accountId)
+    if (!resolved?.ok || (resolved.accountId ?? null) !== accountId) return null
+    const folder = loginFolder(provider, resolved.env || {}, { home, base })
+    if (!folder) return null
+    const scope = { at: clock(), accountId, folder }
+    scopes.set(provider, scope)
+    return scope
+  }
+  return {
+    // An account was switched (or a sign-in changed): nothing older counts.
+    changed(provider) {
+      const now = clock()
+      for (const id of provider === undefined ? Object.keys(changedAt) : [provider]) {
+        if (id in changedAt) {
+          changedAt[id] = now
+          scopes.delete(id)
+        }
+      }
+    },
+    async ingest({ provider, env, since, rateLimit } = {}) {
+      if (!LIVE.includes(provider)) return null
+      const began = clock()
+      // A chat started before the last switch may run under the old login.
+      if (!Number.isFinite(since) || since < changedAt[provider]) return null
+      const folder = loginFolder(provider, env && typeof env === 'object' ? env : {}, { home, base })
+      if (!folder) return null
+      let scope
+      try {
+        scope = await shown(provider)
+      } catch {
+        return null
+      }
+      // Another account's chat, or a switch while the account was read.
+      if (!scope || scope.folder !== folder || changedAt[provider] > began) {
+        if (scope) log?.info?.('usage', `live ${provider} reading ignored: another account`) // i18n-ignore
+        return null
+      }
+      return poller.ingest?.(provider, scope.accountId, rateLimit) ?? null
+    }
+  }
+}
 
 export function registerProviderUsage({
   ipcMain,
@@ -22,7 +102,9 @@ export function registerProviderUsage({
   opencodeReport = createOpencodeUsageReport(),
   send = () => {},
   getWindow = () => null,
-  poller: givenPoller
+  poller: givenPoller,
+  // Receives the function that takes the chats' live readings.
+  onLiveIngest = null
 }) {
   const history = userData
     ? createResetHistory({ file: join(userData, 'reset-history.json'), log })
@@ -63,6 +145,12 @@ export function registerProviderUsage({
       getWindow,
       log
     })
+  const live = createLiveUsageIngest({ accounts, poller, log })
+  try {
+    onLiveIngest?.((event) => live.ingest(event))
+  } catch {
+    /* no live readings then */
+  }
   const known = (query) =>
     USAGE_PROVIDERS.some((p) => p.id === query.provider) &&
     (query.accountId === null || query.accountId === undefined || typeof query.accountId === 'string')
@@ -137,6 +225,7 @@ export function registerProviderUsage({
       ({ provider, id }) => {
         usage.invalidate(provider)
         poller.forget(provider)
+        live.changed(provider)
         return accounts[name](provider, name === 'startLogin' && id === undefined ? null : id)
       },
       () => t('main.accounts.providerUpdateFailed', 'Could not update the provider account.')
@@ -147,6 +236,7 @@ export function registerProviderUsage({
     (id) => {
       usage.invalidate()
       poller.forget()
+      live.changed()
       return accounts.cancelLogin(id)
     },
     () => t('main.login.cancelFailed', 'Could not cancel provider sign-in.')

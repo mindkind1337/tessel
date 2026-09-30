@@ -166,7 +166,10 @@ export const DEFAULT_SETTINGS = Object.freeze({
   hideMouseWhileTyping: false,
   usagePercentageDisplay: 'used', // 'used' | 'remaining'
   // Minutes between automatic usage refreshes while the window is in use; 0 = off.
-  usageRefreshMinutes: 15,
+  usageRefreshMinutes: 2,
+  // Set once 2 min became the default: a 15 saved before is that old default,
+  // not a choice, and becomes 2 (a 15 chosen afterwards stays).
+  usageRefreshDefault2: true,
   showGitIgnoredFiles: true,
 
   // Terminal rendering and interaction. gpuAcceleration: 'auto' (WebGL
@@ -218,7 +221,7 @@ export const EDITOR_AUTOSAVE_MAX_MS = 10000
 
 // Ranges, as in Orca's settings.
 // The choices Settings offers for the automatic usage refresh (0 = off).
-export const USAGE_REFRESH_MINUTES = Object.freeze([0, 5, 15, 30, 60])
+export const USAGE_REFRESH_MINUTES = Object.freeze([0, 2, 5, 15, 30, 60])
 export const LIMITS = Object.freeze({
   fontWeight: [100, 900],
   fontWeightBold: [100, 900],
@@ -353,6 +356,8 @@ export function loadSettings(saved) {
     if (key === 'alertSound' && !['none', 'chime', 'ping'].includes(v)) continue
     if (key === 'usagePercentageDisplay' && !['used', 'remaining'].includes(v)) continue
     if (key === 'usageRefreshMinutes' && !USAGE_REFRESH_MINUTES.includes(v)) continue
+    if (key === 'usageRefreshMinutes' && v === 15 && saved.usageRefreshDefault2 !== true) continue
+    if (key === 'usageRefreshDefault2') continue
     if (key === 'sourceControlGroupOrder' && !SOURCE_CONTROL_GROUP_ORDERS.includes(v)) continue
     if (key === 'sourceControlViewMode' && !['tree', 'list'].includes(v)) continue
     if (key === 'branchPrefix' && !BRANCH_PREFIX_MODES.includes(v)) continue

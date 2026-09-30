@@ -1085,10 +1085,14 @@ app.whenReady().then(() => {
 // Images attached to chat messages: Tessel's own copies (chat/chatImages.js).
 const chatImages = createChatImages({ nativeImage, log })
 chatImages.sweep()
+// The usage indicator's live readings (usagePoller.js ingest), set once the
+// usage service is registered below.
+let usageLiveIngest = null
 const chatSessions = createChatSessions({
   dir: app.getPath('userData'),
   images: chatImages,
   send,
+  onRateLimit: (event) => void usageLiveIngest?.(event)?.catch?.(() => {}),
   // Claude (stream-json), Codex (codex app-server, JSON-RPC) or OpenCode
   // (opencode serve: HTTP + SSE on 127.0.0.1 with a password of its own).
   createAdapter: (opts) => (opts && opts.agent === 'codex' ? createCodexChat(opts) : opts && opts.agent === 'opencode' ? createOpencodeChat({ ...opts, pids: opencodePids, envPluginFile: join(app.getPath('userData'), 'opencode-chat', 'tessel-chat-env.js') }) : createClaudeChat(opts)),
@@ -1570,8 +1574,9 @@ const accounts = createProviderAccounts({
   codex: createCodexAccounts(accountOptions)
 })
 ipcMain.handle('accounts:list', safe(() => accounts.list()))
-// Usage refresh: every 15 min while the window is in use, and on focus when older
-// than 5 min (usagePoller.js); results are pushed on providerUsage:update.
+// Usage refresh: at startup, every 2 min (Settings) while the window is in use,
+// on focus when older than 5 min, and from the chats' own rate-limit reports
+// (usagePoller.js); results are pushed on providerUsage:update.
 registerProviderUsage({
   ipcMain,
   accounts,
@@ -1579,7 +1584,10 @@ registerProviderUsage({
   log,
   listAgents: () => getAgents(),
   send,
-  getWindow: () => mainWindow
+  getWindow: () => mainWindow,
+  onLiveIngest: (ingest) => {
+    usageLiveIngest = ingest
+  }
 })
 ipcMain.handle('accounts:loginStatus', safe((id) => accounts.loginStatus(id)))
 ipcMain.handle('accounts:launchEnv', safe((query) => typeof query === 'string'

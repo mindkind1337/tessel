@@ -131,7 +131,11 @@ export function createChatSessions(deps) {
     readHistory = readTranscriptHistory,
     readOlder = readOlderHistory,
     // Attached images (chatImages.js): chat:send names them by id.
-    images = null
+    images = null,
+    // The rate-limit windows a Claude or Codex chat reports, for the usage
+    // indicator ({ provider, env, since, rateLimit }; providerUsageIpc.js
+    // keeps them only for the account it shows). Never a token.
+    onRateLimit = null
   } = deps || {}
   const sessions = new Map() // paneId -> session
   const seqs = new Map() // paneId -> last seq (outlives a session)
@@ -776,6 +780,18 @@ export function createChatSessions(deps) {
         ...(e.fiveHour ? { fiveHour: e.fiveHour } : {}),
         ...(e.sevenDay ? { sevenDay: e.sevenDay } : {})
       })
+      if (onRateLimit && (s.agent === 'claude' || s.agent === 'codex')) {
+        try {
+          onRateLimit({
+            provider: s.agent,
+            env: { ...(s.usageEnv || {}) },
+            since: s.startedAt ?? null,
+            rateLimit: { fiveHour: e.fiveHour || null, sevenDay: e.sevenDay || null }
+          })
+        } catch (err) {
+          logAt('warn', `usage update failed: ${err?.message || err}`)
+        }
+      }
     })
     on('authError', () => {
       if (!s.ready) return // the start result reports it
@@ -1077,6 +1093,11 @@ export function createChatSessions(deps) {
       let base = envDeps.forPane({ paneId, cwd, projectDir: s.projectDir, accountEnv, ...(envOpts || {}) })
       if (base && typeof base === 'object' && base.env && typeof base.env === 'object') base = base.env
       const childEnv = buildChatEnv(base, { agent, paneId, teamSecret, projectDir: s.projectDir, pathEnv: found.pathEnv })
+      // Which login's limits this chat reports: its config folder only.
+      s.usageEnv = {}
+      for (const name of ['CLAUDE_CONFIG_DIR', 'CODEX_HOME'])
+        if (typeof childEnv?.[name] === 'string' && childEnv[name]) s.usageEnv[name] = childEnv[name]
+      s.startedAt = now()
       // Where this agent keeps its conversations (for the older pages too).
       try {
         s.historyHome = transcriptHome(agent, childEnv) || null

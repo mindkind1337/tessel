@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { nextTick } from 'vue'
-import { settings } from '../settings'
+import { settings, loadSettings, resetSettings, DEFAULT_SETTINGS, USAGE_REFRESH_MINUTES } from '../settings'
 import { flushPromises, mount } from '@vue/test-utils'
 import UsageMenu from '../components/UsageMenu.vue'
 
@@ -81,5 +81,29 @@ describe('usage menu automatic refresh', () => {
     await nextTick()
     expect(button().classes()).not.toContain('usage-bad')
     settings.hiddenUsageProviders = []
+  })
+})
+
+describe('usage refresh setting', () => {
+  afterEach(() => resetSettings())
+
+  it('offers 2 min and makes it the default', () => {
+    expect(USAGE_REFRESH_MINUTES).toEqual([0, 2, 5, 15, 30, 60])
+    expect(DEFAULT_SETTINGS.usageRefreshMinutes).toBe(2)
+  })
+
+  it('moves the old 15-min default to 2 min once; a later choice stays', () => {
+    loadSettings({ usageRefreshMinutes: 15 })
+    expect(settings.usageRefreshMinutes).toBe(2)
+    loadSettings({ usageRefreshMinutes: 15, usageRefreshDefault2: true })
+    expect(settings.usageRefreshMinutes).toBe(15)
+    resetSettings()
+    loadSettings({ usageRefreshMinutes: 30 })
+    expect(settings.usageRefreshMinutes).toBe(30)
+    loadSettings({ usageRefreshMinutes: 0 })
+    expect(settings.usageRefreshMinutes).toBe(0)
+    loadSettings({ usageRefreshMinutes: 7 })
+    expect(settings.usageRefreshMinutes).toBe(0)
+    expect(settings.usageRefreshDefault2).toBe(true)
   })
 })

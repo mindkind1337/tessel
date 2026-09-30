@@ -1,8 +1,9 @@
 <script setup>
 // Local quota observations update the toolbar. Authenticated provider reads
 // happen on menu/open/refresh actions, and from the main process's automatic
-// refresh (usagePoller.js: every 15 min while the window is in use, on focus
-// when older than 5 min), whose readings arrive on providerUsage.onUpdate and
+// refresh (usagePoller.js: at startup, every 2 min by default while the window
+// is in use, on focus when older than 5 min, and the limits a running chat
+// reports), whose readings arrive on providerUsage.onUpdate and
 // colour the icon without a click. Redeeming an actual reset credit
 // additionally requires confirmation.
 // Roster and provider flyout patterns inspired by Orca UsageRosterPanel,
