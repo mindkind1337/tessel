@@ -601,6 +601,22 @@ describe('ChatPane.vue', () => {
     }
   })
 
+  it('Codex chat: its effort (from its conversation) shows in the header and feeds the effort picker, without any new event', async () => {
+    modelLists.codex = { models: [{ id: 'gpt-6-astra', label: 'GPT-6-Astra', effortLevels: ['low', 'medium', 'high'] }], fetchedAt: Date.now() }
+    const prev = window.shellApi.agentModel
+    window.shellApi.agentModel = vi.fn(async () => ({ model: 'gpt-6-astra', effort: 'medium', source: 'session' }))
+    try {
+      await mountPane({ agentId: 'codex', title: 'Codex', model: 'gpt-6-astra', sessionId: '01a0ec6d-21fa-7941-a0c6-4f0cc5d59814' })
+      await settle()
+      expect(window.shellApi.agentModel).toHaveBeenCalled()
+      expect(node.shownEffort).toBe('medium')
+      expect(wrapper.get('[data-test="chat-model"]').text()).toContain('medium')
+    } finally {
+      window.shellApi.agentModel = prev
+      resetModelListsForTests()
+    }
+  })
+
   it('header: rate limits, Yolo on the icon ring only (no badge), maximize and close', async () => {
     await mountPane({}, { chatPermissions: () => 'yolo' })
     emit({ type: 'rateLimit', fiveHour: { utilization: 0.42 }, sevenDay: { utilization: 0.1 } })
