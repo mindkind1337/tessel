@@ -24,6 +24,7 @@ import {
   reduceAgentState,
   publicAgentState
 } from '../../../shared/agentStateModel'
+import { Terminal } from '@xterm/headless'
 
 describe('terminal activity and authoritative agent events', () => {
   let monitor, node, state, screen, callbacks, sequence
@@ -230,6 +231,17 @@ describe('terminal activity and authoritative agent events', () => {
     expect(monitoring[node.id]).toBeUndefined()
   })
 
+  it('a Stop is confirmed by Claude waiting at its input, a draft typed in it or not', async () => {
+    hook('UserPromptSubmit')
+    hook('Stop')
+    screen = { ...screen, ready: false, waiting: true, screen: 'Done.\n> next que' }
+    monitor.output()
+    await vi.advanceTimersByTimeAsync(1400)
+    expect(agentStates[node.id]).toMatchObject({ state: 'idle', reason: 'ready' })
+    expect(agentStatus[node.id]).toBe('idle')
+    expect(callbacks.onCompleted).toHaveBeenCalledTimes(1)
+  })
+
   it('an interrupted Claude turn (no Stop hook) is idle once its screen says so', async () => {
     hook('UserPromptSubmit')
     hook('PreToolUse', { toolId: 'tool-1' })
@@ -425,6 +437,59 @@ describe('actual terminal prompt evidence', () => {
       agentScreenObservation(terminal('› ', 2), 'codex', '■ Conversation interrupted - tell the model what to do differently.\n\n› ').interrupted
     ).toBe(true)
     expect(agentScreenObservation(terminal('› ', 2), 'codex', 'Done.\n\n› ').interrupted).toBe(false)
+  })
+  // Claude Code 2.1 in a Tessel pane (cmd under ConPTY, no WT_SESSION): its
+  // prompt is the ASCII ">" (figures' fallback), its dim text is grey, and
+  // it keeps the cursor in its input. From a live pane's screen.
+  const GREY = '\x1b[38;2;153;153;153m'
+  const RULE_ROW = `\x1b[38;2;136;136;136m${'─'.repeat(50)}\x1b[0m`
+  const STATUS = '  \x1b[38;2;255;107;128m⏵⏵ bypass permissions on \x1b[38;2;153;153;153m(shift+tab to cycle)\x1b[0m'
+  async function claudeScreen(rows, [row, col]) {
+    const term = new Terminal({ cols: 60, rows: rows.length + 2, allowProposedApi: true })
+    await new Promise((resolve) => term.write(`${rows.join('\r\n')}\x1b[${row + 1};${col + 1}H`, resolve))
+    const buffer = term.buffer.active
+    const text = []
+    for (let y = 0; y < term.rows; y++) {
+      const line = buffer.getLine(y).translateToString(true)
+      if (line.trim()) text.push(line)
+    }
+    return agentScreenObservation(term, 'claude', text.join('\n'))
+  }
+  it("reads Claude Code's ASCII prompt under its input rule, empty or with its grey placeholder", async () => {
+    const box = (input) => ['● Done.', '', RULE_ROW, input, RULE_ROW, '', STATUS]
+    expect(await claudeScreen(box('> '), [3, 2])).toMatchObject({ ready: true, waiting: true, busy: false })
+    expect(await claudeScreen(box('> '), [3, 1])).toMatchObject({ ready: true, waiting: true })
+    expect(await claudeScreen(box(`> ${GREY}Try "fix lint errors"\x1b[0m`), [3, 2])).toMatchObject({ ready: true, waiting: true })
+    // A draft typed in it: waiting at its input, but not an empty prompt.
+    expect(await claudeScreen(box('> fix the tests'), [3, 15])).toMatchObject({ ready: false, waiting: true })
+  })
+  it('reads an interrupted Claude Code turn with text left in its input', async () => {
+    const observed = await claudeScreen(
+      [
+        `  ${GREY}Searched for 2 patterns, read 1 file`,
+        '  ⎿  Interrupted · What should Claude do instead?\x1b[0m',
+        RULE_ROW,
+        '> Interrupted',
+        RULE_ROW,
+        '',
+        STATUS
+      ],
+      [3, 13]
+    )
+    expect(observed).toMatchObject({ waiting: true, interrupted: true })
+  })
+  it('a ">" elsewhere is not Claude\'s input: quoted text, a shell prompt, or the cursor before it', async () => {
+    expect(await claudeScreen(['Answer:', '> quoted line', '', STATUS], [1, 13])).toMatchObject({ ready: false, waiting: false })
+    expect(await claudeScreen(['C:\\Tessel>'], [0, 10])).toMatchObject({ ready: false, waiting: false })
+    expect(await claudeScreen(['● Done.', RULE_ROW, '> ', RULE_ROW], [2, 0])).toMatchObject({ waiting: false })
+  })
+  it("sees Claude's running footer above its input under a tall status line", async () => {
+    const status = Array.from({ length: 9 }, (_, i) => `  status line ${i}`)
+    const observed = await claudeScreen(
+      ['✻ Thinking… (12s · esc to interrupt)', '', RULE_ROW, '> ', RULE_ROW, ...status],
+      [3, 2]
+    )
+    expect(observed).toMatchObject({ busy: true, ready: false, waiting: false })
   })
   it('keeps approval and quota evidence ahead of prompt readiness', () => {
     expect(

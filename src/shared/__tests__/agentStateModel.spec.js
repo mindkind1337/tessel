@@ -785,6 +785,46 @@ describe('agents whose hooks alone report their status (hooksAlone)', () => {
 })
 
 describe('work that ends without a new event (finished agents never stay working)', () => {
+  // A Claude Code pane whose screen never reported ready (its prompt went
+  // unread): each Stop left it "working"/settling; the next turn went on
+  // from there, so it read working since its first turn, for hours.
+  it('a settled Stop really ends the turn: the next one is new work, not the old one going on', () => {
+    const f = fixture('claude')
+    f.send('UserPromptSubmit', 1000)
+    f.send('Stop', 5000)
+    const next = 5001 + AGENT_SETTLE_MS
+    expect(f.send('UserPromptSubmit', next)).toMatchObject({ state: 'working', reason: 'processing', since: next })
+    expect(f.send('Stop', next + 10)).toMatchObject({ state: 'working', reason: 'settling', since: next })
+    // A turn started by the agent itself (a background task's end): no
+    // prompt hook, only its tools.
+    const tool = next + 20 + AGENT_SETTLE_MS
+    expect(f.send('PreToolUse', tool, { toolName: 'Bash', toolId: 'tool-1' })).toMatchObject({
+      state: 'working',
+      reason: 'processing',
+      since: tool
+    })
+    // Within the settle time, it is the same turn going on.
+    const g = fixture('claude')
+    g.send('UserPromptSubmit', 1000)
+    g.send('Stop', 5000)
+    expect(g.send('PreToolUse', 5000 + AGENT_SETTLE_MS, { toolName: 'Bash' })).toMatchObject({ state: 'working', since: 1000 })
+  })
+
+  it('a settled Stop still completes on a later ready screen, and a running footer after it shows work again', () => {
+    const f = fixture('claude')
+    f.send('UserPromptSubmit', 1000)
+    f.send('Stop', 5000)
+    const later = 5000 + 3 * AGENT_SETTLE_MS
+    expect(f.send('ScreenReady', later)).toMatchObject({ state: 'idle', reason: 'ready', turnCompletedAt: later })
+    const g = fixture('claude')
+    g.send('UserPromptSubmit', 1000)
+    g.send('Stop', 5000)
+    const busy = 5001 + AGENT_SETTLE_MS
+    expect(g.send('ScreenBusy', busy)).toMatchObject({ state: 'working', source: 'screen', since: busy })
+    // ...only while that footer is seen.
+    expect(publicAgentState(g.state, busy + SCREEN_WORK_MS + 1)).toMatchObject({ state: 'idle', reason: 'ready' })
+  })
+
   it('a settled Stop is idle, since the Stop, with no later event', () => {
     const f = fixture('claude')
     f.send('UserPromptSubmit', 1000)

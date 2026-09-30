@@ -85,10 +85,54 @@ export function applyAgentStates(snapshot) {
   }
 }
 
+const FOOTER = /\besc(?:ape)?\s+(?:to\s+)?(?:interrupt|cancel)\b/i
+const RULE = /^[─━]{8,}$/
+const rowText = (buffer, y) => (y >= 0 ? buffer.getLine(y)?.translateToString(true) || '' : '')
+// A placeholder or hint: drawn dim, or in a colour (Claude Code draws its dim
+// text in grey, not with the terminal's dim attribute). Typed text is plain.
+const hintCell = (cell) =>
+  !!cell && (cell.isDim() || (typeof cell.isFgDefault === 'function' && !cell.isFgDefault()))
+
+// Claude Code's input line, where the cursor is: its prompt "❯", or ">" where
+// the terminal is not known to show Unicode (Claude Code's fallback on
+// Windows without Windows Terminal: every Tessel pane), then the cursor. A
+// ">" line must sit under the input box's top rule ("────"): the same
+// character starts quoted text and other programs' prompts.
+// null: the cursor is not in Claude Code's input. empty: nothing typed (a
+// placeholder at most).
+function claudeInput(term) {
+  const buffer = term.buffer.active
+  const y = buffer.baseY + buffer.cursorY
+  const line = buffer.getLine(y)
+  const text = line?.translateToString(true) || ''
+  const at = text.search(/\S/)
+  if (at < 0 || !['❯', '>'].includes(text[at]) || buffer.cursorX <= at) return null
+  if (text[at] === '>' && !RULE.test(rowText(buffer, y - 1).trim())) return null
+  let typed = false
+  for (let x = at + 1; x < text.length && !typed; x++) {
+    const cell = line.getCell(x)
+    if (cell && cell.getChars().trim() && !hintCell(cell)) typed = true
+  }
+  return { empty: !typed && buffer.cursorX <= at + 2 }
+}
+
+// The rows just above the cursor: Claude Code's spinner and its "esc to
+// interrupt" sit right above its input box, while a tall status line under
+// the box can push them out of the screen's last lines.
+function aboveCursor(term, rows = 5) {
+  const buffer = term.buffer.active
+  const y = buffer.baseY + buffer.cursorY
+  const out = []
+  for (let i = rows; i >= 1; i--) out.push(rowText(buffer, y - i))
+  return out.join('\n')
+}
+
 // Read the actual input cursor/cells, not a prompt-looking line in an answer.
 // A visible input can remain underneath an active turn, so the running footer
 // vetoes readiness. A main-process Stop candidate is still required for a
 // completion: this observation alone cannot finish known hook work.
+// ready: an empty input (automations wait for it). waiting: the agent waits
+// at its input, maybe with a draft typed in it (its status: not running).
 export function agentScreenObservation(term, provider, screen) {
   const approval = detectApproval(screen)
   const limit = detectLimit(screen)
@@ -96,10 +140,16 @@ export function agentScreenObservation(term, provider, screen) {
     .split(/\r?\n/)
     .slice(-8)
     .join('\n')
-  const busy = /\besc(?:ape)?\s+(?:to\s+)?(?:interrupt|cancel)\b/i.test(footer)
+  const busy =
+    FOOTER.test(footer) || (!!term && provider === 'claude' && FOOTER.test(aboveCursor(term)))
   let ready = false
+  let waiting = false
   const prompt = provider === 'claude' ? '❯' : provider === 'codex' ? '›' : null
-  if (term && prompt && !approval && !limit && !busy) {
+  if (term && provider === 'claude' && !approval && !limit && !busy) {
+    const input = claudeInput(term)
+    ready = !!input?.empty
+    waiting = !!input
+  } else if (term && prompt && !approval && !limit && !busy) {
     ready = promptShowsPlaceholder(term, prompt)
     if (!ready) {
       const buffer = term.buffer.active
@@ -112,6 +162,7 @@ export function agentScreenObservation(term, provider, screen) {
         !text.slice(at + prompt.length).trim() &&
         buffer.cursorX === at + prompt.length + 1
     }
+    waiting = ready
   }
   // Claude Code runs no hook when its turn is interrupted (Esc): it says so
   // just above its prompt ("⎿  Interrupted · What should Claude do instead?"),
@@ -122,10 +173,10 @@ export function agentScreenObservation(term, provider, screen) {
     .slice(-16)
     .join('\n')
   const interrupted =
-    ready &&
+    waiting &&
     ((provider === 'claude' && /\bInterrupted\b\s*(?:by user|·\s*What should Claude do instead)/i.test(above)) ||
       (provider === 'codex' && /\bConversation interrupted\b/i.test(above)))
-  return { screen, approval, limit, busy, ready, interrupted }
+  return { screen, approval, limit, busy, ready, waiting, interrupted }
 }
 
 // Shared by TerminalPane and clock-driven tests. Hook state owns the result;
@@ -193,7 +244,8 @@ export function createAgentActivityMonitor({
     }
     if (managed) {
       // Absence of matching text is not proof that a hook approval ended.
-      if (observation.ready) {
+      // At its input, a draft typed or not: not running.
+      if (observation.ready || observation.waiting) {
         const hadApproval =
           approvals[node.id] || getAgentState(node.id, node.agentLaunchToken)?.state === 'approval'
         onApproval(false)

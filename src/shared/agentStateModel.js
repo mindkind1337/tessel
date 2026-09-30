@@ -598,6 +598,28 @@ function applyScreen(target, event, alone = false) {
   }
 }
 
+// A Stop that no ready screen confirmed, with no event at all since for
+// AGENT_SETTLE_MS: publicScope already shows it idle. The next event first
+// makes that end real, so a pane whose screen never reports (another
+// workspace, a prompt the observer cannot read) does not stay "working" from
+// one turn to the next, its next turn counting from the first one's start.
+// The Stop candidate is kept: a later ready screen still marks the turn
+// completed, as it would have while settling.
+const settledAt = (value, at) =>
+  value.state === 'working' &&
+  value.reason === 'settling' &&
+  value.stopCandidateAt != null &&
+  !value.continuing &&
+  at - Math.max(value.stopCandidateAt, value.lastEventAt ?? 0) > AGENT_SETTLE_MS
+
+function settle(target) {
+  clearPending(target)
+  target.state = 'idle'
+  target.reason = 'ready'
+  target.readyReason = 'ready'
+  target.since = target.stopCandidateAt
+}
+
 export function reduceAgentState(state, event, now = Date.now()) {
   if (!validateAgentState(state)) throw new TypeError('Invalid agent state')
   if (!validEvent(state, event, now)) return state
@@ -706,6 +728,9 @@ export function reduceAgentState(state, event, now = Date.now()) {
   } else if (!next.sessionId && event.source === 'hook') {
     next.sessionId = event.sessionId
   }
+  if (!changedSession && settledAt(target, event.at)) settle(target)
+  // Its state before this event (a settled turn already ended).
+  const prior = { state: target.state, since: target.since }
 
   if (event.source === 'screen') {
     if (!applyScreen(target, event, hooksAlone(state.provider))) return state
@@ -763,7 +788,7 @@ export function reduceAgentState(state, event, now = Date.now()) {
   target.confirmed = true
   target.observedAt = Math.max(target.observedAt ?? event.at, event.at)
   target.lastEventAt = Math.max(target.lastEventAt, event.at)
-  if (!changedSession && existing?.state === target.state) target.since = existing.since
+  if (!changedSession && existing && prior.state === target.state) target.since = prior.since
   return next
 }
 
