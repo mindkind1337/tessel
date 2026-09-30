@@ -27,6 +27,7 @@ import { useStructuredAgentSession } from '../../chat/orca/composables/useStruct
 import { rateLimitParts } from '../../chat/chatModel'
 import { modelLabel } from '../../../../shared/modelLabel'
 import { modelsFor } from '../../agentModels'
+import { nativeChatSessionChoiceLabel } from '../../chat/orca/native-chat-session-option-labels.js'
 import { t } from '../../i18n'
 
 const props = defineProps({
@@ -112,10 +113,14 @@ const yolo = computed(() => permissionMode.value === 'bypassPermissions' || perm
 
 // The model's name as its list gives it ("opus" -> "Opus 5.5"), else the
 // short name read from its id.
+// The same words as the composer's pills: the model's name from its list
+// (by id, or by the alias the agent's full id stands for), else its short
+// name.
 function chatModelName(id) {
-  const listed = modelsFor(agentId.value).find((x) => x.id === id)
+  const list = modelsFor(agentId.value)
   const short = modelLabel(id)
-  return listed && listed.label && /\d/.test(listed.label) && !/\d/.test(short) ? listed.label : short
+  const listed = list.find((x) => x.id === id) || list.find((x) => x.label && x.label === short)
+  return listed && listed.label ? listed.label : short
 }
 // The effort when the pane chose none: what the agent's own settings or its
 // conversation say (the same lookup as a terminal pane's header).
@@ -149,7 +154,8 @@ const modelText = computed(() => {
   if (!m) return ''
   const name = chatModelName(m)
   const effort = props.node.effort || settledEffort.value
-  return effort ? `${name} · ${effort}` : name
+  // The effort as the options pill words it ("Extra high", in your language).
+  return effort ? `${name} · ${nativeChatSessionChoiceLabel({ value: effort, label: effort })}` : name
 })
 
 // The sidebar shows the same text (sidebarModel.js); not saved with the layout.
