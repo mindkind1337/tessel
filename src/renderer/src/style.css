@@ -222,6 +222,8 @@ button {
   place-items: center;
   width: 30px;
   height: 28px;
+  /* No default button padding: an icon stays centred in a narrow button. */
+  padding: 0;
   border: 0;
   border-radius: var(--radius);
   background: transparent;
