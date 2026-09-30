@@ -23,7 +23,7 @@ import { settings } from '../../settings'
 import { inYoloFolder } from '../../../../shared/agentPrefs'
 import { teamNumber } from '../../teamNumber'
 import { computed, inject, nextTick, onBeforeUnmount, onMounted, provide, reactive, ref, shallowRef, watch } from 'vue'
-import { SquareTerminal, Ellipsis } from 'lucide-vue-next'
+import { Ellipsis } from 'lucide-vue-next'
 import BrandIcon from '../BrandIcon.vue'
 import AgentChildren from '../AgentChildren.vue'
 import NativeChatView from './orca/NativeChatView.vue'
@@ -52,7 +52,9 @@ const rootEl = ref(null)
 const viewRef = shallowRef(null)
 const headerMenuRef = shallowRef(null)
 // The header's … button: the chat's menu, under the button.
+let moreButton = null
 async function openMore(event) {
+  moreButton = event.currentTarget
   const r = event.currentTarget.getBoundingClientRect()
   const selection = window.getSelection()
   headerSelection.value = selection && rootEl.value?.contains(selection.anchorNode) && rootEl.value?.contains(selection.focusNode) ? selection.toString() : ''
@@ -564,7 +566,11 @@ const headerMenuBindings = computed(() => {
     teamFactTitle: () => team.value?.name || '',
     yoloTitle: () => t('chat.pane.yoloHint', 'Tools run without asking (Settings)'),
     closeCtxMenu: closeHeaderMenu,
-    closeCtxMenuAndRefocus: closeHeaderMenu,
+    // Esc: closed, the … button focused again.
+    closeCtxMenuAndRefocus: () => {
+      closeHeaderMenu()
+      if (moreButton && moreButton.isConnected) moreButton.focus()
+    },
     menuCopy: headerAction(() => window.shellApi.writeClipboard(headerSelection.value)),
     menuPaste: headerAction(() => viewRef.value?.pasteFromClipboard()),
     menuCopySession: headerAction(() => window.shellApi.writeClipboard(props.node.sessionId)),
@@ -667,16 +673,6 @@ defineExpose({ start, send, interrupt, focusPendingApproval, focusComposer: () =
         <span v-if="rateText" class="chat-rate" data-test="chat-rate" :title="t('chat.rate.hint', '{{agent}} usage limits (5 hours, 7 days)', { agent: agentName })">{{ rateText }}</span>
       </div>
       <div class="pane-nav-actions" @mousedown.stop>
-        <button
-          v-if="ctx.switchToTerminal && node.sessionId"
-          class="pane-nav-btn"
-          data-test="chat-open-terminal"
-          :title="t('chat.pane.openInTerminalHint', 'Continue this conversation in a terminal pane: same pane, same permissions or fewer')"
-          :aria-label="t('chat.pane.openInTerminal', 'Open in terminal')"
-          @click="ctx.switchToTerminal(node.id)"
-        >
-          <SquareTerminal :size="14" aria-hidden="true" />
-        </button>
         <!-- More options: the chat's menu (as a right-click in it). -->
         <button
           class="pane-nav-btn"
