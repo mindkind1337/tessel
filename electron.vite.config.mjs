@@ -52,6 +52,13 @@ export default defineConfig({
     // ES modules that import other chunks: bundled as ES workers.
     worker: {
       format: 'es'
+    },
+    // Dev: the app's modules are compiled when the server starts, not while
+    // the window waits on a black page (a cold start took over 30 s).
+    server: {
+      warmup: {
+        clientFiles: ['./src/renderer/src/main.js', './src/renderer/src/App.vue', './src/renderer/src/components/**/*.vue']
+      }
     }
   }
 })

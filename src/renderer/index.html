@@ -10,7 +10,21 @@
     <title>Tessel</title>
   </head>
   <body>
-    <div id="app"></div>
+    <!-- Shown until the app mounts (Vue replaces it): the icon on the app's
+         background, never a black window. -->
+    <div id="app">
+      <div style="position: fixed; inset: 0; display: grid; place-items: center; background: #101216">
+        <svg width="56" height="56" viewBox="0 0 24 24" aria-hidden="true" style="opacity: 0.9; animation: tessel-boot 1.4s ease-in-out infinite alternate">
+          <rect x="3" y="3" width="5" height="5" rx="1.2" fill="#f5c542" />
+          <rect x="9.5" y="3" width="5" height="5" rx="1.2" fill="#f5c542" />
+          <rect x="16" y="3" width="5" height="5" rx="1.2" fill="#f5c542" />
+          <rect x="9.5" y="9.5" width="5" height="5" rx="1.2" fill="#c9a23b" />
+          <rect x="9.5" y="16" width="5" height="5" rx="1.2" fill="#957a31" />
+          <rect x="16" y="16" width="5" height="5" rx="1.2" fill="#e6e6e6" />
+        </svg>
+      </div>
+      <style>@keyframes tessel-boot { from { opacity: 0.45 } to { opacity: 0.95 } }</style>
+    </div>
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>
