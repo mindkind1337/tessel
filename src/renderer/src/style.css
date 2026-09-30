@@ -120,6 +120,11 @@ button {
   flex: 0 0 auto;
   -webkit-app-region: drag;
 }
+/* A menu or popup is open (App.vue watches for one): a click on the toolbar
+   closes it (a window-drag area would keep the click from the page). */
+body.popup-open .toolbar {
+  -webkit-app-region: no-drag;
+}
 
 .toolbar button,
 .toolbar .menu-group {
