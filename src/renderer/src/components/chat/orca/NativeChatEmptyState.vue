@@ -19,7 +19,7 @@ const props = defineProps({
 
 // The agent's product name (the reference's formatAgentTypeLabel for Tessel's agents).
 // Product names, the same in every language.
-const AGENT_LABELS = { claude: 'Claude', codex: 'Codex' } // i18n-ignore
+const AGENT_LABELS = { claude: 'Claude', codex: 'Codex', opencode: 'OpenCode' } // i18n-ignore
 function agentLabel(agent) {
   if (!agent) return t('chat.orca.state.theAgent', 'the agent')
   return AGENT_LABELS[agent] || agent.charAt(0).toUpperCase() + agent.slice(1)

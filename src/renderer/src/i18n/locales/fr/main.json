@@ -739,7 +739,7 @@
       "tooMany": "Trop de chats sont ouverts.",
       "untrusted": "Ce dossier n'est pas encore approuvé pour les agents de chat.",
       "trustTitle": "Approuver ce dossier pour un agent de chat ?",
-      "trustMessage": "Un agent de chat exécute Claude ou Codex dans {{dir}} sans son terminal : il exécute alors les hooks et les serveurs MCP que ce dossier définit (.claude/settings.json, .mcp.json, .codex/config.toml) sans demander.",
+      "trustMessage": "Un agent de chat exécute Claude, Codex ou OpenCode dans {{dir}} sans son terminal : il exécute alors les hooks, les plugins et les serveurs MCP que ce dossier définit (.claude/settings.json, .mcp.json, .codex/config.toml, opencode.json, .opencode/) sans demander.",
       "trustDetail": "Ne l'approuvez que si vous savez d'où vient ce dossier. Dans un panneau terminal, l'agent vous le demande lui-même.",
       "trustYes": "Approuver ce dossier",
       "trustNo": "Annuler",
@@ -757,7 +757,17 @@
       "inputUnseen": "Affichez l'intégralité de la demande avant de l'autoriser.",
       "asleepOther": "Ce panneau contient une autre conversation (en veille). Fermez-la d'abord.",
       "historyImported": "Conversation précédente, tirée de l’historique que garde {{agent}}.",
-      "historyImportedPart": "Conversation précédente, tirée de l’historique que garde {{agent}} (seulement sa partie la plus récente)."
+      "historyImportedPart": "Conversation précédente, tirée de l’historique que garde {{agent}} (seulement sa partie la plus récente).",
+      "opencodeAuthError": "OpenCode n'a pas de connexion valide pour ce fournisseur. Lancez opencode auth login, puis rouvrez ce chat.",
+      "opencodePostureChanged": "OpenCode n'appliquait plus les permissions Manuel (demander avant les modifications et les commandes) : le tour a été arrêté et le chat fermé.",
+      "opencodeSignin": "OpenCode n'a aucun fournisseur connecté. Lancez opencode auth login, puis réessayez.",
+      "opencodeSpawnFailed": "OpenCode n'a pas pu démarrer.",
+      "opencodeStartTimeout": "OpenCode n'a pas répondu à temps.",
+      "opencodeExitedAtStart": "OpenCode s'est arrêté pendant son démarrage.",
+      "opencodePosture": "OpenCode n'a pas confirmé les permissions Manuel (demander avant les modifications et les commandes, pour chaque agent) : le chat n'a pas été ouvert.",
+      "noOpencode": "OpenCode est introuvable. Installez-le, puis réessayez.",
+      "opencodeAuthNotEnforced": "OpenCode a répondu sans son mot de passe : le chat n'a pas été ouvert.",
+      "opencodeVersion": "Cet OpenCode est plus ancien que {{version}}, la version avec laquelle Tessel a été testé. Mettez OpenCode à jour, puis réessayez."
     },
     "browserMenu": {
       "openLinkNewPane": "Ouvrir le lien dans un nouveau volet",

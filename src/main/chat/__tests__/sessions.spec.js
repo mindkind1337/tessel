@@ -1626,3 +1626,103 @@ describe('earlier history of a resumed conversation', () => {
     expect(events('history')).toHaveLength(0)
   })
 })
+
+describe('opencode', () => {
+  const sid = 'ses_f106568edffeX593nuABwvaO1O'
+  beforeEach(() => {
+    deps.resolveOpencode = vi.fn(async () => ({ exe: 'C:\npm\node_modules\opencode-ai\bin\opencode.exe', exeArgs: [], pathEnv: 'C:\npm' }))
+    deps.env.forPane.mockReturnValue({
+      Path: 'C:\Windows',
+      TESSEL_PANE_ID: 'someone-else',
+      OPENCODE_SERVER_PASSWORD: 'inherited',
+      OPENCODE_CONFIG_CONTENT: '{"permission":"allow"}',
+      OPENCODE_PERMISSION: '"allow"',
+      OPENCODE_AUTO_SHARE: '1',
+      OPENCODE_CONFIG: 'C:\cfg\opencode.json',
+      OPENCODE_API_KEY: 'zen',
+      ANTHROPIC_API_KEY: 'a',
+      ORCA_PANE: 'x',
+      CLAUDECODE: '1'
+    })
+    startResult = { ok: true, pid: 3, info: { sessionId: sid, version: '1.18.33', model: 'opencode/nemotron-3.5-lightning-free' } }
+  })
+
+  it('a new session: provider/model, its id from the start, a clean environment', async () => {
+    const chat = createChatSessions(deps)
+    const r = await chat.open({ paneId, cwd: tmp, permissions: 'manual', agent: 'opencode', model: 'opencode/nemotron-3.5-lightning-free', effort: 'low' })
+    expect(r).toMatchObject({ ok: true, agent: 'opencode', sessionId: sid, model: 'opencode/nemotron-3.5-lightning-free' })
+    const o = adapters[0].opts
+    expect(o).toMatchObject({ agent: 'opencode', exe: 'C:\npm\node_modules\opencode-ai\bin\opencode.exe', cwd: tmp, model: 'opencode/nemotron-3.5-lightning-free', effort: 'low', permissions: 'manual' })
+    for (const k of ['sessionId', 'resume', 'threadId', 'permissionMode']) expect(o[k]).toBeUndefined()
+    expect(o.env).toMatchObject({ TESSEL_PANE_ID: paneId, TESSEL_CHAT: '1', OPENCODE_DISABLE_AUTOUPDATE: '1', OPENCODE_CONFIG: 'C:\cfg\opencode.json', OPENCODE_API_KEY: 'zen', ANTHROPIC_API_KEY: 'a' })
+    for (const k of ['OPENCODE_SERVER_PASSWORD', 'OPENCODE_CONFIG_CONTENT', 'OPENCODE_PERMISSION', 'OPENCODE_AUTO_SHARE', 'ORCA_PANE', 'CLAUDECODE', 'CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS']) expect(o.env[k]).toBeUndefined()
+    expect(stateCalls[0]).toEqual(['register', 'opencode'])
+    expect(chat.history({ paneId }).meta).toMatchObject({ sessionId: sid, agent: 'opencode' })
+  })
+
+  it('resume passes the session id; Plan is its plan agent', async () => {
+    const chat = createChatSessions(deps)
+    await chat.open({ paneId, cwd: tmp, permissions: 'manual', agent: 'opencode', resumeId: sid, permissionMode: 'plan' })
+    expect(adapters[0].opts).toMatchObject({ sessionId: sid, permissions: 'manual', permissionMode: 'plan' })
+  })
+
+  it('validates OpenCode ids and models', async () => {
+    const chat = createChatSessions(deps)
+    for (const bad of [
+      { resumeId: '01a0ec89-63d4-7980-80ae-d21e469ea231' },
+      { resumeId: 'ses_short' },
+      { model: 'nemotron' },
+      { model: 'a/b/c' },
+      { model: '--x/y' },
+      { model: 'opencode/has space' }
+    ])
+      expect(await chat.open({ paneId, cwd: tmp, permissions: 'manual', agent: 'opencode', ...bad })).toMatchObject({ ok: false, code: 'invalid' })
+    // A provider/model is not a Claude model.
+    expect(await chat.open({ paneId, cwd: tmp, permissions: 'manual', model: 'opencode/x' })).toMatchObject({ ok: false, code: 'invalid' })
+    expect(deps.createAdapter).not.toHaveBeenCalled()
+  })
+
+  it('no OpenCode found, start failures speak of OpenCode', async () => {
+    deps.resolveOpencode.mockResolvedValue(null)
+    const chat = createChatSessions(deps)
+    expect(await chat.open({ paneId, cwd: tmp, permissions: 'manual', agent: 'opencode' })).toMatchObject({ ok: false, code: 'no-opencode', error: 'OpenCode was not found. Install it, then try again.' })
+    deps.resolveOpencode.mockResolvedValue({ exe: 'C:\oc.exe' })
+    startResult = { ok: false, code: 'posture', error: 'agent general: edit allow' }
+    expect(await chat.open({ paneId, cwd: tmp, permissions: 'manual', agent: 'opencode' })).toMatchObject({ code: 'failed', error: expect.stringMatching(/OpenCode did not confirm the Manual permissions/), detail: 'agent general: edit allow' })
+    startResult = { ok: false, code: 'auth', error: 'answered 200' }
+    expect(await chat.open({ paneId, cwd: tmp, permissions: 'manual', agent: 'opencode' })).toMatchObject({ error: 'OpenCode answered without its password: the chat was not opened.' })
+    startResult = { ok: false, code: 'version', error: 'old' }
+    expect(await chat.open({ paneId, cwd: tmp, permissions: 'manual', agent: 'opencode' })).toMatchObject({ error: expect.stringMatching(/older than 1\.18\.33/) })
+  })
+
+  it('options: provider/model, Manual / Plan / Yolo only', async () => {
+    const chat = createChatSessions(deps)
+    await chat.open({ paneId, cwd: tmp, permissions: 'yolo', agent: 'opencode' })
+    const a = adapters[0]
+    expect(await chat.setOption({ paneId, model: 'openrouter/anthropic:claude' })).toMatchObject({ ok: true, model: 'openrouter/anthropic:claude' })
+    expect(await chat.setOption({ paneId, model: 'nemotron' })).toMatchObject({ ok: false })
+    expect(await chat.setOption({ paneId, permissionMode: 'acceptEdits' })).toMatchObject({ ok: false })
+    expect(await chat.setOption({ paneId, permissionMode: 'plan' })).toMatchObject({ ok: true })
+    expect(await chat.setOption({ paneId, permissionMode: 'bypassPermissions' })).toMatchObject({ ok: true })
+    expect(a.setPermissionMode.mock.calls.map((c) => c[0])).toEqual(['plan', 'bypassPermissions'])
+  })
+
+  it('clips the session rules a card shows', async () => {
+    const chat = createChatSessions(deps)
+    await chat.open({ paneId, cwd: tmp, permissions: 'manual', agent: 'opencode' })
+    await flush()
+    const many = Array.from({ length: 60 }, (_, i) => ({ kind: 'rule', tool: 'bash', content: 'x'.repeat(10000) + i }))
+    adapters[0].emit('permission', { requestId: 'oc_perm_1', toolName: 'Bash', input: { command: 'ls' }, choices: ['accept', 'acceptForSession', 'decline'], sessionRules: many })
+    const ev = last('approval')
+    expect(ev.sessionRules).toHaveLength(50)
+    expect(ev.sessionRules[0].content.length).toBeLessThan(10000)
+  })
+
+  it('a failed turn is said plainly', async () => {
+    const chat = createChatSessions(deps)
+    await chat.open({ paneId, cwd: tmp, permissions: 'manual', agent: 'opencode' })
+    await flush()
+    adapters[0].emit('turnEnd', { status: 'failed', result: 'Upstream request failed' })
+    expect(last('notice')).toMatchObject({ kind: 'error', text: 'The turn failed: Upstream request failed' })
+  })
+})

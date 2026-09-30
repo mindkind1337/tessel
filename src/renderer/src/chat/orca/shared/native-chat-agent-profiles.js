@@ -43,6 +43,11 @@ const NATIVE_CHAT_AGENT_PROFILES = {
     grok: {
         skillPrefix: '/',
         skillSourceOwner: 'grok'
+    },
+    // Tessel: OpenCode runs its commands and skills as /name (its catalog).
+    opencode: {
+        skillPrefix: '/',
+        skillSourceOwner: 'opencode'
     }
 };
 export function getNativeChatAgentProfile(agent) {

@@ -192,3 +192,24 @@ describe('pending question lifecycle', () => {
     expect(tracker.size()).toBe(0)
   })
 })
+
+describe('OpenCode questions (question tool)', () => {
+  const oc = (extra = {}) => [{ question: 'Which format?', header: 'Format', options: [{ label: 'Summary', description: 'Brief' }, { label: 'Full', description: 'All' }], ...extra }]
+  it('positional ids, multiple and custom map to the normalized shape', () => {
+    expect(normalizeQuestions(oc(), 'opencode')).toEqual([
+      { id: 'q0', question: 'Which format?', header: 'Format', multiSelect: false, options: [{ id: 'o0', label: 'Summary', description: 'Brief' }, { id: 'o1', label: 'Full', description: 'All' }], freeTextQuestionId: 'q0' }
+    ])
+    expect(normalizeQuestions(oc({ multiple: true, custom: false }), 'opencode')[0]).toMatchObject({ multiSelect: true })
+    expect(normalizeQuestions(oc({ custom: false }), 'opencode')[0].freeTextQuestionId).toBeUndefined()
+    expect(normalizeQuestions(oc({ multiple: 'yes' }), 'opencode')).toBe(null)
+    expect(normalizeQuestions(oc({ custom: 1 }), 'opencode')).toBe(null)
+  })
+  it('answers are one array of labels per question, in order', () => {
+    const qs = normalizeQuestions([...oc(), { question: 'Why?', header: 'Why', options: [] }], 'opencode')
+    const answers = [
+      { questionId: 'q1', optionIds: [], other: 'Because' },
+      { questionId: 'q0', optionIds: ['o1'] }
+    ]
+    expect(providerAnswers(qs, validateQuestionAnswers(qs, answers), 'opencode')).toEqual([['Full'], ['Because']])
+  })
+})

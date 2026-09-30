@@ -359,6 +359,48 @@ export function codexSkillDiscovery(response, cwd, now = Date.now) {
   return { skills, sources: [...sources.values()], scannedAt: now() }
 }
 
+// OpenCode's GET /skill: { name, description, location (its SKILL.md),
+// content }. The content (the skill's body) is never kept. Provider paths are
+// metadata only, never opened by Tessel. A skill inside the chat's folder is
+// the project's; inside home, the user's; anything else is OpenCode's own.
+export function opencodeSkillDiscovery(list, cwd, now = Date.now, home = homedir()) {
+  const skills = [],
+    sources = new Map(),
+    files = new Set()
+  for (const value of Array.isArray(list) ? list.slice(0, 512) : []) {
+    const name = commandName(value?.name),
+      file = value?.location
+    if (!name || typeof file !== 'string' || file.length > 4096 || /[\p{Cc}\p{Cf}]/u.test(file) || files.has(file)) continue
+    const paths = /^[A-Za-z]:[\\/]|^\\\\/.test(file) ? path.win32 : path.posix
+    if (!paths.isAbsolute(file)) continue
+    const directoryPath = paths.dirname(file),
+      rootPath = paths.dirname(directoryPath)
+    const within = (root) => {
+      if (typeof root !== 'string' || !root) return false
+      const rel = paths.relative(root, file)
+      return !!rel && !paths.isAbsolute(rel) && rel !== '..' && !rel.startsWith('..')
+    }
+    const sourceKind = within(cwd) ? 'repo' : within(home) ? 'home' : 'bundled'
+    sources.set(rootPath, { id: rootPath, label: rootPath, path: rootPath, sourceKind, providers: ['opencode'], owner: 'opencode', exists: true })
+    files.add(file)
+    skills.push({
+      id: file,
+      name,
+      description: clean(value.description),
+      providers: ['opencode'],
+      sourceKind,
+      sourceLabel: rootPath,
+      rootPath,
+      directoryPath,
+      skillFilePath: file,
+      installed: true,
+      updatedAt: null
+    })
+    if (skills.length >= SKILL_LIMITS.entries) break
+  }
+  return { skills, sources: [...sources.values()], scannedAt: now() }
+}
+
 // Main-process cache filtering: no new disk access is needed after revocation.
 export function withoutProjectSkills(result, projectDir, cwd) {
   const scoped = (value) =>
@@ -395,7 +437,7 @@ function sourceLabel(kind) {
 }
 export function publicSkillDiscovery(result) {
   const providers = (values) =>
-    (values || []).filter((value) => ['claude', 'codex', 'agent-skills'].includes(value))
+    (values || []).filter((value) => ['claude', 'codex', 'opencode', 'agent-skills'].includes(value))
   const sources = result.sources.map((source) => ({
     id: reference('source', source.path),
     path: reference('source', source.path),

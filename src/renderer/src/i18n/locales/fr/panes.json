@@ -404,7 +404,9 @@
       "chatCodex": "Codex (chat)",
       "chatCodexHint": "Codex dans un pane de chat : sans terminal ; les messages d'équipe lui arrivent comme des tours à part entière",
       "browser": "Navigateur",
-      "browserHint": "Une page web à côté de vos terminaux (votre serveur de dev, une doc)"
+      "browserHint": "Une page web à côté de vos terminaux (votre serveur de dev, une doc)",
+      "chatOpencode": "OpenCode (chat)",
+      "chatOpencodeHint": "OpenCode dans un volet de chat : pas de terminal ; les messages de l'équipe lui arrivent comme des tours à part"
     },
     "model": {
       "fromSession": "d'après sa dernière réponse",

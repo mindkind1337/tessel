@@ -40,6 +40,16 @@ regular tool row. Child content adds `agentId` and `parentToolUseId`.
 Codex child item ids (tool ids, message ids) are namespaced as
 `<agentId>:<itemId>` so they never meet the parent's or a sibling's ids;
 Claude rows are keyed by agentId + messageId in the session.
+OpenCode ids are child session ids (the `task` tool part's
+`state.metadata.sessionId`, also announced by `session.created` with the
+parent's `parentID`); `parentToolUseId` is the task part's `callID` and groups
+use the parent's user message id of the turn. Child part and tool ids are
+namespaced `<childSessionId>:<id>` like Codex's. A child is completed at its
+own `session.idle` (failed when it reported an error) or when the parent's
+task part completes; its tokens are the latest step's total. A child's
+permission asks are shown as cards (OpenCode runs its tools in-process under
+the child agent's own rules): in Yolo they are answered once automatically,
+except `doom_loop`. Asks from sessions outside the chat's tree are rejected.
 
 Until the chat UI groups children, the renderer's reducer (`chatModel.js`)
 drops `assistantDelta`, `assistant` and `thinking` events that carry an

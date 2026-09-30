@@ -12,6 +12,18 @@ describe('LaunchMenu', () => {
     expect(w.emitted('launch')).toEqual([[{ kind: 'browser' }]])
     w.unmount()
   })
+
+  it('offers OpenCode as a chat only when OpenCode is installed', async () => {
+    const none = mount(LaunchMenu, { props: { shells: [], agents: [{ id: 'opencode', name: 'OpenCode', command: 'opencode', available: false, install: ['npm install -g opencode-ai'] }] }, attachTo: document.body })
+    expect(none.find('[data-test="launch-chat-opencode"]').exists()).toBe(false)
+    none.unmount()
+    const w = mount(LaunchMenu, { props: { shells: [], agents: [{ id: 'opencode', name: 'OpenCode', command: 'opencode', available: true }] }, attachTo: document.body })
+    const item = w.get('[data-test="launch-chat-opencode"]')
+    expect(item.text()).toContain('OpenCode (chat)')
+    await item.trigger('click')
+    expect(w.emitted('launch')).toEqual([[{ kind: 'chat', id: 'opencode' }]])
+    w.unmount()
+  })
 })
 
 describe('effort without a chosen model', () => {

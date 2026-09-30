@@ -44,7 +44,7 @@ const ChatMarkdown = markdownModules['./ChatMarkdown.vue'] || null
 const props = defineProps({
   item: { type: Object, required: true },
   shouldFocus: { type: Boolean, default: false },
-  // The pane's agent ('claude' | 'codex'): what "Allow for this session"
+  // The pane's agent ('claude' | 'codex' | 'opencode'): what "Allow for this session"
   // does, and who asks in the announcement.
   agentId: { type: String, default: null },
   // The pane's folder: where a Codex change with no details may write beyond.
@@ -104,7 +104,7 @@ const hiddenText = computed(() => t('chat.approval.hidden', '{{count}} character
 const mcp = computed(() => row.value.toolName === 'MCP')
 // The pane says which agent asks; before it did, Codex's request ids said it.
 const agent = computed(() => {
-  if (props.agentId === 'claude' || props.agentId === 'codex') return props.agentId
+  if (props.agentId === 'claude' || props.agentId === 'codex' || props.agentId === 'opencode') return props.agentId
   return /^codex_/.test(row.value.requestId) ? 'codex' : null
 })
 // Codex's "for this session" (acceptForSession) adds no rule: Codex itself
@@ -114,6 +114,10 @@ const codexSessionText = computed(() =>
     ? t('chat.approval.codexSessionFiles', 'Allow for this session: Codex stops asking to change these files until the session ends.')
     : t('chat.approval.codexSessionCommand', 'Allow for this session: Codex stops asking to run this same command until the session ends.')
 )
+// OpenCode's "always": its server allows these patterns after every rule, for
+// every agent (sub-agents too), until it restarts; Tessel restarts it when
+// the chat goes back to Manual or Plan.
+const opencodeSessionText = computed(() => t('chat.approval.opencodeSession', "Allow for this session: OpenCode then allows these patterns without asking, for every agent including sub-agents, until this chat's OpenCode restarts (switching to Manual or Plan restarts it). * means everything of that kind: every file, every command."))
 function ruleText(r) {
   if (r.kind === 'mode') return t('chat.approval.ruleMode', 'Switch this session to the {{mode}} mode', { mode: r.mode })
   if (r.kind === 'directories') return t('chat.approval.ruleDirs', 'Give access to {{dirs}}', { dirs: r.directories.join(', ') })
@@ -125,7 +129,7 @@ const toolLabel = computed(() => row.value.displayName || row.value.toolName)
 const title = computed(() => (row.value.tessel ? t('chat.approval.title', 'Allow {{tool}}?', { tool: toolLabel.value }) : row.value.title))
 function announceText() {
   const tool = toolLabel.value || row.value.title
-  if (agent.value) return t('chat.approval.announce', '{{agent}} asks to run {{tool}}', { agent: agent.value === 'codex' ? 'Codex' : 'Claude', tool }) // i18n-ignore
+  if (agent.value) return t('chat.approval.announce', '{{agent}} asks to run {{tool}}', { agent: { codex: 'Codex', opencode: 'OpenCode' }[agent.value] || 'Claude', tool }) // i18n-ignore
   return t('chat.approval.announceAgent', 'The agent asks to run {{tool}}', { tool })
 }
 const decidedText = computed(() => {
@@ -500,6 +504,12 @@ defineExpose({ focus })
         <!-- What "Allow for this session" does: nothing to say when it is not offered. -->
         <div v-if="pending && row.tessel && row.sessionAllowed" class="nc-approval-rules" data-test="chat-approval-rules">
           <span v-if="agent === 'codex'" data-test="chat-approval-codex-session">{{ codexSessionText }}</span>
+          <template v-else-if="agent === 'opencode' && row.sessionRules.length">
+            <span data-test="chat-approval-opencode-session">{{ opencodeSessionText }}</span>
+            <ul>
+              <li v-for="(r, i) in row.sessionRules" :key="i">{{ ruleText(r) }}</li>
+            </ul>
+          </template>
           <template v-else-if="row.sessionRules.length">
             <span>{{ t('chat.approval.rulesTitle', 'Allow for this session also allows:') }}</span>
             <ul>

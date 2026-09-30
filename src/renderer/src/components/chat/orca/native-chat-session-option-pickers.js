@@ -13,7 +13,9 @@ import { getAgentSessionOptionCatalog, modelOptions } from '../../../../../share
 // Each agent's permission modes, in the order ChatPane.vue lists them.
 export const TESSEL_PERMISSION_MODES = {
   claude: ['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions'],
-  codex: ['default', 'bypassPermissions']
+  codex: ['default', 'bypassPermissions'],
+  // OpenCode: its session's rules (Manual, Yolo) and its plan agent.
+  opencode: ['default', 'plan', 'bypassPermissions']
 }
 
 export function permissionModeLabel(mode) {
@@ -42,6 +44,7 @@ export function permissionModeHint(mode, agent) {
     case 'bypassPermissions':
       return t('chat.mode.yoloHint', 'Runs commands and changes files without ever asking')
     default:
+      if (agent === 'opencode') return t('chat.mode.manualOpencodeHint', 'Asks before running commands, changing files or fetching pages, also for its sub-agents')
       return agent === 'codex'
         ? t('chat.mode.manualCodexHint', 'Works in the project folder; asks before anything outside it or with network access')
         : t('chat.mode.manualHint', 'Asks before running commands or changing files')
@@ -83,7 +86,7 @@ export function tesselSessionOptionSnapshot({ agent, models = [], values = {}, m
       settable: true
     })
   }
-  const modes = TESSEL_PERMISSION_MODES[agent === 'codex' ? 'codex' : 'claude']
+  const modes = TESSEL_PERMISSION_MODES[agent] || TESSEL_PERMISSION_MODES.claude
   if (permissionModes) {
     const current = modes.includes(values.permissionMode) ? values.permissionMode : 'default'
     out.push({

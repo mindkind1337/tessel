@@ -41,7 +41,8 @@
       "untrusted": "Ce dossier n'est pas encore approuvé.",
       "trust": "Approuver ce dossier…",
       "stopped": "L'agent s'est arrêté",
-      "signinCodex": "Codex n'est pas connecté. Ouvrez un pane terminal Codex et connectez-vous (codex login), puis relancez."
+      "signinCodex": "Codex n'est pas connecté. Ouvrez un pane terminal Codex et connectez-vous (codex login), puis relancez.",
+      "signinOpencode": "OpenCode n'a aucun fournisseur connecté. Ouvrez un volet terminal OpenCode et lancez opencode auth login, puis démarrez à nouveau."
     },
     "composer": {
       "placeholder": "Écrire à {{agent}}…",
@@ -100,7 +101,8 @@
       "codexSessionCommand": "Autoriser pour cette session : Codex ne demande plus à exécuter cette même commande jusqu'à la fin de la session.",
       "codexSessionFiles": "Autoriser pour cette session : Codex ne demande plus à modifier ces fichiers jusqu'à la fin de la session.",
       "announce": "{{agent}} demande à exécuter {{tool}}",
-      "announceAgent": "L'agent demande à exécuter {{tool}}"
+      "announceAgent": "L'agent demande à exécuter {{tool}}",
+      "opencodeSession": "Autoriser pour cette session : OpenCode autorise alors ces motifs sans demander, pour chaque agent y compris les sous-agents, jusqu'au redémarrage de l'OpenCode de ce chat (passer en Manuel ou en Plan le redémarre). * veut dire tout ce qui est de ce genre : chaque fichier, chaque commande."
     },
     "tool": {
       "result": "Résultat",
@@ -162,7 +164,8 @@
       "capped": "Pas plus que ce que son coordinateur autorise",
       "codexBusy": "Attendez la fin du tour : changer maintenant l'arrêterait",
       "current": "Mode de permission : {{mode}}. {{hint}}",
-      "failed": "Le mode de permission n'a pas changé : {{error}}"
+      "failed": "Le mode de permission n'a pas changé : {{error}}",
+      "manualOpencodeHint": "Demande avant de lancer des commandes, de modifier des fichiers ou de lire des pages web, aussi pour ses sous-agents"
     }
   },
   "chat.orca.backgroundTasks.countAgentsOne": "1 agent",

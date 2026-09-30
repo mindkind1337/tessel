@@ -301,6 +301,18 @@ onMounted(async () => {
         <span class="launch-name">{{ t('pane.launch.chatCodex', 'Codex (chat)') }}</span>
       </button>
     </div>
+    <div v-if="installedAgents.some((a) => a.id === 'opencode' && a.available !== false)" class="launch-row">
+      <button
+        class="launch-item"
+        role="menuitem"
+        data-test="launch-chat-opencode"
+        :title="t('pane.launch.chatOpencodeHint', 'OpenCode in a chat pane: no terminal; team messages reach it as turns of their own')"
+        @click="emit('launch', { kind: 'chat', id: 'opencode' })"
+      >
+        <BrandIcon kind="opencode" :label="t('pane.launch.chatOpencode', 'OpenCode (chat)')" :size="16" />
+        <span class="launch-name">{{ t('pane.launch.chatOpencode', 'OpenCode (chat)') }}</span>
+      </button>
+    </div>
     <!-- Tessel's browser (BrowserPane.vue): a web page next to the terminals. -->
     <div class="launch-row">
       <button
