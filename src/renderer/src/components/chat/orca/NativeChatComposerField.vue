@@ -383,7 +383,9 @@ const criticalTitle = computed(() => {
   border-color: var(--nc-primary, var(--nc-foreground));
 }
 .nc-composer-attachments {
-  padding: 12px 16px 0;
+  /* Same space above and below the chips (the hairline under them). */
+  margin-bottom: 0;
+  padding: 8px 16px;
 }
 .nc-composer-text-row { position: relative; min-width: 0; }
 .nc-composer-mic { position: absolute; right: 10px; top: 10px; }

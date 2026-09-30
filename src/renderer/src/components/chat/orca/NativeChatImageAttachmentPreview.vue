@@ -75,8 +75,8 @@ const viewLabel = computed(() =>
   border: 1px solid color-mix(in srgb, var(--nc-muted-foreground) 20%, var(--nc-border));
   border-radius: 5px;
   background: color-mix(in srgb, var(--nc-foreground) 8%, var(--nc-background));
-  font-size: 14px;
-  line-height: 20px;
+  font-size: 12px;
+  line-height: 16px;
   transition: border-color 150ms;
 }
 .nc-attachment:hover {
@@ -88,8 +88,8 @@ const viewLabel = computed(() =>
   display: inline-flex;
   min-width: 0;
   align-items: center;
-  gap: 6px;
-  padding: 5px 8px 5px 6px;
+  gap: 5px;
+  padding: 3px 6px 3px 4px;
   border: 0;
   border-radius: 5px;
   background: transparent;
@@ -106,8 +106,8 @@ const viewLabel = computed(() =>
 }
 .nc-attachment-thumb {
   display: inline-flex;
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
   flex-shrink: 0;
   align-items: center;
   justify-content: center;
@@ -120,8 +120,8 @@ const viewLabel = computed(() =>
   object-fit: cover;
 }
 .nc-attachment-icon {
-  width: 14px;
-  height: 14px;
+  width: 12px;
+  height: 12px;
   color: var(--nc-muted-foreground);
 }
 .nc-attachment-name {
@@ -135,30 +135,33 @@ const viewLabel = computed(() =>
   flex-shrink: 0;
   color: var(--nc-muted-foreground);
 }
-/* The × shows on hover (and on keyboard focus). */
+/* The × shows on hover (and on keyboard focus), over the end of the
+   text: the chip keeps its size. */
 .nc-attachment-remove {
+  position: absolute;
+  top: 50%;
+  right: 3px;
   display: inline-flex;
-  width: 0;
+  width: 16px;
   height: 16px;
-  flex-shrink: 0;
   align-items: center;
   justify-content: center;
-  overflow: hidden;
-  margin-right: 0;
   padding: 0;
   border: 0;
-  border-radius: 5px;
-  background: transparent;
-  color: var(--nc-muted-foreground);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--nc-foreground) 8%, var(--nc-background));
+  box-shadow: -6px 0 6px color-mix(in srgb, var(--nc-foreground) 8%, var(--nc-background));
+  color: var(--nc-foreground);
   opacity: 0;
+  pointer-events: none;
+  transform: translateY(-50%);
   cursor: pointer;
   transition: opacity 120ms;
 }
 .nc-attachment:hover .nc-attachment-remove,
 .nc-attachment-remove:focus-visible {
-  width: 16px;
-  margin-right: 6px;
   opacity: 1;
+  pointer-events: auto;
 }
 .nc-attachment-remove:hover {
   background: var(--nc-accent);
@@ -169,7 +172,7 @@ const viewLabel = computed(() =>
   box-shadow: 0 0 0 2px var(--nc-ring);
 }
 .nc-attachment-remove-icon {
-  width: 12px;
-  height: 12px;
+  width: 10px;
+  height: 10px;
 }
 </style>
