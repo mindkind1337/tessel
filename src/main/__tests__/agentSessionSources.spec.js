@@ -17,12 +17,14 @@ import {
   moreAgentsHistory,
   insideDir,
   piResumeFile,
+  ompSessions,
+  ompResumeFile,
   grokUserText
 } from '../agentSessionSources'
 import { findAgentSession, resumeTarget } from '../agentResume'
 import { listSessions } from '../agentSessions'
 
-const ENV = ['GROK_HOME', 'PI_CODING_AGENT_DIR', 'DEVIN_HOME', 'COPILOT_HOME', 'KIMI_CODE_HOME', 'CLINE_DIR', 'CLINE_DATA_DIR', 'XDG_DATA_HOME', 'GEMINI_CLI_HOME', 'QWEN_HOME', 'QWEN_RUNTIME_DIR']
+const ENV = ['GROK_HOME', 'PI_CODING_AGENT_DIR', 'OMP_CODING_AGENT_DIR', 'DEVIN_HOME', 'COPILOT_HOME', 'KIMI_CODE_HOME', 'CLINE_DIR', 'CLINE_DATA_DIR', 'XDG_DATA_HOME', 'GEMINI_CLI_HOME', 'QWEN_HOME', 'QWEN_RUNTIME_DIR']
 const U1 = '11111111-2222-4333-8444-555555555555'
 const U2 = '66666666-7777-4888-9999-aaaaaaaaaaaa'
 const T = Date.parse('2026-09-28T10:00:00Z')
@@ -106,6 +108,30 @@ describe('Pi', () => {
     process.env.PI_CODING_AGENT_DIR = join(home, 'custom', 'agent')
     put(`custom/agent/sessions/x/a_${U2}.jsonl`, lines({ type: 'session', id: U2, cwd: 'C:\\B', timestamp: iso(T) }))
     expect(piSessions(home).map((s) => s.id)).toEqual([U2])
+  })
+})
+
+describe('OMP', () => {
+  it("reads Pi's header in its own folder, not its sub-agents' files, and resumes by its session file", () => {
+    const f = put(`.omp/agent/sessions/-C-Proj/2026-09-28T10-00-00-000Z_${U1}.jsonl`, lines({ type: 'session', version: 3, id: U1, cwd: 'C:\\Proj', timestamp: iso(T) }, { type: 'message', message: { role: 'user', content: 'explain omp' } }))
+    // A task sub-agent's file, in the session's own sub-folder.
+    put(`.omp/agent/sessions/-C-Proj/2026-09-28T10-00-00-000Z_${U1}/task_${U2}.jsonl`, lines({ type: 'session', id: U2, cwd: 'C:\\Proj', timestamp: iso(T + 1000) }, { type: 'message', message: { role: 'user', content: 'sub-agent task' } }))
+    expect(ompSessions(home).map((s) => [s.id, s.cwd, s.title])).toEqual([[U1, 'C:\\Proj', 'explain omp']])
+    expect(findAgentSession({ agent: 'omp', cwd: 'C:\\Proj', since: T }, home)).toBe(U1)
+    const target = resumeTarget({ agent: 'omp', sessionId: U1 }, home)
+    // Written with forward slashes; null when the path could not go on a command line.
+    if (/^[A-Za-z0-9_.:\\/-]+$/.test(f)) expect(target.transcriptPath).toMatch(/\/2026-09-28T10-00-00-000Z_11111111-2222-4333-8444-555555555555\.jsonl$/)
+    else expect(target).toBe(null)
+    expect(target && target.transcriptPath && target.transcriptPath.includes('\\')).toBeFalsy()
+    // The sub-agent's own file is not a session to resume.
+    expect(resumeTarget({ agent: 'omp', sessionId: U2 }, home)).toBe(null)
+    expect(ompResumeFile('../x', home)).toBe(null)
+    expect(moreAgentsHistory({ cwd: 'C:\\Proj' }, home).filter((r) => r.agent === 'omp').map((r) => r.id)).toEqual([U1])
+  })
+  it('honours OMP_CODING_AGENT_DIR (its .omp folder)', () => {
+    process.env.OMP_CODING_AGENT_DIR = join(home, 'o', '.omp')
+    put(`o/.omp/agent/sessions/x/a_${U2}.jsonl`, lines({ type: 'session', id: U2, cwd: 'C:\\B', timestamp: iso(T) }))
+    expect(ompSessions(home).map((s) => s.id)).toEqual([U2])
   })
 })
 

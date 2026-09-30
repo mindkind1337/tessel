@@ -12,7 +12,7 @@
 //
 // Where: Grok: <GROK_HOME or ~/.grok>/sessions/<encoded folder>/<id>/chat_history.jsonl;
 // OpenClaude (Claude Code's format): ~/.openclaude/projects/<project>/<id>.jsonl;
-// OMP: ~/.omp/agent/sessions/<folder slug>/<time>_<id>.jsonl (a session's own
+// OMP: <OMP_CODING_AGENT_DIR or ~/.omp/agent/sessions>/<folder slug>/<time>_<id>.jsonl (a session's own
 // sub-folders, its task sub-agents', are not searched).
 // The window names an agent and a session id (checked), never a path; the file
 // is found inside that agent's folder and read only when it is a real file
@@ -25,6 +25,7 @@ import os from 'os'
 import { basename, isAbsolute, join } from 'path'
 import { claudeTranscriptIn } from '../agentModel.js'
 import { realInside } from '../agentChildren.js'
+import { ompSessionsDir } from '../agentSessionSources.js'
 import { HISTORY_LIMITS, claudeHistoryEvents, createBuilder, readLastLines } from './transcriptHistory.js'
 
 export const TRANSCRIPT_VIEW_AGENTS = ['grok', 'openclaude', 'omp']
@@ -51,7 +52,7 @@ export function transcriptViewRoots(home = os.homedir(), env = process.env) {
   return {
     grok: join(envDir(env.GROK_HOME) || join(home, '.grok'), 'sessions'),
     openclaude: join(home, '.openclaude'),
-    omp: join(home, '.omp', 'agent', 'sessions')
+    omp: ompSessionsDir(home, env)
   }
 }
 
