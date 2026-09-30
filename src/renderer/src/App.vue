@@ -1908,6 +1908,21 @@ const winWidth = ref(window.innerWidth)
 const onWinResize = () => (winWidth.value = window.innerWidth)
 window.addEventListener('resize', onWinResize)
 onBeforeUnmount(() => window.removeEventListener('resize', onWinResize))
+// Any menu, list or popup open: the toolbar (a window-drag area, whose clicks
+// Windows keeps) takes clicks, so a click there closes it like anywhere else.
+const POPUP_SELECTOR =
+  '[role="menu"], [role="listbox"]:not(.osb-list), .ctx-menu, .toolbar-menu, .notif-menu, [data-reka-popper-content-wrapper], [data-radix-popper-content-wrapper]'
+let popupFrame = 0
+function checkPopups() {
+  popupFrame = 0
+  document.body.classList.toggle('popup-open', !!document.querySelector(POPUP_SELECTOR))
+}
+const popupObserver = typeof MutationObserver === 'undefined' ? null : new MutationObserver(() => {
+  if (!popupFrame) popupFrame = requestAnimationFrame(checkPopups)
+})
+onMounted(() => popupObserver && popupObserver.observe(document.body, { childList: true, subtree: true }))
+onBeforeUnmount(() => popupObserver && popupObserver.disconnect())
+
 function clampTaskPanel(w) {
   const side = sidebarCollapsed.value ? 52 : sidebarWidth.value
   const max = Math.min(TASK_PANEL_MAX, Math.max(TASK_PANEL_MIN, winWidth.value - side - 420))
@@ -8114,21 +8129,6 @@ function releaseChatTeam(id) {
     window.shellApi.channel.release({ dir: p.dir, teamId: p.teamId, id: p.d.id, toId: p.d.toId }).catch(() => {})
   channelQueued.delete(p.key)
 }
-// Any menu, list or popup open: the toolbar (a window-drag area, whose clicks
-// Windows keeps) takes clicks, so a click there closes it like anywhere else.
-const POPUP_SELECTOR =
-  '[role="menu"], [role="listbox"]:not(.osb-list), .ctx-menu, .toolbar-menu, .notif-menu, [data-reka-popper-content-wrapper], [data-radix-popper-content-wrapper]'
-let popupFrame = 0
-function checkPopups() {
-  popupFrame = 0
-  document.body.classList.toggle('popup-open', !!document.querySelector(POPUP_SELECTOR))
-}
-const popupObserver = typeof MutationObserver === 'undefined' ? null : new MutationObserver(() => {
-  if (!popupFrame) popupFrame = requestAnimationFrame(checkPopups)
-})
-onMounted(() => popupObserver && popupObserver.observe(document.body, { childList: true, subtree: true }))
-onBeforeUnmount(() => popupObserver && popupObserver.disconnect())
-
 let offChatEvents = null
 onMounted(() => {
   const chat = window.shellApi.chat
