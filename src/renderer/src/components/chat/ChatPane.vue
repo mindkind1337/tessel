@@ -69,7 +69,13 @@ const stopped = computed(() => STOPPED_STATES.has(status.value))
 const AGENT_NAMES = { claude: 'Claude', codex: 'Codex', opencode: 'OpenCode' } // i18n-ignore product names
 const agentId = computed(() => (AGENT_NAMES[props.node.agentId] ? props.node.agentId : 'claude'))
 const agentName = computed(() => AGENT_NAMES[agentId.value])
-const title = computed(() => props.node.title || agentName.value)
+// A chat saved with the old default title ("Claude (chat)", "Codex (chat)"…):
+// the agent's name alone (the pane already shows it is a chat).
+const title = computed(() => {
+  const own = props.node.title
+  if (!own) return agentName.value
+  return /^\s*(claude|codex|opencode)\s*\(chat\)\s*$/i.test(own) ? agentName.value : own
+})
 
 const statusLabel = computed(() => {
   switch (status.value) {
