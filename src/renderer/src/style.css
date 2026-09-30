@@ -8717,10 +8717,12 @@ button.act-stat:hover,
 }
 
 /* The workspace you are in: a brighter border and a translucent wash. */
+/* The workspace you are in: a light wash of the theme's accent (a grey
+   wash did not fit the colour themes). */
 .wtc-surface[data-worktree-card-active='primary'] {
-  border-color: color-mix(in srgb, var(--wts-fg) 18%, var(--wts-border));
-  background: color-mix(in srgb, var(--wts-fg) 10%, transparent);
-  box-shadow: 0 1px 2px color-mix(in srgb, var(--wts-fg) 3%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--wts-border));
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  box-shadow: none;
 }
 
 .wtc-parent {

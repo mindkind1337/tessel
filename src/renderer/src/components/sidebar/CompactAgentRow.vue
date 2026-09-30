@@ -194,16 +194,6 @@ const workerOfLabel = computed(() =>
     @click.stop="emit('activate', row)"
     @contextmenu.prevent.stop="emit('context', row, $event)"
   >
-    <button
-      v-if="hasChildren"
-      type="button"
-      class="compact-agent-child-disclosure-button"
-      :aria-label="disclosureLabel"
-      :aria-expanded="!folded"
-      @click="toggleChildren"
-    >
-      <ChevronRight :size="12" :class="{ open: !folded }" aria-hidden="true" />
-    </button>
     <span v-if="picking" class="car-pick" :class="{ on: picked }" aria-hidden="true"></span>
     <AgentStateDot :state="row.dotState" :tooltip="false" />
     <span class="car-icon">
@@ -216,7 +206,6 @@ const workerOfLabel = computed(() =>
       >
     </span>
     <!-- The model it uses (the same text as its pane header). -->
-    <span v-if="rowModel" class="car-tag car-model-tag" data-test="car-model" :title="rowModel">{{ rowModel }}</span>
     <!-- Its team, by name (and "lead" when it leads it). -->
     <span v-if="row.team && teamLabel" class="car-tag car-team-tag" data-test="car-team" :class="{ lead: row.lead }" v-text="teamTag"></span>
     <span v-else-if="row.lead" class="car-tag">{{ t('sidebar.agentRow.lead', 'lead') }}</span>
@@ -232,7 +221,7 @@ const workerOfLabel = computed(() =>
     ></button>
     <span v-if="row.teamUnread" class="car-tag">✉ {{ row.teamUnread }}</span>
     <span v-if="row.toolsDown" class="car-tag">⚠ {{ t('sidebar.agentRow.toolsDown', 'tools') }}</span>
-    <span v-if="hasChildren && folded" class="car-time" :class="{ focused: row.focused }">+{{ children.length }}</span>
+
     <span v-if="row.time" class="car-time" :class="{ focused: row.focused }">{{ row.time }}</span>
     <span v-if="row.num" class="car-num" :class="{ focused: row.focused }">{{ row.num }}</span>
   </div>
@@ -246,51 +235,6 @@ const workerOfLabel = computed(() =>
     @contextmenu.prevent.stop="emit('context', row, $event)"
   >
     {{ row.subline }}
-  </div>
-  <div v-if="hasChildren && !folded" class="worktree-agent-lineage-children" role="group" :aria-label="t('sidebar.agentRow.subAgentsOf', 'Sub-agents of {{name}}', { name: row.title })">
-    <div
-      v-for="c in split.shown"
-      :key="c.id"
-      class="compact-agent-row worktree-agent-row-hover worktree-agent-lineage-child-row"
-      :class="'child-' + c.state"
-      role="button"
-      tabindex="-1"
-      :aria-label="childTitle(c, stateTitle(c.state))"
-      :data-child-id="c.id"
-      data-agent-child=""
-      v-on="childListeners"
-      @click.stop="emit('activate', row)"
-    >
-      <AgentStateDot :state="childDotState(c)" :title="stateTitle(c.state)" :tooltip="false" />
-      <span class="car-text">
-        <span class="car-lead">{{ c.title || noTitle() }}</span>
-      </span>
-      <span class="car-time">{{ childStats(c) }}</span>
-    </div>
-    <template v-if="showOlder">
-      <div
-        v-for="c in split.older"
-        :key="c.id"
-        class="compact-agent-row worktree-agent-row-hover worktree-agent-lineage-child-row"
-        :class="'child-' + c.state"
-        role="button"
-        tabindex="-1"
-        :aria-label="childTitle(c, stateTitle(c.state))"
-        :data-child-id="c.id"
-        data-agent-child=""
-        v-on="childListeners"
-        @click.stop="emit('activate', row)"
-      >
-        <AgentStateDot :state="childDotState(c)" :title="stateTitle(c.state)" :tooltip="false" />
-        <span class="car-text">
-          <span class="car-lead">{{ c.title || noTitle() }}</span>
-        </span>
-        <span class="car-time">{{ childStats(c) }}</span>
-      </div>
-    </template>
-    <button v-if="split.older.length" type="button" class="child-more" @click="toggleOlder">
-      {{ showOlder ? t('sidebar.agentRow.showLess', 'Show less') : moreLabel(split.older.length) }}
-    </button>
   </div>
   <HoverCardContent :hc="rowHover" class="agent-hover-card">
     <AgentHoverDetails

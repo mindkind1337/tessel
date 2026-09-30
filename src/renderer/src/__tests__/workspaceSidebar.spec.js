@@ -235,66 +235,19 @@ describe('left sidebar', () => {
     w.unmount()
   })
 
-  it("lists a Claude Code session's sub-agents under its row, running first, folded by its chevron", async () => {
+  it('shows no sub-agents under an agent row (they are left out of the sidebar)', async () => {
     const now = Date.now()
     window.shellApi = {
-      agentChildren: async () => [
-        { id: 'k1', type: 'Explore', title: 'Scan the repo', state: 'done', startedAt: now - 90000, endedAt: now - 30000, tokens: 1200 },
-        { id: 'k2', type: 'general-purpose', title: 'Write tests', state: 'running', startedAt: now - 5000 },
-        { id: 'k3', type: 'Explore', title: 'Ancient', state: 'done', startedAt: 1, endedAt: 2 }
-      ]
+      agentChildren: async () => [{ id: 'k2', type: 'general-purpose', title: 'Write tests', state: 'running', startedAt: now - 5000 }]
     }
     settings.agentActivityDisplayMode = 'full'
     const w = mountSidebar({
       projects: [{ ...projects()[0], copies: [], panes: [pane('c', { agentId: 'claude', title: 'Claude', sessionId: 'sess-1' })] }]
     })
     await flushPromises()
-    const kids = w.findAll('[data-agent-child]')
-    // Only the active ones show; the finished ones fold under "+ N more".
-    expect(kids.map((k) => k.find('.car-lead').text())).toEqual(['Write tests'])
-    expect(w.find('.child-more').text()).toBe('+ 2 more')
-    await w.find('.child-more').trigger('click')
-    const all = w.findAll('[data-agent-child]')
-    expect(all.map((k) => k.find('.car-lead').text())).toEqual(['Write tests', 'Scan the repo', 'Ancient'])
-    expect(all[1].find('.car-time').text()).toContain('↓ 1.2k')
-    await w.find('.compact-agent-child-disclosure-button').trigger('click')
     expect(w.findAll('[data-agent-child]')).toHaveLength(0)
-    w.unmount()
-  })
-
-  it("lists a Codex session's sub-agents too; type, model and effort show in its hover card only", async () => {
-    const now = Date.now()
-    const asked = []
-    window.shellApi = {
-      agentChildren: async (q) => {
-        asked.push(q)
-        return [
-          { id: 'x1', type: 'explorer', title: 'cli_research (Boole)', state: 'running', startedAt: now - 5000, model: 'gpt-6-astra', tokens: 4200 },
-          { id: 'x2', type: 'default', title: 'accounts_ui (Hubble)', state: 'done', startedAt: now - 90000, endedAt: now - 30000 },
-          { id: 'x3', type: 'Explore', title: 'Claude-made', state: 'running', startedAt: now - 1000, model: 'claude-opus-5-5', effort: 'high' }
-        ]
-      }
-    }
-    settings.agentActivityDisplayMode = 'full'
-    const w = mountSidebar({
-      projects: [{ ...projects()[0], copies: [], panes: [pane('x', { agentId: 'codex', title: 'Codex', sessionId: 'sess-x', accountId: 'acc-1' })] }]
-    })
-    await flushPromises()
-    expect(asked[0]).toEqual({ agent: 'codex', sessionId: 'sess-x', accountId: 'acc-1' })
-    const kids = w.findAll('[data-agent-child]')
-    expect(kids.map((k) => k.find('.car-lead').text())).toEqual(['Claude-made', 'cli_research (Boole)'])
-    // No type or model on the row: they are in the hover card.
-    expect(kids[0].find('[data-child-type]').exists()).toBe(false)
-    expect(kids[0].find('[data-child-model]').exists()).toBe(false)
-    expect(kids[0].find('.car-trail').exists()).toBe(false)
-    await kids[0].trigger('pointerover')
-    await new Promise((r) => setTimeout(r, 320))
-    await flushPromises()
-    const card = document.querySelector('[data-agent-child-hover]')
-    expect(card).not.toBeNull()
-    expect(card.querySelector('[data-hover-type]').textContent).toBe('Type: Explore')
-    expect(card.querySelector('[data-hover-model]').textContent).toBe('Model: Opus 5.5')
-    expect(card.querySelector('[data-hover-effort]').textContent).toBe('Effort: high')
+    expect(w.find('.compact-agent-child-disclosure-button').exists()).toBe(false)
+    expect(w.find('.child-more').exists()).toBe(false)
     w.unmount()
   })
 })
