@@ -8,7 +8,10 @@
       "thisComputer": "Cet ordinateur",
       "local": "Local",
       "addRemote": "Ajouter un hôte distant",
-      "addSshDetail": "Utiliser une machine existante via SSH."
+      "addSshDetail": "Utiliser une machine existante via SSH.",
+      "statusDetail": "{{status}} - {{detail}}",
+      "connecting": "Connexion",
+      "connectFailed": "Échec de la connexion SSH."
     },
     "start": {
       "title": "Ajouter un projet",
@@ -22,12 +25,15 @@
       "cloneTitle": "Cloner depuis une URL",
       "cloneDescription": "Cloner un dépôt Git distant",
       "createTitle": "Créer un nouveau projet",
-      "createDescription": "Démarrer depuis un dossier vide"
+      "createDescription": "Démarrer depuis un dossier vide",
+      "sshCloneDescription": "Cloner un dépôt Git sur cet hôte SSH",
+      "sshCreateDescription": "Démarrer depuis un dossier vide sur cet hôte SSH"
     },
     "busy": {
       "choose": "Choisissez un dossier...",
       "scanning": "Recherche des dépôts...",
-      "opening": "Ouverture du projet..."
+      "opening": "Ouverture du projet...",
+      "connecting": "Connexion à {{host}}..."
     },
     "browse": {
       "pickTitle": "Choisir un dossier de projet"
@@ -45,7 +51,8 @@
       "chooseFolder": "Choisir un dossier",
       "pickTitle": "Choisir où le cloner",
       "cloning": "Clonage...",
-      "go": "Cloner"
+      "go": "Cloner",
+      "descriptionOnHost": "Saisissez l'URL Git et choisissez où le cloner sur {{host}}."
     },
     "create": {
       "title": "Créer un nouveau projet",
@@ -62,7 +69,8 @@
       "changeParent": "Modifier le dossier parent",
       "pickTitle": "Choisir un dossier parent...",
       "creating": "Création…",
-      "go": "Créer le projet"
+      "go": "Créer le projet",
+      "descriptionOnHost": "Nommez-le et Tessel créera un projet Git sur {{host}}."
     },
     "remote": {
       "title": "Ouvrir un projet sur l'hôte SSH",
@@ -135,6 +143,26 @@
     "sidebar": {
       "titleRemote": "{{name}}\n{{host}}:{{path}}\nDouble-cliquez pour renommer",
       "titleGroup": "{{name}}\n{{path}}\nGroupe de {{count}} dépôts\nDouble-cliquez pour renommer"
+    },
+    "remoteBrowser": {
+      "title": "Parcourir le système de fichiers distant",
+      "description": "Naviguez jusqu’à un dossier et cliquez sur Sélectionner pour le choisir.",
+      "badPath": "Ce chemin contient des caractères qui ne peuvent pas être utilisés.",
+      "enterToGo": "Appuyez sur Entrée pour aller à {{path}}",
+      "noMatches": "Aucun résultat pour « {{filter}} »",
+      "footer": "S'ouvre comme projet sur cet hôte · {{path}}",
+      "footerClone": "Clone dans ce dossier sur cet hôte · {{path}}",
+      "footerCreate": "Crée le projet dans ce dossier sur cet hôte · {{path}}",
+      "up": "Dossier parent",
+      "home": "Dossier personnel",
+      "path": "Chemin",
+      "filterPlaceholder": "Tapez pour filtrer ou saisissez un chemin…",
+      "retry": "Réessayer",
+      "empty": "Dossier vide",
+      "fileHint": "Un fichier ne peut pas être ouvert comme projet",
+      "truncated": "Seules les premières entrées sont affichées. Saisissez un chemin pour aller plus loin.",
+      "cancel": "Annuler",
+      "select": "Sélectionner le dossier"
     }
   }
 }

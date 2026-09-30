@@ -483,11 +483,17 @@ const api = {
   // Files, Changes and the editor of remote projects (src/main/remoteFs.js):
   // their files go through the usual explorer / editor / scm calls with
   // ssh://… paths (only below the saved remote projects, which the main
-  // process reads from the layout); here only cancel and the session's
-  // activity (connecting, busy) for the remote badge.
+  // process reads from the layout); here cancel, the session's activity
+  // (connecting, busy) for the remote badge, and Add a project on a host.
   remoteFs: {
     cancel: (hostId) => ipcRenderer.invoke('remoteFs:cancel', hostId),
     state: () => ipcRenderer.invoke('remoteFs:state'),
+    // Add a project on a host: sign in, list a folder (names and kinds),
+    // clone or create one new project folder there.
+    connect: (hostId) => ipcRenderer.invoke('remoteFs:connect', hostId),
+    browse: (hostId, path) => ipcRenderer.invoke('remoteFs:browse', { hostId, path }),
+    clone: (hostId, url, parent) => ipcRenderer.invoke('remoteFs:clone', { hostId, url, parent }),
+    create: (hostId, parent, name) => ipcRenderer.invoke('remoteFs:create', { hostId, parent, name }),
     onActivity: (cb) => {
       const handler = (_e, payload) => cb(payload)
       ipcRenderer.on('remoteFs:activity', handler)

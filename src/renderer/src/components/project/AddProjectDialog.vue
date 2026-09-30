@@ -3,23 +3,29 @@
 // components/sidebar/AddRepoDialog.tsx, AddRepoStartSteps.tsx,
 // AddRepoCloneStep.tsx, AddRepoCreateStep.tsx, AddRepoRemoteStep.tsx,
 // AddRepoStepIndicator.tsx and their hooks).
-// - Host: this computer or a saved SSH host.
+// - Host: this computer or a saved SSH host. An SSH host is signed in to
+//   from its row in the host list (Connect / Retry; the askpass dialog asks
+//   for a password when needed) and selected once connected.
 // - Browse folder: a folder, a repository, or a folder holding several
 //   repositories (they are found and offered: AddProjectNestedStep).
-//   On an SSH host: the path of a folder on that host.
-// - Clone from URL, Create new project: on this computer.
+//   On an SSH host: its folders are browsed (RemoteFolderBrowser) and the
+//   folder chosen becomes the project.
+// - Clone from URL, Create new project: on this computer or on the SSH host
+//   (the parent folder typed or browsed on that host).
 // It emits `add` with the projects to make ({ name, cwd } / { name, remote:
 // { hostId, path } } / { name, cwd, group }); App makes them.
-import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
+import { ref, reactive, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import { ArrowLeft, ChevronDown, Folder, GitBranch, LoaderCircle, CircleStop, X } from 'lucide-vue-next'
 import { t } from '../../i18n'
 import { remoteHostsState, refreshRemoteHosts } from '../../remoteHosts'
 import {
   LOCAL_HOST_ID,
   buildHostOptions,
+  canConnectHost,
   startActions,
   baseName,
   joinPath,
+  joinRemote,
   newScanId,
   planImport,
   remotePathError,
@@ -27,6 +33,7 @@ import {
 } from '../../addProject'
 import AddProjectHostSelector from './AddProjectHostSelector.vue'
 import AddProjectNestedStep from './AddProjectNestedStep.vue'
+import RemoteFolderBrowser from './RemoteFolderBrowser.vue'
 
 const props = defineProps({
   projectCount: { type: Number, default: 1 },
@@ -36,13 +43,27 @@ const emit = defineEmits(['close', 'add', 'manage-hosts'])
 
 const step = ref('add') // 'add' | 'clone' | 'create' | 'remote' | 'nested'
 const hostId = ref(props.initialHostId || LOCAL_HOST_ID)
-const hosts = computed(() => buildHostOptions(remoteHostsState.targets, remoteHostsState.states))
+// What this dialog is doing with the SSH hosts (sign-in in progress, the
+// last error, signed in here): shown over what the main process says.
+const conn = reactive({ connecting: {}, errors: {}, connected: {} })
+const hosts = computed(() => buildHostOptions(remoteHostsState.targets, remoteHostsState.states, conn))
 const host = computed(() => hosts.value.find((h) => h.id === hostId.value) || hosts.value[0])
+const isSsh = computed(() => !!host.value && host.value.kind === 'ssh')
 const actions = computed(() => startActions(host.value ? host.value.kind : 'local'))
 // A saved host removed meanwhile: back to this computer.
 watch(hosts, (list) => {
   if (!list.some((h) => h.id === hostId.value)) hostId.value = LOCAL_HOST_ID
 })
+// Signed in here, then its session ended (idle, Disconnect): not connected anymore.
+watch(
+  () => remoteHostsState.states,
+  (states) => {
+    for (const id of Object.keys(conn.connected)) {
+      const s = states && states[id]
+      if (s && s.status !== 'connected' && s.status !== 'connecting') delete conn.connected[id]
+    }
+  }
+)
 
 const busy = ref(false)
 const busyLabel = ref('')
@@ -50,6 +71,53 @@ const startError = ref('')
 let gen = 0
 
 const api = () => (window.shellApi && window.shellApi.addProject) || null
+const remoteApi = () => (window.shellApi && window.shellApi.remoteFs) || null
+
+// --- Signing in to an SSH host ------------------------------------------------
+// Through the host's Files session (src/main/remoteFs.js): the askpass
+// dialog asks for a password or passphrase when needed. -> true once connected.
+const hostSelector = ref(null)
+async function connectHost(id) {
+  const a = remoteApi()
+  if (!a || !a.connect || conn.connecting[id]) return false
+  conn.connecting[id] = true
+  delete conn.errors[id]
+  let res
+  try {
+    res = await a.connect(id)
+  } catch (err) {
+    res = { ok: false, error: err && err.message }
+  }
+  delete conn.connecting[id]
+  if (res && res.ok) {
+    conn.connected[id] = true
+    return true
+  }
+  delete conn.connected[id]
+  if (!(res && res.cancelled)) conn.errors[id] = (res && res.error) || t('project.host.connectFailed', 'SSH connection failed.')
+  return false
+}
+// From the host list: once connected, the host is selected and the list
+// closes (the dialog goes on with it).
+async function connectFromList(id) {
+  startError.value = ''
+  const ok = await connectHost(id)
+  if (!ok || step.value !== 'add') return
+  hostId.value = id
+  if (hostSelector.value) hostSelector.value.close()
+  focusBrowse()
+}
+// The selected SSH host, signed in (connecting first when needed).
+async function ensureConnected() {
+  const h = host.value
+  if (!h || h.kind !== 'ssh') return true
+  if (!canConnectHost(h)) return true
+  const my = gen
+  const ok = await connectHost(h.id)
+  if (my !== gen || hostId.value !== h.id) return false
+  if (!ok) startError.value = conn.errors[h.id] || ''
+  return ok
+}
 
 // --- The start step: roving selection (the ⏎ chip follows keyboard focus) ----
 const selectedKind = ref('browse')
@@ -75,7 +143,27 @@ function focusBrowse() {
 function onAction(kind) {
   if (busy.value) return
   startError.value = ''
-  if (kind === 'browse') return host.value && host.value.kind === 'ssh' ? openRemote() : browseLocal()
+  if (isSsh.value) return onSshAction(kind)
+  if (kind === 'browse') return browseLocal()
+  if (kind === 'clone') return openClone()
+  if (kind === 'create') return openCreate()
+}
+
+// On an SSH host: signed in first (the dialog goes on by itself once
+// connected), then the step.
+async function onSshAction(kind) {
+  const h = host.value
+  if (canConnectHost(h)) {
+    const my = gen
+    busy.value = true
+    busyLabel.value = t('project.busy.connecting', 'Connecting to {{host}}...', { host: h.label })
+    const ok = await ensureConnected()
+    if (my !== gen) return
+    busy.value = false
+    busyLabel.value = ''
+    if (!ok) return
+  }
+  if (kind === 'browse') return openRemote()
   if (kind === 'clone') return openClone()
   if (kind === 'create') return openCreate()
 }
@@ -190,14 +278,27 @@ const cloning = ref(false)
 const canClone = computed(() => !!cloneUrl.value.trim() && !!cloneDest.value.trim() && !cloning.value)
 let stopCloneProgress = null
 
+// A clone or a new project on the SSH host: its parent folder is typed or
+// picked on that host ('clone' / 'create' while the folder picker is open).
+const browseFor = ref(null)
+const cloneHostId = ref(null) // the host a running remote clone is on
+
 async function openClone() {
   if (actions.value.secondary.find((x) => x.kind === 'clone').disabled) return
   cloneError.value = ''
   step.value = 'clone'
+  if (isSsh.value) {
+    if (!cloneDest.value) cloneDest.value = '~'
+    return
+  }
   await loadDefaults()
   if (step.value === 'clone' && !cloneDest.value) cloneDest.value = defaultParent.value
 }
 async function pickCloneDest() {
+  if (isSsh.value) {
+    browseFor.value = 'clone'
+    return
+  }
   const my = gen
   const dir = await window.shellApi.pickFolder({ title: t('project.clone.pickTitle', 'Choose where to clone it'), defaultPath: cloneDest.value || undefined })
   if (dir && my === gen) {
@@ -206,6 +307,7 @@ async function pickCloneDest() {
   }
 }
 async function doClone() {
+  if (isSsh.value) return doRemoteClone()
   const a = api()
   if (!a || !canClone.value) return
   const my = ++gen
@@ -229,6 +331,32 @@ async function doClone() {
   if (res && res.ok) emitAdd([{ name: res.name || baseName(res.path), cwd: res.path }], 'clone')
   else if (!(res && res.aborted)) cloneError.value = (res && res.error) || t('project.error.generic', 'Something went wrong.')
 }
+// On the host, by its session: git clone into <parent>/<name from the URL>.
+async function doRemoteClone() {
+  const a = remoteApi()
+  const h = host.value
+  if (!a || !a.clone || !canClone.value || !h) return
+  const parentErr = remotePathError(cloneDest.value)
+  if (parentErr) {
+    cloneError.value = parentErr
+    return
+  }
+  const my = ++gen
+  cloning.value = true
+  cloneHostId.value = h.id
+  cloneError.value = ''
+  let res
+  try {
+    res = await a.clone(h.id, cloneUrl.value.trim(), cloneDest.value.trim())
+  } catch (err) {
+    res = { ok: false, error: err && err.message }
+  }
+  if (my !== gen) return
+  cloning.value = false
+  cloneHostId.value = null
+  if (res && res.ok) emitAdd([{ name: res.name || remoteProjectName(res.path, h.label), remote: { hostId: h.id, path: res.path } }], 'clone')
+  else cloneError.value = (res && res.error) || t('project.error.generic', 'Something went wrong.')
+}
 function onCloneKey(e) {
   if (e.key === 'Enter' && !e.isComposing) {
     e.preventDefault()
@@ -242,24 +370,37 @@ const createParent = ref('')
 const createError = ref('')
 const creating = ref(false)
 const advancedOpen = ref(false)
+// On an SSH host, the host checks git itself (and says so).
 const canCreate = computed(
   () =>
     !!createName.value.trim() &&
     !!createParent.value.trim() &&
-    gitAvailability.value !== 'checking' &&
-    gitAvailability.value !== 'unavailable' &&
+    (isSsh.value || (gitAvailability.value !== 'checking' && gitAvailability.value !== 'unavailable')) &&
     !creating.value
 )
-const targetPreview = computed(() => (createParent.value.trim() ? joinPath(createParent.value, createName.value.trim() || 'project-name') : ''))
+const targetPreview = computed(() => {
+  const parent = createParent.value.trim()
+  if (!parent) return ''
+  const name = createName.value.trim() || 'project-name'
+  return isSsh.value ? joinRemote(parent, name) : joinPath(parent, name)
+})
 
 async function openCreate() {
   if (actions.value.secondary.find((x) => x.kind === 'create').disabled) return
   createError.value = ''
   step.value = 'create'
+  if (isSsh.value) {
+    if (!createParent.value) createParent.value = '~'
+    return
+  }
   await loadDefaults()
   if (step.value === 'create' && !createParent.value) createParent.value = defaultParent.value
 }
 async function pickCreateParent() {
+  if (isSsh.value) {
+    browseFor.value = 'create'
+    return
+  }
   const my = gen
   const dir = await window.shellApi.pickFolder({ title: t('project.create.pickTitle', 'Choose parent folder...'), defaultPath: createParent.value || undefined })
   if (dir && my === gen) {
@@ -268,6 +409,7 @@ async function pickCreateParent() {
   }
 }
 async function doCreate() {
+  if (isSsh.value) return doRemoteCreate()
   const a = api()
   if (!a || !canCreate.value) return
   const my = ++gen
@@ -284,37 +426,83 @@ async function doCreate() {
   if (res && res.ok) emitAdd([{ name: res.name, cwd: res.path }], 'create')
   else createError.value = (res && res.error) || t('project.error.generic', 'Something went wrong.')
 }
+function cloneDescription() {
+  return isSsh.value
+    ? t('project.clone.descriptionOnHost', 'Enter the Git URL and choose where to clone it on {{host}}.', { host: host.value.label })
+    : t('project.clone.description', 'Enter the Git URL and choose where to clone it.')
+}
+function createDescription() {
+  return isSsh.value
+    ? t('project.create.descriptionOnHost', 'Name it and Tessel will create a Git project on {{host}}.', { host: host.value.label })
+    : t('project.create.description', 'Name it and Tessel will create a real project with sensible defaults.')
+}
+// On the host: mkdir <parent>/<name>, git init, an empty first commit.
+async function doRemoteCreate() {
+  const a = remoteApi()
+  const h = host.value
+  if (!a || !a.create || !canCreate.value || !h) return
+  const parentErr = remotePathError(createParent.value)
+  if (parentErr) {
+    createError.value = parentErr
+    return
+  }
+  const my = ++gen
+  creating.value = true
+  createError.value = ''
+  let res
+  try {
+    res = await a.create(h.id, createParent.value.trim(), createName.value.trim())
+  } catch (err) {
+    res = { ok: false, error: err && err.message }
+  }
+  if (my !== gen) return
+  creating.value = false
+  if (res && res.ok) emitAdd([{ name: res.name || remoteProjectName(res.path, h.label), remote: { hostId: h.id, path: res.path } }], 'create')
+  else createError.value = (res && res.error) || t('project.error.generic', 'Something went wrong.')
+}
 function summaryText() {
   const parent = createParent.value.trim() || t('project.create.noLocation', 'location not selected')
   return t('project.create.summary', '{{kind}} in {{parent}}', { kind: t('project.create.kindGit', 'Git repository'), parent })
 }
 
 // --- A folder on an SSH host --------------------------------------------------
-const remotePath = ref('')
+// Its folders are browsed; the folder chosen becomes the project.
 const remoteError = ref('')
 function openRemote() {
   remoteError.value = ''
   step.value = 'remote'
 }
-function doAddRemote() {
-  const err = remotePathError(remotePath.value)
+function addRemoteFolder(path) {
+  const err = remotePathError(path)
   if (err) {
     remoteError.value = err
     return
   }
   const h = host.value
-  const path = remotePath.value.trim()
-  emitAdd([{ name: remoteProjectName(path, h.label), remote: { hostId: h.id, path } }], 'remote')
+  const p = String(path).trim()
+  emitAdd([{ name: remoteProjectName(p, h.label), remote: { hostId: h.id, path: p } }], 'remote')
 }
-function remoteDescription() {
-  return t('project.remote.description', 'Enter the path to a Git repository on {{host}}.', { host: host.value ? host.value.label : '' })
+// The folder picker for a clone's or a new project's parent folder.
+function onParentPicked(path) {
+  if (browseFor.value === 'clone') {
+    cloneDest.value = path
+    cloneError.value = ''
+  } else if (browseFor.value === 'create') {
+    createParent.value = path
+    createError.value = ''
+  }
+  browseFor.value = null
 }
-
 // --- Back, close ---------------------------------------------------------------
 // Orca's resetState: a running clone is killed, a scan stopped.
 function reset() {
   gen++
-  if (cloning.value && api()) api().cloneAbort()
+  // A clone running on a host ends with its session (the next operation
+  // on that host signs in again).
+  if (cloning.value && cloneHostId.value && remoteApi() && remoteApi().cancel) remoteApi().cancel(cloneHostId.value)
+  else if (cloning.value && api()) api().cloneAbort()
+  cloneHostId.value = null
+  browseFor.value = null
   if (scanning.value) stopScan()
   endScan()
   if (stopCloneProgress) stopCloneProgress()
@@ -335,12 +523,16 @@ function reset() {
   createError.value = ''
   creating.value = false
   advancedOpen.value = false
-  remotePath.value = ''
   remoteError.value = ''
 }
 const showBack = computed(() => step.value !== 'add')
 function back() {
   if (step.value === 'nested' && busy.value) return
+  // The parent folder picker: back to its form.
+  if (browseFor.value) {
+    browseFor.value = null
+    return
+  }
   reset()
   step.value = 'add'
   selectedKind.value = 'browse'
@@ -365,7 +557,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   if (cloning.value || scanning.value) reset()
 })
-defineExpose({ step, hostId })
+defineExpose({ step, hostId, browseFor })
 </script>
 
 <template>
@@ -389,7 +581,15 @@ defineExpose({ step, hostId })
           <p v-if="projectCount === 0" class="ap-desc">{{ t('project.start.getStarted', 'Add a project to get started with Tessel.') }}</p>
         </header>
         <div ref="actionsEl" class="ap-start" @keydown="onActionsKey" @focusout="onActionsBlur">
-          <AddProjectHostSelector :hosts="hosts" :selected-id="hostId" :disabled="busy" @select="(id) => (hostId = id)" @add-host="emit('manage-hosts')" />
+          <AddProjectHostSelector
+            ref="hostSelector"
+            :hosts="hosts"
+            :selected-id="hostId"
+            :disabled="busy"
+            @select="(id) => (hostId = id)"
+            @connect="connectFromList"
+            @add-host="emit('manage-hosts')"
+          />
           <button
             ref="browseEl"
             type="button"
@@ -452,11 +652,26 @@ defineExpose({ step, hostId })
         </div>
       </template>
 
+      <!-- The parent folder of a clone / a new project, on the SSH host -->
+      <template v-else-if="browseFor">
+        <header class="ap-head">
+          <h2 id="ap-heading" class="ap-title">{{ t('project.remoteBrowser.title', 'Browse remote file system') }}</h2>
+          <p class="ap-desc">{{ t('project.remoteBrowser.description', 'Navigate to a folder and click Select to choose it.') }}</p>
+        </header>
+        <RemoteFolderBrowser
+          :host-id="hostId"
+          :purpose="browseFor"
+          :initial-path="(browseFor === 'clone' ? cloneDest : createParent).trim() || '~'"
+          @select="onParentPicked"
+          @cancel="browseFor = null"
+        />
+      </template>
+
       <!-- Clone from URL -->
       <template v-else-if="step === 'clone'">
         <header class="ap-head">
           <h2 id="ap-heading" class="ap-title">{{ t('project.clone.title', 'Clone from URL') }}</h2>
-          <p class="ap-desc">{{ t('project.clone.description', 'Enter the Git URL and choose where to clone it.') }}</p>
+          <p class="ap-desc">{{ cloneDescription() }}</p>
         </header>
         <div class="ap-form">
           <div class="ap-field">
@@ -482,7 +697,7 @@ defineExpose({ step, hostId })
                 id="ap-clone-dest"
                 v-model="cloneDest"
                 class="ap-input"
-                :placeholder="t('project.clone.parentPlaceholder', 'C:\\path\\to\\destination')"
+                :placeholder="isSsh ? t('project.remote.pathPlaceholder', '/home/user/project') : t('project.clone.parentPlaceholder', 'C:\\path\\to\\destination')"
                 :disabled="cloning"
                 spellcheck="false"
                 data-test="clone-dest"
@@ -520,7 +735,7 @@ defineExpose({ step, hostId })
       <template v-else-if="step === 'create'">
         <header class="ap-head">
           <h2 id="ap-heading" class="ap-title">{{ t('project.create.title', 'Create a new project') }}</h2>
-          <p class="ap-desc">{{ t('project.create.description', 'Name it and Tessel will create a real project with sensible defaults.') }}</p>
+          <p class="ap-desc">{{ createDescription() }}</p>
         </header>
         <div class="ap-form">
           <div class="ap-field">
@@ -544,11 +759,11 @@ defineExpose({ step, hostId })
               <span class="ap-summary-icon"><GitBranch :size="14" aria-hidden="true" /></span>
               <span class="ap-summary-body">
                 <span class="ap-summary-title">{{ summaryText() }}</span>
-                <span v-if="gitAvailability === 'checking'" class="ap-summary-sub">
+                <span v-if="!isSsh && gitAvailability === 'checking'" class="ap-summary-sub">
                   <LoaderCircle :size="12" class="ap-spin" aria-hidden="true" />
                   {{ t('project.create.checkingGit', 'Checking Git on this host...') }}
                 </span>
-                <span v-else-if="gitAvailability === 'unavailable'" class="ap-summary-sub danger" data-test="create-no-git">{{
+                <span v-else-if="!isSsh && gitAvailability === 'unavailable'" class="ap-summary-sub danger" data-test="create-no-git">{{
                   t('project.create.gitRequired', 'Git is required to create a project.')
                 }}</span>
                 <span v-else-if="targetPreview" class="ap-summary-sub mono" :title="targetPreview">{{ targetPreview }}</span>
@@ -568,7 +783,14 @@ defineExpose({ step, hostId })
                     data-test="create-parent"
                     @input="createError = ''"
                   />
-                  <button type="button" class="ap-btn outline small" :disabled="creating" :title="t('project.create.changeParent', 'Change parent folder')" @click="pickCreateParent">
+                  <button
+                    type="button"
+                    class="ap-btn outline small"
+                    :disabled="creating"
+                    :title="t('project.create.changeParent', 'Change parent folder')"
+                    data-test="create-pick"
+                    @click="pickCreateParent"
+                  >
                     {{ t('project.create.change', 'Change') }}
                   </button>
                 </div>
@@ -586,38 +808,11 @@ defineExpose({ step, hostId })
       <!-- A folder on an SSH host -->
       <template v-else-if="step === 'remote'">
         <header class="ap-head">
-          <h2 id="ap-heading" class="ap-title">{{ t('project.remote.title', 'Open project on SSH host') }}</h2>
-          <p class="ap-desc">{{ remoteDescription() }}</p>
+          <h2 id="ap-heading" class="ap-title">{{ t('project.remoteBrowser.title', 'Browse remote file system') }}</h2>
+          <p class="ap-desc">{{ t('project.remoteBrowser.description', 'Navigate to a folder and click Select to choose it.') }}</p>
         </header>
-        <div class="ap-form">
-          <div class="ap-field">
-            <label class="ap-label" for="ap-remote-path">{{ t('project.remote.hostPath', 'Host path') }}</label>
-            <input
-              id="ap-remote-path"
-              v-model="remotePath"
-              class="ap-input"
-              :placeholder="t('project.remote.pathPlaceholder', '/home/user/project')"
-              spellcheck="false"
-              autocomplete="off"
-              data-test="remote-path"
-              autofocus
-              @input="remoteError = ''"
-              @keydown.enter.prevent="doAddRemote"
-            />
-          </div>
-          <p class="ap-hint">
-            {{
-              t(
-                'project.remote.hint',
-                'Its terminals open on this host with ssh, in this folder. Files, Changes and the editor read it over SSH.'
-              )
-            }}
-          </p>
-          <p v-if="remoteError" class="ap-error" role="alert" data-test="remote-error">{{ remoteError }}</p>
-          <button type="button" class="ap-btn primary wide" :disabled="!remotePath.trim()" data-test="remote-go" @click="doAddRemote">
-            {{ t('project.remote.go', 'Add project on SSH host') }}
-          </button>
-        </div>
+        <RemoteFolderBrowser :host-id="hostId" purpose="project" @select="addRemoteFolder" @cancel="back" />
+        <p v-if="remoteError" class="ap-error" role="alert" data-test="remote-error">{{ remoteError }}</p>
       </template>
 
       <!-- Repositories found in the folder -->

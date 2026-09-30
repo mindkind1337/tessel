@@ -131,6 +131,9 @@ describe('start step', () => {
   })
 
   it('the host list: this computer, the saved SSH hosts, Add remote host', async () => {
+    // A connected host is picked at once (a disconnected one connects first:
+    // remoteAddProject.spec.js).
+    remoteHostsState.states = { 'ssh-box': { status: 'connected' } }
     const w = mountDialog()
     await w.find('[data-test="host-trigger"]').trigger('click')
     const list = w.find('[data-test="host-list"]')
@@ -138,14 +141,15 @@ describe('start step', () => {
     expect(list.text()).toContain('Local Windows')
     expect(list.text()).toContain('box')
     expect(list.text()).toContain('Add remote host')
+    expect(w.find('[data-test="host-connect-ssh-box"]').exists()).toBe(false)
     await w.find('[data-test="host-ssh-box"]').trigger('click')
     expect(w.find('[data-test="host-list"]').exists()).toBe(false)
     expect(w.find('[data-test="host-trigger"]').text()).toContain('box')
-    // On an SSH host: open a folder there; clone and create not yet.
+    // On an SSH host: open a folder there, clone or create there.
     expect(w.find('[data-test="ap-browse"]').text()).toContain('Open project on SSH host')
-    expect(w.find('[data-test="ap-clone"]').attributes('disabled')).toBeDefined()
-    expect(w.find('[data-test="ap-create"]').attributes('disabled')).toBeDefined()
-    expect(w.find('[data-test="ap-clone"]').text()).toContain('Not available for SSH hosts yet')
+    expect(w.find('[data-test="ap-clone"]').attributes('disabled')).toBeUndefined()
+    expect(w.find('[data-test="ap-create"]').attributes('disabled')).toBeUndefined()
+    expect(w.find('[data-test="ap-clone"]').text()).toContain('Clone a Git repository on this SSH host')
     w.unmount()
   })
 
@@ -380,16 +384,19 @@ describe('create new project', () => {
 })
 
 describe('a folder on an SSH host', () => {
-  it('path checked, then the project on that host', async () => {
+  it('browses the host, then the folder chosen is the project (remoteAddProject.spec.js has the rest)', async () => {
+    remoteHostsState.states = { 'ssh-box': { status: 'connected' } }
+    window.shellApi.remoteFs = {
+      browse: async (hostId, path) => {
+        calls.push(['browse', hostId, path])
+        return { ok: true, path: '/srv/my app', entries: [] }
+      }
+    }
     const w = mountDialog({ initialHostId: 'ssh-box' })
     await w.find('[data-test="ap-browse"]').trigger('click')
-    expect(w.find('#ap-heading').text()).toBe('Open project on SSH host')
-    await w.find('[data-test="remote-path"]').setValue('srv/app')
-    await w.find('[data-test="remote-go"]').trigger('click')
-    expect(w.find('[data-test="remote-error"]').text()).toContain('absolute path')
-    expect(w.emitted('add')).toBeUndefined()
-    await w.find('[data-test="remote-path"]').setValue('/srv/my app')
-    await w.find('[data-test="remote-go"]').trigger('click')
+    await flushPromises()
+    expect(w.find('#ap-heading').text()).toBe('Browse remote file system')
+    await w.find('[data-test="rfb-select"]').trigger('click')
     expect(w.emitted('add')[0][0]).toEqual({ projects: [{ name: 'my app', remote: { hostId: 'ssh-box', path: '/srv/my app' } }], source: 'remote' })
     w.unmount()
   })
@@ -403,7 +410,13 @@ describe('add-project logic', () => {
       ['ssh-1', 'ssh', 'connected']
     ])
     expect(startActions('local').secondary.every((a) => !a.disabled)).toBe(true)
-    expect(startActions('ssh').secondary.every((a) => a.disabled)).toBe(true)
+    expect(startActions('ssh').secondary.every((a) => !a.disabled)).toBe(true)
+    // What the dialog is doing wins over the main process's state.
+    const local = { connecting: { 'ssh-1': true }, errors: {}, connected: {} }
+    expect(buildHostOptions([{ id: 'ssh-1', label: 'one' }], {}, local)[1].status).toBe('connecting')
+    const failed = buildHostOptions([{ id: 'ssh-1', label: 'one' }], {}, { errors: { 'ssh-1': 'nope' } })[1]
+    expect(failed).toMatchObject({ status: 'error', error: 'nope' })
+    expect(buildHostOptions([{ id: 'ssh-1', label: 'one' }], {}, { connected: { 'ssh-1': true } })[1].status).toBe('connected')
   })
 
   it('only scanned repositories can be imported', () => {

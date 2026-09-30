@@ -14,10 +14,11 @@ import { hostStatus, statusLabel } from './remoteHosts'
 
 export const LOCAL_HOST_ID = 'local'
 
-// Orca's host list: this computer first, then the saved SSH hosts. Tessel has
-// no lasting SSH connection (each terminal runs its own ssh), so every saved
-// host can be picked; its status is what its open terminals say.
-export function buildHostOptions(targets = [], states = {}) {
+// Orca's host list: this computer first, then the saved SSH hosts, with
+// their status: what the main process says (terminals, the Files session),
+// overridden by what the dialog itself is doing (local: { connecting:
+// { id: true }, errors: { id: message }, connected: { id: true } }).
+export function buildHostOptions(targets = [], states = {}, local = {}) {
   const out = [
     {
       id: LOCAL_HOST_ID,
@@ -29,18 +30,34 @@ export function buildHostOptions(targets = [], states = {}) {
   ]
   for (const tg of targets || []) {
     if (!tg || typeof tg.id !== 'string') continue
-    out.push({ id: tg.id, kind: 'ssh', label: tg.label || tg.host, detail: 'SSH', status: hostStatus(tg.id, states) })
+    out.push({ id: tg.id, kind: 'ssh', label: tg.label || tg.host, detail: 'SSH', ...sshHostState(tg.id, states, local) })
   }
   return out
 }
 
+function sshHostState(id, states, local) {
+  if (local.connecting && local.connecting[id]) return { status: 'connecting' }
+  if (local.errors && local.errors[id]) return { status: 'error', error: local.errors[id] }
+  const status = hostStatus(id, states)
+  if (status === 'disconnected' && local.connected && local.connected[id]) return { status: 'connected' }
+  const s = states && states[id]
+  return s && s.error ? { status, error: s.error } : { status }
+}
+
+// "Déconnecté - SSH": the status word and the kind, in the interface's language.
 export function hostStatusText(host) {
   if (!host || host.status === 'local') return t('project.host.local', 'Local')
-  return `${statusLabel(host.status)} - ${host.detail}`
+  return t('project.host.statusDetail', '{{status}} - {{detail}}', { status: statusLabel(host.status), detail: host.detail })
+}
+
+// An SSH host that needs signing in before its folders can be listed.
+export function canConnectHost(host) {
+  return !!host && host.kind === 'ssh' && host.status !== 'connected'
 }
 
 // The start step's actions (Orca's getAddRepoLocalStartActions). On an SSH
-// host, Clone and Create need files on that host: not available yet.
+// host, the folder, the clone's parent folder and the new project's parent
+// folder are picked on that host (RemoteFolderBrowser).
 export function startActions(hostKind = 'local') {
   const ssh = hostKind === 'ssh'
   const primary = {
@@ -53,20 +70,23 @@ export function startActions(hostKind = 'local') {
       ? t('project.start.sshBrowseDescription', 'Existing Git repository or folder on this SSH host')
       : t('project.start.browseDescription', 'Local project, Git repo, or folder with many repos')
   }
-  const unavailable = t('project.start.sshUnavailable', 'Not available for SSH hosts yet')
   const clone = {
     kind: 'clone',
     icon: Globe,
     title: t('project.start.cloneTitle', 'Clone from URL'),
-    description: ssh ? unavailable : t('project.start.cloneDescription', 'Clone a remote Git repository'),
-    disabled: ssh
+    description: ssh
+      ? t('project.start.sshCloneDescription', 'Clone a Git repository on this SSH host')
+      : t('project.start.cloneDescription', 'Clone a remote Git repository'),
+    disabled: false
   }
   const create = {
     kind: 'create',
     icon: Plus,
     title: t('project.start.createTitle', 'Create new project'),
-    description: ssh ? unavailable : t('project.start.createDescription', 'Start from an empty folder'),
-    disabled: ssh
+    description: ssh
+      ? t('project.start.sshCreateDescription', 'Start from an empty folder on this SSH host')
+      : t('project.start.createDescription', 'Start from an empty folder'),
+    disabled: false
   }
   return { primary, secondary: [clone, create] }
 }
@@ -103,6 +123,51 @@ export function remotePathError(raw) {
   if (!(path.startsWith('/') || path === '~' || path.startsWith('~/')))
     return t('project.remote.pathAbsolute', 'Use an absolute path like /home/user/project or ~/project.')
   return ''
+}
+
+// --- The folder picker on a host (Orca's remote-file-browser-helpers.ts) -----
+// Paths are the host's real POSIX paths (the main process resolves them).
+export function joinRemote(dir, name) {
+  return dir === '/' ? `/${name}` : `${String(dir).replace(/\/+$/, '')}/${name}`
+}
+export function parentRemote(p) {
+  if (!p || p === '/') return '/'
+  return String(p).replace(/\/[^/]+\/?$/, '') || '/'
+}
+// "/home/me" -> [{ name: 'home', path: '/home' }, { name: 'me', path: '/home/me' }]
+export function remoteCrumbs(p) {
+  const segs = String(p || '').split('/').filter(Boolean)
+  return segs.map((name, i) => ({ name, path: '/' + segs.slice(0, i + 1).join('/') }))
+}
+// Typed text is a path (Enter goes there) when it has a slash or is ~ . ..
+export function isPathInput(raw) {
+  const s = String(raw || '')
+  return s.includes('/') || s === '~' || s === '.' || s === '..'
+}
+// A typed path -> what the main process lists ("~", "~/x", "/x"), relative
+// ones from the folder shown. -> '' when it cannot be one.
+export function resolveTypedPath(raw, current) {
+  const s = String(raw || '').trim()
+  if (!s) return ''
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u001f\u007f\\]/.test(s) || s.length > 4096) return ''
+  if (s === '~' || s.startsWith('~/') || s.startsWith('/')) return s
+  if (s === '.') return current || '~'
+  if (s === '..') return parentRemote(current)
+  return joinRemote(current || '/', s)
+}
+export function filterRemoteEntries(entries, filter) {
+  const q = String(filter || '').trim().toLowerCase()
+  if (!q || q.length > 2048) return q.length > 2048 ? [] : entries
+  return entries.filter((e) => e.name.toLowerCase().includes(q))
+}
+// Enter in the filter: one folder matching -> go into it; only files -> the
+// "files cannot be opened" hint.
+export function enterAction(filtered) {
+  const folders = filtered.filter((e) => e.dir)
+  if (folders.length === 1) return { type: 'navigate', name: folders[0].name }
+  if (!folders.length && filtered.length) return { type: 'fileHint' }
+  return { type: 'noop' }
 }
 
 export function remoteProjectName(path, hostLabel) {

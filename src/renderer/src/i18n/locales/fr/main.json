@@ -653,7 +653,12 @@
       "localOnly": "Non disponible pour un projet sur un hôte distant.",
       "searchFailed": "La recherche a échoué.",
       "hostTimeout": "Cela a pris trop de temps sur l'hôte et a été arrêté.",
-      "noTrash": "Cet élément est sur un autre disque que la corbeille de l'hôte, et ce disque n'a pas de corbeille utilisable par Tessel : rien n'a été déplacé. Supprimez-le depuis un terminal si vous êtes sûr."
+      "noTrash": "Cet élément est sur un autre disque que la corbeille de l'hôte, et ce disque n'a pas de corbeille utilisable par Tessel : rien n'a été déplacé. Supprimez-le depuis un terminal si vous êtes sûr.",
+      "browseMissing": "Ce dossier n'existe pas sur l'hôte.",
+      "browseDenied": "Permission refusée : ce dossier ne peut pas être lu.",
+      "noGit": "Git n'est pas installé sur {{host}}.",
+      "badProjectName": "Ce nom ne peut pas être un nom de dossier sur l'hôte.",
+      "cloneFailed": "Le clonage a échoué sur l'hôte."
     },
     "automations": {
       "unreadable": "Vos automatisations n'ont pas pu être lues : {{error}}. Rien ne s'exécute tant que Tessel ne les a pas lues.",

@@ -58,6 +58,8 @@ export const RC = {
   FAILED: 98,
   NOT_REPO: 80,
   NO_TRASH: 99, // no trash on the same disk as the file
+  DENIED: 89, // a folder that cannot be read (the folder picker)
+  NO_GIT: 81, // git is not installed on the host
   TIMEOUT: 124, // ended by the host-side watchdog
   PIPE: 141 // the output was cut at its cap
 }
@@ -111,7 +113,14 @@ export const FUNCTIONS = new Set([
   '__t_findn',
   '__t_grep',
   '__t_fp',
-  '__t_nop'
+  '__t_nop',
+  // Add a project on the host (remoteFs.js: browse, clone, create). Not
+  // bound to a project folder: the folder picker lists any folder the
+  // signed-in user can read (names and kinds only, never contents), and a
+  // new project is made in a folder the user chose.
+  '__t_browse',
+  '__t_clone',
+  '__t_newproj'
 ])
 
 // The prelude: POSIX sh, for Linux (GNU, busybox) and macOS / BSD tools.
@@ -357,6 +366,48 @@ __t_fp() {
   __x=$(find "$__R/." \\( -name node_modules -o -name dist -o -name build -o -name out -o -name .next -o -name .cache -o -name target -o -name .venv -o -name __pycache__ -o -path '*/.git/objects' -o -path '*/.git/logs' \\) -prune -o -newer "$__m" -print 2>/dev/null | head -n 1)
   mv -f "$__m.n" "$__m"
   if [ -n "$__x" ]; then echo changed; else echo same; fi
+}
+__t_dir() { [ -d "$1" ] || return 91; __PD=$(cd -P "$1" 2>/dev/null && pwd -P) || return 89; [ -n "$__PD" ] || return 91; }
+__t_browse() {
+  __t_dir "$1" || return $?
+  printf '%s\\000' "$__PD"
+  [ -r "$__PD" ] && [ -x "$__PD" ] || return 89
+  __n=0
+  for __f in "\${__PD%/}"/* "\${__PD%/}"/.[!.]* "\${__PD%/}"/..?*; do
+    [ -e "$__f" ] || [ -L "$__f" ] || continue
+    __n=$((__n+1)); [ "$__n" -gt "$2" ] && break
+    if [ -L "$__f" ]; then if [ -d "$__f" ]; then __k=L; else __k=l; fi
+    elif [ -d "$__f" ]; then __k=d; elif [ -f "$__f" ]; then __k=f; else __k=o; fi
+    printf '%s %s\\000' "$__k" "\${__f##*/}"
+  done
+}
+__t_clone() {
+  __t_name "$2" || return 90
+  __t_dir "$1" || return $?
+  __P="\${__PD%/}/$2"
+  { [ -e "$__P" ] || [ -L "$__P" ]; } && return 94
+  command -v git >/dev/null 2>&1 || return 81
+  ( GIT_SSH_COMMAND=\${GIT_SSH_COMMAND:-'ssh -o BatchMode=yes'}; GCM_INTERACTIVE=never; export GIT_SSH_COMMAND GCM_INTERACTIVE
+    __t_git "$__PD" -c protocol.ext.allow=never -c protocol.fd.allow=never clone -- "$3" "$2" >/dev/null ) || return 98
+  [ -d "$__P" ] || return 98
+  printf '%s\\n' "$__P"
+}
+__t_newproj() {
+  __t_name "$2" || return 90
+  __t_dir "$1" || return $?
+  __P="\${__PD%/}/$2"
+  command -v git >/dev/null 2>&1 || return 81
+  __new=
+  if [ -e "$__P" ] || [ -L "$__P" ]; then
+    [ -d "$__P" ] && [ ! -L "$__P" ] || return 94
+    [ -z "$(ls -A "$__P" 2>/dev/null)" ] || return 94
+  else
+    mkdir "$__P" || return 98
+    __new=1
+  fi
+  if ! __t_git "$__P" init -q >/dev/null; then if [ -n "$__new" ]; then rm -rf "$__P"; else rm -rf "$__P/.git"; fi; return 98; fi
+  __t_git "$__P" commit -q --allow-empty --no-verify -m 'Initial commit' >/dev/null 2>&1
+  printf '%s\\n' "$__P"
 }
 if [ -z "$__T_B" ]; then printf '\\n@@R %s base64\\n' "$__T_N"; else printf '\\n@@R %s ok\\n' "$__T_N"; fi
 `

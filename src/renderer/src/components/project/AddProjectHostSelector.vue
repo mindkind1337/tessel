@@ -1,19 +1,21 @@
 <script setup>
 // The "Host" picker at the top of Add a project (Orca's AddRepoHostSelector,
 // MIT, Copyright (c) 2026 Lovecast Inc.): this computer and the saved SSH
-// hosts; "Add remote host" opens Settings > SSH Hosts.
+// hosts; "Add remote host" opens Settings > SSH Hosts. An SSH host that is
+// not signed in has its Connect (Retry after an error) action in its row;
+// picking that row connects too. The dialog selects it once connected.
 import { ref, computed, onBeforeUnmount, nextTick } from 'vue'
-import { Check, ChevronRight, ChevronsUpDown, Plus } from 'lucide-vue-next'
+import { Check, ChevronRight, ChevronsUpDown, LoaderCircle, Plus } from 'lucide-vue-next'
 import { t } from '../../i18n'
-import { hostStatusText } from '../../addProject'
-import { statusLabel } from '../../remoteHosts'
+import { hostStatusText, canConnectHost } from '../../addProject'
+import { statusLabel, connectVerb } from '../../remoteHosts'
 
 const props = defineProps({
   hosts: { type: Array, required: true },
   selectedId: { type: String, default: null },
   disabled: { type: Boolean, default: false }
 })
-const emit = defineEmits(['select', 'add-host'])
+const emit = defineEmits(['select', 'add-host', 'connect'])
 
 const open = ref(false)
 const root = ref(null)
@@ -38,8 +40,22 @@ function close() {
   document.removeEventListener('pointerdown', onDocPointer, true)
 }
 function pick(host) {
+  if (canConnectHost(host)) return connect(host)
   emit('select', host.id)
   close()
+}
+// The list stays open while it connects (its row says so); the dialog
+// selects the host and closes the list once it is connected.
+function connect(host) {
+  if (host.status === 'connecting') return
+  emit('connect', host.id)
+}
+function connectText(host) {
+  if (host.status === 'connecting') return t('project.host.connecting', 'Connecting')
+  return connectVerb(host.status === 'error' ? 'error' : host.status)
+}
+function detailText(host) {
+  return host.status === 'error' && host.error ? `${hostStatusText(host)} · ${host.error}` : hostStatusText(host)
 }
 function addHost() {
   close()
@@ -109,7 +125,22 @@ defineExpose({ close })
           <Check :size="12" class="aph-icon aph-check" :class="{ shown: host.id === selectedId }" aria-hidden="true" />
           <span class="aph-item-body">
             <span class="aph-item-title">{{ host.label }}</span>
-            <span class="aph-item-detail">{{ hostStatusText(host) }}</span>
+            <span class="aph-item-detail" :class="{ bad: host.status === 'error' }" :title="detailText(host)" :data-test="'host-status-' + host.id">{{
+              detailText(host)
+            }}</span>
+          </span>
+          <span
+            v-if="canConnectHost(host)"
+            role="button"
+            tabindex="-1"
+            class="aph-connect"
+            :class="{ busy: host.status === 'connecting' }"
+            :aria-disabled="host.status === 'connecting'"
+            :data-test="'host-connect-' + host.id"
+            @click.stop.prevent="connect(host)"
+          >
+            <LoaderCircle v-if="host.status === 'connecting'" :size="12" class="aph-spin" aria-hidden="true" />
+            {{ connectText(host) }}
           </span>
         </button>
       </div>
@@ -244,5 +275,35 @@ defineExpose({ close })
   font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.aph-item-detail.bad {
+  color: var(--danger);
+}
+.aph-connect {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  align-self: center;
+  justify-content: flex-end;
+  gap: 4px;
+  min-width: 5.75rem;
+  margin-left: 8px;
+  color: var(--text-dim);
+  font-size: 11px;
+  cursor: pointer;
+}
+.aph-connect:hover {
+  color: var(--text-strong);
+}
+.aph-connect.busy {
+  cursor: default;
+}
+.aph-spin {
+  animation: aph-spin 0.9s linear infinite;
+}
+@keyframes aph-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 </style>

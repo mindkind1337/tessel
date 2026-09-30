@@ -30,6 +30,7 @@ import { RISKY_CONFIG_ARGS, parseRisky, hookEntries, neutralize, gitTrust } from
 import { parseRemotePath, remoteRoot, relativeTo, childPath, isRemotePath } from '../shared/remotePath'
 import { fileKind, extOf, IMAGE_MIME } from '../shared/fileKinds'
 import { t } from './i18n'
+import { validateCloneUrl, deriveCloneRepoName, cloneFailureMessage, errorText as addProjectErrorText } from './addProject'
 
 export const SESSION_PREFIX = 'rfs:'
 const MAX_ENTRIES = 5000
@@ -48,6 +49,12 @@ const BOM = Buffer.from([0xef, 0xbb, 0xbf])
 const NO_HOOKS = '/nonexistent-tessel-no-hooks'
 const ROOT_POLL_MAX_TICKS = 20 // a slow project is looked at less often (60 s at most)
 const CONTROL = /[\u0000-\u001f\u007f]/
+// The folder picker of Add a project (browse): how many names one listing
+// returns at most, and how long it may take.
+export const MAX_BROWSE_ENTRIES = 2000
+const BROWSE_TIMEOUT_MS = 20_000
+const CLONE_TIMEOUT_MS = 10 * 60 * 1000
+const NEWPROJ_TIMEOUT_MS = 60_000
 
 const arg = (path) => rawArg(remotePathArg(path))
 const joinPath = (base, rel) => (rel ? (base.endsWith('/') ? `${base}${rel}` : `${base}/${rel}`) : base)
@@ -73,6 +80,43 @@ export function checkRemoteName(name) {
   if (n === '.' || n === '..' || /[/\\]/.test(n) || CONTROL.test(n))
     return t('main.remoteFs.badName', '"{{name}}" is not a valid name on the remote host.', { name: n.replace(CONTROL, '?') })
   return ''
+}
+
+// A folder the picker of Add a project may list, or a parent folder for a
+// clone / a new project: "~", "~/...", or absolute POSIX; no control
+// characters, no backslash (a project path cannot hold one either: see
+// the renderer's remotePathError). Repeated and trailing slashes are
+// dropped; ".." stays (the host resolves it). -> the path, or null.
+export function cleanBrowsePath(p) {
+  if (typeof p !== 'string') return null
+  const s = p.trim()
+  if (!s || s.length > 4096 || CONTROL.test(s) || s.includes('\\')) return null
+  if (!(s === '~' || s.startsWith('~/') || s.startsWith('/'))) return null
+  const out = s.replace(/\/{2,}/g, '/').replace(/(.)\/$/, '$1')
+  return out
+}
+
+// The host's answer to __t_browse: its real path, then "k name" records
+// (d folder, f file, L link to a folder, l other link, o other).
+// -> { path, entries, truncated }
+export function parseBrowse(buf, max = MAX_BROWSE_ENTRIES) {
+  const recs = Buffer.from(buf || '').toString('utf8').split('\0')
+  const path = recs.shift() || ''
+  const entries = []
+  let count = 0
+  for (const rec of recs) {
+    const m = /^([dfLlo]) (.+)$/s.exec(rec)
+    if (!m) continue
+    count++
+    const name = m[2]
+    // A name the window could not send back (control characters, backslash).
+    if (CONTROL.test(name) || name.includes('\\') || name === '.' || name === '..') continue
+    if (entries.length >= max) break
+    const dir = m[1] === 'd' || m[1] === 'L'
+    entries.push({ name, dir, ...(m[1] === 'L' || m[1] === 'l' ? { link: true } : {}) })
+  }
+  entries.sort((a, b) => (a.dir !== b.dir ? (a.dir ? -1 : 1) : a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })))
+  return { path, entries, truncated: count > max }
 }
 
 // A relative path from the window ("a/b", git's) -> clean "a/b", or null.
@@ -1019,6 +1063,99 @@ export function createRemoteFs({
     return out
   }
 
+  // --- Add a project on the host ------------------------------------------------
+  // The one exception to "only below a saved project": the window picks a
+  // folder on the host before any project exists. Only through the host's
+  // signed-in session; listing gives names and kinds (never contents),
+  // bounded in count, size and time; clone and create make ONE new folder
+  // in a folder the user chose, with a name checked here and on the host.
+  const hostIdOk = (hostId) => typeof hostId === 'string' && /^[\w-]{1,80}$/.test(hostId)
+
+  // Signs in to the host (askpass dialog as the terminals) and keeps the
+  // session. -> { ok } | { ok: false, error, cancelled? }
+  async function connect(hostId) {
+    if (!hostIdOk(hostId)) return { ok: false, error: t('main.remote.notFound', 'This remote host is no longer saved in Tessel.') }
+    try {
+      await open(hostId)
+      return { ok: true }
+    } catch (err) {
+      const code = err && err.code
+      return { ok: false, error: sessionErrorText(hostId, err), ...(code === 'cancelled' || code === 'auth-cancelled' ? { cancelled: true } : {}) }
+    }
+  }
+
+  function addErrorText(hostId, res, fallback) {
+    switch (res.rc) {
+      case RC.MISSING:
+        return t('main.remoteFs.browseMissing', 'This folder does not exist on the host.')
+      case RC.DENIED:
+        return t('main.remoteFs.browseDenied', 'Permission denied: this folder cannot be read.')
+      case RC.NO_GIT:
+        return t('main.remoteFs.noGit', 'Git is not installed on {{host}}.', { host: hostLabel(hostId) })
+      case RC.OUTSIDE:
+        return t('main.remoteFs.badProjectName', 'This name cannot be a folder name on the host.')
+      default:
+        return rcText(res, fallback)
+    }
+  }
+
+  // -> { ok, path (its real path), entries: [{ name, dir, link? }], truncated } | { ok: false, error }
+  async function browse({ hostId, path } = {}) {
+    if (!hostIdOk(hostId)) return { ok: false, error: t('main.remote.notFound', 'This remote host is no longer saved in Tessel.') }
+    const p = cleanBrowsePath(path === undefined || path === null || path === '' ? '~' : path)
+    if (!p) return { ok: false, error: t('main.remoteFs.badPath', 'This path has characters Tessel cannot send to the remote host.') }
+    const res = await call(hostId, '__t_browse', [arg(p), String(MAX_BROWSE_ENTRIES + 1)], { cap: 4 * 1024 * 1024, timeoutMs: BROWSE_TIMEOUT_MS, op: 'list' })
+    if (res.error) return { ok: false, error: res.error }
+    const parsed = parseBrowse(res.out)
+    if (res.rc === RC.DENIED && parsed.path) return { ok: false, path: parsed.path, error: addErrorText(hostId, res) }
+    if (res.rc !== 0 && !(res.rc === RC.PIPE || res.truncated)) return { ok: false, error: addErrorText(hostId, res, t('main.explorer.folderUnreadable', 'The folder could not be read.')) }
+    if (!parsed.path.startsWith('/')) return { ok: false, error: t('main.explorer.folderUnreadable', 'The folder could not be read.') }
+    return { ok: true, path: parsed.path, entries: parsed.entries, truncated: parsed.truncated || !!res.truncated }
+  }
+
+  // git clone <url> into <parent>/<name from the URL>, on the host.
+  // -> { ok, path, name } | { ok: false, error }
+  async function cloneProject({ hostId, url, parent } = {}) {
+    if (!hostIdOk(hostId)) return { ok: false, error: t('main.remote.notFound', 'This remote host is no longer saved in Tessel.') }
+    const checked = validateCloneUrl(url)
+    if (checked.error) return { ok: false, error: addProjectErrorText(checked.error) }
+    // A Windows path names a folder on this computer, not on the host.
+    if (/^([A-Za-z]:[\\/]|\\\\)/.test(checked.url)) return { ok: false, error: addProjectErrorText('url-scheme') }
+    const dest = cleanBrowsePath(parent)
+    if (!dest) return { ok: false, error: addProjectErrorText('destination-invalid') }
+    const name = deriveCloneRepoName(checked.url)
+    if (!name || checkRemoteName(name)) return { ok: false, error: addProjectErrorText('name-invalid') }
+    const res = await call(hostId, '__t_clone', [arg(dest), name, checked.url], { cap: 64 * 1024, timeoutMs: CLONE_TIMEOUT_MS, op: 'clone' })
+    if (res.error) return { ok: false, error: res.error }
+    if (res.rc === RC.EXISTS)
+      return { ok: false, error: t('main.project.clone.exists', 'Destination already exists and is not empty: {{path}}. Choose a different parent folder, delete the existing folder, or add the existing repository instead.', { path: `${dest.replace(/\/$/, '')}/${name}` }) }
+    if (res.rc === RC.FAILED) return { ok: false, error: cloneFailureMessage(res.err, `${dest}/${name}`) }
+    if (res.rc !== 0) return { ok: false, error: addErrorText(hostId, res, t('main.remoteFs.cloneFailed', 'The clone failed on the host.')) }
+    const path = res.out.toString('utf8').split('\n')[0]
+    if (!path.startsWith('/') || CONTROL.test(path)) return { ok: false, error: t('main.remoteFs.cloneFailed', 'The clone failed on the host.') }
+    return { ok: true, path, name }
+  }
+
+  // mkdir <parent>/<name> (or an empty folder there), git init and an empty
+  // first commit, on the host. -> { ok, path, name } | { ok: false, error }
+  async function createProject({ hostId, parent, name } = {}) {
+    if (!hostIdOk(hostId)) return { ok: false, error: t('main.remote.notFound', 'This remote host is no longer saved in Tessel.') }
+    const n = String(name ?? '').trim()
+    if (!n) return { ok: false, error: t('main.project.create.nameEmpty', 'Name cannot be empty') }
+    const bad = checkRemoteName(n)
+    if (bad) return { ok: false, error: bad }
+    const dest = cleanBrowsePath(parent)
+    if (!dest) return { ok: false, error: t('main.project.create.parentAbsolute', 'Parent directory must be an absolute path') }
+    const res = await call(hostId, '__t_newproj', [arg(dest), n], { cap: 64 * 1024, timeoutMs: NEWPROJ_TIMEOUT_MS, op: 'create' })
+    if (res.error) return { ok: false, error: res.error }
+    if (res.rc === RC.EXISTS)
+      return { ok: false, error: t('main.project.create.notEmpty', '"{{name}}" already exists at this location and is not empty.', { name: n }) }
+    if (res.rc !== 0) return { ok: false, error: addErrorText(hostId, res, t('main.project.create.initFailed', 'Failed to initialize git repository: {{error}}', { error: firstLine(res.err) })) }
+    const path = res.out.toString('utf8').split('\n')[0]
+    if (!path.startsWith('/') || CONTROL.test(path)) return { ok: false, error: t('main.project.unknownError', 'unknown error') }
+    return { ok: true, path, name: n }
+  }
+
   function close() {
     for (const hostId of [...sessions.keys()]) closeHost(hostId, 'shutdown')
     watchedRoots.clear()
@@ -1048,6 +1185,10 @@ export function createRemoteFs({
     // Discard sends untracked files to the host's trash (no Recycle Bin here).
     scm: { ...scm, scmDiscard: (q) => scm.scmDiscard(q) },
     remoteOnly,
+    connect,
+    browse,
+    cloneProject,
+    createProject,
     closeHost,
     closePane,
     snapshot,
@@ -1081,4 +1222,10 @@ export function registerRemoteFs({ ipcMain, service }) {
   }
   ipcMain.handle('remoteFs:cancel', guard((hostId) => ({ ok: true, closed: service.closeHost(String(hostId || ''), 'cancelled') })))
   ipcMain.handle('remoteFs:state', guard(() => ({ ok: true, sessions: service.snapshot() })))
+  // Add a project on a host: ids, paths, a URL and a name; never a command.
+  const obj = (q) => (q && typeof q === 'object' ? q : {})
+  ipcMain.handle('remoteFs:connect', guard((hostId) => service.connect(String(hostId || ''))))
+  ipcMain.handle('remoteFs:browse', guard((q) => service.browse({ hostId: String(obj(q).hostId || ''), path: obj(q).path })))
+  ipcMain.handle('remoteFs:clone', guard((q) => service.cloneProject({ hostId: String(obj(q).hostId || ''), url: obj(q).url, parent: obj(q).parent })))
+  ipcMain.handle('remoteFs:create', guard((q) => service.createProject({ hostId: String(obj(q).hostId || ''), parent: obj(q).parent, name: obj(q).name })))
 }

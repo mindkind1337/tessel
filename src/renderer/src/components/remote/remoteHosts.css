@@ -399,7 +399,9 @@
 
 /* --- SSH password / passphrase dialog (Orca's SshPassphraseDialog) ------------ */
 .ssh-cred-backdrop {
-  z-index: 400; /* above menus, popovers and toasts, like Orca's z-[150] */
+  /* Above menus, popovers, toasts and the Add a project dialog (460), which
+     signs in to a host from its host list. */
+  z-index: 470;
 }
 .ssh-cred-dialog {
   width: min(360px, 100%);
