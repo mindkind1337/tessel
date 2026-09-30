@@ -20,7 +20,7 @@
 // user types.
 import { teamNumber } from '../../teamNumber'
 import { computed, inject, nextTick, onBeforeUnmount, onMounted, provide, reactive, ref, shallowRef, watch } from 'vue'
-import { SquareTerminal } from 'lucide-vue-next'
+import { SquareTerminal, Ellipsis } from 'lucide-vue-next'
 import BrandIcon from '../BrandIcon.vue'
 import AgentChildren from '../AgentChildren.vue'
 import NativeChatView from './orca/NativeChatView.vue'
@@ -47,6 +47,11 @@ const STOPPED_STATES = new Set(['ended', 'crashed', 'signin', 'untrusted'])
 const opening = ref(false)
 const rootEl = ref(null)
 const viewRef = shallowRef(null)
+// The header's … button: the chat's menu, under the button.
+function openMore(event) {
+  const r = event.currentTarget.getBoundingClientRect()
+  if (viewRef.value && viewRef.value.openMenuAt) viewRef.value.openMenuAt(r.left, r.bottom + 4)
+}
 // Messages the main process did not take: { key, text, error, sending }.
 const unsent = ref([])
 let unsentKey = 0
@@ -597,6 +602,17 @@ defineExpose({ start, send, interrupt, focusPendingApproval, focusComposer: () =
           @click="ctx.switchToTerminal(node.id)"
         >
           <SquareTerminal :size="14" aria-hidden="true" />
+        </button>
+        <!-- More options: the chat's menu (as a right-click in it). -->
+        <button
+          class="pane-nav-btn"
+          data-test="chat-more"
+          :title="t('chat.pane.moreHint', 'More options (or right-click in the chat)')"
+          :aria-label="t('pane.more', 'More options')"
+          aria-haspopup="menu"
+          @click="openMore"
+        >
+          <Ellipsis :size="14" aria-hidden="true" />
         </button>
         <button
           class="pane-nav-btn"

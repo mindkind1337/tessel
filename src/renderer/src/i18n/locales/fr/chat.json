@@ -7,6 +7,7 @@
       "mcpUnsandboxedHint": "Mode Manuel : les commandes et les modifications de fichiers sont en bac à sable et demandent d'abord. Les outils MCP de votre configuration Codex ne sont pas en bac à sable : ils s'exécutent avec vos droits, et Tessel ne demande que lorsque Codex demande une approbation.",
       "openInTerminal": "Ouvrir dans un terminal",
       "openInTerminalHint": "Poursuivre cette conversation dans un pane terminal : même pane, mêmes permissions ou moins",
+      "moreHint": "Plus d’options (ou clic droit dans le chat)",
       "gotoApproval": "{{tool}} attend votre réponse (Alt+A)"
     },
     "status": {

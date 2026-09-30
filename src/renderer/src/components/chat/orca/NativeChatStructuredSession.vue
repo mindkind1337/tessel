@@ -255,7 +255,12 @@ async function focusPendingApproval() {
   return approvalRef.value ? approvalRef.value.focus() !== false : false
 }
 
+// The header's … button: the same menu as a right-click, at (x, y).
+function openMenuAt(x, y) {
+  if (contextMenuRef.value) contextMenuRef.value.onContextMenu({ preventDefault() {}, stopPropagation() {}, clientX: x, clientY: y })
+}
 defineExpose({
+  openMenuAt,
   focusComposer,
   focusPendingApproval,
   hasPendingApproval: () => !!approvalItem.value,
