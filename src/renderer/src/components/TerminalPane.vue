@@ -33,7 +33,7 @@ import {
 import { promptShowsPlaceholder } from '../promptCheck'
 import { detectTaskDone } from '../agentLimit'
 import { modelLabel } from '../../../shared/modelLabel'
-import { modelFromScreen, modelInLine } from '../../../shared/screenModel'
+import { modelFromScreen, modelFromSwitchLine } from '../../../shared/screenModel'
 import { findFileRefs } from '../../../shared/fileLinks'
 import { osc52Text } from '../../../shared/osc52'
 import { stripTerminalSelectionGutter } from '../../../shared/terminalSelectionGutter'
@@ -197,8 +197,8 @@ function modelSwitchedOnScreen() {
   for (let y = buf.length - 1; y >= from; y--) {
     const line = buf.getLine(y)
     const text = line ? line.translateToString(true) : ''
-    const m = /Set model to\s+(.+?)\s*(?:\(|$)/.exec(text)
-    if (m) return modelInLine(m[1]) || m[1].trim().slice(0, 60)
+    const m = modelFromSwitchLine(text)
+    if (m) return m
   }
   return null
 }

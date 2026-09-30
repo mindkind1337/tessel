@@ -50,3 +50,14 @@ export function modelFromScreen({ bottom = [], top = [] } = {}) {
   }
   return null
 }
+
+// The model Claude Code's /model printed: "Set model to opus (claude-opus-5-5)"
+// -> "claude-opus-5-5" (the full id says the version; the alias before it
+// does not), "Set model to Opus 5.5" -> "Opus 5.5", "Set model to opus" ->
+// "opus". Backticks around it are its Markdown, not the name.
+export function modelFromSwitchLine(text) {
+  const m = /Set model to\s+(.+?)\s*$/.exec(String(text || ''))
+  if (!m) return null
+  const rest = m[1].replace(/`/g, ' ').replace(/\s+and saved as your default.*$/i, '').trim()
+  return modelInLine(rest) || rest.split(/[\s(]/)[0].slice(0, 60) || null
+}

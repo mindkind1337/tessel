@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { modelInLine, modelFromScreen } from '../../../shared/screenModel'
+import { modelInLine, modelFromScreen, modelFromSwitchLine } from '../../../shared/screenModel'
+import { modelLabel } from '../../../shared/modelLabel'
 
 describe('the model an agent shows on its screen', () => {
   it('finds model names as agents print them', () => {
@@ -30,5 +31,17 @@ describe('the model an agent shows on its screen', () => {
     expect(modelFromScreen({ top: ['Welcome', 'model: kimi-k2-0905'], bottom: ['> hi', 'Hello!'] })).toBe('kimi-k2-0905')
     expect(modelFromScreen({ top: ['Welcome'], bottom: ['> hi'] })).toBe(null)
     expect(modelFromScreen()).toBe(null)
+  })
+})
+
+describe("Claude Code's /model result", () => {
+  it('keeps the full id after an alias, so the header says the version', () => {
+    expect(modelFromSwitchLine('  ⎿  Set model to opus (claude-opus-5-5)')).toBe('claude-opus-5-5')
+    expect(modelLabel(modelFromSwitchLine('Set model to `opus (claude-opus-5-5)`'))).toBe('Opus 5.5')
+    expect(modelLabel(modelFromSwitchLine('Set model to claude-fable-5 and saved as your default'))).toBe('Fable 5')
+    expect(modelFromSwitchLine('⎿  Set model to Opus 5.5')).toBe('Opus 5.5')
+    expect(modelFromSwitchLine('Set model to Opus 5 (1M context)')).toBe('Opus 5')
+    expect(modelFromSwitchLine('Set model to opus')).toBe('opus')
+    expect(modelFromSwitchLine('nothing here')).toBe(null)
   })
 })
