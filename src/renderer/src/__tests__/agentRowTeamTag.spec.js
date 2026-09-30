@@ -19,9 +19,10 @@ describe("an agent row shows its team", () => {
   it('names the team, and says lead for its lead; nothing without a team', () => {
     window.shellApi = {}
     const member = mount(CompactAgentRow, { props: { row: row({ team: 't1' }), teamLabel: 'Team 2' } })
-    expect(member.get('[data-test="car-team"]').text()).toBe('Team 2')
+    expect(member.get('[data-test="car-team"]').text()).toBe('2')
     const lead = mount(CompactAgentRow, { props: { row: row({ team: 't1', lead: true }), teamLabel: 'Team 2' } })
-    expect(lead.get('[data-test="car-team"]').text()).toBe('Team 2 · lead')
+    expect(lead.get('[data-test="car-team"]').text()).toBe('2')
+    expect(lead.get('[data-test="car-team"]').classes()).toContain('lead')
     const alone = mount(CompactAgentRow, { props: { row: row() } })
     expect(alone.find('[data-test="car-team"]').exists()).toBe(false)
   })
@@ -46,7 +47,7 @@ describe('a chat agent row (no terminal)', () => {
     window.shellApi = {}
     const w = mount(CompactAgentRow, { props: { row: chat({ team: 't1', lead: true }), teamLabel: 'Team 2' } })
     expect(w.find('[data-test="car-model"]').exists()).toBe(false)
-    expect(w.get('[data-test="car-team"]').text()).toBe('Team 2 · lead')
+    expect(w.get('[data-test="car-team"]').text()).toBe('2')
     expect(w.find('[data-test="car-chat"]').exists()).toBe(false)
     expect(w.get('.compact-agent-row').attributes('aria-label')).toContain('Chat, no terminal')
     const named = mount(CompactAgentRow, { props: { row: chat({ title: 'Claude (chat)', primary: 'Claude (chat)' }) } })

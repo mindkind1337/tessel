@@ -9168,6 +9168,20 @@ button.act-stat:hover,
   color: color-mix(in srgb, var(--wts-muted) 85%, transparent);
 }
 
+/* The team number at the far left of an agent row (the lead's in the accent). */
+.car-team-num {
+  flex-shrink: 0;
+  min-width: 10px;
+  color: color-mix(in srgb, var(--wts-muted) 85%, transparent);
+  font-size: 10px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.car-team-num.lead {
+  color: var(--accent);
+}
+
 .car-pick {
   width: 12px;
   height: 12px;

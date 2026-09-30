@@ -148,9 +148,13 @@ const childState = computed(() => {
 // The model its pane shows (TerminalPane writes paneModels; a chat's row
 // carries it).
 const rowModel = computed(() => props.row.model || (props.row.kind === 'agent' ? paneModels[props.row.id] || '' : ''))
-// The team tag on the row: its name, with "lead" when it leads it.
-const teamTag = computed(() =>
-  props.row.lead ? t('sidebar.agentRow.teamLead', '{{team}} · lead', { team: props.teamLabel }) : props.teamLabel
+// Its team, as a number at the far left of the row ("Team 2" -> 2; a team
+// named otherwise: its first two letters). Its name is in the hover card.
+const teamNum = computed(() => {
+  const label = String(props.teamLabel || '').trim()
+  const n = /(\d+)\s*$/.exec(label)
+  return n ? n[1] : label.slice(0, 2)
+})
 )
 const rowLabel = computed(() => {
   const r = props.row
@@ -193,6 +197,7 @@ const workerOfLabel = computed(() =>
     @click.stop="emit('activate', row)"
     @contextmenu.prevent.stop="emit('context', row, $event)"
   >
+    <span v-if="row.team && teamLabel" class="car-team-num" data-test="car-team" :class="{ lead: row.lead }" aria-hidden="true" v-text="teamNum"></span>
     <span v-if="picking" class="car-pick" :class="{ on: picked }" aria-hidden="true"></span>
     <AgentStateDot :state="row.dotState" :tooltip="false" />
     <span class="car-icon">
@@ -205,9 +210,7 @@ const workerOfLabel = computed(() =>
       >
     </span>
     <!-- The model it uses (the same text as its pane header). -->
-    <!-- Its team, by name (and "lead" when it leads it). -->
-    <span v-if="row.team && teamLabel" class="car-tag car-team-tag" data-test="car-team" :class="{ lead: row.lead }" v-text="teamTag"></span>
-    <span v-else-if="row.lead" class="car-tag">{{ t('sidebar.agentRow.lead', 'lead') }}</span>
+    <span v-if="row.lead && !(row.team && teamLabel)" class="car-tag">{{ t('sidebar.agentRow.lead', 'lead') }}</span>
     <!-- A worker: linked to its coordinator (click: go to it). -->
     <button
       v-if="row.workerOf"
