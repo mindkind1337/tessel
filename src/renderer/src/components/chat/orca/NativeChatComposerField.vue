@@ -27,6 +27,7 @@ import { NATIVE_FILE_DROP_TARGET } from '../../../chat/orca/shared/native-file-d
 import NativeChatPromptEditor from './NativeChatPromptEditor.vue'
 import NativeChatPickerMenu from './NativeChatPickerMenu.vue'
 import NativeChatMentionHint from './NativeChatMentionHint.vue'
+import NativeChatDictationButton from './NativeChatDictationButton.vue'
 import NativeChatComposerActions from './NativeChatComposerActions.vue'
 import NativeChatImageAttachmentPreview from './NativeChatImageAttachmentPreview.vue'
 
@@ -211,6 +212,7 @@ const criticalTitle = computed(() => {
               @remove="emit('removeImageAttachment', $event)"
             />
           </div>
+          <div class="nc-composer-text-row">
           <NativeChatPromptEditor
             :key="composerScopeKey"
             :scope-key="composerScopeKey"
@@ -234,6 +236,16 @@ const criticalTitle = computed(() => {
             @compositionend="onCompositionEnd"
             @paste.capture="emit('paste', $event)"
           />
+          <div v-if="showDictation" class="nc-composer-mic">
+            <NativeChatDictationButton v-if="showDictation"
+        :dictation-disabled="dictationDisabled" :is-dictating="isDictating"
+        :is-dictation-hold-mode="isDictationHoldMode" :dictation-title="dictationTitle"
+        @dictation-toggle="emit('dictationToggle')"
+        @dictation-hold-start="emit('dictationHoldStart')"
+        @dictation-hold-end="emit('dictationHoldEnd')"
+      />
+          </div>
+          </div>
           <span v-if="sendBlockedReason" :id="blockedId" class="nc-ui-sr-only" data-test="chat-send-blocked">{{
             sendBlockedReason
           }}</span>
@@ -251,7 +263,7 @@ const criticalTitle = computed(() => {
               :session-options-props="sessionOptionsProps"
               :context-usage="contextUsage"
               :show-attach="allowImages"
-              :show-dictation="showDictation"
+              :show-dictation="false"
               :dictation-title="dictationTitle"
               :critical-title="criticalTitle"
               @attach="emit('attach')"
@@ -340,21 +352,16 @@ const criticalTitle = computed(() => {
    into internal scrolling, layout-driven, so a re-wrap on resize needs no measure pass. */
 .nc-composer-box :deep(.nc-composer-input) {
   box-sizing: border-box;
-  min-height: 76px;
+  min-height: 52px;
   width: 100%;
   max-height: calc(8lh + 0.5rem);
   overflow-y: auto;
   background: transparent;
-  padding: 16px 14px;
+  padding: 16px;
   font-size: 14px;
   line-height: 20px;
   color: var(--nc-foreground);
   outline: none;
-}
-@media (pointer: coarse) {
-  .nc-composer-box :deep(.nc-composer-input) {
-    min-height: 56px;
-  }
 }
 .nc-composer-box :deep(.nc-composer-input[contenteditable='false']) {
   cursor: not-allowed;
@@ -376,6 +383,8 @@ const criticalTitle = computed(() => {
   border-color: var(--nc-primary, var(--nc-foreground));
 }
 .nc-composer-attachments {
-  padding: 12px 52px 0 14px;
+  padding: 12px 16px 0;
 }
+.nc-composer-text-row { position: relative; min-width: 0; }
+.nc-composer-mic { position: absolute; right: 10px; top: 10px; }
 </style>

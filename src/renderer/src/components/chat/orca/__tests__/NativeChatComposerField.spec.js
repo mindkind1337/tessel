@@ -272,9 +272,8 @@ describe('native chat composer autogrow', () => {
     expect(textarea().classList.contains('nc-ui-scrollbar-sleek')).toBe(true)
   })
 
-  it('keeps the touch-target minimum heights', () => {
-    expect(source).toContain('min-height: 76px;')
-    expect(source).toMatch(/@media \(pointer: coarse\) \{\s*\.nc-composer-box :deep\(\.nc-composer-input\) \{\s*min-height: 56px;/)
+  it('starts with one text line and its vertical padding', () => {
+    expect(source).toContain('min-height: 52px;')
   })
 
   it('does not pin an inline height that a resize could leave stale', async () => {
@@ -353,5 +352,16 @@ describe('Tessel: the field', () => {
     await flushPromises()
     expect(textarea().getAttribute('aria-expanded')).toBe('false')
     expect(textarea().hasAttribute('aria-activedescendant')).toBe(false)
+  })
+})
+
+describe('dictation beside the text', () => {
+  it('keeps the mic below image chips and forwards dictation', async () => {
+    await render(fieldProps({ showDictation: true, dictationDisabled: false, allowImages: true, imageAttachments: [{ id: 'image', name: 'image.png', width: 702, height: 56 }] }))
+    const mic = wrapper.get('[data-test="chat-dictation"]')
+    expect(mic.element.closest('.nc-composer-text-row')).toBeTruthy()
+    expect(mic.element.closest('.nc-composer-attachments')).toBeNull()
+    await mic.trigger('click')
+    expect(wrapper.emitted('dictationToggle')).toHaveLength(1)
   })
 })

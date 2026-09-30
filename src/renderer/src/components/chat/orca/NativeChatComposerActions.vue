@@ -15,13 +15,14 @@
 // Slot: session-options (replaces the default pickers).
 // The goal chip (onExitGoalMode) is not ported: Tessel has no goal controller.
 import { computed } from 'vue'
-import { ArrowUp, Mic, Plus, Square } from 'lucide-vue-next'
+import { ArrowUp, Plus, Square } from 'lucide-vue-next'
 import { t } from '../../../i18n'
 import Button from './ui/Button.vue'
 import Tooltip from './ui/Tooltip.vue'
 import TooltipContent from './ui/TooltipContent.vue'
 import TooltipTrigger from './ui/TooltipTrigger.vue'
 import NativeChatSessionOptionPickers from './NativeChatSessionOptionPickers.vue'
+import NativeChatDictationButton from './NativeChatDictationButton.vue'
 import NativeChatContextUsageRing from './NativeChatContextUsageRing.vue'
 
 const props = defineProps({
@@ -51,30 +52,11 @@ function handleCriticalAction(event) {
   else emit('send')
 }
 
-const dictationLabel = computed(() =>
-  props.isDictating
-    ? t('chat.orca.composer.stopDictation', 'Stop dictation')
-    : props.dictationTitle || t('chat.orca.composer.startDictation', 'Start dictation')
-)
 const attachLabel = computed(() => t('chat.orca.composer.attachImages', 'Attach images'))
 const criticalLabel = computed(() =>
   props.isWorking ? t('chat.orca.stop', 'Stop the agent') : t('chat.orca.composer.send', 'Send')
 )
 
-function onDictationClick() {
-  if (!props.isDictationHoldMode) emit('dictationToggle')
-}
-function onDictationPointerDown(event) {
-  if (!props.isDictationHoldMode || props.dictationDisabled) return
-  event.preventDefault()
-  emit('dictationHoldStart')
-}
-function onDictationPointerUp() {
-  if (props.isDictationHoldMode && !props.dictationDisabled) emit('dictationHoldEnd')
-}
-function onDictationPointerLeave(event) {
-  if (props.isDictationHoldMode && event.buttons === 1 && !props.dictationDisabled) emit('dictationHoldEnd')
-}
 </script>
 
 <template>
@@ -111,29 +93,13 @@ function onDictationPointerLeave(event) {
       </slot>
     </div>
     <div class="nc-actions-end">
-      <Tooltip v-if="showDictation">
-        <TooltipTrigger as-child>
-          <Button
-            type="button"
-            :variant="isDictating ? 'secondary' : 'ghost'"
-            size="icon-sm"
-            class="nc-actions-touch nc-actions-dictation"
-            :aria-label="dictationLabel"
-            data-test="chat-dictation"
-            :disabled="dictationDisabled"
-            @click="onDictationClick"
-            @pointerdown="onDictationPointerDown"
-            @pointerup="onDictationPointerUp"
-            @pointercancel="onDictationPointerUp"
-            @pointerleave="onDictationPointerLeave"
-          >
-            <Square v-if="isDictating" class="nc-size-3-5 nc-fill-current" />
-            <Mic v-else class="nc-size-4" />
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent side="top" :side-offset="4">{{ dictationLabel }}</TooltipContent>
-      </Tooltip>
-      <Button
+      <NativeChatDictationButton v-if="showDictation"
+        :dictation-disabled="dictationDisabled" :is-dictating="isDictating"
+        :is-dictation-hold-mode="isDictationHoldMode" :dictation-title="dictationTitle"
+        @dictation-toggle="emit('dictationToggle')"
+        @dictation-hold-start="emit('dictationHoldStart')"
+        @dictation-hold-end="emit('dictationHoldEnd')"
+      /> <Button
         type="button"
         :data-native-chat-critical-action="isWorking ? 'stop' : undefined"
         :data-test="isWorking ? 'chat-interrupt' : 'chat-send'"
@@ -179,11 +145,6 @@ function onDictationPointerLeave(event) {
 .nc-actions-options {
   flex: 1 1 0;
   min-width: 0;
-}
-.nc-actions-dictation {
-  position: absolute;
-  right: 10px;
-  top: 12px;
 }
 .nc-size-4 {
   width: 16px;
