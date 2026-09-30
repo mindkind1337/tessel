@@ -100,10 +100,16 @@ describe('terminal to chat', () => {
     expect(ws.tree).toMatchObject({ kind: 'chat', id: 'pane-2', agentId: 'codex', sessionId: 'thread-1', cwd: 'C:\\proj', num: 2, team: 'team-1', model: 'gpt-6', effort: 'low' })
   })
 
-  it('not Yolo in the terminal: capped to asking first as a chat; Yolo: not capped', async () => {
+  it('the chat follows Settings like a new one; only a pane set to ask first (or a capped worker) stays capped', async () => {
     const a = load(term())
     await a.api.switchToChat('pane-2')
-    expect(a.ws.tree.maxPermissions).toBe('manual')
+    expect(a.ws.tree.maxPermissions).toBeUndefined()
+    const pinned = load(term({ permissions: 'manual' }))
+    await pinned.api.switchToChat('pane-2')
+    expect(pinned.ws.tree.maxPermissions).toBe('manual')
+    const worker = load(term({ launchYolo: true, maxPermissions: 'manual' }))
+    await worker.api.switchToChat('pane-2')
+    expect(worker.ws.tree.maxPermissions).toBe('manual')
     const b = load(term({ launchYolo: true }))
     await b.api.switchToChat('pane-2')
     expect(b.ws.tree.maxPermissions).toBeUndefined()

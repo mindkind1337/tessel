@@ -567,7 +567,6 @@ defineExpose({ start, send, interrupt, focusPendingApproval, focusComposer: () =
         <span class="chat-status" :class="'st-' + status" data-test="chat-status">
           <span class="chat-status-dot" aria-hidden="true"></span>{{ statusLabel }}
         </span>
-        <span v-if="modelText" class="chat-model" data-test="chat-model">{{ modelText }}</span>
         <span
           v-if="agentId === 'codex' && !yolo"
           class="chat-badge mcp"

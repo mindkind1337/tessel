@@ -684,7 +684,10 @@ describe('ChatPane.vue', () => {
     modelLists.claude = { models: [{ id: 'opus', label: 'Opus 5.5', effortLevels: ['high'] }], fetchedAt: Date.now() }
     try {
       await mountPane({ model: 'opus' })
-      expect(wrapper.get('[data-test="chat-model"]').text()).toBe('Opus 5.5')
+      await settle()
+      // Not shown in the header (the composer's pills show it): the hover card gets it.
+      expect(wrapper.find('[data-test="chat-model"]').exists()).toBe(false)
+      expect(node.headerModel).toBe('Opus 5.5')
     } finally {
       resetModelListsForTests()
     }
@@ -698,7 +701,6 @@ describe('ChatPane.vue', () => {
       await mountPane({ model: 'opus', sessionId: 's1' })
       emit({ type: 'status', state: 'idle', model: 'opus' })
       await settle()
-      expect(wrapper.get('[data-test="chat-model"]').text()).toBe('Opus 5.5 · Extra high')
       expect(node.headerModel).toBe('Opus 5.5 · Extra high')
       // The composer's effort picker reads the same effort.
       expect(node.shownEffort).toBe('xhigh')
@@ -717,7 +719,7 @@ describe('ChatPane.vue', () => {
       await settle()
       expect(window.shellApi.agentModel).toHaveBeenCalled()
       expect(node.shownEffort).toBe('medium')
-      expect(wrapper.get('[data-test="chat-model"]').text()).toContain('Medium')
+      expect(node.headerModel).toContain('Medium')
     } finally {
       window.shellApi.agentModel = prev
       resetModelListsForTests()
