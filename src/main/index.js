@@ -48,6 +48,7 @@ import { claudeImageFile, isPastedImage, PASTE_DIR } from './pastedImages'
 import { createBrowserGuests } from './browserGuest'
 import { createChatSessions } from './chat/sessions'
 import { transcriptHomeFor } from './chat/transcriptHistory'
+import { createTranscriptViews } from './chat/transcriptView'
 import { createClaudeChat } from './chat/claudeChat'
 import { createCodexChat } from './chat/codexChat'
 import { createChatTrust } from './chat/chatTrust'
@@ -1100,6 +1101,11 @@ const chatSessions = createChatSessions({
   log
 })
 chatSessions.register(ipcMain)
+// Read-only chat views of the agents without a chat protocol (Grok,
+// OpenClaude, OMP): their session file, watched while the view is open.
+const transcriptViews = createTranscriptViews({ send, log })
+transcriptViews.register(ipcMain)
+app.on('will-quit', () => transcriptViews.closeAll())
 // Quitting kills the chat agents' process trees at once (before-quit below
 // waits for it); this one only catches a quit that skipped before-quit.
 app.on('will-quit', () => {

@@ -499,7 +499,10 @@
       "yoloFolder": "Yolo dans ce dossier",
       "yoloFolderHint": "Les agents lancés dans {{folder}} (ou un dossier à l'intérieur) démarrent toujours en Yolo. Les agents déjà lancés là gardent leur mode.",
       "openAsChat": "Ouvrir en chat",
-      "openAsChatHint": "Poursuivre cette conversation dans un pane de chat (sans terminal) : même pane, mêmes permissions ou moins"
+      "openAsChatHint": "Poursuivre cette conversation dans un pane de chat (sans terminal) : même pane, mêmes permissions ou moins",
+      "viewTranscript": "Voir la conversation",
+      "viewTranscriptHint": "Afficher cette conversation comme un chat, en lecture seule (la saisie reste dans le terminal)",
+      "hideTranscript": "Revenir au terminal"
     },
     "badge": {
       "quiet": "silencieux depuis {{minutes}} min",

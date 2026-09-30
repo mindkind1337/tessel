@@ -141,7 +141,7 @@ function timeOf(v) {
 // Collects the events, each with a time never before the previous one's,
 // merges a message's text (one line per content block) into its first
 // event, and closes turns.
-function createBuilder(limits) {
+export function createBuilder(limits) {
   const events = []
   const messages = new Map() // key -> the event holding its text
   const openTools = new Set()

@@ -693,5 +693,11 @@
   "chat.orca.contextMenu.closePane": "Fermer le pane",
   "chat.orca.drop.title": "Déposer pour joindre à ce chat",
   "chat.orca.drop.subtitle": "Les fichiers sont ajoutés à votre message sous forme de chemins que l'agent peut lire.",
-  "chat.orca.fileLinks.outside": "Seuls les fichiers des dossiers de ce chat s'ouvrent depuis le chat : {{value0}}"
+  "chat.orca.fileLinks.outside": "Seuls les fichiers des dossiers de ce chat s'ouvrent depuis le chat : {{value0}}",
+  "chat.orca.transcriptView.title": "Conversation de {{agent}}",
+  "chat.orca.transcriptView.readOnly": "Lecture seule : tapez dans le terminal",
+  "chat.orca.transcriptView.truncated": "Dernière partie seulement",
+  "chat.orca.transcriptView.back": "Revenir au terminal",
+  "chat.orca.transcriptView.missing": "Pas encore de fichier de conversation : il apparaît avec le premier message.",
+  "chat.orca.transcriptView.error": "La conversation n'a pas pu être lue."
 }

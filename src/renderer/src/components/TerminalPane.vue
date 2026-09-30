@@ -48,6 +48,7 @@ import { modelChoiceLabel, sessionPillLabel } from '../sessionOptionLabels'
 import { switchClaudeModel, typeCommand } from '../claudeModelSwitch'
 import SessionOptionPicker from './SessionOptionPicker.vue'
 import AgentChildren from './AgentChildren.vue'
+import NativeChatTranscriptView from './chat/orca/NativeChatTranscriptView.vue'
 import { listsChildren } from '../agentChildrenFeed'
 import HoverCardContent from './hover/HoverCardContent.vue'
 import PaneHoverDetails from './PaneHoverDetails.vue'
@@ -601,6 +602,27 @@ function menuSwitchYolo() {
 const canOpenAsChat = computed(() => {
   const n = props.node
   return n.kind === 'agent' && ['claude', 'codex'].includes(n.agentId) && !!n.sessionId && !n.detected && !n.remoteHostId && !!ctx.switchToChat
+})
+// Pane menu > See the conversation: an agent with no chat of its own (Grok,
+// OpenClaude, OMP) whose conversation is known: its session file shown as a
+// chat, read-only, over the terminal (typing stays in the terminal).
+const TRANSCRIPT_VIEW_AGENTS = ['grok', 'openclaude', 'omp']
+const transcriptOpen = ref(false)
+const canViewTranscript = computed(() => {
+  const n = props.node
+  return n.kind === 'agent' && TRANSCRIPT_VIEW_AGENTS.includes(n.agentId) && !!n.sessionId && !n.remoteHostId
+})
+function menuViewTranscript() {
+  closeCtxMenu()
+  if (transcriptOpen.value) closeTranscript()
+  else transcriptOpen.value = true
+}
+function closeTranscript() {
+  transcriptOpen.value = false
+  nextTick(() => term && term.focus())
+}
+watch(canViewTranscript, (can) => {
+  if (!can) transcriptOpen.value = false
 })
 function menuOpenAsChat() {
   closeCtxMenu()
@@ -1504,7 +1526,10 @@ let webglReleased = false
 let onScreen = true
 let releaseTimer = null
 let screenObserver = null
+// The same, reactive (the conversation view watches its file only while shown).
+const paneOnScreen = ref(true)
 function setOnScreen(visible) {
+  paneOnScreen.value = visible
   if (visible === onScreen) return
   onScreen = visible
   clearTimeout(releaseTimer)
@@ -2282,6 +2307,16 @@ onBeforeUnmount(() => {
     </div>
 
     <div ref="hostEl" class="term-host"></div>
+    <div v-if="transcriptOpen && canViewTranscript" class="term-transcript" @mousedown.stop="ctx.setActive(node.id)">
+      <NativeChatTranscriptView
+        :agent="node.agentId"
+        :session-id="node.sessionId"
+        :agent-name="paneTitle"
+        :node="node"
+        :is-visible="paneOnScreen"
+        @close="closeTranscript"
+      />
+    </div>
 
     <div v-if="findOpen" class="find-bar" @mousedown.stop>
       <input
@@ -2557,6 +2592,15 @@ onBeforeUnmount(() => {
       <div class="ctx-menu-sep"></div>
       <button class="ctx-menu-item" @click="menuRestart">
         {{ t('pane.restart', 'Restart') }}<span class="ctx-menu-shortcut">Ctrl+Shift+R</span>
+      </button>
+      <button
+        v-if="canViewTranscript"
+        class="ctx-menu-item"
+        data-test="menu-view-transcript"
+        :title="t('pane.menu.viewTranscriptHint', 'Show this conversation as a chat, read-only (typing stays in the terminal)')"
+        @click="menuViewTranscript"
+      >
+        {{ transcriptOpen ? t('pane.menu.hideTranscript', 'Back to the terminal') : t('pane.menu.viewTranscript', 'See the conversation') }}
       </button>
       <button
         v-if="canOpenAsChat"

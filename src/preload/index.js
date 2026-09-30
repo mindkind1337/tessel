@@ -394,6 +394,12 @@ const api = {
     skills: (opts) => ipcRenderer.invoke('chat:skills', opts),
     onEvent: (cb) => subscribe('chat:event', cb)
   },
+  // Read-only conversation views of terminal agents (src/main/chat/transcriptView.js).
+  transcriptView: {
+    open: (opts) => ipcRenderer.invoke('transcriptView:open', opts),
+    close: (opts) => ipcRenderer.invoke('transcriptView:close', opts),
+    onEvent: (cb) => subscribe('transcriptView:event', cb)
+  },
 
   // Scheduled automations (src/main/automations.js): the list and run
   // history, changes, and the runs the scheduler asks the window to start
