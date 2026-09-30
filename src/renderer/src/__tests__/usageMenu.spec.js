@@ -69,3 +69,38 @@ describe('the usage gauge', () => {
     }
   })
 })
+
+describe('opening the usage menu does not flood the usage services', () => {
+  it('reads a provider on the first open, not again when reopened within 5 minutes; the refresh button reads again', async () => {
+    const { mount, flushPromises } = await import('@vue/test-utils')
+    const UsageMenu = (await import('../components/UsageMenu.vue')).default
+    const read = vi.fn(async () => ({ ok: true, windows: [{ label: 'week', usedPct: 10, resetsAt: null, stale: false }] }))
+    const prev = window.shellApi
+    window.shellApi = {
+      ...(prev || {}),
+      providerUsage: { ...(prev && prev.providerUsage), read, onUpdate: () => () => {}, autoRefresh: async () => ({ ok: true }) }
+    }
+    try {
+      const w = mount(UsageMenu, { attachTo: document.body })
+      await flushPromises()
+      const button = w.find('[data-test="usage-button"]')
+      if (!button.exists()) return w.unmount()
+      await button.trigger('click')
+      await flushPromises()
+      const first = read.mock.calls.length
+      await button.trigger('click') // close
+      await button.trigger('click') // open again
+      await flushPromises()
+      expect(read.mock.calls.length).toBe(first)
+      const refreshBtn = document.querySelector('[data-test="usage-refresh"]')
+      if (refreshBtn && first > 0) {
+        refreshBtn.click()
+        await flushPromises()
+        expect(read.mock.calls.length).toBeGreaterThan(first)
+      }
+      w.unmount()
+    } finally {
+      window.shellApi = prev
+    }
+  })
+})

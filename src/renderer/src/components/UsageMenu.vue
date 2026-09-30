@@ -145,9 +145,14 @@ function invalidateProvider(id) {
   providerBusy.value[id] = false
   resetConfirm.value = null
 }
+// When each provider was last read (as the reference's MIN_REFETCH_MS: opening
+// the menu reads again only after 5 minutes; the refresh button always does).
+const MIN_REFETCH_MS = 5 * 60 * 1000
+const providerReadAt = new Map()
 async function readProvider(id) {
   if (!trackedProviders.value.some((p) => p.id === id) || !window.shellApi.providerUsage?.read)
     return
+  providerReadAt.set(id, Date.now())
   if (accountsReadFailed.value || providerAccounts(id)?.error || accountBusy.value[id]) return
   const accountId = selectedAccount(id)
   const request = (providerRequests.get(id) || 0) + 1
@@ -784,10 +789,16 @@ function closeMenu() {
   open.value = false
   closeProvider()
 }
-async function refresh() {
+// force: the refresh button (always reads); opening the menu reads only the
+// providers not read in the last 5 minutes, so opening it often never floods
+// the usage services (they answer "too many requests" and block).
+async function refresh(force = true) {
   if (resetBusy.value) return
   await Promise.all([load(), loadAccounts(), loadAgents()])
-  if (alive && open.value) await Promise.all(trackedProviders.value.map((p) => readProvider(p.id)))
+  if (!alive || !open.value) return
+  const now = Date.now()
+  const due = trackedProviders.value.filter((p) => force === true || now - (providerReadAt.get(p.id) || 0) >= MIN_REFETCH_MS)
+  await Promise.all(due.map((p) => readProvider(p.id)))
 }
 function visibilityChanged({ id, show }) {
   if (!show && selectedProvider.value === id) closeProvider()
@@ -833,7 +844,7 @@ function toggle() {
   open.value = !open.value
   if (open.value) {
     positionMenu()
-    refresh()
+    refresh(false)
   }
 }
 
@@ -891,7 +902,7 @@ const emptyTitle = () => t('usage.menu.buttonTitleEmpty', "Usage of your agents'
           :title="t('usage.menu.refresh', 'Refresh usage')"
           :disabled="refreshing || resetBusy"
           data-test="usage-refresh"
-          @click="refresh"
+          @click="refresh(true)"
         >
           <svg
             :class="{ spinning: refreshing }"
@@ -1143,9 +1154,7 @@ const emptyTitle = () => t('usage.menu.buttonTitleEmpty', "Usage of your agents'
         ></p>
         <p v-if="providerErrors[detailAgent.id]" class="usage-account-error" role="alert">
           {{ providerErrors[detailAgent.id]
-          }}<span v-if="windows(detailAgent).length">
-            {{ t('usage.menu.showingLastKnown', 'Showing the last known reading.') }}</span
-          >
+          }}<span v-if="windows(detailAgent).length">{{ ' ' + t('usage.menu.showingLastKnown', 'Showing the last known reading.') }}</span>
         </p>
         <p
           v-if="providerBusy[detailAgent.id] && !windows(detailAgent).length"
