@@ -542,6 +542,7 @@ const remoteOp = ref(null) // 'push' | 'pull' | 'sync' | 'publish' | 'fetch' | '
 const commitError = ref('')
 const remoteActionError = ref('')
 const isGenerating = ref(false)
+let generatingRoot = null
 const generateError = ref('')
 
 const upstreamStatus = computed(() =>
@@ -702,6 +703,7 @@ async function generate() {
   isGenerating.value = true
   generateError.value = ''
   const root = repoRoot.value
+  generatingRoot = root
   let res = null
   try {
     res = await api().generate({ root, agent: generateAgent.value })
@@ -709,6 +711,7 @@ async function generate() {
     res = { ok: false, error: err && err.message }
   } finally {
     isGenerating.value = false
+    generatingRoot = null
   }
   if (res && res.ok && res.message) {
     if (!(drafts[rootKey(root)] || '').trim()) drafts[rootKey(root)] = res.message
@@ -718,7 +721,7 @@ async function generate() {
     })
 }
 function cancelGenerate() {
-  if (api() && api().cancelGenerate) api().cancelGenerate({ root: repoRoot.value })
+  if (generatingRoot && api() && api().cancelGenerate) api().cancelGenerate({ root: generatingRoot })
 }
 
 // --- Header: branch, more menu ------------------------------------------------------------

@@ -379,6 +379,26 @@ describe('Source Control: commit', () => {
     expect(w.emitted('toast').at(-1)[0]).toContain('repository changed')
   })
 
+  it('cancels the generator started in the original repository after switching projects', async () => {
+    let finish
+    api({
+      status: q => status([{ path: 'a.js', area: 'staged', status: 'modified' }], { top: q.root }),
+      generate: () => new Promise(resolve => { finish = resolve })
+    })
+    make()
+    await flushPromises()
+    await w.find('[data-test="sc-commit-message"]').setValue('')
+    await w.find('[data-test="sc-generate"]').trigger('click')
+    await flushPromises()
+    await w.setProps({ root: 'C:/another-project' })
+    await flushPromises()
+    await w.find('[data-test="sc-generate-stop"]').trigger('click')
+    await flushPromises()
+    expect(calls.find(([name]) => name === 'cancelGenerate')[1].root).toBe(ROOT)
+    finish({ ok: false, cancelled: true })
+    await flushPromises()
+  })
+
   it('Generate fills an empty message from the staged changes (disabled with nothing staged)', async () => {
     let st = status([{ path: 'a.js', area: 'unstaged', status: 'modified' }])
     api({ status: () => st })
