@@ -8,6 +8,7 @@
 // Roster and provider flyout patterns inspired by Orca UsageRosterPanel,
 // ProviderPanel and CodexSwitcherMenu (MIT, Lovecast, 2026); independent Vue UI.
 // Amber from 60 %, red from 80 % (the reference's thresholds); an old reading says so.
+import { RefreshCw } from 'lucide-vue-next'
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import BrandIcon from './BrandIcon.vue'
 import UsageVisibility from './UsageVisibility.vue'
@@ -904,22 +905,7 @@ const emptyTitle = () => t('usage.menu.buttonTitleEmpty', "Usage of your agents'
           data-test="usage-refresh"
           @click="refresh(true)"
         >
-          <svg
-            :class="{ spinning: refreshing }"
-              width="14"
-              height="14"
-              viewBox="0 0 16 16"
-              fill="none"
-              aria-hidden="true"
-            >
-              <path
-                d="M13 6a5 5 0 10.1 3M13 2.5V6H9.5"
-                stroke="currentColor"
-                stroke-width="1.3"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              />
-            </svg>
+          <RefreshCw :size="13" :class="{ spinning: refreshing }" aria-hidden="true" />
         </button>
       </header>
       <div class="usage-density" role="group" :aria-label="t('usage.menu.display', 'Usage display')">
@@ -1652,6 +1638,7 @@ const emptyTitle = () => t('usage.menu.buttonTitleEmpty', "Usage of your agents'
 .usage-refresh {
   display: grid;
   place-items: center;
+  padding: 0;
   border: 0;
   border-radius: 4px;
   width: 24px;
