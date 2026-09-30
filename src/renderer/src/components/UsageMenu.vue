@@ -363,7 +363,9 @@ function windows(agent) {
 function timestamp(value) {
   return typeof value === 'number' && Number.isFinite(value) ? value : Date.parse(value)
 }
+// window: null when a provider sends no reading for it (never a crash).
 function stale(agent, window) {
+  if (!window) return false
   const reset = timestamp(window.resetsAt)
   return (
     window.stale === true ||
@@ -573,6 +575,7 @@ function shortReset(iso) {
 // A kept reading (the automatic refresh failed, the reading is recent) still
 // counts for the icon until its window resets.
 function counts(agent, window) {
+  if (!window) return false
   if (!stale(agent, window)) return true
   const reset = timestamp(window.resetsAt)
   return agent.kept === true && window.stale !== true && !(Number.isFinite(reset) && reset <= now.value)
@@ -708,8 +711,10 @@ function quotaText(label) {
     : t('usage.menu.quotaUsed', '{{window}} quota used', { window: name })
 }
 function summaryTitle(agent) {
-  const quota = quotaText(summaryWindow(agent).label)
-  return stale(agent, summaryWindow(agent))
+  const window = summaryWindow(agent)
+  if (!window) return ''
+  const quota = quotaText(window.label)
+  return stale(agent, window)
     ? t('usage.menu.quotaLastKnown', '{{quota}} - last known reading', { quota })
     : quota
 }
