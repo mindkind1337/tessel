@@ -60,12 +60,11 @@ afterEach(() => {
 })
 
 describe('status bar', () => {
-  it('shows keep awake, memory · terminals, ports and hosts; nothing on the left', async () => {
+  it('shows keep awake, memory · terminals, ports and hosts, with the former footer on the left', async () => {
     settings.keepAwake = 'agents'
     const w = mountBar()
     await flushPromises()
-    // No input target, pane count or folder on the left any more.
-    expect(w.find('.sb-left').text()).toBe('')
+    expect(w.find('.sb-left').text()).toContain('Input → Claude')
     const awake = w.find('.sb-awake')
     expect(awake.attributes('aria-label')).toBe('Keep computer awake, Agent · Inactive')
     expect(awake.text()).toBe('Agent')
