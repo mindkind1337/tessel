@@ -505,9 +505,11 @@ describe('delivery', () => {
     expect(last('status')).toMatchObject({ state: 'idle' })
   })
 
-  it('working: queued, then sent in order after the turn, one turn each', async () => {
+  it('OpenCode working: queued, then sent in order after the turn, one turn each', async () => {
+    deps.resolveOpencode = vi.fn(async () => ({ exe: 'C:\\bin\\opencode.exe', exeArgs: [] }))
+    startResult = { ok: true, pid: 3, info: { sessionId: 'ses_queue' } }
     const chat = createChatSessions(deps)
-    await openOk(chat)
+    await openOk(chat, { agent: 'opencode' })
     const a = adapters[0]
     const first = chat.send({ paneId, text: 'one' })
     await flush()
@@ -604,12 +606,196 @@ describe('delivery', () => {
     stateCalls.length = 0
     adapters[0].emit('state', { state: 'running' })
     expect(last('status')).toMatchObject({ state: 'working' })
-    const queued = chat.send({ paneId, text: 'wait' })
-    expect(queued.queued).toBe(true)
+    // Sent at once into the agent's own turn (as in a terminal).
+    const steered = chat.send({ paneId, text: 'wait' })
+    expect(steered).toMatchObject({ queued: false, steered: true })
+    await flush()
+    expect(adapters[0].send).toHaveBeenCalledWith({ uuid: steered.id, text: 'wait' })
+    adapters[0].emit('accepted', { uuid: steered.id })
     adapters[0].emit('turnEnd', { status: 'completed' })
     await flush()
     expect(stateCalls.slice(0, 3)).toEqual([['UserPromptSubmit'], ['Stop'], ['observe', 'ScreenReady']])
-    expect(adapters[0].send).toHaveBeenCalledWith({ uuid: queued.id, text: 'wait' })
+    expect(adapters[0].send).toHaveBeenCalledTimes(1)
+    expect(last('status')).toMatchObject({ state: 'idle' })
+  })
+})
+
+describe('a message sent while a turn runs (steered)', () => {
+  const userStatuses = (id) => events('userStatus').filter((e) => e.id === id).map((e) => e.status)
+  const running = async (chat, extra) => {
+    await openOk(chat, extra)
+    const a = adapters[0]
+    const first = chat.send({ paneId, text: 'one' })
+    await flush()
+    a.emit('state', { state: 'running' })
+    a.emit('accepted', { uuid: first.id })
+    return { a, first }
+  }
+
+  it('Claude: written at once, accepted into the running turn, one turn end, never sent again', async () => {
+    const chat = createChatSessions(deps)
+    const { a, first } = await running(chat)
+    stateCalls.length = 0
+    const second = chat.send({ paneId, text: 'two' })
+    expect(second).toEqual({ ok: true, id: second.id, queued: false, steered: true })
+    expect(events('user').map((u) => [u.text, u.status])).toEqual([['one', 'sent'], ['two', 'sent']])
+    await flush()
+    expect(a.send).toHaveBeenCalledTimes(2)
+    expect(a.send.mock.calls[1][0]).toEqual({ uuid: second.id, text: 'two' })
+    expect(last('status')).toMatchObject({ state: 'working' })
+    a.emit('accepted', { uuid: second.id })
+    expect(userStatuses(second.id)).toEqual(['accepted'])
+    a.emit('turnEnd', { status: 'completed', userMessageUuids: [first.id, second.id] })
+    await flush()
+    expect(events('turnEnd')).toHaveLength(1)
+    expect(userStatuses(first.id)).toEqual(['accepted'])
+    expect(userStatuses(second.id)).toEqual(['accepted'])
+    expect(a.send).toHaveBeenCalledTimes(2)
+    expect(stateCalls).toEqual([['Stop'], ['observe', 'ScreenReady']])
+    expect(last('status')).toMatchObject({ state: 'idle' })
+  })
+
+  it('accepted by the turn end\'s list when the agent never echoed it', async () => {
+    const chat = createChatSessions(deps)
+    const { a, first } = await running(chat)
+    const second = chat.send({ paneId, text: 'two' })
+    await flush()
+    a.emit('turnEnd', { status: 'completed', userMessageUuids: [first.id, second.id] })
+    await flush()
+    expect(userStatuses(second.id)).toEqual(['accepted'])
+    expect(last('status')).toMatchObject({ state: 'idle' })
+  })
+
+  it('run by the agent after the turn: the chat stays working for it, team messages wait, then go', async () => {
+    const chat = createChatSessions(deps)
+    const { a } = await running(chat)
+    const second = chat.send({ paneId, text: 'two' })
+    await flush()
+    chat.sendTeam({ paneId, messages: [{ id: 'm1', from: '#2', text: 'team' }] })
+    a.emit('turnEnd', { status: 'completed' })
+    await flush()
+    // Not failed, not sent again, nothing else sent meanwhile.
+    expect(userStatuses(second.id)).toEqual([])
+    expect(a.send).toHaveBeenCalledTimes(2)
+    expect(events('status').filter((e) => e.state === 'idle')).toHaveLength(1) // the open's only
+    expect(last('status')).toMatchObject({ state: 'working' })
+    stateCalls.length = 0
+    a.emit('state', { state: 'running' })
+    a.emit('accepted', { uuid: second.id })
+    expect(userStatuses(second.id)).toEqual(['accepted'])
+    await flush()
+    expect(stateCalls[0]).toEqual(['UserPromptSubmit'])
+    a.emit('turnEnd', { status: 'completed', userMessageUuids: [second.id] })
+    await flush()
+    expect(events('turnEnd')).toHaveLength(2)
+    expect(a.send).toHaveBeenCalledTimes(3)
+    expect(a.send.mock.calls[2][0].text).toContain('team')
+  })
+
+  it('never started by the agent: failed after the wait, the queue goes on; a late start still shows', async () => {
+    const chat = createChatSessions({ ...deps, steerWaitMs: 20 })
+    const { a } = await running(chat)
+    const second = chat.send({ paneId, text: 'two' })
+    await flush()
+    chat.sendTeam({ paneId, messages: [{ id: 'm1', from: '#2', text: 'team' }] })
+    a.emit('turnEnd', { status: 'completed' })
+    await flush()
+    expect(last('status')).toMatchObject({ state: 'working' })
+    await new Promise((r) => setTimeout(r, 60))
+    expect(userStatuses(second.id)).toEqual(['failed'])
+    // The team batch went once the wait was over.
+    expect(a.send).toHaveBeenCalledTimes(3)
+    a.emit('accepted', { uuid: a.send.mock.calls[2][0].uuid })
+    a.emit('turnEnd', { status: 'completed' })
+    await flush()
+    expect(last('status')).toMatchObject({ state: 'idle' })
+    // Taken after all: its row says so, and the chat shows the turn.
+    a.emit('accepted', { uuid: second.id })
+    expect(userStatuses(second.id)).toEqual(['failed', 'accepted'])
+    expect(last('status')).toMatchObject({ state: 'working' })
+    a.emit('turnEnd', { status: 'completed' })
+    await flush()
+    expect(last('status')).toMatchObject({ state: 'idle' })
+    expect(a.send).toHaveBeenCalledTimes(3)
+  })
+
+  it('a write that fails: that message fails, the running turn goes on, nothing queued or resent', async () => {
+    const chat = createChatSessions(deps)
+    const { a } = await running(chat)
+    a.send.mockResolvedValueOnce({ ok: false, error: 'stdin closed' })
+    const second = chat.send({ paneId, text: 'two' })
+    await flush()
+    expect(userStatuses(second.id)).toEqual(['failed'])
+    expect(last('status')).toMatchObject({ state: 'working' })
+    a.emit('turnEnd', { status: 'completed' })
+    await flush()
+    expect(a.send).toHaveBeenCalledTimes(2)
+    expect(last('status')).toMatchObject({ state: 'idle' })
+  })
+
+  it('Codex steers too; OpenCode, a "/command", an approval and a compaction still queue', async () => {
+    deps.resolveCodex = vi.fn(async () => ({ exe: 'C:\\bin\\codex.exe', exeArgs: [] }))
+    let chat = createChatSessions(deps)
+    let r = await running(chat, { agent: 'codex' })
+    expect(chat.send({ paneId, text: 'steer me' })).toMatchObject({ queued: false, steered: true })
+    // A command waits for the end of the turn (never folded into it).
+    expect(chat.send({ paneId, text: '/compact' })).toMatchObject({ queued: true })
+    // And what comes after a queued message waits behind it (order kept).
+    expect(chat.send({ paneId, text: 'after the command' })).toMatchObject({ queued: true })
+    await chat.close({ paneId })
+
+    // An approval pending.
+    adapters.length = 0
+    chat = createChatSessions(deps)
+    r = await running(chat)
+    r.a.emit('permission', { requestId: 'req-1', toolName: 'Bash', input: { command: 'ls' } })
+    expect(chat.send({ paneId, text: 'meanwhile' })).toMatchObject({ queued: true })
+    await chat.close({ paneId })
+
+    // Compacting after "Prompt is too long": the resend goes first.
+    adapters.length = 0
+    chat = createChatSessions(deps)
+    r = await running(chat)
+    r.a.emit('turnEnd', { status: 'failed', isError: true, result: 'Prompt is too long' })
+    await flush()
+    expect(r.a.send.mock.calls.at(-1)[0].text).toBe('/compact')
+    expect(chat.send({ paneId, text: 'while compacting' })).toMatchObject({ queued: true })
+    await chat.close({ paneId })
+
+    // OpenCode keeps its queue.
+    adapters.length = 0
+    deps.resolveOpencode = vi.fn(async () => ({ exe: 'C:\\bin\\opencode.exe', exeArgs: [] }))
+    startResult = { ok: true, pid: 3, info: { sessionId: 'ses_q' } }
+    chat = createChatSessions(deps)
+    r = await running(chat, { agent: 'opencode' })
+    expect(chat.send({ paneId, text: 'later' })).toMatchObject({ queued: true })
+    expect(r.a.send).toHaveBeenCalledTimes(1)
+  })
+
+  it('too long after a steered message joined: the compaction resends both texts, once', async () => {
+    const chat = createChatSessions(deps)
+    const { a, first } = await running(chat)
+    const second = chat.send({ paneId, text: 'two' })
+    await flush()
+    a.emit('accepted', { uuid: second.id })
+    a.emit('turnEnd', { status: 'failed', isError: true, result: 'Prompt is too long' })
+    await flush()
+    expect(a.send.mock.calls.at(-1)[0].text).toBe('/compact')
+    a.emit('turnEnd', { status: 'completed' })
+    await flush()
+    expect(a.send.mock.calls.at(-1)[0].text).toBe('one\n\ntwo')
+    expect(userStatuses(first.id)).toEqual(['accepted', 'sent'])
+    expect(a.send).toHaveBeenCalledTimes(4)
+  })
+
+  it('an exit before the agent took it fails it', async () => {
+    const chat = createChatSessions(deps)
+    const { a } = await running(chat)
+    const second = chat.send({ paneId, text: 'two' })
+    await flush()
+    a.emit('exit', { code: 3, signal: null, stderrTail: '', crashed: true })
+    await flush()
+    expect(userStatuses(second.id)).toEqual(['failed'])
   })
 })
 
@@ -1355,8 +1541,11 @@ describe('codex', () => {
     chat.sendTeam({ paneId, messages: [{ id: 'm1', from: '#3', text: 'x' }] })
     await flush()
     expect(a.send).toHaveBeenCalledTimes(1)
+    // Steered into the running team turn at once.
     const u = chat.send({ paneId, text: 'after' })
-    expect(u.queued).toBe(true)
+    expect(u).toMatchObject({ queued: false, steered: true })
+    await flush()
+    expect(a.send).toHaveBeenLastCalledWith({ uuid: u.id, text: 'after' })
     stateCalls.length = 0
     a.emit('turnEnd', { status: 'failed', error: 'This content was flagged.' })
     await flush()
@@ -1365,8 +1554,14 @@ describe('codex', () => {
     // The turn's end carries the error (the window's one red notice): no notice with the same words.
     expect(events('notice').filter((n) => n.kind === 'error')).toEqual([])
     expect(stateCalls.slice(0, 3)).toEqual([['UserPromptSubmit'], ['StopFailure'], ['observe', 'ScreenReady']])
-    expect(a.send).toHaveBeenLastCalledWith({ uuid: u.id, text: 'after' })
+    // Codex dropped the steer with its failed turn: said at once, never sent again.
+    expect(events('userStatus').filter((e) => e.id === u.id).map((e) => e.status)).toEqual(['failed'])
+    expect(last('status')).toMatchObject({ state: 'idle' })
+    expect(a.send).toHaveBeenCalledTimes(2)
+    // A late echo still shows it taken, as a turn of its own.
     a.emit('accepted', { uuid: u.id })
+    expect(events('userStatus').filter((e) => e.id === u.id).map((e) => e.status)).toEqual(['failed', 'accepted'])
+    expect(last('status')).toMatchObject({ state: 'working' })
     a.emit('turnEnd', { status: 'completed' })
     await flush()
     expect(last('status')).toMatchObject({ state: 'idle' })

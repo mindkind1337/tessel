@@ -12,7 +12,8 @@ export const nativeChatComposerProps = {
   // v-model: the draft (undefined = not bound).
   modelValue: { type: String, default: undefined },
   // A turn runs: the Send button becomes Stop, Escape interrupts, and a
-  // message sent now waits for the end of the turn.
+  // message sent now goes at once (Claude, Codex) or waits for the end of
+  // the turn (OpenCode).
   isWorking: { type: Boolean, default: false },
   // Why nothing can be typed or sent now ('' = it can).
   disabledReason: { type: String, default: '' },

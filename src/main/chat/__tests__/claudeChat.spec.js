@@ -254,6 +254,26 @@ describe('claudeChat: turns', () => {
     expect(acceptedB).toBeGreaterThan(events.indexOf(first))
   })
 
+  it('a message sent mid-turn is written at once; folded into the running turn, it is accepted there and listed at its end', async () => {
+    const { chat, events, sent } = setup({ env: { FAKE_CLAUDE_FOLD: '1' } })
+    await chat.start()
+    const a = randomUUID()
+    const b = randomUUID()
+    await chat.send({ uuid: a, text: 'SLOW count' })
+    await waitFor(() => ofType(events, 'textDelta').length > 3, 5000, 'first deltas')
+    expect(await chat.send({ uuid: b, text: 'also this' })).toEqual({ ok: true, uuid: b })
+    // The frame is on stdin at once, not after the turn.
+    await waitFor(() => sent().some((m) => m.type === 'user' && m.uuid === b), 2000, 'frame b written')
+    await waitFor(() => ofType(events, 'accepted').some((e) => e.uuid === b), 2000, 'b accepted')
+    expect(turnEnds(events)).toEqual([])
+    await waitFor(() => turnEnds(events).length === 1, 10000, 'the turn end')
+    await new Promise((r) => setTimeout(r, 50))
+    expect(turnEnds(events)).toHaveLength(1)
+    expect(turnEnds(events)[0]).toMatchObject({ status: 'completed', userMessageUuids: [a, b] })
+    expect(turnEnds(events)[0].result).toMatch(/\(folded: also this\)$/)
+    expect(sent().filter((m) => m.type === 'user').map((m) => m.uuid)).toEqual([a, b])
+  })
+
   it('interrupt -> turnEnd interrupted; process stays usable; exit 1 on close is not a crash', async () => {
     const { chat, events, sent } = setup()
     await chat.start()

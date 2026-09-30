@@ -14,6 +14,10 @@
 //   FAKE_CLAUDE_CRLF=1 lines end with \r\n
 //   FAKE_CLAUDE_GARBAGE=1 a malformed line before every frame
 //   FAKE_CLAUDE_DELAY  ms between frames of a turn (default 2)
+//   FAKE_CLAUDE_FOLD=1 a user message written while a turn runs joins it (queued, then
+//                      started + its replay at the turn's next step, listed in the result's
+//                      user_message_uuids), as the CLI folds a queued prompt mid-turn; without
+//                      it, the message runs as the next turn (queued behind the running one)
 //
 // Message keywords (in the user text):
 //   PERMISSION  Bash tool_use -> can_use_tool; waits for the answer (allow: runs; deny:
@@ -35,6 +39,7 @@ const IGNORE = new Set((process.env.FAKE_CLAUDE_IGNORE || '').split(',').filter(
 const EOL = process.env.FAKE_CLAUDE_CRLF === '1' ? '\r\n' : '\n'
 const GARBAGE = process.env.FAKE_CLAUDE_GARBAGE === '1'
 const DELAY = Number(process.env.FAKE_CLAUDE_DELAY || 2)
+const FOLD = process.env.FAKE_CLAUDE_FOLD === '1'
 
 function log(rec) {
   if (LOG) fs.appendFileSync(LOG, JSON.stringify(rec) + '\n')
@@ -119,7 +124,7 @@ function result(turn, fields) {
     terminal_reason: 'completed',
     uuid: uuid(),
     user_message_uuid: turn.uuid,
-    user_message_uuids: [turn.uuid],
+    user_message_uuids: turn.uuids || [turn.uuid],
     queued_turn_count: queue.length,
     ...fields
   })
@@ -133,7 +138,7 @@ function textMessage(text) {
 
 async function runTurn(msg) {
   const text = ((msg.message && msg.message.content) || []).map((b) => b.text || '').join('')
-  const turn = { uuid: msg.uuid, aborted: false }
+  const turn = { uuid: msg.uuid, aborted: false, uuids: [msg.uuid], folded: [], foldedText: '' }
   running = turn
   lastInterrupted = false
   lifecycle(msg.uuid, 'started')
@@ -221,8 +226,10 @@ async function runTurn(msg) {
     else if (!(await step())) return
     if (turn.aborted) return
     streamEvent({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: p } })
+    drainFolded(turn)
   }
-  const full = pieces.join('')
+  drainFolded(turn)
+  const full = pieces.join('') + turn.foldedText
   assistant(id, [{ type: 'text', text: full }])
   streamEvent({ type: 'content_block_stop', index: 0 })
   streamEvent({ type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 5 } })
@@ -231,10 +238,23 @@ async function runTurn(msg) {
   return endTurn(turn, { result: full })
 }
 
+// FAKE_CLAUDE_FOLD: the prompts written meanwhile join the turn here.
+function drainFolded(turn) {
+  for (const m of turn.folded.splice(0)) {
+    lifecycle(m.uuid, 'started')
+    out({ type: 'user', message: m.message, session_id: SID, parent_tool_use_id: null, uuid: m.uuid, timestamp: new Date().toISOString(), isReplay: true })
+    turn.uuids.push(m.uuid)
+    const text = ((m.message && m.message.content) || []).map((b) => b.text || '').join('')
+    const extra = ` (folded: ${text.slice(0, 30)})`
+    streamEvent({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: extra } })
+    turn.foldedText += extra
+  }
+}
+
 function endTurn(turn, fields) {
   if (turn.aborted) return
   result(turn, fields)
-  lifecycle(turn.uuid, 'completed')
+  for (const u of turn.uuids) lifecycle(u, 'completed')
   finishTurn()
 }
 
@@ -261,6 +281,8 @@ function interruptTurn() {
   out({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: '[Request interrupted by user]' }] }, parent_tool_use_id: null, session_id: SID, uuid: uuid() })
   result(turn, { subtype: 'error_during_execution', is_error: true, result: undefined, stop_reason: null, terminal_reason: 'aborted_streaming', errors: ['[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=null'] })
   lifecycle(turn.uuid, 'cancelled')
+  // Prompts not folded yet stay queued: they run next.
+  queue.unshift(...turn.folded.splice(0))
   finishTurn()
 }
 
@@ -325,7 +347,9 @@ function onLine(line) {
   if (m.type === 'user') {
     if (!running) state('running')
     lifecycle(m.uuid, 'queued')
-    if (running) queue.push(m)
+    const slash = ((m.message && m.message.content) || []).some((b) => typeof b.text === 'string' && b.text.trim().startsWith('/'))
+    if (running && FOLD && !slash) running.folded.push(m)
+    else if (running) queue.push(m)
     else runTurn(m)
   }
 }

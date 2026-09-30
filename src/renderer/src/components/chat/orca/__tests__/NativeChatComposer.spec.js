@@ -247,18 +247,23 @@ describe('NativeChatComposer (Tessel rules)', () => {
     expect(pane().emitted('interrupt')).toHaveLength(1)
   })
 
-  it('a message typed during a turn is sent (it waits for the end of the turn); the placeholder says so', async () => {
+  it('a message typed during a turn is sent (at once for Codex); the placeholder says so', async () => {
     const send = vi.fn(async () => ({ ok: true }))
-    await render({ send, agentName: 'Codex' })
+    await render({ send, agent: 'codex', agentName: 'Codex' })
     expect(input().getAttribute('aria-label')).toBe('Message Codex…')
     await wrapper.setProps({ isWorking: true })
     await flushPromises()
-    expect(input().getAttribute('aria-label')).toBe('Message Codex (sent when the turn ends)…')
+    expect(input().getAttribute('aria-label')).toBe('Message Codex (sent now, joins the running turn)…')
     expect(sendButton().exists()).toBe(false)
     expect(stopButton().element.disabled).toBe(false)
     await type('next')
     await key({ key: 'Enter', keyCode: 13 })
     expect(send).toHaveBeenCalledWith('next')
+  })
+
+  it('OpenCode during a turn: the placeholder says the message waits for the end of the turn', async () => {
+    await render({ agent: 'opencode', agentName: 'OpenCode', isWorking: true })
+    expect(input().getAttribute('aria-label')).toBe('Message OpenCode (sent when the turn ends)…')
   })
 
   it('Send waits while the agent starts (typing works), and says why', async () => {

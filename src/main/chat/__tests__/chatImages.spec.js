@@ -267,19 +267,23 @@ describe('a chat message with images', () => {
     expect(files()).toEqual([])
   })
 
-  it('keeps a queued message’s images until its own turn has ended', async () => {
+  it('a message sent mid-turn takes its images at once; they stay until the turn that took it has ended', async () => {
     const first = (await handlers['chat:imageSave']({ paneId, bytes: PNG_1x1 })).image
     const second = (await handlers['chat:imageSave']({ paneId, bytes: PNG_1x1 })).image
     await handlers['chat:send']({ paneId, text: 'one', images: [first.id] })
     const r = await handlers['chat:send']({ paneId, text: 'two', images: [second.id] })
-    expect(r.queued).toBe(true)
+    expect(r).toMatchObject({ queued: false, steered: true })
+    await flush()
+    expect(adapters[0].send.mock.calls[1][0].images[0].id).toBe(second.id)
+    // The first turn ends before the agent took it: it runs next, its image kept.
     adapters[0].emit('turnEnd', { status: 'completed' })
     await flush()
-    expect(files()).toEqual([`${second.id}.png`])
-    expect(adapters[0].send.mock.calls[1][0].images[0].id).toBe(second.id)
+    expect(files()).toContain(`${second.id}.png`)
+    adapters[0].emit('accepted', { uuid: r.id })
     adapters[0].emit('turnEnd', { status: 'completed' })
     await flush()
     expect(files()).toEqual([])
+    expect(adapters[0].send).toHaveBeenCalledTimes(2)
   })
 
   it('refuses ids that are not this pane’s, paths, and more than 10', async () => {

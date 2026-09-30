@@ -5,12 +5,17 @@
 // agent status (agentStateStore), fed from the stream since a chat process
 // has no status hooks of its own.
 //
-// Delivery: one turn at a time. A user message goes at once when the agent
-// is idle, else it waits (status 'queued') and goes right after the running
-// turn ends, in order, one turn each. Team messages always wait for idle
-// with no user message waiting; then all waiting team messages go as ONE
-// turn. An interrupt ends the running turn only: waiting messages stay
-// queued and go after it.
+// Delivery: a user message goes at once when the agent is idle. While a
+// Claude or Codex turn runs it goes at once too, as in a terminal ('steered'):
+// the agent folds it into the running turn (Claude at its next step, Codex
+// through turn/steer) or runs it right after as a turn of its own. Otherwise
+// (OpenCode, an approval or a question pending, a compaction, a "/command",
+// messages already waiting) it waits (status 'queued') and goes right after
+// the running turn ends, in order, one turn each. Team messages always wait
+// for idle with no user message waiting; then all waiting team messages go as
+// ONE turn. An interrupt ends the running turn only: waiting messages stay
+// queued and go after it (Claude runs a steered one it had not taken yet
+// after it too; Codex drops it with the turn, and its row says failed).
 //
 // Idle stop: a chat idle for idleMinutes (open option, 0 = never) has its
 // process stopped and turns 'asleep' (no 'ended'). A message sent to it
@@ -31,6 +36,9 @@ import { validOpencodeModel } from './opencodeChat.js'
 
 // teamText: a team message (6000) with the window's "(message <id>, reply to
 // <id>) " prefix; a longer one is cut (teamMessageText), never refused.
+// A steered message the agent never starts: failed after this (its row can
+// still turn 'accepted' if the agent takes it later).
+export const STEER_WAIT_MS = 60000
 export const LIMITS = { text: 100000, teamPerCall: 20, teamText: 6400, teamQueue: 200, sessions: 64, historyTail: 2000 }
 // As the adapter's (claudeChat.js): the CLI's --permission-mode values.
 export const PERMISSION_MODES = ['default', 'bypassPermissions', 'acceptEdits', 'plan', 'auto', 'dontAsk']
@@ -135,7 +143,10 @@ export function createChatSessions(deps) {
     // The rate-limit windows a Claude or Codex chat reports, for the usage
     // indicator ({ provider, env, since, rateLimit }; providerUsageIpc.js
     // keeps them only for the account it shows). Never a token.
-    onRateLimit = null
+    onRateLimit = null,
+    // How long a message steered into a turn that ended before the agent took
+    // it waits for the agent to start it as a turn of its own.
+    steerWaitMs = STEER_WAIT_MS
   } = deps || {}
   const sessions = new Map() // paneId -> session
   const seqs = new Map() // paneId -> last seq (outlives a session)
@@ -311,7 +322,8 @@ export function createChatSessions(deps) {
     !pendingApprovals(s) &&
     !pendingQuestions(s) &&
     !s.userQueue.length &&
-    !s.teamQueue.length
+    !s.teamQueue.length &&
+    !steeredPending(s).length
 
   // Called after every change: any activity restarts (or stops) the count.
   function idleCheck(s) {
@@ -380,7 +392,8 @@ export function createChatSessions(deps) {
     }
   }
   function markFailed(s, turn) {
-    if (turn.accepted || turn.failed) return
+    // A carried turn's messages are the steered ones: settled with them.
+    if (turn.accepted || turn.failed || turn.carried) return
     turn.failed = true
     if (turn.kind === 'user') for (const id of turn.ids) emit(s.paneId, { type: 'userStatus', id, status: 'failed' })
     else if (turn.kind === 'team') emit(s.paneId, { type: 'teamFailed', ids: [...turn.ids] })
@@ -490,6 +503,115 @@ export function createChatSessions(deps) {
     idleCheck(s)
   }
 
+  // ---- a message sent while a turn runs (Claude, Codex) -----------------------
+  // Written at once, never queued here: the agent owns it from the write.
+  // s.steered: id -> { id, text, gaveUp } until the agent echoes it.
+
+  const STEER_AGENTS = new Set(['claude', 'codex'])
+  const steeredPending = (s) => [...(s.steered?.values() || [])].filter((m) => !m.gaveUp)
+  function canSteer(s, text) {
+    return (
+      STEER_AGENTS.has(s.agent) &&
+      s.ready &&
+      !s.asleep &&
+      !!s.turn &&
+      s.turn.kind !== 'compact' &&
+      !s.compaction &&
+      !pendingApprovals(s) &&
+      !pendingQuestions(s) &&
+      !s.userQueue.length &&
+      // A command never joins a running turn: it waits for its end.
+      !String(text || '').trim().startsWith('/')
+    )
+  }
+
+  async function steer(s, m) {
+    const a = s.adapter
+    s.steered.set(m.id, { id: m.id, text: m.text, gaveUp: false })
+    if (m.images?.length) (s.sentImages ||= []).push(...m.images.map((img) => img.id))
+    let r
+    try {
+      const pics = m.images?.length && images ? m.images.map((img) => images.forAgent(img)) : null
+      r = await a.send({ uuid: m.id, text: m.text, ...(pics ? { images: pics } : {}) })
+    } catch (err) {
+      r = { ok: false, error: err?.message }
+    }
+    if (r?.ok || !s.steered.has(m.id) || s.finished) return
+    // Never written: the agent is not working on it.
+    s.steered.delete(m.id)
+    emit(s.paneId, { type: 'userStatus', id: m.id, status: 'failed' })
+    const turn = s.turn
+    if (turn?.carried && turn.ids.includes(m.id)) {
+      turn.ids = turn.ids.filter((id) => id !== m.id)
+      if (!turn.ids.length) endCarried(s, turn)
+    }
+  }
+
+  // The agent echoed a steered message: joined to the running turn, or the
+  // start of the turn carried over from the previous one.
+  function steeredAccepted(s, uuid) {
+    const m = s.steered?.get(uuid)
+    if (!m) return false
+    s.steered.delete(uuid)
+    emit(s.paneId, { type: 'userStatus', id: m.id, status: 'accepted' })
+    const turn = s.turn
+    if (turn?.carried) {
+      if (turn.timer) clearTimeout(turn.timer)
+      turn.timer = null
+      turn.accepted = true
+      turnStarted(s)
+    } else if (turn) {
+      ;(turn.joined ||= []).push({ id: m.id, text: m.text })
+    } else if (!s.finished && !s.closing) {
+      // Taken after the wait gave up: a turn of its own.
+      s.turn = { kind: 'user', uuid, ids: [m.id], text: m.text, accepted: true }
+      turnStarted(s)
+      workStatus(s)
+      idleCheck(s)
+    }
+    return true
+  }
+
+  // The turn ended before the agent took what was steered into it: the agent
+  // runs it next (Claude's own queue, what an interrupt left), so the chat
+  // stays working for it, never sending anything else meanwhile.
+  function carrySteered(s) {
+    const pending = steeredPending(s)
+    if (!pending.length || s.finished || s.closing) return false
+    if (s.agent !== 'claude') {
+      // Codex takes a steer before its turn completes: one the turn ended
+      // without (interrupted, failed) is dropped. Said at once; a late
+      // echo still shows it accepted (steeredAccepted).
+      for (const m of pending) {
+        m.gaveUp = true
+        emit(s.paneId, { type: 'userStatus', id: m.id, status: 'failed' })
+      }
+      return false
+    }
+    const turn = { kind: 'user', carried: true, uuid: pending[0].id, ids: pending.map((m) => m.id), text: pending[0].text, accepted: false, timer: null }
+    turn.timer = setTimeout(() => {
+      if (s.turn !== turn || turn.accepted) return
+      for (const id of turn.ids) {
+        const m = s.steered.get(id)
+        if (!m || m.gaveUp) continue
+        m.gaveUp = true
+        emit(s.paneId, { type: 'userStatus', id, status: 'failed' })
+      }
+      endCarried(s, turn)
+    }, steerWaitMs)
+    if (typeof turn.timer.unref === 'function') turn.timer.unref()
+    s.turn = turn
+    return true
+  }
+  function endCarried(s, turn) {
+    if (s.turn !== turn) return
+    if (turn.timer) clearTimeout(turn.timer)
+    s.turn = null
+    workStatus(s)
+    pump(s)
+    idleCheck(s)
+  }
+
   // Starts the next turn when the agent is free.
   function pump(s) {
     // The images of turns that ended are no longer needed (the agent has them).
@@ -537,7 +659,8 @@ export function createChatSessions(deps) {
       turnStarted(s)
     })
     on('accepted', (e) => {
-      if (!s.turn || !e.uuid || e.uuid !== s.turn.uuid) return
+      if (!e.uuid || steeredAccepted(s, e.uuid)) return
+      if (!s.turn || e.uuid !== s.turn.uuid) return
       turnStarted(s)
       markAccepted(s, s.turn)
     })
@@ -701,8 +824,10 @@ export function createChatSessions(deps) {
         if (e.status !== 'completed') compactionDone(s, false, e.error && typeof e.error === 'object' ? e.error.message : e.error || e.result)
         return
       }
+      const uuids = Array.isArray(e.userMessageUuids) ? e.userMessageUuids : []
+      // Steered messages the turn's end says it took (never echoed before).
+      for (const u of uuids) if (typeof u === 'string') steeredAccepted(s, u)
       if (turn && !turn.accepted) {
-        const uuids = Array.isArray(e.userMessageUuids) ? e.userMessageUuids : []
         if (turn.uuid && uuids.includes(turn.uuid)) markAccepted(s, turn)
         else markFailed(s, turn)
       }
@@ -728,7 +853,9 @@ export function createChatSessions(deps) {
           after = () => giveUpCompaction(s, error)
         } else s.compaction = null
       } else if (st === 'failed' && isTooLong(error) && turn && (turn.kind === 'user' || turn.kind === 'team')) {
-        s.compaction = { kind: turn.kind, ids: [...turn.ids], text: turn.text, phase: 'compacting' }
+        // What was steered into the turn goes again with it.
+        const text = [turn.text, ...(turn.joined || []).map((j) => j.text)].filter(Boolean).join('\n\n')
+        s.compaction = { kind: turn.kind, ids: [...turn.ids], text, phase: 'compacting' }
         shown = ''
         emit(s.paneId, { type: 'notice', kind: 'info', text: t('main.chat.compacting', 'Conversation too long: compacting, then your message is sent again…') })
         after = () => startCompaction(s)
@@ -766,7 +893,9 @@ export function createChatSessions(deps) {
       record(s, st === 'completed' ? 'Stop' : st === 'interrupted' ? 'Interrupt' : 'StopFailure')
       // No settling wait: the result frame is the turn's end.
       observe(s, 'ScreenReady')
+      if (turn?.timer) clearTimeout(turn.timer)
       s.turn = null
+      if (!after) carrySteered(s)
       flushContext(s)
       askContext(s)
       workStatus(s)
@@ -1024,6 +1153,7 @@ export function createChatSessions(deps) {
       turn: null,
       // A wake goes on with what was sent while it was asleep.
       userQueue: from ? from.userQueue : [],
+      steered: new Map(), // id -> { id, text, gaveUp }: sent mid-turn, not echoed yet
       teamQueue: from ? from.teamQueue : [],
       approvals: new Map(),
       questions: new Map(),
@@ -1233,6 +1363,8 @@ export function createChatSessions(deps) {
     images?.release(s.userQueue.flatMap((m) => (m.images || []).map((img) => img.id)))
     for (const m of s.userQueue) emit(s.paneId, { type: 'userStatus', id: m.id, status: 'failed' })
     s.userQueue = []
+    for (const m of steeredPending(s)) emit(s.paneId, { type: 'userStatus', id: m.id, status: 'failed' })
+    s.steered?.clear()
     if (s.teamQueue.length) emit(s.paneId, { type: 'teamFailed', ids: s.teamQueue.map((m) => m.id) })
     s.teamQueue = []
   }
@@ -1268,14 +1400,17 @@ export function createChatSessions(deps) {
     const id = randomUUID()
     const now_ = now()
     const idle = s.ready && !s.turn && !pendingApprovals(s) && !pendingQuestions(s) && !s.userQueue.length
+    // A turn runs: Claude and Codex take it now (see steer).
+    const steered = !idle && canSteer(s, text)
     // The journal keeps each image's name and size, never its data.
     const shown = pics.map((img) => ({ id: img.id, name: img.name, width: img.width, height: img.height }))
-    emit(paneId, { type: 'user', id, text, origin: 'user', status: idle ? 'sent' : 'queued', at: now_, ...(shown.length ? { images: shown } : {}) })
+    emit(paneId, { type: 'user', id, text, origin: 'user', status: idle || steered ? 'sent' : 'queued', at: now_, ...(shown.length ? { images: shown } : {}) })
     if (idle) void deliver(s, { kind: 'user', uuid: id, ids: [id], text, ...(pics.length ? { images: pics } : {}) })
+    else if (steered) void steer(s, { id, text, ...(pics.length ? { images: pics } : {}) })
     else s.userQueue.push({ id, text, ...(pics.length ? { images: pics } : {}) })
     askWake(s)
     idleCheck(s)
-    return { ok: true, id, queued: !idle }
+    return { ok: true, id, queued: !idle && !steered, ...(steered ? { steered: true } : {}) }
   }
 
   function sendTeam({ paneId, messages } = {}) {
