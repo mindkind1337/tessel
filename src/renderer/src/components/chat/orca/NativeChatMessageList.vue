@@ -380,6 +380,8 @@ const jumpLabel = computed(() => t('chat.orca.jumpToLatest', 'Jump to latest'))
   position: relative;
   height: 100%;
   overflow-y: auto;
+  /* Never a horizontal bar: wide content (code, tables) scrolls on its own. */
+  overflow-x: hidden;
   /* Browser anchoring would add unattributed movement beside the virtualizer's anchor. */
   overflow-anchor: none;
   scrollbar-gutter: stable both-edges;
