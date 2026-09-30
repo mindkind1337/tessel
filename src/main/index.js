@@ -215,11 +215,35 @@ migrateUserData()
 
 let mainWindow = null
 
+// Windows caches a taskbar or shortcut icon by its file's path, so a new
+// icon at the same path keeps showing the old one. The dev build uses a copy
+// named after its content (userData\icons\icon-dev-<hash>.ico): a changed
+// icon gets a new path, never a cached image. Older copies are removed.
+let devIconCopyPath = null
+function devIconCopy(file) {
+  if (devIconCopyPath) return devIconCopyPath
+  try {
+    const bytes = fs.readFileSync(file)
+    const hash = crypto.createHash('sha1').update(bytes).digest('hex').slice(0, 10)
+    const dir = join(app.getPath('userData'), 'icons')
+    fs.mkdirSync(dir, { recursive: true })
+    const out = join(dir, `icon-dev-${hash}.ico`)
+    if (!fs.existsSync(out)) fs.writeFileSync(out, bytes)
+    for (const f of fs.readdirSync(dir)) {
+      if (/^icon-dev-[0-9a-f]+\.ico$/.test(f) && f !== basename(out)) fs.rmSync(join(dir, f), { force: true })
+    }
+    devIconCopyPath = out
+  } catch {
+    devIconCopyPath = file
+  }
+  return devIconCopyPath
+}
+
 // The dev build uses a yellow copy of the icon (window, taskbar, Start menu
 // shortcut), so it can't be mistaken for the installed app.
 function appIconPath() {
   const devIco = join(__dirname, '../../build/icon-dev.ico')
-  if (!app.isPackaged && fs.existsSync(devIco)) return devIco
+  if (!app.isPackaged && fs.existsSync(devIco)) return devIconCopy(devIco)
   const ico = join(__dirname, '../../build/icon.ico')
   return fs.existsSync(ico) ? ico : join(__dirname, '../../build/icon.png')
 }
