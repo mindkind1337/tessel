@@ -685,6 +685,17 @@ button {
   }
 }
 
+/* Working / unknown: the dot on the logo shows it; the words stay for screen readers. */
+.pane-working.pane-badge-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  padding: 0;
+  border: 0;
+}
 .pane-working {
   flex: 0 0 auto;
   color: #6fe3a2;

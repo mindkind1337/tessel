@@ -2251,8 +2251,8 @@ onBeforeUnmount(() => {
         >
           {{ t('pane.badge.apply', 'Restart to apply') }}
         </button>
-        <span v-else-if="badge === 'working'" class="pane-working" data-test="pane-badge" :aria-description="statusTitle">{{ estimatedState ? t('pane.badge.workingEstimated', 'working · estimated') : t('pane.badge.working', 'working') }}</span>
-        <span v-else-if="badge === 'unknown'" class="pane-working" data-test="pane-badge" :aria-description="statusTitle">{{ t('pane.badge.unknown', 'unknown') }}</span>
+        <span v-else-if="badge === 'working'" class="pane-working pane-badge-sr" data-test="pane-badge" :aria-description="statusTitle">{{ estimatedState ? t('pane.badge.workingEstimated', 'working · estimated') : t('pane.badge.working', 'working') }}</span>
+        <span v-else-if="badge === 'unknown'" class="pane-working pane-badge-sr" data-test="pane-badge" :aria-description="statusTitle">{{ t('pane.badge.unknown', 'unknown') }}</span>
         <span v-else-if="badge === 'needs'" class="pane-needs-you" data-test="pane-badge">{{ t('pane.badge.needs', 'needs you') }}</span>
         <span v-else-if="badge === 'cache'" class="pane-cache" :class="cache.level" data-test="pane-badge" :title="cacheTitle">
           <svg width="11" height="11" viewBox="0 0 16 16" fill="none" aria-hidden="true">
