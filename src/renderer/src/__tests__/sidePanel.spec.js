@@ -1,3 +1,4 @@
+import { setSelectValue } from './selectTestUtils'
 // The right side panel (SidePanel.vue): its tab bar switches between Files,
 // Changes and Tasks; a tab is created when first shown, then kept.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
@@ -187,7 +188,7 @@ describe('SidePanel.vue', () => {
       ['gone.txt', 'unstaged', ROOT + '\\gone.txt']
     ])
     // A task's own copy: picked at the top, then Review & merge.
-    await w.find('[data-test="changes-target"]').setValue(t.id)
+    await setSelectValue(w.find('[data-test="changes-target"]'), t.id)
     await flushPromises()
     await w.find('[data-test="review-changes"]').trigger('click')
     expect(w.emitted('review')).toEqual([[t.id]])

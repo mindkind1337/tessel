@@ -1,4 +1,5 @@
 <script setup>
+import ThemedSelect from './ui/ThemedSelect.vue'
 // Settings > Automations: scheduled agent tasks, after Orca's Automations
 // page (src/renderer/src/components/automations/AutomationsPage*.tsx,
 // AutomationDetail.tsx, AutomationRunHistory.tsx and
@@ -272,9 +273,9 @@ function select(a) {
         {{ t('automations.page.maxConcurrent', 'Runs at the same time') }}
         <span class="set-hint">{{ t('automations.page.maxConcurrentHint', 'All automations together; the others wait their turn. The same automation never runs twice at once.') }}</span>
       </div>
-      <select class="set-select au-max" :value="automationsState.settings.maxConcurrent" :aria-label="t('automations.page.maxConcurrent', 'Runs at the same time')" :disabled="loading || !automationsState.loaded" data-test="au-max" @change="setMax">
+      <ThemedSelect class="set-select au-max" :value="automationsState.settings.maxConcurrent" :aria-label="t('automations.page.maxConcurrent', 'Runs at the same time')" :disabled="loading || !automationsState.loaded" data-test="au-max" @change="setMax">
         <option v-for="n in MAX_CONCURRENT_LIMIT" :key="n" :value="n">{{ n }}</option>
-      </select>
+      </ThemedSelect>
     </div>
 
     <AutomationEditor

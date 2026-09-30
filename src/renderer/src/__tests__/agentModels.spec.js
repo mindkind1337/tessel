@@ -1,3 +1,4 @@
+import { setSelectValue, selectOptions } from './selectTestUtils'
 // Orca's model per agent in the interface: Settings > Agents defaults, the
 // new pane menu's model pill, the picker, and the Claude /model switch.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -37,16 +38,16 @@ describe('additional agent catalogs in Settings', () => {
       }
       await w.get('[data-test="agent-models-refresh-pi"]').trigger('click')
       await flushPromises()
-      await w.get('[data-test="agent-model-pi"]').setValue('pi/sample')
+      await setSelectValue(w.get('[data-test="agent-model-pi"]'), 'pi/sample')
       const effort = w.get('[data-test="agent-option-pi-effort"]')
-      expect(effort.findAll('option').map((o) => o.attributes('value'))).toEqual(['', 'off', 'high'])
-      await effort.setValue('off')
+      expect((await selectOptions(effort)).map((o) => o.attributes('data-value'))).toEqual(['', 'off', 'high'])
+      await setSelectValue(effort, 'off')
       expect(settings.agentSessionOptions.pi.valuesByModel['pi/sample']).toEqual({ effort: 'off' })
-      await w.get('[data-test="agent-model-kimi"]').setValue('kimi-code/kimi-for-coding')
+      await setSelectValue(w.get('[data-test="agent-model-kimi"]'), 'kimi-code/kimi-for-coding')
       expect(w.find('[data-test="agent-option-kimi-effort"]').exists()).toBe(false)
-      await w.get('[data-test="agent-model-amp"]').setValue('deep')
+      await setSelectValue(w.get('[data-test="agent-model-amp"]'), 'deep')
       expect(w.find('[data-test="agent-option-amp-effort"]').exists()).toBe(true)
-      await w.get('[data-test="agent-model-amp"]').setValue('smart')
+      await setSelectValue(w.get('[data-test="agent-model-amp"]'), 'smart')
       expect(w.find('[data-test="agent-option-amp-effort"]').exists()).toBe(false)
     } finally {
       w.unmount()
@@ -89,7 +90,7 @@ describe('Settings > Agents: default model and effort', () => {
 
   it('lists the catalog; nothing chosen = the agent default, no values saved', async () => {
     expect(wrapper.find('[data-test="agent-models-aider"]').exists()).toBe(false)
-    const opts = select('agent-model-claude').findAll('option')
+    const opts = (await selectOptions(select('agent-model-claude')))
     expect(opts.map((o) => o.text())).toEqual(["Agent's own default", 'Fable', 'Opus', 'Sonnet', 'Haiku'])
     expect(select('agent-model-claude').element.value).toBe('')
     expect(wrapper.find('[data-test="agent-option-claude-effort"]').exists()).toBe(false)
@@ -97,21 +98,21 @@ describe('Settings > Agents: default model and effort', () => {
   })
 
   it('choosing a model, then its effort, saves them; back to the default drops the model', async () => {
-    await select('agent-model-claude').setValue('opus')
+    await setSelectValue(select('agent-model-claude'), 'opus')
     expect(settings.agentSessionOptions.claude.model).toBe('opus')
     const effort = select('agent-option-claude-effort')
-    expect(effort.findAll('option').map((o) => o.text())).toEqual(['Default', 'Low', 'Medium', 'High', 'Extra high', 'Max'])
-    await effort.setValue('max')
+    expect((await selectOptions(effort)).map((o) => o.text())).toEqual(['Default', 'Low', 'Medium', 'High', 'Extra high', 'Max'])
+    await setSelectValue(effort, 'max')
     expect(settings.agentSessionOptions.claude.valuesByModel.opus).toEqual({ effort: 'max' })
     // Fast mode is a running session's toggle (Orca): said, not offered here.
     expect(wrapper.get('[data-test="agent-models-status-claude"]').text()).toContain('Fast mode is switched in a running pane')
-    await effort.setValue('')
+    await setSelectValue(effort, '')
     expect(settings.agentSessionOptions.claude.valuesByModel.opus).toEqual({})
-    await select('agent-model-claude').setValue('')
+    await setSelectValue(select('agent-model-claude'), '')
     expect(settings.agentSessionOptions.claude.model).toBeUndefined()
     // Codex: its reasoning effort.
-    await select('agent-model-codex').setValue('gpt-5.5')
-    expect(select('agent-option-codex-effort').findAll('option').map((o) => o.attributes('value'))).toEqual(['', 'minimal', 'low', 'medium', 'high', 'xhigh'])
+    await setSelectValue(select('agent-model-codex'), 'gpt-5.5')
+    expect((await selectOptions(select('agent-option-codex-effort'))).map((o) => o.attributes('data-value'))).toEqual(['', 'minimal', 'low', 'medium', 'high', 'xhigh'])
   })
 
   it('Refresh models asks the CLI (only then) and lists what it answered; a failure is explained', async () => {
@@ -120,7 +121,7 @@ describe('Settings > Agents: default model and effort', () => {
     await wrapper.get('[data-test="agent-models-refresh-claude"]').trigger('click')
     await flushPromises()
     expect(probes).toEqual([{ agent: 'claude', command: '' }])
-    expect(select('agent-model-claude').findAll('option').map((o) => o.text())).toEqual(["Agent's own default", 'Opus (1M context)'])
+    expect((await selectOptions(select('agent-model-claude'))).map((o) => o.text())).toEqual(["Agent's own default", 'Opus (1M context)'])
     expect(wrapper.get('[data-test="agent-models-status-claude"]').text()).toMatch(/1 models listed by Claude Code/)
     await wrapper.get('[data-test="agent-models-refresh-codex"]').trigger('click')
     await flushPromises()
@@ -358,7 +359,7 @@ describe('OpenCode: models from `opencode models`', () => {
     expect(w.get('[data-test="agent-models-status-opencode"]').text()).toContain('No list yet')
     await w.get('[data-test="agent-models-refresh-opencode"]').trigger('click')
     await flushPromises()
-    expect(w.get('[data-test="agent-model-opencode"]').findAll('option').map((o) => o.attributes('value'))).toEqual(['', 'opencode/big-pickle', 'opencode/nemotron-3-ultra-free'])
+    expect((await selectOptions(w.get('[data-test="agent-model-opencode"]'))).map((o) => o.attributes('data-value'))).toEqual(['', 'opencode/big-pickle', 'opencode/nemotron-3-ultra-free'])
     w.unmount()
   })
 })

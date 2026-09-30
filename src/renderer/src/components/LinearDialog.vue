@@ -1,4 +1,5 @@
 <script setup>
+import ThemedSelect from './ui/ThemedSelect.vue'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { t } from '../i18n'
 
@@ -407,7 +408,7 @@ onBeforeUnmount(() => {
               <h4>{{ t('linear.start.title', 'Work on this issue') }}</h4>
               <div class="issue-start-row">
                 <label class="issue-field"
-                  >{{ t('linear.start.agent', 'Agent') }}<select
+                  >{{ t('linear.start.agent', 'Agent') }}<ThemedSelect
                     v-model="agentId"
                     :aria-label="t('linear.start.agentLabel', 'Agent for Linear issue')"
                     :disabled="busy"
@@ -415,7 +416,7 @@ onBeforeUnmount(() => {
                     <option v-for="agent in agents" :key="agent.id" :value="agent.id">
                       {{ agent.name || agent.id }}
                     </option>
-                  </select></label
+                  </ThemedSelect></label
                 ><label class="issue-checkbox"
                   ><input v-model="worktree" type="checkbox" :disabled="busy" />{{
                     t('linear.start.ownCopy', 'Own Git copy')
@@ -423,7 +424,7 @@ onBeforeUnmount(() => {
                 >
               </div>
               <label class="issue-field"
-                >{{ t('linear.start.after', 'After the task is prepared') }}<select
+                >{{ t('linear.start.after', 'After the task is prepared') }}<ThemedSelect
                   v-model="nextStateId"
                   data-test="linear-start-state"
                   :disabled="busy || statesLoading"
@@ -432,7 +433,7 @@ onBeforeUnmount(() => {
                   <option v-for="state in startStates" :key="state.id" :value="state.id">
                     {{ moveToLabel(state) }}
                   </option>
-                </select></label
+                </ThemedSelect></label
               >
               <p class="issue-hint">
                 {{
@@ -456,22 +457,22 @@ onBeforeUnmount(() => {
           <template v-else>
             <div class="issue-filters">
               <label
-                >{{ t('linear.filter.show', 'Show') }}<select v-model="filter" data-test="linear-filter" :disabled="busy">
+                >{{ t('linear.filter.show', 'Show') }}<ThemedSelect v-model="filter" data-test="linear-filter" :disabled="busy">
                   <option value="assigned">{{ t('linear.filter.assigned', 'Assigned to me') }}</option>
                   <option value="created">{{ t('linear.filter.created', 'Created by me') }}</option>
                   <option value="open">{{ t('linear.filter.open', 'All open') }}</option>
                   <option value="completed">{{ t('linear.filter.completed', 'Completed') }}</option>
                   <option value="all">{{ t('linear.filter.all', 'All issues') }}</option>
-                </select></label
+                </ThemedSelect></label
               ><label
-                >{{ t('linear.filter.team', 'Team') }}<select v-model="teamId" data-test="linear-team" :disabled="busy">
+                >{{ t('linear.filter.team', 'Team') }}<ThemedSelect v-model="teamId" data-test="linear-team" :disabled="busy">
                   <option value="">{{ t('linear.filter.allTeams', 'All teams') }}</option>
                   <option v-for="team in teams" :key="team.id" :value="team.id">
                     {{ team.name }}
                   </option>
-                </select></label
+                </ThemedSelect></label
               ><label
-                >{{ t('linear.filter.state', 'State') }}<select
+                >{{ t('linear.filter.state', 'State') }}<ThemedSelect
                   v-model="stateId"
                   data-test="linear-state"
                   :disabled="busy || !teamId"
@@ -480,7 +481,7 @@ onBeforeUnmount(() => {
                   <option v-for="state in states" :key="state.id" :value="state.id">
                     {{ state.name }}
                   </option>
-                </select></label
+                </ThemedSelect></label
               >
             </div>
             <p v-if="loading" class="issue-empty" role="status">

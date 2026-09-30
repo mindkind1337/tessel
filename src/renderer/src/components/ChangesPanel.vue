@@ -1,4 +1,5 @@
 <script setup>
+import ThemedSelect from './ui/ThemedSelect.vue'
 // Source Control (the side panel's Changes tab), ported from Orca's
 // right-sidebar/source-control (panel/panel-ready.tsx, panel/header-toolbar.tsx,
 // listing/uncommitted-sections.tsx, listing/section-header.tsx,
@@ -804,7 +805,7 @@ function draftStore() {
     <!-- Header (panel/header-toolbar.tsx): Create PR at the left, filter and more at the right. -->
     <div class="sc-header">
       <div v-if="!filterExpanded" class="sc-header-row">
-        <select
+        <ThemedSelect
           v-if="root && copies.length"
           v-model="target"
           class="sc-repo-select"
@@ -814,7 +815,7 @@ function draftStore() {
         >
           <option value="project">{{ t('changes.target.project', 'Project') }}</option>
           <option v-for="k in copies" :key="k.id" :value="k.id">{{ k.title }}</option>
-        </select>
+        </ThemedSelect>
         <button
           v-if="copyTask"
           type="button"

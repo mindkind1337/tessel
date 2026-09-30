@@ -1,4 +1,5 @@
 <script setup>
+import ThemedSelect from './ui/ThemedSelect.vue'
 // Creating or editing a scheduled automation, after Orca's editor
 // (src/renderer/src/components/automations/AutomationEditorDialog.tsx,
 // AutomationSchedulePicker.tsx, AutomationCustomCronPanel.tsx,
@@ -213,10 +214,10 @@ function save() {
 
     <label v-if="!automation" class="au-field">
       <span class="au-label">{{ t('automations.editor.useTemplate', 'Use template') }}</span>
-      <select v-model="templateId" class="set-select" data-test="au-template">
+      <ThemedSelect v-model="templateId" class="set-select" data-test="au-template">
         <option value="">{{ t('automations.editor.noTemplate', 'None') }}</option>
         <option v-for="tpl in templates" :key="tpl.id" :value="tpl.id" :title="tpl.description">{{ tpl.label }}</option>
-      </select>
+      </ThemedSelect>
       <span class="set-hint">{{ t('automations.editor.templateHint', 'Choosing a template replaces the name, prompt, schedule and missed-run grace.') }}</span>
     </label>
 
@@ -228,19 +229,19 @@ function save() {
     <div class="au-grid">
       <label class="au-field">
         <span class="au-label">{{ t('automations.editor.project', 'Project') }}</span>
-        <select v-model="wsId" class="set-select" data-test="au-project">
+        <ThemedSelect v-model="wsId" class="set-select" data-test="au-project">
           <option v-if="projectMissing" :value="wsId" disabled>{{ goneLabel() }}</option>
           <option v-for="p in projects" :key="p.wsId" :value="p.wsId">{{ projectLabel(p) }}</option>
-        </select>
+        </ThemedSelect>
         <span v-if="!projects.length" class="set-hint set-warn">{{ t('automations.editor.noProjects', 'Open a project first: an automation runs in one of your projects.') }}</span>
       </label>
       <label class="au-field">
         <span class="au-label">{{ t('automations.editor.agent', 'Agent') }}</span>
-        <select v-model="agentId" class="set-select" data-test="au-agent">
+        <ThemedSelect v-model="agentId" class="set-select" data-test="au-agent">
           <option v-if="!agentId" value="" disabled>{{ t('automations.editor.needAgent', 'Choose an agent before saving.') }}</option>
           <option v-else-if="!agents.some((ag) => ag.id === agentId)" :value="agentId" disabled>{{ agentLabel({ name: agentId, available: false }) }}</option>
           <option v-for="ag in agents" :key="ag.id" :value="ag.id" :disabled="!ag.available">{{ agentLabel(ag) }}</option>
-        </select>
+        </ThemedSelect>
         <span v-if="!agents.some((ag) => ag.available)" class="set-hint set-warn">{{ t('automations.editor.noAgents', 'No agent that can run automations is on (Claude Code, Codex, Gemini or Qwen).') }}</span>
       </label>
     </div>
@@ -248,17 +249,17 @@ function save() {
     <div v-if="models.length" class="au-grid">
       <label class="au-field">
         <span class="au-label">{{ t('automations.editor.model', 'Model') }}</span>
-        <select v-model="model" class="set-select" data-test="au-model">
+        <ThemedSelect v-model="model" class="set-select" data-test="au-model">
           <option value="">{{ t('automations.editor.defaultModel', "The agent's default (Settings > Agents)") }}</option>
           <option v-for="m in models" :key="m.id" :value="m.id">{{ m.label || m.id }}</option>
-        </select>
+        </ThemedSelect>
       </label>
       <label v-if="effortChoices.length" class="au-field">
         <span class="au-label">{{ t('automations.editor.effort', 'Effort') }}</span>
-        <select v-model="effort" class="set-select" data-test="au-effort">
+        <ThemedSelect v-model="effort" class="set-select" data-test="au-effort">
           <option value="">{{ t('automations.editor.defaultEffort', 'Default') }}</option>
           <option v-for="c in effortChoices" :key="c.value" :value="c.value">{{ sessionChoiceLabel(c) }}</option>
-        </select>
+        </ThemedSelect>
       </label>
     </div>
 
@@ -299,12 +300,12 @@ function save() {
     <fieldset class="au-field">
       <legend class="au-label">{{ t('automations.editor.schedule', 'Schedule') }}</legend>
       <div class="au-sched">
-        <select :value="draft.preset" class="set-select" :aria-label="t('automations.editor.cadence', 'Cadence')" data-test="au-preset" @change="setPreset($event.target.value)">
+        <ThemedSelect :value="draft.preset" class="set-select" :aria-label="t('automations.editor.cadence', 'Cadence')" data-test="au-preset" @change="setPreset($event.target.value)">
           <option v-for="p in SCHEDULE_PRESETS" :key="p" :value="p">{{ presetLabel(p) }}</option>
-        </select>
-        <select v-if="draft.preset === 'weekly'" v-model.number="draft.dayOfWeek" class="set-select" :aria-label="t('automations.editor.day', 'Day')" data-test="au-day">
+        </ThemedSelect>
+        <ThemedSelect v-if="draft.preset === 'weekly'" v-model.number="draft.dayOfWeek" class="set-select" :aria-label="t('automations.editor.day', 'Day')" data-test="au-day">
           <option v-for="(d, i) in days" :key="i" :value="i">{{ d }}</option>
-        </select>
+        </ThemedSelect>
         <label v-if="draft.preset === 'hourly'" class="au-inline">
           <span>{{ t('automations.editor.minute', 'Minute') }}</span>
           <input v-model.number="minute" type="number" min="0" max="59" class="set-number au-minute" data-test="au-minute" />
@@ -334,9 +335,9 @@ function save() {
     <div class="au-grid">
       <label class="au-field">
         <span class="au-label">{{ t('automations.editor.grace', 'Grace') }}</span>
-        <select v-model.number="grace" class="set-select" data-test="au-grace">
+        <ThemedSelect v-model.number="grace" class="set-select" data-test="au-grace">
           <option v-for="g in GRACE_MINUTES" :key="g" :value="g">{{ graceLabel(g) }}</option>
-        </select>
+        </ThemedSelect>
         <span class="set-hint">{{
           t(
             'automations.editor.graceHint',

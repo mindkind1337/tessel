@@ -1,3 +1,4 @@
+import { setSelectValue, selectOptions } from './selectTestUtils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { settings } from '../settings'
 import { flushPromises, mount } from '@vue/test-utils'
@@ -210,7 +211,7 @@ describe('usage provider flyout', () => {
         })
     )
     await wrapper.get('[data-test="usage-refresh"]').trigger('click')
-    await flyout().get('[data-test="usage-account-codex"]').setValue('work')
+    await setSelectValue(flyout().get('[data-test="usage-account-codex"]'), 'work')
     await flushPromises()
     expect(flyout().find('[role="alertdialog"]').exists()).toBe(false)
     expect(api.providerUsage.read).toHaveBeenLastCalledWith({

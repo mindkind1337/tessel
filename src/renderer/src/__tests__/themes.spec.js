@@ -1,3 +1,4 @@
+import { setSelectValue } from './selectTestUtils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { watch } from 'vue'
@@ -43,7 +44,7 @@ describe('appearance preferences', () => {
     })
     const unwatch = watch(() => settings.theme, update, { flush: 'sync' })
     try {
-      await wrapper.get('#appearance-theme').setValue('warp')
+      await setSelectValue(wrapper.get('#appearance-theme'), 'warp')
       expect(document.documentElement.dataset.theme).toBe('warp')
       expect(terminal.options.theme.background).toBe('#191b1a')
       const snapshot = JSON.parse(JSON.stringify(settings))
@@ -51,7 +52,7 @@ describe('appearance preferences', () => {
       loadSettings(snapshot)
       expect(settings.theme).toBe('warp')
       expect(document.documentElement.dataset.theme).toBe('warp')
-      await wrapper.get('#appearance-theme').setValue('classic')
+      await setSelectValue(wrapper.get('#appearance-theme'), 'classic')
       expect(terminal.options.theme).toEqual(terminalTheme('classic'))
       expect(document.documentElement.dataset.theme).toBe('classic')
       expect(wrapper.emitted('close')).toBeUndefined()

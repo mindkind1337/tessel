@@ -61,7 +61,7 @@ describe('Settings modal accessibility', { timeout: 30_000 }, () => {
   })
 
   it('names every select and number input and exposes the selected cursor', async () => {
-    for (const control of wrapper.findAll('select, input[type="number"]')) {
+    for (const control of wrapper.findAll('[role="combobox"], input[type="number"]')) {
       expect(control.element.labels.length).toBeGreaterThan(0)
       expect(control.element.labels[0].textContent.trim()).not.toBe('')
     }

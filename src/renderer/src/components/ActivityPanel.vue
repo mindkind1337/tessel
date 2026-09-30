@@ -1,4 +1,5 @@
 <script setup>
+import ThemedSelect from './ui/ThemedSelect.vue'
 // Activity of the agents: what needs you now, one line per agent, and a
 // timeline of messages, approvals, limits, team changes and journal entries.
 // Numbers come from summarize() (src/shared/activity.js); they help unblock
@@ -381,13 +382,13 @@ const messagesSub = computed(() =>
       <div class="act-filters">
         <label class="act-field">
           <span>{{ t('activity.scope', 'Scope') }}</span>
-          <select
+          <ThemedSelect
             class="act-select"
             :value="scope"
             @change="emit('update:scope', $event.target.value)"
           >
             <option v-for="s in scopes" :key="s.value" :value="s.value">{{ s.label }}</option>
-          </select>
+          </ThemedSelect>
         </label>
         <div class="act-seg" role="group" :aria-label="t('activity.periodLabel', 'Period')">
           <button
@@ -403,12 +404,12 @@ const messagesSub = computed(() =>
         </div>
         <label class="act-field">
           <span>{{ t('activity.agent', 'Agent') }}</span>
-          <select v-model="agentFilter" class="act-select">
+          <ThemedSelect v-model="agentFilter" class="act-select">
             <option value="">{{ t('activity.allAgents', 'All agents') }}</option>
             <option v-for="r in summary.rows" :key="r.paneId" :value="r.paneId">
               {{ r.title }}{{ r.open ? '' : t('activity.closedSuffix', ' (closed)') }}
             </option>
-          </select>
+          </ThemedSelect>
         </label>
       </div>
 

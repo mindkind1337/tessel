@@ -1,3 +1,4 @@
+import { setSelectValue, selectOptions } from './selectTestUtils'
 // Specs for the Agent Task Board view: TaskBoard.vue (the 4-column kanban) and
 // TaskCard.vue (a single task with move / edit / delete / assign controls).
 // These mount the real components with @vue/test-utils and consume the live
@@ -214,9 +215,9 @@ describe('TaskCard.vue', () => {
   it('assigns the task to an agent pane and back to unassigned', async () => {
     const { wrapper, task } = mountCard()
     const select = wrapper.get('[data-test="assign-select"]')
-    await select.setValue('pane-2')
+    await setSelectValue(select, 'pane-2')
     expect(task.paneId).toBe('pane-2')
-    await select.setValue('')
+    await setSelectValue(select, '')
     expect(task.paneId).toBeNull()
   })
 
@@ -243,7 +244,7 @@ describe('TaskCard.vue', () => {
     expect(mountCard({ column: 'review' }).wrapper.get('[data-test="assignee"]').text()).toBe('No agent')
   })
 
-  it('falls back to the agentId when a pane has no title', () => {
+  it('falls back to the agentId when a pane has no title', async () => {
     const task = addTask({ title: 'Card task' })
     task.paneId = 'pane-3'
     task.column = 'review'
@@ -255,8 +256,8 @@ describe('TaskCard.vue', () => {
     })
     expect(wrapper.get('[data-test="assignee"]').text()).toContain('gemini')
     task.column = 'todo'
-    return wrapper.vm.$nextTick().then(() => {
-      const options = wrapper.findAll('[data-test="assign-select"] option')
+    return wrapper.vm.$nextTick().then(async () => {
+      const options = await selectOptions(wrapper.get('[data-test="assign-select"]'))
       expect(options.some((o) => o.text().includes('gemini'))).toBe(true)
     })
   })

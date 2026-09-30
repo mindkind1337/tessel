@@ -1,3 +1,4 @@
+import { setSelectValue, selectOptions } from './selectTestUtils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import GitHubDialog from '../components/GitHubDialog.vue'
@@ -94,8 +95,8 @@ describe('GitHub issue and pull request dialog', () => {
     const older = deferred(),
       newer = deferred()
     api.list.mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise)
-    await wrapper.get('[aria-label="GitHub issue filter"]').setValue('mine')
-    await wrapper.get('[aria-label="GitHub issue filter"]').setValue('all')
+    await setSelectValue(wrapper.get('[aria-label="GitHub issue filter"]'), 'mine')
+    await setSelectValue(wrapper.get('[aria-label="GitHub issue filter"]'), 'all')
     newer.resolve({ ok: true, items: [ghItem(22)] })
     await flushPromises()
     older.resolve({ ok: true, items: [ghItem(11)] })
@@ -145,7 +146,7 @@ describe('GitHub issue and pull request dialog', () => {
     api.list.mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise)
     wrapper = mount(GitHubDialog, { props })
     await flushPromises()
-    await wrapper.get('[aria-label="GitHub issue filter"]').setValue('mine')
+    await setSelectValue(wrapper.get('[aria-label="GitHub issue filter"]'), 'mine')
     older.resolve({ ok: true, items: [ghItem(1)] })
     await flushPromises()
     expect(wrapper.text()).toContain('Reading issues')
@@ -388,8 +389,8 @@ describe('Linear issue dialog', () => {
     const older = deferred(),
       newer = deferred()
     api.issues.mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise)
-    await wrapper.get('[data-test="linear-filter"]').setValue('created')
-    await wrapper.get('[data-test="linear-filter"]').setValue('completed')
+    await setSelectValue(wrapper.get('[data-test="linear-filter"]'), 'created')
+    await setSelectValue(wrapper.get('[data-test="linear-filter"]'), 'completed')
     newer.resolve({ ok: true, items: [linearItem('new')], hasNextPage: true })
     await flushPromises()
     older.resolve({ ok: true, items: [linearItem('old')] })
@@ -404,13 +405,13 @@ describe('Linear issue dialog', () => {
     const older = deferred(),
       newer = deferred()
     api.states.mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise)
-    await wrapper.get('[data-test="linear-team"]').setValue('team-1')
-    await wrapper.get('[data-test="linear-team"]').setValue('team-2')
+    await setSelectValue(wrapper.get('[data-test="linear-team"]'), 'team-1')
+    await setSelectValue(wrapper.get('[data-test="linear-team"]'), 'team-2')
     newer.resolve({ ok: true, states: [{ id: 'infra-doing', name: 'Infra state' }] })
     await flushPromises()
     older.resolve({ ok: true, states: [{ id: 'product-doing', name: 'Product state' }] })
     await flushPromises()
-    const stateOptions = wrapper.get('[data-test="linear-state"]').text()
+    const stateOptions = (await selectOptions(wrapper.get('[data-test="linear-state"]'))).map(o => o.text()).join(' ')
     expect(stateOptions).toContain('Infra state')
     expect(stateOptions).not.toContain('Product state')
   })
@@ -421,7 +422,7 @@ describe('Linear issue dialog', () => {
     await render({ startIssue })
     await openItem()
     expect(wrapper.get('[data-test="linear-start-state"]').element.value).toBe('')
-    await wrapper.get('[data-test="linear-start-state"]').setValue('doing')
+    await setSelectValue(wrapper.get('[data-test="linear-start-state"]'), 'doing')
     expect(startIssue).not.toHaveBeenCalled()
     expect(api.setState).not.toHaveBeenCalled()
     await wrapper.get('[data-test="linear-start"]').trigger('click')

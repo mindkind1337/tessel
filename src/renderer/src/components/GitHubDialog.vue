@@ -1,4 +1,5 @@
 <script setup>
+import ThemedSelect from './ui/ThemedSelect.vue'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { t } from '../i18n'
 
@@ -590,11 +591,11 @@ onBeforeUnmount(() => {
               >
                 <p>{{ confirmText(confirmation, selected.number) }}</p>
                 <label v-if="['merge', 'autoMerge'].includes(confirmation)" class="issue-field"
-                  >{{ t('github.merge.method', 'Merge method') }}<select v-model="method" :disabled="busy">
+                  >{{ t('github.merge.method', 'Merge method') }}<ThemedSelect v-model="method" :disabled="busy">
                     <option value="squash">{{ t('github.merge.squash', 'Squash') }}</option>
                     <option value="merge">{{ t('github.merge.commit', 'Merge commit') }}</option>
                     <option value="rebase">{{ t('github.merge.rebase', 'Rebase') }}</option>
-                  </select></label
+                  </ThemedSelect></label
                 >
                 <div class="issue-actions">
                   <button class="issue-btn" :disabled="busy" @click="confirmation = null">
@@ -642,7 +643,7 @@ onBeforeUnmount(() => {
                 <h4>{{ isPr ? t('github.start.titlePr', 'Work on this pull request') : t('github.start.titleIssue', 'Work on this issue') }}</h4>
                 <div class="issue-start-row">
                   <label class="issue-field"
-                    >{{ t('github.start.agent', 'Agent') }}<select
+                    >{{ t('github.start.agent', 'Agent') }}<ThemedSelect
                       v-model="agentId"
                       :aria-label="t('github.start.agentLabel', 'Agent for GitHub issue')"
                       :disabled="busy"
@@ -650,7 +651,7 @@ onBeforeUnmount(() => {
                       <option v-for="agent in agents" :key="agent.id" :value="agent.id">
                         {{ agent.name || agent.id }}
                       </option>
-                    </select></label
+                    </ThemedSelect></label
                   ><label class="issue-checkbox"
                     ><input v-model="worktree" type="checkbox" :disabled="busy || isPr" />{{
                       t('github.start.ownCopy', 'Own Git copy')
@@ -676,13 +677,13 @@ onBeforeUnmount(() => {
             <form class="issue-filters" @submit.prevent="loadList">
               <label
                 >{{ t('github.filter.show', 'Show')
-                }}<select v-model="preset" :aria-label="t('github.filter.label', 'GitHub issue filter')">
+                }}<ThemedSelect v-model="preset" :aria-label="t('github.filter.label', 'GitHub issue filter')">
                   <option value="all">{{ t('github.filter.allOpen', 'All open') }}</option>
                   <option value="mine">
                     {{ isPr ? t('github.filter.createdByMe', 'Created by me') : t('github.filter.assignedToMe', 'Assigned to me') }}
                   </option>
                   <option v-if="isPr" value="review">{{ t('github.filter.review', 'Review requested') }}</option>
-                </select></label
+                </ThemedSelect></label
               ><label class="issue-search"
                 >{{ t('github.search.label', 'Search')
                 }}<input

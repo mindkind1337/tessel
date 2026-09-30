@@ -1,4 +1,5 @@
 <script setup>
+import ThemedSelect from './ui/ThemedSelect.vue'
 // Local quota observations update the toolbar. Authenticated provider reads
 // happen on menu/open/refresh actions, and from the main process's automatic
 // refresh (usagePoller.js: at startup, every 2 min by default while the window
@@ -743,6 +744,8 @@ const resetExplanation = computed(() =>
 )
 
 function onDocDown(e) {
+  const selectOwner = e.target?.closest?.('[data-select-owner]')?.dataset.selectOwner
+  if (selectOwner && root.value?.contains(document.getElementById(selectOwner))) return
   if (resetBusy.value) return
   if (open.value && root.value && !root.value.contains(e.target)) closeMenu()
 }
@@ -1314,7 +1317,7 @@ const emptyTitle = () => t('usage.menu.buttonTitleEmpty', "Usage of your agents'
             <label :for="'usage-account-' + detailAgent.id">{{
               t('usage.menu.account', 'Account')
             }}</label>
-            <select
+            <ThemedSelect
               :id="'usage-account-' + detailAgent.id"
               :value="providerAccounts(detailAgent.id).selectedId || ''"
               :disabled="
@@ -1344,7 +1347,7 @@ const emptyTitle = () => t('usage.menu.buttonTitleEmpty', "Usage of your agents'
                     : account.label || account.email || t('usage.menu.account', 'Account')
                 "
               ></option>
-            </select>
+            </ThemedSelect>
           </div>
           <p v-if="providerAccounts(detailAgent.id).error" class="usage-account-error" role="alert">
             {{ providerAccounts(detailAgent.id).error }}
@@ -1831,7 +1834,7 @@ const emptyTitle = () => t('usage.menu.buttonTitleEmpty', "Usage of your agents'
   font-size: 11px;
   color: var(--text-dim);
 }
-.usage-account-picker select {
+.usage-account-picker .ts-select {
   min-width: 0;
   width: 100%;
   border: 1px solid var(--border-strong);
@@ -1841,7 +1844,7 @@ const emptyTitle = () => t('usage.menu.buttonTitleEmpty', "Usage of your agents'
   padding: 4px 6px;
   font: inherit;
 }
-.usage-account-picker select:disabled {
+.usage-account-picker .ts-select:disabled {
   opacity: 0.6;
 }
 .usage-account-error,
@@ -1891,7 +1894,7 @@ const emptyTitle = () => t('usage.menu.buttonTitleEmpty', "Usage of your agents'
   color: var(--text-strong);
 }
 .usage-roster button:focus-visible,
-.usage-roster select:focus-visible {
+.usage-roster .ts-select:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
 }

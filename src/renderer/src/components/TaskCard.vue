@@ -1,4 +1,5 @@
 <script setup>
+import ThemedSelect from './ui/ThemedSelect.vue'
 // A single kanban task. Renders its title + current column and drives the shared
 // task-board store directly (the brief: the card consumes the store) — renaming
 // it, deleting it, and assigning it to an agent pane. It moves between columns
@@ -103,7 +104,7 @@ function onDelete() {
 }
 
 // --- Agent assignment --------------------------------------------------------
-// <select> value is a string ('' = unassigned); map it back to a paneId or null.
+// <ThemedSelect> value is a string ('' = unassigned); map it back to a paneId or null.
 const selectedPane = computed({
   get: () => props.task.paneId || '',
   set: (value) => assignAgent(props.task.id, value || null)
@@ -266,7 +267,7 @@ function paneLabel(pane) {
     </div>
 
     <!-- The agent: chosen in To do and Doing, shown in Review and Done. -->
-    <select
+    <ThemedSelect
       v-if="canAssign"
       v-model="selectedPane"
       class="task-assign"
@@ -277,7 +278,7 @@ function paneLabel(pane) {
       <option v-for="pane in agentPanes" :key="pane.id" :value="pane.id">
         {{ paneLabel(pane) }}
       </option>
-    </select>
+    </ThemedSelect>
     <div v-else class="task-card-meta">
       <span
         v-if="assignedPane"

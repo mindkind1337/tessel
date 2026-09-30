@@ -1,3 +1,4 @@
+import { setSelectValue, selectOptions } from './selectTestUtils'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { computed, nextTick } from 'vue'
@@ -60,7 +61,7 @@ describe('Settings > Automations', () => {
     wrapper = m.wrapper
     await flush()
     await wrapper.get('[data-test="au-new"]').trigger('click')
-    await wrapper.get('[data-test="au-template"]').setValue('repo-health-weekday')
+    await setSelectValue(wrapper.get('[data-test="au-template"]'), 'repo-health-weekday')
     await flush()
     expect(wrapper.get('[data-test="au-name"]').element.value).toBe('Weekday repo audit')
     expect(wrapper.get('[data-test="au-yolo"]').text()).toMatch(/--dangerously-skip-permissions/)
@@ -103,10 +104,10 @@ describe('Settings > Automations', () => {
     wrapper = m.wrapper
     await flush()
     await wrapper.get('[data-test="au-new"]').trigger('click')
-    await wrapper.get('[data-test="au-project"]').setValue('ws-2')
+    await setSelectValue(wrapper.get('[data-test="au-project"]'), 'ws-2')
     await flush()
     expect(wrapper.get('[data-test="au-worktree"]').element.disabled).toBe(true)
-    await wrapper.get('[data-test="au-preset"]').setValue('custom')
+    await setSelectValue(wrapper.get('[data-test="au-preset"]'), 'custom')
     await wrapper.get('[data-test="au-cron"]').setValue('*/90 * * * *')
     await flush()
     expect(wrapper.find('[data-test="au-cron-invalid"]').exists()).toBe(true)

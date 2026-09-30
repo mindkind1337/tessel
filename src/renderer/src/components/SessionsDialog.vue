@@ -1,4 +1,5 @@
 <script setup>
+import ThemedSelect from './ui/ThemedSelect.vue'
 // Past agent conversations, newest first. Resume one in a new
 // pane (in the folder it ran in), jump to a pane that already has it open, or
 // copy its session id.
@@ -336,9 +337,9 @@ onMounted(() => {
         <span class="set-hint" role="status">{{ indexLine }}</span>
         <label class="set-hint sessions-keep">
           {{ t('app.sessions.keep', 'Keep') }}
-          <select class="set-number" :value="index.historyDays" :disabled="indexBusy" @change="indexAction('setHistoryDays', Number($event.target.value))">
+          <ThemedSelect class="set-number" :value="index.historyDays" :disabled="indexBusy" @change="indexAction('setHistoryDays', Number($event.target.value))">
             <option v-for="k in keepOptions" :key="k.days" :value="k.days">{{ k.label }}</option>
-          </select>
+          </ThemedSelect>
         </label>
         <button class="exit-btn" data-test="sessions-disable" :disabled="indexBusy" :title="t('app.sessions.disableTitle', 'Stop indexing; the index is kept until you clear it')" @click="indexAction('disable')">
           {{ t('app.sessions.disable', 'Turn off') }}

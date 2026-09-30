@@ -1,3 +1,4 @@
+import { setSelectValue, selectOptions } from './selectTestUtils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { settings } from '../settings'
 import { flushPromises, mount } from '@vue/test-utils'
@@ -40,7 +41,7 @@ describe('usage menu account switching', () => {
     window.shellApi = previousApi
   })
   async function open() {
-    wrapper = mount(UsageMenu)
+    wrapper = mount(UsageMenu, { attachTo: document.body })
     await flushPromises()
     expect(api.accounts.list).not.toHaveBeenCalled()
     await wrapper.get('[data-test="usage-button"]').trigger('click')
@@ -53,13 +54,13 @@ describe('usage menu account switching', () => {
     const before = api.getUsage.mock.calls.length
     const select = wrapper.get('[data-test="usage-account-codex"]')
     expect(select.element.value).toBe('')
-    await select.setValue('work')
+    await setSelectValue(select, 'work')
     await flushPromises()
     expect(api.accounts.select).toHaveBeenCalledWith('codex', 'work')
     expect(select.element.value).toBe('work')
     expect(api.getUsage.mock.calls.length).toBe(before + 1)
     expect(wrapper.text()).toContain('New Codex terminals will use this account')
-    await select.setValue('')
+    await setSelectValue(select, '')
     await flushPromises()
     expect(api.accounts.select).toHaveBeenLastCalledWith('codex', null)
   })
@@ -67,12 +68,12 @@ describe('usage menu account switching', () => {
     api.accounts.select.mockResolvedValueOnce({ ok: false, error: 'Could not save selection' })
     await open()
     const select = wrapper.get('[data-test="usage-account-codex"]')
-    await select.setValue('work')
+    await setSelectValue(select, 'work')
     await flushPromises()
     expect(select.element.value).toBe('')
     expect(select.element.disabled).toBe(false)
     expect(wrapper.text()).toContain('Could not save selection')
-    await select.setValue('work')
+    await setSelectValue(select, 'work')
     await flushPromises()
     expect(select.element.value).toBe('work')
   })
@@ -93,11 +94,11 @@ describe('usage menu account switching', () => {
     api.accounts.list.mockResolvedValueOnce({ ok: false, error: 'Registry locked' })
     window.dispatchEvent(new CustomEvent('tessel:accounts-changed'))
     await flushPromises()
-    expect(wrapper.get('select').findAll('option')).toHaveLength(2)
-    expect(wrapper.get('select').element.disabled).toBe(true)
+    expect(wrapper.get('[role="combobox"]').text()).not.toBe('')
+    expect(wrapper.get('[role="combobox"]').element.disabled).toBe(true)
     await wrapper.get('[data-test="usage-accounts-retry"]').trigger('click')
     await flushPromises()
-    expect(wrapper.get('select').element.disabled).toBe(false)
+    expect(wrapper.get('[role="combobox"]').element.disabled).toBe(false)
   })
 
   it('does not overwrite the new account quota with an old request that finishes late', async () => {
@@ -112,7 +113,7 @@ describe('usage menu account switching', () => {
     api.getUsage.mockResolvedValue({
       agents: [{ id: 'codex', accountId: 'work', windows: [{ label: 'week', usedPct: 10 }] }]
     })
-    await wrapper.get('[data-test="usage-account-codex"]').setValue('work')
+    await setSelectValue(wrapper.get('[data-test="usage-account-codex"]'), 'work')
     await flushPromises()
     finishOldUsage({ agents: [{ id: 'codex', windows: [{ label: 'week', usedPct: 99 }] }] })
     await flushPromises()

@@ -1,3 +1,4 @@
+import { selectOptions } from './selectTestUtils'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import SettingsDialog from '../components/SettingsDialog.vue'
@@ -43,11 +44,11 @@ describe('Settings > Agents', () => {
   })
 
   it('offers only installed, turned-on agents as the default agent', async () => {
-    const opts = () => wrapper.findAll('#settings-default-agent option').map((o) => o.attributes('value'))
-    expect(opts()).toEqual(['', 'claude', 'codex'])
+    const opts = async () => (await selectOptions(wrapper.get('#settings-default-agent'))).map(o => o.attributes('data-value'))
+    expect(await opts()).toEqual(['', 'claude', 'codex'])
     await wrapper.get('[data-agent="codex"] .set-switch').setValue(false)
     expect(settings.agentPrefs.codex.enabled).toBe(false)
-    expect(opts()).toEqual(['', 'claude'])
+    expect(await opts()).toEqual(['', 'claude'])
   })
 
   it('Yolo shows a warning; Customize saves command, arguments and variables; Reset clears them', async () => {

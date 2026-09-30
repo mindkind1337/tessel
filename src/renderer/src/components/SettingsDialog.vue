@@ -1,4 +1,5 @@
 <script setup>
+import ThemedSelect from './ui/ThemedSelect.vue'
 import { describeWaitingText } from '../agentUpdateWhy'
 import { t, intlLocale, UI_LANGUAGES } from '../i18n'
 // Settings, as a full page over the app's main area (like Orca's): a sidebar
@@ -1150,7 +1151,7 @@ function previewSound() {
                   {{ t('settings.agents.defaultAgent', 'Default agent') }}
                   <span class="set-hint">{{ t('settings.agents.defaultAgentHint', 'What a new pane starts (Ctrl+Shift+T)') }}</span>
                 </label>
-                <select id="settings-default-agent" v-model="settings.defaultAgent" class="set-select">
+                <ThemedSelect id="settings-default-agent" v-model="settings.defaultAgent" class="set-select">
                   <option value="">{{ t('settings.agents.defaultShell', 'The default shell') }}</option>
                   <option
                     v-for="a in agents.filter((x) => x.available && agentEnabled(settings.agentPrefs, x.id))"
@@ -1159,7 +1160,7 @@ function previewSound() {
                   >
                     {{ a.name }}
                   </option>
-                </select>
+                </ThemedSelect>
               </div>
               <div class="set-row">
                 <div id="settings-perm-label" class="set-label">
@@ -1254,9 +1255,9 @@ function previewSound() {
                   {{ t('settings.agents.cacheDuration', 'Cache duration') }}
                   <span class="set-hint">{{ t('settings.agents.cacheDurationHint', 'Match your provider\'s cache. The default is 5 minutes') }}</span>
                 </label>
-                <select id="settings-cache-ttl" v-model.number="settings.promptCacheTtlMs" class="set-select">
+                <ThemedSelect id="settings-cache-ttl" v-model.number="settings.promptCacheTtlMs" class="set-select">
                   <option v-for="ttl in CACHE_TTLS" :key="ttl.ms" :value="ttl.ms">{{ ttl.label }}</option>
-                </select>
+                </ThemedSelect>
               </div>
               <label class="set-row">
                 <div class="set-label">
@@ -1464,7 +1465,7 @@ function previewSound() {
                 <div v-if="a.available && hasModelDefaults(a.id)" class="agent-models" :data-test="`agent-models-${a.id}`">
                   <label class="agent-model-field">
                     <span class="set-hint">{{ t('settings.agents.defaultModel', 'Model') }}</span>
-                    <select
+                    <ThemedSelect
                       class="set-select"
                       :data-test="`agent-model-${a.id}`"
                       @change="setDefaultModel(a.id, $event.target.value)"
@@ -1478,12 +1479,12 @@ function previewSound() {
                       >
                         {{ m.label }}
                       </option>
-                    </select>
+                    </ThemedSelect>
                   </label>
                   <template v-for="o in defaultOptionRows(a.id)" :key="o.id">
                     <label v-if="o.kind.type === 'select'" class="agent-model-field">
                       <span class="set-hint">{{ sessionOptionLabel(o) }}</span>
-                      <select
+                      <ThemedSelect
                         class="set-select"
                         :data-test="`agent-option-${a.id}-${o.id}`"
                         @change="setDefaultOption(a.id, o.id, $event.target.value)"
@@ -1492,7 +1493,7 @@ function previewSound() {
                         <option v-for="c in o.kind.choices" :key="c.value" :value="c.value" :selected="modelDefaults(a.id)[o.id] === c.value">
                           {{ sessionChoiceLabel(c) }}
                         </option>
-                      </select>
+                      </ThemedSelect>
                     </label>
                     <label v-else class="agent-model-field agent-model-switch">
                       <span class="set-hint">{{ sessionOptionLabel(o) }}</span>
@@ -1765,10 +1766,10 @@ function previewSound() {
                     t('settings.orchestration.workerModeHint', 'Claude and Codex can work in a chat pane, without a terminal. Other agents use a terminal pane. This applies to the next workers; it does not change those already open.')
                   }}</span>
                 </label>
-                <select id="settings-orch-mode" v-model="settings.orchestrationWorkerMode" class="set-select" data-setting="orchestrationWorkerMode">
+                <ThemedSelect id="settings-orch-mode" v-model="settings.orchestrationWorkerMode" class="set-select" data-setting="orchestrationWorkerMode">
                   <option value="terminal">{{ t('settings.orchestration.workerModeTerminal', 'A terminal pane') }}</option>
                   <option value="chat">{{ t('settings.orchestration.workerModeChat', 'A chat pane (Claude, Codex)') }}</option>
-                </select>
+                </ThemedSelect>
               </div>
             </div>
           </div>
@@ -1818,7 +1819,7 @@ function previewSound() {
                   {{ t('settings.voice.language', 'Language') }}
                   <span class="set-hint">{{ t('settings.voice.languageHint', 'Windows dictation listens in one language. The mic button switches to this one first. Add languages in Windows Settings, Time & language.') }}</span>
                 </label>
-                <select
+                <ThemedSelect
                   id="settings-language"
                   v-model="settings.voiceTip"
                   class="set-select"
@@ -1828,7 +1829,7 @@ function previewSound() {
                   <option v-for="l in languages.filter((x) => x.tip)" :key="l.tip" :value="l.tip">
                     {{ l.name }}
                   </option>
-                </select>
+                </ThemedSelect>
               </div>
             </div>
           </div>
@@ -1938,22 +1939,22 @@ function previewSound() {
                     t('settings.language.hint', "The language of Tessel's interface. System follows Windows.")
                   }}</span>
                 </label>
-                <select id="appearance-language" v-model="settings.uiLanguage" class="set-select">
+                <ThemedSelect id="appearance-language" v-model="settings.uiLanguage" class="set-select">
                   <option v-for="lang in UI_LANGUAGES" :key="lang.value" :value="lang.value">
                     {{ t(lang.key, lang.label) }}
                   </option>
-                </select>
+                </ThemedSelect>
               </div>
               <div class="set-row">
                 <label class="set-label" for="appearance-theme">
                   {{ t('settings.appearance.theme', 'Theme') }}
                   <span class="set-hint">{{ t('settings.appearance.themeHint', 'Applies immediately. Your sessions keep running.') }}</span>
                 </label>
-                <select id="appearance-theme" v-model="settings.theme" class="set-select">
+                <ThemedSelect id="appearance-theme" v-model="settings.theme" class="set-select">
                   <option v-for="theme in THEMES" :key="theme.id" :value="theme.id">
                     {{ theme.label }}
                   </option>
-                </select>
+                </ThemedSelect>
               </div>
               <div class="set-row" data-setting="ui-zoom">
                 <div class="set-label">
@@ -2244,9 +2245,9 @@ function previewSound() {
                   {{ t('settings.text.font', 'Font') }}
                   <span class="set-hint">{{ t('settings.text.fontHint', 'The typeface of every terminal') }}</span>
                 </label>
-                <select id="settings-font" v-model="settings.fontFamily" class="set-select">
+                <ThemedSelect id="settings-font" v-model="settings.fontFamily" class="set-select">
                   <option v-for="f in FONT_FAMILIES" :key="f" :value="f">{{ f }}</option>
-                </select>
+                </ThemedSelect>
               </div>
               <div class="set-row">
                 <div class="set-label">
@@ -2372,14 +2373,14 @@ function previewSound() {
                 </label>
                 <div class="set-shell">
                   <BrandIcon :kind="defaultShell || ''" :size="15" />
-                  <select
+                  <ThemedSelect
                     id="settings-shell"
                     class="set-select"
                     :value="defaultShell"
                     @change="emit('set-default-shell', $event.target.value)"
                   >
                     <option v-for="s in shells" :key="s.id" :value="s.id">{{ s.name }}</option>
-                  </select>
+                  </ThemedSelect>
                 </div>
               </div>
               <div class="set-row">
@@ -2670,7 +2671,7 @@ function previewSound() {
                   {{ t('settings.alerts.sound', 'Sound') }}
                   <span class="set-hint">{{ t('settings.alerts.soundHint', 'With each new notification (the bell in the toolbar lists them)') }}</span>
                 </label>
-                <select
+                <ThemedSelect
                   id="settings-alert-sound"
                   v-model="settings.alertSound"
                   class="set-select"
@@ -2680,7 +2681,7 @@ function previewSound() {
                   <option value="none">{{ t('settings.alerts.soundNone', 'None') }}</option>
                   <option value="chime">{{ t('settings.alerts.soundChime', 'Chime') }}</option>
                   <option value="ping">{{ t('settings.alerts.soundPing', 'Ping') }}</option>
-                </select>
+                </ThemedSelect>
               </div>
               <div
                 v-if="settings.alertSound !== 'none'"

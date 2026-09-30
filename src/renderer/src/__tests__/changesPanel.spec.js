@@ -1,3 +1,4 @@
+import { setSelectValue, selectOptions } from './selectTestUtils'
 // Source Control (ChangesPanel.vue, after Orca's): never "clean" without a git
 // status that worked; late answers dropped; Orca's groups, per-row stage /
 // unstage / discard (asked first), the commit box with its primary action and
@@ -389,7 +390,7 @@ describe('Source Control: notes and task copies', () => {
     make({ workspaceId: 'ws1' })
     await flushPromises()
     expect(names()).toEqual(['a.js'])
-    await w.find('[data-test="changes-target"]').setValue('t1')
+    await setSelectValue(w.find('[data-test="changes-target"]'), 't1')
     await flushPromises()
     expect(names()).toEqual(['copy.js'])
     await rowOf('copy.js', 'unstaged').find('[data-test="sc-stage"]').trigger('click')

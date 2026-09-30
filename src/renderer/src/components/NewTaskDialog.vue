@@ -1,4 +1,5 @@
 <script setup>
+import ThemedSelect from './ui/ThemedSelect.vue'
 // "New task": a title, instructions and the agent that does it. By default a
 // new agent works in its own copy of the project (git worktree + branch), so
 // it cannot break the running app or another agent's work. App starts it.
@@ -198,10 +199,10 @@ onMounted(() => nextTick(() => titleEl.value && titleEl.value.focus()))
 
       <label v-if="reviewers.length" class="nt-review">
         <span>{{ t('tasks.new.reviewBy', 'When it is done, ask for a review by') }}</span>
-        <select v-model="reviewerId" class="nt-select">
+        <ThemedSelect v-model="reviewerId" class="nt-select">
           <option value="">{{ t('tasks.new.nobody', 'nobody') }}</option>
           <option v-for="r in reviewers" :key="r.id" :value="r.id">{{ r.paneName || r.title }}</option>
-        </select>
+        </ThemedSelect>
       </label>
 
       <footer class="nt-actions">
