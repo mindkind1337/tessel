@@ -334,3 +334,26 @@ describe("Claude Code's effort, whatever gave the model", () => {
     fs.rmSync(home, { recursive: true, force: true })
   })
 })
+
+describe("Claude Code's model and effort from its latest answer", () => {
+  it('reads perTurnEffort (a session-only /model pick) before the settings; sub-agent answers do not count', async () => {
+    const { agentModel, claudeTurnFromText } = await import('../agentModel.js')
+    const home = fs.mkdtempSync(join(os.tmpdir(), 'tessel-effort-'))
+    fs.mkdirSync(join(home, '.claude', 'projects', 'C--x'), { recursive: true })
+    fs.writeFileSync(join(home, '.claude', 'settings.json'), JSON.stringify({ model: 'claude-opus-5-5', effortLevel: 'xhigh', modelSettings: { 'claude-fable-5-1': { effortLevel: 'high' } } }))
+    const sid = 'a8319dbf-1b2e-4bcb-90c7-dda297a37a57'
+    const line = (model, effort, extra = {}) =>
+      JSON.stringify({ type: 'assistant', timestamp: '2026-09-30T18:17:37.174Z', effort, perTurnEffort: effort, message: { model }, ...extra })
+    fs.writeFileSync(
+      join(home, '.claude', 'projects', 'C--x', `${sid}.jsonl`),
+      [line('claude-opus-5-5', 'xhigh'), line('claude-fable-5-1', 'medium'), line('claude-haiku-4-5', 'low', { isSidechain: true }), line('<synthetic>', 'high')].join('\n') + '\n'
+    )
+    expect(claudeTurnFromText(line('claude-fable-5-1', 'bogus'))).toMatchObject({ model: 'claude-fable-5-1', effort: null })
+    const res = agentModel({ agentId: 'claude', sessionId: sid, command: 'claude', chosenModel: 'claude-opus-5-5' }, home)
+    expect(res).toMatchObject({ model: 'claude-fable-5-1', effort: 'medium', source: 'session', at: Date.parse('2026-09-30T18:17:37.174Z') })
+    // The pane chose Opus but the session runs Fable: the chosen model's effort comes from the settings.
+    expect(res.chosenEffort).toBe('xhigh')
+    expect(agentModel({ agentId: 'claude', sessionId: sid, command: 'claude', chosenModel: 'fable' }, home).chosenEffort).toBe('medium')
+    fs.rmSync(home, { recursive: true, force: true })
+  })
+})

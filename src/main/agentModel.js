@@ -40,6 +40,13 @@ function parseLoose(text) {
 
 // The model of the latest answer in a Claude Code transcript (JSON lines).
 export function claudeModelFromText(text) {
+  const turn = claudeTurnFromText(text)
+  return turn ? turn.model : null
+}
+// { model, effort } of the latest answer: Claude Code writes the effort the
+// turn ran with next to each answer (perTurnEffort, else effort), so a
+// session-only /model or /effort pick shows too. effort: null when absent.
+export function claudeTurnFromText(text) {
   const lines = String(text || '').split('\n')
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i]
@@ -47,7 +54,10 @@ export function claudeModelFromText(text) {
     try {
       const o = JSON.parse(line)
       const m = o && o.message && o.message.model
-      if (o.type === 'assistant' && typeof m === 'string' && m && !m.startsWith('<')) return m
+      if (o.type !== 'assistant' || o.isSidechain === true || typeof m !== 'string' || !m || m.startsWith('<')) continue
+      const e = [o.perTurnEffort, o.effort].find((x) => CLAUDE_EFFORTS.includes(x))
+      const at = Date.parse(o.timestamp)
+      return { model: m, effort: e || null, ...(Number.isFinite(at) ? { at } : {}) }
     } catch {
       /* a line cut by the tail read */
     }
@@ -439,10 +449,20 @@ export function agentModel(query = {}, home = os.homedir()) {
   const flagEffort = effortFromCommand(query.command)
   const withEffort = res && !res.effort ? { ...res, effort: flagEffort || claudeSettingsEffort(res.model, query.cwd, home) } : res
   if (chosen) {
-    const chosenEffort = flagEffort || claudeSettingsEffort(chosen, query.cwd, home)
+    // The session runs the chosen model: the effort its latest answer used.
+    const sameModel = withEffort && withEffort.source === 'session' && sameClaudeModel(withEffort.model, chosen)
+    const chosenEffort = (sameModel && withEffort.effort) || flagEffort || claudeSettingsEffort(chosen, query.cwd, home)
     return withEffort ? { ...withEffort, chosenEffort } : { model: null, effort: null, source: null, chosenEffort }
   }
   return withEffort
+}
+// Same model: a full id and its alias ("claude-fable-5-1", "fable"), [1m] aside.
+function sameClaudeModel(a, b) {
+  const x = String(a || '').replace(/\[1m\]$/i, '').toLowerCase()
+  const y = String(b || '').replace(/\[1m\]$/i, '').toLowerCase()
+  if (!x || !y) return false
+  const alias = (full, short) => /^[a-z]+$/.test(short) && full.includes(`-${short}-`)
+  return x === y || alias(x, y) || alias(y, x)
 }
 // --effort <level> on an agent's command line.
 export function effortFromCommand(command) {
@@ -468,13 +488,14 @@ function agentModelFound({ agentId, sessionId, command, cwd, launchedAt = 0 } = 
   if (isUuid(sessionId)) {
     if (agentId === 'claude') {
       const f = claudeTranscript(sessionId, home)
-      const m = f && claudeModelFromText(readTail(f))
+      const turn = f && claudeTurnFromText(readTail(f))
+      const m = turn && turn.model
       if (m) {
         // The transcript never says 1M context; the settings do (opus[1m]).
         const set = settingsModel('claude', cwd, home)
         const big = set && /^(\w+)\[1m\]$/i.exec(set.model)
         const same = big && m.toLowerCase().includes(big[1].toLowerCase())
-        return { model: same ? m + '[1m]' : m, effort: claudeSettingsEffort(m, cwd, home), source: 'session' }
+        return { model: same ? m + '[1m]' : m, effort: turn.effort || claudeSettingsEffort(m, cwd, home), source: 'session', ...(turn.at ? { at: turn.at } : {}) }
       }
     } else if (agentId === 'codex') {
       const f = codexRollout(sessionId, home)

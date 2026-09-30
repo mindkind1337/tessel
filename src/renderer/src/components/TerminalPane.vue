@@ -135,6 +135,12 @@ function chosenShown(n, res) {
   const c = n.modelChoice
   if (!c || !c.model) return res
   if (res && res.source === 'session') {
+    // An answer written after the pick: the session says what runs now
+    // (a later /model or /effort in the agent included).
+    if (res.at && c.at && res.at > c.at) {
+      delete n.modelChoice
+      return res
+    }
     if (c.seen === undefined) c.seen = res.model
     else if (res.model !== c.seen) {
       delete n.modelChoice
@@ -351,7 +357,7 @@ function adoptLive(next) {
   const wasCurrent = !!n.launchSig && signatureNow(n) === n.launchSig
   setPaneChoice(next)
   if (wasCurrent) n.launchSig = signatureNow(n)
-  if (next && next.model) n.modelChoice = { model: next.model, effort: typeof next.effort === 'string' ? next.effort : null }
+  if (next && next.model) n.modelChoice = { model: next.model, effort: typeof next.effort === 'string' ? next.effort : null, at: Date.now() }
   refreshModel()
 }
 function setPaneChoice(next) {
