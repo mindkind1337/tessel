@@ -733,6 +733,7 @@ function modelListText(a) {
   const probe = probeFor(a.id)
   if (probe.busy) return t('settings.agents.modelsListing', 'Asking {{name}} for its models…', { name: a.name })
   if (probe.error) return probeErrorText(probe.error, a.name)
+  if (!canProbeModels(a.id) && !list) return t('settings.agents.modelsBuiltInOnly', 'Built-in model list. The agent may also offer other models in its own settings.')
   // No built-in list (OpenCode: its providers are the account's own).
   if (!list && !modelsFor(a.id).length) return t('settings.agents.modelsNone', 'No list yet. Refresh asks {{name}} for the models it offers.', { name: a.name })
   if (!list) return t('settings.agents.modelsBuiltIn', 'Built-in list. Refresh asks {{name}} for the models your account has.', { name: a.name })
@@ -1342,7 +1343,7 @@ function previewSound() {
                 <input v-model="settings.autoUpdateAgents" type="checkbox" class="set-switch" />
               </label>
               <div v-for="a in agentsInstalledFirst" :key="a.id" class="agent-set" :data-agent="a.id">
-                <div class="set-row">
+                <div class="agent-set-header">
                   <div class="set-label agent-set-name">
                     <BrandIcon :kind="a.id" :size="15" />
                     <span>{{ a.name }}</span>
@@ -1350,6 +1351,35 @@ function previewSound() {
                       {{ a.available ? t('settings.agents.isInstalled', 'Installed') : t('settings.agents.notFound', 'Not found')
                       }}{{ customized(a.id) ? ' · ' + t('settings.agents.customized', 'customized') : '' }}
                     </span>
+                  </div>
+                  <div class="agent-set-actions">
+                    <button v-if="AGENT_DOCS[a.id]" class="exit-btn" type="button" @click="openDocs(a.id)">
+                      {{ t('settings.agents.docs', 'Docs') }}
+                    </button>
+                    <button
+                      class="exit-btn"
+                      type="button"
+                      :aria-expanded="openAgent === a.id"
+                      @click="openAgent = openAgent === a.id ? null : a.id"
+                    >
+                      {{ t('settings.agents.customize', 'Customize') }}
+                    </button>
+                    <input
+                      type="checkbox"
+                      class="set-switch"
+                      :aria-label="t('settings.agents.offerInMenus', 'Offer {{name}} in menus', { name: a.name })"
+                      :title="
+                        agentEnabled(settings.agentPrefs, a.id)
+                          ? t('settings.agents.shownInMenus', 'Shown in menus')
+                          : t('settings.agents.hiddenFromMenus', 'Hidden from menus')
+                      "
+                      :checked="agentEnabled(settings.agentPrefs, a.id)"
+                      @change="setAgentPref(a.id, 'enabled', $event.target.checked)"
+                    />
+                  </div>
+                </div>
+                <div class="agent-set-details" v-if="jobText(a.id) || (a.available && (versionText(a) || lastUpdate(a.id) || updateRow(a.id)?.update))">
+                  <div class="agent-set-update-info">
                     <!-- Full-width lines under the name row. -->
                     <div
                       v-if="a.available && versionText(a)"
@@ -1393,8 +1423,9 @@ function previewSound() {
                         </button>
                       </span>
                     </div>
+
                   </div>
-                  <div class="agent-set-actions">
+                  <div v-if="(a.available && updateRow(a.id)?.update) || (agentUpdateJobs[a.id] && ['waiting-stop', 'restarting'].includes(agentUpdateJobs[a.id].phase))" class="agent-set-update-actions">
                     <button
                       v-if="a.available && updateRow(a.id) && updateRow(a.id).update"
                       class="exit-btn agent-update-btn"
@@ -1425,29 +1456,7 @@ function previewSound() {
                     >
                       {{ t('settings.agents.stopWaiting', 'Stop waiting') }}
                     </button>
-                    <button v-if="AGENT_DOCS[a.id]" class="exit-btn" type="button" @click="openDocs(a.id)">
-                      {{ t('settings.agents.docs', 'Docs') }}
-                    </button>
-                    <button
-                      class="exit-btn"
-                      type="button"
-                      :aria-expanded="openAgent === a.id"
-                      @click="openAgent = openAgent === a.id ? null : a.id"
-                    >
-                      {{ t('settings.agents.customize', 'Customize') }}
-                    </button>
-                    <input
-                      type="checkbox"
-                      class="set-switch"
-                      :aria-label="t('settings.agents.offerInMenus', 'Offer {{name}} in menus', { name: a.name })"
-                      :title="
-                        agentEnabled(settings.agentPrefs, a.id)
-                          ? t('settings.agents.shownInMenus', 'Shown in menus')
-                          : t('settings.agents.hiddenFromMenus', 'Hidden from menus')
-                      "
-                      :checked="agentEnabled(settings.agentPrefs, a.id)"
-                      @change="setAgentPref(a.id, 'enabled', $event.target.checked)"
-                    />
+
                   </div>
                 </div>
                 <!-- Its default model and effort (Orca's model per agent). -->

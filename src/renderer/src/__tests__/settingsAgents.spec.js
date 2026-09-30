@@ -34,6 +34,14 @@ describe('Settings > Agents', () => {
     window.shellApi = previousApi
   })
 
+  it('does not advertise model refresh for agents without that action', async () => {
+    await wrapper.setProps({ agents: ['gemini', 'copilot'].map(id => ({ id, name: id, available: true })) })
+    for (const id of ['gemini', 'copilot']) {
+      expect(wrapper.find('[data-test="agent-models-refresh-' + id + '"]').exists()).toBe(false)
+      expect(wrapper.get('[data-test="agent-models-status-' + id + '"]').text()).not.toContain('Refresh')
+    }
+  })
+
   it('offers only installed, turned-on agents as the default agent', async () => {
     const opts = () => wrapper.findAll('#settings-default-agent option').map((o) => o.attributes('value'))
     expect(opts()).toEqual(['', 'claude', 'codex'])

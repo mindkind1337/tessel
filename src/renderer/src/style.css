@@ -1895,14 +1895,16 @@ body.ws-resizing * {
   flex-wrap: wrap;
   align-items: flex-end;
   gap: 6px 12px;
-  padding: 4px 0 6px 28px;
+  padding: 12px 0 0;
 }
 
 .agent-model-field {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  min-width: 140px;
+  width: 220px;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .agent-model-switch {
@@ -3335,19 +3337,19 @@ body.pane-dragging * {
 }
 
 /* Agent versions and updates */
-.agent-set-name .agent-version.agent-update-available {
+.agent-set .agent-version.agent-update-available {
   color: var(--accent);
 }
 .agent-set-name > .agent-version,
 .agent-set-name > .agent-update-job,
-.agent-set-name > .agent-update-last {
+.agent-set .agent-update-last {
   text-align: left;
 }
 .agent-update-spinner {
   vertical-align: -1px;
   margin-right: 3px;
 }
-.agent-set-name > .agent-update-last {
+.agent-set .agent-update-last {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -10863,4 +10865,31 @@ button.act-stat:hover,
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Agent cards keep update details out of the header's alignment. */
+.agent-set {
+  container-type: inline-size;
+  margin: 12px 0;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.agent-set-header { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.agent-set-header .agent-set-name { flex: 1; min-width: 0; margin: 0; }
+.agent-set-header .agent-set-name > .brand-icon { flex-shrink: 0; }
+.agent-set-header .agent-set-name > .set-hint { margin: 0; }
+.agent-set-details { display: grid; gap: 8px; margin-top: 10px; }
+.agent-set-update-info { display: grid; gap: 6px; min-width: 0; }
+.agent-set-update-info > .set-hint { margin: 0; text-align: left; }
+.agent-set-update-info:empty { display: none; }
+.agent-set-update-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.agent-model-field .set-select { width: 100%; min-width: 0; max-width: 100%; }
+.agent-model-switch { width: auto; }
+.agent-set .agent-custom { margin: 12px 0 0; padding: 12px 0 0; }
+@container (max-width: 430px) {
+  .agent-set-header { flex-wrap: wrap; }
+  .agent-set-header .agent-set-name { flex-basis: 100%; }
+  .agent-set-actions { margin-left: auto; }
 }

@@ -52,6 +52,8 @@ describe('Settings > Agents: updates', () => {
   it('shows each agent’s last result: versions, failed with the reason in plain words, and View log', async () => {
     mountWith()
     const codex = wrapper.get('[data-test="agent-update-last-codex"]')
+    expect(codex.element.closest('.agent-set-header')).toBeNull()
+    expect(codex.element.closest('.agent-set-details')).not.toBeNull()
     expect(codex.text()).toContain('0.8.0 → 0.9.0')
     expect(codex.text()).toContain('failed (Network error)')
     expect(codex.text()).toContain(updateFailureText('network', 'Codex CLI'))
