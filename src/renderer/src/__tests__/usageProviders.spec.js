@@ -71,12 +71,14 @@ describe('provider capability visibility', () => {
     await open()
     expect(wrapper.find('[data-test="usage-row-kimi"]').exists()).toBe(false)
     expect(api.providerUsage.read.mock.calls.some(([q]) => q.provider === 'kimi')).toBe(false)
-    await wrapper.get('[data-test="usage-visible-kimi"]').setValue(true)
+    // The choice lives in Settings > Usage (not in this menu): shown again,
+    // the next opening reads it.
+    expect(wrapper.find('[data-test="usage-visibility"]').exists()).toBe(false)
+    settings.hiddenUsageProviders = []
+    await wrapper.get('[data-test="usage-button"]').trigger('click')
+    await wrapper.get('[data-test="usage-button"]').trigger('click')
     await flushPromises()
-    expect(settings.hiddenUsageProviders).toEqual([])
     expect(wrapper.get('[data-test="usage-row-kimi"]').text()).toContain('42%')
-    await wrapper.get('[data-test="usage-visible-kimi"]').setValue(false)
-    expect(settings.hiddenUsageProviders).toEqual(['kimi'])
   })
   it('hides unsupported accounts but retains actionable expiration and service errors', async () => {
     api.providerUsage.read.mockImplementation(async ({ provider }) => ({

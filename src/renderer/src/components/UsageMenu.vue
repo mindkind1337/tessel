@@ -13,7 +13,6 @@ import ThemedSelect from './ui/ThemedSelect.vue'
 import { RefreshCw } from 'lucide-vue-next'
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import BrandIcon from './BrandIcon.vue'
-import UsageVisibility from './UsageVisibility.vue'
 import { settings } from '../settings'
 import { displayedUsagePercent, usagePercentLabel } from '../usagePercent'
 import { loadUsageProviders } from '../usageProviders'
@@ -810,10 +809,6 @@ async function refresh(force = true) {
   const due = trackedProviders.value.filter((p) => force === true || now - (providerReadAt.get(p.id) || 0) >= MIN_REFETCH_MS)
   await Promise.all(due.map((p) => readProvider(p.id)))
 }
-function visibilityChanged({ id, show }) {
-  if (!show && selectedProvider.value === id) closeProvider()
-  if (show && open.value) readProvider(id)
-}
 onMounted(() => {
   document.addEventListener('pointerdown', onDocDown, true)
   window.addEventListener('tessel:accounts-changed', accountsChanged)
@@ -935,7 +930,6 @@ const emptyTitle = () => t('usage.menu.buttonTitleEmpty', "Usage of your agents'
         </button>
       </div>
       <div class="usage-roster-body">
-        <UsageVisibility :providers="installed" @change="visibilityChanged" />
         <p
           v-if="usage && usage.error"
           class="usage-account-error"
