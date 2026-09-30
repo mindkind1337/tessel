@@ -583,6 +583,22 @@ describe('ChatPane.vue', () => {
     }
   })
 
+  it("header: the effort from the agent's own settings when the pane chose none; the sidebar gets the same text", async () => {
+    modelLists.claude = { models: [{ id: 'opus', label: 'Opus 5.5', effortLevels: ['xhigh'] }], fetchedAt: Date.now() }
+    const prev = window.shellApi.agentModel
+    window.shellApi.agentModel = vi.fn(async () => ({ model: 'claude-opus-5-5', effort: 'xhigh', source: 'settings' }))
+    try {
+      await mountPane({ model: 'opus', sessionId: 's1' })
+      emit({ type: 'status', state: 'idle', model: 'opus' })
+      await settle()
+      expect(wrapper.get('[data-test="chat-model"]').text()).toBe('Opus 5.5 · xhigh')
+      expect(node.headerModel).toBe('Opus 5.5 · xhigh')
+    } finally {
+      window.shellApi.agentModel = prev
+      resetModelListsForTests()
+    }
+  })
+
   it('header: rate limits, Yolo on the icon ring only (no badge), maximize and close', async () => {
     await mountPane({}, { chatPermissions: () => 'yolo' })
     emit({ type: 'rateLimit', fiveHour: { utilization: 0.42 }, sevenDay: { utilization: 0.1 } })

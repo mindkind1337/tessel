@@ -18,7 +18,7 @@
 // sign-in needed; a new request is announced by its card); Alt+A goes to the
 // request waiting for an answer. Nothing takes the focus by itself while the
 // user types.
-import { computed, inject, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef } from 'vue'
+import { computed, inject, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from 'vue'
 import { SquareTerminal } from 'lucide-vue-next'
 import BrandIcon from '../BrandIcon.vue'
 import NativeChatView from './orca/NativeChatView.vue'
@@ -112,12 +112,43 @@ function chatModelName(id) {
   const short = modelLabel(id)
   return listed && listed.label && /\d/.test(listed.label) && !/\d/.test(short) ? listed.label : short
 }
+// The effort when the pane chose none: what the agent's own settings or its
+// conversation say (the same lookup as a terminal pane's header).
+const settledEffort = ref(null)
+let effortBusy = false
+async function refreshEffort() {
+  const ask = typeof window !== 'undefined' && window.shellApi ? window.shellApi.agentModel : null
+  if (typeof ask !== 'function' || effortBusy || agentId.value === 'opencode') return
+  effortBusy = true
+  try {
+    const model = meta.model || props.node.model
+    const res = await ask({
+      agentId: agentId.value,
+      sessionId: props.node.sessionId || undefined,
+      cwd: props.node.cwd || undefined,
+      chosenModel: typeof model === 'string' ? model : undefined
+    })
+    if (!alive) return
+    const effort = res && (res.chosenEffort || res.effort)
+    settledEffort.value = typeof effort === 'string' && effort ? effort : null
+  } catch {
+    /* keep what it showed */
+  } finally {
+    effortBusy = false
+  }
+}
 const modelText = computed(() => {
   const m = meta.model || props.node.model
   if (!m) return ''
   const name = chatModelName(m)
-  return props.node.effort ? `${name} · ${props.node.effort}` : name
+  const effort = props.node.effort || settledEffort.value
+  return effort ? `${name} · ${effort}` : name
 })
+
+// The sidebar shows the same text (sidebarModel.js); not saved with the layout.
+watch(modelText, (text) => {
+  if (props.node.headerModel !== text) props.node.headerModel = text
+}, { immediate: true })
 
 const rateText = computed(() =>
   rateLimitParts(meta.rateLimit)
@@ -174,6 +205,7 @@ function onLive(event, previousStatus) {
   const said = announceFor(event, previousStatus)
   if (said) announce(said)
   noteStatus(event, previousStatus)
+  if (event.type === 'turnEnd') refreshEffort()
 }
 // The leaf follows the session (a new session id, the model it runs).
 function noteStatus(event, previousStatus) {
@@ -182,6 +214,7 @@ function noteStatus(event, previousStatus) {
   else if (previousStatus === 'asleep') resuming.value = true
   if (event.sessionId && props.node.sessionId !== event.sessionId) props.node.sessionId = event.sessionId
   if (event.model && props.node.model !== event.model) props.node.model = event.model
+  if (event.state === 'ready' || event.state === 'idle') refreshEffort()
 }
 
 // --- History and start -----------------------------------------------------------------------

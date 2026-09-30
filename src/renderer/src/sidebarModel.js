@@ -76,6 +76,8 @@ function chatStoppedLabel(pane) {
 
 // A chat's model as its header shows it ("Opus 4.7 · high").
 function chatModelText(pane) {
+  // What its header shows (ChatPane writes it: list name, effort found).
+  if (typeof pane.headerModel === 'string' && pane.headerModel) return pane.headerModel
   const name = modelLabel(pane.model)
   if (!name) return ''
   return pane.effort ? `${name} · ${pane.effort}` : name // i18n-ignore
