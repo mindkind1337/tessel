@@ -745,7 +745,9 @@ describe('ChatPane.vue', () => {
     const icon = wrapper.get('[data-test="chat-icon"]')
     expect(icon.classes()).toContain('yolo')
     expect(icon.attributes('title')).toBe('Tools run without asking (Settings)')
-    const [maxBtn, closeBtn] = wrapper.findAll('.pane-nav-btn')
+    // … (the chat's menu), then maximize and close.
+    expect(wrapper.find('[data-test="chat-more"]').exists()).toBe(true)
+    const [maxBtn, closeBtn] = wrapper.findAll('.pane-nav-btn').filter((b) => b.attributes('data-test') !== 'chat-more')
     await maxBtn.trigger('click')
     await closeBtn.trigger('click')
     expect(ctx.toggleMaximize).toHaveBeenCalledWith('c1')
