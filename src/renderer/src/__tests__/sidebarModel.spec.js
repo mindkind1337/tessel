@@ -51,6 +51,7 @@ describe('states in Orca words', () => {
   it('maps Tessel pane states to Orca dots', () => {
     expect(paneDotState(pane('x', { state: 'working' }))).toBe('working')
     expect(paneDotState(pane('x', { state: 'approval' }))).toBe('waiting')
+    expect(paneDotState(pane('x', { state: 'interrupted' }))).toBe('interrupted')
     expect(paneDotState(pane('x', { state: 'limited' }))).toBe('blocked')
     expect(paneDotState(pane('x', { state: 'waiting' }))).toBe('done')
     expect(paneDotState(pane('x', { state: 'unknown' }))).toBe('unverifiable')

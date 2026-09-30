@@ -45,7 +45,8 @@ export function isAgentPane(pane) {
 
 // Tessel's pane state -> Orca's dot state. Tessel: 'approval' (asks you),
 // 'limited' (usage limit), 'working', 'waiting' (done, waiting for you),
-// 'ready', 'unknown' (no report yet), 'stopped' (a chat whose session is not
+// 'ready', 'unknown' (no report yet), 'interrupted' (a chat's last turn was
+// interrupted), 'stopped' (a chat whose session is not
 // running: ended, crashed, not signed in, folder not trusted); sleeping
 // panes are idle.
 export function paneDotState(pane) {
@@ -62,6 +63,7 @@ export function paneDotState(pane) {
     case 'unknown':
       return 'unverifiable'
     case 'stopped':
+    case 'interrupted':
       return 'interrupted'
   }
   return 'idle'

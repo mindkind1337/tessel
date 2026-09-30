@@ -380,6 +380,8 @@ function makeChatLeaf({ id = null, agentId = 'claude', cwd = null, projectDir = 
 // Each chat pane's status as its events say (starting, idle, working,
 // approval, asleep, ended, crashed, signin, untrusted): for the sidebar.
 const chatStatus = reactive({})
+// Chats whose last turn was interrupted (App's chat events).
+const chatInterrupted = reactive({})
 function chatPaneState(leaf) {
   // What the events said, else the pane's own status (after a reload).
   const st = chatStatus[leaf.id] || leaf.liveStatus
@@ -387,6 +389,7 @@ function chatPaneState(leaf) {
   if (st === 'working') return 'working'
   if (st === 'approval') return 'approval'
   if (!st || st === 'starting') return 'unknown'
+  if (st === 'idle' && chatInterrupted[leaf.id]) return 'interrupted'
   if (st === 'idle' || st === 'asleep') return attention[leaf.id] ? 'waiting' : 'ready'
   return 'stopped'
 }
@@ -8109,7 +8112,15 @@ onMounted(() => {
   offChatEvents = chat.onEvent((e) => {
     const ev = e && e.event
     if (!ev) return
-    if (ev.type === 'status' && e.paneId && typeof ev.state === 'string') chatStatus[e.paneId] = ev.state
+    if (ev.type === 'status' && e.paneId && typeof ev.state === 'string') {
+      chatStatus[e.paneId] = ev.state
+      if (ev.state === 'working') delete chatInterrupted[e.paneId]
+    }
+    // Its last turn was interrupted (Esc, Stop): said so until the next one.
+    if (ev.type === 'turnEnd' && e.paneId) {
+      if (ev.status === 'interrupted') chatInterrupted[e.paneId] = true
+      else delete chatInterrupted[e.paneId]
+    }
     // An asleep chat got a message: open it again (resumed), with the
     // permissions and settings of now.
     if (ev.type === 'wake' && e.paneId) {
