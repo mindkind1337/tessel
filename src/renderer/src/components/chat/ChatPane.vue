@@ -564,9 +564,8 @@ defineExpose({ start, send, interrupt, focusPendingApproval, focusComposer: () =
         </span>
         <input v-if="editingName" ref="nameInput" v-model="nameDraft" class="pane-tab-input" :aria-label="t('pane.renameAgent', 'Agent name')" @mousedown.stop @click.stop @keydown.enter.prevent="saveName" @keydown.esc="editingName = false" @blur="saveName" />
         <span v-else tabindex="0" @dblclick.stop="beginRename" @keydown.enter.prevent="beginRename" class="pane-title" data-test="chat-title" :title="t('chat.pane.titleHint', '{{title}}\nDrag the header to move the pane', { title })">{{ title }}</span>
-        <span class="chat-status" :class="'st-' + status" data-test="chat-status">
-          <span class="chat-status-dot" aria-hidden="true"></span>{{ statusLabel }}
-        </span>
+        <!-- The state is the dot on the agent's logo; its words stay for screen readers. -->
+        <span class="chat-status chat-status-sr" :class="'st-' + status" data-test="chat-status">{{ statusLabel }}</span>
         <span
           v-if="agentId === 'codex' && !yolo"
           class="chat-badge mcp"
@@ -673,6 +672,14 @@ defineExpose({ start, send, interrupt, focusPendingApproval, focusComposer: () =
   background: var(--term);
 }
 
+.chat-status-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
 .chat-status {
   display: inline-flex;
   flex: 0 0 auto;
