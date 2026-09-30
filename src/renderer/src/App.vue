@@ -382,6 +382,9 @@ function makeChatLeaf({ id = null, agentId = 'claude', cwd = null, projectDir = 
 const chatStatus = reactive({})
 // Chats whose last turn was interrupted (App's chat events).
 const chatInterrupted = reactive({})
+// Chats whose background work (shells, sub-agents, monitors) still runs:
+// the number of tasks, from their events (else the pane's own count).
+const chatBackground = reactive({})
 function chatPaneState(leaf) {
   // What the events said, else the pane's own status (after a reload).
   const st = chatStatus[leaf.id] || leaf.liveStatus
@@ -389,6 +392,8 @@ function chatPaneState(leaf) {
   if (st === 'working') return 'working'
   if (st === 'approval') return 'approval'
   if (!st || st === 'starting') return 'unknown'
+  // Its turn is over, its background work goes on.
+  if (st === 'idle' && (chatBackground[leaf.id] ?? leaf.liveBackground ?? 0) > 0) return 'monitoring'
   if (st === 'idle' && chatInterrupted[leaf.id]) return 'interrupted'
   if (st === 'idle' || st === 'asleep') return attention[leaf.id] ? 'waiting' : 'ready'
   return 'stopped'
@@ -1768,7 +1773,10 @@ function closeLeaf(leafId, opts = {}) {
   // A chat agent: its Claude ends (the conversation can be resumed later
   // from Agent sessions); the pane's own journal is deleted (forget).
   if (closing && closing.kind === 'chat' && window.shellApi.chat) window.shellApi.chat.close({ paneId: leafId, forget: true }).catch(() => {})
-  if (closing && closing.kind === 'chat') delete chatStatus[leafId]
+  if (closing && closing.kind === 'chat') {
+    delete chatStatus[leafId]
+    delete chatBackground[leafId]
+  }
   if (!noTerminal) {
     window.shellApi.killPty(leafId)
     dropBuffer(leafId)
@@ -5117,7 +5125,8 @@ const reviewActions = {
 // queue: never typed while the agent works or waits for an approval,
 // confirmed when it takes the message; the notes are then cleared.
 function noteTargetState(state) {
-  if (state === 'ready') return t('app.notes.state.ready', 'Ready')
+  // Monitoring: its turn ended (only its background work runs), it takes messages.
+  if (state === 'ready' || state === 'monitoring') return t('app.notes.state.ready', 'Ready')
   if (state === 'working') return t('app.notes.state.working', 'Working: sent when it is free')
   if (state === 'waiting') return t('app.notes.state.waiting', 'Waiting for you')
   if (state === 'limited') return t('app.notes.state.limited', 'At its usage limit')
@@ -8139,7 +8148,10 @@ onMounted(() => {
     if (ev.type === 'status' && e.paneId && typeof ev.state === 'string') {
       chatStatus[e.paneId] = ev.state
       if (ev.state === 'working') delete chatInterrupted[e.paneId]
+      // No process any more (or a new one): its background work is over.
+      if (!['idle', 'working', 'approval'].includes(ev.state)) chatBackground[e.paneId] = 0
     }
+    if (ev.type === 'backgroundTasks' && e.paneId) chatBackground[e.paneId] = Number.isSafeInteger(ev.running) && ev.running > 0 ? ev.running : 0
     // Its last turn was interrupted (Esc, Stop): said so until the next one.
     if (ev.type === 'turnEnd' && e.paneId) {
       if (ev.status === 'interrupted') chatInterrupted[e.paneId] = true

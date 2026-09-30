@@ -24,6 +24,24 @@ const messages = (state) => projectStructuredAgentSessionMessages(state.items, [
 const text = (m) => m.blocks.filter((b) => b.type === 'text').map((b) => b.text).join('')
 
 describe('journal adapter', () => {
+  it('keeps the number of background tasks still running, cleared when the process goes', () => {
+    const { adapter } = run([
+      { type: 'status', state: 'idle', agent: 'claude', sessionId: 's1' },
+      { type: 'backgroundTasks', running: 2 }
+    ])
+    expect(adapter.meta.backgroundTasks).toBe(2)
+    adapter.apply({ type: 'backgroundTasks', running: 'x' })
+    expect(adapter.meta.backgroundTasks).toBe(0)
+    adapter.apply({ type: 'backgroundTasks', running: 1 })
+    adapter.apply({ type: 'status', state: 'working' })
+    expect(adapter.meta.backgroundTasks).toBe(1)
+    adapter.apply({ type: 'status', state: 'ended' })
+    expect(adapter.meta.backgroundTasks).toBe(0)
+    adapter.apply({ type: 'backgroundTasks', running: 1 })
+    adapter.apply({ type: 'status', state: 'starting' })
+    expect(adapter.meta.backgroundTasks).toBe(0)
+  })
+
   it('a simple turn: the user message, a running turn, the streamed answer, then the turn ends', () => {
     const { state, states } = run([
       { type: 'status', state: 'idle', agent: 'claude', model: 'haiku', sessionId: 's1' },

@@ -13,6 +13,7 @@
     "status": {
       "starting": "Démarrage",
       "idle": "Inactif",
+      "monitoring": "Surveille des tâches en arrière-plan",
       "working": "Au travail",
       "approval": "Approbation requise",
       "signin": "Non connecté",

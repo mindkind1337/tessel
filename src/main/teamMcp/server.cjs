@@ -31,7 +31,7 @@ const path = require('path')
 const crypto = require('crypto')
 const { randomUUID } = crypto
 
-const VERSION = '1.10.0'
+const VERSION = '1.10.1'
 const MAX_TEXT = 6000
 
 // --- Finding my team and me ---------------------------------------------------
@@ -1260,6 +1260,27 @@ function statusEvent(provider, data) {
   const normalize = Object.hasOwn(NORMALIZE, provider) ? NORMALIZE[provider] : null
   return normalize && typeof name === 'string' ? normalize(name, data) : null
 }
+// Claude Code's background_tasks (on Stop): the ids of the work still
+// running, or null when the hook says nothing of it (an older CLI). Its own
+// helpers (teammates, which stay listed while idle, memory "dream"s, scans)
+// are not the agent's work. At most 32; an id it lacks gets a stand-in.
+const BACKGROUND_OVER = new Set(['idle', 'done', 'success', 'succeeded', 'complete', 'completed', 'finished', 'failed', 'error', 'terminated', 'exited', 'aborted', 'expired', 'skipped', 'crashed', 'killed', 'cancelled', 'canceled', 'timed_out'])
+const BACKGROUND_NOT_WORK = new Set(['teammate', 'in_process_teammate', 'dream', 'auto-mode scan', 'auto_mode_scan', 'memory import', 'local_memory_import'])
+function backgroundTaskIds(list) {
+  if (!Array.isArray(list)) return null
+  const ids = []
+  for (const task of list) {
+    if (ids.length >= 32) break
+    if (!task || typeof task !== 'object') continue
+    const type = str(task.type).trim().toLowerCase()
+    const status = str(task.status).trim().toLowerCase()
+    if (BACKGROUND_NOT_WORK.has(type) || BACKGROUND_OVER.has(status) || task.ambient === true) continue
+    // The shape the status store accepts (agentStateStore.js validId).
+    const id = typeof task.id === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$/.test(task.id) && !task.id.includes('..') ? task.id : `task-${ids.length + 1}`
+    if (!ids.includes(id)) ids.push(id)
+  }
+  return ids
+}
 function reportAgentState(data, provider, continuing = false) {
   const paneId = process.env.TESSEL_PANE_ID || ''
   const launchToken = process.env.TESSEL_AGENT_LAUNCH || ''
@@ -1305,6 +1326,12 @@ function reportAgentState(data, provider, continuing = false) {
     if (['permission_prompt', 'idle_prompt'].includes(notificationType)) event.notificationType = notificationType
     if (['startup', 'resume', 'clear', 'compact'].includes(data.source)) event.startSource = data.source
     if (status.event === 'Stop') event.continuing = continuing
+    // Claude Code's Stop lists the background work its turn leaves running
+    // (shells, sub-agents, monitors): ids only, for the pane's "monitoring".
+    if (status.event === 'Stop' && !event.agentId && (provider === 'claude' || provider === 'openclaude')) {
+      const background = backgroundTaskIds(data.background_tasks)
+      if (background) event.background = background
+    }
     // Only a tool's identity, never its arguments or prompt text.
     const toolName = status.toolName || data.tool_name
     if (['AskUserQuestion', 'request_user_input'].includes(toolName)) event.toolName = toolName

@@ -44,7 +44,8 @@ export function isAgentPane(pane) {
 }
 
 // Tessel's pane state -> Orca's dot state. Tessel: 'approval' (asks you),
-// 'limited' (usage limit), 'working', 'waiting' (done, waiting for you),
+// 'limited' (usage limit), 'working', 'monitoring' (its turn ended, its
+// background work still runs), 'waiting' (done, waiting for you),
 // 'ready', 'unknown' (no report yet), 'interrupted' (a chat's last turn was
 // interrupted), 'stopped' (a chat whose session is not
 // running: ended, crashed, not signed in, folder not trusted); sleeping
@@ -54,6 +55,8 @@ export function paneDotState(pane) {
   switch (pane.state) {
     case 'working':
       return 'working'
+    case 'monitoring':
+      return 'monitoring'
     case 'approval':
       return 'waiting'
     case 'limited':
@@ -193,27 +196,29 @@ export function getWorktreeStatusLabel(status) {
   return ''
 }
 
-// A copy's status from its panes: someone asks you > working > usage limit
-// (Orca's red "interrupted") > done > a live pane > nothing live.
+// A copy's status from its panes: someone asks you > working > monitoring
+// background work > usage limit (Orca's red "interrupted") > done > a live
+// pane > nothing live.
 export function cardStatus(rows) {
   const live = rows.filter((r) => !r.sleeping)
   if (live.some((r) => r.dotState === 'waiting')) return 'permission'
   if (live.some((r) => r.dotState === 'working')) return 'working'
+  if (live.some((r) => r.dotState === 'monitoring')) return 'monitoring'
   if (live.some((r) => r.dotState === 'blocked')) return 'interrupted'
   if (live.some((r) => r.dotState === 'done')) return 'done'
   if (live.length) return 'active'
   return 'inactive'
 }
 
-// Orca's smart-attention.ts classes: 1 needs you, 2 done, 3 working,
-// 4 not reporting, 5 idle.
+// Orca's smart-attention.ts classes: 1 needs you, 2 done, 3 working (or
+// monitoring its background work), 4 not reporting, 5 idle.
 export function attentionOf(rows) {
   let cls = 5
   let ts = 0
   for (const r of rows) {
     if (r.sleeping || r.kind !== 'agent') continue
     const c =
-      r.dotState === 'waiting' || r.dotState === 'blocked' ? 1 : r.dotState === 'done' ? 2 : r.dotState === 'working' ? 3 : r.dotState === 'unverifiable' ? 4 : 5
+      r.dotState === 'waiting' || r.dotState === 'blocked' ? 1 : r.dotState === 'done' ? 2 : r.dotState === 'working' || r.dotState === 'monitoring' ? 3 : r.dotState === 'unverifiable' ? 4 : 5
     const at = r.since || 0
     if (c < cls || (c === cls && at > ts)) {
       cls = c

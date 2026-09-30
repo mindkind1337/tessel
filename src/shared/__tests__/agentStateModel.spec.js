@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   AGENT_SETTLE_MS,
   AGENT_STATE_STALE_MS,
+  BACKGROUND_MAX_MS,
   SCREEN_WORK_MS,
   createAgentState,
   publicAgentState,
@@ -845,5 +846,118 @@ describe('work that ends without a new event (finished agents never stay working
     f.send('UserPromptSubmit', 1000)
     f.send('Stop', 2000)
     expect(f.send('ScreenInterrupted', 3000)).toMatchObject({ state: 'idle', reason: 'ready', turnCompletedAt: 3000 })
+  })
+})
+
+describe('background work after the turn (monitoring)', () => {
+  // Claude Code: its Stop lists the background work left running; the end of
+  // that work starts a follow-up turn whose Stop lists what is left.
+  const started = () => {
+    const f = fixture('claude')
+    f.send('SessionStart', 101, { startSource: 'startup' })
+    f.send('UserPromptSubmit', 102)
+    f.send('PreToolUse', 103, { toolName: 'Bash' })
+    f.send('PostToolUse', 104, { toolName: 'Bash' })
+    return f
+  }
+
+  it('start background task, turn end: monitoring; task end: idle again', () => {
+    const f = started()
+    expect(f.send('Stop', 200, { background: ['shell-1'] })).toMatchObject({ state: 'working', reason: 'settling' })
+    expect(publicAgentState(f.state, 200)).not.toHaveProperty('monitoring')
+    expect(f.send('ScreenReady', 201)).toMatchObject({ state: 'idle', monitoring: true, backgroundTasks: 1, turnCompletedAt: 201 })
+    // The shell ends: Claude's follow-up turn, then its Stop lists nothing.
+    expect(f.send('UserPromptSubmit', 300)).toMatchObject({ state: 'working' })
+    expect(publicAgentState(f.state, 300)).not.toHaveProperty('monitoring')
+    f.send('Stop', 301, { background: [] })
+    const idle = f.send('ScreenReady', 302)
+    expect(idle).toMatchObject({ state: 'idle' })
+    expect(idle).not.toHaveProperty('monitoring')
+  })
+
+  it('a Stop nobody watches settles into monitoring too', () => {
+    const f = started()
+    f.send('Stop', 200, { background: ['shell-1', 'agent-1'] })
+    expect(publicAgentState(f.state, 201 + AGENT_SETTLE_MS)).toMatchObject({ state: 'idle', monitoring: true, backgroundTasks: 2 })
+  })
+
+  it('resumed work shows working, then monitoring again at its end', () => {
+    const f = started()
+    f.send('Stop', 200, { background: ['shell-1'] })
+    f.send('ScreenReady', 201)
+    const working = f.send('UserPromptSubmit', 300)
+    expect(working.state).toBe('working')
+    expect(working).not.toHaveProperty('monitoring')
+    f.send('Stop', 400, { background: ['shell-1'] })
+    expect(f.send('ScreenReady', 401)).toMatchObject({ state: 'idle', monitoring: true })
+  })
+
+  it('a background sub-agent ends with its own SubagentStop', () => {
+    const f = started()
+    f.send('SubagentStart', 150, { agentId: 'agent-1' })
+    f.send('Stop', 200, { background: ['agent-1', 'shell-1'] })
+    f.send('ScreenReady', 201)
+    expect(f.send('SubagentStop', 250, { agentId: 'agent-1' })).toMatchObject({ monitoring: true, backgroundTasks: 1 })
+    expect(f.state.background).toEqual(['shell-1'])
+  })
+
+  it('never shows monitoring past its bound, a closed pane, a new session or an older CLI', () => {
+    const f = started()
+    f.send('Stop', 200, { background: ['shell-1'] })
+    f.send('ScreenReady', 201)
+    // A task never seen ending stops counting.
+    f.send('ScreenReady', 200 + BACKGROUND_MAX_MS)
+    expect(publicAgentState(f.state, 200 + BACKGROUND_MAX_MS)).toMatchObject({ monitoring: true })
+    expect(f.send('ScreenReady', 201 + BACKGROUND_MAX_MS)).not.toHaveProperty('monitoring')
+    // The session ends.
+    const g = started()
+    g.send('Stop', 200, { background: ['shell-1'] })
+    g.send('ScreenReady', 201)
+    g.send('SessionEnd', 300)
+    expect(g.state.background).toEqual([])
+    // The process exits.
+    const h = started()
+    h.send('Stop', 200, { background: ['shell-1'] })
+    h.send('ScreenReady', 201)
+    h.state = reduceAgentState(h.state, { ...h.event('PtyExit', 300), source: 'lifecycle' }, 300)
+    expect(h.state.background).toEqual([])
+    expect(publicAgentState(h.state, 300)).not.toHaveProperty('monitoring')
+    // /clear: another conversation.
+    const c = started()
+    c.send('Stop', 200, { background: ['shell-1'] })
+    c.send('ScreenReady', 201)
+    c.send('SessionStart', 300, { startSource: 'clear', sessionId: 'session-2' })
+    expect(c.state.background).toEqual([])
+    // A Stop without the list (an older Claude Code) keeps what was known;
+    // none was known: no monitoring.
+    const o = started()
+    o.send('Stop', 200)
+    expect(o.send('ScreenReady', 201)).not.toHaveProperty('monitoring')
+    // A stale pane is unknown, never monitoring.
+    const s = started()
+    s.send('Stop', 200, { background: ['shell-1'] })
+    s.send('ScreenReady', 201)
+    expect(publicAgentState(s.state, 202 + AGENT_STATE_STALE_MS)).toMatchObject({ state: 'unknown' })
+    expect(publicAgentState(s.state, 202 + AGENT_STATE_STALE_MS)).not.toHaveProperty('monitoring')
+  })
+
+  it('rejects a list on anything but a lead Stop, and a malformed one', () => {
+    const f = started()
+    const before = f.state
+    expect(reduceAgentState(before, f.event('PostToolUse', 150, { background: ['x'] }), 150)).toBe(before)
+    expect(reduceAgentState(before, f.event('Stop', 150, { background: 'x' }), 150)).toBe(before)
+    expect(reduceAgentState(before, f.event('Stop', 150, { background: Array(33).fill('x') }), 150)).toBe(before)
+  })
+
+  it('reads a snapshot saved before background tracking', () => {
+    const f = started()
+    const { background, backgroundAt, ...old } = f.state
+    expect(background).toEqual([])
+    expect(backgroundAt).toBeNull()
+    expect(validateAgentState(old)).toBe(true)
+    f.state = old
+    f.send('Stop', 200, { background: ['shell-1'] })
+    expect(f.send('ScreenReady', 201)).toMatchObject({ monitoring: true })
+    expect(validateAgentState({ ...old, background: ['a', 7] })).toBe(false)
   })
 })

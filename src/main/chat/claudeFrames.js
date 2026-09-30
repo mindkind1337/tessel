@@ -7,6 +7,7 @@
 // through normalizeFrame(frame, state) -> [{ type, ...payload }].
 
 import { createClaudeSubagents, observeClaudeSubagents } from './claudeSubagents.js'
+import { createClaudeBackground, observeClaudeBackground } from './claudeBackgroundTasks.js'
 export const TOOL_OUTPUT_MAX_BYTES = 8 * 1024
 
 // The state the normalizer keeps between frames of one process.
@@ -18,6 +19,8 @@ export function createFrameState({ now = Date.now } = {}) {
     interruptRequested: false, // set by the adapter when it sends interrupt
     sessionId: null,
     subagents: createClaudeSubagents(now),
+    // Its background work (claudeBackgroundTasks.js).
+    background: createClaudeBackground(),
     // The context window (after the reference's claude-context-facts): what
     // the newest main-thread response read (its input, cache reads and
     // writes), the window its result reports, and the models that name it.
@@ -243,7 +246,8 @@ export function normalizeFrame(m, state) {
     event.agentId = child.agentId
     if (event.type === 'textDelta' && !event.messageId) event.messageId = child.childMessageId
   }
-  return [...child.out, ...events.filter(event => !m.parent_tool_use_id || ['assistant', 'textDelta', 'toolResult'].includes(event.type))]
+  const background = observeClaudeBackground(m, state.background)
+  return [...child.out, ...events.filter(event => !m.parent_tool_use_id || ['assistant', 'textDelta', 'toolResult'].includes(event.type)), ...(background ? [background] : [])]
 }
 
 function normalizeClaudeFrame(m, state) {

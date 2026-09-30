@@ -5,7 +5,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { nextTick, ref } from 'vue'
-import { setApproval, clearAgentStatus } from '../agentStatus'
+import { setApproval, clearAgentStatus, applyAgentStates } from '../agentStatus'
 import { resetSettings, settings } from '../settings'
 
 vi.mock('@xterm/xterm', () => ({
@@ -204,6 +204,25 @@ describe('terminal pane header', () => {
     // Actions: voice (icon only), …, maximize, close. "+" is in the menu.
     const actions = h.findAll('.pane-nav-actions > button').map((b) => b.attributes('aria-label'))
     expect(actions).toEqual(['Voice typing (Français)', 'More options', 'Maximize pane', 'Close pane'])
+  })
+
+  it('an agent whose turn ended while its background work runs: monitoring dot and badge, then idle', async () => {
+    ctx.unsent = {}
+    ctx.trackOf = () => null
+    wrapper.unmount()
+    wrapper = mount(TerminalPane, { props: { node: { ...node(), agentLaunchToken: 'launch-hp' } }, attachTo: host, global: { provide: { panelCtx: ctx } } })
+    const published = (extra = {}) => ({
+      hp: { paneId: 'hp', provider: 'claude', launchToken: 'launch-hp', sessionId: 's-1', state: 'idle', reason: 'ready', source: 'screen', since: 1, observedAt: 1, hookSeen: true, confirmed: true, stale: false, children: [], childrenTruncated: false, ...extra }
+    })
+    applyAgentStates(published({ monitoring: true, backgroundTasks: 2 }))
+    await flushPromises()
+    const h = header()
+    expect(h.get('.pane-icon').classes()).toContain('monitoring')
+    expect(h.get('[data-test="pane-badge"]').text()).toBe('monitoring')
+    applyAgentStates(published())
+    await flushPromises()
+    expect(h.get('.pane-icon').classes()).not.toContain('monitoring')
+    expect(h.find('[data-test="pane-badge"]').exists()).toBe(false)
   })
 
   it('the … menu opens in <body> and holds what the header no longer shows', async () => {

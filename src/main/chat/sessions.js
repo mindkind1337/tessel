@@ -323,6 +323,7 @@ export function createChatSessions(deps) {
     !s.asleep &&
     !!s.sessionId && // nothing to resume otherwise
     !s.turn &&
+    !(s.backgroundRunning > 0) &&
     !pendingApprovals(s) &&
     !pendingQuestions(s) &&
     !s.userQueue.length &&
@@ -636,6 +637,11 @@ export function createChatSessions(deps) {
 
   function wire(s) {
     const a = s.adapter
+    // A new process: the old one's background work ended with it.
+    if (s.backgroundRunning) {
+      s.backgroundRunning = 0
+      emit(s.paneId, { type: 'backgroundTasks', running: 0 })
+    }
     const on = (name, fn) =>
       a.on(name, (payload) => {
         if (s.adapter !== a) return
@@ -684,6 +690,16 @@ export function createChatSessions(deps) {
       for (const [key, m] of [...s.messages]) if (m.agentId === e.id) s.messages.delete(key)
     })
     on('subagents', e => emit(s.paneId, { ...e, type: 'subagents' }))
+    // Its background work still running (shells, sub-agents, monitors): with
+    // its turn over, the pane is "monitoring", and it is not put to sleep
+    // (stopping its process would stop that work).
+    on('backgroundTasks', (e) => {
+      const running = Number.isSafeInteger(e.running) && e.running > 0 ? e.running : 0
+      if (running === (s.backgroundRunning || 0)) return
+      s.backgroundRunning = running
+      emit(s.paneId, { type: 'backgroundTasks', running })
+      idleCheck(s)
+    })
     // The context window: the newest of what the agent reported (Claude and
     // OpenCode: contextUsage; Codex: its token usage, the last request's
     // total in the model's window). Journaled once a turn is over, only

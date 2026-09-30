@@ -12,6 +12,13 @@ export const AGENT_SETTLE_MS = 20 * 1000
 // no such sighting for this long, the work is over.
 export const SCREEN_WORK_MS = 60 * 1000
 const SCREEN_BUSY_REFRESH_MS = 5 * 1000
+// Background work the agent left running when its turn ended (Claude Code's
+// Stop hook lists it: background shells, background sub-agents, monitors).
+// Its own end starts a follow-up turn whose Stop lists what is left, so a
+// finished task is normally seen ending; one never seen ending (a lost hook)
+// stops counting this long after the last list that named it.
+export const BACKGROUND_MAX_MS = 2 * 60 * 60 * 1000
+export const MAX_BACKGROUND = 32
 // The agents whose own hooks, plugin or extension report their status
 // (teamMcp/server.cjs --hook, agentStatusHooks.js). Claude Code and Codex also
 // have their screens read for a positive "ready" prompt; for the others the
@@ -137,6 +144,9 @@ const ROOT_KEYS = [
   'children',
   'childrenTruncated'
 ]
+// Added after the first saved snapshots: a snapshot without them is read as
+// "no background work known" (validateAgentState, backgroundOf).
+const OPTIONAL_ROOT_KEYS = ['background', 'backgroundAt']
 
 export function createAgentState({ paneId, provider, launchToken, startedAt = Date.now() } = {}) {
   if (![paneId, provider, launchToken].every(isId) || !isTime(startedAt)) {
@@ -152,9 +162,19 @@ export function createAgentState({ paneId, provider, launchToken, startedAt = Da
     sessionId: null,
     seenIds: [],
     children: [],
-    childrenTruncated: false
+    childrenTruncated: false,
+    background: [],
+    backgroundAt: null
   }
 }
+
+const backgroundOf = (state) => (Array.isArray(state.background) ? state.background : [])
+const validBackground = (value) =>
+  (value.background === undefined ||
+    (Array.isArray(value.background) &&
+      value.background.length <= MAX_BACKGROUND &&
+      value.background.every(isId))) &&
+  (value.backgroundAt === undefined || nullable(value.backgroundAt, isTime))
 
 function validScope(value) {
   return (
@@ -200,7 +220,9 @@ function validScope(value) {
 export function validateAgentState(value) {
   return (
     validScope(value) &&
-    exactKeys(value, ROOT_KEYS) &&
+    Object.keys(value).every((key) => ROOT_KEYS.includes(key) || OPTIONAL_ROOT_KEYS.includes(key)) &&
+    ROOT_KEYS.every((key) => Object.hasOwn(value, key)) &&
+    validBackground(value) &&
     value.v === 1 &&
     [value.paneId, value.provider, value.launchToken].every(isId) &&
     isTime(value.startedAt) &&
@@ -241,6 +263,16 @@ function validEvent(state, event, now) {
     ['agentId', 'toolId', 'turnId'].some(
       (key) => event[key] !== undefined && event[key] !== null && !isId(event[key])
     )
+  )
+    return false
+  // The background work a lead Stop lists (ids only).
+  if (
+    event.background !== undefined &&
+    (event.event !== 'Stop' ||
+      !!event.agentId ||
+      !Array.isArray(event.background) ||
+      event.background.length > MAX_BACKGROUND ||
+      !event.background.every(isId))
   )
     return false
   if (event.source === 'hook') return HOOK_EVENTS.has(event.event) && isId(event.sessionId)
@@ -640,7 +672,9 @@ export function reduceAgentState(state, event, now = Date.now()) {
       pendingDecisions: [...child.pendingDecisions]
     })),
     pendingApprovals: [...state.pendingApprovals],
-    pendingDecisions: [...state.pendingDecisions]
+    pendingDecisions: [...state.pendingDecisions],
+    background: [...backgroundOf(state)],
+    backgroundAt: state.backgroundAt ?? null
   }
   const changedSession = boundary && state.sessionId && event.sessionId !== state.sessionId
   if (changedSession) {
@@ -649,7 +683,10 @@ export function reduceAgentState(state, event, now = Date.now()) {
       ...scope(event.at),
       sessionId: event.sessionId,
       children: [],
-      childrenTruncated: false
+      childrenTruncated: false,
+      // Another conversation: the old one's list says nothing of it.
+      background: [],
+      backgroundAt: null
     }
   }
   let target = next
@@ -681,6 +718,8 @@ export function reduceAgentState(state, event, now = Date.now()) {
     cancelCandidate(target)
     transition(target, 'closed', 'ended', event)
     next.children = []
+    next.background = []
+    next.backgroundAt = null
   } else {
     applyHook(target, event, hooksAlone(state.provider))
     // A spool scan can deliver a hook after newer screen evidence. Its hook
@@ -716,6 +755,7 @@ export function reduceAgentState(state, event, now = Date.now()) {
     }
     target.hookSeen = true
     target.lastHookAt = event.at
+    trackBackground(next, event)
   }
   // A live observation can reconfirm a recovered state, but must not resurrect
   // an old completion notification that disappeared while unconfirmed.
@@ -725,6 +765,30 @@ export function reduceAgentState(state, event, now = Date.now()) {
   target.lastEventAt = Math.max(target.lastEventAt, event.at)
   if (!changedSession && existing?.state === target.state) target.since = existing.since
   return next
+}
+
+// The lead's background work from its hooks: a lead Stop's list replaces what
+// was known (an absent list, from an older CLI, changes nothing); a background
+// sub-agent's own SubagentStop ends it; the session ending ends all of it.
+function trackBackground(next, event) {
+  if (event.event === 'SessionEnd' && !event.agentId) {
+    next.background = []
+    next.backgroundAt = null
+  } else if (event.event === 'Stop' && !event.agentId && Array.isArray(event.background)) {
+    next.background = [...new Set(event.background)].slice(0, MAX_BACKGROUND)
+    next.backgroundAt = event.at
+  } else if (event.event === 'SubagentStop' && event.agentId && next.background.includes(event.agentId)) {
+    next.background = next.background.filter((id) => id !== event.agentId)
+  }
+}
+
+// The agent ended its turn (idle) while its own background work goes on:
+// the number of tasks, or 0.
+function backgroundRunning(state, shown, now) {
+  const list = backgroundOf(state)
+  if (!list.length || shown.state !== 'idle' || shown.stale || !shown.confirmed) return 0
+  if (!isTime(state.backgroundAt) || now - state.backgroundAt > BACKGROUND_MAX_MS) return 0
+  return list.length
 }
 
 function publicScope(value, now) {
@@ -767,12 +831,16 @@ function publicScope(value, now) {
 
 export function publicAgentState(state, now = Date.now()) {
   if (!validateAgentState(state) || !isTime(now)) throw new TypeError('Invalid agent state')
+  const lead = publicScope(state, now)
+  const background = backgroundRunning(state, lead, now)
   return {
     paneId: state.paneId,
     provider: state.provider,
     launchToken: state.launchToken,
     sessionId: state.sessionId,
-    ...publicScope(state, now),
+    ...lead,
+    // Idle, but its own background work still runs: "monitoring".
+    ...(background ? { monitoring: true, backgroundTasks: background } : {}),
     children: state.children.map((child) => ({
       agentId: child.agentId,
       sessionId: child.sessionId,

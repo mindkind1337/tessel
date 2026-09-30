@@ -131,6 +131,27 @@ describe('status hooks observe without consuming team messages', () => {
     expect((await hook('Stop')).out).toBe('')
     expect(reports()[0]).toMatchObject({ continuing: false, event: 'Stop' })
   })
+  it("records the ids of the background work a Claude Stop lists, never its descriptions or commands", async () => {
+    // The shape Claude Code 2.1 attaches to Stop (background_tasks).
+    const background_tasks = [
+      { id: 'b8o5jb42q', type: 'shell', status: 'running', description: 'PRIVATE-DESC', command: 'sleep 600' },
+      { id: 'a89b41394dcd804b3', type: 'subagent', status: 'running', description: 'PRIVATE-DESC', agent_type: 'general-purpose' },
+      { id: 'mate-1', type: 'teammate', status: 'running', description: 'always listed' },
+      { id: 'old-1', type: 'shell', status: 'completed', description: 'over' },
+      { id: '../bad', type: 'monitor', status: 'running', description: 'x' }
+    ]
+    await hook('Stop', { data: { stop_hook_active: false, background_tasks, session_crons: [] } })
+    expect(reports()[0]).toMatchObject({ event: 'Stop', background: ['b8o5jb42q', 'a89b41394dcd804b3', 'task-3'] })
+    expect(JSON.stringify(reports())).not.toMatch(/PRIVATE|sleep 600|general-purpose/)
+  })
+  it('records an empty list as "nothing left", and no list when the hook has none', async () => {
+    await hook('Stop', { data: { background_tasks: [] } })
+    await hook('Stop', { data: {} })
+    await hook('Stop', { data: { agent_id: 'child-1', background_tasks: [{ id: 'x', type: 'shell', status: 'running' }] } })
+    const stops = reports().sort((a, b) => a.at - b.at)
+    expect(stops.filter((r) => Array.isArray(r.background)).map((r) => r.background)).toEqual([[]])
+    expect(stops.filter((r) => r.agentId).every((r) => r.background === undefined)).toBe(true)
+  })
   it('keeps child state separate from the root session and inbox', async () => {
     const before = queued()
     await hook('SessionStart')

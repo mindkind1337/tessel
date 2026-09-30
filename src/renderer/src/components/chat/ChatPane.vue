@@ -100,6 +100,12 @@ watch(status, (st) => {
 }, { immediate: true })
 const busy = computed(() => status.value === 'working' || status.value === 'approval')
 const stopped = computed(() => STOPPED_STATES.has(status.value))
+// Its turn is over but its background work (shells, sub-agents, monitors)
+// still runs: "monitoring" (the sidebar reads it from the pane too).
+const backgroundRunning = computed(() => (status.value === 'idle' && meta.backgroundTasks > 0 ? meta.backgroundTasks : 0))
+watch(backgroundRunning, (n) => {
+  if ((props.node.liveBackground || 0) !== n) props.node.liveBackground = n
+}, { immediate: true })
 // Which agent: Claude, Codex or OpenCode (the leaf's agentId).
 const AGENT_NAMES = { claude: 'Claude', codex: 'Codex', opencode: 'OpenCode' } // i18n-ignore product names
 const agentId = computed(() => (AGENT_NAMES[props.node.agentId] ? props.node.agentId : 'claude'))
@@ -129,7 +135,7 @@ const statusLabel = computed(() => {
     case 'starting':
       return t('chat.status.starting', 'Starting')
     case 'idle':
-      return t('chat.status.idle', 'Idle')
+      return backgroundRunning.value ? t('chat.status.monitoring', 'Monitoring background tasks') : t('chat.status.idle', 'Idle')
     case 'working':
       return t('chat.status.working', 'Working')
     case 'approval':
@@ -144,7 +150,7 @@ const statusLabel = computed(() => {
       return t('chat.status.stopped', 'Stopped')
   }
 })
-const iconState = computed(() => (status.value === 'approval' ? 'attention' : status.value === 'working' ? 'busy' : ''))
+const iconState = computed(() => (status.value === 'approval' ? 'attention' : status.value === 'working' ? 'busy' : backgroundRunning.value ? 'monitoring' : ''))
 
 const permissions = computed(() => (typeof ctx.chatPermissions === 'function' ? ctx.chatPermissions(props.node) : null))
 // What the agent may do without asking (chosen in the composer's options).

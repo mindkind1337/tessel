@@ -31,7 +31,9 @@ import {
   managedAgentStatus,
   agentScreenObservation,
   createAgentActivityMonitor,
-  turnEndedSince
+  turnEndedSince,
+  paneMonitoring,
+  monitoring
 } from '../agentStatus'
 import { promptShowsPlaceholder } from '../promptCheck'
 import { detectTaskDone } from '../agentLimit'
@@ -678,6 +680,9 @@ const track = computed(() => (ctx.trackOf ? ctx.trackOf(props.node.id) : null))
 // Sub-agents of this conversation running now (AgentChildren reports them):
 // the pane is at work even while the main agent waits for them.
 const subRunning = ref(0)
+// Its turn ended, its own background work (shells, sub-agents, monitors)
+// still runs: how many tasks, by its hooks (0 = none).
+const backgroundRunning = computed(() => (isAgent.value && paneMonitoring(props.node) ? monitoring[props.node.id] || 0 : 0))
 // When its agent ended its turn: sub-agents silent since then are not running.
 const turnEndedAt = computed(() => (managedAgentStatus(props.node) ? turnEndedSince(props.node.id, props.node.agentLaunchToken) : null))
 function onSubRunning(n) {
@@ -724,7 +729,9 @@ const badge = computed(() => {
   if (unsent.value) return 'unsent'
   if (stuck.value) return 'stuck'
   if (launchStale.value) return 'apply'
-  if (agentStatus.value === 'busy' || subRunning.value) return 'working'
+  if (agentStatus.value === 'busy') return 'working'
+  if (backgroundRunning.value) return 'monitoring'
+  if (subRunning.value) return 'working'
   if (agentStatus.value === 'unknown') return 'unknown'
   // "Needs you" is also the status dot and the pane's glow; the prompt cache
   // countdown is shown nowhere else, so it goes first.
@@ -784,7 +791,9 @@ const headerState = computed(() => {
   if (!isAgent.value) return null
   if (asksApproval.value) return { dot: 'waiting', label: t('sidebar.row.asksApproval', 'Asks your approval') }
   if (limit.value) return { dot: 'blocked', label: limitTitle.value }
-  if (agentStatus.value === 'busy' || subRunning.value) return { dot: 'working', label: agentStateLabel('working') }
+  if (agentStatus.value === 'busy') return { dot: 'working', label: agentStateLabel('working') }
+  if (backgroundRunning.value) return { dot: 'monitoring', label: agentStateLabel('monitoring') }
+  if (subRunning.value) return { dot: 'working', label: agentStateLabel('working') }
   if (agentStatus.value === 'unknown') return { dot: 'unverifiable', label: agentStateLabel('unverifiable') }
   if (needsYou.value) return { dot: 'done', label: agentStateLabel('done') }
   return { dot: 'idle', label: agentStateLabel('idle') }
@@ -2247,7 +2256,7 @@ const paneMenuBindings = computed(() => ({
         <span v-if="team" class="pane-team-num" :class="{ lead: isLead }" data-test="pane-team-num" aria-hidden="true">{{ teamNumber(team.name) }}</span>
         <span
           class="pane-icon"
-          :class="isAgent ? ['agent', needsYou ? 'attention' : subRunning > 0 ? 'busy' : agentStatus, { yolo: node.launchYolo }] : null"
+          :class="isAgent ? ['agent', agentStatus === 'busy' ? 'busy' : backgroundRunning ? 'monitoring' : needsYou ? 'attention' : subRunning > 0 ? 'busy' : agentStatus, { yolo: node.launchYolo }] : null"
           :style="isAgent ? { '--accent': node.accent } : null"
           :aria-label="agentName"
           :aria-description="isAgent ? statusTitle : undefined"
@@ -2329,6 +2338,7 @@ const paneMenuBindings = computed(() => ({
           {{ t('pane.badge.apply', 'Restart to apply') }}
         </button>
         <span v-else-if="badge === 'working'" class="pane-working pane-badge-sr" data-test="pane-badge" :aria-description="statusTitle">{{ estimatedState ? t('pane.badge.workingEstimated', 'working · estimated') : t('pane.badge.working', 'working') }}</span>
+        <span v-else-if="badge === 'monitoring'" class="pane-working pane-monitoring pane-badge-sr" data-test="pane-badge" :aria-description="statusTitle">{{ t('pane.badge.monitoring', 'monitoring') }}</span>
         <span v-else-if="badge === 'unknown'" class="pane-working pane-badge-sr" data-test="pane-badge" :aria-description="statusTitle">{{ t('pane.badge.unknown', 'unknown') }}</span>
         <span v-else-if="badge === 'needs'" class="pane-needs-you" data-test="pane-badge">{{ t('pane.badge.needs', 'needs you') }}</span>
         <span v-else-if="badge === 'cache'" class="pane-cache" :class="cache.level" data-test="pane-badge" :title="cacheTitle">

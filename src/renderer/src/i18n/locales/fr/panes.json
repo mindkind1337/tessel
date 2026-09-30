@@ -91,7 +91,7 @@
       "sleeping": "En veille",
       "active": "Actif",
       "working": "Au travail",
-      "monitoring": "Surveillance des tâches en arrière-plan",
+      "monitoring": "Surveille des tâches en arrière-plan",
       "permission": "Autorisation requise",
       "interrupted": "Interrompu",
       "done": "Terminé",
@@ -164,7 +164,7 @@
     },
     "agentState": {
       "working": "Au travail",
-      "monitoring": "Surveillance des tâches en arrière-plan",
+      "monitoring": "Surveille des tâches en arrière-plan",
       "blocked": "Bloqué",
       "waiting": "En attente de votre réponse",
       "interrupted": "Interrompu",
@@ -524,6 +524,7 @@
       "apply": "Redémarrer pour appliquer",
       "workingEstimated": "au travail · estimé",
       "working": "au travail",
+      "monitoring": "surveille",
       "unknown": "inconnu",
       "needs": "vous attend"
     },

@@ -1765,6 +1765,23 @@ describe('idle stop', () => {
     expect(b.close).not.toHaveBeenCalled()
   })
 
+  it('background work still running after the turn: told to the window, never put to sleep until it ends', async () => {
+    const chat = createChatSessions(deps)
+    await openOk(chat, { idleMinutes: 1 })
+    const a = adapters[0]
+    a.emit('backgroundTasks', { running: 2 })
+    a.emit('backgroundTasks', { running: 2 }) // unchanged: told once
+    await flush()
+    expect(events('backgroundTasks')).toEqual([{ type: 'backgroundTasks', running: 2 }])
+    await sleepNow(60)
+    expect(a.close).not.toHaveBeenCalled()
+    a.emit('backgroundTasks', { running: 0 })
+    await flush()
+    expect(last('backgroundTasks')).toEqual({ type: 'backgroundTasks', running: 0 })
+    await sleepNow(1)
+    expect(a.close).toHaveBeenCalledTimes(1)
+  })
+
   it('0 = never', async () => {
     const chat = createChatSessions(deps)
     await openOk(chat, { idleMinutes: 0 })

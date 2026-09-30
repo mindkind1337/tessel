@@ -70,6 +70,21 @@ describe('states in Orca words', () => {
     expect(cardStatus([])).toBe('inactive')
   })
 
+  it('an agent monitoring its background work: its own dot, label, workspace status and attention class', () => {
+    const row = paneRow(pane('m', { state: 'monitoring', since: NOW - 1000 }), NOW)
+    expect(row.dotState).toBe('monitoring')
+    expect(row.stateLabel).toBe('Monitoring background tasks')
+    const r = (dotState) => ({ dotState, sleeping: false })
+    expect(cardStatus([r('monitoring'), r('idle')])).toBe('monitoring')
+    expect(cardStatus([r('monitoring'), r('working')])).toBe('working')
+    expect(cardStatus([r('monitoring'), r('waiting')])).toBe('permission')
+    expect(cardStatus([r('monitoring'), r('done')])).toBe('monitoring')
+    const [card] = buildProjectCards({ id: 'p', name: 'P', cwd: 'C:\\p', panes: [pane('m', { state: 'monitoring', since: NOW - 1000 })] }, NOW)
+    expect(card.status).toBe('monitoring')
+    expect(card.attention.cls).toBe(3)
+    expect(summarizeAgents([row], 'Agent')).toBe('Agent monitoring')
+  })
+
   it('ages like Orca (now / 5m / 3h / 2d)', () => {
     expect(formatShortTimeAgo(NOW - 10000, NOW)).toBe('now')
     expect(formatShortTimeAgo(NOW - 5 * 60000, NOW)).toBe('5m')

@@ -643,6 +643,23 @@ body.popup-open .toolbar {
   }
 }
 
+/* Its turn ended, its background work still runs (the sidebar's yellow
+   "Monitoring background tasks"): a yellow dot, a slow pulse. */
+.pane-icon.monitoring .pane-status-dot {
+  background: #eab308;
+  animation: monitoring-pulse 2.4s steps(6) infinite;
+}
+
+@keyframes monitoring-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(234, 179, 8, 0.5);
+  }
+  50% {
+    box-shadow: 0 0 0 3px rgba(234, 179, 8, 0);
+  }
+}
+
 .pane-title {
   overflow: hidden;
   text-overflow: ellipsis;

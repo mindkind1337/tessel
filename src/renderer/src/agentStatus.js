@@ -7,6 +7,9 @@
 //                       (see agentLimit.js); reset is its reset time or ''.
 //   approvals[id]    -> true while the agent shows an approval prompt
 //                       ("Would you like to run...", see agentLimit.js).
+//   monitoring[id]   -> the number of background tasks (shells, sub-agents,
+//                       monitors) still running after the agent ended its
+//                       turn, by its own hooks (agentStateModel.js).
 // The workspace sidebar reads both to badge workspaces.
 import { reactive } from 'vue'
 import { detectApproval, detectLimit } from './agentLimit'
@@ -17,6 +20,7 @@ export const agentStatus = reactive({})
 export const attention = reactive({})
 export const limits = reactive({})
 export const approvals = reactive({})
+export const monitoring = reactive({})
 // Main-process observations carry execution identity and freshness. Screen
 // estimates remain useful for display but cannot authorize automatic actions.
 export const agentStates = reactive({})
@@ -64,6 +68,7 @@ export function applyAgentStates(snapshot) {
       if (!entries[id]) {
         const drove = drives(agentStates[id])
         delete agentStates[id]
+        setMonitoring(id, 0)
         if (drove) agentStatus[id] = 'unknown'
       }
   }
@@ -73,6 +78,7 @@ export function applyAgentStates(snapshot) {
     // Not yet heard from its hooks: the screen keeps the status for now.
     if (!drives(state)) continue
     agentStatus[id] = displayStatus(state)
+    setMonitoring(id, state.monitoring === true && Number.isInteger(state.backgroundTasks) ? state.backgroundTasks : 0)
     setApproval(id, state.state === 'approval')
     if (state.state === 'limited') setLimit(id, { reset: state.reset })
     else if (!state.stale && state.confirmed !== false) clearLimit(id)
@@ -294,9 +300,20 @@ export function createAgentActivityMonitor({
   }
 }
 
+// Its turn ended by its own hooks while its background work still runs.
+export function paneMonitoring(leaf) {
+  return !!leaf && managedAgentStatus(leaf) && agentStatus[leaf.id] === 'idle' && monitoring[leaf.id] > 0
+}
+
 export function setApproval(id, on) {
   if (on) approvals[id] = true
   else if (approvals[id]) delete approvals[id]
+}
+
+export function setMonitoring(id, count) {
+  if (count > 0) {
+    if (monitoring[id] !== count) monitoring[id] = count
+  } else if (monitoring[id]) delete monitoring[id]
 }
 
 export function setLimit(id, info) {
@@ -328,6 +345,7 @@ export function clearAgentStatus(id) {
   delete attention[id]
   delete limits[id]
   delete approvals[id]
+  delete monitoring[id]
   delete agentStates[id]
 }
 
@@ -343,12 +361,15 @@ export function turnEndedSince(id, launchToken) {
 
 // A pane's agent state for the sidebar and the status bar: 'approval' (asks
 // you to approve something) | 'limited' (usage limit reached) | 'working' |
+// 'monitoring' (its turn ended, its background work still runs) |
 // 'unknown' | 'waiting' (done, waiting for you) | 'ready'. childrenRunning:
 // its sub-agents running now (the pane header counts them, running only).
 export function paneAgentState(leaf, { agent = true, childrenRunning = 0 } = {}) {
   if (!agent) return 'ready'
   if (approvals[leaf.id]) return 'approval'
   if (limits[leaf.id]) return 'limited'
+  // Its background sub-agents are part of that background work.
+  if (paneMonitoring(leaf)) return 'monitoring'
   if (childrenRunning > 0) return 'working'
   if (managedAgentStatus(leaf) && agentStatus[leaf.id] === 'unknown') return 'unknown'
   if (attention[leaf.id]) return 'waiting'

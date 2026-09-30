@@ -73,7 +73,9 @@ const FIELDS = new Set([
   'toolName',
   'notificationType',
   'startSource',
-  'continuing'
+  'continuing',
+  // A lead Stop's list of the background work still running (ids only).
+  'background'
 ])
 const clone = (value) => JSON.parse(JSON.stringify(value))
 const record = (value) => value && typeof value === 'object' && !Array.isArray(value)
@@ -189,7 +191,15 @@ function hookEvent(value, now) {
     )
       return null
   if (value.continuing !== undefined && typeof value.continuing !== 'boolean') return null
-  return { ...value }
+  if (
+    value.background !== undefined &&
+    (value.event !== 'Stop' ||
+      !Array.isArray(value.background) ||
+      value.background.length > 32 ||
+      !value.background.every(validId))
+  )
+    return null
+  return { ...value, ...(value.background !== undefined ? { background: [...value.background] } : {}) }
 }
 
 /** One app-owned consumer; callers schedule scans, never one timer per pane. */

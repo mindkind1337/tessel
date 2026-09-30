@@ -82,6 +82,26 @@ describe('local agent status spool and snapshots', () => {
     expect(store.snapshot()[paneId].state).toBe('working')
   })
 
+  it('publishes monitoring from a spooled Stop that lists background work, and rejects a list elsewhere', async () => {
+    const store = make()
+    await store.register(registered({ provider: 'claude' }))
+    const claude = (name, extra = {}) => event(name, { provider: 'claude', ...extra })
+    put(claude('UserPromptSubmit', { at: tick - 30 }))
+    put(claude('Stop', { at: tick - 20, background: ['b8o5jb42q'] }))
+    put(claude('PostToolUse', { at: tick - 25, background: ['x'] }))
+    put(claude('Stop', { at: tick - 24, background: ['../x'] }))
+    const scanned = await store.scan()
+    expect(scanned.stats).toMatchObject({ accepted: 2, rejected: 2 })
+    const states = await store.observe(paneId, token, 'ScreenReady')
+    expect(states[paneId]).toMatchObject({ state: 'idle', monitoring: true, backgroundTasks: 1 })
+    put(claude('UserPromptSubmit', { at: tick + 1 }))
+    put(claude('Stop', { at: tick + 2, background: [] }))
+    tick += 3
+    await store.scan()
+    const after = await store.observe(paneId, token, 'ScreenReady')
+    expect(after[paneId]).toMatchObject({ state: 'idle' })
+    expect(after[paneId]).not.toHaveProperty('monitoring')
+  })
   it('deduplicates event ids and ignores old timestamps despite later receipt', async () => {
     const store = make()
     await store.register(registered())

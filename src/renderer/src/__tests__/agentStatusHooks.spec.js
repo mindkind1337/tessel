@@ -15,6 +15,8 @@ import {
   createAgentActivityMonitor,
   managedAgentStatus,
   paneAgentState,
+  paneMonitoring,
+  monitoring,
   turnEndedSince
 } from '../agentStatus'
 import {
@@ -191,6 +193,41 @@ describe('terminal activity and authoritative agent events', () => {
     expect(callbacks.onStatus).toHaveBeenLastCalledWith('idle')
     expect(paneAgentState(node)).toBe('ready')
     expect(turnEndedSince(node.id, node.agentLaunchToken)).toBe(stopAt)
+  })
+
+  it('a turn that ends with background work still running shows monitoring, then ready when it ends', async () => {
+    hook('UserPromptSubmit')
+    hook('Stop', { background: ['shell-1'] })
+    screen = { ...screen, ready: true, screen: 'Started it\n❯ ' }
+    monitor.output()
+    await vi.advanceTimersByTimeAsync(1400)
+    expect(agentStatus[node.id]).toBe('idle')
+    expect(monitoring[node.id]).toBe(1)
+    expect(paneMonitoring(node)).toBe(true)
+    expect(paneAgentState(node)).toBe('monitoring')
+    // Monitoring outranks the finished turn waiting for you and sub-agents.
+    expect(paneAgentState(node, { childrenRunning: 1 })).toBe('monitoring')
+    // The shell ends: Claude's follow-up turn works, then lists nothing.
+    hook('UserPromptSubmit')
+    expect(paneAgentState(node)).toBe('working')
+    expect(monitoring[node.id]).toBeUndefined()
+    hook('Stop', { background: [] })
+    monitor.output()
+    await vi.advanceTimersByTimeAsync(1400)
+    expect(agentStatus[node.id]).toBe('idle')
+    expect(paneAgentState(node)).toBe('ready')
+    // An approval still comes first.
+    hook('UserPromptSubmit')
+    hook('Stop', { background: ['shell-2'] })
+    monitor.output()
+    await vi.advanceTimersByTimeAsync(1400)
+    setApproval(node.id, true)
+    expect(paneAgentState(node)).toBe('approval')
+    setApproval(node.id, false)
+    expect(paneAgentState(node)).toBe('monitoring')
+    // The pane's status goes away: so does its monitoring.
+    applyAgentStates({})
+    expect(monitoring[node.id]).toBeUndefined()
   })
 
   it('an interrupted Claude turn (no Stop hook) is idle once its screen says so', async () => {

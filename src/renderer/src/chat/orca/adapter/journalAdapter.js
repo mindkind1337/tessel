@@ -122,7 +122,7 @@ export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence =
   // subagents: the children this conversation started, by id ({ id, title,
   // type, model, state: 'running' | 'done' | 'quiet', startedAt, endedAt,
   // tokens, lastAt }), as the pane header's list shows them (AgentChildren).
-  const meta = { agent: null, model: null, sessionId: null, status: 'starting', error: '', rateLimit: null, commands: null, queuedIds: [], subagents: {} }
+  const meta = { agent: null, model: null, sessionId: null, status: 'starting', error: '', rateLimit: null, commands: null, queuedIds: [], subagents: {}, backgroundTasks: 0 }
 
   let changedItems = new Set()
   let changedSubs = new Set()
@@ -268,6 +268,7 @@ export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence =
         // No process any more: nothing it started still runs (its tools
         // stopped, its questions can no longer be answered), and a turn still
         // open did not end on its own.
+        if (NO_PROCESS.has(ev.state) || ev.state === 'starting') meta.backgroundTasks = 0
         if (NO_PROCESS.has(ev.state)) {
           for (const item of [...items.values()]) {
             if (item.body.kind === 'tool-call' && item.body.state === 'running') revise(item.itemId, { state: 'interrupted' })
@@ -517,6 +518,10 @@ export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence =
         break
       case 'rateLimit':
         meta.rateLimit = { fiveHour: ev.fiveHour || null, sevenDay: ev.sevenDay || null }
+        break
+      // Its background work still running (the main process counts it).
+      case 'backgroundTasks':
+        meta.backgroundTasks = Number.isSafeInteger(ev.running) && ev.running > 0 ? ev.running : 0
         break
       default:
         break
