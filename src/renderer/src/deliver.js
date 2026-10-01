@@ -20,7 +20,13 @@
 //      command: optional 'paste' | 'type' (a slash command from that chat
 //      view: pasted, or typed key by key with pane.typeKeys for Codex, which
 //      takes a fast write as pasted prose; Enter is pressed once and that is
-//      all: a command starts no turn to watch) }
+//      all: a command starts no turn to watch),
+//      taken(id, at): optional, its own hooks show it took a message whose
+//      Enter was pressed at `at` (agentStatus.js agentTookMessage),
+//      submitted({ at, wasBusy }): optional, told when Enter is pressed,
+//      now(): optional clock }
+// A pane's agentObservation().input ('empty' | 'draft') is evidence too: the
+// pasted text was in its input before Enter and is gone after it.
 // -> 'confirmed' | 'unconfirmed' | 'requeue' (approval prompt before the
 //    paste) | 'failed' (no pane: nothing was typed)
 
@@ -30,6 +36,7 @@ export const DELIVER = {
   stepMs: 500,
   acceptBusyMs: 4000, // working this long after Enter = it took the message
   quietMs: 1500, // quiet this long after Enter = look for a draft
+  evidenceMs: 6000, // no draft left: its hooks may still tell, this long
   watchMs: 15000,
   retries: 2
 }
@@ -44,7 +51,26 @@ export function draftVisible(pane, text) {
   return String(pane.screenText(4) || '').replace(/\s+/g, '').includes(tail)
 }
 
-async function watchAfterEnter(id, text, d) {
+// What its input line holds ('empty' | 'draft'), or null: not known.
+function inputOf(pane) {
+  try {
+    const seen = pane && typeof pane.agentObservation === 'function' ? pane.agentObservation() : null
+    return seen && (seen.input === 'empty' || seen.input === 'draft') ? seen.input : null
+  } catch {
+    return null
+  }
+}
+
+// Evidence that the agent took the message, besides working a few seconds: a
+// turn its hooks opened or ended since Enter (a fast answer, a question
+// asked at once), or the text that was in its input before Enter gone. Only
+// ever ends the watch: it never causes anything to be typed again.
+function tookIt(id, pane, enter, d) {
+  if (!enter.wasBusy && d.taken && d.taken(id, enter.at)) return true
+  return enter.input === 'draft' && inputOf(pane) === 'empty'
+}
+
+async function watchAfterEnter(id, text, d, enter) {
   let busyFor = 0
   let quietFor = 0
   for (let t = d.cfg.stepMs; t <= d.cfg.watchMs; t += d.cfg.stepMs) {
@@ -53,6 +79,7 @@ async function watchAfterEnter(id, text, d) {
     if (!pane) return 'gone'
     // It asks to approve something: it is acting on the message.
     if (d.awaitingApproval(id)) return 'accepted'
+    if (tookIt(id, pane, enter, d)) return 'accepted'
     if (d.isBusy(id)) {
       busyFor += d.cfg.stepMs
       quietFor = 0
@@ -60,7 +87,12 @@ async function watchAfterEnter(id, text, d) {
     } else {
       quietFor += d.cfg.stepMs
       busyFor = 0
-      if (quietFor >= d.cfg.quietMs) return draftVisible(pane, text) ? 'draft' : 'unknown'
+      if (quietFor >= d.cfg.quietMs) {
+        if (draftVisible(pane, text) && inputOf(pane) !== 'empty') return 'draft'
+        // Nothing left in its input, nothing seen yet: its hooks reach
+        // Tessel through a file, a moment later. Look a little longer.
+        if (t >= d.cfg.evidenceMs) return 'unknown'
+      }
     }
   }
   return busyFor >= d.cfg.acceptBusyMs ? 'accepted' : 'unknown'
@@ -105,13 +137,15 @@ export async function pasteAndConfirm(id, text, deps) {
     if (d.awaitingApproval(id)) return 'unconfirmed'
     if (d.userTyping && d.userTyping(id)) return 'unconfirmed'
     if (d.guard && !d.guard(id)) return 'unconfirmed'
+    const enter = { at: d.now ? d.now() : Date.now(), wasBusy: !!d.isBusy(id), input: d.command ? null : inputOf(pane) }
     try {
       pane.submit()
     } catch {
       return 'unconfirmed'
     }
+    if (d.submitted) d.submitted(enter)
     if (d.command) return 'confirmed'
-    const seen = await watchAfterEnter(id, text, d)
+    const seen = await watchAfterEnter(id, text, d, enter)
     if (seen === 'accepted') return 'confirmed'
     if (seen === 'draft' && tries < d.cfg.retries) continue
     return 'unconfirmed'

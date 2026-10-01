@@ -379,7 +379,8 @@
       "recordFailed": "Tessel n'a pas pu l'enregistrer. Réessayez.",
       "toast": "Un message à {{name}} n'a peut-être pas été envoyé. Vérifiez sa zone de saisie.",
       "toastAgent": "Un message à un agent n'a peut-être pas été envoyé. Vérifiez sa zone de saisie.",
-      "check": "Vérifier"
+      "check": "Vérifier",
+      "held": "En attente d'envoi à {{name}} : dites d'abord si son message précédent a été reçu."
     },
     "task": {
       "busy": {

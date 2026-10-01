@@ -36,6 +36,7 @@ import {
   applyAgentStates,
   getAgentState,
   agentStateKnown,
+  agentTookMessage,
   managedAgentStatus,
   clearAgentStatus,
   clearAttention,
@@ -4749,15 +4750,10 @@ async function resolveUnsent(id) {
   if (!unsent[id] || unsent[id] !== u) return
   const meta = u.item.meta || {}
   if (answer === true) {
-    // Recorded first; the pane stays held if that fails.
-    const ok = meta.confirmSent ? await meta.confirmSent() : true
-    if (!ok) {
+    if (!(await unsentWasSent(id, u))) {
       showToast(t('app.unsent.recordFailed', 'Tessel could not record that. Try again.'), { kind: 'error' })
       return
     }
-    if (unsent[id] === u) delete unsent[id]
-    if (u.item.held) logMessage(id, 'delivered', u.item.text, meta)
-    if (!meta.confirmSent && meta.onDelivered) meta.onDelivered()
   } else if (answer === 'alt') {
     // A channel message is released on disk and delivered again by the
     // channel; anything else is queued again here.
@@ -4785,6 +4781,16 @@ function deliverToAgent(leafId, text, meta = {}) {
   const queued = !!pendingMessages[leafId]?.includes(item)
   item.held = queued
   logMessage(leafId, queued ? 'held' : 'sent', text, meta)
+  // Held behind a message not confirmed yet: said, with the way to resolve it.
+  if (queued && unsent[leafId] && Date.now() - (unsent[leafId].heldToldAt || 0) > 15000) {
+    unsent[leafId].heldToldAt = Date.now()
+    const leaf = findLeaf(leafId)
+    showToast(t('app.unsent.held', 'Waiting to send to {{name}}: first say whether its previous message was received.', { name: leaf ? leaf.paneName || leaf.title : t('app.unsent.theAgent', 'the agent') }), {
+      kind: 'attention',
+      timeout: 15000,
+      action: { label: t('app.unsent.check', 'Check'), run: () => resolveUnsent(leafId) }
+    })
+  }
 }
 
 // A pane joined (teamId) or left (null) a team.
@@ -4835,6 +4841,17 @@ function flushPending() {
   for (const id of Object.keys(pendingMessages)) {
     const pane = getPane(id)
     if (!pane || !findLeaf(id)) {
+      // Its terminal remounting (a layout change, its chat view) is back in
+      // a moment: its messages wait for it a little, never dropped at once.
+      const leaf = findLeaf(id)
+      const first = pendingMessages[id][0]
+      if (leaf && !leaf.sleeping && first) {
+        first.paneMissingSince = first.paneMissingSince || Date.now()
+        if (Date.now() - first.paneMissingSince < 30000) {
+          waiting = true
+          continue
+        }
+      }
       for (const item of pendingMessages[id]) failDelivery(item)
       delete pendingMessages[id]
       continue
@@ -4881,7 +4898,11 @@ function flushPending() {
       guard: item.meta && item.meta.guard ? item.meta.guard : null,
       // From a terminal agent's chat view: its images, or a slash command.
       images: item.meta && Array.isArray(item.meta.images) ? item.meta.images : null,
-      command: item.meta && item.meta.command ? item.meta.command : null
+      command: item.meta && item.meta.command ? item.meta.command : null,
+      // Its own hooks: a turn opened or ended since Enter (a fast answer, a
+      // question asked at once) is the message taken.
+      taken: (pid, at) => agentTookMessage(pid, findLeaf(pid)?.agentLaunchToken, at),
+      submitted: (enter) => (item.entered = enter)
     }
     // A channel message is marked in flight on disk first; if that is
     // refused, it is not typed now ('refused').
@@ -4909,6 +4930,7 @@ function flushPending() {
           logMessage(id, 'unconfirmed', item.text, item.meta)
           unsent[id] = { item, at: Date.now() }
           if (item.meta && item.meta.onUncertain) item.meta.onUncertain()
+          watchUnsent(id, unsent[id], item.entered)
           const leaf = findLeaf(id)
           showToast(leaf ? t('app.unsent.toast', 'A message to {{name}} may not have been sent. Check its input box.', { name: leaf.paneName || leaf.title }) : t('app.unsent.toastAgent', 'A message to an agent may not have been sent. Check its input box.'), {
             kind: 'attention',
@@ -4934,6 +4956,37 @@ function requeueDelivery(id, item) {
   pendingMessages[id].unshift(item)
   clearTimeout(pendingTimer)
   pendingTimer = setTimeout(flushPending, 2000)
+}
+
+// An unconfirmed message known sent after all (the user says so, or its
+// agent's hooks do): recorded first (false: not recorded, still held).
+async function unsentWasSent(id, u) {
+  const meta = u.item.meta || {}
+  const ok = meta.confirmSent ? await meta.confirmSent() : true
+  if (!ok) return false
+  if (unsent[id] === u) delete unsent[id]
+  if (u.item.held) logMessage(id, 'delivered', u.item.text, meta)
+  if (!meta.confirmSent && meta.onDelivered) meta.onDelivered()
+  return true
+}
+
+// Its agent's hooks can tell a little later that it took an unconfirmed
+// message (a turn opened or ended since its Enter): then it is sent, the
+// question goes away and the messages held behind it go on. Never typed
+// again from here.
+function watchUnsent(id, u, entered) {
+  if (!entered || entered.wasBusy) return
+  const until = Date.now() + 2 * 60 * 1000
+  const check = () => {
+    if (unsent[id] !== u) return
+    const leaf = findLeaf(id)
+    if (leaf && agentTookMessage(id, leaf.agentLaunchToken, entered.at)) {
+      unsentWasSent(id, u).then((ok) => ok && flushPending()).catch(() => {})
+      return
+    }
+    if (leaf && Date.now() < until) setTimeout(check, 1000)
+  }
+  setTimeout(check, 1000)
 }
 
 // --- Tasks ------------------------------------------------------------------------

@@ -171,3 +171,76 @@ describe("pasteAndConfirm from a terminal agent's chat view", () => {
     expect(state.pastes).toBe(0)
   })
 })
+
+// Claude Code 2.1.286, five real deliveries: a turn that answered in 1-2 s or
+// asked a question at once was never seen busy for 4 s, so the message was
+// marked "not confirmed" and the pane held every later one.
+describe('pasteAndConfirm: other evidence that the message was taken', () => {
+  const withClock = (deps, state) => ({ ...deps, now: () => state.t })
+
+  it('a fast turn its hooks opened and ended after Enter: confirmed, one Enter', async () => {
+    const { state, deps } = harness((s) => {
+      if (s.submits && s.started == null) s.started = s.t
+      s.busy = s.started != null && s.t - s.started < 1000
+      if (s.started != null && !s.busy && s.completed == null) s.completed = s.t
+      s.screen = s.submits ? `> ${MSG}\n● Done.\n> ` : `> ${MSG}`
+    })
+    const taken = (id, at) => state.completed != null && state.completed >= at
+    expect(await pasteAndConfirm('p', MSG, { ...withClock(deps, state), taken })).toBe('confirmed')
+    expect(state.submits).toBe(1)
+    expect(state.pastes).toBe(1)
+  })
+
+  it('a question asked at once (its hooks: approval since Enter): confirmed', async () => {
+    const { state, deps } = harness((s) => {
+      if (s.submits && s.asked == null) s.asked = s.t
+    })
+    const taken = (id, at) => state.asked != null && state.asked >= at
+    expect(await pasteAndConfirm('p', MSG, { ...withClock(deps, state), taken })).toBe('confirmed')
+    expect(state.submits).toBe(1)
+  })
+
+  it('its hooks tell a moment late (after the quiet wait): still confirmed, no second Enter', async () => {
+    const { state, deps } = harness((s) => {
+      if (s.submits && s.enterAt == null) s.enterAt = s.t
+      s.screen = '● Done.'
+      if (s.enterAt != null && s.t - s.enterAt >= 3000) s.completed = s.enterAt + 800
+    })
+    const taken = (id, at) => state.completed != null && state.completed >= at
+    expect(await pasteAndConfirm('p', MSG, { ...withClock(deps, state), taken })).toBe('confirmed')
+    expect(state.submits).toBe(1)
+  })
+
+  it('its input held the text before Enter and is empty after: confirmed, though the text shows above', async () => {
+    const { state, deps } = harness((s) => {
+      // The transcript shows the message it just took, at the bottom.
+      s.screen = `> ${MSG}\n● Done.`
+    })
+    const pane = deps.getPane()
+    pane.agentObservation = () => ({ input: state.submits ? 'empty' : 'draft' })
+    expect(await pasteAndConfirm('p', MSG, deps)).toBe('confirmed')
+    expect(state.submits).toBe(1)
+  })
+
+  it('an input empty already before Enter proves nothing (the paste may not have landed)', async () => {
+    const { state, deps } = harness((s) => {
+      s.screen = '● Done.'
+    })
+    deps.getPane().agentObservation = () => ({ input: 'empty' })
+    expect(await pasteAndConfirm('p', MSG, deps)).toBe('unconfirmed')
+    expect(state.submits).toBe(1)
+  })
+
+  it('typed while it was working: hooks of the running turn are no evidence', async () => {
+    // Its running turn's hooks, right after the first Enter.
+    const taken = () => state.t < 1500
+    const { state, deps } = harness((s) => {
+      s.busy = s.submits === 0 // working when Enter is pressed, then quiet
+      s.screen = '› ' + MSG // still in its input
+    })
+    state.busy = true
+    expect(await pasteAndConfirm('p', MSG, { ...withClock(deps, state), taken })).toBe('unconfirmed')
+    expect(state.submits).toBe(3)
+    expect(state.pastes).toBe(1)
+  })
+})
