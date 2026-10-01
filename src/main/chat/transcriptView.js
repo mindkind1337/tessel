@@ -412,6 +412,44 @@ export function viewEvents(agent, lines, sessionId, limits = HISTORY_LIMITS) {
   return claudeHistoryEvents(lines, limits)
 }
 
+// The context the agent's latest answer read, for the chat view's ring
+// (after Orca's transcript context usage, MIT, Copyright (c) 2026 Lovecast
+// Inc.): Claude Code / OpenClaude: the newest main-thread answer's usage
+// (its input, cache writes and reads; the file never says the window);
+// Codex: its newest token_count (the last request's total, in the model's
+// window). -> { type: 'contextUsage', usedTokens, windowTokens } | null
+const SCAN_FOR_USAGE = 400
+export function contextUsageEvent(agent, lines) {
+  const list = Array.isArray(lines) ? lines : []
+  const n = (v) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.round(v) : 0)
+  const stop = Math.max(0, list.length - SCAN_FOR_USAGE)
+  for (let i = list.length - 1; i >= stop; i--) {
+    const line = list[i]
+    if (typeof line !== 'string') continue
+    if (agent === 'codex') {
+      if (!line.includes('"token_count"')) continue
+      const o = parse(line)
+      const p = obj(o && o.payload)
+      const info = obj(p && p.info)
+      if (!o || o.type !== 'event_msg' || p.type !== 'token_count' || !info) continue
+      const last = obj(info.last_token_usage)
+      const used = last ? n(last.total_tokens) || n(last.input_tokens) + n(last.output_tokens) : 0
+      if (!used) continue
+      return { type: 'contextUsage', usedTokens: used, windowTokens: n(info.model_context_window) || null }
+    }
+    if (agent !== 'claude' && agent !== 'openclaude') return null
+    if (!line.includes('"usage"')) continue
+    const o = parse(line)
+    if (!o || o.type !== 'assistant' || o.isSidechain === true) continue
+    const u = obj(obj(o.message)?.usage)
+    if (!u) continue
+    const used = n(u.input_tokens) + n(u.cache_creation_input_tokens) + n(u.cache_read_input_tokens)
+    if (!used) continue
+    return { type: 'contextUsage', usedTokens: used, windowTokens: null }
+  }
+  return null
+}
+
 function eventsOf(agent, sessionId, tail, limits) {
   let events = viewEvents(agent, tail.lines(), sessionId, limits)
   let truncated = tail.cut()
@@ -419,6 +457,8 @@ function eventsOf(agent, sessionId, tail, limits) {
     events = events.slice(-limits.events)
     truncated = true
   }
+  const usage = contextUsageEvent(agent, tail.lines())
+  if (usage) events = [...events, usage]
   return { events, truncated }
 }
 

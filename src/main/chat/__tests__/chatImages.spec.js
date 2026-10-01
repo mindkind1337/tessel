@@ -146,6 +146,36 @@ describe('taking images for a message', () => {
     store.releasePane('p1')
     expect(files()).toHaveLength(1)
   })
+  it('hands a terminal chat view its own pane’s copies as paths, once, and removes them later', () => {
+    vi.useFakeTimers()
+    try {
+      const a = save()
+      const other = save('p2')
+      expect(store.handOff('p1', [other]).ok).toBe(false)
+      const r = store.handOff('p1', [a])
+      expect(r.ok).toBe(true)
+      expect(r.paths).toHaveLength(1)
+      expect(r.paths[0].startsWith(dir)).toBe(true)
+      expect(fs.existsSync(r.paths[0])).toBe(true)
+      expect(store.handOff('p1', [a]).ok).toBe(false)
+      vi.advanceTimersByTime(10 * 60 * 1000)
+      expect(fs.existsSync(r.paths[0])).toBe(false)
+      expect(store.has(a)).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+  it('chat:imagePaths takes ids only', async () => {
+    const handlers = {}
+    store.register({ handle: (name, fn) => (handlers[name] = fn) }, (id) => typeof id === 'string' && /^p\d$/.test(id))
+    const a = save()
+    expect(handlers['chat:imagePaths'](null, { paneId: 'p1', ids: ['C:\\Windows\\win.ini'] }).ok).toBe(false)
+    expect(handlers['chat:imagePaths'](null, { paneId: '../x', ids: [a] }).ok).toBe(false)
+    expect(handlers['chat:imagePaths'](null, { paneId: 'p1', ids: [] }).ok).toBe(false)
+    const r = handlers['chat:imagePaths'](null, { paneId: 'p1', ids: [a] })
+    expect(r.ok).toBe(true)
+    expect(r.paths[0].startsWith(dir)).toBe(true)
+  })
   it('sweeps leftovers of an earlier run after a day', () => {
     fs.mkdirSync(dir, { recursive: true })
     const old = join(dir, 'img_old.png')

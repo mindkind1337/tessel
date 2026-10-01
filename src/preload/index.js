@@ -416,6 +416,9 @@ const api = {
     imageSave: (opts) => ipcRenderer.invoke('chat:imageSave', opts),
     imageImport: (opts) => ipcRenderer.invoke('chat:imageImport', opts),
     imageDiscard: (opts) => ipcRenderer.invoke('chat:imageDiscard', opts),
+    // A terminal agent's chat view: its images' files (Tessel's copies) for
+    // the agent's input -> { ok, paths }.
+    imagePaths: (opts) => ipcRenderer.invoke('chat:imagePaths', opts),
     onEvent: (cb) => subscribe('chat:event', cb)
   },
   // Search in what was said in the agents' conversations (src/main/sessionSearch).

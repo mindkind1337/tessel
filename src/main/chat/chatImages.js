@@ -8,7 +8,9 @@
 //   the size cap, an image by its bytes; then copied.
 // png, jpeg, gif and webp only; 10 MB each; 10 per message.
 // A copy is removed once the turn that sent it ends, when its chip is removed
-// or its pane closes, and (left by an earlier run) after a day.
+// or its pane closes, and (left by an earlier run) after a day. A terminal
+// agent's chat view gets the paths of its copies (chat:imagePaths), to paste
+// into the agent's input; those are removed ten minutes later.
 import fs from 'fs'
 import os from 'os'
 import { basename, extname, isAbsolute, join } from 'path'
@@ -20,6 +22,8 @@ export const CHAT_IMAGE_DIR = join(os.tmpdir(), 'tessel-paste', 'chat')
 export const IMAGE_ID = /^img_[0-9a-f]{24}$/
 const EXT = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp' }
 const DAY = 24 * 60 * 60 * 1000
+// A copy handed to a terminal agent is removed this long after.
+export const HANDOFF_KEEP_MS = 10 * 60 * 1000
 
 // The image type from its first bytes, or null (never from a name).
 export function sniffImage(buf) {
@@ -237,6 +241,27 @@ export function createChatImages(deps = {}) {
     return { ok: true, images: out }
   }
 
+  // A terminal agent's chat view (its composer types into the terminal): the
+  // pane's images for a message as the files of Tessel's own copies, whose
+  // paths are pasted into the agent's input (Claude Code and Codex attach a
+  // pasted image path). Taken once like a chat message's; the agent reads a
+  // pasted image at once (Claude) or when the message is submitted (Codex),
+  // so each copy is removed a while later (no turn end tells it here).
+  const handOffTimers = new Map()
+  function handOff(paneId, ids) {
+    const r = take(paneId, ids)
+    if (!r.ok) return r
+    for (const img of r.images) {
+      const timer = setTimeout(() => {
+        handOffTimers.delete(img.id)
+        release([img.id])
+      }, limits.handOffKeepMs ?? HANDOFF_KEEP_MS)
+      if (timer && typeof timer.unref === 'function') timer.unref()
+      handOffTimers.set(img.id, timer)
+    }
+    return { ok: true, paths: r.images.map((img) => img.file) }
+  }
+
   // What an adapter gets for one image: its file, type, name, and its data
   // read when needed (base64; for Claude a large png/jpeg is shrunk).
   function forAgent(img) {
@@ -333,6 +358,11 @@ export function createChatImages(deps = {}) {
       if (!validPaneId(paneId)) return notImage()
       return importFile({ paneId, path, thumb: thumb === true })
     })
+    ipcMain.handle('chat:imagePaths', (_e, q) => {
+      const { paneId, ids } = obj(q)
+      if (!validPaneId(paneId) || !Array.isArray(ids) || !ids.length || ids.some((id) => typeof id !== 'string' || !IMAGE_ID.test(id))) return notImage()
+      return handOff(paneId, ids)
+    })
     ipcMain.handle('chat:imageDiscard', (_e, q) => {
       const { paneId, id } = obj(q)
       if (!validPaneId(paneId) || typeof id !== 'string' || !IMAGE_ID.test(id)) return { ok: false }
@@ -340,5 +370,5 @@ export function createChatImages(deps = {}) {
     })
   }
 
-  return { saveBytes, importFile, take, forAgent, release, discard, releasePane, sweep, register, publicImage, has: (id) => images.has(id) }
+  return { saveBytes, importFile, take, handOff, forAgent, release, discard, releasePane, sweep, register, publicImage, has: (id) => images.has(id) }
 }

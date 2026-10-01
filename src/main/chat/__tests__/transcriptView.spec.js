@@ -5,6 +5,7 @@ import fs from 'fs'
 import os from 'os'
 import { join } from 'path'
 import {
+  contextUsageEvent,
   createTail,
   createTranscriptViews,
   reportedTranscript,
@@ -324,6 +325,31 @@ describe('transcript view: Claude Code and Codex (the pane account folder)', () 
     const none = createTranscriptViews({ send: vi.fn(), roots: () => roots, homes: async () => null, sessionsDir: () => sessions })
     expect(await none.openFromWindow({ agent: 'claude', sessionId: CL_ID, paneId: 'pane-7' })).toEqual({ ok: false, code: 'missing' })
     views.closeAll()
+  })
+})
+
+describe('transcript view: the context the latest answer read', () => {
+  const str = (r) => JSON.stringify(r)
+  it('Claude Code / OpenClaude: the newest main-thread answer (input + cache), not a sub-agent', () => {
+    const file = [
+      str({ type: 'assistant', message: { usage: { input_tokens: 10, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } } }),
+      str({ type: 'assistant', message: { usage: { input_tokens: 5, cache_creation_input_tokens: 100, cache_read_input_tokens: 2000, output_tokens: 50 } } }),
+      str({ type: 'assistant', isSidechain: true, message: { usage: { input_tokens: 99999 } } }),
+      str({ type: 'user', message: { content: 'usage' } })
+    ]
+    expect(contextUsageEvent('claude', file)).toEqual({ type: 'contextUsage', usedTokens: 2105, windowTokens: null })
+    expect(contextUsageEvent('openclaude', file).usedTokens).toBe(2105)
+    expect(contextUsageEvent('claude', [str({ type: 'user', message: { content: 'x' } })])).toBeNull()
+    expect(contextUsageEvent('grok', file)).toBeNull()
+  })
+  it('Codex: its newest token_count, in the model window', () => {
+    const file = [
+      str({ type: 'event_msg', payload: { type: 'token_count', info: { last_token_usage: { total_tokens: 1000 }, model_context_window: 272000 } } }),
+      str({ type: 'event_msg', payload: { type: 'token_count', info: { last_token_usage: { input_tokens: 3000, output_tokens: 200 }, model_context_window: 272000 } } }),
+      str({ type: 'event_msg', payload: { type: 'token_count', info: null } }),
+      'not json "token_count"'
+    ]
+    expect(contextUsageEvent('codex', file)).toEqual({ type: 'contextUsage', usedTokens: 3200, windowTokens: 272000 })
   })
 })
 
