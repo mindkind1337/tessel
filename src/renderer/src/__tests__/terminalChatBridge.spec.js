@@ -8,6 +8,8 @@ import {
   answerKeyGroups,
   canShowChatView,
   composerAgent,
+  currentAsk,
+  liveAskFromState,
   groupBytes,
   mergePendingSends,
   pendingAskFromEvents,
@@ -114,5 +116,37 @@ describe('keys', () => {
     vi.advanceTimersByTime(5000)
     expect(write).toHaveBeenCalledTimes(2)
     vi.useRealTimers()
+  })
+})
+
+describe('the question from the hook (shown at once)', () => {
+  const hookAsk = { toolId: 'call_1', toolName: 'request_user_input', questions: [{ question: 'Red or blue?', options: [{ label: 'Red' }, { label: 'Blue' }] }] }
+  it('is preferred over the file, with its tool id as the card id', () => {
+    const events = [
+      { type: 'user', text: 'go' },
+      { type: 'tool', id: 'call_1', name: 'request_user_input', status: 'running', input: { questions: [{ question: 'Old text', options: [{ label: 'X' }] }] } }
+    ]
+    const live = currentAsk(hookAsk, events)
+    expect(live.id).toBe('call_1')
+    expect(live.prompt.questions[0].question).toBe('Red or blue?')
+    expect(live.prompt.questions[0].options.map((o) => o.label)).toEqual(['Red', 'Blue'])
+    expect(currentAsk(hookAsk, []).id).toBe('call_1')
+  })
+  it('falls back to the file without it, and to "answer in the terminal" without either', () => {
+    const events = [{ type: 'tool', id: 'toolu_1', name: 'AskUserQuestion', status: 'running', input: ask }]
+    expect(currentAsk(null, events)).toMatchObject({ id: 'toolu_1' })
+    expect(currentAsk({ toolName: 'Bash', questions: hookAsk.questions }, events)).toMatchObject({ id: 'toolu_1' })
+    expect(currentAsk(null, [])).toBeNull()
+    expect(waitingCard({ input: true }, currentAsk(null, []))).toEqual({ kind: 'terminal' })
+    expect(waitingCard({ input: true }, currentAsk(hookAsk, []))).toMatchObject({ kind: 'question', ask: { id: 'call_1' } })
+  })
+  it('a hook question without a tool id still shows; one with no question does not', () => {
+    expect(liveAskFromState({ toolName: 'AskUserQuestion', questions: hookAsk.questions })).toMatchObject({ id: 'live-ask' })
+    expect(liveAskFromState({ toolName: 'AskUserQuestion', questions: [] })).toBeNull()
+    expect(liveAskFromState(null)).toBeNull()
+  })
+  it('its answer uses the same stepped keys as the file question', () => {
+    const live = currentAsk(hookAsk, [])
+    expect(answerKeyGroups('codex', live.prompt, [{ indices: [1] }])).toEqual([{ raw: '2' }])
   })
 })

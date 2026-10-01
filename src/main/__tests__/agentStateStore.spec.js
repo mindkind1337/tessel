@@ -300,7 +300,7 @@ describe('local agent status spool and snapshots', () => {
     const store = make()
     await store.register(registered())
     put('{bad')
-    put('x'.repeat(8193))
+    put('x'.repeat(32 * 1024 + 1))
     put(event('Stop', { id: '../escape' }))
     put(event('Stop', { at: tick + 10000 }))
     put(event())
@@ -569,5 +569,69 @@ describe('a finished turn with no later event', () => {
     tick += 1000
     await store.observe(paneId, token, 'ScreenInterrupted')
     expect(store.snapshot()[paneId]).toMatchObject({ state: 'idle', reason: 'interrupted' })
+  })
+})
+
+describe('the question an agent asks (live card)', () => {
+  const ask = { questions: [{ question: 'Red or blue?', header: 'Color', options: [{ label: 'Red' }, { label: 'Blue' }] }] }
+  const asked = (extra = {}) => event('PreToolUse', { toolName: 'request_user_input', toolId: 'call_1', ask, ...extra })
+  it('publishes it while the agent waits, never saves it, and forgets it on the answer', async () => {
+    const store = make()
+    await store.register(registered())
+    put(event())
+    put(asked({ at: tick + 1 }))
+    tick += 10
+    const result = await store.scan()
+    expect(result.states[paneId]).toMatchObject({ state: 'approval', reason: 'input', ask: { toolId: 'call_1', toolName: 'request_user_input', questions: ask.questions } })
+    expect(fs.readFileSync(stateFile(), 'utf8')).not.toContain('Red or blue')
+    put(event('PostToolUse', { toolName: 'request_user_input', toolId: 'call_1', at: tick }))
+    tick += 10
+    const after = await store.scan()
+    expect(after.states[paneId].state).toBe('working')
+    expect(after.states[paneId].ask).toBeUndefined()
+  })
+  it('forgets it when the turn ends another way (interrupt, screen, exit)', async () => {
+    const store = make()
+    await store.register(registered())
+    put(event())
+    put(asked({ at: tick + 1 }))
+    tick += 10
+    await store.scan()
+    expect(store.snapshot()[paneId].ask).toBeTruthy()
+    tick += 10
+    await store.observe(paneId, token, 'ScreenInterrupted')
+    expect(store.snapshot()[paneId].ask).toBeUndefined()
+    // A later approval for something else does not bring it back.
+    put(event('PermissionRequest', { toolName: 'Bash', toolId: 'call_2', at: tick }))
+    tick += 10
+    await store.scan()
+    expect(store.snapshot()[paneId].ask).toBeUndefined()
+  })
+  it('checks the file again: a question not in its canonical shape, too large, or of another tool is not shown', async () => {
+    const store = make()
+    await store.register(registered())
+    put(event())
+    put(asked({ at: tick + 1, ask: { questions: [{ ...ask.questions[0], id: 'color', secret: 'SECRET' }] } }))
+    tick += 10
+    const result = await store.scan()
+    // The event still counts (the pane waits), without its question.
+    expect(result.states[paneId]).toMatchObject({ state: 'approval', reason: 'input' })
+    expect(result.states[paneId].ask).toBeUndefined()
+    put(event('PreToolUse', { toolName: 'Bash', toolId: 'call_3', ask, at: tick }))
+    put(asked({ at: tick + 1, toolId: 'call_4', ask: { questions: Array.from({ length: 5 }, () => ask.questions[0]) } }))
+    tick += 10
+    const again = await store.scan()
+    expect(again.states[paneId].ask).toBeUndefined()
+    expect(fs.readFileSync(stateFile(), 'utf8')).not.toContain('SECRET')
+  })
+  it('reads a question event up to its 16 KB question, within the event limit', async () => {
+    const store = make()
+    await store.register(registered())
+    const big = { question: 'x'.repeat(1000), options: Array.from({ length: 8 }, () => ({ label: 'l'.repeat(200), description: 'd'.repeat(500) })) }
+    put(event())
+    put(asked({ at: tick + 1, ask: { questions: [big, big] } }))
+    tick += 10
+    const result = await store.scan()
+    expect(result.states[paneId].ask.questions).toHaveLength(2)
   })
 })

@@ -8,8 +8,10 @@ import {
   validateAgentState,
   STATUS_PROVIDERS
 } from '../shared/agentStateModel'
+import { nextAsk, validAsk } from '../shared/agentAsk'
 
-const MAX_EVENT = 8192
+// A question's card (agentAsk.js) can take up to 16 KB of an event.
+const MAX_EVENT = 32 * 1024
 const MAX_SNAPSHOT = 4 * 1024 * 1024
 const MAX_PANES = 128
 const MAX_SCAN = 128
@@ -75,7 +77,9 @@ const FIELDS = new Set([
   'startSource',
   'continuing',
   // A lead Stop's list of the background work still running (ids only).
-  'background'
+  'background',
+  // The question an agent asks you (agentAsk.js): its structure only.
+  'ask'
 ])
 const clone = (value) => JSON.parse(JSON.stringify(value))
 const record = (value) => value && typeof value === 'object' && !Array.isArray(value)
@@ -199,7 +203,12 @@ function hookEvent(value, now) {
       !value.background.every(validId))
   )
     return null
-  return { ...value, ...(value.background !== undefined ? { background: [...value.background] } : {}) }
+  // Its question, checked again (never trusted from the file): exactly
+  // what agentAsk.js sanitizeAsk makes of it, else the event without it.
+  const rest = { ...value }
+  delete rest.ask
+  const ask = validAsk(value)
+  return { ...rest, ...(ask ? { ask } : {}), ...(value.background !== undefined ? { background: [...value.background] } : {}) }
 }
 
 /** One app-owned consumer; callers schedule scans, never one timer per pane. */
@@ -229,11 +238,16 @@ export function createAgentStateStore({ dir, now = Date.now, onChange = () => {}
   }
   function publicSnapshot() {
     const result = {}
-    for (const [paneId, item] of [...active].sort(([a], [b]) => a.localeCompare(b)))
+    for (const [paneId, item] of [...active].sort(([a], [b]) => a.localeCompare(b))) {
+      const state = publicAgentState(item.state, clock())
+      // A question is shown only while its agent waits (approval): any other
+      // state (answered, interrupted, ended, stale) forgets it for good.
+      if (item.ask && state.state !== 'approval') item.ask = null
       Object.defineProperty(result, paneId, {
-        value: clone(publicAgentState(item.state, clock())),
+        value: clone(item.ask ? { ...state, ask: item.ask } : state),
         enumerable: true
       })
+    }
     return result
   }
   function publish() {
@@ -467,7 +481,12 @@ export function createAgentStateStore({ dir, now = Date.now, onChange = () => {}
         continue
       }
       const before = current.state
-      let next = reduceAgentState(before, event, clock())
+      // The reducer keeps no question: it only follows the pane (below).
+      const plain = { ...event }
+      delete plain.ask
+      let next = reduceAgentState(before, plain, clock())
+      // Not kept in state.json: a question lives only in memory, while asked.
+      if (next !== before) current.ask = nextAsk(current.ask, event)
       if (event.at < bootAt && next !== before) {
         // Historical evidence may revise an actor's state, but a later screen
         // observation cannot confirm that newly recovered state on its behalf.

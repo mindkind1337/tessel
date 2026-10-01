@@ -54,6 +54,22 @@ export function pendingAskFromEvents(events) {
   return pending
 }
 
+// The question the agent's hook says it waits on (the pane's state, from
+// src/shared/agentAsk.js): shown at once, before its file has it (Codex writes
+// its rollout late). Its tool id is the file's tool call id, so the card stays
+// the same one when the file catches up. -> { id, prompt } | null
+export function liveAskFromState(ask) {
+  if (!ask || typeof ask !== 'object' || !QUESTION_TOOLS.has(ask.toolName)) return null
+  const prompt = parseAskFromToolInput(ask.toolName, { questions: ask.questions })
+  return prompt ? { id: typeof ask.toolId === 'string' && ask.toolId ? ask.toolId : 'live-ask', prompt } : null
+}
+
+// The question the card shows: the hook's (live) first, else the one the
+// file shows unanswered.
+export function currentAsk(hookAsk, events) {
+  return liveAskFromState(hookAsk) || pendingAskFromEvents(events)
+}
+
 // Tessel's own lines typed into the agent (team reminders, task notes: they
 // start with "[Tessel]") are shown as Tessel's messages, not as yours.
 export function tagTesselTurns(events) {
@@ -123,9 +139,10 @@ export function stepKeys(groups, write, { setTimer = setTimeout, clearTimer = cl
   }
 }
 
-// What the card shows while the agent waits for you: a question read from its
-// file (answered here), else its approval prompt (Allow / Deny here), else a
-// question the file does not show yet (answer it in the terminal).
+// What the card shows while the agent waits for you: its question, from its
+// hook or its file (answered here), else its approval prompt (Allow / Deny
+// here), else a question neither gives the options of (answer it in the
+// terminal).
 // state: { approval, input } from the pane (input: the hooks say a question
 // tool waits). -> { kind: 'question', ask } | { kind: 'approval' } |
 // { kind: 'terminal' } | null

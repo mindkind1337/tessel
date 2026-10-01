@@ -680,12 +680,14 @@ function termFocus() {
   term.focus()
 }
 // What the chat view shows of the agent: working, waiting for an approval,
-// a question (its hooks say a question tool waits).
+// a question (its hooks say a question tool waits; ask: the question itself,
+// only while it waits).
 const chatWorking = computed(() => shownState.value === 'working')
 const chatWaiting = computed(() => {
   const o = observedState.value
   const input = !!(o && o.state === 'approval' && o.reason === 'input')
-  return { approval: asksApproval.value || shownState.value === 'approval' || input, input }
+  const ask = o && o.state === 'approval' && o.ask ? o.ask : null
+  return { approval: asksApproval.value || shownState.value === 'approval' || input, input, ask }
 })
 const chatDisabledReason = computed(() =>
   props.node.sleeping ? t('pane.chatView.asleep', 'Asleep: it wakes up when you open this pane, then you can write to it.') : ''
