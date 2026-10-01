@@ -5,7 +5,7 @@
 // reads the agent's session file (src/main/chat/transcriptView.js) and sends
 // it again while the agent writes; the chat's list shows it.
 // Read-only (Grok, OMP): typing stays in the terminal, no composer.
-// interactive (Claude Code, OpenClaude, Codex, Cursor: the pane's chat view): a
+// interactive (Claude Code, OpenClaude, Codex, Cursor, Antigravity: the pane's chat view): a
 // composer whose messages are typed into the terminal (sendMessage, Tessel's
 // delivery), Stop (Escape), and the card of what the agent waits for: its
 // question (answered with its selector's keys) or its approval (Allow / Deny).
@@ -65,6 +65,7 @@ import {
   KEY_CTRL_C,
   KEY_ESCAPE,
   answerKeyGroups,
+  askInTerminalFromEvents,
   bridgeSlashCommands,
   cardKeys,
   commandDelivery,
@@ -706,7 +707,9 @@ onBeforeUnmount(() => clearTimeout(answeredApprovalTimer))
 const card = computed(() => {
   if (!props.interactive || props.disabledReason) return null
   const w = props.waiting || {}
-  const shown = waitingCard({ approval: !!w.approval, input: !!w.input, working: props.working }, ask.value)
+  // Antigravity's question (its own selector) shows from its file: answered in its terminal.
+  const input = !!w.input || askInTerminalFromEvents(props.agent, fileEvents.value)
+  const shown = waitingCard({ approval: !!w.approval, input, working: props.working }, ask.value)
   if (shown && shown.kind === 'approval' && answeredApproval.value !== null && answeredApproval.value === approvalKey()) return null
   return shown
 })

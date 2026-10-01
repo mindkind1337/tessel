@@ -24,7 +24,7 @@ import { t } from '../i18n'
 
 // The agents whose terminal pane has a chat view (their transcript is read in
 // src/main/chat/transcriptView.js). OpenCode keeps its own chat pane.
-export const CHAT_VIEW_AGENTS = ['claude', 'openclaude', 'codex', 'cursor']
+export const CHAT_VIEW_AGENTS = ['claude', 'openclaude', 'codex', 'cursor', 'antigravity']
 
 // The keys the cards send: an approval's first option (Allow), and Escape
 // (Deny, cancel a question, Stop a turn), as Orca's cards do.
@@ -37,9 +37,13 @@ export const KEY_ESCAPE = '\x1b'
 export const KEY_CTRL_C = '\x03'
 export const INTERRUPT_GAP_MS = 3000
 
+// Antigravity (agy): Escape halts its turn (Ctrl+C would quit it), "y" and
+// "n" answer its approval prompt (its confirm.yes / confirm.no keys).
 // -> { stop, allow, deny }: the keys Stop, Allow and Deny type into the agent.
 export function cardKeys(agentId) {
-  return agentId === 'cursor' ? { stop: KEY_CTRL_C, allow: 'y', deny: KEY_CTRL_C } : { stop: KEY_ESCAPE, allow: KEY_ALLOW, deny: KEY_ESCAPE }
+  if (agentId === 'cursor') return { stop: KEY_CTRL_C, allow: 'y', deny: KEY_CTRL_C }
+  if (agentId === 'antigravity') return { stop: KEY_ESCAPE, allow: 'y', deny: 'n' }
+  return { stop: KEY_ESCAPE, allow: KEY_ALLOW, deny: KEY_ESCAPE }
 }
 
 // May these keys be typed now? Never a Ctrl+C within INTERRUPT_GAP_MS of the
@@ -56,13 +60,16 @@ export function canShowChatView(node) {
 
 // The composer's slash commands and question keys follow Claude Code's for
 // OpenClaude (its fork).
-export const composerAgent = (agentId) => (agentId === 'codex' || agentId === 'cursor' ? agentId : 'claude')
+export const composerAgent = (agentId) => (agentId === 'codex' || agentId === 'cursor' || agentId === 'antigravity' ? agentId : 'claude')
 
 // Agents that change their model in their own picker (typed into the
 // terminal, then shown there), not in the chat view's.
 export const ownModelPicker = (agentId) => agentId === 'codex' || agentId === 'cursor'
+// Antigravity is not one of them: its "/model <id>" switches at once, so the
+// chat view's own picker types it (agentSessionOptions.js).
 // Agents whose permission mode the chat view's picker changes (Cursor's
-// Shift+Tab cycles its Agent / Plan / Ask modes instead: none).
+// Shift+Tab cycles its Agent / Plan / Ask modes instead: none; Antigravity
+// changes its permissions in its own /permissions panel).
 export const hasModePicker = (agentId) => agentId === 'claude' || agentId === 'openclaude' || agentId === 'codex'
 
 const QUESTION_TOOLS = new Set(['AskUserQuestion', 'ask_user_question', 'askUserQuestion', 'request_user_input'])
@@ -99,6 +106,21 @@ export function liveAskFromState(ask) {
 // file shows unanswered.
 export function currentAsk(hookAsk, events) {
   return liveAskFromState(hookAsk) || pendingAskFromEvents(events)
+}
+
+// Antigravity asks with its ask_question tool, a selector of its own answered
+// in its terminal: true while its file shows such a call with no result yet
+// (and no prompt of yours or interruption since).
+export function askInTerminalFromEvents(agentId, events) {
+  if (agentId !== 'antigravity') return false
+  let open = null
+  for (const e of Array.isArray(events) ? events : []) {
+    if (!e || typeof e !== 'object') continue
+    if ((e.type === 'user' && e.origin !== 'team') || e.type === 'turnEnd') open = null
+    else if (e.type === 'tool' && e.name === 'ask_question' && e.status === 'running') open = String(e.id)
+    else if ((e.type === 'toolResult' || (e.type === 'tool' && !e.name)) && open !== null && String(e.id) === open) open = null
+  }
+  return open !== null
 }
 
 // Tessel's own lines typed into the agent (team reminders, task notes: they
@@ -150,8 +172,8 @@ export function mergePendingSends(events, pending) {
 // differs from Claude Code's), after Orca's buildAskAnswerKeys /
 // buildCodexAskAnswerKeys. -> [{ raw } | { text }]
 export function answerKeyGroups(agentId, prompt, selections) {
-  // Cursor's questions are answered in its terminal (no card here).
-  if (agentId === 'cursor' || !prompt || !hasAskAnswer(prompt, selections)) return []
+  // Cursor's and Antigravity's questions are answered in their terminal.
+  if (agentId === 'cursor' || agentId === 'antigravity' || !prompt || !hasAskAnswer(prompt, selections)) return []
   return composerAgent(agentId) === 'codex' ? buildCodexAskAnswerKeys(prompt, selections) : buildAskAnswerKeys(prompt, selections)
 }
 
@@ -203,7 +225,7 @@ export function commandDelivery(agentId, text, imageCount = 0) {
   const body = String(text || '').trim()
   if (imageCount > 0 || !/^\/[A-Za-z][\w:.-]*(?:\s|$)/.test(body) || /[\r\n]/.test(body)) return null
   const agent = composerAgent(agentId)
-  return agent === 'codex' || agent === 'cursor' ? 'type' : 'paste'
+  return agent === 'codex' || agent === 'cursor' || agent === 'antigravity' ? 'type' : 'paste'
 }
 
 // The image files the composer may name to the agent: Tessel's own copies
@@ -231,11 +253,32 @@ const CURSOR_COMMANDS = [
   { name: 'help', get description() { return t('chat.orca.copy.show_available_commands', 'Show available commands') } }
 ]
 
+// Antigravity CLI's own commands (antigravity.google/docs/cli/reference): the
+// ones that make sense from a chat. /model opens the chat view's picker.
+const ANTIGRAVITY_COMMANDS = [
+  { name: 'model', get description() { return t('chat.orca.catalog.model', 'Choose the model') } },
+  { name: 'planning', get description() { return t('chat.orca.agyCommands.planning', 'Turn on planning mode (a plan before the work)') } },
+  { name: 'fast', get description() { return t('chat.orca.agyCommands.fast', 'Turn on fast mode (no plan first)') } },
+  { name: 'clear', get description() { return t('chat.orca.copy.start_a_new_chat', 'Start a new chat') } },
+  { name: 'resume', get description() { return t('chat.orca.copy.resume_a_saved_chat', 'Resume a saved chat') } },
+  { name: 'fork', get description() { return t('chat.orca.copy.fork_the_current_chat', 'Fork the current chat') } },
+  { name: 'rewind', get description() { return t('chat.orca.cursorCommands.rewind', 'Go back to an earlier message') } },
+  { name: 'rename', get description() { return t('chat.orca.copy.rename_the_current_thread', 'Rename the current thread') } },
+  { name: 'btw', get description() { return t('chat.orca.copy.start_a_side_conversation', 'Start a side conversation') } },
+  { name: 'context', get description() { return t('chat.orca.agyCommands.context', 'Show the context use (in its terminal)') } },
+  { name: 'add-dir', get description() { return t('chat.orca.agyCommands.addDir', 'Add a folder to its workspace') } },
+  { name: 'skills', get description() { return t('chat.orca.copy.manage_and_use_skills', 'Manage and use skills') } },
+  { name: 'mcp', get description() { return t('chat.orca.copy.list_configured_mcp_tools', 'List configured MCP tools') } },
+  { name: 'usage', get description() { return t('chat.orca.agyCommands.usage', 'Show its model quota use') } },
+  { name: 'help', get description() { return t('chat.orca.copy.show_available_commands', 'Show available commands') } }
+]
+
 // The "/" menu: the agent's own commands (its TUI runs them), with model and
 // effort first where the chat view offers their pickers.
 export function bridgeSlashCommands(agentId, { options = [] } = {}) {
   const agent = composerAgent(agentId)
   if (agent === 'cursor') return CURSOR_COMMANDS.map((c) => ({ name: c.name, kind: 'command', description: c.description }))
+  if (agent === 'antigravity') return ANTIGRAVITY_COMMANDS.map((c) => ({ name: c.name, kind: 'command', description: c.description }))
   const own = getAgentSlashCommands(agent)
   const extra = []
   if (agent !== 'codex') {

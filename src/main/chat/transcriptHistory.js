@@ -63,8 +63,10 @@ const withImages = imagePlaceholders
 function toolSummary(input) {
   const i = obj(input) || {}
   const pick = i.command ?? i.cmd ?? i.file_path ?? i.path ?? i.pattern ?? i.url ?? i.query ?? i.description ?? i.prompt
-  const s = typeof pick === 'string' ? pick : Array.isArray(pick) ? pick.join(' ') : ''
-  const one = s.replace(/\s+/g, ' ').trim()
+  return oneLineSummary(typeof pick === 'string' ? pick : Array.isArray(pick) ? pick.join(' ') : '')
+}
+function oneLineSummary(s) {
+  const one = String(s).replace(/\s+/g, ' ').trim()
   return one.length > 200 ? `${one.slice(0, 199)}…` : one
 }
 
@@ -225,7 +227,8 @@ export function createBuilder(limits) {
       }
       messages.set(k, push({ type: kind, messageId: `hist-${key}`, text: text(body) }, ts)) // i18n-ignore id
     },
-    tool(id, name, input, ts) {
+    // summary: the call's own one-line label, when its file gives one.
+    tool(id, name, input, ts, summary) {
       b.work(ts)
       let value = input
       if (typeof value === 'string') {
@@ -237,7 +240,7 @@ export function createBuilder(limits) {
       }
       openTools.add(id)
       seenTools.add(id)
-      push({ type: 'tool', id, name: String(name || ''), summary: toolSummary(value), input: clipDeep(value ?? {}), status: 'running' }, ts)
+      push({ type: 'tool', id, name: String(name || ''), summary: typeof summary === 'string' && summary.trim() ? oneLineSummary(summary) : toolSummary(value), input: clipDeep(value ?? {}), status: 'running' }, ts)
     },
     // The calls still open are over (a file that never writes their results:
     // the agent went on after them).

@@ -402,7 +402,9 @@ export const ANTIGRAVITY_SESSION_OPTION_CATALOG = {
     launchArgs: (value) => ['--model', String(value)],
     agentArgsOverride: (tokens) => hasFlag(tokens, ['--model']),
     removeAgentArgs: (tokens) => removeAgentArgOption(tokens, ['--model']),
-    midSession: { kind: 'agent-picker', command: '/model' }
+    // "/model <id>" switches at once (by id, name or label) and keeps it as
+    // its default; a bare "/model" opens its own picker.
+    midSession: { kind: 'command', build: (value) => `/model ${String(value)}` }
   },
   unknownModelOptions: [ANTIGRAVITY_EFFORT],
   probed: true

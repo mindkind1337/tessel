@@ -1472,6 +1472,9 @@ function reportSession(data, agent) {
   // A Cursor sub-agent's event (its own conversation, its file under
   // <id>/subagents/): not the pane's conversation.
   if (agent === 'cursor' && data && typeof data.transcript_path === 'string' && /[\\/]subagents[\\/][^\\/]*$/i.test(data.transcript_path)) return
+  // An Antigravity sub-agent's event (its own conversation, naming its
+  // parent's): not the pane's conversation (its chat view reads the pane's).
+  if (agent === 'antigravity' && data && [data.parentConversationId, data.parent_conversation_id].some((v) => typeof v === 'string' && v)) return
   const id = String((data && data.session_id) || '')
   if (!/^[A-Za-z0-9._-]{1,100}$/.test(paneId) || paneId.startsWith('.')) return
   if (!/^[A-Za-z0-9_-]{6,80}$/.test(id)) return
