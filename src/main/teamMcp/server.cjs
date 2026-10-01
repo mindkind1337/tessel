@@ -31,7 +31,7 @@ const path = require('path')
 const crypto = require('crypto')
 const { randomUUID } = crypto
 
-const VERSION = '1.10.3'
+const VERSION = '1.10.4'
 const MAX_TEXT = 6000
 
 // --- Finding my team and me ---------------------------------------------------
@@ -1138,6 +1138,52 @@ const snakeName = (v) =>
 const isAskTool = (name) => ['askuserquestion', 'askuser', 'askquestion', 'requestuserinput'].includes(compact(name))
 const toolOf = (data) => firstStr(data, ['tool_name', 'toolName', 'name'])
 const askOr = (event, data) => (isAskTool(toolOf(data)) ? { event, toolName: 'AskUserQuestion' } : { event })
+// The question an agent asks you, as its card shows it at once (Tessel's
+// chat view): the question structure only, bounded. A copy of
+// src/shared/agentAsk.js sanitizeAsk (this script runs outside the
+// application); the main process checks the result again.
+const ASK_LIMITS = { questions: 4, options: 8, question: 1000, header: 200, label: 200, description: 500, bytes: 16 * 1024 }
+const ASK_PROVIDERS = ['claude', 'openclaude', 'codex']
+const ASK_CONTROL = /[\u0000-\u0009\u000b-\u001f\u007f-\u009f‪-‮⁦-⁩]/g
+const askRecord = (value) => !!value && typeof value === 'object' && !Array.isArray(value)
+function askText(value, max) {
+  if (typeof value !== 'string') return ''
+  let text = value.replace(ASK_CONTROL, '').slice(0, max)
+  if (/[\ud800-\udbff]$/.test(text)) text = text.slice(0, -1)
+  return text
+}
+function sanitizeAsk(input) {
+  if (typeof input === 'string') {
+    if (input.length > 4 * ASK_LIMITS.bytes) return null
+    try { input = JSON.parse(input) } catch { return null }
+  }
+  if (!askRecord(input) || !Array.isArray(input.questions)) return null
+  const raw = input.questions
+  if (!raw.length || raw.length > ASK_LIMITS.questions) return null
+  const questions = []
+  for (const q of raw) {
+    if (!askRecord(q)) return null
+    const list = q.options === undefined || q.options === null ? [] : q.options
+    if (!Array.isArray(list) || list.length > ASK_LIMITS.options) return null
+    const out = { question: askText(q.question, ASK_LIMITS.question) }
+    const header = askText(q.header, ASK_LIMITS.header)
+    if (header) out.header = header
+    if (q.multiSelect === true) out.multiSelect = true
+    out.options = []
+    for (const o of list) {
+      const label = typeof o === 'string' ? o : askRecord(o) && typeof o.label === 'string' ? o.label : null
+      if (label === null) return null
+      const option = { label: askText(label, ASK_LIMITS.label) }
+      const description = askRecord(o) ? askText(o.description, ASK_LIMITS.description) : ''
+      if (description) option.description = description
+      out.options.push(option)
+    }
+    if (!out.question && !out.options.length) return null
+    questions.push(out)
+  }
+  const ask = { questions }
+  return Buffer.byteLength(JSON.stringify(ask)) <= ASK_LIMITS.bytes ? ask : null
+}
 const permission = () => ({ event: 'Notification', notificationType: 'permission_prompt' })
 const COPILOT_NAMES = {
   sessionStart: 'SessionStart',
@@ -1356,9 +1402,20 @@ function reportAgentState(data, provider, continuing = false) {
       if (background) event.background = background
       writeBackgroundDiag(root, paneId, data.background_tasks)
     }
-    // Only a tool's identity, never its arguments or prompt text.
+    // Only a tool's identity, never its arguments or prompt text. One
+    // exception: the question an agent asks you (AskUserQuestion, Codex's
+    // request_user_input), so its card shows at once with its options (the
+    // conversation file can come late, Codex's especially). Only its
+    // questions, headers and options' labels and descriptions, bounded
+    // (sanitizeAsk); nothing else of its input, nothing of any other tool.
     const toolName = status.toolName || data.tool_name
-    if (['AskUserQuestion', 'request_user_input'].includes(toolName)) event.toolName = toolName
+    if (['AskUserQuestion', 'request_user_input'].includes(toolName)) {
+      event.toolName = toolName
+      if (['PreToolUse', 'PermissionRequest'].includes(status.event) && !event.agentId && ASK_PROVIDERS.includes(provider)) {
+        const ask = sanitizeAsk(data.tool_input)
+        if (ask) event.ask = ask
+      }
+    }
     const file = path.join(dir, `${event.at}-${event.id}.json`)
     tmp = file + '.tmp'
     fs.writeFileSync(tmp, JSON.stringify(event), { flag: 'wx', mode: 0o600 })
@@ -1669,4 +1726,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { taskRequest, locate, readInbox, send, members, handle, candidateDirs, ackPath, markRead, unread, listTasks, addTask, moveTask, reportTask, gateTask, ask, groupTargets, listWorkers, listGates, TOOLS, VERSION, AGENT_STATUS_AGENTS, statusEvent }
+module.exports = { sanitizeAsk, ASK_LIMITS, taskRequest, locate, readInbox, send, members, handle, candidateDirs, ackPath, markRead, unread, listTasks, addTask, moveTask, reportTask, gateTask, ask, groupTargets, listWorkers, listGates, TOOLS, VERSION, AGENT_STATUS_AGENTS, statusEvent }

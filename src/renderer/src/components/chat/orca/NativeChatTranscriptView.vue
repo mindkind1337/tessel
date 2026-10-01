@@ -14,7 +14,8 @@
 // Props: agent, sessionId ('' = none known yet: waiting for it), agentName,
 //   node, isVisible (the file is watched only while the view shows);
 //   interactive: paneId, accountId (the main process finds the file in that
-//   account's folder), working, waiting ({ approval, input }),
+//   account's folder), working, waiting ({ approval, input, ask: the
+//   question its hook gives, or null }),
 //   disabledReason (why nothing can be sent now), sendMessage(text,
 //   { onDelivered, onFailed }), writeKeys(bytes) (the cards' keys).
 // Emits: close (back to the terminal).
@@ -37,7 +38,7 @@ import {
   answerKeyGroups,
   composerAgent,
   mergePendingSends,
-  pendingAskFromEvents,
+  currentAsk,
   stepKeys,
   tagTesselTurns,
   waitingCard
@@ -261,7 +262,8 @@ function stop() {
   if (props.working) keys(KEY_ESCAPE)
 }
 
-const ask = computed(() => (props.interactive ? pendingAskFromEvents(fileEvents.value) : null))
+// Its hook's question first (shown at once), else the file's.
+const ask = computed(() => (props.interactive ? currentAsk((props.waiting || {}).ask, fileEvents.value) : null))
 const card = computed(() => {
   if (!props.interactive || props.disabledReason) return null
   const w = props.waiting || {}

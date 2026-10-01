@@ -229,3 +229,37 @@ describe('account-aware status hook installation', () => {
     expect((await install('claude', { CLAUDE_CONFIG_DIR: '../relative' })).ok).toBe(false)
   })
 })
+
+describe('the question an agent asks (its card shows at once)', () => {
+  const questions = {
+    questions: [
+      { question: 'Which one?', header: 'Pick', multiSelect: false, options: [{ label: 'A', description: 'First', extra: 'PRIVATE-OPT' }, { label: 'B' }], note: 'PRIVATE-Q' }
+    ],
+    metadata: 'PRIVATE-META'
+  }
+  it.each([
+    ['claude', 'AskUserQuestion', 'PreToolUse'],
+    ['claude', 'AskUserQuestion', 'PermissionRequest'],
+    ['codex', 'request_user_input', 'PreToolUse']
+  ])('%s %s on %s: keeps the question structure only', async (provider, tool, event) => {
+    expect((await hook(event, { provider, data: { tool_name: tool, tool_use_id: 'call_1', tool_input: questions, prompt: 'PRIVATE-PROMPT' } })).code).toBe(0)
+    const [report] = reports()
+    expect(report).toMatchObject({ event, toolName: tool, toolId: 'call_1' })
+    expect(report.ask).toEqual({ questions: [{ question: 'Which one?', header: 'Pick', options: [{ label: 'A', description: 'First' }, { label: 'B' }] }] })
+    expect(JSON.stringify(report)).not.toMatch(/PRIVATE|tool_input/)
+  })
+  it('keeps nothing of any other tool, of a tool end, or of a sub-agent', async () => {
+    await hook('PreToolUse', { data: { tool_name: 'Bash', tool_use_id: 't1', tool_input: questions } })
+    await hook('PostToolUse', { data: { tool_name: 'AskUserQuestion', tool_use_id: 't2', tool_input: questions } })
+    await hook('PreToolUse', { data: { tool_name: 'AskUserQuestion', tool_use_id: 't3', agent_id: 'child-1', tool_input: questions } })
+    expect(reports()).toHaveLength(3)
+    expect(reports().some((r) => r.ask)).toBe(false)
+    expect(JSON.stringify(reports())).not.toMatch(/Which one|PRIVATE/)
+  })
+  it('writes no question over the limits (the card then waits for the file)', async () => {
+    const many = { questions: [{ question: 'Q', options: Array.from({ length: 9 }, (_, i) => ({ label: `o${i}` })) }] }
+    await hook('PreToolUse', { data: { tool_name: 'AskUserQuestion', tool_use_id: 't1', tool_input: many } })
+    expect(reports()[0]).toMatchObject({ toolName: 'AskUserQuestion' })
+    expect(reports()[0].ask).toBeUndefined()
+  })
+})
