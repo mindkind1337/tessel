@@ -12,12 +12,21 @@
 // d: { getPane(id) -> { paste, submit, screenText } | null, isBusy(id),
 //      awaitingApproval(id), sleep(ms) -> Promise, waitIdle: bool,
 //      userTyping(id): the user has a line in progress there,
-//      guard(id): optional, the message's own condition to type now }
+//      guard(id): optional, the message's own condition to type now,
+//      images: optional image files pasted before the text (a terminal
+//      agent's chat view: each path pasted on its own, as Claude Code and
+//      Codex attach a pasted image path, then the text after a pause, after
+//      Orca's image send, MIT, Copyright (c) 2026 Lovecast Inc.),
+//      command: optional 'paste' | 'type' (a slash command from that chat
+//      view: pasted, or typed key by key with pane.typeKeys for Codex, which
+//      takes a fast write as pasted prose; Enter is pressed once and that is
+//      all: a command starts no turn to watch) }
 // -> 'confirmed' | 'unconfirmed' | 'requeue' (approval prompt before the
 //    paste) | 'failed' (no pane: nothing was typed)
 
 export const DELIVER = {
   settleMs: 500, // between paste and Enter
+  imageSettleMs: 300, // between pasted images and the text
   stepMs: 500,
   acceptBusyMs: 4000, // working this long after Enter = it took the message
   quietMs: 1500, // quiet this long after Enter = look for a draft
@@ -72,8 +81,18 @@ export async function pasteAndConfirm(id, text, deps) {
   // From here on some text may be in the agent's terminal (which outlives a
   // reload): anything that goes wrong is 'unconfirmed', never 'failed', so
   // the message is not pasted there a second time.
+  const images = Array.isArray(d.images) ? d.images.filter((f) => typeof f === 'string' && f) : []
   try {
-    pane.paste(text)
+    for (const file of images) pane.paste(file)
+    if (images.length) {
+      await d.sleep(d.cfg.imageSettleMs)
+      pane = d.getPane(id)
+      if (!pane) return 'unconfirmed'
+    }
+    // The text after its images, one space apart (it never joins a path).
+    const body = images.length && text ? ` ${text}` : text
+    if (d.command === 'type' && typeof pane.typeKeys === 'function') await pane.typeKeys(body)
+    else if (body) pane.paste(body)
   } catch {
     return 'unconfirmed'
   }
@@ -91,6 +110,7 @@ export async function pasteAndConfirm(id, text, deps) {
     } catch {
       return 'unconfirmed'
     }
+    if (d.command) return 'confirmed'
     const seen = await watchAfterEnter(id, text, d)
     if (seen === 'accepted') return 'confirmed'
     if (seen === 'draft' && tries < d.cfg.retries) continue

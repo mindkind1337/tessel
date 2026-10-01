@@ -14,6 +14,11 @@
 // Pure: every effect goes through the functions given.
 import { buildAskAnswerKeys, buildCodexAskAnswerKeys, hasAskAnswer, parseAskFromToolInput } from './orca/shared/native-chat-ask.js'
 import { NATIVE_CHAT_QUESTION_STEP_MS, NATIVE_CHAT_SUBMIT_DELAY_MS } from './orca/shared/native-chat-answer-stepping.js'
+import { getAgentSlashCommands } from './orca/shared/native-chat-slash-commands.js'
+import { formatNativeChatFileReference } from './orca/shared/agent-image-paste.js'
+import { commandMarkersAsMessages } from './orca/native-chat-command-marker.js'
+import { fuzzyFilter } from '../../../shared/fuzzy.js'
+import { t } from '../i18n'
 
 // The agents whose terminal pane has a chat view (their transcript is read in
 // src/main/chat/transcriptView.js). OpenCode keeps its own chat pane.
@@ -151,4 +156,79 @@ export function waitingCard({ approval = false, input = false, working = false }
   if (input) return { kind: 'terminal' }
   if (approval) return { kind: 'approval' }
   return null
+}
+
+// ---- The composer (the full one, after Orca's bridge composer: images,
+// slash commands, model and effort, @file) ------------------------------------
+
+// What a sent text is: a slash command (one line starting with "/", typed
+// into the agent as a command: Codex takes it key by key, Claude Code and
+// OpenClaude as a paste; Enter, and no turn is watched for it) or a message
+// (Tessel's delivery, which watches the agent take it). A message with
+// images is always a message (a command never drops its images).
+// -> null | 'paste' | 'type'
+export function commandDelivery(agentId, text, imageCount = 0) {
+  const body = String(text || '').trim()
+  if (imageCount > 0 || !/^\/[A-Za-z][\w:.-]*(?:\s|$)/.test(body) || /[\r\n]/.test(body)) return null
+  return composerAgent(agentId) === 'codex' ? 'type' : 'paste'
+}
+
+// The image files the composer may name to the agent: Tessel's own copies
+// (%TEMP%\tessel-paste\chat\img_<24 hex>.<png|jpg|gif|webp>), nothing else.
+const IMAGE_COPY = /^(?:[A-Za-z]:[\\/]|\/)(?:[^\\/\0\r\n"<>|?*]+[\\/])*tessel-paste[\\/]chat[\\/]img_[0-9a-f]{24}\.(?:png|jpg|gif|webp)$/i
+export function isPastedImageCopy(path) {
+  return typeof path === 'string' && path.length <= 1024 && IMAGE_COPY.test(path) && !/[\\/]\.\.?[\\/]/.test(path)
+}
+
+// The "/" menu: the agent's own commands (its TUI runs them), with model and
+// effort first where the chat view offers their pickers.
+export function bridgeSlashCommands(agentId, { options = [] } = {}) {
+  const agent = composerAgent(agentId)
+  const own = getAgentSlashCommands(agent)
+  const extra = []
+  if (agent !== 'codex') {
+    if (options.includes('model')) extra.push({ name: 'model', kind: 'command', description: t('chat.orca.catalog.model', 'Choose the model') })
+    if (options.includes('effort')) extra.push({ name: 'effort', kind: 'command', description: t('chat.orca.catalog.effort', 'Choose reasoning effort') })
+  }
+  const seen = new Set(extra.map((c) => c.name))
+  return [...extra, ...own.filter((c) => !seen.has(c.name)).map((c) => ({ name: c.name, kind: 'command', description: c.description }))]
+}
+
+// "Ran /compact" rows (Orca's command markers) among the messages: each after
+// the last message shown before it was sent (at the end when no time is known).
+export function withCommandMarkers(messages, markers) {
+  const list = Array.isArray(messages) ? [...messages] : []
+  for (const row of commandMarkersAsMessages(Array.isArray(markers) ? markers : [])) {
+    // From the end: before every later message, after the first earlier one.
+    let at = list.length
+    for (let i = list.length - 1; i >= 0; i--) {
+      const ts = list[i] && list[i].timestamp
+      if (!Number.isFinite(ts) || ts <= 0) continue
+      if (ts <= row.timestamp) {
+        at = i + 1
+        break
+      }
+      at = i
+    }
+    list.splice(at, 0, row)
+  }
+  return list
+}
+
+// The "@" menu: the project's files (files:list, relative paths) best first.
+export function mentionMatches(files, query, limit = 8) {
+  const list = Array.isArray(files) ? files.filter((f) => typeof f === 'string' && f && !/[\r\n\0]/.test(f)) : []
+  return fuzzyFilter(String(query || ''), list, limit)
+}
+// A picked file as the agent reads it after "@": quoted when it has a space.
+export function mentionToken(path) {
+  return formatNativeChatFileReference(String(path || '').replace(/\\/g, '/')).slice(1)
+}
+
+// The context ring: Claude Code's file never says the window; a model chosen
+// with its 1M context ("…[1m]") does (Orca's rule: a bare name does not).
+export function withContextWindow(events, model) {
+  const window = /\[1m\]\s*$/i.test(String(model || '')) ? 1_000_000 : null
+  if (!window) return events
+  return (Array.isArray(events) ? events : []).map((e) => (e && e.type === 'contextUsage' && !e.windowTokens ? { ...e, windowTokens: window } : e))
 }

@@ -6,16 +6,23 @@ import {
   KEY_ALLOW,
   KEY_ESCAPE,
   answerKeyGroups,
+  bridgeSlashCommands,
   canShowChatView,
+  commandDelivery,
   composerAgent,
   currentAsk,
   liveAskFromState,
   groupBytes,
+  isPastedImageCopy,
+  mentionMatches,
+  mentionToken,
   mergePendingSends,
   pendingAskFromEvents,
   stepKeys,
   tagTesselTurns,
-  waitingCard
+  waitingCard,
+  withCommandMarkers,
+  withContextWindow
 } from '../chat/terminalChatBridge'
 
 const ask = { questions: [{ question: 'Which one?', options: [{ label: 'A' }, { label: 'B' }] }] }
@@ -148,5 +155,58 @@ describe('the question from the hook (shown at once)', () => {
   it('its answer uses the same stepped keys as the file question', () => {
     const live = currentAsk(hookAsk, [])
     expect(answerKeyGroups('codex', live.prompt, [{ indices: [1] }])).toEqual([{ raw: '2' }])
+  })
+})
+
+describe('the composer', () => {
+  it('a one-line "/command" is a command: typed key by key for Codex, pasted for Claude Code and OpenClaude', () => {
+    expect(commandDelivery('codex', '/model')).toBe('type')
+    expect(commandDelivery('claude', ' /compact ')).toBe('paste')
+    expect(commandDelivery('openclaude', '/review the diff')).toBe('paste')
+    expect(commandDelivery('claude', 'Fix /src please')).toBeNull()
+    expect(commandDelivery('claude', '/clear\nrm -rf')).toBeNull()
+    expect(commandDelivery('claude', '/ hello')).toBeNull()
+    // With images it is a message (its images are never dropped).
+    expect(commandDelivery('claude', '/review', 1)).toBeNull()
+  })
+  it('names to the agent only Tessel\u2019s own image copies', () => {
+    const win = (...parts) => parts.join(String.fromCharCode(92))
+    const copy = 'img_0123456789abcdef01234567'
+    expect(isPastedImageCopy(win('C:', 'Users', 'me', 'AppData', 'Local', 'Temp', 'tessel-paste', 'chat', `${copy}.png`))).toBe(true)
+    expect(isPastedImageCopy(`/tmp/tessel-paste/chat/${copy}.webp`)).toBe(true)
+    expect(isPastedImageCopy(win('C:', 'Users', 'me', 'secret.png'))).toBe(false)
+    expect(isPastedImageCopy(win('C:', 'Temp', 'tessel-paste', 'chat', '..', '..', 'tessel-paste', 'chat', `${copy}.png`))).toBe(false)
+    expect(isPastedImageCopy(win('C:', 'Temp', 'tessel-paste', 'chat', `${copy}.png`) + String.fromCharCode(13) + '/clear')).toBe(false)
+    expect(isPastedImageCopy(win('tessel-paste', 'chat', `${copy}.png`))).toBe(false)
+    expect(isPastedImageCopy(win('C:', 'Temp', 'tessel-paste', 'chat', `${copy}.exe`))).toBe(false)
+  })
+  it('the "/" menu: the agent\u2019s own commands, model and effort first for Claude Code', () => {
+    const claude = bridgeSlashCommands('claude', { options: ['model', 'effort'] }).map((c) => c.name)
+    expect(claude.slice(0, 3)).toEqual(['model', 'effort', 'clear'])
+    expect(claude).toContain('compact')
+    expect(bridgeSlashCommands('openclaude').map((c) => c.name)).not.toContain('model')
+    const codex = bridgeSlashCommands('codex', { options: ['model', 'effort'] })
+    expect(codex.filter((c) => c.name === 'model')).toHaveLength(1)
+    expect(codex.every((c) => c.kind === 'command')).toBe(true)
+  })
+  it('"Ran /command" rows go where they were sent', () => {
+    const msgs = [{ id: 'a', timestamp: 1000 }, { id: 'b', timestamp: 3000 }]
+    const out = withCommandMarkers(msgs, [{ id: 'm', command: '/compact', sentAt: 2000 }])
+    expect(out.map((m) => m.id)).toEqual(['a', 'command:m', 'b'])
+    expect(out[1].role).toBe('system')
+    expect(withCommandMarkers([{ id: 'x', timestamp: null }], [{ id: 'm', command: '/clear', sentAt: 5 }]).map((m) => m.id)).toEqual(['x', 'command:m'])
+    expect(withCommandMarkers(msgs, [])).toEqual(msgs)
+  })
+  it('"@": the project files best first, quoted with a space', () => {
+    expect(mentionMatches(['src/App.vue', 'README.md', 'src/app.js', 'bad\nname'], 'app', 2).sort()).toEqual(['src/App.vue', 'src/app.js'])
+    expect(mentionMatches(['a/b/c.js', 'bad\napp'], 'app')).toEqual([])
+    expect(mentionToken('src/App.vue')).toBe('src/App.vue')
+    expect(mentionToken('docs/my notes.md')).toBe('"docs/my notes.md"')
+    expect(mentionToken(['src', 'x.js'].join(String.fromCharCode(92)))).toBe('src/x.js')
+  })
+  it('the context ring knows Claude\u2019s window only from a 1M model', () => {
+    const ev = [{ type: 'contextUsage', usedTokens: 10, windowTokens: null }]
+    expect(withContextWindow(ev, 'claude-opus-5-5[1m]')[0].windowTokens).toBe(1000000)
+    expect(withContextWindow(ev, 'opus')).toBe(ev)
   })
 })

@@ -10,7 +10,11 @@ function harness(script) {
     paste: (text) => {
       state.pastes++
       state.pasted = text
-      state.log.push(`paste@${state.t}`)
+      state.log.push(`paste@${state.t}:${text}`)
+    },
+    typeKeys: async (text) => {
+      state.typed = text
+      state.log.push(`type@${state.t}:${text}`)
     },
     submit: () => {
       state.submits++
@@ -130,5 +134,40 @@ describe('pasteAndConfirm', () => {
       s.gone = s.t > 1000
     })
     expect(await pasteAndConfirm('p', MSG, deps)).toBe('unconfirmed')
+  })
+})
+
+describe("pasteAndConfirm from a terminal agent's chat view", () => {
+  const IMG = 'C:\\Temp\\tessel-paste\\chat\\img_0123456789abcdef01234567.png'
+  it('pastes each image path on its own, then the text one space apart, then Enter', async () => {
+    const { state, deps } = harness((s) => {
+      s.busy = s.submits > 0
+    })
+    expect(await pasteAndConfirm('p', 'What is this?', { ...deps, images: [IMG, IMG] })).toBe('confirmed')
+    expect(state.log.slice(0, 4)).toEqual([`paste@0:${IMG}`, `paste@0:${IMG}`, 'paste@300: What is this?', 'enter@800'])
+  })
+  it('images alone: no text pasted, Enter after them', async () => {
+    const { state, deps } = harness((s) => {
+      s.busy = s.submits > 0
+    })
+    expect(await pasteAndConfirm('p', '', { ...deps, images: [IMG] })).toBe('confirmed')
+    expect(state.pastes).toBe(1)
+    expect(state.submits).toBe(1)
+  })
+  it('a slash command: pasted (Claude) or typed key by key (Codex), one Enter, nothing watched', async () => {
+    const { state, deps } = harness(() => {})
+    expect(await pasteAndConfirm('p', '/compact', { ...deps, command: 'paste' })).toBe('confirmed')
+    expect(state.pasted).toBe('/compact')
+    expect(state.submits).toBe(1)
+    const typed = harness(() => {})
+    expect(await pasteAndConfirm('p', '/model', { ...typed.deps, command: 'type' })).toBe('confirmed')
+    expect(typed.state.typed).toBe('/model')
+    expect(typed.state.pastes).toBe(0)
+    expect(typed.state.submits).toBe(1)
+  })
+  it('never types while the user has a line in the terminal', async () => {
+    const { state, deps } = harness(() => {})
+    expect(await pasteAndConfirm('p', '/clear', { ...deps, command: 'paste', userTyping: () => true })).toBe('requeue')
+    expect(state.pastes).toBe(0)
   })
 })
