@@ -2154,6 +2154,10 @@ const sideRoot = computed(() => {
   const ws = currentWs.value
   if (!ws) return null
   if (ws.remote) return remoteRoot(ws.remote.hostId, ws.remote.path)
+  // A worktree's grid on screen (paneViews.js): Files and Changes show that
+  // copy, not the project folder.
+  const active = ws.activeId ? findLeafIn(ws.tree, ws.activeId) : null
+  if (active && viewKey(active, ws.cwd)) return leafViewPath(active)
   return ws.cwd
 })
 const sideRemote = computed(() => {
