@@ -30,7 +30,7 @@ function isAlertNotice(message, block) {
 }
 // Tessel: what changed the session itself (a compaction, a model or effort
 // change) is not a turn's work: it stays in view when the turn folds.
-const SESSION_NOTICES = new Set(['compaction', 'session-option']);
+const SESSION_NOTICES = new Set(['compaction', 'session-option', 'interrupted']);
 function isSessionNotice(message, block) {
     return message.role === 'system' && block.type === 'text' && SESSION_NOTICES.has(block.presentation);
 }

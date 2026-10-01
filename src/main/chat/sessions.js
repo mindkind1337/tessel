@@ -904,7 +904,7 @@ export function createChatSessions(deps) {
       // An interrupted turn (Stop, Esc) says so in the conversation (not the
       // compaction's own turn, which ends the way it was asked to).
       if (st === 'interrupted' && !(turn && turn.kind === 'compact')) {
-        emit(s.paneId, { type: 'notice', kind: 'info', text: t('main.chat.interrupted', 'Interrupted') })
+        emit(s.paneId, { type: 'notice', kind: 'info', presentation: 'interrupted', text: t('main.chat.interrupted', 'Interrupted') })
       }
       // Tools of the turn that never reported a result. A sub-agent's
       // (agentId) are left open: a background child goes on after the

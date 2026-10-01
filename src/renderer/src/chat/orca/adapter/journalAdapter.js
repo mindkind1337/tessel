@@ -467,7 +467,9 @@ export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence =
         if (tone === 'error' && String(ev.text) === lastTurnError) break
         // action: what the notice offers (a button): 'newConversation'.
         const action = typeof ev.action === 'string' && ev.action ? { action: ev.action } : {}
-        put(`status:${idTag}notice-${sequence + 1}`, { kind: 'status', text: String(ev.text), tone, ...action }, {}, at) // i18n-ignore
+        // An interruption stays in view when its turn folds (a session notice).
+        const presentation = ev.presentation === 'interrupted' ? { presentation: 'interrupted' } : {}
+        put(`status:${idTag}notice-${sequence + 1}`, { kind: 'status', text: String(ev.text), tone, ...action, ...presentation }, {}, at) // i18n-ignore
         break
       }
       case 'subagents': {
