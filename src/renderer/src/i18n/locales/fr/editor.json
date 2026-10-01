@@ -282,6 +282,12 @@
       "none": "Aucun commit pour le moment",
       "loadingFiles": "Chargement des fichiers…",
       "noFiles": "Aucune modification de fichier dans ce commit"
+    },
+    "committed": {
+      "title": "Committé sur la branche",
+      "countOne": "1 fichier modifié par rapport à {{ref}}",
+      "count": "{{count}} fichiers modifiés par rapport à {{ref}}",
+      "truncated": "Seuls les {{count}} premiers fichiers sont listés."
     }
   },
   "editor": {
@@ -353,7 +359,8 @@
     "tab": {
       "diff": "{{name}} (diff)",
       "stagedDiff": "{{name}} (diff indexé)",
-      "commitDiff": "{{name}} ({{commit}})"
+      "commitDiff": "{{name}} ({{commit}})",
+      "branchDiff": "{{name}} ({{base}}..{{commit}})"
     },
     "tabs": {
       "aria": "Fichiers ouverts",

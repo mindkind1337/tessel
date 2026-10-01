@@ -153,6 +153,12 @@ function baseLabel(f) {
 }
 function tabLabel(f) {
   if (!f.diff) return baseLabel(f)
+  if (f.diff.area === 'branch')
+    return t('editor.tab.branchDiff', '{{name}} ({{base}}..{{commit}})', {
+      name: baseLabel(f),
+      base: String(f.diff.base || '').slice(0, 7),
+      commit: String(f.diff.commit || '').slice(0, 7)
+    })
   if (f.diff.area === 'commit')
     return t('editor.tab.commitDiff', '{{name}} ({{commit}})', { name: baseLabel(f), commit: String(f.diff.commit || '').slice(0, 7) })
   return f.diff.area === 'staged'
@@ -437,7 +443,7 @@ async function enterDiffTab(f) {
   if (!monaco || !f || !f.diff) return
   const dff = f.diff
   const d = activeDoc.value
-  const editableSide = dff.area !== 'staged' && dff.area !== 'commit'
+  const editableSide = dff.area !== 'staged' && dff.area !== 'commit' && dff.area !== 'branch'
   // The file's document is still loading: wait for it (the watch comes back).
   if (editableSide && d && d.loading) return
   const docReady = editableSide && d && !d.error && !d.loading && !!modelOf(d.path)
@@ -456,7 +462,8 @@ async function enterDiffTab(f) {
       path: dff.rel,
       area: dff.area,
       oldPath: dff.oldRel || undefined,
-      commit: dff.commit || undefined
+      commit: dff.commit || undefined,
+      base: dff.base || undefined
     })
   } catch (err) {
     r = { ok: false, error: err && err.message }
@@ -494,7 +501,7 @@ async function enterDiffTab(f) {
   if (oldM) oldM.dispose()
   diffBusy.value = false
   // Review notes are for the changes not committed yet, not a past commit.
-  if (dff.area !== 'commit') attachNotes(dff)
+  if (dff.area !== 'commit' && dff.area !== 'branch') attachNotes(dff)
   updateRichText()
   // Orca opens a diff at its first change.
   if (!props.node.reveal) {

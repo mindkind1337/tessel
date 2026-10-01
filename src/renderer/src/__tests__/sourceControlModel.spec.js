@@ -236,4 +236,13 @@ describe('commit diff tabs', () => {
     expect(p).not.toBe(diffTabPath('C:\\p\\a.js', 'commit', 'def5678'))
     expect(p).not.toBe(diffTabPath('C:\\p\\a.js', 'unstaged'))
   })
+
+  it('a file committed on the branch gets its own tab per base and HEAD', () => {
+    const p = diffTabPath('C:\\p\\a.js', 'branch', 'abc1234', 'fed9876')
+    expect(isDiffTabPath(p)).toBe(true)
+    expect(docPathOf({ path: p, diff: { full: 'C:\\p\\a.js' } })).toBe('C:\\p\\a.js')
+    expect(p).not.toBe(diffTabPath('C:\\p\\a.js', 'commit', 'abc1234'))
+    expect(p).not.toBe(diffTabPath('C:\\p\\a.js', 'branch', 'abc1234', '0001111'))
+    expect(validSavedFiles([{ path: p }])).toEqual([])
+  })
 })
