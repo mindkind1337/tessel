@@ -47,7 +47,25 @@ export default defineConfig({
     }
   },
   preload: {
-    plugins: [externalizeDepsPlugin()]
+    plugins: [externalizeDepsPlugin()],
+    build: {
+      rollupOptions: {
+        // Tessel's window, and the themed dialog's own window
+        // (src/main/themedDialog.js: sandboxed, so one self-contained file).
+        input: {
+          index: 'src/preload/index.js',
+          themedDialog: 'src/preload/themedDialog.js'
+        },
+        // As with a single entry: Electron required at runtime (never
+        // bundled), CommonJS files named after their entry.
+        external: ['electron', /^electron\/.+/],
+        output: {
+          format: 'cjs',
+          entryFileNames: '[name].js',
+          chunkFileNames: 'chunks/[name]-[hash].js'
+        }
+      }
+    }
   },
   renderer: {
     plugins: [vue()],

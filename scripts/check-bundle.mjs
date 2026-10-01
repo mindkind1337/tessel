@@ -77,5 +77,24 @@ if (process.platform === 'win32' && !fs.existsSync(path.join(dir, 'tessel-cli.ex
   console.error('check-bundle: out/main/tessel-cli.exe is missing (the tessel command launcher)')
   failed = true
 }
+// The preloads: CommonJS files that require electron at runtime. The themed
+// dialog's is sandboxed (src/main/themedDialog.js), so it loads nothing else.
+for (const name of ['index.js', 'themedDialog.js']) {
+  const f = path.join('out', 'preload', name)
+  if (!fs.existsSync(f)) {
+    console.error(`check-bundle: ${f} is missing`)
+    failed = true
+    continue
+  }
+  const text = fs.readFileSync(f, 'utf8')
+  if (!/require\(["']electron["']\)/.test(text) || forbidden.some(([needle]) => text.includes(needle))) {
+    console.error(`check-bundle: ${f} must require electron at runtime, not bundle it`)
+    failed = true
+  }
+  if (name === 'themedDialog.js' && /require\(["'](?!electron["'])/.test(text)) {
+    console.error(`check-bundle: ${f} must be self-contained (a sandboxed preload loads only electron)`)
+    failed = true
+  }
+}
 if (failed) process.exit(1)
 console.log(`check-bundle: ok (${files.length} files)`)

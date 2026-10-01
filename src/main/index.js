@@ -41,6 +41,7 @@ import { createClaudeUsageReport } from './claudeUsageReport'
 import { resolveFiles, codeGotoArg, listProjectFiles } from './fileOpen'
 import { statChatPaths, openChatPath } from './chatFileOpen'
 import { titleBarColors } from '../shared/themePalettes'
+import { createThemedDialog } from './themedDialog'
 import { geminiSessionExists, qwenSessionExists, resumeTarget } from './agentResume'
 import { paneEnv } from './paneEnv'
 import { readForView, readImageForView, openPdfWindow } from './fileView'
@@ -1082,6 +1083,18 @@ const agentStateStore = createAgentStateStore({
 // The copies Tessel made from a project's own code (HEAD or a local branch):
 // only those count as their project for a worker's chat (workerCopies.js).
 const workerCopies = createWorkerCopies({ file: join(app.getPath('userData'), 'worker-copies.json') })
+// Security questions (trust a folder, trust a repository) in Tessel's look:
+// a window of their own that only the user answers, never Tessel's window or
+// its pages (themedDialog.js; the native dialog if it cannot open).
+let windowTheme = 'classic'
+const themedMessageBox = createThemedDialog({
+  BrowserWindow,
+  ipcMain,
+  dialog,
+  preload: join(__dirname, '../preload/themedDialog.js'),
+  getTheme: () => windowTheme,
+  log
+})
 const chatTrust = createChatTrust({
   file: join(app.getPath('userData'), 'chat-trust.json'),
   ask: async ({ dir }) => {
@@ -1096,7 +1109,7 @@ const chatTrust = createChatTrust({
       noLink: true
     }
     const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null
-    const res = win ? await dialog.showMessageBox(win, opts) : await dialog.showMessageBox(opts)
+    const res = win ? await themedMessageBox(win, opts) : await themedMessageBox(opts)
     return res.response === 0
   }
 })
@@ -1621,7 +1634,7 @@ setGitTrust(
         noLink: true
       }
       const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null
-      const res = win ? await dialog.showMessageBox(win, opts) : await dialog.showMessageBox(opts)
+      const res = win ? await themedMessageBox(win, opts) : await themedMessageBox(opts)
       return res.response === 0
     }
   })
@@ -3225,6 +3238,7 @@ ipcMain.handle('update:install', () => updater.install())
 ipcMain.on('window:theme', (event, theme) => {
   if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return
   if (typeof theme !== 'string') return
+  windowTheme = theme.slice(0, 64)
   mainWindow.setTitleBarOverlay({ ...titleBarColors(theme), height: 39 })
 })
 // After an update: { from, to } once, on the first start of the new version.
