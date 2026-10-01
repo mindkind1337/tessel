@@ -405,6 +405,9 @@ function stopEscape(event) {
 /* w-64 / w-60 */
 .nc-picker-menu--model {
   width: 23rem;
+  /* A long list (Cursor's dozens of models) scrolls inside a menu of a
+     comfortable height instead of filling the window. */
+  max-height: min(22rem, var(--nc-available-height, 22rem));
 }
 .nc-picker-menu--options {
   width: 23rem;

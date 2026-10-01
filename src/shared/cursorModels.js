@@ -152,7 +152,42 @@ export function groupCursorModels(rows) {
       options
     })
   }
-  return out
+  return sortCursorModels(out)
+}
+
+// The order the pickers show: Auto first, then by family (Claude, GPT and
+// Codex, Gemini, Grok, Composer, Kimi, the rest), newest version first;
+// Claude by tier (Fable, Opus, Sonnet, Haiku), then newest first.
+const FAMILIES = [/claude|fable|opus|sonnet|haiku/, /gpt|codex/, /gemini/, /grok/, /composer/, /kimi/]
+const CLAUDE_TIERS = ['fable', 'opus', 'sonnet', 'haiku']
+function familyRank(id) {
+  const i = FAMILIES.findIndex((re) => re.test(id))
+  return i < 0 ? FAMILIES.length : i
+}
+// The version as its name says it ("Claude Opus 5.5 1M" -> 5.5, "Kimi K3"
+// -> 3): Cursor writes it two ways in ids (claude-opus-5-5, claude-4.6-opus).
+function versionOf(model) {
+  const m = /(?:^|[\s-]K?)(\d+(?:\.\d+)?)(?![\dM])/i.exec(String(model.label || model.id || ''))
+  return m ? parseFloat(m[1]) : 0
+}
+function tierRank(id) {
+  const i = CLAUDE_TIERS.findIndex((tier) => id.includes(tier))
+  return i < 0 ? CLAUDE_TIERS.length : i
+}
+export function sortCursorModels(models) {
+  const key = (m) => String(m.id || '').toLowerCase()
+  return [...models].sort((a, b) => {
+    const ia = key(a)
+    const ib = key(b)
+    if (ia === 'auto' || ib === 'auto') return ia === 'auto' ? (ib === 'auto' ? 0 : -1) : 1
+    return (
+      familyRank(ia) - familyRank(ib) ||
+      // Claude: Fable, Opus, Sonnet, Haiku, each newest first.
+      (familyRank(ia) === 0 ? tierRank(ia) - tierRank(ib) : 0) ||
+      versionOf(b) - versionOf(a) ||
+      String(a.label || ia).localeCompare(String(b.label || ib))
+    )
+  })
 }
 
 // A model listed once: its own id and name, no options (its one variant,

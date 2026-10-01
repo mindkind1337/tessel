@@ -127,3 +127,22 @@ describe("Cursor's model list, grouped", () => {
     expect(sessionOptionLaunchText('cursor', { model: 'grok-4.7-xhigh-fast' }, '', models)).toBe('--model grok-4.7-xhigh-fast')
   })
 })
+
+describe('the order of Cursor rows', () => {
+  it('Auto, then Claude by tier newest first, then GPT, Gemini, Grok, Composer, Kimi, the rest', async () => {
+    const fs = await import('fs')
+    const { join } = await import('path')
+    const { parseCursorModelList } = await import('../agentModelProbe')
+    const { groupCursorModels } = await import('../cursorModels')
+    const rows = groupCursorModels(parseCursorModelList(fs.readFileSync(join(__dirname, 'fixtures', 'cursor-list-models.txt'), 'utf8')))
+    const labels = rows.map((r) => r.label)
+    expect(labels[0]).toBe('Auto')
+    expect(labels.slice(1, 5)).toEqual(['Claude Fable 5.1 1M (NO ZDR)', 'Claude Fable 5 1M (NO ZDR)', 'Claude Opus 5.5 1M', 'Claude Opus 5 1M'])
+    const first = (word) => labels.findIndex((l) => l.startsWith(word))
+    expect(first('Claude')).toBeLessThan(first('GPT'))
+    expect(first('GPT')).toBeLessThan(first('Gemini'))
+    expect(first('Gemini')).toBeLessThan(first('Grok'))
+    expect(first('Grok')).toBeLessThan(first('Composer'))
+    expect(labels.indexOf('Grok 4.7')).toBeLessThan(labels.indexOf('Grok 4.5'))
+  })
+})
