@@ -217,7 +217,7 @@ describe('pane menu > Model', () => {
       )
     }
     let m = await openModelMenu()
-    expect([...m.querySelectorAll('[data-test="sop-model"]')].map((b) => b.dataset.model)).toEqual(['auto', 'gpt-5.3-codex', 'claude-opus-5'])
+    expect([...m.querySelectorAll('[data-test="sop-model"]')].map((b) => b.dataset.model)).toEqual(['auto', 'claude-opus-5', 'gpt-5.3-codex'])
     m.querySelector('[data-option="effort"][data-value="high"]').click()
     await typed()
     expect(writes).toEqual([

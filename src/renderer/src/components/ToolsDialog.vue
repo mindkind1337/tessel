@@ -211,6 +211,8 @@ onBeforeUnmount(() => window.removeEventListener('focus', onWindowFocus))
         }}
       </p>
 
+      <!-- The tab's list scrolls; the title, tabs and intro stay. -->
+      <div class="tools-scroll">
       <!-- What Tessel itself needs -->
       <template v-if="tab === 'needs'">
         <p v-if="needsError" class="mcp-error">{{ needsError }}</p>
@@ -342,6 +344,7 @@ onBeforeUnmount(() => window.removeEventListener('focus', onWindowFocus))
           }}
         </p>
       </template>
+      </div>
     </div>
   </div>
 </template>

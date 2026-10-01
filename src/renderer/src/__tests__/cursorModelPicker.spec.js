@@ -30,7 +30,7 @@ describe('the pane menu with Cursor', () => {
     const w = mount(SessionOptionPicker, { props: { agentId: 'cursor', models: modelsFor('cursor'), values: null } })
     const ids = w.findAll('[data-test="sop-model"]').map((b) => b.attributes('data-model'))
     expect(ids).toHaveLength(39)
-    expect(ids.slice(0, 4)).toEqual(['auto', 'gpt-5.3-codex', 'gpt-5.2', 'composer-2.5'])
+    expect(ids.slice(0, 4)).toEqual(['auto', 'claude-fable-5-1', 'claude-fable-5', 'claude-opus-5-5'])
     expect(ids).not.toContain('gpt-5.3-codex-high-fast')
     w.unmount()
   })

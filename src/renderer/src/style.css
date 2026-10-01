@@ -3144,6 +3144,18 @@ body.pane-dragging * {
 /* ================= Tools dialog ================= */
 .tools-card {
   width: min(720px, 100%);
+  /* Only the list scrolls (.tools-scroll): the title, tabs and intro stay. */
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.tools-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  margin-right: -8px;
+  padding-right: 8px;
 }
 
 .tools-head-actions {
