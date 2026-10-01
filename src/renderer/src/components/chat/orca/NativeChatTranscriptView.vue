@@ -84,6 +84,7 @@ import {
 } from '../../../chat/terminalChatBridge.js'
 import { heldMessageIds, mergeCommandMarkers, splitCommandTurns, terminalBackgroundTasks } from '../../../chat/terminalChatExtras.js'
 import { t } from '../../../i18n'
+import { useNativeChatFontScale } from '../../../chat/orca/composables/use-native-chat-font-scale.js'
 
 const props = defineProps({
   agent: { type: String, required: true },
@@ -92,6 +93,8 @@ const props = defineProps({
   // The pane the view covers (its folder bounds the file links).
   node: { type: Object, default: null },
   isVisible: { type: Boolean, default: true },
+  // The selected pane: Ctrl+= / Ctrl+- / Ctrl+0 zoom this chat only.
+  isActive: { type: Boolean, default: false },
   interactive: { type: Boolean, default: false },
   paneId: { type: String, default: '' },
   accountId: { type: String, default: undefined },
@@ -339,6 +342,12 @@ const fileLinkContext = computed(() => {
   return folder ? { worktreeId: n.id, worktreePath: folder, roots: [folder, n.projectDir].filter(Boolean) } : null
 })
 const { onLinkClick } = useNativeChatLinkActions(fileLinkContext, rootRef, () => ({ isVisible: props.isVisible }))
+// Its own text size (Ctrl+= / Ctrl+- / Ctrl+0, Ctrl+wheel) while it is the
+// selected pane, kept per pane: never the terminals' size, never another chat's.
+const fontScale = useNativeChatFontScale(
+  () => props.interactive && props.isActive && props.isVisible,
+  () => ({ target: rootRef.value, storageKey: props.paneId ? `tessel.chat.fontScale.${props.paneId}` : undefined }) // i18n-ignore
+)
 provide('nativeChatFileLinkContext', fileLinkContext)
 
 // ---- Interactive (the pane's chat view) ---------------------------------------
@@ -779,6 +788,7 @@ const title = computed(() => t('chat.orca.transcriptView.title', 'Conversation o
         :session="session"
         :journal-items="state.items"
         :is-visible="isVisible"
+        :font-scale="fontScale.scale.value"
         :is-working="interactive && working"
         :expand-signal="false"
         :show-live-turn-activity="false"

@@ -1466,6 +1466,8 @@ function serializeNode(node) {
       agentId: node.detected ? null : node.agentId || null,
       agentCommand: node.agentCommand || null,
       accent: node.accent || null,
+      // Its own zoom (Ctrl+= / Ctrl+-), a step from Settings' font size.
+      fontZoom: Number.isInteger(node.fontZoom) && node.fontZoom ? node.fontZoom : undefined,
       worktree: node.worktree || null,
       sessionId: node.sessionId || null,
       // Left out when not recorded (see createLeaf); null is kept.
@@ -1604,6 +1606,7 @@ async function deserializeNode(snap, cwd = null) {
       if (Number.isInteger(snap.num) && snap.num > 0) asleep.num = snap.num
       if (snap.titleSet === true) asleep.titleSet = true
       if (typeof snap.autoTitle === 'string' && snap.autoTitle) asleep.autoTitle = snap.autoTitle.slice(0, 80)
+      if (Number.isInteger(snap.fontZoom) && Math.abs(snap.fontZoom) <= 20) asleep.fontZoom = snap.fontZoom
       return asleep
     }
     const leaf = await createLeaf(snap.shellId, agent, cwd, snap.worktree || null, {
@@ -1640,6 +1643,7 @@ async function deserializeNode(snap, cwd = null) {
     }
     if (snap.titleSet === true) leaf.titleSet = true
     if (typeof snap.autoTitle === 'string' && snap.autoTitle) leaf.autoTitle = snap.autoTitle.slice(0, 80)
+    if (Number.isInteger(snap.fontZoom) && Math.abs(snap.fontZoom) <= 20) leaf.fontZoom = snap.fontZoom
     // Still running: its line is what was saved. Unknown (an older layout):
     // no automatic reminder until the user sends or clears a line there.
     // Still running: its line is what this window recorded; nothing
@@ -3855,9 +3859,13 @@ function movePane(srcId, target) {
   refitSoon()
 }
 
+// Ctrl+= / Ctrl+- / Ctrl+0: the selected terminal only (its own step from the
+// font size in Settings); a chat zooms itself (its own keys, when focused).
 function zoom(delta) {
-  fontSize.value =
-    delta === 0 ? DEFAULT_FONT_SIZE : Math.min(28, Math.max(8, fontSize.value + delta))
+  const leaf = activeId.value ? findLeaf(activeId.value) : null
+  if (!leaf || hasNoTerminal(leaf)) return
+  const size = Math.min(28, Math.max(8, fontSize.value + (leaf.fontZoom || 0) + delta))
+  leaf.fontZoom = delta === 0 ? 0 : size - fontSize.value
 }
 
 // --- Workspace actions -------------------------------------------------------

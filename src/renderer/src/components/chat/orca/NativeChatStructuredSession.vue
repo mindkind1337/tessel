@@ -106,7 +106,8 @@ const session = computed(() => {
   }
 })
 const viewState = computed(() => selectNativeChatViewState(session.value))
-const fontScale = useNativeChatFontScale(() => props.isFocusedGroup && viewState.value.kind === 'ready', () => ({ target: rootRef.value }))
+// Kept per pane: zooming one chat never changes another's text size.
+const fontScale = useNativeChatFontScale(() => props.isFocusedGroup && viewState.value.kind === 'ready', () => ({ target: rootRef.value, storageKey: props.node && props.node.id ? `tessel.chat.fontScale.${props.node.id}` : undefined })) // i18n-ignore
 const fileLinkContext = useNativeChatFileLinkContext(() => props.node)
 // The chat's folders, for inline code that names a file (ChatMarkdown).
 provide('nativeChatFileLinkContext', fileLinkContext)

@@ -1980,7 +1980,7 @@ onMounted(() => {
   const theme = paneTheme()
   term = new Terminal({
     fontFamily: fontStack(settings.fontFamily),
-    fontSize: settings.fontSize,
+    fontSize: paneFontSize(),
     cursorBlink: settings.cursorBlink,
     cursorStyle: settings.cursorStyle,
     scrollback: settings.scrollback,
@@ -2399,8 +2399,12 @@ watch(
   () => settings.hideMouseWhileTyping,
   (on) => !on && showMouse()
 )
+// This pane's font size: Settings' size plus its own zoom (Ctrl+= / Ctrl+-).
+function paneFontSize() {
+  return Math.min(28, Math.max(8, settings.fontSize + (props.node.fontZoom || 0)))
+}
 watch(
-  () => [settings.fontSize, settings.fontFamily],
+  () => [paneFontSize(), settings.fontFamily],
   ([size, family]) => {
     if (!term) return
     term.options.fontSize = size
@@ -2761,6 +2765,7 @@ const paneMenuBindings = computed(() => ({
         :agent-name="paneTitle"
         :node="node"
         :is-visible="paneOnScreen"
+        :is-active="isActive"
         interactive
         :pane-id="node.id"
         :account-id="typeof node.accountId === 'string' || node.accountId === null ? node.accountId : undefined"
