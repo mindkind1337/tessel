@@ -314,7 +314,9 @@ async function load() {
     // that turn, its tools or its request any more (else the chat would say
     // "Working" with Stop, or show a card nobody can answer).
     if (session.turnId.value !== null || session.prompts.value.length) session.dispatchLocal({ type: 'status', state: 'ended' })
-    await start()
+    // A conversation restored with the app (it has one already) does not ask
+    // to trust its folder by itself: it waits for "Trust this folder…".
+    await start({ askTrust: !props.node.sessionId })
   }
 }
 function retryHistory() {
@@ -345,13 +347,13 @@ async function newConversation() {
 }
 
 // Opens (or starts again) the session through the app.
-async function start() {
+async function start({ askTrust = true } = {}) {
   if (opening.value || typeof ctx.chatOpen !== 'function') return
   opening.value = true
   session.dispatchLocal({ type: 'status', state: 'starting' })
   let res
   try {
-    res = await ctx.chatOpen(props.node)
+    res = await ctx.chatOpen(props.node, { askTrust })
   } catch (err) {
     res = { ok: false, code: 'failed', error: (err && err.message) || String(err) }
   }

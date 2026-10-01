@@ -244,7 +244,7 @@ describe('ChatPane.vue', () => {
   it('opens the session through the app when it is not running', async () => {
     history = { ok: true, events: [], seq: 0 }
     await mountPane()
-    expect(ctx.chatOpen).toHaveBeenCalledWith(node)
+    expect(ctx.chatOpen).toHaveBeenCalledWith(node, { askTrust: true })
     expect(node.sessionId).toBe('s-new')
     expect(status()).toBe('Idle')
     // An empty conversation says so.
@@ -710,7 +710,13 @@ describe('ChatPane.vue', () => {
     expect(document.querySelector('[data-test="chat-state"]').textContent).toContain('The agent stopped')
     expect(document.querySelector('[data-test="chat-state-error"]').textContent).toBe('exit code 3')
     await click(document.querySelector('[data-test="chat-start-again"]'))
-    expect(ctx.chatOpen).toHaveBeenCalledWith(node)
+    expect(ctx.chatOpen).toHaveBeenCalledWith(node, { askTrust: true })
+  })
+
+  it('a conversation restored with the app does not ask to trust its folder by itself', async () => {
+    history = { ok: true, events: [], seq: 0 }
+    await mountPane({ sessionId: 's-old' })
+    expect(ctx.chatOpen).toHaveBeenCalledWith(node, { askTrust: false })
   })
 
   it('header: a model chosen by its alias shows the name its list gives it (opus -> Opus 5.5)', async () => {
