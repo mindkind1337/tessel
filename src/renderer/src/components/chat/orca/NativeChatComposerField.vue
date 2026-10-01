@@ -382,6 +382,8 @@ const criticalTitle = computed(() => {
 /* Focused: the active pane's frame colour (style.css .pane.active), not white. */
 .nc-composer-box:focus-within {
   border-color: color-mix(in srgb, var(--accent) 70%, transparent);
+  /* A faint glow of the same colour, as Claude's composer. */
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 14%, transparent), 0 0 10px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 .nc-composer-attachments {
   /* Same space above and below the chips (the hairline under them). */
