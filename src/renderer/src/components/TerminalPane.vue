@@ -48,7 +48,7 @@ import { isViewed } from '../../../shared/fileKinds'
 import { effectiveAgent, launchSignature, launchSessionValues, inYoloFolder, YOLO_ARGS, YOLO_ENV } from '../../../shared/agentPrefs'
 import { getAgentSessionOptionCatalog, modelOptions, resolveSessionOptionDefaults, composedModelId, listedModelValues, valuesOnListedRow } from '../../../shared/agentSessionOptions'
 import { paneModels } from '../paneModels'
-import { modelsFor } from '../agentModels'
+import { modelsFor, refreshIfStale } from '../agentModels'
 import { modelChoiceLabel, sessionPillLabel } from '../sessionOptionLabels'
 import { switchClaudeModel, typeCommand } from '../claudeModelSwitch'
 import SessionOptionPicker from './SessionOptionPicker.vue'
@@ -94,6 +94,16 @@ const isActive = computed(() => ctx.activeId.value === props.node.id)
 const isMember = computed(() => ctx.broadcast.value && props.node.broadcast)
 const isMaximized = computed(() => ctx.maximizedId.value === props.node.id)
 const isAgent = computed(() => props.node.kind === 'agent')
+// An agent pane asks for its model list (missing or a day old) once it
+// opens: its pickers (header, chat view, Settings) all list from it, not
+// only the pane menu's.
+watch(
+  () => (props.node.kind === 'agent' ? props.node.agentId : null),
+  (agentId) => {
+    if (agentId) refreshIfStale(agentId)
+  },
+  { immediate: true }
+)
 
 /// The model the agent uses, shown in the header: read from its conversation
 // file (so a /model change shows up), its command or its settings, else from
