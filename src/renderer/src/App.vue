@@ -2056,9 +2056,9 @@ const agentPanes = computed(() => {
   return out
 })
 
-// --- The right side panel (SidePanel.vue): Files, Changes, Tasks tabs --------------
+// --- The right side panel (SidePanel.vue): Files, Changes, Tasks, Agents tabs ------
 // taskPanelOpen: the panel is shown; sideTab: the tab it shows.
-const SIDE_TABS = ['files', 'changes', 'tasks']
+const SIDE_TABS = ['files', 'changes', 'tasks', 'history']
 const sideTab = ref('tasks')
 const explorerOpen = computed(() => taskPanelOpen.value && sideTab.value === 'files')
 const taskBoardShown = computed(() => taskPanelOpen.value && sideTab.value === 'tasks')
@@ -2505,6 +2505,9 @@ function buildCommands() {
   const agentsGroup = t('app.cmd.group.agents', 'Agents')
   add(agentsGroup, t('app.cmd.resumeSession', 'Resume a session'), openSessions, {
     hint: t('app.cmd.resumeSessionHint', 'Reopen a past agent conversation')
+  })
+  add(agentsGroup, taskPanelOpen.value && sideTab.value === 'history' ? t('app.cmd.hideSessionHistory', 'Hide Agent Session History') : t('app.cmd.showSessionHistory', 'Show Agent Session History'), () => toggleSideTab('history'), {
+    hint: t('app.cmd.sessionHistoryHint', 'Browse, search and resume past agent conversations')
   })
   add(agentsGroup, t('app.cmd.mcp', 'MCP servers'), () => (mcpOpen.value = true), { hint: t('app.cmd.mcpHint', 'Give agents extra tools') })
   add(agentsGroup, t('app.cmd.installTools', 'Install tools'), openTools, { hint: t('app.cmd.installToolsHint', 'Agents, Git, Node.js and more') })
@@ -9748,6 +9751,8 @@ onBeforeUnmount(() => {
           :agent-panes="agentPanes"
           :workspace-id="currentWsId"
           :remote="sideRemote"
+          :open-session-ids="openSessionIds"
+          @resume-session="resumeSession"
           @close="closeSidePanel"
           @open="openExplorerFile"
           @open-diff="openScmDiff"

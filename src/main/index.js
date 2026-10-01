@@ -1358,6 +1358,18 @@ ipcMain.handle('sessions:find', async (_evt, q = {}) => {
 ipcMain.handle('sessions:list', async (_evt, q = {}) => {
   try { return await accountSessions.list(q) } catch { return [] }
 })
+// One past conversation (Agent Session History, sessionDetails.js): its
+// first prompt and latest turns, its transcript shown in the file manager,
+// its deletion (to the Recycle Bin).
+ipcMain.handle('sessions:details', async (_evt, q = {}) => {
+  try { return await accountSessions.details(q || {}) } catch { return { ok: false } }
+})
+ipcMain.handle('sessions:revealLog', async (_evt, q = {}) => {
+  try { return await accountSessions.reveal(q || {}, (p) => shell.showItemInFolder(p)) } catch { return { ok: false, error: 'failed' } }
+})
+ipcMain.handle('sessions:delete', async (_evt, q = {}) => {
+  try { return await accountSessions.remove(q || {}, (p) => shell.trashItem(p)) } catch { return { ok: false, error: 'failed' } }
+})
 // The model an agent pane uses (for its header), or null.
 ipcMain.handle('agents:model', async (_evt, q = {}) => {
   try {

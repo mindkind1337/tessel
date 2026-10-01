@@ -195,6 +195,12 @@ const api = {
     return () => ipcRenderer.removeListener('agents:modelChanged', handler)
   },
   listSessions: (query) => ipcRenderer.invoke('sessions:list', query),
+  // One past conversation (Agent Session History): its first prompt, latest
+  // turns and transcript file; that file shown in the file manager; the
+  // conversation deleted (Recycle Bin). { agent, id, accountId }
+  sessionDetails: (query) => ipcRenderer.invoke('sessions:details', query),
+  revealSessionLog: (query) => ipcRenderer.invoke('sessions:revealLog', query),
+  deleteSession: (query) => ipcRenderer.invoke('sessions:delete', query),
   voiceTyping: (opts) => ipcRenderer.invoke('app:voiceTyping', opts),
   inputLanguages: () => ipcRenderer.invoke('app:inputLanguages'),
   openExternal: (url) => ipcRenderer.invoke('app:openExternal', url),

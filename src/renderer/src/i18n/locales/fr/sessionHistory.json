@@ -1,0 +1,135 @@
+{
+  "sessionHistory": {
+    "title": "Historique des sessions d'agent",
+    "titleShort": "Agents",
+    "indexedHistory": "Historique indexé",
+    "resumePastSessions": "Reprendre les sessions passées",
+    "refresh": "Actualiser l'historique des sessions",
+    "search": "Rechercher des sessions",
+    "clearSearch": "Effacer la recherche",
+    "scanning": "Analyse des sessions",
+    "loadFailed": "Les sessions n'ont pas pu être lues : {{error}}",
+    "loadingMore": "Chargement de plus de sessions…",
+    "showMore": "Afficher plus de sessions",
+    "unknownLocation": "Emplacement inconnu",
+    "valueCopied": "{{value}} copié",
+    "sessionId": "ID de session",
+    "logPath": "Chemin du log",
+    "view": {
+      "options": "Options d'affichage",
+      "aria": "Options d'affichage de l'historique des sessions",
+      "agents": "Agents",
+      "selectAll": "Tout sélectionner",
+      "clear": "Effacer",
+      "group": "Regroupement",
+      "folder": "Dossier",
+      "agent": "Agent",
+      "reset": "Réinitialiser la vue"
+    },
+    "depth": {
+      "label": "Profondeur de l'historique : {{value}}",
+      "warning": "Un historique plus long peut ralentir toute l'application. La profondeur vaut par agent.",
+      "recommended": "Recommandé",
+      "mayBeSlower": "Peut être plus lent",
+      "slowest": "Le plus lent"
+    },
+    "scope": {
+      "workspace": "Espace de travail",
+      "project": "Projet",
+      "all": "Tous",
+      "aria": "Portée de l'historique des sessions : {{scope}}",
+      "currentWorkspaceLower": "espace de travail actuel",
+      "currentProjectLower": "projet actuel",
+      "allSessionsLower": "toutes les sessions"
+    },
+    "searching": {
+      "failed": "Impossible de chercher sur cet ordinateur. Réessayez.",
+      "noMatches": "Aucune session correspondante dans l'historique indexé. Essayez une autre requête ou une autre portée.",
+      "retry": "Réessayer"
+    },
+    "bar": {
+      "sessions_one": "{{count}} session",
+      "sessions_other": "{{count}} sessions",
+      "sessionsOfLoaded": "{{shown}} sur {{loaded}} sessions",
+      "results_one": "{{count}} résultat",
+      "results_other": "{{count}} résultats"
+    },
+    "sort": {
+      "lastUpdated": "Dernière mise à jour",
+      "created": "Créée",
+      "relevance": "Le plus pertinent",
+      "newest": "Le plus récent",
+      "sessionsAria": "Trier les sessions : {{sort}}",
+      "resultsAria": "Trier les résultats : {{sort}}"
+    },
+    "empty": {
+      "noSessions": "Aucune session d'agent trouvée",
+      "noMatch": "Aucune session ne correspond aux filtres actuels",
+      "noAgentsSelected": "Aucun agent sélectionné"
+    },
+    "time": {
+      "unknown": "Heure inconnue",
+      "justNow": "À l'instant",
+      "minutes": "il y a {{n}} min",
+      "hours": "il y a {{n}} h",
+      "days": "il y a {{n}} j",
+      "months": "il y a {{n}} mois",
+      "years": "il y a {{n}} an(s)"
+    },
+    "role": {
+      "user": "Vous",
+      "agent": "Agent",
+      "tool": "Outil",
+      "system": "Système",
+      "session": "Session"
+    },
+    "row": {
+      "resumeInNewPane": "Reprendre dans un nouveau panneau",
+      "jumpToOriginalPane": "Aller au panneau d'origine",
+      "hideDetails": "Masquer les détails",
+      "showDetails": "Afficher les détails",
+      "toggleDetails": "Détails de la session {{agent}}",
+      "moreActions": "Plus d'actions",
+      "moreSessionActions": "Autres actions de session",
+      "messageCount": "{{n}} msg",
+      "openLog": "Ouvrir le log",
+      "revealLog": "Révéler le log",
+      "openWorkingDirectory": "Ouvrir le répertoire de travail",
+      "copySessionId": "Copier l'ID de session",
+      "copyLogPath": "Copier le chemin du log",
+      "delete": "Supprimer",
+      "deleteReasonOpen": "Cette session est ouverte dans un panneau. Fermez-le d'abord.",
+      "deleteReasonUnsupportedAgent": "Les sessions {{agent}} ne peuvent pas être supprimées depuis Tessel.",
+      "logUnavailable": "Le fichier de la transcription est introuvable.",
+      "folderUnavailable": "Le répertoire de travail est introuvable."
+    },
+    "details": {
+      "viewLog": "Afficher le log",
+      "firstPrompt": "Premier prompt",
+      "prompt": "Prompt",
+      "copyFirstPrompt": "Copier le premier prompt",
+      "copyPrompt": "Copier le prompt",
+      "firstPromptCopied": "Premier prompt copié",
+      "promptCopied": "Prompt copié",
+      "copied": "Copié",
+      "copy": "Copier",
+      "loadingFirstPrompt": "Chargement du premier prompt…",
+      "noFirstPrompt": "Aucun premier prompt disponible",
+      "latestTurns": "Derniers échanges",
+      "noPreview": "Aucun aperçu de conversation disponible",
+      "workingDirectory": "Répertoire de travail"
+    },
+    "subagents": {
+      "count": "Sous-agents ({{count}})",
+      "loading": "Chargement des sous-agents…",
+      "empty": "Aucun sous-agent trouvé."
+    },
+    "delete": {
+      "title": "Supprimer cette session ?",
+      "text": "« {{title}} » sera supprimée. Une fois supprimée, elle ne pourra plus être reprise depuis la ligne de commande de {{agent}} non plus.",
+      "confirm": "Supprimer",
+      "done": "Session supprimée",
+      "failed": "Impossible de supprimer la session"
+    }
+  }
+}

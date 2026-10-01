@@ -7,6 +7,7 @@ import { findAgentSession } from './agentResume'
 import { claudeSessionTitle, codexSessionTitle } from './sessionTitle'
 import { claudeSubagents, codexSubagents, opencodeSubagents, clineSubagents } from './agentChildren'
 import { clineDataDir } from './jsonAgents'
+import { deleteSession, revealSessionFile, sessionDetails } from './sessionDetails'
 
 export function createAccountSessions({ accounts, home = os.homedir(), env = process.env }) {
   const root = (provider, result) =>
@@ -18,8 +19,30 @@ export function createAccountSessions({ accounts, home = os.homedir(), env = pro
     const scope = await accounts.sessionEnv('codex', q.accountId)
     return scope.ok ? findCodexSession(q, home, Date.now(), root('codex', scope)) : null
   }
+  // The folders a conversation's transcript is in (sessionDetails.js): the
+  // account's for Claude Code and Codex, or null when that account is gone.
+  async function roots({ agent, accountId } = {}) {
+    if (agent !== 'claude' && agent !== 'codex') return {}
+    const scope = await accounts.sessionEnv(agent, accountId)
+    return scope.ok ? { [agent]: root(agent, scope) } : null
+  }
   return {
     find,
+    roots,
+    // One past conversation, for the Agent Session History panel: its
+    // details, its file in the file manager, its deletion.
+    async details(q = {}) {
+      const r = await roots(q)
+      return r ? sessionDetails(q, home, r) : { ok: false }
+    },
+    async reveal(q = {}, showItemInFolder) {
+      const r = await roots(q)
+      return r ? revealSessionFile(q, home, r, showItemInFolder) : { ok: false, error: 'missing' }
+    },
+    async remove(q = {}, trashItem) {
+      const r = await roots(q)
+      return r ? deleteSession(q, home, r, trashItem) : { ok: false, error: 'missing' }
+    },
     // The sub-agents a Claude Code or Codex conversation started
     // (agentChildren.js), read in the home it came from (a Codex pane's
     // account CODEX_HOME).
