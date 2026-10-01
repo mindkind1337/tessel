@@ -659,7 +659,7 @@ async function readFreshPath() {
 
 // Read once at start (in the background): until then, the PATH Tessel was
 // started with.
-readFreshPath().then((p) => {
+const freshPathRead = readFreshPath().then((p) => {
   if (freshPath === null) freshPath = p || ''
 })
 // Plus the folders installers put commands in without adding them to PATH
@@ -714,6 +714,10 @@ function firstWord(command) {
 
 let agentCache = null // a promise of the presets with 'available'
 async function getAgents(custom = []) {
+  // The first list waits for the PATH read from Windows: Tessel started from
+  // a terminal opened before an agent was installed would otherwise not see
+  // that agent until a manual refresh (its old PATH, kept in agentCache).
+  if (freshPath === null) await freshPathRead
   if (!agentCache) {
     agentCache = Promise.all(
       AGENT_PRESETS.map(async (a) => ({

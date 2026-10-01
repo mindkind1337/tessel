@@ -33,6 +33,8 @@ export function extraToolDirs(env = process.env, home = os.homedir(), pythonDirs
   const dirs = [
     join(home, '.kimi-code', 'bin'),
     join(home, '.opencode', 'bin'),
+    // Cursor's CLI installer (cursor-agent.cmd, agent.cmd).
+    join(local, 'cursor-agent'),
     join(local, 'Programs', 'Ollama'),
     join(home, '.local', 'bin'),
     join(roaming, 'npm'),

@@ -347,7 +347,11 @@ const agents = computed(() => {
     if (reading.accountId === selectedAccount(reading.id))
       rows.set(reading.id, { ...rows.get(reading.id), ...reading })
   }
-  return [...rows.values()].filter((row) => trackedProviders.value.some((p) => p.id === row.id))
+  const shown = [...rows.values()].filter((row) => trackedProviders.value.some((p) => p.id === row.id))
+  // The providers with usage to show first, the ones without (not signed in,
+  // not installed, refresh needed) at the bottom; each group keeps its order.
+  const hasData = (row) => windows(row).length > 0 || !!row.unlimited
+  return [...shown.filter(hasData), ...shown.filter((row) => !hasData(row))]
 })
 function agentName(agent) {
   return agent.name || NAMES[agent.id] || agent.id
