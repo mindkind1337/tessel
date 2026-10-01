@@ -158,7 +158,16 @@ export function mapOpenCodeGo(data) {
   )
   return windows[0] && windows[1] ? windows.filter(Boolean) : []
 }
-export function mapMiniMax(data, now = Date.now()) {
+// The model names to read, in order ("general" unless set in Settings), after
+// Orca's minimax-fetcher-data.ts parseMiniMaxModels/selectMiniMaxSnapshot.
+export function miniMaxModels(value) {
+  const list = (Array.isArray(value) ? value : String(value ?? '').split(','))
+    .map((m) => String(m).trim())
+    .filter(Boolean)
+    .slice(0, 20)
+  return list.length ? list : ['general']
+}
+export function mapMiniMax(data, now = Date.now(), models = ['general']) {
   const rows = (Array.isArray(data?.model_remains) ? data.model_remains : []).filter(
     (d) =>
       typeof d?.model_name === 'string' &&
@@ -166,7 +175,9 @@ export function mapMiniMax(data, now = Date.now()) {
       number(d.start_time) !== null &&
       number(d.end_time) !== null
   )
-  const d = rows.find((r) => r.model_name === 'general') || (rows.length === 1 ? rows[0] : null)
+  let d = null
+  for (const name of miniMaxModels(models)) d ??= rows.find((r) => r.model_name === name) || null
+  if (!d && rows.length === 1) d = rows[0]
   if (!d) return []
   const windows = [quota('5-hour', 100 - number(d.current_interval_remaining_percent), d.end_time)]
   if (number(d.current_weekly_remaining_percent) !== null)
@@ -178,4 +189,23 @@ export function mapMiniMax(data, now = Date.now()) {
       )
     )
   return windows
+}
+// OpenCode's legacy console (OpenCode Black accounts): /console/api/go/status
+// meters in micro-cents, after Orca's opencode-go-status-parsing.ts.
+export function mapOpenCodeConsole(data) {
+  const meters = data?.access?.meters
+  const window = (meter, label) => {
+    const used = number(meter?.usedMicroCents)
+    const limit = number(meter?.limitMicroCents)
+    return used !== null && limit > 0 ? quota(label, (100 * used) / limit, meter.resetsAt) : null
+  }
+  const windows = [window(meters?.fiveHour, '5-hour'), window(meters?.week, 'Weekly'), window(meters?.month, 'Monthly')]
+  return windows[0] && windows[1] ? windows.filter(Boolean) : []
+}
+// Workspace ids in the console's server-function answer (JS-serialized).
+export function openCodeWorkspaceIds(text) {
+  const ids = []
+  for (const match of String(text).slice(0, 1000000).matchAll(/\bid\s*:\s*["']((?:wrk|wk)_[a-zA-Z0-9]+)["']/g))
+    if (!ids.includes(match[1]) && ids.length < 20) ids.push(match[1])
+  return ids
 }

@@ -580,7 +580,16 @@
       "antigravityUnreadable": "L’utilisation d’Antigravity provient du quota Google Code Assist partagé, qui n’a pas pu être lu pour le moment.",
       "opencodeReportFailed": "Impossible de lire l’utilisation d’OpenCode.",
       "rateLimited": "Le service d’utilisation limite les demandes. Tessel réessaiera plus tard.",
-      "autoRefreshFailed": "Impossible de régler l’actualisation de l’utilisation."
+      "autoRefreshFailed": "Impossible de régler l’actualisation de l’utilisation.",
+      "refreshGeminiFailed": "La connexion de Gemini CLI n'a pas pu être actualisée. Lancez Gemini, puis réessayez l'usage.",
+      "openCodeNoAuthCookie": "Aucun cookie d'authentification trouvé. Collez l'en-tête Cookie complet depuis les DevTools d'opencode.ai.",
+      "setMinimaxCredentials": "Enregistrez une clé API ou un cookie de session MiniMax dans Paramètres > Comptes de fournisseurs d'IA, ou définissez MINIMAX_API_KEY.",
+      "minimaxNoAuthCookie": "Cookie d'authentification MiniMax introuvable. Collez un en-tête Cookie contenant _token.",
+      "openCodeConsoleSession": "OpenCode a refusé le cookie. Collez l'en-tête Cookie complet, y compris __Host-console_session (auth seul ne suffit pas).",
+      "minimaxCookieExpired": "Le cookie de session MiniMax a expiré. Remplacez-le dans les Paramètres.",
+      "minimaxKeyExpired": "La clé API MiniMax a expiré. Remplacez-la dans les Paramètres.",
+      "minimaxNoModel": "Les données d'usage MiniMax du modèle configuré sont introuvables.",
+      "openCodeNoWorkspace": "Aucun espace de travail trouvé pour ce cookie. Ajoutez une clé API OpenCode Go (ou lancez /connect dans OpenCode), ou indiquez un identifiant d'espace de travail."
     },
     "reset": {
       "notSaved": "Le résultat de la réinitialisation n'a pas pu être enregistré dans l'historique local.",
@@ -831,6 +840,16 @@
       "forward": "Suivant",
       "reload": "Recharger",
       "inspect": "Inspecter"
+    },
+    "providerCredentials": {
+      "storageInvalid": "Le stockage des identifiants de fournisseurs de Tessel est invalide.",
+      "unreadable": "Les identifiants de fournisseurs enregistrés n'ont pas pu être déchiffrés. Enregistrez-les à nouveau ou oubliez-les.",
+      "noSecureStorage": "Le stockage sécurisé des identifiants n'est pas disponible sur cet ordinateur : rien n'a été enregistré.",
+      "encryptFailed": "L'identifiant n'a pas pu être chiffré.",
+      "saveFailed": "Le paramètre du fournisseur n'a pas pu être enregistré.",
+      "unknown": "Identifiant de fournisseur inconnu.",
+      "invalidValue": "Collez une valeur valide.",
+      "readFailed": "Impossible de lire les paramètres des fournisseurs."
     }
   },
   "main.chat.image.tooLarge": "Cette image dépasse {{mb}} Mo.",

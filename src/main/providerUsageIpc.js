@@ -10,6 +10,7 @@ import { createOpencodeUsageReport } from './opencodeUsageReport'
 import { t } from './i18n'
 import { createUsagePoller } from './usagePoller'
 import { USAGE_PROVIDERS, validHiddenUsageProviders } from '../shared/usageProviders'
+import { CREDENTIAL_PROVIDER } from './providerCredentials'
 
 const LIVE = ['claude', 'codex']
 const HOME_VARS = { claude: 'CLAUDE_CONFIG_DIR', codex: 'CODEX_HOME' }
@@ -104,13 +105,17 @@ export function registerProviderUsage({
   getWindow = () => null,
   poller: givenPoller,
   // Receives the function that takes the chats' live readings.
-  onLiveIngest = null
+  onLiveIngest = null,
+  // Settings > AI provider accounts' saved usage credentials (providerCredentials.js).
+  credentials = null,
+  // Tests: the provider logins read (default: this computer's).
+  usageSources = null
 }) {
   const history = userData
     ? createResetHistory({ file: join(userData, 'reset-history.json'), log })
     : null
   const usage = service || createProviderUsage({ accounts, history, log })
-  const extra = createExtraProviderUsage({ listAgents })
+  const extra = createExtraProviderUsage({ listAgents, credentials, ...(usageSources ? { sources: usageSources } : {}) })
   const readOne = (query) => (LIVE.includes(query.provider) ? usage.read(query) : extra.read(query))
   // The providers the automatic refresh reads: shown in the Usage menu, with a
   // login found (Claude and Codex: their selected account is signed in).
@@ -202,6 +207,38 @@ export function registerProviderUsage({
       }
     }
   })
+  // Settings > AI provider accounts: Cursor and Grok sign-ins (display fields
+  // only), and the saved usage credentials (only whether each one is saved).
+  handle(
+    'providerSettings:status',
+    async () => {
+      const [cursor, grok] = await Promise.all([extra.signIn('cursor'), extra.signIn('grok')])
+      return { ...(credentials?.status() || { ok: true, secure: false, saved: {}, settings: {} }), cursor, grok }
+    },
+    () => t('main.providerCredentials.readFailed', 'Could not read the provider settings.')
+  )
+  // A changed credential or option: the provider's old reading is not reused.
+  const changed = (result, names) => {
+    if (result?.ok)
+      for (const provider of new Set(names.map((name) => CREDENTIAL_PROVIDER[name]).filter(Boolean)))
+        poller.forget(provider)
+    return result
+  }
+  handle(
+    'providerSettings:saveSecret',
+    ({ name, value }) => changed(credentials.saveSecret(name, value), [name]),
+    () => t('main.providerCredentials.saveFailed', 'The provider setting could not be saved.')
+  )
+  handle(
+    'providerSettings:clearSecret',
+    ({ name }) => changed(credentials.clearSecret(name), [name]),
+    () => t('main.providerCredentials.saveFailed', 'The provider setting could not be saved.')
+  )
+  handle(
+    'providerSettings:update',
+    ({ patch }) => changed(credentials.update(patch), Object.keys(patch || {})),
+    () => t('main.providerCredentials.saveFailed', 'The provider setting could not be saved.')
+  )
   handle(
     'providerUsage:resetHistory',
     (query) => history?.read(query) || { ok: false, error: t('main.reset.historyUnavailable', 'Local reset history is unavailable.') },
