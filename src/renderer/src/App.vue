@@ -3863,7 +3863,8 @@ function movePane(srcId, target) {
 // font size in Settings); a chat zooms itself (its own keys, when focused).
 function zoom(delta) {
   const leaf = activeId.value ? findLeaf(activeId.value) : null
-  if (!leaf || hasNoTerminal(leaf)) return
+  // A terminal agent shown as its chat view zooms the chat (its own keys).
+  if (!leaf || hasNoTerminal(leaf) || leaf.chatView) return
   const size = Math.min(28, Math.max(8, fontSize.value + (leaf.fontZoom || 0) + delta))
   leaf.fontZoom = delta === 0 ? 0 : size - fontSize.value
 }

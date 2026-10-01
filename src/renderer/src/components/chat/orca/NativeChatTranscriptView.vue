@@ -344,8 +344,17 @@ const fileLinkContext = computed(() => {
 const { onLinkClick } = useNativeChatLinkActions(fileLinkContext, rootRef, () => ({ isVisible: props.isVisible }))
 // Its own text size (Ctrl+= / Ctrl+- / Ctrl+0, Ctrl+wheel) while it is the
 // selected pane, kept per pane: never the terminals' size, never another chat's.
+// Also while the keyboard is in it (its composer): the pane may not be the
+// selected one yet, and the app's own zoom leaves typing fields alone.
+const hasFocus = ref(false)
+function onFocusIn() {
+  hasFocus.value = true
+}
+function onFocusOut(event) {
+  if (!rootRef.value || !rootRef.value.contains(event.relatedTarget)) hasFocus.value = false
+}
 const fontScale = useNativeChatFontScale(
-  () => props.interactive && props.isActive && props.isVisible,
+  () => props.interactive && props.isVisible && (props.isActive || hasFocus.value),
   () => ({ target: rootRef.value, storageKey: props.paneId ? `tessel.chat.fontScale.${props.paneId}` : undefined }) // i18n-ignore
 )
 provide('nativeChatFileLinkContext', fileLinkContext)
@@ -749,6 +758,8 @@ const title = computed(() => t('chat.orca.transcriptView.title', 'Conversation o
     class="nc-root nc-transcript-view"
     data-test="transcript-view"
     @pointerdown.capture="onPointerDownCapture"
+    @focusin="onFocusIn"
+    @focusout="onFocusOut"
     @mouseup.capture="onSelectionCapture"
     @keyup.capture="onSelectionCapture"
     @contextmenu.capture="onContextMenu"

@@ -392,3 +392,36 @@ describe('NativeChatTranscriptView, the permission mode picker (interactive)', (
     expect(composer().props('sessionOptionsSnapshot').some((o) => o.id === 'permissionMode')).toBe(false)
   })
 })
+
+describe('zoom in the chat view of the selected terminal agent', () => {
+  it('Ctrl+- and Ctrl+= change its own text size, kept for that pane', async () => {
+    localStorage.removeItem('tessel.chat.fontScale.pane-z')
+    await mountView({ agent: 'claude', sessionId: '22222222-3333-4444-8555-666666666666', interactive: true, paneId: 'pane-z', isActive: true })
+    const list = wrapper.findComponent({ name: 'NativeChatMessageList' })
+    const before = list.exists() ? list.props('fontScale') : null
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: '-', ctrlKey: true, bubbles: true }))
+    await flushPromises()
+    expect(localStorage.getItem('tessel.chat.fontScale.pane-z')).toBe('0.9')
+    if (before !== null) expect(wrapper.findComponent({ name: 'NativeChatMessageList' }).props('fontScale')).toBe(0.9)
+  })
+  it('a chat view that is not the selected pane leaves the keys alone', async () => {
+    localStorage.removeItem('tessel.chat.fontScale.pane-y')
+    await mountView({ agent: 'claude', sessionId: '22222222-3333-4444-8555-666666666666', interactive: true, paneId: 'pane-y', isActive: false })
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: '-', ctrlKey: true, bubbles: true }))
+    await flushPromises()
+    expect(localStorage.getItem('tessel.chat.fontScale.pane-y')).toBe(null)
+  })
+})
+
+describe('zoom while typing in a chat view that is not the selected pane yet', () => {
+  it('the keyboard in its composer is enough', async () => {
+    localStorage.removeItem('tessel.chat.fontScale.pane-x')
+    await mountView({ agent: 'claude', sessionId: '22222222-3333-4444-8555-666666666666', interactive: true, paneId: 'pane-x', isActive: false })
+    const root = document.querySelector('[data-test="transcript-view"]')
+    root.dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
+    await flushPromises()
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: '-', ctrlKey: true, bubbles: true }))
+    await flushPromises()
+    expect(localStorage.getItem('tessel.chat.fontScale.pane-x')).toBe('0.9')
+  })
+})
