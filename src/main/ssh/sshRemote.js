@@ -77,6 +77,7 @@ export function createSshRemote({ host, hosts, send = () => {}, log = null, t, s
   const prompts = new Map() // promptId -> { hostId, kind }
   const chans = new Map() // ch -> ChannelChild
   const tests = new Map() // cid -> resolve
+  const pendingDisconnects = new Set() // hostIds to disconnect once the pipe is back
   const label = (hostId) => {
     try {
       const h = hosts.get(hostId)
@@ -231,6 +232,10 @@ export function createSshRemote({ host, hosts, send = () => {}, log = null, t, s
 
   // The terminal host connection is back: its questions and states again.
   async function onConnected() {
+    for (const hostId of [...pendingDisconnects]) {
+      pendingDisconnects.delete(hostId)
+      host.request('ssh-disconnect', { hostId }, 5000).catch(() => pendingDisconnects.add(hostId))
+    }
     try {
       const res = await host.request('ssh-sync', {}, 5000)
       if (!res || !res.ok) return
@@ -306,8 +311,13 @@ export function createSshRemote({ host, hosts, send = () => {}, log = null, t, s
   // are forgotten. (Its terminals are ended by the caller.)
   function disconnect(hostId) {
     for (const [id, p] of [...prompts]) if (p.hostId === hostId) dropPrompt(id)
-    if (!host.connected) return
-    host.request('ssh-disconnect', { hostId }, 5000).catch(() => {})
+    // The pipe is down: sent when it is back (onConnected), so the terminal
+    // host never keeps credentials the user asked to forget.
+    if (!host.connected) {
+      pendingDisconnects.add(hostId)
+      return
+    }
+    host.request('ssh-disconnect', { hostId }, 5000).catch(() => pendingDisconnects.add(hostId))
   }
 
   const isPane = (paneId) => typeof paneId === 'string' && paneId.startsWith(PANE_PREFIX)

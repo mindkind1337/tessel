@@ -63,12 +63,35 @@ function promptText(...parts) {
     .slice(0, PROMPT_DETAIL_MAX)
 }
 
-let defaultHostKeyAlgorithms = null
-try {
-  const list = ssh2Constants && ssh2Constants.DEFAULT_SERVER_HOST_KEY
-  if (Array.isArray(list) && list.length && list.every((a) => typeof a === 'string')) defaultHostKeyAlgorithms = [...list]
-} catch {
-  defaultHostKeyAlgorithms = null
+// The algorithms offered. Without settings from ssh -G: ssh2's defaults
+// minus SHA-1 (the ssh-rsa host key signature, hmac-sha1 MACs). With them
+// (HostKeyAlgorithms, KexAlgorithms, Ciphers, MACs): the user's lists, in
+// their order, limited to what ssh2 supports; a list with nothing ssh2 can
+// do is an error (never a silent fallback to other algorithms).
+const SHA1_DEFAULTS = new Set(['ssh-rsa', 'hmac-sha1', 'hmac-sha1-etm@openssh.com'])
+const CATEGORIES = [
+  ['kex', 'DEFAULT_KEX', 'SUPPORTED_KEX'],
+  ['serverHostKey', 'DEFAULT_SERVER_HOST_KEY', 'SUPPORTED_SERVER_HOST_KEY'],
+  ['cipher', 'DEFAULT_CIPHER', 'SUPPORTED_CIPHER'],
+  ['hmac', 'DEFAULT_MAC', 'SUPPORTED_MAC']
+]
+const stringList = (v) => (Array.isArray(v) && v.every((a) => typeof a === 'string') ? v : null)
+
+// -> { kex, serverHostKey, cipher, hmac } | { error: category }
+export function effectiveAlgorithms(fromConfig = null, constants = ssh2Constants) {
+  const out = {}
+  for (const [name, defKey, supKey] of CATEGORIES) {
+    const defaults = stringList(constants && constants[defKey])
+    const supported = stringList(constants && constants[supKey])
+    if (!defaults || !supported) continue // an unexpected ssh2: its own defaults
+    const wanted = fromConfig && stringList(fromConfig[name])
+    if (wanted && wanted.length) {
+      const list = wanted.filter((a) => supported.includes(a))
+      if (!list.length) return { error: name }
+      out[name] = list
+    } else out[name] = defaults.filter((a) => !SHA1_DEFAULTS.has(a))
+  }
+  return out
 }
 
 // spec: { host, port, username, identityFiles, identitiesOnly, identityAgent,
@@ -103,15 +126,20 @@ export function connectSsh({
     const evidence = await loadKnownHosts(spec.knownHostsFiles || [])
     const records = hostKeys ? hostKeys.records() : []
     const keys = loadKeys(spec.identityFiles || [])
-    const agentToOffer = agent !== undefined ? agent : makeAgent(spec)
-    const serverHostKey = orderServerHostKeyAlgorithms(
-      evidence.entries,
-      lookupHost,
-      port,
-      defaultHostKeyAlgorithms,
-      hostKeys ? hostKeys.storedKeyTypes(records, lookupHost, port) : [],
-      isHostKeyAlias
-    )
+    const agentToOffer = spec.pubkeyAuthentication === false ? null : agent !== undefined ? agent : makeAgent(spec)
+    const algorithms = effectiveAlgorithms(spec.algorithms)
+    if (algorithms.error) throw sshError('algorithms', { host, port, detail: algorithms.error })
+    if (algorithms.serverHostKey) {
+      algorithms.serverHostKey =
+        orderServerHostKeyAlgorithms(
+          evidence.entries,
+          lookupHost,
+          port,
+          algorithms.serverHostKey,
+          hostKeys ? hostKeys.storedKeyTypes(records, lookupHost, port) : [],
+          isHostKeyAlias
+        ) || algorithms.serverHostKey
+    }
 
     return new Promise((resolve, reject) => {
       const client = new ClientImpl()
@@ -121,6 +149,12 @@ export function connectSsh({
       let rejection = null // a refused host key
       let cancelled = false
       let timedOut = false
+      let connected = false
+      let acceptedKey = null // the host key accepted for this connection
+      // Whether that key was checked (known_hosts, Tessel's store, the
+      // user's Yes, or the key pinned at this endpoint's first unchecked
+      // connection): a kept password is only ever sent to a checked key.
+      let hostVerified = false
 
       const clearTimer = () => {
         if (timer) timers.clearTimeout(timer)
@@ -143,7 +177,8 @@ export function connectSsh({
         if (code === 'ENOTFOUND') return sshError('dns', { host, port })
         if (TRANSIENT.has(code)) return sshError('network', { host, port, detail: code }, true)
         if (err && err.level === 'client-timeout') return sshError('timeout', { host, port }, true)
-        return sshError('failed', { host, port, detail: String((err && err.message) || '').slice(0, 300) })
+        // The text may come from the server (a disconnect reason): no control characters.
+        return sshError('failed', { host, port, detail: promptText((err && err.message) || '').replace(/\n/g, ' ').slice(0, 300) })
       }
       function fail(err) {
         if (settled) return
@@ -177,6 +212,11 @@ export function connectSsh({
 
       // --- Host key ------------------------------------------------------
       const hostVerifier = (key, verify) => {
+        // A later key exchange (re-key) on this connection: the same key only.
+        if (connected) {
+          verify(!!acceptedKey && Buffer.isBuffer(key) && key.equals(acceptedKey))
+          return
+        }
         Promise.resolve()
           .then(async () => {
             const keyType = readHostKeyType(key)
@@ -203,8 +243,24 @@ export function connectSsh({
                 rejection = sshError('hostkey-declined', params)
                 return false
               }
+              hostVerified = true
+            } else if (decision.verified) {
+              hostVerified = true
+            } else if (creds.pinnedKey) {
+              // Accepted unchecked (StrictHostKeyChecking no, accept-new):
+              // this endpoint's first key is pinned in memory, another one
+              // is refused.
+              if (!creds.pinnedKey.equals(key)) {
+                log('warn', `ssh host key differs from the pinned one for ${lookupHost}:${port} (${keyType} ${fingerprint})`)
+                rejection = sshError('hostkey-changed-pinned', params)
+                return false
+              }
+              hostVerified = true
+            } else {
+              creds.pinnedKey = Buffer.from(key)
             }
             if (decision.remember && hostKeys) hostKeys.trust({ host: lookupHost, port, keyType, key })
+            acceptedKey = Buffer.from(key)
             return true
           })
           .catch(() => {
@@ -229,6 +285,8 @@ export function connectSsh({
       let typedPassword = null
       let last = null // the attempt in flight: { type, password: 'cache' | 'typed' | null }
       let partialStages = 0
+      // The kept password, only for a checked host key.
+      const keptPassword = () => (hostVerified ? creds.password : null)
 
       function failedAttempt(partial) {
         if (!last || partial) return
@@ -263,10 +321,11 @@ export function connectSsh({
           const answers = []
           for (const p of prompts) {
             if (isPasswordPrompt(p)) {
-              if (creds.password != null && !cachedPasswordUsed) {
+              const kept = keptPassword()
+              if (kept != null && !cachedPasswordUsed) {
                 cachedPasswordUsed = true
                 if (last) last.password = 'cache'
-                answers.push(creds.password)
+                answers.push(kept)
                 continue
               }
               const v = await question({ kind: 'password', detail: `${username}@${host}`, retry: passwordRejected })
@@ -308,7 +367,7 @@ export function connectSsh({
           triedNone = true
           return { type: 'none', username }
         }
-        if (offered('publickey')) {
+        if (offered('publickey') && spec.pubkeyAuthentication !== false) {
           if (!agentTried && agentToOffer) {
             agentTried = true
             return { type: 'agent', username, agent: agentToOffer }
@@ -321,17 +380,18 @@ export function connectSsh({
             if (auth) return auth
           }
         }
-        if (offered('keyboard-interactive') && kbdAttempts < MAX_KBD_ATTEMPTS) {
+        if (offered('keyboard-interactive') && spec.kbdInteractiveAuthentication !== false && kbdAttempts < MAX_KBD_ATTEMPTS) {
           kbdAttempts++
           last = { type: 'keyboard-interactive', password: null }
           return { type: 'keyboard-interactive', username, prompt: kbdPrompt }
         }
-        if (offered('password') && passwordTries < MAX_PASSWORD_TRIES) {
+        if (offered('password') && spec.passwordAuthentication !== false && passwordTries < MAX_PASSWORD_TRIES) {
           passwordTries++
-          if (creds.password != null && !cachedPasswordUsed) {
+          const kept = keptPassword()
+          if (kept != null && !cachedPasswordUsed) {
             cachedPasswordUsed = true
             last = { type: 'password', password: 'cache' }
-            return { type: 'password', username, password: creds.password }
+            return { type: 'password', username, password: kept }
           }
           const v = await question({ kind: 'password', detail: `${username}@${host}`, retry: passwordRejected })
           if (v == null) {
@@ -368,6 +428,7 @@ export function connectSsh({
           return
         }
         settled = true
+        connected = true
         clearTimer()
         // The password the server just accepted is kept for reconnects.
         if (typedPassword != null) creds.password = typedPassword
@@ -396,7 +457,7 @@ export function connectSsh({
         hostVerifier,
         authHandler
       }
-      if (serverHostKey) config.algorithms = { serverHostKey }
+      if (Object.keys(algorithms).length) config.algorithms = algorithms
       arm()
       try {
         client.connect(config)

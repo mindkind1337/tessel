@@ -20,15 +20,17 @@
 const STRICT = new Set(['true', 'yes', 'always'])
 const LAX = new Set(['false', 'no', 'off'])
 
-// -> { action: 'accept' | 'prompt' | 'reject', remember: boolean, code? }
+// -> { action: 'accept' | 'prompt' | 'reject', remember: boolean, verified?, code? }
+// verified: the key matched a record (an 'accept' without it was not checked:
+// sshConnection.js pins it and never sends a kept password to it unpinned).
 // code (a rejection): 'revoked' | 'changed' | 'changed-store' | 'changed-type' | 'unknown-strict'
 export function decideHostKey({ knownHostsOutcome, storeOutcome, strictHostKeyChecking = 'ask', knownHostsUnreadable = false }) {
   const strict = String(strictHostKeyChecking || 'ask').trim().toLowerCase()
   if (knownHostsOutcome === 'revoked') return { action: 'reject', remember: false, code: 'revoked' }
   if (knownHostsOutcome === 'mismatch') return { action: 'reject', remember: false, code: 'changed' }
-  if (knownHostsOutcome === 'match') return { action: 'accept', remember: false }
+  if (knownHostsOutcome === 'match') return { action: 'accept', remember: false, verified: true }
   if (storeOutcome === 'mismatch') return { action: 'reject', remember: false, code: 'changed-store' }
-  if (storeOutcome === 'match') return { action: 'accept', remember: false }
+  if (storeOutcome === 'match') return { action: 'accept', remember: false, verified: true }
   if (knownHostsOutcome === 'unknown-type-known-host') return { action: 'reject', remember: false, code: 'changed-type' }
   if (storeOutcome === 'unknown-type-known-host') return { action: 'reject', remember: false, code: 'changed-type-store' }
   // Unknown from here (a CA-only host included: ssh2 cannot check

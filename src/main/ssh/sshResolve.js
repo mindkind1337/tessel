@@ -14,7 +14,7 @@
 // the saved fields and OpenSSH's defaults are used.
 import fs from 'fs'
 import os from 'os'
-import { win32 } from 'path'
+import { join, win32 } from 'path'
 import { execFile } from 'child_process'
 import { sshArgsFor } from '../remoteHosts'
 import { resolveSshConfigHomePath } from '../sshConfig'
@@ -85,6 +85,7 @@ export function specFromSshG(map, target, { home = os.homedir(), exists = fs.exi
   if (isSet(one('proxycommand'))) return { ok: false, system: true, reason: 'proxycommand' }
   if (isSet(one('pkcs11provider'))) return { ok: false, system: true, reason: 'pkcs11' }
   if ((map.get('certificatefile') || []).some(isSet)) return { ok: false, system: true, reason: 'certificate' }
+  if (isSet(one('knownhostscommand'))) return { ok: false, system: true, reason: 'knownhostscommand' }
   if (String(one('gssapiauthentication') || '').toLowerCase() === 'yes') return { ok: false, system: true, reason: 'gssapi' }
   const port = Number(one('port') || target.port || 22)
   const known = [
@@ -102,8 +103,52 @@ export function specFromSshG(map, target, { home = os.homedir(), exists = fs.exi
       identityAgent: one('identityagent') || null,
       strictHostKeyChecking: one('stricthostkeychecking') || 'ask',
       knownHostsFiles: known.length ? known : defaultKnownHostsFiles(home),
-      hostKeyAlias: isSet(one('hostkeyalias')) ? one('hostkeyalias') : null
+      hostKeyAlias: isSet(one('hostkeyalias')) ? one('hostkeyalias') : null,
+      passwordAuthentication: !isNo(one('passwordauthentication')),
+      kbdInteractiveAuthentication: !isNo(one('kbdinteractiveauthentication')),
+      pubkeyAuthentication: !isNo(one('pubkeyauthentication')),
+      algorithms: {
+        kex: algoList(one('kexalgorithms')),
+        serverHostKey: algoList(one('hostkeyalgorithms')),
+        cipher: algoList(one('ciphers')),
+        hmac: algoList(one('macs'))
+      }
     }
+  }
+}
+
+// ssh -G prints yes/no or true/false.
+const isNo = (v) => ['no', 'false'].includes(String(v || '').toLowerCase())
+// "a,b,c" (ssh -G prints the resolved list) -> [a, b, c] | undefined
+const algoList = (v) => (isSet(v) ? String(v).split(',').map((a) => a.trim()).filter(Boolean) : undefined)
+
+// Without ssh.exe: does ~/.ssh/config say anything about this host? (Then
+// the saved fields alone could connect differently than ssh would: refused.)
+// Conservative: an Include or a Match block counts as a mention.
+export function configMentionsHost(text, names) {
+  const wanted = names.filter(Boolean).map((n) => String(n).toLowerCase())
+  for (const raw of String(text || '').split(/\r?\n/)) {
+    const m = /^\s*(host|match|include)\b\s*=?\s*(.*)$/i.exec(raw)
+    if (!m) continue
+    if (m[1].toLowerCase() !== 'host') return true
+    for (const pattern of m[2].split(/\s+/).filter(Boolean)) {
+      const neg = pattern.startsWith('!')
+      const p = (neg ? pattern.slice(1) : pattern).toLowerCase().replace(/"/g, '')
+      if (p === '*') continue
+      const re = new RegExp(`^${p.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.')}$`)
+      if (!neg && wanted.some((w) => re.test(w))) return true
+    }
+  }
+  return false
+}
+
+function defaultReadConfig(home) {
+  try {
+    const file = join(home, '.ssh', 'config')
+    const st = fs.statSync(file)
+    return st.size > 1024 * 1024 ? 'Include *' : fs.readFileSync(file, 'utf8')
+  } catch (err) {
+    return err && err.code === 'ENOENT' ? '' : 'Include *'
   }
 }
 
@@ -135,7 +180,7 @@ export function specFromTarget(target, { home = os.homedir(), username = safeUse
   }
 }
 
-export function createSshResolver({ sshExe = () => null, runFile = execFile, home = os.homedir(), now = () => Date.now() } = {}) {
+export function createSshResolver({ sshExe = () => null, runFile = execFile, home = os.homedir(), now = () => Date.now(), readConfig = defaultReadConfig } = {}) {
   const cache = new Map()
 
   function runG(exe, args) {
@@ -163,10 +208,15 @@ export function createSshResolver({ sshExe = () => null, runFile = execFile, hom
     } catch {
       return { ok: false, system: true, reason: 'invalid' }
     }
-    const out = exe ? await runG(exe, args) : null
-    const map = out ? parseSshG(out) : null
-    if (map && map.get('hostname')) value = specFromSshG(map, target, { home })
-    else value = specFromTarget(target, { home })
+    if (exe) {
+      // ssh.exe is there but could not tell its settings (an error, a
+      // timeout): ssh.exe itself is used, never guessed settings.
+      const out = await runG(exe, args)
+      const map = out ? parseSshG(out) : null
+      value = map && map.get('hostname') ? specFromSshG(map, target, { home }) : { ok: false, system: true, reason: 'ssh-g-failed' }
+    } else if (configMentionsHost(readConfig(home), [target.configHost, target.host, target.label])) {
+      value = { ok: false, system: true, reason: 'config-without-ssh' }
+    } else value = specFromTarget(target, { home })
     cache.set(key, { at: now(), value })
     if (cache.size > 200) cache.delete(cache.keys().next().value)
     return value

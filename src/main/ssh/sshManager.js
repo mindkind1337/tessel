@@ -21,6 +21,7 @@ import { connectSsh } from './sshConnection'
 
 export const IDLE_CLOSE_MS = 5 * 60 * 1000
 export const RETRY_DELAYS_MS = [2000, 5000]
+export const CREDENTIALS_MAX_AGE_MS = 8 * 60 * 60 * 1000
 const MAX_CONNECTIONS_PER_HOST = 4
 
 const endpointOf = (spec) => `${spec.username || ''}@${String(spec.host).toLowerCase()}:${spec.port || 22}`
@@ -34,7 +35,10 @@ export function createSshManager({
   log = () => {},
   timers = { setTimeout, clearTimeout },
   idleCloseMs = IDLE_CLOSE_MS,
-  retryDelays = RETRY_DELAYS_MS
+  retryDelays = RETRY_DELAYS_MS,
+  hasShells = () => false, // (hostId) -> a terminal on it may still reconnect
+  now = () => Date.now(),
+  credentialsMaxAgeMs = CREDENTIALS_MAX_AGE_MS
 } = {}) {
   const entries = new Map() // hostId\nendpoint -> entry
   const creds = new Map() // hostId\nendpoint -> { password, passphrases }
@@ -49,13 +53,23 @@ export function createSshManager({
     }
   }
 
+  // Kept credentials (and the host key pinned for an unchecked host): at
+  // most credentialsMaxAgeMs, then asked again.
   function credsFor(key) {
     let c = creds.get(key)
+    if (c && now() - c.since > credentialsMaxAgeMs) c = null
     if (!c) {
-      c = { password: null, passphrases: new Map() }
+      c = { password: null, passphrases: new Map(), pinnedKey: null, since: now() }
       creds.set(key, c)
     }
     return c
+  }
+
+  // The last connection of an entry closed: its credentials go too, unless
+  // a terminal on the host will reconnect with them.
+  function forgetIfUnused(e) {
+    if (liveConns(e).length || e.connecting || hasShells(e.hostId)) return
+    creds.delete(e.key)
   }
 
   function entryFor(hostId, spec) {
@@ -117,6 +131,8 @@ export function createSshManager({
       e.conns = e.conns.filter((c) => c !== conn)
       const wasUsed = conn.channels > 0
       conn.channels = 0
+      // After the terminals' own close handlers (which may reconnect).
+      timers.setTimeout(() => forgetIfUnused(e), 1000)
       if (hostStatus(e.hostId) === 'connected') return
       if (conn.closing || !wasUsed) setState(e.hostId, { status: 'disconnected' })
       else {
@@ -298,11 +314,14 @@ export function createSshManager({
   return {
     open,
     connectHost,
+    forgetIfUnused: (hostId) => {
+      for (const e of [...entries.values()]) if (e.hostId === hostId) forgetIfUnused(e)
+    },
     disconnect,
     closeAll,
     snapshot,
     // For tests and diagnostics: never the secrets themselves.
     connectionCount: (hostId) => [...entries.values()].filter((e) => e.hostId === hostId).reduce((n, e) => n + liveConns(e).length, 0),
-    hasKeptPassword: (hostId) => [...creds].some(([k, c]) => k.startsWith(`${hostId}\n`) && c.password != null)
+    hasKeptPassword: (hostId) => [...creds].some(([k, c]) => k.startsWith(`${hostId}\n`) && c.password != null && now() - c.since <= credentialsMaxAgeMs)
   }
 }

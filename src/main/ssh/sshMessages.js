@@ -9,6 +9,7 @@ export function sshTemplates(t) {
     lost: t('main.ssh.lost', 'Connection to {{host}} lost. Reconnecting…'),
     reconnected: t('main.ssh.reconnected', 'Reconnected to {{host}}: a new shell was started.'),
     gaveUp: t('main.ssh.gaveUp', 'Could not reconnect to {{host}}.'),
+    notConnected: t('main.ssh.notConnected', 'Not connected to {{host}}: what you type is not sent until the new shell starts.'),
     codes: {
       'auth-failed': t('main.ssh.authFailed', 'Sign-in to {{host}} failed (permission denied).'),
       'auth-cancelled': t('main.ssh.authCancelled', 'Sign-in to {{host}} was cancelled.'),
@@ -35,6 +36,11 @@ export function sshTemplates(t) {
         'main.ssh.hostKeyChangedTypeStore',
         'WARNING: {{host}} offered a {{keyType}} host key while you accepted a key of another type: someone could be impersonating this host. Tessel refused to connect. If the host was really reinstalled, remove its entry from {{storeFile}}.'
       ),
+      'hostkey-changed-pinned': t(
+        'main.ssh.hostKeyChangedPinned',
+        'WARNING: {{host}} presented a different host key ({{keyType}} {{fingerprint}}) than at the first connection of this session, and StrictHostKeyChecking does not check it: someone could be impersonating this host. Tessel refused to connect.'
+      ),
+      algorithms: t('main.ssh.algorithms', 'The algorithms set for {{host}} in your SSH configuration ({{detail}}) are not supported by Tessel’s SSH client.'),
       'hostkey-revoked': t('main.ssh.hostKeyRevoked', 'The host key of {{host}} is marked as revoked in known_hosts: Tessel refused to connect.'),
       'hostkey-unknown-strict': t('main.ssh.hostKeyStrict', '{{host}} is not in your known_hosts file and StrictHostKeyChecking is on: Tessel refused to connect. Connect once with ssh to add it.'),
       'hostkey-unreadable': t('main.ssh.hostKeyUnreadable', '{{host}} offered a host key Tessel could not read: not connected.'),
@@ -43,8 +49,12 @@ export function sshTemplates(t) {
   }
 }
 
+// Values may come from the server (a disconnect reason): never a control
+// character (no terminal escape sequence) in the pane or the status.
+const clean = (v) => String(v).replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ')
+
 function fill(template, vars) {
-  return String(template || '').replace(/\{\{\s*(\w+)\s*\}\}/g, (m, name) => (vars[name] !== undefined && vars[name] !== null ? String(vars[name]) : m))
+  return String(template || '').replace(/\{\{\s*(\w+)\s*\}\}/g, (m, name) => (vars[name] !== undefined && vars[name] !== null ? clean(vars[name]) : m))
 }
 
 // code + params (public values) -> one line of text.

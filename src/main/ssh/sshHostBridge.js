@@ -73,8 +73,24 @@ export function validateSpec(raw) {
     identityAgent: raw.identityAgent == null ? null : cleanStr(raw.identityAgent, 1024),
     strictHostKeyChecking: cleanStr(raw.strictHostKeyChecking, 32) || 'ask',
     knownHostsFiles: cleanList(raw.knownHostsFiles, 16, 1024),
-    hostKeyAlias: cleanStr(raw.hostKeyAlias, 253) || null
+    hostKeyAlias: cleanStr(raw.hostKeyAlias, 253) || null,
+    // From ssh -G: PasswordAuthentication / KbdInteractiveAuthentication /
+    // PubkeyAuthentication no, and the algorithm lists.
+    passwordAuthentication: raw.passwordAuthentication !== false,
+    kbdInteractiveAuthentication: raw.kbdInteractiveAuthentication !== false,
+    pubkeyAuthentication: raw.pubkeyAuthentication !== false,
+    algorithms: cleanAlgorithms(raw.algorithms)
   }
+}
+
+function cleanAlgorithms(raw) {
+  if (!raw || typeof raw !== 'object') return null
+  const out = {}
+  for (const k of ['kex', 'serverHostKey', 'cipher', 'hmac']) {
+    const list = cleanList(raw[k], 64, 128).filter((a) => /^[A-Za-z0-9@._+-]+$/.test(a))
+    if (list.length) out[k] = list
+  }
+  return Object.keys(out).length ? out : null
 }
 
 function cleanTexts(raw) {
@@ -84,6 +100,7 @@ function cleanTexts(raw) {
     out.lost = s(raw.lost)
     out.reconnected = s(raw.reconnected)
     out.gaveUp = s(raw.gaveUp)
+    out.notConnected = s(raw.notConnected)
     out.label = s(raw.label).slice(0, 120)
     if (raw.codes && typeof raw.codes === 'object') for (const [k, v] of Object.entries(raw.codes).slice(0, 64)) out.codes[k] = s(v)
   }
@@ -158,6 +175,9 @@ export function createSshHostBridge({
     hostKeys,
     log,
     timers,
+    // A host's kept credentials outlive its connections only while a
+    // terminal there may reconnect.
+    hasShells: (hostId) => [...shells].some((sh) => sh.hostId === hostId),
     onState: (hostId, state) => broadcast({ op: 'ssh-state', hostId, ...state }),
     ...managerOptions
   })
@@ -277,6 +297,7 @@ export function createSshHostBridge({
     let reconnectTimer = null
     let attempt = 0
     let openedAt = 0
+    let notConnectedShown = false
     let queued = []
     let queuedBytes = 0
     const self = { pid: null, hostId, noReconnect: false }
@@ -289,6 +310,8 @@ export function createSshHostBridge({
       if (exited) return
       exited = true
       shells.delete(self)
+      // The host's last terminal: credentials kept only for it may go.
+      manager.forgetIfUnused(hostId)
       if (reconnectTimer) timers.clearTimeout(reconnectTimer)
       reconnectTimer = null
       for (const fn of exitFns) fn({ exitCode, signal })
@@ -314,6 +337,7 @@ export function createSshHostBridge({
           release = res.release
           decoder = new StringDecoder('utf8')
           openedAt = Date.now()
+          notConnectedShown = false
           if (isReconnect && texts.reconnected) emit(dim(formatSshText(texts.reconnected, { host: label })))
           s.on('data', (d) => emit(decoder.write(d)))
           s.stderr.on('data', (d) => emit(decoder.write(d)))
@@ -381,7 +405,15 @@ export function createSshHostBridge({
           }
           return
         }
-        // Typed while connecting: kept (bounded) and sent once the shell is there.
+        // After a shell was lost (a reconnect): dropped, never replayed into
+        // the next login shell (a sudo password or editor keys would become
+        // commands there); the pane says so once.
+        if (openedAt) {
+          if (!notConnectedShown && texts.notConnected) emit(dim(formatSshText(texts.notConnected, { host: label })))
+          notConnectedShown = true
+          return
+        }
+        // Typed while the first shell is starting: kept (bounded), sent to it.
         const n = Buffer.byteLength(String(data))
         if (queuedBytes + n > MAX_QUEUED_INPUT) return
         queued.push(String(data))

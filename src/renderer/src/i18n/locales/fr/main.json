@@ -1,6 +1,9 @@
 {
   "main": {
     "ssh": {
+      "notConnected": "Pas connecté à {{host}} : ce que vous tapez n’est pas envoyé avant le démarrage du nouveau shell.",
+      "hostKeyChangedPinned": "ATTENTION : {{host}} a présenté une autre clé d’hôte ({{keyType}} {{fingerprint}}) qu’à la première connexion de cette session, et StrictHostKeyChecking ne la vérifie pas : quelqu’un pourrait se faire passer pour cet hôte. Tessel a refusé de se connecter.",
+      "algorithms": "Les algorithmes définis pour {{host}} dans votre configuration SSH ({{detail}}) ne sont pas pris en charge par le client SSH de Tessel.",
       "lost": "Connexion à {{host}} perdue. Reconnexion…",
       "reconnected": "Reconnecté à {{host}} : un nouveau shell a été lancé.",
       "gaveUp": "Impossible de se reconnecter à {{host}}.",

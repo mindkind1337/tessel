@@ -113,6 +113,10 @@ export function startSshServer({ hostKey = makeKey().private, auth = {}, onExec,
       resolve({
         port,
         events,
+        // A new key exchange on every connection (the server asks it).
+        rekeyClients() {
+          return Promise.all([...clients].map((c) => new Promise((r) => c.rekey(() => r()))))
+        },
         // Drops every client connection (the network going away).
         dropClients() {
           for (const c of clients) {
