@@ -96,12 +96,21 @@ describe('plain-text paths in message bodies', () => {
     expect(wrapper.text()).toContain('(see C:\\x\\y.gif). Done')
   })
 
-  it('never links URLs nor paths in code blocks', async () => {
-    renderMd('Get https://example.com/a/b.png now.\n\n```\nC:\\x\\y.gif\n```')
+  it('never links URLs in code blocks; a block holding only a path that exists is a link to it', async () => {
+    const file = String.raw`C:\x\y.gif`
+    const md = ['Get https://example.com/a/b.png now.', '', '```', 'curl https://example.com/x', '```', '', '```', file, '```'].join('\n')
+    renderMd(md)
     await flushPromises()
-    // markdown-it's own web link stays; no file link.
-    expect(links().map((a) => routeNativeChatHref(a.getAttribute('href')).kind)).toEqual(['web'])
-    expect(stat).not.toHaveBeenCalled()
+    // The URL in a block stays text; the block holding only C:/x/y.gif (on
+    // the mocked disk) links to it.
+    expect(links().map((a) => routeNativeChatHref(a.getAttribute('href')).kind)).toEqual(['web', 'file'])
+    expect(pathOf(links()[1])).toBe('C:/x/y.gif')
+    // Not on disk: plain text.
+    wrapper.unmount()
+    clearInlineCodeFileCache()
+    renderMd(['```', String.raw`C:\x\missing.gif`, '```'].join('\n'))
+    await flushPromises()
+    expect(links()).toHaveLength(0)
   })
 
   it('a path with spaces only when quoted or in backticks', async () => {
