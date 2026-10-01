@@ -6,7 +6,7 @@
 // the user wanted the pane's dot), waiting / permission a question bubble, done a
 // check (rows) or a green dot (status lane), problems a red dot.
 import { computed } from 'vue'
-import { Activity, CircleCheck, CircleDashed, MessageCircleQuestion, Moon } from 'lucide-vue-next'
+import { CircleCheck, CircleDashed, MessageCircleQuestion, Moon } from 'lucide-vue-next'
 import { agentStateLabel, getWorktreeStatusLabel } from '../../sidebarModel'
 import { t } from '../../i18n'
 
@@ -53,7 +53,7 @@ const dotClass = computed(() => {
     role="img"
   >
     <span v-if="kind === 'working'" class="asd-dot asd-working" data-agent-working=""></span>
-    <Activity v-else-if="kind === 'monitoring'" class="asd-icon asd-yellow" aria-hidden="true" />
+    <span v-else-if="kind === 'monitoring'" class="asd-dot asd-monitoring" aria-hidden="true"></span>
     <MessageCircleQuestion v-else-if="kind === 'question'" class="asd-icon asd-question" aria-hidden="true" />
     <CircleCheck v-else-if="kind === 'check'" class="asd-icon asd-green" aria-hidden="true" />
     <CircleDashed v-else-if="kind === 'dashed'" class="asd-icon asd-amber" aria-hidden="true" />

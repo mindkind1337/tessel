@@ -26,12 +26,11 @@ describe('AgentStateDot', () => {
     expect(root.getAttribute('aria-label')).toBe('Working')
   })
 
-  it('renders monitoring as a static yellow heartbeat glyph', () => {
+  it('renders monitoring as a blue dot, not an icon', () => {
     const root = render({ state: 'monitoring', title: null })
     expect(root.getAttribute('aria-label')).toBe('Monitoring background tasks')
-    const icon = root.querySelector('svg')
-    expect(lucideName(icon)).toBe('activity')
-    expect(icon.classList).toContain('nc-state-dot__icon--monitoring')
+    expect(root.querySelector('svg')).toBeNull()
+    expect(root.querySelector('.nc-state-dot__dot--monitoring')).not.toBeNull()
     expect(root.querySelector('[data-agent-spinner]')).toBeNull()
   })
 

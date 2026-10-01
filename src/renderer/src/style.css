@@ -648,20 +648,20 @@ body.popup-open .toolbar {
   background: var(--danger);
 }
 
-/* Its turn ended, its background work still runs (the sidebar's yellow
-   "Monitoring background tasks"): a yellow dot, a slow pulse. */
+/* Its turn ended, its background work still runs (the sidebar's blue
+   "Monitoring background tasks"): a blue dot, a slow pulse. */
 .pane-icon.monitoring .pane-status-dot {
-  background: #eab308;
+  background: #3b82f6;
   animation: monitoring-pulse 2.4s steps(6) infinite;
 }
 
 @keyframes monitoring-pulse {
   0%,
   100% {
-    box-shadow: 0 0 0 0 rgba(234, 179, 8, 0.5);
+    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.5);
   }
   50% {
-    box-shadow: 0 0 0 3px rgba(234, 179, 8, 0);
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0);
   }
 }
 
@@ -9819,6 +9819,12 @@ button.act-stat:hover,
 
 .asd-dot.red {
   background: #ef4444;
+}
+
+/* Monitoring its background work: a blue dot (the user's choice over a
+   pulse icon), the pane header's color. */
+.asd-dot.asd-monitoring {
+  background: #3b82f6;
 }
 
 .asd-row .asd-icon {
