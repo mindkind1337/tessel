@@ -23,8 +23,10 @@ import { createUsageStatsTracker } from './usageStatsTracker'
 import { copyUsageImage } from './usageClipboard'
 import { registerIssueServices } from './issueServicesIpc'
 import { createGithubService } from './githubService'
-import { createRemoteHosts, registerRemoteHosts } from './remoteHosts'
-import { remoteProjectLaunch } from './remoteProject'
+import { createRemoteHosts, registerRemoteHosts, findSshExe } from './remoteHosts'
+import { remoteProjectLaunch, validateRemotePath } from './remoteProject'
+import { createSshRemote } from './ssh/sshRemote'
+import { STORE_FILE_NAME as SSH_HOST_KEYS_FILE } from './ssh/hostKeyStore'
 import { createAddProject, registerAddProject } from './addProject'
 import { createSshAskpass, registerSshAskpass, askpassExePath } from './sshAskpass'
 import { createAskpassPipeHost } from './askpassPipeHost'
@@ -1494,10 +1496,32 @@ const remoteHosts = createRemoteHosts({ dir: app.getPath('userData'), onChange: 
 // A remote project's Files / Changes session (remoteFs.js) counts as one of
 // the host's connections: Disconnect ends it like a terminal.
 const isRemoteFsPane = (id) => typeof id === 'string' && id.startsWith(REMOTE_FS_PREFIX)
+// The shared ssh2 connection of each host (ssh/sshRemote.js): it lives in
+// the terminal host (so remote terminals survive app restarts like local
+// ones), reached through `host`, created further down (used lazily here).
+const sshRemote = createSshRemote({
+  host: {
+    ensure: () => host.ensure(),
+    request: (op, body, timeout) => host.request(op, body, timeout),
+    send: (op, body) => host.send(op, body),
+    get connected() {
+      return host.connected
+    },
+    get features() {
+      return host.features
+    }
+  },
+  hosts: remoteHosts,
+  send: (channel, payload) => send(channel, payload),
+  log,
+  t,
+  sshExe: () => findSshExe()
+})
 registerRemoteHosts({
   ipcMain,
   service: remoteHosts,
-  killPane: (id) => (isRemoteFsPane(id) ? remoteFs.closePane(id) : host.send('kill', { id }))
+  killPane: (id) => (isRemoteFsPane(id) ? remoteFs.closePane(id) : host.send('kill', { id })),
+  ssh: sshRemote
 })
 // Its passwords, passphrases and host key questions come through OpenSSH's
 // npm run dev did not always leave the helper next to index.js (the build
@@ -1553,7 +1577,11 @@ const sshAskpass = createSshAskpass({
   },
   log
 })
-registerSshAskpass({ ipcMain, broker: sshAskpass })
+// One answer path for both: askpass (system ssh) and ssh2 questions.
+registerSshAskpass({
+  ipcMain,
+  broker: { submit: (req) => (sshRemote.isPane(req && req.paneId) ? sshRemote.submit(req) : sshAskpass.submit(req)) }
+})
 // A repository whose own git config runs programs (core.fsmonitor, filters,
 // textconv, hooksPath, sshCommand): asked once whether to trust it, the
 // answer kept per repository and settings (gitSafety.js); until then git
@@ -1589,7 +1617,7 @@ setGitTrust(
 )
 // Files, Changes and the editor of remote projects (remoteFs.js): one ssh
 // session per host, the same askpass dialog.
-const remoteFs = createRemoteFs({ hosts: remoteHosts, askpass: sshAskpass, send: (channel, payload) => send(channel, payload), log })
+const remoteFs = createRemoteFs({ hosts: remoteHosts, askpass: sshAskpass, ssh: sshRemote, send: (channel, payload) => send(channel, payload), log })
 registerRemoteFs({ ipcMain, service: remoteFs })
 // The saved remote projects (the layout on disk; each save updates them).
 try {
@@ -2646,7 +2674,9 @@ function startHost() {
       TESSEL_PTYHOST_PIPE: hostPipe,
       TESSEL_PTYHOST_TOKEN: hostToken(),
       TESSEL_PTYHOST_PIDFILE: hostPidFile(),
-      TESSEL_LOG_DIR: log.dir
+      TESSEL_LOG_DIR: log.dir,
+      // The SSH host keys the user accepts (ssh/hostKeyStore.js).
+      TESSEL_SSH_HOSTKEYS: join(app.getPath('userData'), SSH_HOST_KEYS_FILE)
     },
     detached: true,
     stdio: 'ignore',
@@ -2721,7 +2751,13 @@ const host = createPtyClient({
     }
     send('pty:exit', { id, exitCode, signal, pid: pid || null })
   },
+  // ssh2 connections, channels and questions (ssh/sshRemote.js).
+  onEvent: (msg) => sshRemote.onEvent(msg),
+  onConnected: () => {
+    void sshRemote.onConnected()
+  },
   onLost: () => {
+    sshRemote.onLost()
     if (quitting) return
     log.error('pty', 'lost the connection to the terminal host')
     // Its terminals are gone with it: tell the panes.
@@ -2744,7 +2780,19 @@ ipcMain.handle('pty:create', async (_evt, opts = {}) => {
   const { id, shellId, cols = 80, rows = 24, cwd, projectDir } = opts
   if (!id) throw new Error('pty:create requires an id') // i18n-ignore internal: programming error
   const shell = getShells().find((s) => s.id === shellId) || defaultShell()
-  // A pane on a remote host runs ssh.exe with the argv built from the saved host.
+  // A pane on a remote host: a shell channel on the host's shared ssh2
+  // connection (in the terminal host), or, for a host that needs the system
+  // ssh (ProxyJump, ProxyCommand…), ssh.exe with the argv built from the
+  // saved host.
+  if (opts.remoteHostId) {
+    const startedAt = Date.now()
+    const target = remoteHosts.get(String(opts.remoteHostId))
+    if (!target) return { ok: false, error: t('main.remote.notFound', 'This remote host is no longer saved in Tessel.') }
+    const mode = await sshRemote.modeFor(target)
+    if (mode.mode === 'ssh2') return createSshPane(opts, target, mode.spec, shell, startedAt)
+    // Closed while that was decided: nothing is started.
+    if ((paneKills.get(id) || 0) >= startedAt) return launchCancelled()
+  }
   let remote = opts.remoteHostId ? remoteHosts.launchFor(String(opts.remoteHostId)) : null
   if (remote && !remote.ok) return { ok: false, error: remote.error }
   // A project on that host (remoteProject.js): the terminal starts in its folder.
@@ -2854,6 +2902,63 @@ ipcMain.handle('pty:create', async (_evt, opts = {}) => {
   }
 })
 
+// A terminal on an SSH host over the shared ssh2 connection (the terminal
+// host opens the shell channel; its questions come as ssh-prompt events).
+// pty:kill times, so a pane closed while its ssh terminal was being created
+// ends it (the kill reached the host before the terminal existed).
+const paneKills = new Map() // id -> time
+async function createSshPane(opts, target, spec, shell, startedAt) {
+  const { id, cols = 80, rows = 24 } = opts
+  let remotePath = null
+  if (opts.remotePath) {
+    const checked = validateRemotePath(opts.remotePath)
+    if (checked.error) return { ok: false, error: t('main.project.remotePathInvalid', 'This remote folder path is not valid. Use an absolute path like /home/user/project or ~/project.') }
+    remotePath = checked.path
+  }
+  // Also voids an askpass launch still being prepared for this pane.
+  sshAskpass.releasePane(id)
+  const startDir = os.homedir()
+  const teamSecret = newTeamSecret()
+  let res
+  try {
+    res = await host.request('create', {
+      id,
+      file: 'ssh',
+      args: [],
+      cwd: startDir,
+      env: {},
+      cols,
+      rows,
+      ssh: sshRemote.terminalRequest(target, spec, remotePath),
+      meta: { shellId: shell.id, shellName: shell.name, backend: 'ssh', cwd: startDir, agentProvider: null, agentLaunchToken: null, agentStartedAt: Date.now(), agentCodexHome: null, teamSecret, remoteHostId: target.id }
+    })
+  } catch (err) {
+    res = { ok: false, error: err.message }
+  }
+  if (!res.ok) {
+    log.error('pty', `failed to open an ssh terminal on ${target.id}: ${res.error}`)
+    return { ok: false, error: t('main.error.launchShell', 'Failed to launch {{shell}}: {{error}}', { shell: target.label, error: res.error }) }
+  }
+  if ((paneKills.get(id) || 0) >= startedAt) {
+    host.send('kill', { id })
+    return { ok: false, cancelled: true, error: t('main.remote.launchCancelled', 'The terminal was closed before ssh started.') }
+  }
+  ptyInfo.set(id, { shellId: shell.id, shellName: shell.name, backend: 'ssh', pid: null, agentLaunchToken: null, agentCodexHome: null })
+  setTeamSecret(id, teamSecret)
+  remoteHosts.paneStarted(id, target.id, { ssh2: true })
+  return {
+    ok: true,
+    shell: { id: shell.id, name: shell.name },
+    backend: 'ssh',
+    windowsBuild: windowsBuildNumber(),
+    pid: null,
+    cwd: startDir,
+    agentLaunchToken: null,
+    agentStatusWarning: null,
+    remoteHost: { id: target.id, label: target.label }
+  }
+}
+
 // Re-attach to a terminal that kept running in the host (after a restart,
 // crash or reload). Returns its recent output to replay.
 ipcMain.handle('pty:attach', async (_evt, id) => {
@@ -2870,7 +2975,7 @@ ipcMain.handle('pty:attach', async (_evt, id) => {
   // Still running since before: its team secret comes back from the host.
   if (res.exited) revokeTeamSecret(id)
   else setTeamSecret(id, res.teamSecret)
-  if (res.remoteHostId && !res.exited) remoteHosts.paneStarted(id, res.remoteHostId)
+  if (res.remoteHostId && !res.exited) remoteHosts.paneStarted(id, res.remoteHostId, { ssh2: res.backend === 'ssh' })
   if (res.agentProvider && res.agentLaunchToken && !res.exited) {
     try { await agentStateStore.register({ paneId: id, provider: res.agentProvider, launchToken: res.agentLaunchToken, startedAt: res.agentStartedAt }) }
     catch { /* renderer shows unknown until an observation can be read */ }
@@ -2929,6 +3034,8 @@ ipcMain.on('pty:resize', (_evt, { id, cols, rows }) => {
 })
 
 ipcMain.on('pty:kill', (_evt, { id }) => {
+  paneKills.set(id, Date.now())
+  if (paneKills.size > 500) paneKills.delete(paneKills.keys().next().value)
   remoteHosts.paneClosing(id)
   // Also voids a launch still being prepared for it.
   sshAskpass.releasePane(id)

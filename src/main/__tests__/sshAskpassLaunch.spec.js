@@ -26,7 +26,7 @@ const fakeNet = {
   }
 }
 
-function harness({ helper = 'fake.exe', createDelay = null } = {}) {
+function harness({ helper = 'fake.exe', createDelay = null, sshMode = { mode: 'system', reason: 'test' } } = {}) {
   let answerVersion = null
   const broker = createSshAskpass({
     helperPath: () => helper,
@@ -44,9 +44,19 @@ function harness({ helper = 'fake.exe', createDelay = null } = {}) {
     getShells: () => [{ id: 'shell', name: 'fixture', file: 'fake.exe', args: [] }],
     defaultShell: () => ({}),
     remoteHosts: {
+      get: (id) => ({ id, label: 'fake' }),
       launchFor: (id) => ({ ok: true, target: { id }, name: 'fake', file: 'fake-ssh', args: [] }),
       paneStarted: (...a) => started.push(a)
     },
+    // The host's shared ssh2 connection (ssh/sshRemote.js): the system ssh
+    // (askpass) here unless a test asks for ssh2.
+    sshRemote: {
+      modeFor: async () => sshMode,
+      terminalRequest: (target, spec, remotePath) => ({ hostId: target.id, spec, remotePath, texts: {} })
+    },
+    validateRemotePath: (p) => ({ path: p }),
+    Date,
+    Map,
     remoteProjectLaunch: (r) => r,
     os: { homedir: () => 'C:/fixture' },
     fs: { existsSync: () => false },
@@ -67,7 +77,7 @@ function harness({ helper = 'fake.exe', createDelay = null } = {}) {
     sshAskpass: broker,
     host: {
       request: (kind, v) => {
-        creates.push({ kind, askpass: !!v.env.SSH_ASKPASS, token: v.env.TESSEL_ASKPASS_TOKEN })
+        creates.push({ kind, askpass: !!v.env.SSH_ASKPASS, token: v.env.TESSEL_ASKPASS_TOKEN, ...(v.ssh ? { ssh: v.ssh, backend: v.meta.backend } : {}) })
         if (createDelay) return new Promise((resolve) => (finishCreate = () => resolve({ ok: true, pid: 4242 })))
         return Promise.resolve({ ok: true, pid: 4242 })
       },
@@ -80,11 +90,27 @@ function harness({ helper = 'fake.exe', createDelay = null } = {}) {
   return { broker, creates, sent, started, create, version: () => answerVersion(), finishCreate: () => finishCreate() }
 }
 
+// The handler first asks which SSH client the host uses (ssh2 or the system
+// ssh): a few promise turns before askpass is prepared.
+const flush = () => new Promise((r) => setTimeout(r, 0))
+
+describe('pty:create on the shared ssh2 connection (the real handler from index.js)', () => {
+  it('opens a shell channel in the terminal host: no askpass, no ssh.exe', async () => {
+    const spec = { host: 'box', port: 22, username: 'me' }
+    const h = harness({ sshMode: { mode: 'ssh2', spec } })
+    const res = await h.create()
+    expect(res).toMatchObject({ ok: true, backend: 'ssh', remoteHost: { id: 'host-1', label: 'fake' } })
+    expect(h.creates).toEqual([{ kind: 'create', askpass: false, token: undefined, ssh: { hostId: 'host-1', spec, remotePath: null, texts: {} }, backend: 'ssh' }])
+    expect(h.started).toEqual([['pane-1', 'host-1', { ssh2: true }]])
+    h.broker.close()
+  })
+})
+
 describe('pty:create with askpass (the real handler from index.js)', () => {
   it('a normal launch gives ssh askpass and counts it as started', async () => {
     const h = harness()
     const p = h.create()
-    await Promise.resolve()
+    await flush()
     h.version()
     const res = await p
     expect(res.ok).toBe(true)
@@ -96,7 +122,7 @@ describe('pty:create with askpass (the real handler from index.js)', () => {
   it('closed while ssh -V runs: no terminal is created at all (not a fallback without askpass)', async () => {
     const h = harness()
     const p = h.create()
-    await Promise.resolve()
+    await flush()
     h.broker.releasePane('pane-1') // pty:kill
     h.version()
     const res = await p
@@ -108,9 +134,9 @@ describe('pty:create with askpass (the real handler from index.js)', () => {
   it('launched again while the first launch is prepared: the first creates nothing, the second runs', async () => {
     const h = harness()
     const first = h.create()
-    await Promise.resolve()
+    await flush()
     const second = h.create()
-    await Promise.resolve()
+    await flush()
     h.version()
     expect(await first).toMatchObject({ ok: false, cancelled: true })
     expect((await second).ok).toBe(true)
@@ -121,7 +147,7 @@ describe('pty:create with askpass (the real handler from index.js)', () => {
   it('closed while the terminal is being created: that ssh is ended, its token revoked', async () => {
     const h = harness({ createDelay: true })
     const p = h.create()
-    await Promise.resolve()
+    await flush()
     h.version()
     while (!h.creates.length) await new Promise((r) => setTimeout(r, 1))
     h.broker.releasePane('pane-1') // pty:kill reached the host before the terminal existed

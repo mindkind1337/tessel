@@ -221,10 +221,12 @@ function firstLine(text) {
 }
 
 // hosts: remoteHosts.js's service; askpass: sshAskpass.js's broker;
+// ssh: ssh/sshRemote.js (the host's shared ssh2 connection, when it applies);
 // send(channel, payload): to the window.
 export function createRemoteFs({
   hosts,
   askpass = null,
+  ssh = null,
   send = () => {},
   log = null,
   spawnImpl,
@@ -296,6 +298,9 @@ export function createRemoteFs({
         return t('main.remoteFs.cancelled', 'Cancelled.')
       case 'auth-cancelled':
         return t('main.remoteFs.signInCancelled', 'Sign-in to {{host}} was cancelled.', { host })
+      case 'ssh':
+        // The ssh2 connection's own reason (already in words: ssh/sshMessages.js).
+        return detail || t('main.remoteFs.lost', 'The connection to {{host}} was lost.', { host })
       case 'no-base64':
         return t('main.remoteFs.noBase64', '{{host}} has neither base64 nor openssl, which Tessel needs to transfer files.', { host })
       case 'prelude':
@@ -340,6 +345,32 @@ export function createRemoteFs({
     const entry = { paneId, closed: false, session: null, token: undefined, busy: 0, op: '' }
     sessions.set(hostId, entry)
     entry.ready = (async () => {
+      // The host's shared ssh2 connection (one exec channel running the
+      // same `exec /bin/sh` protocol), unless the host needs the system ssh.
+      const target = ssh ? hosts.get(hostId) : null
+      if (ssh && !target) throw Object.assign(new Error(t('main.remote.notFound', 'This remote host is no longer saved in Tessel.')), { code: 'host' })
+      const mode = target ? await ssh.modeFor(target) : { mode: 'system' }
+      if (entry.closed) throw Object.assign(new Error('cancelled'), { code: 'cancelled' }) // i18n-ignore internal
+      if (mode.mode === 'ssh2') {
+        activity(hostId, entry)
+        const session = createRemoteSession({
+          file: 'ssh2',
+          args: [],
+          env: {},
+          spawnImpl: ssh.spawnFor(hostId, mode.spec),
+          timers,
+          // The sign-in may ask a host key and a password (2 minutes each).
+          readyTimeoutMs: 6 * 60 * 1000,
+          onExit: (reason) => ended(hostId, entry, reason)
+        })
+        entry.session = session
+        hosts.paneStarted(paneId, hostId, { connected: false, ssh2: true })
+        await session.start()
+        if (hosts.paneConnected) hosts.paneConnected(paneId)
+        activity(hostId, entry)
+        armIdle()
+        return session
+      }
       const launch = hosts.launchFor(hostId)
       if (!launch || !launch.ok) throw Object.assign(new Error((launch && launch.error) || 'host'), { code: 'host' }) // i18n-ignore replaced by sessionErrorText
       activity(hostId, entry)

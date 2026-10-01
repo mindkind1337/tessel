@@ -21,6 +21,7 @@ import { createLogger } from './logger'
 import { Terminal as HeadlessTerminal } from '@xterm/headless'
 import { SerializeAddon } from '@xterm/addon-serialize'
 import { PROTOCOL } from './ptyProtocol'
+import { createSshHostBridge } from './ssh/sshHostBridge'
 
 // Each terminal also feeds a headless (invisible) terminal. When the app
 // re-attaches or saves output, it gets that terminal's finished screen and
@@ -79,6 +80,15 @@ function broadcast(msg) {
     if (c.authed && !c.destroyed) c.write(line)
   }
 }
+
+// Terminals and the Files session on SSH hosts: ssh2 connections kept here,
+// one per host (ssh/sshHostBridge.js). Host keys the user accepts go to
+// TESSEL_SSH_HOSTKEYS (Tessel's user data folder). Never logs a secret.
+const ssh = createSshHostBridge({
+  hostKeyFile: process.env.TESSEL_SSH_HOSTKEYS || null,
+  broadcast,
+  log: (level, msg) => say(level === 'warn' || level === 'error' ? level : 'info', `ssh: ${msg}`)
+})
 
 function describePty(id, p) {
   return {
@@ -191,6 +201,7 @@ function handle(sock, msg) {
         op: 'hello',
         ok: true,
         protocol: PROTOCOL,
+        ...ssh.hello(),
         pid: process.pid,
         ptys: [...ptys].map(([id, p]) => describePty(id, p))
       })
@@ -201,6 +212,8 @@ function handle(sock, msg) {
     return
   }
 
+  if (ssh.handle(sock, msg, reply)) return
+
   switch (msg.op) {
     case 'create': {
       if (ptys.has(msg.id)) {
@@ -209,16 +222,20 @@ function handle(sock, msg) {
       }
       let child
       try {
-        child = pty.spawn(msg.file, msg.args || [], {
-          name: 'xterm-256color',
-          cols: Math.max(2, msg.cols | 0),
-          rows: Math.max(1, msg.rows | 0),
-          cwd: msg.cwd,
-          env: msg.env,
-          useConpty: msg.useConpty !== false
-        })
+        // A terminal on an SSH host: a shell channel on that host's ssh2
+        // connection (ssh/sshHostBridge.js), not a local process.
+        child = msg.ssh
+          ? ssh.createPty({ ...msg.ssh, cols: msg.cols, rows: msg.rows })
+          : pty.spawn(msg.file, msg.args || [], {
+              name: 'xterm-256color',
+              cols: Math.max(2, msg.cols | 0),
+              rows: Math.max(1, msg.rows | 0),
+              cwd: msg.cwd,
+              env: msg.env,
+              useConpty: msg.useConpty !== false
+            })
       } catch (err) {
-        say('error', `spawn failed for ${msg.file}: ${err.message}`)
+        say('error', `spawn failed for ${msg.ssh ? 'an ssh terminal' : msg.file}: ${err.message}`)
         reply({ ok: false, error: err.message })
         return
       }
@@ -316,6 +333,7 @@ function handle(sock, msg) {
     case 'shutdown':
       say('info', `shutdown requested: closing ${ptys.size} terminal(s)`)
       exitGuard()
+      ssh.shutdown()
       for (const id of [...ptys.keys()]) terminate(id, 300)
       reply({ ok: true })
       setTimeout(() => process.exit(0), 800)
@@ -349,6 +367,7 @@ const server = net.createServer((sock) => {
   })
   const drop = () => {
     clients.delete(sock)
+    ssh.sockClosed(sock)
     checkIdle()
   }
   sock.on('close', drop)

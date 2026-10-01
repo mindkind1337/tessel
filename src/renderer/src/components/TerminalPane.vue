@@ -943,6 +943,8 @@ function onLayoutChange() {
 }
 
 function windowsPtyOptions() {
+  // A terminal on an SSH host's ssh2 connection: a Unix PTY, not Windows'.
+  if (props.node.backend === 'ssh') return undefined
   if (props.node.backend === 'conpty') {
     return { backend: 'conpty', buildNumber: props.node.windowsBuild }
   }

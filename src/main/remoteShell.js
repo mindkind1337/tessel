@@ -12,6 +12,11 @@
 // trip. Its limit: the shell runs one command at a time, so operations are
 // queued (a push waits for the listing before it, and the reverse).
 //
+// Most hosts now run this same session on an exec channel of the host's ONE
+// shared ssh2 connection (ssh/sshRemote.js gives a child-process-like object
+// as spawnImpl; the terminals use that connection too); ssh.exe remains for
+// hosts that need it (ProxyJump, ProxyCommand…). The protocol is the same.
+//
 // Protocol. When the session starts, Tessel sends a prelude: shell functions
 // (the only commands Tessel ever runs there, below) and a random nonce. Each
 // request is ONE line
@@ -647,7 +652,8 @@ export function createRemoteSession({
     child.on('error', () => fail('spawn'))
     child.on('exit', (code) => {
       exitCode = code
-      fail(state === 'starting' ? 'connect' : 'closed')
+      // An ssh2 channel (ssh/sshRemote.js) says why it could not start.
+      fail(state === 'starting' ? child.failCode || 'connect' : 'closed')
     })
     if (child.stdin) child.stdin.on('error', () => {})
     child.stdout.on('data', onData)

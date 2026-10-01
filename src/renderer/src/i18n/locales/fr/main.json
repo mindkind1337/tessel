@@ -1,5 +1,28 @@
 {
   "main": {
+    "ssh": {
+      "lost": "Connexion à {{host}} perdue. Reconnexion…",
+      "reconnected": "Reconnecté à {{host}} : un nouveau shell a été lancé.",
+      "gaveUp": "Impossible de se reconnecter à {{host}}.",
+      "authFailed": "La connexion à {{host}} a échoué (accès refusé).",
+      "authCancelled": "La connexion à {{host}} a été annulée.",
+      "timeout": "La connexion à {{host}} a expiré.",
+      "dns": "Le nom d’hôte {{host}} est introuvable.",
+      "network": "Impossible de joindre {{host}} sur le port {{port}} ({{detail}}).",
+      "closed": "{{host}} a fermé la connexion pendant l’authentification.",
+      "lostShort": "La connexion à {{host}} a été perdue.",
+      "channel": "{{host}} a refusé d’ouvrir une autre session : {{detail}}",
+      "hostKeyDeclined": "La clé d’hôte de {{host}} n’a pas été acceptée : pas de connexion.",
+      "hostKeyChanged": "ATTENTION : la clé d’hôte de {{host}} a CHANGÉ ({{keyType}} {{fingerprint}}). Elle ne correspond pas à votre fichier known_hosts : quelqu’un pourrait se faire passer pour cet hôte. Tessel a refusé de se connecter. Si l’hôte a vraiment été réinstallé, retirez l’ancienne clé avec : ssh-keygen -R {{remove}}",
+      "hostKeyChangedStore": "ATTENTION : la clé d’hôte de {{host}} a CHANGÉ depuis que vous l’avez acceptée ({{keyType}} {{fingerprint}}) : quelqu’un pourrait se faire passer pour cet hôte. Tessel a refusé de se connecter. Si l’hôte a vraiment été réinstallé, retirez son entrée de {{storeFile}}.",
+      "hostKeyChangedType": "ATTENTION : {{host}} a présenté une clé d’hôte {{keyType}} alors qu’une clé d’un autre type figure dans known_hosts : quelqu’un pourrait se faire passer pour cet hôte. Tessel a refusé de se connecter. Si l’hôte a vraiment été réinstallé, exécutez : ssh-keygen -R {{remove}}",
+      "hostKeyChangedTypeStore": "ATTENTION : {{host}} a présenté une clé d’hôte {{keyType}} alors que vous aviez accepté une clé d’un autre type : quelqu’un pourrait se faire passer pour cet hôte. Tessel a refusé de se connecter. Si l’hôte a vraiment été réinstallé, retirez son entrée de {{storeFile}}.",
+      "hostKeyRevoked": "La clé d’hôte de {{host}} est marquée comme révoquée dans known_hosts : Tessel a refusé de se connecter.",
+      "hostKeyStrict": "{{host}} ne figure pas dans votre fichier known_hosts et StrictHostKeyChecking est activé : Tessel a refusé de se connecter. Connectez-vous une fois avec ssh pour l’ajouter.",
+      "hostKeyUnreadable": "{{host}} a présenté une clé d’hôte que Tessel ne peut pas lire : pas de connexion.",
+      "failed": "Impossible de se connecter à {{host}} : {{detail}}",
+      "hostKeyQuestion": "Tessel ne s’est jamais connecté à {{host}} (port {{port}}) et ne peut pas vérifier qu’il s’agit de la bonne machine.\n\nEmpreinte de la clé {{keyType}} :\n{{fingerprint}}\n\nComparez-la avec l’empreinte fournie par votre administrateur ou celle que l’hôte affiche (ssh-keygen -lf /etc/ssh/ssh_host_*_key.pub). Si elle correspond, Tessel retient cette clé pour cet hôte."
+    },
     "dialog": {
       "pickFolder": "Choisir un dossier de projet"
     },

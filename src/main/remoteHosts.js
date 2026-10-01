@@ -9,6 +9,12 @@
 // questions come through OpenSSH's askpass channel to a dialog (sshAskpass.js)
 // and the answer goes back to ssh only. Nothing secret is stored, and ssh's
 // own host key checking is left as it is.
+//
+// Now: most hosts use Tessel's ssh2 client instead (ssh/: one connection per
+// host in the terminal host, shared by its terminals and its Files session;
+// the same dialog; host keys checked against known_hosts and Tessel's own
+// store). ssh.exe stays for hosts that need it (sshResolve.js says which);
+// sshArgsFor() also feeds `ssh -G` there.
 import fs from 'fs'
 import os from 'os'
 import { join } from 'path'
@@ -177,6 +183,7 @@ export function createRemoteHosts({
   let cached = null
   const panes = new Map() // paneId -> hostId
   const states = new Map() // hostId -> { status, error }
+  const conns = new Map() // hostId -> status of its shared ssh2 connection
   const disconnecting = new Set()
 
   function load() {
@@ -294,6 +301,7 @@ export function createRemoteHosts({
     store.removed = store.removed.slice(-200)
     save(store)
     states.delete(id)
+    conns.delete(id)
     notify()
     return { ok: true }
   }
@@ -360,11 +368,28 @@ export function createRemoteHosts({
     const mine = [...panes.values()].filter((p) => p.hostId === hostId)
     return mine.some((p) => p.connected) ? 'connected' : 'connecting'
   }
+  // The host's shared ssh2 connection (ssh/sshRemote.js): its panes follow
+  // it (connected once it is signed in, connecting while it signs in or
+  // reconnects); with no pane, the connection's own state shows (an idle
+  // connection is still "connected" until it closes). error: in words.
+  function connectionState(hostId, status, error = '') {
+    if (!hostId || !get(hostId)) return
+    conns.set(hostId, status)
+    const mine = [...panes.values()].filter((p) => p.hostId === hostId)
+    for (const p of mine) p.connected = status === 'connected'
+    if (status === 'error') states.set(hostId, { status: 'error', error: String(error || '') })
+    else if (mine.length) states.set(hostId, { status: status === 'connected' ? 'connected' : 'connecting' })
+    else if (status === 'disconnected' && error) states.set(hostId, { status: 'disconnected', error: String(error) })
+    else states.set(hostId, { status: status === 'connected' ? 'connected' : status === 'connecting' ? 'connecting' : 'disconnected' })
+    notify()
+  }
   // connected: false for a new ssh pane (sshAskpass.js calls paneConnected
   // once ssh is through its login); a re-attached pane is connected already.
-  function paneStarted(paneId, hostId, { connected = true } = {}) {
+  function paneStarted(paneId, hostId, { connected = true, ssh2 = false } = {}) {
     if (!hostId) return
-    panes.set(paneId, { hostId, connected: !!connected })
+    // A pane on the shared ssh2 connection is connected when it is.
+    if (ssh2) connected = conns.get(hostId) === 'connected'
+    panes.set(paneId, { hostId, connected: !!connected, ssh2: !!ssh2 })
     states.set(hostId, { status: paneState(hostId) })
     notify()
   }
@@ -383,7 +408,9 @@ export function createRemoteHosts({
     states.set(p.hostId, { status: paneState(p.hostId) })
     notify()
   }
-  function paneExited(paneId, exitCode) {
+  // error: why an ssh2 terminal could not connect (in words), instead of
+  // ssh.exe's exit code 255.
+  function paneExited(paneId, exitCode, { error = '' } = {}) {
     const pane = panes.get(paneId)
     if (!pane) return
     const hostId = pane.hostId
@@ -397,6 +424,16 @@ export function createRemoteHosts({
     if (!get(hostId)) {
       // Removed meanwhile: nothing to show for it.
       states.delete(hostId)
+      disconnecting.delete(hostId)
+      return notify()
+    }
+    if (pane.ssh2) {
+      // The connection's own state says it (connectionState); a terminal
+      // that could not start says why.
+      if (error && !disconnecting.has(hostId) && !closedByUser) states.set(hostId, { status: 'error', error: String(error) })
+      else if (conns.get(hostId) === 'connected') states.set(hostId, { status: 'connected' })
+      // A failed sign-in keeps showing its reason.
+      else if (conns.get(hostId) !== 'error' || disconnecting.has(hostId) || closedByUser) states.set(hostId, { status: 'disconnected' })
       disconnecting.delete(hostId)
       return notify()
     }
@@ -423,11 +460,14 @@ export function createRemoteHosts({
     if (pane) pane.closing = true
   }
 
-  return { list, importConfig, add, update, remove, get, launchFor, test, snapshot, paneStarted, paneConnected, paneConnecting, paneExited, panesOf, markDisconnecting, paneClosing }
+  return { list, importConfig, add, update, remove, get, launchFor, test, snapshot, paneStarted, paneConnected, paneConnecting, paneExited, panesOf, markDisconnecting, paneClosing, connectionState }
 }
 
 // IPC: remoteHosts:* (the renderer sends ids and form fields, never argv).
-export function registerRemoteHosts({ ipcMain, service, killPane }) {
+// ssh (optional, ssh/sshRemote.js): the shared ssh2 connections — Test signs
+// in through them, Disconnect and Remove close them and forget the host's
+// kept password / passphrases.
+export function registerRemoteHosts({ ipcMain, service, killPane, ssh = null }) {
   const guard = (fn) => async (_evt, arg) => {
     try {
       return await fn(arg || {})
@@ -443,14 +483,24 @@ export function registerRemoteHosts({ ipcMain, service, killPane }) {
     const hostId = String(id || '')
     service.markDisconnecting(hostId)
     for (const p of service.panesOf(hostId)) killPane(p)
+    if (ssh) ssh.disconnect(hostId)
     return service.remove(hostId)
   }))
-  ipcMain.handle('remoteHosts:test', guard(({ id }) => service.test(String(id || ''))))
+  ipcMain.handle('remoteHosts:test', guard(async ({ id }) => {
+    const hostId = String(id || '')
+    const target = ssh ? service.get(hostId) : null
+    if (target) {
+      const mode = await ssh.modeFor(target)
+      if (mode.mode === 'ssh2') return ssh.testConnection(hostId, mode.spec)
+    }
+    return service.test(hostId)
+  }))
   ipcMain.handle('remoteHosts:disconnect', guard(({ id }) => {
     const hostId = String(id || '')
     service.markDisconnecting(hostId)
     const ids = service.panesOf(hostId)
     for (const p of ids) killPane(p)
+    if (ssh) ssh.disconnect(hostId)
     return { ok: true, closed: ids.length }
   }))
 }

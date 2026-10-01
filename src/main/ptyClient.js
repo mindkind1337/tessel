@@ -3,8 +3,11 @@
 import net from 'net'
 import { PROTOCOL } from './ptyProtocol'
 
-export function createPtyClient({ pipe, token, startHost, endStuckHost, log, onData, onExit, onLost }) {
+// onEvent(msg): the host's other messages (ssh-*: ssh/sshRemote.js).
+// onConnected(hello): each time a connection to the host is established.
+export function createPtyClient({ pipe, token, startHost, endStuckHost, log, onData, onExit, onLost, onEvent, onConnected }) {
   let sock = null
+  let hello = null
   let connecting = null
   let seq = 0
   const waiting = new Map() // req -> { resolve, reject, timer }
@@ -47,11 +50,19 @@ export function createPtyClient({ pipe, token, startHost, endStuckHost, log, onD
           w.resolve(msg)
         } else if (msg.op === 'data') onData(msg.id, msg.data)
         else if (msg.op === 'exit') onExit(msg.id, msg.exitCode, msg.signal, msg.pid)
+        else if (onEvent && sock === s) {
+          try {
+            onEvent(msg)
+          } catch {
+            /* a listener's failure never breaks the terminals */
+          }
+        }
       }
     })
     const lost = () => {
       if (sock !== s) return
       sock = null
+      hello = null
       for (const [, w] of waiting) {
         clearTimeout(w.timer)
         w.reject(new Error('terminal host disconnected'))
@@ -131,19 +142,30 @@ export function createPtyClient({ pipe, token, startHost, endStuckHost, log, onD
     if (sock) return { reused: true }
     if (!connecting) {
       connecting = connectAndHello(true)
-        .then(({ s, hello }) => {
+        .then(({ s, hello: h }) => {
           sock = s
+          hello = h
           log.info(
             'pty',
-            `connected to terminal host pid ${hello.pid} (${hello.ptys.length} terminal(s) running)`
+            `connected to terminal host pid ${h.pid} (${h.ptys.length} terminal(s) running)`
           )
-          return hello
+          connected(h)
+          return h
         })
         .finally(() => {
           connecting = null
         })
     }
     return connecting
+  }
+
+  function connected(h) {
+    if (!onConnected) return
+    try {
+      onConnected(h)
+    } catch {
+      /* never breaks the connection */
+    }
   }
 
   async function request(op, body = {}, timeout) {
@@ -159,9 +181,11 @@ export function createPtyClient({ pipe, token, startHost, endStuckHost, log, onD
   async function connectIfRunning() {
     if (sock) return true
     try {
-      const { s, hello } = await connectAndHello(false)
+      const { s, hello: h } = await connectAndHello(false)
       sock = s
-      log.info('pty', `connected to terminal host pid ${hello.pid}`)
+      hello = h
+      log.info('pty', `connected to terminal host pid ${h.pid}`)
+      connected(h)
       return true
     } catch {
       return false
@@ -175,6 +199,10 @@ export function createPtyClient({ pipe, token, startHost, endStuckHost, log, onD
     connectIfRunning,
     get connected() {
       return !!sock
+    },
+    // What the running host can do (an older host lacks newer features).
+    get features() {
+      return { ssh: !!(hello && hello.ssh) }
     }
   }
 }

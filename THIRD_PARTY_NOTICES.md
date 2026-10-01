@@ -15,7 +15,9 @@ adapted from Orca by Lovecast Inc.
 - Referenced source: `src/renderer/src/components/stats`, related usage store and
   settings navigation, `src/main/claude-usage` / `src/main/codex-usage`,
   `src/main/rate-limits` (Gemini, Kimi, Cursor, Grok, OpenCode Go, MiniMax), and
-  `src/renderer/src/components/status-bar/status-bar-provider-visibility.ts`
+  `src/renderer/src/components/status-bar/status-bar-provider-visibility.ts`;
+  the SSH client (Tessel's `src/main/ssh`) adapts `src/main/ssh` (connection,
+  sign-in ladder, known_hosts matching, host key decision and store)
 - License source: https://github.com/stablyai/orca/blob/433986fa3be37911a0f13f7ffd454b831b87a64c/LICENSE
 
 ```text
