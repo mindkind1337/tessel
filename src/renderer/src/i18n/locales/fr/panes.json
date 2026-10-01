@@ -537,7 +537,10 @@
       "openAsChatHint": "Poursuivre cette conversation dans un pane de chat (sans terminal) : même pane, mêmes permissions ou moins",
       "viewTranscript": "Voir la conversation",
       "viewTranscriptHint": "Afficher cette conversation comme un chat, en lecture seule (la saisie reste dans le terminal)",
-      "hideTranscript": "Revenir au terminal"
+      "hideTranscript": "Revenir au terminal",
+      "switchToChatView": "Passer en vue chat",
+      "switchToTerminalView": "Passer en vue terminal",
+      "chatViewHint": "Afficher cette conversation comme un chat par-dessus son terminal, ou de nouveau le terminal : l'agent continue de tourner, rien ne redémarre"
     },
     "badge": {
       "quiet": "silencieux depuis {{minutes}} min",
@@ -599,6 +602,11 @@
     "broadcast": {
       "hint": "Inclure ce panneau dans l'écriture multiple",
       "write": "écrire"
+    },
+    "chatView": {
+      "showChat": "Afficher la vue chat",
+      "showTerminal": "Afficher le terminal",
+      "asleep": "En veille : il se réveille quand vous ouvrez ce panneau, vous pourrez alors lui écrire."
     },
     "voice": {
       "hint": "Parlez au lieu de taper ({{language}}). Saisie vocale Windows, Win+H. Langue : menu …",

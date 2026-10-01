@@ -187,3 +187,48 @@ describe('a switch asked while the agent works waits for the end of its turn', (
     expect(done).toHaveLength(2)
   })
 })
+
+describe("a terminal agent's chat view (App.vue sendFromChatView / chatViewEnded)", () => {
+  function loadView(leaf) {
+    const ctx = {
+      ...load(leaf).ctx,
+      deliverToAgent: vi.fn()
+    }
+    ctx.findLeaf = (id) => (id === leaf.id ? leaf : null)
+    vm.createContext(ctx)
+    vm.runInContext(slice('async function switchToTerminal(leafId)', '// --- Agent sleep') + '\nthis.view = { sendFromChatView, chatViewEnded, switchingLeaves }', ctx)
+    return ctx
+  }
+  const agent = (extra = {}) => ({ type: 'leaf', kind: 'agent', id: 'pane-5', agentId: 'claude', chatView: true, ...extra })
+
+  it('what is written there goes through the usual delivery to the terminal (from you)', () => {
+    const ctx = loadView(agent())
+    const onDelivered = vi.fn()
+    expect(ctx.view.sendFromChatView('pane-5', 'hello', { onDelivered })).toBe(true)
+    expect(ctx.deliverToAgent).toHaveBeenCalledWith('pane-5', 'hello', expect.objectContaining({ source: 'you', onDelivered }))
+  })
+
+  it('not shown as a chat, or asleep: nothing is typed, the message is given back', () => {
+    for (const extra of [{ chatView: false }, { sleeping: { at: 1 } }, { kind: 'chat' }]) {
+      const ctx = loadView(agent(extra))
+      const onFailed = vi.fn()
+      expect(ctx.view.sendFromChatView('pane-5', 'hello', { onFailed })).toBe(false)
+      expect(ctx.deliverToAgent).not.toHaveBeenCalled()
+      expect(onFailed).toHaveBeenCalled()
+    }
+  })
+
+  it('the agent ending shows the terminal again, but not a restart, a sleep or a switch in progress', () => {
+    const ended = agent()
+    expect(loadView(ended).view.chatViewEnded('pane-5')).toBe(true)
+    expect(ended.chatView).toBeUndefined()
+    const restarting = agent()
+    const r = loadView(restarting)
+    r.restartingLeaves.add('pane-5')
+    expect(r.view.chatViewEnded('pane-5')).toBe(false)
+    expect(restarting.chatView).toBe(true)
+    const asleep = agent({ sleeping: { at: 1 } })
+    expect(loadView(asleep).view.chatViewEnded('pane-5')).toBe(false)
+    expect(asleep.chatView).toBe(true)
+  })
+})

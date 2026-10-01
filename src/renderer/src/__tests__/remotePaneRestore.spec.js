@@ -179,3 +179,14 @@ describe('a remote pane restored after a restart', () => {
     expect(leaf.notConnected).toBeFalsy()
   })
 })
+
+describe("a terminal agent's chat view is kept with the layout", () => {
+  it('an agent restored asleep comes back in its chat view (nothing started)', async () => {
+    const { api, shellApi } = load()
+    const leaf = await api.deserializeNode({ type: 'leaf', id: 'pane-c1', shellId: 'pwsh', kind: 'agent', agentId: 'claude', agentCommand: 'claude', title: 'Claude', sessionId: '22222222-3333-4444-8555-666666666666', sleeping: { at: 1 }, chatView: true })
+    expect(leaf).toMatchObject({ kind: 'agent', chatView: true, sleeping: { at: 1 } })
+    expect(shellApi.createPty).not.toHaveBeenCalled()
+    const plain = await api.deserializeNode({ type: 'leaf', id: 'pane-c2', shellId: 'pwsh', kind: 'agent', agentId: 'claude', agentCommand: 'claude', title: 'Claude', sessionId: '22222222-3333-4444-8555-666666666666', sleeping: { at: 1 }, chatView: 'yes' })
+    expect(plain.chatView).toBeUndefined()
+  })
+})

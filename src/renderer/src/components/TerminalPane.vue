@@ -54,6 +54,7 @@ import { switchClaudeModel, typeCommand } from '../claudeModelSwitch'
 import SessionOptionPicker from './SessionOptionPicker.vue'
 import AgentChildren from './AgentChildren.vue'
 import NativeChatTranscriptView from './chat/orca/NativeChatTranscriptView.vue'
+import { canShowChatView } from '../chat/terminalChatBridge'
 import { listsChildren } from '../agentChildrenFeed'
 import HoverCardContent from './hover/HoverCardContent.vue'
 import PaneHoverDetails from './PaneHoverDetails.vue'
@@ -331,7 +332,7 @@ async function openModelMenuAt(x, y) {
 }
 function closeModelMenu(refocus = false) {
   modelMenu.visible = false
-  if (refocus && term) term.focus()
+  if (refocus && term) termFocus()
 }
 // The pane's values after this pick (null = back to the default).
 function nextPaneValues(optionId, value) {
@@ -644,19 +645,97 @@ function menuSwitchYolo() {
   closeCtxMenu()
   if (ctx.restartWithPermissions) ctx.restartWithPermissions(props.node.id, props.node.launchYolo ? 'manual' : 'yolo')
 }
-// Pane menu > Open as chat: a Claude or Codex agent Tessel started, with a
-// known conversation, on this computer: the same conversation goes on in a
-// chat pane (no terminal), in the same place.
+// Pane menu > Switch to chat view (and the header's chat button): Claude
+// Code, OpenClaude and Codex agents Tessel started on this computer show
+// their conversation as a chat over the terminal, the agent still running in
+// it (src/renderer/src/chat/terminalChatBridge.js): nothing is stopped or
+// restarted, the switch is the pane's chatView flag (saved with the layout).
+const chatViewAvailable = computed(() => canShowChatView(props.node))
+const chatShown = computed(() => {
+  const n = props.node
+  return !!n.chatView && chatViewAvailable.value && !exited.value && !n.failed && !n.notConnected
+})
+function toggleChatView() {
+  closeCtxMenu()
+  if (!chatViewAvailable.value) return
+  props.node.chatView = !props.node.chatView || undefined
+}
+// The chat covers the terminal: the terminal gives up the keyboard (keys
+// would reach the agent unseen), and gets it back with the terminal view.
+watch(chatShown, (shown) => {
+  if (shown) {
+    if (term && term.textarea) term.textarea.blur()
+    nextTick(() => isActive.value && chatViewEl.value && chatViewEl.value.focus())
+  } else if (isActive.value) nextTick(() => termFocus())
+})
+const chatViewEl = ref(null)
+// Every focus of the terminal goes through here: with the chat shown, its
+// composer takes it instead.
+function termFocus() {
+  if (!term) return
+  if (chatShown.value) {
+    if (chatViewEl.value) chatViewEl.value.focus()
+    return
+  }
+  term.focus()
+}
+// What the chat view shows of the agent: working, waiting for an approval,
+// a question (its hooks say a question tool waits).
+const chatWorking = computed(() => shownState.value === 'working')
+const chatWaiting = computed(() => {
+  const o = observedState.value
+  const input = !!(o && o.state === 'approval' && o.reason === 'input')
+  return { approval: asksApproval.value || shownState.value === 'approval' || input, input }
+})
+const chatDisabledReason = computed(() =>
+  props.node.sleeping ? t('pane.chatView.asleep', 'Asleep: it wakes up when you open this pane, then you can write to it.') : ''
+)
+// What you write in the chat: typed into the terminal by Tessel's delivery
+// (held while it asks for approval or you have a line typed there).
+function chatSend(text, callbacks) {
+  if (ctx.sendFromChatView) ctx.sendFromChatView(props.node.id, text, callbacks)
+  else if (callbacks && callbacks.onFailed) callbacks.onFailed()
+}
+// The cards' keys (Allow, Deny, Stop, a question's answer), only on a click.
+function chatKeys(bytes) {
+  if (chatShown.value && !props.node.sleeping) window.shellApi.writePty(props.node.id, bytes)
+}
+// The agent really ended (not a restart, a sleep or a wake): back to the
+// terminal, where its shell is.
+const agentEnded = computed(() => {
+  const o = observedState.value
+  return !!(o && o.state === 'closed' && o.reason === 'ended')
+})
+let endedTimer = null
+function chatViewEnded() {
+  clearTimeout(endedTimer)
+  endedTimer = null
+  if (!props.node.chatView || !mounted) return
+  if (ctx.chatViewEnded) ctx.chatViewEnded(props.node.id)
+}
+watch(exited, (gone) => {
+  if (gone) chatViewEnded()
+})
+// Claude Code's /clear also ends its session for a moment (a new one starts
+// right after): only an end that lasts counts.
+watch(agentEnded, (ended) => {
+  clearTimeout(endedTimer)
+  endedTimer = ended ? setTimeout(() => agentEnded.value && chatViewEnded(), 4000) : null
+}, { immediate: true })
+onBeforeUnmount(() => clearTimeout(endedTimer))
+// Pane menu > Open as chat: an OpenCode agent with a known conversation goes
+// on in a chat pane of its own (no terminal), in the same place.
 const canOpenAsChat = computed(() => {
   const n = props.node
-  if (n.kind !== 'agent' || !['claude', 'codex', 'opencode'].includes(n.agentId) || !n.sessionId || n.detected || n.remoteHostId || !ctx.switchToChat) return false
+  if (chatViewAvailable.value) return true
+  if (n.kind !== 'agent' || n.agentId !== 'opencode' || !n.sessionId || n.detected || n.remoteHostId || !ctx.switchToChat) return false
   // OpenCode's chat resumes its own session ids only (ses_…).
-  return n.agentId !== 'opencode' || /^ses_[A-Za-z0-9]{20,40}$/.test(n.sessionId)
+  return /^ses_[A-Za-z0-9]{20,40}$/.test(n.sessionId)
 })
 // Pane menu > See the conversation: an agent with no chat of its own (Grok,
-// OpenClaude, OMP) whose conversation is known: its session file shown as a
-// chat, read-only, over the terminal (typing stays in the terminal).
-const TRANSCRIPT_VIEW_AGENTS = ['grok', 'openclaude', 'omp']
+// OMP) whose conversation is known: its session file shown as a chat,
+// read-only, over the terminal (typing stays in the terminal).
+const TRANSCRIPT_VIEW_AGENTS = ['grok', 'omp']
 const transcriptOpen = ref(false)
 const canViewTranscript = computed(() => {
   const n = props.node
@@ -669,14 +748,15 @@ function menuViewTranscript() {
 }
 function closeTranscript() {
   transcriptOpen.value = false
-  nextTick(() => term && term.focus())
+  nextTick(() => term && termFocus())
 }
 watch(canViewTranscript, (can) => {
   if (!can) transcriptOpen.value = false
 })
 function menuOpenAsChat() {
   closeCtxMenu()
-  if (ctx.switchToChat) ctx.switchToChat(props.node.id)
+  if (chatViewAvailable.value) toggleChatView()
+  else if (ctx.switchToChat) ctx.switchToChat(props.node.id)
 }
 function menuYoloFolder() {
   closeCtxMenu()
@@ -969,7 +1049,7 @@ function windowsPtyOptions() {
 function focusTerm() {
   ctx.setActive(props.node.id)
   acknowledge()
-  if (term) term.focus()
+  if (term) termFocus()
 }
 
 // --- Find in terminal (Ctrl+Shift+F) ----------------------------------------
@@ -1004,7 +1084,7 @@ function closeFind() {
   if (search) search.clearDecorations()
   if (term) {
     term.clearSelection()
-    term.focus()
+    termFocus()
   }
 }
 
@@ -1151,7 +1231,7 @@ async function pasteImage() {
   } else {
     window.shellApi.writePty(props.node.id, '\x16')
   }
-  if (term) term.focus()
+  if (term) termFocus()
 }
 
 // "[Image #N]" in a Claude Code pane opens that image (a click on it).
@@ -1235,19 +1315,19 @@ function requestPaste(text) {
     return
   }
   term.paste(text)
-  term.focus()
+  termFocus()
 }
 
 function confirmPaste() {
   const ask = pasteAsk.value
   pasteAsk.value = null
   if (ask && term) term.paste(ask.text)
-  if (term) term.focus()
+  if (term) termFocus()
 }
 
 function cancelPaste() {
   pasteAsk.value = null
-  if (term) term.focus()
+  if (term) termFocus()
 }
 
 // Ctrl+V: the browser pastes into xterm's hidden text box. Catch it first so
@@ -1293,7 +1373,7 @@ function saveTitle() {
   if (isAgent.value && ctx.renameAgent) {
     if (!ctx.renameAgent(props.node.id, paneTitle.value)) return
     editingTitle.value = false
-    if (term) term.focus()
+    if (term) termFocus()
     return
   }
   if (!paneTitle.value.trim()) {
@@ -1301,7 +1381,7 @@ function saveTitle() {
       props.node.titleSet = false
       paneTitle.value = props.node.title
       editingTitle.value = false
-      if (term) term.focus()
+      if (term) termFocus()
       return
     }
     paneTitle.value = props.node.shellName
@@ -1309,13 +1389,13 @@ function saveTitle() {
   if (paneTitle.value !== props.node.title) props.node.titleSet = true
   props.node.title = paneTitle.value
   editingTitle.value = false
-  if (term) term.focus()
+  if (term) termFocus()
 }
 
 function cancelEditTitle() {
   paneTitle.value = props.node.paneName || props.node.title || props.node.shellName
   editingTitle.value = false
-  if (term) term.focus()
+  if (term) termFocus()
 }
 
 const ctxMenu = reactive({ visible: false, x: 0, y: 0, hasSelection: false })
@@ -1363,7 +1443,7 @@ function keepCtxMenuInWindow(alignRight = null) {
 // being sent to the program running in the terminal.
 function closeCtxMenuAndRefocus() {
   closeCtxMenu()
-  if (term) term.focus()
+  if (term) termFocus()
 }
 
 function closeCtxMenu() {
@@ -1473,7 +1553,7 @@ function jumpToBottom() {
   term.scrollToBottom()
   scrolledUp.value = false
   newBelow.value = false
-  term.focus()
+  termFocus()
 }
 
 // Pane menu > Speak in: pick the voice typing language and start dictation.
@@ -2074,11 +2154,11 @@ onMounted(() => {
   if (isAgent.value) activityMonitor.stateChanged(observedState.value)
 
   if (props.node.exitedAtStart) exited.value = true
-  if (isActive.value) term.focus()
+  if (isActive.value) termFocus()
 })
 
 watch(isActive, (a) => {
-  if (a && term) term.focus()
+  if (a && term) termFocus()
   if (a && document.hasFocus()) acknowledge()
 })
 
@@ -2229,6 +2309,7 @@ const paneMenuBindings = computed(() => ({
   transcriptOpen: unref(transcriptOpen),
   canOpenAsChat: unref(canOpenAsChat),
   menuOpenAsChat: unref(menuOpenAsChat),
+  chatViewAvailable: unref(chatViewAvailable),
   canSwitchYolo: unref(canSwitchYolo),
   menuSwitchYolo: unref(menuSwitchYolo),
   yoloFolder: unref(yoloFolder),
@@ -2394,6 +2475,25 @@ const paneMenuBindings = computed(() => ({
           :parent-idle-since="turnEndedAt"
           @running="onSubRunning"
         />
+        <!-- chat view <-> terminal (the agent keeps running: nothing restarts) -->
+        <button
+          v-if="chatViewAvailable"
+          class="pane-nav-btn"
+          :class="{ on: chatShown }"
+          data-test="pane-chat-toggle"
+          :title="chatShown ? t('pane.chatView.showTerminal', 'Show terminal') : t('pane.chatView.showChat', 'Show chat view')"
+          :aria-label="chatShown ? t('pane.chatView.showTerminal', 'Show terminal') : t('pane.chatView.showChat', 'Show chat view')"
+          :aria-pressed="chatShown"
+          @click="toggleChatView"
+        >
+          <svg v-if="chatShown" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <rect x="1.8" y="2.5" width="12.4" height="11" rx="1.6" stroke="currentColor" stroke-width="1.4" />
+            <path d="M4.5 6.2l2 1.8-2 1.8M8 10h3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+          <svg v-else width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M2.5 3.5h11v7.2H7l-3 2.6v-2.6H2.5z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" />
+          </svg>
+        </button>
         <!-- voice typing (its language: in the … menu) -->
         <button
           class="pane-nav-btn mic-btn"
@@ -2452,7 +2552,26 @@ const paneMenuBindings = computed(() => ({
     </div>
 
     <div ref="hostEl" class="term-host"></div>
-    <div v-if="transcriptOpen && canViewTranscript" class="term-transcript" @mousedown.stop="ctx.setActive(node.id)">
+    <div v-if="chatShown" class="term-transcript" data-test="terminal-chat-view" @mousedown.stop="ctx.setActive(node.id)">
+      <NativeChatTranscriptView
+        ref="chatViewEl"
+        :agent="node.agentId"
+        :session-id="node.sessionId || ''"
+        :agent-name="paneTitle"
+        :node="node"
+        :is-visible="paneOnScreen"
+        interactive
+        :pane-id="node.id"
+        :account-id="typeof node.accountId === 'string' || node.accountId === null ? node.accountId : undefined"
+        :working="chatWorking"
+        :waiting="chatWaiting"
+        :disabled-reason="chatDisabledReason"
+        :send-message="chatSend"
+        :write-keys="chatKeys"
+        @close="toggleChatView"
+      />
+    </div>
+    <div v-else-if="transcriptOpen && canViewTranscript" class="term-transcript" @mousedown.stop="ctx.setActive(node.id)">
       <NativeChatTranscriptView
         :agent="node.agentId"
         :session-id="node.sessionId"
@@ -2543,7 +2662,7 @@ const paneMenuBindings = computed(() => ({
       </button>
     </div>
 
-    <div v-else-if="node.sleeping" class="exit-overlay sleeping" data-test="sleep-overlay" @mousedown.stop>
+    <div v-else-if="node.sleeping && !chatShown" class="exit-overlay sleeping" data-test="sleep-overlay" @mousedown.stop>
       <span>{{ asleepText() }}</span>
       <button class="exit-btn primary" @click="ctx.wakeLeaf && ctx.wakeLeaf(node.id)">{{ t('pane.sleep.wake', 'Wake it') }}</button>
     </div>

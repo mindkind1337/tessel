@@ -793,6 +793,11 @@ body.popup-open .toolbar {
   color: var(--text-strong);
 }
 
+/* A header toggle that is on (the pane's chat view shown). */
+.pane-nav-btn.on {
+  color: var(--accent);
+}
+
 .pane-nav-btn.close:hover {
   background: var(--danger);
   color: #fff;

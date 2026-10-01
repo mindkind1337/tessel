@@ -4,7 +4,7 @@
 // pane's menu, which opens in the page's top layer.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import { nextTick, ref } from 'vue'
+import { nextTick, reactive, ref } from 'vue'
 import { setApproval, clearAgentStatus, applyAgentStates } from '../agentStatus'
 import { resetSettings, settings } from '../settings'
 
@@ -135,7 +135,9 @@ describe('terminal pane header', () => {
       if (!child.matches('.ctx-menu-item')) return child.className
       const clone = child.cloneNode(true)
       clone.querySelectorAll('.ctx-menu-shortcut').forEach(shortcut => shortcut.remove())
-      return clone.textContent.trim().replace('Continue in a terminal', 'Open as chat')
+      // The same entry: a chat pane goes on in a terminal; a terminal agent's
+      // pane shows its chat view (nothing restarts).
+      return clone.textContent.trim().replace('Continue in a terminal', 'Open as chat').replace('Switch to chat view', 'Open as chat')
     })
     const terminalEntries = entries(menu())
     const chat = mount(ChatPane, {
@@ -203,7 +205,50 @@ describe('terminal pane header', () => {
     expect(h.get('.pane-title').attributes('aria-description')).toContain('Branch: feat/header')
     // Actions: voice (icon only), …, maximize, close. "+" is in the menu.
     const actions = h.findAll('.pane-nav-actions > button').map((b) => b.attributes('aria-label'))
-    expect(actions).toEqual(['Voice typing (Français)', 'More options', 'Maximize pane', 'Close pane'])
+    // A Claude Code agent's pane: its chat view toggle first.
+    expect(actions).toEqual(['Show chat view', 'Voice typing (Français)', 'More options', 'Maximize pane', 'Close pane'])
+  })
+
+  it('the chat view shows over the terminal and goes away again: nothing stopped, nothing started', async () => {
+    ctx.unsent = {}
+    ctx.trackOf = () => null
+    ctx.switchToChat = vi.fn()
+    ctx.restartLeaf = vi.fn()
+    window.shellApi.killPty = vi.fn()
+    window.shellApi.writePty = vi.fn()
+    window.shellApi.transcriptView = { open: vi.fn(async () => ({ ok: false, code: 'missing' })), close: vi.fn(), onEvent: () => () => {} }
+    const n = reactive({ ...node(), sessionId: '22222222-3333-4444-8555-666666666666', accountId: null })
+    wrapper.unmount()
+    wrapper = mount(TerminalPane, { props: { node: n }, attachTo: host, global: { provide: { panelCtx: ctx } } })
+    await header().get('[data-test="pane-chat-toggle"]').trigger('click')
+    await flushPromises()
+    expect(n.chatView).toBe(true)
+    expect(wrapper.find('[data-test="terminal-chat-view"]').exists()).toBe(true)
+    expect(window.shellApi.transcriptView.open).toHaveBeenCalledWith({ agent: 'claude', sessionId: n.sessionId, paneId: 'hp', accountId: null })
+    expect(header().get('[data-test="pane-chat-toggle"]').attributes('aria-label')).toBe('Show terminal')
+    // The pane menu says the same, and switches back.
+    await header().get('[data-test="pane-menu-btn"]').trigger('click')
+    await flushPromises()
+    const item = document.body.querySelector('[data-test="menu-open-as-chat"]')
+    expect(item.textContent).toContain('Switch to terminal view')
+    item.click()
+    await flushPromises()
+    expect(n.chatView).toBeFalsy()
+    expect(wrapper.find('[data-test="terminal-chat-view"]').exists()).toBe(false)
+    expect(ctx.switchToChat).not.toHaveBeenCalled()
+    expect(ctx.restartLeaf).not.toHaveBeenCalled()
+    expect(window.shellApi.killPty).not.toHaveBeenCalled()
+    expect(window.shellApi.writePty).not.toHaveBeenCalled()
+  })
+
+  it('an agent on an SSH host or found in a shell has no chat view; OpenCode keeps its chat pane', async () => {
+    ctx.unsent = {}
+    ctx.trackOf = () => null
+    for (const extra of [{ remoteHostId: 'ssh-1' }, { detected: true }, { agentId: 'opencode' }]) {
+      wrapper.unmount()
+      wrapper = mount(TerminalPane, { props: { node: { ...node(), ...extra } }, attachTo: host, global: { provide: { panelCtx: ctx } } })
+      expect(wrapper.find('[data-test="pane-chat-toggle"]').exists(), JSON.stringify(extra)).toBe(false)
+    }
   })
 
   it('an agent whose turn ended while its background work runs: monitoring dot and badge, then idle', async () => {

@@ -4,7 +4,7 @@ import { ref } from 'vue'
 import PaneContextMenu from './PaneContextMenu.vue'
 import BrandIcon from './BrandIcon.vue'
 import { t } from '../i18n'
-const props = defineProps(["ctxMenu","paneTitle","closeCtxMenuAndRefocus","node","team","teamFactTitle","isLead","isAgent","yoloTitle","statusTitle","exited","asksApproval","limit","limitState","agentStatus","estimatedState","needsYou","stuck","track","cache","cacheTitle","cacheLeft","unsent","launchStale","menuResolveUnsent","applyTitle","menuRestartApply","menuCopy","menuPaste","menuCopyOutput","menuClear","menuCopySession","menuFind","hasModelChoice","modelTitle","menuModel","modelText","sessionPillLabel","paneModelList","paneValues","ctx","menuVoice","settings","menuPickVoice","otherPanes","menuSendSelection","menuAskReview","closeCtxMenu","leadToggleText","leaveTeamText","startEditTitle","isMaximized","menuOpenHere","menuSplit","menuRestart","canViewTranscript","menuViewTranscript","transcriptOpen","canOpenAsChat","menuOpenAsChat","canSwitchYolo","menuSwitchYolo","yoloFolder","yoloFolderOn","menuYoloFolder","folderName","menuClose","isChat","disabledReasons"])
+const props = defineProps(["ctxMenu","paneTitle","closeCtxMenuAndRefocus","node","team","teamFactTitle","isLead","isAgent","yoloTitle","statusTitle","exited","asksApproval","limit","limitState","agentStatus","estimatedState","needsYou","stuck","track","cache","cacheTitle","cacheLeft","unsent","launchStale","menuResolveUnsent","applyTitle","menuRestartApply","menuCopy","menuPaste","menuCopyOutput","menuClear","menuCopySession","menuFind","hasModelChoice","modelTitle","menuModel","modelText","sessionPillLabel","paneModelList","paneValues","ctx","menuVoice","settings","menuPickVoice","otherPanes","menuSendSelection","menuAskReview","closeCtxMenu","leadToggleText","leaveTeamText","startEditTitle","isMaximized","menuOpenHere","menuSplit","menuRestart","canViewTranscript","menuViewTranscript","transcriptOpen","canOpenAsChat","menuOpenAsChat","chatViewAvailable","canSwitchYolo","menuSwitchYolo","yoloFolder","yoloFolderOn","menuYoloFolder","folderName","menuClose","isChat","disabledReasons"])
 const unavailable = name => props.disabledReasons?.[name] || ''
 const menuRef = ref(null)
 defineExpose({ focus: options => menuRef.value?.focus(options), contains: target => menuRef.value?.contains(target), getBoundingClientRect: () => menuRef.value.getBoundingClientRect() })
@@ -189,10 +189,18 @@ defineExpose({ focus: options => menuRef.value?.focus(options), contains: target
         class="ctx-menu-item"
         data-test="menu-open-as-chat"
         :disabled="!!unavailable('menuOpenAsChat')"
-        :title="unavailable('menuOpenAsChat') || (isChat ? t('chat.orca.contextMenu.switchToTerminal', 'Continue in a terminal') : t('pane.menu.openAsChatHint', 'Continue this conversation in a chat pane (no terminal): same pane, same permissions or fewer'))"
+        :title="unavailable('menuOpenAsChat') || (isChat ? t('chat.orca.contextMenu.switchToTerminal', 'Continue in a terminal') : chatViewAvailable ? t('pane.menu.chatViewHint', 'Show this conversation as a chat over its terminal, or the terminal again: the agent keeps running, nothing restarts') : t('pane.menu.openAsChatHint', 'Continue this conversation in a chat pane (no terminal): same pane, same permissions or fewer'))"
         @click="menuOpenAsChat"
       >
-        {{ isChat ? t('chat.orca.contextMenu.switchToTerminal', 'Continue in a terminal') : t('pane.menu.openAsChat', 'Open as chat') }}
+        {{
+          isChat
+            ? t('chat.orca.contextMenu.switchToTerminal', 'Continue in a terminal')
+            : chatViewAvailable
+              ? node.chatView
+                ? t('pane.menu.switchToTerminalView', 'Switch to terminal view')
+                : t('pane.menu.switchToChatView', 'Switch to chat view')
+              : t('pane.menu.openAsChat', 'Open as chat')
+        }}
       </button>
       <template v-if="canSwitchYolo">
         <button

@@ -1485,7 +1485,9 @@ function serializeNode(node) {
       sessionOptions: node.detected ? undefined : node.sessionOptions || undefined,
       permissions: node.detected ? undefined : node.permissions || undefined,
       launchSig: node.detected ? undefined : node.launchSig || undefined,
-      launchYolo: node.detected ? undefined : node.launchYolo || undefined
+      launchYolo: node.detected ? undefined : node.launchYolo || undefined,
+      // Shown as a chat over its terminal (TerminalPane's chat view).
+      chatView: !node.detected && node.chatView ? true : undefined
     }
   }
   return {
@@ -1593,7 +1595,8 @@ async function deserializeNode(snap, cwd = null) {
         ...(snap.permissions === 'yolo' ? { permissions: 'yolo' } : {}),
         restoredText: savedOutput[savedId] || '',
         sleeping: { at: snap.sleeping.at },
-        broadcast: snap.broadcast !== false
+        broadcast: snap.broadcast !== false,
+        ...(snap.chatView === true ? { chatView: true } : {})
       })
       if (snap.paneName) asleep.paneName = snap.paneName
       if (Number.isInteger(snap.num) && snap.num > 0) asleep.num = snap.num
@@ -1654,6 +1657,7 @@ async function deserializeNode(snap, cwd = null) {
     }
     leaf.broadcast = snap.broadcast !== false
     if (typeof snap.team === 'string') leaf.team = snap.team
+    if (snap.chatView === true && leaf.kind === 'agent') leaf.chatView = true
     return leaf
   }
   const children = []
@@ -2356,6 +2360,10 @@ provide('panelCtx', {
   // Asked while the agent works: done when its turn ends (never interrupted).
   switchToChat: (id) => requestSwitch(id, 'chat'),
   switchToTerminal: (id) => requestSwitch(id, 'terminal'),
+  // A terminal agent's chat view (nothing restarts): what you write there,
+  // and its agent's real end (back to the terminal).
+  sendFromChatView: (id, text, callbacks) => sendFromChatView(id, text, callbacks),
+  chatViewEnded: (id) => chatViewEnded(id),
   pendingSwitch: (id) => pendingSwitch[id] || null,
   toggleYoloFolder,
   permissionsOf,
@@ -6288,7 +6296,9 @@ async function restartInPlaceNow(leafId, opts) {
     num: old.num, paneName: old.paneName,
     team: old.team,
     gen: (old.gen || 0) + 1,
-    restartedAt: Date.now()
+    restartedAt: Date.now(),
+    // Its chat view stays (a restart or a wake is not the agent ending).
+    ...(old.chatView ? { chatView: true } : {})
   })
   if (opts.forTools) {
     fresh.teamTools = true
@@ -6463,6 +6473,29 @@ async function switchToChat(leafId) {
   }
 }
 const switchingLeaves = new Set()
+
+// --- A terminal agent's chat view (TerminalPane: pane menu > Switch to chat view) ---
+// The agent keeps running in its terminal; the pane only shows its
+// conversation as a chat over it (leaf.chatView, saved with the layout).
+// What you write there reaches the terminal as any message of yours does
+// (deliverToAgent: held during an approval or while a line is typed there).
+function sendFromChatView(leafId, text, { onDelivered, onFailed } = {}) {
+  const leaf = findLeaf(leafId)
+  if (!leaf || leaf.kind !== 'agent' || !leaf.chatView || leaf.sleeping) {
+    if (onFailed) onFailed()
+    return false
+  }
+  deliverToAgent(leafId, text, { source: 'you', onDelivered, onFailed, onDropped: onFailed })
+  return true
+}
+// Its agent really ended (not stopped by a restart, a wake, a sleep or a
+// switch here): the pane shows its terminal again.
+function chatViewEnded(leafId) {
+  const leaf = findLeaf(leafId)
+  if (!leaf || !leaf.chatView || leaf.sleeping || restartingLeaves.has(leafId) || switchingLeaves.has(leafId)) return false
+  delete leaf.chatView
+  return true
+}
 
 // --- Agent sleep (Settings > Agents, after Orca's) ---------------------------------
 // An agent idle for a while (its conversation saved, not in a team, nothing
