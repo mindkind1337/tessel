@@ -643,6 +643,11 @@ body.popup-open .toolbar {
   }
 }
 
+/* Its last turn was interrupted (the sidebar's red "Interrupted"). */
+.pane-icon.interrupted .pane-status-dot {
+  background: var(--danger);
+}
+
 /* Its turn ended, its background work still runs (the sidebar's yellow
    "Monitoring background tasks"): a yellow dot, a slow pulse. */
 .pane-icon.monitoring .pane-status-dot {

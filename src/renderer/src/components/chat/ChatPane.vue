@@ -150,7 +150,17 @@ const statusLabel = computed(() => {
       return t('chat.status.stopped', 'Stopped')
   }
 })
-const iconState = computed(() => (status.value === 'approval' ? 'attention' : status.value === 'working' ? 'busy' : backgroundRunning.value ? 'monitoring' : ''))
+const iconState = computed(() =>
+  status.value === 'approval'
+    ? 'attention'
+    : status.value === 'working'
+      ? 'busy'
+      : backgroundRunning.value
+        ? 'monitoring'
+        : typeof ctx.chatInterrupted === 'function' && ctx.chatInterrupted(props.node.id)
+          ? 'interrupted'
+          : ''
+)
 
 const permissions = computed(() => (typeof ctx.chatPermissions === 'function' ? ctx.chatPermissions(props.node) : null))
 // What the agent may do without asking (chosen in the composer's options).

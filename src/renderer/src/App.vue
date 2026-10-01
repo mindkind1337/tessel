@@ -2313,6 +2313,8 @@ provide('panelCtx', {
   chatOpen: (leaf, opts) => chatOpen(leaf, opts),
   chatSetOption: (leaf, payload) => chatSetOption(leaf, payload),
   // What the chat runs with now (its mode switches included), else what it would start with.
+  // A chat whose last turn was interrupted (its header shows it too).
+  chatInterrupted: (id) => !!chatInterrupted[id],
   chatPermissions: (leaf) =>
     leaf && (leaf.chatPermissions === 'yolo' || leaf.chatPermissions === 'manual')
       ? leaf.chatPermissions

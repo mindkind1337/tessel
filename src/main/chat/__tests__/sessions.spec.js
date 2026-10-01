@@ -1075,6 +1075,8 @@ describe('interrupt, close, exit', () => {
     await flush()
     expect(stateCalls.slice(0, 2)).toEqual([['Interrupt'], ['observe', 'ScreenReady']])
     expect(a.send).toHaveBeenLastCalledWith({ uuid: q.id, text: 'next' })
+    // The conversation says it was interrupted.
+    expect(events('notice').some((n) => n.text === 'Interrupted')).toBe(true)
   })
 
   it('exit code 1 after an interrupted turn is an end, not a crash', async () => {

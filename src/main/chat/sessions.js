@@ -901,6 +901,11 @@ export function createChatSessions(deps) {
       if (st === 'failed' && !error && !after) {
         emit(s.paneId, { type: 'notice', kind: 'error', text: t('main.chat.turnFailedNoReason', 'The turn failed.') })
       }
+      // An interrupted turn (Stop, Esc) says so in the conversation (not the
+      // compaction's own turn, which ends the way it was asked to).
+      if (st === 'interrupted' && !(turn && turn.kind === 'compact')) {
+        emit(s.paneId, { type: 'notice', kind: 'info', text: t('main.chat.interrupted', 'Interrupted') })
+      }
       // Tools of the turn that never reported a result. A sub-agent's
       // (agentId) are left open: a background child goes on after the
       // parent's turn and reports them later (or its roster settles it).

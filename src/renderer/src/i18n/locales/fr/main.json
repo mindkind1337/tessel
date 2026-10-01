@@ -36,7 +36,7 @@
       "invalid": "Ce chemin n'est pas valide."
     },
     "error": {
-      "noProjectFolder":"Le dossier du projet n'existe pas.",
+      "noProjectFolder": "Le dossier du projet n'existe pas.",
       "openNotes": "Impossible d'ouvrir les notes : {{error}}",
       "noCommitMessage": "L'agent n'a donné aucun message.",
       "imageTooLarge": "L'image est trop grande pour être affichée.",
@@ -762,7 +762,7 @@
       "compactUnsupported": "Cet agent ne peut pas compacter sa conversation.",
       "compactBusy": "Attendez la fin du tour pour compacter.",
       "compactFailed": "La conversation n'a pas été compactée.",
-      "compacting": "Compactage de la conversation…",
+      "compacting": "Conversation trop longue : compactage, puis votre message est renvoyé…",
       "noQuestion": "Cette question a déjà reçu une réponse ou n'existe plus.",
       "authError": "Claude n'est pas connecté (ou sa connexion a expiré). Connectez-vous, puis rouvrez ce chat.",
       "busy": "Ce chat est encore en train de se fermer.",
@@ -795,7 +795,6 @@
       "codexPostureChanged": "Codex n'appliquait plus les permissions du mode Manuel (demander d'abord, en bac à sable) : le tour a été arrêté et le chat fermé.",
       "turnFailed": "Le tour a échoué : {{error}}",
       "turnFailedNoReason": "Le tour a échoué.",
-      "compacting": "Conversation trop longue : compactage, puis votre message est renvoyé…",
       "tooLong": "La conversation est trop longue pour {{agent}} et n’a pas pu être compactée : commencez une nouvelle conversation.",
       "notOffered": "L'agent ne propose pas ce choix ici.",
       "inputUnseen": "Affichez l'intégralité de la demande avant de l'autoriser.",
@@ -811,7 +810,8 @@
       "opencodePosture": "OpenCode n'a pas confirmé les permissions Manuel (demander avant les modifications et les commandes, pour chaque agent) : le chat n'a pas été ouvert.",
       "noOpencode": "OpenCode est introuvable. Installez-le, puis réessayez.",
       "opencodeAuthNotEnforced": "OpenCode a répondu sans son mot de passe : le chat n'a pas été ouvert.",
-      "opencodeVersion": "Cet OpenCode est plus ancien que {{version}}, la version avec laquelle Tessel a été testé. Mettez OpenCode à jour, puis réessayez."
+      "opencodeVersion": "Cet OpenCode est plus ancien que {{version}}, la version avec laquelle Tessel a été testé. Mettez OpenCode à jour, puis réessayez.",
+      "interrupted": "Interrompu"
     },
     "browserMenu": {
       "openLinkNewPane": "Ouvrir le lien dans un nouveau volet",
