@@ -96,6 +96,7 @@ let disposed = false
 async function load() {
   const root = repoRoot.value
   if (!root || !api()) return
+  lastLoad = Date.now()
   await refreshStatus(root)
   if (disposed) return
 }
@@ -763,13 +764,22 @@ const branchTitle = computed(() => {
 
 // --- Keep current -----------------------------------------------------------------------
 // The side panel watches the project and reads its status again as files
-// change (its count badge); a task's copy is outside the watched project, so
-// it is read again every few seconds while shown.
+// (and git's own: a stage, a commit, a branch switch) change; a task's copy
+// is outside the watched project, so it is read again every few seconds
+// while shown. The project too, every minute as a safety net, and when the
+// window is shown again (after Orca's useGitStatusPolling.ts, MIT,
+// Copyright (c) 2026 Lovecast Inc.).
+const COPY_POLL_MS = 4000
+const SAFETY_POLL_MS = 60000
 let timer = 0
 let poll = 0
+let lastLoad = 0
 function schedule() {
   clearTimeout(timer)
   timer = setTimeout(load, 250)
+}
+function onVisible() {
+  if (!document.hidden) schedule()
 }
 watch(repoRoot, () => {
   commitError.value = ''
@@ -788,9 +798,11 @@ onMounted(() => {
   load()
   scheduleCompare()
   poll = setInterval(() => {
-    if (copyTask.value && !document.hidden) load()
-  }, 4000)
+    if (document.hidden) return
+    if (copyTask.value || Date.now() - lastLoad >= SAFETY_POLL_MS) load()
+  }, COPY_POLL_MS)
   window.addEventListener('focus', onFocus)
+  document.addEventListener('visibilitychange', onVisible)
 })
 onBeforeUnmount(() => {
   disposed = true
@@ -799,6 +811,7 @@ onBeforeUnmount(() => {
   clearTimeout(compareTimer)
   clearInterval(poll)
   window.removeEventListener('focus', onFocus)
+  document.removeEventListener('visibilitychange', onVisible)
   closeMenu()
   closeMore()
 })
