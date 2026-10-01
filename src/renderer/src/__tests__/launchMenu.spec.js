@@ -35,47 +35,24 @@ describe('agents not installed', () => {
     { id: 'claude', name: 'Claude Code', command: 'claude', available: true, install: ['npm install -g @anthropic-ai/claude-code'], docsUrl: 'https://code.claude.com/docs' }
   ]
 
-  it('offers Install for a known installer, the install page otherwise, and hides the rest', async () => {
+  it('lists no install chips (they are in Settings > Agents)', async () => {
     const w = mount(LaunchMenu, { props: { shells: [], agents }, attachTo: document.body })
-    expect(w.find('[data-test="launch-install-cline"]').exists()).toBe(true)
-    expect(w.find('[data-test="launch-install-cursor"]').exists()).toBe(true)
-    expect(w.find('[data-test="launch-install-zcode"]').exists()).toBe(false)
-    expect(w.find('[data-test="launch-docs-zcode"]').exists()).toBe(true)
-    expect(w.find('[data-test="launch-docs-cursor"]').exists()).toBe(false)
-    expect(w.find('[data-test="launch-install-mystery"]').exists()).toBe(false)
-    expect(w.find('[data-test="launch-docs-mystery"]').exists()).toBe(false)
-    // Installed: started, never offered for install.
-    expect(w.find('[data-test="launch-install-claude"]').exists()).toBe(false)
-    expect(w.find('[data-test="launch-docs-claude"]').exists()).toBe(false)
-    // A confirmed install says so before the click.
-    expect(w.get('[data-test="launch-install-cursor"]').attributes('title')).toContain('asks first')
-    await w.get('[data-test="launch-install-cursor"]').trigger('click')
-    expect(w.emitted('install')[0][0].id).toBe('cursor')
-    await w.get('[data-test="launch-docs-zcode"]').trigger('click')
-    expect(w.emitted('docs')[0][0].docsUrl).toBe('https://zcode.z.ai/')
+    expect(w.find('.launch-install').exists()).toBe(false)
+    expect(w.find('[data-test^="launch-install-"]').exists()).toBe(false)
+    expect(w.find('[data-test^="launch-docs-"]').exists()).toBe(false)
+    expect(w.text()).toContain('Claude Code')
+    expect(w.text()).not.toContain('Cursor CLI')
     w.unmount()
   })
 })
 
-describe('effort without a chosen model', () => {
-  it("the picker offers the running model's effort; the menu launches with that model and effort", async () => {
-    const SessionOptionPicker = (await import('../components/SessionOptionPicker.vue')).default
-    const { modelsFor } = await import('../agentModels')
-    const p = mount(SessionOptionPicker, { props: { agentId: 'claude', models: modelsFor('claude'), values: null, fallbackModel: 'opus' } })
-    const efforts = p.findAll('[data-test="sop-option"][data-option="effort"]').map((b) => b.attributes('data-value'))
-    expect(efforts).toContain('high')
-    await p.get('[data-test="sop-option"][data-option="effort"][data-value="high"]').trigger('click')
-    expect(p.emitted('set')[0][0]).toEqual({ optionId: 'effort', value: 'high' })
-    p.unmount()
-
+describe('model at launch', () => {
+  it('no model pill: an agent starts with its default from Settings', async () => {
     const agents = [{ id: 'claude', name: 'Claude Code', command: 'claude', available: true }]
     const w = mount(LaunchMenu, { props: { shells: [], agents }, attachTo: document.body })
-    await w.get('[data-test="launch-model-pill"]').trigger('click')
-    await w.get('[data-test="sop-option"][data-option="effort"][data-value="high"]').trigger('click')
+    expect(w.find('[data-test="launch-model-pill"]').exists()).toBe(false)
     await w.findAll('.launch-item').find((b) => b.text().includes('Claude Code') && !b.text().includes('chat')).trigger('click')
-    const launched = w.emitted('launch').at(-1)[0]
-    expect(launched.sessionOptions.effort).toBe('high')
-    expect(typeof launched.sessionOptions.model).toBe('string')
+    expect(w.emitted('launch').at(-1)[0]).toEqual({ kind: 'agent', id: 'claude' })
     w.unmount()
   })
 })

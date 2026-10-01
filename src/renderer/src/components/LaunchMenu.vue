@@ -4,12 +4,7 @@
 // new pane opens next to that pane). App owns what actually happens.
 import { ref, computed, onMounted, nextTick } from 'vue'
 import BrandIcon from './BrandIcon.vue'
-import SessionOptionPicker from './SessionOptionPicker.vue'
-import { describeSteps } from '../shellChain'
 import { settings } from '../settings'
-import { modelsFor } from '../agentModels'
-import { sessionPillLabel } from '../sessionOptionLabels'
-import { getAgentSessionOptionCatalog, resolveSessionOptionDefaults } from '../../../shared/agentSessionOptions'
 import { t } from '../i18n'
 
 const props = defineProps({
@@ -32,22 +27,10 @@ const emit = defineEmits([
   'placement',
   'close',
   'worktree',
-  'tools',
-  'install',
-  'docs'
+  'tools'
 ])
 
 const installedAgents = computed(() => props.agents.filter((a) => a.available))
-// Not installed: an Install button when Tessel knows its installer, else a
-// link to its install page; with neither, it is not offered.
-const missingAgents = computed(() => props.agents.filter((a) => !a.available && a.install))
-const docsOnlyAgents = computed(() => props.agents.filter((a) => !a.available && !a.install && a.docsUrl))
-function installHint(agent) {
-  const steps = describeSteps(agent.install)
-  return agent.installConfirm
-    ? t('pane.launch.installConfirmHint', "Install {{name}} with its vendor's installer ({{steps}}). Tessel shows the command and asks first.", { name: agent.name, steps })
-    : t('pane.launch.installHint', 'Install {{name}} ({{steps}}), then start it', { name: agent.name, steps })
-}
 
 const rootEl = ref(null)
 const pos = ref({ left: props.x, top: props.y })
@@ -88,51 +71,7 @@ const whereText = computed(() => {
 
 function launch(kind, item) {
   if (kind === 'agent' && !item.available) return
-  const chosen = kind === 'agent' ? picked.value[item.id] : undefined
-  emit('launch', chosen ? { kind, id: item.id, sessionOptions: chosen } : { kind, id: item.id })
-}
-
-// The model a new agent starts with (Orca's per-session picker before a
-// session starts): chosen here for this pane only; untouched, the agent's
-// default from Settings > Agents (or its own) applies.
-const picked = ref({}) // agent id -> { model, effort? } chosen here
-const pickerFor = ref(null) // the agent whose picker is open
-function hasModels(agent) {
-  return !!getAgentSessionOptionCatalog(agent.id)
-}
-function valuesFor(agent) {
-  return picked.value[agent.id] || resolveSessionOptionDefaults(settings.agentSessionOptions, agent.id) || null
-}
-function pillText(agent) {
-  return sessionPillLabel(modelsFor(agent.id), valuesFor(agent))
-}
-function defaultLabelFor(agent) {
-  const d = resolveSessionOptionDefaults(settings.agentSessionOptions, agent.id)
-  return d
-    ? t('pane.sessionOptions.settingsDefault', 'Default from Settings ({{model}})', { model: sessionPillLabel(modelsFor(agent.id), d) })
-    : t('pane.sessionOptions.agentDefault', "Agent's own default")
-}
-// The list's default model: its effort is offered before any model is chosen.
-function fallbackModelFor(agent) {
-  const list = modelsFor(agent.id)
-  if (!list.length) return null
-  return (list.find((m) => m.isDefault) || list[0]).id
-}
-function onPick(agent, { optionId, value }) {
-  // What the picker shows: a choice made here, else the Settings default.
-  const current = valuesFor(agent)
-  let next
-  if (optionId === 'model') next = value ? { model: value } : null
-  else if (current && current.model) {
-    next = { ...current }
-    if (value === null || value === undefined) delete next[optionId]
-    else next[optionId] = value
-  } else if (value !== null && value !== undefined && fallbackModelFor(agent)) next = { model: fallbackModelFor(agent), [optionId]: value }
-  else next = picked.value[agent.id] || null
-  const all = { ...picked.value }
-  if (next) all[agent.id] = next
-  else delete all[agent.id]
-  picked.value = all
+  emit('launch', { kind, id: item.id })
 }
 
 // Arrow keys move between items; Enter activates; Esc closes.
@@ -260,30 +199,6 @@ onMounted(async () => {
           <BrandIcon :kind="agent.id" :accent="agent.accent" :label="agent.name" :size="16" />
           <span class="launch-name">{{ agent.name }}</span>
         </button>
-        <button
-          v-if="hasModels(agent)"
-          class="launch-model-pill"
-          type="button"
-          data-test="launch-model-pill"
-          :data-agent="agent.id"
-          :class="{ chosen: !!picked[agent.id] }"
-          :aria-expanded="pickerFor === agent.id"
-          :aria-label="t('pane.sessionOptions.pillAccessibleName', '{{category}} {{value}}', { category: t('pane.sessionOptions.model', 'Model'), value: pillText(agent) })"
-          :title="t('pane.launch.modelHint', 'The model {{name}} starts with', { name: agent.name })"
-          @click.stop="pickerFor = pickerFor === agent.id ? null : agent.id"
-        >
-          {{ pillText(agent) }} ▾
-        </button>
-      </div>
-      <div v-if="pickerFor === agent.id" class="launch-model-picker" data-test="launch-model-picker">
-        <SessionOptionPicker
-          :agent-id="agent.id"
-          :models="modelsFor(agent.id)"
-          :values="picked[agent.id] || null"
-          :fallback-model="(valuesFor(agent) && valuesFor(agent).model) || fallbackModelFor(agent)"
-          :default-label="defaultLabelFor(agent)"
-          @set="(e) => onPick(agent, e)"
-        />
       </div>
     </template>
     <!-- Claude as a chat (src/main/chat): no terminal, team messages as turns. -->
@@ -340,34 +255,6 @@ onMounted(async () => {
       </button>
     </div>
     <p v-if="!installedAgents.length" class="launch-empty">{{ t('pane.launch.noAgents', 'No AI agents installed yet.') }}</p>
-    <div v-if="missingAgents.length" class="launch-install">
-      <span class="launch-install-label">{{ t('pane.launch.install', 'Install:') }}</span>
-      <button
-        v-for="agent in missingAgents"
-        :key="agent.id"
-        class="launch-chip"
-        :title="installHint(agent)"
-        :data-test="'launch-install-' + agent.id"
-        @click="emit('install', agent)"
-      >
-        <BrandIcon :kind="agent.id" :accent="agent.accent" :label="agent.name" :size="13" />
-        {{ agent.name }}
-      </button>
-    </div>
-    <div v-if="docsOnlyAgents.length" class="launch-install">
-      <span class="launch-install-label">{{ t('pane.launch.installPage', 'Install page:') }}</span>
-      <button
-        v-for="agent in docsOnlyAgents"
-        :key="agent.id"
-        class="launch-chip"
-        :title="t('pane.launch.installPageHint', 'No automatic install on Windows: open the install page of {{name}} in your browser ({{url}})', { name: agent.name, url: agent.docsUrl })"
-        :data-test="'launch-docs-' + agent.id"
-        @click="emit('docs', agent)"
-      >
-        <BrandIcon :kind="agent.id" :accent="agent.accent" :label="agent.name" :size="13" />
-        {{ agent.name }} ↗
-      </button>
-    </div>
     <div class="launch-row">
       <button class="launch-item subtle" role="menuitem" @click="emit('tools')">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">

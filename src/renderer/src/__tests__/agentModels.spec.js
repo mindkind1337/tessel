@@ -197,40 +197,6 @@ describe('a model menu that opens refreshes a missing or old list', () => {
   })
 })
 
-describe('new pane menu: the model an agent starts with', () => {
-  beforeEach(() => {
-    resetSettings()
-    settings.agentSessionOptions = {}
-    resetModelListsForTests()
-  })
-  afterEach(() => {
-    resetSettings()
-    settings.agentSessionOptions = {}
-  })
-
-  it('untouched: the launch carries no model; a pick goes with the launch', async () => {
-    settings.agentSessionOptions = { codex: { model: 'gpt-5.5', valuesByModel: {} } }
-    const w = mount(LaunchMenu, { props: { agents, shells: [] }, attachTo: document.body })
-    const pills = w.findAll('[data-test="launch-model-pill"]')
-    expect(pills.map((p) => p.attributes('data-agent'))).toEqual(['claude', 'codex'])
-    expect(pills[0].text()).toContain('Model')
-    // The default from Settings shows on the pill.
-    expect(pills[1].text()).toContain('GPT-5.5')
-    await w.findAll('.launch-item').find((b) => b.text() === 'Claude Code').trigger('click')
-    expect(w.emitted('launch')[0][0]).toEqual({ kind: 'agent', id: 'claude' })
-
-    await pills[0].trigger('click')
-    const picker = w.get('[data-test="launch-model-picker"]')
-    expect(picker.get('[data-test="sop-model-default"]').text()).toContain("Agent's own default")
-    await picker.get('[data-model="sonnet"]').trigger('click')
-    await w.get('[data-test="launch-model-picker"] [data-option="effort"][data-value="low"]').trigger('click')
-    expect(w.findAll('[data-test="launch-model-pill"]')[0].text()).toContain('Sonnet · Low')
-    await w.findAll('.launch-item').find((b) => b.text() === 'Claude Code').trigger('click')
-    expect(w.emitted('launch')[1][0]).toEqual({ kind: 'agent', id: 'claude', sessionOptions: { model: 'sonnet', effort: 'low' } })
-    w.unmount()
-  })
-})
-
 describe('the picker', () => {
   it("a running Claude: /fast is an action, never On/Off; Codex's model opens its own picker", async () => {
     const w = mount(SessionOptionPicker, { props: { agentId: 'claude', models: modelsFor('claude'), values: { model: 'opus' }, live: true } })
@@ -335,21 +301,6 @@ describe('OpenCode: models from `opencode models`', () => {
     await w.get('[data-test="sop-agent-picker"]').trigger('click')
     expect(w.emitted('action')[0][0]).toEqual({ optionId: 'model' })
     expect(window.shellApi.probeAgentModels).not.toHaveBeenCalled()
-    w.unmount()
-  })
-
-  it('new pane menu: a picked model goes with the launch', async () => {
-    window.shellApi = { agentModelLists: async () => ({ opencode: { models: listed, fetchedAt: Date.now() } }), probeAgentModels: vi.fn() }
-    await loadModelLists()
-    const oc = [{ id: 'opencode', name: 'OpenCode', command: 'opencode', available: true }]
-    const w = mount(LaunchMenu, { props: { agents: oc, shells: [] }, attachTo: document.body })
-    const pill = w.get('[data-test="launch-model-pill"]')
-    expect(pill.attributes('data-agent')).toBe('opencode')
-    await pill.trigger('click')
-    await w.get('[data-test="launch-model-picker"] [data-model="opencode/big-pickle"]').trigger('click')
-    expect(w.get('[data-test="launch-model-pill"]').text()).toContain('Big Pickle')
-    await w.findAll('.launch-item').find((b) => b.text() === 'OpenCode').trigger('click')
-    expect(w.emitted('launch')[0][0]).toEqual({ kind: 'agent', id: 'opencode', sessionOptions: { model: 'opencode/big-pickle' } })
     w.unmount()
   })
 

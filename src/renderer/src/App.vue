@@ -9897,8 +9897,6 @@ onBeforeUnmount(() => {
       :use-worktree="useWorktree"
       @worktree="(v) => (useWorktree = v)"
       @tools="openTools"
-      @install="installAgent"
-      @docs="(a) => { launcher.open = false; openExternalUrl(a.docsUrl) }"
       :x="launcher.x"
       :y="launcher.y"
       @launch="onLauncherLaunch"
