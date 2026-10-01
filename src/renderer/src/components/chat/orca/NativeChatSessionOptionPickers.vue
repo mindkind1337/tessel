@@ -61,10 +61,16 @@ const pendingId = ref(null)
 const model = computed(() => props.snapshot.find((descriptor) => descriptor.category === 'model') || null)
 const options = computed(() => sortNativeChatSessionOptions(props.snapshot))
 const effort = computed(() => options.value.find(d => d.id === 'effort' && d.kind.type === 'select' && d.kind.choices.length && !d.action) || null)
+const rightOptions = computed(() => options.value.filter(d => d !== effort.value))
+const effortLabel = computed(() => {
+  if (!effort.value || effort.value.valueSource === 'unknown') return ''
+  const choice = effort.value.kind.choices.find(c => c.value === effort.value.kind.currentValue)
+  return choice ? nativeChatSessionChoiceLabel(choice) : ''
+})
 const modeIcons = { default: Hand, acceptEdits: Pencil, plan: ClipboardList, auto: Zap, bypassPermissions: ShieldOff }
-const requestedModelSequence = computed(() => (model.value && props.pickerRequest?.id === model.value.id ? props.pickerRequest.sequence : null))
+const requestedModelSequence = computed(() => (model.value && (props.pickerRequest?.id === model.value.id || (effort.value && props.pickerRequest?.id === effort.value.id)) ? props.pickerRequest.sequence : null))
 const requestedOptionsSequence = computed(() =>
-  options.value.some((descriptor) => descriptor.id === props.pickerRequest?.id) ? (props.pickerRequest?.sequence ?? null) : null
+  rightOptions.value.some((descriptor) => descriptor.id === props.pickerRequest?.id) ? (props.pickerRequest?.sequence ?? null) : null
 )
 
 function runSurfaceCall(pendingKey, call) {
@@ -123,18 +129,18 @@ function onSwitchSelect(event, descriptor) {
 const modelReason = computed(() => (model.value ? nativeChatSessionOptionDisabledReason(model.value.disabledReason) : null))
 const modelTooltip = computed(() => t('chat.orca.composer.model', 'Model'))
 const modelLabel = computed(() => (model.value ? nativeChatModelPillLabel(model.value) : ''))
-const optionsTooltip = computed(() => nativeChatOptionsPillTitle(options.value))
-const optionsLabel = computed(() => nativeChatOptionsPillLabel(options.value))
+const optionsTooltip = computed(() => nativeChatOptionsPillTitle(rightOptions.value))
+const optionsLabel = computed(() => nativeChatOptionsPillLabel(rightOptions.value))
 const optionsReason = computed(() =>
-  options.value.length > 0 && options.value.every((descriptor) => !descriptor.settable)
-    ? nativeChatSessionOptionDisabledReason(options.value[0]?.disabledReason)
+  rightOptions.value.length > 0 && rightOptions.value.every((descriptor) => !descriptor.settable)
+    ? nativeChatSessionOptionDisabledReason(rightOptions.value[0]?.disabledReason)
     : null
 )
 // The reference also disables the pills while a write is on its way; Tessel
 // keeps them enabled then (their rows still wait), so the focus can go back
 // to the pill when a choice closes its menu.
 const modelDisabled = computed(() => props.isWorking)
-const optionsDisabled = computed(() => props.isWorking && !options.value.some((descriptor) => descriptor.settableWhileWorking && descriptor.settable))
+const optionsDisabled = computed(() => props.isWorking && !rightOptions.value.some((descriptor) => descriptor.settableWhileWorking && descriptor.settable))
 
 // Value-only visible text must still include the category in the accessible
 // name (WCAG 2.5.3 Label in Name / voice control).
@@ -164,17 +170,17 @@ const pills = computed(() => {
     {
       key: `model:${requestedModelSequence.value ?? 'idle'}`, // i18n-ignore
       defaultOpen: requestedModelSequence.value !== null,
-      label: modelLabel.value,
+      label: [modelLabel.value, effortLabel.value].filter(Boolean).join(' '),
       tooltipLabel: modelTooltip.value,
       disabled: modelDisabled.value,
       disabledReason: modelReason.value,
-      dispatched: sessionOptionDispatchUnconfirmed(model.value),
+      dispatched: sessionOptionDispatchUnconfirmed(model.value) || (effort.value && sessionOptionDispatchUnconfirmed(effort.value)),
       contentClass: 'nc-picker-menu nc-picker-menu--model',
       rows: modelRows.value,
       modelMenu: true
     }
   ]
-  if (options.value.length > 0) {
+  if (rightOptions.value.length > 0) {
     list.push({
       key: `options:${requestedOptionsSequence.value ?? 'idle'}`, // i18n-ignore
       defaultOpen: requestedOptionsSequence.value !== null,
@@ -182,7 +188,7 @@ const pills = computed(() => {
       tooltipLabel: optionsTooltip.value,
       disabled: optionsDisabled.value,
       disabledReason: optionsReason.value,
-      dispatched: options.value.some(sessionOptionDispatchUnconfirmed),
+      dispatched: rightOptions.value.some(sessionOptionDispatchUnconfirmed),
       contentClass: 'nc-picker-menu nc-picker-menu--options',
       rows: optionRows.value,
       modelMenu: false
@@ -211,7 +217,10 @@ function stopEscape(event) {
               :data-native-chat-picker="pill.modelMenu ? 'model' : 'options'"
               class="nc-picker-trigger"
             >
-              <span class="nc-picker-trigger-label">{{ pill.label }}</span>
+              <span class="nc-picker-trigger-label">
+                <template v-if="pill.modelMenu"><span class="nc-picker-model-name">{{ modelLabel }}</span><span v-if="effortLabel" class="nc-picker-effort-value">&nbsp;{{ effortLabel }}</span></template>
+                <template v-else>{{ pill.label }}</template>
+              </span>
               <ChevronDown class="nc-size-3" aria-hidden="true" />
             </Button>
           </DropdownMenuTrigger>
@@ -326,6 +335,8 @@ function stopEscape(event) {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.nc-picker-model-name { color: var(--nc-foreground); }
+.nc-picker-effort-value { color: var(--nc-muted-foreground); }
 .nc-size-3 {
   width: 12px;
   height: 12px;

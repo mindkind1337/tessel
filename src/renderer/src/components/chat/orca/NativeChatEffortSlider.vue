@@ -64,7 +64,7 @@ function finish(event) {
       @pointerup="finish" @pointercancel="dragIndex = null" @lostpointercapture="dragIndex = null"
     >
       <div class="nc-effort-track" aria-hidden="true">
-        <span v-if="current >= 0 || dragIndex !== null" class="nc-effort-fill" :style="{ width: `calc(${percent(index)}% + 9px)` }" />
+        <span v-if="current >= 0 || dragIndex !== null" class="nc-effort-fill" :style="{ width: percent(index) + '%' }" />
         <span v-for="(choice, i) in choices" :key="choice.value" class="nc-effort-tick"
           :class="{ 'nc-effort-peak': i === choices.length - 1, 'nc-effort-unavailable': choice.disabled }" :style="{ left: percent(i) + '%' }" />
         <span v-if="current >= 0 || dragIndex !== null" class="nc-effort-thumb" :class="{ 'nc-effort-peak': index === choices.length - 1 }" :style="{ left: percent(index) + '%' }" />
@@ -79,9 +79,8 @@ function finish(event) {
 .nc-effort-slider { width: 92px; flex: none; margin-left: auto; height: 24px; padding: 0 8px; display: flex; align-items: center; cursor: pointer; touch-action: none; border-radius: 5px; outline: none; }
 .nc-effort-slider:focus-visible { box-shadow: 0 0 0 2px var(--nc-ring, var(--nc-foreground)); }
 .nc-effort-slider[aria-disabled='true'] { opacity: .45; cursor: default; }
-.nc-effort-track { position: relative; width: 100%; height: 18px; pointer-events: none; }
-.nc-effort-track::before { content: ''; position: absolute; inset: 0 -9px; border-radius: 99px; background: var(--nc-muted); }
-.nc-effort-fill { position: absolute; left: -9px; height: 18px; padding-right: 9px; border-radius: 99px; background: #0786c7; }
+.nc-effort-track { position: relative; width: 100%; height: 2px; background: var(--nc-border); pointer-events: none; }
+.nc-effort-fill { position: absolute; left: 0; height: 2px; background: #0786c7; }
 .nc-effort-tick, .nc-effort-thumb { position: absolute; top: 50%; transform: translate(-50%, -50%); border-radius: 50%; background: var(--nc-muted-foreground); }
 .nc-effort-tick { width: 5px; height: 5px; }
 .nc-effort-thumb { width: 14px; height: 14px; background: #dedee3; transition: left .1s ease; }

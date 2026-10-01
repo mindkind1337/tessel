@@ -119,15 +119,15 @@ describe('NativeChatSessionOptionPickers', () => {
   it('opens the native picker requested by a structured slash command', async () => {
     render({ snapshot: [model(), effort], pickerRequest: null })
     await wrapper.setProps({ pickerRequest: { id: 'model', sequence: 1 } })
-    expect(buttonNamed('Model Opus 4.8').closest('[data-testid="dropdown-root"]').getAttribute('data-open')).toBe('true')
+    expect(buttonNamed('Model Opus 4.8 High').closest('[data-testid="dropdown-root"]').getAttribute('data-open')).toBe('true')
     await wrapper.setProps({ pickerRequest: { id: 'effort', sequence: 2 } })
-    expect(buttonNamed('Effort High').closest('[data-testid="dropdown-root"]').getAttribute('data-open')).toBe('true')
+    expect(buttonNamed('Model Opus 4.8 High').closest('[data-testid="dropdown-root"]').getAttribute('data-open')).toBe('true')
   })
 
   it('prefers collision-aware upward placement for model and option menus', () => {
     render({ snapshot: [model(), effort] })
     const menus = document.querySelectorAll('[data-testid="session-option-menu"]')
-    expect(menus).toHaveLength(2)
+    expect(menus).toHaveLength(1)
     for (const menu of menus) {
       expect(menu.getAttribute('data-side')).toBe('top')
       expect(menu.getAttribute('data-collision-padding')).toBe('8')
@@ -136,30 +136,31 @@ describe('NativeChatSessionOptionPickers', () => {
 
   it('renders model and joined option labels, and hides an empty options pill', async () => {
     render({ snapshot: [model(), effort, fast] })
-    expect(buttonNamed('Model Opus 4.8').textContent).toContain('Opus 4.8')
-    expect(buttonNamed('Model Opus 4.8').textContent).not.toContain('Model:')
-    expect(buttonNamed('Effort High · Fast').textContent).toContain('High · Fast')
-    expect(buttonNamed('Model Opus 4.8').compareDocumentPosition(buttonNamed('Effort High · Fast')) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0)
+    expect(buttonNamed('Model Opus 4.8 High').textContent).toContain('Opus 4.8')
+    expect(buttonNamed('Model Opus 4.8 High').textContent).not.toContain('Model:')
+    expect(buttonNamed('Session options Fast').textContent).toContain('Fast')
+    expect(buttonNamed('Model Opus 4.8 High').compareDocumentPosition(buttonNamed('Session options Fast')) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0)
     await wrapper.setProps({ snapshot: [model()] })
     expect(buttonsMatching(/Effort/)).toHaveLength(0)
   })
 
   it('names a lone unknown effort control explicitly', () => {
     render({ snapshot: [model(), unknownEffort] })
-    expect(buttonNamed('Effort').textContent).toContain('Effort')
+    expect(buttonNamed('Model Opus 4.8')).not.toBeNull()
+    expect(document.querySelector('[role="slider"]').getAttribute('aria-valuetext')).toBe('Not reported')
   })
 
   it('disables both picker triggers while the agent is working', () => {
     render({ snapshot: [model(), effort], isWorking: true })
-    expect(buttonNamed('Model Opus 4.8').parentElement.getAttribute('data-disabled')).toBe('true')
-    expect(buttonNamed('Effort High').parentElement.getAttribute('data-disabled')).toBe('true')
+    expect(buttonNamed('Model Opus 4.8 High').parentElement.getAttribute('data-disabled')).toBe('true')
+    expect(buttonNamed('Model Opus 4.8 High').parentElement.getAttribute('data-disabled')).toBe('true')
   })
 
   it('does not duplicate titles for unknown values or misname generic controls', async () => {
     render({ snapshot: [model({ kind: { type: 'select', choices: [] }, valueSource: 'unknown' }), unknownEffort] })
     expect(buttonNamed('Model').textContent).toContain('Model')
     expect(buttonNamed('Model').textContent).not.toContain('Model: Model')
-    expect(buttonNamed('Effort').textContent).not.toContain('Effort: Effort')
+    expect(buttonNamed('Effort')).toBeNull()
     await wrapper.setProps({ snapshot: [model(), fast] })
     expect(buttonNamed('Session options Fast').textContent).toContain('Fast')
     expect(buttonsMatching(/^Effort/)).toHaveLength(0)
@@ -322,7 +323,7 @@ describe('NativeChatSessionOptionPickers', () => {
     expect(switchNamed('Fast mode').disabled).toBe(true)
     document.querySelector('[role="radio"][data-value="sonnet"]').click()
     expect(setOption).toHaveBeenCalledTimes(1)
-    expect(buttonNamed('Model Opus 4.8').parentElement.getAttribute('data-disabled')).toBe(null)
+    expect(buttonNamed('Model Opus 4.8 High').parentElement.getAttribute('data-disabled')).toBe(null)
     resolve({ ok: true })
     await flushPromises()
     expect(document.querySelector('[role="radio"][data-value="sonnet"]').disabled).toBe(false)
@@ -331,8 +332,8 @@ describe('NativeChatSessionOptionPickers', () => {
   it('an option settable during a turn keeps its pill and rows; the others wait', () => {
     const mode = { id: 'permissionMode', label: 'Permission mode', category: 'mode', kind: { type: 'select', currentValue: 'default', choices: [{ value: 'default', label: 'Manual' }, { value: 'plan', label: 'Plan' }] }, valueSource: 'reported', transport: 'agent-session', settable: true, settableWhileWorking: true }
     render({ snapshot: [model(), effort, mode], isWorking: true })
-    expect(buttonNamed('Model Opus 4.8').parentElement.getAttribute('data-disabled')).toBe('true')
-    expect(buttonsMatching(/^Effort/)[0].parentElement.getAttribute('data-disabled')).toBe(null)
+    expect(buttonNamed('Model Opus 4.8 High').parentElement.getAttribute('data-disabled')).toBe('true')
+    expect(buttonsMatching(/^Session options/)[0].parentElement.getAttribute('data-disabled')).toBe(null)
     expect(document.querySelector('[role="radio"][data-value="plan"]').disabled).toBe(false)
     expect(document.querySelector('[role="slider"]').getAttribute('aria-disabled')).toBe('true')
   })

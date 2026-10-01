@@ -82,6 +82,9 @@ describe('permission mode (the options pill)', () => {
   it.each(['model', 'options'])('the %s menu changes effort by dragging and keyboard without closing', async (which) => {
     const chatSetOption = vi.fn(async (_node, payload) => ({ ok: true, ...payload }))
     const { node } = await mountPane({ model: 'opus', effort: 'medium' }, { chatSetOption })
+    expect(trigger('model').textContent).toContain('Medium')
+    expect(trigger('model').querySelector('.nc-picker-model-name').textContent).toContain('Opus')
+    expect(trigger('options').textContent.trim()).toBe('Manual')
     await openMenu(which)
     const slider = menu().querySelector('[role="slider"]')
     expect(slider).not.toBeNull()
@@ -95,6 +98,8 @@ describe('permission mode (the options pill)', () => {
     expect(chatSetOption).toHaveBeenCalledWith(node, { effort: 'max' })
     expect(menu()).not.toBeNull()
     expect(slider.getAttribute('aria-valuetext')).toBe('Max')
+    expect(trigger('model').textContent).toContain('Max')
+    expect(trigger('options').textContent.trim()).toBe('Manual')
     slider.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true }))
     await flushPromises()
     expect(chatSetOption).toHaveBeenLastCalledWith(node, { effort: 'xhigh' })
