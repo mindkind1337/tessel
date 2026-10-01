@@ -18,6 +18,10 @@ const SCREEN_BUSY_REFRESH_MS = 5 * 1000
 // finished task is normally seen ending; one never seen ending (a lost hook)
 // stops counting this long after the last list that named it.
 export const BACKGROUND_MAX_MS = 2 * 60 * 60 * 1000
+// A task still listed by Stops this long after the first one that listed it
+// is not counted: a watcher re-armed with the session (a page's live updates)
+// is no work.
+export const BACKGROUND_STALE_MS = 60 * 60 * 1000
 export const MAX_BACKGROUND = 32
 // The agents whose own hooks, plugin or extension report their status
 // (teamMcp/server.cjs --hook, agentStatusHooks.js). Claude Code and Codex also
@@ -146,7 +150,7 @@ const ROOT_KEYS = [
 ]
 // Added after the first saved snapshots: a snapshot without them is read as
 // "no background work known" (validateAgentState, backgroundOf).
-const OPTIONAL_ROOT_KEYS = ['background', 'backgroundAt']
+const OPTIONAL_ROOT_KEYS = ['background', 'backgroundAt', 'backgroundSince']
 
 export function createAgentState({ paneId, provider, launchToken, startedAt = Date.now() } = {}) {
   if (![paneId, provider, launchToken].every(isId) || !isTime(startedAt)) {
@@ -164,7 +168,8 @@ export function createAgentState({ paneId, provider, launchToken, startedAt = Da
     children: [],
     childrenTruncated: false,
     background: [],
-    backgroundAt: null
+    backgroundAt: null,
+    backgroundSince: []
   }
 }
 
@@ -174,7 +179,11 @@ const validBackground = (value) =>
     (Array.isArray(value.background) &&
       value.background.length <= MAX_BACKGROUND &&
       value.background.every(isId))) &&
-  (value.backgroundAt === undefined || nullable(value.backgroundAt, isTime))
+  (value.backgroundAt === undefined || nullable(value.backgroundAt, isTime)) &&
+  (value.backgroundSince === undefined ||
+    (Array.isArray(value.backgroundSince) &&
+      value.backgroundSince.length <= MAX_BACKGROUND &&
+      value.backgroundSince.every(isTime)))
 
 function validScope(value) {
   return (
@@ -696,7 +705,8 @@ export function reduceAgentState(state, event, now = Date.now()) {
     pendingApprovals: [...state.pendingApprovals],
     pendingDecisions: [...state.pendingDecisions],
     background: [...backgroundOf(state)],
-    backgroundAt: state.backgroundAt ?? null
+    backgroundAt: state.backgroundAt ?? null,
+    backgroundSince: Array.isArray(state.backgroundSince) ? [...state.backgroundSince] : []
   }
   const changedSession = boundary && state.sessionId && event.sessionId !== state.sessionId
   if (changedSession) {
@@ -708,7 +718,8 @@ export function reduceAgentState(state, event, now = Date.now()) {
       childrenTruncated: false,
       // Another conversation: the old one's list says nothing of it.
       background: [],
-      backgroundAt: null
+      backgroundAt: null,
+      backgroundSince: []
     }
   }
   let target = next
@@ -745,6 +756,7 @@ export function reduceAgentState(state, event, now = Date.now()) {
     next.children = []
     next.background = []
     next.backgroundAt = null
+    next.backgroundSince = []
   } else {
     applyHook(target, event, hooksAlone(state.provider))
     // A spool scan can deliver a hook after newer screen evidence. Its hook
@@ -799,11 +811,21 @@ function trackBackground(next, event) {
   if (event.event === 'SessionEnd' && !event.agentId) {
     next.background = []
     next.backgroundAt = null
+    next.backgroundSince = []
   } else if (event.event === 'Stop' && !event.agentId && Array.isArray(event.background)) {
+    // Each task keeps the time it was first listed (parallel to background).
+    const before = backgroundOf(next)
+    const since = Array.isArray(next.backgroundSince) ? next.backgroundSince : []
     next.background = [...new Set(event.background)].slice(0, MAX_BACKGROUND)
+    next.backgroundSince = next.background.map((id) => {
+      const i = before.indexOf(id)
+      return i >= 0 && isTime(since[i]) ? since[i] : event.at
+    })
     next.backgroundAt = event.at
   } else if (event.event === 'SubagentStop' && event.agentId && next.background.includes(event.agentId)) {
+    const i = next.background.indexOf(event.agentId)
     next.background = next.background.filter((id) => id !== event.agentId)
+    if (Array.isArray(next.backgroundSince)) next.backgroundSince = next.backgroundSince.filter((_, j) => j !== i)
   }
 }
 
@@ -813,7 +835,10 @@ function backgroundRunning(state, shown, now) {
   const list = backgroundOf(state)
   if (!list.length || shown.state !== 'idle' || shown.stale || !shown.confirmed) return 0
   if (!isTime(state.backgroundAt) || now - state.backgroundAt > BACKGROUND_MAX_MS) return 0
-  return list.length
+  const since = Array.isArray(state.backgroundSince) ? state.backgroundSince : []
+  // Stale: still listed by Stops more than an hour after its first one (one
+  // listing followed by a long wait is real work, bounded above).
+  return list.filter((_, i) => !isTime(since[i]) || state.backgroundAt - since[i] < BACKGROUND_STALE_MS).length
 }
 
 function publicScope(value, now) {

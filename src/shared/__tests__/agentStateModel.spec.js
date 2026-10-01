@@ -915,6 +915,21 @@ describe('background work after the turn (monitoring)', () => {
     expect(idle).not.toHaveProperty('monitoring')
   })
 
+  it('a task listed at every Stop for over an hour is not counted (a watcher, not work)', async () => {
+    const { BACKGROUND_STALE_MS } = await import('../agentStateModel')
+    const f = started()
+    f.send('Stop', 200, { background: ['watch-1', 'shell-1'] })
+    expect(f.send('ScreenReady', 201)).toMatchObject({ monitoring: true, backgroundTasks: 2 })
+    // Later turns keep listing the watcher; the shell is new each time.
+    const later = 200 + BACKGROUND_STALE_MS + 1000
+    f.send('UserPromptSubmit', later)
+    f.send('Stop', later + 1, { background: ['watch-1', 'shell-2'] })
+    expect(f.send('ScreenReady', later + 2)).toMatchObject({ monitoring: true, backgroundTasks: 1 })
+    f.send('UserPromptSubmit', later + 10)
+    f.send('Stop', later + 11, { background: ['watch-1'] })
+    expect(f.send('ScreenReady', later + 12)).not.toHaveProperty('monitoring')
+  })
+
   it('a Stop nobody watches settles into monitoring too', () => {
     const f = started()
     f.send('Stop', 200, { background: ['shell-1', 'agent-1'] })
