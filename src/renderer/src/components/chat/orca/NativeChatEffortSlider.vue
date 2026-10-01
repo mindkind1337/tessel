@@ -64,9 +64,9 @@ function finish(event) {
       @pointerup="finish" @pointercancel="dragIndex = null" @lostpointercapture="dragIndex = null"
     >
       <div class="nc-effort-track" aria-hidden="true">
-        <span v-if="current >= 0 || dragIndex !== null" class="nc-effort-fill" :style="{ width: `calc(${percent(index)}% + 16px)` }" />
+        <span v-if="current >= 0 || dragIndex !== null" class="nc-effort-fill" :style="{ width: `min(calc(${percent(index)}% + 19px), calc(100% + 18px))` }" />
         <span v-for="(choice, i) in choices" :key="choice.value" class="nc-effort-tick"
-          :class="{ 'nc-effort-filled-tick': i <= index, 'nc-effort-unavailable': choice.disabled }" :style="{ left: percent(i) + '%' }" />
+          :class="{ 'nc-effort-filled-tick': i <= index, 'nc-effort-last': i === choices.length - 1, 'nc-effort-unavailable': choice.disabled }" :style="{ left: percent(i) + '%' }" />
         <span v-if="current >= 0 || dragIndex !== null" class="nc-effort-thumb" :style="{ left: percent(index) + '%' }" />
       </div>
     </div>
@@ -75,7 +75,8 @@ function finish(event) {
 
 <style scoped>
 /* Sizes in CSS pixels (the reference was a 2x screenshot). The fill runs
-   from the track's left end to the thumb's right edge (9px pad + 7px radius). */
+   from the track's left end to just past the thumb (9px pad + 7px radius +
+   3px of blue after it). The last step's dot is violet. */
 .nc-effort-footer { flex: none; display: flex; align-items: center; gap: 16px; padding: 12px 10px 8px; border-top: 1px solid var(--nc-border); }
 .nc-effort-label { display: flex; align-items: center; gap: 8px; font-size: 12px; white-space: nowrap; }
 .nc-effort-slider { box-sizing: border-box; width: 76px; flex: none; margin-left: auto; height: 18px; padding: 0 9px; display: flex; align-items: center; cursor: pointer; touch-action: none; border-radius: 9px; outline: none; }
@@ -87,6 +88,7 @@ function finish(event) {
 .nc-effort-tick, .nc-effort-thumb { position: absolute; top: 50%; transform: translate(-50%, -50%); border-radius: 50%; background: var(--nc-muted-foreground); }
 .nc-effort-tick { width: 4px; height: 4px; background: #63666f; }
 .nc-effort-filled-tick { background: #479bd5; }
+.nc-effort-last:not(.nc-effort-filled-tick) { background: #a77be8; }
 .nc-effort-thumb { width: 14px; height: 14px; background: #ccc; transition: left .1s ease; }
 .nc-effort-unavailable { opacity: .3; }
 @media (prefers-reduced-motion: reduce) { .nc-effort-thumb { transition: none; } }
