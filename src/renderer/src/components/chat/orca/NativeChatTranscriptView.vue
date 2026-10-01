@@ -484,6 +484,14 @@ const optionCommand = useNativeChatSessionOptionCommand({
   disabledReason: () => props.disabledReason,
   values: () => (props.sessionOptions && props.sessionOptions.values) || {},
   setOption: async (payload) => {
+    // Cursor: a model switches through the pane (/model with its name); an
+    // effort opens its own picker, shown in the terminal (Tab on the model).
+    if (props.agent === 'cursor' && props.setOption) {
+      const res = await props.setOption(payload)
+      if (!res || !res.ok || !res.picker) return res || { ok: false }
+      emit('close')
+      return { ok: false, error: t('chat.orca.terminalChat.pickerOpened', "{{agent}}'s model picker is open in its terminal: Tab on the model changes its effort or Fast.", { agent: props.agentName || props.agent }) }
+    }
     if (ownPicker.value) {
       openAgentPicker()
       return isCodex.value

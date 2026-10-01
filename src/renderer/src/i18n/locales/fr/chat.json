@@ -758,6 +758,7 @@
   "chat.orca.terminalChat.codexPermissions": "Codex change ses permissions dans son propre sélecteur : choisissez dans son terminal.",
   "chat.orca.terminalChat.backgroundStop": "Pour en arrêter une, ouvrez son terminal : /tasks les liste.",
   "chat.orca.terminalChat.ownPicker": "{{agent}} change son modèle dans son propre sélecteur : choisissez dans son terminal.",
+  "chat.orca.terminalChat.pickerOpened": "Le sélecteur de modèle de {{agent}} est ouvert dans son terminal : Tab sur le modèle change son effort ou Fast.",
   "chat.orca.cursorCommands.model": "Choisir le modèle (dans son terminal)",
   "chat.orca.cursorCommands.ask": "Activer ou désactiver le mode Ask (questions en lecture seule)",
   "chat.orca.cursorCommands.debug": "Activer ou désactiver le mode Debug",

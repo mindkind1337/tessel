@@ -4,8 +4,8 @@ import { describe, expect, it } from 'vitest'
 import fs from 'fs'
 import path from 'path'
 import { parseCursorModelList, listedToCatalogModels } from '../agentModelProbe'
-import { parseCursorModelId, groupCursorModels, composeCursorModel, decomposeCursorModel } from '../cursorModels'
-import { catalogModelsFor, sessionOptionLaunchText, composedModelId, listedModelValues, valuesOnListedRow } from '../agentSessionOptions'
+import { parseCursorModelId, groupCursorModels, composeCursorModel, decomposeCursorModel, cursorPickerFilter, cursorModelFromStatusLine, cursorModelOnScreen, cursorPickerShown } from '../cursorModels'
+import { catalogModelsFor, sessionOptionLaunchText, composedModelId, listedModelValues, valuesOnListedRow, getAgentSessionOptionCatalog } from '../agentSessionOptions'
 
 const output = fs.readFileSync(path.join(__dirname, 'fixtures', 'cursor-list-models.txt'), 'utf8')
 const rows = parseCursorModelList(output)
@@ -144,5 +144,46 @@ describe('the order of Cursor rows', () => {
     expect(first('Gemini')).toBeLessThan(first('Grok'))
     expect(first('Grok')).toBeLessThan(first('Composer'))
     expect(labels.indexOf('Grok 4.7')).toBeLessThan(labels.indexOf('Grok 4.5'))
+  })
+})
+
+// Cursor's TUI (2026.10): /model <text> filters its picker by name (an id
+// matches nothing), and the line under its prompt says the model in use.
+describe("Cursor's own picker and status line", () => {
+  it('filters its picker by the name it shows, without context notes', () => {
+    expect(cursorPickerFilter(row('gpt-5.6-sol'))).toBe('GPT-5.6 Sol')
+    expect(cursorPickerFilter(row('gpt-5.3-codex'))).toBe('Codex 5.3')
+    expect(cursorPickerFilter(row('claude-opus-5-5'))).toBe('Claude Opus 5.5')
+    expect(cursorPickerFilter(row('claude-fable-5-1'))).toBe('Claude Fable 5.1')
+    expect(cursorPickerFilter(null)).toBe('')
+  })
+
+  it('reads the status line as the exact listed id, its effort and Fast', () => {
+    expect(cursorModelFromStatusLine('GPT-5.6 Sol 272K High Fast', models)).toMatchObject({ model: 'gpt-5.6-sol-high-fast', row: 'gpt-5.6-sol', name: 'GPT-5.6 Sol Fast', effort: 'high', fastMode: true })
+    expect(cursorModelFromStatusLine('  GPT-5.6 Luna 272K Medium ', models)).toMatchObject({ model: 'gpt-5.6-luna-medium', name: 'GPT-5.6 Luna', effort: 'medium', fastMode: false })
+    expect(cursorModelFromStatusLine('Codex 5.3 High', models)).toMatchObject({ model: 'gpt-5.3-codex-high', effort: 'high' })
+    expect(cursorModelFromStatusLine('Claude Opus 5.5 300K Extra High', models)).toMatchObject({ model: 'claude-opus-5-5-xhigh', effort: 'xhigh' })
+    expect(cursorModelFromStatusLine('Auto', models)).toMatchObject({ model: 'auto', effort: null })
+  })
+
+  it('never takes other text for it', () => {
+    expect(cursorModelFromStatusLine('GPT-5.6 Sol is a good model', models)).toBeNull()
+    expect(cursorModelFromStatusLine('C:\Tessel · main', models)).toBeNull()
+    expect(cursorModelFromStatusLine('→ GPT-5.6 Sol   272K Medium (Tab to modify)', models)).toBeNull()
+  })
+
+  it('reads the screen from the bottom up, and nothing while its picker is open', () => {
+    const screen = ['Cursor Agent', '→ Plan, search, build anything', 'GPT-5.6 Luna 272K Medium', 'C:\Tessel · main']
+    expect(cursorModelOnScreen(screen, models)).toMatchObject({ model: 'gpt-5.6-luna-medium' })
+    const picker = ['Available models', 'Filter:', '→ Auto', 'Grok 4.7   256K High Fast', 'Type to filter • Enter to select • Tab to edit']
+    expect(cursorPickerShown(picker)).toBe(true)
+    expect(cursorModelOnScreen(picker, models)).toBeNull()
+  })
+
+  it('switches mid-session by name: /model with the id would only filter to nothing', () => {
+    const mid = getAgentSessionOptionCatalog('cursor').modelApply.midSession
+    expect(mid.kind).toBe('picker-filter')
+    expect(mid.build('Codex 5.3')).toBe('/model Codex 5.3')
+    expect(mid.build('')).toBe('/model')
   })
 })

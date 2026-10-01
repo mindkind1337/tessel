@@ -325,7 +325,10 @@ export const CURSOR_SESSION_OPTION_CATALOG = {
     launchArgs: (value) => ['--model', String(value)],
     agentArgsOverride: hasModelFlag,
     removeAgentArgs: (tokens) => removeAgentArgOption(tokens, ['-m', '--model']),
-    midSession: { kind: 'command', build: (value) => `/model ${String(value)}` }
+    // Cursor's /model <text> only filters its own picker by name (an id
+    // matches nothing): Tessel opens that picker on the chosen model's name
+    // and the pick is confirmed there (Enter; Tab for its effort or Fast).
+    midSession: { kind: 'picker-filter', build: (filter) => (filter ? `/model ${String(filter)}` : '/model') }
   },
   // model: the picker's row. A row grouped from Cursor's own list composes
   // into one of the ids it listed; the seed rows keep Orca's spelling.
