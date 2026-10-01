@@ -125,3 +125,15 @@ describe('inline code file links', () => {
     expect(stat.mock.calls[0][0]).toEqual(['C:/repo/x.mp4'])
   })
 })
+
+describe('a code block that is only a file path', () => {
+  it('is a link to that file; a block with more than one line stays plain', async () => {
+    const file = String.raw`C:\Users\me\Downloads\livery_right_side.png`
+    const w = render('```\n' + file + '\n```\n\n```\nnpm run build\n' + file + '\n```')
+    await flushPromises()
+    const links = Array.from(w.element.querySelectorAll('pre a'))
+    expect(links).toHaveLength(1)
+    expect(hrefPath(links[0])).toBe(file)
+    expect(links[0].textContent).toBe(file)
+  })
+})

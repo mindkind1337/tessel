@@ -157,7 +157,7 @@ function replaceTextNode(textNode, split) {
   textNode.replaceWith(...replacement)
 }
 
-function transformTextNodes(root, split, { rewriteAnchor, inlineCode } = {}) {
+function transformTextNodes(root, split, { rewriteAnchor, inlineCode, preBlock } = {}) {
   for (const child of Array.from(root.childNodes)) {
     if (child.nodeType === TEXT_NODE) {
       replaceTextNode(child, split)
@@ -169,12 +169,16 @@ function transformTextNodes(root, split, { rewriteAnchor, inlineCode } = {}) {
       rewriteAnchor?.(child)
       continue
     }
-    if (tag === 'pre' || tag === 'img' || isMermaidPlaceholder(child)) continue
+    if (tag === 'pre') {
+      preBlock?.(child)
+      continue
+    }
+    if (tag === 'img' || isMermaidPlaceholder(child)) continue
     if (tag === 'code') {
       inlineCode?.(child)
       continue
     }
-    transformTextNodes(child, split, { rewriteAnchor, inlineCode })
+    transformTextNodes(child, split, { rewriteAnchor, inlineCode, preBlock })
   }
 }
 
@@ -195,6 +199,21 @@ export function linkifyFilePaths(root) {
       anchor.setAttribute('href', link.url)
       code.replaceWith(anchor)
       anchor.appendChild(code)
+    },
+    // A code block that holds only a file path (one line, as agents often
+    // print a path they made): that path is a link too, inside the block.
+    preBlock(pre) {
+      const code = pre.firstElementChild?.localName === 'code' ? pre.firstElementChild : null
+      const text = (code ?? pre).textContent ?? ''
+      if (!text.trim() || text.trim().includes('\n')) return
+      const link = inlineCodeFileLink({ type: 'inlineCode', value: text })
+      if (!link) return
+      const anchor = pre.ownerDocument.createElement('a')
+      anchor.setAttribute('href', link.url)
+      anchor.textContent = text.trim()
+      const holder = code ?? pre
+      holder.textContent = ''
+      holder.appendChild(anchor)
     }
   })
 }
@@ -502,6 +521,9 @@ function inlineCode(element, ctx, state, className) {
 
 function preCode(element, ctx) {
   const code = element.firstElementChild?.localName === 'code' ? element.firstElementChild : element
+  // A block that is only a file path was given a link (linkifyFilePaths).
+  const link = code.childNodes.length === 1 && code.firstChild?.localName === 'a' ? code.firstChild : null
+  if (link) return h('code', null, [renderAnchor(link, ctx, {}, 'cm-d-link')])
   return h('code', null, code.textContent ?? '')
 }
 
