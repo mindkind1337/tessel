@@ -3,7 +3,7 @@
 // AgentQuestionIcon.tsx (MIT, Copyright (c) 2026 Lovecast Inc.)
 /**
  * The compact state glyph beside a background task: a yellow spinner while
- * working, an amber heartbeat while monitoring, a check when done, a dashed
+ * working, a blue dot while monitoring (the user's choice), a check when done, a dashed
  * ring when nothing has been heard (unverifiable), a question glyph when it
  * waits, else a dot (red when blocked / interrupted / failed).
  * Props: state, size 'sm' | 'md' (default 'sm'), title (tooltip text; null
@@ -11,7 +11,7 @@
  *   tooltipSide.
  */
 import { computed } from 'vue'
-import { Activity, CircleCheck, CircleDashed, MessageCircleQuestion } from 'lucide-vue-next'
+import { CircleCheck, CircleDashed, MessageCircleQuestion } from 'lucide-vue-next'
 import { t } from '../../../i18n'
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui'
 
@@ -62,7 +62,7 @@ const alarming = computed(() => ['blocked', 'interrupted', 'failed'].includes(pr
     <TooltipTrigger as-child>
       <span :class="['nc-state-dot', `nc-state-dot--${size}`]" :aria-label="label">
         <span v-if="kind === 'working'" data-agent-spinner="" class="nc-state-dot__spinner nc-state-dot__inner" />
-        <Activity v-else-if="kind === 'monitoring'" aria-hidden="true" class="nc-state-dot__icon nc-state-dot__icon--monitoring" />
+        <span v-else-if="kind === 'monitoring'" aria-hidden="true" class="nc-state-dot__dot nc-state-dot__inner nc-state-dot__dot--monitoring" />
         <CircleCheck v-else-if="kind === 'done'" aria-hidden="true" class="nc-state-dot__icon nc-state-dot__icon--done" />
         <CircleDashed v-else-if="kind === 'unverifiable'" aria-hidden="true" class="nc-state-dot__icon nc-state-dot__icon--unverifiable" />
         <MessageCircleQuestion v-else-if="kind === 'question'" aria-hidden="true" class="nc-state-dot__icon nc-state-dot__icon--question" />
@@ -73,7 +73,7 @@ const alarming = computed(() => ['blocked', 'interrupted', 'failed'].includes(pr
   </Tooltip>
   <span v-else :class="['nc-state-dot', `nc-state-dot--${size}`]" :aria-label="label">
     <span v-if="kind === 'working'" data-agent-spinner="" class="nc-state-dot__spinner nc-state-dot__inner" />
-    <Activity v-else-if="kind === 'monitoring'" aria-hidden="true" class="nc-state-dot__icon nc-state-dot__icon--monitoring" />
+    <span v-else-if="kind === 'monitoring'" aria-hidden="true" class="nc-state-dot__dot nc-state-dot__inner nc-state-dot__dot--monitoring" />
     <CircleCheck v-else-if="kind === 'done'" aria-hidden="true" class="nc-state-dot__icon nc-state-dot__icon--done" />
     <CircleDashed v-else-if="kind === 'unverifiable'" aria-hidden="true" class="nc-state-dot__icon nc-state-dot__icon--unverifiable" />
     <MessageCircleQuestion v-else-if="kind === 'question'" aria-hidden="true" class="nc-state-dot__icon nc-state-dot__icon--question" />
@@ -135,8 +135,8 @@ const alarming = computed(() => ['blocked', 'interrupted', 'failed'].includes(pr
     border-top-color: oklch(0.795 0.184 86.047);
   }
 }
-.nc-state-dot__icon--monitoring {
-  color: oklch(0.795 0.184 86.047);
+.nc-state-dot__dot--monitoring {
+  background: #3b82f6;
 }
 .nc-state-dot__icon--done {
   color: oklch(0.696 0.17 162.48);
