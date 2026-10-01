@@ -69,6 +69,7 @@ import { parseLeadRequest, findTaskRef, leadGuide, memberGuide } from '../../sha
 import { workerLaunchArgs, wakeLaunchArgs } from '../../shared/orchestration'
 import { createOrchestrator } from './orchestrator'
 import { formatChatTranscript } from './chat/chatTranscript'
+import { canShowChatView } from './chat/terminalChatBridge'
 import { automationLaunchArgs, AUTOMATION_AGENTS, permissionFingerprint, quoteGlobArgs } from '../../shared/automations'
 import { createAutomationRunner, probeRunAgent } from './automationRunner'
 import { createCliRequests, CliRequestError } from './cliRequests'
@@ -2506,6 +2507,12 @@ function buildCommands() {
   if (activeId.value) {
     const id = activeId.value
     add(layout, t('app.cmd.maximize', 'Maximize or restore the active pane'), () => toggleMaximize(id))
+    // A terminal agent's chat view (nothing restarts: TerminalPane).
+    const leaf = findLeaf(id)
+    if (leaf && canShowChatView(leaf))
+      add(layout, leaf.chatView ? t('pane.menu.switchToTerminalView', 'Switch to terminal view') : t('pane.menu.switchToChatView', 'Switch to chat view'), () => {
+        leaf.chatView = !leaf.chatView || undefined
+      })
   }
   add(layout, t('app.cmd.closeActive', 'Close the active pane'), closeActive, { shortcut: 'Ctrl+Shift+W' })
   add(layout, sidebarCollapsed.value ? t('app.cmd.showSidebar', 'Show the sidebar') : t('app.cmd.hideSidebar', 'Hide the sidebar'), toggleSidebar)
