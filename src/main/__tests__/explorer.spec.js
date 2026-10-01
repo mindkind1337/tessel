@@ -3,7 +3,7 @@ import fs from 'fs'
 import os from 'os'
 import { join } from 'path'
 import { execFileSync } from 'child_process'
-import { inside, listDir, parsePorcelain, projectStatus, checkName, create, rename, trash, searchNames, searchContent, searchContentWalk, parseGrepRecord, clipLine, grepFileCheck, grepReader, grepArgs, searchCap, SEARCH_LIMIT } from '../explorer'
+import { inside, listDir, parsePorcelain, projectStatus, checkName, create, rename, trash, searchNames, searchContent, searchContentWalk, parseGrepRecord, clipLine, grepFileCheck, grepReader, grepArgs, searchCap, SEARCH_LIMIT, isGitStateChange } from '../explorer'
 import { statusOf, folderStatus, ignoredSet, isIgnored } from '../../renderer/src/explorerStatus'
 
 describe('file explorer', () => {
@@ -303,5 +303,16 @@ describe('content search with git grep follows the walk rules', () => {
     const args = grepArgs('C:\\p', 'q')
     expect(args.join(' ')).toContain('-c grep.fullName=false')
     expect(args).toContain(':(exclude,glob)**/node_modules/**')
+  })
+})
+
+describe('isGitStateChange', () => {
+  it("passes on git's stage, commits, branch switches, merges and fetches", () => {
+    for (const f of ['.git\\index', '.git/HEAD', '.git\\refs\\heads\\main', '.git/refs/remotes/origin/main', '.git/packed-refs', '.git/FETCH_HEAD', '.git/MERGE_HEAD', '.git/ORIG_HEAD'])
+      expect(isGitStateChange(f)).toBe(true)
+  })
+  it('never its objects, logs or lock files, nor a file outside .git', () => {
+    for (const f of ['.git/objects/ab/cdef', '.git/logs/HEAD', '.git/index.lock', '.git/refs/heads/main.lock', 'src/index', 'node_modules/.git/HEAD', '', null])
+      expect(isGitStateChange(f)).toBe(false)
   })
 })

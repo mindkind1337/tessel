@@ -15,6 +15,14 @@ const HIDDEN = new Set(['.git'])
 const HEAVY = ['.git', 'node_modules', 'dist', 'build', 'out', '.next', '.cache', 'target', '.venv', '__pycache__']
 const HEAVY_SET = new Set(HEAVY)
 const UNWATCHED = new RegExp(`(^|[\\\\/])(${HEAVY.map((h) => h.replace(/\./g, '\\.')).join('|')})([\\\\/]|$)`)
+// Git's own files that say the status changed (a stage, a commit, a branch
+// switch, a merge, a fetch), even when done in a terminal: the project's
+// watch passes them on; never its objects, logs or lock files.
+const GIT_STATE = /^\.git[\\/](index|HEAD|ORIG_HEAD|MERGE_HEAD|FETCH_HEAD|packed-refs|refs[\\/].+)$/
+export function isGitStateChange(file) {
+  const f = String(file || '')
+  return GIT_STATE.test(f) && !f.endsWith('.lock')
+}
 
 // The path inside root, or null when it would leave it (.., another drive).
 export function inside(root, p) {
@@ -501,7 +509,7 @@ export function watchProject(root, fn) {
   let watcher
   try {
     watcher = fs.watch(root, { recursive: true }, (_type, file) => {
-      if (file && UNWATCHED.test(String(file))) return
+      if (file && UNWATCHED.test(String(file)) && !isGitStateChange(file)) return
       const now = Date.now()
       if (!timer) first = now
       clearTimeout(timer)
