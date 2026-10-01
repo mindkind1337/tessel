@@ -284,14 +284,11 @@ describe('NativeChatSessionOptionPickers', () => {
       surface: { ...surface, setOption },
       snapshot: [model(), { ...effort, kind: { type: 'select', currentValue: 'high', choices: [{ value: 'low', label: 'Low', disabled: true, disabledReason: 'Not now' }, ...EFFORT_CHOICES.slice(1), { value: 'max', label: 'Max' }] } }]
     })
-    const low = document.querySelector('[role="radio"][data-value="low"]')
-    expect(low.disabled).toBe(true)
-    expect(low.textContent).toContain('Not now')
-    low.click()
-    document.querySelector('[role="radio"][data-value="high"]').click()
+    const slider = document.querySelector('[role="slider"]')
+    slider.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }))
     await flushPromises()
     expect(setOption).not.toHaveBeenCalled()
-    document.querySelector('[role="radio"][data-value="max"]').click()
+    slider.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }))
     await flushPromises()
     expect(setOption).toHaveBeenCalledWith('effort', 'max')
   })
@@ -304,12 +301,12 @@ describe('NativeChatSessionOptionPickers', () => {
       global: { provide: { panelCtx: { toast } } },
       attachTo: document.body
     })
-    document.querySelector('[role="radio"][data-value="low"]').click()
+    document.querySelector('[role="slider"]').dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }))
     await flushPromises()
     expect(toast).toHaveBeenLastCalledWith('Could not update option: no', expect.any(Object))
     expect(wrapper.emitted('error')[0][0]).toBe('Could not update option: no')
-    expect(document.querySelector('[role="radio"][data-value="low"]').disabled).toBe(false)
-    document.querySelector('[role="radio"][data-value="low"]').click()
+    expect(document.querySelector('[role="slider"]').getAttribute('aria-disabled')).toBe('false')
+    document.querySelector('[role="slider"]').dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }))
     await flushPromises()
     expect(toast).toHaveBeenLastCalledWith('Could not update option: pipe', expect.any(Object))
   })
@@ -318,10 +315,10 @@ describe('NativeChatSessionOptionPickers', () => {
     let resolve
     const setOption = vi.fn(() => new Promise((r) => (resolve = r)))
     render({ surface: { ...surface, setOption }, snapshot: [model(), effort, fast] })
-    document.querySelector('[role="radio"][data-value="low"]').click()
+    document.querySelector('[role="slider"]').dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }))
     await flushPromises()
     expect(document.querySelector('[role="radio"][data-value="sonnet"]').disabled).toBe(true)
-    expect(document.querySelector('[role="radio"][data-value="high"]').disabled).toBe(true)
+    expect(document.querySelector('[role="slider"]').getAttribute('aria-disabled')).toBe('true')
     expect(switchNamed('Fast mode').disabled).toBe(true)
     document.querySelector('[role="radio"][data-value="sonnet"]').click()
     expect(setOption).toHaveBeenCalledTimes(1)
@@ -337,7 +334,7 @@ describe('NativeChatSessionOptionPickers', () => {
     expect(buttonNamed('Model Opus 4.8').parentElement.getAttribute('data-disabled')).toBe('true')
     expect(buttonsMatching(/^Effort/)[0].parentElement.getAttribute('data-disabled')).toBe(null)
     expect(document.querySelector('[role="radio"][data-value="plan"]').disabled).toBe(false)
-    expect(document.querySelector('[role="radio"][data-value="low"]').disabled).toBe(true)
+    expect(document.querySelector('[role="slider"]').getAttribute('aria-disabled')).toBe('true')
   })
 
   it('nothing without a surface or a model', async () => {

@@ -226,6 +226,8 @@
   "chat.orca.composer.workspaceAttachmentMismatch": "Les fichiers ne peuvent être joints qu'à leur espace de travail source.",
   "chat.orca.composer.model": "Modèle",
   "chat.orca.composer.effort": "Effort",
+  "chat.orca.composer.effortValue": "Effort ({{value}})",
+  "chat.orca.composer.selectModel": "Choisir un modèle",
   "chat.orca.composer.fastMode": "Mode rapide",
   "chat.orca.composer.thinking": "Réflexion",
   "chat.orca.composer.optionValue.minimal": "Minimal",

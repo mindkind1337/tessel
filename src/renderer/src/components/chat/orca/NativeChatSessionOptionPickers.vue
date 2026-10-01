@@ -17,7 +17,8 @@
 //   @error gets the text). The value shown is always the snapshot's: the
 //   pane rebuilds it from the confirmed values only.
 import { computed, inject, ref } from 'vue'
-import { ChevronDown } from 'lucide-vue-next'
+import { ChevronDown, Check, Hand, Pencil, ClipboardList, Zap, ShieldOff } from 'lucide-vue-next'
+import NativeChatEffortSlider from './NativeChatEffortSlider.vue'
 import {
   Button,
   DropdownMenu,
@@ -59,6 +60,8 @@ const panelCtx = inject('panelCtx', null)
 const pendingId = ref(null)
 const model = computed(() => props.snapshot.find((descriptor) => descriptor.category === 'model') || null)
 const options = computed(() => sortNativeChatSessionOptions(props.snapshot))
+const effort = computed(() => options.value.find(d => d.id === 'effort' && d.kind.type === 'select' && d.kind.choices.length && !d.action) || null)
+const modeIcons = { default: Hand, acceptEdits: Pencil, plan: ClipboardList, auto: Zap, bypassPermissions: ShieldOff }
 const requestedModelSequence = computed(() => (model.value && props.pickerRequest?.id === model.value.id ? props.pickerRequest.sequence : null))
 const requestedOptionsSequence = computed(() =>
   options.value.some((descriptor) => descriptor.id === props.pickerRequest?.id) ? (props.pickerRequest?.sequence ?? null) : null
@@ -154,7 +157,7 @@ function rowsOf(list) {
   }))
 }
 const modelRows = computed(() => (model.value ? rowsOf([model.value]) : []))
-const optionRows = computed(() => rowsOf(options.value))
+const optionRows = computed(() => rowsOf(options.value.filter(d => d !== effort.value)))
 const pills = computed(() => {
   if (!model.value) return []
   const list = [
@@ -221,6 +224,8 @@ function stopEscape(event) {
         </TooltipContent>
       </Tooltip>
       <DropdownMenuContent align="start" side="top" :collision-padding="8" :class="pill.contentClass" @escape-key-down="stopEscape">
+        <div class="nc-picker-scroll nc-ui-scrollbar-sleek">
+        <DropdownMenuLabel v-if="pill.modelMenu">{{ t('chat.orca.composer.selectModel', 'Select a model') }}</DropdownMenuLabel>
         <div v-for="(r, index) in pill.rows" :key="r.descriptor.id">
           <template v-if="!pill.modelMenu">
             <DropdownMenuSeparator v-if="index > 0" />
@@ -270,15 +275,20 @@ function stopEscape(event) {
               :disabled="choiceDisabled(r.descriptor, choice)"
               :title="choice.disabledReason || undefined"
               :data-choice="choice.value"
+              :class="{ 'nc-picker-mode': r.descriptor.id === 'permissionMode' }"
             >
+              <component :is="modeIcons[choice.value]" v-if="r.descriptor.id === 'permissionMode'" class="nc-picker-mode-icon" aria-hidden="true" />
               <div class="nc-picker-choice">
                 <div>{{ nativeChatSessionChoiceLabel(choice) }}</div>
                 <div v-if="choice.description" class="nc-picker-choice-desc">{{ choice.description }}</div>
                 <div v-if="choice.disabledReason" class="nc-picker-choice-desc nc-picker-choice-why">{{ choice.disabledReason }}</div>
               </div>
+              <Check v-if="r.descriptor.id === 'permissionMode' && choice.value === r.descriptor.kind.currentValue" class="nc-picker-mode-check" aria-hidden="true" />
             </DropdownMenuRadioItem>
           </DropdownMenuRadioGroup>
         </div>
+        </div>
+        <NativeChatEffortSlider v-if="effort" :descriptor="effort" :disabled="rowDisabled(effort)" :icon="!pill.modelMenu" @change="value => onRadioChange(effort, value)" />
       </DropdownMenuContent>
     </DropdownMenu>
   </div>
@@ -326,11 +336,18 @@ function stopEscape(event) {
 }
 /* w-64 / w-60 */
 .nc-picker-menu--model {
-  width: 16rem;
+  width: 19rem;
 }
 .nc-picker-menu--options {
-  width: 15rem;
+  width: 21rem;
 }
+.nc-picker-menu { display: flex; flex-direction: column; overflow: hidden; background: var(--nc-popover); border-color: var(--nc-border); }
+.nc-picker-menu :deep([data-nc-menu-item]:focus) { background: var(--nc-accent); color: var(--nc-accent-foreground); }
+.nc-picker-scroll { min-height: 0; overflow-y: auto; }
+.nc-picker-mode { padding-left: 8px; padding-right: 28px; align-items: flex-start; }
+.nc-picker-mode :deep(.nc-ui-menu-indicator) { display: none; }
+.nc-picker-mode-icon { width: 16px; height: 16px; flex: none; margin-top: 3px; }
+.nc-picker-mode-check { position: absolute; right: 8px; top: 8px; width: 14px; height: 14px; }
 .nc-picker-reason {
   font-weight: 400;
 }

@@ -79,6 +79,39 @@ if (typeof globalThis.PointerEvent === 'undefined') {
 }
 
 describe('permission mode (the options pill)', () => {
+  it.each(['model', 'options'])('the %s menu changes effort by dragging and keyboard without closing', async (which) => {
+    const chatSetOption = vi.fn(async (_node, payload) => ({ ok: true, ...payload }))
+    const { node } = await mountPane({ model: 'opus', effort: 'medium' }, { chatSetOption })
+    await openMenu(which)
+    const slider = menu().querySelector('[role="slider"]')
+    expect(slider).not.toBeNull()
+    expect(slider.getAttribute('aria-valuetext')).toBe('Medium')
+    slider.getBoundingClientRect = () => ({ left: 0, width: 116 })
+    slider.dispatchEvent(new PointerEvent('pointerdown', { button: 0, clientX: 8, bubbles: true }))
+    slider.dispatchEvent(new PointerEvent('pointermove', { clientX: 108, bubbles: true }))
+    expect(chatSetOption).not.toHaveBeenCalled()
+    slider.dispatchEvent(new PointerEvent('pointerup', { clientX: 108, bubbles: true }))
+    await flushPromises()
+    expect(chatSetOption).toHaveBeenCalledWith(node, { effort: 'max' })
+    expect(menu()).not.toBeNull()
+    expect(slider.getAttribute('aria-valuetext')).toBe('Max')
+    slider.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true }))
+    await flushPromises()
+    expect(chatSetOption).toHaveBeenLastCalledWith(node, { effort: 'xhigh' })
+    slider.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }))
+    await flushPromises()
+    expect(chatSetOption).toHaveBeenLastCalledWith(node, { effort: 'max' })
+    slider.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await flushPromises()
+    expect(trigger(which)).toBe(document.activeElement)
+  })
+
+  it('omits the slider for a model without effort levels', async () => {
+    await mountPane({ model: 'haiku' })
+    await openMenu('model')
+    expect(menu().querySelector('[role="slider"]')).toBeNull()
+  })
+
   it('Claude: its modes; Yolo only for a chat started in Yolo', async () => {
     await mountPane({ chatPermissionMode: 'default', chatLaunchYolo: false })
     await openMenu('options')
