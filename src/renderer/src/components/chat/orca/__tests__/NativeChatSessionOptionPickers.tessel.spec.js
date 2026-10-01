@@ -95,26 +95,88 @@ describe('permission mode (the options pill)', () => {
     expect(chatSetOption).not.toHaveBeenCalled()
     slider.dispatchEvent(new PointerEvent('pointerup', { clientX: 108, bubbles: true }))
     await flushPromises()
-    expect(chatSetOption).toHaveBeenCalledWith(node, { effort: 'max' })
+    expect(chatSetOption).not.toHaveBeenCalled()
     expect(menu()).not.toBeNull()
     expect(slider.getAttribute('aria-valuetext')).toBe('Max')
     expect(trigger('model').textContent).toContain('Max')
     expect(trigger('options').textContent.trim()).toBe('Manual')
     slider.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true }))
     await flushPromises()
-    expect(chatSetOption).toHaveBeenLastCalledWith(node, { effort: 'xhigh' })
+    expect(chatSetOption).not.toHaveBeenCalled()
+    expect(slider.getAttribute('aria-valuetext')).toBe('Extra high')
     slider.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }))
     await flushPromises()
-    expect(chatSetOption).toHaveBeenLastCalledWith(node, { effort: 'max' })
+    expect(chatSetOption).not.toHaveBeenCalled()
     slider.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     await flushPromises()
     expect(trigger(which)).toBe(document.activeElement)
+    expect(chatSetOption).toHaveBeenCalledExactlyOnceWith(node, { model: 'opus', effort: 'max' })
   })
 
   it('omits the slider for a model without effort levels', async () => {
     await mountPane({ model: 'haiku' })
     await openMenu('model')
     expect(menu().querySelector('[role="slider"]')).toBeNull()
+  })
+
+  it('applies nothing after opening or after changing back to the initial effort', async () => {
+    const { chatSetOption } = await mountPane({ model: 'opus', effort: 'medium' })
+    for (const change of [false, true]) {
+      await openMenu('model')
+      const slider = menu().querySelector('[role="slider"]')
+      if (change) {
+        for (const key of ['End', 'Home', 'ArrowRight']) {
+          slider.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }))
+          await nextTick()
+        }
+      }
+      slider.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      await flushPromises()
+    }
+    expect(chatSetOption).not.toHaveBeenCalled()
+  })
+
+  it('does not apply a model selection changed back before closing', async () => {
+    const { chatSetOption } = await mountPane({ model: 'opus', effort: 'medium' })
+    await openMenu('model')
+    await pick(menu().querySelector('[data-choice="sonnet"]'))
+    await pick(menu().querySelector('[data-choice="opus"]'))
+    menu().dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await flushPromises()
+    expect(chatSetOption).not.toHaveBeenCalled()
+  })
+
+  it('applies one model/effort pair when clicking outside after selecting both', async () => {
+    const { node, chatSetOption } = await mountPane({ model: 'opus', effort: 'medium' })
+    await openMenu('model')
+    await pick(menu().querySelector('[data-choice="sonnet"]'))
+    const slider = menu().querySelector('[role="slider"]')
+    slider.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }))
+    await nextTick()
+    expect(chatSetOption).not.toHaveBeenCalled()
+    document.querySelector('[data-test="chat-input"]').dispatchEvent(new PointerEvent('pointerdown', { button: 0, bubbles: true }))
+    await flushPromises()
+    expect(chatSetOption).toHaveBeenCalledExactlyOnceWith(node, { model: 'sonnet', effort: 'low' })
+  })
+
+  it('applies the pending effort and chosen mode together when the mode closes the menu', async () => {
+    const { node, chatSetOption } = await mountPane({ model: 'opus', effort: 'medium' })
+    await openMenu('options')
+    menu().querySelector('[role="slider"]').dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }))
+    await nextTick()
+    expect(chatSetOption).not.toHaveBeenCalled()
+    await pick(modeItem('plan'))
+    expect(chatSetOption).toHaveBeenCalledExactlyOnceWith(node, { model: 'opus', effort: 'max', permissionMode: 'plan' })
+  })
+
+  it('removes unsupported effort when a model without levels is selected', async () => {
+    const { node, chatSetOption } = await mountPane({ model: 'opus', effort: 'max' })
+    await openMenu('model')
+    await pick(menu().querySelector('[data-choice="haiku"]'))
+    expect(menu().querySelector('[role="slider"]')).toBeNull()
+    menu().dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await flushPromises()
+    expect(chatSetOption).toHaveBeenCalledExactlyOnceWith(node, { model: 'haiku' })
   })
 
   it('Claude: its modes; Yolo only for a chat started in Yolo', async () => {
@@ -241,7 +303,11 @@ describe('model menu', () => {
     await openMenu('model')
     const other = [...menu().querySelectorAll('[role="menuitemradio"]')].find((b) => b.getAttribute('data-choice') !== claude[0].id)
     await pick(other)
-    expect(chatSetOption).toHaveBeenCalledWith(node, { model: other.getAttribute('data-choice') })
+    expect(chatSetOption).not.toHaveBeenCalled()
+    expect(menu()).not.toBeNull()
+    menu().dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await flushPromises()
+    expect(chatSetOption).toHaveBeenCalledExactlyOnceWith(node, { model: other.getAttribute('data-choice'), effort: 'medium' })
     expect(menu()).toBeNull()
     expect(document.activeElement).toBe(trigger('model'))
     expect(trigger('model').textContent).toContain(claude.find((m) => m.id === node.model).label)

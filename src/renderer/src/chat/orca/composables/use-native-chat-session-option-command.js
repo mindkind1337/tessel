@@ -1,6 +1,7 @@
 // After Orca's use-native-chat-session-option-command.ts (MIT, Copyright (c) 2026 Lovecast Inc.)
 // Reactive options; setOption(payload) is the only mutation callback.
-// dispatch({optionId,value}) or dispatch('/model value') returns {ok,...}.
+// dispatch({optionId,value}), dispatch({values:{model,effort}}), or a slash
+// command returns {ok,...}. A values object uses one setOption request.
 // confirmedValues changes only after ok:true; permission caps are checked locally too.
 import { ref, watch, onScopeDispose } from 'vue'
 import { t } from '../../../i18n/index.js'
@@ -70,29 +71,28 @@ export function useNativeChatSessionOptionCommand(options) {
       optionId = command?.optionId
       value = command?.value
     }
-    if (
-      !['model', 'effort', 'permissionMode'].includes(optionId) ||
-      typeof value !== 'string' ||
-      !value.trim()
-    )
+    const values = command && typeof command === 'object' && command.values
+      ? command.values : { [optionId]: value }
+    const entries = Object.entries(values)
+    if (!entries.length || entries.some(([id, next]) => !['model', 'effort', 'permissionMode'].includes(id) || typeof next !== 'string' || !next.trim()))
       return refuse(
         t('chat.orca.options.unsupported', 'This option is not available for this agent.'),
       )
-    const why = optionId === 'permissionMode' ? modeBlocked(value) : ''
+    const why = values.permissionMode ? modeBlocked(values.permissionMode) : ''
     if (why) return refuse(why)
     if (!fn('setOption'))
       return refuse(t('chat.orca.options.unavailable', 'Session options are unavailable.'))
     const owner = scope()
     isDispatching.value = true
     try {
-      const result = await call('setOption', { [optionId]: value })
+      const result = await call('setOption', { ...values })
       if (!alive || scope() !== owner) return result || { ok: false }
       if (result?.ok !== true)
         return refuse(
           result?.error || t('chat.orca.options.rejected', 'The option did not change.'),
         )
-      confirmedValues.value = { ...confirmedValues.value, [optionId]: value }
-      call('onConfirmed', optionId, value)
+      confirmedValues.value = { ...confirmedValues.value, ...values }
+      for (const [id, next] of entries) call('onConfirmed', id, next)
       call('setNotice', null)
       call('onError', null)
       return result

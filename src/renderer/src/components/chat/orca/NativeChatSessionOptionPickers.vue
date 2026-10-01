@@ -14,9 +14,9 @@
 // - a descriptor `settableWhileWorking` stays settable during a turn;
 // - a setOption / invokeAction result { ok: false, error } is a failure like
 //   a rejection: the pane's toast says "Could not update option" (and
-//   @error gets the text). The value shown is always the snapshot's: the
-//   pane rebuilds it from the confirmed values only.
-import { computed, inject, ref } from 'vue'
+//   @error gets the text). With a batched surface, model/effort choices are
+//   previewed locally and applied together only when the menu closes.
+import { computed, inject, ref, watch } from 'vue'
 import { ChevronDown, Check, Hand, Pencil, ClipboardList, Zap, ShieldOff } from 'lucide-vue-next'
 import NativeChatEffortSlider from './NativeChatEffortSlider.vue'
 import {
@@ -58,8 +58,53 @@ const emit = defineEmits(['error'])
 const panelCtx = inject('panelCtx', null)
 
 const pendingId = ref(null)
-const model = computed(() => props.snapshot.find((descriptor) => descriptor.category === 'model') || null)
-const options = computed(() => sortNativeChatSessionOptions(props.snapshot))
+const draft = ref(null)
+let initial = null
+watch(() => props.snapshot, snapshot => {
+  if (!draft.value) return
+  for (const descriptor of snapshot) {
+    const id = descriptor.id
+    if (['model', 'effort', 'permissionMode'].includes(id) && draft.value[id] === initial[id]) {
+      draft.value[id] = descriptor.kind.currentValue
+      initial[id] = descriptor.kind.currentValue
+    }
+  }
+}, { deep: true })
+function beginDraft() {
+  if (draft.value || !props.surface?.setOptions) return
+  initial = Object.fromEntries(props.snapshot.filter(d => ['model', 'effort', 'permissionMode'].includes(d.id)).map(d => [d.id, d.kind.currentValue]))
+  draft.value = { ...initial }
+}
+const selectedEffortChoices = computed(() => {
+  const m = props.snapshot.find(d => d.category === 'model')
+  return m?.effortByModel?.[draft.value?.model ?? m.kind.currentValue]
+    ?? props.snapshot.find(d => d.id === 'effort')?.kind.choices ?? []
+})
+const displayedSnapshot = computed(() => {
+  if (!draft.value) return props.snapshot
+  const list = props.snapshot.filter(d => d.id !== 'effort').map(d => draft.value[d.id] === undefined ? d : { ...d, kind: { ...d.kind, currentValue: draft.value[d.id] } })
+  if (selectedEffortChoices.value.length) {
+    const base = props.snapshot.find(d => d.id === 'effort') || { id: 'effort', label: 'Effort', category: 'thought_level', settable: true, valueSource: 'unknown' } // i18n-ignore
+    list.push({ ...base, valueSource: draft.value.effort ? 'applied' : 'unknown', kind: { type: 'select', currentValue: draft.value.effort, choices: selectedEffortChoices.value } })
+  }
+  return list
+})
+function menuOpenChanged(open) {
+  if (open) return beginDraft()
+  if (!draft.value) return
+  const values = {}
+  const changed = draft.value.model !== initial.model || draft.value.effort !== initial.effort
+  if (changed) {
+    if (draft.value.model) values.model = draft.value.model
+    if (draft.value.effort && selectedEffortChoices.value.length) values.effort = draft.value.effort
+  }
+  if (draft.value.permissionMode !== initial.permissionMode) values.permissionMode = draft.value.permissionMode
+  draft.value = null
+  initial = null
+  if (Object.keys(values).length) runSurfaceCall('model', () => props.surface.setOptions(values))
+}
+const model = computed(() => displayedSnapshot.value.find((descriptor) => descriptor.category === 'model') || null)
+const options = computed(() => sortNativeChatSessionOptions(displayedSnapshot.value))
 const effort = computed(() => options.value.find(d => d.id === 'effort' && d.kind.type === 'select' && d.kind.choices.length && !d.action) || null)
 const rightOptions = computed(() => options.value.filter(d => d !== effort.value))
 const effortLabel = computed(() => {
@@ -118,6 +163,14 @@ function onRadioChange(descriptor, value) {
   if (value === descriptor.kind.currentValue) return
   const choice = descriptor.kind.choices.find((c) => c.value === value)
   if (!choice || choiceDisabled(descriptor, choice)) return
+  if (draft.value && ['model', 'effort', 'permissionMode'].includes(descriptor.id)) {
+    draft.value[descriptor.id] = value
+    if (descriptor.id === 'model' && !selectedEffortChoices.value.some(c => c.value === draft.value.effort)) {
+      draft.value.effort = selectedEffortChoices.value.find(c => c.value === 'medium' && !c.disabled)?.value
+        ?? selectedEffortChoices.value.find(c => !c.disabled)?.value
+    }
+    return
+  }
   setOption(descriptor, value)
 }
 function onSwitchSelect(event, descriptor) {
@@ -205,7 +258,7 @@ function stopEscape(event) {
 
 <template>
   <div v-if="surface && model" class="nc-pickers">
-    <DropdownMenu v-for="pill in pills" :key="pill.key" :default-open="pill.defaultOpen">
+    <DropdownMenu v-for="pill in pills" :key="pill.key" :default-open="pill.defaultOpen" @update:open="menuOpenChanged">
       <Tooltip>
         <TooltipTrigger as-child>
           <DropdownMenuTrigger as-child :disabled="pill.disabled">
@@ -232,7 +285,7 @@ function stopEscape(event) {
           </div>
         </TooltipContent>
       </Tooltip>
-      <DropdownMenuContent align="start" side="top" :collision-padding="8" :class="pill.contentClass" @escape-key-down="stopEscape">
+      <DropdownMenuContent align="start" side="top" :collision-padding="8" :class="pill.contentClass" @escape-key-down="stopEscape" @open-auto-focus="beginDraft">
         <div class="nc-picker-scroll nc-ui-scrollbar-sleek">
         <DropdownMenuLabel v-if="pill.modelMenu">{{ t('chat.orca.composer.selectModel', 'Select a model') }}</DropdownMenuLabel>
         <div v-for="(r, index) in pill.rows" :key="r.descriptor.id">
@@ -285,6 +338,7 @@ function stopEscape(event) {
               :title="choice.disabledReason || undefined"
               :data-choice="choice.value"
               :class="{ 'nc-picker-mode': r.descriptor.id === 'permissionMode' }"
+              @select="event => { if (r.descriptor.id === 'model' && surface?.setOptions) event.preventDefault() }"
             >
               <component :is="modeIcons[choice.value]" v-if="r.descriptor.id === 'permissionMode'" class="nc-picker-mode-icon" aria-hidden="true" />
               <div class="nc-picker-choice">
@@ -347,10 +401,10 @@ function stopEscape(event) {
 }
 /* w-64 / w-60 */
 .nc-picker-menu--model {
-  width: 19rem;
+  width: 23rem;
 }
 .nc-picker-menu--options {
-  width: 21rem;
+  width: 23rem;
 }
 .nc-picker-menu { display: flex; flex-direction: column; overflow: hidden; background: var(--nc-popover); border-color: var(--nc-border); }
 .nc-picker-menu :deep([data-nc-menu-item]:focus) { background: var(--nc-accent); color: var(--nc-accent-foreground); }

@@ -59,6 +59,8 @@ export function permissionModeHint(mode, agent) {
 // composable's); permissionModes: false to leave the mode picker out.
 export function tesselSessionOptionSnapshot({ agent, models = [], values = {}, modeBlocked = () => '', permissionModes = true } = {}) {
   const out = []
+  const catalog = getAgentSessionOptionCatalog(agent)
+  const effortChoicesFor = (id) => catalog ? (modelOptions(catalog, models, id).find(o => o.id === 'effort' && o.kind?.type === 'select')?.kind.choices || []) : []
   let model = typeof values.model === 'string' && values.model ? values.model : null
   // The agent reports its full id (claude-opus-5-5) where the list has the
   // alias it was chosen by (opus, "Opus 5.5"): that row is the current one.
@@ -74,12 +76,12 @@ export function tesselSessionOptionSnapshot({ agent, models = [], values = {}, m
     // Worded by nativeChatSessionOptionLabel (the ids are data).
     label: 'Model', // i18n-ignore
     category: 'model',
+    effortByModel: Object.fromEntries(rows.map(row => [row.value, effortChoicesFor(row.value)])),
     kind: { type: 'select', ...(model ? { currentValue: model } : {}), choices: rows },
     valueSource: model ? 'reported' : 'unknown',
     transport: 'agent-session',
     settable: true
   })
-  const catalog = getAgentSessionOptionCatalog(agent)
   const effort = model && catalog ? modelOptions(catalog, models, model).find((o) => o.id === 'effort' && o.kind && o.kind.type === 'select') : null
   if (effort) {
     const current = typeof values.effort === 'string' && values.effort ? values.effort : null
@@ -126,6 +128,7 @@ export function tesselSessionOptionSnapshot({ agent, models = [], values = {}, m
 export function tesselSessionOptionSurface(dispatch) {
   return {
     setOption: (id, value) => dispatch({ optionId: id, value }),
+    setOptions: (values) => dispatch({ values }),
     invokeAction: async () => ({ ok: false, error: t('chat.orca.options.unsupported', 'This option is not available for this agent.') })
   }
 }

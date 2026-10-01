@@ -43,6 +43,17 @@ describe('session option confirmation and caps', () => {
     expect(h.setOption).toHaveBeenCalledWith({ permissionMode: 'bypassPermissions' })
     expect(h.result.current.confirmedValues.permissionMode).toBe('bypassPermissions')
   })
+  it('applies model and effort together in one request and confirms both', async () => {
+    const h = setup({ values: { model: 'opus', effort: 'medium' } })
+    await h.result.current.dispatch({ values: { model: 'sonnet', effort: 'high' } })
+    expect(h.setOption).toHaveBeenCalledExactlyOnceWith({ model: 'sonnet', effort: 'high' })
+    expect(h.result.current.confirmedValues).toMatchObject({ model: 'sonnet', effort: 'high' })
+  })
+  it('keeps the permission cap when a mode is included with model and effort', async () => {
+    const h = setup({ agent: 'claude', maxPermissions: 'manual', values: { model: 'opus' } })
+    expect((await h.result.current.dispatch({ values: { model: 'sonnet', effort: 'high', permissionMode: 'auto' } })).ok).toBe(false)
+    expect(h.setOption).not.toHaveBeenCalled()
+  })
   it('does not display a requested value until confirmed and serializes requests', async () => {
     let resolve
     const setOption = vi.fn(
