@@ -169,7 +169,9 @@ async function readProvider(id) {
     // Its plan (from its login) even when its usage could not be read.
     if (typeof result?.plan === 'string') providerPlans.value[id] = { accountId, plan: result.plan }
     if (!result?.ok) {
-      if (result?.code === 'unavailable')
+      // A provider you opened stays, with its reason (Antigravity without a
+      // Gemini sign-in), instead of vanishing under the pointer.
+      if (result?.code === 'unavailable' && selectedProvider.value !== id)
         unavailable.value = [...new Set([...unavailable.value, id])]
       throw new Error(
         result?.error || t('usage.menu.providerError', 'Could not refresh provider usage.')
@@ -251,7 +253,7 @@ async function pushed(result) {
     applyReading(id, result)
     return
   }
-  if (result.code === 'unavailable') unavailable.value = [...new Set([...unavailable.value, id])]
+  if (result.code === 'unavailable' && selectedProvider.value !== id) unavailable.value = [...new Set([...unavailable.value, id])]
   providerErrors.value[id] =
     (typeof result.error === 'string' && result.error) ||
     t('usage.menu.providerError', 'Could not refresh provider usage.')

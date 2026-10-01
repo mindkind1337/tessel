@@ -86,6 +86,19 @@ describe('usage provider flyout', () => {
   }
   const flyout = () => wrapper.get('[data-test="usage-provider-flyout"]')
 
+  it('a provider you open whose usage is unavailable stays listed, with its reason', async () => {
+    wrapper = mount(UsageMenu, { attachTo: document.body })
+    await flushPromises()
+    await wrapper.get('[data-test="usage-button"]').trigger('click')
+    await flushPromises()
+    // Its next read (the click's) finds no usage it can show.
+    api.providerUsage.read.mockResolvedValue({ ok: false, provider: 'codex', accountId: null, code: 'unavailable', error: 'Needs a Gemini CLI sign-in.' })
+    await wrapper.get('[data-test="usage-row-codex"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-test="usage-row-codex"]').exists()).toBe(true)
+    expect(flyout().text()).toContain('Needs a Gemini CLI sign-in.')
+  })
+
   it('reads authenticated usage only from explicit menu actions, never mount or timer polling', async () => {
     wrapper = mount(UsageMenu)
     await flushPromises()
