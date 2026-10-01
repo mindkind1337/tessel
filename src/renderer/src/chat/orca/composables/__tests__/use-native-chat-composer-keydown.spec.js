@@ -135,3 +135,29 @@ describe('useNativeChatComposerKeyDown', () => {
     expect(callbacks.send).not.toHaveBeenCalled()
   })
 })
+
+describe('the "@" file list (Tessel)', () => {
+  it('Enter or Tab puts the active file in the draft; arrows move; no list: Enter sends', () => {
+    const acceptMention = vi.fn()
+    const mention = { mode: 'mention', query: 'app', items: ['src/App.vue', 'src/app.js'] }
+    const hook = renderHook(() =>
+      useNativeChatComposerKeyDown({
+        autocomplete: mention,
+        activeSuggestion: 1,
+        draft: '@app',
+        history: EMPTY_HISTORY,
+        isComposing: () => false,
+        acceptMention,
+        send: vi.fn(),
+        setActiveSuggestion: vi.fn(),
+      }),
+    )
+    hook.result.current(keyEvent('Enter'))
+    expect(acceptMention).toHaveBeenCalledWith('src/app.js')
+    hook.result.current(keyEvent('Tab'))
+    expect(acceptMention).toHaveBeenCalledTimes(2)
+    const plain = setup({ mode: 'mention', query: 'x' }, false, '@x')
+    plain.handler(keyEvent('Enter'))
+    expect(plain.callbacks.send).toHaveBeenCalledOnce()
+  })
+})

@@ -54,6 +54,9 @@ export const nativeChatComposerProps = {
   // first); undefined hides it. dictationTitle: its words (the language).
   dictate: { type: Function, default: undefined },
   dictationTitle: { type: String, default: undefined },
+  // Tessel: the "@" menu's files, (query) => [relative paths] (best first);
+  // undefined keeps the plain "Referencing file:" hint.
+  mentionSuggest: { type: Function, default: undefined },
   // Clipboard text for pasteFromClipboard() (default: shellApi.readClipboard).
   readClipboardText: { type: Function, default: undefined },
   // A dropped OS file -> its path (default: shellApi.pathForFile).

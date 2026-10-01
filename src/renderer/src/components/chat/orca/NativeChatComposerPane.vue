@@ -29,6 +29,7 @@ import { useImeEnterGestureOwnership } from './ime-composition-keyboard-event.js
 import { nativeChatComposerEmits, nativeChatComposerProps } from './native-chat-composer-props.js'
 import NativeChatComposerField from './NativeChatComposerField.vue'
 import { CHAT_IMAGE_ACCEPT } from '../../../chat/orca/native-chat-images.js'
+import { formatNativeChatFileReference } from '../../../chat/orca/shared/agent-image-paste.js'
 
 const props = defineProps(nativeChatComposerProps)
 const emit = defineEmits(nativeChatComposerEmits)
@@ -127,6 +128,16 @@ const autocomplete = computed(() => {
   const value = picker.autocomplete.value
   if (value.mode === 'slash' && !pickerEnabled.value) return { mode: 'none' }
   if (value.mode === 'mention' && dismissedMention.value === mentionKey.value) return { mode: 'none' }
+  // Tessel: the project's files that match, when the pane offers them.
+  if (value.mode === 'mention' && typeof props.mentionSuggest === 'function') {
+    let items = []
+    try {
+      items = props.mentionSuggest(value.query) || []
+    } catch {
+      items = []
+    }
+    return items.length ? { ...value, items } : value
+  }
   return value
 })
 const mentionOpen = computed(() => autocomplete.value.mode === 'mention')
@@ -287,7 +298,8 @@ const handleKeyDown = useNativeChatComposerKeyDown(() => ({
   interrupt,
   send,
   menuOpen: mentionOpen.value,
-  closeMenu: dismissMention
+  closeMenu: dismissMention,
+  acceptMention: onAcceptMention
 }))
 
 const canSend = useNativeChatCanSend(() => ({
@@ -338,10 +350,13 @@ function onImeSettled(element) {
   attachments.flushPendingAttachments()
 }
 
-function onAcceptMention() {
+// A file picked from the "@" list (Tessel), else the typed query as is.
+function onAcceptMention(path) {
   const value = autocomplete.value
   if (value.mode !== 'mention') return
-  const result = applyMentionSuggestion(draft.value, caret.value, value.query)
+  const token = typeof path === 'string' && path ? formatNativeChatFileReference(path.replace(/\\/g, '/')).slice(1) : value.query
+  const result = applyMentionSuggestion(draft.value, caret.value, token)
+  setActiveSuggestion(0)
   setDraft(result.draft)
   setCaret(result.caret)
   const textarea = textareaRef.value

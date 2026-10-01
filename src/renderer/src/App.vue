@@ -69,7 +69,7 @@ import { parseLeadRequest, findTaskRef, leadGuide, memberGuide } from '../../sha
 import { workerLaunchArgs, wakeLaunchArgs } from '../../shared/orchestration'
 import { createOrchestrator } from './orchestrator'
 import { formatChatTranscript } from './chat/chatTranscript'
-import { canShowChatView } from './chat/terminalChatBridge'
+import { canShowChatView, isPastedImageCopy } from './chat/terminalChatBridge'
 import { automationLaunchArgs, AUTOMATION_AGENTS, permissionFingerprint, quoteGlobArgs } from '../../shared/automations'
 import { createAutomationRunner, probeRunAgent } from './automationRunner'
 import { createCliRequests, CliRequestError } from './cliRequests'
@@ -2371,6 +2371,8 @@ provide('panelCtx', {
   // and its agent's real end (back to the terminal).
   sendFromChatView: (id, text, callbacks) => sendFromChatView(id, text, callbacks),
   chatViewEnded: (id) => chatViewEnded(id),
+  // A line typed in a pane's terminal (nothing is typed over it).
+  paneUserTyping: (id) => userIsTyping(id),
   pendingSwitch: (id) => pendingSwitch[id] || null,
   toggleYoloFolder,
   permissionsOf,
@@ -4876,7 +4878,10 @@ function flushPending() {
       sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
       waitIdle: !!(item.meta && item.meta.waitIdle),
       userTyping: userIsTyping,
-      guard: item.meta && item.meta.guard ? item.meta.guard : null
+      guard: item.meta && item.meta.guard ? item.meta.guard : null,
+      // From a terminal agent's chat view: its images, or a slash command.
+      images: item.meta && Array.isArray(item.meta.images) ? item.meta.images : null,
+      command: item.meta && item.meta.command ? item.meta.command : null
     }
     // A channel message is marked in flight on disk first; if that is
     // refused, it is not typed now ('refused').
@@ -6536,13 +6541,16 @@ const switchingLeaves = new Set()
 // conversation as a chat over it (leaf.chatView, saved with the layout).
 // What you write there reaches the terminal as any message of yours does
 // (deliverToAgent: held during an approval or while a line is typed there).
-function sendFromChatView(leafId, text, { onDelivered, onFailed } = {}) {
+// images: Tessel's copies of the attached images (their paths pasted
+// first); command: 'paste' | 'type' (a slash command: typed, Enter, done).
+function sendFromChatView(leafId, text, { onDelivered, onFailed, images, command } = {}) {
   const leaf = findLeaf(leafId)
-  if (!leaf || leaf.kind !== 'agent' || !leaf.chatView || leaf.sleeping) {
+  const files = Array.isArray(images) ? images : []
+  if (!leaf || leaf.kind !== 'agent' || !leaf.chatView || leaf.sleeping || !files.every(isPastedImageCopy) || (command && command !== 'paste' && command !== 'type')) {
     if (onFailed) onFailed()
     return false
   }
-  deliverToAgent(leafId, text, { source: 'you', onDelivered, onFailed, onDropped: onFailed })
+  deliverToAgent(leafId, text, { source: 'you', onDelivered, onFailed, onDropped: onFailed, ...(files.length ? { images: files } : {}), ...(command ? { command } : {}) })
   return true
 }
 // Its agent really ended (not stopped by a restart, a wake, a sleep or a

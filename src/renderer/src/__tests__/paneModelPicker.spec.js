@@ -290,4 +290,36 @@ describe('pane menu > Model', () => {
     expect(writes).toEqual([])
     expect(node.sessionOptions).toEqual({ model: 'opus' })
   })
+
+  // The chat view over the terminal: its model and effort pickers go the
+  // same way as this menu (so the header and the chat agree).
+  const chatView = () => wrapper.findComponent({ name: 'NativeChatTranscriptView' })
+  it("the chat view's pickers: the pane's models and values; a pick types /model, confirmed from the screen", async () => {
+    const node = mountPane({ chatView: true })
+    await flushPromises()
+    const view = chatView()
+    expect(view.exists()).toBe(true)
+    expect(view.props('sessionOptions').models.map((m) => m.id)).toContain('sonnet')
+    const pending = view.props('setOption')({ model: 'sonnet' })
+    await typed()
+    expect(writes).toEqual([
+      ['mp', '/model sonnet'],
+      ['mp', '\r']
+    ])
+    emit(' ⎿  Set model to Sonnet 5')
+    expect(await pending).toEqual({ ok: true })
+    expect(node.sessionOptions).toEqual({ model: 'sonnet' })
+  })
+
+  it('the chat view types nothing while a line is typed in the terminal, or for an option it does not have', async () => {
+    mountPane({ chatView: true })
+    ctx.paneUserTyping = () => true
+    await flushPromises()
+    const res = await chatView().props('setOption')({ effort: 'max' })
+    expect(res.ok).toBe(false)
+    expect(res.error).toContain('A line is typed')
+    ctx.paneUserTyping = () => false
+    expect((await chatView().props('setOption')({ permissionMode: 'plan' })).ok).toBe(false)
+    expect(writes).toEqual([])
+  })
 })

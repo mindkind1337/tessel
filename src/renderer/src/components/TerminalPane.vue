@@ -380,10 +380,14 @@ function optionApply(catalog, optionId, modelId) {
   const option = modelOptions(catalog, paneModelList.value, modelId).find((o) => o.id === optionId)
   return option ? option.apply : null
 }
-async function onModelPick({ optionId, value }) {
+// A pick applied: the same path for this menu and for the chat view's
+// pickers, so both agree. -> null (no catalog) | 'saved' (kept for the next
+// start) | 'busy' | 'applied' | 'sent' (typed, not confirmed) | 'rejected' |
+// 'unknown'
+async function applyModelPick({ optionId, value }) {
   const n = props.node
   const catalog = getAgentSessionOptionCatalog(n.agentId)
-  if (!catalog) return
+  if (!catalog) return null
   const next = nextPaneValues(optionId, value)
   const apply = optionApply(catalog, optionId, next && next.model)
   const mid = apply && apply.midSession
@@ -392,28 +396,58 @@ async function onModelPick({ optionId, value }) {
   if (!paneRunning.value || value === null || value === undefined || !mid || mid.kind !== 'command') {
     setPaneChoice(next)
     if (!paneRunning.value) refreshModel()
-    return
+    return 'saved'
   }
-  if (paneBusy.value || modelMenu.pending) return
+  if (paneBusy.value || modelMenu.pending) return 'busy'
   modelMenu.pending = true
   try {
     if (mid.detectAgentInteraction === 'claude-model-switch-confirmation') {
       const outcome = await switchClaudeModel(n.id, value, modelChoiceLabel(paneModelList.value, value))
       if (outcome === 'applied') adoptLive(next)
-      else if (outcome === 'rejected') ctx.toast && ctx.toast(t('pane.sessionOptions.kept', 'Claude kept the current model.'), { kind: 'error' })
-      else {
-        setPaneChoice(next)
-        if (ctx.toast) ctx.toast(t('pane.sessionOptions.unverified', 'Could not verify the model change; open the terminal to check.'), { kind: 'error', timeout: 8000 })
-      }
-    } else {
-      await typeCommand(n.id, mid.build(value), { delivery: mid.delivery === 'type' ? 'type' : 'write' })
-      adoptLive(next)
-      if (ctx.toast) ctx.toast(t('pane.sessionOptions.sentNotConfirmed', 'Sent to the agent — not confirmed'), { timeout: 3000 })
+      else if (outcome !== 'rejected') setPaneChoice(next)
+      return outcome === 'applied' || outcome === 'rejected' ? outcome : 'unknown'
     }
+    await typeCommand(n.id, mid.build(value), { delivery: mid.delivery === 'type' ? 'type' : 'write' })
+    adoptLive(next)
+    return 'sent'
   } finally {
     modelMenu.pending = false
-    closeModelMenu(true)
   }
+}
+async function onModelPick(pick) {
+  const outcome = await applyModelPick(pick).catch(() => 'unknown')
+  if (outcome === null || outcome === 'saved' || outcome === 'busy') return
+  if (outcome === 'rejected') ctx.toast && ctx.toast(t('pane.sessionOptions.kept', 'Claude kept the current model.'), { kind: 'error' })
+  else if (outcome === 'unknown') ctx.toast && ctx.toast(t('pane.sessionOptions.unverified', 'Could not verify the model change; open the terminal to check.'), { kind: 'error', timeout: 8000 })
+  else if (outcome === 'sent') ctx.toast && ctx.toast(t('pane.sessionOptions.sentNotConfirmed', 'Sent to the agent — not confirmed'), { timeout: 3000 })
+  closeModelMenu(true)
+}
+// The chat view's model and effort pickers: what this pane's menu offers
+// (Claude Code: /model, /effort typed into it; Codex: its own picker, which
+// the chat view opens in the terminal), with the values its header shows.
+const chatSessionOptions = computed(() => {
+  if (!hasModelChoice.value || !chatViewAvailable.value) return null
+  const m = agentModel.value
+  const effort = (m && m.effort) || (paneValues.value && paneValues.value.effort) || null
+  return { models: paneModelList.value, values: { ...(effectiveModelId.value ? { model: effectiveModelId.value } : {}), ...(effort ? { effort } : {}) } }
+})
+// { model } | { effort } from the chat view -> { ok, error }: applied the way
+// this pane's model menu applies it (applyModelPick), never while it works
+// or while a line is typed in its terminal.
+async function chatSetOption(payload) {
+  const optionId = Object.keys(payload || {})[0]
+  const value = optionId ? payload[optionId] : undefined
+  const unsupported = t('chat.orca.options.unsupported', 'This option is not available for this agent.')
+  if (!chatSessionOptions.value || !['model', 'effort'].includes(optionId) || typeof value !== 'string' || !value) return { ok: false, error: unsupported }
+  if (!paneRunning.value) return { ok: false, error: t('pane.sessionOptions.appliesAtStart', 'Applies when the agent starts.') }
+  if (paneBusy.value || modelMenu.pending) return { ok: false, error: t('pane.sessionOptions.waitIdle', 'It is working: its model can change once it is idle.') }
+  if (ctx.paneUserTyping && ctx.paneUserTyping(props.node.id)) return { ok: false, error: t('pane.chatView.typedLine', 'A line is typed in its terminal: send or clear it there first.') }
+  const outcome = await applyModelPick({ optionId, value }).catch(() => 'unknown')
+  if (outcome === 'applied' || outcome === 'sent') return { ok: true }
+  if (outcome === 'rejected') return { ok: false, error: t('pane.sessionOptions.kept', 'Claude kept the current model.') }
+  if (outcome === 'unknown') return { ok: false, error: t('pane.sessionOptions.unverified', 'Could not verify the model change; open the terminal to check.') }
+  if (outcome === 'busy') return { ok: false, error: t('pane.sessionOptions.waitIdle', 'It is working: its model can change once it is idle.') }
+  return { ok: false, error: t('pane.sessionOptions.appliesAtRestart', 'A model picked here applies when the agent restarts.') }
 }
 // A flip-only option (/fast) or the agent's own picker (Codex's /model).
 async function onModelAction({ optionId }) {
@@ -693,7 +727,9 @@ const chatDisabledReason = computed(() =>
   props.node.sleeping ? t('pane.chatView.asleep', 'Asleep: it wakes up when you open this pane, then you can write to it.') : ''
 )
 // What you write in the chat: typed into the terminal by Tessel's delivery
-// (held while it asks for approval or you have a line typed there).
+// (held while it asks for approval or you have a line typed there); with
+// images (their files' paths pasted first) or as a slash command
+// (callbacks: { images, command, onDelivered, onFailed }).
 function chatSend(text, callbacks) {
   if (ctx.sendFromChatView) ctx.sendFromChatView(props.node.id, text, callbacks)
   else if (callbacks && callbacks.onFailed) callbacks.onFailed()
@@ -702,6 +738,23 @@ function chatSend(text, callbacks) {
 function chatKeys(bytes) {
   if (chatShown.value && !props.node.sleeping) window.shellApi.writePty(props.node.id, bytes)
 }
+// The chat view's "@" menu: the files of the folder the agent works in.
+async function chatListFiles() {
+  const folder = ctx.paneFolder ? ctx.paneFolder(props.node) : props.node.startDir || props.node.cwd
+  if (!folder || !window.shellApi.listFiles) return []
+  const res = await window.shellApi.listFiles(folder)
+  return res && res.ok && Array.isArray(res.files) ? res.files : []
+}
+// The chat view's mic: Windows voice typing into its composer.
+function chatDictate() {
+  if (chatViewEl.value) chatViewEl.value.focus()
+  if (ctx.voiceTyping) ctx.voiceTyping(props.node.id)
+}
+const chatDictationTitle = computed(() =>
+  ctx.voiceName && ctx.voiceName.value
+    ? t('pane.voice.label', 'Voice typing ({{language}})', { language: ctx.voiceName.value })
+    : t('chat.orca.composer.startDictation', 'Start dictation')
+)
 // The agent really ended (not a restart, a sleep or a wake): back to the
 // terminal, where its shell is.
 const agentEnded = computed(() => {
@@ -2143,6 +2196,14 @@ onMounted(() => {
     // multi-line paste runs as its own command (null: no terminal yet).
     bracketedPaste: () => (term && term.modes ? !!term.modes.bracketedPasteMode : null),
     submit: () => window.shellApi.writePty(props.node.id, '\r'),
+    // A command typed key by key (Codex takes a fast write as pasted prose);
+    // printable characters only.
+    typeKeys: async (text) => {
+      for (const ch of String(text || '').replace(/[\x00-\x1f\x7f]/g, '')) {
+        window.shellApi.writePty(props.node.id, ch)
+        await new Promise((r) => setTimeout(r, 15))
+      }
+    },
     getSelection: () => (term ? term.getSelection() : ''),
     screenText,
     // Is its input prompt empty (see promptCheck.js)?
@@ -2570,6 +2631,13 @@ const paneMenuBindings = computed(() => ({
         :disabled-reason="chatDisabledReason"
         :send-message="chatSend"
         :write-keys="chatKeys"
+        allow-images
+        :session-options="chatSessionOptions"
+        :set-option="chatSetOption"
+        :list-files="chatListFiles"
+        :context-model="(agentModel && agentModel.model) || ''"
+        :dictate="chatDictate"
+        :dictation-title="chatDictationTitle"
         @close="toggleChatView"
       />
     </div>

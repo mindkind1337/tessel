@@ -748,5 +748,8 @@
   "chat.context.compact": "Compacter",
   "chat.context.dismiss": "Masquer cet avertissement",
   "chat.retry.attempt": "Reconnexion… tentative {{attempt}}",
-  "chat.newConversation.failed": "Impossible de démarrer une nouvelle conversation. Réessayez."
+  "chat.newConversation.failed": "Impossible de démarrer une nouvelle conversation. Réessayez.",
+  "chat.orca.composer.mentionFiles": "Fichiers à référencer",
+  "chat.orca.terminalChat.imageOnly": "(image)",
+  "chat.orca.terminalChat.codexPicker": "Codex change son modèle et son effort dans son propre sélecteur : choisissez dans son terminal."
 }

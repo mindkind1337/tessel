@@ -609,7 +609,8 @@
     "chatView": {
       "showChat": "Afficher la vue chat",
       "showTerminal": "Afficher le terminal",
-      "asleep": "En veille : il se réveille quand vous ouvrez ce panneau, vous pourrez alors lui écrire."
+      "asleep": "En veille : il se réveille quand vous ouvrez ce panneau, vous pourrez alors lui écrire.",
+      "typedLine": "Une ligne est tapée dans son terminal : envoyez-la ou effacez-la d'abord."
     },
     "voice": {
       "hint": "Parlez au lieu de taper ({{language}}). Saisie vocale Windows, Win+H. Langue : menu …",

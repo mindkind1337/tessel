@@ -16,7 +16,7 @@
 //   as the Send button's title).
 // Emits: draftChange(value, input), textareaSelect(input), keyDown(event),
 //   imeSettled(input), paste(event), choosePickerItem(item), retrySkills,
-//   acceptMention, removeImageAttachment(id), attach, dictationToggle,
+//   acceptMention(path?), removeImageAttachment(id), attach, dictationToggle,
 //   dictationHoldStart, dictationHoldEnd, send, stop.
 // Slot: session-options (passed to the actions row).
 // Other attributes and listeners (drag/drop) go to the root.
@@ -151,11 +151,15 @@ function onCompositionEnd() {
 }
 
 const slashOpen = computed(() => props.autocomplete.mode === 'slash')
-const activeDescendant = computed(() =>
-  slashOpen.value && props.autocomplete.items.length > 0
-    ? `${props.pickerListboxId}-option-${Math.min(props.activeSuggestion, props.autocomplete.items.length - 1)}` // i18n-ignore
-    : undefined
-)
+// Tessel: the "@" file list is a listbox too.
+const mentionListOpen = computed(() => props.autocomplete.mode === 'mention' && (props.autocomplete.items || []).length > 0)
+const listOpen = computed(() => slashOpen.value || mentionListOpen.value)
+const activeDescendant = computed(() => {
+  const items = props.autocomplete.items || []
+  if (!listOpen.value || !items.length) return undefined
+  const kind = mentionListOpen.value ? 'mention' : 'option'
+  return `${props.pickerListboxId}-${kind}-${Math.min(props.activeSuggestion, items.length - 1)}` // i18n-ignore
+})
 const editorPlaceholder = computed(() =>
   unref(props.goalMode?.active)
     ? t('chat.orca.goal.placeholder', 'Describe your goal, define measurable outcomes for best results')
@@ -187,7 +191,10 @@ const criticalTitle = computed(() => {
         <NativeChatMentionHint
           v-if="autocomplete.mode === 'mention'"
           :query="autocomplete.query"
-          @accept="emit('acceptMention')"
+          :items="autocomplete.items || []"
+          :active-index="activeSuggestion"
+          :listbox-id="pickerListboxId"
+          @accept="emit('acceptMention', $event)"
         />
         <div v-if="notice" class="nc-composer-notice" data-test="chat-composer-notice">
           <ImageOff class="nc-composer-notice-icon" />
@@ -222,8 +229,8 @@ const criticalTitle = computed(() => {
             :placeholder="editorPlaceholder"
             class="nc-composer-input nc-ui-scrollbar-sleek"
             data-test="chat-input"
-            :aria-expanded="slashOpen ? 'true' : 'false'"
-            :aria-controls="slashOpen ? pickerListboxId : undefined"
+            :aria-expanded="listOpen ? 'true' : 'false'"
+            :aria-controls="listOpen ? pickerListboxId : undefined"
             :aria-activedescendant="activeDescendant"
             :aria-describedby="sendBlockedReason ? blockedId : undefined"
             :aria-disabled="disabled ? 'true' : undefined"

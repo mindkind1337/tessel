@@ -7,6 +7,7 @@ import fs from 'fs'
 import vm from 'vm'
 import { join } from 'path'
 import { reactive } from 'vue'
+import { isPastedImageCopy } from '../chat/terminalChatBridge'
 
 const source = fs.readFileSync(join(process.cwd(), 'src/renderer/src/App.vue'), 'utf8')
 function slice(from, to) {
@@ -192,7 +193,8 @@ describe("a terminal agent's chat view (App.vue sendFromChatView / chatViewEnded
   function loadView(leaf) {
     const ctx = {
       ...load(leaf).ctx,
-      deliverToAgent: vi.fn()
+      deliverToAgent: vi.fn(),
+      isPastedImageCopy
     }
     ctx.findLeaf = (id) => (id === leaf.id ? leaf : null)
     vm.createContext(ctx)
@@ -206,6 +208,20 @@ describe("a terminal agent's chat view (App.vue sendFromChatView / chatViewEnded
     const onDelivered = vi.fn()
     expect(ctx.view.sendFromChatView('pane-5', 'hello', { onDelivered })).toBe(true)
     expect(ctx.deliverToAgent).toHaveBeenCalledWith('pane-5', 'hello', expect.objectContaining({ source: 'you', onDelivered }))
+  })
+
+  it('its images (Tessel\'s own copies only) and slash commands go with the message', () => {
+    const copy = ['C:', 'Temp', 'tessel-paste', 'chat', 'img_0123456789abcdef01234567.png'].join(String.fromCharCode(92))
+    const ctx = loadView(agent())
+    expect(ctx.view.sendFromChatView('pane-5', 'look', { images: [copy] })).toBe(true)
+    expect(ctx.deliverToAgent).toHaveBeenCalledWith('pane-5', 'look', expect.objectContaining({ images: [copy] }))
+    expect(ctx.view.sendFromChatView('pane-5', '/compact', { command: 'paste' })).toBe(true)
+    expect(ctx.deliverToAgent).toHaveBeenLastCalledWith('pane-5', '/compact', expect.objectContaining({ command: 'paste' }))
+    const onFailed = vi.fn()
+    expect(ctx.view.sendFromChatView('pane-5', 'look', { images: ['C:/Users/me/secret.png'], onFailed })).toBe(false)
+    expect(ctx.view.sendFromChatView('pane-5', '/x', { command: 'raw', onFailed })).toBe(false)
+    expect(onFailed).toHaveBeenCalledTimes(2)
+    expect(ctx.deliverToAgent).toHaveBeenCalledTimes(2)
   })
 
   it('not shown as a chat, or asleep: nothing is typed, the message is given back', () => {

@@ -49,6 +49,24 @@ export function useNativeChatComposerKeyDown(options) {
         return
       }
     }
+    // Tessel: the "@" file list (a terminal agent's chat view): Up/Down move,
+    // Enter or Tab puts the file in the draft.
+    const mentions = autocomplete.mode === 'mention' ? autocomplete.items || [] : []
+    if (mentions.length && !modified) {
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault()
+        call(
+          'setActiveSuggestion',
+          (index) => (index + (event.key === 'ArrowDown' ? 1 : -1) + mentions.length) % mentions.length,
+        )
+        return
+      }
+      if (event.key === 'Enter' || event.key === 'Tab') {
+        event.preventDefault()
+        call('acceptMention', mentions[read('activeSuggestion', 0)] || mentions[0])
+        return
+      }
+    }
     if (event.key === 'Escape' && read('isWorking', read('busy', false))) {
       event.preventDefault()
       event.stopPropagation()

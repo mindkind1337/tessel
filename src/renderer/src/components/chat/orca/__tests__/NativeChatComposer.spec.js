@@ -625,3 +625,25 @@ describe('structured send racing the next IME composition', () => {
     expect(wrapper.find('[data-test="chat-dictation"]').attributes('disabled')).toBeDefined()
   })
 })
+
+describe('NativeChatComposer: the "@" file list (Tessel)', () => {
+  it('lists the matching files; Enter puts the active one after @ (quoted with a space)', async () => {
+    const mentionSuggest = vi.fn((query) => ['src/App.vue', 'docs/my notes.md'].filter((p) => p.toLowerCase().includes(query.toLowerCase())))
+    await render({ mentionSuggest })
+    await type('look at @app')
+    const list = document.querySelector('[data-test="chat-mention-list"]')
+    expect(list).not.toBeNull()
+    expect(list.textContent).toContain('App.vue')
+    await key({ key: 'Enter' })
+    expect(promptValue(input())).toBe('look at @src/App.vue ')
+    await type('see @notes')
+    await key({ key: 'Tab' })
+    expect(promptValue(input())).toBe('see @"docs/my notes.md" ')
+  })
+  it('without files, the plain hint', async () => {
+    await render({ mentionSuggest: () => [] })
+    await type('@x')
+    expect(document.querySelector('[data-test="chat-mention-list"]')).toBeNull()
+    expect(document.body.textContent).toContain('Referencing file:')
+  })
+})

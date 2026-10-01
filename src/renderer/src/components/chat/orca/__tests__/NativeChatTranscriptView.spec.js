@@ -195,3 +195,99 @@ describe('NativeChatTranscriptView, a terminal agent chat view (interactive)', (
     expect(writeKeys).toHaveBeenCalledWith('2')
   })
 })
+
+describe('NativeChatTranscriptView, the full composer of a terminal agent chat view', () => {
+  const SESSION = '22222222-3333-4444-8555-666666666666'
+  const COPY = ['C:', 'Temp', 'tessel-paste', 'chat', 'img_0123456789abcdef01234567.png'].join(String.fromCharCode(92))
+  async function mountChat(props = {}) {
+    await mountView({ agent: 'claude', sessionId: SESSION, agentName: 'Claude Code', interactive: true, paneId: 'pane-3', allowImages: true, ...props })
+  }
+  const composer = () => wrapper.findComponent({ name: 'NativeChatComposer' })
+
+  it('takes images: their copies are named by id, and the paths go with the message', async () => {
+    const imagePaths = vi.fn(async () => ({ ok: true, paths: [COPY] }))
+    window.shellApi.chat = { imagePaths }
+    const sendMessage = vi.fn()
+    await mountChat({ sendMessage })
+    expect(composer().props('allowImages')).toBe(true)
+    expect(await composer().props('send')('What is this?', { images: ['img_0123456789abcdef01234567'] })).toEqual({ ok: true })
+    expect(imagePaths).toHaveBeenCalledWith({ paneId: 'pane-3', ids: ['img_0123456789abcdef01234567'] })
+    expect(sendMessage).toHaveBeenCalledWith('What is this?', expect.objectContaining({ images: [COPY] }))
+  })
+
+  it('never names a file other than its own copies', async () => {
+    window.shellApi.chat = { imagePaths: vi.fn(async () => ({ ok: true, paths: ['C:/Users/me/secret.png'] })) }
+    const sendMessage = vi.fn()
+    await mountChat({ sendMessage })
+    expect(await composer().props('send')('x', { images: ['img_0123456789abcdef01234567'] })).toMatchObject({ ok: false })
+    expect(sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('a slash command is typed as one, with a "Ran" row; the "/" menu lists the agent commands', async () => {
+    const sendMessage = vi.fn()
+    await mountChat({ sendMessage })
+    const names = composer().props('commands').map((c) => c.name)
+    expect(names).toContain('compact')
+    expect(await composer().props('send')('/compact')).toEqual({ ok: true })
+    expect(sendMessage).toHaveBeenCalledWith('/compact', { command: 'paste' })
+    await flushPromises()
+    expect(text()).toContain('Ran /compact')
+  })
+
+  it('Claude Code: model and effort pickers go through the pane (setOption), shown as changed once it confirms', async () => {
+    const setOption = vi.fn(async () => ({ ok: true }))
+    await mountChat({
+      setOption,
+      sessionOptions: { models: [{ id: 'opus', label: 'Opus', options: [] }, { id: 'sonnet', label: 'Sonnet', options: [] }], values: { model: 'sonnet' } }
+    })
+    const snapshot = composer().props('sessionOptionsSnapshot')
+    expect(snapshot.map((o) => o.id)).toContain('model')
+    expect(snapshot.some((o) => o.id === 'permissionMode')).toBe(false)
+    expect(snapshot.find((o) => o.id === 'model').kind.currentValue).toBe('sonnet')
+    const res = await composer().props('sessionOptionsSurface').setOption('model', 'opus')
+    expect(res).toEqual({ ok: true })
+    expect(setOption).toHaveBeenCalledWith({ model: 'opus' })
+    await flushPromises()
+    expect(composer().props('sessionOptionsSnapshot').find((o) => o.id === 'model').kind.currentValue).toBe('opus')
+    // A bare /model opens the picker here.
+    expect(composer().props('onOptionCommand')('model')).toEqual({ ok: true })
+    await flushPromises()
+    expect(composer().props('sessionOptionsPickerRequest')).toMatchObject({ id: 'model' })
+  })
+
+  it("Codex: /model opens its own picker in the terminal (typed key by key)", async () => {
+    const sendMessage = vi.fn()
+    await mountChat({ agent: 'codex', sendMessage, setOption: vi.fn(), sessionOptions: { models: [{ id: 'gpt-5.5', label: 'GPT-5.5', options: [] }], values: {} } })
+    expect(composer().props('onOptionCommand')('model')).toEqual({ ok: true })
+    expect(sendMessage).toHaveBeenCalledWith('/model', { command: 'type' })
+    expect(wrapper.emitted('close')).toHaveLength(1)
+  })
+
+  it('OpenClaude without a model list: /model goes to its own picker', async () => {
+    const sendMessage = vi.fn()
+    await mountChat({ agent: 'openclaude', sendMessage })
+    expect(composer().props('sessionOptionsSnapshot')).toEqual([])
+    expect(composer().props('onOptionCommand')('model')).toEqual({ ok: true })
+    expect(sendMessage).toHaveBeenCalledWith('/model', { command: 'paste' })
+  })
+
+  it('"@": the project files, loaded once asked', async () => {
+    const listFiles = vi.fn(async () => ['src/App.vue', 'README.md'])
+    await mountChat({ listFiles })
+    const suggest = composer().props('mentionSuggest')
+    expect(suggest('app')).toEqual([])
+    await flushPromises()
+    expect(suggest('app')).toEqual(['src/App.vue'])
+    expect(listFiles).toHaveBeenCalledTimes(1)
+  })
+
+  it('the context ring: what the latest answer read', async () => {
+    api.open.mockResolvedValueOnce({
+      ok: true,
+      viewId: 'tv-1',
+      events: [...conversation, { type: 'contextUsage', usedTokens: 50000, windowTokens: null }]
+    })
+    await mountChat({ contextModel: 'claude-opus-5-5[1m]' })
+    expect(composer().props('contextUsage')).toMatchObject({ usedTokens: 50000, windowTokens: 1000000, percentage: 5 })
+  })
+})
