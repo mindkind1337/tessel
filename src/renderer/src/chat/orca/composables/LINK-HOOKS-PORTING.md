@@ -23,7 +23,9 @@ in component setup; computed values are read with `.value` outside templates.
   chat's folders Tessel asks first (injected `askConfirm`, or
   `options.confirmOpen`). Folders and media/documents open with the system
   through `shellApi.chatFiles.open` (or `options.openSystem`), re-checked in main
-  (src/main/chatFileOpen.js); text and code open in Tessel's editor.
+  (src/main/chatFileOpen.js); images open in Tessel's lightbox
+  (`shellApi.viewImage` + `panelCtx.showImage`, or `options.viewImage` /
+  `options.showImage`) when it can show them; text and code open in Tessel's editor.
   Optional `onOpenFailure({verdict,path,error})` receives resolution/open failures;
   otherwise Tessel's toast is used. A missing context still consumes file clicks
   and reports an unresolved target, avoiding document navigation.

@@ -22,6 +22,7 @@ import {
 import { t } from '../../../i18n/index.js'
 import { isPathInsideOrEqual } from '../shared/cross-platform-path.js'
 import { chatPathProblem, isSystemOpenFile } from '../../../../../shared/chatFileLinks.js'
+import { fileKind } from '../../../../../shared/fileKinds.js'
 
 function chatFilesApi() {
   return globalThis.window?.shellApi?.chatFiles || null
@@ -74,6 +75,19 @@ export function useNativeChatFileLinkClick(context, options = {}) {
     })
     return answer === true
   }
+  // An image: Tessel's own viewer (the lightbox) when there is one; false
+  // sends it on to the system's app.
+  async function showInLightbox(path) {
+    const view = callback('viewImage') || globalThis.window?.shellApi?.viewImage
+    const show = callback('showImage') || panel?.showImage
+    if (!view || !show) return false
+    const res = await Promise.resolve()
+      .then(() => view(path))
+      .catch(() => null)
+    if (!res?.ok || typeof res.dataUrl !== 'string' || !res.dataUrl.startsWith('data:image/')) return false
+    show({ src: res.dataUrl, title: path.split(/[\\/]/).pop() || path, file: null })
+    return true
+  }
   async function onLinkClick(event, href) {
     const route = routeNativeChatHref(href)
     if (route.kind !== 'file') return
@@ -114,6 +128,7 @@ export function useNativeChatFileLinkClick(context, options = {}) {
       if (!ok) return
     }
     try {
+      if (kind === 'file' && fileKind(path) === 'image' && (await showInLightbox(path))) return
       if (kind === 'dir' || isSystemOpenFile(path)) {
         const openSystem = callback('openSystem') || chatFilesApi()?.open
         if (!openSystem) return failure('unverifiable', path, '')

@@ -17,6 +17,8 @@
  *   allowFileUriLinks (Boolean): kept for the reference's callers; file: URIs
  *     are always dropped by renderMarkdown, only linkified text paths remain.
  *   linkifyFilePaths (Boolean): paths in prose / inline code become file links
+ *   linkifyExistingPaths (Boolean, Tessel): the same paths, but each only once
+ *     the main process says it exists (a user's or a teammate's message)
  *   expandImages (Boolean): compact images open a lightbox
  *   renderCodeBlock (component): fenced blocks in the document variant, given
  *     { language } and the <code> as its default slot (e.g. NativeChatCodeBlock)
@@ -30,7 +32,13 @@
 import { computed, defineComponent, h, inject, shallowRef, toValue, watch } from 'vue'
 import { renderMarkdown } from '../../../markdownView'
 import { useNativeChatLinkActions } from '../../../chat/orca/composables/use-native-chat-link-actions.js'
-import { applyInlineCodeFileLinks, resolveInlineCodeFiles } from './chat-inline-code-files.js'
+import {
+  applyCheckedLinks,
+  applyInlineCodeFileLinks,
+  hasGatedLinks,
+  markGatedLinks,
+  resolveInlineCodeFiles
+} from './chat-inline-code-files.js'
 import {
   createCompactRenderers,
   createDocumentRenderers,
@@ -53,6 +61,7 @@ export default defineComponent({
     onLinkClick: { type: Function, default: undefined },
     allowFileUriLinks: { type: Boolean, default: false },
     linkifyFilePaths: { type: Boolean, default: false },
+    linkifyExistingPaths: { type: Boolean, default: false },
     expandImages: { type: Boolean, default: false },
     renderCodeBlock: { type: [Object, Function], default: undefined },
     fileLinkContext: { type: Object, default: null }
@@ -79,6 +88,7 @@ export default defineComponent({
     const baseFragment = computed(() => {
       const parsed = parseSanitizedHtml(renderMarkdown(protectLocalMarkdownLinks(props.content)))
       if (props.linkifyFilePaths) linkifyFilePathsInDom(parsed)
+      else if (props.linkifyExistingPaths) markGatedLinks(parsed, linkifyFilePathsInDom)
       if (props.githubRepo) linkifyGitHubReferences(parsed, props.githubRepo)
       return parsed
     })
@@ -90,21 +100,25 @@ export default defineComponent({
     const codeFiles = shallowRef(null)
     let lookup = 0
     watch(
-      [baseFragment, linkContext, () => props.linkifyFilePaths],
+      [baseFragment, linkContext, () => props.linkifyFilePaths || props.linkifyExistingPaths],
       ([parsed, context, linkify]) => {
         const run = ++lookup
         codeFiles.value = null
         const stat = globalThis.window?.shellApi?.chatFiles?.stat
         if (!linkify || !context || !stat) return
         resolveInlineCodeFiles({ fragment: parsed, content: props.content, context, stat }).then((found) => {
-          if (run === lookup && found.size) codeFiles.value = found
+          if (run === lookup && (found.size || found.links?.size)) codeFiles.value = found
         })
       },
       { immediate: true }
     )
-    const fragment = computed(() =>
-      codeFiles.value ? applyInlineCodeFileLinks(baseFragment.value.cloneNode(true), codeFiles.value) : baseFragment.value
-    )
+    // Gated links show only once found (never a link to nothing).
+    const fragment = computed(() => {
+      const base = baseFragment.value
+      if (!codeFiles.value && !hasGatedLinks(base)) return base
+      const copy = applyCheckedLinks(base.cloneNode(true), codeFiles.value)
+      return codeFiles.value ? applyInlineCodeFileLinks(copy, codeFiles.value) : copy
+    })
 
     return () => {
       const isDocument = props.variant === 'document'

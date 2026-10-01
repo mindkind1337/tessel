@@ -120,6 +120,53 @@ describe('useNativeChatFileLinkClick', () => {
     expect(openFile).not.toHaveBeenCalled()
   })
 
+  describe('images', () => {
+    const PNG = 'C:\\Users\\me\\AppData\\Local\\Temp\\tessel-paste\\image-1.png'
+    const PNG_ABS = 'C:/Users/me/AppData/Local/Temp/tessel-paste/image-1.png'
+    it("open in Tessel's lightbox when there is one (after the question, outside)", async () => {
+      const viewImage = vi.fn(async () => ({ ok: true, dataUrl: 'data:image/png;base64,AAAA' }))
+      const showImage = vi.fn()
+      const openSystem = vi.fn()
+      const confirmOpen = vi.fn(async () => true)
+      const result = setup({ worktreePath: '/repo' }, { viewImage, showImage, openSystem, confirmOpen, statPath: exists() })
+      await result.current(event(), PNG)
+      expect(confirmOpen).toHaveBeenCalled()
+      expect(viewImage).toHaveBeenCalledWith(PNG_ABS)
+      expect(showImage).toHaveBeenCalledWith({ src: 'data:image/png;base64,AAAA', title: 'image-1.png', file: null })
+      expect(openSystem).not.toHaveBeenCalled()
+    })
+    it("go to the system's app when the lightbox cannot show them", async () => {
+      const viewImage = vi.fn(async () => ({ ok: false, error: 'too large' }))
+      const showImage = vi.fn()
+      const openSystem = vi.fn(async () => ({ ok: true }))
+      const result = setup({ worktreePath: '/repo' }, { viewImage, showImage, openSystem, confirmOpen: async () => true, statPath: exists() })
+      await result.current(event(), PNG)
+      expect(showImage).not.toHaveBeenCalled()
+      expect(openSystem).toHaveBeenCalledWith(PNG_ABS)
+    })
+    it('use panelCtx.showImage and shellApi.viewImage by default', async () => {
+      const showImage = vi.fn()
+      window.shellApi = { viewImage: vi.fn(async () => ({ ok: true, dataUrl: 'data:image/gif;base64,R0' })) }
+      let click
+      const wrapper = mount(
+        defineComponent({
+          setup() {
+            click = useNativeChatFileLinkClick({ worktreePath: '/repo' }, { statPath: exists() })
+            return () => null
+          },
+        }),
+        { global: { provide: { panelCtx: { showImage, viewFile: vi.fn() } } } },
+      )
+      try {
+        await click.value(event(), 'assets/logo.gif')
+        expect(showImage).toHaveBeenCalledWith(expect.objectContaining({ src: 'data:image/gif;base64,R0', title: 'logo.gif' }))
+      } finally {
+        wrapper.unmount()
+        delete window.shellApi
+      }
+    })
+  })
+
   it('refuses a path that does not exist, before any question', async () => {
     const openFile = vi.fn()
     const confirmOpen = vi.fn()

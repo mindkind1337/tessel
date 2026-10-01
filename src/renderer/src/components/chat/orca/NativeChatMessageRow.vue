@@ -163,6 +163,7 @@ function scrollToTop() {
           :render-code-block="NativeChatCodeBlock"
           :on-link-click="onLinkClick"
           :allow-file-uri-links="allowFileUriLinks"
+          :linkify-existing-paths="onLinkClick !== undefined"
         />
       </div>
       <div v-if="message.sentAs === 'goal'" class="nc-user-goal">
