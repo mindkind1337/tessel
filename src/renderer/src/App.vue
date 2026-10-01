@@ -2868,6 +2868,16 @@ function onInstallResult(r) {
     return
   }
   loadAgents(true)
+  // Installed by its vendor's installer: its command is not on that pane's
+  // PATH yet, so it starts in a new pane, when asked.
+  if (r.ok === true && run.offerStart && run.agent) {
+    const id = run.agent.id
+    showToast(t('app.install.installedStart', '{{label}} is installed.', { label: run.label }), {
+      timeout: 15000,
+      action: { label: t('app.install.start', 'Start it'), run: () => loadAgents(true).then(() => launch({ kind: 'agent', id })) }
+    })
+    return
+  }
   if (r.ok === true) {
     showToast(run.agent ? t('app.install.installedStarting', '{{label}} is installed and starting.', { label: run.label }) : t('app.install.finished', '{{label}} finished.', { label: run.label }), { timeout: 6000 })
     return
@@ -2887,10 +2897,14 @@ const stopInstallResults = window.shellApi.onInstallResult ? window.shellApi.onI
 onBeforeUnmount(() => stopInstallResults && stopInstallResults())
 
 // Install an agent, then start it in the same pane once the install succeeds.
+// An install that is not a plain npm or winget one (the vendor's script
+// from the internet, pip) is shown first, exactly as it runs, and runs only
+// once the user agrees (main checked its source: agentInstalls.js).
 async function installAgent(agent) {
   if (!agent || !agent.install) return
   closeMenus()
   toolsOpen.value = false
+  if (agent.installConfirm) return installAgentConfirmed(agent)
   const shellId = selectedShell.value
   // Install first; start the agent (with its session) only if that succeeds.
   const install = [].concat(agent.install)
@@ -2902,6 +2916,36 @@ async function installAgent(agent) {
   showToast(t('app.install.agent', 'Installing {{agent}}. It starts in the new pane when the install finishes.', { agent: agent.name }), {
     timeout: 7000
   })
+}
+async function installAgentConfirmed(agent) {
+  const install = [].concat(agent.install)
+  // Written for one shell (PowerShell for `irm | iex`): only that one runs it.
+  const shellId = agent.installShell || selectedShell.value
+  const shell = shells.value.find((s) => s.id === shellId)
+  if (!shell) {
+    showToast(t('app.install.noShell', '{{agent}} installs with {{shell}}, which is not on this computer.', { agent: agent.name, shell: shellId }), { kind: 'error', timeout: 8000 })
+    return
+  }
+  const ok = await askConfirm({
+    title: t('app.install.confirmTitle', 'Install {{agent}}?', { agent: agent.name }),
+    text: t('app.install.confirmText', "This downloads {{agent}}'s installer from the internet and runs it on this computer, in a new {{shell}} pane. It comes from its vendor: only continue if you trust it.", { agent: agent.name, shell: shell.name }),
+    code: install.join('\n'),
+    details: [
+      { label: t('app.install.confirmShell', 'Shell'), value: shell.name },
+      { label: t('app.install.confirmSource', 'Source'), value: agent.installSource || '' }
+    ],
+    confirmLabel: t('app.install.confirmRun', 'Install')
+  })
+  if (ok !== true) return
+  // Its own pane, with the install log and the result toast; the agent is
+  // not started there (see onInstallResult).
+  const leaf = await openPaneBelow(shellId, null, { local: true })
+  if (!leaf) return
+  leaf.title = agent.name
+  await startInstallLog(leaf.id, agent.name, shellId, install, agent)
+  if (installRuns[leaf.id]) installRuns[leaf.id].offerStart = true
+  setTimeout(() => window.shellApi.writePty(leaf.id, `${installChain(install, null, shellId)}\r`), 700)
+  showToast(t('app.install.agentScript', 'Installing {{agent}} below. Tessel tells you when it has finished.', { agent: agent.name }), { timeout: 7000 })
 }
 
 // --- Sessions -----------------------------------------------------------------
@@ -9840,6 +9884,7 @@ onBeforeUnmount(() => {
       @worktree="(v) => (useWorktree = v)"
       @tools="openTools"
       @install="installAgent"
+      @docs="(a) => { launcher.open = false; openExternalUrl(a.docsUrl) }"
       :x="launcher.x"
       :y="launcher.y"
       @launch="onLauncherLaunch"
@@ -9967,6 +10012,8 @@ onBeforeUnmount(() => {
       :text="confirmState.text || ''"
       :confirm-label="confirmState.confirmLabel || 'OK'"
       :alt-label="confirmState.altLabel || ''"
+      :code="confirmState.code || ''"
+      :details="confirmState.details || []"
       :danger="!!confirmState.danger"
       @answer="answerConfirm"
     />

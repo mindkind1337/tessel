@@ -272,7 +272,16 @@
       "finished": "{{label}} est terminé.",
       "failed": "{{label}} a échoué{{reason}}. Le journal montre ce qui n'a pas fonctionné ; joignez-le à un rapport de bogue.",
       "unfinished": "{{label}} ne s'est pas terminé{{reason}}. Le journal montre ce qui n'a pas fonctionné ; joignez-le à un rapport de bogue.",
-      "agent": "Installation de {{agent}}. Il démarre dans le nouveau panneau à la fin de l'installation."
+      "agent": "Installation de {{agent}}. Il démarre dans le nouveau panneau à la fin de l'installation.",
+      "installedStart": "{{label}} est installé.",
+      "start": "Le démarrer",
+      "noShell": "{{agent}} s'installe avec {{shell}}, qui n'est pas présent sur cet ordinateur.",
+      "confirmTitle": "Installer {{agent}} ?",
+      "confirmText": "Ceci télécharge l'installateur de {{agent}} depuis Internet et l'exécute sur cet ordinateur, dans un nouveau panneau {{shell}}. Il vient de son éditeur : ne continuez que si vous lui faites confiance.",
+      "confirmShell": "Shell",
+      "confirmSource": "Source",
+      "confirmRun": "Installer",
+      "agentScript": "Installation de {{agent}} ci-dessous. Tessel vous avertit quand c'est terminé."
     },
     "send": {
       "askedReview": "Revue demandée à {{pane}}.",

@@ -48,6 +48,7 @@ import { readForView, readImageForView, openPdfWindow } from './fileView'
 import { readForEdit, statForEdit, writeForEdit, headContent, createFileWatcher } from './editorFiles'
 import * as explorer from './explorer'
 import { extraToolDirs, withToolDirs } from './toolDirs'
+import { AGENT_INSTALLS, checkInstall } from './agentInstalls'
 import { createInstallLogs } from './installLog'
 import { writeBoardRule } from './agentMemory'
 import { claudeImageFile, isPastedImage, PASTE_DIR } from './pastedImages'
@@ -388,9 +389,8 @@ const AGENT_PRESETS = [
     name: 'Kimi Code',
     command: 'kimi',
     accent: '#3b82f6',
-    // Kimi Code's own installer (the pip kimi-cli is no longer maintained);
-    // run through PowerShell so it works from any shell.
-    install: ['powershell -NoProfile -Command "irm https://code.kimi.com/kimi-code/install.ps1 | iex"'],
+    // Kimi Code's own installer (the pip kimi-cli is no longer maintained).
+    ...AGENT_INSTALLS.kimi,
     // The old pip kimi-cli answers to "kimi" too (and only says it is no
     // longer maintained): found there, Kimi Code is not installed.
     notFrom: /[\\/](Python\d*[\\/]Scripts|local-packages[\\/][^\\/]+[\\/]Scripts)[\\/]kimi(\.exe)?$/i
@@ -422,14 +422,14 @@ const AGENT_PRESETS = [
     // `agent` is also a Grok alias. Cursor keeps its distinctive CLI name.
     command: 'cursor-agent',
     accent: '#a3a3a3',
-    install: null
+    ...AGENT_INSTALLS.cursor
   },
   {
     id: 'grok',
     name: 'Grok Build',
     command: 'grok',
     accent: '#b8b8b8',
-    install: null
+    ...AGENT_INSTALLS.grok
   },
   {
     id: 'pi',
@@ -457,7 +457,7 @@ const AGENT_PRESETS = [
     name: 'Goose',
     command: 'goose',
     accent: '#e4b65b',
-    install: null
+    ...AGENT_INSTALLS.goose
   },
   {
     id: 'auggie',
@@ -465,23 +465,23 @@ const AGENT_PRESETS = [
     command: 'auggie',
     accent: '#67c5ad',
     // Augment currently documents Windows through WSL, not native setup.
-    install: null
+    ...AGENT_INSTALLS.auggie
   },
   {
     id: 'aider',
     name: 'Aider',
     command: 'aider',
     accent: '#14b014',
-    install: ['python -m pip install aider-install', 'aider-install']
+    ...AGENT_INSTALLS.aider
   },
   // More agents Orca knows (its catalog, MIT). Only installers we are sure
-  // of; the others: see their Docs link in Settings > Agents.
+  // of (agentInstalls.js); the others: a link to their install page.
   {
     id: 'openclaude',
     name: 'OpenClaude',
     command: 'openclaude',
     accent: '#d9a077',
-    install: null
+    ...AGENT_INSTALLS.openclaude
   },
   {
     id: 'kilo',
@@ -495,7 +495,7 @@ const AGENT_PRESETS = [
     name: 'Kiro',
     command: 'kiro-cli chat --tui',
     accent: '#9046ff',
-    install: null
+    ...AGENT_INSTALLS.kiro
   },
   {
     id: 'continue',
@@ -516,77 +516,77 @@ const AGENT_PRESETS = [
     name: 'Mistral Vibe',
     command: 'vibe',
     accent: '#fa520f',
-    install: null
+    ...AGENT_INSTALLS.vibe
   },
   {
     id: 'antigravity',
     name: 'Antigravity',
     command: 'agy',
     accent: '#5b8def',
-    install: null
+    ...AGENT_INSTALLS.antigravity
   },
   {
     id: 'rovo',
     name: 'Rovo Dev',
     command: 'rovo',
     accent: '#1868db',
-    install: null
+    ...AGENT_INSTALLS.rovo
   },
   {
     id: 'hermes',
     name: 'Hermes',
     command: 'hermes --tui',
     accent: '#c9a86a',
-    install: null
+    ...AGENT_INSTALLS.hermes
   },
   {
     id: 'devin',
     name: 'Devin',
     command: 'devin',
     accent: '#3fb68b',
-    install: null
+    ...AGENT_INSTALLS.devin
   },
   {
     id: 'trae',
     name: 'Trae',
     command: 'traecli',
     accent: '#ff4d4f',
-    install: null
+    ...AGENT_INSTALLS.trae
   },
   {
     id: 'zcode',
     name: 'ZCode',
     command: 'zcode',
     accent: '#6c8cff',
-    install: null
+    ...AGENT_INSTALLS.zcode
   },
   {
     id: 'autohand',
     name: 'Autohand Code',
     command: 'autohand',
     accent: '#f59e0b',
-    install: null
+    ...AGENT_INSTALLS.autohand
   },
   {
     id: 'commandcode',
     name: 'Command Code',
     command: 'command-code --trust',
     accent: '#e5e7eb',
-    install: null
+    ...AGENT_INSTALLS.commandcode
   },
   {
     id: 'openclaw',
     name: 'OpenClaw',
     command: 'openclaw',
     accent: '#ef6b5b',
-    install: null
+    ...AGENT_INSTALLS.openclaw
   },
   {
     id: 'omp',
     name: 'OMP',
     command: 'omp',
     accent: '#c04fd8',
-    install: null
+    ...AGENT_INSTALLS.omp
   },
   {
     id: 'muse',
@@ -594,35 +594,35 @@ const AGENT_PRESETS = [
     // Skips its first-run "trust this folder?" question.
     command: 'muse --trust-workspace',
     accent: '#0668e1',
-    install: null
+    ...AGENT_INSTALLS.muse
   },
   {
     id: 'opencode2',
     name: 'OpenCode 2',
     command: 'opencode2',
     accent: '#e8e8e8',
-    install: null
+    ...AGENT_INSTALLS.opencode2
   },
   {
     id: 'mimocode',
     name: 'MiMo Code',
     command: 'mimo',
     accent: '#ff6900',
-    install: null
+    ...AGENT_INSTALLS.mimocode
   },
   {
     id: 'primeagent',
     name: 'Prime Agent',
     command: 'prime-agent',
     accent: '#8b8bf5',
-    install: null
+    ...AGENT_INSTALLS.primeagent
   },
   {
     id: 'ante',
     name: 'Ante',
     command: 'ante',
     accent: '#22c55e',
-    install: null
+    ...AGENT_INSTALLS.ante
   }
 ]
 
@@ -721,7 +721,9 @@ async function getAgents(custom = []) {
         name: a.name,
         command: a.command,
         accent: a.accent,
-        install: a.install,
+        // Only an install that passes its checks (agentInstalls.js) reaches
+        // the window; else its install page, if it has one.
+        ...checkInstall(a),
         available: await commandExists(firstWord(a.command), a.notFrom || null)
       }))
     )

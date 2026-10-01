@@ -10,7 +10,11 @@ defineProps({
   confirmLabel: { type: String, default: 'OK' },
   // Optional second choice (answers 'alt'); Cancel still means "not now".
   altLabel: { type: String, default: '' },
-  danger: { type: Boolean, default: false }
+  danger: { type: Boolean, default: false },
+  // A command shown exactly as it will run, and labelled facts about it
+  // ([{ label, value }]: its shell, where it comes from).
+  code: { type: String, default: '' },
+  details: { type: Array, default: () => [] }
 })
 const emit = defineEmits(['answer'])
 const okEl = ref(null)
@@ -61,6 +65,13 @@ function trapTab(event) {
     >
       <h2 id="confirm-title" class="confirm-title">{{ title }}</h2>
       <p v-if="text" id="confirm-text" class="confirm-text">{{ text }}</p>
+      <pre v-if="code" class="confirm-code" data-test="confirm-code">{{ code }}</pre>
+      <dl v-if="details.length" class="confirm-details">
+        <template v-for="d in details" :key="d.label">
+          <dt>{{ d.label }}</dt>
+          <dd>{{ d.value }}</dd>
+        </template>
+      </dl>
       <div class="confirm-actions">
         <button class="confirm-btn" @click="emit('answer', false)">{{ t('app.confirm.cancel', 'Cancel') }}</button>
         <button v-if="altLabel" class="confirm-btn" @click="emit('answer', 'alt')">{{ altLabel }}</button>

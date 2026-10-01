@@ -39,7 +39,11 @@ export const NPM_PACKAGES = {
   kilo: '@kilocode/cli',
   continue: '@continuedev/cli',
   codebuff: 'codebuff',
-  openclaw: 'openclaw'
+  openclaw: 'openclaw',
+  openclaude: '@gitlawb/openclaude',
+  autohand: 'autohand-cli',
+  commandcode: 'command-code',
+  mimocode: '@mimo-ai/cli'
 }
 // Same options as its install (see AGENT_PRESETS).
 const NPM_FLAGS = { pi: '--ignore-scripts ' }
@@ -50,6 +54,10 @@ const OTHER_HINTS = {
   kimi: () => t('main.agentUpdate.hintKimi', 'Run its installer again to update it.'),
   ollama: () => t('main.agentUpdate.hintOllama', 'Ollama updates itself (or: winget upgrade Ollama.Ollama).'),
   aider: () => t('main.agentUpdate.hintAider', 'Run aider-install again to update it.')
+}
+// Installed by the vendor's own script (agentInstalls.js).
+for (const id of ['cursor', 'grok', 'antigravity', 'hermes', 'devin', 'omp', 'muse']) {
+  OTHER_HINTS[id] = () => t('main.agentUpdate.hintInstaller', 'Run its installer again to update it.')
 }
 
 export function npmUpdateSteps(id) {

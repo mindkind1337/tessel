@@ -439,7 +439,10 @@
       "browser": "Navigateur",
       "browserHint": "Une page web à côté de vos terminaux (votre serveur de dev, une doc)",
       "chatOpencode": "OpenCode (chat)",
-      "chatOpencodeHint": "OpenCode dans un volet de chat : pas de terminal ; les messages de l'équipe lui arrivent comme des tours à part"
+      "chatOpencodeHint": "OpenCode dans un volet de chat : pas de terminal ; les messages de l'équipe lui arrivent comme des tours à part",
+      "installConfirmHint": "Installer {{name}} avec l'installateur de son éditeur ({{steps}}). Tessel montre la commande et demande d'abord.",
+      "installPage": "Page d'installation :",
+      "installPageHint": "Pas d'installation automatique sous Windows : ouvrir la page d'installation de {{name}} dans votre navigateur ({{url}})"
     },
     "model": {
       "fromSession": "d'après sa dernière réponse",
