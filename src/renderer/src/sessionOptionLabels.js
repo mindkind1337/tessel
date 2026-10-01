@@ -56,6 +56,15 @@ export function modelDescription(model) {
       return t('pane.sessionOptions.describe.sonnet', 'Efficient for routine tasks')
     case 'Fastest for quick answers': // i18n-ignore
       return t('pane.sessionOptions.describe.haiku', 'Fastest for quick answers')
+    // Claude Code's newer wording of the same lines.
+    case 'Most capable for your hardest and longest-running tasks': // i18n-ignore
+      return t('pane.sessionOptions.describe.fableNew', 'Most capable for your hardest and longest-running tasks')
+    case 'For your toughest challenges': // i18n-ignore
+      return t('pane.sessionOptions.describe.toughest', 'For your toughest challenges')
+    case 'For complex work and everyday tasks': // i18n-ignore
+      return t('pane.sessionOptions.describe.complexEveryday', 'For complex work and everyday tasks')
+    case 'Most efficient for simpler tasks': // i18n-ignore
+      return t('pane.sessionOptions.describe.efficientSimple', 'Most efficient for simpler tasks')
     case "xAI's latest frontier model": // i18n-ignore
       return t('pane.sessionOptions.describe.grokLatest', "xAI's latest frontier model")
     case "xAI's previous frontier model": // i18n-ignore

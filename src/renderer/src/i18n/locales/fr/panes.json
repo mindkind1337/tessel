@@ -684,7 +684,11 @@
         "sonnet": "Efficace pour les tâches courantes",
         "haiku": "Le plus rapide pour des réponses brèves",
         "grokLatest": "Le dernier modèle de pointe de xAI",
-        "grokPrevious": "Le précédent modèle de pointe de xAI"
+        "grokPrevious": "Le précédent modèle de pointe de xAI",
+        "fableNew": "Le plus performant pour vos tâches les plus difficiles et les plus longues",
+        "toughest": "Pour vos défis les plus difficiles",
+        "complexEveryday": "Pour le travail complexe et les tâches du quotidien",
+        "efficientSimple": "Le plus efficace pour les tâches simples"
       },
       "pillAccessibleName": "{{category}} {{value}}",
       "chooseInAgentPicker": "Choisir dans le sélecteur d'agents…",
