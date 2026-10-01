@@ -598,6 +598,95 @@ describe('Source Control: branch line and Commits', () => {
     expect(window.shellApi.openExternal).toHaveBeenCalledWith('https://github.com/me/r/compare/main...main')
   })
 
+  const MB = 'b'.repeat(40)
+  const HEAD = 'c'.repeat(40)
+  const branchFiles = [
+    { path: 'src/a.js', status: 'modified', added: 3, removed: 1 },
+    { path: 'src/new.js', oldPath: 'src/old.js', status: 'renamed', added: 0, removed: 0 },
+    { path: 'README.md', status: 'added', added: 10, removed: 0 },
+    { path: 'gone.txt', status: 'deleted', added: 0, removed: 4 }
+  ]
+  async function withBranch(statusExtra = {}, compareExtra = {}, entries = []) {
+    api({
+      status: () => status(entries, { branch: 'feature', ...statusExtra }),
+      branchCompare: () => ({ ok: true, base: 'origin/main', mergeBase: MB, head: HEAD, ahead: 2, behind: 0, added: 17, removed: 5, files: branchFiles, filesTruncated: false, ...compareExtra })
+    })
+    make()
+    await flushPromises()
+    await new Promise((r) => setTimeout(r, 350))
+    await flushPromises()
+  }
+  const branchRows = () => w.findAll('[data-test="sc-branch-row"]')
+
+  it('Committed on Branch: the files with their count, folder, +/- and status letter; a row opens base → HEAD', async () => {
+    settings.sourceControlViewMode = 'list'
+    await withBranch()
+    const section = w.find('[data-test="sc-branch-section"]')
+    expect(section.find('.sc-section-label').text()).toBe('Committed on Branch')
+    expect(section.find('[data-test="sc-branch-count"]').text()).toBe('4')
+    expect(section.find('[data-test="sc-branch-count"]').attributes('title')).toBe('4 files changed vs origin/main')
+    const a = section.find('[data-path="src/a.js"]')
+    expect(a.find('.explorer-name').text()).toBe('a.js')
+    expect(a.find('.sc-row-dir').text()).toBe('src')
+    expect([a.find('.sc-plus').text(), a.find('.sc-minus').text()]).toEqual(['+3', '-1'])
+    expect(branchRows().map((r) => r.find('.sc-status').text()).sort()).toEqual(['A', 'D', 'M', 'R'])
+    expect(w.find('[data-test="sc-empty"]').exists()).toBe(false) // nothing uncommitted, but the branch has work
+    await section.find('[data-path="src/new.js"]').trigger('click')
+    expect(w.emitted('open-diff').at(-1)[0]).toMatchObject({
+      root: ROOT,
+      rel: 'src/new.js',
+      oldRel: 'src/old.js',
+      area: 'branch',
+      base: MB,
+      commit: HEAD,
+      file: 'C:\\proj\\src\\new.js',
+      preview: true
+    })
+    // Collapsing hides the rows.
+    await section.find('[data-test="sc-section-toggle"]').trigger('click')
+    expect(branchRows().length).toBe(0)
+    await section.find('[data-test="sc-section-toggle"]').trigger('click')
+    settings.sourceControlViewMode = 'tree'
+  })
+
+  it('Committed on Branch: a tree in tree view; a filter narrows it and silences the count title', async () => {
+    settings.sourceControlViewMode = 'tree'
+    await withBranch()
+    const section = w.find('[data-test="sc-branch-section"]')
+    expect(section.find('[data-test="sc-dir"]').attributes('data-path')).toBe('src')
+    expect(branchRows().length).toBe(4)
+    await section.find('.sc-dir-toggle').trigger('click')
+    expect(branchRows().length).toBe(2)
+    await section.find('.sc-dir-toggle').trigger('click')
+    await w.find('[data-test="source-control-filter-toggle"]').trigger('click')
+    await w.find('[data-test="source-control-filter-input"]').setValue('READ')
+    expect(branchRows().map((r) => r.attributes('data-path'))).toEqual(['README.md'])
+    expect(w.find('[data-test="sc-branch-count"]').text()).toBe('1')
+    expect(w.find('[data-test="sc-branch-count"]').attributes('title')).toBeUndefined()
+  })
+
+  it('Committed on Branch: hidden without a base, on the base branch, or when the branch committed nothing', async () => {
+    await withBranch({}, { base: null })
+    expect(w.find('[data-test="sc-branch-section"]').exists()).toBe(false)
+    w.unmount()
+    await withBranch({ branch: 'main' })
+    expect(w.find('[data-test="sc-branch-section"]').exists()).toBe(false)
+    w.unmount()
+    await withBranch({}, { onBase: true })
+    expect(w.find('[data-test="sc-branch-section"]').exists()).toBe(false)
+    w.unmount()
+    await withBranch({}, { files: [] })
+    expect(w.find('[data-test="sc-branch-section"]').exists()).toBe(false)
+    expect(w.find('[data-test="sc-empty"]').exists()).toBe(true)
+  })
+
+  it('Publish Branch: a branch with commits, no upstream and nothing to commit', async () => {
+    await withBranch({ hasUpstream: false, upstream: null, head: HEAD })
+    const primary = w.find('[data-test="sc-primary"]')
+    expect(primary.text()).toContain('Publish Branch')
+    expect(primary.attributes('disabled')).toBeUndefined()
+  })
+
   it('Commits: closed at first; opened, lists the commits with ref pills; a commit shows its files; a file opens its diff', async () => {
     const hash = '1'.repeat(40)
     api({

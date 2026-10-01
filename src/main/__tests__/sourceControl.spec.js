@@ -32,7 +32,8 @@ import {
   parseHistoryLog,
   parseNameStatusZ,
   compareUrl,
-  githubRepoOf
+  githubRepoOf,
+  branchFileList
 } from '../sourceControl'
 
 // Real git in temp repos (publish, push, pull): slow on a busy Windows PC.
@@ -426,6 +427,60 @@ describe('branch compare, commits and commit files', () => {
     expect(c).toMatchObject({ ok: true, base: 'origin/main', ahead: 1, behind: 0, added: 5, removed: 1 })
     expect(c.mergeBase).toMatch(/^[0-9a-f]{40}$/)
     expect(c.reviewUrl).toBe(null) // not a GitHub remote
+  })
+
+  it('lists the files committed on the branch (merge base -> HEAD), not the uncommitted ones, and opens each one base -> HEAD', async () => {
+    g(repo, 'checkout', '-q', '-b', 'feature')
+    write('feat.txt', '1\n2\n')
+    write('a.txt', 'one\ntwo\nthree\n')
+    g(repo, 'mv', 'old name.txt', 'new name.txt')
+    g(repo, 'rm', '-q', 'dir with space/b c.txt')
+    g(repo, 'add', '-A')
+    g(repo, 'commit', '-q', '-m', 'feat')
+    write('a.txt', 'changed on disk\n') // uncommitted: not in the list
+    write('untracked.txt', 'u\n')
+    const c = await scmBranchCompare({ root: repo })
+    expect(c).toMatchObject({ ok: true, base: 'origin/main', onBase: false, filesTruncated: false })
+    expect(c.head).toBe(g(repo, 'rev-parse', 'HEAD').trim())
+    const byPath = Object.fromEntries(c.files.map((f) => [f.path, f]))
+    expect(Object.keys(byPath).sort()).toEqual(['a.txt', 'dir with space/b c.txt', 'feat.txt', 'new name.txt'])
+    expect(byPath['feat.txt']).toMatchObject({ status: 'added', added: 2, removed: 0 })
+    expect(byPath['a.txt']).toMatchObject({ status: 'modified', added: 1, removed: 0 })
+    expect(byPath['dir with space/b c.txt']).toMatchObject({ status: 'deleted', added: 0, removed: 1 })
+    expect(byPath['new name.txt']).toMatchObject({ status: 'renamed', oldPath: 'old name.txt' })
+    const v = await scmFileVersions({ root: repo, path: 'a.txt', area: 'branch', base: c.mergeBase, commit: c.head })
+    expect(v).toMatchObject({ ok: true, original: 'one\ntwo\n', modified: 'one\ntwo\nthree\n' })
+    const r = await scmFileVersions({ root: repo, path: 'new name.txt', oldPath: 'old name.txt', area: 'branch', base: c.mergeBase, commit: c.head })
+    expect(r).toMatchObject({ ok: true, original: 'rename me\n', modified: 'rename me\n' })
+    const added = await scmFileVersions({ root: repo, path: 'feat.txt', area: 'branch', base: c.mergeBase, commit: c.head })
+    expect(added).toMatchObject({ ok: true, original: '', modified: '1\n2\n' })
+    // Revisions are commit ids only.
+    expect(await scmFileVersions({ root: repo, path: 'a.txt', area: 'branch', base: '--output=x', commit: c.head })).toMatchObject({ ok: false })
+    expect(await scmFileVersions({ root: repo, path: 'a.txt', area: 'branch', base: c.mergeBase, commit: 'HEAD' })).toMatchObject({ ok: false })
+  })
+
+  it('on the base branch itself: no committed-on-branch files', async () => {
+    write('a.txt', 'local\n')
+    g(repo, 'commit', '-q', '-am', 'unpushed')
+    const c = await scmBranchCompare({ root: repo })
+    expect(c).toMatchObject({ ok: true, base: 'origin/main', onBase: true, files: [], head: null })
+  })
+
+  it('caps the committed-on-branch list and says so', () => {
+    const ns = 'M\0a.js\0A\0b.js\0D\0c.js\0'
+    const num = '1\t2\ta.js\0' + '3\t0\tb.js\0' + '-\t-\tc.js\0'
+    expect(branchFileList(ns, num)).toEqual({
+      files: [
+        { path: 'a.js', status: 'modified', added: 1, removed: 2, binary: false },
+        { path: 'b.js', status: 'added', added: 3, removed: 0, binary: false },
+        { path: 'c.js', status: 'deleted', added: null, removed: null, binary: true }
+      ],
+      truncated: false
+    })
+    const capped = branchFileList(ns, num, 2)
+    expect(capped.files.map((f) => f.path)).toEqual(['a.js', 'b.js'])
+    expect(capped.truncated).toBe(true)
+    expect(branchFileList('', '')).toEqual({ files: [], truncated: false })
   })
 
   it('no remote: nothing to compare with', async () => {

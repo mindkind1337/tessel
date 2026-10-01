@@ -289,6 +289,8 @@ function diffRequest(entry, extra = {}) {
     area: entry.area,
     status: entry.status,
     file: fullPath(entry.path),
+    // A file committed on the branch: its merge base -> HEAD's commit.
+    ...(entry.area === 'branch' ? { base: entry.base, commit: entry.commit } : {}),
     ...extra
   }
 }
@@ -434,6 +436,40 @@ const compareStats = computed(() => {
     })
   return out
 })
+
+// --- Committed on Branch (after Orca's listing/branch-section.tsx, MIT,
+// Copyright (c) 2026 Lovecast Inc.): the files the branch changed since its
+// merge base with the compare base. Not shown on the base branch itself.
+const onBaseBranch = computed(() => {
+  const c = compare.value
+  if (!c || !c.base) return false
+  if (c.onBase) return true
+  const branch = data.value && data.value.branch
+  return !!branch && c.base.slice(c.base.indexOf('/') + 1) === branch
+})
+const branchEntries = computed(() => {
+  const c = compare.value
+  if (!c || c.error || !c.base || onBaseBranch.value || !Array.isArray(c.files)) return []
+  if (!/^[0-9a-f]{7,64}$/.test(String(c.mergeBase || '')) || !/^[0-9a-f]{7,64}$/.test(String(c.head || ''))) return []
+  return c.files.map((f) => ({ ...f, area: 'branch', base: c.mergeBase, commit: c.head }))
+})
+const branchSection = computed(() => {
+  const q = normalizedFilter.value
+  const items = q ? branchEntries.value.filter((e) => e.path.toLowerCase().includes(q)) : branchEntries.value
+  return { id: 'branch', area: 'branch', items }
+})
+const branchRows = computed(() =>
+  viewMode.value === 'tree' ? sectionTreeRows(branchSection.value, collapsedDirs.value) : sectionListRows(branchSection.value)
+)
+// Orca's count title: a filter changes what the number means, so it goes silent then.
+const branchCountTitle = computed(() => {
+  const n = branchSection.value.items.length
+  if (!baseLabel.value || n !== branchEntries.value.length) return undefined
+  return n === 1
+    ? t('changes.committed.countOne', '1 file changed vs {{ref}}', { ref: baseLabel.value })
+    : t('changes.committed.count', '{{count}} files changed vs {{ref}}', { count: n, ref: baseLabel.value })
+})
+const branchTruncatedText = () => t('changes.committed.truncated', 'Only the first {{count}} files are listed.', { count: branchEntries.value.length })
 function openReviewPage() {
   const url = compare.value && compare.value.reviewUrl
   if (url && window.shellApi && window.shellApi.openExternal) window.shellApi.openExternal(url)
@@ -1464,11 +1500,92 @@ function draftStore() {
           </template>
         </div>
 
-        <div v-if="loaded && data && data.repo && !hasUncommittedEntries && !normalizedFilter" class="sc-empty" data-test="sc-empty">
+        <!-- Committed on Branch (listing/branch-section.tsx): read-only, a row opens base → HEAD. -->
+        <div v-if="branchSection.items.length" class="sc-section" data-section="branch" data-test="sc-branch-section">
+          <div class="sc-section-header">
+            <div class="sc-section-row">
+              <button type="button" class="sc-section-toggle" :aria-expanded="!collapsed.has('branch')" data-test="sc-section-toggle" @click="toggleSection('branch')">
+                <LucideIcon name="chevronDown" :size="14" :class="{ 'sc-rot': collapsed.has('branch') }" />
+                <span class="sc-section-label">{{ t('changes.committed.title', 'Committed on Branch') }}</span>
+                <span class="sc-section-count" :title="branchCountTitle" data-test="sc-branch-count">{{ branchSection.items.length }}</span>
+              </button>
+              <span class="sc-section-actions">
+                <button
+                  type="button"
+                  class="sc-view-all"
+                  :title="t('changes.viewAll.hint', 'Open the diff of every file of this section')"
+                  data-test="sc-view-all"
+                  @click.stop="viewAll({ id: 'branch', items: branchEntries })"
+                >
+                  {{ t('changes.viewAll.label', 'View all') }}
+                </button>
+              </span>
+            </div>
+          </div>
+          <template v-if="!collapsed.has('branch')">
+            <template v-for="node in branchRows" :key="node.key">
+              <div
+                v-if="node.type === 'directory'"
+                class="sc-dir"
+                :style="dirPad(node)"
+                :data-path="node.path"
+                data-test="sc-dir"
+                data-scm-row
+                tabindex="-1"
+                role="treeitem"
+                :aria-expanded="!collapsedDirs.has(node.key)"
+                @keydown="onRowKeydown($event, node)"
+              >
+                <button type="button" class="sc-dir-toggle" tabindex="-1" :title="node.path" @click="toggleDir(node.key)">
+                  <LucideIcon name="chevronDown" :size="12" :class="{ 'sc-rot': collapsedDirs.has(node.key) }" />
+                  <component :is="collapsedDirs.has(node.key) ? Folder : FolderOpen" :size="12" class="sc-dir-icon" />
+                  <span class="sc-dir-name">{{ node.name }}</span>
+                </button>
+                <span class="sc-dir-count" data-test="sc-dir-count">{{ node.fileCount }}</span>
+              </div>
+              <div
+                v-else
+                class="sc-row"
+                :class="{ current: openKey === rowKey(node.entry) }"
+                :style="filePad(node)"
+                :data-path="node.entry.path"
+                data-area="branch"
+                :title="t('changes.row.title', '{{path}} ({{status}})', { path: node.entry.path, status: statusTitle(node.entry.status) })"
+                data-test="sc-branch-row"
+                data-scm-row
+                tabindex="-1"
+                @click="openDiff(node.entry)"
+                @dblclick="openDiff(node.entry, true)"
+                @keydown="onRowKeydown($event, node)"
+              >
+                <component :is="getFileTypeIcon(node.entry.path)" :size="14" class="sc-file-icon" :style="{ color: STATUS_COLORS[node.entry.status] }" />
+                <div class="sc-row-text">
+                  <span class="sc-row-line">
+                    <span class="sc-row-name explorer-name">{{ fileName(node.entry.path) }}</span>
+                    <span v-if="viewMode === 'list' && dirName(node.entry.path)" class="sc-row-dir explorer-hit-dir">{{ dirName(node.entry.path) }}</span>
+                  </span>
+                </div>
+                <span v-if="node.entry.added > 0 || node.entry.removed > 0" class="sc-counts">
+                  <span v-if="node.entry.added > 0" class="sc-plus">+{{ node.entry.added }}</span>
+                  <span v-if="node.entry.added > 0 && node.entry.removed > 0">{{ ' ' }}</span>
+                  <span v-if="node.entry.removed > 0" class="sc-minus">-{{ node.entry.removed }}</span>
+                </span>
+                <span class="sc-status" :style="{ color: STATUS_COLORS[node.entry.status] }">{{ STATUS_LABELS[node.entry.status] }}</span>
+              </div>
+            </template>
+            <p v-if="compare && compare.filesTruncated" class="sc-notice" data-test="sc-branch-truncated" v-text="branchTruncatedText()"></p>
+          </template>
+        </div>
+
+        <div
+          v-if="loaded && data && data.repo && !hasUncommittedEntries && !branchEntries.length && !normalizedFilter"
+          class="sc-empty"
+          data-test="sc-empty"
+        >
           <div class="sc-empty-heading">{{ t('changes.empty.title', 'No changes') }}</div>
           <div class="sc-empty-text">{{ t('changes.empty.text', 'This workspace is clean: everything is committed.') }}</div>
         </div>
-        <div v-if="normalizedFilter && !filtered.length" class="sc-empty">
+        <div v-if="normalizedFilter && !filtered.length && !branchSection.items.length" class="sc-empty">
           <div class="sc-empty-heading">{{ t('changes.filter.noMatchTitle', 'No matching files') }}</div>
           <div class="sc-empty-text" v-text="noMatchText()"></div>
         </div>

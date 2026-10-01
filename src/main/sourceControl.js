@@ -403,6 +403,22 @@ export function parseNameStatusZ(out) {
   return list
 }
 
+// The files a branch committed since its base ("Committed on Branch", after
+// Orca's main/git/source-control/branch-change-entries.ts, MIT, Copyright (c)
+// 2026 Lovecast Inc.): `git diff -z --name-status` and `--numstat` of
+// mergeBase..HEAD -> { files: [{ path, oldPath?, status, added, removed }], truncated }.
+// Capped so a huge branch cannot flood the renderer.
+export const BRANCH_FILES_MAX = 5000
+export function branchFileList(nameStatusOut, numstatOut, max = BRANCH_FILES_MAX) {
+  const counts = parseNumstatZ(numstatOut)
+  const all = parseNameStatusZ(nameStatusOut)
+  const files = all.slice(0, max).map((e) => {
+    const c = counts[e.path]
+    return c ? { ...e, added: c.added, removed: c.removed, binary: c.binary } : e
+  })
+  return { files, truncated: all.length > files.length }
+}
+
 // --- The staged diff, for a generated commit message --------------------------------
 export const STAGED_DIFF_BUDGET = 200000
 
@@ -696,7 +712,8 @@ export function createScm(b) {
 
   const compareInFlight = new Map() // top -> Promise
 
-  // -> { ok, base, mergeBase, ahead, behind, added, removed, reviewUrl }
+  // -> { ok, base, mergeBase, ahead, behind, added, removed, reviewUrl,
+  //      onBase, head, files, filesTruncated }
   //  | { ok: true, base: null } (nothing to compare with) | { ok: false, error }
   async function scmBranchCompare({ root } = {}) {
     const r = await repoOf(root)
@@ -721,6 +738,19 @@ export function createScm(b) {
       git(top, ['status', '--porcelain=v2', '-z', '--untracked-files=all'], { timeout: 20000 }),
       git(top, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'])
     ])
+    // The files committed on the branch (not on its base branch itself: there
+    // they would be the unpushed commits, which Commits already lists).
+    const onBase = !!branch && base.slice(base.indexOf('/') + 1) === branch
+    const headRes = onBase ? null : await git(top, ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}'])
+    const head = headRes && headRes.ok ? headRes.stdout.trim() : ''
+    let list = { files: [], truncated: false }
+    if (isCommitId(head)) {
+      const [ns, num] = await Promise.all([
+        git(top, ['diff', '-z', '--name-status', '-M', '--no-ext-diff', mergeBase, head, '--'], { timeout: BRANCH_TOTAL_TIMEOUT }),
+        git(top, ['diff', '-z', '--numstat', '-M', '--no-ext-diff', '--no-textconv', mergeBase, head, '--'], { timeout: BRANCH_TOTAL_TIMEOUT })
+      ])
+      if (ns.ok) list = branchFileList(ns.stdout, num.ok ? num.stdout : '')
+    }
     const behindAhead = await git(top, ['rev-list', '--left-right', '--count', `${base}...HEAD`])
     const m = /^(\d+)\s+(\d+)/.exec(behindAhead.ok ? behindAhead.stdout.trim() : '')
     let added = null
@@ -748,7 +778,11 @@ export function createScm(b) {
       behind: m ? Number(m[1]) : 0,
       added,
       removed,
-      reviewUrl: url.ok ? compareUrl({ remoteUrl: url.stdout.trim(), base, upstream }) : null
+      reviewUrl: url.ok ? compareUrl({ remoteUrl: url.stdout.trim(), base, upstream }) : null,
+      onBase,
+      head: isCommitId(head) ? head : null,
+      files: list.files,
+      filesTruncated: list.truncated
     }
   }
 
@@ -835,7 +869,7 @@ export function createScm(b) {
   // area 'staged': HEAD -> index (read-only); 'unstaged': index -> the file on
   // disk; 'untracked': nothing -> the file on disk. oldPath: a staged rename's
   // old name. -> { ok, original, modified, binary, exists, rel, full }
-  async function scmFileVersions({ root, path, area, oldPath, commit } = {}) {
+  async function scmFileVersions({ root, path, area, oldPath, commit, base } = {}) {
     const r = await repoOf(root)
     if (r.error) return { ok: false, error: r.error }
     const rel = relIn(r.top, path)
@@ -843,9 +877,10 @@ export function createScm(b) {
     const oldRel = oldPath ? relIn(r.top, oldPath) : null
     if (oldPath && !oldRel) return { ok: false, error: t('main.scm.notRepoFile', 'Not a file of this repository.') }
     // A file of a commit (the Commits section): its first parent -> the commit, read-only.
-    if (area === 'commit') {
-      if (!isCommitId(commit)) return { ok: false, error: t('main.scm.badCommit', 'Unknown commit.') }
-      const before = await show(r.top, `${commit}^:${oldRel || rel}`)
+    // A file committed on the branch (area 'branch'): the merge base -> HEAD's commit.
+    if (area === 'commit' || area === 'branch') {
+      if (!isCommitId(commit) || (area === 'branch' && !isCommitId(base))) return { ok: false, error: t('main.scm.badCommit', 'Unknown commit.') }
+      const before = await show(r.top, `${area === 'branch' ? base : `${commit}^`}:${oldRel || rel}`)
       const after = await show(r.top, `${commit}:${rel}`)
       const o = clean(before.missing ? { text: '' } : before)
       const m = clean(after.missing ? { text: '' } : after)
