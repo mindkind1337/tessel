@@ -46,23 +46,75 @@ export function claudeModelFromText(text) {
 // { model, effort } of the latest answer: Claude Code writes the effort the
 // turn ran with next to each answer (perTurnEffort, else effort), so a
 // session-only /model or /effort pick shows too. effort: null when absent.
+// A /model or /effort run in the session after that answer (its command line
+// and Claude Code's "Set model to …" / "Set effort level to …" after it) is
+// newer: that model or effort, from then (at: when it ran).
 export function claudeTurnFromText(text) {
   const lines = String(text || '').split('\n')
+  // Newest first: the command's result line comes before its command line.
+  let result = null // { kind: 'model' | 'effort', family? } | null: the line after this one
+  let picked = null // { model?, effort?, at }
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i]
-    if (!line.includes('"model"')) continue
+    const isCommand = line.includes('<local-command-stdout>') || line.includes('<command-name>')
+    if (!line.includes('"model"') && !isCommand) {
+      if (line.trim()) result = null
+      continue
+    }
     try {
       const o = JSON.parse(line)
+      if (isCommand && o.type === 'user') {
+        const command = claudeCommandLine(o, result)
+        result = command.result
+        if (command.model && !(picked && picked.model)) picked = { ...picked, model: command.model, at: (picked && picked.at) || command.at }
+        if (command.effort && !(picked && picked.effort)) picked = { ...picked, effort: command.effort, at: (picked && picked.at) || command.at }
+        continue
+      }
+      result = null
       const m = o && o.message && o.message.model
       if (o.type !== 'assistant' || o.isSidechain === true || typeof m !== 'string' || !m || m.startsWith('<')) continue
       const e = [o.perTurnEffort, o.effort].find((x) => CLAUDE_EFFORTS.includes(x))
       const at = Date.parse(o.timestamp)
+      if (picked) return pickedTurn(picked, m, e || null)
       return { model: m, effort: e || null, ...(Number.isFinite(at) ? { at } : {}) }
     } catch {
       /* a line cut by the tail read */
     }
   }
-  return null
+  return picked ? pickedTurn(picked, null, null) : null
+}
+// A /model with no effort of its own: Haiku has none; another keeps it.
+function pickedTurn(picked, model, effort) {
+  const next = picked.model || model
+  if (!next) return null
+  const kept = picked.effort || (picked.model && /haiku/i.test(picked.model) ? null : effort)
+  return { model: next, effort: kept || null, ...(Number.isFinite(picked.at) ? { at: picked.at } : {}) }
+}
+const CLAUDE_FAMILIES = /^(opus|sonnet|haiku|fable)\b/i
+// One user line of a slash command Claude Code ran: its result
+// (<local-command-stdout>Set model to `Haiku 4.5`…) or its command
+// (<command-name>/model</command-name>…<command-args>haiku</command-args>).
+// after: what the next line said ({ kind, family? } | null).
+// -> { result, model?, effort?, at }
+function claudeCommandLine(o, after) {
+  const content = o.message && o.message.content
+  const body = typeof content === 'string' ? content : Array.isArray(content) ? content.map((b) => (b && b.type === 'text' ? b.text : '')).join('\n') : ''
+  const at = Date.parse(o.timestamp)
+  const stdout = /<local-command-stdout>([\s\S]{0,400})/.exec(body)
+  if (stdout) {
+    const m = /^\s*Set model to\s+`?([^`\n]{1,80})/.exec(stdout[1])
+    if (m) return { result: { kind: 'model', family: (CLAUDE_FAMILIES.exec(m[1].trim()) || [])[1] } }
+    return { result: /^\s*Set effort level to\s+(low|medium|high|xhigh|max)\b/i.test(stdout[1]) ? { kind: 'effort' } : null }
+  }
+  const name = (/<command-name>\/?([\w:.-]{1,40})<\/command-name>/.exec(body) || [])[1]
+  const args = ((/<command-args>([^<]{0,100})<\/command-args>/.exec(body) || [])[1] || '').trim()
+  if (name === 'model' && after && after.kind === 'model') {
+    // A bare /model (its picker): the family Claude Code printed.
+    const model = /^[\w.[\]-]{1,80}$/.test(args) ? args : after.family ? after.family.toLowerCase() : null
+    return { result: null, model, at }
+  }
+  if (name === 'effort' && after && after.kind === 'effort' && CLAUDE_EFFORTS.includes(args.toLowerCase())) return { result: null, effort: args.toLowerCase(), at }
+  return { result: null }
 }
 
 // The model (and reasoning effort) of the latest turn in a Codex rollout.

@@ -891,6 +891,9 @@ export function publicAgentState(state, now = Date.now()) {
     ...lead,
     // Idle, but its own background work still runs: "monitoring".
     ...(background ? { monitoring: true, backgroundTasks: background } : {}),
+    // The last list a lead Stop gave (ids only, and when): the chat view's
+    // background-task dock drops what the agent no longer lists.
+    ...(isTime(state.backgroundAt) ? { backgroundIds: [...backgroundOf(state)], backgroundListedAt: state.backgroundAt } : {}),
     children: state.children.map((child) => ({
       agentId: child.agentId,
       sessionId: child.sessionId,

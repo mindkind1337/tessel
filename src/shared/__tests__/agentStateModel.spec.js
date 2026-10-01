@@ -930,6 +930,16 @@ describe('background work after the turn (monitoring)', () => {
     expect(f.send('ScreenReady', later + 12)).not.toHaveProperty('monitoring')
   })
 
+  it('the last listing (ids and when) is public, for the chat view background dock', () => {
+    const f = started()
+    expect(publicAgentState(f.state, 150)).not.toHaveProperty('backgroundIds')
+    f.send('Stop', 200, { background: ['shell-1'] })
+    expect(publicAgentState(f.state, 201)).toMatchObject({ backgroundIds: ['shell-1'], backgroundListedAt: 200 })
+    f.send('UserPromptSubmit', 300)
+    f.send('Stop', 301, { background: [] })
+    expect(publicAgentState(f.state, 302)).toMatchObject({ backgroundIds: [], backgroundListedAt: 301 })
+  })
+
   it('a Stop nobody watches settles into monitoring too', () => {
     const f = started()
     f.send('Stop', 200, { background: ['shell-1', 'agent-1'] })
