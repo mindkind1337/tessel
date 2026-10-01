@@ -110,3 +110,88 @@ describe('NativeChatTranscriptView', () => {
     expect(document.querySelector('[data-test="transcript-view-error"]')).not.toBeNull()
   })
 })
+
+describe('NativeChatTranscriptView, a terminal agent chat view (interactive)', () => {
+  const SESSION = '22222222-3333-4444-8555-666666666666'
+  async function mountChat(props = {}) {
+    await mountView({ agent: 'claude', sessionId: SESSION, agentName: 'Claude Code', interactive: true, paneId: 'pane-3', accountId: 'acc-1', ...props })
+  }
+  const composer = () => wrapper.findComponent({ name: 'NativeChatComposer' })
+
+  it('asks by pane and account (never a folder), with a composer', async () => {
+    await mountChat()
+    expect(api.open).toHaveBeenCalledWith({ agent: 'claude', sessionId: SESSION, paneId: 'pane-3', accountId: 'acc-1' })
+    expect(document.querySelector('[data-test="chat-composer"]')).not.toBeNull()
+    expect(text()).not.toContain('Read only')
+    expect(text()).toContain('Show terminal')
+  })
+
+  it('no conversation yet: waits for it without asking for a file', async () => {
+    await mountChat({ sessionId: '' })
+    expect(api.open).not.toHaveBeenCalled()
+    expect(text()).toContain('Waiting for the conversation')
+    await wrapper.setProps({ sessionId: SESSION })
+    await flushPromises()
+    expect(api.open).toHaveBeenCalledTimes(1)
+    expect(text()).toContain('List the files')
+  })
+
+  it('a message goes through the given delivery, shows as sent, then once from the file', async () => {
+    const sendMessage = vi.fn()
+    await mountChat({ sendMessage })
+    expect(await composer().props('send')('Run the tests')).toEqual({ ok: true })
+    expect(sendMessage).toHaveBeenCalledWith('Run the tests', expect.objectContaining({ onDelivered: expect.any(Function), onFailed: expect.any(Function) }))
+    await flushPromises()
+    expect(text()).toContain('Run the tests')
+    for (const cb of listeners)
+      cb({ viewId: 'tv-1', ok: true, events: [...conversation, { type: 'user', id: 'hist-u9', text: 'Run the tests', status: 'accepted', at: Date.now() }] })
+    await flushPromises()
+    expect(text().split('Run the tests').length - 1).toBe(1)
+    // Failed delivery: no longer shown as sent.
+    await composer().props('send')('Lost one')
+    sendMessage.mock.calls.at(-1)[1].onFailed()
+    await flushPromises()
+    expect(text()).not.toContain('Lost one')
+  })
+
+  it('nothing is sent while it cannot be (asleep)', async () => {
+    const sendMessage = vi.fn()
+    await mountChat({ sendMessage, disabledReason: 'Asleep' })
+    expect(await composer().props('send')('hi')).toMatchObject({ ok: false })
+    expect(sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('Stop sends Escape, only while it works', async () => {
+    const writeKeys = vi.fn()
+    await mountChat({ writeKeys })
+    composer().vm.$emit('interrupt')
+    expect(writeKeys).not.toHaveBeenCalled()
+    await wrapper.setProps({ working: true })
+    composer().vm.$emit('interrupt')
+    expect(writeKeys).toHaveBeenCalledWith('\x1b')
+  })
+
+  it('an approval: Allow types 1, Deny Escape', async () => {
+    const writeKeys = vi.fn()
+    await mountChat({ writeKeys, waiting: { approval: true } })
+    document.querySelector('[data-test="terminal-chat-allow"]').click()
+    document.querySelector('[data-test="terminal-chat-deny"]').click()
+    expect(writeKeys.mock.calls.map((c) => c[0])).toEqual(['1', '\x1b'])
+  })
+
+  it("a question from the file: answered with the selector's keys", async () => {
+    const writeKeys = vi.fn()
+    const question = { questions: [{ question: 'Which file?', options: [{ label: 'a.js' }, { label: 'b.js' }] }] }
+    api.open.mockResolvedValueOnce({
+      ok: true,
+      viewId: 'tv-1',
+      events: [...conversation.slice(0, 2), { type: 'tool', id: 'ask-1', name: 'AskUserQuestion', input: question, status: 'running', at: 2500 }]
+    })
+    await mountChat({ writeKeys, waiting: { approval: true, input: true } })
+    expect(document.querySelector('[data-test="terminal-chat-question"]')).not.toBeNull()
+    expect(text()).toContain('Which file?')
+    wrapper.findComponent({ name: 'NativeChatQuestionCard' }).vm.$emit('answer', [{ indices: [1], other: '' }])
+    await vi.advanceTimersByTimeAsync(10)
+    expect(writeKeys).toHaveBeenCalledWith('2')
+  })
+})
