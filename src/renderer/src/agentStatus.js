@@ -86,6 +86,16 @@ export function applyAgentStates(snapshot) {
 }
 
 const FOOTER = /\besc(?:ape)?\s+(?:to\s+)?(?:interrupt|cancel)\b/i
+const RUNNING = /\besc(?:ape)?\s+(?:to\s+)?interrupt\b/i
+// Claude Code's working line, its spinner over its input box. Since 2.1.2xx
+// it no longer says "esc to interrupt": a spinner glyph (· ✢ ✳ ✶ ✻ ✽, "*"
+// on some terminals), its verb with "…", then maybe "(23s · ↓ 1.2k tokens ·
+// thinking)", cut where a narrow pane wraps it. Its finished form ("✻ Worked
+// for 23s") has no "…": not running.
+const WORKING =
+  /^\s*[·✢✳✶✻✽*]\s+[A-Za-z][^…()]{0,60}…(?:\s*\((?=[^)]*(?:\d+[hms]\b|\btokens?\b|\bthinking\b|\bthought for\b|\btool\b|\binterrupt\b))[^)]*\)?)?\s*$/
+const workingLine = (text) => String(text || '').split(/\r?\n/).some((line) => WORKING.test(line))
+const INTERRUPTED = /\bInterrupted\b\s*(?:by user|·\s*What should Claude do instead)/i
 const RULE = /^[─━]{8,}$/
 const rowText = (buffer, y) => (y >= 0 ? buffer.getLine(y)?.translateToString(true) || '' : '')
 // A placeholder or hint: drawn dim, or in a colour (Claude Code draws its dim
@@ -140,8 +150,15 @@ export function agentScreenObservation(term, provider, screen) {
     .split(/\r?\n/)
     .slice(-8)
     .join('\n')
+  // Claude Code's spinner can sit above a todo list over its input box.
+  const near = term && provider === 'claude' ? aboveCursor(term, 14) : ''
+  const spinner = provider === 'claude' && (workingLine(footer) || workingLine(near))
   const busy =
-    FOOTER.test(footer) || (!!term && provider === 'claude' && FOOTER.test(aboveCursor(term)))
+    spinner || FOOTER.test(footer) || (!!term && provider === 'claude' && FOOTER.test(aboveCursor(term)))
+  // Running, not an approval's "esc to cancel" (the monitor clears an
+  // answered approval on it).
+  const running =
+    spinner || RUNNING.test(footer) || (!!term && provider === 'claude' && RUNNING.test(aboveCursor(term)))
   let ready = false
   let waiting = false
   const prompt = provider === 'claude' ? '❯' : provider === 'codex' ? '›' : null
@@ -171,12 +188,64 @@ export function agentScreenObservation(term, provider, screen) {
   const above = String(screen || '')
     .split(/\r?\n/)
     .slice(-16)
-    .join('\n')
+  const interruption = provider === 'claude' && waiting ? lastInterruption(above) : null
   const interrupted =
     waiting &&
-    ((provider === 'claude' && /\bInterrupted\b\s*(?:by user|·\s*What should Claude do instead)/i.test(above)) ||
-      (provider === 'codex' && /\bConversation interrupted\b/i.test(above)))
-  return { screen, approval, limit, busy, ready, waiting, interrupted }
+    (!!interruption || (provider === 'codex' && /\bConversation interrupted\b/i.test(above.join('\n'))))
+  return {
+    screen,
+    approval,
+    limit,
+    busy,
+    running,
+    ready,
+    waiting,
+    interrupted,
+    // Which "Interrupted" line it is (the monitor reports each one once per
+    // turn), and what the input line holds now (deliver.js: an input Enter
+    // emptied is a message taken). null: not known.
+    interruption,
+    input: inputState(term, provider)
+  }
+}
+
+// Claude Code's "Interrupted" line, only when it is the last thing above its
+// input box (blank rows and the box's rules apart). An older one, from a
+// turn before the latest prompt, has that prompt, its tool calls and its
+// spinner under it: it says nothing of the turn running now. -> that line
+// with the one above it (to tell one interruption from the next), or null.
+function lastInterruption(lines) {
+  let input = -1
+  for (let i = lines.length - 1; i >= 0 && input < 0; i--) if (/^\s*[❯>]/.test(lines[i])) input = i
+  for (let i = input - 1; i >= 0; i--) {
+    const text = lines[i].trim()
+    if (!text || RULE.test(text)) continue
+    return INTERRUPTED.test(text) ? `${i > 0 ? lines[i - 1].trim() : ''}\n${text}` : null
+  }
+  return null
+}
+
+// 'empty' | 'draft' | null: Claude Code's input at the cursor (a placeholder
+// counts as empty), Codex's "›" line, whatever the agent is doing.
+function inputState(term, provider) {
+  if (!term) return null
+  try {
+    if (provider === 'claude') {
+      const input = claudeInput(term)
+      return input ? (input.empty ? 'empty' : 'draft') : null
+    }
+    if (provider === 'codex') {
+      if (promptShowsPlaceholder(term, '›')) return 'empty'
+      const buffer = term.buffer.active
+      const text = buffer.getLine(buffer.baseY + buffer.cursorY)?.translateToString(true) || ''
+      const at = text.indexOf('›')
+      if (at < 0 || text.slice(0, at).trim()) return null
+      return text.slice(at + 1).trim() ? 'draft' : 'empty'
+    }
+  } catch {
+    // A terminal being torn down: not known.
+  }
+  return null
 }
 
 // Shared by TerminalPane and clock-driven tests. Hook state owns the result;
@@ -218,6 +287,22 @@ export function createAgentActivityMonitor({
       // An unavailable observer must never break terminal rendering/input.
     }
   }
+  // The hooks win while a turn they opened runs (UserPromptSubmit,
+  // PreToolUse, no Stop yet): an "Interrupted" line this pane already saw
+  // before that turn began is the old turn's, still in view, and never ends
+  // the new one.
+  let seenInterruption = null // { key, at }
+  function freshInterruption(node, observation) {
+    if (!observation.interrupted) return false
+    const key = observation.interruption
+    if (!key) return true
+    const state = getAgentState(node.id, node.agentLaunchToken)
+    const hookTurn =
+      !!state?.hookSeen && state.source === 'hook' && ['working', 'approval'].includes(state.state)
+    if (seenInterruption?.key === key) return !(hookTurn && state.since > seenInterruption.at)
+    seenInterruption = { key, at: now() }
+    return true
+  }
   function screenCheck() {
     if (disposed) return
     const node = getNode()
@@ -250,13 +335,15 @@ export function createAgentActivityMonitor({
           approvals[node.id] || getAgentState(node.id, node.agentLaunchToken)?.state === 'approval'
         onApproval(false)
         if (hadApproval) send('ScreenClearApproval')
-        send(observation.interrupted ? 'ScreenInterrupted' : 'ScreenReady')
+        send(freshInterruption(node, observation) ? 'ScreenInterrupted' : 'ScreenReady')
       } else if (observation.busy) {
         // Working again ("esc to interrupt", never an approval's "esc to
         // cancel") with no approval on screen: the approval was answered.
         const hadApproval =
           approvals[node.id] || getAgentState(node.id, node.agentLaunchToken)?.state === 'approval'
-        const running = /\besc(?:ape)?\s+(?:to\s+)?interrupt\b/i.test(String(observation.screen || '').split(/\r?\n/).slice(-8).join('\n'))
+        const running =
+          observation.running ??
+          RUNNING.test(String(observation.screen || '').split(/\r?\n/).slice(-8).join('\n'))
         if (hadApproval && running) {
           onApproval(false)
           send('ScreenClearApproval')
@@ -399,6 +486,18 @@ export function clearAgentStatus(id) {
   delete approvals[id]
   delete monitoring[id]
   delete agentStates[id]
+}
+
+// Its own hooks show it took a message whose Enter was pressed at `at`
+// (deliver.js): a turn they opened since (UserPromptSubmit: working; a
+// question, AskUserQuestion: approval) or a turn that ended since (a short
+// one, never seen busy on screen). Not for a message typed while it worked.
+export function agentTookMessage(id, launchToken, at) {
+  const state = getAgentState(id, launchToken)
+  if (!state || !state.hookSeen || state.stale || state.confirmed === false || !Number.isFinite(at)) return false
+  if (Number.isFinite(state.turnCompletedAt) && state.turnCompletedAt >= at) return true
+  if (!Number.isFinite(state.since) || state.since < at) return false
+  return state.state === 'approval' || (state.state === 'working' && state.source === 'hook')
 }
 
 // When this pane's agent ended its turn, by its own hooks (its published
