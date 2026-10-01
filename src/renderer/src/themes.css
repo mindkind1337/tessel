@@ -26,7 +26,8 @@
 }
 
 :root[data-theme='warp'] .pane.active::after {
-  box-shadow: inset 0 1px 0 var(--ui-accent);
+  /* A whole frame (a top line alone was hard to see). */
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ui-accent) 80%, transparent);
 }
 
 :root[data-theme='warp'] .pane.broadcast-member.active::after {
