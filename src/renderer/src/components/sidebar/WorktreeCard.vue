@@ -8,7 +8,7 @@
 // Its details (title, branch, status, folder, live ports) show in Orca's
 // WorktreeCardDetailsHover card instead of native tooltips.
 import { computed, useId } from 'vue'
-import { Bell, ChevronDown, Folder, Plug, Server } from 'lucide-vue-next'
+import { ChevronDown, Folder, Plug, Server } from 'lucide-vue-next'
 import BrandIcon from '../BrandIcon.vue'
 import AgentStateDot from './AgentStateDot.vue'
 import CompactAgentRow from './CompactAgentRow.vue'
@@ -157,29 +157,11 @@ function onCardClick(e) {
       @contextmenu.prevent.stop="emit('context', card, $event)"
     >
       <div class="wtc-parent" :class="{ center: titleOnly }" data-worktree-card-hover-trigger="" v-on="cardHover.triggerListeners">
-        <!-- Status lane: status glyph; hover shows the bell (mark read/unread). -->
+        <!-- Status lane: the status glyph (no read/unread bell). -->
         <div class="wtc-status-slot">
-          <button
-            type="button"
-            class="wtc-unread"
-            :class="{ unread: card.isUnread }"
-            :aria-label="card.isUnread ? t('sidebar.card.markRead', 'Mark as read') : t('sidebar.card.markUnread', 'Mark as unread')"
-            :aria-description="unreadTooltip"
-            @click.stop="emit('toggle-read', card)"
-          >
-            <svg v-if="card.isUnread" class="wtc-filled-bell" viewBox="0 0 24 24" aria-hidden="true">
-              <path
-                fill="currentColor"
-                fill-rule="evenodd"
-                clip-rule="evenodd"
-                d="M5.25 9A6.75 6.75 0 0 1 12 2.25 6.75 6.75 0 0 1 18.75 9v3.75c0 .526.214 1.03.594 1.407l.53.532a.75.75 0 0 1-.53 1.28H4.656a.75.75 0 0 1-.53-1.28l.53-.532A1.989 1.989 0 0 0 5.25 12.75V9Zm6.75 12a3 3 0 0 0 2.996-2.825.75.75 0 0 0-.748-.8h-4.5a.75.75 0 0 0-.748.8A3 3 0 0 0 12 21Z"
-              />
-            </svg>
-            <template v-else>
-              <AgentStateDot :state="statusGlyph" variant="status" title="" class="wtc-status-glyph" />
-              <Bell class="wtc-bell-hover" :size="12" aria-hidden="true" />
-            </template>
-          </button>
+          <span class="wtc-status-lane" aria-hidden="true">
+            <AgentStateDot :state="statusGlyph" variant="status" title="" class="wtc-status-glyph" />
+          </span>
           <span class="sr-only">{{ statusLabel }}</span>
         </div>
 

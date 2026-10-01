@@ -8891,56 +8891,12 @@ button.act-stat:hover,
   padding-top: 0;
 }
 
-.osb .wtc-unread {
-  position: relative;
+.osb .wtc-status-lane {
   display: flex;
   width: 16px;
   height: 16px;
   align-items: center;
   justify-content: center;
-  border-radius: 4px;
-  cursor: pointer;
-  transition: all 0.15s;
-}
-
-.osb .wtc-unread:hover {
-  background: color-mix(in srgb, var(--orca-accent) 80%, transparent);
-}
-
-.wtc-unread:active {
-  transform: scale(0.95);
-}
-
-.wtc-unread:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 1px var(--wts-ring);
-}
-
-.wtc-status-glyph {
-  transition: opacity 0.15s;
-}
-
-.wtc-bell-hover {
-  position: absolute;
-  color: color-mix(in srgb, var(--wts-muted) 40%, transparent);
-  opacity: 0;
-  transition: opacity 0.15s;
-}
-
-.wtc-unread:hover .wtc-status-glyph,
-.wtc-unread:focus-visible .wtc-status-glyph {
-  opacity: 0;
-}
-
-.wtc-unread:hover .wtc-bell-hover,
-.wtc-unread:focus-visible .wtc-bell-hover {
-  opacity: 1;
-}
-
-.wtc-filled-bell {
-  width: 13px;
-  height: 13px;
-  color: var(--orca-amber);
 }
 
 .wtc-content {

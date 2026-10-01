@@ -85,8 +85,9 @@ describe('left sidebar', () => {
     expect(cards[1].attributes('data-worktree-card-active')).toBe('primary')
     expect(cards[0].attributes('data-worktree-card-active')).toBeUndefined()
     expect(w.find('[data-focused-agent-pane="true"]').attributes('data-pane-id')).toBe('c')
-    // Needs you: the question glyph and the unread bell.
-    expect(cards[1].find('.wtc-filled-bell').exists()).toBe(true)
+    // Needs you: its title in bold; no read/unread bell.
+    expect(cards[1].find('.wtc-filled-bell').exists()).toBe(false)
+    expect(cards[1].find('.wtc-status-lane').exists()).toBe(true)
     expect(cards[1].find('.wtc-title').classes()).toContain('unread')
     w.unmount()
   })
@@ -194,7 +195,7 @@ describe('left sidebar', () => {
     w.unmount()
   })
 
-  it('a workspace card menu: copy path, mark read, delete a task copy; the primary one removes the project', async () => {
+  it('a workspace card menu: copy path, delete a task copy; the primary one removes the project', async () => {
     const w = mountSidebar()
     await w.findAll('.wtc-surface')[1].trigger('contextmenu', { clientX: 20, clientY: 30 })
     const items = () => [...document.querySelectorAll('.orca-menu [data-orca-menu-item]')]
@@ -202,7 +203,6 @@ describe('left sidebar', () => {
       'Open in File Explorer',
       'Copy Path',
       'Copy Worktree Name',
-      'Mark Read',
       'Review Changes…',
       'Sleep',
       'Delete'

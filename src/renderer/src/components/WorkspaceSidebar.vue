@@ -11,7 +11,6 @@ import { ref, computed, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import {
   Activity,
   Bell,
-  BellOff,
   ChevronDown,
   Copy,
   Ellipsis,
@@ -665,13 +664,6 @@ function cardMenuItems(card) {
     onSelect: () => emit('copy', card.branch || card.title, 'name')
   })
   items.push({ type: 'separator' })
-  items.push({
-    type: 'item',
-    icon: card.isUnread ? BellOff : Bell,
-    label: card.isUnread ? t('sidebar.card.menuMarkRead', 'Mark Read') : t('sidebar.card.menuMarkUnread', 'Mark Unread'),
-    disabled: !card.panes.length,
-    onSelect: () => toggleRead(card)
-  })
   if (card.taskId) {
     items.push({ type: 'item', icon: GitCompare, label: t('sidebar.card.review', 'Review Changes…'), onSelect: () => emit('review-task', card.taskId) })
   }
