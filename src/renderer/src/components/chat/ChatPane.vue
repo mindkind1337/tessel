@@ -199,6 +199,10 @@ async function refreshEffort() {
     settledEffort.value = typeof effort === 'string' && effort ? effort : null
     // The composer's effort picker shows it too (not saved with the layout).
     props.node.shownEffort = settledEffort.value || undefined
+    // Before its first answer the agent has not said its model: the one its
+    // settings start it with, for the model picker (not saved either).
+    const settled = res && typeof res.model === 'string' && res.model ? res.model : null
+    props.node.shownModel = !model && settled ? settled : undefined
   } catch {
     /* keep what it showed */
   } finally {

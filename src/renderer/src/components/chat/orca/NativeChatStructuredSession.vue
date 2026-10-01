@@ -191,7 +191,7 @@ const optionCommand = useNativeChatSessionOptionCommand({
   // own settings or conversation, ChatPane's shownEffort).
   values: () => {
     const effort = props.node.effort || props.node.shownEffort
-    return { model: c.meta.model || props.node.model || undefined, ...(effort ? { effort } : {}) }
+    return { model: c.meta.model || props.node.model || props.node.shownModel || undefined, ...(effort ? { effort } : {}) }
   },
   permissionMode: () => props.permissionMode,
   chatLaunchYolo: () => !!props.node.chatLaunchYolo,

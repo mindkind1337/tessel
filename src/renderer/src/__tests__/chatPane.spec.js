@@ -749,6 +749,20 @@ describe('ChatPane.vue', () => {
     }
   })
 
+  it('before its first answer, the model picker shows the model its settings start it with', async () => {
+    modelLists.claude = { models: [{ id: 'opus', label: 'Opus 5.5', effortLevels: ['xhigh'] }], fetchedAt: Date.now() }
+    const prev = window.shellApi.agentModel
+    window.shellApi.agentModel = vi.fn(async () => ({ model: 'claude-opus-5-5', effort: 'xhigh', source: 'settings' }))
+    try {
+      await mountPane({ model: null })
+      await settle()
+      expect(node.shownModel).toBe('claude-opus-5-5')
+    } finally {
+      window.shellApi.agentModel = prev
+      resetModelListsForTests()
+    }
+  })
+
   it('Codex chat: its effort (from its conversation) shows in the header and feeds the effort picker, without any new event', async () => {
     modelLists.codex = { models: [{ id: 'gpt-6-astra', label: 'GPT-6-Astra', effortLevels: ['low', 'medium', 'high'] }], fetchedAt: Date.now() }
     const prev = window.shellApi.agentModel
