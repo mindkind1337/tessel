@@ -18,7 +18,9 @@ describe('Pi, Cursor and Antigravity model output fixtures', () => {
     const rows = parseCursorModelList('Available models\nauto - Auto (default)\ngpt-5.3-codex - Codex (current)\nnew-model - New Model\nnew-model - Duplicate\nUse --model to choose')
     expect(rows).toEqual([{ id: 'auto', label: 'Auto', isDefault: true }, { id: 'gpt-5.3-codex', label: 'Codex' }, { id: 'new-model', label: 'New Model' }])
     const models = catalogModelsFor('cursor', listedToCatalogModels('cursor', rows))
-    expect(models.find((m) => m.id === 'gpt-5.3-codex').options.map((o) => o.id)).toEqual(['effort', 'fastMode'])
+    // Listed once: no options (the seed's would compose ids Cursor did not list).
+    expect(models.find((m) => m.id === 'gpt-5.3-codex').options).toEqual([])
+    expect(sessionOptionLaunchText('cursor', { model: 'gpt-5.3-codex', effort: 'high', fastMode: true }, '', models)).toBe('--model gpt-5.3-codex')
     expect(models.find((m) => m.id === 'new-model').options).toEqual([])
     expect(sessionOptionLaunchText('cursor', { model: 'new-model', effort: 'high' }, '', models)).toBe('--model new-model')
   })

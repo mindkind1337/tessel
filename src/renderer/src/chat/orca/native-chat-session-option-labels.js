@@ -38,6 +38,8 @@ export function nativeChatSessionOptionLabel(descriptor) {
 }
 export function nativeChatSessionChoiceLabel(choice) {
     switch(choice.value){
+        case 'none':
+            return t('chat.orca.composer.optionValue.none', 'None');
         case 'minimal':
             return t('chat.orca.composer.optionValue.minimal', 'Minimal');
         case 'low':

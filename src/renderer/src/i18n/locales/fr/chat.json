@@ -232,6 +232,7 @@
   "chat.orca.composer.selectModel": "Choisir un modèle",
   "chat.orca.composer.fastMode": "Mode rapide",
   "chat.orca.composer.thinking": "Réflexion",
+  "chat.orca.composer.optionValue.none": "Aucun",
   "chat.orca.composer.optionValue.minimal": "Minimal",
   "chat.orca.composer.optionValue.low": "Faible",
   "chat.orca.composer.optionValue.medium": "Moyen",

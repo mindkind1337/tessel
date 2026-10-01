@@ -25,6 +25,8 @@ export function sessionChoiceLabel(choice) {
   switch (choice && choice.value) {
     case 'off': // i18n-ignore
       return t('pane.sessionOptions.value.off', 'Off')
+    case 'none': // i18n-ignore
+      return t('pane.sessionOptions.value.none', 'None')
     case 'minimal': // i18n-ignore
       return t('pane.sessionOptions.value.minimal', 'Minimal')
     case 'low': // i18n-ignore

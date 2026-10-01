@@ -670,6 +670,7 @@
       "value": {
         "fast": "Rapide",
         "off": "Désactivé",
+        "none": "Aucune",
         "minimal": "Minimal",
         "low": "Basse",
         "medium": "Moyenne",

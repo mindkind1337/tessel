@@ -16,6 +16,7 @@
 // probe only when asked (Settings > Agents > Refresh models) and keeps the
 // answer (agentModelList.js).
 import { createClaudeCatalogOptions, createCodexCatalogOptions, createPiCatalogOptions, ANTIGRAVITY_SESSION_OPTION_CATALOG } from './agentSessionOptions'
+import { groupCursorModels } from './cursorModels'
 
 // Why (Orca): the Claude CLI has no model-listing subcommand (`claude models`
 // starts a chat session). CLIs that predate the request answer
@@ -214,8 +215,11 @@ export function parseCursorModelList(stdout) {
   return parseModelLines(stdout, (line) => {
     const match = /^(\S+)\s+-\s+(.+)$/.exec(line)
     if (!match) return null
-    const label = match[2].replace(/\s*\((?:default|current)\)/g, '').trim()
-    return label ? { id: match[1], label, ...(/\(default\)/.test(match[2]) ? { isDefault: true } : {}) } : null
+    // "Auto (current, default)": the marks are not part of the name.
+    const marks = /\s*\(((?:current|default)(?:,\s*(?:current|default))*)\)/
+    const mark = marks.exec(match[2])
+    const label = match[2].replace(marks, '').trim()
+    return label ? { id: match[1], label, ...(mark && /default/.test(mark[1]) ? { isDefault: true } : {}) } : null
   })
 }
 
@@ -262,6 +266,9 @@ export function finalizeProbeOutput(agent, stdout, stderr, code) {
 // catalog rows with their options (effort, fast mode).
 export function listedToCatalogModels(agent, rows) {
   if (!Array.isArray(rows)) return []
+  // Cursor lists each effort / Fast / Thinking variant as its own id: one
+  // row per base model, those as its options (cursorModels.js).
+  if (agent === 'cursor') return groupCursorModels(rows)
   return rows.map((row) => {
     const base = { id: row.id, label: row.label, ...(row.description ? { description: row.description } : {}), ...(row.isDefault ? { isDefault: true } : {}) }
     if (agent === 'claude')

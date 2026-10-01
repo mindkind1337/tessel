@@ -8,7 +8,7 @@
 // worker, no Auto for one either, Codex: Manual and Yolo, never Yolo during
 // a turn). The main process stays the authority.
 import { t } from '../../../i18n'
-import { getAgentSessionOptionCatalog, modelOptions } from '../../../../../shared/agentSessionOptions.js'
+import { getAgentSessionOptionCatalog, modelOptions, valuesOnListedRow } from '../../../../../shared/agentSessionOptions.js'
 import { modelLabel } from '../../../../../shared/modelLabel.js'
 
 // Each agent's permission modes, in the order ChatPane.vue lists them.
@@ -64,6 +64,8 @@ export function permissionModeHint(mode, agent) {
 export function tesselSessionOptionSnapshot({ agent, models = [], values = {}, modeBlocked = () => '', permissionModes = true } = {}) {
   const out = []
   const catalog = getAgentSessionOptionCatalog(agent)
+  // A Cursor variant id (gpt-5.3-codex-high-fast): its model's row, its effort.
+  values = valuesOnListedRow(models, values) || {}
   const effortChoicesFor = (id) => catalog ? (modelOptions(catalog, models, id).find(o => o.id === 'effort' && o.kind?.type === 'select')?.kind.choices || []) : []
   let model = typeof values.model === 'string' && values.model ? values.model : null
   // The agent reports its full id (claude-opus-5-5) where the list has the

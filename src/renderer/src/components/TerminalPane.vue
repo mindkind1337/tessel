@@ -46,7 +46,7 @@ import { terminalSettingOptions, composeTerminalTheme, useWebgl, METRIC_OPTIONS 
 import { cacheCountdown } from '../promptCache'
 import { isViewed } from '../../../shared/fileKinds'
 import { effectiveAgent, launchSignature, launchSessionValues, inYoloFolder, YOLO_ARGS, YOLO_ENV } from '../../../shared/agentPrefs'
-import { getAgentSessionOptionCatalog, modelOptions, resolveSessionOptionDefaults } from '../../../shared/agentSessionOptions'
+import { getAgentSessionOptionCatalog, modelOptions, resolveSessionOptionDefaults, composedModelId, listedModelValues, valuesOnListedRow } from '../../../shared/agentSessionOptions'
 import { paneModels } from '../paneModels'
 import { modelsFor } from '../agentModels'
 import { modelChoiceLabel, sessionPillLabel } from '../sessionOptionLabels'
@@ -281,6 +281,9 @@ const effectiveModelId = computed(() => {
   if (shown) {
     const exact = list.find((m) => m.id === shown)
     if (exact) return exact.id
+    // A Cursor variant id (gpt-5.3-codex-high-fast): its model's row.
+    const listed = listedModelValues(list, shown)
+    if (listed) return listed.model
     const alias = list.find((m) => shown.includes(`-${m.id}-`) || shown.endsWith(`-${m.id}`))
     if (alias) return alias.id
   }
@@ -348,7 +351,7 @@ function closeModelMenu(refocus = false) {
 }
 // The pane's values after this pick (null = back to the default).
 function nextPaneValues(optionId, value) {
-  const current = paneValues.value
+  const current = valuesOnListedRow(paneModelList.value, paneValues.value)
   if (optionId === 'model') {
     if (!value) return null
     const next = { model: value }
@@ -390,6 +393,9 @@ function setPaneChoice(next) {
 function optionApply(catalog, optionId, modelId) {
   if (optionId === 'model') return catalog.modelApply
   const option = modelOptions(catalog, paneModelList.value, modelId).find((o) => o.id === optionId)
+  // An option that is part of the model's id (Cursor's effort, Fast,
+  // Thinking) changes the model: /model with the new id.
+  if (option && option.apply.composedIntoModel && catalog.composeModelValue) return catalog.modelApply
   return option ? option.apply : null
 }
 // A pick applied: the same path for this menu and for the chat view's
@@ -419,7 +425,11 @@ async function applyModelPick({ optionId, value }) {
       else if (outcome !== 'rejected') setPaneChoice(next)
       return outcome === 'applied' || outcome === 'rejected' ? outcome : 'unknown'
     }
-    await typeCommand(n.id, mid.build(value), { delivery: mid.delivery === 'type' ? 'type' : 'write' })
+    // The exact id the agent takes: Cursor's row and options compose into
+    // one of the ids it listed (gpt-5.3-codex + High + Fast ->
+    // gpt-5.3-codex-high-fast).
+    const sent = catalog.composeModelValue && apply === catalog.modelApply ? composedModelId(n.agentId, next, paneModelList.value) : value
+    await typeCommand(n.id, mid.build(sent), { delivery: mid.delivery === 'type' ? 'type' : 'write' })
     adoptLive(next)
     return 'sent'
   } finally {
@@ -440,7 +450,9 @@ async function onModelPick(pick) {
 const chatSessionOptions = computed(() => {
   if (!hasModelChoice.value || !chatViewAvailable.value) return null
   const m = agentModel.value
-  const effort = (m && m.effort) || (paneValues.value && paneValues.value.effort) || null
+  // A Cursor variant id it reports carries its effort (gpt-5.3-codex-high-fast).
+  const listed = m && m.model ? listedModelValues(paneModelList.value, m.model) : null
+  const effort = (m && m.effort) || (listed && listed.effort) || (paneValues.value && paneValues.value.effort) || null
   return { models: paneModelList.value, values: { ...(effectiveModelId.value ? { model: effectiveModelId.value } : {}), ...(effort ? { effort } : {}) } }
 })
 // { model } | { effort } from the chat view -> { ok, error }: applied the way

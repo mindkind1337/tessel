@@ -9,7 +9,7 @@
 // … menu; the caller decides what a pick does.
 import { computed, onMounted } from 'vue'
 import { refreshIfStale } from '../agentModels'
-import { getAgentSessionOptionCatalog, modelOptions } from '../../../shared/agentSessionOptions'
+import { getAgentSessionOptionCatalog, modelOptions, valuesOnListedRow } from '../../../shared/agentSessionOptions'
 import { sessionOptionLabel, sessionChoiceLabel, modelDescription } from '../sessionOptionLabels'
 import { t } from '../i18n'
 import { modelLabel } from '../../../shared/modelLabel'
@@ -41,8 +41,11 @@ onMounted(() => refreshIfStale(props.agentId))
 // The agent may report its full id (claude-fable-5-1, opus[1m]) where the
 // list has the alias it was chosen by ("Fable 5.1"): that row is the current
 // one, never a second row with the raw id.
+// A Cursor variant id (gpt-5.3-codex-high-fast) is its model's row with
+// High and Fast set.
+const shownValues = computed(() => valuesOnListedRow(props.models, props.values))
 const chosenModel = computed(() => {
-  const model = (props.values && props.values.model) || null
+  const model = (shownValues.value && shownValues.value.model) || null
   if (!model || props.models.some((m) => m.id === model)) return model
   const name = modelLabel(model)
   const plain = name.replace(/ \(1M\)$/, '')
@@ -85,7 +88,7 @@ function toggleText(option) {
   return t('pane.sessionOptions.toggleOption', 'Toggle {{option}}', { option: sessionOptionLabel(option).toLowerCase() })
 }
 function value(option) {
-  return props.values ? props.values[option.id] : undefined
+  return shownValues.value ? shownValues.value[option.id] : undefined
 }
 function set(optionId, v) {
   if (disabled.value) return

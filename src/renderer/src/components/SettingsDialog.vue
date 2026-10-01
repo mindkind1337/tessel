@@ -26,6 +26,7 @@ import { parseEnvText, YOLO_ARGS, YOLO_ENV, agentEnabled } from '../../../shared
 import { AGENT_DOCS } from '../../../shared/agentDocs'
 import {
   getAgentSessionOptionCatalog,
+  valuesOnListedRow,
   modelOptions,
   resolveSessionOptionDefaults,
   updateSessionOptionDefaults,
@@ -693,7 +694,9 @@ function hasModelDefaults(id) {
   return !!getAgentSessionOptionCatalog(id)
 }
 function modelDefaults(id) {
-  return resolveSessionOptionDefaults(settings.agentSessionOptions, id) || null
+  // A Cursor variant id saved before its list was grouped: its row, with
+  // the effort / Fast / Thinking it stands for.
+  return valuesOnListedRow(modelsFor(id), resolveSessionOptionDefaults(settings.agentSessionOptions, id)) || null
 }
 // The models offered, with the chosen one even when the list lacks it.
 function defaultModelRows(id) {
@@ -725,10 +728,18 @@ function defaultHasLiveFast(id) {
 function setDefaultOption(id, optionId, value) {
   const d = modelDefaults(id)
   if (!d) return
+  let persisted = settings.agentSessionOptions
+  // A saved Cursor variant id becomes its row: the values it stood for are
+  // kept with the one changed now.
+  const stored = resolveSessionOptionDefaults(persisted, id)
+  if (stored && stored.model !== d.model) {
+    persisted = updateSessionOptionDefaults({ persisted, agent: id, modelId: d.model, optionId: 'model', value: d.model })
+    for (const [k, v] of Object.entries(d)) if (k !== 'model') persisted = updateSessionOptionDefaults({ persisted, agent: id, modelId: d.model, optionId: k, value: v })
+  }
   settings.agentSessionOptions =
     value === '' || value === null
-      ? clearSessionOptionValue({ persisted: settings.agentSessionOptions, agent: id, modelId: d.model, optionId })
-      : updateSessionOptionDefaults({ persisted: settings.agentSessionOptions, agent: id, modelId: d.model, optionId, value })
+      ? clearSessionOptionValue({ persisted, agent: id, modelId: d.model, optionId })
+      : updateSessionOptionDefaults({ persisted, agent: id, modelId: d.model, optionId, value })
 }
 function probeFor(id) {
   return modelProbes[id] || { busy: false, error: null }

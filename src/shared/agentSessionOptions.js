@@ -15,6 +15,7 @@
 //
 // Labels here are English; the interface translates them
 // (renderer/src/sessionOptionLabels.js).
+import { composeCursorModel, decomposeCursorModel } from './cursorModels'
 
 // --- Arguments (agent-session-option-agent-args.ts, agent-cli-flag-detection.ts)
 
@@ -311,6 +312,10 @@ const CURSOR_THINKING = {
 
 export const CURSOR_SESSION_OPTION_CATALOG = {
   probed: true,
+  // Its list is what the CLI accepts: a seed id it does not list (or one
+  // composed the seed's way) would fail at launch. A pane's saved model
+  // still runs.
+  discoveredModelsAreAuthoritative: true,
   models: [
     { id: 'auto', label: 'Auto', isDefault: true, options: [] },
     { id: 'gpt-5.3-codex', label: 'GPT-5.3 Codex', options: [CURSOR_EFFORT, CURSOR_FAST] },
@@ -322,7 +327,10 @@ export const CURSOR_SESSION_OPTION_CATALOG = {
     removeAgentArgs: (tokens) => removeAgentArgOption(tokens, ['-m', '--model']),
     midSession: { kind: 'command', build: (value) => `/model ${String(value)}` }
   },
-  composeModelValue: (modelId, values) => {
+  // model: the picker's row. A row grouped from Cursor's own list composes
+  // into one of the ids it listed; the seed rows keep Orca's spelling.
+  composeModelValue: (modelId, values, model) => {
+    if (model && Array.isArray(model.variants)) return composeCursorModel(model, values)
     if (modelId === 'auto') return modelId
     if (modelId.startsWith('claude-')) {
       const thinking = values.thinking === true ? '-thinking' : ''
@@ -549,7 +557,9 @@ export function mergeDiscoveredAuthoritativeModels(seed, discovered) {
   return discovered.map((disc) => {
     const seedMatch = seed.find((model) => model.id === disc.id)
     // eslint-disable-next-line no-unused-vars
-    const { isDefault: _seeded, ...merged } = seedMatch ? { ...seedMatch, ...disc, options: seedMatch.options } : { ...disc, options: disc.options && disc.options.length ? disc.options : inheritedOptions }
+    // A row from Cursor's grouped list keeps its own options (none for a
+    // model listed once): only those compose into ids the CLI listed.
+    const { isDefault: _seeded, ...merged } = seedMatch ? { ...seedMatch, ...disc, options: disc.variants ? disc.options : seedMatch.options } : { ...disc, options: disc.options && disc.options.length ? disc.options : disc.variants ? [] : inheritedOptions }
     return disc.isDefault ? { ...merged, isDefault: true } : merged
   })
 }
@@ -565,6 +575,36 @@ export function catalogModelsFor(agent, discovered) {
   if (agent === 'claude') return [...discovered]
   if (catalog.discoveredModelsAreAuthoritative) return mergeDiscoveredAuthoritativeModels(catalog.models, discovered)
   return mergeCatalogModels(catalog.models, discovered)
+}
+
+// The exact id the agent runs for a model row and its values (Cursor's
+// grouped rows compose into one listed id; others are the row's id).
+export function composedModelId(agent, values, models = null) {
+  const catalog = getAgentSessionOptionCatalog(agent)
+  const modelId = values && typeof values.model === 'string' ? values.model : null
+  if (!catalog || !modelId || !catalog.composeModelValue) return modelId
+  const model = (Array.isArray(models) && models.find((m) => m.id === modelId)) || findCatalogModel(catalog, modelId)
+  if (!model) return modelId
+  const opts = model.options || []
+  const picked = Object.fromEntries(opts.filter((o) => values[o.id] !== undefined && values[o.id] !== null).map((o) => [o.id, values[o.id]]))
+  return catalog.composeModelValue(modelId, picked, model)
+}
+
+// An id the agent reports (or a pane saved) -> the picker row it belongs to
+// and the values that make it: { model, effort?, fastMode?, thinking? }.
+// A listed row's own id -> { model: id }; an unknown id -> null.
+export function listedModelValues(models, id) {
+  if (typeof id !== 'string' || !id) return null
+  return decomposeCursorModel(models, id) || ((models || []).some((m) => m.id === id) ? { model: id } : null)
+}
+
+// Values whose model is an exact variant id (gpt-5.3-codex-high-fast, a
+// choice saved from Cursor's flat list or reported by the agent) -> its row's
+// id with the options that make it, so a picker shows that row selected.
+export function valuesOnListedRow(models, values) {
+  if (!values || typeof values.model !== 'string' || (models || []).some((m) => m.id === values.model)) return values
+  const listed = decomposeCursorModel(models, values.model)
+  return listed ? { ...values, ...listed } : values
 }
 
 export function sessionOptionValueIsValid(value) {
@@ -610,7 +650,7 @@ export function resolveAgentSessionOptionLaunch(agent, values, trailingAgentArgs
       return model && includeCatalogDefaults ? [[option.id, option.kind.defaultValue]] : []
     })
   )
-  const composedModelId = catalog.composeModelValue ? catalog.composeModelValue(modelId, modelValues) : modelId
+  const composedModelId = catalog.composeModelValue ? catalog.composeModelValue(modelId, modelValues, model) : modelId
   const modelOverridden = !!(catalog.modelApply.agentArgsOverride && catalog.modelApply.agentArgsOverride(trailingAgentArgs) === true)
 
   if (catalog.modelApply.launchArgs) {

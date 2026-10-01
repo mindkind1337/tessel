@@ -5,7 +5,7 @@
 // answers a confirmation; a pane it opens is an ordinary pane, started the
 // way the new-pane menu starts it (your agent settings apply).
 import { t } from './i18n'
-import { getAgentSessionOptionCatalog, modelOptions, safeSessionValue } from '../../shared/agentSessionOptions'
+import { getAgentSessionOptionCatalog, modelOptions, safeSessionValue, listedModelValues } from '../../shared/agentSessionOptions'
 
 export class CliRequestError extends Error {
   constructor(code, message) {
@@ -33,6 +33,9 @@ export function sessionChoiceError(agentId, model, effort, models) {
   if (!catalog) return t('app.cli.noModelChoice', 'Tessel cannot choose the model of this agent.')
   const list = Array.isArray(models) && models.length ? models : catalog.models
   const ids = list.map((m) => m.id)
+  // An exact Cursor variant id (gpt-5.3-codex-high-fast) is one it listed;
+  // its effort is in the id (it launches as given).
+  if (!ids.includes(model) && listedModelValues(list, model)) return null
   if (!safeSessionValue(model) || !ids.includes(model))
     return t('app.cli.unknownModel', 'Unknown model “{{model}}”. Available: {{list}}', { model, list: ids.join(', ') || '—' })
   if (!effort) return null

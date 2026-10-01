@@ -8,7 +8,8 @@ import { nextTick, ref } from 'vue'
 import { setApproval, clearAgentStatus } from '../agentStatus'
 import { resetSettings, settings } from '../settings'
 import { effectiveAgent, launchSignature } from '../../../shared/agentPrefs'
-import { resetModelListsForTests } from '../agentModels'
+import { resetModelListsForTests, modelLists } from '../agentModels'
+import { parseCursorModelList } from '../../../shared/agentModelProbe'
 
 vi.mock('@xterm/xterm', () => ({
   Terminal: class {
@@ -197,6 +198,48 @@ describe('pane menu > Model', () => {
       ['mp', '/fast'],
       ['mp', '\r']
     ])
+  })
+
+  it("a running Cursor: a model's effort, Fast and the model itself go as /model with the exact listed id", async () => {
+    const node = mountPane({ agentId: 'cursor', sessionOptions: { model: 'gpt-5.3-codex' } })
+    modelLists.cursor = {
+      fetchedAt: Date.now(),
+      models: parseCursorModelList(
+        [
+          'auto - Auto (current, default)',
+          'gpt-5.3-codex-low - Codex 5.3 Low',
+          'gpt-5.3-codex - Codex 5.3',
+          'gpt-5.3-codex-high - Codex 5.3 High',
+          'gpt-5.3-codex-high-fast - Codex 5.3 High Fast',
+          'claude-opus-5-high - Claude Opus 5 1M',
+          'claude-opus-5-thinking-high - Claude Opus 5 1M Thinking'
+        ].join('\n')
+      )
+    }
+    let m = await openModelMenu()
+    expect([...m.querySelectorAll('[data-test="sop-model"]')].map((b) => b.dataset.model)).toEqual(['auto', 'gpt-5.3-codex', 'claude-opus-5'])
+    m.querySelector('[data-option="effort"][data-value="high"]').click()
+    await typed()
+    expect(writes).toEqual([
+      ['mp', '/model gpt-5.3-codex-high'],
+      ['mp', ENTER]
+    ])
+    await flushPromises()
+    expect(node.sessionOptions).toEqual({ model: 'gpt-5.3-codex', effort: 'high' })
+    m = await openModelMenu()
+    const fast = m.querySelector('input[data-option="fastMode"]')
+    fast.checked = true
+    fast.dispatchEvent(new Event('change'))
+    await vi.waitFor(() => expect(writes).toHaveLength(4), { timeout: 3000 })
+    expect(writes.slice(2)).toEqual([
+      ['mp', '/model gpt-5.3-codex-high-fast'],
+      ['mp', ENTER]
+    ])
+    await flushPromises()
+    m = await openModelMenu()
+    m.querySelector('[data-model="claude-opus-5"]').click()
+    await vi.waitFor(() => expect(writes).toHaveLength(6), { timeout: 3000 })
+    expect(writes[4]).toEqual(['mp', '/model claude-opus-5-high'])
   })
 
   it('while it asks for an approval nothing is typed', async () => {
