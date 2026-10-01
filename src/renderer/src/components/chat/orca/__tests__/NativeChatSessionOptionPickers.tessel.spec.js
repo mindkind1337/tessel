@@ -352,4 +352,15 @@ describe('the reported full id and the listed alias', () => {
     expect(option.kind.currentValue).toBe('opus')
     expect(option.kind.choices.map((c) => c.value)).toEqual(['opus', 'claude-fable-5-1'])
   })
+
+  it('its 1M-context form (claude-opus-5-5[1m]) is the same listed row, never the raw id', () => {
+    const models = [{ id: 'opus', label: 'Opus 5.5', options: [] }]
+    const snap = tesselSessionOptionSnapshot({ agent: 'claude', models, values: { model: 'claude-opus-5-5[1m]' } })
+    const option = snap.options ? snap.options.find((o) => o.id === 'model') : snap.find((o) => o.id === 'model')
+    expect(option.kind.currentValue).toBe('opus')
+    expect(option.kind.choices).toHaveLength(1)
+    const other = tesselSessionOptionSnapshot({ agent: 'claude', models: [], values: { model: 'claude-opus-5-5[1m]' } })
+    const row = (other.options || other).find((o) => o.id === 'model').kind.choices[0]
+    expect(row.label).toBe('Opus 5.5 (1M)')
+  })
 })

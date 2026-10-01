@@ -64,13 +64,15 @@ export function tesselSessionOptionSnapshot({ agent, models = [], values = {}, m
   let model = typeof values.model === 'string' && values.model ? values.model : null
   // The agent reports its full id (claude-opus-5-5) where the list has the
   // alias it was chosen by (opus, "Opus 5.5"): that row is the current one.
+  // Its 1M-context form ("claude-opus-5-5[1m]") is the same row.
   if (model && !models.some((m) => m.id === model)) {
-    const same = models.find((m) => m.label && m.label === modelLabel(model))
+    const plain = modelLabel(model).replace(/ \(1M\)$/, '')
+    const same = models.find((m) => m.label && (m.label === modelLabel(model) || m.label === plain)) || models.find((m) => m.id === model.replace(/\[1m\]$/i, ''))
     if (same) model = same.id
   }
   // The chosen model is listed even when the list does not have it.
   const rows = models.map((m) => ({ value: m.id, label: m.label || m.id, ...(m.description ? { description: m.description } : {}) }))
-  if (model && !rows.some((r) => r.value === model)) rows.push({ value: model, label: model })
+  if (model && !rows.some((r) => r.value === model)) rows.push({ value: model, label: modelLabel(model) || model })
   out.push({
     id: 'model',
     // Worded by nativeChatSessionOptionLabel (the ids are data).
