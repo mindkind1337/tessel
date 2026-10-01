@@ -282,6 +282,31 @@ describe('Tessel team tools (background messages)', () => {
     fs.rmSync(home, { recursive: true, force: true })
   })
 
+  it("Antigravity's conversation id is recorded (no path, no prompt), never a sub-agent's", async () => {
+    const sessions = fs.mkdtempSync(join(os.tmpdir(), 'tessel-sessions-'))
+    const id = '11111111-2222-4333-8444-555555555555'
+    const run = (input) =>
+      new Promise((resolve) => {
+        const child = spawn(process.execPath, [SERVER, '--hook', '--agent=antigravity', '--event=PostInvocation'], {
+          env: { ...process.env, TESSEL_PANE_ID: B.id, TESSEL_SESSIONS_DIR: sessions, TESSEL_AGENT_PROVIDER: 'antigravity' }
+        })
+        child.on('close', () => resolve())
+        child.stdin.end(JSON.stringify({ conversationId: id, transcriptPath: 'C:\\x\\transcript.jsonl', modelName: 'auto', invocationNum: 1, ...input }))
+      })
+    const file = join(sessions, `${B.id}.json`)
+    await run({})
+    const report = JSON.parse(fs.readFileSync(file, 'utf8'))
+    expect(report).toMatchObject({ agent: 'antigravity', sessionId: id })
+    expect(report.transcriptPath).toBeUndefined()
+    expect(Object.keys(report).sort()).toEqual(['agent', 'at', 'cwd', 'sessionId', 'source'])
+    expect(report.source).toBe('PostInvocation')
+    // A sub-agent's event: the pane's conversation is left as it was.
+    fs.rmSync(file, { force: true })
+    await run({ conversationId: '99999999-2222-4333-8444-555555555555', parentConversationId: id })
+    expect(fs.existsSync(file)).toBe(false)
+    fs.rmSync(sessions, { recursive: true, force: true })
+  })
+
   it('as a Gemini CLI hook: the same answers under its event names, and its conversation reported', async () => {
     const sessions = fs.mkdtempSync(join(os.tmpdir(), 'tessel-sessions-'))
     mcp.send(as(A), '#4', 'Gemini, after a tool')

@@ -763,5 +763,10 @@
   "chat.orca.cursorCommands.debug": "Activer ou désactiver le mode Debug",
   "chat.orca.cursorCommands.runEverything": "Exécuter les commandes sans demander (on, off, status)",
   "chat.orca.cursorCommands.summarize": "Résumer la conversation pour libérer du contexte",
-  "chat.orca.cursorCommands.rewind": "Revenir à un message précédent"
+  "chat.orca.cursorCommands.rewind": "Revenir à un message précédent",
+  "chat.orca.agyCommands.planning": "Activer le mode planification (un plan avant le travail)",
+  "chat.orca.agyCommands.fast": "Activer le mode rapide (sans plan d'abord)",
+  "chat.orca.agyCommands.context": "Afficher l'utilisation du contexte (dans son terminal)",
+  "chat.orca.agyCommands.addDir": "Ajouter un dossier à son espace de travail",
+  "chat.orca.agyCommands.usage": "Afficher l'utilisation de son quota de modèles"
 }

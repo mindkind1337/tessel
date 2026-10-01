@@ -19,7 +19,10 @@
 // Codex: <its account's CODEX_HOME>/sessions/YYYY/MM/DD/rollout-<time>-<id>.jsonl;
 // Cursor: ~/.cursor/projects/<folder slug>/agent-transcripts/<id>/<id>.jsonl
 // (older: agent-transcripts/<id>.jsonl; its sub-agents' own files, under
-// <id>/subagents/, are never the pane's).
+// <id>/subagents/, are never the pane's);
+// Antigravity (agy): ~/.gemini/antigravity-cli/brain/<id>/.system_generated/logs/
+// transcript_full.jsonl (else its shortened twin transcript.jsonl; the id is
+// the conversation id its hooks report).
 // Claude Code and Codex: the folder is the pane's account's, resolved in this
 // process from the account id (the window never names a folder). Newer Claude
 // Code names its file with a UUID other than the hook's session id: the path
@@ -45,7 +48,7 @@ import { ompSessionsDir } from '../agentSessionSources.js'
 import { HISTORY_LIMITS, claudeHistoryEvents, codexHistoryEvents, createBuilder, findTranscript } from './transcriptHistory.js'
 import { claudeBackgroundFromLines, transcriptCwd } from './transcriptBackground.js'
 
-export const TRANSCRIPT_VIEW_AGENTS = ['grok', 'openclaude', 'omp', 'claude', 'codex', 'cursor']
+export const TRANSCRIPT_VIEW_AGENTS = ['grok', 'openclaude', 'omp', 'claude', 'codex', 'cursor', 'antigravity']
 // Their folder is the pane's account's (given by the caller as `home`).
 const ACCOUNT_AGENTS = ['claude', 'codex']
 const MAX_VIEWS = 8
@@ -58,7 +61,7 @@ const str = (v) => (typeof v === 'string' && v ? v : null)
 
 export function validViewId(agent, id) {
   if (typeof id !== 'string') return false
-  return agent === 'openclaude' || agent === 'cursor' || ACCOUNT_AGENTS.includes(agent) ? UUID.test(id) : TOKEN_ID.test(id)
+  return agent === 'openclaude' || agent === 'cursor' || agent === 'antigravity' || ACCOUNT_AGENTS.includes(agent) ? UUID.test(id) : TOKEN_ID.test(id)
 }
 
 function envDir(v) {
@@ -72,7 +75,8 @@ export function transcriptViewRoots(home = os.homedir(), env = process.env) {
     grok: join(envDir(env.GROK_HOME) || join(home, '.grok'), 'sessions'),
     openclaude: join(home, '.openclaude'),
     omp: ompSessionsDir(home, env),
-    cursor: join(home, '.cursor', 'projects')
+    cursor: join(home, '.cursor', 'projects'),
+    antigravity: join(home, '.gemini', 'antigravity-cli', 'brain')
   }
 }
 
@@ -118,6 +122,7 @@ export function findTranscriptViewFile(agent, id, roots = transcriptViewRoots(),
     if (hit) return hit
   }
   if (agent === 'cursor') return cursorTranscriptFile(roots.cursor, id, reported)
+  if (agent === 'antigravity') return antigravityTranscriptFile(roots.antigravity, id)
   const root = roots[agent]
   if (typeof root !== 'string' || !isAbsolute(root)) return null
   const base = realBase(root)
@@ -168,6 +173,20 @@ function cursorTranscriptFile(root, id, reported) {
   return null
 }
 
+// Antigravity: its conversation's own log, found from the id alone (the full
+// one first: the other cuts long texts).
+const ANTIGRAVITY_LOGS = ['transcript_full.jsonl', 'transcript.jsonl']
+function antigravityTranscriptFile(root, id) {
+  if (typeof root !== 'string' || !isAbsolute(root)) return null
+  const base = realBase(root)
+  if (!base) return null
+  for (const name of ANTIGRAVITY_LOGS) {
+    const candidate = join(root, id, '.system_generated', 'logs', name)
+    if (fs.existsSync(candidate)) return realInside(base, candidate, false) ? candidate : null
+  }
+  return null
+}
+
 function parse(line) {
   try {
     return obj(JSON.parse(line))
@@ -187,11 +206,15 @@ function textsOf(content) {
 function toolQueue(b) {
   const pending = []
   return {
-    call(id, name, input, ts) {
+    // summary: the call's own one-line label (else the builder's guess).
+    call(id, name, input, ts, summary) {
       const key = str(id) || b.nextId('t')
       pending.push(key)
-      b.tool(key, name, input, ts)
+      b.tool(key, name, input, ts, summary)
     },
+    waiting: () => pending.length,
+    // A new prompt: calls never answered are not paired with later results.
+    clear: () => pending.splice(0),
     result(id, output, isError, ts) {
       let key = str(id)
       if (key) {
@@ -394,6 +417,99 @@ export function cursorViewEvents(lines, limits = HISTORY_LIMITS) {
     }
     if (!any) b.work(null)
   })
+  return b.finish()
+}
+
+// ---- Antigravity --------------------------------------------------------------
+// One step a line (its own log, written as the conversation goes):
+//   { step_index, source: 'USER_EXPLICIT' | 'MODEL' | 'SYSTEM' | …, type,
+//     status: 'DONE' | 'ERROR' | 'CANCELED' | …, created_at, content?,
+//     thinking?, tool_calls?: [{ name, args }], truncated_fields? }
+// USER_INPUT: a prompt, inside <USER_REQUEST>…</USER_REQUEST> (what it adds
+// around it, <ADDITIONAL_METADATA> and settings changes, is not yours);
+// PLANNER_RESPONSE: the model's step, its thinking, text and tool calls (no
+// ids: each later model step of another type is the next call's result, in
+// order); ERROR_MESSAGE: the turn failed; the system's own steps (its history,
+// checkpoints, ephemeral notes) are not shown. A step logged again (same
+// step_index) keeps its first place and its latest content.
+const AGY_PREFIX = /^CORTEX_STEP_(?:TYPE|STATUS|SOURCE)_/
+const agyEnum = (v) => (typeof v === 'string' ? v.replace(AGY_PREFIX, '') : '')
+const AGY_HIDDEN = new Set(['CONVERSATION_HISTORY', 'CHECKPOINT', 'EPHEMERAL_MESSAGE'])
+function antigravityRequest(content) {
+  const c = typeof content === 'string' ? content : ''
+  const open = c.indexOf('<USER_REQUEST>')
+  if (open < 0) return c.replace(/<(ADDITIONAL_METADATA|USER_SETTINGS_CHANGE)>[\s\S]*?<\/\1>/g, '').trim()
+  const start = open + '<USER_REQUEST>'.length
+  const end = c.indexOf('</USER_REQUEST>', start)
+  return (end >= 0 ? c.slice(start, end) : c.slice(start)).trim()
+}
+// Its tools' arguments carry their own labels (toolSummary, toolAction): the
+// call's summary, not its input.
+function antigravityCall(call) {
+  const c = obj(call)
+  if (!c) return null
+  let args = parseArgs(c.args ?? c.arguments ?? c.input)
+  args = obj(args) ? { ...args } : args
+  let summary = ''
+  if (obj(args)) {
+    summary = str(args.CommandLine) || str(args.AbsolutePath) || str(args.DirectoryPath) || str(args.TargetFile) || str(args.Url) || str(args.toolSummary) || str(args.toolAction) || ''
+    delete args.toolSummary
+    delete args.toolAction
+  }
+  return { name: str(c.name) || 'tool', args: args ?? {}, summary } // i18n-ignore tool name
+}
+
+export function antigravityViewEvents(lines, limits = HISTORY_LIMITS) {
+  const b = createBuilder(limits)
+  const tools = toolQueue(b)
+  const records = []
+  const byStep = new Map()
+  lines.forEach((line, index) => {
+    const r = parse(line)
+    if (!r) return
+    const step = Number.isInteger(r.step_index) ? r.step_index : null
+    if (step !== null && byStep.has(step)) {
+      records[byStep.get(step)] = { r, index: records[byStep.get(step)].index }
+      return
+    }
+    if (step !== null) byStep.set(step, records.length)
+    records.push({ r, index })
+  })
+  for (const { r, index } of records) {
+    const source = agyEnum(r.source)
+    const type = agyEnum(r.type)
+    const status = agyEnum(r.status)
+    const ts = r.created_at
+    const key = `agy-${Number.isInteger(r.step_index) ? r.step_index : `l${index}`}` // i18n-ignore id
+    if (source === 'USER_EXPLICIT' || source === 'USER') {
+      if (type !== 'USER_INPUT' && type !== 'REQUEST') continue
+      const body = antigravityRequest(r.content)
+      if (!body) continue
+      tools.clear()
+      b.settleTools(ts)
+      b.user(key, body, ts)
+      continue
+    }
+    if (source !== 'MODEL' || AGY_HIDDEN.has(type)) continue
+    if (type === 'PLANNER_RESPONSE') {
+      if (str(r.thinking)) b.message('thinking', key, r.thinking, ts, '\n\n')
+      if (str(r.content)) b.message('assistant', key, r.content, ts, '\n\n')
+      for (const call of Array.isArray(r.tool_calls) ? r.tool_calls : []) {
+        const c = antigravityCall(call)
+        if (c) tools.call(null, c.name, c.args, ts, c.summary)
+      }
+      if (!str(r.thinking) && !str(r.content)) b.work(ts)
+    } else if (type === 'ERROR_MESSAGE' && !tools.waiting()) {
+      b.endTurn('failed', ts, str(r.content) || '')
+      continue
+    } else if (tools.waiting()) {
+      tools.result(null, typeof r.content === 'string' ? r.content : '', status === 'ERROR', ts)
+    }
+    if (status === 'CANCELED' || status === 'INTERRUPTED') {
+      tools.clear()
+      b.endTurn('interrupted', ts)
+    }
+  }
   return b.finish()
 }
 
@@ -608,6 +724,7 @@ export function viewEvents(agent, lines, sessionId, limits = HISTORY_LIMITS) {
   if (agent === 'omp') return ompViewEvents(lines, limits)
   if (agent === 'codex') return codexHistoryEvents(lines, sessionId, limits)
   if (agent === 'cursor') return cursorViewEvents(lines, limits)
+  if (agent === 'antigravity') return antigravityViewEvents(lines, limits)
   return claudeHistoryEvents(lines, limits)
 }
 
