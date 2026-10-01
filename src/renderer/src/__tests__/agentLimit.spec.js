@@ -41,6 +41,8 @@ describe('detectApproval', () => {
     expect(detectApproval('  Would you like to run the following command?\n  $ npm ci')).toBe(true)
     expect(detectApproval('Do you want to proceed?\n❯ 1. Yes')).toBe(true)
     expect(detectApproval('Press enter to confirm or esc to cancel')).toBe(true)
+    // Cursor CLI's input line while its approval prompt waits.
+    expect(detectApproval('Run this command?\n → Run (once) (y)\n\n → Waiting for decision (y/n/p)...')).toBe(true)
   })
 
   it('ignores ordinary output', () => {

@@ -755,5 +755,12 @@
   "chat.orca.terminalChat.imageOnly": "(image)",
   "chat.orca.terminalChat.codexPicker": "Codex change son modèle et son effort dans son propre sélecteur : choisissez dans son terminal.",
   "chat.orca.terminalChat.codexPermissions": "Codex change ses permissions dans son propre sélecteur : choisissez dans son terminal.",
-  "chat.orca.terminalChat.backgroundStop": "Pour en arrêter une, ouvrez son terminal : /tasks les liste."
+  "chat.orca.terminalChat.backgroundStop": "Pour en arrêter une, ouvrez son terminal : /tasks les liste.",
+  "chat.orca.terminalChat.ownPicker": "{{agent}} change son modèle dans son propre sélecteur : choisissez dans son terminal.",
+  "chat.orca.cursorCommands.model": "Choisir le modèle (dans son terminal)",
+  "chat.orca.cursorCommands.ask": "Activer ou désactiver le mode Ask (questions en lecture seule)",
+  "chat.orca.cursorCommands.debug": "Activer ou désactiver le mode Debug",
+  "chat.orca.cursorCommands.runEverything": "Exécuter les commandes sans demander (on, off, status)",
+  "chat.orca.cursorCommands.summarize": "Résumer la conversation pour libérer du contexte",
+  "chat.orca.cursorCommands.rewind": "Revenir à un message précédent"
 }

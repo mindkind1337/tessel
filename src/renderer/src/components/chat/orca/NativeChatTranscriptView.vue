@@ -5,7 +5,7 @@
 // reads the agent's session file (src/main/chat/transcriptView.js) and sends
 // it again while the agent writes; the chat's list shows it.
 // Read-only (Grok, OMP): typing stays in the terminal, no composer.
-// interactive (Claude Code, OpenClaude, Codex: the pane's chat view): a
+// interactive (Claude Code, OpenClaude, Codex, Cursor: the pane's chat view): a
 // composer whose messages are typed into the terminal (sendMessage, Tessel's
 // delivery), Stop (Escape), and the card of what the agent waits for: its
 // question (answered with its selector's keys) or its approval (Allow / Deny).
@@ -62,12 +62,16 @@ import { useStructuredAgentSessionContextUsage } from '../../../chat/orca/compos
 import { appendCommandMarkerCache, readCommandMarkerCache } from '../../../chat/orca/native-chat-command-marker.js'
 import { TESSEL_PERMISSION_MODES, permissionModeDescriptor, tesselSessionOptionSnapshot, tesselSessionOptionSurface } from './native-chat-session-option-pickers.js'
 import {
-  KEY_ALLOW,
+  KEY_CTRL_C,
   KEY_ESCAPE,
   answerKeyGroups,
   bridgeSlashCommands,
+  cardKeys,
   commandDelivery,
   composerAgent,
+  hasModePicker,
+  keysAllowed,
+  ownModelPicker,
   isPastedImageCopy,
   mentionMatches,
   mergePendingSends,
@@ -339,8 +343,12 @@ provide('nativeChatFileLinkContext', fileLinkContext)
 
 // ---- Interactive (the pane's chat view) ---------------------------------------
 
+// Never two Ctrl+C close together (Cursor quits on the second: terminalChatBridge.js).
+let lastCtrlCAt = null
 function keys(bytes) {
-  if (props.writeKeys) props.writeKeys(bytes)
+  if (!props.writeKeys || !keysAllowed(bytes, lastCtrlCAt)) return
+  if (bytes.includes(KEY_CTRL_C)) lastCtrlCAt = Date.now()
+  props.writeKeys(bytes)
 }
 // A slash command, typed into the agent as one (Codex key by key), with its
 // "Ran /command" row; nothing is watched for it.
@@ -390,7 +398,8 @@ async function send(text, opts = {}) {
   if (!alive || props.disabledReason) return { ok: false, error: props.disabledReason || undefined }
   const id = ++nextSend
   const shown = body.trim() ? body : t('chat.orca.terminalChat.imageOnly', '(image)')
-  pendingSends.value = [...pendingSends.value, { id, text: shown, at: Date.now(), delivered: false }]
+  const seen = fileEvents.value.filter((e) => e && e.type === 'user' && e.origin !== 'team').length
+  pendingSends.value = [...pendingSends.value, { id, text: shown, at: Date.now(), delivered: false, seen }]
   render()
   sentSignal.value++
   watchHeld()
@@ -440,8 +449,10 @@ const heldIds = computed(() => heldMessageIds(pendingSends.value, heldReason.val
 
 // ---- Model and effort (the pane's model menu path) ----------------------------
 const isCodex = computed(() => composerAgent(props.agent) === 'codex')
-// Codex changes its model and effort in its own picker: typed (/model) and
-// shown in its terminal, where you pick (after Orca's agent-picker options).
+// Codex and Cursor change their model (and effort) in their own picker: typed
+// (/model) and shown in their terminal, where you pick (after Orca's
+// agent-picker options).
+const ownPicker = computed(() => ownModelPicker(props.agent))
 function openAgentPicker() {
   const res = sendCommand('/model', 'type')
   if (res.ok) emit('close')
@@ -455,9 +466,11 @@ const optionCommand = useNativeChatSessionOptionCommand({
   disabledReason: () => props.disabledReason,
   values: () => (props.sessionOptions && props.sessionOptions.values) || {},
   setOption: async (payload) => {
-    if (isCodex.value) {
+    if (ownPicker.value) {
       openAgentPicker()
-      return { ok: false, error: t('chat.orca.terminalChat.codexPicker', 'Codex changes its model and effort in its own picker: choose in its terminal.') }
+      return isCodex.value
+        ? { ok: false, error: t('chat.orca.terminalChat.codexPicker', 'Codex changes its model and effort in its own picker: choose in its terminal.') }
+        : { ok: false, error: t('chat.orca.terminalChat.ownPicker', '{{agent}} changes its model in its own picker: choose in its terminal.', { agent: props.agentName || props.agent }) }
     }
     return props.setOption ? props.setOption(payload) : { ok: false }
   },
@@ -468,7 +481,7 @@ const optionCommand = useNativeChatSessionOptionCommand({
 // the terminal), with ChatPane's wording. Not during a turn: a key typed then
 // could land in an approval prompt that opens meanwhile.
 const modeDescriptor = computed(() => {
-  if (!props.interactive || !props.permissionMode || (!props.setPermissionMode && !isCodex.value)) return null
+  if (!props.interactive || !hasModePicker(props.agent) || !props.permissionMode || (!props.setPermissionMode && !isCodex.value)) return null
   const agent = composerAgent(props.agent)
   return permissionModeDescriptor({
     agent,
@@ -528,7 +541,7 @@ const optionPickerRequest = ref(null)
 // A bare "/model" or "/effort" (typed or picked): its picker here; Codex's
 // own; an agent without a list here (OpenClaude) gets the command itself.
 function onOptionCommand(name) {
-  if (isCodex.value && (name === 'model' || name === 'effort')) return openAgentPicker()
+  if (ownPicker.value && (name === 'model' || name === 'effort')) return openAgentPicker()
   if (optionIds.value.includes(name)) {
     const current = optionPickerRequest.value
     optionPickerRequest.value = { id: name, sequence: (current ? current.sequence : 0) + 1 }
@@ -645,9 +658,9 @@ function onPointerDownCapture(event) {
   if (event.button === 2) onSelectionCapture()
 }
 
-// Stop: Escape, the terminal's own key (only while a turn runs).
+// Stop: the terminal's own key, Escape (Cursor: Ctrl+C), only while a turn runs.
 function stop() {
-  if (props.working) keys(KEY_ESCAPE)
+  if (props.working) keys(cardKeys(props.agent).stop)
 }
 
 // Its hook's question first (shown at once), else the file's.
@@ -702,12 +715,12 @@ function onQuestionCancel() {
 function approve() {
   if (!card.value || card.value.kind !== 'approval') return
   markApprovalAnswered()
-  keys(KEY_ALLOW)
+  keys(cardKeys(props.agent).allow)
 }
 function deny() {
   if (!card.value || card.value.kind !== 'approval') return
   markApprovalAnswered()
-  keys(KEY_ESCAPE)
+  keys(cardKeys(props.agent).deny)
 }
 const fromAgent = computed(() => props.agentName || props.agent)
 const questionHead = computed(() => t('chat.orca.question.from', '{{agent}} asks you', { agent: fromAgent.value }))

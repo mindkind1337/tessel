@@ -31,7 +31,7 @@ const path = require('path')
 const crypto = require('crypto')
 const { randomUUID } = crypto
 
-const VERSION = '1.10.5'
+const VERSION = '1.10.6'
 const MAX_TEXT = 6000
 
 // --- Finding my team and me ---------------------------------------------------
@@ -1447,7 +1447,10 @@ function sessionFilePath(value, agent) {
   const roots = {
     claude: path.join(process.env.CLAUDE_CONFIG_DIR || path.join(home, '.claude'), 'projects'),
     openclaude: path.join(home, '.openclaude', 'projects'),
-    codex: path.join(process.env.CODEX_HOME || path.join(home, '.codex'), 'sessions')
+    codex: path.join(process.env.CODEX_HOME || path.join(home, '.codex'), 'sessions'),
+    // Cursor: projects/<folder>/agent-transcripts/<id>/<id>.jsonl (never a
+    // sub-agent's file: reportSession skips those events).
+    cursor: path.join(home, '.cursor', 'projects')
   }
   const root = roots[agent]
   if (!root || !path.isAbsolute(root)) return ''
@@ -1466,6 +1469,9 @@ function reportSession(data, agent) {
   // environment): its conversation is not the pane's, never recorded over it.
   const paneAgent = process.env.TESSEL_AGENT_PROVIDER || ''
   if (paneAgent && paneAgent !== agent) return
+  // A Cursor sub-agent's event (its own conversation, its file under
+  // <id>/subagents/): not the pane's conversation.
+  if (agent === 'cursor' && data && typeof data.transcript_path === 'string' && /[\\/]subagents[\\/][^\\/]*$/i.test(data.transcript_path)) return
   const id = String((data && data.session_id) || '')
   if (!/^[A-Za-z0-9._-]{1,100}$/.test(paneId) || paneId.startsWith('.')) return
   if (!/^[A-Za-z0-9_-]{6,80}$/.test(id)) return

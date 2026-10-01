@@ -24,12 +24,29 @@ import { t } from '../i18n'
 
 // The agents whose terminal pane has a chat view (their transcript is read in
 // src/main/chat/transcriptView.js). OpenCode keeps its own chat pane.
-export const CHAT_VIEW_AGENTS = ['claude', 'openclaude', 'codex']
+export const CHAT_VIEW_AGENTS = ['claude', 'openclaude', 'codex', 'cursor']
 
 // The keys the cards send: an approval's first option (Allow), and Escape
 // (Deny, cancel a question, Stop a turn), as Orca's cards do.
 export const KEY_ALLOW = '1'
 export const KEY_ESCAPE = '\x1b'
+// Cursor CLI: "y" runs what its approval prompt shows, Ctrl+C rejects it (its
+// Escape and "n" ask what to do instead), and Ctrl+C stops a turn (it has no
+// Escape for that). A second Ctrl+C within 2 s quits it: one at most every
+// INTERRUPT_GAP_MS from the chat view.
+export const KEY_CTRL_C = '\x03'
+export const INTERRUPT_GAP_MS = 3000
+
+// -> { stop, allow, deny }: the keys Stop, Allow and Deny type into the agent.
+export function cardKeys(agentId) {
+  return agentId === 'cursor' ? { stop: KEY_CTRL_C, allow: 'y', deny: KEY_CTRL_C } : { stop: KEY_ESCAPE, allow: KEY_ALLOW, deny: KEY_ESCAPE }
+}
+
+// May these keys be typed now? Never a Ctrl+C within INTERRUPT_GAP_MS of the
+// last one (lastAt): Cursor would take the second as "quit".
+export function keysAllowed(bytes, lastAt, now = Date.now()) {
+  return !String(bytes || '').includes(KEY_CTRL_C) || !Number.isFinite(lastAt) || now - lastAt >= INTERRUPT_GAP_MS
+}
 
 // A terminal agent Tessel started on this computer (not one detected in a
 // shell, not on an SSH host).
@@ -39,7 +56,14 @@ export function canShowChatView(node) {
 
 // The composer's slash commands and question keys follow Claude Code's for
 // OpenClaude (its fork).
-export const composerAgent = (agentId) => (agentId === 'codex' ? 'codex' : 'claude')
+export const composerAgent = (agentId) => (agentId === 'codex' || agentId === 'cursor' ? agentId : 'claude')
+
+// Agents that change their model in their own picker (typed into the
+// terminal, then shown there), not in the chat view's.
+export const ownModelPicker = (agentId) => agentId === 'codex' || agentId === 'cursor'
+// Agents whose permission mode the chat view's picker changes (Cursor's
+// Shift+Tab cycles its Agent / Plan / Ask modes instead: none).
+export const hasModePicker = (agentId) => agentId === 'claude' || agentId === 'openclaude' || agentId === 'codex'
 
 const QUESTION_TOOLS = new Set(['AskUserQuestion', 'ask_user_question', 'askUserQuestion', 'request_user_input'])
 
@@ -95,7 +119,9 @@ const MATCH_SLACK_MS = 5000
 // What you sent from the chat stays shown (as sent) until the agent's file
 // has it: the same text, or (once Tessel saw the agent take it) the next
 // prompt of yours after it, whatever the file made of it (a long paste may be
-// shown shortened). pending: [{ id, text, at, delivered }] in sending order.
+// shown shortened). pending: [{ id, text, at, delivered, seen }] in sending
+// order (seen: how many prompts the file showed when it was sent, for a file
+// without times: Cursor's).
 // -> { events: the conversation plus the messages not in it yet, done: ids
 // of the pending messages now in the file }
 export function mergePendingSends(events, pending) {
@@ -105,7 +131,9 @@ export function mergePendingSends(events, pending) {
   const done = []
   const shown = []
   for (const p of Array.isArray(pending) ? pending : []) {
-    const after = prompts.filter((e) => !used.has(e) && (!Number.isFinite(e.at) || e.at >= p.at - MATCH_SLACK_MS))
+    const after = prompts.filter(
+      (e, i) => !used.has(e) && (Number.isFinite(e.at) ? e.at >= p.at - MATCH_SLACK_MS : !Number.isFinite(p.seen) || i >= p.seen)
+    )
     let hit = after.find((e) => norm(e.text) === norm(p.text))
     if (!hit && p.delivered) hit = after[0]
     if (hit) {
@@ -122,7 +150,8 @@ export function mergePendingSends(events, pending) {
 // differs from Claude Code's), after Orca's buildAskAnswerKeys /
 // buildCodexAskAnswerKeys. -> [{ raw } | { text }]
 export function answerKeyGroups(agentId, prompt, selections) {
-  if (!prompt || !hasAskAnswer(prompt, selections)) return []
+  // Cursor's questions are answered in its terminal (no card here).
+  if (agentId === 'cursor' || !prompt || !hasAskAnswer(prompt, selections)) return []
   return composerAgent(agentId) === 'codex' ? buildCodexAskAnswerKeys(prompt, selections) : buildAskAnswerKeys(prompt, selections)
 }
 
@@ -167,12 +196,14 @@ export function waitingCard({ approval = false, input = false, working = false }
 // into the agent as a command: Codex takes it key by key, Claude Code and
 // OpenClaude as a paste; Enter, and no turn is watched for it) or a message
 // (Tessel's delivery, which watches the agent take it). A message with
-// images is always a message (a command never drops its images).
+// images is always a message (a command never drops its images). Cursor, as
+// Codex, takes it key by key (its "/" menu opens as it is typed).
 // -> null | 'paste' | 'type'
 export function commandDelivery(agentId, text, imageCount = 0) {
   const body = String(text || '').trim()
   if (imageCount > 0 || !/^\/[A-Za-z][\w:.-]*(?:\s|$)/.test(body) || /[\r\n]/.test(body)) return null
-  return composerAgent(agentId) === 'codex' ? 'type' : 'paste'
+  const agent = composerAgent(agentId)
+  return agent === 'codex' || agent === 'cursor' ? 'type' : 'paste'
 }
 
 // The image files the composer may name to the agent: Tessel's own copies
@@ -182,10 +213,29 @@ export function isPastedImageCopy(path) {
   return typeof path === 'string' && path.length <= 1024 && IMAGE_COPY.test(path) && !/[\\/]\.\.?[\\/]/.test(path)
 }
 
+// Cursor CLI's own commands (cursor.com/docs/cli/reference/slash-commands):
+// the ones that make sense from a chat. /model opens its picker in the terminal.
+const CURSOR_COMMANDS = [
+  ['model', 'chat.orca.cursorCommands.model', 'Choose the model (in its terminal)'],
+  ['plan', 'chat.orca.copy.switch_to_plan_mode', 'Switch to Plan mode'],
+  ['ask', 'chat.orca.cursorCommands.ask', 'Toggle Ask mode (read-only questions)'],
+  ['debug', 'chat.orca.cursorCommands.debug', 'Toggle Debug mode'],
+  ['run-everything', 'chat.orca.cursorCommands.runEverything', 'Run commands without asking (on, off, status)'],
+  ['summarize', 'chat.orca.cursorCommands.summarize', 'Summarize the conversation to free context'],
+  ['clear', 'chat.orca.copy.start_a_new_chat', 'Start a new chat'],
+  ['resume', 'chat.orca.copy.resume_a_saved_chat', 'Resume a saved chat'],
+  ['fork', 'chat.orca.copy.fork_the_current_chat', 'Fork the current chat'],
+  ['rewind', 'chat.orca.cursorCommands.rewind', 'Go back to an earlier message'],
+  ['rename', 'chat.orca.copy.rename_the_current_thread', 'Rename the current thread'],
+  ['mcp', 'chat.orca.copy.list_configured_mcp_tools', 'List configured MCP tools'],
+  ['help', 'chat.orca.copy.show_available_commands', 'Show available commands']
+]
+
 // The "/" menu: the agent's own commands (its TUI runs them), with model and
 // effort first where the chat view offers their pickers.
 export function bridgeSlashCommands(agentId, { options = [] } = {}) {
   const agent = composerAgent(agentId)
+  if (agent === 'cursor') return CURSOR_COMMANDS.map(([name, key, fallback]) => ({ name, kind: 'command', description: t(key, fallback) }))
   const own = getAgentSlashCommands(agent)
   const extra = []
   if (agent !== 'codex') {

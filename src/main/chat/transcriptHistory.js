@@ -183,12 +183,13 @@ export function createBuilder(limits) {
   const b = {
     // idTag: an older page's own mark, so its made-up ids never meet another page's.
     nextId: (prefix) => `hist-${limits.idTag || ''}${prefix}-${++n}`, // i18n-ignore id
-    endTurn(status = 'completed', ts) {
+    // error: what the agent said went wrong (shown under the turn).
+    endTurn(status = 'completed', ts, error = '') {
       if (!turn) return
       for (const id of openTools) push({ type: 'tool', id, status: status === 'interrupted' ? 'stopped' : 'done' }, ts)
       openTools.clear()
       const when = at(ts)
-      push({ type: 'turnEnd', status, ...(when != null && turn.at != null ? { durationMs: Math.max(0, when - turn.at) } : {}) }, ts)
+      push({ type: 'turnEnd', status, ...(when != null && turn.at != null ? { durationMs: Math.max(0, when - turn.at) } : {}), ...(error ? { error: text(error) } : {}) }, ts)
       turn = null
       messages.clear()
     },
@@ -237,6 +238,12 @@ export function createBuilder(limits) {
       openTools.add(id)
       seenTools.add(id)
       push({ type: 'tool', id, name: String(name || ''), summary: toolSummary(value), input: clipDeep(value ?? {}), status: 'running' }, ts)
+    },
+    // The calls still open are over (a file that never writes their results:
+    // the agent went on after them).
+    settleTools(ts) {
+      for (const id of openTools) push({ type: 'tool', id, status: 'done' }, ts)
+      openTools.clear()
     },
     toolResult(id, output, isError, ts) {
       if (!seenTools.has(id)) return

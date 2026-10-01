@@ -16,7 +16,10 @@
 // OMP: <OMP_CODING_AGENT_DIR or ~/.omp/agent/sessions>/<folder slug>/<time>_<id>.jsonl (a session's own
 // sub-folders, its task sub-agents', are not searched);
 // Claude Code: <its account's config folder>/projects/<project>/<id>.jsonl;
-// Codex: <its account's CODEX_HOME>/sessions/YYYY/MM/DD/rollout-<time>-<id>.jsonl.
+// Codex: <its account's CODEX_HOME>/sessions/YYYY/MM/DD/rollout-<time>-<id>.jsonl;
+// Cursor: ~/.cursor/projects/<folder slug>/agent-transcripts/<id>/<id>.jsonl
+// (older: agent-transcripts/<id>.jsonl; its sub-agents' own files, under
+// <id>/subagents/, are never the pane's).
 // Claude Code and Codex: the folder is the pane's account's, resolved in this
 // process from the account id (the window never names a folder). Newer Claude
 // Code names its file with a UUID other than the hook's session id: the path
@@ -42,7 +45,7 @@ import { ompSessionsDir } from '../agentSessionSources.js'
 import { HISTORY_LIMITS, claudeHistoryEvents, codexHistoryEvents, createBuilder, findTranscript } from './transcriptHistory.js'
 import { claudeBackgroundFromLines, transcriptCwd } from './transcriptBackground.js'
 
-export const TRANSCRIPT_VIEW_AGENTS = ['grok', 'openclaude', 'omp', 'claude', 'codex']
+export const TRANSCRIPT_VIEW_AGENTS = ['grok', 'openclaude', 'omp', 'claude', 'codex', 'cursor']
 // Their folder is the pane's account's (given by the caller as `home`).
 const ACCOUNT_AGENTS = ['claude', 'codex']
 const MAX_VIEWS = 8
@@ -55,7 +58,7 @@ const str = (v) => (typeof v === 'string' && v ? v : null)
 
 export function validViewId(agent, id) {
   if (typeof id !== 'string') return false
-  return agent === 'openclaude' || ACCOUNT_AGENTS.includes(agent) ? UUID.test(id) : TOKEN_ID.test(id)
+  return agent === 'openclaude' || agent === 'cursor' || ACCOUNT_AGENTS.includes(agent) ? UUID.test(id) : TOKEN_ID.test(id)
 }
 
 function envDir(v) {
@@ -68,7 +71,8 @@ export function transcriptViewRoots(home = os.homedir(), env = process.env) {
   return {
     grok: join(envDir(env.GROK_HOME) || join(home, '.grok'), 'sessions'),
     openclaude: join(home, '.openclaude'),
-    omp: ompSessionsDir(home, env)
+    omp: ompSessionsDir(home, env),
+    cursor: join(home, '.cursor', 'projects')
   }
 }
 
@@ -113,6 +117,7 @@ export function findTranscriptViewFile(agent, id, roots = transcriptViewRoots(),
     const hit = reportedTranscriptIn(roots.openclaude, 'projects', reported)
     if (hit) return hit
   }
+  if (agent === 'cursor') return cursorTranscriptFile(roots.cursor, id, reported)
   const root = roots[agent]
   if (typeof root !== 'string' || !isAbsolute(root)) return null
   const base = realBase(root)
@@ -145,6 +150,22 @@ export function findTranscriptViewFile(agent, id, roots = transcriptViewRoots(),
     }
   }
   return file && realInside(base, file, false) ? file : null
+}
+
+// Cursor: the file its hooks named for this conversation (its own name, never a
+// sub-agent's), else the one of that id in any project folder.
+function cursorTranscriptFile(root, id, reported) {
+  if (typeof root !== 'string' || !isAbsolute(root)) return null
+  const base = realBase(root)
+  if (!base) return null
+  const own = (file) => isAbsolute(file) && file.length <= 1024 && !file.includes('\0') && basename(file).toLowerCase() === `${id}.jsonl`.toLowerCase() && !/[\\/]subagents[\\/]/i.test(file)
+  if (typeof reported === 'string' && own(reported) && realInside(base, reported, false)) return reported
+  for (const group of dirNames(root)) {
+    for (const candidate of [join(root, group, 'agent-transcripts', id, `${id}.jsonl`), join(root, group, 'agent-transcripts', `${id}.jsonl`)]) {
+      if (fs.existsSync(candidate)) return realInside(base, candidate, false) ? candidate : null
+    }
+  }
+  return null
 }
 
 function parse(line) {
@@ -311,6 +332,67 @@ export function ompViewEvents(lines, limits = HISTORY_LIMITS) {
     // An aborted turn with nothing streamed still ends as interrupted.
     if (m.stopReason === 'aborted') b.endTurn('interrupted', ts)
     else if (!any) b.work(ts)
+  })
+  return b.finish()
+}
+
+// ---- Cursor -------------------------------------------------------------------
+// One object a line, with no time, no id and no tool result (its file never
+// keeps them):
+//   { role: 'user', message: { content: [{ type: 'text', text }] } }: a prompt,
+//     inside <user_query>…</user_query>, after what Cursor adds before it
+//     ("[Image]" lines and <image_files>, <timestamp>…);
+//   { role: 'assistant', message: { content: [{ type: 'text', text },
+//     { type: 'tool_use', name, input }…] } }: one step, its text (the thinking
+//     Cursor hides ends it as "[REDACTED]") and the tools it called;
+//   { type: 'turn_ended', status: 'success' | 'error' | 'aborted', error }.
+// A step's tools are over once a later line comes (the agent went on).
+const CURSOR_REDACTED = /\s*\[REDACTED\]\s*$/
+function cursorImages(text) {
+  const open = text.toLowerCase().indexOf('<image_files>')
+  if (open < 0) return 0
+  return text.slice(0, open).split('\n').filter((l) => l.trim() === '[Image]').length
+}
+
+export function cursorViewEvents(lines, limits = HISTORY_LIMITS) {
+  const b = createBuilder(limits)
+  lines.forEach((line, index) => {
+    const r = parse(line)
+    if (!r) return
+    if (r.type === 'turn_ended') {
+      const status = r.status === 'aborted' ? 'interrupted' : r.status === 'error' ? 'failed' : 'completed'
+      b.endTurn(status, null, status === 'failed' ? str(r.error) || '' : '')
+      return
+    }
+    const content = obj(r.message)?.content
+    const key = `cursor-${index}` // i18n-ignore id
+    if (r.role === 'user') {
+      const texts = textsOf(content)
+      const images = texts.reduce((n, t) => n + cursorImages(t), 0)
+      const body = texts.map(grokUserQuery).filter((t) => t.trim()).join('\n')
+      b.settleTools(null)
+      b.user(key, body, null, Array.from({ length: images }, () => ({ kind: 'image' })))
+      return
+    }
+    if (r.role !== 'assistant') return
+    b.settleTools(null)
+    const blocks = Array.isArray(content) ? content : typeof content === 'string' ? [{ type: 'text', text: content }] : []
+    let any = false
+    for (const blk of blocks) {
+      const o = obj(blk)
+      if (!o) continue
+      if (o.type === 'text' && str(o.text)) {
+        const text = o.text.replace(CURSOR_REDACTED, '')
+        if (text.trim()) {
+          b.message('assistant', key, text, null, '\n\n')
+          any = true
+        }
+      } else if (o.type === 'tool_use') {
+        b.tool(str(o.id) || b.nextId('t'), str(o.name) || 'tool', o.input, null) // i18n-ignore tool name
+        any = true
+      }
+    }
+    if (!any) b.work(null)
   })
   return b.finish()
 }
@@ -525,6 +607,7 @@ export function viewEvents(agent, lines, sessionId, limits = HISTORY_LIMITS) {
   if (agent === 'grok') return grokViewEvents(lines, limits)
   if (agent === 'omp') return ompViewEvents(lines, limits)
   if (agent === 'codex') return codexHistoryEvents(lines, sessionId, limits)
+  if (agent === 'cursor') return cursorViewEvents(lines, limits)
   return claudeHistoryEvents(lines, limits)
 }
 
@@ -724,7 +807,7 @@ export function createTranscriptViews({ send, roots = transcriptViewRoots, homes
       if (!home) return { ok: false, code: 'missing' }
     }
     let reported = null
-    if (ACCOUNT_AGENTS.includes(agent) || agent === 'openclaude') {
+    if (ACCOUNT_AGENTS.includes(agent) || agent === 'openclaude' || agent === 'cursor') {
       try {
         reported = reportedTranscript(sessionsDir(), o.paneId, agent, sessionId)
       } catch {
