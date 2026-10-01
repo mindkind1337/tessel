@@ -314,3 +314,21 @@ describe('OpenCode: models from `opencode models`', () => {
     w.unmount()
   })
 })
+
+describe('the model the agent reports by its full id', () => {
+  it('is the listed row with that name, never a second row with the raw id', () => {
+    const models = [
+      { id: 'opus', label: 'Opus 5.5', options: [] },
+      { id: 'fable', label: 'Fable 5.1', options: [] }
+    ]
+    const w = mount(SessionOptionPicker, { props: { agentId: 'claude', models, values: { model: 'claude-fable-5-1' } } })
+    const rows = w.findAll('[data-test="sop-model"]')
+    expect(rows.map((r) => r.attributes('data-model'))).toEqual(['opus', 'fable'])
+    expect(w.get('[data-model="fable"]').attributes('aria-checked')).toBe('true')
+    w.unmount()
+    // A model the list does not have: one extra row, named, not its raw id.
+    const x = mount(SessionOptionPicker, { props: { agentId: 'claude', models, values: { model: 'claude-sonnet-4-6' } } })
+    expect(x.findAll('[data-test="sop-model"]').at(-1).text()).toContain('Sonnet 4.6')
+    x.unmount()
+  })
+})

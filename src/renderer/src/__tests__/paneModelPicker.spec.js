@@ -260,11 +260,11 @@ describe('pane menu > Model', () => {
     window.shellApi.agentModel.mockResolvedValue({ model: 'gpt-5.5', effort: 'high', source: 'session' })
     await wrapper.setProps({ node: { ...wrapper.props('node'), sessionId: 's1' } })
     await flushPromises()
-    expect(wrapper.get('[data-test="pane-model-chip"]').text()).toBe('gpt-5.5 · High')
+    expect(wrapper.get('[data-test="pane-model-chip"]').text()).toBe('GPT-5.5 · High')
     window.shellApi.agentModel.mockResolvedValue({ model: 'gpt-5.5', effort: 'medium', source: 'session' })
     await wrapper.setProps({ node: { ...wrapper.props('node'), sessionId: 's3' } })
     await flushPromises()
-    expect(wrapper.get('[data-test="pane-model-chip"]').text()).toBe('gpt-5.5 · Medium')
+    expect(wrapper.get('[data-test="pane-model-chip"]').text()).toBe('GPT-5.5 · Medium')
   })
 
   it('a pane launched with its own model shows it over the default from settings, until its session says otherwise', async () => {

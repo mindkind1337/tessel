@@ -12,6 +12,7 @@ import { refreshIfStale } from '../agentModels'
 import { getAgentSessionOptionCatalog, modelOptions } from '../../../shared/agentSessionOptions'
 import { sessionOptionLabel, sessionChoiceLabel, modelDescription } from '../sessionOptionLabels'
 import { t } from '../i18n'
+import { modelLabel } from '../../../shared/modelLabel'
 
 const props = defineProps({
   agentId: { type: String, required: true },
@@ -37,14 +38,26 @@ const emit = defineEmits(['set', 'action'])
 const catalog = computed(() => getAgentSessionOptionCatalog(props.agentId))
 // Shown: a missing or old model list is refreshed in the background.
 onMounted(() => refreshIfStale(props.agentId))
-const chosenModel = computed(() => (props.values && props.values.model) || null)
+// The agent may report its full id (claude-fable-5-1, opus[1m]) where the
+// list has the alias it was chosen by ("Fable 5.1"): that row is the current
+// one, never a second row with the raw id.
+const chosenModel = computed(() => {
+  const model = (props.values && props.values.model) || null
+  if (!model || props.models.some((m) => m.id === model)) return model
+  const name = modelLabel(model)
+  const plain = name.replace(/ \(1M\)$/, '')
+  const same =
+    props.models.find((m) => m.label && (m.label === name || m.label === plain)) ||
+    props.models.find((m) => m.id === model.replace(/\[1m\]$/i, ''))
+  return same ? same.id : model
+})
 const optionsModel = computed(() => chosenModel.value || props.fallbackModel || null)
 const options = computed(() => (catalog.value && optionsModel.value ? modelOptions(catalog.value, props.models, optionsModel.value) : []))
 // The chosen model is listed even when the list does not have it (a model
 // chosen before, or one the CLI no longer lists).
 const rows = computed(() => {
   const list = props.models.slice()
-  if (chosenModel.value && !list.some((m) => m.id === chosenModel.value)) list.push({ id: chosenModel.value, label: chosenModel.value, options: [] })
+  if (chosenModel.value && !list.some((m) => m.id === chosenModel.value)) list.push({ id: chosenModel.value, label: modelLabel(chosenModel.value) || chosenModel.value, options: [] })
   return list
 })
 const modelPicker = computed(() => {
