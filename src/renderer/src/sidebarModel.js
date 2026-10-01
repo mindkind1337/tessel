@@ -269,7 +269,9 @@ export function paneRow(pane, now = Date.now()) {
   // Beside the name: only what needs attention (the dot shows the state);
   // the task goes on a second line under it (subline).
   else secondary = ''
-  const subline = agent ? pane.task || (pane.track && pane.track.text) || '' : ''
+  // Only a task: its state and how long ("Idle · 1 min") are already the dot
+  // and the time on the right.
+  const subline = agent ? pane.task || '' : ''
   const primary = pane.paneName || pane.title || (agent ? agentName : terminal)
   return {
     id: pane.id,

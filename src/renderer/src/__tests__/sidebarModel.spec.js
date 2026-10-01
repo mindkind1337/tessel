@@ -97,6 +97,8 @@ describe('states in Orca words', () => {
     expect(paneRow(pane('x', { sleeping: true }), NOW).secondary).toBe('Sleeping')
     expect(paneRow(pane('x', { kind: 'shell', title: 'pwsh' }), NOW)).toMatchObject({ primary: 'pwsh', secondary: 'Terminal' })
     expect(paneRow(pane('x', { task: 'Fix it', state: 'working' }), NOW)).toMatchObject({ primary: 'x', secondary: '', subline: 'Fix it', stateLabel: 'Working' })
+    // No task: no second line (its state and time are the dot and the time on the right).
+    expect(paneRow(pane('x', { state: 'idle', track: { text: 'Idle · 1 min' } }), NOW).subline).toBe('')
     expect(paneRow(pane('x', { sessionId: 's1' }), NOW).children).toEqual({ agent: 'claude', sessionId: 's1' })
     expect(paneRow(pane('x', { agentId: 'codex', sessionId: 's1', accountId: null }), NOW).children).toEqual({ agent: 'codex', sessionId: 's1', accountId: null })
     expect(paneRow(pane('x', { agentId: 'opencode', sessionId: 'ses_1' }), NOW).children).toEqual({ agent: 'opencode', sessionId: 'ses_1' })
