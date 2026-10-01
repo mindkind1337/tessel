@@ -5,7 +5,9 @@ import fs from 'fs'
 import os from 'os'
 import { join } from 'path'
 import {
+  createTail,
   createTranscriptViews,
+  reportedTranscript,
   findTranscriptViewFile,
   grokViewEvents,
   ompViewEvents,
@@ -69,7 +71,8 @@ describe('transcript view: where and which files', () => {
     expect(validViewId('grok', 'a/b/c/d/e')).toBe(false)
     expect(validViewId('openclaude', 'not-a-uuid-at-all')).toBe(false)
     expect(validViewId('openclaude', OC_ID)).toBe(true)
-    expect(readTranscriptView({ agent: 'claude', sessionId: OC_ID, roots })).toEqual({ ok: false, code: 'invalid' })
+    expect(readTranscriptView({ agent: 'gemini', sessionId: OC_ID, roots })).toEqual({ ok: false, code: 'invalid' })
+    expect(readTranscriptView({ agent: 'claude', sessionId: 'not-a-uuid-at-all', roots })).toEqual({ ok: false, code: 'invalid' })
     expect(readTranscriptView({ agent: 'grok', sessionId: '..\\x', roots })).toEqual({ ok: false, code: 'invalid' })
   })
 
@@ -250,5 +253,112 @@ describe('transcript view: live while open', () => {
     const res = await handlers['transcriptView:open']({}, { agent: 'grok', sessionId: GROK_ID, path: 'C:\\Windows\\win.ini' })
     expect(res.ok).toBe(true)
     expect(await handlers['transcriptView:close']({}, { viewId: res.viewId })).toEqual({ ok: true })
+  })
+})
+
+describe('transcript view: Claude Code and Codex (the pane account folder)', () => {
+  const CL_ID = '22222222-3333-4444-8555-666666666666'
+  const OTHER_FILE_ID = '99999999-3333-4444-8555-666666666666'
+  const CX_ID = '0199aabb-ccdd-7eef-8000-0000000000aa'
+  let home
+  beforeEach(() => {
+    home = join(tmp, 'claude-account')
+  })
+  function claudeFile(content, name = CL_ID) {
+    const dir = join(home, 'projects', 'C--proj')
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(join(dir, `${name}.jsonl`), content)
+    return join(dir, `${name}.jsonl`)
+  }
+  const claudeTurn = (text, s) => ({ type: 'user', uuid: `u-${s}`, timestamp: ts(s), message: { role: 'user', content: text } })
+
+  it('finds the file in the given folder by id, or the path its hooks reported (inside that folder only)', () => {
+    const byId = claudeFile(lines([claudeTurn('by id', 1)]))
+    expect(findTranscriptViewFile('claude', CL_ID, roots, { home })).toBe(byId)
+    // Newer Claude Code: a file named with another UUID, named by its hooks.
+    const named = claudeFile(lines([claudeTurn('named', 1)]), OTHER_FILE_ID)
+    expect(findTranscriptViewFile('claude', CL_ID, roots, { home, reported: named })).toBe(named)
+    // Outside the folder, not a .jsonl, or no folder at all: not taken.
+    const outside = join(tmp, 'elsewhere.jsonl')
+    fs.writeFileSync(outside, lines([claudeTurn('secret', 1)]))
+    expect(findTranscriptViewFile('claude', CL_ID, roots, { home, reported: outside })).toBe(byId)
+    expect(findTranscriptViewFile('claude', CL_ID, roots, { home: null, reported: named })).toBeNull()
+    expect(readTranscriptView({ agent: 'claude', sessionId: CL_ID, roots, home: null })).toEqual({ ok: false, code: 'missing' })
+  })
+
+  it('Codex: its rollout in the account CODEX_HOME, its own thread only', () => {
+    const codexHome = join(tmp, 'codex-account')
+    const now = new Date()
+    const day = join(codexHome, 'sessions', String(now.getFullYear()), String(now.getMonth() + 1).padStart(2, '0'), String(now.getDate()).padStart(2, '0'))
+    fs.mkdirSync(day, { recursive: true })
+    const file = join(day, `rollout-2026-09-01T10-00-00-${CX_ID}.jsonl`)
+    fs.writeFileSync(
+      file,
+      lines([
+        { type: 'event_msg', timestamp: ts(1), payload: { type: 'user_message', message: 'Fix it' } },
+        { type: 'event_msg', timestamp: ts(2), payload: { type: 'agent_message', message: 'Fixed.' } },
+        { type: 'event_msg', timestamp: ts(3), payload: { type: 'task_complete' } }
+      ])
+    )
+    const res = readTranscriptView({ agent: 'codex', sessionId: CX_ID, roots, home: codexHome })
+    expect(res.ok).toBe(true)
+    expect(res.events.filter((e) => e.type === 'user').map((e) => e.text)).toEqual(['Fix it'])
+    expect(res.events.filter((e) => e.type === 'assistant').map((e) => e.text)).toEqual(['Fixed.'])
+  })
+
+  it('the window names a pane and an account, never a folder: the home is resolved in main, the hook report checked', async () => {
+    const named = claudeFile(lines([claudeTurn('from the reported file', 1)]), OTHER_FILE_ID)
+    const sessions = join(tmp, 'sessions')
+    fs.mkdirSync(sessions, { recursive: true })
+    fs.writeFileSync(join(sessions, 'pane-7.json'), JSON.stringify({ agent: 'claude', sessionId: CL_ID, transcriptPath: named }))
+    expect(reportedTranscript(sessions, 'pane-7', 'claude', CL_ID)).toBe(named)
+    expect(reportedTranscript(sessions, 'pane-7', 'claude', OTHER_FILE_ID)).toBeNull()
+    expect(reportedTranscript(sessions, '../pane-7', 'claude', CL_ID)).toBeNull()
+    const homes = vi.fn(async () => home)
+    const views = createTranscriptViews({ send: vi.fn(), roots: () => roots, homes, sessionsDir: () => sessions, watch: () => ({ close() {}, on() {} }) })
+    const res = await views.openFromWindow({ agent: 'claude', sessionId: CL_ID, paneId: 'pane-7', accountId: 'acc-1', home: 'C:\Windows' })
+    expect(homes).toHaveBeenCalledWith('claude', 'acc-1')
+    expect(res.ok).toBe(true)
+    expect(res.events.find((e) => e.type === 'user').text).toBe('from the reported file')
+    // No account folder: nothing read.
+    const none = createTranscriptViews({ send: vi.fn(), roots: () => roots, homes: async () => null, sessionsDir: () => sessions })
+    expect(await none.openFromWindow({ agent: 'claude', sessionId: CL_ID, paneId: 'pane-7' })).toEqual({ ok: false, code: 'missing' })
+    views.closeAll()
+  })
+})
+
+describe('transcript view: incremental reads', () => {
+  const file = () => join(tmp, 'tail.jsonl')
+  it('reads only what was added, waits for a line being written, and starts again when the file shrinks', () => {
+    fs.writeFileSync(file(), '{"a":1}\n{"b":2}\n{"c":')
+    const tail = createTail(file(), 1024)
+    expect(tail.read()).toBe(true)
+    expect(tail.lines()).toEqual(['{"a":1}', '{"b":2}'])
+    expect(tail.read()).toBe(false)
+    fs.appendFileSync(file(), '3}\r\n{"d":4}\n')
+    expect(tail.read()).toBe(true)
+    expect(tail.lines()).toEqual(['{"a":1}', '{"b":2}', '{"c":3}', '{"d":4}'])
+    fs.writeFileSync(file(), '{"new":1}\n')
+    expect(tail.read()).toBe(true)
+    expect(tail.lines()).toEqual(['{"new":1}'])
+    expect(tail.cut()).toBe(false)
+  })
+
+  it('keeps the last bytes only (a cut first line is dropped), and a large addition reads only its end', () => {
+    fs.writeFileSync(file(), Array.from({ length: 10 }, (_, i) => `{"n":${i}}`).join('\n') + '\n')
+    const tail = createTail(file(), 40)
+    tail.read()
+    expect(tail.cut()).toBe(true)
+    expect(tail.lines().at(-1)).toBe('{"n":9}')
+    expect(tail.lines().every((l) => l.startsWith('{"n":'))).toBe(true)
+    expect(tail.lines().join('\n').length).toBeLessThanOrEqual(40)
+    fs.appendFileSync(file(), Array.from({ length: 20 }, (_, i) => `{"m":${i}}`).join('\n') + '\n')
+    tail.read()
+    expect(tail.lines().at(-1)).toBe('{"m":19}')
+    expect(tail.lines().join('\n').length).toBeLessThanOrEqual(40)
+  })
+
+  it('a missing file reads as null', () => {
+    expect(createTail(join(tmp, 'nope.jsonl'), 1024).read()).toBeNull()
   })
 })

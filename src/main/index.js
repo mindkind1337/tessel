@@ -1199,7 +1199,17 @@ const sessionSearch = createSessionSearch({
 sessionSearch.register(ipcMain)
 app.whenReady().then(() => sessionSearch.start())
 app.on('will-quit', () => sessionSearch.close())
-const transcriptViews = createTranscriptViews({ send, log })
+// Claude Code and Codex: the folder of the pane's account (resolved here from
+// its id), and the session file its hooks reported (sessions/<pane>.json).
+const transcriptViews = createTranscriptViews({
+  send,
+  log,
+  homes: async (agent, accountId) => {
+    const r = await accountSessions.roots({ agent, accountId })
+    return (r && r[agent]) || null
+  },
+  sessionsDir: () => sessionsDir()
+})
 transcriptViews.register(ipcMain)
 app.on('will-quit', () => transcriptViews.closeAll())
 // Quitting kills the chat agents' process trees at once (before-quit below
@@ -1333,8 +1343,9 @@ ipcMain.handle('sessions:reported', () => {
     try {
       const r = JSON.parse(fs.readFileSync(join(dir, n), 'utf8'))
       if (r && typeof r.sessionId === 'string') {
-        // The inbox key stays in this process (agents:inbox).
-        const { inboxToken, ...shown } = r
+        // The inbox key stays in this process (agents:inbox), and so does the
+        // session file's path (transcriptView.js reads it here).
+        const { inboxToken, transcriptPath, ...shown } = r
         out[n.slice(0, -5)] = { ...shown, inbox: !!(r.inbox && inboxToken) }
       }
     } catch {

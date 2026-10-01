@@ -228,6 +228,30 @@ describe('Tessel team tools (background messages)', () => {
     expect(shown.hookSpecificOutput.additionalContext).toMatch(/For the chat agent/)
   })
 
+  it("Claude Code's session file path is recorded only inside its own projects folder (no content)", async () => {
+    const sessions = fs.mkdtempSync(join(os.tmpdir(), 'tessel-sessions-'))
+    const config = fs.mkdtempSync(join(os.tmpdir(), 'tessel-claude-config-'))
+    const run = (input) =>
+      new Promise((resolve) => {
+        const child = spawn(process.execPath, [SERVER, '--hook'], {
+          env: { ...process.env, TESSEL_PANE_ID: B.id, TESSEL_PROJECT_DIR: dir, TESSEL_SESSIONS_DIR: sessions, CLAUDE_CONFIG_DIR: config }
+        })
+        child.on('close', () => resolve())
+        child.stdin.end(JSON.stringify({ session_id: '11111111-2222-4333-8444-555555555555', cwd: dir, hook_event_name: 'SessionStart', ...input }))
+      })
+    const report = () => JSON.parse(fs.readFileSync(join(sessions, `${B.id}.json`), 'utf8'))
+    const inside = join(config, 'projects', 'C--proj', '99999999-2222-4333-8444-555555555555.jsonl')
+    await run({ transcript_path: inside })
+    expect(report()).toMatchObject({ agent: 'claude', transcriptPath: inside })
+    for (const bad of [join(config, 'settings.jsonl'), join(config, 'projects', '..', '..', 'x.jsonl'), join(config, 'projects', 'a.txt'), 'relative/a.jsonl']) {
+      fs.rmSync(join(sessions, `${B.id}.json`), { force: true })
+      await run({ transcript_path: bad })
+      expect(report().transcriptPath).toBeUndefined()
+    }
+    fs.rmSync(sessions, { recursive: true, force: true })
+    fs.rmSync(config, { recursive: true, force: true })
+  })
+
   it('as a Gemini CLI hook: the same answers under its event names, and its conversation reported', async () => {
     const sessions = fs.mkdtempSync(join(os.tmpdir(), 'tessel-sessions-'))
     mcp.send(as(A), '#4', 'Gemini, after a tool')

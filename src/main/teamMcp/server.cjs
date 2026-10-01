@@ -31,7 +31,7 @@ const path = require('path')
 const crypto = require('crypto')
 const { randomUUID } = crypto
 
-const VERSION = '1.10.2'
+const VERSION = '1.10.3'
 const MAX_TEXT = 6000
 
 // --- Finding my team and me ---------------------------------------------------
@@ -1369,6 +1369,27 @@ function reportAgentState(data, provider, continuing = false) {
   }
 }
 
+// The session file an agent's hook names (transcript_path): newer Claude Code
+// names it with a UUID other than its session id, so Tessel's chat view of the
+// pane reads it from here. Only a path, never anything from inside the file,
+// and only a .jsonl file inside the agent's own conversations folder (its
+// account's config folder for Claude Code, CODEX_HOME for Codex); Tessel checks
+// it again (real path, no link) before reading it. Anything else: ''.
+function sessionFilePath(value, agent) {
+  if (typeof value !== 'string' || !value || value.length > 1024 || value.includes('\0')) return ''
+  if (!path.isAbsolute(value) || !value.toLowerCase().endsWith('.jsonl')) return ''
+  const home = require('os').homedir()
+  const roots = {
+    claude: path.join(process.env.CLAUDE_CONFIG_DIR || path.join(home, '.claude'), 'projects'),
+    openclaude: path.join(home, '.openclaude', 'projects'),
+    codex: path.join(process.env.CODEX_HOME || path.join(home, '.codex'), 'sessions')
+  }
+  const root = roots[agent]
+  if (!root || !path.isAbsolute(root)) return ''
+  const rel = path.relative(path.resolve(root), path.resolve(value))
+  return rel && !rel.startsWith('..') && !path.isAbsolute(rel) ? path.resolve(value) : ''
+}
+
 // The conversation an agent is in right now, as its own hooks say it (every
 // event carries session_id; SessionStart comes right after /clear, /resume
 // or a restart). Written per pane in <this script's folder>/sessions/, so
@@ -1389,6 +1410,7 @@ function reportSession(data, agent) {
   // Tessel posts reminders there instead of typing them into the terminal.
   const inbox = agent === 'claude' ? String(process.env.CLAUDE_CODE_MESSAGING_SOCKET || '') : ''
   const inboxToken = inbox ? String(process.env.CLAUDE_CODE_MESSAGING_TOKEN || '') : ''
+  const transcriptPath = sessionFilePath(data && data.transcript_path, agent)
   try {
     const old = readJson(file)
     // Unchanged: rewritten at most once a minute, so its time says when the
@@ -1399,6 +1421,7 @@ function reportSession(data, agent) {
       old.agent === agent &&
       (old.inbox || '') === inbox &&
       (old.inboxToken || '') === inboxToken &&
+      (old.transcriptPath || '') === transcriptPath &&
       Date.now() - (Number(old.at) || 0) < 60000
     )
       return
@@ -1406,6 +1429,7 @@ function reportSession(data, agent) {
     const tmp = `${file}.${process.pid}.tmp`
     const report = { agent, sessionId: id, source: String(data.source || data.hook_event_name || ''), cwd: String(data.cwd || ''), at: Date.now() }
     if (inbox && inboxToken) Object.assign(report, { inbox, inboxToken })
+    if (transcriptPath) report.transcriptPath = transcriptPath
     fs.writeFileSync(tmp, JSON.stringify(report))
     fs.renameSync(tmp, file)
   } catch {

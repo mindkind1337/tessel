@@ -1,7 +1,8 @@
-// A read-only chat view of a terminal agent's conversation, for the agents
-// with no chat protocol of their own (Grok, OpenClaude, OMP): their session
-// file is read and shown in the chat UI while the agent keeps running in its
-// terminal pane.
+// A chat view of a terminal agent's conversation: its session file is read
+// and shown in the chat UI while the agent keeps running in its terminal pane.
+// Read-only for Grok and OMP; for Claude Code, OpenClaude and Codex the view
+// also types into the terminal (the renderer's chat view of the pane), so
+// nothing is restarted to switch between the terminal and the chat.
 //
 // After Orca's src/main/native-chat (transcript-line-decoders-grok.ts,
 // transcript-line-decoders-omp.ts, session-file-resolver.ts,
@@ -13,22 +14,33 @@
 // Where: Grok: <GROK_HOME or ~/.grok>/sessions/<encoded folder>/<id>/chat_history.jsonl;
 // OpenClaude (Claude Code's format): ~/.openclaude/projects/<project>/<id>.jsonl;
 // OMP: <OMP_CODING_AGENT_DIR or ~/.omp/agent/sessions>/<folder slug>/<time>_<id>.jsonl (a session's own
-// sub-folders, its task sub-agents', are not searched).
+// sub-folders, its task sub-agents', are not searched);
+// Claude Code: <its account's config folder>/projects/<project>/<id>.jsonl;
+// Codex: <its account's CODEX_HOME>/sessions/YYYY/MM/DD/rollout-<time>-<id>.jsonl.
+// Claude Code and Codex: the folder is the pane's account's, resolved in this
+// process from the account id (the window never names a folder). Newer Claude
+// Code names its file with a UUID other than the hook's session id: the path
+// its hooks reported for that session (teamMcp reportSession, per pane) is
+// used when it is a real file inside that same folder.
 // The window names an agent and a session id (checked), never a path; the file
 // is found inside that agent's folder and read only when it is a real file
 // whose real path stays inside it (no link, no junction). Bounded like the
 // chat's history (the last 4 MB, 2000 events, texts cut); at most 8 views are
 // watched at once, each by one file watcher (a slow poll where watching fails),
-// re-read at most every 300 ms, and only while the view is open.
+// read again at most every 300 ms, and only while the view is open. A change
+// reads only the bytes added since the last read (the kept lines are decoded
+// again in memory); a file that shrank or was replaced is read again whole.
 import fs from 'fs'
 import os from 'os'
 import { basename, isAbsolute, join } from 'path'
 import { claudeTranscriptIn } from '../agentModel.js'
 import { realInside } from '../agentChildren.js'
 import { ompSessionsDir } from '../agentSessionSources.js'
-import { HISTORY_LIMITS, claudeHistoryEvents, createBuilder, readLastLines } from './transcriptHistory.js'
+import { HISTORY_LIMITS, claudeHistoryEvents, codexHistoryEvents, createBuilder, findTranscript } from './transcriptHistory.js'
 
-export const TRANSCRIPT_VIEW_AGENTS = ['grok', 'openclaude', 'omp']
+export const TRANSCRIPT_VIEW_AGENTS = ['grok', 'openclaude', 'omp', 'claude', 'codex']
+// Their folder is the pane's account's (given by the caller as `home`).
+const ACCOUNT_AGENTS = ['claude', 'codex']
 const MAX_VIEWS = 8
 const GROUP_SCAN_MAX = 2048
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -39,7 +51,7 @@ const str = (v) => (typeof v === 'string' && v ? v : null)
 
 export function validViewId(agent, id) {
   if (typeof id !== 'string') return false
-  return agent === 'openclaude' ? UUID.test(id) : TOKEN_ID.test(id)
+  return agent === 'openclaude' || ACCOUNT_AGENTS.includes(agent) ? UUID.test(id) : TOKEN_ID.test(id)
 }
 
 function envDir(v) {
@@ -76,9 +88,27 @@ function dirNames(dir) {
   }
 }
 
+// The path an agent's hooks reported for its session, when it is a real
+// .jsonl file (no link, no junction) inside <folder>/<sub> -> that path, or null.
+export function reportedTranscriptIn(folder, sub, file) {
+  if (typeof folder !== 'string' || !isAbsolute(folder) || typeof file !== 'string' || !isAbsolute(file)) return null
+  if (file.length > 1024 || file.includes('\0') || !file.toLowerCase().endsWith('.jsonl')) return null
+  const base = realBase(join(folder, sub))
+  return base && realInside(base, file, false) ? file : null
+}
+
 // -> the session file (a real file inside the agent's folder) or null.
-export function findTranscriptViewFile(agent, id, roots = transcriptViewRoots()) {
+// home: Claude Code's or Codex's folder (the pane's account's); reported: the
+// path its hooks gave for this session (checked here).
+export function findTranscriptViewFile(agent, id, roots = transcriptViewRoots(), { home = null, reported = null } = {}) {
   if (!TRANSCRIPT_VIEW_AGENTS.includes(agent) || !validViewId(agent, id)) return null
+  if (ACCOUNT_AGENTS.includes(agent)) {
+    return reportedTranscriptIn(home, agent === 'codex' ? 'sessions' : 'projects', reported) || findTranscript(agent, id, home)
+  }
+  if (agent === 'openclaude') {
+    const hit = reportedTranscriptIn(roots.openclaude, 'projects', reported)
+    if (hit) return hit
+  }
   const root = roots[agent]
   if (typeof root !== 'string' || !isAbsolute(root)) return null
   const base = realBase(root)
@@ -281,25 +311,150 @@ export function ompViewEvents(lines, limits = HISTORY_LIMITS) {
   return b.finish()
 }
 
-// -> { ok: true, events, truncated } | { ok: false, code: 'invalid' | 'missing' | 'empty' }
-export function readTranscriptView({ agent, sessionId, roots = transcriptViewRoots(), limits = HISTORY_LIMITS } = {}) {
-  if (!TRANSCRIPT_VIEW_AGENTS.includes(agent) || !validViewId(agent, sessionId)) return { ok: false, code: 'invalid' }
-  const file = findTranscriptViewFile(agent, sessionId, roots)
-  if (!file) return { ok: false, code: 'missing' }
-  const read = readLastLines(file, limits.bytes)
-  if (!read) return { ok: false, code: 'missing' }
-  let events = agent === 'grok' ? grokViewEvents(read.lines, limits) : agent === 'omp' ? ompViewEvents(read.lines, limits) : claudeHistoryEvents(read.lines, limits)
-  let truncated = read.cut
+/// ---- Reading -----------------------------------------------------------------
+
+// A session file's complete lines, the last `maxBytes` of them, kept between
+// reads: each read takes only the bytes added since the previous one (up to
+// its last line end: a line being written waits for the next read). A file
+// that shrank or was replaced (another file at that path) is read again from
+// its last `maxBytes`. Lines are cut at '\n' bytes only, which never fall
+// inside a UTF-8 character.
+export function createTail(file, maxBytes) {
+  let offset = 0
+  let identity = null
+  let lines = []
+  let sizes = []
+  let kept = 0
+  let cut = false
+  function reset() {
+    offset = 0
+    lines = []
+    sizes = []
+    kept = 0
+    cut = false
+  }
+  // -> true when lines were added (or the file was read again), false when
+  // nothing changed, null when the file cannot be read.
+  function read() {
+    let fd
+    try {
+      fd = fs.openSync(file, 'r')
+    } catch {
+      return null
+    }
+    try {
+      const st = fs.fstatSync(fd)
+      const id = `${st.dev}:${st.ino}:${st.birthtimeMs}`
+      let changed = false
+      if (identity !== id || st.size < offset) {
+        if (identity !== null) changed = true
+        identity = id
+        reset()
+      }
+      if (st.size === offset) return changed
+      let start = offset
+      // More was added than is kept: only its end is read.
+      if (st.size - start > maxBytes) {
+        start = st.size - maxBytes
+        reset()
+        cut = true
+      }
+      const buf = Buffer.alloc(st.size - start)
+      let got = 0
+      while (got < buf.length) {
+        const n = fs.readSync(fd, buf, got, buf.length - got, start + got)
+        if (!n) break
+        got += n
+      }
+      let from = 0
+      // Started inside a line (the file's tail only): from the next line.
+      if (start > 0 && start !== offset) {
+        const nl = buf.indexOf(10)
+        if (nl < 0 || nl >= got) return true
+        from = nl + 1
+      }
+      const end = got > 0 ? buf.lastIndexOf(10, got - 1) : -1
+      if (end < from) {
+        if (start !== offset) offset = start + from
+        return changed || start !== offset
+      }
+      offset = start + end + 1
+      for (const raw of buf.subarray(from, end).toString('utf8').split('\n')) {
+        const line = raw.endsWith('\r') ? raw.slice(0, -1) : raw
+        if (!line) continue
+        lines.push(line)
+        const size = Buffer.byteLength(line) + 1
+        sizes.push(size)
+        kept += size
+      }
+      let drop = 0
+      while (kept > maxBytes && drop < lines.length) kept -= sizes[drop++]
+      if (drop) {
+        lines = lines.slice(drop)
+        sizes = sizes.slice(drop)
+        cut = true
+      }
+      return true
+    } catch {
+      return null
+    } finally {
+      fs.closeSync(fd)
+    }
+  }
+  return { read, lines: () => lines, cut: () => cut }
+}
+
+// The lines of one agent's session file -> the chat's events.
+export function viewEvents(agent, lines, sessionId, limits = HISTORY_LIMITS) {
+  if (agent === 'grok') return grokViewEvents(lines, limits)
+  if (agent === 'omp') return ompViewEvents(lines, limits)
+  if (agent === 'codex') return codexHistoryEvents(lines, sessionId, limits)
+  return claudeHistoryEvents(lines, limits)
+}
+
+function eventsOf(agent, sessionId, tail, limits) {
+  let events = viewEvents(agent, tail.lines(), sessionId, limits)
+  let truncated = tail.cut()
   if (events.length > limits.events) {
     events = events.slice(-limits.events)
     truncated = true
   }
-  return { ok: true, events, truncated, file }
+  return { events, truncated }
+}
+
+// -> { ok: true, events, truncated, file, tail } | { ok: false, code: 'invalid' | 'missing' }
+// home, reported: see findTranscriptViewFile (Claude Code, Codex, OpenClaude).
+export function readTranscriptView({ agent, sessionId, roots = transcriptViewRoots(), home = null, reported = null, limits = HISTORY_LIMITS } = {}) {
+  if (!TRANSCRIPT_VIEW_AGENTS.includes(agent) || !validViewId(agent, sessionId)) return { ok: false, code: 'invalid' }
+  const file = findTranscriptViewFile(agent, sessionId, roots, { home, reported })
+  if (!file) return { ok: false, code: 'missing' }
+  const tail = createTail(file, limits.bytes)
+  if (tail.read() === null) return { ok: false, code: 'missing' }
+  return { ok: true, ...eventsOf(agent, sessionId, tail, limits), file, tail }
+}
+
+const PANE_ID = /^[A-Za-z0-9_-][A-Za-z0-9._-]{0,99}$/
+const ACCOUNT_ID = /^[\w.-]{1,80}$/
+
+// What a pane's hooks last reported (teamMcp reportSession): the session file
+// they named, for that session of that agent only (checked again where it is
+// used: findTranscriptViewFile).
+export function reportedTranscript(sessionsDir, paneId, agent, sessionId) {
+  if (typeof sessionsDir !== 'string' || !isAbsolute(sessionsDir) || typeof paneId !== 'string' || !PANE_ID.test(paneId)) return null
+  try {
+    const r = obj(JSON.parse(fs.readFileSync(join(sessionsDir, `${paneId}.json`), 'utf8')))
+    return r && r.agent === agent && r.sessionId === sessionId && typeof r.transcriptPath === 'string' ? r.transcriptPath : null
+  } catch {
+    return null
+  }
 }
 
 // The open views and their watchers. send(channel, payload) reaches the window.
-export function createTranscriptViews({ send, roots = transcriptViewRoots, watch = fs.watch, debounceMs = 300, pollMs = 2000, log = null } = {}) {
-  const views = new Map() // viewId -> { agent, sessionId, file, watcher, timer, poll, stamp }
+// homes(agent, accountId) -> the folder Claude Code or Codex keeps that
+// account's conversations in (or null); sessionsDir() -> where the panes'
+// hooks report their sessions.
+export function createTranscriptViews({ send, roots = transcriptViewRoots, homes = async () => null, sessionsDir = () => null, watch = fs.watch, debounceMs = 300, pollMs = 2000, log = null, limits = HISTORY_LIMITS } = {}) {
+  const views = new Map() // viewId -> { agent, sessionId, file, tail, watcher, timer, poll, stamp }
   let nextId = 0
 
   const stampOf = (file) => {
@@ -316,9 +471,13 @@ export function createTranscriptViews({ send, roots = transcriptViewRoots, watch
     const stamp = stampOf(v.file)
     if (stamp === v.stamp) return
     v.stamp = stamp
-    const res = readTranscriptView({ agent: v.agent, sessionId: v.sessionId, roots: roots() })
-    if (!views.has(viewId)) return
-    send('transcriptView:event', { viewId, ...(res.ok ? { ok: true, events: res.events, truncated: res.truncated } : { ok: false, code: res.code }) })
+    const read = v.tail.read()
+    if (!views.has(viewId) || read === false) return
+    if (read === null) {
+      send('transcriptView:event', { viewId, ok: false, code: 'missing' })
+      return
+    }
+    send('transcriptView:event', { viewId, ok: true, ...eventsOf(v.agent, v.sessionId, v.tail, limits) })
   }
   function schedule(viewId) {
     const v = views.get(viewId)
@@ -341,14 +500,19 @@ export function createTranscriptViews({ send, roots = transcriptViewRoots, watch
     }
     return true
   }
-  function open({ agent, sessionId } = {}) {
-    const res = readTranscriptView({ agent, sessionId, roots: roots() })
+  // home, reported: resolved by the IPC handler (never from the window).
+  function open({ agent, sessionId, home = null, reported = null } = {}) {
+    const res = readTranscriptView({ agent, sessionId, roots: roots(), home, reported, limits })
     if (!res.ok) return res
     // The oldest view gives way: a view nobody closed (a crashed window) cannot pile up.
     while (views.size >= MAX_VIEWS) close(views.keys().next().value)
     const viewId = `tv-${++nextId}` // i18n-ignore id
-    const v = { agent, sessionId, file: res.file, watcher: null, timer: null, poll: null, stamp: stampOf(res.file) }
+    const v = { agent, sessionId, file: res.file, tail: res.tail, watcher: null, timer: null, poll: null, stamp: stampOf(res.file) }
     views.set(viewId, v)
+    // The watcher hurries a read; the slow poll is what is relied on (a
+    // watcher can miss changes, or stop, without saying so).
+    v.poll = setInterval(() => schedule(viewId), pollMs)
+    v.poll.unref?.()
     try {
       v.watcher = watch(res.file, { persistent: false }, () => schedule(viewId))
       v.watcher.on?.('error', () => {
@@ -358,20 +522,41 @@ export function createTranscriptViews({ send, roots = transcriptViewRoots, watch
           // gone
         }
         v.watcher = null
-        if (!v.poll && views.has(viewId)) v.poll = setInterval(() => schedule(viewId), pollMs)
       })
     } catch (err) {
       if (log) log.warn('transcriptView', `watch failed, polling: ${err && err.message}`)
-      v.poll = setInterval(() => schedule(viewId), pollMs)
     }
     return { ok: true, viewId, events: res.events, truncated: res.truncated }
   }
+  // The window names the agent, the session, its pane and its account, never
+  // a folder or a file.
+  async function openFromWindow(q) {
+    const o = obj(q) || {}
+    const { agent, sessionId } = o
+    if (!TRANSCRIPT_VIEW_AGENTS.includes(agent) || !validViewId(agent, sessionId)) return { ok: false, code: 'invalid' }
+    const accountId = o.accountId === null || (typeof o.accountId === 'string' && ACCOUNT_ID.test(o.accountId)) ? o.accountId : undefined
+    let home = null
+    if (ACCOUNT_AGENTS.includes(agent)) {
+      try {
+        home = (await homes(agent, accountId)) || null
+      } catch {
+        home = null
+      }
+      if (!home) return { ok: false, code: 'missing' }
+    }
+    let reported = null
+    if (ACCOUNT_AGENTS.includes(agent) || agent === 'openclaude') {
+      try {
+        reported = reportedTranscript(sessionsDir(), o.paneId, agent, sessionId)
+      } catch {
+        reported = null
+      }
+    }
+    return open({ agent, sessionId, home, reported })
+  }
   function register(ipcMain) {
-    ipcMain.handle('transcriptView:open', (_e, q) => {
-      const o = obj(q) || {}
-      return open({ agent: o.agent, sessionId: o.sessionId })
-    })
+    ipcMain.handle('transcriptView:open', (_e, q) => openFromWindow(q))
     ipcMain.handle('transcriptView:close', (_e, q) => ({ ok: close(obj(q)?.viewId) }))
   }
-  return { open, close, closeAll: () => [...views.keys()].forEach(close), register, count: () => views.size }
+  return { open, openFromWindow, close, closeAll: () => [...views.keys()].forEach(close), register, count: () => views.size }
 }
