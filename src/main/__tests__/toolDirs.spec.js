@@ -37,6 +37,12 @@ describe('folders installers leave off PATH', () => {
     expect(dirs.indexOf(kimi)).toBeLessThan(dirs.indexOf(store))
   })
 
+  it("finds Cursor's CLI folder (its installer may not be in the PATH Tessel started with)", () => {
+    const cursor = mk('Local', 'cursor-agent')
+    const env = { LOCALAPPDATA: join(home, 'Local'), APPDATA: join(home, 'Roaming'), TESSEL_TOOLDIRS_TEST: '1' }
+    expect(extraToolDirs(env, home)).toContain(cursor)
+  })
+
   it('adds them after PATH, once each, whatever the case', () => {
     const p = ['C:\\Windows', 'C:\\Users\\u\\AppData\\Roaming\\npm'].join(delimiter)
     const out = withToolDirs(p, ['c:\\users\\u\\appdata\\roaming\\npm\\', 'C:\\Py\\Scripts', 'C:\\Py\\Scripts'])
