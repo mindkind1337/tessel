@@ -180,6 +180,9 @@ function createInput(current) {
       current.commands.selectAll()
     },
     setSelectionRange: (from, to) => {
+      // A caret set a frame later (after a mention is inserted) may come
+      // after the composer closed: its editor is gone by then.
+      if (!current || current.isDestroyed) return
       const { positions } = promptTextMap(current.state.doc)
       current.commands.setTextSelection({
         from: positions[Math.min(from ?? 0, positions.length - 1)],
