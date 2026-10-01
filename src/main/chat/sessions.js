@@ -1537,21 +1537,28 @@ export function createChatSessions(deps) {
     return { ok: true, input: ap.input }
   }
 
+  // The value an option had before a change, for the window's "from → to".
+  const fromOf = (value) => (typeof value === 'string' && value ? { from: value.slice(0, 200) } : {})
   async function setOption({ paneId, model, effort, permissionMode } = {}) {
     const z = sessions.get(paneId)
     if (z?.asleep && permissionMode == null) {
       // Kept for the wake (a model or effort the caller does not give then).
+      const was = { model: z.model, effort: z.effort }
       if (model != null) z.model = model
       if (effort != null) z.effort = effort
-      if (model != null) emit(paneId, { type: 'option', option: 'model', value: String(model).slice(0, 200), ok: true })
-      if (effort != null) emit(paneId, { type: 'option', option: 'effort', value: String(effort).slice(0, 200), ok: true })
+      if (model != null && model !== was.model) emit(paneId, { type: 'option', option: 'model', value: String(model).slice(0, 200), ok: true, ...fromOf(was.model) })
+      if (effort != null && effort !== was.effort) emit(paneId, { type: 'option', option: 'effort', value: String(effort).slice(0, 200), ok: true, ...fromOf(was.effort) })
       return { ok: true, model: z.model, effort: z.effort }
     }
     const s = live(paneId)
     if (!s) return closed()
     const results = []
-    // The chat says what changed (or did not): a row of its own, worded by the window.
-    const said = (option, value, ok) => emit(paneId, { type: 'option', option, value: String(value).slice(0, 200), ok })
+    // The chat says what changed (or did not), from what to what: a row of
+    // its own, worded by the window. The same value again changes nothing.
+    const was = { model: s.model, effort: s.effort }
+    const said = (option, value, ok) => emit(paneId, { type: 'option', option, value: String(value).slice(0, 200), ok, ...fromOf(was[option]) })
+    if (model != null && model === s.model) model = null
+    if (effort != null && effort === s.effort) effort = null
     if (model != null && !validModel(s.agent, model)) {
       results.push(false)
       said('model', model, false)

@@ -731,6 +731,8 @@
   "chat.option.model": "Modèle : {{name}}",
   "chat.option.modelFailed": "Modèle non changé : {{name}}",
   "chat.option.effort": "Effort : {{name}}",
+  "chat.option.effortChange": "Effort : {{from}} → {{to}}",
+  "chat.option.modelChange": "Modèle : {{from}} → {{to}}",
   "chat.option.effortFailed": "Effort non changé : {{name}}",
   "chat.compact.failed": "Impossible de compacter la conversation : {{error}}",
   "chat.context.lowCompact": "Contexte presque plein : {{pct}} % utilisé ({{used}} / {{window}}). Compactez la conversation pour libérer de la place.",

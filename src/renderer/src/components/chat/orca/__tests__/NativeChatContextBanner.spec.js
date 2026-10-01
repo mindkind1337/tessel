@@ -75,6 +75,8 @@ describe('chatOptionNoticeText', () => {
     expect(chatOptionNoticeText({ option: 'model', value: 'claude-opus-5-5', ok: true }, 'claude')).toBe('Model: Opus 5.5')
     expect(chatOptionNoticeText({ option: 'effort', value: 'xhigh', ok: true }, 'claude')).toBe('Effort: Extra high')
     expect(chatOptionNoticeText({ option: 'effort', value: 'high', ok: false }, 'claude')).toBe('Effort not changed: High')
+    expect(chatOptionNoticeText({ option: 'effort', value: 'high', ok: true, from: 'medium' }, 'claude')).toBe('Effort: Medium → High')
+    expect(chatOptionNoticeText({ option: 'model', value: 'claude-opus-5-5', ok: true, from: 'claude-opus-5-5' }, 'claude')).toBe('Model: Opus 5.5')
     setMessages('fr', fr)
     expect(chatOptionNoticeText({ option: 'model', value: 'claude-opus-5-5', ok: true }, 'claude')).toBe('Modèle : Opus 5.5')
     expect(chatOptionNoticeText({ option: 'effort', value: 'high', ok: true }, 'claude')).toBe(`Effort : ${fr['chat.orca.composer.optionValue.high'] || 'Élevé'}`)

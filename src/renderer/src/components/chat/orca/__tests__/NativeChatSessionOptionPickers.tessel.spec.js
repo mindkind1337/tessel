@@ -110,7 +110,7 @@ describe('permission mode (the options pill)', () => {
     slider.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     await flushPromises()
     expect(trigger(which)).toBe(document.activeElement)
-    expect(chatSetOption).toHaveBeenCalledExactlyOnceWith(node, { model: 'opus', effort: 'max' })
+    expect(chatSetOption).toHaveBeenCalledExactlyOnceWith(node, { effort: 'max' })
   })
 
   it('omits the slider for a model without effort levels', async () => {
@@ -166,7 +166,7 @@ describe('permission mode (the options pill)', () => {
     await nextTick()
     expect(chatSetOption).not.toHaveBeenCalled()
     await pick(modeItem('plan'))
-    expect(chatSetOption).toHaveBeenCalledExactlyOnceWith(node, { model: 'opus', effort: 'max', permissionMode: 'plan' })
+    expect(chatSetOption).toHaveBeenCalledExactlyOnceWith(node, { effort: 'max', permissionMode: 'plan' })
   })
 
   it('removes unsupported effort when a model without levels is selected', async () => {

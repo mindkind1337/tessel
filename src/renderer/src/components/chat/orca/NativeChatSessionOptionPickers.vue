@@ -93,11 +93,12 @@ function menuOpenChanged(open) {
   if (open) return beginDraft()
   if (!draft.value) return
   const values = {}
-  const changed = draft.value.model !== initial.model || draft.value.effort !== initial.effort
-  if (changed) {
-    if (draft.value.model) values.model = draft.value.model
-    if (draft.value.effort && selectedEffortChoices.value.length) values.effort = draft.value.effort
-  }
+  // Only what changed: an effort alone never re-sends the model. A new model
+  // carries the effort shown with it (its levels may differ).
+  const modelChanged = draft.value.model !== initial.model
+  if (modelChanged && draft.value.model) values.model = draft.value.model
+  if ((modelChanged || draft.value.effort !== initial.effort) && draft.value.effort && selectedEffortChoices.value.length)
+    values.effort = draft.value.effort
   if (draft.value.permissionMode !== initial.permissionMode) values.permissionMode = draft.value.permissionMode
   draft.value = null
   initial = null

@@ -19,10 +19,17 @@ export function chatModelName(agent, id) {
 export function chatOptionNoticeText(ev, agent) {
   if (!ev || (ev.option !== 'model' && ev.option !== 'effort')) return ''
   const value = String(ev.value ?? '')
+  const from = typeof ev.from === 'string' && ev.from && ev.from !== value ? ev.from : ''
   if (ev.option === 'model') {
     const name = chatModelName(agent, value)
-    return ev.ok === false ? t('chat.option.modelFailed', 'Model not changed: {{name}}', { name }) : t('chat.option.model', 'Model: {{name}}', { name })
+    if (ev.ok === false) return t('chat.option.modelFailed', 'Model not changed: {{name}}', { name })
+    return from
+      ? t('chat.option.modelChange', 'Model: {{from}} → {{to}}', { from: chatModelName(agent, from), to: name })
+      : t('chat.option.model', 'Model: {{name}}', { name })
   }
   const name = nativeChatSessionChoiceLabel({ value, label: value })
-  return ev.ok === false ? t('chat.option.effortFailed', 'Effort not changed: {{name}}', { name }) : t('chat.option.effort', 'Effort: {{name}}', { name })
+  if (ev.ok === false) return t('chat.option.effortFailed', 'Effort not changed: {{name}}', { name })
+  return from
+    ? t('chat.option.effortChange', 'Effort: {{from}} → {{to}}', { from: nativeChatSessionChoiceLabel({ value: from, label: from }), to: name })
+    : t('chat.option.effort', 'Effort: {{name}}', { name })
 }

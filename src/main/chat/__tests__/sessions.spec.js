@@ -1168,13 +1168,18 @@ describe('interrupt, close, exit', () => {
     expect((await chat.setOption({ paneId, permissionMode: 'bypassPermissions' })).ok).toBe(false)
     expect(a.setPermissionMode).not.toHaveBeenCalled()
     // The chat says what changed: one row each, journaled.
-    expect(events('option')).toEqual([
+    expect(events('option')).toMatchObject([
       { type: 'option', option: 'model', value: 'opus', ok: true },
       { type: 'option', option: 'effort', value: 'max', ok: true }
     ])
+    // The same values again: nothing changes, nothing is said.
+    const before = events('option').length
+    expect((await chat.setOption({ paneId, model: 'opus', effort: 'max' })).ok).toBe(true)
+    expect(events('option')).toHaveLength(before)
     a.setEffort.mockResolvedValueOnce({ ok: false })
     expect((await chat.setOption({ paneId, effort: 'low' })).ok).toBe(false)
-    expect(last('option')).toEqual({ type: 'option', option: 'effort', value: 'low', ok: false })
+    // From what to what (the value before the change).
+    expect(last('option')).toEqual({ type: 'option', option: 'effort', value: 'low', ok: false, from: 'max' })
     expect(chat.history({ paneId }).events.map((e) => e.event.type)).toContain('option')
   })
 
