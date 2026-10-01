@@ -166,7 +166,9 @@
       "codexBusy": "Attendez la fin du tour : changer maintenant l'arrêterait",
       "current": "Mode de permission : {{mode}}. {{hint}}",
       "failed": "Le mode de permission n'a pas changé : {{error}}",
-      "manualOpencodeHint": "Demande avant de lancer des commandes, de modifier des fichiers ou de lire des pages web, aussi pour ses sous-agents"
+      "manualOpencodeHint": "Demande avant de lancer des commandes, de modifier des fichiers ou de lire des pages web, aussi pour ses sous-agents",
+      "dontAsk": "Ne pas demander",
+      "dontAskHint": "Ne demande jamais : fait seulement ce que ses règles autorisent et refuse le reste"
     }
   },
   "chat.orca.backgroundTasks.countAgentsOne": "1 agent",
@@ -751,5 +753,6 @@
   "chat.newConversation.failed": "Impossible de démarrer une nouvelle conversation. Réessayez.",
   "chat.orca.composer.mentionFiles": "Fichiers à référencer",
   "chat.orca.terminalChat.imageOnly": "(image)",
-  "chat.orca.terminalChat.codexPicker": "Codex change son modèle et son effort dans son propre sélecteur : choisissez dans son terminal."
+  "chat.orca.terminalChat.codexPicker": "Codex change son modèle et son effort dans son propre sélecteur : choisissez dans son terminal.",
+  "chat.orca.terminalChat.codexPermissions": "Codex change ses permissions dans son propre sélecteur : choisissez dans son terminal."
 }

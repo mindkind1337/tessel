@@ -54,7 +54,16 @@ import { switchClaudeModel, typeCommand } from '../claudeModelSwitch'
 import SessionOptionPicker from './SessionOptionPicker.vue'
 import AgentChildren from './AgentChildren.vue'
 import NativeChatTranscriptView from './chat/orca/NativeChatTranscriptView.vue'
-import { canShowChatView } from '../chat/terminalChatBridge'
+import {
+  KEY_SHIFT_TAB,
+  canCycleToYolo,
+  canShowChatView,
+  composerAgent,
+  launchPermissionMode,
+  permissionModeFromScreen,
+  shownPermissionMode,
+  stepToPermissionMode
+} from '../chat/terminalChatBridge'
 import { listsChildren } from '../agentChildrenFeed'
 import HoverCardContent from './hover/HoverCardContent.vue'
 import PaneHoverDetails from './PaneHoverDetails.vue'
@@ -737,6 +746,68 @@ function chatSend(text, callbacks) {
 // The cards' keys (Allow, Deny, Stop, a question's answer), only on a click.
 function chatKeys(bytes) {
   if (chatShown.value && !props.node.sleeping) window.shellApi.writePty(props.node.id, bytes)
+}
+// The chat view's permission mode picker: the mode the agent's hook said last
+// (permission_mode), or what Tessel saw on its screen after switching it,
+// whichever is newer; before either, how it was launched.
+const modeSeen = ref(null) // { mode, at }: after a switch from the chat view
+watch(() => props.node.agentLaunchToken, () => (modeSeen.value = null))
+const chatPermissionMode = computed(() => {
+  const o = observedState.value
+  return shownPermissionMode({
+    hookMode: o ? o.permissionMode : null,
+    hookAt: o && Number.isFinite(o.permissionModeAt) ? o.permissionModeAt : 0,
+    localMode: modeSeen.value && modeSeen.value.mode,
+    localAt: modeSeen.value ? modeSeen.value.at : 0,
+    launchMode: launchPermissionMode(props.node)
+  })
+})
+// Why a mode cannot be picked here (Claude Code, OpenClaude: Shift+Tab never
+// reaches Yolo in a session started without it, nor Don't ask).
+function chatModeBlocked(mode) {
+  if (composerAgent(props.node.agentId) === 'codex') return ''
+  if (mode === 'bypassPermissions' && !canCycleToYolo(props.node))
+    return canSwitchYolo.value
+      ? t('pane.chatView.yoloRestart', 'Started without Yolo: pane menu > Restart in Yolo')
+      : t('pane.chatView.yoloAtStart', 'Started without Yolo: only a restart with Yolo (Settings > Agents) allows it')
+  if (mode === 'dontAsk') return t('pane.chatView.modeAtStart', 'Only when it starts (--permission-mode)')
+  return ''
+}
+// Why no key may be typed into it now ('' when one may).
+function chatKeysBlocked() {
+  const id = props.node.id
+  if (!chatShown.value || !paneRunning.value) return t('pane.chatView.notRunning', 'It is not running.')
+  if (chatWaiting.value.approval) return t('pane.chatView.modeApproval', 'It asks for your approval: answer it first.')
+  if (chatWorking.value || agentStatus.value === 'busy') return t('pane.chatView.modeWorking', 'It is working: its mode can change once it is idle.')
+  if (ctx.paneUserTyping && ctx.paneUserTyping(id)) return t('pane.chatView.typedLine', 'A line is typed in its terminal: send or clear it there first.')
+  if (ctx.paneDelivering && ctx.paneDelivering(id)) return t('pane.chatView.modeDelivering', 'A message is being typed into it: try again in a moment.')
+  return ''
+}
+// Claude Code, OpenClaude: Shift+Tab one press at a time, each one checked on
+// its screen's footer, until it shows the mode asked (at most 6 presses).
+let modeSwitching = false
+async function chatSetPermissionMode(mode) {
+  if (composerAgent(props.node.agentId) === 'codex') return { ok: false }
+  const why = chatModeBlocked(mode) || chatKeysBlocked()
+  if (why) return { ok: false, error: why }
+  if (modeSwitching) return { ok: false, error: t('pane.chatView.modeSwitching', 'Its mode is already changing.') }
+  modeSwitching = true
+  let res
+  try {
+    res = await stepToPermissionMode({
+      target: mode,
+      read: () => permissionModeFromScreen(screenText(6)),
+      press: () => window.shellApi.writePty(props.node.id, KEY_SHIFT_TAB),
+      blocked: chatKeysBlocked
+    })
+  } finally {
+    modeSwitching = false
+  }
+  if (res.presses > 0 || res.ok) modeSeen.value = { mode: res.mode, at: Date.now() }
+  if (res.ok) return { ok: true }
+  if (res.code === 'blocked') return { ok: false, error: res.error }
+  if (res.code === 'unavailable') return { ok: false, error: t('pane.chatView.modeUnavailable', 'It does not offer this mode now (Shift+Tab never reached it).') }
+  return { ok: false, error: t('pane.chatView.modeUnconfirmed', 'Could not confirm the mode on its screen; open the terminal to check.') }
 }
 // The chat view's "@" menu: the files of the folder the agent works in.
 async function chatListFiles() {
@@ -2636,6 +2707,9 @@ const paneMenuBindings = computed(() => ({
         :set-option="chatSetOption"
         :list-files="chatListFiles"
         :context-model="(agentModel && agentModel.model) || ''"
+        :permission-mode="chatPermissionMode"
+        :mode-blocked="chatModeBlocked"
+        :set-permission-mode="chatSetPermissionMode"
         :dictate="chatDictate"
         :dictation-title="chatDictationTitle"
         @close="toggleChatView"

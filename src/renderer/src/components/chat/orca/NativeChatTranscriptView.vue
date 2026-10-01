@@ -26,8 +26,12 @@
 //   relative paths), model and effort (sessionOptions { models, values },
 //   setOption({ model } | { effort }) -> { ok, error }: the pane's own
 //   model menu path; Codex changes them in its own picker, opened in the
-//   terminal), the context ring (contextModel: the model, for Claude's 1M
-//   window) and voice typing (dictate, dictationTitle).
+//   terminal), the permission mode (permissionMode: the mode it is in;
+//   modeBlocked(mode) -> '' or why it cannot be picked now;
+//   setPermissionMode(mode) -> { ok, error }: Claude Code's and OpenClaude's
+//   Shift+Tab, run by the pane; Codex changes it in its own /permissions
+//   picker, opened in the terminal), the context ring (contextModel: the
+//   model, for Claude's 1M window) and voice typing (dictate, dictationTitle).
 // Emits: close (back to the terminal).
 // Exposed: focus() (the composer).
 import { computed, onBeforeUnmount, onMounted, provide, ref, shallowRef, watch } from 'vue'
@@ -46,7 +50,7 @@ import { useNativeChatLinkActions } from '../../../chat/orca/composables/use-nat
 import { useNativeChatSessionOptionCommand } from '../../../chat/orca/composables/use-native-chat-session-option-command.js'
 import { useStructuredAgentSessionContextUsage } from '../../../chat/orca/composables/use-structured-agent-session-context-usage.js'
 import { appendCommandMarkerCache, readCommandMarkerCache } from '../../../chat/orca/native-chat-command-marker.js'
-import { tesselSessionOptionSnapshot, tesselSessionOptionSurface } from './native-chat-session-option-pickers.js'
+import { TESSEL_PERMISSION_MODES, permissionModeDescriptor, tesselSessionOptionSnapshot, tesselSessionOptionSurface } from './native-chat-session-option-pickers.js'
 import {
   KEY_ALLOW,
   KEY_ESCAPE,
@@ -87,6 +91,10 @@ const props = defineProps({
   setOption: { type: Function, default: undefined },
   listFiles: { type: Function, default: undefined },
   contextModel: { type: String, default: '' },
+  // The permission mode picker (interactive).
+  permissionMode: { type: String, default: '' },
+  modeBlocked: { type: Function, default: undefined },
+  setPermissionMode: { type: Function, default: undefined },
   dictate: { type: Function, default: undefined },
   dictationTitle: { type: String, default: undefined }
 })
@@ -362,19 +370,66 @@ const optionCommand = useNativeChatSessionOptionCommand({
   },
   onError: () => {}
 })
-// Model and effort only: a terminal agent's permission mode is its own
-// (Shift+Tab in Claude Code, /permissions in Codex), changed in its terminal.
-const optionSnapshot = computed(() =>
-  props.sessionOptions
+// The permission mode: the agent's own (Shift+Tab in Claude Code and
+// OpenClaude, run by the pane; /permissions in Codex, its own picker opened in
+// the terminal), with ChatPane's wording. Not during a turn: a key typed then
+// could land in an approval prompt that opens meanwhile.
+const modeDescriptor = computed(() => {
+  if (!props.interactive || !props.permissionMode || (!props.setPermissionMode && !isCodex.value)) return null
+  const agent = composerAgent(props.agent)
+  return permissionModeDescriptor({
+    agent,
+    modes: TESSEL_PERMISSION_MODES[agent],
+    current: props.permissionMode,
+    modeBlocked: (mode) => (typeof props.modeBlocked === 'function' ? props.modeBlocked(mode) || '' : ''),
+    settableWhileWorking: false
+  })
+})
+function openPermissionsPicker() {
+  const res = sendCommand('/permissions', 'type')
+  if (res.ok) emit('close')
+  return res
+}
+async function changePermissionMode(mode) {
+  if (mode === props.permissionMode) return { ok: true }
+  if (isCodex.value) {
+    openPermissionsPicker()
+    return { ok: false, error: t('chat.orca.terminalChat.codexPermissions', 'Codex changes its permissions in its own picker: choose in its terminal.') }
+  }
+  if (props.disabledReason) return { ok: false, error: props.disabledReason }
+  return props.setPermissionMode ? props.setPermissionMode(mode) : { ok: false }
+}
+const modelSurface = computed(() => (props.sessionOptions && props.setOption ? tesselSessionOptionSurface(optionCommand.dispatch) : null))
+const optionSnapshot = computed(() => [
+  ...(props.sessionOptions
     ? tesselSessionOptionSnapshot({
         agent: composerAgent(props.agent),
         models: props.sessionOptions.models || [],
         values: optionCommand.confirmedValues.value,
         permissionModes: false
       })
-    : []
-)
-const optionSurface = computed(() => (props.sessionOptions && props.setOption ? tesselSessionOptionSurface(optionCommand.dispatch) : null))
+    : []),
+  ...(modeDescriptor.value ? [modeDescriptor.value] : [])
+])
+// The pickers' surface: the model and effort through the pane's model menu
+// path, the permission mode through changePermissionMode.
+const optionSurface = computed(() => {
+  const models = modelSurface.value
+  if (!modeDescriptor.value) return models
+  const none = { ok: false, error: t('chat.orca.options.unsupported', 'This option is not available for this agent.') }
+  return {
+    setOption: (id, value) => (id === 'permissionMode' ? changePermissionMode(value) : models ? models.setOption(id, value) : Promise.resolve(none)),
+    setOptions: async (values) => {
+      const { permissionMode, ...rest } = values || {}
+      if (Object.keys(rest).length) {
+        const res = models ? await models.setOptions(rest) : none
+        if (!res || res.ok === false || permissionMode === undefined) return res
+      }
+      return permissionMode === undefined ? { ok: true } : changePermissionMode(permissionMode)
+    },
+    invokeAction: models ? models.invokeAction : async () => none
+  }
+})
 const optionIds = computed(() => optionSnapshot.value.map((o) => o.id))
 const optionPickerRequest = ref(null)
 // A bare "/model" or "/effort" (typed or picked): its picker here; Codex's
@@ -389,9 +444,15 @@ function onOptionCommand(name) {
   if (name === 'model' || name === 'effort') return sendCommand(`/${name}`)
   return { ok: false, error: t('chat.orca.options.unsupported', 'This option is not available for this agent.') }
 }
-// A typed "/model x" or "/effort x".
+// A typed "/model x", "/effort x" or "/permissionMode x".
 function setOptionFromText(payload) {
   const [optionId] = Object.keys(payload || {})
+  if (optionId === 'permissionMode') {
+    const why = modeDescriptor.value ? '' : t('chat.orca.options.unsupported', 'This option is not available for this agent.')
+    const choice = modeDescriptor.value && modeDescriptor.value.kind.choices.find((c) => c.value === payload[optionId])
+    const blocked = why || (!choice ? t('chat.orca.options.unsupported', 'This option is not available for this agent.') : choice.disabledReason || '')
+    return blocked ? Promise.resolve({ ok: false, error: blocked }) : Promise.resolve(changePermissionMode(payload[optionId]))
+  }
   return optionCommand.dispatch({ optionId, value: payload[optionId] })
 }
 const slashCommands = computed(() => bridgeSlashCommands(props.agent, { options: optionIds.value }))
@@ -578,7 +639,7 @@ const title = computed(() => t('chat.orca.transcriptView.title', 'Conversation o
         :disabled-reason="disabledReason"
         :send="send"
         :allow-images="allowImages"
-        :set-option="sessionOptions && setOption ? setOptionFromText : undefined"
+        :set-option="(sessionOptions && setOption) || modeDescriptor ? setOptionFromText : undefined"
         :on-option-command="onOptionCommand"
         :commands="slashCommands"
         :context-usage="contextUsage"

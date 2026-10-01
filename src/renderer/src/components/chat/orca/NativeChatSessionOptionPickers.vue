@@ -17,7 +17,7 @@
 //   @error gets the text). With a batched surface, model/effort choices are
 //   previewed locally and applied together only when the menu closes.
 import { computed, inject, ref, watch } from 'vue'
-import { ChevronDown, Check, Hand, Pencil, ClipboardList, Zap, ShieldOff } from 'lucide-vue-next'
+import { ChevronDown, Check, Hand, Pencil, ClipboardList, Zap, ShieldOff, Ban } from 'lucide-vue-next'
 import NativeChatEffortSlider from './NativeChatEffortSlider.vue'
 import {
   Button,
@@ -113,7 +113,7 @@ const effortLabel = computed(() => {
   const choice = effort.value.kind.choices.find(c => c.value === effort.value.kind.currentValue)
   return choice ? nativeChatSessionChoiceLabel(choice) : ''
 })
-const modeIcons = { default: Hand, acceptEdits: Pencil, plan: ClipboardList, auto: Zap, bypassPermissions: ShieldOff }
+const modeIcons = { default: Hand, acceptEdits: Pencil, plan: ClipboardList, auto: Zap, bypassPermissions: ShieldOff, dontAsk: Ban }
 const requestedModelSequence = computed(() => (model.value && (props.pickerRequest?.id === model.value.id || (effort.value && props.pickerRequest?.id === effort.value.id)) ? props.pickerRequest.sequence : null))
 const requestedOptionsSequence = computed(() =>
   rightOptions.value.some((descriptor) => descriptor.id === props.pickerRequest?.id) ? (props.pickerRequest?.sequence ?? null) : null
@@ -218,9 +218,11 @@ function rowsOf(list) {
 }
 const modelRows = computed(() => (model.value ? rowsOf([model.value]) : []))
 const optionRows = computed(() => rowsOf(options.value.filter(d => d !== effort.value)))
+// Tessel: an agent with no model list here (OpenClaude's chat view) still
+// gets its options pill (its permission mode).
 const pills = computed(() => {
-  if (!model.value) return []
-  const list = [
+  if (!model.value && !rightOptions.value.length) return []
+  const list = !model.value ? [] : [
     {
       key: `model:${requestedModelSequence.value ?? 'idle'}`, // i18n-ignore
       defaultOpen: requestedModelSequence.value !== null,
@@ -258,7 +260,7 @@ function stopEscape(event) {
 </script>
 
 <template>
-  <div v-if="surface && model" class="nc-pickers">
+  <div v-if="surface && pills.length" class="nc-pickers">
     <DropdownMenu v-for="pill in pills" :key="pill.key" :default-open="pill.defaultOpen" @update:open="menuOpenChanged">
       <Tooltip>
         <TooltipTrigger as-child>

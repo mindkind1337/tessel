@@ -31,7 +31,7 @@ const path = require('path')
 const crypto = require('crypto')
 const { randomUUID } = crypto
 
-const VERSION = '1.10.4'
+const VERSION = '1.10.5'
 const MAX_TEXT = 6000
 
 // --- Finding my team and me ---------------------------------------------------
@@ -1144,6 +1144,11 @@ const askOr = (event, data) => (isAskTool(toolOf(data)) ? { event, toolName: 'As
 // application); the main process checks the result again.
 const ASK_LIMITS = { questions: 4, options: 8, question: 1000, header: 200, label: 200, description: 500, bytes: 16 * 1024 }
 const ASK_PROVIDERS = ['claude', 'openclaude', 'codex']
+// The permission mode the agent says it is in (permission_mode), for its chat
+// view's mode picker: one of these values, nothing else. A copy of
+// src/shared/agentPermissionMode.js; the main process checks it again.
+const PERMISSION_MODES = ['default', 'acceptEdits', 'plan', 'auto', 'dontAsk', 'bypassPermissions']
+const MODE_PROVIDERS = ['claude', 'openclaude', 'codex']
 const ASK_CONTROL = /[\u0000-\u0009\u000b-\u001f\u007f-\u009f‪-‮⁦-⁩]/g
 const askRecord = (value) => !!value && typeof value === 'object' && !Array.isArray(value)
 function askText(value, max) {
@@ -1416,6 +1421,9 @@ function reportAgentState(data, provider, continuing = false) {
         if (ask) event.ask = ask
       }
     }
+    // The lead's permission mode: the enum value only (a sub-agent's may differ).
+    if (!event.agentId && MODE_PROVIDERS.includes(provider) && PERMISSION_MODES.includes(data.permission_mode))
+      event.permissionMode = data.permission_mode
     const file = path.join(dir, `${event.at}-${event.id}.json`)
     tmp = file + '.tmp'
     fs.writeFileSync(tmp, JSON.stringify(event), { flag: 'wx', mode: 0o600 })
@@ -1726,4 +1734,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { sanitizeAsk, ASK_LIMITS, taskRequest, locate, readInbox, send, members, handle, candidateDirs, ackPath, markRead, unread, listTasks, addTask, moveTask, reportTask, gateTask, ask, groupTargets, listWorkers, listGates, TOOLS, VERSION, AGENT_STATUS_AGENTS, statusEvent }
+module.exports = { sanitizeAsk, ASK_LIMITS, PERMISSION_MODES, MODE_PROVIDERS, taskRequest, locate, readInbox, send, members, handle, candidateDirs, ackPath, markRead, unread, listTasks, addTask, moveTask, reportTask, gateTask, ask, groupTargets, listWorkers, listGates, TOOLS, VERSION, AGENT_STATUS_AGENTS, statusEvent }

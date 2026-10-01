@@ -29,6 +29,8 @@ export function permissionModeLabel(mode) {
       return t('chat.mode.auto', 'Auto')
     case 'bypassPermissions':
       return t('chat.mode.yolo', 'Yolo')
+    case 'dontAsk':
+      return t('chat.mode.dontAsk', "Don't ask")
     default:
       return t('chat.mode.manual', 'Manual')
   }
@@ -44,6 +46,8 @@ export function permissionModeHint(mode, agent) {
       return t('chat.mode.autoHint', 'Claude runs the actions it judges safe and asks for the others')
     case 'bypassPermissions':
       return t('chat.mode.yoloHint', 'Runs commands and changes files without ever asking')
+    case 'dontAsk':
+      return t('chat.mode.dontAskHint', 'Never asks: does only what its rules allow and refuses the rest')
     default:
       if (agent === 'opencode') return t('chat.mode.manualOpencodeHint', 'Asks before running commands, changing files or fetching pages, also for its sub-agents')
       return agent === 'codex'
@@ -100,28 +104,37 @@ export function tesselSessionOptionSnapshot({ agent, models = [], values = {}, m
   const modes = TESSEL_PERMISSION_MODES[agent] || TESSEL_PERMISSION_MODES.claude
   if (permissionModes) {
     const current = modes.includes(values.permissionMode) ? values.permissionMode : 'default'
-    out.push({
-      id: 'permissionMode',
-      label: t('chat.orca.composer.permissionMode', 'Permission mode'),
-      category: 'mode',
-      kind: {
-        type: 'select',
-        currentValue: current,
-        choices: modes.map((mode) => {
-          // The mode it is in is never "blocked" (ChatPane.vue's rule).
-          const why = mode === current ? '' : modeBlocked(mode) || ''
-          return { value: mode, label: permissionModeLabel(mode), description: permissionModeHint(mode, agent), ...(why ? { disabled: true, disabledReason: why } : {}) }
-        })
-      },
-      valueSource: 'reported',
-      transport: 'agent-session',
-      settable: true,
-      // Tessel: a permission mode may change during a turn (Claude asks the
-      // same questions less); the pickers otherwise wait for the turn's end.
-      settableWhileWorking: true
-    })
+    out.push(permissionModeDescriptor({ agent, modes, current, modeBlocked }))
   }
   return out
+}
+
+// The permission mode picker's descriptor: modes in this order, current the
+// one it is in (listed even when not among modes: a terminal agent may be in
+// one it was started in, like Don't ask), each other mode with why it cannot
+// be chosen now (modeBlocked). settableWhileWorking: a permission mode may
+// change during a turn (Claude asks the same questions less); the pickers
+// otherwise wait for the turn's end.
+export function permissionModeDescriptor({ agent, modes, current, modeBlocked = () => '', settableWhileWorking = true }) {
+  const list = modes.includes(current) ? modes : [...modes, current]
+  return {
+    id: 'permissionMode',
+    label: t('chat.orca.composer.permissionMode', 'Permission mode'),
+    category: 'mode',
+    kind: {
+      type: 'select',
+      currentValue: current,
+      choices: list.map((mode) => {
+        // The mode it is in is never "blocked" (ChatPane.vue's rule).
+        const why = mode === current ? '' : modeBlocked(mode) || ''
+        return { value: mode, label: permissionModeLabel(mode), description: permissionModeHint(mode, agent), ...(why ? { disabled: true, disabledReason: why } : {}) }
+      })
+    },
+    valueSource: 'reported',
+    transport: 'agent-session',
+    settable: true,
+    settableWhileWorking
+  }
 }
 
 // -> the pickers' surface: every choice goes through dispatch({ optionId,

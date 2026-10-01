@@ -308,3 +308,65 @@ describe('NativeChatTranscriptView, the full composer of a terminal agent chat v
     expect(composer().props('contextUsage')).toMatchObject({ usedTokens: 50000, windowTokens: 1000000, percentage: 5 })
   })
 })
+
+describe('NativeChatTranscriptView, the permission mode picker (interactive)', () => {
+  const SESSION = '22222222-3333-4444-8555-666666666666'
+  async function mountChat(props = {}) {
+    await mountView({ agent: 'claude', sessionId: SESSION, agentName: 'Claude Code', interactive: true, paneId: 'pane-3', ...props })
+  }
+  const composer = () => wrapper.findComponent({ name: 'NativeChatComposer' })
+  const modeOption = () => composer().props('sessionOptionsSnapshot').find((o) => o.id === 'permissionMode')
+
+  it("Claude Code: shows the pane's mode with ChatPane's wording, and switches through the pane", async () => {
+    const setPermissionMode = vi.fn(async () => ({ ok: true }))
+    const modeBlocked = (mode) => (mode === 'bypassPermissions' ? 'Started without Yolo' : '')
+    await mountChat({ permissionMode: 'acceptEdits', modeBlocked, setPermissionMode })
+    const option = modeOption()
+    expect(option.kind.currentValue).toBe('acceptEdits')
+    expect(option.kind.choices.map((c) => c.value)).toEqual(['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions'])
+    expect(option.kind.choices.map((c) => c.label)).toEqual(['Manual', 'Accept edits', 'Plan', 'Auto', 'Yolo'])
+    expect(option.kind.choices.find((c) => c.value === 'bypassPermissions')).toMatchObject({ disabled: true, disabledReason: 'Started without Yolo' })
+    // Not during a turn (a key could land in an approval opening meanwhile).
+    expect(option.settableWhileWorking).toBe(false)
+    expect(await composer().props('sessionOptionsSurface').setOption('permissionMode', 'plan')).toEqual({ ok: true })
+    expect(setPermissionMode).toHaveBeenCalledWith('plan')
+    // The menu's batched choice, too.
+    expect(await composer().props('sessionOptionsSurface').setOptions({ permissionMode: 'default' })).toEqual({ ok: true })
+    expect(setPermissionMode).toHaveBeenLastCalledWith('default')
+    // A typed /permissionMode: the same path, the same rules.
+    expect(await composer().props('setOption')({ permissionMode: 'bypassPermissions' })).toEqual({ ok: false, error: 'Started without Yolo' })
+    expect(setPermissionMode).toHaveBeenCalledTimes(2)
+  })
+
+  it('follows the mode the pane reports (Shift+Tab in the terminal), a mode outside the list too', async () => {
+    await mountChat({ permissionMode: 'default', setPermissionMode: vi.fn() })
+    await wrapper.setProps({ permissionMode: 'plan' })
+    expect(modeOption().kind.currentValue).toBe('plan')
+    await wrapper.setProps({ permissionMode: 'dontAsk' })
+    expect(modeOption().kind.currentValue).toBe('dontAsk')
+    expect(modeOption().kind.choices.find((c) => c.value === 'dontAsk').label).toBe("Don't ask")
+  })
+
+  it('OpenClaude without a model list: the mode picker alone', async () => {
+    await mountChat({ agent: 'openclaude', permissionMode: 'default', setPermissionMode: vi.fn() })
+    expect(composer().props('sessionOptionsSnapshot').map((o) => o.id)).toEqual(['permissionMode'])
+    expect(composer().props('sessionOptionsSurface')).toBeTruthy()
+  })
+
+  it('Codex: a mode opens its own /permissions picker in the terminal (typed key by key)', async () => {
+    const sendMessage = vi.fn()
+    await mountChat({ agent: 'codex', sendMessage, permissionMode: 'bypassPermissions' })
+    const option = modeOption()
+    expect(option.kind.choices.map((c) => c.value)).toEqual(['default', 'bypassPermissions'])
+    const res = await composer().props('sessionOptionsSurface').setOption('permissionMode', 'default')
+    expect(res.ok).toBe(false)
+    expect(res.error).toContain('Codex changes its permissions in its own picker')
+    expect(sendMessage).toHaveBeenCalledWith('/permissions', { command: 'type' })
+    expect(wrapper.emitted('close')).toHaveLength(1)
+  })
+
+  it('no mode known, or not interactive: no mode picker', async () => {
+    await mountChat({ setPermissionMode: vi.fn() })
+    expect(composer().props('sessionOptionsSnapshot').some((o) => o.id === 'permissionMode')).toBe(false)
+  })
+})

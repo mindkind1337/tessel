@@ -263,3 +263,23 @@ describe('the question an agent asks (its card shows at once)', () => {
     expect(reports()[0].ask).toBeUndefined()
   })
 })
+
+describe('the permission mode (the chat view mode picker)', () => {
+  it.each([
+    ['claude', 'UserPromptSubmit', 'plan'],
+    ['claude', 'Stop', 'bypassPermissions'],
+    ['codex', 'PreToolUse', 'dontAsk']
+  ])('%s %s: keeps permission_mode, the value only', async (provider, event, mode) => {
+    expect((await hook(event, { provider, data: { permission_mode: mode, prompt: 'PRIVATE-PROMPT', tool_name: 'Bash', tool_input: { command: 'PRIVATE-CMD' } } })).code).toBe(0)
+    const [report] = reports()
+    expect(report).toMatchObject({ event, permissionMode: mode })
+    expect(JSON.stringify(report)).not.toMatch(/PRIVATE/)
+  })
+  it("keeps no unknown value, nor a sub-agent's", async () => {
+    await hook('UserPromptSubmit', { data: { permission_mode: 'superuser' } })
+    await hook('Stop', { data: { permission_mode: { mode: 'plan' } } })
+    await hook('PreToolUse', { data: { permission_mode: 'plan', agent_id: 'child-1', tool_name: 'Bash' } })
+    expect(reports()).toHaveLength(3)
+    expect(reports().some((r) => 'permissionMode' in r)).toBe(false)
+  })
+})

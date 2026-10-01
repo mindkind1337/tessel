@@ -610,7 +610,17 @@
       "showChat": "Afficher la vue chat",
       "showTerminal": "Afficher le terminal",
       "asleep": "En veille : il se réveille quand vous ouvrez ce panneau, vous pourrez alors lui écrire.",
-      "typedLine": "Une ligne est tapée dans son terminal : envoyez-la ou effacez-la d'abord."
+      "typedLine": "Une ligne est tapée dans son terminal : envoyez-la ou effacez-la d'abord.",
+      "yoloRestart": "Démarré sans Yolo : menu du panneau > Redémarrer en Yolo",
+      "yoloAtStart": "Démarré sans Yolo : seul un redémarrage avec Yolo (Réglages > Agents) le permet",
+      "modeAtStart": "Seulement à son démarrage (--permission-mode)",
+      "notRunning": "Il ne tourne pas.",
+      "modeApproval": "Il vous demande votre accord : répondez d'abord.",
+      "modeWorking": "Il travaille : son mode pourra changer une fois qu'il sera inactif.",
+      "modeDelivering": "Un message est en train d'y être tapé : réessayez dans un instant.",
+      "modeSwitching": "Son mode est déjà en train de changer.",
+      "modeUnavailable": "Il ne propose pas ce mode maintenant (Maj+Tab ne l'a jamais atteint).",
+      "modeUnconfirmed": "Impossible de confirmer le mode sur son écran ; ouvrez le terminal pour vérifier."
     },
     "voice": {
       "hint": "Parlez au lieu de taper ({{language}}). Saisie vocale Windows, Win+H. Langue : menu …",

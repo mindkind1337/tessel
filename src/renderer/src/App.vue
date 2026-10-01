@@ -2373,6 +2373,9 @@ provide('panelCtx', {
   chatViewEnded: (id) => chatViewEnded(id),
   // A line typed in a pane's terminal (nothing is typed over it).
   paneUserTyping: (id) => userIsTyping(id),
+  // A message of Tessel's being typed into it, or waiting to be (keys of the
+  // chat view's mode picker wait for it).
+  paneDelivering: (id) => delivering.has(id) || !!(pendingMessages[id] && pendingMessages[id].length) || !!unsent[id] || teamPointer.inFlight(id),
   pendingSwitch: (id) => pendingSwitch[id] || null,
   toggleYoloFolder,
   permissionsOf,

@@ -635,3 +635,35 @@ describe('the question an agent asks (live card)', () => {
     expect(result.states[paneId].ask.questions).toHaveLength(2)
   })
 })
+
+describe('the permission mode its hooks report (the chat view mode picker)', () => {
+  it('publishes the latest lead mode with its time, never saves it, and checks it again', async () => {
+    const store = make()
+    await store.register(registered())
+    put(event('UserPromptSubmit', { permissionMode: 'plan' }))
+    tick += 10
+    let result = await store.scan()
+    expect(result.states[paneId]).toMatchObject({ permissionMode: 'plan', permissionModeAt: tick - 10 })
+    expect(fs.readFileSync(stateFile(), 'utf8')).not.toContain('permissionMode')
+    // A sub-agent's, an unknown value: not taken; an older event: not over a newer one.
+    put(event('PreToolUse', { agentId: 'child-1', toolName: 'Bash', permissionMode: 'bypassPermissions', at: tick }))
+    put(event('PreToolUse', { toolName: 'Bash', permissionMode: 'root', at: tick + 1 }))
+    tick += 10
+    result = await store.scan()
+    expect(result.states[paneId].permissionMode).toBe('plan')
+    put(event('Stop', { permissionMode: 'default', at: tick }))
+    tick += 10
+    result = await store.scan()
+    expect(result.states[paneId]).toMatchObject({ permissionMode: 'default', permissionModeAt: tick - 10 })
+  })
+  it('forgets it with a new launch', async () => {
+    const store = make()
+    await store.register(registered())
+    put(event('UserPromptSubmit', { permissionMode: 'acceptEdits' }))
+    tick += 10
+    await store.scan()
+    expect(store.snapshot()[paneId].permissionMode).toBe('acceptEdits')
+    await store.register(registered({ launchToken: 'b'.repeat(32) }))
+    expect(store.snapshot()[paneId].permissionMode).toBeUndefined()
+  })
+})
