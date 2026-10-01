@@ -172,13 +172,21 @@ const stagedEntries = computed(() => entries.value.filter((e) => e.area === 'sta
 const unresolved = computed(() => entries.value.filter((e) => e.conflictStatus === 'unresolved'))
 const hasUncommittedEntries = computed(() => entries.value.length > 0)
 
+// A path git ends with "/" is a whole folder it does not look into (an
+// untracked folder that holds its own git repository): its name is the
+// folder's.
+function isNestedRepo(p) {
+  return /\/$/.test(p)
+}
 function fileName(p) {
-  const i = p.lastIndexOf('/')
-  return i >= 0 ? p.slice(i + 1) : p
+  const q = p.replace(/\/+$/, '')
+  const i = q.lastIndexOf('/')
+  return i >= 0 ? q.slice(i + 1) : q
 }
 function dirName(p) {
-  const i = p.lastIndexOf('/')
-  return i >= 0 ? p.slice(0, i) : ''
+  const q = p.replace(/\/+$/, '')
+  const i = q.lastIndexOf('/')
+  return i >= 0 ? q.slice(0, i) : ''
 }
 const rowKey = (e) => `${e.area}::${e.path}`
 const noMatchText = () => t('changes.filter.noMatch', 'No changed files match "{{query}}"', { query: filterQuery.value })
@@ -1393,7 +1401,7 @@ function draftStore() {
                 @dblclick="openDiff(node.entry, true)"
                 @keydown="onRowKeydown($event, node)"
               >
-                <component :is="getFileTypeIcon(node.entry.path)" :size="14" class="sc-file-icon" :style="{ color: STATUS_COLORS[node.entry.status] }" />
+                <component :is="isNestedRepo(node.entry.path) ? Folder : getFileTypeIcon(node.entry.path)" :size="14" class="sc-file-icon" :style="{ color: STATUS_COLORS[node.entry.status] }" />
                 <div class="sc-row-text">
                   <span class="sc-row-line">
                     <span class="sc-row-name explorer-name">{{ fileName(node.entry.path) }}</span>

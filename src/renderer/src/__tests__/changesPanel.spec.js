@@ -146,6 +146,13 @@ describe('Source Control: status', () => {
     }
   })
 
+  it('a folder that holds its own repository (git lists it as "dir/") shows its name, not an empty row', async () => {
+    api({ status: () => status([{ path: 'fixtures/cap-repo/', area: 'untracked', status: 'untracked' }]) })
+    make()
+    await flushPromises()
+    expect(names()).toEqual(['cap-repo'])
+  })
+
   it('a clean repository says so', async () => {
     api({ status: () => status([]) })
     make()
