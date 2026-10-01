@@ -379,8 +379,9 @@ const criticalTitle = computed(() => {
 .nc-composer-box--dictation :deep(.nc-composer-input) {
   padding-right: 52px;
 }
+/* Focused: the active pane's frame colour (style.css .pane.active), not white. */
 .nc-composer-box:focus-within {
-  border-color: var(--nc-primary, var(--nc-foreground));
+  border-color: color-mix(in srgb, var(--accent) 70%, transparent);
 }
 .nc-composer-attachments {
   /* Same space above and below the chips (the hairline under them). */
