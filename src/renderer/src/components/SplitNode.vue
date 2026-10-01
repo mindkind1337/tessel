@@ -6,6 +6,7 @@ export default { name: 'SplitNode' }
 import { ref } from 'vue'
 import { t } from '../i18n'
 import { trackPointerDrag } from '../browser/webviewPassthrough'
+import { writeViewSizes } from '../paneViews'
 import TerminalPane from './TerminalPane.vue'
 import EditorPane from './EditorPane.vue'
 import BrowserPane from './BrowserPane.vue'
@@ -48,6 +49,8 @@ function onDividerKey(e, i) {
   if (a < 5 || b < 5) return
   sizes[i] = a
   sizes[i + 1] = b
+  // A worktree's view of a split: the split itself takes the move.
+  writeViewSizes(props.node)
   notifyLayoutChange()
 }
 
@@ -75,6 +78,7 @@ function startDrag(e, i) {
     next[i] = a
     next[i + 1] = pairSum - a
     props.node.sizes = next
+    writeViewSizes(props.node)
     notifyLayoutChange()
   }
   const up = () => {

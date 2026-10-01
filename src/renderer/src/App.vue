@@ -8,6 +8,7 @@ import WorkspaceSidebar from './components/WorkspaceSidebar.vue'
 import StatusBar from './components/StatusBar.vue'
 import { buildProjectCards, cardTargetPane, portProbes } from './sidebarModel'
 import { createProjectWorktrees } from './projectWorktrees'
+import { workspaceViews, viewKey, leafViewPath } from './paneViews'
 import { createPortScanner, browserUrlForPort, addressForPort } from './portScanner'
 import { allowedBrowserUrl, BLANK_URL } from '../../shared/browserUrl'
 import LaunchMenu from './components/LaunchMenu.vue'
@@ -260,9 +261,11 @@ function openInTesselEditor({ file, line = null, col = null, preview = true, ws 
   if (!file || !ws) return null
   const active = ws.activeId ? findLeafIn(ws.tree, ws.activeId) : null
   let leaf = active && active.kind === 'editor' ? active : null
-  if (!leaf) forEachLeaf(ws.tree, (l) => !leaf && l.kind === 'editor' && (leaf = l))
+  // The editor of the worktree you are looking at (its own grid).
+  if (!leaf) forEachLeaf(ws.tree, (l) => !leaf && l.kind === 'editor' && sameView(l, active, ws) && (leaf = l))
   if (!leaf) {
     leaf = makeEditorLeaf()
+    keepView(leaf, active, ws)
     const split = (orig) => reactive({ type: 'split', id: newId('split'), dir: 'row', sizes: [50, 50], children: [orig, leaf] })
     if (active) ws.tree = replaceNode(ws.tree, active.id, split)
     else ws.tree = ws.tree ? split(ws.tree) : leaf
@@ -326,10 +329,11 @@ function openInBrowser({ url = BLANK_URL, ws = currentWs.value, newPane = false,
   let leaf = null
   if (!newPane) {
     leaf = active && active.kind === 'browser' ? active : null
-    if (!leaf) forEachLeaf(ws.tree, (l) => !leaf && l.kind === 'browser' && (leaf = l))
+    if (!leaf) forEachLeaf(ws.tree, (l) => !leaf && l.kind === 'browser' && sameView(l, active, ws) && (leaf = l))
   }
   if (!leaf) {
     leaf = makeBrowserLeaf(null, target)
+    keepView(leaf, active, ws)
     const split = (orig) => reactive({ type: 'split', id: newId('split'), dir: 'row', sizes: [50, 50], children: [orig, leaf] })
     if (active) ws.tree = replaceNode(ws.tree, active.id, split)
     else ws.tree = ws.tree ? split(ws.tree) : leaf
@@ -340,6 +344,14 @@ function openInBrowser({ url = BLANK_URL, ws = currentWs.value, newPane = false,
   if (activate || !ws.activeId) ws.activeId = leaf.id
   refitSoon()
   return leaf
+}
+// Each worktree of a project has its own grid of panes (paneViews.js): a
+// pane opened from one stays in it.
+function sameView(leaf, other, ws) {
+  return !other || viewKey(leaf, ws.cwd) === viewKey(other, ws.cwd)
+}
+function keepView(leaf, from, ws) {
+  if (from && viewKey(from, ws.cwd)) leaf.viewPath = leafViewPath(from)
 }
 // A page in the system browser (http and https only, checked again by main).
 function openExternalUrl(url) {
@@ -402,12 +414,15 @@ function chatPaneState(leaf) {
 function openChatAgent({ ws = currentWs.value, agent = 'claude' } = {}) {
   if (!ws) return null
   const active = ws.activeId ? findLeafIn(ws.tree, ws.activeId) : null
-  const cwd = ws.cwd || (active && active.cwd) || null
+  // Opened from a worktree's grid: the chat works in that copy.
+  const copy = active && viewKey(active, ws.cwd) ? active.worktree || { path: leafViewPath(active), branch: '' } : null
+  const cwd = (copy && copy.path) || ws.cwd || (active && active.cwd) || null
   if (!cwd || ws.remote) {
     showToast(t('app.chat.needFolder', 'A chat agent works in a project folder on this computer: open one first.'), { kind: 'error' })
     return null
   }
   const leaf = makeChatLeaf({ agentId: agent, cwd, projectDir: ws.cwd || null })
+  if (copy) leaf.worktree = { path: copy.path, branch: copy.branch || '' }
   const split = (orig) => reactive({ type: 'split', id: newId('split'), dir: 'row', sizes: [50, 50], children: [orig, leaf] })
   if (active) ws.tree = replaceNode(ws.tree, active.id, split)
   else ws.tree = ws.tree ? split(ws.tree) : leaf
@@ -831,6 +846,8 @@ function userIsTyping(id) {
 
 // `tree` and `activeId` always point at the current workspace, so the pane
 // operations below work unchanged.
+// Each workspace's grids, one per worktree (paneViews.js).
+const paneViews = computed(() => Object.fromEntries(workspaces.value.map((w) => [w.id, workspaceViews(w)])))
 const tree = computed({
   get: () => (currentWs.value ? currentWs.value.tree : null),
   set: (v) => {
@@ -1394,7 +1411,8 @@ function serializeNode(node) {
       num: node.num || null,
       paneName: node.paneName || undefined,
       files: (node.files || []).map((f) => ({ path: f.path, preview: !!f.preview })),
-      activePath: node.activePath || null
+      activePath: node.activePath || null,
+      viewPath: node.viewPath || undefined
     }
   }
   // A chat agent: its folder and Claude conversation (resumed on restore).
@@ -1429,7 +1447,8 @@ function serializeNode(node) {
       num: node.num || null,
       paneName: node.paneName || undefined,
       url: allowedBrowserUrl(node.url) || BLANK_URL,
-      zoom: Number.isFinite(node.zoom) ? node.zoom : 0
+      zoom: Number.isFinite(node.zoom) ? node.zoom : 0,
+      viewPath: node.viewPath || undefined
     }
   }
   if (node.type === 'leaf') {
@@ -1478,6 +1497,10 @@ function serializeNode(node) {
 }
 
 // Rebuild a live tree from a snapshot, spawning a fresh PTY per leaf.
+// The worktree grid an editor or a browser pane was in (paneViews.js).
+function validViewPath(v) {
+  return typeof v === 'string' && v.length > 0 && v.length <= 1000
+}
 async function deserializeNode(snap, cwd = null) {
   if (!snap) return null
   // An editor pane comes back with its tabs, without any terminal (a file
@@ -1493,6 +1516,7 @@ async function deserializeNode(snap, cwd = null) {
     leaf.files = files
     const active = files.find((f) => samePath(f.path, snap.activePath))
     leaf.activePath = (active || files[0]).path
+    if (validViewPath(snap.viewPath)) leaf.viewPath = snap.viewPath
     return leaf
   }
   // A chat agent comes back with its conversation (resumed when it opens).
@@ -1527,6 +1551,7 @@ async function deserializeNode(snap, cwd = null) {
     if (snap.paneName) leaf.paneName = snap.paneName
     if (Number.isInteger(snap.num) && snap.num > 0) leaf.num = snap.num
     if (Number.isFinite(snap.zoom)) leaf.zoom = Math.max(-3, Math.min(5, snap.zoom))
+    if (validViewPath(snap.viewPath)) leaf.viewPath = snap.viewPath
     return leaf
   }
   if (snap.type === 'leaf') {
@@ -1708,6 +1733,12 @@ async function splitLeaf(
   opts = {}
 ) {
   const ws = wsOfLeaf(leafId) || currentWs.value
+  // A pane you open next to one in a worktree's grid works in that worktree
+  // and stays in its grid (paneViews.js).
+  if (opts.inheritView && !worktree && !opts.cwd && ws) {
+    const from = findLeafIn(ws.tree, leafId)
+    if (from && viewKey(from, ws.cwd)) worktree = from.worktree ? { path: from.worktree.path, branch: from.worktree.branch } : { path: leafViewPath(from), branch: '' }
+  }
   const leaf = await createLeaf(shellId, agent, opts.cwd || (ws && ws.cwd), worktree, wsLeafOpts(ws, opts))
   if (!leaf) return
   if (!ws || !workspaces.value.includes(ws)) {
@@ -2388,7 +2419,7 @@ provide('panelCtx', {
 })
 
 function splitActive(dir) {
-  if (activeId.value) splitLeaf(activeId.value, dir)
+  if (activeId.value) splitLeaf(activeId.value, dir, null, selectedShell.value, null, { inheritView: true })
 }
 
 function closeActive() {
@@ -2652,7 +2683,7 @@ async function launch({ kind, id, sessionOptions = null }, targetId = activeId.v
 
   const ws = (targetId && wsOfLeaf(targetId)) || currentWs.value
   if (targetId && ws && ws.tree) {
-    await splitLeaf(targetId, where === 'down' ? 'col' : 'row', agent, shellId, worktree, { before: where === 'left', sessionOptions })
+    await splitLeaf(targetId, where === 'down' ? 'col' : 'row', agent, shellId, worktree, { before: where === 'left', sessionOptions, inheritView: true })
     return
   }
   if (!ws) return
@@ -2693,7 +2724,7 @@ async function loadAgents(refresh = false) {
 async function openPaneBelow(shellId, agent = null, opts = {}) {
   const ws = currentWs.value
   if (!ws) return null
-  if (activeId.value && ws.tree) return splitLeaf(activeId.value, 'col', agent, shellId, null, opts)
+  if (activeId.value && ws.tree) return splitLeaf(activeId.value, 'col', agent, shellId, null, { inheritView: true, ...opts })
   const leaf = await createLeaf(shellId, agent, ws.cwd, null, wsLeafOpts(ws, opts))
   if (leaf) {
     ws.tree = leaf
@@ -3009,9 +3040,12 @@ function otherPanes(paneId) {
   return out.sort((a, b) => (a.num || 99) - (b.num || 99))
 }
 
+// The grid on screen: the current workspace's, of the worktree you look at.
+const VISIBLE_GRID = '.ws-layer:not(.hidden) > .view-layer:not(.hidden)'
+
 // Where a pane sits in the visible layout, in words ("top left", "right").
 function paneWhere(paneId) {
-  const layer = document.querySelector('.ws-layer:not(.hidden)')
+  const layer = document.querySelector(VISIBLE_GRID)
   const el = layer && layer.querySelector(`.pane[data-pane-id="${paneId}"]`) // i18n-ignore
   if (!layer || !el) return ''
   const L = layer.getBoundingClientRect()
@@ -3324,6 +3358,10 @@ function focusPane(paneId) {
   const ws = wsOfLeaf(paneId)
   if (!ws) return
   selectWorkspace(ws.id)
+  // Another worktree's grid comes up: a pane maximized in the one you leave
+  // is restored.
+  const from = findLeafIn(ws.tree, ws.activeId)
+  if (maximizedId.value && maximizedId.value !== paneId && from && viewKey(from, ws.cwd) !== viewKey(findLeafIn(ws.tree, paneId), ws.cwd)) maximizedId.value = null
   ws.activeId = paneId
   clearAttention(paneId)
   readForPane(paneId)
@@ -3416,7 +3454,7 @@ function sendTestNotification() {
 
 // Alt+Arrow: move focus to the nearest pane in that direction.
 function moveFocus(dir) {
-  const layer = document.querySelector('.ws-layer:not(.hidden)')
+  const layer = document.querySelector(VISIBLE_GRID)
   if (!layer || !activeId.value) return
   const panes = [...layer.querySelectorAll('.pane[data-pane-id]')].map((el) => ({
     id: el.dataset.paneId,
@@ -3640,7 +3678,7 @@ function detachLeaf(ws, leafId) {
 // takes that whole side (any pane, from any place in the layout).
 const EDGE_BAND = 28
 function workspaceEdgeAt(x, y) {
-  const layer = document.querySelector('.ws-layer:not(.hidden)')
+  const layer = document.querySelector(VISIBLE_GRID)
   const ws = currentWs.value
   if (!layer || !ws || !ws.tree || ws.tree.type !== 'split') return null
   const r = layer.getBoundingClientRect()
@@ -9673,10 +9711,20 @@ onBeforeUnmount(() => {
           :class="{ hidden: ws.id !== currentWsId }"
           :aria-hidden="ws.id !== currentWsId"
         >
-          <SplitNode v-if="ws.tree" :node="ws.tree" />
-          <!-- The browser panes' pages, outside the split tree so a layout
-               change never reloads them (browser/pageHost.js). -->
-          <div class="browser-host"></div>
+          <!-- One grid per worktree of the project (paneViews.js): the
+               active pane's on screen, the others kept running out of sight. -->
+          <div
+            v-for="view in paneViews[ws.id]"
+            :key="view.key"
+            class="ws-layer view-layer"
+            :class="{ hidden: !view.active }"
+            :aria-hidden="!view.active"
+          >
+            <SplitNode :node="view.tree" />
+            <!-- The browser panes' pages, outside the split tree so a layout
+                 change never reloads them (browser/pageHost.js). -->
+            <div class="browser-host"></div>
+          </div>
         </div>
         <div v-if="!tree" class="startup-message">
           {{ initError || t('app.main.starting', 'Starting...') }}
