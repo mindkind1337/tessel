@@ -15,6 +15,11 @@ const valueText = computed(() => current.value < 0 && dragIndex.value === null
   : nativeChatSessionChoiceLabel(choices.value[index.value]))
 const label = computed(() => t('chat.orca.composer.effortValue', 'Effort ({{value}})', { value: valueText.value }))
 const percent = i => choices.value.length < 2 ? 50 : i * 100 / (choices.value.length - 1)
+// Geometry (CSS px): an 18px track, a 14px thumb (2px inset all round), steps
+// on the inner 58px (9px pads). A middle step's thumb sits 2px left of its
+// dot so 2px of blue shows after it, short of the next dot; the ends keep
+// the 2px inset to the track's rounded ends.
+const nudge = i => (i > 0 && i < choices.value.length - 1 ? 2 : 0)
 function commit(i) {
   if (!props.disabled && choices.value[i] && !choices.value[i].disabled) emit('change', choices.value[i].value)
 }
@@ -64,19 +69,18 @@ function finish(event) {
       @pointerup="finish" @pointercancel="dragIndex = null" @lostpointercapture="dragIndex = null"
     >
       <div class="nc-effort-track" aria-hidden="true">
-        <span v-if="current >= 0 || dragIndex !== null" class="nc-effort-fill" :style="{ width: `min(calc(${percent(index)}% + 17.5px), calc(100% + 18px))` }" />
+        <span v-if="current >= 0 || dragIndex !== null" class="nc-effort-fill" :style="{ width: `calc(${percent(index)}% + ${18 - nudge(index)}px)` }" />
         <span v-for="(choice, i) in choices" :key="choice.value" class="nc-effort-tick"
           :class="{ 'nc-effort-filled-tick': i <= index, 'nc-effort-last': i === choices.length - 1, 'nc-effort-unavailable': choice.disabled }" :style="{ left: percent(i) + '%' }" />
-        <span v-if="current >= 0 || dragIndex !== null" class="nc-effort-thumb" :style="{ left: percent(index) + '%' }" />
+        <span v-if="current >= 0 || dragIndex !== null" class="nc-effort-thumb" :style="{ left: `calc(${percent(index)}% - ${nudge(index)}px)` }" />
       </div>
     </div>
   </div>
 </template>
 
 <style scoped>
-/* Sizes in CSS pixels (the reference was a 2x screenshot). The fill runs
-   from the track's left end to just past the thumb (9px pad + 7px radius +
-   1.5px of blue after it, short of the next dot). The last step's dot is violet. */
+/* Sizes in CSS pixels (the reference was a 2x screenshot); see nudge() for
+   the geometry. The fill ends 2px past the thumb. The last step's dot is violet. */
 .nc-effort-footer { flex: none; display: flex; align-items: center; gap: 16px; padding: 12px 10px 8px; border-top: 1px solid var(--nc-border); }
 .nc-effort-label { display: flex; align-items: center; gap: 8px; font-size: 12px; white-space: nowrap; }
 .nc-effort-slider { box-sizing: border-box; width: 76px; flex: none; margin-left: auto; height: 18px; padding: 0 9px; display: flex; align-items: center; cursor: pointer; touch-action: none; border-radius: 9px; outline: none; }
