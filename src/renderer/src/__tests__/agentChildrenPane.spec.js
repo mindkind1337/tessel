@@ -199,7 +199,7 @@ describe('sub-agents chip', () => {
     expect(w.emitted('running').at(-1)[0]).toBe(1)
     await w.find('[data-test="agent-children"]').trigger('click')
     expect(w.find('.agent-child-type').text()).toBe('explorer')
-    expect(w.find('.agent-child-model').text()).toBe('gpt-6-astra')
+    expect(w.find('.agent-child-model').text()).toBe('GPT-6 Astra')
     w.unmount()
     // Agents with no sub-agent records ask nothing.
     const g = mountChip({ agentId: 'gemini', sessionId: 'G' })
