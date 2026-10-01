@@ -190,7 +190,16 @@ export function run(file, args, opts = {}) {
 // node), or null when it is not a launcher this understands.
 //   "%dp0%\node_modules\@openai\codex\bin\codex.js" %*   -> node + script
 //   "%dp0%\node_modules\...\claude.exe"   %*             -> the .exe
+//   powershell ... -File "%SCRIPT_DIR%\cursor-agent.ps1" %* -> that script
+//     (Cursor's launcher), started the same way; only a .ps1 beside it.
 export function shimTarget(cmdText, dir, nodePath, exists = fs.existsSync) {
+  const ps = /powershell(?:\.exe)?\s[^\r\n]*-File\s+"%(?:~dp0|SCRIPT_DIR%)\\?([\w.-]+\.ps1)"\s*%\*/i.exec(String(cmdText || ''))
+  if (ps) {
+    const script = join(dir, ps[1])
+    if (!exists(script)) return null
+    const shell = join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+    return { file: shell, pre: ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script] }
+  }
   const m = /"%~?dp0%?\\?([^"%]+)"\s*%\*/i.exec(String(cmdText || ''))
   if (!m) return null
   const target = join(dir, m[1])

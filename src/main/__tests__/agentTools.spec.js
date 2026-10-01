@@ -272,3 +272,22 @@ describe('psQuote and the typographic quotes', () => {
     expect(psQuote('\u2018a\u201Ab\u201B')).toBe("'\u2018\u2018a\u201A\u201Ab\u201B\u201B'")
   })
 })
+
+describe("Cursor's launcher (a .cmd that runs a PowerShell script beside it)", () => {
+  it('is started as that script through PowerShell, never anything outside its folder', async () => {
+    const { shimTarget } = await import('../agentTools')
+    const cmd = [
+      '@echo off',
+      'set "SCRIPT_DIR=%~dp0"',
+      String.raw`%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%\cursor-agent.ps1" %*`
+    ].join('\r\n')
+    const dir = String.raw`C:\Users\me\AppData\Local\cursor-agent`
+    const script = join(dir, 'cursor-agent.ps1')
+    const t = shimTarget(cmd, dir, null, (p) => p === script)
+    expect(t.file).toMatch(/powershell\.exe$/i)
+    expect(t.pre).toEqual(['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script])
+    // The script must exist beside it; a path out of the folder is not read.
+    expect(shimTarget(cmd, dir, null, () => false)).toBe(null)
+    expect(shimTarget(cmd.replace('cursor-agent.ps1', String.raw`..\x.ps1`), dir, null, () => true)).toBe(null)
+  })
+})
