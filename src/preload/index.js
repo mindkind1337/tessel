@@ -291,6 +291,8 @@ const api = {
     current: (args) => ipcRenderer.invoke('team:current', args),
     retire: (args) => ipcRenderer.invoke('team:retire', args),
     tasks: (args) => ipcRenderer.invoke('team:tasks', args),
+    // Cards deleted on the board: out of every published copy in a project.
+    forgetTasks: (args) => ipcRenderer.invoke('team:forget-tasks', args),
     roster: (args) => ipcRenderer.invoke('team:roster', args),
     requests: (args) => ipcRenderer.invoke('team:requests', args),
     requestsDone: (args) => ipcRenderer.invoke('team:requests-done', args),

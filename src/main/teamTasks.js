@@ -97,6 +97,45 @@ export function publishTeamTasks({ dir, teamId, board, tasks } = {}) {
   return { ok: true, changed: true }
 }
 
+// Cards deleted on the board: gone at once from every copy published for
+// the agents in this project (each team's tasks.json and each workspace
+// board's), also a board nobody republishes any more (its agents gone), so
+// no agent keeps reading a deleted card. Only removes: a published copy
+// never adds a card (Tessel's board is the only source).
+// -> { ok, changed: number of files rewritten }
+export function forgetPublishedTasks({ dir, ids } = {}) {
+  if (typeof dir !== 'string' || !isAbsolute(dir) || !Array.isArray(ids)) return { ok: false, error: 'Invalid location.' }
+  const gone = new Set(ids.filter((id) => typeof id === 'string' && ID_RE.test(id)))
+  let changed = 0
+  if (!gone.size) return { ok: true, changed }
+  for (const kind of ['team-channel', 'board']) {
+    const base = join(resolve(dir), '.tessel', kind)
+    let names = []
+    try {
+      names = fs.readdirSync(base, { withFileTypes: true }).filter((e) => e.isDirectory() && ID_RE.test(e.name)).map((e) => e.name)
+    } catch {
+      continue
+    }
+    for (const name of names) {
+      const file = join(base, name, 'tasks.json')
+      let data = null
+      try {
+        data = JSON.parse(fs.readFileSync(file, 'utf8'))
+      } catch {
+        continue
+      }
+      if (!data || !Array.isArray(data.tasks) || !data.tasks.some((t) => t && gone.has(t.id))) continue
+      try {
+        writeAtomic(file, { ...data, tasks: data.tasks.filter((t) => !(t && gone.has(t.id))) })
+        changed++
+      } catch {
+        // Rewritten with the next publish of that board.
+      }
+    }
+  }
+  return { ok: true, changed }
+}
+
 function orchestration(t) {
   const out = {}
   const deps = cleanIds(t.deps)

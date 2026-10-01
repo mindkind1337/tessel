@@ -51,11 +51,61 @@ export function moveTask(id, column) {
   return updateTask(id, { column })
 }
 
+// Cards deleted from the board, by id (oldest first). A deleted card never
+// comes back: a copy of the board from before its deletion (loaded again when
+// the interface restarts while the previous one still shows the board, or
+// written by a window that still had it) is filtered here, and the ids are
+// saved with the board (the main process keeps every window's deletions, see
+// taskBoardPersistence.js). Card ids are never reused.
+const MAX_DELETED = 5000
+const deleted = new Set()
+// Deleted since the published copies for the agents were last cleaned
+// (App.vue removes them from every team and workspace board).
+const toPurge = new Set()
+
+function forget(id) {
+  deleted.delete(id)
+  deleted.add(id)
+  while (deleted.size > MAX_DELETED) deleted.delete(deleted.values().next().value)
+}
+
 export function removeTask(id) {
   const idx = tasks.findIndex((t) => t.id === id)
   if (idx === -1) return false
   tasks.splice(idx, 1)
+  forget(id)
+  toPurge.add(id)
   return true
+}
+
+export function deletedTaskIds() {
+  return [...deleted]
+}
+
+// Deletions read from the saved board (kept with this window's own).
+export function addDeletedTasks(ids) {
+  if (!Array.isArray(ids)) return
+  for (const id of ids) if (typeof id === 'string' && id && !deleted.has(id)) forget(id)
+  for (let i = tasks.length - 1; i >= 0; i--) if (deleted.has(tasks[i].id)) tasks.splice(i, 1)
+}
+
+// The ids deleted since the last call (each handed out once).
+export function takeDeletedToPurge() {
+  const ids = [...toPurge]
+  toPurge.clear()
+  return ids
+}
+
+// Is this card on the board of these agents? Its workspace's board (a card
+// with no agent belongs to its workspace and every agent there sees it), or
+// a card given to or added by one of them, wherever it is. The same rule for
+// what the agents read (team_tasks) and what they may change, so an agent
+// can always move and finish a card it sees or added.
+// scope: { wsIds: [workspace ids], memberIds: [pane ids] }
+export function cardOnBoard(task, { wsIds = [], memberIds = [] } = {}) {
+  if (!task) return false
+  if (task.wsId && wsIds.includes(task.wsId)) return true
+  return (!!task.paneId && memberIds.includes(task.paneId)) || (!!task.createdBy && memberIds.includes(task.createdBy))
 }
 
 export function assignAgent(taskId, paneId) {
@@ -68,6 +118,7 @@ export function setTasks(nextTasks) {
   if (!Array.isArray(nextTasks)) {
     throw new Error('setTasks requires an array of tasks')
   }
-  tasks.splice(0, tasks.length, ...nextTasks)
+  // A card deleted meanwhile stays deleted (see removeTask).
+  tasks.splice(0, tasks.length, ...nextTasks.filter((t) => !(t && deleted.has(t.id))))
   return tasks
 }

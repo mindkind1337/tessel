@@ -76,7 +76,7 @@ import { trackAgent } from '../../shared/tracking'
 import { pasteAndConfirm } from './deliver'
 import { createTeamDelivery } from './teamDelivery'
 import { dropBuffer, seedBuffer } from './ptyStore'
-import { tasks as boardTasks, setTasks, updateTask, removeTask, addTask } from './taskBoardStore'
+import { tasks as boardTasks, setTasks, updateTask, removeTask, addTask, deletedTaskIds, addDeletedTasks, takeDeletedToPurge, cardOnBoard } from './taskBoardStore'
 import { paneModels } from './paneModels'
 import { sleepBlocker } from '../../shared/agentSleep'
 import { updateBlocker, planUpdate, autoUpdateMoment } from '../../shared/agentUpdatePlan'
@@ -2180,15 +2180,39 @@ let taskSaveTimer = null
 // Board requests from agents already applied ("<team>/<file>"), saved in the
 // board's file with the cards (see syncTeamBoard).
 const appliedRequests = new Set()
+// With the ids of the cards deleted (taskBoardStore.js): a deleted card is
+// never written back, even by a copy of the board from before its deletion.
 function boardToSave() {
-  return { tasks: JSON.parse(JSON.stringify(boardTasks)), appliedRequests: [...appliedRequests] }
+  return { tasks: JSON.parse(JSON.stringify(boardTasks)), appliedRequests: [...appliedRequests], deleted: deletedTaskIds() }
 }
 
 // Every board save goes here: none while the saved board could not be read
 // (locked at start), so it is never overwritten.
 function saveBoard() {
   if (boardLocked) return Promise.resolve({ ok: false, error: t('app.board.lockedAtStart', 'The saved board could not be read at start.') })
-  return window.shellApi.taskBoard.save(boardToSave())
+  const saving = window.shellApi.taskBoard.save(boardToSave())
+  purgePublishedCards()
+  return saving
+}
+
+// Cards deleted on the board leave every copy published for the agents at
+// once (each team's and each workspace board's tasks.json in every project),
+// also a board nobody republishes any more: no agent keeps seeing a card
+// that is gone.
+function purgePublishedCards() {
+  const api = window.shellApi.team
+  if (!api || !api.forgetTasks) return
+  const ids = takeDeletedToPurge()
+  if (!ids.length) return
+  const dirs = new Set()
+  for (const ws of workspaces.value) if (ws.cwd && !ws.remote) dirs.add(ws.cwd)
+  for (const team of teams.value) {
+    const dir = channelDir(team)
+    if (dir) dirs.add(dir)
+  }
+  // Republished from the board as it is now, whatever was published before.
+  for (const k of Object.keys(boardSigs)) delete boardSigs[k]
+  for (const dir of dirs) api.forgetTasks({ dir, ids }).catch(() => {})
 }
 function scheduleTaskSave() {
   if (taskSaveTimer) clearTimeout(taskSaveTimer)
@@ -7971,6 +7995,21 @@ async function syncBoard(b, round = teamRound) {
   if (boardLocked) return
   const { key: boardKey, dir, target, wsId, members } = b
   const byNum = (n) => resolveAgentAddress(members, n)
+  // The cards on this board: those of its agents' workspaces (a card with
+  // no agent belongs to its workspace's board) and those given to or added
+  // by one of them anywhere. The same rule for what is published (what the
+  // agents read with team_tasks) and for the cards they may move, finish or
+  // gate: an agent can always change a card it sees, or one it added.
+  const scope = {
+    wsIds: [...new Set([wsId, ...members.map((m) => wsOfLeaf(m.id)?.id)].filter(Boolean))],
+    memberIds: members.map((m) => m.id)
+  }
+  const onBoard = (task) => cardOnBoard(task, scope)
+  const deletedNow = new Set(deletedTaskIds())
+  const noCard = (id) =>
+    deletedNow.has(id)
+      ? `Card ${id} was deleted from the board: it is gone, do not use it again (see team_tasks).` // i18n-ignore
+      : `No card ${id} on your team's board (see team_tasks).` // i18n-ignore
   const res = await window.shellApi.team.requests({ dir, ...target })
   // Replaced meanwhile: these requests are the new round's to apply (their
   // reservations released, so it reads them again).
@@ -8006,7 +8045,7 @@ async function syncBoard(b, round = teamRound) {
           refusals.push({ fromId: from.id, text: `The card "${r.title}" was not added: ${r.assignee} is not in your team.` }) // i18n-ignore
           continue
         }
-        const unknown = (r.deps || []).filter((d) => !boardTasks.some((t) => t.id === d && t.wsId === wsId))
+        const unknown = (r.deps || []).filter((d) => !boardTasks.some((t) => t.id === d && onBoard(t)))
         if (unknown.length) {
           refusals.push({ fromId: from.id, text: `The card "${r.title}" was not added: no card ${unknown.join(', ')} on your team's board to wait for (see team_tasks).` }) // i18n-ignore
           continue
@@ -8026,16 +8065,16 @@ async function syncBoard(b, round = teamRound) {
         recordActivity({ type: 'task', action: 'added', paneId: who.id, agent: agentInfo(who), title: r.title, wsId, by: paneLabel(from) })
       } else if (r.action === 'report' || r.action === 'gate') {
         const task = boardTasks.find((t) => t.id === r.id)
-        if (!task || task.wsId !== wsId) {
-          refusals.push({ fromId: from.id, text: `No card ${r.id} on your team's board (see team_tasks).` }) // i18n-ignore
+        if (!task || !onBoard(task)) {
+          refusals.push({ fromId: from.id, text: noCard(r.id) })
           continue
         }
         if (r.action === 'report') applyReport(task, r, from, b.teamId)
         else askDecision(task, r, from)
       } else if (r.action === 'move') {
         const task = boardTasks.find((t) => t.id === r.id)
-        if (!task || task.wsId !== wsId) {
-          refusals.push({ fromId: from.id, text: `No card ${r.id} on your team's board (see team_tasks).` }) // i18n-ignore
+        if (!task || !onBoard(task)) {
+          refusals.push({ fromId: from.id, text: noCard(r.id) })
           continue
         }
         if (task.column === r.column) continue
@@ -8086,7 +8125,7 @@ async function syncBoard(b, round = teamRound) {
     return leaf ? leaf.paneName || null : null
   }
   const cards = boardTasks
-    .filter((t) => t.wsId === wsId)
+    .filter(onBoard)
     .map((t) => ({
       id: t.id,
       title: t.title,
@@ -9233,6 +9272,10 @@ onMounted(async () => {
     startStep = 'task board'
     // The layout already waited for its lock: no second long wait.
     const saved = await loadUnlocked(() => window.shellApi.taskBoard.load({ withLedger: true }), layoutLocked ? 2 : 10)
+    // Cards deleted (saved, and any deleted in this window before the board
+    // was read again, e.g. while the interface restarted): never brought back
+    // by the copy read here.
+    addDeletedTasks(saved && saved.deleted)
     if (saved && saved.locked === true) {
       boardLocked = true
       if (Array.isArray(saved.tasks)) setTasks(saved.tasks) // its previous copy, shown only

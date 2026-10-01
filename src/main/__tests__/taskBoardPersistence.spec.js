@@ -180,11 +180,11 @@ describe('the ledger of applied board requests', () => {
     const d = fs.mkdtempSync(join(os.tmpdir(), 'tessel-ledger-'))
     try {
       saveTasks(d, [{ id: 'a' }], ['team-1/pane-1__1.json'])
-      expect(loadBoard(d)).toEqual({ tasks: [{ id: 'a' }], appliedRequests: ['team-1/pane-1__1.json'] })
+      expect(loadBoard(d)).toEqual({ tasks: [{ id: 'a' }], appliedRequests: ['team-1/pane-1__1.json'], deleted: [] })
       expect(loadTasks(d)).toEqual([{ id: 'a' }])
       // A board saved by an older version (a plain list): no ledger.
       saveTasks(d, [{ id: 'b' }])
-      expect(loadBoard(d)).toEqual({ tasks: [{ id: 'b' }], appliedRequests: [] })
+      expect(loadBoard(d)).toEqual({ tasks: [{ id: 'b' }], appliedRequests: [], deleted: [] })
     } finally {
       fs.rmSync(d, { recursive: true, force: true })
     }

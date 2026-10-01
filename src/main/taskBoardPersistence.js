@@ -48,25 +48,53 @@ export function loadBoard(userDataDir) {
   // A damaged file (stopped mid-write by an older version, cut, unknown
   // shape) is kept aside as .corrupt-<time> and the previous good copy used.
   const res = readJsonSafe(file, isTaskList, { onLocked: 'backup' })
-  if (res.locked) return {
-    locked: true,
-    tasks: Array.isArray(res.data) ? res.data : res.data?.tasks || [],
-    appliedRequests: Array.isArray(res.data?.appliedRequests)
-      ? res.data.appliedRequests.filter((k) => typeof k === 'string') : []
+  if (res.locked) {
+    const deleted = deletedOf(res.data)
+    return {
+      locked: true,
+      tasks: withoutDeleted(Array.isArray(res.data) ? res.data : res.data?.tasks || [], deleted),
+      appliedRequests: Array.isArray(res.data?.appliedRequests)
+        ? res.data.appliedRequests.filter((k) => typeof k === 'string') : [],
+      deleted
+    }
   }
   if (res.data) {
-    if (Array.isArray(res.data)) return { tasks: res.data, appliedRequests: [] }
+    if (Array.isArray(res.data)) return { tasks: res.data, appliedRequests: [], deleted: [] }
     const applied = Array.isArray(res.data.appliedRequests)
       ? res.data.appliedRequests.filter((k) => typeof k === 'string')
       : []
-    return { tasks: res.data.tasks, appliedRequests: applied }
+    const deleted = deletedOf(res.data)
+    return { tasks: withoutDeleted(res.data.tasks, deleted), appliedRequests: applied, deleted }
   }
 
   // No good copy at all: empty or an unknown shape opens an empty board;
   // damaged JSON throws so the caller logs it.
   const raw = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : ''
   if (raw.trim()) JSON.parse(raw)
-  return { tasks: [], appliedRequests: [] }
+  return { tasks: [], appliedRequests: [], deleted: [] }
+}
+
+// The ids of the cards deleted from the board (the version 2 envelope's
+// "deleted"): such a card is never read back nor written again, whatever
+// copy of the board a window saves (one from before the deletion included).
+const MAX_DELETED = 5000
+function deletedOf(data) {
+  return data && !Array.isArray(data) && Array.isArray(data.deleted) ? data.deleted.filter((k) => typeof k === 'string' && k) : []
+}
+function withoutDeleted(tasks, deleted) {
+  if (!deleted.length) return tasks
+  const gone = new Set(deleted)
+  return tasks.filter((t) => !(t && gone.has(t.id)))
+}
+
+// The deletions already saved (best effort: a file that cannot be read now
+// adds none; the window's own list still goes in).
+function savedDeleted(file) {
+  try {
+    return deletedOf(JSON.parse(fs.readFileSync(file, 'utf8')))
+  } catch {
+    return []
+  }
 }
 
 // A task array, or the forward-compatible { version, tasks: [...] } envelope.
@@ -82,14 +110,30 @@ function isTaskList(data) {
  * @param {Array<object>} tasks
  * @returns {string} the path written
  */
-export function saveTasks(userDataDir, tasks, appliedRequests = null) {
+export function saveTasks(userDataDir, tasks, appliedRequests = null, deleted = null) {
   if (!Array.isArray(tasks)) throw new Error('saveTasks requires an array of tasks')
   const file = taskBoardFilePath(userDataDir)
   // Temp file + rename, previous copy kept as .bak: a kill mid-write never
   // leaves an empty or cut board. With a ledger: one file, one write.
-  const data = Array.isArray(appliedRequests)
-    ? { version: 2, tasks, appliedRequests: appliedRequests.filter((k) => typeof k === 'string').slice(-5000) }
-    : tasks
+  let data = tasks
+  if (Array.isArray(appliedRequests)) {
+    // Deletions add up: those already saved (by this window or another one)
+    // and this save's. A card in that list is left out, so a copy of the
+    // board from before its deletion cannot write it back.
+    const all = new Set(savedDeleted(file))
+    for (const id of Array.isArray(deleted) ? deleted : []) {
+      if (typeof id !== 'string' || !id) continue
+      all.delete(id)
+      all.add(id)
+    }
+    const kept = [...all].slice(-MAX_DELETED)
+    data = {
+      version: 2,
+      tasks: withoutDeleted(tasks, kept),
+      appliedRequests: appliedRequests.filter((k) => typeof k === 'string').slice(-5000),
+      ...(kept.length ? { deleted: kept } : {})
+    }
+  }
   writeJsonSafe(file, data, isTaskList)
   return file
 }

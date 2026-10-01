@@ -173,3 +173,54 @@ describe('doingSince', () => {
     expect(t.doingSince).toBeGreaterThan(first)
   })
 })
+
+// A card deleted on the board stays deleted: an older copy of the board
+// loaded again (the window's interface restarted while the previous one was
+// still showing the board, or a saved copy from before the deletion) never
+// brings it back with the same id.
+describe('a deleted card', () => {
+  it('does not come back when an older copy of the board is loaded again', async () => {
+    const { tasks, addTask, removeTask, setTasks, deletedTaskIds } = await import('../taskBoardStore')
+    const a = addTask({ title: 'keep' })
+    const b = addTask({ title: 'delete me' })
+    const before = JSON.parse(JSON.stringify(tasks))
+    removeTask(b.id)
+    setTasks(before)
+    expect(tasks.some((t) => t.id === b.id)).toBe(false)
+    expect(tasks.some((t) => t.id === a.id)).toBe(true)
+    expect(deletedTaskIds()).toContain(b.id)
+  })
+
+  it('deletions read from the saved board count too (and are kept with the new ones)', async () => {
+    const { tasks, setTasks, addDeletedTasks, deletedTaskIds, removeTask, addTask } = await import('../taskBoardStore')
+    addDeletedTasks(['task-9-1'])
+    setTasks([{ id: 'task-9-1', title: 'gone', column: 'todo' }, { id: 'task-9-2', title: 'here', column: 'todo' }])
+    expect(tasks.map((t) => t.id)).toEqual(['task-9-2'])
+    const c = addTask({ title: 'c' })
+    removeTask(c.id)
+    expect(deletedTaskIds()).toEqual(expect.arrayContaining(['task-9-1', c.id]))
+  })
+
+  it('is handed once to the purge of the published copies', async () => {
+    const { addTask, removeTask, takeDeletedToPurge } = await import('../taskBoardStore')
+    takeDeletedToPurge()
+    const d = addTask({ title: 'd' })
+    removeTask(d.id)
+    expect(takeDeletedToPurge()).toEqual([d.id])
+    expect(takeDeletedToPurge()).toEqual([])
+  })
+})
+
+// Which cards an agent's board shows and lets it change: the cards of its
+// workspace(s), and the cards it (or a teammate) was given or added anywhere.
+describe('cardOnBoard', () => {
+  it('a card added by an agent of the board is on it, whatever its workspace', async () => {
+    const { cardOnBoard } = await import('../taskBoardStore')
+    const scope = { wsIds: ['ws-1'], memberIds: ['pane-1'] }
+    expect(cardOnBoard({ id: 't', wsId: 'ws-1', paneId: null }, scope)).toBe(true)
+    expect(cardOnBoard({ id: 't', wsId: 'ws-2', paneId: null, createdBy: 'pane-1' }, scope)).toBe(true)
+    expect(cardOnBoard({ id: 't', wsId: 'ws-2', paneId: 'pane-1' }, scope)).toBe(true)
+    expect(cardOnBoard({ id: 't', wsId: 'ws-2', paneId: 'pane-9', createdBy: 'pane-8' }, scope)).toBe(false)
+    expect(cardOnBoard(null, scope)).toBe(false)
+  })
+})

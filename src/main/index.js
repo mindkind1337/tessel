@@ -97,7 +97,7 @@ import { detectAgents } from './agentDetect'
 import { createPortScanner } from './workspacePorts'
 import { createResourceCollector } from './resourceUsage'
 import { newTeamSecret, setTeamSecret, revokeTeamSecret } from './teamAuth'
-import { publishTeamTasks, takeTeamRequests, finishTeamRequests, releaseTeamRequests, messageStatuses, writeBoardPanes, toolsAlive, writeRoster, writeTeamAnswer, publishWorkers } from './teamTasks'
+import { publishTeamTasks, forgetPublishedTasks, takeTeamRequests, finishTeamRequests, releaseTeamRequests, messageStatuses, writeBoardPanes, toolsAlive, writeRoster, writeTeamAnswer, publishWorkers } from './teamTasks'
 import {
   writeServerScript,
   installClaudeHooks,
@@ -826,7 +826,7 @@ ipcMain.handle('taskboard:load', (_evt, opts) => {
 ipcMain.handle('taskboard:save', (_evt, board) => {
   try {
     if (Array.isArray(board)) saveTasks(app.getPath('userData'), board)
-    else saveTasks(app.getPath('userData'), board && board.tasks, board && board.appliedRequests)
+    else saveTasks(app.getPath('userData'), board && board.tasks, board && board.appliedRequests, board && board.deleted)
     return { ok: true }
   } catch (err) {
     logCrashContext(`taskboard:save failed: ${err.message}`)
@@ -1752,6 +1752,8 @@ const TEAM_OWNER = crypto.createHash('sha1').update(app.getPath('userData').toLo
 ipcMain.handle('team:current', safe((args) => writeCurrentTeams({ ...args, owner: TEAM_OWNER })))
 ipcMain.handle('team:retire', safe((args) => retireOldTeams({ ...args, owner: TEAM_OWNER })))
 ipcMain.handle('team:tasks', safe(publishTeamTasks))
+// Cards deleted on the board: out of every copy published in a project.
+ipcMain.handle('team:forget-tasks', safe(forgetPublishedTasks))
 ipcMain.handle('team:roster', safe(writeRoster))
 ipcMain.handle('team:requests', safe(takeTeamRequests))
 ipcMain.handle('team:requests-done', safe(finishTeamRequests))
