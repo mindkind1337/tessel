@@ -279,6 +279,23 @@ describe('connecting state', () => {
     expect(s.snapshot()[target.id].status).toBe('connected')
     s.paneConnecting('pane-unknown')
   })
+
+  it('says when the shared ssh2 connection is signed in (restored panes then start without asking)', () => {
+    const s = service()
+    const { target } = s.add({ host: 'srv' })
+    expect(s.sharedConnected(target.id)).toBe(false)
+    s.connectionState(target.id, 'connecting')
+    expect(s.snapshot()[target.id].shared).toBeUndefined()
+    s.connectionState(target.id, 'connected')
+    expect(s.sharedConnected(target.id)).toBe(true)
+    expect(s.snapshot()[target.id]).toMatchObject({ status: 'connected', shared: true })
+    // A system-ssh pane connected is not the shared connection.
+    const other = s.add({ host: 'srv2' }).target
+    s.paneStarted('pane-9', other.id, { connected: true })
+    expect(s.snapshot()[other.id].shared).toBeUndefined()
+    s.connectionState(target.id, 'disconnected')
+    expect(s.sharedConnected(target.id)).toBe(false)
+  })
 })
 
 describe('IPC', () => {

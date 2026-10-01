@@ -60,6 +60,7 @@ import PaneHoverDetails from './PaneHoverDetails.vue'
 import { useHoverCard } from './hover/useHoverCard'
 import { agentStateLabel } from '../sidebarModel'
 import { t, intlLocale } from '../i18n'
+import { remoteHostsState } from '../remoteHosts'
 import { nativeChatSessionChoiceLabel } from '../chat/orca/native-chat-session-option-labels'
 
 const props = defineProps({
@@ -276,7 +277,7 @@ const effectiveModelId = computed(() => {
 // What the pane uses: its own choice, else the default from Settings.
 const paneValues = computed(() => launchSessionValues(props.node.sessionOptions, settings.agentSessionOptions, props.node.agentId))
 const settingsDefault = computed(() => resolveSessionOptionDefaults(settings.agentSessionOptions, props.node.agentId))
-const paneRunning = computed(() => isAgent.value && !exited.value && !props.node.sleeping && !props.node.failed)
+const paneRunning = computed(() => isAgent.value && !exited.value && !props.node.sleeping && !props.node.failed && !props.node.notConnected)
 const paneBusy = computed(() => shownState.value === 'working' || agentStatus.value === 'busy' || asksApproval.value)
 const modelDefaultLabel = computed(() =>
   settingsDefault.value
@@ -594,6 +595,20 @@ onBeforeUnmount(() => {
   activityMonitor.dispose()
 })
 const cache = computed(() => (cacheShown.value ? cacheCountdown(cacheStartedAt.value, settings.promptCacheTtlMs, cacheNow.value) : null))
+
+// A pane on an SSH host reopened when Tessel started: it waits for Connect
+// (or Enter in the pane) before signing in.
+const remoteHostName = computed(() => {
+  const id = props.node.remoteHostId
+  const target = id ? remoteHostsState.targets.find((x) => x.id === id) : null
+  return (target && (target.label || target.host)) || id || ''
+})
+function notConnectedText() {
+  return t('pane.remote.notConnected', '{{host}} — not connected', { host: remoteHostName.value })
+}
+function connectRemote() {
+  if (props.node.notConnected && !props.node.connecting && ctx.connectLeaf) ctx.connectLeaf(props.node.id)
+}
 
 const sleptAt = computed(() =>
   props.node.sleeping ? new Date(props.node.sleeping.at).toLocaleTimeString(intlLocale(), { hour: '2-digit', minute: '2-digit' }) : ''
@@ -1897,6 +1912,12 @@ onMounted(() => {
   // User input → routed through App (handles broadcast / multi-write).
   term.onData((data) => {
     if (replaying) return
+    // Not connected yet (a restored remote pane): nothing to type into; Enter
+    // connects.
+    if (props.node.notConnected) {
+      if (data.includes('\r')) connectRemote()
+      return
+    }
     hideMouseOnType()
     expectRedraw()
     ctx.routeInput(props.node.id, data)
@@ -2513,6 +2534,13 @@ const paneMenuBindings = computed(() => ({
       <span :title="node.failed">{{ t('pane.failed', "This terminal couldn't start.") }}</span>
       <button class="exit-btn primary" @click="ctx.restartLeaf(node.id)">{{ t('pane.retry', 'Retry') }}</button>
       <button class="exit-btn" @click="ctx.closeLeaf(node.id, { force: true })">{{ t('pane.close', 'Close pane') }}</button>
+    </div>
+
+    <div v-else-if="node.notConnected" class="exit-overlay remote-idle" data-test="remote-connect-overlay" @mousedown.stop>
+      <span>{{ notConnectedText() }}</span>
+      <button class="exit-btn primary" data-test="remote-connect" :disabled="!!node.connecting" @click="connectRemote">
+        {{ node.connecting ? t('pane.remote.connecting', 'Connecting…') : t('pane.remote.connect', 'Connect') }}
+      </button>
     </div>
 
     <div v-else-if="node.sleeping" class="exit-overlay sleeping" data-test="sleep-overlay" @mousedown.stop>

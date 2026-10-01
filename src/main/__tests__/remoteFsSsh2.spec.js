@@ -75,6 +75,7 @@ describe.skipIf(!gitSh())('remote project over the shared ssh2 connection', () =
     const spec = { host: '127.0.0.1', port: server.port, username: 'me', identityFiles: [], knownHostsFiles: [join(base, 'known_hosts')], strictHostKeyChecking: 'ask' }
     const hosts = {
       get: () => ({ id: HOST, label: 'Box', host: '127.0.0.1' }),
+      sharedConnected: () => true,
       launchFor: () => ({ ok: false, error: 'the system ssh is not used here' }),
       paneStarted: (id, hostId, o) => events.push(['started', id, hostId, o]),
       paneConnected: (id) => events.push(['connected', id]),

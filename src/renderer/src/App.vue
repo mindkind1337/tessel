@@ -58,7 +58,7 @@ import LinearDialog from './components/LinearDialog.vue'
 import { createExternalIssueStarter } from './externalIssues'
 import './issueDialogs.css'
 import { addNotification, readForPane, playAlertSound } from './notificationsStore'
-import { initRemoteHosts, setRemoteHostHandlers, remoteHostsState, manageRemoteHosts } from './remoteHosts'
+import { initRemoteHosts, setRemoteHostHandlers, remoteHostsState, manageRemoteHosts, hostShared } from './remoteHosts'
 import AddProjectDialog from './components/project/AddProjectDialog.vue'
 import { savedRemote, savedGroup } from './addProject'
 import NotesPanel from './components/NotesPanel.vue'
@@ -1073,6 +1073,41 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
   // Ask first or Yolo: the pane's own choice (pane menu > Restart in Yolo),
   // else Yolo in a Yolo folder, else Settings > Agents.
   const panePermissions = opts.permissions === 'manual' || opts.permissions === 'yolo' ? opts.permissions : null
+  // A pane on an SSH host reopened when Tessel starts, its terminal gone (the
+  // terminal host restarted): it does not connect by itself (no password
+  // question nobody asked for). It keeps its place, name and conversation and
+  // waits for Connect (or Enter) in the pane (connectLeaf), unless the host's
+  // shared connection is already signed in: nothing to ask, it starts now.
+  if (!attached && opts.lazyRemote && opts.remoteHostId && !hostShared(opts.remoteHostId)) {
+    return reactive({
+      type: 'leaf',
+      id,
+      shellId,
+      shellName: shellId,
+      title: agent ? agent.name : remoteHostLabel(opts.remoteHostId),
+      kind: agent ? 'agent' : 'shell',
+      agentId: agent ? agent.id : null,
+      agentCommand: agent ? agent.command : null,
+      accent: agent ? agent.accent : null,
+      worktree: worktree && worktree.path ? { path: worktree.path, branch: worktree.branch } : null,
+      backend: 'ssh',
+      startDir: opts.startDir || null,
+      sessionId: opts.sessionId || null,
+      accountId: opts.accountId,
+      launchedAt: opts.launchedAt || null,
+      ...(paneChoice ? { sessionOptions: paneChoice } : {}),
+      ...(panePermissions ? { permissions: panePermissions } : {}),
+      remoteHostId: opts.remoteHostId,
+      remotePath: opts.remotePath || null,
+      // What it printed last time: shown now, and again above the session
+      // once it connects.
+      restoredText: opts.savedOutput || '',
+      savedText: opts.savedOutput || '',
+      // How it starts on Connect (the folder and resume, as at restore).
+      notConnected: { cwd: projectDir, resume: !!opts.resume },
+      broadcast: true
+    })
+  }
   const permissions = launchPermissions(panePermissions, [projectDir, cwd], settings.yoloFolders, settings.agentPermissions)
   // What it runs with, flags included (for the signature and the header).
   const launchAll = agent ? effectiveAgent(agent, settings.agentPrefs, permissions, sessionValues, agentModels) : null
@@ -1556,6 +1591,8 @@ async function deserializeNode(snap, cwd = null) {
       resume: settings.resumeAgents,
       remoteHostId: typeof snap.remoteHostId === 'string' && /^ssh-[\w-]{1,60}$/.test(snap.remoteHostId) ? snap.remoteHostId : undefined,
       remotePath: typeof snap.remotePath === 'string' && snap.remotePath.length <= 1024 ? snap.remotePath : undefined,
+      // Its terminal gone: it waits for Connect instead of signing in now.
+      lazyRemote: true,
       keepOnFailure: true,
       // A team member started again (its terminal was gone): team messages
       // waiting for it go in its first prompt (see createLeaf).
@@ -2269,6 +2306,8 @@ provide('panelCtx', {
   permissionsOf,
   paneFolder: (leaf) => paneFolders(leaf)[0] || null,
   wakeLeaf: (id) => wakeLeaf(id),
+  // A restored remote pane waiting for Connect.
+  connectLeaf: (id) => connectLeaf(id),
   setActive,
   toggleMaximize,
   fontSize,
@@ -3079,6 +3118,80 @@ function setDefaultShell(id) {
   if (shell) showToast(t('app.shell.default', '{{name}} is now the default shell.', { name: shell.name }))
 }
 
+// A restored pane on an SSH host waiting for Connect (see createLeaf): its
+// terminal starts now, in the same pane (same id, place, name, team and
+// conversation). Signing in asks what it must, once (the dialog), as for a
+// new pane. -> true when it started.
+const connectingLeaves = new Set()
+async function connectLeaf(leafId) {
+  const old = findLeaf(leafId)
+  if (!old || !old.notConnected || !old.remoteHostId || connectingLeaves.has(leafId) || !wsOfLeaf(leafId)) return false
+  connectingLeaves.add(leafId)
+  old.connecting = true
+  try {
+    const agent =
+      old.kind === 'agent' && old.agentCommand
+        ? { id: old.agentId, name: old.title, command: old.agentCommand, accent: old.accent }
+        : null
+    const fresh = await createLeaf(old.shellId, agent, old.notConnected.cwd, old.worktree, {
+      id: leafId,
+      savedOutput: old.savedText || '',
+      sessionId: old.sessionId || null,
+      accountId: old.accountId,
+      launchedAt: old.launchedAt || null,
+      startDir: old.startDir || null,
+      sessionOptions: old.sessionOptions,
+      permissions: old.permissions,
+      resume: old.notConnected.resume,
+      remoteHostId: old.remoteHostId,
+      remotePath: old.remotePath || undefined,
+      keepOnFailure: true,
+      ...(typeof old.team === 'string' ? { wake: { teamId: old.team, gen: 0 } } : {})
+    })
+    // Could not start (said in a toast): it stays as it was, Connect again.
+    if (!fresh || fresh.failed) return false
+    const ws = wsOfLeaf(leafId)
+    if (!ws || findLeaf(leafId) !== old) {
+      // Closed while it was starting: do not leave its terminal running.
+      window.shellApi.killPty(leafId)
+      return false
+    }
+    Object.assign(fresh, {
+      title: old.title,
+      broadcast: old.broadcast,
+      num: old.num,
+      paneName: old.paneName,
+      team: old.team,
+      // A new terminal component: the saved output is shown above the session.
+      gen: (old.gen || 0) + 1,
+      ...(old.titleSet ? { titleSet: true } : {}),
+      ...(old.autoTitle ? { autoTitle: old.autoTitle } : {}),
+      ...(old.teamTools ? { teamTools: true } : {}),
+      ...(typeof old.toolsVersion === 'string' ? { toolsVersion: old.toolsVersion } : {})
+    })
+    setDraft(leafId, false)
+    ws.tree = replaceNode(ws.tree, leafId, () => fresh)
+    return true
+  } finally {
+    connectingLeaves.delete(leafId)
+    old.connecting = false
+  }
+}
+// The host's shared connection is signed in (another pane connected, or a
+// remote project's Files): its restored panes start too, nothing to ask.
+watch(
+  () => {
+    const ids = []
+    forEachWsLeaf((l) => {
+      if (l.notConnected && l.remoteHostId && hostShared(l.remoteHostId)) ids.push(l.id)
+    })
+    return ids.join('|')
+  },
+  (key) => {
+    if (key) for (const id of key.split('|')) connectLeaf(id)
+  }
+)
+
 // Replace a pane with a fresh process of the same kind, in the same spot.
 const restartingLeaves = new Set()
 async function restartLeaf(leafId) {
@@ -3087,6 +3200,11 @@ async function restartLeaf(leafId) {
   let old = findLeafIn(ws.tree, leafId)
   // An editor pane has no process to restart.
   if (!old || hasNoTerminal(old)) return
+  // Not connected yet (a restored remote pane): Restart connects it.
+  if (old.notConnected) {
+    await connectLeaf(leafId)
+    return
+  }
   // An agent keeps its pane id: its team messages, lead role, tasks and
   // inbox stay addressed to it.
   if (old.kind === 'agent' && old.agentCommand) {
@@ -4107,7 +4225,7 @@ function sleepPanes(ids) {
   let slept = 0
   for (const id of ids || []) {
     const leaf = findLeaf(id)
-    if (!leaf || leaf.kind !== 'agent' || leaf.sleeping || restartingLeaves.has(id)) continue
+    if (!leaf || leaf.kind !== 'agent' || leaf.sleeping || leaf.notConnected || restartingLeaves.has(id)) continue
     const ws = wsOfLeaf(id)
     if (ws && ws.id === currentWsId.value && id === activeId.value) {
       skipped.push(t('app.sleep.activePane', '{{pane}} (the pane you are in)', { pane: paneLabel(leaf) }))
@@ -4457,7 +4575,7 @@ const teamPointer = createTeamDelivery({
   blocked: (id) => pointerBlocked(id),
   getPane: (id) => {
     const leaf = findLeaf(id)
-    return leaf && !leaf.sleeping ? getPane(id) || null : null
+    return leaf && !leaf.sleeping && !leaf.notConnected ? getPane(id) || null : null
   },
   inputEmpty: (id) => (findLeaf(id)?.agentId === 'codex' ? inputShownEmpty(id) : null),
   // Cursor Agent keeps typed text as an editable prompt: Enter stays the user's.
@@ -6063,6 +6181,9 @@ async function restartInPlace(leafId, opts = {}) {
 async function restartInPlaceNow(leafId, opts) {
   const old = findLeaf(leafId)
   if (!wsOfLeaf(leafId) || !old || old.kind !== 'agent' || !old.agentCommand) return false
+  // A restored remote pane not connected yet: only Connect starts it (on
+  // its host), never a restart here.
+  if (old.notConnected) return false
   window.shellApi.killPty(leafId)
   // Wait until its terminal is really gone, so the new one gets the same id.
   let gone = false
@@ -6341,6 +6462,8 @@ async function sleepTick() {
   }
 }
 function putToSleep(leaf) {
+  // Not connected (a restored remote pane): nothing runs, nothing to stop.
+  if (leaf.notConnected) return
   leaf.sleeping = { at: Date.now() }
   window.shellApi.killPty(leaf.id)
   if (window.shellApi.log) window.shellApi.log('info', `agent sleep: ${paneLabel(leaf)} asleep (idle ${settings.agentSleepMinutes} min)`)
@@ -6593,6 +6716,7 @@ function pointerBlocked(id) {
   if (!settings.teamWakeUps) return 'wake-ups are off in Settings'
   if (leaf.kind !== 'agent' || !leaf.teamTools) return 'not an agent pane with the team tools'
   if (leaf.sleeping) return 'asleep'
+  if (leaf.notConnected) return 'not connected'
   if (restartingLeaves.has(id)) return 'being restarted'
   const now = Date.now()
   const w = wakeState[id]

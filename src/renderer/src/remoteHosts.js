@@ -7,7 +7,20 @@
 import { reactive } from 'vue'
 import { t } from './i18n'
 
-export const remoteHostsState = reactive({ targets: [], states: {}, loaded: false, error: '' })
+// needsConnect: hostId -> true while a remote project's Files / Changes
+// were refused because the host is not connected (nothing signs in by
+// itself, src/main/remoteFs.js): the remote badge offers Connect.
+export const remoteHostsState = reactive({ targets: [], states: {}, loaded: false, error: '', needsConnect: {} })
+
+// The host's shared ssh2 connection is signed in: a terminal or the Files
+// session opened now asks nothing.
+export function hostShared(id, states = remoteHostsState.states) {
+  const s = states && states[id]
+  return !!(s && s.shared)
+}
+function clearNeeds(states) {
+  for (const id of Object.keys(remoteHostsState.needsConnect)) if (hostShared(id, states)) delete remoteHostsState.needsConnect[id]
+}
 
 function api() {
   return typeof window !== 'undefined' && window.shellApi ? window.shellApi.remoteHosts || null : null
@@ -21,6 +34,7 @@ export async function refreshRemoteHosts() {
     if (res && res.ok) {
       remoteHostsState.targets = Array.isArray(res.targets) ? res.targets : []
       remoteHostsState.states = res.states && typeof res.states === 'object' ? res.states : {}
+      clearNeeds(remoteHostsState.states)
       remoteHostsState.error = ''
     } else remoteHostsState.error = t('remote.pane.loadFailed', 'Failed to load SSH targets')
   } catch {
@@ -41,16 +55,42 @@ export async function syncRemoteHosts() {
   await refreshRemoteHosts()
 }
 
+// A remote project's session: refused (not connected), or signed in.
+export function noteRemoteActivity(a) {
+  if (!a || typeof a.hostId !== 'string') return
+  if (a.needsConnect) remoteHostsState.needsConnect[a.hostId] = true
+  else if (a.state === 'ready' || a.state === 'busy') delete remoteHostsState.needsConnect[a.hostId]
+}
+
 let unsubscribe = null
+let unsubscribeFs = null
 export function initRemoteHosts() {
   const a = api()
   if (!a || unsubscribe) return
   if (typeof a.onState === 'function') {
     unsubscribe = a.onState((states) => {
       remoteHostsState.states = states && typeof states === 'object' ? states : {}
+      clearNeeds(remoteHostsState.states)
     })
   }
+  const fs = typeof window !== 'undefined' && window.shellApi ? window.shellApi.remoteFs : null
+  if (fs && typeof fs.onActivity === 'function' && !unsubscribeFs) unsubscribeFs = fs.onActivity(noteRemoteActivity)
   return syncRemoteHosts()
+}
+
+// Connect for a remote project's Files / Changes (the remote badge): signs in
+// (asking what it must). -> { ok } | { ok: false, error, cancelled? }
+export async function connectRemoteFiles(hostId) {
+  const fs = typeof window !== 'undefined' && window.shellApi ? window.shellApi.remoteFs : null
+  if (!fs || typeof fs.connect !== 'function') return { ok: false, error: '' }
+  let res
+  try {
+    res = await fs.connect(hostId)
+  } catch (err) {
+    res = { ok: false, error: (err && err.message) || '' }
+  }
+  if (res && res.ok) delete remoteHostsState.needsConnect[hostId]
+  return res || { ok: false, error: '' }
 }
 
 // App.vue says how to open a pane on a host and Settings > SSH Hosts.

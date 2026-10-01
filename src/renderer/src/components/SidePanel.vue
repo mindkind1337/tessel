@@ -3,12 +3,13 @@
 // Files (the explorer), Changes (source control), Tasks (the task board).
 // A tab is created the first time it is shown, then kept (its folders,
 // search and scroll stay as they were) while the panel is open.
-import { reactive, watch, computed, onMounted, onBeforeUnmount } from 'vue'
+import { reactive, ref, watch, computed, onMounted, onBeforeUnmount } from 'vue'
 import ExplorerPanel from './ExplorerPanel.vue'
 import { refreshStatus, statusOf, changeCount, rootKey } from '../scmState'
 import ChangesPanel from './ChangesPanel.vue'
 import TaskBoard from './TaskBoard.vue'
 import RemoteBadge from './project/RemoteBadge.vue'
+import { remoteHostsState } from '../remoteHosts'
 import { t } from '../i18n'
 import { Files, GitBranch, ListChecks } from 'lucide-vue-next'
 
@@ -81,6 +82,19 @@ watch(
     reload()
   }
 )
+// A remote project whose host was not connected (Files / Changes refused,
+// the badge offers Connect): once it is (Connect, or a terminal signed in on
+// the host), Files and Changes read it again from scratch.
+const remoteRev = ref(0)
+watch(
+  () => !!(props.remote && remoteHostsState.needsConnect[props.remote.hostId]),
+  (needs, before) => {
+    if (before && !needs && props.remote) {
+      remoteRev.value++
+      reload()
+    }
+  }
+)
 onMounted(() => {
   if (props.root && explorer()) explorer().watch(props.root)
   reload()
@@ -137,6 +151,7 @@ onBeforeUnmount(() => {
       />
       <ExplorerPanel
         v-if="shown.files"
+        :key="'files:' + remoteRev"
         v-show="current() === 'files'"
         :root="root"
         :can-insert="canInsert"
@@ -150,6 +165,7 @@ onBeforeUnmount(() => {
       />
       <ChangesPanel
         v-if="shown.changes"
+        :key="'changes:' + remoteRev"
         v-show="current() === 'changes'"
         :root="root"
         :workspace-id="workspaceId"

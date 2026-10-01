@@ -37,6 +37,7 @@ function harness({ helper = 'fake.exe', createDelay = null, sshMode = { mode: 's
   const creates = []
   const sent = []
   const started = []
+  const allowed = []
   let finishCreate = null
   const handlers = {}
   vm.runInNewContext(handlerSource, {
@@ -55,6 +56,8 @@ function harness({ helper = 'fake.exe', createDelay = null, sshMode = { mode: 's
       terminalRequest: (target, spec, remotePath) => ({ hostId: target.id, spec, remotePath, texts: {} })
     },
     validateRemotePath: (p) => ({ path: p }),
+    // A terminal opened on a host lets its Files session sign in (remoteFs.js).
+    remoteFs: { allow: (id) => allowed.push(id) },
     Date,
     Map,
     remoteProjectLaunch: (r) => r,
@@ -87,7 +90,7 @@ function harness({ helper = 'fake.exe', createDelay = null, sshMode = { mode: 's
     t: (_key, fallback) => fallback
   })
   const create = (id = 'pane-1') => handlers['pty:create'](null, { id, shellId: 'shell', remoteHostId: 'host-1' })
-  return { broker, creates, sent, started, create, version: () => answerVersion(), finishCreate: () => finishCreate() }
+  return { broker, creates, sent, started, allowed, create, version: () => answerVersion(), finishCreate: () => finishCreate() }
 }
 
 // The handler first asks which SSH client the host uses (ssh2 or the system
@@ -102,6 +105,8 @@ describe('pty:create on the shared ssh2 connection (the real handler from index.
     expect(res).toMatchObject({ ok: true, backend: 'ssh', remoteHost: { id: 'host-1', label: 'fake' } })
     expect(h.creates).toEqual([{ kind: 'create', askpass: false, token: undefined, ssh: { hostId: 'host-1', spec, remotePath: null, texts: {} }, backend: 'ssh' }])
     expect(h.started).toEqual([['pane-1', 'host-1', { ssh2: true }]])
+    // A terminal opened on the host: its Files session may sign in too.
+    expect(h.allowed).toEqual(['host-1'])
     h.broker.close()
   })
 })

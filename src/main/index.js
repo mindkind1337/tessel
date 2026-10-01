@@ -1229,9 +1229,20 @@ app.whenReady().then(() => {
 // A remote project's prompt file, written through its Files session
 // (automationRemotePrompt.js), never typed into the host's login shell.
 const remotePrompts = createRemotePromptWriter({
-  listDir: (q) => remoteFs.listDir(q),
-  create: (q) => remoteFs.create(q),
-  writeForEdit: (q) => remoteFs.writeForEdit(q),
+  // An automation the user scheduled on that project may sign in (a run's
+  // pane on the host connects too).
+  listDir: (q) => {
+    remoteFs.allowPath(q && q.root)
+    return remoteFs.listDir(q)
+  },
+  create: (q) => {
+    remoteFs.allowPath(q && q.root)
+    return remoteFs.create(q)
+  },
+  writeForEdit: (q) => {
+    remoteFs.allowPath(q && q.file)
+    return remoteFs.writeForEdit(q)
+  },
   snapshot: () => remoteFs.snapshot()
 })
 const automations = createAutomations({
@@ -2788,6 +2799,9 @@ ipcMain.handle('pty:create', async (_evt, opts = {}) => {
     const startedAt = Date.now()
     const target = remoteHosts.get(String(opts.remoteHostId))
     if (!target) return { ok: false, error: t('main.remote.notFound', 'This remote host is no longer saved in Tessel.') }
+    // A terminal opened on the host (a new pane, or Connect in a restored
+    // one): its Files / Changes session may sign in too from now on.
+    remoteFs.allow(target.id)
     const mode = await sshRemote.modeFor(target)
     if (mode.mode === 'ssh2') return createSshPane(opts, target, mode.spec, shell, startedAt)
     // Closed while that was decided: nothing is started.

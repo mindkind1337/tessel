@@ -39,6 +39,8 @@ function stubHosts(events) {
   return {
     launchFor: () => ({ ok: true, file: 'ssh.exe', args: ['box'], name: 'Box', target: { id: HOST } }),
     get: () => ({ id: HOST, label: 'Box' }),
+    // Signed in already (remoteFs.js opens no session nobody asked for).
+    sharedConnected: () => true,
     paneStarted: (id, hostId, o) => events.push(['started', id, hostId, o]),
     paneConnected: (id) => events.push(['connected', id]),
     paneClosing: (id) => events.push(['closing', id]),
@@ -420,4 +422,64 @@ describe.skipIf(!gitSh())('connection failures', () => {
     fs.rmSync(argvFile, { force: true })
     rfs.close()
   }, 30000)
+})
+
+// Never a sign-in nobody asked for (after a restart of Tessel with a remote
+// project shown): no session for a host the user has not connected to in
+// this run, unless its shared ssh2 connection is signed in already.
+describe('no sign-in by itself', () => {
+  const make = (shared) => {
+    const sent = []
+    const calls = []
+    const spawnImpl = (...args) => {
+      calls.push(args)
+      throw Object.assign(new Error('spawn refused in this test'), { code: 'spawn' })
+    }
+    const hosts = { ...stubHosts([]), sharedConnected: () => shared }
+    const rfs = createRemoteFs({ hosts, send: (c, p) => sent.push([c, p]), spawnImpl })
+    rfs.setRoots([remoteRoot(HOST, '/srv/app')])
+    return { rfs, sent, calls }
+  }
+
+  it('a host not connected: refused without starting ssh, the badge is told to offer Connect', async () => {
+    const { rfs, sent, calls } = make(false)
+    const res = await rfs.listDir({ root: remoteRoot(HOST, '/srv/app') })
+    expect(res.ok).toBe(false)
+    expect(res.error).toMatch(/not connected/)
+    const status = await rfs.projectStatus({ root: remoteRoot(HOST, '/srv/app') })
+    expect(status.ok).toBe(false)
+    expect(calls).toHaveLength(0)
+    expect(sent.some(([c, p]) => c === 'remoteFs:activity' && p.hostId === HOST && p.needsConnect === true)).toBe(true)
+    rfs.close()
+  })
+
+  it('Connect (the user) may sign in, and so may later operations', async () => {
+    const { rfs, calls } = make(false)
+    await rfs.connect(HOST)
+    expect(calls.length).toBeGreaterThan(0)
+    const before = calls.length
+    await rfs.listDir({ root: remoteRoot(HOST, '/srv/app') })
+    expect(calls.length).toBeGreaterThan(before)
+    rfs.close()
+  })
+
+  it('a terminal opened on the host (allow) or an automation on the project (allowPath) may sign in', async () => {
+    const a = make(false)
+    a.rfs.allow(HOST)
+    await a.rfs.listDir({ root: remoteRoot(HOST, '/srv/app') })
+    expect(a.calls.length).toBeGreaterThan(0)
+    a.rfs.close()
+    const b = make(false)
+    b.rfs.allowPath(remoteRoot(HOST, '/srv/app'))
+    await b.rfs.listDir({ root: remoteRoot(HOST, '/srv/app') })
+    expect(b.calls.length).toBeGreaterThan(0)
+    b.rfs.close()
+  })
+
+  it('the shared connection already signed in: nothing to ask, it opens', async () => {
+    const { rfs, calls } = make(true)
+    await rfs.listDir({ root: remoteRoot(HOST, '/srv/app') })
+    expect(calls.length).toBeGreaterThan(0)
+    rfs.close()
+  })
 })

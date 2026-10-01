@@ -3,10 +3,13 @@
 // host: the host and the folder, and what its session is doing (connecting,
 // reading, saving, pushing…) with a Cancel button while an operation runs
 // (it ends the session; the next operation starts a new one). The session
-// itself lives in the main process (src/main/remoteFs.js).
+// itself lives in the main process (src/main/remoteFs.js). Nothing signs in
+// by itself: a host not connected (after a restart of Tessel) shows "not
+// connected" and a Connect button here.
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { Server, Loader2, X } from 'lucide-vue-next'
 import { t } from '../../i18n'
+import { remoteHostsState, connectRemoteFiles } from '../../remoteHosts'
 
 const props = defineProps({
   hostId: { type: String, default: '' },
@@ -59,6 +62,19 @@ watch(busy, (b) => {
   else slowTimer = setTimeout(() => (slow.value = true), 400)
 })
 
+// Not connected: Files / Changes were refused until you connect.
+const needsConnect = computed(() => !!remoteHostsState.needsConnect[props.hostId] && !busy.value)
+const connecting = ref(false)
+const connectError = ref('')
+async function connect() {
+  if (connecting.value) return
+  connecting.value = true
+  connectError.value = ''
+  const res = await connectRemoteFiles(props.hostId)
+  connecting.value = false
+  if (!res.ok && !res.cancelled) connectError.value = res.error || ''
+}
+
 function cancel() {
   if (window.shellApi && window.shellApi.remoteFs) window.shellApi.remoteFs.cancel(props.hostId).catch(() => {})
 }
@@ -90,7 +106,15 @@ onBeforeUnmount(() => {
       {{ t('project.remote.badge', 'Remote') }}
     </span>
     <span class="rb-where" :title="`${host}:${path}`">{{ host }}<template v-if="path">:{{ path }}</template></span>
-    <template v-if="busy && slow">
+    <template v-if="needsConnect">
+      <span class="rb-off" role="status" data-test="remote-not-connected" :title="connectError || undefined">{{
+        t('project.remote.notConnected', 'Not connected')
+      }}</span>
+      <button type="button" class="rb-connect" :disabled="connecting" data-test="remote-connect" @click="connect">
+        {{ t('project.remote.connect', 'Connect') }}
+      </button>
+    </template>
+    <template v-else-if="busy && slow">
       <span class="rb-busy" role="status" data-test="remote-busy">
         <Loader2 :size="12" class="rb-spin" aria-hidden="true" />
         <span class="rb-label">{{ label }}</span>
@@ -174,6 +198,27 @@ onBeforeUnmount(() => {
   background: transparent;
   color: inherit;
   cursor: pointer;
+}
+.rb-off {
+  flex: none;
+  white-space: nowrap;
+}
+.rb-connect {
+  flex: none;
+  padding: 1px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-strong);
+  font-size: 11px;
+  cursor: pointer;
+}
+.rb-connect:hover:not(:disabled) {
+  background: var(--bg-hover, rgba(127, 127, 127, 0.2));
+}
+.rb-connect:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 .rb-cancel:hover {
   background: var(--bg-hover, rgba(127, 127, 127, 0.2));

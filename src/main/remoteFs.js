@@ -296,6 +296,8 @@ export function createRemoteFs({
         return t('main.remoteFs.timeout', 'The operation on {{host}} took too long and was stopped.', { host })
       case 'cancelled':
         return t('main.remoteFs.cancelled', 'Cancelled.')
+      case 'not-connected':
+        return t('main.remoteFs.notConnected', '{{host}} is not connected. Use Connect to sign in.', { host })
       case 'auth-cancelled':
         return t('main.remoteFs.signInCancelled', 'Sign-in to {{host}} was cancelled.', { host })
       case 'ssh':
@@ -338,9 +340,36 @@ export function createRemoteFs({
   }
 
   // --- Sessions ------------------------------------------------------------------
+  // Never a sign-in (a password question) nobody asked for: a session starts
+  // only for a host the user connected to in this run (Connect, a terminal
+  // opened on it, Add a project), or whose shared ssh2 connection is already
+  // signed in (nothing to ask). Otherwise, as after a restart of Tessel with
+  // a remote project shown, the operation says the host is not connected and
+  // the remote badge offers Connect (needsConnect).
+  const allowed = new Set() // hostIds
+  function allow(hostId) {
+    if (typeof hostId === 'string' && hostId) allowed.add(hostId)
+  }
+  // A path of a remote project (ssh://…): its host.
+  function allowPath(virtual) {
+    const p = parseRemotePath(virtual)
+    if (p) allow(p.hostId)
+  }
+  function mayOpen(hostId) {
+    if (allowed.has(hostId)) return true
+    try {
+      return !!(hosts.sharedConnected && hosts.sharedConnected(hostId))
+    } catch {
+      return false
+    }
+  }
   function open(hostId) {
     const existing = sessions.get(hostId)
     if (existing && !existing.closed) return existing.ready
+    if (!mayOpen(hostId)) {
+      activity(hostId, null, { needsConnect: true })
+      return Promise.reject(Object.assign(new Error('not connected'), { code: 'not-connected' })) // i18n-ignore internal
+    }
     const paneId = `${SESSION_PREFIX}${hostId}`
     const entry = { paneId, closed: false, session: null, token: undefined, busy: 0, op: '' }
     sessions.set(hostId, entry)
@@ -1210,6 +1239,8 @@ export function createRemoteFs({
   // session. -> { ok } | { ok: false, error, cancelled? }
   async function connect(hostId) {
     if (!hostIdOk(hostId)) return { ok: false, error: t('main.remote.notFound', 'This remote host is no longer saved in Tessel.') }
+    // The user's own action (Connect, Add a project): it may sign in.
+    allow(hostId)
     try {
       await open(hostId)
       return { ok: true }
@@ -1237,6 +1268,7 @@ export function createRemoteFs({
   // -> { ok, path (its real path), entries: [{ name, dir, link? }], truncated } | { ok: false, error }
   async function browse({ hostId, path } = {}) {
     if (!hostIdOk(hostId)) return { ok: false, error: t('main.remote.notFound', 'This remote host is no longer saved in Tessel.') }
+    allow(hostId)
     const p = cleanBrowsePath(path === undefined || path === null || path === '' ? '~' : path)
     if (!p) return { ok: false, error: t('main.remoteFs.badPath', 'This path has characters Tessel cannot send to the remote host.') }
     const res = await call(hostId, '__t_browse', [arg(p), String(MAX_BROWSE_ENTRIES + 1)], { cap: 4 * 1024 * 1024, timeoutMs: BROWSE_TIMEOUT_MS, op: 'list' })
@@ -1252,6 +1284,7 @@ export function createRemoteFs({
   // -> { ok, path, name } | { ok: false, error }
   async function cloneProject({ hostId, url, parent } = {}) {
     if (!hostIdOk(hostId)) return { ok: false, error: t('main.remote.notFound', 'This remote host is no longer saved in Tessel.') }
+    allow(hostId)
     const checked = validateCloneUrl(url)
     if (checked.error) return { ok: false, error: addProjectErrorText(checked.error) }
     // A Windows path names a folder on this computer, not on the host.
@@ -1275,6 +1308,7 @@ export function createRemoteFs({
   // first commit, on the host. -> { ok, path, name } | { ok: false, error }
   async function createProject({ hostId, parent, name } = {}) {
     if (!hostIdOk(hostId)) return { ok: false, error: t('main.remote.notFound', 'This remote host is no longer saved in Tessel.') }
+    allow(hostId)
     const n = String(name ?? '').trim()
     if (!n) return { ok: false, error: t('main.project.create.nameEmpty', 'Name cannot be empty') }
     const bad = checkRemoteName(n)
@@ -1301,6 +1335,8 @@ export function createRemoteFs({
   }
 
   return {
+    allow,
+    allowPath,
     setRoots,
     listDir,
     projectStatus,

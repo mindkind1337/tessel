@@ -667,6 +667,7 @@
       "connectTimeout": "La connexion à {{host}} a expiré.",
       "timeout": "L'opération sur {{host}} a pris trop de temps et a été arrêtée.",
       "cancelled": "Annulé.",
+      "notConnected": "{{host}} n'est pas connecté. Utilisez Connecter pour vous connecter.",
       "signInCancelled": "La connexion à {{host}} a été annulée.",
       "noBase64": "{{host}} n'a ni base64 ni openssl, dont Tessel a besoin pour transférer les fichiers.",
       "noTemp": "{{host}} n'a pas de dossier temporaire accessible en écriture pour la session de Tessel.",

@@ -31,6 +31,8 @@ function stubHosts(events = []) {
   return {
     launchFor: () => ({ ok: true, file: 'ssh.exe', args: ['box'], name: 'Box', target: { id: HOST } }),
     get: () => ({ id: HOST, label: 'Box' }),
+    // Signed in already (remoteFs.js opens no session nobody asked for).
+    sharedConnected: () => true,
     paneStarted: (id) => events.push(['started', id]),
     paneConnected: (id) => events.push(['connected', id]),
     paneClosing: (id) => events.push(['closing', id]),

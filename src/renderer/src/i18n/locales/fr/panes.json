@@ -656,6 +656,11 @@
       },
       "chipLabel": "Modèle : {{model}}. Choisir le modèle",
       "chipStatic": "Modèle : {{model}}"
+    },
+    "remote": {
+      "notConnected": "{{host}} — non connecté",
+      "connect": "Connecter",
+      "connecting": "Connexion…"
     }
   }
 }

@@ -12,6 +12,8 @@ const HOST = 'ssh-test2'
 const hosts = {
   launchFor: () => ({ ok: true, file: 'ssh.exe', args: ['box'], name: 'Box', target: { id: HOST } }),
   get: () => ({ id: HOST, label: 'Box' }),
+  // Signed in already (remoteFs.js opens no session nobody asked for).
+  sharedConnected: () => true,
   paneStarted: () => {},
   paneConnected: () => {},
   paneClosing: () => {},

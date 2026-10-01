@@ -99,7 +99,9 @@
         "pull": "Pull…",
         "fetch": "Fetch…",
         "working": "Opération sur l'hôte…"
-      }
+      },
+      "notConnected": "Non connecté",
+      "connect": "Connecter"
     },
     "nested": {
       "title": "Importer des dépôts depuis un dossier",

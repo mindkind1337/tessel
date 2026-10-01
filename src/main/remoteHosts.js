@@ -352,8 +352,14 @@ export function createRemoteHosts({
   // --- Live state: which hosts have a terminal open --------------------------
   function snapshot() {
     const out = {}
-    for (const [id, s] of states) out[id] = { ...s, panes: panesOf(id) }
+    // shared: the host's shared ssh2 connection is signed in, so a terminal
+    // or the Files session opened now asks nothing (a restored pane waiting
+    // for Connect starts by itself then).
+    for (const [id, s] of states) out[id] = { ...s, panes: panesOf(id), ...(sharedConnected(id) ? { shared: true } : {}) }
     return out
+  }
+  function sharedConnected(hostId) {
+    return conns.get(hostId) === 'connected'
   }
   function notify() {
     try {
@@ -460,7 +466,7 @@ export function createRemoteHosts({
     if (pane) pane.closing = true
   }
 
-  return { list, importConfig, add, update, remove, get, launchFor, test, snapshot, paneStarted, paneConnected, paneConnecting, paneExited, panesOf, markDisconnecting, paneClosing, connectionState }
+  return { list, importConfig, add, update, remove, get, launchFor, test, snapshot, sharedConnected, paneStarted, paneConnected, paneConnecting, paneExited, panesOf, markDisconnecting, paneClosing, connectionState }
 }
 
 // IPC: remoteHosts:* (the renderer sends ids and form fields, never argv).
