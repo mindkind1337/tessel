@@ -196,6 +196,16 @@ describe('terminal activity and authoritative agent events', () => {
     expect(turnEndedSince(node.id, node.agentLaunchToken)).toBe(stopAt)
   })
 
+  it('working again wins over a finished turn you have not looked at', async () => {
+    const { setAttention, clearAgentStatus: clear } = await import('../agentStatus')
+    setAttention(node.id)
+    setAgentStatus(node.id, 'idle', node.agentLaunchToken)
+    expect(paneAgentState(node)).toBe('waiting')
+    setAgentStatus(node.id, 'busy', node.agentLaunchToken)
+    expect(paneAgentState(node)).toBe('working')
+    clear(node.id)
+  })
+
   it('a turn that ends with background work still running shows monitoring, then ready when it ends', async () => {
     hook('UserPromptSubmit')
     hook('Stop', { background: ['shell-1'] })

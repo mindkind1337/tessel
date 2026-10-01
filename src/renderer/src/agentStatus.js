@@ -424,6 +424,9 @@ export function paneAgentState(leaf, { agent = true, childrenRunning = 0 } = {})
   if (paneMonitoring(leaf)) return 'monitoring'
   if (childrenRunning > 0) return 'working'
   if (managedAgentStatus(leaf) && agentStatus[leaf.id] === 'unknown') return 'unknown'
+  // Working again (a new turn, one it started itself) wins over an earlier
+  // finished turn you have not looked at yet.
+  if (agentStatus[leaf.id] === 'busy') return 'working'
   if (attention[leaf.id]) return 'waiting'
-  return agentStatus[leaf.id] === 'busy' ? 'working' : 'ready'
+  return 'ready'
 }
