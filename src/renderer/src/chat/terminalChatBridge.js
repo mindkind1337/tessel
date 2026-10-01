@@ -216,26 +216,26 @@ export function isPastedImageCopy(path) {
 // Cursor CLI's own commands (cursor.com/docs/cli/reference/slash-commands):
 // the ones that make sense from a chat. /model opens its picker in the terminal.
 const CURSOR_COMMANDS = [
-  ['model', 'chat.orca.cursorCommands.model', 'Choose the model (in its terminal)'],
-  ['plan', 'chat.orca.copy.switch_to_plan_mode', 'Switch to Plan mode'],
-  ['ask', 'chat.orca.cursorCommands.ask', 'Toggle Ask mode (read-only questions)'],
-  ['debug', 'chat.orca.cursorCommands.debug', 'Toggle Debug mode'],
-  ['run-everything', 'chat.orca.cursorCommands.runEverything', 'Run commands without asking (on, off, status)'],
-  ['summarize', 'chat.orca.cursorCommands.summarize', 'Summarize the conversation to free context'],
-  ['clear', 'chat.orca.copy.start_a_new_chat', 'Start a new chat'],
-  ['resume', 'chat.orca.copy.resume_a_saved_chat', 'Resume a saved chat'],
-  ['fork', 'chat.orca.copy.fork_the_current_chat', 'Fork the current chat'],
-  ['rewind', 'chat.orca.cursorCommands.rewind', 'Go back to an earlier message'],
-  ['rename', 'chat.orca.copy.rename_the_current_thread', 'Rename the current thread'],
-  ['mcp', 'chat.orca.copy.list_configured_mcp_tools', 'List configured MCP tools'],
-  ['help', 'chat.orca.copy.show_available_commands', 'Show available commands']
+  { name: 'model', get description() { return t('chat.orca.cursorCommands.model', 'Choose the model (in its terminal)') } },
+  { name: 'plan', get description() { return t('chat.orca.copy.switch_to_plan_mode', 'Switch to Plan mode') } },
+  { name: 'ask', get description() { return t('chat.orca.cursorCommands.ask', 'Toggle Ask mode (read-only questions)') } },
+  { name: 'debug', get description() { return t('chat.orca.cursorCommands.debug', 'Toggle Debug mode') } },
+  { name: 'run-everything', get description() { return t('chat.orca.cursorCommands.runEverything', 'Run commands without asking (on, off, status)') } },
+  { name: 'summarize', get description() { return t('chat.orca.cursorCommands.summarize', 'Summarize the conversation to free context') } },
+  { name: 'clear', get description() { return t('chat.orca.copy.start_a_new_chat', 'Start a new chat') } },
+  { name: 'resume', get description() { return t('chat.orca.copy.resume_a_saved_chat', 'Resume a saved chat') } },
+  { name: 'fork', get description() { return t('chat.orca.copy.fork_the_current_chat', 'Fork the current chat') } },
+  { name: 'rewind', get description() { return t('chat.orca.cursorCommands.rewind', 'Go back to an earlier message') } },
+  { name: 'rename', get description() { return t('chat.orca.copy.rename_the_current_thread', 'Rename the current thread') } },
+  { name: 'mcp', get description() { return t('chat.orca.copy.list_configured_mcp_tools', 'List configured MCP tools') } },
+  { name: 'help', get description() { return t('chat.orca.copy.show_available_commands', 'Show available commands') } }
 ]
 
 // The "/" menu: the agent's own commands (its TUI runs them), with model and
 // effort first where the chat view offers their pickers.
 export function bridgeSlashCommands(agentId, { options = [] } = {}) {
   const agent = composerAgent(agentId)
-  if (agent === 'cursor') return CURSOR_COMMANDS.map(([name, key, fallback]) => ({ name, kind: 'command', description: t(key, fallback) }))
+  if (agent === 'cursor') return CURSOR_COMMANDS.map((c) => ({ name: c.name, kind: 'command', description: c.description }))
   const own = getAgentSlashCommands(agent)
   const extra = []
   if (agent !== 'codex') {
