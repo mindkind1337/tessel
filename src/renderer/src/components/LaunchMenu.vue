@@ -33,11 +33,21 @@ const emit = defineEmits([
   'close',
   'worktree',
   'tools',
-  'install'
+  'install',
+  'docs'
 ])
 
 const installedAgents = computed(() => props.agents.filter((a) => a.available))
+// Not installed: an Install button when Tessel knows its installer, else a
+// link to its install page; with neither, it is not offered.
 const missingAgents = computed(() => props.agents.filter((a) => !a.available && a.install))
+const docsOnlyAgents = computed(() => props.agents.filter((a) => !a.available && !a.install && a.docsUrl))
+function installHint(agent) {
+  const steps = describeSteps(agent.install)
+  return agent.installConfirm
+    ? t('pane.launch.installConfirmHint', "Install {{name}} with its vendor's installer ({{steps}}). Tessel shows the command and asks first.", { name: agent.name, steps })
+    : t('pane.launch.installHint', 'Install {{name}} ({{steps}}), then start it', { name: agent.name, steps })
+}
 
 const rootEl = ref(null)
 const pos = ref({ left: props.x, top: props.y })
@@ -336,11 +346,26 @@ onMounted(async () => {
         v-for="agent in missingAgents"
         :key="agent.id"
         class="launch-chip"
-        :title="t('pane.launch.installHint', 'Install {{name}} ({{steps}}), then start it', { name: agent.name, steps: describeSteps(agent.install) })"
+        :title="installHint(agent)"
+        :data-test="'launch-install-' + agent.id"
         @click="emit('install', agent)"
       >
         <BrandIcon :kind="agent.id" :accent="agent.accent" :label="agent.name" :size="13" />
         {{ agent.name }}
+      </button>
+    </div>
+    <div v-if="docsOnlyAgents.length" class="launch-install">
+      <span class="launch-install-label">{{ t('pane.launch.installPage', 'Install page:') }}</span>
+      <button
+        v-for="agent in docsOnlyAgents"
+        :key="agent.id"
+        class="launch-chip"
+        :title="t('pane.launch.installPageHint', 'No automatic install on Windows: open the install page of {{name}} in your browser ({{url}})', { name: agent.name, url: agent.docsUrl })"
+        :data-test="'launch-docs-' + agent.id"
+        @click="emit('docs', agent)"
+      >
+        <BrandIcon :kind="agent.id" :accent="agent.accent" :label="agent.name" :size="13" />
+        {{ agent.name }} ↗
       </button>
     </div>
     <div class="launch-row">

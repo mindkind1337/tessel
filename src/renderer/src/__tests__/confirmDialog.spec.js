@@ -83,3 +83,15 @@ describe('confirmation keyboard navigation', () => {
     expect(wrapper.emitted('answer')).toEqual([[false], ['alt'], [true], [false], [false]])
   })
 })
+
+describe('confirmation with a command', () => {
+  it('shows the command exactly, and its details', () => {
+    const w = mount(ConfirmDialog, {
+      props: { title: 'Install Cursor CLI?', code: "irm 'https://cursor.com/install?win32=true' | iex", details: [{ label: 'Shell', value: 'Windows PowerShell' }, { label: 'Source', value: 'https://cursor.com/docs/cli/installation' }] }
+    })
+    expect(w.get('[data-test="confirm-code"]').text()).toBe("irm 'https://cursor.com/install?win32=true' | iex")
+    expect(w.get('.confirm-details').text()).toContain('https://cursor.com/docs/cli/installation')
+    expect(w.get('.confirm-details').text()).toContain('Windows PowerShell')
+    w.unmount()
+  })
+})

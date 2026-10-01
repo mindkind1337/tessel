@@ -154,7 +154,8 @@
       "registryStatus": "le registre a répondu {{status}}",
       "registryTimeout": "le registre n'a pas répondu à temps",
       "registryTooLarge": "réponse du registre trop volumineuse",
-      "registryUnreadable": "réponse du registre illisible"
+      "registryUnreadable": "réponse du registre illisible",
+      "hintInstaller": "Relancez son installateur pour le mettre à jour."
     },
     "agents": {
       "alreadyGenerating": "Un message est déjà en cours de génération.",

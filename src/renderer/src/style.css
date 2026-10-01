@@ -5400,6 +5400,35 @@ button.act-stat:hover,
   font-size: 12.5px;
   line-height: 1.5;
 }
+.confirm-code {
+  margin: 10px 0 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--term);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  user-select: text;
+}
+.confirm-details {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 10px;
+  margin: 10px 0 0;
+  font-size: 12px;
+}
+.confirm-details dt {
+  color: var(--text-dim);
+}
+.confirm-details dd {
+  margin: 0;
+  color: var(--text);
+  word-break: break-all;
+  user-select: text;
+}
 
 .confirm-actions {
   display: flex;
