@@ -291,7 +291,8 @@ async function imagePaths(ids) {
   if (!a || typeof a.imagePaths !== 'function') return failed
   let res
   try {
-    res = await a.imagePaths({ paneId: props.paneId, ids })
+    // The composer saved them under its own key (its attachment scope).
+    res = await a.imagePaths({ paneId: composerKey.value, ids })
   } catch {
     return failed
   }

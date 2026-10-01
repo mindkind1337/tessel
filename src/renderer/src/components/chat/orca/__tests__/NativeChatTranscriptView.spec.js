@@ -211,8 +211,24 @@ describe('NativeChatTranscriptView, the full composer of a terminal agent chat v
     await mountChat({ sendMessage })
     expect(composer().props('allowImages')).toBe(true)
     expect(await composer().props('send')('What is this?', { images: ['img_0123456789abcdef01234567'] })).toEqual({ ok: true })
-    expect(imagePaths).toHaveBeenCalledWith({ paneId: 'pane-3', ids: ['img_0123456789abcdef01234567'] })
+    expect(imagePaths).toHaveBeenCalledWith({ paneId: 'terminal-chat-pane-3', ids: ['img_0123456789abcdef01234567'] })
     expect(sendMessage).toHaveBeenCalledWith('What is this?', expect.objectContaining({ images: [COPY] }))
+  })
+
+  it('a dropped image: saved and taken back under the same pane key, its path sent with the message', async () => {
+    const image = { id: 'img_0123456789abcdef01234567', name: 'shot.png', width: 1, height: 1 }
+    const imageImport = vi.fn(async () => ({ ok: true, image }))
+    const imagePaths = vi.fn(async () => ({ ok: true, paths: [COPY] }))
+    window.shellApi.chat = { imageSave: vi.fn(), imageImport, imageDiscard: vi.fn(), imagePaths }
+    const sendMessage = vi.fn()
+    await mountChat({ sendMessage })
+    expect(composer().vm.attachResolvedPaths(['C:/Users/me/shot.png'])).toBe(true)
+    await flushPromises()
+    await composer().vm.setDraft('this one')
+    await composer().vm.send()
+    await flushPromises()
+    expect(imagePaths.mock.calls[0][0].paneId).toBe(imageImport.mock.calls[0][0].paneId)
+    expect(sendMessage).toHaveBeenCalledWith('this one', expect.objectContaining({ images: [COPY] }))
   })
 
   it('never names a file other than its own copies', async () => {
