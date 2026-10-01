@@ -40,10 +40,6 @@
     inset 0 0 0 9999px color-mix(in srgb, var(--ui-accent) 8%, transparent);
 }
 
-:root[data-theme='warp'] .pane.active .pane-nav {
-  border-bottom-color: var(--ui-accent);
-}
-
 :root[data-theme='warp'] .pane-nav.agent::after {
   opacity: 0.55;
 }
