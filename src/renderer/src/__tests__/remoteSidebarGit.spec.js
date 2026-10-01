@@ -1,6 +1,7 @@
 // A project on an SSH host in the left sidebar: its branch, the "primary"
-// badge, a chip with its host, and its other branches (git worktrees on the
-// host), like a local project; a host not connected keeps what was shown.
+// badge, a chip with its host, and its other git worktrees on the host
+// (hidden behind one line, shown on request), like a local project; a host
+// not connected keeps what was shown.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import WorkspaceSidebar from '../components/WorkspaceSidebar.vue'
@@ -70,13 +71,13 @@ describe('a remote project: the sidebar', () => {
     await setUiLanguage('en')
   })
 
-  it('shows the branch, the primary badge, the host chip and the other branches line', () => {
+  it('shows the branch, the primary badge, the host chip and the hidden worktrees line', () => {
     const w = mountSidebar()
     const card = w.get('[data-card-key="ws1::"]')
     expect(card.get('.wtc-branch').text()).toBe('main')
     expect(card.get('.wtc-badge').text()).toBe('primary')
     expect(card.get('[data-test="card-remote-host"]').text()).toContain('fivem-afterlife')
-    expect(w.get('[data-test="sidebar-others-toggle"]').text()).toBe('2 other branches')
+    expect(w.get('[data-test="sidebar-others-toggle"]').text()).toBe('Hiding 1 discovered worktree')
   })
 
   it('no branch yet (host never connected): the host chip alone, no badge, no line', () => {
@@ -88,10 +89,13 @@ describe('a remote project: the sidebar', () => {
     expect(w.find('[data-test="sidebar-others-toggle"]').exists()).toBe(false)
   })
 
-  it('a row of its other branches opens that folder on the host', async () => {
+  it('its line unfolds to the host folder; one you chose to show opens that folder on the host', async () => {
     settings.sidebarExpandedBranches = ['repo:ws1']
     const w = mountSidebar()
-    await w.findAll('[data-test="sidebar-other-branch"]')[1].trigger('click')
+    expect(w.get('.osb-wt-group-path').text()).toBe('ssh://ssh-box1/srv')
+    await w.get('[data-test="sidebar-show-worktree"]').trigger('click')
+    expect(settings.sidebarShownWorktrees).toEqual({ 'repo:ws1': ['ssh://ssh-box1/srv/app-feature'] })
+    await w.get('[data-test="sidebar-other-branch"]').trigger('click')
     expect(w.emitted('open-card')).toEqual([[{ wsId: 'ws1', path: 'ssh://ssh-box1/srv/app-feature', isMain: false }]])
   })
 
@@ -101,7 +105,7 @@ describe('a remote project: the sidebar', () => {
     const card = w.get('[data-card-key="ws1::"]')
     expect(card.get('.wtc-badge').text()).toBe('principal')
     expect(card.get('[data-test="card-remote-host"]').text()).toContain('Hôte SSH')
-    expect(w.get('[data-test="sidebar-others-toggle"]').text()).toBe('2 autres branches')
+    expect(w.get('[data-test="sidebar-others-toggle"]').text()).toBe('1 copie cachée')
   })
 })
 

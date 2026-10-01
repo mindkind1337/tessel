@@ -14,6 +14,8 @@ import {
   ChevronDown,
   Copy,
   Ellipsis,
+  EyeOff,
+  X,
   Folder,
   Server,
   FolderOpen,
@@ -36,8 +38,16 @@ import {
 } from 'lucide-vue-next'
 import OrcaMenu from './OrcaMenu.vue'
 import WorktreeCard from './sidebar/WorktreeCard.vue'
+import HiddenWorktreesDialog from './sidebar/HiddenWorktreesDialog.vue'
 import { settings } from '../settings'
-import { buildSidebarRows, neighborCard, cardTargetPane, isAgentPane, otherBranchesLabel } from '../sidebarModel'
+import {
+  buildSidebarRows,
+  neighborCard,
+  cardTargetPane,
+  isAgentPane,
+  hiddenWorktreesLabel,
+  projectWorktreeVisibility
+} from '../sidebarModel'
 import { t } from '../i18n'
 import { trackPointerDrag } from '../browser/webviewPassthrough'
 
@@ -95,6 +105,8 @@ const emit = defineEmits([
 ])
 
 // --- Options (persisted in settings, Orca's defaults) -------------------------
+// Folders of a hidden-worktrees line shown in full: project group key -> keys.
+const openWorktreeGroups = ref({})
 const options = computed(() => ({
   groupBy: settings.sidebarGroupBy,
   sortBy: settings.sidebarSortBy,
@@ -104,7 +116,10 @@ const options = computed(() => ({
   hideDefaultBranchWorkspace: settings.hideDefaultBranchWorkspace,
   filterRepoIds: settings.sidebarFilterRepoIds,
   collapsedGroups: settings.sidebarCollapsedGroups,
-  expandedBranches: settings.sidebarExpandedBranches
+  expandedBranches: settings.sidebarExpandedBranches,
+  shownWorktrees: settings.sidebarShownWorktrees,
+  dismissedWorktreeLines: settings.sidebarDismissedWorktreeLines,
+  openWorktreeGroups: openWorktreeGroups.value
 }))
 const rows = computed(() => buildSidebarRows(props.projects, options.value, props.now))
 const grouped = computed(() => settings.sidebarGroupBy !== 'none')
@@ -118,16 +133,58 @@ function toggleGroup(key) {
   settings.sidebarCollapsedGroups = list.includes(key) ? list.filter((k) => k !== key) : [...list, key]
 }
 
-// A project's "N other branches" line: folded unless unfolded here (kept
+// A project's "Hiding N discovered worktrees" line (after Orca's
+// ImportedWorktreesVisibilityLine.tsx and NewExternalWorktreesInboxLine.tsx,
+// MIT, Copyright (c) 2026 Lovecast Inc.): folded unless unfolded here (kept
 // per project, like the collapsed groups).
 function toggleOthers(key) {
   const list = settings.sidebarExpandedBranches
   settings.sidebarExpandedBranches = list.includes(key) ? list.filter((k) => k !== key) : [...list, key]
 }
+function toggleWorktreeGroup(groupKey, folderKey) {
+  const list = openWorktreeGroups.value[groupKey] || []
+  openWorktreeGroups.value = {
+    ...openWorktreeGroups.value,
+    [groupKey]: list.includes(folderKey) ? list.filter((k) => k !== folderKey) : [...list, folderKey]
+  }
+}
+// Show: the worktree becomes a row under its project; Hide puts it back.
+const groupKeyOf = (projectId) => `repo:${projectId}` // i18n-ignore
+function showWorktree(projectId, path) {
+  const key = groupKeyOf(projectId)
+  const list = settings.sidebarShownWorktrees[key] || []
+  if (list.includes(path)) return
+  settings.sidebarShownWorktrees = { ...settings.sidebarShownWorktrees, [key]: [...list, path] }
+}
+function hideWorktree(projectId, path) {
+  const key = groupKeyOf(projectId)
+  const next = { ...settings.sidebarShownWorktrees }
+  const list = (next[key] || []).filter((p) => p !== path)
+  if (list.length) next[key] = list
+  else delete next[key]
+  settings.sidebarShownWorktrees = next
+}
+// Don't show again: the line goes for good; the project menu still lists them.
+function dismissWorktreeLine(groupKey) {
+  const list = settings.sidebarDismissedWorktreeLines
+  if (!list.includes(groupKey)) settings.sidebarDismissedWorktreeLines = [...list, groupKey]
+}
+function worktreesOf(project) {
+  return projectWorktreeVisibility(project, settings.sidebarShownWorktrees[groupKeyOf(project.id)])
+}
+// The project menu's Hidden worktrees dialog (its project id).
+const hiddenDialogId = ref(null)
+const hiddenDialog = computed(() => {
+  const project = hiddenDialogId.value && props.projects.find((p) => p.id === hiddenDialogId.value)
+  if (!project) return null
+  const { hidden, shown } = worktreesOf(project)
+  return { project, hidden, shownCount: shown.length }
+})
 // A row of it opens that folder like a copy card with no pane does.
 function openBranch(item) {
   emit('open-card', { wsId: item.projectId, path: item.path, isMain: false })
 }
+const dontShowAgainLabel = () => t('sidebar.hiddenWorktrees.dontShowAgain', "Don't show again")
 function branchTitle(item) {
   return item.locked ? t('sidebar.otherBranchLocked', '{{path}}\nLocked', { path: item.path }) : item.path
 }
@@ -637,6 +694,7 @@ function projectActionItems(project) {
       onSelect: () => startPicking(wsId, 'new')
     },
     { type: 'item', icon: StickyNote, label: t('sidebar.project.notes', 'Project Notes'), onSelect: () => emit('notes-ws', wsId) },
+    ...hiddenWorktreesItem(project),
     {
       type: 'item',
       icon: Activity,
@@ -648,6 +706,20 @@ function projectActionItems(project) {
     },
     { type: 'separator' },
     { type: 'item', icon: Trash2, label: t('sidebar.project.remove', 'Remove Project'), danger: true, onSelect: () => emit('remove', wsId) }
+  ]
+}
+
+// "Hidden Worktrees (N)...", for a project with other worktrees.
+function hiddenWorktreesItem(project) {
+  const { hidden, shown } = worktreesOf(project)
+  if (!hidden.length && !shown.length) return []
+  return [
+    {
+      type: 'item',
+      icon: EyeOff,
+      label: t('sidebar.hiddenWorktrees.menu', 'Hidden Worktrees ({{count}})…', { count: hidden.length }),
+      onSelect: () => (hiddenDialogId.value = project.id)
+    }
   ]
 }
 
@@ -1095,34 +1167,99 @@ defineExpose({
               {{ t('sidebar.clearFilters', 'Clear filters') }}
             </button>
           </div>
-          <!-- The project's other git worktrees: one folded line, a compact list when unfolded. -->
-          <div v-else-if="r.type === 'others'" class="osb-others" data-test="sidebar-others">
-            <button
-              type="button"
-              class="osb-others-toggle"
-              data-test="sidebar-others-toggle"
-              :aria-expanded="r.open"
-              @click="toggleOthers(r.groupKey)"
-            >
-              <ChevronDown :size="12" :class="{ collapsed: !r.open }" aria-hidden="true" />
-              <span v-text="otherBranchesLabel(r.count)"></span>
-            </button>
-            <div v-if="r.open" class="osb-others-list">
+          <!-- A worktree you chose to show: a row under its project. -->
+          <div v-else-if="r.type === 'branch'" class="osb-others osb-wt-shown" data-test="sidebar-shown-worktree">
+            <div class="osb-wt-line">
               <button
-                v-for="item in r.items"
-                :key="item.key"
                 type="button"
                 class="osb-others-row"
                 data-test="sidebar-other-branch"
-                :title="branchTitle(item)"
-                @click="openBranch(item)"
+                :title="branchTitle(r.item)"
+                @click="openBranch(r.item)"
               >
                 <GitBranch :size="12" aria-hidden="true" />
-                <span class="osb-others-branch">{{ item.label }}</span>
-                <span v-if="item.folder !== item.label" class="osb-others-folder">{{ item.folder }}</span>
+                <span class="osb-others-branch">{{ r.item.label }}</span>
+                <span v-if="r.item.folder !== r.item.label" class="osb-others-folder">{{ r.item.folder }}</span>
+              </button>
+              <button
+                type="button"
+                class="osb-wt-x"
+                data-test="sidebar-hide-worktree"
+                :title="t('sidebar.hiddenWorktrees.hide', 'Hide')"
+                :aria-label="t('sidebar.hiddenWorktrees.hideNamed', 'Hide {{name}}', { name: r.item.label })"
+                @click="hideWorktree(r.project.id, r.item.path)"
+              >
+                <EyeOff :size="12" aria-hidden="true" />
               </button>
             </div>
           </div>
+          <!-- The project's hidden worktrees: one folded line, a preview by folder when unfolded. -->
+          <section v-else-if="r.type === 'others'" class="osb-others" data-test="sidebar-others">
+            <div class="osb-wt-line">
+              <button
+                type="button"
+                class="osb-others-toggle"
+                data-test="sidebar-others-toggle"
+                :aria-expanded="r.open"
+                @click="toggleOthers(r.groupKey)"
+              >
+                <ChevronDown :size="12" :class="{ collapsed: !r.open }" aria-hidden="true" />
+                <span class="osb-others-branch" v-text="hiddenWorktreesLabel(r.count)"></span>
+              </button>
+              <button
+                type="button"
+                class="osb-wt-x"
+                data-test="sidebar-others-dismiss"
+                :title="dontShowAgainLabel()"
+                :aria-label="
+                  t('sidebar.hiddenWorktrees.dismissLabel', 'Hide discovered worktrees permanently for {{project}}', { project: r.project.name })
+                "
+                @click="dismissWorktreeLine(r.groupKey)"
+              >
+                <X :size="12" aria-hidden="true" />
+              </button>
+            </div>
+            <div v-if="r.open" class="osb-others-list" :aria-label="t('sidebar.hiddenWorktrees.groups', 'Hidden worktree groups')">
+              <div v-for="g in r.groups" :key="g.key" class="osb-wt-group" data-test="sidebar-worktree-group">
+                <div class="osb-wt-group-head">
+                  <span class="osb-wt-group-path" :title="g.path">{{ g.path }}</span>
+                  <span class="osb-wt-count">{{ g.count }}</span>
+                </div>
+                <div v-for="item in g.items" :key="item.key" class="osb-wt-line osb-wt-item" data-test="sidebar-hidden-worktree">
+                  <span class="osb-others-branch" :title="branchTitle(item)">{{ item.label }}</span>
+                  <span v-if="item.folder !== item.label" class="osb-others-folder">{{ item.folder }}</span>
+                  <button
+                    type="button"
+                    class="osb-link osb-wt-show"
+                    data-test="sidebar-show-worktree"
+                    :aria-label="t('sidebar.hiddenWorktrees.showNamed', 'Show {{name}}', { name: item.label })"
+                    @click="showWorktree(r.project.id, item.path)"
+                  >
+                    {{ t('sidebar.hiddenWorktrees.show', 'Show') }}
+                  </button>
+                </div>
+                <button
+                  v-if="g.more"
+                  type="button"
+                  class="osb-link osb-wt-more"
+                  data-test="sidebar-worktree-group-more"
+                  @click="toggleWorktreeGroup(r.groupKey, g.key)"
+                  v-text="
+                    g.full
+                      ? t('sidebar.hiddenWorktrees.showFewer', 'Show fewer')
+                      : t('sidebar.hiddenWorktrees.showMore', 'Show {{count}} more', { count: g.more })
+                  "
+                ></button>
+              </div>
+              <div
+                v-if="r.moreGroups"
+                class="osb-wt-more-groups"
+                data-test="sidebar-worktree-more-groups"
+                v-text="t('sidebar.hiddenWorktrees.moreLocations', '+ {{count}} more locations', { count: r.moreGroups })"
+              ></div>
+              <p class="osb-wt-hint">{{ t('sidebar.hiddenWorktrees.hint', 'Change this later from the project menu.') }}</p>
+            </div>
+          </section>
           <WorktreeCard
             v-else
             :card="r.card"
@@ -1208,6 +1345,17 @@ defineExpose({
       :label="menu ? menu.label || t('sidebar.menu', 'Menu') : t('sidebar.menu', 'Menu')"
       @close="closeMenu"
     />
+
+    <Teleport to="body">
+      <HiddenWorktreesDialog
+        v-if="hiddenDialog"
+        :project-name="hiddenDialog.project.name"
+        :items="hiddenDialog.hidden"
+        :shown-count="hiddenDialog.shownCount"
+        @show="showWorktree(hiddenDialog.project.id, $event)"
+        @close="hiddenDialogId = null"
+      />
+    </Teleport>
 
     <div class="osb-resize" :title="t('sidebar.resizeHint', 'Drag to resize. Double-click to reset.')" @pointerdown="startResize">
       <div class="osb-resize-line"></div>

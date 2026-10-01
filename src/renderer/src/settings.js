@@ -128,8 +128,13 @@ export const DEFAULT_SETTINGS = Object.freeze({
   hideDefaultBranchWorkspace: false,
   sidebarFilterRepoIds: [],
   sidebarCollapsedGroups: [],
-  // Projects whose "N other branches" line is unfolded (folded by default).
+  // Projects whose "Hiding N discovered worktrees" line is unfolded (folded
+  // by default), the worktrees you chose to show per project (project group
+  // key 'repo:<id>' -> paths; Tessel hides the ones it did not make), and the
+  // projects whose line you closed for good ("Don't show again").
   sidebarExpandedBranches: [],
+  sidebarShownWorktrees: {},
+  sidebarDismissedWorktreeLines: [],
   worktreeCardProperties: ['ports', 'inline-agents'],
   agentActivityDisplayMode: 'compact', // 'compact' | 'full'
   // Settings > Appearance > Window & Sidebar (Orca's).
@@ -260,6 +265,8 @@ const fresh = () => ({
   sidebarFilterRepoIds: [],
   sidebarCollapsedGroups: [],
   sidebarExpandedBranches: [],
+  sidebarShownWorktrees: {},
+  sidebarDismissedWorktreeLines: [],
   worktreeCardProperties: [...DEFAULT_SETTINGS.worktreeCardProperties],
   statusBarItems: [...DEFAULT_SETTINGS.statusBarItems]
 })
@@ -311,7 +318,16 @@ export function loadSettings(saved) {
       if (Array.isArray(v)) settings.quickCommands = v.filter(validQuickCommand).slice(0, 100)
       continue
     }
-    if (key === 'sidebarFilterRepoIds' || key === 'sidebarCollapsedGroups' || key === 'sidebarExpandedBranches') {
+    if (key === 'sidebarShownWorktrees') {
+      settings.sidebarShownWorktrees = validShownWorktrees(v)
+      continue
+    }
+    if (
+      key === 'sidebarFilterRepoIds' ||
+      key === 'sidebarCollapsedGroups' ||
+      key === 'sidebarExpandedBranches' ||
+      key === 'sidebarDismissedWorktreeLines'
+    ) {
       const list = idList(v)
       if (list) settings[key] = list
       continue
@@ -386,6 +402,18 @@ export function resetSettings() {
 
 // { [agent id]: { enabled?, command?, args?, env? } } from storage: only
 // well-formed entries, strings trimmed to sane sizes.
+// sidebarShownWorktrees: { 'repo:<id>': [paths] }, anything else dropped.
+export function validShownWorktrees(v) {
+  const out = {}
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return out
+  for (const [key, paths] of Object.entries(v).slice(0, 500)) {
+    if (key.length > 200 || !Array.isArray(paths)) continue
+    const list = [...new Set(paths.filter((p) => typeof p === 'string' && p && p.length <= 1024))].slice(0, 500)
+    if (list.length) out[key] = list
+  }
+  return out
+}
+
 export function validAgentPrefs(v) {
   const out = {}
   if (!v || typeof v !== 'object' || Array.isArray(v)) return out

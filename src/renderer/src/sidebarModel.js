@@ -376,11 +376,12 @@ export function buildProjectCards(project, now = Date.now()) {
 }
 
 // The project's other git worktrees (project.worktrees, from `git worktree
-// list`): the ones with no card (no task, no pane), for the folded "N other
-// branches" line (after Orca's ImportedWorktreesVisibilityLine.tsx, MIT,
-// Copyright (c) 2026 Lovecast Inc.: discovered worktrees stay behind one
-// line, never one card each). Not the project folder itself, not a
-// registration whose folder is gone.
+// list`): the ones with no card (no task, no pane). Not the project folder
+// itself, not a registration whose folder is gone. Tessel did not make them,
+// so they stay hidden until you choose to show one (after Orca's
+// worktree-visibility-resolution.ts shouldShowWorktree and
+// external-worktree-visibility.ts, MIT, Copyright (c) 2026 Lovecast Inc.:
+// a worktree the app did not create defaults to 'hide').
 export function projectOtherBranches(project, cards = buildProjectCards(project)) {
   const out = []
   for (const w of project.worktrees || []) {
@@ -398,17 +399,84 @@ export function projectOtherBranches(project, cards = buildProjectCards(project)
       // Detached: its commit, short.
       label: w.branch || head || folderName(w.path),
       folder: folderName(w.path),
-      locked: !!w.locked
+      locked: !!w.locked,
+      detached: !w.branch
     })
   }
   const locale = intlLocale()
   return out.sort((a, b) => a.label.localeCompare(b.label, locale))
 }
 
-export function otherBranchesLabel(count) {
+// A project's other worktrees split by your choices (shownPaths: the ones you
+// chose to Show): shown (a row each under the project), hidden (all the
+// rest, which the Hidden worktrees dialog lists), and the ones its "Hiding N"
+// line counts: hidden minus the detached ones (no branch), which stay out of
+// it like Orca's scratch worktrees stay out of its discovery inbox.
+export function projectWorktreeVisibility(project, shownPaths = [], cards = buildProjectCards(project)) {
+  const others = projectOtherBranches(project, cards)
+  const paths = Array.isArray(shownPaths) ? shownPaths : []
+  const isShown = (o) => paths.some((p) => samePath(p, o.path))
+  const shown = others.filter(isShown)
+  const hidden = others.filter((o) => !isShown(o))
+  return { shown, hidden, inbox: hidden.filter((o) => !o.detached) }
+}
+
+export const HIDDEN_WORKTREE_GROUP_LIMIT = 5
+export const HIDDEN_WORKTREE_PREVIEW_LIMIT = 3
+
+// The folder a worktree sits in (Orca's getExternalWorktreeParentPath),
+// separators as written: 'C:\\repo.worktrees', '/srv', 'ssh://host/srv'.
+export function worktreeParentPath(path) {
+  const p = String(path || '').replace(/[\\/]+$/, '')
+  const at = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'))
+  if (at < 0) return '?'
+  if (at === 0) return p[0]
+  const parent = p.slice(0, at)
+  return /^[A-Za-z]:$/.test(parent) ? parent + p[at] : parent
+}
+
+// Orca's groupWorktreesByParentPath: one group per parent folder, in the
+// order met.
+export function groupWorktreesByParentPath(items) {
+  const groups = []
+  const byKey = new Map()
+  for (const item of items) {
+    const path = worktreeParentPath(item.path)
+    const key = path.replace(/\\/g, '/').toLowerCase()
+    let g = byKey.get(key)
+    if (!g) {
+      g = { key, path, items: [] }
+      byKey.set(key, g)
+      groups.push(g)
+    }
+    g.items.push(item)
+  }
+  return groups
+}
+
+// The unfolded line's preview (Orca's ImportedWorktreesVisibilityLine): at
+// most 5 folders, 3 worktrees each unless that folder is opened in full
+// (openGroups: their keys), then how many more folders.
+export function hiddenWorktreesPreview(items, openGroups) {
+  const all = groupWorktreesByParentPath(items)
+  const groups = all.slice(0, HIDDEN_WORKTREE_GROUP_LIMIT).map((g) => {
+    const full = Array.isArray(openGroups) && openGroups.includes(g.key)
+    return {
+      key: g.key,
+      path: g.path,
+      count: g.items.length,
+      items: full ? g.items : g.items.slice(0, HIDDEN_WORKTREE_PREVIEW_LIMIT),
+      more: Math.max(0, g.items.length - HIDDEN_WORKTREE_PREVIEW_LIMIT),
+      full
+    }
+  })
+  return { groups, moreGroups: Math.max(0, all.length - groups.length) }
+}
+
+export function hiddenWorktreesLabel(count) {
   return count === 1
-    ? t('sidebar.otherBranches', '{{count}} other branch', { count })
-    : t('sidebar.otherBranches', '{{count}} other branches', { count })
+    ? t('sidebar.hiddenWorktrees.line', 'Hiding {{count}} discovered worktree', { count })
+    : t('sidebar.hiddenWorktrees.line', 'Hiding {{count}} discovered worktrees', { count })
 }
 
 // Orca's buildWorktreeComparator.
@@ -447,7 +515,10 @@ export const DEFAULT_SIDEBAR_OPTIONS = Object.freeze({
   hideDefaultBranchWorkspace: false,
   filterRepoIds: [],
   collapsedGroups: [],
-  expandedBranches: [] // projects whose other-branches line is unfolded
+  expandedBranches: [], // projects whose hidden-worktrees line is unfolded
+  shownWorktrees: {}, // project group key -> the worktree paths you chose to show
+  dismissedWorktreeLines: [], // projects whose hidden-worktrees line you closed for good
+  openWorktreeGroups: {} // project group key -> folders of its line shown in full (not kept)
 })
 
 // Orca's visible-worktrees rules: sleeping ones hidden on request (the
@@ -462,13 +533,16 @@ export function isCardVisible(card, opts) {
 
 // projects -> the list's rows: [{ type: 'header', key, project, count,
 // collapsed }], [{ type: 'card', key, card, project }] and, under a project
-// with other git worktrees, [{ type: 'others', key, project, count, open,
-// items }] (items only while unfolded).
+// with other git worktrees, a row per worktree you chose to show [{ type:
+// 'branch', key, project, item }], then its hidden ones' line [{ type:
+// 'others', key, groupKey, project, count, open, groups, moreGroups }]
+// (groups only while unfolded). A header carries its hiddenWorktrees.
 export function buildSidebarRows(projects, options = {}, now = Date.now()) {
   const opts = { ...DEFAULT_SIDEBAR_OPTIONS, ...options }
   const filter = new Set((opts.filterRepoIds || []).filter((id) => projects.some((p) => p.id === id)))
   const collapsed = new Set(opts.collapsedGroups || [])
   const expanded = new Set(opts.expandedBranches || [])
+  const dismissed = new Set(opts.dismissedWorktreeLines || [])
   const names = Object.fromEntries(projects.map((p) => [p.id, p.name]))
   const cmp = compareCards(opts.sortBy, names)
   const shown = projects.filter((p) => !filter.size || filter.has(p.id))
@@ -480,7 +554,7 @@ export function buildSidebarRows(projects, options = {}, now = Date.now()) {
       project,
       index,
       cards: visible,
-      others: projectOtherBranches(project, cards),
+      worktrees: projectWorktreeVisibility(project, (opts.shownWorktrees || {})[`repo:${project.id}`], cards), // i18n-ignore
       hidden: cards.length - visible.length,
       lastActivityAt: Math.max(0, ...cards.map((c) => c.lastActivityAt))
     }
@@ -496,15 +570,27 @@ export function buildSidebarRows(projects, options = {}, now = Date.now()) {
   if (opts.projectOrderBy === 'recent') groups.sort((a, b) => b.lastActivityAt - a.lastActivityAt || a.index - b.index)
   for (const g of groups) {
     const key = `repo:${g.project.id}` // i18n-ignore
-    rows.push({ type: 'header', key, label: g.project.name, project: g.project, count: g.cards.length, hidden: g.hidden, collapsed: collapsed.has(key) })
+    rows.push({
+      type: 'header',
+      key,
+      label: g.project.name,
+      project: g.project,
+      count: g.cards.length,
+      hidden: g.hidden,
+      hiddenWorktrees: g.worktrees.hidden,
+      collapsed: collapsed.has(key)
+    })
     if (collapsed.has(key)) continue
     // Every workspace of it hidden by the filters: a way back, not a dead end.
     if (!g.cards.length && g.hidden) rows.push({ type: 'hidden', key: `${key}:hidden`, project: g.project, count: g.hidden }) // i18n-ignore
     for (const card of g.cards) rows.push({ type: 'card', key: card.key, card, project: g.project })
-    // Its other branches: one folded line, never a card each.
-    if (g.others.length) {
+    // The worktrees you chose to show: a row each.
+    for (const item of g.worktrees.shown) rows.push({ type: 'branch', key: `${key}:wt:${item.path}`, project: g.project, item }) // i18n-ignore
+    // The rest: one folded line, never a card each (unless closed for good).
+    if (g.worktrees.inbox.length && !dismissed.has(key)) {
       const open = expanded.has(key)
-      rows.push({ type: 'others', key: `${key}:others`, groupKey: key, project: g.project, count: g.others.length, open, items: open ? g.others : [] }) // i18n-ignore
+      const preview = open ? hiddenWorktreesPreview(g.worktrees.inbox, (opts.openWorktreeGroups || {})[key]) : { groups: [], moreGroups: 0 }
+      rows.push({ type: 'others', key: `${key}:others`, groupKey: key, project: g.project, count: g.worktrees.inbox.length, open, ...preview }) // i18n-ignore
     }
   }
   return rows

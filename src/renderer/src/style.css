@@ -8739,6 +8739,323 @@ button.act-stat:hover,
   opacity: 0.7;
 }
 
+/* The hidden-worktrees line and a shown worktree's row: an X (Don't show
+   again) or an eye (Hide) that appears on hover, like Orca's. */
+.osb-wt-line {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.osb-wt-line > .osb-others-toggle,
+.osb-wt-line > .osb-others-row {
+  padding-right: 24px;
+}
+
+.osb .osb-wt-x {
+  position: absolute;
+  top: 50%;
+  right: 2px;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--wts-muted);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.osb-wt-line:hover > .osb-wt-x,
+.osb-wt-line:focus-within > .osb-wt-x {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.osb .osb-wt-x:hover,
+.osb .osb-wt-x:focus-visible {
+  background: color-mix(in srgb, var(--text) 10%, transparent);
+  color: var(--text);
+  outline: none;
+}
+
+.osb-others-list.osb-others-list {
+  margin: 2px 0 2px 11px;
+  padding-left: 8px;
+  border-left: 1px solid var(--border);
+}
+
+.osb-wt-group {
+  padding: 3px 0;
+}
+
+.osb-wt-group-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 2px 6px;
+}
+
+.osb-wt-group-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--wts-muted);
+  font-family: var(--mono, 'Cascadia Mono', Consolas, monospace);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.osb-wt-count {
+  flex: none;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--wts-muted);
+  font-size: 10px;
+  line-height: 1.2;
+}
+
+.osb-wt-item {
+  gap: 6px;
+  padding: 2px 6px 2px 14px;
+  border-radius: 4px;
+  color: var(--wts-muted);
+}
+
+.osb-wt-item:hover {
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+  color: var(--text);
+}
+
+.osb-wt-item .osb-others-folder {
+  max-width: 35%;
+}
+
+.osb .osb-wt-show {
+  flex: none;
+  color: var(--accent);
+  font-size: 11px;
+}
+
+.osb-wt-item .osb-others-folder + .osb-wt-show {
+  margin-left: 4px;
+}
+
+.osb-wt-item .osb-others-branch + .osb-wt-show {
+  margin-left: auto;
+}
+
+.osb .osb-wt-more {
+  margin: 1px 0 0 14px;
+  color: var(--wts-muted);
+  font-size: 11px;
+}
+
+.osb .osb-wt-more:hover,
+.osb .osb-wt-more:focus-visible {
+  color: var(--text);
+}
+
+.osb-wt-more-groups {
+  padding: 3px 6px;
+  color: var(--wts-muted);
+  font-size: 11px;
+}
+
+.osb-wt-hint {
+  margin: 4px 6px 2px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  color: var(--wts-muted);
+  font-size: 10.5px;
+}
+
+/* The project menu's Hidden worktrees dialog. */
+.hwt-card {
+  width: min(520px, 100%);
+}
+
+.hwt-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.hwt-head-text {
+  min-width: 0;
+}
+
+.hwt-title {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.hwt-sub {
+  margin: 4px 0 0;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.hwt-close {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.hwt-close:hover,
+.hwt-close:focus-visible {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  color: var(--text);
+  outline: none;
+}
+
+.hwt-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--text-dim);
+}
+
+.hwt-search:focus-within {
+  border-color: var(--accent);
+}
+
+.hwt-search input {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  outline: none;
+}
+
+.hwt-list {
+  display: grid;
+  gap: 4px;
+  max-height: 300px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.hwt-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.hwt-row:hover {
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+}
+
+.hwt-row-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.hwt-name,
+.hwt-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hwt-name {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.hwt-path {
+  color: var(--text-dim);
+  font-family: var(--mono, 'Cascadia Mono', Consolas, monospace);
+  font-size: 11px;
+}
+
+.hwt-show {
+  flex: none;
+  padding: 4px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.hwt-show:hover,
+.hwt-show:focus-visible {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.hwt-empty {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--text) 3%, transparent);
+}
+
+.hwt-empty-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-dim);
+}
+
+.hwt-empty-title {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.hwt-empty-sub {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
 .osb-link {
   padding: 0;
   border: 0;
