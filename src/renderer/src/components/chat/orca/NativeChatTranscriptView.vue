@@ -479,7 +479,9 @@ const title = computed(() => t('chat.orca.transcriptView.title', 'Conversation o
 
 <template>
   <div ref="rootRef" class="nc-root nc-transcript-view" data-test="transcript-view">
-    <div class="nc-transcript-head">
+    <!-- The read-only view's bar. The chat view has none: the pane header
+         already holds "Show terminal" (the user found the bar redundant). -->
+    <div v-if="!interactive" class="nc-transcript-head">
       <MessagesSquare class="nc-transcript-icon" aria-hidden="true" />
       <span class="nc-transcript-title">{{ title }}</span>
       <span v-if="!interactive" class="nc-transcript-note">{{ t('chat.orca.transcriptView.readOnly', 'Read only: type in the terminal') }}</span>

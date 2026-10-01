@@ -123,7 +123,8 @@ describe('NativeChatTranscriptView, a terminal agent chat view (interactive)', (
     expect(api.open).toHaveBeenCalledWith({ agent: 'claude', sessionId: SESSION, paneId: 'pane-3', accountId: 'acc-1' })
     expect(document.querySelector('[data-test="chat-composer"]')).not.toBeNull()
     expect(text()).not.toContain('Read only')
-    expect(text()).toContain('Show terminal')
+    // No bar of its own: "Show terminal" is in the pane header.
+    expect(document.querySelector('.nc-transcript-head')).toBeNull()
   })
 
   it('no conversation yet: waits for it without asking for a file', async () => {
