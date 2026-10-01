@@ -410,7 +410,9 @@ const emit = defineEmits([
   'update-agent-in-pane',
   'close-reopen-agent-update',
   'open-update-log',
-  'test-notification'
+  'test-notification',
+  'install-agent',
+  'agent-install-page'
 ])
 
 // Settings > Agents: versions and updates of the installed agent CLIs.
@@ -1355,6 +1357,28 @@ function previewSound() {
                     </span>
                   </div>
                   <div class="agent-set-actions">
+                    <!-- Not on this computer: install it (the launch menu's way:
+                         the exact command is shown and confirmed first when it
+                         runs a vendor script), or its install page. -->
+                    <button
+                      v-if="!a.available && a.install"
+                      class="exit-btn"
+                      type="button"
+                      data-test="agent-install"
+                      @click="emit('install-agent', a)"
+                    >
+                      {{ t('settings.agents.install', 'Install') }}
+                    </button>
+                    <button
+                      v-else-if="!a.available && a.docsUrl"
+                      class="exit-btn"
+                      type="button"
+                      data-test="agent-install-page"
+                      :title="a.docsUrl"
+                      @click="emit('agent-install-page', a)"
+                    >
+                      {{ t('settings.agents.installPage', 'Install page') }}
+                    </button>
                     <button v-if="AGENT_DOCS[a.id]" class="exit-btn" type="button" @click="openDocs(a.id)">
                       {{ t('settings.agents.docs', 'Docs') }}
                     </button>

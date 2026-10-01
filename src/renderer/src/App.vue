@@ -10097,6 +10097,8 @@ onBeforeUnmount(() => {
       @open-update="((settingsOpen = false), (updateOpen = true))"
       @set-default-shell="setDefaultShell"
       @test-notification="sendTestNotification"
+      @install-agent="(a) => { closeSettings(); installAgent(a) }"
+      @agent-install-page="(a) => openExternalUrl(a.docsUrl)"
       @close="closeSettings"
     />
 

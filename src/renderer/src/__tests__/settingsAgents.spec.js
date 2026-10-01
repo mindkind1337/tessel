@@ -35,6 +35,24 @@ describe('Settings > Agents', () => {
     window.shellApi = previousApi
   })
 
+  it('an agent not on this computer offers Install, or its install page, never for an installed one', async () => {
+    await wrapper.setProps({
+      agents: [
+        { id: 'claude', name: 'Claude Code', available: true, install: ['npm install -g @anthropic-ai/claude-code'] },
+        { id: 'cursor', name: 'Cursor CLI', available: false, install: ["irm 'https://cursor.com/install?win32=true' | iex"], installConfirm: true },
+        { id: 'goose', name: 'Goose', available: false, install: null, docsUrl: 'https://goose-docs.ai/docs/getting-started/installation' },
+        { id: 'zz', name: 'Nothing', available: false, install: null }
+      ]
+    })
+    expect(wrapper.find('[data-agent="claude"] [data-test="agent-install"]').exists()).toBe(false)
+    await wrapper.get('[data-agent="cursor"] [data-test="agent-install"]').trigger('click')
+    expect(wrapper.emitted('install-agent')[0][0].id).toBe('cursor')
+    await wrapper.get('[data-agent="goose"] [data-test="agent-install-page"]').trigger('click')
+    expect(wrapper.emitted('agent-install-page')[0][0].id).toBe('goose')
+    expect(wrapper.find('[data-agent="zz"] [data-test="agent-install"]').exists()).toBe(false)
+    expect(wrapper.find('[data-agent="zz"] [data-test="agent-install-page"]').exists()).toBe(false)
+  })
+
   it('does not advertise model refresh for agents without that action', async () => {
     await wrapper.setProps({ agents: ['gemini', 'copilot'].map(id => ({ id, name: id, available: true })) })
     for (const id of ['gemini', 'copilot']) {

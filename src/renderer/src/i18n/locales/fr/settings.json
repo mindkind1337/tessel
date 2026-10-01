@@ -162,6 +162,8 @@
       "stopWaiting": "Ne plus attendre",
       "docs": "Docs",
       "customize": "Personnaliser",
+      "install": "Installer",
+      "installPage": "Page d'installation",
       "offerInMenus": "Proposer {{name}} dans les menus",
       "shownInMenus": "Affiché dans les menus",
       "hiddenFromMenus": "Masqué des menus",
