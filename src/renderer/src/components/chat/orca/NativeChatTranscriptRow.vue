@@ -38,6 +38,12 @@ const deliveryFailed = computed(
   () => props.context.failedDeliveryMessageIds?.has(message.value.id) === true
 )
 const queued = computed(() => props.context.queuedMessageIds?.has(message.value.id) === true)
+// Tessel: why it waits, when its list says (a Map of reasons).
+const queuedReason = computed(() => {
+  const ids = props.context.queuedMessageIds
+  const reason = ids instanceof Map ? ids.get(message.value.id) : null
+  return typeof reason === 'string' ? reason : ''
+})
 // Stable per turn, so the status row does not re-render with every list render.
 const onToggleExpanded = computed(() => {
   const turnKey = props.slot.turnKey
@@ -68,6 +74,7 @@ const onToggleExpanded = computed(() => {
       :allow-file-uri-links="context.allowFileUriLinks"
       :delivery-failed="deliveryFailed"
       :queued="queued"
+      :queued-reason="queuedReason"
       :structured-activity-ui="context.showTurnStatus"
       :folded="slot.folded"
       :runtime-context="context.runtimeContext"

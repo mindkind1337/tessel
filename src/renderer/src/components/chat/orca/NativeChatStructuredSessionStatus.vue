@@ -27,7 +27,9 @@ const props = defineProps({
     type: Object,
     default: () => ({ show: false, isMonitoring: false, tasks: [], settledTasks: [], supportsStop: false, supportsStopAll: false })
   },
-  stopBackgroundTask: { type: Function, default: async () => undefined }
+  stopBackgroundTask: { type: Function, default: async () => undefined },
+  // Tessel: where to stop them when the dock offers no Stop.
+  stopNote: { type: String, default: '' }
 })
 
 const NO_STOPPING_TASKS = new Set()
@@ -84,6 +86,7 @@ const startingText = computed(() =>
     :stopping-task-ids="activeStopping?.taskIds ?? NO_STOPPING_TASKS"
     :stopping-all="activeStopping?.all ?? false"
     :expanded="expanded?.sessionId === sessionId && expanded.expanded"
+    :stop-note="stopNote"
     @expanded-change="onExpandedChange"
     @stop="onStop"
   />

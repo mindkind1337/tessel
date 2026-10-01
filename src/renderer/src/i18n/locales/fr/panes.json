@@ -560,7 +560,9 @@
       "working": "au travail",
       "monitoring": "surveille",
       "unknown": "inconnu",
-      "needs": "vous attend"
+      "needs": "vous attend",
+      "question": "question ?",
+      "questionHint": "Cet agent vous pose une question"
     },
     "sleep": {
       "overlay": "En veille depuis {{time}} : son terminal a été arrêté pour libérer de la mémoire. Sa conversation est conservée.",
@@ -620,7 +622,9 @@
       "modeDelivering": "Un message est en train d'y être tapé : réessayez dans un instant.",
       "modeSwitching": "Son mode est déjà en train de changer.",
       "modeUnavailable": "Il ne propose pas ce mode maintenant (Maj+Tab ne l'a jamais atteint).",
-      "modeUnconfirmed": "Impossible de confirmer le mode sur son écran ; ouvrez le terminal pour vérifier."
+      "modeUnconfirmed": "Impossible de confirmer le mode sur son écran ; ouvrez le terminal pour vérifier.",
+      "heldTyped": "En attente : une ligne est tapée dans son terminal (envoyez-la ou effacez-la).",
+      "heldApproval": "En attente : il demande d'abord votre approbation."
     },
     "voice": {
       "hint": "Parlez au lieu de taper ({{language}}). Saisie vocale Windows, Win+H. Langue : menu …",
@@ -704,7 +708,8 @@
         "failed": "{{agent}} n'a pas pu lister ses modèles."
       },
       "chipLabel": "Modèle : {{model}}. Choisir le modèle",
-      "chipStatic": "Modèle : {{model}}"
+      "chipStatic": "Modèle : {{model}}",
+      "noEffort": "Ce modèle n'a pas d'effort de raisonnement à choisir."
     },
     "remote": {
       "notConnected": "{{host}} — non connecté",

@@ -174,10 +174,32 @@ describe('NativeChatTranscriptView, a terminal agent chat view (interactive)', (
 
   it('an approval: Allow types 1, Deny Escape', async () => {
     const writeKeys = vi.fn()
-    await mountChat({ writeKeys, waiting: { approval: true } })
+    await mountChat({ writeKeys, waiting: { approval: true, approvalKey: 1 } })
     document.querySelector('[data-test="terminal-chat-allow"]').click()
+    await flushPromises()
+    // Answered: its card is gone (a second click would type into the agent).
+    expect(document.querySelector('[data-test="terminal-chat-approval"]')).toBeNull()
+    await wrapper.setProps({ waiting: { approval: true, approvalKey: 2 } })
     document.querySelector('[data-test="terminal-chat-deny"]').click()
     expect(writeKeys.mock.calls.map((c) => c[0])).toEqual(['1', '\x1b'])
+  })
+
+  it('an answered approval stays hidden until the pane leaves it or a new one comes, and shows again after a while', async () => {
+    const writeKeys = vi.fn()
+    await mountChat({ writeKeys, waiting: { approval: true, approvalKey: 5 } })
+    const allow = document.querySelector('[data-test="terminal-chat-allow"]')
+    allow.click()
+    allow.click()
+    expect(writeKeys.mock.calls.map((c) => c[0])).toEqual(['1'])
+    await flushPromises()
+    expect(document.querySelector('[data-test="terminal-chat-approval"]')).toBeNull()
+    // Never left it (the key may not have landed): shown again after 8 s.
+    await vi.advanceTimersByTimeAsync(8000)
+    expect(document.querySelector('[data-test="terminal-chat-approval"]')).not.toBeNull()
+    document.querySelector('[data-test="terminal-chat-allow"]').click()
+    await wrapper.setProps({ waiting: { approval: false } })
+    await wrapper.setProps({ waiting: { approval: true, approvalKey: 5 } })
+    expect(document.querySelector('[data-test="terminal-chat-approval"]')).not.toBeNull()
   })
 
   it("a question from the file: answered with the selector's keys", async () => {

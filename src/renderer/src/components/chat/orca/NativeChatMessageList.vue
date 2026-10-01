@@ -69,8 +69,11 @@ const props = defineProps({
   onLinkClick: { type: Function, default: undefined },
   allowFileUriLinks: { type: Boolean, default: false },
   failedDeliveryMessageIds: { type: Set, default: undefined },
-  // Tessel: user messages waiting in the engine's queue ("Queued" chip).
-  queuedMessageIds: { type: Set, default: undefined },
+  // Tessel: user messages waiting in the engine's queue ("Queued" chip); a
+  // Map gives each one the reason it waits (the chat view over a terminal).
+  queuedMessageIds: { type: [Set, Map], default: undefined },
+  // Tessel: each change scrolls to the latest message (a message just sent).
+  scrollToLatestSignal: { type: Number, default: 0 },
   /** Turn timing and disclosure are available on structured agent sessions. */
   showTurnStatus: { type: Boolean, default: true },
   /** Whether the active turn's foreground activity row should be visible. */
@@ -250,6 +253,14 @@ function jumpToLatest() {
   beginNavigation()
   scrollToBottom()
 }
+// Tessel: what you just sent is shown, wherever you had scrolled.
+watch(
+  () => props.scrollToLatestSignal,
+  (now, before) => {
+    if (now !== before) jumpToLatest()
+  },
+  { flush: 'post' }
+)
 const readerScrollInput = nativeChatReaderScrollInputHandlers(beginNavigation)
 // Pinning the target mounts it in the same render, so the row exists by the time
 // this post-render watcher runs. Routed through `scrollMessageToTop` rather than

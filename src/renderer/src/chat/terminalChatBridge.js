@@ -19,6 +19,7 @@ import { formatNativeChatFileReference } from './orca/shared/agent-image-paste.j
 import { commandMarkersAsMessages } from './orca/native-chat-command-marker.js'
 import { fuzzyFilter } from '../../../shared/fuzzy.js'
 import { PERMISSION_MODES } from '../../../shared/agentPermissionMode.js'
+import { claudeContextWindow } from './terminalChatExtras.js'
 import { t } from '../i18n'
 
 // The agents whose terminal pane has a chat view (their transcript is read in
@@ -226,12 +227,17 @@ export function mentionToken(path) {
   return formatNativeChatFileReference(String(path || '').replace(/\\/g, '/')).slice(1)
 }
 
-// The context ring: Claude Code's file never says the window; a model chosen
-// with its 1M context ("…[1m]") does (Orca's rule: a bare name does not).
-export function withContextWindow(events, model) {
-  const window = /\[1m\]\s*$/i.test(String(model || '')) ? 1_000_000 : null
-  if (!window) return events
-  return (Array.isArray(events) ? events : []).map((e) => (e && e.type === 'contextUsage' && !e.windowTokens ? { ...e, windowTokens: window } : e))
+// The context ring: Claude Code's file never says the window; the model's
+// known one is used (terminalChatExtras.js claudeContextWindow: 1M for
+// "…[1m]", else 200k). Codex's file says its own.
+export function withContextWindow(events, model, agent = 'claude') {
+  const list = Array.isArray(events) ? events : []
+  if (composerAgent(agent) === 'codex') return list
+  return list.map((e) => {
+    if (!e || e.type !== 'contextUsage' || e.windowTokens) return e
+    const window = claudeContextWindow(model, e.usedTokens, agent)
+    return window ? { ...e, windowTokens: window } : e
+  })
 }
 
 // ---- The permission mode (the composer's mode picker) ------------------------

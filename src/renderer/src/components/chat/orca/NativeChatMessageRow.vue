@@ -47,6 +47,8 @@ const props = defineProps({
   deliveryFailed: { type: Boolean, default: false },
   // Tessel: waiting in the engine's queue for the end of the turn.
   queued: { type: Boolean, default: false },
+  // Tessel: why it waits, in place of the queue's words.
+  queuedReason: { type: String, default: '' },
   structuredActivityUi: { type: Boolean, default: true },
   folded: { type: Boolean, default: false },
   runtimeContext: { type: Object, default: undefined }
@@ -108,7 +110,7 @@ const teamFromLabel = computed(() => {
     : t('chat.user.fromTeam', 'From a teammate')
 })
 const queuedText = computed(() =>
-  isTeam.value ? t('chat.user.teamQueued', 'Waiting: delivered when the turn ends') : t('chat.user.queued', 'Queued: will send when the turn ends')
+  props.queuedReason ? props.queuedReason : isTeam.value ? t('chat.user.teamQueued', 'Waiting: delivered when the turn ends') : t('chat.user.queued', 'Queued: will send when the turn ends')
 )
 const deliveryText = computed(() =>
   isTeam.value

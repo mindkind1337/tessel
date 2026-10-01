@@ -754,5 +754,6 @@
   "chat.orca.composer.mentionFiles": "Fichiers à référencer",
   "chat.orca.terminalChat.imageOnly": "(image)",
   "chat.orca.terminalChat.codexPicker": "Codex change son modèle et son effort dans son propre sélecteur : choisissez dans son terminal.",
-  "chat.orca.terminalChat.codexPermissions": "Codex change ses permissions dans son propre sélecteur : choisissez dans son terminal."
+  "chat.orca.terminalChat.codexPermissions": "Codex change ses permissions dans son propre sélecteur : choisissez dans son terminal.",
+  "chat.orca.terminalChat.backgroundStop": "Pour en arrêter une, ouvrez son terminal : /tasks les liste."
 }

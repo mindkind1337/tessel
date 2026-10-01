@@ -42,7 +42,9 @@ const props = defineProps({
   isVisible: { type: Boolean, default: true },
   expanded: { type: Boolean, default: false },
   onExpandedChange: { type: Function, default: undefined },
-  onStop: { type: Function, default: undefined }
+  onStop: { type: Function, default: undefined },
+  // Tessel: where to stop them when no Stop is offered here (a terminal agent).
+  stopNote: { type: String, default: '' }
 })
 
 /** Below this strip width (border-box, live root font size) the header drops
@@ -200,6 +202,7 @@ const unavailableText = computed(() =>
             </div>
           </template>
           <p v-else class="nc-bg-tasks__unavailable">{{ unavailableText }}</p>
+          <p v-if="stopNote && !supportsTaskStop && !supportsStopAll" class="nc-bg-tasks__note" data-test="bg-tasks-stop-note">{{ stopNote }}</p>
           <div
             v-if="!supportsTaskStop && supportsStopAll"
             :class="rowGroups.length > 0 ? 'nc-bg-tasks__stop-all--ruled' : 'nc-bg-tasks__stop-all'"
@@ -385,6 +388,11 @@ const unavailableText = computed(() =>
 }
 .nc-bg-tasks__unavailable {
   margin: 0;
+}
+.nc-bg-tasks__note {
+  margin: 8px 0 0;
+  border-top: 1px solid var(--nc-border);
+  padding-top: 6px;
 }
 .nc-bg-tasks__stop-all {
   margin-top: 8px;
