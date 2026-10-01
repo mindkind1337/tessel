@@ -64,7 +64,7 @@ function finish(event) {
       @pointerup="finish" @pointercancel="dragIndex = null" @lostpointercapture="dragIndex = null"
     >
       <div class="nc-effort-track" aria-hidden="true">
-        <span v-if="current >= 0 || dragIndex !== null" class="nc-effort-fill" :style="{ width: `calc(${percent(index)}% + 36px)` }" />
+        <span v-if="current >= 0 || dragIndex !== null" class="nc-effort-fill" :style="{ width: `calc(${percent(index)}% + 18px)` }" />
         <span v-for="(choice, i) in choices" :key="choice.value" class="nc-effort-tick"
           :class="{ 'nc-effort-filled-tick': i <= index, 'nc-effort-unavailable': choice.disabled }" :style="{ left: percent(i) + '%' }" />
         <span v-if="current >= 0 || dragIndex !== null" class="nc-effort-thumb" :style="{ left: percent(index) + '%' }" />
@@ -74,18 +74,19 @@ function finish(event) {
 </template>
 
 <style scoped>
+/* Sizes in CSS pixels (the reference was a 2x screenshot). */
 .nc-effort-footer { flex: none; display: flex; align-items: center; gap: 16px; padding: 12px 10px 8px; border-top: 1px solid var(--nc-border); }
 .nc-effort-label { display: flex; align-items: center; gap: 8px; font-size: 12px; white-space: nowrap; }
-.nc-effort-slider { box-sizing: border-box; width: 153px; flex: none; margin-left: auto; height: 37px; padding: 0 18px; display: flex; align-items: center; cursor: pointer; touch-action: none; border-radius: 18.5px; outline: none; }
+.nc-effort-slider { box-sizing: border-box; width: 76px; flex: none; margin-left: auto; height: 18px; padding: 0 9px; display: flex; align-items: center; cursor: pointer; touch-action: none; border-radius: 9px; outline: none; }
 .nc-effort-slider:focus-visible { box-shadow: 0 0 0 2px var(--nc-ring, var(--nc-foreground)); }
 .nc-effort-slider[aria-disabled='true'] { opacity: .45; cursor: default; }
-.nc-effort-track { position: relative; width: 100%; height: 37px; pointer-events: none; }
-.nc-effort-track::before { content: ''; position: absolute; inset: 0 -18px; border-radius: 18.5px; background: #3a3f4b; }
-.nc-effort-fill { box-sizing: border-box; position: absolute; left: -18px; height: 37px; border-radius: 18.5px; background: #007acc; }
+.nc-effort-track { position: relative; width: 100%; height: 18px; pointer-events: none; }
+.nc-effort-track::before { content: ''; position: absolute; inset: 0 -9px; border-radius: 9px; background: #3a3f4b; }
+.nc-effort-fill { box-sizing: border-box; position: absolute; left: -9px; height: 18px; border-radius: 9px; background: #007acc; }
 .nc-effort-tick, .nc-effort-thumb { position: absolute; top: 50%; transform: translate(-50%, -50%); border-radius: 50%; background: var(--nc-muted-foreground); }
-.nc-effort-tick { width: 8px; height: 8px; background: #63666f; }
+.nc-effort-tick { width: 4px; height: 4px; background: #63666f; }
 .nc-effort-filled-tick { background: #479bd5; }
-.nc-effort-thumb { width: 28px; height: 29px; background: #ccc; transition: left .1s ease; }
+.nc-effort-thumb { width: 14px; height: 14px; background: #ccc; transition: left .1s ease; }
 .nc-effort-unavailable { opacity: .3; }
 @media (prefers-reduced-motion: reduce) { .nc-effort-thumb { transition: none; } }
 </style>
