@@ -223,6 +223,15 @@ const api = {
     autoRefresh: (query) => ipcRenderer.invoke('providerUsage:autoRefresh', query),
     onUpdate: (cb) => subscribe('providerUsage:update', cb)
   },
+  // Settings > AI provider accounts: Cursor and Grok sign-ins, and the saved
+  // usage credentials of Gemini, OpenCode Go and MiniMax. Values go in; only
+  // "saved" flags come back.
+  providerSettings: {
+    status: () => ipcRenderer.invoke('providerSettings:status'),
+    saveSecret: (name, value) => ipcRenderer.invoke('providerSettings:saveSecret', { name, value }),
+    clearSecret: (name) => ipcRenderer.invoke('providerSettings:clearSecret', { name }),
+    update: (patch) => ipcRenderer.invoke('providerSettings:update', { patch })
+  },
   github: {
     status: (q) => ipcRenderer.invoke('github:status', q),
     list: (q) => ipcRenderer.invoke('github:list', q),

@@ -9,6 +9,7 @@ import { t, intlLocale, UI_LANGUAGES } from '../i18n'
 import { ref, computed, watch, nextTick, onMounted, onUnmounted, onUpdated } from 'vue'
 import BrandIcon from './BrandIcon.vue'
 import ProviderAccounts from './ProviderAccounts.vue'
+import ProviderUsageAccounts from './ProviderUsageAccounts.vue'
 import StatsUsage from './StatsUsage.vue'
 import RemoteHostsSettings from './remote/RemoteHostsSettings.vue'
 import AutomationsPage from './AutomationsPage.vue'
@@ -1643,6 +1644,7 @@ function previewSound() {
           <div class="set-group">
             <div class="set-card set-card-pad">
               <ProviderAccounts />
+              <ProviderUsageAccounts />
             </div>
           </div>
         </section>

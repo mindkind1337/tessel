@@ -10,11 +10,16 @@ import {
   mapCursorLegacy,
   mapGrok,
   mapOpenCodeGo,
-  mapMiniMax
+  mapMiniMax,
+  mapOpenCodeConsole,
+  openCodeWorkspaceIds
 } from './usageProviderMapping'
+import { randomUUID } from 'node:crypto'
 import { t } from './i18n'
 import { retryAfterMs } from './usagePoller'
 
+// The console's server-function id for its workspaces list (stable, from Orca).
+const OPENCODE_WORKSPACES_ID = 'def39973159c7f0483d8793a822b8dbb10d067e12c65455fcb4608459ba0234f'
 export const USAGE_URLS = Object.freeze({
   geminiProject: 'https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist',
   gemini: 'https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota',
@@ -24,8 +29,16 @@ export const USAGE_URLS = Object.freeze({
   grok: 'https://cli-chat-proxy.grok.com/v1/billing?format=credits',
   grokMonthly: 'https://cli-chat-proxy.grok.com/v1/billing',
   'opencode-go': 'https://opencode.ai/zen/go/v1/usage',
-  minimax: 'https://platform.minimax.io/v1/api/openplatform/coding_plan/remains'
+  // OpenCode's legacy console, with the session cookie saved in Settings (Orca's
+  // opencode-go-usage-fetcher.ts): its workspaces, then a workspace's Go status.
+  opencodeWorkspaces: `https://opencode.ai/_server?id=${OPENCODE_WORKSPACES_ID}`,
+  opencodeConsole: 'https://opencode.ai/console/api/go/status',
+  minimax: 'https://platform.minimax.io/v1/api/openplatform/coding_plan/remains',
+  // Settings > MiniMax endpoint: China (Orca's minimax-request-context.ts).
+  minimaxCn: 'https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains'
 })
+// Internal endpoints of a provider's read, never a provider of their own.
+const SUB_REQUESTS = ['geminiProject', 'cursorLegacy', 'grokMonthly', 'opencodeWorkspaces', 'opencodeConsole', 'minimaxCn']
 // Providers read through another one's quota: Antigravity shares Google Code
 // Assist's with Gemini CLI, and keeps its own token in the OS keyring, so its
 // quota is Gemini's (after Orca's src/main/rate-limits/antigravity-usage-mirror.ts,
@@ -33,7 +46,9 @@ export const USAGE_URLS = Object.freeze({
 export const USAGE_MIRRORS = Object.freeze({ antigravity: 'gemini' })
 export function createExtraProviderUsage({
   listAgents,
-  sources = createUsageProviderSources(),
+  // Settings' saved usage credentials (providerCredentials.js).
+  credentials = null,
+  sources = createUsageProviderSources({ credentials }),
   request = globalThis.fetch,
   clock = Date.now,
   timeoutMs = 10000
@@ -49,7 +64,7 @@ export function createExtraProviderUsage({
     )
     return { ok: true, providers: providers.filter((p) => p.report || p.quota) }
   }
-  async function json(key, headers, signal, body) {
+  async function json(key, headers, signal, body, asText = false) {
     const url = USAGE_URLS[key]
     if (!url) refuse('validation', t('main.usage.unsupportedEndpoint', 'Unsupported usage endpoint.'))
     const response = await request(url, {
@@ -79,6 +94,21 @@ export function createExtraProviderUsage({
       }
       if (key === 'opencode-go' && response.status === 403)
         refuse('unavailable', t('main.usage.noOpenCodeGo', 'This OpenCode account has no Go subscription.'))
+      if (key === 'opencodeConsole' && response.status === 401)
+        refuse(
+          'auth',
+          t(
+            'main.usage.openCodeConsoleSession',
+            'OpenCode refused the cookie. Paste the full Cookie header including __Host-console_session (auth alone is not enough).'
+          )
+        )
+      if ((key === 'minimax' || key === 'minimaxCn') && (response.status === 401 || response.status === 403))
+        refuse(
+          'auth',
+          headers?.Cookie
+            ? t('main.usage.minimaxCookieExpired', 'MiniMax session cookie expired. Replace it in Settings.')
+            : t('main.usage.minimaxKeyExpired', 'MiniMax API key expired. Replace it in Settings.')
+        )
       refuse(
         response.status === 401 || response.status === 403 ? 'auth' : 'network',
         response.status === 401 || response.status === 403
@@ -96,11 +126,12 @@ export function createExtraProviderUsage({
         if (item.done) break
         if (signal.aborted) refuse('timeout', t('main.usage.timedOut', 'The usage request timed out.'))
         size += item.value.byteLength
-        if (size > 256 * 1024) refuse('response', t('main.usage.tooLarge', 'The usage response exceeded its size limit.'))
+        if (size > (asText ? 1024 * 1024 : 256 * 1024)) refuse('response', t('main.usage.tooLarge', 'The usage response exceeded its size limit.'))
         chunks.push(Buffer.from(item.value))
       }
       try {
-        return JSON.parse(Buffer.concat(chunks).toString('utf8'))
+        const text = Buffer.concat(chunks).toString('utf8')
+        return asText ? text : JSON.parse(text)
       } catch {
         refuse('response', t('main.usage.unreadable', 'The usage response could not be read.'))
       }
@@ -110,12 +141,14 @@ export function createExtraProviderUsage({
   }
   return {
     capabilities,
+    // Cursor and Grok: who is signed in, for Settings (no token).
+    signIn: (provider) => sources.signIn?.(provider),
     async read({ provider, accountId } = {}) {
       const sequence = (sequences.get(provider) || 0) + 1
       if (
         typeof provider !== 'string' ||
         !(Object.hasOwn(USAGE_URLS, provider) || Object.hasOwn(USAGE_MIRRORS, provider)) ||
-        ['geminiProject', 'cursorLegacy', 'grokMonthly'].includes(provider) ||
+        SUB_REQUESTS.includes(provider) ||
         accountId !== null
       )
         return {
@@ -135,9 +168,57 @@ export function createExtraProviderUsage({
           refuse('unavailable', t('main.usage.agentNotInstalled', 'The matching agent is not installed.'))
         asked = true
         const login = await sources.auth(source)
-        const fetch = (key, body) => {
+        const fetch = (key, body, headers = login.headers, asText = false) => {
           if (controller.signal.aborted) refuse('timeout', t('main.usage.timedOut', 'The usage request timed out.'))
-          return json(key, login.headers, controller.signal, body)
+          return json(key, headers, controller.signal, body, asText)
+        }
+        // OpenCode's legacy console: the workspace from Settings, or the ones
+        // its session can see, then the first workspace that answers.
+        const openCodeConsole = async ({ cookie, workspaceId }) => {
+          const base = { Cookie: cookie, Origin: 'https://opencode.ai' }
+          const ids = workspaceId
+            ? [workspaceId]
+            : openCodeWorkspaceIds(
+                await fetch(
+                  'opencodeWorkspaces',
+                  null,
+                  {
+                    ...base,
+                    Referer: 'https://opencode.ai',
+                    'X-Server-Id': OPENCODE_WORKSPACES_ID,
+                    'X-Server-Instance': `server-fn:${randomUUID()}`,
+                    Accept: 'text/javascript, application/json;q=0.9, */*;q=0.8'
+                  },
+                  true
+                )
+              )
+          if (!ids.length)
+            refuse(
+              'unavailable',
+              t(
+                'main.usage.openCodeNoWorkspace',
+                'No workspace found for this cookie. Add an OpenCode Go API key (or run /connect in OpenCode), or set a Workspace ID override.'
+              )
+            )
+          let failure = null
+          for (const id of ids.slice(0, 5)) {
+            try {
+              const found = mapOpenCodeConsole(
+                await fetch('opencodeConsole', null, {
+                  ...base,
+                  Accept: 'application/json',
+                  Referer: `https://opencode.ai/console/${id}/go`,
+                  'x-org-id': id
+                })
+              )
+              if (found.length) return found
+            } catch (error) {
+              if (error?.code === 'rate-limited' || error?.code === 'timeout') throw error
+              failure = error
+            }
+          }
+          if (failure) throw failure
+          refuse('response', t('main.usage.unreadable', 'The usage response could not be read.'))
         }
         let windows = [],
           unlimited = false
@@ -151,8 +232,24 @@ export function createExtraProviderUsage({
           )
             refuse('response', t('main.usage.geminiNoProject', 'Gemini did not return a quota project.'))
           windows = mapGemini(await fetch('gemini', { project: project.cloudaicompanionProject }))
+        } else if (provider === 'opencode-go' && !login.headers.Authorization) {
+          windows = await openCodeConsole(login.console)
+        } else if (provider === 'opencode-go' && login.console) {
+          // A Black-only account's key has no Go entitlement: its usage is
+          // behind the console session (as in Orca); the key's verdict otherwise.
+          try {
+            windows = mapOpenCodeGo(await fetch('opencode-go'))
+          } catch (error) {
+            if (error?.code === 'rate-limited' || error?.code === 'timeout') throw error
+            try {
+              windows = await openCodeConsole(login.console)
+            } catch (consoleError) {
+              if (consoleError?.code === 'rate-limited' || consoleError?.code === 'timeout') throw consoleError
+              throw error
+            }
+          }
         } else {
-          const data = await fetch(provider)
+          const data = await fetch(provider === 'minimax' ? login.endpoint || 'minimax' : provider)
           if (provider === 'kimi') windows = mapKimi(data)
           if (provider === 'cursor') {
             ;({ windows, unlimited = false } = mapCursor(data))
@@ -165,12 +262,23 @@ export function createExtraProviderUsage({
           }
           if (provider === 'opencode-go') windows = mapOpenCodeGo(data)
           if (provider === 'minimax') {
-            if (data?.base_resp?.status_code !== undefined && data.base_resp.status_code !== 0)
+            const code = data?.base_resp?.status_code
+            // An expired cookie or key answers HTTP 200 with status 1004.
+            if (code !== undefined && code !== 0)
               refuse(
-                data.base_resp.status_code === 1004 ? 'auth' : 'response',
-                t('main.usage.minimaxRefused', 'MiniMax refused the usage request. Check its API key.')
+                code === 1004 ? 'auth' : 'response',
+                code === 1004
+                  ? login.transport === 'cookie'
+                    ? t('main.usage.minimaxCookieExpired', 'MiniMax session cookie expired. Replace it in Settings.')
+                    : t('main.usage.minimaxKeyExpired', 'MiniMax API key expired. Replace it in Settings.')
+                  : t('main.usage.minimaxRefused', 'MiniMax refused the usage request. Check its API key.')
               )
-            windows = mapMiniMax(data, clock())
+            windows = mapMiniMax(data, clock(), login.models)
+            if (!windows.length)
+              refuse(
+                'unavailable',
+                t('main.usage.minimaxNoModel', 'MiniMax usage data for the configured model was not found.')
+              )
           }
         }
         const current = await sources.auth(source)

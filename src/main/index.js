@@ -14,6 +14,7 @@ import { createProviderLogin } from './providerLogin'
 import { createProviderAccounts } from './providerAccounts'
 import { createAccountUsage } from './providerAccountUsage'
 import { registerProviderUsage } from './providerUsageIpc'
+import { createProviderCredentials } from './providerCredentials'
 import { createAccountSessions } from './providerAccountSessions'
 import { postToInbox } from './agentInbox'
 import { hooksStatus } from './teamHooksStatus'
@@ -1714,7 +1715,10 @@ registerProviderUsage({
   getWindow: () => mainWindow,
   onLiveIngest: (ingest) => {
     usageLiveIngest = ingest
-  }
+  },
+  // Settings > AI provider accounts: Gemini, OpenCode Go and MiniMax usage
+  // credentials, encrypted with the OS (providerCredentials.js).
+  credentials: createProviderCredentials({ dir: join(app.getPath('userData'), 'provider-credentials'), safeStorage })
 })
 ipcMain.handle('accounts:loginStatus', safe((id) => accounts.loginStatus(id)))
 ipcMain.handle('accounts:launchEnv', safe((query) => typeof query === 'string'
