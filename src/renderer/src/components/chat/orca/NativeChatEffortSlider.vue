@@ -30,7 +30,7 @@ function keydown(event) {
 }
 function point(event) {
   const rect = event.currentTarget.getBoundingClientRect()
-  const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left - 18) / Math.max(1, rect.width - 36)))
+  const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left - 9) / Math.max(1, rect.width - 18)))
   const i = Math.round(ratio * (choices.value.length - 1))
   if (!choices.value[i]?.disabled) dragIndex.value = i
 }
@@ -64,7 +64,7 @@ function finish(event) {
       @pointerup="finish" @pointercancel="dragIndex = null" @lostpointercapture="dragIndex = null"
     >
       <div class="nc-effort-track" aria-hidden="true">
-        <span v-if="current >= 0 || dragIndex !== null" class="nc-effort-fill" :style="{ width: `calc(${percent(index)}% + 18px)` }" />
+        <span v-if="current >= 0 || dragIndex !== null" class="nc-effort-fill" :style="{ width: `calc(${percent(index)}% + 16px)` }" />
         <span v-for="(choice, i) in choices" :key="choice.value" class="nc-effort-tick"
           :class="{ 'nc-effort-filled-tick': i <= index, 'nc-effort-unavailable': choice.disabled }" :style="{ left: percent(i) + '%' }" />
         <span v-if="current >= 0 || dragIndex !== null" class="nc-effort-thumb" :style="{ left: percent(index) + '%' }" />
@@ -74,7 +74,8 @@ function finish(event) {
 </template>
 
 <style scoped>
-/* Sizes in CSS pixels (the reference was a 2x screenshot). */
+/* Sizes in CSS pixels (the reference was a 2x screenshot). The fill runs
+   from the track's left end to the thumb's right edge (9px pad + 7px radius). */
 .nc-effort-footer { flex: none; display: flex; align-items: center; gap: 16px; padding: 12px 10px 8px; border-top: 1px solid var(--nc-border); }
 .nc-effort-label { display: flex; align-items: center; gap: 8px; font-size: 12px; white-space: nowrap; }
 .nc-effort-slider { box-sizing: border-box; width: 76px; flex: none; margin-left: auto; height: 18px; padding: 0 9px; display: flex; align-items: center; cursor: pointer; touch-action: none; border-radius: 9px; outline: none; }
