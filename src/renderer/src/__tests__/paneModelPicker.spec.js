@@ -200,7 +200,7 @@ describe('pane menu > Model', () => {
     ])
   })
 
-  it("a running Cursor: a model's effort, Fast and the model itself go as /model with the exact listed id", async () => {
+  it("a running Cursor: a model goes as /model with its name (an id would only filter its picker); an effort or Fast opens its picker", async () => {
     const node = mountPane({ agentId: 'cursor', sessionOptions: { model: 'gpt-5.3-codex' } })
     modelLists.cursor = {
       fetchedAt: Date.now(),
@@ -218,28 +218,25 @@ describe('pane menu > Model', () => {
     }
     let m = await openModelMenu()
     expect([...m.querySelectorAll('[data-test="sop-model"]')].map((b) => b.dataset.model)).toEqual(['auto', 'claude-opus-5', 'gpt-5.3-codex'])
-    m.querySelector('[data-option="effort"][data-value="high"]').click()
+    expect(m.querySelector('[data-test="sop-note"]').textContent).toContain('switches at once')
+    m.querySelector('[data-model="claude-opus-5"]').click()
     await typed()
     expect(writes).toEqual([
-      ['mp', '/model gpt-5.3-codex-high'],
+      ['mp', '/model Claude Opus 5'],
       ['mp', ENTER]
     ])
     await flushPromises()
-    expect(node.sessionOptions).toEqual({ model: 'gpt-5.3-codex', effort: 'high' })
+    // Nothing kept for the next start: Cursor remembers its pick itself.
+    expect(node.sessionOptions).toEqual({ model: 'gpt-5.3-codex' })
     m = await openModelMenu()
-    const fast = m.querySelector('input[data-option="fastMode"]')
-    fast.checked = true
-    fast.dispatchEvent(new Event('change'))
+    m.querySelector('[data-option="effort"][data-value="high"]').click()
     await vi.waitFor(() => expect(writes).toHaveLength(4), { timeout: 3000 })
     expect(writes.slice(2)).toEqual([
-      ['mp', '/model gpt-5.3-codex-high-fast'],
+      ['mp', '/model'],
       ['mp', ENTER]
     ])
     await flushPromises()
-    m = await openModelMenu()
-    m.querySelector('[data-model="claude-opus-5"]').click()
-    await vi.waitFor(() => expect(writes).toHaveLength(6), { timeout: 3000 })
-    expect(writes[4]).toEqual(['mp', '/model claude-opus-5-high'])
+    expect(ctx.toast).toHaveBeenLastCalledWith(expect.stringContaining('Tab'), expect.anything())
   })
 
   it('while it asks for an approval nothing is typed', async () => {

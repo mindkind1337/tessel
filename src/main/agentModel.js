@@ -588,7 +588,10 @@ export function watchModelFiles(onChange, home = os.homedir()) {
     { agent: 'opencode', dir: join(state, 'opencode'), match: /^model\.json$/ },
     { agent: 'opencode', dir: join(cfg, 'opencode'), match: /^opencode\.jsonc?$/ },
     { agent: 'cline', dir: join(cline, 'settings'), match: /^providers\.json$/ },
-    { agent: 'cline', dir: join(cline, 'db'), match: /^sessions\.db/ }
+    { agent: 'cline', dir: join(cline, 'db'), match: /^sessions\.db/ },
+    // Cursor writes its last pick there (its /model picker, --model): its
+    // panes read their status line again.
+    { agent: 'cursor', dir: join(home, '.cursor'), match: /^cli-config\.json$/ }
   ]
   const watchers = new Map() // target -> fs.FSWatcher
   const timers = new Map() // agent -> timeout

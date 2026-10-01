@@ -275,3 +275,103 @@ export function decomposeCursorModel(models, id) {
   }
   return null
 }
+
+// --- The running CLI's own picker and status line ---------------------------
+// Cursor's TUI (2026.10) groups its models the same way: one row per model
+// ("GPT-5.6 Sol"), its context, effort and Fast as parameters ("272K High
+// Fast", Tab to change them). Its /model <text> only FILTERS that picker by
+// name (an id such as gpt-5.6-sol-high matches nothing), and the line under
+// its prompt says what this session runs: "GPT-5.6 Sol 272K High Fast".
+
+// Notes in a listed label that the TUI shows as a parameter, or not at all:
+// a context size ("1M", "272K") and "(NO ZDR)".
+function plainName(label) {
+  return tidy(label)
+    .replace(/\(NO ZDR\)/gi, ' ')
+    .split(' ')
+    .filter((w) => w && !/^\d+(?:\.\d+)?[KM]$/i.test(w))
+    .join(' ')
+}
+
+// A grouped row -> the text that filters Cursor's picker down to it
+// ("GPT-5.6 Luna 1M" -> "GPT-5.6 Luna"). '' when there is nothing to type.
+export function cursorPickerFilter(model) {
+  if (!model) return ''
+  const name = plainName(model.label || model.id)
+  return /^[\w .()+-]{1,80}$/.test(name) ? name : ''
+}
+
+const STATUS_EFFORTS = Object.entries(EFFORT_WORDS).sort((a, b) => b[1].length - a[1].length)
+
+// The line Cursor shows under its prompt ("GPT-5.6 Sol 272K High Fast") and
+// the grouped rows -> { model: the listed id it is, row, effort, fastMode,
+// thinking } or null. The whole line must be a row's name followed only by
+// parameters (a context size, an effort, Fast, Thinking), so text in the
+// conversation is never taken for it.
+export function cursorModelFromStatusLine(line, models) {
+  const text = tidy(line)
+  if (!text || text.length > 120) return null
+  let best = null
+  for (const m of Array.isArray(models) ? models : []) {
+    if (!m || !m.label) continue
+    const name = plainName(m.label)
+    if (!name || (text !== name && !text.startsWith(name + ' '))) continue
+    if (best && best.name.length >= name.length) continue
+    const values = statusParameters(text.slice(name.length).trim())
+    if (values) best = { name, model: m, values }
+  }
+  if (!best) return null
+  const { model, values } = best
+  const fastMode = values.fast
+  const thinking = values.thinking
+  const effort = values.effort && model.efforts && model.efforts.includes(values.effort) ? values.effort : null
+  const picked = { ...(effort ? { effort } : {}), fastMode, ...(thinking ? { thinking } : {}) }
+  const id = Array.isArray(model.variants) ? composeCursorModel(model, picked) : model.id
+  return {
+    model: id,
+    row: model.id,
+    name: [best.name, fastMode ? 'Fast' : '', thinking ? 'Thinking' : ''].filter(Boolean).join(' '),
+    effort: effort || (model.efforts && model.efforts.length > 1 ? model.defaultEffort || null : null),
+    fastMode: !!fastMode,
+    thinking: !!thinking
+  }
+}
+// "272K High Fast" -> { effort: 'high', fast: true, thinking: false }, or
+// null when a word is none of those.
+function statusParameters(rest) {
+  const out = { effort: '', fast: false, thinking: false }
+  let s = ` ${rest} `
+  for (const [effort, word] of STATUS_EFFORTS) {
+    if (s.includes(` ${word} `)) {
+      out.effort = effort
+      s = s.replace(` ${word} `, ' ')
+      break
+    }
+  }
+  for (const w of s.split(' ').filter(Boolean)) {
+    if (/^\d+(?:\.\d+)?[KM]$/i.test(w)) continue
+    if (w === 'Fast') out.fast = true
+    else if (w === 'Thinking') out.thinking = true
+    else return null
+  }
+  return out
+}
+
+// Cursor's model picker is open on screen (its rows look like status lines:
+// "Grok 4.7   256K High Fast").
+export function cursorPickerShown(lines) {
+  return (Array.isArray(lines) ? lines : []).some((l) => /Type to filter|Enter to select|^\s*(?:Available models|Models matching)\b/.test(String(l || '')))
+}
+
+// The model Cursor's screen shows: its status line among the last lines (read
+// from the bottom up). lines: the screen's lines, top to bottom. null while
+// its picker is open.
+export function cursorModelOnScreen(lines, models) {
+  if (cursorPickerShown(lines)) return null
+  const list = (Array.isArray(lines) ? lines : []).map((l) => String(l || '')).filter((l) => l.trim())
+  for (let i = list.length - 1; i >= 0; i--) {
+    const found = cursorModelFromStatusLine(list[i], models)
+    if (found) return found
+  }
+  return null
+}

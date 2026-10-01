@@ -703,6 +703,8 @@
       "kept": "Claude a conservé le modèle actuel.",
       "unverified": "Impossible de vérifier le changement de modèle ; ouvrez le terminal pour vérifier.",
       "sentNotConfirmed": "Envoyé à l'agent — non confirmé",
+      "cursorLive": "Un modèle choisi ici s'applique aussitôt ; son effort ou Fast ouvre son propre sélecteur dans le terminal (Tab sur le modèle).",
+      "pickerOpened": "Son sélecteur de modèle est ouvert dans le terminal : Tab sur le modèle change son effort ou Fast.",
       "probe": {
         "notFound": "{{agent}} est introuvable sur cet ordinateur.",
         "timeout": "{{agent}} n'a pas listé ses modèles en 60 s.",

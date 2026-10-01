@@ -47,6 +47,7 @@ import { cacheCountdown } from '../promptCache'
 import { isViewed } from '../../../shared/fileKinds'
 import { effectiveAgent, launchSignature, launchSessionValues, inYoloFolder, YOLO_ARGS, YOLO_ENV } from '../../../shared/agentPrefs'
 import { getAgentSessionOptionCatalog, modelOptions, resolveSessionOptionDefaults, composedModelId, listedModelValues, valuesOnListedRow } from '../../../shared/agentSessionOptions'
+import { cursorModelOnScreen, cursorPickerFilter, cursorPickerShown } from '../../../shared/cursorModels'
 import { paneModels } from '../paneModels'
 import { modelsFor, refreshIfStale } from '../agentModels'
 import { modelChoiceLabel, sessionPillLabel } from '../sessionOptionLabels'
@@ -117,7 +118,7 @@ const effortName = (effort) => nativeChatSessionChoiceLabel({ value: effort, lab
 const modelText = computed(() => {
   const m = agentModel.value
   if (!m || !m.model) return ''
-  return modelLabel(m.model) + (m.effort ? ` · ${effortName(m.effort)}` : '')
+  return (m.name || modelLabel(m.model)) + (m.effort ? ` · ${effortName(m.effort)}` : '')
 })
 // For the team roster (team_members): the model this pane shows.
 watch(
@@ -202,6 +203,19 @@ async function refreshModel() {
   modelBusy = true
   try {
     const n = props.node
+    // Cursor: the line under its prompt says what this session runs
+    // ("GPT-5.6 Sol 272K High Fast"), a pick in its own picker included;
+    // while that picker is open, what it showed stays.
+    if (n.agentId === 'cursor' && term) {
+      const lines = screenText(8).split('\n')
+      if (cursorPickerShown(lines) && agentModel.value) return
+      const seen = cursorModelOnScreen(lines, modelsFor('cursor'))
+      if (seen) {
+        delete n.modelChoice
+        agentModel.value = { model: seen.model, name: seen.name, effort: seen.effort, source: 'screen' }
+        return
+      }
+    }
     let res = await window.shellApi.agentModel({
       agentId: n.agentId,
       sessionId: n.sessionId,
@@ -289,7 +303,7 @@ const effectiveModelId = computed(() => {
   if (!list.length) return null
   const shown = agentModel.value && agentModel.value.model
   if (shown) {
-    const exact = list.find((m) => m.id === shown)
+    const exact = list.find((m) => m.id === shown) || list.find((m) => m.label === shown)
     if (exact) return exact.id
     // A Cursor variant id (gpt-5.3-codex-high-fast): its model's row.
     const listed = listedModelValues(list, shown)
@@ -299,6 +313,13 @@ const effectiveModelId = computed(() => {
   }
   const byDefault = list.find((m) => m.isDefault)
   return (byDefault || list[0]).id
+})
+// The menu's checked values: the pane's own choice; a running Cursor, what
+// its status line shows (a pick in its own picker included).
+const paneMenuValues = computed(() => {
+  const m = agentModel.value
+  if (props.node.agentId === 'cursor' && paneRunning.value && m && m.source === 'screen') return listedModelValues(paneModelList.value, m.model) || props.node.sessionOptions || null
+  return props.node.sessionOptions || null
 })
 // What the pane uses: its own choice, else the default from Settings.
 const paneValues = computed(() => launchSessionValues(props.node.sessionOptions, settings.agentSessionOptions, props.node.agentId))
@@ -316,6 +337,7 @@ const modelMenuNote = computed(() => {
   if (!paneRunning.value) return t('pane.sessionOptions.appliesAtStart', 'Applies when the agent starts.')
   const catalog = getAgentSessionOptionCatalog(props.node.agentId)
   const mid = catalog && catalog.modelApply.midSession
+  if (mid && mid.kind === 'picker-filter') return t('pane.sessionOptions.cursorLive', 'A model chosen here switches at once; its effort or Fast opens its own picker in the terminal (Tab on the model).')
   return mid && mid.kind === 'command' ? '' : t('pane.sessionOptions.appliesAtRestart', 'A model picked here applies when the agent restarts.')
 })
 const modelBusyReason = computed(() =>
@@ -327,7 +349,7 @@ const modelBusyReason = computed(() =>
 const headerModelText = computed(() => {
   const m = agentModel.value
   if (!isAgent.value || !m || !m.model) return ''
-  const name = modelLabel(m.model)
+  const name = m.name || modelLabel(m.model)
   return m.effort ? `${name} · ${effortName(m.effort)}` : name
 })
 function openModelMenuAtChip(e) {
@@ -361,7 +383,9 @@ function closeModelMenu(refocus = false) {
 }
 // The pane's values after this pick (null = back to the default).
 function nextPaneValues(optionId, value) {
-  const current = valuesOnListedRow(paneModelList.value, paneValues.value)
+  // A running Cursor: from the model its status line shows.
+  const base = (props.node.agentId === 'cursor' && paneRunning.value && paneMenuValues.value) || paneValues.value
+  const current = valuesOnListedRow(paneModelList.value, base)
   if (optionId === 'model') {
     if (!value) return null
     const next = { model: value }
@@ -408,6 +432,7 @@ function optionApply(catalog, optionId, modelId) {
   if (option && option.apply.composedIntoModel && catalog.composeModelValue) return catalog.modelApply
   return option ? option.apply : null
 }
+let pickRefresh = null // reads Cursor's status line again after a pick
 // A pick applied: the same path for this menu and for the chat view's
 // pickers, so both agree. -> null (no catalog) | 'saved' (kept for the next
 // start) | 'busy' | 'applied' | 'sent' (typed, not confirmed) | 'rejected' |
@@ -419,6 +444,26 @@ async function applyModelPick({ optionId, value }) {
   const next = nextPaneValues(optionId, value)
   const apply = optionApply(catalog, optionId, next && next.model)
   const mid = apply && apply.midSession
+  // Cursor: its /model <text> filters its own picker by name and switches
+  // at once when one model matches ("/model Codex 5.3"); an id or an effort
+  // in the text matches nothing. A model: /model with its name (sent, then
+  // its status line tells what runs). An effort or Fast: its picker, where
+  // Tab on the model sets them. Nothing is kept for the next start (Cursor
+  // remembers its last pick itself).
+  if (paneRunning.value && value !== null && value !== undefined && mid && mid.kind === 'picker-filter') {
+    if (paneBusy.value || modelMenu.pending) return 'busy'
+    const row = optionId === 'model' ? paneModelList.value.find((m) => m.id === value) : null
+    const filter = cursorPickerFilter(row)
+    modelMenu.pending = true
+    try {
+      await typeCommand(n.id, mid.build(filter))
+    } finally {
+      modelMenu.pending = false
+    }
+    clearTimeout(pickRefresh)
+    pickRefresh = setTimeout(refreshModel, 1500)
+    return filter ? 'sent' : 'picker'
+  }
   // Not running, a value going back to a default, or a change the running
   // session takes only in its own picker: kept for the next start.
   if (!paneRunning.value || value === null || value === undefined || !mid || mid.kind !== 'command') {
@@ -449,7 +494,11 @@ async function applyModelPick({ optionId, value }) {
 async function onModelPick(pick) {
   const outcome = await applyModelPick(pick).catch(() => 'unknown')
   if (outcome === null || outcome === 'saved' || outcome === 'busy') return
-  if (outcome === 'rejected') ctx.toast && ctx.toast(t('pane.sessionOptions.kept', 'Claude kept the current model.'), { kind: 'error' })
+  if (outcome === 'picker') {
+    // Its picker is in the terminal: the chat view gives way to it.
+    if (props.node.chatView) props.node.chatView = undefined
+    ctx.toast && ctx.toast(t('pane.sessionOptions.pickerOpened', 'Its model picker is open in the terminal: Tab on the model changes its effort or Fast.'), { timeout: 6000 })
+  } else if (outcome === 'rejected') ctx.toast && ctx.toast(t('pane.sessionOptions.kept', 'Claude kept the current model.'), { kind: 'error' })
   else if (outcome === 'unknown') ctx.toast && ctx.toast(t('pane.sessionOptions.unverified', 'Could not verify the model change; open the terminal to check.'), { kind: 'error', timeout: 8000 })
   else if (outcome === 'sent') ctx.toast && ctx.toast(t('pane.sessionOptions.sentNotConfirmed', 'Sent to the agent — not confirmed'), { timeout: 3000 })
   closeModelMenu(true)
@@ -480,6 +529,7 @@ async function chatSetOption(payload) {
   if (ctx.paneUserTyping && ctx.paneUserTyping(props.node.id)) return { ok: false, error: t('pane.chatView.typedLine', 'A line is typed in its terminal: send or clear it there first.') }
   const outcome = await applyModelPick({ optionId, value }).catch(() => 'unknown')
   if (outcome === 'applied' || outcome === 'sent') return { ok: true }
+  if (outcome === 'picker') return { ok: true, picker: true }
   if (outcome === 'rejected') return { ok: false, error: t('pane.sessionOptions.kept', 'Claude kept the current model.') }
   if (outcome === 'unknown') return { ok: false, error: t('pane.sessionOptions.unverified', 'Could not verify the model change; open the terminal to check.') }
   if (outcome === 'busy') return { ok: false, error: t('pane.sessionOptions.waitIdle', 'It is working: its model can change once it is idle.') }
@@ -513,6 +563,7 @@ const stopModelChanged = window.shellApi.onAgentModelChanged
   : null
 onBeforeUnmount(() => {
   clearInterval(modelTimer)
+  clearTimeout(pickRefresh)
   if (stopModelChanged) stopModelChanged()
 })
 watch(
@@ -2938,7 +2989,7 @@ const paneMenuBindings = computed(() => ({
       <SessionOptionPicker
         :agent-id="node.agentId"
         :models="paneModelList"
-        :values="node.sessionOptions || null"
+        :values="paneMenuValues"
         :default-label="modelDefaultLabel"
         :fallback-model="effectiveModelId"
         :live="paneRunning"
