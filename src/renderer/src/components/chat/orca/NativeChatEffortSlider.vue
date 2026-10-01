@@ -20,6 +20,9 @@ const percent = i => choices.value.length < 2 ? 50 : i * 100 / (choices.value.le
 // dot so 2px of blue shows after it, short of the next dot; the ends keep
 // the 2px inset to the track's rounded ends.
 const nudge = i => (i > 0 && i < choices.value.length - 1 ? 2 : 0)
+// Five levels fit the base 76px (about 15px between dots); with more, the
+// slider grows so the dots keep that spacing instead of crowding.
+const sliderWidth = computed(() => `${Math.max(76, 18 + (choices.value.length - 1) * 15)}px`)
 function commit(i) {
   if (!props.disabled && choices.value[i] && !choices.value[i].disabled) emit('change', choices.value[i].value)
 }
@@ -62,6 +65,7 @@ function finish(event) {
     </div>
     <div
       class="nc-effort-slider" role="slider" tabindex="-1" data-nc-menu-item
+      :style="{ width: sliderWidth }"
       :data-disabled="disabled ? '' : undefined" :aria-disabled="disabled"
       :aria-label="t('chat.orca.composer.effort', 'Effort')" aria-orientation="horizontal"
       :aria-valuemin="0" :aria-valuemax="choices.length - 1" :aria-valuenow="index" :aria-valuetext="valueText"
