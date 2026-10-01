@@ -44,6 +44,9 @@ function fakeWindowClass({ throwOnCreate = false, loadFails = false, noIpc = fal
     setPosition(x, y) {
       this.pos = [x, y]
     }
+    setBounds(b) {
+      this.bounds = b
+    }
     center() {
       this.centered = true
     }
@@ -59,7 +62,8 @@ function fakeWindowClass({ throwOnCreate = false, loadFails = false, noIpc = fal
 const parentWindow = () => ({
   isDestroyed: () => false,
   isMinimized: () => false,
-  getBounds: () => ({ x: 100, y: 50, width: 1000, height: 800 })
+  getBounds: () => ({ x: 100, y: 50, width: 1000, height: 800 }),
+  getContentBounds: () => ({ x: 108, y: 58, width: 984, height: 784 })
 })
 
 const OPTS = {
@@ -117,9 +121,12 @@ describe('themedMessageBox', () => {
     expect(content).toMatchObject({ type: 'warning', title: OPTS.title, message: OPTS.message, detail: OPTS.detail, buttons: OPTS.buttons, defaultId: 1, cancelId: 1 })
     // The theme's colours (Nord's chrome here).
     expect(content.vars['--chrome']).toBe('#242933')
-    // Shown once ready, centred on its parent.
+    // Shown once ready, over its parent's content (see-through: the page
+    // dims it and draws the card in the middle).
+    expect(o.transparent).toBe(true)
+    expect(content).toMatchObject({ cover: true, theme: 'classic' })
     expect(win.shown).toBe(true)
-    expect(win.pos).toEqual([100 + (1000 - 460) / 2, 50 + (800 - 180) / 2])
+    expect(win.bounds).toEqual({ x: 108, y: 58, width: 984, height: 784 })
     win.webContents.ipc.emit(ANSWER_CHANNEL, ev(win.webContents), 0)
     await expect(result).resolves.toEqual({ response: 0, checkboxChecked: false })
     expect(win.destroyed).toBe(true)

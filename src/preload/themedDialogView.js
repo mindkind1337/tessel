@@ -14,6 +14,8 @@ export function renderDialog(doc, content, answer, now = () => Date.now()) {
   for (const [name, value] of Object.entries(content.vars || {})) {
     if (/^--[a-z0-9-]+$/.test(name) && HEX.test(String(value))) root.style.setProperty(name, String(value))
   }
+  root.dataset.theme = content.theme === 'warp' ? 'warp' : 'classic'
+  doc.body.classList.toggle('cover', content.cover === true)
   const byId = (id) => doc.getElementById(id)
   byId('icon')?.setAttribute('class', `icon ${['warning', 'error', 'question'].includes(content.type) ? content.type : 'info'}`)
   byId('title').textContent = String(content.title || '')
@@ -61,6 +63,7 @@ export function renderDialog(doc, content, answer, now = () => Date.now()) {
         choose(focused >= 0 ? focused : defaultId)
       } else if (event.key === 'Tab') {
         event.preventDefault()
+        doc.body.classList.add('kbd')
         if (!buttons.length) return
         const at = buttons.indexOf(doc.activeElement)
         const next = at < 0 ? 0 : (at + (event.shiftKey ? buttons.length - 1 : 1)) % buttons.length
@@ -73,11 +76,12 @@ export function renderDialog(doc, content, answer, now = () => Date.now()) {
   // about trust).
   const first = buttons.find((b) => Number(b.dataset.index) === defaultId) || buttons[0]
   first?.focus()
-  // The height it needs whatever the window's size now (the text part
-  // scrolls when the window cannot grow that much).
-  const part = (sel, scroll) => {
-    const el = doc.querySelector(sel)
-    return el ? (scroll ? el.scrollHeight : el.getBoundingClientRect().height) : 0
-  }
-  return Math.ceil(part('.head') + part('.body', true) + part('.actions') + 2)
+  // Over Tessel's window, a click beside the card is Cancel (as in Tessel).
+  const backdrop = doc.querySelector('.backdrop')
+  backdrop?.addEventListener('pointerdown', (event) => {
+    if (content.cover === true && event.target === backdrop) choose(cancelId, { safe: true })
+  })
+  // The height the card needs (a window of its own is sized to it).
+  const card = doc.querySelector('.card')
+  return Math.ceil((card ? card.scrollHeight : 0) + 2)
 }

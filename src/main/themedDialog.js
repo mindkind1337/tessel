@@ -18,7 +18,7 @@ export const CONTENT_CHANNEL = 'themed-dialog:content'
 export const READY_CHANNEL = 'themed-dialog:ready'
 export const ANSWER_CHANNEL = 'themed-dialog:answer'
 
-const WIDTH = 460
+const WIDTH = 500
 const MIN_HEIGHT = 140
 const MAX_HEIGHT = 620
 
@@ -76,7 +76,7 @@ function cleanText(value, max) {
 
 // What the dialog window shows, from showMessageBox's options: plain data
 // (strings, numbers), drawn as text by the dialog's preload.
-export function dialogContent(opts = {}, vars = themeVars('classic')) {
+export function dialogContent(opts = {}, vars = themeVars('classic'), { theme = 'classic', cover = false } = {}) {
   const raw = Array.isArray(opts.buttons) && opts.buttons.length ? opts.buttons.slice(0, 6) : ['OK']
   const buttons = raw.map((b) => cleanText(b, 80).replace(/\n/g, ' ') || 'OK')
   const valid = (n) => Number.isInteger(n) && n >= 0 && n < buttons.length
@@ -92,6 +92,10 @@ export function dialogContent(opts = {}, vars = themeVars('classic')) {
     buttons,
     defaultId,
     cancelId,
+    // Warp has confirmations of its own look; the others are the classic one
+    // in their colours. cover: the window covers Tessel's, dimmed.
+    theme: theme === 'warp' ? 'warp' : 'classic',
+    cover: cover === true,
     vars: { ...vars }
   }
 }
@@ -105,38 +109,43 @@ export const DIALOG_HTML = `<!doctype html>
 <style>
 * { box-sizing: border-box; }
 :root { color-scheme: dark; }
-html, body { margin: 0; height: 100%; overflow: hidden; }
+html, body { margin: 0; height: 100%; overflow: hidden; background: transparent; }
 body {
-  background: var(--surface, #181b21);
   color: var(--text, #d6d9df);
   font-family: 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
   font-size: 12.5px;
   user-select: none;
 }
+/* As Tessel's own confirmations (ConfirmDialog.vue, style.css): a card over
+   the dimmed window. */
+.backdrop { position: fixed; inset: 0; display: grid; place-items: center; padding: 16px; }
+body.cover .backdrop { background: rgba(5, 6, 8, 0.6); }
+body:not(.cover) .backdrop { padding: 0; place-items: stretch; }
 .card {
-  display: flex; flex-direction: column;
-  max-height: 100vh;
+  width: min(500px, 100%);
+  max-height: calc(100vh - 60px);
+  overflow-y: auto;
+  padding: 20px 22px 18px;
   border: 1px solid var(--border-strong, #333946);
+  border-radius: 14px;
   background: var(--surface, #181b21);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
 }
-.head {
-  display: flex; align-items: center; gap: 10px;
-  padding: 16px 20px 4px;
-  -webkit-app-region: drag;
-}
-.icon { flex: 0 0 auto; width: 22px; height: 22px; color: var(--accent, #6c9cff); }
-.icon.warning, .icon.error { color: var(--warn, #f5a524); }
+body:not(.cover) .card { width: 100%; max-height: 100vh; border-radius: 0; box-shadow: none; }
+.card::-webkit-scrollbar { width: 8px; }
+.card::-webkit-scrollbar-thumb { background: var(--border-strong, #333946); border-radius: 8px; }
+.head { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; }
+.icon { flex: 0 0 auto; width: 16px; height: 16px; color: var(--accent, #6c9cff); }
+.icon.warning { color: var(--warn, #f5a524); }
 .icon.error { color: var(--danger, #e5484d); }
 .icon .ic { display: none; }
 .icon.info .ic-info, .icon.question .ic-info, .icon.warning .ic-warn, .icon.error .ic-warn { display: block; }
 .title { margin: 0; color: var(--text-strong, #f1f3f6); font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
-.body { padding: 6px 20px 0 52px; overflow-y: auto; min-height: 0; user-select: text; }
-.message { margin: 0; color: var(--text, #d6d9df); line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
-.detail { margin: 10px 0 0; color: var(--text-dim, #7f8795); line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.body { user-select: text; }
+.message { margin: 0; color: var(--text, #d6d9df); font-size: 12.5px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.detail { margin: 8px 0 0; color: var(--text-dim, #7f8795); font-size: 12.5px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
 .detail:empty, .message:empty { display: none; }
-.head, .actions { flex: 0 0 auto; }
-.body { flex: 1 1 auto; }
-.actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; padding: 18px 20px 18px; }
+.actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
 button {
   height: 30px; padding: 0 14px;
   border: 1px solid var(--border-strong, #333946); border-radius: 7px;
@@ -154,15 +163,24 @@ button.primary.danger {
   background: color-mix(in srgb, var(--danger, #e5484d) 22%, transparent);
 }
 button:focus { outline: none; }
-button:focus-visible, button.focused { outline: 2px solid var(--accent, #6c9cff); outline-offset: 2px; }
-::-webkit-scrollbar { width: 10px; }
-::-webkit-scrollbar-thumb { background: var(--border-strong, #333946); border: 3px solid transparent; border-radius: 8px; background-clip: padding-box; }
+/* The focus ring once the keyboard moves it (Tab), not from the start. */
+body.kbd button:focus { outline: 2px solid var(--accent, #6c9cff); outline-offset: 2px; }
+/* The Warp-inspired theme's confirmations (themes.css). */
+:root[data-theme='warp'] .card { width: min(440px, 100%); padding: 16px 18px; border-radius: 7px; background: var(--chrome, #161917); }
+:root[data-theme='warp'] body:not(.cover) .card { width: 100%; border-radius: 0; }
+:root[data-theme='warp'] .title { font-size: 13px; font-weight: 500; }
+:root[data-theme='warp'] .message, :root[data-theme='warp'] .detail { font-size: 11px; }
+:root[data-theme='warp'] .actions { gap: 6px; margin-top: 14px; }
+:root[data-theme='warp'] button { height: 26px; padding-inline: 10px; border-radius: 4px; background: var(--surface, #202321); font-size: 11px; }
+:root[data-theme='warp'] button.primary { border-color: color-mix(in srgb, var(--accent, #aed5b2) 52%, var(--border, #303631)); background: color-mix(in srgb, var(--accent, #aed5b2) 12%, var(--surface, #202321)); }
+:root[data-theme='warp'] button.primary.danger { border-color: color-mix(in srgb, var(--danger, #e5a6a0) 58%, var(--border, #303631)); background: color-mix(in srgb, var(--danger, #e5a6a0) 10%, var(--surface, #202321)); color: var(--danger, #e5a6a0); }
 </style>
 </head>
 <body>
+<div class="backdrop">
 <div class="card" role="alertdialog" aria-modal="true" aria-labelledby="title" aria-describedby="message">
   <div class="head">
-    <svg id="icon" class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <svg id="icon" class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
       <g class="ic ic-warn"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></g>
       <g class="ic ic-info"><circle cx="12" cy="12" r="9.5"/><path d="M12 16v-5"/><path d="M12 8h.01"/></g>
     </svg>
@@ -173,6 +191,7 @@ button:focus-visible, button.focused { outline: 2px solid var(--accent, #6c9cff)
     <p id="detail" class="detail"></p>
   </div>
   <div id="actions" class="actions"></div>
+</div>
 </div>
 </body>
 </html>`
@@ -194,7 +213,8 @@ export function createThemedDialog({ BrowserWindow, dialog, preload, getTheme = 
     let content
     let win
     try {
-      content = dialogContent(opts, themeVars(getTheme()))
+      const theme = getTheme()
+      content = dialogContent(opts, themeVars(theme), { theme, cover: !!parent })
       win = new BrowserWindow({
         parent: parent || undefined,
         modal: !!parent,
@@ -211,8 +231,12 @@ export function createThemedDialog({ BrowserWindow, dialog, preload, getTheme = 
         // Without it, a frameless window that cannot be resized comes out
         // smaller than asked on Windows (its sizing border is taken off).
         thickFrame: false,
+        // Over Tessel's window it is see-through: its page dims the window
+        // and draws the card (rounded, with its shadow) in the middle.
+        transparent: !!parent,
+        hasShadow: !parent,
         title: content.title || 'Tessel',
-        backgroundColor: content.vars['--surface'] || '#181b21',
+        backgroundColor: parent ? '#00000000' : content.vars['--surface'] || '#181b21',
         webPreferences: {
           preload,
           sandbox: true,
@@ -274,12 +298,11 @@ export function createThemedDialog({ BrowserWindow, dialog, preload, getTheme = 
         clearTimeout(timer)
         const h = Math.max(MIN_HEIGHT, Math.min(MAX_HEIGHT, Math.ceil(Number(height) || 220)))
         try {
-          win.setContentSize(WIDTH, h)
-          const p = parent && !parent.isDestroyed() ? (parent.isMinimized?.() ? parent.getNormalBounds() : parent.getBounds()) : null
-          if (p) {
-            const [w, wh] = win.getSize()
-            win.setPosition(Math.round(p.x + (p.width - w) / 2), Math.round(p.y + Math.max(0, (p.height - wh) / 2)))
+          const p = parent && !parent.isDestroyed() && !parent.isMinimized?.() ? parent.getContentBounds?.() : null
+          if (p && p.width > 0 && p.height > 0) {
+            win.setBounds({ x: p.x, y: p.y, width: p.width, height: p.height })
           } else {
+            win.setContentSize(WIDTH, h)
             win.center()
           }
           win.show()
