@@ -57,6 +57,15 @@ describe('compact usage roster', () => {
     expect(wrapper.find('.usage-window').exists()).toBe(false)
   })
 
+  it('lists the providers with usage first, the ones without at the bottom', async () => {
+    api.listAgents.mockResolvedValue([{ id: 'claude', available: true }, { id: 'codex', available: true }])
+    api.getUsage.mockResolvedValue({ agents: [{ id: 'claude', windows: [] }, { id: 'codex', windows: [hourly, weekly] }] })
+    await open()
+    const ids = wrapper.findAll('[data-test="usage-agent"]').map((s) => s.text())
+    expect(ids[0]).toContain('Codex')
+    expect(ids.at(-1)).toContain('Claude')
+  })
+
   it('uses a fresh window ahead of stale readings and never resets old usage to zero', async () => {
     api.getUsage.mockResolvedValue(
       readings([
