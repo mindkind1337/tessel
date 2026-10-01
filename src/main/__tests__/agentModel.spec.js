@@ -356,4 +356,42 @@ describe("Claude Code's model and effort from its latest answer", () => {
     expect(agentModel({ agentId: 'claude', sessionId: sid, command: 'claude', chosenModel: 'fable' }, home).chosenEffort).toBe('medium')
     fs.rmSync(home, { recursive: true, force: true })
   })
+
+  it('a /model or /effort run after the latest answer is newer (its command and its result line)', async () => {
+    const { claudeTurnFromText } = await import('../agentModel.js')
+    const answer = (model, effort, ts) => JSON.stringify({ type: 'assistant', timestamp: ts, effort, perTurnEffort: effort, message: { model } })
+    const user = (content, ts, extra = {}) => JSON.stringify({ type: 'user', timestamp: ts, message: { role: 'user', content }, ...extra })
+    const caveat = (ts) => user('<local-command-caveat>The command below was run directly in Claude Code</local-command-caveat>', ts, { isMeta: true })
+    const command = (name, args, ts) => user(`<command-name>/${name}</command-name>\n            <command-message>${name}</command-message>\n            <command-args>${args}</command-args>`, ts)
+    const stdout = (text, ts) => user(`<local-command-stdout>${text}</local-command-stdout>`, ts)
+    const T1 = '2026-10-01T17:56:48.645Z'
+    const T2 = '2026-10-01T17:58:00.000Z'
+    const T3 = '2026-10-01T17:59:00.000Z'
+    const base = [answer('claude-opus-5-5', 'xhigh', T1)]
+    // /model haiku: Haiku, no effort, from when it ran.
+    const haiku = [...base, caveat(T2), command('model', 'haiku', T2), stdout('Set model to `Haiku 4.5` and saved as your default for new sessions', T2)]
+    expect(claudeTurnFromText(haiku.join('\n'))).toEqual({ model: 'haiku', effort: null, at: Date.parse(T2) })
+    // Then /model sonnet and /effort medium.
+    const sonnet = [
+      ...haiku,
+      caveat(T3),
+      command('model', 'sonnet', T3),
+      stdout('Set model to `Sonnet 5.5` and saved as your default for new sessions', T3),
+      caveat(T3),
+      command('effort', 'medium', T3),
+      stdout('Set effort level to medium (saved as your default for new sessions): Balanced approach', T3)
+    ]
+    expect(claudeTurnFromText(sonnet.join('\n'))).toEqual({ model: 'sonnet', effort: 'medium', at: Date.parse(T3) })
+    // A bare /model (its picker): the family it printed.
+    const picked = [...base, command('model', '', T2), stdout('Set model to `Sonnet 5.5`', T2)]
+    expect(claudeTurnFromText(picked.join('\n'))).toMatchObject({ model: 'sonnet', effort: 'xhigh' })
+    // A /model it refused (no "Set model to" after it) changes nothing.
+    const refused = [...base, command('model', 'nonsense', T2), stdout('Invalid model', T2)]
+    expect(claudeTurnFromText(refused.join('\n'))).toMatchObject({ model: 'claude-opus-5-5', effort: 'xhigh' })
+    // An answer after the command: the answer says what runs.
+    const answered = [...haiku, answer('claude-haiku-4-5', null, T3)]
+    expect(claudeTurnFromText(answered.join('\n'))).toMatchObject({ model: 'claude-haiku-4-5', at: Date.parse(T3) })
+    // Before any answer: the command alone.
+    expect(claudeTurnFromText([command('model', 'opus', T2), stdout('Set model to `Opus 5.5`', T2)].join('\n'))).toEqual({ model: 'opus', effort: null, at: Date.parse(T2) })
+  })
 })

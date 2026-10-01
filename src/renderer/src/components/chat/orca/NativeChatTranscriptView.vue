@@ -26,8 +26,19 @@
 //   relative paths), model and effort (sessionOptions { models, values },
 //   setOption({ model } | { effort }) -> { ok, error }: the pane's own
 //   model menu path; Codex changes them in its own picker, opened in the
-//   terminal), the context ring (contextModel: the model, for Claude's 1M
-//   window) and voice typing (dictate, dictationTitle).
+//   terminal), the permission mode (permissionMode: the mode it is in;
+//   modeBlocked(mode) -> '' or why it cannot be picked now;
+//   setPermissionMode(mode) -> { ok, error }: Claude Code's and OpenClaude's
+//   Shift+Tab, run by the pane; Codex changes it in its own /permissions
+//   picker, opened in the terminal), the context ring (contextModel: the
+//   model, for its context window: terminalChatExtras.js) and voice typing
+//   (dictate, dictationTitle); paneActions (the right-click menu's: split,
+//   maximize, close; Paste goes into the composer, "Continue in a terminal"
+//   shows the terminal), background ({ ids, listedAt }: what the agent's last
+//   Stop listed, for the background-task dock), sendHeldReason() -> '' or why
+//   a message sent from here still waits to be typed (shown on its row).
+// The "/" menu also lists the agent's skills (transcriptView:skills), and
+// scrolling up reads earlier lines of its file (transcriptView:earlier).
 // Emits: close (back to the terminal).
 // Exposed: focus() (the composer).
 import { computed, onBeforeUnmount, onMounted, provide, ref, shallowRef, watch } from 'vue'
@@ -35,6 +46,8 @@ import { MessageCircleQuestion, MessagesSquare, ShieldQuestion, SquareTerminal }
 import './orca-tokens.css'
 import NativeChatComposer from './NativeChatComposer.vue'
 import NativeChatContextBanner from './NativeChatContextBanner.vue'
+import NativeChatContextMenu from './NativeChatContextMenu.vue'
+import NativeChatStructuredSessionStatus from './NativeChatStructuredSessionStatus.vue'
 import NativeChatEmptyState from './NativeChatEmptyState.vue'
 import NativeChatMessageList from './NativeChatMessageList.vue'
 import NativeChatQuestionCard from './NativeChatQuestionCard.vue'
@@ -44,9 +57,10 @@ import { reduceStructuredAgentSession, EMPTY_STRUCTURED_AGENT_SESSION } from '..
 import { projectStructuredAgentSessionMessages } from '../../../chat/orca/structured-agent-session-message-projection.js'
 import { useNativeChatLinkActions } from '../../../chat/orca/composables/use-native-chat-link-actions.js'
 import { useNativeChatSessionOptionCommand } from '../../../chat/orca/composables/use-native-chat-session-option-command.js'
+import { useNativeChatWorkspaceFileDrop } from '../../../chat/orca/composables/use-native-chat-workspace-file-drop.js'
 import { useStructuredAgentSessionContextUsage } from '../../../chat/orca/composables/use-structured-agent-session-context-usage.js'
 import { appendCommandMarkerCache, readCommandMarkerCache } from '../../../chat/orca/native-chat-command-marker.js'
-import { tesselSessionOptionSnapshot, tesselSessionOptionSurface } from './native-chat-session-option-pickers.js'
+import { TESSEL_PERMISSION_MODES, permissionModeDescriptor, tesselSessionOptionSnapshot, tesselSessionOptionSurface } from './native-chat-session-option-pickers.js'
 import {
   KEY_ALLOW,
   KEY_ESCAPE,
@@ -64,6 +78,7 @@ import {
   withCommandMarkers,
   withContextWindow
 } from '../../../chat/terminalChatBridge.js'
+import { heldMessageIds, mergeCommandMarkers, splitCommandTurns, terminalBackgroundTasks } from '../../../chat/terminalChatExtras.js'
 import { t } from '../../../i18n'
 
 const props = defineProps({
@@ -87,8 +102,16 @@ const props = defineProps({
   setOption: { type: Function, default: undefined },
   listFiles: { type: Function, default: undefined },
   contextModel: { type: String, default: '' },
+  // The permission mode picker (interactive).
+  permissionMode: { type: String, default: '' },
+  modeBlocked: { type: Function, default: undefined },
+  setPermissionMode: { type: Function, default: undefined },
   dictate: { type: Function, default: undefined },
-  dictationTitle: { type: String, default: undefined }
+  dictationTitle: { type: String, default: undefined },
+  // The right-click menu, the background-task dock, held messages (interactive).
+  paneActions: { type: Object, default: null },
+  background: { type: Object, default: null },
+  sendHeldReason: { type: Function, default: undefined }
 })
 const emit = defineEmits(['close'])
 
@@ -109,6 +132,15 @@ const draft = ref('')
 // here and is not in it yet (shown as sent meanwhile).
 const fileEvents = shallowRef([])
 const pendingSends = shallowRef([])
+// The slash commands the file shows ("Ran /x" rows, not your messages), its
+// background tasks, whether earlier lines can still be read.
+const fileCommands = shallowRef([])
+const fileBackground = shallowRef([])
+const hasEarlier = ref(false)
+const loadingEarlier = ref(false)
+const olderGeneration = ref(0)
+// Each message sent from here scrolls the list to it.
+const sentSignal = ref(0)
 let viewId = null
 let opening = false
 let off = null
@@ -137,8 +169,14 @@ function render() {
   adapter.replay(merged.events)
   state.value = reduceStructuredAgentSession(EMPTY_STRUCTURED_AGENT_SESSION, { type: 'event', event: adapter.snapshotEvent() }, 0)
 }
-function show(events) {
-  fileEvents.value = tagTesselTurns(withContextWindow(events || [], props.contextModel))
+// One read of the file: { events, more, background }.
+function show(res) {
+  const tagged = tagTesselTurns(withContextWindow((res && res.events) || [], props.contextModel, props.agent))
+  const split = props.interactive ? splitCommandTurns(tagged) : { events: tagged, commands: [] }
+  fileEvents.value = split.events
+  fileCommands.value = split.commands
+  fileBackground.value = res && Array.isArray(res.background) ? res.background : []
+  hasEarlier.value = !!(res && res.more)
   render()
 }
 
@@ -185,15 +223,40 @@ async function openView() {
     return
   }
   viewId = res.viewId
+  viewOpen.value = true
   truncated.value = !!res.truncated
-  show(res.events)
+  show(res)
   phase.value = 'ready'
+}
+// Scrolled up: the lines before those shown, read from the same file
+// (bounded in the main process). -> 'applied' | 'unchanged' | 'failed'
+async function loadEarlier() {
+  const a = api()
+  if (!a || typeof a.earlier !== 'function' || !viewId || loadingEarlier.value || !hasEarlier.value) return 'unchanged'
+  const asked = viewId
+  loadingEarlier.value = true
+  let res
+  try {
+    res = await a.earlier({ viewId })
+  } catch {
+    res = null
+  } finally {
+    loadingEarlier.value = false
+  }
+  if (!alive || asked !== viewId) return 'unchanged'
+  if (!res || !res.ok) return 'failed'
+  truncated.value = !!res.truncated
+  show(res)
+  if (!res.added) return 'unchanged'
+  olderGeneration.value++
+  return 'applied'
 }
 function closeView() {
   stopRetry()
   const a = api()
   if (a && viewId) a.close({ viewId })
   viewId = null
+  viewOpen.value = false
 }
 
 onMounted(() => {
@@ -203,7 +266,7 @@ onMounted(() => {
       if (!msg || msg.viewId !== viewId || !viewId) return
       if (msg.ok) {
         truncated.value = !!msg.truncated
-        show(msg.events)
+        show(msg)
         phase.value = 'ready'
       }
     })
@@ -232,6 +295,9 @@ watch(
   () => {
     closeView()
     fileEvents.value = []
+    fileCommands.value = []
+    fileBackground.value = []
+    hasEarlier.value = false
     phase.value = 'loading'
     render()
     if (props.isVisible) openView()
@@ -249,16 +315,18 @@ watch(
     markers.value = props.interactive ? readCommandMarkerCache(markerScope()) : []
   }
 )
-const messages = computed(() => withCommandMarkers(projectStructuredAgentSessionMessages(state.value.items, [], state.value.submissions), markers.value))
+// The file's commands (each run once) and those sent from here it lacks yet.
+const allMarkers = computed(() => mergeCommandMarkers(markers.value, fileCommands.value))
+const messages = computed(() => withCommandMarkers(projectStructuredAgentSessionMessages(state.value.items, [], state.value.submissions), allMarkers.value))
 const session = computed(() => ({
   messages: messages.value,
   status: messages.value.length ? 'ready' : 'empty',
   sessionId: props.sessionId,
   agent: props.agent,
-  hasMore: false,
-  loadingEarlier: false,
-  olderHistoryGeneration: 0,
-  loadEarlier: async () => 'unchanged',
+  hasMore: hasEarlier.value,
+  loadingEarlier: loadingEarlier.value,
+  olderHistoryGeneration: olderGeneration.value,
+  loadEarlier,
   readPhase: 'ready'
 }))
 const fileLinkContext = computed(() => {
@@ -281,6 +349,7 @@ function sendCommand(text, how = commandDelivery(props.agent, text) || 'paste') 
   const command = String(text || '').trim()
   props.sendMessage(command, { command: how })
   markers.value = appendCommandMarkerCache(markerScope(), command)
+  sentSignal.value++
   return { ok: true }
 }
 // The images' files (Tessel's copies of what was pasted, dropped or picked),
@@ -323,6 +392,8 @@ async function send(text, opts = {}) {
   const shown = body.trim() ? body : t('chat.orca.terminalChat.imageOnly', '(image)')
   pendingSends.value = [...pendingSends.value, { id, text: shown, at: Date.now(), delivered: false }]
   render()
+  sentSignal.value++
+  watchHeld()
   props.sendMessage(body, {
     ...(images.length ? { images } : {}),
     onDelivered: () => {
@@ -336,6 +407,36 @@ async function send(text, opts = {}) {
   })
   return { ok: true }
 }
+
+// A message Tessel's delivery holds (a line typed in the terminal, an
+// approval to answer first) shows as waiting, with why, until it is typed:
+// asked every second while one is not typed yet.
+const HELD_POLL_MS = 1000
+const heldReason = ref('')
+let heldTimer = null
+function checkHeld() {
+  const waiting = pendingSends.value.some((p) => !p.delivered)
+  let why = ''
+  if (waiting && typeof props.sendHeldReason === 'function') {
+    try {
+      why = props.sendHeldReason() || ''
+    } catch {
+      why = ''
+    }
+  }
+  heldReason.value = typeof why === 'string' ? why : ''
+  if (!waiting || !alive) {
+    clearInterval(heldTimer)
+    heldTimer = null
+  }
+}
+function watchHeld() {
+  if (heldTimer || typeof props.sendHeldReason !== 'function') return
+  heldTimer = setInterval(checkHeld, HELD_POLL_MS)
+  checkHeld()
+}
+onBeforeUnmount(() => clearInterval(heldTimer))
+const heldIds = computed(() => heldMessageIds(pendingSends.value, heldReason.value))
 
 // ---- Model and effort (the pane's model menu path) ----------------------------
 const isCodex = computed(() => composerAgent(props.agent) === 'codex')
@@ -362,19 +463,66 @@ const optionCommand = useNativeChatSessionOptionCommand({
   },
   onError: () => {}
 })
-// Model and effort only: a terminal agent's permission mode is its own
-// (Shift+Tab in Claude Code, /permissions in Codex), changed in its terminal.
-const optionSnapshot = computed(() =>
-  props.sessionOptions
+// The permission mode: the agent's own (Shift+Tab in Claude Code and
+// OpenClaude, run by the pane; /permissions in Codex, its own picker opened in
+// the terminal), with ChatPane's wording. Not during a turn: a key typed then
+// could land in an approval prompt that opens meanwhile.
+const modeDescriptor = computed(() => {
+  if (!props.interactive || !props.permissionMode || (!props.setPermissionMode && !isCodex.value)) return null
+  const agent = composerAgent(props.agent)
+  return permissionModeDescriptor({
+    agent,
+    modes: TESSEL_PERMISSION_MODES[agent],
+    current: props.permissionMode,
+    modeBlocked: (mode) => (typeof props.modeBlocked === 'function' ? props.modeBlocked(mode) || '' : ''),
+    settableWhileWorking: false
+  })
+})
+function openPermissionsPicker() {
+  const res = sendCommand('/permissions', 'type')
+  if (res.ok) emit('close')
+  return res
+}
+async function changePermissionMode(mode) {
+  if (mode === props.permissionMode) return { ok: true }
+  if (isCodex.value) {
+    openPermissionsPicker()
+    return { ok: false, error: t('chat.orca.terminalChat.codexPermissions', 'Codex changes its permissions in its own picker: choose in its terminal.') }
+  }
+  if (props.disabledReason) return { ok: false, error: props.disabledReason }
+  return props.setPermissionMode ? props.setPermissionMode(mode) : { ok: false }
+}
+const modelSurface = computed(() => (props.sessionOptions && props.setOption ? tesselSessionOptionSurface(optionCommand.dispatch) : null))
+const optionSnapshot = computed(() => [
+  ...(props.sessionOptions
     ? tesselSessionOptionSnapshot({
         agent: composerAgent(props.agent),
         models: props.sessionOptions.models || [],
         values: optionCommand.confirmedValues.value,
         permissionModes: false
       })
-    : []
-)
-const optionSurface = computed(() => (props.sessionOptions && props.setOption ? tesselSessionOptionSurface(optionCommand.dispatch) : null))
+    : []),
+  ...(modeDescriptor.value ? [modeDescriptor.value] : [])
+])
+// The pickers' surface: the model and effort through the pane's model menu
+// path, the permission mode through changePermissionMode.
+const optionSurface = computed(() => {
+  const models = modelSurface.value
+  if (!modeDescriptor.value) return models
+  const none = { ok: false, error: t('chat.orca.options.unsupported', 'This option is not available for this agent.') }
+  return {
+    setOption: (id, value) => (id === 'permissionMode' ? changePermissionMode(value) : models ? models.setOption(id, value) : Promise.resolve(none)),
+    setOptions: async (values) => {
+      const { permissionMode, ...rest } = values || {}
+      if (Object.keys(rest).length) {
+        const res = models ? await models.setOptions(rest) : none
+        if (!res || res.ok === false || permissionMode === undefined) return res
+      }
+      return permissionMode === undefined ? { ok: true } : changePermissionMode(permissionMode)
+    },
+    invokeAction: models ? models.invokeAction : async () => none
+  }
+})
 const optionIds = computed(() => optionSnapshot.value.map((o) => o.id))
 const optionPickerRequest = ref(null)
 // A bare "/model" or "/effort" (typed or picked): its picker here; Codex's
@@ -389,9 +537,15 @@ function onOptionCommand(name) {
   if (name === 'model' || name === 'effort') return sendCommand(`/${name}`)
   return { ok: false, error: t('chat.orca.options.unsupported', 'This option is not available for this agent.') }
 }
-// A typed "/model x" or "/effort x".
+// A typed "/model x", "/effort x" or "/permissionMode x".
 function setOptionFromText(payload) {
   const [optionId] = Object.keys(payload || {})
+  if (optionId === 'permissionMode') {
+    const why = modeDescriptor.value ? '' : t('chat.orca.options.unsupported', 'This option is not available for this agent.')
+    const choice = modeDescriptor.value && modeDescriptor.value.kind.choices.find((c) => c.value === payload[optionId])
+    const blocked = why || (!choice ? t('chat.orca.options.unsupported', 'This option is not available for this agent.') : choice.disabledReason || '')
+    return blocked ? Promise.resolve({ ok: false, error: blocked }) : Promise.resolve(changePermissionMode(payload[optionId]))
+  }
   return optionCommand.dispatch({ optionId, value: payload[optionId] })
 }
 const slashCommands = computed(() => bridgeSlashCommands(props.agent, { options: optionIds.value }))
@@ -427,6 +581,70 @@ function compact() {
   return sendCommand('/compact')
 }
 
+// ---- Skills, background tasks, the right-click menu -----------------------------
+// The "/" menu's skills: the agent's own (its project's, by its open view;
+// the user's; its account's), found by the main process.
+const viewOpen = ref(false)
+const skillsOptions = computed(() => {
+  const a = api()
+  if (!props.interactive || !a || typeof a.skills !== 'function') return undefined
+  return {
+    // Found again once its view is open (its project's folder is known then).
+    contextKey: `${props.sessionId}:${viewOpen.value ? 'view' : 'none'}`, // i18n-ignore key
+    discover: async ({ refresh } = {}) => {
+      const res = await a.skills({
+        agent: props.agent,
+        ...(props.accountId !== undefined ? { accountId: props.accountId } : {}),
+        ...(viewId ? { viewId } : {}),
+        ...(refresh ? { refresh: true } : {})
+      })
+      if (!res || res.ok === false || !res.result) throw new Error((res && res.error) || t('chat.orca.skills.unavailable', 'Skill discovery is unavailable.'))
+      return res.result
+    }
+  }
+})
+// The background work it still runs, from its file, less what its last Stop
+// no longer listed (no Stop here: see terminalBackgroundTasks).
+const backgroundTasks = computed(() =>
+  terminalBackgroundTasks(fileBackground.value, {
+    ids: props.background && Array.isArray(props.background.ids) ? props.background.ids : null,
+    listedAt: props.background ? props.background.listedAt : null,
+    working: props.working
+  })
+)
+const contextMenuRef = shallowRef(null)
+const menuActions = computed(() => ({
+  ...(props.paneActions || {}),
+  onPaste: () => composerRef.value && composerRef.value.pasteFromClipboard && composerRef.value.pasteFromClipboard(),
+  onSwitchToTerminal: () => emit('close')
+}))
+function onContextMenu(event) {
+  if (props.interactive && contextMenuRef.value) contextMenuRef.value.onContextMenu(event)
+}
+// A file dropped anywhere on the chat (its list or its composer), from the
+// system or Tessel's file tree: an image is attached as a pasted one, another
+// file's path goes into the draft (as in the chat pane). Taken here, never
+// passed on to the terminal under it (which would type the paths into it).
+const fileDrop = useNativeChatWorkspaceFileDrop(() => ({
+  paneKey: composerKey.value,
+  sessionId: props.sessionId,
+  disabled: !props.interactive || !!props.disabledReason,
+  attachResolvedPaths: (paths, connectionId, ownership) =>
+    composerRef.value && composerRef.value.attachResolvedPaths ? composerRef.value.attachResolvedPaths(paths, connectionId, ownership) : false
+}))
+function onDragOverCapture(event) {
+  if (props.interactive) fileDrop.onDragOverCapture(event)
+}
+function onDropCapture(event) {
+  if (props.interactive) fileDrop.onDropCapture(event)
+}
+function onSelectionCapture() {
+  if (contextMenuRef.value) contextMenuRef.value.rememberSelection()
+}
+function onPointerDownCapture(event) {
+  if (event.button === 2) onSelectionCapture()
+}
+
 // Stop: Escape, the terminal's own key (only while a turn runs).
 function stop() {
   if (props.working) keys(KEY_ESCAPE)
@@ -434,10 +652,32 @@ function stop() {
 
 // Its hook's question first (shown at once), else the file's.
 const ask = computed(() => (props.interactive ? currentAsk((props.waiting || {}).ask, fileEvents.value) : null))
+// An approval answered here (Allow or Deny sent) shows no card until another
+// one comes (its key: when the pane went into it), or after a while if the
+// pane never left it (the key may not have landed): a second click would type
+// into the agent's input.
+const ANSWERED_HIDE_MS = 8000
+const answeredApproval = ref(null) // the key of the approval answered
+let answeredApprovalTimer = null
+const approvalKey = () => String((props.waiting || {}).approvalKey ?? '')
+function markApprovalAnswered() {
+  answeredApproval.value = approvalKey()
+  clearTimeout(answeredApprovalTimer)
+  answeredApprovalTimer = setTimeout(() => (answeredApproval.value = null), ANSWERED_HIDE_MS)
+}
+watch(
+  () => !!(props.waiting || {}).approval,
+  (on) => {
+    if (!on) answeredApproval.value = null
+  }
+)
+onBeforeUnmount(() => clearTimeout(answeredApprovalTimer))
 const card = computed(() => {
   if (!props.interactive || props.disabledReason) return null
   const w = props.waiting || {}
-  return waitingCard({ approval: !!w.approval, input: !!w.input, working: props.working }, ask.value)
+  const shown = waitingCard({ approval: !!w.approval, input: !!w.input, working: props.working }, ask.value)
+  if (shown && shown.kind === 'approval' && answeredApproval.value !== null && answeredApproval.value === approvalKey()) return null
+  return shown
 })
 const questionSending = ref(false)
 function onQuestionAnswer(selections) {
@@ -460,9 +700,13 @@ function onQuestionCancel() {
   keys(KEY_ESCAPE)
 }
 function approve() {
+  if (!card.value || card.value.kind !== 'approval') return
+  markApprovalAnswered()
   keys(KEY_ALLOW)
 }
 function deny() {
+  if (!card.value || card.value.kind !== 'approval') return
+  markApprovalAnswered()
   keys(KEY_ESCAPE)
 }
 const fromAgent = computed(() => props.agentName || props.agent)
@@ -478,7 +722,17 @@ const title = computed(() => t('chat.orca.transcriptView.title', 'Conversation o
 </script>
 
 <template>
-  <div ref="rootRef" class="nc-root nc-transcript-view" data-test="transcript-view">
+  <div
+    ref="rootRef"
+    class="nc-root nc-transcript-view"
+    data-test="transcript-view"
+    @pointerdown.capture="onPointerDownCapture"
+    @mouseup.capture="onSelectionCapture"
+    @keyup.capture="onSelectionCapture"
+    @contextmenu.capture="onContextMenu"
+    @dragover.capture="onDragOverCapture"
+    @drop.capture="onDropCapture"
+  >
     <!-- The read-only view's bar. The chat view has none: the pane header
          already holds "Show terminal" (the user found the bar redundant). -->
     <div v-if="!interactive" class="nc-transcript-head">
@@ -517,9 +771,18 @@ const title = computed(() => t('chat.orca.transcriptView.title', 'Conversation o
         :show-live-turn-activity="false"
         :on-link-click="onLinkClick"
         :allow-file-uri-links="true"
+        :queued-message-ids="interactive ? heldIds : undefined"
+        :scroll-to-latest-signal="sentSignal"
       />
     </div>
     <template v-if="interactive">
+      <NativeChatStructuredSessionStatus
+        :session-id="sessionId"
+        :agent-label="fromAgent"
+        :is-visible="isVisible"
+        :background-tasks="backgroundTasks"
+        :stop-note="t('chat.orca.terminalChat.backgroundStop', 'To stop one, open its terminal: /tasks lists them there.')"
+      />
       <div v-if="card && card.kind === 'question'" class="nc-term-card nc-term-question" data-test="terminal-chat-question">
         <p class="nc-term-card-head">
           <MessageCircleQuestion class="nc-term-card-icon" aria-hidden="true" />
@@ -578,7 +841,7 @@ const title = computed(() => t('chat.orca.transcriptView.title', 'Conversation o
         :disabled-reason="disabledReason"
         :send="send"
         :allow-images="allowImages"
-        :set-option="sessionOptions && setOption ? setOptionFromText : undefined"
+        :set-option="(sessionOptions && setOption) || modeDescriptor ? setOptionFromText : undefined"
         :on-option-command="onOptionCommand"
         :commands="slashCommands"
         :context-usage="contextUsage"
@@ -588,8 +851,10 @@ const title = computed(() => t('chat.orca.transcriptView.title', 'Conversation o
         :mention-suggest="listFiles ? mentionSuggest : undefined"
         :dictate="dictate"
         :dictation-title="dictationTitle"
+        :skills-options="skillsOptions"
         @interrupt="stop"
       />
+      <NativeChatContextMenu ref="contextMenuRef" :root-el="rootRef" :enabled="isVisible" :actions="menuActions" />
     </template>
   </div>
 </template>

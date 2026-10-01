@@ -11,7 +11,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { config, flushPromises, mount } from '@vue/test-utils'
 import { computed, defineComponent, h, nextTick, reactive } from 'vue'
 import NativeChatSessionOptionPickers from '../NativeChatSessionOptionPickers.vue'
-import { tesselSessionOptionSnapshot, tesselSessionOptionSurface } from '../native-chat-session-option-pickers.js'
+import { permissionModeDescriptor, tesselSessionOptionSnapshot, tesselSessionOptionSurface } from '../native-chat-session-option-pickers.js'
 import { useNativeChatSessionOptionCommand } from '../../../../chat/orca/composables/use-native-chat-session-option-command.js'
 import { modelsFor } from '../../../../agentModels.js'
 
@@ -362,5 +362,44 @@ describe('the reported full id and the listed alias', () => {
     const other = tesselSessionOptionSnapshot({ agent: 'claude', models: [], values: { model: 'claude-opus-5-5[1m]' } })
     const row = (other.options || other).find((o) => o.id === 'model').kind.choices[0]
     expect(row.label).toBe('Opus 5.5 (1M)')
+  })
+})
+
+describe('a terminal agent with no model list here (OpenClaude): the mode pill alone', () => {
+  it('shows the options pill without a model pill, and picks a mode through the surface', async () => {
+    const setOptions = vi.fn(async () => ({ ok: true }))
+    const surface = { setOption: vi.fn(async () => ({ ok: true })), setOptions, invokeAction: vi.fn() }
+    const snapshot = [
+      permissionModeDescriptor({
+        agent: 'claude',
+        modes: ['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions'],
+        current: 'acceptEdits',
+        modeBlocked: (mode) => (mode === 'bypassPermissions' ? 'Started without Yolo' : ''),
+        settableWhileWorking: false
+      })
+    ]
+    wrapper = mount(NativeChatSessionOptionPickers, { props: { surface, snapshot }, attachTo: document.body })
+    await flushPromises()
+    expect(trigger('model')).toBeNull()
+    expect(trigger('options').textContent.trim()).toBe('Accept edits')
+    await openMenu('options')
+    expect(modes()).toEqual([
+      { id: 'default', disabled: false },
+      { id: 'acceptEdits', disabled: false },
+      { id: 'plan', disabled: false },
+      { id: 'auto', disabled: false },
+      { id: 'bypassPermissions', disabled: true }
+    ])
+    expect(modeItem('bypassPermissions').textContent).toContain('Started without Yolo')
+    await pick(modeItem('plan'))
+    menu()?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await flushPromises()
+    expect([...surface.setOption.mock.calls, ...setOptions.mock.calls].flat()).toContainEqual(expect.objectContaining({ permissionMode: 'plan' }))
+  })
+  it('during a turn the pill waits (a key could land in an approval)', async () => {
+    const snapshot = [permissionModeDescriptor({ agent: 'claude', modes: ['default', 'plan'], current: 'default', settableWhileWorking: false })]
+    wrapper = mount(NativeChatSessionOptionPickers, { props: { surface: { setOption: vi.fn(), setOptions: vi.fn(), invokeAction: vi.fn() }, snapshot, isWorking: true }, attachTo: document.body })
+    await flushPromises()
+    expect(trigger('options').disabled || trigger('options').getAttribute('data-disabled') !== null).toBe(true)
   })
 })

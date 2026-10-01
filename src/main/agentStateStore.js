@@ -9,6 +9,7 @@ import {
   STATUS_PROVIDERS
 } from '../shared/agentStateModel'
 import { nextAsk, validAsk } from '../shared/agentAsk'
+import { eventPermissionMode } from '../shared/agentPermissionMode'
 
 // A question's card (agentAsk.js) can take up to 16 KB of an event.
 const MAX_EVENT = 32 * 1024
@@ -79,7 +80,9 @@ const FIELDS = new Set([
   // A lead Stop's list of the background work still running (ids only).
   'background',
   // The question an agent asks you (agentAsk.js): its structure only.
-  'ask'
+  'ask',
+  // The lead's permission mode (agentPermissionMode.js): the enum value only.
+  'permissionMode'
 ])
 const clone = (value) => JSON.parse(JSON.stringify(value))
 const record = (value) => value && typeof value === 'object' && !Array.isArray(value)
@@ -205,10 +208,18 @@ function hookEvent(value, now) {
     return null
   // Its question, checked again (never trusted from the file): exactly
   // what agentAsk.js sanitizeAsk makes of it, else the event without it.
+  // Its permission mode too: one of the known values from a lead, else none.
   const rest = { ...value }
   delete rest.ask
+  delete rest.permissionMode
   const ask = validAsk(value)
-  return { ...rest, ...(ask ? { ask } : {}), ...(value.background !== undefined ? { background: [...value.background] } : {}) }
+  const permissionMode = eventPermissionMode(value)
+  return {
+    ...rest,
+    ...(ask ? { ask } : {}),
+    ...(permissionMode ? { permissionMode } : {}),
+    ...(value.background !== undefined ? { background: [...value.background] } : {})
+  }
 }
 
 /** One app-owned consumer; callers schedule scans, never one timer per pane. */
@@ -243,8 +254,10 @@ export function createAgentStateStore({ dir, now = Date.now, onChange = () => {}
       // A question is shown only while its agent waits (approval): any other
       // state (answered, interrupted, ended, stale) forgets it for good.
       if (item.ask && state.state !== 'approval') item.ask = null
+      // The permission mode its last hook said (with when), while it runs.
+      const mode = item.mode && state.state !== 'closed' ? { permissionMode: item.mode.value, permissionModeAt: item.mode.at } : {}
       Object.defineProperty(result, paneId, {
-        value: clone(item.ask ? { ...state, ask: item.ask } : state),
+        value: clone({ ...state, ...(item.ask ? { ask: item.ask } : {}), ...mode }),
         enumerable: true
       })
     }
@@ -484,9 +497,13 @@ export function createAgentStateStore({ dir, now = Date.now, onChange = () => {}
       // The reducer keeps no question: it only follows the pane (below).
       const plain = { ...event }
       delete plain.ask
+      delete plain.permissionMode
       let next = reduceAgentState(before, plain, clock())
       // Not kept in state.json: a question lives only in memory, while asked.
       if (next !== before) current.ask = nextAsk(current.ask, event)
+      // The permission mode (memory only too): the latest hook's.
+      if (event.permissionMode && (!current.mode || event.at >= current.mode.at))
+        current.mode = { value: event.permissionMode, at: event.at }
       if (event.at < bootAt && next !== before) {
         // Historical evidence may revise an actor's state, but a later screen
         // observation cannot confirm that newly recovered state on its behalf.

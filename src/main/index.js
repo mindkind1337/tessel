@@ -57,6 +57,7 @@ import { createChatSessions } from './chat/sessions'
 import { createChatImages } from './chat/chatImages'
 import { transcriptHomeFor } from './chat/transcriptHistory'
 import { createTranscriptViews } from './chat/transcriptView'
+import { createTerminalSkills } from './chat/terminalSkills'
 import { createSessionSearch } from './sessionSearch/index.js'
 import { createClaudeChat } from './chat/claudeChat'
 import { createCodexChat } from './chat/codexChat'
@@ -1218,6 +1219,15 @@ const transcriptViews = createTranscriptViews({
 })
 transcriptViews.register(ipcMain)
 app.on('will-quit', () => transcriptViews.closeAll())
+// The skills a terminal agent's chat view lists ("/" menu): its project's
+// (its open view's folder), the user's and its account's.
+createTerminalSkills({
+  views: transcriptViews,
+  homes: async (agent, accountId) => {
+    const r = await accountSessions.roots({ agent, accountId })
+    return (r && r[agent]) || null
+  }
+}).register(ipcMain)
 // Quitting kills the chat agents' process trees at once (before-quit below
 // waits for it); this one only catches a quit that skipped before-quit.
 app.on('will-quit', () => {

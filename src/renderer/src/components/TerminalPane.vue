@@ -54,7 +54,17 @@ import { switchClaudeModel, typeCommand } from '../claudeModelSwitch'
 import SessionOptionPicker from './SessionOptionPicker.vue'
 import AgentChildren from './AgentChildren.vue'
 import NativeChatTranscriptView from './chat/orca/NativeChatTranscriptView.vue'
-import { canShowChatView } from '../chat/terminalChatBridge'
+import {
+  KEY_SHIFT_TAB,
+  canCycleToYolo,
+  canShowChatView,
+  composerAgent,
+  launchArgsOf,
+  launchPermissionMode,
+  permissionModeFromScreen,
+  shownPermissionMode,
+  stepToPermissionMode
+} from '../chat/terminalChatBridge'
 import { listsChildren } from '../agentChildrenFeed'
 import HoverCardContent from './hover/HoverCardContent.vue'
 import PaneHoverDetails from './PaneHoverDetails.vue'
@@ -185,7 +195,9 @@ async function refreshModel() {
     let res = await window.shellApi.agentModel({
       agentId: n.agentId,
       sessionId: n.sessionId,
-      command: [n.agentCommand, n.detectedCommand].filter(Boolean).join(' '),
+      // Its launch arguments too: a --model or --effort Tessel added (a
+      // default from Settings > Agents) beats its settings file.
+      command: [n.agentCommand, launchArgsOf(n), n.detectedCommand].filter(Boolean).join(' '),
       cwd: n.startDir,
       launchedAt: n.launchedAt || 0,
       chosenModel:
@@ -439,6 +451,8 @@ async function chatSetOption(payload) {
   const value = optionId ? payload[optionId] : undefined
   const unsupported = t('chat.orca.options.unsupported', 'This option is not available for this agent.')
   if (!chatSessionOptions.value || !['model', 'effort'].includes(optionId) || typeof value !== 'string' || !value) return { ok: false, error: unsupported }
+  // An effort for a model that has none (Haiku): said so, not "at restart".
+  if (optionId === 'effort' && !modelHasEffort(effectiveModelId.value)) return { ok: false, error: t('pane.sessionOptions.noEffort', 'This model has no reasoning effort to choose.') }
   if (!paneRunning.value) return { ok: false, error: t('pane.sessionOptions.appliesAtStart', 'Applies when the agent starts.') }
   if (paneBusy.value || modelMenu.pending) return { ok: false, error: t('pane.sessionOptions.waitIdle', 'It is working: its model can change once it is idle.') }
   if (ctx.paneUserTyping && ctx.paneUserTyping(props.node.id)) return { ok: false, error: t('pane.chatView.typedLine', 'A line is typed in its terminal: send or clear it there first.') }
@@ -448,6 +462,11 @@ async function chatSetOption(payload) {
   if (outcome === 'unknown') return { ok: false, error: t('pane.sessionOptions.unverified', 'Could not verify the model change; open the terminal to check.') }
   if (outcome === 'busy') return { ok: false, error: t('pane.sessionOptions.waitIdle', 'It is working: its model can change once it is idle.') }
   return { ok: false, error: t('pane.sessionOptions.appliesAtRestart', 'A model picked here applies when the agent restarts.') }
+}
+// The model offers a reasoning effort (the catalog's options for it).
+function modelHasEffort(modelId) {
+  const catalog = getAgentSessionOptionCatalog(props.node.agentId)
+  return !!catalog && modelOptions(catalog, paneModelList.value, modelId).some((o) => o.id === 'effort')
 }
 // A flip-only option (/fast) or the agent's own picker (Codex's /model).
 async function onModelAction({ optionId }) {
@@ -721,7 +740,30 @@ const chatWaiting = computed(() => {
   const o = observedState.value
   const input = !!(o && o.state === 'approval' && o.reason === 'input')
   const ask = o && o.state === 'approval' && o.ask ? o.ask : null
-  return { approval: asksApproval.value || shownState.value === 'approval' || input, input, ask }
+  const approval = asksApproval.value || shownState.value === 'approval' || input
+  // Which approval (when the pane went into it): an answered one's card
+  // stays hidden until another one comes.
+  const approvalKey = approval ? (o && o.state === 'approval' && Number.isFinite(o.since) ? o.since : 'screen') : null
+  return { approval, input, ask, approvalKey }
+})
+// Why a message sent from the chat still waits to be typed (Tessel's delivery
+// holds it): '' when nothing holds it that the pane can tell.
+function chatSendHeldReason() {
+  if (ctx.paneUserTyping && ctx.paneUserTyping(props.node.id)) return t('pane.chatView.heldTyped', 'Waiting: a line is typed in its terminal (send or clear it there).')
+  if (chatWaiting.value.approval) return t('pane.chatView.heldApproval', 'Waiting: it asks for your approval first.')
+  return ''
+}
+// The chat view's right-click menu: this pane's own actions.
+const chatPaneActions = computed(() => ({
+  ...(ctx.splitLeaf ? { onSplitRight: () => ctx.splitLeaf(props.node.id, 'row'), onSplitDown: () => ctx.splitLeaf(props.node.id, 'col') } : {}),
+  ...(ctx.toggleMaximize ? { isPaneExpanded: isMaximized.value, onToggleExpand: () => ctx.toggleMaximize(props.node.id) } : {}),
+  ...(ctx.closeLeaf ? { onClosePane: () => ctx.closeLeaf(props.node.id) } : {})
+}))
+// What the agent's last Stop listed as still running in the background (ids,
+// when): the chat view's dock drops the tasks it no longer lists.
+const chatBackground = computed(() => {
+  const o = observedState.value
+  return o && Array.isArray(o.backgroundIds) ? { ids: o.backgroundIds, listedAt: o.backgroundListedAt } : null
 })
 const chatDisabledReason = computed(() =>
   props.node.sleeping ? t('pane.chatView.asleep', 'Asleep: it wakes up when you open this pane, then you can write to it.') : ''
@@ -737,6 +779,68 @@ function chatSend(text, callbacks) {
 // The cards' keys (Allow, Deny, Stop, a question's answer), only on a click.
 function chatKeys(bytes) {
   if (chatShown.value && !props.node.sleeping) window.shellApi.writePty(props.node.id, bytes)
+}
+// The chat view's permission mode picker: the mode the agent's hook said last
+// (permission_mode), or what Tessel saw on its screen after switching it,
+// whichever is newer; before either, how it was launched.
+const modeSeen = ref(null) // { mode, at }: after a switch from the chat view
+watch(() => props.node.agentLaunchToken, () => (modeSeen.value = null))
+const chatPermissionMode = computed(() => {
+  const o = observedState.value
+  return shownPermissionMode({
+    hookMode: o ? o.permissionMode : null,
+    hookAt: o && Number.isFinite(o.permissionModeAt) ? o.permissionModeAt : 0,
+    localMode: modeSeen.value && modeSeen.value.mode,
+    localAt: modeSeen.value ? modeSeen.value.at : 0,
+    launchMode: launchPermissionMode(props.node)
+  })
+})
+// Why a mode cannot be picked here (Claude Code, OpenClaude: Shift+Tab never
+// reaches Yolo in a session started without it, nor Don't ask).
+function chatModeBlocked(mode) {
+  if (composerAgent(props.node.agentId) === 'codex') return ''
+  if (mode === 'bypassPermissions' && !canCycleToYolo(props.node))
+    return canSwitchYolo.value
+      ? t('pane.chatView.yoloRestart', 'Started without Yolo: pane menu > Restart in Yolo')
+      : t('pane.chatView.yoloAtStart', 'Started without Yolo: only a restart with Yolo (Settings > Agents) allows it')
+  if (mode === 'dontAsk') return t('pane.chatView.modeAtStart', 'Only when it starts (--permission-mode)')
+  return ''
+}
+// Why no key may be typed into it now ('' when one may).
+function chatKeysBlocked() {
+  const id = props.node.id
+  if (!chatShown.value || !paneRunning.value) return t('pane.chatView.notRunning', 'It is not running.')
+  if (chatWaiting.value.approval) return t('pane.chatView.modeApproval', 'It asks for your approval: answer it first.')
+  if (chatWorking.value || agentStatus.value === 'busy') return t('pane.chatView.modeWorking', 'It is working: its mode can change once it is idle.')
+  if (ctx.paneUserTyping && ctx.paneUserTyping(id)) return t('pane.chatView.typedLine', 'A line is typed in its terminal: send or clear it there first.')
+  if (ctx.paneDelivering && ctx.paneDelivering(id)) return t('pane.chatView.modeDelivering', 'A message is being typed into it: try again in a moment.')
+  return ''
+}
+// Claude Code, OpenClaude: Shift+Tab one press at a time, each one checked on
+// its screen's footer, until it shows the mode asked (at most 6 presses).
+let modeSwitching = false
+async function chatSetPermissionMode(mode) {
+  if (composerAgent(props.node.agentId) === 'codex') return { ok: false }
+  const why = chatModeBlocked(mode) || chatKeysBlocked()
+  if (why) return { ok: false, error: why }
+  if (modeSwitching) return { ok: false, error: t('pane.chatView.modeSwitching', 'Its mode is already changing.') }
+  modeSwitching = true
+  let res
+  try {
+    res = await stepToPermissionMode({
+      target: mode,
+      read: () => permissionModeFromScreen(screenText(6)),
+      press: () => window.shellApi.writePty(props.node.id, KEY_SHIFT_TAB),
+      blocked: chatKeysBlocked
+    })
+  } finally {
+    modeSwitching = false
+  }
+  if (res.presses > 0 || res.ok) modeSeen.value = { mode: res.mode, at: Date.now() }
+  if (res.ok) return { ok: true }
+  if (res.code === 'blocked') return { ok: false, error: res.error }
+  if (res.code === 'unavailable') return { ok: false, error: t('pane.chatView.modeUnavailable', 'It does not offer this mode now (Shift+Tab never reached it).') }
+  return { ok: false, error: t('pane.chatView.modeUnconfirmed', 'Could not confirm the mode on its screen; open the terminal to check.') }
 }
 // The chat view's "@" menu: the files of the folder the agent works in.
 async function chatListFiles() {
@@ -874,7 +978,8 @@ const badge = computed(() => {
   if (props.node.sleeping) return 'asleep'
   if (exited.value) return 'exited'
   if (!isAgent.value) return null
-  if (asksApproval.value) return 'approval'
+  // A question it asks you is not an approval.
+  if (asksApproval.value) return chatWaiting.value.input ? 'question' : 'approval'
   if (limit.value) return 'limit'
   if (unsent.value) return 'unsent'
   if (stuck.value) return 'stuck'
@@ -1188,8 +1293,11 @@ function quotePath(path) {
 
 // Files from Windows, or a path dragged from Tessel's file explorer.
 const TESSEL_PATH = 'text/x-tessel-path'
+// The chat view over the terminal takes its own drops (its composer attaches
+// them): nothing dropped on it is typed into the terminal.
+const onChatView = (e) => chatShown.value && !!(e.target && e.target.closest && e.target.closest('[data-test="terminal-chat-view"]'))
 function onDragOver(e) {
-  if (!e.dataTransfer) return
+  if (!e.dataTransfer || onChatView(e)) return
   const types = [...e.dataTransfer.types]
   if (!types.includes('Files') && !types.includes(TESSEL_PATH)) return
   e.preventDefault()
@@ -1203,6 +1311,10 @@ function onDragLeave(e) {
 
 function onDrop(e) {
   dropping.value = false
+  if (onChatView(e)) {
+    e.preventDefault()
+    return
+  }
   const dragged = e.dataTransfer ? e.dataTransfer.getData(TESSEL_PATH) : ''
   if (dragged) {
     e.preventDefault()
@@ -1458,6 +1570,9 @@ const ctxMenuEl = ref(null)
 
 async function onContextMenu(e) {
   e.preventDefault()
+  // The chat view over the terminal has its own menu: a right-click there
+  // never pastes into the terminal under it.
+  if (onChatView(e)) return
   // Right-click pastes, like PuTTY and Linux terminals: select text, then
   // right-click to paste it at the prompt. Shift+right-click (or the ⋯
   // button) opens the menu.
@@ -2483,6 +2598,7 @@ const paneMenuBindings = computed(() => ({
         <span v-if="badge === 'asleep'" class="exit-tag" data-test="pane-badge" :title="t('pane.badge.asleepHint', 'Asleep: open the pane to wake it')">{{ t('pane.badge.asleep', 'asleep') }}</span>
         <span v-else-if="badge === 'exited'" class="exit-tag" data-test="pane-badge">{{ t('pane.badge.exited', 'exited') }}</span>
         <span v-else-if="badge === 'approval'" class="pane-approval" data-test="pane-badge" :title="t('pane.badge.approvalHint', 'This agent is asking you to approve something')">{{ t('pane.badge.approval', 'approve?') }}</span>
+        <span v-else-if="badge === 'question'" class="pane-approval" data-test="pane-badge" :title="t('pane.badge.questionHint', 'This agent asks you a question')">{{ t('pane.badge.question', 'question?') }}</span>
         <span v-else-if="badge === 'limit'" class="pane-limit" data-test="pane-badge" :title="limitTitle">{{ t('pane.badge.limit', 'limit') }}{{ limit.reset ? ` · ${limit.reset}` : '' }}</span>
         <button
           v-else-if="badge === 'unsent'"
@@ -2636,8 +2752,14 @@ const paneMenuBindings = computed(() => ({
         :set-option="chatSetOption"
         :list-files="chatListFiles"
         :context-model="(agentModel && agentModel.model) || ''"
+        :permission-mode="chatPermissionMode"
+        :mode-blocked="chatModeBlocked"
+        :set-permission-mode="chatSetPermissionMode"
         :dictate="chatDictate"
         :dictation-title="chatDictationTitle"
+        :pane-actions="chatPaneActions"
+        :background="chatBackground"
+        :send-held-reason="chatSendHeldReason"
         @close="toggleChatView"
       />
     </div>

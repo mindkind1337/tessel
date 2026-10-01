@@ -75,10 +75,14 @@ export function skillFrontmatter(text, fallback) {
   return name ? { name, description: values.description || null } : null
 }
 
+// roots: [base, kind, folders, owner?] to scan instead of the chat's own
+// (a terminal agent's: its account folder, Codex's); owner 'claude' unless
+// given, none for the shared .agents folders.
 export async function discoverClaudeSkills({
   cwd,
   projectDir,
   home = homedir(),
+  roots = null,
   limits = SKILL_LIMITS,
   io = fs
 }) {
@@ -91,7 +95,7 @@ export async function discoverClaudeSkills({
     sources = [],
     skills = [],
     seen = new Set()
-  for (const [base, kind, folders] of [
+  for (const [base, kind, folders, owner = 'claude'] of roots || [
     [cwd, 'repo', ['.claude/skills', '.claude/commands', '.agents/skills']],
     [projectDir, 'repo', ['.claude/skills', '.claude/commands', '.agents/skills']],
     [home, 'home', ['.claude/skills', '.claude/commands', '.agents/skills']]
@@ -108,12 +112,12 @@ export async function discoverClaudeSkills({
         label: root,
         path: root,
         sourceKind: kind,
-        providers: [shared ? 'agent-skills' : 'claude'],
-        owner: shared ? null : 'claude',
+        providers: [shared ? 'agent-skills' : owner],
+        owner: shared ? null : owner,
         exists: false,
         skippedReason: 'unavailable',
         base: path.resolve(base),
-        legacy: folder.endsWith('/commands')
+        legacy: /(^|\/)commands$/.test(folder)
       })
     }
   }

@@ -18,6 +18,8 @@ import { getAgentSlashCommands } from './orca/shared/native-chat-slash-commands.
 import { formatNativeChatFileReference } from './orca/shared/agent-image-paste.js'
 import { commandMarkersAsMessages } from './orca/native-chat-command-marker.js'
 import { fuzzyFilter } from '../../../shared/fuzzy.js'
+import { PERMISSION_MODES } from '../../../shared/agentPermissionMode.js'
+import { claudeContextWindow } from './terminalChatExtras.js'
 import { t } from '../i18n'
 
 // The agents whose terminal pane has a chat view (their transcript is read in
@@ -225,10 +227,135 @@ export function mentionToken(path) {
   return formatNativeChatFileReference(String(path || '').replace(/\\/g, '/')).slice(1)
 }
 
-// The context ring: Claude Code's file never says the window; a model chosen
-// with its 1M context ("…[1m]") does (Orca's rule: a bare name does not).
-export function withContextWindow(events, model) {
-  const window = /\[1m\]\s*$/i.test(String(model || '')) ? 1_000_000 : null
-  if (!window) return events
-  return (Array.isArray(events) ? events : []).map((e) => (e && e.type === 'contextUsage' && !e.windowTokens ? { ...e, windowTokens: window } : e))
+// The context ring: Claude Code's file never says the window; the model's
+// known one is used (terminalChatExtras.js claudeContextWindow: 1M for
+// "…[1m]", else 200k). Codex's file says its own.
+export function withContextWindow(events, model, agent = 'claude') {
+  const list = Array.isArray(events) ? events : []
+  if (composerAgent(agent) === 'codex') return list
+  return list.map((e) => {
+    if (!e || e.type !== 'contextUsage' || e.windowTokens) return e
+    const window = claudeContextWindow(model, e.usedTokens, agent)
+    return window ? { ...e, windowTokens: window } : e
+  })
+}
+
+// ---- The permission mode (the composer's mode picker) ------------------------
+
+// Claude Code's and OpenClaude's key to the next permission mode (Shift+Tab).
+export const KEY_SHIFT_TAB = '\x1b[Z'
+const MODES = new Set(PERMISSION_MODES)
+
+// What the pane was launched with (its launch signature: command, arguments,
+// variables). -> the arguments text, '' when unknown.
+export function launchArgsOf(node) {
+  if (!node || typeof node.launchSig !== 'string' || node.launchSig.length > 20000) return ''
+  try {
+    const sig = JSON.parse(node.launchSig)
+    return Array.isArray(sig) && typeof sig[1] === 'string' ? sig[1] : ''
+  } catch {
+    return ''
+  }
+}
+
+// The mode the agent started in, from how Tessel launched it (before its first
+// hook says): Yolo (Settings > Agents, the pane menu, a Yolo folder: its
+// skip-approvals flag), a --permission-mode of your own arguments, else default.
+export function launchPermissionMode(node) {
+  if (!node) return 'default'
+  const args = launchArgsOf(node)
+  if (composerAgent(node.agentId) === 'codex')
+    return node.launchYolo || node.permissions === 'yolo' || /--dangerously-bypass-approvals-and-sandbox\b/.test(args) ? 'bypassPermissions' : 'default'
+  const own = /--permission-mode[ =]["']?([A-Za-z]+)/.exec(args)
+  if (own && MODES.has(own[1])) return own[1]
+  return node.launchYolo || node.permissions === 'yolo' || /--dangerously-skip-permissions\b/.test(args) ? 'bypassPermissions' : 'default'
+}
+
+// Claude Code lets Shift+Tab reach Yolo (bypassPermissions) only in a session
+// started able to use it: with --dangerously-skip-permissions, its
+// --allow-dangerously-skip-permissions, or started in that mode.
+export function canCycleToYolo(node) {
+  if (!node || composerAgent(node.agentId) === 'codex') return false
+  const args = launchArgsOf(node)
+  return !!node.launchYolo || /--(?:allow-)?dangerously-skip-permissions\b/.test(args) || /--permission-mode[ =]["']?bypassPermissions\b/.test(args)
+}
+
+// The mode the picker shows: the latest of what the agent's hook said
+// (hookMode, at hookAt) and what Tessel saw on its screen after switching it
+// (localMode, at localAt); before either, the launch's.
+export function shownPermissionMode({ hookMode = null, hookAt = 0, localMode = null, localAt = 0, launchMode = 'default' } = {}) {
+  const hook = MODES.has(hookMode) ? hookMode : null
+  const local = MODES.has(localMode) ? localMode : null
+  if (hook && local) return localAt > hookAt ? local : hook
+  return hook || local || (MODES.has(launchMode) ? launchMode : 'default')
+}
+
+// The mode Claude Code's footer shows ("⏵⏵ accept edits on (shift+tab to
+// cycle)", "⏸ plan mode on"…; nothing in its default mode), read from the
+// last lines of its screen. -> a mode ('default' when none is shown)
+const SCREEN_MODES = [
+  [/accept edits on\b/i, 'acceptEdits'],
+  [/plan mode on\b/i, 'plan'],
+  [/bypass permissions on\b/i, 'bypassPermissions'],
+  [/auto mode on\b/i, 'auto'],
+  [/don['’]t ask on\b/i, 'dontAsk']
+]
+export function permissionModeFromScreen(text, lines = 4) {
+  const tail = String(text || '')
+    .replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '')
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .slice(-lines)
+  for (const line of tail.reverse()) {
+    // The footer line starts with the mode (after its symbol), never in a message.
+    if (!/^[^A-Za-z]{0,6}(?:accept edits|plan mode|bypass permissions|auto mode|don['’]t ask) on\b/i.test(line)) continue
+    for (const [re, mode] of SCREEN_MODES) if (re.test(line)) return mode
+  }
+  return 'default'
+}
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+// Shift+Tab, one press at a time, until the screen shows the target mode.
+// read() -> the mode on screen now; press() sends one Shift+Tab; blocked() ->
+// '' or why no key may be typed now (checked before each press). Stops at the
+// target, after maxPresses, when a press changes nothing on screen within
+// stepTimeoutMs, when the cycle comes back to where it started (the target is
+// not in it), or after timeoutMs in all.
+// -> { ok, mode (the last seen), presses, code?: 'blocked' | 'unconfirmed' |
+// 'unavailable' | 'cap' | 'timeout', error? }
+export async function stepToPermissionMode({
+  target,
+  read,
+  press,
+  blocked = () => '',
+  maxPresses = 6,
+  stepTimeoutMs = 1500,
+  timeoutMs = 8000,
+  pollMs = 80,
+  sleep = wait,
+  now = Date.now
+} = {}) {
+  const start = now()
+  let seen = read()
+  const first = seen
+  let presses = 0
+  while (seen !== target) {
+    if (presses >= maxPresses) return { ok: false, code: 'cap', mode: seen, presses }
+    if (now() - start >= timeoutMs) return { ok: false, code: 'timeout', mode: seen, presses }
+    const why = blocked()
+    if (why) return { ok: false, code: 'blocked', error: why, mode: seen, presses }
+    press()
+    presses++
+    const pressedAt = now()
+    let next = read()
+    while (next === seen && now() - pressedAt < stepTimeoutMs) {
+      await sleep(pollMs)
+      next = read()
+    }
+    if (next === seen) return { ok: false, code: 'unconfirmed', mode: seen, presses }
+    seen = next
+    if (seen !== target && seen === first) return { ok: false, code: 'unavailable', mode: seen, presses }
+  }
+  return { ok: true, mode: seen, presses }
 }

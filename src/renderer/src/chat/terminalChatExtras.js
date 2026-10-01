@@ -1,0 +1,116 @@
+// More of the chat view over a terminal agent (terminalChatBridge.js): its
+// slash commands shown as "Ran /command" rows, its background-task dock, the
+// messages waiting to be typed, the context window of a Claude model.
+// Pure: every input is given.
+import { agentJournalSubmissionKey } from './orca/shared/agent-session-journal-item-key.js'
+
+// ---- Slash commands ------------------------------------------------------------
+
+// A user line that is one slash command ("/compact", "/model haiku"): what the
+// agent's file shows for a command run in it (Claude Code writes it once as
+// typed and once more as its <command-name> echo, which the reader turns into
+// the same text).
+const COMMAND = /^\/[A-Za-z][\w:.-]*(?:[ \t][^\r\n]*)?$/
+// The same command shown again this soon is the same run (/compact's echo
+// comes once the compaction ended, minutes later).
+const SAME_RUN_MS = 5 * 60 * 1000
+// A command sent from the chat (its local "Ran" row) is the one the file shows
+// this close to it.
+const MATCH_MS = 2 * 60 * 1000
+
+const commandOf = (e) => (e && e.type === 'user' && e.origin !== 'team' && typeof e.text === 'string' && COMMAND.test(e.text.trim()) ? e.text.trim() : null)
+
+// events -> { events: without the commands' user lines, commands: [{ id,
+// command, sentAt }] (one per run, as command markers) }.
+export function splitCommandTurns(events) {
+  const list = Array.isArray(events) ? events : []
+  const kept = []
+  const commands = []
+  for (const e of list) {
+    const command = commandOf(e)
+    if (!command) {
+      kept.push(e)
+      continue
+    }
+    const at = Number.isFinite(e.at) ? e.at : null
+    const last = commands[commands.length - 1]
+    if (last && last.command === command && (at === null || last.sentAt === null || Math.abs(at - last.sentAt) <= SAME_RUN_MS)) continue
+    commands.push({ id: `file-${e.id}`, command, sentAt: at }) // i18n-ignore
+  }
+  return { events: commands.length ? kept : list, commands }
+}
+
+// The "Ran /command" rows: the file's (each run once; one with no time is
+// not placed), and those sent from the chat the file does not show yet.
+export function mergeCommandMarkers(local, fromFile) {
+  const file = (Array.isArray(fromFile) ? fromFile : []).filter((m) => Number.isFinite(m.sentAt))
+  const used = new Set()
+  const own = []
+  for (const m of Array.isArray(local) ? local : []) {
+    const hit = file.find((f, i) => !used.has(i) && f.command === m.command && Math.abs(f.sentAt - m.sentAt) <= MATCH_MS)
+    if (hit) used.add(file.indexOf(hit))
+    else own.push(m)
+  }
+  return [...file, ...own].sort((a, b) => a.sentAt - b.sentAt)
+}
+
+// ---- Messages waiting to be typed --------------------------------------------
+
+// The messages sent from the chat that Tessel's delivery still holds (not
+// typed yet), with why: their rows say "waiting" with that reason instead of
+// "sent". pending: [{ id, delivered }]; reason: '' when nothing holds them.
+// -> Map(message id -> reason) | undefined
+export function heldMessageIds(pending, reason) {
+  if (!reason) return undefined
+  const held = (Array.isArray(pending) ? pending : []).filter((p) => p && !p.delivered)
+  if (!held.length) return undefined
+  return new Map(held.map((p) => [agentJournalSubmissionKey(`pending-${p.id}`), reason])) // i18n-ignore
+}
+
+// ---- Background tasks ------------------------------------------------------------
+
+// A task its agent started this long before a listing is judged by it.
+const LISTING_SLACK_MS = 2000
+
+// The dock above the composer (NativeChatStructuredSessionStatus's
+// backgroundTasks): the background work the file shows running (tasks: [{ id,
+// kind, description, startedAt }]), less what the agent's last Stop no longer
+// listed (its hook: ids, listedAt). Stop is not offered: a terminal agent has
+// no safe way to stop one task from here (its /tasks panel is a dialog in its
+// terminal). working: a turn runs (the dock then speaks quietly).
+export function terminalBackgroundTasks(tasks, { ids = null, listedAt = null, working = false } = {}) {
+  const listed = Array.isArray(ids) ? new Set(ids) : null
+  const live = (Array.isArray(tasks) ? tasks : []).filter((task) => {
+    if (!task || typeof task.id !== 'string') return false
+    if (!listed || !Number.isFinite(listedAt)) return true
+    // Started before the agent's last listing and not in it: over.
+    return !(Number.isFinite(task.startedAt) && task.startedAt > 0 && task.startedAt < listedAt - LISTING_SLACK_MS && !listed.has(task.id))
+  })
+  return {
+    show: live.length > 0,
+    isMonitoring: !working,
+    tasks: live.map((task) => ({
+      id: task.id,
+      kind: ['agent', 'command', 'monitor', 'workflow'].includes(task.kind) ? task.kind : 'unknown',
+      ...(task.description ? { description: task.description } : {}),
+      ...(Number.isFinite(task.startedAt) && task.startedAt > 0 ? { startedAt: task.startedAt } : {}),
+      stoppable: false
+    })),
+    settledTasks: [],
+    supportsStop: false,
+    supportsStopAll: false
+  }
+}
+
+// ---- Context window --------------------------------------------------------------
+
+// Claude Code's file never says the context window: a model chosen with its
+// 1M context ("…[1m]") has 1M, any other Claude model 200k (more used than
+// that: it must be 1M). Other models (OpenClaude's other providers): unknown.
+const CLAUDE_MODEL = /^(?:claude-|anthropic[/.])?(?:opus|sonnet|haiku|fable)\b|^claude-/i
+export function claudeContextWindow(model, usedTokens = 0, agent = 'claude') {
+  const name = String(model || '').trim()
+  if (/\[1m\]\s*$/i.test(name)) return 1_000_000
+  if (name ? !CLAUDE_MODEL.test(name) : agent !== 'claude') return null
+  return usedTokens > 200_000 ? 1_000_000 : 200_000
+}

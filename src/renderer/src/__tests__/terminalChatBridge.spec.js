@@ -204,9 +204,18 @@ describe('the composer', () => {
     expect(mentionToken('docs/my notes.md')).toBe('"docs/my notes.md"')
     expect(mentionToken(['src', 'x.js'].join(String.fromCharCode(92)))).toBe('src/x.js')
   })
-  it('the context ring knows Claude\u2019s window only from a 1M model', () => {
+  it('the context ring knows Claude\u2019s window from its model: 1M with [1m], else 200k', () => {
     const ev = [{ type: 'contextUsage', usedTokens: 10, windowTokens: null }]
     expect(withContextWindow(ev, 'claude-opus-5-5[1m]')[0].windowTokens).toBe(1000000)
-    expect(withContextWindow(ev, 'opus')).toBe(ev)
+    expect(withContextWindow(ev, 'opus')[0].windowTokens).toBe(200000)
+    expect(withContextWindow(ev, 'claude-haiku-4-5')[0].windowTokens).toBe(200000)
+    expect(withContextWindow(ev, '')[0].windowTokens).toBe(200000)
+    // More used than 200k: it must be the 1M window.
+    expect(withContextWindow([{ ...ev[0], usedTokens: 300000 }], 'sonnet')[0].windowTokens).toBe(1000000)
+    // OpenClaude on another provider's model: unknown; Codex says its own.
+    expect(withContextWindow(ev, 'gpt-5', 'openclaude')[0].windowTokens).toBeNull()
+    expect(withContextWindow(ev, '', 'openclaude')[0].windowTokens).toBeNull()
+    expect(withContextWindow(ev, 'gpt-5', 'codex')[0].windowTokens).toBeNull()
+    expect(withContextWindow([{ ...ev[0], windowTokens: 400000 }], 'opus')[0].windowTokens).toBe(400000)
   })
 })

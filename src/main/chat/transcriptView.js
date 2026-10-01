@@ -30,6 +30,9 @@
 // read again at most every 300 ms, and only while the view is open. A change
 // reads only the bytes added since the last read (the kept lines are decoded
 // again in memory); a file that shrank or was replaced is read again whole.
+// Scrolled up, the view reads the 4 MB before the kept lines (whole lines,
+// from the same already-checked file; 12 MB more at most, the events kept grow
+// with it).
 import fs from 'fs'
 import os from 'os'
 import { basename, isAbsolute, join } from 'path'
@@ -37,6 +40,7 @@ import { claudeTranscriptIn } from '../agentModel.js'
 import { realInside } from '../agentChildren.js'
 import { ompSessionsDir } from '../agentSessionSources.js'
 import { HISTORY_LIMITS, claudeHistoryEvents, codexHistoryEvents, createBuilder, findTranscript } from './transcriptHistory.js'
+import { claudeBackgroundFromLines, transcriptCwd } from './transcriptBackground.js'
 
 export const TRANSCRIPT_VIEW_AGENTS = ['grok', 'openclaude', 'omp', 'claude', 'codex']
 // Their folder is the pane's account's (given by the caller as `home`).
@@ -319,19 +323,59 @@ export function ompViewEvents(lines, limits = HISTORY_LIMITS) {
 // that shrank or was replaced (another file at that path) is read again from
 // its last `maxBytes`. Lines are cut at '\n' bytes only, which never fall
 // inside a UTF-8 character.
-export function createTail(file, maxBytes) {
+// readEarlier(bytes): the lines just before the kept ones (at most `bytes`
+// more, whole lines only), kept from then on (the chat's "load earlier", after
+// Orca's windowed transcript read in use-native-chat-live-session.ts, MIT,
+// Copyright (c) 2026 Lovecast Inc.); at most `maxEarlier` bytes in all.
+export function createTail(file, maxBytes, { maxEarlier = 0 } = {}) {
   let offset = 0
   let identity = null
   let lines = []
   let sizes = []
   let kept = 0
   let cut = false
+  // The file offset of the first kept line, and how much may be kept now
+  // (more once earlier lines were read).
+  let head = 0
+  let limit = maxBytes
+  let earlier = 0
+  // Blank lines' bytes after the last kept line (they go with the next one).
+  let blank = 0
+  // A line before the kept ones too long to read whole: nothing earlier is read.
+  let stuck = false
   function reset() {
     offset = 0
     lines = []
     sizes = []
     kept = 0
     cut = false
+    head = 0
+    limit = maxBytes
+    earlier = 0
+    blank = 0
+    stuck = false
+  }
+  // The complete lines of buf[from, end) (end: just past a '\n'), each with
+  // its size in the file (a blank line's bytes go with the next line's).
+  function linesOf(buf, from, end, carry = 0) {
+    const out = []
+    const outSizes = []
+    let skipped = carry
+    let pos = from
+    while (pos < end) {
+      let nl = buf.indexOf(10, pos)
+      if (nl < 0 || nl >= end) nl = end - 1
+      let stop = nl
+      if (stop > pos && buf[stop - 1] === 13) stop--
+      const size = nl + 1 - pos
+      if (stop > pos) {
+        out.push(buf.toString('utf8', pos, stop))
+        outSizes.push(size + skipped)
+        skipped = 0
+      } else skipped += size
+      pos = nl + 1
+    }
+    return { out, outSizes, skipped }
   }
   // -> true when lines were added (or the file was read again), false when
   // nothing changed, null when the file cannot be read.
@@ -375,20 +419,26 @@ export function createTail(file, maxBytes) {
       }
       const end = got > 0 ? buf.lastIndexOf(10, got - 1) : -1
       if (end < from) {
-        if (start !== offset) offset = start + from
+        if (start !== offset) offset = head = start + from
         return changed || start !== offset
       }
+      if (!lines.length && start !== offset) {
+        head = start + from
+        blank = 0
+      }
       offset = start + end + 1
-      for (const raw of buf.subarray(from, end).toString('utf8').split('\n')) {
-        const line = raw.endsWith('\r') ? raw.slice(0, -1) : raw
-        if (!line) continue
-        lines.push(line)
-        const size = Buffer.byteLength(line) + 1
-        sizes.push(size)
-        kept += size
+      const { out, outSizes, skipped } = linesOf(buf, from, end + 1, blank)
+      blank = skipped
+      for (let i = 0; i < out.length; i++) {
+        lines.push(out[i])
+        sizes.push(outSizes[i])
+        kept += outSizes[i]
       }
       let drop = 0
-      while (kept > maxBytes && drop < lines.length) kept -= sizes[drop++]
+      while (kept > limit && drop < lines.length) {
+        kept -= sizes[drop]
+        head += sizes[drop++]
+      }
       if (drop) {
         lines = lines.slice(drop)
         sizes = sizes.slice(drop)
@@ -401,7 +451,73 @@ export function createTail(file, maxBytes) {
       fs.closeSync(fd)
     }
   }
-  return { read, lines: () => lines, cut: () => cut }
+  // -> { added: lines added before the kept ones, more: earlier lines remain
+  // (and may still be read) } | null (the file changed under it, or cannot be
+  // read: read() starts it over).
+  function readEarlier(bytes) {
+    const room = Math.min(bytes, maxEarlier - earlier)
+    if (head <= 0 || room <= 0 || stuck) return { added: 0, more: false }
+    let fd
+    try {
+      fd = fs.openSync(file, 'r')
+    } catch {
+      return null
+    }
+    try {
+      const st = fs.fstatSync(fd)
+      if (identity !== `${st.dev}:${st.ino}:${st.birthtimeMs}` || st.size < offset) return null
+      // The window ends where the kept lines begin (just past a '\n'); a line
+      // longer than the room left is never cut: nothing more is read.
+      // One byte more before it: a window that starts a line keeps it.
+      const start = Math.max(0, head - room - 1)
+      const buf = Buffer.alloc(head - start)
+      let got = 0
+      while (got < buf.length) {
+        const n = fs.readSync(fd, buf, got, buf.length - got, start + got)
+        if (!n) break
+        got += n
+      }
+      if (got !== buf.length) return null
+      let from = 0
+      if (start > 0) {
+        // Its last byte ends the line before the kept ones: a newline before
+        // it starts a whole line, none means that line is longer than the room.
+        const nl = buf.indexOf(10)
+        if (nl < 0 || nl >= buf.length - 1) {
+          stuck = true
+          return { added: 0, more: false }
+        }
+        from = nl + 1
+      }
+      const { out, outSizes, skipped } = linesOf(buf, from, buf.length)
+      let added = outSizes.reduce((sum, n) => sum + n, 0)
+      // Blank lines just before the kept ones go with the first of them.
+      if (skipped && sizes.length) {
+        sizes[0] += skipped
+        added += skipped
+      } else if (skipped) blank += skipped
+      const read = buf.length - from
+      lines = [...out, ...lines]
+      sizes = [...outSizes, ...sizes]
+      kept += added
+      head = start + from
+      earlier += read
+      // Kept while the agent writes on (up to the whole bound, then the
+      // oldest go first).
+      limit = Math.max(limit, kept, maxBytes + maxEarlier)
+      cut = head > 0
+      return { added: out.length, more: more() }
+    } catch {
+      return null
+    } finally {
+      fs.closeSync(fd)
+    }
+  }
+  // Earlier lines remain and may still be read.
+  function more() {
+    return head > 0 && earlier < maxEarlier && !stuck
+  }
+  return { read, readEarlier, lines: () => lines, cut: () => cut, more }
 }
 
 // The lines of one agent's session file -> the chat's events.
@@ -450,16 +566,22 @@ export function contextUsageEvent(agent, lines) {
   return null
 }
 
-function eventsOf(agent, sessionId, tail, limits) {
+// Each "load earlier" reads up to one more tail's worth (4 MB), three at most;
+// the events kept grow with it.
+const EARLIER_STEPS = 3
+// more: earlier lines can still be read (readEarlier); background: Claude
+// Code's background tasks still running (transcriptBackground.js).
+function eventsOf(agent, sessionId, tail, limits, eventCap = limits.events) {
   let events = viewEvents(agent, tail.lines(), sessionId, limits)
   let truncated = tail.cut()
-  if (events.length > limits.events) {
-    events = events.slice(-limits.events)
+  if (events.length > eventCap) {
+    events = events.slice(-eventCap)
     truncated = true
   }
   const usage = contextUsageEvent(agent, tail.lines())
   if (usage) events = [...events, usage]
-  return { events, truncated }
+  const background = agent === 'claude' || agent === 'openclaude' ? claudeBackgroundFromLines(tail.lines()) : []
+  return { events, truncated, more: !!(tail.more && tail.more()), background }
 }
 
 // -> { ok: true, events, truncated, file, tail } | { ok: false, code: 'invalid' | 'missing' }
@@ -468,7 +590,7 @@ export function readTranscriptView({ agent, sessionId, roots = transcriptViewRoo
   if (!TRANSCRIPT_VIEW_AGENTS.includes(agent) || !validViewId(agent, sessionId)) return { ok: false, code: 'invalid' }
   const file = findTranscriptViewFile(agent, sessionId, roots, { home, reported })
   if (!file) return { ok: false, code: 'missing' }
-  const tail = createTail(file, limits.bytes)
+  const tail = createTail(file, limits.bytes, { maxEarlier: limits.bytes * EARLIER_STEPS })
   if (tail.read() === null) return { ok: false, code: 'missing' }
   return { ok: true, ...eventsOf(agent, sessionId, tail, limits), file, tail }
 }
@@ -494,7 +616,7 @@ export function reportedTranscript(sessionsDir, paneId, agent, sessionId) {
 // account's conversations in (or null); sessionsDir() -> where the panes'
 // hooks report their sessions.
 export function createTranscriptViews({ send, roots = transcriptViewRoots, homes = async () => null, sessionsDir = () => null, watch = fs.watch, debounceMs = 300, pollMs = 2000, log = null, limits = HISTORY_LIMITS } = {}) {
-  const views = new Map() // viewId -> { agent, sessionId, file, tail, watcher, timer, poll, stamp }
+  const views = new Map() // viewId -> { agent, sessionId, file, tail, watcher, timer, poll, stamp, eventCap }
   let nextId = 0
 
   const stampOf = (file) => {
@@ -517,7 +639,24 @@ export function createTranscriptViews({ send, roots = transcriptViewRoots, homes
       send('transcriptView:event', { viewId, ok: false, code: 'missing' })
       return
     }
-    send('transcriptView:event', { viewId, ok: true, ...eventsOf(v.agent, v.sessionId, v.tail, limits) })
+    send('transcriptView:event', { viewId, ok: true, ...eventsOf(v.agent, v.sessionId, v.tail, limits, v.eventCap) })
+  }
+  // The window's "load earlier": the lines before the kept ones, read from the
+  // same file (bounded: createTail's readEarlier), then the whole view again.
+  // -> { ok, events, truncated, more, background, added } | { ok: false, code }
+  function earlier(viewId) {
+    const v = views.get(viewId)
+    if (!v) return { ok: false, code: 'missing' }
+    const res = v.tail.readEarlier(limits.bytes)
+    if (!res) return { ok: false, code: 'changed' }
+    if (res.added) v.eventCap = Math.min(v.eventCap + limits.events, limits.events * (EARLIER_STEPS + 1))
+    return { ok: true, added: res.added, ...eventsOf(v.agent, v.sessionId, v.tail, limits, v.eventCap) }
+  }
+  // The folder the agent works in, from its file's newest lines (for its
+  // skills), or null.
+  function cwdOf(viewId) {
+    const v = views.get(viewId)
+    return v ? transcriptCwd(v.tail.lines()) : null
   }
   function schedule(viewId) {
     const v = views.get(viewId)
@@ -547,7 +686,7 @@ export function createTranscriptViews({ send, roots = transcriptViewRoots, homes
     // The oldest view gives way: a view nobody closed (a crashed window) cannot pile up.
     while (views.size >= MAX_VIEWS) close(views.keys().next().value)
     const viewId = `tv-${++nextId}` // i18n-ignore id
-    const v = { agent, sessionId, file: res.file, tail: res.tail, watcher: null, timer: null, poll: null, stamp: stampOf(res.file) }
+    const v = { agent, sessionId, file: res.file, tail: res.tail, watcher: null, timer: null, poll: null, stamp: stampOf(res.file), eventCap: limits.events }
     views.set(viewId, v)
     // The watcher hurries a read; the slow poll is what is relied on (a
     // watcher can miss changes, or stop, without saying so).
@@ -566,7 +705,7 @@ export function createTranscriptViews({ send, roots = transcriptViewRoots, homes
     } catch (err) {
       if (log) log.warn('transcriptView', `watch failed, polling: ${err && err.message}`)
     }
-    return { ok: true, viewId, events: res.events, truncated: res.truncated }
+    return { ok: true, viewId, events: res.events, truncated: res.truncated, more: res.more, background: res.background }
   }
   // The window names the agent, the session, its pane and its account, never
   // a folder or a file.
@@ -597,6 +736,7 @@ export function createTranscriptViews({ send, roots = transcriptViewRoots, homes
   function register(ipcMain) {
     ipcMain.handle('transcriptView:open', (_e, q) => openFromWindow(q))
     ipcMain.handle('transcriptView:close', (_e, q) => ({ ok: close(obj(q)?.viewId) }))
+    ipcMain.handle('transcriptView:earlier', (_e, q) => earlier(obj(q)?.viewId))
   }
-  return { open, openFromWindow, close, closeAll: () => [...views.keys()].forEach(close), register, count: () => views.size }
+  return { open, openFromWindow, close, earlier, cwdOf, agentOf: (viewId) => views.get(viewId)?.agent || null, closeAll: () => [...views.keys()].forEach(close), register, count: () => views.size }
 }

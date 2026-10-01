@@ -245,12 +245,13 @@ describe('transcript view: live while open', () => {
     expect(send).toHaveBeenCalledTimes(1)
   })
 
-  it('registers its two channels (the IPC guard is global)', async () => {
+  it('registers its channels (the IPC guard is global)', async () => {
     grokFile(GROK_SESSION)
     const { views } = setup()
     const handlers = {}
     views.register({ handle: (name, fn) => (handlers[name] = fn) })
-    expect(Object.keys(handlers).sort()).toEqual(['transcriptView:close', 'transcriptView:open'])
+    expect(Object.keys(handlers).sort()).toEqual(['transcriptView:close', 'transcriptView:earlier', 'transcriptView:open'])
+    expect(await handlers['transcriptView:earlier']({}, { viewId: 'tv-999' })).toEqual({ ok: false, code: 'missing' })
     const res = await handlers['transcriptView:open']({}, { agent: 'grok', sessionId: GROK_ID, path: 'C:\\Windows\\win.ini' })
     expect(res.ok).toBe(true)
     expect(await handlers['transcriptView:close']({}, { viewId: res.viewId })).toEqual({ ok: true })
@@ -386,5 +387,106 @@ describe('transcript view: incremental reads', () => {
 
   it('a missing file reads as null', () => {
     expect(createTail(join(tmp, 'nope.jsonl'), 1024).read()).toBeNull()
+  })
+})
+
+describe('transcript view: earlier lines (scrolled up)', () => {
+  const file = () => join(tmp, 'tail.jsonl')
+  const rows = (n, key = 'n') => Array.from({ length: n }, (_, i) => `{"${key}":${String(i).padStart(2, '0')}}`)
+
+  it('reads whole lines just before the kept ones, bounded, until the start of the file', () => {
+    fs.writeFileSync(file(), rows(20).join('\n') + '\n')
+    // Each line is 9 bytes with its newline: 4 lines kept, 3 windows of 20 bytes at most.
+    const tail = createTail(file(), 36, { maxEarlier: 60 })
+    tail.read()
+    const all = rows(20)
+    // Always whole lines, the file's last ones, one after the other.
+    const contiguous = () => expect(tail.lines()).toEqual(all.slice(all.length - tail.lines().length))
+    contiguous()
+    expect(tail.more()).toBe(true)
+    let before = tail.lines().length
+    let res
+    let steps = 0
+    do {
+      res = tail.readEarlier(20)
+      contiguous()
+      expect(tail.lines().length).toBe(before + res.added)
+      before = tail.lines().length
+      steps++
+    } while (res.more && steps < 10)
+    expect(steps).toBeGreaterThan(1)
+    // Bounded: 60 more bytes at most (9 per line).
+    expect(tail.lines().join('\n').length).toBeLessThanOrEqual(36 + 60)
+    expect(tail.lines().length).toBeLessThan(all.length)
+    expect(tail.readEarlier(20)).toEqual({ added: 0, more: false })
+    // New lines are still read, and the earlier ones kept.
+    const kept = tail.lines().slice()
+    fs.appendFileSync(file(), '{"x":1}\n')
+    expect(tail.read()).toBe(true)
+    expect(tail.lines()).toEqual([...kept, '{"x":1}'])
+  })
+
+  it('reaches the first line, with blank lines and CRLF ends kept in place', () => {
+    fs.writeFileSync(file(), '{"a":1}\r\n\n{"b":2}\n\n\n{"c":3}\n{"d":4}\n')
+    const tail = createTail(file(), 17, { maxEarlier: 1000 })
+    tail.read()
+    expect(tail.lines()).toEqual(['{"c":3}', '{"d":4}'])
+    expect(tail.readEarlier(10)).toEqual({ added: 1, more: true })
+    expect(tail.lines()).toEqual(['{"b":2}', '{"c":3}', '{"d":4}'])
+    expect(tail.readEarlier(1000)).toEqual({ added: 1, more: false })
+    expect(tail.lines()).toEqual(['{"a":1}', '{"b":2}', '{"c":3}', '{"d":4}'])
+    expect(tail.cut()).toBe(false)
+    expect(tail.readEarlier(1000)).toEqual({ added: 0, more: false })
+  })
+
+  it('a line longer than the window is never cut, and a replaced file is not read from', () => {
+    fs.writeFileSync(file(), `{"long":"${'x'.repeat(100)}"}\n{"a":1}\n`)
+    const tail = createTail(file(), 9, { maxEarlier: 1000 })
+    tail.read()
+    expect(tail.lines()).toEqual(['{"a":1}'])
+    expect(tail.readEarlier(20)).toEqual({ added: 0, more: false })
+    expect(tail.lines()).toEqual(['{"a":1}'])
+    fs.writeFileSync(file(), rows(10).join('\n') + '\n')
+    const other = createTail(file(), 18, { maxEarlier: 1000 })
+    other.read()
+    fs.rmSync(file())
+    fs.writeFileSync(file(), rows(10, 'z').join('\n') + '\n')
+    expect(other.readEarlier(100)).toBeNull()
+  })
+
+  it('a view loads earlier lines on request and says when there are more', () => {
+    const many = [{ type: 'system', content: 'You are Grok.' }]
+    for (let i = 0; i < 40; i++) many.push({ type: 'user', id: `u${i}`, timestamp: ts(i % 60), content: [{ type: 'text', text: `prompt ${i}` }] })
+    grokFile(lines(many))
+    const limits = { bytes: 900, events: 2000, text: 64 * 1024 }
+    const views = createTranscriptViews({ send: vi.fn(), roots: () => roots, watch: () => ({ close() {}, on() {} }), limits })
+    const opened = views.open({ agent: 'grok', sessionId: GROK_ID })
+    expect(opened.ok).toBe(true)
+    expect(opened.more).toBe(true)
+    const shown = opened.events.filter((e) => e.type === 'user').length
+    const res = views.earlier(opened.viewId)
+    expect(res).toMatchObject({ ok: true })
+    expect(res.added).toBeGreaterThan(0)
+    expect(res.events.filter((e) => e.type === 'user').length).toBeGreaterThan(shown)
+    expect(res.events.filter((e) => e.type === 'user').at(-1).text).toBe('prompt 39')
+    expect(views.earlier('tv-nope')).toEqual({ ok: false, code: 'missing' })
+    views.closeAll()
+  })
+
+  it("Claude Code: its background tasks and its folder come with the view", () => {
+    const at = (n) => new Date(Date.now() - 60000 + n * 1000).toISOString()
+    const records = [
+      { type: 'user', cwd: join(tmp, 'proj'), timestamp: at(1), message: { role: 'user', content: 'start a server' } },
+      { type: 'assistant', timestamp: at(2), message: { id: 'm1', role: 'assistant', model: 'claude-opus-5-5', content: [{ type: 'tool_use', id: 'tu1', name: 'Bash', input: { command: 'npm run dev', description: 'Start the dev server', run_in_background: true } }] } },
+      { type: 'user', timestamp: at(3), toolUseResult: { backgroundTaskId: 'b123abc' }, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tu1', content: 'Command running in background with ID: b123abc.' }] } }
+    ]
+    openclaudeFile(lines(records))
+    const views = createTranscriptViews({ send: vi.fn(), roots: () => roots, watch: () => ({ close() {}, on() {} }) })
+    const opened = views.open({ agent: 'openclaude', sessionId: OC_ID })
+    expect(opened.background).toEqual([{ id: 'b123abc', kind: 'command', description: 'Start the dev server', startedAt: Date.parse(records[1].timestamp) }])
+    expect(views.cwdOf(opened.viewId)).toBe(join(tmp, 'proj'))
+    expect(views.agentOf(opened.viewId)).toBe('openclaude')
+    expect(views.cwdOf('tv-nope')).toBeNull()
+    views.closeAll()
   })
 })
