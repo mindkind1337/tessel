@@ -9213,15 +9213,15 @@ onBeforeUnmount(() => {
             width="16"
             height="16"
             viewBox="0 0 24 24"
-            fill="currentColor"
             aria-hidden="true"
           >
-            <rect x="2" y="2.5" width="5.5" height="5.5" rx="1.2" />
-            <rect x="9.25" y="2.5" width="5.5" height="5.5" rx="1.2" />
-            <rect x="16.5" y="2.5" width="5.5" height="5.5" rx="1.2" />
-            <rect x="9.25" y="9.25" width="5.5" height="5.5" rx="1.2" opacity="0.8" />
-            <rect x="9.25" y="16" width="5.5" height="5.5" rx="1.2" opacity="0.55" />
-            <rect x="16.5" y="16" width="5.5" height="5.5" rx="1.2" opacity="0.35" />
+            <!-- The icon's own colours: blue (the dev build: yellow), fading down, a light cursor tile. -->
+            <rect x="2" y="2.5" width="5.5" height="5.5" rx="1.2" :fill="isDev ? '#f5c542' : '#6b8fff'" />
+            <rect x="9.25" y="2.5" width="5.5" height="5.5" rx="1.2" :fill="isDev ? '#f5c542' : '#6b8fff'" />
+            <rect x="16.5" y="2.5" width="5.5" height="5.5" rx="1.2" :fill="isDev ? '#f5c542' : '#6b8fff'" />
+            <rect x="9.25" y="9.25" width="5.5" height="5.5" rx="1.2" :fill="isDev ? '#c9a23b' : '#5e78d4'" />
+            <rect x="9.25" y="16" width="5.5" height="5.5" rx="1.2" :fill="isDev ? '#957a31' : '#44589b'" />
+            <rect x="16.5" y="16" width="5.5" height="5.5" rx="1.2" fill="#e6e6e6" />
           </svg>
           <span class="brand-name">Tessel</span>
           <span v-if="isDev" class="brand-dev" :title="t('app.toolbar.devBuild', 'Development build (npm run dev)')">{{ t('app.toolbar.dev', 'dev') }}</span>
