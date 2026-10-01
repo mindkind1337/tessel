@@ -33,6 +33,8 @@ const props = defineProps({
   // Why the row can or cannot be ticked while picking a team.
   pickHint: { type: String, default: '' },
   teamLabel: { type: String, default: '' },
+  // Some row of the list has a team number: keep its column (aligned).
+  teamColumn: { type: Boolean, default: false },
   now: { type: Number, default: () => Date.now() }
 })
 const emit = defineEmits(['activate', 'context'])
@@ -194,6 +196,7 @@ const workerOfLabel = computed(() =>
     @contextmenu.prevent.stop="emit('context', row, $event)"
   >
     <span v-if="row.team && teamLabel" class="car-team-num" data-test="car-team" :class="{ lead: row.lead }" aria-hidden="true" v-text="teamNum"></span>
+    <span v-else-if="teamColumn" class="car-team-num" aria-hidden="true"></span>
     <span v-if="picking" class="car-pick" :class="{ on: picked }" aria-hidden="true"></span>
     <AgentStateDot :state="row.dotState" :tooltip="false" />
     <span class="car-icon">

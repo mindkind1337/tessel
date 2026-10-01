@@ -55,6 +55,8 @@ const emit = defineEmits([
 
 const card = computed(() => props.card)
 const rows = computed(() => card.value.panes)
+// A row with a team number: every row keeps that column, so all line up.
+const teamColumn = computed(() => rows.value.some((r) => r.team && teamLabel(r)))
 const hasPorts = computed(() => props.showPorts && props.ports.length > 0)
 // Orca: the branch shows under the title unless compact cards repeat it.
 const showBranch = computed(() => !!card.value.branch && (!props.compactCards || card.value.branch !== card.value.title))
@@ -288,6 +290,7 @@ function onCardClick(e) {
                       :pickable="!picking || !picking.active || picking.canPick(r)"
                       :pick-hint="pickHint(r)"
                       :team-label="teamLabel(r)"
+                      :team-column="teamColumn"
                       @activate="onRow(r, $event)"
                       @context="(row, e) => emit('row-context', row, card, e)"
                       />
@@ -305,6 +308,7 @@ function onCardClick(e) {
                 :pickable="!picking || !picking.active || picking.canPick(r)"
                 :pick-hint="pickHint(r)"
                 :team-label="teamLabel(r)"
+                :team-column="teamColumn"
                 @activate="onRow(r, $event)"
                 @context="(row, e) => emit('row-context', row, card, e)"
                 />
