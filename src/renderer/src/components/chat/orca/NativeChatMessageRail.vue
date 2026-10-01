@@ -10,7 +10,7 @@
  * Emits: select(item), readerScroll() (the reader scrolled the transcript
  *   through the rail).
  */
-import { computed, nextTick, onBeforeUnmount, ref, unref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, unref, watch } from 'vue'
 import { t } from '../../../i18n'
 import { Popover, PopoverContent, PopoverTrigger } from './ui/index.js'
 import NativeChatMessageRailItems from './NativeChatMessageRailItems.vue'
@@ -32,6 +32,41 @@ const items = computed(() => unref(props.rail.items) ?? [])
 const activeId = computed(() => unref(props.rail.activeId) ?? null)
 const visible = computed(() => unref(props.rail.visible) === true)
 const label = computed(() => t('chat.orca.railLabel', 'Your messages'))
+
+// A short pane: only the ticks its height holds (3 px each, 8 px apart),
+// spread over the conversation and always with the current one, instead of a
+// column running over the composer.
+const TICK_STEP = 11
+const railEl = ref(null)
+const railHeight = ref(0)
+let railObserver = null
+onMounted(() => {
+  if (typeof ResizeObserver !== 'function') return
+  railObserver = new ResizeObserver((entries) => {
+    railHeight.value = entries[0]?.contentRect?.height || 0
+  })
+  watch(railEl, (el, old) => {
+    if (old) railObserver.unobserve(old)
+    if (el) railObserver.observe(el)
+  }, { immediate: true })
+})
+onBeforeUnmount(() => railObserver?.disconnect())
+const shownTicks = computed(() => fitTicks(ticks.value, activeId.value, railHeight.value))
+function fitTicks(list, active, height) {
+  if (!height) return list
+  const fit = Math.floor((height + 8) / TICK_STEP)
+  if (list.length <= fit) return list
+  if (fit < 1) return []
+  const picked = new Set(fit === 1 ? [list.length - 1] : Array.from({ length: fit }, (_, i) => Math.round((i * (list.length - 1)) / (fit - 1))))
+  const at = list.findIndex((item) => item.id === active)
+  if (at >= 0 && !picked.has(at)) {
+    let near = -1
+    for (const i of picked) if (near < 0 || Math.abs(i - at) < Math.abs(near - at)) near = i
+    picked.delete(near)
+    picked.add(at)
+  }
+  return list.filter((_, i) => picked.has(i))
+}
 
 // Hover preserves focus; activation enters the focus-managed prompt picker.
 const mode = ref(null)
@@ -123,6 +158,7 @@ function onSelect(item) {
     <PopoverTrigger as-child>
       <button
         type="button"
+        ref="railEl"
         data-native-chat-rail
         :aria-label="label"
         class="nc-rail"
@@ -132,7 +168,7 @@ function onSelect(item) {
         @wheel="onWheel"
       >
         <span
-          v-for="item in ticks"
+          v-for="item in shownTicks"
           :key="item.id"
           aria-hidden="true"
           :class="['nc-rail__tick', item.id === activeId ? 'nc-rail__tick--active' : 'nc-rail__tick--idle']"

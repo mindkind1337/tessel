@@ -351,3 +351,29 @@ describe('message rail interaction', () => {
     })
   })
 })
+
+describe('message rail in a short pane', () => {
+  it('shows only the ticks its height holds, spread out and with the current one', async () => {
+    const prev = globalThis.ResizeObserver
+    globalThis.ResizeObserver = class {
+      constructor(cb) {
+        this.cb = cb
+      }
+      observe() {
+        this.cb([{ contentRect: { height: 40 } }])
+      }
+      unobserve() {}
+      disconnect() {}
+    }
+    try {
+      mountRail({ rail: { items: overflowItems, ticks: overflowItems, activeId: overflowItems[12].id, visible: true }, onSelect: vi.fn() })
+      await flush()
+      const ticks = document.querySelectorAll('.nc-rail__tick')
+      // 40 px holds 4 ticks (3 px each, 8 px apart), not 20.
+      expect(ticks).toHaveLength(4)
+      expect(document.querySelectorAll('.nc-rail__tick--active')).toHaveLength(1)
+    } finally {
+      globalThis.ResizeObserver = prev
+    }
+  })
+})
