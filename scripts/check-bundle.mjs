@@ -18,7 +18,8 @@ walk(dir)
 const forbidden = [
   ['install-electron', 'the electron npm package (its installer) was bundled'],
   ['Electron failed to install correctly', 'the electron npm package was bundled'],
-  ['node-pty.node', 'node-pty (a native module) was bundled']
+  ['node-pty.node', 'node-pty (a native module) was bundled'],
+  ['sshcrypto.node', 'ssh2 was bundled (it must stay external, loaded from node_modules)']
 ]
 let failed = false
 for (const f of files) {
@@ -33,6 +34,20 @@ for (const f of files) {
 if (!files.some((f) => f.endsWith('ptyHost.js'))) {
   console.error('check-bundle: out/main/ptyHost.js is missing')
   failed = true
+} else {
+  // The SSH client of the terminal host: required at runtime (not bundled),
+  // and present in node_modules (electron-builder packages dependencies).
+  const hostText = [path.join(dir, 'ptyHost.js'), ...files.filter((f) => f.includes(path.join('main', 'chunks')))]
+    .map((f) => fs.readFileSync(f, 'utf8'))
+    .join('\n')
+  if (!/require\(["']ssh2["']\)/.test(hostText)) {
+    console.error('check-bundle: the terminal host does not require ssh2 at runtime')
+    failed = true
+  }
+  if (!fs.existsSync(path.join('node_modules', 'ssh2', 'package.json'))) {
+    console.error('check-bundle: node_modules/ssh2 is missing (npm install)')
+    failed = true
+  }
 }
 // The tessel command (src/cli): one file, unpacked from the archive, so it
 // must not load a shared chunk (which stays inside app.asar).

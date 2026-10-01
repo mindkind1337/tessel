@@ -24,7 +24,8 @@
     "@tiptap/starter-kit": "^3.31.3",
     "@tiptap/vue-3": "^3.31.3",
     "electron-updater": "^6.8.9",
-    "node-pty": "^1.1.0"
+    "node-pty": "^1.1.0",
+    "ssh2": "1.17.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -68,7 +69,11 @@
     "files": [
       "out/**/*",
       "THIRD_PARTY_NOTICES.md",
-      "package.json"
+      "package.json",
+      "!node_modules/ssh2/lib/protocol/crypto/build/**",
+      "!node_modules/cpu-features/**",
+      "!node_modules/buildcheck/**",
+      "!node_modules/nan/**"
     ],
     "asarUnpack": [
       "node_modules/node-pty/**",

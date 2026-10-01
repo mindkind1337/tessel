@@ -20,7 +20,10 @@ export default defineConfig({
         // runtime. (Setting rollupOptions replaces electron-vite's defaults,
         // and a bundled copy of the \`electron\` npm package tries to
         // "install" Electron by relaunching the app, in an endless loop.)
-        external: ['electron', /^electron\/.+/, 'node-pty', 'electron-updater', /^node:/],
+        // ssh2 (the SSH client of the terminal host, src/main/ssh): loaded
+        // from node_modules at runtime (its optional native parts are tried
+        // and skipped there), packaged by electron-builder as a dependency.
+        external: ['electron', /^electron\/.+/, 'node-pty', 'electron-updater', 'ssh2', /^ssh2\/.+/, /^node:/],
         // Two entry points: the app's main process, and the terminal host it
         // starts as a separate background process.
         input: {
