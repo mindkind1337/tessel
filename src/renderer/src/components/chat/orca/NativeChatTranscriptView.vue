@@ -238,9 +238,9 @@ watch(
   }
 )
 
-// "Ran /compact" rows of the commands sent from here (this conversation's).
 // The composer's key (its draft, images and markers are kept per pane).
 const composerKey = computed(() => `terminal-chat-${props.paneId}`) // i18n-ignore
+// "Ran /compact" rows of the commands sent from here (this conversation's).
 const markerScope = () => ({ paneKey: composerKey.value, agent: props.agent, sessionId: props.sessionId || '' })
 const markers = shallowRef(props.interactive ? readCommandMarkerCache(markerScope()) : [])
 watch(
