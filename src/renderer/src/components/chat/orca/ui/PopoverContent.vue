@@ -180,7 +180,7 @@ defineExpose({ el: contentEl, updatePosition: () => position.update() })
 <style>
 .nc-ui-popover-content {
   box-sizing: border-box;
-  z-index: 60;
+  z-index: 460;
   overflow: hidden;
   border-radius: 6px;
   border: 1px solid rgb(255 255 255 / 0.14);

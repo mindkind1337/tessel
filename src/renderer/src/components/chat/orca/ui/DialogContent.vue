@@ -124,7 +124,7 @@ const closeLabel = computed(() => t('chat.orca.ui.close', 'Close'))
 .nc-ui-dialog-overlay {
   position: fixed;
   inset: 0;
-  z-index: 50;
+  z-index: 450;
   background: rgb(0 0 0 / 0.55);
   backdrop-filter: blur(2px);
   pointer-events: auto;
@@ -138,7 +138,7 @@ const closeLabel = computed(() => t('chat.orca.ui.close', 'Close'))
   position: fixed;
   top: 50%;
   left: 50%;
-  z-index: 50;
+  z-index: 450;
   display: grid;
   width: 100%;
   max-width: calc(100% - 2rem);

@@ -3,7 +3,7 @@
 /**
  * TooltipContent: role="tooltip" (its id is the trigger's aria-describedby),
  * teleported to <body> with classes "nc-root nc-ui-tooltip-content",
- * pointer-events none, above menus and popovers (z-index 90).
+ * pointer-events none, above menus and popovers (z-index 490).
  * Props: side (default 'top'), align ('center'), sideOffset (0; the arrow
  *   adds its 10px like Radix), alignOffset (0), avoidCollisions (true),
  *   collisionPadding (0), showArrow (true).
@@ -116,7 +116,7 @@ const arrowStyle = computed(() => {
 .nc-ui-tooltip-content {
   box-sizing: border-box;
   pointer-events: none;
-  z-index: 90;
+  z-index: 490;
   width: fit-content;
   transform-origin: var(--nc-transform-origin);
   border-radius: 6px;

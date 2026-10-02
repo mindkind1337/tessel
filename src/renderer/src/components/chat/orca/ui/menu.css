@@ -6,7 +6,7 @@
  */
 .nc-ui-menu-content {
   box-sizing: border-box;
-  z-index: 70;
+  z-index: 470;
   min-width: 11rem;
   transform-origin: var(--nc-transform-origin);
   overflow: hidden;
