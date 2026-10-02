@@ -121,3 +121,119 @@ describe("App.vue's queue after an unconfirmed delivery", () => {
     expect(failed).toHaveBeenCalledTimes(1)
   })
 })
+
+// A terminal agent's chat view: its messages wait for the end of the turn as
+// cards whose controls (heldDelivery) edit, delete or send them now; a
+// deleted one is never typed, even caught between the queue and the paste.
+describe("App.vue's held chat-view messages (sendFromChatView, heldDelivery)", () => {
+  let ctx, pasted, gate
+  beforeEach(() => {
+    vi.useFakeTimers()
+    pasted = []
+    gate = null
+    ctx = {
+      pendingMessages: {},
+      unsent: {},
+      delivering: new Set(),
+      agentStatus: { a1: 'busy' },
+      teamPointer: { inFlight: () => false },
+      getPane: () => ({}),
+      findLeaf: (id) => (id === 'a1' ? { id: 'a1', kind: 'agent', chatView: true, title: 'Claude' } : null),
+      isPastedImageCopy: () => true,
+      awaitingApproval: () => false,
+      userIsTyping: () => false,
+      unsafeMultilinePaste: () => false,
+      agentTookMessage: () => false,
+      // As deliver.js: waits for a quiet agent, then the guard, then the paste.
+      pasteAndConfirm: vi.fn(async (id, text, deps) => {
+        if (gate) await gate
+        if (deps.waitIdle && ctx.agentStatus[id] === 'busy') return 'requeue'
+        if (deps.guard && !deps.guard(id)) return 'requeue'
+        pasted.push(text)
+        return 'confirmed'
+      }),
+      logMessage: vi.fn(),
+      showToast: vi.fn(),
+      t: (key, text) => text,
+      resolveUnsent: vi.fn(),
+      pendingTimer: null,
+      setTimeout,
+      clearTimeout,
+      Promise,
+      Date,
+      Object
+    }
+    vm.runInNewContext(
+      slice('function deliverToAgent(leafId, text, meta = {}) {', '\n// A pane joined (teamId)') +
+        slice('function flushPending() {', '\n// --- Tasks') +
+        slice('function sendFromChatView(', '\n// Its agent really ended'),
+      ctx
+    )
+  })
+  afterEach(() => vi.useRealTimers())
+  const settle = () => vi.advanceTimersByTimeAsync(0)
+  function sendHeld(text) {
+    const cb = { onQueued: vi.fn(), onTyped: vi.fn(), onFailed: vi.fn(), onDelivered: vi.fn() }
+    expect(ctx.sendFromChatView('a1', text, cb)).toBe(true)
+    return { cb, controls: cb.onQueued.mock.calls[0][0] }
+  }
+
+  it('waits while the agent works; edited, it goes out with the new words once it is idle', async () => {
+    const { cb, controls } = sendHeld('draft')
+    await vi.advanceTimersByTimeAsync(4000)
+    expect(pasted).toEqual([])
+    expect(controls.edit('final words')).toEqual({ ok: true })
+    ctx.agentStatus.a1 = 'idle'
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(pasted).toEqual(['final words'])
+    expect(cb.onTyped).toHaveBeenCalledTimes(1)
+    expect(cb.onDelivered).toHaveBeenCalledTimes(1)
+    // Typed: nothing to change any more.
+    expect(controls.remove()).toEqual({ ok: false, code: 'gone' })
+    expect(controls.edit('late')).toEqual({ ok: false, code: 'gone' })
+  })
+
+  it('deleted while waiting: never typed; the others still go, in order', async () => {
+    const a = sendHeld('one')
+    const b = sendHeld('two')
+    sendHeld('three')
+    expect(b.controls.remove()).toEqual({ ok: true })
+    ctx.agentStatus.a1 = 'idle'
+    await vi.advanceTimersByTimeAsync(10000)
+    expect(pasted).toEqual(['one', 'three'])
+    expect(a.cb.onTyped).toHaveBeenCalled()
+    expect(b.cb.onTyped).not.toHaveBeenCalled()
+  })
+
+  it('Send now: typed at once, ahead of the others, without waiting for the turn', async () => {
+    sendHeld('first')
+    const second = sendHeld('second')
+    expect(second.controls.sendNow()).toEqual({ ok: true })
+    await settle()
+    expect(pasted).toEqual(['second'])
+  })
+
+  it('deleted between the queue and the paste: its guard refuses it, it is dropped, never typed', async () => {
+    let open
+    gate = new Promise((r) => (open = r))
+    ctx.agentStatus.a1 = 'idle'
+    const { cb, controls } = sendHeld('in flight')
+    await settle()
+    expect(ctx.pendingMessages.a1).toBeUndefined()
+    expect(controls.remove()).toEqual({ ok: true })
+    open()
+    await vi.advanceTimersByTimeAsync(6000)
+    expect(pasted).toEqual([])
+    expect(cb.onTyped).not.toHaveBeenCalled()
+    expect(cb.onFailed).toHaveBeenCalledTimes(1)
+    expect(ctx.pendingMessages.a1).toBeUndefined()
+  })
+
+  it('a slash command is not held: no card, typed at once', async () => {
+    const onQueued = vi.fn()
+    ctx.sendFromChatView('a1', '/compact', { command: 'paste', onQueued })
+    await settle()
+    expect(onQueued).not.toHaveBeenCalled()
+    expect(pasted).toEqual(['/compact'])
+  })
+})

@@ -313,7 +313,7 @@ const canSend = useNativeChatCanSend(() => ({
 // A pasted image has no agent-readable path until its save lands; sending
 // mid-save would ship the message without the image the chip promises.
 const hasPendingAttachment = computed(() => imageAttachments.value.some((attachment) => attachment.pending))
-// While a turn runs the button is Stop (Enter still sends: at once for Claude and Codex, after the turn for OpenCode).
+// While a turn runs the button is Stop (Enter still sends: the message waits as a card until the turn ends).
 const sendButtonDisabled = computed(() => (props.isWorking ? false : !canSend.value || hasPendingAttachment.value))
 
 const contextUsageSummary = useNativeChatContextUsageSummary(structuredTransport)
@@ -321,8 +321,8 @@ const contextUsageSummary = useNativeChatContextUsageSummary(structuredTransport
 const placeholder = computed(() => {
   if (props.disabledReason) return props.disabledReason
   if (props.sendBlockedReason) return props.sendBlockedReason
-  // While it works, the same words: Claude and Codex take a message at once;
-  // OpenCode's waits, and its row says so ("Queued: sent when the turn ends").
+  // While it works, the same words: a message sent then waits as a card above
+  // the composer (Send now steers it in for Claude and Codex).
   return t('chat.composer.placeholder', 'Message {{agent}}…', { agent: props.agentName })
 })
 

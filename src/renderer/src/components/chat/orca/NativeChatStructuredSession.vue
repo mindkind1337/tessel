@@ -2,6 +2,7 @@
 // After Orca's NativeChatStructuredSession.tsx (MIT, Copyright (c) 2026 Lovecast Inc.)
 //
 // One chat session: the transcript (or its loading / empty / error state),
+// the messages waiting for the end of the turn (cards above the composer),
 // the banners under it (messages not sent, the agent to start again, the
 // session's status and background tasks), the request waiting for an answer
 // and the composer, fed by the pane's session (useStructuredAgentSession).
@@ -32,6 +33,7 @@ import NativeChatMessageList from './NativeChatMessageList.vue'
 import NativeChatStructuredSessionStatus from './NativeChatStructuredSessionStatus.vue'
 import NativeChatQuestionCard from './NativeChatQuestionCard.vue'
 import NativeChatContextBanner from './NativeChatContextBanner.vue'
+import NativeChatQueuedMessages from './NativeChatQueuedMessages.vue'
 import { MessageCircleQuestion } from 'lucide-vue-next'
 import { Button } from './ui/index.js'
 import { createApprovalInputFetcher } from './native-chat-approval-card.js'
@@ -244,6 +246,36 @@ function onPointerDownCapture(event) {
 function focusComposer() {
   return composerRef.value ? composerRef.value.focus() : false
 }
+
+// --- Held messages (cards above the composer, the engine's queue) ---------------------------
+// Send now steers a card into the running turn: Claude and Codex only, and
+// not while a request waits for an answer (the engine checks again).
+const canSendQueuedNow = computed(() => (props.agent === 'claude' || props.agent === 'codex') && turnRunning.value && !prompt.value)
+function queuedFailed(res) {
+  if (res && res.ok !== false) return
+  composerError.value = (res && res.error) || t('chat.orca.queued.failed', 'The waiting message could not be changed.')
+}
+async function onQueuedSendNow(id) {
+  const res = await c.sendQueuedNow(id)
+  queuedFailed(res)
+  return res
+}
+async function onQueuedDelete(id) {
+  const res = await c.deleteQueued(id)
+  queuedFailed(res)
+  return res
+}
+async function onQueuedEdit(id, text) {
+  const res = await c.editQueued(id, text)
+  // Already sent: the new words are not lost, they wait in the composer.
+  if (res && res.code === 'gone') {
+    draft.value = draft.value.trim() ? `${draft.value}\n${text}` : text
+    composerError.value = t('chat.orca.queued.editGone', 'Already sent: your edited text is in the composer.')
+    return res
+  }
+  queuedFailed(res)
+  return res
+}
 // Alt+A: the request waiting for an answer.
 async function focusPendingApproval() {
   // A question waiting: its first choice.
@@ -368,6 +400,15 @@ defineExpose({
       :busy="turnRunning || !!prompt"
       :disabled="!!disabledReason"
       :agent-name="agentName"
+    />
+    <NativeChatQueuedMessages
+      v-if="c.queuedCards"
+      :cards="c.queuedCards.value"
+      :can-send-now="canSendQueuedNow"
+      :send-now="onQueuedSendNow"
+      :edit="onQueuedEdit"
+      :remove="onQueuedDelete"
+      :focus-composer="focusComposer"
     />
     <NativeChatComposer
       ref="composerRef"

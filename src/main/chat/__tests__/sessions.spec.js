@@ -1369,7 +1369,7 @@ describe('IPC', () => {
   it('registers the chat channels', () => {
     const h = wire(createChatSessions(deps))
     expect(Object.keys(h).sort()).toEqual(
-      ['chat:answer', 'chat:skills', 'chat:approvalInput', 'chat:approve', 'chat:close', 'chat:compact', 'chat:history', 'chat:historyOlder', 'chat:interrupt', 'chat:open', 'chat:send', 'chat:sendTeam', 'chat:setOption'].sort()
+      ['chat:answer', 'chat:skills', 'chat:approvalInput', 'chat:approve', 'chat:close', 'chat:compact', 'chat:history', 'chat:historyOlder', 'chat:interrupt', 'chat:open', 'chat:send', 'chat:sendTeam', 'chat:setOption', 'chat:queuedEdit', 'chat:queuedDelete', 'chat:queuedSend'].sort()
     )
   })
 

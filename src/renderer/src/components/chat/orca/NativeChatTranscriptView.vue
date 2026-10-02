@@ -17,7 +17,7 @@
 //   account's folder), working, waiting ({ approval, input, ask: the
 //   question its hook gives, or null }),
 //   disabledReason (why nothing can be sent now), sendMessage(text,
-//   { images, command, onDelivered, onFailed }), writeKeys(bytes) (the
+//   { images, command, onDelivered, onFailed, onQueued, onTyped }), writeKeys(bytes) (the
 //   cards' keys); the full composer's (after Orca's bridge composer,
 //   NativeChatComposer.tsx and NativeChatComposerActions.tsx): allowImages
 //   (pasted, dropped, picked: Tessel's copies, whose paths are pasted into
@@ -37,7 +37,12 @@
 //   maximize, close; Paste goes into the composer, "Continue in a terminal"
 //   shows the terminal), background ({ ids, listedAt }: what the agent's last
 //   Stop listed, for the background-task dock), sendHeldReason() -> '' or why
-//   a message sent from here still waits to be typed (shown on its row).
+//   a message sent from here still waits to be typed (shown on its card).
+// A message waits for the end of the agent's turn (and anything else
+// Tessel's delivery waits for) as a card above the composer, after Orca's
+// queued-message cards (MIT, Copyright (c) 2026 Lovecast Inc.): edit, delete
+// or send now through its delivery's controls (sendMessage's onQueued); it
+// joins the transcript once it is typed (onTyped).
 // The "/" menu also lists the agent's skills (transcriptView:skills), and
 // scrolling up reads earlier lines of its file (transcriptView:earlier).
 // Emits: close (back to the terminal).
@@ -52,6 +57,7 @@ import NativeChatStructuredSessionStatus from './NativeChatStructuredSessionStat
 import NativeChatEmptyState from './NativeChatEmptyState.vue'
 import NativeChatMessageList from './NativeChatMessageList.vue'
 import NativeChatQuestionCard from './NativeChatQuestionCard.vue'
+import NativeChatQueuedMessages from './NativeChatQueuedMessages.vue'
 import { Button } from './ui/index.js'
 import { createJournalAdapter } from '../../../chat/orca/adapter/journalAdapter.js'
 import { reduceStructuredAgentSession, EMPTY_STRUCTURED_AGENT_SESSION } from '../../../chat/orca/shared/structured-agent-session-reducer.js'
@@ -86,7 +92,7 @@ import {
   screenContextUsage,
   compactCommand
 } from '../../../chat/terminalChatBridge.js'
-import { heldMessageIds, mergeCommandMarkers, splitCommandTurns, terminalBackgroundTasks } from '../../../chat/terminalChatExtras.js'
+import { mergeCommandMarkers, splitCommandTurns, terminalBackgroundTasks } from '../../../chat/terminalChatExtras.js'
 import { t } from '../../../i18n'
 import { useNativeChatFontScale } from '../../../chat/orca/composables/use-native-chat-font-scale.js'
 
@@ -173,11 +179,13 @@ function api() {
 // with the messages sent from here that it does not show yet.
 function render() {
   const now = Date.now()
-  let merged = mergePendingSends(fileEvents.value, pendingSends.value)
+  // A message not typed yet is a card, not a row.
+  const rows = (list) => list.filter((p) => p.typed || p.delivered)
+  let merged = mergePendingSends(fileEvents.value, rows(pendingSends.value))
   const keep = pendingSends.value.filter((p) => !merged.done.includes(p.id) && !(p.delivered && now - p.at > SENT_SHOWN_MS))
   if (keep.length !== pendingSends.value.length) {
     pendingSends.value = keep
-    merged = mergePendingSends(fileEvents.value, keep)
+    merged = mergePendingSends(fileEvents.value, rows(keep))
   }
   const adapter = createJournalAdapter({ now: () => 0 })
   adapter.replay(merged.events)
@@ -423,17 +431,21 @@ async function send(text, opts = {}) {
   if (!alive || props.disabledReason) return { ok: false, error: props.disabledReason || undefined }
   const id = ++nextSend
   const shown = body.trim() ? body : t('chat.orca.terminalChat.imageOnly', '(image)')
-  const seen = fileEvents.value.filter((e) => e && e.type === 'user' && e.origin !== 'team').length
-  pendingSends.value = [...pendingSends.value, { id, text: shown, at: Date.now(), delivered: false, seen }]
+  const userRows = () => fileEvents.value.filter((e) => e && e.type === 'user' && e.origin !== 'team').length
+  pendingSends.value = [...pendingSends.value, { id, text: shown, at: Date.now(), delivered: false, typed: false, controls: null, imageCount: ids.length, seen: userRows() }]
   render()
   sentSignal.value++
   watchHeld()
+  const update = (patch) => {
+    pendingSends.value = pendingSends.value.map((p) => (p.id === id ? { ...p, ...patch } : p))
+    render()
+  }
   props.sendMessage(body, {
     ...(images.length ? { images } : {}),
-    onDelivered: () => {
-      pendingSends.value = pendingSends.value.map((p) => (p.id === id ? { ...p, delivered: true } : p))
-      render()
-    },
+    onQueued: (controls) => update({ controls }),
+    // Typed now: a row from here, timed and placed from now (it may have waited).
+    onTyped: () => update({ typed: true, at: Date.now(), seen: userRows() }),
+    onDelivered: () => update({ delivered: true }),
     onFailed: () => {
       pendingSends.value = pendingSends.value.filter((p) => p.id !== id)
       render()
@@ -449,7 +461,7 @@ const HELD_POLL_MS = 1000
 const heldReason = ref('')
 let heldTimer = null
 function checkHeld() {
-  const waiting = pendingSends.value.some((p) => !p.delivered)
+  const waiting = pendingSends.value.some((p) => !p.typed && !p.delivered)
   let why = ''
   if (waiting && typeof props.sendHeldReason === 'function') {
     try {
@@ -470,7 +482,50 @@ function watchHeld() {
   checkHeld()
 }
 onBeforeUnmount(() => clearInterval(heldTimer))
-const heldIds = computed(() => heldMessageIds(pendingSends.value, heldReason.value))
+// The cards: what was sent from here and is not typed yet, with why it waits.
+const queuedCards = computed(() => {
+  const caption = heldReason.value || (props.working ? t('chat.orca.queued.untilTurnEnd', 'Typed when the turn ends') : '')
+  return pendingSends.value
+    .filter((p) => !p.typed && !p.delivered)
+    .map((p) => ({ id: String(p.id), text: p.text, ...(p.imageCount ? { imageCount: p.imageCount } : {}), ...(caption ? { caption } : {}) }))
+})
+// Why a card's action failed, under the composer for a few seconds.
+const queuedNotice = ref(null)
+let noticeTimer = null
+function setComposerNotice(text) {
+  queuedNotice.value = text
+  clearTimeout(noticeTimer)
+  noticeTimer = setTimeout(() => (queuedNotice.value = null), 6000)
+}
+onBeforeUnmount(() => clearTimeout(noticeTimer))
+const pendingById = (id) => pendingSends.value.find((p) => String(p.id) === id) || null
+// A card's action through its delivery's controls; already typed: said.
+function queuedAction(id, run) {
+  const p = pendingById(id)
+  const res = p && p.controls ? run(p) : { ok: false }
+  if (!res || res.ok === false) setComposerNotice(res && res.code === 'gone' ? t('chat.orca.queued.gone', 'This message is already being sent.') : t('chat.orca.queued.failed', 'The waiting message could not be changed.'))
+  return res
+}
+function onQueuedRemove(id) {
+  return queuedAction(id, (p) => {
+    const res = p.controls.remove()
+    if (res && res.ok) {
+      pendingSends.value = pendingSends.value.filter((x) => x !== p)
+      render()
+    }
+    return res
+  })
+}
+function onQueuedEdit(id, text) {
+  return queuedAction(id, (p) => {
+    const res = p.controls.edit(text)
+    if (res && res.ok) pendingSends.value = pendingSends.value.map((x) => (x === p ? { ...x, text } : x))
+    return res
+  })
+}
+function onQueuedSendNow(id) {
+  return queuedAction(id, (p) => p.controls.sendNow())
+}
 
 // ---- Model and effort (the pane's model menu path) ----------------------------
 const isCodex = computed(() => composerAgent(props.agent) === 'codex')
@@ -823,7 +878,6 @@ const title = computed(() => t('chat.orca.transcriptView.title', 'Conversation o
         :show-live-turn-activity="false"
         :on-link-click="onLinkClick"
         :allow-file-uri-links="true"
-        :queued-message-ids="interactive ? heldIds : undefined"
         :scroll-to-latest-signal="sentSignal"
       />
     </div>
@@ -831,6 +885,7 @@ const title = computed(() => t('chat.orca.transcriptView.title', 'Conversation o
       <NativeChatStructuredSessionStatus
         :session-id="sessionId"
         :agent-label="fromAgent"
+        :composer-error="queuedNotice"
         :is-visible="isVisible"
         :background-tasks="backgroundTasks"
         :stop-note="t('chat.orca.terminalChat.backgroundStop', 'To stop one, open its terminal: /tasks lists them there.')"
@@ -882,6 +937,15 @@ const title = computed(() => t('chat.orca.transcriptView.title', 'Conversation o
         :busy="working || !!card"
         :disabled="!!disabledReason"
         :agent-name="fromAgent"
+      />
+      <NativeChatQueuedMessages
+        :cards="queuedCards"
+        :can-send-now="true"
+        :send-now-title="t('chat.orca.queued.typeNowHint', 'Type it into the terminal now, without waiting for the end of the turn')"
+        :send-now="onQueuedSendNow"
+        :edit="onQueuedEdit"
+        :remove="onQueuedRemove"
+        :focus-composer="() => composerRef && composerRef.focus && composerRef.focus()"
       />
       <NativeChatComposer
         ref="composerRef"

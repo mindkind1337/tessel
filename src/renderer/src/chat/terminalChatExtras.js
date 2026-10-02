@@ -1,8 +1,7 @@
 // More of the chat view over a terminal agent (terminalChatBridge.js): its
 // slash commands shown as "Ran /command" rows, its background-task dock, the
-// messages waiting to be typed, the context window of a Claude model.
+// context window of a Claude model.
 // Pure: every input is given.
-import { agentJournalSubmissionKey } from './orca/shared/agent-session-journal-item-key.js'
 
 // ---- Slash commands ------------------------------------------------------------
 
@@ -52,19 +51,6 @@ export function mergeCommandMarkers(local, fromFile) {
     else own.push(m)
   }
   return [...file, ...own].sort((a, b) => a.sentAt - b.sentAt)
-}
-
-// ---- Messages waiting to be typed --------------------------------------------
-
-// The messages sent from the chat that Tessel's delivery still holds (not
-// typed yet), with why: their rows say "waiting" with that reason instead of
-// "sent". pending: [{ id, delivered }]; reason: '' when nothing holds them.
-// -> Map(message id -> reason) | undefined
-export function heldMessageIds(pending, reason) {
-  if (!reason) return undefined
-  const held = (Array.isArray(pending) ? pending : []).filter((p) => p && !p.delivered)
-  if (!held.length) return undefined
-  return new Map(held.map((p) => [agentJournalSubmissionKey(`pending-${p.id}`), reason])) // i18n-ignore
 }
 
 // ---- Background tasks ------------------------------------------------------------

@@ -21,6 +21,14 @@
 // process stopped and turns 'asleep' (no 'ended'). A message sent to it
 // waits (queued) and asks the window once to open it again ('wake'); that
 // open resumes the same conversation and sends what waited.
+//
+// Held messages (chat:send with hold, the chat pane's): a message sent while
+// the agent cannot take it at once waits in userQueue as a card above the
+// composer ('queuedMessage', never a transcript row) that the user can edit,
+// delete or send now (steered into the running turn, Claude and Codex). It
+// becomes a 'user' row only when it goes out (where it goes out), or a failed
+// one if the chat ends first. After Orca's host-owned queue of mid-turn
+// messages (MIT, Copyright (c) 2026 Lovecast Inc.).
 import { discoverClaudeSkills, withoutProjectSkills, publicSkillDiscovery } from './skills.js'
 import { normalizeCommands } from './commands.js'
 import { QUESTION_LIMITS, normalizeQuestions, validateQuestionAnswers } from './questions.js'
@@ -411,7 +419,9 @@ export function createChatSessions(deps) {
     s.turn = turn
     if (turn.images?.length) (s.sentImages ||= []).push(...turn.images.map((img) => img.id))
     idleCheck(s)
-    if (turn.kind === 'user') for (const id of turn.ids) if (turn.wasQueued) emit(s.paneId, { type: 'userStatus', id, status: 'sent' })
+    // A held card becomes its row now, where it goes out.
+    if (turn.held) emitHeldRow(s, turn.held, 'sent')
+    else if (turn.kind === 'user') for (const id of turn.ids) if (turn.wasQueued) emit(s.paneId, { type: 'userStatus', id, status: 'sent' })
     workStatus(s)
     let r
     try {
@@ -517,7 +527,8 @@ export function createChatSessions(deps) {
 
   const STEER_AGENTS = new Set(['claude', 'codex'])
   const steeredPending = (s) => [...(s.steered?.values() || [])].filter((m) => !m.gaveUp)
-  function canSteer(s, text) {
+  // Whether a running turn can take a message now (a card's Send now too).
+  function steerable(s, text) {
     return (
       STEER_AGENTS.has(s.agent) &&
       s.ready &&
@@ -527,11 +538,12 @@ export function createChatSessions(deps) {
       !s.compaction &&
       !pendingApprovals(s) &&
       !pendingQuestions(s) &&
-      !s.userQueue.length &&
       // A command never joins a running turn: it waits for its end.
       !String(text || '').trim().startsWith('/')
     )
   }
+  // A new message: never ahead of one already waiting (order kept).
+  const canSteer = (s, text) => steerable(s, text) && !s.userQueue.length
 
   async function steer(s, m) {
     const a = s.adapter
@@ -627,7 +639,7 @@ export function createChatSessions(deps) {
     if (!s.ready || s.finished || s.closing || s.turn || pendingApprovals(s) || pendingQuestions(s)) return
     if (s.userQueue.length) {
       const m = s.userQueue.shift()
-      void deliver(s, { kind: 'user', uuid: m.id, ids: [m.id], text: m.text, images: m.images, wasQueued: true })
+      void deliver(s, { kind: 'user', uuid: m.id, ids: [m.id], text: m.text, images: m.images, wasQueued: true, ...(m.held ? { held: m } : {}) })
       return
     }
     if (s.teamQueue.length) {
@@ -1407,7 +1419,10 @@ export function createChatSessions(deps) {
   function failQueued(s) {
     releaseSentImages(s)
     images?.release(s.userQueue.flatMap((m) => (m.images || []).map((img) => img.id)))
-    for (const m of s.userQueue) emit(s.paneId, { type: 'userStatus', id: m.id, status: 'failed' })
+    for (const m of s.userQueue) {
+      if (m.held) emitHeldRow(s, m, 'failed')
+      else emit(s.paneId, { type: 'userStatus', id: m.id, status: 'failed' })
+    }
     s.userQueue = []
     for (const m of steeredPending(s)) emit(s.paneId, { type: 'userStatus', id: m.id, status: 'failed' })
     s.steered?.clear()
@@ -1434,7 +1449,8 @@ export function createChatSessions(deps) {
 
   // A user message (origin 'user'); team messages go through sendTeam.
   // imageIds: images saved for this pane (chatImages.js), in order.
-  function sendUser({ paneId, text, imageIds } = {}) {
+  // hold: a message that cannot go at once waits as an editable card.
+  function sendUser({ paneId, text, imageIds, hold = false } = {}) {
     const s = live(paneId) || waiting(paneId)
     if (!s) return closed()
     let pics = []
@@ -1446,10 +1462,18 @@ export function createChatSessions(deps) {
     const id = randomUUID()
     const now_ = now()
     const idle = s.ready && !s.turn && !pendingApprovals(s) && !pendingQuestions(s) && !s.userQueue.length
-    // A turn runs: Claude and Codex take it now (see steer).
-    const steered = !idle && canSteer(s, text)
+    // A turn runs: Claude and Codex take it now (see steer), unless it is held.
+    const steered = !idle && !hold && canSteer(s, text)
     // The journal keeps each image's name and size, never its data.
     const shown = pics.map((img) => ({ id: img.id, name: img.name, width: img.width, height: img.height }))
+    if (!idle && hold) {
+      const m = { id, text, at: now_, held: true, shown, ...(pics.length ? { images: pics } : {}) }
+      s.userQueue.push(m)
+      emitCard(s, m)
+      askWake(s)
+      idleCheck(s)
+      return { ok: true, id, queued: true, held: true }
+    }
     emit(paneId, { type: 'user', id, text, origin: 'user', status: idle || steered ? 'sent' : 'queued', at: now_, ...(shown.length ? { images: shown } : {}) })
     if (idle) void deliver(s, { kind: 'user', uuid: id, ids: [id], text, ...(pics.length ? { images: pics } : {}) })
     else if (steered) void steer(s, { id, text, ...(pics.length ? { images: pics } : {}) })
@@ -1457,6 +1481,54 @@ export function createChatSessions(deps) {
     askWake(s)
     idleCheck(s)
     return { ok: true, id, queued: !idle && !steered, ...(steered ? { steered: true } : {}) }
+  }
+
+  // ---- held messages (the cards above the composer) ---------------------------
+  // All synchronous: a card is either still in userQueue (it can change) or
+  // already taken out by pump or Send now ('gone'), never in between.
+
+  const heldCard = (m) => ({ id: m.id, text: m.text, at: m.at, ...(m.shown?.length ? { imageCount: m.shown.length } : {}) })
+  function emitCard(s, m) {
+    emit(s.paneId, { type: 'queuedMessage', ...heldCard(m) })
+  }
+  function emitHeldRow(s, m, status) {
+    emit(s.paneId, { type: 'user', id: m.id, text: m.text, origin: 'user', status, at: now(), ...(m.shown?.length ? { images: m.shown } : {}) })
+  }
+  function heldOf(paneId, id) {
+    const s = live(paneId) || waiting(paneId)
+    if (!s) return { error: closed() }
+    const i = s.userQueue.findIndex((m) => m.held && m.id === id)
+    if (i < 0) return { error: { ok: false, code: 'gone', error: t('main.chat.queuedGone', 'This message was already sent.') } }
+    return { s, i, m: s.userQueue[i] }
+  }
+  function queuedEdit({ paneId, id, text } = {}) {
+    const h = heldOf(paneId, id)
+    if (h.error) return h.error
+    if (!String(text || '').trim() && !h.m.shown?.length) return invalid()
+    h.m.text = text
+    emitCard(h.s, h.m)
+    return { ok: true }
+  }
+  function queuedDelete({ paneId, id } = {}) {
+    const h = heldOf(paneId, id)
+    if (h.error) return h.error
+    h.s.userQueue.splice(h.i, 1)
+    images?.release((h.m.images || []).map((img) => img.id))
+    emit(paneId, { type: 'queuedRemoved', id })
+    idleCheck(h.s)
+    return { ok: true }
+  }
+  // Send now: steered into the running turn (Claude, Codex), ahead of the others.
+  function queuedSend({ paneId, id } = {}) {
+    const h = heldOf(paneId, id)
+    if (h.error) return h.error
+    const { s, m } = h
+    if (!steerable(s, m.text)) return { ok: false, code: 'cannot', error: t('main.chat.queuedCannot', 'It cannot take a message now: this one goes when the turn ends.') }
+    s.userQueue.splice(h.i, 1)
+    emitHeldRow(s, m, 'sent')
+    void steer(s, { id: m.id, text: m.text, ...(m.images?.length ? { images: m.images } : {}) })
+    idleCheck(s)
+    return { ok: true, steered: true }
   }
 
   function sendTeam({ paneId, messages } = {}) {
@@ -1695,6 +1767,8 @@ export function createChatSessions(deps) {
       // Authoritative live requests for remounts, even after journal rotation.
       // Empty after restart: recorded questions can never become answerable again.
       questions: s && !s.closing && !s.finished ? [...s.questions].map(([requestId, q]) => ({ type: 'question', requestId, questions: q.questions, status: 'pending' })) : [],
+      // The held messages in order (their cards), as authoritative.
+      queuedMessages: s && !s.closing && !s.finished ? s.userQueue.filter((m) => m.held).map(heldCard) : [],
       // A live session (starting, idle, working, approval): do not open it again.
       open: !!s && !s.finished && !s.closing && !s.asleep,
       // Asleep (its process stopped when idle): open false, live set (status
@@ -1835,13 +1909,29 @@ export function createChatSessions(deps) {
       })
     })
     ipcMain.handle('chat:send', (_e, q) => {
-      const { paneId, text, images: imageIds } = obj(q)
-      if (!validPaneId(paneId)) return invalid()
+      const { paneId, text, images: imageIds, hold } = obj(q)
+      if (!validPaneId(paneId) || (hold != null && typeof hold !== 'boolean')) return invalid()
       if (imageIds != null && (!Array.isArray(imageIds) || imageIds.some((id) => typeof id !== 'string'))) return invalid()
       const withImages = Array.isArray(imageIds) && imageIds.length > 0
       // With images, the text may be empty.
       if (!(okText(text, LIMITS.text) || (withImages && typeof text === 'string' && text.length <= LIMITS.text))) return invalid()
-      return sendUser({ paneId, text, ...(withImages ? { imageIds } : {}) })
+      return sendUser({ paneId, text, ...(withImages ? { imageIds } : {}), ...(hold ? { hold: true } : {}) })
+    })
+    // A held message (its card): edit its text, delete it, or send it now.
+    ipcMain.handle('chat:queuedEdit', (_e, q) => {
+      const { paneId, id, text } = obj(q)
+      if (!validPaneId(paneId) || !validId(id) || typeof text !== 'string' || text.length > LIMITS.text) return invalid()
+      return queuedEdit({ paneId, id, text })
+    })
+    ipcMain.handle('chat:queuedDelete', (_e, q) => {
+      const { paneId, id } = obj(q)
+      if (!validPaneId(paneId) || !validId(id)) return invalid()
+      return queuedDelete({ paneId, id })
+    })
+    ipcMain.handle('chat:queuedSend', (_e, q) => {
+      const { paneId, id } = obj(q)
+      if (!validPaneId(paneId) || !validId(id)) return invalid()
+      return queuedSend({ paneId, id })
     })
     images?.register(ipcMain, validPaneId)
     ipcMain.handle('chat:sendTeam', (_e, q) => {
@@ -1916,5 +2006,5 @@ export function createChatSessions(deps) {
     })
   }
 
-  return { historyOlder, open, send: sendUser, sendTeam, interrupt, answer, approve, approvalInput, setOption, compact, close, closeAll, history, skills, list, register }
+  return { historyOlder, open, send: sendUser, sendTeam, queuedEdit, queuedDelete, queuedSend, interrupt, answer, approve, approvalInput, setOption, compact, close, closeAll, history, skills, list, register }
 }

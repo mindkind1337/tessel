@@ -399,7 +399,7 @@ async function send(text, opts = {}) {
   if (images.length) {
     let res
     try {
-      res = await api().send({ paneId: props.node.id, text: body, images })
+      res = await api().send({ paneId: props.node.id, text: body, images, hold: true })
     } catch (err) {
       res = { ok: false, error: (err && err.message) || String(err) }
     }
@@ -417,7 +417,7 @@ async function deliver(entry) {
   entry.sending = true
   let res
   try {
-    res = await a.send({ paneId: props.node.id, text: entry.text })
+    res = await a.send({ paneId: props.node.id, text: entry.text, hold: true })
   } catch (err) {
     res = { ok: false, error: (err && err.message) || String(err) }
   }

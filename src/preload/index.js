@@ -414,6 +414,10 @@ const api = {
   chat: {
     open: (opts) => ipcRenderer.invoke('chat:open', opts),
     send: (opts) => ipcRenderer.invoke('chat:send', opts),
+    // A held message's card: edit, delete, send now.
+    queuedEdit: (opts) => ipcRenderer.invoke('chat:queuedEdit', opts),
+    queuedDelete: (opts) => ipcRenderer.invoke('chat:queuedDelete', opts),
+    queuedSend: (opts) => ipcRenderer.invoke('chat:queuedSend', opts),
     sendTeam: (opts) => ipcRenderer.invoke('chat:sendTeam', opts),
     interrupt: (opts) => ipcRenderer.invoke('chat:interrupt', opts),
     approve: (opts) => ipcRenderer.invoke('chat:approve', opts),

@@ -147,6 +147,23 @@ describe('journal adapter', () => {
     expect(adapter.meta.queuedIds).toEqual([])
   })
 
+  it('a held message is a card, never an item: edited in place, gone when deleted or when its row comes', () => {
+    const { adapter, state } = run([
+      { type: 'queuedMessage', id: 'q1', text: 'first', at: 5 },
+      { type: 'queuedMessage', id: 'q2', text: 'second', imageCount: 2, at: 6 },
+      { type: 'queuedMessage', id: 'q1', text: 'first, edited', at: 5 }
+    ])
+    expect(state.items).toEqual([])
+    expect(adapter.meta.queuedCards).toEqual([
+      { id: 'q1', text: 'first, edited', at: 5 },
+      { id: 'q2', text: 'second', imageCount: 2, at: 6 }
+    ])
+    adapter.apply({ type: 'queuedRemoved', id: 'q2' })
+    adapter.apply({ type: 'user', id: 'q1', text: 'first, edited', origin: 'user', status: 'sent' })
+    expect(adapter.meta.queuedCards).toEqual([])
+    expect(adapter.items().map((i) => i.body.kind)).toEqual(['message'])
+  })
+
   it('an approval is a pending prompt, then a resolved one; Codex without acceptForSession offers no session option', () => {
     const { state, states } = run([
       { type: 'user', id: 'u1', text: 'go', status: 'accepted' },
