@@ -14,7 +14,8 @@ import {
   ompViewEvents,
   readTranscriptView,
   transcriptViewRoots,
-  validViewId
+  validViewId,
+  VIEW_LIMITS
 } from '../transcriptView'
 
 const GROK_ID = 'a1b2c3d4-0000-4000-8000-000000000001'
@@ -488,5 +489,33 @@ describe('transcript view: earlier lines (scrolled up)', () => {
     expect(views.agentOf(opened.viewId)).toBe('openclaude')
     expect(views.cwdOf('tv-nope')).toBeNull()
     views.closeAll()
+  })
+})
+
+describe('transcript view: images pasted in the terminal', () => {
+  const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
+  const session = lines([
+    {
+      type: 'user',
+      uuid: 'u-img',
+      timestamp: ts(1),
+      message: {
+        role: 'user',
+        content: [
+          { type: 'text', text: '[Image #1] what is this?' },
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: PNG } }
+        ]
+      }
+    }
+  ])
+  it('the chat view shows a pasted screenshot on its message', () => {
+    openclaudeFile(session)
+    const res = readTranscriptView({ agent: 'openclaude', sessionId: OC_ID, roots, limits: VIEW_LIMITS })
+    const user = res.events.find((e) => e.type === 'user')
+    expect(user.images).toHaveLength(1)
+    expect(user.images[0].dataUrl).toBe(`data:image/png;base64,${PNG}`)
+  })
+  it('the views read their images by default', () => {
+    expect(VIEW_LIMITS.attachments.images).toBeGreaterThan(0)
   })
 })

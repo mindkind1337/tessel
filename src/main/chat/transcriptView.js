@@ -45,7 +45,12 @@ import { basename, isAbsolute, join } from 'path'
 import { claudeTranscriptIn } from '../agentModel.js'
 import { realInside } from '../agentChildren.js'
 import { ompSessionsDir } from '../agentSessionSources.js'
-import { HISTORY_LIMITS, claudeHistoryEvents, codexHistoryEvents, createBuilder, findTranscript } from './transcriptHistory.js'
+import { HISTORY_LIMITS, ATTACHMENT_LIMITS, resolveHistoryAttachments, claudeHistoryEvents, codexHistoryEvents, createBuilder, findTranscript } from './transcriptHistory.js'
+
+// The chat view's limits: its user messages show their images (a screenshot
+// pasted in the terminal), the newest first within a smaller page budget
+// than a chat pane's history (the view is sent again as the file grows).
+export const VIEW_LIMITS = { ...HISTORY_LIMITS, attachments: { ...ATTACHMENT_LIMITS, pageBytes: 6 * 1024 * 1024 } }
 import { claudeBackgroundFromLines, transcriptCwd } from './transcriptBackground.js'
 
 export const TRANSCRIPT_VIEW_AGENTS = ['grok', 'openclaude', 'omp', 'claude', 'codex', 'cursor', 'antigravity']
@@ -778,6 +783,8 @@ function eventsOf(agent, sessionId, tail, limits, eventCap = limits.events) {
     events = events.slice(-eventCap)
     truncated = true
   }
+  // Their images and files, for the events kept only.
+  if (limits.attachments) resolveHistoryAttachments(events, limits.attachments)
   const usage = contextUsageEvent(agent, tail.lines())
   if (usage) events = [...events, usage]
   const background = agent === 'claude' || agent === 'openclaude' ? claudeBackgroundFromLines(tail.lines()) : []
@@ -815,7 +822,7 @@ export function reportedTranscript(sessionsDir, paneId, agent, sessionId) {
 // homes(agent, accountId) -> the folder Claude Code or Codex keeps that
 // account's conversations in (or null); sessionsDir() -> where the panes'
 // hooks report their sessions.
-export function createTranscriptViews({ send, roots = transcriptViewRoots, homes = async () => null, sessionsDir = () => null, watch = fs.watch, debounceMs = 300, pollMs = 2000, log = null, limits = HISTORY_LIMITS } = {}) {
+export function createTranscriptViews({ send, roots = transcriptViewRoots, homes = async () => null, sessionsDir = () => null, watch = fs.watch, debounceMs = 300, pollMs = 2000, log = null, limits = VIEW_LIMITS } = {}) {
   const views = new Map() // viewId -> { agent, sessionId, file, tail, watcher, timer, poll, stamp, eventCap }
   let nextId = 0
 
