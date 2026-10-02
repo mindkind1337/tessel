@@ -40,7 +40,11 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey, true))
 </script>
 
 <template>
+  <!-- A card in the middle of the window, below its title bar: the window's
+       own close button never sits where this viewer's is (closing Tessel by
+       mistake). Esc, the card's ×, or a click beside it closes it. -->
   <div class="imgview-backdrop" role="dialog" aria-modal="true" :aria-label="shownTitle" @mousedown.self="emit('close')">
+    <div class="imgview-card">
     <div class="imgview-bar">
       <span class="imgview-title">{{ shownTitle }}</span>
       <span v-if="size" class="imgview-size">{{ size }}</span>
@@ -65,6 +69,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey, true))
     </div>
     <div class="imgview-stage" :class="{ full: fullSize }" @mousedown.self="emit('close')">
       <img :src="src" :alt="shownTitle" class="imgview-img" draggable="false" @load="onLoad" @click="fullSize = !fullSize" />
+    </div>
     </div>
   </div>
 </template>
