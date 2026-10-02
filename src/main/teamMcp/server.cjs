@@ -31,7 +31,7 @@ const path = require('path')
 const crypto = require('crypto')
 const { randomUUID } = crypto
 
-const VERSION = '1.10.6'
+const VERSION = '1.10.7'
 const MAX_TEXT = 6000
 
 // --- Finding my team and me ---------------------------------------------------
@@ -494,11 +494,24 @@ function moveTask(ctx, args) {
   return { ok: true }
 }
 
-// Each member, with its agent, model and state, and its open cards.
+// Each member, with its agent, model and state, and its open cards. First
+// the caller's own address as Tessel resolved it from the identity Tessel
+// gave its session (TESSEL_PANE_ID), never from a guess: after Orca's
+// "tell each agent its own orchestration address" (MIT, Copyright (c) 2026
+// Lovecast Inc.).
 function members(ctx) {
   const r = roster(ctx) || {}
   const data = readJson(path.join(ctx.root, 'tasks.json'))
   const tasks = data && Array.isArray(data.tasks) ? data.tasks : []
+  return [selfLine(ctx), ...membersList(ctx, r, tasks)].filter(Boolean).join('\n')
+}
+function selfLine(ctx) {
+  const me = ctx.state.members[ctx.meId]
+  if (!me) return ''
+  const name = memberName(me)
+  return `You are ${name}: your address in the team. Teammates and your workers reach you with team_send {"to":"${name}"}; never pass another agent's name as "me".`
+}
+function membersList(ctx, r, tasks) {
   return Object.entries(ctx.state.members)
     .filter(([, m]) => m.active)
     .map(([id, m]) => {
@@ -507,7 +520,6 @@ function members(ctx) {
       const cards = tasks.filter((t) => (t.assignee === memberName(m) || t.assignee === `#${m.num}`) && t.column !== 'done').map((t) => t.id)
       return `${memberName(m)} (${m.title})${id === ctx.meId ? ' (you)' : ''}${about ? ` [${about}]` : ''}${cards.length ? `, cards: ${cards.join(', ')}` : ''}`
     })
-    .join('\n')
 }
 
 // --- Asking and waiting for the answer ---------------------------------------------
@@ -750,7 +762,7 @@ const TOOLS = [
   },
   {
     name: 'team_members',
-    description: 'List who is in your Tessel team: each teammate’s agent, model, state (working, idle, approval, limited) and open cards. Use it to pick who gets a task.',
+    description: 'List who is in your Tessel team: first your own address (your name, what team_send and team_ask take), then each teammate’s agent, model, state (working, idle, approval, limited) and open cards. Use it to pick who gets a task.',
     inputSchema: { type: 'object', properties: { ...ME_ARG } }
   },
   {

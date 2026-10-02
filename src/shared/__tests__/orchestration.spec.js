@@ -12,6 +12,7 @@ import {
   depthExceededMessage,
   WORKER_START_PROMPT,
   WAKE_LAUNCH_PROMPT,
+  CHAT_RESULTS_POINTER,
   wakeLaunchArgs,
   START_RATE,
   TOTAL_WORKERS_LIMIT
@@ -176,6 +177,20 @@ describe('launch', () => {
     expect(workerPreamble({ workerHandle: '#5', coordinatorHandle: '#2', taskId: 't', dispatchId: 'w', title: 'x', brief: 'y', where: null, projectDir: 'C:\\repo', canDispatch: true })).toMatch(
       /SUB-WORKERS[\s\S]*team_worker_start/
     )
+    // No address known: nothing said about one.
+    expect(text).not.toMatch(/Your address in the team/)
+  })
+
+  it("the preamble tells a worker its own address and its coordinator's; a chat is told mail starts a turn", () => {
+    const p = { workerHandle: 'Ada Codex', coordinatorHandle: 'Bohr Claude Code', taskId: 't', dispatchId: 'w', title: 'x', brief: 'y', where: null, projectDir: 'C:\\repo', canDispatch: false }
+    const text = workerPreamble({ ...p, workerAddress: 'Ada', coordinatorAddress: 'Bohr' })
+    expect(text).toMatch(/Your address in the team is "Ada": your coordinator and teammates reach you with team_send \{"to":"Ada"\}\. Your coordinator's address is "Bohr"\./)
+    expect(text).toMatch(/never pass another agent's name as "me"/)
+    expect(text).toMatch(/team_ask \{"to":"Bohr"/)
+    expect(text).not.toMatch(/You are a chat/)
+    expect(workerPreamble({ ...p, workerAddress: 'Ada', coordinatorAddress: 'Bohr', chat: true })).toMatch(/\nYou are a chat: a message that arrives while you are idle starts a new turn of yours/)
+    expect(CHAT_RESULTS_POINTER).toMatch(/team_inbox/)
+    expect(CHAT_RESULTS_POINTER).toMatch(/end your turn/)
   })
 
   it("a worker's output: last lines, no control codes", () => {

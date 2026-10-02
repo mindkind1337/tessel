@@ -254,11 +254,25 @@ export function outputTail(text, lines = 60) {
   return out.length > 6000 ? out.slice(-6000) : out
 }
 
+// The turn Tessel gives a chat coordinator when results from its workers
+// (or from a teammate it gave a card) wait for it in team_inbox: a pointer,
+// never the results themselves (they stay in the team's notices, read once
+// under the agent's own identity). After Orca's pointer turn for a
+// structured chat coordinator (MIT, Copyright (c) 2026 Lovecast Inc.:
+// "deliver worker results to a structured chat coordinator"). Fixed text.
+export const CHAT_RESULTS_POINTER =
+  'Results from your workers (or from teammates you gave cards) are waiting for you. Call team_inbox now to read them, then go on coordinating: start, follow up or settle workers as their reports require. When nothing is left for you to do now, end your turn: the next results come to you as a new turn like this one, so do not wait or poll.'
+
 // Orca's dispatch preamble (preamble.ts), adapted: who the worker is, who
 // its coordinator is, its card, and how to report through the team tools.
 //   { workerHandle "#5", coordinatorHandle "#2 Claude Code", taskId,
 //     dispatchId, title, brief, teamName, where: { path, branch, baseBranch }
-//     (its own copy) or null (the project folder), projectDir, canDispatch }
+//     (its own copy) or null (the project folder), projectDir, canDispatch,
+//     workerAddress, coordinatorAddress (their names in the team, what
+//     team_send and team_ask take), chat (the worker is a chat agent) }
+// Like Orca's "tell each agent its own orchestration address": the worker
+// is told its own address and its coordinator's, as Tessel resolved them
+// from the identity Tessel gave each pane (TESSEL_PANE_ID), never guessed.
 export function workerPreamble(p) {
   const where = p.where
     ? `You work in your own copy of the project: ${p.where.path} (git branch ${p.where.branch}, made from ${p.where.baseBranch || 'the main branch'}). ` +
@@ -268,17 +282,24 @@ export function workerPreamble(p) {
   const sub = p.canDispatch
     ? '\n\n=== SUB-WORKERS ===\nYou may start sub-workers for this task with team_worker_start. You own them: wait for their reports and settle them (team_worker_list, team_worker_stop) before you send your own worker_done. Nesting is capped: a sub-worker of yours may not be able to start more.'
     : ''
+  const coordTo = p.coordinatorAddress || String(p.coordinatorHandle).split(' ')[0]
+  const address = p.workerAddress
+    ? `\nYour address in the team is "${p.workerAddress}": your coordinator and teammates reach you with team_send {"to":"${p.workerAddress}"}. Your coordinator's address is "${coordTo}". Tessel knows who you are from the session it started: never pass another agent's name as "me" (team_members marks you with "(you)").`
+    : ''
+  const chat = p.chat
+    ? '\nYou are a chat: a message that arrives while you are idle starts a new turn of yours, so never wait in a loop or poll for messages.'
+    : ''
   return `[Tessel worker brief]
 You are working inside Tessel. You are a worker started by your coordinator.
 You are ${p.workerHandle}. Your coordinator is ${p.coordinatorHandle}${p.teamName ? `, in team "${p.teamName}"` : ''}.
-Your task card is ${p.taskId}. Your dispatch id is ${p.dispatchId}.
+Your task card is ${p.taskId}. Your dispatch id is ${p.dispatchId}.${address}${chat}
 
 Your coordinator cannot see this terminal: reach it only with the team tools below. A question or a result left only in this terminal never gets to it. Do not post to other channels during the work.
 
 === TEAM TOOLS ===
 - team_worker_done {"outcome":"succeeded","summary":"...","files":[...]}: report the outcome, required, exactly once. The summary is 3 sentences: what you did, what you found, what is left. Use "failed" when the work is not done; never encode failure only in prose and never stop silently.
 - team_heartbeat {"phase":"investigating|implementing|reviewing|waiting"}: every ${HEARTBEAT_MIN} minutes while you work, so your coordinator can tell "still thinking" from "stuck". Not needed while you wait inside team_ask.
-- team_ask {"to":"${String(p.coordinatorHandle).split(' ')[0]}","question":"..."}: ask your coordinator and wait for the answer. Use it instead of asking in this terminal: nobody watches it.
+- team_ask {"to":"${coordTo}","question":"..."}: ask your coordinator and wait for the answer. Use it instead of asking in this terminal: nobody watches it.
 - team_task_gate {"id":"${p.taskId}","question":"..."}: a decision only the user makes; the card waits for it.
 - team_inbox: read your coordinator's follow-ups at each checkpoint (before a new file, after a test run) and once more right before worker_done.
 

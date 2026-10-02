@@ -33,6 +33,12 @@ describe('named team addresses', () => {
     const ctx = mcp.locate()
     expect(mcp.members(ctx)).toContain('Ada (Codex)')
     expect(mcp.members(ctx)).not.toMatch(/#[12]/)
+    // The caller's own address first, from its own identity (TESSEL_PANE_ID).
+    expect(mcp.members(ctx).split('\n')[0]).toBe('You are Ada: your address in the team. Teammates and your workers reach you with team_send {"to":"Ada"}; never pass another agent\'s name as "me".')
+    expect(mcp.members(ctx)).toContain('Ada (Codex) (you)')
+    process.env.TESSEL_PANE_ID = 'pane-b'
+    expect(mcp.members(mcp.locate()).split('\n')[0]).toMatch(/^You are Bohr: /)
+    process.env.TESSEL_PANE_ID = 'pane-a'
     expect(mcp.send(ctx, 'bOHR', 'Named message').ok).toBe(true)
     expect(mcp.send(ctx, '#2', 'Legacy message').ok).toBe(true)
     const res = pollTeamChannel({ dir, teamId: 'team-a' })

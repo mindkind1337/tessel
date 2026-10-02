@@ -76,7 +76,8 @@ export const CHAT_REMINDER =
 //   createWorktree(ws, title) -> { worktree } | { error },
 //   openWorkerPane({ ws, agent, worktree, launchOptions }) -> leaf | null,
 //   joinTeam(leaf, team) -> Promise, closePane(paneId, { byUser }),
-//   notice(leaves, text, teamId), answer(team, rid, ok, text),
+//   notice(leaves, text, teamId, { wake }) (wake: a chat among the leaves
+//     also gets a turn pointing it at team_inbox), answer(team, rid, ok, text),
 //   readScreen(paneId, lines) -> string | null,
 //   activity(event), attention(title, body, paneId), toast(text, opts),
 //   publish(team, { workers, limits, phases }), now(),
@@ -105,6 +106,14 @@ export function createOrchestrator(deps) {
   // Started as a chat? Only Claude and Codex have one; the rest stay terminals.
   const chatMode = (r) => deps.settings.orchestrationWorkerMode === 'chat' && CHAT_AGENTS.includes(r.agent)
   const handleOf = (leaf) => leaf ? leaf.paneName || null : null
+  // A chat coordinator hears of its workers as a new turn of its own (Tessel
+  // points it at team_inbox), so it ends its turn instead of waiting: after
+  // Orca's structured chat coordinator (MIT, Copyright (c) 2026 Lovecast Inc.).
+  const isChat = (leaf) => !!leaf && leaf.kind === 'chat'
+  const hearIn = (leaf) =>
+    isChat(leaf)
+      ? 'You will hear as a new turn of this chat (then read it with team_inbox), so end your turn when you have nothing else to do' // i18n-ignore
+      : 'You will hear in team_inbox' // i18n-ignore
   const labelOf = (id) => {
     const leaf = id ? deps.findLeaf(id) : null
     return leaf ? deps.label(leaf) : 'a closed agent'
@@ -148,7 +157,7 @@ export function createOrchestrator(deps) {
       return
     }
     const coord = deps.findLeaf(r.by)
-    if (coord) deps.notice([coord], `[Tessel] ${text}`, team.id)
+    if (coord) deps.notice([coord], `[Tessel] ${text}`, team.id, { wake: true })
   }
   // Sealed by Tessel's main process for the requester only (teamAuth.js).
   const answerNow = (team, req, from, ok, text) => {
@@ -259,7 +268,7 @@ export function createOrchestrator(deps) {
         req,
         from,
         true,
-        `Worker request ${r.id} for "${r.title}" (card ${r.taskId}) waits for the user's confirmation in Tessel. You will hear in team_inbox when it starts or is refused; meanwhile go on with other work.` // i18n-ignore
+        `Worker request ${r.id} for "${r.title}" (card ${r.taskId}) waits for the user's confirmation in Tessel. ${hearIn(from)} when it starts or is refused; meanwhile go on with other work.` // i18n-ignore
       )
       askUser(r, from)
       return
@@ -286,7 +295,7 @@ export function createOrchestrator(deps) {
     const why = waiting.length
       ? `it waits for card ${waiting.join(', ')}` // i18n-ignore
       : `you already have ${limits().maxConcurrent} workers running (the limit): it starts when one ends` // i18n-ignore
-    return `Worker request ${r.id} for "${r.title}" (card ${r.taskId}) is queued: ${why}. You will hear in team_inbox when it starts.` // i18n-ignore
+    return `Worker request ${r.id} for "${r.title}" (card ${r.taskId}) is queued: ${why}. ${hearIn(deps.findLeaf(r.by))} when it starts.` // i18n-ignore
   }
 
   // May `from` act on this worker now? Both still in this team, and `from`
@@ -570,7 +579,10 @@ export function createOrchestrator(deps) {
         teamName: team.name,
         where: worktree,
         projectDir: ws.cwd,
-        canDispatch: r.depth < lim.maxDepth
+        canDispatch: r.depth < lim.maxDepth,
+        workerAddress: handleOf(leaf),
+        coordinatorAddress: handleOf(coord),
+        chat: !!chat
       }),
       team.id
     )
@@ -588,7 +600,7 @@ export function createOrchestrator(deps) {
       team,
       r,
       true,
-      `Started worker ${handle} (${r.agent}) on card ${r.taskId} "${r.title}"${r.branch ? `, branch ${r.branch}` : ''}. It reports with team_worker_done; follow it with team_worker_list or team_worker_read ${handle}.` // i18n-ignore
+      `Started worker ${handle} (${r.agent}) on card ${r.taskId} "${r.title}"${r.branch ? `, branch ${r.branch}` : ''}. It reports with team_worker_done; follow it with team_worker_list or team_worker_read ${handle}.${isChat(coord) ? ' Its report comes to you as a new turn of this chat: when you have nothing else to do, end your turn rather than wait or poll.' : ''}` // i18n-ignore
     )
   }
 
