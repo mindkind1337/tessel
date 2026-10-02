@@ -10,12 +10,18 @@
 // world (the page never sees it, nothing is left on window); the text is
 // capped (MAX_SNAPSHOT_CHARS) and says so; a control's value is never
 // listed (a control's children are not read; an editable area's text is not
-// its name).
+// its name). A control says its state instead: checked / unchecked, pressed,
+// selected, expanded / collapsed, disabled, required, and for a field only
+// whether it is filled or empty (a list's chosen option is named: a label of
+// the page, not something typed). Pieces of text that follow each other in
+// the same element (a word cut into styled letters) are one line.
 
 export const MAX_SNAPSHOT_CHARS = 60000
 // Clickable elements without a role, at most.
 const MAX_CURSOR_INTERACTIVE = 50
 const MAX_NAME = 200
+// One line of merged text, at most (more starts another line).
+const MAX_TEXT = 1000
 
 const INTERACTIVE_ROLES = new Set([
   'button',
@@ -40,57 +46,158 @@ const LANDMARK_ROLES = new Set(['banner', 'navigation', 'main', 'complementary',
 
 const SKIP_ROLES = new Set(['none', 'presentation', 'generic'])
 
+const CHECKABLE_ROLES = new Set(['checkbox', 'radio', 'switch', 'menuitemcheckbox', 'menuitemradio'])
+const FIELD_ROLES = new Set(['textbox', 'searchbox', 'spinbutton'])
+// Looked through for a list's chosen option, at most.
+const MAX_OPTION_NODES = 500
+
+// A node's accessibility property (checked, disabled, editable…), or undefined.
+function prop(node, name) {
+  if (!Array.isArray(node.properties)) return undefined
+  const p = node.properties.find((x) => x && x.name === name)
+  return p && p.value ? p.value.value : undefined
+}
+const isTrue = (v) => v === true || v === 'true'
+const isFalse = (v) => v === false || v === 'false'
+
+// Whether a field holds something: its value's presence, never the value.
+function hasText(node, nodeById) {
+  if (node.value && node.value.value != null) return String(node.value.value).length > 0
+  const stack = [...(node.childIds || [])]
+  let looked = 0
+  while (stack.length && looked++ < MAX_OPTION_NODES) {
+    const child = nodeById.get(stack.pop())
+    if (!child) continue
+    const role = (child.role && child.role.value) || ''
+    if ((role === 'StaticText' || role === 'staticText') && String((child.name && child.name.value) || '').trim()) return true
+    if (Array.isArray(child.childIds)) stack.push(...child.childIds)
+  }
+  return false
+}
+
+// The labels of a list's chosen options (its option nodes marked selected).
+function chosenOptions(node, nodeById) {
+  const out = []
+  const stack = [...(node.childIds || [])].reverse()
+  let looked = 0
+  while (stack.length && looked++ < MAX_OPTION_NODES && out.length < 3) {
+    const child = nodeById.get(stack.pop())
+    if (!child) continue
+    const role = String((child.role && child.role.value) || '').toLowerCase()
+    if (role.endsWith('option')) {
+      const label = clip(child.name && child.name.value)
+      if (label && isTrue(prop(child, 'selected'))) out.push(label)
+      continue
+    }
+    if (Array.isArray(child.childIds)) stack.push(...[...child.childIds].reverse())
+  }
+  return out
+}
+
+// What a control is in now, as words: never what it holds.
+export function controlState(node, role, nodeById = new Map()) {
+  const out = []
+  if (CHECKABLE_ROLES.has(role)) {
+    const checked = prop(node, 'checked')
+    out.push(checked === 'mixed' ? 'mixed' : isTrue(checked) ? 'checked' : 'unchecked')
+  }
+  const pressed = prop(node, 'pressed')
+  if (pressed !== undefined && !CHECKABLE_ROLES.has(role)) out.push(pressed === 'mixed' ? 'mixed' : isTrue(pressed) ? 'pressed' : 'not pressed')
+  if (isTrue(prop(node, 'selected'))) out.push('selected')
+  const expanded = prop(node, 'expanded')
+  if (isTrue(expanded)) out.push('expanded')
+  else if (isFalse(expanded)) out.push('collapsed')
+  // A field (a combobox one types in too): filled or empty. A list: its chosen option.
+  if (FIELD_ROLES.has(role) || (role === 'combobox' && prop(node, 'editable') !== undefined)) out.push(hasText(node, nodeById) ? 'filled' : 'empty')
+  else if (role === 'combobox' || role === 'listbox') {
+    const chosen = chosenOptions(node, nodeById)
+    if (chosen.length) out.push(`option ${chosen.map((c) => `"${c}"`).join(', ')}`)
+  }
+  if (isTrue(prop(node, 'disabled'))) out.push('disabled')
+  if (isTrue(prop(node, 'required'))) out.push('required')
+  return out.join(', ')
+}
+
 const clip = (s) => {
   const text = String(s || '').replace(/\s+/g, ' ').trim()
   return text.length > MAX_NAME ? `${text.slice(0, MAX_NAME)}…` : text
 }
 
-// One AX node and its children -> entries ({ ref, role, name, backendDOMNodeId, depth }).
-export function walkTree(node, nodeById, depth, entries, nextRef, seen = new Set()) {
+// One AX node and its children -> entries ({ ref, role, name, state,
+// backendDOMNodeId, depth }). container: the nearest element the tree keeps
+// (not ignored) around this node; text pieces of one container are one line.
+export function walkTree(node, nodeById, depth, entries, nextRef, seen = new Set(), container = null) {
   if (!node || seen.has(node.nodeId)) return
   seen.add(node.nodeId)
-  if (node.ignored) return walkChildren(node, nodeById, depth, entries, nextRef, seen)
 
   const role = (node.role && node.role.value) || ''
-  const name = clip(node.name && node.name.value)
+  const isStaticText = role === 'staticText' || role === 'StaticText'
+  const raw = String((node.name && node.name.value) || '')
+  // A space or a line break between two pieces of text: they are two words.
+  if (role === 'LineBreak' || (isStaticText && raw && !raw.trim())) {
+    const last = entries[entries.length - 1]
+    if (last && last.role === 'text' && last.container === container) last.spaceAfter = true
+    return
+  }
+  if (node.ignored) return walkChildren(node, nodeById, depth, entries, nextRef, seen, container)
 
-  if (SKIP_ROLES.has(role)) return walkChildren(node, nodeById, depth, entries, nextRef, seen)
+  const name = clip(raw)
+
+  if (SKIP_ROLES.has(role)) return walkChildren(node, nodeById, depth, entries, nextRef, seen, node.nodeId)
 
   const isInteractive = INTERACTIVE_ROLES.has(role)
   const isHeading = role === 'heading'
   const isLandmark = LANDMARK_ROLES.has(role)
-  const isStaticText = role === 'staticText' || role === 'StaticText'
 
-  if (!isInteractive && !isHeading && !isLandmark && !isStaticText) return walkChildren(node, nodeById, depth, entries, nextRef, seen)
+  if (!isInteractive && !isHeading && !isLandmark && !isStaticText) return walkChildren(node, nodeById, depth, entries, nextRef, seen, node.nodeId)
   // A control is one line, its children never read: a text field's,
   // a combobox's or a number input's children are the value it holds.
   if (isInteractive) {
-    if (isFocusable(node) || node.backendDOMNodeId)
-      entries.push({ ref: `@e${nextRef()}`, role: formatInteractiveRole(role), axRole: role, axName: name, name: name || '(unlabeled)', backendDOMNodeId: node.backendDOMNodeId || 0, depth })
+    if (isFocusable(node) || node.backendDOMNodeId) {
+      const state = controlState(node, role, nodeById)
+      entries.push({ ref: `@e${nextRef()}`, role: formatInteractiveRole(role), axRole: role, axName: name, name: name || '(unlabeled)', ...(state ? { state } : {}), backendDOMNodeId: node.backendDOMNodeId || 0, depth })
+    }
     return
   }
-  if (!name && !isLandmark) return walkChildren(node, nodeById, depth, entries, nextRef, seen)
+  if (!name && !isLandmark) return walkChildren(node, nodeById, depth, entries, nextRef, seen, node.nodeId)
 
   if (isLandmark) {
     entries.push({ ref: '', role: formatLandmarkRole(role, name), name: name || role, backendDOMNodeId: node.backendDOMNodeId || 0, depth })
-    return walkChildren(node, nodeById, depth + 1, entries, nextRef, seen)
+    return walkChildren(node, nodeById, depth + 1, entries, nextRef, seen, node.nodeId)
   }
   if (isHeading) {
     entries.push({ ref: '', role: 'heading', name, backendDOMNodeId: node.backendDOMNodeId || 0, depth })
     return
   }
   if (isStaticText) {
-    entries.push({ ref: '', role: 'text', name, backendDOMNodeId: node.backendDOMNodeId || 0, depth })
+    // The text that follows another piece in the same element continues its
+    // line: joined as written (a letter styled on its own stays in its
+    // word; whole words get the space the page drew between them).
+    const last = entries[entries.length - 1]
+    if (last && last.role === 'text' && last.container === container && last.depth === depth) {
+      // (Two spaces in a row, each in its own element, leave no trace in the
+      // tree: a capital right after the end of a sentence starts a new word.)
+      const space = last.spaceAfter || /\s$/.test(last.raw) || /^\s/.test(raw) || (name.length > 1 && last.lastPiece > 1) || (/[.!?;:]$/.test(last.name) && /^\p{Lu}/u.test(name))
+      const joined = `${last.name}${space ? ' ' : ''}${name}`
+      if (joined.length <= MAX_TEXT) {
+        last.name = joined
+        last.raw = raw
+        last.lastPiece = name.length
+        last.spaceAfter = false
+        return
+      }
+    }
+    entries.push({ ref: '', role: 'text', name, raw, lastPiece: name.length, container, backendDOMNodeId: node.backendDOMNodeId || 0, depth })
     return
   }
-  walkChildren(node, nodeById, depth, entries, nextRef, seen)
+  walkChildren(node, nodeById, depth, entries, nextRef, seen, node.nodeId)
 }
 
-function walkChildren(node, nodeById, depth, entries, nextRef, seen) {
+function walkChildren(node, nodeById, depth, entries, nextRef, seen, container = null) {
   if (!Array.isArray(node.childIds)) return
   for (const id of node.childIds) {
     const child = nodeById.get(id)
-    if (child) walkTree(child, nodeById, depth, entries, nextRef, seen)
+    if (child) walkTree(child, nodeById, depth, entries, nextRef, seen, container)
   }
 }
 
@@ -167,10 +274,10 @@ export function formatSnapshot(entries, maxChars = MAX_SNAPSHOT_CHARS) {
       const nth = (occurrence.get(key) || 0) + 1
       occurrence.set(key, nth)
       const shown = total > 1 && nth > 1 ? `${e.name} (${ordinal(nth)})` : e.name
-      line = `${indent}[${e.ref}] ${e.role} "${shown}"`
+      line = `${indent}[${e.ref}] ${e.role} "${shown}"${e.state ? ` (${e.state})` : ''}`
       // Refs past the cap are not given: the agent only sees what it can use.
       if (!truncated && size + line.length + 1 <= maxChars) {
-        refs.push({ ref: e.ref, role: e.role, name: shown })
+        refs.push({ ref: e.ref, role: e.role, name: shown, ...(e.state ? { state: e.state } : {}) })
         refMap.set(e.ref, { backendDOMNodeId: e.backendDOMNodeId, role: e.role, name: e.name, axRole: e.axRole || null, axName: e.axName == null ? null : e.axName, nth: total > 1 ? nth : undefined })
       }
     } else line = `${indent}${e.role} "${e.name}"`

@@ -1095,7 +1095,7 @@ const BROWSER_TOOLS = [
   },
   {
     name: 'browser_snapshot',
-    description: 'Read the page: its accessibility tree as text, one line per heading, text and control; each control has a ref like @e3 for browser_click / browser_fill / browser_type / browser_scroll. Snapshot again after navigation and after any click that changes the page.',
+    description: 'Read the page: its accessibility tree as text, one line per heading, text and control; each control has a ref like @e3 for browser_click / browser_fill / browser_type / browser_scroll, and says its state in brackets (checked / unchecked, selected, expanded / collapsed, disabled, required; a field only says filled or empty, never what it holds; a list names its chosen option). Snapshot again after navigation and after any click that changes the page.',
     inputSchema: { type: 'object', properties: { ...PAGE_ARG } }
   },
   {
