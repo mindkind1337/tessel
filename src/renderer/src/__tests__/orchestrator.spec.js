@@ -61,7 +61,7 @@ function world({ confirm = true, max = 2, depth = 1 } = {}) {
       log.closed.push({ id, ...opts })
       leaves.delete(id)
     },
-    notice: (list, text) => log.notices.push({ to: list.map((l) => l.id), text }),
+    notice: (list, text, teamId, opts) => log.notices.push({ to: list.map((l) => l.id), text, ...(opts && opts.wake ? { wake: true } : {}) }),
     answer: (tm, rid, ok, text, toId) => log.answers.push({ rid, ok, text, toId }),
     readScreen: (id) => (leaves.has(id) ? 'line 1\nRunning npm test\n' : null),
     activity: (e) => log.activity.push(e),
@@ -450,9 +450,9 @@ describe('orchestrator: chat workers', () => {
       return w.sendFails || { ok: true }
     }
     const notice = w.deps.notice
-    w.deps.notice = (list, text, teamId) => {
+    w.deps.notice = (list, text, teamId, opts) => {
       w.log.order.push('notice')
-      notice(list, text, teamId)
+      notice(list, text, teamId, opts)
     }
     w.deps.readChat = async (paneId, lines) => {
       w.log.reads.push({ paneId, lines })
@@ -675,5 +675,41 @@ describe('orchestrator: chat workers', () => {
     expect(r.status).toBe('stopped')
     expect(w.log.closed.at(-1)).toMatchObject({ id: r.paneId, byUser: false })
     expect(r2.status).toBe('running')
+  })
+
+  // A chat coordinator hears of its workers as turns (App points it at
+  // team_inbox for notices sent with wake); every worker is told its own
+  // address and its coordinator's.
+  it('a chat coordinator: told results come as a turn; its notices wake it; the worker knows both addresses', async () => {
+    const w = chatWorld({ max: 1 })
+    w.lead.kind = 'chat'
+    const r = await started(w)
+    const brief = w.log.notices.find((x) => x.to[0] === r.paneId && /worker brief/.test(x.text))
+    expect(brief.wake).toBeUndefined()
+    expect(brief.text).toMatch(/Your address in the team is "Agent 21": your coordinator and teammates reach you with team_send \{"to":"Agent 21"\}\. Your coordinator's address is "Agent 1"\./)
+    expect(brief.text).toMatch(/You are a chat: a message that arrives while you are idle starts a new turn/)
+    expect(brief.text).toMatch(/team_ask \{"to":"Agent 1"/)
+    expect(w.log.answers.at(-1).text).toMatch(/Its report comes to you as a new turn of this chat/)
+    // At the limit: queued, and told how it will hear.
+    w.start({ agent: 'claude', title: 'B' }, w.lead, 'r-chat-000002')
+    expect(w.log.answers.at(-1).text).toMatch(/is queued: .* You will hear as a new turn of this chat/)
+    // Its worker's pane closed: the coordinator's notice wakes it.
+    w.leaves.delete(r.paneId)
+    w.tick()
+    const ended = told(w, /ended before it reported/)
+    expect(ended).toHaveLength(1)
+    expect(ended[0].wake).toBe(true)
+  })
+
+  it('a terminal coordinator: same notices, no turn wording; a terminal worker is not told it is a chat', async () => {
+    const w = world({ confirm: false })
+    w.start({}, w.lead, 'r-term-000001')
+    await w.flush()
+    await w.flush()
+    const r = w.team.workers[0]
+    expect(w.log.answers.at(-1).text).not.toMatch(/new turn/)
+    const brief = w.log.notices.find((x) => x.to[0] === r.paneId)
+    expect(brief.text).toMatch(/Your address in the team is "Agent 11"/)
+    expect(brief.text).not.toMatch(/You are a chat/)
   })
 })

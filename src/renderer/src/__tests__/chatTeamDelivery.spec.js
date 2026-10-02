@@ -105,3 +105,57 @@ describe('team messages for a chat agent', () => {
     expect(channel.release).toHaveBeenCalledWith(expect.objectContaining({ id: 'old', toId: 'pane-c' }))
   })
 })
+
+// Results for a chat coordinator (App.vue pointChatAtInbox): once its
+// notice is written, a team turn points it at team_inbox; one pointer at a
+// time per chat, a new one once that turn was taken or failed.
+describe('worker results for a chat coordinator', () => {
+  let ctx, chat, leaves, clock
+  beforeEach(() => {
+    leaves = { 'pane-c': { id: 'pane-c', kind: 'chat' }, 'pane-t': { id: 'pane-t', kind: 'agent' } }
+    chat = { sendTeam: vi.fn(async () => ({ ok: true })) }
+    clock = 1000
+    let n = 0
+    ctx = {
+      window: { shellApi: { chat } },
+      findLeaf: (id) => leaves[id] || null,
+      newId: (p) => `${p}-${++n}`,
+      CHAT_RESULTS_POINTER: 'POINTER',
+      Date: { now: () => clock },
+      Object,
+      Promise
+    }
+    vm.createContext(ctx)
+    vm.runInContext(slice('const chatPointers = {}', 'const noticeId =') + '\nthis.api = { pointChatAtInbox, pointerSettled, chatPointers }', ctx)
+  })
+  const flush = () => new Promise((r) => setTimeout(r, 0))
+
+  it('points a chat at its inbox once until that turn is taken; never a terminal', async () => {
+    ctx.api.pointChatAtInbox('pane-c')
+    ctx.api.pointChatAtInbox('pane-c')
+    ctx.api.pointChatAtInbox('pane-t')
+    ctx.api.pointChatAtInbox('gone')
+    await flush()
+    expect(chat.sendTeam).toHaveBeenCalledTimes(1)
+    expect(chat.sendTeam.mock.calls[0][0]).toEqual({ paneId: 'pane-c', messages: [{ id: 'msg-1', from: 'Tessel', text: 'POINTER' }] })
+    // Taken (or failed): the next result points again.
+    ctx.api.pointerSettled(['other'])
+    ctx.api.pointChatAtInbox('pane-c')
+    expect(chat.sendTeam).toHaveBeenCalledTimes(1)
+    ctx.api.pointerSettled(['msg-1'])
+    ctx.api.pointChatAtInbox('pane-c')
+    expect(chat.sendTeam).toHaveBeenCalledTimes(2)
+  })
+
+  it('a pointer the chat refused, or one never settled for long, is sent again', async () => {
+    chat.sendTeam.mockResolvedValueOnce({ ok: false })
+    ctx.api.pointChatAtInbox('pane-c')
+    await flush()
+    ctx.api.pointChatAtInbox('pane-c')
+    await flush()
+    expect(chat.sendTeam).toHaveBeenCalledTimes(2)
+    clock += 16 * 60 * 1000
+    ctx.api.pointChatAtInbox('pane-c')
+    expect(chat.sendTeam).toHaveBeenCalledTimes(3)
+  })
+})

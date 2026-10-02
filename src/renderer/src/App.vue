@@ -68,7 +68,7 @@ import NotesPanel from './components/NotesPanel.vue'
 import NewTaskDialog from './components/NewTaskDialog.vue'
 import ReviewPanel from './components/ReviewPanel.vue'
 import { parseLeadRequest, findTaskRef, leadGuide, memberGuide } from '../../shared/leadRequests'
-import { workerLaunchArgs, wakeLaunchArgs } from '../../shared/orchestration'
+import { workerLaunchArgs, wakeLaunchArgs, CHAT_RESULTS_POINTER } from '../../shared/orchestration'
 import { createOrchestrator } from './orchestrator'
 import { formatChatTranscript } from './chat/chatTranscript'
 import { canShowChatView, isPastedImageCopy } from './chat/terminalChatBridge'
@@ -7716,7 +7716,7 @@ function applyReport(task, r, from, teamId) {
     const files = r.files && r.files.length ? `
 Files: ${r.files.slice(0, 20).join(', ')}${r.files.length > 20 ? ' …' : ''}` : '' // i18n-ignore
     tellAgents([giver], `[Tessel] ${paneLabel(from)} finished card ${task.id} "${task.title}": ${r.outcome}.
-${r.summary}${files}`, teamId) // i18n-ignore
+${r.summary}${files}`, teamId, { wake: true }) // i18n-ignore
   }
   if (r.outcome === 'failed') {
     inboxNote('attention', t('app.board.couldNotFinish', '{{pane}} could not finish "{{title}}"', { pane: paneLabel(from), title: task.title }), r.summary.slice(0, 200), from.id)
@@ -7845,7 +7845,7 @@ const orchestrator = createOrchestrator({
     await publishCurrentTeams()
   },
   closePane: (id, { byUser } = {}) => closeLeaf(id, byUser ? {} : { force: true }),
-  notice: (leaves, text, teamId) => noticeAgents(leaves, text, teamId),
+  notice: (leaves, text, teamId, { wake = false } = {}) => noticeAgents(leaves, text, teamId, { source: 'tessel', scope: 'team', teamId, ...(wake ? { wake: true } : {}) }),
   // Sealed in the main process for the requester only (src/main/teamAuth.js).
   answer(team, rid, ok, text, toId) {
     const dir = channelDir(team)
@@ -8595,6 +8595,7 @@ onMounted(() => {
     if (ev.type === 'turnEnd' && e.paneId && findLeaf(e.paneId)?.worker) orchestrator.chatTurnEnded(e.paneId, { status: ev.status, error: ev.error || null })
     if (ev.type === 'teamAccepted' && Array.isArray(ev.ids)) for (const id of ev.ids) acceptChatTeam(id)
     else if (ev.type === 'teamFailed' && Array.isArray(ev.ids)) for (const id of ev.ids) releaseChatTeam(id)
+    if ((ev.type === 'teamAccepted' || ev.type === 'teamFailed') && Array.isArray(ev.ids)) pointerSettled(ev.ids)
   })
 })
 onBeforeUnmount(() => offChatEvents && offChatEvents())
@@ -8801,8 +8802,8 @@ async function tellTeam(teamId, text, opts = {}) {
 // A note from Tessel to some agents. For a team it is a background notice
 // (read with the team tools, never typed into a terminal); outside a team,
 // ones out of usage are skipped.
-function tellAgents(list, text, teamId = null) {
-  const meta = { source: 'tessel', scope: 'team-change', teamId }
+function tellAgents(list, text, teamId = null, { wake = false } = {}) {
+  const meta = { source: 'tessel', scope: 'team-change', teamId, ...(wake ? { wake: true } : {}) }
   if (teamId) {
     noticeAgents(list, text, teamId, meta)
     return
@@ -8831,6 +8832,34 @@ function noticeAgents(list, text, teamId, meta = { source: 'tessel', scope: 'tea
   sendNotices({ dir, teamId, notices, text, meta, tries: 0 })
   return true
 }
+// A chat coordinator never reads team_inbox on its own while it is idle: a
+// worker's result (kept in the notices, read once under its own identity)
+// gets it a team turn that points it there, at once when idle, else after
+// its turn. One pointer at a time per chat (it reads every result waiting);
+// a new one once that turn was taken or failed. After Orca's coordinator
+// mail delivery to a structured chat (MIT, Copyright (c) 2026 Lovecast Inc.).
+const chatPointers = {} // pane id -> { id, at } of the pointer not taken yet
+const POINTER_STALE_MS = 15 * 60 * 1000
+function pointChatAtInbox(paneId) {
+  const api = window.shellApi.chat
+  const leaf = findLeaf(paneId)
+  if (!api || !api.sendTeam || !leaf || leaf.kind !== 'chat') return
+  const p = chatPointers[paneId]
+  if (p && Date.now() - p.at < POINTER_STALE_MS) return
+  const id = newId('msg')
+  chatPointers[paneId] = { id, at: Date.now() }
+  const drop = () => {
+    if (chatPointers[paneId] && chatPointers[paneId].id === id) delete chatPointers[paneId]
+  }
+  Promise.resolve(api.sendTeam({ paneId, messages: [{ id, from: 'Tessel', text: CHAT_RESULTS_POINTER }] }))
+    .then((r) => {
+      if (!r || !r.ok) drop()
+    })
+    .catch(drop)
+}
+function pointerSettled(ids) {
+  for (const [paneId, p] of Object.entries(chatPointers)) if (ids.includes(p.id) || !findLeaf(paneId)) delete chatPointers[paneId]
+}
 const noticeId = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`
 const NOTICE_RETRY_MS = 5000
 const NOTICE_TRIES = 60 // 5 minutes, then said failed in the activity log
@@ -8845,8 +8874,10 @@ function sendNotices(job) {
   }
   Promise.resolve(window.shellApi.team.notice({ dir: job.dir, teamId: job.teamId, notices: job.notices }))
     .then((res) => {
-      if (res && res.ok) for (const n of job.notices) logMessage(n.toId, 'sent', job.text, job.meta)
-      else retry((res && res.error) || 'no answer')
+      if (!(res && res.ok)) return retry((res && res.error) || 'no answer')
+      for (const n of job.notices) logMessage(n.toId, 'sent', job.text, job.meta)
+      // Results for a chat coordinator: once written, a turn points it at them.
+      if (job.meta && job.meta.wake) for (const n of job.notices) pointChatAtInbox(n.toId)
     })
     .catch((err) => retry(err && err.message))
 }
