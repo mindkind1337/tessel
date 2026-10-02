@@ -64,6 +64,8 @@ function wire(hostRecords = new Map()) {
     shouldUseConpty: () => true,
     windowsBuildNumber: () => 123,
     prepareStatus: setup,
+    // Folder pre-trust is covered by agentFolderTrust.spec.js: inert here.
+    agentFolderTrust: { apply: async () => 'off' },
     STATUS_PROVIDERS,
     host,
     ptyInfo,
