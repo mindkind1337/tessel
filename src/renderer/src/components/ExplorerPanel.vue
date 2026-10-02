@@ -5,7 +5,9 @@
 // images… in Tessel's viewer; code in your editor); right-click for more;
 // drag a file onto a terminal to type its path there. Search by name (in
 // folders not opened yet too) or by content; git-ignored files are dimmed.
+// A sparse checkout: the tree can show one of its folders as its root.
 import { ref, reactive, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import ThemedSelect from './ui/ThemedSelect.vue'
 import { statusOf, folderStatus, ignoredSet, isIgnored } from '../explorerStatus'
 import { settings } from '../settings'
 import { isRemotePath, remoteHostPath } from '../../../shared/remotePath'
@@ -38,6 +40,40 @@ const rootName = computed(() => (props.root ? props.root.split(/[\\/]/).filter(B
 const remote = computed(() => isRemotePath(props.root))
 const hostPath = (p) => (remote.value ? remoteHostPath(p) || p : p)
 
+// --- Sparse checkout ----------------------------------------------------------------
+// After Orca's sparse-scoped file tree (file-explorer-display-root.ts, MIT,
+// Copyright (c) 2026 Lovecast Inc.): when the project's repository keeps only
+// some folders (git sparse-checkout), the tree can show one of them as its
+// root. A sole folder is shown by itself; with several, the whole project
+// until one is chosen. The choice is kept per project while Tessel runs.
+// It changes what the tree shows, never what is checked out.
+const WHOLE = ''
+const sparseDirs = ref([]) // [{ rel: 'a/b', path }]
+const scope = ref(WHOLE) // the rel shown, or WHOLE
+const scopeByRoot = new Map() // project (lower case) -> rel | WHOLE
+const displayRoot = computed(() => {
+  const d = scope.value ? sparseDirs.value.find((x) => x.rel === scope.value) : null
+  return d ? d.path : props.root
+})
+async function loadSparse() {
+  const root = props.root
+  const fn = api() && api().sparse
+  const res = root && fn ? await fn({ root }).catch(() => null) : null
+  if (root !== props.root) return
+  const dirs = res && res.ok && res.sparse && Array.isArray(res.dirs) ? res.dirs : []
+  sparseDirs.value = dirs
+  const saved = scopeByRoot.get(key(root))
+  scope.value = saved !== undefined && (saved === WHOLE || dirs.some((d) => d.rel === saved)) ? saved : dirs.length === 1 ? dirs[0].rel : WHOLE
+}
+function chooseScope(rel) {
+  const v = typeof rel === 'string' ? rel : WHOLE
+  scopeByRoot.set(key(props.root), v)
+  scope.value = v
+}
+const scopeHelp = computed(() =>
+  t('explorer.sparse.help', 'This repository uses a sparse checkout: only some folders are on disk. Choosing one changes what the tree shows, not what is checked out. Name search looks in the folder shown; content search in the whole project.')
+)
+
 async function loadDir(dir) {
   if (!api() || !props.root) return
   const cur = nodes[dir] || { entries: [], loading: false, error: '' }
@@ -57,8 +93,8 @@ async function loadStatus() {
 // Everything shown again: the open folders and the git status.
 async function refresh() {
   if (!props.root) return
-  const dirs = [props.root, ...Object.keys(open).filter((d) => open[d])]
-  await Promise.all(dirs.map(loadDir))
+  const dirs = [...new Set([props.root, displayRoot.value, ...Object.keys(open).filter((d) => open[d])])]
+  await Promise.all([...dirs.map(loadDir), loadSparse()])
   loadStatus()
   if (query.value.trim()) runSearch()
 }
@@ -78,7 +114,7 @@ const rows = computed(() => {
       if (e.dir && open[e.path]) walk(e.path, depth + 1)
     }
   }
-  if (props.root) walk(props.root, 0)
+  if (props.root) walk(displayRoot.value, 0)
   return out
 })
 function letterOf(e) {
@@ -104,8 +140,10 @@ async function runSearch() {
   }
   search.busy = true
   const fn = mode.value === 'content' ? api().searchContent : api().searchNames
+  // Names: in the folder the tree shows; contents: the whole project.
+  const within = mode.value === 'names' && displayRoot.value !== props.root ? { dir: displayRoot.value } : {}
   const res = fn
-    ? await fn({ root: props.root, query: mode.value === 'content' ? query.value : q, dotfiles: dotfiles.value }).catch((err) => ({ ok: false, error: err.message }))
+    ? await fn({ root: props.root, ...within, query: mode.value === 'content' ? query.value : q, dotfiles: dotfiles.value }).catch((err) => ({ ok: false, error: err.message }))
     : { ok: false, error: t('explorer.search.unavailable', 'Search is not available.') }
   if (seq !== searchSeq) return // a newer search is on its way
   Object.assign(search, {
@@ -162,8 +200,8 @@ function onHitClick(h) {
 // --- The "…" menu ------------------------------------------------------------------
 function moreAct(what) {
   moreOpen.value = false
-  if (what === 'new-file') startNew(props.root, false)
-  else if (what === 'new-folder') startNew(props.root, true)
+  if (what === 'new-file') startNew(displayRoot.value, false)
+  else if (what === 'new-folder') startNew(displayRoot.value, true)
   else if (what === 'dotfiles') dotfiles.value = !dotfiles.value
 }
 
@@ -219,7 +257,7 @@ function closeMenu() {
 }
 const menuDir = computed(() => {
   const e = menu.entry
-  if (!e) return props.root
+  if (!e) return displayRoot.value
   return e.dir ? e.path : e.path.replace(/[\\/][^\\/]*$/, '')
 })
 function copy(text) {
@@ -251,7 +289,7 @@ const setEditEl = (el) => {
   if (el) editEl.value = el
 }
 async function startNew(dir, folder) {
-  if (dir !== props.root && !open[dir]) {
+  if (dir !== displayRoot.value && !open[dir]) {
     open[dir] = true
     await loadDir(dir)
   }
@@ -338,13 +376,20 @@ async function showRoot() {
   for (const k of Object.keys(open)) delete open[k]
   status.value = {}
   edit.value = null
+  sparseDirs.value = []
+  scope.value = WHOLE
   if (!props.root || !api()) return
   api().watch(props.root)
-  await loadDir(props.root)
+  await Promise.all([loadDir(props.root), loadSparse()])
   loadStatus()
   runSearch()
 }
 watch(() => props.root, showRoot)
+// Another folder shown: read when new; a name search follows it.
+watch(displayRoot, (dir) => {
+  if (dir && !nodes[dir]) loadDir(dir)
+  if (mode.value === 'names' && query.value.trim()) runSearch()
+})
 watch(dotfiles, refresh)
 onMounted(() => {
   showRoot()
@@ -458,6 +503,20 @@ function rowTitle(e) {
       </div>
     </div>
 
+    <div v-if="root && sparseDirs.length" class="explorer-scope" data-test="explorer-scope" :title="scopeHelp">
+      <span class="explorer-scope-label">{{ t('explorer.sparse.label', 'Sparse checkout') }}</span>
+      <ThemedSelect
+        class="explorer-scope-select"
+        :model-value="scope"
+        :aria-label="t('explorer.sparse.choose', 'Folder shown in the tree')"
+        data-test="explorer-scope-select"
+        @update:model-value="chooseScope"
+      >
+        <option value="">{{ t('explorer.sparse.whole', 'Whole project') }}</option>
+        <option v-for="d in sparseDirs" :key="d.rel" :value="d.rel">{{ d.rel }}</option>
+      </ThemedSelect>
+    </div>
+
     <div v-if="!root" class="explorer-empty">
       {{
         t(
@@ -525,7 +584,7 @@ function rowTitle(e) {
       <div v-if="search.busy && !search.results.length" class="explorer-empty">{{ t('explorer.search.searching', 'Searching…') }}</div>
     </div>
     <div v-else class="explorer-tree" role="tree" @contextmenu.self="onContext($event, null)">
-      <div v-if="edit && edit.mode === 'new' && edit.dir === root" class="explorer-edit" :style="{ paddingLeft: '8px' }">
+      <div v-if="edit && edit.mode === 'new' && edit.dir === displayRoot" class="explorer-edit" :style="{ paddingLeft: '8px' }">
         <input
           :ref="setEditEl"
           v-model="edit.value"
@@ -581,7 +640,7 @@ function rowTitle(e) {
           <div v-if="edit.error" class="explorer-edit-error">{{ edit.error }}</div>
         </div>
       </template>
-      <div v-if="nodes[root] && nodes[root].error" class="explorer-empty">{{ nodes[root].error }}</div>
+      <div v-if="nodes[displayRoot] && nodes[displayRoot].error" class="explorer-empty">{{ nodes[displayRoot].error }}</div>
     </div>
 
     <div v-if="menu.open" class="explorer-menu-back" @mousedown.self="closeMenu" @contextmenu.prevent="closeMenu">

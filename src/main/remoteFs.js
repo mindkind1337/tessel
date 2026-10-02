@@ -32,6 +32,7 @@ import { fileKind, extOf, IMAGE_MIME } from '../shared/fileKinds'
 import { t } from './i18n'
 import { validateCloneUrl, deriveCloneRepoName, cloneFailureMessage, errorText as addProjectErrorText } from './addProject'
 import { parseWorktreeList, MAX_WORKTREES } from './worktreeList'
+import { parseSparseList, sparseDirsUnder } from './sparseCheckout'
 
 export const SESSION_PREFIX = 'rfs:'
 const MAX_ENTRIES = 5000
@@ -665,9 +666,35 @@ export function createRemoteFs({
     return { ok: true, files, repo: true }
   }
 
-  async function searchNames({ root, query, dotfiles = true, limit = SEARCH_LIMIT } = {}) {
+  // The folders a sparse checkout keeps below the project (explorer.js
+  // sparseInfo): -> { ok, sparse, dirs: [{ rel, path }] }.
+  async function sparseInfo({ root } = {}) {
     const loc = under(root, root)
     if (!loc) return { ok: false, error: t('main.explorer.invalidFolder', 'Invalid folder.') }
+    const none = { ok: true, sparse: false, dirs: [] }
+    const info = await repoInfo(loc)
+    if (info.error) return { ok: false, error: info.error }
+    if (info.missing || !info.top) return none
+    const res = await call(loc.hostId, '__t_gitin', [arg(loc.root.path), arg(info.top), ...info.gitArgs, 'sparse-checkout', 'list'], { cap: 1024 * 1024, timeoutMs: 15000, op: 'status' })
+    if (res.error) return { ok: false, error: res.error }
+    // Exit 128 ("this worktree is not sparse") or an old git: not sparse.
+    if (res.rc !== 0) return none
+    const rootRel = relativeTo(info.top, info.realRoot)
+    if (rootRel === null) return none
+    const dirs = sparseDirsUnder(parseSparseList(res.out.toString('utf8')), rootRel, { caseless: false })
+      .filter((rel) => !CONTROL.test(rel))
+      .map((rel) => ({ rel, path: childPath(root, rel) }))
+    return { ok: true, sparse: true, dirs }
+  }
+
+  // `dir`: only names below that folder of the project (the tree's root
+  // when it shows one sparse folder).
+  async function searchNames({ root, dir, query, dotfiles = true, limit = SEARCH_LIMIT } = {}) {
+    const loc = under(root, root)
+    if (!loc) return { ok: false, error: t('main.explorer.invalidFolder', 'Invalid folder.') }
+    const scope = dir ? under(root, dir) : loc
+    if (!scope) return { ok: false, error: t('main.explorer.outside', 'Outside the project.') }
+    const within = scope.rel ? `${scope.rel}/` : ''
     const max = Number.isInteger(limit) && limit > 0 ? Math.min(limit, SEARCH_LIMIT) : SEARCH_LIMIT
     const q = String(query || '').trim()
     if (!q) return { ok: true, results: [], truncated: false }
@@ -685,6 +712,7 @@ export function createRemoteFs({
         const rel = cleanRel(rec.slice(at + 3))
         if (!rel || rel.includes('\\')) continue
         if (!dotfiles && rel.split('/').some((s) => s.startsWith('.'))) continue
+        if (within && !rel.startsWith(within)) continue
         if (results.length >= max) {
           truncated = true
           break
@@ -1340,6 +1368,7 @@ export function createRemoteFs({
     setRoots,
     listDir,
     projectStatus,
+    sparseInfo,
     searchNames,
     searchContent,
     create,

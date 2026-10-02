@@ -242,6 +242,18 @@ describe.skipIf(!gitSh())('remote project over a fake ssh (Git for Windows sh)',
     expect(res.ok).toBe(true)
     expect(events.filter((e) => e[0] === 'started').length).toBeGreaterThanOrEqual(2)
   }, 30000)
+
+  it('sparse checkout: its folders for the tree, and names searched below one', async () => {
+    expect(await rfs.sparseInfo({ root })).toEqual({ ok: true, sparse: false, dirs: [] })
+    g('sparse-checkout', 'set', '--cone', 'src')
+    try {
+      expect(await rfs.sparseInfo({ root })).toEqual({ ok: true, sparse: true, dirs: [{ rel: 'src', path: childPath(root, 'src') }] })
+      const n = await rfs.searchNames({ root, dir: childPath(root, 'src'), query: 'a' })
+      expect(n.results.map((r) => r.rel)).toEqual(['src/main.js'])
+    } finally {
+      g('sparse-checkout', 'disable')
+    }
+  }, 60000)
 })
 
 // The security review's probes, kept as regression tests.

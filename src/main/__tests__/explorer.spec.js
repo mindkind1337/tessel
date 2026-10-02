@@ -3,7 +3,8 @@ import fs from 'fs'
 import os from 'os'
 import { join } from 'path'
 import { execFileSync } from 'child_process'
-import { inside, listDir, parsePorcelain, projectStatus, checkName, create, rename, trash, searchNames, searchContent, searchContentWalk, parseGrepRecord, clipLine, grepFileCheck, grepReader, grepArgs, searchCap, SEARCH_LIMIT, isGitStateChange } from '../explorer'
+import { inside, listDir, parsePorcelain, projectStatus, checkName, create, rename, trash, searchNames, searchContent, searchContentWalk, parseGrepRecord, clipLine, grepFileCheck, grepReader, grepArgs, searchCap, SEARCH_LIMIT, isGitStateChange, sparseInfo } from '../explorer'
+import { parseSparseList, sparseDirsUnder } from '../sparseCheckout'
 import { statusOf, folderStatus, ignoredSet, isIgnored } from '../../renderer/src/explorerStatus'
 
 describe('file explorer', () => {
@@ -315,4 +316,54 @@ describe('isGitStateChange', () => {
     for (const f of ['.git/objects/ab/cdef', '.git/logs/HEAD', '.git/index.lock', '.git/refs/heads/main.lock', 'src/index', 'node_modules/.git/HEAD', '', null])
       expect(isGitStateChange(f)).toBe(false)
   })
+})
+
+describe('sparse checkout folders for the tree', () => {
+  let base
+  let root
+  const git = (...a) => execFileSync('git', ['-C', root, '-c', 'user.email=t@t', '-c', 'user.name=t', ...a], { windowsHide: true })
+  beforeEach(() => {
+    base = fs.mkdtempSync(join(os.tmpdir(), 'tessel-sparse-'))
+    root = join(base, 'repo')
+    for (const d of ['app/web', 'app/api', 'docs', 'tools']) fs.mkdirSync(join(root, d), { recursive: true })
+    for (const f of ['app/web/main.js', 'app/api/server.js', 'docs/guide.md', 'tools/build.js', 'README.md']) fs.writeFileSync(join(root, f), 'x\n')
+    git('init', '-q')
+    git('add', '-A')
+    git('commit', '-qm', 'x')
+  })
+  afterEach(() => fs.rmSync(base, { recursive: true, force: true }))
+
+  it('reads plain folders from the list, never globs, negations or paths that leave', () => {
+    expect(parseSparseList('app/web\ndocs\n')).toEqual(['app/web', 'docs'])
+    expect(parseSparseList('/*\n!/*/\n/src/\n# note\n../up\nC:/x\n"q x"\nsrc\n\n')).toEqual(['src'])
+    expect(sparseDirsUnder(['app/web', 'docs', 'App/api'], 'app')).toEqual(['web', 'api'])
+    expect(sparseDirsUnder(['app/web', 'App/api'], 'app', { caseless: false })).toEqual(['web'])
+    expect(sparseDirsUnder(['app/web'], '')).toEqual(['app/web'])
+  })
+
+  it('is not sparse until a sparse checkout is set, then names its folders', async () => {
+    expect(await sparseInfo({ root })).toEqual({ ok: true, sparse: false, dirs: [] })
+    git('sparse-checkout', 'set', '--cone', 'app/web', 'docs')
+    const res = await sparseInfo({ root })
+    expect(res.sparse).toBe(true)
+    expect(res.dirs).toEqual([
+      { rel: 'app/web', path: join(root, 'app', 'web') },
+      { rel: 'docs', path: join(root, 'docs') }
+    ])
+    // The folders left out are not on disk any more.
+    expect(fs.existsSync(join(root, 'tools'))).toBe(false)
+  }, 30000)
+
+  it('from a folder inside the repository: its own sparse folders, relative to it', async () => {
+    git('sparse-checkout', 'set', '--cone', 'app/web', 'docs')
+    const res = await sparseInfo({ root: join(root, 'app') })
+    expect(res.dirs).toEqual([{ rel: 'web', path: join(root, 'app', 'web') }])
+    expect(await sparseInfo({ root: 'relative' })).toMatchObject({ ok: false })
+  }, 30000)
+
+  it('searches names below the folder the tree shows', async () => {
+    const res = await searchNames({ root, dir: join(root, 'app'), query: 'js' })
+    expect(res.results.map((r) => r.rel).sort()).toEqual([join('app', 'api', 'server.js'), join('app', 'web', 'main.js')])
+    expect((await searchNames({ root, dir: join(root, '..'), query: 'js' })).ok).toBe(false)
+  }, 30000)
 })
