@@ -449,8 +449,10 @@ export function electronKeyEvents(def, modifiers) {
   const keyCode = ELECTRON_KEYS[def.key] || def.key
   const mods = MODIFIER_NAMES.filter(([bit]) => modifiers & bit).map(([, name]) => name)
   const events = [{ type: 'keyDown', keyCode, modifiers: mods }]
-  // A character is typed by its char event (not Enter / Tab: their keyDown acts).
-  if (typesChar(def)) events.push({ type: 'char', keyCode: def.text, modifiers: mods })
+  // A character is typed by its char event. Enter too (alone or with Shift):
+  // without it a form is not submitted and a text area gets no new line.
+  // Tab acts on its keyDown.
+  if (typesChar(def) || (def.key === 'Enter' && !(modifiers & 7))) events.push({ type: 'char', keyCode: def.text, modifiers: mods })
   events.push({ type: 'keyUp', keyCode, modifiers: mods })
   return events
 }

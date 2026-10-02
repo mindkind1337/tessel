@@ -188,6 +188,8 @@ describe('snapshot of the accessibility tree', () => {
       if (m === 'Accessibility.getFullAXTree') return { nodes: [] }
       if (m === 'Runtime.evaluate') {
         expect(p.expression).toContain("el.isContentEditable ? 'editable area'")
+        // A styled element inside a link or a button is not a second control.
+        expect(p.expression).toContain(`el.parentElement.closest('a[href], button, [role="button"], [role="link"]')`)
         return { result: {} }
       }
       return {}
@@ -268,7 +270,15 @@ describe('keys and password fields', () => {
       { type: 'char', keyCode: 'c', modifiers: [] },
       { type: 'keyUp', keyCode: 'c', modifiers: [] }
     ])
-    expect(ev('Enter').map((e) => e.type)).toEqual(['keyDown', 'keyUp'])
+    // Enter needs its char event: a form is submitted, a text area gets its new line (not with Control / Alt / Meta).
+    expect(ev('Enter')).toEqual([
+      { type: 'keyDown', keyCode: 'Enter', modifiers: [] },
+      { type: 'char', keyCode: '\r', modifiers: [] },
+      { type: 'keyUp', keyCode: 'Enter', modifiers: [] }
+    ])
+    expect(ev('Shift+Enter').map((e) => e.type)).toEqual(['keyDown', 'char', 'keyUp'])
+    expect(ev('Control+Enter').map((e) => e.type)).toEqual(['keyDown', 'keyUp'])
+    expect(ev('Tab').map((e) => e.type)).toEqual(['keyDown', 'keyUp'])
     expect(ev('ArrowDown')[0].keyCode).toBe('Down')
     expect(ev('Control+a')).toEqual([
       { type: 'keyDown', keyCode: 'a', modifiers: ['control'] },

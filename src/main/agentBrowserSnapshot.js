@@ -319,6 +319,8 @@ const CURSOR_SCRIPT = `(() => {
     if (SKIP_TAGS.has(tag)) return;
     const role = el.getAttribute('role');
     if (role && SKIP_ROLES.has(role)) return;
+    // Inside a link or a button the tree already lists (a styled <span> in an <a>): that one is the control.
+    if (el.parentElement && el.parentElement.closest('a[href], button, [role="button"], [role="link"]')) return;
     const rect = el.getBoundingClientRect();
     if (rect.width === 0 || rect.height === 0) return;
     const text = (el.getAttribute('aria-label') || (el.isContentEditable ? 'editable area' : el.textContent) || '').trim().slice(0, 80);
