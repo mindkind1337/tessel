@@ -127,6 +127,60 @@ function claudeInput(term) {
   return { empty: !typed && buffer.cursorX <= at + 2 }
 }
 
+// How many images Claude Code (or OpenClaude) shows in its input box now: a
+// pasted image path becomes "[Image #N]" there a moment later (deliver.js
+// waits for each one before the next path, and before Enter). The box is the
+// rows between its two rules ("────") around the cursor; text above it (the
+// conversation) is never counted. null: the cursor is not in such a box.
+// The agent wraps a long input itself, maybe between "[Image" and "#N]".
+const IMAGE_MARKER = /\[Image\s+#\d+\]/g
+export function claudeInputImages(term) {
+  try {
+    const buffer = term && term.buffer && term.buffer.active
+    if (!buffer) return null
+    const y = buffer.baseY + buffer.cursorY
+    let top = -1
+    for (let r = y; r >= Math.max(0, y - 40) && top < 0; r--) if (RULE.test(rowText(buffer, r).trim())) top = r
+    if (top < 0 || top === y) return null
+    const rows = []
+    for (let r = top + 1; r <= y + 40; r++) {
+      const line = buffer.getLine(r)
+      if (!line) break
+      const text = line.translateToString(true)
+      if (r > y && RULE.test(text.trim())) break
+      // A wrapped row continues the one above it: joined, so a marker cut by
+      // the wrap still counts once.
+      if (line.isWrapped && rows.length) rows[rows.length - 1] += text
+      else rows.push(text)
+    }
+    const prompt = rows[0] ? rows[0].search(/\S/) : -1
+    if (prompt < 0 || !['❯', '>'].includes(rows[0][prompt])) return null
+    return (rows.join('\n').match(IMAGE_MARKER) || []).length
+  } catch {
+    return null
+  }
+}
+
+// The same for Codex: its input has no rules, only its prompt "›" on its
+// first row (a pasted image path shows as "[Image #N]" there too). Counted
+// from the nearest "›" row at or above the cursor down to the cursor (the
+// conversation's own "›" rows are above that one). null: no prompt found.
+export function codexInputImages(term) {
+  try {
+    const buffer = term && term.buffer && term.buffer.active
+    if (!buffer) return null
+    const y = buffer.baseY + buffer.cursorY
+    let start = -1
+    for (let r = y; r >= Math.max(0, y - 40) && start < 0; r--) if (/^\s*›/.test(rowText(buffer, r))) start = r
+    if (start < 0) return null
+    let text = ''
+    for (let r = start; r <= y; r++) text += (buffer.getLine(r)?.isWrapped ? '' : '\n') + rowText(buffer, r)
+    return (text.match(IMAGE_MARKER) || []).length
+  } catch {
+    return null
+  }
+}
+
 // The rows just above the cursor: Claude Code's spinner and its "esc to
 // interrupt" sit right above its input box, while a tall status line under
 // the box can push them out of the screen's last lines.

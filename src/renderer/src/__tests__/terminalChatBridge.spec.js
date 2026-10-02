@@ -3,6 +3,7 @@
 // cards type.
 import { describe, expect, it, vi } from 'vitest'
 import {
+  chatViewTakesImages,
   KEY_ALLOW,
   KEY_ESCAPE,
   answerKeyGroups,
@@ -217,5 +218,13 @@ describe('the composer', () => {
     expect(withContextWindow(ev, '', 'openclaude')[0].windowTokens).toBeNull()
     expect(withContextWindow(ev, 'gpt-5', 'codex')[0].windowTokens).toBeNull()
     expect(withContextWindow([{ ...ev[0], windowTokens: 400000 }], 'opus')[0].windowTokens).toBe(400000)
+  })
+})
+
+describe('chatViewTakesImages', () => {
+  it('Claude Code, OpenClaude, Codex and Cursor attach images; Antigravity takes text only', () => {
+    for (const a of ['claude', 'openclaude', 'codex', 'cursor']) expect(chatViewTakesImages(a)).toBe(true)
+    expect(chatViewTakesImages('antigravity')).toBe(false)
+    expect(chatViewTakesImages('aider')).toBe(false)
   })
 })

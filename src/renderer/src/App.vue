@@ -37,6 +37,7 @@ import {
   getAgentState,
   agentStateKnown,
   agentTookMessage,
+  turnEndedSince,
   managedAgentStatus,
   clearAgentStatus,
   clearAttention,
@@ -73,13 +74,13 @@ import { parseLeadRequest, findTaskRef, leadGuide, memberGuide } from '../../sha
 import { workerLaunchArgs, wakeLaunchArgs, CHAT_RESULTS_POINTER } from '../../shared/orchestration'
 import { createOrchestrator } from './orchestrator'
 import { formatChatTranscript } from './chat/chatTranscript'
-import { canShowChatView, isPastedImageCopy } from './chat/terminalChatBridge'
+import { canShowChatView, chatViewTakesImages, isPastedImageCopy } from './chat/terminalChatBridge'
 import { automationLaunchArgs, AUTOMATION_AGENTS, permissionFingerprint, quoteGlobArgs } from '../../shared/automations'
 import { createAutomationRunner, probeRunAgent } from './automationRunner'
 import { createCliRequests, CliRequestError } from './cliRequests'
 import { automationsState, applySnapshot as applyAutomations, subscribeAutomations } from './automationsStore'
 import { trackAgent } from '../../shared/tracking'
-import { pasteAndConfirm } from './deliver'
+import { pasteAndConfirm, turnStarting } from './deliver'
 import { createTeamDelivery } from './teamDelivery'
 import { dropBuffer, seedBuffer } from './ptyStore'
 import { tasks as boardTasks, setTasks, updateTask, removeTask, addTask, deletedTaskIds, addDeletedTasks, takeDeletedToPurge, cardOnBoard } from './taskBoardStore'
@@ -4783,6 +4784,18 @@ const teamPointer = createTeamDelivery({
 onBeforeUnmount(() => teamPointer.dispose())
 
 // Ask the user what happened to an unconfirmed message, then go on.
+// The question about an unconfirmed message: Enter pressed and not seen
+// taken, or never pressed (an image that did not attach, the user's keys or
+// an approval came first).
+function unsentText(item, who) {
+  const message = `${item.text.slice(0, 160)}${item.text.length > 160 ? '…' : ''}`
+  if (item.stoppedBefore === 'image')
+    return t('app.unsent.imageText', 'Tessel pasted a message with images into the input box of {{who}}, but an image did not show there as [Image #N], so Enter was not pressed: "{{message}}". Look at its input box. To send it as it is there, press Enter in the terminal yourself, then choose "It was sent". To start over, clear its input box first, then choose "Send again".', { who, message })
+  if (item.stoppedBefore === 'noEnter')
+    return t('app.unsent.noEnterText', 'Tessel pasted a message into the input box of {{who}} but did not press Enter (keys were typed there, or it asked for approval meanwhile): "{{message}}". Look at its input box. If the message is still there, press Enter in the terminal yourself, then choose "It was sent". To start over, clear its input box first, then choose "Send again".', { who, message })
+  return t('app.unsent.text', 'Tessel pasted a message and pressed Enter, but {{who}} did not visibly take it: "{{message}}". Look at its input box. If the message is still there, press Enter in the terminal yourself, then choose "It was sent". If it is gone and was not received, choose "Send again".', { who, message })
+}
+
 async function resolveUnsent(id) {
   const u = unsent[id]
   if (!u) return
@@ -4791,7 +4804,7 @@ async function resolveUnsent(id) {
   const who = leaf ? leaf.paneName || leaf.title : t('app.unsent.theAgent', 'the agent')
   const answer = await askConfirm({
     title: t('app.unsent.title', 'Did {{who}} get the message?', { who }),
-    text: t('app.unsent.text', 'Tessel pasted a message and pressed Enter, but {{who}} did not visibly take it: "{{message}}". Look at its input box. If the message is still there, press Enter in the terminal yourself, then choose "It was sent". If it is gone and was not received, choose "Send again".', { who, message: `${u.item.text.slice(0, 160)}${u.item.text.length > 160 ? '…' : ''}` }),
+    text: unsentText(u.item, who),
     confirmLabel: t('app.unsent.wasSent', 'It was sent'),
     altLabel: t('app.unsent.sendAgain', 'Send again')
   })
@@ -4914,7 +4927,8 @@ function flushPending() {
     const first = pendingMessages[id][0]
     const m = first && first.meta
     if (m && (m.notBefore || m.waitIdle)) {
-      if ((m.notBefore && Date.now() < m.notBefore) || agentStatus[id] === 'busy') {
+      // (The started turn is looked at first: it must see the agent work.)
+      if ((m.waitIdle && nextTurnStarting(id)) || (m.notBefore && Date.now() < m.notBefore) || agentStatus[id] === 'busy') {
         waiting = true
         continue
       }
@@ -4951,8 +4965,12 @@ function flushPending() {
       // Its own hooks: a turn opened or ended since Enter (a fast answer, a
       // question asked at once) is the message taken.
       taken: (pid, at) => agentTookMessage(pid, findLeaf(pid)?.agentLaunchToken, at),
-      submitted: (enter) => (item.entered = enter)
+      submitted: (enter) => (item.entered = enter),
+      // Stopped before Enter (an image that never showed in its input).
+      stopped: (why) => (item.stoppedBefore = why)
     }
+    item.entered = null
+    item.stoppedBefore = null
     // A channel message is marked in flight on disk first; if that is
     // refused, it is not typed now ('refused').
     Promise.resolve(item.meta && item.meta.beforePaste ? item.meta.beforePaste() : true)
@@ -4962,6 +4980,9 @@ function flushPending() {
       .then((result) => {
         delivering.delete(id)
         if (result === 'confirmed') {
+          // A turn it starts now: the next message that waits for a quiet
+          // agent waits for that turn too, even before it shows it works.
+          if (item.entered && !item.entered.wasBusy && !(item.meta && item.meta.command)) turnPending[id] = { at: item.entered.at, sawBusy: false }
           if (item.held) logMessage(id, 'delivered', item.text, item.meta)
           if (item.meta && item.meta.onDelivered) item.meta.onDelivered()
         } else if (result === 'requeue') {
@@ -4981,7 +5002,14 @@ function flushPending() {
           if (item.meta && item.meta.onUncertain) item.meta.onUncertain()
           watchUnsent(id, unsent[id], item.entered)
           const leaf = findLeaf(id)
-          showToast(leaf ? t('app.unsent.toast', 'A message to {{name}} may not have been sent. Check its input box.', { name: leaf.paneName || leaf.title }) : t('app.unsent.toastAgent', 'A message to an agent may not have been sent. Check its input box.'), {
+          if (item.stoppedBefore === 'image') {
+            const name = leaf ? leaf.paneName || leaf.title : t('app.unsent.theAgent', 'the agent')
+            showToast(t('app.unsent.imageToast', 'An image did not attach in {{name}}: the message was not sent (Enter not pressed). Check its input box.', { name }), {
+              kind: 'attention',
+              timeout: 15000,
+              action: { label: t('app.unsent.check', 'Check'), run: () => resolveUnsent(id) }
+            })
+          } else showToast(leaf ? t('app.unsent.toast', 'A message to {{name}} may not have been sent. Check its input box.', { name: leaf.paneName || leaf.title }) : t('app.unsent.toastAgent', 'A message to an agent may not have been sent. Check its input box.'), {
             kind: 'attention',
             timeout: 15000,
             action: { label: t('app.unsent.check', 'Check'), run: () => resolveUnsent(id) }
@@ -4994,6 +5022,18 @@ function flushPending() {
   }
   clearTimeout(pendingTimer)
   pendingTimer = waiting ? setTimeout(flushPending, 2000) : null
+}
+
+// The turn a delivered message started, until it is seen ending (see
+// deliver.js turnStarting): leafId -> { at, sawBusy }.
+const turnPending = {}
+function nextTurnStarting(id) {
+  const p = turnPending[id]
+  if (!p) return false
+  const leaf = findLeaf(id)
+  const wait = turnStarting(p, { busy: agentStatus[id] === 'busy', endedAt: leaf ? turnEndedSince(id, leaf.agentLaunchToken) : null })
+  if (!wait) delete turnPending[id]
+  return wait
 }
 
 function failDelivery(item) {
@@ -6691,7 +6731,7 @@ const switchingLeaves = new Set()
 function sendFromChatView(leafId, text, { onDelivered, onFailed, onQueued, onTyped, images, command } = {}) {
   const leaf = findLeaf(leafId)
   const files = Array.isArray(images) ? images : []
-  if (!leaf || leaf.kind !== 'agent' || !leaf.chatView || leaf.sleeping || !files.every(isPastedImageCopy) || (command && command !== 'paste' && command !== 'type')) {
+  if (!leaf || leaf.kind !== 'agent' || !leaf.chatView || leaf.sleeping || !files.every(isPastedImageCopy) || (files.length && !chatViewTakesImages(leaf.agentId)) || (command && command !== 'paste' && command !== 'type')) {
     if (onFailed) onFailed()
     return false
   }

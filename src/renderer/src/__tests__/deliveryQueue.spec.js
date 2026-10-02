@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import fs from 'fs'
 import vm from 'vm'
 import { join } from 'path'
+import { turnStarting } from '../deliver'
 
 const source = fs.readFileSync(join(process.cwd(), 'src/renderer/src/App.vue'), 'utf8')
 function slice(from, to) {
@@ -38,6 +39,8 @@ describe("App.vue's queue after an unconfirmed delivery", () => {
       userIsTyping: () => false,
       unsafeMultilinePaste: () => false,
       agentTookMessage: vi.fn(() => took),
+      turnStarting,
+      turnEndedSince: vi.fn(() => null),
       pasteAndConfirm: vi.fn(async (id, text, deps) => {
         pasted.push(text)
         ctx.lastDeps = deps
@@ -119,6 +122,31 @@ describe("App.vue's queue after an unconfirmed delivery", () => {
     ctx.deliverToAgent('a1', 'later', { onFailed: failed })
     await vi.advanceTimersByTimeAsync(32000)
     expect(failed).toHaveBeenCalledTimes(1)
+  })
+  it('a quiet-agent message right after one was taken waits for the turn it started, even before it shows', async () => {
+    ctx.deliverToAgent('a1', 'with images', { waitIdle: true })
+    await settle()
+    ctx.deliverToAgent('a1', 'second', { waitIdle: true })
+    await settle()
+    // Codex reports its turn a moment after Enter: not busy yet, still held.
+    expect(pasted).toEqual(['with images'])
+    await vi.advanceTimersByTimeAsync(2100)
+    expect(pasted).toEqual(['with images'])
+    ctx.agentStatus.a1 = 'busy'
+    await vi.advanceTimersByTimeAsync(2100)
+    expect(pasted).toEqual(['with images'])
+    ctx.agentStatus.a1 = 'idle'
+    await vi.advanceTimersByTimeAsync(2100)
+    expect(pasted).toEqual(['with images', 'second'])
+  })
+
+  it('its hooks saw that turn end: the next one goes at once', async () => {
+    ctx.deliverToAgent('a1', 'first', { waitIdle: true })
+    await settle()
+    ctx.turnEndedSince.mockReturnValue(Date.now() + 500)
+    ctx.deliverToAgent('a1', 'second', { waitIdle: true })
+    await settle()
+    expect(pasted).toEqual(['first', 'second'])
   })
 })
 

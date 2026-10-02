@@ -228,6 +228,15 @@ export function commandDelivery(agentId, text, imageCount = 0) {
   return agent === 'codex' || agent === 'cursor' || agent === 'antigravity' ? 'type' : 'paste'
 }
 
+// Can its chat view attach images (each one's path pasted into its input)?
+// Claude Code, OpenClaude and Codex turn a pasted image path into
+// "[Image #N]"; Cursor takes the path in its prompt. Antigravity cannot:
+// it reads the path as a text file and fails (CLI 1.2.14, also with
+// "@file"), so its composer takes text only and says so.
+export function chatViewTakesImages(agentId) {
+  return ['claude', 'openclaude', 'codex', 'cursor'].includes(agentId)
+}
+
 // The image files the composer may name to the agent: Tessel's own copies
 // (%TEMP%\tessel-paste\chat\img_<24 hex>.<png|jpg|gif|webp>), nothing else.
 const IMAGE_COPY = /^(?:[A-Za-z]:[\\/]|\/)(?:[^\\/\0\r\n"<>|?*]+[\\/])*tessel-paste[\\/]chat[\\/]img_[0-9a-f]{24}\.(?:png|jpg|gif|webp)$/i

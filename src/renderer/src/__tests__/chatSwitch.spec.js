@@ -7,7 +7,7 @@ import fs from 'fs'
 import vm from 'vm'
 import { join } from 'path'
 import { reactive } from 'vue'
-import { isPastedImageCopy } from '../chat/terminalChatBridge'
+import { chatViewTakesImages, isPastedImageCopy } from '../chat/terminalChatBridge'
 
 const source = fs.readFileSync(join(process.cwd(), 'src/renderer/src/App.vue'), 'utf8')
 function slice(from, to) {
@@ -194,7 +194,8 @@ describe("a terminal agent's chat view (App.vue sendFromChatView / chatViewEnded
     const ctx = {
       ...load(leaf).ctx,
       deliverToAgent: vi.fn(),
-      isPastedImageCopy
+      isPastedImageCopy,
+      chatViewTakesImages
     }
     ctx.findLeaf = (id) => (id === leaf.id ? leaf : null)
     vm.createContext(ctx)
@@ -222,6 +223,16 @@ describe("a terminal agent's chat view (App.vue sendFromChatView / chatViewEnded
     expect(ctx.view.sendFromChatView('pane-5', '/x', { command: 'raw', onFailed })).toBe(false)
     expect(onFailed).toHaveBeenCalledTimes(2)
     expect(ctx.deliverToAgent).toHaveBeenCalledTimes(2)
+  })
+
+  it('an agent that cannot take images (Antigravity): a message with images is given back, text still goes', () => {
+    const copy = ['C:', 'Temp', 'tessel-paste', 'chat', 'img_0123456789abcdef01234567.png'].join(String.fromCharCode(92))
+    const ctx = loadView(agent({ agentId: 'antigravity' }))
+    const onFailed = vi.fn()
+    expect(ctx.view.sendFromChatView('pane-5', 'look', { images: [copy], onFailed })).toBe(false)
+    expect(onFailed).toHaveBeenCalled()
+    expect(ctx.view.sendFromChatView('pane-5', 'hello', {})).toBe(true)
+    expect(ctx.deliverToAgent).toHaveBeenCalledTimes(1)
   })
 
   it('not shown as a chat, or asleep: nothing is typed, the message is given back', () => {

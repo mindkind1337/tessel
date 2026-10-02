@@ -230,6 +230,22 @@ describe('what each agent gets', () => {
     ])
     expect(opencodeParts('', [pic()])).toHaveLength(1)
   })
+  it('several images in one message: every agent gets each one, in order', () => {
+    const many = [1, 2, 3, 4, 5].map((n) => ({ ...pic('image/png', `image-${n}.png`), path: `C:\\Temp\\tessel-paste\\chat\\img_${n}.png`, base64: () => `D${n}` }))
+    expect(claudeUserContent('how many?', many).map((b) => (b.type === 'image' ? b.source.data : b.text))).toEqual(['D1', 'D2', 'D3', 'D4', 'D5', 'how many?'])
+    expect(codexUserInput('how many?', many).map((b) => b.path || b.text)).toEqual(['how many?', ...[1, 2, 3, 4, 5].map((n) => `C:\\Temp\\tessel-paste\\chat\\img_${n}.png`)])
+    expect(opencodeParts('how many?', many).map((b) => b.filename || b.text)).toEqual(['how many?', 'image-1.png', 'image-2.png', 'image-3.png', 'image-4.png', 'image-5.png'])
+  })
+  it('three real files taken together reach Claude as three distinct blocks, in the order sent', () => {
+    const ids = [pngOf(10, 10), pngOf(20, 20), pngOf(30, 30)].map((buf, i) => store.importFile({ paneId: 'p1', path: write(`c${i}.png`, buf) }).image.id)
+    const order = [ids[2], ids[0], ids[1]]
+    const { images } = store.take('p1', order)
+    expect(images.map((img) => img.id)).toEqual(order)
+    const blocks = claudeUserContent('which?', images.map((img) => store.forAgent(img)))
+    expect(blocks.filter((b) => b.type === 'image')).toHaveLength(3)
+    expect(new Set(blocks.filter((b) => b.type === 'image').map((b) => b.source.data)).size).toBe(3)
+    expect(blocks[3]).toEqual({ type: 'text', text: 'which?' })
+  })
 })
 
 class FakeAdapter extends EventEmitter {

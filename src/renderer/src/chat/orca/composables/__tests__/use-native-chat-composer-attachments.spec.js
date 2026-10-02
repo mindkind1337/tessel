@@ -42,6 +42,14 @@ describe('local attachment state and text-only paths', () => {
     expect(h.draft.value).toBe('/shot.png ')
     expect(h.result.current.imageAttachments).toEqual([])
   })
+  it('an image dropped where images are not taken: its path goes in as text, and says so', () => {
+    const h = setup()
+    h.result.current.attachResolvedPaths(['/shot.png'])
+    expect(h.setNotice).toHaveBeenCalledWith('This agent cannot take images: their file paths go in as text.')
+    const plain = setup()
+    plain.result.current.attachResolvedPaths(['/notes.txt'])
+    expect(plain.setNotice).not.toHaveBeenCalled()
+  })
 })
 
 // A fake main process: imageSave (clipboard bytes) / imageImport (a dropped

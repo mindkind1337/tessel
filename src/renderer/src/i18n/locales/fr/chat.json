@@ -525,6 +525,7 @@
   "chat.orca.catalog.clear": "Commencer une nouvelle conversation",
   "chat.orca.catalog.compact": "Compacter le contexte de la conversation",
   "chat.orca.composer.textOnly": "Ce chat accepte uniquement du texte.",
+  "chat.orca.composer.imagesAsText": "Cet agent ne peut pas recevoir d'images : leurs chemins de fichier sont ajoutés comme texte.",
   "chat.orca.composer.sendRejected": "Le message n’a pas été envoyé. Votre brouillon a été conservé.",
   "chat.orca.options.unsupported": "Cette option n’est pas disponible pour cet agent.",
   "chat.orca.options.unavailable": "Les options de la session sont indisponibles.",

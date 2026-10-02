@@ -395,6 +395,9 @@
       "toast": "Un message à {{name}} n'a peut-être pas été envoyé. Vérifiez sa zone de saisie.",
       "toastAgent": "Un message à un agent n'a peut-être pas été envoyé. Vérifiez sa zone de saisie.",
       "check": "Vérifier",
+      "imageToast": "Une image ne s'est pas jointe dans {{name}} : le message n'a pas été envoyé (Entrée non appuyée). Vérifiez sa zone de saisie.",
+      "imageText": "Tessel a collé un message avec des images dans la zone de saisie de {{who}}, mais une image n'y est pas apparue comme [Image #N], donc Entrée n'a pas été appuyée : « {{message}} ». Regardez sa zone de saisie. Pour l'envoyer tel quel, appuyez vous-même sur Entrée dans le terminal, puis choisissez « Il a été envoyé ». Pour recommencer, videz d'abord sa zone de saisie, puis choisissez « Renvoyer ».",
+      "noEnterText": "Tessel a collé un message dans la zone de saisie de {{who}} mais n'a pas appuyé sur Entrée (des touches y ont été tapées, ou il a demandé une approbation entre-temps) : « {{message}} ». Regardez sa zone de saisie. Si le message y est encore, appuyez vous-même sur Entrée dans le terminal, puis choisissez « Il a été envoyé ». Pour recommencer, videz d'abord sa zone de saisie, puis choisissez « Renvoyer ».",
       "held": "En attente d'envoi à {{name}} : dites d'abord si son message précédent a été reçu."
     },
     "task": {

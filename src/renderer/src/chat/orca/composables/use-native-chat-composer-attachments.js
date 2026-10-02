@@ -215,6 +215,9 @@ export function useNativeChatComposerAttachments(options) {
         ? paths.map((path, i) => ({ path, file: files[i] })).filter((entry) => isChatImagePath(entry.path))
         : []
       if (images.length) attachImages(images)
+      // Images where this chat takes none: their paths go in as text, said.
+      else if (!read('allowImages', false) && paths.some((path) => isChatImagePath(path)))
+        call('setNotice', t('chat.orca.composer.imagesAsText', 'This agent cannot take images: their file paths go in as text.'))
       const textPaths = paths.filter((path) => !images.some((entry) => entry.path === path))
       if (!textPaths.length) return true
       const text =

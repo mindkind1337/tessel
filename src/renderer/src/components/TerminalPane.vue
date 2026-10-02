@@ -30,6 +30,8 @@ import {
   getAgentState,
   managedAgentStatus,
   agentScreenObservation,
+  claudeInputImages,
+  codexInputImages,
   createAgentActivityMonitor,
   turnEndedSince,
   paneMonitoring,
@@ -60,6 +62,7 @@ import {
   KEY_SHIFT_TAB,
   canCycleToYolo,
   canShowChatView,
+  chatViewTakesImages,
   composerAgent,
   launchArgsOf,
   launchPermissionMode,
@@ -1515,6 +1518,16 @@ async function pasteImage() {
   if (term) termFocus()
 }
 
+// The agents whose input shows a pasted image path as "[Image #N]"
+// (deliver.js waits for it). Cursor and Antigravity: not read here.
+function inputImages() {
+  if (!term) return null
+  const agent = props.node.agentId
+  if (agent === 'claude' || agent === 'openclaude') return claudeInputImages(term)
+  if (agent === 'codex') return codexInputImages(term)
+  return null
+}
+
 // "[Image #N]" in a Claude Code pane opens that image (a click on it).
 // The images pasted here: Claude shows the path as "[Image #N]" a moment
 // later, the first number above those on screen before is this one. Images
@@ -2448,6 +2461,15 @@ onMounted(() => {
         await new Promise((r) => setTimeout(r, 15))
       }
     },
+    // Codex only: backspace n times (deliver.js: a pasted image path Codex
+    // left as plain text is erased before it is pasted again).
+    ...(props.node.agentId === 'codex'
+      ? {
+          erase: (n) => {
+            if (Number.isInteger(n) && n > 0 && n <= 4096) window.shellApi.writePty(props.node.id, '\x7f'.repeat(n))
+          }
+        }
+      : {}),
     getSelection: () => (term ? term.getSelection() : ''),
     resetInputModes,
     screenText,
@@ -2455,7 +2477,11 @@ onMounted(() => {
     promptShowsPlaceholder: (promptChar) => promptShowsPlaceholder(term, promptChar),
     // What the screen shows of its agent: { busy, ready, approval, limit }
     // (an automation's run where no hooks report, e.g. on a remote host).
-    agentObservation: () => (term ? agentScreenObservation(term, props.node.agentId, screenText(12)) : null)
+    agentObservation: () => (term ? agentScreenObservation(term, props.node.agentId, screenText(12)) : null),
+    // How many "[Image #N]" its input shows (Claude Code, OpenClaude,
+    // Codex: each pasted image path becomes one), or null: not known for
+    // this agent or not readable now (deliver.js then waits a fixed time).
+    imageMarkers: () => inputImages()
   }
   registerPane(props.node.id, paneApi)
 
@@ -2883,7 +2909,7 @@ const paneMenuBindings = computed(() => ({
         :disabled-reason="chatDisabledReason"
         :send-message="chatSend"
         :write-keys="chatKeys"
-        allow-images
+        :allow-images="chatViewTakesImages(node.agentId)"
         :session-options="chatSessionOptions"
         :set-option="chatSetOption"
         :list-files="chatListFiles"
