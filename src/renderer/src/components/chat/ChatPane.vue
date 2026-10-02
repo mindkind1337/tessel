@@ -92,6 +92,17 @@ const meta = session.meta
 
 const isActive = computed(() => ctx.activeId.value === props.node.id)
 const isMaximized = computed(() => ctx.maximizedId.value === props.node.id)
+// Made the active pane (a click in the sidebar, a shortcut): the keyboard
+// goes to its composer, as a terminal pane takes it; not when the focus is
+// already inside the pane (a button or a card of it was clicked).
+watch(isActive, (a) => {
+  if (!a) return
+  nextTick(() => {
+    const root = rootEl.value
+    if (!root || root.contains(document.activeElement)) return
+    if (viewRef.value) viewRef.value.focusComposer()
+  })
+})
 const status = computed(() => meta.status)
 // The sidebar reads the pane's own status (App's copy only hears changes,
 // and forgets them on a reload); not saved with the layout.
