@@ -399,3 +399,15 @@ describe("Claude Code's model and effort from its latest answer", () => {
     expect(claudeTurnFromText([command('model', 'opus', T2), stdout('Set model to `Opus 5.5`', T2)].join('\n'))).toEqual({ model: 'opus', effort: null, at: Date.parse(T2) })
   })
 })
+
+describe("Cursor's model from its cli-config.json", () => {
+  it('the full name, never only "GPT-5.6", with its effort apart', async () => {
+    const { cursorConfigModel } = await import('../agentModel.js')
+    const cfg = (displayName, modelId = 'gpt-5.6-luna') => JSON.stringify({ model: { modelId, displayName } })
+    expect(cursorConfigModel(cfg('GPT-5.6 Luna 272K Medium'))).toEqual({ model: 'gpt-5.6-luna', name: 'GPT-5.6 Luna', effort: 'medium' })
+    expect(cursorConfigModel(cfg('GPT-5.6 Sol 1M Extra High Fast', 'gpt-5.6-sol'))).toEqual({ model: 'gpt-5.6-sol', name: 'GPT-5.6 Sol Fast', effort: 'xhigh' })
+    expect(cursorConfigModel(cfg('Auto', 'default'))).toEqual({ model: 'default', name: 'Auto' })
+    expect(cursorConfigModel('not json')).toBe(null)
+    expect(cursorConfigModel(JSON.stringify({ model: { modelId: 'bad id!' } }))).toBe(null)
+  })
+})

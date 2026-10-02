@@ -445,6 +445,35 @@ export function claudeSettingsEffort(model, cwd, home) {
   return general
 }
 
+// Cursor keeps its last pick (its /model picker, --model) in cli-config.json:
+// { model: { modelId: 'gpt-5.6-luna', displayName: 'GPT-5.6 Luna 272K Medium' } }.
+// -> { model, name: 'GPT-5.6 Luna', effort: 'medium' }: the full name, so the
+// header never shows only "GPT-5.6" when Cursor has several of them.
+const CURSOR_EFFORT_WORDS = [['extra high', 'xhigh'], ['minimal', 'minimal'], ['medium', 'medium'], ['high', 'high'], ['low', 'low'], ['max', 'max'], ['none', 'none']]
+export function cursorConfigModel(text) {
+  let m = null
+  try {
+    m = JSON.parse(text || '').model
+  } catch {
+    return null
+  }
+  const id = m && typeof m.modelId === 'string' && /^[\w.-]{1,80}$/.test(m.modelId) ? m.modelId : null
+  if (!id) return null
+  let name = typeof m.displayName === 'string' ? m.displayName.replace(/\s+/g, ' ').trim().slice(0, 80) : ''
+  let effort = null
+  for (const [word, value] of CURSOR_EFFORT_WORDS) {
+    const re = new RegExp(`\\s${word}(?=\\s|$)`, 'i') // i18n-ignore
+    if (re.test(name)) {
+      effort = value
+      name = name.replace(re, '')
+      break
+    }
+  }
+  // The context size ("272K") is not part of its name.
+  name = name.replace(/\s\d+(?:\.\d+)?[KM]\b/g, '').trim()
+  return { model: id, ...(name ? { name } : {}), ...(effort ? { effort } : {}) }
+}
+
 function settingsModel(agentId, cwd, home) {
   const files = []
   if (agentId === 'claude') {
@@ -457,6 +486,7 @@ function settingsModel(agentId, cwd, home) {
     return null
   }
   if (agentId === 'codex') return codexModelFromToml(readText(join(home, '.codex', 'config.toml')))
+  if (agentId === 'cursor') return cursorConfigModel(readText(join(home, '.cursor', 'cli-config.json')))
   if (agentId === 'gemini' || agentId === 'qwen') {
     const dir = agentId === 'gemini' ? '.gemini' : '.qwen'
     if (cwd) files.push(join(cwd, dir, 'settings.json'))
@@ -564,7 +594,7 @@ function agentModelFound({ agentId, sessionId, command, cwd, launchedAt = 0 } = 
   const s = settingsModel(agentId, cwd, home)
   if (s) {
     const effort = s.effort || (agentId === 'claude' ? claudeSettingsEffort(s.model, cwd, home) : null)
-    return { model: s.model, effort, source: 'settings' }
+    return { model: s.model, effort, source: 'settings', ...(s.name ? { name: s.name } : {}) }
   }
   return picked ? { model: picked.model, effort: null, source: 'picked' } : null
 }
