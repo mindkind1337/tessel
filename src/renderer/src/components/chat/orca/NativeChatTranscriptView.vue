@@ -122,6 +122,9 @@ const props = defineProps({
   // What the agent's status line says of its context ({ usedTokens,
   // windowTokens } or null), for an agent whose file never says it (Cursor).
   screenContext: { type: Object, default: null },
+  // The next message the agent suggests on its screen (Claude Code's greyed
+  // prompt suggestion): the composer's placeholder, Tab takes it.
+  promptSuggestion: { type: String, default: '' },
   // The permission mode picker (interactive).
   permissionMode: { type: String, default: '' },
   modeBlocked: { type: Function, default: undefined },
@@ -951,6 +954,7 @@ const title = computed(() => t('chat.orca.transcriptView.title', 'Conversation o
         ref="composerRef"
         v-model="draft"
         :pane-key="composerKey"
+        :prompt-suggestion="promptSuggestion"
         :agent="composerAgent(agent)"
         :agent-name="fromAgent"
         :is-working="working"

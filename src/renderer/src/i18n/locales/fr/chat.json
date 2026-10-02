@@ -48,6 +48,7 @@
     },
     "composer": {
       "placeholder": "Écrire à {{agent}}…",
+      "suggestion": "{{text}}   (Tab)",
       "label": "Message",
       "send": "Envoyer",
       "sendHint": "Envoyer (Entrée) · nouvelle ligne : Maj+Entrée",

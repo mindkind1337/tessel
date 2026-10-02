@@ -261,6 +261,21 @@ describe('NativeChatComposer (Tessel rules)', () => {
     expect(send).toHaveBeenCalledWith('next')
   })
 
+  it("the agent's suggested next message is the placeholder; Tab takes it, then Enter sends it", async () => {
+    const send = vi.fn(async () => ({ ok: true }))
+    await render({ send, promptSuggestion: 'ok push the release' })
+    expect(input().getAttribute('aria-label')).toBe('ok push the release   (Tab)')
+    await key({ key: 'Tab', keyCode: 9 })
+    expect(promptValue(input())).toBe('ok push the release')
+    await key({ key: 'Enter', keyCode: 13 })
+    expect(send).toHaveBeenCalledWith('ok push the release')
+  })
+
+  it('no suggestion while the agent works', async () => {
+    await render({ promptSuggestion: 'ok push the release', isWorking: true })
+    expect(input().getAttribute('aria-label')).toBe('Message Claude…')
+  })
+
   it('OpenCode during a turn: the placeholder stays plain (its row says it waits)', async () => {
     await render({ agent: 'opencode', agentName: 'OpenCode', isWorking: true })
     expect(input().getAttribute('aria-label')).toBe('Message OpenCode…')

@@ -100,3 +100,24 @@ export function claudeContextWindow(model, usedTokens = 0, agent = 'claude') {
   if (name ? !CLAUDE_MODEL.test(name) : agent !== 'claude') return null
   return usedTokens > 200_000 ? 1_000_000 : 200_000
 }
+
+// Claude Code's prompt suggestion: after a turn it shows a likely next message
+// greyed in its empty prompt ("> ok push the release"), Tab takes it. rows:
+// the bottom rows of the screen, [{ text, styled }] where styled[i] says the
+// cell at i is drawn dim, in a set colour or inverted (typed text is the
+// terminal's default colour). -> the suggestion, or ''.
+const PROMPT_ROW = /^(\s*(?:│\s*)?[>❯]\s+)(\S.*?)\s*(?:│\s*)?$/
+export function promptSuggestionOnScreen(rows) {
+  for (let i = (Array.isArray(rows) ? rows.length : 0) - 1; i >= 0; i--) {
+    const row = rows[i]
+    const m = row && typeof row.text === 'string' ? PROMPT_ROW.exec(row.text) : null
+    if (!m) continue
+    const from = m[1].length
+    const text = m[2]
+    for (let x = 0; x < text.length; x++) {
+      if (text[x] !== ' ' && !(row.styled && row.styled[from + x])) return ''
+    }
+    return text.length <= 500 ? text : ''
+  }
+  return ''
+}

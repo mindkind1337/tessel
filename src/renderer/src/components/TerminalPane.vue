@@ -67,6 +67,7 @@ import {
   shownPermissionMode,
   stepToPermissionMode
 } from '../chat/terminalChatBridge'
+import { promptSuggestionOnScreen } from '../chat/terminalChatExtras'
 import { listsChildren } from '../agentChildrenFeed'
 import HoverCardContent from './hover/HoverCardContent.vue'
 import PaneHoverDetails from './PaneHoverDetails.vue'
@@ -116,6 +117,35 @@ watch(
 const agentModel = ref(null) // { model, effort, source } | null
 // Cursor: the context its status line shows ({ usedTokens, windowTokens }), for the chat view's ring.
 const screenContext = ref(null)
+// Claude Code: the next message it suggests, greyed in its empty prompt (the
+// chat view's placeholder; Tab takes it there too).
+const promptSuggestion = ref('')
+function readPromptSuggestion() {
+  if (props.node.agentId !== 'claude') return ''
+  // (Also called before the terminal exists: term is declared further down.)
+  try {
+    return term ? suggestionRows() : ''
+  } catch {
+    return ''
+  }
+}
+function suggestionRows() {
+  const buf = term.buffer.active
+  const rows = []
+  const cell = buf.getNullCell()
+  for (let y = buf.baseY + term.rows - 1; y >= Math.max(0, buf.baseY + term.rows - 12); y--) {
+    const line = buf.getLine(y)
+    if (!line) continue
+    const text = line.translateToString(true)
+    const styled = []
+    for (let x = 0; x < text.length; x++) {
+      const c = line.getCell(x, cell)
+      styled.push(!!c && (!!c.isDim() || !!c.isInverse() || !c.isFgDefault()))
+    }
+    rows.unshift({ text, styled })
+  }
+  return promptSuggestionOnScreen(rows)
+}
 // An effort in the app's language, as the chat's composer says it ("Moyen").
 const effortName = (effort) => nativeChatSessionChoiceLabel({ value: effort, label: effort })
 const modelText = computed(() => {
@@ -204,6 +234,7 @@ async function refreshModel() {
     return
   }
   modelBusy = true
+  promptSuggestion.value = readPromptSuggestion()
   try {
     const n = props.node
     // Cursor: the line under its prompt says what this session runs
@@ -630,6 +661,9 @@ function stateWord(state) {
 watch(agentStatus, (v) => {
   setAgentStatus(props.node.id, v, props.node.agentLaunchToken)
   if (v === 'idle') refreshModel() // an answer just ended
+  // Its suggestion comes a moment after the answer: looked at again then.
+  if ((v === 'idle' || v === 'done') && props.node.agentId === 'claude') setTimeout(() => (promptSuggestion.value = readPromptSuggestion()), 3000)
+  else if (v === 'busy') promptSuggestion.value = ''
 })
 // Output that answers something done here (a click that focuses the pane, a
 // resize, a key typed) is the agent redrawing or echoing, not working: it does
@@ -2855,6 +2889,7 @@ const paneMenuBindings = computed(() => ({
         :list-files="chatListFiles"
         :context-model="(agentModel && agentModel.model) || ''"
         :screen-context="node.agentId === 'cursor' ? screenContext : null"
+        :prompt-suggestion="promptSuggestion"
         :permission-mode="chatPermissionMode"
         :mode-blocked="chatModeBlocked"
         :set-permission-mode="chatSetPermissionMode"

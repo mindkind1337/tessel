@@ -286,7 +286,7 @@ const dispatchPickerCommand = useNativeChatPickerCommandDispatch(() => ({
 
 const completePickerItem = goalMode.interceptPick(picker.completeItem)
 const dispatchPicked = goalMode.interceptPick(dispatchPickerCommand)
-const handleKeyDown = useNativeChatComposerKeyDown(() => ({
+const handleComposerKey = useNativeChatComposerKeyDown(() => ({
   ...composerOptions(),
   autocomplete: autocomplete.value,
   activeSuggestion: activeSuggestion.value,
@@ -301,6 +301,17 @@ const handleKeyDown = useNativeChatComposerKeyDown(() => ({
   closeMenu: dismissMention,
   acceptMention: onAcceptMention
 }))
+// The agent's suggested next message: Tab on an empty draft takes it (as in
+// its terminal), unless a picker or menu is open.
+const suggestionShown = computed(() => !!props.promptSuggestion && !props.isWorking && !disabled.value && !draft.value)
+function handleKeyDown(event) {
+  if (event && event.key === 'Tab' && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey && suggestionShown.value && autocomplete.value.mode === 'none') {
+    event.preventDefault()
+    setDraft(props.promptSuggestion)
+    return
+  }
+  return handleComposerKey(event)
+}
 
 const canSend = useNativeChatCanSend(() => ({
   draft: draft.value,
@@ -323,6 +334,7 @@ const placeholder = computed(() => {
   if (props.sendBlockedReason) return props.sendBlockedReason
   // While it works, the same words: a message sent then waits as a card above
   // the composer (Send now steers it in for Claude and Codex).
+  if (suggestionShown.value) return t('chat.composer.suggestion', '{{text}}   (Tab)', { text: props.promptSuggestion })
   return t('chat.composer.placeholder', 'Message {{agent}}…', { agent: props.agentName })
 })
 

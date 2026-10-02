@@ -9,6 +9,9 @@ export const nativeChatComposerProps = {
   agent: { type: String, default: 'claude' },
   // Shown in the placeholder ("Message Claude…").
   agentName: { type: String, default: 'Claude' }, // i18n-ignore product name
+  // Tessel: the next message the agent suggests (Claude Code's greyed prompt
+  // suggestion): the placeholder while the draft is empty; Tab takes it.
+  promptSuggestion: { type: String, default: '' },
   // v-model: the draft (undefined = not bound).
   modelValue: { type: String, default: undefined },
   // A turn runs: the Send button becomes Stop, Escape interrupts, and a
