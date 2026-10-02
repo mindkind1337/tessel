@@ -34,7 +34,8 @@ export const YOLO_ARGS = {
   vibe: '--agent auto-approve',
   devin: '--permission-mode bypass --respect-workspace-trust false',
   muse: '--yolo',
-  ante: '--yolo'
+  ante: '--yolo',
+  qoder: '--dangerously-skip-permissions'
 }
 export const YOLO_ENV = { goose: { GOOSE_MODE: 'auto' } }
 

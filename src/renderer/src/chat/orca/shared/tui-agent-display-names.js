@@ -39,6 +39,9 @@ export const TUI_AGENT_DISPLAY_NAMES = {
     pi: 'Pi',
     omp: 'OMP',
     'prime-agent': 'Prime Agent', // i18n-ignore
+    qoder: 'Qoder CLI', // i18n-ignore
+    freebuff: 'Freebuff',
+    dsh: 'DeepSeek Harness', // i18n-ignore
     gemini: 'Gemini',
     antigravity: 'Antigravity',
     aider: 'Aider',

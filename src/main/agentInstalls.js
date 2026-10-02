@@ -74,6 +74,13 @@ export const AGENT_INSTALLS = {
     installSource: 'https://dev.meta.ai/docs/muse-code',
     allowedDomains: ['dev.meta.ai']
   },
+  qoder: {
+    // Its Windows PowerShell installer (the npm package is "legacy" there).
+    install: ['irm https://qoder.com/install.ps1 | iex'],
+    installShell: PS,
+    installSource: 'https://docs.qoder.com/cli/installation',
+    allowedDomains: ['qoder.com']
+  },
 
   // --- An npm package published by the vendor (no confirmation, npm updates) ---
   openclaude: { install: ['npm install -g @gitlawb/openclaude'], installSource: 'https://github.com/Gitlawb/openclaude' },
@@ -81,6 +88,7 @@ export const AGENT_INSTALLS = {
   commandcode: { install: ['npm install -g command-code'], installSource: 'https://commandcode.ai/docs/quickstart' },
   openclaw: { install: ['npm install -g openclaw'], installSource: 'https://docs.openclaw.ai/install' },
   mimocode: { install: ['npm install -g @mimo-ai/cli'], installSource: 'https://github.com/XiaomiMiMo/MiMo-Code' },
+  freebuff: { install: ['npm install -g freebuff'], installSource: 'https://freebuff.com/cli' },
 
   // --- No automatic Windows install: a link to the install page only ---
   // Script saves into the current folder and does not touch PATH.
@@ -101,7 +109,10 @@ export const AGENT_INSTALLS = {
   opencode2: { docsUrl: 'https://opencode.ai/v2/docs/' },
   // macOS and Linux only.
   primeagent: { docsUrl: 'https://github.com/PrimeIntellect-ai/prime-agent' },
-  ante: { docsUrl: 'https://github.com/AntigmaLabs/ante-preview' }
+  ante: { docsUrl: 'https://github.com/AntigmaLabs/ante-preview' },
+  // DeepSeek's npm package ships `dsh` only; the `dsh-tui` launcher of its
+  // interactive profile is a separate, community package.
+  dsh: { docsUrl: 'https://deepseek-harness.github.io/deepseek-harness/' }
 }
 
 // --- Checks -------------------------------------------------------------------

@@ -202,7 +202,8 @@
       "statusPath": "Le chemin du script de hook ne peut pas être cité sans risque pour cet agent.",
       "pluginNotManaged": "Ce fichier n'est pas géré par Tessel ; il n'a pas été modifié : {{file}}",
       "noNode": "Node.js (node.exe) est introuvable dans les dossiers du PATH : Tessel n'a donc pas installé ses hooks d'agents. Installez Node.js, puis redémarrez Tessel.",
-      "notList": "{{file}} a un réglage pour {{event}} qui n'est pas une liste de hooks : Tessel ne l'a pas modifié."
+      "notList": "{{file}} a un réglage pour {{event}} qui n'est pas une liste de hooks : Tessel ne l'a pas modifié.",
+      "dshFlowList": "{{file}} est écrit sous forme de liste [...] : réécrivez-le avec une entrée « - » par ligne pour que Tessel puisse y ajouter ses hooks."
     },
     "jsonAgents": {
       "kimiNotObject": "mcpServers de Kimi n'est pas un objet ; le fichier existant n'a pas été modifié.",
@@ -556,6 +557,8 @@
       "refreshKimi": "Lancez Kimi pour actualiser sa connexion, puis relisez l'utilisation.",
       "signInGrok": "Connectez-vous avec Grok pour lire l'utilisation.",
       "refreshGrok": "Lancez Grok pour actualiser sa connexion, puis relisez l'utilisation.",
+      "signInZcode": "Configurez une clé Coding Plan de Z.ai dans ZCode pour lire son utilisation.",
+      "zcodeRefused": "ZCode a refusé la demande de quota. Vérifiez sa clé Coding Plan.",
       "signInCursor": "Connectez-vous avec Cursor ou cursor-agent pour lire l'utilisation.",
       "refreshCursor": "Lancez cursor-agent login pour actualiser l'utilisation de Cursor.",
       "connectOpenCode": "Connectez un abonnement OpenCode Go dans OpenCode pour lire l'utilisation.",

@@ -12,6 +12,7 @@ import {
   mapOpenCodeGo,
   mapMiniMax,
   mapOpenCodeConsole,
+  mapZcode,
   openCodeWorkspaceIds
 } from './usageProviderMapping'
 import { randomUUID } from 'node:crypto'
@@ -35,10 +36,15 @@ export const USAGE_URLS = Object.freeze({
   opencodeConsole: 'https://opencode.ai/console/api/go/status',
   minimax: 'https://platform.minimax.io/v1/api/openplatform/coding_plan/remains',
   // Settings > MiniMax endpoint: China (Orca's minimax-request-context.ts).
-  minimaxCn: 'https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains'
+  minimaxCn: 'https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains',
+  // ZCode's Coding Plan quota, on the host of its configured endpoint (Orca's
+  // zcode-usage-fetcher.ts): Z.ai, then BigModel (China) and its dev host.
+  zcode: 'https://api.z.ai/api/monitor/usage/quota/limit',
+  zcodeCn: 'https://open.bigmodel.cn/api/monitor/usage/quota/limit',
+  zcodeDev: 'https://dev.bigmodel.cn/api/monitor/usage/quota/limit'
 })
 // Internal endpoints of a provider's read, never a provider of their own.
-const SUB_REQUESTS = ['geminiProject', 'cursorLegacy', 'grokMonthly', 'opencodeWorkspaces', 'opencodeConsole', 'minimaxCn']
+const SUB_REQUESTS = ['geminiProject', 'cursorLegacy', 'grokMonthly', 'opencodeWorkspaces', 'opencodeConsole', 'minimaxCn', 'zcodeCn', 'zcodeDev']
 // Providers read through another one's quota: Antigravity shares Google Code
 // Assist's with Gemini CLI, and keeps its own token in the OS keyring, so its
 // quota is Gemini's (after Orca's src/main/rate-limits/antigravity-usage-mirror.ts,
@@ -249,7 +255,7 @@ export function createExtraProviderUsage({
             }
           }
         } else {
-          const data = await fetch(provider === 'minimax' ? login.endpoint || 'minimax' : provider)
+          const data = await fetch(provider === 'minimax' || provider === 'zcode' ? login.endpoint || provider : provider)
           if (provider === 'kimi') windows = mapKimi(data)
           if (provider === 'cursor') {
             ;({ windows, unlimited = false } = mapCursor(data))
@@ -261,6 +267,11 @@ export function createExtraProviderUsage({
             if (!windows.length) windows = mapGrok(await fetch('grokMonthly'))
           }
           if (provider === 'opencode-go') windows = mapOpenCodeGo(data)
+          if (provider === 'zcode') {
+            windows = mapZcode(data, clock())
+            if (!windows)
+              refuse('response', t('main.usage.zcodeRefused', 'ZCode refused the quota request. Check its Coding Plan key.'))
+          }
           if (provider === 'minimax') {
             const code = data?.base_resp?.status_code
             // An expired cookie or key answers HTTP 200 with status 1004.

@@ -15,6 +15,7 @@ import { reactive } from 'vue'
 import { detectApproval, detectLimit } from './agentLimit'
 import { promptShowsPlaceholder } from './promptCheck'
 import { STATUS_PROVIDERS, SCREEN_READY_PROVIDERS } from '../../shared/agentStateModel'
+import { freebuffScreenState } from '../../shared/freebuffScreen'
 
 export const agentStatus = reactive({})
 export const attention = reactive({})
@@ -144,6 +145,10 @@ function aboveCursor(term, rows = 5) {
 // ready: an empty input (automations wait for it). waiting: the agent waits
 // at its input, maybe with a draft typed in it (its status: not running).
 export function agentScreenObservation(term, provider, screen) {
+  if (provider === 'freebuff') {
+    const own = freebuffObservation(term, screen)
+    if (own) return own
+  }
   const approval = detectApproval(screen)
   const limit = detectLimit(screen)
   const footer = String(screen || '')
@@ -206,6 +211,35 @@ export function agentScreenObservation(term, provider, screen) {
     // emptied is a message taken). null: not known.
     interruption,
     input: inputState(term, provider)
+  }
+}
+
+// Freebuff (no hooks): its own screen, read whole (a question dialog can be
+// taller than the lines near the cursor). null: nothing of its own shown.
+function freebuffObservation(term, screen) {
+  let state = null
+  try {
+    const buffer = term?.buffer?.active
+    if (!buffer) return null
+    const lines = []
+    for (let y = buffer.viewportY; y < buffer.viewportY + term.rows; y++) lines.push(rowText(buffer, y))
+    state = freebuffScreenState(lines, buffer.type === 'alternate')?.state || null
+  } catch {
+    return null
+  }
+  if (!state) return null
+  const waiting = state === 'waiting' || state === 'blocked'
+  return {
+    screen,
+    approval: waiting,
+    limit: detectLimit(screen),
+    busy: state === 'working',
+    running: state === 'working',
+    ready: state === 'ready',
+    waiting: state === 'ready',
+    interrupted: false,
+    interruption: null,
+    input: null
   }
 }
 

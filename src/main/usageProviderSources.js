@@ -44,6 +44,9 @@ export function openCodeCookie(raw) {
   return pairs.length ? pairs.map((p) => `${p.name}=${p.value}`).join('; ') : null
 }
 
+// ZCode's quota hosts (its configured baseURL) -> Tessel's endpoint key.
+const ZCODE_ENDPOINTS = { 'api.z.ai': 'zcode', 'open.bigmodel.cn': 'zcodeCn', 'dev.bigmodel.cn': 'zcodeDev' }
+
 export class ProviderReadError extends Error {
   constructor(code, message) {
     super(message)
@@ -112,7 +115,9 @@ export function createUsageProviderSources({
       path.join(cursor, 'auth.json'),
       path.join(desktop, 'User', 'globalStorage', 'state.vscdb')
     ],
-    'opencode-go': [path.join(openCode, 'auth.json'), path.join(openCode, 'opencode.db')]
+    'opencode-go': [path.join(openCode, 'auth.json'), path.join(openCode, 'opencode.db')],
+    // ZCode CLI's settings: its selected model's provider key and endpoint.
+    zcode: [path.join(home, '.zcode', 'cli', 'config.json')]
   }
   // cursor-agent's settings (its authInfo names the signed-in person, never a
   // token): ~/.cursor on Windows and macOS, the config folder elsewhere.
@@ -356,6 +361,30 @@ export function createUsageProviderSources({
         models: miniMaxModels(settings.minimaxUsageModels),
         transport: headers.Cookie ? 'cookie' : 'api-key'
       }
+    } else if (provider === 'zcode') {
+      // The Coding Plan key of the provider ZCode's selected model uses
+      // (model "<provider>/<model>"), never another configured account's;
+      // only Z.ai's and BigModel's own https endpoints. After Orca's
+      // zcode-usage-fetcher.ts (MIT, Copyright (c) 2026 Lovecast Inc.).
+      const config = await json(paths.zcode[0])
+      const model = typeof config?.model === 'string' ? config.model : config?.model?.main
+      const slash = typeof model === 'string' ? model.indexOf('/') : -1
+      const name = slash > 0 && slash < model.length - 1 ? model.slice(0, slash) : null
+      const settings = name && config?.provider?.[name]?.options
+      const key = typeof settings?.apiKey === 'string' ? token(settings.apiKey.trim()) : null
+      let endpoint = null
+      try {
+        const url = new URL(settings?.baseURL)
+        if (url.protocol === 'https:' && (url.port === '' || url.port === '443') && !url.username && !url.password)
+          endpoint = ZCODE_ENDPOINTS[url.hostname] || null
+      } catch {
+        endpoint = null
+      }
+      if (!key || !endpoint)
+        refuse('unavailable', t('main.usage.signInZcode', 'Set up a Z.ai Coding Plan key in ZCode to read its usage.'))
+      // Z.ai takes the key itself, not "Bearer <key>".
+      headers = { Authorization: key, Accept: 'application/json', 'Accept-Language': 'en-US,en' }
+      extra = { endpoint }
     } else refuse('unavailable', t('main.usage.noCollector', 'This provider has no quota collector.'))
     return {
       headers,

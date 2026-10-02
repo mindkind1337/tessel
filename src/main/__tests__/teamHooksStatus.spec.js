@@ -65,7 +65,7 @@ describe('read-only hook connection diagnostics', () => {
     expect(team.map((a) => a.hooks)).toEqual(['missing', 'missing', 'missing', 'missing', 'missing', 'missing'])
     // The agents whose hooks only report their status (agentStatusHooks.js).
     expect(result.agents.filter((a) => a.statusOnly).map((a) => [a.id, a.hooks])).toEqual(
-      ['cursor', 'droid', 'grok', 'antigravity', 'openclaude', 'commandcode', 'amp', 'pi'].map((id) => [id, 'missing'])
+      ['cursor', 'droid', 'grok', 'antigravity', 'openclaude', 'commandcode', 'qoder', 'dsh', 'amp', 'pi'].map((id) => [id, 'missing'])
     )
     expect(Object.keys(result.agents[0].events)).toEqual(HOOK_EVENTS)
     expect(Object.keys(result.agents[1].events)).toEqual(CODEX_HOOK_EVENTS)

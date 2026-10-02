@@ -12,7 +12,9 @@ export const USAGE_PROVIDERS = Object.freeze([
   // OpenCode's token stats (opencodeUsageReport.js); its quota is OpenCode Go.
   { id: 'opencode', name: 'OpenCode', agents: ['opencode'], report: true, quota: false },
   { id: 'opencode-go', name: 'OpenCode Go', agents: ['opencode'], report: false },
-  { id: 'minimax', name: 'MiniMax', agents: ['opencode', 'claude'], report: false }
+  { id: 'minimax', name: 'MiniMax', agents: ['opencode', 'claude'], report: false },
+  // ZCode CLI's Z.ai Coding Plan quota (extraProviderUsage.js).
+  { id: 'zcode', name: 'ZCode', agents: ['zcode'], report: false }
 ])
 export function installedUsageProviders(agents = []) {
   const ids = new Set(agents.filter((a) => a?.available).map((a) => a.id))

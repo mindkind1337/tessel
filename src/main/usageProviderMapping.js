@@ -209,3 +209,51 @@ export function openCodeWorkspaceIds(text) {
     if (!ids.includes(match[1]) && ids.length < 20) ids.push(match[1])
   return ids
 }
+// ZCode's Coding Plan (Z.ai / BigModel): /api/monitor/usage/quota/limit, after
+// Orca's zcode-usage-fetcher.ts. Token or credit limits give the 5-hour and
+// weekly windows; TIME_LIMIT is the monthly tool quota. null: not a valid answer.
+const ZCODE_UNITS = { 1: 1440, 3: 60, 5: 1, 6: 10080 }
+function zcodeMinutes(l) {
+  // Z.ai encodes its monthly marker as "one minute".
+  if (l.type === 'TIME_LIMIT' && l.unit === 5 && l.number === 1) return 30 * 24 * 60
+  const unit = number(l.unit)
+  const count = number(l.number)
+  if (unit === null || count === null || !Number.isInteger(count) || count <= 0) return null
+  return ZCODE_UNITS[unit] ? count * ZCODE_UNITS[unit] : null
+}
+function zcodeUsed(l) {
+  const total = number(l.usage)
+  if (total !== null && total > 0) {
+    const current = number(l.currentValue)
+    const remaining = number(l.remaining)
+    if (current !== null || remaining !== null) return (100 * (current ?? total - (remaining ?? 0))) / total
+  }
+  return number(l.percentage)
+}
+export function mapZcode(data, now = Date.now()) {
+  const code = data?.code
+  const limits = data?.data?.limits
+  if (data?.success !== true || (code !== undefined && code !== 0 && code !== 200) || !Array.isArray(limits)) return null
+  const window = (l, label) => {
+    if (!l || typeof l !== 'object') return null
+    const minutes = zcodeMinutes(l)
+    const used = zcodeUsed(l)
+    if (minutes === null || used === null) return null
+    const reset = timestamp(l.nextResetTime)
+    // A 5-hour window resetting later than 5 hours from now: not its reset.
+    return { minutes, value: quota(label, used, minutes === 300 && reset !== null && reset > now + 301 * 60000 ? null : reset) }
+  }
+  const plan = limits
+    .slice(0, 100)
+    .filter((l) => l?.type === 'TOKENS_LIMIT' || l?.type === 'CREDIT_LIMIT')
+    .map((l) => window(l, ''))
+    .filter(Boolean)
+  const session = plan.find((w) => w.minutes === 300)
+  const weekly = plan.find((w) => w.minutes === 10080)
+  const monthly = window(limits.find((l) => l?.type === 'TIME_LIMIT'), 'Monthly')
+  return [
+    session && { ...session.value, label: '5-hour' },
+    weekly && { ...weekly.value, label: 'Weekly' },
+    monthly?.value
+  ].filter(Boolean)
+}

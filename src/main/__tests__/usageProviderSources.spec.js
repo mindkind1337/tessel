@@ -157,3 +157,33 @@ describe('read-only provider logins in isolated homes', () => {
     }
   })
 })
+
+describe('ZCode Coding Plan login', () => {
+  const config = (model, baseURL, apiKey = 'fixture-zai') => ({
+    model,
+    provider: {
+      zai: { options: { apiKey, baseURL } },
+      other: { options: { apiKey: 'fixture-other', baseURL: 'https://api.z.ai/api/coding/paas/v4' } }
+    }
+  })
+  it("uses only the selected model's provider key, on Z.ai's or BigModel's https hosts", async () => {
+    expect(await sources.present('zcode')).toBe(false)
+    await write('.zcode/cli/config.json', config('zai/glm-5', 'https://api.z.ai/api/coding/paas/v4'))
+    expect(await sources.present('zcode')).toBe(true)
+    const login = await sources.auth('zcode')
+    expect(login.headers.Authorization).toBe('fixture-zai')
+    expect(login.endpoint).toBe('zcode')
+    await write('.zcode/cli/config.json', config({ main: 'zai/glm-5' }, 'https://open.bigmodel.cn/api/coding/paas/v4'))
+    expect((await sources.auth('zcode')).endpoint).toBe('zcodeCn')
+    for (const bad of [
+      config('glm-5', 'https://api.z.ai/x'),
+      config('zai/glm-5', 'http://api.z.ai/x'),
+      config('zai/glm-5', 'https://api.z.ai.evil.example/x'),
+      config('zai/glm-5', 'https://api.z.ai:8443/x'),
+      config('zai/glm-5', 'https://api.z.ai/x', 'two\nlines')
+    ]) {
+      await write('.zcode/cli/config.json', bad)
+      await expect(sources.auth('zcode')).rejects.toMatchObject({ code: 'unavailable' })
+    }
+  })
+})

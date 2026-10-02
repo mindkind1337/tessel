@@ -41,7 +41,9 @@ export const STATUS_PROVIDERS = [
   'openclaude',
   'commandcode',
   'amp',
-  'pi'
+  'pi',
+  'qoder',
+  'dsh'
 ]
 export const SCREEN_READY_PROVIDERS = ['claude', 'codex']
 export const hooksAlone = (provider) =>

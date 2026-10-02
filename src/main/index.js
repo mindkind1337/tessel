@@ -626,6 +626,32 @@ const AGENT_PRESETS = [
     command: 'ante',
     accent: '#22c55e',
     ...AGENT_INSTALLS.ante
+  },
+  // Qoder CLI, Freebuff and DeepSeek Harness, after Orca's
+  // src/renderer/src/lib/agent-catalog.tsx and src/shared/tui-agent-config.ts,
+  // MIT, Copyright (c) 2026 Lovecast Inc.
+  {
+    id: 'qoder',
+    name: 'Qoder CLI',
+    // Its installer and its npm package both ship `qodercli`.
+    command: 'qodercli',
+    accent: '#2adb5c',
+    ...AGENT_INSTALLS.qoder
+  },
+  {
+    id: 'freebuff',
+    name: 'Freebuff',
+    command: 'freebuff',
+    accent: '#e5e7eb',
+    ...AGENT_INSTALLS.freebuff
+  },
+  {
+    id: 'dsh',
+    name: 'DeepSeek Harness',
+    // The launcher of dsh's interactive profile (it runs dsh --profile dsh-tui).
+    command: 'dsh-tui',
+    accent: '#4d6bfe',
+    ...AGENT_INSTALLS.dsh
   }
 ]
 
