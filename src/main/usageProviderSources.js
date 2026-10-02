@@ -392,6 +392,27 @@ export function createUsageProviderSources({
         if (!row) return out
         return { ...out, signedIn: true, email: short(row.email), teamId: short(row.team_id), tokenFresh: fresh(row) }
       }
+      // Gemini CLI (oauth_creds.json): whether its login is still valid and
+      // whether it can be refreshed (Settings > "Use Gemini CLI credentials").
+      // Only the email from the ID token's payload is kept, never a token.
+      if (provider === 'gemini') {
+        const creds = await json(paths.gemini[0])
+        if (!creds || !(token(creds.access_token) || token(creds.refresh_token))) return out
+        let email = null
+        try {
+          const payload = JSON.parse(Buffer.from(String(creds.id_token).split('.')[1], 'base64url').toString('utf8'))
+          email = short(payload?.email)
+        } catch {
+          /* no identity */
+        }
+        return {
+          ...out,
+          signedIn: true,
+          email,
+          tokenFresh: !!token(creds.access_token) && typeof creds.expiry_date === 'number' && creds.expiry_date > clock() + 5000,
+          refreshable: !!token(creds.refresh_token)
+        }
+      }
       if (provider !== 'cursor') return out
       let identity = {}
       for (const file of cursorConfigs) {

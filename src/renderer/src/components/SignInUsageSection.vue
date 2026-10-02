@@ -4,7 +4,7 @@
 // CursorAccountsSection.tsx and GrokAccountsSection.tsx (MIT, Copyright (c)
 // 2026 Lovecast Inc.).
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import BrandIcon from './BrandIcon.vue'
+import ProviderAccountRow from './ProviderAccountRow.vue'
 import { t, intlLocale } from '../i18n'
 
 const props = defineProps({
@@ -66,21 +66,55 @@ function resetText(at) {
   const when = new Date(at).toLocaleString(intlLocale(), { dateStyle: 'medium', timeStyle: 'short' })
   return t('settings.accounts.resets', 'Resets {{when}}', { when })
 }
-// What the signed-in card says under the account name.
-const signedInText = computed(() => {
-  if (props.provider === 'grok')
-    return fresh.value
-      ? t('settings.accounts.grok.signedIn', 'Signed in. Tessel reads the Grok CLI session stored on disk.')
-      : t('settings.accounts.grok.expired', 'Session expired — run grok on the computer running Tessel and wait for it to start. If prompted, complete sign-in, then click Refresh usage. No chat message is needed.')
-  if (!fresh.value)
-    return t('settings.accounts.cursor.expired', 'Sign-in expired — run cursor-agent login on the computer running Tessel, then click Refresh usage.')
-  const source = sourceLabel(props.status?.credentialSource)
-  return source
-    ? t('settings.accounts.cursor.signedInFrom', 'Signed in. Tessel reads the session stored in {{source}}.', { source })
-    : t('settings.accounts.cursor.signedInGeneric', 'Signed in. Tessel reads the Cursor session stored on this computer.')
-})
 const reset = computed(() => resetText(windows.value.find((w) => Number.isFinite(w.resetsAt))?.resetsAt))
 const weekly = computed(() => windows.value.some((w) => w.label === 'Weekly'))
+const name = computed(() => (props.provider === 'cursor' ? CURSOR : t('settings.accounts.grok.title', 'Grok (xAI)')))
+// The row's one status line: who is signed in and the first usage number.
+const line = computed(() => {
+  if (props.loading && !props.status) return { text: t('settings.accounts.loading', 'Loading…'), tone: 'dim' }
+  if (props.status?.error) return { text: props.status.error, tone: 'error' }
+  if (!signedIn.value)
+    return {
+      text:
+        props.provider === 'cursor'
+          ? t('settings.accounts.cursor.signedOut', 'No Cursor sign-in found on this computer')
+          : t('settings.accounts.grok.signedOut', 'Not signed in to Grok CLI'),
+      tone: 'dim'
+    }
+  if (!fresh.value) return { text: t('settings.accounts.row.expired', 'Sign-in expired'), tone: 'warn' }
+  const who = props.status.email || props.status.displayName
+  let text = who
+    ? t('settings.accounts.row.signedInAs', 'Signed in as {{name}}', { name: who })
+    : t('settings.accounts.status.ready', 'Signed in')
+  const first = windows.value[0]
+  if (first && Number.isFinite(first.usedPct))
+    text += ' · ' + t('settings.accounts.row.used', '{{pct}}% used', { pct: Math.round(first.usedPct) })
+  return { text, tone: 'ok' }
+})
+// What to do next, under the status (signed out or expired).
+const help = computed(() => {
+  if (props.loading && !props.status) return ''
+  if (!signedIn.value)
+    return props.provider === 'cursor'
+      ? t('settings.accounts.cursor.signedOutShort', 'Sign in with Cursor IDE or run cursor-agent login, then Refresh usage.')
+      : t('settings.accounts.grok.signedOutShort', 'Run grok login in a terminal, then Refresh usage.')
+  if (!fresh.value)
+    return props.provider === 'cursor'
+      ? t('settings.accounts.cursor.expiredShort', 'Run cursor-agent login on this computer, then Refresh usage.')
+      : t('settings.accounts.grok.expiredShort', 'Run grok on this computer (complete sign-in if asked), then Refresh usage.')
+  return ''
+})
+const attention = computed(
+  () => !!props.status?.error || (signedIn.value && !fresh.value) || !!staleError.value
+)
+// Where Tessel reads the sign-in from.
+const sourceText = computed(() => {
+  if (props.provider === 'grok') return t('settings.accounts.grok.source', 'Read from the Grok CLI session (~/.grok/auth.json).')
+  const source = sourceLabel(props.status?.credentialSource)
+  return source
+    ? t('settings.accounts.cursor.readFrom', 'Read from {{source}}. Tessel never changes your Cursor login.', { source })
+    : t('settings.accounts.cursor.readOnly', 'Tessel only reads the Cursor sign-in on this computer; it never changes it.')
+})
 
 async function read() {
   if (!window.shellApi?.providerUsage?.read) return
@@ -130,71 +164,38 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="usage-account" :data-provider="provider" :aria-labelledby="`usage-account-${provider}`">
-    <header class="usage-account-head">
-      <div>
-        <h4 :id="`usage-account-${provider}`">
-          <BrandIcon :kind="provider" :size="16" />{{
-            provider === 'cursor' ? CURSOR : t('settings.accounts.grok.title', 'Grok (xAI)')
-          }}
-        </h4>
-        <p class="usage-account-desc">
-          {{
-            provider === 'cursor'
-              ? t('settings.accounts.cursor.subtitle', 'Shows your monthly Cursor plan usage from the sign-in already on this computer. Tessel only reads it — it never changes your Cursor login.')
-              : t('settings.accounts.grok.subtitle', 'Shows weekly credit usage from your Grok CLI sign-in (session file ~/.grok/auth.json).')
-          }}
-        </p>
-      </div>
-      <button type="button" class="usage-link" data-test="usage-account-link" @click="openLink">
-        {{
-          provider === 'cursor'
-            ? t('settings.accounts.cursor.dashboard', 'Cursor dashboard')
-            : t('settings.accounts.grok.docs', 'Grok CLI docs')
-        }}
-        <span aria-hidden="true">↗</span>
-      </button>
-    </header>
-    <div class="usage-account-card" :class="{ ready: signedIn && fresh }">
-      <span class="usage-account-shield" aria-hidden="true">{{ signedIn && fresh ? '✓' : '○' }}</span>
-      <div class="usage-account-body" aria-live="polite">
-        <p v-if="loading && !status" class="usage-account-dim">{{ t('settings.accounts.loading', 'Loading…') }}</p>
-        <template v-else-if="signedIn">
-          <p class="usage-account-name" data-test="usage-account-name">
-            {{ status.email || status.displayName || t('settings.accounts.status.ready', 'Signed in') }}
-          </p>
-          <p class="usage-account-dim" data-test="usage-account-state">{{ signedInText }}</p>
-        </template>
-        <template v-else>
-          <p class="usage-account-name">
-            {{
-              provider === 'cursor'
-                ? t('settings.accounts.cursor.signedOut', 'No Cursor sign-in found on this computer')
-                : t('settings.accounts.grok.signedOut', 'Not signed in to Grok CLI')
-            }}
-          </p>
-          <p class="usage-account-dim">
-            {{
-              provider === 'cursor'
-                ? t('settings.accounts.cursor.signedOutHelp', 'Sign in with Cursor IDE, or run cursor-agent login in a terminal, then click Refresh usage here.')
-                : t('settings.accounts.grok.signedOutHelp', 'In a terminal, run grok login, then click Refresh usage here.')
-            }}
-          </p>
-        </template>
-        <p v-if="status?.error" class="usage-account-error" role="alert">{{ status.error }}</p>
-      </div>
+  <ProviderAccountRow
+    :provider="provider"
+    :icon="provider"
+    :name="name"
+    :status="line.text"
+    :tone="line.tone"
+    :attention="attention"
+  >
+    <template #actions>
       <button
         type="button"
-        class="usage-btn"
+        class="exit-btn"
         :disabled="refreshing"
         data-test="usage-account-refresh"
         @click="refresh"
       >
         {{ refreshing ? t('settings.accounts.refreshing', 'Refreshing…') : t('settings.accounts.refreshUsage', 'Refresh usage') }}
       </button>
-    </div>
+    </template>
+    <template v-if="help" #note>
+      <span data-test="usage-account-help">{{ help }}</span>
+    </template>
+
+    <!-- Details: where the sign-in is read, the usage numbers, the provider's page. -->
+    <p class="usage-hint" data-test="usage-account-source">
+      <span v-if="signedIn && (status?.email || status?.displayName)" class="usage-account-name" data-test="usage-account-name">{{
+        status.email || status.displayName
+      }}</span>
+      {{ sourceText }}
+    </p>
     <div v-if="windows.length" class="usage-account-usage" data-test="usage-account-usage">
-      <p class="usage-account-title">
+      <p class="usage-label">
         {{
           provider === 'cursor'
             ? t('settings.accounts.cursor.usageTitle', 'Monthly plan usage')
@@ -203,21 +204,12 @@ onBeforeUnmount(() => {
               : t('settings.accounts.grok.monthlyTitle', 'Monthly usage')
         }}
       </p>
-      <p class="usage-account-dim">
-        {{
-          provider === 'cursor'
-            ? t('settings.accounts.cursor.usageDescription', 'Cursor bills two pools that reset with your billing cycle, plus on-demand spend once they run out.')
-            : weekly
-              ? t('settings.accounts.grok.weeklyDescription', 'Same weekly credit % as the grok /usage screen in the terminal.')
-              : t('settings.accounts.grok.monthlyDescription', 'Included monthly usage for Grok unified-billing accounts.')
-        }}
-      </p>
       <ul class="usage-account-windows">
         <li v-for="w in windows" :key="w.label">
           <span class="usage-badge">{{ Math.round(w.usedPct) }}%</span>{{ windowLabel(w.label) }}
         </li>
       </ul>
-      <p v-if="reset" class="usage-account-dim">{{ reset }}</p>
+      <p v-if="reset" class="usage-hint">{{ reset }}</p>
       <p
         v-if="staleError"
         class="usage-account-error"
@@ -225,21 +217,28 @@ onBeforeUnmount(() => {
         v-text="t('settings.accounts.staleUsage', 'Last known usage — the latest refresh failed: {{reason}}', { reason: staleError })"
       ></p>
     </div>
-    <div v-else-if="usage?.unlimited" class="usage-account-usage">
-      <p class="usage-account-dim">{{ t('settings.accounts.cursor.unlimited', 'This Cursor plan has no usage limit.') }}</p>
-    </div>
+    <p v-else-if="usage?.unlimited" class="usage-hint">{{ t('settings.accounts.cursor.unlimited', 'This Cursor plan has no usage limit.') }}</p>
     <div v-else-if="unavailable" class="usage-account-usage" data-test="usage-account-unavailable">
-      <p class="usage-account-title">{{ t('settings.accounts.usage', 'Usage') }}</p>
-      <p class="usage-account-dim">
+      <p class="usage-hint">
         {{
           provider === 'cursor'
             ? t('settings.accounts.cursor.noAllowance', 'Cursor reported no usage allowance for this account.')
             : t('settings.accounts.grok.noPercentage', 'Grok reported no usage percentage for this account.')
         }}
+        {{ unavailable }}
       </p>
-      <p class="usage-account-dim">{{ unavailable }}</p>
     </div>
-  </section>
+    <div>
+      <button type="button" class="usage-link" data-test="usage-account-link" @click="openLink">
+        {{
+          provider === 'cursor'
+            ? t('settings.accounts.cursor.dashboard', 'Cursor dashboard')
+            : t('settings.accounts.grok.docs', 'Grok CLI docs')
+        }}
+        <span aria-hidden="true">↗</span>
+      </button>
+    </div>
+  </ProviderAccountRow>
 </template>
 
 <style scoped src="./usageAccount.css"></style>

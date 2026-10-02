@@ -11352,3 +11352,10 @@ button.act-stat:hover,
   .agent-set-header .agent-set-name { flex-basis: 100%; }
   .agent-set-actions { margin-left: auto; }
 }
+
+/* Settings > AI provider accounts: one row per provider (ProviderAccountRow),
+   separated by a line, none above the first. */
+.set-accounts-card .provider-accounts > .prov-row:first-of-type,
+.set-accounts-card .provider-accounts:not(:has(.prov-row)) + .provider-usage-accounts > .prov-row:first-of-type {
+  border-top: 0;
+}

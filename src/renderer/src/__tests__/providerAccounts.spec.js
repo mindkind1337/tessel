@@ -74,10 +74,35 @@ describe('provider account management', () => {
     expect(row().text()).toContain('Studio')
     expect(row().text()).toContain('Pro')
     expect(row().text()).toContain('Last signed in')
-    expect(section().text()).toContain('new Codex terminals')
+    expect(section().text()).toContain('New Codex terminals use the selected account')
     expect(section('claude').text()).toContain('system Claude sign-in')
-    expect(section('claude').text()).toContain('Restart existing Claude terminals')
+    expect(section('claude').text()).toContain('restart Claude terminals')
     expect(row('system').find('[data-test="account-remove"]').exists()).toBe(false)
+  })
+
+  it('shows one row per provider with the account in use; its accounts stay folded until Details', async () => {
+    await render()
+    const details = () => section().get('[data-test="provider-details"]')
+    expect(section().get('[data-test="provider-status"]').text()).toBe('Using System default · Signed in')
+    expect(section().get('[data-test="provider-status"]').classes()).toContain('ok')
+    expect(details().attributes('style')).toContain('display: none')
+    const toggle = section().get('[data-test="provider-details-toggle"]')
+    expect(toggle.attributes('aria-expanded')).toBe('false')
+    await toggle.trigger('click')
+    expect(toggle.attributes('aria-expanded')).toBe('true')
+    expect(details().attributes('style') || '').not.toContain('display: none')
+    await toggle.trigger('click')
+    expect(details().attributes('style')).toContain('display: none')
+  })
+
+  it('opens the details by themselves when the account in use needs a sign-in', async () => {
+    state.providers[0].selectedId = 'saved-1'
+    state.providers[0].accounts[0].status = 'missing'
+    await render()
+    expect(section().get('[data-test="provider-status"]').text()).toBe('Using Work · Sign-in needed')
+    expect(section().get('[data-test="provider-status"]').classes()).toContain('warn')
+    expect(section().get('[data-test="provider-details-toggle"]').attributes('aria-expanded')).toBe('true')
+    expect(section('claude').get('[data-test="provider-details-toggle"]').attributes('aria-expanded')).toBe('false')
   })
 
   it('switches explicitly, confirms persisted selection and announces the change', async () => {

@@ -32,7 +32,7 @@ async function clear() {
 </script>
 
 <template>
-  <div class="usage-setting" :data-secret="id">
+  <div class="usage-field" :data-secret="id">
     <div class="usage-label">
       <label :for="id">{{ label }}</label>
       <span class="usage-saved" :class="{ on: saved }" data-test="secret-state">{{

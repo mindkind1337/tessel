@@ -212,8 +212,8 @@ export function registerProviderUsage({
   handle(
     'providerSettings:status',
     async () => {
-      const [cursor, grok] = await Promise.all([extra.signIn('cursor'), extra.signIn('grok')])
-      return { ...(credentials?.status() || { ok: true, secure: false, saved: {}, settings: {} }), cursor, grok }
+      const [cursor, grok, gemini] = await Promise.all([extra.signIn('cursor'), extra.signIn('grok'), extra.signIn('gemini')])
+      return { ...(credentials?.status() || { ok: true, secure: false, saved: {}, settings: {} }), cursor, grok, gemini }
     },
     () => t('main.providerCredentials.readFailed', 'Could not read the provider settings.')
   )

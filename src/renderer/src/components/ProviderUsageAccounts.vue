@@ -1,20 +1,21 @@
 <script setup>
 // Settings > AI provider accounts, after Claude Code and Codex: the providers
 // whose sign-in Tessel does not manage, only reads for usage (Gemini, OpenCode
-// Go, MiniMax, Grok, Cursor), in Orca's order and words (AccountsPane.tsx,
-// accounts-pane-provider-setting-sections.tsx, accounts-pane-minimax-*.tsx,
-// GrokAccountsSection.tsx, CursorAccountsSection.tsx; MIT, Copyright (c) 2026
-// Lovecast Inc.). Keys and cookies go to the main process and stay there
-// (encrypted); this page only learns whether each one is saved.
+// Go, MiniMax, Grok, Cursor), in Orca's order (AccountsPane.tsx and its
+// provider sections; MIT, Copyright (c) 2026 Lovecast Inc.). One row each,
+// its keys and options folded under Configure. Keys and cookies go to the
+// main process and stay there (encrypted); this page only learns whether each
+// one is saved.
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import BrandIcon from './BrandIcon.vue'
+import ProviderAccountRow from './ProviderAccountRow.vue'
 import SecretField from './SecretField.vue'
 import SignInUsageSection from './SignInUsageSection.vue'
 import ThemedSelect from './ui/ThemedSelect.vue'
 import { t } from '../i18n'
 
 // Product names and examples, the same in every language.
-const NAMES = { opencode: 'OpenCode Go', minimax: 'MiniMax' } // i18n-ignore
+const NAMES = { gemini: 'Gemini', opencode: 'OpenCode Go', minimax: 'MiniMax', grok: 'Grok', cursor: 'Cursor' } // i18n-ignore
+const ORDER = ['gemini', 'opencode', 'minimax', 'grok', 'cursor']
 const COOKIE_EXAMPLE = 'auth=…; __Host-console_session=…' // i18n-ignore
 const WORKSPACE_EXAMPLE = 'opencode.ai/workspace/wrk_…/go' // i18n-ignore
 const DEFAULT_MODEL = 'general' // i18n-ignore
@@ -26,6 +27,8 @@ const error = ref('')
 const notice = ref({}) // section -> message
 const drafts = ref({ opencodeWorkspaceId: '', minimaxGroupId: '', minimaxUsageModels: '' })
 const cookieHelp = ref(false)
+const advanced = ref(false)
+const revealed = ref(new Set()) // hidden providers shown on request
 const available = computed(() => !!window.shellApi?.providerSettings?.status)
 let alive = true
 
@@ -35,19 +38,73 @@ const secure = computed(() => state.value?.secure !== false)
 const has = (...ids) => !agents.value || ids.some((id) => agents.value.has(id))
 // Orca shows every section; Tessel shows a provider when its agent is
 // installed here, or when something is already set or signed in for it.
-const visible = computed(() => ({
-  gemini: has('gemini', 'antigravity') || !!settings.value.geminiCliOAuth,
+// The others are named on one quiet line at the end, and can be shown.
+const relevant = computed(() => ({
+  gemini: has('gemini', 'antigravity') || !!settings.value.geminiCliOAuth || state.value?.gemini?.signedIn === true,
   opencode: has('opencode') || !!(saved.value.opencodeGoApiKey || saved.value.opencodeCookie || settings.value.opencodeWorkspaceId),
   minimax: has('opencode', 'claude') || !!(saved.value.minimaxApiKey || saved.value.minimaxCookie),
   grok: has('grok') || state.value?.grok?.signedIn === true,
   cursor: has('cursor') || state.value?.cursor?.signedIn === true
 }))
+const visible = computed(() =>
+  Object.fromEntries(ORDER.map((id) => [id, relevant.value[id] || revealed.value.has(id)]))
+)
+const notInstalled = computed(() => (loading.value ? [] : ORDER.filter((id) => !visible.value[id])))
+function reveal(id) {
+  revealed.value = new Set([...revealed.value, id])
+}
 const minimaxConsole = computed(() =>
   settings.value.minimaxEndpoint === 'cn'
     ? 'https://platform.minimaxi.com/console/usage'
     : 'https://platform.minimax.io/console/usage'
 )
-const minimaxConfigured = computed(() => !!(saved.value.minimaxApiKey || saved.value.minimaxCookie))
+
+// ---- One status line per row ----
+const gemini = computed(() => state.value?.gemini || null)
+// Expired, and nothing will refresh it: Gemini and Antigravity usage stop.
+const geminiStuck = computed(
+  () =>
+    gemini.value?.signedIn === true &&
+    !gemini.value.tokenFresh &&
+    !(settings.value.geminiCliOAuth && gemini.value.refreshable)
+)
+const geminiStatus = computed(() => {
+  if (loading.value && !state.value) return { text: t('settings.accounts.loading', 'Loading…'), tone: 'dim' }
+  const g = gemini.value
+  if (!g) return { text: t('settings.accounts.gemini.readsCli', 'Reads the Gemini CLI sign-in'), tone: 'dim' }
+  if (g.error) return { text: g.error, tone: 'error' }
+  if (!g.signedIn) return { text: t('settings.accounts.gemini.signedOut', 'Not signed in — run gemini to sign in'), tone: 'dim' }
+  if (geminiStuck.value) return { text: t('settings.accounts.row.expired', 'Sign-in expired'), tone: 'warn' }
+  const who = g.email
+    ? t('settings.accounts.row.signedInAs', 'Signed in as {{name}}', { name: g.email })
+    : t('settings.accounts.status.ready', 'Signed in')
+  return g.tokenFresh
+    ? { text: who, tone: 'ok' }
+    : { text: t('settings.accounts.gemini.refreshed', '{{who}} · renewed with the Gemini CLI credentials', { who }), tone: 'ok' }
+})
+const opencodeStatus = computed(() => {
+  const key = !!saved.value.opencodeGoApiKey
+  const cookie = !!saved.value.opencodeCookie
+  if (key && cookie) return { text: t('settings.accounts.row.keyAndCookie', 'API key and session cookie saved'), tone: 'ok' }
+  if (key) return { text: t('settings.accounts.row.keySaved', 'API key saved'), tone: 'ok' }
+  if (cookie) return { text: t('settings.accounts.row.cookieSaved', 'Session cookie saved'), tone: 'ok' }
+  return { text: t('settings.accounts.opencode.usesConnect', 'Uses the key OpenCode saved with /connect'), tone: 'dim' }
+})
+const minimaxStatus = computed(() => {
+  const key = !!saved.value.minimaxApiKey
+  const cookie = !!saved.value.minimaxCookie
+  const where =
+    settings.value.minimaxEndpoint === 'cn'
+      ? t('settings.accounts.minimax.chinaShort', 'China')
+      : t('settings.accounts.minimax.overseasShort', 'Overseas')
+  if (!key && !cookie) return { text: t('settings.accounts.row.notSetUp', 'Not set up'), tone: 'dim' }
+  const what = key && cookie
+    ? t('settings.accounts.row.keyAndCookie', 'API key and session cookie saved')
+    : key
+      ? t('settings.accounts.row.keySaved', 'API key saved')
+      : t('settings.accounts.row.cookieSaved', 'Session cookie saved')
+  return { text: `${what} · ${where}`, tone: 'ok' }
+})
 
 function message(result, fallback) {
   return (typeof result?.error === 'string' && result.error) || fallback
@@ -139,54 +196,66 @@ onBeforeUnmount(() => {
 
 <template>
   <div v-if="available" class="provider-usage-accounts" data-test="provider-usage-accounts">
-    <p v-if="error" class="usage-account-error" role="alert">{{ error }}</p>
+    <p v-if="error" class="usage-account-error usage-banner" role="alert">{{ error }}</p>
 
     <!-- ============ Gemini ============ -->
-    <section v-if="visible.gemini" class="usage-account" data-provider="gemini" aria-labelledby="usage-account-gemini">
-      <h4 id="usage-account-gemini" class="usage-account-heading"><BrandIcon kind="gemini" :size="16" />Gemini</h4>
-      <p class="usage-account-desc">{{ t('settings.accounts.gemini.desc', 'Configure Gemini provider settings.') }}</p>
-      <div class="usage-setting usage-switch">
-        <div>
-          <label class="usage-label" for="gemini-cli-oauth">{{
-            t('settings.accounts.gemini.label', 'Use Gemini CLI credentials (experimental)')
-          }}</label>
-          <p class="usage-account-dim">
-            {{ t('settings.accounts.gemini.hint', 'Extracts OAuth credentials from your local Gemini CLI installation to authenticate with Google for this computer. This uses credentials issued to the Gemini CLI app, not Tessel. May break if Google updates the CLI. Use at your own risk.') }}
-          </p>
-          <p class="usage-account-dim">
-            {{ t('settings.accounts.gemini.offHint', 'When off, Tessel reads Gemini usage only while the Gemini CLI login is still valid, and never refreshes it.') }}
-          </p>
-        </div>
+    <ProviderAccountRow
+      v-if="visible.gemini"
+      provider="gemini"
+      icon="gemini"
+      :name="NAMES.gemini"
+      :status="geminiStatus.text"
+      :tone="geminiStatus.tone"
+      :attention="geminiStuck"
+      toggle="configure"
+    >
+      <template v-if="geminiStuck" #note>
+        <span data-test="gemini-expired-help">{{
+          settings.geminiCliOAuth
+            ? t('settings.accounts.gemini.expiredRun', 'Gemini and Antigravity usage can’t be read. Run gemini to sign in again.')
+            : t('settings.accounts.gemini.expiredHelp', 'Gemini and Antigravity usage can’t be read. Turn on “Use Gemini CLI credentials” below, or run gemini to sign in again.')
+        }}</span>
+      </template>
+      <label class="usage-field usage-switch">
+        <span class="usage-field-text">
+          <span class="usage-label">{{ t('settings.accounts.gemini.label', 'Use Gemini CLI credentials (experimental)') }}</span>
+          <span class="usage-hint">{{
+            t('settings.accounts.gemini.hintShort', 'Renews an expired Gemini CLI login with the CLI’s own credentials (issued to Gemini CLI, not Tessel). Off: usage is read only while the login is valid. May break if Google changes the CLI.')
+          }}</span>
+        </span>
         <input
           id="gemini-cli-oauth"
           type="checkbox"
-          role="switch"
+          class="set-switch"
           :checked="!!settings.geminiCliOAuth"
           :disabled="busy || loading"
           data-test="gemini-cli-oauth"
           @change="update('gemini', { geminiCliOAuth: $event.target.checked })"
         />
-      </div>
-      <p v-if="notice.gemini" class="usage-account-dim" role="status">{{ notice.gemini }}</p>
-    </section>
+      </label>
+      <p v-if="notice.gemini" class="usage-hint" role="status">{{ notice.gemini }}</p>
+    </ProviderAccountRow>
 
     <!-- ============ OpenCode Go ============ -->
-    <section v-if="visible.opencode" class="usage-account" data-provider="opencode-go" aria-labelledby="usage-account-opencode">
-      <h4 id="usage-account-opencode" class="usage-account-heading"><BrandIcon kind="opencode" :size="16" />{{ NAMES.opencode }}</h4>
-      <p class="usage-account-desc">{{ t('settings.accounts.opencode.desc', 'Configure OpenCode Go provider settings.') }}</p>
+    <ProviderAccountRow
+      v-if="visible.opencode"
+      provider="opencode-go"
+      icon="opencode"
+      :name="NAMES.opencode"
+      :status="opencodeStatus.text"
+      :tone="opencodeStatus.tone"
+      toggle="configure"
+    >
       <p v-if="!secure" class="usage-account-error">{{ t('settings.accounts.noSecureStorage', 'Secure credential storage is unavailable on this computer, so keys and cookies cannot be saved.') }}</p>
       <SecretField
         id="opencode-go-api-key"
         :label="t('settings.accounts.opencode.apiKey', 'OpenCode Go API key')"
-        :placeholder="t('settings.accounts.opencode.apiKeyPlaceholder', 'Leave blank to use the key saved by /connect or OPENCODE_API_KEY')"
+        :placeholder="t('settings.accounts.opencode.apiKeyPlaceholderShort', 'Optional — blank uses /connect or OPENCODE_API_KEY')"
         :saved="!!saved.opencodeGoApiKey"
         :busy="busy || !secure"
         :save="saveSecret('opencode', 'opencodeGoApiKey')"
         :forget="forgetSecret('opencode', 'opencodeGoApiKey')"
-      >
-        <p class="usage-account-dim">{{ t('settings.accounts.opencode.apiKeyDesc', 'Optional override. Tessel otherwise uses the key OpenCode saved when you ran /connect, then OPENCODE_API_KEY.') }}</p>
-        <p class="usage-account-dim">{{ t('settings.accounts.opencode.apiKeyHelp', 'Used for OpenCode Go usage in the status bar. The session cookie below is only needed for legacy console (OpenCode Black) accounts.') }}</p>
-      </SecretField>
+      />
       <SecretField
         id="opencode-go-cookie"
         :label="t('settings.accounts.opencode.cookie', 'OpenCode Go session cookie')"
@@ -196,14 +265,12 @@ onBeforeUnmount(() => {
         :save="saveSecret('opencode', 'opencodeCookie')"
         :forget="forgetSecret('opencode', 'opencodeCookie')"
       >
-        <p class="usage-account-dim">
-          {{ t('settings.accounts.opencode.cookieHelp', 'Paste the full Cookie header from your browser’s DevTools → Network → any opencode.ai request, including __Host-console_session (e.g.') }}
-          <code>{{ COOKIE_EXAMPLE }}</code>{{ t('settings.accounts.opencode.cookieHelpEnd', '). The auth cookie still covers workspace discovery; auth alone is not enough for usage.') }}
+        <p class="usage-hint">
+          {{ t('settings.accounts.opencode.cookieHelpShort', 'Only for legacy console (OpenCode Black) accounts: the full Cookie header of an opencode.ai request in DevTools, with __Host-console_session.') }}
         </p>
       </SecretField>
-      <div class="usage-setting">
+      <div class="usage-field">
         <label class="usage-label" for="opencode-workspace">{{ t('settings.accounts.opencode.workspace', 'Workspace ID override') }}</label>
-        <p class="usage-account-dim">{{ t('settings.accounts.opencode.workspaceDesc', 'Optional workspace ID override if the automatic lookup fails.') }}</p>
         <div class="usage-row">
           <input
             id="opencode-workspace"
@@ -227,38 +294,34 @@ onBeforeUnmount(() => {
             {{ t('settings.accounts.clear', 'Clear') }}
           </button>
         </div>
-        <p class="usage-account-dim">
-          {{ t('settings.accounts.opencode.workspaceHelp', 'Find this in the URL after logging into opencode.ai (e.g.') }}
-          <code>{{ WORKSPACE_EXAMPLE }}</code>).
+        <p class="usage-hint">
+          {{ t('settings.accounts.opencode.workspaceHelpShort', 'Only if the automatic lookup fails. It is in the opencode.ai URL:') }}
+          <code>{{ WORKSPACE_EXAMPLE }}</code>
         </p>
       </div>
-      <p v-if="notice.opencode" class="usage-account-dim" role="status">{{ notice.opencode }}</p>
-    </section>
+      <p v-if="notice.opencode" class="usage-hint" role="status">{{ notice.opencode }}</p>
+    </ProviderAccountRow>
 
     <!-- ============ MiniMax ============ -->
-    <section v-if="visible.minimax" class="usage-account" data-provider="minimax" aria-labelledby="usage-account-minimax">
-      <header class="usage-account-head">
-        <div>
-          <h4 id="usage-account-minimax"><BrandIcon kind="minimax" :label="NAMES.minimax" accent="#e2367a" :size="16" />{{ NAMES.minimax }}</h4>
-          <p class="usage-account-desc">{{ t('settings.accounts.minimax.desc', 'Configure MiniMax usage tracking for your account.') }}</p>
-        </div>
-        <button type="button" class="usage-link" data-test="minimax-console" @click="openLink(minimaxConsole)">
+    <ProviderAccountRow
+      v-if="visible.minimax"
+      provider="minimax"
+      icon="minimax"
+      :icon-label="NAMES.minimax"
+      icon-accent="#e2367a"
+      :name="NAMES.minimax"
+      :status="minimaxStatus.text"
+      :tone="minimaxStatus.tone"
+      toggle="configure"
+    >
+      <template #actions>
+        <button type="button" class="exit-btn" data-test="minimax-console" @click="openLink(minimaxConsole)">
           {{ t('settings.accounts.minimax.openConsole', 'Open console') }} <span aria-hidden="true">↗</span>
         </button>
-      </header>
-      <div class="usage-account-card" :class="{ ready: minimaxConfigured }">
-        <span class="usage-account-shield" aria-hidden="true">{{ minimaxConfigured ? '✓' : '○' }}</span>
-        <div class="usage-account-body">
-          <p class="usage-account-name" data-test="minimax-state">
-            {{ minimaxConfigured ? t('settings.accounts.minimax.stored', 'Stored locally') : t('settings.accounts.minimax.notSet', 'Credentials not set') }}
-          </p>
-          <p class="usage-account-dim">{{ t('settings.accounts.minimax.storage', 'Stored locally (encrypted) and sent to the selected MiniMax endpoint for usage refreshes.') }}</p>
-        </div>
-      </div>
+      </template>
       <p v-if="!secure" class="usage-account-error">{{ t('settings.accounts.noSecureStorage', 'Secure credential storage is unavailable on this computer, so keys and cookies cannot be saved.') }}</p>
-      <div class="usage-setting">
+      <div class="usage-field">
         <label class="usage-label" for="minimax-endpoint">{{ t('settings.accounts.minimax.endpoint', 'MiniMax endpoint') }}</label>
-        <p class="usage-account-dim">{{ t('settings.accounts.minimax.endpointDesc', 'Pick the host that matches your account. Both overseas (platform.minimax.io) and China (platform.minimaxi.com) accept either a session cookie or an API key.') }}</p>
         <ThemedSelect
           id="minimax-endpoint"
           class="usage-input"
@@ -270,7 +333,20 @@ onBeforeUnmount(() => {
           <option value="overseas">{{ t('settings.accounts.minimax.overseas', 'Overseas (platform.minimax.io)') }}</option>
           <option value="cn">{{ t('settings.accounts.minimax.china', 'China (platform.minimaxi.com)') }}</option>
         </ThemedSelect>
+        <p class="usage-hint">{{ t('settings.accounts.minimax.endpointShort', 'The host that matches your account.') }}</p>
       </div>
+      <SecretField
+        id="minimax-api-key"
+        :label="t('settings.accounts.minimax.apiKey', 'MiniMax API key')"
+        :placeholder="t('settings.accounts.minimax.apiKeyPlaceholder', 'Paste your MiniMax API key')"
+        :saved="!!saved.minimaxApiKey"
+        :busy="busy || !secure"
+        :forget-label="t('settings.accounts.minimax.forgetKey', 'Forget key')"
+        :save="saveSecret('minimax', 'minimaxApiKey', t('settings.accounts.minimax.apiKeySaved', 'MiniMax API key saved.'))"
+        :forget="forgetSecret('minimax', 'minimaxApiKey')"
+      >
+        <p class="usage-hint">{{ t('settings.accounts.minimax.apiKeyHelpShort', 'From your MiniMax console → API keys. Used before the cookie.') }}</p>
+      </SecretField>
       <SecretField
         id="minimax-cookie"
         :label="t('settings.accounts.minimax.cookie', 'MiniMax session cookie')"
@@ -301,75 +377,75 @@ onBeforeUnmount(() => {
           <li>{{ t('settings.accounts.minimax.step6', 'Under Request Headers, copy the Cookie value.') }}</li>
           <li>{{ t('settings.accounts.minimax.step7', 'Paste it here and click Save.') }}</li>
         </ol>
-        <p class="usage-account-dim">{{ t('settings.accounts.minimax.cookieHelp', 'Open the selected console, sign in, then copy the Cookie request header from DevTools (Network → any remains request → Cookie).') }}</p>
-        <p class="usage-account-dim">{{ t('settings.accounts.minimax.cookieExpires', 'Cookie expires when you sign out in the browser.') }}</p>
+        <p class="usage-hint">{{ t('settings.accounts.minimax.cookieExpires', 'Cookie expires when you sign out in the browser.') }}</p>
       </SecretField>
-      <SecretField
-        id="minimax-api-key"
-        :label="t('settings.accounts.minimax.apiKey', 'MiniMax API key')"
-        :placeholder="t('settings.accounts.minimax.apiKeyPlaceholder', 'Paste your MiniMax API key')"
-        :saved="!!saved.minimaxApiKey"
-        :busy="busy || !secure"
-        :forget-label="t('settings.accounts.minimax.forgetKey', 'Forget key')"
-        :save="saveSecret('minimax', 'minimaxApiKey', t('settings.accounts.minimax.apiKeySaved', 'MiniMax API key saved.'))"
-        :forget="forgetSecret('minimax', 'minimaxApiKey')"
-      >
-        <p class="usage-account-dim">{{ t('settings.accounts.minimax.apiKeyHelp', 'Copy the API key from your MiniMax console → API keys. A saved API key takes priority over the cookie; use Forget key to switch back to the cookie.') }}</p>
-      </SecretField>
-      <p v-if="notice.minimax" class="usage-account-dim" role="status">{{ notice.minimax }}</p>
+      <p v-if="notice.minimax" class="usage-hint" role="status">{{ notice.minimax }}</p>
       <div class="usage-advanced">
-        <p class="usage-account-title">{{ t('settings.accounts.minimax.advanced', 'Advanced') }}</p>
-        <p class="usage-account-dim">{{ t('settings.accounts.minimax.advancedDesc', 'Leave these defaults alone unless MiniMax usage refresh points at the wrong workspace or model.') }}</p>
-        <div class="usage-setting">
-          <label class="usage-label" for="minimax-group">{{ t('settings.accounts.minimax.group', 'Group ID override') }}</label>
-          <p class="usage-account-dim">{{ t('settings.accounts.minimax.groupDesc', 'Optional. Leave blank to use minimax_group_id_v2 from the cookie.') }}</p>
-          <input
-            id="minimax-group"
-            v-model="drafts.minimaxGroupId"
-            class="usage-input"
-            type="text"
-            spellcheck="false"
-            :disabled="busy"
-            :placeholder="t('settings.accounts.minimax.groupPlaceholder', 'Use group ID from cookie')"
-            data-test="minimax-group"
-            @change="commitText('minimax', 'minimaxGroupId')"
-            @keydown.enter.prevent="commitText('minimax', 'minimaxGroupId')"
-          />
-        </div>
-        <div class="usage-setting">
-          <label class="usage-label" for="minimax-models">{{ t('settings.accounts.minimax.models', 'Usage model names') }}</label>
-          <p class="usage-account-dim">{{ t('settings.accounts.minimax.modelsDesc', 'Optional comma-separated model names. Leave as general unless MiniMax returns a model-specific error.') }}</p>
-          <input
-            id="minimax-models"
-            v-model="drafts.minimaxUsageModels"
-            class="usage-input"
-            type="text"
-            spellcheck="false"
-            :disabled="busy"
-            :placeholder="DEFAULT_MODEL"
-            data-test="minimax-models"
-            @change="commitText('minimax', 'minimaxUsageModels')"
-            @keydown.enter.prevent="commitText('minimax', 'minimaxUsageModels')"
-          />
+        <button
+          type="button"
+          class="usage-link"
+          :aria-expanded="advanced"
+          aria-controls="minimax-advanced"
+          data-test="minimax-advanced"
+          @click="advanced = !advanced"
+        >
+          {{ t('settings.accounts.minimax.advancedOptions', 'Advanced options') }}
+        </button>
+        <div v-show="advanced" id="minimax-advanced" class="usage-advanced-body">
+          <p class="usage-hint">{{ t('settings.accounts.minimax.advancedShort', 'Change these only if usage points at the wrong group or model.') }}</p>
+          <div class="usage-field">
+            <label class="usage-label" for="minimax-group">{{ t('settings.accounts.minimax.group', 'Group ID override') }}</label>
+            <input
+              id="minimax-group"
+              v-model="drafts.minimaxGroupId"
+              class="usage-input"
+              type="text"
+              spellcheck="false"
+              :disabled="busy"
+              :placeholder="t('settings.accounts.minimax.groupPlaceholder', 'Use group ID from cookie')"
+              data-test="minimax-group"
+              @change="commitText('minimax', 'minimaxGroupId')"
+              @keydown.enter.prevent="commitText('minimax', 'minimaxGroupId')"
+            />
+          </div>
+          <div class="usage-field">
+            <label class="usage-label" for="minimax-models">{{ t('settings.accounts.minimax.models', 'Usage model names') }}</label>
+            <input
+              id="minimax-models"
+              v-model="drafts.minimaxUsageModels"
+              class="usage-input"
+              type="text"
+              spellcheck="false"
+              :disabled="busy"
+              :placeholder="DEFAULT_MODEL"
+              data-test="minimax-models"
+              @change="commitText('minimax', 'minimaxUsageModels')"
+              @keydown.enter.prevent="commitText('minimax', 'minimaxUsageModels')"
+            />
+            <p class="usage-hint">{{ t('settings.accounts.minimax.modelsShort', 'Comma-separated.') }}</p>
+          </div>
         </div>
       </div>
-    </section>
+    </ProviderAccountRow>
 
     <!-- ============ Grok, Cursor ============ -->
     <SignInUsageSection v-if="visible.grok" provider="grok" :status="state?.grok || null" :loading="loading" @reload="load" />
     <SignInUsageSection v-if="visible.cursor" provider="cursor" :status="state?.cursor || null" :loading="loading" @reload="load" />
+
+    <!-- Not installed, nothing saved: one quiet line, each name shows its row. -->
+    <p v-if="notInstalled.length" class="usage-hidden" data-test="providers-not-installed">
+      {{ t('settings.accounts.notInstalled', 'Not installed:') }}
+      <template v-for="(id, i) in notInstalled" :key="id"
+        >{{ i ? ', ' : '' }}<button
+          type="button"
+          class="usage-link"
+          :title="t('settings.accounts.showProvider', 'Show {{name}}', { name: NAMES[id] })"
+          :data-test="`reveal-${id}`"
+          @click="reveal(id)"
+        >{{ NAMES[id] }}</button></template
+      >
+    </p>
   </div>
 </template>
 
 <style scoped src="./usageAccount.css"></style>
-<style scoped>
-.usage-account-heading {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 0;
-  color: var(--text-strong);
-  font-size: 12px;
-  font-weight: 600;
-}
-</style>

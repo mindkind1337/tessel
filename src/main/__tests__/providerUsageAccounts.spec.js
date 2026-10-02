@@ -164,6 +164,18 @@ describe('Cursor and Grok sign-in status (read only)', () => {
     await write('.grok/auth.json', 'not json')
     expect((await sources.signIn('grok')).error).toBeTruthy()
   })
+
+  it('reads whether the Gemini CLI login is valid or refreshable, with its email only', async () => {
+    const sources = createUsageProviderSources({ home, env, platform: 'win32', clock: () => now })
+    expect(await sources.signIn('gemini')).toMatchObject({ signedIn: false, tokenFresh: false })
+    const idToken = `h.${Buffer.from(JSON.stringify({ email: 'gem@example.test' })).toString('base64url')}.s`
+    await write('.gemini/oauth_creds.json', { access_token: 'fixture-gem', refresh_token: 'fixture-gem-refresh', id_token: idToken, expiry_date: now + 3600000 })
+    const status = await sources.signIn('gemini')
+    expect(status).toMatchObject({ signedIn: true, email: 'gem@example.test', tokenFresh: true, refreshable: true })
+    expect(JSON.stringify(status)).not.toMatch(/fixture-gem|h\./)
+    await write('.gemini/oauth_creds.json', { access_token: 'fixture-gem', expiry_date: now - 1 })
+    expect(await sources.signIn('gemini')).toMatchObject({ signedIn: true, email: null, tokenFresh: false, refreshable: false })
+  })
 })
 
 describe('usage reads with saved credentials', () => {
@@ -328,7 +340,7 @@ describe('provider settings IPC', () => {
     expect(saved).toMatchObject({ ok: true, saved: { minimaxCookie: true } })
     expect(poller.forget).toHaveBeenCalledWith('minimax')
     const status = await handlers.get('providerSettings:status')(null)
-    expect(status).toMatchObject({ ok: true, grok: { signedIn: true, email: 'g@example.test' }, cursor: { signedIn: false } })
+    expect(status).toMatchObject({ ok: true, grok: { signedIn: true, email: 'g@example.test' }, cursor: { signedIn: false }, gemini: { signedIn: false } })
     expect(JSON.stringify(status)).not.toMatch(/fixture-(cookie|grok)/)
     await handlers.get('providerSettings:update')(null, { patch: { geminiCliOAuth: true } })
     expect(poller.forget).toHaveBeenCalledWith('gemini')

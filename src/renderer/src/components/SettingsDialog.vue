@@ -88,7 +88,7 @@ const PAGES = {
       return t('settings.pages.accounts.title', 'AI provider accounts')
     },
     get desc() {
-      return t('settings.pages.accounts.desc', 'Your sign-ins with each AI provider, for quick switching.')
+      return t('settings.pages.accounts.desc', 'Your sign-ins and usage keys for each AI provider. Keys and cookies stay encrypted on this computer.')
     },
     icon: 'M8 8a2.75 2.75 0 100-5.5A2.75 2.75 0 008 8zM2.75 13.5c.7-2.3 2.8-3.75 5.25-3.75s4.55 1.45 5.25 3.75'
   },
@@ -1653,7 +1653,7 @@ function previewSound() {
             <p class="set-page-desc">{{ PAGES.accounts.desc }}</p>
           </header>
           <div class="set-group">
-            <div class="set-card set-card-pad">
+            <div class="set-card set-accounts-card">
               <ProviderAccounts />
               <ProviderUsageAccounts />
             </div>

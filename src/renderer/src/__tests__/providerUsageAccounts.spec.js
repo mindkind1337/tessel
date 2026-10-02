@@ -64,7 +64,7 @@ describe('usage-only provider sections', () => {
     await flushPromises()
   }
 
-  it('shows the sections in Orca’s order for the installed agents', async () => {
+  it('shows one row per provider in Orca’s order for the installed agents, the others on one line', async () => {
     await mountIt()
     expect(wrapper.findAll('[data-provider]').map((s) => s.attributes('data-provider'))).toEqual([
       'gemini',
@@ -78,6 +78,10 @@ describe('usage-only provider sections', () => {
     state.cursor.signedIn = false
     await mountIt()
     expect(wrapper.findAll('[data-provider]').map((s) => s.attributes('data-provider'))).toEqual(['minimax'])
+    expect(wrapper.get('[data-test="providers-not-installed"]').text()).toBe('Not installed: Gemini, OpenCode Go, Grok, Cursor')
+    await wrapper.get('[data-test="reveal-grok"]').trigger('click')
+    expect(wrapper.findAll('[data-provider]').map((s) => s.attributes('data-provider'))).toEqual(['minimax', 'grok'])
+    expect(wrapper.get('[data-test="providers-not-installed"]').text()).not.toContain('Grok')
   })
 
   it('Cursor: the signed-in account, its usage, Refresh and the dashboard link', async () => {
@@ -114,7 +118,7 @@ describe('usage-only provider sections', () => {
     expect(api.saveSecret).toHaveBeenCalledWith('minimaxApiKey', 'fixture-minimax-key')
     expect(field.get('[data-test="secret-input"]').element.value).toBe('')
     expect(field.get('[data-test="secret-state"]').text()).toBe('Saved')
-    expect(minimax.get('[data-test="minimax-state"]').text()).toBe('Stored locally')
+    expect(minimax.get('[data-test="provider-status"]').text()).toBe('API key saved · Overseas')
     expect(wrapper.html()).not.toContain('fixture-minimax-key')
     await field.get('[data-test="secret-forget"]').trigger('click')
     await flushPromises()
@@ -148,6 +152,61 @@ describe('usage-only provider sections', () => {
     await input.trigger('change')
     await flushPromises()
     expect(api.update).toHaveBeenCalledWith({ opencodeWorkspaceId: 'wrk_abc' })
+  })
+
+  it('every row starts folded with a one-line status; Configure opens it', async () => {
+    await mountIt()
+    expect(wrapper.find('[data-test="providers-not-installed"]').exists()).toBe(false)
+    for (const row of wrapper.findAll('[data-provider]')) {
+      expect(row.get('[data-test="provider-details"]').attributes('style')).toContain('display: none')
+      expect(row.get('[data-test="provider-details-toggle"]').attributes('aria-expanded')).toBe('false')
+    }
+    expect(wrapper.get('[data-provider="cursor"] [data-test="provider-status"]').text()).toBe('Signed in as person@example.test · 42% used')
+    expect(wrapper.get('[data-provider="opencode-go"] [data-test="provider-status"]').text()).toBe('Uses the key OpenCode saved with /connect')
+    expect(wrapper.get('[data-provider="minimax"] [data-test="provider-status"]').text()).toBe('Not set up')
+    const opencode = wrapper.get('[data-provider="opencode-go"]')
+    await opencode.get('[data-test="provider-details-toggle"]').trigger('click')
+    expect(opencode.get('[data-test="provider-details-toggle"]').text()).toContain('Configure')
+    expect(opencode.get('[data-test="provider-details"]').attributes('style') || '').not.toContain('display: none')
+  })
+
+  it('an expired sign-in opens its row and says what to do', async () => {
+    state.grok = { signedIn: true, email: 'g@example.test', tokenFresh: false, error: null }
+    await mountIt()
+    const grok = wrapper.get('[data-provider="grok"]')
+    expect(grok.get('[data-test="provider-status"]').text()).toBe('Sign-in expired')
+    expect(grok.get('[data-test="usage-account-help"]').text()).toContain('Refresh usage')
+    expect(grok.get('[data-test="provider-details-toggle"]').attributes('aria-expanded')).toBe('true')
+  })
+
+  it('Gemini: an expired login with the CLI credentials off says how to read usage again', async () => {
+    state.gemini = { signedIn: true, email: 'gem@example.test', tokenFresh: false, refreshable: true, error: null }
+    await mountIt()
+    const gemini = () => wrapper.get('[data-provider="gemini"]')
+    expect(gemini().get('[data-test="provider-status"]').text()).toBe('Sign-in expired')
+    expect(gemini().get('[data-test="provider-status"]').classes()).toContain('warn')
+    expect(gemini().get('[data-test="gemini-expired-help"]').text()).toContain('Turn on “Use Gemini CLI credentials”')
+    expect(gemini().get('[data-test="gemini-expired-help"]').text()).toContain('Antigravity')
+    expect(gemini().get('[data-test="provider-details-toggle"]').attributes('aria-expanded')).toBe('true')
+    await gemini().get('[data-test="gemini-cli-oauth"]').setValue(true)
+    await flushPromises()
+    expect(api.update).toHaveBeenCalledWith({ geminiCliOAuth: true })
+    expect(gemini().find('[data-test="gemini-expired-help"]').exists()).toBe(false)
+    expect(gemini().get('[data-test="provider-status"]').text()).toBe(
+      'Signed in as gem@example.test · renewed with the Gemini CLI credentials'
+    )
+  })
+
+  it('Gemini: a valid login is quiet; no refresh token means signing in again', async () => {
+    state.gemini = { signedIn: true, email: null, tokenFresh: true, refreshable: false, error: null }
+    await mountIt()
+    expect(wrapper.get('[data-provider="gemini"] [data-test="provider-status"]').text()).toBe('Signed in')
+    expect(wrapper.get('[data-provider="gemini"] [data-test="provider-details-toggle"]').attributes('aria-expanded')).toBe('false')
+    wrapper.unmount()
+    state.gemini = { signedIn: true, email: null, tokenFresh: false, refreshable: false, error: null }
+    state.settings.geminiCliOAuth = true
+    await mountIt()
+    expect(wrapper.get('[data-provider="gemini"] [data-test="gemini-expired-help"]').text()).toContain('Run gemini to sign in again')
   })
 
   it('without secure storage, keys and cookies cannot be typed in', async () => {
