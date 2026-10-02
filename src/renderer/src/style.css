@@ -9330,10 +9330,8 @@ button.act-stat:hover,
   background: color-mix(in srgb, var(--orca-accent) 40%, transparent);
 }
 
-/* The workspace you are in: a light wash of the theme's accent (a grey
-   wash did not fit the colour themes), no coloured border. */
+/* The workspace you are in: no border or wash (its selected row shows it). */
 .wtc-surface[data-worktree-card-active='primary'] {
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
   box-shadow: none;
 }
 
