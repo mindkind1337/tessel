@@ -352,8 +352,18 @@ const agents = computed(() => {
   const shown = [...rows.values()].filter((row) => trackedProviders.value.some((p) => p.id === row.id))
   // The providers with usage to show first, the ones without (not signed in,
   // not installed, refresh needed) at the bottom; each group keeps its order.
+  // A provider that showed usage keeps its place while it is read again
+  // (opening it refreshes it), instead of dropping to the bottom and back.
   const hasData = (row) => windows(row).length > 0 || !!row.unlimited
-  return [...shown.filter(hasData), ...shown.filter((row) => !hasData(row))]
+  for (const row of shown) if (hasData(row)) placedWithData.add(row.id)
+  const placed = (row) => hasData(row) || placedWithData.has(row.id)
+  return [...shown.filter(placed), ...shown.filter((row) => !placed(row))]
+})
+// The providers shown with usage since the menu opened (not reactive: only
+// where a row sits while it is read again).
+const placedWithData = new Set()
+watch(open, (o) => {
+  if (o) placedWithData.clear()
 })
 function agentName(agent) {
   return agent.name || NAMES[agent.id] || agent.id
