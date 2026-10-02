@@ -1709,6 +1709,7 @@ function saveLayoutNow() {
     taskPanelWidth: taskPanelWidth.value,
     taskPanelOpen: taskPanelOpen.value,
     sidePanelTab: sideTab.value,
+    sideBrowsers: sideBrowsers.value.map((b) => ({ id: b.id, url: b.url || '', title: b.title || '' })),
     currentIndex: Math.max(
       0,
       workspaces.value.findIndex((w) => w.id === currentWsId.value)
@@ -2075,6 +2076,19 @@ const agentPanes = computed(() => {
 // taskPanelOpen: the panel is shown; sideTab: the tab it shows.
 const SIDE_TABS = ['dashboard', 'files', 'changes', 'tasks', 'history']
 const sideTab = ref('tasks')
+// The web pages opened with the side panel's + ([{ id, url, title }], a tab
+// each, saved with the layout; a page loads when its tab is first shown).
+const sideBrowsers = ref([])
+const SIDE_BROWSER_ID = /^web-[a-z0-9]{1,16}$/
+function restoreSideBrowsers(list) {
+  if (!Array.isArray(list)) return []
+  const out = []
+  for (const b of list.slice(0, 50)) {
+    if (!b || typeof b.id !== 'string' || !SIDE_BROWSER_ID.test(b.id) || out.some((o) => o.id === b.id)) continue
+    out.push({ id: b.id, url: typeof b.url === 'string' ? b.url : '', title: typeof b.title === 'string' ? b.title : '' })
+  }
+  return out
+}
 // The panel over the whole workspace (its tab bar's Fullscreen button, Esc
 // restores it). Not saved: Tessel always starts with the panes in view.
 const sideFullscreen = ref(false)
@@ -9446,7 +9460,9 @@ async function restoreOrSeedLayout() {
     // The task board opens again if it was open.
     if (saved.taskPanelOpen === true) taskPanelOpen.value = true
     // The side panel's tab (the file explorer was a panel of its own before).
-    if (SIDE_TABS.includes(saved.sidePanelTab)) sideTab.value = saved.sidePanelTab
+    sideBrowsers.value = restoreSideBrowsers(saved.sideBrowsers)
+    if (SIDE_TABS.includes(saved.sidePanelTab) || sideBrowsers.value.some((b) => b.id === saved.sidePanelTab)) sideTab.value = saved.sidePanelTab
+    else if (typeof saved.sidePanelTab === 'string' && saved.sidePanelTab.startsWith('web-')) sideTab.value = 'dashboard'
     else if (saved.explorerOpen === true && saved.taskPanelOpen !== true) {
       sideTab.value = 'files'
       taskPanelOpen.value = true
@@ -9560,6 +9576,7 @@ onMounted(async () => {
       taskPanelWidth,
       taskPanelOpen,
       sideTab,
+      sideBrowsers,
       settings,
       placement,
       teams
@@ -10027,6 +10044,7 @@ onBeforeUnmount(() => {
         <SidePanel
           v-model:tab="sideTab"
           v-model:fullscreen="sideFullscreen"
+          v-model:browsers="sideBrowsers"
           :projects="sidebarProjects"
           :now="clock"
           :root="sideRoot"
@@ -10049,7 +10067,6 @@ onBeforeUnmount(() => {
           @focus-pane="focusPane"
           @review="openReview"
           @sleep="sleepPanes"
-          @quick-add="(kind) => (kind === 'terminal' ? launch({ kind: 'shell', id: selectedShell }) : launch({ kind }))"
         />
       </aside>
     </div>
