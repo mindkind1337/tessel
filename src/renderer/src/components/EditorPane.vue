@@ -195,8 +195,51 @@ function isDark() {
   const [r, g, b] = c.map(Number)
   return 0.299 * r + 0.587 * g + 0.114 * b < 128
 }
+// The editor wears the app's theme: Monaco's own dark / light colours with
+// Tessel's background, text, gutter and borders (read from the theme's CSS
+// variables), so it matches the terminals instead of Monaco's grey.
+function cssColor(name, fallback) {
+  const probe = document.createElement('span')
+  probe.style.color = `var(${name}, ${fallback})` // i18n-ignore
+  document.body.appendChild(probe)
+  const rgb = getComputedStyle(probe).color.match(/\d+(\.\d+)?/g)
+  probe.remove()
+  if (!rgb || rgb.length < 3) return fallback
+  return '#' + rgb.slice(0, 3).map((n) => Math.round(Number(n)).toString(16).padStart(2, '0')).join('')
+}
 function applyTheme() {
-  if (monaco) monaco.editor.setTheme(isDark() ? 'vs-dark' : 'vs')
+  if (!monaco) return
+  const dark = isDark()
+  const bg = cssColor('--term', dark ? '#15171c' : '#ffffff')
+  const fg = cssColor('--text', dark ? '#d6d9df' : '#1f2328')
+  const dim = cssColor('--text-dim', dark ? '#7f8795' : '#6e7781')
+  const strong = cssColor('--text-strong', dark ? '#f1f3f6' : '#000000')
+  const line = cssColor('--surface', dark ? '#181b21' : '#f6f8fa')
+  const border = cssColor('--border', dark ? '#252932' : '#d0d7de')
+  const accent = cssColor('--accent', '#6c9cff')
+  monaco.editor.defineTheme('tessel', {
+    base: dark ? 'vs-dark' : 'vs',
+    inherit: true,
+    rules: [],
+    colors: {
+      'editor.background': bg,
+      'editor.foreground': fg,
+      'editorGutter.background': bg,
+      'editorLineNumber.foreground': dim,
+      'editorLineNumber.activeForeground': strong,
+      'editor.lineHighlightBackground': line,
+      'editor.lineHighlightBorder': line,
+      'editorWidget.background': line,
+      'editorWidget.border': border,
+      'editorHoverWidget.background': line,
+      'editorHoverWidget.border': border,
+      'editorCursor.foreground': accent,
+      'minimap.background': bg,
+      'scrollbarSlider.background': border + '99',
+      'editorOverviewRuler.border': bg
+    }
+  })
+  monaco.editor.setTheme('tessel')
 }
 function editorOptions() {
   return editorOptionsFor(settings)
