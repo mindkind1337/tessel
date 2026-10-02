@@ -37,6 +37,9 @@ export const DEFAULT_SETTINGS = Object.freeze({
   // A short sound with each new notification: 'none' | 'chime' | 'ping'.
   alertSound: 'none',
   confirmCloseAgent: true,
+  // Closing Tessel's window quits it and stops every agent and terminal:
+  // asked first while some run (quitConfirm.js).
+  confirmQuitRunning: true,
   // Type a one-line reminder into an idle agent's terminal when team
   // messages wait for it (nothing else can start an idle agent's turn). Off:
   // messages stay in the background only, read when the agent next works.

@@ -275,6 +275,8 @@
       "restoreHint": "Désactivé : démarre avec un seul terminal",
       "confirmClose": "Confirmer avant de fermer les terminaux en cours d'exécution",
       "confirmCloseHint": "Demander avant d'arrêter un agent ou une commande en cours à la fermeture d'un terminal.",
+      "confirmQuit": "Demander avant de quitter quand des agents ou des terminaux tournent",
+      "confirmQuitHint": "Fermer la fenêtre quitte Tessel et arrête tous les agents et terminaux.",
       "workspace": "Espace de travail",
       "workspaceIntro": "Configurez où sont créés les nouveaux espaces de travail.",
       "workspaceDir": "Dossier des espaces de travail",

@@ -5449,6 +5449,21 @@ button.act-stat:hover,
   user-select: text;
 }
 
+/* An optional "Don't ask again" under the text. */
+.confirm-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+  color: var(--text-dim);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.confirm-check input {
+  margin: 0;
+  accent-color: var(--accent);
+}
+
 .confirm-actions {
   display: flex;
   justify-content: flex-end;

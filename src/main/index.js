@@ -122,6 +122,7 @@ import { ensureInbox, takeInbox, removeInbox } from './leadInbox'
 import { t, setLanguage as setMainLanguage, currentLocale, onLanguageChange } from './i18n'
 import { createCliServer, CliError } from './cliServer'
 import { createCliBridge } from './cliBridge'
+import { createCloseGuard } from './closeGuard'
 import { createCliInstaller, createUserPathRegistry, cliBinDir, cliCommandName, cliScriptPath, cliLauncherPath, iniText, readRegistryPathSync } from './cliInstall'
 import {
   ensureTeamChannel,
@@ -2633,19 +2634,19 @@ ipcMain.handle('editor:watch', safe((paths) => {
   const count = editorWatcher.set(list.filter((p) => !isRemotePath(p))) + remoteFs.watchFiles(remote)
   return { ok: true, count }
 }))
-// Closing the window with unsaved editor files: the window asks first (Save,
-// Don't Save, Cancel). Quitting for an update was asked about beforehand.
-let editorDirtyCount = 0
-let editorCloseAllowed = false
+// Closing the window quits Tessel: the window asks first (closeGuard.js), for
+// unsaved editor files (Save, Don't Save, Cancel) and for running agents and
+// terminals (Settings > General). Quitting for an update was asked about
+// beforehand; a Windows shutdown or a page that cannot answer is never held.
 let appQuitting = false
-ipcMain.on('editor:dirty', (event, n) => {
-  if (!mainWindow || event.sender !== mainWindow.webContents) return
-  editorDirtyCount = Number.isInteger(n) && n > 0 ? n : 0
+const closeGuard = createCloseGuard({ isQuitting: () => appQuitting, log })
+ipcMain.on('editor:closeAck', (event) => {
+  if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return
+  closeGuard.ack()
 })
 ipcMain.on('editor:closeWindow', (event) => {
   if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return
-  editorCloseAllowed = true
-  mainWindow.close()
+  closeGuard.allow(mainWindow)
 })
 ipcMain.on('clipboard:write', (_evt, text) => {
   if (typeof text === 'string' && text.length) clipboard.writeText(text)
@@ -3231,6 +3232,7 @@ setInterval(() => {
   if (host.connected && !quitting) saveScrollback()
 }, 30000).unref()
 app.on('session-end', () => {
+  closeGuard.sessionEnding()
   log.info('app', 'Windows is signing out or shutting down: saving terminal output')
   saveScrollback()
 })
@@ -3260,6 +3262,8 @@ const updater = createUpdater({
   send,
   beforeInstall: async (version) => {
     fs.writeFileSync(updateNoteFile(), JSON.stringify({ from: app.getVersion(), to: version }))
+    // Installing: the window closes without asking (the user chose to install).
+    appQuitting = true
     // The chat agents too: before-quit skips its shutdown after this one.
     await Promise.allSettled([shutdownTerminals(), chatSessions.closeAll({ kill: true })])
     shutdownDone = true
@@ -3269,6 +3273,7 @@ const updater = createUpdater({
   onInstallFailed: () => {
     shutdownDone = false
     quitting = false
+    appQuitting = false
     try {
       fs.rmSync(updateNoteFile(), { force: true })
     } catch {
@@ -3388,11 +3393,15 @@ function createWindow() {
     logCrashContext(`renderer gone: reason=${details.reason} exitCode=${details.exitCode}`)
   })
 
-  mainWindow.webContents.on('responsive', () => log.info('window', 'responsive again'))
+  mainWindow.webContents.on('responsive', () => {
+    closeGuard.setUnresponsive(false)
+    log.info('window', 'responsive again')
+  })
   mainWindow.webContents.on('did-fail-load', (_e, code, desc, url) =>
     log.error('window', `failed to load ${url}: ${desc} (${code})`)
   )
   mainWindow.webContents.on('unresponsive', () => {
+    closeGuard.setUnresponsive(true)
     logCrashContext('renderer unresponsive')
   })
 
@@ -3404,26 +3413,25 @@ function createWindow() {
   // second while minimized; the page uses this to pause what nobody sees
   // (windowVisibility.js), as Orca's window does with its visibility.
   for (const name of ['minimize', 'restore', 'hide', 'show']) mainWindow.on(name, () => send('window:shown', windowShown()))
-  // Unsaved files in the editor: the window asks before it closes (see
-  // editor:dirty). Not while the app is quitting (an update asked already).
-  mainWindow.on('close', (event) => {
-    if (editorCloseAllowed || appQuitting || editorDirtyCount <= 0) return
-    // A page that cannot answer never keeps the window open.
-    if (mainWindow.webContents.isCrashed() || mainWindow.webContents.isLoading()) return
-    event.preventDefault()
-    mainWindow.webContents.send('editor:confirmClose')
-  })
-  // A new page (reload) or a crashed one has no unsaved editor files.
+  // The window asks before it closes (unsaved editor files, running agents
+  // and terminals; see closeGuard.js). Never while the app is quitting (an
+  // update asked already), Windows shuts down, or the page cannot answer.
+  mainWindow.on('close', (event) => closeGuard.onClose(event, mainWindow))
+  // Windows asks whether it may end the session: never refused (no
+  // preventDefault), and the window then closes without asking.
+  mainWindow.on('query-session-end', () => closeGuard.sessionEnding())
+  mainWindow.on('session-end', () => closeGuard.sessionEnding())
+  // A new page (reload) or a crashed one: a question it got is dropped.
   mainWindow.webContents.on('did-start-navigation', (details) => {
     if (details && details.isMainFrame && !details.isSameDocument) {
-      editorDirtyCount = 0
+      closeGuard.pageGone()
       // A reloading page starts no run until it says it is ready again.
       automations.setWindowReady(false)
       cliBridge.windowGone()
     }
   })
   mainWindow.webContents.on('render-process-gone', () => {
-    editorDirtyCount = 0
+    closeGuard.pageGone()
     automations.setWindowReady(false)
     cliBridge.windowGone()
   })

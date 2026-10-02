@@ -135,6 +135,19 @@
       "runningOne": "{{names}} tourne encore dans ce panneau. La fermeture l’arrête.",
       "runningMany": "{{names}} tournent encore dans ce panneau. La fermeture les arrête."
     },
+    "quit": {
+      "title": "Quitter Tessel ?",
+      "confirm": "Quitter",
+      "dontAsk": "Ne plus demander",
+      "agentOne": "1 agent",
+      "agents": "{{count}} agents",
+      "terminalOne": "1 terminal",
+      "terminals": "{{count}} terminaux",
+      "and": "{{first}} et {{second}}",
+      "runningOne": "{{what}} tourne encore. Quitter l’arrête.",
+      "runningMany": "{{what}} tournent encore. Quitter les arrête.",
+      "resume": "Les conversations des agents pourront être reprises plus tard."
+    },
     "board": {
       "lockedAtStart": "Le tableau enregistré n'a pas pu être lu au démarrage.",
       "couldNotFinish": "{{pane}} n'a pas pu terminer « {{title}} »",

@@ -1900,6 +1900,13 @@ function previewSound() {
                 </div>
                 <input v-model="settings.confirmCloseAgent" type="checkbox" class="set-switch" />
               </label>
+              <label class="set-row">
+                <div class="set-label">
+                  {{ t('settings.general.confirmQuit', 'Ask before quitting while agents or terminals run') }}
+                  <span class="set-hint">{{ t('settings.general.confirmQuitHint', 'Closing the window quits Tessel and stops every agent and terminal.') }}</span>
+                </div>
+                <input v-model="settings.confirmQuitRunning" type="checkbox" class="set-switch" />
+              </label>
             </div>
           </div>
           <!-- The tessel command (Settings > General, as Orca's CLI section). -->

@@ -168,6 +168,8 @@ const api = {
       ipcRenderer.on('editor:confirmClose', h)
       return () => ipcRenderer.removeListener('editor:confirmClose', h)
     },
+    // The page got the close question (main then waits for its answer).
+    ackClose: () => ipcRenderer.send('editor:closeAck'),
     closeWindow: () => ipcRenderer.send('editor:closeWindow')
   },
   viewImage: (file) => ipcRenderer.invoke('files:viewImage', file),

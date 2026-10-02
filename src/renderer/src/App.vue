@@ -47,6 +47,7 @@ import { detectApproval } from './agentLimit'
 import { activity, recordActivity, loadActivity, saveActivityNow, activityChanged } from './activityStore'
 import ActivityPanel from './components/ActivityPanel.vue'
 import ConfirmDialog from './components/ConfirmDialog.vue'
+import { askQuitRunning } from './quitConfirm'
 import ImageViewer from './components/ImageViewer.vue'
 import FileViewer from './components/FileViewer.vue'
 import { fileKind, isViewed } from '../../shared/fileKinds'
@@ -746,9 +747,11 @@ function askConfirm(opts) {
     confirmState.value = { ...opts, resolve }
   })
 }
-function answerConfirm(ok) {
+function answerConfirm(ok, checked) {
   const c = confirmState.value
   confirmState.value = null
+  // An optional checkbox ("Don't ask again"): its state, before the answer.
+  if (c && c.onCheck) c.onCheck(!!checked)
   if (c) c.resolve(ok === 'alt' ? 'alt' : !!ok)
 }
 provide('askConfirm', askConfirm)
@@ -9509,18 +9512,30 @@ onMounted(async () => {
   window.addEventListener('keydown', onKey)
   window.addEventListener('pointerdown', onDocPointerDown, true)
   // The code editor: its notices, files changed on disk, and closing the
-  // window with unsaved files (the main process asks through here).
+  // window (the main process asks through here): unsaved files first, then
+  // running agents and terminals (quitConfirm.js). Asked once at a time.
   setEditorHooks({ toast: (text, opts) => showToast(text, opts) })
   startDiskWatch()
   watch(() => [settings.editorAutoSave, settings.editorAutoSaveDelayMs], autoSaveSettingsChanged)
   if (window.shellApi.editor && window.shellApi.editor.onConfirmClose) {
     unsubEditorClose = window.shellApi.editor.onConfirmClose(async () => {
-      const dirty = Object.values(editorDocs)
-        .filter((d) => d.dirty)
-        .map((d) => d.path)
-      if (dirty.length && !(await askEditorClose(dirty))) return
-      saveLayoutNow()
-      window.shellApi.editor.closeWindow()
+      if (window.shellApi.editor.ackClose) window.shellApi.editor.ackClose()
+      if (closeAsking) return
+      closeAsking = true
+      try {
+        const dirty = Object.values(editorDocs)
+          .filter((d) => d.dirty)
+          .map((d) => d.path)
+        if (dirty.length && !(await askEditorClose(dirty))) return
+        const leaves = []
+        forEachWsLeaf((l) => leaves.push(l))
+        const asleep = (l) => l.kind === 'chat' && (chatStatus[l.id] || l.liveStatus) === 'asleep'
+        if (!(await askQuitRunning({ settings, leaves, isAgent: isAgentLeaf, noTerminal: hasNoTerminal, asleep, askConfirm }))) return
+        saveLayoutNow()
+        window.shellApi.editor.closeWindow()
+      } finally {
+        closeAsking = false
+      }
     })
   }
   unsubFocusPane = window.shellApi.onFocusPane
@@ -9531,6 +9546,7 @@ onMounted(async () => {
 
 let unsubFocusPane = null
 let unsubEditorClose = null
+let closeAsking = false
 
 // A saved file another program holds for a moment (antivirus, backup): the
 // main process answers { locked: true }; tried again every second (about 15 s
@@ -10092,6 +10108,7 @@ onBeforeUnmount(() => {
       :code="confirmState.code || ''"
       :details="confirmState.details || []"
       :danger="!!confirmState.danger"
+      :check-label="confirmState.checkLabel || ''"
       @answer="answerConfirm"
     />
 

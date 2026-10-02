@@ -4,7 +4,7 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { t } from '../i18n'
 
-defineProps({
+const props = defineProps({
   title: { type: String, required: true },
   text: { type: String, default: '' },
   confirmLabel: { type: String, default: 'OK' },
@@ -14,10 +14,18 @@ defineProps({
   // A command shown exactly as it will run, and labelled facts about it
   // ([{ label, value }]: its shell, where it comes from).
   code: { type: String, default: '' },
-  details: { type: Array, default: () => [] }
+  details: { type: Array, default: () => [] },
+  // An optional checkbox under the text ("Don't ask again"): its state goes
+  // with the answer (answer, checked).
+  checkLabel: { type: String, default: '' }
 })
 const emit = defineEmits(['answer'])
 const okEl = ref(null)
+const checked = ref(false)
+function answer(value) {
+  if (props.checkLabel) emit('answer', value, checked.value)
+  else emit('answer', value)
+}
 const dialog = ref(null)
 let previousFocus = null
 
@@ -30,7 +38,7 @@ onUnmounted(() => {
 })
 
 function trapTab(event) {
-  const buttons = [...(dialog.value?.querySelectorAll('button:not(:disabled)') || [])]
+  const buttons = [...(dialog.value?.querySelectorAll('button:not(:disabled), input:not(:disabled)') || [])]
   const first = buttons[0]
   const last = buttons.at(-1)
   if (!first) {
@@ -51,7 +59,7 @@ function trapTab(event) {
 </script>
 
 <template>
-  <div class="help-backdrop confirm-backdrop" @pointerdown.self="emit('answer', false)">
+  <div class="help-backdrop confirm-backdrop" @pointerdown.self="answer(false)">
     <div
       ref="dialog"
       class="help-card confirm-card"
@@ -60,7 +68,7 @@ function trapTab(event) {
       aria-labelledby="confirm-title"
       aria-describedby="confirm-text"
       @focusin.stop
-      @keydown.escape.prevent.stop="emit('answer', false)"
+      @keydown.escape.prevent.stop="answer(false)"
       @keydown.tab.stop="trapTab"
     >
       <h2 id="confirm-title" class="confirm-title">{{ title }}</h2>
@@ -72,14 +80,18 @@ function trapTab(event) {
           <dd>{{ d.value }}</dd>
         </template>
       </dl>
+      <label v-if="checkLabel" class="confirm-check">
+        <input v-model="checked" type="checkbox" data-test="confirm-check" />
+        {{ checkLabel }}
+      </label>
       <div class="confirm-actions">
-        <button class="confirm-btn" @click="emit('answer', false)">{{ t('app.confirm.cancel', 'Cancel') }}</button>
-        <button v-if="altLabel" class="confirm-btn" @click="emit('answer', 'alt')">{{ altLabel }}</button>
+        <button class="confirm-btn" @click="answer(false)">{{ t('app.confirm.cancel', 'Cancel') }}</button>
+        <button v-if="altLabel" class="confirm-btn" @click="answer('alt')">{{ altLabel }}</button>
         <button
           ref="okEl"
           class="confirm-btn primary"
           :class="{ danger }"
-          @click="emit('answer', true)"
+          @click="answer(true)"
         >
           {{ confirmLabel }}
         </button>
