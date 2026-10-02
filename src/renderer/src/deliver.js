@@ -32,7 +32,7 @@
 
 export const DELIVER = {
   settleMs: 500, // between paste and Enter
-  imageSettleMs: 300, // between pasted images and the text
+  imageSettleMs: 500, // after each pasted image (the agent reads it)
   stepMs: 500,
   acceptBusyMs: 4000, // working this long after Enter = it took the message
   quietMs: 1500, // quiet this long after Enter = look for a draft
@@ -115,8 +115,12 @@ export async function pasteAndConfirm(id, text, deps) {
   // the message is not pasted there a second time.
   const images = Array.isArray(d.images) ? d.images.filter((f) => typeof f === 'string' && f) : []
   try {
-    for (const file of images) pane.paste(file)
-    if (images.length) {
+    // One image at a time: the agent turns each pasted path into its image
+    // ("[Image #1]") a moment later; a second path pasted meanwhile is lost.
+    for (const [i, file] of images.entries()) {
+      // A space apart: a path never joins the one before it.
+      if (i > 0) pane.paste(' ')
+      pane.paste(file)
       await d.sleep(d.cfg.imageSettleMs)
       pane = d.getPane(id)
       if (!pane) return 'unconfirmed'

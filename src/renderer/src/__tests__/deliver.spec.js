@@ -139,12 +139,12 @@ describe('pasteAndConfirm', () => {
 
 describe("pasteAndConfirm from a terminal agent's chat view", () => {
   const IMG = 'C:\\Temp\\tessel-paste\\chat\\img_0123456789abcdef01234567.png'
-  it('pastes each image path on its own, then the text one space apart, then Enter', async () => {
+  it('pastes each image path on its own, waiting after each (a second path pasted at once was lost), then the text one space apart, then Enter', async () => {
     const { state, deps } = harness((s) => {
       s.busy = s.submits > 0
     })
     expect(await pasteAndConfirm('p', 'What is this?', { ...deps, images: [IMG, IMG] })).toBe('confirmed')
-    expect(state.log.slice(0, 4)).toEqual([`paste@0:${IMG}`, `paste@0:${IMG}`, 'paste@300: What is this?', 'enter@800'])
+    expect(state.log.slice(0, 5)).toEqual([`paste@0:${IMG}`, 'paste@500: ', `paste@500:${IMG}`, 'paste@1000: What is this?', 'enter@1500'])
   })
   it('images alone: no text pasted, Enter after them', async () => {
     const { state, deps } = harness((s) => {
