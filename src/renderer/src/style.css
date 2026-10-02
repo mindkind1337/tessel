@@ -9563,6 +9563,11 @@ button.act-stat:hover,
   background: color-mix(in srgb, var(--orca-accent) 18%, transparent);
 }
 
+/* The pane you are in: a borderless fill. */
+.worktree-agent-row-hover[data-focused-agent-pane='true'] {
+  background: color-mix(in srgb, var(--orca-accent) 70%, transparent);
+}
+
 .compact-agent-row.picked {
   background: color-mix(in srgb, var(--accent) 16%, transparent);
 }
