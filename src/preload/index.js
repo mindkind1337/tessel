@@ -132,7 +132,8 @@ const api = {
   // system (the main process re-checks it).
   chatFiles: {
     stat: (paths) => ipcRenderer.invoke('chatFiles:stat', { paths }),
-    open: (path) => ipcRenderer.invoke('chatFiles:open', { path })
+    open: (path) => ipcRenderer.invoke('chatFiles:open', { path }),
+    reveal: (path) => ipcRenderer.invoke('chatFiles:reveal', { path })
   },
   explorer: {
     list: (q) => ipcRenderer.invoke('explorer:list', q),

@@ -68,3 +68,17 @@ export async function openChatPath(q, { shell, fsp = fsDefault.promises } = {}) 
   const err = await shell.openPath(p)
   return err ? { ok: false, reason: 'failed', error: err } : { ok: true, with: kind === 'dir' ? 'folder' : 'default' }
 }
+
+// "Show in folder" on a path the chat names: the system's file manager opens
+// its folder with it selected. Nothing is run, so any existing local file or
+// folder may be shown (same path checks as above, no type allowlist).
+export async function revealChatPath(q, { shell, fsp = fsDefault.promises } = {}) {
+  const p = q && typeof q.path === 'string' ? q.path : ''
+  const problem = chatPathProblem(p)
+  // A program or a script is only shown, never run: that one is fine here.
+  if (problem && problem !== 'executable') return refused(problem === 'control' ? 'invalid' : problem)
+  if (!isAbsolute(p)) return refused('invalid')
+  if (!(await kindOf(p, fsp))) return refused('missing')
+  shell.showItemInFolder(p)
+  return { ok: true }
+}

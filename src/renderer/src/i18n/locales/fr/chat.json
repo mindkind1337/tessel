@@ -704,6 +704,8 @@
   "chat.orca.status.toggleDetails": "Afficher ou masquer les détails du tour",
   "chat.orca.status.responding": "L'agent répond",
   "chat.orca.contextMenu.copy": "Copier",
+  "chat.orca.contextMenu.revealFile": "Afficher dans le dossier",
+  "chat.orca.contextMenu.copyPath": "Copier le chemin",
   "chat.orca.contextMenu.paste": "Coller",
   "chat.orca.contextMenu.switchToTerminal": "Continuer dans un terminal",
   "chat.orca.contextMenu.splitRight": "Scinder à droite",

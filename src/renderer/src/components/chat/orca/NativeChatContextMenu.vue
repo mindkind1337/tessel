@@ -11,11 +11,14 @@
 // Exposed: onContextMenu(event) (bind it on the root, capture phase),
 //   rememberSelection() (on mouseup/keyup: the selection a right-click would
 //   otherwise clear).
-import { computed, onBeforeUnmount, onMounted, reactive, watch } from 'vue'
-import { Clipboard, Copy, Maximize2, Minimize2, PanelBottomClose, PanelRightClose, SquareTerminal, X } from 'lucide-vue-next'
+import { computed, inject, onBeforeUnmount, onMounted, reactive, toValue, watch } from 'vue'
+import { Clipboard, Copy, FolderOpen, Link2, Maximize2, Minimize2, PanelBottomClose, PanelRightClose, SquareTerminal, X } from 'lucide-vue-next'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuTrigger } from './ui/index.js'
 import { isMacPlatform } from '../../../chat/orca/native-chat-shortcut.js'
 import { t } from '../../../i18n'
+import { routeNativeChatHref } from '../../../chat/orca/shared/native-chat-href-routing.js'
+import { parseExplicitFileLinkTarget, resolveExplicitFileLinkTarget } from '../../../chat/orca/lib/explicit-file-link-target.js'
+import { chatPathProblem } from '../../../../../shared/chatFileLinks.js'
 
 const props = defineProps({
   rootEl: { type: Object, default: null },
@@ -23,7 +26,32 @@ const props = defineProps({
   actions: { type: Object, default: () => ({}) }
 })
 
-const state = reactive({ open: false, x: 0, y: 0, selectedText: '' })
+const state = reactive({ open: false, x: 0, y: 0, selectedText: '', filePath: '' })
+// Tessel: a right-click on a file link offers its folder and its path. The
+// link resolves as a click does (the chat's folder for a relative path).
+const linkContext = inject('nativeChatFileLinkContext', null)
+function fileOfLink(target) {
+  const a = target && typeof target.closest === 'function' ? target.closest('a[href]') : null
+  if (!a) return ''
+  const route = routeNativeChatHref(a.getAttribute('href'))
+  if (!route || route.kind !== 'file') return ''
+  if (chatPathProblem(route.pathText, { requireAbsolute: false })) return ''
+  const owner = toValue(linkContext)
+  const parsed = parseExplicitFileLinkTarget(route.pathText, { allowRelativeDirectoryPath: true })
+  if (!parsed || !owner || !owner.worktreePath || owner.remote) return ''
+  const resolved = resolveExplicitFileLinkTarget(parsed, owner.worktreePath, owner.homePath)
+  const path = resolved && resolved.absolutePath
+  return path && !chatPathProblem(path) ? path : ''
+}
+function revealFile() {
+  const api = window.shellApi && window.shellApi.chatFiles
+  if (state.filePath && api && typeof api.reveal === 'function') api.reveal(state.filePath)
+}
+function copyFilePath() {
+  if (!state.filePath) return
+  if (window.shellApi && typeof window.shellApi.writeClipboard === 'function') window.shellApi.writeClipboard(state.filePath)
+  else if (navigator.clipboard) navigator.clipboard.writeText(state.filePath).catch(() => {})
+}
 let openedAt = 0
 let lastSelectedText = ''
 
@@ -49,6 +77,11 @@ function onContextMenu(event) {
   event.stopPropagation()
   openedAt = Date.now()
   state.selectedText = selectedIn(props.rootEl) || lastSelectedText
+  try {
+    state.filePath = fileOfLink(event.target)
+  } catch {
+    state.filePath = ''
+  }
   state.x = event.clientX
   state.y = event.clientY
   state.open = true
@@ -88,6 +121,17 @@ defineExpose({ onContextMenu, rememberSelection })
       <button aria-hidden="true" tabindex="-1" class="nc-context-anchor" :style="triggerStyle" type="button" />
     </DropdownMenuTrigger>
     <DropdownMenuContent class="nc-context-menu" :side-offset="0" align="start" data-test="chat-context-menu" @close-auto-focus="(e) => e.preventDefault()">
+      <template v-if="state.filePath">
+        <DropdownMenuItem data-test="chat-context-reveal" @select="revealFile">
+          <FolderOpen />
+          {{ t('chat.orca.contextMenu.revealFile', 'Show in Folder') }}
+        </DropdownMenuItem>
+        <DropdownMenuItem data-test="chat-context-copy-path" @select="copyFilePath">
+          <Link2 />
+          {{ t('chat.orca.contextMenu.copyPath', 'Copy Path') }}
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+      </template>
       <DropdownMenuItem :disabled="!canCopy" @select="copy">
         <Copy />
         {{ t('chat.orca.contextMenu.copy', 'Copy') }}

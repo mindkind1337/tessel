@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { statChatPaths, openChatPath, MAX_STAT_PATHS } from '../chatFileOpen'
+import { statChatPaths, openChatPath, revealChatPath, MAX_STAT_PATHS } from '../chatFileOpen'
 import { chatPathProblem, isSystemOpenFile } from '../../shared/chatFileLinks'
 
 const win = process.platform === 'win32'
@@ -127,5 +127,28 @@ describe('openChatPath', () => {
     const deps = setup({ [abs('a.mp4')]: 'file' })
     deps.shell.openPath.mockResolvedValue('No app')
     expect(await openChatPath({ path: abs('a.mp4') }, deps)).toEqual({ ok: false, reason: 'failed', error: 'No app' })
+  })
+})
+
+describe('revealChatPath (Show in Folder)', () => {
+  const setup = (entries) => ({ shell: { showItemInFolder: vi.fn() }, fsp: fakeFs(entries) })
+  it('shows any existing file or folder in its folder, a script included (nothing is run)', async () => {
+    const deps = setup({ [abs('a.png')]: 'file', [abs('dir')]: 'dir', [abs('run.ps1')]: 'file' })
+    for (const p of [abs('a.png'), abs('dir'), abs('run.ps1')]) expect(await revealChatPath({ path: p }, deps)).toEqual({ ok: true })
+    expect(deps.shell.showItemInFolder).toHaveBeenCalledTimes(3)
+  })
+  it.each([
+    ['\\\\server\\share\\a.png', 'network'],
+    ['relative/a.png', 'invalid'],
+    ['C:\\x\\a\u0001.png', 'invalid']
+  ])('refuses %s (%s)', async (p, reason) => {
+    const deps = setup({ [p]: 'file' })
+    expect(await revealChatPath({ path: p }, deps)).toMatchObject({ ok: false, reason })
+    expect(deps.shell.showItemInFolder).not.toHaveBeenCalled()
+  })
+  it('a missing path is refused', async () => {
+    const deps = setup({})
+    expect(await revealChatPath({ path: abs('gone.png') }, deps)).toMatchObject({ ok: false, reason: 'missing' })
+    expect(deps.shell.showItemInFolder).not.toHaveBeenCalled()
   })
 })
