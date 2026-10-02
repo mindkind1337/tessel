@@ -7533,6 +7533,44 @@ button.act-stat:hover,
   flex: 1 1 auto;
 }
 
+/* The web pages opened with + (SideBrowser.vue): a globe tab each, its ×
+   in the top right corner on hover or when shown. Many pages scroll. */
+.side-web-tabs {
+  display: flex;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.side-web-close {
+  position: absolute;
+  top: 3px;
+  right: 2px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: var(--surface);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.side-web-tab:hover .side-web-close,
+.side-web-tab.on .side-web-close {
+  display: inline-flex;
+}
+
+.side-web-close:hover {
+  background: color-mix(in srgb, var(--text-dim) 20%, var(--surface));
+  color: var(--text-strong);
+}
+
 .side-close {
   align-self: center;
 }

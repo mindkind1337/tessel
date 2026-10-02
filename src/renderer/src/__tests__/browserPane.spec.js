@@ -35,6 +35,7 @@ vi.mock('../components/DesignModePanel.vue', async () => {
   }
 })
 import BrowserPane from '../components/BrowserPane.vue'
+import SideBrowser from '../components/SideBrowser.vue'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { parse as parseSfc } from '@vue/compiler-sfc'
@@ -774,5 +775,52 @@ describe('BrowserPane.vue: layout, input and browser behaviour', () => {
     await wrapper.find('.bp-page').trigger('pointerleave')
     await flushPromises()
     expect(node.scroll).toEqual({ url: 'https://example.com/', x: 0, y: 640 })
+  })
+})
+
+// A page in a tab of the side panel (SideBrowser.vue): the same pane, without
+// its header; the grid's pane context is not touched.
+describe('SideBrowser.vue', () => {
+  let prevApi, popup
+  beforeEach(() => {
+    prevApi = window.shellApi
+    popup = null
+    window.shellApi = {
+      browser: {
+        onPopup: (cb) => {
+          popup = cb
+          return () => {}
+        }
+      }
+    }
+  })
+  afterEach(() => {
+    window.shellApi = prevApi
+  })
+
+  it('no pane header; its address bar has the keyboard; a link for a new pane opens a new side tab', async () => {
+    const parent = { activeId: ref('p1'), setActive: vi.fn(), toggleMaximize: vi.fn(), closeLeaf: vi.fn(), openBrowserPane: vi.fn(), toast: vi.fn() }
+    const node = reactive({ id: 'web-a1', url: '', title: '' })
+    const w = mount(SideBrowser, { props: { node, active: true }, attachTo: document.body, global: { provide: { panelCtx: parent } } })
+    const el = w.find('webview').element
+    el.getWebContentsId = () => 7
+    el.loadURL = vi.fn(() => Promise.resolve())
+    el.canGoBack = () => false
+    el.canGoForward = () => false
+    el.setZoomLevel = () => {}
+    await flushPromises()
+    expect(w.find('[data-test="pane-header"]').exists()).toBe(false)
+    expect(w.find('.browser-pane').classes()).toContain('in-side')
+    expect(w.find('[data-test="browser-toolbar"]').exists()).toBe(true)
+    expect(document.activeElement).toBe(w.find('.bp-address-input').element)
+    el.dispatchEvent(new Event('dom-ready'))
+    await nextTick()
+    popup({ webContentsId: 7, url: 'https://example.com/x', newPane: true })
+    await flushPromises()
+    expect(w.emitted('open-tab')).toEqual([['https://example.com/x']])
+    expect(parent.openBrowserPane).not.toHaveBeenCalled()
+    await w.find('.browser-pane').trigger('mousedown')
+    expect(parent.setActive).not.toHaveBeenCalled()
+    w.unmount()
   })
 })

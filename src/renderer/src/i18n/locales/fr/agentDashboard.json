@@ -45,11 +45,9 @@
     }
   },
   "sidePanelAdd": {
-    "title": "Ouvrir une page web, un terminal ou un chat",
-    "aria": "Nouveau",
-    "browser": "Page web",
-    "terminal": "Terminal",
-    "chat": "Agent Claude (chat)",
+    "title": "Nouvelle page web",
+    "newPage": "Nouvelle page",
+    "closePage": "Fermer la page (clic du milieu)",
     "fullscreen": "Plein écran",
     "exitFullscreen": "Quitter le plein écran (Échap)"
   },

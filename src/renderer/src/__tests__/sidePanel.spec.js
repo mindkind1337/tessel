@@ -128,15 +128,70 @@ describe('SidePanel.vue', () => {
     w.unmount()
   })
 
-  it('+: a menu to open a browser page, a terminal or a chat', async () => {
-    const w = make('tasks')
+  // A side panel wired like App's (v-model:tab, v-model:browsers).
+  const makeWired = (tab, browsers = []) => {
+    const w = mount(SidePanel, {
+      props: {
+        tab,
+        root: ROOT,
+        workspaceId: 'ws1',
+        browsers,
+        'onUpdate:tab': (v) => w.setProps({ tab: v }),
+        'onUpdate:browsers': (v) => w.setProps({ browsers: v })
+      },
+      attachTo: document.body,
+      global: { stubs: { SideBrowser: { props: ['node', 'active'], template: '<div class="side-browser-stub" :data-url="node.url"></div>' } } }
+    })
+    return w
+  }
+
+  it('+: a new web page in a tab of its own, shown; × goes back to the tab before', async () => {
+    const w = makeWired('tasks')
+    expect(w.find('[data-test="side-add"]').attributes('title')).toBe('New browser page')
     await w.find('[data-test="side-add"]').trigger('click')
-    const menu = document.querySelector('[data-test="side-add-menu"]')
-    expect([...menu.querySelectorAll('button')].map((b) => b.dataset.test)).toEqual(['side-add-browser', 'side-add-terminal', 'side-add-chat'])
-    menu.querySelector('[data-test="side-add-browser"]').click()
     await nextTick()
-    expect(w.emitted('quick-add')).toEqual([['browser']])
-    expect(document.querySelector('[data-test="side-add-menu"]')).toBe(null)
+    const pages = w.props('browsers')
+    expect(pages).toHaveLength(1)
+    expect(pages[0]).toMatchObject({ url: '', title: '' })
+    const id = pages[0].id
+    expect(w.props('tab')).toBe(id)
+    // After the fixed tabs, selected, its page shown.
+    const tabs = w.findAll('.side-tab')
+    expect(tabs[tabs.length - 1].attributes('data-test')).toBe('side-tab-' + id)
+    expect(w.find('[data-test="side-tab-' + id + '"]').classes()).toContain('on')
+    expect(w.find('[data-test="side-tab-' + id + '"]').attributes('title')).toBe('New page')
+    expect(w.find('.side-browser-stub').isVisible()).toBe(true)
+    expect(w.find('[data-test="add-task-form"]').isVisible()).toBe(false)
+    // A second page; ×: back to the first one.
+    await w.find('[data-test="side-add"]').trigger('click')
+    await nextTick()
+    expect(w.props('browsers')).toHaveLength(2)
+    await w.findAll('[data-test="side-web-close"]')[1].trigger('click')
+    await nextTick()
+    expect(w.props('browsers').map((b) => b.id)).toEqual([id])
+    expect(w.props('tab')).toBe(id)
+    // The last one closed: the tab shown before it (Tasks).
+    await w.find('[data-test="side-web-close"]').trigger('click')
+    await nextTick()
+    expect(w.props('browsers')).toEqual([])
+    expect(w.props('tab')).toBe('tasks')
+    expect(w.find('.side-browser-stub').exists()).toBe(false)
+    w.unmount()
+  })
+
+  it('a restored page loads only when its tab is first shown; middle-click closes it', async () => {
+    const w = makeWired('files', [{ id: 'web-a1', url: 'https://example.com/', title: 'Example' }])
+    await flushPromises()
+    const tab = w.find('[data-test="side-tab-web-a1"]')
+    expect(tab.attributes('title')).toBe('Example')
+    expect(w.find('.side-browser-stub').exists()).toBe(false)
+    await tab.trigger('click')
+    await nextTick()
+    expect(w.find('.side-browser-stub').attributes('data-url')).toBe('https://example.com/')
+    await w.find('[data-test="side-tab-web-a1"]').trigger('auxclick', { button: 1 })
+    await nextTick()
+    expect(w.props('browsers')).toEqual([])
+    expect(w.props('tab')).toBe('files')
     w.unmount()
   })
 

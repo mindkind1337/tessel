@@ -2,22 +2,25 @@
 // The right side panel (after Orca's): one panel, a tab bar at its top —
 // Dashboard (every agent of every project), Files (the explorer), Changes
 // (source control), Tasks (the task board), Agents (the agent session
-// history). At the right end of the bar: + (a browser page, a terminal, a
-// chat) and Fullscreen (the panel over the whole workspace; Esc restores it).
+// history), then the web pages opened with + (SideBrowser.vue, one tab each,
+// x or a middle-click closes one). At the right end of the bar: + (a new web
+// page) and Fullscreen (the panel over the whole workspace; Esc restores it).
 // A tab is created the first time it is shown, then kept (its folders,
 // search and scroll stay as they were) while the panel is open.
-import { reactive, ref, watch, computed, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import { reactive, ref, watch, computed, onMounted, onBeforeUnmount } from 'vue'
 import ExplorerPanel from './ExplorerPanel.vue'
 import { refreshStatus, statusOf, changeCount, rootKey } from '../scmState'
 import ChangesPanel from './ChangesPanel.vue'
 import TaskBoard from './TaskBoard.vue'
 import SessionHistoryPanel from './SessionHistoryPanel.vue'
 import AgentDashboard from './AgentDashboard.vue'
+import SideBrowser from './SideBrowser.vue'
 import AgentSessionHistoryIcon from './AgentSessionHistoryIcon.vue'
 import RemoteBadge from './project/RemoteBadge.vue'
 import { remoteHostsState } from '../remoteHosts'
 import { t } from '../i18n'
-import { Files, GitBranch, ListChecks, LayoutDashboard, Maximize2, Minimize2, Plus, Globe, SquareTerminal, MessageSquare } from 'lucide-vue-next'
+import { displayUrl } from '../../../shared/browserUrl'
+import { Files, GitBranch, ListChecks, LayoutDashboard, Maximize2, Minimize2, Plus, Globe, X } from 'lucide-vue-next'
 
 const SIDE_TABS = ['dashboard', 'files', 'changes', 'tasks', 'history']
 
@@ -38,7 +41,10 @@ const props = defineProps({
   projects: { type: Array, default: () => [] },
   now: { type: Number, default: () => Date.now() },
   // The panel over the whole workspace (App keeps it, not saved).
-  fullscreen: { type: Boolean, default: false }
+  fullscreen: { type: Boolean, default: false },
+  // The web pages opened with +: [{ id, url, title }] (App keeps and saves
+  // them; a page's tab id is its id).
+  browsers: { type: Array, default: () => [] }
 })
 const emit = defineEmits([
   'update:tab',
@@ -59,8 +65,7 @@ const emit = defineEmits([
   // Dashboard: put these idle agents to sleep (App's sleepPanes).
   'sleep',
   'update:fullscreen',
-  // The + menu: 'browser' | 'terminal' | 'chat'.
-  'quick-add'
+  'update:browsers'
 ])
 
 // Labels are translated where shown (the language can change while open).
@@ -75,15 +80,24 @@ const TABS = [
   { id: 'history', key: 'explorer.side.history', label: 'Agent Session History', shortcut: '', icon: AgentSessionHistoryIcon } // i18n-ignore
 ]
 const tabLabel = (tab) => t(tab.key, tab.label)
+const isBrowser = (id) => props.browsers.some((b) => b.id === id)
+const isTab = (id) => SIDE_TABS.includes(id) || isBrowser(id)
 const shown = reactive({})
+// The tabs shown before this one, latest last: closing a page goes back to
+// the latest one still there.
+const visited = []
 watch(
   () => props.tab,
-  (t) => {
-    if (SIDE_TABS.includes(t)) shown[t] = true
+  (t, before) => {
+    if (isTab(t)) shown[t] = true
+    if (before && before !== t) {
+      visited.push(before)
+      if (visited.length > 20) visited.shift()
+    }
   },
   { immediate: true }
 )
-const current = () => (SIDE_TABS.includes(props.tab) ? props.tab : 'tasks')
+const current = () => (isTab(props.tab) ? props.tab : 'tasks')
 
 // The count on the Changes tab (like a source control badge): the project's
 // changed files, read again as its files change.
@@ -128,7 +142,7 @@ onMounted(() => {
       timer = setTimeout(reload, 250)
     })
 })
-// --- Fullscreen and the + menu ---------------------------------------------
+// --- Fullscreen and the web pages (+) -----------------------------------------
 function setFullscreen(on) {
   if (!!on !== props.fullscreen) emit('update:fullscreen', !!on)
 }
@@ -137,72 +151,52 @@ function focusPane(id) {
   setFullscreen(false)
   emit('focus-pane', id)
 }
-const addMenu = reactive({ open: false, top: 0, right: 0 })
-const addBtn = ref(null)
-const addMenuEl = ref(null)
 const rootEl = ref(null)
 // Esc restores the panel, unless something used the key already (a search
-// box, a menu) or the keyboard is elsewhere (a pane, a dialog).
+// box, a page) or the keyboard is elsewhere (a pane, a dialog).
 function onKey(e) {
-  if (e.key !== 'Escape' || !props.fullscreen || e.defaultPrevented || addMenu.open) return
+  if (e.key !== 'Escape' || !props.fullscreen || e.defaultPrevented) return
   const target = e.target
   const inPanel = !!rootEl.value && target instanceof Node && rootEl.value.contains(target)
   if (!inPanel && target !== document.body && target !== document.documentElement) return
   e.preventDefault()
   setFullscreen(false)
 }
-const ADD_ITEMS = [
-  { id: 'browser', key: 'sidePanelAdd.browser', label: 'Browser page', icon: Globe }, // i18n-ignore
-  { id: 'terminal', key: 'sidePanelAdd.terminal', label: 'Terminal', icon: SquareTerminal },
-  { id: 'chat', key: 'sidePanelAdd.chat', label: 'Claude agent (chat)', icon: MessageSquare } // i18n-ignore
-]
-function closeAddMenu() {
-  addMenu.open = false
+function newBrowserId() {
+  let id
+  do id = 'web-' + Math.random().toString(36).slice(2, 10) // i18n-ignore
+  while (isTab(id))
+  return id
 }
-function toggleAddMenu() {
-  if (addMenu.open) return closeAddMenu()
-  const r = addBtn.value ? addBtn.value.getBoundingClientRect() : { bottom: 40, right: window.innerWidth }
-  addMenu.top = Math.round(r.bottom + 4)
-  addMenu.right = Math.max(4, Math.round(window.innerWidth - r.right))
-  addMenu.open = true
-  nextTick(() => {
-    const first = addMenuEl.value && addMenuEl.value.querySelector('button')
-    if (first) first.focus()
-  })
+// +: a new page, shown. A link a page opens in a new pane: a new tab, not shown.
+function addBrowser(url = '', show = true) {
+  const page = { id: newBrowserId(), url: url || '', title: '' }
+  emit('update:browsers', [...props.browsers, page])
+  if (show) emit('update:tab', page.id)
 }
-function pickAdd(id) {
-  closeAddMenu()
-  setFullscreen(false)
-  emit('quick-add', id)
+// A page closed: its tab goes; if it was shown, the tab shown before it.
+function closeBrowser(id) {
+  const rest = props.browsers.filter((b) => b.id !== id)
+  delete shown[id]
+  emit('update:browsers', rest)
+  if (props.tab !== id) return
+  const ok = (tab) => tab !== id && (SIDE_TABS.includes(tab) || rest.some((b) => b.id === tab))
+  const back = [...visited].reverse().find(ok)
+  emit('update:tab', back || 'dashboard')
 }
-function onMenuKey(e) {
-  if (e.key === 'Escape') {
-    e.preventDefault()
-    e.stopPropagation()
-    closeAddMenu()
-    if (addBtn.value) addBtn.value.focus()
-    return
-  }
-  if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
+function browserLabel(b) {
+  return b.title || displayUrl(b.url) || t('sidePanelAdd.newPage', 'New page')
+}
+// Middle-click closes a page's tab.
+function onBrowserTabAux(e, id) {
+  if (e.button !== 1) return
   e.preventDefault()
-  const items = [...addMenuEl.value.querySelectorAll('button')]
-  const i = items.indexOf(document.activeElement)
-  const next = e.key === 'ArrowDown' ? (i + 1) % items.length : (i - 1 + items.length) % items.length
-  items[next].focus()
-}
-function onPointerDown(e) {
-  if (!addMenu.open) return
-  const target = e.target
-  if (addMenuEl.value && addMenuEl.value.contains(target)) return
-  if (addBtn.value && addBtn.value.contains(target)) return
-  closeAddMenu()
+  closeBrowser(id)
 }
 window.addEventListener('keydown', onKey)
-window.addEventListener('pointerdown', onPointerDown, true)
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKey)
-  window.removeEventListener('pointerdown', onPointerDown, true)
   if (stop) stop()
   clearTimeout(timer)
   if (explorer()) explorer().unwatch()
@@ -237,18 +231,46 @@ onBeforeUnmount(() => {
           >{{ badge }}</span
         >
       </button>
+      <div v-if="browsers.length" class="side-web-tabs">
+        <div
+          v-for="b in browsers"
+          :key="b.id"
+          class="side-tab side-web-tab"
+          :class="{ on: current() === b.id }"
+          role="tab"
+          tabindex="0"
+          :aria-selected="current() === b.id"
+          :title="browserLabel(b)"
+          :aria-label="browserLabel(b)"
+          :data-test="'side-tab-' + b.id"
+          @click="emit('update:tab', b.id)"
+          @keydown.enter.self.prevent="emit('update:tab', b.id)"
+          @keydown.space.self.prevent="emit('update:tab', b.id)"
+          @mousedown.middle.prevent
+          @auxclick="onBrowserTabAux($event, b.id)"
+        >
+          <Globe :size="16" aria-hidden="true" />
+          <button
+            type="button"
+            class="side-web-close"
+            tabindex="-1"
+            :title="t('sidePanelAdd.closePage', 'Close page (middle-click)')"
+            :aria-label="t('sidePanelAdd.closePage', 'Close page (middle-click)')"
+            data-test="side-web-close"
+            @click.stop="closeBrowser(b.id)"
+          >
+            <X :size="10" aria-hidden="true" />
+          </button>
+        </div>
+      </div>
       <span class="side-tabs-fill"></span>
       <button
-        ref="addBtn"
         type="button"
         class="side-tab-action"
-        :class="{ on: addMenu.open }"
-        :title="t('sidePanelAdd.title', 'Open a browser page, a terminal or a chat')"
-        :aria-label="t('sidePanelAdd.aria', 'New')"
-        aria-haspopup="menu"
-        :aria-expanded="addMenu.open"
+        :title="t('sidePanelAdd.title', 'New browser page')"
+        :aria-label="t('sidePanelAdd.title', 'New browser page')"
         data-test="side-add"
-        @click="toggleAddMenu"
+        @click="addBrowser()"
       >
         <Plus :size="15" aria-hidden="true" />
       </button>
@@ -266,30 +288,6 @@ onBeforeUnmount(() => {
         <Maximize2 v-else :size="14" aria-hidden="true" />
       </button>
     </div>
-    <Teleport to="body">
-      <div
-        v-if="addMenu.open"
-        ref="addMenuEl"
-        class="ctx-menu side-add-menu"
-        role="menu"
-        :style="{ top: addMenu.top + 'px', right: addMenu.right + 'px' }"
-        data-test="side-add-menu"
-        @keydown="onMenuKey"
-      >
-        <button
-          v-for="item in ADD_ITEMS"
-          :key="item.id"
-          type="button"
-          class="ctx-menu-item"
-          role="menuitem"
-          :data-test="'side-add-' + item.id"
-          @click="pickAdd(item.id)"
-        >
-          <component :is="item.icon" :size="14" aria-hidden="true" />
-          <span>{{ t(item.key, item.label) }}</span>
-        </button>
-      </div>
-    </Teleport>
     <div class="side-body">
       <RemoteBadge
         v-if="remote && (current() === 'files' || current() === 'changes')"
@@ -351,6 +349,16 @@ onBeforeUnmount(() => {
         @open-editor="(file) => emit('open-editor', file)"
         @toast="(t) => emit('toast', t)"
       />
+      <template v-for="b in browsers" :key="b.id">
+        <SideBrowser
+          v-if="shown[b.id]"
+          v-show="current() === b.id"
+          :node="b"
+          :active="current() === b.id"
+          @close="closeBrowser(b.id)"
+          @open-tab="(url) => addBrowser(url, false)"
+        />
+      </template>
     </div>
   </div>
 </template>

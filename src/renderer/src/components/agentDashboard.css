@@ -419,10 +419,6 @@
   outline: none;
   box-shadow: inset 0 0 0 1px var(--accent);
 }
-.side-add-menu .ctx-menu-item {
-  justify-content: flex-start;
-  gap: 8px;
-}
 /* Fullscreen: the panel covers the workspace (sidebar and panes), never the
    toolbar above it. Above a maximized pane (100); the workspace is its own
    stacking layer meanwhile, so the toolbar's menus still open over it. */

@@ -57,7 +57,10 @@ import DesignModePanel from './DesignModePanel.vue'
 import { t } from '../i18n'
 
 const props = defineProps({
-  node: { type: Object, required: true }
+  node: { type: Object, required: true },
+  // A page in the side panel (SideBrowser.vue): no pane header (move,
+  // maximize, close are the side panel's tab bar).
+  inSidePanel: { type: Boolean, default: false }
 })
 
 const ctx = inject('panelCtx')
@@ -800,6 +803,7 @@ defineExpose({ navigate, focusAddress })
     class="pane browser-pane"
     :class="{
       hosted,
+      'in-side': inSidePanel,
       active: isActive,
       maximized: isMaximized,
       highlighted: ctx.highlightId.value === node.id
@@ -810,7 +814,7 @@ defineExpose({ navigate, focusAddress })
     @mousedown="onPaneMouseDown"
     @keydown="onKeydown"
   >
-    <div class="pane-nav" data-test="pane-header" @mousedown.stop="onNavMouseDown" @pointerdown="onNavPointerDown">
+    <div v-if="!inSidePanel" class="pane-nav" data-test="pane-header" @mousedown.stop="onNavMouseDown" @pointerdown="onNavPointerDown">
       <div class="pane-nav-left">
         <span class="pane-icon" :title="t('browser.pane.title', 'Browser')">
           <Globe :size="15" aria-hidden="true" />
@@ -1154,6 +1158,14 @@ defineExpose({ navigate, focusAddress })
 <style scoped>
 .browser-pane {
   outline: none;
+}
+
+/* In the side panel: no header above the toolbar, no active ring. */
+.browser-pane.in-side .bp-body {
+  top: 0;
+}
+.browser-pane.in-side::after {
+  display: none;
 }
 
 .bp-body {
