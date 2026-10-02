@@ -437,10 +437,30 @@ const ports = computed(() => {
     return true
   })
 })
+// The ports popover stays inside the pane: a narrow pane (the side panel)
+// would otherwise cut its left side off.
+const portsShift = ref(0)
+const portsWidth = ref(0)
+function fitPorts() {
+  portsShift.value = 0
+  portsWidth.value = 0
+  nextTick(() => {
+    const pop = rootEl.value && rootEl.value.querySelector('.bp-ports')
+    if (!pop) return
+    const box = rootEl.value.getBoundingClientRect()
+    const room = Math.max(160, box.width - 16)
+    if (pop.offsetWidth > room) portsWidth.value = room
+    nextTick(() => {
+      const r = pop.getBoundingClientRect()
+      if (r.left < box.left + 8) portsShift.value = Math.round(box.left + 8 - r.left)
+    })
+  })
+}
 function togglePorts() {
   reloadMenu.value = false
   portsTick.value++
   portsOpen.value = !portsOpen.value
+  if (portsOpen.value) fitPorts()
 }
 function openPort(p) {
   closeMenus()
@@ -941,7 +961,12 @@ defineExpose({ navigate, focusAddress })
             <Plug :size="15" />
             <span v-if="ports.length" class="bp-badge">{{ ports.length }}</span>
           </button>
-          <div v-if="portsOpen" class="bp-menu bp-ports" data-test="browser-ports-popover">
+          <div
+            v-if="portsOpen"
+            class="bp-menu bp-ports"
+            :style="{ transform: portsShift ? `translateX(${portsShift}px)` : null, width: portsWidth ? portsWidth + 'px' : null }"
+            data-test="browser-ports-popover"
+          >
             <div class="bp-ports-head">
               <span class="bp-ports-title"><Plug :size="12" aria-hidden="true" />{{ t('browser.ports.title', 'Ports') }}</span>
               <span class="bp-ports-count">{{ portsCount }}</span>
