@@ -868,6 +868,15 @@ body.popup-open .toolbar {
   height: 100%;
 }
 
+/* No scrollbar in terminals: the wheel and Shift+PageUp/PageDown still
+   scroll the history. */
+.term-host .xterm-viewport {
+  scrollbar-width: none;
+}
+.term-host .xterm-viewport::-webkit-scrollbar {
+  display: none;
+}
+
 /* ================= Context menu ================= */
 .ctx-menu {
   position: fixed;
