@@ -8,6 +8,7 @@
       "openInTerminal": "Ouvrir dans un terminal",
       "openInTerminalHint": "Poursuivre cette conversation dans un pane terminal : même pane, mêmes permissions ou moins",
       "moreHint": "Plus d’options (ou clic droit dans le chat)",
+      "toTerminalHint": "Continuer cette conversation dans un terminal",
       "gotoApproval": "{{tool}} attend votre réponse (Alt+A)"
     },
     "status": {
