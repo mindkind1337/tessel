@@ -951,12 +951,34 @@ const title = computed(() => t('chat.orca.transcriptView.title', 'Conversation o
 .nc-transcript-state {
   display: flex;
   flex: 1 1 0%;
+  min-height: 0;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 8px;
+  padding: 16px;
+  overflow: hidden;
   color: var(--nc-muted-foreground);
   font-size: 12px;
+  /* Narrow or short panes: the badge and title give way to the line alone. */
+  container-type: size;
+}
+.nc-transcript-state p {
+  max-width: 22rem;
+  margin: 0;
+  text-align: center;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+@container (max-width: 320px) {
+  .nc-transcript-state :deep(.nc-empty) {
+    display: none;
+  }
+}
+@container (max-height: 220px) {
+  .nc-transcript-state :deep(.nc-empty) {
+    display: none;
+  }
 }
 /* What the agent waits for: an accent line for its question, a warning line
    for its approval (as the chat pane sets them apart). */
