@@ -7,10 +7,31 @@
  * Used by ChatMarkdown as its renderCodeBlock, and by the approval card.
  */
 import { Comment, Fragment, Text, defineComponent, h, isVNode } from 'vue'
-import { Code2 } from 'lucide-vue-next'
+import { Code2, FolderOpen } from 'lucide-vue-next'
 import { t } from '../../../i18n'
 import { getCodeBlockLanguageLabel } from './rich-markdown-code-block-languages.js'
 import NativeChatCopyButton from './NativeChatCopyButton.vue'
+import { chatPathProblem } from '../../../../../shared/chatFileLinks.js'
+
+// Tessel: a block that is only a local file or folder path ("C:\x\a.png",
+// "/home/x/a.png") gets Show in Folder next to Copy. -> the path or ''.
+export function codeBlockPath(code) {
+  const text = String(code || '').trim()
+  if (!text || text.length > 1024 || /[\r\n]/.test(text)) return ''
+  if (!/^(?:[A-Za-z]:[\\/]|\/)/.test(text)) return ''
+  const problem = chatPathProblem(text)
+  return problem && problem !== 'executable' ? '' : text
+}
+function revealButton(path) {
+  const api = typeof window !== 'undefined' && window.shellApi && window.shellApi.chatFiles
+  if (!path || !api || typeof api.reveal !== 'function') return null
+  const label = t('chat.orca.contextMenu.revealFile', 'Show in Folder')
+  return h(
+    'button',
+    { type: 'button', class: 'nc-code-reveal', title: label, 'aria-label': label, 'data-test': 'code-reveal', onClick: () => api.reveal(path) },
+    [h(FolderOpen, { class: 'nc-code-reveal-icon', 'aria-hidden': 'true' })]
+  )
+}
 
 // The text of the slot's vnodes (the reference walks React children).
 export function extractCodeText(node) {
@@ -37,6 +58,7 @@ export default defineComponent({
       const code = extractCodeText(children)
       const language = props.language
       const copyLabel = t('chat.orca.copyCode', 'Copy code')
+      const reveal = revealButton(codeBlockPath(code))
       return h('div', { class: 'nc-code-block' }, [
         language
           ? h('div', { class: 'nc-code-header' }, [
@@ -44,13 +66,16 @@ export default defineComponent({
                 h(Code2, { class: 'nc-code-language-icon', 'aria-hidden': 'true' }),
                 h('span', { class: 'nc-code-language-label' }, getCodeBlockLanguageLabel(language))
               ]),
-              code
-                ? h(NativeChatCopyButton, {
-                    text: code,
-                    label: copyLabel,
-                    class: 'nc-code-copy-inline'
-                  })
-                : null
+              h('span', { class: 'nc-code-actions-inline' }, [
+                reveal,
+                code
+                  ? h(NativeChatCopyButton, {
+                      text: code,
+                      label: copyLabel,
+                      class: 'nc-code-copy-inline'
+                    })
+                  : null
+              ])
             ])
           : null,
         h(
@@ -59,7 +84,7 @@ export default defineComponent({
           children
         ),
         code && !language
-          ? h(NativeChatCopyButton, { text: code, label: copyLabel, class: 'nc-code-copy-float' })
+          ? h('div', { class: 'nc-code-copy-float' }, [reveal, h(NativeChatCopyButton, { text: code, label: copyLabel })])
           : null
       ])
     }
@@ -134,7 +159,36 @@ export default defineComponent({
   background: transparent;
   font: inherit;
 }
+.nc-code-actions-inline {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.nc-code-reveal {
+  display: flex;
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--nc-muted-foreground);
+  cursor: pointer;
+}
+.nc-code-reveal:hover {
+  background: color-mix(in srgb, var(--nc-foreground) 10%, transparent);
+  color: var(--nc-foreground);
+}
+.nc-code-reveal-icon {
+  width: 14px;
+  height: 14px;
+}
 .nc-code-copy-float {
+  display: flex;
+  gap: 2px;
   position: absolute;
   right: 8px;
   top: 8px;
