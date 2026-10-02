@@ -42,6 +42,7 @@ import { modelFromScreen, modelFromSwitchLine } from '../../../shared/screenMode
 import { findFileRefs } from '../../../shared/fileLinks'
 import { osc52Text } from '../../../shared/osc52'
 import { stripTerminalSelectionGutter } from '../../../shared/terminalSelectionGutter'
+import { buildInputModeReset } from '../../../shared/terminalModeReset'
 import { terminalSettingOptions, composeTerminalTheme, useWebgl, METRIC_OPTIONS } from '../terminalOptions'
 import { cacheCountdown } from '../promptCache'
 import { isViewed } from '../../../shared/fileKinds'
@@ -1731,6 +1732,21 @@ function menuClear() {
   if (term) term.clear()
   closeCtxMenu()
 }
+// Reset Terminal: a program that crashed can leave mouse tracking, bracketed
+// paste, application keys or the alternate screen on, so clicks and keys type
+// garbage. Clears them in this pane and in the host's copy of the screen (so a
+// re-attach does not bring them back); the program itself is not touched.
+// After Orca's terminal-input-mode-reset.ts (MIT, Copyright (c) 2026 Lovecast Inc.).
+function resetInputModes() {
+  if (!term) return
+  // A local ConPTY keeps focus reporting on for the terminal's whole life.
+  term.write(buildInputModeReset({ keepFocusReporting: props.node.backend === 'conpty' }))
+  window.shellApi.resetPtyModes?.(props.node.id)
+}
+function menuResetTerminal() {
+  resetInputModes()
+  closeCtxMenuAndRefocus()
+}
 function menuSplit(dir) {
   ctx.splitLeaf(props.node.id, dir)
   closeCtxMenu()
@@ -2393,6 +2409,7 @@ onMounted(() => {
       }
     },
     getSelection: () => (term ? term.getSelection() : ''),
+    resetInputModes,
     screenText,
     // Is its input prompt empty (see promptCheck.js)?
     promptShowsPlaceholder: (promptChar) => promptShowsPlaceholder(term, promptChar),
@@ -2535,6 +2552,7 @@ const paneMenuBindings = computed(() => ({
   menuPaste: unref(menuPaste),
   menuCopyOutput: unref(menuCopyOutput),
   menuClear: unref(menuClear),
+  menuResetTerminal: unref(menuResetTerminal),
   menuCopySession: unref(menuCopySession),
   menuFind: unref(menuFind),
   hasModelChoice: unref(hasModelChoice),

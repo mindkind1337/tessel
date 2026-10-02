@@ -33,12 +33,22 @@ describe('sidebar and status bar settings', () => {
     })
   })
 
+  it('the host chip is a card property: on by default, given once to a saved list, then your choice is kept', () => {
+    expect(settings.worktreeCardProperties).toContain('host')
+    loadSettings({ worktreeCardProperties: ['ports'] })
+    expect(settings.worktreeCardProperties).toEqual(['ports', 'host'])
+    expect(settings.worktreeCardHostDefaulted).toBe(true)
+    loadSettings({ worktreeCardProperties: ['ports'], worktreeCardHostDefaulted: true })
+    expect(settings.worktreeCardProperties).toEqual(['ports'])
+  })
+
   it('keeps only valid saved values', () => {
     loadSettings({
       sidebarGroupBy: 'status',
       sidebarSortBy: 'smart',
       statusBarItems: ['ports', 'claude', 'ports', 7],
       worktreeCardProperties: ['inline-agents', 'pr'],
+      worktreeCardHostDefaulted: true,
       sidebarFilterRepoIds: ['ws1', 3],
       leftSidebarTintOpacity: 2,
       leftSidebarTintColor: 'red',

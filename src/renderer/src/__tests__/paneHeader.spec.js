@@ -50,6 +50,7 @@ vi.mock('@xterm/addon-fit', () => ({
 vi.mock('@xterm/addon-web-links', () => ({ WebLinksAddon: class {} }))
 vi.mock('@xterm/addon-search', () => ({ SearchAddon: class { onDidChangeResults() {} } }))
 vi.mock('@xterm/addon-webgl', () => ({ WebglAddon: class {} }))
+import { Terminal } from '@xterm/xterm'
 import TerminalPane from '../components/TerminalPane.vue'
 import ChatPane from '../components/chat/ChatPane.vue'
 
@@ -151,12 +152,29 @@ describe('terminal pane header', () => {
       await flushPromises()
       const chatMenu = document.querySelector('[data-test="chat-header-menu"]')
       expect(entries(chatMenu)).toEqual(terminalEntries)
-      for (const label of ['Copy output', 'Clear', 'Find', 'Restart asking first']) {
+      for (const label of ['Copy output', 'Clear', 'Reset Terminal', 'Find', 'Restart asking first']) {
         const button = [...chatMenu.querySelectorAll('button')].find(el => el.textContent.includes(label))
         expect(button.disabled, label).toBe(true)
         expect(button.title, label).not.toBe('')
       }
     } finally { chat.unmount() }
+  })
+
+  it('Reset Terminal clears leftover input modes in the pane and the host, without writing to the program', async () => {
+    const write = vi.spyOn(Terminal.prototype, 'write')
+    window.shellApi.resetPtyModes = vi.fn()
+    window.shellApi.writePty = vi.fn()
+    try {
+      await header().get('[data-test="pane-menu-btn"]').trigger('click')
+      await flushPromises()
+      menu().querySelector('[data-test="menu-reset-terminal"]').click()
+      await flushPromises()
+      const written = write.mock.calls.map(([data]) => data).join('')
+      for (const mode of ['[?1000l', '[?1006l', '[?2004l', '[?1l', '[?1049l', '[?1004l']) expect(written).toContain(mode)
+      expect(window.shellApi.resetPtyModes).toHaveBeenCalledWith('hp')
+      expect(window.shellApi.writePty).not.toHaveBeenCalled()
+      expect(menu()).toBeNull()
+    } finally { write.mockRestore() }
   })
 
   it('shows its name, program and no number', async () => {

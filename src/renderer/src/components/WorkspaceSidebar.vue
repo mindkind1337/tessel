@@ -125,6 +125,7 @@ const rows = computed(() => buildSidebarRows(props.projects, options.value, prop
 const grouped = computed(() => settings.sidebarGroupBy !== 'none')
 const showPorts = computed(() => settings.worktreeCardProperties.includes('ports'))
 const showAgents = computed(() => settings.worktreeCardProperties.includes('inline-agents'))
+const showHost = computed(() => settings.worktreeCardProperties.includes('host'))
 const projectNames = computed(() => Object.fromEntries(props.projects.map((p) => [p.id, p.name])))
 const activeCard = computed(() => rows.value.find((r) => r.type === 'card' && r.card.isActive)?.card || null)
 
@@ -606,6 +607,14 @@ function optionsItems() {
         label: t('sidebar.options.agentActivity', 'Agent activity'),
         checked: props_.includes('inline-agents'),
         onSelect: () => toggleProp('inline-agents')
+      },
+      // The host chip of a project on an SSH host, after Orca's host card
+      // property (MIT, Copyright (c) 2026 Lovecast Inc.).
+      {
+        type: 'checkbox',
+        label: t('sidebar.options.host', 'Host'),
+        checked: props_.includes('host'),
+        onSelect: () => toggleProp('host')
       },
       { type: 'separator' },
       { type: 'label', label: t('sidebar.options.agentActivityLayout', 'Agent activity layout') },
@@ -1267,6 +1276,7 @@ defineExpose({
             :compact-cards="settings.compactWorktreeCards"
             :show-ports="showPorts"
             :show-agents="showAgents"
+            :show-host="showHost"
             :agent-mode="settings.agentActivityDisplayMode"
             :expanded="isExpanded(r.card)"
             :ports="portsOf(r.card)"

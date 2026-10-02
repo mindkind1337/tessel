@@ -635,6 +635,7 @@ const headerMenuBindings = computed(() => {
     disabledReasons: {
       menuCopyOutput: terminalOnly,
       menuClear: terminalOnly,
+      menuResetTerminal: terminalOnly,
       menuFind: terminalOnly,
       menuSwitchYolo: t('pane.menu.chatPermissions', 'Change permissions in the chat composer'),
       menuOpenAsChat: props.node.sessionId && ctx.switchToTerminal ? '' : t('pane.menu.noSession', 'Start a conversation first'),

@@ -31,6 +31,8 @@ const props = defineProps({
   compactCards: { type: Boolean, default: false },
   showPorts: { type: Boolean, default: true },
   showAgents: { type: Boolean, default: true },
+  // The SSH host chip (sidebar options > Show properties > Host).
+  showHost: { type: Boolean, default: true },
   agentMode: { type: String, default: 'compact' }, // 'compact' | 'full'
   expanded: { type: Boolean, default: false },
   ports: { type: Array, default: () => [] },
@@ -60,8 +62,9 @@ const teamColumn = computed(() => rows.value.some((r) => r.team && teamLabel(r))
 const hasPorts = computed(() => props.showPorts && props.ports.length > 0)
 // Orca: the branch shows under the title unless compact cards repeat it.
 const showBranch = computed(() => !!card.value.branch && (!props.compactCards || card.value.branch !== card.value.title))
+const showHostChip = computed(() => props.showHost && !!card.value.host)
 const hasMetaRow = computed(() =>
-  props.compactCards ? false : !!(showBranch.value || hasPorts.value || props.showProjectBadge || card.value.host)
+  props.compactCards ? false : !!(showBranch.value || hasPorts.value || props.showProjectBadge || showHostChip.value)
 )
 const showTitleRowIndicators = computed(() => props.compactCards && hasPorts.value)
 const showInlineAgents = computed(() => props.showAgents && rows.value.length > 0)
@@ -195,7 +198,7 @@ function onCardClick(e) {
                 </span>
                 <!-- A project on an SSH host: a chip with its host. -->
                 <span
-                  v-if="card.host"
+                  v-if="showHostChip"
                   class="wtc-repo-badge wtc-host-chip"
                   data-test="card-remote-host"
                 >

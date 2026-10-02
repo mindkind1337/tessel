@@ -204,6 +204,8 @@
       "splitDown": "Scinder vers le bas",
       "evenGrid": "Grille régulière {{grid}}",
       "maximize": "Agrandir ou restaurer le panneau actif",
+      "resetTerminal": "Réinitialiser le terminal actif",
+      "resetTerminalHint": "Désactive les modes qu'un programme a laissés actifs ; il continue de tourner",
       "closeActive": "Fermer le panneau actif",
       "showSidebar": "Afficher la barre latérale",
       "hideSidebar": "Masquer la barre latérale",

@@ -138,7 +138,10 @@ export const DEFAULT_SETTINGS = Object.freeze({
   sidebarExpandedBranches: [],
   sidebarShownWorktrees: {},
   sidebarDismissedWorktreeLines: [],
-  worktreeCardProperties: ['ports', 'inline-agents'],
+  worktreeCardProperties: ['ports', 'inline-agents', 'host'],
+  // 'host' became a card property after profiles had saved their list: they
+  // get it once (the chip was always shown), then your choice is kept.
+  worktreeCardHostDefaulted: true,
   agentActivityDisplayMode: 'compact', // 'compact' | 'full'
   // Settings > Appearance > Window & Sidebar (Orca's).
   compactWorktreeCards: false,
@@ -217,7 +220,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
 })
 
 export const SIDEBAR_SORTS = ['name', 'smart', 'recent', 'repo', 'manual']
-export const WORKTREE_CARD_PROPERTIES = ['ports', 'inline-agents']
+export const WORKTREE_CARD_PROPERTIES = ['ports', 'inline-agents', 'host']
 export const STATUS_BAR_ITEMS = ['ssh', 'resource-usage', 'ports']
 export const MAX_LEFT_SIDEBAR_TINT_OPACITY = 0.35
 
@@ -339,6 +342,8 @@ export function loadSettings(saved) {
       const known = key === 'statusBarItems' ? STATUS_BAR_ITEMS : WORKTREE_CARD_PROPERTIES
       const list = idList(v)
       if (list) settings[key] = list.filter((x) => known.includes(x))
+      if (list && key === 'worktreeCardProperties' && saved.worktreeCardHostDefaulted !== true && !list.includes('host'))
+        settings.worktreeCardProperties.push('host')
       continue
     }
     if (key === 'sidebarGroupBy' && !['repo', 'none'].includes(v)) continue
@@ -377,6 +382,7 @@ export function loadSettings(saved) {
     if (key === 'usageRefreshMinutes' && !USAGE_REFRESH_MINUTES.includes(v)) continue
     if (key === 'usageRefreshMinutes' && v === 15 && saved.usageRefreshDefault2 !== true) continue
     if (key === 'usageRefreshDefault2') continue
+    if (key === 'worktreeCardHostDefaulted') continue
     if (key === 'sourceControlGroupOrder' && !SOURCE_CONTROL_GROUP_ORDERS.includes(v)) continue
     if (key === 'sourceControlViewMode' && !['tree', 'list'].includes(v)) continue
     if (key === 'branchPrefix' && !BRANCH_PREFIX_MODES.includes(v)) continue

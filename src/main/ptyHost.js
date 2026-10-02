@@ -21,6 +21,7 @@ import { createLogger } from './logger'
 import { Terminal as HeadlessTerminal } from '@xterm/headless'
 import { SerializeAddon } from '@xterm/addon-serialize'
 import { PROTOCOL } from './ptyProtocol'
+import { buildInputModeReset } from '../shared/terminalModeReset'
 import { createSshHostBridge } from './ssh/sshHostBridge'
 
 // Each terminal also feeds a headless (invisible) terminal. When the app
@@ -314,6 +315,22 @@ function handle(sock, msg) {
           /* resize race */
         }
       }
+      return
+    }
+    case 'resetModes': {
+      // Reset Terminal: clear the modes a crashed program left on in this
+      // screen too, so a re-attach does not turn them back on in the pane.
+      // Only the screen hears it: the program itself is not touched. After
+      // Orca's daemon resetInputModes (MIT, Copyright (c) 2026 Lovecast Inc.).
+      const p = ptys.get(msg.id)
+      if (p) {
+        try {
+          p.screen.vt.write(buildInputModeReset({ keepFocusReporting: p.meta.backend === 'conpty' }))
+        } catch {
+          /* screen already disposed */
+        }
+      }
+      reply({ ok: !!p })
       return
     }
     case 'list':

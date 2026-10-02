@@ -4,6 +4,7 @@
 // not connected keeps what was shown.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { nextTick } from 'vue'
 import WorkspaceSidebar from '../components/WorkspaceSidebar.vue'
 import { settings, resetSettings } from '../settings'
 import { buildProjectCards, projectOtherBranches } from '../sidebarModel'
@@ -87,6 +88,15 @@ describe('a remote project: the sidebar', () => {
     expect(card.find('.wtc-badge').exists()).toBe(false)
     expect(card.get('[data-test="card-remote-host"]').text()).toContain('fivem-afterlife')
     expect(w.find('[data-test="sidebar-others-toggle"]').exists()).toBe(false)
+  })
+
+  it('Show properties > Host turns the host chip off on every card', async () => {
+    settings.worktreeCardProperties = settings.worktreeCardProperties.filter((x) => x !== 'host')
+    const w = mountSidebar([remoteProject({ branch: '', worktrees: [] })])
+    expect(w.get('[data-card-key="ws1::"]').find('[data-test="card-remote-host"]').exists()).toBe(false)
+    settings.worktreeCardProperties = [...settings.worktreeCardProperties, 'host']
+    await nextTick()
+    expect(w.get('[data-card-key="ws1::"]').find('[data-test="card-remote-host"]').exists()).toBe(true)
   })
 
   it('its line unfolds to the host folder; one you chose to show opens that folder on the host', async () => {
