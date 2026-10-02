@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+
+# Build output
+out/
+dist/
+
+# Logs & test artifacts
+*.log
+tessel-crash.log
+test-result.txt
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+
+# Local runtime / agent workspace state
+.bridgespace/bin/
+.bridgespace/swarms/
+
+# Local Claude Code state (machine-specific)
+.claude/settings.local.json
+.claude/*.lock
+.claude/scheduled_tasks.lock
+dev-app-update.yml
+
+# Tessel project notes shared by the agents (see "Project notes")
+.tessel/

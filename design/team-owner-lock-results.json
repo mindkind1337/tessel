@@ -1,0 +1,34 @@
+{
+  "dir": "C:\\Tessel\\design\\owner-lock-DbuyiS",
+  "aPid": 51336,
+  "bResult": {
+    "code": 2,
+    "output": "{\"error\":\"The team folder is busy (another Tessel window is writing it).\"}\n"
+  },
+  "whileAHolds": {
+    "version": 1,
+    "panes": {},
+    "owners": {},
+    "teams": {}
+  },
+  "aResult": {
+    "code": 0,
+    "output": "{\"ok\":true,\"changed\":true,\"lost\":[]}\n"
+  },
+  "final": {
+    "version": 1,
+    "panes": {
+      "pane-a": {
+        "team": "team-a",
+        "num": 1,
+        "owner": "a"
+      }
+    },
+    "owners": {
+      "a": 1790360631577
+    },
+    "teams": {
+      "team-a": "a"
+    }
+  }
+}

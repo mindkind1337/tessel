@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="fr">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tessel — Proposition de design</title>
+<style>
+  :root { color-scheme: light dark; --bg:light-dark(#eef1f5,#101216); --panel:light-dark(#fff,#191c22); --term:light-dark(#f8fafc,#13161b); --line:light-dark(#cdd4de,#303640); --text:light-dark(#202735,#e7ebf2); --muted:light-dark(#556174,#a2adbd); --blue:light-dark(#245ac3,#8aafff); --selected:light-dark(#e9f0ff,#202e47); --green:light-dark(#206940,#91d7ad); --amber:light-dark(#815300,#efc477); }
+  * { box-sizing:border-box }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.55 'Segoe UI',sans-serif }
+  .intro { max-width:1500px; margin:auto; padding:28px 24px 18px }
+  .intro h1 { font-size:24px; font-weight:500; margin:0 0 4px }
+  .intro p { color:var(--muted); margin:0 }
+  .window { margin:0 24px 28px; border:1px solid var(--line); border-radius:10px; overflow:hidden; background:var(--panel) }
+  .titlebar { padding:12px 18px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:16px; flex-wrap:wrap }
+  .brand { font-weight:500; display:flex; align-items:center; gap:8px }
+  .brand svg { color:var(--blue) }
+  .caption { color:var(--muted); margin-left:auto; font-size:12px }
+  .shell { display:grid; grid-template-columns:216px minmax(0,1fr); min-height:610px }
+  .sidebar { padding:20px 12px; border-right:1px solid var(--line); display:flex; flex-direction:column; gap:8px }
+  .eyebrow { color:var(--muted); font-size:12px; margin:0 10px 10px }
+  .workspace { padding:12px; border-radius:6px }
+  .workspace.selected { background:var(--selected); box-shadow:inset 3px 0 var(--blue) }
+  .workspace small { display:block; color:var(--muted); margin-top:4px }
+  .workspace .attention { color:var(--amber) }
+  .utilities { margin-top:auto; padding:30px 12px 0; color:var(--muted); display:grid; gap:12px }
+  main { min-width:0 }
+  .context { padding:18px 20px 12px; display:flex; align-items:center; gap:16px; flex-wrap:wrap }
+  .context h2 { margin:0; font-size:18px; font-weight:500 }
+  .path { color:var(--muted); font:12px/1.5 Consolas,monospace; overflow-wrap:anywhere }
+  .context .primary { margin-left:auto }
+  button { border:1px solid var(--line); border-radius:6px; background:var(--panel); color:var(--text); font:inherit; min-height:34px; padding:5px 12px; cursor:pointer }
+  button:hover { background:var(--selected) }
+  button:focus-visible { outline:2px solid var(--blue); outline-offset:3px }
+  .primary { color:var(--blue); background:var(--selected); border-color:var(--blue) }
+  .controls { padding:0 20px 16px; display:flex; gap:8px; align-items:center; flex-wrap:wrap }
+  .controls .summary { color:var(--muted); margin-right:auto; font-size:12px }
+  .content { display:grid; grid-template-columns:minmax(0,1fr) 250px; border-top:1px solid var(--line) }
+  .content.without-tasks { grid-template-columns:minmax(0,1fr) }
+  .panes { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; padding:12px; background:var(--bg); align-content:start }
+  .pane { border:1px solid var(--line); border-radius:6px; background:var(--term); overflow:hidden; min-width:0 }
+  .pane.active { border-color:var(--blue); box-shadow:0 0 0 1px var(--blue) }
+  .pane header { background:var(--panel); border-bottom:1px solid var(--line); padding:9px 12px; display:flex; align-items:center; gap:8px; flex-wrap:wrap }
+  .agent { font-weight:500 }
+  .status { margin-left:auto; font:12px/1.5 'Segoe UI',sans-serif; color:var(--green) }
+  .status.waiting { color:var(--amber) }
+  .terminal { padding:16px; min-height:190px; font:13px/1.8 Consolas,monospace; overflow-wrap:anywhere }
+  .terminal p { margin:0 0 12px }
+  .dim { color:var(--muted) }
+  .green { color:var(--green) }
+  .prompt { color:var(--blue) }
+  .wide { grid-column:1/-1 }
+  .wide .terminal { min-height:115px }
+  .tasks { padding:16px; border-left:1px solid var(--line) }
+  .tasks h3 { font-size:14px; font-weight:500; margin:0 0 22px }
+  .task { padding:12px 0; border-bottom:1px solid var(--line) }
+  .task small { display:block; color:var(--muted); margin-top:6px }
+  .taskgroup { color:var(--muted); font-size:12px; margin:18px 0 0 }
+  .foot { padding:8px 16px; border-top:1px solid var(--line); display:flex; gap:16px; flex-wrap:wrap; color:var(--muted); font-size:12px }
+  .foot span:last-child { margin-left:auto }
+  .broadcast-note { padding:10px 20px; border-top:1px solid var(--amber); color:var(--amber); background:var(--panel) }
+  [hidden] { display:none!important }
+  @media(min-width:1550px) { .window { max-width:1452px; margin-left:auto; margin-right:auto } }
+  @media(max-width:1100px) { .shell { grid-template-columns:180px minmax(0,1fr) } .content { grid-template-columns:minmax(0,1fr) } .tasks { border-left:0; border-top:1px solid var(--line) } }
+  @media(max-width:720px) { .window { margin:0 10px 20px } .shell { grid-template-columns:minmax(0,1fr) } .sidebar { border-right:0; border-bottom:1px solid var(--line) } .sidebar .workspace:not(.selected),.utilities,.sidebar .eyebrow { display:none } .panes { grid-template-columns:minmax(0,1fr) } .context,.controls { padding-left:12px; padding-right:12px } .context .primary { margin-left:0 } .caption { margin-left:0 } }
+</style>
+<div class="intro">
+  <h1>Tessel, un espace de travail plus lisible</h1>
+  <p>Proposition visuelle · données fictives · les commandes Tâches et Diffusion permettent d’explorer la disposition.</p>
+</div>
+<div class="window">
+  <header class="titlebar">
+    <div class="brand"><svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2" y="3" width="20" height="18" rx="4"/><path d="M12 3v18m0-9h10M5 8l3 2-3 2"/></svg>Tessel</div>
+    <span class="caption">Maquette de l’espace de travail</span>
+  </header>
+  <div class="shell">
+    <aside class="sidebar" aria-label="Espaces de travail illustratifs">
+      <p class="eyebrow">ESPACES DE TRAVAIL</p>
+      <div class="workspace selected">Tessel<small>3 panneaux · 2 agents</small><small class="attention">! 1 agent attend une réponse</small></div>
+      <div class="workspace">Site web<small>2 panneaux · au repos</small></div>
+      <div class="workspace">Explorations<small>1 terminal</small></div>
+      <div class="utilities"><span>Sessions récentes</span><span>Agents et outils</span><span>Connexions MCP</span><span>Paramètres</span></div>
+    </aside>
+    <main>
+      <div class="context"><div><h2>Tessel</h2><div class="path">C:\Tessel &nbsp; / &nbsp; main</div></div><span class="primary" style="padding:6px 12px;border-radius:6px">+ Nouveau panneau</span></div>
+      <div class="controls"><span class="summary">1 agent en cours · 1 en attente</span><button id="broadcast" aria-pressed="false">Diffusion désactivée</button><button id="toggle-tasks" aria-expanded="true" aria-controls="tasks">Tâches</button></div>
+      <div id="broadcast-note" class="broadcast-note" hidden>Diffusion active · 3 panneaux destinataires · simulation</div>
+      <div class="content" id="content">
+        <div class="panes">
+          <section class="pane active" aria-label="Panneau actif : Codex">
+            <header><span class="agent">01 · Codex</span><span class="status">● En cours</span></header>
+            <div class="terminal"><p class="dim">C:\Tessel · main</p><p class="prompt">› Harmoniser les composants</p><p>Analyse des en-têtes de panneaux<br>et des états de sélection.</p><p class="dim">• Lecture de TerminalPane.vue</p></div>
+          </section>
+          <section class="pane">
+            <header><span class="agent">02 · Claude</span><span class="status waiting">! Attend une réponse</span></header>
+            <div class="terminal"><p class="dim">C:\Tessel · main</p><p>La revue est terminée.</p><p>Souhaites-tu conserver le mode<br>compact par défaut ?</p><p class="prompt">› _</p></div>
+          </section>
+          <section class="pane wide">
+            <header><span class="agent">03 · PowerShell</span><span class="status dim">Prêt</span></header>
+            <div class="terminal"><p><span class="prompt">PS C:\Tessel&gt;</span> git status --short</p><p class="prompt">PS C:\Tessel&gt; _</p></div>
+          </section>
+        </div>
+        <aside class="tasks" id="tasks"><h3>Tâches du projet</h3><p class="taskgroup">EN COURS · 1</p><div class="task">Harmoniser les composants<small>Codex · panneau 01</small></div><p class="taskgroup">À FAIRE · 1</p><div class="task">Vérifier la navigation clavier<small>Non assignée</small></div><p class="taskgroup">TERMINÉ · 1</p><div class="task">Revue des espacements<small>Claude · panneau 02</small></div></aside>
+      </div>
+      <footer class="foot"><span id="target-status">Saisie → 01 · Codex</span><span>Ctrl+Shift+Space · Nouveau panneau</span></footer>
+    </main>
+  </div>
+</div>
+<script>
+  const taskToggle = document.getElementById('toggle-tasks');
+  taskToggle.addEventListener('click', () => {
+    const open = taskToggle.getAttribute('aria-expanded') !== 'true';
+    taskToggle.setAttribute('aria-expanded', String(open));
+    document.getElementById('tasks').hidden = !open;
+    document.getElementById('content').classList.toggle('without-tasks', !open);
+  });
+  const broadcastToggle = document.getElementById('broadcast');
+  broadcastToggle.addEventListener('click', () => {
+    const on = broadcastToggle.getAttribute('aria-pressed') !== 'true';
+    broadcastToggle.setAttribute('aria-pressed', String(on));
+    broadcastToggle.textContent = on ? 'Désactiver la diffusion' : 'Diffusion désactivée';
+    document.getElementById('broadcast-note').hidden = !on;
+    document.getElementById('target-status').textContent = on ? 'Saisie → les 3 panneaux' : 'Saisie → 01 · Codex';
+  });
+</script>
+</html>

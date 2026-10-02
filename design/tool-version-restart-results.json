@@ -1,0 +1,63 @@
+{
+  "revision": "e02b26d",
+  "cases": [
+    {
+      "kind": "idle-old-version",
+      "restarted": [
+        {
+          "id": "pane-fixture",
+          "opts": {
+            "forTools": true
+          }
+        }
+      ]
+    },
+    {
+      "kind": "current-version",
+      "restarted": []
+    },
+    {
+      "kind": "no-session",
+      "restarted": []
+    },
+    {
+      "kind": "working",
+      "restarted": []
+    },
+    {
+      "kind": "focused",
+      "restarted": []
+    },
+    {
+      "kind": "draft",
+      "restarted": []
+    },
+    {
+      "kind": "approval",
+      "restarted": []
+    },
+    {
+      "kind": "pending",
+      "restarted": []
+    },
+    {
+      "kind": "uncertain-message",
+      "restarted": []
+    },
+    {
+      "kind": "unknown-history-draft",
+      "restarted": []
+    },
+    {
+      "kind": "unknown-but-empty",
+      "restarted": [
+        {
+          "id": "pane-fixture",
+          "opts": {
+            "forTools": true
+          }
+        }
+      ]
+    }
+  ]
+}

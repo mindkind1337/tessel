@@ -1,0 +1,186 @@
+{
+  "source": "C:\\Tessel\\design\\review-ed1554d",
+  "errors": [],
+  "cases": [
+    {
+      "theme": "classic",
+      "size": {
+        "width": 1366,
+        "height": 768
+      },
+      "layout": {
+        "card": {
+          "x": 143,
+          "y": 152.203125,
+          "right": 1223,
+          "bottom": 615.796875,
+          "clientWidth": 1078,
+          "scrollWidth": 1078
+        },
+        "chip": {
+          "x": 843.21875,
+          "right": 948.09375,
+          "text": "Between agents",
+          "pressed": "true",
+          "color": "rgb(207, 224, 255)"
+        },
+        "messages": [
+          "15:24\nMessage\n#1 Codex CLI → Claude Code: “Can you review the new task tools?” · not read yet",
+          "15:24\nMessage\n#1 Codex CLI → Claude Code: “The scroll correction passed the independent tests.” · read"
+        ]
+      }
+    },
+    {
+      "theme": "classic",
+      "size": {
+        "width": 800,
+        "height": 600
+      },
+      "layout": {
+        "card": {
+          "x": 16,
+          "y": 68.203125,
+          "right": 784,
+          "bottom": 531.796875,
+          "clientWidth": 766,
+          "scrollWidth": 766
+        },
+        "chip": {
+          "x": 404.21875,
+          "right": 509.09375,
+          "text": "Between agents",
+          "pressed": "true",
+          "color": "rgb(207, 224, 255)"
+        },
+        "messages": [
+          "15:24\nMessage\n#1 Codex CLI → Claude Code: “Can you review the new task tools?” · not read yet",
+          "15:24\nMessage\n#1 Codex CLI → Claude Code: “The scroll correction passed the independent tests.” · read"
+        ]
+      }
+    },
+    {
+      "theme": "classic",
+      "size": {
+        "width": 640,
+        "height": 400
+      },
+      "layout": {
+        "card": {
+          "x": 16,
+          "y": 30,
+          "right": 624,
+          "bottom": 370,
+          "clientWidth": 606,
+          "scrollWidth": 606
+        },
+        "chip": {
+          "x": 244.21875,
+          "right": 349.09375,
+          "text": "Between agents",
+          "pressed": "true",
+          "color": "rgb(207, 224, 255)"
+        },
+        "messages": [
+          "15:24\nMessage\n#1 Codex CLI → Claude Code: “Can you review the new task tools?” · not read yet",
+          "15:24\nMessage\n#1 Codex CLI → Claude Code: “The scroll correction passed the independent tests.” · read"
+        ]
+      }
+    },
+    {
+      "theme": "classic",
+      "filterToggle": true,
+      "expandedText": "Can you review the new task tools?\nPlease check persistence and assignment.",
+      "bothStates": true
+    },
+    {
+      "theme": "warp",
+      "size": {
+        "width": 1366,
+        "height": 768
+      },
+      "layout": {
+        "card": {
+          "x": 203,
+          "y": 188.75,
+          "right": 1163,
+          "bottom": 579.25,
+          "clientWidth": 958,
+          "scrollWidth": 958
+        },
+        "chip": {
+          "x": 787.21875,
+          "right": 892.09375,
+          "text": "Between agents",
+          "pressed": "true",
+          "color": "rgb(174, 213, 178)"
+        },
+        "messages": [
+          "15:24\nMessage\n#1 Codex CLI → Claude Code: “Can you review the new task tools?” · not read yet",
+          "15:24\nMessage\n#1 Codex CLI → Claude Code: “The scroll correction passed the independent tests.” · read"
+        ]
+      }
+    },
+    {
+      "theme": "warp",
+      "size": {
+        "width": 800,
+        "height": 600
+      },
+      "layout": {
+        "card": {
+          "x": 16,
+          "y": 104.75,
+          "right": 784,
+          "bottom": 495.25,
+          "clientWidth": 766,
+          "scrollWidth": 766
+        },
+        "chip": {
+          "x": 408.21875,
+          "right": 513.09375,
+          "text": "Between agents",
+          "pressed": "true",
+          "color": "rgb(174, 213, 178)"
+        },
+        "messages": [
+          "15:24\nMessage\n#1 Codex CLI → Claude Code: “Can you review the new task tools?” · not read yet",
+          "15:24\nMessage\n#1 Codex CLI → Claude Code: “The scroll correction passed the independent tests.” · read"
+        ]
+      }
+    },
+    {
+      "theme": "warp",
+      "size": {
+        "width": 640,
+        "height": 400
+      },
+      "layout": {
+        "card": {
+          "x": 16,
+          "y": 30,
+          "right": 624,
+          "bottom": 370,
+          "clientWidth": 606,
+          "scrollWidth": 606
+        },
+        "chip": {
+          "x": 248.21875,
+          "right": 353.09375,
+          "text": "Between agents",
+          "pressed": "true",
+          "color": "rgb(174, 213, 178)"
+        },
+        "messages": [
+          "15:24\nMessage\n#1 Codex CLI → Claude Code: “Can you review the new task tools?” · not read yet",
+          "15:24\nMessage\n#1 Codex CLI → Claude Code: “The scroll correction passed the independent tests.” · read"
+        ]
+      }
+    },
+    {
+      "theme": "warp",
+      "filterToggle": true,
+      "expandedText": "Can you review the new task tools?\nPlease check persistence and assignment.",
+      "bothStates": true
+    }
+  ]
+}

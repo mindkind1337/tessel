@@ -1,0 +1,31 @@
+{
+  "dir": "C:\\Tessel\\design\\owner-race-6QBcmg",
+  "interleaving": "A reads -> B reads/writes -> A writes -> A retires",
+  "current": {
+    "version": 1,
+    "panes": {
+      "pane-a": {
+        "team": "team-a",
+        "num": 1,
+        "owner": "window-a"
+      }
+    },
+    "owners": {
+      "window-a": 1790359589832
+    }
+  },
+  "retired": {
+    "ok": true,
+    "retired": [
+      "team-b"
+    ]
+  },
+  "otherWindowMembers": [
+    {
+      "id": "pane-b",
+      "num": 2,
+      "title": "B",
+      "active": false
+    }
+  ]
+}

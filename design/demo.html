@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="fr" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tessel — Démo interactive</title>
+  <link rel="stylesheet" href="warp.css">
+  <script src="demo.js" defer></script>
+</head>
+<body>
+  <header class="titlebar"><span class="brand"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="2" y="3" width="20" height="18" rx="4"/><path d="M12 3v18m0-9h10M5 8l3 2-3 2"/></svg>Tessel <span class="demo-label">DÉMO</span></span><div class="projectbar"><h1 id="project-name"></h1><span class="path-separator">/</span><p id="project-path"></p></div><div class="toolbar-actions"><label class="layout-label"><span class="sr-only">Disposition</span><select id="layout" aria-label="Disposition"><option value="grid">Grille</option><option value="columns">Colonnes</option><option value="rows">Lignes</option></select></label><button id="broadcast" aria-pressed="false">Diffusion</button><button id="toggle-tasks" aria-expanded="true" aria-controls="tasks">Tâches</button><button id="new-pane" class="primary">+ Nouveau</button></div></header>
+  <div class="app-shell">
+    <aside class="sidebar"><div class="section-heading">Espaces de travail</div><nav id="workspaces" aria-label="Espaces de travail"></nav><button id="add-workspace" class="subtle">+ Nouvel espace</button><div class="sessions-heading section-heading">Sessions <span id="session-count"></span></div><nav id="sessions" aria-label="Sessions du projet"></nav><div class="sidebar-bottom"><button id="theme" aria-label="Passer au thème clair">Thème clair</button><div class="demo-actions"><button id="guide">Aide</button><button id="reset">Réinitialiser</button></div><span class="simulation-note">Commandes et agents simulés</span></div></aside>
+    <main>
+      <div id="broadcast-note" class="broadcast-note" hidden></div>
+      <div class="work-area" id="work-area"><div id="panes" class="panes"></div><aside id="tasks" class="tasks"><header><h2>Tâches</h2><span id="task-count" class="muted"></span></header><form id="task-form"><label class="sr-only" for="task-title">Nouvelle tâche</label><input id="task-title" placeholder="Une tâche à accomplir…" maxlength="140" required><button type="submit" aria-label="Ajouter la tâche">+</button></form><div id="task-list"></div></aside></div>
+      <footer><span id="target"></span><span id="summary" class="muted"></span><span id="save-status">Sauvegardé dans ce navigateur</span></footer>
+    </main>
+  </div>
+  <dialog id="modal"><form id="modal-form"><header><h2 id="modal-title"></h2><button type="button" id="close-modal" aria-label="Fermer la fenêtre">×</button></header><div id="modal-body"></div><div id="modal-actions" class="modal-actions"></div></form></dialog>
+  <div id="toast" role="status" hidden></div>
+</body>
+</html>

@@ -1,0 +1,36 @@
+{
+  "version": 2,
+  "tasks": [
+    {
+      "id": "task-1-570526",
+      "title": "Review terminal scrolling",
+      "column": "done",
+      "paneId": "review-a",
+      "wsId": "workspace-1",
+      "createdBy": "review-a",
+      "doingSince": 1790366495489
+    },
+    {
+      "id": "task-3-272396",
+      "title": "Save retry",
+      "column": "doing",
+      "paneId": "review-a",
+      "wsId": "workspace-1",
+      "createdBy": "review-a",
+      "doingSince": 1790366495448
+    },
+    {
+      "id": "task-4-223116",
+      "title": "Saved before renderer crash",
+      "column": "doing",
+      "paneId": "review-a",
+      "wsId": "workspace-1",
+      "createdBy": "review-a",
+      "doingSince": 1790366495454
+    }
+  ],
+  "appliedRequests": [
+    "review-team/review-a__test-add.json",
+    "review-team/review-a__add-then-delete.json"
+  ]
+}

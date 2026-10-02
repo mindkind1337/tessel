@@ -1,0 +1,95 @@
+{
+  "name": "tessel",
+  "version": "1.2.1",
+  "description": "Split-panel multi-terminal for Windows (Electron + Vue + xterm.js + node-pty)",
+  "main": "out/main/index.js",
+  "author": "Jean-Claude Trottier",
+  "license": "MIT",
+  "scripts": {
+    "dev": "node launch.mjs dev",
+    "build": "electron-vite build && node scripts/check-bundle.mjs",
+    "preview": "node launch.mjs preview",
+    "start": "node launch.mjs preview",
+    "lint": "eslint . --fix",
+    "format": "prettier --write .",
+    "test": "vitest run",
+    "dist": "npm run build && electron-builder --win --x64 --publish never",
+    "dist:dir": "npm run build && electron-builder --win --x64 --dir --publish never"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9",
+    "node-pty": "^1.1.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@vitejs/plugin-vue": "^6.0.7",
+    "@vue/test-utils": "^2.4.11",
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/addon-search": "^0.15.0",
+    "@xterm/addon-serialize": "^0.13.0",
+    "@xterm/addon-web-links": "^0.11.0",
+    "@xterm/addon-webgl": "^0.18.0",
+    "@xterm/headless": "^5.5.0",
+    "@xterm/xterm": "^5.5.0",
+    "electron": "^42.4.0",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "^5.0.0",
+    "eslint": "^10.5.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-vue": "^10.9.2",
+    "globals": "^17.6.0",
+    "jsdom": "^29.1.1",
+    "prettier": "^3.8.4",
+    "puppeteer-core": "^25.1.0",
+    "vite": "^8.0.16",
+    "vitest": "^4.1.9",
+    "vue": "^3.5.13"
+  },
+  "build": {
+    "appId": "com.jeanclaudetrottier.tessel",
+    "productName": "Tessel",
+    "copyright": "Copyright (c) 2026 Jean-Claude Trottier",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "node_modules/node-pty/**"
+    ],
+    "npmRebuild": false,
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico",
+      "artifactName": "Tessel-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Tessel",
+      "uninstallDisplayName": "Tessel",
+      "deleteAppDataOnUninstall": false
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "mindkind1337",
+        "repo": "tessel",
+        "releaseType": "release"
+      }
+    ]
+  }
+}
