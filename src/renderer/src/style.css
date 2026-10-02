@@ -5416,6 +5416,8 @@ button.act-stat:hover,
   color: var(--text-dim);
   font-size: 12.5px;
   line-height: 1.5;
+  /* A long path (a file outside the project) wraps instead of running out. */
+  overflow-wrap: anywhere;
 }
 .confirm-code {
   margin: 10px 0 0;
@@ -6536,6 +6538,11 @@ button.act-stat:hover,
   align-items: center;
   gap: 10px;
   padding: 8px 12px;
+  /* As the toolbar: it covers the window's top edge, where Windows draws its
+     own min / max / close buttons; this bar's buttons stay left of them. */
+  min-height: 40px;
+  box-sizing: border-box;
+  padding-right: 150px;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
   color: var(--text-dim);
