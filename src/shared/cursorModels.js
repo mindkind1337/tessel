@@ -370,8 +370,64 @@ export function cursorModelOnScreen(lines, models) {
   if (cursorPickerShown(lines)) return null
   const list = (Array.isArray(lines) ? lines : []).map((l) => String(l || '')).filter((l) => l.trim())
   for (let i = list.length - 1; i >= 0; i--) {
-    const found = cursorModelFromStatusLine(list[i], models)
-    if (found) return found
+    const found = cursorStatusLine(list[i], models)
+    if (found) return found.model
+  }
+  return null
+}
+
+// Once a conversation has begun, Cursor adds to that line what it knows of the
+// context, after " · ": "GPT-5.6 Sol 272K High · MAX · 12.3% · 2 files
+// edited" (the share of the model's window used, else "45.2k tokens" while
+// the window is unknown); a label of its own may come first. The line ->
+// { model, segment: its model's part, rest: the parts after it } or null.
+// Every part after the model must be one of those, so text in the
+// conversation is never taken for it.
+const STATUS_TAIL = [/^MAX$/, /^\d+(?:\.\d+)?%$/, /^\d+(?:\.\d+)?[kM]? tokens?$/, /^\d+ files? edited$/]
+function cursorStatusLine(line, models) {
+  const parts = tidy(line).split(' · ')
+  if (parts.length > 6) return null
+  for (let i = 0; i < Math.min(parts.length, 2); i++) {
+    const model = cursorModelFromStatusLine(parts[i], models)
+    if (!model) continue
+    const rest = parts.slice(i + 1)
+    return rest.every((p) => STATUS_TAIL.some((re) => re.test(p))) ? { model, segment: parts[i], rest } : null
+  }
+  return null
+}
+
+// "272K" / "1M" -> tokens (Cursor's sizes are thousands and millions).
+function sizeTokens(word) {
+  const m = /^(\d+(?:\.\d+)?)([KM])$/i.exec(word || '')
+  return m ? Math.round(Number(m[1]) * (m[2].toUpperCase() === 'M' ? 1_000_000 : 1_000)) : 0
+}
+
+// The context Cursor's status line shows (its own count: the share of the
+// window its last request used) -> { usedTokens, windowTokens, percentage }
+// | { none: true } (the status line, with nothing about the context yet: a
+// new conversation) | null (no status line on screen, or its picker is open).
+// The window is the size the line gives with the model ("272K"), else the
+// one in the listed model's label; unknown: nothing is shown.
+export function cursorContextOnScreen(lines, models) {
+  if (cursorPickerShown(lines)) return null
+  const list = (Array.isArray(lines) ? lines : []).map((l) => String(l || '')).filter((l) => l.trim())
+  for (let i = list.length - 1; i >= 0; i--) {
+    const found = cursorStatusLine(list[i], models)
+    if (!found) continue
+    const listed = (Array.isArray(models) ? models : []).find((m) => m && m.id === found.model.row)
+    const windowTokens =
+      found.segment.split(' ').map(sizeTokens).find((n) => n > 0) || tidy(listed && listed.label).split(' ').map(sizeTokens).find((n) => n > 0) || 0
+    const pct = found.rest.find((p) => p.endsWith('%'))
+    const count = found.rest.find((p) => / tokens?$/.test(p))
+    if (!windowTokens || (!pct && !count)) return { none: true }
+    let used = 0
+    if (pct) used = Math.round((Number(pct.slice(0, -1)) / 100) * windowTokens)
+    else {
+      const m = /^(\d+(?:\.\d+)?)([kM]?) /.exec(count)
+      used = m ? Math.round(Number(m[1]) * (m[2] === 'M' ? 1_000_000 : m[2] === 'k' ? 1_000 : 1)) : 0
+    }
+    if (!(used > 0) || used > windowTokens * 1.5) return { none: true }
+    return { usedTokens: used, windowTokens, percentage: Math.round((used / windowTokens) * 100) }
   }
   return null
 }

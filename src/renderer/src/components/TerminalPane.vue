@@ -47,7 +47,7 @@ import { cacheCountdown } from '../promptCache'
 import { isViewed } from '../../../shared/fileKinds'
 import { effectiveAgent, launchSignature, launchSessionValues, inYoloFolder, YOLO_ARGS, YOLO_ENV } from '../../../shared/agentPrefs'
 import { getAgentSessionOptionCatalog, modelOptions, resolveSessionOptionDefaults, composedModelId, listedModelValues, valuesOnListedRow } from '../../../shared/agentSessionOptions'
-import { cursorModelOnScreen, cursorPickerFilter, cursorPickerShown } from '../../../shared/cursorModels'
+import { cursorContextOnScreen, cursorModelOnScreen, cursorPickerFilter, cursorPickerShown } from '../../../shared/cursorModels'
 import { paneModels } from '../paneModels'
 import { modelsFor, refreshIfStale } from '../agentModels'
 import { modelChoiceLabel, sessionPillLabel } from '../sessionOptionLabels'
@@ -113,6 +113,8 @@ watch(
 // until its conversation answers with another model. Checked every 20 s, each
 // time it finishes working, and when one of those files changes.
 const agentModel = ref(null) // { model, effort, source } | null
+// Cursor: the context its status line shows ({ usedTokens, windowTokens }), for the chat view's ring.
+const screenContext = ref(null)
 // An effort in the app's language, as the chat's composer says it ("Moyen").
 const effortName = (effort) => nativeChatSessionChoiceLabel({ value: effort, label: effort })
 const modelText = computed(() => {
@@ -208,6 +210,9 @@ async function refreshModel() {
     // while that picker is open, what it showed stays.
     if (n.agentId === 'cursor' && term) {
       const lines = screenText(8).split('\n')
+      // Kept while its status line is out of sight; gone in a new conversation.
+      const ctx = cursorContextOnScreen(lines, modelsFor('cursor'))
+      if (ctx) screenContext.value = ctx.none ? null : ctx
       if (cursorPickerShown(lines) && agentModel.value) return
       const seen = cursorModelOnScreen(lines, modelsFor('cursor'))
       if (seen) {
@@ -2830,6 +2835,7 @@ const paneMenuBindings = computed(() => ({
         :set-option="chatSetOption"
         :list-files="chatListFiles"
         :context-model="(agentModel && agentModel.model) || ''"
+        :screen-context="node.agentId === 'cursor' ? screenContext : null"
         :permission-mode="chatPermissionMode"
         :mode-blocked="chatModeBlocked"
         :set-permission-mode="chatSetPermissionMode"

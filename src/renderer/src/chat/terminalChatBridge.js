@@ -333,6 +333,23 @@ export function withContextWindow(events, model, agent = 'claude') {
   })
 }
 
+// The context the agent's own status line shows (Cursor: its share of the
+// window, read by the pane: cursorModels.js cursorContextOnScreen), for an
+// agent whose file never says it -> the ring's usage, or null.
+export function screenContextUsage(ctx) {
+  const pos = (v) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.round(v) : 0)
+  const used = pos(ctx && ctx.usedTokens)
+  const window = pos(ctx && ctx.windowTokens)
+  if (!used || !window) return null
+  return { usedTokens: used, windowTokens: window, percentage: Math.round((used / window) * 100), estimated: false, categories: [] }
+}
+
+// The command that compacts the agent's conversation (the low-context
+// banner's Compact): Cursor's is /summarize, the others' /compact.
+export function compactCommand(agent) {
+  return composerAgent(agent) === 'cursor' ? '/summarize' : '/compact'
+}
+
 // ---- The permission mode (the composer's mode picker) ------------------------
 
 // Claude Code's and OpenClaude's key to the next permission mode (Shift+Tab).

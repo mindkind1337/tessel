@@ -192,6 +192,20 @@ describe('messages and commands', () => {
     await mountChat({ contextModel: 'claude-opus-5-5' })
     expect(composer().props('contextUsage')).toMatchObject({ usedTokens: 50000, windowTokens: 200000, percentage: 25 })
   })
+
+  it("Cursor's ring: what its status line says (its file never says it), and Compact runs its /summarize", async () => {
+    const sendMessage = vi.fn(() => ({ ok: true }))
+    await mountChat({ agent: 'cursor', agentName: 'Cursor', sendMessage, screenContext: { usedTokens: 244800, windowTokens: 272000 } })
+    expect(composer().props('contextUsage')).toMatchObject({ usedTokens: 244800, windowTokens: 272000, percentage: 90, estimated: false })
+    const banner = document.querySelector('[data-test="chat-context-low"]')
+    expect(banner).not.toBeNull()
+    const compact = [...banner.querySelectorAll('button')].find((b) => /Compact/.test(b.textContent))
+    compact.click()
+    await settle()
+    expect(sendMessage.mock.calls[0][0]).toBe('/summarize')
+    await wrapper.setProps({ screenContext: null })
+    expect(composer().props('contextUsage')).toBeNull()
+  })
 })
 
 describe('files dropped on the chat view', () => {

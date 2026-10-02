@@ -16,7 +16,9 @@ import {
   hasModePicker,
   keysAllowed,
   mergePendingSends,
-  ownModelPicker
+  ownModelPicker,
+  screenContextUsage,
+  compactCommand
 } from '../chat/terminalChatBridge'
 
 describe('Cursor in the terminal chat view', () => {
@@ -80,5 +82,21 @@ describe('Cursor in the terminal chat view', () => {
   it('no question card keys for Cursor (its questions are answered in its terminal)', () => {
     const prompt = { questions: [{ question: 'Pick', options: [{ label: 'A' }, { label: 'B' }] }] }
     expect(answerKeyGroups('cursor', prompt, [['A']])).toEqual([])
+  })
+})
+
+describe("Cursor's context ring and Compact", () => {
+  it('shows the context its status line gave, as its own count', () => {
+    expect(screenContextUsage({ usedTokens: 34000, windowTokens: 272000 })).toEqual({ usedTokens: 34000, windowTokens: 272000, percentage: 13, estimated: false, categories: [] })
+    expect(screenContextUsage(null)).toBeNull()
+    expect(screenContextUsage({ usedTokens: 34000 })).toBeNull()
+    expect(screenContextUsage({ usedTokens: 0, windowTokens: 272000 })).toBeNull()
+  })
+
+  it('compacts with its own /summarize, the others with /compact', () => {
+    expect(compactCommand('cursor')).toBe('/summarize')
+    expect(compactCommand('claude')).toBe('/compact')
+    expect(compactCommand('openclaude')).toBe('/compact')
+    expect(compactCommand('codex')).toBe('/compact')
   })
 })
