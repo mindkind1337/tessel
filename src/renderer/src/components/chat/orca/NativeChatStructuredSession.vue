@@ -395,6 +395,7 @@ defineExpose({
       />
     </div>
     <NativeChatContextBanner
+      :style="{ zoom: fontScale.scale.value }"
       :usage="contextUsage"
       :compact="compact"
       :busy="turnRunning || !!prompt"
@@ -403,6 +404,7 @@ defineExpose({
     />
     <NativeChatQueuedMessages
       v-if="c.queuedCards"
+      :style="{ zoom: fontScale.scale.value }"
       :cards="c.queuedCards.value"
       :can-send-now="canSendQueuedNow"
       :send-now="onQueuedSendNow"
@@ -411,6 +413,7 @@ defineExpose({
       :focus-composer="focusComposer"
     />
     <NativeChatComposer
+      :style="{ zoom: fontScale.scale.value }"
       ref="composerRef"
       v-model="draft"
       :pane-key="paneKey"

@@ -935,6 +935,7 @@ const title = computed(() => t('chat.orca.transcriptView.title', 'Conversation o
         </div>
       </div>
       <NativeChatContextBanner
+        :style="{ zoom: fontScale.scale.value }"
         :usage="contextUsage"
         :compact="compact"
         :busy="working || !!card"
@@ -942,6 +943,7 @@ const title = computed(() => t('chat.orca.transcriptView.title', 'Conversation o
         :agent-name="fromAgent"
       />
       <NativeChatQueuedMessages
+        :style="{ zoom: fontScale.scale.value }"
         :cards="queuedCards"
         :can-send-now="true"
         :send-now-title="t('chat.orca.queued.typeNowHint', 'Type it into the terminal now, without waiting for the end of the turn')"
@@ -951,6 +953,7 @@ const title = computed(() => t('chat.orca.transcriptView.title', 'Conversation o
         :focus-composer="() => composerRef && composerRef.focus && composerRef.focus()"
       />
       <NativeChatComposer
+        :style="{ zoom: fontScale.scale.value }"
         ref="composerRef"
         v-model="draft"
         :pane-key="composerKey"
