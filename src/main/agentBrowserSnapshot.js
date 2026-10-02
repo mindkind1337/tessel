@@ -61,18 +61,29 @@ const isTrue = (v) => v === true || v === 'true'
 const isFalse = (v) => v === false || v === 'false'
 
 // Whether a field holds something: its value's presence, never the value.
-function hasText(node, nodeById) {
+// A number box (the hours, minutes, day… of a time or date field too) shows a
+// placeholder while empty ("--", "mm", "yyyy") and still reports a value of
+// 0: it holds something only when the text it shows has a digit.
+function hasText(node, nodeById, role = '') {
+  const shown = shownText(node, nodeById)
+  if (role === 'spinbutton' && shown) return /\p{N}/u.test(shown)
   if (node.value && node.value.value != null) return String(node.value.value).length > 0
+  return !!shown
+}
+
+// The text a field shows (its own text nodes), to be looked at, never listed.
+function shownText(node, nodeById) {
   const stack = [...(node.childIds || [])]
   let looked = 0
+  let text = ''
   while (stack.length && looked++ < MAX_OPTION_NODES) {
     const child = nodeById.get(stack.pop())
     if (!child) continue
     const role = (child.role && child.role.value) || ''
-    if ((role === 'StaticText' || role === 'staticText') && String((child.name && child.name.value) || '').trim()) return true
-    if (Array.isArray(child.childIds)) stack.push(...child.childIds)
+    if (role === 'StaticText' || role === 'staticText') text += String((child.name && child.name.value) || '').trim()
+    else if (Array.isArray(child.childIds)) stack.push(...child.childIds)
   }
-  return false
+  return text
 }
 
 // The labels of a list's chosen options (its option nodes marked selected).
@@ -108,7 +119,7 @@ export function controlState(node, role, nodeById = new Map()) {
   if (isTrue(expanded)) out.push('expanded')
   else if (isFalse(expanded)) out.push('collapsed')
   // A field (a combobox one types in too): filled or empty. A list: its chosen option.
-  if (FIELD_ROLES.has(role) || (role === 'combobox' && prop(node, 'editable') !== undefined)) out.push(hasText(node, nodeById) ? 'filled' : 'empty')
+  if (FIELD_ROLES.has(role) || (role === 'combobox' && prop(node, 'editable') !== undefined)) out.push(hasText(node, nodeById, role) ? 'filled' : 'empty')
   else if (role === 'combobox' || role === 'listbox') {
     const chosen = chosenOptions(node, nodeById)
     if (chosen.length) out.push(`option ${chosen.map((c) => `"${c}"`).join(', ')}`)

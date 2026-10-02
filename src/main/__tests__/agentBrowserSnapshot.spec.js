@@ -103,6 +103,35 @@ describe('snapshot of the accessibility tree', () => {
     expect(controlState({ value: { value: 'typed' }, properties: [] }, 'combobox')).toBe('')
   })
 
+  // As Chromium 142 reports <input type="time"> and <input type="date">: an
+  // empty box has a value of 0 and shows a placeholder.
+  it('an empty hours, minutes or day box (value 0, a placeholder shown) is empty; one showing digits is filled', () => {
+    const box = (id, name, value, shown) => [
+      { nodeId: id, role: { value: 'spinbutton' }, name: { value: name }, backendDOMNodeId: Number(id), ...(value === undefined ? {} : { value: { type: 'number', value } }), childIds: shown == null ? [] : [`${id}t`] },
+      ...(shown == null ? [] : [{ nodeId: `${id}t`, role: { value: 'StaticText' }, name: { value: shown }, childIds: [`${id}i`] }, { nodeId: `${id}i`, role: { value: 'InlineTextBox' }, name: { value: shown } }])
+    ]
+    const entries = walk([
+      { nodeId: '1', role: { value: 'RootWebArea' }, childIds: ['2', '3', '4', '5', '6', '7', '8'] },
+      ...box('2', 'Hours', 0, '--'),
+      ...box('3', 'Minutes', 0, '--'),
+      ...box('4', 'Hours set', 9, '09'),
+      ...box('5', 'Day', 0, 'jj'),
+      ...box('6', 'Year', 0, 'aaaa'),
+      // A number field: empty has no value and shows nothing; a custom one may only have a value.
+      ...box('7', 'Empty number', undefined, null),
+      ...box('8', 'Custom', 5, null)
+    ])
+    expect(formatSnapshot(entries).snapshot.split('\n')).toEqual([
+      '[@e1] number input "Hours" (empty)',
+      '[@e2] number input "Minutes" (empty)',
+      '[@e3] number input "Hours set" (filled)',
+      '[@e4] number input "Day" (empty)',
+      '[@e5] number input "Year" (empty)',
+      '[@e6] number input "Empty number" (empty)',
+      '[@e7] number input "Custom" (filled)'
+    ])
+  })
+
   it('pieces of text that follow each other in one element are one line: letters keep their word, words their space', () => {
     const letters = (text, from) => text.split('').map((c, i) => ({ nodeId: `${from}${i}`, role: { value: 'StaticText' }, name: { value: c } }))
     const hi = letters('Hi there. Ok', 'h')
