@@ -7,7 +7,7 @@
  * Used by ChatMarkdown as its renderCodeBlock, and by the approval card.
  */
 import { Comment, Fragment, Text, defineComponent, h, isVNode } from 'vue'
-import { Code2, FolderOpen } from 'lucide-vue-next'
+import { Code2, File, FolderOpen } from 'lucide-vue-next'
 import { t } from '../../../i18n'
 import { getCodeBlockLanguageLabel } from './rich-markdown-code-block-languages.js'
 import NativeChatCopyButton from './NativeChatCopyButton.vue'
@@ -59,13 +59,21 @@ export default defineComponent({
       const language = props.language
       const copyLabel = t('chat.orca.copyCode', 'Copy code')
       const reveal = revealButton(codeBlockPath(code))
+      // A path: a header like a language's, its buttons always in view at the
+      // top right (never over the path itself).
+      const header = language || reveal
       return h('div', { class: 'nc-code-block' }, [
-        language
+        header
           ? h('div', { class: 'nc-code-header' }, [
-              h('span', { 'data-code-language': language, class: 'nc-code-language' }, [
-                h(Code2, { class: 'nc-code-language-icon', 'aria-hidden': 'true' }),
-                h('span', { class: 'nc-code-language-label' }, getCodeBlockLanguageLabel(language))
-              ]),
+              language
+                ? h('span', { 'data-code-language': language, class: 'nc-code-language' }, [
+                    h(Code2, { class: 'nc-code-language-icon', 'aria-hidden': 'true' }),
+                    h('span', { class: 'nc-code-language-label' }, getCodeBlockLanguageLabel(language))
+                  ])
+                : h('span', { class: 'nc-code-language', 'data-code-path': '' }, [
+                    h(File, { class: 'nc-code-language-icon', 'aria-hidden': 'true' }),
+                    h('span', { class: 'nc-code-language-label' }, t('chat.orca.codePath', 'Path'))
+                  ]),
               h('span', { class: 'nc-code-actions-inline' }, [
                 reveal,
                 code
@@ -80,11 +88,11 @@ export default defineComponent({
           : null,
         h(
           'pre',
-          { class: ['nc-code-pre', 'nc-scrollbar-sleek', { 'is-bare': !language }] },
+          { class: ['nc-code-pre', 'nc-scrollbar-sleek', { 'is-bare': !header }] },
           children
         ),
-        code && !language
-          ? h('div', { class: 'nc-code-copy-float' }, [reveal, h(NativeChatCopyButton, { text: code, label: copyLabel })])
+        code && !header
+          ? h(NativeChatCopyButton, { text: code, label: copyLabel, class: 'nc-code-copy-float' })
           : null
       ])
     }

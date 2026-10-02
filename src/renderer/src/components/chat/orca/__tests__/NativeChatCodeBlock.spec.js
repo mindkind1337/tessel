@@ -43,7 +43,7 @@ describe('NativeChatCodeBlock', () => {
     mountBlock(undefined, 'y')
     expect(wrapper.find('[data-code-language]').exists()).toBe(false)
     expect(wrapper.find('pre').classes()).toContain('is-bare')
-    expect(wrapper.find('.nc-code-copy-float button').exists()).toBe(true)
+    expect(wrapper.find('button.nc-code-copy-float').exists()).toBe(true)
   })
 
   it('empty code has no copy button', () => {

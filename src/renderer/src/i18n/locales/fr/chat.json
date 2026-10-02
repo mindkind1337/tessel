@@ -536,6 +536,7 @@
   "chat.orca.copyMessage.copy": "Copier le message",
   "chat.orca.copyMessage.copied": "Copié",
   "chat.orca.copyCode": "Copier le code",
+  "chat.orca.codePath": "Chemin",
   "chat.orca.scrollMessageToTop": "Faire défiler ce message en haut",
   "chat.orca.goal.sentAsGoal": "Envoyé comme objectif",
   "chat.orca.notices.compaction": "Contexte compacté",
