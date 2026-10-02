@@ -125,7 +125,7 @@ export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence =
   // subagents: the children this conversation started, by id ({ id, title,
   // type, model, state: 'running' | 'done' | 'quiet', startedAt, endedAt,
   // tokens, lastAt }), as the pane header's list shows them (AgentChildren).
-  const meta = { agent: null, model: null, sessionId: null, status: 'starting', error: '', rateLimit: null, commands: null, queuedIds: [], subagents: {}, backgroundTasks: 0 }
+  const meta = { agent: null, model: null, sessionId: null, status: 'starting', error: '', rateLimit: null, commands: null, queuedIds: [], queuedCards: [], subagents: {}, backgroundTasks: 0 }
 
   let changedItems = new Set()
   let changedSubs = new Set()
@@ -180,6 +180,18 @@ export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence =
     const has = meta.queuedIds.includes(id)
     if (queued && !has) meta.queuedIds = [...meta.queuedIds, id]
     else if (!queued && has) meta.queuedIds = meta.queuedIds.filter((x) => x !== id)
+  }
+
+  // Held messages (the cards above the composer: { id, text, at, imageCount }),
+  // in order; never transcript items (after Orca's queued-message cards, MIT,
+  // Copyright (c) 2026 Lovecast Inc.). A card leaves when it is deleted or
+  // becomes a 'user' row (sent, or failed).
+  function setCard(card) {
+    const i = meta.queuedCards.findIndex((c) => c.id === card.id)
+    meta.queuedCards = i < 0 ? [...meta.queuedCards, card] : meta.queuedCards.map((c, j) => (j === i ? card : c))
+  }
+  function dropCard(id) {
+    if (meta.queuedCards.some((c) => c.id === id)) meta.queuedCards = meta.queuedCards.filter((c) => c.id !== id)
   }
 
   // A turn opens once the agent took a message (its echo) or starts working
@@ -319,6 +331,7 @@ export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence =
         }
         put(itemId, body, {}, at)
         lastUserItemId = itemId
+        dropCard(String(ev.id))
         setQueued(String(ev.id), ev.status === 'queued')
         submit(String(ev.id), DISPATCH[ev.status] || 'pending', at)
         if (ev.status === 'accepted') openTurnFor(itemId, at)
@@ -331,6 +344,12 @@ export function createJournalAdapter({ now = Date.now, epoch = 'tessel', fence =
         if (ev.status === 'accepted') openTurnFor(agentJournalSubmissionKey(String(ev.id)), at)
         break
       }
+      case 'queuedMessage':
+        if (ev.id) setCard({ id: String(ev.id), text: String(ev.text ?? ''), at, ...(Number.isSafeInteger(ev.imageCount) && ev.imageCount > 0 ? { imageCount: ev.imageCount } : {}) })
+        break
+      case 'queuedRemoved':
+        if (ev.id) dropCard(String(ev.id))
+        break
       case 'teamAccepted':
       case 'teamFailed': {
         for (const id of Array.isArray(ev.ids) ? ev.ids : []) setQueued(String(id), false)

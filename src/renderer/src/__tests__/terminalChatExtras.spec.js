@@ -1,8 +1,7 @@
-// The chat view over a terminal agent: command rows, held messages,
+// The chat view over a terminal agent: command rows,
 // background tasks, Claude's context window (pure helpers).
 import { describe, expect, it } from 'vitest'
-import { claudeContextWindow, heldMessageIds, mergeCommandMarkers, splitCommandTurns, terminalBackgroundTasks } from '../chat/terminalChatExtras.js'
-import { agentJournalSubmissionKey } from '../chat/orca/shared/agent-session-journal-item-key.js'
+import { claudeContextWindow, mergeCommandMarkers, splitCommandTurns, terminalBackgroundTasks } from '../chat/terminalChatExtras.js'
 
 const user = (id, text, at, extra = {}) => ({ type: 'user', id, text, origin: 'user', status: 'accepted', at, ...extra })
 
@@ -47,19 +46,6 @@ describe('slash commands as "Ran" rows', () => {
       { id: 'l2', command: '/effort low', sentAt: 20000 }
     ])
     expect(mergeCommandMarkers([{ id: 'l1', command: '/compact', sentAt: 10000 }], [{ id: 'f', command: '/compact', sentAt: 10000 + 3 * 60 * 1000 }])).toHaveLength(2)
-  })
-})
-
-describe('messages held by the delivery', () => {
-  it('the ones not typed yet, by message id, with why; none without a reason', () => {
-    const pending = [
-      { id: 1, delivered: true },
-      { id: 2, delivered: false }
-    ]
-    const held = heldMessageIds(pending, 'Waiting: a line is typed in its terminal.')
-    expect([...held.entries()]).toEqual([[agentJournalSubmissionKey('pending-2'), 'Waiting: a line is typed in its terminal.']])
-    expect(heldMessageIds(pending, '')).toBeUndefined()
-    expect(heldMessageIds([{ id: 1, delivered: true }], 'x')).toBeUndefined()
   })
 })
 

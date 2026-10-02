@@ -842,9 +842,10 @@ const chatDisabledReason = computed(() =>
   props.node.sleeping ? t('pane.chatView.asleep', 'Asleep: it wakes up when you open this pane, then you can write to it.') : ''
 )
 // What you write in the chat: typed into the terminal by Tessel's delivery
-// (held while it asks for approval or you have a line typed there); with
+// (held while it works, asks for approval or you have a line typed there:
+// a card above the composer until then); with
 // images (their files' paths pasted first) or as a slash command
-// (callbacks: { images, command, onDelivered, onFailed }).
+// (callbacks: { images, command, onDelivered, onFailed, onQueued, onTyped }).
 function chatSend(text, callbacks) {
   if (ctx.sendFromChatView) ctx.sendFromChatView(props.node.id, text, callbacks)
   else if (callbacks && callbacks.onFailed) callbacks.onFailed()

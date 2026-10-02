@@ -769,5 +769,20 @@
   "chat.orca.agyCommands.fast": "Activer le mode rapide (sans plan d'abord)",
   "chat.orca.agyCommands.context": "Afficher l'utilisation du contexte (dans son terminal)",
   "chat.orca.agyCommands.addDir": "Ajouter un dossier à son espace de travail",
-  "chat.orca.agyCommands.usage": "Afficher l'utilisation de son quota de modèles"
+  "chat.orca.agyCommands.usage": "Afficher l'utilisation de son quota de modèles",
+  "chat.orca.queued.imageOne": "+ 1 image",
+  "chat.orca.queued.imageMany": "+ {{count}} images",
+  "chat.orca.queued.listLabel": "Messages en attente de la fin du tour",
+  "chat.orca.queued.editLabel": "Modifier le message en attente",
+  "chat.orca.queued.save": "Enregistrer",
+  "chat.orca.queued.cancel": "Annuler",
+  "chat.orca.queued.sendNowHint": "L'envoyer maintenant, sans attendre la fin du tour",
+  "chat.orca.queued.sendNow": "Envoyer maintenant",
+  "chat.orca.queued.edit": "Modifier le message",
+  "chat.orca.queued.delete": "Supprimer",
+  "chat.orca.queued.failed": "Le message en attente n'a pas pu être modifié.",
+  "chat.orca.queued.editGone": "Déjà envoyé : votre texte modifié est dans la zone de saisie.",
+  "chat.orca.queued.gone": "Ce message est déjà en cours d'envoi.",
+  "chat.orca.queued.typeNowHint": "Le taper dans le terminal maintenant, sans attendre la fin du tour",
+  "chat.orca.queued.untilTurnEnd": "Tapé à la fin du tour"
 }

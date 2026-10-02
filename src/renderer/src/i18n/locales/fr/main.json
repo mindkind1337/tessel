@@ -784,6 +784,8 @@
       "noApproval": "Cette demande a déjà reçu une réponse ou n'existe plus.",
       "noClaude": "Claude Code est introuvable. Installez-le, puis réessayez.",
       "notOpen": "Ce chat n'est pas en cours d'exécution.",
+      "queuedCannot": "Il ne peut pas prendre de message maintenant : celui-ci part à la fin du tour.",
+      "queuedGone": "Ce message a déjà été envoyé.",
       "sessionOpen": "Cette conversation est déjà ouverte dans un autre panneau.",
       "signin": "Claude n'est pas connecté. Connectez-vous à Claude Code, puis réessayez.",
       "spawnFailed": "Claude Code n'a pas pu être lancé.",

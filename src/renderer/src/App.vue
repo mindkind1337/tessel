@@ -4806,6 +4806,7 @@ function deliverToAgent(leafId, text, meta = {}) {
       action: { label: t('app.unsent.check', 'Check'), run: () => resolveUnsent(leafId) }
     })
   }
+  return item
 }
 
 // A pane joined (teamId) or left (null) a team.
@@ -4971,6 +4972,47 @@ function requeueDelivery(id, item) {
   pendingMessages[id].unshift(item)
   clearTimeout(pendingTimer)
   pendingTimer = setTimeout(flushPending, 2000)
+}
+
+// A message from a terminal agent's chat view still waiting to be typed (its
+// card above the composer, after Orca's queued-message cards, MIT, Copyright
+// (c) 2026 Lovecast Inc.): edit, delete or send now. state: { typing,
+// cancelled }, set by its guard right before the paste. A deleted message is
+// never typed: out of the queue, or, caught between the queue and the paste,
+// refused by its guard and dropped. -> each { ok } | { ok: false, code: 'gone' }
+function heldDelivery(leafId, item, state) {
+  const queued = () => (pendingMessages[leafId] ? pendingMessages[leafId].indexOf(item) : -1)
+  const gone = { ok: false, code: 'gone' }
+  return {
+    remove() {
+      const i = queued()
+      if (i >= 0) {
+        pendingMessages[leafId].splice(i, 1)
+        if (!pendingMessages[leafId].length) delete pendingMessages[leafId]
+        return { ok: true }
+      }
+      if (state.typing) return gone
+      state.cancelled = true
+      item.meta.dropIfNotNow = true
+      return { ok: true }
+    },
+    edit(text) {
+      if (queued() < 0 || typeof text !== 'string' || !text.trim()) return gone
+      item.text = text
+      return { ok: true }
+    },
+    // Typed as soon as the pane allows, ahead of the others and without
+    // waiting for the turn's end.
+    sendNow() {
+      const i = queued()
+      if (i < 0) return gone
+      pendingMessages[leafId].splice(i, 1)
+      pendingMessages[leafId].unshift(item)
+      item.meta.waitIdle = false
+      flushPending()
+      return { ok: true }
+    }
+  }
 }
 
 // An unconfirmed message known sent after all (the user says so, or its
@@ -6611,14 +6653,25 @@ const switchingLeaves = new Set()
 // (deliverToAgent: held during an approval or while a line is typed there).
 // images: Tessel's copies of the attached images (their paths pasted
 // first); command: 'paste' | 'type' (a slash command: typed, Enter, done).
-function sendFromChatView(leafId, text, { onDelivered, onFailed, images, command } = {}) {
+// A message (not a command) waits for the end of the agent's turn as a card
+// (onQueued(controls): heldDelivery's; onTyped(): its paste starts).
+function sendFromChatView(leafId, text, { onDelivered, onFailed, onQueued, onTyped, images, command } = {}) {
   const leaf = findLeaf(leafId)
   const files = Array.isArray(images) ? images : []
   if (!leaf || leaf.kind !== 'agent' || !leaf.chatView || leaf.sleeping || !files.every(isPastedImageCopy) || (command && command !== 'paste' && command !== 'type')) {
     if (onFailed) onFailed()
     return false
   }
-  deliverToAgent(leafId, text, { source: 'you', onDelivered, onFailed, onDropped: onFailed, ...(files.length ? { images: files } : {}), ...(command ? { command } : {}) })
+  const state = { typing: false, cancelled: false }
+  const guard = () => {
+    if (state.cancelled) return false
+    state.typing = true
+    if (onTyped) onTyped()
+    return true
+  }
+  const held = command ? {} : { waitIdle: true, guard }
+  const item = deliverToAgent(leafId, text, { source: 'you', onDelivered, onFailed, onDropped: onFailed, ...held, ...(files.length ? { images: files } : {}), ...(command ? { command } : {}) })
+  if (item && !command && onQueued) onQueued(heldDelivery(leafId, item, state))
   return true
 }
 // Its agent really ended (not stopped by a restart, a wake, a sleep or a

@@ -319,7 +319,7 @@ describe('ChatPane.vue', () => {
     expect(api.send).not.toHaveBeenCalled()
     await type('run the tests')
     await enter()
-    expect(api.send).toHaveBeenCalledWith({ paneId: 'c1', text: 'run the tests' })
+    expect(api.send).toHaveBeenCalledWith({ paneId: 'c1', text: 'run the tests', hold: true })
     expect(draft()).toBe('')
     expect(unsent()).toHaveLength(0)
   })
@@ -336,7 +336,7 @@ describe('ChatPane.vue', () => {
     )
     await type('message A')
     await enter()
-    expect(api.send).toHaveBeenCalledWith({ paneId: 'c1', text: 'message A' })
+    expect(api.send).toHaveBeenCalledWith({ paneId: 'c1', text: 'message A', hold: true })
     // The draft stays until the pane has the message (sent or kept as "Not sent").
     expect(draft()).toBe('message A')
     // B is typed over it while A is on its way; A is refused: B stays.
@@ -362,7 +362,7 @@ describe('ChatPane.vue', () => {
     expect(entries).toHaveLength(1)
     expect(entries[0].querySelector('[data-test="chat-unsent-error"]').textContent).toBe('pipe closed')
     await click(entries[0].querySelector('[data-test="chat-unsent-retry"]'))
-    expect(api.send).toHaveBeenLastCalledWith({ paneId: 'c1', text: 'message A' })
+    expect(api.send).toHaveBeenLastCalledWith({ paneId: 'c1', text: 'message A', hold: true })
     expect(unsent()).toHaveLength(0)
     expect(draft()).toBe('draft B')
 
@@ -405,7 +405,7 @@ describe('ChatPane.vue', () => {
     await settle()
     expect(sendBtn().disabled).toBe(false)
     await enter()
-    expect(api.send).toHaveBeenCalledWith({ paneId: 'c1', text: 'early' })
+    expect(api.send).toHaveBeenCalledWith({ paneId: 'c1', text: 'early', hold: true })
 
     // Asleep, then waking up: the message waits in the main process.
     emit({ type: 'status', state: 'asleep' })
@@ -416,7 +416,7 @@ describe('ChatPane.vue', () => {
     await settle()
     expect(sendBtn().disabled).toBe(false)
     await enter()
-    expect(api.send).toHaveBeenLastCalledWith({ paneId: 'c1', text: 'wake up' })
+    expect(api.send).toHaveBeenLastCalledWith({ paneId: 'c1', text: 'wake up', hold: true })
   })
 
   it('a history that could not be read: an explicit state with Retry, no empty chat, no start', async () => {
@@ -474,6 +474,64 @@ describe('ChatPane.vue', () => {
     await settle()
     expect(document.querySelectorAll('[data-test="nc-user-row"]')).toHaveLength(2)
     expect(document.querySelector('[data-test="nc-user-queued"]')).toBeNull()
+  })
+
+  it('a held message is a card above the composer (not a row): edit, delete, send now; it becomes a row when it goes out', async () => {
+    const cards = () => [...document.querySelectorAll('[data-test="chat-queued-card"]')]
+    api.queuedEdit = vi.fn(async () => ({ ok: true }))
+    api.queuedDelete = vi.fn(async () => ({ ok: true }))
+    api.queuedSend = vi.fn(async () => ({ ok: true }))
+    // The main process's word on reload: a card the journal had and it no longer holds never went out.
+    history = {
+      ...history,
+      events: [{ seq: 1, event: { type: 'queuedMessage', id: 'lost', text: 'lost one', at: 5 } }],
+      seq: 1,
+      queuedMessages: [{ id: 'q1', text: 'first card', at: 10 }]
+    }
+    await mountPane()
+    expect(cards().map((c) => c.querySelector('[data-test="chat-queued-text"]').textContent)).toEqual(['first card'])
+    expect(document.querySelector('[data-test="nc-user-row"]').textContent).toContain('lost one')
+    emit({ type: 'status', state: 'working' })
+    emit({ type: 'queuedMessage', id: 'q2', text: 'second card', imageCount: 2 })
+    await settle()
+    expect(cards()).toHaveLength(2)
+    expect(cards()[1].querySelector('[data-test="chat-queued-caption"]').textContent).toContain('+ 2 images')
+    // Never a transcript row while it waits.
+    expect([...document.querySelectorAll('[data-test="nc-user-row"]')].some((r) => r.textContent.includes('second card'))).toBe(false)
+    // Edit in place: Enter saves through the main process.
+    await click(cards()[0].querySelector('[data-test="chat-queued-edit"]'))
+    const editor = document.querySelector('[data-test="chat-queued-editor"]')
+    editor.value = 'first, reworded'
+    editor.dispatchEvent(new Event('input'))
+    await key(editor, { key: 'Enter' })
+    expect(api.queuedEdit).toHaveBeenCalledWith({ paneId: 'c1', id: 'q1', text: 'first, reworded' })
+    emit({ type: 'queuedMessage', id: 'q1', text: 'first, reworded' })
+    await settle()
+    expect(cards()[0].querySelector('[data-test="chat-queued-text"]').textContent).toBe('first, reworded')
+    // Send now (Claude, while a turn runs), delete.
+    await click(cards()[1].querySelector('[data-test="chat-queued-send-now"]'))
+    expect(api.queuedSend).toHaveBeenCalledWith({ paneId: 'c1', id: 'q2' })
+    await click(cards()[0].querySelector('[data-test="chat-queued-delete"]'))
+    expect(api.queuedDelete).toHaveBeenCalledWith({ paneId: 'c1', id: 'q1' })
+    emit({ type: 'queuedRemoved', id: 'q1' })
+    // Out: its row now, its card gone.
+    emit({ type: 'user', id: 'q2', text: 'second card', origin: 'user', status: 'sent' })
+    await settle()
+    expect(cards()).toHaveLength(0)
+    expect([...document.querySelectorAll('[data-test="nc-user-row"]')].some((r) => r.textContent.includes('second card'))).toBe(true)
+  })
+
+  it('a card edited after it was sent: the new words wait in the composer, and it says so', async () => {
+    api.queuedEdit = vi.fn(async () => ({ ok: false, code: 'gone', error: 'This message was already sent.' }))
+    history = { ...history, queuedMessages: [{ id: 'q1', text: 'card', at: 10 }] }
+    await mountPane()
+    await click(document.querySelector('[data-test="chat-queued-edit"]'))
+    const editor = document.querySelector('[data-test="chat-queued-editor"]')
+    editor.value = 'late words'
+    editor.dispatchEvent(new Event('input'))
+    await click(document.querySelector('[data-test="chat-queued-save"]'))
+    expect(draft()).toContain('late words')
+    expect(document.querySelector('[data-test="chat-session-error"]').textContent).toContain('Already sent')
   })
 
   it('Esc interrupts while working, not when idle; so does Stop', async () => {
@@ -1184,7 +1242,7 @@ describe('ChatPane.vue', () => {
     const banner = document.querySelector('[data-test="chat-context-low"]')
     expect(banner.textContent).toContain('90% full')
     await click(document.querySelector('[data-test="chat-context-compact"]'))
-    expect(api.send).toHaveBeenCalledWith({ paneId: 'c1', text: '/compact' })
+    expect(api.send).toHaveBeenCalledWith({ paneId: 'c1', text: '/compact', hold: true })
     emit({ type: 'compacted', trigger: 'manual' })
     await settle()
     expect(document.querySelector('[data-test="chat-context-low"]')).toBeNull()

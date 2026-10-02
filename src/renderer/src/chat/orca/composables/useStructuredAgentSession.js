@@ -127,6 +127,18 @@ export function useStructuredAgentSession({ paneId, api = typeof window !== 'und
       }
       adapter.replay([...settle, ...[...live.values()].map((q) => ({ ...q, type: 'question', status: 'pending' }))])
     }
+    // The held messages are the main process's word too: a card it no longer
+    // holds never went out (Tessel stopped meanwhile) and shows as not sent.
+    if (Array.isArray(res.queuedMessages)) {
+      const held = res.queuedMessages.filter((m) => m && m.id)
+      const kept = new Set(held.map((m) => String(m.id)))
+      const lost = adapter.meta.queuedCards.filter((c) => !kept.has(c.id))
+      adapter.replay([
+        ...lost.map((c) => ({ type: 'user', id: c.id, text: c.text, origin: 'user', status: 'failed', at: c.at })),
+        ...adapter.meta.queuedCards.map((c) => ({ type: 'queuedRemoved', id: c.id })),
+        ...held.map((m) => ({ ...m, type: 'queuedMessage' }))
+      ])
+    }
     // The last "/" catalog, kept apart from the journal (a short tail can miss it).
     if (adapter.meta.commands === null && Array.isArray(res.commands)) adapter.apply({ type: 'commands', commands: res.commands })
     feed(adapter.snapshotEvent())
@@ -194,6 +206,17 @@ export function useStructuredAgentSession({ paneId, api = typeof window !== 'und
   }
   // Compacts the conversation (the engine asks the agent: Codex's compact,
   // OpenCode's summarize; Claude's /compact goes as a message).
+  // A held message's card (the main process holds it until the turn ends):
+  // edit its text, delete it, or send it now. -> { ok } | { ok: false, code:
+  // 'gone' (already sent) | 'cannot' | ..., error }.
+  async function queuedAction(name, payload) {
+    if (!api || typeof api[name] !== 'function') return { ok: false }
+    try {
+      return (await api[name]({ paneId, ...payload })) || { ok: false }
+    } catch (err) {
+      return { ok: false, error: (err && err.message) || String(err) }
+    }
+  }
   async function compact() {
     if (!api || !api.compact) return { ok: false }
     try {
@@ -312,6 +335,11 @@ export function useStructuredAgentSession({ paneId, api = typeof window !== 'und
     outbox: computed(() => []),
     blockedClientMessageId: computed(() => null),
     send,
+    // Tessel's held messages: their cards above the composer, and their actions.
+    queuedCards: computed(() => meta.queuedCards || []),
+    editQueued: (id, text) => queuedAction('queuedEdit', { id, text }),
+    deleteQueued: (id) => queuedAction('queuedDelete', { id }),
+    sendQueuedNow: (id) => queuedAction('queuedSend', { id }),
     retry: async () => false,
     isWorking,
     workingStartedAt,

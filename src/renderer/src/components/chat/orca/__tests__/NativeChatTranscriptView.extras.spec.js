@@ -1,5 +1,5 @@
 // The terminal agent chat view, closer to the chat pane: its right-click
-// menu, background-task dock, skills, earlier history, held messages, slash
+// menu, background-task dock, skills, earlier history, waiting cards, slash
 // command rows, context window and file drops (a fake window.shellApi).
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
@@ -155,7 +155,7 @@ describe('earlier history', () => {
 })
 
 describe('messages and commands', () => {
-  it('a message the delivery holds shows as waiting, with why, until it is typed; a send scrolls to it', async () => {
+  it('a message not typed yet is a card above the composer, with why it waits, until it is typed; a send scrolls to it', async () => {
     const sendMessage = vi.fn()
     let held = 'Waiting: a line is typed in its terminal.'
     await mountChat({ sendMessage, sendHeldReason: () => held })
@@ -163,11 +163,54 @@ describe('messages and commands', () => {
     await composer().props('send')('Hold me')
     await flushPromises()
     expect(list().props('scrollToLatestSignal')).toBe(before + 1)
-    expect(document.querySelector('[data-test="nc-user-queued"]').textContent).toContain('Waiting: a line is typed in its terminal.')
+    const card = () => document.querySelector('[data-test="chat-queued-card"]')
+    expect(card().querySelector('[data-test="chat-queued-caption"]').textContent).toContain('Waiting: a line is typed in its terminal.')
+    const rows = () => [...document.querySelectorAll('[data-test="nc-user-row"]')].filter((r) => r.textContent.includes('Hold me'))
+    expect(rows()).toHaveLength(0)
     held = ''
-    sendMessage.mock.calls[0][1].onDelivered()
+    sendMessage.mock.calls[0][1].onTyped()
     await flushPromises()
-    expect(document.querySelector('[data-test="nc-user-queued"]')).toBeNull()
+    expect(card()).toBeNull()
+    expect(rows()).toHaveLength(1)
+  })
+
+  it("a card's edit, delete and send now go to its delivery's controls; one already typed is said, never typed again", async () => {
+    const sendMessage = vi.fn()
+    await mountChat({ sendMessage, working: true })
+    const cards = () => [...document.querySelectorAll('[data-test="chat-queued-card"]')]
+    const controls = [0, 1, 2].map(() => ({ remove: vi.fn(() => ({ ok: true })), edit: vi.fn(() => ({ ok: true })), sendNow: vi.fn(() => ({ ok: true })) }))
+    for (const [i, words] of ['first', 'second', 'third'].entries()) {
+      await composer().props('send')(words)
+      sendMessage.mock.calls[i][1].onQueued(controls[i])
+    }
+    await settle()
+    expect(cards().map((c) => c.querySelector('[data-test="chat-queued-text"]').textContent)).toEqual(['first', 'second', 'third'])
+    expect(cards()[0].querySelector('[data-test="chat-queued-caption"]').textContent).toContain('Typed when the turn ends')
+    // Edit in place.
+    cards()[0].querySelector('[data-test="chat-queued-edit"]').click()
+    await settle()
+    const editor = document.querySelector('[data-test="chat-queued-editor"]')
+    editor.value = 'first, better'
+    editor.dispatchEvent(new Event('input'))
+    editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+    await settle()
+    expect(controls[0].edit).toHaveBeenCalledWith('first, better')
+    expect(cards()[0].querySelector('[data-test="chat-queued-text"]').textContent).toBe('first, better')
+    // Delete: gone from the cards (its delivery will never type it).
+    cards()[1].querySelector('[data-test="chat-queued-delete"]').click()
+    await settle()
+    expect(controls[1].remove).toHaveBeenCalled()
+    expect(cards()).toHaveLength(2)
+    // Send now.
+    cards()[1].querySelector('[data-test="chat-queued-send-now"]').click()
+    await settle()
+    expect(controls[2].sendNow).toHaveBeenCalled()
+    // Already being typed: the card stays until its delivery says, and why is shown.
+    controls[0].remove.mockReturnValueOnce({ ok: false, code: 'gone' })
+    cards()[0].querySelector('[data-test="chat-queued-delete"]').click()
+    await settle()
+    expect(cards()).toHaveLength(2)
+    expect(document.querySelector('[data-test="chat-session-error"]').textContent).toContain('already being sent')
   })
 
   it('slash commands from the file are "Ran" rows (each run once, with the one sent from here), not your messages', async () => {
