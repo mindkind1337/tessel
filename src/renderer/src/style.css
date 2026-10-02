@@ -9547,7 +9547,9 @@ button.act-stat:hover,
   align-items: center;
   gap: 4px;
   overflow: hidden;
-  padding: 0 4px;
+  /* The right as wide as the left looks (its padding plus the team number's
+     centred room), so a filled row is even on both sides. */
+  padding: 0 6px 0 4px;
   border-radius: 4px;
   color: var(--wts-muted);
   font-size: 11px;
