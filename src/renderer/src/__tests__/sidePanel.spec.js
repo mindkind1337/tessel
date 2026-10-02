@@ -106,6 +106,40 @@ describe('SidePanel.vue', () => {
     w.unmount()
   })
 
+  it('Dashboard is the first tab; a card focuses its pane and leaves fullscreen', async () => {
+    const projects = [{ id: 'ws1', name: 'proj', panes: [{ id: 'p1', kind: 'agent', agentId: 'claude', title: 'Claude Code', state: 'working' }] }]
+    const w = mount(SidePanel, { props: { tab: 'dashboard', root: ROOT, workspaceId: 'ws1', projects, fullscreen: true }, attachTo: document.body })
+    expect(w.findAll('.side-tab')[0].attributes('data-test')).toBe('side-tab-dashboard')
+    expect(w.find('[data-test="side-tab-dashboard"]').classes()).toContain('on')
+    await w.find('[data-test="adb-card"]').trigger('click')
+    expect(w.emitted('update:fullscreen')).toEqual([[false]])
+    expect(w.emitted('focus-pane')).toEqual([['p1']])
+    w.unmount()
+  })
+
+  it('Fullscreen: the button toggles it, Esc leaves it', async () => {
+    const w = make('tasks')
+    await w.find('[data-test="side-fullscreen"]').trigger('click')
+    expect(w.emitted('update:fullscreen')).toEqual([[true]])
+    await w.setProps({ fullscreen: true })
+    expect(w.find('[data-test="side-fullscreen"]').attributes('aria-pressed')).toBe('true')
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    expect(w.emitted('update:fullscreen')).toEqual([[true], [false]])
+    w.unmount()
+  })
+
+  it('+: a menu to open a browser page, a terminal or a chat', async () => {
+    const w = make('tasks')
+    await w.find('[data-test="side-add"]').trigger('click')
+    const menu = document.querySelector('[data-test="side-add-menu"]')
+    expect([...menu.querySelectorAll('button')].map((b) => b.dataset.test)).toEqual(['side-add-browser', 'side-add-terminal', 'side-add-chat'])
+    menu.querySelector('[data-test="side-add-browser"]').click()
+    await nextTick()
+    expect(w.emitted('quick-add')).toEqual([['browser']])
+    expect(document.querySelector('[data-test="side-add-menu"]')).toBe(null)
+    w.unmount()
+  })
+
   it('Files: the tree with git letters, ignored entries dimmed with ⊘', async () => {
     const w = make('files')
     await flushPromises()

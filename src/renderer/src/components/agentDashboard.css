@@ -1,0 +1,441 @@
+/* The Dashboard tab of the right side panel (AgentDashboard.vue): a header
+   (total, a line per state, a bar, Status / Project, chips, search, Sleep
+   idle), then a section per group with a grid of agent cards: one column in a
+   narrow panel, two or three when it is wide or fullscreen. */
+.adb {
+  --adb-waiting: #f97316;
+  --adb-working: #3ddc84;
+  --adb-done: #10b981;
+  --adb-idle: color-mix(in srgb, var(--text-dim) 55%, transparent);
+  --adb-sleeping: color-mix(in srgb, var(--text-dim) 28%, transparent);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--surface);
+  font-size: 12.5px;
+  container-type: inline-size;
+}
+
+/* --- Header --- */
+.adb-head {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 10px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.adb-head-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.adb-head-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.adb-total {
+  color: var(--text-strong);
+  font-size: 18px;
+  font-weight: 650;
+  line-height: 1.2;
+}
+.adb-summary {
+  overflow: hidden;
+  margin-top: 2px;
+  color: var(--text-dim);
+  font-size: 11.5px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.adb-group-switch {
+  display: inline-flex;
+  flex: 0 0 auto;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-2);
+}
+.adb-group-btn {
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 11.5px;
+}
+.adb-group-btn:hover {
+  color: var(--text);
+}
+.adb-group-btn.on {
+  border-color: var(--border-strong);
+  background: color-mix(in srgb, var(--text-strong) 10%, transparent);
+  color: var(--text-strong);
+}
+.adb-group-btn:focus-visible,
+.adb-chip:focus-visible,
+.adb-sleep:focus-visible,
+.adb-card:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.adb-bar {
+  display: flex;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--surface-3);
+}
+.adb-bar-seg {
+  height: 100%;
+  transition: width 200ms;
+}
+.adb-bar-seg + .adb-bar-seg {
+  margin-left: 1px;
+}
+.adb-bar-seg.adb-waiting,
+.adb-chip-dot.adb-waiting {
+  background: var(--adb-waiting);
+}
+.adb-bar-seg.adb-working,
+.adb-chip-dot.adb-working {
+  background: var(--adb-working);
+}
+.adb-bar-seg.adb-done,
+.adb-chip-dot.adb-done {
+  background: var(--adb-done);
+}
+.adb-bar-seg.adb-idle,
+.adb-chip-dot.adb-idle {
+  background: var(--adb-idle);
+}
+.adb-bar-seg.adb-sleeping,
+.adb-chip-dot.adb-sleeping {
+  background: var(--adb-sleeping);
+}
+
+.adb-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.adb-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+.adb-chip:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
+.adb-chip.on {
+  border-color: var(--border-strong);
+  background: color-mix(in srgb, var(--text-strong) 10%, transparent);
+  color: var(--text-strong);
+}
+.adb-chip-dot {
+  display: inline-block;
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+.adb-chip-count {
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.adb-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.adb-search {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  min-width: 0;
+}
+.adb-search-icon {
+  position: absolute;
+  left: 8px;
+  color: var(--text-dim);
+  pointer-events: none;
+}
+.adb-search-input {
+  width: 100%;
+  height: 26px;
+  padding: 0 24px 0 26px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 12px;
+}
+.adb-search-input::-webkit-search-cancel-button {
+  display: none;
+}
+.adb-search-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.adb-search-clear {
+  position: absolute;
+  right: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.adb-search-clear:hover {
+  color: var(--text-strong);
+}
+.adb-sleep {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+.adb-sleep:hover:not(:disabled) {
+  background: var(--surface-3);
+  color: var(--text-strong);
+}
+.adb-sleep:disabled {
+  color: var(--text-dim);
+  cursor: default;
+  opacity: 0.6;
+}
+
+/* --- Groups and cards --- */
+.adb-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 10px 12px;
+}
+.adb-group {
+  margin-top: 8px;
+}
+.adb-group-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 6px;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.adb-group-name {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.adb-group-count {
+  color: color-mix(in srgb, var(--text-dim) 70%, transparent);
+  font-variant-numeric: tabular-nums;
+}
+.adb-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+}
+@container (min-width: 520px) {
+  .adb-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@container (min-width: 840px) {
+  .adb-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+@container (min-width: 1280px) {
+  .adb-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+.adb-card {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  padding: 8px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  transition:
+    background 100ms,
+    border-color 100ms;
+}
+.adb-card:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-3);
+}
+.adb-card.focused {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+}
+.adb-card-icon {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  background: var(--surface);
+}
+.adb-card-dot {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--surface-2);
+}
+.adb-card:hover .adb-card-dot {
+  background: var(--surface-3);
+}
+.adb-card-text {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+}
+.adb-card-title {
+  overflow: hidden;
+  color: var(--text-strong);
+  font-size: 12.5px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.adb-card.unvisited .adb-card-title {
+  font-weight: 600;
+}
+.adb-card-sub {
+  overflow: hidden;
+  color: var(--text-dim);
+  font-size: 11px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.adb-pill {
+  flex: 0 0 auto;
+  padding: 1px 7px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--text-dim) 14%, transparent);
+  color: var(--text-dim);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.adb-pill-waiting {
+  background: color-mix(in srgb, var(--adb-waiting) 18%, transparent);
+  color: var(--adb-waiting);
+}
+.adb-pill-working {
+  background: color-mix(in srgb, var(--adb-working) 16%, transparent);
+  color: var(--adb-working);
+}
+.adb-pill-done {
+  background: color-mix(in srgb, var(--adb-done) 16%, transparent);
+  color: var(--adb-done);
+}
+
+.adb-empty {
+  padding: 28px 12px;
+  text-align: center;
+}
+.adb-empty-title {
+  color: var(--text-strong);
+  font-weight: 600;
+}
+.adb-empty-hint {
+  margin-top: 4px;
+  color: var(--text-dim);
+}
+
+/* --- Side panel: fullscreen and the + menu (SidePanel.vue) --- */
+.side-tab-action {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: color-mix(in srgb, var(--text-dim) 75%, transparent);
+  cursor: pointer;
+}
+.side-tab-action:hover,
+.side-tab-action.on {
+  background: var(--surface-3);
+  color: var(--text-strong);
+}
+.side-tab-action:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.side-add-menu .ctx-menu-item {
+  justify-content: flex-start;
+  gap: 8px;
+}
+/* Fullscreen: the panel covers the workspace (sidebar and panes), never the
+   toolbar above it. Above a maximized pane (100); the workspace is its own
+   stacking layer meanwhile, so the toolbar's menus still open over it. */
+.workspace:has(> .task-panel.side-fullscreen) {
+  isolation: isolate;
+}
+.task-panel.side-fullscreen {
+  position: absolute;
+  inset: 0;
+  z-index: 110;
+  flex-basis: auto !important;
+  border-left: 0;
+}
+.task-panel.side-fullscreen .task-resize {
+  display: none;
+}
