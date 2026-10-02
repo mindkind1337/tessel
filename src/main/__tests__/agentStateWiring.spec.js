@@ -66,6 +66,7 @@ function wire(hostRecords = new Map()) {
     prepareStatus: setup,
     // Folder pre-trust is covered by agentFolderTrust.spec.js: inert here.
     agentFolderTrust: { apply: async () => 'off' },
+    app: { getPath: () => dir },
     STATUS_PROVIDERS,
     host,
     ptyInfo,

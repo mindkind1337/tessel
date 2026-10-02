@@ -42,6 +42,7 @@ function harness({ helper = 'fake.exe', createDelay = null, sshMode = { mode: 's
   const handlers = {}
   vm.runInNewContext(handlerSource, {
     ipcMain: { handle: (k, v) => (handlers[k] = v) },
+    app: { getPath: () => "fixture-user-data" },
     getShells: () => [{ id: 'shell', name: 'fixture', file: 'fake.exe', args: [] }],
     defaultShell: () => ({}),
     remoteHosts: {
