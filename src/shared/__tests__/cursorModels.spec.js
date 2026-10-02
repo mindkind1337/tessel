@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 import fs from 'fs'
 import path from 'path'
 import { parseCursorModelList, listedToCatalogModels } from '../agentModelProbe'
-import { parseCursorModelId, groupCursorModels, composeCursorModel, decomposeCursorModel, cursorPickerFilter, cursorModelFromStatusLine, cursorModelOnScreen, cursorPickerShown } from '../cursorModels'
+import { parseCursorModelId, groupCursorModels, composeCursorModel, decomposeCursorModel, cursorPickerFilter, cursorModelFromStatusLine, cursorModelOnScreen, cursorPickerShown, cursorContextOnScreen } from '../cursorModels'
 import { catalogModelsFor, sessionOptionLaunchText, composedModelId, listedModelValues, valuesOnListedRow, getAgentSessionOptionCatalog } from '../agentSessionOptions'
 
 const output = fs.readFileSync(path.join(__dirname, 'fixtures', 'cursor-list-models.txt'), 'utf8')
@@ -178,6 +178,29 @@ describe("Cursor's own picker and status line", () => {
     const picker = ['Available models', 'Filter:', '→ Auto', 'Grok 4.7   256K High Fast', 'Type to filter • Enter to select • Tab to edit']
     expect(cursorPickerShown(picker)).toBe(true)
     expect(cursorModelOnScreen(picker, models)).toBeNull()
+  })
+
+  it('still reads the model once the line also says the context', () => {
+    const screen = ['→ Plan, search, build anything', 'GPT-5.6 Luna 272K Medium · 12.5% · 2 files edited', 'C:\Tessel · main']
+    expect(cursorModelOnScreen(screen, models)).toMatchObject({ model: 'gpt-5.6-luna-medium' })
+    expect(cursorModelOnScreen(['GPT-5.6 Luna 272K Medium · and then it said'], models)).toBeNull()
+  })
+
+  // Hand-made status lines (the layout of Cursor's prompt bar, 2026.10).
+  it("reads the context its status line shows, in the model's window", () => {
+    expect(cursorContextOnScreen(['GPT-5.6 Luna 272K Medium · 12.5%', 'C:\Tessel · main'], models)).toEqual({ usedTokens: 34000, windowTokens: 272000, percentage: 13 })
+    expect(cursorContextOnScreen(['GPT-5.6 Sol 1M High · MAX · 90% · 3 files edited'], models)).toEqual({ usedTokens: 900000, windowTokens: 1000000, percentage: 90 })
+    // Its count while the share is unknown.
+    expect(cursorContextOnScreen(['GPT-5.6 Luna 272K Medium · 45.2k tokens'], models)).toEqual({ usedTokens: 45200, windowTokens: 272000, percentage: 17 })
+  })
+
+  it('says nothing without the window, the share, or its status line', () => {
+    // A new conversation: the line without the context.
+    expect(cursorContextOnScreen(['GPT-5.6 Luna 272K Medium'], models)).toEqual({ none: true })
+    // Auto: no window known.
+    expect(cursorContextOnScreen(['Auto · 40%'], models)).toEqual({ none: true })
+    expect(cursorContextOnScreen(['the context is at 40%', 'C:\Tessel · main'], models)).toBeNull()
+    expect(cursorContextOnScreen(['Available models', 'GPT-5.6 Luna 272K Medium · 12%', 'Type to filter'], models)).toBeNull()
   })
 
   it('switches mid-session by name: /model with the id would only filter to nothing', () => {

@@ -31,7 +31,8 @@
 //   setPermissionMode(mode) -> { ok, error }: Claude Code's and OpenClaude's
 //   Shift+Tab, run by the pane; Codex changes it in its own /permissions
 //   picker, opened in the terminal), the context ring (contextModel: the
-//   model, for its context window: terminalChatExtras.js) and voice typing
+//   model, for its context window: terminalChatExtras.js; screenContext:
+//   what the agent's status line says of it, when its file never does) and voice typing
 //   (dictate, dictationTitle); paneActions (the right-click menu's: split,
 //   maximize, close; Paste goes into the composer, "Continue in a terminal"
 //   shows the terminal), background ({ ids, listedAt }: what the agent's last
@@ -81,7 +82,9 @@ import {
   tagTesselTurns,
   waitingCard,
   withCommandMarkers,
-  withContextWindow
+  withContextWindow,
+  screenContextUsage,
+  compactCommand
 } from '../../../chat/terminalChatBridge.js'
 import { heldMessageIds, mergeCommandMarkers, splitCommandTurns, terminalBackgroundTasks } from '../../../chat/terminalChatExtras.js'
 import { t } from '../../../i18n'
@@ -110,6 +113,9 @@ const props = defineProps({
   setOption: { type: Function, default: undefined },
   listFiles: { type: Function, default: undefined },
   contextModel: { type: String, default: '' },
+  // What the agent's status line says of its context ({ usedTokens,
+  // windowTokens } or null), for an agent whose file never says it (Cursor).
+  screenContext: { type: Object, default: null },
   // The permission mode picker (interactive).
   permissionMode: { type: String, default: '' },
   modeBlocked: { type: Function, default: undefined },
@@ -615,10 +621,11 @@ function mentionSuggest(query) {
   if (!files.value || Date.now() - filesAt > FILES_STALE_MS) void loadFiles()
   return files.value ? mentionMatches(files.value, query) : []
 }
-const contextUsage = useStructuredAgentSessionContextUsage(() => state.value.items, null)
-// The low-context banner's Compact: the agent's own /compact.
+const fileContextUsage = useStructuredAgentSessionContextUsage(() => state.value.items, null)
+const contextUsage = computed(() => fileContextUsage.value || screenContextUsage(props.screenContext))
+// The low-context banner's Compact: the agent's own (/compact, Cursor's /summarize).
 function compact() {
-  return sendCommand('/compact')
+  return sendCommand(compactCommand(props.agent))
 }
 
 // ---- Skills, background tasks, the right-click menu -----------------------------
