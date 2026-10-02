@@ -2511,7 +2511,8 @@ browserGuests.register(ipcMain)
 // Agents driving the browser's pages (agentBrowser.js): the browser_* tools
 // of teamMcp/server.cjs, over the tessel command's pipe ('browser' below),
 // each request signed by its pane's team secret.
-let agentBrowserEnabled = true
+// Off until the window says what the setting is (its first report comes at start).
+let agentBrowserEnabled = false
 const agentBrowser = createAgentBrowser({
   verify: (body, paneId) => verifyRequest(body, paneId, 'browser'),
   enabled: () => agentBrowserEnabled,
@@ -2519,14 +2520,17 @@ const agentBrowser = createAgentBrowser({
   guestById: (id) => browserGuests.guestById(id),
   send,
   nativeImage,
-  screenshotDir: PASTE_DIR,
+  // Its own folder: only the latest agent screenshots are kept there.
+  screenshotDir: join(PASTE_DIR, 'agent-browser'),
   log
 })
 // Settings > Agents > Let agents use the browser (the window says it at
 // start and on each change).
 ipcMain.handle('browser:agentSettings', (event, opts) => {
   if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return false
-  agentBrowserEnabled = !(opts && opts.enabled === false)
+  agentBrowserEnabled = !!(opts && opts.enabled === true)
+  // Turned off: every page an agent drives is let go now.
+  if (!agentBrowserEnabled) agentBrowser.releaseAll()
   return true
 })
 // The Stop on a page's "Agent" badge.

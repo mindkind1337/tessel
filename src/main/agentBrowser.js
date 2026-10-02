@@ -27,7 +27,10 @@
 //   (allowedBrowserUrl: http(s) and the blank page; no file:, no
 //   user:password@). Downloads stay refused for every page (browserGuest.js).
 // - No eval, no cookies, no storage, no field values in a snapshot; text and
-//   printable keys never go into a password field (agentBrowserInput.js).
+//   printable keys never go into a password field, nor where Tessel cannot
+//   see the focus; no paste (agentBrowserInput.js). browser_wait takes plain
+//   selectors only (no [attribute] or :pseudo-class that could read values).
+// - Stop or the setting turned off end every command still waiting.
 // - Every answer is capped (text, console lines, screenshot size).
 import fs from 'fs'
 import { join } from 'path'
@@ -35,7 +38,7 @@ import crypto from 'crypto'
 import { CliError } from './cliServer'
 import { allowedBrowserUrl, normalizeBrowserInput, BLANK_URL } from '../shared/browserUrl'
 import { buildSnapshot, MAX_SNAPSHOT_CHARS } from './agentBrowserSnapshot'
-import { BrowserInputError, resolveRef, click, putText, pressKey, wheel, elementCenter, navigationKey, parseKeyCombo } from './agentBrowserInput'
+import { BrowserInputError, resolveRef, click, putText, pressKey, wheel, elementCenter, navigationKey, parseKeyCombo, isolatedWorld, rememberSecrets } from './agentBrowserInput'
 import { shortcutOf } from './browserGuest'
 
 export const AGENT_OPS = ['pages', 'open', 'navigate', 'snapshot', 'click', 'fill', 'type', 'press', 'scroll', 'screenshot', 'console', 'wait']
@@ -87,10 +90,45 @@ function pageLine(p) {
   return `${p.current ? '* ' : '  '}${p.page}  ${String(p.title || '').slice(0, 120) || '(no title)'} — ${p.url || BLANK_URL}${p.ready === false ? '  (loading)' : ''}`
 }
 
-// A key combination Tessel's browser keeps for itself (browserGuest.js).
+// A key combination an agent may not press: the ones Tessel's browser keeps
+// for itself (browserGuest.js), and paste (Ctrl/Meta+V, Shift+Insert: the
+// clipboard would go into the page, where the agent can read it).
 export function reservedKey(combo) {
   const { def, modifiers } = parseKeyCombo(combo)
+  const k = String(def.key).toLowerCase()
+  if ((modifiers & 6) && k === 'v') return true
+  if ((modifiers & 8) && k === 'insert') return true
   return !!shortcutOf({ type: 'keyDown', key: def.key, control: !!(modifiers & 2), meta: !!(modifiers & 4), alt: !!(modifiers & 1), shift: !!(modifiers & 8) })
+}
+
+// A CSS selector browser_wait accepts: tags, #ids, .classes, *, the
+// combinators (space > + ~) and commas only. No attribute selector and no
+// pseudo-class: input[value^="a"], :autofill, :placeholder-shown or :invalid
+// would let an agent read a field's value one character at a time.
+export function safeSelector(raw) {
+  const s = String(raw == null ? '' : raw).trim()
+  if (!s || s.length > MAX_WAIT_TEXT || !/^[A-Za-z0-9_\s#.>+~*,-]+$/.test(s)) return null
+  return s
+}
+
+// Agent screenshots kept (the newest), in their own folder.
+export const KEEP_AGENT_SCREENSHOTS = 20
+const AGENT_SHOT = /^browser-\d+-[0-9a-f]{6}\.png$/
+export function pruneScreenshots(dir, keep = KEEP_AGENT_SCREENSHOTS, fsImpl = fs) {
+  let names = []
+  try {
+    names = fsImpl.readdirSync(dir).filter((n) => AGENT_SHOT.test(n))
+  } catch {
+    return
+  }
+  names.sort((a, b) => Number(a.split('-')[1]) - Number(b.split('-')[1]) || a.localeCompare(b))
+  for (const n of names.slice(0, Math.max(0, names.length - keep))) {
+    try {
+      fsImpl.unlinkSync(join(dir, n))
+    } catch {
+      // in use: next time
+    }
+  }
 }
 
 // One message from the page's console (Electron 42 passes an event object,
@@ -127,7 +165,7 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
   function stateOf(guest) {
     let s = pages.get(guest.id)
     if (!s) {
-      s = { refMap: null, navKey: null, queue: Promise.resolve(), idle: null, agent: null, console: [], attached: false, listener: null }
+      s = { refMap: null, navKey: null, queue: Promise.resolve(), idle: null, agent: null, console: [], attached: false, listener: null, world: null, secretIds: new Set() }
       pages.set(guest.id, s)
       guest.once('destroyed', () => forget(guest.id))
     }
@@ -155,7 +193,14 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
   function sender(guest) {
     return (method, params = {}) => guest.debugger.sendCommand(method, params)
   }
+  // Stopped by the user, or the setting turned off (while a command waited):
+  // nothing more is done to the page.
+  function allowed(guest) {
+    if (revoked.has(guest.id)) throw fail('stopped_by_user', 'The user stopped agents from driving this page. Ask them, or open another page with browser_open.')
+    if (!enabled()) throw fail('disabled', 'The user turned off "Let agents use the browser" (Tessel Settings > Agents).')
+  }
   async function attach(guest, s) {
+    allowed(guest)
     const dbg = guest.debugger
     if (!dbg.isAttached()) {
       try {
@@ -169,7 +214,9 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
         if (method === 'Page.frameNavigated' && params && params.frame && !params.frame.parentId) {
           s.refMap = null
           s.navKey = null
+          s.world = null
         }
+        if (method === 'Runtime.executionContextsCleared') s.world = null
         // An unanswered dialog blocks every command: an alert is closed, a
         // confirm or prompt refused (never accepted for the agent).
         if (method === 'Page.javascriptDialogOpening') {
@@ -182,6 +229,7 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
         dbg.removeListener('message', s.listener)
         s.listener = null
         s.attached = false
+        s.world = null
       })
     }
     if (!s.attached) {
@@ -202,7 +250,10 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
     } catch {
       // gone
     }
-    if (s) s.attached = false
+    if (s) {
+      s.attached = false
+      s.world = null
+    }
   }
 
   // --- The badge on the page ("Agent controlling · Stop") ---------------------------
@@ -221,6 +272,11 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
     send('browser:agentControl', { webContentsId: id, active: false, ...(stopped ? { stopped: true } : {}) })
   }
 
+  // The setting turned off: every page an agent drives is let go now.
+  function releaseAll() {
+    for (const [id, s] of pages) if (s.idle || s.attached) release(id)
+  }
+
   // The user's Stop on a page's badge: no agent drives it again while it lives.
   function stop(id) {
     if (!Number.isSafeInteger(id) || !guestById(id)) return false
@@ -230,8 +286,12 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
   }
 
   // --- Commands --------------------------------------------------------------------
-  function queued(s, fn) {
-    const run = s.queue.then(fn, fn)
+  function queued(s, guest, fn) {
+    const go = () => {
+      allowed(guest)
+      return fn()
+    }
+    const run = s.queue.then(go, go)
     s.queue = run.catch(() => {})
     return withTimeout(run, COMMAND_TIMEOUT_MS)
   }
@@ -262,12 +322,12 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
     const cdp = await attach(guest, s)
     let contextId = null
     try {
-      const { frameTree } = await cdp('Page.getFrameTree')
-      const r = await cdp('Page.createIsolatedWorld', { frameId: frameTree.frame.id, worldName: 'tessel-agent', grantUniveralAccess: false })
-      contextId = r.executionContextId
+      contextId = await isolatedWorld(cdp, s)
     } catch {
       contextId = null
     }
+    // The page's password fields, remembered even if one is later shown as text.
+    await rememberSecrets(cdp, s)
     const result = await buildSnapshot(cdp, { contextId, maxChars: MAX_SNAPSHOT_CHARS })
     s.refMap = result.refMap
     s.navKey = await navigationKey(cdp)
@@ -295,6 +355,7 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
     if (screenshotDir) {
       try {
         fs.mkdirSync(screenshotDir, { recursive: true })
+        pruneScreenshots(screenshotDir, KEEP_AGENT_SCREENSHOTS - 1)
         file = join(screenshotDir, `browser-${Date.now()}-${crypto.randomBytes(3).toString('hex')}.png`)
         fs.writeFileSync(file, png)
       } catch (err) {
@@ -340,6 +401,8 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
     const urlPart = args.url != null ? String(args.url) : null
     const given = [text, selector, urlPart].filter((v) => v != null)
     if (given.length !== 1 || !given[0] || given[0].length > MAX_WAIT_TEXT) throw fail('invalid_argument', 'Give one of "text", "selector" or "url" (at most 500 characters).')
+    if (selector != null && !safeSelector(selector))
+      throw fail('invalid_argument', 'browser_wait takes a simple selector only: tags, #id, .class, *, combinators (space > + ~) and commas. No [attributes] and no :pseudo-classes.')
     const until = Date.now() + ms
     for (;;) {
       if (guest.isDestroyed()) throw fail('page_gone', 'The page was closed.')
@@ -410,15 +473,15 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
       case 'type': {
         const cdp = await attach(guest, s)
         const entry = await resolveRef(cdp, s, args.ref)
-        await putText(cdp, entry.backendDOMNodeId, args.text, { clear: op === 'fill', insert: typeof guest.insertText === 'function' ? (t) => guest.insertText(t) : null })
+        await putText(cdp, entry.backendDOMNodeId, args.text, { clear: op === 'fill', cache: s, insert: typeof guest.insertText === 'function' ? (t) => guest.insertText(t) : null })
         return { text: `${op === 'fill' ? 'Filled' : 'Typed into'} ${args.ref} (${entry.role} "${entry.name}").` }
       }
       case 'press': {
         // Keys the browser or Tessel itself would act on (Ctrl+Shift+W closes
         // a pane, Ctrl+R reloads, F12 opens devtools...): never from an agent.
-        if (reservedKey(args.key)) throw fail('reserved_key', `${String(args.key).slice(0, 40)} is a Tessel or browser shortcut: agents cannot press it.`)
+        if (reservedKey(args.key)) throw fail('reserved_key', `${String(args.key).slice(0, 40)} is a Tessel or browser shortcut, or paste: agents cannot press it.`)
         const cdp = await attach(guest, s)
-        const key = await pressKey(cdp, args.key, typeof guest.sendInputEvent === 'function' ? (ev) => guest.sendInputEvent(ev) : null)
+        const key = await pressKey(cdp, args.key, typeof guest.sendInputEvent === 'function' ? (ev) => guest.sendInputEvent(ev) : null, s)
         return { text: `Pressed ${String(args.key).slice(0, 40) || key}.` }
       }
       case 'scroll': {
@@ -481,7 +544,7 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
     const s = stateOf(guest)
     controlled(guest, s, r.agent)
     try {
-      const out = await queued(s, () => run(op, guest, s, args))
+      const out = await queued(s, guest, () => run(op, guest, s, args))
       return { ...out, text: capText(out.text) }
     } catch (err) {
       if (err instanceof CliError) throw err
@@ -491,5 +554,5 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
     }
   }
 
-  return { handle, stop, watchGuest, release, isRevoked: (id) => revoked.has(id), _pages: pages }
+  return { handle, stop, watchGuest, release, releaseAll, isRevoked: (id) => revoked.has(id), _pages: pages }
 }

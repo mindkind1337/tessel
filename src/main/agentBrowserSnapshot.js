@@ -9,7 +9,8 @@
 // not listed); the pass that finds clickable <div>s runs in an isolated
 // world (the page never sees it, nothing is left on window); the text is
 // capped (MAX_SNAPSHOT_CHARS) and says so; a control's value is never
-// listed (a field's text, a password).
+// listed (a control's children are not read; an editable area's text is not
+// its name).
 
 export const MAX_SNAPSHOT_CHARS = 60000
 // Clickable elements without a role, at most.
@@ -61,6 +62,13 @@ export function walkTree(node, nodeById, depth, entries, nextRef, seen = new Set
   const isStaticText = role === 'staticText' || role === 'StaticText'
 
   if (!isInteractive && !isHeading && !isLandmark && !isStaticText) return walkChildren(node, nodeById, depth, entries, nextRef, seen)
+  // A control is one line, its children never read: a text field's,
+  // a combobox's or a number input's children are the value it holds.
+  if (isInteractive) {
+    if (isFocusable(node) || node.backendDOMNodeId)
+      entries.push({ ref: `@e${nextRef()}`, role: formatInteractiveRole(role), axRole: role, axName: name, name: name || '(unlabeled)', backendDOMNodeId: node.backendDOMNodeId || 0, depth })
+    return
+  }
   if (!name && !isLandmark) return walkChildren(node, nodeById, depth, entries, nextRef, seen)
 
   if (isLandmark) {
@@ -73,10 +81,6 @@ export function walkTree(node, nodeById, depth, entries, nextRef, seen = new Set
   }
   if (isStaticText) {
     entries.push({ ref: '', role: 'text', name, backendDOMNodeId: node.backendDOMNodeId || 0, depth })
-    return
-  }
-  if (isInteractive && (isFocusable(node) || node.backendDOMNodeId)) {
-    entries.push({ ref: `@e${nextRef()}`, role: formatInteractiveRole(role), axRole: role, axName: name, name: name || '(unlabeled)', backendDOMNodeId: node.backendDOMNodeId || 0, depth })
     return
   }
   walkChildren(node, nodeById, depth, entries, nextRef, seen)
@@ -199,7 +203,7 @@ const CURSOR_SCRIPT = `(() => {
     if (role && SKIP_ROLES.has(role)) return;
     const rect = el.getBoundingClientRect();
     if (rect.width === 0 || rect.height === 0) return;
-    const text = (el.getAttribute('aria-label') || el.textContent || '').trim().slice(0, 80);
+    const text = (el.getAttribute('aria-label') || (el.isContentEditable ? 'editable area' : el.textContent) || '').trim().slice(0, 80);
     if (!text) return;
     found.push(el);
   }
@@ -225,7 +229,7 @@ export async function findCursorInteractiveElements(send, existingEntries, conte
         if (!node || existing.has(node.backendNodeId)) continue
         const { result: text } = await send('Runtime.callFunctionOn', {
           objectId: p.value.objectId,
-          functionDeclaration: "function() { return (this.getAttribute('aria-label') || this.textContent || '').trim().slice(0, 80) }",
+          functionDeclaration: "function() { return (this.getAttribute('aria-label') || (this.isContentEditable ? 'editable area' : this.textContent) || '').trim().slice(0, 80) }",
           returnByValue: true
         })
         const name = clip(text && text.value)

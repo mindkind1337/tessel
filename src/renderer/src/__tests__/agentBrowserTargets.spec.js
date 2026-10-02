@@ -113,6 +113,32 @@ describe('which browser page an agent drives', () => {
     expect(r).toMatchObject({ page: 'new-0', guestId: 900 })
   })
 
+  // L1: an agent cannot fill the screen with pages.
+  it('at most 5 pages opened by one agent; another agent still may', async () => {
+    const wss = world()
+    const targets = createAgentBrowserTargets({
+      enabled: () => true,
+      workspaces: () => wss,
+      forEachLeaf,
+      sameView: (l, other) => (l.view || '') === (other.view || ''),
+      guestOf: () => 7,
+      paneLabel: (l) => l.id,
+      openPage: ({ ws, url }) => {
+        const page = leaf(`p-${Math.random()}`, 'browser', { url })
+        ws.tree.children.push(page)
+        return page
+      },
+      sleep: () => Promise.resolve()
+    })
+    for (let i = 0; i < 5; i++) await targets.handle({ agent: 'agent-a', op: 'open', url: 'http://x/' })
+    await expect(targets.handle({ agent: 'agent-a', op: 'open', url: 'http://x/' })).rejects.toMatchObject({ code: 'too_many_pages' })
+    await expect(targets.handle({ agent: 'chat-a', op: 'open', url: 'http://x/' })).resolves.toBeTruthy()
+    // One closed: room again.
+    const i = wss[0].tree.children.findIndex((l) => l.openedBy === 'agent-a')
+    wss[0].tree.children.splice(i, 1)
+    await expect(targets.handle({ agent: 'agent-a', op: 'open', url: 'http://x/' })).resolves.toBeTruthy()
+  })
+
   it('a page still loading: null after the wait', async () => {
     let now = 0
     vi.spyOn(Date, 'now').mockImplementation(() => (now += 2000))

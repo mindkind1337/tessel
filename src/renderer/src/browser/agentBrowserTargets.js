@@ -23,6 +23,8 @@ export class AgentBrowserTargetError extends Error {
 const refuse = (code, message) => new AgentBrowserTargetError(code, message)
 
 export const GUEST_WAIT_MS = 10000
+// Pages one agent may have opened at a time (browser_open).
+export const MAX_AGENT_PAGES = 5
 
 // deps:
 //   enabled() -> bool
@@ -90,8 +92,12 @@ export function createAgentBrowserTargets(deps) {
     }
 
     if (req.op === 'open') {
+      let mine = 0
+      for (const w of deps.workspaces()) deps.forEachLeaf(w.tree, (l) => l.kind === 'browser' && l.openedBy === leaf.id && mine++)
+      if (mine >= MAX_AGENT_PAGES) throw refuse('too_many_pages', `You already opened ${MAX_AGENT_PAGES} browser pages: reuse one (browser_pages, then "page" or browser_navigate).`) // i18n-ignore
       const page = deps.openPage({ ws, near: leaf, url: req.url })
       if (!page) throw refuse('open_failed', 'Tessel could not open a browser pane.') // i18n-ignore
+      page.openedBy = leaf.id
       return { agent, page: page.id, guestId: await waitGuest(page.id) }
     }
 

@@ -1235,7 +1235,7 @@ function previewSound() {
               <label class="set-row">
                 <div class="set-label">
                   {{ t('settings.agents.browser', 'Let agents use the browser') }}
-                  <span class="set-hint">{{ t('settings.agents.browserHint', 'Agents can read, click and type in the built-in browser\'s pages of their own project (never other projects\' pages, never password fields, no downloads). A page an agent drives shows an Agent badge; its Stop button takes the page back.') }}</span>
+                  <span class="set-hint">{{ t('settings.agents.browserHint', 'Agents can read, click and type in the built-in browser\'s pages of their own project (never other projects\' pages, never password fields, no downloads). All pages share the browser\'s cookies: agents can use the sites you are signed into in Tessel\'s browser. A page an agent drives shows an Agent badge; its Stop button takes the page back.') }}</span>
                 </div>
                 <input v-model="settings.agentBrowser" type="checkbox" class="set-switch" data-setting="agentBrowser" />
               </label>

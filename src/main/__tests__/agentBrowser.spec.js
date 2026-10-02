@@ -1,7 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { createRequire } from 'module'
 import { join } from 'path'
-import { createAgentBrowser, agentUrl, capText, consoleEntry, reservedKey, MAX_IMAGE_B64, CONSOLE_KEEP } from '../agentBrowser'
+import fs from 'fs'
+import os from 'os'
+import { createAgentBrowser, agentUrl, capText, consoleEntry, reservedKey, safeSelector, pruneScreenshots, MAX_IMAGE_B64, CONSOLE_KEEP } from '../agentBrowser'
 import { handleRequestLine, validateParams, CLI_PROTOCOL } from '../cliServer'
 import { setTeamSecret, verifyRequest, _resetTeamAuth } from '../teamAuth'
 
@@ -75,15 +77,56 @@ const AX = {
     { nodeId: '6', role: { value: 'button' }, name: { value: 'Go' }, backendDOMNodeId: 60 }
   ]
 }
-const pageCdp = (extra = {}) => ({
+// The page's elements as the isolated world sees them: backend id ->
+// { secret (password / dots), closed (closed shadow root) }. DOM.focus moves
+// the keyboard; `page.focusOpaque` puts it in a cross-origin frame;
+// `page.focusTo` sends it elsewhere (a host delegating focus).
+function pageModel() {
+  return {
+    elements: { 30: { secret: false }, 40: { secret: true }, 50: {}, 60: {} },
+    focused: null,
+    focusOpaque: false,
+    focusTo: {},
+    loaderId: 'L1',
+    worlds: 0
+  }
+}
+const idOf = (objectId) => Number(String(objectId).slice(1))
+const pageCdp = (extra = {}, page = pageModel()) => ({
   'Accessibility.getFullAXTree': AX,
-  'Page.getFrameTree': { frameTree: { frame: { id: 'F' } } },
-  'Page.createIsolatedWorld': { executionContextId: 9 },
-  'Runtime.evaluate': { result: {} },
+  'Page.getFrameTree': () => ({ frameTree: { frame: { id: 'F', loaderId: page.loaderId } } }),
+  'Page.createIsolatedWorld': () => ({ executionContextId: ++page.worlds }),
+  'Runtime.evaluate': (p) => {
+    const ex = String(p.expression)
+    if (ex.includes("querySelectorAll('*')")) return { result: { objectId: 'scan' } }
+    if (ex.includes('document.activeElement')) {
+      if (page.focusOpaque) return { result: { type: 'string', value: 'opaque' } }
+      return { result: page.focused == null ? { type: 'object', subtype: 'null' } : { objectId: `n${page.focused}` } }
+    }
+    return { result: {} }
+  },
+  'Runtime.getProperties': (p) =>
+    p.objectId === 'scan'
+      ? {
+          result: Object.entries(page.elements)
+            .filter(([, e]) => e.type === 'password')
+            .map(([id], i) => ({ name: String(i), value: { objectId: `n${id}` } }))
+        }
+      : { result: [] },
+  'Runtime.callFunctionOn': (p) => (String(p.functionDeclaration).includes('webkitTextSecurity') ? { result: { value: !!(page.elements[idOf(p.objectId)] || {}).secret } } : { result: {} }),
   'Page.getNavigationHistory': { currentIndex: 0, entries: [{ id: 1 }] },
-  'DOM.describeNode': (p) => ({ node: p.backendNodeId === 40 ? { nodeName: 'INPUT', attributes: ['type', 'password'] } : { nodeName: 'INPUT', attributes: ['type', 'email'], backendNodeId: p.backendNodeId } }),
+  'DOM.describeNode': (p) => {
+    const id = p.objectId ? idOf(p.objectId) : p.backendNodeId
+    const e = page.elements[id]
+    if (!e) throw new Error('No node with given id found')
+    return { node: { backendNodeId: id, nodeName: 'INPUT', ...(e.closed ? { shadowRoots: [{ shadowRootType: 'closed' }] } : {}) } }
+  },
+  'DOM.focus': (p) => {
+    page.focused = page.focusTo[p.backendNodeId] || p.backendNodeId
+    return {}
+  },
   'DOM.getContentQuads': { quads: [[10, 20, 110, 20, 110, 60, 10, 60]] },
-  'DOM.resolveNode': { object: { objectId: 'o1' } },
+  'DOM.resolveNode': (p) => ({ object: { objectId: `n${p.backendNodeId}` } }),
   ...extra
 })
 
@@ -93,7 +136,7 @@ function signed(op, args = {}) {
   return mcp.browserRequest(op, args)
 }
 
-function setup({ guest = fakeGuest(11, { cdp: pageCdp() }), enabled = true, target = {} } = {}) {
+function setup({ guest = fakeGuest(11, { cdp: pageCdp() }), enabled = true, enabledFn = null, target = {} } = {}) {
   const sentToWindow = []
   const ask = vi.fn(async (_m, p) => {
     if (p.op === 'list') return { agent: 'Gauss', pages: [{ page: 'pane-b', url: guest.getURL(), title: 'App', ready: true, current: true }] }
@@ -101,7 +144,7 @@ function setup({ guest = fakeGuest(11, { cdp: pageCdp() }), enabled = true, targ
   })
   const ab = createAgentBrowser({
     verify: (body, pane) => verifyRequest(body, pane, 'browser'),
-    enabled: () => enabled,
+    enabled: enabledFn || (() => enabled),
     ask,
     guestById: (id) => (guest && id === guest.id ? guest : null),
     send: (ch, payload) => sentToWindow.push([ch, payload]),
@@ -231,17 +274,102 @@ describe('agent browser: commands', () => {
   })
 
   it('a printable key is refused while a password field has the keyboard; Enter is not', async () => {
-    const guest = fakeGuest(11, {
-      cdp: pageCdp({
-        'Runtime.evaluate': { result: { objectId: 'active' } },
-        'DOM.describeNode': (p) => (p.objectId === 'active' ? { node: { nodeName: 'INPUT', attributes: ['type', 'PASSWORD'] } } : { node: {} })
-      })
-    })
-    const { call } = setup({ guest })
+    const page = pageModel()
+    page.focused = 40
+    const { call } = setup({ guest: fakeGuest(11, { cdp: pageCdp({}, page) }) })
     await expect(call('press', { key: 'a' })).rejects.toMatchObject({ code: 'password_field' })
     await expect(call('press', { key: 'Enter' })).resolves.toMatchObject({ text: 'Pressed Enter.' })
     await expect(call('press', { key: 'Hyper+q' })).rejects.toMatchObject({ code: 'invalid_argument' })
     await expect(call('press', { key: 'Control+Shift+w' })).rejects.toMatchObject({ code: 'reserved_key' })
+    page.focused = 30
+    await expect(call('press', { key: 'a' })).resolves.toMatchObject({ text: 'Pressed a.' })
+    page.focused = null
+    await expect(call('press', { key: 'a' })).resolves.toBeTruthy()
+  })
+
+  // M3: the guard fails closed.
+  it('focus Tessel cannot see (a cross-origin frame, a closed shadow root, an error) refuses typing', async () => {
+    const page = pageModel()
+    page.focusOpaque = true
+    const { call, guest } = setup({ guest: fakeGuest(11, { cdp: pageCdp({}, page) }) })
+    await expect(call('press', { key: 'x' })).rejects.toMatchObject({ code: 'field_not_visible' })
+    await expect(call('press', { key: 'Enter' })).resolves.toBeTruthy()
+    await call('snapshot')
+    await expect(call('type', { ref: '@e1', text: 'a' })).rejects.toMatchObject({ code: 'field_not_visible' })
+    page.focusOpaque = false
+    page.elements[30].closed = true
+    page.focused = 30
+    await expect(call('press', { key: 'x' })).rejects.toMatchObject({ code: 'field_not_visible' })
+    const broken = setup({ guest: fakeGuest(12, { cdp: pageCdp({ 'Page.getFrameTree': () => Promise.reject(new Error('gone')) }) }) })
+    await expect(broken.call('press', { key: 'x' })).rejects.toMatchObject({ code: 'field_not_visible' })
+    expect(guest.sent.filter(([m]) => m === 'Input.insertText')).toEqual([])
+  })
+
+  it('a field that hands its focus to an inner password field is refused after focusing', async () => {
+    const page = pageModel()
+    page.focusTo[30] = 40
+    const { call, guest } = setup({ guest: fakeGuest(11, { cdp: pageCdp({}, page) }) })
+    await call('snapshot')
+    await expect(call('fill', { ref: '@e1', text: 'hunter2' })).rejects.toMatchObject({ code: 'password_field' })
+    expect(guest.sent.filter(([m]) => m === 'Input.insertText')).toEqual([])
+  })
+
+  it('paste is reserved (Ctrl+V, Meta+V, Shift+Insert)', async () => {
+    const { call } = setup()
+    for (const key of ['Control+v', 'Control+Shift+V', 'Meta+v', 'Shift+Insert']) await expect(call('press', { key })).rejects.toMatchObject({ code: 'reserved_key' })
+  })
+
+  // M4: a "show password" toggle turns the field into text; it stays a secret.
+  it('a field seen once as a password stays one for the page', async () => {
+    const page = pageModel()
+    page.elements[40] = { secret: true, type: 'password' }
+    const { call } = setup({ guest: fakeGuest(11, { cdp: pageCdp({}, page) }) })
+    await call('snapshot')
+    page.elements[40] = { secret: false, type: 'text' }
+    await expect(call('fill', { ref: '@e2', text: 'hunter2' })).rejects.toMatchObject({ code: 'password_field' })
+    page.focused = 40
+    await expect(call('press', { key: 'a' })).rejects.toMatchObject({ code: 'password_field' })
+  })
+
+  // L4: one isolated world per document.
+  it('the isolated world is made once per document, again after navigation', async () => {
+    const page = pageModel()
+    const { call } = setup({ guest: fakeGuest(11, { cdp: pageCdp({}, page) }) })
+    await call('snapshot')
+    await call('snapshot')
+    await call('fill', { ref: '@e1', text: 'x' })
+    expect(page.worlds).toBe(1)
+    page.loaderId = 'L2'
+    await call('snapshot')
+    expect(page.worlds).toBe(2)
+  })
+
+  // M2: a command waiting behind another one when the user presses Stop.
+  it('Stop and the setting turned off end waiting commands; nothing re-attaches', async () => {
+    let release
+    const slow = new Promise((r) => (release = r))
+    const page = pageModel()
+    let enabled = true
+    const guest = fakeGuest(11, { cdp: pageCdp({ 'Accessibility.getFullAXTree': async () => (await slow, AX) }, page) })
+    const { ab } = setup({ guest, enabledFn: () => enabled })
+    const first = ab.handle(validateParams('browser', signed('snapshot', {})))
+    await new Promise((r) => setTimeout(r, 20))
+    const second = ab.handle(validateParams('browser', signed('snapshot', {})))
+    await new Promise((r) => setTimeout(r, 20))
+    ab.stop(guest.id)
+    release()
+    await first.catch(() => {})
+    await expect(second).rejects.toMatchObject({ code: 'stopped_by_user' })
+    expect(guest.debugger.attached).toBe(false)
+
+    const g2 = fakeGuest(12, { cdp: pageCdp() })
+    const s2 = setup({ guest: g2, enabledFn: () => enabled })
+    await s2.call('snapshot')
+    expect(g2.debugger.attached).toBe(true)
+    enabled = false
+    s2.ab.releaseAll()
+    expect(g2.debugger.attached).toBe(false)
+    expect(s2.sentToWindow).toContainEqual(['browser:agentControl', { webContentsId: 12, active: false }])
   })
 
   it('navigate only to addresses the browser allows', async () => {
@@ -296,6 +424,15 @@ describe('agent browser: commands', () => {
     await expect(call('wait', { selector: '#never', timeout_ms: 300 })).rejects.toMatchObject({ code: 'wait_timeout' })
   })
 
+  // H1: a selector could read a field's value one character at a time.
+  it('wait takes plain selectors only: no attributes, no pseudo-classes', async () => {
+    const { call, guest } = setup()
+    for (const sel of ['input[type=password][value^="a"]', '#pw:autofill', 'input:placeholder-shown', 'input:invalid', '[data-x]', String.raw`a\:b`, '#x:has(input)'])
+      await expect(call('wait', { selector: sel })).rejects.toMatchObject({ code: 'invalid_argument' })
+    expect(guest.executeJavaScriptInIsolatedWorld).not.toHaveBeenCalled()
+    await expect(call('wait', { selector: 'main > form .row, #submit ~ button + *' })).resolves.toBeTruthy()
+  })
+
   it('a screenshot too large to show is scaled down or given as a file only', async () => {
     const big = 'A'.repeat(MAX_IMAGE_B64 + 10)
     const img = {
@@ -329,6 +466,45 @@ describe('agent browser: helpers', () => {
   it('Tessel and browser shortcuts are reserved keys', () => {
     for (const k of ['Control+Shift+w', 'Control+r', 'F12', 'F5', 'Control+l', 'Alt+ArrowLeft', 'F1', 'Control+Shift+p']) expect(reservedKey(k)).toBe(true)
     for (const k of ['Enter', 'a', 'Control+a', 'Tab', 'Shift+Tab', 'ArrowDown']) expect(reservedKey(k)).toBe(false)
+  })
+
+  it('safeSelector: tags, #id, .class, *, combinators and commas', () => {
+    expect(safeSelector('div.card > #title, ul li + li ~ *')).toBe('div.card > #title, ul li + li ~ *')
+    for (const bad of ['', 'a[href]', 'input:checked', 'a::before', 'x'.repeat(600), String.raw`a\61`]) expect(safeSelector(bad)).toBe(null)
+  })
+
+  // L2: agent screenshots do not pile up.
+  it('only the newest agent screenshots are kept', () => {
+    const dir = fs.mkdtempSync(join(os.tmpdir(), 'agent-shots-'))
+    try {
+      for (let i = 1; i <= 25; i++) fs.writeFileSync(join(dir, `browser-${1000 + i}-abcdef.png`), 'x')
+      fs.writeFileSync(join(dir, 'other.txt'), 'keep')
+      pruneScreenshots(dir, 20)
+      const left = fs.readdirSync(dir).sort()
+      expect(left).toHaveLength(21)
+      expect(left).toContain('other.txt')
+      expect(left).not.toContain('browser-1005-abcdef.png')
+      expect(left).toContain('browser-1006-abcdef.png')
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  // L3: until the window reports the setting, agents are refused.
+  it('main starts with the setting off until the window reports it, and lets pages go when it turns off', () => {
+    const src = fs.readFileSync(join(__dirname, '..', 'index.js'), 'utf8')
+    expect(src).toMatch(/let agentBrowserEnabled = false/)
+    expect(src).toMatch(/agentBrowserEnabled = !!\(opts && opts\.enabled === true\)/)
+    expect(src).toMatch(/if \(!agentBrowserEnabled\) agentBrowser\.releaseAll\(\)/)
+    expect(src).toMatch(/screenshotDir: join\(PASTE_DIR, 'agent-browser'\)/)
+  })
+
+  // M5: the shared cookie jar is said plainly.
+  it('the setting says agents use the sites you are signed into (EN and FR)', () => {
+    const vue = fs.readFileSync(join(__dirname, '..', '..', 'renderer', 'src', 'components', 'SettingsDialog.vue'), 'utf8')
+    expect(vue).toContain("All pages share the browser\\'s cookies: agents can use the sites you are signed into in Tessel\\'s browser.")
+    const fr = JSON.parse(fs.readFileSync(join(__dirname, '..', '..', 'renderer', 'src', 'i18n', 'locales', 'fr', 'settings.json'), 'utf8'))
+    expect(fr.settings.agents.browserHint).toMatch(/cookies du navigateur : les agents peuvent utiliser les sites auxquels vous êtes connecté/)
   })
 
   it('capText cuts long answers and says so', () => {

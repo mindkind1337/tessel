@@ -5,9 +5,11 @@
 // and browser-text-insertion.ts (MIT, Copyright (c) 2026 Lovecast Inc.),
 // ported to plain JS.
 //
-// Tessel's difference: text never goes into a password field (a ref, or
-// the element that has the keyboard, checked before each fill, type or
-// printable key).
+// Tessel's differences: text never goes into a password field. The ref's
+// element and the element that really has the keyboard (through shadow
+// roots and same-origin frames) are checked in an isolated world before
+// each fill, type or printable key; a field once seen as a password stays
+// one for the page's life; focus Tessel cannot see is refused (fail closed).
 
 export class BrowserInputError extends Error {
   constructor(code, message) {
@@ -31,6 +33,7 @@ const KEY_DEFINITIONS = {
   Escape: { key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 },
   Backspace: { key: 'Backspace', code: 'Backspace', windowsVirtualKeyCode: 8 },
   Delete: { key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46 },
+  Insert: { key: 'Insert', code: 'Insert', windowsVirtualKeyCode: 45 },
   ArrowUp: { key: 'ArrowUp', code: 'ArrowUp', windowsVirtualKeyCode: 38 },
   ArrowDown: { key: 'ArrowDown', code: 'ArrowDown', windowsVirtualKeyCode: 40 },
   ArrowLeft: { key: 'ArrowLeft', code: 'ArrowLeft', windowsVirtualKeyCode: 37 },
@@ -105,27 +108,157 @@ export async function describe(send, backendNodeId) {
 }
 
 // The main frame's isolated world for Tessel's own scripts (the page's
-// scripts never see it). -> executionContextId
-export async function isolatedWorld(send) {
+// scripts never see it, nor change what it reads). One per document: kept in
+// `cache.world` ({ frameId, loaderId, contextId }) until the page loads
+// another document. -> executionContextId
+export async function isolatedWorld(send, cache = null) {
   const { frameTree } = await send('Page.getFrameTree')
-  const frameId = frameTree && frameTree.frame && frameTree.frame.id
-  if (!frameId) throw new BrowserInputError('page_error', 'The page has no frame yet.')
-  const { executionContextId } = await send('Page.createIsolatedWorld', { frameId, worldName: 'tessel-agent', grantUniveralAccess: false })
+  const frame = frameTree && frameTree.frame
+  if (!frame || !frame.id) throw new BrowserInputError('page_error', 'The page has no frame yet.')
+  const w = cache && cache.world
+  if (w && w.frameId === frame.id && w.loaderId === (frame.loaderId || null)) return w.contextId
+  const { executionContextId } = await send('Page.createIsolatedWorld', { frameId: frame.id, worldName: 'tessel-agent', grantUniveralAccess: false })
+  if (cache) cache.world = { frameId: frame.id, loaderId: frame.loaderId || null, contextId: executionContextId }
   return executionContextId
 }
 
-// The element that has the keyboard now (inside an iframe: the iframe), or null.
-export async function focusedNode(send) {
+// Run on an element in the isolated world: does it hold a secret? A password
+// input, a field the page marks for a password, or text drawn as dots
+// (-webkit-text-security).
+const SECRET_FN = `function() {
+  const tag = String(this.tagName || '').toLowerCase();
+  if (tag === 'input' && String(this.type || '').toLowerCase() === 'password') return true;
+  const ac = String((this.getAttribute && this.getAttribute('autocomplete')) || '');
+  if (/(^|\\s)(current|new)-password(\\s|$)/i.test(ac)) return true;
   try {
-    const contextId = await isolatedWorld(send)
-    const { result } = await send('Runtime.evaluate', { expression: 'document.activeElement', contextId, returnByValue: false })
-    if (!result || !result.objectId) return null
-    const { node } = await send('DOM.describeNode', { objectId: result.objectId })
-    send('Runtime.releaseObject', { objectId: result.objectId }).catch(() => {})
-    return node || null
-  } catch {
-    return null
+    const view = this.ownerDocument && this.ownerDocument.defaultView;
+    const st = view && view.getComputedStyle(this);
+    const sec = st && (st.webkitTextSecurity || st.getPropertyValue('-webkit-text-security'));
+    if (sec && sec !== 'none') return true;
+  } catch (e) {}
+  return false;
+}`
+
+// The element that really has the keyboard: through open shadow roots and
+// same-origin frames. 'opaque' when focus is somewhere Tessel cannot see
+// (a cross-origin frame).
+const DEEP_ACTIVE = `(() => {
+  let el = document.activeElement;
+  for (let i = 0; el && i < 64; i++) {
+    if (el.shadowRoot && el.shadowRoot.activeElement) { el = el.shadowRoot.activeElement; continue; }
+    const tag = String(el.tagName || '').toLowerCase();
+    if (tag === 'iframe' || tag === 'frame') {
+      let d = null;
+      try { d = el.contentDocument; } catch (e) { d = null; }
+      if (!d) return 'opaque';
+      if (d.activeElement && d.activeElement !== d.body) { el = d.activeElement; continue; }
+    }
+    break;
   }
+  return el || null;
+})()`
+
+// The password fields of the page (its document, open shadow roots and
+// same-origin frames), as elements, for the page's remembered secrets.
+const SECRET_SCAN = `(() => {
+  const out = [];
+  const visit = (root, depth) => {
+    if (!root || depth > 8 || out.length > 200) return;
+    let all = [];
+    try { all = root.querySelectorAll('*'); } catch (e) { return; }
+    for (const el of all) {
+      const tag = el.tagName.toLowerCase();
+      if ((tag === 'input' && String(el.type).toLowerCase() === 'password') || /(^|\\s)(current|new)-password(\\s|$)/i.test(el.getAttribute('autocomplete') || '')) out.push(el);
+      if (el.shadowRoot) visit(el.shadowRoot, depth + 1);
+      if (tag === 'iframe' || tag === 'frame') { let d = null; try { d = el.contentDocument; } catch (e) {} if (d) visit(d, depth + 1); }
+    }
+  };
+  visit(document, 0);
+  return out;
+})()`
+
+// A page's remembered secret fields (backend node ids): a field seen once as
+// a password stays one for the page's life ("show password" toggles its type).
+function remembered(cache) {
+  if (!cache) return new Set()
+  if (!cache.secretIds) cache.secretIds = new Set()
+  return cache.secretIds
+}
+
+// Notes every password field the page has now.
+export async function rememberSecrets(send, cache) {
+  const ids = remembered(cache)
+  try {
+    const contextId = await isolatedWorld(send, cache)
+    const { result } = await send('Runtime.evaluate', { expression: SECRET_SCAN, contextId, returnByValue: false })
+    if (!result || !result.objectId) return ids
+    const { result: props } = await send('Runtime.getProperties', { objectId: result.objectId, ownProperties: true })
+    for (const p of props || []) {
+      if (!/^\d+$/.test(p.name) || !p.value || !p.value.objectId) continue
+      try {
+        const { node } = await send('DOM.describeNode', { objectId: p.value.objectId })
+        if (node && node.backendNodeId) ids.add(node.backendNodeId)
+      } catch {
+        // gone meanwhile
+      }
+    }
+    send('Runtime.releaseObject', { objectId: result.objectId }).catch(() => {})
+  } catch {
+    // the checks below still apply
+  }
+  return ids
+}
+
+// An element (by objectId in the isolated world) -> { secret, opaque, backendNodeId }.
+async function inspectElement(send, objectId, cache) {
+  const { result } = await send('Runtime.callFunctionOn', { objectId, functionDeclaration: SECRET_FN, returnByValue: true })
+  const { node } = await send('DOM.describeNode', { objectId, depth: 1, pierce: true })
+  const backendNodeId = node && node.backendNodeId
+  // Focus inside a closed shadow root cannot be seen from here.
+  const closed = !!(node && Array.isArray(node.shadowRoots) && node.shadowRoots.some((r) => r && r.shadowRootType === 'closed'))
+  const ids = remembered(cache)
+  const secret = (result && result.value === true) || (backendNodeId != null && ids.has(backendNodeId))
+  if (secret && backendNodeId != null) ids.add(backendNodeId)
+  return { secret, opaque: closed, backendNodeId }
+}
+
+// Where the keyboard is: { none } (nowhere), or { secret, opaque }. Any
+// error counts as opaque (the caller refuses: fail closed).
+export async function focusedField(send, cache = null) {
+  try {
+    const contextId = await isolatedWorld(send, cache)
+    const { result } = await send('Runtime.evaluate', { expression: DEEP_ACTIVE, contextId, returnByValue: false })
+    if (result && result.type === 'string' && result.value === 'opaque') return { secret: false, opaque: true }
+    if (!result || !result.objectId) return { none: true, secret: false, opaque: false }
+    const info = await inspectElement(send, result.objectId, cache)
+    send('Runtime.releaseObject', { objectId: result.objectId }).catch(() => {})
+    return info
+  } catch {
+    return { secret: false, opaque: true }
+  }
+}
+
+// An element by its backend node id -> { secret, opaque } (errors: opaque).
+export async function nodeField(send, backendNodeId, cache = null) {
+  try {
+    if (remembered(cache).has(backendNodeId)) return { secret: true, opaque: false, backendNodeId }
+    const contextId = await isolatedWorld(send, cache)
+    const { object } = await send('DOM.resolveNode', { backendNodeId, executionContextId: contextId })
+    if (!object || !object.objectId) return { secret: false, opaque: true }
+    const info = await inspectElement(send, object.objectId, cache)
+    send('Runtime.releaseObject', { objectId: object.objectId }).catch(() => {})
+    return info
+  } catch {
+    return { secret: false, opaque: true }
+  }
+}
+
+const PASSWORD_REFUSAL = 'Agents may not type into password fields. Ask the user to fill it in.'
+const OPAQUE_REFUSAL = 'Tessel cannot see where the keyboard is in this page (a frame from another site, or a closed component): agents may not type there.'
+
+function refuseField(info) {
+  if (info.secret) throw new BrowserInputError('password_field', PASSWORD_REFUSAL)
+  if (info.opaque) throw new BrowserInputError('field_not_visible', OPAQUE_REFUSAL)
 }
 
 // The current page's navigation entry: refs belong to one.
@@ -231,14 +364,12 @@ export async function click(send, backendNodeId, { button = 'left', clickCount =
   return { x: Math.round(x), y: Math.round(y) }
 }
 
-export async function refuseIfPassword(send, backendNodeId) {
-  let node = null
-  try {
-    node = await describe(send, backendNodeId)
-  } catch {
-    node = null
-  }
-  if (isPasswordNode(node)) throw new BrowserInputError('password_field', 'Agents may not type into password fields. Ask the user to fill it in.')
+// The field itself (a remembered secret, a password, dots) and, after it
+// took the keyboard, where the keyboard really is (a component that hands
+// focus to an inner password field): refused when either is a secret or
+// cannot be seen.
+export async function refuseIfPassword(send, backendNodeId, cache = null) {
+  refuseField(await nodeField(send, backendNodeId, cache))
 }
 
 // insert(text): the page's own input pipeline (webContents.insertText):
@@ -257,10 +388,8 @@ function checkText(text) {
   if (text.length > MAX_INPUT_TEXT) throw new BrowserInputError('invalid_argument', `The text is too long (at most ${MAX_INPUT_TEXT} characters).`)
 }
 
-// Focus the element; clear: select what it holds first (it is replaced).
-async function focusFor(send, backendNodeId, clear) {
-  await send('DOM.focus', { backendNodeId })
-  if (!clear) return
+// Select what the element holds (fill replaces it).
+async function selectContents(send, backendNodeId) {
   const { object } = await send('DOM.resolveNode', { backendNodeId })
   if (!object || !object.objectId) return
   await send('Runtime.callFunctionOn', {
@@ -274,11 +403,18 @@ async function focusFor(send, backendNodeId, clear) {
   send('Runtime.releaseObject', { objectId: object.objectId }).catch(() => {})
 }
 
-// Replaces the field's text (fill) or adds at the cursor (type).
-export async function putText(send, backendNodeId, text, { clear, insert = null }) {
+// Replaces the field's text (fill) or adds at the cursor (type). cache: the
+// page's state (its isolated world, its remembered secret fields).
+export async function putText(send, backendNodeId, text, { clear, insert = null, cache = null }) {
   checkText(text)
-  await refuseIfPassword(send, backendNodeId)
-  await focusFor(send, backendNodeId, clear)
+  await rememberSecrets(send, cache)
+  await refuseIfPassword(send, backendNodeId, cache)
+  await send('DOM.focus', { backendNodeId })
+  // Where the keyboard went (a host may delegate it to an inner field).
+  const focus = await focusedField(send, cache)
+  if (focus.none) throw new BrowserInputError('not_focusable', 'This element does not take the keyboard: pick a text field from browser_snapshot.')
+  refuseField(focus)
+  if (clear) await selectContents(send, backendNodeId)
   if (text) await insertText(send, text, insert)
   else if (clear) {
     await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46 })
@@ -322,11 +458,15 @@ export function electronKeyEvents(def, modifiers) {
 // sendInput(event): the page's own input pipeline
 // (webContents.sendInputEvent); CDP key events are unreliable in an Electron
 // guest (a Backspace or a second character can be lost).
-export async function pressKey(send, combo, sendInput = null) {
+export async function pressKey(send, combo, sendInput = null, cache = null) {
   const { def, modifiers } = parseKeyCombo(combo)
-  // A character into a password field is typing a password.
-  if (typesChar(def) && isPasswordNode(await focusedNode(send)))
-    throw new BrowserInputError('password_field', 'Agents may not type into password fields. Ask the user to fill it in.')
+  // A character into a password field is typing a password; focus Tessel
+  // cannot see counts as one (fail closed).
+  if (typesChar(def) && !(modifiers & 7)) {
+    await rememberSecrets(send, cache)
+    const focus = await focusedField(send, cache)
+    if (!focus.none) refuseField(focus)
+  }
   if (sendInput) {
     for (const ev of electronKeyEvents(def, modifiers)) await sendInput(ev)
     return def.key

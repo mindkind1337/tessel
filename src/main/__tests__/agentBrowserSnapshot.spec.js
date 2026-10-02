@@ -31,6 +31,39 @@ describe('snapshot of the accessibility tree', () => {
     ])
   })
 
+  // M1: an unlabelled field's children are its value.
+  it('never reads a control\'s children: an unlabelled field\'s value stays out', () => {
+    const entries = walk([
+      { nodeId: '1', role: { value: 'RootWebArea' }, childIds: ['2', '4', '6', '8', '10'] },
+      { nodeId: '2', role: { value: 'textbox' }, name: { value: '' }, backendDOMNodeId: 2, childIds: ['3'] },
+      { nodeId: '3', role: { value: 'StaticText' }, name: { value: 'secret-token-123' } },
+      { nodeId: '4', role: { value: 'searchbox' }, backendDOMNodeId: 4, childIds: ['5'] },
+      { nodeId: '5', role: { value: 'generic' }, childIds: ['5b'] },
+      { nodeId: '5b', role: { value: 'StaticText' }, name: { value: 'my search' } },
+      { nodeId: '6', role: { value: 'combobox' }, name: { value: '' }, backendDOMNodeId: 6, childIds: ['7'] },
+      { nodeId: '7', role: { value: 'StaticText' }, name: { value: 'chosen value' } },
+      { nodeId: '8', role: { value: 'spinbutton' }, name: { value: 'Age' }, backendDOMNodeId: 8, childIds: ['9'] },
+      { nodeId: '9', role: { value: 'StaticText' }, name: { value: '42' } },
+      { nodeId: '10', role: { value: 'textbox' }, name: { value: '' }, childIds: ['11'] },
+      { nodeId: '11', role: { value: 'StaticText' }, name: { value: 'no backend id' } }
+    ])
+    const { snapshot } = formatSnapshot(entries)
+    expect(snapshot.split('\n')).toEqual(['[@e1] text input "(unlabeled)"', '[@e2] text input "(unlabeled) (2nd)"', '[@e3] combobox "(unlabeled)"', '[@e4] number input "Age"', '[@e5] text input "(unlabeled) (3rd)"'])
+    for (const leak of ['secret-token', 'my search', 'chosen value', '42', 'no backend id']) expect(snapshot).not.toContain(leak)
+  })
+
+  it('the clickable pass never names an editable area by its text', async () => {
+    const send = async (m, p) => {
+      if (m === 'Accessibility.getFullAXTree') return { nodes: [] }
+      if (m === 'Runtime.evaluate') {
+        expect(p.expression).toContain("el.isContentEditable ? 'editable area'")
+        return { result: {} }
+      }
+      return {}
+    }
+    await buildSnapshot(send, { contextId: 1 })
+  })
+
   it('names duplicates (2nd, 3rd) and keeps which occurrence each ref is', () => {
     const entries = walk([
       { nodeId: '1', role: { value: 'RootWebArea' }, childIds: ['2', '3', '4'] },
