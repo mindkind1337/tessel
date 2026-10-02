@@ -1,5 +1,0 @@
-2026/09/25-15:24:06.619 7e4c Creating DB C:\Tessel\design\team-view-ui\browser-profile\Default\EdgeCoupons/coupons_data.db since it was missing.
-2026/09/25-15:24:06.653 7e4c Reusing MANIFEST C:\Tessel\design\team-view-ui\browser-profile\Default\EdgeCoupons/coupons_data.db/MANIFEST-000001
-2026/09/25-15:24:07.010 cb7c Level-0 table #5: started
-2026/09/25-15:24:07.023 cb7c Level-0 table #5: 683273 bytes OK
-2026/09/25-15:24:07.033 cb7c Delete type=0 #3

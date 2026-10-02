@@ -2284,11 +2284,6 @@ onMounted(() => {
   term.onSelectionChange(() => {
     if (settings.copyOnSelect) copySelection()
   })
-  // On the alternate screen (no history) xterm turns the wheel into ↑/↓ keys;
-  // an agent reads those as "previous prompt" and the wheel cycles through
-  // your old messages. In an agent pane the wheel does nothing there instead
-  // (an agent that asks for mouse events still gets its wheel).
-  term.attachCustomWheelEventHandler(() => !(isAgent.value && term.buffer.active.type === 'alternate'))
   term.attachCustomKeyEventHandler((e) => {
     if (e.type === 'keydown' && e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'f') {
       openFind()

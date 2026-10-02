@@ -48,7 +48,6 @@ vi.mock('@xterm/xterm', () => ({
     onBell(fn) {
       this.bellFn = fn
     }
-    attachCustomWheelEventHandler() {}
     attachCustomKeyEventHandler(fn) {
       this.keyFn = fn
     }

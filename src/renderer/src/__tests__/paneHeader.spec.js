@@ -31,7 +31,6 @@ vi.mock('@xterm/xterm', () => ({
     onData() {}
     onResize() {}
     onSelectionChange() {}
-    attachCustomWheelEventHandler() {}
     attachCustomKeyEventHandler() {}
     getSelection() {
       return ''
