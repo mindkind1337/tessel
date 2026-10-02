@@ -360,10 +360,10 @@ const jumpLabel = computed(() => t('chat.orca.jumpToLatest', 'Jump to latest'))
         type="button"
         class="nc-message-list__jump"
         :aria-label="jumpLabel"
+        :title="jumpLabel"
         @click="jumpToLatest"
       >
         <ArrowDown class="nc-message-list__jump-icon" />
-        <span>{{ jumpLabel }}</span>
       </button>
     </div>
     <div v-if="taskList" class="nc-message-list__tasks">
@@ -414,15 +414,16 @@ const jumpLabel = computed(() => t('chat.orca.jumpToLatest', 'Jump to latest'))
 .nc-message-list__jump {
   position: absolute;
   bottom: 12px;
-  left: 50%;
+  right: 16px;
   display: flex;
-  transform: translateX(-50%);
   align-items: center;
-  gap: 6px;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
   margin: 0;
   border: 1px solid var(--nc-border);
   border-radius: 9999px;
-  padding: 6px 12px;
+  padding: 0;
   background: color-mix(in srgb, var(--nc-card) 90%, transparent);
   color: var(--nc-muted-foreground);
   font-family: inherit;
