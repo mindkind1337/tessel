@@ -65,6 +65,7 @@ import { createCodexChat } from './chat/codexChat'
 import { createOpencodeChat } from './chat/opencodeChat'
 import { createServerPidFile, reapOpencodeServers } from './chat/opencodeServers'
 import { createChatTrust } from './chat/chatTrust'
+import { createAgentFolderTrust } from './agentFolderTrust'
 import { createWorkerCopies } from './chat/workerCopies'
 import { createLogger, describe } from './logger'
 import { guardIpc, mainFrameSender } from './ipcGuard'
@@ -807,6 +808,8 @@ ipcMain.on('layout:save', (_evt, data) => {
   if (isLayout(data)) remoteFs.setRoots(remoteRootsOfLayout(data))
   // Its local project folders are the only ones whose worktrees are listed.
   if (isLayout(data)) worktreeList.setRoots(localRootsOfLayout(data))
+  // ...and the projects whose folder an agent may be pre-trusted in.
+  if (isLayout(data)) agentFolderTrust.setRoots(localRootsOfLayout(data))
   try {
     writeJsonSafe(layoutFile(), data, isLayout)
   } catch {
@@ -1111,7 +1114,7 @@ const chatTrust = createChatTrust({
       type: 'warning',
       title: t('main.chat.trustTitle', 'Trust this folder for a chat agent?'),
       message: t('main.chat.trustMessage', 'A chat agent runs Claude, Codex or OpenCode in {{dir}} without its terminal: it then runs the hooks, plugins and MCP servers this folder sets up (.claude/settings.json, .mcp.json, .codex/config.toml, opencode.json, .opencode/) without asking.', { dir: String(dir).replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, 300) }),
-      detail: t('main.chat.trustDetail', 'Trust it only if you know where this folder comes from. In a terminal pane the agent asks you itself.'),
+      detail: t('main.chat.trustDetail', 'Trust it only if you know where this folder comes from. Agents Tessel starts here in a terminal then skip their own "trust this folder?" question too (Settings > Agents).'),
       buttons: [t('main.chat.trustYes', 'Trust this folder'), t('main.chat.trustNo', 'Cancel')],
       defaultId: 1,
       cancelId: 1,
@@ -1122,6 +1125,10 @@ const chatTrust = createChatTrust({
     return res.response === 0
   }
 })
+// The folder an agent starts in, pre-trusted in that agent's own settings
+// (agentFolderTrust.js): only a project the user added, a folder trusted for
+// chats, or a copy Tessel made from such a project's own code.
+const agentFolderTrust = createAgentFolderTrust({ chatTrust, workerCopies, log })
 // The OpenCode servers chat panes start, by PID: one a crash left behind is
 // stopped at the next start (opencodeServers.js checks it is ours first).
 const opencodePidsFile = join(app.getPath('userData'), 'opencode-chat', 'servers.json')
@@ -1174,6 +1181,9 @@ const chatSessions = createChatSessions({
   // as that project (verified both ways by git's links). Any other worktree,
   // such as a pull request's copy, is trusted (or asked) like any folder.
   trustRoots: (cwd, opts) => workerCopies.trustRoots(cwd, opts),
+  // A Codex chat in a trusted folder: Codex's own trust too, or a read-only
+  // chat would ignore the project's .codex settings (agentFolderTrust.js).
+  preTrust: (q) => agentFolderTrust.apply(q),
   // Where a resumed conversation's earlier history is read (its agent's own
   // transcript): the system Claude folder, the system Codex home or a managed
   // Codex account's, never another folder.
@@ -1689,6 +1699,7 @@ try {
   const saved = readJsonSafe(layoutFile(), isLayout)
   remoteFs.setRoots(remoteRootsOfLayout(saved && saved.data))
   worktreeList.setRoots(localRootsOfLayout(saved && saved.data))
+  agentFolderTrust.setRoots(localRootsOfLayout(saved && saved.data))
 } catch {
   /* none yet: the first save brings them */
 }
@@ -2897,6 +2908,18 @@ ipcMain.handle('pty:create', async (_evt, opts = {}) => {
   if (agentProvider) {
     const setup = await prepareStatus(agentProvider, env, opts.hookOptIn)
     if (!setup.ok) agentStatusWarning = setup.error
+  }
+  // The agent does not stop at "Do you trust this folder?" in a folder the
+  // user chose in Tessel (agentFolderTrust.js decides which; never throws).
+  if (opts.agentId && cwd === startDir) {
+    await agentFolderTrust.apply({
+      agentId: opts.agentId,
+      cwd: startDir,
+      env,
+      enabled: opts.agentFolderTrust === true,
+      remote: !!remote,
+      wsl: shell.id === 'wsl' || /[\\/]wsl\.exe$/i.test(String(shell.file || ''))
+    })
   }
   // ssh's questions go to Tessel's askpass helper (sshAskpass.js). 'fallback'
   // (old ssh, no helper): ssh asks in the terminal. 'cancelled': the pane was

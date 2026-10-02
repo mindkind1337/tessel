@@ -53,6 +53,11 @@ export const DEFAULT_SETTINGS = Object.freeze({
   // its editor): off unless turned on. Its prompt hook must answer for every
   // prompt; a failing or left-behind one could block them all.
   cursorStatusHooks: false,
+  // An agent Tessel starts in a project you added (or a folder you trusted
+  // for chats, or a copy Tessel made from one) skips its own "Do you trust
+  // this folder?" question: Tessel writes that folder's trust into the
+  // agent's settings first (src/main/agentFolderTrust.js).
+  agentFolderTrust: true,
   // Settings > Orchestration (Orca's coordinator and workers): ask before an
   // agent starts workers (on by default), how many workers one coordinator
   // runs at a time (the rest wait in a queue), how deep workers may nest

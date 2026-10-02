@@ -489,6 +489,8 @@ async function chatOpen(leaf, { askTrust = true } = {}) {
       worker: leaf.worker === true,
       // A worker never asks: its folder is trusted already (its project), or it does not start.
       askTrust: askTrust && !leaf.worker,
+      // Settings > Agents: a Codex chat's folder trusted in Codex too.
+      agentFolderTrust: settings.agentFolderTrust !== false,
       // Settings > Agents: stopped after this many idle minutes (0: never).
       idleMinutes: Number.isInteger(settings.chatIdleMinutes) ? settings.chatIdleMinutes : 30,
       extraEnv,
@@ -1184,7 +1186,7 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
     res = { ok: false, error: refused }
   } else if (!attached) {
     try {
-      res = await window.shellApi.createPty({ id, shellId, agentId: agent?.id, cols: 80, rows: 24, cwd, projectDir, extraEnv, accountEnv, unsetEnv, hookOptIn: { cursor: settings.cursorStatusHooks === true }, ...(opts.remoteHostId ? { remoteHostId: opts.remoteHostId } : {}), ...(opts.remoteHostId && opts.remotePath ? { remotePath: opts.remotePath } : {}) })
+      res = await window.shellApi.createPty({ id, shellId, agentId: agent?.id, cols: 80, rows: 24, cwd, projectDir, extraEnv, accountEnv, unsetEnv, hookOptIn: { cursor: settings.cursorStatusHooks === true }, agentFolderTrust: settings.agentFolderTrust !== false, ...(opts.remoteHostId ? { remoteHostId: opts.remoteHostId } : {}), ...(opts.remoteHostId && opts.remotePath ? { remotePath: opts.remotePath } : {}) })
     } catch (err) {
       res = { ok: false, error: err && err.message }
     }
