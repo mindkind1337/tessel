@@ -39,5 +39,8 @@ export const AGENT_DOCS = {
   opencode2: 'https://opencode.ai/v2/docs/',
   mimocode: 'https://mimo.xiaomi.com/coder',
   primeagent: 'https://github.com/PrimeIntellect-ai/prime-agent',
-  ante: 'https://github.com/AntigmaLabs/ante-preview'
+  ante: 'https://github.com/AntigmaLabs/ante-preview',
+  qoder: 'https://docs.qoder.com/cli/overview',
+  freebuff: 'https://freebuff.com/cli',
+  dsh: 'https://deepseek-harness.github.io/deepseek-harness/'
 }

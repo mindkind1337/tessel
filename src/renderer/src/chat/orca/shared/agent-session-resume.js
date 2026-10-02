@@ -24,6 +24,7 @@
 export const RESUMABLE_TUI_AGENTS = [
     'claude',
     'codex',
+    'qoder',
     'gemini',
     'antigravity',
     'opencode',
@@ -38,7 +39,8 @@ export const RESUMABLE_TUI_AGENTS = [
     'copilot',
     'kimi',
     'muse',
-    'zcode'
+    'zcode',
+    'dsh'
 ];
 const RESUMABLE_TUI_AGENT_SET = new Set(RESUMABLE_TUI_AGENTS);
 const PROVIDER_SESSION_ID_MAX_LENGTH = 512;
@@ -129,6 +131,7 @@ export function agentProviderSessionsEqual(agent, left, right) {
 }
 export function extractAgentProviderSession(source, payload) {
     switch(source){
+        case 'qoder':
         case 'claude':
         case 'codex':
             {
@@ -163,6 +166,8 @@ export function extractAgentProviderSession(source, payload) {
                 }, payload) : null;
             }
         case 'zcode':
+        // DeepSeek Harness's hook bridge sends an empty transcript_path: the id alone.
+        case 'dsh':
             {
                 const id = readSessionId(payload, [
                     'session_id'
@@ -275,6 +280,12 @@ export function getAgentResumeArgv(agent, providerSession, ompResumeFilePath) {
                 'resume',
                 id
             ] : null;
+        case 'qoder':
+            return providerSession.key === 'session_id' ? [
+                'qodercli',
+                '--resume',
+                id
+            ] : null;
         case 'gemini':
             return providerSession.key === 'session_id' ? [
                 'gemini',
@@ -362,6 +373,13 @@ export function getAgentResumeArgv(agent, providerSession, ompResumeFilePath) {
         case 'zcode':
             return providerSession.key === 'session_id' ? [
                 'zcode',
+                '--resume',
+                id
+            ] : null;
+        // dsh keys its sessions by workspace path: the pane keeps its folder.
+        case 'dsh':
+            return providerSession.key === 'session_id' ? [
+                'dsh-tui',
                 '--resume',
                 id
             ] : null;

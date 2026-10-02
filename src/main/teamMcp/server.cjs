@@ -1126,7 +1126,7 @@ const STATUS_EVENTS = {
 // 2026 Lovecast Inc.
 // Agents whose hooks (agentStatusHooks.js) only report their status: the hook
 // answers nothing, or the neutral answer their CLI waits for.
-const STATUS_AGENTS = ['cursor', 'droid', 'grok', 'antigravity', 'openclaude', 'commandcode', 'amp', 'pi']
+const STATUS_AGENTS = ['cursor', 'droid', 'grok', 'antigravity', 'openclaude', 'commandcode', 'amp', 'pi', 'qoder', 'dsh']
 // Cursor's prompt hook answers {"continue":true} (it takes the AND of every
 // hook's answer: never a refusal of Tessel's). Antigravity's PreInvocation can
 // only add context (its result has no decision): an explicit empty result, as
@@ -1314,7 +1314,28 @@ const NORMALIZE = {
     if (name === 'Stop') return { event: data.fullyIdle === false || data.fully_idle === false ? 'PostToolUse' : 'Stop' }
     return null
   },
-  commandcode: (name) => (['PreToolUse', 'PostToolUse', 'Stop'].includes(name) ? { event: name } : null)
+  commandcode: (name) => (['PreToolUse', 'PostToolUse', 'Stop'].includes(name) ? { event: name } : null),
+  qoder(name, data) {
+    // A compaction restarts the session mid-turn: not a new one.
+    if (name === 'SessionStart') return ['compact'].includes(str(data.source)) ? null : { event: name }
+    if (name === 'PreToolUse') return askOr('PreToolUse', data)
+    if (name === 'Stop') return { event: data.is_interrupt === true ? 'Interrupt' : 'Stop' }
+    if (name === 'Notification') {
+      const type = str(data.notification_type)
+      if (type === 'permission_prompt' || type === 'elicitation_dialog') return permission()
+      return type === 'idle_prompt' ? { event: 'Stop' } : null
+    }
+    // A /compact the user ran has ended; an automatic one is part of a turn.
+    if (name === 'PostCompact') return data.trigger === 'manual' ? { event: 'Stop' } : null
+    return ['UserPromptSubmit', 'PostToolUse', 'PostToolUseFailure', 'PermissionRequest', 'StopFailure', 'SessionEnd'].includes(name) ? { event: name } : null
+  },
+  dsh(name, data) {
+    // Its bridge stamps a sub-agent's own session on these: never the pane's.
+    if (name === 'SubagentStart' || name === 'SubagentStop') return null
+    // No Notification or PermissionRequest: its question tool is the wait.
+    if (name === 'PreToolUse') return askOr('PreToolUse', data)
+    return ['SessionStart', 'UserPromptSubmit', 'PostToolUse', 'Stop'].includes(name) ? { event: name } : null
+  }
 }
 // -> the status event this hook stands for ({ event, ...fields }), or null.
 function statusEvent(provider, data) {

@@ -10,6 +10,9 @@ describe('resume arguments', () => {
     expect(await resumeArgs('grok', U, api({}))).toEqual(['--resume', U])
     expect(await resumeArgs('devin', 'devin-abc123', api({}))).toEqual(['--resume', 'devin-abc123'])
     expect(await resumeArgs('zcode', 'zc_123456', api({}))).toEqual(['--resume', 'zc_123456'])
+    // Qoder CLI and DeepSeek Harness: the id their hooks reported.
+    expect(await resumeArgs('qoder', U, api({}))).toEqual(['--resume', U])
+    expect(await resumeArgs('dsh', 'dsh_session1', api({}))).toEqual(['--resume', 'dsh_session1'])
     expect(await resumeArgs('antigravity', U, api({}))).toEqual(['--conversation', U])
     expect(await resumeArgs('kimi', 'session_abc123', api({}))).toEqual(['--session', 'session_abc123'])
     expect(await resumeArgs('opencode', 'ses_abcdef', api({}))).toEqual(['--session', 'ses_abcdef'])

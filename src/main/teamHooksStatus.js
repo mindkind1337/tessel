@@ -6,6 +6,7 @@ import { kimiConfigFile, kimiHookEvents, KIMI_HOOK_EVENTS } from './kimiHooks'
 import { join } from 'path'
 import { t } from './i18n'
 import { statusHooksInstallation, STATUS_HOOK_AGENTS, STATUS_HOOKS } from './agentStatusHooks'
+import { dshPatchFile } from './dshHooks'
 import { findNode, hookCommand, noNodeError } from './nodePath'
 import { STATUS_PROVIDERS } from '../shared/agentStateModel'
 import { HOOK_EVENTS, CODEX_HOOK_EVENTS, GEMINI_HOOK_EVENTS, COPILOT_HOOK_EVENTS, COPILOT_HOOKS_FILE, OPENCODE_PLUGIN_FILE, OPENCODE_MARKER, opencodePlugin } from './teamInstall'
@@ -337,7 +338,9 @@ function backups(home, configDirs, env) {
     join(configDirs.codex || join(home, '.codex'), 'config.toml'),
     join(home, '.gemini', 'settings.json'),
     kimiConfigFile(home),
-    ...STATUS_HOOK_AGENTS.map((id) => STATUS_HOOKS[id].file(home, env))
+    ...STATUS_HOOK_AGENTS.map((id) => STATUS_HOOKS[id].file(home, env)),
+    // DeepSeek Harness's patch layer, where Tessel's row points at its hooks.
+    dshPatchFile(home, env)
   ]
   return [...new Set(files)].map((f) => `${f}.before-tessel`).filter((f) => {
     try {

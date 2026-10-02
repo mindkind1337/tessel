@@ -99,8 +99,64 @@ const RULES = [
     re: exe('prime-agent'),
     // Its npm shim runs a generic bundled cli.js: only the package path says which.
     script: /(^|[\\/])node_modules[\\/]prime-agent[\\/]dist[\\/]bundle[\\/]cli\.js$|(^|[\\/])node_modules[\\/](?:.+[\\/])?prime-agent$/i
+  },
+  // Qoder CLI, Freebuff and DeepSeek Harness, after Orca's
+  // src/shared/agent-process-recognition.ts and dsh-launch-command.ts, MIT,
+  // Copyright (c) 2026 Lovecast Inc.
+  // Qoder's launcher runs a versioned `qodercli-<version>` binary.
+  {
+    id: 'qoder',
+    re: /(^|[\\/])qodercli(-\d[^\\/]*)?(\.exe)?$/i,
+    script: /(^|[\\/])node_modules[\\/](?:.+[\\/])?qodercli$|(^|[\\/])@qoder-ai[\\/]qodercli[\\/]/i
+  },
+  // Its npm bin is a generic index.js: only the package folder says which.
+  { id: 'freebuff', ...named('freebuff', /(^|[\\/])node_modules[\\/]freebuff[\\/]index\.js$/i) },
+  // DeepSeek Harness: `dsh-tui` (alias `dst`) runs `dsh --profile dsh-tui`;
+  // the same `dsh` also serves its web, headless and SDK profiles, which are
+  // no agent pane.
+  {
+    id: 'dsh',
+    re: /(^|[\\/])(?:dsh-tui|dst|dsh)(\.exe)?$/i,
+    script: /(^|[\\/])@deepseek-ai[\\/]dsh[\\/]lib[\\/]bin\.js$|(^|[\\/])@deepseek-harness-tui[\\/]dsh-tui[\\/]/i,
+    reject: (cmd) => dshNotInteractive(cmd)
   }
 ]
+
+// A `dsh` command line that runs something else than its interactive
+// profile: a non-interactive --profile, the `plugin` or `web` subcommand, or a
+// config dump. Only the launcher's own leading words are read (what follows
+// belongs to the app: a session id, a prompt). `dsh-tui` / `dst` always are.
+const DSH_OTHER_PROFILES = new Set(['web', 'headless', 'sdk', 'sdk-minimal', 'acp', 'desktop'])
+const DSH_DUMPS = new Set(['--dump-config', '--dump-default-config', '--dump-config-schema'])
+const DSH_VALUE_FLAGS = new Set(['--profile', '--from-default-profile', '--patch'])
+const DSH_FLAGS = new Set(['-V', '--version', '-h', '--help', ...DSH_DUMPS])
+export function dshNotInteractive(cmd) {
+  const tokens = []
+  const re = /"([^"]*)"|'([^']*)'|(\S+)/g
+  let m
+  while (tokens.length < 64 && (m = re.exec(String(cmd || '')))) tokens.push(m[1] ?? m[2] ?? m[3])
+  const base = (t) =>
+    (String(t || '').split(/[\\/]/).pop() || '').toLowerCase().replace(/\.(?:exe|cmd|bat|ps1|js|mjs|cjs)$/, '')
+  if (['dsh-tui', 'dst'].includes(base(tokens[0])) || ['dsh-tui', 'dst'].includes(base(tokens[1]))) return false
+  if (/(^|[\\/])@deepseek-harness-tui[\\/]dsh-tui[\\/]/i.test(tokens[1] || '')) return false
+  const launcher = (t) => DSH_FLAGS.has(t) || DSH_VALUE_FLAGS.has(t.split('=', 1)[0])
+  let i = 1
+  // Leading words before its flags: a runtime's script path, or a subcommand.
+  for (; i < tokens.length && !launcher(tokens[i]); i++) {
+    if (tokens[i] === 'plugin' || tokens[i] === 'web') return true
+    if (!tokens[i].startsWith('-') && i > 1) return false
+  }
+  let profile = null
+  for (; i < tokens.length; i++) {
+    const t = tokens[i]
+    if (DSH_DUMPS.has(t)) return true
+    if (!launcher(t)) break
+    if (profile === null && t.startsWith('--profile=')) profile = t.slice(10)
+    else if (profile === null && t === '--profile') profile = tokens[i + 1] ?? null
+    if (DSH_VALUE_FLAGS.has(t)) i++
+  }
+  return profile !== null && DSH_OTHER_PROFILES.has(profile)
+}
 
 function escape(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -138,7 +194,10 @@ export function agentOf(proc) {
   const runtime = /(^|[\\/])(?:node|nodejs|bun)(\.exe)?$/i.test(name || words[0] || '')
   const script = runtime && words[1] && !words[1].startsWith('-') ? words[1] : ''
   for (const r of RULES) {
-    if (executables.some((w) => r.re.test(w)) || (script && r.script?.test(script))) return r.id
+    if (executables.some((w) => r.re.test(w)) || (script && r.script?.test(script))) {
+      if (r.reject && r.reject(cmd)) continue
+      return r.id
+    }
   }
   // Ollama: its menu (no arguments), a chat (run) or an agent it starts
   // (launch); not the server or a list.

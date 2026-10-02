@@ -182,6 +182,51 @@ describe('installing status hooks in the agents’ own files', () => {
     expect(statusHooksInstallation(agent, scriptPath, { home, env: {}, node: NODE }).hooks).toBe('error')
   })
 
+  it('Qoder: Claude Code-shaped hooks in ~/.qoder/settings.json', () => {
+    expect(installStatusHooks('qoder', scriptPath, { home, env: {}, node: NODE })).toEqual({ changed: true })
+    const saved = read(join(home, '.qoder', 'settings.json'))
+    expect(Object.keys(saved.hooks)).toEqual(STATUS_HOOKS.qoder.events)
+    expect(saved.hooks.Stop).toEqual([{ hooks: [{ type: 'command', command: statusCommand(scriptPath, 'qoder', 'Stop', NODE), timeout: 30 }] }])
+  })
+
+  it("DeepSeek Harness: its own hooks file, pointed at by Tessel's row in its patch layer", () => {
+    const dshHome = join(dir, 'dsh-home')
+    const env = { DSH_HOME: dshHome }
+    const patch = join(dshHome, 'cordis.patch.yml')
+    const hooksFile = join(dshHome, 'tessel-status-hooks.json')
+    // dsh writes an empty flow list into a new patch file.
+    put(patch, '[] # my patches\n')
+    expect(installStatusHooks('dsh', scriptPath, { home, env, node: NODE })).toEqual({ changed: true })
+    expect(Object.keys(read(hooksFile).hooks)).toEqual(['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Stop'])
+    const text = fs.readFileSync(patch, 'utf8')
+    expect(text).not.toContain('[]')
+    expect(text).toContain(' # my patches')
+    expect(text).toContain("name: '@deepseek-ai/dsh-hooks-claude-code'")
+    expect(text).toContain(`configPath: '${hooksFile}'`)
+    expect(fs.readFileSync(`${patch}.before-tessel`, 'utf8')).toBe('[] # my patches\n')
+    expect(installStatusHooks('dsh', scriptPath, { home, env, node: NODE })).toEqual({ changed: false })
+    expect(statusHooksInstallation('dsh', scriptPath, { home, env, node: NODE }).hooks).toBe('installed')
+    expect(fs.existsSync(join(home, '.dsh'))).toBe(false)
+    // Its row gone (the user removed it): not working, so not "installed".
+    put(patch, '- insert: []\n')
+    expect(statusHooksInstallation('dsh', scriptPath, { home, env, node: NODE }).hooks).toBe('partial')
+    expect(installStatusHooks('dsh', scriptPath, { home, env, node: NODE })).toEqual({ changed: true })
+    expect(fs.readFileSync(patch, 'utf8').startsWith('- insert: []\n')).toBe(true)
+    expect(removeStatusHooks('dsh', { home, env })).toEqual({ changed: true })
+    expect(fs.readFileSync(patch, 'utf8')).toBe('- insert: []\n')
+    expect(fs.existsSync(hooksFile)).toBe(false)
+    expect(fs.existsSync(`${patch}.before-tessel`)).toBe(false)
+  })
+
+  it('DeepSeek Harness: a [...] patch list it cannot add to is refused, never rewritten', () => {
+    const env = { DSH_HOME: join(dir, 'dsh-home') }
+    const patch = join(dir, 'dsh-home', 'cordis.patch.yml')
+    put(patch, '[{ insert: [] }]\n')
+    expect(installStatusHooks('dsh', scriptPath, { home, env, node: NODE }).error).toMatch(/one "- " entry per line/)
+    expect(fs.readFileSync(patch, 'utf8')).toBe('[{ insert: [] }]\n')
+    expect(statusHooksInstallation('dsh', scriptPath, { home, env, node: NODE }).hooks).toBe('error')
+  })
+
   it('Pi: its extension goes where PI_CODING_AGENT_DIR says', () => {
     const agentDir = join(dir, 'pi-agent')
     installStatusHooks('pi', scriptPath, { home, env: { PI_CODING_AGENT_DIR: agentDir }, node: NODE })
@@ -289,7 +334,15 @@ describe('the hook script turns each agent’s events into status events', () =>
     ['antigravity', ['--agent=antigravity', '--event=Stop'], { fullyIdle: false }, 'PostToolUse'],
     ['antigravity', ['--agent=antigravity', '--event=PreInvocation'], {}, 'UserPromptSubmit'],
     ['openclaude', ['--agent=openclaude', '--event=UserPromptSubmit'], { session_id: 'oc-session-1', prompt: 'PRIVATE' }, 'UserPromptSubmit'],
-    ['commandcode', ['--agent=commandcode', '--event=Stop'], { session_id: 'cc-session-1' }, 'Stop']
+    ['commandcode', ['--agent=commandcode', '--event=Stop'], { session_id: 'cc-session-1' }, 'Stop'],
+    ['qoder', ['--agent=qoder', '--event=Stop'], { session_id: 'qoder-session-1', is_interrupt: true }, 'Interrupt'],
+    ['qoder', ['--agent=qoder', '--event=Notification'], { session_id: 'qoder-session-1', notification_type: 'idle_prompt' }, 'Stop'],
+    ['qoder', ['--agent=qoder', '--event=Notification'], { session_id: 'qoder-session-1', notification_type: 'permission_prompt' }, 'Notification'],
+    ['qoder', ['--agent=qoder', '--event=PermissionRequest'], { session_id: 'qoder-session-1', tool_name: 'Bash' }, 'PermissionRequest'],
+    ['qoder', ['--agent=qoder', '--event=PostCompact'], { session_id: 'qoder-session-1', trigger: 'manual' }, 'Stop'],
+    ['dsh', ['--agent=dsh', '--event=UserPromptSubmit'], { session_id: 'dsh-session-1', prompt: 'PRIVATE' }, 'UserPromptSubmit'],
+    ['dsh', ['--agent=dsh', '--event=PreToolUse'], { session_id: 'dsh-session-1', tool_name: 'ask_user_question' }, 'PreToolUse'],
+    ['dsh', ['--agent=dsh', '--event=Stop'], { session_id: 'dsh-session-1' }, 'Stop']
   ]
   it.each(cases)('%s %j -> %s', async (provider, args, payload, event) => {
     const result = await runHook(args, payload, paneEnv(provider))
@@ -310,6 +363,10 @@ describe('the hook script turns each agent’s events into status events', () =>
     await runHook(['--agent=cursor', '--event=afterAgentResponse'], { conversation_id: 'cur-conv-1' }, paneEnv('cursor'))
     await runHook(['--agent=grok', '--event=Stop'], { sessionId: 'grok-child', subagentType: 'explore' }, paneEnv('grok'))
     await runHook(['--agent=grok', '--event=Notification'], { sessionId: 'g-session', notificationType: 'permission_prompt', message: 'Tool permission requested' }, paneEnv('grok'))
+    // Qoder's compaction restart and automatic compaction; dsh's sub-agents.
+    await runHook(['--agent=qoder', '--event=SessionStart'], { session_id: 'qoder-session-1', source: 'compact' }, paneEnv('qoder'))
+    await runHook(['--agent=qoder', '--event=PostCompact'], { session_id: 'qoder-session-1', trigger: 'auto' }, paneEnv('qoder'))
+    await runHook(['--agent=dsh', '--event=SubagentStop'], { session_id: 'dsh-child-1' }, paneEnv('dsh'))
     expect(reports()).toEqual([])
   })
   it('Copilot sub-agents are reported as children (its name identifies each)', async () => {

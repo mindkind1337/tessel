@@ -43,7 +43,8 @@ export const NPM_PACKAGES = {
   openclaude: '@gitlawb/openclaude',
   autohand: 'autohand-cli',
   commandcode: 'command-code',
-  mimocode: '@mimo-ai/cli'
+  mimocode: '@mimo-ai/cli',
+  freebuff: 'freebuff'
 }
 // Same options as its install (see AGENT_PRESETS).
 const NPM_FLAGS = { pi: '--ignore-scripts ' }
@@ -56,7 +57,7 @@ const OTHER_HINTS = {
   aider: () => t('main.agentUpdate.hintAider', 'Run aider-install again to update it.')
 }
 // Installed by the vendor's own script (agentInstalls.js).
-for (const id of ['cursor', 'grok', 'antigravity', 'hermes', 'devin', 'omp', 'muse']) {
+for (const id of ['cursor', 'grok', 'antigravity', 'hermes', 'devin', 'omp', 'muse', 'qoder']) {
   OTHER_HINTS[id] = () => t('main.agentUpdate.hintInstaller', 'Run its installer again to update it.')
 }
 

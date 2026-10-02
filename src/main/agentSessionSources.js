@@ -1,5 +1,5 @@
 // Read-only session readers for the agents that pick their own conversation
-// id: Droid, Grok, Pi, Antigravity, Devin, Cursor, Copilot, Kimi and Cline.
+// id: Droid, Grok, Pi, Antigravity, Devin, Cursor, Copilot, Kimi, Cline and ZCode.
 // Each one lists { agent, id, cwd, started, updated, title } from the agent's
 // own session folder, for the Sessions dialog (history) and to find the
 // conversation a pane started (resume).
@@ -175,7 +175,8 @@ export function sessionDirs(home = os.homedir(), env = process.env) {
     cursor: join(home, '.cursor'),
     copilot: join(envDir(env.COPILOT_HOME) || join(home, '.copilot'), 'session-state'),
     kimi: envDir(env.KIMI_CODE_HOME) || join(home, '.kimi-code'),
-    cline: join(clineDataDir(home), 'sessions')
+    cline: join(clineDataDir(home), 'sessions'),
+    zcode: join(home, '.zcode', 'cli', 'db')
   }
 }
 
@@ -438,6 +439,56 @@ export function devinSessions(home = os.homedir(), { since = 0 } = {}) {
   return out
 }
 
+// --- ZCode ----------------------------------------------------------------------------
+// ~/.zcode/cli/db/db.sqlite: OpenCode's tables (session: id, directory, title,
+// time_created, time_updated in ms, parent_id, time_archived; message and
+// part, data as JSON). A message ZCode marks hidden
+// (semantics.transcriptVisibility) is never read for a title. After Orca's
+// src/main/ai-vault/session-scanner-zcode-sources.ts and
+// session-scanner-zcode-visibility.ts, MIT, Copyright (c) 2026 Lovecast Inc.
+
+const ZCODE_VISIBLE = "COALESCE(json_extract(m.data, '$.semantics.transcriptVisibility'), 'visible') != 'hidden'"
+function zcodeFirstPrompt(db, id) {
+  const rows = readRows(
+    db,
+    `SELECT json_extract(p.data, '$.text') AS text FROM message m JOIN part p ON p.message_id = m.id
+     WHERE m.session_id = ? AND ${ZCODE_VISIBLE} AND json_extract(m.data, '$.role') = 'user'
+       AND json_extract(p.data, '$.type') = 'text' AND length(p.data) <= 65536
+     ORDER BY m.time_created ASC, m.id ASC, p.id ASC LIMIT 8`,
+    [id]
+  )
+  for (const r of rows) if (typeof r.text === 'string' && realPrompt(r.text)) return title(r.text)
+  return ''
+}
+export function zcodeSessions(home = os.homedir(), { since = 0 } = {}) {
+  const root = sessionDirs(home).zcode
+  const db = join(root, 'db.sqlite')
+  if (!fs.existsSync(db) || !insideDir(root, db)) return []
+  const cols = new Set(readRows(db, 'PRAGMA table_info(session)').map((c) => c.name))
+  if (!['id', 'directory', 'title', 'time_created', 'time_updated'].every((c) => cols.has(c))) return []
+  const where = []
+  if (cols.has('parent_id')) where.push('parent_id IS NULL')
+  if (cols.has('time_archived')) where.push('time_archived IS NULL')
+  if (since) where.push('time_updated >= ?')
+  const rows = readRows(
+    db,
+    `SELECT id, directory, title, time_created, time_updated FROM session${where.length ? ` WHERE ${where.join(' AND ')}` : ''} ORDER BY time_updated DESC LIMIT 1000`,
+    since ? [since - SLACK] : []
+  )
+  const hasParts = readRows(db, "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('message', 'part')").length === 2
+  const out = []
+  for (const r of rows) {
+    const id = String(r.id || '')
+    if (!plainId(id)) continue
+    const started = time(r.time_created)
+    // Its own title, or (none yet) the first prompt typed, for the newest few.
+    let name = title(r.title)
+    if (!name && hasParts && out.length < 200) name = zcodeFirstPrompt(db, id)
+    out.push({ agent: 'zcode', id, cwd: folder(r.directory), started, updated: time(r.time_updated) || started, title: name })
+  }
+  return out
+}
+
 // --- Cursor Agent ------------------------------------------------------------------
 // ~/.cursor/chats/<md5 of folder>/<chat id>/meta.json { title, cwd, createdAtMs,
 // updatedAtMs }; the messages are in ~/.cursor/projects/<slug>/agent-transcripts/
@@ -626,7 +677,8 @@ const READERS = {
   pi: piSessions,
   omp: ompSessions,
   antigravity: antigravitySessions,
-  devin: devinSessions
+  devin: devinSessions,
+  zcode: zcodeSessions
 }
 export const HISTORY_AGENTS = Object.keys(READERS)
 

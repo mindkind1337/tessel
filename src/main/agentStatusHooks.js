@@ -5,7 +5,7 @@
 // into Tessel's status events, bound to the pane's launch (agentStateStore.js).
 //
 // Where each agent reads its hooks, and which events, after Orca's
-// src/main/{cursor,droid,grok,antigravity,openclaude,command-code}/hook-service.ts,
+// src/main/{cursor,droid,grok,antigravity,openclaude,command-code,qoder,dsh}/hook-service.ts,
 // src/main/amp/agent-status-plugin-source.ts and
 // src/main/pi/agent-status-extension-source.ts, MIT, Copyright (c) 2026 Lovecast Inc.
 //
@@ -24,6 +24,7 @@ import { readJson } from './fileRead'
 import { writeFileAtomic } from './safeJson'
 import { t } from './i18n'
 import { hookNode, hookCommand, pluginNodeSource, findNode } from './nodePath'
+import { dshHome, dshPatchStatus, installDshPatch, removeDshPatchFile } from './dshHooks'
 
 const OURS = 'tessel-team-mcp.cjs'
 const record = (v) => v !== null && typeof v === 'object' && !Array.isArray(v)
@@ -86,6 +87,24 @@ export const STATUS_HOOKS = {
     file: (home) => join(home, '.commandcode', 'settings.json'),
     events: ['PreToolUse', 'PostToolUse', 'Stop'],
     matcher: { PreToolUse: '.*', PostToolUse: '.*' }
+  },
+  // Qoder CLI: Claude Code's hooks format, in its own settings
+  // (docs.qoder.com/cli/hooks).
+  qoder: {
+    shape: 'claude',
+    file: (home) => join(home, '.qoder', 'settings.json'),
+    events: ['SessionStart', 'SessionEnd', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'PermissionRequest', 'Stop', 'StopFailure', 'Notification', 'PostCompact']
+  },
+  // DeepSeek Harness: Tessel's own hooks file, read by dsh's Claude Code hook
+  // bridge through a row Tessel adds to its home patch layer (dshHooks.js).
+  // Only the events that bridge fires (it has no Notification or
+  // PermissionRequest: an unknown name would register nothing).
+  dsh: {
+    shape: 'claude',
+    own: true,
+    patch: true,
+    file: (home, env) => join(dshHome(home, env), 'tessel-status-hooks.json'),
+    events: ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Stop']
   },
   amp: {
     shape: 'plugin',
@@ -335,6 +354,14 @@ function eventTable(spec, settings, create) {
 export function installStatusHooks(agent, scriptPath, { home = os.homedir(), env = process.env, node } = {}) {
   const spec = STATUS_HOOKS[agent]
   if (!spec) return { error: `${agent}: no status hooks` } // i18n-ignore internal: programming error
+  const result = installEntries(agent, spec, scriptPath, { home, env, node })
+  if (result.error || !spec.patch) return result
+  // dsh: its patch row points at the hooks file, written first.
+  const patched = installDshPatch(spec.file(home, env), { home, env })
+  return patched.error ? patched : { changed: !!(result.changed || patched.changed) }
+}
+
+function installEntries(agent, spec, scriptPath, { home, env, node }) {
   const found = hookNode(scriptPath, node, env)
   if (found.error) return found
   const file = spec.file(home, env)
@@ -421,11 +448,17 @@ export function removeStatusHooks(agent, { home = os.homedir(), env = process.en
   const spec = STATUS_HOOKS[agent]
   if (!spec) return { changed: false }
   const file = spec.file(home, env)
+  // dsh: its patch row goes first (never pointing at a missing file).
+  let unpatched = { changed: false }
+  if (spec.patch) {
+    unpatched = removeDshPatchFile({ home, env })
+    if (unpatched.error) return unpatched
+  }
   const result = removeEntries(spec, file)
   // Tessel's copy of the user's file goes with its hooks (only once they are
   // gone: a failed removal keeps it).
   if (!result.error) dropBackup(file)
-  return result
+  return unpatched.changed && !result.error ? { ...result, changed: true } : result
 }
 
 // The copy of a user's file Tessel kept before its first change.
@@ -518,5 +551,13 @@ export function statusHooksInstallation(agent, scriptPath, { home = os.homedir()
   row.events = status.events
   const on = Object.values(status.events).filter(Boolean).length
   row.hooks = status.every ? 'installed' : on ? 'partial' : 'missing'
+  // dsh reads the file only through its patch row.
+  if (spec.patch && on) {
+    const patch = dshPatchStatus(file, { home, env })
+    if (patch.error) {
+      row.hooks = 'error'
+      row.error = patch.error
+    } else if (patch !== 'installed') row.hooks = 'partial'
+  }
   return row
 }

@@ -9,7 +9,8 @@ import {
   mapCursorLegacy,
   mapGrok,
   mapOpenCodeGo,
-  mapMiniMax
+  mapMiniMax,
+  mapZcode
 } from '../usageProviderMapping'
 const now = Date.parse('2026-09-28T12:00:00Z')
 const fixtures = {
@@ -343,5 +344,54 @@ describe('Orca quota mappings', () => {
         ]
       })
     ).toEqual([])
+  })
+})
+
+describe('ZCode Coding Plan quota', () => {
+  const limits = {
+    success: true,
+    code: 200,
+    data: {
+      level: 'pro',
+      limits: [
+        { type: 'TOKENS_LIMIT', unit: 3, number: 5, usage: 1000, currentValue: 250, nextResetTime: now + 3600000 },
+        { type: 'TOKENS_LIMIT', unit: 6, number: 1, percentage: 40, nextResetTime: now + 86400000 },
+        { type: 'TIME_LIMIT', unit: 5, number: 1, usage: 100, remaining: 90, nextResetTime: now + 7 * 86400000 }
+      ]
+    }
+  }
+  it('maps its 5-hour, weekly and monthly limits, and refuses an unsuccessful answer', () => {
+    expect(mapZcode(limits, now)).toEqual([
+      { label: '5-hour', usedPct: 25, resetsAt: now + 3600000 },
+      { label: 'Weekly', usedPct: 40, resetsAt: now + 86400000 },
+      { label: 'Monthly', usedPct: 10, resetsAt: now + 7 * 86400000 }
+    ])
+    // A 5-hour reset further than 5 hours away is not its reset.
+    const far = { ...limits, data: { limits: [{ ...limits.data.limits[0], nextResetTime: now + 10 * 3600000 }] } }
+    expect(mapZcode(far, now)).toEqual([{ label: '5-hour', usedPct: 25, resetsAt: null }])
+    expect(mapZcode({ success: false, msg: 'nope' }, now)).toBe(null)
+    expect(mapZcode({ success: true, code: 1001, data: { limits: [] } }, now)).toBe(null)
+  })
+  it("reads the endpoint of ZCode's configured host, with its key as given", async () => {
+    const sources = {
+      present: vi.fn(async () => true),
+      auth: vi.fn(async () => ({ headers: { Authorization: 'fixture-only' }, endpoint: 'zcodeCn', fingerprint: 'one' }))
+    }
+    const request = vi.fn(async () => new Response(JSON.stringify(limits)))
+    const service = createExtraProviderUsage({
+      sources,
+      request,
+      listAgents: async () => [{ id: 'zcode', available: true }],
+      clock: () => now
+    })
+    expect((await service.capabilities()).providers.map((p) => p.id)).toEqual(['zcode'])
+    const result = await read(service, 'zcode')
+    expect(result).toMatchObject({ ok: true, provider: 'zcode', windows: [{ label: '5-hour' }, { label: 'Weekly' }, { label: 'Monthly' }] })
+    expect(request.mock.calls.map(([url]) => url)).toEqual(['https://open.bigmodel.cn/api/monitor/usage/quota/limit'])
+    expect(JSON.stringify(result)).not.toContain('fixture-only')
+    // Its other hosts are never providers of their own.
+    expect(await read(service, 'zcodeCn')).toMatchObject({ ok: false, code: 'validation' })
+    request.mockImplementation(async () => new Response(JSON.stringify({ success: false, msg: 'bad key' })))
+    expect(await read(service, 'zcode')).toMatchObject({ ok: false, code: 'response' })
   })
 })

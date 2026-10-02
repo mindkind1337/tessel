@@ -122,7 +122,13 @@ describe('which agent runs in a shell pane', () => {
     ['muse', 'muse-bin-1.3.0'],
     ['opencode2', 'opencode2'],
     ['mimocode', 'mimo'],
-    ['primeagent', 'prime-agent']
+    ['primeagent', 'prime-agent'],
+    ['qoder', 'qodercli'],
+    ['qoder', 'qodercli-1.1.64'],
+    ['freebuff', 'freebuff'],
+    ['dsh', 'dsh-tui'],
+    ['dsh', 'dst'],
+    ['dsh', 'dsh']
   ])('recognises %s from its command %s', (id, executable) => {
     expect(
       agentOf({ name: `${executable}.exe`, cmd: `"C:\Tools\${executable}.exe" "ask claude"` })
@@ -136,10 +142,28 @@ describe('which agent runs in a shell pane', () => {
     ['kilo', win`C:\npm\node_modules\@kilocode\cli\bin\kilo.js`],
     ['zcode', win`C:\npm\node_modules\@zcode\cli\dist\zcode.cjs`],
     ['primeagent', win`C:\npm\node_modules\prime-agent\dist\bundle\cli.js`],
-    ['openclaw', '/usr/lib/node_modules/openclaw/bin/openclaw']
+    ['openclaw', '/usr/lib/node_modules/openclaw/bin/openclaw'],
+    ['qoder', win`C:\npm\node_modules\@qoder-ai\qodercli\bundle\qodercli.js`],
+    ['freebuff', win`C:\npm\node_modules\freebuff\index.js`],
+    ['dsh', win`C:\npm\node_modules\@deepseek-ai\dsh\lib\bin.js`],
+    ['dsh', win`C:\npm\node_modules\@deepseek-harness-tui\dsh-tui\bin\dsh-tui.js`]
   ])('recognises the %s npm install as a runtime entrypoint', (id, script) => {
     expect(agentOf({ name: 'node.exe', cmd: `node "${script}" chat` })).toBe(id)
     expect(agentOf({ name: 'git.exe', cmd: `git "${script}"` })).toBe(null)
+  })
+
+  it("takes dsh's web, headless and SDK profiles, plugin and dumps for no agent pane", () => {
+    const bin = win`C:\npm\node_modules\@deepseek-ai\dsh\lib\bin.js`
+    expect(agentOf({ name: 'dsh.exe', cmd: 'dsh --profile dsh-tui --resume abc123' })).toBe('dsh')
+    expect(agentOf({ name: 'node.exe', cmd: `node "${bin}" --profile dsh-tui` })).toBe('dsh')
+    for (const cmd of ['dsh --profile web', 'dsh --profile=headless', 'dsh web', 'dsh plugin add x', 'dsh --dump-config', `node "${bin}" --profile sdk`])
+      expect(agentOf({ name: 'dsh.exe', cmd })).toBe(null)
+    // The launcher's argv belongs to the app: a folder named "web" is a folder.
+    expect(agentOf({ name: 'dsh-tui.exe', cmd: 'dsh-tui web' })).toBe('dsh')
+    expect(agentOf({ name: 'dsh.exe', cmd: 'dsh --profile dsh-tui web' })).toBe('dsh')
+    // Freebuff is not Codebuff, and the Qoder IDE is not its CLI.
+    expect(agentOf({ name: 'codebuff.exe', cmd: 'codebuff' })).toBe('codebuff')
+    expect(agentOf({ name: 'Qoder.exe', cmd: 'Qoder.exe' })).toBe(null)
   })
 
   it('keeps the short command names from matching other programs', () => {

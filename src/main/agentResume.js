@@ -16,7 +16,10 @@
 //               found in their session folders (agentSessionSources.js);
 //               resumed with the arguments of agent-session-resume.js
 //   OpenClaude  like Claude Code, transcripts under ~/.openclaude/projects
-//   ZCode       its id only comes from its hooks (reported sessions)
+//   ZCode       picks its own id: found in ~/.zcode/cli/db/db.sqlite
+//               (agentSessionSources.js), resumed with zcode --resume <id>
+//   Qoder CLI, DeepSeek Harness: their id only comes from their status
+//               hooks (reported sessions): qodercli / dsh-tui --resume <id>
 // Each "find" takes the session started in the pane's folder at or after the
 // pane started, not already used by another pane (like findCodexSession).
 import fs from 'fs'
@@ -165,7 +168,7 @@ export function findAgentSession(q = {}, home = os.homedir(), roots = {}) {
   if (agent === 'cline') return pickSession(clineSessions(home), q)
   if (agent === 'copilot') return pickSession(copilotSessions(home, q.since), q)
   if (agent === 'kimi') return pickSession(kimiSessions(home, q.since), q)
-  // Droid, Grok, Pi, OMP, Antigravity, Devin, Cursor (agentSessionSources.js).
+  // Droid, Grok, Pi, OMP, Antigravity, Devin, Cursor, ZCode (agentSessionSources.js).
   const list = agentSessionList(agent, home, { since: q.since })
   return list ? pickSession(list.map((r) => ({ id: r.id, cwd: r.cwd, time: r.started, updated: r.updated })), q) : null
 }
@@ -177,8 +180,9 @@ export function findAgentSession(q = {}, home = os.homedir(), roots = {}) {
 //   {}                   resume with the id
 //   { transcriptPath }   Pi, OMP: resume with its session file
 // Agents whose sessions we can read are only resumed when the session exists
-// (they refuse an unknown id); ZCode's id only comes from its hooks.
-const UNCHECKED = new Set(['opencode', 'cline', 'copilot', 'kimi', 'zcode'])
+// (they refuse an unknown id); Qoder's and DeepSeek Harness's ids only come
+// from their hooks.
+const UNCHECKED = new Set(['opencode', 'cline', 'copilot', 'kimi', 'qoder', 'dsh'])
 
 export function resumeTarget({ agent, sessionId } = {}, home = os.homedir()) {
   if (!isSessionId(sessionId)) return null

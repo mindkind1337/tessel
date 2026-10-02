@@ -8,7 +8,7 @@
 import { t } from './i18n'
 import { maskSecrets } from './chat/chatModel'
 
-export const AGENTS = ['claude', 'codex', 'gemini', 'qwen', 'opencode', 'openclaude', 'copilot', 'kimi', 'cline', 'cursor', 'droid', 'grok', 'pi', 'omp', 'antigravity', 'devin']
+export const AGENTS = ['claude', 'codex', 'gemini', 'qwen', 'opencode', 'openclaude', 'copilot', 'kimi', 'cline', 'cursor', 'droid', 'grok', 'pi', 'omp', 'antigravity', 'devin', 'zcode']
 export const AGENT_NAME = {
   claude: 'Claude Code', // i18n-ignore
   codex: 'Codex',
@@ -25,7 +25,8 @@ export const AGENT_NAME = {
   pi: 'Pi',
   omp: 'OMP',
   antigravity: 'Antigravity',
-  devin: 'Devin'
+  devin: 'Devin',
+  zcode: 'ZCode'
 }
 export const agentLabel = (agent) => AGENT_NAME[agent] || agent
 

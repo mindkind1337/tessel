@@ -19,7 +19,8 @@ import {
   piResumeFile,
   ompSessions,
   ompResumeFile,
-  grokUserText
+  grokUserText,
+  zcodeSessions
 } from '../agentSessionSources'
 import { findAgentSession, resumeTarget } from '../agentResume'
 import { listSessions } from '../agentSessions'
@@ -172,6 +173,37 @@ describe.skipIf(!sqlite)('Devin', () => {
   })
 })
 
+describe.skipIf(!sqlite)('ZCode', () => {
+  it("lists ~/.zcode/cli/db/db.sqlite (OpenCode's tables), titles from its first visible prompt", () => {
+    fs.mkdirSync(join(home, '.zcode', 'cli', 'db'), { recursive: true })
+    const db = new sqlite.DatabaseSync(join(home, '.zcode', 'cli', 'db', 'db.sqlite'))
+    db.exec('CREATE TABLE session (id TEXT, directory TEXT, title TEXT, time_created INTEGER, time_updated INTEGER, parent_id TEXT, time_archived INTEGER)')
+    db.exec('CREATE TABLE message (id TEXT, session_id TEXT, time_created INTEGER, data TEXT)')
+    db.exec('CREATE TABLE part (id TEXT, message_id TEXT, session_id TEXT, data TEXT)')
+    const ins = db.prepare('INSERT INTO session VALUES (?, ?, ?, ?, ?, ?, ?)')
+    ins.run('ses_zcode01', 'C:\\Proj', 'Fix the import', T, T + 60000, null, null)
+    ins.run('ses_zcode02', 'C:\\Proj', '', T + 1000, T + 2000, null, null)
+    ins.run('ses_child01', 'C:\\Proj', 'child', T, T, 'ses_zcode01', null)
+    ins.run('ses_archiv1', 'C:\\Proj', 'old', T, T, null, T)
+    const msg = db.prepare('INSERT INTO message VALUES (?, ?, ?, ?)')
+    const part = db.prepare('INSERT INTO part VALUES (?, ?, ?, ?)')
+    // A hidden message (ZCode's own) comes first: never the title.
+    msg.run('m1', 'ses_zcode02', T + 1000, JSON.stringify({ role: 'user', semantics: { transcriptVisibility: 'hidden' } }))
+    part.run('p1', 'm1', 'ses_zcode02', JSON.stringify({ type: 'text', text: 'system preamble' }))
+    msg.run('m2', 'ses_zcode02', T + 1500, JSON.stringify({ role: 'user' }))
+    part.run('p2', 'm2', 'ses_zcode02', JSON.stringify({ type: 'text', text: 'explain zcode' }))
+    db.close()
+    expect(zcodeSessions(home).map((r) => [r.id, r.cwd, r.title])).toEqual([
+      ['ses_zcode01', 'C:\\Proj', 'Fix the import'],
+      ['ses_zcode02', 'C:\\Proj', 'explain zcode']
+    ])
+    expect(findAgentSession({ agent: 'zcode', cwd: 'C:\\Proj', since: T }, home)).toBe('ses_zcode01')
+    expect(resumeTarget({ agent: 'zcode', sessionId: 'ses_zcode02' }, home)).toEqual({})
+    expect(resumeTarget({ agent: 'zcode', sessionId: 'ses_child01' }, home)).toBe(null)
+    expect(moreAgentsHistory({ cwd: 'C:\\Proj' }, home).filter((r) => r.agent === 'zcode').map((r) => r.id)).toEqual(['ses_zcode01', 'ses_zcode02'])
+  })
+})
+
 describe('Cursor', () => {
   it('reads chats/<hash>/<id>/meta.json and titles from its transcript', () => {
     put(`.cursor/chats/abcd/${U1}/meta.json`, { cwd: 'C:\\Proj', createdAtMs: T, updatedAtMs: T + 10 })
@@ -217,10 +249,13 @@ describe('the Sessions dialog list', () => {
 })
 
 describe('safety', () => {
-  it('never an unsafe id, and ZCode (hooks only) resumes the id as given', () => {
+  it('never an unsafe id, and Qoder / DeepSeek Harness (hooks only) resume the id as given', () => {
     expect(resumeTarget({ agent: 'droid', sessionId: 'a b; rm -rf' }, home)).toBe(null)
-    expect(resumeTarget({ agent: 'zcode', sessionId: 'zc_123456' }, home)).toEqual({})
-    expect(resumeTarget({ agent: 'zcode', sessionId: '--help' }, home)).toBe(null)
+    expect(resumeTarget({ agent: 'qoder', sessionId: 'qd_123456' }, home)).toEqual({})
+    expect(resumeTarget({ agent: 'dsh', sessionId: 'dsh_123456' }, home)).toEqual({})
+    expect(resumeTarget({ agent: 'qoder', sessionId: '--help' }, home)).toBe(null)
+    // ZCode: only a session in its database.
+    expect(resumeTarget({ agent: 'zcode', sessionId: 'zc_123456' }, home)).toBe(null)
     expect(resumeTarget({ agent: 'nope', sessionId: U1 }, home)).toBe(null)
   })
   it('does not follow a link out of the agent folder', () => {
