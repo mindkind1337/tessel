@@ -793,7 +793,7 @@
       "untrusted": "Ce dossier n'est pas encore approuvé pour les agents de chat.",
       "trustTitle": "Approuver ce dossier pour un agent de chat ?",
       "trustMessage": "Un agent de chat exécute Claude, Codex ou OpenCode dans {{dir}} sans son terminal : il exécute alors les hooks, les plugins et les serveurs MCP que ce dossier définit (.claude/settings.json, .mcp.json, .codex/config.toml, opencode.json, .opencode/) sans demander.",
-      "trustDetail": "Ne l'approuvez que si vous savez d'où vient ce dossier. Dans un panneau terminal, l'agent vous le demande lui-même.",
+      "trustDetail": "Ne l'approuvez que si vous savez d'où vient ce dossier. Les agents que Tessel lance ici dans un terminal sautent alors aussi leur propre question « faire confiance à ce dossier ? » (Paramètres > Agents).",
       "trustYes": "Approuver ce dossier",
       "trustNo": "Annuler",
       "noCodex": "Codex est introuvable. Installez-le, puis réessayez.",

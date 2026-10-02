@@ -2271,3 +2271,31 @@ describe('opencode earlier history', () => {
     expect(adapters[0].history).not.toHaveBeenCalled()
   })
 })
+
+it('a Codex chat pre-trusts its folder in Codex before it starts; a Claude chat does not', async () => {
+  const order = []
+  const preTrust = vi.fn(async (q) => {
+    order.push('trust')
+    return 'granted'
+  })
+  const base = makeDeps({ preTrust, resolveCodex: async () => ({ exe: 'C:\bin\codex.exe' }) })
+  const createAdapter = base.createAdapter
+  base.createAdapter = vi.fn((opts) => {
+    order.push('adapter')
+    return createAdapter(opts)
+  })
+  const chat = createChatSessions(base)
+  await openOk(chat, { paneId: 'cx', agent: 'codex', agentFolderTrust: true })
+  expect(preTrust).toHaveBeenCalledTimes(1)
+  expect(preTrust.mock.calls[0][0]).toMatchObject({ agentId: 'codex', cwd: tmp, enabled: true })
+  expect(preTrust.mock.calls[0][0].env).toBeTypeOf('object')
+  expect(order).toEqual(['trust', 'adapter'])
+  // The setting off: asked with enabled false (agentFolderTrust writes nothing then).
+  await openOk(chat, { paneId: 'cx2', agent: 'codex' })
+  expect(preTrust.mock.calls[1][0].enabled).toBe(false)
+  await openOk(chat, { paneId: 'cl', agentFolderTrust: true })
+  expect(preTrust).toHaveBeenCalledTimes(2)
+  // A failing pre-trust never stops the chat.
+  preTrust.mockRejectedValueOnce(new Error('disk'))
+  await openOk(chat, { paneId: 'cx3', agent: 'codex', agentFolderTrust: true })
+})

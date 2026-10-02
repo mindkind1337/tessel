@@ -1227,6 +1227,13 @@ function previewSound() {
               </label>
               <label class="set-row">
                 <div class="set-label">
+                  {{ t('settings.agents.folderTrust', 'Trust the folder when Tessel starts an agent') }}
+                  <span class="set-hint">{{ t('settings.agents.folderTrustHint', 'Agents Tessel starts in a project you added, in a folder you trusted for chats, or in a copy Tessel made from one, skip their "Do you trust this folder?" question (Claude Code, Codex, Cursor, Copilot, Antigravity), so the project\'s agent settings and hooks apply right away. A pull request\'s copy, your home folder and remote hosts still ask. Off: each agent asks the first time it runs in a folder, and workers or automations wait at that question until you answer it. Folders already trusted stay trusted.') }}</span>
+                </div>
+                <input v-model="settings.agentFolderTrust" type="checkbox" class="set-switch" data-setting="agentFolderTrust" />
+              </label>
+              <label class="set-row">
+                <div class="set-label">
                   {{ t('settings.agents.autoTitles', 'Show the conversation\'s title') }}
                   <span class="set-hint">{{ t('settings.agents.autoTitlesHint', 'Under the agent in the left sidebar and in the pane\'s hover card (Claude Code and Codex)') }}</span>
                 </div>

@@ -131,6 +131,9 @@ export function createChatSessions(deps) {
     state,
     trust,
     trustRoots = () => [],
+    // Before a Codex chat starts in its (trusted) folder: Codex's own folder
+    // trust (agentFolderTrust.js apply; never throws).
+    preTrust = null,
     discoverSkills = discoverClaudeSkills,
     log = null,
     now = Date.now,
@@ -1268,6 +1271,17 @@ export function createChatSessions(deps) {
       }
       // A resumed conversation: its earlier turns first (never on a wake).
       if (resumeId && !from) importHistory(s, childEnv)
+      // Codex trusts the folder itself only when the chat may write there: a
+      // Manual (read-only) chat would ignore the project's .codex settings.
+      // A chat's Claude (-p) never asks, so only Codex.
+      if (agent === 'codex' && typeof preTrust === 'function') {
+        try {
+          await preTrust({ agentId: 'codex', cwd, env: childEnv, enabled: opts.agentFolderTrust === true })
+        } catch {
+          // The folder stays as Codex has it.
+        }
+        if (s.closing) return closedWhileStarting()
+      }
       const common = {
         agent,
         exe: found.exe,
@@ -1816,6 +1830,7 @@ export function createChatSessions(deps) {
         maxPermissions: o.maxPermissions === 'manual' ? 'manual' : undefined,
         worker: o.worker === true,
         askTrust: o.askTrust === true,
+        agentFolderTrust: o.agentFolderTrust === true,
         envOpts: { extraEnv: o.extraEnv, accountEnv: o.accountEnv, unsetEnv: Array.isArray(o.unsetEnv) ? o.unsetEnv.filter((n) => typeof n === 'string').slice(0, 50) : [] }
       })
     })

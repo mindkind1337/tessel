@@ -110,6 +110,8 @@
       "yoloWarning": "Yolo : les agents exécutent des commandes et modifient des fichiers sans vous demander d'abord (l'option propre à chaque agent pour sauter les approbations, sauf si vous définissez ses arguments vous-même). Utilisez-le seulement dans des projets que vous pouvez restaurer.",
       "resume": "Reprendre les conversations à la réouverture des panneaux",
       "resumeHint": "Claude Code et Codex reprennent là où ils s'étaient arrêtés après un redémarrage, au lieu de commencer une nouvelle conversation",
+      "folderTrust": "Faire confiance au dossier quand Tessel lance un agent",
+      "folderTrustHint": "Les agents que Tessel lance dans un projet que vous avez ajouté, dans un dossier que vous avez approuvé pour les conversations, ou dans une copie que Tessel en a faite, sautent leur question « Faites-vous confiance à ce dossier ? » (Claude Code, Codex, Cursor, Copilot, Antigravity) : les réglages et hooks d'agent du projet s'appliquent tout de suite. La copie d'une pull request, votre dossier personnel et les hôtes distants posent toujours la question. Désactivé : chaque agent la pose la première fois qu'il tourne dans un dossier, et les workers ou automatisations attendent votre réponse. Les dossiers déjà approuvés le restent.",
       "autoTitles": "Afficher le titre de la conversation",
       "autoTitlesHint": "Sous l'agent dans la barre de gauche et dans la bulle au survol du panneau (Claude Code et Codex)",
       "whileWorking": "Pendant que les agents travaillent",
