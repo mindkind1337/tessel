@@ -56,6 +56,8 @@ import NotificationsMenu from './components/NotificationsMenu.vue'
 import FileFinder from './components/FileFinder.vue'
 import UsageMenu from './components/UsageMenu.vue'
 import { acquirePassthrough, trackPointerDrag } from './browser/webviewPassthrough'
+import { pageOf } from './browser/pageHost'
+import { createAgentBrowserTargets } from './browser/agentBrowserTargets'
 import GitHubDialog from './components/GitHubDialog.vue'
 import LinearDialog from './components/LinearDialog.vue'
 import { createExternalIssueStarter } from './externalIssues'
@@ -8153,6 +8155,39 @@ const cliRequests = createCliRequests({
   },
   notify: (text) => showToast(text, { timeout: 5000 })
 })
+// The agents' browser tools (src/main/agentBrowser.js): which page of the
+// agent's own project and worktree they act on, a new one next to it.
+const agentBrowserTargets = createAgentBrowserTargets({
+  enabled: () => settings.agentBrowser !== false,
+  workspaces: () => workspaces.value,
+  forEachLeaf,
+  sameView,
+  guestOf: (paneId) => {
+    const page = pageOf(paneId)
+    return page && page.ready && page.guestId != null ? page.guestId : null
+  },
+  paneLabel,
+  // Next to the agent's pane, in its grid; the screen and the keyboard stay
+  // where they are.
+  openPage({ ws, near, url }) {
+    if (!workspaces.value.includes(ws) || !findLeafIn(ws.tree, near.id)) return null
+    const leaf = makeBrowserLeaf(null, url)
+    keepView(leaf, near, ws)
+    ws.tree = replaceNode(ws.tree, near.id, (orig) => reactive({ type: 'split', id: newId('split'), dir: 'row', sizes: [50, 50], children: [orig, leaf] }))
+    refitSoon()
+    return leaf
+  }
+})
+// Settings > Agents > Let agents use the browser: the main process refuses
+// the browser tools too while it is off.
+watch(
+  () => settings.agentBrowser !== false,
+  (enabled) => {
+    const api = window.shellApi && window.shellApi.browser
+    if (api && typeof api.agentSettings === 'function') api.agentSettings({ enabled }).catch(() => {})
+  },
+  { immediate: true }
+)
 function startCliRequests() {
   const api = window.shellApi.cli
   if (!api) return
@@ -8160,7 +8195,8 @@ function startCliRequests() {
     if (!req || typeof req.id !== 'string') return
     let msg
     try {
-      msg = { id: req.id, ok: true, result: await cliRequests.handle(req) }
+      const handled = req.method === 'browserTarget' ? agentBrowserTargets.handle(req.params || {}) : cliRequests.handle(req)
+      msg = { id: req.id, ok: true, result: await handled }
     } catch (err) {
       msg = { id: req.id, ok: false, error: { code: (err && err.code) || 'failed', message: (err && err.message) || '' } }
     }

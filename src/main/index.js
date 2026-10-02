@@ -54,6 +54,7 @@ import { createInstallLogs } from './installLog'
 import { writeBoardRule } from './agentMemory'
 import { claudeImageFile, isPastedImage, PASTE_DIR } from './pastedImages'
 import { createBrowserGuests } from './browserGuest'
+import { createAgentBrowser } from './agentBrowser'
 import { createChatSessions } from './chat/sessions'
 import { createChatImages } from './chat/chatImages'
 import { transcriptHomeFor } from './chat/transcriptHistory'
@@ -100,7 +101,7 @@ import { JSON_AGENTS, setJsonAgentServer, teamToolsEntry } from './jsonAgents'
 import { detectAgents } from './agentDetect'
 import { createPortScanner } from './workspacePorts'
 import { createResourceCollector } from './resourceUsage'
-import { newTeamSecret, setTeamSecret, revokeTeamSecret } from './teamAuth'
+import { newTeamSecret, setTeamSecret, revokeTeamSecret, verifyRequest } from './teamAuth'
 import { publishTeamTasks, forgetPublishedTasks, takeTeamRequests, finishTeamRequests, releaseTeamRequests, messageStatuses, writeBoardPanes, toolsAlive, writeRoster, writeTeamAnswer, publishWorkers } from './teamTasks'
 import {
   writeServerScript,
@@ -2502,9 +2503,37 @@ const browserGuests = createBrowserGuests({
   // "Open Link in Default Browser" of a page's right-click menu (http(s)).
   openExternal: (url) => {
     if (isSafeExternal(url)) shell.openExternal(url).catch(() => {})
-  }
+  },
+  // Each page's console, for the agents' browser tools.
+  onGuest: (guest) => agentBrowser.watchGuest(guest)
 })
 browserGuests.register(ipcMain)
+// Agents driving the browser's pages (agentBrowser.js): the browser_* tools
+// of teamMcp/server.cjs, over the tessel command's pipe ('browser' below),
+// each request signed by its pane's team secret.
+let agentBrowserEnabled = true
+const agentBrowser = createAgentBrowser({
+  verify: (body, paneId) => verifyRequest(body, paneId, 'browser'),
+  enabled: () => agentBrowserEnabled,
+  ask: (method, params) => cliBridge.ask(method, params),
+  guestById: (id) => browserGuests.guestById(id),
+  send,
+  nativeImage,
+  screenshotDir: PASTE_DIR,
+  log
+})
+// Settings > Agents > Let agents use the browser (the window says it at
+// start and on each change).
+ipcMain.handle('browser:agentSettings', (event, opts) => {
+  if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return false
+  agentBrowserEnabled = !(opts && opts.enabled === false)
+  return true
+})
+// The Stop on a page's "Agent" badge.
+ipcMain.handle('browser:agentStop', (event, id) => {
+  if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return false
+  return agentBrowser.stop(id)
+})
 ipcMain.handle('clipboard:saveImage', () => {
   const img = clipboard.readImage()
   if (img.isEmpty()) return null
@@ -2970,6 +2999,9 @@ ipcMain.handle('pty:create', async (_evt, opts = {}) => {
         // and the project its team lives in.
         TESSEL_PANE_ID: String(id),
         TESSEL_TEAM_SECRET: teamSecret,
+        // Where this Tessel's command pipe is described (cli-runtime.json):
+        // the browser tools reach this Tessel, not another one.
+        TESSEL_RUNTIME_DIR: app.getPath('userData'),
         ...(agentProvider ? { TESSEL_AGENT_PROVIDER: agentProvider, TESSEL_AGENT_LAUNCH: agentLaunchToken, TESSEL_AGENT_STATE_DIR: agentStateDir } : {}),
         ...(projectDir && isAbsolute(projectDir) && fs.existsSync(projectDir) ? { TESSEL_PROJECT_DIR: projectDir } : {}),
         ...(askpassEnv || {})
@@ -3636,7 +3668,8 @@ const cliHandlers = {
   },
   status: async () => ({ version: app.getVersion(), ...(await cliBridge.ask('status', {})) }),
   'task.add': async (params) => cliBridge.ask('addTask', params),
-  usage: async () => accountUsage.usage()
+  usage: async () => accountUsage.usage(),
+  browser: async (params) => agentBrowser.handle(params)
 }
 const cliServer = createCliServer({
   userData: app.getPath('userData'),

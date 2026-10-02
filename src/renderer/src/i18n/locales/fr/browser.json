@@ -103,6 +103,14 @@
       "nextLabel": "Résultat suivant",
       "close": "Fermer (Échap)",
       "closeLabel": "Fermer la recherche"
+    },
+    "agent": {
+      "hint": "Un agent lit et clique dans cette page (Paramètres > Agents > Laisser les agents utiliser le navigateur)",
+      "controlling": "{{agent}} pilote",
+      "controllingAnon": "Agent aux commandes",
+      "stop": "Arrêter",
+      "stopHint": "Empêcher les agents de piloter cette page",
+      "stopped": "Les agents ne peuvent plus piloter cette page. Fermez-la et ouvrez-en une nouvelle pour le leur permettre à nouveau."
     }
   },
   "browserDesign": {

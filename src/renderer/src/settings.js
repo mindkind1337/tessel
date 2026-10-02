@@ -58,6 +58,10 @@ export const DEFAULT_SETTINGS = Object.freeze({
   // this folder?" question: Tessel writes that folder's trust into the
   // agent's settings first (src/main/agentFolderTrust.js).
   agentFolderTrust: true,
+  // Agents may drive the built-in browser's pages of their own project
+  // (the browser_* tools, src/main/agentBrowser.js); each page shows an
+  // Agent badge with a Stop button while one does. On, as in Orca.
+  agentBrowser: true,
   // Settings > Orchestration (Orca's coordinator and workers): ask before an
   // agent starts workers (on by default), how many workers one coordinator
   // runs at a time (the rest wait in a queue), how deep workers may nest

@@ -213,7 +213,9 @@
       "yoloFolderRemove": "Retirer",
       "yoloFolderRemoveHint": "Les agents lancés ici demandent à nouveau d'abord (sauf si Yolo est activé plus haut)",
       "chatIdle": "Arrêter un agent de chat inactif après",
-      "chatIdleHint": "Minutes sans tour (0 : jamais). Son prochain message le relance, sa conversation reprise"
+      "chatIdleHint": "Minutes sans tour (0 : jamais). Son prochain message le relance, sa conversation reprise",
+      "browser": "Laisser les agents utiliser le navigateur",
+      "browserHint": "Les agents peuvent lire, cliquer et taper dans les pages du navigateur intégré de leur propre projet (jamais les pages des autres projets, jamais les champs de mot de passe, aucun téléchargement). Une page pilotée par un agent affiche un badge Agent ; son bouton Arrêter reprend la page."
     },
     "orchestration": {
       "yourTeam": "Votre équipe",

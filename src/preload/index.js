@@ -406,7 +406,12 @@ const api = {
     // The mouse's back/forward buttons with no page focused: for the active pane.
     onAppCommand: (cb) => subscribe('browser:appCommand', cb),
     onPermissionDenied: (cb) => subscribe('browser:permissionDenied', cb),
-    onDownloadBlocked: (cb) => subscribe('browser:downloadBlocked', cb)
+    onDownloadBlocked: (cb) => subscribe('browser:downloadBlocked', cb),
+    // Agents driving pages (src/main/agentBrowser.js): the setting, the
+    // badge's Stop, and when an agent starts or stops driving a page.
+    agentSettings: (opts) => ipcRenderer.invoke('browser:agentSettings', opts),
+    agentStop: (id) => ipcRenderer.invoke('browser:agentStop', id),
+    onAgentControl: (cb) => subscribe('browser:agentControl', cb)
   },
 
   // Chat agents (src/main/chat/sessions.js): Claude without a terminal. The

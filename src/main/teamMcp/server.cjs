@@ -13,6 +13,10 @@
 //                            orchestration: a coordinator (the team's lead)
 //                            starts workers in new panes (Orca's
 //                            coordinator and workers, the Tessel way)
+//   browser_pages / _open / _navigate / _snapshot / _click / _fill / _type /
+//   _press / _scroll / _screenshot / _console / _wait
+//                            drive Tessel's built-in browser pages of my own
+//                            project (see "Browser tools" below)
 //
 // Tessel stays the only writer of the channel's state.json: this server only
 // reads it, sends by dropping a file into my outbox (Tessel takes it in), and
@@ -31,7 +35,7 @@ const path = require('path')
 const crypto = require('crypto')
 const { randomUUID } = crypto
 
-const VERSION = '1.10.7'
+const VERSION = '1.11.0'
 const MAX_TEXT = 6000
 
 // --- Finding my team and me ---------------------------------------------------
@@ -953,6 +957,191 @@ const TOOLS = [
   }
 ]
 
+// --- Browser tools ------------------------------------------------------------------
+// Tessel's built-in browser, driven the way Orca's agents drive theirs
+// (MIT, Copyright (c) 2026 Lovecast Inc.: skill-guides/orca-cli/references/
+// browser.md, src/cli/handlers/browser-*.ts): a snapshot with element refs,
+// then click / fill / type / press by ref, a new snapshot after the page
+// changes. Commands go to a browser pane of the agent's own project and
+// worktree (the one it used last, else the one shown), or the "page" named.
+//
+// Transport: the tessel command's pipe (its runtime file and token in
+// Tessel's data folder, this Windows user only), each request signed with
+// this pane's team secret: Tessel checks the pane, its project, the page
+// and the user's setting (src/main/agentBrowser.js).
+const BROWSER_TEAM_KEY = 'browser'
+const BROWSER_TIMEOUT_MS = 60000
+const BROWSER_MAX_REPLY = 2 * 1024 * 1024
+const PIPE_RE = /^\\\\\.\\pipe\\tessel-cli-[0-9a-f]{32}$/
+const PAGE_ARG = { page: { type: 'string', description: 'Optional: the browser page id from browser_pages (default: the page you used last, else the one shown in your project).' } }
+
+// Tessel's data folders this agent may belong to: the one it was started
+// from (TESSEL_RUNTIME_DIR), then the installed app's and the dev build's
+// (this script lives in %APPDATA%\tessel-team).
+function browserRuntimes() {
+  const appData = process.env.APPDATA || path.dirname(__dirname)
+  const dirs = []
+  for (const d of [process.env.TESSEL_RUNTIME_DIR, path.join(appData, 'tessel'), path.join(appData, 'tessel-dev')]) if (d && !dirs.includes(d)) dirs.push(d)
+  const out = []
+  for (const dir of dirs) {
+    const rt = readJson(path.join(dir, 'cli-runtime.json'))
+    let token = ''
+    try {
+      token = fs.readFileSync(path.join(dir, 'cli.token'), 'utf8').trim()
+    } catch {
+      continue
+    }
+    if (!rt || typeof rt.pipe !== 'string' || !PIPE_RE.test(rt.pipe) || !/^[0-9a-f]{64}$/.test(token)) continue
+    try {
+      process.kill(rt.pid, 0)
+    } catch (err) {
+      if (!err || err.code !== 'EPERM') continue
+    }
+    out.push({ pipe: rt.pipe, token })
+  }
+  return out
+}
+
+function pipeCall(rt, method, params, timeoutMs = BROWSER_TIMEOUT_MS) {
+  const net = require('net')
+  return new Promise((resolve) => {
+    let buf = ''
+    let done = false
+    let sock = null
+    const finish = (v) => {
+      if (done) return
+      done = true
+      clearTimeout(timer)
+      try {
+        if (sock) sock.destroy()
+      } catch {
+        // closed
+      }
+      resolve(v)
+    }
+    const timer = setTimeout(() => finish({ ok: false, error: { code: 'timeout', message: 'Tessel did not answer in time.' } }), timeoutMs)
+    sock = net.createConnection(rt.pipe)
+    sock.setEncoding('utf8')
+    sock.on('error', (err) => finish({ ok: false, error: { code: 'not_running', message: `Tessel is not reachable (${err.code || err.message}).` } }))
+    sock.on('data', (chunk) => {
+      buf += chunk
+      if (buf.length > BROWSER_MAX_REPLY) return finish({ ok: false, error: { code: 'too_large', message: 'The answer is too large.' } })
+      const nl = buf.indexOf('\n')
+      if (nl < 0) return
+      try {
+        finish(JSON.parse(buf.slice(0, nl)))
+      } catch {
+        finish({ ok: false, error: { code: 'bad_reply', message: 'Tessel sent an answer this tool cannot read.' } })
+      }
+    })
+    sock.on('end', () => finish({ ok: false, error: { code: 'bad_reply', message: 'Tessel closed the connection without answering.' } }))
+    const body = Buffer.from(JSON.stringify({ token: rt.token, method, params }), 'utf8').toString('base64')
+    sock.write(`TESSEL-CLI 1 ${body}\n`)
+  })
+}
+
+// The arguments as Tessel reads them (no empty values), signed by this pane.
+function browserRequest(op, args) {
+  const clean = {}
+  for (const [k, v] of Object.entries(args || {})) if (k !== 'me' && v !== null && v !== undefined && v !== '') clean[k] = v
+  const pane = String(process.env.TESSEL_PANE_ID || '')
+  const nonce = crypto.randomBytes(18).toString('base64url')
+  const at = Date.now()
+  const mac = crypto
+    .createHmac('sha256', Buffer.from(teamSecret(), 'hex'))
+    .update(canonical({ pane, team: BROWSER_TEAM_KEY, body: { op, args: clean, nonce, at } }))
+    .digest('hex')
+  return { pane, op, args: clean, auth: { nonce, at, mac } }
+}
+
+async function browserTool(op, args, deps = { runtimes: browserRuntimes, call: pipeCall }) {
+  if (!process.env.TESSEL_PANE_ID || !teamSecret())
+    return { text: 'The browser tools work only in an agent Tessel started: restart this agent from Tessel (right-click its pane, Restart).', isError: true }
+  const runtimes = deps.runtimes()
+  if (!runtimes.length) return { text: 'Tessel is not running (or is too old for the browser tools).', isError: true }
+  let last = null
+  for (const rt of runtimes) {
+    // A new signature for each Tessel tried (a nonce is used once).
+    const r = await deps.call(rt, 'browser', browserRequest(op, args))
+    if (r && r.ok) {
+      const res = r.result || {}
+      const out = { text: String(res.text || 'Done.') }
+      if (res.image && typeof res.image.data === 'string' && /^image\/(png|jpeg)$/.test(res.image.mimeType)) out.image = { data: res.image.data, mimeType: res.image.mimeType }
+      return out
+    }
+    last = r && r.error ? r.error : { message: 'Tessel could not do it.' }
+    // Another Tessel (the installed app and the dev build): it does not know this pane.
+    if (last.code === 'unknown_pane' || last.code === 'not_running' || last.code === 'unknown_method') continue
+    break
+  }
+  return { text: `${last.message || 'Tessel could not do it.'}${last.code ? ` [${last.code}]` : ''}`, isError: true }
+}
+
+const BROWSER_TOOLS = [
+  {
+    name: 'browser_pages',
+    description: "List the pages of Tessel's built-in browser in your own project and worktree (id, title, address; * marks the one your commands go to by default).",
+    inputSchema: { type: 'object', properties: {} }
+  },
+  {
+    name: 'browser_open',
+    description: 'Open a new browser pane next to yours in Tessel (your project) on an http(s) address, e.g. a local dev server "http://localhost:5173". Later commands go to it. Use it when browser_pages lists none.',
+    inputSchema: { type: 'object', properties: { url: { type: 'string', description: 'http(s) address, or "localhost:5173"' } }, required: ['url'] }
+  },
+  {
+    name: 'browser_navigate',
+    description: 'Go to an http(s) address in the page, or back / forward / reload. Waits for the load. Refs from an earlier snapshot are no longer valid.',
+    inputSchema: { type: 'object', properties: { url: { type: 'string' }, action: { type: 'string', enum: ['back', 'forward', 'reload'] }, ...PAGE_ARG } }
+  },
+  {
+    name: 'browser_snapshot',
+    description: 'Read the page: its accessibility tree as text, one line per heading, text and control; each control has a ref like @e3 for browser_click / browser_fill / browser_type / browser_scroll. Snapshot again after navigation and after any click that changes the page.',
+    inputSchema: { type: 'object', properties: { ...PAGE_ARG } }
+  },
+  {
+    name: 'browser_click',
+    description: 'Click the element with this ref (from the last browser_snapshot).',
+    inputSchema: { type: 'object', properties: { ref: { type: 'string', description: 'e.g. "@e3"' }, double: { type: 'boolean', description: 'Double-click' }, ...PAGE_ARG }, required: ['ref'] }
+  },
+  {
+    name: 'browser_fill',
+    description: 'Replace the text of a field (ref from browser_snapshot) with "text". Never for password fields: ask the user to type those.',
+    inputSchema: { type: 'object', properties: { ref: { type: 'string' }, text: { type: 'string' }, ...PAGE_ARG }, required: ['ref', 'text'] }
+  },
+  {
+    name: 'browser_type',
+    description: 'Type "text" into a field (ref from browser_snapshot) at its cursor, keeping what it holds. Never for password fields.',
+    inputSchema: { type: 'object', properties: { ref: { type: 'string' }, text: { type: 'string' }, ...PAGE_ARG }, required: ['ref', 'text'] }
+  },
+  {
+    name: 'browser_press',
+    description: 'Press a key in the page (where the keyboard is): "Enter", "Tab", "Escape", "ArrowDown", "a", or a combination like "Control+a".',
+    inputSchema: { type: 'object', properties: { key: { type: 'string' }, ...PAGE_ARG }, required: ['key'] }
+  },
+  {
+    name: 'browser_scroll',
+    description: 'Scroll the page (direction and pixels, default down 600), or bring an element (ref) into view.',
+    inputSchema: { type: 'object', properties: { direction: { type: 'string', enum: ['up', 'down', 'left', 'right'] }, amount: { type: 'number' }, ref: { type: 'string' }, ...PAGE_ARG } }
+  },
+  {
+    name: 'browser_screenshot',
+    description: 'A screenshot of what the page shows (an image, and the PNG file path).',
+    inputSchema: { type: 'object', properties: { ...PAGE_ARG } }
+  },
+  {
+    name: 'browser_console',
+    description: "The page's latest console messages (errors, warnings, logs) and the dialogs it opened.",
+    inputSchema: { type: 'object', properties: { limit: { type: 'number', description: 'How many (default 50)' }, level: { type: 'string', enum: ['error', 'warning', 'info', 'debug', 'dialog'] }, ...PAGE_ARG } }
+  },
+  {
+    name: 'browser_wait',
+    description: 'Wait until the page shows a text, has a CSS selector, or its address contains a part (one of them), up to timeout_ms (default 10000, at most 30000). Better than sleeping after an async change.',
+    inputSchema: { type: 'object', properties: { text: { type: 'string' }, selector: { type: 'string' }, url: { type: 'string' }, timeout_ms: { type: 'number' }, ...PAGE_ARG } }
+  }
+]
+const BROWSER_OPS = Object.fromEntries(BROWSER_TOOLS.map((t) => [t.name, t.name.slice('browser_'.length)]))
+TOOLS.push(...BROWSER_TOOLS)
+
 // An agent in no team: its workspace's board (.tessel/board/<workspace>),
 // from the panes.<window>.json files Tessel writes (fresh ones only).
 function boardLocate(start) {
@@ -981,6 +1170,8 @@ function boardLocate(start) {
 const BOARD_TOOLS = ['team_tasks', 'team_task_add', 'team_task_move', 'team_task_done', 'team_task_gate']
 
 function callTool(name, args = {}, signal = null) {
+  // The browser tools need no team: only this pane's identity.
+  if (BROWSER_OPS[name]) return browserTool(BROWSER_OPS[name], args)
   let ctx = locate(args.me)
   // Alone (no team): the board tools use the workspace's board.
   if (ctx.error && BOARD_TOOLS.includes(name)) ctx = boardLocate() || ctx
@@ -1038,13 +1229,13 @@ function handle(msg, signal = null) {
       capabilities: { tools: {} },
       serverInfo: { name: 'tessel-team', version: VERSION },
       instructions:
-        'You work in Tessel: the user follows everything you do on its task board, so keep it up to date yourself, without being asked. Add a card (team_task_add) for every piece of work the moment you start it (what the user asks, each step you decide to take, each task you give a teammate), and move your cards as they go (team_task_move: "done" as soon as one is finished). Only a quick question or a short answer needs no card. If you are in a team, call team_inbox when you start and after each step to read messages from teammates, answer them with team_send, and never ask the user to pass messages between agents. To work together: give a teammate a card (team_task_add, with "after" when it must wait for other cards), finish work you were given with team_task_done and a short report, ask one teammate and wait for the answer with team_ask, ask the user to decide with team_task_gate, and send to groups like "@codex" or "@idle"; team_members shows who is idle. A team lead can also coordinate workers: start new agents in new panes with team_worker_start (one per independent piece of work), follow them with team_worker_list and team_worker_read, and stop or release them; a worker reports with team_worker_done and sends team_heartbeat while it works.'
+        'You work in Tessel: the user follows everything you do on its task board, so keep it up to date yourself, without being asked. Add a card (team_task_add) for every piece of work the moment you start it (what the user asks, each step you decide to take, each task you give a teammate), and move your cards as they go (team_task_move: "done" as soon as one is finished). Only a quick question or a short answer needs no card. If you are in a team, call team_inbox when you start and after each step to read messages from teammates, answer them with team_send, and never ask the user to pass messages between agents. To work together: give a teammate a card (team_task_add, with "after" when it must wait for other cards), finish work you were given with team_task_done and a short report, ask one teammate and wait for the answer with team_ask, ask the user to decide with team_task_gate, and send to groups like "@codex" or "@idle"; team_members shows who is idle. A team lead can also coordinate workers: start new agents in new panes with team_worker_start (one per independent piece of work), follow them with team_worker_list and team_worker_read, and stop or release them; a worker reports with team_worker_done and sends team_heartbeat while it works. To check a web page (your dev server, a UI change), use the built-in browser of Tessel with the browser_* tools: browser_pages or browser_open, then browser_snapshot to read the page with element refs (@e1), browser_click / browser_fill / browser_type / browser_press by ref, and browser_snapshot again after the page changes or navigates; browser_wait instead of sleeping, browser_console for errors, browser_screenshot to see it. The user sees an Agent badge on the page and can stop you.'
     }
   }
   if (method === 'ping') return {}
   if (method === 'tools/list') return { tools: TOOLS }
   if (method === 'tools/call') {
-    const done = (r) => ({ content: [{ type: 'text', text: r.text }], isError: !!r.isError })
+    const done = (r) => ({ content: [{ type: 'text', text: r.text }, ...(r.image ? [{ type: 'image', data: r.image.data, mimeType: r.image.mimeType }] : [])], isError: !!r.isError })
     const failed = (err) => done({ text: `Tessel team tool failed: ${err.message}`, isError: true })
     try {
       const r = callTool(params && params.name, (params && params.arguments) || {}, signal)
@@ -1776,4 +1967,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { sanitizeAsk, ASK_LIMITS, PERMISSION_MODES, MODE_PROVIDERS, taskRequest, locate, readInbox, send, members, handle, candidateDirs, ackPath, markRead, unread, listTasks, addTask, moveTask, reportTask, gateTask, ask, groupTargets, listWorkers, listGates, TOOLS, VERSION, AGENT_STATUS_AGENTS, statusEvent }
+module.exports = { browserTool, browserRequest, browserRuntimes, BROWSER_TOOLS, sanitizeAsk, ASK_LIMITS, PERMISSION_MODES, MODE_PROVIDERS, taskRequest, locate, readInbox, send, members, handle, candidateDirs, ackPath, markRead, unread, listTasks, addTask, moveTask, reportTask, gateTask, ask, groupTargets, listWorkers, listGates, TOOLS, VERSION, AGENT_STATUS_AGENTS, statusEvent }

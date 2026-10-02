@@ -80,7 +80,7 @@ describe('request lines', () => {
 
 describe('validateParams', () => {
   it('knows exactly the offered methods', () => {
-    expect(METHODS).toEqual(['ping', 'focus', 'open', 'new', 'status', 'task.add', 'usage'])
+    expect(METHODS).toEqual(['ping', 'focus', 'open', 'new', 'status', 'task.add', 'usage', 'browser'])
     expect(() => validateParams('write', {})).toThrow(/Unknown request/)
     expect(() => validateParams('worker.start', {})).toThrow(/Unknown request/)
   })

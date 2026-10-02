@@ -22,6 +22,7 @@ import { ref, shallowRef, computed, watch, inject, nextTick, onMounted, onBefore
 import {
   ArrowLeft,
   ArrowRight,
+  Bot,
   Camera,
   ChevronDown,
   ChevronUp,
@@ -91,6 +92,14 @@ const canGoForward = ref(false)
 const guestId = ref(null)
 const failure = ref(null) // { kind: 'load' | 'crash', code, description, url }
 const designActive = ref(false)
+// An agent driving this page (its browser tools, src/main/agentBrowser.js):
+// { agent } while it does; the badge's Stop takes the page back.
+const agentControl = ref(null)
+const agentText = computed(() =>
+  agentControl.value && agentControl.value.agent
+    ? t('browser.agent.controlling', '{{agent}} is driving', { agent: agentControl.value.agent })
+    : t('browser.agent.controllingAnon', 'Agent driving')
+)
 
 let ready = false // loadURL needs the webview attached and its first dom-ready
 let pendingUrl = null
@@ -697,6 +706,9 @@ function subscribe(api) {
     })
     if (typeof off === 'function') unsubscribers.push(off)
   }
+  on('onAgentControl', (ev) => {
+    agentControl.value = ev.active ? { agent: String(ev.agent || '').slice(0, 60) } : null
+  })
   on('onPermissionDenied', (ev) => {
     if (ctx.toast) ctx.toast(permissionNotice(ev), { timeout: 6000 })
   })
@@ -708,6 +720,19 @@ function subscribe(api) {
       ...(url ? { action: { label: t('browser.notice.openDefault', 'Open in default browser'), run: () => openExternal(url) } } : {})
     })
   })
+}
+
+// The badge's Stop: no agent drives this page again while it is open.
+function stopAgent() {
+  const api = window.shellApi && window.shellApi.browser
+  if (!api || typeof api.agentStop !== 'function' || guestId.value == null) return
+  Promise.resolve(api.agentStop(guestId.value))
+    .then((ok) => {
+      if (!ok) return
+      agentControl.value = null
+      if (ctx.toast) ctx.toast(t('browser.agent.stopped', 'Agents can no longer drive this page. Close it and open a new one to let them again.'), { timeout: 6000 })
+    })
+    .catch(() => {})
 }
 
 // --- The page's place (browser/pageHost.js) -------------------------------------------------
@@ -946,6 +971,20 @@ defineExpose({ navigate, focusAddress })
           />
           <div v-if="addressError" class="bp-address-error" role="alert" data-test="browser-address-error">{{ addressError }}</div>
         </form>
+
+        <div
+          v-if="agentControl"
+          class="bp-agent"
+          role="status"
+          data-test="browser-agent"
+          :title="t('browser.agent.hint', 'An agent is reading and clicking in this page (Settings > Agents > Let agents use the browser)')"
+        >
+          <Bot :size="14" aria-hidden="true" />
+          <span class="bp-agent-text">{{ agentText }}</span>
+          <button type="button" class="bp-agent-stop" data-test="browser-agent-stop" :title="t('browser.agent.stopHint', 'Stop agents from driving this page')" @click="stopAgent">
+            {{ t('browser.agent.stop', 'Stop') }}
+          </button>
+        </div>
 
         <div class="bp-menu-anchor">
           <button
@@ -1334,6 +1373,41 @@ defineExpose({ navigate, focusAddress })
   flex: 0 0 auto;
 }
 
+.bp-agent {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 1 auto;
+  min-width: 0;
+  height: 24px;
+  padding: 0 3px 0 7px;
+  border-radius: 12px;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.bp-agent-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.bp-agent-stop {
+  flex: 0 0 auto;
+  height: 18px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 9px;
+  background: var(--accent);
+  color: var(--chrome);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.bp-agent-stop:hover {
+  filter: brightness(1.1);
+}
 .bp-badge {
   position: absolute;
   top: 1px;

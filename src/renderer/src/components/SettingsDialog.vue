@@ -1234,6 +1234,13 @@ function previewSound() {
               </label>
               <label class="set-row">
                 <div class="set-label">
+                  {{ t('settings.agents.browser', 'Let agents use the browser') }}
+                  <span class="set-hint">{{ t('settings.agents.browserHint', 'Agents can read, click and type in the built-in browser\'s pages of their own project (never other projects\' pages, never password fields, no downloads). A page an agent drives shows an Agent badge; its Stop button takes the page back.') }}</span>
+                </div>
+                <input v-model="settings.agentBrowser" type="checkbox" class="set-switch" data-setting="agentBrowser" />
+              </label>
+              <label class="set-row">
+                <div class="set-label">
                   {{ t('settings.agents.autoTitles', 'Show the conversation\'s title') }}
                   <span class="set-hint">{{ t('settings.agents.autoTitlesHint', 'Under the agent in the left sidebar and in the pane\'s hover card (Claude Code and Codex)') }}</span>
                 </div>

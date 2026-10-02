@@ -144,7 +144,7 @@ export function contextMenuItems(params = {}, nav = {}) {
   return items
 }
 
-export function createBrowserGuests({ getWindow, send, log = null, screenshotDir, electron, openExternal = null }) {
+export function createBrowserGuests({ getWindow, send, log = null, screenshotDir, electron, openExternal = null, onGuest = null }) {
   const { webContents, clipboard, nativeImage, session: electronSession, Menu = null } = electron
   // guest id -> { cancel } while an element is being picked.
   const picking = new Map()
@@ -246,6 +246,14 @@ export function createBrowserGuests({ getWindow, send, log = null, screenshotDir
 
   // did-attach-webview: the page's own rules.
   function onDidAttach(_event, guest) {
+    // Its console kept for the agents' browser tools (agentBrowser.js).
+    if (onGuest) {
+      try {
+        onGuest(guest)
+      } catch (err) {
+        warn(`watching a page failed: ${err.message}`)
+      }
+    }
     // When the user last clicked or typed in the page, and whether Tessel's
     // window was in full screen then (a page needs that click to ask for full
     // screen, so it is the window's state from before the page's).
@@ -482,6 +490,19 @@ export function createBrowserGuests({ getWindow, send, log = null, screenshotDir
     return guest
   }
 
+  // A page of the browser in Tessel's window, by its id, for the main
+  // process's own use (agentBrowser.js): never Tessel's window itself, never
+  // another kind of webContents, never another session.
+  function guestById(id) {
+    const win = getWindow()
+    if (!win || win.isDestroyed() || !Number.isSafeInteger(id)) return null
+    const guest = webContents.fromId(id)
+    if (!guest || guest.isDestroyed() || guest.getType() !== 'webview') return null
+    if (guest.hostWebContents !== win.webContents) return null
+    if (guest.session !== browserSession()) return null
+    return guest
+  }
+
   // --- Design Mode ------------------------------------------------------------------
   // Screenshots and saved messages older than a day go (they are only for
   // pasting now): at start and at each new one.
@@ -666,7 +687,7 @@ export function createBrowserGuests({ getWindow, send, log = null, screenshotDir
 
   purgeOldFiles()
 
-  return { attachToWindow, register, onWillAttach, onDidAttach, guestFor, capture, pick, shortcutOf, isScreenshot, browserSession, purgeOldFiles, saveFeedback, clearData, showContextMenu, runMenuItem }
+  return { attachToWindow, register, onWillAttach, onDidAttach, guestFor, guestById, capture, pick, shortcutOf, isScreenshot, browserSession, purgeOldFiles, saveFeedback, clearData, showContextMenu, runMenuItem }
 }
 
 export { shortcutOf }
