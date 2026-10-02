@@ -27,7 +27,7 @@ describe('NativeChatContextBanner', () => {
     render({ usage: usage(84), compact })
     expect(banner().exists()).toBe(false)
     await wrapper.setProps({ usage: usage(87) })
-    expect(banner().text()).toContain('87% used (174k / 200k)')
+    expect(banner().text()).toContain('87% full (174k / 200k)')
     await compactButton().trigger('click')
     await flushPromises()
     expect(compact).toHaveBeenCalledTimes(1)
@@ -66,7 +66,7 @@ describe('NativeChatContextBanner', () => {
     setMessages('fr', fr)
     render({ usage: usage(88), compact: vi.fn() })
     expect(compactButton().text()).toBe('Compacter')
-    expect(banner().text()).toContain('Contexte presque plein : 88 % utilisé')
+    expect(banner().text()).toContain('Contexte rempli à 88 %')
   })
 })
 

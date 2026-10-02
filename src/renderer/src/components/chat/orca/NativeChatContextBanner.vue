@@ -43,7 +43,7 @@ const text = computed(() => {
   const used = props.usage ? formatContextTokenCount(props.usage.usedTokens) : ''
   const window = props.usage ? formatContextTokenCount(props.usage.windowTokens) : ''
   return props.compact
-    ? t('chat.context.lowCompact', 'Context almost full: {{pct}}% used ({{used}} / {{window}}). Compact the conversation to free space.', { pct: percentage.value, used, window })
+    ? t('chat.context.lowCompact', 'Context {{pct}}% full ({{used}} / {{window}})', { pct: percentage.value, used, window })
     : t('chat.context.low', 'Context almost full: {{pct}}% used ({{used}} / {{window}}). {{agent}} cannot compact it here: start a new conversation soon.', {
         pct: percentage.value,
         used,
@@ -71,10 +71,8 @@ async function onCompact() {
 
 <template>
   <div v-if="shown" class="nc-context-banner" role="status" data-test="chat-context-low">
-    <span class="nc-context-banner-text">
-      <TriangleAlert class="nc-context-banner-icon" aria-hidden="true" />
-      {{ text }}
-    </span>
+    <TriangleAlert class="nc-context-banner-icon" aria-hidden="true" />
+    <span class="nc-context-banner-text">{{ text }}</span>
     <span class="nc-context-banner-actions">
       <Button
         v-if="compact"
@@ -105,38 +103,44 @@ async function onCompact() {
 </template>
 
 <style scoped>
+/* One quiet amber card above the composer: icon, text and actions on one
+   line (the text wraps beside the icon, never under it). */
 .nc-context-banner {
   box-sizing: border-box;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  width: 100%;
-  max-width: 56rem;
-  margin: 0 auto;
-  padding: 4px 16px;
-  color: var(--nc-warning, #f59e0b);
+  gap: 10px;
+  width: calc(100% - 32px);
+  max-width: 54rem;
+  margin: 4px auto;
+  padding: 6px 6px 6px 10px;
+  border: 1px solid color-mix(in srgb, var(--nc-warning, #f59e0b) 35%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--nc-warning, #f59e0b) 8%, transparent);
+  color: var(--nc-foreground, inherit);
   font-size: 12px;
   line-height: 16px;
-}
-.nc-context-banner-text {
-  display: inline-flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  overflow-wrap: break-word;
-}
-.nc-context-banner-actions {
-  display: inline-flex;
-  flex-shrink: 0;
-  align-items: center;
-  gap: 4px;
 }
 .nc-context-banner-icon {
   width: 14px;
   height: 14px;
-  flex-shrink: 0;
+  flex: none;
+  color: var(--nc-warning, #f59e0b);
+}
+.nc-context-banner-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--nc-muted-foreground, inherit);
+  overflow-wrap: break-word;
+}
+.nc-context-banner-actions {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+}
+.nc-context-banner-actions :deep(button) {
+  font-size: 12px;
 }
 .nc-size-3 {
   width: 12px;

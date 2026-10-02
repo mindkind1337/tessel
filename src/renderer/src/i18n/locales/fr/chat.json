@@ -743,7 +743,7 @@
   "chat.option.modelChange": "Modèle : {{from}} → {{to}}",
   "chat.option.effortFailed": "Effort non changé : {{name}}",
   "chat.compact.failed": "Impossible de compacter la conversation : {{error}}",
-  "chat.context.lowCompact": "Contexte presque plein : {{pct}} % utilisé ({{used}} / {{window}}). Compactez la conversation pour libérer de la place.",
+  "chat.context.lowCompact": "Contexte rempli à {{pct}} % ({{used}} / {{window}})",
   "chat.context.low": "Contexte presque plein : {{pct}} % utilisé ({{used}} / {{window}}). {{agent}} ne peut pas le compacter ici : démarrez bientôt une nouvelle conversation.",
   "chat.context.compactWait": "Attendez la fin du tour",
   "chat.context.compactHint": "Résumer la conversation jusqu’ici pour libérer le contexte",

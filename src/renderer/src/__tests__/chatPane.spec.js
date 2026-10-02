@@ -1182,7 +1182,7 @@ describe('ChatPane.vue', () => {
     emit({ type: 'contextUsage', usedTokens: 180000, windowTokens: 200000 })
     await settle()
     const banner = document.querySelector('[data-test="chat-context-low"]')
-    expect(banner.textContent).toContain('90% used')
+    expect(banner.textContent).toContain('90% full')
     await click(document.querySelector('[data-test="chat-context-compact"]'))
     expect(api.send).toHaveBeenCalledWith({ paneId: 'c1', text: '/compact' })
     emit({ type: 'compacted', trigger: 'manual' })
