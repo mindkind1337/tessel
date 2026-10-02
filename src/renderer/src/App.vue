@@ -2526,6 +2526,11 @@ function buildCommands() {
   if (activeId.value) {
     const id = activeId.value
     add(layout, t('app.cmd.maximize', 'Maximize or restore the active pane'), () => toggleMaximize(id))
+    // Reset Terminal (TerminalPane): only a mounted terminal pane can do it.
+    if (getPane(id)?.resetInputModes)
+      add(layout, t('app.cmd.resetTerminal', 'Reset the active terminal'), () => getPane(id)?.resetInputModes(), {
+        hint: t('app.cmd.resetTerminalHint', 'Turns off modes a program left on; it keeps running')
+      })
     // A terminal agent's chat view (nothing restarts: TerminalPane).
     const leaf = findLeaf(id)
     if (leaf && canShowChatView(leaf))

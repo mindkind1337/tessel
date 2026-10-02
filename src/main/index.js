@@ -3102,6 +3102,10 @@ ipcMain.handle('pty:reconcile', async (_evt, liveIds = []) => {
 
 ipcMain.on('pty:write', (_evt, { id, data }) => host.send('write', { id, data }))
 
+// Reset Terminal: the host clears the modes in its own copy of the screen (an
+// older host ignores the unknown op; the pane still resets itself).
+ipcMain.on('pty:resetModes', (_evt, { id } = {}) => host.send('resetModes', { id }))
+
 ipcMain.on('pty:resize', (_evt, { id, cols, rows }) => {
   if (cols > 0 && rows > 0) host.send('resize', { id, cols, rows })
 })

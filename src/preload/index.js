@@ -26,6 +26,8 @@ const api = {
   writePty: (id, data) => ipcRenderer.send('pty:write', { id, data }),
   resizePty: (id, cols, rows) => ipcRenderer.send('pty:resize', { id, cols, rows }),
   killPty: (id) => ipcRenderer.send('pty:kill', { id }),
+  // Reset Terminal: clear leftover input modes in the host's copy of the screen.
+  resetPtyModes: (id) => ipcRenderer.send('pty:resetModes', { id }),
   // Is a program running in this terminal (under its shell)? -> { running,
   // names } or { unknown: true } (Settings > General, closing a pane).
   ptyRunningWork: (id) => ipcRenderer.invoke('pty:runningWork', id),
