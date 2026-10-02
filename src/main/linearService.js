@@ -5,6 +5,7 @@ import fs from 'fs'
 import { randomUUID } from 'crypto'
 import { dirname, isAbsolute, join, parse, resolve, sep } from 'path'
 import { t } from './i18n'
+import { envelopeProtection, secureStorageAvailable } from './credentialProtection'
 
 const ENDPOINT = 'https://api.linear.app/graphql'
 const MAX_RESPONSE = 2 * 1024 * 1024
@@ -284,14 +285,18 @@ export function createLinearService({
   }
   function publicStatus() {
     load()
+    // Whether a key can be sealed here, and how the saved one sits on disk
+    // (credentialProtection.js): the dialog warns before a key is typed.
+    const storage = { secure: secureStorageAvailable(safeStorage), protection: envelopeProtection(file) }
     return credentials
       ? {
           ok: true,
           configured: true,
           viewer: clone(credentials.viewer),
-          organization: clone(credentials.organization)
+          organization: clone(credentials.organization),
+          ...storage
         }
-      : { ok: true, configured: false }
+      : { ok: true, configured: false, ...storage }
   }
   function changed() {
     generation++

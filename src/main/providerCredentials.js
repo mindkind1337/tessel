@@ -10,6 +10,7 @@ import { randomUUID } from 'crypto'
 import { isAbsolute, join, resolve } from 'path'
 import { writeJsonSafe } from './safeJson'
 import { t } from './i18n'
+import { envelopeProtection } from './credentialProtection'
 
 export const SECRET_NAMES = Object.freeze([
   'minimaxApiKey',
@@ -180,6 +181,9 @@ export function createProviderCredentials({ dir, safeStorage } = {}) {
     return {
       ok: true,
       secure: encryption(),
+      // How the saved file sits on disk ('sealed' | 'plaintext' | null), for
+      // Settings' warning; read without decrypting.
+      protection: envelopeProtection(secretsFile),
       saved: Object.fromEntries(SECRET_NAMES.map((name) => [name, !!saved[name]])),
       settings: settings(),
       ...(secretsError ? { error: secretsError } : {})

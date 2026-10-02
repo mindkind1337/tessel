@@ -46,7 +46,7 @@ describe('saved provider credentials', () => {
   it('encrypts keys and cookies and only reports whether each is saved', async () => {
     const credentials = store()
     const result = credentials.saveSecret('minimaxApiKey', '  fixture-minimax-key  ')
-    expect(result).toMatchObject({ ok: true, secure: true, saved: { minimaxApiKey: true, minimaxCookie: false } })
+    expect(result).toMatchObject({ ok: true, secure: true, protection: 'sealed', saved: { minimaxApiKey: true, minimaxCookie: false } })
     expect(JSON.stringify(result)).not.toContain('fixture-minimax-key')
     const raw = await fs.readFile(path.join(home, 'userData', 'provider-credentials', 'secrets.json'), 'utf8')
     expect(raw).not.toContain('fixture-minimax-key')
@@ -70,7 +70,7 @@ describe('saved provider credentials', () => {
     const refused = plain.saveSecret('minimaxApiKey', 'fixture-key')
     expect(refused.ok).toBe(false)
     expect(refused.error).not.toContain('fixture-key')
-    expect(plain.status()).toMatchObject({ secure: false, saved: { minimaxApiKey: false } })
+    expect(plain.status()).toMatchObject({ secure: false, protection: null, saved: { minimaxApiKey: false } })
     const credentials = store()
     expect(credentials.saveSecret('claudeToken', 'x').ok).toBe(false)
     expect(credentials.saveSecret('minimaxApiKey', 'two words').ok).toBe(false)

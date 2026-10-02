@@ -663,7 +663,9 @@
       "scopeClaudeShort": "Changer de compte modifie votre connexion Claude du système ; redémarrez les terminaux Claude pour l'utiliser.",
       "scopeCodexShort": "Les nouveaux terminaux Codex utilisent le compte sélectionné ; ceux déjà ouverts gardent le leur.",
       "notInstalled": "Non installés :",
-      "showProvider": "Afficher {{name}}"
+      "showProvider": "Afficher {{name}}",
+      "unsealed": "Vos clés et cookies enregistrés sont stockés sans chiffrement : quiconque peut lire votre disque ou une sauvegarde peut les lire. Enregistrez-les de nouveau pour les chiffrer.",
+      "unsealedSignIns": "Les connexions des comptes ajoutés ici sont stockées sans chiffrement, dans des fichiers de votre dossier utilisateur Windows (comme {{name}} conserve la sienne) : quiconque peut lire votre disque ou une sauvegarde peut les utiliser."
     },
     "usageVisibility": {
       "showInUsage": "Afficher dans Utilisation",

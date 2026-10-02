@@ -80,6 +80,14 @@ describe('provider account management', () => {
     expect(row('system').find('[data-test="account-remove"]').exists()).toBe(false)
   })
 
+  it('says that added accounts keep their sign-in unencrypted, only when there are some', async () => {
+    state.providers[1].accounts = []
+    await render()
+    expect(section().get('[data-test="accounts-unsealed"]').text()).toContain('stored unencrypted')
+    expect(section().get('[data-test="accounts-unsealed"]').text()).toContain('Codex')
+    expect(section('claude').find('[data-test="accounts-unsealed"]').exists()).toBe(false)
+  })
+
   it('shows one row per provider with the account in use; its accounts stay folded until Details', async () => {
     await render()
     const details = () => section().get('[data-test="provider-details"]')

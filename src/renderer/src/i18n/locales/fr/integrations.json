@@ -469,7 +469,8 @@
       "key": "Clé d'API personnelle",
       "openSettings": "Ouvrir les paramètres Linear",
       "testing": "Test…",
-      "save": "Tester et enregistrer"
+      "save": "Tester et enregistrer",
+      "noSecureStorage": "Le stockage sécurisé des identifiants n'est pas disponible sur cet ordinateur : la clé ne peut pas être enregistrée, car Tessel ne la stocke jamais sans chiffrement."
     },
     "disconnectConfirm": {
       "label": "Confirmer la déconnexion de Linear",

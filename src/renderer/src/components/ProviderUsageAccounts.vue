@@ -35,6 +35,9 @@ let alive = true
 const settings = computed(() => state.value?.settings || {})
 const saved = computed(() => state.value?.saved || {})
 const secure = computed(() => state.value?.secure !== false)
+// The saved file is readable as it is (not Tessel's sealed form): warned where
+// the keys are managed (after Orca's UnsealedCredentialNotice, MIT, Lovecast Inc. 2026).
+const unsealed = computed(() => state.value?.protection === 'plaintext')
 const has = (...ids) => !agents.value || ids.some((id) => agents.value.has(id))
 // Orca shows every section; Tessel shows a provider when its agent is
 // installed here, or when something is already set or signed in for it.
@@ -247,6 +250,7 @@ onBeforeUnmount(() => {
       toggle="configure"
     >
       <p v-if="!secure" class="usage-account-error">{{ t('settings.accounts.noSecureStorage', 'Secure credential storage is unavailable on this computer, so keys and cookies cannot be saved.') }}</p>
+      <p v-if="unsealed" class="usage-account-error" role="alert" data-test="credentials-unsealed">{{ t('settings.accounts.unsealed', 'Your saved keys and cookies are stored unencrypted: anyone who can read your disk or a backup of it can read them. Save them again to encrypt them.') }}</p>
       <SecretField
         id="opencode-go-api-key"
         :label="t('settings.accounts.opencode.apiKey', 'OpenCode Go API key')"
@@ -320,6 +324,7 @@ onBeforeUnmount(() => {
         </button>
       </template>
       <p v-if="!secure" class="usage-account-error">{{ t('settings.accounts.noSecureStorage', 'Secure credential storage is unavailable on this computer, so keys and cookies cannot be saved.') }}</p>
+      <p v-if="unsealed" class="usage-account-error" role="alert" data-test="credentials-unsealed">{{ t('settings.accounts.unsealed', 'Your saved keys and cookies are stored unencrypted: anyone who can read your disk or a backup of it can read them. Save them again to encrypt them.') }}</p>
       <div class="usage-field">
         <label class="usage-label" for="minimax-endpoint">{{ t('settings.accounts.minimax.endpoint', 'MiniMax endpoint') }}</label>
         <ThemedSelect
