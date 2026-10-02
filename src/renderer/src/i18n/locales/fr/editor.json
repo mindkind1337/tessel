@@ -480,6 +480,12 @@
       "confirmRemote": "Mettre {{name}} à la corbeille de l'hôte distant ?",
       "doneRemote": "« {{name}} » est dans la corbeille de l'hôte distant.",
       "failedRemote": "« {{name}} » n'a pas pu être mis à la corbeille de l'hôte distant : {{error}}"
+    },
+    "sparse": {
+      "label": "Extraction partielle",
+      "choose": "Dossier affiché dans l'arborescence",
+      "whole": "Projet entier",
+      "help": "Ce dépôt utilise une extraction partielle (sparse checkout) : seuls certains dossiers sont sur le disque. En choisir un change ce que l'arborescence affiche, pas ce qui est extrait. La recherche par nom cherche dans le dossier affiché ; la recherche de contenu dans tout le projet."
     }
   },
   "notes": {

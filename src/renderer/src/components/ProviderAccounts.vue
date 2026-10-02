@@ -477,6 +477,22 @@ onBeforeUnmount(() => {
           </div>
         </div>
       </div>
+      <!-- Added accounts keep their sign-in the way the CLI does: a readable
+           file, not sealed by the OS. Said where they are managed (after Orca's
+           UnsealedCredentialNotice, MIT, Lovecast Inc. 2026). -->
+      <p
+        v-if="provider.accounts?.length"
+        class="account-scope account-unsealed"
+        role="note"
+        data-test="accounts-unsealed"
+        v-text="
+          t(
+            'settings.accounts.unsealedSignIns',
+            'The sign-ins of the accounts added here are stored unencrypted, in files of your Windows user folder (as {{name}} keeps its own): anyone who can read your disk or a backup of it can use them.',
+            { name: names[provider.provider] || provider.provider }
+          )
+        "
+      ></p>
       <div
         v-if="removeTarget?.provider === provider.provider"
         class="account-confirm"
@@ -700,6 +716,9 @@ onBeforeUnmount(() => {
 }
 .account-confirm-actions {
   justify-content: flex-end;
+}
+.account-unsealed {
+  color: var(--warn);
 }
 .accounts-error {
   color: var(--danger);

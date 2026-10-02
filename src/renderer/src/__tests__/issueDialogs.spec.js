@@ -372,6 +372,14 @@ describe('Linear issue dialog', () => {
     expect(wrapper.get('[data-test="linear-key"]').element.value).toBe('')
   })
 
+  it('warns before a key is typed when it could not be stored encrypted', async () => {
+    api.status.mockResolvedValue({ ok: true, configured: false, secure: false, protection: null })
+    await render()
+    expect(wrapper.get('[data-test="linear-no-secure-storage"]').text()).toContain('never stores it unencrypted')
+    await wrapper.get('[data-test="linear-key"]').setValue('lin_api_test-secret-value')
+    expect(wrapper.get('[data-test="linear-connect"]').attributes('disabled')).toBeDefined()
+  })
+
   it('redacts a key even if an unexpected rejected promise echoes it', async () => {
     api.status.mockResolvedValue({ ok: true, configured: false })
     const secret = 'lin_api_test-secret-value'

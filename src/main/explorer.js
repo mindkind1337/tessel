@@ -7,6 +7,7 @@ import { execFile, spawn } from 'child_process'
 import { StringDecoder } from 'string_decoder'
 import { t } from './i18n'
 import { localGitArgs } from './gitSafety'
+import { parseSparseList, sparseDirsUnder } from './sparseCheckout'
 
 const MAX_ENTRIES = 5000
 // Never listed (Orca hides the same by default): git's own folder.
@@ -139,6 +140,47 @@ export async function projectStatus({ root, ignored = false } = {}) {
   })
 }
 
+// The folders a sparse checkout keeps below the project (sparseCheckout.js),
+// for the tree to offer as its root: -> { ok, sparse, dirs: [{ rel, path }] }
+// (rel "a/b" from the project folder, only folders that are there). Not a
+// repository, not sparse, or a git without sparse-checkout: { sparse: false }.
+export async function sparseInfo({ root } = {}) {
+  if (typeof root !== 'string' || !isAbsolute(root)) return { ok: false, error: t('main.explorer.invalidFolder', 'Invalid folder.') }
+  const none = { ok: true, sparse: false, dirs: [] }
+  const top = await gitTop(root)
+  if (!top) return none
+  const safety = await localGitArgs(top)
+  const out = await new Promise((done) => {
+    // Exit 128 ("this worktree is not sparse") or an old git: not sparse.
+    execFile('git', ['-C', top, ...safety, 'sparse-checkout', 'list'], { windowsHide: true, timeout: 10000, maxBuffer: 1024 * 1024 }, (err, stdout) =>
+      done(err ? null : String(stdout))
+    )
+  })
+  if (out === null) return none
+  // The project below the top: as given, or by its real path (a junction, a
+  // short 8.3 name) when git named the top that way.
+  const ways = [resolve(root)]
+  try {
+    ways.push(fs.realpathSync.native(ways[0]))
+  } catch {
+    // gone: compared as given
+  }
+  const rootRel = ways.map((p) => relative(top, p)).find((rel) => !rel.startsWith('..') && !isAbsolute(rel))
+  if (rootRel === undefined) return none
+  const dirs = []
+  for (const rel of sparseDirsUnder(parseSparseList(out), rootRel)) {
+    const full = inside(root, rel)
+    if (!full) continue
+    try {
+      if (!fs.statSync(full).isDirectory()) continue
+    } catch {
+      continue
+    }
+    dirs.push({ rel, path: full })
+  }
+  return { ok: true, sparse: true, dirs }
+}
+
 // --- Search -------------------------------------------------------------------
 export const SEARCH_LIMIT = 500
 const MAX_WALK = 100000 // entries looked at, at most, per search
@@ -185,14 +227,18 @@ const relOf = (root, p) => relative(resolve(root), p)
 
 // Files and folders whose name has the query (case-insensitive), in folders
 // not opened yet too: -> { ok, results: [{ name, path, rel, dir }], truncated }
-export async function searchNames({ root, query, dotfiles = true, limit = SEARCH_LIMIT } = {}) {
+// `dir`: only below that folder of the project (the tree's root when it shows
+// one sparse folder); rel stays relative to the project.
+export async function searchNames({ root, dir, query, dotfiles = true, limit = SEARCH_LIMIT } = {}) {
   if (!inside(root, root)) return { ok: false, error: t('main.explorer.invalidFolder', 'Invalid folder.') }
+  const start = dir ? inside(root, dir) : resolve(root)
+  if (!start) return { ok: false, error: t('main.explorer.outside', 'Outside the project.') }
   limit = searchCap(limit)
   const q = String(query || '').trim().toLowerCase()
   if (!q) return { ok: true, results: [], truncated: false }
   const results = []
   let truncated = false
-  const stopped = await walk(root, { dotfiles }, (e) => {
+  const stopped = await walk(start, { dotfiles }, (e) => {
     if (!e.name.toLowerCase().includes(q)) return false
     if (results.length >= limit) {
       truncated = true

@@ -2555,6 +2555,8 @@ ipcMain.handle('chatFiles:open', (_evt, q = {}) => openChatPath(q || {}, { shell
 const explorerFor = (q) => (remoteArg(q) ? remoteFs : explorer)
 ipcMain.handle('explorer:list', safe((q) => explorerFor(q).listDir(q || {})))
 ipcMain.handle('explorer:status', safe((q) => explorerFor(q).projectStatus(q || {})))
+// A sparse checkout's folders, offered as the tree's root.
+ipcMain.handle('explorer:sparse', safe((q) => explorerFor(q).sparseInfo(q || {})))
 // Search the project: file names (also in folders not opened yet), or contents.
 ipcMain.handle('explorer:searchNames', safe((q) => explorerFor(q).searchNames(q || {})))
 ipcMain.handle('explorer:searchContent', safe((q) => explorerFor(q).searchContent(q || {})))

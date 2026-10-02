@@ -75,11 +75,11 @@ async function connect() {
 
 describe('Linear service with isolated credentials and mocked GraphQL', () => {
   it('keeps status local, validates only an explicit connect, encrypts the entire record and restores locally', async () => {
-    expect(await service.status()).toEqual({ ok: true, configured: false })
+    expect(await service.status()).toEqual({ ok: true, configured: false, secure: true, protection: null })
     expect(fetcher).not.toHaveBeenCalled()
     const open = vi.spyOn(fs, 'openSync')
     const result = await service.connect({ key: KEY })
-    expect(result).toEqual({ ok: true, configured: true, viewer, organization })
+    expect(result).toEqual({ ok: true, configured: true, viewer, organization, secure: true, protection: 'sealed' })
     expect(JSON.stringify(result)).not.toContain(KEY)
     expect(fetcher).toHaveBeenCalledTimes(1)
     const [url, options] = fetcher.mock.calls[0]
@@ -310,7 +310,7 @@ describe('Linear service with isolated credentials and mocked GraphQL', () => {
     network.resolve(response(connectData()))
     expect((await pending).ok).toBe(false)
     expect(fs.existsSync(file())).toBe(false)
-    expect(await service.status()).toEqual({ ok: true, configured: false })
+    expect(await service.status()).toEqual({ ok: true, configured: false, secure: true, protection: null })
   })
 
   it('lets the latest connect win and prevents old-account reads during validation populating its cache', async () => {
@@ -405,5 +405,16 @@ describe('Linear service with isolated credentials and mocked GraphQL', () => {
     expect(fs.readdirSync(dir)).toEqual(['unrelated.txt'])
     expect((await service.issues()).ok).toBe(false)
     expect(fetcher).not.toHaveBeenCalled()
+  })
+
+  it('says before a key is typed when it could not be sealed, and when a saved one is readable', async () => {
+    safeStorage.isEncryptionAvailable.mockReturnValue(false)
+    expect(await service.status()).toEqual({ ok: true, configured: false, secure: false, protection: null })
+    safeStorage.isEncryptionAvailable.mockReturnValue(true)
+    safeStorage.getSelectedStorageBackend.mockReturnValue('basic_text')
+    expect((await service.status()).secure).toBe(false)
+    expect((await service.connect({ key: KEY })).ok).toBe(false)
+    expect(fs.existsSync(file())).toBe(false)
+    expect(safeStorage.decryptString).not.toHaveBeenCalled()
   })
 })

@@ -7627,6 +7627,27 @@ button.act-stat:hover,
   color: var(--text-strong);
 }
 
+/* Sparse checkout: the folder the tree shows. */
+.explorer-scope {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11.5px;
+}
+
+.explorer-scope-label {
+  flex: 0 0 auto;
+  color: var(--text-dim);
+}
+
+.explorer-scope-select {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 /* Names | Content */
 .explorer-seg {
   display: flex;

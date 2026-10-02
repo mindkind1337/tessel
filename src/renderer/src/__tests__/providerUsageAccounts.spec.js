@@ -216,4 +216,14 @@ describe('usage-only provider sections', () => {
     expect(field.get('[data-test="secret-input"]').attributes('disabled')).toBeDefined()
     expect(wrapper.get('[data-provider="opencode-go"]').text()).toContain('Secure credential storage is unavailable')
   })
+
+  it('warns where the keys are managed when the saved file is readable as it is', async () => {
+    state.protection = 'plaintext'
+    await mountIt()
+    expect(wrapper.get('[data-provider="opencode-go"] [data-test="credentials-unsealed"]').text()).toContain('stored unencrypted')
+    wrapper.unmount()
+    state.protection = 'sealed'
+    await mountIt()
+    expect(wrapper.find('[data-test="credentials-unsealed"]').exists()).toBe(false)
+  })
 })

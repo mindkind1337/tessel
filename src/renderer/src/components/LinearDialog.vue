@@ -309,6 +309,11 @@ onBeforeUnmount(() => {
           ><p v-if="loading" class="issue-empty">{{ t('linear.readingConnection', 'Reading connection…') }}</p>
           <form v-else class="issue-form" @submit.prevent="connect">
             <h3>{{ t('linear.connect.title', 'Connect Linear') }}</h3>
+            <p v-if="connection && connection.secure === false" class="issue-error" role="alert" data-test="linear-no-secure-storage">
+              {{
+                t('linear.connect.noSecureStorage', 'Secure credential storage is unavailable on this computer, so the key cannot be saved: Tessel never stores it unencrypted.')
+              }}
+            </p>
             <p class="issue-hint">
               {{
                 t('linear.connect.hint', 'Use a personal API key from Linear Settings → Security & access. It is stored securely on this computer.')
@@ -334,7 +339,7 @@ onBeforeUnmount(() => {
               ><button
                 class="issue-btn primary"
                 data-test="linear-connect"
-                :disabled="busy || !key.trim()"
+                :disabled="busy || !key.trim() || connection?.secure === false"
               >
                 {{ busy ? t('linear.connect.testing', 'Testing…') : t('linear.connect.save', 'Test and save') }}
               </button>
