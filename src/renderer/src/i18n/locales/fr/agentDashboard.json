@@ -1,0 +1,63 @@
+{
+  "agentDashboard": {
+    "tab": "Tableau de bord",
+    "total_one": "{{count}} agent",
+    "total_other": "{{count}} agents",
+    "state": {
+      "waiting": "Vous attend",
+      "working": "Au travail",
+      "done": "Terminé",
+      "idle": "Inactif",
+      "sleeping": "En veille"
+    },
+    "count": {
+      "waiting": "{{count}} vous attendent",
+      "working": "{{count}} au travail",
+      "done": "{{count}} terminés",
+      "idle": "{{count}} inactifs",
+      "sleeping": "{{count}} en veille"
+    },
+    "filter": {
+      "all": "Tous"
+    },
+    "filterLabel": "Afficher",
+    "groupBy": "Regrouper par",
+    "byStatus": "État",
+    "byProject": "Projet",
+    "noProject": "Sans projet",
+    "search": "Rechercher un agent, une tâche, un projet",
+    "clearSearch": "Effacer la recherche",
+    "empty": "Aucun agent pour l'instant",
+    "emptyHint": "Les agents que vous lancez dans n'importe quel projet apparaissent ici.",
+    "noMatch": "Aucun agent ne correspond.",
+    "card": {
+      "where": "{{project}} · {{branch}}",
+      "sub": "{{agent}} · {{project}}",
+      "pill": "{{state}} {{time}}"
+    },
+    "sleep": {
+      "button": "Mettre en veille les inactifs ({{count}})",
+      "hint": "Met en veille les agents de terminal inactifs : leurs conversations sont conservées, ouvrir un panneau le réveille",
+      "title": "Mettre en veille les agents inactifs ?",
+      "textOne": "1 agent inactif passe en veille : son terminal se ferme, sa conversation est conservée. Ouvrez son panneau pour le réveiller.",
+      "text": "{{count}} agents inactifs passent en veille : leurs terminaux se ferment, leurs conversations sont conservées. Ouvrez un panneau pour le réveiller.",
+      "confirm": "Mettre en veille"
+    }
+  },
+  "sidePanelAdd": {
+    "title": "Ouvrir une page web, un terminal ou un chat",
+    "aria": "Nouveau",
+    "browser": "Page web",
+    "terminal": "Terminal",
+    "chat": "Agent Claude (chat)",
+    "fullscreen": "Plein écran",
+    "exitFullscreen": "Quitter le plein écran (Échap)"
+  },
+  "app": {
+    "cmd": {
+      "showAgentDashboard": "Afficher le tableau de bord des agents",
+      "hideAgentDashboard": "Masquer le tableau de bord des agents",
+      "agentDashboardHint": "Tous les agents de tous les projets d'un coup d'œil"
+    }
+  }
+}

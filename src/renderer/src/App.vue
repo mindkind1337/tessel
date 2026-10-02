@@ -2071,8 +2071,15 @@ const agentPanes = computed(() => {
 
 // --- The right side panel (SidePanel.vue): Files, Changes, Tasks, Agents tabs ------
 // taskPanelOpen: the panel is shown; sideTab: the tab it shows.
-const SIDE_TABS = ['files', 'changes', 'tasks', 'history']
+const SIDE_TABS = ['dashboard', 'files', 'changes', 'tasks', 'history']
 const sideTab = ref('tasks')
+// The panel over the whole workspace (its tab bar's Fullscreen button, Esc
+// restores it). Not saved: Tessel always starts with the panes in view.
+const sideFullscreen = ref(false)
+watch(sideFullscreen, () => nextTick(() => window.dispatchEvent(new Event('terminal-layout-change'))))
+watch(taskPanelOpen, (open) => {
+  if (!open) sideFullscreen.value = false
+})
 const explorerOpen = computed(() => taskPanelOpen.value && sideTab.value === 'files')
 const taskBoardShown = computed(() => taskPanelOpen.value && sideTab.value === 'tasks')
 // Show a tab; the same tab again (its shortcut or button) closes the panel.
@@ -2539,6 +2546,9 @@ function buildCommands() {
   const agentsGroup = t('app.cmd.group.agents', 'Agents')
   add(agentsGroup, t('app.cmd.resumeSession', 'Resume a session'), openSessions, {
     hint: t('app.cmd.resumeSessionHint', 'Reopen a past agent conversation')
+  })
+  add(agentsGroup, taskPanelOpen.value && sideTab.value === 'dashboard' ? t('app.cmd.hideAgentDashboard', 'Hide Agent Dashboard') : t('app.cmd.showAgentDashboard', 'Show Agent Dashboard'), () => toggleSideTab('dashboard'), {
+    hint: t('app.cmd.agentDashboardHint', 'Every agent of every project at a glance')
   })
   add(agentsGroup, taskPanelOpen.value && sideTab.value === 'history' ? t('app.cmd.hideSessionHistory', 'Hide Agent Session History') : t('app.cmd.showSessionHistory', 'Show Agent Session History'), () => toggleSideTab('history'), {
     hint: t('app.cmd.sessionHistoryHint', 'Browse, search and resume past agent conversations')
@@ -9915,7 +9925,7 @@ onBeforeUnmount(() => {
       <aside
         v-if="taskPanelOpen"
         class="task-panel"
-        :class="{ resizing: taskResizing }"
+        :class="{ resizing: taskResizing, 'side-fullscreen': sideFullscreen }"
         :style="{ flexBasis: taskPanelShown + 'px' }"
       >
         <div
@@ -9925,6 +9935,9 @@ onBeforeUnmount(() => {
         ></div>
         <SidePanel
           v-model:tab="sideTab"
+          v-model:fullscreen="sideFullscreen"
+          :projects="sidebarProjects"
+          :now="clock"
           :root="sideRoot"
           :can-insert="canInsertPath"
           :agent-panes="agentPanes"
@@ -9944,6 +9957,8 @@ onBeforeUnmount(() => {
           @new-task="openNewTask"
           @focus-pane="focusPane"
           @review="openReview"
+          @sleep="sleepPanes"
+          @quick-add="(kind) => (kind === 'terminal' ? launch({ kind: 'shell', id: selectedShell }) : launch({ kind }))"
         />
       </aside>
     </div>

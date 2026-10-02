@@ -1,22 +1,25 @@
 <script setup>
 // The right side panel (after Orca's): one panel, a tab bar at its top —
-// Files (the explorer), Changes (source control), Tasks (the task board),
-// Agents (the agent session history).
+// Dashboard (every agent of every project), Files (the explorer), Changes
+// (source control), Tasks (the task board), Agents (the agent session
+// history). At the right end of the bar: + (a browser page, a terminal, a
+// chat) and Fullscreen (the panel over the whole workspace; Esc restores it).
 // A tab is created the first time it is shown, then kept (its folders,
 // search and scroll stay as they were) while the panel is open.
-import { reactive, ref, watch, computed, onMounted, onBeforeUnmount } from 'vue'
+import { reactive, ref, watch, computed, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import ExplorerPanel from './ExplorerPanel.vue'
 import { refreshStatus, statusOf, changeCount, rootKey } from '../scmState'
 import ChangesPanel from './ChangesPanel.vue'
 import TaskBoard from './TaskBoard.vue'
 import SessionHistoryPanel from './SessionHistoryPanel.vue'
+import AgentDashboard from './AgentDashboard.vue'
 import AgentSessionHistoryIcon from './AgentSessionHistoryIcon.vue'
 import RemoteBadge from './project/RemoteBadge.vue'
 import { remoteHostsState } from '../remoteHosts'
 import { t } from '../i18n'
-import { Files, GitBranch, ListChecks } from 'lucide-vue-next'
+import { Files, GitBranch, ListChecks, LayoutDashboard, Maximize2, Minimize2, Plus, Globe, SquareTerminal, MessageSquare } from 'lucide-vue-next'
 
-const SIDE_TABS = ['files', 'changes', 'tasks', 'history']
+const SIDE_TABS = ['dashboard', 'files', 'changes', 'tasks', 'history']
 
 const props = defineProps({
   tab: { type: String, default: 'tasks' },
@@ -29,7 +32,13 @@ const props = defineProps({
   // A project on a remote host: { hostId, host, path }. Its root is then an
   // ssh://… path: Files and Changes read it over SSH (src/main/remoteFs.js),
   // under a small badge naming the host.
-  remote: { type: Object, default: null }
+  remote: { type: Object, default: null },
+  // The Dashboard tab: App's sidebarProjects (every project, its panes) and
+  // its clock (the "Working 4m" times).
+  projects: { type: Array, default: () => [] },
+  now: { type: Number, default: () => Date.now() },
+  // The panel over the whole workspace (App keeps it, not saved).
+  fullscreen: { type: Boolean, default: false }
 })
 const emit = defineEmits([
   'update:tab',
@@ -46,7 +55,12 @@ const emit = defineEmits([
   'open-diff',
   'create-pr',
   // A past conversation to reopen in a new pane: { agent, id, cwd, accountId }.
-  'resume-session'
+  'resume-session',
+  // Dashboard: put these idle agents to sleep (App's sleepPanes).
+  'sleep',
+  'update:fullscreen',
+  // The + menu: 'browser' | 'terminal' | 'chat'.
+  'quick-add'
 ])
 
 // Labels are translated where shown (the language can change while open).
@@ -54,6 +68,7 @@ const emit = defineEmits([
 // activity-bar-buttons.tsx): Files, Source Control (git branch), Tasks; the
 // name is in the tooltip.
 const TABS = [
+  { id: 'dashboard', key: 'agentDashboard.tab', label: 'Dashboard', shortcut: '', icon: LayoutDashboard },
   { id: 'files', key: 'explorer.side.files', label: 'Files', shortcut: 'Ctrl+Shift+X', icon: Files },
   { id: 'changes', key: 'explorer.side.changes', label: 'Changes', shortcut: 'Ctrl+Shift+G', icon: GitBranch },
   { id: 'tasks', key: 'explorer.side.tasks', label: 'Tasks', shortcut: 'Ctrl+Shift+K', icon: ListChecks },
@@ -113,7 +128,81 @@ onMounted(() => {
       timer = setTimeout(reload, 250)
     })
 })
+// --- Fullscreen and the + menu ---------------------------------------------
+function setFullscreen(on) {
+  if (!!on !== props.fullscreen) emit('update:fullscreen', !!on)
+}
+// A pane brought to the front from the panel: fullscreen would hide it.
+function focusPane(id) {
+  setFullscreen(false)
+  emit('focus-pane', id)
+}
+const addMenu = reactive({ open: false, top: 0, right: 0 })
+const addBtn = ref(null)
+const addMenuEl = ref(null)
+const rootEl = ref(null)
+// Esc restores the panel, unless something used the key already (a search
+// box, a menu) or the keyboard is elsewhere (a pane, a dialog).
+function onKey(e) {
+  if (e.key !== 'Escape' || !props.fullscreen || e.defaultPrevented || addMenu.open) return
+  const target = e.target
+  const inPanel = !!rootEl.value && target instanceof Node && rootEl.value.contains(target)
+  if (!inPanel && target !== document.body && target !== document.documentElement) return
+  e.preventDefault()
+  setFullscreen(false)
+}
+const ADD_ITEMS = [
+  { id: 'browser', key: 'sidePanelAdd.browser', label: 'Browser page', icon: Globe }, // i18n-ignore
+  { id: 'terminal', key: 'sidePanelAdd.terminal', label: 'Terminal', icon: SquareTerminal },
+  { id: 'chat', key: 'sidePanelAdd.chat', label: 'Claude agent (chat)', icon: MessageSquare } // i18n-ignore
+]
+function closeAddMenu() {
+  addMenu.open = false
+}
+function toggleAddMenu() {
+  if (addMenu.open) return closeAddMenu()
+  const r = addBtn.value ? addBtn.value.getBoundingClientRect() : { bottom: 40, right: window.innerWidth }
+  addMenu.top = Math.round(r.bottom + 4)
+  addMenu.right = Math.max(4, Math.round(window.innerWidth - r.right))
+  addMenu.open = true
+  nextTick(() => {
+    const first = addMenuEl.value && addMenuEl.value.querySelector('button')
+    if (first) first.focus()
+  })
+}
+function pickAdd(id) {
+  closeAddMenu()
+  setFullscreen(false)
+  emit('quick-add', id)
+}
+function onMenuKey(e) {
+  if (e.key === 'Escape') {
+    e.preventDefault()
+    e.stopPropagation()
+    closeAddMenu()
+    if (addBtn.value) addBtn.value.focus()
+    return
+  }
+  if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
+  e.preventDefault()
+  const items = [...addMenuEl.value.querySelectorAll('button')]
+  const i = items.indexOf(document.activeElement)
+  const next = e.key === 'ArrowDown' ? (i + 1) % items.length : (i - 1 + items.length) % items.length
+  items[next].focus()
+}
+function onPointerDown(e) {
+  if (!addMenu.open) return
+  const target = e.target
+  if (addMenuEl.value && addMenuEl.value.contains(target)) return
+  if (addBtn.value && addBtn.value.contains(target)) return
+  closeAddMenu()
+}
+window.addEventListener('keydown', onKey)
+window.addEventListener('pointerdown', onPointerDown, true)
+
 onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onKey)
+  window.removeEventListener('pointerdown', onPointerDown, true)
   if (stop) stop()
   clearTimeout(timer)
   if (explorer()) explorer().unwatch()
@@ -121,7 +210,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="side-panel">
+  <div ref="rootEl" class="side-panel">
     <div class="side-tabs" role="tablist" :aria-label="t('explorer.side.panel', 'Side panel')">
       <button
         v-for="tab in TABS"
@@ -149,13 +238,72 @@ onBeforeUnmount(() => {
         >
       </button>
       <span class="side-tabs-fill"></span>
+      <button
+        ref="addBtn"
+        type="button"
+        class="side-tab-action"
+        :class="{ on: addMenu.open }"
+        :title="t('sidePanelAdd.title', 'Open a browser page, a terminal or a chat')"
+        :aria-label="t('sidePanelAdd.aria', 'New')"
+        aria-haspopup="menu"
+        :aria-expanded="addMenu.open"
+        data-test="side-add"
+        @click="toggleAddMenu"
+      >
+        <Plus :size="15" aria-hidden="true" />
+      </button>
+      <button
+        type="button"
+        class="side-tab-action"
+        :class="{ on: fullscreen }"
+        :title="fullscreen ? t('sidePanelAdd.exitFullscreen', 'Exit fullscreen (Esc)') : t('sidePanelAdd.fullscreen', 'Fullscreen')"
+        :aria-label="fullscreen ? t('sidePanelAdd.exitFullscreen', 'Exit fullscreen (Esc)') : t('sidePanelAdd.fullscreen', 'Fullscreen')"
+        :aria-pressed="fullscreen"
+        data-test="side-fullscreen"
+        @click="setFullscreen(!fullscreen)"
+      >
+        <Minimize2 v-if="fullscreen" :size="14" aria-hidden="true" />
+        <Maximize2 v-else :size="14" aria-hidden="true" />
+      </button>
     </div>
+    <Teleport to="body">
+      <div
+        v-if="addMenu.open"
+        ref="addMenuEl"
+        class="ctx-menu side-add-menu"
+        role="menu"
+        :style="{ top: addMenu.top + 'px', right: addMenu.right + 'px' }"
+        data-test="side-add-menu"
+        @keydown="onMenuKey"
+      >
+        <button
+          v-for="item in ADD_ITEMS"
+          :key="item.id"
+          type="button"
+          class="ctx-menu-item"
+          role="menuitem"
+          :data-test="'side-add-' + item.id"
+          @click="pickAdd(item.id)"
+        >
+          <component :is="item.icon" :size="14" aria-hidden="true" />
+          <span>{{ t(item.key, item.label) }}</span>
+        </button>
+      </div>
+    </Teleport>
     <div class="side-body">
       <RemoteBadge
         v-if="remote && (current() === 'files' || current() === 'changes')"
         :host-id="remote.hostId"
         :host="remote.host"
         :path="remote.path"
+      />
+      <AgentDashboard
+        v-if="shown.dashboard"
+        v-show="current() === 'dashboard'"
+        :projects="projects"
+        :now="now"
+        @focus-pane="focusPane"
+        @sleep="(ids) => emit('sleep', ids)"
       />
       <ExplorerPanel
         v-if="shown.files"
@@ -189,7 +337,7 @@ onBeforeUnmount(() => {
         :agent-panes="agentPanes"
         :workspace-id="workspaceId"
         @new-task="emit('new-task')"
-        @focus-pane="(id) => emit('focus-pane', id)"
+        @focus-pane="focusPane"
         @review="(id) => emit('review', id)"
       />
       <SessionHistoryPanel
@@ -199,7 +347,7 @@ onBeforeUnmount(() => {
         :open-ids="openSessionIds"
         :active="current() === 'history'"
         @resume="(s) => emit('resume-session', s)"
-        @focus-pane="(id) => emit('focus-pane', id)"
+        @focus-pane="focusPane"
         @open-editor="(file) => emit('open-editor', file)"
         @toast="(t) => emit('toast', t)"
       />
