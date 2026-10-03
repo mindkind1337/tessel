@@ -289,6 +289,32 @@ describe('agent browser: commands', () => {
     expect(guest.sent.filter(([m, p]) => m === 'Input.insertText' && p.text === 'hunter2')).toEqual([])
   })
 
+  // Re-rendered: the element is found again by role, name and occurrence, or not at all.
+  it('a re-rendered page with fewer matches: the 2nd "Go" is stale, never the first one clicked instead', async () => {
+    const page = pageModel()
+    let tree = AX
+    const { call, guest } = setup({ guest: fakeGuest(11, { cdp: pageCdp({ 'Accessibility.getFullAXTree': () => tree }, page) }) })
+    await call('snapshot')
+    // The list re-rendered with one "Go" left (new node ids).
+    delete page.elements[50]
+    delete page.elements[60]
+    page.elements[70] = {}
+    tree = { nodes: [...AX.nodes.slice(0, 4).map((n) => (n.nodeId === '1' ? { ...n, childIds: ['2', '3', '4', '7'] } : n)), { nodeId: '7', role: { value: 'button' }, name: { value: 'Go' }, backendDOMNodeId: 70 }] }
+    await expect(call('click', { ref: '@e4' })).rejects.toMatchObject({ code: 'stale_ref' })
+    expect(guest.sent.filter(([m]) => m === 'Input.dispatchMouseEvent')).toEqual([])
+  })
+
+  it('a re-rendered element still there once is found again', async () => {
+    const page = pageModel()
+    let tree = AX
+    const { call } = setup({ guest: fakeGuest(11, { cdp: pageCdp({ 'Accessibility.getFullAXTree': () => tree }, page) }) })
+    await call('snapshot')
+    delete page.elements[30]
+    page.elements[31] = {}
+    tree = { nodes: AX.nodes.map((n) => (n.nodeId === '3' ? { ...n, backendDOMNodeId: 31 } : n)) }
+    expect((await call('fill', { ref: '@e1', text: 'a' })).text).toContain('@e1')
+  })
+
   it('fill with an empty text clears the field (the tool keeps an empty "text")', async () => {
     const { call, guest } = setup()
     await call('snapshot')
