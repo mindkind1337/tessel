@@ -886,9 +886,13 @@ export function createChatSessions(deps) {
       const uuids = Array.isArray(e.userMessageUuids) ? e.userMessageUuids : []
       // Steered messages the turn's end says it took (never echoed before).
       for (const u of uuids) if (typeof u === 'string') steeredAccepted(s, u)
+      // Not taken: failed, unless a compaction sends it again (decided below;
+      // failed now, the window would release a team message and offer it
+      // again, and it would arrive twice).
+      let notTaken = false
       if (turn && !turn.accepted) {
         if (turn.uuid && uuids.includes(turn.uuid)) markAccepted(s, turn)
-        else markFailed(s, turn)
+        else notTaken = true
       }
       if (turn) turnStarted(s)
       const st = ['completed', 'interrupted', 'failed'].includes(e.status) ? e.status : 'failed'
@@ -920,7 +924,9 @@ export function createChatSessions(deps) {
         shown = ''
         emit(s.paneId, { type: 'notice', kind: 'info', text: t('main.chat.compacting', 'Conversation too long: compacting, then your message is sent again…') })
         after = () => startCompaction(s)
+        notTaken = false
       }
+      if (notTaken) markFailed(s, turn)
       emit(s.paneId, {
         type: 'turnEnd',
         status: st,
@@ -1553,7 +1559,8 @@ export function createChatSessions(deps) {
   function sendTeam({ paneId, messages } = {}) {
     const s = live(paneId) || waiting(paneId)
     if (!s) return closed()
-    const known = new Set([...s.teamQueue.map((m) => m.id), ...(s.turn?.kind === 'team' ? s.turn.ids : [])])
+    // Queued, in the turn, or waiting for its resend after a compaction.
+    const known = new Set([...s.teamQueue.map((m) => m.id), ...(s.turn?.kind === 'team' ? s.turn.ids : []), ...(s.compaction?.kind === 'team' ? s.compaction.ids : [])])
     const added = []
     for (const m of messages) {
       if (known.has(m.id) || s.teamQueue.length >= LIMITS.teamQueue) continue

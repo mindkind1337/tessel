@@ -510,6 +510,35 @@ describe('delivery', () => {
     expect(a.send.mock.calls.at(-1)[0]).toMatchObject({ text: '/compact' })
   })
 
+  // Refused for its length before the agent said it took it: the team message
+  // is not reported failed (the window would release it and send it again)
+  // and the same message offered meanwhile is not queued a second time.
+  it('a team message too long before it was taken: not failed, not queued twice, delivered once after the compaction', async () => {
+    const chat = createChatSessions(deps)
+    await openOk(chat)
+    const a = adapters[0]
+    chat.sendTeam({ paneId, messages: [{ id: 'm1', from: '#3 Claude', text: 'hello' }] })
+    await flush()
+    expect(a.send).toHaveBeenCalledTimes(1)
+    a.emit('turnEnd', { status: 'failed', isError: true, result: 'Prompt is too long' })
+    await flush()
+    expect(events('teamFailed')).toEqual([])
+    expect(a.send.mock.calls[1][0]).toMatchObject({ text: '/compact' })
+    // The window offers it again while it waits (its next poll).
+    expect(chat.sendTeam({ paneId, messages: [{ id: 'm1', from: '#3 Claude', text: 'hello' }] }).ids).toEqual([])
+    a.emit('turnEnd', { status: 'completed' })
+    await flush()
+    const resend = a.send.mock.calls[2][0]
+    expect(resend.text).toContain('hello')
+    a.emit('accepted', { uuid: resend.uuid })
+    a.emit('turnEnd', { status: 'completed', userMessageUuids: [resend.uuid] })
+    await flush()
+    await flush()
+    // Delivered once: nothing more was sent.
+    expect(a.send).toHaveBeenCalledTimes(3)
+    expect(events('teamFailed')).toEqual([])
+  })
+
   it("Codex's compaction turn ending after 'compacted' is not the resent message's end", async () => {
     const chat = createChatSessions({ ...deps, resolveCodex: async () => ({ exe: 'C:\bin\codex.exe' }) })
     await openOk(chat, { agent: 'codex' })
