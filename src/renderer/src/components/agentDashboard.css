@@ -390,6 +390,13 @@
   color: var(--text-strong);
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--text-strong) 70%, transparent);
 }
+/* The card's right end: its sub-agents at work, then its time. */
+.adb-card-end {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
 .adb-pill {
   flex: 0 0 auto;
   padding: 1px 7px;

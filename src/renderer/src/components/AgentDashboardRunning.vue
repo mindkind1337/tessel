@@ -59,7 +59,6 @@ const label = computed(() =>
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  margin-top: 2px;
   color: var(--accent);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
