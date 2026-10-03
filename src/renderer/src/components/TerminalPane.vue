@@ -70,7 +70,7 @@ import {
   shownPermissionMode,
   stepToPermissionMode
 } from '../chat/terminalChatBridge'
-import { promptSuggestionOnScreen } from '../chat/terminalChatExtras'
+import { promptSuggestionOnScreen, suggestionScreenRows } from '../chat/terminalChatExtras'
 import { listsChildren } from '../agentChildrenFeed'
 import HoverCardContent from './hover/HoverCardContent.vue'
 import PaneHoverDetails from './PaneHoverDetails.vue'
@@ -133,21 +133,7 @@ function readPromptSuggestion() {
   }
 }
 function suggestionRows() {
-  const buf = term.buffer.active
-  const rows = []
-  const cell = buf.getNullCell()
-  for (let y = buf.baseY + term.rows - 1; y >= Math.max(0, buf.baseY + term.rows - 12); y--) {
-    const line = buf.getLine(y)
-    if (!line) continue
-    const text = line.translateToString(true)
-    const styled = []
-    for (let x = 0; x < text.length; x++) {
-      const c = line.getCell(x, cell)
-      styled.push(!!c && (!!c.isDim() || !!c.isInverse() || !c.isFgDefault()))
-    }
-    rows.unshift({ text, styled })
-  }
-  return promptSuggestionOnScreen(rows)
+  return promptSuggestionOnScreen(suggestionScreenRows(term.buffer.active, term.rows))
 }
 // An effort in the app's language, as the chat's composer says it ("Moyen").
 const effortName = (effort) => nativeChatSessionChoiceLabel({ value: effort, label: effort })

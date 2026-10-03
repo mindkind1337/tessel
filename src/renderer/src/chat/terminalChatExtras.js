@@ -106,6 +106,31 @@ export function claudeContextWindow(model, usedTokens = 0, agent = 'claude') {
 // the bottom rows of the screen, [{ text, styled }] where styled[i] says the
 // cell at i is drawn dim, in a set colour or inverted (typed text is the
 // terminal's default colour). -> the suggestion, or ''.
+// The bottom rows of a terminal buffer as promptSuggestionOnScreen reads them.
+export function suggestionScreenRows(buf, termRows) {
+  const rows = []
+  const cell = buf.getNullCell()
+  for (let y = buf.baseY + termRows - 1; y >= Math.max(0, buf.baseY + termRows - 12); y--) {
+    const line = buf.getLine(y)
+    if (!line) continue
+    // Cell by cell: a wide character (CJK, emoji) takes two cells and one or
+    // two string positions, so the text and its styles are built together.
+    let text = ''
+    const styled = []
+    for (let x = 0; x < line.length; x++) {
+      const c = line.getCell(x, cell)
+      if (!c || c.getWidth() === 0) continue // the second half of a wide character
+      const chars = c.getChars() || ' '
+      const on = !!c.isDim() || !!c.isInverse() || !c.isFgDefault()
+      text += chars
+      for (let i = 0; i < chars.length; i++) styled.push(on)
+    }
+    // Trimmed on the right, as translateToString(true) is.
+    const end = text.replace(/\s+$/, '').length
+    rows.unshift({ text: text.slice(0, end), styled: styled.slice(0, end) })
+  }
+  return rows
+}
 const PROMPT_ROW = /^(\s*(?:│\s*)?[>❯]\s+)(\S.*?)\s*(?:│\s*)?$/
 // The prompt with nothing in it (rows are trimmed on the right): the search
 // stops there, so an older greyed row above (the echo of the last message
