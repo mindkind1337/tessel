@@ -22,14 +22,18 @@ export const PROMPT_LIMITS = {
 
 const FAILING = ['fail', 'cancel']
 
-// No ANSI escapes, no control characters but newline and tab, no
-// bidirectional overrides, and no "<<<" / ">>>" that could imitate a marker.
+// No ANSI escapes (also in gh's caret notation, ESC as "^["), no control
+// characters but newline and tab, no bidirectional overrides, no byte order
+// marks, and no "<<<" / ">>>" that could imitate a marker.
 export function cleanText(value, max = Infinity) {
   if (typeof value !== 'string') return ''
   const text = value
     .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?/g, '')
     .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')
     .replace(/\x1b[@-_]?/g, '')
+    .replace(/\^\[\][^\n]*?(?:\^G|\^\[\\)/g, '')
+    .replace(/\^\[\[[0-?]*[ -/]*[@-~]/g, '')
+    .replace(/﻿/g, '')
     .replace(/\r\n?/g, '\n')
     .replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f‪-‮⁦-⁩]/g, '')
     .replace(/<{3,}|>{3,}/g, (run) => run.replace(/[<>]/g, (c) => (c === '<' ? '‹' : '›')))

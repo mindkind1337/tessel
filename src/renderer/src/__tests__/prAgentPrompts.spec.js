@@ -25,6 +25,13 @@ describe('cleanText and tailBytes', () => {
     expect(cleanText('abcdef', 3)).toBe('abc')
     expect(cleanText(null)).toBe('')
   })
+  it('strips the ANSI escapes gh prints in caret notation, and byte order marks', () => {
+    // gh run view --log-failed writes ESC as the two characters "^[".
+    expect(cleanText('﻿^[[41m^[[1m FAIL ^[[22m^[[49m a.spec.ts^[[2m > ^[[22m^[]8;;http://x^Glink')).toBe(
+      ' FAIL  a.spec.ts > link'
+    )
+    expect(cleanText('x ^ [y] ^[z')).toBe('x ^ [y] ^[z')
+  })
   it('keeps the end of a long text from a whole line', () => {
     const text = Array.from({ length: 1000 }, (_, i) => `line ${i}`).join('\n')
     const tail = tailBytes(text, 200)

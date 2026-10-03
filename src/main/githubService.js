@@ -58,17 +58,47 @@ const str = (value, max = 1024) => (typeof value === 'string' ? value.slice(0, m
 const array = (value) => (Array.isArray(value) ? value : [])
 const count = (value) => (Number.isSafeInteger(value) && value >= 0 ? value : 0)
 const user = (value) => ({ login: str(value?.login, 100) })
-// Untrusted text (CI logs, review comments): no ANSI escapes, no control
-// characters but newline and tab, no bidirectional overrides.
+// Untrusted text (CI logs, review comments): no ANSI escapes (also as gh
+// prints them in caret notation, ESC as "^["), no control characters but
+// newline and tab, no bidirectional overrides, no byte order marks.
 export function cleanUntrusted(value, max = Infinity) {
   if (typeof value !== 'string') return ''
   const text = value
     .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?/g, '')
     .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')
     .replace(/\x1b[@-_]?/g, '')
+    .replace(/\^\[\][^\n]*?(?:\^G|\^\[\\)/g, '')
+    .replace(/\^\[\[[0-?]*[ -/]*[@-~]/g, '')
+    .replace(/﻿/g, '')
     .replace(/\r\n?/g, '\n')
     .replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f‪-‮⁦-⁩]/g, '')
   return text.length > max ? text.slice(0, max) : text
+}
+// gh run view --log-failed prints "<job>\t<step>\t<timestamp> <text>" lines,
+// and the whole job log with "UNKNOWN STEP" when it cannot match the steps.
+// Only the text is kept (a known step is named once where it starts), and
+// what follows the last error line (post-job cleanup) is left out, so the
+// capped tail holds the failure. partialFirst: the output was cut, its first
+// line is a fragment.
+const LOG_PREFIX = /^[^\t\n]*\t([^\t\n]*)\t\d{4}-\d\d-\d\dT[\d:.]+Z ?/
+export function readableFailedLog(text, partialFirst = false) {
+  const lines = text.split('\n')
+  if (partialFirst && lines.length > 1) lines.shift()
+  const out = []
+  let step = null
+  let lastError = -1
+  for (const raw of lines) {
+    const match = LOG_PREFIX.exec(raw)
+    if (match) {
+      const name = match[1].trim()
+      if (name && name !== 'UNKNOWN STEP' && name !== step) out.push(`== ${name} ==`)
+      step = name
+    }
+    const line = match ? raw.slice(match[0].length) : raw
+    if (line.includes('##[error]')) lastError = out.length
+    out.push(line)
+  }
+  return (lastError >= 0 ? out.slice(0, lastError + 1) : out).join('\n')
 }
 // The last maxBytes (UTF-8) of a text, starting at a whole line when cut.
 export function tailText(text, maxBytes) {
@@ -625,7 +655,10 @@ export function createGithubService({
             cwd,
             { tailBytes: LOG_TAIL_BYTES * 4, timeout: 60000 }
           )
-          const tail = tailText(cleanUntrusted(result.stdout), Math.min(LOG_TAIL_BYTES, budget))
+          const tail = tailText(
+            readableFailedLog(cleanUntrusted(result.stdout), result.tailed),
+            Math.min(LOG_TAIL_BYTES, budget)
+          )
           budget -= Buffer.byteLength(tail.text)
           entry.logTail = tail.text
           entry.logTruncated = tail.truncated || result.tailed
