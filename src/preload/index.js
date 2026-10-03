@@ -214,6 +214,8 @@ const api = {
   gitInfo: (cwd) => ipcRenderer.invoke('git:info', cwd),
   // The worktrees of an open project's repository (read-only).
   gitWorktrees: (cwd) => ipcRenderer.invoke('git:worktrees', cwd),
+  // Their git evidence, for Clean up worktrees.
+  worktreeCleanupScan: (cwd) => ipcRenderer.invoke('git:worktreeCleanupScan', cwd),
   createWorktree: (cwd, label, options) =>
     ipcRenderer.invoke('git:createWorktree', { cwd, label, options }),
   // Last locally observed subscription quotas, with timestamps and stale flags.
