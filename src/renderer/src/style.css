@@ -5737,6 +5737,29 @@ button.act-stat:hover,
   font-variant-numeric: tabular-nums;
 }
 
+/* What a job used (tokens, time, estimated cost): JobCostLine.vue. */
+.job-cost {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-dim);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.task-card-cost {
+  display: flex;
+  margin: 2px 0 0;
+}
+
+.task-board-total {
+  display: flex;
+  gap: 4px;
+  min-width: 0;
+  padding: 8px 12px 0;
+}
+
 .task-card-extra {
   display: flex;
   flex-direction: column;

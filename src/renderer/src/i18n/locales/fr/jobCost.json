@@ -1,0 +1,27 @@
+{
+  "jobCost": {
+    "unknown": "coût inconnu",
+    "tokens": "{{n}} tokens",
+    "detail": {
+      "input": "Entrée : {{n}}",
+      "output": "Sortie : {{n}}",
+      "cacheRead": "Lecture du cache : {{n}}",
+      "cacheWrite": "Écriture du cache : {{n}}",
+      "time": "Temps : {{time}}",
+      "model": "Modèle : {{model}}",
+      "unknown": "Aucun prix connu pour ce modèle : coût inconnu",
+      "cost": "Coût : {{cost}}",
+      "estimate": "Estimation au prix de l'API (les abonnements ne sont pas facturés au token)"
+    },
+    "total": {
+      "label": "Total :",
+      "cards_one": "{{count}} tâche avec consommation",
+      "cards_other": "{{count}} tâches avec consommation",
+      "unknown_one": "dont {{count}} au coût inconnu (non compté)",
+      "unknown_other": "dont {{count}} au coût inconnu (non comptées)"
+    },
+    "hover": {
+      "title": "Cette session"
+    }
+  }
+}

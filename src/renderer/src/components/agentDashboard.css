@@ -466,3 +466,67 @@
 .task-panel.side-fullscreen .task-resize {
   display: none;
 }
+
+/* The pill, and under it the session's tokens and estimated cost. */
+.adb-card-side {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  min-width: 0;
+}
+.adb-cost {
+  max-width: 120px;
+}
+
+/* Its sub-agents: a dot each and "3 sub-agents · 2 running"; the list on hover. */
+.adb-children {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  margin-top: 2px;
+  color: var(--text-dim);
+  font-size: 10.5px;
+}
+.adb-children-dots {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
+}
+.adb-children-text {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.adb-children-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: -4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.adb-child {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+}
+.adb-child-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.adb-child-title {
+  color: var(--text-strong);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.adb-child-sub {
+  color: var(--text-dim);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}

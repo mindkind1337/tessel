@@ -6,15 +6,16 @@
 // state with the dot, its team and a muted hint. It
 // replaces the header title's native tooltip.
 import { computed } from 'vue'
-import { Users, SquareTerminal, Cpu, MessageSquareText, GitBranch } from 'lucide-vue-next'
+import { Users, SquareTerminal, Cpu, MessageSquareText, GitBranch, Coins } from 'lucide-vue-next'
 import BrandIcon from './BrandIcon.vue'
 import AgentStateDot from './sidebar/AgentStateDot.vue'
-import { t } from '../i18n'
+import { t, currentLocale } from '../i18n'
+import { useJobCost, hasUsage, jobCostLine, jobCostDetails } from '../jobCost'
 
 const props = defineProps({
   // Built by TerminalPane: { heading, agentName, iconKind, accent, model,
   // conversation, branch, state: { dot, label } | null, stateDetail, warn,
-  // yolo, team: { name, lead } | null, session }
+  // yolo, team: { name, lead } | null, session, id }
   info: { type: Object, required: true }
 })
 
@@ -27,6 +28,12 @@ const teamLine = computed(() => {
   if (!team) return ''
   return team.lead ? t('sidebar.hover.teamLead', '{{team}} (lead)', { team: team.name }) : team.name
 })
+// What the pane's current session used (tokens, time, estimated cost), asked
+// while the card is open (jobCost.js).
+const costOf = useJobCost('panes', () => (props.info.id ? [props.info.id] : []))
+const cost = computed(() => costOf(props.info.id))
+const costLine = computed(() => (currentLocale(), hasUsage(cost.value) ? jobCostLine(cost.value) : ''))
+const costDetails = computed(() => (currentLocale(), costLine.value ? jobCostDetails(cost.value, undefined, { withSummary: false }).split('\n') : []))
 const sessionLine = computed(() => (props.info.session ? t('pane.status.session', 'Session {{id}}', { id: props.info.session }) : ''))
 </script>
 
@@ -67,6 +74,17 @@ const sessionLine = computed(() => (props.info.session ? t('pane.status.session'
         <span>{{ t('sidebar.hover.team', 'Team') }}</span>
       </div>
       <div class="hc-section-body hc-strong" v-text="teamLine"></div>
+    </section>
+
+    <section v-if="costLine" class="hc-section" data-hover-cost="">
+      <div class="hc-section-title">
+        <Coins :size="12" aria-hidden="true" />
+        <span>{{ t('jobCost.hover.title', 'This session') }}</span>
+      </div>
+      <div class="hc-section-body hc-lines">
+        <span class="hc-strong" data-hover-cost-line="" v-text="costLine"></span>
+        <span v-for="(line, i) in costDetails" :key="i" class="hc-muted" v-text="line"></span>
+      </div>
     </section>
 
     <div v-if="sessionLine" class="hc-footer" data-hover-pane="">

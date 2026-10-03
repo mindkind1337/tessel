@@ -11,6 +11,9 @@ import { computed, inject } from 'vue'
 import { Search, X, Moon } from 'lucide-vue-next'
 import BrandIcon from './BrandIcon.vue'
 import AgentStateDot from './sidebar/AgentStateDot.vue'
+import AgentDashboardChildren from './AgentDashboardChildren.vue'
+import JobCostLine from './JobCostLine.vue'
+import { useJobCost } from '../jobCost'
 import { isAgentPane, paneRow } from '../sidebarModel'
 import { buildDashboard, dashboardBucket, DASHBOARD_STATES, dashboardView } from '../agentDashboard'
 import { t } from '../i18n'
@@ -41,6 +44,9 @@ const rows = computed(() => {
   }
   return out
 })
+// The current session's tokens and estimated cost of each agent (jobCost.js,
+// fetched together for every card, throttled).
+const costOf = useJobCost('panes', () => rows.value.map((r) => r.id))
 const board = computed(() => buildDashboard(rows.value, { filter: view.filter, query: view.query, groupBy: view.groupBy }))
 
 function stateName(state) {
@@ -282,8 +288,12 @@ async function sleepIdle() {
             <span class="adb-card-text">
               <span class="adb-card-title">{{ cardTitle(r) }}</span>
               <span class="adb-card-sub">{{ cardSub(r) }}</span>
+              <AgentDashboardChildren :row="r" />
             </span>
-            <span v-if="pill(r)" class="adb-pill" :class="'adb-pill-' + r.bucket" data-test="adb-pill">{{ pill(r) }}</span>
+            <span v-if="pill(r) || costOf(r.id)" class="adb-card-side">
+              <span v-if="pill(r)" class="adb-pill" :class="'adb-pill-' + r.bucket" data-test="adb-pill">{{ pill(r) }}</span>
+              <JobCostLine :entry="costOf(r.id)" compact class="adb-cost" />
+            </span>
           </button>
         </div>
       </section>

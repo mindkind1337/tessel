@@ -43,6 +43,13 @@
       "textOne": "1 agent inactif passe en veille : son terminal se ferme, sa conversation est conservée. Ouvrez son panneau pour le réveiller.",
       "text": "{{count}} agents inactifs passent en veille : leurs terminaux se ferment, leurs conversations sont conservées. Ouvrez un panneau pour le réveiller.",
       "confirm": "Mettre en veille"
+    },
+    "children": {
+      "count_one": "{{count}} sous-agent",
+      "count_other": "{{count}} sous-agents",
+      "summary": "{{head}} · {{running}} en cours",
+      "quiet": "Silencieux",
+      "tokens": "↓ {{tokens}} tokens"
     }
   },
   "sidePanelAdd": {
