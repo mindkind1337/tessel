@@ -87,6 +87,19 @@ describe('multi-agent conversation history', () => {
     expect(window.shellApi.listSessions).toHaveBeenLastCalledWith({ cwd: null, limit: 80 })
   })
 
+  it('continues an Antigravity IDE conversation in the CLI even when its folder is unknown', async () => {
+    const ide = { agent: 'antigravity', origin: 'ide', id: 'ide-id', cwd: '', title: 'From the IDE', updated: Date.now() }
+    window.shellApi = { listSessions: vi.fn().mockResolvedValue([ide]), writeClipboard: vi.fn() }
+    wrapper = mount(SessionsDialog, { props: { cwd: 'C:/Current' } })
+    await flushPromises()
+    const resume = wrapper.find('.session-row .primary')
+    expect(resume.text()).toBe('Continue in CLI')
+    expect(resume.attributes('disabled')).toBeUndefined()
+    expect(resume.attributes('title')).toContain('folder is unknown')
+    await resume.trigger('click')
+    expect(wrapper.emitted('resume')).toEqual([[ide]])
+  })
+
   it('shows a filter for each agent that has conversations', async () => {
     const rows = [{ agent: 'droid', id: 'droid-session', cwd: 'C:/P', title: 'Droid task', updated: Date.now() }]
     window.shellApi = { listSessions: vi.fn().mockResolvedValue(rows), writeClipboard: vi.fn() }

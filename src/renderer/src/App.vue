@@ -3133,11 +3133,13 @@ async function continueAgyFromIde(s) {
   if (!ws) return null
   const prep = await window.shellApi.prepareAgyContinue({ id: s.id }).catch(() => null)
   if (!ide && (!prep || prep.error === 'not-found')) return 'not-ide'
-  if (!prep || !prep.ok || !(prep.cwd || s.cwd)) {
+  if (!prep || !prep.ok) {
     showToast(t('sessionHistory.agyContinue.failed', "Couldn't read this Antigravity IDE conversation."), { kind: 'error' })
     return null
   }
-  const opts = { cwd: prep.cwd || s.cwd, local: true, agyContinue: { file: prep.file } }
+  // Its folder unknown (the IDE does not always record it): the folder a new
+  // pane opens in.
+  const opts = { cwd: prep.cwd || s.cwd || null, local: true, agyContinue: { file: prep.file } }
   let leaf = null
   if (activeId.value && ws.tree) {
     leaf = await splitLeaf(activeId.value, placement.value === 'down' ? 'col' : 'row', agent, selectedShell.value, null, { ...opts, before: placement.value === 'left' })
