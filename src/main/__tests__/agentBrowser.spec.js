@@ -246,6 +246,22 @@ describe('agent browser: commands', () => {
     ])
   })
 
+  // Two agents on one page: refs are numbered again by each snapshot, so a ref
+  // read by one agent must never act on what another agent's snapshot listed.
+  it("another agent's snapshot of the same page makes this agent's refs stale", async () => {
+    const OTHER = 'pane-8-agent'
+    setTeamSecret(OTHER, 'c'.repeat(64))
+    const { call, ab } = setup()
+    await call('snapshot')
+    process.env.TESSEL_PANE_ID = OTHER
+    process.env.TESSEL_TEAM_SECRET = 'c'.repeat(64)
+    await ab.handle(validateParams('browser', mcp.browserRequest('snapshot', {})))
+    await expect(call('click', { ref: '@e3' })).rejects.toMatchObject({ code: 'stale_ref' })
+    // Its own new snapshot: its refs work again.
+    await call('snapshot')
+    expect((await call('click', { ref: '@e3' })).text).toContain('Clicked @e3')
+  })
+
   it('a ref before any snapshot, or an unknown one, says to snapshot', async () => {
     const { call } = setup()
     await expect(call('click', { ref: '@e1' })).rejects.toMatchObject({ code: 'stale_ref' })

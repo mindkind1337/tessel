@@ -318,7 +318,7 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
     return { url: allowedBrowserUrl(guest.getURL()) || BLANK_URL, title: String(guest.getTitle() || '').slice(0, 200) }
   }
 
-  async function snapshot(guest, s) {
+  async function snapshot(guest, s, pane) {
     const cdp = await attach(guest, s)
     let contextId = null
     try {
@@ -330,6 +330,8 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
     await rememberSecrets(cdp, s)
     const result = await buildSnapshot(cdp, { contextId, maxChars: MAX_SNAPSHOT_CHARS })
     s.refMap = result.refMap
+    // Whose refs these are: a snapshot by another agent numbers them again.
+    s.refOwner = pane
     s.navKey = await navigationKey(cdp)
     const { url, title } = where(guest)
     return { text: `Page: ${title || '(no title)'} — ${url}\n${result.snapshot || '(nothing readable on this page yet)'}` }
@@ -450,10 +452,15 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
     return { text: `Now on ${w.url} — ${w.title || '(no title)'}. Call browser_snapshot to read it.` }
   }
 
-  async function run(op, guest, s, args) {
+  async function run(op, guest, s, args, pane) {
+    // A ref is this agent's only if its own snapshot gave it (two agents on
+    // one page: the other's snapshot listed other elements under the same refs).
+    if (args.ref != null && s.refMap && s.refOwner !== pane) {
+      throw new BrowserInputError('stale_ref', 'Another agent read this page since your snapshot: call browser_snapshot again.')
+    }
     switch (op) {
       case 'snapshot':
-        return snapshot(guest, s)
+        return snapshot(guest, s, pane)
       case 'navigate':
         return navigate(guest, s, args)
       case 'screenshot':
@@ -544,7 +551,7 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
     const s = stateOf(guest)
     controlled(guest, s, r.agent)
     try {
-      const out = await queued(s, guest, () => run(op, guest, s, args))
+      const out = await queued(s, guest, () => run(op, guest, s, args, pane))
       return { ...out, text: capText(out.text) }
     } catch (err) {
       if (err instanceof CliError) throw err
