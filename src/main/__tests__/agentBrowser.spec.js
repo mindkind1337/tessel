@@ -204,7 +204,20 @@ describe('agent browser: who may call', () => {
     expect(() => validateParams('browser', { ...req, args: { ref: { a: 1 } } })).toThrow()
     expect(() => validateParams('browser', { ...req, pane: '../x' })).toThrow()
     expect(() => validateParams('browser', { ...req, auth: null })).toThrow()
-    expect(() => validateParams('browser', { ...req, args: { text: 'x'.repeat(40000) } })).toThrow()
+    expect(() => validateParams('browser', { ...req, args: { text: 'x'.repeat(140000) } })).toThrow()
+  })
+
+  // fill takes up to 20,000 characters: whatever they are (accents, CJK,
+  // quotes, line breaks), such a request goes through the pipe whole.
+  it('a fill of 20,000 characters goes through the pipe, whatever the characters', async () => {
+    const { ab } = setup()
+    await ab.handle(validateParams('browser', signed('snapshot', {})))
+    for (const ch of ['é', '日', '"', '\n', '\u0001']) {
+      const req = signed('fill', { ref: '@e1', text: ch.repeat(20000) })
+      const line = `${CLI_PROTOCOL} ${Buffer.from(JSON.stringify({ token: TOKEN, method: 'browser', params: req })).toString('base64')}`
+      const reply = JSON.parse(await handleRequestLine(line, { token: TOKEN, handlers: { browser: (p) => ab.handle(p) } }))
+      expect(reply.error && reply.error.code).not.toBe('too_large')
+    }
   })
 
   it('the user\'s Stop revokes the page and hides the badge', async () => {

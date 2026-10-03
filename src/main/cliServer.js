@@ -27,7 +27,9 @@ import path from 'path'
 import { t } from './i18n'
 
 export const CLI_PROTOCOL = 'TESSEL-CLI 1'
-export const MAX_REQUEST_BYTES = 64 * 1024
+// A request line (base64): room for a browser request whose arguments are at
+// their own limit (MAX_BROWSER_ARGS_BYTES), encoded.
+export const MAX_REQUEST_BYTES = 192 * 1024
 export const MAX_REPLY_BYTES = 1024 * 1024
 export const RUNTIME_FILE = 'cli-runtime.json'
 export const TOKEN_FILE = 'cli.token'
@@ -199,7 +201,9 @@ export function validateParams(method, params = {}) {
 // flat arguments (strings, numbers, booleans) and the pane's signature.
 // Who may do what is decided by agentBrowser.js.
 const BROWSER_ARG_KEYS = new Set(['page', 'url', 'action', 'ref', 'text', 'key', 'direction', 'amount', 'double', 'limit', 'level', 'selector', 'timeout_ms'])
-export const MAX_BROWSER_ARGS_BYTES = 32 * 1024
+// fill and type take 20,000 characters, of any kind: a control character is
+// 6 bytes in JSON, so 120,000 bytes, and some room.
+export const MAX_BROWSER_ARGS_BYTES = 128 * 1024
 function browserParams(params) {
   const bad = () => invalid(t('main.cli.badParams', 'The request’s parameters are not valid.'))
   const { pane, op, args, auth } = params

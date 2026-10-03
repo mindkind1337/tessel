@@ -74,7 +74,7 @@ describe('request lines', () => {
   })
 
   it('refuses a request that is too large', () => {
-    expect(() => parseRequestLine(`${CLI_PROTOCOL} ${'A'.repeat(70 * 1024)}`)).toThrow(/too large/)
+    expect(() => parseRequestLine(`${CLI_PROTOCOL} ${'A'.repeat(200 * 1024)}`)).toThrow(/too large/)
   })
 })
 
@@ -260,7 +260,7 @@ describe('createCliServer', () => {
     await server.start()
     const sock = fakeSocket()
     net.servers[0].onConnection(sock)
-    sock.emit('data', Buffer.alloc(70 * 1024, 65))
+    sock.emit('data', Buffer.alloc(200 * 1024, 65))
     expect(JSON.parse(sock.answer).error.code).toBe('too_large')
     server.stop()
   })
