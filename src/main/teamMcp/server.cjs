@@ -38,12 +38,32 @@ const { randomUUID } = crypto
 const VERSION = '1.11.0'
 const MAX_TEXT = 6000
 
+// --- An agent on an SSH host --------------------------------------------------
+// Tessel runs this server on this computer for an agent on an SSH host
+// (src/main/remoteAgent/REMOTE_AGENTS.md), with TESSEL_REMOTE=1 and the host's
+// label. That host is not trusted like this computer: no browser (it is on
+// this computer), no starting or driving workers, its messages say where
+// they come from, and only the project folder Tessel gave is ever read.
+const isRemote = () => process.env.TESSEL_REMOTE === '1'
+function remoteHost() {
+  // eslint-disable-next-line no-control-regex
+  const label = String(process.env.TESSEL_REMOTE_HOST || '').replace(/[\u0000-\u001f\u007f[\]]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60)
+  return label || 'an SSH host'
+}
+// The note put before what it writes to the others (messages, reports).
+const remoteTag = () => (isRemote() ? `[from an agent on ${remoteHost()}] ` : '')
+const REMOTE_BLOCKED = new Set(['team_worker_start', 'team_worker_read', 'team_worker_stop', 'team_worker_release', 'team_worker_list'])
+const remoteBlocked = (name) => isRemote() && (REMOTE_BLOCKED.has(name) || String(name).startsWith('browser_'))
+
 // --- Finding my team and me ---------------------------------------------------
 
 function candidateDirs(start) {
   const out = []
   const add = (d) => d && !out.includes(d) && out.push(d)
   add(process.env.TESSEL_PROJECT_DIR)
+  // On an SSH host: its paths mean nothing here, and this process's folder is
+  // not its project. Only the folder Tessel gave.
+  if (isRemote()) return out
   let d = path.resolve(start || process.cwd())
   for (let i = 0; i < 8; i++) {
     add(d)
@@ -294,9 +314,10 @@ function send(ctx, to, text, replyTo, extra = null) {
   const box = path.join(ctx.root, 'outbox', ctx.me.token)
   fs.mkdirSync(box, { recursive: true })
   const name = `mcp-${Date.now()}-${process.pid}-${Math.random().toString(36).slice(2, 8)}`
-  if (body.length > MAX_TEXT)
-    return { error: `The message is too long (${body.length} characters, at most ${MAX_TEXT}): nothing was sent. Split it in several messages.` }
-  const payload = { to: target, text: body, ...(extra || {}) }
+  const max = MAX_TEXT - remoteTag().length
+  if (body.length > max)
+    return { error: `The message is too long (${body.length} characters, at most ${max}): nothing was sent. Split it in several messages.` }
+  const payload = { to: target, text: remoteTag() + body, ...(extra || {}) }
   if (replyTo) payload.reply_to = String(replyTo).slice(0, 80)
   fs.writeFileSync(path.join(box, `${name}.tmp`), JSON.stringify(payload))
   fs.renameSync(path.join(box, `${name}.tmp`), path.join(box, `${name}.json`))
@@ -442,10 +463,11 @@ function reportTask(ctx, args) {
   if (outcome !== 'succeeded' && outcome !== 'failed') return { error: '"outcome" must be "succeeded" or "failed".' }
   const summary = String(args.summary || '').trim()
   if (!summary) return { error: 'Give a "summary": what you did, what you found, what is left (a few sentences).' }
-  if (summary.length > 2000) return { error: 'The summary is too long (at most 2000 characters).' }
+  const maxSummary = 2000 - remoteTag().length
+  if (summary.length > maxSummary) return { error: `The summary is too long (at most ${maxSummary} characters).` }
   const files = listArg(args.files)
   if (files.length > 50 || files.some((f) => f.length > 300)) return { error: '"files": at most 50 paths.' }
-  taskRequest(ctx, { action: 'report', id, outcome, summary, files })
+  taskRequest(ctx, { action: 'report', id, outcome, summary: remoteTag() + summary, files })
   return { ok: true }
 }
 
@@ -682,10 +704,11 @@ function workerDone(ctx, args) {
   if (outcome !== 'succeeded' && outcome !== 'failed') return { error: '"outcome" must be "succeeded" or "failed".' }
   const summary = String(args.summary || '').trim()
   if (!summary) return { error: 'Give a "summary": what you did, what you found, what is left (3 sentences).' }
-  if (summary.length > 2000) return { error: 'The summary is too long (at most 2000 characters).' }
+  const maxSummary = 2000 - remoteTag().length
+  if (summary.length > maxSummary) return { error: `The summary is too long (at most ${maxSummary} characters).` }
   const files = listArg(args.files)
   if (files.length > 50 || files.some((f) => f.length > 300)) return { error: '"files": at most 50 paths.' }
-  taskRequest(ctx, { action: 'worker-done', outcome, summary, files })
+  taskRequest(ctx, { action: 'worker-done', outcome, summary: remoteTag() + summary, files })
   return { ok: true, text: 'Sent to Tessel: your coordinator is told. Your work on this task is complete: stop here and return to an idle prompt.' }
 }
 
@@ -1171,6 +1194,11 @@ function boardLocate(start) {
 const BOARD_TOOLS = ['team_tasks', 'team_task_add', 'team_task_move', 'team_task_done', 'team_task_gate']
 
 function callTool(name, args = {}, signal = null) {
+  if (remoteBlocked(name))
+    return {
+      text: `${name} is not available to an agent on an SSH host (${remoteHost()}): Tessel's browser and its workers are on the user's computer. Ask a teammate on the user's computer, or the user.`,
+      isError: true
+    }
   // The browser tools need no team: only this pane's identity.
   if (BROWSER_OPS[name]) return browserTool(BROWSER_OPS[name], args)
   let ctx = locate(args.me)
@@ -1221,6 +1249,12 @@ function callTool(name, args = {}, signal = null) {
   return { text: `Unknown tool ${name}.`, isError: true }
 }
 
+const INSTRUCTIONS =
+  'You work in Tessel: the user follows everything you do on its task board, so keep it up to date yourself, without being asked. Add a card (team_task_add) for every piece of work the moment you start it (what the user asks, each step you decide to take, each task you give a teammate), and move your cards as they go (team_task_move: "done" as soon as one is finished). Only a quick question or a short answer needs no card. If you are in a team, call team_inbox when you start and after each step to read messages from teammates, answer them with team_send, and never ask the user to pass messages between agents. To work together: give a teammate a card (team_task_add, with "after" when it must wait for other cards), finish work you were given with team_task_done and a short report, ask one teammate and wait for the answer with team_ask, ask the user to decide with team_task_gate, and send to groups like "@codex" or "@idle"; team_members shows who is idle. A team lead can also coordinate workers: start new agents in new panes with team_worker_start (one per independent piece of work), follow them with team_worker_list and team_worker_read, and stop or release them; a worker reports with team_worker_done and sends team_heartbeat while it works. To check a web page (your dev server, a UI change), use the built-in browser of Tessel with the browser_* tools: browser_pages or browser_open, then browser_snapshot to read the page with element refs (@e1), browser_click / browser_fill / browser_type / browser_press by ref, and browser_snapshot again after the page changes or navigates; browser_wait instead of sleeping, browser_console for errors, browser_screenshot to see it. The user sees an Agent badge on the page and can stop you.'
+// On an SSH host: no browser and no workers.
+const REMOTE_INSTRUCTIONS =
+  'You work in Tessel: the user follows everything you do on its task board, so keep it up to date yourself, without being asked. Add a card (team_task_add) for every piece of work the moment you start it (what the user asks, each step you decide to take, each task you give a teammate), and move your cards as they go (team_task_move: "done" as soon as one is finished). Only a quick question or a short answer needs no card. If you are in a team, call team_inbox when you start and after each step to read messages from teammates, answer them with team_send, and never ask the user to pass messages between agents. To work together: give a teammate a card (team_task_add, with "after" when it must wait for other cards), finish work you were given with team_task_done and a short report, ask one teammate and wait for the answer with team_ask, ask the user to decide with team_task_gate, and send to groups like "@codex" or "@idle"; team_members shows who is idle. You run on an SSH host: the browser and worker tools are not available to you (they are on the computer of the user).'
+
 // signal: aborted when the client cancels this request (a waiting team_ask).
 function handle(msg, signal = null) {
   const { id, method, params } = msg
@@ -1229,12 +1263,11 @@ function handle(msg, signal = null) {
       protocolVersion: (params && params.protocolVersion) || '2025-06-18',
       capabilities: { tools: {} },
       serverInfo: { name: 'tessel-team', version: VERSION },
-      instructions:
-        'You work in Tessel: the user follows everything you do on its task board, so keep it up to date yourself, without being asked. Add a card (team_task_add) for every piece of work the moment you start it (what the user asks, each step you decide to take, each task you give a teammate), and move your cards as they go (team_task_move: "done" as soon as one is finished). Only a quick question or a short answer needs no card. If you are in a team, call team_inbox when you start and after each step to read messages from teammates, answer them with team_send, and never ask the user to pass messages between agents. To work together: give a teammate a card (team_task_add, with "after" when it must wait for other cards), finish work you were given with team_task_done and a short report, ask one teammate and wait for the answer with team_ask, ask the user to decide with team_task_gate, and send to groups like "@codex" or "@idle"; team_members shows who is idle. A team lead can also coordinate workers: start new agents in new panes with team_worker_start (one per independent piece of work), follow them with team_worker_list and team_worker_read, and stop or release them; a worker reports with team_worker_done and sends team_heartbeat while it works. To check a web page (your dev server, a UI change), use the built-in browser of Tessel with the browser_* tools: browser_pages or browser_open, then browser_snapshot to read the page with element refs (@e1), browser_click / browser_fill / browser_type / browser_press by ref, and browser_snapshot again after the page changes or navigates; browser_wait instead of sleeping, browser_console for errors, browser_screenshot to see it. The user sees an Agent badge on the page and can stop you.'
+      instructions: isRemote() ? REMOTE_INSTRUCTIONS : INSTRUCTIONS
     }
   }
   if (method === 'ping') return {}
-  if (method === 'tools/list') return { tools: TOOLS }
+  if (method === 'tools/list') return { tools: isRemote() ? TOOLS.filter((t) => !remoteBlocked(t.name)) : TOOLS }
   if (method === 'tools/call') {
     const done = (r) => ({ content: [{ type: 'text', text: r.text }, ...(r.image ? [{ type: 'image', data: r.image.data, mimeType: r.image.mimeType }] : [])], isError: !!r.isError })
     const failed = (err) => done({ text: `Tessel team tool failed: ${err.message}`, isError: true })
@@ -1709,7 +1742,8 @@ function reportSession(data, agent) {
   // Tessel posts reminders there instead of typing them into the terminal.
   const inbox = agent === 'claude' ? String(process.env.CLAUDE_CODE_MESSAGING_SOCKET || '') : ''
   const inboxToken = inbox ? String(process.env.CLAUDE_CODE_MESSAGING_TOKEN || '') : ''
-  const transcriptPath = sessionFilePath(data && data.transcript_path, agent)
+  // On an SSH host: its transcript and folder are paths there, never read here.
+  const transcriptPath = isRemote() ? '' : sessionFilePath(data && data.transcript_path, agent)
   try {
     const old = readJson(file)
     // Unchanged: rewritten at most once a minute, so its time says when the
@@ -1726,7 +1760,7 @@ function reportSession(data, agent) {
       return
     fs.mkdirSync(dir, { recursive: true })
     const tmp = `${file}.${process.pid}.tmp`
-    const report = { agent, sessionId: id, source: String(data.source || data.hook_event_name || ''), cwd: String(data.cwd || ''), at: Date.now() }
+    const report = { agent, sessionId: id, source: String(data.source || data.hook_event_name || ''), cwd: isRemote() ? '' : String(data.cwd || ''), at: Date.now() }
     if (inbox && inboxToken) Object.assign(report, { inbox, inboxToken })
     if (transcriptPath) report.transcriptPath = transcriptPath
     fs.writeFileSync(tmp, JSON.stringify(report))
