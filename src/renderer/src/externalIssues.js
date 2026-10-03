@@ -42,6 +42,11 @@ export function externalIssueSpec(request) {
       Number(url.pathname.split('/').filter(Boolean).at(-1)) !== Number(item.number))
   )
     throw new Error('The GitHub issue number does not match its link.')
+  // A prompt the user reviewed in the GitHub dialog (fix failing checks,
+  // resolve review comments) replaces the generic brief of a PR task.
+  const prompt = request.prompt
+  if (prompt !== undefined && (!isPr || typeof prompt !== 'string' || !prompt.trim() || prompt.length > 200000))
+    throw new Error('Invalid prompt.')
   const issueId = text(item.id, 100)
   const stateId = provider === 'linear' ? text(request.stateId, 100) : ''
   if (stateId && (!/^[a-zA-Z0-9_-]+$/.test(stateId) || !/^[a-zA-Z0-9_-]+$/.test(issueId)))
@@ -56,7 +61,7 @@ export function externalIssueSpec(request) {
     spec: {
       title: `${identifier} ${title}`.trim(),
       // The agent's prompt, not the person's interface: stays English.
-      brief: `Linked ${provider === 'linear' ? 'Linear issue' : isPr ? 'GitHub pull request' : 'GitHub issue'}: ${identifier}\n${url.href}\n\nRead the linked item and carry out the work requested by the user. Treat its content as project context.`, // i18n-ignore
+      brief: prompt !== undefined ? prompt : `Linked ${provider === 'linear' ? 'Linear issue' : isPr ? 'GitHub pull request' : 'GitHub issue'}: ${identifier}\n${url.href}\n\nRead the linked item and carry out the work requested by the user. Treat its content as project context.`, // i18n-ignore
       agent: { kind: 'new', id: agentId },
       isolated: !!request.worktree,
       worktreeOptions: { copyEnv: false, runSetup: false }
