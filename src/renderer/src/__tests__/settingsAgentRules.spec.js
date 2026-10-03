@@ -45,6 +45,15 @@ describe('Settings > Agents > Detection rules', () => {
     expect(status().classes()).toContain('set-error')
   })
 
+  // "Open rules file" creates the commented example, which changes nothing:
+  // it is not "in use (0 change(s))".
+  it('says a rules file with no change keeps the built-in rules', async () => {
+    applyAgentStateRules({ state: 'override', size: 0, override: { engineVersion: 1, agents: {} } })
+    await flushPromises()
+    expect(status().text()).not.toContain('0 change')
+    expect(status().text()).toContain('changes nothing yet')
+  })
+
   it('Open rules file asks the main process, and says when it could not', async () => {
     await wrapper.get('[data-test="agent-rules-open"]').trigger('click')
     await flushPromises()
