@@ -7,6 +7,8 @@
 import { ref, computed, watch, nextTick, onMounted } from 'vue'
 import { parseTable } from '../../../shared/fileKinds'
 import { renderMarkdown, renderMermaid } from '../markdownView'
+import { markdownPreviewState } from '../markdownSize'
+import MarkdownSizeGate from './MarkdownSizeGate.vue'
 import { resolveFrom } from '../../../shared/viewPaths'
 import { t } from '../i18n'
 
@@ -16,10 +18,24 @@ const props = defineProps({
   kind: { type: String, required: true },
   text: { type: String, default: '' }
 })
-const emit = defineEmits(['open'])
+// 'source': a Markdown file too large to preview asks for the editor.
+const emit = defineEmits(['open', 'source'])
 
 const bodyEl = ref(null)
-const markdownHtml = computed(() => (props.kind === 'markdown' ? renderMarkdown(props.text) : ''))
+// A large Markdown file waits for "Render anyway" (markdownSize.js); the
+// choice holds for this tab while it stays under the hard cap.
+const renderAnyway = ref(false)
+const markdownState = computed(() =>
+  props.kind === 'markdown' ? markdownPreviewState(props.text, renderAnyway.value) : 'render'
+)
+const markdownHtml = computed(() =>
+  props.kind === 'markdown' && markdownState.value === 'render' ? renderMarkdown(props.text) : ''
+)
+async function renderLarge() {
+  renderAnyway.value = true
+  await nextTick()
+  afterRender()
+}
 const table = computed(() => {
   if (props.kind !== 'table') return null
   const { rows } = parseTable(props.text, props.file)
@@ -133,8 +149,14 @@ function onBodyClick(e) {
 
 <template>
   <div ref="bodyEl" class="fview-body ed-rich" :data-kind="kind" data-test="rich-view" @click="onBodyClick">
+    <MarkdownSizeGate
+      v-if="kind === 'markdown' && markdownState !== 'render'"
+      :state="markdownState"
+      @render="renderLarge"
+      @source="emit('source')"
+    />
     <!-- eslint-disable-next-line vue/no-v-html (sanitized by DOMPurify, markdownView.js) -->
-    <article v-if="kind === 'markdown'" class="fview-md" v-html="markdownHtml"></article>
+    <article v-else-if="kind === 'markdown'" class="fview-md" v-html="markdownHtml"></article>
     <div v-else-if="kind === 'mermaid'" class="fview-mermaid">
       <div
         v-if="mermaidError"

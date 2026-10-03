@@ -1127,6 +1127,7 @@ onBeforeUnmount(() => {
           :kind="mode === 'image' ? 'image' : kind"
           :text="richText"
           @open="openLinked"
+          @source="setToggle('source')"
         />
         <div v-if="message" class="ed-message" :class="{ error: (activeDoc && activeDoc.error && !diffInfo) || diffError }">{{ message }}</div>
       </div>

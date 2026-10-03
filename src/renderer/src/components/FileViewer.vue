@@ -6,6 +6,8 @@
 import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { fileKind, parseTable, formatJson } from '../../../shared/fileKinds'
 import { renderMarkdown, renderMermaid } from '../markdownView'
+import { markdownPreviewState } from '../markdownSize'
+import MarkdownSizeGate from './MarkdownSizeGate.vue'
 import { resolveFrom } from '../../../shared/viewPaths'
 import { t, intlLocale } from '../i18n'
 
@@ -41,6 +43,7 @@ async function load() {
   loading.value = true
   error.value = ''
   text.value = ''
+  renderAnyway.value = false
   imageUrl.value = ''
   let res = null
   try {
@@ -61,7 +64,20 @@ async function load() {
 }
 
 // --- What is shown -------------------------------------------------------------
-const markdownHtml = computed(() => (kind.value === 'markdown' && mode.value === 'rich' ? renderMarkdown(text.value) : ''))
+// A large Markdown file waits for "Render anyway"; one over the hard cap is
+// never rendered: its source shows under a note (markdownSize.js).
+const renderAnyway = ref(false)
+const markdownState = computed(() =>
+  kind.value === 'markdown' && !loading.value ? markdownPreviewState(text.value, renderAnyway.value) : 'render'
+)
+const markdownHtml = computed(() =>
+  kind.value === 'markdown' && mode.value === 'rich' && markdownState.value === 'render' ? renderMarkdown(text.value) : ''
+)
+async function renderLarge() {
+  renderAnyway.value = true
+  await nextTick()
+  afterRender()
+}
 const table = computed(() => {
   if (kind.value !== 'table' || mode.value !== 'rich') return null
   const { rows } = parseTable(text.value, props.file)
@@ -73,7 +89,11 @@ const plainLines = computed(() => {
   return src.split(/\r?\n/)
 })
 const showPlain = computed(
-  () => !loading.value && !error.value && kind.value !== 'image' && (mode.value === 'source' || !hasRich.value)
+  () =>
+    !loading.value &&
+    !error.value &&
+    kind.value !== 'image' &&
+    (mode.value === 'source' || !hasRich.value || markdownState.value === 'too-large')
 )
 const mermaidSvg = ref('')
 const mermaidError = ref('')
@@ -232,8 +252,15 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey, true))
         <div v-if="loading" class="fview-note">{{ t('editor.viewer.reading', 'Reading…') }}</div>
         <div v-else-if="error" class="fview-note error">{{ error }}</div>
         <template v-else>
+          <MarkdownSizeGate
+            v-if="kind === 'markdown' && mode === 'rich' && markdownState !== 'render'"
+            :state="markdownState"
+            :source-button="markdownState !== 'too-large'"
+            @render="renderLarge"
+            @source="mode = 'source'"
+          />
           <!-- eslint-disable-next-line vue/no-v-html (sanitized by DOMPurify, markdownView.js) -->
-          <article v-if="kind === 'markdown' && mode === 'rich'" class="fview-md" v-html="markdownHtml"></article>
+          <article v-else-if="kind === 'markdown' && mode === 'rich'" class="fview-md" v-html="markdownHtml"></article>
           <div v-else-if="kind === 'mermaid' && mode === 'rich'" class="fview-mermaid">
             <div
               v-if="mermaidError"

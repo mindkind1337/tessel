@@ -513,6 +513,20 @@ describe('actual terminal prompt evidence', () => {
       )
     ).toMatchObject({ ready: false, limit: { reset: '5 PM' } })
   })
+  it("reads Codex's 'Implement this plan?' menu as an approval, not a ready input", () => {
+    const menu = [
+      '  Implement this plan?',
+      '› 1. Yes, implement this plan           Switch to Default and start coding',
+      '  2. Yes, clear context and implement  Start a fresh thread (current context: 2% used)',
+      '  3. No, stay in Plan mode              Continue planning with the model',
+      '  enter select · esc back'
+    ].join('\n')
+    expect(agentScreenObservation(terminal('› ', 2, true), 'codex', menu)).toMatchObject({
+      approval: true,
+      ready: false,
+      waiting: false
+    })
+  })
 })
 
 describe('agents whose hooks alone report their status (Gemini, Droid...)', () => {
