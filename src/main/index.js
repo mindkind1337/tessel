@@ -39,6 +39,7 @@ import { STATUS_PROVIDERS } from '../shared/agentStateModel'
 import { prepareAgentStateHooks } from './agentStateSetup'
 import { assessNeeds } from './tesselNeeds'
 import { createClaudeUsageReport } from './claudeUsageReport'
+import { createJobCost } from './jobCost'
 import { resolveFiles, codeGotoArg, listProjectFiles } from './fileOpen'
 import { statChatPaths, openChatPath, revealChatPath } from './chatFileOpen'
 import { titleBarColors } from '../shared/themePalettes'
@@ -1764,6 +1765,44 @@ ipcMain.handle('accounts:launchEnv', safe((query) => typeof query === 'string'
   ? accounts.launchEnv(query) : accounts.launchEnv(query?.provider, query?.accountId)))
 const accountSessions = createAccountSessions({ accounts })
 const accountUsage = createAccountUsage({ accounts, userData: app.getPath('userData') })
+// Tokens, time and estimated cost of each job (task card) and pane session,
+// from the agents' session files in every account's folder (jobCost.js).
+let jobCostHomes = { at: 0, agentHomes: null }
+async function jobCostHomeList(agent) {
+  if (!jobCostHomes.agentHomes || Date.now() - jobCostHomes.at > 60000) {
+    const agentHomes = { claude: new Set(), codex: new Set() }
+    let rows = []
+    try {
+      rows = (await accounts.list()).providers || []
+    } catch {
+      rows = []
+    }
+    for (const a of ['claude', 'codex']) {
+      const row = rows.find((r) => r.provider === a)
+      const ids = [undefined, null, ...((row && row.accounts) || []).map((x) => x && x.id).filter(Boolean)]
+      for (const accountId of ids) {
+        try {
+          const r = await accountSessions.roots({ agent: a, accountId })
+          if (r && r[a]) agentHomes[a].add(r[a])
+        } catch {
+          // that account's folder is unknown
+        }
+      }
+    }
+    jobCostHomes = { at: Date.now(), agentHomes }
+  }
+  return [...(jobCostHomes.agentHomes[agent] || [])]
+}
+const jobCost = createJobCost({
+  userDataDir: app.getPath('userData'),
+  sessionsDir: () => sessionsDir(),
+  homes: jobCostHomeList,
+  isRemote: isRemotePath,
+  send,
+  log
+})
+jobCost.register(ipcMain)
+app.on('will-quit', () => void jobCost.close())
 ipcMain.handle('usage:get', safe(() => accountUsage.usage()))
 // Claude Code's usage report from its own conversation files (tokens, estimated cost).
 const claudeUsageReport = createClaudeUsageReport()

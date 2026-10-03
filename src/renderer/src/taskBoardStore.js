@@ -40,8 +40,38 @@ export function updateTask(id, patch = {}) {
   if (rest.column === 'doing' && !task.startedAt && !('startedAt' in rest)) rest.startedAt = Date.now()
   if (rest.column === 'done' && task.column !== 'done' && !('doneAt' in rest)) rest.doneAt = Date.now()
   if (rest.column && rest.column !== 'done' && task.column === 'done') rest.doneAt = null
+  const periods = workPeriodsAfter(task, rest, Date.now())
+  if (periods) rest.workPeriods = periods
   Object.assign(task, rest)
   return task
+}
+
+// The periods the card spent in Doing, with the pane that worked on it:
+// [{ start, end (null while it is in Doing), paneId }], oldest first. The job
+// cost (src/main/jobCost.js) counts the tokens that pane spent in them. A new
+// pane while in Doing closes the period and opens another one for the new
+// pane. -> the new list, or null when it does not change.
+const MAX_PERIODS = 50
+export function workPeriodsAfter(task, patch, now) {
+  if ('workPeriods' in patch) return null
+  const was = task.column === 'doing'
+  const is = (patch.column || task.column) === 'doing'
+  const pane = 'paneId' in patch ? patch.paneId || null : task.paneId || null
+  const list = Array.isArray(task.workPeriods) ? task.workPeriods.map((p) => ({ ...p })) : []
+  const open = list.length && list[list.length - 1].end == null ? list[list.length - 1] : null
+  let changed = false
+  if (open && (!is || open.paneId !== pane)) {
+    open.end = now
+    changed = true
+  }
+  if (is && (!was || !open || open.paneId !== pane)) {
+    // A card already in Doing before periods were kept: since it got there.
+    const legacy = was && !open && !list.length && pane === (task.paneId || null)
+    const start = legacy ? Number(task.doingSince) || Number(task.startedAt) || now : now
+    list.push({ start, end: null, paneId: pane })
+    changed = true
+  }
+  return changed ? list.slice(-MAX_PERIODS) : null
 }
 
 export function moveTask(id, column) {

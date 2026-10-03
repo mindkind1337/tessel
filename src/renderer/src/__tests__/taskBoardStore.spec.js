@@ -224,3 +224,44 @@ describe('cardOnBoard', () => {
     expect(cardOnBoard(null, scope)).toBe(false)
   })
 })
+
+describe('work periods (job cost)', () => {
+  it('opens a period entering Doing, closes it leaving, and splits on a new pane', async () => {
+    const { workPeriodsAfter } = await import('../taskBoardStore')
+    let card = { column: 'todo', paneId: 'p1' }
+    const step = (patch, now) => {
+      const p = workPeriodsAfter(card, patch, now)
+      card = { ...card, ...patch, ...(p ? { workPeriods: p } : {}) }
+    }
+    step({ column: 'doing' }, 100)
+    expect(card.workPeriods).toEqual([{ start: 100, end: null, paneId: 'p1' }])
+    step({ title: 'renamed' }, 150)
+    expect(card.workPeriods).toHaveLength(1)
+    step({ paneId: 'p2' }, 200)
+    expect(card.workPeriods).toEqual([
+      { start: 100, end: 200, paneId: 'p1' },
+      { start: 200, end: null, paneId: 'p2' }
+    ])
+    step({ column: 'review' }, 300)
+    expect(card.workPeriods[1]).toEqual({ start: 200, end: 300, paneId: 'p2' })
+    step({ column: 'doing' }, 400)
+    expect(card.workPeriods).toHaveLength(3)
+    expect(card.workPeriods[2]).toEqual({ start: 400, end: null, paneId: 'p2' })
+  })
+
+  it('a card already in Doing without periods starts from doingSince', async () => {
+    const { workPeriodsAfter } = await import('../taskBoardStore')
+    const p = workPeriodsAfter({ column: 'doing', paneId: 'p1', doingSince: 50 }, { title: 'x' }, 500)
+    expect(p).toEqual([{ start: 50, end: null, paneId: 'p1' }])
+  })
+
+  it('updateTask records the periods on the card', () => {
+    const t = addTask({ title: 'job' })
+    assignAgent(t.id, 'pane-a')
+    moveTask(t.id, 'doing')
+    expect(t.workPeriods).toHaveLength(1)
+    expect(t.workPeriods[0].paneId).toBe('pane-a')
+    moveTask(t.id, 'done')
+    expect(t.workPeriods[0].end).toEqual(expect.any(Number))
+  })
+})
