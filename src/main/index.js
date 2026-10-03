@@ -126,6 +126,7 @@ import { t, setLanguage as setMainLanguage, currentLocale, onLanguageChange } fr
 import { createCliServer, CliError } from './cliServer'
 import { createCliBridge } from './cliBridge'
 import { createCloseGuard } from './closeGuard'
+import { installRendererRecovery } from './rendererRecovery'
 import { createCliInstaller, createUserPathRegistry, cliBinDir, cliCommandName, cliScriptPath, cliLauncherPath, iniText, readRegistryPathSync } from './cliInstall'
 import {
   ensureTeamChannel,
@@ -3514,14 +3515,29 @@ function createWindow() {
   browserGuests.attachToWindow(mainWindow)
   mainWindow.maximize()
 
-  if (process.env.ELECTRON_RENDERER_URL) {
-    mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
-  } else {
-    mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
-  }
+  const win = mainWindow
+  // The window's page, at start and when it is reloaded after a crash.
+  const loadPage = () =>
+    process.env.ELECTRON_RENDERER_URL
+      ? win.loadURL(process.env.ELECTRON_RENDERER_URL)
+      : win.loadFile(join(__dirname, '../renderer/index.html'))
+  loadPage().catch((err) => log.error('window', `the page did not load: ${err.message}`))
 
   mainWindow.webContents.on('render-process-gone', (_event, details) => {
     logCrashContext(`renderer gone: reason=${details.reason} exitCode=${details.exitCode}`)
+  })
+  // A crashed page reloads on its own (rendererRecovery.js): the terminals
+  // live in the terminal host, which a reload never touches, and the page
+  // re-attaches them as it restores the layout. A crash loop or a PC out of
+  // memory asks (Reload / Quit) instead. The native box: it needs no new page
+  // process, which may be what failed.
+  installRendererRecovery({
+    win,
+    loadPage,
+    isQuitting: () => appQuitting || shutdownDone,
+    showMessageBox: (parent, opts) => (parent.isDestroyed() ? dialog.showMessageBox(opts) : dialog.showMessageBox(parent, opts)),
+    quit: () => app.quit(),
+    log
   })
 
   mainWindow.webContents.on('responsive', () => {

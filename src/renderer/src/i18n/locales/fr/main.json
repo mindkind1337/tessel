@@ -864,5 +864,19 @@
   "main.chat.image.unreadable": "Ce fichier n’a pas pu être lu.",
   "main.chat.image.link": "Les liens ne peuvent pas être joints : déposez l’image elle-même.",
   "main.chat.image.perMessage": "Au plus {{n}} images par message.",
-  "main.chat.image.gone": "Une image jointe n’est plus disponible. Joignez-la de nouveau."
+  "main.chat.image.gone": "Une image jointe n’est plus disponible. Joignez-la de nouveau.",
+  "main.rendererRecovery.title": "Tessel n’arrive pas à se charger",
+  "main.rendererRecovery.reload": "Recharger",
+  "main.rendererRecovery.tryAgain": "Réessayer",
+  "main.rendererRecovery.quit": "Quitter",
+  "main.rendererRecovery.keepRunning": "Vos terminaux et vos agents continuent de tourner : recharger les ramène. Quitter les arrête.",
+  "main.rendererRecovery.lowMemoryMessage": "Windows manque de mémoire.",
+  "main.rendererRecovery.lowMemoryDetail": "Il ne reste à Windows que {{freeMB}} Mo de mémoire libre : la fenêtre a de nouveau manqué de mémoire après le rechargement.",
+  "main.rendererRecovery.lowMemoryAdvice": "Libérez de la mémoire en fermant les applications que vous n’utilisez pas (ou quelques agents), puis cliquez sur Recharger.",
+  "main.rendererRecovery.launchFailedMessage": "Tessel n’a pas pu démarrer le processus qui dessine sa fenêtre.",
+  "main.rendererRecovery.launchFailedDetail": "Tessel a réessayé {{recoveryCount}} fois sans succès.",
+  "main.rendererRecovery.launchFailedAdvice": "Le système a refusé de le démarrer. Libérez de la mémoire ou fermez d’autres applications, puis cliquez sur Réessayer. Si cela se reproduit, réinstallez Tessel.",
+  "main.rendererRecovery.crashLoopMessage": "La fenêtre a planté à répétition et ne se recharge plus d’elle-même.",
+  "main.rendererRecovery.crashLoopDetail": "Tessel a tenté de la rétablir {{recoveryCount}} fois de suite sans succès.",
+  "main.rendererRecovery.crashLoopAdvice": "C’est souvent un problème de pilote graphique ou d’installation. Rechargez pour réessayer, ou quittez et redémarrez Tessel."
 }
