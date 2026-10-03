@@ -964,6 +964,7 @@ const title = computed(() => t('chat.orca.transcriptView.title', 'Conversation o
     </div>
     <template v-if="interactive">
       <NativeChatStructuredSessionStatus
+        :style="{ zoom: fontScale.scale.value }"
         :session-id="sessionId"
         :agent-label="fromAgent"
         :composer-error="queuedNotice"

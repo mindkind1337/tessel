@@ -52,6 +52,26 @@ describe('NativeChatStructuredSessionStatus', () => {
     await wrapper.setProps({ error: null })
     expect(wrapper.find('[data-test="chat-session-error"]').text()).toBe('not sent')
   })
+
+  // The chat's own zoom (Ctrl+= / Ctrl+-) is set on these lines as on the
+  // composer: the sub-agents dock keeps the composer's width and size.
+  it("the chat's zoom reaches every line, the background-task dock included", () => {
+    wrapper = mount(NativeChatStructuredSessionStatus, {
+      props: {
+        sessionId: 'session-1',
+        agentLabel: 'Claude',
+        startupPhase: 'starting',
+        error: 'journal locked',
+        isVisible: true,
+        backgroundTasks: { ...NO_TASKS, show: true, tasks: [{ id: 'a1', kind: 'agent', description: 'count_a' }] }
+      },
+      attrs: { style: { zoom: 1.3 } },
+      attachTo: document.body
+    })
+    expect(wrapper.find('[data-test="chat-session-starting"]').attributes('style')).toContain('zoom: 1.3')
+    expect(wrapper.find('[data-test="chat-session-error"]').attributes('style')).toContain('zoom: 1.3')
+    expect(wrapper.find('[data-native-chat-background-tasks]').attributes('style')).toContain('zoom: 1.3')
+  })
 })
 
 describe('NativeChatDeliveryRetry', () => {

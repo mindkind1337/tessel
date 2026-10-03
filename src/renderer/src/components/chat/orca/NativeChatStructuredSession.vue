@@ -358,6 +358,7 @@ defineExpose({
     />
     <NativeChatLaunchRetry :status="launchStatus" :agent-id="agent" :error="launchError" :opening="opening" @retry="emit('start')" />
     <NativeChatStructuredSessionStatus
+      :style="{ zoom: fontScale.scale.value }"
       :session-id="c.meta.sessionId || ''"
       :agent-label="agentName"
       :composer-error="composerError"
