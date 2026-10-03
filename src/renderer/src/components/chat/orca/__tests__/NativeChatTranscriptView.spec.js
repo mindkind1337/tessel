@@ -105,6 +105,27 @@ describe('NativeChatTranscriptView', () => {
     expect(text()).toContain('List the files')
   })
 
+  it('its file gone while shown: what it shows stays, and it looks for the file again', async () => {
+    await mountView()
+    for (const cb of listeners) cb({ viewId: 'tv-1', ok: false, code: 'missing' })
+    await flushPromises()
+    expect(text()).toContain('List the files')
+    await vi.advanceTimersByTimeAsync(3000)
+    await flushPromises()
+    expect(api.open).toHaveBeenCalledTimes(2)
+  })
+
+  it('its watch closed by the main process (too many views): it opens again later, keeping what it shows', async () => {
+    await mountView()
+    for (const cb of listeners) cb({ viewId: 'tv-1', ok: false, code: 'closed' })
+    await flushPromises()
+    expect(text()).toContain('List the files')
+    expect(api.open).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(31000)
+    await flushPromises()
+    expect(api.open).toHaveBeenCalledTimes(2)
+  })
+
   it('hidden, it stops watching; shown again, it opens again; closed, the watch ends', async () => {
     await mountView()
     await wrapper.setProps({ isVisible: false })

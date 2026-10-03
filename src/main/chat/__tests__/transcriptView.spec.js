@@ -224,6 +224,16 @@ describe('transcript view: live while open', () => {
     expect(views.close(ids[9])).toBe(true)
   })
 
+  // The oldest view giving way is told so (else its window would wait for
+  // changes that never come).
+  it('a view closed to make room tells its window', async () => {
+    grokFile(GROK_SESSION)
+    const { views, send } = setup()
+    const ids = []
+    for (let i = 0; i < 9; i++) ids.push((await views.open({ agent: 'grok', sessionId: GROK_ID })).viewId)
+    expect(send).toHaveBeenCalledWith('transcriptView:event', { viewId: ids[0], ok: false, code: 'closed' })
+  })
+
   it('where watching fails, a slow poll takes over (and stops with the view)', async () => {
     vi.useFakeTimers()
     const file = grokFile(GROK_SESSION)

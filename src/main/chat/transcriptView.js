@@ -967,7 +967,12 @@ export function createTranscriptViews({ send, roots = transcriptViewRoots, homes
     const opened = openTail({ agent, sessionId, roots: roots(), home, reported, limits })
     if (!opened.ok) return opened
     // The oldest view gives way: a view nobody closed (a crashed window) cannot pile up.
-    while (views.size >= MAX_VIEWS) close(views.keys().next().value)
+    // The oldest gives way, and its window is told (it opens again later).
+    while (views.size >= MAX_VIEWS) {
+      const oldest = views.keys().next().value
+      close(oldest)
+      send('transcriptView:event', { viewId: oldest, ok: false, code: 'closed' })
+    }
     const viewId = `tv-${++nextId}` // i18n-ignore id
     const v = { agent, sessionId, file: opened.file, tail: opened.tail, watcher: null, timer: null, poll: null, stamp: stampOf(opened.file), eventCap: limits.events, images: new Map(), sent: new Set(), queue: Promise.resolve() }
     views.set(viewId, v)

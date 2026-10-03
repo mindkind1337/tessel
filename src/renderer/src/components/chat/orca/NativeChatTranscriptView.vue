@@ -144,6 +144,8 @@ const emit = defineEmits(['close'])
 const RETRY_MS = 3000
 // A message the agent took but whose turn the file never showed (it may show
 // it in another form) stops being shown as sent after this long.
+// A view the main process closed to make room opens again after this long.
+const REOPEN_MS = 30 * 1000
 const SENT_SHOWN_MS = 2 * 60 * 1000
 // Typed but never confirmed nor refused (the agent may or may not have it):
 // shown as sent this long, then left to the conversation file.
@@ -329,6 +331,24 @@ onMounted(() => {
         truncated.value = !!msg.truncated
         show(msg)
         phase.value = 'ready'
+        return
+      }
+      // Its file gone (deleted, rotated): said, and looked for again.
+      if (msg.code === 'missing') {
+        viewId = null
+        viewOpen.value = false
+        phase.value = 'missing'
+        clearTimeout(retry)
+        retry = setTimeout(openView, RETRY_MS)
+        return
+      }
+      // Its watch closed by the main process (too many views open): what it
+      // shows stays; it opens again a little later.
+      if (msg.code === 'closed') {
+        viewId = null
+        viewOpen.value = false
+        clearTimeout(retry)
+        retry = setTimeout(() => props.isVisible && openView(), REOPEN_MS)
       }
     })
     if (typeof unsubscribe === 'function') off = unsubscribe
