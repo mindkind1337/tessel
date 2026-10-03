@@ -131,7 +131,7 @@ const preventDefault = (event) => event.preventDefault()
       <PopoverContent
         :aria-label="label"
         side="top"
-        align="end"
+        align="start"
         :side-offset="8"
         class="nc-context-card"
         @open-auto-focus="preventDefault"
