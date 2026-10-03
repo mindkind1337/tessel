@@ -13,9 +13,11 @@ export function useNativeChatFileLinkContext(pane, options = {}) {
       ? resolve(leaf)
       : leaf && {
           worktreeId: leaf.id,
-          worktreePath: panel?.paneFolder?.(leaf) || leaf.projectDir || leaf.cwd || leaf.startDir,
+          // Tessel: a pane working in a worktree copy reads its links there
+          // (the agent's "src/a.js" is the copy's, not the project checkout's).
+          worktreePath: leaf.worktree?.path || panel?.paneFolder?.(leaf) || leaf.projectDir || leaf.cwd || leaf.startDir,
           // Tessel: the folders a link may open a file in (the pane's own).
-          roots: [...new Set([panel?.paneFolder?.(leaf), leaf.projectDir, leaf.cwd, leaf.startDir].filter((p) => typeof p === 'string' && p))],
+          roots: [...new Set([leaf.worktree?.path, panel?.paneFolder?.(leaf), leaf.projectDir, leaf.cwd, leaf.startDir].filter((p) => typeof p === 'string' && p))],
           runtimeEnvironmentId: null,
           remote: leaf.remote,
         }
