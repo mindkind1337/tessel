@@ -217,8 +217,15 @@ export async function pasteAndConfirm(id, text, deps) {
         // misses that they were one (the path stays plain text): erased,
         // exactly what was pasted, and pasted again. Only when the path is
         // what ends its input, and never if anything else came in.
+        // A beat first: the image may show just after the wait (the screen
+        // lags the terminal). Taken, it is never erased (the backspaces would
+        // eat it and the images before it), nor called missing.
+        await d.sleep(d.cfg.imagePollMs)
         pane = d.getPane(id)
-        if (!pane || !pathShown(pane, file) || markersOf(pane) !== before) return stop('image')
+        if (!pane) return stop('image')
+        const late = markersOf(pane)
+        if (late !== null && late > before) break
+        if (!pathShown(pane, file) || late !== before) return stop('image')
         pane.erase(file.length)
         await d.sleep(d.cfg.imageMinMs)
         pane = d.getPane(id)

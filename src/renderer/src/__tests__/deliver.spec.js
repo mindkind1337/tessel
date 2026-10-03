@@ -394,7 +394,23 @@ describe('an image path the agent left as plain text (Codex on Windows, now and 
     const { state, deps, tries } = flaky((f, n) => f === img(2) && n === 1)
     expect(await pasteAndConfirm('p', 'Colours?', { ...deps, images: [img(1), img(2), img(3)] })).toBe('confirmed')
     expect(tries[img(2)]).toBe(2)
-    expect(state.log.filter((l) => l.startsWith('erase@'))).toEqual([`erase@1700:${img(2).length}`])
+    expect(state.log.filter((l) => l.startsWith('erase@'))).toEqual([`erase@1800:${img(2).length}`])
+    expect(state.submits).toBe(1)
+  })
+  // Codex turns the path into its image a moment after the wait ended: that
+  // image is taken, never erased (the backspaces would eat it and the earlier
+  // ones) nor called missing.
+  it('an image that shows just after the wait: taken, nothing erased, one Enter', async () => {
+    const { state, deps, pane, tries } = flaky(() => true)
+    const plain = pane.screenText
+    pane.imageMarkers = () => (state.t > 1500 ? 1 : 0)
+    pane.screenText = () => (state.t > 1500 ? '' : plain())
+    const why = []
+    const result = await pasteAndConfirm('p', 'Colours?', { ...deps, images: [img(1)], stopped: (w) => why.push(w) })
+    expect(result).toBe('confirmed')
+    expect(tries[img(1)]).toBe(1)
+    expect(state.log.some((l) => l.startsWith('erase@'))).toBe(false)
+    expect(why).toEqual([])
     expect(state.submits).toBe(1)
   })
   it('never taken: three tries, then stopped without Enter', async () => {
