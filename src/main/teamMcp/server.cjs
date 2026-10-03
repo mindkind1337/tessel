@@ -1040,10 +1040,11 @@ function pipeCall(rt, method, params, timeoutMs = BROWSER_TIMEOUT_MS) {
   })
 }
 
-// The arguments as Tessel reads them (no empty values), signed by this pane.
+// The arguments as Tessel reads them (no empty values, except an empty
+// "text": browser_fill with "" clears the field), signed by this pane.
 function browserRequest(op, args) {
   const clean = {}
-  for (const [k, v] of Object.entries(args || {})) if (k !== 'me' && v !== null && v !== undefined && v !== '') clean[k] = v
+  for (const [k, v] of Object.entries(args || {})) if (k !== 'me' && v !== null && v !== undefined && (v !== '' || k === 'text')) clean[k] = v
   const pane = String(process.env.TESSEL_PANE_ID || '')
   const nonce = crypto.randomBytes(18).toString('base64url')
   const at = Date.now()

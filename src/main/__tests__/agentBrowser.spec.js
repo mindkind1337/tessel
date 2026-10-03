@@ -289,6 +289,15 @@ describe('agent browser: commands', () => {
     expect(guest.sent.filter(([m, p]) => m === 'Input.insertText' && p.text === 'hunter2')).toEqual([])
   })
 
+  it('fill with an empty text clears the field (the tool keeps an empty "text")', async () => {
+    const { call, guest } = setup()
+    await call('snapshot')
+    expect(mcp.browserRequest('fill', { ref: '@e1', text: '' }).args).toEqual({ ref: '@e1', text: '' })
+    const r = await call('fill', { ref: '@e1', text: '' })
+    expect(r.text).toContain('@e1')
+    expect(guest.sent).toContainEqual(['Input.dispatchKeyEvent', expect.objectContaining({ type: 'keyDown', key: 'Delete' })])
+  })
+
   it('a printable key is refused while a password field has the keyboard; Enter is not', async () => {
     const page = pageModel()
     page.focused = 40
