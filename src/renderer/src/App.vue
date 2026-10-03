@@ -85,6 +85,7 @@ import { createTeamDelivery } from './teamDelivery'
 import { dropBuffer, seedBuffer } from './ptyStore'
 import { tasks as boardTasks, setTasks, updateTask, removeTask, addTask, deletedTaskIds, addDeletedTasks, takeDeletedToPurge, cardOnBoard } from './taskBoardStore'
 import { taskHistory, setTaskHistory, backfillHistory, setHistoryDescriber } from './taskHistory'
+import { restoredSideTab } from './sideTabs'
 import { paneModels } from './paneModels'
 import { sleepBlocker } from '../../shared/agentSleep'
 import { updateBlocker, planUpdate, autoUpdateMoment } from '../../shared/agentUpdatePlan'
@@ -2125,7 +2126,6 @@ setHistoryDescriber((card) => {
 
 // --- The right side panel (SidePanel.vue): Files, Changes, Tasks, Agents tabs ------
 // taskPanelOpen: the panel is shown; sideTab: the tab it shows.
-const SIDE_TABS = ['dashboard', 'files', 'changes', 'tasks', 'history']
 const sideTab = ref('tasks')
 // The web pages opened with the side panel's + ([{ id, url, title }], a tab
 // each, saved with the layout; a page loads when its tab is first shown).
@@ -2624,6 +2624,9 @@ function buildCommands() {
   })
   add(agentsGroup, taskPanelOpen.value && sideTab.value === 'history' ? t('app.cmd.hideSessionHistory', 'Hide Agent Session History') : t('app.cmd.showSessionHistory', 'Show Agent Session History'), () => toggleSideTab('history'), {
     hint: t('app.cmd.sessionHistoryHint', 'Browse, search and resume past agent conversations')
+  })
+  add(agentsGroup, taskPanelOpen.value && sideTab.value === 'taskHistory' ? t('taskHistory.cmd.hide', 'Hide Task history') : t('taskHistory.cmd.show', 'Show Task history'), () => toggleSideTab('taskHistory'), {
+    hint: t('taskHistory.cmd.hint', 'Finished tasks with their time, tokens and estimated cost')
   })
   add(agentsGroup, t('app.cmd.mcp', 'MCP servers'), () => (mcpOpen.value = true), { hint: t('app.cmd.mcpHint', 'Give agents extra tools') })
   add(agentsGroup, t('app.cmd.installTools', 'Install tools'), openTools, { hint: t('app.cmd.installToolsHint', 'Agents, Git, Node.js and more') })
@@ -9656,8 +9659,8 @@ async function restoreOrSeedLayout() {
     if (saved.taskPanelOpen === true) taskPanelOpen.value = true
     // The side panel's tab (the file explorer was a panel of its own before).
     sideBrowsers.value = restoreSideBrowsers(saved.sideBrowsers)
-    if (SIDE_TABS.includes(saved.sidePanelTab) || sideBrowsers.value.some((b) => b.id === saved.sidePanelTab)) sideTab.value = saved.sidePanelTab
-    else if (typeof saved.sidePanelTab === 'string' && saved.sidePanelTab.startsWith('web-')) sideTab.value = 'dashboard'
+    const restoredTab = restoredSideTab(saved.sidePanelTab, sideBrowsers.value)
+    if (restoredTab) sideTab.value = restoredTab
     else if (saved.explorerOpen === true && saved.taskPanelOpen !== true) {
       sideTab.value = 'files'
       taskPanelOpen.value = true

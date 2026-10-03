@@ -1,6 +1,6 @@
 {
   "taskHistory": {
-    "tab": "Historique des tâches",
+    "tab": "Historique des tâches — temps et coût",
     "title": "Historique des tâches",
     "export": "Exporter en CSV",
     "unknown": "inconnu",
@@ -8,6 +8,11 @@
     "search": "Chercher dans les titres",
     "empty": "Aucune tâche terminée pour l'instant. Les tâches placées dans Terminé sur le tableau des tâches apparaissent ici.",
     "noMatch": "Aucune tâche ne correspond à ces filtres.",
+    "cmd": {
+      "show": "Afficher l'historique des tâches",
+      "hide": "Masquer l'historique des tâches",
+      "hint": "Les tâches terminées avec leur temps, leurs tokens et leur coût estimé"
+    },
     "period": {
       "today": "Aujourd'hui",
       "week": "7 derniers jours",
