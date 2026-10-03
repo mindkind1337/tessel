@@ -62,7 +62,7 @@ import FileFinder from './components/FileFinder.vue'
 import UsageMenu from './components/UsageMenu.vue'
 import { acquirePassthrough, trackPointerDrag } from './browser/webviewPassthrough'
 import { pageOf } from './browser/pageHost'
-import { createAgentBrowserTargets } from './browser/agentBrowserTargets'
+import { createAgentBrowserTargets, addPageNear } from './browser/agentBrowserTargets'
 import GitHubDialog from './components/GitHubDialog.vue'
 import LinearDialog from './components/LinearDialog.vue'
 import { createExternalIssueStarter } from './externalIssues'
@@ -8420,11 +8420,16 @@ const agentBrowserTargets = createAgentBrowserTargets({
   paneLabel,
   // Next to the agent's pane, in its grid; the screen and the keyboard stay
   // where they are.
-  openPage({ ws, near, url }) {
+  // Its next pages: stacked with the ones it opened (addPageNear).
+  openPage({ ws, near, url, stack = false }) {
     if (!workspaces.value.includes(ws) || !findLeafIn(ws.tree, near.id)) return null
     const leaf = makeBrowserLeaf(null, url)
     keepView(leaf, near, ws)
-    ws.tree = replaceNode(ws.tree, near.id, (orig) => reactive({ type: 'split', id: newId('split'), dir: 'row', sizes: [50, 50], children: [orig, leaf] }))
+    ws.tree = addPageNear(ws.tree, near.id, leaf, {
+      dir: stack ? 'col' : 'row',
+      mine: (n) => n === leaf || (n.type === 'leaf' && n.kind === 'browser' && !!near.openedBy && n.openedBy === near.openedBy),
+      makeSplit: (dir, children, sizes) => reactive({ type: 'split', id: newId('split'), dir, sizes, children })
+    })
     refitSoon()
     return leaf
   }

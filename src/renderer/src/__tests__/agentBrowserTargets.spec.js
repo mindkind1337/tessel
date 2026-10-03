@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { createAgentBrowserTargets } from '../browser/agentBrowserTargets'
+import { createAgentBrowserTargets, addPageNear } from '../browser/agentBrowserTargets'
 
 function forEachLeaf(node, fn) {
   if (!node) return
@@ -137,6 +137,60 @@ describe('which browser page an agent drives', () => {
     const i = wss[0].tree.children.findIndex((l) => l.openedBy === 'agent-a')
     wss[0].tree.children.splice(i, 1)
     await expect(targets.handle({ agent: 'agent-a', op: 'open', url: 'http://x/' })).resolves.toBeTruthy()
+  })
+
+  // Found in a real window: each page an agent opened halved its pane; after
+  // five pages the agent was a sliver. The next pages go with its pages.
+  it("an agent's next pages are stacked with its pages, in equal rows; its own pane keeps its room", async () => {
+    const ws = { id: 'S', cwd: 'C:\\s', tree: split(leaf('shell-s', 'shell'), leaf('agent-s', 'agent')) }
+    ws.tree.dir = 'row'
+    ws.tree.sizes = [50, 50]
+    let n = 0
+    const nears = []
+    const targets = createAgentBrowserTargets({
+      enabled: () => true,
+      workspaces: () => [ws],
+      forEachLeaf,
+      sameView: () => true,
+      guestOf: () => 7,
+      paneLabel: (l) => l.id,
+      openPage: ({ ws: w, near, url, stack }) => {
+        nears.push([near.id, !!stack])
+        const page = leaf(`p${n++}`, 'browser', { url })
+        w.tree = addPageNear(w.tree, near.id, page, {
+          dir: stack ? 'col' : 'row',
+          mine: (x) => x === page || (x.type === 'leaf' && x.kind === 'browser' && !!near.openedBy && x.openedBy === near.openedBy),
+          makeSplit: (dir, children, sizes) => ({ type: 'split', dir, sizes, children })
+        })
+        return page
+      },
+      sleep: () => Promise.resolve()
+    })
+    for (let i = 0; i < 4; i++) await targets.handle({ agent: 'agent-s', op: 'open', url: 'http://x/' })
+    expect(nears).toEqual([
+      ['agent-s', false],
+      ['p0', true],
+      ['p1', true],
+      ['p2', true]
+    ])
+    // shell | (agent | (p0 / p1 / p2 / p3))
+    const right = ws.tree.children[1]
+    expect(right.dir).toBe('row')
+    expect(right.children[0].id).toBe('agent-s')
+    expect(right.sizes).toEqual([50, 50])
+    const stack = right.children[1]
+    expect(stack.dir).toBe('col')
+    expect(stack.children.map((c) => c.id)).toEqual(['p0', 'p1', 'p2', 'p3'])
+    expect(stack.sizes).toEqual([25, 25, 25, 25])
+  })
+
+  it('addPageNear never merges into a group that holds other panes', () => {
+    const tree = { type: 'split', dir: 'col', sizes: [50, 50], children: [leaf('p0', 'browser', { openedBy: 'a' }), leaf('shell', 'shell')] }
+    const page = leaf('p1', 'browser')
+    const out = addPageNear(tree, 'p0', page, { dir: 'col', mine: (x) => x === page || x.openedBy === 'a', makeSplit: (dir, children, sizes) => ({ type: 'split', dir, sizes, children }) })
+    expect(out.children.map((c) => c.id || c.children.map((x) => x.id).join('+'))).toEqual(['p0+p1', 'shell'])
+    expect(out.sizes).toEqual([50, 50])
+    expect(tree.children[0].id).toBe('p0')
   })
 
   it('a page still loading: null after the wait', async () => {
