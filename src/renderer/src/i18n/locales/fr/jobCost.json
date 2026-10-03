@@ -19,6 +19,9 @@
       "cards_other": "{{count}} tâches avec consommation",
       "unknown_one": "dont {{count}} au coût inconnu (non compté)",
       "unknown_other": "dont {{count}} au coût inconnu (non comptées)"
+    },
+    "hover": {
+      "title": "Cette session"
     }
   }
 }

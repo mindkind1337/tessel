@@ -1194,7 +1194,8 @@ const hoverInfo = computed(() => {
     yolo: agent && n.launchYolo ? yoloTitle() : '',
     team: team.value ? { name: team.value.name, lead: isLead.value } : null,
     num: n.num || 0,
-    session: agent ? n.sessionId || '' : ''
+    session: agent ? n.sessionId || '' : '',
+    id: agent ? n.id : ''
   }
 })
 

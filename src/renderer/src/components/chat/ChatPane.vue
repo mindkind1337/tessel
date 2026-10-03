@@ -34,6 +34,7 @@ import { modelLabel } from '../../../../shared/modelLabel'
 import { modelsFor } from '../../agentModels'
 import { nativeChatSessionChoiceLabel } from '../../chat/orca/native-chat-session-option-labels.js'
 import { t } from '../../i18n'
+import { useJobCost, hasUsage, jobCostLine, jobCostDetails } from '../../jobCost'
 
 const props = defineProps({
   node: { type: Object, required: true }
@@ -127,6 +128,16 @@ const title = computed(() => {
   const own = props.node.paneName || props.node.title
   if (!own) return agentName.value
   return /^\s*(claude|codex|opencode)\s*\(chat\)\s*$/i.test(own) ? agentName.value : own
+})
+
+// The title's tooltip: its name, what the current session used (tokens,
+// time, estimated cost: jobCost.js), and how to move the pane.
+const costOf = useJobCost('panes', () => [props.node.id])
+const titleHint = computed(() => {
+  const base = t('chat.pane.titleHint', '{{title}}\nDrag the header to move the pane', { title: title.value })
+  const cost = costOf(props.node.id)
+  if (!hasUsage(cost)) return base
+  return [base, '', jobCostLine(cost), jobCostDetails(cost, undefined, { withSummary: false })].join('\n')
 })
 
 const editingName = ref(false)
@@ -701,7 +712,7 @@ defineExpose({ start, send, interrupt, focusPendingApproval, focusComposer: () =
           <span class="pane-status-dot"></span>
         </span>
         <input v-if="editingName" ref="nameInput" v-model="nameDraft" class="pane-tab-input" :aria-label="t('pane.renameAgent', 'Agent name')" @mousedown.stop @click.stop @keydown.enter.prevent="saveName" @keydown.esc="editingName = false" @blur="saveName" />
-        <span v-else tabindex="0" @dblclick.stop="beginRename" @keydown.enter.prevent="beginRename" class="pane-title" data-test="chat-title" :title="t('chat.pane.titleHint', '{{title}}\nDrag the header to move the pane', { title })">{{ title }}</span>
+        <span v-else tabindex="0" @dblclick.stop="beginRename" @keydown.enter.prevent="beginRename" class="pane-title" data-test="chat-title" :title="titleHint">{{ title }}</span>
         <!-- The state is the dot on the agent's logo; its words stay for screen readers. -->
         <span class="chat-status chat-status-sr" :class="'st-' + status" data-test="chat-status">{{ statusLabel }}</span>
         <span

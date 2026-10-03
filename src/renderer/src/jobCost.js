@@ -227,7 +227,8 @@ export function jobCostLine(e, { compact = false, locale = intlLocale() } = {}) 
 }
 
 // The tooltip: each kind of token, the model, and what the cost means.
-export function jobCostDetails(e, locale = intlLocale()) {
+// withSummary false: without the time and cost (shown beside it already).
+export function jobCostDetails(e, locale = intlLocale(), { withSummary = true } = {}) {
   if (!hasUsage(e)) return ''
   const lines = [
     t('jobCost.detail.input', 'Input: {{n}}', { n: tokensWord(e.inputTokens, locale) }),
@@ -235,10 +236,10 @@ export function jobCostDetails(e, locale = intlLocale()) {
     t('jobCost.detail.cacheRead', 'Cache read: {{n}}', { n: tokensWord(e.cacheReadTokens, locale) }),
     t('jobCost.detail.cacheWrite', 'Cache write: {{n}}', { n: tokensWord(e.cacheWriteTokens, locale) })
   ]
-  if (num(e.durationMs) > 0) lines.push(t('jobCost.detail.time', 'Time: {{time}}', { time: formatDuration(e.durationMs) }))
+  if (withSummary && num(e.durationMs) > 0) lines.push(t('jobCost.detail.time', 'Time: {{time}}', { time: formatDuration(e.durationMs) }))
   if (e.model) lines.push(t('jobCost.detail.model', 'Model: {{model}}', { model: modelLabel(e.model) || e.model }))
   if (e.known === false) lines.push(t('jobCost.detail.unknown', 'No price known for this model: cost unknown'))
-  else if (e.usd !== null && e.usd !== undefined)
+  else if (withSummary && e.usd !== null && e.usd !== undefined)
     lines.push(t('jobCost.detail.cost', 'Cost: {{cost}}', { cost: costText(e, locale) }))
   lines.push(t('jobCost.detail.estimate', 'API-equivalent estimate (subscriptions are not billed per token)'))
   return lines.join('\n')

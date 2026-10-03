@@ -16,6 +16,7 @@ import { installNativeChatMessageListTestViewport } from '../chat/orca/native-ch
 import { clearNativeChatDraftCacheForTests } from '../chat/orca/native-chat-draft-cache.js'
 import { clearNativeChatAttachmentCacheForTests } from '../chat/orca/composables/use-native-chat-composer-attachments.js'
 import { modelsFor, modelLists, resetModelListsForTests } from '../agentModels.js'
+import { resetJobCost } from '../jobCost'
 
 // Real <Transition> for the menus (the stub would wrap their teleported content).
 config.global.stubs.transition = false
@@ -200,6 +201,25 @@ describe('ChatPane.vue', () => {
     await input.setValue('Curie')
     await input.trigger('keydown', { key: 'Enter' })
     expect(wrapper.get('[data-test="chat-title"]').text()).toBe('Curie')
+  })
+
+  it("the title's tooltip adds the session's tokens and estimated cost", async () => {
+    resetJobCost()
+    window.shellApi.jobCost = {
+      forCards: vi.fn(async () => ({})),
+      forPanes: vi.fn(async (ids) => (ids.includes('c1') ? { c1: { inputTokens: 10000, outputTokens: 2400, cacheReadTokens: 0, cacheWriteTokens: 0, durationMs: 360000, usd: 0.31, known: true, model: 'claude-opus-5-5', provider: 'anthropic', estimated: true } } : {})),
+      onChanged: vi.fn(() => () => {})
+    }
+    await mountPane()
+    await vi.waitFor(() => expect(wrapper.get('[data-test="chat-title"]').attributes('title')).toContain('12.4k tokens · 6 min · ~$0.31'))
+    const hint = wrapper.get('[data-test="chat-title"]').attributes('title')
+    expect(hint).toContain('Drag the header to move the pane')
+    expect(hint).toContain('Model: Opus 5.5')
+    expect(hint).toContain('API-equivalent estimate')
+    expect(window.shellApi.jobCost.forPanes).toHaveBeenCalledWith(['c1'])
+    wrapper.unmount()
+    wrapper = null
+    resetJobCost()
   })
 
   it('redraws the history on mount and does not reopen a running session', async () => {
