@@ -85,13 +85,14 @@ export function withHistory(tasks, history) {
 // --- Sums and cost -------------------------------------------------------
 
 function emptySums() {
-  return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reportedUsd: 0, reported: 0, events: 0 }
+  return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cacheWrite1h: 0, reportedUsd: 0, reported: 0, events: 0 }
 }
 function addInto(s, ev, share = 1) {
   s.input += ev.input * share
   s.output += ev.output * share
   s.cacheRead += ev.cacheRead * share
   s.cacheWrite += ev.cacheWrite * share
+  s.cacheWrite1h += (ev.cacheWrite1h || 0) * share
   if (typeof ev.reportedUsd === 'number') {
     s.reportedUsd += ev.reportedUsd * share
     s.reported += 1
@@ -134,7 +135,7 @@ export function summarize(t, durationMs, estimate = defaultEstimate, extra = {})
     cacheWrite += s.cacheWrite
     let r = null
     try {
-      r = estimate({ provider: s.provider, model: s.model, inputTokens: s.input, outputTokens: s.output, cacheReadTokens: s.cacheRead, cacheWriteTokens: s.cacheWrite })
+      r = estimate({ provider: s.provider, model: s.model, inputTokens: s.input, outputTokens: s.output, cacheReadTokens: s.cacheRead, cacheWriteTokens: s.cacheWrite, cacheWrite1hTokens: s.cacheWrite1h })
     } catch {
       r = null
     }
@@ -655,7 +656,7 @@ function mergeTally(into, from) {
   for (const [k, s] of from.byModel) {
     let d = into.byModel.get(k)
     if (!d) into.byModel.set(k, (d = { provider: s.provider, model: s.model, ...emptySums() }))
-    for (const f of ['input', 'output', 'cacheRead', 'cacheWrite', 'reportedUsd', 'reported', 'events']) d[f] += s[f]
+    for (const f of ['input', 'output', 'cacheRead', 'cacheWrite', 'cacheWrite1h', 'reportedUsd', 'reported', 'events']) d[f] += s[f]
   }
   for (const [k, sub] of from.bySub) {
     if (!into.bySub.has(k)) into.bySub.set(k, newTally())

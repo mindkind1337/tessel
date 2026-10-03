@@ -19,7 +19,9 @@
 //            (OpenCode), for chat agents that keep no transcript we read.
 //
 // An event: { key, at (ms), model, provider, input, output, cacheRead,
-// cacheWrite, reportedUsd? }; input never includes the cache reads or writes.
+// cacheWrite, cacheWrite1h?, reportedUsd? }; input never includes the cache
+// reads or writes; cacheWrite1h is the part of cacheWrite Claude wrote for
+// one hour (priced at its own rate).
 //
 // The incremental design (a cursor per file, the usage-only state, the
 // fork-safe Codex keys) follows Orca's usage scanners (github.com/stablyai/orca,
@@ -60,9 +62,10 @@ function claudeLine(e, line) {
     had.output = Math.max(had.output, t.output)
     had.cacheRead = Math.max(had.cacheRead, t.cacheRead)
     had.cacheWrite = Math.max(had.cacheWrite, t.cacheWrite)
+    had.cacheWrite1h = Math.max(had.cacheWrite1h, t.cacheWrite1h || 0)
     return
   }
-  const ev = { key, at: t.time || e.last || 0, model: t.model, provider: 'anthropic', input: t.input, output: t.output, cacheRead: t.cacheRead, cacheWrite: t.cacheWrite }
+  const ev = { key, at: t.time || e.last || 0, model: t.model, provider: 'anthropic', input: t.input, output: t.output, cacheRead: t.cacheRead, cacheWrite: t.cacheWrite, cacheWrite1h: t.cacheWrite1h || 0 }
   e.byKey.set(key, ev)
   e.events.push(ev)
 }
@@ -127,6 +130,7 @@ function journalLine(e, line) {
     output: n(u.output_tokens),
     cacheRead,
     cacheWrite: n(u.cache_creation_input_tokens),
+    cacheWrite1h: Math.min(n(u.cache_creation_input_tokens), n(u.cache_creation && u.cache_creation.ephemeral_1h_input_tokens)),
     ...(typeof ev.costUsd === 'number' && Number.isFinite(ev.costUsd) && ev.costUsd >= 0 ? { reportedUsd: ev.costUsd } : {})
   })
 }

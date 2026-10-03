@@ -11,13 +11,15 @@ const CX = '33333333-3333-4333-8333-333333333333'
 const T0 = Date.parse('2026-10-01T10:00:00.000Z')
 const iso = (ms) => new Date(ms).toISOString()
 
-function claudeLine({ id, at, model = 'claude-opus-4-8', input = 10, output = 20, cacheRead = 0, cacheWrite = 0, requestId = 'req' }) {
+function claudeLine({ id, at, model = 'claude-opus-4-8', input = 10, output = 20, cacheRead = 0, cacheWrite = 0, cacheWrite1h = 0, requestId = 'req' }) {
+  const usage = { input_tokens: input, output_tokens: output, cache_read_input_tokens: cacheRead, cache_creation_input_tokens: cacheWrite }
+  if (cacheWrite1h) usage.cache_creation = { ephemeral_5m_input_tokens: cacheWrite - cacheWrite1h, ephemeral_1h_input_tokens: cacheWrite1h }
   return JSON.stringify({
     type: 'assistant',
     timestamp: iso(at),
     requestId: `${requestId}-${id}`,
     uuid: `${id}-${Math.random()}`,
-    message: { id, model, usage: { input_tokens: input, output_tokens: output, cache_read_input_tokens: cacheRead, cache_creation_input_tokens: cacheWrite } }
+    message: { id, model, usage }
   })
 }
 const userLine = (at) => JSON.stringify({ type: 'user', timestamp: iso(at), message: { role: 'user', content: 'hi' } })
@@ -293,6 +295,16 @@ describe('job cost service', () => {
     await new Promise((r) => setTimeout(r, 20))
     expect(sent).toEqual(['jobCost:changed'])
     await svc.close()
+  })
+
+  it('prices 1-hour cache writes at their own rate (Claude Code writes them)', async () => {
+    const f = claudeFile(S1)
+    write(f, [claudeLine({ id: 'm1', at: T0, model: 'claude-haiku-4-5-20251001', input: 10, output: 357, cacheRead: 28924, cacheWrite: 12087, cacheWrite1h: 12087 }), claudeLine({ id: 'm2', at: T0 + 1000, model: 'claude-haiku-4-5-20251001', input: 8, output: 41, cacheRead: 41011, cacheWrite: 489, cacheWrite1h: 489 })])
+    report('pane-1', 'claude', S1, f)
+    // The real price table: Haiku 4.5 at $1 / $5 / $0.10 / $1.25 (5 min) / $2 (1 h).
+    const r = (await service({ estimate: undefined }).forPanes(['pane-1']))['pane-1']
+    expect(r).toMatchObject({ inputTokens: 18, outputTokens: 398, cacheReadTokens: 69935, cacheWriteTokens: 12576 })
+    expect(r.usd).toBeCloseTo((18 * 1 + 398 * 5 + 69935 * 0.1 + 12576 * 2) / 1e6, 12)
   })
 
   it('a session whose transcript is not written yet: told when it appears, then read', async () => {
