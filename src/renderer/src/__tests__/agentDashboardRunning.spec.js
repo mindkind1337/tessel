@@ -23,7 +23,8 @@ describe('a Dashboard card: the sub-agents working now', () => {
     feeds.set('p1', [child('running'), child('running'), child('done'), child('done'), child('done')])
     const w = mount(AgentDashboardRunning, { props: { row: { id: 'p1', kind: 'agent', children: { paneId: 'p1' } } } })
     await flushPromises()
-    expect(w.get('[data-test="adb-running"]').text()).toBe('2 sub-agents working')
+    expect(w.get('[data-test="adb-running"]').text()).toBe('2')
+    expect(w.get('[data-test="adb-running"]').attributes('title')).toBe('2 sub-agents working')
     w.unmount()
   })
   it('nothing when none works', async () => {

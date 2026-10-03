@@ -42,17 +42,39 @@ const label = computed(() =>
 </script>
 
 <template>
-  <span v-if="running > 0" class="adb-running" data-test="adb-running">{{ label }}</span>
+  <!-- As in the pane header (AgentChildren.vue): its icon and the number. -->
+  <span v-if="running > 0" class="adb-running" data-test="adb-running" :title="label" :aria-label="label">
+    <svg class="adb-running-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <!-- lucide "workflow" (ISC) -->
+      <rect width="8" height="8" x="3" y="3" rx="2" />
+      <path d="M7 11v4a2 2 0 0 0 2 2h4" />
+      <rect width="8" height="8" x="13" y="13" rx="2" />
+    </svg>
+    <span class="adb-running-count">{{ running }}</span>
+  </span>
 </template>
 
 <style scoped>
 .adb-running {
-  display: block;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
   margin-top: 2px;
-  color: var(--adb-working, var(--text-dim));
+  color: var(--accent);
   font-size: 11px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+.adb-running-icon {
+  animation: adb-running-pulse 1.2s steps(4) infinite;
+}
+@keyframes adb-running-pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .adb-running-icon {
+    animation: none;
+  }
 }
 </style>
