@@ -728,6 +728,58 @@ describe('BrowserPane.vue: layout, input and browser behaviour', () => {
     expect(webview().reload).not.toHaveBeenCalled()
   })
 
+  it('routes back and forward to only the last focused grid or side browser', async () => {
+    const commands = new Set()
+    api.onAppCommand = (cb) => { commands.add(cb); return () => commands.delete(cb) }
+    const command = (action) => { for (const cb of commands) cb({ action }) }
+    await mountPane()
+    const grid = webview()
+    const side = mount(SideBrowser, {
+      props: { node: reactive({ id: 'web-test', url: 'https://example.com/' }), active: true },
+      attachTo: document.body,
+      global: { provide: { panelCtx: ctx } }
+    })
+    try {
+      const page = fakeWebview(side.find('webview').element)
+      page.dispatchEvent(new Event('dom-ready'))
+      await side.find('.browser-pane').trigger('mousedown')
+      command('back')
+      expect(page.goBack).toHaveBeenCalledTimes(1)
+      expect(grid.goBack).not.toHaveBeenCalled()
+
+      // The grid's id never changed while the side browser was used.
+      expect(ctx.activeId.value).toBe('b1')
+      await wrapper.find('.browser-pane').trigger('mousedown')
+      command('forward')
+      expect(grid.goForward).toHaveBeenCalledTimes(1)
+      expect(page.goForward).not.toHaveBeenCalled()
+
+      page.dispatchEvent(new Event('focus'))
+      command('forward')
+      expect(page.goForward).toHaveBeenCalledTimes(1)
+      expect(grid.goForward).toHaveBeenCalledTimes(1)
+
+      await wrapper.find('.bp-address-input').trigger('focusin')
+      command('back')
+      expect(grid.goBack).toHaveBeenCalledTimes(1)
+      expect(page.goBack).toHaveBeenCalledTimes(1)
+
+      page.dispatchEvent(new Event('focus'))
+      await side.setProps({ active: false })
+      command('back')
+      expect(grid.goBack).toHaveBeenCalledTimes(2)
+      expect(page.goBack).toHaveBeenCalledTimes(1)
+
+      await side.setProps({ active: true })
+      side.unmount()
+      command('forward')
+      expect(grid.goForward).toHaveBeenCalledTimes(2)
+      expect(page.goForward).toHaveBeenCalledTimes(1)
+    } finally {
+      side.unmount()
+    }
+  })
+
   it('a middle-click or Ctrl+click link opens a new pane next to this one (its scroll noted first); others stay here', async () => {
     await mountPane()
     handlers.popup({ webContentsId: 42, url: 'https://example.com/other', newPane: true })
