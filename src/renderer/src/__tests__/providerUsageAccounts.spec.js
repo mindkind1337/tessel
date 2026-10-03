@@ -70,6 +70,7 @@ describe('usage-only provider sections', () => {
       'gemini',
       'opencode-go',
       'minimax',
+      'zcode',
       'grok',
       'cursor'
     ])
@@ -77,10 +78,10 @@ describe('usage-only provider sections', () => {
     agents = ['claude']
     state.cursor.signedIn = false
     await mountIt()
-    expect(wrapper.findAll('[data-provider]').map((s) => s.attributes('data-provider'))).toEqual(['minimax'])
+    expect(wrapper.findAll('[data-provider]').map((s) => s.attributes('data-provider'))).toEqual(['minimax', 'zcode'])
     expect(wrapper.get('[data-test="providers-not-installed"]').text()).toBe('Not installed: Gemini, OpenCode Go, Grok, Cursor')
     await wrapper.get('[data-test="reveal-grok"]').trigger('click')
-    expect(wrapper.findAll('[data-provider]').map((s) => s.attributes('data-provider'))).toEqual(['minimax', 'grok'])
+    expect(wrapper.findAll('[data-provider]').map((s) => s.attributes('data-provider'))).toEqual(['minimax', 'zcode', 'grok'])
     expect(wrapper.get('[data-test="providers-not-installed"]').text()).not.toContain('Grok')
   })
 
@@ -207,6 +208,42 @@ describe('usage-only provider sections', () => {
     state.settings.geminiCliOAuth = true
     await mountIt()
     expect(wrapper.get('[data-provider="gemini"] [data-test="gemini-expired-help"]').text()).toContain('Run gemini to sign in again')
+  })
+
+  it('GLM Coding Plan: a pasted key goes to the main process; only “Saved” comes back; the site picks the host', async () => {
+    await mountIt()
+    const glm = wrapper.get('[data-provider="zcode"]')
+    expect(glm.get('[data-test="provider-status"]').text()).toBe('Not set up')
+    const field = glm.get('[data-secret="glm-plan-key"]')
+    await field.get('[data-test="secret-input"]').setValue('fixture-glm-key')
+    await field.get('[data-test="secret-save"]').trigger('click')
+    await flushPromises()
+    expect(api.saveSecret).toHaveBeenCalledWith('zcodePlanApiKey', 'fixture-glm-key')
+    expect(field.get('[data-test="secret-input"]').element.value).toBe('')
+    expect(field.get('[data-test="secret-state"]').text()).toBe('Saved')
+    expect(field.get('[data-test="secret-save"]').text()).toBe('Replace')
+    expect(glm.get('[data-test="provider-status"]').text()).toBe('API key saved · Z.ai')
+    expect(wrapper.html()).not.toContain('fixture-glm-key')
+    glm.getComponent(ThemedSelect).vm.$emit('update:modelValue', 'bigmodel')
+    await flushPromises()
+    expect(api.update).toHaveBeenCalledWith({ zcodePlanSite: 'bigmodel' })
+    expect(glm.get('[data-test="provider-status"]').text()).toBe('API key saved · BigModel')
+    await glm.get('[data-test="glm-console"]').trigger('click')
+    expect(window.shellApi.openExternal).toHaveBeenCalledWith('https://open.bigmodel.cn/usercenter/proj-mgmt/apikeys')
+    await field.get('[data-test="secret-forget"]').trigger('click')
+    await flushPromises()
+    expect(api.clearSecret).toHaveBeenCalledWith('zcodePlanApiKey')
+    expect(field.get('[data-test="secret-state"]').text()).toBe('Not saved')
+  })
+
+  it('GLM Coding Plan: without secure storage the key cannot be typed in, with the warnings', async () => {
+    state.secure = false
+    state.protection = 'plaintext'
+    await mountIt()
+    const glm = wrapper.get('[data-provider="zcode"]')
+    expect(glm.get('[data-secret="glm-plan-key"] [data-test="secret-input"]').attributes('disabled')).toBeDefined()
+    expect(glm.text()).toContain('Secure credential storage is unavailable')
+    expect(glm.find('[data-test="credentials-unsealed"]').exists()).toBe(true)
   })
 
   it('without secure storage, keys and cookies cannot be typed in', async () => {

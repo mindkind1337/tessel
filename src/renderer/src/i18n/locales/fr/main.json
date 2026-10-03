@@ -559,6 +559,7 @@
       "refreshGrok": "Lancez Grok pour actualiser sa connexion, puis relisez l'utilisation.",
       "signInZcode": "Configurez une clé Coding Plan de Z.ai dans ZCode pour lire son utilisation.",
       "zcodeRefused": "ZCode a refusé la demande de quota. Vérifiez sa clé Coding Plan.",
+      "zcodePlanKeyUnusable": "La clé GLM Coding Plan enregistrée est inutilisable. Remplacez-la dans les Paramètres.",
       "signInCursor": "Connectez-vous avec Cursor ou cursor-agent pour lire l'utilisation.",
       "refreshCursor": "Lancez cursor-agent login pour actualiser l'utilisation de Cursor.",
       "cursorSignInExpired": "La connexion à Cursor a expiré. Reconnectez-vous avec Cursor ou cursor-agent login.",

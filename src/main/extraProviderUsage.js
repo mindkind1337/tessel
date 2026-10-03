@@ -60,8 +60,23 @@ export function createExtraProviderUsage({
   timeoutMs = 10000
 } = {}) {
   const sequences = new Map()
+  // The providers to read: installed ones, and the ones a key saved in
+  // Settings links (a GLM Coding Plan key without ZCode, named after its plan).
+  async function installedProviders() {
+    const agents = await listAgents()
+    let linked = []
+    try {
+      linked = (await sources.linked?.()) || []
+    } catch {
+      linked = []
+    }
+    const own = new Set(installedUsageProviders(agents).map((p) => p.id))
+    return installedUsageProviders(agents, linked).map((p) =>
+      own.has(p.id) || p.id !== 'zcode' ? p : { ...p, name: 'GLM Coding Plan' } // i18n-ignore product name
+    )
+  }
   async function capabilities() {
-    const installed = installedUsageProviders(await listAgents())
+    const installed = await installedProviders()
     const providers = await Promise.all(
       installed.map(async (p) => ({
         ...p,
@@ -184,13 +199,22 @@ export function createExtraProviderUsage({
       const source = USAGE_MIRRORS[provider] || provider
       const controller = new AbortController()
       let timer,
-        asked = false // the source's login was reached
+        asked = false, // the source's login was reached
+        secrets = [] // the login's key or cookie, never in an error
+      const redact = (text) =>
+        secrets.reduce((out, secret) => out.split(secret).join('[redacted]'), String(text))
       const work = async () => {
-        const installed = installedUsageProviders(await listAgents())
+        const installed = await installedProviders()
         if (!installed.some((p) => p.id === provider))
           refuse('unavailable', t('main.usage.agentNotInstalled', 'The matching agent is not installed.'))
         asked = true
         const login = await sources.auth(source)
+        for (const name of ['Authorization', 'Cookie']) {
+          const value = login?.headers?.[name]
+          if (typeof value === 'string' && value.length >= 4)
+            secrets.push(value, value.replace(/^Bearer\s+/i, ''))
+        }
+        secrets = [...new Set(secrets.filter((value) => value.length >= 4))].sort((a, b) => b.length - a.length)
         const fetch = (key, body, headers = login.headers, asText = false) => {
           if (controller.signal.aborted) refuse('timeout', t('main.usage.timedOut', 'The usage request timed out.'))
           return json(key, headers, controller.signal, body, asText)
@@ -361,9 +385,10 @@ export function createExtraProviderUsage({
           provider,
           accountId: null,
           code,
+          // Tessel's own words; a key is never echoed, even by mistake.
           error:
             error instanceof ProviderReadError
-              ? error.message
+              ? redact(error.message)
               : t('main.usage.readRetry', 'Could not read provider usage. Try again.'),
           ...(error instanceof ProviderReadError && Number.isFinite(error.retryAfterMs)
             ? { retryAfterMs: error.retryAfterMs }

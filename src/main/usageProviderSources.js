@@ -46,6 +46,9 @@ export function openCodeCookie(raw) {
 
 // ZCode's quota hosts (its configured baseURL) -> Tessel's endpoint key.
 const ZCODE_ENDPOINTS = { 'api.z.ai': 'zcode', 'open.bigmodel.cn': 'zcodeCn', 'dev.bigmodel.cn': 'zcodeDev' }
+// A GLM Coding Plan key saved in Settings: its site -> the endpoint key (only
+// the official Z.ai and BigModel quota hosts; after Orca's zcode-plan-sites.ts).
+const ZCODE_PLAN_ENDPOINTS = Object.freeze({ zai: 'zcode', bigmodel: 'zcodeCn' })
 
 export class ProviderReadError extends Error {
   constructor(code, message) {
@@ -187,7 +190,13 @@ export function createUsageProviderSources({
     }
     return [...new Set(result)]
   }
+  // Providers whose quota a key saved in Settings links without their agent
+  // installed: a GLM Coding Plan key (used from Claude Code, OpenCode…).
+  function linked() {
+    return saved('zcodePlanApiKey') ? ['zcode'] : []
+  }
   async function present(provider) {
+    if (provider === 'zcode' && saved('zcodePlanApiKey')) return true
     if (provider === 'minimax')
       return !!(token(env.MINIMAX_API_KEY) || saved('minimaxApiKey') || saved('minimaxCookie'))
     if (
@@ -361,6 +370,20 @@ export function createUsageProviderSources({
         models: miniMaxModels(settings.minimaxUsageModels),
         transport: headers.Cookie ? 'cookie' : 'api-key'
       }
+    } else if (provider === 'zcode' && saved('zcodePlanApiKey')) {
+      // A GLM Coding Plan key saved in Settings wins over ZCode CLI's: it was
+      // linked for this. A saved key that is unusable is its own error, never
+      // a silent fall back to another account's key (after Orca's
+      // zcode-usage-fetcher.ts, MIT, Copyright (c) 2026 Lovecast Inc.).
+      const key = token(saved('zcodePlanApiKey'))
+      const endpoint = ZCODE_PLAN_ENDPOINTS[options().zcodePlanSite] || ZCODE_PLAN_ENDPOINTS.zai
+      if (!key)
+        refuse(
+          'credentials',
+          t('main.usage.zcodePlanKeyUnusable', 'The saved GLM Coding Plan key is unusable. Replace it in Settings.')
+        )
+      headers = { Authorization: key, Accept: 'application/json', 'Accept-Language': 'en-US,en' }
+      extra = { endpoint }
     } else if (provider === 'zcode') {
       // The Coding Plan key of the provider ZCode's selected model uses
       // (model "<provider>/<model>"), never another configured account's;
@@ -501,5 +524,5 @@ export function createUsageProviderSources({
       }
     }
   }
-  return { present, auth, signIn }
+  return { present, linked, auth, signIn }
 }
