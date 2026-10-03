@@ -436,6 +436,9 @@ export function createChatSessions(deps) {
     s.turn = null
     workStatus(s)
     if (turn.kind === 'compact') return giveUpCompaction(s, r?.error)
+    // The message resent after a compaction could not be written: that
+    // compaction is over (else the next turn would be taken for its resend).
+    if (s.compaction && s.compaction.phase === 'retrying') s.compaction = null
     pump(s)
     idleCheck(s)
   }

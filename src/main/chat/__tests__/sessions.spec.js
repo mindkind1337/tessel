@@ -487,6 +487,29 @@ describe('delivery', () => {
     expect(last('status')).toMatchObject({ state: 'idle' })
   })
 
+  it('a resent message that cannot be written after the compaction ends the compaction: the next too-long turn compacts again', async () => {
+    const chat = createChatSessions(deps)
+    await openOk(chat)
+    const a = adapters[0]
+    const r = await chat.send({ paneId, text: 'hello' })
+    await flush()
+    a.emit('accepted', { uuid: r.id })
+    a.emit('turnEnd', { status: 'failed', isError: true, result: 'Prompt is too long' })
+    await flush()
+    // The /compact turn completes; the resend is refused by the agent.
+    a.send.mockResolvedValueOnce({ ok: false, error: 'stdin closed' })
+    a.emit('turnEnd', { status: 'completed' })
+    await flush()
+    expect(a.send).toHaveBeenCalledTimes(3)
+    // A new message too long: compacted again (not taken for the old resend).
+    const r2 = await chat.send({ paneId, text: 'second' })
+    await flush()
+    a.emit('accepted', { uuid: r2.id })
+    a.emit('turnEnd', { status: 'failed', isError: true, result: 'Prompt is too long' })
+    await flush()
+    expect(a.send.mock.calls.at(-1)[0]).toMatchObject({ text: '/compact' })
+  })
+
   it("Codex's compaction turn ending after 'compacted' is not the resent message's end", async () => {
     const chat = createChatSessions({ ...deps, resolveCodex: async () => ({ exe: 'C:\bin\codex.exe' }) })
     await openOk(chat, { agent: 'codex' })
