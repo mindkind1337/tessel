@@ -78,7 +78,7 @@ describe('saved provider credentials', () => {
     expect(cleanSecret('minimaxApiKey', 'line\nbreak')).toBe(null)
   })
 
-  it('keeps plain options with Orca’s defaults and validates them', () => {
+  it('keeps plain options with Orca’s defaults and validates them', async () => {
     const credentials = store()
     expect(credentials.settings()).toEqual({
       geminiCliOAuth: false,
@@ -94,6 +94,10 @@ describe('saved provider credentials', () => {
     expect(credentials.update({ minimaxEndpoint: 'mars' }).ok).toBe(false)
     expect(credentials.update({ opencodeWorkspaceId: '../etc' }).ok).toBe(false)
     expect(credentials.update({ secretsFile: 'x' }).ok).toBe(false)
+    // A name every object has is no setting either: nothing extra is saved.
+    for (const key of ['constructor', 'toString', 'hasOwnProperty']) expect(credentials.update({ [key]: 'x' }).ok).toBe(false)
+    const saved = JSON.parse(await fs.readFile(path.join(home, 'userData', 'provider-credentials', 'settings.json'), 'utf8'))
+    expect(Object.keys(saved).sort()).toEqual(Object.keys(credentials.settings()).sort())
     expect(store().settings().minimaxEndpoint).toBe('cn')
   })
 
