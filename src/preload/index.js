@@ -270,6 +270,16 @@ const api = {
   // project, conversation), from its own files on this computer.
   claudeUsageReport: (query = {}) => ipcRenderer.invoke('usage:claudeReport', query),
   statsUsage: { summary: () => ipcRenderer.invoke('statsUsage:summary') },
+  // Tokens, time and estimated cost per task card / per pane's current session
+  // (src/main/jobCost.js): forCards(ids) / forPanes(ids) -> { [id]: { status,
+  // inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, durationMs,
+  // usd, known, model, provider, estimated: true, ... } }; onChanged(cb) ->
+  // unsubscribe (debounced, when their files change).
+  jobCost: {
+    forCards: (cardIds) => ipcRenderer.invoke('jobCost:forCards', cardIds),
+    forPanes: (paneIds) => ipcRenderer.invoke('jobCost:forPanes', paneIds),
+    onChanged: (cb) => subscribe('jobCost:changed', cb)
+  },
   writeClipboardImage: (bytes) => ipcRenderer.invoke('statsUsage:copyImage', bytes),
   // Codex's usage report (tokens and requests), from its own session files.
   codexUsageReport: (query = {}) => ipcRenderer.invoke('usage:codexReport', query),
