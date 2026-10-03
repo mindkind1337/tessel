@@ -25,11 +25,13 @@ import { isBackgroundTaskBlock, isSubagentGroupBlock, isToolCallBlock } from "./
 import { nativeChatTurnFold } from "./shared/native-chat-turn-fold.js";
 import { deriveNativeChatRowContent, nativeChatRowRendersContent } from "./shared/native-chat-row-content.js";
 import { estimateNativeChatRowHeight, nativeChatRowContentMetrics } from "./native-chat-row-height-estimate.js";
+import { isCommandMarkerId } from "./native-chat-command-marker.js";
 function isAlertNotice(message, block) {
     return message.role === 'system' && block.type === 'text' && (block.tone === 'error' || block.tone === 'warning');
 }
 // Tessel: what changed the session itself (a compaction, a model or effort
-// change) is not a turn's work: it stays in view when the turn folds.
+// change, a slash command's "Ran /compact" row) is not a turn's work: it stays
+// in view when the turn folds.
 const SESSION_NOTICES = new Set(['compaction', 'session-option', 'interrupted']);
 function isSessionNotice(message, block) {
     return message.role === 'system' && block.type === 'text' && SESSION_NOTICES.has(block.presentation);
@@ -43,7 +45,7 @@ export function buildNativeChatTranscriptSlots(input) {
             role: message.role,
             rendersProse: content.markdown.length > 0 || content.hasImages,
             // Tessel: an error or a warning stays in view when its turn folds.
-            outlivesTurn: message.blocks.some((block)=>isSubagentGroupBlock(block) || isBackgroundTaskBlock(block) || isAlertNotice(message, block) || isSessionNotice(message, block))
+            outlivesTurn: isCommandMarkerId(String(message.id ?? '')) || message.blocks.some((block)=>isSubagentGroupBlock(block) || isBackgroundTaskBlock(block) || isAlertNotice(message, block) || isSessionNotice(message, block))
         };
     });
     const trailingRunIndex = foldRows.findLastIndex((row, index)=>row.role !== 'user' && row.role !== 'reasoning' && receipts.get(messages[index].id)?.kind !== 'approval' && (row.rendersProse || messages[index].blocks.some(isToolCallBlock)));
