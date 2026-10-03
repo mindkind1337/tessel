@@ -225,6 +225,22 @@ describe('NativeChatTranscriptView, a terminal agent chat view (interactive)', (
     }
   })
 
+  // /clear or /resume: another conversation file. A message the old one took
+  // is not shown in the new one; one still on its way is matched in the new file.
+  it('another conversation (/clear): a delivered message of the old one is not carried into it', async () => {
+    const sendMessage = vi.fn()
+    await mountChat({ sendMessage })
+    await composer().props('send')('Old question')
+    sendMessage.mock.calls[0][1].onTyped()
+    sendMessage.mock.calls[0][1].onDelivered()
+    await flushPromises()
+    expect(text()).toContain('Old question')
+    api.open.mockResolvedValueOnce({ ok: true, viewId: 'tv-2', events: [], truncated: false })
+    await wrapper.setProps({ sessionId: '33333333-4444-4555-8666-777777777777' })
+    await flushPromises()
+    expect(text()).not.toContain('Old question')
+  })
+
   it('nothing is sent while it cannot be (asleep)', async () => {
     const sendMessage = vi.fn()
     await mountChat({ sendMessage, disabledReason: 'Asleep' })

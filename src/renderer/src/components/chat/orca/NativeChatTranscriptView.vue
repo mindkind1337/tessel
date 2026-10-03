@@ -379,6 +379,9 @@ watch(
     fileCommands.value = []
     fileBackground.value = []
     hasEarlier.value = false
+    // What the old conversation took stays there; a message still on its
+    // way is looked for from the start of the new file.
+    pendingSends.value = pendingSends.value.filter((p) => !p.delivered).map((p) => ({ ...p, seen: 0 }))
     phase.value = 'loading'
     render()
     if (props.isVisible) openView()
