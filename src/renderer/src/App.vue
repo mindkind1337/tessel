@@ -6630,8 +6630,9 @@ async function switchToTerminal(leafId) {
   }
   switchingLeaves.add(leafId)
   try {
-    // Its journal goes too: the conversation goes on in the terminal.
-    if (window.shellApi.chat) await window.shellApi.chat.close({ paneId: leafId, forget: true }).catch(() => {})
+    // Stopped first; its journal stays until the terminal is there (a
+    // terminal that does not start leaves the chat as it was, to reopen).
+    if (window.shellApi.chat) await window.shellApi.chat.close({ paneId: leafId }).catch(() => {})
     clearAgentStatus(leafId)
     const ws = wsOfLeaf(leafId)
     if (!ws || findLeaf(leafId) !== old) return false
@@ -6648,7 +6649,10 @@ async function switchToTerminal(leafId) {
       resume: true,
       wake: { teamId: old.team || null, gen: 1 }
     })
-    if (!fresh) return false
+    if (!fresh) {
+      showToast(t('app.switch.terminalFailed', 'The terminal did not start: the chat stays as it was.'), { kind: 'error' })
+      return false
+    }
     if (findLeaf(leafId) !== old) {
       window.shellApi.killPty(leafId)
       return false
@@ -6661,6 +6665,8 @@ async function switchToTerminal(leafId) {
     }
     now.tree = replaceNode(now.tree, leafId, () => fresh)
     scheduleSave()
+    // Its journal goes now: the conversation goes on in the terminal.
+    if (window.shellApi.chat) await window.shellApi.chat.close({ paneId: leafId, forget: true }).catch(() => {})
     return true
   } finally {
     switchingLeaves.delete(leafId)

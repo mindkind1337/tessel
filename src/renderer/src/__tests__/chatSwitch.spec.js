@@ -75,6 +75,19 @@ describe('chat to terminal', () => {
     expect(ws.tree).toMatchObject({ kind: 'agent', id: 'pane-1', num: 3, team: 'team-1' })
   })
 
+  it("a terminal that does not start leaves the chat's conversation in place (its journal is not forgotten)", async () => {
+    const { api, ctx, ws } = load(chat())
+    ctx.createLeaf.mockResolvedValueOnce(null)
+    expect(await api.switchToTerminal('pane-1')).toBe(false)
+    expect(ctx.window.shellApi.chat.close.mock.calls.some(([q]) => q && q.forget)).toBe(false)
+    expect(ws.tree).toMatchObject({ kind: 'chat', id: 'pane-1' })
+    expect(ctx.showToast).toHaveBeenCalled()
+    // Started: then its journal goes (the conversation goes on in the terminal).
+    const ok = load(chat())
+    expect(await ok.api.switchToTerminal('pane-1')).toBe(true)
+    expect(ok.ctx.window.shellApi.chat.close).toHaveBeenLastCalledWith({ paneId: 'pane-1', forget: true })
+  })
+
   it('a chat that asked first (or a capped worker) asks first in the terminal; otherwise Settings decide', async () => {
     for (const extra of [{ chatPermissions: 'manual' }, { chatPermissions: 'yolo', maxPermissions: 'manual' }]) {
       const { api, ctx } = load(chat(extra))
