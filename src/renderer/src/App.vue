@@ -4248,7 +4248,9 @@ const sidebarProjects = computed(() =>
         pid: Number.isInteger(leaf.pid) ? leaf.pid : null,
         copyPath: leaf.worktree && leaf.worktree.path ? leaf.worktree.path : null,
         copyBranch: leaf.worktree ? leaf.worktree.branch || '' : '',
-        since: tracked && tracked.since ? tracked.since : 0,
+        // Asleep: since it was put to sleep (kept across restarts), not since
+        // its last state, whose clock starts again with each Tessel start.
+        since: leaf.sleeping && Number.isFinite(leaf.sleeping.at) ? leaf.sleeping.at : tracked && tracked.since ? tracked.since : 0,
         activityAt: paneActivityAt[leaf.id] || 0,
         isActive: leaf.id === w.activeId,
         focused: w.id === currentWsId.value && leaf.id === activeId.value,
