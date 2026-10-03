@@ -16,6 +16,9 @@ import { t } from '../../../i18n'
 const dockModules = import.meta.glob('./NativeChatBackgroundTasksStatus.vue', { eager: true, import: 'default' })
 const NativeChatBackgroundTasksStatus = dockModules['./NativeChatBackgroundTasksStatus.vue'] || null
 
+// Several lines, no single root: the chat's zoom (style) goes on each of them.
+defineOptions({ inheritAttrs: false })
+
 const props = defineProps({
   sessionId: { type: String, default: '' },
   agentLabel: { type: String, required: true },
@@ -72,11 +75,12 @@ const startingText = computed(() =>
 </script>
 
 <template>
-  <p v-if="startupPhase === 'starting'" class="nc-session-status" data-test="chat-session-starting">{{ startingText }}</p>
-  <p v-if="error || composerError" class="nc-session-status nc-session-status--error" data-test="chat-session-error">{{ error ?? composerError }}</p>
+  <p v-if="startupPhase === 'starting'" v-bind="$attrs" class="nc-session-status" data-test="chat-session-starting">{{ startingText }}</p>
+  <p v-if="error || composerError" v-bind="$attrs" class="nc-session-status nc-session-status--error" data-test="chat-session-error">{{ error ?? composerError }}</p>
   <component
     :is="NativeChatBackgroundTasksStatus"
     v-if="backgroundTasks.show && NativeChatBackgroundTasksStatus"
+    v-bind="$attrs"
     :is-visible="isVisible"
     :tasks="backgroundTasks.tasks"
     :settled-tasks="backgroundTasks.settledTasks"

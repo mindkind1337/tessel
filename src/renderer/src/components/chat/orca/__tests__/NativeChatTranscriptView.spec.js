@@ -270,6 +270,26 @@ describe('NativeChatTranscriptView, a terminal agent chat view (interactive)', (
     expect(writeKeys.mock.calls.map((c) => c[0])).toEqual(['1', '\x1b'])
   })
 
+  // The chat's zoom (Ctrl+- / Ctrl+=) sizes these cards as it sizes the composer.
+  it("the approval and question cards follow the chat's zoom", async () => {
+    localStorage.setItem('tessel.chat.fontScale.pane-3', '0.8')
+    try {
+      await mountChat({ waiting: { approval: true, approvalKey: 1 } })
+      expect(document.querySelector('[data-test="terminal-chat-approval"]').getAttribute('style')).toContain('zoom: 0.8')
+      wrapper.unmount()
+      wrapper = null
+      api.open.mockResolvedValueOnce({
+        ok: true,
+        viewId: 'tv-1',
+        events: [...conversation.slice(0, 2), { type: 'tool', id: 'ask-1', name: 'AskUserQuestion', input: { questions: [{ question: 'Which file?', options: [{ label: 'a.js' }] }] }, status: 'running', at: 2500 }]
+      })
+      await mountChat({ waiting: { approval: true, input: true } })
+      expect(document.querySelector('[data-test="terminal-chat-question"]').getAttribute('style')).toContain('zoom: 0.8')
+    } finally {
+      localStorage.removeItem('tessel.chat.fontScale.pane-3')
+    }
+  })
+
   it('an answered approval stays hidden until the pane leaves it or a new one comes, and shows again after a while', async () => {
     const writeKeys = vi.fn()
     await mountChat({ writeKeys, waiting: { approval: true, approvalKey: 5 } })

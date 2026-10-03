@@ -17,6 +17,9 @@ import { Button } from './ui/index.js'
 import { t } from '../../../i18n'
 import { admitStructuredAgentSessionOutboxEntry } from '../../../chat/orca/shared/structured-agent-session-outbox.js'
 
+// Several lines, no single root: the chat's zoom (style) goes on each of them.
+defineOptions({ inheritAttrs: false })
+
 const props = defineProps({
   outbox: { type: Array, default: () => [] },
   blockedClientMessageId: { type: String, default: null },
@@ -49,7 +52,7 @@ async function copy(entry) {
 </script>
 
 <template>
-  <div v-if="retryable" class="nc-delivery" data-test="chat-delivery-retry">
+  <div v-if="retryable" v-bind="$attrs" class="nc-delivery" data-test="chat-delivery-retry">
     <span>
       {{
         retryable.state === 'unconfirmed'
@@ -65,6 +68,7 @@ async function copy(entry) {
   <div
     v-for="u in unsent"
     :key="'unsent-' + u.key"
+    v-bind="$attrs"
     class="nc-delivery nc-delivery--unsent"
     role="group"
     :aria-label="t('chat.unsent.title', 'Not sent')"

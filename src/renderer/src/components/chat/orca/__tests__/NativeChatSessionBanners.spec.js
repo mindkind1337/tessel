@@ -52,9 +52,40 @@ describe('NativeChatStructuredSessionStatus', () => {
     await wrapper.setProps({ error: null })
     expect(wrapper.find('[data-test="chat-session-error"]').text()).toBe('not sent')
   })
+
+  // The chat's own zoom (Ctrl+= / Ctrl+-) is set on these lines as on the
+  // composer: the sub-agents dock keeps the composer's width and size.
+  it("the chat's zoom reaches every line, the background-task dock included", () => {
+    wrapper = mount(NativeChatStructuredSessionStatus, {
+      props: {
+        sessionId: 'session-1',
+        agentLabel: 'Claude',
+        startupPhase: 'starting',
+        error: 'journal locked',
+        isVisible: true,
+        backgroundTasks: { ...NO_TASKS, show: true, tasks: [{ id: 'a1', kind: 'agent', description: 'count_a' }] }
+      },
+      attrs: { style: { zoom: 1.3 } },
+      attachTo: document.body
+    })
+    expect(wrapper.find('[data-test="chat-session-starting"]').attributes('style')).toContain('zoom: 1.3')
+    expect(wrapper.find('[data-test="chat-session-error"]').attributes('style')).toContain('zoom: 1.3')
+    expect(wrapper.find('[data-native-chat-background-tasks]').attributes('style')).toContain('zoom: 1.3')
+  })
 })
 
 describe('NativeChatDeliveryRetry', () => {
+  // Several lines, no single root: the chat's zoom goes on each "Not sent" line.
+  it("the chat's zoom reaches every not-sent line", () => {
+    wrapper = mount(NativeChatDeliveryRetry, {
+      props: { unsent: [{ key: 1, text: 'a', error: 'x' }, { key: 2, text: 'b', error: 'y' }] },
+      attrs: { style: { zoom: 0.8 } }
+    })
+    const lines = wrapper.findAll('[data-test="chat-unsent"]')
+    expect(lines).toHaveLength(2)
+    for (const line of lines) expect(line.attributes('style')).toContain('zoom: 0.8')
+  })
+
   it('the reference outbox: Retry names the entry the queue stopped on', async () => {
     const retry = vi.fn()
     wrapper = mount(NativeChatDeliveryRetry, {
