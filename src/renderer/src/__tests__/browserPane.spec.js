@@ -632,6 +632,19 @@ describe('BrowserPane.vue: layout, input and browser behaviour', () => {
     expect(rule('.bp-agent-stop')).not.toMatch(/position:\s*absolute/)
   })
 
+  // A <webview> is transparent: a page that sets no background (most simple
+  // pages, forms, docs) showed black text on Tessel's dark pane. A browser
+  // paints such a page on white.
+  it('a page without its own background is painted on white, as in a browser', () => {
+    const file = resolve(process.cwd(), 'src/renderer/src/components/BrowserPane.vue')
+    const css = parseSfc(readFileSync(file, 'utf8')).descriptor.styles
+      .map((b) => b.content)
+      .join('\n')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+    const m = css.match(/(^|\n)\.bp-webview\s*\{([^}]*)\}/)
+    expect(m && m[2]).toMatch(/background:\s*#fff\b/)
+  })
+
   it("Tessel's drags let the pointer through the page, and give it back when they end", async () => {
     await mountPane()
     const release = acquirePassthrough()
