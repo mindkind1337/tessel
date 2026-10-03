@@ -36,6 +36,7 @@ import { createSshManager } from './sshManager'
 import { createHostKeyStore } from './hostKeyStore'
 import { formatSshError, formatSshText } from './sshMessages'
 import { remoteCdCommand, validateRemotePath } from '../remoteProject'
+import { createRemoteAgentTunnel, validateRemoteAgent, exportPrefix } from '../remoteAgent/remoteAgentTunnel'
 
 export const SSH_FEATURE = 1
 export const CREDENTIAL_TIMEOUT_MS = 120_000
@@ -46,6 +47,9 @@ const MAX_SECRET = 4096
 const MAX_QUEUED_INPUT = 64 * 1024
 const CONTROL = /[\u0000-\u001f\u007f]/
 const ID_RE = /^[A-Za-z0-9_.:-]{1,80}$/
+// A remote-agent pane waits this long for its socket before its shell opens
+// (then it opens anyway: the agent's team tools say the socket is missing).
+export const AGENT_BIND_WAIT_MS = 10_000
 
 function cleanStr(v, max) {
   return typeof v === 'string' && v.length > 0 && v.length <= max && !CONTROL.test(v) ? v : null
@@ -128,7 +132,9 @@ export function createSshHostBridge({
   timers = { setTimeout, clearTimeout },
   managerOptions = {},
   reconnectDelays = RECONNECT_DELAYS_MS,
-  credentialTimeoutMs = CREDENTIAL_TIMEOUT_MS
+  credentialTimeoutMs = CREDENTIAL_TIMEOUT_MS,
+  tunnelOptions = {},
+  agentBindWaitMs = AGENT_BIND_WAIT_MS
 } = {}) {
   const prompts = new Map() // promptId -> { hostId, resolve, timer, public }
   const chans = new Map() // ch -> { sock, stream, release, closed, pending }
@@ -180,6 +186,15 @@ export function createSshHostBridge({
     hasShells: (hostId) => [...shells].some((sh) => sh.hostId === hostId),
     onState: (hostId, state) => broadcast({ op: 'ssh-state', hostId, ...state }),
     ...managerOptions
+  })
+
+  // Agents on the host: their team tools come back through a forwarded
+  // socket (remoteAgent/remoteAgentTunnel.js).
+  const tunnel = createRemoteAgentTunnel({
+    openExec: (hostId, spec, command) => manager.open(hostId, spec, 'exec', { command }),
+    log,
+    timers,
+    ...tunnelOptions
   })
 
   function sendTo(sock, msg) {
@@ -275,17 +290,31 @@ export function createSshHostBridge({
   // a local terminal. A lost connection reconnects (RECONNECT_DELAYS_MS) and
   // starts a new shell in the same pane; a refused key, a failed or
   // cancelled sign-in ends the pane with the reason in it.
-  function createPty({ hostId, spec: rawSpec, remotePath, texts: rawTexts, cols, rows }) {
+  //
+  // remoteAgent (from main, with paneId): an agent's pane. Its shell gets
+  // TESSEL_PANE_ID / TESSEL_REMOTE_SOCK / TESSEL_REMOTE_TOKEN /
+  // TESSEL_AGENT_PROVIDER, and the pane and its token are known to the
+  // tunnel until the pane exits. (The token is never logged.)
+  function createPty({ hostId, spec: rawSpec, remotePath, texts: rawTexts, cols, rows, paneId, remoteAgent: rawAgent }) {
     const spec = validateSpec(rawSpec)
     const texts = cleanTexts(rawTexts)
     const label = texts.label || (spec && spec.host) || ''
-    let command = null
+    let cdCommand = null
     if (remotePath != null && remotePath !== '') {
       const checked = validateRemotePath(remotePath)
       if (checked.error) throw new Error('invalid remote path') // i18n-ignore internal
-      command = remoteCdCommand(checked.path)
+      cdCommand = remoteCdCommand(checked.path)
     }
     if (!spec || !cleanStr(hostId, 80)) throw new Error('invalid ssh spec') // i18n-ignore internal
+    const agent = rawAgent == null ? null : validateRemoteAgent(rawAgent)
+    if (rawAgent != null && (!agent || typeof paneId !== 'string' || !ID_RE.test(paneId))) throw new Error('invalid remote agent') // i18n-ignore internal
+    // The command of each (re)opened shell: the socket path is known once
+    // the tunnel is bound.
+    const commandFor = () =>
+      agent
+        ? exportPrefix({ paneId, token: agent.token, instance: agent.instance, provider: agent.provider, sockPath: tunnel.sockPathFor(hostId) }) +
+          (cdCommand || 'exec "$SHELL" -l')
+        : cdCommand
     const dataFns = []
     const exitFns = []
     const size = { cols: Math.max(2, cols | 0), rows: Math.max(1, rows | 0) }
@@ -310,6 +339,7 @@ export function createSshHostBridge({
       if (exited) return
       exited = true
       shells.delete(self)
+      if (agent) tunnel.forgetPane(paneId)
       // The host's last terminal: credentials kept only for it may go.
       manager.forgetIfUnused(hostId)
       if (reconnectTimer) timers.clearTimeout(reconnectTimer)
@@ -318,11 +348,32 @@ export function createSshHostBridge({
     }
     const pty = { term: 'xterm-256color', cols: size.cols, rows: size.rows, width: 0, height: 0 }
 
+    // An agent's pane: signed in first (a failure ends the pane as for any
+    // terminal), then the socket bound (or not, after agentBindWaitMs).
+    function agentReady() {
+      if (!agent) return Promise.resolve()
+      return manager.connectHost(hostId, spec).then(
+        () =>
+          new Promise((resolve) => {
+            const t = timers.setTimeout(resolve, agentBindWaitMs)
+            tunnel.ensure(hostId, spec).then(() => {
+              timers.clearTimeout(t)
+              resolve()
+            })
+          })
+      )
+    }
+
     function open(isReconnect) {
-      const opts = command ? { command, pty: { ...pty, cols: size.cols, rows: size.rows } } : { pty: { ...pty, cols: size.cols, rows: size.rows } }
-      manager
-        .open(hostId, spec, command ? 'exec' : 'shell', opts)
+      agentReady()
+        .then(() => {
+          if (killed || exited) return { stream: null }
+          const command = commandFor()
+          const opts = command ? { command, pty: { ...pty, cols: size.cols, rows: size.rows } } : { pty: { ...pty, cols: size.cols, rows: size.rows } }
+          return manager.open(hostId, spec, command ? 'exec' : 'shell', opts)
+        })
         .then((res) => {
+          if (!res.stream) return
           if (killed || exited) {
             try {
               res.stream.close()
@@ -451,6 +502,7 @@ export function createSshHostBridge({
       }
     })
     shells.add(self)
+    if (agent) tunnel.registerPane(hostId, paneId, agent, spec)
     open(false)
     return self
   }
@@ -498,6 +550,7 @@ export function createSshHostBridge({
         const hostId = cleanStr(msg.hostId, 80)
         if (hostId) {
           for (const s of shells) if (s.hostId === hostId) s.noReconnect = true
+          tunnel.dropHost(hostId)
           cancelPrompts(hostId)
           manager.disconnect(hostId)
         }
@@ -550,8 +603,9 @@ export function createSshHostBridge({
 
   function shutdown() {
     for (const id of [...prompts.keys()]) settle(id, null)
+    tunnel.closeAll()
     manager.closeAll()
   }
 
-  return { handle, createPty, sockClosed, shutdown, manager, hello: () => ({ ssh: SSH_FEATURE }) }
+  return { handle, createPty, sockClosed, shutdown, manager, tunnel, hello: () => ({ ssh: SSH_FEATURE }) }
 }
