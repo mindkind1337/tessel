@@ -36,6 +36,13 @@ const rowsOf = (items, opts = {}) => cleanupRows({ defaultBranch: 'main', items 
 const by = (rows, name) => rows.find((r) => r.path.endsWith(name))
 
 describe('cleanupRows', () => {
+  it('a folder left behind by a failed removal: risky (said why), listed, ticked only by hand', () => {
+    const rows = rowsOf([ev('C:\\w\\left',{ leftover: true, dirty: null, merged: true, activityAt: NOW - 1000, lastCommitAt: NOW - 1000 })])
+    expect(rows[0]).toMatchObject({ removable: true, safe: false, risks: ['leftover'], force: false })
+    expect(visibleRows(rows)).toHaveLength(1)
+    expect(riskLabel('leftover', rows[0])).toBe('Folder left behind by a removal that failed')
+  })
+
   it('a clean, merged worktree with no pane is safe and needs no force', () => {
     const [r] = rowsOf([ev('C:\\w\\done')])
     expect(r).toMatchObject({ safe: true, removable: true, risks: [], force: false, inactive: true, label: 'done' })

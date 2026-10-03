@@ -27,7 +27,9 @@ export function cleanupRows(scan, { project = null, tasks = [], now = Date.now()
     const activityAt = Math.max(ev.activityAt || 0, (card && card.lastActivityAt) || 0)
     const blocker = ev.detached ? 'detached' : ev.onDefault ? 'default-branch' : ev.locked ? 'locked' : null
     const risks = []
-    if (ev.dirty === true) risks.push('dirty')
+    // A folder a failed removal left behind: never safe, its content unread.
+    if (ev.leftover) risks.push('leftover')
+    else if (ev.dirty === true) risks.push('dirty')
     else if (ev.dirty === null && !ev.missing) risks.push('unknown-status')
     if (ev.merged === false) risks.push('unmerged')
     else if (ev.merged === null) risks.push('unknown-merge')
@@ -88,6 +90,8 @@ export function riskLabel(code, row = {}) {
       return row.changes === 1
         ? t('cleanup.risk.dirtyOne', '1 uncommitted change')
         : t('cleanup.risk.dirty', '{{count}} uncommitted changes', { count: row.changes || 0 })
+    case 'leftover':
+      return t('cleanup.risk.leftover', 'Folder left behind by a removal that failed')
     case 'unknown-status':
       return t('cleanup.risk.unknownStatus', 'Could not check for uncommitted changes')
     case 'unmerged':
