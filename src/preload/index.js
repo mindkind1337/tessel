@@ -245,6 +245,8 @@ const api = {
     createIssue: (q) => ipcRenderer.invoke('github:createIssue', q),
     createPr: (q) => ipcRenderer.invoke('github:createPr', q),
     checks: (q) => ipcRenderer.invoke('github:checks', q),
+    failingLogs: (q) => ipcRenderer.invoke('github:failingLogs', q),
+    reviewThreads: (q) => ipcRenderer.invoke('github:reviewThreads', q),
     action: (q) => ipcRenderer.invoke('github:action', q),
     startPoint: (q) => ipcRenderer.invoke('github:startPoint', q)
   },

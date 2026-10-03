@@ -16,6 +16,8 @@ export function registerIssueServices({ ipcMain, dir, safeStorage, github, linea
       'createIssue',
       'createPr',
       'checks',
+      'failingLogs',
+      'reviewThreads',
       'action',
       'startPoint'
     ],
