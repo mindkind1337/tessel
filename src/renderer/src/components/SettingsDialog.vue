@@ -36,6 +36,7 @@ import {
 import { modelsFor, modelLists, modelProbes, refreshModels, canProbeModels } from '../agentModels'
 import { sessionOptionLabel, sessionChoiceLabel, probeErrorText } from '../sessionOptionLabels'
 import { CACHE_TTLS } from '../promptCache'
+import { agentRulesStatus } from '../agentStateRules'
 import { ORCHESTRATION_EXAMPLES, ORCHESTRATION_TOOLS } from '../orchestrationGuide'
 import { WORKER_AGENTS, MAX_CONCURRENT_LIMIT, NESTED_DEPTH_LIMIT } from '../../../shared/orchestration'
 // Settings > Appearance, "Usage refresh": Off, or every N minutes.
@@ -416,6 +417,21 @@ const emit = defineEmits([
   'install-agent',
   'agent-install-page'
 ])
+
+// Settings > Agents > Detection rules: which rules read the agents' screens.
+const agentRulesLine = computed(() => {
+  if (agentRulesStatus.state === 'override')
+    return t('settings.agents.rulesOverride', 'Your rules file is in use ({{count}} change(s) over the built-in rules)', { count: agentRulesStatus.size })
+  if (agentRulesStatus.state === 'invalid')
+    return t('settings.agents.rulesInvalid', 'Your rules file is ignored, the built-in rules stay in use: {{reason}}', { reason: agentRulesStatus.reason })
+  return t('settings.agents.rulesBuiltin', 'Built-in rules. Open the rules file to fix how Tessel tells an agent works, waits for your approval or hit its limit; saved changes apply at once')
+})
+const agentRulesError = ref('')
+async function openAgentRules() {
+  agentRulesError.value = ''
+  const res = await window.shellApi.agentRules?.open().catch((err) => ({ ok: false, error: err?.message || String(err) }))
+  if (res && !res.ok) agentRulesError.value = res.error || ''
+}
 
 // Settings > Agents: versions and updates of the installed agent CLIs.
 const checkingAgentUpdates = ref(false)
@@ -1372,6 +1388,19 @@ function previewSound() {
                 </div>
                 <input v-model="settings.autoUpdateAgents" type="checkbox" class="set-switch" />
               </label>
+              <!-- The texts that tell an agent works, waits for an approval or
+                   hit its limit: the built-in rules, or the user's rules file
+                   over them (agentStateRules.js). -->
+              <div class="set-row" data-test="agent-rules">
+                <div class="set-label">
+                  {{ t('settings.agents.rules', 'Detection rules') }}
+                  <span class="set-hint" :class="{ 'set-error': agentRulesStatus.state === 'invalid' }" data-test="agent-rules-status">{{ agentRulesLine }}</span>
+                  <span v-if="agentRulesError" class="set-hint set-error">{{ agentRulesError }}</span>
+                </div>
+                <button class="exit-btn" type="button" data-test="agent-rules-open" @click="openAgentRules">
+                  {{ t('settings.agents.rulesOpen', 'Open rules file') }}
+                </button>
+              </div>
               <div v-for="a in agentsInstalledFirst" :key="a.id" class="agent-set" :data-agent="a.id">
                 <div class="agent-set-header">
                   <div class="set-label agent-set-name">
