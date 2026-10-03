@@ -208,6 +208,8 @@ const workerOfLabel = computed(() =>
     </span>
     <!-- Its team's number, after its name (the lead's underlined). -->
     <span v-if="row.team && teamLabel" class="car-team-num" data-test="car-team" :class="{ lead: row.lead }" aria-hidden="true" v-text="teamNum"></span>
+    <!-- The name and its team tag on the left; the rest pushed to the right. -->
+    <span class="car-spacer" aria-hidden="true"></span>
     <!-- The model it uses (the same text as its pane header). -->
     <span v-if="row.lead && !(row.team && teamLabel)" class="car-tag">{{ t('sidebar.agentRow.lead', 'lead') }}</span>
     <!-- A worker: linked to its coordinator (click: go to it). -->

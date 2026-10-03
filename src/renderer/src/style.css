@@ -9580,9 +9580,14 @@ button.act-stat:hover,
   flex-shrink: 0;
 }
 
+.car-spacer {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
 .car-text {
   min-width: 0;
-  flex: 1;
+  flex: 0 1 auto;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
