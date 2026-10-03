@@ -69,18 +69,19 @@ export function cleanUntrusted(value, max = Infinity) {
     .replace(/\x1b[@-_]?/g, '')
     .replace(/\^\[\][^\n]*?(?:\^G|\^\[\\)/g, '')
     .replace(/\^\[\[[0-?]*[ -/]*[@-~]/g, '')
-    .replace(/﻿/g, '')
+    .replace(/\ufeff/g, '')
     .replace(/\r\n?/g, '\n')
     .replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f‪-‮⁦-⁩]/g, '')
   return text.length > max ? text.slice(0, max) : text
 }
-// gh run view --log-failed prints "<job>\t<step>\t<timestamp> <text>" lines,
-// and the whole job log with "UNKNOWN STEP" when it cannot match the steps.
+// gh run view --log-failed prints "<job>\t<step>\t<timestamp> <text>" lines
+// (no timestamp on the next lines of a multi-line message), and the whole
+// job log with "UNKNOWN STEP" when it cannot match the steps.
 // Only the text is kept (a known step is named once where it starts), and
 // what follows the last error line (post-job cleanup) is left out, so the
 // capped tail holds the failure. partialFirst: the output was cut, its first
 // line is a fragment.
-const LOG_PREFIX = /^[^\t\n]*\t([^\t\n]*)\t\d{4}-\d\d-\d\dT[\d:.]+Z ?/
+const LOG_PREFIX = /^[^\t\n]*\t([^\t\n]*)\t(?:\d{4}-\d\d-\d\dT[\d:.]+Z ?)?/
 export function readableFailedLog(text, partialFirst = false) {
   const lines = text.split('\n')
   if (partialFirst && lines.length > 1) lines.shift()

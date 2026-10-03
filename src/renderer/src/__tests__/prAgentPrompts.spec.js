@@ -27,7 +27,7 @@ describe('cleanText and tailBytes', () => {
   })
   it('strips the ANSI escapes gh prints in caret notation, and byte order marks', () => {
     // gh run view --log-failed writes ESC as the two characters "^[".
-    expect(cleanText('﻿^[[41m^[[1m FAIL ^[[22m^[[49m a.spec.ts^[[2m > ^[[22m^[]8;;http://x^Glink')).toBe(
+    expect(cleanText('\ufeff^[[41m^[[1m FAIL ^[[22m^[[49m a.spec.ts^[[2m > ^[[22m^[]8;;http://x^Glink')).toBe(
       ' FAIL  a.spec.ts > link'
     )
     expect(cleanText('x ^ [y] ^[z')).toBe('x ^ [y] ^[z')

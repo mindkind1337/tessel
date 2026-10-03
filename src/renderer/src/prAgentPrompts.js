@@ -33,7 +33,7 @@ export function cleanText(value, max = Infinity) {
     .replace(/\x1b[@-_]?/g, '')
     .replace(/\^\[\][^\n]*?(?:\^G|\^\[\\)/g, '')
     .replace(/\^\[\[[0-?]*[ -/]*[@-~]/g, '')
-    .replace(/﻿/g, '')
+    .replace(/\ufeff/g, '')
     .replace(/\r\n?/g, '\n')
     .replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f‪-‮⁦-⁩]/g, '')
     .replace(/<{3,}|>{3,}/g, (run) => run.replace(/[<>]/g, (c) => (c === '<' ? '‹' : '›')))

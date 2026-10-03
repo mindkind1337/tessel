@@ -660,9 +660,10 @@ describe('GitHub reads for agent prompts', () => {
     // log, each line prefixed by job, step and timestamp, ESC as "^[".
     const p = (step, text) => `test / e2e-test\t${step}\t2026-09-24T15:46:04.7340461Z ${text}`
     const log = [
-      `test / e2e-test\tUNKNOWN STEP\t﻿2026-09-24T15:45:05.3430095Z Current runner version: '2.337.0'`,
+      `test / e2e-test\tUNKNOWN STEP\t\ufeff2026-09-24T15:45:05.3430095Z Current runner version: '2.337.0'`,
       p('UNKNOWN STEP', '^[[41m^[[1m FAIL ^[[22m^[[49m packages/vue/__tests__/e2e/Transition.spec.ts'),
       p('UNKNOWN STEP', "##[error]AssertionError: expected 'a' to be 'b'"),
+      'test / e2e-test	UNKNOWN STEP	Expected: "b"',
       p('UNKNOWN STEP', '##[error]Process completed with exit code 1.'),
       p('UNKNOWN STEP', 'Post job cleanup.'),
       p('UNKNOWN STEP', '[command]/usr/bin/git config --local --unset-all http.https://github.com/.extraheader'),
@@ -685,6 +686,7 @@ describe('GitHub reads for agent prompts', () => {
         "Current runner version: '2.337.0'",
         ' FAIL  packages/vue/__tests__/e2e/Transition.spec.ts',
         "##[error]AssertionError: expected 'a' to be 'b'",
+        'Expected: "b"',
         '##[error]Process completed with exit code 1.'
       ].join('\n')
     )
