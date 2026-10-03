@@ -359,8 +359,8 @@
   white-space: nowrap;
   text-overflow: ellipsis;
 }
-/* Its team's number on the icon's top left corner; the team's lead in the
-   colour and outlined (as in the sidebar). */
+/* Its team's number on the icon's top left corner; the team's lead
+   brighter and outlined (as in the sidebar). */
 .adb-card-team {
   position: absolute;
   top: -5px;
