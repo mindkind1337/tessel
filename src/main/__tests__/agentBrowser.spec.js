@@ -424,6 +424,24 @@ describe('agent browser: commands', () => {
     await expect(call('wait', { selector: '#never', timeout_ms: 300 })).rejects.toMatchObject({ code: 'wait_timeout' })
   })
 
+  it('wait: the user\'s Stop or the setting turned off ends a wait still polling the page', async () => {
+    let on = true
+    const { ab, call, guest } = setup({ enabledFn: () => on })
+    guest.executeJavaScriptInIsolatedWorld.mockResolvedValue(false)
+    const stopped = call('wait', { text: 'Welcome', timeout_ms: 5000 })
+    await new Promise((r) => setTimeout(r, 50))
+    ab.stop(guest.id)
+    guest.executeJavaScriptInIsolatedWorld.mockResolvedValue(true)
+    await expect(stopped).rejects.toMatchObject({ code: 'stopped_by_user' })
+
+    const other = setup({ guest: fakeGuest(12, { cdp: pageCdp() }), enabledFn: () => on })
+    other.guest.executeJavaScriptInIsolatedWorld.mockResolvedValue(false)
+    const turnedOff = other.call('wait', { url: 'never-there', timeout_ms: 5000 })
+    await new Promise((r) => setTimeout(r, 50))
+    on = false
+    await expect(turnedOff).rejects.toMatchObject({ code: 'disabled' })
+  })
+
   // H1: a selector could read a field's value one character at a time.
   it('wait takes plain selectors only: no attributes, no pseudo-classes', async () => {
     const { call, guest } = setup()
