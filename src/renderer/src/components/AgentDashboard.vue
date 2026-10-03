@@ -93,7 +93,9 @@ function cardTitle(r) {
   return r.subline || r.primary
 }
 function cardSub(r) {
-  const agent = r.typeLabel && r.typeLabel !== cardTitle(r) ? r.typeLabel : r.subline ? r.primary : ''
+  // The icon already says which agent it is (Claude Code, Codex…): the line
+  // under a task names the pane (its name) instead.
+  const agent = r.subline ? r.primary : ''
   const where = r.branch ? t('agentDashboard.card.where', '{{project}} · {{branch}}', { project: r.projectName, branch: r.branch }) : r.projectName
   return agent ? t('agentDashboard.card.sub', '{{agent}} · {{project}}', { agent, project: where }) : where
 }

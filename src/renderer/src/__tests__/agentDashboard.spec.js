@@ -100,7 +100,7 @@ describe('AgentDashboard.vue', () => {
     ])
     const working = w.find('[data-test="adb-section-working"] [data-test="adb-card"]')
     expect(working.find('.adb-card-title').text()).toBe('Build the dashboard')
-    expect(working.find('.adb-card-sub').text()).toBe('Claude Code · tessel')
+    expect(working.find('.adb-card-sub').text()).toBe('Claude Code 1 · tessel') // its pane's name: the icon says the agent
     expect(working.find('[data-test="adb-pill"]').text()).toBe('4m') // the section names the state
     const done = w.find('[data-test="adb-section-done"] [data-test="adb-card"]')
     expect(done.find('.adb-card-title').text()).toBe('Claude Code 2')

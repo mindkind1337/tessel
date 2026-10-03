@@ -366,18 +366,20 @@
   top: -5px;
   left: -5px;
   z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   min-width: 14px;
   height: 14px;
   padding: 0 3px;
-  border-radius: 7px;
+  border-radius: 4px;
   background: var(--surface-2);
   box-shadow: 0 0 0 1px var(--border);
   color: var(--text-dim);
   font-size: 9.5px;
   font-weight: 700;
-  line-height: 14px;
+  line-height: 1;
   font-variant-numeric: tabular-nums;
-  text-align: center;
 }
 .adb-card:hover .adb-card-team {
   background: var(--surface-3);
