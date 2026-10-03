@@ -122,6 +122,26 @@ describe('SessionHistoryPanel.vue', () => {
     expect(wrapper.emitted('focus-pane')).toEqual([['pane-7']])
   })
 
+  it('an Antigravity IDE conversation offers Continue in CLI and passes its origin, in the list and in search results', async () => {
+    const IDE = { agent: 'antigravity', origin: 'ide', id: 'dddddddd-1111-4222-8333-444444444444', cwd: 'E:\ide', title: 'From the IDE', started: NOW - 5_000, updated: NOW - 5_000 }
+    api.listSessions = vi.fn(() => Promise.resolve([...SESSIONS, IDE]))
+    api.sessionSearch.status = vi.fn(() => Promise.resolve({ available: true, enabled: true, phase: 'current', filesDue: 0, sessions: 1, sizeBytes: 0 }))
+    api.sessionSearch.search = vi.fn(() => Promise.resolve({ ok: true, hits: [{ agent: 'antigravity', sessionId: IDE.id, cwd: IDE.cwd, title: IDE.title, updatedAt: NOW, messageCount: 2 }] }))
+    await make({ cwd: null })
+    const row = rows().find((r) => r.attributes('data-session') === IDE.id)
+    expect(row.find('[data-test="session-origin"]').text()).toBe('IDE')
+    const button = row.find('[data-test="session-resume"]')
+    expect(button.attributes('aria-label')).toContain('new Antigravity CLI conversation')
+    await button.trigger('click')
+    expect(wrapper.emitted('resume').at(-1)).toEqual([{ agent: 'antigravity', id: IDE.id, cwd: 'E:\ide', title: 'From the IDE', origin: 'ide' }])
+    await wrapper.find('[data-test="session-query"]').setValue('ide')
+    await new Promise((r) => setTimeout(r, 250))
+    await flushPromises()
+    const hit = rows().find((r) => r.attributes('data-session') === IDE.id)
+    await hit.find('[data-test="session-resume"]').trigger('click')
+    expect(wrapper.emitted('resume').at(-1)[0]).toMatchObject({ id: IDE.id, origin: 'ide' })
+  })
+
   it('expands a row: the first prompt, the latest turns, the folder, the sub-agents', async () => {
     await make()
     await rows()[0].find('[data-test="session-toggle"]').trigger('click')

@@ -372,7 +372,7 @@ onMounted(() => {
             :title="s.cwd ? t('app.sessions.resumeTitle', 'Resume in its project folder') : t('app.sessions.resumeUnavailable', 'The saved project folder is unavailable. You can still copy the session ID.')"
             @click="emit('resume', s)"
           >
-            {{ t('app.sessions.resume', 'Resume') }}
+            {{ s.origin === 'ide' ? t('sessionHistory.row.continueInCli', 'Continue in CLI') : t('app.sessions.resume', 'Resume') }}
           </button>
         </div>
       </template>
@@ -411,7 +411,7 @@ onMounted(() => {
           "
           @click="emit('resume', s)"
         >
-          {{ t('app.sessions.resume', 'Resume') }}
+          {{ s.origin === 'ide' ? t('sessionHistory.row.continueInCli', 'Continue in CLI') : t('app.sessions.resume', 'Resume') }}
         </button>
       </div>
       </template>

@@ -9,7 +9,7 @@
 // ai-vault-first-prompt-card.tsx, AiVaultSessionSubagents.tsx and
 // AiVaultSearchEvidence.tsx (MIT, Copyright (c) 2026 Lovecast Inc.).
 import { computed, inject, onBeforeUnmount, ref, watch } from 'vue'
-import { Bot, Check, ChevronDown, Copy, FileJson, Folder, FolderOpen, LoaderCircle, LocateFixed, MessageSquare, MoreHorizontal, Play, TextCursorInput, Trash2 } from 'lucide-vue-next'
+import { Bot, Check, ChevronDown, Copy, FileJson, Folder, FolderOpen, LoaderCircle, LocateFixed, MessageSquare, MoreHorizontal, Play, SquareTerminal, TextCursorInput, Trash2 } from 'lucide-vue-next'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from './chat/orca/ui/index.js'
 import BrandIcon from './BrandIcon.vue'
 import { maskSecrets } from '../chat/chatModel'
@@ -34,9 +34,15 @@ const api = () => (typeof window !== 'undefined' && window.shellApi) || null
 const s = computed(() => props.session)
 const title = computed(() => maskSecrets(s.value.title || '') || t('app.sessions.untitled', 'Untitled conversation'))
 const canResume = computed(() => !!s.value.cwd && !!s.value.id)
-const resumeLabel = computed(() =>
-  canResume.value ? t('sessionHistory.row.resumeInNewPane', 'Resume in New Pane') : t('app.sessions.resumeUnavailable', 'The saved project folder is unavailable. You can still copy the session ID.')
-)
+// An Antigravity IDE conversation: continued in a new Antigravity CLI one.
+const fromIde = computed(() => s.value.agent === 'antigravity' && s.value.origin === 'ide')
+const actionText = computed(() => (fromIde.value ? t('sessionHistory.row.continueInCli', 'Continue in CLI') : t('sessionHistory.row.resumeInNewPane', 'Resume in New Pane')))
+const resumeLabel = computed(() => {
+  if (!canResume.value) return t('app.sessions.resumeUnavailable', 'The saved project folder is unavailable. You can still copy the session ID.')
+  return fromIde.value
+    ? t('sessionHistory.row.continueInCliHint', 'Start a new Antigravity CLI conversation in its folder, from the end of this IDE conversation')
+    : actionText.value
+})
 const detailsTooltip = computed(() => (props.expanded ? t('sessionHistory.row.hideDetails', 'Hide Details') : t('sessionHistory.row.showDetails', 'Show Details')))
 const detailsId = computed(() => `sh-details-${String(s.value.id).replace(/[^A-Za-z0-9_-]/g, '-')}`) // i18n-ignore
 const when = computed(() => timeAgo(s.value.updated, props.now))
@@ -193,7 +199,7 @@ function onRowClick(event) {
             <LocateFixed :size="14" aria-hidden="true" />
           </button>
           <button v-else class="sh-icon-btn" :disabled="!canResume" :title="resumeLabel" :aria-label="resumeLabel" data-test="session-resume" @click="emit('resume')">
-            <Play :size="14" aria-hidden="true" />
+            <SquareTerminal v-if="fromIde" :size="14" aria-hidden="true" /><Play v-else :size="14" aria-hidden="true" />
           </button>
         </div>
         <button
@@ -215,7 +221,7 @@ function onRowClick(event) {
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" :side-offset="4" class="sh-menu">
             <DropdownMenuItem v-if="paneId" data-test="menu-jump" @select="emit('focus-pane', paneId)"><LocateFixed :size="14" /> {{ t('sessionHistory.row.jumpToOriginalPane', 'Jump to Original Pane') }}</DropdownMenuItem>
-            <DropdownMenuItem v-else :disabled="!canResume" data-test="menu-resume" @select="emit('resume')"><Play :size="14" /> {{ t('sessionHistory.row.resumeInNewPane', 'Resume in New Pane') }}</DropdownMenuItem>
+            <DropdownMenuItem v-else :disabled="!canResume" data-test="menu-resume" @select="emit('resume')"><SquareTerminal v-if="fromIde" :size="14" /><Play v-else :size="14" /> {{ actionText }}</DropdownMenuItem>
             <template v-if="logActions || session.cwd">
               <DropdownMenuSeparator />
               <DropdownMenuItem v-if="logActions" data-test="menu-open-log" @select="openLog"><FileJson :size="14" /> {{ t('sessionHistory.row.openLog', 'Open Log') }}</DropdownMenuItem>
@@ -244,6 +250,7 @@ function onRowClick(event) {
       <span class="sh-meta-icon"><BrandIcon :kind="session.agent" :size="14" /></span>
       <span class="sh-meta-line">
         <span class="sh-meta-agent">{{ agentLabel(session.agent) }}</span>
+        <template v-if="fromIde"><span class="sh-sep">·</span><span class="sh-meta-origin" data-test="session-origin">{{ t('sessionHistory.row.ideOrigin', 'IDE') }}</span></template>
         <template v-if="messagesLabel"><span class="sh-sep">·</span><span class="sh-nums">{{ messagesLabel }}</span></template>
         <span class="sh-sep">·</span><span class="sh-nums" :title="new Date(session.updated).toLocaleString()">{{ when }}</span>
         <template v-if="session.accountLabel"><span class="sh-sep">·</span><span class="sh-meta-account" :title="session.accountLabel">{{ session.accountLabel }}</span></template>
@@ -256,7 +263,7 @@ function onRowClick(event) {
     <div v-if="expanded" :id="detailsId" class="sh-details" data-test="session-details" @pointerdown.stop @click.stop @dblclick.stop>
       <div class="sh-details-actions">
         <button v-if="paneId" class="exit-btn" data-test="details-jump" @click="emit('focus-pane', paneId)"><LocateFixed :size="13" aria-hidden="true" /> {{ t('sessionHistory.row.jumpToOriginalPane', 'Jump to Original Pane') }}</button>
-        <button v-else class="exit-btn primary" :disabled="!canResume" :title="resumeLabel" data-test="details-resume" @click="emit('resume')"><Play :size="13" aria-hidden="true" /> {{ t('sessionHistory.row.resumeInNewPane', 'Resume in New Pane') }}</button>
+        <button v-else class="exit-btn primary" :disabled="!canResume" :title="resumeLabel" data-test="details-resume" @click="emit('resume')"><SquareTerminal v-if="fromIde" :size="13" aria-hidden="true" /><Play v-else :size="13" aria-hidden="true" /> {{ actionText }}</button>
         <button v-if="logActions" class="exit-btn subtle" data-test="details-view-log" @click="openLog"><FileJson :size="13" aria-hidden="true" /> {{ t('sessionHistory.details.viewLog', 'View Log') }}</button>
       </div>
       <div class="sh-details-body">
