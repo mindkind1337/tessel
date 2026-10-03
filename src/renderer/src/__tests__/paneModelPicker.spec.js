@@ -282,14 +282,14 @@ describe('pane menu > Model', () => {
     mountPane({ modelChoice: { model: 'opus', effort: 'high' } })
     await flushPromises()
     const chip = () => wrapper.get('[data-test="pane-model-chip"]')
-    expect(chip().text()).toBe('Opus · High')
+    expect(chip().text()).toBe('Opus 5.5 · High')
     wrapper.props('node').modelChoice = { model: 'opus', effort: 'max' }
     await wrapper.vm.$nextTick()
     // The header refreshes its model on its own schedule; ask now.
     window.shellApi.agentModel.mockResolvedValueOnce(null)
     await wrapper.setProps({ node: { ...wrapper.props('node'), sessionId: 's2' } })
     await flushPromises()
-    expect(chip().text()).toBe('Opus · Max')
+    expect(chip().text()).toBe('Opus 5.5 · Max')
     await chip().trigger('click')
     await nextTick()
     expect(modelMenu()).not.toBeNull()

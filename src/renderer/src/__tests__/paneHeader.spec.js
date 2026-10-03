@@ -203,7 +203,7 @@ describe('terminal pane header', () => {
     expect(h.text()).not.toContain('feat/header')
     expect(h.text()).not.toContain('Blue')
     // The model it uses: one dim chip after the name (a click opens the picker).
-    expect(h.get('[data-test="pane-model-chip"]').text()).toBe('Opus')
+    expect(h.get('[data-test="pane-model-chip"]').text()).toBe('Opus 5.5') // the alias shows its newest version until the agent reports one
     expect(h.text()).not.toContain('FR')
     // Several states at once (a message not confirmed, quiet 12 min,
     // unknown): one badge, the most urgent.

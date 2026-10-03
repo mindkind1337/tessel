@@ -53,6 +53,7 @@ import { getAgentSessionOptionCatalog, modelOptions, resolveSessionOptionDefault
 import { cursorContextOnScreen, cursorModelOnScreen, cursorPickerFilter, cursorPickerShown } from '../../../shared/cursorModels'
 import { paneModels } from '../paneModels'
 import { modelsFor, refreshIfStale } from '../agentModels'
+import { CLAUDE_PRICING } from '../../../shared/claudePricing'
 import { modelChoiceLabel, sessionPillLabel } from '../sessionOptionLabels'
 import { switchClaudeModel, typeCommand } from '../claudeModelSwitch'
 import SessionOptionPicker from './SessionOptionPicker.vue'
@@ -208,8 +209,25 @@ function withModelVersion(shown, ...reported) {
   const bare = /^(opus|sonnet|haiku|fable)(\[1m\])?$/i.exec(String(shown.model || '').trim())
   if (!bare) return shown
   const family = bare[1].toLowerCase()
-  const full = reported.find((m) => typeof m === 'string' && new RegExp(`^(?:claude-)?${family}-\\d`, 'i').test(m.trim()))
+  // Until the agent reports its version, the newest one Tessel knows of that
+  // family (what Claude Code's alias picks): "opus" -> "Opus 5.5".
+  const full = reported.find((m) => typeof m === 'string' && new RegExp(`^(?:claude-)?${family}-\\d`, 'i').test(m.trim())) || newestClaudeOf(family)
   return full ? { ...shown, model: full.trim() + (bare[2] && !/\[1m\]$/i.test(full) ? '[1m]' : '') } : shown
+}
+// The newest priced Claude model of a family ("opus" -> "claude-opus-5-5").
+function newestClaudeOf(family) {
+  let best = null
+  let bestKey = -1
+  for (const id of Object.keys(CLAUDE_PRICING)) {
+    const m = new RegExp(`^claude-${family}-(\\d+)(?:-(\\d+))?$`).exec(id)
+    if (!m) continue
+    const key = Number(m[1]) * 100 + Number(m[2] || 0)
+    if (key > bestKey) {
+      bestKey = key
+      best = id
+    }
+  }
+  return best
 }
 let modelBusy = false
 let modelAgain = false // asked while a check ran: one more after it
