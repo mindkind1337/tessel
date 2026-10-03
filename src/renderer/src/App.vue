@@ -48,6 +48,7 @@ import {
   paneAgentState
 } from './agentStatus'
 import { detectApproval } from './agentLimit'
+import { applyAgentStateRules } from './agentStateRules'
 import { activity, recordActivity, loadActivity, saveActivityNow, activityChanged } from './activityStore'
 import ActivityPanel from './components/ActivityPanel.vue'
 import ConfirmDialog from './components/ConfirmDialog.vue'
@@ -4506,6 +4507,31 @@ if (window.shellApi.agentStates) {
   }).catch(() => {})
 }
 onBeforeUnmount(() => offAgentState?.())
+
+// The agent-state detection rules: the built-in ones, or the user's
+// agent-state-rules.json over them (main reads and watches the file). A file
+// with an error is ignored: said once per error (Settings > Agents says it too).
+let agentRulesRevision = 0
+let agentRulesWarned = ''
+function useAgentRules(payload) {
+  const status = applyAgentStateRules(payload)
+  if (status.state !== 'invalid') agentRulesWarned = ''
+  else if (status.reason !== agentRulesWarned) {
+    agentRulesWarned = status.reason
+    showToast(t('app.agentRules.invalid', 'Agent detection rules file ignored ({{reason}}): the built-in rules stay in use.', { reason: status.reason }), { kind: 'error', timeout: 10000 })
+  }
+}
+const offAgentRules = window.shellApi.agentRules?.onChanged((payload) => {
+  agentRulesRevision++
+  useAgentRules(payload)
+})
+if (window.shellApi.agentRules) {
+  const revision = agentRulesRevision
+  window.shellApi.agentRules.get().then((payload) => {
+    if (revision === agentRulesRevision) useAgentRules(payload)
+  }).catch(() => {})
+}
+onBeforeUnmount(() => offAgentRules?.())
 const agentStates = computed(() => {
   const out = {}
   for (const ws of workspaces.value) {
@@ -4785,7 +4811,7 @@ function openActivity(scope = 'workspace') {
 // message waits until the prompt is gone.
 function awaitingApproval(leafId) {
   const pane = getPane(leafId)
-  return !!(pane && pane.screenText && detectApproval(pane.screenText(20)))
+  return !!(pane && pane.screenText && detectApproval(pane.screenText(20), findLeaf(leafId)?.agentId))
 }
 
 // Messages waiting for an agent to be free: leafId -> [text].

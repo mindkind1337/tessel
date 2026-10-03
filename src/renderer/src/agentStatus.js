@@ -13,6 +13,7 @@
 // The workspace sidebar reads both to badge workspaces.
 import { reactive } from 'vue'
 import { detectApproval, detectLimit } from './agentLimit'
+import { rulesFor } from './agentStateRules'
 import { promptShowsPlaceholder } from './promptCheck'
 import { STATUS_PROVIDERS, SCREEN_READY_PROVIDERS } from '../../shared/agentStateModel'
 import { freebuffScreenState } from '../../shared/freebuffScreen'
@@ -86,17 +87,16 @@ export function applyAgentStates(snapshot) {
   }
 }
 
-const FOOTER = /\besc(?:ape)?\s+(?:to\s+)?(?:interrupt|cancel)\b/i
-const RUNNING = /\besc(?:ape)?\s+(?:to\s+)?interrupt\b/i
-// Claude Code's working line, its spinner over its input box. Since 2.1.2xx
-// it no longer says "esc to interrupt": a spinner glyph (· ✢ ✳ ✶ ✻ ✽, "*"
-// on some terminals), its verb with "…", then maybe "(23s · ↓ 1.2k tokens ·
-// thinking)", cut where a narrow pane wraps it. Its finished form ("✻ Worked
-// for 23s") has no "…": not running.
-const WORKING =
-  /^\s*[·✢✳✶✻✽*]\s+[A-Za-z][^…()]{0,60}…(?:\s*\((?=[^)]*(?:\d+[hms]\b|\btokens?\b|\bthinking\b|\bthought for\b|\btool\b|\binterrupt\b))[^)]*\)?)?\s*$/
-const workingLine = (text) => String(text || '').split(/\r?\n/).some((line) => WORKING.test(line))
-const INTERRUPTED = /\bInterrupted\b\s*(?:by user|·\s*What should Claude do instead)/i
+// The footer, spinner and interruption texts are data: the "busy-footer",
+// "running-footer", "working-line", "interrupted" and "interrupted-screen"
+// rules of src/shared/agentStateRules (common.json; claude.json: Claude Code's
+// working line, its spinner over its input box, and its "Interrupted" line;
+// codex.json: "Conversation interrupted"), maybe fixed by the user's override
+// file (agentStateRules.js).
+const workingLine = (rules, text) =>
+  String(text || '')
+    .split(/\r?\n/)
+    .some((line) => rules.test('working-line', line))
 const RULE = /^[─━]{8,}$/
 const rowText = (buffer, y) => (y >= 0 ? buffer.getLine(y)?.translateToString(true) || '' : '')
 // A placeholder or hint: drawn dim, or in a colour (Claude Code draws its dim
@@ -203,21 +203,26 @@ export function agentScreenObservation(term, provider, screen) {
     const own = freebuffObservation(term, screen)
     if (own) return own
   }
-  const approval = detectApproval(screen)
-  const limit = detectLimit(screen)
+  const rules = rulesFor(provider)
+  const approval = detectApproval(screen, provider)
+  const limit = detectLimit(screen, provider)
   const footer = String(screen || '')
     .split(/\r?\n/)
     .slice(-8)
     .join('\n')
   // Claude Code's spinner can sit above a todo list over its input box.
   const near = term && provider === 'claude' ? aboveCursor(term, 14) : ''
-  const spinner = provider === 'claude' && (workingLine(footer) || workingLine(near))
+  const spinner = rules.has('working-line') && (workingLine(rules, footer) || workingLine(rules, near))
   const busy =
-    spinner || FOOTER.test(footer) || (!!term && provider === 'claude' && FOOTER.test(aboveCursor(term)))
+    spinner ||
+    rules.test('busy-footer', footer) ||
+    (!!term && provider === 'claude' && rules.test('busy-footer', aboveCursor(term)))
   // Running, not an approval's "esc to cancel" (the monitor clears an
   // answered approval on it).
   const running =
-    spinner || RUNNING.test(footer) || (!!term && provider === 'claude' && RUNNING.test(aboveCursor(term)))
+    spinner ||
+    rules.test('running-footer', footer) ||
+    (!!term && provider === 'claude' && rules.test('running-footer', aboveCursor(term)))
   let ready = false
   let waiting = false
   const prompt = provider === 'claude' ? '❯' : provider === 'codex' ? '›' : null
@@ -247,10 +252,8 @@ export function agentScreenObservation(term, provider, screen) {
   const above = String(screen || '')
     .split(/\r?\n/)
     .slice(-16)
-  const interruption = provider === 'claude' && waiting ? lastInterruption(above) : null
-  const interrupted =
-    waiting &&
-    (!!interruption || (provider === 'codex' && /\bConversation interrupted\b/i.test(above.join('\n'))))
+  const interruption = waiting && rules.has('interrupted') ? lastInterruption(rules, above) : null
+  const interrupted = waiting && (!!interruption || rules.test('interrupted-screen', above.join('\n')))
   return {
     screen,
     approval,
@@ -286,7 +289,7 @@ function freebuffObservation(term, screen) {
   return {
     screen,
     approval: waiting,
-    limit: detectLimit(screen),
+    limit: detectLimit(screen, 'freebuff'),
     busy: state === 'working',
     running: state === 'working',
     ready: state === 'ready',
@@ -302,13 +305,13 @@ function freebuffObservation(term, screen) {
 // turn before the latest prompt, has that prompt, its tool calls and its
 // spinner under it: it says nothing of the turn running now. -> that line
 // with the one above it (to tell one interruption from the next), or null.
-function lastInterruption(lines) {
+function lastInterruption(rules, lines) {
   let input = -1
   for (let i = lines.length - 1; i >= 0 && input < 0; i--) if (/^\s*[❯>]/.test(lines[i])) input = i
   for (let i = input - 1; i >= 0; i--) {
     const text = lines[i].trim()
     if (!text || RULE.test(text)) continue
-    return INTERRUPTED.test(text) ? `${i > 0 ? lines[i - 1].trim() : ''}\n${text}` : null
+    return rules.test('interrupted', text) ? `${i > 0 ? lines[i - 1].trim() : ''}\n${text}` : null
   }
   return null
 }
@@ -431,7 +434,7 @@ export function createAgentActivityMonitor({
           approvals[node.id] || getAgentState(node.id, node.agentLaunchToken)?.state === 'approval'
         const running =
           observation.running ??
-          RUNNING.test(String(observation.screen || '').split(/\r?\n/).slice(-8).join('\n'))
+          rulesFor(node.agentId).test('running-footer', String(observation.screen || '').split(/\r?\n/).slice(-8).join('\n'))
         if (hadApproval && running) {
           onApproval(false)
           send('ScreenClearApproval')

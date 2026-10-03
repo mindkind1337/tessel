@@ -1,0 +1,31 @@
+{
+  "id": "common",
+  "engineVersion": 1,
+  "rules": [
+    { "id": "limit-hit-usage", "why": "Codex: \"You've hit your usage limit. ... try again at 8:47 PM.\"", "kind": "limit", "regex": "you['’]ve hit your usage limit", "ignoreCase": true },
+    { "id": "limit-usage-reached", "why": "Claude Code: \"Claude usage limit reached. Your limit will reset at 5pm\".", "kind": "limit", "regex": "\\busage limit reached\\b", "ignoreCase": true },
+    { "id": "limit-window-reached", "why": "Claude Code: \"5-hour limit reached ∙ resets 3pm (America/Toronto)\" and its weekly, session and model limits.", "kind": "limit", "regex": "\\b(?:5-hour|five-hour|weekly|session|opus|sonnet) limit reached\\b", "ignoreCase": true },
+    { "id": "limit-reached-your", "why": "\"You've reached your usage limit\" and its weekly, session and 5-hour forms.", "kind": "limit", "regex": "you['’]ve reached your (?:usage|weekly|session|5-hour) limit", "ignoreCase": true },
+    { "id": "limit-quota-exceeded", "why": "Gemini: \"Quota exceeded ...\".", "kind": "limit", "regex": "\\bquota exceeded\\b", "ignoreCase": true },
+    { "id": "limit-quota-exhausted", "why": "Gemini: \"You have exhausted your daily quota\".", "kind": "limit", "regex": "you have exhausted your (?:daily )?quota", "ignoreCase": true },
+    { "id": "limit-resource-exhausted", "why": "Gemini's API error code, upper case only.", "kind": "limit", "regex": "\\bRESOURCE_EXHAUSTED\\b" },
+    { "id": "reset-at", "why": "\"try again at 8:47 PM\", \"reset at 5pm\", \"resets 3pm (America/Toronto)\": the first group is the reset time.", "kind": "limit-reset", "regex": "(?:try again at|resets? at|resets|reset at)\\s+([0-9]{1,2}(?::[0-9]{2})?\\s*(?:[ap]m|[ap]\\.m\\.))", "ignoreCase": true },
+    { "id": "reset-in", "why": "\"try again in 2 days 3 hours\", \"resets in 45 minutes\": shown as \"in 2 days 3 hours\".", "kind": "limit-reset", "regex": "(?:try again|resets?) in\\s+((?:\\d+\\s*(?:days?|hours?|hrs?|minutes?|mins?)\\s*,?\\s*(?:and\\s*)?)+)", "ignoreCase": true, "prefix": "in " },
+    { "id": "reset-on", "why": "\"resets Oct 3, 9am\", \"try again on Oct 3\".", "kind": "limit-reset", "regex": "(?:try again on|resets? on|resets)\\s+([A-Z][a-z]{2,8}\\.? \\d{1,2}(?:,? \\d{1,2}(?::\\d{2})?\\s*[ap]m)?)" },
+    { "id": "approval-would-you-like", "why": "Codex: \"Would you like to run the following command?\", \"make these changes\", \"apply\".", "kind": "approval", "regex": "Would you like to (run|make|apply)", "ignoreCase": true },
+    { "id": "approval-press-enter", "why": "A selection dialog's footer.", "kind": "approval", "regex": "Press enter to confirm", "ignoreCase": true },
+    { "id": "approval-do-you-want", "why": "Claude Code: \"Do you want to proceed?\", \"make this edit\", \"create\", \"allow\", \"run\".", "kind": "approval", "regex": "Do you want to (proceed|make|create|allow|run)", "ignoreCase": true },
+    { "id": "approval-trust", "why": "Folder trust questions: \"Do you trust the files in this folder?\".", "kind": "approval", "regex": "Do you trust (the files|the contents|this)", "ignoreCase": true },
+    { "id": "approval-allow-execution", "why": "Gemini: \"Allow execution of ...?\".", "kind": "approval", "regex": "Allow execution", "ignoreCase": true },
+    { "id": "approval-apply-change", "why": "Gemini: \"Apply this change?\".", "kind": "approval", "regex": "Apply this change", "ignoreCase": true },
+    { "id": "approval-y-n", "why": "A yes/no question: \"(y/n)\".", "kind": "approval", "regex": "\\(y\\/n\\)", "ignoreCase": true },
+    { "id": "approval-y-n-p", "why": "Cursor's input line: \"Waiting for decision (y/n/p)...\".", "kind": "approval", "regex": "\\(y\\/n\\/p\\)", "ignoreCase": true },
+    { "id": "approval-y-big-n", "why": "A yes/no question that defaults to no: \"[y/N]\".", "kind": "approval", "regex": "\\[y\\/N\\]", "ignoreCase": true },
+    { "id": "approval-run-command", "why": "Antigravity's title: \"Run this command?\".", "kind": "approval", "regex": "Run this command\\?", "ignoreCase": true },
+    { "id": "approval-allow-url", "why": "Antigravity's title: \"Allow access to this URL?\".", "kind": "approval", "regex": "Allow access to this URL\\?", "ignoreCase": true },
+    { "id": "approval-allow-tool", "why": "Antigravity's title: \"Allow calling this tool?\".", "kind": "approval", "regex": "Allow calling this tool\\?", "ignoreCase": true },
+    { "id": "approval-approve-action", "why": "Antigravity's title: \"Approve this action?\".", "kind": "approval", "regex": "Approve this action\\?", "ignoreCase": true },
+    { "id": "busy-esc", "why": "A working agent's footer: \"esc to interrupt\", or an approval's \"esc to cancel\" (read in the screen's last 8 lines).", "kind": "busy-footer", "regex": "\\besc(?:ape)?\\s+(?:to\\s+)?(?:interrupt|cancel)\\b", "ignoreCase": true },
+    { "id": "running-esc", "why": "Running, not an approval: only \"esc to interrupt\".", "kind": "running-footer", "regex": "\\besc(?:ape)?\\s+(?:to\\s+)?interrupt\\b", "ignoreCase": true }
+  ]
+}

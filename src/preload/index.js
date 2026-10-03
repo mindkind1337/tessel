@@ -96,6 +96,13 @@ const api = {
     ipcRenderer.on('agents:state', handler)
     return () => ipcRenderer.removeListener('agents:state', handler)
   },
+  // Agent-state detection rules: { state: 'builtin' | 'override' | 'invalid',
+  // reason, file, size, override }. open: creates the file when missing.
+  agentRules: {
+    get: () => ipcRenderer.invoke('agentRules:get'),
+    open: () => ipcRenderer.invoke('agentRules:open'),
+    onChanged: (cb) => subscribe('agentRules:changed', cb)
+  },
   installLogStart: (q) => ipcRenderer.invoke('install:logStart', q),
   // Agent CLI updates: { checkedAt, agents: { id: { installed, latest, update, steps } } }.
   agentUpdates: {

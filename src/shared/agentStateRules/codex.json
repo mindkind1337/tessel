@@ -1,0 +1,7 @@
+{
+  "id": "codex",
+  "engineVersion": 1,
+  "rules": [
+    { "id": "interrupted", "why": "Codex after Esc: \"■ Conversation interrupted - tell the model what to do differently\" (read in the screen's last 16 lines).", "kind": "interrupted-screen", "regex": "\\bConversation interrupted\\b", "ignoreCase": true }
+  ]
+}

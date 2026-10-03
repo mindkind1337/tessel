@@ -101,6 +101,11 @@
     },
     "agents": {
       "newAgents": "Nouveaux agents",
+      "rules": "Règles de détection",
+      "rulesOpen": "Ouvrir le fichier des règles",
+      "rulesOverride": "Votre fichier de règles est en usage ({{count}} changement(s) par rapport aux règles intégrées)",
+      "rulesInvalid": "Votre fichier de règles est ignoré, les règles intégrées restent en usage : {{reason}}",
+      "rulesBuiltin": "Règles intégrées. Ouvrez le fichier des règles pour corriger comment Tessel voit qu'un agent travaille, attend votre approbation ou a atteint sa limite ; les changements enregistrés s'appliquent aussitôt",
       "defaultAgent": "Agent par défaut",
       "defaultAgentHint": "Ce que lance un nouveau panneau (Ctrl+Maj+T)",
       "defaultShell": "Le shell par défaut",

@@ -373,6 +373,9 @@
       "deleteOnlyTasks": "Ses {{count}} tâches seront supprimées.",
       "deleteTitle": "Supprimer « {{name}} » ?"
     },
+    "agentRules": {
+      "invalid": "Fichier des règles de détection des agents ignoré ({{reason}}) : les règles intégrées restent en usage."
+    },
     "port": {
       "browserFailed": "Impossible d'ouvrir le navigateur",
       "alreadyExited": "Le processus sur {{port}} était déjà terminé",
