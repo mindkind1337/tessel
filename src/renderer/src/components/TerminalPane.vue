@@ -1029,6 +1029,15 @@ function closeTranscript() {
 watch(canViewTranscript, (can) => {
   if (!can) transcriptOpen.value = false
 })
+// OpenCode has no chat view over its terminal: its header button opens the
+// conversation in a chat pane of its own (Open as chat), once Tessel knows it.
+const opencodeAgent = computed(() => props.node.kind === 'agent' && props.node.agentId === 'opencode' && !props.node.remoteHostId)
+const chatToggleTitle = computed(() => {
+  if (chatViewAvailable.value) return chatShown.value ? t('pane.chatView.showTerminal', 'Show terminal') : t('pane.chatView.showChat', 'Show chat view')
+  return canOpenAsChat.value
+    ? t('pane.chatView.openAsChat', 'Continue this conversation in a chat pane')
+    : t('pane.chatView.noOpencodeSession', 'Send a first message here: the chat opens once OpenCode has a conversation')
+})
 function menuOpenAsChat() {
   closeCtxMenu()
   if (chatViewAvailable.value) toggleChatView()
@@ -2817,14 +2826,15 @@ const paneMenuBindings = computed(() => ({
         />
         <!-- chat view <-> terminal (the agent keeps running: nothing restarts) -->
         <button
-          v-if="chatViewAvailable"
+          v-if="chatViewAvailable || opencodeAgent"
           class="pane-nav-btn"
           :class="{ on: chatShown }"
           data-test="pane-chat-toggle"
-          :title="chatShown ? t('pane.chatView.showTerminal', 'Show terminal') : t('pane.chatView.showChat', 'Show chat view')"
+          :disabled="!chatViewAvailable && !canOpenAsChat"
+          :title="chatToggleTitle"
           :aria-label="chatShown ? t('pane.chatView.showTerminal', 'Show terminal') : t('pane.chatView.showChat', 'Show chat view')"
           :aria-pressed="chatShown"
-          @click="toggleChatView"
+          @click="chatViewAvailable ? toggleChatView() : menuOpenAsChat()"
         >
           <svg v-if="chatShown" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <rect x="1.8" y="2.5" width="12.4" height="11" rx="1.6" stroke="currentColor" stroke-width="1.4" />

@@ -613,6 +613,8 @@
     },
     "chatView": {
       "showChat": "Afficher la vue chat",
+      "openAsChat": "Continuer cette conversation dans un pane chat",
+      "noOpencodeSession": "Envoyez d’abord un message ici : le chat s’ouvre dès qu’OpenCode a une conversation",
       "showTerminal": "Afficher le terminal",
       "asleep": "En veille : il se réveille quand vous ouvrez ce panneau, vous pourrez alors lui écrire.",
       "typedLine": "Une ligne est tapée dans son terminal : envoyez-la ou effacez-la d'abord.",
