@@ -16,6 +16,7 @@ import {
   validateRemoteAgent,
   validateHome,
   exportPrefix,
+  tokenFileCommand,
   prepCommand,
   HOOK_TIMEOUT_EXIT
 } from '../remoteAgent/remoteAgentTunnel'
@@ -149,14 +150,19 @@ describe('validateRemoteAgent', () => {
   })
 
   it('builds the export prefix with single-quoted values', () => {
-    expect(exportPrefix({ paneId: 'p1', token: TOKEN, instance: 'tessel-h1', provider: 'codex', sockPath: "/home/o'k/.tessel-server/run/tessel-h1.sock" })).toBe(
-      `export TESSEL_PANE_ID='p1' TESSEL_REMOTE_SOCK='/home/o'\\''k/.tessel-server/run/tessel-h1.sock' TESSEL_REMOTE_TOKEN='${TOKEN}' TESSEL_AGENT_PROVIDER='codex'; `
+    // The token itself is never on the command line: read from its file.
+    expect(exportPrefix({ paneId: 'p1', instance: 'tessel-h1', provider: 'codex', sockPath: "/home/o'k/.tessel-server/run/tessel-h1.sock" })).toBe(
+      `export TESSEL_PANE_ID='p1' TESSEL_REMOTE_SOCK='/home/o'\\''k/.tessel-server/run/tessel-h1.sock' TESSEL_REMOTE_TOKEN="$(cat "$HOME"/'.tessel-server/run/p1.token')" TESSEL_AGENT_PROVIDER='codex'; `
     )
-    expect(exportPrefix({ paneId: 'p1', token: TOKEN, instance: 'tessel-h1', provider: null, sockPath: null })).toContain(`TESSEL_REMOTE_SOCK="$HOME"/'.tessel-server/run/tessel-h1.sock'`)
-    expect(() => exportPrefix({ paneId: "p'1", token: TOKEN, instance: 'tessel-h1' })).toThrow()
-    expect(validateHome('/home/me\n')).toBe('/home/me')
-    expect(validateHome('relative\n')).toBe(null)
-    expect(validateHome('/home/a\\b')).toBe(null)
+    expect(exportPrefix({ paneId: 'p1', instance: 'tessel-h1', provider: null, sockPath: null })).toContain(`TESSEL_REMOTE_SOCK="$HOME"/'.tessel-server/run/tessel-h1.sock'`)
+    expect(() => exportPrefix({ paneId: "p'1", instance: 'tessel-h1' })).toThrow()
+    expect(tokenFileCommand('p1')).toBe('umask 077 && mkdir -p "$HOME/.tessel-server/run" && cat > "$HOME/.tessel-server/run/p1.token"')
+    expect(validateHome('TESSEL_HOME=/home/me\n')).toBe('/home/me')
+    // An rc file that prints something: the marked line still counts.
+    expect(validateHome('Welcome!\nTESSEL_HOME=/home/me\n')).toBe('/home/me')
+    expect(validateHome('/home/me\n')).toBe(null)
+    expect(validateHome('TESSEL_HOME=relative\n')).toBe(null)
+    expect(validateHome('TESSEL_HOME=/home/a\\b')).toBe(null)
     expect(prepCommand('tessel-h1')).toContain('rm -f "$HOME/.tessel-server/run/tessel-h1.sock"')
     expect(prepCommand('tessel-h1')).toContain('umask 077')
   })
@@ -357,7 +363,7 @@ function fakeExec(state) {
     const stream = new FakeChannel()
     stream.stderr = new EventEmitter()
     setTimeout(() => {
-      stream.push(`${state.home}\n`)
+      stream.push(command.startsWith('umask 077 && mkdir -p "$HOME/.tessel-server/run" && chmod') ? `motd\nTESSEL_HOME=${state.home}\n` : '')
       stream.push(null)
       stream.tesselExit = [state.code ?? 0]
       stream.emit('close')
@@ -398,6 +404,49 @@ describe('binding', () => {
     expect(state.client.unforwards).toEqual([path])
     expect(t.isBound('h1')).toBe(false)
     expect(t.logs.join('\n')).not.toContain(TOKEN)
+  })
+
+  it('writes the token file through stdin; a pane re-created with the same id is not forgotten by the old one', async () => {
+    const state = { commands: [], home: '/home/me', client: fakeClient(), released: 0 }
+    const inputs = []
+    const exec = fakeExec(state)
+    const t = makeTunnel({
+      openExec: (...a) =>
+        exec(...a).then((r) => {
+          const end = r.stream.end.bind(r.stream)
+          r.stream.end = (x) => (inputs.push(x == null ? null : String(x)), end())
+          return r
+        })
+    })
+    const old = agent()
+    t.registerPane('h1', 'p1', old, spec)
+    await t.ensure('h1', spec)
+    expect(await t.writeToken('h1', spec, 'p1')).toBe(true)
+    expect(state.commands[1]).toBe(tokenFileCommand('p1'))
+    expect(state.commands.join('\n')).not.toContain(TOKEN)
+    expect(inputs[1]).toBe(TOKEN)
+    const fresh = agent({ token: OTHER })
+    t.registerPane('h1', 'p1', fresh, spec)
+    t.forgetPane('p1', old)
+    expect(t.paneCount()).toBe(1)
+    expect(t.isBound('h1')).toBe(true)
+    t.forgetPane('p1', fresh)
+    expect(t.paneCount()).toBe(0)
+    // Its token file removed on the server.
+    expect(state.commands[2]).toBe('rm -f "$HOME/.tessel-server/run/p1.token"')
+  })
+
+  it('a pane that comes after its host was unbound mid-bind gets a bind of its own', async () => {
+    const state = { commands: [], home: '/home/me', client: fakeClient(), released: 0 }
+    const t = makeTunnel({ openExec: fakeExec(state) })
+    t.registerPane('h1', 'p1', agent(), spec)
+    const first = t.ensure('h1', spec)
+    t.forgetPane('p1')
+    t.registerPane('h1', 'p2', agent({ token: OTHER }), spec)
+    const second = t.ensure('h1', spec)
+    expect(await first).toBe(null)
+    expect(await second).toBe('/home/me/.tessel-server/run/tessel-h1.sock')
+    expect(t.isBound('h1')).toBe(true)
   })
 
   it('binds again on the new connection after the old one went away', async () => {
