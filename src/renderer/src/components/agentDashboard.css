@@ -288,6 +288,7 @@
   }
 }
 .adb-card {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 9px;
@@ -390,12 +391,12 @@
   color: var(--text-strong);
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--text-strong) 70%, transparent);
 }
-/* The card's right end: its sub-agents at work, then its time. */
-.adb-card-end {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 8px;
+/* Its sub-agents at work: in the card's top right corner. */
+.adb-card-corner {
+  position: absolute;
+  top: 3px;
+  right: 7px;
+  line-height: 1;
 }
 .adb-pill {
   flex: 0 0 auto;

@@ -286,10 +286,8 @@ async function sleepIdle() {
               <span class="adb-card-title">{{ cardTitle(r) }}</span>
               <span class="adb-card-sub">{{ cardSub(r) }}</span>
             </span>
-            <span class="adb-card-end">
-              <AgentDashboardRunning :row="r" />
-              <span v-if="pill(r)" class="adb-pill" :class="'adb-pill-' + r.bucket" data-test="adb-pill">{{ pill(r) }}</span>
-            </span>
+            <span v-if="pill(r)" class="adb-pill" :class="'adb-pill-' + r.bucket" data-test="adb-pill">{{ pill(r) }}</span>
+            <AgentDashboardRunning :row="r" class="adb-card-corner" />
           </button>
         </div>
       </section>
