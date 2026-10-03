@@ -391,12 +391,10 @@
   color: var(--text-strong);
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--text-strong) 70%, transparent);
 }
-/* Its sub-agents at work: in the card's top right corner. */
-.adb-card-corner {
-  position: absolute;
-  top: 3px;
-  right: 7px;
-  line-height: 1;
+/* Its sub-agents at work: before the agent's name, on the line under the title. */
+.adb-card-running {
+  margin-right: 6px;
+  vertical-align: -1px;
 }
 .adb-pill {
   flex: 0 0 auto;
