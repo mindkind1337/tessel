@@ -3,7 +3,7 @@
 // filtered, searched, grouped by state or by project; a card focuses its
 // pane; "Sleep idle" asks first, then sleeps the idle terminal agents.
 import { describe, it, expect, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import AgentDashboard from '../components/AgentDashboard.vue'
 import { buildDashboard, dashboardBucket, dashboardView } from '../agentDashboard'
@@ -85,6 +85,20 @@ describe('agentDashboard.js', () => {
 
 describe('AgentDashboard.vue', () => {
   const make = (extra = {}) => mount(AgentDashboard, { props: { projects: projects(), now: NOW }, ...extra })
+
+  it('rechecks idle agents after confirmation without adding newly idle agents', async () => {
+    let confirm
+    const w = make({ global: { provide: { askConfirm: () => new Promise((resolve) => { confirm = resolve }) } } })
+    await w.get('[data-test="adb-sleep-idle"]').trigger('click')
+    const updated = projects()
+    updated[1].panes[0].state = 'working'
+    updated[0].panes[0].state = 'ready'
+    await w.setProps({ projects: updated })
+    confirm(true)
+    await flushPromises()
+    expect(w.emitted('sleep')).toBeUndefined()
+    w.unmount()
+  })
 
   it('a total, a line per state, a bar, and a section per state with its cards', () => {
     const w = make()
