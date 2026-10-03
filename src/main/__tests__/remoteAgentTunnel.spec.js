@@ -1,6 +1,6 @@
 // @vitest-environment node
 // The terminal host's end of the remote-agent socket tunnel
-// (remoteAgent/remoteAgentTunnel.js, design/remote-agents.md wire protocol
+// (remoteAgent/remoteAgentTunnel.js, src/main/remoteAgent/REMOTE_AGENTS.md wire protocol
 // v1) with fake ssh2 clients and channel streams, and a fake server.cjs run
 // by the real node: hello checks, the token, the MCP pipe, hook framing and
 // limits, binding / re-binding / unforwarding.

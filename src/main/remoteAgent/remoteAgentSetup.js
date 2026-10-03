@@ -1,4 +1,4 @@
-// Agents on an SSH host (design/remote-agents.md): what main prepares for a
+// Agents on an SSH host (src/main/remoteAgent/REMOTE_AGENTS.md): what main prepares for a
 // remote agent pane. The shim (tessel-shim.cjs) is put on the host once per
 // host and app run through the Files session (remoteShell.js __t_ragent),
 // which also has it register the team tools and hooks there; the pane then

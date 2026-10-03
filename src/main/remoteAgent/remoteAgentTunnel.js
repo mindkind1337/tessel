@@ -1,5 +1,5 @@
 // Agents on an SSH host: the terminal host's end of the socket tunnel
-// (design/remote-agents.md, wire protocol v1).
+// (src/main/remoteAgent/REMOTE_AGENTS.md, wire protocol v1).
 //
 // A remote agent runs tessel-shim.cjs on the server; the shim connects to
 // ~/.tessel-server/run/<instance>.sock, which sshd forwards to this process

@@ -3115,7 +3115,7 @@ ipcMain.handle('pty:create', async (_evt, opts = {}) => {
 // ends it (the kill reached the host before the terminal existed).
 const paneKills = new Map() // id -> time
 
-// Agents on an SSH host (design/remote-agents.md). The shim goes on each host
+// Agents on an SSH host (src/main/remoteAgent/REMOTE_AGENTS.md). The shim goes on each host
 // once per app run, over the Files session; the team tools and hooks of the
 // remote agent then reach the normal server.cjs, run here by the terminal
 // host's tunnel with this environment. -> { remoteAgent?, launchToken?, warning? }
@@ -3197,7 +3197,7 @@ async function createSshPane(opts, target, spec, shell, startedAt) {
   const startDir = os.homedir()
   const teamSecret = newTeamSecret()
   // An agent Tessel starts here gets the team tools and its status like a
-  // local one (design/remote-agents.md); without them it still starts.
+  // local one (src/main/remoteAgent/REMOTE_AGENTS.md); without them it still starts.
   const agent = await prepareRemoteAgent({ id, target, remotePath, agentId: opts.agentId, teamSecret })
   if ((paneKills.get(id) || 0) >= startedAt) return { ok: false, cancelled: true, error: t('main.remote.launchCancelled', 'The terminal was closed before ssh started.') }
   const agentProvider = agent.remoteAgent ? agent.remoteAgent.provider : null

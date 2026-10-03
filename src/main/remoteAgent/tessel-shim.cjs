@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Tessel's helper on an SSH server (design/remote-agents.md). An agent there
+// Tessel's helper on an SSH server (src/main/remoteAgent/REMOTE_AGENTS.md). An agent there
 // (Claude Code, Codex) runs it instead of the team tools: it pipes its stdio
 // through the pane's Unix socket (TESSEL_REMOTE_SOCK), which sshd forwards to
 // Tessel on the PC, where the real tessel-team server runs.

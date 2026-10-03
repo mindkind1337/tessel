@@ -5767,7 +5767,7 @@ function teamDir(teamId) {
 
 // The folder holding a workspace's .tessel data (team channel, board): its
 // project folder, or for a project on an SSH host a folder on this computer
-// (design/remote-agents.md), asked of main once and kept.
+// (src/main/remoteAgent/REMOTE_AGENTS.md), asked of main once and kept.
 const remoteDataDirs = reactive({}) // ssh:// root -> local folder | null
 function wsDataDir(ws) {
   if (!ws) return null
