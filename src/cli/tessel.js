@@ -14,7 +14,7 @@ import { spawn } from 'node:child_process'
 
 // Same values as cliServer.js (a test checks they agree).
 export const CLI_PROTOCOL = 'TESSEL-CLI 1'
-export const MAX_REQUEST_BYTES = 64 * 1024
+export const MAX_REQUEST_BYTES = 192 * 1024 // as the app (cliServer.js): the browser tools send long texts
 export const MAX_REPLY_BYTES = 1024 * 1024
 export const RUNTIME_FILE = 'cli-runtime.json'
 export const TOKEN_FILE = 'cli.token'
