@@ -123,7 +123,7 @@ import { findNode, noNodeError } from './nodePath'
 import { removeStatusHooks, STATUS_HOOK_AGENTS } from './agentStatusHooks'
 import teamServerSource from './teamMcp/server.cjs?raw'
 import remoteShimSource from './remoteAgent/tessel-shim.cjs?raw'
-import { REMOTE_AGENT_PROVIDERS, createShimInstaller, instanceName, newRemoteToken, remoteProjectDataDir } from './remoteAgent/remoteAgentSetup'
+import { REMOTE_AGENT_PROVIDERS, createShimInstaller, instanceName, newRemoteToken, readInstallId, remoteProjectDataDir, remoteServerEnv } from './remoteAgent/remoteAgentSetup'
 import { ensureInbox, takeInbox, removeInbox } from './leadInbox'
 import { t, setLanguage as setMainLanguage, currentLocale, onLanguageChange } from './i18n'
 import { createCliServer, CliError } from './cliServer'
@@ -2988,36 +2988,42 @@ async function prepareRemoteAgent({ id, target, remotePath, agentId, teamSecret 
     log.error('remote-agent', `team server script: ${err.message}`)
     return { warning: remoteShimWarning('failed') }
   }
-  // A remote project's team channel and board live on this computer.
-  let projectDir = null
-  if (remotePath) {
-    projectDir = remoteProjectDataDir(app.getPath('userData'), target.id, remotePath)
-    try {
-      fs.mkdirSync(projectDir, { recursive: true })
-    } catch {
-      projectDir = null
-    }
+  // A remote project's team channel and board live on this computer (a pane
+  // outside any project: the host's folder). server.cjs never looks for a
+  // team anywhere else.
+  const projectDir = remoteProjectDataDir(app.getPath('userData'), target.id, remotePath)
+  try {
+    fs.mkdirSync(projectDir, { recursive: true })
+  } catch (err) {
+    log.error('remote-agent', `data folder: ${err.message}`)
+    return { warning: remoteShimWarning('failed') }
   }
   const launchToken = crypto.randomBytes(16).toString('hex')
-  const env = freshEnv()
-  for (const key of Object.keys(env)) if (/^TESSEL_/i.test(key)) delete env[key]
-  Object.assign(env, {
+  // Only what server.cjs needs: the remote side drives that process
+  // (remoteServerEnv), and TESSEL_REMOTE limits its tools (no browser, no
+  // workers on this computer).
+  const env = remoteServerEnv(freshEnv(), {
     TESSEL_PANE_ID: String(id),
     TESSEL_TEAM_SECRET: teamSecret,
     TESSEL_RUNTIME_DIR: app.getPath('userData'),
     TESSEL_AGENT_PROVIDER: provider,
     TESSEL_AGENT_LAUNCH: launchToken,
     TESSEL_AGENT_STATE_DIR: agentStateDir,
-    ...(projectDir ? { TESSEL_PROJECT_DIR: projectDir } : {})
+    TESSEL_PROJECT_DIR: projectDir,
+    TESSEL_REMOTE: '1',
+    TESSEL_REMOTE_HOST: String(target.label || target.id).replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 120)
   })
   return {
     launchToken,
-    remoteAgent: { token: newRemoteToken(), instance: instanceName(basename(app.getPath('userData')), target.id), provider, env, node, script }
+    remoteAgent: { token: newRemoteToken(), instance: instanceName(basename(app.getPath('userData')), target.id, remoteInstallId()), provider, env, node, script }
   }
 }
-// The folder on this computer that holds a remote project's .tessel data.
+let installIdCache = null
+const remoteInstallId = () => (installIdCache = installIdCache || readInstallId(join(app.getPath('userData'), 'remote-agent-id'), fs))
+// The folder on this computer that holds a remote project's .tessel data
+// (saved hosts only).
 ipcMain.handle('remote:projectDataDir', (_evt, hostId, remotePath) => {
-  if (typeof hostId !== 'string' || !/^ssh-[\w-]{1,60}$/.test(hostId)) return null
+  if (typeof hostId !== 'string' || !/^ssh-[\w-]{1,60}$/.test(hostId) || !remoteHosts.get(hostId)) return null
   const checked = validateRemotePath(remotePath)
   if (checked.error) return null
   const dir = remoteProjectDataDir(app.getPath('userData'), hostId, checked.path)

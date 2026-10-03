@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { createShimInstaller, instanceName, parseInstallOutput, remoteProjectDataDir, shimVersion, newRemoteToken } from '../remoteAgentSetup'
+import { createShimInstaller, instanceName, parseInstallOutput, readInstallId, remoteProjectDataDir, remoteServerEnv, shimVersion, newRemoteToken } from '../remoteAgentSetup'
 
 const SOURCE = "#!/usr/bin/env node\n'use strict'\nconst VERSION = '1.0.0'\n"
 
@@ -25,6 +25,33 @@ describe('remoteAgentSetup', () => {
     expect(a).not.toBe(remoteProjectDataDir('C:\\ud', 'ssh-b', '/home/u/p'))
     expect(a.startsWith('C:\\ud')).toBe(true)
     expect(remoteProjectDataDir('C:\\ud', '../x', '/p')).not.toContain('..')
+  })
+
+  it('gives a pane outside any project the host folder', () => {
+    expect(remoteProjectDataDir('C:\\ud', 'ssh-a', null)).toMatch(/ssh-a[\\/]_host$/)
+    expect(remoteProjectDataDir('C:\\ud', 'ssh-a', '/p')).not.toMatch(/_host$/)
+  })
+
+  it('names the socket per install too', () => {
+    expect(instanceName('tessel', 'ssh-a', '1111111111111111')).not.toBe(instanceName('tessel', 'ssh-a', '2222222222222222'))
+  })
+
+  it('keeps one install id in its file', () => {
+    const files = {}
+    const fsApi = { readFileSync: (f) => { if (!(f in files)) throw new Error('none'); return files[f] }, writeFileSync: (f, v) => (files[f] = v) }
+    const a = readInstallId('id', fsApi)
+    expect(a).toMatch(/^[0-9a-f]{16}$/)
+    expect(readInstallId('id', fsApi)).toBe(a)
+    files.id = 'junk'
+    expect(readInstallId('id', fsApi)).not.toBe('junk')
+  })
+
+  it('gives server.cjs only the variables it needs', () => {
+    const env = remoteServerEnv(
+      { Path: 'C:\\bin', SystemRoot: 'C:\\Windows', APPDATA: 'C:\\a', ANTHROPIC_API_KEY: 'sk-x', GITHUB_TOKEN: 'g', TESSEL_TEAM_SECRET: 'old' },
+      { TESSEL_PANE_ID: 'p', TESSEL_REMOTE: '1', EMPTY: '' }
+    )
+    expect(env).toEqual({ Path: 'C:\\bin', SystemRoot: 'C:\\Windows', APPDATA: 'C:\\a', TESSEL_PANE_ID: 'p', TESSEL_REMOTE: '1' })
   })
 
   it('makes 64-hex tokens', () => {

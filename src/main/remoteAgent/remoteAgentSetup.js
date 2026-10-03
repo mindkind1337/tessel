@@ -17,17 +17,48 @@ export function shimVersion(source) {
 }
 
 // Where a remote project's .tessel data (team channel, board) lives on this
-// computer: one folder per host and remote path.
+// computer: one folder per host and remote path; a pane on the host outside
+// any project gets the host's own folder (_host).
 export function remoteProjectDataDir(userData, hostId, remotePath) {
-  const hash = crypto.createHash('sha1').update(`${hostId}\n${remotePath}`).digest('hex').slice(0, 16)
-  return join(userData, 'remote-projects', String(hostId).replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 60), hash)
+  const host = join(userData, 'remote-projects', String(hostId).replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 60))
+  if (!remotePath) return join(host, '_host')
+  return join(host, crypto.createHash('sha1').update(`${hostId}\n${remotePath}`).digest('hex').slice(0, 16))
 }
 
-// The socket name on the host: stable per app build and host (survives a
-// reconnect), distinct for the dev build and the installed app.
-export function instanceName(flavour, hostId) {
+// The socket name on the host: stable per app install and host (survives a
+// reconnect), distinct for the dev build, the installed app and another
+// computer using the same account there (installId: random, kept by main).
+export function instanceName(flavour, hostId, installId = '') {
   const f = String(flavour || 'tessel').toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 20) || 'tessel'
-  return `${f}-${crypto.createHash('sha1').update(String(hostId)).digest('hex').slice(0, 12)}`
+  return `${f}-${crypto.createHash('sha1').update(`${installId}\n${hostId}`).digest('hex').slice(0, 12)}`
+}
+
+// This install's id (for instanceName): read from its file, made once. -> 16 hex
+export function readInstallId(file, fsApi) {
+  try {
+    const v = String(fsApi.readFileSync(file, 'utf8')).trim()
+    if (/^[0-9a-f]{16}$/.test(v)) return v
+  } catch {
+    /* none yet */
+  }
+  const id = crypto.randomBytes(8).toString('hex')
+  try {
+    fsApi.writeFileSync(file, id + '\n')
+  } catch {
+    /* kept for this run only */
+  }
+  return id
+}
+
+// The environment of server.cjs run for a remote pane: only what node and
+// the team tools need, never the rest of this computer's environment (API
+// keys, tokens), since the remote side drives that process.
+const KEEP_ENV = new Set(['PATH', 'PATHEXT', 'SYSTEMROOT', 'SYSTEMDRIVE', 'WINDIR', 'COMSPEC', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH', 'APPDATA', 'LOCALAPPDATA', 'TEMP', 'TMP', 'HOME', 'LANG'])
+export function remoteServerEnv(base, tessel) {
+  const env = {}
+  for (const [k, v] of Object.entries(base || {})) if (KEEP_ENV.has(k.toUpperCase()) && typeof v === 'string') env[k] = v
+  for (const [k, v] of Object.entries(tessel || {})) if (typeof v === 'string' && v) env[k] = v
+  return env
 }
 
 export const newRemoteToken = () => crypto.randomBytes(32).toString('hex')

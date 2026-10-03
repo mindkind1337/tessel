@@ -446,8 +446,15 @@ __t_newproj() {
 __t_ragent() {
   case $1 in ''|*[!0-9A-Za-z.-]*) return 90 ;; esac
   __s="$HOME/.tessel-server"
-  ( umask 077; mkdir -p "$__s/bin" "$__s/run" ) || return 98
-  chmod 700 "$__s" "$__s/bin" "$__s/run" 2>/dev/null
+  [ -L "$__s" ] && return 98
+  if [ -e "$__s" ]; then [ -d "$__s" ] && [ -O "$__s" ] || return 98; fi
+  ( umask 077; mkdir -p "$__s" && mkdir -p "$__s/bin" "$__s/run" ) || return 98
+  for __x in "$__s" "$__s/bin" "$__s/run"; do
+    [ -L "$__x" ] && return 98
+    [ -d "$__x" ] && [ -O "$__x" ] || return 98
+    chmod 700 "$__x" || return 98
+  done
+  [ -L "$__s/bin/tessel-shim.cjs" ] && return 98
   __nd=$(command -v node 2>/dev/null) || __nd=
   case $__nd in /*) ;; *) __nd= ;; esac
   if [ -z "$__nd" ]; then __nd=$("\${SHELL:-/bin/sh}" -lc 'command -v node' </dev/null 2>/dev/null | tail -n 1) || __nd=; case $__nd in /*) ;; *) __nd= ;; esac; fi
