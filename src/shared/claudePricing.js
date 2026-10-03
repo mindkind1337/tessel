@@ -3,14 +3,21 @@
 // tokens would cost on the API. Prices and the model-name matching come from
 // Orca (github.com/stablyai/orca, src/main/claude-usage/claude-model-pricing.ts,
 // MIT, Copyright (c) 2026 Lovecast Inc.), rewritten here in JavaScript.
+// Checked against https://platform.claude.com/docs/en/about-claude/pricing on
+// 2026-10-03 (modelPricing.js PRICING_UPDATED); Sonnet 5.5 and Mythos added
+// then. Haiku 3 and Sonnet 3.5 / 3.7 are no longer on that page (retired):
+// their earlier list prices stay for old transcripts.
 
 const LONG = { thresholdTokens: 200_000, inputAbove: 6, outputAbove: 22.5, cacheReadAbove: 0.6, cacheWriteAbove: 7.5, cacheWrite1hAbove: 12 }
 
 export const CLAUDE_PRICING = {
   'claude-fable-5-1': { input: 10, output: 50, cacheRead: 0.25, cacheWrite: 12.5, cacheWrite1h: 20 },
+  'claude-mythos-5-1': { input: 10, output: 50, cacheRead: 0.25, cacheWrite: 12.5, cacheWrite1h: 20 },
   'claude-fable-5': { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5, cacheWrite1h: 20 },
+  'claude-mythos-5': { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5, cacheWrite1h: 20 },
   'claude-opus-5-5': { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5, cacheWrite1h: 8 },
   'claude-opus-5': { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25, cacheWrite1h: 10 },
+  'claude-sonnet-5-5': { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5, cacheWrite1h: 4 },
   'claude-sonnet-5': { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5, cacheWrite1h: 4 },
   'claude-opus-4-8': { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25, cacheWrite1h: 10 },
   'claude-opus-4-7': { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25, cacheWrite1h: 10 },
@@ -37,6 +44,8 @@ export function pricingModel(model) {
   const rules = [
     [/fable-5-1(?:$|[^0-9a-z])/, 'claude-fable-5-1'],
     [/fable-5(?:$|[^0-9])/, 'claude-fable-5'],
+    [/mythos-5-1(?:$|[^0-9a-z])/, 'claude-mythos-5-1'],
+    [/mythos-5(?:$|[^0-9])/, 'claude-mythos-5'],
     [/opus-5-5(?:$|[^0-9a-z])/, 'claude-opus-5-5'],
     [/opus-5(?:$|[^0-9])/, 'claude-opus-5'],
     [/opus-4-8(?:$|[^0-9])/, 'claude-opus-4-8'],
@@ -46,6 +55,7 @@ export function pricingModel(model) {
     [/opus-4-1(?:$|[^0-9])/, 'claude-opus-4-1'],
     [/opus-4(?:$|-20\d{6}$|@20\d{6}$)/, 'claude-opus-4'],
     [/opus-4/, 'claude-opus-4-8'], // a newer Opus 4 point release: today's Opus price
+    [/sonnet-5-5(?:$|[^0-9a-z])/, 'claude-sonnet-5-5'],
     [/sonnet-5(?:$|[^0-9])/, 'claude-sonnet-5'],
     [/sonnet-4-6(?:$|[^0-9])/, 'claude-sonnet-4-6'],
     [/sonnet-4-5(?:$|[^0-9])/, 'claude-sonnet-4-5'],
