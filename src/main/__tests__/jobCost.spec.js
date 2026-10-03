@@ -294,4 +294,41 @@ describe('job cost service', () => {
     expect(sent).toEqual(['jobCost:changed'])
     await svc.close()
   })
+
+  it('a session whose transcript is not written yet: told when it appears, then read', async () => {
+    // Claude Code reports its session at start but writes the transcript only
+    // with the first prompt: a card moved to Doing before that must still
+    // get its figures.
+    const f = claudeFile(S1)
+    report('pane-1', 'claude', S1, f)
+    fs.writeFileSync(join(userData, 'task-board.json'), JSON.stringify({ tasks: [{ id: 'card-A', column: 'doing', paneId: 'pane-1', workPeriods: [{ start: T0, end: null, paneId: 'pane-1' }] }] }))
+    const sent = []
+    const svc = service({ send: (ch) => sent.push(ch), debounceMs: 1 })
+    expect((await svc.forCards(['card-A']))['card-A']).toMatchObject({ status: 'unavailable', reason: 'missing-file' })
+    expect((await svc.forPanes(['pane-1']))['pane-1']).toMatchObject({ status: 'unavailable', reason: 'missing-file' })
+    await svc.poll()
+    write(f, [claudeLine({ id: 'm1', at: T0 + 1000 })])
+    await svc.poll()
+    await new Promise((r) => setTimeout(r, 20))
+    expect(sent).toEqual(['jobCost:changed'])
+    expect((await svc.forCards(['card-A']))['card-A']).toMatchObject({ status: 'ok', inputTokens: 10, outputTokens: 20 })
+    expect((await svc.forPanes(['pane-1']))['pane-1']).toMatchObject({ status: 'ok', inputTokens: 10 })
+    await svc.close()
+  })
+
+  it('a pane with no session reported yet: told when its agent reports one', async () => {
+    fs.writeFileSync(join(userData, 'task-board.json'), JSON.stringify({ tasks: [{ id: 'card-A', column: 'doing', paneId: 'pane-1', workPeriods: [{ start: T0, end: null, paneId: 'pane-1' }] }] }))
+    const sent = []
+    const svc = service({ send: (ch) => sent.push(ch), debounceMs: 1 })
+    expect((await svc.forCards(['card-A']))['card-A']).toMatchObject({ status: 'unavailable', reason: 'no-session' })
+    await svc.poll()
+    const f = claudeFile(S1)
+    write(f, [claudeLine({ id: 'm1', at: T0 + 1000 })])
+    report('pane-1', 'claude', S1, f)
+    await svc.poll()
+    await new Promise((r) => setTimeout(r, 20))
+    expect(sent).toEqual(['jobCost:changed'])
+    expect((await svc.forCards(['card-A']))['card-A']).toMatchObject({ status: 'ok', inputTokens: 10 })
+    await svc.close()
+  })
 })

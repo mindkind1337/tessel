@@ -316,6 +316,25 @@ export function createJobCost({
     return paneLog.get(paneId).at(-1)
   }
 
+  async function exists(file) {
+    try {
+      return (await fs.stat(file)).isFile()
+    } catch {
+      return false
+    }
+  }
+
+  // A pane whose figures could not be read yet (no session reported, or its
+  // transcript not written yet: Claude Code writes it with the first prompt):
+  // its session report and the transcript it named are watched, so the window
+  // is told when they appear.
+  function watchPending(paneId, s) {
+    const dir = sessionsDir()
+    if (typeof dir === 'string' && isAbsolute(dir)) watch(join(dir, `${paneId}.json`))
+    const p = s && s.transcriptPath
+    if (typeof p === 'string' && isAbsolute(p) && p.length <= 1024 && !p.includes('\0') && p.toLowerCase().endsWith('.jsonl') && !isRemote(p)) watch(p)
+  }
+
   // A session -> its files [{ file, kind, sub }] | { reason }
   async function filesOf(paneId, s) {
     if (FILE_AGENTS.includes(s.agent)) {
@@ -323,7 +342,7 @@ export function createJobCost({
       const key = `${s.agent}|${s.sessionId}|${s.transcriptPath || ''}`
       const known = resolved.get(key)
       // A file not found is looked for again after a while (not yet written).
-      let hit = known && (known.file || now() - known.at < 30000) ? known.file : undefined
+      let hit = known && known.file ? known.file : undefined
       if (hit === undefined) {
         hit = null
         let folders = []
@@ -333,23 +352,27 @@ export function createJobCost({
           folders = []
         }
         const sub = s.agent === 'codex' ? 'sessions' : 'projects'
+        // The reported path: checked every time (cheap), so a transcript
+        // written after the session started is found as soon as it exists.
         for (const home of folders) {
           if (typeof home !== 'string' || !isAbsolute(home)) continue
           if (isRemote(home)) continue
           const f = s.transcriptPath ? reportedTranscriptIn(home, sub, s.transcriptPath) : null
-          if (f) {
+          if (f && (await exists(f))) {
             hit = f
             break
           }
         }
         if (!hit && s.transcriptPath && folders.length && isRemote(s.transcriptPath)) return { reason: 'remote' }
-        if (!hit)
+        // The search by id (reads folders): not again for a while.
+        if (!hit && !(known && now() - known.at < 30000)) {
           for (const home of folders) {
             if (typeof home !== 'string' || !isAbsolute(home) || isRemote(home)) continue
             hit = s.agent === 'codex' ? codexRolloutIn(home, s.sessionId) : claudeTranscriptIn(home, s.sessionId)
             if (hit) break
           }
-        resolved.set(key, { file: hit, at: now() })
+          resolved.set(key, { file: hit, at: now() })
+        } else if (hit) resolved.set(key, { file: hit, at: now() })
         if (resolved.size > 2000) resolved.delete(resolved.keys().next().value)
       }
       if (hit) {
@@ -419,16 +442,19 @@ export function createJobCost({
       try {
         const s = await noteSession(id)
         if (!s) {
+          watchPending(id, null)
           out[id] = unavailable('no-session')
           continue
         }
         const where = await filesOf(id, s)
         if (!where.files) {
+          if (where.reason === 'missing-file') watchPending(id, s)
           out[id] = unavailable(where.reason, { sessionId: s.sessionId, agent: s.agent })
           continue
         }
         const r = await eventsOf(where.files, budget)
         if (!r.any) {
+          watchPending(id, s)
           out[id] = unavailable('missing-file', { sessionId: s.sessionId, agent: s.agent })
           continue
         }
@@ -502,7 +528,10 @@ export function createJobCost({
         for (const s of sessions) {
           const where = await filesOf(paneId, s)
           if (where.files) files.push(...where.files)
-          else reason = reason || where.reason
+          else {
+            reason = reason || where.reason
+            if (where.reason === 'missing-file') watchPending(paneId, s)
+          }
         }
         if (files.length) {
           const r = await eventsOf(files, budget)
@@ -510,7 +539,11 @@ export function createJobCost({
           if (r.any) res = attribute(r.events, [...byPane.get(paneId)].map(([id, windows]) => ({ id, windows })))
           else reason = reason || 'missing-file'
         }
-        if (!res) for (const id of byPane.get(paneId).keys()) if (!reasons.has(id)) reasons.set(id, reason || 'missing-file')
+        if (!res) {
+          const why = reason || 'missing-file'
+          if (why === 'missing-file' || why === 'no-session') watchPending(paneId, sessions.at(-1))
+          for (const id of byPane.get(paneId).keys()) if (!reasons.has(id)) reasons.set(id, why)
+        }
       } catch (err) {
         warn(`pane ${paneId}`, err)
       }
