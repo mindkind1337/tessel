@@ -5,6 +5,7 @@ import SplitNode from './components/SplitNode.vue'
 import BrandIcon from './components/BrandIcon.vue'
 import SidePanel from './components/SidePanel.vue'
 import WorkspaceSidebar from './components/WorkspaceSidebar.vue'
+import WorktreeCleanupDialog from './components/sidebar/WorktreeCleanupDialog.vue'
 import StatusBar from './components/StatusBar.vue'
 import { buildProjectCards, cardTargetPane, portProbes } from './sidebarModel'
 import { createProjectWorktrees } from './projectWorktrees'
@@ -2628,6 +2629,12 @@ function buildCommands() {
   add(t('app.cmd.group.settings', 'Settings'), t('app.cmd.stats', 'Stats & Usage'), () => openSettingsAt('stats'), { hint: t('app.cmd.statsHint', 'Token analytics, daily usage, models, projects and conversations') })
 
   add(t('app.cmd.group.task', 'Task'), t('app.cmd.newTask', 'New task…'), openNewTask, { hint: t('app.cmd.newTaskHint', 'Give an agent a task, in its own copy of the project') })
+  if (currentWs.value && currentWs.value.cwd && !currentWs.value.remote && window.shellApi.worktreeCleanupScan) {
+    const wsId = currentWs.value.id
+    add(t('app.cmd.group.task', 'Task'), t('app.cmd.cleanupWorktrees', 'Clean up worktrees…'), () => openWorktreeCleanup(wsId), {
+      hint: t('app.cmd.cleanupWorktreesHint', "Remove this project's merged or inactive worktrees, with their git state")
+    })
+  }
   add(t('app.cmd.group.task', 'Task'), t('app.cmd.automations', 'Automations'), () => openSettingsAt('automations'), {
     hint: t('app.cmd.automationsHint', 'Run an agent task on a schedule while Tessel is open')
   })
@@ -5446,6 +5453,35 @@ async function removeTaskCopy(task, force) {
     await new Promise((r) => setTimeout(r, 800))
   }
   return window.shellApi.review.remove({ root: wt.root, path: wt.path, branch: wt.branch, target: wt.baseBranch || 'main', force })
+}
+
+// Clean up worktrees (the project menu, the command palette): the dialog
+// shows a project's other worktrees with their git state; each one removed
+// has its panes closed first, then goes through review:remove (which unlinks
+// junctions before git deletes anything).
+const cleanupWsId = ref(null)
+const cleanupProject = computed(() => (cleanupWsId.value && sidebarProjects.value.find((p) => p.id === cleanupWsId.value)) || null)
+const cleanupTasks = computed(() => boardTasks.filter((x) => cleanupWsId.value && x.wsId === cleanupWsId.value))
+function openWorktreeCleanup(wsId) {
+  const ws = wsById(wsId)
+  if (!ws || !ws.cwd || ws.remote) return
+  cleanupWsId.value = wsId
+}
+function scanWorktreeCleanup(cwd) {
+  return window.shellApi.worktreeCleanupScan(cwd)
+}
+async function removeCleanupWorktree(row, { root, defaultBranch }) {
+  const open = (row.paneIds || []).filter((id) => findLeaf(id))
+  for (const id of open) closeLeaf(id, { force: true })
+  // Let their terminals release the folder.
+  if (open.length) await new Promise((r) => setTimeout(r, 800))
+  const res = await window.shellApi.review.remove({ root, path: row.path, branch: row.branch, target: defaultBranch, force: !!row.force })
+  // The task's copy is gone: its card stays, without a copy.
+  if (res && res.ok && row.taskId) updateTask(row.taskId, { worktree: null })
+  return res
+}
+function onWorktreesCleaned() {
+  refreshBranches()
 }
 
 // ✕ on a card: asked first. A task working in its own copy of the project
@@ -10122,6 +10158,7 @@ onBeforeUnmount(() => {
         @reveal="revealFolder"
         @delete-task="deleteTask"
         @review-task="openReview"
+        @cleanup-worktrees="openWorktreeCleanup"
         @port-open="openPort"
         @port-copy="copyPort"
         @port-stop="stopPort"
@@ -10308,6 +10345,16 @@ onBeforeUnmount(() => {
     />
 
     <CommandPalette v-if="paletteOpen" :commands="paletteCommands" @close="paletteOpen = false" />
+    <WorktreeCleanupDialog
+      v-if="cleanupProject"
+      :project="cleanupProject"
+      :tasks="cleanupTasks"
+      :scan="scanWorktreeCleanup"
+      :remove="removeCleanupWorktree"
+      :now="clock"
+      @removed="onWorktreesCleaned"
+      @close="cleanupWsId = null"
+    />
     <AddProjectDialog
       v-if="addProjectOpen"
       :project-count="workspaces.length"

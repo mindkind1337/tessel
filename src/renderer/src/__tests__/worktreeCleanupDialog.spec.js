@@ -4,6 +4,10 @@ import { describe, it, expect, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import WorktreeCleanupDialog from '../components/sidebar/WorktreeCleanupDialog.vue'
+import WorkspaceSidebar from '../components/WorkspaceSidebar.vue'
+import { resetSettings } from '../settings'
+import { setUiLanguage } from '../i18n'
+import { _resetFeedsForTest } from '../agentChildrenFeed'
 import { INACTIVE_MS } from '../worktreeCleanup'
 
 const NOW = 10_000_000_000_000
@@ -176,5 +180,44 @@ describe('WorktreeCleanupDialog', () => {
     expect(checked(w)).toEqual(['a'])
     await w.find('.wcl-card').trigger('keydown', { key: 'Escape' })
     expect(w.emitted('close')).toHaveLength(1)
+  })
+})
+
+describe('the project menu', () => {
+  const menuLabels = () => [...document.querySelectorAll('.orca-menu [data-orca-menu-item]')].map((b) => b.textContent.trim())
+  const wt = (path, extra = {}) => ({ path, branch: 'x', head: 'h', isMain: false, locked: false, prunable: false, ...extra })
+  afterEach(async () => {
+    _resetFeedsForTest()
+    delete window.shellApi
+    await setUiLanguage('en')
+  })
+  function open(projects) {
+    resetSettings()
+    window.shellApi = {}
+    const w = mount(WorkspaceSidebar, { props: { projects, currentId: 'ws1', ports: {}, now: NOW, teams: [] }, attachTo: document.body })
+    mounted.push(w)
+    return w
+  }
+
+  it('Clean Up Worktrees… emits the project, for a local project with other worktrees', async () => {
+    const w = open([{ ...project, worktrees: [wt('C:\repo', { isMain: true }), wt('C:\w\a')] }])
+    await w.findAll('.osb-header-action')[0].trigger('click')
+    const item = [...document.querySelectorAll('.orca-menu [data-orca-menu-item]')].find((b) => b.textContent.trim() === 'Clean Up Worktrees…')
+    expect(item).toBeTruthy()
+    item.click()
+    await flushPromises()
+    expect(w.emitted('cleanup-worktrees')[0]).toEqual(['ws1'])
+  })
+
+  it('not for a project without other worktrees, nor a remote one', async () => {
+    const w = open([{ ...project, worktrees: [wt('C:\repo', { isMain: true })] }])
+    await w.findAll('.osb-header-action')[0].trigger('click')
+    expect(menuLabels()).not.toContain('Clean Up Worktrees…')
+    w.unmount()
+    mounted = []
+    document.body.innerHTML = ''
+    const r = open([{ ...project, remote: { host: 'srv', path: '/x' }, worktrees: [wt('/x/a')] }])
+    await r.findAll('.osb-header-action')[0].trigger('click')
+    expect(menuLabels()).not.toContain('Clean Up Worktrees…')
   })
 })
