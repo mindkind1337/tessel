@@ -123,6 +123,24 @@ describe("App.vue's queue after an unconfirmed delivery", () => {
     await vi.advanceTimersByTimeAsync(32000)
     expect(failed).toHaveBeenCalledTimes(1)
   })
+  it('a terminal that came back resets the wait: a later remount waits again, its messages are not failed at once', async () => {
+    const failed = vi.fn()
+    // Held while the agent works; its terminal remounts (a layout change, its chat view).
+    ctx.agentStatus.a1 = 'busy'
+    ctx.deliverToAgent('a1', 'held card', { waitIdle: true, onFailed: failed })
+    delete panes.a1
+    await vi.advanceTimersByTimeAsync(2000)
+    panes.a1 = {}
+    // Back; still busy for a while (more than 30 s), then a second remount.
+    await vi.advanceTimersByTimeAsync(40000)
+    delete panes.a1
+    await vi.advanceTimersByTimeAsync(4000)
+    expect(failed).not.toHaveBeenCalled()
+    panes.a1 = {}
+    ctx.agentStatus.a1 = 'idle'
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(pasted).toEqual(['held card'])
+  })
   it('a quiet-agent message right after one was taken waits for the turn it started, even before it shows', async () => {
     ctx.deliverToAgent('a1', 'with images', { waitIdle: true })
     await settle()

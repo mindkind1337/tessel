@@ -4918,6 +4918,8 @@ function flushPending() {
       delete pendingMessages[id]
       continue
     }
+    // Its terminal is back: a later remount waits its own 30 s again.
+    for (const item of pendingMessages[id]) delete item.paneMissingSince
     if (awaitingApproval(id)) {
       waiting = true
       continue
