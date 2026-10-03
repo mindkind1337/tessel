@@ -229,6 +229,31 @@ describe('job cost service', () => {
     expect(saved.panes['pane-1'].map((s) => s.sessionId)).toEqual([S1, S2])
   })
 
+  it('a card deleted from the board: counted from its record in the history', async () => {
+    const f1 = claudeFile(S1)
+    write(f1, [claudeLine({ id: 'a', at: T0 + 1000, input: 100, output: 0 }), claudeLine({ id: 'b', at: T0 + 50000, input: 40, output: 0 })])
+    report('pane-1', 'claude', S1, f1)
+    fs.writeFileSync(
+      join(userData, 'task-board.json'),
+      JSON.stringify({
+        version: 2,
+        appliedRequests: [],
+        tasks: [{ id: 'card-B', column: 'done', paneId: 'pane-1', workPeriods: [{ start: T0 + 40000, end: T0 + 60000, paneId: 'pane-1' }] }],
+        deleted: ['card-A'],
+        history: [
+          { id: 'card-A', title: 'Gone', paneId: 'pane-1', doneAt: T0 + 30000, workPeriods: [{ start: T0, end: T0 + 30000, paneId: 'pane-1' }] },
+          { id: 'card-B', title: 'On board', workPeriods: [{ start: T0, end: T0 + 60000, paneId: 'pane-1' }] }
+        ]
+      })
+    )
+    const svc = service()
+    const r = await svc.forCards(['card-A', 'card-B'])
+    expect(r['card-A']).toMatchObject({ status: 'ok', inputTokens: 100, durationMs: 30000 })
+    // The card on the board: its own periods, not its record's.
+    expect(r['card-B']).toMatchObject({ status: 'ok', inputTokens: 40, durationMs: 20000 })
+    await svc.close()
+  })
+
   it('a Codex pane found by its session id in the account folder', async () => {
     const f = join(codexHome, 'sessions', '2026', '10', '01', `rollout-2026-10-01T10-00-00-${CX}.jsonl`)
     write(f, [JSON.stringify({ timestamp: iso(T0), type: 'turn_context', payload: { model: 'gpt-5.5' } }), tokenCount(T0 + 1000, [100, 40, 10], [100, 40, 10])])

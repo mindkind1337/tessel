@@ -48,7 +48,7 @@ describe('a deleted card on the saved board', () => {
 
   it('a board without deletions reads as before', () => {
     saveTasks(dir, [card('a')], ['team-1/p__1.json'])
-    expect(loadBoard(dir)).toEqual({ tasks: [card('a')], appliedRequests: ['team-1/p__1.json'], deleted: [] })
+    expect(loadBoard(dir)).toEqual({ tasks: [card('a')], appliedRequests: ['team-1/p__1.json'], deleted: [], history: [] })
   })
 })
 

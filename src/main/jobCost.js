@@ -68,6 +68,20 @@ export function cardWindows(card, now = Date.now()) {
   return out.map((w) => ({ ...w, end: Math.min(Math.max(w.end, w.start), Math.max(now, w.start)) }))
 }
 
+// The finished tasks' history (task-board.json "history"): a record whose
+// card was deleted from the board is still counted, from its work periods.
+export function withHistory(tasks, history) {
+  if (!Array.isArray(history) || !history.length) return tasks
+  const ids = new Set(tasks.map((t) => t.id))
+  const out = [...tasks]
+  for (const r of history) {
+    if (!obj(r) || typeof r.id !== 'string' || ids.has(r.id)) continue
+    ids.add(r.id)
+    out.push({ id: r.id, column: 'done', paneId: typeof r.paneId === 'string' ? r.paneId : null, startedAt: num(r.startedAt), doneAt: num(r.doneAt), workPeriods: Array.isArray(r.workPeriods) ? r.workPeriods : [] })
+  }
+  return out
+}
+
 // --- Sums and cost -------------------------------------------------------
 
 function emptySums() {
@@ -445,7 +459,7 @@ export function createJobCost({
     const data = await readJson(file)
     const tasks = Array.isArray(data) ? data : obj(data) && Array.isArray(data.tasks) ? data.tasks : null
     // A board being written (unreadable a moment): the last good one.
-    if (tasks) board = { stamp, tasks: tasks.filter((t) => obj(t) && typeof t.id === 'string') }
+    if (tasks) board = { stamp, tasks: withHistory(tasks.filter((t) => obj(t) && typeof t.id === 'string'), obj(data) && data.history) }
     watch(file)
     return board.tasks
   }

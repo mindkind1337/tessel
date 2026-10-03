@@ -872,7 +872,7 @@ ipcMain.handle('taskboard:load', (_evt, opts) => {
 ipcMain.handle('taskboard:save', (_evt, board) => {
   try {
     if (Array.isArray(board)) saveTasks(app.getPath('userData'), board)
-    else saveTasks(app.getPath('userData'), board && board.tasks, board && board.appliedRequests, board && board.deleted)
+    else saveTasks(app.getPath('userData'), board && board.tasks, board && board.appliedRequests, board && board.deleted, board && board.history)
     return { ok: true }
   } catch (err) {
     logCrashContext(`taskboard:save failed: ${err.message}`)
