@@ -62,6 +62,18 @@ describe('increase/decreaseChatFontScale', ()=>{
     });
 });
 describe('chatFontScaleActionForEvent', ()=>{
+    // French AZERTY: the top row gives à for 0 and _ for 8 (unshifted); the
+    // key's place (code) says which key it is.
+    it('reads the key itself on AZERTY: Ctrl+0 (à) resets, Ctrl+8 (_) does nothing', ()=>{
+        expect(chatFontScaleActionForEvent(combo({ key: 'à', code: 'Digit0', ctrlKey: true }), false)).toBe('reset');
+        expect(chatFontScaleActionForEvent(combo({ key: '_', code: 'Digit8', ctrlKey: true }), false)).toBeNull();
+        expect(chatFontScaleActionForEvent(combo({ key: '-', code: 'Digit6', ctrlKey: true }), false)).toBe('decrease');
+        expect(chatFontScaleActionForEvent(combo({ key: '_', code: 'Minus', ctrlKey: true }), false)).toBe('decrease');
+        expect(chatFontScaleActionForEvent(combo({ key: '+', code: 'NumpadAdd', ctrlKey: true }), false)).toBe('increase');
+        expect(chatFontScaleActionForEvent(combo({ key: '-', code: 'NumpadSubtract', ctrlKey: true }), false)).toBe('decrease');
+        expect(chatFontScaleActionForEvent(combo({ key: '0', code: 'Numpad0', ctrlKey: true }), false)).toBe('reset');
+    });
+
     it('maps Cmd+= to increase on Mac', ()=>{
         expect(chatFontScaleActionForEvent(combo({
             key: '=',

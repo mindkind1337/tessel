@@ -9484,14 +9484,15 @@ function onKey(e, opts = {}) {
       openFinder()
     }
   }
+  // (The key's place for 0 and the keypad: AZERTY's Ctrl+0 gives "à".)
   if (e.ctrlKey && !e.shiftKey && !e.altKey) {
-    if (e.key === '=' || e.key === '+') {
+    if (e.key === '=' || e.key === '+' || e.code === 'NumpadAdd') {
       e.preventDefault()
       zoom(1)
-    } else if (e.key === '-') {
+    } else if (e.key === '-' || e.code === 'NumpadSubtract') {
       e.preventDefault()
       zoom(-1)
-    } else if (e.key === '0') {
+    } else if (e.key === '0' || e.code === 'Digit0' || e.code === 'Numpad0') {
       e.preventDefault()
       zoom(0)
     }

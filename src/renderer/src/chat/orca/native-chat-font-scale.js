@@ -41,13 +41,21 @@ export function chatFontScaleActionForEvent(e, isMac) {
     if (!primary) {
         return null;
     }
+    // Tessel: the key's place (code) for 0 and the keypad, so AZERTY's top
+    // row works (Ctrl+0 gives "à"); "_" only from the minus key itself (on
+    // AZERTY it is Ctrl+8).
+    const code = typeof e.code === 'string' ? e.code : '';
+    if (code === 'Digit0' || code === 'Numpad0') return 'reset';
+    if (code === 'NumpadAdd') return 'increase';
+    if (code === 'NumpadSubtract') return 'decrease';
     switch(e.key){
         case '=':
         case '+':
             return 'increase';
         case '-':
-        case '_':
             return 'decrease';
+        case '_':
+            return !code || code === 'Minus' ? 'decrease' : null;
         case '0':
             return 'reset';
         default:
