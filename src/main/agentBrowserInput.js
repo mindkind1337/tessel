@@ -429,10 +429,42 @@ async function selectContents(send, backendNodeId) {
 
 // Replaces the field's text (fill) or adds at the cursor (type). cache: the
 // page's state (its isolated world, its remembered secret fields).
+// A list (<select>) takes no typed text: its option is chosen by label (or
+// value), as a person picks it. -> { label } or throws, naming the options.
+const CHOOSE_OPTION = `function (want) {
+  const norm = (s) => String(s == null ? '' : s).replace(/\\s+/g, ' ').trim().toLowerCase()
+  const w = norm(want)
+  const opts = Array.from(this.options || [])
+  const o = opts.find((x) => norm(x.label || x.text) === w) || opts.find((x) => norm(x.value) === w)
+  const labels = opts.slice(0, 50).map((x) => String(x.label || x.text).slice(0, 80))
+  if (this.disabled) return { ok: false, disabled: true, labels }
+  if (!o || o.disabled) return { ok: false, labels }
+  o.selected = true
+  this.dispatchEvent(new Event('input', { bubbles: true }))
+  this.dispatchEvent(new Event('change', { bubbles: true }))
+  return { ok: true, label: String(o.label || o.text).slice(0, 80) }
+}`
+async function chooseOption(send, backendNodeId, text) {
+  const { object } = await send('DOM.resolveNode', { backendNodeId })
+  if (!object || !object.objectId) throw new BrowserInputError('stale_ref', 'The list is gone: call browser_snapshot again.')
+  try {
+    const r = await send('Runtime.callFunctionOn', { objectId: object.objectId, functionDeclaration: CHOOSE_OPTION, arguments: [{ value: text }], returnByValue: true })
+    const v = (r && r.result && r.result.value) || {}
+    if (v.ok) return { option: v.label }
+    if (v.disabled) throw new BrowserInputError('disabled_field', 'This list is disabled.')
+    const choices = Array.isArray(v.labels) && v.labels.length ? v.labels.join(', ') : '(none)'
+    throw new BrowserInputError('no_option', `No option "${String(text).slice(0, 80)}" in this list. Its options: ${choices}`)
+  } finally {
+    send('Runtime.releaseObject', { objectId: object.objectId }).catch(() => {})
+  }
+}
+
 export async function putText(send, backendNodeId, text, { clear, insert = null, cache = null }) {
   checkText(text)
   await rememberSecrets(send, cache)
   await refuseIfPassword(send, backendNodeId, cache)
+  const node = await describe(send, backendNodeId).catch(() => null)
+  if (node && String(node.nodeName || '').toUpperCase() === 'SELECT') return chooseOption(send, backendNodeId, text)
   await send('DOM.focus', { backendNodeId })
   // Where the keyboard went (a host may delegate it to an inner field).
   const focus = await focusedField(send, cache)

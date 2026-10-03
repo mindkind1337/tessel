@@ -119,7 +119,7 @@ const pageCdp = (extra = {}, page = pageModel()) => ({
     const id = p.objectId ? idOf(p.objectId) : p.backendNodeId
     const e = page.elements[id]
     if (!e) throw new Error('No node with given id found')
-    return { node: { backendNodeId: id, nodeName: 'INPUT', ...(e.closed ? { shadowRoots: [{ shadowRootType: 'closed' }] } : {}) } }
+    return { node: { backendNodeId: id, nodeName: e.tag || 'INPUT', ...(e.closed ? { shadowRoots: [{ shadowRootType: 'closed' }] } : {}) } }
   },
   'DOM.focus': (p) => {
     page.focused = page.focusTo[p.backendNodeId] || p.backendNodeId
@@ -354,6 +354,40 @@ describe('agent browser: commands', () => {
     await call('snapshot')
     await expect(call('fill', { ref: '@e1', text: 'my text' })).rejects.toMatchObject({ code: 'password_field' })
     expect(guest.sent.filter(([m]) => m === 'Input.insertText')).toEqual([])
+  })
+
+  // A list (<select>): text typed into it changes nothing (found in a real
+  // page: "Filled" was answered and the list kept its option). fill picks the
+  // option by its label or value instead; an unknown one names the options.
+  it('fill on a list picks the option by its label; an unknown option is refused with the choices', async () => {
+    const page = pageModel()
+    page.elements[30] = { tag: 'SELECT' }
+    const options = [
+      { label: 'Red', value: 'r' },
+      { label: 'Green', value: 'g' },
+      { label: 'Blue', value: 'b' }
+    ]
+    let selected = 'g'
+    const base = pageCdp({}, page)
+    const cdp = {
+      ...base,
+      'Runtime.callFunctionOn': (p) => {
+        if (!String(p.functionDeclaration).includes('this.options')) return base['Runtime.callFunctionOn'](p)
+        const want = String(p.arguments[0].value).trim().toLowerCase()
+        const o = options.find((x) => x.label.toLowerCase() === want) || options.find((x) => x.value === want)
+        if (!o) return { result: { value: { ok: false, labels: options.map((x) => x.label) } } }
+        selected = o.value
+        return { result: { value: { ok: true, label: o.label } } }
+      }
+    }
+    const { call, guest } = setup({ guest: fakeGuest(11, { cdp }) })
+    await call('snapshot')
+    const r = await call('fill', { ref: '@e1', text: 'Blue' })
+    expect(selected).toBe('b')
+    expect(r.text).toContain('Blue')
+    expect(guest.sent.filter(([m]) => m === 'Input.insertText')).toEqual([])
+    await expect(call('fill', { ref: '@e1', text: 'Purple' })).rejects.toMatchObject({ code: 'no_option', message: expect.stringContaining('Red, Green, Blue') })
+    expect(selected).toBe('b')
   })
 
   it('fill types into a text field, never into a password field', async () => {

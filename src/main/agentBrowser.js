@@ -512,7 +512,8 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
       case 'type': {
         const cdp = await attach(guest, s)
         const entry = await resolveRef(cdp, s, args.ref)
-        await putText(cdp, entry.backendDOMNodeId, args.text, { clear: op === 'fill', cache: s, insert: typeof guest.insertText === 'function' ? (t) => guest.insertText(t) : null })
+        const put = await putText(cdp, entry.backendDOMNodeId, args.text, { clear: op === 'fill', cache: s, insert: typeof guest.insertText === 'function' ? (t) => guest.insertText(t) : null })
+        if (put && put.option) return { text: `Chose "${put.option}" in ${args.ref} (${entry.role} "${entry.name}").` }
         return { text: `${op === 'fill' ? 'Filled' : 'Typed into'} ${args.ref} (${entry.role} "${entry.name}").` }
       }
       case 'press': {
