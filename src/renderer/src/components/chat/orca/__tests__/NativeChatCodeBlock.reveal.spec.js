@@ -15,6 +15,15 @@ describe('a code block that is a path', () => {
     expect(codeBlockPath('C:/a.png\nC:/b.png')).toBe('')
     expect(codeBlockPath('//server/share/a.png')).toBe('')
   })
+  it('a command that starts with a path is not a path; a path with spaces still is', () => {
+    expect(codeBlockPath('/usr/bin/git status')).toBe('')
+    expect(codeBlockPath('C:/tools/x.exe --flag')).toBe('')
+    expect(codeBlockPath('/compact')).toBe('')
+    expect(codeBlockPath('C:/Program Files/App/app.exe')).toBe('C:/Program Files/App/app.exe')
+    expect(codeBlockPath('/home/me/My Files/a.png')).toBe('/home/me/My Files/a.png')
+    expect(codeBlockPath('C:/Users/me/My Folder/')).toBe('C:/Users/me/My Folder/')
+    expect(codeBlockPath('/home/me/notes')).toBe('/home/me/notes')
+  })
   it('gets Show in Folder next to Copy', async () => {
     const reveal = vi.fn()
     window.shellApi = { chatFiles: { reveal }, writeClipboard: vi.fn() }

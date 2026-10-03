@@ -19,6 +19,11 @@ export function codeBlockPath(code) {
   const text = String(code || '').trim()
   if (!text || text.length > 1024 || /[\r\n]/.test(text)) return ''
   if (!/^(?:[A-Za-z]:[\\/]|\/)/.test(text)) return ''
+  // A command that starts with a path ("/usr/bin/git status", "C:\x.exe
+  // --flag"): with a space, a path ends with a file extension or a folder
+  // separator. A lone name at the root ("/compact", "/help") is a command.
+  if (/\s/.test(text) && !/(?:\.[A-Za-z0-9]{1,8}|[\\/])$/.test(text)) return ''
+  if (/^\/[^\\/]*$/.test(text) && !/\.[A-Za-z0-9]{1,8}$/.test(text)) return ''
   const problem = chatPathProblem(text)
   return problem && problem !== 'executable' ? '' : text
 }
