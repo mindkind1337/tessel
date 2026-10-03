@@ -5589,11 +5589,14 @@ async function removeTaskCopy(task, force) {
 // has its panes closed first, then goes through review:remove (which unlinks
 // junctions before git deletes anything).
 const cleanupWsId = ref(null)
+// Asked again while open (the palette over it): a new dialog, scanned again.
+const cleanupSeq = ref(0)
 const cleanupProject = computed(() => (cleanupWsId.value && sidebarProjects.value.find((p) => p.id === cleanupWsId.value)) || null)
 const cleanupTasks = computed(() => boardTasks.filter((x) => cleanupWsId.value && x.wsId === cleanupWsId.value))
 function openWorktreeCleanup(wsId) {
   const ws = wsById(wsId)
   if (!ws || !ws.cwd || ws.remote) return
+  cleanupSeq.value++
   cleanupWsId.value = wsId
 }
 function scanWorktreeCleanup(cwd) {
@@ -10584,6 +10587,7 @@ onBeforeUnmount(() => {
     <CommandPalette v-if="paletteOpen" :commands="paletteCommands" @close="paletteOpen = false" />
     <WorktreeCleanupDialog
       v-if="cleanupProject"
+      :key="cleanupSeq"
       :project="cleanupProject"
       :tasks="cleanupTasks"
       :scan="scanWorktreeCleanup"

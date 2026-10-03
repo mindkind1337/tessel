@@ -5,7 +5,7 @@
 // worktree that failed (it stays listed, to try again). After Orca's
 // WorkspaceCleanupDialog and its candidate rows and confirm step, MIT,
 // Copyright (c) 2026 Lovecast Inc.
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { AlertTriangle, Check, GitBranch, Loader2, X } from 'lucide-vue-next'
 import { t } from '../../i18n'
 import { formatShortTimeAgo } from '../../sidebarModel'
@@ -92,9 +92,14 @@ async function rescan() {
     }
     return
   }
-  result.value = res
+  // A row that failed and that git no longer lists (it unregistered the copy
+  // but its folder stayed): kept, with its error, so it can be tried again
+  // (review:remove deletes such a leftover folder).
+  const prev = (result.value && result.value.items) || []
+  const kept = prev.filter((i) => progress.value[i.path]?.state === 'failed' && !res.items.some((x) => x.path === i.path))
+  result.value = kept.length ? { ...res, items: [...res.items, ...kept] } : res
   // Worktrees gone from git are gone from the list (and from what was removed).
-  removed.value = new Set([...removed.value].filter((k) => res.items.some((i) => i.path === k)))
+  removed.value = new Set([...removed.value].filter((k) => result.value.items.some((i) => i.path === k)))
   if (firstScan) {
     firstScan = false
     selection.value = defaultSelection(visibleRows(allRows.value))
@@ -131,16 +136,33 @@ async function runRemoval() {
   // The failed ones stay ticked: Remove again tries them again.
   selection.value = new Set(res.failed.map((f) => f.key))
   summary.value = res.failed.length
-    ? t('cleanup.summaryFailed', 'Removed {{done}}. {{failed}} could not be removed: see why below, then try again.', {
-        done: res.done.length,
-        failed: res.failed.length
-      })
+    ? failedSummary(res.done.length, res.failed.length)
     : res.done.length === 1
       ? t('cleanup.summaryOne', 'Removed 1 worktree.')
       : t('cleanup.summary', 'Removed {{count}} worktrees.', { count: res.done.length })
   phase.value = 'list'
   rescan()
 }
+
+function failedSummary(done, failed) {
+  if (!done)
+    return failed === 1
+      ? t('cleanup.summaryFailedOne', '1 could not be removed: see why below, then try again.')
+      : t('cleanup.summaryFailedOnly', '{{count}} could not be removed: see why below, then try again.', { count: failed })
+  return failed === 1
+    ? t('cleanup.summaryFailedMixedOne', 'Removed {{done}}. 1 could not be removed: see why below, then try again.', { done })
+    : t('cleanup.summaryFailed', 'Removed {{done}}. {{failed}} could not be removed: see why below, then try again.', { done, failed })
+}
+
+// The button that had the focus goes away with each step (confirm, removing):
+// the focus comes back to the dialog, so Escape and Tab keep working there
+// and nothing typed reaches the terminal behind it.
+watch(phase, () =>
+  nextTick(() => {
+    const el = dialog.value
+    if (el && !el.contains(document.activeElement)) el.focus({ preventScroll: true })
+  })
+)
 
 function close() {
   if (phase.value === 'removing') return
@@ -286,7 +308,8 @@ onUnmounted(() => {
             />
             <div class="hwt-row-text">
               <div class="hwt-name"><GitBranch :size="12" aria-hidden="true" /> {{ row.label }}</div>
-              <div class="hwt-path" :title="row.path">{{ row.path }}</div>
+              <!-- Cut at the start: the folder name at the end tells the rows apart. -->
+              <div class="hwt-path wcl-path" :title="row.path"><bdi>{{ row.path }}</bdi></div>
               <div class="wcl-chips">
                 <span v-if="row.missing" class="wcl-chip">{{ t('cleanup.missing', 'Folder gone') }}</span>
                 <span v-else-if="row.dirty === false" class="wcl-chip ok">{{ t('cleanup.clean', 'Clean') }}</span>
@@ -343,9 +366,11 @@ onUnmounted(() => {
             {{
               phase === 'removing'
                 ? t('cleanup.removing', 'Removing…')
-                : selectedRows.length === 1
-                  ? t('cleanup.removeOneDots', 'Remove 1 worktree…')
-                  : L.removeNDots(selectedRows.length)
+                : !selectedRows.length
+                  ? t('cleanup.removeNone', 'Remove worktrees…')
+                  : selectedRows.length === 1
+                    ? t('cleanup.removeOneDots', 'Remove 1 worktree…')
+                    : L.removeNDots(selectedRows.length)
             }}
           </button>
         </div>
