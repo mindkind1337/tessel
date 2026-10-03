@@ -539,6 +539,18 @@ describe('agent browser: commands', () => {
     await expect(call('open', { url: 'file:///C:/x' })).rejects.toMatchObject({ code: 'url_refused' })
   })
 
+  // A page redirected to a huge address: the answer stays small (the address shortened).
+  it('a very long page address is shortened in the answers (open, navigate)', async () => {
+    const long = `https://example.com/${'a'.repeat(2 * 1024 * 1024)}`
+    const guest = fakeGuest(11, { cdp: pageCdp(), url: long })
+    const { call } = setup({ guest })
+    const opened = await call('open', { url: 'https://example.com' })
+    expect(opened.text.length).toBeLessThan(5000)
+    expect(opened.text).toContain('…')
+    const moved = await call('navigate', { action: 'reload' })
+    expect(moved.text.length).toBeLessThan(5000)
+  })
+
   it('the last page used is the default target next time', async () => {
     const { call, ask } = setup()
     await call('snapshot', { page: 'pane-b' })

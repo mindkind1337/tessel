@@ -56,6 +56,8 @@ const CONSOLE_TEXT = 500
 export const IDLE_MS = 60 * 1000
 const COMMAND_TIMEOUT_MS = 45 * 1000
 const NAV_TIMEOUT_MS = 30 * 1000
+// A page address in an answer, at most (longer: shortened).
+const MAX_SHOWN_URL = 2000
 const CAPTURE_TIMEOUT_MS = 5000
 export const WAIT_DEFAULT_MS = 10000
 export const WAIT_MAX_MS = 30000
@@ -336,8 +338,11 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
     })
   }
 
+  // The page's address and title as answers show them (an address can be
+  // huge after a redirect: shortened, so an answer is never too large).
   function where(guest) {
-    return { url: allowedBrowserUrl(guest.getURL()) || BLANK_URL, title: String(guest.getTitle() || '').slice(0, 200) }
+    const url = allowedBrowserUrl(guest.getURL()) || BLANK_URL
+    return { url: url.length > MAX_SHOWN_URL ? `${url.slice(0, MAX_SHOWN_URL)}…` : url, title: String(guest.getTitle() || '').slice(0, 200) }
   }
 
   async function snapshot(guest, s, pane) {
