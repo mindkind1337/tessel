@@ -322,7 +322,11 @@
       "openInVsCode": "Ouvrir dans VS Code",
       "openInVsCodeHint": "VS Code s'il est installé, sinon le programme associé au fichier",
       "closeEsc": "Fermer (Échap)",
-      "close": "Fermer"
+      "close": "Fermer",
+      "markdownLarge": "Fichier volumineux : ce fichier Markdown dépasse {{limit}}, et son rendu peut figer Tessel un moment.",
+      "markdownTooLarge": "Ce fichier Markdown dépasse {{limit}}, trop volumineux pour l'aperçu : Source l'affiche en texte.",
+      "renderAnyway": "Afficher quand même",
+      "showSource": "Voir la source"
     },
     "doc": {
       "unknownError": "erreur inconnue",
