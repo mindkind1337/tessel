@@ -104,7 +104,7 @@ describe('AgentDashboard.vue', () => {
     expect(working.find('[data-test="adb-pill"]').text()).toBe('4m') // the section names the state
     const done = w.find('[data-test="adb-section-done"] [data-test="adb-card"]')
     expect(done.find('.adb-card-title').text()).toBe('Claude Code 2')
-    expect(done.find('[data-test="adb-pill"]').text()).toBe('Done 10m')
+    expect(done.find('[data-test="adb-pill"]').text()).toBe('10m')
     // A chat agent is listed; a plain terminal is not.
     expect(w.findAll('[data-test="adb-card"]').map((c) => c.attributes('data-pane-id'))).not.toContain('s')
     expect(w.findAll('[data-test="adb-card"]').map((c) => c.attributes('data-pane-id'))).toContain('c')
@@ -141,6 +141,22 @@ describe('AgentDashboard.vue', () => {
     await btn.trigger('click')
     await nextTick()
     expect(w.emitted('sleep')).toEqual([[['4']]])
+  })
+
+  it("a card in a team shows the team's number on its icon, the lead's marked", () => {
+    const list = projects()
+    const agents = list[0].panes.filter((p) => p.kind === 'agent' || p.kind === 'chat')
+    agents[0].team = 't1'
+    agents[0].lead = true
+    agents[1].team = 't1'
+    const w = mount(AgentDashboard, {
+      props: { projects: list, now: NOW },
+      global: { provide: { panelCtx: { teamById: (id) => (id === 't1' ? { id: 't1', name: 'Team 2' } : null) } } }
+    })
+    const badges = w.findAll('[data-test="adb-team"]')
+    expect(badges.map((b) => b.text())).toEqual(['2', '2'])
+    expect(badges.filter((b) => b.classes().includes('lead'))).toHaveLength(1)
+    expect(w.find('[data-test="adb-team"].lead').attributes('title')).toBe('Team 2 (lead)')
   })
 
   it('an empty dashboard says so', () => {

@@ -359,22 +359,35 @@
   white-space: nowrap;
   text-overflow: ellipsis;
 }
-/* Its team's number, as in the sidebar (the lead's underlined). */
-.adb-team {
-  flex: 0 0 auto;
-  min-width: 18px;
-  padding: 1px 5px;
-  border-radius: 9px;
-  background: color-mix(in srgb, var(--text-dim) 14%, transparent);
+/* Its team's number on the icon's top left corner; the team's lead in the
+   accent colour, underlined (as in the sidebar). */
+.adb-card-team {
+  position: absolute;
+  top: -5px;
+  left: -5px;
+  z-index: 1;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 7px;
+  background: var(--surface-2);
+  box-shadow: 0 0 0 1px var(--border);
   color: var(--text-dim);
-  font-size: 10.5px;
-  font-weight: 600;
+  font-size: 9.5px;
+  font-weight: 700;
+  line-height: 14px;
   font-variant-numeric: tabular-nums;
   text-align: center;
 }
-.adb-team.lead {
+.adb-card:hover .adb-card-team {
+  background: var(--surface-3);
+}
+/* As in the sidebar and the pane header: the lead's number brighter and
+   underlined, never a coloured fill (themes keep their own accent). */
+.adb-card-team.lead {
+  color: var(--text-strong);
   text-decoration: underline;
-  text-underline-offset: 2px;
+  text-underline-offset: 1px;
 }
 .adb-pill {
   flex: 0 0 auto;

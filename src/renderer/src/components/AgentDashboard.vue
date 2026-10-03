@@ -259,6 +259,14 @@ async function sleepIdle() {
             @click="emit('focus-pane', r.id)"
           >
             <span class="adb-card-icon">
+              <span
+                v-if="teamOf(r)"
+                class="adb-card-team"
+                :class="{ lead: r.lead }"
+                data-test="adb-team"
+                :title="r.lead ? t('agentDashboard.card.teamLead', '{{team}} (lead)', { team: teamOf(r) }) : teamOf(r)"
+                >{{ teamNumber(teamOf(r)) }}</span
+              >
               <BrandIcon :kind="r.iconKind" :accent="r.accent" :label="r.title" :size="18" />
               <span class="adb-card-dot"><AgentStateDot :state="r.sleeping ? 'sleeping' : r.dotState" :tooltip="false" /></span>
             </span>
@@ -266,14 +274,6 @@ async function sleepIdle() {
               <span class="adb-card-title">{{ cardTitle(r) }}</span>
               <span class="adb-card-sub">{{ cardSub(r) }}</span>
             </span>
-            <span
-              v-if="teamOf(r)"
-              class="adb-team"
-              :class="{ lead: r.lead }"
-              data-test="adb-team"
-              :title="r.lead ? t('agentDashboard.card.teamLead', '{{team}} (lead)', { team: teamOf(r) }) : teamOf(r)"
-              >{{ teamNumber(teamOf(r)) }}</span
-            >
             <span v-if="pill(r)" class="adb-pill" :class="'adb-pill-' + r.bucket" data-test="adb-pill">{{ pill(r) }}</span>
           </button>
         </div>
