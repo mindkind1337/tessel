@@ -452,6 +452,8 @@ function keys(bytes) {
 // "Ran /command" row; nothing is watched for it.
 // Compaction asked from here (Compact, /compact, Cursor's /summarize): shown
 // as under way from the moment it is sent until the agent stops working.
+// Meanwhile the list is not told the agent works: a compaction is not the last
+// turn's work (that turn's "Worked for" would count it).
 const compactAskedAt = ref(0)
 watch(
   () => props.working,
@@ -459,11 +461,8 @@ watch(
     if (was && !working) compactAskedAt.value = 0
   }
 )
-const liveNotice = computed(() =>
-  props.interactive && (props.compacting || (props.working && compactAskedAt.value > 0))
-    ? t('chat.orca.compactingConversation', 'Compacting the conversation…')
-    : ''
-)
+const compactingNow = computed(() => props.interactive && (props.compacting || (props.working && compactAskedAt.value > 0)))
+const liveNotice = computed(() => (compactingNow.value ? t('chat.orca.compactingConversation', 'Compacting the conversation…') : ''))
 function sendCommand(text, how = commandDelivery(props.agent, text) || 'paste') {
   if (!props.sendMessage || props.disabledReason) return { ok: false, error: props.disabledReason || undefined }
   const command = String(text || '').trim()
@@ -953,7 +952,7 @@ const title = computed(() => t('chat.orca.transcriptView.title', 'Conversation o
         :journal-items="state.items"
         :is-visible="isVisible"
         :font-scale="fontScale.scale.value"
-        :is-working="interactive && working"
+        :is-working="interactive && working && !compactingNow"
         :live-notice="liveNotice"
         :expand-signal="false"
         :show-live-turn-activity="false"
