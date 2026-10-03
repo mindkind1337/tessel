@@ -517,6 +517,8 @@ describe('agent browser: helpers', () => {
   it('Tessel and browser shortcuts are reserved keys', () => {
     for (const k of ['Control+Shift+w', 'Control+r', 'F12', 'F5', 'Control+l', 'Alt+ArrowLeft', 'F1', 'Control+Shift+p']) expect(reservedKey(k)).toBe(true)
     for (const k of ['Enter', 'a', 'Control+a', 'Tab', 'Shift+Tab', 'ArrowDown']) expect(reservedKey(k)).toBe(false)
+    // The window's own keys (its default menu: close, minimize, full screen, quit).
+    for (const k of ['Control+w', 'Control+m', 'F11', 'Control+q', 'Alt+F4', 'Meta+w']) expect(reservedKey(k)).toBe(true)
   })
 
   it('safeSelector: tags, #id, .class, *, combinators and commas', () => {

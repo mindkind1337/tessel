@@ -98,6 +98,12 @@ export function reservedKey(combo) {
   const k = String(def.key).toLowerCase()
   if ((modifiers & 6) && k === 'v') return true
   if ((modifiers & 8) && k === 'insert') return true
+  // The window's own keys (its default menu and the system's): a key the page
+  // leaves unhandled can reach the window, which would close (Ctrl+W, Alt+F4),
+  // minimize (Ctrl+M), go full screen (F11) or quit (Ctrl+Q).
+  if ((modifiers & 6) && ['w', 'm', 'q'].includes(k)) return true
+  if ((modifiers & 1) && k === 'f4') return true
+  if (k === 'f11') return true
   return !!shortcutOf({ type: 'keyDown', key: def.key, control: !!(modifiers & 2), meta: !!(modifiers & 4), alt: !!(modifiers & 1), shift: !!(modifiers & 8) })
 }
 
