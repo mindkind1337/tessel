@@ -11,8 +11,10 @@ import { ref, computed, nextTick, inject, watch } from 'vue'
 import { updateTask, removeTask, assignAgent, moveTask, tasks as allTasks } from '../taskBoardStore'
 import { COLUMNS } from '../../../shared/taskModel'
 import BrandIcon from './BrandIcon.vue'
+import JobCostLine from './JobCostLine.vue'
 import { formatDuration, formatWhen } from '../timeFormat'
 import { t, intlLocale } from '../i18n'
+import { hasUsage } from '../jobCost'
 
 const props = defineProps({
   task: { type: Object, required: true },
@@ -23,7 +25,9 @@ const props = defineProps({
   // Picking cards to delete together (Done > Select): a tick box, and a click
   // on the card ticks it.
   selectable: { type: Boolean, default: false },
-  selected: { type: Boolean, default: false }
+  selected: { type: Boolean, default: false },
+  // What its agent used for it (jobCost.js entry), or null.
+  cost: { type: Object, default: null }
 })
 
 const emit = defineEmits(['focus-pane', 'review', 'toggle-select'])
@@ -340,6 +344,11 @@ function paneLabel(pane) {
     <div v-if="task.worktree || task.brief" class="task-card-extra">
       <span v-if="task.worktree" class="task-branch" :title="task.worktree.path">{{ task.worktree.branch }}</span>
       <span v-if="task.brief" class="task-brief" :title="task.brief">{{ task.brief }}</span>
+    </div>
+
+    <!-- What the work used: tokens, time, estimated cost (details in its tooltip). -->
+    <div v-if="hasUsage(cost)" class="task-card-cost" data-test="task-cost">
+      <JobCostLine :entry="cost" />
     </div>
 
     <!-- Bottom line: when, then what can be done now. -->

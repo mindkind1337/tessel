@@ -10,6 +10,8 @@ import { COLUMNS } from '../../../shared/taskModel'
 import { tasks, addTask, moveTask, removeTask } from '../taskBoardStore'
 import TaskCard from './TaskCard.vue'
 import OrchestrationCard from './OrchestrationCard.vue'
+import JobCostLine from './JobCostLine.vue'
+import { useJobCost, refreshJobCost, sumJobCosts } from '../jobCost'
 import { t } from '../i18n'
 
 const props = defineProps({
@@ -36,6 +38,27 @@ const grouped = computed(() => {
   // keep their place at the top.
   for (const c of COLUMNS) groups[c].sort((a, b) => (a.columnSince || 0) - (b.columnSince || 0))
   return groups
+})
+
+// What each visible card's work used (tokens, time, estimated cost), asked
+// for the cards on this board, again when a card moves or changes agent, and
+// when the main process says the figures changed (jobCost.js, throttled).
+const visibleTasks = computed(() => COLUMNS.flatMap((c) => grouped.value[c]))
+const costOf = useJobCost('cards', () => visibleTasks.value.map((task) => task.id))
+watch(
+  () => visibleTasks.value.map((task) => `${task.id}:${task.column}:${task.paneId || ''}`).join('|'), // i18n-ignore
+  () => refreshJobCost()
+)
+// The total of the visible cards, at the top of the board.
+const costTotal = computed(() => sumJobCosts(visibleTasks.value.map((task) => costOf(task.id))))
+const costTotalTitle = computed(() => {
+  const total = costTotal.value
+  const lines = [total.count === 1
+      ? t('jobCost.total.cards', '{{count}} task with usage', { count: 1 })
+      : t('jobCost.total.cards', '{{count}} tasks with usage', { count: total.count })]
+  if (total.unknownCount)
+    lines.push(t('jobCost.total.unknown', '{{count}} of them with an unknown cost (not counted)', { count: total.unknownCount }))
+  return lines.join('\n')
 })
 
 function onAdd() {
@@ -139,6 +162,10 @@ const deleteLabel = computed(() =>
         {{ t('tasks.board.newTask', 'New task…') }}
       </button>
     </div>
+    <div v-if="costTotal.count" class="task-board-total" data-test="task-board-cost" :title="costTotalTitle">
+      <span class="job-cost">{{ t('jobCost.total.label', 'Total:') }}</span>
+      <JobCostLine :entry="costTotal" />
+    </div>
     <form class="task-board-add" data-test="add-task-form" @submit.prevent="onAdd">
       <input
         v-model="newTitle"
@@ -199,6 +226,7 @@ const deleteLabel = computed(() =>
             :agent-panes="agentPanes"
             :selectable="selecting && column === 'done'"
             :selected="picked.includes(task.id)"
+            :cost="costOf(task.id)"
             @toggle-select="togglePick"
             @focus-pane="(id) => emit('focus-pane', id)"
             @review="(id) => emit('review', id)"
