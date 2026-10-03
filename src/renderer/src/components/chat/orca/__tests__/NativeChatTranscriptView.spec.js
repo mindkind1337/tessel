@@ -71,6 +71,30 @@ describe('NativeChatTranscriptView', () => {
     expect(text()).not.toContain('not mine')
   })
 
+  it("a message's image stays when later reads send only its key; one it lacks is asked for once", async () => {
+    const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
+    const key = 'c'.repeat(24)
+    const withImage = (img) => [{ ...conversation[0], images: [{ key, name: 'shot.png', mediaType: 'image/png', ...img }] }, ...conversation.slice(1)]
+    api.open.mockResolvedValueOnce({ ok: true, viewId: 'tv-1', events: withImage({ dataUrl: PNG }), truncated: false })
+    api.images = vi.fn(async () => ({ ok: true, images: { [key]: PNG } }))
+    await mountView()
+    const shown = () => [...document.querySelectorAll('img')].filter((i) => i.getAttribute('src') === PNG).length
+    expect(shown()).toBe(1)
+    for (const cb of listeners) cb({ viewId: 'tv-1', ok: true, events: [...withImage({}), { type: 'user', id: 'hist-u2', text: 'And now?', status: 'accepted', at: 4000 }] })
+    await flushPromises()
+    expect(text()).toContain('And now?')
+    expect(shown()).toBe(1)
+    expect(api.images).not.toHaveBeenCalled()
+    // Reopened (a new view): it lacks the bytes, asks once, then shows it.
+    await wrapper.setProps({ isVisible: false })
+    api.open.mockResolvedValueOnce({ ok: true, viewId: 'tv-2', events: withImage({}), truncated: false })
+    await wrapper.setProps({ isVisible: true })
+    await flushPromises()
+    expect(api.images).toHaveBeenCalledTimes(1)
+    expect(api.images).toHaveBeenCalledWith({ viewId: 'tv-2', keys: [key] })
+    expect(shown()).toBe(1)
+  })
+
   it('no file yet: says so and looks again while shown', async () => {
     api.open.mockResolvedValueOnce({ ok: false, code: 'missing' })
     await mountView()

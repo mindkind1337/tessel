@@ -187,7 +187,7 @@ describe('transcript view: live while open', () => {
     vi.useFakeTimers()
     const file = grokFile(GROK_SESSION)
     const { views, send, watcher, change } = setup()
-    const opened = views.open({ agent: 'grok', sessionId: GROK_ID })
+    const opened = await views.open({ agent: 'grok', sessionId: GROK_ID })
     expect(opened).toMatchObject({ ok: true, viewId: expect.any(String) })
     expect(opened.events.length).toBeGreaterThan(0)
     fs.appendFileSync(file, lines([{ type: 'user', id: 'u3', timestamp: ts(9), content: 'next' }]))
@@ -212,12 +212,13 @@ describe('transcript view: live while open', () => {
     expect(send).toHaveBeenCalledTimes(1)
   })
 
-  it('a missing file or a bad id opens nothing; at most 8 views, the oldest gives way', () => {
+  it('a missing file or a bad id opens nothing; at most 8 views, the oldest gives way', async () => {
     grokFile(GROK_SESSION)
     const { views } = setup()
-    expect(views.open({ agent: 'grok', sessionId: 'nope-not-there' })).toEqual({ ok: false, code: 'missing' })
-    expect(views.open({ agent: 'grok', sessionId: '../x' })).toEqual({ ok: false, code: 'invalid' })
-    const ids = Array.from({ length: 10 }, () => views.open({ agent: 'grok', sessionId: GROK_ID }).viewId)
+    expect(await views.open({ agent: 'grok', sessionId: 'nope-not-there' })).toEqual({ ok: false, code: 'missing' })
+    expect(await views.open({ agent: 'grok', sessionId: '../x' })).toEqual({ ok: false, code: 'invalid' })
+    const ids = []
+    for (let i = 0; i < 10; i++) ids.push((await views.open({ agent: 'grok', sessionId: GROK_ID })).viewId)
     expect(views.count()).toBe(8)
     expect(views.close(ids[0])).toBe(false)
     expect(views.close(ids[9])).toBe(true)
@@ -236,7 +237,7 @@ describe('transcript view: live while open', () => {
       debounceMs: 10,
       pollMs: 100
     })
-    const { viewId } = views.open({ agent: 'grok', sessionId: GROK_ID })
+    const { viewId } = await views.open({ agent: 'grok', sessionId: GROK_ID })
     fs.appendFileSync(file, lines([{ type: 'user', timestamp: ts(9), content: 'polled' }]))
     await vi.advanceTimersByTimeAsync(150)
     expect(send).toHaveBeenCalledTimes(1)
@@ -251,7 +252,7 @@ describe('transcript view: live while open', () => {
     const { views } = setup()
     const handlers = {}
     views.register({ handle: (name, fn) => (handlers[name] = fn) })
-    expect(Object.keys(handlers).sort()).toEqual(['transcriptView:close', 'transcriptView:earlier', 'transcriptView:open'])
+    expect(Object.keys(handlers).sort()).toEqual(['transcriptView:close', 'transcriptView:earlier', 'transcriptView:images', 'transcriptView:open'])
     expect(await handlers['transcriptView:earlier']({}, { viewId: 'tv-999' })).toEqual({ ok: false, code: 'missing' })
     const res = await handlers['transcriptView:open']({}, { agent: 'grok', sessionId: GROK_ID, path: 'C:\\Windows\\win.ini' })
     expect(res.ok).toBe(true)
@@ -455,26 +456,26 @@ describe('transcript view: earlier lines (scrolled up)', () => {
     expect(other.readEarlier(100)).toBeNull()
   })
 
-  it('a view loads earlier lines on request and says when there are more', () => {
+  it('a view loads earlier lines on request and says when there are more', async () => {
     const many = [{ type: 'system', content: 'You are Grok.' }]
     for (let i = 0; i < 40; i++) many.push({ type: 'user', id: `u${i}`, timestamp: ts(i % 60), content: [{ type: 'text', text: `prompt ${i}` }] })
     grokFile(lines(many))
     const limits = { bytes: 900, events: 2000, text: 64 * 1024 }
     const views = createTranscriptViews({ send: vi.fn(), roots: () => roots, watch: () => ({ close() {}, on() {} }), limits })
-    const opened = views.open({ agent: 'grok', sessionId: GROK_ID })
+    const opened = await views.open({ agent: 'grok', sessionId: GROK_ID })
     expect(opened.ok).toBe(true)
     expect(opened.more).toBe(true)
     const shown = opened.events.filter((e) => e.type === 'user').length
-    const res = views.earlier(opened.viewId)
+    const res = await views.earlier(opened.viewId)
     expect(res).toMatchObject({ ok: true })
     expect(res.added).toBeGreaterThan(0)
     expect(res.events.filter((e) => e.type === 'user').length).toBeGreaterThan(shown)
     expect(res.events.filter((e) => e.type === 'user').at(-1).text).toBe('prompt 39')
-    expect(views.earlier('tv-nope')).toEqual({ ok: false, code: 'missing' })
+    expect(await views.earlier('tv-nope')).toEqual({ ok: false, code: 'missing' })
     views.closeAll()
   })
 
-  it("Claude Code: its background tasks and its folder come with the view", () => {
+  it("Claude Code: its background tasks and its folder come with the view", async () => {
     const at = (n) => new Date(Date.now() - 60000 + n * 1000).toISOString()
     const records = [
       { type: 'user', cwd: join(tmp, 'proj'), timestamp: at(1), message: { role: 'user', content: 'start a server' } },
@@ -483,7 +484,7 @@ describe('transcript view: earlier lines (scrolled up)', () => {
     ]
     openclaudeFile(lines(records))
     const views = createTranscriptViews({ send: vi.fn(), roots: () => roots, watch: () => ({ close() {}, on() {} }) })
-    const opened = views.open({ agent: 'openclaude', sessionId: OC_ID })
+    const opened = await views.open({ agent: 'openclaude', sessionId: OC_ID })
     expect(opened.background).toEqual([{ id: 'b123abc', kind: 'command', description: 'Start the dev server', startedAt: Date.parse(records[1].timestamp) }])
     expect(views.cwdOf(opened.viewId)).toBe(join(tmp, 'proj'))
     expect(views.agentOf(opened.viewId)).toBe('openclaude')
@@ -517,5 +518,62 @@ describe('transcript view: images pasted in the terminal', () => {
   })
   it('the views read their images by default', () => {
     expect(VIEW_LIMITS.attachments.images).toBeGreaterThan(0)
+  })
+
+  // A 1x1 PNG with another pixel: another image.
+  const PNG2 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
+  const userWith = (uuid, s, text, data) => ({
+    type: 'user',
+    uuid,
+    timestamp: ts(s),
+    message: { role: 'user', content: [{ type: 'text', text }, ...(data ? [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data } }] : [])] }
+  })
+  const imagesOf = (payload) => payload.events.filter((e) => e.type === 'user').map((e) => e.images || [])
+
+  it('a view sends an image\'s bytes once: later reads name it by its key only; a new image is sent once', async () => {
+    const file = openclaudeFile(session)
+    const send = vi.fn()
+    const views = createTranscriptViews({ send, roots: () => roots, watch: () => ({ close() {}, on() {} }), isRemote: async () => false })
+    const opened = await views.open({ agent: 'openclaude', sessionId: OC_ID })
+    const [first] = imagesOf(opened)
+    expect(first).toEqual([{ key: expect.stringMatching(/^[0-9a-f]{24}$/), name: 'image.png', mediaType: 'image/png', dataUrl: `data:image/png;base64,${PNG}` }])
+    const key = first[0].key
+
+    // The agent writes on: the old message's image comes without its bytes.
+    fs.appendFileSync(file, lines([userWith('u-2', 2, 'and this?', PNG2)]))
+    await views.refresh(opened.viewId)
+    expect(send).toHaveBeenCalledTimes(1)
+    let [old, added] = imagesOf(send.mock.calls[0][1])
+    expect(old).toEqual([{ key, name: 'image.png', mediaType: 'image/png' }])
+    expect(added[0].dataUrl).toBe(`data:image/png;base64,${PNG2}`)
+
+    // Again: no image bytes at all.
+    fs.appendFileSync(file, lines([userWith('u-3', 3, 'thanks')]))
+    await views.refresh(opened.viewId)
+    const payload = send.mock.calls[1][1]
+    expect(JSON.stringify(payload)).not.toContain('base64')
+    ;[old, added] = imagesOf(payload)
+    expect(old[0].key).toBe(key)
+    expect(added[0].key).not.toBe(key)
+
+    // A window that missed a send asks for the bytes by key (its view's own images only).
+    expect(views.images(opened.viewId, [key, 'f'.repeat(24), '../x'])).toEqual({ ok: true, images: { [key]: `data:image/png;base64,${PNG}` } })
+    expect(views.images('tv-nope', [key])).toEqual({ ok: false, code: 'missing' })
+    views.closeAll()
+  })
+
+  it('reads of one view never overlap (a refresh during load earlier waits for it)', async () => {
+    const file = openclaudeFile(session)
+    const send = vi.fn()
+    const views = createTranscriptViews({ send, roots: () => roots, watch: () => ({ close() {}, on() {} }), isRemote: async () => false })
+    const opened = await views.open({ agent: 'openclaude', sessionId: OC_ID })
+    fs.appendFileSync(file, lines([userWith('u-2', 2, 'more', PNG2)]))
+    const [a, b] = await Promise.all([views.earlier(opened.viewId), views.refresh(opened.viewId)])
+    expect(a.ok).toBe(true)
+    expect(b).toBeUndefined()
+    // Each image's bytes went exactly once across the two answers.
+    const all = [...imagesOf(a), ...imagesOf(send.mock.calls[0][1])].flat().filter((i) => i.dataUrl)
+    expect(all.map((i) => i.dataUrl)).toEqual([`data:image/png;base64,${PNG2}`])
+    views.closeAll()
   })
 })

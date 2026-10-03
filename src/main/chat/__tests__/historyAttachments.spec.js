@@ -311,3 +311,45 @@ describe('network and device paths', () => {
     }
   })
 })
+
+describe('the chat view: images resolved once per view (cached), never blocking', () => {
+  const page = async (list) => {
+    const { noteAttachments } = await import('../historyAttachments.js')
+    return list.map(([id, cands]) => noteAttachments({ type: 'user', id, text: 'look' }, cands))
+  }
+  it('decodes an image once, keyed by what it holds; a changed file is read again; the cache follows the page', async () => {
+    const { resolveHistoryAttachmentsCached, imageFromBase64, imageFromPath } = await import('../historyAttachments.js')
+    const file = write('shot.png', PNG_1x1)
+    const cache = new Map()
+    const first = await resolveHistoryAttachmentsCached(await page([['u1', [imageFromBase64(b64(PNG_1x1), 'image/png')]], ['u2', [imageFromPath(file)]]]), ATTACHMENT_LIMITS, { cache, isRemote: async () => false })
+    expect(first[0].images[0]).toMatchObject({ key: expect.stringMatching(/^[0-9a-f]{24}$/), dataUrl: dataUrl(PNG_1x1) })
+    expect(first[1].images[0]).toMatchObject({ name: 'shot.png', dataUrl: dataUrl(PNG_1x1) })
+    const entries = [...cache.values()]
+    expect(entries).toHaveLength(2)
+    // Read again (new events, as after a change of the transcript): the same entries, the same keys.
+    const again = await resolveHistoryAttachmentsCached(await page([['u1', [imageFromBase64(b64(PNG_1x1), 'image/png')]], ['u2', [imageFromPath(file)]]]), ATTACHMENT_LIMITS, { cache, isRemote: async () => false })
+    expect([...cache.values()]).toEqual(entries)
+    expect([...cache.values()][0]).toBe(entries[0])
+    expect(again.map((e) => e.images[0].key)).toEqual(first.map((e) => e.images[0].key))
+    // The file replaced by another image: read again, under a new key.
+    fs.writeFileSync(file, JPEG)
+    fs.utimesSync(file, new Date(), new Date(Date.now() + 5000))
+    const changed = await resolveHistoryAttachmentsCached(await page([['u2', [imageFromPath(file)]]]), ATTACHMENT_LIMITS, { cache, isRemote: async () => false })
+    expect(changed[0].images[0]).toMatchObject({ mediaType: 'image/jpeg', dataUrl: dataUrl(JPEG, 'image/jpeg') })
+    expect(changed[0].images[0].key).not.toBe(first[1].images[0].key)
+    // Only this page's image is kept.
+    expect(cache.size).toBe(1)
+  })
+
+  it('a path on a network drive is never read; a stalled disk gives "[image]" after the deadline', async () => {
+    const { resolveHistoryAttachmentsCached, imageFromPath } = await import('../historyAttachments.js')
+    const file = write('shot.png', PNG_1x1)
+    const asked = []
+    const remote = await resolveHistoryAttachmentsCached(await page([['u1', [imageFromPath(file)]]]), ATTACHMENT_LIMITS, { isRemote: async (p) => (asked.push(p), true) })
+    expect(asked).toEqual([file])
+    expect(remote[0].images).toBeUndefined()
+    expect(remote[0].text).toBe('look\n[image]')
+    const stalled = await resolveHistoryAttachmentsCached(await page([['u1', [imageFromPath(file)]]]), ATTACHMENT_LIMITS, { isRemote: () => new Promise(() => {}), timeoutMs: 30 })
+    expect(stalled[0].text).toBe('look\n[image]')
+  })
+})
