@@ -107,7 +107,7 @@ function pill(r) {
   if (view.groupBy !== 'project') return timed ? r.time : ''
   return timed ? t('agentDashboard.card.pill', '{{state}} {{time}}', { state: name, time: r.time }) : name
 }
-// Its team, as in the sidebar: the team's number (the lead's underlined).
+// Its team, as in the sidebar: the team's number (the lead's outlined).
 const panel = inject('panelCtx', null)
 function teamOf(r) {
   if (!r.team || !panel || typeof panel.teamById !== 'function') return ''

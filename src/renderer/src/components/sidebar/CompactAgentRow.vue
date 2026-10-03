@@ -206,7 +206,7 @@ const workerOfLabel = computed(() =>
         - {{ row.secondary }}</span
       >
     </span>
-    <!-- Its team's number, after its name (the lead's underlined). -->
+    <!-- Its team's number, after its name (the lead's outlined). -->
     <span v-if="row.team && teamLabel" class="car-team-num" data-test="car-team" :class="{ lead: row.lead }" aria-hidden="true" v-text="teamNum"></span>
     <!-- The name and its team tag on the left; the rest pushed to the right. -->
     <span class="car-spacer" aria-hidden="true"></span>

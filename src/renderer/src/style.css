@@ -9659,19 +9659,29 @@ button.act-stat:hover,
 
 /* The team number at the far left of an agent row (the lead's underlined). */
 /* A pane's team number, at the far left of its header. */
+/* Its team's number as a small tag (as in the sidebar and the Dashboard). */
 .pane-team-num {
+  display: inline-flex;
   flex-shrink: 0;
-  margin-right: 2px;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  margin-right: 4px;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--text-dim) 18%, transparent);
   color: var(--text-dim);
-  font-size: 11px;
-  font-weight: 600;
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 1;
   font-variant-numeric: tabular-nums;
 }
+/* The team's lead: the tag outlined, its number brighter (not --accent: a
+   pane header sets that to its agent's colour). */
 .pane-team-num.lead {
-  /* Not --accent: a pane header sets that to its agent's colour. */
   color: var(--text-strong);
-  text-decoration: underline;
-  text-underline-offset: 2px;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text-strong) 70%, transparent);
 }
 
 /* A small tag after the agent's name (as on the Dashboard's cards). */
@@ -9692,10 +9702,9 @@ button.act-stat:hover,
   font-variant-numeric: tabular-nums;
 }
 .car-team-num.lead {
-  /* As in its pane header: the lead's number underlined, same colour. */
-  color: color-mix(in srgb, var(--wts-fg) 85%, transparent);
-  text-decoration: underline;
-  text-underline-offset: 2px;
+  /* As in its pane header: the lead's tag outlined, its number brighter. */
+  color: color-mix(in srgb, var(--wts-fg) 90%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--wts-fg) 60%, transparent);
 }
 
 .car-pick {
