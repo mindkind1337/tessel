@@ -2,6 +2,8 @@
 import { ensureAgentNames, renameAgentName, resolveAgentAddress, agentProgramLabel } from '../../shared/agentNames'
 import { ref, reactive, provide, watch, computed, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import SplitNode from './components/SplitNode.vue'
+import FloatingTerminal from './components/FloatingTerminal.vue'
+import { createFloatingTerminal, isFloatingToggleKey } from './floatingTerminal'
 import BrandIcon from './components/BrandIcon.vue'
 import SidePanel from './components/SidePanel.vue'
 import WorkspaceSidebar from './components/WorkspaceSidebar.vue'
@@ -920,7 +922,8 @@ const shortcuts = computed(() => [
       ['Ctrl+Shift+W', t('app.help.closePane', 'Close pane')],
       ['Ctrl+Shift+R', t('app.help.restartPane', 'Restart pane')],
       ['Alt+Arrow', t('app.help.movePanes', 'Move between panes')],
-      ['Esc', t('app.help.restoreMax', 'Restore a maximized pane')]
+      ['Esc', t('app.help.restoreMax', 'Restore a maximized pane')],
+      ['Ctrl+`', t('app.help.floatingTerminal', 'Show or hide the floating terminal (the key left of 1)')]
     ]
   },
   {
@@ -2599,6 +2602,10 @@ function buildCommands() {
   }
   add(layout, t('app.cmd.closeActive', 'Close the active pane'), closeActive, { shortcut: 'Ctrl+Shift+W' })
   add(layout, sidebarCollapsed.value ? t('app.cmd.showSidebar', 'Show the sidebar') : t('app.cmd.hideSidebar', 'Hide the sidebar'), toggleSidebar)
+  add(layout, floating.state.open ? t('app.cmd.hideFloating', 'Hide the floating terminal') : t('app.cmd.showFloating', 'Show the floating terminal'), toggleFloating, {
+    shortcut: 'Ctrl+`',
+    hint: t('app.cmd.floatingHint', "A terminal over the workspace, in the project's folder; it keeps running when hidden")
+  })
 
   const agentsGroup = t('app.cmd.group.agents', 'Agents')
   add(agentsGroup, t('app.cmd.resumeSession', 'Resume a session'), openSessions, {
@@ -4330,7 +4337,7 @@ onMounted(() => {
   if (!api || !api.onShortcut) return
   offBrowserKeys = api.onShortcut((e) => {
     if (!e || e.action !== 'app' || typeof e.key !== 'string') return
-    onKey({ key: e.key, ctrlKey: !!e.ctrl, shiftKey: !!e.shift, altKey: false, metaKey: false, target: document.body, preventDefault() {}, stopPropagation() {} })
+    onKey({ key: e.key, code: typeof e.code === 'string' ? e.code : '', ctrlKey: !!e.ctrl, shiftKey: !!e.shift, altKey: false, metaKey: false, target: document.body, preventDefault() {}, stopPropagation() {} })
   })
 })
 onBeforeUnmount(() => offBrowserKeys && offBrowserKeys())
@@ -9537,8 +9544,61 @@ function typingInField(e) {
   return !!t.closest('input, textarea, select, [contenteditable="true"]')
 }
 
+// The floating terminal (Ctrl+` or the toolbar's button): a terminal of its
+// own over the workspace, never one of the grid's panes (floatingTerminal.js).
+// It starts in the current project's folder (on its host for a remote one).
+function floatingStorage() {
+  try {
+    return window.localStorage
+  } catch {
+    return null
+  }
+}
+const floating = createFloatingTerminal({
+  createLeaf,
+  killPty: (id) => window.shellApi.killPty(id),
+  dropBuffer,
+  storage: floatingStorage(),
+  startOptions: () => {
+    const ws = currentWs.value
+    return { shellId: selectedShell.value, cwd: ws && !ws.remote ? ws.cwd || null : null, opts: wsLeafOpts(ws) }
+  }
+})
+function toggleFloating() {
+  closeMenus()
+  floating.toggle()
+}
+// A key pressed in the floating terminal: the grid's pane shortcuts (split,
+// close, restart, multi-write, moving between panes) are not for the grid's
+// active pane behind it. Close and restart act on the floating terminal.
+function floatingPaneKey(e) {
+  const el = e.target
+  if (!el || !el.closest || !el.closest('.floating-term')) return false
+  if (e.ctrlKey && e.shiftKey && !e.altKey) {
+    const k = e.key.toLowerCase()
+    if (k === 'w') {
+      e.preventDefault()
+      floating.close()
+      return true
+    }
+    if (k === 'r') {
+      e.preventDefault()
+      floating.restart()
+      return true
+    }
+    return ['e', 'o', 'b'].includes(k)
+  }
+  return e.altKey && !e.ctrlKey && !e.shiftKey && e.key.startsWith('Arrow')
+}
+
 function onKey(e, opts = {}) {
+  if (isFloatingToggleKey(e) && !dialogOpen()) {
+    e.preventDefault()
+    if (!e.repeat) toggleFloating()
+    return
+  }
   if (!opts.fromEditor && typingInField(e) && e.key !== 'Escape' && e.key !== 'F1') return
+  if (floatingPaneKey(e)) return
   if (dialogOpen()) {
     // Ctrl+, and F1 close their own dialog; they never open one over another.
     if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === ',') {
@@ -9768,8 +9828,12 @@ onMounted(async () => {
   if (window.shellApi.reconcilePtys) {
     const ids = []
     forEachWsLeaf((l) => !hasNoTerminal(l) && ids.push(l.id))
+    // The floating terminal's, still running while it is hidden.
+    ids.push(...floating.ptyIds())
     window.shellApi.reconcilePtys(ids)
   }
+  // Shown again if it was shown before the reload (its terminal re-attached).
+  floating.restoreAtStart()
   loadVoiceLanguages()
   // Settings (incl. your own agents) are loaded now; detect agents with them.
   startStep = 'agent detection'
@@ -10125,6 +10189,23 @@ onBeforeUnmount(() => {
             </button>
           </div>
         </div>
+        <!-- The floating terminal (Ctrl+`), over the workspace. -->
+        <button
+          class="tb-icon"
+          :class="{ on: floating.state.open }"
+          :title="t('app.toolbar.floatingTitle', 'Floating terminal (Ctrl+`)')"
+          :aria-label="t('app.toolbar.floating', 'Floating terminal')"
+          :aria-pressed="floating.state.open"
+          data-test="floating-terminal-toggle"
+          @click="toggleFloating"
+        >
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <rect x="1.75" y="2.25" width="12.5" height="11.5" rx="2.25" stroke="currentColor" stroke-width="1.3" />
+            <rect v-if="floating.state.open" x="2.4" y="2.9" width="11.2" height="5.2" rx="1.4" fill="currentColor" />
+            <path v-else d="M2.5 8.5h11" stroke="currentColor" stroke-width="1.3" />
+            <path v-if="!floating.state.open" d="M4.6 4.6l1.5 1.3-1.5 1.3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </button>
         <!-- The two side panels, shown or hidden (filled half = shown). -->
         <button
           class="tb-icon tb-panel-toggle"
@@ -10249,6 +10330,7 @@ onBeforeUnmount(() => {
         <div v-if="!tree" class="startup-message">
           {{ initError || t('app.main.starting', 'Starting...') }}
         </div>
+        <FloatingTerminal :ctl="floating" @restore-focus="focusActiveInput" />
       </div>
       <aside
         v-if="taskPanelOpen"

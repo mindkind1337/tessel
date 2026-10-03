@@ -728,5 +728,13 @@
       "connect": "Connecter",
       "connecting": "Connexion…"
     }
+  },
+  "floating": {
+    "label": "Terminal flottant",
+    "starting": "Démarrage du terminal...",
+    "resize": "Redimensionner le terminal flottant",
+    "resizeHint": "Faites glisser pour redimensionner. Ctrl+` le masque, son terminal continue de tourner.",
+    "hideHint": "Masquer (Ctrl+`). Son terminal continue de tourner.",
+    "hide": "Masquer le terminal flottant"
   }
 }

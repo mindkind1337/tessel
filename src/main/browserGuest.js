@@ -86,6 +86,8 @@ function shortcutOf(input) {
   // the window runs them as if the page were not there.
   if (ctrl && input.shift && !input.alt && APP_KEYS.includes(k)) return 'app'
   if (ctrl && !input.shift && !input.alt && (key === 'PageUp' || key === 'PageDown' || key === ',')) return 'app'
+  // Ctrl+`: the floating terminal (the key left of 1, whatever it prints).
+  if (ctrl && !input.shift && !input.alt && (input.code === 'Backquote' || key === '`')) return 'app'
   if (key === 'F1') return 'app'
   return null
 }
@@ -355,7 +357,7 @@ export function createBrowserGuests({ getWindow, send, log = null, screenshotDir
       const action = shortcutOf(input)
       if (!action) return
       event.preventDefault()
-      const keys = action === 'app' ? { key: String(input.key).slice(0, 20), ctrl: !!(input.control || input.meta), shift: !!input.shift } : {}
+      const keys = action === 'app' ? { key: String(input.key).slice(0, 20), code: String(input.code || '').slice(0, 20), ctrl: !!(input.control || input.meta), shift: !!input.shift } : {}
       send('browser:shortcut', { webContentsId: guest.id, action, ...keys })
     })
     // A new page: an element being picked on the old one is dropped. A page
