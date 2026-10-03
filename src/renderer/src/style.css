@@ -8800,6 +8800,13 @@ button.act-stat:hover,
   color: var(--backdrop);
 }
 
+/* Its hover stays the theme's accent (a grey fill left its dark text unreadable). */
+.osb .osb-btn.primary:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 85%, #fff);
+  background: color-mix(in srgb, var(--accent) 85%, #fff);
+  color: var(--backdrop);
+}
+
 .osb .osb-btn:disabled {
   opacity: 0.45;
   cursor: default;
