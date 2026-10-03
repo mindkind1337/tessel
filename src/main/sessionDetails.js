@@ -14,13 +14,13 @@ import fs from 'fs'
 import os from 'os'
 import { basename, dirname, join } from 'path'
 import { claudeTranscriptIn, codexRolloutIn } from './agentModel'
-import { isUuid } from './agentSessions'
+import { isUuid, qoderDir, qoderTranscriptIn } from './agentSessions'
 import { insideDir, ompSessions, ompSessionsDir, piSessions, piSessionsDir, plainId, sessionDirs } from './agentSessionSources'
 import { readLastLines } from './chat/transcriptHistory'
 import { readHead } from './fileRead'
 import { rowsFromLines } from './sessionSearch/indexer'
 
-export const CONTENT_AGENTS = ['claude', 'openclaude', 'codex', 'grok', 'pi', 'omp']
+export const CONTENT_AGENTS = ['claude', 'openclaude', 'codex', 'grok', 'pi', 'omp', 'qoder']
 // Deleted whole: a Claude Code transcript with its <id>/ sidecar folder (the
 // sub-agents), Grok's session folder, a Pi or OMP file. Codex is left out
 // (its session_index.jsonl would keep naming the file), as are the agents
@@ -90,6 +90,9 @@ export function findSessionFile({ agent, id } = {}, home = os.homedir(), roots =
     const dir = agent === 'claude' ? roots.claude || join(home, '.claude') : join(home, '.openclaude')
     root = join(dir, 'projects')
     file = isUuid(id) ? claudeTranscriptIn(dir, id) : null
+  } else if (agent === 'qoder') {
+    root = join(qoderDir(home), 'projects')
+    file = qoderTranscriptIn(qoderDir(home), id)
   } else if (agent === 'codex') {
     const dir = roots.codex || join(home, '.codex')
     root = join(dir, 'sessions')

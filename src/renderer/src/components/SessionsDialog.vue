@@ -35,7 +35,8 @@ const AGENT_NAME = {
   grok: 'Grok',
   pi: 'Pi',
   antigravity: 'Antigravity',
-  devin: 'Devin'
+  devin: 'Devin',
+  qoder: 'Qoder CLI' // i18n-ignore
 }
 
 const cardEl = ref(null)

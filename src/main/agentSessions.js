@@ -6,6 +6,8 @@
 // Codex: it picks its own id, and writes ~/.codex/sessions/YYYY/MM/DD/
 //   rollout-*.jsonl whose first line is session_meta { id, cwd, timestamp }.
 //   We find the session a pane started by its folder and start time.
+// Qoder CLI: Claude Code's transcript format under ~/.qoder/projects (history
+//   and search only; it reports its own id through its hooks).
 import fs from 'fs'
 import os from 'os'
 import { join } from 'path'
@@ -131,11 +133,12 @@ function oneLine(text, max = 120) {
   return t.length > max ? t.slice(0, max - 1) + '…' : t
 }
 
-// Parse the head of a Claude transcript: { cwd, started, title }.
+// Parse the head of a Claude transcript: { cwd, started, title, sessionId }.
 export function parseClaudeHead(text) {
   let cwd = ''
   let started = 0
   let title = ''
+  let sessionId = ''
   for (const line of String(text).split('\n')) {
     if (!line.startsWith('{')) continue
     let o
@@ -144,8 +147,9 @@ export function parseClaudeHead(text) {
     } catch {
       continue
     }
-    if (!cwd && o.cwd) cwd = o.cwd
-    if (!started && o.timestamp) started = Date.parse(o.timestamp) || 0
+    if (!cwd && typeof o.cwd === 'string') cwd = o.cwd
+    if (!sessionId && typeof o.sessionId === 'string') sessionId = o.sessionId
+    if (!started && typeof o.timestamp === 'string') started = Date.parse(o.timestamp) || 0
     if (!title && o.type === 'user' && !o.isMeta && o.message) {
       const t = textOf(o.message.content)
       if (isRealPrompt(t)) title = oneLine(t)
@@ -153,7 +157,62 @@ export function parseClaudeHead(text) {
     if (!title && o.type === 'summary' && o.summary) title = oneLine(o.summary)
     if (cwd && title) break
   }
-  return { cwd, started, title }
+  return { cwd, started, title, sessionId }
+}
+
+// --- Qoder CLI ------------------------------------------------------------------
+// Qoder writes Claude Code's transcript lines (~/.qoder/projects/<folder
+// slug>/<session>.jsonl, sub-agents in a <session>/subagents/ folder) with
+// records of its own (workspace-directories, runtime-config, active-leaf).
+// After Orca's session-scanner-qoder-parser.ts and
+// session-scanner-agent-sources.ts (MIT, Copyright (c) 2026 Lovecast Inc.).
+export const qoderDir = (home = os.homedir()) => join(home, '.qoder')
+
+// A Qoder line as the Claude readers take it: of a message, only its text
+// blocks (its thinking, tool calls and tool output stay out of the history's
+// previews and of search). Any other line as it is.
+export function qoderTextLine(line) {
+  if (typeof line !== 'string' || !line.includes('"content"')) return line
+  let o
+  try {
+    o = JSON.parse(line)
+  } catch {
+    return line
+  }
+  const message = o && typeof o === 'object' ? o.message : null
+  if (!message || typeof message !== 'object' || !Array.isArray(message.content)) return line
+  const content = message.content.filter((b) => b && typeof b === 'object' && b.type === 'text')
+  return JSON.stringify({ ...o, message: { ...message, content } })
+}
+
+// A Qoder transcript's file (<session>.jsonl, or another name holding that
+// sessionId), or null.
+export function qoderTranscriptIn(dir, id) {
+  if (!isUuid(id)) return null
+  const root = join(dir, 'projects')
+  const named = []
+  for (const d of readDirs(root)) {
+    const file = join(root, d.name, `${id}.jsonl`)
+    if (fs.existsSync(file)) return file
+    for (const f of readNames(join(root, d.name))) if (f.endsWith('.jsonl')) named.push(join(root, d.name, f))
+  }
+  for (const file of named) if (parseClaudeHead(readHead(file, 16 * 1024)).sessionId === id) return file
+  return null
+}
+
+function readDirs(dir) {
+  try {
+    return fs.readdirSync(dir, { withFileTypes: true }).filter((d) => d.isDirectory())
+  } catch {
+    return []
+  }
+}
+function readNames(dir) {
+  try {
+    return fs.readdirSync(dir)
+  } catch {
+    return []
+  }
 }
 
 // Parse the head of a Codex rollout: { id, cwd, started, title }.
@@ -188,7 +247,8 @@ function sameDir(a, b) {
 }
 
 // Conversations in a Claude Code style config folder (<dir>/projects/<slug>/<uuid>.jsonl).
-function claudeLikeHistory(agent, configDir, { cwd, limit }) {
+// anyName (Qoder): any <name>.jsonl, its id the sessionId inside.
+function claudeLikeHistory(agent, configDir, { cwd, limit, anyName = false }) {
   const root = join(configDir, 'projects')
   let projects = []
   try {
@@ -206,10 +266,10 @@ function claudeLikeHistory(agent, configDir, { cwd, limit }) {
     }
     for (const f of names) {
       const m = /^([0-9a-f-]{36})\.jsonl$/i.exec(f)
-      if (!m) continue
+      if (!m && !(anyName && f.endsWith('.jsonl'))) continue
       const full = join(root, d.name, f)
       try {
-        files.push({ id: m[1], full, updated: fs.statSync(full).mtimeMs })
+        files.push({ id: m ? m[1] : '', full, updated: fs.statSync(full).mtimeMs })
       } catch {
         /* vanished */
       }
@@ -222,7 +282,9 @@ function claudeLikeHistory(agent, configDir, { cwd, limit }) {
     const head = parseClaudeHead(readHead(f.full))
     if (!head.title) continue // never messaged: nothing to resume
     if (cwd && !sameDir(head.cwd, cwd)) continue
-    out.push({ agent, id: f.id, cwd: head.cwd, started: head.started, updated: f.updated, title: head.title })
+    const id = anyName && isUuid(head.sessionId) ? head.sessionId : f.id
+    if (!id) continue
+    out.push({ agent, id, cwd: head.cwd, started: head.started, updated: f.updated, title: head.title })
   }
   return out
 }
@@ -237,6 +299,8 @@ export function listSessions({ cwd = null, limit = 60 } = {}, home = os.homedir(
   if (roots.claude !== null) out.push(...claudeLikeHistory('claude', roots.claude || join(home, '.claude'), { cwd, limit }))
   // OpenClaude, a Claude Code fork: the same layout under ~/.openclaude.
   if (roots.others !== false) out.push(...claudeLikeHistory('openclaude', join(home, '.openclaude'), { cwd, limit }))
+  // Qoder CLI: the same format under ~/.qoder.
+  if (roots.others !== false) out.push(...claudeLikeHistory('qoder', qoderDir(home), { cwd, limit, anyName: true }))
 
   // Codex: ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl
   const codexRoot = roots.codex === null ? null : join(roots.codex || join(home, '.codex'), 'sessions')

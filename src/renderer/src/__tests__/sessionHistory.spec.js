@@ -39,6 +39,21 @@ describe('view options', () => {
     expect(o.limit).toBe(DEFAULT_SESSION_LIMIT)
   })
 
+  it('shows an agent added since the save when the save showed every agent it knew', () => {
+    const before = AGENTS.filter((a) => a !== 'qoder')
+    // Saved before Qoder was listed (no `known`): all chosen, so Qoder too.
+    expect(normalizeViewOptions({ agents: before }).agents).toEqual(AGENTS)
+    expect(normalizeViewOptions({ agents: before.filter((a) => a !== 'codex') }).agents).not.toContain('qoder')
+    // Saved with the agents it knew: one left out stays out.
+    expect(normalizeViewOptions({ agents: before, known: AGENTS }).agents).not.toContain('qoder')
+    expect(normalizeViewOptions({ agents: ['claude'], known: ['claude'] }).agents).toEqual(AGENTS)
+    const store = new Map()
+    const storage = { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, v) }
+    saveViewOptions({ ...defaultViewOptions(), agents: before }, storage)
+    expect(JSON.parse(store.get('tessel.sessionHistory.view')).known).toEqual(AGENTS)
+    expect(loadViewOptions(storage).agents).not.toContain('qoder')
+  })
+
   it('counts the adjustments the view menu badge shows (sorts excluded)', () => {
     expect(countViewAdjustments(defaultViewOptions())).toBe(0)
     expect(countViewAdjustments({ ...defaultViewOptions(), sort: 'created' })).toBe(0)

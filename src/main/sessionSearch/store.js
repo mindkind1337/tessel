@@ -24,7 +24,7 @@ export const MARK_CLOSE = ''
 const MARKS = /[]/g
 // The agents a result may name, and the shape of a session id a result may
 // carry (what the resume accepts): anything else in the database is not shown.
-export const KNOWN_AGENTS = new Set(['claude', 'openclaude', 'codex', 'gemini', 'qwen', 'opencode', 'copilot', 'kimi', 'cline', 'cursor', 'droid', 'grok', 'pi', 'omp', 'antigravity', 'devin', 'zcode']) // i18n-ignore
+export const KNOWN_AGENTS = new Set(['claude', 'openclaude', 'codex', 'gemini', 'qwen', 'opencode', 'copilot', 'kimi', 'cline', 'cursor', 'droid', 'grok', 'pi', 'omp', 'antigravity', 'devin', 'zcode', 'qoder']) // i18n-ignore
 export const safeSessionId = (id) => typeof id === 'string' && /^[A-Za-z0-9_][A-Za-z0-9_-]{5,79}$/.test(id)
 
 // unicode61 keeps `_ . - / +` inside tokens, so paths and identifiers match

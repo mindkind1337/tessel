@@ -8,7 +8,7 @@
 import { t } from './i18n'
 import { maskSecrets } from './chat/chatModel'
 
-export const AGENTS = ['claude', 'codex', 'gemini', 'qwen', 'opencode', 'openclaude', 'copilot', 'kimi', 'cline', 'cursor', 'droid', 'grok', 'pi', 'omp', 'antigravity', 'devin', 'zcode']
+export const AGENTS = ['claude', 'codex', 'gemini', 'qwen', 'opencode', 'openclaude', 'copilot', 'kimi', 'cline', 'cursor', 'droid', 'grok', 'pi', 'omp', 'antigravity', 'devin', 'zcode', 'qoder']
 export const AGENT_NAME = {
   claude: 'Claude Code', // i18n-ignore
   codex: 'Codex',
@@ -26,14 +26,15 @@ export const AGENT_NAME = {
   omp: 'OMP',
   antigravity: 'Antigravity',
   devin: 'Devin',
-  zcode: 'ZCode'
+  zcode: 'ZCode',
+  qoder: 'Qoder CLI' // i18n-ignore
 }
 export const agentLabel = (agent) => AGENT_NAME[agent] || agent
 
 // The agents whose transcript Tessel reads (a log, a first prompt, latest
 // turns) and the ones it can delete: the same lists as src/main/sessionDetails.js
 // (the main process checks again).
-export const CONTENT_AGENTS = ['claude', 'openclaude', 'codex', 'grok', 'pi', 'omp']
+export const CONTENT_AGENTS = ['claude', 'openclaude', 'codex', 'grok', 'pi', 'omp', 'qoder']
 export const DELETABLE_AGENTS = ['claude', 'openclaude', 'grok', 'pi', 'omp']
 export const hasLog = (agent) => CONTENT_AGENTS.includes(agent)
 
@@ -58,13 +59,20 @@ export function normalizeSessionLimit(value) {
 export function defaultViewOptions() {
   return { agents: [...AGENTS], sort: DEFAULT_SORT, searchSort: DEFAULT_SEARCH_SORT, group: DEFAULT_GROUP, limit: DEFAULT_SESSION_LIMIT }
 }
+// The agents listed before a save said which ones it knew (`known`): a save
+// that chose all of them chose the ones added since too.
+const AGENTS_BEFORE_KNOWN = AGENTS.filter((a) => a !== 'qoder')
+
 // Whatever was saved, made valid: unknown agents dropped, unknown choices
-// back to their default.
+// back to their default. An agent added since the save is shown when the
+// save showed every agent it knew.
 export function normalizeViewOptions(raw) {
   const d = defaultViewOptions()
   const o = raw && typeof raw === 'object' ? raw : {}
+  const known = Array.isArray(o.known) ? o.known : AGENTS_BEFORE_KNOWN
+  const all = Array.isArray(o.agents) && known.every((a) => !AGENTS.includes(a) || o.agents.includes(a))
   return {
-    agents: Array.isArray(o.agents) ? AGENTS.filter((a) => o.agents.includes(a)) : d.agents,
+    agents: Array.isArray(o.agents) ? AGENTS.filter((a) => o.agents.includes(a) || (all && !known.includes(a))) : d.agents,
     sort: SORTS.includes(o.sort) ? o.sort : d.sort,
     searchSort: SEARCH_SORTS.includes(o.searchSort) ? o.searchSort : d.searchSort,
     group: GROUPS.includes(o.group) ? o.group : d.group,
@@ -87,7 +95,7 @@ export function loadViewOptions(storage = typeof localStorage !== 'undefined' ? 
 }
 export function saveViewOptions(o, storage = typeof localStorage !== 'undefined' ? localStorage : null) {
   try {
-    storage.setItem(VIEW_STORAGE_KEY, JSON.stringify(normalizeViewOptions(o)))
+    storage.setItem(VIEW_STORAGE_KEY, JSON.stringify({ ...normalizeViewOptions({ ...o, known: AGENTS }), known: AGENTS }))
   } catch {
     // no storage: the options last for this window
   }
