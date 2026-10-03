@@ -100,13 +100,13 @@ describe('Dashboard: sub-agents', () => {
     ]
   }
 
-  it('"3 sub-agents · 2 running" with a dot each; the list on hover', async () => {
+  it('"2 running · 3 in all" with a dot each; the list on hover', async () => {
     const api = install({ children: kids() })
     const wrapper = mount(AgentDashboard, { props: { projects: projects() }, attachTo: document.body })
     await vi.waitFor(() => expect(card(wrapper, '1').find('[data-test="adb-children"]').exists()).toBe(true))
     expect(api.agentChildren).toHaveBeenCalledWith({ agent: 'claude', sessionId: 'sess-1' })
     const line = card(wrapper, '1').get('[data-test="adb-children"]')
-    expect(line.text()).toBe('3 sub-agents · 2 running')
+    expect(line.text()).toBe('2 running · 3 in all')
     expect(line.findAll('.adb-children-dots > *')).toHaveLength(3)
     // A pane without a conversation has none.
     expect(card(wrapper, '2').find('[data-test="adb-children"]').exists()).toBe(false)
@@ -126,7 +126,7 @@ describe('Dashboard: sub-agents', () => {
     setMessages('fr', fr)
     const wrapper = mount(AgentDashboard, { props: { projects: projects() } })
     await vi.waitFor(() => expect(card(wrapper, '1').find('[data-test="adb-children"]').exists()).toBe(true))
-    expect(card(wrapper, '1').get('[data-test="adb-children"]').text()).toBe('3 sous-agents · 2 en cours')
+    expect(card(wrapper, '1').get('[data-test="adb-children"]').text()).toBe('2 en cours · 3 au total')
   })
 
   it('the feed is released when the Dashboard goes (no more polling)', async () => {

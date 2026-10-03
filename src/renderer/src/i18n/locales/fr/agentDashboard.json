@@ -48,6 +48,7 @@
       "count_one": "{{count}} sous-agent",
       "count_other": "{{count}} sous-agents",
       "summary": "{{head}} · {{running}} en cours",
+      "runningOfAll": "{{running}} en cours · {{count}} au total",
       "quiet": "Silencieux",
       "tokens": "↓ {{tokens}} tokens"
     }

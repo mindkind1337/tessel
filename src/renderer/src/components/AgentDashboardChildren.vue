@@ -64,7 +64,11 @@ const summary = computed(() => {
   const count = children.value.length
   const head =
     count === 1 ? t('agentDashboard.children.count', '{{count}} sub-agent', { count }) : t('agentDashboard.children.count', '{{count}} sub-agents', { count })
-  return running.value ? t('agentDashboard.children.summary', '{{head}} · {{running}} running', { head, running: running.value }) : head
+  // The ones at work first ("5 running · 49 in all"): a long conversation's
+  // finished sub-agents must not read as that many at work.
+  return running.value
+    ? t('agentDashboard.children.runningOfAll', '{{running}} running · {{count}} in all', { running: running.value, count })
+    : head
 })
 const dots = computed(() => ordered.value.slice(0, MAX_DOTS))
 const listed = computed(() => ordered.value.slice(0, MAX_LISTED))
