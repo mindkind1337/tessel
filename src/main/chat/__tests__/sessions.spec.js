@@ -466,6 +466,62 @@ describe('delivery', () => {
     expect(events('turnEnd').filter((e) => e.error)).toEqual([])
   })
 
+  // Codex reports a compaction as a turn of its own: the compacted item, then
+  // that turn's end. The message goes again after that end, never before it
+  // (else that end would be taken for the resent message's).
+  it("Codex's compaction turn ending after 'compacted' is not the resent message's end", async () => {
+    const chat = createChatSessions({ ...deps, resolveCodex: async () => ({ exe: 'C:\bin\codex.exe' }) })
+    await openOk(chat, { agent: 'codex' })
+    const a = adapters[0]
+    a.compact = vi.fn(async () => ({ ok: true }))
+    const r = await chat.send({ paneId, text: 'hello' })
+    await flush()
+    a.emit('accepted', { uuid: r.id })
+    a.emit('turnEnd', { status: 'failed', error: { message: 'context_length_exceeded' } })
+    await flush()
+    await flush()
+    a.emit('compacted', {})
+    a.emit('turnEnd', { status: 'completed', userMessageUuids: [] })
+    await flush()
+    expect(a.send).toHaveBeenCalledTimes(2)
+    const resent = a.send.mock.calls[1][0]
+    expect(resent).toMatchObject({ text: 'hello' })
+    expect(events('userStatus').filter((e) => e.id === r.id && e.status === 'failed')).toEqual([])
+    // The resent message's own turn is the one tracked.
+    a.emit('accepted', { uuid: resent.uuid })
+    a.emit('turnEnd', { status: 'completed', userMessageUuids: [resent.uuid] })
+    await flush()
+    expect(events('userStatus').filter((e) => e.id === r.id).map((e) => e.status)).not.toContain('failed')
+    expect(last('status')).toMatchObject({ state: 'idle' })
+  })
+
+  it("a compaction with no turn end after 'compacted' (OpenCode's summary): the message goes again after a moment", async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      deps.resolveOpencode = vi.fn(async () => ({ exe: 'C:\bin\opencode.exe', exeArgs: [] }))
+      startResult = { ok: true, pid: 3, info: { sessionId: 'ses_compact' } }
+      const chat = createChatSessions(deps)
+      await openOk(chat, { agent: 'opencode' })
+      const a = adapters[0]
+      a.compact = vi.fn(async () => ({ ok: true }))
+      const r = await chat.send({ paneId, text: 'hello' })
+      await flush()
+      a.emit('accepted', { uuid: r.id })
+      a.emit('turnEnd', { status: 'failed', error: 'ContextOverflowError: maximum context length' })
+      await flush()
+      await flush()
+      a.emit('compacted', {})
+      await flush()
+      expect(a.send).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(1600)
+      await flush()
+      expect(a.send).toHaveBeenCalledTimes(2)
+      expect(a.send.mock.calls[1][0]).toMatchObject({ text: 'hello' })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('a conversation too long (Codex): the adapter compacts, then the message goes again; another failure is said once', async () => {
     const chat = createChatSessions({ ...deps, resolveCodex: async () => ({ exe: 'C:\bin\codex.exe' }) })
     await openOk(chat, { agent: 'codex' })
@@ -483,6 +539,10 @@ describe('delivery', () => {
     expect(a.send).toHaveBeenCalledTimes(1)
     expect(last('status')).toMatchObject({ state: 'working' })
     a.emit('compacted', {})
+    await flush()
+    // Its compaction turn ends right after: then the message goes again.
+    expect(a.send).toHaveBeenCalledTimes(1)
+    a.emit('turnEnd', { status: 'completed', userMessageUuids: [] })
     await flush()
     expect(a.send).toHaveBeenCalledTimes(2)
     expect(a.send.mock.calls[1][0]).toMatchObject({ text: 'hello' })

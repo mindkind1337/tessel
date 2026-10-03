@@ -445,6 +445,8 @@ export function createChatSessions(deps) {
   // window overflow): the conversation is compacted, then the message sent
   // again, once. Failing that, the user is told to start a new conversation.
 
+  // After 'compacted', how long a compaction turn's own end is waited for.
+  const COMPACT_SETTLE_MS = 1500
   const COMPACT_WAIT_MS = 120000
   const TOO_LONG = /prompt is too long|context.?(window|length)|too many tokens|maximum context|context_length_exceeded|contextoverflow|ran out of room/i
   const isTooLong = (error) => TOO_LONG.test(String(error || ''))
@@ -852,7 +854,19 @@ export function createChatSessions(deps) {
       }
     })
     on('compacted', () => {
-      compactionDone(s, true)
+      // Codex reports its compaction as a turn of its own and ends that turn
+      // right after: the message goes again once that end came (else it would
+      // be taken for the resent message's end), or after a moment when no
+      // turn end follows (OpenCode's summary).
+      const turn = s.turn
+      if (turn && turn.kind === 'compact' && s.agent !== 'claude') {
+        turn.compacted = true
+        if (turn.timer) clearTimeout(turn.timer)
+        turn.timer = setTimeout(() => {
+          if (s.turn === turn) compactionDone(s, true)
+        }, COMPACT_SETTLE_MS)
+        if (typeof turn.timer.unref === 'function') turn.timer.unref()
+      }
       askContext(s)
     })
     on('turnEnd', (e) => {
@@ -862,6 +876,7 @@ export function createChatSessions(deps) {
       // done at 'compacted'; failed, the wait ends here.
       if (turn && turn.kind === 'compact' && s.agent !== 'claude') {
         if (e.status !== 'completed') compactionDone(s, false, e.error && typeof e.error === 'object' ? e.error.message : e.error || e.result)
+        else if (turn.compacted) compactionDone(s, true)
         return
       }
       const uuids = Array.isArray(e.userMessageUuids) ? e.userMessageUuids : []
