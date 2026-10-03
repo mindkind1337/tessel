@@ -210,6 +210,18 @@ describe('createAgentFolderTrust', () => {
     expect(await s.apply({ agentId: 'codex', cwd: home, env: env(), enabled: true })).toBe('granted')
   })
 
+  it('Codex: never a home that is itself a git repository (Codex would trust every folder below it without its own)', async () => {
+    fs.mkdirSync(join(home, '.codex'))
+    fs.mkdirSync(join(home, '.git'))
+    const s = make()
+    s.setRoots([home, project])
+    expect(await s.apply({ agentId: 'codex', cwd: home, env: env(), enabled: true })).toBe('too-broad')
+    expect(fs.existsSync(join(home, '.codex', 'config.toml'))).toBe(false)
+    // A project folder that is a repository still is.
+    fs.mkdirSync(join(project, '.git'))
+    expect(await s.apply({ agentId: 'codex', cwd: project, env: env(), enabled: true })).toBe('granted')
+  })
+
   it('Codex: the config.toml of its CODEX_HOME, edited in place; no Codex home, nothing created', async () => {
     const s = make()
     expect(await s.apply({ agentId: 'codex', cwd: project, env: env(), enabled: true })).toBe('missing-config')
