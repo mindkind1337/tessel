@@ -226,7 +226,7 @@ function handle(sock, msg) {
         // A terminal on an SSH host: a shell channel on that host's ssh2
         // connection (ssh/sshHostBridge.js), not a local process.
         child = msg.ssh
-          ? ssh.createPty({ ...msg.ssh, cols: msg.cols, rows: msg.rows })
+          ? ssh.createPty({ ...msg.ssh, paneId: msg.id, cols: msg.cols, rows: msg.rows })
           : pty.spawn(msg.file, msg.args || [], {
               name: 'xterm-256color',
               cols: Math.max(2, msg.cols | 0),
