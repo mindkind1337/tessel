@@ -489,13 +489,13 @@ export function createChatSessions(deps) {
         }
       )
   }
-  function compactionDone(s, ok, error) {
+  function compactionDone(s, ok, error, opts) {
     const turn = s.turn
     if (!turn || turn.kind !== 'compact' || s.agent === 'claude') return false
     if (turn.timer) clearTimeout(turn.timer)
     s.turn = null
     if (ok) resendAfterCompaction(s)
-    else giveUpCompaction(s, error)
+    else giveUpCompaction(s, error, opts)
     return true
   }
   function resendAfterCompaction(s) {
@@ -504,12 +504,13 @@ export function createChatSessions(deps) {
     c.phase = 'retrying'
     void deliver(s, { kind: c.kind, uuid: randomUUID(), ids: c.ids, text: c.text, wasQueued: true })
   }
-  function giveUpCompaction(s, error = '') {
+  // quiet: the user stopped it (Stop): the message is not sent, nothing to explain.
+  function giveUpCompaction(s, error = '', { quiet = false } = {}) {
     const c = s.compaction
     s.compaction = null
     if (c && c.kind === 'user') for (const id of c.ids) emit(s.paneId, { type: 'userStatus', id, status: 'failed' })
     else if (c && c.kind === 'team') emit(s.paneId, { type: 'teamFailed', ids: [...c.ids] })
-    if (!s.finished) {
+    if (!s.finished && !quiet) {
       emit(s.paneId, {
         type: 'notice',
         kind: 'error',
@@ -875,7 +876,7 @@ export function createChatSessions(deps) {
       // Codex's compaction runs as a turn of its own, not one of the chat:
       // done at 'compacted'; failed, the wait ends here.
       if (turn && turn.kind === 'compact' && s.agent !== 'claude') {
-        if (e.status !== 'completed') compactionDone(s, false, e.error && typeof e.error === 'object' ? e.error.message : e.error || e.result)
+        if (e.status !== 'completed') compactionDone(s, false, e.error && typeof e.error === 'object' ? e.error.message : e.error || e.result, { quiet: e.status === 'interrupted' })
         else if (turn.compacted) compactionDone(s, true)
         return
       }
@@ -902,7 +903,7 @@ export function createChatSessions(deps) {
       if (turn && turn.kind === 'compact') {
         // Claude's /compact turn: done, the message goes again; failed, said below.
         shown = ''
-        after = st === 'completed' ? () => resendAfterCompaction(s) : () => giveUpCompaction(s, error)
+        after = st === 'completed' ? () => resendAfterCompaction(s) : () => giveUpCompaction(s, error, { quiet: st === 'interrupted' })
       } else if (s.compaction) {
         // The message sent again after the compaction.
         if (st === 'failed' && isTooLong(error)) {

@@ -469,6 +469,24 @@ describe('delivery', () => {
   // Codex reports a compaction as a turn of its own: the compacted item, then
   // that turn's end. The message goes again after that end, never before it
   // (else that end would be taken for the resent message's).
+  it("Stop during Claude's /compact turn: no \"too long\" error, the message is just not sent", async () => {
+    const chat = createChatSessions(deps)
+    await openOk(chat)
+    const a = adapters[0]
+    const r = await chat.send({ paneId, text: 'hello' })
+    await flush()
+    a.emit('accepted', { uuid: r.id })
+    a.emit('turnEnd', { status: 'failed', isError: true, result: 'Prompt is too long' })
+    await flush()
+    expect(a.send.mock.calls[1][0]).toMatchObject({ text: '/compact' })
+    a.emit('turnEnd', { status: 'interrupted' })
+    await flush()
+    expect(events('notice').filter((n) => n.kind === 'error')).toEqual([])
+    expect(last('userStatus')).toEqual({ type: 'userStatus', id: r.id, status: 'failed' })
+    expect(a.send).toHaveBeenCalledTimes(2)
+    expect(last('status')).toMatchObject({ state: 'idle' })
+  })
+
   it("Codex's compaction turn ending after 'compacted' is not the resent message's end", async () => {
     const chat = createChatSessions({ ...deps, resolveCodex: async () => ({ exe: 'C:\bin\codex.exe' }) })
     await openOk(chat, { agent: 'codex' })
