@@ -39,7 +39,7 @@ describe('issue integration IPC boundary', () => {
     })
     expect(handlers.has('github:exec')).toBe(false)
     expect(handlers.has('linear:graphql')).toBe(false)
-    expect(handlers.size).toBe(15)
+    expect(handlers.size).toBe(17) // github: +failingLogs, +reviewThreads (read only)
     const query = {
       cwd: 'C:/project/copy',
       title: 'Fix navigation',
