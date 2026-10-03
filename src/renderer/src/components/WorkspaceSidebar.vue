@@ -15,6 +15,7 @@ import {
   Copy,
   Ellipsis,
   EyeOff,
+  Eraser,
   X,
   Folder,
   Server,
@@ -99,6 +100,7 @@ const emit = defineEmits([
   'reveal',
   'delete-task',
   'review-task',
+  'cleanup-worktrees',
   'port-open',
   'port-copy',
   'port-stop'
@@ -723,6 +725,7 @@ function projectActionItems(project) {
     },
     { type: 'item', icon: StickyNote, label: t('sidebar.project.notes', 'Project Notes'), onSelect: () => emit('notes-ws', wsId) },
     ...hiddenWorktreesItem(project),
+    ...cleanupWorktreesItem(project),
     {
       type: 'item',
       icon: Activity,
@@ -747,6 +750,20 @@ function hiddenWorktreesItem(project) {
       icon: EyeOff,
       label: t('sidebar.hiddenWorktrees.menu', 'Hidden Worktrees ({{count}})…', { count: hidden.length }),
       onSelect: () => (hiddenDialogId.value = project.id)
+    }
+  ]
+}
+
+// "Clean Up Worktrees...", for a local project with other worktrees.
+function cleanupWorktreesItem(project) {
+  if (!project.cwd || project.remote || !(project.worktrees || []).some((w) => w && !w.isMain)) return []
+  return [
+    {
+      type: 'item',
+      icon: Eraser,
+      label: t('sidebar.project.cleanupWorktrees', 'Clean Up Worktrees…'),
+      title: t('sidebar.project.cleanupWorktreesHint', 'Remove merged or inactive worktrees, with their git state'),
+      onSelect: () => emit('cleanup-worktrees', project.id)
     }
   ]
 }

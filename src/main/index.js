@@ -34,6 +34,7 @@ import { createAskpassPipeHost } from './askpassPipeHost'
 import { createRemoteFs, registerRemoteFs, remoteRootsOfLayout, SESSION_PREFIX as REMOTE_FS_PREFIX } from './remoteFs'
 import { createGitTrust, setGitTrust } from './gitSafety'
 import { createWorktreeList, localRootsOfLayout } from './worktreeList'
+import { createWorktreeCleanup } from './worktreeCleanup'
 import { isRemotePath } from '../shared/remotePath'
 import { STATUS_PROVIDERS } from '../shared/agentStateModel'
 import { prepareAgentStateHooks } from './agentStateSetup'
@@ -1575,6 +1576,13 @@ ipcMain.handle(
   'git:worktrees',
   // A remote project's (its virtual root): over its host's signed-in session.
   safe((cwd) => (isRemotePath(cwd) ? remoteFs.gitWorktrees(cwd) : worktreeList.list(cwd)))
+)
+// Clean up worktrees: the git evidence of an open local project's other
+// worktrees (read-only, worktreeCleanup.js); removing goes through review:remove.
+const worktreeCleanup = createWorktreeCleanup({ list: (cwd) => worktreeList.list(cwd) })
+ipcMain.handle(
+  'git:worktreeCleanupScan',
+  safe((cwd) => (isRemotePath(cwd) ? { ok: false, error: 'remote' } : worktreeCleanup.scan(cwd)))
 )
 ipcMain.handle(
   'git:createWorktree',
