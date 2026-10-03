@@ -363,9 +363,17 @@ const pickBarCardKey = computed(() => {
   if (!p) return null
   const list = rows.value || []
   if (list.some((x) => x.type === 'header' && x.project && x.project.id === p.wsId)) return null
-  let key = null
-  for (const x of list) if (x.type === 'card' && x.card && x.card.projectId === p.wsId) key = x.key
-  return key
+  // Under the card that holds the ticked agents (in view where you tick),
+  // else the project's last card.
+  const ids = new Set(picked.value)
+  let withPicked = null
+  let last = null
+  for (const x of list) {
+    if (x.type !== 'card' || !x.card || x.card.projectId !== p.wsId) continue
+    last = x.key
+    if ((x.card.panes || []).some((pane) => ids.has(pane.id))) withPicked = x.key
+  }
+  return withPicked || last
 })
 function pickingFor(wsId) {
   if (!picking.value || picking.value.wsId !== wsId) return null

@@ -221,7 +221,7 @@ describe('left sidebar', () => {
     w.unmount()
   })
 
-  it('cards not grouped by project: the team picking bar still shows (under the project's last card)', async () => {
+  it("cards not grouped by project: the team picking bar still shows (under the card holding the ticked agents)", async () => {
     settings.sidebarGroupBy = 'none'
     try {
       const w = mountSidebar({ projects: [{ ...projects()[0], copies: [] }] })
