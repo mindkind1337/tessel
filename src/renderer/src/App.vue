@@ -8840,9 +8840,12 @@ function createTeam(leafIds) {
   const ids = (leafIds || []).filter((id) => isAgentLeaf(findLeaf(id)) && !findLeaf(id).team)
   if (!ids.length) return null
   const names = new Set(teams.value.map((t) => t.name))
+  // The number each team shows (its name's last number: "Team 2" and
+  // "Équipe 2" are both 2), so a new team never takes one already shown.
+  const numbers = new Set(teams.value.map((x) => (/(\d+)\s*$/.exec(String(x.name || '')) || [])[1]).filter(Boolean))
   let n = 1
   const teamName = (i) => t('app.team.defaultName', 'Team {{n}}', { n: i })
-  while (names.has(teamName(n))) n++
+  while (names.has(teamName(n)) || numbers.has(String(n))) n++
   const used = new Set(teams.value.map((x) => x.color))
   const color = TEAM_COLORS.find((c) => !used.has(c)) || TEAM_COLORS[n % TEAM_COLORS.length]
   const team = { id: newId('team'), name: teamName(n), color }
