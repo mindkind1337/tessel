@@ -103,7 +103,8 @@ function cardSub(r) {
 // how long (nothing without a time). Grouped by project, both.
 function pill(r) {
   const name = stateName(r.bucket)
-  const timed = r.time && r.bucket !== 'idle' && r.bucket !== 'sleeping'
+  // Every state shows since when (idle and asleep too, as in the sidebar).
+  const timed = !!r.time
   if (view.groupBy !== 'project') return timed ? r.time : ''
   return timed ? t('agentDashboard.card.pill', '{{state}} {{time}}', { state: name, time: r.time }) : name
 }
