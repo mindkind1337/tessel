@@ -8,6 +8,7 @@
 import fs from 'fs'
 import { basename, dirname } from 'path'
 import { OVERRIDE_TEMPLATE, overrideSize, parseJsonc, validateOverride } from '../shared/agentStateRules'
+import { t } from './i18n'
 
 // A rules file larger than this is refused unread (a real one is a few KB).
 export const MAX_RULES_FILE_BYTES = 256 * 1024
@@ -19,17 +20,17 @@ export function readRulesFile(file, { knownAgents = null, fsApi = fs } = {}) {
   try {
     const stat = fsApi.statSync(file)
     if (stat.size > MAX_RULES_FILE_BYTES)
-      return { ...base, state: 'invalid', reason: `the file is larger than ${MAX_RULES_FILE_BYTES / 1024} KB` }
+      return { ...base, state: 'invalid', reason: t('main.agentRules.tooLarge', 'the file is larger than {{kb}} KB', { kb: MAX_RULES_FILE_BYTES / 1024 }) }
     text = fsApi.readFileSync(file, 'utf8')
   } catch (err) {
     if (err && err.code === 'ENOENT') return base
-    return { ...base, state: 'invalid', reason: `cannot read the file: ${err?.message || err}` }
+    return { ...base, state: 'invalid', reason: t('main.agentRules.unreadable', 'cannot read the file: {{error}}', { error: String(err?.message || err) }) }
   }
   let value
   try {
     value = parseJsonc(text)
   } catch (err) {
-    return { ...base, state: 'invalid', reason: `not valid JSON: ${err?.message || err}` }
+    return { ...base, state: 'invalid', reason: t('main.agentRules.badJson', 'not valid JSON: {{error}}', { error: String(err?.message || err) }) }
   }
   const checked = validateOverride(value, { knownAgents })
   if (!checked.ok) return { ...base, state: 'invalid', reason: checked.error }
