@@ -254,6 +254,23 @@ describe.skipIf(!gitSh())('remote project over a fake ssh (Git for Windows sh)',
       g('sparse-checkout', 'disable')
     }
   }, 60000)
+
+  it('keeps accented sparse folders on a remote host', async () => {
+    const dir = '\u00e9tudes'
+    fs.mkdirSync(join(proj, dir))
+    fs.writeFileSync(join(proj, dir, 'notes.md'), 'x\n')
+    g('add', '--', dir)
+    g('commit', '-qm', 'accented folder')
+    g('config', 'core.quotePath', 'true')
+    g('sparse-checkout', 'set', '--cone', dir)
+    try {
+      expect(await rfs.sparseInfo({ root })).toEqual({
+        ok: true, sparse: true, dirs: [{ rel: dir, path: childPath(root, dir) }]
+      })
+    } finally {
+      g('sparse-checkout', 'disable')
+    }
+  }, 60000)
 })
 
 // The security review's probes, kept as regression tests.

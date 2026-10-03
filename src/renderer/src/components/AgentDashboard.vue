@@ -140,7 +140,13 @@ async function sleepIdle() {
         confirmLabel: t('agentDashboard.sleep.confirm', 'Sleep')
       })
     : true
-  if (ok === true) emit('sleep', ids)
+  if (ok === true) {
+    // Confirmation can remain open while an agent starts work or gains focus.
+    // Only keep originally offered agents that are still idle now.
+    const eligible = new Set(sleepable.value.map((r) => r.id))
+    const remaining = ids.filter((id) => eligible.has(id))
+    if (remaining.length) emit('sleep', remaining)
+  }
 }
 </script>
 

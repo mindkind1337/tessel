@@ -53,6 +53,7 @@ import {
   portAddress
 } from '../browser/browserPage'
 import { registerWebview } from '../browser/webviewPassthrough'
+import { registerNavigationOwner, focusNavigationOwner, isNavigationOwner, releaseNavigationOwner } from '../browser/navigationFocus'
 import { claimPage, releasePage, placePage, createWebview } from '../browser/pageHost'
 import DesignModePanel from './DesignModePanel.vue'
 import { t } from '../i18n'
@@ -255,6 +256,7 @@ function onGone() {
 // A click in the page: the pane becomes the active one, menus close.
 function onPageFocus() {
   closeMenus()
+  focusNavigationOwner(pageOwner)
   if (!isActive.value) ctx.setActive(props.node.id)
 }
 
@@ -646,6 +648,7 @@ function onKeydown(e) {
 // --- Pane (header, focus) --------------------------------------------------------------------
 function focusPane() {
   const root = rootEl.value
+  if (root && isActive.value) focusNavigationOwner(pageOwner)
   if (!root || root.contains(document.activeElement)) return
   if (isBlank.value && !failure.value) focusAddress()
   else if (wv() && typeof wv().focus === 'function') wv().focus()
@@ -655,6 +658,7 @@ watch(isActive, (a) => {
   if (a) nextTick(focusPane)
 })
 function onPaneMouseDown() {
+  focusNavigationOwner(pageOwner)
   ctx.setActive(props.node.id)
 }
 // Drag the header to move the pane; a click on it activates the pane.
@@ -665,7 +669,7 @@ function onNavPointerDown(e) {
 }
 function onNavMouseDown(e) {
   if (!e.target.closest('input, label')) e.preventDefault()
-  ctx.setActive(props.node.id)
+  onPaneMouseDown()
 }
 
 // The app asks for the address bar (a counter it bumps), or another page.
@@ -701,7 +705,7 @@ function subscribe(api) {
   // The mouse's back/forward buttons while no page has the keyboard: the active pane's.
   if (typeof api.onAppCommand === 'function') {
     const off = api.onAppCommand((ev) => {
-      if (!ev || !isActive.value) return
+      if (!ev || !isActive.value || !isNavigationOwner(pageOwner)) return
       if (ev.action === 'back' || ev.action === 'forward') runAction(ev.action)
     })
     if (typeof off === 'function') unsubscribers.push(off)
@@ -761,6 +765,7 @@ watch([coveredByMaximized, isMaximized], () => nextTick(place))
 let resizeObserver = null
 // A click on the page's overlays (the failure page, Design Mode) activates the pane.
 function onBoxMouseDown() {
+  focusNavigationOwner(pageOwner)
   if (!isActive.value) ctx.setActive(props.node.id)
 }
 // A page taken back: what it shows now.
@@ -804,6 +809,7 @@ function mountPage() {
 
 let unregisterWebview = null
 onMounted(() => {
+  registerNavigationOwner(pageOwner, () => isActive.value)
   mountPage()
   const el = wv()
   if (el) for (const [name, fn] of Object.entries(WEBVIEW_EVENTS)) el.addEventListener(name, fn)
@@ -814,6 +820,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  releaseNavigationOwner(pageOwner)
   const el = wv()
   if (el) for (const [name, fn] of Object.entries(WEBVIEW_EVENTS)) el.removeEventListener(name, fn)
   if (resizeObserver) resizeObserver.disconnect()
@@ -857,6 +864,7 @@ defineExpose({ navigate, focusAddress })
     data-pane-kind="browser"
     tabindex="-1"
     @mousedown="onPaneMouseDown"
+    @focusin="onPaneMouseDown"
     @keydown="onKeydown"
   >
     <div v-if="!inSidePanel" class="pane-nav" data-test="pane-header" @mousedown.stop="onNavMouseDown" @pointerdown="onNavPointerDown">

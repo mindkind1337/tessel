@@ -152,7 +152,7 @@ export async function sparseInfo({ root } = {}) {
   const safety = await localGitArgs(top)
   const out = await new Promise((done) => {
     // Exit 128 ("this worktree is not sparse") or an old git: not sparse.
-    execFile('git', ['-C', top, ...safety, 'sparse-checkout', 'list'], { windowsHide: true, timeout: 10000, maxBuffer: 1024 * 1024 }, (err, stdout) =>
+    execFile('git', ['-C', top, ...safety, '-c', 'core.quotePath=false', 'sparse-checkout', 'list'], { windowsHide: true, timeout: 10000, maxBuffer: 1024 * 1024 }, (err, stdout) =>
       done(err ? null : String(stdout))
     )
   })

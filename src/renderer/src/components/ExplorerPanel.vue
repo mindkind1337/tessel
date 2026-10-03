@@ -31,6 +31,11 @@ const query = ref('')
 const mode = ref('names')
 const search = reactive({ busy: false, results: [], truncated: false, error: '', done: false })
 const moreOpen = ref(false)
+let viewRevision = 0
+let disposed = false
+let statusRequest = 0
+const directoryRequests = new Map()
+const stillCurrent = (revision, root) => !disposed && revision === viewRevision && root === props.root
 
 const api = () => window.shellApi.explorer
 const key = (p) => String(p || '').toLowerCase()
@@ -76,14 +81,20 @@ const scopeHelp = computed(() =>
 
 async function loadDir(dir) {
   if (!api() || !props.root) return
+  const revision = viewRevision, root = props.root
+  const request = Symbol()
+  directoryRequests.set(dir, request)
   const cur = nodes[dir] || { entries: [], loading: false, error: '' }
   nodes[dir] = { ...cur, loading: true }
-  const res = await api().list({ root: props.root, dir, dotfiles: dotfiles.value }).catch(() => null)
+  const res = await api().list({ root, dir, dotfiles: dotfiles.value }).catch(() => null)
+  if (!stillCurrent(revision, root) || directoryRequests.get(dir) !== request) return
   nodes[dir] = res && res.ok ? { entries: res.entries, loading: false, error: '' } : { entries: [], loading: false, error: (res && res.error) || t('explorer.readFailed', 'Could not read it.') }
 }
 async function loadStatus() {
   if (!api() || !props.root) return
-  const res = await api().status({ root: props.root, ignored: true }).catch(() => null)
+  const revision = viewRevision, root = props.root, request = ++statusRequest
+  const res = await api().status({ root, ignored: true }).catch(() => null)
+  if (!stillCurrent(revision, root) || request !== statusRequest) return
   if (!res || !res.ok) return
   const out = {}
   for (const [p, l] of Object.entries(res.files || {})) out[key(p)] = l
@@ -93,8 +104,10 @@ async function loadStatus() {
 // Everything shown again: the open folders and the git status.
 async function refresh() {
   if (!props.root) return
+  const revision = viewRevision, root = props.root
   const dirs = [...new Set([props.root, displayRoot.value, ...Object.keys(open).filter((d) => open[d])])]
   await Promise.all([...dirs.map(loadDir), loadSparse()])
+  if (!stillCurrent(revision, root)) return
   loadStatus()
   if (query.value.trim()) runSearch()
 }
@@ -372,6 +385,8 @@ async function doTrash() {
 let stopChanged = null
 let changedTimer = 0
 async function showRoot() {
+  const revision = ++viewRevision, root = props.root
+  directoryRequests.clear()
   for (const k of Object.keys(nodes)) delete nodes[k]
   for (const k of Object.keys(open)) delete open[k]
   status.value = {}
@@ -381,6 +396,7 @@ async function showRoot() {
   if (!props.root || !api()) return
   api().watch(props.root)
   await Promise.all([loadDir(props.root), loadSparse()])
+  if (!stillCurrent(revision, root)) return
   loadStatus()
   runSearch()
 }
@@ -401,6 +417,7 @@ onMounted(() => {
     })
 })
 onBeforeUnmount(() => {
+  disposed = true
   if (stopChanged) stopChanged()
   clearTimeout(changedTimer)
   clearTimeout(searchTimer)
