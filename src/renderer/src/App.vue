@@ -5762,8 +5762,23 @@ function teamLead(teamId) {
 
 function teamDir(teamId) {
   const m = teamMembers(teamId)[0]
-  const ws = m && wsOfLeaf(m.id)
-  return (ws && ws.cwd) || null
+  return wsDataDir(m && wsOfLeaf(m.id))
+}
+
+// The folder holding a workspace's .tessel data (team channel, board): its
+// project folder, or for a project on an SSH host a folder on this computer
+// (design/remote-agents.md), asked of main once and kept.
+const remoteDataDirs = reactive({}) // ssh:// root -> local folder | null
+function wsDataDir(ws) {
+  if (!ws) return null
+  if (!ws.remote) return ws.cwd || null
+  const key = remoteRoot(ws.remote.hostId, ws.remote.path)
+  if (!(key in remoteDataDirs)) {
+    remoteDataDirs[key] = null
+    const ask = window.shellApi.remoteProjectDataDir
+    if (ask) ask(ws.remote.hostId, ws.remote.path).then((dir) => (remoteDataDirs[key] = typeof dir === 'string' ? dir : null), () => {})
+  }
+  return remoteDataDirs[key]
 }
 
 function inboxPathFor(dir, token) {
@@ -6207,7 +6222,10 @@ async function publishCurrentTeams() {
   const byDir = {}
   // Open projects too: after a reload with no team left, a project's old
   // map is still cleaned up.
-  for (const ws of workspaces.value) if (ws.cwd) teamDirsSeen.add(ws.cwd)
+  for (const ws of workspaces.value) {
+    const dir = wsDataDir(ws)
+    if (dir) teamDirsSeen.add(dir)
+  }
   for (const team of teams.value) {
     const dir = channelDir(team)
     if (!dir) continue
@@ -7874,16 +7892,17 @@ async function syncSoloBoards(round) {
   if (!window.shellApi.team || !window.shellApi.team.boardPanes) return
   const byDir = {}
   for (const ws of workspaces.value) {
-    if (!ws.cwd) continue
+    const wsDir = wsDataDir(ws)
+    if (!wsDir) continue
     const solo = []
     forEachLeaf(ws.tree, (l) => {
       if (isAgentLeaf(l) && l.num && !(l.team && teamById(l.team))) solo.push(l)
     })
-    const panes = (byDir[ws.cwd] = byDir[ws.cwd] || {})
+    const panes = (byDir[wsDir] = byDir[wsDir] || {})
     for (const l of solo) panes[l.id] = { ws: ws.id, num: l.num, paneName: l.paneName }
     if (!solo.length && !soloBoardsSeen.has(ws.id)) continue
     soloBoardsSeen.add(ws.id)
-    await syncBoard({ key: `ws/${ws.id}`, dir: ws.cwd, target: { board: ws.id }, wsId: ws.id, members: solo, teamId: null }, round) // i18n-ignore
+    await syncBoard({ key: `ws/${ws.id}`, dir: wsDir, target: { board: ws.id }, wsId: ws.id, members: solo, teamId: null }, round) // i18n-ignore
     if (roundGone(round)) return
   }
   for (const [dir, panes] of Object.entries(byDir)) {

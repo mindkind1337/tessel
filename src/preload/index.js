@@ -214,6 +214,8 @@ const api = {
   gitInfo: (cwd) => ipcRenderer.invoke('git:info', cwd),
   // The worktrees of an open project's repository (read-only).
   gitWorktrees: (cwd) => ipcRenderer.invoke('git:worktrees', cwd),
+  // A remote project's .tessel data folder on this computer (remote agents).
+  remoteProjectDataDir: (hostId, remotePath) => ipcRenderer.invoke('remote:projectDataDir', hostId, remotePath),
   createWorktree: (cwd, label, options) =>
     ipcRenderer.invoke('git:createWorktree', { cwd, label, options }),
   // Last locally observed subscription quotas, with timestamps and stale flags.

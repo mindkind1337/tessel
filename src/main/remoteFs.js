@@ -1294,6 +1294,16 @@ export function createRemoteFs({
   }
 
   // -> { ok, path (its real path), entries: [{ name, dir, link? }], truncated } | { ok: false, error }
+  // Agents on this host (remoteAgent/remoteAgentSetup.js): the shim put in
+  // ~/.tessel-server (once per version) and its `install` run there.
+  // -> { rc, out, err } | { error }
+  async function installAgentShim(hostId, { version, source } = {}) {
+    if (!hostIdOk(hostId)) return { error: t('main.remote.notFound', 'This remote host is no longer saved in Tessel.') }
+    if (typeof version !== 'string' || !/^[0-9A-Za-z.-]{1,40}$/.test(version)) return { error: 'bad shim version' } // i18n-ignore internal
+    allow(hostId)
+    return call(hostId, '__t_ragent', [version], { cap: 64 * 1024, timeoutMs: 60_000, upload: Buffer.from(String(source || ''), 'utf8'), op: 'agent' })
+  }
+
   async function browse({ hostId, path } = {}) {
     if (!hostIdOk(hostId)) return { ok: false, error: t('main.remote.notFound', 'This remote host is no longer saved in Tessel.') }
     allow(hostId)
@@ -1388,6 +1398,7 @@ export function createRemoteFs({
     gitWorktrees,
     githubContext,
     connect,
+    installAgentShim,
     browse,
     cloneProject,
     createProject,

@@ -127,7 +127,10 @@ export const FUNCTIONS = new Set([
   // new project is made in a folder the user chose.
   '__t_browse',
   '__t_clone',
-  '__t_newproj'
+  '__t_newproj',
+  // Agents on this host (remoteAgent/remoteAgentSetup.js): put Tessel's shim
+  // in ~/.tessel-server and have it register the team tools there.
+  '__t_ragent'
 ])
 
 // The prelude: POSIX sh, for Linux (GNU, busybox) and macOS / BSD tools.
@@ -439,6 +442,27 @@ __t_newproj() {
   if ! __t_git "$__P" init -q >/dev/null; then if [ -n "$__new" ]; then rm -rf "$__P"; else rm -rf "$__P/.git"; fi; return 98; fi
   __t_git "$__P" commit -q --allow-empty --no-verify -m 'Initial commit' >/dev/null 2>&1
   printf '%s\\n' "$__P"
+}
+__t_ragent() {
+  case $1 in ''|*[!0-9A-Za-z.-]*) return 90 ;; esac
+  __s="$HOME/.tessel-server"
+  ( umask 077; mkdir -p "$__s/bin" "$__s/run" ) || return 98
+  chmod 700 "$__s" "$__s/bin" "$__s/run" 2>/dev/null
+  __nd=$(command -v node 2>/dev/null) || __nd=
+  case $__nd in /*) ;; *) __nd= ;; esac
+  if [ -z "$__nd" ]; then __nd=$("\${SHELL:-/bin/sh}" -lc 'command -v node' </dev/null 2>/dev/null | tail -n 1) || __nd=; case $__nd in /*) ;; *) __nd= ;; esac; fi
+  if [ -z "$__nd" ]; then for __c in "$HOME"/.nvm/versions/node/*/bin/node "$HOME"/.volta/bin/node "$HOME"/.local/bin/node /usr/local/bin/node /opt/homebrew/bin/node; do [ -x "$__c" ] && __nd=$__c; done; fi
+  [ -n "$__nd" ] && [ -x "$__nd" ] || return 81
+  __v=$("$__nd" -p 'process.versions.node.split(".")[0]' 2>/dev/null) || return 81
+  [ "$__v" -ge 18 ] 2>/dev/null || return 82
+  if [ "$(cat "$__s/bin/VERSION" 2>/dev/null)" != "$1" ] || [ ! -f "$__s/bin/tessel-shim.cjs" ]; then
+    __tmp=$(mktemp "$__s/bin/.shim.XXXXXX") || return 98
+    __t_b64d <"$__T_D/u" >"$__tmp" || { rm -f "$__tmp"; return 98; }
+    chmod 600 "$__tmp"
+    mv -f "$__tmp" "$__s/bin/tessel-shim.cjs" || { rm -f "$__tmp"; return 98; }
+    printf '%s\\n' "$1" >"$__s/bin/VERSION"
+  fi
+  "$__nd" "$__s/bin/tessel-shim.cjs" install --node "$__nd"
 }
 if [ -z "$__T_B" ]; then printf '\\n@@R %s base64\\n' "$__T_N"; else printf '\\n@@R %s ok\\n' "$__T_N"; fi
 `

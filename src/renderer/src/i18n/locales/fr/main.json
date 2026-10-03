@@ -864,6 +864,11 @@
       "unknown": "Identifiant de fournisseur inconnu.",
       "invalidValue": "Collez une valeur valide.",
       "readFailed": "Impossible de lire les paramètres des fournisseurs."
+    },
+    "remoteAgent": {
+      "noNode": "Node.js est introuvable sur cet hôte : l’agent qui y tourne n’a ni les outils d’équipe ni son état en direct. Installez Node.js 18 ou plus récent sur l’hôte.",
+      "oldNode": "Node.js sur cet hôte est antérieur à la version 18 : l’agent qui y tourne n’a ni les outils d’équipe ni son état en direct. Mettez Node.js à jour sur l’hôte.",
+      "failed": "Tessel n’a pas pu installer ses outils d’équipe sur cet hôte : l’agent qui y tourne n’a ni les outils d’équipe ni son état en direct."
     }
   },
   "main.chat.image.tooLarge": "Cette image dépasse {{mb}} Mo.",
