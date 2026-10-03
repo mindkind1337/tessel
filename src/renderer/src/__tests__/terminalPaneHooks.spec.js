@@ -61,7 +61,12 @@ vi.mock('@xterm/xterm', () => ({
     onResize() {}
     onSelectionChange() {}
     attachCustomKeyEventHandler() {}
-    focus() {}
+    paste(data) {
+      ;(this.pasted ||= []).push(data)
+    }
+    focus() {
+      this.textarea?.focus()
+    }
     dispose() {}
     scrollToBottom() {}
   }
@@ -200,6 +205,57 @@ describe('TerminalPane status integration', () => {
     await vi.advanceTimersByTimeAsync(1400)
     expect(ctx.notifyAgentDone).toHaveBeenCalledTimes(1)
     expect(ctx.agentReportedDone).toHaveBeenCalledTimes(1)
+  })
+
+  // A paste that seems to do nothing: Tessel's log says what it was (kind,
+  // size, outcome, never the content), and "Confirm paste" keeps the
+  // keyboard while it is open, even when the pane is selected meanwhile.
+  it('a paste during a turn: logged without its content; Confirm paste keeps the focus', async () => {
+    wrapper.unmount()
+    window.shellApi.log = vi.fn()
+    window.shellApi.saveClipboardImage = vi.fn(async () => 'C:\\Temp\\tessel-paste\\image-1.png')
+    window.shellApi.writePty = vi.fn()
+    wrapper = mount(TerminalPane, {
+      props: { node: { id: 'test-pane', kind: 'agent', type: 'leaf', title: 'Claude', agentId: 'claude', agentLaunchToken: 'launch' } },
+      global: { provide: { panelCtx: ctx } },
+      attachTo: document.body
+    })
+    await nextTick()
+    const term = fixture.terminals.at(-1)
+    term.textarea.classList.add('xterm-helper-textarea')
+    ctx.hook('UserPromptSubmit')
+    onData({ id: 'test-pane', data: 'Working' })
+    term.flush(['Working… esc to interrupt', '❯ '])
+    await vi.advanceTimersByTimeAsync(1400)
+    expect(agentStatus['test-pane']).toBe('busy')
+    const paste = (clipboardData) => {
+      const event = new Event('paste', { bubbles: true, cancelable: true })
+      Object.defineProperty(event, 'clipboardData', { value: clipboardData })
+      term.textarea.dispatchEvent(event)
+    }
+    const logged = () => window.shellApi.log.mock.calls.map((c) => c[1])
+    // An image: saved, its path pasted.
+    paste({ types: ['Files'], items: [{ kind: 'file', type: 'image/png' }], getData: () => '' })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(term.pasted).toEqual(['C:\\Temp\\tessel-paste\\image-1.png'])
+    expect(logged().at(-1)).toBe('paste in test-pane (agent working): Ctrl+V: image saved, its path pasted')
+    // Files copied in the Explorer: nothing to paste, said so.
+    paste({ types: ['Files'], items: [{ kind: 'file', type: '' }], getData: () => '' })
+    expect(logged().at(-1)).toBe('paste in test-pane (agent working): Ctrl+V: no text or image on the clipboard (Files)')
+    // Several lines: asked first, the box has the focus and keeps it.
+    paste({ types: ['text/plain'], items: [], getData: () => 'secret one\nsecret two' })
+    await nextTick()
+    expect(logged().at(-1)).toBe('paste in test-pane (agent working): Ctrl+V: text, 2 lines, 21 chars, confirmation asked')
+    const box = document.querySelector('.paste-ask')
+    expect(document.activeElement).toBe(box)
+    ctx.activeId.value = 'test-pane'
+    await nextTick()
+    expect(document.activeElement).toBe(box)
+    box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    await nextTick()
+    expect(term.pasted.at(-1)).toBe('secret one\nsecret two')
+    expect(logged().at(-1)).toBe('paste in test-pane (agent working): confirmed: text, 2 lines, 21 chars pasted')
+    expect(logged().join('\n')).not.toContain('secret')
   })
 
   // The suggestion is read again 3 s after a turn ends; a new turn started

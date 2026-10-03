@@ -831,9 +831,14 @@ watch(chatShown, (shown) => {
 })
 const chatViewEl = ref(null)
 // Every focus of the terminal goes through here: with the chat shown, its
-// composer takes it instead.
+// composer takes it instead; with "Confirm paste" open, that box keeps it
+// (else its Enter would reach the agent and the paste seem to do nothing).
 function termFocus() {
   if (!term) return
+  if (pasteAsk.value) {
+    if (pasteAskEl.value) pasteAskEl.value.focus()
+    return
+  }
   if (chatShown.value) {
     if (chatViewEl.value) chatViewEl.value.focus()
     return
@@ -1494,11 +1499,24 @@ function copySelection() {
   return false
 }
 
+// One line in Tessel's log per paste, to follow one that seems to do nothing:
+// its kind, size and outcome, never its content.
+function logPaste(what) {
+  if (!window.shellApi.log) return
+  const working = isAgent.value && agentStatus.value === 'busy' ? ' (agent working)' : ''
+  window.shellApi.log('info', `paste in ${props.node.id}${working}: ${what}`)
+}
+function pasteSize(text) {
+  const lines = String(text).replace(/\r\n?/g, '\n').replace(/\n+$/, '').split('\n').length
+  return `text, ${lines} line${lines === 1 ? '' : 's'}, ${String(text).length} chars`
+}
+
 async function pasteClipboard() {
   const text = await window.shellApi.readClipboard()
-  if (text) requestPaste(text)
+  if (text) requestPaste(text, 'menu')
   else if (window.shellApi.clipboardHasImage && (await window.shellApi.clipboardHasImage()))
-    pasteImage()
+    pasteImage('menu')
+  else logPaste('menu: the clipboard has no text or image')
 }
 
 // An image can't be typed into a terminal. Claude Code attaches an image
@@ -1506,7 +1524,7 @@ async function pasteClipboard() {
 // path: instant, where Claude's own Alt+V takes seconds on Windows (it starts
 // PowerShell to read the clipboard). Other programs read the clipboard
 // themselves on Ctrl+V (Codex does it quickly).
-async function pasteImage() {
+async function pasteImage(how = 'Ctrl+V') {
   if (props.node.agentId === 'claude') {
     let file = null
     try {
@@ -1518,9 +1536,14 @@ async function pasteImage() {
       const before = Math.max(0, ...imageNumbersOnScreen())
       term.paste(file)
       rememberPastedImage(file, before)
-    } else window.shellApi.writePty(props.node.id, '\x1bv')
+      logPaste(`${how}: image saved, its path pasted`)
+    } else {
+      window.shellApi.writePty(props.node.id, '\x1bv')
+      logPaste(`${how}: image not saved, Alt+V sent to Claude`)
+    }
   } else {
     window.shellApi.writePty(props.node.id, '\x16')
+    logPaste(`${how}: image, Ctrl+V sent to the agent`)
   }
   if (term) termFocus()
 }
@@ -1602,9 +1625,14 @@ const pasteAsk = ref(null) // { text, lines, preview, more }
 const pasteAskEl = ref(null)
 const PREVIEW_LINES = 500
 
-function requestPaste(text) {
-  if (!text || !term) return
+function requestPaste(text, how = 'Ctrl+V') {
+  if (!text) return
+  if (!term) {
+    logPaste(`${how}: ${pasteSize(text)}, no terminal to paste into`)
+    return
+  }
   if (settings.confirmMultilinePaste && /[\r\n]/.test(text)) {
+    logPaste(`${how}: ${pasteSize(text)}, confirmation asked`)
     const all = text.replace(/\r\n?/g, '\n').replace(/\n+$/, '').split('\n')
     pasteAsk.value = {
       text,
@@ -1616,6 +1644,7 @@ function requestPaste(text) {
     return
   }
   term.paste(text)
+  logPaste(`${how}: ${pasteSize(text)}, pasted`)
   termFocus()
 }
 
@@ -1623,10 +1652,12 @@ function confirmPaste() {
   const ask = pasteAsk.value
   pasteAsk.value = null
   if (ask && term) term.paste(ask.text)
+  if (ask) logPaste(`confirmed: ${pasteSize(ask.text)} pasted`)
   if (term) termFocus()
 }
 
 function cancelPaste() {
+  if (pasteAsk.value) logPaste('cancelled')
   pasteAsk.value = null
   if (term) termFocus()
 }
@@ -1642,6 +1673,8 @@ function onPasteEvent(e) {
   const text = data ? data.getData('text/plain') : ''
   if (text) requestPaste(text)
   else if (data && [...data.items].some((i) => i.type.startsWith('image/'))) pasteImage()
+  // Its kinds only (e.g. "Files" for files copied in the Explorer).
+  else logPaste(`Ctrl+V: no text or image on the clipboard (${(data ? [...data.types] : []).join(', ') || 'empty'})`)
 }
 
 // Editable pane title — stored on the node so it survives layout changes and
