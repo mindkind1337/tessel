@@ -245,6 +245,36 @@ describe('agent browser: commands', () => {
     _resetTeamAuth()
   })
 
+  // A command the page never answers (a script call that hangs): the user's
+  // Stop ends it at once, and the page's next command is not stuck behind it.
+  it("Stop ends a command still waiting on the page; a hung command does not block the next one", async () => {
+    const { call, ab, guest } = setup()
+    guest.executeJavaScriptInIsolatedWorld = vi.fn(() => new Promise(() => {}))
+    const started = Date.now()
+    const hung = call('wait', { text: 'never', timeout_ms: 30000 })
+    await new Promise((r) => setTimeout(r, 50))
+    ab.stop(guest.id)
+    await expect(hung).rejects.toMatchObject({ code: 'stopped_by_user' })
+    expect(Date.now() - started).toBeLessThan(2000)
+  })
+
+  it('a hung command times out and the page answers the next command', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      const { call, guest } = setup()
+      guest.executeJavaScriptInIsolatedWorld = vi.fn(() => new Promise(() => {}))
+      const hung = call('wait', { text: 'never', timeout_ms: 1000 })
+      const hungResult = hung.catch((e) => e)
+      await vi.advanceTimersByTimeAsync(46000)
+      expect(await hungResult).toMatchObject({ code: expect.stringMatching(/timeout/) })
+      const next = call('console', {})
+      await vi.advanceTimersByTimeAsync(10)
+      expect((await next).text).toContain('No console messages')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('snapshot lists refs; click dispatches a click at the element centre', async () => {
     const { call, guest } = setup()
     const snap = await call('snapshot')

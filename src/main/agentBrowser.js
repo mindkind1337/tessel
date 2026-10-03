@@ -292,19 +292,30 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
     revoked.add(id)
     const s = pages.get(id)
     if (s && s.page) revokedPages.add(s.page)
+    // Commands still waiting on this page end now, not when the page answers.
+    if (s && s.cancels) for (const cancel of [...s.cancels]) cancel(fail('stopped_by_user', 'The user stopped agents from driving this page.'))
     release(id, { stopped: true })
     return true
   }
 
   // --- Commands --------------------------------------------------------------------
+  // One command at a time per page. A command the page never answers does
+  // not hold the page: the next one starts once it timed out, and the user's
+  // Stop ends every command still waiting on the page at once.
   function queued(s, guest, fn) {
     const go = () => {
       allowed(guest)
       return fn()
     }
+    let cancel
+    const cancelled = new Promise((_resolve, reject) => (cancel = reject))
+    cancelled.catch(() => {})
     const run = s.queue.then(go, go)
-    s.queue = run.catch(() => {})
-    return withTimeout(run, COMMAND_TIMEOUT_MS)
+    const answer = withTimeout(Promise.race([run, cancelled]), COMMAND_TIMEOUT_MS)
+    if (!s.cancels) s.cancels = new Set()
+    s.cancels.add(cancel)
+    s.queue = answer.catch(() => {}).finally(() => s.cancels.delete(cancel))
+    return answer
   }
 
   function waitLoaded(guest, ms = NAV_TIMEOUT_MS) {
@@ -419,6 +430,7 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
     const until = Date.now() + ms
     for (;;) {
       if (guest.isDestroyed()) throw fail('page_gone', 'The page was closed.')
+      allowed(guest) // stopped, or the setting turned off, while it waits
       // The user's Stop, or the setting turned off, while it waits: no more
       // looking at the page, and no answer from it.
       allowed(guest)
