@@ -6658,6 +6658,9 @@ async function switchToTerminal(leafId) {
       return false
     }
     Object.assign(fresh, { num: old.num, paneName: old.paneName, team: old.team, broadcast: false, restartedAt: Date.now() })
+    // A worker stays one, with its coordinator's cap (back in a chat it applies again).
+    if (old.worker) fresh.worker = true
+    if (old.maxPermissions === 'manual') fresh.maxPermissions = 'manual'
     const now = wsOfLeaf(leafId)
     if (!now) {
       window.shellApi.killPty(leafId)
@@ -6718,6 +6721,8 @@ async function switchToChat(leafId) {
     // a restart does; only a pane you set to ask first, or a worker capped
     // by its coordinator, keeps asking.
     if (old.permissions === 'manual' || old.maxPermissions === 'manual') leaf.maxPermissions = 'manual'
+    // A worker stays one (its cap is kept across a Tessel restart only for a worker).
+    if (old.worker) leaf.worker = true
     now.tree = replaceNode(now.tree, leafId, () => leaf)
     scheduleSave()
     return true

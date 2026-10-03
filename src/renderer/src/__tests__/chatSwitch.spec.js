@@ -134,6 +134,18 @@ describe('terminal to chat', () => {
     expect(b.ws.tree.maxPermissions).toBeUndefined()
   })
 
+  // A worker never runs with more than its coordinator: its flag and its cap
+  // go with it both ways (OpenCode's terminal has no permission switch of its
+  // own, so the cap must survive the terminal to apply again in the chat).
+  it('a capped worker stays a capped worker, chat to terminal and back', async () => {
+    const c = load({ type: 'leaf', kind: 'chat', id: 'pane-3', agentId: 'opencode', cwd: 'C:\proj', sessionId: 'ses_' + 'b'.repeat(26), worker: true, maxPermissions: 'manual', num: 1 })
+    expect(await c.api.switchToTerminal('pane-3')).toBe(true)
+    expect(c.ws.tree).toMatchObject({ kind: 'agent', worker: true, maxPermissions: 'manual' })
+    const t2 = load({ ...c.ws.tree, startDir: 'C:\proj' })
+    expect(await t2.api.switchToChat('pane-3')).toBe(true)
+    expect(t2.ws.tree).toMatchObject({ kind: 'chat', worker: true, maxPermissions: 'manual' })
+  })
+
   it('OpenCode too, with its own session id (ses_…); another id is refused', async () => {
     const ok = load(term({ agentId: 'opencode', sessionId: 'ses_' + 'a'.repeat(26), modelChoice: null }))
     expect(await ok.api.switchToChat('pane-2')).toBe(true)
