@@ -262,11 +262,21 @@ describe('terminal pane header', () => {
   it('an agent on an SSH host or found in a shell has no chat view; OpenCode keeps its chat pane', async () => {
     ctx.unsent = {}
     ctx.trackOf = () => null
-    for (const extra of [{ remoteHostId: 'ssh-1' }, { detected: true }, { agentId: 'opencode' }]) {
+    for (const extra of [{ remoteHostId: 'ssh-1' }, { detected: true }]) {
       wrapper.unmount()
       wrapper = mount(TerminalPane, { props: { node: { ...node(), ...extra } }, attachTo: host, global: { provide: { panelCtx: ctx } } })
       expect(wrapper.find('[data-test="pane-chat-toggle"]').exists(), JSON.stringify(extra)).toBe(false)
     }
+    // OpenCode: its button opens its own chat pane, once its conversation is known.
+    ctx.switchToChat = vi.fn()
+    wrapper.unmount()
+    wrapper = mount(TerminalPane, { props: { node: { ...node(), agentId: 'opencode' } }, attachTo: host, global: { provide: { panelCtx: ctx } } })
+    expect(wrapper.find('[data-test="pane-chat-toggle"]').attributes('disabled')).toBeDefined()
+    wrapper.unmount()
+    wrapper = mount(TerminalPane, { props: { node: { ...node(), agentId: 'opencode', sessionId: 'ses_' + 'a'.repeat(26) } }, attachTo: host, global: { provide: { panelCtx: ctx } } })
+    await wrapper.find('[data-test="pane-chat-toggle"]').trigger('click')
+    expect(ctx.switchToChat).toHaveBeenCalledWith(node().id)
+    delete ctx.switchToChat
   })
 
   it('an agent whose turn ended while its background work runs: monitoring dot and badge, then idle', async () => {
