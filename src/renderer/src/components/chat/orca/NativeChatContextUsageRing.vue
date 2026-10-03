@@ -121,7 +121,7 @@ const preventDefault = (event) => event.preventDefault()
               fill="none"
               stroke="currentColor"
               :stroke-width="RING_STROKE"
-              stroke-linecap="round"
+              stroke-linecap="butt"
               :stroke-dasharray="RING_CIRCUMFERENCE"
               :stroke-dashoffset="dashOffset"
             />
@@ -200,8 +200,11 @@ const preventDefault = (event) => event.preventDefault()
 .nc-context-ring-svg {
   transform: rotate(-90deg);
 }
+/* Tessel: the empty part in a neutral grey (not the arc's colour) and square
+   ends, so 91 % reads as 91 %, not as a full red ring. */
 .nc-context-ring-track {
-  opacity: 0.25;
+  color: var(--nc-muted-foreground);
+  opacity: 0.35;
 }
 /* w-72 */
 .nc-context-card {
