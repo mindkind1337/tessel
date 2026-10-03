@@ -131,6 +131,7 @@ import { createCliServer, CliError } from './cliServer'
 import { createCliBridge } from './cliBridge'
 import { createCloseGuard } from './closeGuard'
 import { installRendererRecovery } from './rendererRecovery'
+import { prepareAntigravityContinue } from './antigravityIdeHistory'
 import { createCliInstaller, createUserPathRegistry, cliBinDir, cliCommandName, cliScriptPath, cliLauncherPath, iniText, readRegistryPathSync } from './cliInstall'
 import {
   ensureTeamChannel,
@@ -1464,6 +1465,16 @@ ipcMain.handle('sessions:revealLog', async (_evt, q = {}) => {
 })
 ipcMain.handle('sessions:delete', async (_evt, q = {}) => {
   try { return await accountSessions.remove(q || {}, (p) => shell.trashItem(p)) } catch { return { ok: false, error: 'failed' } }
+})
+// An Antigravity IDE conversation continued in a new agy CLI conversation
+// (antigravityIdeHistory.js): its history written to a prompt file in
+// Tessel's own folder. -> { ok, file, dir, cwd } or { ok: false, error }
+ipcMain.handle('sessions:agyContinue', (_evt, q = {}) => {
+  try {
+    return prepareAntigravityContinue({ id: q && q.id }, { outDir: join(app.getPath('userData'), 'agy-continue') })
+  } catch {
+    return { ok: false, error: 'failed' }
+  }
 })
 // The model an agent pane uses (for its header), or null.
 ipcMain.handle('agents:model', async (_evt, q = {}) => {

@@ -80,6 +80,7 @@ import { createOrchestrator } from './orchestrator'
 import { formatChatTranscript } from './chat/chatTranscript'
 import { canShowChatView, chatViewTakesImages, isPastedImageCopy } from './chat/terminalChatBridge'
 import { automationLaunchArgs, AUTOMATION_AGENTS, permissionFingerprint, quoteGlobArgs } from '../../shared/automations'
+import { agyContinueLaunchArgs } from '../../shared/agyContinue'
 import { createAutomationRunner, probeRunAgent } from './automationRunner'
 import { createCliRequests, CliRequestError } from './cliRequests'
 import { automationsState, applySnapshot as applyAutomations, subscribeAutomations } from './automationsStore'
@@ -1363,7 +1364,14 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
       window.shellApi.killPty(id)
       return null
     }
-    const base = (launch.args ? `${start.line} ${launch.args}` : start.line) + extra + automationArgs
+    // An Antigravity IDE conversation continued in a new agy conversation:
+    // its first prompt points at the history file (agyContinue.js).
+    const continueArgs = opts.agyContinue && agent.id === 'antigravity' && !start.resumed ? agyContinueLaunchArgs(opts.agyContinue.file, res.shell && res.shell.id) : ''
+    if (opts.agyContinue && !continueArgs) {
+      window.shellApi.killPty(id)
+      return null
+    }
+    const base = (launch.args ? `${start.line} ${launch.args}` : start.line) + extra + automationArgs + continueArgs
     setTimeout(() => {
       const withWake = !!wakeArg && !!settings.teamWakeUps
       const full = base + (withWake ? wakeArg : '')
@@ -3061,6 +3069,10 @@ const openSessionIds = computed(() => {
 // Reopen a past conversation in a new pane, in the folder it ran in.
 async function resumeSession(s) {
   sessionsOpen.value = false
+  // Antigravity: an IDE conversation is continued in a new CLI one. A search
+  // result names no origin: the main process tells (not found among the IDE's
+  // conversations: a CLI one, resumed as usual).
+  if (s && s.agent === 'antigravity' && (await continueAgyFromIde(s)) !== 'not-ide') return
   // Only an agent of the catalog, by its id (a session list or a search index
   // never names a command to run), with a session id of the expected shape.
   const agent = s && agentById(s.agent)
@@ -3086,6 +3098,39 @@ async function resumeSession(s) {
       ws.activeId = leaf.id
     }
   }
+}
+
+// An Antigravity IDE conversation: the agy CLI cannot resume it, so a new
+// agy conversation starts in its folder from its history (the main process
+// writes it to a prompt file, antigravityIdeHistory.js). Always on this
+// computer, where the file is.
+// -> 'not-ide' when it is not one of the IDE's conversations.
+async function continueAgyFromIde(s) {
+  const ide = s.origin === 'ide'
+  if (!ide && s.origin) return 'not-ide'
+  const agent = agentById('antigravity')
+  if (!agent || !safeSessionId(s.id) || !window.shellApi.prepareAgyContinue) return ide ? null : 'not-ide'
+  const ws = currentWs.value
+  if (!ws) return null
+  const prep = await window.shellApi.prepareAgyContinue({ id: s.id }).catch(() => null)
+  if (!ide && (!prep || prep.error === 'not-found')) return 'not-ide'
+  if (!prep || !prep.ok || !(prep.cwd || s.cwd)) {
+    showToast(t('sessionHistory.agyContinue.failed', "Couldn't read this Antigravity IDE conversation."), { kind: 'error' })
+    return null
+  }
+  const opts = { cwd: prep.cwd || s.cwd, local: true, agyContinue: { file: prep.file } }
+  let leaf = null
+  if (activeId.value && ws.tree) {
+    leaf = await splitLeaf(activeId.value, placement.value === 'down' ? 'col' : 'row', agent, selectedShell.value, null, { ...opts, before: placement.value === 'left' })
+  } else {
+    leaf = await createLeaf(selectedShell.value, agent, opts.cwd, null, opts)
+    if (leaf) {
+      ws.tree = leaf
+      ws.activeId = leaf.id
+    }
+  }
+  if (!leaf) showToast(t('sessionHistory.agyContinue.startFailed', "Couldn't start Antigravity CLI for this conversation."), { kind: 'error' })
+  return leaf
 }
 
 function openSessions() {

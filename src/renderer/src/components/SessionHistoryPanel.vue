@@ -251,7 +251,9 @@ watch([query, scope, () => view.agents, () => index.value && index.value.enabled
   searchTimer = setTimeout(runSearch, 180)
 })
 const hitRows = computed(() => {
-  const rows = (hits.value || []).map(hitRow)
+  // A hit names no origin: an Antigravity IDE conversation's comes from the list.
+  const ide = new Set(sessions.value.filter((x) => x.origin === 'ide').map((x) => `${x.agent}:${x.id}`))
+  const rows = (hits.value || []).map(hitRow).map((r) => (ide.has(`${r.agent}:${r.id}`) ? { ...r, origin: 'ide' } : r))
   return view.searchSort === 'newest' ? rows.sort((a, b) => b.updated - a.updated) : rows
 })
 const sizeText = (n) => (n >= 1048576 ? `${Math.round(n / 1048576)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`) // i18n-ignore
@@ -319,7 +321,7 @@ const emptyTitle = computed(() => {
 })
 
 function onResume(s) {
-  emit('resume', { agent: s.agent, id: s.id, cwd: s.cwd, title: s.title, ...(s.accountId !== undefined ? { accountId: s.accountId } : {}) })
+  emit('resume', { agent: s.agent, id: s.id, cwd: s.cwd, title: s.title, ...(s.origin ? { origin: s.origin } : {}), ...(s.accountId !== undefined ? { accountId: s.accountId } : {}) })
 }
 function onDeleted(s) {
   expanded.delete(s.id)

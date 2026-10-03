@@ -394,6 +394,112 @@ export function antigravitySessions(home = os.homedir(), { since = 0 } = {}) {
   return out
 }
 
+// --- Antigravity IDE (2.0) ---------------------------------------------------------
+// The IDE keeps its conversations in the same brain/ layout under
+// ~/.gemini/antigravity-ide (older builds: ~/.gemini/antigravity), with
+// transcript_full.jsonl beside transcript.jsonl. The CLI (agy) cannot resume
+// them by id: they are listed with origin 'ide' and continued in a new CLI
+// conversation from their history (antigravityIdeHistory.js). Their folder:
+// history.jsonl by conversationId (or the unique first-prompt match), then
+// cache/{last_conversations,projects,conversation_metadata}.json.
+// After Orca's shared/antigravity-session-origin.ts,
+// session-scanner-antigravity-{sources,paths,history,metadata}.ts and
+// antigravity-transcript-candidates.ts (MIT, Copyright (c) 2026 Lovecast Inc.).
+
+export const ANTIGRAVITY_IDE_ORIGINS = ['antigravity-ide', 'antigravity']
+export function antigravityIdeRoots(home = os.homedir()) {
+  return ANTIGRAVITY_IDE_ORIGINS.map((o) => join(home, '.gemini', o))
+}
+const INDEX_MAX = 4 * 1024 * 1024
+const INDEX_ROWS = 10000
+const absPath = (v) => typeof v === 'string' && v.length <= 4096 && /^(?:[/\\]|[A-Za-z]:[/\\])/.test(v) && !/[\x00-\x1f]/.test(v)
+
+// The transcript of an IDE conversation folder: the full one when it is
+// there, else the compact one; both only inside `root`.
+export function antigravityIdeTranscript(root, id) {
+  if (!plainId(id)) return null
+  const logs = join(root, 'brain', id, '.system_generated', 'logs')
+  for (const name of ['transcript_full.jsonl', 'transcript.jsonl']) {
+    const file = join(logs, name)
+    const s = stat(file)
+    if (s && s.isFile() && insideDir(root, file)) return { file, updated: s.mtimeMs, born: s.birthtimeMs || s.mtimeMs }
+  }
+  return null
+}
+
+// conversation id -> folder (null when two sources disagree).
+export function antigravityIdeFolders(historyText, cache = {}) {
+  const map = new Map()
+  const note = (id, path) => {
+    if (!plainId(id) || !absPath(path)) return
+    if (!map.has(id)) map.set(id, path)
+    else if (map.get(id) !== path) map.set(id, null)
+  }
+  for (const r of jsonLines(historyText).slice(-INDEX_ROWS)) {
+    if (typeof r.conversationId === 'string') note(r.conversationId, typeof r.workspace === 'string' ? r.workspace.trim() : '')
+  }
+  const fromCache = new Map()
+  const noteCache = (id, path) => {
+    if (!plainId(id) || !absPath(path)) return
+    if (!fromCache.has(id)) fromCache.set(id, path)
+    else if (fromCache.get(id) !== path) fromCache.set(id, null)
+  }
+  const pairs = (o) => (object(o) ? Object.entries(o).slice(0, INDEX_ROWS) : [])
+  const projects = new Map()
+  for (const [k, v] of pairs(cache.projects)) {
+    if (typeof v !== 'string') continue
+    if (absPath(k)) projects.set(v, projects.has(v) && projects.get(v) !== k ? null : k)
+    else if (absPath(v)) projects.set(k, projects.has(k) && projects.get(k) !== v ? null : v)
+  }
+  for (const [path, id] of pairs(cache.lastConversations)) if (typeof id === 'string') noteCache(id, path)
+  for (const [id, v] of pairs(object(cache.metadata) ? cache.metadata.conversations : null)) {
+    const summary = object(v) && object(v.summary) ? v.summary : null
+    const p = summary && typeof summary.ProjectID === 'string' ? projects.get(summary.ProjectID) : undefined
+    if (p) noteCache(id, p)
+  }
+  for (const [id, path] of fromCache) if (!map.has(id)) map.set(id, path)
+  return map
+}
+
+export function antigravityIdeSessions(home = os.homedir(), { since = 0 } = {}) {
+  const out = []
+  const seen = new Set()
+  for (const root of antigravityIdeRoots(home)) {
+    const brain = join(root, 'brain')
+    let folders = null // read once per root, only when needed
+    let history = null
+    for (const d of entries(brain)) {
+      if (!d.isDirectory() || d.isSymbolicLink() || !plainId(d.name) || seen.has(d.name)) continue
+      const t = antigravityIdeTranscript(root, d.name)
+      if (!t || t.updated < since - SLACK) continue
+      const head = parseAntigravityHead(headIn(root, t.file))
+      if (folders === null) {
+        const h = join(root, 'history.jsonl')
+        history = insideDir(root, h) ? readTail(h, 2 * 1024 * 1024) : ''
+        folders = antigravityIdeFolders(history, {
+          projects: readJsonIn(root, join(root, 'cache', 'projects.json'), INDEX_MAX),
+          lastConversations: readJsonIn(root, join(root, 'cache', 'last_conversations.json'), INDEX_MAX),
+          metadata: readJsonIn(root, join(root, 'cache', 'conversation_metadata.json'), INDEX_MAX)
+        })
+      }
+      const byId = folders.has(d.name) ? folders.get(d.name) || '' : antigravityWorkspace(history, head.prompt, head.promptAt)
+      seen.add(d.name)
+      out.push({
+        agent: 'antigravity',
+        origin: 'ide',
+        id: d.name,
+        cwd: folder(byId),
+        started: head.started || t.born,
+        updated: t.updated,
+        title: title(head.prompt),
+        file: t.file
+      })
+      if (out.length > 400) return out
+    }
+  }
+  return out
+}
+
 // --- Devin -------------------------------------------------------------------------
 // <DEVIN_HOME or %APPDATA%\devin\cli>/sessions.db, table sessions (id,
 // working_directory, title, created_at, last_activity_at in seconds, hidden),
@@ -687,10 +793,12 @@ export const HISTORY_AGENTS = Object.keys(READERS)
 export function moreAgentsHistory({ cwd = null, limit = 60 } = {}, home = os.homedir()) {
   const want = cwd ? normDir(cwd) : null
   const out = []
-  for (const agent of HISTORY_AGENTS) {
+  // Antigravity IDE conversations: listed apart from the CLI's own (their
+  // own per-agent limit), to be continued in a new CLI conversation.
+  for (const read of [...HISTORY_AGENTS.map((a) => READERS[a]), antigravityIdeSessions]) {
     let rows = []
     try {
-      rows = READERS[agent](home, {})
+      rows = read(home, {})
     } catch {
       continue
     }

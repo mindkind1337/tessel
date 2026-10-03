@@ -85,6 +85,9 @@
     },
     "row": {
       "resumeInNewPane": "Reprendre dans un nouveau panneau",
+      "continueInCli": "Continuer dans la CLI",
+      "continueInCliHint": "Démarrer une nouvelle conversation Antigravity CLI dans son dossier, à partir de la fin de cette conversation de l'IDE",
+      "ideOrigin": "IDE",
       "jumpToOriginalPane": "Aller au panneau d'origine",
       "hideDetails": "Masquer les détails",
       "showDetails": "Afficher les détails",
@@ -130,6 +133,10 @@
       "confirm": "Supprimer",
       "done": "Session supprimée",
       "failed": "Impossible de supprimer la session"
+    },
+    "agyContinue": {
+      "failed": "Impossible de lire cette conversation de l'IDE Antigravity.",
+      "startFailed": "Impossible de démarrer Antigravity CLI pour cette conversation."
     }
   }
 }

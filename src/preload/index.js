@@ -214,6 +214,7 @@ const api = {
   sessionDetails: (query) => ipcRenderer.invoke('sessions:details', query),
   revealSessionLog: (query) => ipcRenderer.invoke('sessions:revealLog', query),
   deleteSession: (query) => ipcRenderer.invoke('sessions:delete', query),
+  prepareAgyContinue: (query) => ipcRenderer.invoke('sessions:agyContinue', query),
   voiceTyping: (opts) => ipcRenderer.invoke('app:voiceTyping', opts),
   inputLanguages: () => ipcRenderer.invoke('app:inputLanguages'),
   openExternal: (url) => ipcRenderer.invoke('app:openExternal', url),
