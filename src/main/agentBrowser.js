@@ -165,6 +165,9 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
   // guest id -> { refMap, navKey, queue, idle, agent, console: [], attached, listener }
   const pages = new Map()
   const revoked = new Set() // guest ids the user stopped
+  // Browser page (pane) ids the user stopped: a page's view can be rebuilt
+  // under a new guest (moved to another workspace, the window reloaded).
+  const revokedPages = new Set()
   const lastPage = new Map() // agent pane id -> browser pane id it drove last
   const warn = (msg) => log && log.warn('agent-browser', msg)
 
@@ -287,6 +290,8 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
   function stop(id) {
     if (!Number.isSafeInteger(id) || !guestById(id)) return false
     revoked.add(id)
+    const s = pages.get(id)
+    if (s && s.page) revokedPages.add(s.page)
     release(id, { stopped: true })
     return true
   }
@@ -542,6 +547,7 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
       const guest = r.guestId != null ? guestById(r.guestId) : null
       if (guest) {
         const s = stateOf(guest)
+        s.page = r.page
         controlled(guest, s, r.agent)
         await waitLoaded(guest)
       }
@@ -552,9 +558,10 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
     const r = targetFrom(await ask('browserTarget', { agent: pane, op: 'resolve', page: args.page || null, last: lastPage.get(pane) || null }))
     const guest = r.guestId != null ? guestById(r.guestId) : null
     if (!guest) throw fail('page_not_ready', 'That browser page is not ready yet: try again in a moment.')
-    if (revoked.has(guest.id)) throw fail('stopped_by_user', 'The user stopped agents from driving this page. Ask them, or open another page with browser_open.')
+    if (revoked.has(guest.id) || revokedPages.has(r.page)) throw fail('stopped_by_user', 'The user stopped agents from driving this page. Ask them, or open another page with browser_open.')
     lastPage.set(pane, r.page)
     const s = stateOf(guest)
+    s.page = r.page
     controlled(guest, s, r.agent)
     try {
       const out = await queued(s, guest, () => run(op, guest, s, args, pane))

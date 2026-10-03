@@ -217,6 +217,21 @@ describe('agent browser: who may call', () => {
     await expect(call('snapshot')).rejects.toMatchObject({ code: 'stopped_by_user' })
     expect(ab.stop(12345)).toBe(false)
   })
+
+  // The page's view is rebuilt (moved to another workspace, the window
+  // reloaded): a new guest under the same page. The user's Stop still holds.
+  it("the user's Stop holds for the page when its view is rebuilt under a new guest", async () => {
+    const first = fakeGuest(11, { cdp: pageCdp() })
+    const second = fakeGuest(12, { cdp: pageCdp() })
+    let current = first
+    const ask = vi.fn(async () => ({ agent: 'Gauss', page: 'pane-b', guestId: current.id }))
+    const ab = createAgentBrowser({ verify: (body, pane) => verifyRequest(body, pane, 'browser'), enabled: () => true, ask, guestById: (id) => [first, second].find((g) => g.id === id) || null, send: () => {} })
+    const call = (op, args) => ab.handle(validateParams('browser', signed(op, args)))
+    await call('snapshot')
+    expect(ab.stop(11)).toBe(true)
+    current = second
+    await expect(call('snapshot')).rejects.toMatchObject({ code: 'stopped_by_user' })
+  })
 })
 
 describe('agent browser: commands', () => {
