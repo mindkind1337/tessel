@@ -6596,6 +6596,7 @@ function switchBusy(leaf) {
   const st = leaf.kind === 'chat' ? chatPaneState(leaf) : paneState(leaf)
   return st === 'working' || st === 'approval'
 }
+const monitoringSwitch = {} // leaf id -> { to, at }: the first click on a pane with background tasks
 function requestSwitch(leafId, to) {
   const leaf = findLeaf(leafId)
   if (!leaf) return false
@@ -6604,6 +6605,18 @@ function requestSwitch(leafId, to) {
     delete pendingSwitch[leafId]
     showToast(t('app.switch.cancelled', '{{name}} stays as it is.', { name }), { timeout: 4000 })
     return false
+  }
+  // Watching background tasks (a dev server, a sub-agent): the switch stops
+  // its process and them with it. Said first; a second click goes anyway.
+  const state = leaf.kind === 'chat' ? chatPaneState(leaf) : paneState(leaf)
+  if (state === 'monitoring') {
+    const asked = monitoringSwitch[leafId]
+    if (!(asked && asked.to === to && Date.now() - asked.at < 10000)) {
+      monitoringSwitch[leafId] = { to, at: Date.now() }
+      showToast(t('app.switch.background', '{{name}} still has background tasks running: switching stops them. Click again to switch anyway.', { name }), { kind: 'warning', timeout: 8000 })
+      return false
+    }
+    delete monitoringSwitch[leafId]
   }
   if (!switchBusy(leaf)) {
     delete pendingSwitch[leafId]

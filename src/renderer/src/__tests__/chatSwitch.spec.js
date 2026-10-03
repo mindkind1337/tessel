@@ -211,6 +211,14 @@ describe('a switch asked while the agent works waits for the end of its turn', (
     // Idle: at once.
     ctx.requestSwitch('pane-1', 'terminal')
     expect(done).toHaveLength(2)
+    // Watching background tasks (a dev server, a sub-agent): the switch would
+    // stop them. Said first; a second click switches anyway.
+    state = 'monitoring'
+    expect(ctx.requestSwitch('pane-1', 'terminal')).toBe(false)
+    expect(done).toHaveLength(2)
+    expect(ctx.showToast.mock.calls.at(-1)[0]).toContain('background')
+    ctx.requestSwitch('pane-1', 'terminal')
+    expect(done).toHaveLength(3)
   })
 })
 
