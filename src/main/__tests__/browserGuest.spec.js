@@ -329,7 +329,9 @@ describe('a page attached', () => {
       [{ key: '=', control: true }, 'zoomIn'],
       [{ key: '+', control: true, shift: true }, 'zoomIn'],
       [{ key: '-', control: true }, 'zoomOut'],
-      [{ key: '0', control: true }, 'zoomReset']
+      [{ key: '0', control: true }, 'zoomReset'],
+      [{ key: '`', code: 'Backquote', control: true }, 'app'],
+      [{ key: '²', code: 'Backquote', control: true }, 'app']
     ]
     for (const [input, action] of cases) {
       t.sent.length = 0

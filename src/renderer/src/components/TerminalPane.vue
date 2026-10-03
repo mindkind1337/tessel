@@ -9,6 +9,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links'
 import { SearchAddon } from '@xterm/addon-search'
 import { WebglAddon } from '@xterm/addon-webgl'
 import { getBuffer } from '../ptyStore'
+import { isFloatingToggleKey } from '../floatingTerminal'
 import BrandIcon from './BrandIcon.vue'
 import { settings, fontStack } from '../settings'
 import { terminalTheme } from '../themes'
@@ -1459,6 +1460,7 @@ function onDrop(e) {
 // shell (Alt+Arrow would otherwise type escape sequences, for example).
 function isAppShortcut(e) {
   const k = e.key
+  if (isFloatingToggleKey(e)) return true
   if (e.ctrlKey && e.shiftKey && !e.altKey) {
     return ['e', 'o', 'w', 'b', 'k', 'n', 'f', 'r', 'p', 'x', 'g'].includes(k.toLowerCase())
   }
@@ -1807,7 +1809,7 @@ function menuResetTerminal() {
   closeCtxMenuAndRefocus()
 }
 function menuSplit(dir) {
-  ctx.splitLeaf(props.node.id, dir)
+  if (ctx.splitLeaf) ctx.splitLeaf(props.node.id, dir)
   closeCtxMenu()
 }
 function menuClose() {
@@ -1829,7 +1831,8 @@ function onNavPointerDown(e) {
   headerHover.dismiss()
   if (e.button !== 0) return
   if (e.target.closest('button, input, label')) return
-  ctx.beginPaneDrag(props.node.id, e)
+  // (Not in the grid: the floating terminal's pane does not move.)
+  if (ctx.beginPaneDrag) ctx.beginPaneDrag(props.node.id, e)
 }
 
 // --- Hand text to another pane -------------------------------------------------
@@ -2870,8 +2873,9 @@ const paneMenuBindings = computed(() => ({
             <circle cx="13" cy="8" r="1.4" fill="currentColor" />
           </svg>
         </button>
-        <!-- maximize / restore -->
+        <!-- maximize / restore (not for the floating terminal's pane) -->
         <button
+          v-if="!ctx.floating"
           class="pane-nav-btn"
           :title="isMaximized ? t('pane.restore', 'Restore pane') : t('pane.maximize', 'Maximize pane')"
           :aria-label="isMaximized ? t('pane.restore', 'Restore pane') : t('pane.maximize', 'Maximize pane')"
