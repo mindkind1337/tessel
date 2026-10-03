@@ -84,6 +84,7 @@ import { pasteAndConfirm, turnStarting } from './deliver'
 import { createTeamDelivery } from './teamDelivery'
 import { dropBuffer, seedBuffer } from './ptyStore'
 import { tasks as boardTasks, setTasks, updateTask, removeTask, addTask, deletedTaskIds, addDeletedTasks, takeDeletedToPurge, cardOnBoard } from './taskBoardStore'
+import { taskHistory, setTaskHistory, backfillHistory, setHistoryDescriber } from './taskHistory'
 import { paneModels } from './paneModels'
 import { sleepBlocker } from '../../shared/agentSleep'
 import { updateBlocker, planUpdate, autoUpdateMoment } from '../../shared/agentUpdatePlan'
@@ -2107,6 +2108,21 @@ const agentPanes = computed(() => {
   return out
 })
 
+// Who finished a card and where, for its record in the task history
+// (taskHistory.js): its pane's name and agent, its workspace's name.
+setHistoryDescriber((card) => {
+  const periods = Array.isArray(card.workPeriods) ? card.workPeriods : []
+  const paneId = card.paneId || [...periods].reverse().map((p) => p && p.paneId).find(Boolean) || null
+  const owner = paneId ? wsOfLeaf(paneId) : null
+  const leaf = owner ? findLeafIn(owner.tree, paneId) : null
+  const ws = workspaces.value.find((w) => w.id === card.wsId) || owner
+  return {
+    agentName: leaf ? leaf.paneName || leaf.title || null : null,
+    agentKind: leaf ? leaf.agentId || null : null,
+    project: ws ? ws.name || null : null
+  }
+})
+
 // --- The right side panel (SidePanel.vue): Files, Changes, Tasks, Agents tabs ------
 // taskPanelOpen: the panel is shown; sideTab: the tab it shows.
 const SIDE_TABS = ['dashboard', 'files', 'changes', 'tasks', 'history']
@@ -2291,7 +2307,7 @@ const appliedRequests = new Set()
 // With the ids of the cards deleted (taskBoardStore.js): a deleted card is
 // never written back, even by a copy of the board from before its deletion.
 function boardToSave() {
-  return { tasks: JSON.parse(JSON.stringify(boardTasks)), appliedRequests: [...appliedRequests], deleted: deletedTaskIds() }
+  return { tasks: JSON.parse(JSON.stringify(boardTasks)), appliedRequests: [...appliedRequests], deleted: deletedTaskIds(), history: JSON.parse(JSON.stringify(taskHistory)) }
 }
 
 // Every board save goes here: none while the saved board could not be read
@@ -9783,10 +9799,12 @@ onMounted(async () => {
     if (saved && saved.locked === true) {
       boardLocked = true
       if (Array.isArray(saved.tasks)) setTasks(saved.tasks) // its previous copy, shown only
+      setTaskHistory(saved.history)
       showToast(t('app.board.locked', 'Your task board could not be read (the file is in use by another program). Tessel shows its previous copy and will not save it until it is restarted, so the file stays intact.'), { kind: 'error', timeout: 20000 })
     } else {
       const savedTasks = Array.isArray(saved) ? saved : saved && saved.tasks
       if (Array.isArray(savedTasks)) setTasks(savedTasks)
+      setTaskHistory(saved && saved.history)
       for (const k of (saved && saved.appliedRequests) || []) appliedRequests.add(k)
     }
   } catch {
@@ -9796,8 +9814,11 @@ onMounted(async () => {
   // saving. Reconciling before the watch is registered keeps it from writing the
   // file back on every launch (the cleanup is idempotent and persists on the
   // next real change).
+  // Done cards from before the history was kept get their record (saved
+  // with the next change).
+  if (!boardLocked) backfillHistory(boardTasks)
   reconcileTaskPanes()
-  if (!boardLocked) watch(boardTasks, scheduleTaskSave, { deep: true })
+  if (!boardLocked) watch([boardTasks, taskHistory], scheduleTaskSave, { deep: true })
   teamsReady = true
   // Scheduled automations start only now: panes, agents and the board are
   // there to run them (and to follow the runs still going).

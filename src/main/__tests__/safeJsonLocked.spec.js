@@ -95,12 +95,12 @@ describe('startup while the saved JSON cannot be read', () => {
     saveTasks(dir, latest, ['first', 'second'])
     const boardFile = taskBoardFilePath(dir)
     const denied = denyRead(boardFile)
-    const readonly = { tasks: old, appliedRequests: ['first'], locked: true, deleted: [] }
+    const readonly = { tasks: old, appliedRequests: ['first'], locked: true, deleted: [], history: [] }
     expect(loadBoard(dir)).toEqual(readonly)
     expect(loadTasks(dir)).toEqual(readonly)
     denied.mockRestore()
     expect(() => saveTasks(dir, [], [])).toThrow(/not been loaded/)
-    expect(loadBoard(dir)).toEqual({ tasks: latest, appliedRequests: ['first', 'second'], deleted: [] })
+    expect(loadBoard(dir)).toEqual({ tasks: latest, appliedRequests: ['first', 'second'], deleted: [], history: [] })
     saveTasks(dir, latest, ['first', 'second'])
   })
 })

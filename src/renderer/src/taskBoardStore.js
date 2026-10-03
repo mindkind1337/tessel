@@ -6,6 +6,7 @@
 
 import { reactive } from 'vue'
 import { COLUMNS, createTask } from '../../shared/taskModel'
+import { recordDone, forgetDone, renameDone } from './taskHistory'
 
 // The reactive collection to watch / render. Mutated in place so external
 // references and watchers stay valid across hydration.
@@ -42,7 +43,13 @@ export function updateTask(id, patch = {}) {
   if (rest.column && rest.column !== 'done' && task.column === 'done') rest.doneAt = null
   const periods = workPeriodsAfter(task, rest, Date.now())
   if (periods) rest.workPeriods = periods
+  const wasDone = task.column === 'done'
   Object.assign(task, rest)
+  // The history of finished tasks (taskHistory.js): a record when it enters
+  // Done, none once taken back out; a done card renamed keeps its new title.
+  if (task.column === 'done' && !wasDone) recordDone(task)
+  else if (wasDone && task.column !== 'done') forgetDone(task.id)
+  else if (wasDone && 'title' in rest) renameDone(task.id, task.title)
   return task
 }
 
