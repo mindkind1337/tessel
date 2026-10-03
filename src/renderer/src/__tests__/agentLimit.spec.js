@@ -45,6 +45,35 @@ describe('detectApproval', () => {
     expect(detectApproval('Run this command?\n → Run (once) (y)\n\n → Waiting for decision (y/n/p)...')).toBe(true)
   })
 
+  // Codex 0.160's menu after a Plan-mode turn, as its screen shows it.
+  const planMenu = [
+    '  2. Check the diff confirms exactly one added line and no other changes.',
+    '─ Worked for 12s • 1:45 AM ──────────────────────────────────────────',
+    '  Implement this plan?',
+    '',
+    '› 1. Yes, implement this plan           Switch to Default and start coding',
+    '  2. Yes, clear context and implement  Start a fresh thread (current context: 2% used)',
+    '  3. No, stay in Plan mode              Continue planning with the model',
+    '',
+    '  enter select · esc back'
+  ]
+
+  it("spots Codex's 'Implement this plan?' menu while it is open", () => {
+    expect(detectApproval(planMenu.join('\n'))).toBe(true)
+    expect(detectApproval(planMenu.join('\r\n') + '\n\n')).toBe(true)
+    // Painted by cell diff, the text copy can lose its spaces.
+    expect(detectApproval('Implementthisplan?\n3.No,stayinPlanmode\nenterselect·escback')).toBe(true)
+  })
+
+  it("does not count the plan menu once it is answered or only mentioned", () => {
+    // Answered: the composer (or Codex's work) is under the menu's old text.
+    expect(detectApproval([...planMenu, '', '› Ask Codex to do anything', '  ? for shortcuts'].join('\n'))).toBe(false)
+    expect(detectApproval([...planMenu, '• Working (3s • esc to interrupt)'].join('\n'))).toBe(false)
+    // An agent's answer that names the menu.
+    expect(detectApproval('Codex asks "Implement this plan?" after a Plan-mode turn.')).toBe(false)
+    expect(detectApproval('Implement this plan?\n  enter select · esc back')).toBe(false)
+  })
+
   it('ignores ordinary output', () => {
     expect(detectApproval('Ran npm test: 120 passed')).toBe(false)
     expect(detectApproval('')).toBe(false)

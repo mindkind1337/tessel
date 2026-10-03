@@ -49,8 +49,26 @@ export function detectLimit(text) {
 const APPROVAL_PATTERNS =
   /Would you like to (run|make|apply)|Press enter to confirm|Do you want to (proceed|make|create|allow|run)|Do you trust (the files|the contents|this)|Allow execution|Apply this change|\(y\/n\)|\(y\/n\/p\)|\[y\/N\]|Run this command\?|Allow access to this URL\?|Allow calling this tool\?|Approve this action\?/i
 
+// Codex's menu after a Plan-mode turn ("Implement this plan?", then "1. Yes,
+// implement this plan", ..., "3. No, stay in Plan mode" and its key row
+// "enter select · esc back"). It owns the keyboard although Codex's Stop hook
+// has already fired, so a message typed into it would pick a choice. Codex
+// leaves the menu's text on screen once answered, so it counts only while its
+// key row is the last line. After Orca's plan_implement_menu anchor in
+// src/main/runtime/agent-state-rules/codex.json (MIT, Copyright (c) 2026
+// Lovecast Inc.).
+function codexPlanMenu(text) {
+  const at = text.search(/implement\s*this\s*plan\?/i)
+  if (at < 0) return false
+  const after = text.slice(at)
+  if (!/no,\s*stay\s*in\s*plan\s*mode/i.test(after)) return false
+  const lines = after.split(/\r?\n/).filter((line) => line.trim())
+  return /enter\s*(?:to\s*)?select\s*·\s*esc\s*(?:to\s*)?back\s*$/i.test(lines[lines.length - 1] || '')
+}
+
 export function detectApproval(text) {
-  return APPROVAL_PATTERNS.test(String(text || ''))
+  const s = String(text || '')
+  return APPROVAL_PATTERNS.test(s) || codexPlanMenu(s)
 }
 
 // An agent working on a task says it is finished with a line that holds
