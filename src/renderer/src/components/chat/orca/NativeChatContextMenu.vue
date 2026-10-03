@@ -35,7 +35,10 @@ function fileOfLink(target) {
   if (!a) return ''
   const route = routeNativeChatHref(a.getAttribute('href'))
   if (!route || route.kind !== 'file') return ''
-  if (chatPathProblem(route.pathText, { requireAbsolute: false })) return ''
+  // As a click checks the text: a network or device path is never looked at.
+  // (A ":12" line suffix is no problem: it is taken off below.)
+  const early = chatPathProblem(route.pathText, { requireAbsolute: false })
+  if (early === 'control' || early === 'network') return ''
   const owner = toValue(linkContext)
   const parsed = parseExplicitFileLinkTarget(route.pathText, { allowRelativeDirectoryPath: true })
   if (!parsed || !owner || !owner.worktreePath || owner.remote) return ''
