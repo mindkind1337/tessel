@@ -340,3 +340,31 @@ describe('installRendererRecovery', () => {
     expect(win.webContents.listenerCount('render-process-gone')).toBe(0)
   })
 })
+
+// --- Wiring in index.js ---------------------------------------------------------
+describe('the main window wiring', () => {
+  const read = (f) => require('fs').readFileSync(require('path').join(__dirname, '..', f), 'utf8')
+  const main = read('index.js')
+  const createWindow = main.slice(main.indexOf('function createWindow()'), main.indexOf('// Windows takes a taskbar button'))
+
+  it('the window installs recovery with the same page load as at start', () => {
+    expect(createWindow).toMatch(/const loadPage = \(\) =>[\s\S]{0,200}loadURL\(process\.env\.ELECTRON_RENDERER_URL\)[\s\S]{0,120}loadFile\(/)
+    expect(createWindow).toMatch(/loadPage\(\)\.catch/)
+    expect(createWindow).toMatch(/installRendererRecovery\(\{\s*win,\s*loadPage,/)
+    expect(createWindow).toMatch(/isQuitting: \(\) => appQuitting \|\| shutdownDone/)
+    expect(createWindow).toMatch(/quit: \(\) => app\.quit\(\)/)
+  })
+  it('a reload never touches the terminal host', () => {
+    // Code only: the comments explain the terminal host.
+    const src = read('rendererRecovery.js')
+      .split('\n')
+      .filter((l) => !/^\s*\/\//.test(l))
+      .join('\n')
+    expect(src).not.toMatch(/\bhost\b\.|ptyHost|shutdownTerminals|'kill'/)
+    expect(createWindow).not.toMatch(/shutdownTerminals|host\.(send|request)/)
+  })
+  it('a reloaded page drops the close question and the window readiness, as before', () => {
+    expect(createWindow).toMatch(/'did-start-navigation'[\s\S]{0,200}closeGuard\.pageGone\(\)/)
+    expect(createWindow).toMatch(/'render-process-gone', \(\) => \{\s*closeGuard\.pageGone\(\)/)
+  })
+})
