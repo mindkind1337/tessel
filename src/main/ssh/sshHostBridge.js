@@ -312,7 +312,7 @@ export function createSshHostBridge({
     // the tunnel is bound.
     const commandFor = () =>
       agent
-        ? exportPrefix({ paneId, token: agent.token, instance: agent.instance, provider: agent.provider, sockPath: tunnel.sockPathFor(hostId) }) +
+        ? exportPrefix({ paneId, instance: agent.instance, provider: agent.provider, sockPath: tunnel.sockPathFor(hostId) }) +
           (cdCommand || 'exec "$SHELL" -l')
         : cdCommand
     const dataFns = []
@@ -339,7 +339,7 @@ export function createSshHostBridge({
       if (exited) return
       exited = true
       shells.delete(self)
-      if (agent) tunnel.forgetPane(paneId)
+      if (agent) tunnel.forgetPane(paneId, agent)
       // The host's last terminal: credentials kept only for it may go.
       manager.forgetIfUnused(hostId)
       if (reconnectTimer) timers.clearTimeout(reconnectTimer)
@@ -349,17 +349,21 @@ export function createSshHostBridge({
     const pty = { term: 'xterm-256color', cols: size.cols, rows: size.rows, width: 0, height: 0 }
 
     // An agent's pane: signed in first (a failure ends the pane as for any
-    // terminal), then the socket bound (or not, after agentBindWaitMs).
+    // terminal), then the socket bound and the token file written (or not,
+    // after agentBindWaitMs).
     function agentReady() {
       if (!agent) return Promise.resolve()
       return manager.connectHost(hostId, spec).then(
         () =>
           new Promise((resolve) => {
             const t = timers.setTimeout(resolve, agentBindWaitMs)
-            tunnel.ensure(hostId, spec).then(() => {
-              timers.clearTimeout(t)
-              resolve()
-            })
+            tunnel
+              .ensure(hostId, spec)
+              .then(() => tunnel.writeToken(hostId, spec, paneId))
+              .then(() => {
+                timers.clearTimeout(t)
+                resolve()
+              })
           })
       )
     }
