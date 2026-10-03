@@ -24,8 +24,11 @@ describe('chat wiring', () => {
 
   it('a chat pane closed for good forgets its journal', () => {
     const app = src('renderer/src/App.vue')
-    const closes = app.match(/shellApi\.chat\.close\(\{[^}]*\}\)/g) || []
-    expect(closes.length).toBeGreaterThan(0)
-    for (const c of closes) expect(c).toContain('forget: true')
+    // Each function that closes a chat forgets its journal (a chat going on
+    // in a terminal is stopped first and forgotten once the terminal is there).
+    const fns = app.split(/\n(?=(?:async )?function )/)
+    const closing = fns.filter((f) => /shellApi\.chat\.close\(\{/.test(f))
+    expect(closing.length).toBeGreaterThan(0)
+    for (const f of closing) expect(f).toMatch(/shellApi\.chat\.close\(\{[^}]*forget: true[^}]*\}\)/)
   })
 })
