@@ -377,9 +377,15 @@ export async function refuseIfPassword(send, backendNodeId, cache = null) {
 // insert(text): the page's own input pipeline (webContents.insertText):
 // CDP's Input.insertText types nothing in an Electron guest (Orca found the
 // same and edits through the browser instead).
-async function insertText(send, text, insert = null) {
+// Where the keyboard is, looked at again right before each piece goes in:
+// the page can move it after the first look (a focus handler's timer,
+// auto-advance to the next field), never into a password field.
+async function insertText(send, text, insert = null, cache = null) {
   for (let i = 0; i < text.length; i += INSERT_CHUNK) {
     const part = text.slice(i, i + INSERT_CHUNK)
+    const focus = await focusedField(send, cache)
+    if (focus.none) throw new BrowserInputError('not_focusable', 'The keyboard left the field: call browser_snapshot again.')
+    refuseField(focus)
     if (insert) await insert(part)
     else await send('Input.insertText', { text: part })
   }
@@ -417,7 +423,7 @@ export async function putText(send, backendNodeId, text, { clear, insert = null,
   if (focus.none) throw new BrowserInputError('not_focusable', 'This element does not take the keyboard: pick a text field from browser_snapshot.')
   refuseField(focus)
   if (clear) await selectContents(send, backendNodeId)
-  if (text) await insertText(send, text, insert)
+  if (text) await insertText(send, text, insert, cache)
   else if (clear) {
     await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46 })
     await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46 })

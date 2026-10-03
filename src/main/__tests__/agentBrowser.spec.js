@@ -324,6 +324,25 @@ describe('agent browser: commands', () => {
     await expect(call('click', { ref: '@e1' })).rejects.toMatchObject({ code: 'stale_ref' })
   })
 
+  // The page moves the keyboard after Tessel looked (a focus handler's timer,
+  // auto-advance): the text never lands in the password field it moved to.
+  it('the keyboard moved to a password field between the check and the text: refused, nothing typed', async () => {
+    const page = pageModel()
+    const base = pageCdp({}, page)
+    const cdp = {
+      ...base,
+      'Runtime.callFunctionOn': (p) => {
+        // Selecting the field's text (fill): the page moves the focus meanwhile.
+        if (String(p.functionDeclaration).includes('this.select()')) page.focused = 40
+        return base['Runtime.callFunctionOn'](p)
+      }
+    }
+    const { call, guest } = setup({ guest: fakeGuest(11, { cdp }) })
+    await call('snapshot')
+    await expect(call('fill', { ref: '@e1', text: 'my text' })).rejects.toMatchObject({ code: 'password_field' })
+    expect(guest.sent.filter(([m]) => m === 'Input.insertText')).toEqual([])
+  })
+
   it('fill types into a text field, never into a password field', async () => {
     const { call, guest } = setup()
     await call('snapshot')
