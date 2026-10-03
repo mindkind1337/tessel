@@ -9669,14 +9669,22 @@ button.act-stat:hover,
   text-underline-offset: 2px;
 }
 
+/* A small tag after the agent's name (as on the Dashboard's cards). */
 .car-team-num {
+  display: inline-flex;
   flex-shrink: 0;
-  min-width: 10px;
+  align-items: center;
+  justify-content: center;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--wts-muted) 16%, transparent);
   color: color-mix(in srgb, var(--wts-muted) 85%, transparent);
-  font-size: 10px;
-  font-weight: 600;
+  font-size: 9.5px;
+  font-weight: 700;
+  line-height: 1;
   font-variant-numeric: tabular-nums;
-  text-align: center;
 }
 .car-team-num.lead {
   /* As in its pane header: the lead's number underlined, same colour. */
