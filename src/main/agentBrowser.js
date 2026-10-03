@@ -98,6 +98,12 @@ export function reservedKey(combo) {
   const k = String(def.key).toLowerCase()
   if ((modifiers & 6) && k === 'v') return true
   if ((modifiers & 8) && k === 'insert') return true
+  // The window's own keys (its default menu and the system's): a key the page
+  // leaves unhandled can reach the window, which would close (Ctrl+W, Alt+F4),
+  // minimize (Ctrl+M), go full screen (F11) or quit (Ctrl+Q).
+  if ((modifiers & 6) && ['w', 'm', 'q'].includes(k)) return true
+  if ((modifiers & 1) && k === 'f4') return true
+  if (k === 'f11') return true
   return !!shortcutOf({ type: 'keyDown', key: def.key, control: !!(modifiers & 2), meta: !!(modifiers & 4), alt: !!(modifiers & 1), shift: !!(modifiers & 8) })
 }
 
@@ -159,6 +165,9 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
   // guest id -> { refMap, navKey, queue, idle, agent, console: [], attached, listener }
   const pages = new Map()
   const revoked = new Set() // guest ids the user stopped
+  // Browser page (pane) ids the user stopped: a page's view can be rebuilt
+  // under a new guest (moved to another workspace, the window reloaded).
+  const revokedPages = new Set()
   const lastPage = new Map() // agent pane id -> browser pane id it drove last
   const warn = (msg) => log && log.warn('agent-browser', msg)
 
@@ -281,6 +290,8 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
   function stop(id) {
     if (!Number.isSafeInteger(id) || !guestById(id)) return false
     revoked.add(id)
+    const s = pages.get(id)
+    if (s && s.page) revokedPages.add(s.page)
     release(id, { stopped: true })
     return true
   }
@@ -318,7 +329,7 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
     return { url: allowedBrowserUrl(guest.getURL()) || BLANK_URL, title: String(guest.getTitle() || '').slice(0, 200) }
   }
 
-  async function snapshot(guest, s) {
+  async function snapshot(guest, s, pane) {
     const cdp = await attach(guest, s)
     let contextId = null
     try {
@@ -330,6 +341,8 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
     await rememberSecrets(cdp, s)
     const result = await buildSnapshot(cdp, { contextId, maxChars: MAX_SNAPSHOT_CHARS })
     s.refMap = result.refMap
+    // Whose refs these are: a snapshot by another agent numbers them again.
+    s.refOwner = pane
     s.navKey = await navigationKey(cdp)
     const { url, title } = where(guest)
     return { text: `Page: ${title || '(no title)'} — ${url}\n${result.snapshot || '(nothing readable on this page yet)'}` }
@@ -454,10 +467,15 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
     return { text: `Now on ${w.url} — ${w.title || '(no title)'}. Call browser_snapshot to read it.` }
   }
 
-  async function run(op, guest, s, args) {
+  async function run(op, guest, s, args, pane) {
+    // A ref is this agent's only if its own snapshot gave it (two agents on
+    // one page: the other's snapshot listed other elements under the same refs).
+    if (args.ref != null && s.refMap && s.refOwner !== pane) {
+      throw new BrowserInputError('stale_ref', 'Another agent read this page since your snapshot: call browser_snapshot again.')
+    }
     switch (op) {
       case 'snapshot':
-        return snapshot(guest, s)
+        return snapshot(guest, s, pane)
       case 'navigate':
         return navigate(guest, s, args)
       case 'screenshot':
@@ -533,6 +551,7 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
       const guest = r.guestId != null ? guestById(r.guestId) : null
       if (guest) {
         const s = stateOf(guest)
+        s.page = r.page
         controlled(guest, s, r.agent)
         await waitLoaded(guest)
       }
@@ -543,12 +562,13 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
     const r = targetFrom(await ask('browserTarget', { agent: pane, op: 'resolve', page: args.page || null, last: lastPage.get(pane) || null }))
     const guest = r.guestId != null ? guestById(r.guestId) : null
     if (!guest) throw fail('page_not_ready', 'That browser page is not ready yet: try again in a moment.')
-    if (revoked.has(guest.id)) throw fail('stopped_by_user', 'The user stopped agents from driving this page. Ask them, or open another page with browser_open.')
+    if (revoked.has(guest.id) || revokedPages.has(r.page)) throw fail('stopped_by_user', 'The user stopped agents from driving this page. Ask them, or open another page with browser_open.')
     lastPage.set(pane, r.page)
     const s = stateOf(guest)
+    s.page = r.page
     controlled(guest, s, r.agent)
     try {
-      const out = await queued(s, guest, () => run(op, guest, s, args))
+      const out = await queued(s, guest, () => run(op, guest, s, args, pane))
       return { ...out, text: capText(out.text) }
     } catch (err) {
       if (err instanceof CliError) throw err

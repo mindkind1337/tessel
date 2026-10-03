@@ -137,6 +137,9 @@ const norm = (s) => String(s || '').replace(/\s+/g, ' ').trim()
 // A sent message shows in the conversation file this long after (or before:
 // the two clocks are the same, the times are rounded).
 const MATCH_SLACK_MS = 5000
+// Claude Code's own names for pasted pictures in a message's text.
+const IMAGE_MARKER = /\[Image #\d+\]/
+const IMAGE_MARKERS = /\[Image #\d+\]/g
 
 // What you sent from the chat stays shown (as sent) until the agent's file
 // has it: the same text, or (once Tessel saw the agent take it) the next
@@ -156,7 +159,11 @@ export function mergePendingSends(events, pending) {
     const after = prompts.filter(
       (e, i) => !used.has(e) && (Number.isFinite(e.at) ? e.at >= p.at - MATCH_SLACK_MS : !Number.isFinite(p.seen) || i >= p.seen)
     )
-    let hit = after.find((e) => norm(e.text) === norm(p.text))
+    // Sent with pictures: the file names them first ("[Image #1] hello"),
+    // and a message of pictures only has nothing else (body: the text sent).
+    const sent = norm(typeof p.body === 'string' ? p.body : p.text)
+    const sameText = (e) => norm(e.text) === norm(p.text) || (p.imageCount > 0 && IMAGE_MARKER.test(e.text) && norm(String(e.text).replace(IMAGE_MARKERS, ' ')) === sent)
+    let hit = after.find(sameText)
     if (!hit && p.delivered) hit = after[0]
     if (hit) {
       used.add(hit)

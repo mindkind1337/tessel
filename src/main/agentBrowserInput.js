@@ -310,8 +310,10 @@ async function recoverRef(send, entry) {
       if (n.role && n.role.value === entry.axRole && clipName(n.name && n.name.value).slice(0, 200) === String(entry.axName || '').replace(/…$/, '').slice(0, 200) && n.backendDOMNodeId)
         matches.push(n.backendDOMNodeId)
     }
-    const i = (entry.nth || 1) - 1
-    const candidates = i < matches.length ? [matches[i], ...matches] : matches
+    // The same occurrence only: with fewer matches than before (an item
+    // removed), another element of the same name would be a wrong guess. A
+    // name that was unique is taken again only while it still is.
+    const candidates = entry.nth ? (entry.nth <= matches.length ? [matches[entry.nth - 1]] : []) : matches.length === 1 ? matches : []
     for (const id of candidates) {
       try {
         await describe(send, id)

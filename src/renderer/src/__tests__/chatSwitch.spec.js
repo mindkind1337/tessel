@@ -75,6 +75,19 @@ describe('chat to terminal', () => {
     expect(ws.tree).toMatchObject({ kind: 'agent', id: 'pane-1', num: 3, team: 'team-1' })
   })
 
+  it("a terminal that does not start leaves the chat's conversation in place (its journal is not forgotten)", async () => {
+    const { api, ctx, ws } = load(chat())
+    ctx.createLeaf.mockResolvedValueOnce(null)
+    expect(await api.switchToTerminal('pane-1')).toBe(false)
+    expect(ctx.window.shellApi.chat.close.mock.calls.some(([q]) => q && q.forget)).toBe(false)
+    expect(ws.tree).toMatchObject({ kind: 'chat', id: 'pane-1' })
+    expect(ctx.showToast).toHaveBeenCalled()
+    // Started: then its journal goes (the conversation goes on in the terminal).
+    const ok = load(chat())
+    expect(await ok.api.switchToTerminal('pane-1')).toBe(true)
+    expect(ok.ctx.window.shellApi.chat.close).toHaveBeenLastCalledWith({ paneId: 'pane-1', forget: true })
+  })
+
   it('a chat that asked first (or a capped worker) asks first in the terminal; otherwise Settings decide', async () => {
     for (const extra of [{ chatPermissions: 'manual' }, { chatPermissions: 'yolo', maxPermissions: 'manual' }]) {
       const { api, ctx } = load(chat(extra))
@@ -119,6 +132,18 @@ describe('terminal to chat', () => {
     const b = load(term({ launchYolo: true }))
     await b.api.switchToChat('pane-2')
     expect(b.ws.tree.maxPermissions).toBeUndefined()
+  })
+
+  // A worker never runs with more than its coordinator: its flag and its cap
+  // go with it both ways (OpenCode's terminal has no permission switch of its
+  // own, so the cap must survive the terminal to apply again in the chat).
+  it('a capped worker stays a capped worker, chat to terminal and back', async () => {
+    const c = load({ type: 'leaf', kind: 'chat', id: 'pane-3', agentId: 'opencode', cwd: 'C:\proj', sessionId: 'ses_' + 'b'.repeat(26), worker: true, maxPermissions: 'manual', num: 1 })
+    expect(await c.api.switchToTerminal('pane-3')).toBe(true)
+    expect(c.ws.tree).toMatchObject({ kind: 'agent', worker: true, maxPermissions: 'manual' })
+    const t2 = load({ ...c.ws.tree, startDir: 'C:\proj' })
+    expect(await t2.api.switchToChat('pane-3')).toBe(true)
+    expect(t2.ws.tree).toMatchObject({ kind: 'chat', worker: true, maxPermissions: 'manual' })
   })
 
   it('OpenCode too, with its own session id (ses_…); another id is refused', async () => {

@@ -22,6 +22,13 @@ describe("Claude Code's prompt suggestion on screen", () => {
     expect(promptSuggestionOnScreen([row('> '), row('just output', 0)])).toBe('')
     expect(promptSuggestionOnScreen([])).toBe('')
   })
+  // The empty prompt at the bottom: an older greyed row above it (the echo of
+  // the last message sent) is not a suggestion, or Tab would send it again.
+  it('an empty prompt stops the search: an older greyed row above it is not a suggestion', () => {
+    const rows = [row('> push the release', 2), row('● Done.'), row('─'.repeat(40)), row('> '), row('─'.repeat(40))]
+    expect(promptSuggestionOnScreen(rows)).toBe('')
+    expect(promptSuggestionOnScreen([row('> push the release', 2), row('│ >                         │')])).toBe('')
+  })
   it('a prompt drawn in a box', () => {
     expect(promptSuggestionOnScreen([row('│ > run the tests           │', 4, 17)])).toBe('run the tests')
   })

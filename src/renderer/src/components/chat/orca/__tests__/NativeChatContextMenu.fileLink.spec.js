@@ -41,6 +41,46 @@ describe('the chat right-click menu on a file link', () => {
     expect(reveal.mock.calls[0][0].replace(/\\/g, '/')).toBe('C:/Users/me/Downloads/livery.png')
   })
 
+  it('a link with a line number (a.js:12, src/App.vue:6617:3) offers them too, for the file itself', async () => {
+    const reveal = vi.fn(async () => ({ ok: true }))
+    window.shellApi = { chatFiles: { reveal }, writeClipboard: vi.fn() }
+    wrapper = mountMenu()
+    for (const [href, file] of [
+      ['C:/proj/a.js:12', 'C:/proj/a.js'],
+      ['src/App.vue:6617:3', 'C:/proj/src/App.vue']
+    ]) {
+      link?.remove()
+      link = document.createElement('a')
+      link.setAttribute('href', createNativeChatFileHref(href))
+      link.textContent = href
+      document.body.appendChild(link)
+      await rightClick(link)
+      expect(labels().slice(0, 2)).toEqual(['Show in Folder', 'Copy Path'])
+      document.querySelector('[data-test="chat-context-reveal"]').click()
+      await flushPromises()
+      expect(reveal.mock.calls.at(-1)[0].replace(/\\/g, '/')).toBe(file)
+    }
+  })
+
+  it('a file Tessel cannot show (gone meanwhile) is said, not a click that does nothing', async () => {
+    const reveal = vi.fn(async () => ({ ok: false, reason: 'missing' }))
+    const toast = vi.fn()
+    window.shellApi = { chatFiles: { reveal }, writeClipboard: vi.fn() }
+    wrapper = mount(NativeChatContextMenu, {
+      props: { rootEl: document.body, enabled: true, actions: {} },
+      attachTo: document.body,
+      global: { provide: { nativeChatFileLinkContext: { worktreePath: 'C:/proj' }, panelCtx: { toast } } }
+    })
+    link = document.createElement('a')
+    link.setAttribute('href', createNativeChatFileHref('C:/proj/gone.txt'))
+    link.textContent = 'gone.txt'
+    document.body.appendChild(link)
+    await rightClick(link)
+    document.querySelector('[data-test="chat-context-reveal"]').click()
+    await flushPromises()
+    expect(toast).toHaveBeenCalledWith(expect.stringContaining('gone.txt'), { kind: 'error' })
+  })
+
   it('elsewhere: no file items', async () => {
     window.shellApi = { chatFiles: { reveal: vi.fn() } }
     wrapper = mountMenu()

@@ -436,6 +436,9 @@ export function createChatSessions(deps) {
     s.turn = null
     workStatus(s)
     if (turn.kind === 'compact') return giveUpCompaction(s, r?.error)
+    // The message resent after a compaction could not be written: that
+    // compaction is over (else the next turn would be taken for its resend).
+    if (s.compaction && s.compaction.phase === 'retrying') s.compaction = null
     pump(s)
     idleCheck(s)
   }
@@ -445,6 +448,8 @@ export function createChatSessions(deps) {
   // window overflow): the conversation is compacted, then the message sent
   // again, once. Failing that, the user is told to start a new conversation.
 
+  // After 'compacted', how long a compaction turn's own end is waited for.
+  const COMPACT_SETTLE_MS = 1500
   const COMPACT_WAIT_MS = 120000
   const TOO_LONG = /prompt is too long|context.?(window|length)|too many tokens|maximum context|context_length_exceeded|contextoverflow|ran out of room/i
   const isTooLong = (error) => TOO_LONG.test(String(error || ''))
@@ -487,13 +492,13 @@ export function createChatSessions(deps) {
         }
       )
   }
-  function compactionDone(s, ok, error) {
+  function compactionDone(s, ok, error, opts) {
     const turn = s.turn
     if (!turn || turn.kind !== 'compact' || s.agent === 'claude') return false
     if (turn.timer) clearTimeout(turn.timer)
     s.turn = null
     if (ok) resendAfterCompaction(s)
-    else giveUpCompaction(s, error)
+    else giveUpCompaction(s, error, opts)
     return true
   }
   function resendAfterCompaction(s) {
@@ -502,12 +507,13 @@ export function createChatSessions(deps) {
     c.phase = 'retrying'
     void deliver(s, { kind: c.kind, uuid: randomUUID(), ids: c.ids, text: c.text, wasQueued: true })
   }
-  function giveUpCompaction(s, error = '') {
+  // quiet: the user stopped it (Stop): the message is not sent, nothing to explain.
+  function giveUpCompaction(s, error = '', { quiet = false } = {}) {
     const c = s.compaction
     s.compaction = null
     if (c && c.kind === 'user') for (const id of c.ids) emit(s.paneId, { type: 'userStatus', id, status: 'failed' })
     else if (c && c.kind === 'team') emit(s.paneId, { type: 'teamFailed', ids: [...c.ids] })
-    if (!s.finished) {
+    if (!s.finished && !quiet) {
       emit(s.paneId, {
         type: 'notice',
         kind: 'error',
@@ -852,7 +858,19 @@ export function createChatSessions(deps) {
       }
     })
     on('compacted', () => {
-      compactionDone(s, true)
+      // Codex reports its compaction as a turn of its own and ends that turn
+      // right after: the message goes again once that end came (else it would
+      // be taken for the resent message's end), or after a moment when no
+      // turn end follows (OpenCode's summary).
+      const turn = s.turn
+      if (turn && turn.kind === 'compact' && s.agent !== 'claude') {
+        turn.compacted = true
+        if (turn.timer) clearTimeout(turn.timer)
+        turn.timer = setTimeout(() => {
+          if (s.turn === turn) compactionDone(s, true)
+        }, COMPACT_SETTLE_MS)
+        if (typeof turn.timer.unref === 'function') turn.timer.unref()
+      }
       askContext(s)
     })
     on('turnEnd', (e) => {
@@ -861,7 +879,8 @@ export function createChatSessions(deps) {
       // Codex's compaction runs as a turn of its own, not one of the chat:
       // done at 'compacted'; failed, the wait ends here.
       if (turn && turn.kind === 'compact' && s.agent !== 'claude') {
-        if (e.status !== 'completed') compactionDone(s, false, e.error && typeof e.error === 'object' ? e.error.message : e.error || e.result)
+        if (e.status !== 'completed') compactionDone(s, false, e.error && typeof e.error === 'object' ? e.error.message : e.error || e.result, { quiet: e.status === 'interrupted' })
+        else if (turn.compacted) compactionDone(s, true)
         return
       }
       const uuids = Array.isArray(e.userMessageUuids) ? e.userMessageUuids : []
@@ -887,7 +906,7 @@ export function createChatSessions(deps) {
       if (turn && turn.kind === 'compact') {
         // Claude's /compact turn: done, the message goes again; failed, said below.
         shown = ''
-        after = st === 'completed' ? () => resendAfterCompaction(s) : () => giveUpCompaction(s, error)
+        after = st === 'completed' ? () => resendAfterCompaction(s) : () => giveUpCompaction(s, error, { quiet: st === 'interrupted' })
       } else if (s.compaction) {
         // The message sent again after the compaction.
         if (st === 'failed' && isTooLong(error)) {

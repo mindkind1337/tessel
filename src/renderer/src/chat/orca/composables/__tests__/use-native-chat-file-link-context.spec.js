@@ -23,6 +23,25 @@ describe('useNativeChatFileLinkContext', () => {
     )
     expect(resolved.result.current.worktreePath).toBe('/custom')
   })
+  it("a pane working in a worktree copy resolves its links in that copy, not the project's checkout", () => {
+    const paneFolder = vi.fn(() => 'C:/proj')
+    let context
+    const wrapper = mount(
+      defineComponent({
+        setup() {
+          context = useNativeChatFileLinkContext({ id: 'a', kind: 'chat', cwd: 'C:/copy', projectDir: 'C:/proj', worktree: { path: 'C:/copy', branch: 'b' } })
+          return () => null
+        },
+      }),
+      { global: { provide: { panelCtx: { paneFolder } } } },
+    )
+    try {
+      expect(context.value.worktreePath).toBe('C:/copy')
+      expect(context.value.roots).toEqual(expect.arrayContaining(['C:/copy', 'C:/proj']))
+    } finally {
+      wrapper.unmount()
+    }
+  })
   it('uses Tessel paneFolder and viewFile instead of an external opener', async () => {
     const viewFile = vi.fn(),
       paneFolder = vi.fn(() => '/workspace')

@@ -6,12 +6,13 @@
  * Slot: the code (e.g. <code>{{ text }}</code>); its text is what Copy copies.
  * Used by ChatMarkdown as its renderCodeBlock, and by the approval card.
  */
-import { Comment, Fragment, Text, defineComponent, h, isVNode } from 'vue'
+import { Comment, Fragment, Text, defineComponent, h, inject, isVNode } from 'vue'
 import { Code2, File, FolderOpen } from 'lucide-vue-next'
 import { t } from '../../../i18n'
 import { getCodeBlockLanguageLabel } from './rich-markdown-code-block-languages.js'
 import NativeChatCopyButton from './NativeChatCopyButton.vue'
 import { chatPathProblem } from '../../../../../shared/chatFileLinks.js'
+import { revealChatPath } from '../../../chat/orca/native-chat-reveal.js'
 
 // Tessel: a block that is only a local file or folder path ("C:\x\a.png",
 // "/home/x/a.png") gets Show in Folder next to Copy. -> the path or ''.
@@ -19,16 +20,21 @@ export function codeBlockPath(code) {
   const text = String(code || '').trim()
   if (!text || text.length > 1024 || /[\r\n]/.test(text)) return ''
   if (!/^(?:[A-Za-z]:[\\/]|\/)/.test(text)) return ''
+  // A command that starts with a path ("/usr/bin/git status", "C:\x.exe
+  // --flag"): with a space, a path ends with a file extension or a folder
+  // separator. A lone name at the root ("/compact", "/help") is a command.
+  if (/\s/.test(text) && !/(?:\.[A-Za-z0-9]{1,8}|[\\/])$/.test(text)) return ''
+  if (/^\/[^\\/]*$/.test(text) && !/\.[A-Za-z0-9]{1,8}$/.test(text)) return ''
   const problem = chatPathProblem(text)
   return problem && problem !== 'executable' ? '' : text
 }
-function revealButton(path) {
+function revealButton(path, toast) {
   const api = typeof window !== 'undefined' && window.shellApi && window.shellApi.chatFiles
   if (!path || !api || typeof api.reveal !== 'function') return null
   const label = t('chat.orca.contextMenu.revealFile', 'Show in Folder')
   return h(
     'button',
-    { type: 'button', class: 'nc-code-reveal', title: label, 'aria-label': label, 'data-test': 'code-reveal', onClick: () => api.reveal(path) },
+    { type: 'button', class: 'nc-code-reveal', title: label, 'aria-label': label, 'data-test': 'code-reveal', onClick: () => revealChatPath(path, toast) },
     [h(FolderOpen, { class: 'nc-code-reveal-icon', 'aria-hidden': 'true' })]
   )
 }
@@ -53,12 +59,15 @@ export default defineComponent({
     language: { type: String, default: undefined }
   },
   setup(props, { slots }) {
+    // Where a path Tessel cannot show is said (the pane's toasts).
+    const panel = inject('panelCtx', null)
+    const toast = (text, opts) => panel && typeof panel.toast === 'function' && panel.toast(text, opts)
     return () => {
       const children = slots.default?.() ?? []
       const code = extractCodeText(children)
       const language = props.language
       const copyLabel = t('chat.orca.copyCode', 'Copy code')
-      const reveal = revealButton(codeBlockPath(code))
+      const reveal = revealButton(codeBlockPath(code), toast)
       // A path: a header like a language's, its buttons always in view at the
       // top right (never over the path itself).
       const header = language || reveal

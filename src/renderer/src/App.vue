@@ -4901,6 +4901,18 @@ function logMessage(leafId, status, text, meta = {}) {
 function flushPending() {
   let waiting = false
   for (const id of Object.keys(pendingMessages)) {
+    // The pane became a chat (Open as chat): what waited for its terminal
+    // goes to the chat. A picture (a terminal's file path) cannot: said.
+    const asChat = findLeaf(id)
+    if (asChat && asChat.kind === 'chat') {
+      for (const item of pendingMessages[id]) {
+        if (item.meta && typeof item.meta.guard === 'function' && !item.meta.guard()) continue
+        if (item.meta && Array.isArray(item.meta.images) && item.meta.images.length) failDelivery(item)
+        else deliverToChat(id, item.text, item.meta || {})
+      }
+      delete pendingMessages[id]
+      continue
+    }
     const pane = getPane(id)
     if (!pane || !findLeaf(id)) {
       // Its terminal remounting (a layout change, its chat view) is back in
@@ -4916,6 +4928,14 @@ function flushPending() {
       }
       for (const item of pendingMessages[id]) failDelivery(item)
       delete pendingMessages[id]
+      continue
+    }
+    // Its terminal is back: a later remount waits its own 30 s again.
+    for (const item of pendingMessages[id]) delete item.paneMissingSince
+    // Restarting, or going to a chat: its terminal is about to go, nothing
+    // is typed into it (the message waits for the pane that comes back).
+    if (restartingLeaves.has(id) || switchingLeaves.has(id)) {
+      waiting = true
       continue
     }
     if (awaitingApproval(id)) {
@@ -6628,8 +6648,9 @@ async function switchToTerminal(leafId) {
   }
   switchingLeaves.add(leafId)
   try {
-    // Its journal goes too: the conversation goes on in the terminal.
-    if (window.shellApi.chat) await window.shellApi.chat.close({ paneId: leafId, forget: true }).catch(() => {})
+    // Stopped first; its journal stays until the terminal is there (a
+    // terminal that does not start leaves the chat as it was, to reopen).
+    if (window.shellApi.chat) await window.shellApi.chat.close({ paneId: leafId }).catch(() => {})
     clearAgentStatus(leafId)
     const ws = wsOfLeaf(leafId)
     if (!ws || findLeaf(leafId) !== old) return false
@@ -6646,12 +6667,18 @@ async function switchToTerminal(leafId) {
       resume: true,
       wake: { teamId: old.team || null, gen: 1 }
     })
-    if (!fresh) return false
+    if (!fresh) {
+      showToast(t('app.switch.terminalFailed', 'The terminal did not start: the chat stays as it was.'), { kind: 'error' })
+      return false
+    }
     if (findLeaf(leafId) !== old) {
       window.shellApi.killPty(leafId)
       return false
     }
     Object.assign(fresh, { num: old.num, paneName: old.paneName, team: old.team, broadcast: false, restartedAt: Date.now() })
+    // A worker stays one, with its coordinator's cap (back in a chat it applies again).
+    if (old.worker) fresh.worker = true
+    if (old.maxPermissions === 'manual') fresh.maxPermissions = 'manual'
     const now = wsOfLeaf(leafId)
     if (!now) {
       window.shellApi.killPty(leafId)
@@ -6659,6 +6686,8 @@ async function switchToTerminal(leafId) {
     }
     now.tree = replaceNode(now.tree, leafId, () => fresh)
     scheduleSave()
+    // Its journal goes now: the conversation goes on in the terminal.
+    if (window.shellApi.chat) await window.shellApi.chat.close({ paneId: leafId, forget: true }).catch(() => {})
     return true
   } finally {
     switchingLeaves.delete(leafId)
@@ -6710,6 +6739,8 @@ async function switchToChat(leafId) {
     // a restart does; only a pane you set to ask first, or a worker capped
     // by its coordinator, keeps asking.
     if (old.permissions === 'manual' || old.maxPermissions === 'manual') leaf.maxPermissions = 'manual'
+    // A worker stays one (its cap is kept across a Tessel restart only for a worker).
+    if (old.worker) leaf.worker = true
     now.tree = replaceNode(now.tree, leafId, () => leaf)
     scheduleSave()
     return true

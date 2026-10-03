@@ -29,6 +29,8 @@ describe("App.vue's queue after an unconfirmed delivery", () => {
     panes = { a1: {} }
     ctx = {
       pendingMessages: {},
+      restartingLeaves: new Set(),
+      switchingLeaves: new Set(),
       unsent: {},
       delivering: new Set(),
       agentStatus: {},
@@ -123,6 +125,55 @@ describe("App.vue's queue after an unconfirmed delivery", () => {
     await vi.advanceTimersByTimeAsync(32000)
     expect(failed).toHaveBeenCalledTimes(1)
   })
+  it('a terminal that came back resets the wait: a later remount waits again, its messages are not failed at once', async () => {
+    const failed = vi.fn()
+    // Held while the agent works; its terminal remounts (a layout change, its chat view).
+    ctx.agentStatus.a1 = 'busy'
+    ctx.deliverToAgent('a1', 'held card', { waitIdle: true, onFailed: failed })
+    delete panes.a1
+    await vi.advanceTimersByTimeAsync(2000)
+    panes.a1 = {}
+    // Back; still busy for a while (more than 30 s), then a second remount.
+    await vi.advanceTimersByTimeAsync(40000)
+    delete panes.a1
+    await vi.advanceTimersByTimeAsync(4000)
+    expect(failed).not.toHaveBeenCalled()
+    panes.a1 = {}
+    ctx.agentStatus.a1 = 'idle'
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(pasted).toEqual(['held card'])
+  })
+  it('a pane restarting or switching to chat: nothing is typed into its old terminal; sent once it is back', async () => {
+    for (const set of ['restartingLeaves', 'switchingLeaves']) {
+      pasted.length = 0
+      ctx[set].add('a1')
+      ctx.deliverToAgent('a1', `during ${set}`, {})
+      await vi.advanceTimersByTimeAsync(4000)
+      expect(pasted).toEqual([])
+      ctx[set].delete('a1')
+      await vi.advanceTimersByTimeAsync(2500)
+      expect(pasted).toEqual([`during ${set}`])
+    }
+  })
+  it('a pane that became a chat: its waiting messages go to the chat, not dropped after the terminal wait', async () => {
+    const failed = vi.fn()
+    const delivered = vi.fn()
+    ctx.deliverToChat = vi.fn((id, text, meta) => meta.onDelivered && meta.onDelivered())
+    ctx.agentStatus.a1 = 'busy'
+    ctx.deliverToAgent('a1', 'held for the terminal', { source: 'you', waitIdle: true, onFailed: failed, onDelivered: delivered })
+    ctx.deliverToAgent('a1', 'with a picture', { source: 'you', images: ['C:/p.png'], onFailed: failed })
+    // Switched: the leaf is a chat now, its terminal gone.
+    delete panes.a1
+    leaf.kind = 'chat'
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(ctx.deliverToChat).toHaveBeenCalledTimes(1)
+    expect(ctx.deliverToChat.mock.calls[0][1]).toBe('held for the terminal')
+    expect(delivered).toHaveBeenCalledTimes(1)
+    // A picture is a terminal's file path: the chat cannot take it, said at once.
+    expect(failed).toHaveBeenCalledTimes(1)
+    expect(ctx.pendingMessages.a1).toBeUndefined()
+    expect(pasted).toEqual([])
+  })
   it('a quiet-agent message right after one was taken waits for the turn it started, even before it shows', async () => {
     ctx.deliverToAgent('a1', 'with images', { waitIdle: true })
     await settle()
@@ -161,6 +212,8 @@ describe("App.vue's held chat-view messages (sendFromChatView, heldDelivery)", (
     gate = null
     ctx = {
       pendingMessages: {},
+      restartingLeaves: new Set(),
+      switchingLeaves: new Set(),
       unsent: {},
       delivering: new Set(),
       agentStatus: { a1: 'busy' },

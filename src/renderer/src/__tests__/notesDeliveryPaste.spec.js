@@ -104,6 +104,8 @@ describe("App.vue's message queue: notes checked again when typed", () => {
     const ctx = {
       unsafeMultilinePaste,
       pendingMessages: {},
+      restartingLeaves: new Set(),
+      switchingLeaves: new Set(),
       getPane: () => ({ bracketedPaste: () => bracketed }),
       findLeaf: () => ({ id: 'a1' }),
       awaitingApproval: () => false,

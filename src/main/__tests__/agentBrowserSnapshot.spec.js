@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { walkTree, formatSnapshot, buildSnapshot, ordinal, controlState } from '../agentBrowserSnapshot'
+import { walkTree, formatSnapshot, buildSnapshot, ordinal, controlState, CLICKABLE_NAME_FN } from '../agentBrowserSnapshot'
 import { parseKeyCombo, isPasswordNode, electronKeyEvents } from '../agentBrowserInput'
 
 function walk(nodes) {
@@ -183,11 +183,42 @@ describe('snapshot of the accessibility tree', () => {
     expect(entries.map((e) => e.name).join(' ')).toBe(words.map((w) => w.name.value.trim()).join(' '))
   })
 
+  // A clickable element wrapping an editable area (<td style="cursor:pointer"><div
+  // contenteditable>draft</div></td>): named by its own text, never by what
+  // was typed in the area (or in a field inside it).
+  // As Chromium reports <div contenteditable>: a generic node marked editable,
+  // its text as children. Its text is what the user typed: never listed.
+  it('an editable area with no role is a field: listed as filled or empty, never its text', () => {
+    const P = (o) => Object.entries(o).map(([name, value]) => ({ name, value: { value } }))
+    const entries = walk([
+      { nodeId: '1', role: { value: 'RootWebArea' }, childIds: ['2', '4', '6'] },
+      { nodeId: '2', role: { value: 'generic' }, name: { value: '' }, backendDOMNodeId: 148, properties: P({ focusable: true, editable: 'richtext' }), childIds: ['3'] },
+      { nodeId: '3', role: { value: 'StaticText' }, name: { value: 'my secret draft' } },
+      { nodeId: '4', role: { value: 'generic' }, name: { value: 'Comment' }, backendDOMNodeId: 150, properties: P({ focusable: true, editable: 'plaintext' }), childIds: [] },
+      { nodeId: '6', role: { value: 'StaticText' }, name: { value: 'After' } }
+    ])
+    const { snapshot } = formatSnapshot(entries)
+    expect(snapshot).not.toContain('my secret draft')
+    expect(snapshot.split('\n')).toEqual(['[@e1] text input "(unlabeled)" (filled)', '[@e2] text input "Comment" (empty)', 'text "After"'])
+  })
+
+  it("a clickable element is never named by the text typed in an editable area or field inside it", () => {
+    const text = (data) => ({ nodeType: 3, data })
+    const el = (tag, attrs, children = [], extra = {}) => ({ nodeType: 1, tagName: tag.toUpperCase(), childNodes: children, getAttribute: (n) => (n in attrs ? attrs[n] : null), ...extra })
+    const nameOf = new Function(`return (${CLICKABLE_NAME_FN})`)()
+    const cell = el('td', {}, [text('Notes: '), el('div', { contenteditable: 'true' }, [text('my secret draft')]), el('textarea', {}, [text('typed too')]), text(' (edit)')])
+    expect(nameOf.call(cell)).toBe('Notes: (edit)')
+    expect(nameOf.call(el('div', { contenteditable: '' }, [text('typed')]))).toBe('editable area')
+    expect(nameOf.call(el('div', {}, [text('x')], { isContentEditable: true }))).toBe('editable area')
+    expect(nameOf.call(el('div', { 'aria-label': 'Open menu' }, [text('typed')]))).toBe('Open menu')
+    expect(nameOf.call(el('div', { contenteditable: 'false' }, [text('plain')]))).toBe('plain')
+  })
+
   it('the clickable pass never names an editable area by its text', async () => {
     const send = async (m, p) => {
       if (m === 'Accessibility.getFullAXTree') return { nodes: [] }
       if (m === 'Runtime.evaluate') {
-        expect(p.expression).toContain("el.isContentEditable ? 'editable area'")
+        expect(p.expression).toContain(CLICKABLE_NAME_FN)
         // A styled element inside a link or a button is not a second control.
         expect(p.expression).toContain(`el.parentElement.closest('a[href], button, [role="button"], [role="link"]')`)
         return { result: {} }

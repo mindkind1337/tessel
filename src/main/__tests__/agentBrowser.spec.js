@@ -217,6 +217,21 @@ describe('agent browser: who may call', () => {
     await expect(call('snapshot')).rejects.toMatchObject({ code: 'stopped_by_user' })
     expect(ab.stop(12345)).toBe(false)
   })
+
+  // The page's view is rebuilt (moved to another workspace, the window
+  // reloaded): a new guest under the same page. The user's Stop still holds.
+  it("the user's Stop holds for the page when its view is rebuilt under a new guest", async () => {
+    const first = fakeGuest(11, { cdp: pageCdp() })
+    const second = fakeGuest(12, { cdp: pageCdp() })
+    let current = first
+    const ask = vi.fn(async () => ({ agent: 'Gauss', page: 'pane-b', guestId: current.id }))
+    const ab = createAgentBrowser({ verify: (body, pane) => verifyRequest(body, pane, 'browser'), enabled: () => true, ask, guestById: (id) => [first, second].find((g) => g.id === id) || null, send: () => {} })
+    const call = (op, args) => ab.handle(validateParams('browser', signed(op, args)))
+    await call('snapshot')
+    expect(ab.stop(11)).toBe(true)
+    current = second
+    await expect(call('snapshot')).rejects.toMatchObject({ code: 'stopped_by_user' })
+  })
 })
 
 describe('agent browser: commands', () => {
@@ -246,6 +261,22 @@ describe('agent browser: commands', () => {
     ])
   })
 
+  // Two agents on one page: refs are numbered again by each snapshot, so a ref
+  // read by one agent must never act on what another agent's snapshot listed.
+  it("another agent's snapshot of the same page makes this agent's refs stale", async () => {
+    const OTHER = 'pane-8-agent'
+    setTeamSecret(OTHER, 'c'.repeat(64))
+    const { call, ab } = setup()
+    await call('snapshot')
+    process.env.TESSEL_PANE_ID = OTHER
+    process.env.TESSEL_TEAM_SECRET = 'c'.repeat(64)
+    await ab.handle(validateParams('browser', mcp.browserRequest('snapshot', {})))
+    await expect(call('click', { ref: '@e3' })).rejects.toMatchObject({ code: 'stale_ref' })
+    // Its own new snapshot: its refs work again.
+    await call('snapshot')
+    expect((await call('click', { ref: '@e3' })).text).toContain('Clicked @e3')
+  })
+
   it('a ref before any snapshot, or an unknown one, says to snapshot', async () => {
     const { call } = setup()
     await expect(call('click', { ref: '@e1' })).rejects.toMatchObject({ code: 'stale_ref' })
@@ -271,6 +302,41 @@ describe('agent browser: commands', () => {
     await expect(call('fill', { ref: '@e2', text: 'hunter2' })).rejects.toMatchObject({ code: 'password_field' })
     await expect(call('type', { ref: '@e2', text: 'x' })).rejects.toMatchObject({ code: 'password_field' })
     expect(guest.sent.filter(([m, p]) => m === 'Input.insertText' && p.text === 'hunter2')).toEqual([])
+  })
+
+  // Re-rendered: the element is found again by role, name and occurrence, or not at all.
+  it('a re-rendered page with fewer matches: the 2nd "Go" is stale, never the first one clicked instead', async () => {
+    const page = pageModel()
+    let tree = AX
+    const { call, guest } = setup({ guest: fakeGuest(11, { cdp: pageCdp({ 'Accessibility.getFullAXTree': () => tree }, page) }) })
+    await call('snapshot')
+    // The list re-rendered with one "Go" left (new node ids).
+    delete page.elements[50]
+    delete page.elements[60]
+    page.elements[70] = {}
+    tree = { nodes: [...AX.nodes.slice(0, 4).map((n) => (n.nodeId === '1' ? { ...n, childIds: ['2', '3', '4', '7'] } : n)), { nodeId: '7', role: { value: 'button' }, name: { value: 'Go' }, backendDOMNodeId: 70 }] }
+    await expect(call('click', { ref: '@e4' })).rejects.toMatchObject({ code: 'stale_ref' })
+    expect(guest.sent.filter(([m]) => m === 'Input.dispatchMouseEvent')).toEqual([])
+  })
+
+  it('a re-rendered element still there once is found again', async () => {
+    const page = pageModel()
+    let tree = AX
+    const { call } = setup({ guest: fakeGuest(11, { cdp: pageCdp({ 'Accessibility.getFullAXTree': () => tree }, page) }) })
+    await call('snapshot')
+    delete page.elements[30]
+    page.elements[31] = {}
+    tree = { nodes: AX.nodes.map((n) => (n.nodeId === '3' ? { ...n, backendDOMNodeId: 31 } : n)) }
+    expect((await call('fill', { ref: '@e1', text: 'a' })).text).toContain('@e1')
+  })
+
+  it('fill with an empty text clears the field (the tool keeps an empty "text")', async () => {
+    const { call, guest } = setup()
+    await call('snapshot')
+    expect(mcp.browserRequest('fill', { ref: '@e1', text: '' }).args).toEqual({ ref: '@e1', text: '' })
+    const r = await call('fill', { ref: '@e1', text: '' })
+    expect(r.text).toContain('@e1')
+    expect(guest.sent).toContainEqual(['Input.dispatchKeyEvent', expect.objectContaining({ type: 'keyDown', key: 'Delete' })])
   })
 
   it('a printable key is refused while a password field has the keyboard; Enter is not', async () => {
@@ -484,6 +550,8 @@ describe('agent browser: helpers', () => {
   it('Tessel and browser shortcuts are reserved keys', () => {
     for (const k of ['Control+Shift+w', 'Control+r', 'F12', 'F5', 'Control+l', 'Alt+ArrowLeft', 'F1', 'Control+Shift+p']) expect(reservedKey(k)).toBe(true)
     for (const k of ['Enter', 'a', 'Control+a', 'Tab', 'Shift+Tab', 'ArrowDown']) expect(reservedKey(k)).toBe(false)
+    // The window's own keys (its default menu: close, minimize, full screen, quit).
+    for (const k of ['Control+w', 'Control+m', 'F11', 'Control+q', 'Alt+F4', 'Meta+w']) expect(reservedKey(k)).toBe(true)
   })
 
   it('safeSelector: tags, #id, .class, *, combinators and commas', () => {

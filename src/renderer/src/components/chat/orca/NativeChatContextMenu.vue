@@ -19,6 +19,7 @@ import { t } from '../../../i18n'
 import { routeNativeChatHref } from '../../../chat/orca/shared/native-chat-href-routing.js'
 import { parseExplicitFileLinkTarget, resolveExplicitFileLinkTarget } from '../../../chat/orca/lib/explicit-file-link-target.js'
 import { chatPathProblem } from '../../../../../shared/chatFileLinks.js'
+import { revealChatPath } from '../../../chat/orca/native-chat-reveal.js'
 
 const props = defineProps({
   rootEl: { type: Object, default: null },
@@ -35,7 +36,10 @@ function fileOfLink(target) {
   if (!a) return ''
   const route = routeNativeChatHref(a.getAttribute('href'))
   if (!route || route.kind !== 'file') return ''
-  if (chatPathProblem(route.pathText, { requireAbsolute: false })) return ''
+  // As a click checks the text: a network or device path is never looked at.
+  // (A ":12" line suffix is no problem: it is taken off below.)
+  const early = chatPathProblem(route.pathText, { requireAbsolute: false })
+  if (early === 'control' || early === 'network') return ''
   const owner = toValue(linkContext)
   const parsed = parseExplicitFileLinkTarget(route.pathText, { allowRelativeDirectoryPath: true })
   if (!parsed || !owner || !owner.worktreePath || owner.remote) return ''
@@ -43,9 +47,10 @@ function fileOfLink(target) {
   const path = resolved && resolved.absolutePath
   return path && !chatPathProblem(path) ? path : ''
 }
+const panel = inject('panelCtx', null)
 function revealFile() {
-  const api = window.shellApi && window.shellApi.chatFiles
-  if (state.filePath && api && typeof api.reveal === 'function') api.reveal(state.filePath)
+  // A file Tessel cannot show (gone meanwhile, ...) is said in a toast.
+  void revealChatPath(state.filePath, (text, opts) => panel && typeof panel.toast === 'function' && panel.toast(text, opts))
 }
 function copyFilePath() {
   if (!state.filePath) return

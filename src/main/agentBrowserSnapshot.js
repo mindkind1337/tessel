@@ -154,6 +154,16 @@ export function walkTree(node, nodeById, depth, entries, nextRef, seen = new Set
 
   const name = clip(raw)
 
+  // An editable area with no control role (<div contenteditable>, reported as
+  // generic): a text field. Its children are what the user typed: one line,
+  // filled or empty, never read.
+  if (!INTERACTIVE_ROLES.has(role) && role !== 'RootWebArea' && prop(node, 'editable') !== undefined) {
+    if (isFocusable(node) || node.backendDOMNodeId) {
+      const state = hasText(node, nodeById, 'textbox') ? 'filled' : 'empty'
+      entries.push({ ref: `@e${nextRef()}`, role: 'text input', axRole: role, axName: name, name: name || '(unlabeled)', state, backendDOMNodeId: node.backendDOMNodeId || 0, depth })
+    }
+    return
+  }
   if (SKIP_ROLES.has(role)) return walkChildren(node, nodeById, depth, entries, nextRef, seen, node.nodeId)
 
   const isInteractive = INTERACTIVE_ROLES.has(role)
@@ -304,6 +314,26 @@ export function formatSnapshot(entries, maxChars = MAX_SNAPSHOT_CHARS) {
   return { snapshot: lines.join('\n'), refs, refMap, truncated }
 }
 
+// A clickable element's name, run in the page (isolated world): its label,
+// or its own text without what is typed in an editable area or a field
+// inside it (a clickable cell around a draft would list the draft).
+export const CLICKABLE_NAME_FN = `function () {
+  const label = this.getAttribute('aria-label');
+  if (label && label.trim()) return label.trim().slice(0, 80);
+  const editable = (n) => n.nodeType === 1 && (n.isContentEditable === true || (n.getAttribute('contenteditable') != null && n.getAttribute('contenteditable') !== 'false') || /^(input|textarea|select)$/i.test(n.tagName));
+  if (editable(this)) return 'editable area';
+  let out = '';
+  const walk = (n) => {
+    for (const c of n.childNodes || []) {
+      if (out.length > 400) return;
+      if (c.nodeType === 3) out += c.data;
+      else if (c.nodeType === 1 && !editable(c)) walk(c);
+    }
+  };
+  walk(this);
+  return out.replace(/\\s+/g, ' ').trim().slice(0, 80);
+}`
+
 // The clickable elements the accessibility tree misses (styled <div>s with
 // cursor:pointer, onclick, tabindex, contenteditable), found in an isolated
 // world. -> entries (role 'clickable', ref to be given).
@@ -312,6 +342,7 @@ const CURSOR_SCRIPT = `(() => {
   const SKIP_TAGS = new Set(['input','button','select','textarea','a']);
   const seen = new Set();
   const found = [];
+  const nameOf = ${CLICKABLE_NAME_FN};
   function check(el) {
     if (found.length >= ${MAX_CURSOR_INTERACTIVE} || seen.has(el)) return;
     seen.add(el);
@@ -323,7 +354,7 @@ const CURSOR_SCRIPT = `(() => {
     if (el.parentElement && el.parentElement.closest('a[href], button, [role="button"], [role="link"]')) return;
     const rect = el.getBoundingClientRect();
     if (rect.width === 0 || rect.height === 0) return;
-    const text = (el.getAttribute('aria-label') || (el.isContentEditable ? 'editable area' : el.textContent) || '').trim().slice(0, 80);
+    const text = nameOf.call(el);
     if (!text) return;
     found.push(el);
   }
@@ -349,7 +380,7 @@ export async function findCursorInteractiveElements(send, existingEntries, conte
         if (!node || existing.has(node.backendNodeId)) continue
         const { result: text } = await send('Runtime.callFunctionOn', {
           objectId: p.value.objectId,
-          functionDeclaration: "function() { return (this.getAttribute('aria-label') || (this.isContentEditable ? 'editable area' : this.textContent) || '').trim().slice(0, 80) }",
+          functionDeclaration: CLICKABLE_NAME_FN,
           returnByValue: true
         })
         const name = clip(text && text.value)
