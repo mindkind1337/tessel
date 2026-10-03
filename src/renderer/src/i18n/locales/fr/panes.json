@@ -192,7 +192,7 @@
       "identity": "{{name}} {{state}}"
     },
     "time": {
-      "now": "maintenant",
+      "now": "< 1 min",
       "minutes": "{{count}} min",
       "hours": "{{count}} h",
       "days": "{{count}} j"

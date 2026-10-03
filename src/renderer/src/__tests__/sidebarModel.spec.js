@@ -86,7 +86,7 @@ describe('states in Orca words', () => {
   })
 
   it('ages like Orca (now / 5m / 3h / 2d)', () => {
-    expect(formatShortTimeAgo(NOW - 10000, NOW)).toBe('now')
+    expect(formatShortTimeAgo(NOW - 10000, NOW)).toBe('< 1m')
     expect(formatShortTimeAgo(NOW - 5 * 60000, NOW)).toBe('5m')
     expect(formatShortTimeAgo(NOW - 3 * 3600000, NOW)).toBe('3h')
     expect(formatShortTimeAgo(NOW - 50 * 3600000, NOW)).toBe('2d')

@@ -167,7 +167,7 @@ export function selectSummaryGroupIconAgents(rows, maxCount) {
 // Orca's lib/short-time-ago.ts.
 export function formatShortTimeAgo(ts, now = Date.now()) {
   const delta = now - ts
-  if (delta < 60000) return t('sidebar.time.now', 'now')
+  if (delta < 60000) return t('sidebar.time.now', '< 1m')
   const minutes = Math.floor(delta / 60000)
   if (minutes < 60) return t('sidebar.time.minutes', '{{count}}m', { count: minutes })
   const hours = Math.floor(minutes / 60)
