@@ -16,9 +16,11 @@ export const USAGE_PROVIDERS = Object.freeze([
   // ZCode CLI's Z.ai Coding Plan quota (extraProviderUsage.js).
   { id: 'zcode', name: 'ZCode', agents: ['zcode'], report: false }
 ])
-export function installedUsageProviders(agents = []) {
+// linked: provider ids whose quota a key saved in Settings links without
+// their agent (a GLM Coding Plan key: 'zcode').
+export function installedUsageProviders(agents = [], linked = []) {
   const ids = new Set(agents.filter((a) => a?.available).map((a) => a.id))
-  return USAGE_PROVIDERS.filter((p) => p.agents.some((id) => ids.has(id)))
+  return USAGE_PROVIDERS.filter((p) => p.agents.some((id) => ids.has(id)) || linked.includes(p.id))
 }
 export function validHiddenUsageProviders(value) {
   return Array.isArray(value)

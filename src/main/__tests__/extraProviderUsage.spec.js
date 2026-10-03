@@ -190,6 +190,46 @@ describe('explicit additional quota collectors', () => {
       expect(JSON.stringify(result)).not.toMatch(/fixture-only|private-fixture-data/)
     }
   )
+  it('reports only a Cursor 401 as an expired sign-in', async () => {
+    const { service, request } = setup()
+    request.mockResolvedValue(new Response('private-fixture-data', { status: 401 }))
+    const expired = await read(service, 'cursor')
+    expect(expired).toMatchObject({ ok: false, code: 'expired' })
+    expect(expired.error).toMatch(/sign-in expired/i)
+    expect(JSON.stringify(expired)).not.toMatch(/fixture-only|private-fixture-data/)
+  })
+  it.each([403, 500, 502])(
+    'reports a Cursor HTTP %s as a usage read that failed, not an expired sign-in',
+    async (status) => {
+      const { service, request } = setup()
+      request.mockResolvedValue(new Response('private-fixture-data', { status }))
+      const result = await read(service, 'cursor')
+      expect(result).toMatchObject({ ok: false, code: 'server' })
+      expect(result.error).toBe(`Cursor usage could not be read (HTTP ${status}).`)
+      expect(result.error).not.toMatch(/sign in|login/i)
+      expect(JSON.stringify(result)).not.toMatch(/fixture-only|private-fixture-data/)
+    }
+  )
+  it("keeps a forbidden answer from Cursor's legacy usage a failed read", async () => {
+    const { service, request } = setup()
+    request
+      .mockResolvedValueOnce(new Response(JSON.stringify({ membershipType: 'free' })))
+      .mockResolvedValueOnce(new Response('', { status: 403 }))
+    expect(await read(service, 'cursor')).toMatchObject({
+      ok: false,
+      code: 'server',
+      error: 'Cursor usage could not be read (HTTP 403).'
+    })
+  })
+  it('reports a Cursor redirect, network error or unreadable body without asking to sign in', async () => {
+    const { service, request } = setup()
+    request.mockResolvedValueOnce(new Response('', { status: 302, headers: { Location: '/login' } }))
+    expect(await read(service, 'cursor')).toMatchObject({ ok: false, code: 'redirect' })
+    request.mockRejectedValueOnce(new TypeError('fetch failed'))
+    expect(await read(service, 'cursor')).toMatchObject({ ok: false, code: 'network' })
+    request.mockResolvedValueOnce(new Response('not json'))
+    expect(await read(service, 'cursor')).toMatchObject({ ok: false, code: 'response' })
+  })
   it('reports a 429 with its Retry-After, for the automatic refresh to wait', async () => {
     const { service, request } = setup()
     request.mockResolvedValue(
@@ -314,11 +354,17 @@ describe('Orca quota mappings', () => {
     ])
     expect(mapKimi({ usage: { limit: 0, used: 1 } })).toEqual([])
   })
-  it('prefers Cursor actual ratio to rounded percentage and clamps its calendar reset', () => {
+  it("prefers Cursor's reported plan percentage, the ratio without it, and clamps its calendar reset", () => {
+    // The raw base allowance can read 100% while the plan still has capacity.
     expect(
-      mapCursor({ individualUsage: { plan: { used: 20, limit: 100, totalPercentUsed: 99 } } })
+      mapCursor({ individualUsage: { plan: { used: 2000, limit: 2000, totalPercentUsed: 12 } } })
         .windows[0].usedPct
-    ).toBe(20)
+    ).toBe(12)
+    expect(
+      mapCursor({ individualUsage: { plan: { used: 20, limit: 100, totalPercentUsed: '0' } } })
+        .windows[0].usedPct
+    ).toBe(0)
+    expect(mapCursor({ individualUsage: { plan: { used: 20, limit: 100 } } }).windows[0].usedPct).toBe(20)
     expect(
       mapCursorLegacy({
         startOfMonth: '2026-01-31T12:00:00Z',

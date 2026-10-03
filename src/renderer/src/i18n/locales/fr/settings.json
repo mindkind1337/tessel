@@ -649,6 +649,21 @@
         "advancedShort": "Modifiez-les seulement si l'usage vise le mauvais groupe ou le mauvais modèle.",
         "modelsShort": "Séparés par des virgules."
       },
+      "glm": {
+        "bigmodelShort": "BigModel",
+        "zaiShort": "Z.ai",
+        "usesZcode": "Utilise la clé configurée dans ZCode",
+        "openConsole": "Obtenir une clé",
+        "site": "Site du forfait",
+        "zai": "Z.ai (api.z.ai)",
+        "bigmodel": "BigModel, Chine (open.bigmodel.cn)",
+        "siteShort": "Là où votre Coding Plan a été acheté.",
+        "apiKey": "Clé GLM Coding Plan",
+        "apiKeyPlaceholder": "Collez la clé API de votre Coding Plan",
+        "forgetKey": "Retirer la clé",
+        "apiKeySaved": "Clé GLM Coding Plan enregistrée.",
+        "apiKeyHelp": "Affiche le quota de ce forfait dans Utilisation, même sans ZCode. Utilisée avant la clé de ZCode, et envoyée uniquement au service de quota du site du forfait, en HTTPS."
+      },
       "row": {
         "configure": "Configurer",
         "details": "Détails",

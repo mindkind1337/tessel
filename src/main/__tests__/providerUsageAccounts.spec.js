@@ -85,7 +85,8 @@ describe('saved provider credentials', () => {
       opencodeWorkspaceId: '',
       minimaxEndpoint: 'overseas',
       minimaxGroupId: '',
-      minimaxUsageModels: 'general'
+      minimaxUsageModels: 'general',
+      zcodePlanSite: 'zai'
     })
     expect(credentials.update({ minimaxEndpoint: 'cn', opencodeWorkspaceId: ' wrk_abc123 ' }).settings).toMatchObject({
       minimaxEndpoint: 'cn',
