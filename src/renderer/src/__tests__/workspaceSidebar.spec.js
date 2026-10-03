@@ -221,6 +221,25 @@ describe('left sidebar', () => {
     w.unmount()
   })
 
+  it('cards not grouped by project: the team picking bar still shows (under the project's last card)', async () => {
+    settings.sidebarGroupBy = 'none'
+    try {
+      const w = mountSidebar({ projects: [{ ...projects()[0], copies: [] }] })
+      settings.agentActivityDisplayMode = 'full'
+      await flushPromises()
+      await w.find('[data-pane-id="a"]').trigger('contextmenu', { clientX: 5, clientY: 5 })
+      ;[...document.querySelectorAll('.orca-menu [data-orca-menu-item]')].find((b) => b.textContent.trim() === 'New Team…').click()
+      await flushPromises()
+      expect(w.findAll('[data-test="sidebar-pick-bar"]')).toHaveLength(1)
+      await w.find('[data-pane-id="c"]').trigger('click')
+      await w.findAll('.osb-btn.primary').find((b) => b.text() === 'Group as a team').trigger('click')
+      expect(w.emitted('create-team')[0]).toEqual([['a', 'c']])
+      w.unmount()
+    } finally {
+      settings.sidebarGroupBy = 'repo'
+    }
+  })
+
   it('an agent row menu makes a team: tick agents, then group them', async () => {
     const w = mountSidebar({ projects: [{ ...projects()[0], copies: [] }] })
     settings.agentActivityDisplayMode = 'full'

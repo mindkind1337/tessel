@@ -356,6 +356,17 @@ function groupPicked() {
   cancelPicking()
 }
 const pickTeam = computed(() => (picking.value && picking.value.target !== 'new' ? teamById(picking.value.target) : null))
+// Where the team picking bar shows: under its project's header, or (cards
+// not grouped by project: no such header) under that project's last card.
+const pickBarCardKey = computed(() => {
+  const p = picking.value
+  if (!p) return null
+  const list = rows.value || []
+  if (list.some((x) => x.type === 'header' && x.project && x.project.id === p.wsId)) return null
+  let key = null
+  for (const x of list) if (x.type === 'card' && x.card && x.card.projectId === p.wsId) key = x.key
+  return key
+})
 function pickingFor(wsId) {
   if (!picking.value || picking.value.wsId !== wsId) return null
   return { active: true, picked: picked.value, canPick, why: pickWhy }
@@ -1152,7 +1163,7 @@ defineExpose({
                 @keydown.escape.prevent.stop="editingTeam = null"
               />
             </div>
-            <div v-if="r.project && picking && picking.wsId === r.project.id" class="osb-inline-box osb-pick-bar">
+            <div v-if="r.project && picking && picking.wsId === r.project.id" class="osb-inline-box osb-pick-bar" data-test="sidebar-pick-bar">
               <span>{{ pickHint(r.project.id) }}</span>
               <div class="osb-inline-actions">
                 <button type="button" class="osb-btn" @click="cancelPicking">{{ t('sidebar.cancel', 'Cancel') }}</button>
@@ -1295,6 +1306,17 @@ defineExpose({
             @port-copy="emit('port-copy', $event)"
             @port-stop="emit('port-stop', $event)"
           />
+          <div v-if="r.type === 'card' && picking && r.key === pickBarCardKey" class="osb-inline-box osb-pick-bar" data-test="sidebar-pick-bar">
+            <span>{{ pickHint(picking.wsId) }}</span>
+            <div class="osb-inline-actions">
+              <button type="button" class="osb-btn" @click="cancelPicking">{{ t('sidebar.cancel', 'Cancel') }}</button>
+              <button type="button" class="osb-btn primary" :disabled="pickTeam ? !picked.length : picked.length < 2" @click="groupPicked">
+                <span
+                  v-text="pickTeam ? t('sidebar.team.addToName', 'Add to {{team}}', { team: pickTeam.name }) : t('sidebar.team.group', 'Group as a team')"
+                ></span>
+              </button>
+            </div>
+          </div>
         </template>
         <div v-if="!rows.some((x) => x.type === 'card') && projects.length" class="osb-empty">
           {{ t('sidebar.noMatch', 'No workspaces match these filters.') }}
