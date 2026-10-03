@@ -972,7 +972,7 @@ const title = computed(() => t('chat.orca.transcriptView.title', 'Conversation o
         :background-tasks="backgroundTasks"
         :stop-note="t('chat.orca.terminalChat.backgroundStop', 'To stop one, open its terminal: /tasks lists them there.')"
       />
-      <div v-if="card && card.kind === 'question'" class="nc-term-card nc-term-question" data-test="terminal-chat-question">
+      <div v-if="card && card.kind === 'question'" class="nc-term-card nc-term-question" :style="{ zoom: fontScale.scale.value }" data-test="terminal-chat-question">
         <p class="nc-term-card-head">
           <MessageCircleQuestion class="nc-term-card-icon" aria-hidden="true" />
           <span>{{ questionHead }}</span>
@@ -986,7 +986,7 @@ const title = computed(() => t('chat.orca.transcriptView.title', 'Conversation o
           @cancel="onQuestionCancel"
         />
       </div>
-      <div v-else-if="card && card.kind === 'approval'" class="nc-term-card nc-term-approval" data-test="terminal-chat-approval">
+      <div v-else-if="card && card.kind === 'approval'" class="nc-term-card nc-term-approval" :style="{ zoom: fontScale.scale.value }" data-test="terminal-chat-approval">
         <p class="nc-term-card-head">
           <ShieldQuestion class="nc-term-card-icon" aria-hidden="true" />
           <span>{{ approvalHead }}</span>
@@ -1001,7 +1001,7 @@ const title = computed(() => t('chat.orca.transcriptView.title', 'Conversation o
           </Button>
         </div>
       </div>
-      <div v-else-if="card && card.kind === 'terminal'" class="nc-term-card" data-test="terminal-chat-in-terminal">
+      <div v-else-if="card && card.kind === 'terminal'" class="nc-term-card" :style="{ zoom: fontScale.scale.value }" data-test="terminal-chat-in-terminal">
         <p class="nc-term-card-head">
           <MessageCircleQuestion class="nc-term-card-icon" aria-hidden="true" />
           <span>{{ inTerminalHead }}</span>

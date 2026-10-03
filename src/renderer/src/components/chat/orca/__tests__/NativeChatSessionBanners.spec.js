@@ -75,6 +75,17 @@ describe('NativeChatStructuredSessionStatus', () => {
 })
 
 describe('NativeChatDeliveryRetry', () => {
+  // Several lines, no single root: the chat's zoom goes on each "Not sent" line.
+  it("the chat's zoom reaches every not-sent line", () => {
+    wrapper = mount(NativeChatDeliveryRetry, {
+      props: { unsent: [{ key: 1, text: 'a', error: 'x' }, { key: 2, text: 'b', error: 'y' }] },
+      attrs: { style: { zoom: 0.8 } }
+    })
+    const lines = wrapper.findAll('[data-test="chat-unsent"]')
+    expect(lines).toHaveLength(2)
+    for (const line of lines) expect(line.attributes('style')).toContain('zoom: 0.8')
+  })
+
   it('the reference outbox: Retry names the entry the queue stopped on', async () => {
     const retry = vi.fn()
     wrapper = mount(NativeChatDeliveryRetry, {

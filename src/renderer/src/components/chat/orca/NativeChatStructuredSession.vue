@@ -350,13 +350,14 @@ defineExpose({
       />
     </div>
     <NativeChatDeliveryRetry
+      :style="{ zoom: fontScale.scale.value }"
       :unsent="unsent"
       :retry-disabled-reason="disabledReason || sendBlockedReason"
       @retry-unsent="(entry) => emit('retry-unsent', entry)"
       @discard="(entry) => emit('discard-unsent', entry)"
       @copied="(payload) => emit('copied-unsent', payload)"
     />
-    <NativeChatLaunchRetry :status="launchStatus" :agent-id="agent" :error="launchError" :opening="opening" @retry="emit('start')" />
+    <NativeChatLaunchRetry :style="{ zoom: fontScale.scale.value }" :status="launchStatus" :agent-id="agent" :error="launchError" :opening="opening" @retry="emit('start')" />
     <NativeChatStructuredSessionStatus
       :style="{ zoom: fontScale.scale.value }"
       :session-id="c.meta.sessionId || ''"
@@ -369,6 +370,7 @@ defineExpose({
     <NativeChatApprovalCard
       v-if="approvalItem"
       :key="approvalItem.itemId"
+      :style="{ zoom: fontScale.scale.value }"
       ref="approvalRef"
       :item="approvalItem"
       :agent-id="agent"
@@ -379,7 +381,7 @@ defineExpose({
       :allow-file-uri-links="true"
       @link-click="onLinkClick"
     />
-    <div v-if="questionItem" class="nc-session-question" data-test="chat-question">
+    <div v-if="questionItem" class="nc-session-question" :style="{ zoom: fontScale.scale.value }" data-test="chat-question">
       <!-- Set apart from an approval: the agent asks, it does not ask permission. -->
       <p class="nc-session-question-head">
         <MessageCircleQuestion class="nc-session-question-icon" aria-hidden="true" />
