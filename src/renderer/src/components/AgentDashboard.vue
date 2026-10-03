@@ -15,6 +15,7 @@ import { isAgentPane, paneRow } from '../sidebarModel'
 import { buildDashboard, dashboardBucket, DASHBOARD_STATES, dashboardView } from '../agentDashboard'
 import { t } from '../i18n'
 import { teamNumber } from '../teamNumber'
+import AgentDashboardRunning from './AgentDashboardRunning.vue'
 import './agentDashboard.css'
 
 const props = defineProps({
@@ -284,6 +285,7 @@ async function sleepIdle() {
             <span class="adb-card-text">
               <span class="adb-card-title">{{ cardTitle(r) }}</span>
               <span class="adb-card-sub">{{ cardSub(r) }}</span>
+              <AgentDashboardRunning :row="r" />
             </span>
             <span v-if="pill(r)" class="adb-pill" :class="'adb-pill-' + r.bucket" data-test="adb-pill">{{ pill(r) }}</span>
           </button>

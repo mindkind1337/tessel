@@ -44,6 +44,10 @@
       "text": "{{count}} agents inactifs passent en veille : leurs terminaux se ferment, leurs conversations sont conservées. Ouvrez un panneau pour le réveiller.",
       "confirm": "Mettre en veille"
     },
+    "running": {
+      "one": "1 sous-agent au travail",
+      "many": "{{count}} sous-agents au travail"
+    },
     "children": {
       "count_one": "{{count}} sous-agent",
       "count_other": "{{count}} sous-agents",
