@@ -54,8 +54,10 @@ function revealFile() {
 }
 function copyFilePath() {
   if (!state.filePath) return
-  if (window.shellApi && typeof window.shellApi.writeClipboard === 'function') window.shellApi.writeClipboard(state.filePath)
-  else if (navigator.clipboard) navigator.clipboard.writeText(state.filePath).catch(() => {})
+  // A Windows path in its own form (C:\a\b), to paste in a dialog or a shell.
+  const text = /^[A-Za-z]:[\\/]/.test(state.filePath) ? state.filePath.replace(/\//g, '\\') : state.filePath
+  if (window.shellApi && typeof window.shellApi.writeClipboard === 'function') window.shellApi.writeClipboard(text)
+  else if (navigator.clipboard) navigator.clipboard.writeText(text).catch(() => {})
 }
 let openedAt = 0
 let lastSelectedText = ''

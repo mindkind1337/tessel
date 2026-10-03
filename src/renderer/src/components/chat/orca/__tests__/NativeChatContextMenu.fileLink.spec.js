@@ -41,6 +41,32 @@ describe('the chat right-click menu on a file link', () => {
     expect(reveal.mock.calls[0][0].replace(/\\/g, '/')).toBe('C:/Users/me/Downloads/livery.png')
   })
 
+  // Pasted in a Windows dialog or terminal: the system's own form.
+  it('Copy Path copies a Windows path with backslashes (a POSIX one as it is)', async () => {
+    const writeClipboard = vi.fn()
+    window.shellApi = { chatFiles: { reveal: vi.fn() }, writeClipboard }
+    for (const [href, copied] of [
+      ['C:/Users/me/Downloads/livery.png', 'C:\\Users\\me\\Downloads\\livery.png'],
+      ['/home/me/a.png', '/home/me/a.png']
+    ]) {
+      wrapper?.unmount()
+      link?.remove()
+      wrapper = mount(NativeChatContextMenu, {
+        props: { rootEl: document.body, enabled: true, actions: {} },
+        attachTo: document.body,
+        global: { provide: { nativeChatFileLinkContext: { worktreePath: href.startsWith('/') ? '/home/me' : 'C:/proj' } } }
+      })
+      link = document.createElement('a')
+      link.setAttribute('href', createNativeChatFileHref(href))
+      link.textContent = 'file'
+      document.body.appendChild(link)
+      await rightClick(link)
+      document.querySelector('[data-test="chat-context-copy-path"]').click()
+      await flushPromises()
+      expect(writeClipboard).toHaveBeenLastCalledWith(copied)
+    }
+  })
+
   it('a link with a line number (a.js:12, src/App.vue:6617:3) offers them too, for the file itself', async () => {
     const reveal = vi.fn(async () => ({ ok: true }))
     window.shellApi = { chatFiles: { reveal }, writeClipboard: vi.fn() }
