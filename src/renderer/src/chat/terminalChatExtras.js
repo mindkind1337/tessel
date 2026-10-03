@@ -107,9 +107,14 @@ export function claudeContextWindow(model, usedTokens = 0, agent = 'claude') {
 // cell at i is drawn dim, in a set colour or inverted (typed text is the
 // terminal's default colour). -> the suggestion, or ''.
 const PROMPT_ROW = /^(\s*(?:│\s*)?[>❯]\s+)(\S.*?)\s*(?:│\s*)?$/
+// The prompt with nothing in it (rows are trimmed on the right): the search
+// stops there, so an older greyed row above (the echo of the last message
+// sent) is never taken for a suggestion and sent again by Tab.
+const EMPTY_PROMPT_ROW = /^\s*(?:│\s*)?[>❯]\s*(?:│\s*)?$/
 export function promptSuggestionOnScreen(rows) {
   for (let i = (Array.isArray(rows) ? rows.length : 0) - 1; i >= 0; i--) {
     const row = rows[i]
+    if (row && typeof row.text === 'string' && EMPTY_PROMPT_ROW.test(row.text)) return ''
     const m = row && typeof row.text === 'string' ? PROMPT_ROW.exec(row.text) : null
     if (!m) continue
     const from = m[1].length
