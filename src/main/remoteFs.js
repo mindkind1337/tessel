@@ -675,7 +675,7 @@ export function createRemoteFs({
     const info = await repoInfo(loc)
     if (info.error) return { ok: false, error: info.error }
     if (info.missing || !info.top) return none
-    const res = await call(loc.hostId, '__t_gitin', [arg(loc.root.path), arg(info.top), ...info.gitArgs, 'sparse-checkout', 'list'], { cap: 1024 * 1024, timeoutMs: 15000, op: 'status' })
+    const res = await call(loc.hostId, '__t_gitin', [arg(loc.root.path), arg(info.top), ...info.gitArgs, '-c', 'core.quotePath=false', 'sparse-checkout', 'list'], { cap: 1024 * 1024, timeoutMs: 15000, op: 'status' })
     if (res.error) return { ok: false, error: res.error }
     // Exit 128 ("this worktree is not sparse") or an old git: not sparse.
     if (res.rc !== 0) return none

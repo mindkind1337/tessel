@@ -361,6 +361,19 @@ describe('sparse checkout folders for the tree', () => {
     expect(await sparseInfo({ root: 'relative' })).toMatchObject({ ok: false })
   }, 30000)
 
+  it('keeps accented sparse folders with Git default path quoting', async () => {
+    const dir = '\u00e9tudes'
+    fs.mkdirSync(join(root, dir))
+    fs.writeFileSync(join(root, dir, 'notes.md'), 'x\n')
+    git('add', '-A')
+    git('commit', '-qm', 'accented folder')
+    git('config', 'core.quotePath', 'true')
+    git('sparse-checkout', 'set', '--cone', dir)
+    expect(await sparseInfo({ root })).toEqual({
+      ok: true, sparse: true, dirs: [{ rel: dir, path: join(root, dir) }]
+    })
+  }, 30000)
+
   it('searches names below the folder the tree shows', async () => {
     const res = await searchNames({ root, dir: join(root, 'app'), query: 'js' })
     expect(res.results.map((r) => r.rel).sort()).toEqual([join('app', 'api', 'server.js'), join('app', 'web', 'main.js')])
