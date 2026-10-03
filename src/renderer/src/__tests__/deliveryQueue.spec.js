@@ -155,6 +155,25 @@ describe("App.vue's queue after an unconfirmed delivery", () => {
       expect(pasted).toEqual([`during ${set}`])
     }
   })
+  it('a pane that became a chat: its waiting messages go to the chat, not dropped after the terminal wait', async () => {
+    const failed = vi.fn()
+    const delivered = vi.fn()
+    ctx.deliverToChat = vi.fn((id, text, meta) => meta.onDelivered && meta.onDelivered())
+    ctx.agentStatus.a1 = 'busy'
+    ctx.deliverToAgent('a1', 'held for the terminal', { source: 'you', waitIdle: true, onFailed: failed, onDelivered: delivered })
+    ctx.deliverToAgent('a1', 'with a picture', { source: 'you', images: ['C:/p.png'], onFailed: failed })
+    // Switched: the leaf is a chat now, its terminal gone.
+    delete panes.a1
+    leaf.kind = 'chat'
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(ctx.deliverToChat).toHaveBeenCalledTimes(1)
+    expect(ctx.deliverToChat.mock.calls[0][1]).toBe('held for the terminal')
+    expect(delivered).toHaveBeenCalledTimes(1)
+    // A picture is a terminal's file path: the chat cannot take it, said at once.
+    expect(failed).toHaveBeenCalledTimes(1)
+    expect(ctx.pendingMessages.a1).toBeUndefined()
+    expect(pasted).toEqual([])
+  })
   it('a quiet-agent message right after one was taken waits for the turn it started, even before it shows', async () => {
     ctx.deliverToAgent('a1', 'with images', { waitIdle: true })
     await settle()

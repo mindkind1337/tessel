@@ -4901,6 +4901,18 @@ function logMessage(leafId, status, text, meta = {}) {
 function flushPending() {
   let waiting = false
   for (const id of Object.keys(pendingMessages)) {
+    // The pane became a chat (Open as chat): what waited for its terminal
+    // goes to the chat. A picture (a terminal's file path) cannot: said.
+    const asChat = findLeaf(id)
+    if (asChat && asChat.kind === 'chat') {
+      for (const item of pendingMessages[id]) {
+        if (item.meta && typeof item.meta.guard === 'function' && !item.meta.guard()) continue
+        if (item.meta && Array.isArray(item.meta.images) && item.meta.images.length) failDelivery(item)
+        else deliverToChat(id, item.text, item.meta || {})
+      }
+      delete pendingMessages[id]
+      continue
+    }
     const pane = getPane(id)
     if (!pane || !findLeaf(id)) {
       // Its terminal remounting (a layout change, its chat view) is back in
