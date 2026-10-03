@@ -1508,7 +1508,7 @@ function logPaste(what) {
 }
 function pasteSize(text) {
   const lines = String(text).replace(/\r\n?/g, '\n').replace(/\n+$/, '').split('\n').length
-  return `text, ${lines} line${lines === 1 ? '' : 's'}, ${String(text).length} chars`
+  return `text, ${lines} line${lines === 1 ? '' : 's'}, ${String(text).length} chars` // i18n-ignore
 }
 
 async function pasteClipboard() {
@@ -1536,14 +1536,14 @@ async function pasteImage(how = 'Ctrl+V') {
       const before = Math.max(0, ...imageNumbersOnScreen())
       term.paste(file)
       rememberPastedImage(file, before)
-      logPaste(`${how}: image saved, its path pasted`)
+      logPaste(`${how}: image saved, its path pasted`) // i18n-ignore
     } else {
       window.shellApi.writePty(props.node.id, '\x1bv')
-      logPaste(`${how}: image not saved, Alt+V sent to Claude`)
+      logPaste(`${how}: image not saved, Alt+V sent to Claude`) // i18n-ignore
     }
   } else {
     window.shellApi.writePty(props.node.id, '\x16')
-    logPaste(`${how}: image, Ctrl+V sent to the agent`)
+    logPaste(`${how}: image, Ctrl+V sent to the agent`) // i18n-ignore
   }
   if (term) termFocus()
 }
@@ -1628,11 +1628,11 @@ const PREVIEW_LINES = 500
 function requestPaste(text, how = 'Ctrl+V') {
   if (!text) return
   if (!term) {
-    logPaste(`${how}: ${pasteSize(text)}, no terminal to paste into`)
+    logPaste(`${how}: ${pasteSize(text)}, no terminal to paste into`) // i18n-ignore
     return
   }
   if (settings.confirmMultilinePaste && /[\r\n]/.test(text)) {
-    logPaste(`${how}: ${pasteSize(text)}, confirmation asked`)
+    logPaste(`${how}: ${pasteSize(text)}, confirmation asked`) // i18n-ignore
     const all = text.replace(/\r\n?/g, '\n').replace(/\n+$/, '').split('\n')
     pasteAsk.value = {
       text,
@@ -1644,7 +1644,7 @@ function requestPaste(text, how = 'Ctrl+V') {
     return
   }
   term.paste(text)
-  logPaste(`${how}: ${pasteSize(text)}, pasted`)
+  logPaste(`${how}: ${pasteSize(text)}, pasted`) // i18n-ignore
   termFocus()
 }
 
@@ -1652,7 +1652,7 @@ function confirmPaste() {
   const ask = pasteAsk.value
   pasteAsk.value = null
   if (ask && term) term.paste(ask.text)
-  if (ask) logPaste(`confirmed: ${pasteSize(ask.text)} pasted`)
+  if (ask) logPaste(`confirmed: ${pasteSize(ask.text)} pasted`) // i18n-ignore
   if (term) termFocus()
 }
 
@@ -1674,7 +1674,7 @@ function onPasteEvent(e) {
   if (text) requestPaste(text)
   else if (data && [...data.items].some((i) => i.type.startsWith('image/'))) pasteImage()
   // Its kinds only (e.g. "Files" for files copied in the Explorer).
-  else logPaste(`Ctrl+V: no text or image on the clipboard (${(data ? [...data.types] : []).join(', ') || 'empty'})`)
+  else logPaste(`Ctrl+V: no text or image on the clipboard (${(data ? [...data.types] : []).join(', ') || 'empty'})`) // i18n-ignore
 }
 
 // Editable pane title — stored on the node so it survives layout changes and
