@@ -435,7 +435,7 @@ async function send(text, opts = {}) {
   const id = ++nextSend
   const shown = body.trim() ? body : t('chat.orca.terminalChat.imageOnly', '(image)')
   const userRows = () => fileEvents.value.filter((e) => e && e.type === 'user' && e.origin !== 'team').length
-  pendingSends.value = [...pendingSends.value, { id, text: shown, at: Date.now(), delivered: false, typed: false, controls: null, imageCount: ids.length, seen: userRows() }]
+  pendingSends.value = [...pendingSends.value, { id, text: shown, body, at: Date.now(), delivered: false, typed: false, controls: null, imageCount: ids.length, seen: userRows() }]
   render()
   sentSignal.value++
   watchHeld()

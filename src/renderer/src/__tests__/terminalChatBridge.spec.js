@@ -78,6 +78,20 @@ describe('messages', () => {
     expect(b).toEqual({ type: 'user', id: '2', text: 'mine' })
   })
 
+  // Claude Code writes a message sent with pictures as "[Image #1] hello": its
+  // row is the sent one, not a second row waiting for delivery.
+  it('a message sent with images matches its file row, which names the images first', () => {
+    const events = [{ type: 'user', id: 'old', text: 'before', at: 1000 }]
+    const withText = mergePendingSends([...events, { type: 'user', id: 'n', text: '[Image #1] [Image #2] hello there', at: 10500 }], [{ id: 1, text: 'hello there', at: 10000, imageCount: 2 }])
+    expect(withText.done).toEqual([1])
+    expect(withText.events.some((e) => e.id === 'pending-1')).toBe(false)
+    // Images only: the row shown as "(image)" matches a file row with only the markers.
+    const only = mergePendingSends([...events, { type: 'user', id: 'n', text: '[Image #1]', at: 10500 }], [{ id: 2, text: '(image)', body: '', at: 10000, imageCount: 1 }])
+    expect(only.done).toEqual([2])
+    // Another message is still not taken for it.
+    expect(mergePendingSends([...events, { type: 'user', id: 'n', text: '[Image #1] other', at: 10500 }], [{ id: 3, text: 'hello there', at: 10000, imageCount: 1 }]).done).toEqual([])
+  })
+
   it('a sent message shows until the file has it (same text, or the next prompt once delivered)', () => {
     const events = [{ type: 'user', id: 'old', text: 'before', at: 1000 }]
     let r = mergePendingSends(events, [{ id: 1, text: 'hello  there', at: 10000 }])
