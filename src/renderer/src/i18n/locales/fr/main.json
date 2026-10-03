@@ -561,6 +561,8 @@
       "zcodeRefused": "ZCode a refusé la demande de quota. Vérifiez sa clé Coding Plan.",
       "signInCursor": "Connectez-vous avec Cursor ou cursor-agent pour lire l'utilisation.",
       "refreshCursor": "Lancez cursor-agent login pour actualiser l'utilisation de Cursor.",
+      "cursorSignInExpired": "La connexion à Cursor a expiré. Reconnectez-vous avec Cursor ou cursor-agent login.",
+      "cursorUnreadable": "L'utilisation de Cursor n'a pas pu être lue (HTTP {{status}}).",
       "connectOpenCode": "Connectez un abonnement OpenCode Go dans OpenCode pour lire l'utilisation.",
       "setMinimaxKey": "Définissez MINIMAX_API_KEY dans l'environnement où Tessel s'exécute pour lire l'utilisation.",
       "noCollector": "Ce fournisseur n'a aucun collecteur de quota.",

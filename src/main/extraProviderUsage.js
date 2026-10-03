@@ -98,6 +98,23 @@ export function createExtraProviderUsage({
         error.retryAfterMs = retryAfterMs(response.headers, clock())
         throw error
       }
+      // Cursor: only a 401 means the sign-in expired. A 403, 5xx or other
+      // failure is a usage read that did not work, not a reason to sign in
+      // again (after Orca's src/main/rate-limits/cursor-fetcher.ts, MIT,
+      // Copyright (c) 2026 Lovecast Inc.).
+      if (key === 'cursor' || key === 'cursorLegacy') {
+        if (response.status === 401)
+          refuse(
+            'expired',
+            t('main.usage.cursorSignInExpired', 'Cursor sign-in expired. Sign in again with Cursor or cursor-agent login.')
+          )
+        refuse(
+          'server',
+          t('main.usage.cursorUnreadable', 'Cursor usage could not be read (HTTP {{status}}).', {
+            status: response.status
+          })
+        )
+      }
       if (key === 'opencode-go' && response.status === 403)
         refuse('unavailable', t('main.usage.noOpenCodeGo', 'This OpenCode account has no Go subscription.'))
       if (key === 'opencodeConsole' && response.status === 401)
