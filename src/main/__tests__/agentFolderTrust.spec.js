@@ -69,6 +69,25 @@ describe('Codex config.toml edit', () => {
     expect(projectHeaderPath('[projects."/a".sub]')).toBe(null)
   })
 
+  it('a folder already set as a dotted key or an inline table is left alone (no duplicate table, no overriding "untrusted")', () => {
+    const forms = [
+      'projects."/a".trust_level = "untrusted"\n',
+      '[projects]\n"/a" = { trust_level = "untrusted" }\n',
+      '[projects]\n"/a".trust_level = "untrusted"\n',
+      'projects = { "/a" = { trust_level = "untrusted" } }\n',
+      "[projects]\n'C:/CODE/App' = { trust_level = \"untrusted\" }\n"
+    ]
+    for (const text of forms) {
+      const r = withCodexProjectTrusted(text, text.includes('App') ? 'C:\\code\\app' : '/a')
+      expect(r).toEqual({ text, changed: false, reason: 'unreadable' })
+    }
+    // Other folders in those forms: ours is added as its own table.
+    const other = '[projects]\n"/b" = { trust_level = "trusted" }\n'
+    expect(withCodexProjectTrusted(other, '/a').changed).toBe(true)
+    const header = '[projects."/a"]\ntrust_level = "untrusted"\n'
+    expect(withCodexProjectTrusted(header, '/a').reason).toBe('untrusted')
+  })
+
   it('keeps a byte-order mark', () => {
     const r = withCodexProjectTrusted('\ufeffa = 1\n', '/a')
     expect(r.text.startsWith('\ufeffa = 1\n')).toBe(true)
