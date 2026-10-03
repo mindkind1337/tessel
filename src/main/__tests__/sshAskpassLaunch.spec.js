@@ -26,7 +26,7 @@ const fakeNet = {
   }
 }
 
-function harness({ helper = 'fake.exe', createDelay = null, sshMode = { mode: 'system', reason: 'test' } } = {}) {
+function harness({ helper = 'fake.exe', createDelay = null, sshMode = { mode: 'system', reason: 'test' }, remoteAgent = {} } = {}) {
   let answerVersion = null
   const broker = createSshAskpass({
     helperPath: () => helper,
@@ -57,6 +57,8 @@ function harness({ helper = 'fake.exe', createDelay = null, sshMode = { mode: 's
       terminalRequest: (target, spec, remotePath) => ({ hostId: target.id, spec, remotePath, texts: {} })
     },
     validateRemotePath: (p) => ({ path: p }),
+    // Agents on the host (remoteAgent/remoteAgentSetup.js): what main prepared.
+    prepareRemoteAgent: async (q) => (typeof remoteAgent === 'function' ? remoteAgent(q) : remoteAgent),
     // A terminal opened on a host lets its Files session sign in (remoteFs.js).
     remoteFs: { allow: (id) => allowed.push(id) },
     Date,
@@ -81,7 +83,7 @@ function harness({ helper = 'fake.exe', createDelay = null, sshMode = { mode: 's
     sshAskpass: broker,
     host: {
       request: (kind, v) => {
-        creates.push({ kind, askpass: !!v.env.SSH_ASKPASS, token: v.env.TESSEL_ASKPASS_TOKEN, ...(v.ssh ? { ssh: v.ssh, backend: v.meta.backend } : {}) })
+        creates.push({ kind, askpass: !!v.env.SSH_ASKPASS, token: v.env.TESSEL_ASKPASS_TOKEN, ...(v.ssh ? { ssh: v.ssh, backend: v.meta.backend } : {}), ...(v.meta && v.meta.agentProvider ? { agent: [v.meta.agentProvider, v.meta.agentLaunchToken] } : {}) })
         if (createDelay) return new Promise((resolve) => (finishCreate = () => resolve({ ok: true, pid: 4242 })))
         return Promise.resolve({ ok: true, pid: 4242 })
       },
@@ -90,7 +92,7 @@ function harness({ helper = 'fake.exe', createDelay = null, sshMode = { mode: 's
     log: { error: () => {}, warn: () => {}, info: () => {} },
     t: (_key, fallback) => fallback
   })
-  const create = (id = 'pane-1') => handlers['pty:create'](null, { id, shellId: 'shell', remoteHostId: 'host-1' })
+  const create = (id = 'pane-1', extra = {}) => handlers['pty:create'](null, { id, shellId: 'shell', remoteHostId: 'host-1', ...extra })
   return { broker, creates, sent, started, allowed, create, version: () => answerVersion(), finishCreate: () => finishCreate() }
 }
 
@@ -108,6 +110,27 @@ describe('pty:create on the shared ssh2 connection (the real handler from index.
     expect(h.started).toEqual([['pane-1', 'host-1', { ssh2: true }]])
     // A terminal opened on the host: its Files session may sign in too.
     expect(h.allowed).toEqual(['host-1'])
+    h.broker.close()
+  })
+
+  it('an agent pane carries its remote-agent setup to the terminal host and its status token back', async () => {
+    const spec = { host: 'box', port: 22, username: 'me' }
+    const seen = []
+    const remoteAgent = { token: 'a'.repeat(64), instance: 'tessel-abc', provider: 'claude', env: { TESSEL_PANE_ID: 'pane-1' }, node: 'C:/node.exe', script: 'C:/s.cjs' }
+    const h = harness({ sshMode: { mode: 'ssh2', spec }, remoteAgent: (q) => (seen.push(q), { remoteAgent, launchToken: 'b'.repeat(32) }) })
+    const res = await h.create('pane-1', { agentId: 'claude', remotePath: '/srv/app' })
+    expect(seen).toEqual([{ id: 'pane-1', target: { id: 'host-1', label: 'fake' }, remotePath: '/srv/app', agentId: 'claude', teamSecret: 'c'.repeat(64) }])
+    expect(h.creates[0].ssh.remoteAgent).toEqual(remoteAgent)
+    expect(h.creates[0].agent).toEqual(['claude', 'b'.repeat(32)])
+    expect(res).toMatchObject({ ok: true, agentLaunchToken: 'b'.repeat(32), agentStatusWarning: null })
+    h.broker.close()
+  })
+
+  it('an agent pane whose host could not be set up still opens, with the reason', async () => {
+    const h = harness({ sshMode: { mode: 'ssh2', spec: { host: 'box', port: 22, username: 'me' } }, remoteAgent: { warning: 'no node there' } })
+    const res = await h.create('pane-1', { agentId: 'claude' })
+    expect(res).toMatchObject({ ok: true, agentLaunchToken: null, agentStatusWarning: 'no node there' })
+    expect(h.creates[0].ssh.remoteAgent).toBeUndefined()
     h.broker.close()
   })
 })

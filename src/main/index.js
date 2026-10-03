@@ -2960,6 +2960,75 @@ const host = createPtyClient({
   }
 })
 
+// Agents on an SSH host (src/main/remoteAgent/REMOTE_AGENTS.md). The shim goes on each host
+// once per app run, over the Files session; the team tools and hooks of the
+// remote agent then reach the normal server.cjs, run here by the terminal
+// host's tunnel with this environment. -> { remoteAgent?, launchToken?, warning? }
+const remoteShims = createShimInstaller({
+  install: (hostId, shim) => remoteFs.installAgentShim(hostId, shim),
+  source: remoteShimSource,
+  log: (text) => log.warn('remote-agent', text)
+})
+function remoteShimWarning(reason) {
+  if (reason === 'no-node') return t('main.remoteAgent.noNode', 'Node.js was not found on this host, so the agent there has no team tools or live status. Install Node.js 18 or newer on the host.')
+  if (reason === 'old-node') return t('main.remoteAgent.oldNode', 'Node.js on this host is older than 18, so the agent there has no team tools or live status. Update Node.js on the host.')
+  return t('main.remoteAgent.failed', 'Tessel could not set up its team tools on this host, so the agent there has no team tools or live status.')
+}
+async function prepareRemoteAgent({ id, target, remotePath, agentId, teamSecret }) {
+  const provider = REMOTE_AGENT_PROVIDERS.includes(agentId) ? agentId : null
+  if (!provider) return {}
+  const node = findNode({ env: freshEnv() })
+  if (!node) return { warning: noNodeError() }
+  const shim = await remoteShims.ensure(target.id)
+  if (!shim.ok) return { warning: remoteShimWarning(shim.reason) }
+  let script
+  try {
+    script = writeServerScript(join(app.getPath('appData'), 'tessel-team'), teamServerSource)
+  } catch (err) {
+    log.error('remote-agent', `team server script: ${err.message}`)
+    return { warning: remoteShimWarning('failed') }
+  }
+  // A remote project's team channel and board live on this computer.
+  let projectDir = null
+  if (remotePath) {
+    projectDir = remoteProjectDataDir(app.getPath('userData'), target.id, remotePath)
+    try {
+      fs.mkdirSync(projectDir, { recursive: true })
+    } catch {
+      projectDir = null
+    }
+  }
+  const launchToken = crypto.randomBytes(16).toString('hex')
+  const env = freshEnv()
+  for (const key of Object.keys(env)) if (/^TESSEL_/i.test(key)) delete env[key]
+  Object.assign(env, {
+    TESSEL_PANE_ID: String(id),
+    TESSEL_TEAM_SECRET: teamSecret,
+    TESSEL_RUNTIME_DIR: app.getPath('userData'),
+    TESSEL_AGENT_PROVIDER: provider,
+    TESSEL_AGENT_LAUNCH: launchToken,
+    TESSEL_AGENT_STATE_DIR: agentStateDir,
+    ...(projectDir ? { TESSEL_PROJECT_DIR: projectDir } : {})
+  })
+  return {
+    launchToken,
+    remoteAgent: { token: newRemoteToken(), instance: instanceName(basename(app.getPath('userData')), target.id), provider, env, node, script }
+  }
+}
+// The folder on this computer that holds a remote project's .tessel data.
+ipcMain.handle('remote:projectDataDir', (_evt, hostId, remotePath) => {
+  if (typeof hostId !== 'string' || !/^ssh-[\w-]{1,60}$/.test(hostId)) return null
+  const checked = validateRemotePath(remotePath)
+  if (checked.error) return null
+  const dir = remoteProjectDataDir(app.getPath('userData'), hostId, checked.path)
+  try {
+    fs.mkdirSync(dir, { recursive: true })
+  } catch {
+    return null
+  }
+  return dir
+})
+
 ipcMain.handle('pty:create', async (_evt, opts = {}) => {
   const launchCancelled = () => ({
     ok: false,
@@ -3114,75 +3183,6 @@ ipcMain.handle('pty:create', async (_evt, opts = {}) => {
 // pty:kill times, so a pane closed while its ssh terminal was being created
 // ends it (the kill reached the host before the terminal existed).
 const paneKills = new Map() // id -> time
-
-// Agents on an SSH host (src/main/remoteAgent/REMOTE_AGENTS.md). The shim goes on each host
-// once per app run, over the Files session; the team tools and hooks of the
-// remote agent then reach the normal server.cjs, run here by the terminal
-// host's tunnel with this environment. -> { remoteAgent?, launchToken?, warning? }
-const remoteShims = createShimInstaller({
-  install: (hostId, shim) => remoteFs.installAgentShim(hostId, shim),
-  source: remoteShimSource,
-  log: (text) => log.warn('remote-agent', text)
-})
-function remoteShimWarning(reason) {
-  if (reason === 'no-node') return t('main.remoteAgent.noNode', 'Node.js was not found on this host, so the agent there has no team tools or live status. Install Node.js 18 or newer on the host.')
-  if (reason === 'old-node') return t('main.remoteAgent.oldNode', 'Node.js on this host is older than 18, so the agent there has no team tools or live status. Update Node.js on the host.')
-  return t('main.remoteAgent.failed', 'Tessel could not set up its team tools on this host, so the agent there has no team tools or live status.')
-}
-async function prepareRemoteAgent({ id, target, remotePath, agentId, teamSecret }) {
-  const provider = REMOTE_AGENT_PROVIDERS.includes(agentId) ? agentId : null
-  if (!provider) return {}
-  const node = findNode({ env: freshEnv() })
-  if (!node) return { warning: noNodeError() }
-  const shim = await remoteShims.ensure(target.id)
-  if (!shim.ok) return { warning: remoteShimWarning(shim.reason) }
-  let script
-  try {
-    script = writeServerScript(join(app.getPath('appData'), 'tessel-team'), teamServerSource)
-  } catch (err) {
-    log.error('remote-agent', `team server script: ${err.message}`)
-    return { warning: remoteShimWarning('failed') }
-  }
-  // A remote project's team channel and board live on this computer.
-  let projectDir = null
-  if (remotePath) {
-    projectDir = remoteProjectDataDir(app.getPath('userData'), target.id, remotePath)
-    try {
-      fs.mkdirSync(projectDir, { recursive: true })
-    } catch {
-      projectDir = null
-    }
-  }
-  const launchToken = crypto.randomBytes(16).toString('hex')
-  const env = freshEnv()
-  for (const key of Object.keys(env)) if (/^TESSEL_/i.test(key)) delete env[key]
-  Object.assign(env, {
-    TESSEL_PANE_ID: String(id),
-    TESSEL_TEAM_SECRET: teamSecret,
-    TESSEL_RUNTIME_DIR: app.getPath('userData'),
-    TESSEL_AGENT_PROVIDER: provider,
-    TESSEL_AGENT_LAUNCH: launchToken,
-    TESSEL_AGENT_STATE_DIR: agentStateDir,
-    ...(projectDir ? { TESSEL_PROJECT_DIR: projectDir } : {})
-  })
-  return {
-    launchToken,
-    remoteAgent: { token: newRemoteToken(), instance: instanceName(basename(app.getPath('userData')), target.id), provider, env, node, script }
-  }
-}
-// The folder on this computer that holds a remote project's .tessel data.
-ipcMain.handle('remote:projectDataDir', (_evt, hostId, remotePath) => {
-  if (typeof hostId !== 'string' || !/^ssh-[\w-]{1,60}$/.test(hostId)) return null
-  const checked = validateRemotePath(remotePath)
-  if (checked.error) return null
-  const dir = remoteProjectDataDir(app.getPath('userData'), hostId, checked.path)
-  try {
-    fs.mkdirSync(dir, { recursive: true })
-  } catch {
-    return null
-  }
-  return dir
-})
 
 async function createSshPane(opts, target, spec, shell, startedAt) {
   const { id, cols = 80, rows = 24 } = opts
