@@ -145,6 +145,9 @@ const RETRY_MS = 3000
 // A message the agent took but whose turn the file never showed (it may show
 // it in another form) stops being shown as sent after this long.
 const SENT_SHOWN_MS = 2 * 60 * 1000
+// Typed but never confirmed nor refused (the agent may or may not have it):
+// shown as sent this long, then left to the conversation file.
+const UNCONFIRMED_SHOWN_MS = 10 * 60 * 1000
 
 const rootRef = ref(null)
 const composerRef = ref(null)
@@ -190,7 +193,7 @@ function render() {
   // A message not typed yet is a card, not a row.
   const rows = (list) => list.filter((p) => p.typed || p.delivered)
   let merged = mergePendingSends(fileEvents.value, rows(pendingSends.value))
-  const keep = pendingSends.value.filter((p) => !merged.done.includes(p.id) && !(p.delivered && now - p.at > SENT_SHOWN_MS))
+  const keep = pendingSends.value.filter((p) => !merged.done.includes(p.id) && !(p.delivered && now - p.at > SENT_SHOWN_MS) && !(p.typed && !p.delivered && now - p.at > UNCONFIRMED_SHOWN_MS))
   if (keep.length !== pendingSends.value.length) {
     pendingSends.value = keep
     merged = mergePendingSends(fileEvents.value, rows(keep))

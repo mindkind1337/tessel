@@ -184,6 +184,26 @@ describe('NativeChatTranscriptView, a terminal agent chat view (interactive)', (
     expect(text()).not.toContain('Lost one')
   })
 
+  // Typed, but never confirmed nor refused (the agent may or may not have it):
+  // shown as sent a while, not for good.
+  it('a typed message never confirmed goes from the conversation after a while', async () => {
+    const sendMessage = vi.fn()
+    await mountChat({ sendMessage })
+    await composer().props('send')('Maybe taken')
+    sendMessage.mock.calls[0][1].onTyped()
+    await flushPromises()
+    expect(text()).toContain('Maybe taken')
+    const start = Date.now()
+    const now = vi.spyOn(Date, 'now').mockReturnValue(start + 11 * 60 * 1000)
+    try {
+      for (const cb of listeners) cb({ viewId: 'tv-1', ok: true, events: [...conversation] })
+      await flushPromises()
+      expect(text()).not.toContain('Maybe taken')
+    } finally {
+      now.mockRestore()
+    }
+  })
+
   it('nothing is sent while it cannot be (asleep)', async () => {
     const sendMessage = vi.fn()
     await mountChat({ sendMessage, disabledReason: 'Asleep' })
