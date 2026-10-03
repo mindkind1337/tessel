@@ -8830,10 +8830,31 @@ function teamMembers(teamId) {
 }
 
 // Teams nobody belongs to any more go away.
+// Every team shows its own number, across all workspaces: a later team
+// whose number another already shows (e.g. "Team 2" and "Équipe 2") is
+// renamed to the next free "Team N" (in the app's language).
+function dedupeTeamNumbers(list) {
+  const numberOf = (name) => (/(\d+)\s*$/.exec(String(name || '')) || [])[1] || null
+  const taken = new Set()
+  const out = []
+  for (const team of list) {
+    const n = numberOf(team.name)
+    if (!n || !taken.has(n)) {
+      if (n) taken.add(n)
+      out.push(team)
+      continue
+    }
+    let i = 1
+    while (taken.has(String(i))) i++
+    taken.add(String(i))
+    out.push({ ...team, name: t('app.team.defaultName', 'Team {{n}}', { n: i }) })
+  }
+  return out
+}
 function pruneTeams() {
   const used = new Set()
   forEachWsLeaf((l) => l.team && used.add(l.team))
-  teams.value = teams.value.filter((t) => used.has(t.id))
+  teams.value = dedupeTeamNumbers(teams.value.filter((t) => used.has(t.id)))
 }
 
 function createTeam(leafIds) {
@@ -9604,7 +9625,7 @@ async function restoreOrSeedLayout() {
     )
     // (A saved "new workspace" from before is now Right: it has its own button.)
     if (['left', 'right', 'down'].includes(saved.placement)) placement.value = saved.placement
-    if (Array.isArray(saved.teams)) teams.value = saved.teams.filter(isTeam)
+    if (Array.isArray(saved.teams)) teams.value = dedupeTeamNumbers(saved.teams.filter(isTeam))
     // v2 stores a list of workspaces; v1 stored a single tree.
     const snaps = !settings.restoreWorkspaces
       ? []
