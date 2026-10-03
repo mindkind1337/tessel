@@ -15,8 +15,9 @@ import {
   createRemoteAgentTunnel,
   validateRemoteAgent,
   validateHome,
-  exportPrefix,
-  tokenFileCommand,
+  envFileContent,
+  envFileCommand,
+  sourcePrefix,
   prepCommand,
   HOOK_TIMEOUT_EXIT
 } from '../remoteAgent/remoteAgentTunnel'
@@ -149,14 +150,16 @@ describe('validateRemoteAgent', () => {
     expect(validateRemoteAgent({ ...agent(), provider: null, env: { TESSEL_AGENT_PROVIDER: 'codex' } }).provider).toBe('codex')
   })
 
-  it('builds the export prefix with single-quoted values', () => {
-    // The token itself is never on the command line: read from its file.
-    expect(exportPrefix({ paneId: 'p1', instance: 'tessel-h1', provider: 'codex', sockPath: "/home/o'k/.tessel-server/run/tessel-h1.sock" })).toBe(
-      `export TESSEL_PANE_ID='p1' TESSEL_REMOTE_SOCK='/home/o'\\''k/.tessel-server/run/tessel-h1.sock' TESSEL_REMOTE_TOKEN="$(cat "$HOME"/'.tessel-server/run/p1.token')" TESSEL_AGENT_PROVIDER='codex'; `
+  it('builds the env file with single-quoted values, sourced then removed by the pane command', () => {
+    expect(envFileContent({ paneId: 'p1', token: TOKEN, instance: 'tessel-h1', provider: 'codex', sockPath: "/home/o'k/.tessel-server/run/tessel-h1.sock" })).toBe(
+      `export TESSEL_PANE_ID='p1' TESSEL_REMOTE_SOCK='/home/o'\\''k/.tessel-server/run/tessel-h1.sock' TESSEL_REMOTE_TOKEN='${TOKEN}' TESSEL_AGENT_PROVIDER='codex'\n`
     )
-    expect(exportPrefix({ paneId: 'p1', instance: 'tessel-h1', provider: null, sockPath: null })).toContain(`TESSEL_REMOTE_SOCK="$HOME"/'.tessel-server/run/tessel-h1.sock'`)
-    expect(() => exportPrefix({ paneId: "p'1", instance: 'tessel-h1' })).toThrow()
-    expect(tokenFileCommand('p1')).toBe('umask 077 && mkdir -p "$HOME/.tessel-server/run" && cat > "$HOME/.tessel-server/run/p1.token"')
+    expect(envFileContent({ paneId: 'p1', token: TOKEN, instance: 'tessel-h1', provider: null, sockPath: null })).toContain(`TESSEL_REMOTE_SOCK="$HOME"/'.tessel-server/run/tessel-h1.sock'`)
+    expect(() => envFileContent({ paneId: "p'1", token: TOKEN, instance: 'tessel-h1' })).toThrow()
+    expect(() => envFileContent({ paneId: 'p1', token: 'x', instance: 'tessel-h1' })).toThrow()
+    expect(envFileCommand('p1')).toBe('umask 077 && mkdir -p "$HOME/.tessel-server/run" && cat > "$HOME/.tessel-server/run/p1.env"')
+    // The token itself is never on the command line.
+    expect(sourcePrefix('p1')).toBe(`[ -r "$HOME"/'.tessel-server/run/p1.env' ] && . "$HOME"/'.tessel-server/run/p1.env'; rm -f "$HOME"/'.tessel-server/run/p1.env'; `)
     expect(validateHome('TESSEL_HOME=/home/me\n')).toBe('/home/me')
     // An rc file that prints something: the marked line still counts.
     expect(validateHome('Welcome!\nTESSEL_HOME=/home/me\n')).toBe('/home/me')
@@ -332,6 +335,111 @@ describe('hook', () => {
   })
 })
 
+describe('caps', () => {
+  const okLine = (ch) => until(() => ch.text().includes('{"ok":true}'))
+
+  it('at most maxSessions MCP connections and hooks over all hosts', async () => {
+    const t = makeTunnel({ limits: { maxSessions: 2 } })
+    t.registerPane('h1', 'p1', agent())
+    t.registerPane('h2', 'p2', agent({ token: OTHER }))
+    const a = connect(t, hello())
+    const b = connect(t, hello({ pane: 'p2', token: OTHER }), 'h2')
+    await okLine(a)
+    await okLine(b)
+    const c = connect(t, hello({ kind: 'hook', args: ['claude'] }))
+    await closed(c)
+    expect(c.lines()).toEqual(['{"ok":false,"error":"busy"}'])
+    expect(t.sessionCount()).toBe(2)
+    a.close()
+    await until(() => t.sessionCount() === 1)
+    const d = connect(t, hello())
+    await okLine(d)
+    b.close()
+    d.close()
+    await until(() => t.sessionCount() === 0)
+  })
+
+  it('at most maxPaneMcp MCP connections per pane', async () => {
+    const t = makeTunnel({ limits: { maxPaneMcp: 2 } })
+    t.registerPane('h1', 'p1', agent())
+    t.registerPane('h1', 'p2', agent({ token: OTHER }))
+    const a = connect(t, hello())
+    const b = connect(t, hello())
+    await okLine(a)
+    await okLine(b)
+    const c = connect(t, hello())
+    await closed(c)
+    expect(c.lines()).toEqual(['{"ok":false,"error":"busy"}'])
+    // Another pane is not counted against it.
+    const d = connect(t, hello({ pane: 'p2', token: OTHER }))
+    await okLine(d)
+  })
+
+  it('at most maxPaneHooks hooks at once per pane', async () => {
+    const t = makeTunnel({ limits: { maxPaneHooks: 1 } })
+    t.registerPane('h1', 'p1', agent())
+    // Still sending its stdin: holds its slot.
+    const a = connect(t, hello({ kind: 'hook', args: ['claude'] }) + 'partial')
+    await okLine(a)
+    const b = connect(t, hello({ kind: 'hook', args: ['claude'] }))
+    await closed(b)
+    expect(b.lines()).toEqual(['{"ok":false,"error":"busy"}'])
+    a.push(null)
+    await closed(a)
+    await until(() => t.sessionCount() === 0)
+    const c = connect(t, hello({ kind: 'hook', args: ['claude'] }))
+    c.push(null)
+    await closed(c)
+    expect(c.lines()[0]).toBe('{"ok":true}')
+  })
+
+  it('hooks per second per pane: a token bucket', async () => {
+    let clock = 1_000_000
+    const t = makeTunnel({ now: () => clock, limits: { hookRatePerS: 2 } })
+    t.registerPane('h1', 'p1', agent())
+    const hook = async () => {
+      const ch = connect(t, hello({ kind: 'hook', args: ['claude'] }))
+      ch.push(null)
+      await closed(ch)
+      return ch.lines()[0]
+    }
+    expect(await hook()).toBe('{"ok":true}')
+    expect(await hook()).toBe('{"ok":true}')
+    expect(await hook()).toBe('{"ok":false,"error":"busy"}')
+    clock += 500 // one more token
+    expect(await hook()).toBe('{"ok":true}')
+    expect(await hook()).toBe('{"ok":false,"error":"busy"}')
+  })
+
+  it('ends an MCP connection idle for mcpIdleMs, not one in use', async () => {
+    const t = makeTunnel({ limits: { mcpIdleMs: 250 } })
+    t.registerPane('h1', 'p1', agent())
+    const busy = connect(t, hello())
+    const idle = connect(t, hello())
+    await okLine(busy)
+    await okLine(idle)
+    const started = Date.now()
+    while (Date.now() - started < 600) {
+      busy.push('x\n')
+      await new Promise((r) => setTimeout(r, 60))
+    }
+    expect(idle.isClosed).toBe(true)
+    expect(busy.isClosed).toBe(false)
+    const child = t.children[1].child
+    await until(() => child.exitCode !== null || child.signalCode !== null)
+    busy.close()
+  })
+
+  it('runs server.cjs in the pane project data folder', async () => {
+    const t = makeTunnel()
+    t.registerPane('h1', 'p1', agent({ env: { ...process.env, TESSEL_X: 'local', TESSEL_PROJECT_DIR: dir } }))
+    const ch = connect(t, hello())
+    await okLine(ch)
+    expect(t.children[0].args[2].cwd).toBe(dir)
+    ch.close()
+  })
+})
+
 // A fake ssh2 client: records forwards, emits 'unix connection'.
 function fakeClient() {
   const c = new EventEmitter()
@@ -406,7 +514,7 @@ describe('binding', () => {
     expect(t.logs.join('\n')).not.toContain(TOKEN)
   })
 
-  it('writes the token file through stdin; a pane re-created with the same id is not forgotten by the old one', async () => {
+  it('writes the env file through stdin; a pane re-created with the same id is not forgotten by the old one', async () => {
     const state = { commands: [], home: '/home/me', client: fakeClient(), released: 0 }
     const inputs = []
     const exec = fakeExec(state)
@@ -421,10 +529,10 @@ describe('binding', () => {
     const old = agent()
     t.registerPane('h1', 'p1', old, spec)
     await t.ensure('h1', spec)
-    expect(await t.writeToken('h1', spec, 'p1')).toBe(true)
-    expect(state.commands[1]).toBe(tokenFileCommand('p1'))
+    expect(await t.writeEnv('h1', spec, 'p1')).toBe(true)
+    expect(state.commands[1]).toBe(envFileCommand('p1'))
     expect(state.commands.join('\n')).not.toContain(TOKEN)
-    expect(inputs[1]).toBe(TOKEN)
+    expect(inputs[1]).toBe(envFileContent({ paneId: 'p1', token: TOKEN, instance: 'tessel-h1', provider: 'claude', sockPath: '/home/me/.tessel-server/run/tessel-h1.sock' }))
     const fresh = agent({ token: OTHER })
     t.registerPane('h1', 'p1', fresh, spec)
     t.forgetPane('p1', old)
@@ -432,8 +540,8 @@ describe('binding', () => {
     expect(t.isBound('h1')).toBe(true)
     t.forgetPane('p1', fresh)
     expect(t.paneCount()).toBe(0)
-    // Its token file removed on the server.
-    expect(state.commands[2]).toBe('rm -f "$HOME/.tessel-server/run/p1.token"')
+    // Its env file removed on the server (if its shell never did).
+    expect(state.commands[2]).toBe('rm -f "$HOME/.tessel-server/run/p1.env"')
   })
 
   it('a pane that comes after its host was unbound mid-bind gets a bind of its own', async () => {

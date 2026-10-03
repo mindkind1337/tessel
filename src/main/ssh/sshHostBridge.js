@@ -36,7 +36,7 @@ import { createSshManager } from './sshManager'
 import { createHostKeyStore } from './hostKeyStore'
 import { formatSshError, formatSshText } from './sshMessages'
 import { remoteCdCommand, validateRemotePath } from '../remoteProject'
-import { createRemoteAgentTunnel, validateRemoteAgent, exportPrefix } from '../remoteAgent/remoteAgentTunnel'
+import { createRemoteAgentTunnel, validateRemoteAgent, sourcePrefix } from '../remoteAgent/remoteAgentTunnel'
 
 export const SSH_FEATURE = 1
 export const CREDENTIAL_TIMEOUT_MS = 120_000
@@ -308,11 +308,11 @@ export function createSshHostBridge({
     if (!spec || !cleanStr(hostId, 80)) throw new Error('invalid ssh spec') // i18n-ignore internal
     const agent = rawAgent == null ? null : validateRemoteAgent(rawAgent)
     if (rawAgent != null && (!agent || typeof paneId !== 'string' || !ID_RE.test(paneId))) throw new Error('invalid remote agent') // i18n-ignore internal
-    // The command of each (re)opened shell: the socket path is known once
-    // the tunnel is bound.
+    // The command of each (re)opened shell: the pane's variables come from
+    // the env file the tunnel writes just before (writeEnv).
     const commandFor = () =>
       agent
-        ? exportPrefix({ paneId, instance: agent.instance, provider: agent.provider, sockPath: tunnel.sockPathFor(hostId) }) +
+        ? sourcePrefix(paneId) +
           (cdCommand || 'exec "$SHELL" -l')
         : cdCommand
     const dataFns = []
@@ -349,7 +349,7 @@ export function createSshHostBridge({
     const pty = { term: 'xterm-256color', cols: size.cols, rows: size.rows, width: 0, height: 0 }
 
     // An agent's pane: signed in first (a failure ends the pane as for any
-    // terminal), then the socket bound and the token file written (or not,
+    // terminal), then the socket bound and the env file written (or not,
     // after agentBindWaitMs).
     function agentReady() {
       if (!agent) return Promise.resolve()
@@ -359,7 +359,7 @@ export function createSshHostBridge({
             const t = timers.setTimeout(resolve, agentBindWaitMs)
             tunnel
               .ensure(hostId, spec)
-              .then(() => tunnel.writeToken(hostId, spec, paneId))
+              .then(() => tunnel.writeEnv(hostId, spec, paneId))
               .then(() => {
                 timers.clearTimeout(t)
                 resolve()

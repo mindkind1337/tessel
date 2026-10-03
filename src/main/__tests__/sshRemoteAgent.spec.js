@@ -12,7 +12,7 @@ import { join } from 'path'
 import ssh2 from 'ssh2'
 import { createSshHostBridge } from '../ssh/sshHostBridge'
 import { makeKey } from './fixtures/sshServer'
-import { prepCommand, tokenFileCommand } from '../remoteAgent/remoteAgentTunnel'
+import { prepCommand, envFileCommand, envFileContent } from '../remoteAgent/remoteAgentTunnel'
 
 const { Server } = ssh2
 const PASSWORD = 'pw-remote-agent'
@@ -192,11 +192,12 @@ describe('remote-agent pane on ssh2', () => {
     await until(() => out.text.includes('shell ready'))
     expect(server.events.execs[0]).toBe(prepCommand('tessel-h1'))
     expect(server.events.forwards.map((f) => f.path)).toEqual([SOCK])
-    // The token goes through stdin into its file, never on a command line.
-    expect(server.events.tokenFiles).toEqual([{ command: tokenFileCommand('pane-1'), content: TOKEN }])
-    expect(server.events.execs[2]).toBe(
-      `export TESSEL_PANE_ID='pane-1' TESSEL_REMOTE_SOCK='${SOCK}' TESSEL_REMOTE_TOKEN="$(cat "$HOME"/'.tessel-server/run/pane-1.token')" TESSEL_AGENT_PROVIDER='claude'; cd -- '/srv/my app' && exec "$SHELL" -l`
-    )
+    // The variables go through stdin into the env file, never on a command line.
+    expect(server.events.tokenFiles).toEqual([
+      { command: envFileCommand('pane-1'), content: envFileContent({ paneId: 'pane-1', token: TOKEN, instance: 'tessel-h1', provider: 'claude', sockPath: SOCK }) }
+    ])
+    const env = `"$HOME"/'.tessel-server/run/pane-1.env'`
+    expect(server.events.execs[2]).toBe(`[ -r ${env} ] && . ${env}; rm -f ${env}; cd -- '/srv/my app' && exec "$SHELL" -l`)
     expect(server.events.execs.join('\n')).not.toContain(TOKEN)
   })
 
