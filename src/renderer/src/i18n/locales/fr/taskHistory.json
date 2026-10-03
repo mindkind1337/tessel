@@ -1,0 +1,66 @@
+{
+  "taskHistory": {
+    "tab": "Historique des tâches",
+    "title": "Historique des tâches",
+    "export": "Exporter en CSV",
+    "unknown": "inconnu",
+    "noAgent": "Aucun agent",
+    "search": "Chercher dans les titres",
+    "empty": "Aucune tâche terminée pour l'instant. Les tâches placées dans Terminé sur le tableau des tâches apparaissent ici.",
+    "noMatch": "Aucune tâche ne correspond à ces filtres.",
+    "period": {
+      "today": "Aujourd'hui",
+      "week": "7 derniers jours",
+      "month": "30 derniers jours",
+      "all": "Depuis toujours"
+    },
+    "sort": {
+      "date": "Plus récentes d'abord",
+      "cost": "Coût le plus élevé",
+      "time": "Temps le plus long"
+    },
+    "filter": {
+      "period": "Période",
+      "project": "Projet",
+      "agent": "Agent",
+      "sort": "Trier",
+      "allProjects": "Tous les projets",
+      "allAgents": "Tous les agents"
+    },
+    "total": {
+      "tasks": "tâches",
+      "tasks_one": "tâche",
+      "tasks_other": "tâches",
+      "time": "temps",
+      "tokens": "tokens",
+      "cost": "coût est.",
+      "unknown_one": "{{count}} au coût inconnu (non comptée)",
+      "unknown_other": "{{count}} au coût inconnu (non comptées)",
+      "unknown": "{{count}} au coût inconnu (non comptées)",
+      "pending": "{{count}} en cours de lecture"
+    },
+    "detail": {
+      "periods": "Périodes de travail",
+      "openPane": "Ouvrir le volet de l'agent",
+      "noPeriods": "Aucun temps dans En cours n'a été enregistré.",
+      "models": "Coût par modèle",
+      "unknownModel": "Modèle inconnu",
+      "subagents_one": "{{count}} sous-agent",
+      "subagents_other": "{{count}} sous-agents",
+      "subagents": "{{count}} sous-agents",
+      "incomplete": "Certains de ses volets n'ont pas pu être lus : les chiffres peuvent être bas.",
+      "reading": "Lecture des chiffres…"
+    },
+    "reason": {
+      "noSession": "Aucune session d'agent n'a été vue pour son volet.",
+      "missingFile": "Le fichier de session de l'agent est introuvable.",
+      "remote": "L'agent travaillait sur un autre ordinateur.",
+      "unsupported": "Tessel ne peut pas lire la consommation de cet agent.",
+      "invalidSession": "L'identifiant de session n'est pas valide.",
+      "noPane": "Aucun volet d'agent n'y a travaillé.",
+      "notStarted": "Elle n'est jamais passée par En cours.",
+      "noCard": "Sa carte n'existe plus, ni son enregistrement.",
+      "error": "Les chiffres n'ont pas pu être lus."
+    }
+  }
+}
