@@ -359,6 +359,23 @@
   white-space: nowrap;
   text-overflow: ellipsis;
 }
+/* Its team's number, as in the sidebar (the lead's underlined). */
+.adb-team {
+  flex: 0 0 auto;
+  min-width: 18px;
+  padding: 1px 5px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--text-dim) 14%, transparent);
+  color: var(--text-dim);
+  font-size: 10.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.adb-team.lead {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
 .adb-pill {
   flex: 0 0 auto;
   padding: 1px 7px;

@@ -14,6 +14,7 @@ import AgentStateDot from './sidebar/AgentStateDot.vue'
 import { isAgentPane, paneRow } from '../sidebarModel'
 import { buildDashboard, dashboardBucket, DASHBOARD_STATES, dashboardView } from '../agentDashboard'
 import { t } from '../i18n'
+import { teamNumber } from '../teamNumber'
 import './agentDashboard.css'
 
 const props = defineProps({
@@ -96,11 +97,20 @@ function cardSub(r) {
   const where = r.branch ? t('agentDashboard.card.where', '{{project}} · {{branch}}', { project: r.projectName, branch: r.branch }) : r.projectName
   return agent ? t('agentDashboard.card.sub', '{{agent}} · {{project}}', { agent, project: where }) : where
 }
+// Grouped by status, the section already names the state: the pill says only
+// how long (nothing without a time). Grouped by project, both.
 function pill(r) {
   const name = stateName(r.bucket)
-  return r.time && r.bucket !== 'idle' && r.bucket !== 'sleeping'
-    ? t('agentDashboard.card.pill', '{{state}} {{time}}', { state: name, time: r.time })
-    : name
+  const timed = r.time && r.bucket !== 'idle' && r.bucket !== 'sleeping'
+  if (view.groupBy !== 'project') return timed ? r.time : ''
+  return timed ? t('agentDashboard.card.pill', '{{state}} {{time}}', { state: name, time: r.time }) : name
+}
+// Its team, as in the sidebar: the team's number (the lead's underlined).
+const panel = inject('panelCtx', null)
+function teamOf(r) {
+  if (!r.team || !panel || typeof panel.teamById !== 'function') return ''
+  const team = panel.teamById(r.team)
+  return team && team.name ? team.name : ''
 }
 
 // Idle terminal agents that can sleep (a chat has no sleep; the pane you are
@@ -256,7 +266,15 @@ async function sleepIdle() {
               <span class="adb-card-title">{{ cardTitle(r) }}</span>
               <span class="adb-card-sub">{{ cardSub(r) }}</span>
             </span>
-            <span class="adb-pill" :class="'adb-pill-' + r.bucket" data-test="adb-pill">{{ pill(r) }}</span>
+            <span
+              v-if="teamOf(r)"
+              class="adb-team"
+              :class="{ lead: r.lead }"
+              data-test="adb-team"
+              :title="r.lead ? t('agentDashboard.card.teamLead', '{{team}} (lead)', { team: teamOf(r) }) : teamOf(r)"
+              >{{ teamNumber(teamOf(r)) }}</span
+            >
+            <span v-if="pill(r)" class="adb-pill" :class="'adb-pill-' + r.bucket" data-test="adb-pill">{{ pill(r) }}</span>
           </button>
         </div>
       </section>

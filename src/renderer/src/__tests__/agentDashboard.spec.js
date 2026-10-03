@@ -101,7 +101,7 @@ describe('AgentDashboard.vue', () => {
     const working = w.find('[data-test="adb-section-working"] [data-test="adb-card"]')
     expect(working.find('.adb-card-title').text()).toBe('Build the dashboard')
     expect(working.find('.adb-card-sub').text()).toBe('Claude Code · tessel')
-    expect(working.find('[data-test="adb-pill"]').text()).toBe('Working 4m')
+    expect(working.find('[data-test="adb-pill"]').text()).toBe('4m') // the section names the state
     const done = w.find('[data-test="adb-section-done"] [data-test="adb-card"]')
     expect(done.find('.adb-card-title').text()).toBe('Claude Code 2')
     expect(done.find('[data-test="adb-pill"]').text()).toBe('Done 10m')
@@ -154,7 +154,7 @@ describe('AgentDashboard.vue', () => {
     const w = make()
     expect(w.find('[data-test="adb-total"]').text()).toBe('7 agents')
     expect(w.find('[data-test="adb-chip-all"]').text()).toContain('Tous')
-    expect(w.find('[data-test="adb-section-working"] [data-test="adb-pill"]').text()).toBe('Au travail 4 min')
+    expect(w.find('[data-test="adb-section-working"] [data-test="adb-pill"]').text()).toBe('4 min')
     await setUiLanguage('en')
   })
 })
