@@ -154,6 +154,16 @@ export function walkTree(node, nodeById, depth, entries, nextRef, seen = new Set
 
   const name = clip(raw)
 
+  // An editable area with no control role (<div contenteditable>, reported as
+  // generic): a text field. Its children are what the user typed: one line,
+  // filled or empty, never read.
+  if (!INTERACTIVE_ROLES.has(role) && role !== 'RootWebArea' && prop(node, 'editable') !== undefined) {
+    if (isFocusable(node) || node.backendDOMNodeId) {
+      const state = hasText(node, nodeById, 'textbox') ? 'filled' : 'empty'
+      entries.push({ ref: `@e${nextRef()}`, role: 'text input', axRole: role, axName: name, name: name || '(unlabeled)', state, backendDOMNodeId: node.backendDOMNodeId || 0, depth })
+    }
+    return
+  }
   if (SKIP_ROLES.has(role)) return walkChildren(node, nodeById, depth, entries, nextRef, seen, node.nodeId)
 
   const isInteractive = INTERACTIVE_ROLES.has(role)
