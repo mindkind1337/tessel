@@ -62,6 +62,25 @@ describe('the chat right-click menu on a file link', () => {
     }
   })
 
+  it('a file Tessel cannot show (gone meanwhile) is said, not a click that does nothing', async () => {
+    const reveal = vi.fn(async () => ({ ok: false, reason: 'missing' }))
+    const toast = vi.fn()
+    window.shellApi = { chatFiles: { reveal }, writeClipboard: vi.fn() }
+    wrapper = mount(NativeChatContextMenu, {
+      props: { rootEl: document.body, enabled: true, actions: {} },
+      attachTo: document.body,
+      global: { provide: { nativeChatFileLinkContext: { worktreePath: 'C:/proj' }, panelCtx: { toast } } }
+    })
+    link = document.createElement('a')
+    link.setAttribute('href', createNativeChatFileHref('C:/proj/gone.txt'))
+    link.textContent = 'gone.txt'
+    document.body.appendChild(link)
+    await rightClick(link)
+    document.querySelector('[data-test="chat-context-reveal"]').click()
+    await flushPromises()
+    expect(toast).toHaveBeenCalledWith(expect.stringContaining('gone.txt'), { kind: 'error' })
+  })
+
   it('elsewhere: no file items', async () => {
     window.shellApi = { chatFiles: { reveal: vi.fn() } }
     wrapper = mountMenu()

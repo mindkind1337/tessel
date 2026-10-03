@@ -32,6 +32,15 @@ describe('a code block that is a path', () => {
     expect(reveal).toHaveBeenCalledWith('C:/Users/me/Downloads/livery.png')
     w.unmount()
   })
+  it('a path Tessel cannot show is said in a toast', async () => {
+    const toast = vi.fn()
+    window.shellApi = { chatFiles: { reveal: vi.fn(async () => ({ ok: false, reason: 'missing' })) }, writeClipboard: vi.fn() }
+    const w = mount(NativeChatCodeBlock, { slots: { default: () => h('code', 'C:/Users/me/gone.png') }, global: { provide: { panelCtx: { toast } } } })
+    await w.find('[data-test="code-reveal"]').trigger('click')
+    await new Promise((r) => setTimeout(r, 0))
+    expect(toast).toHaveBeenCalledWith(expect.stringContaining('gone.png'), { kind: 'error' })
+    w.unmount()
+  })
   it('a command block has only Copy', () => {
     window.shellApi = { chatFiles: { reveal: vi.fn() }, writeClipboard: vi.fn() }
     const w = mount(NativeChatCodeBlock, { slots: { default: () => h('code', 'npm run build') } })
