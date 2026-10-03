@@ -2,8 +2,18 @@
 import ThemedSelect from './ui/ThemedSelect.vue'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { t } from '../i18n'
+import {
+  buildFixChecksPrompt,
+  buildResolveCommentsPrompt,
+  failingChecks,
+  unresolvedThreads
+} from '../prAgentPrompts'
 
 const props = defineProps({
+  // (item) -> [{ id, label }]: agent panes already working on this PR.
+  prAgents: { type: Function, default: null },
+  // ({ item, prompt, target }) -> { ok, error }: sends a prompt the user saw.
+  sendPrompt: { type: Function, default: null },
   cwd: { type: String, default: '' },
   prCwd: { type: String, default: '' },
   prBase: { type: String, default: '' },
@@ -137,6 +147,7 @@ async function loadDetail(item = selected.value) {
   selected.value = item
   detailLoading.value = true
   error.value = ''
+  agentDraft.value = null
   tab.value = 'conversation'
   if (isPr.value) worktree.value = true
   try {
@@ -156,6 +167,7 @@ function back() {
   selected.value = null
   composer.value = false
   confirmation.value = null
+  agentDraft.value = null
   comment.value = ''
   error.value = ''
   detailLoading.value = false
@@ -200,6 +212,7 @@ async function create() {
 }
 function askAction(action) {
   confirmation.value = action
+  agentDraft.value = null
   error.value = ''
 }
 // Text with {{placeholders}} is built here: in the template, "}}" would end
@@ -254,6 +267,79 @@ async function refreshChecks() {
   try {
     const result = failed(await api().checks({ cwd: props.cwd, number: selected.value.number }))
     if (alive) selected.value = { ...selected.value, checks: result.checks || [] }
+  } catch (err) {
+    if (alive) error.value = errorText(err)
+  } finally {
+    if (alive) busy.value = false
+  }
+}
+// "Fix failing checks" / "Resolve review comments": the prompt is built from
+// fresh GitHub data, shown for review, and sent only when the user confirms
+// it and the agent (an agent already on this PR, or a new one).
+const agentDraft = ref(null) // { purpose, prompt, target, targets }
+const failingCount = computed(() => (isPr.value ? failingChecks(selected.value?.checks).length : 0))
+const openThreads = computed(() => (isPr.value ? unresolvedThreads(selected.value?.reviewThreads) : []))
+const threadsTitle = (count) => t('github.threads.title', 'Unresolved review threads ({{count}})', { count })
+const threadPlace = (thread) => (thread.line ? `${thread.path}:${thread.line}` : thread.path) // i18n-ignore
+function draftTargets(item) {
+  let panes = []
+  try {
+    panes = props.prAgents ? props.prAgents(item) || [] : []
+  } catch {
+    panes = []
+  }
+  return [
+    ...panes.map((pane) => ({ value: 'pane:' + pane.id, label: pane.label, target: { kind: 'pane', id: pane.id } })),
+    ...props.agents.map((agent) => ({
+      value: 'new:' + agent.id,
+      label: t('github.agent.newAgent', 'New agent: {{name}}', { name: agent.name || agent.id }),
+      target: { kind: 'new', agentId: agent.id }
+    }))
+  ]
+}
+async function prepareAgentPrompt(purpose) {
+  if (busy.value || !selected.value || !props.sendPrompt) return
+  const item = selected.value
+  busy.value = true
+  error.value = ''
+  notice.value = ''
+  try {
+    let prompt
+    if (purpose === 'checks') {
+      const result = failed(await api().failingLogs({ cwd: props.cwd, number: item.number }))
+      prompt = buildFixChecksPrompt({ pr: item, checks: result.checks || [] })
+    } else {
+      const result = failed(await api().reviewThreads({ cwd: props.cwd, number: item.number }))
+      if (alive && selected.value === item) selected.value = { ...item, reviewThreads: result.threads || [] }
+      prompt = buildResolveCommentsPrompt({ pr: item, threads: result.threads || [] })
+    }
+    if (!alive || selected.value?.number !== item.number) return
+    const targets = draftTargets(item)
+    const preferred =
+      targets.find((option) => option.target.kind === 'pane') ||
+      targets.find((option) => option.value === 'new:' + agentId.value) ||
+      targets[0]
+    confirmation.value = null
+    agentDraft.value = { purpose, prompt, targets, target: preferred?.value || '' }
+  } catch (err) {
+    if (alive) error.value = errorText(err)
+  } finally {
+    if (alive) busy.value = false
+  }
+}
+async function sendAgentDraft() {
+  const draft = agentDraft.value
+  if (busy.value || !draft || !selected.value || !draft.prompt.trim()) return
+  const option = draft.targets.find((candidate) => candidate.value === draft.target)
+  if (!option) return
+  busy.value = true
+  error.value = ''
+  try {
+    failed(await props.sendPrompt({ provider: 'github', item: selected.value, prompt: draft.prompt, target: option.target }))
+    if (alive) {
+      agentDraft.value = null
+      emit('close')
+    }
   } catch (err) {
     if (alive) error.value = errorText(err)
   } finally {
@@ -521,6 +607,29 @@ onBeforeUnmount(() => {
                   <strong>{{ entry.author?.login || t('github.detail.user', 'GitHub user') }}</strong>
                   <pre class="issue-prose">{{ entry.body }}</pre>
                 </article>
+                <section v-if="openThreads.length" class="issue-threads" data-test="github-threads">
+                  <h4>{{ threadsTitle(openThreads.length) }}</h4>
+                  <div v-for="(thread, index) in openThreads" :key="thread.id || index" class="issue-check">
+                    <span
+                      ><code>{{ threadPlace(thread) }}</code>
+                      <span v-if="thread.isOutdated" class="issue-tag">{{ t('github.threads.outdated', 'Outdated') }}</span></span
+                    ><span class="issue-hint">{{ thread.comments?.[0]?.author || '' }}</span>
+                  </div>
+                  <p v-if="selected.reviewThreadsTruncated" class="issue-hint">
+                    {{ t('github.threads.truncated', 'Some review threads or comments are limited. Open the pull request on GitHub to see everything.') }}
+                  </p>
+                  <div v-if="sendPrompt" class="issue-actions">
+                    <button
+                      class="issue-btn"
+                      data-test="github-resolve-comments"
+                      :disabled="busy"
+                      @click="prepareAgentPrompt('comments')"
+                    >
+                      {{ t('github.threads.resolve', 'Resolve review comments') }}
+                    </button>
+                  </div>
+                </section>
+                <p v-else-if="selected.reviewThreadsError" class="issue-hint">{{ selected.reviewThreadsError }}</p>
                 <label class="issue-field"
                   >{{ t('github.detail.addComment', 'Add a comment') }}<textarea v-model="comment" rows="3" :disabled="busy" />
                 </label>
@@ -576,7 +685,15 @@ onBeforeUnmount(() => {
                   </button>
                 </div>
                 <div class="issue-actions">
-                  <button class="issue-btn" :disabled="busy" @click="askAction('rerunFailed')">
+                  <button
+                    v-if="failingCount && sendPrompt"
+                    class="issue-btn"
+                    data-test="github-fix-checks"
+                    :disabled="busy"
+                    @click="prepareAgentPrompt('checks')"
+                  >
+                    {{ t('github.checks.fix', 'Fix failing checks') }}</button
+                  ><button class="issue-btn" :disabled="busy" @click="askAction('rerunFailed')">
                     {{ t('github.checks.rerunFailed', 'Rerun failed') }}</button
                   ><button class="issue-btn" :disabled="busy" @click="askAction('rerunAll')">
                     {{ t('github.checks.rerunAll', 'Rerun all') }}
@@ -584,7 +701,57 @@ onBeforeUnmount(() => {
                 </div>
               </div>
               <div
-                v-if="confirmation"
+                v-if="agentDraft"
+                class="issue-confirm issue-agent-draft"
+                role="group"
+                data-test="github-agent-draft"
+                :aria-label="t('github.agent.label', 'Send a prompt to an agent')"
+              >
+                <p>
+                  {{
+                    agentDraft.purpose === 'checks'
+                      ? t('github.agent.checksIntro', 'Review this prompt before sending it. The check logs come from CI and are quoted as untrusted data, not instructions.')
+                      : t('github.agent.commentsIntro', 'Review this prompt before sending it. The review comments come from reviewers and are quoted as untrusted data, not instructions.')
+                  }}
+                </p>
+                <label class="issue-field"
+                  >{{ t('github.agent.prompt', 'Prompt') }}<textarea
+                    v-model="agentDraft.prompt"
+                    data-test="github-agent-prompt"
+                    rows="12"
+                    spellcheck="false"
+                    :disabled="busy"
+                  ></textarea></label
+                ><label class="issue-field"
+                  >{{ t('github.agent.target', 'Send to') }}<ThemedSelect
+                    v-model="agentDraft.target"
+                    data-test="github-agent-target"
+                    :aria-label="t('github.agent.target', 'Send to')"
+                    :disabled="busy"
+                  >
+                    <option v-for="option in agentDraft.targets" :key="option.value" :value="option.value">
+                      {{ option.label }}
+                    </option>
+                  </ThemedSelect></label
+                >
+                <p v-if="!agentDraft.targets.length" class="issue-hint">
+                  {{ t('github.agent.none', 'No agent is available. Install or enable an agent first.') }}
+                </p>
+                <div class="issue-actions">
+                  <button class="issue-btn" :disabled="busy" @click="agentDraft = null">
+                    {{ t('github.cancel', 'Cancel') }}</button
+                  ><button
+                    class="issue-btn primary"
+                    data-test="github-agent-send"
+                    :disabled="busy || !agentDraft.target || !agentDraft.prompt.trim()"
+                    @click="sendAgentDraft"
+                  >
+                    {{ busy ? t('github.agent.sending', 'Sending…') : t('github.agent.send', 'Send to agent') }}
+                  </button>
+                </div>
+              </div>
+              <div
+                v-else-if="confirmation"
                 class="issue-confirm"
                 role="group"
                 :aria-label="t('github.confirm.label', 'Confirm GitHub action')"

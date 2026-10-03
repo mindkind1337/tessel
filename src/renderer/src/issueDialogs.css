@@ -378,6 +378,31 @@
   margin: 0 0 8px;
   line-height: 1.5;
 }
+.issue-threads {
+  margin-top: 14px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+.issue-threads h4 {
+  margin: 0 0 4px;
+  font-size: 12px;
+}
+.issue-threads code {
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.issue-agent-draft {
+  display: grid;
+  gap: 8px;
+}
+.issue-agent-draft > p {
+  margin: 0;
+}
+.issue-agent-draft textarea {
+  font-family: monospace;
+  font-size: 11px;
+  resize: vertical;
+}
 .issue-start {
   margin-top: 16px;
   border-top: 1px solid var(--border);

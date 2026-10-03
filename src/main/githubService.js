@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { extraToolDirs, withToolDirs } from './toolDirs'
 import { t } from './i18n'
 
@@ -15,6 +15,34 @@ const MAX_OUTPUT = 4 * 1024 * 1024
 const COMMON_FIELDS = 'number,title,url,state,author,labels,assignees,createdAt,updatedAt'
 const PR_FIELDS = ',isDraft,headRefName,baseRefName,reviewDecision'
 const CHECK_FIELDS = 'name,state,bucket,link,workflow,description,startedAt,completedAt'
+// "Fix failing checks" / "Resolve review comments" (after the MIT-licensed
+// reference pr-checks-fix-prompt.ts and pr-comments-resolution-prompt.ts,
+// Copyright (c) 2026 Lovecast Inc.): CI logs and review comments are
+// untrusted text bound for an agent prompt, so they are read with bounded
+// output, cleaned of control characters, and capped here.
+const FAILING_BUCKETS = ['fail', 'cancel']
+const LOG_TAIL_BYTES = 12 * 1024
+const LOG_TOTAL_BYTES = 48 * 1024
+const MAX_LOG_CHECKS = 8
+const THREAD_LIMIT = 50
+const THREAD_COMMENTS = 10
+const COMMENT_CHARS = 4000
+const COMMENTS_TOTAL_CHARS = 48 * 1024
+const THREADS_QUERY = [
+  'query($owner: String!, $name: String!, $number: Int!) {',
+  '  repository(owner: $owner, name: $name) {',
+  '    pullRequest(number: $number) {',
+  '      reviewThreads(first: 100) {',
+  '        pageInfo { hasNextPage }',
+  '        nodes {',
+  '          id isResolved isOutdated path line startLine originalLine',
+  '          comments(first: 20) { totalCount nodes { author { login } body url createdAt } }',
+  '        }',
+  '      }',
+  '    }',
+  '  }',
+  '}'
+].join('\n')
 
 class ServiceError extends Error {
   constructor(code, message) {
@@ -30,6 +58,28 @@ const str = (value, max = 1024) => (typeof value === 'string' ? value.slice(0, m
 const array = (value) => (Array.isArray(value) ? value : [])
 const count = (value) => (Number.isSafeInteger(value) && value >= 0 ? value : 0)
 const user = (value) => ({ login: str(value?.login, 100) })
+// Untrusted text (CI logs, review comments): no ANSI escapes, no control
+// characters but newline and tab, no bidirectional overrides.
+export function cleanUntrusted(value, max = Infinity) {
+  if (typeof value !== 'string') return ''
+  const text = value
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?/g, '')
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')
+    .replace(/\x1b[@-_]?/g, '')
+    .replace(/\r\n?/g, '\n')
+    .replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f‪-‮⁦-⁩]/g, '')
+  return text.length > max ? text.slice(0, max) : text
+}
+// The last maxBytes (UTF-8) of a text, starting at a whole line when cut.
+export function tailText(text, maxBytes) {
+  const buf = Buffer.from(text, 'utf8')
+  if (buf.length <= maxBytes) return { text, truncated: false }
+  let tail = buf.subarray(buf.length - maxBytes).toString('utf8').replace(/^�+/, '')
+  const nl = tail.indexOf('\n')
+  if (nl >= 0 && nl < tail.length - 1) tail = tail.slice(nl + 1)
+  return { text: tail, truncated: true }
+}
+const lineNumber = (value) => (Number.isSafeInteger(value) && value > 0 ? value : null)
 function httpsUrl(value) {
   try {
     const url = new URL(value)
@@ -172,6 +222,54 @@ function defaultRunner(file, args, options) {
     })
   })
 }
+// Like defaultRunner, but keeps only the last tailBytes of stdout: a CI log
+// can be far larger than the read limit, and only its end is wanted.
+export function tailRunner(file, args, options) {
+  return new Promise((resolve) => {
+    let child
+    try {
+      child = spawn(file, args, { cwd: options.cwd, env: options.env, shell: false, windowsHide: true })
+    } catch (error) {
+      resolve({ code: error?.code || 1, stdout: '', stderr: '' })
+      return
+    }
+    const keep = options.tailBytes
+    const out = []
+    let held = 0
+    let total = 0
+    let err = ''
+    let killed = false
+    const timer = setTimeout(() => {
+      killed = true
+      child.kill('SIGKILL')
+    }, options.timeout || 30000)
+    child.stdout.on('data', (chunk) => {
+      total += chunk.length
+      out.push(chunk)
+      held += chunk.length
+      while (out.length > 1 && held - out[0].length >= keep) held -= out.shift().length
+    })
+    child.stderr.on('data', (chunk) => {
+      if (err.length < 65536) err += chunk.toString('utf8')
+    })
+    child.on('error', (error) => {
+      clearTimeout(timer)
+      resolve({ code: error?.code || 1, stdout: '', stderr: '', killed })
+    })
+    child.on('close', (code) => {
+      clearTimeout(timer)
+      let buf = Buffer.concat(out)
+      if (buf.length > keep) buf = buf.subarray(buf.length - keep)
+      resolve({
+        code: killed ? 1 : (code ?? 1),
+        stdout: buf.toString('utf8'),
+        stderr: err.slice(0, 65536),
+        killed,
+        tailed: total > buf.length
+      })
+    })
+  })
+}
 function json(result) {
   try {
     return JSON.parse(result.stdout)
@@ -306,7 +404,12 @@ export function createGithubService({
   })
   let running = 0
   const queue = []
-  async function command(file, args, cwd, { writing = false, accept = [0], raw = false } = {}) {
+  async function command(
+    file,
+    args,
+    cwd,
+    { writing = false, accept = [0], raw = false, tailBytes = 0, timeout = 30000 } = {}
+  ) {
     if (!file)
       fail('unavailable', t('main.github.noGhOrGit', 'GitHub CLI or Git is unavailable. Install it and restart Tessel.'))
     if (running >= 4) await new Promise((resolve) => queue.push(resolve))
@@ -314,15 +417,16 @@ export function createGithubService({
     try {
       let result
       try {
-        result = await execute(file, args, {
+        result = await (tailBytes && !runner ? tailRunner : execute)(file, args, {
           cwd,
           env: { ...childEnv },
           encoding: 'utf8',
           shell: false,
           windowsHide: true,
-          timeout: 30000,
+          timeout,
           maxBuffer: MAX_OUTPUT,
-          killSignal: 'SIGKILL'
+          killSignal: 'SIGKILL',
+          ...(tailBytes ? { tailBytes } : {})
         })
       } catch (error) {
         result = {
@@ -336,7 +440,8 @@ export function createGithubService({
         ...result,
         code: result?.code ?? (result?.ok === false ? 1 : 0),
         stdout: String(result?.stdout || ''),
-        stderr: String(result?.stderr || '')
+        stderr: String(result?.stderr || ''),
+        tailed: !!result?.tailed
       }
       if (Buffer.byteLength(result.stdout) + Buffer.byteLength(result.stderr) > MAX_OUTPUT)
         result = { code: 'output_limit', stdout: '', stderr: '' }
@@ -476,6 +581,125 @@ export function createGithubService({
       fail('response', t('main.github.otherPr', 'GitHub returned a different pull request.'))
     return { ...item, headSha: shaInput(value.headRefOid) }
   }
+  // The run and job of a GitHub Actions check in this repository, or null
+  // (an external check has no log gh can read).
+  function actionsJob(url, repo) {
+    try {
+      const parsed = new URL(url)
+      if (parsed.origin !== new URL(repo.url).origin) return null
+      const match = parsed.pathname.match(/^\/([^/]+\/[^/]+)\/actions\/runs\/([1-9]\d{0,19})\/job\/([1-9]\d{0,19})\/?$/)
+      if (!match || match[1].toLowerCase() !== repo.nameWithOwner.toLowerCase()) return null
+      return { runId: match[2], jobId: match[3] }
+    } catch {
+      return null
+    }
+  }
+  // The failing checks of a PR with the cleaned tail of each one's failed log.
+  async function readFailingLogs(cwd, repo, number) {
+    const { checks, truncated } = await readChecks(cwd, repo, number)
+    const failing = checks.filter((check) => FAILING_BUCKETS.includes(check.bucket))
+    let budget = LOG_TOTAL_BYTES
+    let fetched = 0
+    const out = []
+    for (const check of failing.slice(0, 20)) {
+      const entry = {
+        name: cleanUntrusted(check.name, 1024),
+        state: check.state,
+        bucket: check.bucket,
+        workflow: cleanUntrusted(check.workflow, 1024),
+        description: cleanUntrusted(check.description, 2048),
+        url: check.url,
+        logTail: '',
+        logTruncated: false,
+        // ok | empty | unavailable | skipped (count or size cap) | none (no Actions job)
+        logStatus: 'none'
+      }
+      const job = actionsJob(check.url, repo)
+      if (job && (fetched >= MAX_LOG_CHECKS || budget <= 0)) entry.logStatus = 'skipped'
+      else if (job) {
+        fetched++
+        try {
+          const result = await command(
+            executable,
+            scoped(['run', 'view', job.runId, '--job', job.jobId, '--log-failed'], repo),
+            cwd,
+            { tailBytes: LOG_TAIL_BYTES * 4, timeout: 60000 }
+          )
+          const tail = tailText(cleanUntrusted(result.stdout), Math.min(LOG_TAIL_BYTES, budget))
+          budget -= Buffer.byteLength(tail.text)
+          entry.logTail = tail.text
+          entry.logTruncated = tail.truncated || result.tailed
+          entry.logStatus = tail.text.trim() ? 'ok' : 'empty'
+        } catch {
+          entry.logStatus = 'unavailable'
+        }
+      }
+      out.push(entry)
+    }
+    return { checks: out, truncated: truncated || failing.length > out.length }
+  }
+  // The unresolved review threads of a PR (file, line, comments), bounded.
+  async function readThreads(cwd, repo, number) {
+    const [owner, name] = repo.nameWithOwner.split('/')
+    const value = json(
+      await command(
+        executable,
+        [
+          'api',
+          'graphql',
+          '--hostname',
+          repo.host,
+          '-f',
+          `query=${THREADS_QUERY}`, // i18n-ignore GraphQL argument
+          '-f',
+          `owner=${owner}`, // i18n-ignore gh argument
+          '-f',
+          `name=${name}`, // i18n-ignore gh argument
+          '-F',
+          `number=${number}` // i18n-ignore gh argument
+        ],
+        cwd
+      )
+    )
+    const connection = value?.data?.repository?.pullRequest?.reviewThreads
+    if (!object(connection) || !Array.isArray(connection.nodes))
+      fail('response', t('main.github.invalidThreads', 'GitHub returned invalid review threads.'))
+    const open = connection.nodes.filter((node) => object(node) && node.isResolved === false)
+    let budget = COMMENTS_TOTAL_CHARS
+    const threads = open.slice(0, THREAD_LIMIT).map((node) => {
+      const nodes = array(node.comments?.nodes).filter(object)
+      const comments = []
+      for (const comment of nodes.slice(0, THREAD_COMMENTS)) {
+        if (budget <= 0) break
+        const body = cleanUntrusted(comment.body, Math.min(COMMENT_CHARS, budget))
+        budget -= body.length
+        comments.push({
+          author: str(comment.author?.login, 100),
+          body,
+          bodyTruncated: typeof comment.body === 'string' && comment.body.length > body.length,
+          url: httpsUrl(comment.url),
+          createdAt: str(comment.createdAt, 40)
+        })
+      }
+      const total = Number.isSafeInteger(node.comments?.totalCount) ? node.comments.totalCount : nodes.length
+      return {
+        id: str(node.id, 200),
+        path: cleanUntrusted(node.path, 2048),
+        line: lineNumber(node.line) ?? lineNumber(node.originalLine),
+        startLine: lineNumber(node.startLine),
+        isOutdated: node.isOutdated === true,
+        comments,
+        omittedComments: Math.max(0, total - comments.length)
+      }
+    })
+    return {
+      threads,
+      truncated:
+        open.length > THREAD_LIMIT ||
+        connection.pageInfo?.hasNextPage === true ||
+        threads.some((thread) => thread.omittedComments > 0 || thread.comments.some((c) => c.bodyTruncated))
+    }
+  }
   const safe =
     (work) =>
     async (input = {}) => {
@@ -598,6 +822,14 @@ export function createGithubService({
         } catch {
           item.checksError = t('main.github.checksUnavailable', 'Checks are unavailable. Refresh to try again.')
         }
+        try {
+          const result = await readThreads(cwd, repo, id)
+          item.reviewThreads = result.threads
+          item.reviewThreadsTruncated = result.truncated
+        } catch {
+          item.reviewThreads = []
+          item.reviewThreadsError = t('main.github.threadsUnavailable', 'Review threads are unavailable. Refresh to try again.')
+        }
       }
       return { ok: true, item, truncated }
     }),
@@ -645,6 +877,22 @@ export function createGithubService({
       cwd = at.cwd
       const repo = await repository(at)
       return { ok: true, ...(await readChecks(cwd, repo, id)) }
+    }),
+    // Reads only: the failing checks with their log tails, for an agent prompt.
+    failingLogs: safe(async ({ cwd, number }) => {
+      const id = numberInput(number)
+      const at = await place(cwd)
+      cwd = at.cwd
+      const repo = await repository(at)
+      return { ok: true, ...(await readFailingLogs(cwd, repo, id)) }
+    }),
+    // Reads only: the unresolved review threads, for an agent prompt.
+    reviewThreads: safe(async ({ cwd, number }) => {
+      const id = numberInput(number)
+      const at = await place(cwd)
+      cwd = at.cwd
+      const repo = await repository(at)
+      return { ok: true, ...(await readThreads(cwd, repo, id)) }
     }),
     action: safe(async ({ cwd, kind, number, action, body, reason, method = 'squash' }) => {
       const type = kindInput(kind)

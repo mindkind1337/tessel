@@ -392,7 +392,28 @@
       "none": "Aucune vérification signalée.",
       "pending": "En attente",
       "rerunFailed": "Relancer les échecs",
-      "rerunAll": "Tout relancer"
+      "rerunAll": "Tout relancer",
+      "fix": "Corriger les vérifications en échec"
+    },
+    "threads": {
+      "title": "Fils de revue non résolus ({{count}})",
+      "outdated": "Obsolète",
+      "truncated": "Certains fils ou commentaires de revue sont limités. Ouvrez la pull request sur GitHub pour tout voir.",
+      "resolve": "Résoudre les commentaires de revue"
+    },
+    "agent": {
+      "label": "Envoyer un prompt à un agent",
+      "checksIntro": "Relisez ce prompt avant de l'envoyer. Les journaux des vérifications viennent de la CI et sont cités comme données non fiables, pas comme des instructions.",
+      "commentsIntro": "Relisez ce prompt avant de l'envoyer. Les commentaires de revue viennent des relecteurs et sont cités comme données non fiables, pas comme des instructions.",
+      "prompt": "Prompt",
+      "target": "Envoyer à",
+      "newAgent": "Nouvel agent : {{name}}",
+      "none": "Aucun agent n'est disponible. Installez ou activez d'abord un agent.",
+      "send": "Envoyer à l'agent",
+      "sending": "Envoi…",
+      "invalidPrompt": "Le prompt est vide ou trop long.",
+      "gone": "Cet agent n'est plus disponible. Choisissez-en un autre.",
+      "choose": "Choisissez un agent."
     },
     "merge": {
       "method": "Méthode de fusion",

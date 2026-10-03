@@ -212,6 +212,38 @@ async function prepareLinkedIssue(request) {
   if (result.warning) showToast(result.warning, { kind: 'error', timeout: 10000 })
   return result
 }
+// "Fix failing checks" / "Resolve review comments" of a pull request: the
+// agents already working on it (its task, or a copy on its branch) in the
+// GitHub dialog's workspace.
+function githubPrAgents(item) {
+  const ws = issueWorkspace.value
+  const number = Number(item?.number)
+  if (!ws || !Number.isSafeInteger(number) || number < 1) return []
+  const head = typeof item.headRefName === 'string' ? item.headRefName : ''
+  return wsAgents(ws.id)
+    .filter((leaf) => {
+      if (head && leaf.worktree?.branch === head) return true
+      const task = taskOfPane(leaf.id)
+      return !!task && task.wsId === ws.id && !!task.worktree && String(task.title || '').startsWith(`#${number} `)
+    })
+    .map((leaf) => ({ id: leaf.id, label: agentLabel(leaf) }))
+}
+// The user saw the prompt and picked the agent: an existing pane gets it as
+// a message; a new agent starts as a task in its own copy of the PR.
+async function sendGithubPrompt({ item, prompt, target } = {}) {
+  if (typeof prompt !== 'string' || !prompt.trim() || prompt.length > 200000)
+    return { ok: false, error: t('github.agent.invalidPrompt', 'The prompt is empty or too long.') }
+  if (target?.kind === 'pane') {
+    if (!githubPrAgents(item).some((a) => a.id === target.id))
+      return { ok: false, error: t('github.agent.gone', 'That agent is no longer available. Choose another one.') }
+    deliverToAgent(target.id, prompt, { source: 'you', scope: 'github', multilineSafe: true })
+    focusPane(target.id)
+    return { ok: true }
+  }
+  if (target?.kind === 'new')
+    return prepareLinkedIssue({ provider: 'github', item, agentId: target.agentId, worktree: true, prompt })
+  return { ok: false, error: t('github.agent.choose', 'Choose an agent.') }
+}
 const settingsSection = ref(null) // opens Settings scrolled to that section
 function openSettingsAt(section) {
   settingsSection.value = section
@@ -10315,7 +10347,7 @@ onBeforeUnmount(() => {
       @manage-hosts="manageHostsFromAddProject"
       @close="addProjectOpen = false"
     />
-    <GitHubDialog v-if="githubOpen" :cwd="(issueWorkspace && gitKeyOf(issueWorkspace)) || ''" :pr-cwd="githubTaskContext?.cwd || ''" :pr-base="githubTaskContext?.base || ''" :initial-mode="githubTaskContext ? 'createPr' : ''" :agents="taskAgentKinds" :default-agent="settings.defaultAgent || ''" :start-issue="prepareLinkedIssue" @busy="githubBusy = $event" @close="githubOpen = false" />
+    <GitHubDialog v-if="githubOpen" :cwd="(issueWorkspace && gitKeyOf(issueWorkspace)) || ''" :pr-cwd="githubTaskContext?.cwd || ''" :pr-base="githubTaskContext?.base || ''" :initial-mode="githubTaskContext ? 'createPr' : ''" :agents="taskAgentKinds" :default-agent="settings.defaultAgent || ''" :start-issue="prepareLinkedIssue" :pr-agents="githubPrAgents" :send-prompt="sendGithubPrompt" @busy="githubBusy = $event" @close="githubOpen = false" />
     <LinearDialog v-if="linearOpen" :cwd="issueWorkspace?.cwd || ''" :agents="taskAgentKinds" :default-agent="settings.defaultAgent || ''" :start-issue="prepareLinkedIssue" @busy="linearBusy = $event" @close="linearOpen = false" />
     <FileFinder
       v-if="finderOpen"

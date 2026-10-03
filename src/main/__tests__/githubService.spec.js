@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { createGithubService } from '../githubService'
+import { createGithubService, tailRunner, cleanUntrusted } from '../githubService'
 
 let cwd
 const repo = {
@@ -599,5 +599,183 @@ describe('process safety', () => {
       await fs.unlink(native)
       await fs.rmdir(install)
     }
+  })
+})
+
+describe('GitHub reads for agent prompts', () => {
+  const thread = (extra = {}) => ({
+    id: 'T1',
+    isResolved: false,
+    isOutdated: false,
+    path: 'src/app.js',
+    line: 12,
+    startLine: null,
+    comments: {
+      totalCount: 1,
+      nodes: [{ author: { login: 'rev' }, body: 'Rename this', url: `${repo.url}/pull/1#r1` }]
+    },
+    ...extra
+  })
+  const threadsResponse = (nodes, hasNextPage = false) =>
+    response({
+      data: { repository: { pullRequest: { reviewThreads: { pageInfo: { hasNextPage }, nodes } } } }
+    })
+
+  it('reads the failed log tail of each failing Actions check with argument arrays only', async () => {
+    const big = Array.from({ length: 4000 }, (_, i) => `\x1b[31mline ${i}\x1b[0m\r`).join('\n')
+    const { service, calls } = fixture((_file, args) => {
+      if (args[1] === 'checks')
+        return response([
+          check({ name: 'unit', bucket: 'fail', state: 'FAILURE' }),
+          check({ name: 'lint', bucket: 'pass' }),
+          check({ name: 'external', bucket: 'fail', link: 'https://ci.example.com/1' }),
+          check({ name: 'cancelled', bucket: 'cancel', link: `${repo.url}/actions/runs/124/job/457` })
+        ])
+      if (args[0] === 'run') return { code: 0, stdout: args.includes('456') ? big : 'short failure' }
+      return response([])
+    })
+    const result = await service.failingLogs({ cwd, number: 1 })
+    expect(result.ok).toBe(true)
+    expect(result.checks.map((c) => [c.name, c.logStatus])).toEqual([
+      ['unit', 'ok'],
+      ['external', 'none'],
+      ['cancelled', 'ok']
+    ])
+    const unit = result.checks[0]
+    expect(Buffer.byteLength(unit.logTail)).toBeLessThanOrEqual(12 * 1024)
+    expect(unit.logTruncated).toBe(true)
+    expect(unit.logTail).toContain('line 3999')
+    expect(unit.logTail.startsWith('line ')).toBe(true)
+    expect(unit.logTail).not.toMatch(/[\x1b\r]/)
+    const runCalls = calls.filter((c) => c.args[0] === 'run')
+    expect(runCalls.map((c) => c.args)).toEqual([
+      ['run', 'view', '123', '--job', '456', '--log-failed', '--repo', 'github.com/owner/project'],
+      ['run', 'view', '124', '--job', '457', '--log-failed', '--repo', 'github.com/owner/project']
+    ])
+    expect(runCalls.every((c) => c.options.shell === false && c.options.tailBytes > 0)).toBe(true)
+  })
+
+  it('caps the number of logs read and the total log size', async () => {
+    const checks = Array.from({ length: 12 }, (_, i) =>
+      check({ name: `job${i}`, bucket: 'fail', link: `${repo.url}/actions/runs/9${i}/job/8${i}` })
+    )
+    const { service, calls } = fixture((_file, args) => {
+      if (args[1] === 'checks') return response(checks)
+      if (args[0] === 'run') return { code: 0, stdout: 'y'.repeat(30000) }
+      return response([])
+    })
+    const result = await service.failingLogs({ cwd, number: 1 })
+    expect(calls.filter((c) => c.args[0] === 'run').length).toBeLessThanOrEqual(8)
+    const total = result.checks.reduce((sum, c) => sum + Buffer.byteLength(c.logTail), 0)
+    expect(total).toBeLessThanOrEqual(48 * 1024)
+    expect(result.checks).toHaveLength(12)
+    expect(result.checks.some((c) => c.logStatus === 'skipped')).toBe(true)
+  })
+
+  it('keeps a failing check when its log cannot be read', async () => {
+    const { service } = fixture((_file, args) => {
+      if (args[1] === 'checks') return response([check({ bucket: 'fail' })])
+      if (args[0] === 'run') return { code: 1, stderr: 'secret' }
+      return response([])
+    })
+    const result = await service.failingLogs({ cwd, number: 1 })
+    expect(result).toMatchObject({
+      ok: true,
+      checks: [{ name: 'CI', logStatus: 'unavailable', logTail: '' }]
+    })
+    expect(JSON.stringify(result)).not.toContain('secret')
+  })
+
+  it('reads only unresolved review threads through gh api graphql with variables', async () => {
+    const { service, calls } = fixture((_file, args) =>
+      args[0] === 'api'
+        ? threadsResponse([
+            thread(),
+            thread({ id: 'T2', isResolved: true }),
+            thread({ id: 'T3', line: null, originalLine: 7, isOutdated: true, path: 'a‮b.js' })
+          ])
+        : response([])
+    )
+    const result = await service.reviewThreads({ cwd, number: 1 })
+    expect(result.ok).toBe(true)
+    expect(result.threads.map((t) => [t.id, t.path, t.line, t.isOutdated])).toEqual([
+      ['T1', 'src/app.js', 12, false],
+      ['T3', 'ab.js', 7, true]
+    ])
+    expect(result.threads[0].comments).toEqual([
+      expect.objectContaining({ author: 'rev', body: 'Rename this' })
+    ])
+    const api = calls.find((c) => c.args[0] === 'api')
+    expect(api.args.slice(0, 4)).toEqual(['api', 'graphql', '--hostname', 'github.com'])
+    expect(api.args).toContain('owner=owner')
+    expect(api.args).toContain('name=project')
+    expect(api.args).toContain('number=1')
+    expect(api.args.find((a) => a.startsWith('query='))).toContain('reviewThreads')
+    expect(api.options.shell).toBe(false)
+  })
+
+  it('caps comment bodies, comments and threads', async () => {
+    const many = Array.from({ length: 60 }, (_, i) =>
+      thread({
+        id: `T${i}`,
+        comments: {
+          totalCount: 12,
+          nodes: Array.from({ length: 12 }, () => ({ author: { login: 'r' }, body: 'z'.repeat(4500) }))
+        }
+      })
+    )
+    const { service } = fixture((_file, args) =>
+      args[0] === 'api' ? threadsResponse(many, true) : response([])
+    )
+    const result = await service.reviewThreads({ cwd, number: 1 })
+    expect(result.threads.length).toBe(50)
+    expect(result.truncated).toBe(true)
+    const bodies = result.threads.flatMap((t) => t.comments.map((c) => c.body))
+    expect(bodies.every((b) => b.length <= 4000)).toBe(true)
+    expect(bodies.join('').length).toBeLessThanOrEqual(48 * 1024)
+    expect(result.threads.every((t) => t.comments.length <= 10)).toBe(true)
+  })
+
+  it('adds unresolved threads to a PR detail, and an error when they cannot be read', async () => {
+    const ok = fixture((_file, args) =>
+      args[0] === 'api'
+        ? threadsResponse([thread()])
+        : args[1] === 'checks'
+          ? response([])
+          : response(pr(1))
+    )
+    const detail = await ok.service.detail({ cwd, kind: 'prs', number: 1 })
+    expect(detail.item.reviewThreads).toHaveLength(1)
+    const bad = fixture((_file, args) =>
+      args[0] === 'api'
+        ? { code: 1, stderr: 'x' }
+        : args[1] === 'checks'
+          ? response([])
+          : response(pr(1))
+    )
+    const failed = await bad.service.detail({ cwd, kind: 'prs', number: 1 })
+    expect(failed.ok).toBe(true)
+    expect(failed.item.reviewThreads).toEqual([])
+    expect(failed.item.reviewThreadsError).toEqual(expect.any(String))
+  })
+
+  it('keeps only the tail of a large real child output, and cleans escapes', async () => {
+    const result = await tailRunner(
+      process.execPath,
+      ['-e', 'for (let i = 0; i < 20000; i++) process.stdout.write("row " + i + "\\n")'],
+      { cwd, env: process.env, timeout: 20000, tailBytes: 1000 }
+    )
+    expect(result.code).toBe(0)
+    expect(result.tailed).toBe(true)
+    expect(Buffer.byteLength(result.stdout)).toBeLessThanOrEqual(1000)
+    expect(result.stdout).toContain('row 19999')
+    expect(cleanUntrusted('a\x1b]8;;http://x\x07b\x1b[1mc\u0000d\r\ne⁦f')).toBe('abcd\nef')
+  })
+
+  it('rejects invalid numbers before running gh', async () => {
+    const { service, runner } = fixture()
+    expect((await service.failingLogs({ cwd, number: '--x' })).ok).toBe(false)
+    expect((await service.reviewThreads({ cwd, number: 0 })).ok).toBe(false)
+    expect(runner).not.toHaveBeenCalled()
   })
 })

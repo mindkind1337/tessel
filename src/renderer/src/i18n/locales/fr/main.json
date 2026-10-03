@@ -431,6 +431,8 @@
       "invalidList": "GitHub a renvoyé une liste non valide.",
       "otherItem": "GitHub a renvoyé un autre élément.",
       "checksUnavailable": "Les vérifications ne sont pas disponibles. Actualisez pour réessayer.",
+      "threadsUnavailable": "Les fils de revue ne sont pas disponibles. Actualisez pour réessayer.",
+      "invalidThreads": "GitHub a renvoyé des fils de revue non valides.",
       "invalidDraft": "Choix de brouillon non valide.",
       "sameBase": "Choisissez une branche de base différente de la branche source.",
       "invalidAction": "Action GitHub non valide.",
