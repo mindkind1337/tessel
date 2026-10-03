@@ -178,6 +178,40 @@ describe('GLM Coding Plan quota', () => {
     expect(JSON.stringify(unread)).not.toContain(KEY)
   })
 
+  // Z.ai and BigModel answer a wrong or expired key with HTTP 200 and
+  // { code: 401, msg: "token expired or incorrect", success: false } (seen
+  // with a fake key, 2026-10-03): the saved key to replace, not a retry, and
+  // not "ZCode" when the key is the one saved in Settings.
+  it('reports a refused saved key as one to replace in Settings', async () => {
+    const credentials = store()
+    credentials.saveSecret('zcodePlanApiKey', KEY)
+    const refusedBody = usage(credentials, {
+      respond: async () => new Response(JSON.stringify({ code: 401, msg: 'token expired or incorrect', success: false }))
+    })
+    const body = await refusedBody.service.read({ provider: 'zcode', accountId: null })
+    expect(body).toMatchObject({ ok: false, code: 'auth' })
+    expect(body.error).toMatch(/GLM Coding Plan key/)
+    expect(body.error).toMatch(/Settings/)
+    expect(body.error).not.toMatch(/ZCode/)
+    expect(JSON.stringify(body)).not.toContain(KEY)
+    const refusedHttp = usage(credentials, { respond: async () => new Response('', { status: 401 }) })
+    const http = await refusedHttp.service.read({ provider: 'zcode', accountId: null })
+    expect(http).toMatchObject({ ok: false, code: 'auth' })
+    expect(http.error).toMatch(/GLM Coding Plan key/)
+    expect(http.error).not.toMatch(/CLI/)
+  })
+
+  it("reports a refused ZCode CLI key as ZCode's", async () => {
+    await write('.zcode/cli/config.json', zcodeConfig())
+    const { service } = usage(store(), {
+      agents: ['zcode'],
+      respond: async () => new Response(JSON.stringify({ code: 401, msg: 'token expired or incorrect', success: false }))
+    })
+    const result = await service.read({ provider: 'zcode', accountId: null })
+    expect(result).toMatchObject({ ok: false, code: 'auth' })
+    expect(result.error).toMatch(/ZCode/)
+  })
+
   it('redacts the key even from a message that would carry it', async () => {
     const sources = {
       present: async () => true,

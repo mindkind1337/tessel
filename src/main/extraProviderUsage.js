@@ -296,7 +296,22 @@ export function createExtraProviderUsage({
             }
           }
         } else {
-          const data = await fetch(provider === 'minimax' || provider === 'zcode' ? login.endpoint || provider : provider)
+          // A Coding Plan key that Z.ai or BigModel refuses: the key to
+          // replace (the one saved in Settings, or ZCode's own), never a retry.
+          const zcodeKeyRefused = () =>
+            refuse(
+              'auth',
+              login.planKey
+                ? t('main.usage.zcodePlanKeyRefused', 'The GLM Coding Plan key was refused (expired or incorrect). Replace it in Settings.')
+                : t('main.usage.zcodeKeyRefused', "ZCode's Coding Plan key was refused (expired or incorrect). Update it in ZCode.")
+            )
+          let data
+          try {
+            data = await fetch(provider === 'minimax' || provider === 'zcode' ? login.endpoint || provider : provider)
+          } catch (error) {
+            if (provider === 'zcode' && error?.code === 'auth') zcodeKeyRefused()
+            throw error
+          }
           if (provider === 'kimi') windows = mapKimi(data)
           if (provider === 'cursor') {
             ;({ windows, unlimited = false } = mapCursor(data))
@@ -310,8 +325,15 @@ export function createExtraProviderUsage({
           if (provider === 'opencode-go') windows = mapOpenCodeGo(data)
           if (provider === 'zcode') {
             windows = mapZcode(data, clock())
+            // Wrong or expired key: HTTP 200 with { code: 401, success: false }.
+            if (!windows && (data?.code === 401 || data?.code === 403)) zcodeKeyRefused()
             if (!windows)
-              refuse('response', t('main.usage.zcodeRefused', 'ZCode refused the quota request. Check its Coding Plan key.'))
+              refuse(
+                'response',
+                login.planKey
+                  ? t('main.usage.zcodePlanRefused', 'The GLM Coding Plan quota service refused the request.')
+                  : t('main.usage.zcodeRefused', 'ZCode refused the quota request. Check its Coding Plan key.')
+              )
           }
           if (provider === 'minimax') {
             const code = data?.base_resp?.status_code

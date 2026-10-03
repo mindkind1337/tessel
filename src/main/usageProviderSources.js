@@ -383,7 +383,7 @@ export function createUsageProviderSources({
           t('main.usage.zcodePlanKeyUnusable', 'The saved GLM Coding Plan key is unusable. Replace it in Settings.')
         )
       headers = { Authorization: key, Accept: 'application/json', 'Accept-Language': 'en-US,en' }
-      extra = { endpoint }
+      extra = { endpoint, planKey: true }
     } else if (provider === 'zcode') {
       // The Coding Plan key of the provider ZCode's selected model uses
       // (model "<provider>/<model>"), never another configured account's;
