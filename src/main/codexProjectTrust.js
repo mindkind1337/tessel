@@ -186,13 +186,44 @@ export function codexPathKey(path) {
   return path.replace(/\\/g, '/').toLowerCase()
 }
 
+// Is `projects` (all of it, or this folder's entry) set some other way than a
+// [projects."<path>"] table: an inline table (projects = {...}, or
+// "<path>" = {...} under [projects]) or dotted keys (projects."<path>".x = ...)?
+// A table added then would define it twice (Codex could not read its config)
+// and could override the user's "untrusted".
+function projectSetOtherwise(source, want) {
+  let table = []
+  for (const l of lines(source)) {
+    if (!l.structural) continue
+    const header = tableHeader(l.line)
+    if (header) {
+      const inner = header.startsWith('[[') && header.endsWith(']]') ? header.slice(2, -2) : header.slice(1, -1)
+      const key = parseKeyPath(inner)
+      table = key && key.end === inner.length ? key.segments : [null]
+      continue
+    }
+    const key = parseKeyPath(l.line)
+    if (!key || l.line[key.end] !== '=') continue
+    const full = [...table, ...key.segments]
+    if (full[0] !== 'projects') continue
+    if (full.length === 1) return true
+    // Inside our own [projects."<path>"] table: its keys are ours to read.
+    if (table.length === 2 && table[0] === 'projects' && codexPathKey(String(table[1])) === want) continue
+    if (codexPathKey(full[1]) === want) return true
+  }
+  return false
+}
+
 // --- The edit -----------------------------------------------------------------
 // `text` with `projectPath` trusted -> { text, changed, reason? }.
-// reason: 'untrusted' (the user said no to this folder: left alone).
+// reason: 'untrusted' (the user said no to this folder: left alone);
+// 'unreadable' (the folder or the projects list is written in a form this
+// edit does not make: left alone, Codex asks).
 export function withCodexProjectTrusted(text, projectPath) {
   const source = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text
   const bom = source === text ? '' : '﻿'
   const want = codexPathKey(projectPath)
+  if (projectSetOtherwise(source, want)) return { text, changed: false, reason: 'unreadable' }
   const eol = source.includes('\r\n') ? '\r\n' : '\n'
   const trustLine = 'trust_level = "trusted"'
   let headerEnd = null

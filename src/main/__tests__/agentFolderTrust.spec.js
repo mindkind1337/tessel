@@ -69,6 +69,25 @@ describe('Codex config.toml edit', () => {
     expect(projectHeaderPath('[projects."/a".sub]')).toBe(null)
   })
 
+  it('a folder already set as a dotted key or an inline table is left alone (no duplicate table, no overriding "untrusted")', () => {
+    const forms = [
+      'projects."/a".trust_level = "untrusted"\n',
+      '[projects]\n"/a" = { trust_level = "untrusted" }\n',
+      '[projects]\n"/a".trust_level = "untrusted"\n',
+      'projects = { "/a" = { trust_level = "untrusted" } }\n',
+      "[projects]\n'C:/CODE/App' = { trust_level = \"untrusted\" }\n"
+    ]
+    for (const text of forms) {
+      const r = withCodexProjectTrusted(text, text.includes('App') ? 'C:\\code\\app' : '/a')
+      expect(r).toEqual({ text, changed: false, reason: 'unreadable' })
+    }
+    // Other folders in those forms: ours is added as its own table.
+    const other = '[projects]\n"/b" = { trust_level = "trusted" }\n'
+    expect(withCodexProjectTrusted(other, '/a').changed).toBe(true)
+    const header = '[projects."/a"]\ntrust_level = "untrusted"\n'
+    expect(withCodexProjectTrusted(header, '/a').reason).toBe('untrusted')
+  })
+
   it('keeps a byte-order mark', () => {
     const r = withCodexProjectTrusted('\ufeffa = 1\n', '/a')
     expect(r.text.startsWith('\ufeffa = 1\n')).toBe(true)
@@ -189,6 +208,18 @@ describe('createAgentFolderTrust', () => {
     expect(await s.apply({ agentId: 'copilot', cwd: home, env: env(), enabled: true })).toBe('too-broad')
     expect(readJson(claudeFile())).toEqual({})
     expect(await s.apply({ agentId: 'codex', cwd: home, env: env(), enabled: true })).toBe('granted')
+  })
+
+  it('Codex: never a home that is itself a git repository (Codex would trust every folder below it without its own)', async () => {
+    fs.mkdirSync(join(home, '.codex'))
+    fs.mkdirSync(join(home, '.git'))
+    const s = make()
+    s.setRoots([home, project])
+    expect(await s.apply({ agentId: 'codex', cwd: home, env: env(), enabled: true })).toBe('too-broad')
+    expect(fs.existsSync(join(home, '.codex', 'config.toml'))).toBe(false)
+    // A project folder that is a repository still is.
+    fs.mkdirSync(join(project, '.git'))
+    expect(await s.apply({ agentId: 'codex', cwd: project, env: env(), enabled: true })).toBe('granted')
   })
 
   it('Codex: the config.toml of its CODEX_HOME, edited in place; no Codex home, nothing created', async () => {

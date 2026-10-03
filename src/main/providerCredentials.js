@@ -38,13 +38,14 @@ export const DEFAULT_PROVIDER_SETTINGS = Object.freeze({
   minimaxGroupId: '',
   minimaxUsageModels: 'general'
 })
-const SETTING_RULES = {
+// A null prototype: "constructor" or "toString" is no setting.
+const SETTING_RULES = Object.assign(Object.create(null), {
   geminiCliOAuth: (v) => typeof v === 'boolean',
   opencodeWorkspaceId: (v) => typeof v === 'string' && (v === '' || /^(?:wrk|wk)_[A-Za-z0-9]{1,100}$/.test(v)),
   minimaxEndpoint: (v) => v === 'overseas' || v === 'cn',
   minimaxGroupId: (v) => typeof v === 'string' && /^[A-Za-z0-9_-]{0,64}$/.test(v),
   minimaxUsageModels: (v) => typeof v === 'string' && /^[A-Za-z0-9_.,\s-]{0,200}$/.test(v)
-}
+})
 const MAX_SECRET = 16384
 const MAX_FILE = 128 * 1024
 

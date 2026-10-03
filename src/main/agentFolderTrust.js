@@ -309,7 +309,12 @@ export function createAgentFolderTrust({
       const folder = eligibleFolder(cwd)
       if (!folder) return 'not-eligible'
       const e = env && typeof env === 'object' ? env : {}
-      if (INHERITS_FROM_A_HOME[preset] && isTooBroadToPreTrust(folder, [homedir(), e.HOME, e.USERPROFILE])) return 'too-broad'
+      const homes = [homedir(), e.HOME, e.USERPROFILE]
+      if (INHERITS_FROM_A_HOME[preset] && isTooBroadToPreTrust(folder, homes)) return 'too-broad'
+      // Codex looks a folder up by its repository's top: a home (or a disk
+      // root) that is a repository would cover every folder below it that
+      // has none of its own.
+      if (preset === 'codex' && isTooBroadToPreTrust(folder, homes) && fs.existsSync(join(folder, '.git'))) return 'too-broad'
       const prev = queues.get(preset) || Promise.resolve()
       const run = prev.then(() => write(preset, folder, e))
       queues.set(preset, run.catch(() => {}))

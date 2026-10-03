@@ -406,6 +406,9 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
     const until = Date.now() + ms
     for (;;) {
       if (guest.isDestroyed()) throw fail('page_gone', 'The page was closed.')
+      // The user's Stop, or the setting turned off, while it waits: no more
+      // looking at the page, and no answer from it.
+      allowed(guest)
       let hit = false
       if (urlPart) hit = String(guest.getURL()).includes(urlPart)
       else {
@@ -421,6 +424,7 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
         if (v === 'bad') throw fail('invalid_argument', `Not a valid CSS selector: ${selector.slice(0, 200)}`)
         hit = v === true
       }
+      allowed(guest)
       if (hit) return { text: `Found ${text ? 'the text' : selector ? 'the selector' : 'the address'} on ${where(guest).url}.` }
       if (Date.now() >= until) throw fail('wait_timeout', `Not found after ${ms} ms.`)
       await sleep(250)

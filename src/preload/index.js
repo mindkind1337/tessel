@@ -459,6 +459,7 @@ const api = {
     open: (opts) => ipcRenderer.invoke('transcriptView:open', opts),
     close: (opts) => ipcRenderer.invoke('transcriptView:close', opts),
     earlier: (opts) => ipcRenderer.invoke('transcriptView:earlier', opts),
+    images: (opts) => ipcRenderer.invoke('transcriptView:images', opts),
     skills: (opts) => ipcRenderer.invoke('transcriptView:skills', opts),
     onEvent: (cb) => subscribe('transcriptView:event', cb)
   },

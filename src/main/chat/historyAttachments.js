@@ -17,6 +17,7 @@
 // path itself), checked again on the opened handle, read with the size cap.
 // Nothing is ever logged about an image (no data, no path).
 import fs from 'fs'
+import { createHash } from 'crypto'
 import { basename, extname, isAbsolute, resolve } from 'path'
 import { fileURLToPath } from 'url'
 import { sniffImage } from './chatImages.js'
@@ -254,5 +255,139 @@ export function resolveHistoryAttachments(events, caps = ATTACHMENT_LIMITS) {
     text = placeholders(text, lostFiles, '[file]') // i18n-ignore
     ev.text = text
   }
+  return events
+}
+
+// ---- The chat view's resolution: cached per view, never blocking -------------------
+// The same choice as resolveHistoryAttachments (newest first, the same caps),
+// for a view read again after every change of its file: each image is
+// decoded once per view and kept in `cache` (by its content, or a file's
+// path, size and change time), and a local file is read with fs.promises,
+// never on a network drive (isRemote) and given up after timeoutMs (a
+// stalled disk shows "[image]", the view goes on). Each image gets a `key`
+// (the same for the same image) so the view can send its bytes only once.
+// cache: Map (the view's), pruned to the images of this page.
+
+const IMAGE_READ_TIMEOUT_MS = 2000
+
+function withDeadline(promise, ms) {
+  let timer
+  return Promise.race([promise, new Promise((r) => (timer = setTimeout(() => r(null), ms)))]).finally(() => clearTimeout(timer))
+}
+
+// { path, size, mtimeMs } of an existing regular local file reached directly
+// (no link on the way, not on a network drive), or null.
+async function plainFileAsync(path, isRemote) {
+  const p = localPath(path)
+  if (!p) return null
+  try {
+    if (isRemote && (await isRemote(p))) return null
+    const st = await fs.promises.lstat(p)
+    if (st.isSymbolicLink() || !st.isFile()) return null
+    if (!samePath(await fs.promises.realpath(p), p)) return null
+    return { path: p, size: st.size, mtimeMs: st.mtimeMs }
+  } catch {
+    return null
+  }
+}
+
+async function readLocalAsync(f, max) {
+  if (!f || f.size > max) return null
+  let handle = null
+  try {
+    handle = await fs.promises.open(f.path, 'r')
+    const st = await handle.stat()
+    if (!st.isFile() || st.size > max) return null
+    const buf = Buffer.alloc(Math.min(st.size, max) + 1)
+    let got = 0
+    while (got < buf.length) {
+      const { bytesRead } = await handle.read(buf, got, buf.length - got, got)
+      if (!bytesRead) break
+      got += bytesRead
+    }
+    return got && got <= max ? buf.subarray(0, got) : null
+  } catch {
+    return null
+  } finally {
+    if (handle) await handle.close().catch(() => {})
+  }
+}
+
+const sha = (s) => createHash('sha1').update(s).digest('hex')
+
+// The candidate's identity (what it holds), before any decoding, or null.
+async function imageIdentity(c, isRemote, timeoutMs) {
+  if (c.base64) return { id: `b|${c.mediaType || ''}|${sha(c.base64)}` }
+  if (c.dataUrl) return { id: `d|${sha(c.dataUrl)}` }
+  if (c.path) {
+    const f = await withDeadline(plainFileAsync(c.path, isRemote), timeoutMs)
+    return f ? { id: `p|${f.path}|${f.size}|${f.mtimeMs}`, file: f } : null
+  }
+  return null
+}
+
+async function resolveImageCached(c, caps, cache, used, isRemote, timeoutMs) {
+  const who = await imageIdentity(c, isRemote, timeoutMs)
+  if (!who) return null
+  if (cache.has(who.id)) {
+    used.add(who.id)
+    return cache.get(who.id)
+  }
+  let got = null
+  if (who.file) {
+    const buf = await withDeadline(readLocalAsync(who.file, caps.imageBytes), timeoutMs)
+    const mediaType = buf ? sniffImage(buf) : null
+    got = mediaType ? { buf, mediaType } : null
+  } else got = resolveImage(c, caps)
+  const entry = got
+    ? { key: sha(who.id).slice(0, 24), mediaType: got.mediaType, bytes: got.buf.length, dataUrl: `data:${got.mediaType};base64,${got.buf.toString('base64')}` }
+    : null
+  cache.set(who.id, entry)
+  used.add(who.id)
+  return entry
+}
+
+async function resolveFileAsync(c, isRemote, timeoutMs) {
+  const out = resolveFile({ ...c, path: null })
+  const local = c.path ? await withDeadline(plainFileAsync(c.path, isRemote), timeoutMs) : null
+  return local ? { ...out, size: local.size, path: local.path } : out
+}
+
+export async function resolveHistoryAttachmentsCached(events, caps = ATTACHMENT_LIMITS, { cache = new Map(), isRemote = null, timeoutMs = IMAGE_READ_TIMEOUT_MS } = {}) {
+  let budget = caps.pageBytes
+  const used = new Set()
+  for (let i = (Array.isArray(events) ? events.length : 0) - 1; i >= 0; i--) {
+    const ev = events[i]
+    const note = pending.get(ev)
+    if (!note) continue
+    pending.delete(ev)
+    const images = []
+    const files = []
+    const names = new Set()
+    let lostImages = 0
+    let lostFiles = 0
+    for (const c of note.list) {
+      if (c.kind === 'file') {
+        if (files.length >= caps.files) lostFiles++
+        else files.push(await resolveFileAsync(c, isRemote, timeoutMs))
+        continue
+      }
+      const got = images.length < caps.images && budget > 0 ? await resolveImageCached(c, caps, cache, used, isRemote, timeoutMs) : null
+      if (!got || got.bytes > budget) {
+        lostImages++
+        continue
+      }
+      budget -= got.bytes
+      images.push({ key: got.key, name: imageName(c, got.mediaType, names), mediaType: got.mediaType, dataUrl: got.dataUrl })
+    }
+    if (images.length) ev.images = images
+    if (files.length) ev.files = files
+    let text = typeof ev.text === 'string' ? ev.text : ''
+    if (!note.marked) text = imagePlaceholders(text, lostImages)
+    text = placeholders(text, lostFiles, '[file]') // i18n-ignore
+    ev.text = text
+  }
+  // Only this page's images stay (a view's memory follows what it shows).
+  for (const id of [...cache.keys()]) if (!used.has(id)) cache.delete(id)
   return events
 }

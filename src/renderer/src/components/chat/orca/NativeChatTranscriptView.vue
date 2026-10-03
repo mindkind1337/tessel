@@ -93,6 +93,7 @@ import {
   compactCommand
 } from '../../../chat/terminalChatBridge.js'
 import { mergeCommandMarkers, splitCommandTurns, terminalBackgroundTasks } from '../../../chat/terminalChatExtras.js'
+import { createTranscriptImages } from '../../../chat/transcriptImages.js'
 import { t } from '../../../i18n'
 import { useNativeChatFontScale } from '../../../chat/orca/composables/use-native-chat-font-scale.js'
 
@@ -172,6 +173,10 @@ let alive = true
 let nextSend = 0
 let answering = null
 let answeredTimer = null
+// The images' bytes come once per view; kept here for the latest page.
+const images = createTranscriptImages()
+const askedImages = new Set()
+let lastRead = null
 
 function api() {
   const a = typeof window !== 'undefined' && window.shellApi ? window.shellApi.transcriptView : null
@@ -196,13 +201,39 @@ function render() {
 }
 // One read of the file: { events, more, background }.
 function show(res) {
-  const tagged = tagTesselTurns(withContextWindow((res && res.events) || [], props.contextModel, props.agent))
+  lastRead = res
+  const filled = images.apply((res && res.events) || [])
+  if (filled.missing.length) fetchImages(filled.missing)
+  const tagged = tagTesselTurns(withContextWindow(filled.events, props.contextModel, props.agent))
   const split = props.interactive ? splitCommandTurns(tagged) : { events: tagged, commands: [] }
   fileEvents.value = split.events
   fileCommands.value = split.commands
   fileBackground.value = res && Array.isArray(res.background) ? res.background : []
   hasEarlier.value = !!(res && res.more)
   render()
+}
+
+// Images this window lacks (a send it missed): asked once each, then shown.
+async function fetchImages(keys) {
+  const a = api()
+  const want = keys.filter((k) => !askedImages.has(k))
+  if (!a || typeof a.images !== 'function' || !viewId || !want.length) return
+  for (const k of want) askedImages.add(k)
+  const asked = viewId
+  let r
+  try {
+    r = await a.images({ viewId, keys: want })
+  } catch {
+    r = null
+  }
+  if (!alive || asked !== viewId || !r || !r.ok) return
+  images.add(r.images)
+  if (lastRead) show(lastRead)
+}
+function forgetImages() {
+  images.clear()
+  askedImages.clear()
+  lastRead = null
 }
 
 function stopRetry() {
@@ -247,6 +278,7 @@ async function openView() {
     if (phase.value === 'missing') retry = setTimeout(openView, RETRY_MS)
     return
   }
+  forgetImages()
   viewId = res.viewId
   viewOpen.value = true
   truncated.value = !!res.truncated
@@ -282,6 +314,7 @@ function closeView() {
   if (a && viewId) a.close({ viewId })
   viewId = null
   viewOpen.value = false
+  forgetImages()
 }
 
 onMounted(() => {

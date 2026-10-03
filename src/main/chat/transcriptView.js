@@ -46,6 +46,8 @@ import { claudeTranscriptIn } from '../agentModel.js'
 import { realInside } from '../agentChildren.js'
 import { ompSessionsDir } from '../agentSessionSources.js'
 import { HISTORY_LIMITS, ATTACHMENT_LIMITS, resolveHistoryAttachments, claudeHistoryEvents, codexHistoryEvents, createBuilder, findTranscript } from './transcriptHistory.js'
+import { resolveHistoryAttachmentsCached } from './historyAttachments.js'
+import { createRemoteDrives } from './remoteDrives.js'
 
 // The chat view's limits: its user messages show their images (a screenshot
 // pasted in the terminal), the newest first within a smaller page budget
@@ -776,30 +778,42 @@ export function contextUsageEvent(agent, lines) {
 const EARLIER_STEPS = 3
 // more: earlier lines can still be read (readEarlier); background: Claude
 // Code's background tasks still running (transcriptBackground.js).
-function eventsOf(agent, sessionId, tail, limits, eventCap = limits.events) {
+// The events kept (their attachments noted, not resolved yet), and the rest.
+function eventsCore(agent, sessionId, tail, limits, eventCap = limits.events) {
   let events = viewEvents(agent, tail.lines(), sessionId, limits)
   let truncated = tail.cut()
   if (events.length > eventCap) {
     events = events.slice(-eventCap)
     truncated = true
   }
-  // Their images and files, for the events kept only.
-  if (limits.attachments) resolveHistoryAttachments(events, limits.attachments)
   const usage = contextUsageEvent(agent, tail.lines())
-  if (usage) events = [...events, usage]
   const background = agent === 'claude' || agent === 'openclaude' ? claudeBackgroundFromLines(tail.lines()) : []
-  return { events, truncated, more: !!(tail.more && tail.more()), background }
+  return { events, usage, truncated, more: !!(tail.more && tail.more()), background }
+}
+const withUsage = ({ events, usage, ...rest }) => ({ events: usage ? [...events, usage] : events, ...rest })
+function eventsOf(agent, sessionId, tail, limits, eventCap = limits.events) {
+  const core = eventsCore(agent, sessionId, tail, limits, eventCap)
+  // Their images and files, for the events kept only.
+  if (limits.attachments) resolveHistoryAttachments(core.events, limits.attachments)
+  return withUsage(core)
 }
 
-// -> { ok: true, events, truncated, file, tail } | { ok: false, code: 'invalid' | 'missing' }
-// home, reported: see findTranscriptViewFile (Claude Code, Codex, OpenClaude).
-export function readTranscriptView({ agent, sessionId, roots = transcriptViewRoots(), home = null, reported = null, limits = HISTORY_LIMITS } = {}) {
+// The view's file and its first read: { ok: true, file, tail } | { ok: false, code }.
+function openTail({ agent, sessionId, roots, home, reported, limits }) {
   if (!TRANSCRIPT_VIEW_AGENTS.includes(agent) || !validViewId(agent, sessionId)) return { ok: false, code: 'invalid' }
   const file = findTranscriptViewFile(agent, sessionId, roots, { home, reported })
   if (!file) return { ok: false, code: 'missing' }
   const tail = createTail(file, limits.bytes, { maxEarlier: limits.bytes * EARLIER_STEPS })
   if (tail.read() === null) return { ok: false, code: 'missing' }
-  return { ok: true, ...eventsOf(agent, sessionId, tail, limits), file, tail }
+  return { ok: true, file, tail }
+}
+
+// -> { ok: true, events, truncated, file, tail } | { ok: false, code: 'invalid' | 'missing' }
+// home, reported: see findTranscriptViewFile (Claude Code, Codex, OpenClaude).
+export function readTranscriptView({ agent, sessionId, roots = transcriptViewRoots(), home = null, reported = null, limits = HISTORY_LIMITS } = {}) {
+  const opened = openTail({ agent, sessionId, roots, home, reported, limits })
+  if (!opened.ok) return opened
+  return { ok: true, ...eventsOf(agent, sessionId, opened.tail, limits), file: opened.file, tail: opened.tail }
 }
 
 const PANE_ID = /^[A-Za-z0-9_-][A-Za-z0-9._-]{0,99}$/
@@ -821,10 +835,21 @@ export function reportedTranscript(sessionsDir, paneId, agent, sessionId) {
 // The open views and their watchers. send(channel, payload) reaches the window.
 // homes(agent, accountId) -> the folder Claude Code or Codex keeps that
 // account's conversations in (or null); sessionsDir() -> where the panes'
-// hooks report their sessions.
-export function createTranscriptViews({ send, roots = transcriptViewRoots, homes = async () => null, sessionsDir = () => null, watch = fs.watch, debounceMs = 300, pollMs = 2000, log = null, limits = VIEW_LIMITS } = {}) {
-  const views = new Map() // viewId -> { agent, sessionId, file, tail, watcher, timer, poll, stamp, eventCap }
+// hooks report their sessions; isRemote(path) -> a path on a network drive
+// (never read for an image).
+//
+// Images: a view is read again after every change of its file, so each
+// image is decoded once per view (resolveHistoryAttachmentsCached keeps it,
+// by its content or a file's path, size and change time) and its bytes go to
+// the window once: every image carries a `key`, and its dataUrl only the
+// first time that view sends it (an image that left the page and comes back
+// is sent again). The window keeps the ones it has (transcriptImages.js) and
+// asks for one it lacks (transcriptView:images, bounded like a page).
+export function createTranscriptViews({ send, roots = transcriptViewRoots, homes = async () => null, sessionsDir = () => null, watch = fs.watch, debounceMs = 300, pollMs = 2000, log = null, limits = VIEW_LIMITS, isRemote = null } = {}) {
+  const views = new Map() // viewId -> { agent, sessionId, file, tail, watcher, timer, poll, stamp, eventCap, images, sent, queue }
   let nextId = 0
+  let drives = null
+  const remote = isRemote || ((p) => (drives || (drives = createRemoteDrives())).isRemote(p))
 
   const stampOf = (file) => {
     try {
@@ -834,30 +859,80 @@ export function createTranscriptViews({ send, roots = transcriptViewRoots, homes
       return ''
     }
   }
+  // One read of a view at a time (its tail, its images and what was sent).
+  function serial(v, fn) {
+    const run = v.queue.then(fn, fn)
+    v.queue = run.catch(() => {})
+    return run
+  }
+  // The view's events, its images resolved (cached), each image's bytes left
+  // out when this view already sent them.
+  async function eventsFor(v) {
+    const core = eventsCore(v.agent, v.sessionId, v.tail, limits, v.eventCap)
+    if (limits.attachments) await resolveHistoryAttachmentsCached(core.events, limits.attachments, { cache: v.images, isRemote: remote })
+    const shown = new Set()
+    for (const ev of core.events) {
+      if (!Array.isArray(ev.images)) continue
+      ev.images = ev.images.map((img) => {
+        if (!img.key) return img
+        const seen = v.sent.has(img.key) || shown.has(img.key)
+        shown.add(img.key)
+        if (!seen) return img
+        const { dataUrl, ...light } = img // eslint-disable-line no-unused-vars
+        return light
+      })
+    }
+    v.sent = shown
+    return withUsage(core)
+  }
   function refresh(viewId) {
     const v = views.get(viewId)
-    if (!v) return
-    const stamp = stampOf(v.file)
-    if (stamp === v.stamp) return
-    v.stamp = stamp
-    const read = v.tail.read()
-    if (!views.has(viewId) || read === false) return
-    if (read === null) {
-      send('transcriptView:event', { viewId, ok: false, code: 'missing' })
-      return
-    }
-    send('transcriptView:event', { viewId, ok: true, ...eventsOf(v.agent, v.sessionId, v.tail, limits, v.eventCap) })
+    if (!v) return Promise.resolve()
+    return serial(v, async () => {
+      if (views.get(viewId) !== v) return
+      const stamp = stampOf(v.file)
+      if (stamp === v.stamp) return
+      v.stamp = stamp
+      const read = v.tail.read()
+      if (read === false) return
+      if (read === null) {
+        send('transcriptView:event', { viewId, ok: false, code: 'missing' })
+        return
+      }
+      const out = await eventsFor(v)
+      if (views.get(viewId) !== v) return
+      send('transcriptView:event', { viewId, ok: true, ...out })
+    })
   }
   // The window's "load earlier": the lines before the kept ones, read from the
   // same file (bounded: createTail's readEarlier), then the whole view again.
   // -> { ok, events, truncated, more, background, added } | { ok: false, code }
-  function earlier(viewId) {
+  async function earlier(viewId) {
     const v = views.get(viewId)
     if (!v) return { ok: false, code: 'missing' }
-    const res = v.tail.readEarlier(limits.bytes)
-    if (!res) return { ok: false, code: 'changed' }
-    if (res.added) v.eventCap = Math.min(v.eventCap + limits.events, limits.events * (EARLIER_STEPS + 1))
-    return { ok: true, added: res.added, ...eventsOf(v.agent, v.sessionId, v.tail, limits, v.eventCap) }
+    return serial(v, async () => {
+      const res = v.tail.readEarlier(limits.bytes)
+      if (!res) return { ok: false, code: 'changed' }
+      if (res.added) v.eventCap = Math.min(v.eventCap + limits.events, limits.events * (EARLIER_STEPS + 1))
+      return { ok: true, added: res.added, ...(await eventsFor(v)) }
+    })
+  }
+  // The window lacks some images it was sent (it missed that send): their
+  // bytes again, from the view's own cache only, a page's worth at most.
+  // -> { ok, images: { key: dataUrl } }
+  function imagesOf(viewId, keys) {
+    const v = views.get(viewId)
+    if (!v) return { ok: false, code: 'missing' }
+    const want = new Set((Array.isArray(keys) ? keys : []).filter((k) => typeof k === 'string' && /^[0-9a-f]{24}$/.test(k)).slice(0, 64))
+    const images = {}
+    let budget = limits.attachments ? limits.attachments.pageBytes : 0
+    for (const entry of v.images.values()) {
+      if (!entry || !want.has(entry.key) || images[entry.key] || entry.bytes > budget) continue
+      budget -= entry.bytes
+      images[entry.key] = entry.dataUrl
+      v.sent.add(entry.key)
+    }
+    return { ok: true, images }
   }
   // The folder the agent works in, from its file's newest lines (for its
   // skills), or null.
@@ -870,7 +945,7 @@ export function createTranscriptViews({ send, roots = transcriptViewRoots, homes
     if (!v || v.timer) return
     v.timer = setTimeout(() => {
       v.timer = null
-      refresh(viewId)
+      refresh(viewId).catch((err) => log && log.warn('transcriptView', `read failed: ${err && err.message}`))
     }, debounceMs)
   }
   function close(viewId) {
@@ -884,23 +959,26 @@ export function createTranscriptViews({ send, roots = transcriptViewRoots, homes
     } catch {
       // already gone
     }
+    v.images.clear()
     return true
   }
   // home, reported: resolved by the IPC handler (never from the window).
-  function open({ agent, sessionId, home = null, reported = null } = {}) {
-    const res = readTranscriptView({ agent, sessionId, roots: roots(), home, reported, limits })
-    if (!res.ok) return res
+  async function open({ agent, sessionId, home = null, reported = null } = {}) {
+    const opened = openTail({ agent, sessionId, roots: roots(), home, reported, limits })
+    if (!opened.ok) return opened
     // The oldest view gives way: a view nobody closed (a crashed window) cannot pile up.
     while (views.size >= MAX_VIEWS) close(views.keys().next().value)
     const viewId = `tv-${++nextId}` // i18n-ignore id
-    const v = { agent, sessionId, file: res.file, tail: res.tail, watcher: null, timer: null, poll: null, stamp: stampOf(res.file), eventCap: limits.events }
+    const v = { agent, sessionId, file: opened.file, tail: opened.tail, watcher: null, timer: null, poll: null, stamp: stampOf(opened.file), eventCap: limits.events, images: new Map(), sent: new Set(), queue: Promise.resolve() }
     views.set(viewId, v)
+    const res = await serial(v, () => eventsFor(v))
+    if (views.get(viewId) !== v) return { ok: false, code: 'missing' }
     // The watcher hurries a read; the slow poll is what is relied on (a
     // watcher can miss changes, or stop, without saying so).
     v.poll = setInterval(() => schedule(viewId), pollMs)
     v.poll.unref?.()
     try {
-      v.watcher = watch(res.file, { persistent: false }, () => schedule(viewId))
+      v.watcher = watch(opened.file, { persistent: false }, () => schedule(viewId))
       v.watcher.on?.('error', () => {
         try {
           v.watcher.close()
@@ -944,6 +1022,7 @@ export function createTranscriptViews({ send, roots = transcriptViewRoots, homes
     ipcMain.handle('transcriptView:open', (_e, q) => openFromWindow(q))
     ipcMain.handle('transcriptView:close', (_e, q) => ({ ok: close(obj(q)?.viewId) }))
     ipcMain.handle('transcriptView:earlier', (_e, q) => earlier(obj(q)?.viewId))
+    ipcMain.handle('transcriptView:images', (_e, q) => imagesOf(obj(q)?.viewId, obj(q)?.keys))
   }
-  return { open, openFromWindow, close, earlier, cwdOf, agentOf: (viewId) => views.get(viewId)?.agent || null, closeAll: () => [...views.keys()].forEach(close), register, count: () => views.size }
+  return { open, openFromWindow, close, earlier, images: imagesOf, refresh, cwdOf, agentOf: (viewId) => views.get(viewId)?.agent || null, closeAll: () => [...views.keys()].forEach(close), register, count: () => views.size }
 }
