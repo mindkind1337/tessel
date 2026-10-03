@@ -28,6 +28,36 @@ describe('useNativeChatFontScale', () => {
     expect(result.current.fontScale).toBe(1)
     expect(localStorage.getItem(CHAT_FONT_SCALE_STORAGE_KEY)).toBe('1')
   })
+  // Typed in a dialog or the palette over the app: not the chat's zoom.
+  it('a key typed in a dialog or a field outside the chat does not zoom it', () => {
+    const target = document.createElement('div')
+    document.body.append(target)
+    const dialog = document.createElement('div')
+    dialog.setAttribute('role', 'dialog')
+    const field = document.createElement('input')
+    dialog.append(field)
+    const outside = document.createElement('textarea')
+    document.body.append(dialog, outside)
+    try {
+      const { result } = renderHook(() => useNativeChatFontScale(true, { target, isMac: false }))
+      for (const el of [field, outside]) {
+        const ev = key('+', { bubbles: true })
+        el.dispatchEvent(ev)
+        expect(ev.defaultPrevented).toBe(false)
+      }
+      expect(result.current.fontScale).toBe(1)
+      // In the chat, or with nothing focused: it zooms.
+      const inChat = document.createElement('div')
+      target.append(inChat)
+      inChat.dispatchEvent(key('+', { bubbles: true }))
+      document.body.dispatchEvent(key('+', { bubbles: true }))
+      expect(result.current.fontScale).toBe(1.2)
+    } finally {
+      target.remove()
+      dialog.remove()
+      outside.remove()
+    }
+  })
   it('scopes wheel to the pane and removes listeners on disable and unmount', () => {
     const target = document.createElement('div'),
       enabled = ref(true)

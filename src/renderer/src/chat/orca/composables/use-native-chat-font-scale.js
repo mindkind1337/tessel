@@ -35,9 +35,19 @@ export function useNativeChatFontScale(enabled, options = {}) {
   const increase = () => set(increaseChatFontScale(fontScale.value))
   const decrease = () => set(decreaseChatFontScale(fontScale.value))
   const reset = () => set(DEFAULT_CHAT_FONT_SCALE)
+  // Tessel: a key typed in a dialog or the palette, or in a field outside the
+  // chat, is not the chat's zoom (the listener is on the window).
+  function elsewhere(event) {
+    const el = event.target
+    if (!el || typeof el.closest !== 'function') return false
+    const pane = get('target')
+    if (pane && typeof pane.contains === 'function' && pane.contains(el)) return false
+    if (el.closest('[role="dialog"], [role="alertdialog"], dialog, [aria-modal="true"]')) return true
+    return !!el.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"]')
+  }
   function keydown(event) {
     const action = chatFontScaleActionForEvent(event, get('isMac') ?? isMacPlatform())
-    if (!action || event.altKey || event.isComposing) return
+    if (!action || event.altKey || event.isComposing || elsewhere(event)) return
     event.preventDefault()
     event.stopPropagation()
     if (action === 'increase') increase()
