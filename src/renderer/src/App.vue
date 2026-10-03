@@ -8869,7 +8869,11 @@ function dedupeTeamNumbers(list) {
   const numberOf = (name) => (/(\d+)\s*$/.exec(String(name || '')) || [])[1] || null
   const taken = new Set()
   const out = []
-  for (const team of list) {
+  for (const raw of list) {
+    // A team still under its default name ("Team 2", "Équipe 2") shows it
+    // in the app's current language; a name the user gave is kept.
+    const dflt = /^\s*(?:team|[ée]quipe)\s+(\d+)\s*$/i.exec(String(raw.name || ''))
+    const team = dflt ? { ...raw, name: t('app.team.defaultName', 'Team {{n}}', { n: Number(dflt[1]) }) } : raw
     const n = numberOf(team.name)
     if (!n || !taken.has(n)) {
       if (n) taken.add(n)
