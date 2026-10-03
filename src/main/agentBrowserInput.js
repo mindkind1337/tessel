@@ -287,6 +287,8 @@ export async function resolveRef(send, state, ref) {
   }
   try {
     await describe(send, entry.backendDOMNodeId)
+    // Removed from the page but not yet freed: describeNode still answers.
+    if (!(await connected(send, entry.backendDOMNodeId))) throw new Error('detached')
     return entry
   } catch {
     // Re-rendered by the page: the same role and name (the same occurrence) again.
@@ -297,6 +299,19 @@ export async function resolveRef(send, state, ref) {
     }
     state.refMap = null
     throw new BrowserInputError('stale_ref', `${key} is no longer on the page: call browser_snapshot again.`)
+  }
+}
+
+// false only when the element is known to be out of the document.
+async function connected(send, backendNodeId) {
+  try {
+    const { object } = await send('DOM.resolveNode', { backendNodeId })
+    if (!object || !object.objectId) return true
+    const { result } = await send('Runtime.callFunctionOn', { objectId: object.objectId, functionDeclaration: 'function() { return this.isConnected }', returnByValue: true })
+    send('Runtime.releaseObject', { objectId: object.objectId }).catch(() => {})
+    return !(result && result.value === false)
+  } catch {
+    return true
   }
 }
 
@@ -317,6 +332,7 @@ async function recoverRef(send, entry) {
     for (const id of candidates) {
       try {
         await describe(send, id)
+        if (!(await connected(send, id))) continue
         return id
       } catch {
         // next

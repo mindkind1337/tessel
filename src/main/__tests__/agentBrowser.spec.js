@@ -368,6 +368,26 @@ describe('agent browser: commands', () => {
     expect(guest.sent.filter(([m]) => m === 'Input.dispatchMouseEvent')).toEqual([])
   })
 
+  // Removed from the page but not yet freed: describeNode still answers.
+  it('an element the page removed (detached, not yet freed) is stale, not "hidden"', async () => {
+    const page = pageModel()
+    let tree = AX
+    const base = pageCdp({ 'Accessibility.getFullAXTree': () => tree }, page)
+    const cdp = {
+      ...base,
+      'Runtime.callFunctionOn': (p) => (String(p.functionDeclaration).includes('isConnected') ? { result: { value: !(page.elements[idOf(p.objectId)] || {}).detached } } : base['Runtime.callFunctionOn'](p)),
+      'DOM.getContentQuads': (p) => ((page.elements[p.backendNodeId] || {}).detached ? Promise.reject(new Error('Could not compute content quads.')) : { quads: [[10, 20, 110, 20, 110, 60, 10, 60]] }),
+      'DOM.getBoxModel': () => Promise.reject(new Error('Could not compute box model.'))
+    }
+    const { call } = setup({ guest: fakeGuest(11, { cdp }) })
+    await call('snapshot')
+    // The list re-rendered: the old "Go" nodes detached, none left.
+    page.elements[50].detached = true
+    page.elements[60].detached = true
+    tree = { nodes: AX.nodes.slice(0, 4).map((n) => (n.nodeId === '1' ? { ...n, childIds: ['2', '3', '4'] } : n)) }
+    await expect(call('click', { ref: '@e3' })).rejects.toMatchObject({ code: 'stale_ref' })
+  })
+
   it('a re-rendered element still there once is found again', async () => {
     const page = pageModel()
     let tree = AX
