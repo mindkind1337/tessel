@@ -110,6 +110,9 @@ const props = defineProps({
   paneId: { type: String, default: '' },
   accountId: { type: String, default: undefined },
   working: { type: Boolean, default: false },
+  // The agent's hooks say it is compacting its conversation (Claude Code's
+  // PreCompact, its own or asked): shown as a live line at the end.
+  compacting: { type: Boolean, default: false },
   waiting: { type: Object, default: () => ({}) },
   disabledReason: { type: String, default: '' },
   sendMessage: { type: Function, default: undefined },
@@ -447,11 +450,26 @@ function keys(bytes) {
 }
 // A slash command, typed into the agent as one (Codex key by key), with its
 // "Ran /command" row; nothing is watched for it.
+// Compaction asked from here (Compact, /compact, Cursor's /summarize): shown
+// as under way from the moment it is sent until the agent stops working.
+const compactAskedAt = ref(0)
+watch(
+  () => props.working,
+  (working, was) => {
+    if (was && !working) compactAskedAt.value = 0
+  }
+)
+const liveNotice = computed(() =>
+  props.interactive && (props.compacting || (props.working && compactAskedAt.value > 0))
+    ? t('chat.orca.compactingConversation', 'Compacting the conversation…')
+    : ''
+)
 function sendCommand(text, how = commandDelivery(props.agent, text) || 'paste') {
   if (!props.sendMessage || props.disabledReason) return { ok: false, error: props.disabledReason || undefined }
   const command = String(text || '').trim()
   props.sendMessage(command, { command: how })
   markers.value = appendCommandMarkerCache(markerScope(), command)
+  if (/^\/(?:compact|summarize)(?:\s|$)/i.test(command)) compactAskedAt.value = Date.now()
   sentSignal.value++
   return { ok: true }
 }
@@ -936,6 +954,7 @@ const title = computed(() => t('chat.orca.transcriptView.title', 'Conversation o
         :is-visible="isVisible"
         :font-scale="fontScale.scale.value"
         :is-working="interactive && working"
+        :live-notice="liveNotice"
         :expand-signal="false"
         :show-live-turn-activity="false"
         :on-link-click="onLinkClick"

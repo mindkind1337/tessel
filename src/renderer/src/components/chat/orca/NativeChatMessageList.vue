@@ -20,7 +20,7 @@
  * reader opens it).
  */
 import { computed, shallowRef, watch } from 'vue'
-import { ArrowDown } from 'lucide-vue-next'
+import { ArrowDown, Loader2 } from 'lucide-vue-next'
 import { t } from '../../../i18n'
 import { createNativeChatMessageListProjection } from '../../../chat/orca/native-chat-message-list-projection.js'
 import { structuredQuestionTranscript } from '../../../chat/orca/structured-agent-question-projection.js'
@@ -59,6 +59,9 @@ const props = defineProps({
   railOutline: { type: Array, default: null },
   isVisible: { type: Boolean, default: true },
   isWorking: { type: Boolean, default: false },
+  // Tessel: a line at the end saying what the agent does without a turn of
+  // the conversation (e.g. "Compacting the conversation…"), with a spinner.
+  liveNotice: { type: String, default: '' },
   /** Toolbar-driven desired open state for every tool run; each flip re-syncs. */
   expandSignal: { type: Boolean, default: false },
   /** Chat-only text multiplier (1 = default), driven by the zoom shortcuts. */
@@ -345,6 +348,10 @@ const jumpLabel = computed(() => t('chat.orca.jumpToLatest', 'Jump to latest'))
               :status="turnStatuses.active.value"
             />
             <NativeChatTypingIndicatorRow v-if="!showTurnStatus && showTypingIndicator" />
+            <div v-if="liveNotice" class="nc-message-list__live-notice" role="status" data-test="chat-live-notice">
+              <Loader2 class="nc-message-list__live-notice-icon nc-animate-spin" aria-hidden="true" />
+              <span>{{ liveNotice }}</span>
+            </div>
           </div>
         </div>
       </div>
@@ -410,6 +417,19 @@ const jumpLabel = computed(() => t('chat.orca.jumpToLatest', 'Jump to latest'))
   flex-direction: column;
   gap: 20px;
   padding-inline: 5px;
+}
+.nc-message-list__live-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0 4px;
+  color: var(--nc-muted-foreground);
+  font-size: 13px;
+}
+.nc-message-list__live-notice-icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
 }
 .nc-message-list__jump {
   position: absolute;

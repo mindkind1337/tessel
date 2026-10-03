@@ -844,6 +844,11 @@ function termFocus() {
 // a question (its hooks say a question tool waits; ask: the question itself,
 // only while it waits).
 const chatWorking = computed(() => shownState.value === 'working')
+// Its hooks say it is compacting (Claude Code's PreCompact).
+const chatCompacting = computed(() => {
+  const o = observedState.value
+  return !!(o && o.state === 'working' && o.reason === 'compacting')
+})
 const chatWaiting = computed(() => {
   const o = observedState.value
   const input = !!(o && o.state === 'approval' && o.reason === 'input')
@@ -2907,6 +2912,7 @@ const paneMenuBindings = computed(() => ({
         :pane-id="node.id"
         :account-id="typeof node.accountId === 'string' || node.accountId === null ? node.accountId : undefined"
         :working="chatWorking"
+        :compacting="chatCompacting"
         :waiting="chatWaiting"
         :disabled-reason="chatDisabledReason"
         :send-message="chatSend"

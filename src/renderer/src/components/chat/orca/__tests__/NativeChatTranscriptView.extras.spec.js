@@ -174,6 +174,25 @@ describe('messages and commands', () => {
     expect(rows()).toHaveLength(1)
   })
 
+  it('a compaction under way is said at the end of the chat, from its hooks or once asked from here, until the turn ends', async () => {
+    const notice = () => document.querySelector('[data-test="chat-live-notice"]')
+    await mountChat({ compacting: true, working: true, paneId: 'pane-compacting' })
+    await settle()
+    expect(notice().textContent).toContain('Compacting the conversation')
+    await wrapper.setProps({ compacting: false, working: false })
+    await settle()
+    expect(notice()).toBeNull()
+    const sendMessage = vi.fn()
+    await wrapper.setProps({ sendMessage })
+    await composer().props('send')('/compact')
+    await wrapper.setProps({ working: true })
+    await settle()
+    expect(notice().textContent).toContain('Compacting the conversation')
+    await wrapper.setProps({ working: false })
+    await settle()
+    expect(notice()).toBeNull()
+  })
+
   it("a card's edit, delete and send now go to its delivery's controls; one already typed is said, never typed again", async () => {
     const sendMessage = vi.fn()
     await mountChat({ sendMessage, working: true })
