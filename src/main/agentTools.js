@@ -435,7 +435,10 @@ export async function createWorktree(cwd, label, options = {}) {
   } catch {
     return { ok: false, error: t('main.agents.worktreeDirCreate', 'Could not create the worktree directory.') }
   }
-  const res = await run('git', ['-C', info.root, 'worktree', 'add', '-b', branch, wtPath, selected.commit])
+  // Long paths on (Windows): a deep checkout can be created, and later
+  // deleted by git itself with the same option (review.js). After Orca's
+  // worktree creation (MIT, Copyright (c) 2026 Lovecast Inc.).
+  const res = await run('git', ['-C', info.root, '-c', 'core.longpaths=true', 'worktree', 'add', '-b', branch, wtPath, selected.commit])
   if (!res.ok) return { ok: false, error: cliError(res, 'git worktree add failed') }
   const result = { ok: true, path: wtPath, branch, baseBranch: selected.branch, baseCommit: selected.commit, baseKind: selected.kind, root: info.root }
   if (options.copyEnv === true) result.copyEnvResult = await copyWorktreeEnv(info.root, wtPath, run)

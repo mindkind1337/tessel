@@ -10,6 +10,7 @@ import fs from 'fs'
 import { run } from './agentTools'
 import { cleanEnv } from './cleanEnv'
 import { t } from './i18n'
+import { createLeftoverStore, leftoverRefusal, removeLeftover, unlinkFolderLinks } from './worktreeLeftover'
 import {
   parseChangedFiles,
   parseCommits,
@@ -34,6 +35,13 @@ function samePath(a, b) {
   return process.platform === 'win32' ? x.toLowerCase() === y.toLowerCase() : x === y
 }
 
+// Copies git unregistered while their folder stayed (worktreeLeftover.js):
+// in memory until index.js gives the store its file.
+let leftovers = createLeftoverStore()
+export function setLeftoverStore(store) {
+  leftovers = store || createLeftoverStore()
+}
+
 // { root, path, branch, target } from the renderer -> checked values, or an error.
 async function check({ root, path, branch, target } = {}) {
   if (typeof root !== 'string' || !root || !fs.existsSync(root)) return { error: t('main.review.noProject', 'The project folder is missing.') }
@@ -53,14 +61,19 @@ async function check({ root, path, branch, target } = {}) {
     const inBase = !(!rel || rel.startsWith('..') || isAbsolute(rel))
     const list = await git(repo, ['worktree', 'list', '--porcelain'])
     const rec = parseWorktrees(list.stdout).find((w) => samePath(w.path, path))
-    if (samePath(path, repo) || (!rec && !inBase)) return { error: t('main.review.notTaskCopy', 'Not a task copy of this project.') }
+    // A copy git unregistered while its folder stayed (a delete that failed
+    // partway), remembered for this branch: still this task's copy.
+    const left = rec ? null : leftovers.get(repo, path)
+    const pending = !!left && left.branch === branch
+    if (samePath(path, repo) || (!rec && !inBase && !pending)) return { error: t('main.review.notTaskCopy', 'Not a task copy of this project.') }
     // A listed copy must be the one on this branch: never pair copy A with
     // branch B.
     if (rec && rec.branch !== `refs/heads/${branch}`)
       return { error: t('main.review.copyWrongBranch', 'That copy is not on branch {{branch}}.', { branch }) }
-    out.path = rec ? rec.path : resolve(path)
+    out.path = rec ? rec.path : pending ? left.path : resolve(path)
     out.listed = !!rec
-    listedOnBranch = !!rec
+    out.leftover = pending
+    listedOnBranch = !!rec || pending
   }
   // A branch named with another prefix is a task branch only while git
   // lists its task copy.
@@ -250,33 +263,89 @@ async function stillListed(repo, path) {
   return parseWorktrees(list.stdout).some((w) => samePath(w.path, path))
 }
 
+function isLinkPath(p) {
+  try {
+    return fs.lstatSync(p).isSymbolicLink()
+  } catch {
+    return false
+  }
+}
+
+// What git left of a copy it unregistered (junctions, a path too long, a
+// file still open): deleted without ever following a link
+// (worktreeLeftover.js). -> null, or why it is still there.
+async function removeLeftoverOf(c) {
+  // lstat: a link left there counts, even one that points nowhere.
+  if (!fs.existsSync(c.path) && !isLinkPath(c.path)) return null
+  const refusal = await leftoverRefusal(c.path, { repo: c.repo, known: true })
+  if (refusal) {
+    // Never the case for a real copy: nothing is deleted, nothing kept.
+    leftovers.forget(c.path)
+    const reason =
+      refusal === 'project'
+        ? t('main.review.leftoverIsProject', 'it is the project folder or holds it')
+        : refusal === 'home'
+          ? t('main.review.leftoverIsHome', 'it is your home folder or holds it')
+          : refusal === 'drive-root'
+            ? t('main.review.leftoverIsRoot', 'it is a drive root')
+            : t('main.review.leftoverUnknown', 'git does not know it as a copy of this project')
+    return t('main.review.leftoverRefused', 'Git removed the copy, but its folder {{path}} was left untouched: {{reason}}.', { path: c.path, reason })
+  }
+  const rm = await removeLeftover(c.path)
+  if (rm.ok) return null
+  return t('main.review.deleteLeftover', 'Git removed the copy, but its folder {{path}} could not be deleted completely ({{error}}). Close what uses it and delete again.', {
+    path: c.path,
+    error: rm.error
+  })
+}
+
 // Delete the task's copy and its branch. `force` also drops work that was
 // never merged (Discard); without it git refuses to delete an unmerged branch.
+// Git deletes the copy; what it leaves behind is deleted after. A delete that
+// fails partway is remembered: the card stays, says why, and Delete can be
+// tried again (after Orca's local worktree removal recovery, MIT, Copyright
+// (c) 2026 Lovecast Inc.).
 export async function reviewRemove(args = {}) {
   const c = await check(args)
   if (c.error) return { ok: false, error: c.error }
-  if (c.path && c.listed) {
+  // The copy is itself a link: git would delete through it. Only the link
+  // goes (below, as a leftover), then git forgets the copy (prune).
+  const isLink = !!c.path && c.listed && isLinkPath(c.path)
+  if (isLink) leftovers.add(c.repo, c.path, c.branch)
+  if (c.path && c.listed && !isLink) {
+    // Git keeps a copy with changes unless forced: checked first, so nothing
+    // in it changes when it stays (below, its links are unlinked).
+    if (!args.force) {
+      const st = await git(c.path, ['status', '--porcelain', '--ignore-submodules=none'])
+      if (!st.ok) return { ok: false, error: t('main.review.readCopy', 'Could not read the copy.') }
+      if (st.stdout.trim()) return { ok: false, error: t('main.review.copyNotClean', 'The copy has modified or untracked files: nothing was deleted.') }
+    }
+    // Git for Windows deletes THROUGH a junction (a linked node_modules
+    // emptied its target): every link to a folder in the copy is unlinked
+    // first, never what it points to.
+    const links = await unlinkFolderLinks(c.path)
+    if (!links.ok)
+      return { ok: false, error: t('main.review.copyLinks', 'Could not unlink the links in the copy before deleting it ({{error}}): nothing else was deleted.', { error: links.error }) }
     // Windows keeps the folder busy for a moment after its terminal closes.
-    // git may unregister the copy and still fail to delete its folder: then
-    // the folder is deleted below.
     let res = null
     for (let i = 0; i < 8; i++) {
-      res = await git(c.repo, ['worktree', 'remove', ...(args.force ? ['--force'] : []), c.path])
+      // Long paths on, as the copy was created (agentTools.js); no short
+      // timeout, so a large delete is never killed halfway.
+      res = await git(c.repo, ['-c', 'core.longpaths=true', 'worktree', 'remove', ...(args.force ? ['--force'] : []), c.path], { timeout: 600000 })
       if (res.ok || !(await stillListed(c.repo, c.path))) break
       if (!args.force && /modified or untracked/i.test(res.stderr)) break
       await wait(700)
     }
     if (!res.ok && (await stillListed(c.repo, c.path)))
       return { ok: false, error: (res.stderr || t('main.review.gitFailed', '{{command}} failed', { command: 'git worktree remove' })).trim().split(/\r?\n/)[0] }
-    for (let i = 0; i < 8 && fs.existsSync(c.path); i++) {
-      try {
-        fs.rmSync(c.path, { recursive: true, force: true })
-      } catch {
-        await wait(700)
-      }
-    }
-    if (fs.existsSync(c.path))
-      return { ok: false, error: t('main.review.deleteFolder', 'Could not delete the folder {{path}}. Close what uses it and try again.', { path: c.path }) }
+    // Git no longer lists the copy: a folder still there is the one it
+    // knew, remembered so the delete can be tried again.
+    if (fs.existsSync(c.path)) leftovers.add(c.repo, c.path, c.branch)
+  }
+  if (c.path && (c.listed || c.leftover)) {
+    const failed = await removeLeftoverOf(c)
+    if (failed) return { ok: false, error: failed }
+    leftovers.forget(c.path)
   }
   await git(c.repo, ['worktree', 'prune'])
   if (await refExists(c.repo, c.branch)) {
