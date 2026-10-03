@@ -146,6 +146,13 @@ describe('revealChatPath (Show in Folder)', () => {
     expect(await revealChatPath({ path: p }, deps)).toMatchObject({ ok: false, reason })
     expect(deps.shell.showItemInFolder).not.toHaveBeenCalled()
   })
+  // The chat resolves links with forward slashes (C:/data/a.png): the file
+  // manager gets the system's own form, so the file is selected in its folder.
+  it("the file manager gets the system's own path form", async () => {
+    const deps = setup({ [abs('a.png')]: 'file' })
+    await revealChatPath({ path: abs('a.png') }, deps)
+    expect(deps.shell.showItemInFolder).toHaveBeenCalledWith(win ? 'C:\\data\\a.png' : '/data/a.png')
+  })
   it('a missing path is refused', async () => {
     const deps = setup({})
     expect(await revealChatPath({ path: abs('gone.png') }, deps)).toMatchObject({ ok: false, reason: 'missing' })

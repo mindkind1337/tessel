@@ -6,7 +6,7 @@
 // document (an allowlist, not a blocklist). No Electron import: shell and fs
 // are passed in, so this stays testable in Node.
 import fsDefault from 'fs'
-import { isAbsolute } from 'path'
+import { isAbsolute, normalize } from 'path'
 import { chatPathProblem, isSystemOpenFile, TEXT_ONLY_SCRIPT_EXTENSIONS, chatPathExt } from '../shared/chatFileLinks'
 import { t } from './i18n'
 
@@ -79,6 +79,7 @@ export async function revealChatPath(q, { shell, fsp = fsDefault.promises } = {}
   if (problem && problem !== 'executable') return refused(problem === 'control' ? 'invalid' : problem)
   if (!isAbsolute(p)) return refused('invalid')
   if (!(await kindOf(p, fsp))) return refused('missing')
-  shell.showItemInFolder(p)
+  // The system's own form (C:\a\b, not C:/a/b): Explorer selects the item.
+  shell.showItemInFolder(normalize(p))
   return { ok: true }
 }
