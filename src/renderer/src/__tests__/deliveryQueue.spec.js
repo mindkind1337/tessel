@@ -29,6 +29,8 @@ describe("App.vue's queue after an unconfirmed delivery", () => {
     panes = { a1: {} }
     ctx = {
       pendingMessages: {},
+      restartingLeaves: new Set(),
+      switchingLeaves: new Set(),
       unsent: {},
       delivering: new Set(),
       agentStatus: {},
@@ -141,6 +143,18 @@ describe("App.vue's queue after an unconfirmed delivery", () => {
     await vi.advanceTimersByTimeAsync(3000)
     expect(pasted).toEqual(['held card'])
   })
+  it('a pane restarting or switching to chat: nothing is typed into its old terminal; sent once it is back', async () => {
+    for (const set of ['restartingLeaves', 'switchingLeaves']) {
+      pasted.length = 0
+      ctx[set].add('a1')
+      ctx.deliverToAgent('a1', `during ${set}`, {})
+      await vi.advanceTimersByTimeAsync(4000)
+      expect(pasted).toEqual([])
+      ctx[set].delete('a1')
+      await vi.advanceTimersByTimeAsync(2500)
+      expect(pasted).toEqual([`during ${set}`])
+    }
+  })
   it('a quiet-agent message right after one was taken waits for the turn it started, even before it shows', async () => {
     ctx.deliverToAgent('a1', 'with images', { waitIdle: true })
     await settle()
@@ -179,6 +193,8 @@ describe("App.vue's held chat-view messages (sendFromChatView, heldDelivery)", (
     gate = null
     ctx = {
       pendingMessages: {},
+      restartingLeaves: new Set(),
+      switchingLeaves: new Set(),
       unsent: {},
       delivering: new Set(),
       agentStatus: { a1: 'busy' },

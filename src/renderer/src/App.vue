@@ -4920,6 +4920,12 @@ function flushPending() {
     }
     // Its terminal is back: a later remount waits its own 30 s again.
     for (const item of pendingMessages[id]) delete item.paneMissingSince
+    // Restarting, or going to a chat: its terminal is about to go, nothing
+    // is typed into it (the message waits for the pane that comes back).
+    if (restartingLeaves.has(id) || switchingLeaves.has(id)) {
+      waiting = true
+      continue
+    }
     if (awaitingApproval(id)) {
       waiting = true
       continue
