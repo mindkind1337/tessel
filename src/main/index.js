@@ -98,7 +98,9 @@ import { takeTeamAcks } from './teamAcks'
 import { writeJsonSafe, readJsonSafe } from './safeJson'
 import { addNotices, writeCurrentTeams, retireOldTeams } from './teamNotices'
 import { JSON_AGENTS, setJsonAgentServer, teamToolsEntry } from './jsonAgents'
-import { detectAgents } from './agentDetect'
+import { detectAgents, KNOWN_AGENT_IDS } from './agentDetect'
+import { createAgentStateRulesFile } from './agentStateRulesFile'
+import { OVERRIDE_FILE_NAME } from '../shared/agentStateRules'
 import { createPortScanner } from './workspacePorts'
 import { createResourceCollector } from './resourceUsage'
 import { newTeamSecret, setTeamSecret, revokeTeamSecret, verifyRequest } from './teamAuth'
@@ -1374,6 +1376,29 @@ const codexTurnEndTimer = setInterval(() => { void codexTurnEnd().catch(() => {}
 codexTurnEndTimer.unref()
 app.on('will-quit', () => clearInterval(codexTurnEndTimer))
 ipcMain.handle('agents:states', () => agentStateStore.snapshot())
+// Agent-state detection rules: the user's agent-state-rules.json over the
+// built-in ones (agentStateRulesFile.js), watched, sent to the renderer.
+const agentRulesFile = createAgentStateRulesFile({
+  file: join(app.getPath('userData'), OVERRIDE_FILE_NAME),
+  knownAgents: [...new Set([...KNOWN_AGENT_IDS, ...STATUS_PROVIDERS])],
+  send: (payload) => send('agentRules:changed', payload),
+  log
+})
+app.whenReady().then(() => agentRulesFile.start())
+app.on('will-quit', () => agentRulesFile.stop())
+ipcMain.handle('agentRules:get', () => agentRulesFile.current())
+// Settings > Agents > Detection rules: "Open rules file" (made from the
+// commented example when missing).
+ipcMain.handle('agentRules:open', async () => {
+  try {
+    const file = agentRulesFile.ensureFile()
+    agentRulesFile.reload()
+    const error = await shell.openPath(file)
+    return { ok: !error, error: error || null, file }
+  } catch (err) {
+    return { ok: false, error: err?.message || String(err), file: null }
+  }
+})
 ipcMain.on('agents:screen', (_evt, q) => {
   if (!q || typeof q !== 'object') return
   void agentStateStore.observe(q.paneId, q.launchToken, { event: q.event, reset: q.reset }).catch(() => {})
