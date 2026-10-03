@@ -647,13 +647,19 @@ function stateWord(state) {
   }
   return state
 }
+// The suggestion's look 3 s after a turn: cancelled by a new turn (it would
+// read the screen mid-turn) and when the pane closes.
+let suggestionTimer = null
 watch(agentStatus, (v) => {
   setAgentStatus(props.node.id, v, props.node.agentLaunchToken)
   if (v === 'idle') refreshModel() // an answer just ended
   // Its suggestion comes a moment after the answer: looked at again then.
-  if ((v === 'idle' || v === 'done') && props.node.agentId === 'claude') setTimeout(() => (promptSuggestion.value = readPromptSuggestion()), 3000)
+  clearTimeout(suggestionTimer)
+  suggestionTimer = null
+  if ((v === 'idle' || v === 'done') && props.node.agentId === 'claude') suggestionTimer = setTimeout(() => (promptSuggestion.value = readPromptSuggestion()), 3000)
   else if (v === 'busy') promptSuggestion.value = ''
 })
+onBeforeUnmount(() => clearTimeout(suggestionTimer))
 // Output that answers something done here (a click that focuses the pane, a
 // resize, a key typed) is the agent redrawing or echoing, not working: it does
 // not count as activity for this long after it.

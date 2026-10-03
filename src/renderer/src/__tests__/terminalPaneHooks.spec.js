@@ -26,10 +26,17 @@ vi.mock('@xterm/xterm', () => ({
           cursorY: 1,
           cursorX: 2,
           length: 24,
+          // Rows in `greyed` are drawn dim from their third cell (a prompt's
+          // suggestion); the others read as before.
+          getNullCell: () => ({}),
           getLine: (index) => ({
             isWrapped: false,
+            length: this.cols,
             translateToString: () => this.lines[index] || '',
-            getCell: () => ({ getChars: () => '', isDim: () => false })
+            getCell: (x) =>
+              this.greyed && this.greyed.includes(index)
+                ? { getChars: () => (this.lines[index] || '')[x] || '', getWidth: () => 1, isDim: () => x >= 2, isInverse: () => false, isFgDefault: () => x < 2 }
+                : { getChars: () => '', getWidth: () => 1, isDim: () => false, isInverse: () => false, isFgDefault: () => true }
           })
         }
       }
@@ -193,6 +200,28 @@ describe('TerminalPane status integration', () => {
     await vi.advanceTimersByTimeAsync(1400)
     expect(ctx.notifyAgentDone).toHaveBeenCalledTimes(1)
     expect(ctx.agentReportedDone).toHaveBeenCalledTimes(1)
+  })
+
+  // The suggestion is read again 3 s after a turn ends; a new turn started
+  // meanwhile cancels that read (else it reads the screen mid-turn).
+  it("a turn started within 3 s of the last one's end cancels the suggestion's late read", async () => {
+    ctx.hook('UserPromptSubmit')
+    ctx.hook('Stop')
+    onData({ id: 'test-pane', data: 'Done' })
+    fixture.terminals[0].flush(['Answer', '❯ '])
+    await vi.advanceTimersByTimeAsync(1400)
+    await nextTick()
+    expect(agentStatus['test-pane']).toBe('idle')
+    // A new turn at once; its screen shows a greyed prompt row meanwhile.
+    ctx.hook('UserPromptSubmit')
+    const term = fixture.terminals[0]
+    term.greyed = [23]
+    onData({ id: 'test-pane', data: 'Working' })
+    term.flush([...Array(22).fill(''), 'Working… esc to interrupt', '> push the release'])
+    await vi.advanceTimersByTimeAsync(1400)
+    expect(agentStatus['test-pane']).toBe('busy')
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(wrapper.vm.promptSuggestion).toBe('')
   })
 
   it('renders missing managed state honestly and does not turn a silent tool into a completed answer', async () => {
