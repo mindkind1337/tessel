@@ -89,7 +89,8 @@ import {
   copyMcp,
   hklFromTip
 } from './agentTools'
-import { reviewInfo, reviewDiff, reviewMerge, reviewRemove, reviewCommit, reviewPush } from './review'
+import { reviewInfo, reviewDiff, reviewMerge, reviewRemove, reviewCommit, reviewPush, setLeftoverStore } from './review'
+import { createLeftoverStore } from './worktreeLeftover'
 import * as scm from './sourceControl'
 import { runHeadless, cancelHeadless, resolveProgram } from './agentHeadless'
 import { createCommitMessageGeneration } from './commitMessageGeneration'
@@ -1770,6 +1771,9 @@ const claudeUsageReport = createClaudeUsageReport()
 ipcMain.handle('usage:claudeReport', safe((query) => claudeUsageReport(query)))
 // Codex's usage report from its own session files (tokens, requests).
 ipcMain.handle('usage:codexReport', safe((query) => accountUsage.report(query)))
+// A task copy git unregistered while its folder stayed: remembered so its
+// delete can be tried again, even after a restart (worktreeLeftover.js).
+setLeftoverStore(createLeftoverStore({ file: join(app.getPath('userData'), 'worktree-leftovers.json') }))
 ipcMain.handle('review:info', safe(reviewInfo))
 ipcMain.handle('review:diff', safe(reviewDiff))
 ipcMain.handle('review:merge', safe(reviewMerge))
