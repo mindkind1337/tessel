@@ -183,6 +183,20 @@ function allTokens(e) {
   return e ? num(e.inputTokens) + num(e.outputTokens) + num(e.cacheReadTokens) + num(e.cacheWriteTokens) : 0
 }
 
+// A card still in Doing: its time goes on between two reads of the figures
+// (they are read again only when its agent writes something). -> the entry
+// with the card's time up to now, or the entry itself.
+export function withLiveTime(entry, task, now = Date.now()) {
+  if (!entry || !task || task.column !== 'doing' || !Array.isArray(task.workPeriods)) return entry
+  let ms = 0
+  for (const p of task.workPeriods) {
+    if (!p || !Number.isFinite(p.start)) continue
+    const end = Number.isFinite(p.end) ? p.end : now
+    ms += Math.max(0, Math.min(end, now) - p.start)
+  }
+  return ms > num(entry.durationMs) ? { ...entry, durationMs: ms } : entry
+}
+
 export function hasUsage(e) {
   return !!e && (allTokens(e) > 0 || num(e.usd) > 0)
 }
