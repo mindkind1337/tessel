@@ -1381,12 +1381,16 @@ defineExpose({ navigate, focusAddress })
   flex: 0 0 auto;
 }
 
+/* Icon, name, Stop: only the name shrinks (minmax(0, …)), so in a narrow
+   pane the badge keeps its icon and Stop and never overlaps the next button. */
 .bp-agent {
-  display: flex;
+  display: grid;
+  grid-auto-flow: column;
+  grid-template-columns: auto minmax(0, max-content) auto;
   align-items: center;
   gap: 5px;
   flex: 0 1 auto;
-  min-width: 0;
+  min-width: min-content;
   height: 24px;
   padding: 0 3px 0 7px;
   border-radius: 12px;

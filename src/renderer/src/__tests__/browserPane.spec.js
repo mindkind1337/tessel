@@ -613,6 +613,25 @@ describe('BrowserPane.vue: layout, input and browser behaviour', () => {
     expect(css).not.toMatch(/(^|[^-])zoom:|transform:\s*scale/)
   })
 
+  // A narrow pane (found in a real window: a third of 1600 px): the badge
+  // shrank to 12 px and its Stop sat over the Ports button. Only the agent's
+  // name may shrink; the badge never gets narrower than its icon and Stop.
+  it("the Agent badge keeps its Stop button in a narrow pane: only the name shrinks", () => {
+    const file = resolve(process.cwd(), 'src/renderer/src/components/BrowserPane.vue')
+    const css = parseSfc(readFileSync(file, 'utf8')).descriptor.styles
+      .map((b) => b.content)
+      .join('\n')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+    const rule = (sel) => {
+      const m = css.match(new RegExp(`(^|\\n)${sel.replace('.', '\\.')}\\s*\\{([^}]*)\\}`))
+      return m ? m[2] : ''
+    }
+    expect(rule('.bp-agent')).toMatch(/display:\s*grid/)
+    expect(rule('.bp-agent')).toMatch(/grid-template-columns:\s*auto minmax\(0,\s*max-content\) auto/)
+    expect(rule('.bp-agent')).toMatch(/min-width:\s*min-content/)
+    expect(rule('.bp-agent-stop')).not.toMatch(/position:\s*absolute/)
+  })
+
   it("Tessel's drags let the pointer through the page, and give it back when they end", async () => {
     await mountPane()
     const release = acquirePassthrough()
