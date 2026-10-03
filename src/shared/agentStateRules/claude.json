@@ -1,0 +1,8 @@
+{
+  "id": "claude",
+  "engineVersion": 1,
+  "rules": [
+    { "id": "working-spinner", "why": "Claude Code's working line over its input box (since 2.1.2xx it no longer says \"esc to interrupt\"): a spinner glyph (· ✢ ✳ ✶ ✻ ✽, \"*\" on some terminals), its verb with \"…\", then maybe \"(23s · ↓ 1.2k tokens · thinking)\", cut where a narrow pane wraps it. Its finished form (\"✻ Worked for 23s\") has no \"…\". Tested line by line.", "kind": "working-line", "regex": "^\\s*[·✢✳✶✻✽*]\\s+[A-Za-z][^…()]{0,60}…(?:\\s*\\((?=[^)]*(?:\\d+[hms]\\b|\\btokens?\\b|\\bthinking\\b|\\bthought for\\b|\\btool\\b|\\binterrupt\\b))[^)]*\\)?)?\\s*$" },
+    { "id": "interrupted", "why": "Claude Code runs no hook when Esc stops its turn: it says so above its prompt (\"⎿  Interrupted · What should Claude do instead?\"). Tested on the last line above its input box.", "kind": "interrupted", "regex": "\\bInterrupted\\b\\s*(?:by user|·\\s*What should Claude do instead)", "ignoreCase": true }
+  ]
+}

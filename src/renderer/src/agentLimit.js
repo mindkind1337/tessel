@@ -7,36 +7,22 @@
 // Only these exact phrasings count, so an agent that merely talks about
 // limits is not flagged.
 
-const LIMIT_PATTERNS = [
-  /you['’]ve hit your usage limit/i,
-  /\busage limit reached\b/i,
-  /\b(?:5-hour|five-hour|weekly|session|opus|sonnet) limit reached\b/i,
-  /you['’]ve reached your (?:usage|weekly|session|5-hour) limit/i,
-  /\bquota exceeded\b/i,
-  /you have exhausted your (?:daily )?quota/i,
-  /\bRESOURCE_EXHAUSTED\b/
-]
-
-const RESET_PATTERNS = [
-  // "try again at 8:47 PM", "reset at 5pm", "resets 3pm (America/Toronto)"
-  /(?:try again at|resets? at|resets|reset at)\s+([0-9]{1,2}(?::[0-9]{2})?\s*(?:[ap]m|[ap]\.m\.))/i,
-  // "try again in 2 days 3 hours", "resets in 45 minutes"
-  /(?:try again|resets?) in\s+((?:\d+\s*(?:days?|hours?|hrs?|minutes?|mins?)\s*,?\s*(?:and\s*)?)+)/i,
-  // "resets Oct 3, 9am", "try again on Oct 3"
-  /(?:try again on|resets? on|resets)\s+([A-Z][a-z]{2,8}\.? \d{1,2}(?:,? \d{1,2}(?::\d{2})?\s*[ap]m)?)/
-]
+// The phrasings and reset times are data: the "limit" and "limit-reset" rules
+// of src/shared/agentStateRules/common.json, maybe fixed by the user's
+// override file (agentStateRules.js).
+import { rulesFor } from './agentStateRules'
 
 // -> null, or { reset: '8:47 PM' | 'in 2 days 3 hours' | '' }
-export function detectLimit(text) {
+// provider: the pane's agent id (its own rules apply too), or none.
+export function detectLimit(text, provider) {
   const s = String(text || '')
-  if (!LIMIT_PATTERNS.some((re) => re.test(s))) return null
-  for (const re of RESET_PATTERNS) {
-    const m = re.exec(s)
-    if (m) {
-      const when = m[1].replace(/\s+/g, ' ').replace(/[\s,]+$/, '').trim()
-      // Preserve the CLI's English reset phrase in the shared agent-state protocol.
-      return { reset: re === RESET_PATTERNS[1] ? `in ${when}` : when } // i18n-ignore
-    }
+  const rules = rulesFor(provider)
+  if (!rules.test('limit', s)) return null
+  const found = rules.exec('limit-reset', s)
+  if (found) {
+    const when = String(found.match[1] ?? '').replace(/\s+/g, ' ').replace(/[\s,]+$/, '').trim()
+    // Preserve the CLI's English reset phrase in the shared agent-state protocol.
+    return { reset: found.rule.prefix + when } // i18n-ignore
   }
   return { reset: '' }
 }
@@ -44,13 +30,11 @@ export function detectLimit(text) {
 // What agent CLIs show while they wait for the user to approve something
 // (Codex, Claude Code, Gemini; Cursor's input line: "Waiting for decision
 // (y/n/p)..."; Antigravity's titles: "Run this command?", "Allow access to
-// this URL?", "Allow calling this tool?", "Approve this action?"). Typing into
-// such a prompt could answer it.
-const APPROVAL_PATTERNS =
-  /Would you like to (run|make|apply)|Press enter to confirm|Do you want to (proceed|make|create|allow|run)|Do you trust (the files|the contents|this)|Allow execution|Apply this change|\(y\/n\)|\(y\/n\/p\)|\[y\/N\]|Run this command\?|Allow access to this URL\?|Allow calling this tool\?|Approve this action\?/i
-
-export function detectApproval(text) {
-  return APPROVAL_PATTERNS.test(String(text || ''))
+// this URL?", "Allow calling this tool?", "Approve this action?"): the
+// "approval" rules of agentStateRules/common.json. Typing into such a prompt
+// could answer it.
+export function detectApproval(text, provider) {
+  return rulesFor(provider).test('approval', String(text || ''))
 }
 
 // An agent working on a task says it is finished with a line that holds
