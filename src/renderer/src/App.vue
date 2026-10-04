@@ -5999,6 +5999,9 @@ async function runLeadRequest(team, lead, req) {
       if (!m) return `Not started "${req.title}": unknown agent. Valid names: ${teamMembers(team.id).map((m) => m.paneName).join(", ")}.` // i18n-ignore
       spec = { title: req.title, brief: req.brief, agent: { kind: 'pane', id: m.id }, isolated: false }
     } else {
+      // A lead on an SSH host (or in a project there) never starts agents on
+      // this computer (src/main/remoteAgent/REMOTE_AGENTS.md).
+      if (lead.remoteHostId || (ws && ws.remote)) return `Not started "${req.title}": a lead on an SSH host can only give tasks to its teammates, not start new agents.` // i18n-ignore
       const kind = taskAgentKinds.value.find((a) => a.id === req.kind)
       if (!kind) return `Not started "${req.title}": unknown agent kind "${req.kind}". Use one of: ${taskAgentKinds.value.map((a) => a.id).join(', ')}.` // i18n-ignore
       if (req.ownCopy) {
