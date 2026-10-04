@@ -111,7 +111,8 @@ import {
 import { openTab, validSavedFiles, samePath, fileName, docPathOf, diffTabPath } from './editor/editorTabs'
 import { setNotesDelivery } from './notesDelivery'
 import { unsafeMultilinePaste } from './pasteSafety'
-import { t, intlLocale } from './i18n'
+import { t, intlLocale, currentLocale } from './i18n'
+import { dedupeTeamNumbers } from './teamNumber.js'
 
 const shells = ref([])
 const agents = ref([])
@@ -8994,37 +8995,24 @@ function teamMembers(teamId) {
   return out
 }
 
-// Teams nobody belongs to any more go away.
-// Every team shows its own number, across all workspaces: a later team
-// whose number another already shows (e.g. "Team 2" and "Équipe 2") is
-// renamed to the next free "Team N" (in the app's language).
-function dedupeTeamNumbers(list) {
-  const numberOf = (name) => (/(\d+)\s*$/.exec(String(name || '')) || [])[1] || null
-  const taken = new Set()
-  const out = []
-  for (const raw of list) {
-    // A team still under its default name ("Team 2", "Équipe 2") shows it
-    // in the app's current language; a name the user gave is kept.
-    const dflt = /^\s*(?:team|[ée]quipe)\s+(\d+)\s*$/i.exec(String(raw.name || ''))
-    const team = dflt ? { ...raw, name: t('app.team.defaultName', 'Team {{n}}', { n: Number(dflt[1]) }) } : raw
-    const n = numberOf(team.name)
-    if (!n || !taken.has(n)) {
-      if (n) taken.add(n)
-      out.push(team)
-      continue
-    }
-    let i = 1
-    while (taken.has(String(i))) i++
-    taken.add(String(i))
-    out.push({ ...team, name: t('app.team.defaultName', 'Team {{n}}', { n: i }) })
-  }
-  return out
-}
+// Teams nobody belongs to any more go away; each shows its own number
+// (teamNumber.js dedupeTeamNumbers).
 function pruneTeams() {
   const used = new Set()
   forEachWsLeaf((l) => l.team && used.add(l.team))
   teams.value = dedupeTeamNumbers(teams.value.filter((t) => used.has(t.id)))
 }
+// The language changed: teams under their default name show it in the new
+// one ("Team 2" <-> "Équipe 2"), without waiting for a reload.
+watch(
+  () => currentLocale(),
+  () => {
+    const next = dedupeTeamNumbers(teams.value)
+    if (next === teams.value) return
+    teams.value = next
+    scheduleSave()
+  }
+)
 
 function createTeam(leafIds) {
   const ids = (leafIds || []).filter((id) => isAgentLeaf(findLeaf(id)) && !findLeaf(id).team)
