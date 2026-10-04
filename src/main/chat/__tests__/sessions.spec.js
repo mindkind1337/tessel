@@ -2179,6 +2179,29 @@ describe('earlier history of a resumed conversation', () => {
     expect(adapters.at(-1).start).toHaveBeenCalled()
   })
 
+  it("a Claude conversation never written (no message sent before the app quit) starts again under its id, not --resume (Claude finds none)", async () => {
+    const neverWritten = '7b8f3c2e-1111-4222-8333-944445555666'
+    const transcriptExists = vi.fn(() => false)
+    deps = makeDeps({ transcriptHome: () => tmp, transcriptExists })
+    let chat = createChatSessions(deps)
+    const r = await openOk(chat, { resumeId: neverWritten })
+    expect(transcriptExists).toHaveBeenCalledWith('claude', neverWritten, tmp)
+    expect(adapters.at(-1).opts).toMatchObject({ sessionId: neverWritten })
+    expect(adapters.at(-1).opts.resume).toBeUndefined()
+    expect(r.sessionId).toBe(neverWritten)
+    await chat.close({ paneId, forget: true })
+    // Written: resumed. No folder known: resumed as before.
+    deps = makeDeps({ transcriptHome: () => tmp, transcriptExists: () => true })
+    chat = createChatSessions(deps)
+    await openOk(chat, { resumeId: neverWritten })
+    expect(adapters.at(-1).opts).toMatchObject({ resume: neverWritten })
+    await chat.close({ paneId, forget: true })
+    deps = makeDeps({ transcriptHome: () => null, transcriptExists })
+    chat = createChatSessions(deps)
+    await openOk(chat, { resumeId: neverWritten })
+    expect(adapters.at(-1).opts).toMatchObject({ resume: neverWritten })
+  })
+
   it('a reader that throws never stops the chat', async () => {
     deps = makeDeps({ transcriptHome: () => tmp, readHistory: () => { throw new Error('boom') } })
     const chat = createChatSessions(deps)

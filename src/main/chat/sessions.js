@@ -37,7 +37,7 @@ import fs from 'fs'
 import { isAbsolute } from 'path'
 import { buildChatEnv } from './chatEnv.js'
 import { clipDeep, createChatJournal, validPaneId } from './journal.js'
-import { readTranscriptHistory, readOlderHistory, opencodeHistoryEvents, resolveHistoryAttachments, ATTACHMENT_LIMITS, HISTORY_LIMITS } from './transcriptHistory.js'
+import { readTranscriptHistory, readOlderHistory, opencodeHistoryEvents, resolveHistoryAttachments, findTranscript, ATTACHMENT_LIMITS, HISTORY_LIMITS } from './transcriptHistory.js'
 import { t } from '../i18n.js'
 import { approvalPreview } from '../../shared/chatApproval.js'
 import { validOpencodeModel } from './opencodeChat.js'
@@ -150,6 +150,9 @@ export function createChatSessions(deps) {
     // (transcriptHistory.js transcriptHomeFor): null reads no earlier history.
     transcriptHome = () => null,
     readHistory = readTranscriptHistory,
+    // Whether the agent wrote that conversation's file in that folder (a
+    // Claude chat closed before its first message never did).
+    transcriptExists = (agent, id, home) => !!findTranscript(agent, id, home),
     readOlder = readOlderHistory,
     // Attached images (chatImages.js): chat:send names them by id.
     images = null,
@@ -221,6 +224,19 @@ export function createChatSessions(deps) {
   // earlier turns, read from the agent's own transcript, go into the journal
   // first, marked imported. Once: the journal's meta then names the session,
   // so a reload or a later open replays the journal, never the file again.
+  // A Claude chat closed before its first message (the app quit, it slept)
+  // has an id Claude never wrote: --resume would stop it at once ("No
+  // conversation found"). It starts again under the same id. Unknown folder:
+  // resumed as before.
+  function claudeNeverWritten(id, home) {
+    if (!id || !home) return false
+    try {
+      return !transcriptExists('claude', id, home)
+    } catch {
+      return false
+    }
+  }
+
   function importHistory(s, env) {
     if (!s.sessionId) return
     const j = journalOf(s.paneId)
@@ -1342,7 +1358,7 @@ export function createChatSessions(deps) {
             ? { ...common, ...(resumeId ? { threadId: resumeId } : {}), permissions }
             : agent === 'opencode'
               ? { ...common, ...(resumeId ? { sessionId: resumeId } : {}), permissions, ...(permissionModeUsed === 'plan' ? { permissionMode: 'plan' } : {}) }
-              : { ...common, ...(resumeId ? { resume: resumeId } : { sessionId: s.sessionId }), permissionMode: permissionModeUsed }
+              : { ...common, ...(resumeId && !claudeNeverWritten(resumeId, s.historyHome) ? { resume: resumeId } : { sessionId: s.sessionId }), permissionMode: permissionModeUsed }
         )
       } catch (err) {
         drop()
