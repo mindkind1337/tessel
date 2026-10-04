@@ -7,33 +7,36 @@
 // 2026 Lovecast Inc.), local file only: nothing is downloaded.
 import fs from 'fs'
 import { basename, dirname } from 'path'
-import { OVERRIDE_TEMPLATE, overrideSize, parseJsonc, validateOverride } from '../shared/agentStateRules'
+import { OVERRIDE_TEMPLATE, describeRuleError, overrideSize, parseJsonc, validateOverride } from '../shared/agentStateRules'
 import { t } from './i18n'
 
 // A rules file larger than this is refused unread (a real one is a few KB).
 export const MAX_RULES_FILE_BYTES = 256 * 1024
 
-// -> { state: 'builtin' | 'override' | 'invalid', reason, file, size, override }
+// -> { state: 'builtin' | 'override' | 'invalid', reason, problem, file, size, override }
+// problem: why the file is refused, a code with its values
+// (agentStateRules.js describeRuleError): the window says it in its own
+// language. reason: the same in main's language.
 export function readRulesFile(file, { knownAgents = null, fsApi = fs } = {}) {
-  const base = { state: 'builtin', reason: '', file, size: 0, override: null }
+  const base = { state: 'builtin', reason: '', problem: null, file, size: 0, override: null }
+  const invalid = (problem) => ({ ...base, state: 'invalid', problem, reason: describeRuleError(problem, t) })
   let text
   try {
     const stat = fsApi.statSync(file)
-    if (stat.size > MAX_RULES_FILE_BYTES)
-      return { ...base, state: 'invalid', reason: t('main.agentRules.tooLarge', 'the file is larger than {{kb}} KB', { kb: MAX_RULES_FILE_BYTES / 1024 }) }
+    if (stat.size > MAX_RULES_FILE_BYTES) return invalid({ code: 'tooLarge', kb: MAX_RULES_FILE_BYTES / 1024 })
     text = fsApi.readFileSync(file, 'utf8')
   } catch (err) {
     if (err && err.code === 'ENOENT') return base
-    return { ...base, state: 'invalid', reason: t('main.agentRules.unreadable', 'cannot read the file: {{error}}', { error: String(err?.message || err) }) }
+    return invalid({ code: 'unreadable', detail: String(err?.message || err) })
   }
   let value
   try {
     value = parseJsonc(text)
   } catch (err) {
-    return { ...base, state: 'invalid', reason: t('main.agentRules.badJson', 'not valid JSON: {{error}}', { error: String(err?.message || err) }) }
+    return invalid({ code: 'badJson', detail: String(err?.message || err) })
   }
   const checked = validateOverride(value, { knownAgents })
-  if (!checked.ok) return { ...base, state: 'invalid', reason: checked.error }
+  if (!checked.ok) return invalid(checked.error)
   return { ...base, state: 'override', size: overrideSize(checked.override), override: checked.override }
 }
 
@@ -50,10 +53,10 @@ export function createAgentStateRulesFile({
   let current = readRulesFile(file, { knownAgents, fsApi })
   let watcher = null
   let timer = null
-  const key = (p) => JSON.stringify([p.state, p.reason, p.override])
+  const key = (p) => JSON.stringify([p.state, p.problem, p.override])
 
   function report(p) {
-    if (p.state === 'invalid') log?.warn?.('agent-rules', `${file} ignored, the built-in rules stay in use: ${p.reason}`)
+    if (p.state === 'invalid') log?.warn?.('agent-rules', `${file} ignored, the built-in rules stay in use: ${describeRuleError(p.problem)}`)
     else if (p.state === 'override') log?.info?.('agent-rules', `${file} in use (${p.size} rule change(s))`)
     else log?.info?.('agent-rules', 'built-in rules in use (no rules file)')
   }

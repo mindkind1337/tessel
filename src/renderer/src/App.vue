@@ -50,7 +50,7 @@ import {
   paneAgentState
 } from './agentStatus'
 import { detectApproval } from './agentLimit'
-import { applyAgentStateRules } from './agentStateRules'
+import { agentRulesReason, applyAgentStateRules } from './agentStateRules'
 import { activity, recordActivity, loadActivity, saveActivityNow, activityChanged } from './activityStore'
 import ActivityPanel from './components/ActivityPanel.vue'
 import ConfirmDialog from './components/ConfirmDialog.vue'
@@ -4636,9 +4636,9 @@ let agentRulesWarned = ''
 function useAgentRules(payload) {
   const status = applyAgentStateRules(payload)
   if (status.state !== 'invalid') agentRulesWarned = ''
-  else if (status.reason !== agentRulesWarned) {
-    agentRulesWarned = status.reason
-    showToast(t('app.agentRules.invalid', 'Agent detection rules file ignored ({{reason}}): the built-in rules stay in use.', { reason: status.reason }), { kind: 'error', timeout: 10000 })
+  else if (agentRulesReason(t) !== agentRulesWarned) {
+    agentRulesWarned = agentRulesReason(t)
+    showToast(t('app.agentRules.invalid', 'Agent detection rules file ignored ({{reason}}): the built-in rules stay in use.', { reason: agentRulesWarned }), { kind: 'error', timeout: 10000 })
   }
 }
 const offAgentRules = window.shellApi.agentRules?.onChanged((payload) => {

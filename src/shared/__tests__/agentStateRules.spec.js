@@ -9,6 +9,7 @@ import {
   RULE_KINDS,
   compileRuleSet,
   createRuleEngine,
+  describeRuleError,
   findUnsafePatternReason,
   mergeRules,
   overrideSize,
@@ -69,7 +70,11 @@ describe('built-in rules reproduce the former hardcoded patterns', () => {
   it('the approval alternation, split one alternative per rule', () => {
     const approval = ofKind('common', 'approval')
     expect(approval.every((r) => r.ignoreCase)).toBe(true)
-    expect(approval.map((r) => asRegExp(r).source).join('|')).toBe(OLD.approval.source)
+    // Added since: the trust questions of today's Claude Code and Codex.
+    const added = ['approval-trust-safety-check', 'approval-trust-folder', 'approval-trust-option']
+    const former = approval.filter((r) => !added.includes(r.id))
+    expect(approval.filter((r) => added.includes(r.id)).map((r) => r.id)).toEqual(added)
+    expect(former.map((r) => asRegExp(r).source).join('|')).toBe(OLD.approval.source)
   })
 
   it('footer, working line and interruption patterns', () => {
@@ -104,15 +109,15 @@ describe('built-in rules reproduce the former hardcoded patterns', () => {
 
 describe('pattern safety', () => {
   it.each([
-    ['(a+)+$', 'repeats a group'],
-    ['(a|aa)*b', 'repeats a group'],
-    ['(\\w?)+x', 'repeats a group'],
-    ['((ab)+c)*', 'repeats a group'],
+    ['(a+)+$', 'repeatedGroup'],
+    ['(a|aa)*b', 'repeatedGroup'],
+    ['(\\w?)+x', 'repeatedGroup'],
+    ['((ab)+c)*', 'repeatedGroup'],
     ['(a)\\1', 'backreference'],
     ['(?<=x)y', 'lookbehind'],
-    ['(', 'does not compile']
+    ['(', 'noCompile']
   ])('%s is refused', (pattern, why) => {
-    expect(findUnsafePatternReason(pattern)).toContain(why)
+    expect(findUnsafePatternReason(pattern)).toBe(why)
   })
 
   it.each(['\\busage limit reached\\b', 'Do you want to (proceed|run)', '[(]y/n[)]', '(?:esc)+ to'])('%s is accepted', (pattern) => {
@@ -122,7 +127,7 @@ describe('pattern safety', () => {
 
 const rule = (over = {}) => ({ id: 'mine', kind: 'approval', regex: 'Continue\\? \\(yes/no\\)', ...over })
 const override = (agents) => ({ engineVersion: 1, agents })
-const err = (value, opts) => validateOverride(value, { knownAgents: ['claude', 'codex', 'gemini'], ...opts }).error
+const err = (value, opts) => describeRuleError(validateOverride(value, { knownAgents: ['claude', 'codex', 'gemini'], ...opts }).error)
 
 describe('override schema', () => {
   it('accepts a valid file', () => {
@@ -157,6 +162,30 @@ describe('override schema', () => {
 
   it('names where the error is', () => {
     expect(err(override({ claude: { rules: [rule(), rule({ id: 'b', regex: '(a|b)+c' })] } }))).toMatch(/^agents\.claude\.rules\[1\]: regex/)
+  })
+
+  // The reason is a code with its values, so each window says it in its
+  // language; the place in the file and the parser's own words stay as is.
+  it('gives a code and its values, said in the language of the caller', () => {
+    const value = override({ claude: { rules: [rule(), rule({ id: 'b', regex: '(a|b)+c' })] } })
+    const { error } = validateOverride(value, { knownAgents: ['claude'] })
+    expect(error).toEqual({ code: 'unsafeRegex', at: 'agents.claude.rules[1]', why: 'repeatedGroup' })
+    const fr = (key, english, vars) =>
+      ({
+        'main.agentRules.at': '{{at}} : {{reason}}',
+        'main.agentRules.unsafeRegex.repeatedGroup': 'la regex répète un groupe qui peut correspondre de plusieurs façons'
+      })[key]?.replace(/\{\{(\w+)\}\}/g, (_m, n) => vars[n]) ?? `EN:${english}`
+    expect(describeRuleError(error, fr)).toBe('agents.claude.rules[1] : la regex répète un groupe qui peut correspondre de plusieurs façons')
+    expect(validateOverride(override({ robot: {} }), { knownAgents: ['claude'] }).error).toEqual({ code: 'unknownAgent', at: 'agents.robot', agent: 'robot' })
+    const compile = validateOverride(override({ claude: { rules: [rule({ regex: '[a-' })] } })).error
+    expect(compile).toMatchObject({ code: 'regexCompile', at: 'agents.claude.rules[0]' })
+    expect(compile.detail).toMatch(/Invalid regular expression/)
+    expect(describeRuleError(compile)).toContain('regex does not compile: Invalid regular expression')
+  })
+
+  it('an old plain-text reason is shown as it is', () => {
+    expect(describeRuleError('agents.x: something')).toBe('agents.x: something')
+    expect(describeRuleError(null)).toBe('')
   })
 
   it('any agent id when the known list is not given (the renderer re-check)', () => {

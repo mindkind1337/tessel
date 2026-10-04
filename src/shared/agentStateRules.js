@@ -12,6 +12,7 @@
 import common from './agentStateRules/common.json'
 import claude from './agentStateRules/claude.json'
 import codex from './agentStateRules/codex.json'
+import { english } from './i18nText'
 
 export const RULES_ENGINE_VERSION = 1
 export const COMMON_RULES_ID = 'common'
@@ -57,17 +58,18 @@ const ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 // backtrack exponentially is refused when the file loads. Overlapping
 // adjacent quantifiers (`\s*\s*x`) are polynomial and not detected; the screen
 // text cap above bounds them.
+// -> null, or why: 'noCompile' | 'backreference' | 'lookbehind' | 'repeatedGroup'.
 export function findUnsafePatternReason(pattern) {
   try {
     new RegExp(pattern)
   } catch {
-    return 'does not compile'
+    return 'noCompile'
   }
-  if (/\\[1-9]|\\k</.test(pattern)) return 'uses a backreference'
-  if (/\(\?<[=!]/.test(pattern)) return 'uses a lookbehind'
+  if (/\\[1-9]|\\k</.test(pattern)) return 'backreference'
+  if (/\(\?<[=!]/.test(pattern)) return 'lookbehind'
   // A repeated group inside a repeated group counts: its quantifier makes
   // the outer body vary.
-  if (repeatsAVariableGroup(pattern)) return 'repeats a group that can match in more than one way'
+  if (repeatsAVariableGroup(pattern)) return 'repeatedGroup'
   return null
 }
 
@@ -128,53 +130,60 @@ function unknownKey(obj, allowed) {
 
 const RULE_KEYS = ['id', 'why', 'kind', 'regex', 'ignoreCase', 'prefix']
 
+// Why a rules file is refused: a code with its values, never text, so each
+// window says it in its own language (describeRuleError below). at: where
+// in the file ("agents.claude.rules[0]"), kept as written.
+const problem = (code, params = {}) => ({ code, ...params })
+const placed = (at, error) => ({ ...error, at: error.at ? `${at}.${error.at}` : at })
+
 // One rule. builtin: Tessel's own (reviewed) patterns skip the length cap and
-// the backtracking heuristic, never the rest. -> error text or null.
+// the backtracking heuristic, never the rest. -> a problem or null.
 export function ruleError(rule, { builtin = false } = {}) {
-  if (!isObject(rule)) return 'must be an object'
+  if (!isObject(rule)) return problem('notObject')
   const extra = unknownKey(rule, RULE_KEYS)
-  if (extra) return `unknown field "${extra}"`
+  if (extra) return problem('unknownField', { field: extra })
   if (typeof rule.id !== 'string' || !rule.id || rule.id.length > MAX_ID || !ID_RE.test(rule.id))
-    return 'id must be letters, digits, ".", "_" or "-" (64 at most)'
-  if (!RULE_KINDS.includes(rule.kind)) return `kind must be one of ${RULE_KINDS.join(', ')}`
-  if (typeof rule.regex !== 'string' || !rule.regex) return 'regex must be a pattern text'
-  if (!builtin && rule.regex.length > MAX_PATTERN_LENGTH) return `regex is longer than ${MAX_PATTERN_LENGTH} characters`
-  if (rule.ignoreCase !== undefined && typeof rule.ignoreCase !== 'boolean') return 'ignoreCase must be true or false'
+    return problem('badRuleId', { max: MAX_ID })
+  if (!RULE_KINDS.includes(rule.kind)) return problem('badKind', { kinds: RULE_KINDS.join(', ') })
+  if (typeof rule.regex !== 'string' || !rule.regex) return problem('noRegex')
+  if (!builtin && rule.regex.length > MAX_PATTERN_LENGTH) return problem('regexTooLong', { max: MAX_PATTERN_LENGTH })
+  if (rule.ignoreCase !== undefined && typeof rule.ignoreCase !== 'boolean') return problem('badIgnoreCase')
   if (rule.why !== undefined && (typeof rule.why !== 'string' || rule.why.length > MAX_WHY))
-    return `why must be a text (${MAX_WHY} characters at most)`
+    return problem('badWhy', { max: MAX_WHY })
   if (rule.prefix !== undefined) {
-    if (rule.kind !== 'limit-reset') return 'prefix is for limit-reset rules'
-    if (typeof rule.prefix !== 'string' || rule.prefix.length > MAX_PREFIX) return `prefix must be a text (${MAX_PREFIX} characters at most)`
+    if (rule.kind !== 'limit-reset') return problem('prefixNotReset')
+    if (typeof rule.prefix !== 'string' || rule.prefix.length > MAX_PREFIX) return problem('badPrefix', { max: MAX_PREFIX })
   }
   let re
   try {
     re = new RegExp(rule.regex, rule.ignoreCase ? 'i' : '')
   } catch (err) {
-    return `regex does not compile: ${err.message}`
+    return problem('regexCompile', { detail: String(err?.message || err) })
   }
   if (!builtin) {
     const unsafe = findUnsafePatternReason(rule.regex)
-    if (unsafe) return `regex ${unsafe}`
-    if (re.test('')) return 'regex matches empty text (it would match every screen)'
+    if (unsafe) return problem('unsafeRegex', { why: unsafe })
+    if (re.test('')) return problem('matchesEmpty')
   }
   if (rule.kind === 'limit-reset' && !/\((?!\?)/.test(rule.regex.replace(/\\./g, '')))
-    return 'a limit-reset regex needs a group around the reset time'
+    return problem('resetNeedsGroup')
   return null
 }
 
 // A built-in file (tests check every shipped one).
 export function validateRuleFile(file, { builtin = true } = {}) {
-  if (!isObject(file)) return { ok: false, error: 'must be an object' }
+  const fail = (error) => ({ ok: false, error })
+  if (!isObject(file)) return fail(problem('notObject'))
   const extra = unknownKey(file, ['id', 'engineVersion', 'rules'])
-  if (extra) return { ok: false, error: `unknown field "${extra}"` }
-  if (typeof file.id !== 'string' || !file.id) return { ok: false, error: 'id is missing' }
-  if (file.engineVersion !== RULES_ENGINE_VERSION) return { ok: false, error: `engineVersion must be ${RULES_ENGINE_VERSION}` }
-  if (!Array.isArray(file.rules)) return { ok: false, error: 'rules must be a list' }
+  if (extra) return fail(problem('unknownField', { field: extra }))
+  if (typeof file.id !== 'string' || !file.id) return fail(problem('noFileId'))
+  if (file.engineVersion !== RULES_ENGINE_VERSION) return fail(problem('badEngineVersion', { version: RULES_ENGINE_VERSION }))
+  if (!Array.isArray(file.rules)) return fail(problem('notList', { at: 'rules' }))
   const ids = new Set()
   for (const [i, rule] of file.rules.entries()) {
     const error = ruleError(rule, { builtin })
-    if (error) return { ok: false, error: `rules[${i}]: ${error}` }
-    if (ids.has(rule.id)) return { ok: false, error: `rules[${i}]: id "${rule.id}" is used twice` }
+    if (error) return fail(placed(`rules[${i}]`, error))
+    if (ids.has(rule.id)) return fail(problem('idTwice', { at: `rules[${i}]`, id: rule.id }))
     ids.add(rule.id)
   }
   return { ok: true, error: null }
@@ -189,43 +198,123 @@ const builtinIds = (builtins, agent) =>
 // A rule whose id is a built-in one replaces it (in place), a new id adds it;
 // disable turns built-in or common rules off for that agent ("common": for all).
 // knownAgents: the agent ids Tessel knows (null: any id).
-// -> { ok, error, override } (override: the value, ready to merge).
+// -> { ok, error, override } (error: a problem; override: the value, ready to merge).
 export function validateOverride(value, { knownAgents = null, builtins = BUILTIN_RULE_FILES } = {}) {
   const fail = (error) => ({ ok: false, error, override: null })
-  if (!isObject(value)) return fail('the file must hold one JSON object')
+  if (!isObject(value)) return fail(problem('notOneObject'))
   const extra = unknownKey(value, ['engineVersion', 'agents'])
-  if (extra) return fail(`unknown field "${extra}"`)
-  if (value.engineVersion !== RULES_ENGINE_VERSION) return fail(`engineVersion must be ${RULES_ENGINE_VERSION}`)
-  if (!isObject(value.agents)) return fail('agents must be an object: { "claude": { "rules": [...] } }')
+  if (extra) return fail(problem('unknownField', { field: extra }))
+  if (value.engineVersion !== RULES_ENGINE_VERSION) return fail(problem('badEngineVersion', { version: RULES_ENGINE_VERSION }))
+  if (!isObject(value.agents)) return fail(problem('agentsNotObject'))
   const commonOwn = new Set(builtinIds(builtins, COMMON_RULES_ID))
   for (const r of value.agents[COMMON_RULES_ID]?.rules || []) if (r && typeof r.id === 'string') commonOwn.add(r.id)
   for (const [agent, entry] of Object.entries(value.agents)) {
     const at = `agents.${agent}`
     if (agent !== COMMON_RULES_ID && knownAgents && !knownAgents.includes(agent))
-      return fail(`${at}: "${agent}" is not an agent Tessel knows`)
-    if (!isObject(entry)) return fail(`${at}: must be an object`)
+      return fail(problem('unknownAgent', { at, agent }))
+    if (!isObject(entry)) return fail(problem('notObject', { at }))
     const extraKey = unknownKey(entry, ['rules', 'disable'])
-    if (extraKey) return fail(`${at}: unknown field "${extraKey}"`)
+    if (extraKey) return fail(problem('unknownField', { at, field: extraKey }))
     const rules = entry.rules ?? []
-    if (!Array.isArray(rules)) return fail(`${at}.rules: must be a list`)
-    if (rules.length > MAX_RULES_PER_AGENT) return fail(`${at}.rules: ${MAX_RULES_PER_AGENT} rules at most`)
+    if (!Array.isArray(rules)) return fail(problem('notList', { at: `${at}.rules` }))
+    if (rules.length > MAX_RULES_PER_AGENT) return fail(problem('tooManyRules', { at: `${at}.rules`, max: MAX_RULES_PER_AGENT }))
     const ids = new Set()
     for (const [i, rule] of rules.entries()) {
       const error = ruleError(rule)
-      if (error) return fail(`${at}.rules[${i}]: ${error}`)
-      if (ids.has(rule.id)) return fail(`${at}.rules[${i}]: id "${rule.id}" is used twice`)
+      if (error) return fail(placed(`${at}.rules[${i}]`, error))
+      if (ids.has(rule.id)) return fail(problem('idTwice', { at: `${at}.rules[${i}]`, id: rule.id }))
       ids.add(rule.id)
     }
     const disable = entry.disable ?? []
-    if (!Array.isArray(disable)) return fail(`${at}.disable: must be a list of rule ids`)
-    if (disable.length > MAX_DISABLED_PER_AGENT) return fail(`${at}.disable: ${MAX_DISABLED_PER_AGENT} ids at most`)
+    if (!Array.isArray(disable)) return fail(problem('disableNotList', { at: `${at}.disable` }))
+    if (disable.length > MAX_DISABLED_PER_AGENT) return fail(problem('tooManyDisabled', { at: `${at}.disable`, max: MAX_DISABLED_PER_AGENT }))
     const known = agent === COMMON_RULES_ID ? commonOwn : new Set([...commonOwn, ...builtinIds(builtins, agent), ...ids])
     for (const [i, id] of disable.entries()) {
-      if (typeof id !== 'string') return fail(`${at}.disable[${i}]: must be a rule id`)
-      if (!known.has(id)) return fail(`${at}.disable[${i}]: no rule "${id}" to turn off`)
+      if (typeof id !== 'string') return fail(problem('disableNotId', { at: `${at}.disable[${i}]` }))
+      if (!known.has(id)) return fail(problem('noRuleToDisable', { at: `${at}.disable[${i}]`, id }))
     }
   }
   return { ok: true, error: null, override: value }
+}
+
+// A problem (above, or the rules file's own: tooLarge, unreadable, badJson)
+// as a sentence. t: the caller's t(key, english, vars) (English without it).
+// A detail (the JSON parser's or the regex engine's own words) stays as is,
+// inside a translated sentence. An older plain-text reason is shown as is.
+export function describeRuleError(error, t = english) {
+  if (error == null) return ''
+  if (typeof error === 'string') return error
+  if (!isObject(error)) return String(error)
+  const reason = problemText(error, t)
+  return error.at ? t('main.agentRules.at', '{{at}}: {{reason}}', { at: error.at, reason }) : reason
+}
+
+function problemText(e, t) {
+  switch (e.code) {
+    case 'tooLarge':
+      return t('main.agentRules.tooLarge', 'the file is larger than {{kb}} KB', { kb: e.kb })
+    case 'unreadable':
+      return t('main.agentRules.unreadable', 'cannot read the file: {{error}}', { error: e.detail })
+    case 'badJson':
+      return t('main.agentRules.badJson', 'not valid JSON: {{error}}', { error: e.detail })
+    case 'notOneObject':
+      return t('main.agentRules.notOneObject', 'the file must hold one JSON object')
+    case 'notObject':
+      return t('main.agentRules.notObject', 'must be an object')
+    case 'unknownField':
+      return t('main.agentRules.unknownField', 'unknown field "{{field}}"', { field: e.field })
+    case 'noFileId':
+      return t('main.agentRules.noFileId', 'id is missing')
+    case 'badEngineVersion':
+      return t('main.agentRules.badEngineVersion', 'engineVersion must be {{version}}', { version: e.version })
+    case 'agentsNotObject':
+      return t('main.agentRules.agentsNotObject', 'agents must be an object: { "claude": { "rules": [...] } }')
+    case 'unknownAgent':
+      return t('main.agentRules.unknownAgent', '"{{agent}}" is not an agent Tessel knows', { agent: e.agent })
+    case 'notList':
+      return t('main.agentRules.notList', 'must be a list')
+    case 'tooManyRules':
+      return t('main.agentRules.tooManyRules', '{{max}} rules at most', { max: e.max })
+    case 'idTwice':
+      return t('main.agentRules.idTwice', 'id "{{id}}" is used twice', { id: e.id })
+    case 'disableNotList':
+      return t('main.agentRules.disableNotList', 'must be a list of rule ids')
+    case 'tooManyDisabled':
+      return t('main.agentRules.tooManyDisabled', '{{max}} ids at most', { max: e.max })
+    case 'disableNotId':
+      return t('main.agentRules.disableNotId', 'must be a rule id')
+    case 'noRuleToDisable':
+      return t('main.agentRules.noRuleToDisable', 'no rule "{{id}}" to turn off', { id: e.id })
+    case 'badRuleId':
+      return t('main.agentRules.badRuleId', 'id must be letters, digits, ".", "_" or "-" ({{max}} at most)', { max: e.max })
+    case 'badKind':
+      return t('main.agentRules.badKind', 'kind must be one of {{kinds}}', { kinds: e.kinds })
+    case 'noRegex':
+      return t('main.agentRules.noRegex', 'regex must be a pattern text')
+    case 'regexTooLong':
+      return t('main.agentRules.regexTooLong', 'regex is longer than {{max}} characters', { max: e.max })
+    case 'badIgnoreCase':
+      return t('main.agentRules.badIgnoreCase', 'ignoreCase must be true or false')
+    case 'badWhy':
+      return t('main.agentRules.badWhy', 'why must be a text ({{max}} characters at most)', { max: e.max })
+    case 'prefixNotReset':
+      return t('main.agentRules.prefixNotReset', 'prefix is for limit-reset rules')
+    case 'badPrefix':
+      return t('main.agentRules.badPrefix', 'prefix must be a text ({{max}} characters at most)', { max: e.max })
+    case 'regexCompile':
+      return t('main.agentRules.regexCompile', 'regex does not compile: {{error}}', { error: e.detail })
+    case 'unsafeRegex':
+      if (e.why === 'backreference') return t('main.agentRules.unsafeRegex.backreference', 'regex uses a backreference')
+      if (e.why === 'lookbehind') return t('main.agentRules.unsafeRegex.lookbehind', 'regex uses a lookbehind')
+      if (e.why === 'noCompile') return t('main.agentRules.unsafeRegex.noCompile', 'regex does not compile')
+      return t('main.agentRules.unsafeRegex.repeatedGroup', 'regex repeats a group that can match in more than one way')
+    case 'matchesEmpty':
+      return t('main.agentRules.matchesEmpty', 'regex matches empty text (it would match every screen)')
+    case 'resetNeedsGroup':
+      return t('main.agentRules.resetNeedsGroup', 'a limit-reset regex needs a group around the reset time')
+    default:
+      return String(e.code || '') // i18n-ignore an unknown code, from a newer main
+  }
 }
 
 // How many rules the override adds, replaces or turns off (Settings).
