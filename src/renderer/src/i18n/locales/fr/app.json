@@ -72,7 +72,7 @@
       "openLogs": "Ouvrir le dossier des journaux",
       "copyDiagnostics": "Copier les diagnostics",
       "foot": "Déposez des fichiers sur un panneau pour coller leurs chemins. Sélectionnez du texte pour le copier, clic droit pour coller. Maj+clic droit sur un panneau pour plus d’options.",
-      "chatApproval": "Dans un pane de chat : aller à la demande qui attend votre réponse",
+      "chatApproval": "Dans un panneau de chat : aller à la demande qui attend votre réponse",
       "floatingTerminal": "Afficher ou masquer le terminal flottant (la touche à gauche de 1)"
     },
     "toolbar": {

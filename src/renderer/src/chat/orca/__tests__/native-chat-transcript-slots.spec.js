@@ -344,4 +344,15 @@ describe('a settled turn (Tessel)', ()=>{
         expect(slots.map((slot)=>slot.message.id)).toEqual(['u', 'e', 'w', 'b']);
         expect(slots.every((slot)=>!slot.folded)).toBe(true);
     });
+    it("keeps a slash command's \"Ran /compact\" row in view, as the session notices", ()=>{
+        const messages = [
+            text('u', 'Then say done.', 'user'),
+            text('b', 'Done.'),
+            text('command:1-1', 'Ran /compact', 'system')
+        ];
+        const slots = build(messages, {
+            turnStatuses: { active: null, completedByTurn: { u: { startedAt: 1, workedSeconds: 2 } } }
+        });
+        expect(slots.map((slot)=>slot.message.id)).toEqual(['u', 'b', 'command:1-1']);
+    });
 });

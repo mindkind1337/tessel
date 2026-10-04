@@ -53,13 +53,16 @@ export function childTime(c, now = Date.now()) {
 // files say "running", then "quiet", forever. It is active only while it
 // really can be: it wrote in the last CHILD_STALE_MS, and, once its parent's
 // turn is over (the pane idle since parentIdleSince), it wrote after that end
-// (a background sub-agent keeps writing; a stopped one does not).
+// (a background sub-agent keeps writing; a stopped one does not), unless
+// Claude says it was started in the background (background: true).
 export const CHILD_STALE_MS = 10 * 60 * 1000
 const PARENT_GRACE_MS = 5 * 1000
 export function childActive(c, { now = Date.now(), parentIdleSince = null } = {}) {
   if (!c || c.state !== 'running') return false
   if (Number.isFinite(c.lastAt) && now - c.lastAt > CHILD_STALE_MS) return false
-  if (Number.isFinite(parentIdleSince)) {
+  // One started in the background works on after its parent's turn, even
+  // while it writes nothing (one long answer); it is over when it says so.
+  if (Number.isFinite(parentIdleSince) && c.background !== true) {
     const at = c.lastAt || c.startedAt || 0
     if (at <= parentIdleSince + PARENT_GRACE_MS) return false
   }

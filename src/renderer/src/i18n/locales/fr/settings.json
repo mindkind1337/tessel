@@ -261,9 +261,9 @@
       "maxDepthHint": "1 : les exécutants du chef ne peuvent pas lancer leurs propres exécutants ; 2 : ils le peuvent, une fois ; jusqu'à {{max}}",
       "trust": "Chaque demande d'exécutant est signée avec un secret que seul son panneau possède, et Tessel vérifie qui l'a envoyée et si elle est encore permise ; les réponses (comme ce qu'affiche un exécutant) sont chiffrées pour l'agent qui les a demandées. Cela empêche un agent de se faire passer pour un autre par erreur ou à peu de frais. Tous les agents tournent sous votre utilisateur Windows : cela ne peut pas arrêter un programme déterminé qui tourne en votre nom.",
       "workerMode": "Mode des nouveaux workers",
-      "workerModeHint": "Claude et Codex peuvent travailler dans un pane de chat, sans terminal. Les autres agents utilisent un pane terminal. Ce choix s'applique aux prochains workers ; il ne transforme pas ceux déjà ouverts.",
-      "workerModeTerminal": "Un pane terminal",
-      "workerModeChat": "Un pane de chat (Claude, Codex)",
+      "workerModeHint": "Claude et Codex peuvent travailler dans un panneau de chat, sans terminal. Les autres agents utilisent un panneau terminal. Ce choix s'applique aux prochains workers ; il ne transforme pas ceux déjà ouverts.",
+      "workerModeTerminal": "Un panneau terminal",
+      "workerModeChat": "Un panneau de chat (Claude, Codex)",
       "hooksTitle": "Hooks des agents",
       "hooksIntro": "Tessel ajoute de petits hooks aux réglages de vos agents pour montrer ce que fait chacun et lui remettre les messages de l'équipe. Seules les entrées de Tessel sont ajoutées ; vos autres hooks et réglages restent tels quels.",
       "cursorHooks": "Hooks d'état de Cursor",
@@ -748,7 +748,7 @@
       "removeTitle": "Retirer la commande « {{name}} » ?",
       "removeText": "La commande sera supprimée et son dossier retiré du PATH de votre compte Windows. L’application Tessel restera installée.",
       "remove": "Retirer",
-      "agentsNote": "Les programmes exécutés sous votre compte, y compris les agents des panes de Tessel, peuvent aussi utiliser cette commande pour ouvrir des projets, des fichiers et des panes, ou ajouter des cartes. Elle ne saisit aucun texte dans un terminal et ne répond à aucune demande de confirmation."
+      "agentsNote": "Les programmes exécutés sous votre compte, y compris les agents des panneaux de Tessel, peuvent aussi utiliser cette commande pour ouvrir des projets, des fichiers et des panneaux, ou ajouter des cartes. Elle ne saisit aucun texte dans un terminal et ne répond à aucune demande de confirmation."
     }
   }
 }

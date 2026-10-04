@@ -16,7 +16,7 @@ describe("a Claude Code conversation's sub-agents", () => {
 
   it('finished only when its last message ended the turn and nothing followed', () => {
     const a = { type: 'assistant', timestamp: '2026-09-28T10:05:00Z', message: { stop_reason: 'end_turn', usage: { input_tokens: 2, cache_read_input_tokens: 100000, cache_creation_input_tokens: 5000, output_tokens: 800 } } }
-    expect(summarizeTail([line(a), line({ type: 'attachment', timestamp: '2026-09-28T10:05:01Z' })])).toEqual({ done: true, last: Date.parse('2026-09-28T10:05:01Z'), tokens: 105802, model: null })
+    expect(summarizeTail([line(a), line({ type: 'attachment', timestamp: '2026-09-28T10:05:01Z' })])).toEqual({ done: true, last: Date.parse('2026-09-28T10:05:01Z'), tokens: 105802, model: null, decided: true })
     const working = [line({ ...a, message: { ...a.message, stop_reason: 'tool_use' } }), line({ type: 'user', timestamp: '2026-09-28T10:06:00Z' })]
     expect(summarizeTail(working).done).toBe(false)
   })
@@ -56,6 +56,37 @@ describe("a Claude Code conversation's sub-agents", () => {
 
   const event = (at, stop) =>
     line({ type: 'assistant', timestamp: new Date(at).toISOString(), message: { stop_reason: stop, usage: { input_tokens: 1, output_tokens: 2 } } }) + '\n'
+
+  it('a finished one is done even when a line after its end is larger than the tail read (Claude notes its whole prompt)', () => {
+    const dir = join(claudeDir, 'projects', 'C--proj', SID, 'subagents')
+    fs.mkdirSync(dir, { recursive: true })
+    const now = Date.parse('2026-09-28T10:30:00Z')
+    const big = 'x'.repeat(150 * 1024)
+    fs.writeFileSync(
+      join(dir, 'agent-big.jsonl'),
+      [
+        line({ type: 'user', timestamp: '2026-09-28T10:29:00Z' }),
+        line({ type: 'assistant', timestamp: '2026-09-28T10:29:30Z', message: { stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } } }),
+        line({ type: 'attachment', timestamp: '2026-09-28T10:29:31Z', attachment: { type: 'prompt_snapshot', systemPrompt: [big] } }),
+        line({ type: 'attachment', timestamp: '2026-09-28T10:29:32Z', attachment: { type: 'hook_success' } })
+      ].join('\n') + '\n'
+    )
+    const c = claudeSubagents(SID, claudeDir, now).find((a) => a.id === 'big')
+    expect(c.state).toBe('done')
+  })
+
+  it("one Claude started in the background says so (its meta's requestShape)", () => {
+    const dir = join(claudeDir, 'projects', 'C--proj', SID, 'subagents')
+    fs.mkdirSync(dir, { recursive: true })
+    const now = Date.parse('2026-09-28T10:30:00Z')
+    fs.writeFileSync(join(dir, 'agent-bgx.meta.json'), JSON.stringify({ agentType: 'general-purpose', description: 'Poem', requestShape: 'background' }))
+    fs.writeFileSync(join(dir, 'agent-bgx.jsonl'), line({ type: 'user', timestamp: new Date(now - 5000).toISOString() }) + '\n')
+    fs.writeFileSync(join(dir, 'agent-fgx.meta.json'), JSON.stringify({ agentType: 'general-purpose', description: 'Fix' }))
+    fs.writeFileSync(join(dir, 'agent-fgx.jsonl'), line({ type: 'user', timestamp: new Date(now - 6000).toISOString() }) + '\n')
+    const list = claudeSubagents(SID, claudeDir, now)
+    expect(list.find((a) => a.id === 'bgx').background).toBe(true)
+    expect(list.find((a) => a.id === 'fgx').background).toBe(false)
+  })
 
   it('an unfinished one silent for 16 min is quiet (not stopped, no end date)', () => {
     const dir = join(claudeDir, 'projects', 'C--proj', SID, 'subagents')
