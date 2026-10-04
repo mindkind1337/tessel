@@ -118,3 +118,19 @@ describe('a sleeping agent restored after a restart or a reload', () => {
     expect(alone.teamTools).toBeUndefined()
   })
 })
+
+describe('the pane a workspace opens on after a restart or a reload', () => {
+  // App.vue's own functions: the first pane, else (all asleep) the first one.
+  const ctx = {}
+  vm.createContext(ctx)
+  vm.runInContext(slice('function firstLeafId(node)', '// --- Workspace persistence') + '\nthis.api = { firstLeafId, firstAwakeLeafId }', ctx)
+  const leaf = (id, extra = {}) => ({ type: 'leaf', id, ...extra })
+  const split = (...children) => ({ type: 'split', children })
+
+  it('is not an agent put to sleep (opening it would wake it)', () => {
+    const tree = split(leaf('ada', { sleeping: { at: 1 } }), split(leaf('bohr'), leaf('curie')))
+    expect(ctx.api.firstAwakeLeafId(tree)).toBe('bohr')
+    expect(ctx.api.firstAwakeLeafId(split(leaf('a', { sleeping: { at: 1 } }), leaf('b', { sleeping: { at: 2 } })))).toBe('a')
+    expect(ctx.api.firstAwakeLeafId(null)).toBe(null)
+  })
+})

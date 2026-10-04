@@ -1454,6 +1454,20 @@ function firstLeafId(node) {
   }
   return null
 }
+// The pane a restored workspace opens on: the first one not asleep (opening
+// a sleeping agent wakes it), else the first one.
+function firstAwakeLeafId(node) {
+  const awake = (n) => {
+    if (!n) return null
+    if (n.type === 'leaf') return n.sleeping ? null : n.id
+    for (const c of n.children) {
+      const id = awake(c)
+      if (id) return id
+    }
+    return null
+  }
+  return awake(node) || firstLeafId(node)
+}
 
 // --- Workspace persistence -------------------------------------------------
 // Serialize the live tree into a plain snapshot (no PTYs / pids / runtime ids).
@@ -9872,7 +9886,7 @@ async function restoreOrSeedLayout() {
         if (!leaf) continue
         ws.tree = leaf
       }
-      ws.activeId = firstLeafId(ws.tree)
+      ws.activeId = firstAwakeLeafId(ws.tree)
       workspaces.value.push(ws)
     }
     if (workspaces.value.length) {
