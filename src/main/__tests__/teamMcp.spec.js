@@ -1081,3 +1081,96 @@ describe('the team tools say they are running', () => {
     }
   }, 20000)
 })
+
+describe('an agent on an SSH host (TESSEL_REMOTE=1)', () => {
+  let dir
+  const teamId = 'team-1'
+  const A = { id: 'pane-1-aaaaaa', num: 1, title: 'Claude Code' }
+  const B = { id: 'pane-4-bbbbbb', num: 4, title: 'Claude Code' }
+  const state = () => JSON.parse(fs.readFileSync(join(dir, '.tessel', 'team-channel', teamId, 'state.json'), 'utf8'))
+  const remote = (pane, host = 'build-box') => {
+    process.env.TESSEL_PANE_ID = pane.id
+    process.env.TESSEL_PROJECT_DIR = dir
+    process.env.TESSEL_REMOTE = '1'
+    process.env.TESSEL_REMOTE_HOST = host
+  }
+  const call = (name, args = {}) => mcp.handle({ id: 1, method: 'tools/call', params: { name, arguments: args } })
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(join(os.tmpdir(), 'tessel-mcp-remote-'))
+    ensureTeamChannel({ dir, teamId, members: [A, B] })
+    writeCurrentTeams({ dir, panes: { [A.id]: { team: teamId, num: 1 }, [B.id]: { team: teamId, num: 4 } } })
+  })
+  afterEach(() => {
+    for (const k of ['TESSEL_PANE_ID', 'TESSEL_PROJECT_DIR', 'TESSEL_REMOTE', 'TESSEL_REMOTE_HOST']) delete process.env[k]
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('neither lists nor runs the browser and worker tools', () => {
+    const all = mcp.handle({ id: 1, method: 'tools/list' }).tools.map((t) => t.name)
+    expect(all).toContain('browser_open')
+    remote(A)
+    const names = mcp.handle({ id: 1, method: 'tools/list' }).tools.map((t) => t.name)
+    expect(names.filter((n) => n.startsWith('browser_'))).toEqual([])
+    for (const n of ['team_worker_start', 'team_worker_read', 'team_worker_stop', 'team_worker_release', 'team_worker_list']) expect(names).not.toContain(n)
+    // A remote agent can still be a worker: it reports, and the board and messages stay.
+    expect(names).toEqual(expect.arrayContaining(['team_worker_done', 'team_heartbeat', 'team_send', 'team_task_add', 'team_inbox']))
+    for (const n of ['browser_navigate', 'team_worker_start', 'team_worker_read']) {
+      const r = call(n, { url: 'http://localhost/', agent: 'claude', task: 'x', brief: 'y' })
+      expect(r.isError).toBe(true)
+      expect(r.content[0].text).toMatch(/not available to an agent on an SSH host \(build-box\)/)
+    }
+    expect(mcp.handle({ id: 1, method: 'initialize' }).instructions).not.toMatch(/browser_snapshot|team_worker_start/)
+  })
+
+  it('its messages and reports say which host they come from', () => {
+    remote(A, 'build-box\n[evil]')
+    expect(mcp.send(mcp.locate(), '#4', 'hello').ok).toBe(true)
+    const box = join(dir, '.tessel', 'team-channel', teamId, 'outbox', state().members[A.id].token)
+    const sent = fs.readdirSync(box).filter((n) => n.endsWith('.json')).map((n) => JSON.parse(fs.readFileSync(join(box, n), 'utf8')))
+    expect(sent.map((m) => m.text)).toEqual(['[from an agent on build-box evil] hello'])
+    // The tag counts in the length limit.
+    expect(mcp.send(mcp.locate(), '#4', 'x'.repeat(5990)).error).toMatch(/too long/)
+    expect(mcp.reportTask(mcp.locate(), { id: 'task-1', summary: 'did it' }).ok).toBe(true)
+    const req = takeTeamRequests({ dir, teamId }).requests.find((r) => r.action === 'report')
+    expect(req.summary).toBe('[from an agent on build-box evil] did it')
+  })
+
+  it('only the project folder Tessel gave is searched, never its own or a given folder', () => {
+    remote(A)
+    expect(mcp.candidateDirs(join(dir, 'sub'))).toEqual([dir])
+    delete process.env.TESSEL_PROJECT_DIR
+    expect(mcp.candidateDirs(dir)).toEqual([])
+    expect(mcp.locate(null, dir).error).toBeTruthy()
+  })
+
+  it('hooks ignore the transcript path and folder sent from the host', async () => {
+    const sessions = fs.mkdtempSync(join(os.tmpdir(), 'tessel-sessions-'))
+    const config = fs.mkdtempSync(join(os.tmpdir(), 'tessel-claude-config-'))
+    const inside = join(config, 'projects', 'C--proj', '99999999-2222-4333-8444-555555555555.jsonl')
+    const run = (input, env) =>
+      new Promise((resolve) => {
+        const child = spawn(process.execPath, [SERVER, '--hook'], {
+          env: { ...process.env, TESSEL_PANE_ID: B.id, TESSEL_SESSIONS_DIR: sessions, CLAUDE_CONFIG_DIR: config, TESSEL_REMOTE: '1', TESSEL_REMOTE_HOST: 'build-box', ...env }
+        })
+        let out = ''
+        child.stdout.on('data', (c) => (out += c))
+        child.on('close', () => resolve(out))
+        child.stdin.end(JSON.stringify({ session_id: '11111111-2222-4333-8444-555555555555', transcript_path: inside, ...input }))
+      })
+    await run({ hook_event_name: 'SessionStart', cwd: dir }, { TESSEL_PROJECT_DIR: dir })
+    const report = JSON.parse(fs.readFileSync(join(sessions, `${B.id}.json`), 'utf8'))
+    expect(report.transcriptPath).toBeUndefined()
+    expect(report.cwd).toBe('')
+    // A message for B: shown only through TESSEL_PROJECT_DIR, never found from the cwd sent.
+    process.env.TESSEL_PANE_ID = A.id
+    process.env.TESSEL_PROJECT_DIR = dir
+    mcp.send(mcp.locate(), '#4', 'Ping from A')
+    delete process.env.TESSEL_PROJECT_DIR
+    pollTeamChannel({ dir, teamId })
+    expect(await run({ hook_event_name: 'PostToolUse', cwd: dir }, { TESSEL_PROJECT_DIR: '' })).toBe('')
+    expect(JSON.parse(await run({ hook_event_name: 'PostToolUse', cwd: '/nowhere' }, { TESSEL_PROJECT_DIR: dir })).hookSpecificOutput.additionalContext).toMatch(/Ping from A/)
+    fs.rmSync(sessions, { recursive: true, force: true })
+    fs.rmSync(config, { recursive: true, force: true })
+  })
+})
