@@ -22,6 +22,27 @@ export class AgentBrowserTargetError extends Error {
 }
 const refuse = (code, message) => new AgentBrowserTargetError(code, message)
 
+// Where a page an agent opens goes in its grid (a new tree; `tree` is not
+// changed). The first one: beside the agent (`near` = the agent, dir 'row').
+// The next ones: with the pages it opened (`near` = its last page, dir
+// 'col'), as one more equal row of that group, so the agent's own pane keeps
+// its room (each page used to halve the agent's pane: five pages left it a
+// sliver). mine(node): a page this agent opened.
+// makeSplit(dir, children, sizes) -> a split node.
+export function addPageNear(tree, nearId, page, { dir = 'row', mine = () => false, makeSplit }) {
+  const walk = (node) => {
+    if (!node) return node
+    if (node.type === 'leaf') return node.id === nearId ? makeSplit(dir, [node, page], [50, 50]) : node
+    const i = node.children.findIndex((c) => c.type === 'leaf' && c.id === nearId)
+    if (i >= 0 && node.dir === dir && node.children.every(mine)) {
+      const children = [...node.children.slice(0, i + 1), page, ...node.children.slice(i + 1)]
+      return { ...node, children, sizes: children.map(() => 100 / children.length) }
+    }
+    return { ...node, children: node.children.map(walk) }
+  }
+  return walk(tree)
+}
+
 export const GUEST_WAIT_MS = 10000
 // Pages one agent may have opened at a time (browser_open).
 export const MAX_AGENT_PAGES = 5
@@ -95,7 +116,10 @@ export function createAgentBrowserTargets(deps) {
       let mine = 0
       for (const w of deps.workspaces()) deps.forEachLeaf(w.tree, (l) => l.kind === 'browser' && l.openedBy === leaf.id && mine++)
       if (mine >= MAX_AGENT_PAGES) throw refuse('too_many_pages', `You already opened ${MAX_AGENT_PAGES} browser pages: reuse one (browser_pages, then "page" or browser_navigate).`) // i18n-ignore
-      const page = deps.openPage({ ws, near: leaf, url: req.url })
+      // Its last page still in its grid: the new one goes with it.
+      let last = null
+      deps.forEachLeaf(ws.tree, (l) => l.kind === 'browser' && l.openedBy === leaf.id && deps.sameView(l, leaf, ws) && (last = l))
+      const page = deps.openPage({ ws, near: last || leaf, url: req.url, stack: !!last })
       if (!page) throw refuse('open_failed', 'Tessel could not open a browser pane.') // i18n-ignore
       page.openedBy = leaf.id
       return { agent, page: page.id, guestId: await waitGuest(page.id) }

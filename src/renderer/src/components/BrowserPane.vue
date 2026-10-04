@@ -1250,7 +1250,9 @@ defineExpose({ navigate, focusAddress })
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+  container-type: inline-size;
 }
+
 
 /* Orca's navigation control row: back, forward, reload, the address, tools. */
 .bp-toolbar {
@@ -1361,6 +1363,24 @@ defineExpose({ navigate, focusAddress })
   color: var(--text-dim);
 }
 
+/* A narrow pane (the side panel's default width, a third of the grid): the
+   buttons left no room for the address, which shrank to its globe. The
+   address then gets a row of its own under the buttons. */
+@container (max-width: 520px) {
+  .bp-toolbar {
+    flex-wrap: wrap;
+    height: auto;
+    min-height: 38px;
+    padding: 5px 8px;
+    row-gap: 5px;
+  }
+  .bp-address {
+    order: 10;
+    flex: 1 1 100%;
+    margin: 0;
+  }
+}
+
 .bp-address-error {
   position: absolute;
   top: calc(100% + 6px);
@@ -1381,12 +1401,16 @@ defineExpose({ navigate, focusAddress })
   flex: 0 0 auto;
 }
 
+/* Icon, name, Stop: only the name shrinks (minmax(0, …)), so in a narrow
+   pane the badge keeps its icon and Stop and never overlaps the next button. */
 .bp-agent {
-  display: flex;
+  display: grid;
+  grid-auto-flow: column;
+  grid-template-columns: auto minmax(0, max-content) auto;
   align-items: center;
   gap: 5px;
   flex: 0 1 auto;
-  min-width: 0;
+  min-width: min-content;
   height: 24px;
   padding: 0 3px 0 7px;
   border-radius: 12px;

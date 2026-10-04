@@ -62,7 +62,7 @@ import FileFinder from './components/FileFinder.vue'
 import UsageMenu from './components/UsageMenu.vue'
 import { acquirePassthrough, trackPointerDrag } from './browser/webviewPassthrough'
 import { pageOf } from './browser/pageHost'
-import { createAgentBrowserTargets } from './browser/agentBrowserTargets'
+import { createAgentBrowserTargets, addPageNear } from './browser/agentBrowserTargets'
 import GitHubDialog from './components/GitHubDialog.vue'
 import LinearDialog from './components/LinearDialog.vue'
 import { createExternalIssueStarter } from './externalIssues'
@@ -1026,22 +1026,23 @@ function newUuid() {
 async function agentStartLine(agent, sessionId, resume, accountId) {
   const kind = sessionKind(agent)
   if (kind === 'claude' || kind === 'openclaude') {
-    if (sessionId && resume) {
-      // Resume if the conversation exists. If we can't check (older app
-      // version), try resuming anyway rather than reusing an id in use.
-      const exists =
-        kind === 'openclaude'
-          ? window.shellApi.agentResumeTarget
-            ? !!(await window.shellApi.agentResumeTarget({ agent: kind, sessionId }).catch(() => null))
-            : true
-          : window.shellApi.claudeSessionExists
-            ? await window.shellApi.claudeSessionExists(sessionId, accountId !== undefined ? { accountId } : undefined)
-            : true
-      if (exists)
-        return { line: `${agent.command} --resume ${sessionId}`, sessionId, resumed: true } // i18n-ignore
-    }
-    // No transcript yet (you never messaged it): start fresh, same id.
-    const id = sessionId || newUuid()
+    // Whether the conversation exists. If we can't check (older app
+    // version), assume it does: resume it rather than reuse an id in use.
+    const exists = !sessionId
+      ? false
+      : kind === 'openclaude'
+        ? window.shellApi.agentResumeTarget
+          ? !!(await window.shellApi.agentResumeTarget({ agent: kind, sessionId }).catch(() => null))
+          : true
+        : window.shellApi.claudeSessionExists
+          ? await window.shellApi.claudeSessionExists(sessionId, accountId !== undefined ? { accountId } : undefined)
+          : true
+    if (sessionId && resume && exists)
+      return { line: `${agent.command} --resume ${sessionId}`, sessionId, resumed: true } // i18n-ignore
+    // No transcript yet (you never messaged it): start fresh, same id. Not
+    // resuming one that exists ("Resume agents" off): a new id, since Claude
+    // Code refuses an id in use and the agent would not start.
+    const id = sessionId && !exists ? sessionId : newUuid()
     return { line: `${agent.command} --session-id ${id}`, sessionId: id, resumed: false } // i18n-ignore
   }
   if (kind === 'codex') {
@@ -8437,11 +8438,16 @@ const agentBrowserTargets = createAgentBrowserTargets({
   paneLabel,
   // Next to the agent's pane, in its grid; the screen and the keyboard stay
   // where they are.
-  openPage({ ws, near, url }) {
+  // Its next pages: stacked with the ones it opened (addPageNear).
+  openPage({ ws, near, url, stack = false }) {
     if (!workspaces.value.includes(ws) || !findLeafIn(ws.tree, near.id)) return null
     const leaf = makeBrowserLeaf(null, url)
     keepView(leaf, near, ws)
-    ws.tree = replaceNode(ws.tree, near.id, (orig) => reactive({ type: 'split', id: newId('split'), dir: 'row', sizes: [50, 50], children: [orig, leaf] }))
+    ws.tree = addPageNear(ws.tree, near.id, leaf, {
+      dir: stack ? 'col' : 'row',
+      mine: (n) => n === leaf || (n.type === 'leaf' && n.kind === 'browser' && !!near.openedBy && n.openedBy === near.openedBy),
+      makeSplit: (dir, children, sizes) => reactive({ type: 'split', id: newId('split'), dir, sizes, children })
+    })
     refitSoon()
     return leaf
   }

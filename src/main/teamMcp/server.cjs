@@ -1106,7 +1106,7 @@ const BROWSER_TOOLS = [
   },
   {
     name: 'browser_fill',
-    description: 'Replace the text of a field (ref from browser_snapshot) with "text". Never for password fields: ask the user to type those.',
+    description: 'Replace the text of a field (ref from browser_snapshot) with "text"; on a list (combobox), choose the option with this label. Never for password fields: ask the user to type those.',
     inputSchema: { type: 'object', properties: { ref: { type: 'string' }, text: { type: 'string' }, ...PAGE_ARG }, required: ['ref', 'text'] }
   },
   {

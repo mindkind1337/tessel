@@ -241,7 +241,10 @@ export function createBrowserGuests({ getWindow, send, log = null, screenshotDir
       disableHtmlFullscreenWindowResize: true,
       // alert() in a loop would hold Tessel's whole window: from the second
       // dialog on, the page's dialogs can be turned off.
-      safeDialogs: true
+      safeDialogs: true,
+      // A guest is transparent by default: a page without its own background
+      // (and its frames) showed on Tessel's dark pane. White, as in a browser.
+      transparent: false
     })
     params.src = src
   }
