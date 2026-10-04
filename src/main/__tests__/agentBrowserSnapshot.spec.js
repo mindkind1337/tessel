@@ -276,6 +276,52 @@ describe('snapshot of the accessibility tree', () => {
     expect(r.snapshot).toBe('[@e1] button "OK"')
     expect(calls).toEqual(['Accessibility.enable', 'Accessibility.getFullAXTree'])
   })
+
+  // An <iframe> is an "Iframe" node without children in its page's tree: its
+  // content is read on its own (same process: by frame id; another site: in
+  // its own debugger session) and listed under it, its refs saying where.
+  it('lists the content of frames under them, nested too; a frame that cannot be read says so', async () => {
+    const trees = {
+      main: [
+        { nodeId: '1', role: { value: 'RootWebArea' }, childIds: ['2', '3', '4'] },
+        { nodeId: '2', role: { value: 'button' }, name: { value: 'Top' }, backendDOMNodeId: 2 },
+        { nodeId: '3', role: { value: 'Iframe' }, name: { value: 'Pay' }, backendDOMNodeId: 3, childIds: [] },
+        { nodeId: '4', role: { value: 'Iframe' }, name: { value: '' }, backendDOMNodeId: 4, childIds: [] }
+      ],
+      'main:F2': [
+        { nodeId: '1', role: { value: 'RootWebArea' }, childIds: ['2', '3'] },
+        { nodeId: '2', role: { value: 'textbox' }, name: { value: 'Card' }, backendDOMNodeId: 20 },
+        { nodeId: '3', role: { value: 'Iframe' }, name: { value: 'Widget' }, backendDOMNodeId: 21 }
+      ],
+      'S1:': [
+        { nodeId: '1', role: { value: 'RootWebArea' }, childIds: ['2'] },
+        { nodeId: '2', role: { value: 'button' }, name: { value: 'Confirm' }, backendDOMNodeId: 5 }
+      ]
+    }
+    const sendFor = (session) => async (m, p = {}) => {
+      if (m === 'Accessibility.getFullAXTree') return { nodes: trees[`${session}:${p.frameId || ''}`] || trees[session] || [] }
+      return {}
+    }
+    const opened = []
+    const openFrame = async ({ session, backendNodeId }) => {
+      opened.push([session, backendNodeId])
+      if (backendNodeId === 3) return { session: null, send: sendFor('main'), frameId: 'F2' }
+      if (backendNodeId === 21) return { session: 'S1', send: sendFor('S1'), frameId: null }
+      return null
+    }
+    const r = await buildSnapshot(sendFor('main'), { openFrame })
+    expect(r.snapshot.split('\n')).toEqual(['[@e1] button "Top"', 'frame "Pay"', '  [@e2] text input "Card" (empty)', '  frame "Widget"', '    [@e3] button "Confirm"', 'frame "frame" (not readable)'])
+    expect(opened).toEqual([
+      [null, 3],
+      [null, 21],
+      [null, 4]
+    ])
+    expect(r.refMap.get('@e1')).toMatchObject({ backendDOMNodeId: 2, session: null, frameId: null })
+    expect(r.refMap.get('@e2')).toMatchObject({ backendDOMNodeId: 20, session: null, frameId: 'F2' })
+    expect(r.refMap.get('@e3')).toMatchObject({ backendDOMNodeId: 5, session: 'S1', frameId: null })
+    // Without a way to open frames: only their line.
+    expect((await buildSnapshot(sendFor('main'))).snapshot.split('\n')).toEqual(['[@e1] button "Top"', 'frame "Pay"', 'frame "frame"'])
+  })
 })
 
 describe('keys and password fields', () => {

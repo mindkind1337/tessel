@@ -7,7 +7,7 @@
 // page) and Fullscreen (the panel over the whole workspace; Esc restores it).
 // A tab is created the first time it is shown, then kept (its folders,
 // search and scroll stay as they were) while the panel is open.
-import { reactive, ref, watch, computed, onMounted, onBeforeUnmount } from 'vue'
+import { reactive, ref, watch, computed, provide, onMounted, onBeforeUnmount } from 'vue'
 import ExplorerPanel from './ExplorerPanel.vue'
 import { refreshStatus, statusOf, changeCount, rootKey } from '../scmState'
 import ChangesPanel from './ChangesPanel.vue'
@@ -147,6 +147,16 @@ onMounted(() => {
 function setFullscreen(on) {
   if (!!on !== props.fullscreen) emit('update:fullscreen', !!on)
 }
+// A web page of the panel with the keyboard (its address bar, the page):
+// the window's Esc never comes here, the page asks (SideBrowser.vue).
+// -> whether fullscreen was left.
+provide('sideFullscreen', {
+  exit: () => {
+    if (!props.fullscreen) return false
+    setFullscreen(false)
+    return true
+  }
+})
 // A pane brought to the front from the panel: fullscreen would hide it.
 function focusPane(id) {
   setFullscreen(false)

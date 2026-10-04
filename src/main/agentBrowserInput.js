@@ -7,9 +7,10 @@
 //
 // Tessel's differences: text never goes into a password field. The ref's
 // element and the element that really has the keyboard (through shadow
-// roots and same-origin frames) are checked in an isolated world before
-// each fill, type or printable key; a field once seen as a password stays
-// one for the page's life; focus Tessel cannot see is refused (fail closed).
+// roots and same-origin frames; a frame from another site in its own debugger
+// session) are checked in an isolated world before each fill, type or
+// printable key; a field once seen as a password stays one for the page's
+// life; focus Tessel cannot see is refused (fail closed).
 
 export class BrowserInputError extends Error {
   constructor(code, message) {
@@ -222,13 +223,18 @@ async function inspectElement(send, objectId, cache) {
   return { secret, opaque: closed, backendNodeId }
 }
 
-// Where the keyboard is: { none } (nowhere), or { secret, opaque }. Any
-// error counts as opaque (the caller refuses: fail closed).
-export async function focusedField(send, cache = null) {
+// The same, in a frame from another site: only if that frame's document
+// has the keyboard ('elsewhere' if not).
+const FRAME_DEEP_ACTIVE = `(document.hasFocus() ? ${DEEP_ACTIVE} : 'elsewhere')`
+
+// One document's keyboard: { none }, { elsewhere }, { inFrame } (in a frame
+// it cannot see into) or { secret, opaque }. Errors: opaque.
+async function focusIn(send, cache, expression) {
   try {
     const contextId = await isolatedWorld(send, cache)
-    const { result } = await send('Runtime.evaluate', { expression: DEEP_ACTIVE, contextId, returnByValue: false })
-    if (result && result.type === 'string' && result.value === 'opaque') return { secret: false, opaque: true }
+    const { result } = await send('Runtime.evaluate', { expression, contextId, returnByValue: false })
+    if (result && result.type === 'string' && result.value === 'elsewhere') return { elsewhere: true }
+    if (result && result.type === 'string' && result.value === 'opaque') return { secret: false, opaque: true, inFrame: true }
     if (!result || !result.objectId) return { none: true, secret: false, opaque: false }
     const info = await inspectElement(send, result.objectId, cache)
     send('Runtime.releaseObject', { objectId: result.objectId }).catch(() => {})
@@ -236,6 +242,23 @@ export async function focusedField(send, cache = null) {
   } catch {
     return { secret: false, opaque: true }
   }
+}
+
+// Where the keyboard is: { none } (nowhere), or { secret, opaque }. Any
+// error counts as opaque (the caller refuses: fail closed). frames: the
+// page's frames from other sites ([{ send, cache }], their own debugger
+// sessions): focus in one of them is looked at there ({ remote: true }).
+export async function focusedField(send, cache = null, frames = []) {
+  const top = await focusIn(send, cache, DEEP_ACTIVE)
+  if (!top.inFrame) return top
+  // The frame whose document has the keyboard and shows where in it (its
+  // parent frames have it too, but only see their <iframe>).
+  for (const f of frames || []) {
+    const r = await focusIn(f.send, f.cache, FRAME_DEEP_ACTIVE)
+    if (r.elsewhere || r.inFrame) continue
+    return { ...r, remote: true }
+  }
+  return { secret: false, opaque: true }
 }
 
 // An element by its backend node id -> { secret, opaque } (errors: opaque).
@@ -274,7 +297,9 @@ export async function navigationKey(send) {
 
 // state: { refMap, navKey } of the page's last snapshot. -> the entry (its
 // backendDOMNodeId refreshed when the page re-rendered it) or throws.
-export async function resolveRef(send, state, ref) {
+// sendOf(entry): the debugger session of the entry's frame (one from another
+// site), or throws (that frame is gone); default: the page's own.
+export async function resolveRef(send, state, ref, sendOf = null) {
   if (typeof ref !== 'string' || !/^@?e\d{1,6}$/.test(ref)) throw new BrowserInputError('invalid_argument', 'Give a "ref" from browser_snapshot, like "@e3".')
   const key = ref.startsWith('@') ? ref : `@${ref}`
   if (!state || !state.refMap) throw new BrowserInputError('stale_ref', 'No snapshot of this page yet: call browser_snapshot first.')
@@ -285,14 +310,15 @@ export async function resolveRef(send, state, ref) {
     state.refMap = null
     throw new BrowserInputError('stale_ref', 'The page changed since the last snapshot: call browser_snapshot again.')
   }
+  const at = sendOf ? sendOf(entry) : send
   try {
-    await describe(send, entry.backendDOMNodeId)
+    await describe(at, entry.backendDOMNodeId)
     // Removed from the page but not yet freed: describeNode still answers.
-    if (!(await connected(send, entry.backendDOMNodeId))) throw new Error('detached')
+    if (!(await connected(at, entry.backendDOMNodeId))) throw new Error('detached')
     return entry
   } catch {
     // Re-rendered by the page: the same role and name (the same occurrence) again.
-    const found = await recoverRef(send, entry)
+    const found = await recoverRef(at, entry)
     if (found) {
       entry.backendDOMNodeId = found
       return entry
@@ -318,7 +344,8 @@ async function connected(send, backendNodeId) {
 async function recoverRef(send, entry) {
   if (!entry.axRole) return null
   try {
-    const { nodes } = await send('Accessibility.getFullAXTree')
+    // In the entry's own document (a frame's, by its id).
+    const { nodes } = await send('Accessibility.getFullAXTree', entry.frameId ? { frameId: entry.frameId } : {})
     const clipName = (s) => String(s || '').replace(/\s+/g, ' ').trim()
     const matches = []
     for (const n of nodes || []) {
@@ -372,8 +399,32 @@ export async function elementCenter(send, backendNodeId) {
   return { x: (Math.min(...xs) + Math.max(...xs)) / 2, y: (Math.min(...ys) + Math.max(...ys)) / 2 }
 }
 
-export async function click(send, backendNodeId, { button = 'left', clickCount = 1 } = {}) {
-  const { x, y } = await elementCenter(send, backendNodeId)
+// The centre of an element of a frame from another site, in the page's
+// viewport: in the frame's own viewport (its session's send), plus where the
+// frame's box is in its parent, and so on up. frame: { send, owner (its
+// <iframe> in the parent session), parent (frame or null: the page) }.
+export async function frameElementCenter(send, frame, backendNodeId) {
+  const at = await elementCenter(frame.send, backendNodeId)
+  for (let f = frame, depth = 0; f; f = f.parent, depth++) {
+    if (!f.owner || depth > 8) throw new BrowserInputError('stale_ref', 'The frame of this element is gone: call browser_snapshot again.')
+    const up = f.parent ? f.parent.send : send
+    try {
+      await up('DOM.scrollIntoViewIfNeeded', { backendNodeId: f.owner })
+    } catch {
+      // its box anyway
+    }
+    const { model } = await up('DOM.getBoxModel', { backendNodeId: f.owner })
+    const q = model && model.content
+    if (!Array.isArray(q) || q.length < 8) throw new BrowserInputError('not_visible', 'The frame of this element has no box on the page (hidden or not laid out).')
+    at.x += Math.min(q[0], q[2], q[4], q[6])
+    at.y += Math.min(q[1], q[3], q[5], q[7])
+  }
+  return at
+}
+
+// at(): where to click (default: the element's centre, in the page's session).
+export async function click(send, backendNodeId, { button = 'left', clickCount = 1, at = null } = {}) {
+  const { x, y } = at ? await at() : await elementCenter(send, backendNodeId)
   await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y })
   for (let n = 1; n <= clickCount; n++) {
     await send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button, buttons: button === 'right' ? 2 : 1, clickCount: n })
@@ -396,14 +447,16 @@ export async function refuseIfPassword(send, backendNodeId, cache = null) {
 // Where the keyboard is, looked at again right before each piece goes in:
 // the page can move it after the first look (a focus handler's timer,
 // auto-advance to the next field), never into a password field.
-async function insertText(send, text, insert = null, cache = null) {
+// Focus in a frame from another site: CDP's Input.insertText, which types
+// there (webContents.insertText crashes such a frame's page in Electron 42).
+async function insertText(keys, text, insert = null, focusNow) {
   for (let i = 0; i < text.length; i += INSERT_CHUNK) {
     const part = text.slice(i, i + INSERT_CHUNK)
-    const focus = await focusedField(send, cache)
+    const focus = await focusNow()
     if (focus.none) throw new BrowserInputError('not_focusable', 'The keyboard left the field: call browser_snapshot again.')
     refuseField(focus)
-    if (insert) await insert(part)
-    else await send('Input.insertText', { text: part })
+    if (insert && !focus.remote) await insert(part)
+    else await keys('Input.insertText', { text: part })
   }
 }
 
@@ -459,7 +512,11 @@ async function chooseOption(send, backendNodeId, text) {
   }
 }
 
-export async function putText(send, backendNodeId, text, { clear, insert = null, cache = null }) {
+// send and cache: the element's document's (a frame from another site: its
+// own session's). keys: the page's session (input goes through the page),
+// focusNow(): where the keyboard really is, from the page down
+// (focusedField with the page's frames); defaults: the element's own.
+export async function putText(send, backendNodeId, text, { clear, insert = null, cache = null, keys = send, focusNow = () => focusedField(send, cache) }) {
   checkText(text)
   await rememberSecrets(send, cache)
   await refuseIfPassword(send, backendNodeId, cache)
@@ -467,14 +524,14 @@ export async function putText(send, backendNodeId, text, { clear, insert = null,
   if (node && String(node.nodeName || '').toUpperCase() === 'SELECT') return chooseOption(send, backendNodeId, text)
   await send('DOM.focus', { backendNodeId })
   // Where the keyboard went (a host may delegate it to an inner field).
-  const focus = await focusedField(send, cache)
+  const focus = await focusNow()
   if (focus.none) throw new BrowserInputError('not_focusable', 'This element does not take the keyboard: pick a text field from browser_snapshot.')
   refuseField(focus)
   if (clear) await selectContents(send, backendNodeId)
-  if (text) await insertText(send, text, insert, cache)
+  if (text) await insertText(keys, text, insert, focusNow)
   else if (clear) {
-    await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46 })
-    await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46 })
+    await keys('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46 })
+    await keys('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46 })
   }
   // Frameworks that listen for "change" (React's onChange on some inputs) hear it.
   try {
@@ -516,13 +573,15 @@ export function electronKeyEvents(def, modifiers) {
 // sendInput(event): the page's own input pipeline
 // (webContents.sendInputEvent); CDP key events are unreliable in an Electron
 // guest (a Backspace or a second character can be lost).
-export async function pressKey(send, combo, sendInput = null, cache = null) {
+// frames: the page's frames from other sites (see focusedField).
+export async function pressKey(send, combo, sendInput = null, cache = null, frames = []) {
   const { def, modifiers } = parseKeyCombo(combo)
   // A character into a password field is typing a password; focus Tessel
   // cannot see counts as one (fail closed).
   if (typesChar(def) && !(modifiers & 7)) {
     await rememberSecrets(send, cache)
-    const focus = await focusedField(send, cache)
+    for (const f of frames || []) await rememberSecrets(f.send, f.cache)
+    const focus = await focusedField(send, cache, frames)
     if (!focus.none) refuseField(focus)
   }
   if (sendInput) {

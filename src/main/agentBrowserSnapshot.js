@@ -5,8 +5,9 @@
 // snapshot-cursor-interactive-elements.ts (MIT, Copyright (c) 2026 Lovecast
 // Inc.), ported to plain JS.
 //
-// Tessel's differences: no cross-origin iframe sessions (their content is
-// not listed); the pass that finds clickable <div>s runs in an isolated
+// Tessel's differences: a frame's content is listed under its frame line
+// (a frame from another site is read in its own debugger session, see
+// agentBrowser.js); the pass that finds clickable <div>s runs in an isolated
 // world (the page never sees it, nothing is left on window); the text is
 // capped (MAX_SNAPSHOT_CHARS) and says so; a control's value is never
 // listed (a control's children are not read; an editable area's text is not
@@ -154,6 +155,13 @@ export function walkTree(node, nodeById, depth, entries, nextRef, seen = new Set
 
   const name = clip(raw)
 
+  // A frame (<iframe>): its document is another tree, read on its own
+  // (buildSnapshot) and listed under this line.
+  if (role === 'Iframe' || role === 'IframePresentational') {
+    entries.push({ ref: '', role: 'frame', name: name || 'frame', frameOwner: node.backendDOMNodeId || 0, backendDOMNodeId: node.backendDOMNodeId || 0, depth })
+    return
+  }
+
   // An editable area with no control role (<div contenteditable>, reported as
   // generic): a text field. Its children are what the user typed: one line,
   // filled or empty, never read.
@@ -279,7 +287,13 @@ export function formatSnapshot(entries, maxChars = MAX_SNAPSHOT_CHARS) {
   // Several controls with the same role and name ("Submit" three times): the
   // 2nd and later say so, so the agent can tell them apart.
   const counts = new Map()
-  for (const e of entries) if (e.ref) counts.set(`${e.role}:${e.name}`, (counts.get(`${e.role}:${e.name}`) || 0) + 1)
+  // Per document too (a frame's own tree): what finds a re-rendered control again.
+  const inDoc = (e) => `${e.session || ''}|${e.frameId || ''}|${e.role}:${e.name}`
+  for (const e of entries) {
+    if (!e.ref) continue
+    counts.set(`${e.role}:${e.name}`, (counts.get(`${e.role}:${e.name}`) || 0) + 1)
+    counts.set(inDoc(e), (counts.get(inDoc(e)) || 0) + 1)
+  }
   const occurrence = new Map()
   const refMap = new Map()
   const refs = []
@@ -294,14 +308,17 @@ export function formatSnapshot(entries, maxChars = MAX_SNAPSHOT_CHARS) {
       const total = counts.get(key) || 1
       const nth = (occurrence.get(key) || 0) + 1
       occurrence.set(key, nth)
+      const docTotal = counts.get(inDoc(e)) || 1
+      const docNth = (occurrence.get(inDoc(e)) || 0) + 1
+      occurrence.set(inDoc(e), docNth)
       const shown = total > 1 && nth > 1 ? `${e.name} (${ordinal(nth)})` : e.name
       line = `${indent}[${e.ref}] ${e.role} "${shown}"${e.state ? ` (${e.state})` : ''}`
       // Refs past the cap are not given: the agent only sees what it can use.
       if (!truncated && size + line.length + 1 <= maxChars) {
         refs.push({ ref: e.ref, role: e.role, name: shown, ...(e.state ? { state: e.state } : {}) })
-        refMap.set(e.ref, { backendDOMNodeId: e.backendDOMNodeId, role: e.role, name: e.name, axRole: e.axRole || null, axName: e.axName == null ? null : e.axName, nth: total > 1 ? nth : undefined })
+        refMap.set(e.ref, { backendDOMNodeId: e.backendDOMNodeId, role: e.role, name: e.name, axRole: e.axRole || null, axName: e.axName == null ? null : e.axName, nth: docTotal > 1 ? docNth : undefined, session: e.session || null, frameId: e.frameId || null })
       }
-    } else line = `${indent}${e.role} "${e.name}"`
+    } else line = `${indent}${e.role} "${e.name}"${e.state ? ` (${e.state})` : ''}`
     if (truncated) continue
     if (size + line.length + 1 > maxChars) {
       truncated = true
@@ -396,22 +413,65 @@ export async function findCursorInteractiveElements(send, existingEntries, conte
   return out
 }
 
-// send(method, params) -> CDP result. contextId: an isolated world's (or
-// null: no clickable pass).
-export async function buildSnapshot(send, { contextId = null, maxChars = MAX_SNAPSHOT_CHARS } = {}) {
-  await send('Accessibility.enable')
-  const { nodes } = await send('Accessibility.getFullAXTree')
+// Frames read in one snapshot, at most, and how deep in each other.
+export const MAX_FRAMES = 20
+export const MAX_FRAME_DEPTH = 5
+
+// One document's tree -> entries, each saying where its element lives:
+// session (the debugger session of a frame from another site; null: the
+// page's own) and frameId (a frame of that session's process; null: its top).
+async function documentEntries(send, { session = null, frameId = null, depth = 0, nextRef }) {
+  const { nodes } = await send('Accessibility.getFullAXTree', frameId ? { frameId } : {})
   const list = Array.isArray(nodes) ? nodes : []
   const nodeById = new Map()
   for (const n of list) nodeById.set(n.nodeId, n)
   const entries = []
+  if (list[0]) walkTree(list[0], nodeById, depth, entries, nextRef)
+  for (const e of entries) Object.assign(e, { session, frameId })
+  return entries
+}
+
+// Each frame line gets its document's entries right under it (frames in
+// frames too, up to the limits). openFrame({ session, backendNodeId }) ->
+// { session, send, frameId } where the frame's document is read, or null.
+async function openFrames(entries, openFrame, nextRef) {
+  let opened = 0
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i]
+    if (!e.frameOwner) continue
+    const level = e.frameLevel || 0
+    if (opened >= MAX_FRAMES || level >= MAX_FRAME_DEPTH) {
+      e.state = 'not read: too many frames'
+      continue
+    }
+    opened++
+    let inner = []
+    try {
+      const at = await openFrame({ session: e.session || null, backendNodeId: e.frameOwner })
+      if (at) inner = await documentEntries(at.send, { session: at.session || null, frameId: at.frameId || null, depth: e.depth + 1, nextRef })
+      else e.state = 'not readable'
+    } catch {
+      e.state = 'not readable'
+    }
+    for (const x of inner) x.frameLevel = level + 1
+    entries.splice(i + 1, 0, ...inner)
+  }
+}
+
+// send(method, params) -> CDP result. contextId: an isolated world's (or
+// null: no clickable pass, which looks at the page's own document only).
+// openFrame: see openFrames (null: frames are listed, their content not).
+export async function buildSnapshot(send, { contextId = null, maxChars = MAX_SNAPSHOT_CHARS, openFrame = null } = {}) {
+  await send('Accessibility.enable')
   let counter = 1
-  if (list[0]) walkTree(list[0], nodeById, 0, entries, () => counter++)
+  const nextRef = () => counter++
+  const entries = await documentEntries(send, { nextRef })
   if (contextId != null) {
     for (const e of await findCursorInteractiveElements(send, entries, contextId)) {
       e.ref = `@e${counter++}`
       entries.push(e)
     }
   }
+  if (openFrame) await openFrames(entries, openFrame, nextRef)
   return formatSnapshot(entries, maxChars)
 }

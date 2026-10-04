@@ -415,11 +415,20 @@ function submitAddress() {
   // The page gets the keys once it starts loading.
   if (addressEl.value) addressEl.value.blur()
 }
+// Escape with the keyboard here (the address bar, or the page: the main
+// process tells an Escape the page did not use): the side panel's
+// fullscreen ends. -> whether it did.
+function escapeOut() {
+  return !!(ctx.exitFullscreen && ctx.exitFullscreen())
+}
 function onAddressKeydown(e) {
   if (e.key !== 'Escape') return
-  // Escape puts the current address back (and stays here: not the app's Escape).
+  // Escape puts the current address back (and stays here: not the app's
+  // Escape); with nothing to put back, it leaves the side panel's fullscreen.
   e.preventDefault()
   e.stopPropagation()
+  const edited = addressText.value !== displayUrl(currentUrl.value) || !!addressError.value
+  if (!edited && escapeOut()) return
   addressText.value = displayUrl(currentUrl.value)
   addressError.value = ''
   nextTick(() => addressEl.value && addressEl.value.select())
@@ -620,6 +629,8 @@ function runAction(action) {
       return zoom(-1)
     case 'zoomReset':
       return zoom(0)
+    case 'escape':
+      return escapeOut()
   }
 }
 function onKeydown(e) {

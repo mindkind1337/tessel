@@ -160,6 +160,34 @@ describe('SidePanel.vue', () => {
     w.unmount()
   })
 
+  // A page of the panel has the keyboard (its address bar, the page itself):
+  // the window's Esc never reaches the panel, the page asks it to leave.
+  it('Fullscreen: a web page of the panel can leave it (its Esc)', async () => {
+    let side = null
+    const w = mount(SidePanel, {
+      props: { tab: 'web-a', root: ROOT, workspaceId: 'ws1', browsers: [{ id: 'web-a', url: 'https://example.com/', title: '' }], fullscreen: false },
+      attachTo: document.body,
+      global: {
+        stubs: {
+          SideBrowser: {
+            props: ['node', 'active'],
+            inject: ['sideFullscreen'],
+            created() {
+              side = this.sideFullscreen
+            },
+            template: '<div class="side-browser-stub"></div>'
+          }
+        }
+      }
+    })
+    expect(side.exit()).toBe(false)
+    expect(w.emitted('update:fullscreen')).toBeUndefined()
+    await w.setProps({ fullscreen: true })
+    expect(side.exit()).toBe(true)
+    expect(w.emitted('update:fullscreen')).toEqual([[false]])
+    w.unmount()
+  })
+
   // A side panel wired like App's (v-model:tab, v-model:browsers).
   const makeWired = (tab, browsers = []) => {
     const w = mount(SidePanel, {
