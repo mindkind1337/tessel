@@ -174,6 +174,9 @@ export function claudeSubagents(sessionId, claudeDir = join(os.homedir(), '.clau
       id,
       type: typeof meta.agentType === 'string' ? meta.agentType.slice(0, 60) : 'agent',
       title: typeof meta.description === 'string' ? meta.description.slice(0, 200) : '',
+      // Started in the background (run_in_background): it works on after its
+      // parent's turn ends.
+      background: meta.requestShape === 'background',
       state,
       startedAt: startedAt || st.birthtimeMs || null,
       endedAt: state === 'done' ? last : null,
