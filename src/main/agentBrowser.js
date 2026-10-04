@@ -37,8 +37,8 @@ import { join } from 'path'
 import crypto from 'crypto'
 import { CliError } from './cliServer'
 import { allowedBrowserUrl, normalizeBrowserInput, BLANK_URL } from '../shared/browserUrl'
-import { buildSnapshot, MAX_SNAPSHOT_CHARS } from './agentBrowserSnapshot'
-import { BrowserInputError, resolveRef, click, putText, pressKey, wheel, elementCenter, navigationKey, parseKeyCombo, isolatedWorld, rememberSecrets } from './agentBrowserInput'
+import { buildSnapshot, MAX_SNAPSHOT_CHARS, MAX_FRAMES } from './agentBrowserSnapshot'
+import { BrowserInputError, resolveRef, click, putText, pressKey, wheel, elementCenter, frameElementCenter, focusedField, navigationKey, parseKeyCombo, isolatedWorld, rememberSecrets } from './agentBrowserInput'
 import { shortcutOf } from './browserGuest'
 
 export const AGENT_OPS = ['pages', 'open', 'navigate', 'snapshot', 'click', 'fill', 'type', 'press', 'scroll', 'screenshot', 'console', 'wait']
@@ -176,7 +176,7 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
   function stateOf(guest) {
     let s = pages.get(guest.id)
     if (!s) {
-      s = { refMap: null, navKey: null, queue: Promise.resolve(), idle: null, agent: null, console: [], attached: false, listener: null, world: null, secretIds: new Set() }
+      s = { refMap: null, navKey: null, queue: Promise.resolve(), idle: null, agent: null, console: [], attached: false, listener: null, world: null, secretIds: new Set(), frames: new Map() }
       pages.set(guest.id, s)
       guest.once('destroyed', () => forget(guest.id))
     }
@@ -201,8 +201,35 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
   }
 
   // --- The debugger -------------------------------------------------------------
-  function sender(guest) {
-    return (method, params = {}) => guest.debugger.sendCommand(method, params)
+  function sender(guest, sessionId = null) {
+    return sessionId ? (method, params = {}) => guest.debugger.sendCommand(method, params, sessionId) : (method, params = {}) => guest.debugger.sendCommand(method, params)
+  }
+  // Frames from other sites run in their own process: the debugger attaches
+  // to each (Target.setAutoAttach, flat sessions) and keeps them in
+  // s.frames: session id -> { send, targetId, owner (its <iframe> in the
+  // parent, learnt by a snapshot), parent (frame or null: the page), and
+  // its own isolated world and remembered secret fields }.
+  const AUTO_ATTACH = { autoAttach: true, waitForDebuggerOnStart: false, flatten: true, filter: [{ type: 'iframe' }] }
+  function frameAttached(guest, s, params, parentSession) {
+    const info = (params && params.targetInfo) || {}
+    if (!params || !params.sessionId || info.type !== 'iframe') return
+    const send = sender(guest, params.sessionId)
+    s.frames.set(params.sessionId, { send, targetId: info.targetId, owner: null, parent: (parentSession && s.frames.get(parentSession)) || null, world: null, secretIds: new Set() })
+    // Page: its navigations and dialogs (answered as the page's, above).
+    send('Page.enable').catch(() => {})
+    send('DOM.enable').catch(() => {})
+    send('Emulation.setFocusEmulationEnabled', { enabled: true }).catch(() => {})
+    // Its own frames from yet another site.
+    send('Target.setAutoAttach', AUTO_ATTACH).catch(() => {})
+  }
+  // The page's frames from other sites, as focusedField takes them.
+  const frameList = (s) => [...s.frames.values()].map((f) => ({ send: f.send, cache: f }))
+  // An entry's frame from another site, or null (the page's own document).
+  function frameOf(s, entry) {
+    if (!entry.session) return null
+    const f = s.frames.get(entry.session)
+    if (!f) throw new BrowserInputError('stale_ref', 'The frame of this element is gone: call browser_snapshot again.')
+    return f
   }
   // Stopped by the user, or the setting turned off (while a command waited):
   // nothing more is done to the page.
@@ -221,7 +248,15 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
       }
     }
     if (!s.listener) {
-      s.listener = (_event, method, params) => {
+      s.listener = (_event, method, params, sessionId) => {
+        if (method === 'Target.attachedToTarget') return frameAttached(guest, s, params, sessionId)
+        if (method === 'Target.detachedFromTarget') return params && s.frames.delete(params.sessionId)
+        // A frame from another site: its own document changed.
+        if (sessionId) {
+          const f = s.frames.get(sessionId)
+          if (f && (method === 'Runtime.executionContextsCleared' || method === 'Page.frameNavigated')) f.world = null
+          if (method !== 'Page.javascriptDialogOpening') return
+        }
         if (method === 'Page.frameNavigated' && params && params.frame && !params.frame.parentId) {
           s.refMap = null
           s.navKey = null
@@ -232,7 +267,7 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
         // confirm or prompt refused (never accepted for the agent).
         if (method === 'Page.javascriptDialogOpening') {
           s.console.push({ level: 'dialog', text: `[${params && params.type}] ${String((params && params.message) || '').slice(0, CONSOLE_TEXT)} (dismissed)`, source: '', line: 0, at: Date.now() })
-          dbg.sendCommand('Page.handleJavaScriptDialog', { accept: !!params && params.type === 'alert' }).catch(() => {})
+          sender(guest, sessionId)('Page.handleJavaScriptDialog', { accept: !!params && params.type === 'alert' }).catch(() => {})
         }
       }
       dbg.on('message', s.listener)
@@ -241,12 +276,15 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
         s.listener = null
         s.attached = false
         s.world = null
+        s.frames.clear()
       })
     }
     if (!s.attached) {
       const cdp = sender(guest)
       await cdp('Page.enable')
       await cdp('DOM.enable')
+      // Frames from other sites (their content in the snapshot, their refs).
+      await cdp('Target.setAutoAttach', AUTO_ATTACH).catch(() => {})
       // A page whose pane is not the focused one (another pane, another
       // window, a grid out of sight) still takes the agent's typing: it
       // behaves as focused while the agent drives it (undone on detach).
@@ -264,6 +302,7 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
     if (s) {
       s.attached = false
       s.world = null
+      s.frames.clear()
     }
   }
 
@@ -355,7 +394,26 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
     }
     // The page's password fields, remembered even if one is later shown as text.
     await rememberSecrets(cdp, s)
-    const result = await buildSnapshot(cdp, { contextId, maxChars: MAX_SNAPSHOT_CHARS })
+    for (const f of [...s.frames.values()].slice(0, MAX_FRAMES)) await rememberSecrets(f.send, f)
+    // A frame's <iframe> -> where its document is read: the page's session
+    // for a frame of the same process (by its frame id), the frame's own
+    // session for one from another site (its target id is its frame id).
+    const openFrame = async ({ session, backendNodeId }) => {
+      const parent = session ? s.frames.get(session) : null
+      if (session && !parent) return null
+      const send = parent ? parent.send : cdp
+      const { node } = await send('DOM.describeNode', { backendNodeId })
+      const frameId = node && node.frameId
+      if (!frameId) return null
+      for (const [id, f] of s.frames) {
+        if (f.targetId !== frameId) continue
+        f.owner = backendNodeId
+        f.parent = parent
+        return { session: id, send: f.send, frameId: null }
+      }
+      return { session, send, frameId }
+    }
+    const result = await buildSnapshot(cdp, { contextId, maxChars: MAX_SNAPSHOT_CHARS, openFrame })
     s.refMap = result.refMap
     // Whose refs these are: a snapshot by another agent numbers them again.
     s.refOwner = pane
@@ -485,6 +543,15 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
   }
 
   async function run(op, guest, s, args, pane) {
+    // A ref in a frame from another site: its frame's session, its place in the page.
+    const sendOf = (entry) => {
+      const f = frameOf(s, entry)
+      return f ? f.send : sender(guest)
+    }
+    const centerOf = (cdp, entry) => {
+      const f = frameOf(s, entry)
+      return f ? frameElementCenter(cdp, f, entry.backendDOMNodeId) : elementCenter(cdp, entry.backendDOMNodeId)
+    }
     // A ref is this agent's only if its own snapshot gave it (two agents on
     // one page: the other's snapshot listed other elements under the same refs).
     if (args.ref != null && s.refMap && s.refOwner !== pane) {
@@ -503,16 +570,23 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
         return waitFor(guest, args)
       case 'click': {
         const cdp = await attach(guest, s)
-        const entry = await resolveRef(cdp, s, args.ref)
-        await click(cdp, entry.backendDOMNodeId, { clickCount: args.double ? 2 : 1 })
+        const entry = await resolveRef(cdp, s, args.ref, sendOf)
+        await click(cdp, entry.backendDOMNodeId, { clickCount: args.double ? 2 : 1, at: () => centerOf(cdp, entry) })
         await sleep(150)
         return { text: `Clicked ${args.ref} (${entry.role} "${entry.name}"). If the page changed, call browser_snapshot again.` }
       }
       case 'fill':
       case 'type': {
         const cdp = await attach(guest, s)
-        const entry = await resolveRef(cdp, s, args.ref)
-        const put = await putText(cdp, entry.backendDOMNodeId, args.text, { clear: op === 'fill', cache: s, insert: typeof guest.insertText === 'function' ? (t) => guest.insertText(t) : null })
+        const entry = await resolveRef(cdp, s, args.ref, sendOf)
+        const frame = frameOf(s, entry)
+        const put = await putText(frame ? frame.send : cdp, entry.backendDOMNodeId, args.text, {
+          clear: op === 'fill',
+          cache: frame || s,
+          keys: cdp,
+          focusNow: () => focusedField(cdp, s, frameList(s)),
+          insert: typeof guest.insertText === 'function' ? (t) => guest.insertText(t) : null
+        })
         if (put && put.option) return { text: `Chose "${put.option}" in ${args.ref} (${entry.role} "${entry.name}").` }
         return { text: `${op === 'fill' ? 'Filled' : 'Typed into'} ${args.ref} (${entry.role} "${entry.name}").` }
       }
@@ -521,15 +595,15 @@ export function createAgentBrowser({ verify, enabled = () => true, ask, guestByI
         // a pane, Ctrl+R reloads, F12 opens devtools...): never from an agent.
         if (reservedKey(args.key)) throw fail('reserved_key', `${String(args.key).slice(0, 40)} is a Tessel or browser shortcut, or paste: agents cannot press it.`)
         const cdp = await attach(guest, s)
-        const key = await pressKey(cdp, args.key, typeof guest.sendInputEvent === 'function' ? (ev) => guest.sendInputEvent(ev) : null, s)
+        const key = await pressKey(cdp, args.key, typeof guest.sendInputEvent === 'function' ? (ev) => guest.sendInputEvent(ev) : null, s, frameList(s))
         return { text: `Pressed ${String(args.key).slice(0, 40) || key}.` }
       }
       case 'scroll': {
         const cdp = await attach(guest, s)
         let at = null
         if (args.ref) {
-          const entry = await resolveRef(cdp, s, args.ref)
-          at = await elementCenter(cdp, entry.backendDOMNodeId)
+          const entry = await resolveRef(cdp, s, args.ref, sendOf)
+          at = await centerOf(cdp, entry)
           if (!args.direction) return { text: `Scrolled ${args.ref} into view.` }
         }
         const px = await wheel(cdp, args.direction, args.amount, at)

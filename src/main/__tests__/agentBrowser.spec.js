@@ -19,9 +19,12 @@ const SECRET = 'a'.repeat(64)
 const TOKEN = 'b'.repeat(64)
 
 // A browser page as the main process sees it: its debugger answers from `cdp`.
-function fakeGuest(id, { cdp = {}, url = 'http://localhost:5173/', image = null } = {}) {
+// `sessions`: the debugger sessions of frames from other sites (session id ->
+// its own `cdp`); `guest.cdpEvent` sends the debugger's events.
+function fakeGuest(id, { cdp = {}, url = 'http://localhost:5173/', image = null, sessions = {} } = {}) {
   const on = {}
   const sent = []
+  const listeners = []
   let current = url
   const guest = {
     id,
@@ -52,17 +55,20 @@ function fakeGuest(id, { cdp = {}, url = 'http://localhost:5173/', image = null 
       detach() {
         this.attached = false
       },
-      on: () => {},
+      on: (ev, fn) => ev === 'message' && listeners.push(fn),
       once: () => {},
       removeListener: () => {},
-      sendCommand: async (method, params) => {
-        sent.push([method, params])
-        const h = cdp[method]
+      sendCommand: async (method, params, sessionId) => {
+        sent.push(sessionId ? [method, params, sessionId] : [method, params])
+        const map = sessionId ? sessions[sessionId] : cdp
+        if (!map) throw new Error('Session with given id not found.')
+        const h = map[method]
         if (typeof h === 'function') return h(params)
         return h || {}
       }
     }
   }
+  guest.cdpEvent = (method, params, sessionId) => listeners.forEach((fn) => fn({}, method, params, sessionId))
   return guest
 }
 
@@ -100,6 +106,7 @@ const pageCdp = (extra = {}, page = pageModel()) => ({
     const ex = String(p.expression)
     if (ex.includes("querySelectorAll('*')")) return { result: { objectId: 'scan' } }
     if (ex.includes('document.activeElement')) {
+      if (page.unfocused && ex.includes('document.hasFocus()')) return { result: { type: 'string', value: 'elsewhere' } }
       if (page.focusOpaque) return { result: { type: 'string', value: 'opaque' } }
       return { result: page.focused == null ? { type: 'object', subtype: 'null' } : { objectId: `n${page.focused}` } }
     }
@@ -119,7 +126,7 @@ const pageCdp = (extra = {}, page = pageModel()) => ({
     const id = p.objectId ? idOf(p.objectId) : p.backendNodeId
     const e = page.elements[id]
     if (!e) throw new Error('No node with given id found')
-    return { node: { backendNodeId: id, nodeName: e.tag || 'INPUT', ...(e.closed ? { shadowRoots: [{ shadowRootType: 'closed' }] } : {}) } }
+    return { node: { backendNodeId: id, nodeName: e.tag || 'INPUT', ...(e.frameId ? { frameId: e.frameId } : {}), ...(e.closed ? { shadowRoots: [{ shadowRootType: 'closed' }] } : {}) } }
   },
   'DOM.focus': (p) => {
     page.focused = page.focusTo[p.backendNodeId] || p.backendNodeId
@@ -302,6 +309,114 @@ describe('agent browser: commands', () => {
       ['mousePressed', 60, 40],
       ['mouseReleased', 60, 40]
     ])
+  })
+
+  // The page's tree has an "Iframe" node without children: the frame's own
+  // tree is read (by its frame id: same process) and listed under it.
+  it('snapshot lists what a frame of the same site holds; its refs click', async () => {
+    const page = pageModel()
+    page.elements[70] = { tag: 'IFRAME', frameId: 'F2' }
+    page.elements[80] = {}
+    const tree = { nodes: [{ ...AX.nodes[0], childIds: [...AX.nodes[0].childIds, '7'] }, ...AX.nodes.slice(1), { nodeId: '7', role: { value: 'Iframe' }, name: { value: 'Checkout' }, backendDOMNodeId: 70, childIds: [] }] }
+    const inner = { nodes: [{ nodeId: '1', role: { value: 'RootWebArea' }, childIds: ['2'] }, { nodeId: '2', role: { value: 'button' }, name: { value: 'Pay' }, backendDOMNodeId: 80 }] }
+    const { call, guest } = setup({ guest: fakeGuest(11, { cdp: pageCdp({ 'Accessibility.getFullAXTree': (p) => (p && p.frameId === 'F2' ? inner : tree) }, page) }) })
+    const snap = await call('snapshot')
+    expect(snap.text).toContain('frame "Checkout"\n  [@e5] button "Pay"')
+    await call('click', { ref: '@e5' })
+    expect(guest.sent.filter(([m]) => m === 'DOM.getContentQuads').map(([, p]) => p.backendNodeId)).toEqual([80])
+    expect(guest.sent.filter(([m]) => m === 'Input.dispatchMouseEvent').map(([, p]) => [p.type, p.x, p.y])[1]).toEqual(['mousePressed', 60, 40])
+  })
+
+  // A frame from another site lives in another process: the debugger attaches
+  // to it (its own session), reads its tree there, clicks at its place in the
+  // page (the frame's box + the element's place in the frame) and types into
+  // it with the same password rules, the keyboard found inside that frame.
+  describe('a frame from another site', () => {
+    function crossSite() {
+      const page = pageModel()
+      page.elements[71] = { tag: 'IFRAME', frameId: 'T1' }
+      const frame = pageModel()
+      frame.elements = { 5: {}, 6: {}, 7: { secret: true } }
+      frame.unfocused = true
+      const tree = { nodes: [{ ...AX.nodes[0], childIds: [...AX.nodes[0].childIds, '7'] }, ...AX.nodes.slice(1), { nodeId: '7', role: { value: 'Iframe' }, name: { value: 'Card form' }, backendDOMNodeId: 71, childIds: [] }] }
+      const frameTree = {
+        nodes: [
+          { nodeId: '1', role: { value: 'RootWebArea' }, childIds: ['2', '3', '4'] },
+          { nodeId: '2', role: { value: 'button' }, name: { value: 'Pay now' }, backendDOMNodeId: 5 },
+          { nodeId: '3', role: { value: 'textbox' }, name: { value: 'Card' }, backendDOMNodeId: 6 },
+          { nodeId: '4', role: { value: 'textbox' }, name: { value: 'PIN' }, backendDOMNodeId: 7 }
+        ]
+      }
+      let guest = null
+      const cdp = pageCdp(
+        {
+          'Accessibility.getFullAXTree': tree,
+          'Target.setAutoAttach': () => {
+            guest.cdpEvent('Target.attachedToTarget', { sessionId: 'S1', targetInfo: { type: 'iframe', targetId: 'T1' } })
+            return {}
+          },
+          'DOM.getBoxModel': (p) => (p.backendNodeId === 71 ? { model: { content: [100, 200, 300, 200, 300, 300, 100, 300] } } : {})
+        },
+        page
+      )
+      const frameBase = pageCdp({ 'Accessibility.getFullAXTree': frameTree, 'DOM.getContentQuads': { quads: [[0, 0, 20, 0, 20, 10, 0, 10]] } }, frame)
+      const frameCdp = {
+        ...frameBase,
+        // The keyboard goes into the frame: the page sees only its <iframe>.
+        'DOM.focus': (p) => {
+          frame.unfocused = false
+          page.focusOpaque = true
+          return frameBase['DOM.focus'](p)
+        }
+      }
+      guest = fakeGuest(11, { cdp, sessions: { S1: frameCdp } })
+      guest.insertText = vi.fn(async () => {})
+      return { guest, page, frame }
+    }
+
+    it('snapshot lists its controls; click lands on them in the page', async () => {
+      const { guest } = crossSite()
+      const { call } = setup({ guest })
+      const snap = await call('snapshot')
+      expect(snap.text).toContain('frame "Card form"\n  [@e5] button "Pay now"\n  [@e6] text input "Card" (empty)\n  [@e7] text input "PIN" (empty)')
+      await call('click', { ref: '@e5' })
+      expect(guest.sent.filter(([m]) => m === 'DOM.getContentQuads').map(([, p, sid]) => [p.backendNodeId, sid])).toEqual([[5, 'S1']])
+      // In the page's own session: the frame's box (100, 200) + the button's centre in the frame (10, 5).
+      expect(guest.sent.filter(([m]) => m === 'Input.dispatchMouseEvent').map(([, p, sid]) => [p.type, p.x, p.y, sid])).toEqual([
+        ['mouseMoved', 110, 205, undefined],
+        ['mousePressed', 110, 205, undefined],
+        ['mouseReleased', 110, 205, undefined]
+      ])
+    })
+
+    it('fill types into its field (never through insertText of the page: it crashes a frame from another site)', async () => {
+      const { guest } = crossSite()
+      const { call } = setup({ guest })
+      await call('snapshot')
+      const r = await call('fill', { ref: '@e6', text: '4242' })
+      expect(r.text).toContain('Filled @e6')
+      expect(guest.sent.filter(([m]) => m === 'DOM.focus')).toEqual([['DOM.focus', { backendNodeId: 6 }, 'S1']])
+      expect(guest.sent.filter(([m]) => m === 'Input.insertText')).toEqual([['Input.insertText', { text: '4242' }]])
+      expect(guest.insertText).not.toHaveBeenCalled()
+      // A key typed while the keyboard is in that field: allowed too.
+      expect((await call('press', { key: 'x' })).text).toContain('Pressed x')
+    })
+
+    it('its password field is refused, by fill and by a typed key', async () => {
+      const { guest, page, frame } = crossSite()
+      const { call } = setup({ guest })
+      await call('snapshot')
+      await expect(call('fill', { ref: '@e7', text: '1234' })).rejects.toMatchObject({ code: 'password_field' })
+      // The keyboard put there another way (a click): a typed key is refused.
+      page.focusOpaque = true
+      frame.unfocused = false
+      frame.focused = 7
+      await expect(call('press', { key: '1' })).rejects.toMatchObject({ code: 'password_field' })
+      // In a frame no session shows (its debugger went away): refused too.
+      guest.cdpEvent('Target.detachedFromTarget', { sessionId: 'S1' })
+      await expect(call('press', { key: '1' })).rejects.toMatchObject({ code: 'field_not_visible' })
+      expect(guest.sent.filter(([m]) => m === 'Input.insertText' || m === 'Input.dispatchKeyEvent')).toEqual([])
+    })
   })
 
   // Two agents on one page: refs are numbered again by each snapshot, so a ref
