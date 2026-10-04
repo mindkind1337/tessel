@@ -11,6 +11,8 @@ import WorktreeCleanupDialog from './components/sidebar/WorktreeCleanupDialog.vu
 import StatusBar from './components/StatusBar.vue'
 import { buildProjectCards, cardTargetPane, portProbes } from './sidebarModel'
 import { createProjectWorktrees } from './projectWorktrees'
+import { prAgentTargets } from './prAgentTargets'
+import { withWorktreePath } from './prAgentPrompts'
 import { workspaceViews, viewKey, leafViewPath } from './paneViews'
 import { createPortScanner, browserUrlForPort, addressForPort } from './portScanner'
 import { allowedBrowserUrl, BLANK_URL } from '../../shared/browserUrl'
@@ -222,19 +224,25 @@ async function prepareLinkedIssue(request) {
 }
 // "Fix failing checks" / "Resolve review comments" of a pull request: the
 // agents already working on it (its task, or a copy on its branch) in the
-// GitHub dialog's workspace.
+// GitHub dialog's workspace, then its other agents in the project's main
+// folder or worktrees (prAgentTargets.js).
 function githubPrAgents(item) {
   const ws = issueWorkspace.value
-  const number = Number(item?.number)
-  if (!ws || !Number.isSafeInteger(number) || number < 1) return []
-  const head = typeof item.headRefName === 'string' ? item.headRefName : ''
-  return wsAgents(ws.id)
-    .filter((leaf) => {
-      if (head && leaf.worktree?.branch === head) return true
-      const task = taskOfPane(leaf.id)
-      return !!task && task.wsId === ws.id && !!task.worktree && String(task.title || '').startsWith(`#${number} `)
-    })
-    .map((leaf) => ({ id: leaf.id, label: agentLabel(leaf) }))
+  if (!ws) return []
+  const key = gitKeyOf(ws)
+  return prAgentTargets({
+    agents: wsAgents(ws.id),
+    cwd: ws.cwd,
+    mainBranch: wsBranches[key] || '',
+    worktrees: wsWorktrees[key] || [],
+    number: item?.number,
+    head: typeof item?.headRefName === 'string' ? item.headRefName : '',
+    label: agentLabel,
+    taskOf: (id) => {
+      const task = taskOfPane(id)
+      return task && task.wsId === ws.id ? task : null
+    }
+  })
 }
 // The user saw the prompt and picked the agent: an existing pane gets it as
 // a message; a new agent starts as a task in its own copy of the PR.
@@ -5466,7 +5474,7 @@ async function startTask(spec, opts = {}) {
         return { error: `could not make a separate copy: ${(res && res.error) || 'unknown error'}` } // i18n-ignore
       }
       worktree = { path: res.path, branch: res.branch, baseBranch: res.baseBranch || null, root: res.root || ws.cwd }
-      updateTask(task.id, { worktree })
+      updateTask(task.id, spec.briefWorktree ? { worktree, brief: withWorktreePath(spec.brief || '', res.path) } : { worktree })
     }
     if (opts.expectedCwd && (!workspaces.value.includes(ws) || ws.cwd !== opts.expectedCwd)) {
       updateTask(task.id, { column: 'todo' })
