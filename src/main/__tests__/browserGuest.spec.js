@@ -834,6 +834,54 @@ describe("a browser's everyday input", () => {
     expect(t.sent).toEqual([])
   })
 
+  // The side panel's fullscreen says "Exit fullscreen (Esc)": an Escape the
+  // page leaves alone goes to the window too. One the page used (a dialog of
+  // its own: defaultPrevented, or stopped before its window) stays the page's.
+  it("an Escape the page did not use is told to the window; one it used is not", async () => {
+    const g = t.attach()
+    g.isLoading = vi.fn(() => false)
+    // The page's isolated world: what it saw of the page's Escape keys.
+    let seen = null
+    g.executeJavaScriptInIsolatedWorld = vi.fn(async (_world, [{ code }]) => (code.includes('addEventListener') ? undefined : seen))
+    g.emit('dom-ready')
+    await new Promise((r) => setImmediate(r))
+    expect(g.executeJavaScriptInIsolatedWorld).toHaveBeenCalledTimes(1)
+    const [world, [{ code }]] = g.executeJavaScriptInIsolatedWorld.mock.calls[0]
+    expect(world).not.toBe(0)
+    expect(code).toContain("e.key !== 'Escape'")
+    expect(code).toContain('e.isTrusted')
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+    const escape = () => {
+      const e = ev()
+      g.emit('before-input-event', e, { type: 'keyDown', key: 'Escape' })
+      expect(e.preventDefault).not.toHaveBeenCalled()
+    }
+    // Not used by the page: the window hears it (once).
+    escape()
+    seen = { n: 1, prevented: false }
+    await wait(400)
+    expect(t.sent).toEqual([['browser:shortcut', { webContentsId: 7, action: 'escape' }]])
+    // Used by the page (its dialog closed, preventDefault).
+    escape()
+    seen = { n: 2, prevented: true }
+    await wait(400)
+    // Stopped by the page before its window (stopPropagation): never seen.
+    escape()
+    await wait(400)
+    // With a modifier: not the window's.
+    g.emit('before-input-event', ev(), { type: 'keyDown', key: 'Escape', control: true })
+    seen = { n: 3, prevented: false }
+    await wait(400)
+    expect(t.sent).toHaveLength(1)
+    // A new document: counted from 0 again.
+    g.emit('dom-ready')
+    await new Promise((r) => setImmediate(r))
+    escape()
+    seen = { n: 1, prevented: false }
+    await wait(400)
+    expect(t.sent).toHaveLength(2)
+  })
+
   it('Ctrl+wheel zooms the pane (Chromium asks, the window zooms), one step per notch', () => {
     const now = vi.spyOn(Date, 'now')
     try {

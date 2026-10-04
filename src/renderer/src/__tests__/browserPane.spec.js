@@ -739,6 +739,39 @@ describe('BrowserPane.vue: layout, input and browser behaviour', () => {
     expect(webview().stop).not.toHaveBeenCalled()
   })
 
+  // In the side panel's fullscreen ("Exit fullscreen (Esc)"): Esc in the
+  // address bar first puts the address back if it was edited, then leaves
+  // fullscreen; an Escape the page did not use (main process) leaves it too.
+  it('Esc in the address bar, or one the page did not use, leaves the side panel\'s fullscreen', async () => {
+    ctx.exitFullscreen = vi.fn(() => true)
+    await mountPane()
+    const input = wrapper.find('.bp-address-input')
+    const shown = input.element.value
+    expect(shown).toContain('example.com')
+    await input.setValue('typed somewhere')
+    await key(input, 'Escape')
+    expect(input.element.value).toBe(shown)
+    expect(ctx.exitFullscreen).not.toHaveBeenCalled()
+    await key(input, 'Escape')
+    expect(ctx.exitFullscreen).toHaveBeenCalledTimes(1)
+    handlers.shortcut({ webContentsId: 42, action: 'escape' })
+    expect(ctx.exitFullscreen).toHaveBeenCalledTimes(2)
+    // Another page's Escape: not this one's.
+    handlers.shortcut({ webContentsId: 43, action: 'escape' })
+    expect(ctx.exitFullscreen).toHaveBeenCalledTimes(2)
+  })
+
+  it('a pane of the grid: Esc in the address bar only puts the address back, the page\'s Escape does nothing', async () => {
+    await mountPane()
+    const input = wrapper.find('.bp-address-input')
+    const seen = vi.fn()
+    document.body.addEventListener('keydown', seen)
+    await key(input, 'Escape')
+    document.body.removeEventListener('keydown', seen)
+    expect(seen).not.toHaveBeenCalled()
+    expect(() => handlers.shortcut({ webContentsId: 42, action: 'escape' })).not.toThrow()
+  })
+
   it('reload, history and zoom keys act on the page, never on Tessel', async () => {
     await mountPane()
     const pane = wrapper.find('.browser-pane')

@@ -93,6 +93,26 @@ function shortcutOf(input) {
 }
 const APP_KEYS = ['e', 'o', 'w', 'b', 'k', 'x', 'g', 'n', 't', ' ', 'p', 'j']
 
+// An Escape the page leaves alone is the window's too (the side panel's
+// fullscreen ends on Esc). Whether the page used it is seen from an isolated
+// world (the page never sees this): each trusted Escape keydown that reaches
+// the page's window is counted once the page's own handlers ran, with
+// whether one prevented it. One the page stopped before its window (or that
+// went to a frame) is never counted: the page's.
+const ESC_WORLD = 1998
+const ESC_WATCH = `(() => {
+  if (window.__tesselEsc) return;
+  const s = window.__tesselEsc = { n: 0, prevented: false };
+  window.addEventListener('keydown', (e) => {
+    if (!e.isTrusted || e.key !== 'Escape') return;
+    setTimeout(() => { s.prevented = e.defaultPrevented; s.n++; }, 0);
+  });
+})()`
+const ESC_READ = `(() => { const s = window.__tesselEsc; return s ? { n: s.n, prevented: s.prevented } : null; })()`
+// How long, at most, the page takes to see its Escape (looked at this often).
+const ESC_WAIT_MS = 320
+const ESC_POLL_MS = 40
+
 // Middle-click or Ctrl+click on a link: a new pane (a browser's new tab).
 // The rest (target=_blank, window.open) stays in the same pane.
 export function wantsNewPane(disposition, mouse) {
@@ -344,6 +364,37 @@ export function createBrowserGuests({ getWindow, send, log = null, screenshotDir
       // Frames too: never another scheme (a frame on javascript: or file:).
       if (event.url && !allowedBrowserUrl(event.url) && !/^(about:|data:|blob:)/i.test(event.url)) event.preventDefault()
     })
+    // The page's Escape keys, counted in its isolated world (ESC_WATCH), for
+    // each new document; escSeen: how many were looked at already.
+    let escSeen = 0
+    const canWatch = () => typeof guest.executeJavaScriptInIsolatedWorld === 'function'
+    guest.on('dom-ready', () => {
+      escSeen = 0
+      if (!canWatch()) return
+      setImmediate(() => {
+        if (!guest.isDestroyed()) guest.executeJavaScriptInIsolatedWorld(ESC_WORLD, [{ code: ESC_WATCH }]).catch(() => {})
+      })
+    })
+    // Once the page saw this Escape: the window is told unless the page used it.
+    function escapeToWindow() {
+      const until = Date.now() + ESC_WAIT_MS
+      const look = async () => {
+        if (guest.isDestroyed()) return
+        let s = null
+        try {
+          s = await guest.executeJavaScriptInIsolatedWorld(ESC_WORLD, [{ code: ESC_READ }])
+        } catch {
+          s = null
+        }
+        if (s && Number.isSafeInteger(s.n) && s.n > escSeen) {
+          escSeen = s.n
+          if (!s.prevented) send('browser:shortcut', { webContentsId: guest.id, action: 'escape' })
+          return
+        }
+        if (Date.now() < until) setTimeout(look, ESC_POLL_MS)
+      }
+      setTimeout(look, ESC_POLL_MS)
+    }
     guest.on('before-input-event', (event, input) => {
       if (input) noteGesture(input.type)
       // Escape stops a page still loading; the page gets its Escape too.
@@ -354,7 +405,7 @@ export function createBrowserGuests({ getWindow, send, log = null, screenshotDir
           setImmediate(() => {
             if (!guest.isDestroyed()) guest.stop()
           })
-        }
+        } else if (canWatch()) escapeToWindow()
         return
       }
       const action = shortcutOf(input)
