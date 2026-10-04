@@ -12,6 +12,7 @@ import fs from 'fs'
 import { join } from 'path'
 import { run as defaultRun } from './agentTools'
 import { localGitArgs as defaultGitArgs } from './gitSafety'
+import { pathKey } from './worktreeLeftover'
 
 const CONCURRENCY = 4
 const GIT_TIMEOUT = 15000
@@ -68,6 +69,9 @@ async function inBatches(items, size, fn) {
 
 // One worktree ({ path, branch, head, locked, prunable } from worktreeList)
 // -> its evidence. git(cwd, args) runs git there with the safety arguments.
+// wt.leftover: a copy git no longer lists whose folder stayed (a removal
+// that failed partway, worktreeLeftover.js): git is never run inside it (it
+// is no checkout any more: git could find another repository above it).
 export async function worktreeEvidence(wt, { git, defaultBranch, exists = fs.existsSync, stat = fs.statSync } = {}) {
   const ev = {
     path: wt.path,
@@ -76,6 +80,7 @@ export async function worktreeEvidence(wt, { git, defaultBranch, exists = fs.exi
     detached: !wt.branch,
     locked: !!wt.locked,
     missing: !!wt.prunable || !exists(wt.path),
+    leftover: !!wt.leftover,
     onDefault: !!wt.branch && wt.branch === defaultBranch,
     dirty: null,
     changes: 0,
@@ -105,7 +110,7 @@ export async function worktreeEvidence(wt, { git, defaultBranch, exists = fs.exi
     }
   }
   let touched = 0
-  if (!ev.missing) {
+  if (!ev.missing && !ev.leftover) {
     // When git last wrote to this checkout (its index, its HEAD), read
     // before git status refreshes the index.
     const dir = await git(wt.path, ['rev-parse', '--absolute-git-dir'])
@@ -124,7 +129,9 @@ export async function worktreeEvidence(wt, { git, defaultBranch, exists = fs.exi
 }
 
 // list: worktreeList's list (it checks the folder is an open project).
-export function createWorktreeCleanup({ list, run = defaultRun, gitArgs = defaultGitArgs, exists = fs.existsSync, stat = fs.statSync } = {}) {
+// leftovers: the store of copies git forgot while their folder stayed
+// (worktreeLeftover.js): listed too, so their removal can be tried again.
+export function createWorktreeCleanup({ list, run = defaultRun, gitArgs = defaultGitArgs, exists = fs.existsSync, stat = fs.statSync, leftovers = null } = {}) {
   return {
     // -> { ok: true, root, defaultBranch, items: [evidence] } | { ok: false, error }
     async scan(cwd) {
@@ -137,6 +144,12 @@ export function createWorktreeCleanup({ list, run = defaultRun, gitArgs = defaul
       const git = (where, args) => run('git', ['-C', where || root, ...safety, ...args], { timeout: GIT_TIMEOUT })
       const defaultBranch = await defaultBranchOf((args) => git(null, args), main.branch)
       const others = res.worktrees.filter((w) => !w.isMain)
+      const listed = new Set(res.worktrees.map((w) => pathKey(w.path)))
+      for (const rec of (leftovers && leftovers.list(root)) || []) {
+        if (listed.has(pathKey(rec.path)) || !exists(rec.path)) continue
+        listed.add(pathKey(rec.path))
+        others.push({ path: rec.path, branch: rec.branch || '', head: '', locked: false, prunable: false, leftover: true })
+      }
       const items = await inBatches(others, CONCURRENCY, (wt) => worktreeEvidence(wt, { git, defaultBranch, exists, stat }))
       return { ok: true, root, mainBranch: main.branch || '', defaultBranch, items, scannedAt: Date.now() }
     }

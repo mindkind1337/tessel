@@ -164,6 +164,58 @@ describe('WorktreeCleanupDialog', () => {
     expect(w.find('[data-test="cleanup-empty"]').exists()).toBe(true)
   })
 
+  it('a failed row git no longer lists (its folder left behind) stays, with its error, for a retry', async () => {
+    let fail = true
+    const { w, removes, setItems } = setup({
+      items: [ev('busy', { dirty: true, changes: 1 })],
+      remove: async () => {
+        // Git unregistered the copy but could not delete its folder.
+        setItems([])
+        return fail ? { ok: false, error: 'EBUSY held.txt' } : { ok: true }
+      }
+    })
+    await flushPromises()
+    const row = w.findAll('[data-test="cleanup-row"]')[0]
+    await row.find('[data-test="cleanup-check"]').setValue(true)
+    await w.find('[data-test="cleanup-remove"]').trigger('click')
+    await w.find('[data-test="cleanup-confirm-remove"]').trigger('click')
+    await flushPromises()
+    expect(names(w)).toEqual(['busy'])
+    expect(w.find('[data-test="cleanup-row-error"]').text()).toBe('Not removed: EBUSY held.txt')
+    expect(w.find('[data-test="cleanup-summary"]').text()).toBe('1 could not be removed: see why below, then try again.')
+    expect(checked(w)).toEqual(['busy'])
+    fail = false
+    await w.find('[data-test="cleanup-remove"]').trigger('click')
+    await w.find('[data-test="cleanup-confirm-remove"]').trigger('click')
+    await flushPromises()
+    expect(removes.map((r) => [r.key, r.force])).toEqual([
+      ['C:\\w\\busy', true],
+      ['C:\\w\\busy', true]
+    ])
+    expect(w.find('[data-test="cleanup-empty"]').exists()).toBe(true)
+  })
+
+  it('keeps the keyboard focus through the confirm step and after a removal (Escape still works)', async () => {
+    const { w } = setup({ items: [ev('a'), ev('b')] })
+    await flushPromises()
+    const card = w.find('.wcl-card').element
+    w.find('[data-test="cleanup-remove"]').element.focus()
+    await w.find('[data-test="cleanup-remove"]').trigger('click')
+    await nextTick()
+    expect(card.contains(document.activeElement)).toBe(true)
+    w.find('[data-test="cleanup-confirm-remove"]').element.focus()
+    await w.find('[data-test="cleanup-confirm-remove"]').trigger('click')
+    await flushPromises()
+    expect(card.contains(document.activeElement)).toBe(true)
+  })
+
+  it('with nothing ticked, the Remove button names no count', async () => {
+    const { w } = setup({ items: [ev('a')] })
+    await flushPromises()
+    await w.find('[data-test="cleanup-select-none"]').trigger('click')
+    expect(w.find('[data-test="cleanup-remove"]').text()).toBe('Remove worktrees…')
+  })
+
   it('a scan that fails says why', async () => {
     const { w } = setup({ scan: async () => ({ ok: false, error: 'not-repo' }) })
     await flushPromises()

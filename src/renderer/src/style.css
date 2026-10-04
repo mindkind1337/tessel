@@ -9300,6 +9300,12 @@ button.act-stat:hover,
   accent-color: var(--accent);
 }
 
+/* A long path is cut at its start, so its last folders stay readable. */
+.wcl-path {
+  direction: rtl;
+  text-align: left;
+}
+
 .wcl-row .hwt-name {
   display: flex;
   align-items: center;

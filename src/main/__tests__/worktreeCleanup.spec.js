@@ -118,6 +118,34 @@ describe('scan (real repository)', () => {
     expect(item('gone')).toMatchObject({ missing: true, dirty: null, merged: true, branch: 'agent/gone' })
   })
 
+  it("a copy git forgot while its folder stayed (a removal that failed) is listed again, without git run inside it", async () => {
+    const left = join(dir, 'repo.worktrees', 'left')
+    fs.mkdirSync(left, { recursive: true })
+    fs.writeFileSync(join(left, 'held.txt'), 'x')
+    const gone = join(dir, 'repo.worktrees', 'left-gone')
+    const recs = [
+      { repo, path: left, branch: 'agent/merged', at: 1 },
+      { repo, path: gone, branch: 'agent/x', at: 2 },
+      // Listed by git: not twice.
+      { repo, path: wt('ahead'), branch: 'agent/ahead', at: 3 }
+    ]
+    const calls = []
+    const run = async (cmd, args, opts) => {
+      calls.push(args)
+      const { run: real } = await import('../agentTools')
+      return real(cmd, args, opts)
+    }
+    const cleanup = createWorktreeCleanup({ list, run, gitArgs: async () => [], leftovers: { list: (r) => (r === repo ? recs : []) } })
+    const out = await cleanup.scan(repo)
+    expect(out.items).toHaveLength(6)
+    const found = out.items.find((i) => i.path === left)
+    expect(found).toMatchObject({ leftover: true, branch: 'agent/merged', missing: false, dirty: null, merged: true, detached: false })
+    expect(out.items.some((i) => i.path === gone)).toBe(false)
+    expect(out.items.filter((i) => i.path.toLowerCase() === wt('ahead').toLowerCase())).toHaveLength(1)
+    // git never runs with the leftover folder as its working folder.
+    expect(calls.some((a) => a[1] === left)).toBe(false)
+  }, 30000)
+
   it('passes errors from the folder check through', async () => {
     const cleanup = createWorktreeCleanup({ list: async () => ({ ok: false, error: 'unknown-folder' }) })
     expect(await cleanup.scan('C:\\nope')).toEqual({ ok: false, error: 'unknown-folder' })

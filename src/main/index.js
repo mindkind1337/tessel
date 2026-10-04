@@ -1615,7 +1615,11 @@ ipcMain.handle(
 )
 // Clean up worktrees: the git evidence of an open local project's other
 // worktrees (read-only, worktreeCleanup.js); removing goes through review:remove.
-const worktreeCleanup = createWorktreeCleanup({ list: (cwd) => worktreeList.list(cwd) })
+// A task copy git unregistered while its folder stayed: remembered so its
+// delete can be tried again, even after a restart (worktreeLeftover.js).
+const worktreeLeftovers = createLeftoverStore({ file: join(app.getPath('userData'), 'worktree-leftovers.json') })
+setLeftoverStore(worktreeLeftovers)
+const worktreeCleanup = createWorktreeCleanup({ list: (cwd) => worktreeList.list(cwd), leftovers: worktreeLeftovers })
 ipcMain.handle(
   'git:worktreeCleanupScan',
   safe((cwd) => (isRemotePath(cwd) ? { ok: false, error: 'remote' } : worktreeCleanup.scan(cwd)))
@@ -1855,9 +1859,6 @@ const claudeUsageReport = createClaudeUsageReport()
 ipcMain.handle('usage:claudeReport', safe((query) => claudeUsageReport(query)))
 // Codex's usage report from its own session files (tokens, requests).
 ipcMain.handle('usage:codexReport', safe((query) => accountUsage.report(query)))
-// A task copy git unregistered while its folder stayed: remembered so its
-// delete can be tried again, even after a restart (worktreeLeftover.js).
-setLeftoverStore(createLeftoverStore({ file: join(app.getPath('userData'), 'worktree-leftovers.json') }))
 ipcMain.handle('review:info', safe(reviewInfo))
 ipcMain.handle('review:diff', safe(reviewDiff))
 ipcMain.handle('review:merge', safe(reviewMerge))
