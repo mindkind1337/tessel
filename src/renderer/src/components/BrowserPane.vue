@@ -1607,9 +1607,6 @@ defineExpose({ navigate, focusAddress })
   min-width: 0;
   min-height: 0;
   border: none;
-  /* The <webview> is transparent: a page without its own background is
-     painted on white, as a browser does (not on the dark pane). */
-  background: #fff;
 }
 
 /* Orca's find bar. */
