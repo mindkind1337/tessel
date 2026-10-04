@@ -12,7 +12,7 @@ import { join } from 'path'
 import ssh2 from 'ssh2'
 import { createSshHostBridge } from '../ssh/sshHostBridge'
 import { makeKey } from './fixtures/sshServer'
-import { prepCommand } from '../remoteAgent/remoteAgentTunnel'
+import { prepCommand, envFileCommand, envFileContent } from '../remoteAgent/remoteAgentTunnel'
 
 const { Server } = ssh2
 const PASSWORD = 'pw-remote-agent'
@@ -41,7 +41,7 @@ function until(fn, ms = 10000, label = '') {
 // An sshd stand-in: answers the prep command with HOME, records forwards,
 // cancels and the pane's command, and can dial a forwarded socket.
 function startServer() {
-  const events = { execs: [], forwards: [], cancels: [], connections: 0 }
+  const events = { execs: [], forwards: [], cancels: [], connections: 0, tokenFiles: [] }
   const clients = new Set()
   const server = new Server({ hostKeys: [makeKey().private] }, (client) => {
     events.connections++
@@ -70,8 +70,23 @@ function startServer() {
         session.on('exec', (ok, _no, info) => {
           const stream = ok()
           events.execs.push(info.command)
-          if (info.command.includes('.tessel-server/run') && info.command.startsWith('umask')) {
-            stream.write(`${HOME}\n`)
+          if (info.command.includes('.tessel-server/run') && info.command.includes('chmod 700')) {
+            stream.write(`TESSEL_HOME=${HOME}\n`)
+            stream.exit(0)
+            stream.end()
+            return
+          }
+          if (info.command.includes('cat > ')) {
+            let got = ''
+            stream.on('data', (d) => (got += d))
+            stream.on('end', () => {
+              events.tokenFiles.push({ command: info.command, content: got })
+              stream.exit(0)
+              stream.end()
+            })
+            return
+          }
+          if (info.command.startsWith('rm -f')) {
             stream.exit(0)
             stream.end()
             return
@@ -177,16 +192,20 @@ describe('remote-agent pane on ssh2', () => {
     await until(() => out.text.includes('shell ready'))
     expect(server.events.execs[0]).toBe(prepCommand('tessel-h1'))
     expect(server.events.forwards.map((f) => f.path)).toEqual([SOCK])
-    expect(server.events.execs[1]).toBe(
-      `export TESSEL_PANE_ID='pane-1' TESSEL_REMOTE_SOCK='${SOCK}' TESSEL_REMOTE_TOKEN='${TOKEN}' TESSEL_AGENT_PROVIDER='claude'; cd -- '/srv/my app' && exec "$SHELL" -l`
-    )
+    // The variables go through stdin into the env file, never on a command line.
+    expect(server.events.tokenFiles).toEqual([
+      { command: envFileCommand('pane-1'), content: envFileContent({ paneId: 'pane-1', token: TOKEN, instance: 'tessel-h1', provider: 'claude', sockPath: SOCK }) }
+    ])
+    const env = `"$HOME"/'.tessel-server/run/pane-1.env'`
+    expect(server.events.execs[2]).toBe(`[ -r ${env} ] && . ${env}; rm -f ${env}; cd -- '/srv/my app' && exec "$SHELL" -l`)
+    expect(server.events.execs.join('\n')).not.toContain(TOKEN)
   })
 
   it('a plain agent shell becomes exec "$SHELL" -l; a pane without remoteAgent is unchanged', async () => {
     makeBridge()
     const { out } = agentPane()
     await until(() => out.text.includes('shell ready'))
-    expect(server.events.execs[1]).toMatch(/; exec "\$SHELL" -l$/)
+    expect(server.events.execs[2]).toMatch(/; exec "\$SHELL" -l$/)
     expect(() => bridge.createPty({ hostId: 'h1', spec: spec(), texts: {}, cols: 80, rows: 24, paneId: 'p2', remoteAgent: { ...remoteAgent(), token: 'nope' } })).toThrow(/invalid remote agent/)
     expect(() => bridge.createPty({ hostId: 'h1', spec: spec(), texts: {}, cols: 80, rows: 24, remoteAgent: remoteAgent() })).toThrow(/invalid remote agent/)
   })

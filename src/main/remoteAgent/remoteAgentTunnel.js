@@ -29,6 +29,14 @@ export const HOOK_TIMEOUT_EXIT = 124
 export const MAX_CONNECTIONS = 32
 export const HELLO_TIMEOUT_MS = 10_000
 export const BIND_RETRY_MS = [1000, 5000, 15000]
+// Caps (security review): server.cjs processes at once over all hosts; per
+// pane, MCP connections and hooks at once, and hooks per second (a token
+// bucket); an MCP connection with no byte either way for MCP_IDLE_MS ends.
+export const MAX_SESSIONS = 16
+export const MAX_PANE_MCP = 4
+export const MAX_PANE_HOOKS = 4
+export const HOOK_RATE_PER_S = 10
+export const MCP_IDLE_MS = 30 * 60 * 1000
 const HOOK_OUTPUT_MAX = 4 * 1024 * 1024
 const PREP_OUTPUT_MAX = 8 * 1024
 
@@ -69,9 +77,15 @@ export function validateRemoteAgent(raw) {
 // POSIX single quotes (values here never hold a backslash: see remoteProject.js).
 const q = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`
 
-// A remote home from the prep command's output, checked. -> path | null
+// A remote home from the prep command's output (its TESSEL_HOME= line: a
+// shell rc file may print other lines), checked. -> path | null
 export function validateHome(raw) {
-  const home = String(raw || '').replace(/\r?\n$/, '')
+  const line = String(raw || '')
+    .split(/\r?\n/)
+    .reverse()
+    .find((l) => l.startsWith('TESSEL_HOME='))
+  if (!line) return null
+  const home = line.slice('TESSEL_HOME='.length)
   if (!home.startsWith('/') || home.length > 1024 || CONTROL.test(home) || home.includes('\\')) return null
   return home.replace(/\/+$/, '') || '/'
 }
@@ -87,15 +101,25 @@ export function prepCommand(instance) {
   return (
     'umask 077 && mkdir -p "$HOME/.tessel-server/run" && ' +
     'chmod 700 "$HOME/.tessel-server" "$HOME/.tessel-server/run" && ' +
-    `rm -f "$HOME/.tessel-server/run/${instance}.sock" && printf '%s\\n' "$HOME"`
+    `rm -f "$HOME/.tessel-server/run/${instance}.sock" && printf 'TESSEL_HOME=%s\\n' "$HOME"`
   )
 }
 
-// The prefix that puts the pane's remote-agent variables in its shell:
-//   export TESSEL_PANE_ID='..' TESSEL_REMOTE_SOCK='..' TESSEL_REMOTE_TOKEN='..' [TESSEL_AGENT_PROVIDER='..'];
+// The pane's variables reach the server on an exec channel's stdin, into a
+// 0600 file in the 0700 run folder (never on a command line: other users of
+// the server could read the token in ps / /proc). The pane's shell sources
+// it and removes it before anything else runs.
+export const envFileOf = (paneId) => `.tessel-server/run/${paneId}.env`
+export function envFileCommand(paneId) {
+  if (!PANE_RE.test(paneId)) throw new Error('invalid pane') // i18n-ignore internal
+  return `umask 077 && mkdir -p "$HOME/.tessel-server/run" && cat > "$HOME/${envFileOf(paneId)}"`
+}
+
+// The env file:
+//   export TESSEL_PANE_ID='..' TESSEL_REMOTE_SOCK='..' TESSEL_REMOTE_TOKEN='..' [TESSEL_AGENT_PROVIDER='..']
 // sockPath null (the home is not known: the bind failed): built from $HOME
 // by the remote shell.
-export function exportPrefix({ paneId, token, instance, provider, sockPath }) {
+export function envFileContent({ paneId, token, instance, provider, sockPath }) {
   if (!PANE_RE.test(paneId) || !TOKEN_RE.test(token) || !INSTANCE_RE.test(instance)) throw new Error('invalid remote agent') // i18n-ignore internal
   const sock = sockPath ? q(sockPath) : `"$HOME"/${q(`.tessel-server/run/${instance}.sock`)}`
   const parts = [`TESSEL_PANE_ID=${q(paneId)}`, `TESSEL_REMOTE_SOCK=${sock}`, `TESSEL_REMOTE_TOKEN=${q(token)}`]
@@ -103,7 +127,15 @@ export function exportPrefix({ paneId, token, instance, provider, sockPath }) {
     if (!PROVIDER_RE.test(provider)) throw new Error('invalid remote agent') // i18n-ignore internal
     parts.push(`TESSEL_AGENT_PROVIDER=${q(provider)}`)
   }
-  return `export ${parts.join(' ')}; `
+  return `export ${parts.join(' ')}\n`
+}
+
+// The start of the pane's command: the env file sourced when it is there
+// (a missing file would end a POSIX sh), then removed in any case.
+export function sourcePrefix(paneId) {
+  if (!PANE_RE.test(paneId)) throw new Error('invalid pane') // i18n-ignore internal
+  const f = `"$HOME"/${q(envFileOf(paneId))}`
+  return `[ -r ${f} ] && . ${f}; rm -f ${f}; `
 }
 
 function safely(fn) {
@@ -122,7 +154,7 @@ function exitCodeOf(stream) {
 }
 
 // Runs one command on an exec channel. -> Promise<{ code, stdout, client }>
-function runExec(openExec, hostId, spec, command, timers, timeoutMs) {
+function runExec(openExec, hostId, spec, command, timers, timeoutMs, input) {
   return openExec(hostId, spec, command).then(
     ({ stream, release, client }) =>
       new Promise((resolve, reject) => {
@@ -151,7 +183,7 @@ function runExec(openExec, hostId, spec, command, timers, timeoutMs) {
           }, 0)
         if (stream.tesselClosed) onClose()
         else stream.once('close', onClose)
-        safely(() => stream.end())
+        safely(() => (input == null ? stream.end() : stream.end(input)))
       })
   )
 }
@@ -161,6 +193,7 @@ export function createRemoteAgentTunnel({
   spawn = nodeSpawn,
   log = () => {},
   timers = { setTimeout, clearTimeout },
+  now = () => Date.now(),
   limits = {}
 } = {}) {
   const L = {
@@ -170,8 +203,14 @@ export function createRemoteAgentTunnel({
     maxConnections: MAX_CONNECTIONS,
     bindRetryMs: BIND_RETRY_MS,
     prepTimeoutMs: 20_000,
+    maxSessions: MAX_SESSIONS,
+    maxPaneMcp: MAX_PANE_MCP,
+    maxPaneHooks: MAX_PANE_HOOKS,
+    hookRatePerS: HOOK_RATE_PER_S,
+    mcpIdleMs: MCP_IDLE_MS,
     ...limits
   }
+  let sessions = 0 // MCP connections and hooks past their hello, all hosts
   const panes = new Map() // paneId -> { hostId, token: Buffer, agent, conns: Set }
   const hosts = new Map() // hostId -> host state (below)
   const listening = new WeakSet() // ssh2 clients with our 'unix connection' listener
@@ -193,17 +232,39 @@ export function createRemoteAgentTunnel({
     // the same one for every pane on a host).
     if (!h.instance) h.instance = agent.instance
     if (spec) h.spec = spec
-    panes.set(paneId, { hostId, token: Buffer.from(agent.token, 'hex'), agent, conns: new Set() })
+    panes.set(paneId, { hostId, token: Buffer.from(agent.token, 'hex'), agent, conns: new Set(), mcp: 0, hooks: 0, bucket: L.hookRatePerS, bucketAt: now() })
     return true
   }
 
-  function forgetPane(paneId) {
+  // agent: the one registered (a pane re-created with the same id meanwhile
+  // is not forgotten by the old one's late exit).
+  function forgetPane(paneId, agent) {
     const p = panes.get(paneId)
-    if (!p) return
+    if (!p || (agent && p.agent !== agent)) return
     panes.delete(paneId)
     for (const c of [...p.conns]) c.end()
     const h = hosts.get(p.hostId)
-    if (h && !hasPanes(h.hostId)) unbind(h)
+    if (!h) return
+    // Its env file (left when its shell never started) goes too, while the
+    // host is connected (never a new connection, nor a sign-in, for that).
+    if (h.client && h.spec) runExec(openExec, h.hostId, h.spec, `rm -f "$HOME/${envFileOf(paneId)}"`, timers, L.prepTimeoutMs).catch(() => {})
+    if (!hasPanes(h.hostId)) unbind(h)
+  }
+
+  // The pane's env file on the server (before each shell of the pane
+  // starts: its shell removes it). Never rejects. -> Promise<boolean>
+  function writeEnv(hostId, spec, paneId) {
+    const p = panes.get(paneId)
+    if (!p || p.hostId !== hostId) return Promise.resolve(false)
+    const { token, instance, provider } = p.agent
+    const content = envFileContent({ paneId, token, instance, provider, sockPath: (hosts.get(hostId) || {}).sockPath || null })
+    return runExec(openExec, hostId, spec, envFileCommand(paneId), timers, L.prepTimeoutMs, content).then(
+      (r) => r.code === 0,
+      (err) => {
+        log('warn', `remote agent env file on ${spec.host}: ${(err && err.code) || 'failed'}`)
+        return false
+      }
+    )
   }
 
   const hasPanes = (hostId) => [...panes.values()].some((p) => p.hostId === hostId)
@@ -218,7 +279,7 @@ export function createRemoteAgentTunnel({
     if (h.client && h.sockPath) return Promise.resolve(h.sockPath)
     if (!h.binding) {
       const generation = h.generation
-      h.binding = bind(h, generation)
+      const binding = bind(h, generation)
         .then((sockPath) => {
           h.retry = 0
           return sockPath
@@ -228,8 +289,9 @@ export function createRemoteAgentTunnel({
           return null
         })
         .finally(() => {
-          h.binding = null
+          if (h.binding === binding) h.binding = null
         })
+      h.binding = binding
     }
     return h.binding
   }
@@ -257,13 +319,6 @@ export function createRemoteAgentTunnel({
       return null
     }
     h.client = client
-    const gone = () => {
-      if (h.client !== client) return
-      h.client = null
-      scheduleRebind(h)
-    }
-    client.once('close', gone)
-    client.once('end', gone)
     log('info', `remote agent socket bound on ${h.spec.host} (${h.instance})`)
     return sockPath
   }
@@ -287,6 +342,8 @@ export function createRemoteAgentTunnel({
     if (h.retryTimer) timers.clearTimeout(h.retryTimer)
     h.retryTimer = null
     h.retry = 0
+    // A bind in progress is not joined by a pane that comes next.
+    h.binding = null
     for (const c of [...h.conns]) c.end()
     const client = h.client
     h.client = null
@@ -297,6 +354,16 @@ export function createRemoteAgentTunnel({
   function listen(client) {
     if (listening.has(client)) return
     listening.add(client)
+    // The connection went away: its sockets are bound again elsewhere.
+    const gone = () => {
+      for (const h of hosts.values()) {
+        if (h.client !== client) continue
+        h.client = null
+        scheduleRebind(h)
+      }
+    }
+    client.once('close', gone)
+    client.once('end', gone)
     client.on('unix connection', (info, accept, reject) => {
       const path = info && info.socketPath
       const h = [...hosts.values()].find((x) => x.sockPath === path && x.client === client)
@@ -319,6 +386,7 @@ export function createRemoteAgentTunnel({
     let ended = false
     let pane = null
     let helloTimer = null
+    let release = null // the session slot taken after the hello
     const conn = {
       end() {
         if (ended) return
@@ -332,6 +400,8 @@ export function createRemoteAgentTunnel({
       if (pane) pane.conns.delete(conn)
       if (child && child.exitCode === null && child.signalCode === null) safely(() => child.kill())
       timers.clearTimeout(helloTimer)
+      if (release) release()
+      release = null
     }
     // A last line, then the channel closes (after the line is out).
     function finishWith(obj) {
@@ -402,15 +472,42 @@ export function createRemoteAgentTunnel({
       const p = panes.get(m.pane)
       if (!p || p.hostId !== hostId) return finishWith({ ok: false, error: 'unknown-pane' })
       if (!crypto.timingSafeEqual(Buffer.from(m.token, 'hex'), p.token)) return finishWith({ ok: false, error: 'bad-token' })
+      if (!reserve(p, m.kind)) return finishWith({ ok: false, error: 'busy' })
       pane = p
       p.conns.add(conn)
       if (m.kind === 'mcp') runMcp(p, rest)
       else runHook(p, args[0], rest)
     }
 
+    // A slot under the caps (released with the connection). -> boolean
+    function reserve(p, kind) {
+      if (sessions >= L.maxSessions) return false
+      if (kind === 'mcp') {
+        if (p.mcp >= L.maxPaneMcp) return false
+        p.mcp++
+      } else {
+        const t = now()
+        p.bucket = Math.min(L.hookRatePerS, p.bucket + ((t - p.bucketAt) / 1000) * L.hookRatePerS)
+        p.bucketAt = t
+        if (p.hooks >= L.maxPaneHooks || p.bucket < 1) return false
+        p.bucket -= 1
+        p.hooks++
+      }
+      sessions++
+      release = () => {
+        sessions--
+        if (kind === 'mcp') p.mcp--
+        else p.hooks--
+      }
+      return true
+    }
+
+    // In the pane's project data folder (TESSEL_PROJECT_DIR, set by main).
     function start(p, argv) {
+      const cwd = cleanPath(p.agent.env.TESSEL_PROJECT_DIR) || undefined
       return spawn(p.agent.node, [p.agent.script, ...argv], {
         env: p.agent.env,
+        ...(cwd ? { cwd } : {}),
         windowsHide: true,
         shell: false,
         stdio: ['pipe', 'pipe', argv.length ? 'pipe' : 'ignore']
@@ -418,6 +515,8 @@ export function createRemoteAgentTunnel({
     }
 
     function runMcp(p, rest) {
+      let idleTimer = null
+      stream.once('close', () => timers.clearTimeout(idleTimer))
       try {
         child = start(p, [])
       } catch {
@@ -437,6 +536,18 @@ export function createRemoteAgentTunnel({
         if (rest.length) child.stdin.write(rest)
         stream.pipe(child.stdin)
         child.stdout.pipe(stream, { end: false })
+        // Idle: no byte either way for mcpIdleMs.
+        let last = now()
+        const touch = () => (last = now())
+        stream.on('data', touch)
+        child.stdout.on('data', touch)
+        const check = () => {
+          if (ended) return
+          const left = L.mcpIdleMs - (now() - last)
+          if (left <= 0) return conn.end()
+          idleTimer = timers.setTimeout(check, left)
+        }
+        idleTimer = timers.setTimeout(check, L.mcpIdleMs)
         stream.resume()
       })
       // server.cjs gone: the client's stdout ends, then the channel closes.
@@ -536,12 +647,14 @@ export function createRemoteAgentTunnel({
     forgetPane,
     dropHost,
     ensure,
+    writeEnv,
     handleConnection,
     closeAll,
     sockPathFor: (hostId) => (hosts.get(hostId) || {}).sockPath || null,
     // For tests and diagnostics: never a token.
     isBound: (hostId) => !!(hosts.get(hostId) && hosts.get(hostId).client),
     connectionCount: (hostId) => (hosts.get(hostId) ? hosts.get(hostId).conns.size : 0),
-    paneCount: () => panes.size
+    paneCount: () => panes.size,
+    sessionCount: () => sessions
   }
 }

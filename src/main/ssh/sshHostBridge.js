@@ -36,7 +36,7 @@ import { createSshManager } from './sshManager'
 import { createHostKeyStore } from './hostKeyStore'
 import { formatSshError, formatSshText } from './sshMessages'
 import { remoteCdCommand, validateRemotePath } from '../remoteProject'
-import { createRemoteAgentTunnel, validateRemoteAgent, exportPrefix } from '../remoteAgent/remoteAgentTunnel'
+import { createRemoteAgentTunnel, validateRemoteAgent, sourcePrefix } from '../remoteAgent/remoteAgentTunnel'
 
 export const SSH_FEATURE = 1
 export const CREDENTIAL_TIMEOUT_MS = 120_000
@@ -308,11 +308,11 @@ export function createSshHostBridge({
     if (!spec || !cleanStr(hostId, 80)) throw new Error('invalid ssh spec') // i18n-ignore internal
     const agent = rawAgent == null ? null : validateRemoteAgent(rawAgent)
     if (rawAgent != null && (!agent || typeof paneId !== 'string' || !ID_RE.test(paneId))) throw new Error('invalid remote agent') // i18n-ignore internal
-    // The command of each (re)opened shell: the socket path is known once
-    // the tunnel is bound.
+    // The command of each (re)opened shell: the pane's variables come from
+    // the env file the tunnel writes just before (writeEnv).
     const commandFor = () =>
       agent
-        ? exportPrefix({ paneId, token: agent.token, instance: agent.instance, provider: agent.provider, sockPath: tunnel.sockPathFor(hostId) }) +
+        ? sourcePrefix(paneId) +
           (cdCommand || 'exec "$SHELL" -l')
         : cdCommand
     const dataFns = []
@@ -339,7 +339,7 @@ export function createSshHostBridge({
       if (exited) return
       exited = true
       shells.delete(self)
-      if (agent) tunnel.forgetPane(paneId)
+      if (agent) tunnel.forgetPane(paneId, agent)
       // The host's last terminal: credentials kept only for it may go.
       manager.forgetIfUnused(hostId)
       if (reconnectTimer) timers.clearTimeout(reconnectTimer)
@@ -349,17 +349,21 @@ export function createSshHostBridge({
     const pty = { term: 'xterm-256color', cols: size.cols, rows: size.rows, width: 0, height: 0 }
 
     // An agent's pane: signed in first (a failure ends the pane as for any
-    // terminal), then the socket bound (or not, after agentBindWaitMs).
+    // terminal), then the socket bound and the env file written (or not,
+    // after agentBindWaitMs).
     function agentReady() {
       if (!agent) return Promise.resolve()
       return manager.connectHost(hostId, spec).then(
         () =>
           new Promise((resolve) => {
             const t = timers.setTimeout(resolve, agentBindWaitMs)
-            tunnel.ensure(hostId, spec).then(() => {
-              timers.clearTimeout(t)
-              resolve()
-            })
+            tunnel
+              .ensure(hostId, spec)
+              .then(() => tunnel.writeEnv(hostId, spec, paneId))
+              .then(() => {
+                timers.clearTimeout(t)
+                resolve()
+              })
           })
       )
     }
