@@ -1663,6 +1663,11 @@ async function deserializeNode(snap, cwd = null) {
       if (snap.titleSet === true) asleep.titleSet = true
       if (typeof snap.autoTitle === 'string' && snap.autoTitle) asleep.autoTitle = snap.autoTitle.slice(0, 80)
       if (Number.isInteger(snap.fontZoom) && Math.abs(snap.fontZoom) <= 20) asleep.fontZoom = snap.fontZoom
+      // Asleep, it stays in its team (else a reload took it out, and a team
+      // whose members all slept was gone).
+      if (typeof snap.team === 'string') asleep.team = snap.team
+      if (snap.teamTools) asleep.teamTools = true
+      if (typeof snap.toolsVersion === 'string') asleep.toolsVersion = snap.toolsVersion
       return asleep
     }
     const leaf = await createLeaf(snap.shellId, agent, cwd, snap.worktree || null, {
