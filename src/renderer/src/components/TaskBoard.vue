@@ -11,7 +11,8 @@ import { tasks, addTask, moveTask, removeTask } from '../taskBoardStore'
 import TaskCard from './TaskCard.vue'
 import OrchestrationCard from './OrchestrationCard.vue'
 import JobCostLine from './JobCostLine.vue'
-import { useJobCost, refreshJobCost, sumJobCosts } from '../jobCost'
+import { useJobCost, refreshJobCost, sumJobCosts, withLiveTime } from '../jobCost'
+import { useNow } from '../chat/orca/composables/use-now'
 import { t } from '../i18n'
 
 const props = defineProps({
@@ -44,13 +45,16 @@ const grouped = computed(() => {
 // for the cards on this board, again when a card moves or changes agent, and
 // when the main process says the figures changed (jobCost.js, throttled).
 const visibleTasks = computed(() => COLUMNS.flatMap((c) => grouped.value[c]))
-const costOf = useJobCost('cards', () => visibleTasks.value.map((task) => task.id))
+const fetchedCost = useJobCost('cards', () => visibleTasks.value.map((task) => task.id))
+// A card in Doing: its time goes on between two reads (a clock only while one is).
+const clock = useNow(15000, () => visibleTasks.value.some((task) => task.column === 'doing'))
+const costOf = (task) => withLiveTime(fetchedCost(task.id), task, clock.value)
 watch(
   () => visibleTasks.value.map((task) => `${task.id}:${task.column}:${task.paneId || ''}`).join('|'), // i18n-ignore
   () => refreshJobCost()
 )
 // The total of the visible cards, at the top of the board.
-const costTotal = computed(() => sumJobCosts(visibleTasks.value.map((task) => costOf(task.id))))
+const costTotal = computed(() => sumJobCosts(visibleTasks.value.map((task) => costOf(task))))
 const costTotalTitle = computed(() => {
   const total = costTotal.value
   const lines = [total.count === 1
@@ -226,7 +230,7 @@ const deleteLabel = computed(() =>
             :agent-panes="agentPanes"
             :selectable="selecting && column === 'done'"
             :selected="picked.includes(task.id)"
-            :cost="costOf(task.id)"
+            :cost="costOf(task)"
             @toggle-select="togglePick"
             @focus-pane="(id) => emit('focus-pane', id)"
             @review="(id) => emit('review', id)"

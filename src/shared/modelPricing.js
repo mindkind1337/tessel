@@ -26,9 +26,12 @@
 //   prompt length. Not counted: long-context tiers (OpenAI > 272K, Gemini
 //   > 200K, Grok >= 200K prompts; Claude 4.6 and later, including the
 //   "[1m]" variants, keep standard rates over the full 1M window anyway),
-//   Claude fast mode and Cursor "-fast" ids, 1-hour cache writes, batch
-//   discounts, data residency multipliers, Gemini cache storage per hour,
-//   web search and other per-call tool fees.
+//   Claude fast mode and Cursor "-fast" ids, batch discounts, data residency
+//   multipliers, Gemini cache storage per hour, web search and other
+//   per-call tool fees.
+// - Claude's 1-hour cache writes (Claude Code makes most of its writes so):
+//   a caller that knows how many of the cacheWriteTokens were 1-hour writes
+//   passes them as cacheWrite1hTokens, priced at the 1-hour rate.
 
 import { CLAUDE_PRICING } from './claudePricing.js'
 
@@ -49,7 +52,7 @@ const r = (input, output, cacheRead, cacheWrite) => ({ input, output, cacheRead,
 // Claude: claudePricing.js's table (also used by the Claude usage report),
 // standard rates and the 5-minute cache write.
 const CLAUDE = Object.fromEntries(
-  Object.entries(CLAUDE_PRICING).map(([k, p]) => [k, r(p.input, p.output, p.cacheRead, p.cacheWrite)])
+  Object.entries(CLAUDE_PRICING).map(([k, p]) => [k, { ...r(p.input, p.output, p.cacheRead, p.cacheWrite), cacheWrite1h: p.cacheWrite1h }])
 )
 
 // OpenAI lists cache writes only for GPT-6 and GPT-5.6 (1.25x input); for the
@@ -211,8 +214,10 @@ const count = (n) => {
 // -> { usd: number|null, known: boolean, perMillion: { input, output, cacheRead, cacheWrite } | null }
 // Optional extras: at, when the tokens were used (Date, ms or 'YYYY-MM-DD';
 // today by default); recordedUsd, a cost the agent recorded itself (OpenCode),
-// which wins over the estimate.
-export function estimateCost({ provider, model, inputTokens = 0, outputTokens = 0, cacheReadTokens = 0, cacheWriteTokens = 0, at, recordedUsd } = {}) {
+// which wins over the estimate; cacheWrite1hTokens, how many of the
+// cacheWriteTokens were 1-hour writes (Claude's 1-hour rate; the ordinary
+// write rate for a model without one).
+export function estimateCost({ provider, model, inputTokens = 0, outputTokens = 0, cacheReadTokens = 0, cacheWriteTokens = 0, cacheWrite1hTokens = 0, at, recordedUsd } = {}) {
   void provider
   const key = pricingKey(model)
   const p = key ? ratesFor(key, at) : null
@@ -220,11 +225,15 @@ export function estimateCost({ provider, model, inputTokens = 0, outputTokens = 
     return { usd: recordedUsd, known: true, perMillion: p }
   }
   if (!p) return { usd: null, known: false, perMillion: null }
+  const writes = count(cacheWriteTokens)
+  const writes1h = Math.min(writes, count(cacheWrite1hTokens))
+  const rate1h = MODEL_PRICES[key].cacheWrite1h ?? p.cacheWrite
   const usd =
     (count(inputTokens) * p.input +
       count(outputTokens) * p.output +
       count(cacheReadTokens) * p.cacheRead +
-      count(cacheWriteTokens) * p.cacheWrite) /
+      (writes - writes1h) * p.cacheWrite +
+      writes1h * rate1h) /
     1_000_000
   return { usd, known: true, perMillion: p }
 }

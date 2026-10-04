@@ -85,13 +85,14 @@ export function withHistory(tasks, history) {
 // --- Sums and cost -------------------------------------------------------
 
 function emptySums() {
-  return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reportedUsd: 0, reported: 0, events: 0 }
+  return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cacheWrite1h: 0, reportedUsd: 0, reported: 0, events: 0 }
 }
 function addInto(s, ev, share = 1) {
   s.input += ev.input * share
   s.output += ev.output * share
   s.cacheRead += ev.cacheRead * share
   s.cacheWrite += ev.cacheWrite * share
+  s.cacheWrite1h += (ev.cacheWrite1h || 0) * share
   if (typeof ev.reportedUsd === 'number') {
     s.reportedUsd += ev.reportedUsd * share
     s.reported += 1
@@ -134,7 +135,7 @@ export function summarize(t, durationMs, estimate = defaultEstimate, extra = {})
     cacheWrite += s.cacheWrite
     let r = null
     try {
-      r = estimate({ provider: s.provider, model: s.model, inputTokens: s.input, outputTokens: s.output, cacheReadTokens: s.cacheRead, cacheWriteTokens: s.cacheWrite })
+      r = estimate({ provider: s.provider, model: s.model, inputTokens: s.input, outputTokens: s.output, cacheReadTokens: s.cacheRead, cacheWriteTokens: s.cacheWrite, cacheWrite1hTokens: s.cacheWrite1h })
     } catch {
       r = null
     }
@@ -316,6 +317,25 @@ export function createJobCost({
     return paneLog.get(paneId).at(-1)
   }
 
+  async function exists(file) {
+    try {
+      return (await fs.stat(file)).isFile()
+    } catch {
+      return false
+    }
+  }
+
+  // A pane whose figures could not be read yet (no session reported, or its
+  // transcript not written yet: Claude Code writes it with the first prompt):
+  // its session report and the transcript it named are watched, so the window
+  // is told when they appear.
+  function watchPending(paneId, s) {
+    const dir = sessionsDir()
+    if (typeof dir === 'string' && isAbsolute(dir)) watch(join(dir, `${paneId}.json`))
+    const p = s && s.transcriptPath
+    if (typeof p === 'string' && isAbsolute(p) && p.length <= 1024 && !p.includes('\0') && p.toLowerCase().endsWith('.jsonl') && !isRemote(p)) watch(p)
+  }
+
   // A session -> its files [{ file, kind, sub }] | { reason }
   async function filesOf(paneId, s) {
     if (FILE_AGENTS.includes(s.agent)) {
@@ -323,7 +343,7 @@ export function createJobCost({
       const key = `${s.agent}|${s.sessionId}|${s.transcriptPath || ''}`
       const known = resolved.get(key)
       // A file not found is looked for again after a while (not yet written).
-      let hit = known && (known.file || now() - known.at < 30000) ? known.file : undefined
+      let hit = known && known.file ? known.file : undefined
       if (hit === undefined) {
         hit = null
         let folders = []
@@ -333,23 +353,27 @@ export function createJobCost({
           folders = []
         }
         const sub = s.agent === 'codex' ? 'sessions' : 'projects'
+        // The reported path: checked every time (cheap), so a transcript
+        // written after the session started is found as soon as it exists.
         for (const home of folders) {
           if (typeof home !== 'string' || !isAbsolute(home)) continue
           if (isRemote(home)) continue
           const f = s.transcriptPath ? reportedTranscriptIn(home, sub, s.transcriptPath) : null
-          if (f) {
+          if (f && (await exists(f))) {
             hit = f
             break
           }
         }
         if (!hit && s.transcriptPath && folders.length && isRemote(s.transcriptPath)) return { reason: 'remote' }
-        if (!hit)
+        // The search by id (reads folders): not again for a while.
+        if (!hit && !(known && now() - known.at < 30000)) {
           for (const home of folders) {
             if (typeof home !== 'string' || !isAbsolute(home) || isRemote(home)) continue
             hit = s.agent === 'codex' ? codexRolloutIn(home, s.sessionId) : claudeTranscriptIn(home, s.sessionId)
             if (hit) break
           }
-        resolved.set(key, { file: hit, at: now() })
+          resolved.set(key, { file: hit, at: now() })
+        } else if (hit) resolved.set(key, { file: hit, at: now() })
         if (resolved.size > 2000) resolved.delete(resolved.keys().next().value)
       }
       if (hit) {
@@ -419,16 +443,19 @@ export function createJobCost({
       try {
         const s = await noteSession(id)
         if (!s) {
+          watchPending(id, null)
           out[id] = unavailable('no-session')
           continue
         }
         const where = await filesOf(id, s)
         if (!where.files) {
+          if (where.reason === 'missing-file') watchPending(id, s)
           out[id] = unavailable(where.reason, { sessionId: s.sessionId, agent: s.agent })
           continue
         }
         const r = await eventsOf(where.files, budget)
         if (!r.any) {
+          watchPending(id, s)
           out[id] = unavailable('missing-file', { sessionId: s.sessionId, agent: s.agent })
           continue
         }
@@ -502,7 +529,10 @@ export function createJobCost({
         for (const s of sessions) {
           const where = await filesOf(paneId, s)
           if (where.files) files.push(...where.files)
-          else reason = reason || where.reason
+          else {
+            reason = reason || where.reason
+            if (where.reason === 'missing-file') watchPending(paneId, s)
+          }
         }
         if (files.length) {
           const r = await eventsOf(files, budget)
@@ -510,7 +540,11 @@ export function createJobCost({
           if (r.any) res = attribute(r.events, [...byPane.get(paneId)].map(([id, windows]) => ({ id, windows })))
           else reason = reason || 'missing-file'
         }
-        if (!res) for (const id of byPane.get(paneId).keys()) if (!reasons.has(id)) reasons.set(id, reason || 'missing-file')
+        if (!res) {
+          const why = reason || 'missing-file'
+          if (why === 'missing-file' || why === 'no-session') watchPending(paneId, sessions.at(-1))
+          for (const id of byPane.get(paneId).keys()) if (!reasons.has(id)) reasons.set(id, why)
+        }
       } catch (err) {
         warn(`pane ${paneId}`, err)
       }
@@ -622,7 +656,7 @@ function mergeTally(into, from) {
   for (const [k, s] of from.byModel) {
     let d = into.byModel.get(k)
     if (!d) into.byModel.set(k, (d = { provider: s.provider, model: s.model, ...emptySums() }))
-    for (const f of ['input', 'output', 'cacheRead', 'cacheWrite', 'reportedUsd', 'reported', 'events']) d[f] += s[f]
+    for (const f of ['input', 'output', 'cacheRead', 'cacheWrite', 'cacheWrite1h', 'reportedUsd', 'reported', 'events']) d[f] += s[f]
   }
   for (const [k, sub] of from.bySub) {
     if (!into.bySub.has(k)) into.bySub.set(k, newTally())
