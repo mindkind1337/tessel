@@ -154,6 +154,9 @@ export async function switchClaudeModel(paneId, modelId, expectedModelLabel) {
     }
   })
   observer.arm()
+  // Claude Code saves a /model pick as its default for new sessions: this one
+  // is for this pane only.
+  if (window.shellApi.claudeHoldDefaultModel) await window.shellApi.claudeHoldDefaultModel().catch(() => {})
   try {
     await typeCommand(paneId, `/model ${modelId}`) // i18n-ignore
   } catch {

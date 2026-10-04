@@ -1,4 +1,5 @@
 import { app, BrowserWindow, Menu, ipcMain, clipboard, nativeImage, dialog, Notification, shell, powerSaveBlocker, powerMonitor, safeStorage, webContents, session, utilityProcess } from 'electron'
+import { holdClaudeDefaultModel } from './claudeDefaultModel'
 import { join, isAbsolute, dirname, basename } from 'path'
 import os from 'os'
 import fs from 'fs'
@@ -1089,6 +1090,11 @@ ipcMain.handle('sessions:title', async (_evt, q = {}) => {
     log.warn('sessions', `title: ${err.message}`)
   }
   return ''
+})
+// A model picked in Tessel for one Claude Code pane: its /model must not
+// become the default of every new session (see claudeDefaultModel.js).
+ipcMain.handle('claude:holdDefaultModel', () => {
+  holdClaudeDefaultModel()
 })
 ipcMain.handle('sessions:claudeExists', async (_evt, id, scope) => {
   try { return await accountSessions.claudeExists(id, scope) } catch { return false }

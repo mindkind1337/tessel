@@ -79,6 +79,7 @@ const api = {
   // from validated named palettes instead of passing arbitrary CSS colors.
   setWindowTheme: (theme) => ipcRenderer.send('window:theme', theme),
   diagnostics: () => ipcRenderer.invoke('logs:diagnostics'),
+  claudeHoldDefaultModel: () => ipcRenderer.invoke('claude:holdDefaultModel'),
   claudeSessionExists: (id, scope) => ipcRenderer.invoke('sessions:claudeExists', id, scope),
   findCodexSession: (query) => ipcRenderer.invoke('sessions:findCodex', query),
   findAgentSession: (query) => ipcRenderer.invoke('sessions:find', query),
