@@ -7,6 +7,7 @@ import os from 'os'
 import { join } from 'path'
 import { createAgentStateRulesFile, readRulesFile, MAX_RULES_FILE_BYTES } from '../agentStateRulesFile'
 import { OVERRIDE_TEMPLATE } from '../../shared/agentStateRules'
+import { setLanguage } from '../i18n'
 
 let dir
 let file
@@ -27,7 +28,7 @@ const knownAgents = ['claude', 'codex']
 
 describe('readRulesFile', () => {
   it('no file: built-in', () => {
-    expect(readRulesFile(file, { knownAgents })).toEqual({ state: 'builtin', reason: '', file, size: 0, override: null })
+    expect(readRulesFile(file, { knownAgents })).toEqual({ state: 'builtin', reason: '', problem: null, file, size: 0, override: null })
   })
 
   it('a valid file: override, with its size', () => {
@@ -50,6 +51,26 @@ describe('readRulesFile', () => {
   it('a huge file is refused unread', () => {
     fs.writeFileSync(file, ' '.repeat(MAX_RULES_FILE_BYTES + 1))
     expect(readRulesFile(file, { knownAgents }).reason).toContain('larger than')
+    expect(readRulesFile(file, { knownAgents }).problem).toEqual({ code: 'tooLarge', kb: 256 })
+  })
+
+  // The window says the reason in its own language from the code; main's
+  // own text is in its language too. The parser's words stay as they are.
+  describe('in French', () => {
+    afterEach(() => setLanguage('en'))
+
+    it('a schema error and broken JSON: a code, and French text around the details', () => {
+      setLanguage('fr')
+      fs.writeFileSync(file, JSON.stringify({ engineVersion: 1, agents: { claude: { rules: [{ id: 'x', kind: 'approval', regex: '(a+)+b' }] } } }))
+      const bad = readRulesFile(file, { knownAgents })
+      expect(bad.problem).toEqual({ code: 'unsafeRegex', at: 'agents.claude.rules[0]', why: 'repeatedGroup' })
+      expect(bad.reason).toBe('agents.claude.rules[0] : la regex répète un groupe qui peut correspondre de plusieurs façons')
+      fs.writeFileSync(file, '{ "engineVersion": 1, ')
+      const broken = readRulesFile(file, { knownAgents })
+      expect(broken.problem).toMatchObject({ code: 'badJson' })
+      expect(broken.reason).toBe(`JSON non valide : ${broken.problem.detail}`)
+      expect(broken.reason).not.toContain('not valid JSON')
+    })
   })
 })
 

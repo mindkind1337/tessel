@@ -36,7 +36,7 @@ import {
 import { modelsFor, modelLists, modelProbes, refreshModels, canProbeModels } from '../agentModels'
 import { sessionOptionLabel, sessionChoiceLabel, probeErrorText } from '../sessionOptionLabels'
 import { CACHE_TTLS } from '../promptCache'
-import { agentRulesStatus } from '../agentStateRules'
+import { agentRulesReason, agentRulesStatus } from '../agentStateRules'
 import { ORCHESTRATION_EXAMPLES, ORCHESTRATION_TOOLS } from '../orchestrationGuide'
 import { WORKER_AGENTS, MAX_CONCURRENT_LIMIT, NESTED_DEPTH_LIMIT } from '../../../shared/orchestration'
 // Settings > Appearance, "Usage refresh": Off, or every N minutes.
@@ -426,7 +426,7 @@ const agentRulesLine = computed(() => {
   if (agentRulesStatus.state === 'override')
     return t('settings.agents.rulesOverride', 'Your rules file is in use ({{count}} change(s) over the built-in rules)', { count: agentRulesStatus.size })
   if (agentRulesStatus.state === 'invalid')
-    return t('settings.agents.rulesInvalid', 'Your rules file is ignored, the built-in rules stay in use: {{reason}}', { reason: agentRulesStatus.reason })
+    return t('settings.agents.rulesInvalid', 'Your rules file is ignored, the built-in rules stay in use: {{reason}}', { reason: agentRulesReason(t) })
   return t('settings.agents.rulesBuiltin', 'Built-in rules. Open the rules file to fix how Tessel tells an agent works, waits for your approval or hit its limit; saved changes apply at once')
 })
 const agentRulesError = ref('')

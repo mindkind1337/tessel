@@ -5,6 +5,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import SettingsDialog from '../components/SettingsDialog.vue'
 import { resetSettings } from '../settings'
 import { applyAgentStateRules } from '../agentStateRules'
+import { setUiLanguage } from '../i18n'
 
 describe('Settings > Agents > Detection rules', () => {
   let wrapper, previousApi, opens
@@ -43,6 +44,28 @@ describe('Settings > Agents > Detection rules', () => {
     expect(status().text()).toContain('ignored')
     expect(status().text()).toContain('"robot" is not an agent')
     expect(status().classes()).toContain('set-error')
+  })
+
+  // The main process sends the reason as a code: said here in the
+  // interface's language, the parser's own words kept as they are.
+  it('says why the file is ignored in French, from its code', async () => {
+    await setUiLanguage('fr')
+    try {
+      applyAgentStateRules({
+        state: 'invalid',
+        reason: 'agents.claude.rules[0]: regex repeats a group that can match in more than one way',
+        problem: { code: 'unsafeRegex', at: 'agents.claude.rules[0]', why: 'repeatedGroup' }
+      })
+      await flushPromises()
+      expect(status().text()).toContain('agents.claude.rules[0] : la regex répète un groupe')
+      expect(status().text()).not.toContain('repeats a group')
+      applyAgentStateRules({ state: 'invalid', reason: 'not valid JSON: Unexpected end', problem: { code: 'badJson', detail: 'Unexpected end of JSON input' } })
+      await flushPromises()
+      expect(status().text()).toContain('JSON non valide : Unexpected end of JSON input')
+      expect(status().text()).not.toContain('not valid JSON')
+    } finally {
+      await setUiLanguage('en')
+    }
   })
 
   // "Open rules file" creates the commented example, which changes nothing:
