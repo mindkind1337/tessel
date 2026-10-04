@@ -406,6 +406,8 @@ function wakeSandbox(over = {}) {
     watchFoundSession: () => {},
     workerLaunchArgs: () => '',
     wakeLaunchArgs,
+    // createLeaf's Claude permission mode (a chat continued in a terminal): none here.
+    permissionMode: null,
     setTimeout: (fn) => fn(),
     ...over
   }
