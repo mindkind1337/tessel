@@ -655,6 +655,44 @@ describe('GitHub reads for agent prompts', () => {
     expect(runCalls.every((c) => c.options.shell === false && c.options.tailBytes > 0)).toBe(true)
   })
 
+  it('keeps only the readable text of a real gh --log-failed output', async () => {
+    // As gh 2.x prints it when it cannot match the job's steps: the whole job
+    // log, each line prefixed by job, step and timestamp, ESC as "^[".
+    const p = (step, text) => `test / e2e-test\t${step}\t2026-09-24T15:46:04.7340461Z ${text}`
+    const log = [
+      `test / e2e-test\tUNKNOWN STEP\t\ufeff2026-09-24T15:45:05.3430095Z Current runner version: '2.337.0'`,
+      p('UNKNOWN STEP', '^[[41m^[[1m FAIL ^[[22m^[[49m packages/vue/__tests__/e2e/Transition.spec.ts'),
+      p('UNKNOWN STEP', "##[error]AssertionError: expected 'a' to be 'b'"),
+      'test / e2e-test	UNKNOWN STEP	Expected: "b"',
+      p('UNKNOWN STEP', '##[error]Process completed with exit code 1.'),
+      p('UNKNOWN STEP', 'Post job cleanup.'),
+      p('UNKNOWN STEP', '[command]/usr/bin/git config --local --unset-all http.https://github.com/.extraheader'),
+      p('UNKNOWN STEP', 'Cleaning up orphan processes'),
+      ''
+    ].join('\n')
+    const stepped = [p('Install', 'pnpm i'), p('Run tests', 'FAIL x'), p('Run tests', '##[error]boom')].join('\n')
+    const { service } = fixture((_file, args) => {
+      if (args[1] === 'checks')
+        return response([
+          check({ name: 'e2e', bucket: 'fail' }),
+          check({ name: 'unit', bucket: 'fail', link: `${repo.url}/actions/runs/124/job/457` })
+        ])
+      if (args[0] === 'run') return { code: 0, stdout: args.includes('456') ? log : stepped }
+      return response([])
+    })
+    const [e2e, unit] = (await service.failingLogs({ cwd, number: 1 })).checks
+    expect(e2e.logTail).toBe(
+      [
+        "Current runner version: '2.337.0'",
+        ' FAIL  packages/vue/__tests__/e2e/Transition.spec.ts',
+        "##[error]AssertionError: expected 'a' to be 'b'",
+        'Expected: "b"',
+        '##[error]Process completed with exit code 1.'
+      ].join('\n')
+    )
+    expect(unit.logTail).toBe(['== Install ==', 'pnpm i', '== Run tests ==', 'FAIL x', '##[error]boom'].join('\n'))
+  })
+
   it('caps the number of logs read and the total log size', async () => {
     const checks = Array.from({ length: 12 }, (_, i) =>
       check({ name: `job${i}`, bucket: 'fail', link: `${repo.url}/actions/runs/9${i}/job/8${i}` })
