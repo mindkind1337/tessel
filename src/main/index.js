@@ -142,6 +142,10 @@ import {
   releaseTeamDelivery
 } from './teamChannel'
 
+// Many services each clean up on will-quit (more than Node's warning limit
+// of 10): expected, not a leak.
+app.setMaxListeners(40)
+
 // ---------------------------------------------------------------------------
 // PTY registry
 // ---------------------------------------------------------------------------

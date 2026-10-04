@@ -412,6 +412,8 @@ function openExternalUrl(url) {
 // stream-json mode; messages (yours, its team's) are turns of their own,
 // never typed. Its state comes from the conversation itself.
 const CHAT_AGENTS = ['claude', 'codex', 'opencode']
+// Claude Code's modes that ask before acting (a pane in Manual keeps one).
+const MANUAL_CLAUDE_MODES = ['default', 'acceptEdits', 'plan', 'dontAsk']
 // The default title chats had before ("Claude (chat)"…): dropped on restore.
 const OLD_CHAT_TITLE = /^\s*(claude|codex|opencode)\s*\(chat\)\s*$/i
 const CHAT_AGENT_NAMES = { claude: 'Claude', codex: 'Codex', opencode: 'OpenCode' } // i18n-ignore product names
@@ -1175,6 +1177,7 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
       launchedAt: opts.launchedAt || null,
       ...(paneChoice ? { sessionOptions: paneChoice } : {}),
       ...(panePermissions ? { permissions: panePermissions } : {}),
+      ...(opts.permissionMode ? { permissionMode: opts.permissionMode } : {}),
       remoteHostId: opts.remoteHostId,
       remotePath: opts.remotePath || null,
       // What it printed last time: shown now, and again above the session
@@ -1187,6 +1190,9 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
     })
   }
   const permissions = launchPermissions(panePermissions, [projectDir, cwd], settings.yoloFolders, settings.agentPermissions)
+  // A Claude Code pane that asks first, with its mode (a chat continued in a
+  // terminal): that mode, unless your own arguments set one.
+  const permissionMode = agent && agent.id === 'claude' && permissions === 'manual' && MANUAL_CLAUDE_MODES.includes(opts.permissionMode) ? opts.permissionMode : null
   // What it runs with, flags included (for the signature and the header).
   const launchAll = agent ? effectiveAgent(agent, settings.agentPrefs, permissions, sessionValues, agentModels) : null
   const launch = workerChoice ? effectiveAgent(agent, settings.agentPrefs, permissions, null, agentModels) : launchAll
@@ -1274,6 +1280,7 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
       accountId,
       ...(paneChoice ? { sessionOptions: paneChoice } : {}),
       ...(panePermissions ? { permissions: panePermissions } : {}),
+      ...(permissionMode ? { permissionMode } : {}),
       remoteHostId: opts.remoteHostId || null,
       remotePath: (opts.remoteHostId && opts.remotePath) || null,
       failed: msg,
@@ -1311,6 +1318,7 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
     ...(paneChoice ? { sessionOptions: paneChoice } : {}),
     // Its own Ask first / Yolo choice (pane menu), for its restarts.
     ...(panePermissions ? { permissions: panePermissions } : {}),
+    ...(permissionMode ? { permissionMode } : {}),
     // Started with a chosen model: the header shows it until the agent's
     // conversation answers with another one.
     ...(!attached && modelApplied
@@ -1384,7 +1392,8 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
       window.shellApi.killPty(id)
       return null
     }
-    const base = (launch.args ? `${start.line} ${launch.args}` : start.line) + extra + automationArgs + continueArgs
+    const permissionModeArg = permissionMode && !/--permission-mode\b/.test(launch.args || '') ? ` --permission-mode ${permissionMode}` : '' // i18n-ignore
+    const base = (launch.args ? `${start.line} ${launch.args}` : start.line) + extra + automationArgs + continueArgs + permissionModeArg
     setTimeout(() => {
       const withWake = !!wakeArg && !!settings.teamWakeUps
       const full = base + (withWake ? wakeArg : '')
@@ -1568,6 +1577,7 @@ function serializeNode(node) {
       // Its own model choice (pane menu > Model), for the next start.
       sessionOptions: node.detected ? undefined : node.sessionOptions || undefined,
       permissions: node.detected ? undefined : node.permissions || undefined,
+      permissionMode: node.detected ? undefined : node.permissionMode || undefined,
       launchSig: node.detected ? undefined : node.launchSig || undefined,
       launchYolo: node.detected ? undefined : node.launchYolo || undefined,
       // Shown as a chat over its terminal (TerminalPane's chat view).
@@ -1706,6 +1716,7 @@ async function deserializeNode(snap, cwd = null) {
       startDir: typeof snap.startDir === 'string' ? snap.startDir : null,
       sessionOptions: snap.sessionOptions,
       permissions: snap.permissions === 'yolo' ? 'yolo' : undefined,
+      permissionMode: typeof snap.permissionMode === 'string' ? snap.permissionMode : undefined,
       resume: settings.resumeAgents,
       remoteHostId: typeof snap.remoteHostId === 'string' && /^ssh-[\w-]{1,60}$/.test(snap.remoteHostId) ? snap.remoteHostId : undefined,
       remotePath: typeof snap.remotePath === 'string' && snap.remotePath.length <= 1024 ? snap.remotePath : undefined,
@@ -3461,6 +3472,7 @@ async function connectLeaf(leafId) {
       startDir: old.startDir || null,
       sessionOptions: old.sessionOptions,
       permissions: old.permissions,
+      permissionMode: old.permissionMode,
       resume: old.notConnected.resume,
       remoteHostId: old.remoteHostId,
       remotePath: old.remotePath || undefined,
@@ -3547,6 +3559,7 @@ async function restartLeaf(leafId) {
     accountId: old.accountId,
     sessionOptions: old.sessionOptions,
     permissions: old.permissions,
+    permissionMode: old.permissionMode,
     resume: settings.resumeAgents,
     ...(old.remoteHostId ? { remoteHostId: old.remoteHostId } : {}),
     ...(old.remoteHostId && old.remotePath ? { remotePath: old.remotePath } : {})
@@ -6748,6 +6761,7 @@ async function restartInPlaceNow(leafId, opts) {
     accountId: old.accountId,
     sessionOptions: old.sessionOptions,
     permissions: old.permissions,
+    permissionMode: old.permissionMode,
     resume: !!old.sessionId && opts.resume !== false,
     // Team messages waiting for it: its first prompt says so (see createLeaf).
     wake: { teamId: old.team || null, gen: (old.gen || 0) + 1 }
@@ -6882,6 +6896,9 @@ async function switchToTerminal(leafId) {
       // a chat known to ask first, or a worker capped by its coordinator,
       // keeps asking first. OpenCode's terminal has no such switch.
       ...(old.agentId !== 'opencode' && (old.chatPermissions === 'manual' || old.maxPermissions === 'manual') ? { permissions: 'manual' } : {}),
+      // Claude Code: the chat's own mode (Ask, Accept edits, Plan), never
+      // its default for new sessions (which may be auto).
+      ...(old.agentId === 'claude' ? { permissionMode: old.chatPermissionMode || 'default' } : {}),
       resume: true,
       wake: { teamId: old.team || null, gen: 1 }
     })

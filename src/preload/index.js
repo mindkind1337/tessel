@@ -7,6 +7,21 @@ function subscribe(channel, cb) {
   return () => ipcRenderer.removeListener(channel, handler)
 }
 
+// Channels every pane listens to (its output, its exit, its model): one IPC
+// listener each, shared, instead of one per pane (Node warns past 10).
+const shared = {}
+function onShared(channel, cb) {
+  let subs = shared[channel]
+  if (!subs) {
+    subs = shared[channel] = new Set()
+    ipcRenderer.on(channel, (_e, payload) => {
+      for (const fn of [...subs]) fn(payload)
+    })
+  }
+  subs.add(cb)
+  return () => subs.delete(cb)
+}
+
 // Bridge a minimal, typed-ish API to the renderer. No node access leaks.
 const api = {
   // True in the dev build (not the installed app); the toolbar shows it.
@@ -203,11 +218,7 @@ const api = {
   probeAgentModels: (query) => ipcRenderer.invoke('agents:probeModels', query),
   // { paneId, sessionId, text } -> { ok } | { ok: false, error }
   agentInbox: (query) => ipcRenderer.invoke('agents:inbox', query),
-  onAgentModelChanged: (cb) => {
-    const handler = (_e, agentId) => cb(agentId)
-    ipcRenderer.on('agents:modelChanged', handler)
-    return () => ipcRenderer.removeListener('agents:modelChanged', handler)
-  },
+  onAgentModelChanged: (cb) => onShared('agents:modelChanged', cb),
   listSessions: (query) => ipcRenderer.invoke('sessions:list', query),
   // One past conversation (Agent Session History): its first prompt, latest
   // turns and transcript file; that file shown in the file manager; the
@@ -606,16 +617,8 @@ const api = {
   },
 
   // Subscriptions return an unsubscribe function.
-  onData: (cb) => {
-    const handler = (_e, payload) => cb(payload)
-    ipcRenderer.on('pty:data', handler)
-    return () => ipcRenderer.removeListener('pty:data', handler)
-  },
-  onExit: (cb) => {
-    const handler = (_e, payload) => cb(payload)
-    ipcRenderer.on('pty:exit', handler)
-    return () => ipcRenderer.removeListener('pty:exit', handler)
-  },
+  onData: (cb) => onShared('pty:data', cb),
+  onExit: (cb) => onShared('pty:exit', cb),
   onFocusPane: (cb) => {
     const handler = (_e, payload) => cb(payload)
     ipcRenderer.on('app:focusPane', handler)
