@@ -3032,6 +3032,12 @@ function remoteShimWarning(reason) {
 async function prepareRemoteAgent({ id, target, remotePath, agentId, teamSecret }) {
   const provider = REMOTE_AGENT_PROVIDERS.includes(agentId) ? agentId : null
   if (!provider) return {}
+  // A terminal host started by an older Tessel keeps running across app
+  // restarts without the tunnel: nothing is set up, and the user is told.
+  if (!host.features.remoteAgent) {
+    log.warn('remote-agent', 'the terminal host is older than this Tessel: no team tools for the agent on the host')
+    return { warning: t('main.remoteAgent.oldHost', "Tessel's terminal host was started by an older version, so this agent has no team tools or live status on the host. Quit Tessel completely and start it again (this restarts the terminals), then launch the agent again.") }
+  }
   const node = findNode({ env: freshEnv() })
   if (!node) return { warning: noNodeError() }
   const shim = await remoteShims.ensure(target.id)

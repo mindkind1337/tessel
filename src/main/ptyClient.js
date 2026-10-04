@@ -202,7 +202,7 @@ export function createPtyClient({ pipe, token, startHost, endStuckHost, log, onD
     },
     // What the running host can do (an older host lacks newer features).
     get features() {
-      return { ssh: !!(hello && hello.ssh) }
+      return { ssh: !!(hello && hello.ssh), remoteAgent: !!(hello && hello.remoteAgent) }
     }
   }
 }

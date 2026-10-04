@@ -874,7 +874,8 @@
     "remoteAgent": {
       "noNode": "Node.js est introuvable sur cet hôte : l’agent qui y tourne n’a ni les outils d’équipe ni son état en direct. Installez Node.js 18 ou plus récent sur l’hôte.",
       "oldNode": "Node.js sur cet hôte est antérieur à la version 18 : l’agent qui y tourne n’a ni les outils d’équipe ni son état en direct. Mettez Node.js à jour sur l’hôte.",
-      "failed": "Tessel n’a pas pu installer ses outils d’équipe sur cet hôte : l’agent qui y tourne n’a ni les outils d’équipe ni son état en direct."
+      "failed": "Tessel n’a pas pu installer ses outils d’équipe sur cet hôte : l’agent qui y tourne n’a ni les outils d’équipe ni son état en direct.",
+      "oldHost": "Le gestionnaire de terminaux de Tessel a été lancé par une version plus ancienne : cet agent n’a ni les outils d’équipe ni son état en direct sur l’hôte. Quittez complètement Tessel puis relancez-le (les terminaux redémarrent), puis relancez l’agent."
     }
   },
   "main.chat.image.tooLarge": "Cette image dépasse {{mb}} Mo.",
