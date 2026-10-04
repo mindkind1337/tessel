@@ -75,7 +75,7 @@ mkdir -p .claude .codex tessel-smoke`
 // goes, the originals come back.
 const TEARDOWN = `cd "$HOME"
 [ -f ${BACKUP}/.complete ] || { echo "no complete backup: nothing removed" >&2; exit 3; }
-pkill -u "$(id -u)" -f tessel-shim.cjs 2>/dev/null || true
+pkill -u "$(id -u)" -f '[t]essel-shim[.]cjs' 2>/dev/null || true
 rm -rf .tessel-server .claude.json .claude .codex tessel-smoke
 rm -f ${BACKUP}/.complete
 for f in ${BACKUP}/.[!.]* ${BACKUP}/*; do [ -e "$f" ] || [ -L "$f" ] || continue; mv "$f" .; done
