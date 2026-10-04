@@ -87,6 +87,7 @@
       "resumeInNewPane": "Reprendre dans un nouveau panneau",
       "continueInCli": "Continuer dans la CLI",
       "continueInCliHint": "Démarrer une nouvelle conversation Antigravity CLI dans son dossier, à partir de la fin de cette conversation de l'IDE",
+      "continueInCliNoFolderHint": "Son dossier est inconnu : démarrer une nouvelle conversation Antigravity CLI dans le dossier actuel, à partir de la fin de cette conversation de l'IDE",
       "ideOrigin": "IDE",
       "jumpToOriginalPane": "Aller au panneau d'origine",
       "hideDetails": "Masquer les détails",

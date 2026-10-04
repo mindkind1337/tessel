@@ -142,6 +142,21 @@ describe('SessionHistoryPanel.vue', () => {
     expect(wrapper.emitted('resume').at(-1)[0]).toMatchObject({ id: IDE.id, origin: 'ide' })
   })
 
+  it('an Antigravity IDE conversation whose folder is unknown can still be continued in the CLI; another agent\'s cannot be resumed', async () => {
+    const IDE = { agent: 'antigravity', origin: 'ide', id: 'eeeeeeee-1111-4222-8333-444444444444', cwd: '', title: 'No folder', started: NOW - 5_000, updated: NOW - 5_000 }
+    const LOST = { agent: 'gemini', id: 'ffffffff-1111-4222-8333-444444444444', cwd: '', title: 'Lost', started: NOW - 6_000, updated: NOW - 6_000 }
+    api.listSessions = vi.fn(() => Promise.resolve([IDE, LOST]))
+    await make({ cwd: null })
+    const row = rows().find((r) => r.attributes('data-session') === IDE.id)
+    const button = row.find('[data-test="session-resume"]')
+    expect(button.attributes('disabled')).toBeUndefined()
+    expect(button.attributes('aria-label')).toContain('folder is unknown')
+    await button.trigger('click')
+    expect(wrapper.emitted('resume').at(-1)[0]).toMatchObject({ id: IDE.id, origin: 'ide' })
+    const lost = rows().find((r) => r.attributes('data-session') === LOST.id)
+    expect(lost.find('[data-test="session-resume"]').attributes('disabled')).toBeDefined()
+  })
+
   it('expands a row: the first prompt, the latest turns, the folder, the sub-agents', async () => {
     await make()
     await rows()[0].find('[data-test="session-toggle"]').trigger('click')

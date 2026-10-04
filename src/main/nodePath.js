@@ -89,6 +89,28 @@ export function commandWord(file) {
 // Tessel's hook command: node, the script, its arguments.
 export const hookCommand = (node, scriptPath, args) => `${commandWord(node)} "${scriptPath}"${args ? ` ${args}` : ''}`
 
+// For an agent that runs a hook as Go's exec.Command("cmd", "/c", command)
+// on Windows (Antigravity CLI): Go quotes that argument with the C runtime's
+// rules, so every " in the command reaches cmd.exe as \" and the usual forms
+// above fail ("'C:/\"Program Files/nodejs/node.exe\"' is not recognized";
+// its localized message is not even UTF-8 and stops the agent's turn).
+// cmd.exe, Go-quoted or not, and PowerShell all run C:\"Program
+// Files\nodejs"\node.exe: the quotes only around its folder. The file name
+// and every argument then go without quotes, so none may hold a space.
+// -> the word, or null when it cannot be written so.
+export function cmdCommandWord(file) {
+  const path = String(file || '').replace(/\//g, '\\')
+  if (!/\s/.test(path)) return path
+  const m = /^([A-Za-z]:)\\(.+)\\([^\\]+)$/.exec(path)
+  if (!m || /\s/.test(m[3])) return null
+  return `${m[1]}\\"${m[2]}"\\${m[3]}`
+}
+export function goCmdHookCommand(node, scriptPath, args) {
+  const word = cmdCommandWord(node)
+  if (!word || typeof scriptPath !== 'string' || !scriptPath || /\s/.test(scriptPath)) return null
+  return `${word} ${scriptPath}${args ? ` ${args}` : ''}`
+}
+
 // The code of a plugin (OpenCode, Amp, Pi) that picks the node to run: the
 // one running the plugin when it is node itself (not Bun or an agent's own
 // binary), else the one found at install time.

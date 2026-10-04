@@ -33,12 +33,16 @@ const api = () => (typeof window !== 'undefined' && window.shellApi) || null
 
 const s = computed(() => props.session)
 const title = computed(() => maskSecrets(s.value.title || '') || t('app.sessions.untitled', 'Untitled conversation'))
-const canResume = computed(() => !!s.value.cwd && !!s.value.id)
-// An Antigravity IDE conversation: continued in a new Antigravity CLI one.
+// An Antigravity IDE conversation: continued in a new Antigravity CLI one,
+// also when its folder is unknown (the IDE does not always record it): then
+// in the folder a new pane opens in.
 const fromIde = computed(() => s.value.agent === 'antigravity' && s.value.origin === 'ide')
+const canResume = computed(() => !!s.value.id && (!!s.value.cwd || fromIde.value))
 const actionText = computed(() => (fromIde.value ? t('sessionHistory.row.continueInCli', 'Continue in CLI') : t('sessionHistory.row.resumeInNewPane', 'Resume in New Pane')))
 const resumeLabel = computed(() => {
   if (!canResume.value) return t('app.sessions.resumeUnavailable', 'The saved project folder is unavailable. You can still copy the session ID.')
+  if (fromIde.value && !s.value.cwd)
+    return t('sessionHistory.row.continueInCliNoFolderHint', 'Its folder is unknown: start a new Antigravity CLI conversation in the current folder, from the end of this IDE conversation')
   return fromIde.value
     ? t('sessionHistory.row.continueInCliHint', 'Start a new Antigravity CLI conversation in its folder, from the end of this IDE conversation')
     : actionText.value

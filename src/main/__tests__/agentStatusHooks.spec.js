@@ -91,9 +91,12 @@ const put = (file, value) => {
   fs.writeFileSync(file, typeof value === 'string' ? value : JSON.stringify(value))
 }
 const read = (file) => JSON.parse(fs.readFileSync(file, 'utf8'))
+// Antigravity on Windows takes no script path with a space (agentStatusHooks.js, goCmd).
+const scriptFor = (agent) => (STATUS_HOOKS[agent].goCmd && process.platform === 'win32' ? scriptPath.replace(' ', '') : scriptPath)
 
 describe('installing status hooks in the agents’ own files', () => {
   it.each(JSON_AGENTS)('%s: merges with the user’s hooks, is idempotent, and removes only its own', (agent) => {
+    const scriptPath = scriptFor(agent)
     const spec = STATUS_HOOKS[agent]
     const file = spec.file(home, {})
     const event = spec.events[0]
@@ -148,8 +151,30 @@ describe('installing status hooks in the agents’ own files', () => {
     for (const gate of ['preToolUse', 'beforeShellExecution', 'beforeMCPExecution']) expect(saved.hooks[gate]).toBeUndefined()
   })
 
+  it('Antigravity on Windows: no quote that cmd.exe would get as \\" (agy runs a hook as cmd /c, Go-quoted)', () => {
+    expect(statusCommand('C:\\TesselData\\tessel-team-mcp.cjs', 'antigravity', 'Stop', NODE, 'win32')).toBe(
+      'C:\\"Program Files\\nodejs"\\node.exe C:\\TesselData\\tessel-team-mcp.cjs --hook --agent=antigravity --event=Stop'
+    )
+    expect(statusCommand(scriptPath, 'droid', 'Stop', NODE, 'win32')).toBe(`C:/"Program Files/nodejs/node.exe" "${scriptPath}" --hook --agent=droid --event=Stop`)
+    expect(statusCommand('/opt/t/tessel-team-mcp.cjs', 'antigravity', 'Stop', '/usr/bin/node', 'linux')).toBe('"/usr/bin/node" "/opt/t/tessel-team-mcp.cjs" --hook --agent=antigravity --event=Stop')
+  })
+
+  it.runIf(process.platform === 'win32')('Antigravity on Windows: a script path with a space is refused, the file left alone', () => {
+    const file = join(home, '.gemini', 'config', 'hooks.json')
+    expect(installStatusHooks('antigravity', scriptPath, { home, env: {}, node: NODE }).error).toBeTruthy()
+    expect(fs.existsSync(file)).toBe(false)
+    // An older Tessel's entries (they fail there) are taken out, the user's kept.
+    fs.mkdirSync(dirname(file), { recursive: true })
+    const old = `C:/"Program Files/nodejs/node.exe" "${scriptPath}" --hook --agent=antigravity --event=Stop`
+    fs.writeFileSync(file, JSON.stringify({ mine: { Stop: [{ type: 'command', command: 'echo hi' }] }, 'tessel-status': { Stop: [{ type: 'command', command: old, timeout: 30 }] } }))
+    expect(installStatusHooks('antigravity', scriptPath, { home, env: {}, node: NODE }).error).toBeTruthy()
+    expect(JSON.stringify(read(file))).not.toContain('tessel-team-mcp.cjs')
+    expect(read(file).mine.Stop[0].command).toBe('echo hi')
+  })
+
   it('Antigravity: its own bundle, and never PreToolUse (silence there refuses the tool)', () => {
-    installStatusHooks('antigravity', scriptPath, { home, env: {}, node: NODE })
+    const scriptPath = 'C:\\TesselData\\tessel-team-mcp.cjs'
+    expect(installStatusHooks('antigravity', scriptPath, { home, env: {}, node: NODE })).toEqual({ changed: true })
     const saved = read(join(home, '.gemini', 'config', 'hooks.json'))
     expect(Object.keys(saved)).toEqual(['tessel-status'])
     expect(saved['tessel-status'].PreToolUse).toBeUndefined()
@@ -235,6 +260,7 @@ describe('installing status hooks in the agents’ own files', () => {
   })
 
   it.each(JSON_AGENTS)('%s: a user value that is not a list under one of its events is refused, never overwritten', (agent) => {
+    const scriptPath = scriptFor(agent)
     const spec = STATUS_HOOKS[agent]
     const file = spec.file(home, {})
     const event = spec.events[1]
@@ -245,7 +271,8 @@ describe('installing status hooks in the agents’ own files', () => {
   })
 
   it('every command runs node by its absolute path, quoted for cmd, PowerShell and bash', () => {
-    for (const agent of JSON_AGENTS) {
+    // (Antigravity's form on Windows: its own test above.)
+    for (const agent of JSON_AGENTS.filter((a) => !(STATUS_HOOKS[a].goCmd && process.platform === 'win32'))) {
       const command = statusCommand(scriptPath, agent, 'Stop', NODE)
       expect(command.startsWith('C:/"Program Files/nodejs/node.exe" "C:\\Tessel data\\tessel-team-mcp.cjs" --hook')).toBe(true)
       expect(command).not.toMatch(/^node /)
