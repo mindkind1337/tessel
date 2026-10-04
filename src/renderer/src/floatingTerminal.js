@@ -64,7 +64,10 @@ export function createFloatingTerminal({ createLeaf, killPty, dropBuffer, startO
     height: saved.height,
     // Its pane (a leaf like the grid's, never put in a tree).
     leaf: null,
-    starting: false
+    starting: false,
+    // Its terminal has the keyboard (FloatingTerminal.vue keeps it): shown
+    // again after a reload, it has it, not the grid's pane hidden under it.
+    keyboard: saved.open
   })
   // The terminal to re-attach (after a reload) until it is.
   let ptyId = saved.ptyId
@@ -163,5 +166,12 @@ export function createFloatingTerminal({ createLeaf, killPty, dropBuffer, startO
     return id ? [id] : []
   }
 
-  return { state, show, hide, toggle, setHeight, close, restart, restoreAtStart, ensureLeaf, ptyIds }
+  // Shown with the keyboard in it: the grid's panes under it do not take the
+  // keyboard (a pane that mounts or a dialog that closes would otherwise
+  // send the typing to a pane the user cannot see).
+  function hasKeyboard() {
+    return !!(state.open && state.keyboard)
+  }
+
+  return { state, show, hide, toggle, setHeight, close, restart, restoreAtStart, ensureLeaf, ptyIds, hasKeyboard }
 }

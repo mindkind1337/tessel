@@ -110,6 +110,16 @@ describe('floating terminal', () => {
     expect(ft.state.open).toBe(true)
   })
 
+  it('has the keyboard when shown again after a reload (not the grid pane under it)', async () => {
+    const storage = memoryStorage({ [FLOATING_STORAGE_KEY]: JSON.stringify({ open: true, height: 0.5, ptyId: 'pane-7' }) })
+    const { ft } = make({ storage, host: fakeHost(['pane-7']) })
+    expect(ft.hasKeyboard()).toBe(true)
+    ft.hide()
+    expect(ft.hasKeyboard()).toBe(false)
+    const hidden = make({ storage: memoryStorage({ [FLOATING_STORAGE_KEY]: JSON.stringify({ open: false }) }) })
+    expect(hidden.ft.hasKeyboard()).toBe(false)
+  })
+
   it('re-attaches lazily when it was hidden at reload', async () => {
     const storage = memoryStorage({ [FLOATING_STORAGE_KEY]: JSON.stringify({ open: false, ptyId: 'pane-7' }) })
     const host = fakeHost(['pane-7'])
