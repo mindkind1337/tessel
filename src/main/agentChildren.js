@@ -12,6 +12,9 @@ import { readRows } from './fileRead'
 
 const ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const TAIL_BYTES = 96 * 1024
+// A tail with no message in it (Claude writes its whole prompt as one line
+// after a sub-agent ends, often over 100 KB) is read again, wider, up to this.
+const WIDE_TAIL_BYTES = 2 * 1024 * 1024
 const MAX_AGENTS = 50
 // Not finished, and nothing written for this long: quiet (maybe a long tool,
 // maybe stopped: nothing proves which, so it is never shown as finished).
@@ -123,7 +126,7 @@ export function summarizeTail(lines) {
     }
     if (decided && last && tokens !== null && model !== null) break
   }
-  return { done, last, tokens, model }
+  return { done, last, tokens, model, decided }
 }
 
 // -> [{ id, type, title, state: 'running'|'done'|'quiet', startedAt, endedAt,
@@ -164,6 +167,7 @@ export function claudeSubagents(sessionId, claudeDir = join(os.homedir(), '.clau
     try {
       startedAt = readStart(file)
       tail = summarizeTail(readTail(file, st.size))
+      if (!tail.decided && st.size > TAIL_BYTES) tail = summarizeTail(readTail(file, st.size, WIDE_TAIL_BYTES))
     } catch {
       // being written: next time
     }
