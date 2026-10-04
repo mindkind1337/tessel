@@ -1,6 +1,6 @@
 {
   "name": "tessel",
-  "version": "1.8.0",
+  "version": "1.10.4",
   "description": "Split-panel multi-terminal for Windows (Electron + Vue + xterm.js + node-pty)",
   "main": "out/main/index.js",
   "author": "Jean-Claude Trottier",
