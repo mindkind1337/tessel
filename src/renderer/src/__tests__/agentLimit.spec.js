@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { detectLimit, detectApproval, detectTaskDone } from '../agentLimit'
+import { agentScreenObservation } from '../agentStatus'
 
 describe('detectLimit', () => {
   it('spots Codex hitting its limit and the reset time', () => {
@@ -84,6 +85,48 @@ describe('trust prompts and the task signal', () => {
   it('treats a "do you trust this folder" screen as an approval', () => {
     expect(detectApproval('Do you trust the files in this folder?\n❯ 1. Yes, proceed')).toBe(true)
     expect(detectApproval('Do you trust the contents of this directory?')).toBe(true)
+  })
+
+  // The texts of the CLIs installed today (2026-10): Claude Code's "Quick
+  // safety check", Codex's "Trust this folder?", Antigravity's "Do you trust
+  // the contents of this project?". A pane waiting there waits for the user.
+  it('treats the current trust prompts of Claude Code, Codex and Antigravity as approvals', () => {
+    const claude = [
+      ' Accessing workspace:',
+      '',
+      ' C:\\Users\\me\\code\\app',
+      '',
+      ' Quick safety check: Is this a project you created or one you trust? (Like your own code, a well-known open',
+      ' source project, or work from your team). If not, take a moment to review what\'s in this folder first.',
+      '',
+      ' ❯ 1. Yes, I trust this folder',
+      '   2. No, exit',
+      '',
+      ' Enter to confirm · Esc to cancel'
+    ].join('\n')
+    for (const provider of [undefined, 'claude']) expect(detectApproval(claude, provider)).toBe(true)
+    expect(detectApproval(' This session hasn\'t worked here before. Is this a directory you created or one you trust?', 'claude')).toBe(true)
+    const codex = [
+      '  Trust this folder?',
+      '',
+      '  Codex can read, edit, and run files here, subject to your permission settings.',
+      '',
+      '› 1. Trust and continue',
+      '  2. Quit'
+    ].join('\n')
+    for (const provider of [undefined, 'codex']) expect(detectApproval(codex, provider)).toBe(true)
+    expect(detectApproval('Do you trust the contents of this project?\n> Yes, I trust this folder', 'antigravity')).toBe(true)
+  })
+
+  it('the trust prompt wins over its "Esc to cancel" footer: waiting, not working', () => {
+    const screen = 'Quick safety check: Is this a project you created or one you trust?\n❯ 1. Yes, I trust this folder\n  2. No, exit\n\nEnter to confirm · Esc to cancel'
+    const seen = agentScreenObservation(null, 'claude', screen)
+    expect(seen.approval).toBe(true)
+  })
+
+  it('does not take an answer that talks about trust for a prompt', () => {
+    expect(detectApproval('I trust the test suite here; the folder looks fine.')).toBe(false)
+    expect(detectApproval('Tessel shows "Trust this folder" in its chat pane.')).toBe(false)
   })
 
   it('spots TASK_COMPLETE, not the instruction that spells it in parts', () => {
