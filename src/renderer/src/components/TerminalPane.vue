@@ -2549,7 +2549,9 @@ onMounted(() => {
   if (isAgent.value) activityMonitor.stateChanged(observedState.value)
 
   if (props.node.exitedAtStart) exited.value = true
-  if (isActive.value) termFocus()
+  // Not under the floating terminal while it has the keyboard (typing would
+  // reach a pane the user cannot see).
+  if (isActive.value && !(ctx.floatingHasKeyboard && ctx.floatingHasKeyboard())) termFocus()
 })
 
 watch(isActive, (a) => {

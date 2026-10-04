@@ -682,6 +682,15 @@ function dirtyEditorPaths(leaves) {
 }
 // The keyboard goes back to the active pane: its terminal, or its editor.
 function focusActiveInput() {
+  // The floating terminal shown with the keyboard: it keeps it (the grid's
+  // active pane may be hidden under it).
+  if (floating.hasKeyboard()) {
+    const fta = document.querySelector('.floating-term.open .xterm-helper-textarea')
+    if (fta) {
+      fta.focus()
+      return
+    }
+  }
   const id = activeId.value
   const ed = id ? getEditorPane(id) : null
   if (ed) {
@@ -2445,6 +2454,9 @@ function renameAgent(id, name) {
   }
 
 provide('panelCtx', {
+  // The floating terminal is shown with the keyboard: a grid pane that
+  // mounts (a reload, a crash recovery) does not take it.
+  floatingHasKeyboard: () => floating.hasKeyboard(),
   renameAgent,
   broadcast,
   activeId,

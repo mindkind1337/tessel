@@ -145,6 +145,48 @@ describe('floating terminal panel', () => {
     expect(wrapper.emitted('restore-focus')).toHaveLength(1)
   })
 
+  it('hidden with its toolbar button, the keyboard goes back to the active pane (not the button)', async () => {
+    mountPanel()
+    const toggle = document.createElement('button')
+    toggle.setAttribute('data-test', 'floating-terminal-toggle')
+    document.body.append(toggle)
+    // Clicking the button focuses it, then shows the panel.
+    toggle.focus()
+    await ctl.show()
+    await flushPromises()
+    await nextTick()
+    toggle.focus()
+    ctl.hide()
+    await nextTick()
+    expect(wrapper.emitted('restore-focus')).toHaveLength(1)
+  })
+
+  it('keeps the keyboard while a dialog borrows it; a grid pane takes it', async () => {
+    mountPanel()
+    await ctl.show()
+    await flushPromises()
+    await nextTick()
+    expect(ctl.hasKeyboard()).toBe(true)
+    const dialog = document.createElement('div')
+    dialog.setAttribute('role', 'dialog')
+    const input = document.createElement('input')
+    dialog.append(input)
+    document.body.append(dialog)
+    input.focus()
+    expect(ctl.hasKeyboard()).toBe(true)
+    expect(seen.ctx.activeId.value).toBe('pane-f1')
+    const gridPane = document.createElement('div')
+    gridPane.className = 'pane'
+    const ta = document.createElement('textarea')
+    gridPane.append(ta)
+    document.body.append(gridPane)
+    ta.focus()
+    expect(ctl.hasKeyboard()).toBe(false)
+    expect(seen.ctx.activeId.value).toBe(null)
+    // Its pane never defers to itself.
+    expect(seen.ctx.floatingHasKeyboard).toBeNull()
+  })
+
   it('does not hide on Escape', async () => {
     mountPanel()
     await ctl.show()
@@ -165,6 +207,15 @@ describe('floating terminal in App.vue', () => {
     expect(grid).not.toMatch(/FloatingTerminal/)
     // Nothing assigns its leaf into a tree or a workspace.
     expect(src).not.toMatch(/floating\.state\.leaf/)
+  })
+  it('a grid pane that mounts or the keyboard given back after a dialog never goes under it', () => {
+    expect(src).toMatch(/floatingHasKeyboard: \(\) => floating\.hasKeyboard\(\)/)
+    const fn = src.slice(src.indexOf('function focusActiveInput()'), src.indexOf('function focusActiveInput()') + 400)
+    expect(fn).toMatch(/if \(floating\.hasKeyboard\(\)\)/)
+    const pane = fs.readFileSync(join(process.cwd(), 'src', 'renderer', 'src', 'components', 'TerminalPane.vue'), 'utf8')
+    expect(pane).toMatch(/if \(isActive\.value && !\(ctx\.floatingHasKeyboard && ctx\.floatingHasKeyboard\(\)\)\) termFocus\(\)/)
+    const editor = fs.readFileSync(join(process.cwd(), 'src', 'renderer', 'src', 'components', 'EditorPane.vue'), 'utf8')
+    expect(editor).toMatch(/if \(isActive\.value && !\(ctx\.floatingHasKeyboard && ctx\.floatingHasKeyboard\(\)\)\) focusEditor\(\)/)
   })
   it('keeps its terminal when unused host terminals are closed', () => {
     const at = src.indexOf('window.shellApi.reconcilePtys(ids)')

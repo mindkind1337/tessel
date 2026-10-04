@@ -877,7 +877,8 @@ onMounted(async () => {
   ready.value = true
   await nextTick()
   showActive()
-  if (isActive.value) focusEditor()
+  // Not under the floating terminal while it has the keyboard.
+  if (isActive.value && !(ctx.floatingHasKeyboard && ctx.floatingHasKeyboard())) focusEditor()
 })
 
 onBeforeUnmount(() => {

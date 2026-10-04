@@ -22,8 +22,14 @@ const emit = defineEmits(['restore-focus'])
 const rootEl = ref(null)
 const state = props.ctl.state
 const leaf = computed(() => state.leaf)
-// Its terminal has the keyboard (its pane shows as the active one).
-const focused = ref(!!state.open)
+// Its terminal has the keyboard (its pane shows as the active one); kept in
+// its state so App.vue's grid panes leave the keyboard to it.
+const focused = computed({
+  get: () => !!state.keyboard,
+  set: (v) => {
+    state.keyboard = !!v
+  }
+})
 const activeId = computed(() => (focused.value && state.open && leaf.value ? leaf.value.id : null))
 
 // Its pane's actions are its own: no split, maximize or drag in the grid,
@@ -33,6 +39,7 @@ provide('panelCtx', {
   ...parent,
   // (Its pane's header and menu leave out maximize, split and open here.)
   floating: true,
+  floatingHasKeyboard: null,
   activeId,
   maximizedId: ref(null),
   broadcast: ref(false),
@@ -90,13 +97,19 @@ function focusTerminal() {
   if (ta) ta.focus()
 }
 
+// Where the keyboard was not chosen by the user: nowhere, or the button
+// that shows and hides this panel (clicking it focuses it).
+function nowhere(el) {
+  return !el || el === document.body || !!(el.closest && el.closest('[data-test="floating-terminal-toggle"]'))
+}
+
 watch(
   () => state.open,
   (open) => {
     const el = document.activeElement
     const inside = !!(el && rootEl.value && rootEl.value.contains(el))
     if (open) {
-      before = el && el !== document.body && !inside ? el : null
+      before = !nowhere(el) && !inside ? el : null
       focused.value = true
       nextTick(focusTerminal)
       return
@@ -104,7 +117,7 @@ watch(
     focused.value = false
     // Only when the keyboard was in it: something else chosen meanwhile
     // (a pane clicked below it) keeps the keyboard.
-    if (inside || !el || el === document.body) {
+    if (inside || nowhere(el)) {
       if (inside && typeof el.blur === 'function') el.blur()
       if (before && before.isConnected && typeof before.focus === 'function') before.focus()
       else emit('restore-focus')
@@ -118,11 +131,13 @@ watch(leaf, (l) => {
   if (l && state.open && focused.value) nextTick(focusTerminal)
 })
 
-// The keyboard moved out of it (a grid pane, the sidebar): it is no longer
-// the active one; back into it: it is.
+// The keyboard moved out of it to a grid pane: it is no longer the active
+// one; back into it: it is. A dialog, menu or the palette taking the keyboard
+// for a moment changes nothing: closed, it gives the keyboard back here.
 function onFocusIn(e) {
-  if (!rootEl.value) return
-  focused.value = rootEl.value.contains(e.target)
+  if (!rootEl.value || !e.target) return
+  if (rootEl.value.contains(e.target)) focused.value = true
+  else if (e.target.closest && e.target.closest('.pane, .ws-layer')) focused.value = false
 }
 onMounted(() => document.addEventListener('focusin', onFocusIn))
 onBeforeUnmount(() => document.removeEventListener('focusin', onFocusIn))
