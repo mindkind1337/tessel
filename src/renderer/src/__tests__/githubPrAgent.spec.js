@@ -135,6 +135,30 @@ describe('Fix failing checks / Resolve review comments', () => {
     expect(sendPrompt.mock.calls[0][0].target).toEqual({ kind: 'new', agentId: 'codex' })
   })
 
+  it('puts the chosen pane\'s folder in the review prompt, and back the fallback for a new agent', async () => {
+    const sendPrompt = vi.fn(async () => ({ ok: true }))
+    const prAgents = () => [
+      { id: 'pane-1', label: 'Ada (Claude)', path: 'C:/Project-wt/feature', match: true },
+      { id: 'plain', label: 'Bob (Codex)', path: 'C:/Project', hint: 'main', match: false }
+    ]
+    await openPr(prItem({ reviewThreads: [thread] }), { sendPrompt, prAgents })
+    await wrapper.get('[data-test="github-resolve-comments"]').trigger('click')
+    await flushPromises()
+    const prompt = () => wrapper.get('[data-test="github-agent-prompt"]').element.value
+    expect(prompt()).toContain('- Worktree: "C:/Project-wt/feature"')
+    await setSelectValue(wrapper.get('[data-test="github-agent-target"]'), 'pane:plain')
+    await flushPromises()
+    expect(prompt()).toContain('- Worktree: "C:/Project"')
+    await setSelectValue(wrapper.get('[data-test="github-agent-target"]'), 'new:codex')
+    await flushPromises()
+    expect(prompt()).toContain('- Worktree: "the current working directory"')
+    await setSelectValue(wrapper.get('[data-test="github-agent-target"]'), 'pane:pane-1')
+    await flushPromises()
+    await wrapper.get('[data-test="github-agent-send"]').trigger('click')
+    await flushPromises()
+    expect(sendPrompt.mock.calls[0][0].prompt).toContain('- Worktree: "C:/Project-wt/feature"')
+  })
+
   it('can switch to a new agent, cancel, and shows a send error without closing', async () => {
     const sendPrompt = vi.fn(async () => ({ ok: false, error: 'That agent is no longer available.' }))
     await openPr(prItem({ reviewThreads: [thread] }), { sendPrompt, prAgents: () => [{ id: 'p', label: 'P' }] })
@@ -165,6 +189,10 @@ describe('a new agent for a PR prompt', () => {
     agentId: 'codex',
     worktree: true
   }
+  it('asks for the new copy\'s folder in a reviewed prompt', () => {
+    expect(externalIssueSpec({ ...request, prompt: 'Fix it' }).spec.briefWorktree).toBe(true)
+    expect(externalIssueSpec(request).spec.briefWorktree).toBeFalsy()
+  })
   it('uses the reviewed prompt as the task brief', () => {
     expect(externalIssueSpec({ ...request, prompt: 'Fix it' }).spec.brief).toBe('Fix it')
     expect(externalIssueSpec(request).spec.brief).toContain('Linked GitHub pull request')

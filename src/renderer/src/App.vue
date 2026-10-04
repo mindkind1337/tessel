@@ -12,6 +12,7 @@ import StatusBar from './components/StatusBar.vue'
 import { buildProjectCards, cardTargetPane, portProbes } from './sidebarModel'
 import { createProjectWorktrees } from './projectWorktrees'
 import { prAgentTargets } from './prAgentTargets'
+import { withWorktreePath } from './prAgentPrompts'
 import { workspaceViews, viewKey, leafViewPath } from './paneViews'
 import { createPortScanner, browserUrlForPort, addressForPort } from './portScanner'
 import { allowedBrowserUrl, BLANK_URL } from '../../shared/browserUrl'
@@ -5460,7 +5461,7 @@ async function startTask(spec, opts = {}) {
         return { error: `could not make a separate copy: ${(res && res.error) || 'unknown error'}` } // i18n-ignore
       }
       worktree = { path: res.path, branch: res.branch, baseBranch: res.baseBranch || null, root: res.root || ws.cwd }
-      updateTask(task.id, { worktree })
+      updateTask(task.id, spec.briefWorktree ? { worktree, brief: withWorktreePath(spec.brief || '', res.path) } : { worktree })
     }
     if (opts.expectedCwd && (!workspaces.value.includes(ws) || ws.cwd !== opts.expectedCwd)) {
       updateTask(task.id, { column: 'todo' })

@@ -5,6 +5,7 @@ import { t } from '../i18n'
 import {
   buildFixChecksPrompt,
   buildResolveCommentsPrompt,
+  withWorktreePath,
   failingChecks,
   unresolvedThreads
 } from '../prAgentPrompts'
@@ -294,6 +295,7 @@ function draftTargets(item) {
       value: 'pane:' + pane.id,
       label: pane.hint ? t('github.agent.paneOnBranch', '{{name}} · branch {{branch}}', { name: pane.label, branch: pane.hint }) : pane.label,
       match: pane.match !== false,
+      path: typeof pane.path === 'string' ? pane.path : '',
       target: { kind: 'pane', id: pane.id }
     })),
     ...props.agents.map((agent) => ({
@@ -326,6 +328,7 @@ async function prepareAgentPrompt(purpose) {
       targets.find((option) => option.value === 'new:' + agentId.value) ||
       targets[0]
     confirmation.value = null
+    if (purpose === 'comments') prompt = withWorktreePath(prompt, preferred?.path || '')
     agentDraft.value = { purpose, prompt, targets, target: preferred?.value || '' }
   } catch (err) {
     if (alive) error.value = errorText(err)
@@ -333,6 +336,17 @@ async function prepareAgentPrompt(purpose) {
     if (alive) busy.value = false
   }
 }
+// The review prompt names the picked agent's folder; a new agent's copy is
+// named once it exists (App startTask), so it keeps the fallback here.
+watch(
+  () => agentDraft.value?.target,
+  (value, before) => {
+    const draft = agentDraft.value
+    if (!draft || draft.purpose !== 'comments' || value === before || before === undefined) return
+    const option = draft.targets.find((candidate) => candidate.value === value)
+    draft.prompt = withWorktreePath(draft.prompt, option?.path || '')
+  }
+)
 async function sendAgentDraft() {
   const draft = agentDraft.value
   if (busy.value || !draft || !selected.value || !draft.prompt.trim()) return
