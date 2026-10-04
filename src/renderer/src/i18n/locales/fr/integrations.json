@@ -408,6 +408,7 @@
       "prompt": "Prompt",
       "target": "Envoyer à",
       "newAgent": "Nouvel agent : {{name}}",
+      "paneOnBranch": "{{name}} · branche {{branch}}",
       "none": "Aucun agent n'est disponible. Installez ou activez d'abord un agent.",
       "send": "Envoyer à l'agent",
       "sending": "Envoi…",

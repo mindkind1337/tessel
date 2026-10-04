@@ -289,7 +289,13 @@ function draftTargets(item) {
     panes = []
   }
   return [
-    ...panes.map((pane) => ({ value: 'pane:' + pane.id, label: pane.label, target: { kind: 'pane', id: pane.id } })),
+    // The project's other agents (match false) say which branch they are on.
+    ...panes.map((pane) => ({
+      value: 'pane:' + pane.id,
+      label: pane.hint ? t('github.agent.paneOnBranch', '{{name}} · branch {{branch}}', { name: pane.label, branch: pane.hint }) : pane.label,
+      match: pane.match !== false,
+      target: { kind: 'pane', id: pane.id }
+    })),
     ...props.agents.map((agent) => ({
       value: 'new:' + agent.id,
       label: t('github.agent.newAgent', 'New agent: {{name}}', { name: agent.name || agent.id }),
@@ -316,7 +322,7 @@ async function prepareAgentPrompt(purpose) {
     if (!alive || selected.value?.number !== item.number) return
     const targets = draftTargets(item)
     const preferred =
-      targets.find((option) => option.target.kind === 'pane') ||
+      targets.find((option) => option.target.kind === 'pane' && option.match) ||
       targets.find((option) => option.value === 'new:' + agentId.value) ||
       targets[0]
     confirmation.value = null

@@ -122,6 +122,19 @@ describe('Fix failing checks / Resolve review comments', () => {
     expect(sendPrompt).toHaveBeenCalledWith(expect.objectContaining({ prompt: 'Edited prompt', target: { kind: 'pane', id: 'pane-1' } }))
   })
 
+  it('lists the project\'s other agents after the best matches, with their branch, and keeps a new agent preselected for them', async () => {
+    const sendPrompt = vi.fn(async () => ({ ok: true }))
+    const prAgents = () => [{ id: 'plain', label: 'Bob (Codex)', path: 'C:/Project', hint: 'main', match: false }]
+    await openPr(prItem({ reviewThreads: [thread] }), { sendPrompt, prAgents })
+    await wrapper.get('[data-test="github-resolve-comments"]').trigger('click')
+    await flushPromises()
+    const target = wrapper.get('[data-test="github-agent-target"]')
+    expect((await selectOptions(target)).map((o) => o.text())).toEqual(['Bob (Codex) · branch main', 'New agent: Codex'])
+    await wrapper.get('[data-test="github-agent-send"]').trigger('click')
+    await flushPromises()
+    expect(sendPrompt.mock.calls[0][0].target).toEqual({ kind: 'new', agentId: 'codex' })
+  })
+
   it('can switch to a new agent, cancel, and shows a send error without closing', async () => {
     const sendPrompt = vi.fn(async () => ({ ok: false, error: 'That agent is no longer available.' }))
     await openPr(prItem({ reviewThreads: [thread] }), { sendPrompt, prAgents: () => [{ id: 'p', label: 'P' }] })
