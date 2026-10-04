@@ -39,7 +39,16 @@ claude --stdio--> node tessel-shim.cjs mcp
   `<instance>.sock`, `<instance>` = `[a-z0-9-]{1,40}` (app flavour + hostId
   hash), stable across reconnects; Tessel removes a stale one before binding.
 
-### Environment of a remote pane (exported by the shell command Tessel runs)
+### Environment of a remote pane (from a file the pane's shell sources)
+Never on a command line (other users of the server could read it in ps /
+/proc). Before each shell of the pane starts (first open and every
+reconnect), the terminal host writes `~/.tessel-server/run/<pane>.env`
+(0600, in the 0700 run folder) through an exec channel's stdin:
+`export TESSEL_PANE_ID='..' TESSEL_REMOTE_SOCK='..' TESSEL_REMOTE_TOKEN='..' [TESSEL_AGENT_PROVIDER='..']`.
+The pane command starts with `[ -r F ] && . F; rm -f F;` (a missing file
+would end a POSIX sh), then `cd -- '<path>' && exec "$SHELL" -l` or
+`exec "$SHELL" -l`. A file left by a shell that never started is removed
+when the pane exits (if the host is still connected). The variables:
 - `TESSEL_PANE_ID` – the pane id.
 - `TESSEL_REMOTE_SOCK` – absolute path of the socket.
 - `TESSEL_REMOTE_TOKEN` – 64 hex chars, random per pane launch.
@@ -69,6 +78,11 @@ the terminal host from the remote `$HOME` (prep exec channel); the pane's
 shell opens after the bind (waits ~10 s at most, then opens anyway).
 Main passes `msg.ssh.remoteAgent = { token, instance, provider, env, node,
 script }` in the create message; none -> the pane behaves as today.
+Caps (answer `busy`): at most 16 MCP connections + hooks past their hello
+over all hosts; per pane at most 4 MCP connections and 4 hooks at once, and
+hooks limited by a token bucket of 10 per second. An MCP connection with no
+byte in either direction for 30 min is closed (its server.cjs killed).
+server.cjs runs with cwd = the pane env's `TESSEL_PROJECT_DIR` (when absolute).
 
 ### Shim modes (`node tessel-shim.cjs <mode>`)
 - `mcp` – connect, hello, pipe stdio. No socket/env → print reason on stderr, exit 1.
