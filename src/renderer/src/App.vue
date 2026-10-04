@@ -1017,22 +1017,23 @@ function newUuid() {
 async function agentStartLine(agent, sessionId, resume, accountId) {
   const kind = sessionKind(agent)
   if (kind === 'claude' || kind === 'openclaude') {
-    if (sessionId && resume) {
-      // Resume if the conversation exists. If we can't check (older app
-      // version), try resuming anyway rather than reusing an id in use.
-      const exists =
-        kind === 'openclaude'
-          ? window.shellApi.agentResumeTarget
-            ? !!(await window.shellApi.agentResumeTarget({ agent: kind, sessionId }).catch(() => null))
-            : true
-          : window.shellApi.claudeSessionExists
-            ? await window.shellApi.claudeSessionExists(sessionId, accountId !== undefined ? { accountId } : undefined)
-            : true
-      if (exists)
-        return { line: `${agent.command} --resume ${sessionId}`, sessionId, resumed: true } // i18n-ignore
-    }
-    // No transcript yet (you never messaged it): start fresh, same id.
-    const id = sessionId || newUuid()
+    // Whether the conversation exists. If we can't check (older app
+    // version), assume it does: resume it rather than reuse an id in use.
+    const exists = !sessionId
+      ? false
+      : kind === 'openclaude'
+        ? window.shellApi.agentResumeTarget
+          ? !!(await window.shellApi.agentResumeTarget({ agent: kind, sessionId }).catch(() => null))
+          : true
+        : window.shellApi.claudeSessionExists
+          ? await window.shellApi.claudeSessionExists(sessionId, accountId !== undefined ? { accountId } : undefined)
+          : true
+    if (sessionId && resume && exists)
+      return { line: `${agent.command} --resume ${sessionId}`, sessionId, resumed: true } // i18n-ignore
+    // No transcript yet (you never messaged it): start fresh, same id. Not
+    // resuming one that exists ("Resume agents" off): a new id, since Claude
+    // Code refuses an id in use and the agent would not start.
+    const id = sessionId && !exists ? sessionId : newUuid()
     return { line: `${agent.command} --session-id ${id}`, sessionId: id, resumed: false } // i18n-ignore
   }
   if (kind === 'codex') {
