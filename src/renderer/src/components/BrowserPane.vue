@@ -1250,7 +1250,9 @@ defineExpose({ navigate, focusAddress })
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+  container-type: inline-size;
 }
+
 
 /* Orca's navigation control row: back, forward, reload, the address, tools. */
 .bp-toolbar {
@@ -1359,6 +1361,24 @@ defineExpose({ navigate, focusAddress })
 
 .bp-address-input::placeholder {
   color: var(--text-dim);
+}
+
+/* A narrow pane (the side panel's default width, a third of the grid): the
+   buttons left no room for the address, which shrank to its globe. The
+   address then gets a row of its own under the buttons. */
+@container (max-width: 520px) {
+  .bp-toolbar {
+    flex-wrap: wrap;
+    height: auto;
+    min-height: 38px;
+    padding: 5px 8px;
+    row-gap: 5px;
+  }
+  .bp-address {
+    order: 10;
+    flex: 1 1 100%;
+    margin: 0;
+  }
 }
 
 .bp-address-error {

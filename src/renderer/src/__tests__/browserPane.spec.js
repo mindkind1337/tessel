@@ -632,6 +632,30 @@ describe('BrowserPane.vue: layout, input and browser behaviour', () => {
     expect(rule('.bp-agent-stop')).not.toMatch(/position:\s*absolute/)
   })
 
+  // Found in a real window: in the side panel (330 px) the buttons took the
+  // whole row and the address shrank to its globe, so no address could be
+  // typed. A narrow pane puts the address on a row of its own.
+  it('a narrow pane gives the address a row of its own under the buttons', () => {
+    const file = resolve(process.cwd(), 'src/renderer/src/components/BrowserPane.vue')
+    const css = parseSfc(readFileSync(file, 'utf8')).descriptor.styles
+      .map((b) => b.content)
+      .join('\n')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+    expect(css).toMatch(/(^|\n)\.bp-body\s*\{[^}]*container-type:\s*inline-size/)
+    const q = css.match(/@container \(max-width:\s*(\d+)px\)\s*\{([\s\S]*?\n)\}/)
+    expect(q).toBeTruthy()
+    // The side panel's default width (330) and more are narrow.
+    expect(Number(q[1])).toBeGreaterThanOrEqual(400)
+    expect(q[2]).toMatch(/\.bp-toolbar\s*\{[^}]*flex-wrap:\s*wrap/)
+    expect(q[2]).toMatch(/\.bp-toolbar\s*\{[^}]*height:\s*auto/)
+    expect(q[2]).toMatch(/\.bp-address\s*\{[^}]*flex:\s*1 1 100%/)
+    // After the rules it overrides (same specificity: the later one wins; a
+    // first try above them left the toolbar 38 px high, the page over its
+    // second row).
+    expect(css.indexOf('@container (max-width')).toBeGreaterThan(css.search(/\n\.bp-toolbar\s*\{/))
+    expect(css.indexOf('@container (max-width')).toBeGreaterThan(css.search(/\n\.bp-address\s*\{/))
+  })
+
   it("Tessel's drags let the pointer through the page, and give it back when they end", async () => {
     await mountPane()
     const release = acquirePassthrough()
