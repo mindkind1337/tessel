@@ -165,7 +165,10 @@ describe('will-attach-webview', () => {
       javascript: true,
       partition: BROWSER_PARTITION,
       disableHtmlFullscreenWindowResize: true,
-      safeDialogs: true
+      safeDialogs: true,
+      // Opaque, white like a browser: a page without its own background
+      // (and its frames) showed black text on Tessel's dark pane.
+      transparent: false
     })
     expect(params.src).toBe('http://localhost:5173/')
     // The session's rules are in place before the page loads anything.
