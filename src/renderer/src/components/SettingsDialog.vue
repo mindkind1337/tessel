@@ -420,6 +420,9 @@ const emit = defineEmits([
 
 // Settings > Agents > Detection rules: which rules read the agents' screens.
 const agentRulesLine = computed(() => {
+  // The example "Open rules file" creates changes nothing until edited.
+  if (agentRulesStatus.state === 'override' && !agentRulesStatus.size)
+    return t('settings.agents.rulesEmpty', 'Your rules file changes nothing yet: the built-in rules are in use. Saved changes apply at once')
   if (agentRulesStatus.state === 'override')
     return t('settings.agents.rulesOverride', 'Your rules file is in use ({{count}} change(s) over the built-in rules)', { count: agentRulesStatus.size })
   if (agentRulesStatus.state === 'invalid')

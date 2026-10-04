@@ -103,6 +103,7 @@
       "newAgents": "Nouveaux agents",
       "rules": "Règles de détection",
       "rulesOpen": "Ouvrir le fichier des règles",
+      "rulesEmpty": "Votre fichier de règles ne change rien pour l'instant : les règles intégrées sont en usage. Les changements enregistrés s'appliquent aussitôt",
       "rulesOverride": "Votre fichier de règles est en usage ({{count}} changement(s) par rapport aux règles intégrées)",
       "rulesInvalid": "Votre fichier de règles est ignoré, les règles intégrées restent en usage : {{reason}}",
       "rulesBuiltin": "Règles intégrées. Ouvrez le fichier des règles pour corriger comment Tessel voit qu'un agent travaille, attend votre approbation ou a atteint sa limite ; les changements enregistrés s'appliquent aussitôt",
