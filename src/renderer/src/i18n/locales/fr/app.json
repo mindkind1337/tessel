@@ -72,7 +72,8 @@
       "openLogs": "Ouvrir le dossier des journaux",
       "copyDiagnostics": "Copier les diagnostics",
       "foot": "Déposez des fichiers sur un panneau pour coller leurs chemins. Sélectionnez du texte pour le copier, clic droit pour coller. Maj+clic droit sur un panneau pour plus d’options.",
-      "chatApproval": "Dans un pane de chat : aller à la demande qui attend votre réponse"
+      "chatApproval": "Dans un panneau de chat : aller à la demande qui attend votre réponse",
+      "floatingTerminal": "Afficher ou masquer le terminal flottant (la touche à gauche de 1)"
     },
     "toolbar": {
       "updateVersion": "Mettre à jour {{version}}",
@@ -110,7 +111,9 @@
       "closeActive": "Fermer le panneau actif",
       "settingsTitle": "Paramètres (Ctrl+,)",
       "settings": "Paramètres",
-      "broadcastBanner": "La diffusion est activée. Les frappes vont à chaque panneau où « écrire » est coché."
+      "broadcastBanner": "La diffusion est activée. Les frappes vont à chaque panneau où « écrire » est coché.",
+      "floatingTitle": "Terminal flottant (Ctrl+`)",
+      "floating": "Terminal flottant"
     },
     "codexHooks": {
       "updated": "Les hooks d'état de Codex ont été mis à jour. Vérifiez-les dans /hooks pour activer l'état en direct."
@@ -270,7 +273,10 @@
       "newChatCodex": "Nouvel agent Codex (chat)",
       "newChatCodexHint": "Codex sans terminal : les messages d'équipe lui arrivent comme des tours à part entière",
       "newChatOpencode": "Nouvel agent OpenCode (chat)",
-      "newChatOpencodeHint": "OpenCode sans terminal : les messages de l'équipe lui arrivent comme des tours à part"
+      "newChatOpencodeHint": "OpenCode sans terminal : les messages de l'équipe lui arrivent comme des tours à part",
+      "showFloating": "Afficher le terminal flottant",
+      "hideFloating": "Masquer le terminal flottant",
+      "floatingHint": "Un terminal par-dessus l'espace de travail, dans le dossier du projet ; il continue de tourner une fois masqué"
     },
     "worktree": {
       "createFailed": "Impossible de créer une copie séparée.",
@@ -366,6 +372,9 @@
       "deleteOnlyTasksOne": "Sa tâche sera supprimée.",
       "deleteOnlyTasks": "Ses {{count}} tâches seront supprimées.",
       "deleteTitle": "Supprimer « {{name}} » ?"
+    },
+    "agentRules": {
+      "invalid": "Fichier des règles de détection des agents ignoré ({{reason}}) : les règles intégrées restent en usage."
     },
     "port": {
       "browserFailed": "Impossible d'ouvrir le navigateur",

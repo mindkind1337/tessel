@@ -7,6 +7,21 @@ function subscribe(channel, cb) {
   return () => ipcRenderer.removeListener(channel, handler)
 }
 
+// Channels every pane listens to (its output, its exit, its model): one IPC
+// listener each, shared, instead of one per pane (Node warns past 10).
+const shared = {}
+function onShared(channel, cb) {
+  let subs = shared[channel]
+  if (!subs) {
+    subs = shared[channel] = new Set()
+    ipcRenderer.on(channel, (_e, payload) => {
+      for (const fn of [...subs]) fn(payload)
+    })
+  }
+  subs.add(cb)
+  return () => subs.delete(cb)
+}
+
 // Bridge a minimal, typed-ish API to the renderer. No node access leaks.
 const api = {
   // True in the dev build (not the installed app); the toolbar shows it.
@@ -79,6 +94,7 @@ const api = {
   // from validated named palettes instead of passing arbitrary CSS colors.
   setWindowTheme: (theme) => ipcRenderer.send('window:theme', theme),
   diagnostics: () => ipcRenderer.invoke('logs:diagnostics'),
+  claudeHoldDefaultModel: () => ipcRenderer.invoke('claude:holdDefaultModel'),
   claudeSessionExists: (id, scope) => ipcRenderer.invoke('sessions:claudeExists', id, scope),
   findCodexSession: (query) => ipcRenderer.invoke('sessions:findCodex', query),
   findAgentSession: (query) => ipcRenderer.invoke('sessions:find', query),
@@ -95,6 +111,13 @@ const api = {
     const handler = (_e, states) => cb(states)
     ipcRenderer.on('agents:state', handler)
     return () => ipcRenderer.removeListener('agents:state', handler)
+  },
+  // Agent-state detection rules: { state: 'builtin' | 'override' | 'invalid',
+  // reason, file, size, override }. open: creates the file when missing.
+  agentRules: {
+    get: () => ipcRenderer.invoke('agentRules:get'),
+    open: () => ipcRenderer.invoke('agentRules:open'),
+    onChanged: (cb) => subscribe('agentRules:changed', cb)
   },
   installLogStart: (q) => ipcRenderer.invoke('install:logStart', q),
   // Agent CLI updates: { checkedAt, agents: { id: { installed, latest, update, steps } } }.
@@ -195,11 +218,7 @@ const api = {
   probeAgentModels: (query) => ipcRenderer.invoke('agents:probeModels', query),
   // { paneId, sessionId, text } -> { ok } | { ok: false, error }
   agentInbox: (query) => ipcRenderer.invoke('agents:inbox', query),
-  onAgentModelChanged: (cb) => {
-    const handler = (_e, agentId) => cb(agentId)
-    ipcRenderer.on('agents:modelChanged', handler)
-    return () => ipcRenderer.removeListener('agents:modelChanged', handler)
-  },
+  onAgentModelChanged: (cb) => onShared('agents:modelChanged', cb),
   listSessions: (query) => ipcRenderer.invoke('sessions:list', query),
   // One past conversation (Agent Session History): its first prompt, latest
   // turns and transcript file; that file shown in the file manager; the
@@ -207,6 +226,7 @@ const api = {
   sessionDetails: (query) => ipcRenderer.invoke('sessions:details', query),
   revealSessionLog: (query) => ipcRenderer.invoke('sessions:revealLog', query),
   deleteSession: (query) => ipcRenderer.invoke('sessions:delete', query),
+  prepareAgyContinue: (query) => ipcRenderer.invoke('sessions:agyContinue', query),
   voiceTyping: (opts) => ipcRenderer.invoke('app:voiceTyping', opts),
   inputLanguages: () => ipcRenderer.invoke('app:inputLanguages'),
   openExternal: (url) => ipcRenderer.invoke('app:openExternal', url),
@@ -216,6 +236,8 @@ const api = {
   gitWorktrees: (cwd) => ipcRenderer.invoke('git:worktrees', cwd),
   // A remote project's .tessel data folder on this computer (remote agents).
   remoteProjectDataDir: (hostId, remotePath) => ipcRenderer.invoke('remote:projectDataDir', hostId, remotePath),
+  // Their git evidence, for Clean up worktrees.
+  worktreeCleanupScan: (cwd) => ipcRenderer.invoke('git:worktreeCleanupScan', cwd),
   createWorktree: (cwd, label, options) =>
     ipcRenderer.invoke('git:createWorktree', { cwd, label, options }),
   // Last locally observed subscription quotas, with timestamps and stale flags.
@@ -597,16 +619,8 @@ const api = {
   },
 
   // Subscriptions return an unsubscribe function.
-  onData: (cb) => {
-    const handler = (_e, payload) => cb(payload)
-    ipcRenderer.on('pty:data', handler)
-    return () => ipcRenderer.removeListener('pty:data', handler)
-  },
-  onExit: (cb) => {
-    const handler = (_e, payload) => cb(payload)
-    ipcRenderer.on('pty:exit', handler)
-    return () => ipcRenderer.removeListener('pty:exit', handler)
-  },
+  onData: (cb) => onShared('pty:data', cb),
+  onExit: (cb) => onShared('pty:exit', cb),
   onFocusPane: (cb) => {
     const handler = (_e, payload) => cb(payload)
     ipcRenderer.on('app:focusPane', handler)

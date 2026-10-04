@@ -312,7 +312,10 @@ export async function reviewRemove(args = {}) {
   // goes (below, as a leftover), then git forgets the copy (prune).
   const isLink = !!c.path && c.listed && isLinkPath(c.path)
   if (isLink) leftovers.add(c.repo, c.path, c.branch)
-  if (c.path && c.listed && !isLink) {
+  // A copy whose folder is already gone (deleted behind git's back): nothing
+  // on disk to delete, git forgets it on prune below.
+  const gone = !!c.path && c.listed && !isLink && !fs.existsSync(c.path)
+  if (c.path && c.listed && !isLink && !gone) {
     // Git keeps a copy with changes unless forced: checked first, so nothing
     // in it changes when it stays (below, its links are unlinked).
     if (!args.force) {
@@ -342,14 +345,17 @@ export async function reviewRemove(args = {}) {
     // knew, remembered so the delete can be tried again.
     if (fs.existsSync(c.path)) leftovers.add(c.repo, c.path, c.branch)
   }
-  if (c.path && (c.listed || c.leftover)) {
+  if (c.path && (c.listed || c.leftover) && !gone) {
     const failed = await removeLeftoverOf(c)
     if (failed) return { ok: false, error: failed }
     leftovers.forget(c.path)
   }
   await git(c.repo, ['worktree', 'prune'])
   if (await refExists(c.repo, c.branch)) {
-    const del = await git(c.repo, ['branch', args.force ? '-D' : '-d', c.branch])
+    // git branch -d only knows the checked-out branch: a branch already in
+    // its base branch loses nothing either, whatever is checked out.
+    const merged = !args.force && (await git(c.repo, ['merge-base', '--is-ancestor', `refs/heads/${c.branch}`, `refs/heads/${c.target}`])).code === 0
+    const del = await git(c.repo, ['branch', args.force || merged ? '-D' : '-d', c.branch])
     if (!del.ok) return { ok: false, error: (del.stderr || t('main.review.gitFailed', '{{command}} failed', { command: 'git branch -d' })).trim().split(/\r?\n/)[0], copyRemoved: true }
   }
   return { ok: true }

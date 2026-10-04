@@ -62,6 +62,8 @@
       "loading": "Chargement de l'utilisation…",
       "unlimited": "Illimité",
       "refreshNeeded": "Actualisation requise",
+      "signInAgain": "Se reconnecter",
+      "couldNotRead": "L'utilisation n'a pas pu être lue",
       "openForUsage": "Ouvrir pour voir",
       "lastKnownReadingLower": "dernière lecture connue",
       "details": "Détails et historique d'utilisation",

@@ -7,6 +7,7 @@ import {
   TASK_BOARD_FILENAME,
   taskBoardFilePath,
   loadTasks,
+  loadBoard,
   saveTasks
 } from '../taskBoardPersistence'
 
@@ -180,13 +181,47 @@ describe('the ledger of applied board requests', () => {
     const d = fs.mkdtempSync(join(os.tmpdir(), 'tessel-ledger-'))
     try {
       saveTasks(d, [{ id: 'a' }], ['team-1/pane-1__1.json'])
-      expect(loadBoard(d)).toEqual({ tasks: [{ id: 'a' }], appliedRequests: ['team-1/pane-1__1.json'], deleted: [] })
+      expect(loadBoard(d)).toEqual({ tasks: [{ id: 'a' }], appliedRequests: ['team-1/pane-1__1.json'], deleted: [], history: [] })
       expect(loadTasks(d)).toEqual([{ id: 'a' }])
       // A board saved by an older version (a plain list): no ledger.
       saveTasks(d, [{ id: 'b' }])
-      expect(loadBoard(d)).toEqual({ tasks: [{ id: 'b' }], appliedRequests: [], deleted: [] })
+      expect(loadBoard(d)).toEqual({ tasks: [{ id: 'b' }], appliedRequests: [], deleted: [], history: [] })
     } finally {
       fs.rmSync(d, { recursive: true, force: true })
     }
+  })
+
+  describe('the finished tasks history', () => {
+    let dir
+    beforeEach(() => {
+      dir = fs.mkdtempSync(join(os.tmpdir(), 'tessel-history-'))
+    })
+    afterEach(() => fs.rmSync(dir, { recursive: true, force: true }))
+    it('is saved with the board and read back, deleted cards included', () => {
+      const history = [{ id: 'gone', title: 'Old', doneAt: 5 }, { id: 't3', title: 'Ship docs', doneAt: 9 }]
+      saveTasks(dir, sampleTasks(), [], ['gone'], history)
+      const board = loadBoard(dir)
+      expect(board.tasks.map((t) => t.id)).toEqual(['t1', 't2', 't3'])
+      expect(board.history.map((r) => r.id)).toEqual(['gone', 't3'])
+    })
+
+    it('a save without a history (older window) keeps the saved one', () => {
+      saveTasks(dir, sampleTasks(), [], [], [{ id: 'gone', title: 'Old' }])
+      saveTasks(dir, sampleTasks(), [], [])
+      expect(loadBoard(dir).history.map((r) => r.id)).toEqual(['gone'])
+    })
+
+    it('drops malformed records and keeps the newest 2,000', () => {
+      const many = Array.from({ length: 2005 }, (_, i) => ({ id: 'h' + i }))
+      saveTasks(dir, [], [], [], [null, { title: 'no id' }, ...many])
+      const h = loadBoard(dir).history
+      expect(h).toHaveLength(2000)
+      expect(h[0].id).toBe('h5')
+    })
+
+    it('an old board file has an empty history', () => {
+      saveTasks(dir, sampleTasks())
+      expect(loadBoard(dir).history).toEqual([])
+    })
   })
 })

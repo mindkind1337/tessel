@@ -406,6 +406,8 @@ function wakeSandbox(over = {}) {
     watchFoundSession: () => {},
     workerLaunchArgs: () => '',
     wakeLaunchArgs,
+    // createLeaf's Claude permission mode (a chat continued in a terminal): none here.
+    permissionMode: null,
     setTimeout: (fn) => fn(),
     ...over
   }
@@ -453,6 +455,19 @@ it('Tessel relaunching a Codex with team messages waiting: a first prompt on its
   // Team tools not set up: it could not read them.
   ctx.teamToolsReady = false
   expect(await launchLine('codex', { id: 'pane-2', sessionId: 's-2', resume: true, wake: { teamId: 'team-1', gen: 1 } })).not.toContain(WAKE_LAUNCH_PROMPT)
+})
+
+// Found restarting Tessel with "Resume agents" off: the pane kept its old id
+// and Claude Code refused it ("Session ID … is already in use"), so the
+// agent never started. Not resuming a conversation that exists: a new id.
+it('not resuming: a Claude Code pane whose conversation exists starts with a new id, never the old one', async () => {
+  const { ctx, launchLine } = wakeSandbox()
+  ctx.window.shellApi.claudeSessionExists = vi.fn(async (id) => id === 'old-id')
+  expect(await launchLine('claude', { id: 'pane-c', sessionId: 'old-id', resume: false })).toBe('claude --session-id new-uuid\r')
+  // Never written to (no transcript): the same id is fine.
+  expect(await launchLine('claude', { id: 'pane-c', sessionId: 'unused-id', resume: false })).toBe('claude --session-id unused-id\r')
+  // Resuming: as before.
+  expect(await launchLine('claude', { id: 'pane-c', sessionId: 'old-id', resume: true })).toBe('claude --resume old-id\r')
 })
 
 it('team wake-ups off: no launch prompt, checked before and after counting and when the line is typed; nothing recorded', async () => {

@@ -1,4 +1,5 @@
 import { app, BrowserWindow, Menu, ipcMain, clipboard, nativeImage, dialog, Notification, shell, powerSaveBlocker, powerMonitor, safeStorage, webContents, session, utilityProcess } from 'electron'
+import { holdClaudeDefaultModel } from './claudeDefaultModel'
 import { join, isAbsolute, dirname, basename } from 'path'
 import os from 'os'
 import fs from 'fs'
@@ -34,6 +35,7 @@ import { createAskpassPipeHost } from './askpassPipeHost'
 import { createRemoteFs, registerRemoteFs, remoteRootsOfLayout, SESSION_PREFIX as REMOTE_FS_PREFIX } from './remoteFs'
 import { createGitTrust, setGitTrust } from './gitSafety'
 import { createWorktreeList, localRootsOfLayout } from './worktreeList'
+import { createWorktreeCleanup } from './worktreeCleanup'
 import { isRemotePath } from '../shared/remotePath'
 import { STATUS_PROVIDERS } from '../shared/agentStateModel'
 import { prepareAgentStateHooks } from './agentStateSetup'
@@ -100,7 +102,9 @@ import { takeTeamAcks } from './teamAcks'
 import { writeJsonSafe, readJsonSafe } from './safeJson'
 import { addNotices, writeCurrentTeams, retireOldTeams } from './teamNotices'
 import { JSON_AGENTS, setJsonAgentServer, teamToolsEntry } from './jsonAgents'
-import { detectAgents } from './agentDetect'
+import { detectAgents, KNOWN_AGENT_IDS } from './agentDetect'
+import { createAgentStateRulesFile } from './agentStateRulesFile'
+import { OVERRIDE_FILE_NAME } from '../shared/agentStateRules'
 import { createPortScanner } from './workspacePorts'
 import { createResourceCollector } from './resourceUsage'
 import { newTeamSecret, setTeamSecret, revokeTeamSecret, verifyRequest } from './teamAuth'
@@ -130,6 +134,7 @@ import { createCliServer, CliError } from './cliServer'
 import { createCliBridge } from './cliBridge'
 import { createCloseGuard } from './closeGuard'
 import { installRendererRecovery } from './rendererRecovery'
+import { prepareAntigravityContinue } from './antigravityIdeHistory'
 import { createCliInstaller, createUserPathRegistry, cliBinDir, cliCommandName, cliScriptPath, cliLauncherPath, iniText, readRegistryPathSync } from './cliInstall'
 import {
   ensureTeamChannel,
@@ -138,6 +143,10 @@ import {
   holdTeamDelivery,
   releaseTeamDelivery
 } from './teamChannel'
+
+// Many services each clean up on will-quit (more than Node's warning limit
+// of 10): expected, not a leak.
+app.setMaxListeners(40)
 
 // ---------------------------------------------------------------------------
 // PTY registry
@@ -870,7 +879,7 @@ ipcMain.handle('taskboard:load', (_evt, opts) => {
 ipcMain.handle('taskboard:save', (_evt, board) => {
   try {
     if (Array.isArray(board)) saveTasks(app.getPath('userData'), board)
-    else saveTasks(app.getPath('userData'), board && board.tasks, board && board.appliedRequests, board && board.deleted)
+    else saveTasks(app.getPath('userData'), board && board.tasks, board && board.appliedRequests, board && board.deleted, board && board.history)
     return { ok: true }
   } catch (err) {
     logCrashContext(`taskboard:save failed: ${err.message}`)
@@ -1087,6 +1096,11 @@ ipcMain.handle('sessions:title', async (_evt, q = {}) => {
     log.warn('sessions', `title: ${err.message}`)
   }
   return ''
+})
+// A model picked in Tessel for one Claude Code pane: its /model must not
+// become the default of every new session (see claudeDefaultModel.js).
+ipcMain.handle('claude:holdDefaultModel', () => {
+  holdClaudeDefaultModel()
 })
 ipcMain.handle('sessions:claudeExists', async (_evt, id, scope) => {
   try { return await accountSessions.claudeExists(id, scope) } catch { return false }
@@ -1379,6 +1393,29 @@ const codexTurnEndTimer = setInterval(() => { void codexTurnEnd().catch(() => {}
 codexTurnEndTimer.unref()
 app.on('will-quit', () => clearInterval(codexTurnEndTimer))
 ipcMain.handle('agents:states', () => agentStateStore.snapshot())
+// Agent-state detection rules: the user's agent-state-rules.json over the
+// built-in ones (agentStateRulesFile.js), watched, sent to the renderer.
+const agentRulesFile = createAgentStateRulesFile({
+  file: join(app.getPath('userData'), OVERRIDE_FILE_NAME),
+  knownAgents: [...new Set([...KNOWN_AGENT_IDS, ...STATUS_PROVIDERS])],
+  send: (payload) => send('agentRules:changed', payload),
+  log
+})
+app.whenReady().then(() => agentRulesFile.start())
+app.on('will-quit', () => agentRulesFile.stop())
+ipcMain.handle('agentRules:get', () => agentRulesFile.current())
+// Settings > Agents > Detection rules: "Open rules file" (made from the
+// commented example when missing).
+ipcMain.handle('agentRules:open', async () => {
+  try {
+    const file = agentRulesFile.ensureFile()
+    agentRulesFile.reload()
+    const error = await shell.openPath(file)
+    return { ok: !error, error: error || null, file }
+  } catch (err) {
+    return { ok: false, error: err?.message || String(err), file: null }
+  }
+})
 ipcMain.on('agents:screen', (_evt, q) => {
   if (!q || typeof q !== 'object') return
   void agentStateStore.observe(q.paneId, q.launchToken, { event: q.event, reset: q.reset }).catch(() => {})
@@ -1440,6 +1477,16 @@ ipcMain.handle('sessions:revealLog', async (_evt, q = {}) => {
 })
 ipcMain.handle('sessions:delete', async (_evt, q = {}) => {
   try { return await accountSessions.remove(q || {}, (p) => shell.trashItem(p)) } catch { return { ok: false, error: 'failed' } }
+})
+// An Antigravity IDE conversation continued in a new agy CLI conversation
+// (antigravityIdeHistory.js): its history written to a prompt file in
+// Tessel's own folder. -> { ok, file, dir, cwd } or { ok: false, error }
+ipcMain.handle('sessions:agyContinue', (_evt, q = {}) => {
+  try {
+    return prepareAntigravityContinue({ id: q && q.id }, { outDir: join(app.getPath('userData'), 'agy-continue') })
+  } catch {
+    return { ok: false, error: 'failed' }
+  }
 })
 // The model an agent pane uses (for its header), or null.
 ipcMain.handle('agents:model', async (_evt, q = {}) => {
@@ -1577,6 +1624,17 @@ ipcMain.handle(
   'git:worktrees',
   // A remote project's (its virtual root): over its host's signed-in session.
   safe((cwd) => (isRemotePath(cwd) ? remoteFs.gitWorktrees(cwd) : worktreeList.list(cwd)))
+)
+// Clean up worktrees: the git evidence of an open local project's other
+// worktrees (read-only, worktreeCleanup.js); removing goes through review:remove.
+// A task copy git unregistered while its folder stayed: remembered so its
+// delete can be tried again, even after a restart (worktreeLeftover.js).
+const worktreeLeftovers = createLeftoverStore({ file: join(app.getPath('userData'), 'worktree-leftovers.json') })
+setLeftoverStore(worktreeLeftovers)
+const worktreeCleanup = createWorktreeCleanup({ list: (cwd) => worktreeList.list(cwd), leftovers: worktreeLeftovers })
+ipcMain.handle(
+  'git:worktreeCleanupScan',
+  safe((cwd) => (isRemotePath(cwd) ? { ok: false, error: 'remote' } : worktreeCleanup.scan(cwd)))
 )
 ipcMain.handle(
   'git:createWorktree',
@@ -1813,9 +1871,6 @@ const claudeUsageReport = createClaudeUsageReport()
 ipcMain.handle('usage:claudeReport', safe((query) => claudeUsageReport(query)))
 // Codex's usage report from its own session files (tokens, requests).
 ipcMain.handle('usage:codexReport', safe((query) => accountUsage.report(query)))
-// A task copy git unregistered while its folder stayed: remembered so its
-// delete can be tried again, even after a restart (worktreeLeftover.js).
-setLeftoverStore(createLeftoverStore({ file: join(app.getPath('userData'), 'worktree-leftovers.json') }))
 ipcMain.handle('review:info', safe(reviewInfo))
 ipcMain.handle('review:diff', safe(reviewDiff))
 ipcMain.handle('review:merge', safe(reviewMerge))

@@ -1,6 +1,6 @@
 // Usage credentials and options for the providers Tessel reads quotas for
 // without managing their sign-in (Settings > AI provider accounts: Gemini,
-// OpenCode Go, MiniMax). The settings they hold follow Orca's AccountsPane and
+// OpenCode Go, MiniMax, a GLM Coding Plan key). The settings they hold follow Orca's AccountsPane and
 // minimax-api-key-store.ts / minimax-cookie-store.ts (MIT, Copyright (c) 2026
 // Lovecast Inc.); this storage is Tessel's: secrets are encrypted with the OS
 // (safeStorage) like Linear's key and never leave the main process; only
@@ -16,7 +16,11 @@ export const SECRET_NAMES = Object.freeze([
   'minimaxApiKey',
   'minimaxCookie',
   'opencodeGoApiKey',
-  'opencodeCookie'
+  'opencodeCookie',
+  // A standalone GLM Coding Plan key (Z.ai or BigModel), read before ZCode
+  // CLI's own (after Orca's zcode-plan-api-key-store.ts, MIT, Copyright (c)
+  // 2026 Lovecast Inc.).
+  'zcodePlanApiKey'
 ])
 // The provider whose usage reading a value changes (to drop its old reading).
 export const CREDENTIAL_PROVIDER = Object.freeze({
@@ -28,7 +32,9 @@ export const CREDENTIAL_PROVIDER = Object.freeze({
   opencodeGoApiKey: 'opencode-go',
   opencodeCookie: 'opencode-go',
   opencodeWorkspaceId: 'opencode-go',
-  geminiCliOAuth: 'gemini'
+  geminiCliOAuth: 'gemini',
+  zcodePlanApiKey: 'zcode',
+  zcodePlanSite: 'zcode'
 })
 // Orca's defaults (default-global-settings.ts).
 export const DEFAULT_PROVIDER_SETTINGS = Object.freeze({
@@ -36,7 +42,9 @@ export const DEFAULT_PROVIDER_SETTINGS = Object.freeze({
   opencodeWorkspaceId: '',
   minimaxEndpoint: 'overseas',
   minimaxGroupId: '',
-  minimaxUsageModels: 'general'
+  minimaxUsageModels: 'general',
+  // The GLM Coding Plan key's site: Z.ai ('zai') or BigModel ('bigmodel').
+  zcodePlanSite: 'zai'
 })
 // A null prototype: "constructor" or "toString" is no setting.
 const SETTING_RULES = Object.assign(Object.create(null), {
@@ -44,7 +52,8 @@ const SETTING_RULES = Object.assign(Object.create(null), {
   opencodeWorkspaceId: (v) => typeof v === 'string' && (v === '' || /^(?:wrk|wk)_[A-Za-z0-9]{1,100}$/.test(v)),
   minimaxEndpoint: (v) => v === 'overseas' || v === 'cn',
   minimaxGroupId: (v) => typeof v === 'string' && /^[A-Za-z0-9_-]{0,64}$/.test(v),
-  minimaxUsageModels: (v) => typeof v === 'string' && /^[A-Za-z0-9_.,\s-]{0,200}$/.test(v)
+  minimaxUsageModels: (v) => typeof v === 'string' && /^[A-Za-z0-9_.,\s-]{0,200}$/.test(v),
+  zcodePlanSite: (v) => v === 'zai' || v === 'bigmodel'
 })
 const MAX_SECRET = 16384
 const MAX_FILE = 128 * 1024

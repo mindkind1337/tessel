@@ -145,6 +145,17 @@ describe('nothing is forgotten', { timeout: 30_000 }, () => {
     expect(missing).toEqual([])
   })
 
+  it("the French says panneau, never the English word pane", () => {
+    const dir = join(root, 'i18n', 'locales', 'fr')
+    const bad = []
+    for (const name of readdirSync(dir)) {
+      for (const [key, value] of Object.entries(flatten(JSON.parse(readFileSync(join(dir, name), 'utf8'))))) {
+        if (/\bpanes?\b/i.test(String(value).replace(/\{\{[^}]*\}\}/g, ''))) bad.push(`${key}: ${value}`)
+      }
+    }
+    expect(bad).toEqual([])
+  })
+
   it('the French keeps every {{placeholder}} of the English', () => {
     const fr = {}
     const dir = join(root, 'i18n', 'locales', 'fr')

@@ -236,7 +236,7 @@ export function folderName(p) {
   return parts[parts.length - 1] || String(p || '')
 }
 
-function samePath(a, b) {
+export function samePath(a, b) {
   const n = (p) =>
     String(p || '')
       .replace(/[\\/]+$/, '')

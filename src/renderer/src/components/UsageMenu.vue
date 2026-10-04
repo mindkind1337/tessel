@@ -43,6 +43,11 @@ const providerReadings = ref({})
 // provider -> { accountId, plan }: the plan its last read found (Claude: from its login).
 const providerPlans = ref({})
 const providerErrors = ref({})
+// provider -> the failed read's code: a sign-in that expired ('auth',
+// 'expired') asks to sign in again; a read that did not work offers Retry.
+const providerErrorCodes = ref({})
+const SIGN_IN_CODES = ['auth', 'expired']
+const RETRY_CODES = ['network', 'server', 'response', 'timeout', 'redirect', 'upstream']
 const providerBusy = ref({})
 const resetConfirm = ref(null)
 const resetBusy = ref(false)
@@ -144,6 +149,7 @@ function invalidateProvider(id) {
   providerRequests.set(id, (providerRequests.get(id) || 0) + 1)
   delete providerReadings.value[id]
   delete providerErrors.value[id]
+  delete providerErrorCodes.value[id]
   providerBusy.value[id] = false
   resetConfirm.value = null
 }
@@ -161,6 +167,7 @@ async function readProvider(id) {
   providerRequests.set(id, request)
   providerBusy.value[id] = true
   providerErrors.value[id] = ''
+  delete providerErrorCodes.value[id]
   resetConfirm.value = null
   if (!['claude', 'codex'].includes(id)) delete providerReadings.value[id]
   try {
@@ -173,6 +180,7 @@ async function readProvider(id) {
       // Gemini sign-in), instead of vanishing under the pointer.
       if (result?.code === 'unavailable' && selectedProvider.value !== id)
         unavailable.value = [...new Set([...unavailable.value, id])]
+      if (typeof result?.code === 'string') providerErrorCodes.value[id] = result.code
       throw new Error(
         result?.error || t('usage.menu.providerError', 'Could not refresh provider usage.')
       )
@@ -238,6 +246,8 @@ async function pushed(result) {
   if (result.ok && result.kept) {
     // A recent reading kept through a failed refresh: shown as last known.
     providerErrors.value[id] = typeof result.error === 'string' ? result.error : ''
+    if (typeof result.code === 'string') providerErrorCodes.value[id] = result.code
+    else delete providerErrorCodes.value[id]
     providerReadings.value[id] = {
       ...result,
       id,
@@ -250,10 +260,13 @@ async function pushed(result) {
   }
   if (result.ok) {
     providerErrors.value[id] = ''
+    delete providerErrorCodes.value[id]
     applyReading(id, result)
     return
   }
   if (result.code === 'unavailable' && selectedProvider.value !== id) unavailable.value = [...new Set([...unavailable.value, id])]
+  if (typeof result.code === 'string') providerErrorCodes.value[id] = result.code
+  else delete providerErrorCodes.value[id]
   providerErrors.value[id] =
     (typeof result.error === 'string' && result.error) ||
     t('usage.menu.providerError', 'Could not refresh provider usage.')
@@ -390,10 +403,18 @@ function stale(agent, window) {
     (Number.isFinite(reset) && reset <= now.value)
   )
 }
+// The compact row's one figure: a provider's primary pool when it has one
+// (Cursor's own models, as in Orca's UsageRosterPanel getUsageHeadlineSection,
+// MIT, Copyright (c) 2026 Lovecast Inc.), the fullest window otherwise. The
+// toolbar icon still takes the fullest window of all, so an exhausted pool warns.
+const PRIMARY_WINDOWS = { cursor: 'Cursor models' } // i18n-ignore
 function summaryWindow(agent) {
   const valid = windows(agent)
   const fresh = valid.filter((window) => !stale(agent, window))
-  return (fresh.length ? fresh : valid).reduce(
+  const pool = fresh.length ? fresh : valid
+  const primary = PRIMARY_WINDOWS[agent.id] && pool.find((window) => window.label === PRIMARY_WINDOWS[agent.id])
+  if (primary) return primary
+  return pool.reduce(
     (best, window) => (!best || window.usedPct > best.usedPct ? window : best),
     null
   )
@@ -418,6 +439,19 @@ function planLabel(agent) {
         .replace(/[_-]+/g, ' ')
         .replace(/\b[a-z]/g, (letter) => letter.toUpperCase())
     : ''
+}
+// What a failed read asks for: 'signIn' (its sign-in expired), 'retry' (the
+// usage could not be read), or nothing.
+function errorAction(id) {
+  if (!providerErrors.value[id]) return null
+  const code = providerErrorCodes.value[id]
+  if (SIGN_IN_CODES.includes(code)) return 'signIn'
+  if (RETRY_CODES.includes(code)) return 'retry'
+  return null
+}
+function signInAgain() {
+  closeMenu()
+  emit('accounts')
 }
 function unavailableText(agent) {
   if (agent.unlimited)
@@ -1018,8 +1052,12 @@ const emptyTitle = () => t('usage.menu.buttonTitleEmpty', "Usage of your agents'
                 ? t('usage.menu.loading', 'Loading usage…')
                 : a.unlimited
                   ? t('usage.menu.unlimited', 'Unlimited')
-                  : providerErrors[a.id]
-                    ? t('usage.menu.refreshNeeded', 'Refresh needed')
+                  : errorAction(a.id) === 'signIn'
+                    ? t('usage.menu.signInAgain', 'Sign in again')
+                    : errorAction(a.id) === 'retry'
+                      ? t('usage.menu.couldNotRead', 'Usage could not be read')
+                      : providerErrors[a.id]
+                        ? t('usage.menu.refreshNeeded', 'Refresh needed')
                     : t('usage.menu.openForUsage', 'Open for usage')
             }}</span>
             <svg
@@ -1135,6 +1173,25 @@ const emptyTitle = () => t('usage.menu.buttonTitleEmpty', "Usage of your agents'
         <p v-if="providerErrors[detailAgent.id]" class="usage-account-error" role="alert">
           {{ providerErrors[detailAgent.id]
           }}<span v-if="windows(detailAgent).length">{{ ' ' + t('usage.menu.showingLastKnown', 'Showing the last known reading.') }}</span>
+          <button
+            v-if="errorAction(detailAgent.id) === 'signIn' && hasAccounts"
+            type="button"
+            class="usage-text-button"
+            data-test="usage-provider-sign-in"
+            @click="signInAgain"
+          >
+            {{ t('usage.menu.signInAgain', 'Sign in again') }}
+          </button>
+          <button
+            v-else-if="errorAction(detailAgent.id) === 'retry'"
+            type="button"
+            class="usage-text-button"
+            data-test="usage-provider-retry"
+            :disabled="providerBusy[detailAgent.id]"
+            @click="readProvider(detailAgent.id)"
+          >
+            {{ t('usage.menu.retry', 'Retry') }}
+          </button>
         </p>
         <p
           v-if="providerBusy[detailAgent.id] && !windows(detailAgent).length"

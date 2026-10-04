@@ -16,6 +16,8 @@ const props = defineProps({
 const emit = defineEmits(['close', 'open-tab'])
 
 const parent = inject('panelCtx', null) || {}
+// The panel's fullscreen, left by the page's Esc (SidePanel.vue).
+const side = inject('sideFullscreen', null)
 const activeId = ref(props.active ? props.node.id : null)
 watch(
   () => props.active,
@@ -41,6 +43,7 @@ provide('panelCtx', {
   beginPaneDrag: () => {},
   closeLeaf: () => emit('close'),
   openBrowserPane: (url) => emit('open-tab', url),
+  exitFullscreen: side ? side.exit : null,
   toast: parent.toast,
   openExternal: parent.openExternal,
   browserPorts: parent.browserPorts

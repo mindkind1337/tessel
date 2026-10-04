@@ -7,7 +7,7 @@ import fs from 'fs'
 import os from 'os'
 import { join, resolve, sep } from 'path'
 import { spawnSync } from 'child_process'
-import { findNode, commandWord, hookCommand, hookNode, unsafePath } from '../nodePath'
+import { findNode, commandWord, hookCommand, hookNode, unsafePath, cmdCommandWord, goCmdHookCommand } from '../nodePath'
 import { installClaudeHooks, installCopilotHooks } from '../teamInstall'
 import { installStatusHooks, STATUS_HOOKS } from '../agentStatusHooks'
 
@@ -75,6 +75,16 @@ describe('hook commands', () => {
     expect(hookCommand('C:\\n\\node.exe', 'C:\\s\\x.cjs', '--hook')).toBe('C:/"n/node.exe" "C:\\s\\x.cjs" --hook')
   })
 
+  it('for an agent that runs hooks as Go\'s exec.Command("cmd", "/c", command) (Antigravity): no quote that cmd.exe would get as \\"', () => {
+    expect(cmdCommandWord('C:\\Program Files\\nodejs\\node.exe')).toBe('C:\\"Program Files\\nodejs"\\node.exe')
+    expect(cmdCommandWord('C:/n/node.exe')).toBe('C:\\n\\node.exe')
+    expect(cmdCommandWord('C:\\my node.exe')).toBe(null)
+    expect(cmdCommandWord('C:\\n\\my node.exe')).toBe(null)
+    expect(goCmdHookCommand('C:\\Program Files\\nodejs\\node.exe', 'C:\\s\\x.cjs', '--hook')).toBe('C:\\"Program Files\\nodejs"\\node.exe C:\\s\\x.cjs --hook')
+    // A script path with a space cannot go through that quoting.
+    expect(goCmdHookCommand('C:\\n\\node.exe', 'C:\\Tessel data\\x.cjs', '--hook')).toBe(null)
+  })
+
   it('refuse unsafe or relative node paths, and a missing node', () => {
     expect(hookNode('C:\\s\\x.cjs', 'node').error).toBeTruthy()
     expect(hookNode('C:\\s\\x.cjs', 'C:\\a%b\\node.exe').error).toBeTruthy()
@@ -132,5 +142,28 @@ describe.runIf(process.platform === 'win32')('run from a folder with a planted n
     // The old bare command, for comparison: cmd.exe runs the planted file.
     spawnSync(`node "${script}"`, { cwd: project, env, shell: true, encoding: 'utf8', windowsHide: true })
     expect(fs.existsSync(marker)).toBe(true)
+  }, 60000)
+})
+
+// Antigravity CLI (a Go program) runs a hook as exec.Command("cmd", "/c",
+// command); node's spawn quotes that argument the same way (the C runtime's
+// rules: every " reaches cmd.exe as \").
+describe.runIf(process.platform === 'win32')('a hook run the way Antigravity CLI runs it', () => {
+  it('the common form fails there; the cmd form runs the real node, Go-quoted, raw and in PowerShell', () => {
+    const nodeDir = join(dir, 'Program Files', 'nodejs')
+    fs.mkdirSync(nodeDir, { recursive: true })
+    const node = join(nodeDir, 'node.exe')
+    fs.copyFileSync(process.execPath, node)
+    const script = join(dir, 'hook.cjs')
+    fs.writeFileSync(script, "process.stdout.write('real:' + process.argv.slice(2).join(','))")
+    const viaGo = (command) => spawnSync('cmd.exe', ['/c', command], { cwd: dir, encoding: 'utf8', windowsHide: true })
+    expect(viaGo(hookCommand(node, script, '--hook --agent=antigravity')).stdout).not.toBe('real:--hook,--agent=antigravity')
+    const command = goCmdHookCommand(node, script, '--hook --agent=antigravity')
+    expect(command).not.toBe(null)
+    expect(viaGo(command).stdout).toBe('real:--hook,--agent=antigravity')
+    const raw = spawnSync('cmd.exe', ['/d', '/s', '/c', `"${command}"`], { cwd: dir, encoding: 'utf8', windowsHide: true, windowsVerbatimArguments: true })
+    expect(raw.stdout).toBe('real:--hook,--agent=antigravity')
+    const viaPs = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], { cwd: dir, encoding: 'utf8', windowsHide: true })
+    expect(viaPs.stdout).toBe('real:--hook,--agent=antigravity')
   }, 60000)
 })

@@ -1,0 +1,82 @@
+{
+  "cleanup": {
+    "title": "Nettoyer les worktrees",
+    "sub": "comparé à {{branch}}",
+    "close": "Fermer",
+    "scanning": "Lecture des worktrees…",
+    "unknownError": "Erreur inconnue",
+    "error": {
+      "remote": "Le nettoyage des worktrees ne fonctionne que pour les projets sur cet ordinateur.",
+      "notRepo": "Le dossier du projet n'est pas un dépôt git.",
+      "unknownFolder": "Ce dossier n'est pas un projet ouvert.",
+      "scan": "Impossible de lire les worktrees ({{error}})."
+    },
+    "risk": {
+      "dirtyOne": "1 modification non commitée",
+      "dirty": "{{count}} modifications non commitées",
+      "leftover": "Dossier laissé par une suppression qui a échoué",
+      "unknownStatus": "Impossible de vérifier les modifications non commitées",
+      "unmergedOne": "1 commit non fusionné",
+      "unmerged": "{{count}} commits non fusionnés",
+      "unmergedPlain": "Non fusionné",
+      "unknownMerge": "Impossible de vérifier s'il est fusionné",
+      "openAgents": "{{count}} panneaux ouverts ({{agents}} agents) : fermés d'abord",
+      "openPanes": "{{count}} panneaux ouverts : fermés d'abord",
+      "task": "Copie de la tâche « {{title}} »"
+    },
+    "blocker": {
+      "detached": "Sans branche (détaché) : à supprimer avec git",
+      "defaultBranch": "Sur la branche par défaut",
+      "locked": "Verrouillé dans git"
+    },
+    "confirmOne": "Supprimer 1 worktree ? Son dossier et sa branche sont supprimés.",
+    "confirm": "Supprimer {{count}} worktrees ? Leurs dossiers et leurs branches sont supprimés.",
+    "confirmRisky": "Le travail dans ceux-ci est perdu pour de bon :",
+    "back": "Retour",
+    "removeOne": "Supprimer 1 worktree",
+    "removeN": "Supprimer {{count}} worktrees",
+    "removeOneDots": "Supprimer 1 worktree…",
+    "removeNDots": "Supprimer {{count}} worktrees…",
+    "removeNone": "Supprimer des worktrees…",
+    "removing": "Suppression…",
+    "summaryFailedOne": "1 worktree n'a pas pu être supprimé : voyez pourquoi ci-dessous, puis réessayez.",
+    "summaryFailedOnly": "{{count}} worktrees n'ont pas pu être supprimés : voyez pourquoi ci-dessous, puis réessayez.",
+    "summaryFailedMixedOne": "Supprimés : {{done}}. 1 n'a pas pu être supprimé : voyez pourquoi ci-dessous, puis réessayez.",
+    "summaryFailed": "Supprimés : {{done}}. {{failed}} n'ont pas pu être supprimés : voyez pourquoi ci-dessous, puis réessayez.",
+    "summaryOne": "1 worktree supprimé.",
+    "summary": "{{count}} worktrees supprimés.",
+    "showAll": "Afficher aussi les worktrees actifs",
+    "selectSafe": "Sélectionner les sûrs",
+    "selectNone": "Tout désélectionner",
+    "selectRow": "Sélectionner {{name}}",
+    "missing": "Dossier disparu",
+    "clean": "Propre",
+    "dirtyChip": "Modifié",
+    "merged": "Fusionné",
+    "notMerged": "Non fusionné",
+    "ahead": "{{count}} en avance",
+    "behind": "{{count}} en retard",
+    "agentsChip": "{{count}} agents ouverts",
+    "panesChip": "{{count}} panneaux ouverts",
+    "lastCommit": "Dernier commit {{time}} : {{subject}}",
+    "lastActivity": "Dernière activité {{time}}",
+    "ago": "il y a {{time}}",
+    "never": "jamais",
+    "failed": "Non supprimé : {{error}}",
+    "empty": "Rien à nettoyer",
+    "emptyHidden": "{{count}} worktrees actifs sont masqués : « Afficher aussi les worktrees actifs » les liste.",
+    "emptyNone": "Ce projet n'a pas d'autres worktrees."
+  },
+  "sidebar": {
+    "project": {
+      "cleanupWorktrees": "Nettoyer les worktrees…",
+      "cleanupWorktreesHint": "Supprimer les worktrees fusionnés ou inactifs, avec leur état git"
+    }
+  },
+  "app": {
+    "cmd": {
+      "cleanupWorktrees": "Nettoyer les worktrees…",
+      "cleanupWorktreesHint": "Supprimer les worktrees fusionnés ou inactifs de ce projet, avec leur état git"
+    }
+  }
+}

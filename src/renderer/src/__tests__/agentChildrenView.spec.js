@@ -46,4 +46,13 @@ describe('sub-agents in a pane', () => {
     expect(childActive(run, { now, parentIdleSince: now - 30000 })).toBe(false)
     expect(childrenSummary([run, { ...run, lastAt: now - 10000 }], now, now - 30000)).toMatchObject({ running: 1, quiet: 1 })
   })
+  it("one started in the background works after its parent's turn ended, even while it writes nothing (one long answer)", () => {
+    const now = 100_000_000
+    const bg = { state: 'running', background: true, startedAt: now - 20000, lastAt: now - 19000 }
+    expect(childActive(bg, { now, parentIdleSince: now - 15000 })).toBe(true)
+    expect(childrenSummary([bg, { ...bg, background: false }], now, now - 15000)).toMatchObject({ running: 1, quiet: 1 })
+    // Finished, or silent past the stale limit: not at work.
+    expect(childActive({ ...bg, state: 'done' }, { now, parentIdleSince: now - 15000 })).toBe(false)
+    expect(childActive({ ...bg, lastAt: now - CHILD_STALE_MS - 1 }, { now, parentIdleSince: now - 15000 })).toBe(false)
+  })
 })

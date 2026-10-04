@@ -90,7 +90,10 @@ export function mapCursor(data) {
     if (w) windows.push(w)
   }
   if (plan?.enabled !== false) {
-    add('Monthly', ratio(plan?.used, plan?.limit) ?? number(plan?.totalPercentUsed))
+    // Cursor's reported plan percentage wins: the raw base allowance can read
+    // 100% while the plan still has capacity (after Orca's
+    // cursor-usage-mapping.ts, MIT, Copyright (c) 2026 Lovecast Inc.).
+    add('Monthly', number(plan?.totalPercentUsed) ?? ratio(plan?.used, plan?.limit))
     add('Cursor models', plan?.autoPercentUsed)
     add('Other models', plan?.apiPercentUsed)
   }

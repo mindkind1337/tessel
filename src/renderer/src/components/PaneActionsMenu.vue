@@ -164,14 +164,17 @@ defineExpose({ focus: options => menuRef.value?.focus(options), contains: target
         <div class="ctx-menu-sep"></div>
       </template>
       <button class="ctx-menu-item" @click="(closeCtxMenu(), startEditTitle($event))">{{ t('pane.menu.rename', 'Rename') }}</button>
-      <button class="ctx-menu-item" @click="(closeCtxMenu(), ctx.toggleMaximize(node.id))">{{ isMaximized ? t('pane.restore', 'Restore pane') : t('pane.maximize', 'Maximize pane') }}</button>
-      <button class="ctx-menu-item" @click="menuOpenHere">{{ t('pane.menu.openHere', 'Open terminal or agent here…') }}</button>
-      <button class="ctx-menu-item" @click="menuSplit('row')">
-        {{ t('pane.menu.splitRight', 'Split right') }}<span class="ctx-menu-shortcut">▥</span>
-      </button>
-      <button class="ctx-menu-item" @click="menuSplit('col')">
-        {{ t('pane.menu.splitDown', 'Split down') }}<span class="ctx-menu-shortcut">▤</span>
-      </button>
+      <button v-if="!ctx.floating" class="ctx-menu-item" @click="(closeCtxMenu(), ctx.toggleMaximize(node.id))">{{ isMaximized ? t('pane.restore', 'Restore pane') : t('pane.maximize', 'Maximize pane') }}</button>
+      <!-- Not in the floating terminal's pane (not in the grid). -->
+      <template v-if="!ctx.floating">
+        <button class="ctx-menu-item" @click="menuOpenHere">{{ t('pane.menu.openHere', 'Open terminal or agent here…') }}</button>
+        <button class="ctx-menu-item" @click="menuSplit('row')">
+          {{ t('pane.menu.splitRight', 'Split right') }}<span class="ctx-menu-shortcut">▥</span>
+        </button>
+        <button class="ctx-menu-item" @click="menuSplit('col')">
+          {{ t('pane.menu.splitDown', 'Split down') }}<span class="ctx-menu-shortcut">▤</span>
+        </button>
+      </template>
       <div class="ctx-menu-sep"></div>
       <button class="ctx-menu-item" @click="menuRestart">
         {{ t('pane.restart', 'Restart') }}<span class="ctx-menu-shortcut">Ctrl+Shift+R</span>

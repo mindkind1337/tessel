@@ -101,6 +101,18 @@ describe('chat to terminal', () => {
     }
   })
 
+  it("Claude in the terminal keeps the chat's mode (Plan, Accept edits, Ask), never its own default", async () => {
+    for (const [extra, mode] of [
+      [{ chatPermissions: 'manual', chatPermissionMode: 'plan' }, 'plan'],
+      [{ chatPermissions: 'manual', chatPermissionMode: 'acceptEdits' }, 'acceptEdits'],
+      [{ chatPermissions: 'manual' }, 'default']
+    ]) {
+      const { api, ctx } = load(chat(extra))
+      await api.switchToTerminal('pane-1')
+      expect(ctx.createLeaf.mock.calls[0][4]).toMatchObject({ permissions: 'manual', permissionMode: mode })
+    }
+  })
+
   it('no conversation yet: nothing done, said so', async () => {
     const { api, ctx } = load(chat({ sessionId: null }))
     expect(await api.switchToTerminal('pane-1')).toBe(false)

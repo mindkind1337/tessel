@@ -49,6 +49,7 @@ import NotesSendMenu from './NotesSendMenu.vue'
 import DiffNoteDraft from './DiffNoteDraft.vue'
 import DiffNoteCard from './DiffNoteCard.vue'
 import { t } from '../i18n'
+import { isFloatingToggleKey } from '../floatingTerminal'
 
 const props = defineProps({
   node: { type: Object, required: true }
@@ -702,6 +703,7 @@ function onTabsWheel(e) {
 // never reach Monaco, which binds some of the same keys).
 function isAppShortcut(e) {
   const k = e.key
+  if (isFloatingToggleKey(e)) return true
   if (e.ctrlKey && e.shiftKey && !e.altKey) return ['e', 'o', 'w', 'b', 'k', 'n', 't', 'r', 'p', 'x', 'j', 'g', ' '].includes(k.toLowerCase())
   if (e.ctrlKey && !e.shiftKey && !e.altKey) return ['=', '+', '-', '0', ',', 'PageUp', 'PageDown'].includes(k)
   // Alt+Up/Down stay Monaco's (move a line); Alt+Left/Right move between panes.
@@ -875,7 +877,8 @@ onMounted(async () => {
   ready.value = true
   await nextTick()
   showActive()
-  if (isActive.value) focusEditor()
+  // Not under the floating terminal while it has the keyboard.
+  if (isActive.value && !(ctx.floatingHasKeyboard && ctx.floatingHasKeyboard())) focusEditor()
 })
 
 onBeforeUnmount(() => {

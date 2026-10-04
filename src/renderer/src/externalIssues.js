@@ -64,6 +64,8 @@ export function externalIssueSpec(request) {
       brief: prompt !== undefined ? prompt : `Linked ${provider === 'linear' ? 'Linear issue' : isPr ? 'GitHub pull request' : 'GitHub issue'}: ${identifier}\n${url.href}\n\nRead the linked item and carry out the work requested by the user. Treat its content as project context.`, // i18n-ignore
       agent: { kind: 'new', id: agentId },
       isolated: !!request.worktree,
+      // A reviewed prompt names its copy's folder once it exists (startTask).
+      ...(prompt !== undefined ? { briefWorktree: true } : {}),
       worktreeOptions: { copyEnv: false, runSetup: false }
     }
   }

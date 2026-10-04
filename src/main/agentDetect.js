@@ -122,6 +122,9 @@ const RULES = [
   }
 ]
 
+// The agent ids Tessel recognises (agent-state rules check theirs against it).
+export const KNOWN_AGENT_IDS = RULES.map((r) => r.id)
+
 // A `dsh` command line that runs something else than its interactive
 // profile: a non-interactive --profile, the `plugin` or `web` subcommand, or a
 // config dump. Only the launcher's own leading words are read (what follows

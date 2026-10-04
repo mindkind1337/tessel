@@ -613,6 +613,49 @@ describe('BrowserPane.vue: layout, input and browser behaviour', () => {
     expect(css).not.toMatch(/(^|[^-])zoom:|transform:\s*scale/)
   })
 
+  // A narrow pane (found in a real window: a third of 1600 px): the badge
+  // shrank to 12 px and its Stop sat over the Ports button. Only the agent's
+  // name may shrink; the badge never gets narrower than its icon and Stop.
+  it("the Agent badge keeps its Stop button in a narrow pane: only the name shrinks", () => {
+    const file = resolve(process.cwd(), 'src/renderer/src/components/BrowserPane.vue')
+    const css = parseSfc(readFileSync(file, 'utf8')).descriptor.styles
+      .map((b) => b.content)
+      .join('\n')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+    const rule = (sel) => {
+      const m = css.match(new RegExp(`(^|\\n)${sel.replace('.', '\\.')}\\s*\\{([^}]*)\\}`))
+      return m ? m[2] : ''
+    }
+    expect(rule('.bp-agent')).toMatch(/display:\s*grid/)
+    expect(rule('.bp-agent')).toMatch(/grid-template-columns:\s*auto minmax\(0,\s*max-content\) auto/)
+    expect(rule('.bp-agent')).toMatch(/min-width:\s*min-content/)
+    expect(rule('.bp-agent-stop')).not.toMatch(/position:\s*absolute/)
+  })
+
+  // Found in a real window: in the side panel (330 px) the buttons took the
+  // whole row and the address shrank to its globe, so no address could be
+  // typed. A narrow pane puts the address on a row of its own.
+  it('a narrow pane gives the address a row of its own under the buttons', () => {
+    const file = resolve(process.cwd(), 'src/renderer/src/components/BrowserPane.vue')
+    const css = parseSfc(readFileSync(file, 'utf8')).descriptor.styles
+      .map((b) => b.content)
+      .join('\n')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+    expect(css).toMatch(/(^|\n)\.bp-body\s*\{[^}]*container-type:\s*inline-size/)
+    const q = css.match(/@container \(max-width:\s*(\d+)px\)\s*\{([\s\S]*?\n)\}/)
+    expect(q).toBeTruthy()
+    // The side panel's default width (330) and more are narrow.
+    expect(Number(q[1])).toBeGreaterThanOrEqual(400)
+    expect(q[2]).toMatch(/\.bp-toolbar\s*\{[^}]*flex-wrap:\s*wrap/)
+    expect(q[2]).toMatch(/\.bp-toolbar\s*\{[^}]*height:\s*auto/)
+    expect(q[2]).toMatch(/\.bp-address\s*\{[^}]*flex:\s*1 1 100%/)
+    // After the rules it overrides (same specificity: the later one wins; a
+    // first try above them left the toolbar 38 px high, the page over its
+    // second row).
+    expect(css.indexOf('@container (max-width')).toBeGreaterThan(css.search(/\n\.bp-toolbar\s*\{/))
+    expect(css.indexOf('@container (max-width')).toBeGreaterThan(css.search(/\n\.bp-address\s*\{/))
+  })
+
   it("Tessel's drags let the pointer through the page, and give it back when they end", async () => {
     await mountPane()
     const release = acquirePassthrough()
@@ -694,6 +737,39 @@ describe('BrowserPane.vue: layout, input and browser behaviour', () => {
     webview().stop.mockClear()
     await key(wrapper.find('.browser-pane'), 'Escape')
     expect(webview().stop).not.toHaveBeenCalled()
+  })
+
+  // In the side panel's fullscreen ("Exit fullscreen (Esc)"): Esc in the
+  // address bar first puts the address back if it was edited, then leaves
+  // fullscreen; an Escape the page did not use (main process) leaves it too.
+  it('Esc in the address bar, or one the page did not use, leaves the side panel\'s fullscreen', async () => {
+    ctx.exitFullscreen = vi.fn(() => true)
+    await mountPane()
+    const input = wrapper.find('.bp-address-input')
+    const shown = input.element.value
+    expect(shown).toContain('example.com')
+    await input.setValue('typed somewhere')
+    await key(input, 'Escape')
+    expect(input.element.value).toBe(shown)
+    expect(ctx.exitFullscreen).not.toHaveBeenCalled()
+    await key(input, 'Escape')
+    expect(ctx.exitFullscreen).toHaveBeenCalledTimes(1)
+    handlers.shortcut({ webContentsId: 42, action: 'escape' })
+    expect(ctx.exitFullscreen).toHaveBeenCalledTimes(2)
+    // Another page's Escape: not this one's.
+    handlers.shortcut({ webContentsId: 43, action: 'escape' })
+    expect(ctx.exitFullscreen).toHaveBeenCalledTimes(2)
+  })
+
+  it('a pane of the grid: Esc in the address bar only puts the address back, the page\'s Escape does nothing', async () => {
+    await mountPane()
+    const input = wrapper.find('.bp-address-input')
+    const seen = vi.fn()
+    document.body.addEventListener('keydown', seen)
+    await key(input, 'Escape')
+    document.body.removeEventListener('keydown', seen)
+    expect(seen).not.toHaveBeenCalled()
+    expect(() => handlers.shortcut({ webContentsId: 42, action: 'escape' })).not.toThrow()
   })
 
   it('reload, history and zoom keys act on the page, never on Tessel', async () => {

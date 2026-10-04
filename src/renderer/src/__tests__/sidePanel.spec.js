@@ -7,6 +7,8 @@ import { nextTick } from 'vue'
 import SidePanel from '../components/SidePanel.vue'
 import ExplorerPanel from '../components/ExplorerPanel.vue'
 import { setTasks, addTask } from '../taskBoardStore'
+import { setTaskHistory } from '../taskHistory'
+import { SIDE_TABS, restoredSideTab } from '../sideTabs'
 
 const ROOT = 'C:\\proj'
 let calls
@@ -117,6 +119,36 @@ describe('SidePanel.vue', () => {
     w.unmount()
   })
 
+  it('Task history: a tab of its own after Tasks, its rows open their pane (fullscreen left)', async () => {
+    setTaskHistory([{ id: 'h1', title: 'Shipped it', agentName: 'Ada', agentKind: 'claude', project: 'proj', paneId: 'p1', doneAt: Date.now() - 1000, durationMs: 60000, cost: { status: 'ok', inputTokens: 10, outputTokens: 5, usd: 0.02, known: true, final: true, models: [] } }])
+    const projects = [{ id: 'ws1', name: 'proj', panes: [{ id: 'p1', kind: 'agent', agentId: 'claude', title: 'Ada', state: 'idle' }] }]
+    const w = mount(SidePanel, { props: { tab: 'tasks', root: ROOT, workspaceId: 'ws1', projects, fullscreen: true }, attachTo: document.body })
+    const ids = w.findAll('.side-tab').map((x) => x.attributes('data-test'))
+    expect(ids.indexOf('side-tab-taskHistory')).toBe(ids.indexOf('side-tab-tasks') + 1)
+    expect(w.find('[data-test="side-tab-taskHistory"]').attributes('title')).toBe('Task history — time and cost')
+    expect(w.find('[data-test="task-history"]').exists()).toBe(false) // created when first shown
+    await w.find('[data-test="side-tab-taskHistory"]').trigger('click')
+    expect(w.emitted('update:tab')).toEqual([['taskHistory']])
+    await w.setProps({ tab: 'taskHistory' })
+    expect(w.find('[data-test="task-history"]').isVisible()).toBe(true)
+    await w.find('[data-test="history-row-h1"] button').trigger('click')
+    await w.find('[data-test="history-open-pane"]').trigger('click')
+    expect(w.emitted('update:fullscreen')).toEqual([[false]])
+    expect(w.emitted('focus-pane')).toEqual([['p1']])
+    w.unmount()
+    setTaskHistory([])
+  })
+
+  it('a saved layout opens on its tab again, Task history included', () => {
+    expect(SIDE_TABS).toContain('taskHistory')
+    expect(restoredSideTab('taskHistory')).toBe('taskHistory')
+    expect(restoredSideTab('history')).toBe('history')
+    expect(restoredSideTab('web-abc', [{ id: 'web-abc' }])).toBe('web-abc')
+    expect(restoredSideTab('web-gone', [])).toBe('dashboard')
+    expect(restoredSideTab('nope')).toBe(null)
+    expect(restoredSideTab(undefined)).toBe(null)
+  })
+
   it('Fullscreen: the button toggles it, Esc leaves it', async () => {
     const w = make('tasks')
     await w.find('[data-test="side-fullscreen"]').trigger('click')
@@ -125,6 +157,34 @@ describe('SidePanel.vue', () => {
     expect(w.find('[data-test="side-fullscreen"]').attributes('aria-pressed')).toBe('true')
     document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     expect(w.emitted('update:fullscreen')).toEqual([[true], [false]])
+    w.unmount()
+  })
+
+  // A page of the panel has the keyboard (its address bar, the page itself):
+  // the window's Esc never reaches the panel, the page asks it to leave.
+  it('Fullscreen: a web page of the panel can leave it (its Esc)', async () => {
+    let side = null
+    const w = mount(SidePanel, {
+      props: { tab: 'web-a', root: ROOT, workspaceId: 'ws1', browsers: [{ id: 'web-a', url: 'https://example.com/', title: '' }], fullscreen: false },
+      attachTo: document.body,
+      global: {
+        stubs: {
+          SideBrowser: {
+            props: ['node', 'active'],
+            inject: ['sideFullscreen'],
+            created() {
+              side = this.sideFullscreen
+            },
+            template: '<div class="side-browser-stub"></div>'
+          }
+        }
+      }
+    })
+    expect(side.exit()).toBe(false)
+    expect(w.emitted('update:fullscreen')).toBeUndefined()
+    await w.setProps({ fullscreen: true })
+    expect(side.exit()).toBe(true)
+    expect(w.emitted('update:fullscreen')).toEqual([[false]])
     w.unmount()
   })
 

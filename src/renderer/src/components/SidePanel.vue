@@ -1,13 +1,13 @@
 <script setup>
 // The right side panel (after Orca's): one panel, a tab bar at its top —
 // Dashboard (every agent of every project), Files (the explorer), Changes
-// (source control), Tasks (the task board), Agents (the agent session
-// history), then the web pages opened with + (SideBrowser.vue, one tab each,
+// (source control), Tasks (the task board), Task history (finished tasks,
+// their time and cost), Agents (the agent session history), then the web pages opened with + (SideBrowser.vue, one tab each,
 // x or a middle-click closes one). At the right end of the bar: + (a new web
 // page) and Fullscreen (the panel over the whole workspace; Esc restores it).
 // A tab is created the first time it is shown, then kept (its folders,
 // search and scroll stay as they were) while the panel is open.
-import { reactive, ref, watch, computed, onMounted, onBeforeUnmount } from 'vue'
+import { reactive, ref, watch, computed, provide, onMounted, onBeforeUnmount } from 'vue'
 import ExplorerPanel from './ExplorerPanel.vue'
 import { refreshStatus, statusOf, changeCount, rootKey } from '../scmState'
 import ChangesPanel from './ChangesPanel.vue'
@@ -20,9 +20,9 @@ import RemoteBadge from './project/RemoteBadge.vue'
 import { remoteHostsState } from '../remoteHosts'
 import { t } from '../i18n'
 import { displayUrl } from '../../../shared/browserUrl'
-import { Files, GitBranch, ListChecks, LayoutDashboard, Maximize2, Minimize2, Plus, Globe, X } from 'lucide-vue-next'
-
-const SIDE_TABS = ['dashboard', 'files', 'changes', 'tasks', 'history']
+import TaskHistoryPanel from './TaskHistoryPanel.vue'
+import { SIDE_TABS } from '../sideTabs'
+import { Files, GitBranch, ListChecks, LayoutDashboard, Maximize2, Minimize2, Plus, Globe, X, ReceiptText } from 'lucide-vue-next'
 
 const props = defineProps({
   tab: { type: String, default: 'tasks' },
@@ -77,6 +77,7 @@ const TABS = [
   { id: 'files', key: 'explorer.side.files', label: 'Files', shortcut: 'Ctrl+Shift+X', icon: Files },
   { id: 'changes', key: 'explorer.side.changes', label: 'Changes', shortcut: 'Ctrl+Shift+G', icon: GitBranch },
   { id: 'tasks', key: 'explorer.side.tasks', label: 'Tasks', shortcut: 'Ctrl+Shift+K', icon: ListChecks },
+  { id: 'taskHistory', key: 'taskHistory.tab', label: 'Task history — time and cost', shortcut: '', icon: ReceiptText }, // i18n-ignore
   { id: 'history', key: 'explorer.side.history', label: 'Agent Session History', shortcut: '', icon: AgentSessionHistoryIcon } // i18n-ignore
 ]
 const tabLabel = (tab) => t(tab.key, tab.label)
@@ -146,6 +147,16 @@ onMounted(() => {
 function setFullscreen(on) {
   if (!!on !== props.fullscreen) emit('update:fullscreen', !!on)
 }
+// A web page of the panel with the keyboard (its address bar, the page):
+// the window's Esc never comes here, the page asks (SideBrowser.vue).
+// -> whether fullscreen was left.
+provide('sideFullscreen', {
+  exit: () => {
+    if (!props.fullscreen) return false
+    setFullscreen(false)
+    return true
+  }
+})
 // A pane brought to the front from the panel: fullscreen would hide it.
 function focusPane(id) {
   setFullscreen(false)
@@ -337,6 +348,14 @@ onBeforeUnmount(() => {
         @new-task="emit('new-task')"
         @focus-pane="focusPane"
         @review="(id) => emit('review', id)"
+      />
+      <TaskHistoryPanel
+        v-if="shown.taskHistory"
+        v-show="current() === 'taskHistory'"
+        :projects="projects"
+        :now="now"
+        :active="current() === 'taskHistory'"
+        @focus-pane="focusPane"
       />
       <SessionHistoryPanel
         v-if="shown.history"

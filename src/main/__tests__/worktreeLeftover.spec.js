@@ -156,6 +156,14 @@ describe('leftover store', () => {
     b.forget(join(box, 'proj.worktrees', 'x'))
     expect(createLeftoverStore({ file }).get(join(box, 'proj'), join(box, 'proj.worktrees', 'x'))).toBe(null)
   })
+  it("lists one project's leftovers", () => {
+    const store = createLeftoverStore()
+    const { box } = sandbox()
+    store.add(join(box, 'proj'), join(box, 'proj.worktrees', 'x'), 'agent/x')
+    store.add(join(box, 'other'), join(box, 'other.worktrees', 'y'), 'agent/y')
+    expect(store.list(join(box, 'proj')).map((r) => r.branch)).toEqual(['agent/x'])
+    expect(store.list('')).toEqual([])
+  })
 })
 
 describe('reviewRemove with leftovers', { timeout: 60000 }, () => {

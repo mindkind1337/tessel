@@ -193,6 +193,24 @@ describe('messages and commands', () => {
     expect(notice()).toBeNull()
   })
 
+  it("a compaction is not the last turn's work: the list is not told it works meanwhile (its time stays the turn's own)", async () => {
+    await mountChat({ working: true, paneId: 'pane-compact-time' })
+    await settle()
+    expect(list().props('isWorking')).toBe(true)
+    await wrapper.setProps({ working: false })
+    await settle()
+    await wrapper.setProps({ compacting: true, working: true })
+    await settle()
+    expect(list().props('isWorking')).toBe(false)
+    await wrapper.setProps({ compacting: false, working: false })
+    const sendMessage = vi.fn()
+    await wrapper.setProps({ sendMessage })
+    await composer().props('send')('/compact')
+    await wrapper.setProps({ working: true })
+    await settle()
+    expect(list().props('isWorking')).toBe(false)
+  })
+
   it("a card's edit, delete and send now go to its delivery's controls; one already typed is said, never typed again", async () => {
     const sendMessage = vi.fn()
     await mountChat({ sendMessage, working: true })

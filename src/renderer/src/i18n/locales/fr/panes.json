@@ -434,9 +434,9 @@
       "keysClose": "pour fermer",
       "modelHint": "Le modèle avec lequel {{name}} démarre",
       "chat": "Claude Code (chat)",
-      "chatHint": "Claude dans un pane de chat : sans terminal ; les messages d'équipe lui arrivent comme des tours à part entière",
+      "chatHint": "Claude dans un panneau de chat : sans terminal ; les messages d'équipe lui arrivent comme des tours à part entière",
       "chatCodex": "Codex (chat)",
-      "chatCodexHint": "Codex dans un pane de chat : sans terminal ; les messages d'équipe lui arrivent comme des tours à part entière",
+      "chatCodexHint": "Codex dans un panneau de chat : sans terminal ; les messages d'équipe lui arrivent comme des tours à part entière",
       "browser": "Navigateur",
       "browserHint": "Une page web à côté de vos terminaux (votre serveur de dev, une doc)",
       "chatOpencode": "OpenCode (chat)",
@@ -540,7 +540,7 @@
       "yoloFolder": "Yolo dans ce dossier",
       "yoloFolderHint": "Les agents lancés dans {{folder}} (ou un dossier à l'intérieur) démarrent toujours en Yolo. Les agents déjà lancés là gardent leur mode.",
       "openAsChat": "Ouvrir en chat",
-      "openAsChatHint": "Poursuivre cette conversation dans un pane de chat (sans terminal) : même pane, mêmes permissions ou moins",
+      "openAsChatHint": "Poursuivre cette conversation dans un panneau de chat (sans terminal) : même panneau, mêmes permissions ou moins",
       "viewTranscript": "Voir la conversation",
       "viewTranscriptHint": "Afficher cette conversation comme un chat, en lecture seule (la saisie reste dans le terminal)",
       "hideTranscript": "Revenir au terminal",
@@ -613,7 +613,7 @@
     },
     "chatView": {
       "showChat": "Afficher la vue chat",
-      "openAsChat": "Continuer cette conversation dans un pane chat",
+      "openAsChat": "Continuer cette conversation dans un panneau chat",
       "noOpencodeSession": "Envoyez d’abord un message ici : le chat s’ouvre dès qu’OpenCode a une conversation",
       "showTerminal": "Afficher le terminal",
       "asleep": "En veille : il se réveille quand vous ouvrez ce panneau, vous pourrez alors lui écrire.",
@@ -728,5 +728,13 @@
       "connect": "Connecter",
       "connecting": "Connexion…"
     }
+  },
+  "floating": {
+    "label": "Terminal flottant",
+    "starting": "Démarrage du terminal...",
+    "resize": "Redimensionner le terminal flottant",
+    "resizeHint": "Faites glisser pour redimensionner. Ctrl+` le masque, son terminal continue de tourner.",
+    "hideHint": "Masquer (Ctrl+`). Son terminal continue de tourner.",
+    "hide": "Masquer le terminal flottant"
   }
 }

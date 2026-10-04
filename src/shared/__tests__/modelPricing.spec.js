@@ -227,6 +227,16 @@ describe('estimateCost', () => {
     expect(r.usd).toBeCloseTo(4 + 20 + 0.2 + 5, 10)
   })
 
+  it('1-hour cache writes (part of cacheWriteTokens) at the 1-hour rate (Claude Code writes them)', () => {
+    const r = estimateCost({ model: 'claude-haiku-4-5-20251001', inputTokens: 18, outputTokens: 398, cacheReadTokens: 69935, cacheWriteTokens: 12576, cacheWrite1hTokens: 12576 })
+    expect(r.usd).toBeCloseTo((18 * 1 + 398 * 5 + 69935 * 0.1 + 12576 * 2) / M, 12)
+    const mixed = estimateCost({ model: 'claude-opus-5-5', cacheWriteTokens: M, cacheWrite1hTokens: M / 4 })
+    expect(mixed.usd).toBeCloseTo(0.75 * 5 + 0.25 * 8, 10)
+    // Never more 1-hour tokens than writes; other providers: their write rate.
+    expect(estimateCost({ model: 'claude-opus-5-5', cacheWriteTokens: M, cacheWrite1hTokens: 3 * M }).usd).toBeCloseTo(8, 10)
+    expect(estimateCost({ model: 'gpt-6-sol', cacheWriteTokens: M, cacheWrite1hTokens: M }).usd).toBeCloseTo(2.5, 10)
+  })
+
   it('bills cached tokens once (inputTokens is the non-cached part)', () => {
     const r = estimateCost({ provider: 'codex', model: 'gpt-6-astra', inputTokens: 200_000, cacheReadTokens: 800_000, outputTokens: 10_000 })
     expect(r.usd).toBeCloseTo((200_000 * 10 + 800_000 * 1 + 10_000 * 50) / M, 10)

@@ -2,12 +2,17 @@
 import { ensureAgentNames, renameAgentName, resolveAgentAddress, agentProgramLabel } from '../../shared/agentNames'
 import { ref, reactive, provide, watch, computed, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import SplitNode from './components/SplitNode.vue'
+import FloatingTerminal from './components/FloatingTerminal.vue'
+import { createFloatingTerminal, isFloatingToggleKey } from './floatingTerminal'
 import BrandIcon from './components/BrandIcon.vue'
 import SidePanel from './components/SidePanel.vue'
 import WorkspaceSidebar from './components/WorkspaceSidebar.vue'
+import WorktreeCleanupDialog from './components/sidebar/WorktreeCleanupDialog.vue'
 import StatusBar from './components/StatusBar.vue'
 import { buildProjectCards, cardTargetPane, portProbes } from './sidebarModel'
 import { createProjectWorktrees } from './projectWorktrees'
+import { prAgentTargets } from './prAgentTargets'
+import { withWorktreePath } from './prAgentPrompts'
 import { workspaceViews, viewKey, leafViewPath } from './paneViews'
 import { createPortScanner, browserUrlForPort, addressForPort } from './portScanner'
 import { allowedBrowserUrl, BLANK_URL } from '../../shared/browserUrl'
@@ -45,6 +50,7 @@ import {
   paneAgentState
 } from './agentStatus'
 import { detectApproval } from './agentLimit'
+import { agentRulesReason, applyAgentStateRules } from './agentStateRules'
 import { activity, recordActivity, loadActivity, saveActivityNow, activityChanged } from './activityStore'
 import ActivityPanel from './components/ActivityPanel.vue'
 import ConfirmDialog from './components/ConfirmDialog.vue'
@@ -58,7 +64,7 @@ import FileFinder from './components/FileFinder.vue'
 import UsageMenu from './components/UsageMenu.vue'
 import { acquirePassthrough, trackPointerDrag } from './browser/webviewPassthrough'
 import { pageOf } from './browser/pageHost'
-import { createAgentBrowserTargets } from './browser/agentBrowserTargets'
+import { createAgentBrowserTargets, addPageNear } from './browser/agentBrowserTargets'
 import GitHubDialog from './components/GitHubDialog.vue'
 import LinearDialog from './components/LinearDialog.vue'
 import { createExternalIssueStarter } from './externalIssues'
@@ -76,6 +82,7 @@ import { createOrchestrator } from './orchestrator'
 import { formatChatTranscript } from './chat/chatTranscript'
 import { canShowChatView, chatViewTakesImages, isPastedImageCopy } from './chat/terminalChatBridge'
 import { automationLaunchArgs, AUTOMATION_AGENTS, permissionFingerprint, quoteGlobArgs } from '../../shared/automations'
+import { agyContinueLaunchArgs } from '../../shared/agyContinue'
 import { createAutomationRunner, probeRunAgent } from './automationRunner'
 import { createCliRequests, CliRequestError } from './cliRequests'
 import { automationsState, applySnapshot as applyAutomations, subscribeAutomations } from './automationsStore'
@@ -84,6 +91,8 @@ import { pasteAndConfirm, turnStarting } from './deliver'
 import { createTeamDelivery } from './teamDelivery'
 import { dropBuffer, seedBuffer } from './ptyStore'
 import { tasks as boardTasks, setTasks, updateTask, removeTask, addTask, deletedTaskIds, addDeletedTasks, takeDeletedToPurge, cardOnBoard } from './taskBoardStore'
+import { taskHistory, setTaskHistory, backfillHistory, setHistoryDescriber } from './taskHistory'
+import { restoredSideTab } from './sideTabs'
 import { paneModels } from './paneModels'
 import { sleepBlocker } from '../../shared/agentSleep'
 import { updateBlocker, planUpdate, autoUpdateMoment } from '../../shared/agentUpdatePlan'
@@ -104,7 +113,8 @@ import {
 import { openTab, validSavedFiles, samePath, fileName, docPathOf, diffTabPath } from './editor/editorTabs'
 import { setNotesDelivery } from './notesDelivery'
 import { unsafeMultilinePaste } from './pasteSafety'
-import { t, intlLocale } from './i18n'
+import { t, intlLocale, currentLocale } from './i18n'
+import { dedupeTeamNumbers } from './teamNumber.js'
 
 const shells = ref([])
 const agents = ref([])
@@ -214,19 +224,25 @@ async function prepareLinkedIssue(request) {
 }
 // "Fix failing checks" / "Resolve review comments" of a pull request: the
 // agents already working on it (its task, or a copy on its branch) in the
-// GitHub dialog's workspace.
+// GitHub dialog's workspace, then its other agents in the project's main
+// folder or worktrees (prAgentTargets.js).
 function githubPrAgents(item) {
   const ws = issueWorkspace.value
-  const number = Number(item?.number)
-  if (!ws || !Number.isSafeInteger(number) || number < 1) return []
-  const head = typeof item.headRefName === 'string' ? item.headRefName : ''
-  return wsAgents(ws.id)
-    .filter((leaf) => {
-      if (head && leaf.worktree?.branch === head) return true
-      const task = taskOfPane(leaf.id)
-      return !!task && task.wsId === ws.id && !!task.worktree && String(task.title || '').startsWith(`#${number} `)
-    })
-    .map((leaf) => ({ id: leaf.id, label: agentLabel(leaf) }))
+  if (!ws) return []
+  const key = gitKeyOf(ws)
+  return prAgentTargets({
+    agents: wsAgents(ws.id),
+    cwd: ws.cwd,
+    mainBranch: wsBranches[key] || '',
+    worktrees: wsWorktrees[key] || [],
+    number: item?.number,
+    head: typeof item?.headRefName === 'string' ? item.headRefName : '',
+    label: agentLabel,
+    taskOf: (id) => {
+      const task = taskOfPane(id)
+      return task && task.wsId === ws.id ? task : null
+    }
+  })
 }
 // The user saw the prompt and picked the agent: an existing pane gets it as
 // a message; a new agent starts as a task in its own copy of the PR.
@@ -404,6 +420,8 @@ function openExternalUrl(url) {
 // stream-json mode; messages (yours, its team's) are turns of their own,
 // never typed. Its state comes from the conversation itself.
 const CHAT_AGENTS = ['claude', 'codex', 'opencode']
+// Claude Code's modes that ask before acting (a pane in Manual keeps one).
+const MANUAL_CLAUDE_MODES = ['default', 'acceptEdits', 'plan', 'dontAsk']
 // The default title chats had before ("Claude (chat)"…): dropped on restore.
 const OLD_CHAT_TITLE = /^\s*(claude|codex|opencode)\s*\(chat\)\s*$/i
 const CHAT_AGENT_NAMES = { claude: 'Claude', codex: 'Codex', opencode: 'OpenCode' } // i18n-ignore product names
@@ -675,6 +693,15 @@ function dirtyEditorPaths(leaves) {
 }
 // The keyboard goes back to the active pane: its terminal, or its editor.
 function focusActiveInput() {
+  // The floating terminal shown with the keyboard: it keeps it (the grid's
+  // active pane may be hidden under it).
+  if (floating.hasKeyboard()) {
+    const fta = document.querySelector('.floating-term.open .xterm-helper-textarea')
+    if (fta) {
+      fta.focus()
+      return
+    }
+  }
   const id = activeId.value
   const ed = id ? getEditorPane(id) : null
   if (ed) {
@@ -919,7 +946,8 @@ const shortcuts = computed(() => [
       ['Ctrl+Shift+W', t('app.help.closePane', 'Close pane')],
       ['Ctrl+Shift+R', t('app.help.restartPane', 'Restart pane')],
       ['Alt+Arrow', t('app.help.movePanes', 'Move between panes')],
-      ['Esc', t('app.help.restoreMax', 'Restore a maximized pane')]
+      ['Esc', t('app.help.restoreMax', 'Restore a maximized pane')],
+      ['Ctrl+`', t('app.help.floatingTerminal', 'Show or hide the floating terminal (the key left of 1)')]
     ]
   },
   {
@@ -1009,22 +1037,23 @@ function newUuid() {
 async function agentStartLine(agent, sessionId, resume, accountId) {
   const kind = sessionKind(agent)
   if (kind === 'claude' || kind === 'openclaude') {
-    if (sessionId && resume) {
-      // Resume if the conversation exists. If we can't check (older app
-      // version), try resuming anyway rather than reusing an id in use.
-      const exists =
-        kind === 'openclaude'
-          ? window.shellApi.agentResumeTarget
-            ? !!(await window.shellApi.agentResumeTarget({ agent: kind, sessionId }).catch(() => null))
-            : true
-          : window.shellApi.claudeSessionExists
-            ? await window.shellApi.claudeSessionExists(sessionId, accountId !== undefined ? { accountId } : undefined)
-            : true
-      if (exists)
-        return { line: `${agent.command} --resume ${sessionId}`, sessionId, resumed: true } // i18n-ignore
-    }
-    // No transcript yet (you never messaged it): start fresh, same id.
-    const id = sessionId || newUuid()
+    // Whether the conversation exists. If we can't check (older app
+    // version), assume it does: resume it rather than reuse an id in use.
+    const exists = !sessionId
+      ? false
+      : kind === 'openclaude'
+        ? window.shellApi.agentResumeTarget
+          ? !!(await window.shellApi.agentResumeTarget({ agent: kind, sessionId }).catch(() => null))
+          : true
+        : window.shellApi.claudeSessionExists
+          ? await window.shellApi.claudeSessionExists(sessionId, accountId !== undefined ? { accountId } : undefined)
+          : true
+    if (sessionId && resume && exists)
+      return { line: `${agent.command} --resume ${sessionId}`, sessionId, resumed: true } // i18n-ignore
+    // No transcript yet (you never messaged it): start fresh, same id. Not
+    // resuming one that exists ("Resume agents" off): a new id, since Claude
+    // Code refuses an id in use and the agent would not start.
+    const id = sessionId && !exists ? sessionId : newUuid()
     return { line: `${agent.command} --session-id ${id}`, sessionId: id, resumed: false } // i18n-ignore
   }
   if (kind === 'codex') {
@@ -1156,6 +1185,7 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
       launchedAt: opts.launchedAt || null,
       ...(paneChoice ? { sessionOptions: paneChoice } : {}),
       ...(panePermissions ? { permissions: panePermissions } : {}),
+      ...(opts.permissionMode ? { permissionMode: opts.permissionMode } : {}),
       remoteHostId: opts.remoteHostId,
       remotePath: opts.remotePath || null,
       // What it printed last time: shown now, and again above the session
@@ -1168,6 +1198,9 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
     })
   }
   const permissions = launchPermissions(panePermissions, [projectDir, cwd], settings.yoloFolders, settings.agentPermissions)
+  // A Claude Code pane that asks first, with its mode (a chat continued in a
+  // terminal): that mode, unless your own arguments set one.
+  const permissionMode = agent && agent.id === 'claude' && permissions === 'manual' && MANUAL_CLAUDE_MODES.includes(opts.permissionMode) ? opts.permissionMode : null
   // What it runs with, flags included (for the signature and the header).
   const launchAll = agent ? effectiveAgent(agent, settings.agentPrefs, permissions, sessionValues, agentModels) : null
   const launch = workerChoice ? effectiveAgent(agent, settings.agentPrefs, permissions, null, agentModels) : launchAll
@@ -1255,6 +1288,7 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
       accountId,
       ...(paneChoice ? { sessionOptions: paneChoice } : {}),
       ...(panePermissions ? { permissions: panePermissions } : {}),
+      ...(permissionMode ? { permissionMode } : {}),
       remoteHostId: opts.remoteHostId || null,
       remotePath: (opts.remoteHostId && opts.remotePath) || null,
       failed: msg,
@@ -1292,6 +1326,7 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
     ...(paneChoice ? { sessionOptions: paneChoice } : {}),
     // Its own Ask first / Yolo choice (pane menu), for its restarts.
     ...(panePermissions ? { permissions: panePermissions } : {}),
+    ...(permissionMode ? { permissionMode } : {}),
     // Started with a chosen model: the header shows it until the agent's
     // conversation answers with another one.
     ...(!attached && modelApplied
@@ -1358,7 +1393,15 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
       window.shellApi.killPty(id)
       return null
     }
-    const base = (launch.args ? `${start.line} ${launch.args}` : start.line) + extra + automationArgs
+    // An Antigravity IDE conversation continued in a new agy conversation:
+    // its first prompt points at the history file (agyContinue.js).
+    const continueArgs = opts.agyContinue && agent.id === 'antigravity' && !start.resumed ? agyContinueLaunchArgs(opts.agyContinue.file, res.shell && res.shell.id) : ''
+    if (opts.agyContinue && !continueArgs) {
+      window.shellApi.killPty(id)
+      return null
+    }
+    const permissionModeArg = permissionMode && !/--permission-mode\b/.test(launch.args || '') ? ` --permission-mode ${permissionMode}` : '' // i18n-ignore
+    const base = (launch.args ? `${start.line} ${launch.args}` : start.line) + extra + automationArgs + continueArgs + permissionModeArg
     setTimeout(() => {
       const withWake = !!wakeArg && !!settings.teamWakeUps
       const full = base + (withWake ? wakeArg : '')
@@ -1437,6 +1480,20 @@ function firstLeafId(node) {
     if (id) return id
   }
   return null
+}
+// The pane a restored workspace opens on: the first one not asleep (opening
+// a sleeping agent wakes it), else the first one.
+function firstAwakeLeafId(node) {
+  const awake = (n) => {
+    if (!n) return null
+    if (n.type === 'leaf') return n.sleeping ? null : n.id
+    for (const c of n.children) {
+      const id = awake(c)
+      if (id) return id
+    }
+    return null
+  }
+  return awake(node) || firstLeafId(node)
 }
 
 // --- Workspace persistence -------------------------------------------------
@@ -1528,6 +1585,7 @@ function serializeNode(node) {
       // Its own model choice (pane menu > Model), for the next start.
       sessionOptions: node.detected ? undefined : node.sessionOptions || undefined,
       permissions: node.detected ? undefined : node.permissions || undefined,
+      permissionMode: node.detected ? undefined : node.permissionMode || undefined,
       launchSig: node.detected ? undefined : node.launchSig || undefined,
       launchYolo: node.detected ? undefined : node.launchYolo || undefined,
       // Shown as a chat over its terminal (TerminalPane's chat view).
@@ -1647,6 +1705,11 @@ async function deserializeNode(snap, cwd = null) {
       if (snap.titleSet === true) asleep.titleSet = true
       if (typeof snap.autoTitle === 'string' && snap.autoTitle) asleep.autoTitle = snap.autoTitle.slice(0, 80)
       if (Number.isInteger(snap.fontZoom) && Math.abs(snap.fontZoom) <= 20) asleep.fontZoom = snap.fontZoom
+      // Asleep, it stays in its team (else a reload took it out, and a team
+      // whose members all slept was gone).
+      if (typeof snap.team === 'string') asleep.team = snap.team
+      if (snap.teamTools) asleep.teamTools = true
+      if (typeof snap.toolsVersion === 'string') asleep.toolsVersion = snap.toolsVersion
       return asleep
     }
     const leaf = await createLeaf(snap.shellId, agent, cwd, snap.worktree || null, {
@@ -1661,6 +1724,7 @@ async function deserializeNode(snap, cwd = null) {
       startDir: typeof snap.startDir === 'string' ? snap.startDir : null,
       sessionOptions: snap.sessionOptions,
       permissions: snap.permissions === 'yolo' ? 'yolo' : undefined,
+      permissionMode: typeof snap.permissionMode === 'string' ? snap.permissionMode : undefined,
       resume: settings.resumeAgents,
       remoteHostId: typeof snap.remoteHostId === 'string' && /^ssh-[\w-]{1,60}$/.test(snap.remoteHostId) ? snap.remoteHostId : undefined,
       remotePath: typeof snap.remotePath === 'string' && snap.remotePath.length <= 1024 ? snap.remotePath : undefined,
@@ -2107,9 +2171,23 @@ const agentPanes = computed(() => {
   return out
 })
 
+// Who finished a card and where, for its record in the task history
+// (taskHistory.js): its pane's name and agent, its workspace's name.
+setHistoryDescriber((card) => {
+  const periods = Array.isArray(card.workPeriods) ? card.workPeriods : []
+  const paneId = card.paneId || [...periods].reverse().map((p) => p && p.paneId).find(Boolean) || null
+  const owner = paneId ? wsOfLeaf(paneId) : null
+  const leaf = owner ? findLeafIn(owner.tree, paneId) : null
+  const ws = workspaces.value.find((w) => w.id === card.wsId) || owner
+  return {
+    agentName: leaf ? leaf.paneName || leaf.title || null : null,
+    agentKind: leaf ? leaf.agentId || null : null,
+    project: ws ? ws.name || null : null
+  }
+})
+
 // --- The right side panel (SidePanel.vue): Files, Changes, Tasks, Agents tabs ------
 // taskPanelOpen: the panel is shown; sideTab: the tab it shows.
-const SIDE_TABS = ['dashboard', 'files', 'changes', 'tasks', 'history']
 const sideTab = ref('tasks')
 // The web pages opened with the side panel's + ([{ id, url, title }], a tab
 // each, saved with the layout; a page loads when its tab is first shown).
@@ -2291,7 +2369,7 @@ const appliedRequests = new Set()
 // With the ids of the cards deleted (taskBoardStore.js): a deleted card is
 // never written back, even by a copy of the board from before its deletion.
 function boardToSave() {
-  return { tasks: JSON.parse(JSON.stringify(boardTasks)), appliedRequests: [...appliedRequests], deleted: deletedTaskIds() }
+  return { tasks: JSON.parse(JSON.stringify(boardTasks)), appliedRequests: [...appliedRequests], deleted: deletedTaskIds(), history: JSON.parse(JSON.stringify(taskHistory)) }
 }
 
 // Every board save goes here: none while the saved board could not be read
@@ -2416,6 +2494,9 @@ function renameAgent(id, name) {
   }
 
 provide('panelCtx', {
+  // The floating terminal is shown with the keyboard: a grid pane that
+  // mounts (a reload, a crash recovery) does not take it.
+  floatingHasKeyboard: () => floating.hasKeyboard(),
   renameAgent,
   broadcast,
   activeId,
@@ -2598,6 +2679,10 @@ function buildCommands() {
   }
   add(layout, t('app.cmd.closeActive', 'Close the active pane'), closeActive, { shortcut: 'Ctrl+Shift+W' })
   add(layout, sidebarCollapsed.value ? t('app.cmd.showSidebar', 'Show the sidebar') : t('app.cmd.hideSidebar', 'Hide the sidebar'), toggleSidebar)
+  add(layout, floating.state.open ? t('app.cmd.hideFloating', 'Hide the floating terminal') : t('app.cmd.showFloating', 'Show the floating terminal'), toggleFloating, {
+    shortcut: 'Ctrl+`',
+    hint: t('app.cmd.floatingHint', "A terminal over the workspace, in the project's folder; it keeps running when hidden")
+  })
 
   const agentsGroup = t('app.cmd.group.agents', 'Agents')
   add(agentsGroup, t('app.cmd.resumeSession', 'Resume a session'), openSessions, {
@@ -2608,6 +2693,9 @@ function buildCommands() {
   })
   add(agentsGroup, taskPanelOpen.value && sideTab.value === 'history' ? t('app.cmd.hideSessionHistory', 'Hide Agent Session History') : t('app.cmd.showSessionHistory', 'Show Agent Session History'), () => toggleSideTab('history'), {
     hint: t('app.cmd.sessionHistoryHint', 'Browse, search and resume past agent conversations')
+  })
+  add(agentsGroup, taskPanelOpen.value && sideTab.value === 'taskHistory' ? t('taskHistory.cmd.hide', 'Hide Task history') : t('taskHistory.cmd.show', 'Show Task history'), () => toggleSideTab('taskHistory'), {
+    hint: t('taskHistory.cmd.hint', 'Finished tasks with their time, tokens and estimated cost')
   })
   add(agentsGroup, t('app.cmd.mcp', 'MCP servers'), () => (mcpOpen.value = true), { hint: t('app.cmd.mcpHint', 'Give agents extra tools') })
   add(agentsGroup, t('app.cmd.installTools', 'Install tools'), openTools, { hint: t('app.cmd.installToolsHint', 'Agents, Git, Node.js and more') })
@@ -2660,6 +2748,12 @@ function buildCommands() {
   add(t('app.cmd.group.settings', 'Settings'), t('app.cmd.stats', 'Stats & Usage'), () => openSettingsAt('stats'), { hint: t('app.cmd.statsHint', 'Token analytics, daily usage, models, projects and conversations') })
 
   add(t('app.cmd.group.task', 'Task'), t('app.cmd.newTask', 'New task…'), openNewTask, { hint: t('app.cmd.newTaskHint', 'Give an agent a task, in its own copy of the project') })
+  if (currentWs.value && currentWs.value.cwd && !currentWs.value.remote && window.shellApi.worktreeCleanupScan) {
+    const wsId = currentWs.value.id
+    add(t('app.cmd.group.task', 'Task'), t('app.cmd.cleanupWorktrees', 'Clean up worktrees…'), () => openWorktreeCleanup(wsId), {
+      hint: t('app.cmd.cleanupWorktreesHint', "Remove this project's merged or inactive worktrees, with their git state")
+    })
+  }
   add(t('app.cmd.group.task', 'Task'), t('app.cmd.automations', 'Automations'), () => openSettingsAt('automations'), {
     hint: t('app.cmd.automationsHint', 'Run an agent task on a schedule while Tessel is open')
   })
@@ -3046,6 +3140,10 @@ const openSessionIds = computed(() => {
 // Reopen a past conversation in a new pane, in the folder it ran in.
 async function resumeSession(s) {
   sessionsOpen.value = false
+  // Antigravity: an IDE conversation is continued in a new CLI one. A search
+  // result names no origin: the main process tells (not found among the IDE's
+  // conversations: a CLI one, resumed as usual).
+  if (s && s.agent === 'antigravity' && (await continueAgyFromIde(s)) !== 'not-ide') return
   // Only an agent of the catalog, by its id (a session list or a search index
   // never names a command to run), with a session id of the expected shape.
   const agent = s && agentById(s.agent)
@@ -3071,6 +3169,41 @@ async function resumeSession(s) {
       ws.activeId = leaf.id
     }
   }
+}
+
+// An Antigravity IDE conversation: the agy CLI cannot resume it, so a new
+// agy conversation starts in its folder from its history (the main process
+// writes it to a prompt file, antigravityIdeHistory.js). Always on this
+// computer, where the file is.
+// -> 'not-ide' when it is not one of the IDE's conversations.
+async function continueAgyFromIde(s) {
+  const ide = s.origin === 'ide'
+  if (!ide && s.origin) return 'not-ide'
+  const agent = agentById('antigravity')
+  if (!agent || !safeSessionId(s.id) || !window.shellApi.prepareAgyContinue) return ide ? null : 'not-ide'
+  const ws = currentWs.value
+  if (!ws) return null
+  const prep = await window.shellApi.prepareAgyContinue({ id: s.id }).catch(() => null)
+  if (!ide && (!prep || prep.error === 'not-found')) return 'not-ide'
+  if (!prep || !prep.ok) {
+    showToast(t('sessionHistory.agyContinue.failed', "Couldn't read this Antigravity IDE conversation."), { kind: 'error' })
+    return null
+  }
+  // Its folder unknown (the IDE does not always record it): the folder a new
+  // pane opens in.
+  const opts = { cwd: prep.cwd || s.cwd || null, local: true, agyContinue: { file: prep.file } }
+  let leaf = null
+  if (activeId.value && ws.tree) {
+    leaf = await splitLeaf(activeId.value, placement.value === 'down' ? 'col' : 'row', agent, selectedShell.value, null, { ...opts, before: placement.value === 'left' })
+  } else {
+    leaf = await createLeaf(selectedShell.value, agent, opts.cwd, null, opts)
+    if (leaf) {
+      ws.tree = leaf
+      ws.activeId = leaf.id
+    }
+  }
+  if (!leaf) showToast(t('sessionHistory.agyContinue.startFailed', "Couldn't start Antigravity CLI for this conversation."), { kind: 'error' })
+  return leaf
 }
 
 function openSessions() {
@@ -3347,6 +3480,7 @@ async function connectLeaf(leafId) {
       startDir: old.startDir || null,
       sessionOptions: old.sessionOptions,
       permissions: old.permissions,
+      permissionMode: old.permissionMode,
       resume: old.notConnected.resume,
       remoteHostId: old.remoteHostId,
       remotePath: old.remotePath || undefined,
@@ -3433,6 +3567,7 @@ async function restartLeaf(leafId) {
     accountId: old.accountId,
     sessionOptions: old.sessionOptions,
     permissions: old.permissions,
+    permissionMode: old.permissionMode,
     resume: settings.resumeAgents,
     ...(old.remoteHostId ? { remoteHostId: old.remoteHostId } : {}),
     ...(old.remoteHostId && old.remotePath ? { remotePath: old.remotePath } : {})
@@ -4323,7 +4458,7 @@ onMounted(() => {
   if (!api || !api.onShortcut) return
   offBrowserKeys = api.onShortcut((e) => {
     if (!e || e.action !== 'app' || typeof e.key !== 'string') return
-    onKey({ key: e.key, ctrlKey: !!e.ctrl, shiftKey: !!e.shift, altKey: false, metaKey: false, target: document.body, preventDefault() {}, stopPropagation() {} })
+    onKey({ key: e.key, code: typeof e.code === 'string' ? e.code : '', ctrlKey: !!e.ctrl, shiftKey: !!e.shift, altKey: false, metaKey: false, target: document.body, preventDefault() {}, stopPropagation() {} })
   })
 })
 onBeforeUnmount(() => offBrowserKeys && offBrowserKeys())
@@ -4492,6 +4627,31 @@ if (window.shellApi.agentStates) {
   }).catch(() => {})
 }
 onBeforeUnmount(() => offAgentState?.())
+
+// The agent-state detection rules: the built-in ones, or the user's
+// agent-state-rules.json over them (main reads and watches the file). A file
+// with an error is ignored: said once per error (Settings > Agents says it too).
+let agentRulesRevision = 0
+let agentRulesWarned = ''
+function useAgentRules(payload) {
+  const status = applyAgentStateRules(payload)
+  if (status.state !== 'invalid') agentRulesWarned = ''
+  else if (agentRulesReason(t) !== agentRulesWarned) {
+    agentRulesWarned = agentRulesReason(t)
+    showToast(t('app.agentRules.invalid', 'Agent detection rules file ignored ({{reason}}): the built-in rules stay in use.', { reason: agentRulesWarned }), { kind: 'error', timeout: 10000 })
+  }
+}
+const offAgentRules = window.shellApi.agentRules?.onChanged((payload) => {
+  agentRulesRevision++
+  useAgentRules(payload)
+})
+if (window.shellApi.agentRules) {
+  const revision = agentRulesRevision
+  window.shellApi.agentRules.get().then((payload) => {
+    if (revision === agentRulesRevision) useAgentRules(payload)
+  }).catch(() => {})
+}
+onBeforeUnmount(() => offAgentRules?.())
 const agentStates = computed(() => {
   const out = {}
   for (const ws of workspaces.value) {
@@ -4771,7 +4931,7 @@ function openActivity(scope = 'workspace') {
 // message waits until the prompt is gone.
 function awaitingApproval(leafId) {
   const pane = getPane(leafId)
-  return !!(pane && pane.screenText && detectApproval(pane.screenText(20)))
+  return !!(pane && pane.screenText && detectApproval(pane.screenText(20), findLeaf(leafId)?.agentId))
 }
 
 // Messages waiting for an agent to be free: leafId -> [text].
@@ -5314,7 +5474,7 @@ async function startTask(spec, opts = {}) {
         return { error: `could not make a separate copy: ${(res && res.error) || 'unknown error'}` } // i18n-ignore
       }
       worktree = { path: res.path, branch: res.branch, baseBranch: res.baseBranch || null, root: res.root || ws.cwd }
-      updateTask(task.id, { worktree })
+      updateTask(task.id, spec.briefWorktree ? { worktree, brief: withWorktreePath(spec.brief || '', res.path) } : { worktree })
     }
     if (opts.expectedCwd && (!workspaces.value.includes(ws) || ws.cwd !== opts.expectedCwd)) {
       updateTask(task.id, { column: 'todo' })
@@ -5478,6 +5638,38 @@ async function removeTaskCopy(task, force) {
     await new Promise((r) => setTimeout(r, 800))
   }
   return window.shellApi.review.remove({ root: wt.root, path: wt.path, branch: wt.branch, target: wt.baseBranch || 'main', force })
+}
+
+// Clean up worktrees (the project menu, the command palette): the dialog
+// shows a project's other worktrees with their git state; each one removed
+// has its panes closed first, then goes through review:remove (which unlinks
+// junctions before git deletes anything).
+const cleanupWsId = ref(null)
+// Asked again while open (the palette over it): a new dialog, scanned again.
+const cleanupSeq = ref(0)
+const cleanupProject = computed(() => (cleanupWsId.value && sidebarProjects.value.find((p) => p.id === cleanupWsId.value)) || null)
+const cleanupTasks = computed(() => boardTasks.filter((x) => cleanupWsId.value && x.wsId === cleanupWsId.value))
+function openWorktreeCleanup(wsId) {
+  const ws = wsById(wsId)
+  if (!ws || !ws.cwd || ws.remote) return
+  cleanupSeq.value++
+  cleanupWsId.value = wsId
+}
+function scanWorktreeCleanup(cwd) {
+  return window.shellApi.worktreeCleanupScan(cwd)
+}
+async function removeCleanupWorktree(row, { root, defaultBranch }) {
+  const open = (row.paneIds || []).filter((id) => findLeaf(id))
+  for (const id of open) closeLeaf(id, { force: true })
+  // Let their terminals release the folder.
+  if (open.length) await new Promise((r) => setTimeout(r, 800))
+  const res = await window.shellApi.review.remove({ root, path: row.path, branch: row.branch, target: defaultBranch, force: !!row.force })
+  // The task's copy is gone: its card stays, without a copy.
+  if (res && res.ok && row.taskId) updateTask(row.taskId, { worktree: null })
+  return res
+}
+function onWorktreesCleaned() {
+  refreshBranches()
 }
 
 // ✕ on a card: asked first. A task working in its own copy of the project
@@ -6598,6 +6790,7 @@ async function restartInPlaceNow(leafId, opts) {
     accountId: old.accountId,
     sessionOptions: old.sessionOptions,
     permissions: old.permissions,
+    permissionMode: old.permissionMode,
     resume: !!old.sessionId && opts.resume !== false,
     // Team messages waiting for it: its first prompt says so (see createLeaf).
     wake: { teamId: old.team || null, gen: (old.gen || 0) + 1 }
@@ -6732,6 +6925,9 @@ async function switchToTerminal(leafId) {
       // a chat known to ask first, or a worker capped by its coordinator,
       // keeps asking first. OpenCode's terminal has no such switch.
       ...(old.agentId !== 'opencode' && (old.chatPermissions === 'manual' || old.maxPermissions === 'manual') ? { permissions: 'manual' } : {}),
+      // Claude Code: the chat's own mode (Ask, Accept edits, Plan), never
+      // its default for new sessions (which may be auto).
+      ...(old.agentId === 'claude' ? { permissionMode: old.chatPermissionMode || 'default' } : {}),
       resume: true,
       wake: { teamId: old.team || null, gen: 1 }
     })
@@ -8309,11 +8505,16 @@ const agentBrowserTargets = createAgentBrowserTargets({
   paneLabel,
   // Next to the agent's pane, in its grid; the screen and the keyboard stay
   // where they are.
-  openPage({ ws, near, url }) {
+  // Its next pages: stacked with the ones it opened (addPageNear).
+  openPage({ ws, near, url, stack = false }) {
     if (!workspaces.value.includes(ws) || !findLeafIn(ws.tree, near.id)) return null
     const leaf = makeBrowserLeaf(null, url)
     keepView(leaf, near, ws)
-    ws.tree = replaceNode(ws.tree, near.id, (orig) => reactive({ type: 'split', id: newId('split'), dir: 'row', sizes: [50, 50], children: [orig, leaf] }))
+    ws.tree = addPageNear(ws.tree, near.id, leaf, {
+      dir: stack ? 'col' : 'row',
+      mine: (n) => n === leaf || (n.type === 'leaf' && n.kind === 'browser' && !!near.openedBy && n.openedBy === near.openedBy),
+      makeSplit: (dir, children, sizes) => reactive({ type: 'split', id: newId('split'), dir, sizes, children })
+    })
     refitSoon()
     return leaf
   }
@@ -8883,37 +9084,24 @@ function teamMembers(teamId) {
   return out
 }
 
-// Teams nobody belongs to any more go away.
-// Every team shows its own number, across all workspaces: a later team
-// whose number another already shows (e.g. "Team 2" and "Équipe 2") is
-// renamed to the next free "Team N" (in the app's language).
-function dedupeTeamNumbers(list) {
-  const numberOf = (name) => (/(\d+)\s*$/.exec(String(name || '')) || [])[1] || null
-  const taken = new Set()
-  const out = []
-  for (const raw of list) {
-    // A team still under its default name ("Team 2", "Équipe 2") shows it
-    // in the app's current language; a name the user gave is kept.
-    const dflt = /^\s*(?:team|[ée]quipe)\s+(\d+)\s*$/i.exec(String(raw.name || ''))
-    const team = dflt ? { ...raw, name: t('app.team.defaultName', 'Team {{n}}', { n: Number(dflt[1]) }) } : raw
-    const n = numberOf(team.name)
-    if (!n || !taken.has(n)) {
-      if (n) taken.add(n)
-      out.push(team)
-      continue
-    }
-    let i = 1
-    while (taken.has(String(i))) i++
-    taken.add(String(i))
-    out.push({ ...team, name: t('app.team.defaultName', 'Team {{n}}', { n: i }) })
-  }
-  return out
-}
+// Teams nobody belongs to any more go away; each shows its own number
+// (teamNumber.js dedupeTeamNumbers).
 function pruneTeams() {
   const used = new Set()
   forEachWsLeaf((l) => l.team && used.add(l.team))
   teams.value = dedupeTeamNumbers(teams.value.filter((t) => used.has(t.id)))
 }
+// The language changed: teams under their default name show it in the new
+// one ("Team 2" <-> "Équipe 2"), without waiting for a reload.
+watch(
+  () => currentLocale(),
+  () => {
+    const next = dedupeTeamNumbers(teams.value)
+    if (next === teams.value) return
+    teams.value = next
+    scheduleSave()
+  }
+)
 
 function createTeam(leafIds) {
   const ids = (leafIds || []).filter((id) => isAgentLeaf(findLeaf(id)) && !findLeaf(id).team)
@@ -9523,8 +9711,61 @@ function typingInField(e) {
   return !!t.closest('input, textarea, select, [contenteditable="true"]')
 }
 
+// The floating terminal (Ctrl+` or the toolbar's button): a terminal of its
+// own over the workspace, never one of the grid's panes (floatingTerminal.js).
+// It starts in the current project's folder (on its host for a remote one).
+function floatingStorage() {
+  try {
+    return window.localStorage
+  } catch {
+    return null
+  }
+}
+const floating = createFloatingTerminal({
+  createLeaf,
+  killPty: (id) => window.shellApi.killPty(id),
+  dropBuffer,
+  storage: floatingStorage(),
+  startOptions: () => {
+    const ws = currentWs.value
+    return { shellId: selectedShell.value, cwd: ws && !ws.remote ? ws.cwd || null : null, opts: wsLeafOpts(ws) }
+  }
+})
+function toggleFloating() {
+  closeMenus()
+  floating.toggle()
+}
+// A key pressed in the floating terminal: the grid's pane shortcuts (split,
+// close, restart, multi-write, moving between panes) are not for the grid's
+// active pane behind it. Close and restart act on the floating terminal.
+function floatingPaneKey(e) {
+  const el = e.target
+  if (!el || !el.closest || !el.closest('.floating-term')) return false
+  if (e.ctrlKey && e.shiftKey && !e.altKey) {
+    const k = e.key.toLowerCase()
+    if (k === 'w') {
+      e.preventDefault()
+      floating.close()
+      return true
+    }
+    if (k === 'r') {
+      e.preventDefault()
+      floating.restart()
+      return true
+    }
+    return ['e', 'o', 'b'].includes(k)
+  }
+  return e.altKey && !e.ctrlKey && !e.shiftKey && e.key.startsWith('Arrow')
+}
+
 function onKey(e, opts = {}) {
+  if (isFloatingToggleKey(e) && !dialogOpen()) {
+    e.preventDefault()
+    if (!e.repeat) toggleFloating()
+    return
+  }
   if (!opts.fromEditor && typingInField(e) && e.key !== 'Escape' && e.key !== 'F1') return
+  if (floatingPaneKey(e)) return
   if (dialogOpen()) {
     // Ctrl+, and F1 close their own dialog; they never open one over another.
     if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === ',') {
@@ -9666,8 +9907,8 @@ async function restoreOrSeedLayout() {
     if (saved.taskPanelOpen === true) taskPanelOpen.value = true
     // The side panel's tab (the file explorer was a panel of its own before).
     sideBrowsers.value = restoreSideBrowsers(saved.sideBrowsers)
-    if (SIDE_TABS.includes(saved.sidePanelTab) || sideBrowsers.value.some((b) => b.id === saved.sidePanelTab)) sideTab.value = saved.sidePanelTab
-    else if (typeof saved.sidePanelTab === 'string' && saved.sidePanelTab.startsWith('web-')) sideTab.value = 'dashboard'
+    const restoredTab = restoredSideTab(saved.sidePanelTab, sideBrowsers.value)
+    if (restoredTab) sideTab.value = restoredTab
     else if (saved.explorerOpen === true && saved.taskPanelOpen !== true) {
       sideTab.value = 'files'
       taskPanelOpen.value = true
@@ -9715,7 +9956,7 @@ async function restoreOrSeedLayout() {
         if (!leaf) continue
         ws.tree = leaf
       }
-      ws.activeId = firstLeafId(ws.tree)
+      ws.activeId = firstAwakeLeafId(ws.tree)
       workspaces.value.push(ws)
     }
     if (workspaces.value.length) {
@@ -9754,8 +9995,12 @@ onMounted(async () => {
   if (window.shellApi.reconcilePtys) {
     const ids = []
     forEachWsLeaf((l) => !hasNoTerminal(l) && ids.push(l.id))
+    // The floating terminal's, still running while it is hidden.
+    ids.push(...floating.ptyIds())
     window.shellApi.reconcilePtys(ids)
   }
+  // Shown again if it was shown before the reload (its terminal re-attached).
+  floating.restoreAtStart()
   loadVoiceLanguages()
   // Settings (incl. your own agents) are loaded now; detect agents with them.
   startStep = 'agent detection'
@@ -9809,10 +10054,12 @@ onMounted(async () => {
     if (saved && saved.locked === true) {
       boardLocked = true
       if (Array.isArray(saved.tasks)) setTasks(saved.tasks) // its previous copy, shown only
+      setTaskHistory(saved.history)
       showToast(t('app.board.locked', 'Your task board could not be read (the file is in use by another program). Tessel shows its previous copy and will not save it until it is restarted, so the file stays intact.'), { kind: 'error', timeout: 20000 })
     } else {
       const savedTasks = Array.isArray(saved) ? saved : saved && saved.tasks
       if (Array.isArray(savedTasks)) setTasks(savedTasks)
+      setTaskHistory(saved && saved.history)
       for (const k of (saved && saved.appliedRequests) || []) appliedRequests.add(k)
     }
   } catch {
@@ -9822,8 +10069,11 @@ onMounted(async () => {
   // saving. Reconciling before the watch is registered keeps it from writing the
   // file back on every launch (the cleanup is idempotent and persists on the
   // next real change).
+  // Done cards from before the history was kept get their record (saved
+  // with the next change).
+  if (!boardLocked) backfillHistory(boardTasks)
   reconcileTaskPanes()
-  if (!boardLocked) watch(boardTasks, scheduleTaskSave, { deep: true })
+  if (!boardLocked) watch([boardTasks, taskHistory], scheduleTaskSave, { deep: true })
   teamsReady = true
   // Scheduled automations start only now: panes, agents and the board are
   // there to run them (and to follow the runs still going).
@@ -10111,6 +10361,23 @@ onBeforeUnmount(() => {
             </button>
           </div>
         </div>
+        <!-- The floating terminal (Ctrl+`), over the workspace. -->
+        <button
+          class="tb-icon"
+          :class="{ on: floating.state.open }"
+          :title="t('app.toolbar.floatingTitle', 'Floating terminal (Ctrl+`)')"
+          :aria-label="t('app.toolbar.floating', 'Floating terminal')"
+          :aria-pressed="floating.state.open"
+          data-test="floating-terminal-toggle"
+          @click="toggleFloating"
+        >
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <rect x="1.75" y="2.25" width="12.5" height="11.5" rx="2.25" stroke="currentColor" stroke-width="1.3" />
+            <rect v-if="floating.state.open" x="2.4" y="2.9" width="11.2" height="5.2" rx="1.4" fill="currentColor" />
+            <path v-else d="M2.5 8.5h11" stroke="currentColor" stroke-width="1.3" />
+            <path v-if="!floating.state.open" d="M4.6 4.6l1.5 1.3-1.5 1.3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </button>
         <!-- The two side panels, shown or hidden (filled half = shown). -->
         <button
           class="tb-icon tb-panel-toggle"
@@ -10204,6 +10471,7 @@ onBeforeUnmount(() => {
         @reveal="revealFolder"
         @delete-task="deleteTask"
         @review-task="openReview"
+        @cleanup-worktrees="openWorktreeCleanup"
         @port-open="openPort"
         @port-copy="copyPort"
         @port-stop="stopPort"
@@ -10234,6 +10502,7 @@ onBeforeUnmount(() => {
         <div v-if="!tree" class="startup-message">
           {{ initError || t('app.main.starting', 'Starting...') }}
         </div>
+        <FloatingTerminal :ctl="floating" @restore-focus="focusActiveInput" />
       </div>
       <aside
         v-if="taskPanelOpen"
@@ -10390,6 +10659,17 @@ onBeforeUnmount(() => {
     />
 
     <CommandPalette v-if="paletteOpen" :commands="paletteCommands" @close="paletteOpen = false" />
+    <WorktreeCleanupDialog
+      v-if="cleanupProject"
+      :key="cleanupSeq"
+      :project="cleanupProject"
+      :tasks="cleanupTasks"
+      :scan="scanWorktreeCleanup"
+      :remove="removeCleanupWorktree"
+      :now="clock"
+      @removed="onWorktreesCleaned"
+      @close="cleanupWsId = null"
+    />
     <AddProjectDialog
       v-if="addProjectOpen"
       :project-count="workspaces.length"

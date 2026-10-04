@@ -226,6 +226,15 @@ export function createLeftoverStore({ file = null, now = Date.now, max = MAX_LEF
       }
       save()
     },
+    // The leftovers of the project `repo`, oldest first.
+    list(repo) {
+      if (typeof repo !== 'string' || !repo) return []
+      const k = pathKey(repo)
+      return Object.values(load())
+        .filter((r) => r && typeof r.path === 'string' && typeof r.repo === 'string' && pathKey(r.repo) === k)
+        .sort((a, b) => (a.at || 0) - (b.at || 0))
+        .map((r) => ({ ...r }))
+    },
     forget(path) {
       const list = load()
       const k = pathKey(path)

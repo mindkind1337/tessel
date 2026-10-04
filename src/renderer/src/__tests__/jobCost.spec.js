@@ -199,6 +199,26 @@ describe('task board', () => {
     wrapper.unmount()
   })
 
+  it('a card in Doing: its time goes on between two reads of the figures (card and total)', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-10-03T10:00:00Z'))
+    const a = addTask({ title: 'A' })
+    a.column = 'doing'
+    a.workPeriods = [{ start: Date.now() - 6 * 60 * 1000, end: null, paneId: 'pane-1' }]
+    const api = installApi({ [a.id]: ENTRY })
+    const wrapper = mount(TaskBoard)
+    await vi.advanceTimersByTimeAsync(0)
+    await nextTick()
+    expect(wrapper.get('[data-task-id="' + a.id + '"] [data-test="job-cost"]').text()).toBe('12.4k tokens · 6 min · ~$0.31')
+    // Ten minutes later, nothing written by the agent (no change notice).
+    await vi.advanceTimersByTimeAsync(10 * 60 * 1000)
+    await nextTick()
+    expect(api.forCards).toHaveBeenCalledTimes(1)
+    expect(wrapper.get('[data-task-id="' + a.id + '"] [data-test="job-cost"]').text()).toBe('12.4k tokens · 16 min · ~$0.31')
+    expect(wrapper.get('[data-test="task-board-cost"] [data-test="job-cost"]').text()).toBe('12.4k tokens · 16 min · ~$0.31')
+    wrapper.unmount()
+  })
+
   it('TaskCard alone: the cost prop drives the line', () => {
     const task = addTask({ title: 'Alone' })
     const wrapper = mount(TaskCard, { props: { task, cost: { ...ENTRY, usd: null, known: false } } })

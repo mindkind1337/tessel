@@ -239,6 +239,15 @@ function folderName(p) {
   return parts[parts.length - 1] || p
 }
 
+// An Antigravity IDE conversation is continued in a new CLI one, also when
+// its folder is unknown (then in the folder a new pane opens in).
+function resumeTip(s) {
+  if (s.cwd) return t('app.sessions.resumeTitle', 'Resume in its project folder')
+  if (s.origin === 'ide')
+    return t('sessionHistory.row.continueInCliNoFolderHint', 'Its folder is unknown: start a new Antigravity CLI conversation in the current folder, from the end of this IDE conversation')
+  return t('app.sessions.resumeUnavailable', 'The saved project folder is unavailable. You can still copy the session ID.')
+}
+
 function copyId(s) {
   window.shellApi.writeClipboard(s.id)
   emit('copied', s.id)
@@ -369,11 +378,11 @@ onMounted(() => {
           <button
             v-else
             class="exit-btn primary"
-            :disabled="!s.cwd || !s.id"
-            :title="s.cwd ? t('app.sessions.resumeTitle', 'Resume in its project folder') : t('app.sessions.resumeUnavailable', 'The saved project folder is unavailable. You can still copy the session ID.')"
+            :disabled="!(s.cwd || s.origin === 'ide') || !s.id"
+            :title="resumeTip(s)"
             @click="emit('resume', s)"
           >
-            {{ t('app.sessions.resume', 'Resume') }}
+            {{ s.origin === 'ide' ? t('sessionHistory.row.continueInCli', 'Continue in CLI') : t('app.sessions.resume', 'Resume') }}
           </button>
         </div>
       </template>
@@ -404,15 +413,11 @@ onMounted(() => {
         <button
           v-else
           class="exit-btn primary"
-          :disabled="!s.cwd"
-          :title="
-            s.cwd
-              ? t('app.sessions.resumeTitle', 'Resume in its project folder')
-              : t('app.sessions.resumeUnavailable', 'The saved project folder is unavailable. You can still copy the session ID.')
-          "
+          :disabled="!(s.cwd || s.origin === 'ide')"
+          :title="resumeTip(s)"
           @click="emit('resume', s)"
         >
-          {{ t('app.sessions.resume', 'Resume') }}
+          {{ s.origin === 'ide' ? t('sessionHistory.row.continueInCli', 'Continue in CLI') : t('app.sessions.resume', 'Resume') }}
         </button>
       </div>
       </template>

@@ -1,7 +1,7 @@
 <script setup>
 // Settings > AI provider accounts, after Claude Code and Codex: the providers
 // whose sign-in Tessel does not manage, only reads for usage (Gemini, OpenCode
-// Go, MiniMax, Grok, Cursor), in Orca's order (AccountsPane.tsx and its
+// Go, MiniMax, a GLM Coding Plan, Grok, Cursor), in Orca's order (AccountsPane.tsx and its
 // provider sections; MIT, Copyright (c) 2026 Lovecast Inc.). One row each,
 // its keys and options folded under Configure. Keys and cookies go to the
 // main process and stay there (encrypted); this page only learns whether each
@@ -14,8 +14,13 @@ import ThemedSelect from './ui/ThemedSelect.vue'
 import { t } from '../i18n'
 
 // Product names and examples, the same in every language.
-const NAMES = { gemini: 'Gemini', opencode: 'OpenCode Go', minimax: 'MiniMax', grok: 'Grok', cursor: 'Cursor' } // i18n-ignore
-const ORDER = ['gemini', 'opencode', 'minimax', 'grok', 'cursor']
+const NAMES = { gemini: 'Gemini', opencode: 'OpenCode Go', minimax: 'MiniMax', glm: 'GLM Coding Plan', grok: 'Grok', cursor: 'Cursor' } // i18n-ignore
+const ORDER = ['gemini', 'opencode', 'minimax', 'glm', 'grok', 'cursor']
+// Where a GLM Coding Plan key is made (after Orca's zcode-plan-sites.ts).
+const GLM_CONSOLES = {
+  zai: 'https://z.ai/manage-apikey',
+  bigmodel: 'https://open.bigmodel.cn/usercenter/proj-mgmt/apikeys'
+} // i18n-ignore
 const COOKIE_EXAMPLE = 'auth=…; __Host-console_session=…' // i18n-ignore
 const WORKSPACE_EXAMPLE = 'opencode.ai/workspace/wrk_…/go' // i18n-ignore
 const DEFAULT_MODEL = 'general' // i18n-ignore
@@ -46,6 +51,8 @@ const relevant = computed(() => ({
   gemini: has('gemini', 'antigravity') || !!settings.value.geminiCliOAuth || state.value?.gemini?.signedIn === true,
   opencode: has('opencode') || !!(saved.value.opencodeGoApiKey || saved.value.opencodeCookie || settings.value.opencodeWorkspaceId),
   minimax: has('opencode', 'claude') || !!(saved.value.minimaxApiKey || saved.value.minimaxCookie),
+  // A GLM Coding Plan is used from ZCode, Claude Code or OpenCode.
+  glm: has('zcode', 'claude', 'opencode') || !!saved.value.zcodePlanApiKey,
   grok: has('grok') || state.value?.grok?.signedIn === true,
   cursor: has('cursor') || state.value?.cursor?.signedIn === true
 }))
@@ -107,6 +114,18 @@ const minimaxStatus = computed(() => {
       ? t('settings.accounts.row.keySaved', 'API key saved')
       : t('settings.accounts.row.cookieSaved', 'Session cookie saved')
   return { text: `${what} · ${where}`, tone: 'ok' }
+})
+const glmConsole = computed(() => GLM_CONSOLES[settings.value.zcodePlanSite] || GLM_CONSOLES.zai)
+const glmStatus = computed(() => {
+  const where =
+    settings.value.zcodePlanSite === 'bigmodel'
+      ? t('settings.accounts.glm.bigmodelShort', 'BigModel')
+      : t('settings.accounts.glm.zaiShort', 'Z.ai')
+  if (saved.value.zcodePlanApiKey)
+    return { text: `${t('settings.accounts.row.keySaved', 'API key saved')} · ${where}`, tone: 'ok' }
+  if (has('zcode') && agents.value)
+    return { text: t('settings.accounts.glm.usesZcode', 'Uses the key ZCode is set up with'), tone: 'dim' }
+  return { text: t('settings.accounts.row.notSetUp', 'Not set up'), tone: 'dim' }
 })
 
 function message(result, fallback) {
@@ -431,6 +450,55 @@ onBeforeUnmount(() => {
           </div>
         </div>
       </div>
+    </ProviderAccountRow>
+
+    <!-- ============ GLM Coding Plan ============ -->
+    <ProviderAccountRow
+      v-if="visible.glm"
+      provider="zcode"
+      icon="zcode"
+      icon-label="GLM"
+      icon-accent="#3859ff"
+      :name="NAMES.glm"
+      :status="glmStatus.text"
+      :tone="glmStatus.tone"
+      toggle="configure"
+    >
+      <template #actions>
+        <button type="button" class="exit-btn" data-test="glm-console" @click="openLink(glmConsole)">
+          {{ t('settings.accounts.glm.openConsole', 'Get a key') }} <span aria-hidden="true">↗</span>
+        </button>
+      </template>
+      <p v-if="!secure" class="usage-account-error">{{ t('settings.accounts.noSecureStorage', 'Secure credential storage is unavailable on this computer, so keys and cookies cannot be saved.') }}</p>
+      <p v-if="unsealed" class="usage-account-error" role="alert" data-test="credentials-unsealed">{{ t('settings.accounts.unsealed', 'Your saved keys and cookies are stored unencrypted: anyone who can read your disk or a backup of it can read them. Save them again to encrypt them.') }}</p>
+      <div class="usage-field">
+        <label class="usage-label" for="glm-site">{{ t('settings.accounts.glm.site', 'Plan site') }}</label>
+        <ThemedSelect
+          id="glm-site"
+          class="usage-input"
+          :model-value="settings.zcodePlanSite || 'zai'"
+          :disabled="busy"
+          data-test="glm-site"
+          @update:model-value="(value) => value !== settings.zcodePlanSite && update('glm', { zcodePlanSite: value })"
+        >
+          <option value="zai">{{ t('settings.accounts.glm.zai', 'Z.ai (api.z.ai)') }}</option>
+          <option value="bigmodel">{{ t('settings.accounts.glm.bigmodel', 'BigModel, China (open.bigmodel.cn)') }}</option>
+        </ThemedSelect>
+        <p class="usage-hint">{{ t('settings.accounts.glm.siteShort', 'Where your Coding Plan was bought.') }}</p>
+      </div>
+      <SecretField
+        id="glm-plan-key"
+        :label="t('settings.accounts.glm.apiKey', 'GLM Coding Plan key')"
+        :placeholder="t('settings.accounts.glm.apiKeyPlaceholder', 'Paste your Coding Plan API key')"
+        :saved="!!saved.zcodePlanApiKey"
+        :busy="busy || !secure"
+        :forget-label="t('settings.accounts.glm.forgetKey', 'Remove key')"
+        :save="saveSecret('glm', 'zcodePlanApiKey', t('settings.accounts.glm.apiKeySaved', 'GLM Coding Plan key saved.'))"
+        :forget="forgetSecret('glm', 'zcodePlanApiKey')"
+      >
+        <p class="usage-hint">{{ t('settings.accounts.glm.apiKeyHelp', 'Shows this plan’s quota in Usage, even without ZCode. Used before ZCode’s own key, and sent only to the plan site’s quota service over HTTPS.') }}</p>
+      </SecretField>
+      <p v-if="notice.glm" class="usage-hint" role="status">{{ notice.glm }}</p>
     </ProviderAccountRow>
 
     <!-- ============ Grok, Cursor ============ -->

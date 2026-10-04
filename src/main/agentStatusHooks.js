@@ -23,7 +23,7 @@ import { dirname, isAbsolute, join } from 'path'
 import { readJson } from './fileRead'
 import { writeFileAtomic } from './safeJson'
 import { t } from './i18n'
-import { hookNode, hookCommand, pluginNodeSource, findNode } from './nodePath'
+import { hookNode, hookCommand, goCmdHookCommand, pluginNodeSource, findNode, unsafePathError } from './nodePath'
 import { dshHome, dshPatchStatus, installDshPatch, removeDshPatchFile } from './dshHooks'
 
 const OURS = 'tessel-team-mcp.cjs'
@@ -34,8 +34,13 @@ const envDir = (env, name) => {
 }
 
 // Tessel's command for one of an agent's events (node: its absolute path).
-export const statusCommand = (scriptPath, agent, event, node) =>
-  hookCommand(node, scriptPath, `--hook --agent=${agent}${event ? ` --event=${event}` : ''}`)
+// null: the paths cannot be written for that agent's shell.
+export function statusCommand(scriptPath, agent, event, node, platform = process.platform) {
+  const args = `--hook --agent=${agent}${event ? ` --event=${event}` : ''}`
+  const spec = STATUS_HOOKS[agent]
+  if (spec && spec.goCmd && platform === 'win32') return goCmdHookCommand(node, scriptPath, args)
+  return hookCommand(node, scriptPath, args)
+}
 const isOurs = (command) => typeof command === 'string' && command.includes(OURS) && command.includes('--agent=')
 
 // shape: 'claude' = { hooks: { Event: [{ matcher, hooks: [{ type, command }] }] } }
@@ -75,7 +80,9 @@ export const STATUS_HOOKS = {
     file: (home) => join(home, '.gemini', 'config', 'hooks.json'),
     // Not PreToolUse: Antigravity takes silence there as a refusal.
     events: ['PreInvocation', 'PostInvocation', 'PostToolUse', 'Stop'],
-    tool: ['PostToolUse']
+    tool: ['PostToolUse'],
+    // On Windows it runs a hook through cmd /c, Go-quoted (nodePath.js).
+    goCmd: true
   },
   openclaude: {
     shape: 'claude',
@@ -365,6 +372,12 @@ function installEntries(agent, spec, scriptPath, { home, env, node }) {
   const found = hookNode(scriptPath, node, env)
   if (found.error) return found
   const file = spec.file(home, env)
+  if (spec.shape !== 'plugin' && spec.events.some((e) => !statusCommand(scriptPath, agent, e, found.node))) {
+    // Never left with entries of an older Tessel that fail there (each
+    // failure stopped Antigravity's turn).
+    if (fs.existsSync(file)) removeEntries(spec, file)
+    return { error: unsafePathError() }
+  }
   try {
     if (spec.shape === 'plugin') {
       const text = spec.source(scriptPath, found.node)

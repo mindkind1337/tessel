@@ -553,8 +553,8 @@ export function normalizeAutomationInput(input) {
 // inside double quotes are taken: letters and digits of any language, space,
 // . _ - ' ( ) and the folder separators. Anything else ($ ` " % ! & ; ...)
 // is refused, never quoted by guesswork.
-const WIN_PATH = /^[A-Za-z]:\\[\p{L}\p{N} ._'()\\-]{1,400}$/u
-const WSL_PATH = /^\/mnt\/[a-z]\/[\p{L}\p{N} ._'()/-]{1,400}$/u
+export const WIN_PATH = /^[A-Za-z]:\\[\p{L}\p{N} ._'()\\-]{1,400}$/u
+export const WSL_PATH = /^\/mnt\/[a-z]\/[\p{L}\p{N} ._'()/-]{1,400}$/u
 // A remote project's prompt file, relative to its folder (the terminal
 // starts there): always this shape, Tessel's own ids only.
 export const REMOTE_PROMPT_DIR = '.tessel/automations'

@@ -415,11 +415,20 @@ function submitAddress() {
   // The page gets the keys once it starts loading.
   if (addressEl.value) addressEl.value.blur()
 }
+// Escape with the keyboard here (the address bar, or the page: the main
+// process tells an Escape the page did not use): the side panel's
+// fullscreen ends. -> whether it did.
+function escapeOut() {
+  return !!(ctx.exitFullscreen && ctx.exitFullscreen())
+}
 function onAddressKeydown(e) {
   if (e.key !== 'Escape') return
-  // Escape puts the current address back (and stays here: not the app's Escape).
+  // Escape puts the current address back (and stays here: not the app's
+  // Escape); with nothing to put back, it leaves the side panel's fullscreen.
   e.preventDefault()
   e.stopPropagation()
+  const edited = addressText.value !== displayUrl(currentUrl.value) || !!addressError.value
+  if (!edited && escapeOut()) return
   addressText.value = displayUrl(currentUrl.value)
   addressError.value = ''
   nextTick(() => addressEl.value && addressEl.value.select())
@@ -620,6 +629,8 @@ function runAction(action) {
       return zoom(-1)
     case 'zoomReset':
       return zoom(0)
+    case 'escape':
+      return escapeOut()
   }
 }
 function onKeydown(e) {
@@ -1250,7 +1261,9 @@ defineExpose({ navigate, focusAddress })
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+  container-type: inline-size;
 }
+
 
 /* Orca's navigation control row: back, forward, reload, the address, tools. */
 .bp-toolbar {
@@ -1361,6 +1374,24 @@ defineExpose({ navigate, focusAddress })
   color: var(--text-dim);
 }
 
+/* A narrow pane (the side panel's default width, a third of the grid): the
+   buttons left no room for the address, which shrank to its globe. The
+   address then gets a row of its own under the buttons. */
+@container (max-width: 520px) {
+  .bp-toolbar {
+    flex-wrap: wrap;
+    height: auto;
+    min-height: 38px;
+    padding: 5px 8px;
+    row-gap: 5px;
+  }
+  .bp-address {
+    order: 10;
+    flex: 1 1 100%;
+    margin: 0;
+  }
+}
+
 .bp-address-error {
   position: absolute;
   top: calc(100% + 6px);
@@ -1381,12 +1412,16 @@ defineExpose({ navigate, focusAddress })
   flex: 0 0 auto;
 }
 
+/* Icon, name, Stop: only the name shrinks (minmax(0, …)), so in a narrow
+   pane the badge keeps its icon and Stop and never overlaps the next button. */
 .bp-agent {
-  display: flex;
+  display: grid;
+  grid-auto-flow: column;
+  grid-template-columns: auto minmax(0, max-content) auto;
   align-items: center;
   gap: 5px;
   flex: 0 1 auto;
-  min-width: 0;
+  min-width: min-content;
   height: 24px;
   padding: 0 3px 0 7px;
   border-radius: 12px;

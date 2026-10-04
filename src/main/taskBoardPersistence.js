@@ -55,23 +55,40 @@ export function loadBoard(userDataDir) {
       tasks: withoutDeleted(Array.isArray(res.data) ? res.data : res.data?.tasks || [], deleted),
       appliedRequests: Array.isArray(res.data?.appliedRequests)
         ? res.data.appliedRequests.filter((k) => typeof k === 'string') : [],
-      deleted
+      deleted,
+      history: historyOf(res.data)
     }
   }
   if (res.data) {
-    if (Array.isArray(res.data)) return { tasks: res.data, appliedRequests: [], deleted: [] }
+    if (Array.isArray(res.data)) return { tasks: res.data, appliedRequests: [], deleted: [], history: [] }
     const applied = Array.isArray(res.data.appliedRequests)
       ? res.data.appliedRequests.filter((k) => typeof k === 'string')
       : []
     const deleted = deletedOf(res.data)
-    return { tasks: withoutDeleted(res.data.tasks, deleted), appliedRequests: applied, deleted }
+    return { tasks: withoutDeleted(res.data.tasks, deleted), appliedRequests: applied, deleted, history: historyOf(res.data) }
   }
 
   // No good copy at all: empty or an unknown shape opens an empty board;
   // damaged JSON throws so the caller logs it.
   const raw = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : ''
   if (raw.trim()) JSON.parse(raw)
-  return { tasks: [], appliedRequests: [], deleted: [] }
+  return { tasks: [], appliedRequests: [], deleted: [], history: [] }
+}
+
+// The finished tasks' history (renderer taskHistory.js): records kept even
+// after their card is deleted, oldest first, at most MAX_HISTORY.
+const MAX_HISTORY = 2000
+function historyOf(data) {
+  return data && !Array.isArray(data) && Array.isArray(data.history)
+    ? data.history.filter((r) => r && typeof r === 'object' && typeof r.id === 'string' && r.id).slice(-MAX_HISTORY)
+    : []
+}
+function savedHistory(file) {
+  try {
+    return historyOf(JSON.parse(fs.readFileSync(file, 'utf8')))
+  } catch {
+    return []
+  }
 }
 
 // The ids of the cards deleted from the board (the version 2 envelope's
@@ -110,7 +127,7 @@ function isTaskList(data) {
  * @param {Array<object>} tasks
  * @returns {string} the path written
  */
-export function saveTasks(userDataDir, tasks, appliedRequests = null, deleted = null) {
+export function saveTasks(userDataDir, tasks, appliedRequests = null, deleted = null, history = null) {
   if (!Array.isArray(tasks)) throw new Error('saveTasks requires an array of tasks')
   const file = taskBoardFilePath(userDataDir)
   // Temp file + rename, previous copy kept as .bak: a kill mid-write never
@@ -127,11 +144,14 @@ export function saveTasks(userDataDir, tasks, appliedRequests = null, deleted = 
       all.add(id)
     }
     const kept = [...all].slice(-MAX_DELETED)
+    // A window that does not send the history (an older one) keeps it.
+    const hist = Array.isArray(history) ? historyOf({ history }) : savedHistory(file)
     data = {
       version: 2,
       tasks: withoutDeleted(tasks, kept),
       appliedRequests: appliedRequests.filter((k) => typeof k === 'string').slice(-5000),
-      ...(kept.length ? { deleted: kept } : {})
+      ...(kept.length ? { deleted: kept } : {}),
+      ...(hist.length ? { history: hist } : {})
     }
   }
   writeJsonSafe(file, data, isTaskList)
