@@ -553,3 +553,12 @@ describe('security review: Stop and the session', () => {
     expect(win.calls.filter((c) => c.op === 'approve')).toHaveLength(2)
   })
 })
+
+describe('security review: a command the card shows whole', () => {
+  it('at most 50 lines, no run of blank lines', () => {
+    expect(() => checkCommand(Array(51).fill('echo x').join('\n'))).toThrow(/50 lines/)
+    expect(() => checkCommand('ls\n\n\nrm -rf x')).toThrow(/blank lines/)
+    expect(() => checkCommand('ls' + ' '.repeat(10) + '\n \n\t\nrm x')).toThrow(/blank lines/)
+    expect(checkCommand('ls\npwd')).toBe('ls\npwd')
+  })
+})

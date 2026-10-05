@@ -71,3 +71,13 @@ describe('security review: the read card', () => {
     w.unmount()
   })
 })
+
+describe('security review: the whole command is seen', () => {
+  it('the field grows with the command and says how many lines it has', () => {
+    const cmd = Array(8).fill('echo x').join('\n')
+    const w = mount(AgentCommandApproval, { props: { card: { kind: 'command', command: cmd, own: true, agentLabel: 'Ada', name: 'n', where: 'w', disclaimers: [], actions: [] } }, attachTo: document.body })
+    expect(Number(w.find('[data-test="agent-command-text"]').attributes('rows'))).toBeGreaterThanOrEqual(8)
+    expect(w.find('[data-test="agent-command-lines"]').text()).toContain('8 lines')
+    w.unmount()
+  })
+})

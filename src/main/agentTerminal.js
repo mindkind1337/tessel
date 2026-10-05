@@ -39,6 +39,7 @@ import { MAX_OUTPUT_LENGTH, MAX_POLL_OUTPUT, truncateLargeOutput, truncateOutput
 
 export const TERMINAL_OPS = ['list', 'run', 'output', 'send', 'kill', 'lastCommand', 'selection']
 export const MAX_COMMAND_BYTES = 8 * 1024
+export const MAX_COMMAND_LINES = 50
 export const MAX_TEXT = 1000
 export const RUN_MAX_TIMEOUT_MS = 120000
 export const ASYNC_DEFAULT_TIMEOUT_MS = 20000
@@ -86,6 +87,10 @@ export function checkCommand(raw, { allowEmpty = false } = {}) {
   const line = raw.replace(/\r\n?/g, '\n')
   // eslint-disable-next-line no-control-regex
   if (/[\x00-\x08\x0b-\x1f\x7f\x80-\x9f]/.test(line)) throw fail('invalid_argument', 'The command has control characters: send keys like Ctrl+C with send_to_terminal "keys".')
+  // What the user approves must fit on the card: no blank lines pushing a
+  // part out of sight, a bounded number of lines.
+  if (/\n[ \t]*\n[ \t]*\n/.test(line)) throw fail('invalid_argument', 'The command has a run of blank lines: remove them.')
+  if (line.split('\n').length > MAX_COMMAND_LINES) throw fail('too_large', `The command has more than ${MAX_COMMAND_LINES} lines: write a script file and run it.`)
   return line
 }
 // Ctrl+C, Ctrl+D, Ctrl+\ alone (send_to_terminal "command", as VS Code takes them).

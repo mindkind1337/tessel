@@ -73,6 +73,11 @@ const allowWholeLabel = computed(() =>
       ? t('app.agentTerminal.allowHost', 'Allow on this host')
       : t('app.agentTerminal.allowPane', 'Allow in this terminal')
 )
+// The whole command in sight: the field is as tall as the command (up to
+// 20 rows, then it scrolls) and a command of several lines says so.
+const lineCount = computed(() => String(text.value || '').split('\n').length)
+const rows = computed(() => Math.min(20, Math.max(3, lineCount.value)))
+const linesText = computed(() => t('app.agentTerminal.lines', '{{count}} lines: read them all before allowing.', { count: lineCount.value }))
 const actions = computed(() => (Array.isArray(props.card.actions) ? props.card.actions : []))
 
 function answer(value) {
@@ -126,11 +131,12 @@ function trapTab(event) {
         v-model="text"
         class="confirm-code aca-command"
         data-test="agent-command-text"
-        rows="3"
+        :rows="rows"
         spellcheck="false"
         :aria-label="t('app.agentTerminal.commandLabel', 'Command (you can edit it)')"
       ></textarea>
       <pre v-else-if="shown" class="confirm-code" data-test="agent-command-text">{{ card.command }}</pre>
+      <p v-if="shown && lineCount > 1" class="confirm-text aca-warn" data-test="agent-command-lines">{{ linesText }}</p>
       <dl v-if="card.folder" class="confirm-details">
         <dt>{{ t('app.agentTerminal.folder', 'Folder') }}</dt>
         <dd>{{ card.folder }}</dd>
@@ -176,6 +182,7 @@ function trapTab(event) {
 }
 .aca-command {
   width: 100%;
+  max-height: 50vh;
   box-sizing: border-box;
   resize: vertical;
   min-height: 3.2em;

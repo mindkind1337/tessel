@@ -825,7 +825,8 @@
       "readText": "Il lira ce que ce terminal affiche et son historique, qui peut contenir des mots de passe, des clés ou d’autres secrets que vous avez tapés ou affichés. L’autoriser pour ce terminal lui permet de le relire jusqu’au redémarrage de Tessel.",
       "hostText": "Ce n’est pas l’hôte de votre projet : Tessel y ouvre un terminal avec votre compte, déjà connecté. Chaque commande vous est quand même demandée, et les règles de votre projet ne s’y appliquent pas.",
       "allowRead": "Autoriser la lecture de ce terminal",
-      "allowHost": "Autoriser sur cet hôte"
+      "allowHost": "Autoriser sur cet hôte",
+      "lines": "{{count}} lignes : lisez-les toutes avant d’autoriser."
     }
   }
 }
