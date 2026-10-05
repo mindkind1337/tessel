@@ -23,7 +23,7 @@
 // The answers go to the agent: English on purpose.
 import { executeCommand, watchForInput, waitForIdle } from './executeStrategy'
 import { initLineFor } from './shellInit'
-import { truncateOutputKeepingTail, MAX_POLL_OUTPUT, getLastLine } from '../../../shared/terminalOutput'
+import { getLastLine } from '../../../shared/terminalOutput'
 
 export class AgentTerminalError extends Error {
   constructor(code, message) {
@@ -321,9 +321,10 @@ export function createAgentTerminalTargets(deps) {
         // Left running (timed out, async): the agent hears when it ends, if
         // the shell says so (VS Code notifies only with command detection).
         if (exec.background && !r.cancelled && t.shell.quality() !== 'none') {
-          const out = truncateOutputKeepingTail(r.output || t.getOutput(exec.startMarker, null) || '', MAX_POLL_OUTPUT)
+          // A short notice only (it goes through the team channel's files):
+          // the agent reads the output itself with get_terminal_output.
           const code = Number.isInteger(r.exitCode) ? ` with exit code ${r.exitCode}` : '' // i18n-ignore
-          noticeOf(agentLeaf, leaf.id, name)(`command completed${code}.]\nCommand: ${command}\nTerminal output:\n${out}`) // i18n-ignore
+          noticeOf(agentLeaf, leaf.id, name)(`command completed${code}.]\nCommand: ${command.slice(0, 300)}\nRead its output with get_terminal_output with id="${leaf.id}".`) // i18n-ignore
         }
         return r
       })

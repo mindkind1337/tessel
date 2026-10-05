@@ -183,7 +183,11 @@ describe('agent terminals: its own', () => {
     await vi.advanceTimersByTimeAsync(10000)
     expect(deps.notifyAgent).toHaveBeenCalledTimes(1)
     expect(deps.notifyAgent.mock.calls[0][1]).toMatch(/^\[Terminal pane-own-1 .*notification: command completed with exit code 0\.\]/)
-    expect(deps.notifyAgent.mock.calls[0][1]).toContain('done')
+    // Only a short notice: never the output (it goes through the team channel's files).
+    expect(deps.notifyAgent.mock.calls[0][1]).not.toContain('done')
+    expect(deps.notifyAgent.mock.calls[0][1]).not.toContain('building')
+    expect(deps.notifyAgent.mock.calls[0][1]).toContain('Command: npm run build')
+    expect(deps.notifyAgent.mock.calls[0][1]).toContain('get_terminal_output with id="pane-own-1"')
   })
 
   it('a password question: the user is told, nothing is sent', async () => {

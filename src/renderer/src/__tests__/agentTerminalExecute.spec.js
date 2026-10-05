@@ -196,3 +196,13 @@ describe('security review: the badge\'s log', () => {
     expect(terminalLog['p-read'][0].kind).toBe('read')
   })
 })
+
+describe('security review: the commands log is documented', () => {
+  it('Settings says where the log is and what it keeps', async () => {
+    const { mount } = await import('@vue/test-utils')
+    const { default: S } = await import('../components/AgentTerminalSettings.vue')
+    const w = mount(S, { global: { provide: { askConfirm: async () => true } } })
+    expect(w.find('[data-test="settings-terminal-log"]').text()).toContain('agent-terminal.log')
+    w.unmount()
+  })
+})

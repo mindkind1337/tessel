@@ -11,6 +11,7 @@ import { isRegexKey } from '../../../shared/terminalRules'
 
 const askConfirm = inject('askConfirm', null)
 
+const logText = computed(() => t('settings.agents.terminalLog', 'Tessel keeps a log of every command agents run in terminals and of the terminals they read (when, which agent, which terminal, the command in full) in agent-terminal.log in its data folder, up to 1 MB (the older part in agent-terminal.log.old). Commands can hold secrets you gave an agent.'))
 const regexLabel = computed(() => t('settings.agents.terminalRuleRegex', 'regular expression'))
 const userRules = computed(() => Object.entries(settings.agentTerminalRules || {}))
 const projectRules = computed(() =>
@@ -77,6 +78,7 @@ async function setAutoApprove(e) {
         </div>
         <input v-model="settings.agentTerminal" type="checkbox" class="set-switch" data-setting="agentTerminal" />
       </label>
+      <p class="set-row set-hint" data-test="settings-terminal-log">{{ logText }}</p>
       <label class="set-row">
         <div class="set-label">
           {{ t('settings.agents.terminalAutoApprove', 'Let rules approve commands') }}
