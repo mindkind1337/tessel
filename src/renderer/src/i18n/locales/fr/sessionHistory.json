@@ -105,7 +105,8 @@
       "deleteReasonOpen": "Cette session est ouverte dans un panneau. Fermez-le d'abord.",
       "deleteReasonUnsupportedAgent": "Les sessions {{agent}} ne peuvent pas être supprimées depuis Tessel.",
       "logUnavailable": "Le fichier de la transcription est introuvable.",
-      "folderUnavailable": "Le répertoire de travail est introuvable."
+      "folderUnavailable": "Le répertoire de travail est introuvable.",
+      "onHost": "Cette conversation est enregistrée sur l’hôte SSH."
     },
     "details": {
       "viewLog": "Afficher le log",
@@ -138,6 +139,8 @@
     "agyContinue": {
       "failed": "Impossible de lire cette conversation de l'IDE Antigravity.",
       "startFailed": "Impossible de démarrer Antigravity CLI pour cette conversation."
-    }
+    },
+    "remoteNotConnected": "Connectez-vous à {{host}} (ouvrez-y un terminal) pour voir ses sessions.",
+    "remoteFailed": "Les sessions de {{host}} n’ont pas pu être lues."
   }
 }

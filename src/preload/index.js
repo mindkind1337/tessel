@@ -220,6 +220,8 @@ const api = {
   agentInbox: (query) => ipcRenderer.invoke('agents:inbox', query),
   onAgentModelChanged: (cb) => onShared('agents:modelChanged', cb),
   listSessions: (query) => ipcRenderer.invoke('sessions:list', query),
+  // An SSH host's own history (remote agents): never signs in.
+  listRemoteSessions: (query) => ipcRenderer.invoke('sessions:listRemote', query),
   // One past conversation (Agent Session History): its first prompt, latest
   // turns and transcript file; that file shown in the file manager; the
   // conversation deleted (Recycle Bin). { agent, id, accountId }

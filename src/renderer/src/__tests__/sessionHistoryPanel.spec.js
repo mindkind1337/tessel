@@ -256,3 +256,26 @@ describe('SessionHistoryPanel.vue', () => {
     expect(wrapper.find('.sh-view-count').exists()).toBe(false)
   })
 })
+
+describe('a project on an SSH host', () => {
+  const REMOTE = { hostId: 'ssh-box', host: 'box', path: '/home/me/app' }
+  const HOST_ROWS = [
+    { agent: 'claude', id: 'dddddddd-1111-4222-8333-444444444444', cwd: '/home/me/app', title: 'On the server', started: null, updated: NOW - 60_000, host: 'ssh-box' },
+    { agent: 'claude', id: 'eeeeeeee-1111-4222-8333-444444444444', cwd: '/home/me/other', title: 'Other folder there', started: null, updated: NOW - 120_000, host: 'ssh-box' }
+  ]
+
+  it("lists the host's own conversations, scoped to the project's folder there", async () => {
+    api.listRemoteSessions = vi.fn(() => Promise.resolve({ ok: true, sessions: HOST_ROWS }))
+    await make({ cwd: null, remote: REMOTE })
+    expect(api.listRemoteSessions).toHaveBeenCalledWith({ hostId: 'ssh-box', limit: expect.any(Number) })
+    expect(api.listSessions).not.toHaveBeenCalled()
+    expect(titles()).toEqual(['On the server'])
+  })
+
+  it('says to connect when the host is not signed in (and never shows local sessions)', async () => {
+    api.listRemoteSessions = vi.fn(() => Promise.resolve({ ok: false, notConnected: true, error: 'x' }))
+    await make({ cwd: null, remote: REMOTE })
+    expect(rows()).toHaveLength(0)
+    expect(wrapper.find('.sh-error').text()).toContain('box')
+  })
+})

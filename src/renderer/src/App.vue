@@ -1034,14 +1034,18 @@ function newUuid() {
 
 // The command that starts an agent: a fresh conversation, or the pane's own
 // previous one when `resume` is set and it exists.
-async function agentStartLine(agent, sessionId, resume, accountId) {
+async function agentStartLine(agent, sessionId, resume, accountId, { known = false } = {}) {
   const kind = sessionKind(agent)
   if (kind === 'claude' || kind === 'openclaude') {
     // Whether the conversation exists. If we can't check (older app
     // version), assume it does: resume it rather than reuse an id in use.
+    // known: listed from an SSH host's own history (its transcript is there,
+    // not on this computer).
     const exists = !sessionId
       ? false
-      : kind === 'openclaude'
+      : known
+        ? true
+        : kind === 'openclaude'
         ? window.shellApi.agentResumeTarget
           ? !!(await window.shellApi.agentResumeTarget({ agent: kind, sessionId }).catch(() => null))
           : true
@@ -1361,7 +1365,7 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
   }
   // Launch the agent CLI once the shell has had a moment to print its prompt.
   if (agent && agent.command) {
-    const start = await agentStartLine({ ...agent, command: launch.command }, opts.sessionId || null, !!opts.resume, accountId)
+    const start = await agentStartLine({ ...agent, command: launch.command }, opts.sessionId || null, !!opts.resume, accountId, { known: opts.remoteSession === true && !!opts.remoteHostId })
     leaf.sessionId = start.sessionId
     // Its arguments (or the Yolo flag) at the end: they work with resuming too.
     // A worker's launch options (model, effort, its first prompt) only on a
@@ -3152,7 +3156,12 @@ async function resumeSession(s) {
   if (!ws) return
   // A Codex session of a managed account resumes in that account (null: the
   // system's own sign-in).
-  const opts = { cwd: s.cwd || null, sessionId: s.id, resume: true, ...(s.accountId === null || typeof s.accountId === 'string' ? { accountId: s.accountId } : {}) }
+  // A conversation listed from an SSH host (its history, sessions:listRemote)
+  // resumes there, in its own folder on that host.
+  const remote = typeof s.host === 'string' && s.host && typeof s.cwd === 'string' && s.cwd.startsWith('/') && remoteHostsState.targets.some((h) => h.id === s.host)
+  const opts = remote
+    ? { cwd: null, sessionId: s.id, resume: true, remoteHostId: s.host, remotePath: s.cwd, remoteSession: true }
+    : { cwd: s.cwd || null, sessionId: s.id, resume: true, ...(s.accountId === null || typeof s.accountId === 'string' ? { accountId: s.accountId } : {}) }
   if (activeId.value && ws.tree) {
     await splitLeaf(
       activeId.value,

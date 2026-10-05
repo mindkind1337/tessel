@@ -55,8 +55,13 @@ const messagesLabel = computed(() => {
   return Number.isFinite(n) ? t('sessionHistory.row.messageCount', '{{n}} msgs', { n }) : ''
 })
 const showFolder = computed(() => props.scope !== 'workspace' && !!s.value.cwd)
-const deleteReason = computed(() => deleteBlockedReason(s.value, props.paneId ? { [s.value.id]: props.paneId } : {}))
-const logActions = computed(() => hasLog(s.value.agent))
+// A conversation on an SSH host (its history): its log and folder are there,
+// not on this computer, so only Resume and Copy ID apply.
+const onHost = computed(() => typeof s.value.host === 'string' && !!s.value.host)
+const deleteReason = computed(() =>
+  onHost.value ? t('sessionHistory.row.onHost', 'This conversation is stored on the SSH host.') : deleteBlockedReason(s.value, props.paneId ? { [s.value.id]: props.paneId } : {})
+)
+const logActions = computed(() => hasLog(s.value.agent) && !onHost.value)
 
 // --- Details (loaded when expanded) -------------------------------------------------
 const details = ref(null) // { ok, file, firstPrompt, turns, messageCount }
@@ -226,11 +231,11 @@ function onRowClick(event) {
           <DropdownMenuContent align="end" :side-offset="4" class="sh-menu">
             <DropdownMenuItem v-if="paneId" data-test="menu-jump" @select="emit('focus-pane', paneId)"><LocateFixed :size="14" /> {{ t('sessionHistory.row.jumpToOriginalPane', 'Jump to Original Pane') }}</DropdownMenuItem>
             <DropdownMenuItem v-else :disabled="!canResume" data-test="menu-resume" @select="emit('resume')"><SquareTerminal v-if="fromIde" :size="14" /><Play v-else :size="14" /> {{ actionText }}</DropdownMenuItem>
-            <template v-if="logActions || session.cwd">
+            <template v-if="logActions || (session.cwd && !onHost)">
               <DropdownMenuSeparator />
               <DropdownMenuItem v-if="logActions" data-test="menu-open-log" @select="openLog"><FileJson :size="14" /> {{ t('sessionHistory.row.openLog', 'Open Log') }}</DropdownMenuItem>
               <DropdownMenuItem v-if="logActions" data-test="menu-reveal-log" @select="revealLog"><FolderOpen :size="14" /> {{ t('sessionHistory.row.revealLog', 'Reveal Log') }}</DropdownMenuItem>
-              <DropdownMenuItem v-if="session.cwd" data-test="menu-open-cwd" @select="openCwd"><FolderOpen :size="14" /> {{ t('sessionHistory.row.openWorkingDirectory', 'Open Working Directory') }}</DropdownMenuItem>
+              <DropdownMenuItem v-if="session.cwd && !onHost" data-test="menu-open-cwd" @select="openCwd"><FolderOpen :size="14" /> {{ t('sessionHistory.row.openWorkingDirectory', 'Open Working Directory') }}</DropdownMenuItem>
             </template>
             <DropdownMenuSeparator />
             <DropdownMenuItem data-test="menu-copy-id" @select="copyId">{{ t('sessionHistory.row.copySessionId', 'Copy Session ID') }}</DropdownMenuItem>

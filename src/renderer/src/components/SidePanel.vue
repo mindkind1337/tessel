@@ -361,6 +361,7 @@ onBeforeUnmount(() => {
         v-if="shown.history"
         v-show="current() === 'history'"
         :cwd="remote ? null : root"
+        :remote="remote"
         :open-ids="openSessionIds"
         :active="current() === 'history'"
         @resume="(s) => emit('resume-session', s)"

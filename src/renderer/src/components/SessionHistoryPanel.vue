@@ -55,8 +55,11 @@ import './chat/orca/orca-tokens.css'
 import './sessionHistory.css'
 
 const props = defineProps({
-  // The workspace's folder (null for a remote project: no scope but All).
+  // The workspace's folder (null for a remote project).
   cwd: { type: String, default: null },
+  // A project on an SSH host: { hostId, host, path }. Its conversations are
+  // the host's own (sessions:listRemote), scoped to its folder there.
+  remote: { type: Object, default: null },
   // sessionId -> paneId for the conversations open in a pane.
   openIds: { type: Object, default: () => ({}) },
   // Shown now (the list is read again when it is shown after a while).
@@ -88,10 +91,13 @@ const limitHint = (n) =>
   n === DEFAULT_SESSION_LIMIT ? t('sessionHistory.depth.recommended', 'Recommended') : n === 100 ? t('sessionHistory.depth.mayBeSlower', 'May be slower') : t('sessionHistory.depth.slowest', 'Slowest')
 
 // --- Scope ----------------------------------------------------------------------------
-const scope = ref(props.cwd ? 'workspace' : 'all')
+// The folder the Workspace / Project scopes compare with: the project's, on
+// this computer or on the host.
+const scopeDir = computed(() => (props.remote && typeof props.remote.path === 'string' ? props.remote.path : props.cwd))
+const scope = ref(scopeDir.value ? 'workspace' : 'all')
 const scopes = computed(() => [
-  { id: 'workspace', label: t('sessionHistory.scope.workspace', 'Workspace'), disabled: !props.cwd },
-  { id: 'project', label: t('sessionHistory.scope.project', 'Project'), disabled: !props.cwd },
+  { id: 'workspace', label: t('sessionHistory.scope.workspace', 'Workspace'), disabled: !scopeDir.value },
+  { id: 'project', label: t('sessionHistory.scope.project', 'Project'), disabled: !scopeDir.value },
   { id: 'all', label: t('sessionHistory.scope.all', 'All'), disabled: false }
 ])
 const scopeAria = computed(() =>
@@ -104,12 +110,9 @@ const scopeAria = computed(() =>
           : t('sessionHistory.scope.allSessionsLower', 'all sessions')
   })
 )
-watch(
-  () => props.cwd,
-  (cwd) => {
-    if (!cwd) scope.value = 'all'
-  }
-)
+watch(scopeDir, (dir) => {
+  if (!dir) scope.value = 'all'
+})
 
 // --- The list -------------------------------------------------------------------------
 const sessions = ref([])
@@ -127,9 +130,20 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    const list = await a.listSessions({ cwd: null, limit: view.limit })
+    const remote = props.remote && props.remote.hostId ? props.remote : null
+    if (remote && !a.listRemoteSessions) {
+      sessions.value = []
+      return
+    }
+    const res = remote ? await a.listRemoteSessions({ hostId: remote.hostId, limit: view.limit }) : await a.listSessions({ cwd: null, limit: view.limit })
     if (seq !== loadSeq) return
-    sessions.value = Array.isArray(list) ? list : []
+    if (remote) {
+      sessions.value = res && res.ok && Array.isArray(res.sessions) ? res.sessions : []
+      if (res && !res.ok)
+        error.value = res.notConnected
+          ? t('sessionHistory.remoteNotConnected', 'Connect to {{host}} (open a terminal there) to see its sessions.', { host: remote.host || remote.hostId })
+          : (res.error || t('sessionHistory.remoteFailed', 'The sessions of {{host}} could not be read.', { host: remote.host || remote.hostId }))
+    } else sessions.value = Array.isArray(res) ? res : []
   } catch (err) {
     if (seq !== loadSeq) return
     sessions.value = []
@@ -148,6 +162,13 @@ function refresh() {
   else load()
 }
 watch(() => view.limit, load)
+// Another project (this computer / an SSH host): its own list.
+watch(
+  () => (props.remote && props.remote.hostId) || '',
+  (now, before) => {
+    if (now !== before) load()
+  }
+)
 // Shown again after a minute away: read again (a conversation may have ended).
 watch(
   () => props.active,
@@ -158,7 +179,7 @@ watch(
 
 const query = ref('')
 const filtered = computed(() =>
-  filterSessions(sessions.value, { query: searching.value ? '' : query.value, agents: view.agents, scope: scope.value, sort: view.sort, cwd: props.cwd })
+  filterSessions(sessions.value, { query: searching.value ? '' : query.value, agents: view.agents, scope: scope.value, sort: view.sort, cwd: scopeDir.value })
 )
 const groups = computed(() => {
   if (searching.value) return hitRows.value.length ? [{ key: 'search', label: null, sessions: hitRows.value }] : []
@@ -190,7 +211,9 @@ let statusTimer = null
 let searchTimer = null
 let searchSeq = 0
 const hasQuery = computed(() => query.value.trim().length > 0)
-const searching = computed(() => hasQuery.value && !!(index.value && index.value.enabled))
+// The conversation-text index holds this computer's sessions only: a remote
+// project's list is filtered by title and folder instead.
+const searching = computed(() => hasQuery.value && !props.remote && !!(index.value && index.value.enabled))
 const needsConsent = computed(() => hasQuery.value && !!(index.value && index.value.available && !index.value.enabled))
 async function refreshIndex() {
   const a = searchApi()
