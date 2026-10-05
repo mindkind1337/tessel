@@ -286,13 +286,43 @@ describe('round trip', () => {
     expect(seen[0]).toMatchObject({ kind: 'mcp', args: [] })
   })
 
-  it('mcp: no socket or a refusal -> the reason on stderr, exit 1', async () => {
-    const none = await run(['mcp'], { env: { TESSEL_REMOTE_SOCK: '' } })
-    expect(none.code).toBe(1)
-    expect(none.err).toContain('TESSEL_REMOTE_SOCK')
-    const refused = await run(['mcp'], { env: { TESSEL_REMOTE_TOKEN: 'cd'.repeat(32) } })
-    expect(refused.code).toBe(1)
-    expect(refused.err).toContain('bad-token')
+  // What an MCP client sends first; the shim answers each request in order.
+  const session =
+    [
+      { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'claude-code' } } },
+      { jsonrpc: '2.0', method: 'notifications/initialized' },
+      { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} },
+      { jsonrpc: '2.0', id: 3, method: 'ping' },
+      { jsonrpc: '2.0', id: 4, method: 'resources/list' }
+    ]
+      .map((m) => JSON.stringify(m))
+      .join('\n') + '\nnot json\n'
+  const answers = (out) => out.trim().split('\n').map((l) => JSON.parse(l))
+
+  it('mcp outside a Tessel pane (VS Code, plain ssh): a valid server without tools, quietly', async () => {
+    const r = await run(['mcp'], { input: session, env: { TESSEL_REMOTE_SOCK: '', TESSEL_REMOTE_TOKEN: '', TESSEL_PANE_ID: '' } })
+    expect(r.code).toBe(0)
+    expect(r.err).toBe('')
+    expect(answers(r.out)).toEqual([
+      { jsonrpc: '2.0', id: 1, result: { protocolVersion: '2025-03-26', capabilities: { tools: {} }, serverInfo: { name: 'tessel-team', version: shim.VERSION } } },
+      { jsonrpc: '2.0', id: 2, result: { tools: [] } },
+      { jsonrpc: '2.0', id: 3, result: {} },
+      { jsonrpc: '2.0', id: 4, error: { code: -32601, message: 'Method not found: resources/list' } }
+    ])
+    expect(seen).toEqual([])
+  })
+
+  it('mcp with Tessel closed or refusing: the same empty server, the reason only in its instructions', async () => {
+    for (const env of [{ TESSEL_REMOTE_SOCK: sock + '-nope' }, { TESSEL_REMOTE_TOKEN: 'cd'.repeat(32) }]) {
+      const r = await run(['mcp'], { input: session, env })
+      expect(r.code).toBe(0)
+      expect(r.err).toBe('')
+      const [init, list] = answers(r.out)
+      expect(init.result.serverInfo.name).toBe('tessel-team')
+      expect(init.result.instructions).toMatch(/not reachable/)
+      expect(list.result).toEqual({ tools: [] })
+    }
+    expect(seen.map((h) => h.token)).toEqual(['cd'.repeat(32)])
   })
 
   it('version', async () => {

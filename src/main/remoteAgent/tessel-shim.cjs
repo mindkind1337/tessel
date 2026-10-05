@@ -15,7 +15,7 @@ const os = require('os')
 const net = require('net')
 const path = require('path')
 
-const VERSION = '1.0.0'
+const VERSION = '1.1.0'
 const PROTOCOL = 1
 const SERVER_NAME = 'tessel-team'
 const SHIM_NAME = 'tessel-shim.cjs'
@@ -114,17 +114,58 @@ function writeThen(stream, data, then) {
   stream.write(data, () => then())
 }
 
+// The agent outside a Tessel pane (VS Code, a plain ssh login: no socket), or
+// Tessel closed: a valid MCP server without tools, quietly, so the agent does
+// not list tessel-team as failed. reason: said to the agent when it was in a
+// Tessel pane but Tessel did not answer.
+function emptyServer(reason) {
+  const write = (obj) => process.stdout.write(JSON.stringify(obj) + '\n')
+  const answer = (msg) => {
+    if (!msg || typeof msg !== 'object' || msg.id === undefined || msg.id === null) return // a notification
+    const { id, method, params } = msg
+    if (method === 'initialize') {
+      const result = {
+        protocolVersion: (params && typeof params.protocolVersion === 'string' && params.protocolVersion) || '2025-06-18',
+        capabilities: { tools: {} },
+        serverInfo: { name: SERVER_NAME, version: VERSION }
+      }
+      if (reason) result.instructions = `Tessel's team tools are not reachable right now (${reason}).`
+      return write({ jsonrpc: '2.0', id, result })
+    }
+    if (method === 'tools/list') return write({ jsonrpc: '2.0', id, result: { tools: [] } })
+    if (method === 'ping') return write({ jsonrpc: '2.0', id, result: {} })
+    write({ jsonrpc: '2.0', id, error: { code: -32601, message: `Method not found: ${method}` } })
+  }
+  let buf = ''
+  process.stdin.setEncoding('utf8')
+  process.stdin.on('data', (chunk) => {
+    buf += chunk
+    let nl
+    while ((nl = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, nl).trim()
+      buf = buf.slice(nl + 1)
+      if (!line) continue
+      let msg
+      try {
+        msg = JSON.parse(line)
+      } catch {
+        continue
+      }
+      for (const m of Array.isArray(msg) ? msg : [msg]) answer(m)
+    }
+  })
+  const done = () => process.stdout.write('', () => process.exit(0))
+  process.stdin.on('end', done)
+  process.stdin.on('error', done)
+  process.stdout.on('error', () => process.exit(0))
+  process.stdin.resume()
+}
+
 function runMcp(argv, env = process.env) {
   const conn = remoteEnv(env)
-  if (conn.error) {
-    process.stderr.write(`tessel-shim: ${conn.error}\n`)
-    process.exit(1)
-  }
+  if (conn.error) return emptyServer(null)
   open(conn, 'mcp', [], (err, socket, rest) => {
-    if (err) {
-      process.stderr.write(`tessel-shim: cannot reach Tessel (${err.message})\n`)
-      process.exit(1)
-    }
+    if (err) return emptyServer(String(err.message || 'no answer').slice(0, 120))
     let exiting = false
     const exit = (code) => {
       if (exiting) return
