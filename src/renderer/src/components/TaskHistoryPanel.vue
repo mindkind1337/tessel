@@ -18,16 +18,20 @@ import { formatCost } from '../../../shared/modelPricing'
 import { modelLabel } from '../../../shared/modelLabel'
 import { formatDuration } from '../timeFormat'
 import { t, intlLocale, currentLocale } from '../i18n'
+import './sessionHistory.css'
 
 const props = defineProps({
   // App's sidebarProjects: which agent panes still exist.
   projects: { type: Array, default: () => [] },
   // The tab is shown: the figures are read only then.
   active: { type: Boolean, default: false },
-  now: { type: Number, default: () => Date.now() }
+  now: { type: Number, default: () => Date.now() },
+  // The workspace shown: its own tasks by default, All for every workspace.
+  workspaceId: { type: String, default: null }
 })
 const emit = defineEmits(['focus-pane'])
 
+const scope = ref('workspace')
 const period = ref('all')
 const project = ref('')
 const agent = ref('')
@@ -47,9 +51,13 @@ const SORT_LABELS = {
   time: () => t('taskHistory.sort.time', 'Longest time')
 }
 
-const options = computed(() => filterOptions(taskHistory))
+// This workspace's tasks, or all of them (a workspace unknown: all).
+const inScope = computed(() =>
+  scope.value === 'workspace' && props.workspaceId ? taskHistory.filter((r) => r.wsId === props.workspaceId) : taskHistory
+)
+const options = computed(() => filterOptions(inScope.value))
 const shown = computed(() =>
-  sortHistory(filterHistory(taskHistory, { period: period.value, project: project.value, agent: agent.value, query: query.value }, props.now), sortBy.value)
+  sortHistory(filterHistory(inScope.value, { period: period.value, project: project.value, agent: agent.value, query: query.value }, props.now), sortBy.value)
 )
 const totals = computed(() => historyTotals(shown.value))
 
@@ -211,6 +219,22 @@ function exportCsv() {
       </button>
     </div>
 
+    <div class="sh-scope th-scope" role="group" :aria-label="t('taskHistory.scope.aria', 'Which tasks')" data-test="history-scopes">
+      <button
+        v-for="sc in ['workspace', 'all']"
+        :key="sc"
+        type="button"
+        class="sh-scope-btn"
+        :class="{ on: scope === sc }"
+        :disabled="sc === 'workspace' && !workspaceId"
+        :aria-pressed="scope === sc ? 'true' : 'false'"
+        :data-test="'history-scope-' + sc"
+        @click="scope = sc"
+      >
+        {{ sc === 'workspace' ? t('taskHistory.scope.workspace', 'This workspace') : t('taskHistory.scope.all', 'All workspaces') }}
+      </button>
+    </div>
+
     <div class="th-totals" data-test="history-totals">
       <div class="th-stat">
         <span class="th-stat-value" data-test="total-tasks">{{ totals.tasks }}</span>
@@ -317,6 +341,10 @@ function exportCsv() {
 </template>
 
 <style scoped>
+.th-scope {
+  flex: 0 0 auto;
+  margin: 0 0 8px;
+}
 .th-panel {
   display: flex;
   flex-direction: column;

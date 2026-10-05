@@ -32,6 +32,35 @@ export function isEvent(e) {
   return !!e && typeof e === 'object' && Number.isFinite(e.t) && typeof e.type === 'string'
 }
 
+// The log as stored (activity.json) travels between the window and the main
+// process as JSON text. At most this long (20000 events are a few MB).
+export const MAX_TEXT = 64 * 1024 * 1024
+
+// Text the main process may write as the log: a JSON list, not too long.
+// (Reading it back checks every event: parseActivityText.)
+export function isActivityText(text) {
+  return typeof text === 'string' && text.length <= MAX_TEXT && /^\s*\[/.test(text) && /\]\s*$/.test(text)
+}
+
+// The stored log's text -> its events, checked and bounded ([] when it is
+// not a list).
+export function parseActivityText(text, now = Date.now()) {
+  if (typeof text !== 'string' || !text.trim()) return []
+  let data
+  try {
+    data = JSON.parse(text)
+  } catch {
+    return []
+  }
+  return Array.isArray(data) ? trimEvents(data.filter(isEvent), now) : []
+}
+
+// The log -> the text to store (checked and bounded like the main process
+// did before writing it).
+export function activityText(events, now = Date.now()) {
+  return JSON.stringify(trimEvents(events.filter(isEvent), now))
+}
+
 function median(list) {
   if (!list.length) return null
   const s = [...list].sort((a, b) => a - b)

@@ -1,6 +1,6 @@
 <script setup>
 import { ensureAgentNames, renameAgentName, resolveAgentAddress, agentProgramLabel } from '../../shared/agentNames'
-import { ref, reactive, provide, watch, computed, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import { ref, reactive, provide, watch, computed, nextTick, onMounted, onBeforeUnmount, toRaw } from 'vue'
 import SplitNode from './components/SplitNode.vue'
 import FloatingTerminal from './components/FloatingTerminal.vue'
 import { createFloatingTerminal, isFloatingToggleKey } from './floatingTerminal'
@@ -15,7 +15,7 @@ import { prAgentTargets } from './prAgentTargets'
 import { withWorktreePath } from './prAgentPrompts'
 import { workspaceViews, viewKey, leafViewPath } from './paneViews'
 import { createPortScanner, browserUrlForPort, addressForPort } from './portScanner'
-import { allowedBrowserUrl, BLANK_URL } from '../../shared/browserUrl'
+import { allowedBrowserUrl, BLANK_URL, displayUrl } from '../../shared/browserUrl'
 import LaunchMenu from './components/LaunchMenu.vue'
 import SettingsDialog from './components/SettingsDialog.vue'
 import UpdateDialog from './components/UpdateDialog.vue'
@@ -51,7 +51,7 @@ import {
 } from './agentStatus'
 import { detectApproval } from './agentLimit'
 import { agentRulesReason, applyAgentStateRules } from './agentStateRules'
-import { activity, recordActivity, loadActivity, saveActivityNow, activityChanged } from './activityStore'
+import { activity, recordActivity, loadActivity, saveActivityNow, activityChanged, trimCount as activityTrimCount } from './activityStore'
 import ActivityPanel from './components/ActivityPanel.vue'
 import ConfirmDialog from './components/ConfirmDialog.vue'
 import { askQuitRunning } from './quitConfirm'
@@ -64,6 +64,7 @@ import FileFinder from './components/FileFinder.vue'
 import UsageMenu from './components/UsageMenu.vue'
 import { acquirePassthrough, trackPointerDrag } from './browser/webviewPassthrough'
 import { pageOf } from './browser/pageHost'
+import { paneDropZone, placeLeaf, sidePageFromLeaf, leafFromSidePage, saveSideBrowsers, restoreSideBrowsers, newSidePageId } from './browser/pageMove'
 import { createAgentBrowserTargets, addPageNear } from './browser/agentBrowserTargets'
 import GitHubDialog from './components/GitHubDialog.vue'
 import LinearDialog from './components/LinearDialog.vue'
@@ -1812,7 +1813,7 @@ function saveLayoutNow() {
     taskPanelWidth: taskPanelWidth.value,
     taskPanelOpen: taskPanelOpen.value,
     sidePanelTab: sideTab.value,
-    sideBrowsers: sideBrowsers.value.map((b) => ({ id: b.id, url: b.url || '', title: b.title || '' })),
+    sideBrowsers: saveSideBrowsers(sideBrowsers.value),
     currentIndex: Math.max(
       0,
       workspaces.value.findIndex((w) => w.id === currentWsId.value)
@@ -2193,19 +2194,11 @@ setHistoryDescriber((card) => {
 // --- The right side panel (SidePanel.vue): Files, Changes, Tasks, Agents tabs ------
 // taskPanelOpen: the panel is shown; sideTab: the tab it shows.
 const sideTab = ref('tasks')
-// The web pages opened with the side panel's + ([{ id, url, title }], a tab
-// each, saved with the layout; a page loads when its tab is first shown).
+// The web pages opened with the side panel's + ([{ id, url, title, zoom }],
+// a tab each, saved with the layout (browser/pageMove.js); a page loads when
+// its tab is first shown).
 const sideBrowsers = ref([])
-const SIDE_BROWSER_ID = /^web-[a-z0-9]{1,16}$/
-function restoreSideBrowsers(list) {
-  if (!Array.isArray(list)) return []
-  const out = []
-  for (const b of list.slice(0, 50)) {
-    if (!b || typeof b.id !== 'string' || !SIDE_BROWSER_ID.test(b.id) || out.some((o) => o.id === b.id)) continue
-    out.push({ id: b.id, url: typeof b.url === 'string' ? b.url : '', title: typeof b.title === 'string' ? b.title : '' })
-  }
-  return out
-}
+const sidePanelRef = ref(null)
 // The panel over the whole workspace (its tab bar's Fullscreen button, Esc
 // restores it). Not saved: Tessel always starts with the panes in view.
 const sideFullscreen = ref(false)
@@ -3792,15 +3785,21 @@ function moveFocus(dir) {
 
 // --- Drag a pane by its header to rearrange -----------------------------------
 // Drop on a pane edge to place it on that side, on the middle to swap the two,
-// or on a workspace in the sidebar to move it there.
+// or on a workspace in the sidebar to move it there. A browser pane also goes
+// to the right side panel (one of its web tabs), and a web tab of the panel
+// comes to the grid the same way (browser/pageMove.js).
 const paneDrag = reactive({
   active: false,
   srcId: null,
+  // The side panel's web page dragged from its tab (srcId is then its id).
+  fromSide: false,
+  // A browser pane of the grid: the side panel takes it.
+  browser: false,
   title: '',
   kind: '',
   x: 0,
   y: 0,
-  target: null, // { kind: 'pane', id, zone } | { kind: 'ws', id }
+  target: null, // { kind: 'pane', id, zone } | { kind: 'ws', id } | { kind: 'edge', id, zone } | { kind: 'side' }
   zoneRect: null,
   label: ''
 })
@@ -3817,6 +3816,33 @@ function findLeaf(id) {
 function beginPaneDrag(srcId, e) {
   const leaf = findLeaf(srcId)
   if (!leaf) return
+  trackPaneDrag(e, () => {
+    paneDrag.srcId = srcId
+    paneDrag.fromSide = false
+    paneDrag.browser = leaf.kind === 'browser'
+    paneDrag.title = leaf.paneName || leaf.title
+    paneDrag.kind = leaf.kind === 'agent' ? leaf.agentId : hasNoTerminal(leaf) ? '' : leaf.shellId
+  })
+}
+
+// A web tab of the side panel dragged onto the grid (SidePanel.vue's tab bar).
+function beginSidePageDrag(pageId, e) {
+  const page = sideBrowsers.value.find((b) => b.id === pageId)
+  if (!page) return
+  trackPaneDrag(e, () => {
+    paneDrag.srcId = pageId
+    paneDrag.fromSide = true
+    paneDrag.browser = true
+    paneDrag.title = page.title || displayUrl(page.url) || t('sidePanelAdd.newPage', 'New page')
+    paneDrag.kind = ''
+    // The panel over the whole workspace would hide the grid.
+    sideFullscreen.value = false
+  })
+}
+
+// The pointer followed from a press (e) until it is let go: past a few pixels
+// it is a drag (start() names what moves), the drop zones follow it.
+function trackPaneDrag(e, start) {
   const startX = e.clientX
   const startY = e.clientY
   // Browser pages let the pointer through until the drag ends.
@@ -3827,9 +3853,7 @@ function beginPaneDrag(srcId, e) {
     if (!paneDrag.active) {
       if (Math.hypot(ev.clientX - startX, ev.clientY - startY) < DRAG_THRESHOLD) return
       paneDrag.active = true
-      paneDrag.srcId = srcId
-      paneDrag.title = leaf.paneName || leaf.title
-      paneDrag.kind = leaf.kind === 'agent' ? leaf.agentId : hasNoTerminal(leaf) ? '' : leaf.shellId
+      start()
       maximizedId.value = null
       closeMenus()
       document.body.classList.add('pane-dragging')
@@ -3848,7 +3872,11 @@ function beginPaneDrag(srcId, e) {
   }
   const up = () => {
     stopListening()
-    if (paneDrag.active && paneDrag.target) movePane(paneDrag.srcId, paneDrag.target)
+    if (paneDrag.active && paneDrag.target) {
+      if (paneDrag.fromSide) moveSidePageToGrid(paneDrag.srcId, paneDrag.target)
+      else if (paneDrag.target.kind === 'side') moveBrowserToSide(paneDrag.srcId)
+      else movePane(paneDrag.srcId, paneDrag.target)
+    }
     endPaneDrag()
   }
   // Cancelled (the window lost focus, the pointer was taken): nothing moves.
@@ -3872,6 +3900,8 @@ function beginPaneDrag(srcId, e) {
 function endPaneDrag() {
   paneDrag.active = false
   paneDrag.srcId = null
+  paneDrag.fromSide = false
+  paneDrag.browser = false
   paneDrag.target = null
   paneDrag.zoneRect = null
   document.body.classList.remove('pane-dragging')
@@ -3881,6 +3911,18 @@ function updateDropTarget(x, y) {
   paneDrag.target = null
   paneDrag.zoneRect = null
   const els = document.elementsFromPoint(x, y)
+  // The right side panel: its web pages take a browser pane (a page dragged
+  // from it drops nowhere there).
+  const sideEl = els.find((el) => el.classList && el.classList.contains('task-panel'))
+  if (sideEl) {
+    if (paneDrag.browser && !paneDrag.fromSide) {
+      const r = sideEl.getBoundingClientRect()
+      paneDrag.target = { kind: 'side' }
+      paneDrag.zoneRect = { left: r.left, top: r.top, width: r.width, height: r.height }
+      paneDrag.label = t('app.drag.toSidePanel', 'Open in the side panel')
+    }
+    return
+  }
   const wsEl = els.find((el) => el.dataset && el.dataset.wsDropId)
   if (wsEl) {
     const id = wsEl.dataset.wsDropId
@@ -3913,13 +3955,8 @@ function updateDropTarget(x, y) {
   )
   if (!paneEl || paneEl.dataset.paneId === paneDrag.srcId) return
   const r = paneEl.getBoundingClientRect()
-  const fx = (x - r.left) / r.width
-  const fy = (y - r.top) / r.height
-  let zone = 'center'
-  if (fx < 0.3 || fx > 0.7 || fy < 0.3 || fy > 0.7) {
-    const d = { left: fx, right: 1 - fx, top: fy, bottom: 1 - fy }
-    zone = Object.keys(d).reduce((a, b) => (d[a] <= d[b] ? a : b))
-  }
+  // A page from the side panel has nothing to swap with: a side, always.
+  const zone = paneDropZone((x - r.left) / r.width, (y - r.top) / r.height, { center: !paneDrag.fromSide })
   const half = { width: r.width / 2, height: r.height / 2 }
   const rect = {
     left: { left: r.left, top: r.top, width: half.width, height: r.height },
@@ -4018,20 +4055,7 @@ function movePane(srcId, target) {
     const dst = wsById(target.id)
     if (!dst) return
     detachLeaf(srcWs, srcId)
-    if (!dst.tree) {
-      dst.tree = src
-    } else {
-      const dir = target.zone === 'left' || target.zone === 'right' ? 'row' : 'col'
-      const before = target.zone === 'left' || target.zone === 'top'
-      const root = dst.tree
-      dst.tree = reactive({
-        type: 'split',
-        id: newId('split'),
-        dir,
-        sizes: before ? [35, 65] : [65, 35],
-        children: before ? [src, root] : [root, src]
-      })
-    }
+    dst.tree = placeLeaf(dst.tree, target, src, { makeSplit })
     dst.activeId = srcId
     refitSoon()
     return
@@ -4057,18 +4081,72 @@ function movePane(srcId, target) {
   }
 
   detachLeaf(srcWs, srcId)
-  const dir = target.zone === 'left' || target.zone === 'right' ? 'row' : 'col'
-  const before = target.zone === 'left' || target.zone === 'top'
-  dstWs.tree = replaceNode(dstWs.tree, target.id, (orig) =>
-    reactive({
-      type: 'split',
-      id: newId('split'),
-      dir,
-      sizes: [50, 50],
-      children: before ? [src, orig] : [orig, src]
-    })
-  )
+  dstWs.tree = placeLeaf(dstWs.tree, target, src, { makeSplit }) || dstWs.tree
   dstWs.activeId = srcId
+  refitSoon()
+}
+
+const makeSplit = (dir, children, sizes) => reactive({ type: 'split', id: newId('split'), dir, sizes, children })
+
+// The pages agents drive now (their webContents ids; the main process says
+// when one starts and stops, src/main/agentBrowser.js).
+const agentDrivenGuests = new Set()
+let offAgentControl = null
+onMounted(() => {
+  const api = window.shellApi.browser
+  if (!api || typeof api.onAgentControl !== 'function') return
+  offAgentControl = api.onAgentControl((ev) => {
+    if (!ev || ev.webContentsId == null) return
+    if (ev.active) agentDrivenGuests.add(ev.webContentsId)
+    else agentDrivenGuests.delete(ev.webContentsId)
+  })
+})
+onBeforeUnmount(() => offAgentControl && offAgentControl())
+
+// A browser pane dropped on the side panel: one of its web tabs now, shown;
+// the pane leaves the grid. The page opens again there on its address (see
+// browser/pageMove.js). No agent may drive a side panel page: one that was
+// driving this one lets go (its view is destroyed with the pane) and no
+// longer finds it in its page list.
+function moveBrowserToSide(srcId) {
+  const ws = wsOfLeaf(srcId)
+  const leaf = findLeaf(srcId)
+  if (!ws || !leaf || leaf.kind !== 'browser') return
+  const live = pageOf(srcId)
+  const driven = !!leaf.openedBy || !!(live && live.guestId != null && agentDrivenGuests.has(live.guestId))
+  const page = sidePageFromLeaf(leaf, newSidePageId(sideBrowsers.value), {
+    blankUrl: BLANK_URL,
+    defaultTitle: t('app.pane.browser', 'Browser')
+  })
+  if (maximizedId.value === srcId) maximizedId.value = null
+  detachLeaf(ws, srcId)
+  sideBrowsers.value = [...sideBrowsers.value, page]
+  showSideTab(page.id)
+  if (driven) showToast(t('app.drag.agentReleased', 'Moved to the side panel: agents can no longer drive this page.'), { timeout: 5000 })
+  refitSoon()
+}
+
+// A web tab of the side panel dropped on the grid: a browser pane at the drop
+// zone (beside a pane, along a side of the grid, or in a workspace of the
+// sidebar); the tab leaves the panel. A new pane: opened by no agent, in the
+// worktree grid of the pane it lands by.
+function moveSidePageToGrid(pageId, target) {
+  const page = sideBrowsers.value.find((b) => b.id === pageId)
+  if (!page) return
+  const ws = target.kind === 'pane' ? wsOfLeaf(target.id) : wsById(target.id)
+  if (!ws) return
+  const anchorId = target.kind === 'pane' ? target.id : ws.activeId && findLeafIn(ws.tree, ws.activeId) ? ws.activeId : firstLeafId(ws.tree)
+  const anchor = anchorId ? findLeafIn(ws.tree, anchorId) : null
+  const leaf = leafFromSidePage(page, (url) => makeBrowserLeaf(null, url))
+  keepView(leaf, anchor, ws)
+  const next = placeLeaf(ws.tree, target, leaf, { anchorId, makeSplit })
+  if (!next) return
+  ws.tree = next
+  // Its tab goes (the panel shows the tab it showed before).
+  if (sidePanelRef.value) sidePanelRef.value.closeBrowser(pageId)
+  else sideBrowsers.value = sideBrowsers.value.filter((b) => b.id !== pageId)
+  if (ws.id !== currentWsId.value) selectWorkspace(ws.id)
+  ws.activeId = leaf.id
   refitSoon()
 }
 
@@ -4740,12 +4818,23 @@ const RESTORE_WINDOW_MS = 60000
 let activityLoaded = false
 const lastStateEvent = {} // leafId -> the logged event of its current state
 
+// Each pane's last state logged before startup, found in one pass over the
+// plain log (not one pass through Vue's proxies per pane: with 20000 events
+// and a dozen agents that froze startup). Events logged since have later
+// times, so the index only changes when old events leave the log.
+let savedStates = null
+let savedStatesTrim = -1
 function savedStateBefore(id) {
-  let last = null
-  for (const e of activity) {
-    if (e.type === 'agent.state' && e.paneId === id && e.t < appStartedAt && (!last || e.t > last.t)) last = e
+  if (!savedStates || savedStatesTrim !== activityTrimCount()) {
+    savedStates = new Map()
+    savedStatesTrim = activityTrimCount()
+    for (const e of toRaw(activity)) {
+      if (e.type !== 'agent.state' || !(e.t < appStartedAt)) continue
+      const last = savedStates.get(e.paneId)
+      if (!last || e.t > last.t) savedStates.set(e.paneId, e)
+    }
   }
-  return last
+  return savedStates.get(id) || null
 }
 
 // The saved start is taken back once per pane at most, and never after the
@@ -10548,7 +10637,12 @@ onBeforeUnmount(() => {
       <aside
         v-if="taskPanelOpen"
         class="task-panel"
-        :class="{ resizing: taskResizing, 'side-fullscreen': sideFullscreen }"
+        :class="{
+          resizing: taskResizing,
+          'side-fullscreen': sideFullscreen,
+          'page-drop': paneDrag.active && paneDrag.browser && !paneDrag.fromSide,
+          'page-drop-over': paneDrag.active && !!paneDrag.target && paneDrag.target.kind === 'side'
+        }"
         :style="{ flexBasis: taskPanelShown + 'px' }"
       >
         <div
@@ -10557,6 +10651,7 @@ onBeforeUnmount(() => {
           @pointerdown="startTaskResize"
         ></div>
         <SidePanel
+          ref="sidePanelRef"
           v-model:tab="sideTab"
           v-model:fullscreen="sideFullscreen"
           v-model:browsers="sideBrowsers"
@@ -10582,6 +10677,7 @@ onBeforeUnmount(() => {
           @focus-pane="focusPane"
           @review="openReview"
           @sleep="sleepPanes"
+          @page-drag="beginSidePageDrag"
         />
       </aside>
     </div>
