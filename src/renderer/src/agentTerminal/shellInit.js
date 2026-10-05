@@ -61,13 +61,13 @@ export function posixInit(env = AGENT_ENV) {
     `__ts_pc(){ local s=$?; if [ "$__ts_ran" = 1 ]; then builtin printf '\\e]633;D;%s\\a' "$s"; else builtin printf '\\e]633;D\\a'; fi; __ts_ran=0; `, // i18n-ignore
     `[ -n "$__ts_opc" ] && eval "$__ts_opc"; builtin printf '\\e]633;P;Cwd=%s\\a' "$(builtin printf '%s' "$PWD" | sed 's/\\\\/\\\\x5c/g; s/;/\\\\x3b/g')"; __ts_in=0; }; `, // i18n-ignore
     `__ts_pre(){ [ "$__ts_in" = 0 ] || return 0; case "$BASH_COMMAND" in __ts_*) return 0;; esac; __ts_in=1; __ts_ran=1; builtin printf '\\e]633;C\\a'; }; `, // i18n-ignore
-    `trap '__ts_pre' DEBUG; PROMPT_COMMAND=__ts_pc; PS1="\\[\\e]633;A\\a\\]$PS1\\[\\e]633;B\\a\\]"; builtin printf '\\e]633;P;HasRichCommandDetection=True\\a'` // i18n-ignore
+    `trap '__ts_pre' DEBUG; PROMPT_COMMAND=__ts_pc; PS1="\\[\\e]633;A\\a\\]$PS1\\[\\e]633;B\\a\\]"; builtin printf '\\e]633;P;HasRichCommandDetection=True\\a\\e]633;P;Shell=bash\\a'` // i18n-ignore
   ].join('')
   const zsh = [
     'setopt HIST_IGNORE_SPACE; __ts_ran=0; ',
     `__ts_pc(){ local s=$?; if [[ $__ts_ran == 1 ]]; then printf '\\e]633;D;%s\\a' $s; else printf '\\e]633;D\\a'; fi; __ts_ran=0; printf '\\e]633;P;Cwd=%s\\a' "\${PWD//;/\\\\x3b}"; }; `, // i18n-ignore
     `__ts_pe(){ __ts_ran=1; printf '\\e]633;C\\a'; }; precmd_functions=(__ts_pc $precmd_functions); preexec_functions+=(__ts_pe); `, // i18n-ignore
-    `PS1="%{$(printf '\\e]633;A\\a')%}$PS1%{$(printf '\\e]633;B\\a')%}"; printf '\\e]633;P;HasRichCommandDetection=True\\a'` // i18n-ignore
+    `PS1="%{$(printf '\\e]633;A\\a')%}$PS1%{$(printf '\\e]633;B\\a')%}"; printf '\\e]633;P;HasRichCommandDetection=True\\a\\e]633;P;Shell=zsh\\a'` // i18n-ignore
   ].join('')
   return ` ${vars}; if [ -n "$BASH_VERSION" ]; then ${bash}; elif [ -n "$ZSH_VERSION" ]; then ${zsh}; fi; clear` // i18n-ignore
 }

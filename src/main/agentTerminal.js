@@ -373,7 +373,7 @@ export function createAgentTerminal({ verify, settings = () => ({ enabled: true 
     writable(t)
     notStopped(agentPane, t)
     const s = conf()
-    const lang = t.lang === 'powershell' ? 'powershell' : 'bash'
+    const lang = t.lang === 'powershell' || t.lang === 'bash' ? t.lang : 'unknown'
     // A terminal on a host that is not the project's: the project's rules do
     // not apply, and nothing is approved without asking (rules or session).
     const elsewhere = t.projectHost === false

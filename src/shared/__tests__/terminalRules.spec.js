@@ -182,3 +182,10 @@ describe('security review: a first word shaped like a regex', () => {
     expect(rulesOfAction({ kind: 'prefix', keys: ['/./s', 'make'], scope: 'user' })).toEqual([{ key: 'make', value: true, scope: 'user' }])
   })
 })
+
+describe('security review: a shell Tessel does not know', () => {
+  it('is never auto-approved and gets no rule offers', () => {
+    const r = analyzeCommandLine('ls', { rules: buildRules(), enabled: true, lang: 'unknown' })
+    expect(r).toMatchObject({ isAutoApproved: false, isAutoApproveAllowed: false, actions: [] })
+  })
+})

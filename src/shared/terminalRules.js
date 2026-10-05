@@ -686,6 +686,9 @@ export function analyzeCommandLine(commandLine, { lang = 'bash', rules = buildRu
   const isPwsh = lang === 'powershell'
   const line = String(commandLine || '').trimStart()
   const sess = sessionRules(session.rules)
+  // A shell Tessel cannot read (cmd, fish, an SSH host's unknown shell):
+  // nothing is auto-approved, no rule is offered.
+  if (lang !== 'bash' && lang !== 'powershell') return { isAutoApproved: false, isAutoApproveAllowed: false, isDenied: false, info: null, disclaimers: ['unanalyzable'], actions: [], subCommands: [], reason: 'unknown shell' }
   if (enabled && session.allowAll) return { isAutoApproved: true, isAutoApproveAllowed: true, isDenied: false, info: 'Allowed for this session', disclaimers: [], actions: [], subCommands: [] }
   const parsed = splitCommandLine(line, lang)
   const subCommands = parsed.subCommands

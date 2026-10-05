@@ -562,3 +562,12 @@ describe('security review: a command the card shows whole', () => {
     expect(checkCommand('ls\npwd')).toBe('ls\npwd')
   })
 })
+
+describe('security review: an unknown remote shell', () => {
+  it('always asks', async () => {
+    const win = fakeWindow({ target: { ...OWN, lang: 'unknown', shellKind: 'ssh', projectHost: true } })
+    const { at } = make(win, { settings: { autoApprove: true } })
+    await at.handle(signed('run', { command: 'ls', explanation: 'x', goal: 'y', mode: 'sync' }))
+    expect(win.ops()).toContain('approve')
+  })
+})

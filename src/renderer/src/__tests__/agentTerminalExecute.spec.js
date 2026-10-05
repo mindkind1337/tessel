@@ -183,6 +183,7 @@ describe('the first line in an agent\'s own terminal', () => {
     const b = posixInit()
     expect(b).toContain("DEBIAN_FRONTEND='noninteractive'")
     expect(b).toContain('HISTCONTROL=ignorespace')
+    expect(b).toContain('633;P;Shell=bash')
     expect(initLineFor('cmd')).toBe(null)
     expect(initLineFor('ssh')).toBe(b)
   })

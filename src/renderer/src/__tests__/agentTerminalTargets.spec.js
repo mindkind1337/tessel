@@ -291,3 +291,12 @@ describe('security review: which host', () => {
     expect((await ask(targets, { op: 'resolve', terminal: 'pane-srv' })).projectHost).toBe(false)
   })
 })
+
+describe('security review: the shell of an SSH terminal', () => {
+  it('is unknown until the shell says it is bash or zsh', async () => {
+    const { targets, termOf } = setup()
+    expect((await ask(targets, { op: 'resolve', terminal: 'pane-srv' })).lang).toBe('unknown')
+    termOf('pane-srv').osc('P;Shell=bash')
+    expect((await ask(targets, { op: 'resolve', terminal: 'pane-srv' })).lang).toBe('bash')
+  })
+})

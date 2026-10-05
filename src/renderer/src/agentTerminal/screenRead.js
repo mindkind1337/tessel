@@ -187,6 +187,8 @@ export function createShellIntegration({ registerMarker = () => null } = {}) {
       }
       case 'P':
         if (e.key === 'Cwd') s.cwd = String(e.value || '').slice(0, 1000)
+        // The shell says what it is (Tessel's init line for an agent's terminal).
+        if (e.key === 'Shell' && /^(bash|zsh)$/.test(e.value)) s.shell = e.value
         if (e.key === 'HasRichCommandDetection' && /^true$/i.test(e.value)) s.rich = true
         break
       default:
@@ -199,7 +201,7 @@ export function createShellIntegration({ registerMarker = () => null } = {}) {
     // 'rich' | 'basic' | 'none'
     quality: () => (s.rich ? 'rich' : s.seen ? 'basic' : 'none'),
     executing: () => s.executing,
-    state: () => ({ integration: s.seen, running: s.seen ? s.executing : null, ends: s.ends, exitCode: s.exitCode, prompt: s.prompt, cwd: s.cwd, quality: s.rich ? 'rich' : s.seen ? 'basic' : 'none' }),
+    state: () => ({ shell: s.shell || null, integration: s.seen, running: s.seen ? s.executing : null, ends: s.ends, exitCode: s.exitCode, prompt: s.prompt, cwd: s.cwd, quality: s.rich ? 'rich' : s.seen ? 'basic' : 'none' }),
     lastCommand: () => last,
     onCommandFinished(fn) {
       finished.add(fn)

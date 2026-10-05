@@ -91,12 +91,24 @@ export function createAgentTerminalTargets(deps) {
   }
 
   // The shell's language for rules: PowerShell or bash-like.
+  // The language the rules read a terminal's commands in: PowerShell, bash
+  // (bash and zsh), or unknown (cmd, an SSH host's or WSL's shell until it
+  // says it is bash or zsh): an unknown shell's commands are always asked.
   function shellOf(leaf) {
-    if (leaf.remoteHostId) return { lang: 'bash', shellKind: 'ssh' }
     const id = String(leaf.shellId || '')
+    let reported = null
+    try {
+      const pane = deps.getPane(leaf.id)
+      const t = pane && typeof pane.agentAdapter === 'function' ? pane.agentAdapter() : null
+      reported = t ? t.shell.state().shell || null : null
+    } catch {
+      reported = null
+    }
+    const posix = reported === 'bash' || reported === 'zsh'
+    if (leaf.remoteHostId) return { lang: posix ? 'bash' : 'unknown', shellKind: 'ssh' }
     if (id === 'pwsh' || id === 'powershell') return { lang: 'powershell', shellKind: id }
-    if (id === 'cmd') return { lang: 'bash', shellKind: 'cmd' }
-    return { lang: 'bash', shellKind: id || 'bash' }
+    if (id === 'gitbash') return { lang: 'bash', shellKind: id }
+    return { lang: posix ? 'bash' : 'unknown', shellKind: id || 'unknown' }
   }
   const workspaceKey = (ws) => String((ws.remote && `${ws.remote.hostId}:${ws.remote.path}`) || ws.cwd || ws.id || '')
 
