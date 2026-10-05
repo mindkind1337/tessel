@@ -58,6 +58,7 @@ import { writeBoardRule } from './agentMemory'
 import { claudeImageFile, isPastedImage, PASTE_DIR } from './pastedImages'
 import { createBrowserGuests } from './browserGuest'
 import { createAgentBrowser } from './agentBrowser'
+import { createAgentTerminal } from './agentTerminal'
 import { createChatSessions } from './chat/sessions'
 import { createChatImages } from './chat/chatImages'
 import { transcriptHomeFor } from './chat/transcriptHistory'
@@ -2639,6 +2640,52 @@ ipcMain.handle('browser:agentStop', (event, id) => {
   if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return false
   return agentBrowser.stop(id)
 })
+// Agents running commands in terminals (agentTerminal.js): the terminal
+// tools of teamMcp/server.cjs, over the tessel command's pipe ('terminal'
+// below), each request signed by its pane's team secret.
+// Off until the window says what the settings are (its first report comes at start).
+let agentTerminalSettings = { enabled: false }
+const agentTerminal = createAgentTerminal({
+  verify: (body, paneId) => verifyRequest(body, paneId, 'terminal'),
+  settings: () => agentTerminalSettings,
+  ask: (method, params, opts) => cliBridge.ask(method, params, opts),
+  // A program running under a local shell (Settings' close confirmation does the same).
+  busyOf: async (ids) => {
+    const procs = await listProcessNames()
+    if (!procs) return {}
+    const out = {}
+    for (const id of ids) {
+      const pid = ptyInfo.get(id)?.pid
+      if (Number.isInteger(pid) && pid > 0 && procs.some((p) => p.pid === pid)) out[id] = runningWork(procs, pid).length > 0
+    }
+    return out
+  },
+  send,
+  logFile: join(app.getPath('userData'), 'agent-terminal.log'),
+  outputDir: join(os.tmpdir(), 'tessel-terminal-output'),
+  log
+})
+// Settings > Agents > Terminals (the window says it at start and on each change).
+ipcMain.handle('terminal:agentSettings', (event, opts) => {
+  if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return false
+  const o = opts && typeof opts === 'object' ? opts : {}
+  const rulesOf = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : {})
+  const ws = {}
+  for (const [k, v] of Object.entries(rulesOf(o.workspaceRules)).slice(0, 500)) if (typeof k === 'string' && k.length <= 2000) ws[k] = rulesOf(v)
+  agentTerminalSettings = { enabled: o.enabled === true, autoApprove: o.autoApprove === true, ignoreDefaults: o.ignoreDefaults === true, userRules: rulesOf(o.userRules), workspaceRules: ws }
+  if (!agentTerminalSettings.enabled) agentTerminal.releaseAll()
+  return true
+})
+// The Stop on a terminal's "<agent> is using this terminal" badge.
+ipcMain.handle('terminal:agentStop', (event, paneId) => {
+  if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return false
+  return agentTerminal.stop(paneId)
+})
+// "Allow again" after a Stop.
+ipcMain.handle('terminal:agentAllow', (event, q) => {
+  if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return false
+  return agentTerminal.allowAgain(q && q.paneId, q && q.agentPane)
+})
 ipcMain.handle('clipboard:saveImage', () => {
   const img = clipboard.readImage()
   if (img.isEmpty()) return null
@@ -3396,6 +3443,7 @@ ipcMain.on('pty:kill', (_evt, { id }) => {
   host.send('kill', { id })
   ptyInfo.delete(id)
   revokeTeamSecret(id)
+  agentTerminal.forgetPane(id)
 })
 
 // Settings > General, "Confirm before closing running terminals": is a
@@ -3878,7 +3926,8 @@ const cliHandlers = {
   status: async () => ({ version: app.getVersion(), ...(await cliBridge.ask('status', {})) }),
   'task.add': async (params) => cliBridge.ask('addTask', params),
   usage: async () => accountUsage.usage(),
-  browser: async (params) => agentBrowser.handle(params)
+  browser: async (params) => agentBrowser.handle(params),
+  terminal: async (params) => agentTerminal.handle(params)
 }
 const cliServer = createCliServer({
   userData: app.getPath('userData'),

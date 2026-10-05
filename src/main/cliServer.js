@@ -19,8 +19,10 @@
 // a file, open a terminal or agent pane, focus the window, list the panes,
 // add a card to the task board, read the usage, and (method "browser") an
 // agent's browser tool (agentBrowser.js: signed by the agent's own pane,
-// checked there). Nothing types into a terminal, answers a confirmation, or
-// controls orchestration workers.
+// checked there), and (method "terminal") an agent's terminal tool
+// (agentTerminal.js: signed the same way; what it types, the user approves).
+// Nothing else types into a terminal, answers a confirmation, or controls
+// orchestration workers.
 import crypto from 'crypto'
 import fs from 'fs'
 import path from 'path'
@@ -34,7 +36,7 @@ export const MAX_REPLY_BYTES = 1024 * 1024
 export const RUNTIME_FILE = 'cli-runtime.json'
 export const TOKEN_FILE = 'cli.token'
 export const MAX_IN_FLIGHT = 8
-export const METHODS = ['ping', 'focus', 'open', 'new', 'status', 'task.add', 'usage', 'browser']
+export const METHODS = ['ping', 'focus', 'open', 'new', 'status', 'task.add', 'usage', 'browser', 'terminal']
 
 const TOKEN_RE = /^[0-9a-f]{64}$/
 const MAX_PATH = 1024
@@ -192,6 +194,8 @@ export function validateParams(method, params = {}) {
     }
     case 'browser':
       return browserParams(params)
+    case 'terminal':
+      return terminalParams(params)
     default:
       throw new CliError('unknown_method', t('main.cli.unknownMethod', 'Unknown request: {{method}}', { method: String(method).slice(0, 40) }))
   }
@@ -219,6 +223,36 @@ function browserParams(params) {
     clean[k] = v
   }
   if (Buffer.byteLength(JSON.stringify(clean), 'utf8') > MAX_BROWSER_ARGS_BYTES) throw new CliError('too_large', t('main.cli.tooLarge', 'The request is too large.'))
+  if (!auth || typeof auth !== 'object' || Array.isArray(auth) || typeof auth.nonce !== 'string' || typeof auth.mac !== 'string' || !Number.isFinite(auth.at)) throw bad()
+  return { pane, op, args: clean, auth: { nonce: auth.nonce.slice(0, 80), at: auth.at, mac: auth.mac.slice(0, 128) } }
+}
+
+// An agent's terminal tool (teamMcp/server.cjs): its pane, the operation,
+// flat arguments (strings, numbers, booleans; "keys" a list of key names)
+// and the pane's signature. Who may do what is decided by agentTerminal.js.
+const TERMINAL_ARG_KEYS = new Set(['id', 'command', 'explanation', 'goal', 'mode', 'isBackground', 'timeout', 'host', 'waitForOutput', 'keys', 'all', 'lines'])
+// A command of 8 KB (control characters 6 bytes each in JSON) and its texts.
+export const MAX_TERMINAL_ARGS_BYTES = 64 * 1024
+function terminalParams(params) {
+  const bad = () => invalid(t('main.cli.badParams', 'The request’s parameters are not valid.'))
+  const { pane, op, args, auth } = params
+  if (typeof pane !== 'string' || !/^[A-Za-z0-9][\w.:-]{0,99}$/.test(pane)) throw bad()
+  if (typeof op !== 'string' || !/^[a-zA-Z]{1,20}$/.test(op)) throw bad()
+  const a = args == null ? {} : args
+  if (typeof a !== 'object' || Array.isArray(a)) throw bad()
+  const clean = {}
+  for (const [k, v] of Object.entries(a)) {
+    if (!TERMINAL_ARG_KEYS.has(k)) throw bad()
+    if (v === null || v === undefined) continue
+    if (k === 'keys' && Array.isArray(v)) {
+      if (v.length > 64 || v.some((x) => typeof x !== 'string' || x.length > 40)) throw bad()
+      clean[k] = v.slice()
+      continue
+    }
+    if (!['string', 'number', 'boolean'].includes(typeof v) || (typeof v === 'number' && !Number.isFinite(v))) throw bad()
+    clean[k] = v
+  }
+  if (Buffer.byteLength(JSON.stringify(clean), 'utf8') > MAX_TERMINAL_ARGS_BYTES) throw new CliError('too_large', t('main.cli.tooLarge', 'The request is too large.'))
   if (!auth || typeof auth !== 'object' || Array.isArray(auth) || typeof auth.nonce !== 'string' || typeof auth.mac !== 'string' || !Number.isFinite(auth.at)) throw bad()
   return { pane, op, args: clean, auth: { nonce: auth.nonce.slice(0, 80), at: auth.at, mac: auth.mac.slice(0, 128) } }
 }

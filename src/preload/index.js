@@ -451,6 +451,17 @@ const api = {
     onAgentControl: (cb) => subscribe('browser:agentControl', cb)
   },
 
+  // Agents using the other terminals (src/main/agentTerminal.js): the
+  // settings, the badge's Stop, "Allow again", and when an agent starts or
+  // stops using a terminal and what it ran there.
+  terminalAgent: {
+    settings: (opts) => ipcRenderer.invoke('terminal:agentSettings', opts),
+    stop: (paneId) => ipcRenderer.invoke('terminal:agentStop', paneId),
+    allowAgain: (paneId, agentPane) => ipcRenderer.invoke('terminal:agentAllow', { paneId, agentPane }),
+    onControl: (cb) => subscribe('terminal:agentControl', cb),
+    onLog: (cb) => subscribe('terminal:agentLog', cb)
+  },
+
   // Chat agents (src/main/chat/sessions.js): Claude without a terminal. The
   // window opens, messages, answers approvals and follows each chat's events.
   chat: {

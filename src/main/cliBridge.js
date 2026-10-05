@@ -12,13 +12,15 @@ export function createCliBridge({ send, timeoutMs = 30000, timers = { setTimeout
   let ready = false
   let waiting = [] // sends held until the window is ready
 
-  function ask(method, params = {}) {
+  // opts.timeoutMs: a longer wait for this one (an approval the user answers).
+  function ask(method, params = {}, opts = {}) {
     return new Promise((resolve, reject) => {
       const id = crypto.randomUUID()
+      const limit = opts && Number.isFinite(opts.timeoutMs) && opts.timeoutMs > 0 ? opts.timeoutMs : timeoutMs
       const timer = timers.setTimeout(() => {
         pending.delete(id)
         reject(new CliError('timeout', t('main.cli.windowTimeout', 'Tessel’s window did not answer in time.')))
-      }, timeoutMs)
+      }, limit)
       const entry = { resolve, reject, timer, sent: false }
       pending.set(id, entry)
       const go = () => {

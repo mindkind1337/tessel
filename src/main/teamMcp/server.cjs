@@ -17,6 +17,9 @@
 //   _press / _scroll / _screenshot / _console / _wait
 //                            drive Tessel's built-in browser pages of my own
 //                            project (see "Browser tools" below)
+//   run_in_terminal / get_terminal_output / send_to_terminal / kill_terminal /
+//   terminal_last_command / terminal_selection / terminal_list
+//                            run commands in terminals (see "Terminal tools")
 //
 // Tessel stays the only writer of the channel's state.json: this server only
 // reads it, sends by dropping a file into my outbox (Tessel takes it in), and
@@ -53,7 +56,9 @@ function remoteHost() {
 // The note put before what it writes to the others (messages, reports).
 const remoteTag = () => (isRemote() ? `[from an agent on ${remoteHost()}] ` : '')
 const REMOTE_BLOCKED = new Set(['team_worker_start', 'team_worker_read', 'team_worker_stop', 'team_worker_release', 'team_worker_list'])
-const remoteBlocked = (name) => isRemote() && (REMOTE_BLOCKED.has(name) || String(name).startsWith('browser_'))
+// Terminal tools: Tessel's panes are on the user's computer.
+const TERMINAL_TOOL_NAMES = new Set(['run_in_terminal', 'get_terminal_output', 'send_to_terminal', 'kill_terminal', 'terminal_last_command', 'terminal_selection', 'terminal_list'])
+const remoteBlocked = (name) => isRemote() && (REMOTE_BLOCKED.has(name) || String(name).startsWith('browser_') || TERMINAL_TOOL_NAMES.has(name))
 
 // --- Finding my team and me ---------------------------------------------------
 
@@ -1166,6 +1171,147 @@ const BROWSER_TOOLS = [
 const BROWSER_OPS = Object.fromEntries(BROWSER_TOOLS.map((t) => [t.name, t.name.slice('browser_'.length)]))
 TOOLS.push(...BROWSER_TOOLS)
 
+// --- Terminal tools -------------------------------------------------------------------
+// Run commands in a terminal, the way Visual Studio Code's chat agents do
+// (MIT, Copyright (c) Microsoft Corporation: src/vs/workbench/contrib/
+// terminalContrib/chatAgentTools/browser/tools/runInTerminalTool.ts,
+// getTerminalOutputTool.ts, sendToTerminalTool.ts, killTerminalTool.ts,
+// getTerminalLastCommandTool.ts, getTerminalSelectionTool.ts: the tools and
+// their descriptions, adapted). The agent's commands run in terminals of its
+// own, visible panes next to it in Tessel (on its project's SSH host when the
+// project is there, or on a host it names); the user approves each command
+// unless their rules allow it. Tessel's addition: "id" of one of the user's
+// own shells (terminal_list) runs it there, approved once per terminal.
+//
+// Transport: the tessel command's pipe, each request signed with this pane's
+// team secret (team key "terminal"); Tessel checks the pane, the terminal,
+// the user's approval and setting (src/main/agentTerminal.js).
+const TERMINAL_TEAM_KEY = 'terminal'
+// A command waits up to 2 minutes, an approval up to 5.
+const TERMINAL_TIMEOUT_MS = 8 * 60 * 1000
+
+function terminalRequest(op, args) {
+  const clean = {}
+  for (const [k, v] of Object.entries(args || {})) if (k !== 'me' && v !== null && v !== undefined && (v !== '' || k === 'command')) clean[k] = v
+  const pane = String(process.env.TESSEL_PANE_ID || '')
+  const nonce = crypto.randomBytes(18).toString('base64url')
+  const at = Date.now()
+  const mac = crypto
+    .createHmac('sha256', Buffer.from(teamSecret(), 'hex'))
+    .update(canonical({ pane, team: TERMINAL_TEAM_KEY, body: { op, args: clean, nonce, at } }))
+    .digest('hex')
+  return { pane, op, args: clean, auth: { nonce, at, mac } }
+}
+
+async function terminalTool(op, args, deps = { runtimes: browserRuntimes, call: pipeCall }) {
+  if (!process.env.TESSEL_PANE_ID || !teamSecret())
+    return { text: 'The terminal tools work only in an agent Tessel started: restart this agent from Tessel (right-click its pane, Restart).', isError: true }
+  const runtimes = deps.runtimes()
+  if (!runtimes.length) return { text: 'Tessel is not running (or is too old for the terminal tools).', isError: true }
+  let last = null
+  for (const rt of runtimes) {
+    const r = await deps.call(rt, 'terminal', terminalRequest(op, args), TERMINAL_TIMEOUT_MS)
+    if (r && r.ok) return { text: String((r.result && r.result.text) || 'Done.') }
+    last = r && r.error ? r.error : { message: 'Tessel could not do it.' }
+    if (last.code === 'unknown_pane' || last.code === 'not_running' || last.code === 'unknown_method') continue
+    break
+  }
+  return { text: `${last.message || 'Tessel could not do it.'}${last.code ? ` [${last.code}]` : ''}`, isError: true }
+}
+
+const TERMINAL_ID = { type: 'string', description: 'The terminal ID returned by run_in_terminal (or from terminal_list).' }
+const RUN_DESCRIPTION = [
+  'Run a shell command in a terminal of your own in Tessel (a visible pane next to yours that the user can watch), preserving environment variables, working directory and other context across sync commands. On Windows it is PowerShell: chain commands with ; (Windows PowerShell 5.1 has no &&). On an SSH host it is the host\'s shell (bash): use && to chain commands. The user approves each command before it runs, unless their rules allow it; they may edit it.',
+  '',
+  'Command Execution:',
+  '- Never create a sub-shell (eg. bash -c "command" or powershell -c "command") unless explicitly asked',
+  '- Prefer pipelines | over temporary files',
+  '- By default (mode=sync), shell and cwd are reused by later sync commands',
+  '',
+  'Execution Mode:',
+  "- mode='sync' (strongly preferred): waits for the command to complete and returns its full output inline. Use for ALL one-shot commands (builds, tests, installs, compilation, scripts). Omit timeout.",
+  "- mode='async': waits for an initial idle/output signal, then returns a terminal ID and output snapshot while the process keeps running in its own terminal. Use ONLY for processes that must keep running (servers, watchers, daemons).",
+  '- Sync output is final: do NOT call get_terminal_output afterward unless the result says the command was moved to background, timed out, or needs input.',
+  '- A command still running after the timeout (at most 120000 ms) keeps running; you get its terminal ID. When an async command or a timed-out sync command finishes, you are notified in your team inbox (when its shell reports command ends). Do NOT poll or sleep to wait for completion.',
+  '',
+  'Output Management:',
+  '- Output exceeding 20KB is saved to a temp file; the result includes the file path so you can read it with your file tools',
+  '- For pager commands, disable paging: git --no-pager, or | cat / | Out-String',
+  '',
+  'Best Practices:',
+  '- Avoid printing credentials unless absolutely required',
+  '- Avoid commands that ask for a password (sudo, ssh to another host, runas): secrets must never go through you. If one asks, the user is told to type it in the terminal; stop and wait.',
+  '- NEVER run sleep or similar wait commands to wait for something. NEVER pipe interactive commands through head, tail, grep, Select-Object: it hides their prompts.',
+  '',
+  'Interactive Input Handling:',
+  '- Send exactly one answer per prompt with send_to_terminal, then read the next prompt with get_terminal_output before the next answer.',
+  '',
+  'Tessel: set "host" to run on an SSH host the user set up in Tessel (its connection must be signed in); set "id" to run in one of the user\'s own shells instead (see terminal_list; the user approves it once for that terminal; never another agent\'s pane).'
+].join('\n')
+const TERMINAL_TOOLS = [
+  {
+    name: 'run_in_terminal',
+    description: RUN_DESCRIPTION,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        command: { type: 'string', description: 'The command to run in the terminal.' },
+        explanation: { type: 'string', description: 'A one-sentence description of what the command does. This will be shown to the user before the command is run.' },
+        goal: { type: 'string', description: 'A short description of the goal or purpose of the command (e.g., "Install dependencies", "Start development server").' },
+        mode: { type: 'string', enum: ['sync', 'async'], description: 'Execution mode for this command. Use sync (default) for nearly all commands.' },
+        timeout: { type: 'number', description: 'Optional. Usually omit. In milliseconds, at most 120000 (the default). If it elapses, the command continues in the background and you get a terminal ID to check output later.' },
+        host: { type: 'string', description: 'Optional: an SSH host from Tessel (its name), to run there. Default: where your project is.' },
+        id: { type: 'string', description: 'Optional: the id of one of the user\'s shells (terminal_list) to run the command there instead of your own terminal.' }
+      },
+      required: ['command', 'explanation', 'goal', 'mode']
+    }
+  },
+  {
+    name: 'get_terminal_output',
+    description:
+      'Get output from a terminal execution that was moved to background (identified by the `id` returned from run_in_terminal), or the last lines of any terminal in your project (see terminal_list; read-only, including other agents\' panes). Use this ONLY when the run_in_terminal result says the command was moved to background, timed out, or needs input. Do NOT call this after a sync command that completed normally. If a background command has not yet completed, you will be notified when it finishes — do NOT poll in a loop.',
+    inputSchema: { type: 'object', properties: { id: TERMINAL_ID, lines: { type: 'number', description: 'For a terminal you did not run a command in: how many last lines (1-400, default 60).' } }, required: ['id'] }
+  },
+  {
+    name: 'send_to_terminal',
+    description:
+      'Send input text to an active terminal execution (identified by the `id` returned from run_in_terminal). The \'command\' field may be empty to press Enter (useful for interactive prompts); it is sent followed by Enter. Or send named keys with \'keys\' instead (e.g. ["Ctrl+C"], ["Down", "Enter"], ["y"]; never paste). By default, returns the last 20 lines of terminal output captured shortly after sending. Set \'waitForOutput\' to true for interactive programs to wait until the terminal becomes idle before returning. Never send passwords or other secrets.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: TERMINAL_ID,
+        command: { type: 'string', description: 'The input text to send to the terminal. The text is sent followed by Enter. Provide an empty string to send just Enter.' },
+        keys: { type: 'array', items: { type: 'string' }, description: 'Instead of command: key names, e.g. Ctrl+C, Escape, Up, Down, Tab, Enter, y.' },
+        waitForOutput: { type: 'boolean', description: 'When true, waits for the terminal to become idle before returning. Defaults to false.' }
+      },
+      required: ['id']
+    }
+  },
+  {
+    name: 'kill_terminal',
+    description: 'Kill one of your own terminals by its ID (closes its pane and stops what runs there). Use this to clean up terminals that are no longer needed (e.g., after stopping a server). The user\'s own terminals are never killed.',
+    inputSchema: { type: 'object', properties: { id: TERMINAL_ID }, required: ['id'] }
+  },
+  {
+    name: 'terminal_last_command',
+    description: 'Get the last command run in the user\'s active terminal in Tessel (read-only).',
+    inputSchema: { type: 'object', properties: {} }
+  },
+  {
+    name: 'terminal_selection',
+    description: 'Get the current selection in the user\'s active terminal in Tessel (read-only).',
+    inputSchema: { type: 'object', properties: {} }
+  },
+  {
+    name: 'terminal_list',
+    description:
+      'List the terminals open in Tessel in your project (or every project with all=true): id, number, name, kind (a shell, an SSH host, another agent\'s pane: read-only), state and folder. Read one with get_terminal_output; run a command in one of the user\'s shells with run_in_terminal and its id (the user approves it once for that terminal).',
+    inputSchema: { type: 'object', properties: { all: { type: 'boolean', description: 'Every project, not only yours' } } }
+  }
+]
+const TERMINAL_OPS = { run_in_terminal: 'run', get_terminal_output: 'output', send_to_terminal: 'send', kill_terminal: 'kill', terminal_last_command: 'lastCommand', terminal_selection: 'selection', terminal_list: 'list' }
+TOOLS.push(...TERMINAL_TOOLS)
+
 // An agent in no team: its workspace's board (.tessel/board/<workspace>),
 // from the panes.<window>.json files Tessel writes (fresh ones only).
 function boardLocate(start) {
@@ -1199,8 +1345,9 @@ function callTool(name, args = {}, signal = null) {
       text: `${name} is not available to an agent on an SSH host (${remoteHost()}): Tessel's browser and its workers are on the user's computer. Ask a teammate on the user's computer, or the user.`,
       isError: true
     }
-  // The browser tools need no team: only this pane's identity.
+  // The browser and terminal tools need no team: only this pane's identity.
   if (BROWSER_OPS[name]) return browserTool(BROWSER_OPS[name], args)
+  if (TERMINAL_OPS[name]) return terminalTool(TERMINAL_OPS[name], args)
   let ctx = locate(args.me)
   // Alone (no team): the board tools use the workspace's board.
   if (ctx.error && BOARD_TOOLS.includes(name)) ctx = boardLocate() || ctx
@@ -1250,7 +1397,7 @@ function callTool(name, args = {}, signal = null) {
 }
 
 const INSTRUCTIONS =
-  'You work in Tessel: the user follows everything you do on its task board, so keep it up to date yourself, without being asked. Add a card (team_task_add) for every piece of work the moment you start it (what the user asks, each step you decide to take, each task you give a teammate), and move your cards as they go (team_task_move: "done" as soon as one is finished). Only a quick question or a short answer needs no card. If you are in a team, call team_inbox when you start and after each step to read messages from teammates, answer them with team_send, and never ask the user to pass messages between agents. To work together: give a teammate a card (team_task_add, with "after" when it must wait for other cards), finish work you were given with team_task_done and a short report, ask one teammate and wait for the answer with team_ask, ask the user to decide with team_task_gate, and send to groups like "@codex" or "@idle"; team_members shows who is idle. A team lead can also coordinate workers: start new agents in new panes with team_worker_start (one per independent piece of work), follow them with team_worker_list and team_worker_read, and stop or release them; a worker reports with team_worker_done and sends team_heartbeat while it works. To check a web page (your dev server, a UI change), use the built-in browser of Tessel with the browser_* tools: browser_pages or browser_open, then browser_snapshot to read the page with element refs (@e1), browser_click / browser_fill / browser_type / browser_press by ref, and browser_snapshot again after the page changes or navigates; browser_wait instead of sleeping, browser_console for errors, browser_screenshot to see it. The user sees an Agent badge on the page and can stop you.'
+  'You work in Tessel: the user follows everything you do on its task board, so keep it up to date yourself, without being asked. Add a card (team_task_add) for every piece of work the moment you start it (what the user asks, each step you decide to take, each task you give a teammate), and move your cards as they go (team_task_move: "done" as soon as one is finished). Only a quick question or a short answer needs no card. If you are in a team, call team_inbox when you start and after each step to read messages from teammates, answer them with team_send, and never ask the user to pass messages between agents. To work together: give a teammate a card (team_task_add, with "after" when it must wait for other cards), finish work you were given with team_task_done and a short report, ask one teammate and wait for the answer with team_ask, ask the user to decide with team_task_gate, and send to groups like "@codex" or "@idle"; team_members shows who is idle. A team lead can also coordinate workers: start new agents in new panes with team_worker_start (one per independent piece of work), follow them with team_worker_list and team_worker_read, and stop or release them; a worker reports with team_worker_done and sends team_heartbeat while it works. To check a web page (your dev server, a UI change), use the built-in browser of Tessel with the browser_* tools: browser_pages or browser_open, then browser_snapshot to read the page with element refs (@e1), browser_click / browser_fill / browser_type / browser_press by ref, and browser_snapshot again after the page changes or navigates; browser_wait instead of sleeping, browser_console for errors, browser_screenshot to see it. The user sees an Agent badge on the page and can stop you. To run shell commands, use run_in_terminal: it runs them in a terminal of your own next to your pane (on your project SSH host when it is there) and the user approves each command; terminal_list shows the other terminals of the user, which you can read with get_terminal_output.'
 // On an SSH host: no browser and no workers.
 const REMOTE_INSTRUCTIONS =
   'You work in Tessel: the user follows everything you do on its task board, so keep it up to date yourself, without being asked. Add a card (team_task_add) for every piece of work the moment you start it (what the user asks, each step you decide to take, each task you give a teammate), and move your cards as they go (team_task_move: "done" as soon as one is finished). Only a quick question or a short answer needs no card. If you are in a team, call team_inbox when you start and after each step to read messages from teammates, answer them with team_send, and never ask the user to pass messages between agents. To work together: give a teammate a card (team_task_add, with "after" when it must wait for other cards), finish work you were given with team_task_done and a short report, ask one teammate and wait for the answer with team_ask, ask the user to decide with team_task_gate, and send to groups like "@codex" or "@idle"; team_members shows who is idle. You run on an SSH host: the browser and worker tools are not available to you (they are on the computer of the user).'
@@ -2002,4 +2149,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { browserTool, browserRequest, browserRuntimes, BROWSER_TOOLS, sanitizeAsk, ASK_LIMITS, PERMISSION_MODES, MODE_PROVIDERS, taskRequest, locate, readInbox, send, members, handle, candidateDirs, ackPath, markRead, unread, listTasks, addTask, moveTask, reportTask, gateTask, ask, groupTargets, listWorkers, listGates, TOOLS, VERSION, AGENT_STATUS_AGENTS, statusEvent }
+module.exports = { browserTool, browserRequest, browserRuntimes, BROWSER_TOOLS, terminalTool, terminalRequest, TERMINAL_TOOLS, TERMINAL_OPS, sanitizeAsk, ASK_LIMITS, PERMISSION_MODES, MODE_PROVIDERS, taskRequest, locate, readInbox, send, members, handle, candidateDirs, ackPath, markRead, unread, listTasks, addTask, moveTask, reportTask, gateTask, ask, groupTargets, listWorkers, listGates, TOOLS, VERSION, AGENT_STATUS_AGENTS, statusEvent }
