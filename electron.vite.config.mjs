@@ -32,6 +32,9 @@ export default defineConfig({
           // Session search's own process (its index and indexing; started
           // only while the search is turned on).
           sessionSearchWorker: 'src/main/sessionSearch/worker.js',
+          // The past conversations list's own process (sessionListClient.js:
+          // started when the list is asked for, stopped when unused).
+          sessionListWorker: 'src/main/sessionListWorker.js',
           // The tessel command (Settings > General > Tessel CLI), run by
           // Tessel's executable as Node; self-contained, unpacked from the
           // app archive (package.json asarUnpack).

@@ -83,7 +83,7 @@ const api = {
   loadNotes: (opts) => ipcRenderer.invoke('notes:load', opts),
   saveNotes: (opts) => ipcRenderer.invoke('notes:save', opts),
   activity: {
-    load: () => ipcRenderer.invoke('activity:load'),
+    load: (opts) => ipcRenderer.invoke('activity:load', opts),
     save: (events) => ipcRenderer.invoke('activity:save', events)
   },
   homeDir: () => ipcRenderer.invoke('app:homeDir'),
