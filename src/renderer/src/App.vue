@@ -1364,18 +1364,15 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
     if (FOUND_AFTER_START.includes(sessionKind(agent)) && !leaf.sessionId) watchFoundSession(leaf, agent.id)
     return leaf
   }
+  // Launch the agent CLI once the shell has had a moment to print its prompt.
   // Claude on an SSH host: its own install there, else VS Code's copy; none:
   // its install is offered instead of typing a command the host lacks.
   let launchCommand = launch && launch.command
   if (agent && agent.command && opts.remoteHostId && sessionKind(agent) === 'claude' && launchCommand === 'claude') {
     launchCommand = await remoteClaudeCommand(opts.remoteHostId, launchCommand)
-    if (!launchCommand) {
-      offerClaudeInstall(opts.remoteHostId)
-      return leaf
-    }
+    if (!launchCommand) offerClaudeInstall(opts.remoteHostId)
   }
-  // Launch the agent CLI once the shell has had a moment to print its prompt.
-  if (agent && agent.command) {
+  if (agent && agent.command && launchCommand) {
     const start = await agentStartLine({ ...agent, command: launchCommand },opts.sessionId || null, !!opts.resume, accountId, { known: opts.remoteSession === true && !!opts.remoteHostId })
     leaf.sessionId = start.sessionId
     // Its arguments (or the Yolo flag) at the end: they work with resuming too.
