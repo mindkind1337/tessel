@@ -118,3 +118,96 @@ export function createShimInstaller({ install, source, log = () => {} }) {
   }
   return { ensure, version, forget: (hostId) => done.delete(hostId) }
 }
+
+// What __t_agents (remoteShell.js) printed: one line per tool,
+// `claude <abs path>|-`, `codex …`, `vscode-claude …`.
+// -> { claude, codex, vscodeClaude } (null when missing)
+const AGENT_TOOL_KEYS = { claude: 'claude', codex: 'codex', 'vscode-claude': 'vscodeClaude' }
+export function parseAgentTools(text) {
+  const out = { claude: null, codex: null, vscodeClaude: null }
+  for (const line of String(text || '').split('\n')) {
+    const sp = line.indexOf(' ')
+    if (sp < 0) continue
+    const key = AGENT_TOOL_KEYS[line.slice(0, sp)]
+    const path = line.slice(sp + 1).replace(/\r$/, '')
+    if (!key || out[key]) continue
+    if (path.startsWith('/') && path.length <= 4096 && !/[\u0000-\u001f\u007f]/.test(path)) out[key] = path
+  }
+  return out
+}
+
+// The check made when a terminal opens on a host (like VS Code's server):
+// the shim put there (ensureShim: createShimInstaller().ensure) and the
+// agents found there (agentTools: remoteFs.agentTools). Once per host and
+// app run, in the background; again at the next terminal when the host could
+// not be reached. send(status) tells the window:
+//   { hostId, label, claude, codex, vscodeClaude, shim: 'ok' | reason, error? }
+// A pane whose ssh still signs in (system ssh with askpass) waits for its
+// sign-in (paneConnected), so the user is never asked twice at once.
+export function createRemoteAgentCheck({ ensureShim, agentTools, label = (id) => id, send = () => {}, log = () => {} }) {
+  const done = new Map() // hostId -> Promise<status>
+  const waiting = new Map() // paneId -> hostId
+  async function run(hostId) {
+    let shim
+    try {
+      shim = await ensureShim(hostId)
+    } catch (err) {
+      shim = { ok: false, reason: 'failed', detail: (err && err.message) || '' }
+    }
+    let tools
+    try {
+      tools = await agentTools(hostId)
+    } catch (err) {
+      tools = { error: (err && err.message) || 'failed' }
+    }
+    const found = tools && !tools.error ? tools : { claude: null, codex: null, vscodeClaude: null }
+    const status = {
+      hostId,
+      label: String(label(hostId) || hostId),
+      claude: found.claude || null,
+      codex: found.codex || null,
+      vscodeClaude: found.vscodeClaude || null,
+      shim: shim && shim.ok ? 'ok' : (shim && shim.reason) || 'failed',
+      ...(tools && tools.error ? { error: String(tools.error).slice(0, 500) } : {})
+    }
+    if (status.error) log(`remote agent check on ${hostId}: ${status.error}`)
+    return status
+  }
+  // A terminal on the host started (connected). -> Promise<status>
+  function hostStarted(hostId) {
+    if (typeof hostId !== 'string' || !hostId) return Promise.resolve(null)
+    let p = done.get(hostId)
+    if (p) return p
+    p = run(hostId).then((status) => {
+      // Not reached: the next terminal there tries again.
+      if (status.error && done.get(hostId) === p) done.delete(hostId)
+      try {
+        send(status)
+      } catch {
+        /* the window is gone */
+      }
+      return status
+    })
+    done.set(hostId, p)
+    return p
+  }
+  return {
+    hostStarted,
+    // Once that pane's ssh is signed in.
+    waitConnected(paneId, hostId) {
+      if (typeof hostId === 'string' && hostId) waiting.set(paneId, hostId)
+    },
+    paneConnected(paneId) {
+      const hostId = waiting.get(paneId)
+      if (!hostId) return
+      waiting.delete(paneId)
+      void hostStarted(hostId)
+    },
+    paneExited(paneId) {
+      waiting.delete(paneId)
+    },
+    // The window asks again (after installing an agent there): a new check,
+    // answered (not sent).
+    check: (hostId) => run(hostId)
+  }
+}
