@@ -80,6 +80,8 @@ import { useHoverCard } from './hover/useHoverCard'
 import { agentStateLabel } from '../sidebarModel'
 import { t, intlLocale } from '../i18n'
 import { remoteHostsState } from '../remoteHosts'
+import { readText as readScreenText, createShellIntegration, createTerminalAdapter } from '../agentTerminal/screenRead'
+import { terminalControl, terminalLog } from '../agentTerminal/agentTerminalState'
 import { nativeChatSessionChoiceLabel } from '../chat/orca/native-chat-session-option-labels'
 
 const props = defineProps({
@@ -712,6 +714,60 @@ function screenText(lines = 20) {
     if (y <= buf.baseY) break
   }
   return out.join('\n')
+}
+
+// --- The agents' terminal tools (src/main/agentTerminal.js) -------------------------
+// The shell's own reports of each command (OSC 633 / 133), and the adapter
+// the tools run commands through (agentTerminal/executeStrategy.js).
+const shellIntegration = createShellIntegration({ registerMarker: () => (term ? term.registerMarker(0) || null : null) })
+const exitHooks = new Set()
+const disposeHooks = new Set()
+let paneDisposed = false
+let agentAdapter = null
+function getAgentAdapter() {
+  if (!term) return null
+  if (!agentAdapter)
+    agentAdapter = createTerminalAdapter(term, shellIntegration, {
+      writePty: (data) => window.shellApi.writePty(props.node.id, data),
+      paste: (text) => pasteText(text),
+      exitCode: () => (exited.value ? (Number.isInteger(exitCode.value) ? exitCode.value : -1) : null),
+      onExit: (fn) => (exitHooks.add(fn), () => exitHooks.delete(fn)),
+      onDispose: (fn) => (disposeHooks.add(fn), () => disposeHooks.delete(fn)),
+      isDisposed: () => paneDisposed
+    })
+  return agentAdapter
+}
+watch(exited, (v) => {
+  if (v) for (const fn of [...exitHooks]) fn(exitCode.value)
+})
+onBeforeUnmount(() => {
+  paneDisposed = true
+  for (const fn of [...disposeHooks]) fn()
+})
+// The "Ada is using this terminal · Stop" badge, and what agents ran here.
+const agentUser = computed(() => terminalControl[props.node.id] || null)
+const agentRuns = computed(() => terminalLog[props.node.id] || [])
+const agentLogOpen = ref(false)
+const agentBadgeText = computed(() =>
+  agentUser.value
+    ? t('pane.agentTerminal.using', '{{agent}} is using this terminal', { agent: agentUser.value.agent })
+    : t('pane.agentTerminal.used', 'Agent commands ({{count}})', { count: agentRuns.value.length })
+)
+function stopTerminalAgent() {
+  const api = window.shellApi && window.shellApi.terminalAgent
+  if (!api || typeof api.stop !== 'function') return
+  Promise.resolve(api.stop(props.node.id))
+    .then((ok) => {
+      if (ok && ctx.toast) ctx.toast(t('pane.agentTerminal.stopped', 'The agent can no longer type in this terminal.'), { timeout: 5000 })
+    })
+    .catch(() => {})
+}
+function agentRunTime(at) {
+  try {
+    return new Date(at).toLocaleTimeString(intlLocale(), { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  } catch {
+    return ''
+  }
 }
 
 // Prompt cache countdown (Settings > Agents): from Claude's last answer.
@@ -2197,6 +2253,10 @@ onMounted(() => {
     }
     return true
   })
+  // Shell integration (OSC 133, and VS Code's OSC 633): where a command
+  // starts and ends, for the agents' terminal_run (agentTerminal/screenRead.js).
+  term.parser.registerOscHandler(133, (data) => shellIntegration.feed(data))
+  term.parser.registerOscHandler(633, (data) => shellIntegration.feed(data))
   // [Image #N] in Claude Code: click to open the image.
   term.registerLinkProvider({
     provideLinks(y, callback) {
@@ -2542,7 +2602,12 @@ onMounted(() => {
     // How many "[Image #N]" its input shows (Claude Code, OpenClaude,
     // Codex: each pasted image path becomes one), or null: not known for
     // this agent or not readable now (deliver.js then waits a fixed time).
-    imageMarkers: () => inputImages()
+    imageMarkers: () => inputImages(),
+    // The agents' terminal tools (src/renderer/src/agentTerminal):
+    // the last lines as plain text, a mark where a command starts and the
+    // output since it, the shell's own reports, the arrows' mode.
+    readText: (lines) => readScreenText(term, lines),
+    agentAdapter: getAgentAdapter
   }
   registerPane(props.node.id, paneApi)
 
@@ -2859,6 +2924,30 @@ const paneMenuBindings = computed(() => ({
       <HoverCardContent :hc="headerHover" side="bottom" align="start" :side-offset="6" class="pane-hover-card" data-test="pane-hover-card">
         <PaneHoverDetails :info="hoverInfo" />
       </HoverCardContent>
+      <!-- An agent typing in this terminal (its terminal tools): who, what
+           it ran, and Stop. -->
+      <div v-if="agentUser || agentRuns.length" class="pane-agent-term" :class="{ active: !!agentUser }" data-test="pane-agent-terminal" @mousedown.stop>
+        <button
+          type="button"
+          class="pane-agent-term-text"
+          data-test="pane-agent-terminal-log"
+          :title="t('pane.agentTerminal.logHint', 'What agents ran in this terminal')"
+          :aria-expanded="agentLogOpen"
+          @click.stop="agentLogOpen = !agentLogOpen"
+        >
+          {{ agentBadgeText }}
+        </button>
+        <button v-if="agentUser" type="button" class="pane-agent-term-stop" data-test="pane-agent-terminal-stop" :title="t('pane.agentTerminal.stopHint', 'Stop this agent from typing in this terminal')" @click.stop="stopTerminalAgent">
+          {{ t('pane.agentTerminal.stop', 'Stop') }}
+        </button>
+        <div v-if="agentLogOpen" class="pane-agent-term-log" role="list" data-test="pane-agent-terminal-list" @click.stop>
+          <div v-if="!agentRuns.length" class="pane-agent-term-empty">{{ t('pane.agentTerminal.noLog', 'Nothing run yet') }}</div>
+          <div v-for="(r, i) in agentRuns.slice().reverse()" :key="i" class="pane-agent-term-row" role="listitem">
+            <span class="pane-agent-term-meta">{{ agentRunTime(r.at) }} · {{ r.agent }}{{ r.kind === 'keys' ? ` · ${t('pane.agentTerminal.keys', 'keys')}` : '' }}</span>
+            <code class="pane-agent-term-cmd">{{ r.text }}</code>
+          </div>
+        </div>
+      </div>
       <div class="pane-nav-actions" @mousedown.stop>
         <label
           v-if="ctx.broadcast.value"
