@@ -781,6 +781,10 @@
       "right": "à droite",
       "center": "au centre",
       "full": "plein écran"
+    },
+    "remoteAgents": {
+      "noClaude": "Claude Code n’est pas installé sur {{host}}. Installez-le pour lancer Claude sur cet hôte depuis Tessel.",
+      "install": "Installer Claude Code"
     }
   }
 }

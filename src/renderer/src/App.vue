@@ -4347,6 +4347,38 @@ onMounted(() => {
   })
 })
 onBeforeUnmount(() => offRemoteBranches && offRemoteBranches())
+
+// Agents on an SSH host (src/main/remoteAgent/REMOTE_AGENTS.md): when a host
+// connects, main puts Tessel's helper there and says which agent CLIs it
+// has. Claude Code missing: offered once per host and run, with a button that
+// runs its official installer in a new pane on that host (it then shows its
+// sign-in link there).
+const REMOTE_CLAUDE_INSTALL = 'curl -fsSL https://claude.ai/install.sh | bash && claude' // i18n-ignore shell command
+const remoteAgentOffered = new Set()
+let offRemoteAgents = null
+function onRemoteAgentsStatus(st) {
+  if (!st || typeof st.hostId !== 'string' || st.claude || remoteAgentOffered.has(st.hostId)) return
+  if (st.shim && st.shim !== 'ok') return
+  remoteAgentOffered.add(st.hostId)
+  const host = st.label || remoteHostLabel(st.hostId)
+  showToast(t('app.remoteAgents.noClaude', 'Claude Code is not installed on {{host}}. Install it there to run Claude on this host from Tessel.', { host }), {
+    timeout: 20000,
+    action: { label: t('app.remoteAgents.install', 'Install Claude Code'), run: () => installClaudeOnHost(st.hostId) }
+  })
+}
+async function installClaudeOnHost(hostId) {
+  const ws = workspaces.value.find((w) => w.remote && w.remote.hostId === hostId)
+  const opts = ws ? { remoteHostId: hostId, remotePath: ws.remote.path } : { remoteHostId: hostId }
+  const leaf = await openPaneBelow(selectedShell.value, null, opts)
+  if (!leaf) return
+  // Typed while the remote shell starts: the terminal host keeps it for it.
+  window.shellApi.writePty(leaf.id, REMOTE_CLAUDE_INSTALL + '')
+}
+onMounted(() => {
+  const api = window.shellApi.remoteAgents
+  if (api && api.onStatus) offRemoteAgents = api.onStatus(onRemoteAgentsStatus)
+})
+onBeforeUnmount(() => offRemoteAgents && offRemoteAgents())
 async function refreshBranches() {
   const cwds = [...new Set(workspaces.value.map((w) => w.cwd).filter(Boolean))]
   const remotes = [...new Set(workspaces.value.filter((w) => w.remote).map(gitKeyOf).filter(Boolean))]

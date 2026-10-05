@@ -581,6 +581,16 @@ const api = {
       return () => ipcRenderer.removeListener('remoteFs:activity', handler)
     }
   },
+  // Agents on SSH hosts (src/main/remoteAgent/REMOTE_AGENTS.md): which agent
+  // CLIs a host has, sent when it connects; check() asks again.
+  remoteAgents: {
+    check: (hostId) => ipcRenderer.invoke('remoteAgents:check', hostId),
+    onStatus: (cb) => {
+      const handler = (_e, payload) => cb(payload)
+      ipcRenderer.on('remoteAgents:status', handler)
+      return () => ipcRenderer.removeListener('remoteAgents:status', handler)
+    }
+  },
   // ssh's questions for a remote host pane: password, passphrase, challenge,
   // host key (src/main/sshAskpass.js, through OpenSSH's askpass). The answer
   // goes in this one call, bound to the pane and its one-time request id
