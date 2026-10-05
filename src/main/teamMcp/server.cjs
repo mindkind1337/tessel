@@ -35,7 +35,7 @@ const path = require('path')
 const crypto = require('crypto')
 const { randomUUID } = crypto
 
-const VERSION = '1.11.0'
+const VERSION = '1.11.1'
 const MAX_TEXT = 6000
 
 // --- An agent on an SSH host --------------------------------------------------
