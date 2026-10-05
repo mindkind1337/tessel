@@ -3042,6 +3042,17 @@ const remoteAgentCheck = createRemoteAgentCheck({
   send: (status) => send('remoteAgents:status', status),
   log: (text) => log.warn('remote-agent', text)
 })
+// The agent sessions on a saved host (history): only while it is
+// connected (never a sign-in), with the shim brought to this version first.
+// ({ hostId, limit }) -> { ok, sessions: [row + host] } | { ok: false, error, notConnected? }
+ipcMain.handle('sessions:listRemote', async (_evt, req) => {
+  const hostId = req && typeof req === 'object' ? req.hostId : null
+  if (typeof hostId !== 'string' || !/^[\w-]{1,80}$/.test(hostId) || !remoteHosts.get(hostId)) return { ok: false, error: t('main.remote.notFound', 'This remote host is no longer saved in Tessel.') }
+  if (!remoteFs.connectedQuietly(hostId)) return remoteFs.listAgentSessions(hostId, req.limit)
+  const shim = await remoteShims.ensure(hostId)
+  if (!shim.ok) return { ok: false, error: remoteShimWarning(shim.reason) }
+  return remoteFs.listAgentSessions(hostId, req.limit)
+})
 ipcMain.handle('remoteAgents:check', async (_evt, hostId) => {
   if (typeof hostId !== 'string' || !/^[\w-]{1,80}$/.test(hostId) || !remoteHosts.get(hostId)) return null
   return remoteAgentCheck.check(hostId)

@@ -133,7 +133,10 @@ export const FUNCTIONS = new Set([
   '__t_ragent',
   // The agents installed on this host (remoteAgent/remoteAgentSetup.js
   // parseAgentTools): their paths only.
-  '__t_agents'
+  '__t_agents',
+  // The agent sessions on this host (the shim's `sessions`): ids, folders,
+  // titles, never their contents.
+  '__t_rsess'
 ])
 
 // The prelude: POSIX sh, for Linux (GNU, busybox) and macOS / BSD tools.
@@ -446,6 +449,23 @@ __t_newproj() {
   __t_git "$__P" commit -q --allow-empty --no-verify -m 'Initial commit' >/dev/null 2>&1
   printf '%s\\n' "$__P"
 }
+__t_findnode() {
+  __nd=$(command -v node 2>/dev/null) || __nd=
+  case $__nd in /*) ;; *) __nd= ;; esac
+  if [ -z "$__nd" ]; then __nd=$("\${SHELL:-/bin/sh}" -lc 'command -v node' </dev/null 2>/dev/null | tail -n 1) || __nd=; case $__nd in /*) ;; *) __nd= ;; esac; fi
+  if [ -z "$__nd" ]; then for __c in "$HOME"/.nvm/versions/node/*/bin/node "$HOME"/.volta/bin/node "$HOME"/.local/bin/node /usr/local/bin/node /opt/homebrew/bin/node; do [ -x "$__c" ] && __nd=$__c; done; fi
+  [ -n "$__nd" ] && [ -x "$__nd" ]
+}
+__t_rsess() {
+  case $1 in ''|*[!0-9]*) return 90 ;; esac
+  __s="$HOME/.tessel-server"
+  [ -d "$__s" ] && [ ! -L "$__s" ] && [ -O "$__s" ] || return 81
+  [ -f "$__s/bin/tessel-shim.cjs" ] && [ ! -L "$__s/bin/tessel-shim.cjs" ] || return 81
+  __nd=$(cat "$__s/bin/NODE" 2>/dev/null) || __nd=
+  case $__nd in /*) [ -f "$__nd" ] && [ -x "$__nd" ] || __nd= ;; *) __nd= ;; esac
+  [ -n "$__nd" ] || __t_findnode || return 81
+  "$__nd" "$__s/bin/tessel-shim.cjs" sessions "$1"
+}
 __t_ragent() {
   case $1 in ''|*[!0-9A-Za-z.-]*) return 90 ;; esac
   __s="$HOME/.tessel-server"
@@ -458,13 +478,10 @@ __t_ragent() {
     chmod 700 "$__x" || return 98
   done
   [ -L "$__s/bin/tessel-shim.cjs" ] && return 98
-  __nd=$(command -v node 2>/dev/null) || __nd=
-  case $__nd in /*) ;; *) __nd= ;; esac
-  if [ -z "$__nd" ]; then __nd=$("\${SHELL:-/bin/sh}" -lc 'command -v node' </dev/null 2>/dev/null | tail -n 1) || __nd=; case $__nd in /*) ;; *) __nd= ;; esac; fi
-  if [ -z "$__nd" ]; then for __c in "$HOME"/.nvm/versions/node/*/bin/node "$HOME"/.volta/bin/node "$HOME"/.local/bin/node /usr/local/bin/node /opt/homebrew/bin/node; do [ -x "$__c" ] && __nd=$__c; done; fi
-  [ -n "$__nd" ] && [ -x "$__nd" ] || return 81
+  __t_findnode || return 81
   __v=$("$__nd" -p 'process.versions.node.split(".")[0]' 2>/dev/null) || return 81
   [ "$__v" -ge 18 ] 2>/dev/null || return 82
+  printf '%s\\n' "$__nd" >"$__s/bin/NODE"
   if [ "$(cat "$__s/bin/VERSION" 2>/dev/null)" != "$1" ] || [ ! -f "$__s/bin/tessel-shim.cjs" ]; then
     __tmp=$(mktemp "$__s/bin/.shim.XXXXXX") || return 98
     __t_b64d <"$__T_D/u" >"$__tmp" || { rm -f "$__tmp"; return 98; }
