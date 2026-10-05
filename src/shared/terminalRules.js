@@ -128,10 +128,12 @@ export const DEFAULT_RULES = Object.freeze({
   date: true,
   '/^date\\b.*\\s(-s|--set)\\b/': false,
   find: true,
-  '/^find\\b.*\\s-(delete|exec|execdir|fprint|fprintf|fls|ok|okdir)\\b/': false,
+  '/^find\\b.*\\s-(delete|exec|execdir|fprint\\w*|fprintf|fls|ok|okdir)\\b/': false,
   rg: true,
   '/^rg\\b.*\\s(--pre|--hostname-bin)\\b/': false,
   sed: true,
+  // Tessel: editing a file in place (VS Code catches it with its file-write analyzer).
+  '/^sed\\b.*\\s(-[a-zA-Z]*i|--in-place)/': false,
   '/^sed\\b.*\\s(-[a-zA-Z]*(e|f)[a-zA-Z]*|--expression|--file)\\b/': false,
   '/^sed\\b.*s\\/.*\\/.*\\/[ew]/': false,
   "/^sed\\b(?:\\s+(?:(?:-l|--line-length)\\s+\\S+|--line-length=\\S+|-\\S+))*\\s+(['\"])\\s*(?:(?:\\d+|\\$|\\/(?:\\\\.|[^\\/])*\\/)(?:\\s*,\\s*(?:\\d+|\\$|\\/(?:\\\\.|[^\\/])*\\/))?)?\\s*!?\\s*[erRwW](?:\\s|\\1)/": false,
@@ -140,9 +142,12 @@ export const DEFAULT_RULES = Object.freeze({
   // sort (sortAutoApproveRules.ts)
   '/^sort\\b(?!-)/': true,
   '/^sort\\b.*\\s-(o|S)\\b/': false,
+  // Tessel: joined short options too (-no out, -oFILE).
+  '/^sort\\b.*\\s-[a-zA-Z]*o/': false,
   "/^sort\\b.*\\s(?:\\$?['\"]|\\\\)*-(?:\\$?['\"]|\\\\)*-(?:\\$?['\"]|\\\\)*c(?:\\$?['\"]|\\\\)*o/": false,
   tree: true,
   '/^tree\\b.*\\s-o\\b/': false,
+  '/^tree\\b.*\\s-[a-zA-Z]*o/': false,
   '/^xxd$/': true,
   '/^xxd\\b(\\s+-\\S+)*\\s+[^-\\s]\\S*$/': true,
   // Dangerous commands: always ask
@@ -331,15 +336,27 @@ const PWSH_KEYWORDS = new Set(['if', 'elseif', 'else', 'foreach', 'for', 'while'
 const BASH_DECLARATIONS = new Set(['export', 'declare', 'typeset', 'local', 'readonly'])
 const NULL_TARGETS = /^(?:\/dev\/null|\$null|nul)$/i
 
+// PowerShell reads the typographic quotes as quotes, and en / em dashes as
+// the dash of a parameter.
+const SMART_SINGLE = /[‘-‛]/g
+const SMART_DOUBLE = /[“-„]/g
+const ODD_QUOTE_OR_DASH = /[‐-‟′-‷−«»‹›＂＇－]/
+
 export function splitCommandLine(commandLine, lang = 'bash') {
   const pwsh = lang === 'powershell'
-  const s = String(commandLine == null ? '' : commandLine)
+  const raw = String(commandLine == null ? '' : commandLine)
+  const s = pwsh ? raw.replace(SMART_SINGLE, "'").replace(SMART_DOUBLE, '"') : raw
   const subCommands = []
   const fileWrites = []
   let why = null
   const unsure = (reason) => {
     if (!why) why = reason
   }
+  // Fail closed on what a shell may read differently from this splitter: more
+  // than one line, a comment, a typographic quote or dash.
+  if (/[\r\n]/.test(raw)) unsure('several lines')
+  if (raw.includes('#')) unsure('a # (comment)')
+  if (ODD_QUOTE_OR_DASH.test(raw)) unsure('a typographic quote or dash')
 
   // Scans from i until `closer` (')', '}', '`' or null for the end) at this
   // level. Returns the index after the closer.
@@ -370,6 +387,14 @@ export function splitCommandLine(commandLine, lang = 'bash') {
       if (closer && c === closer && (closer !== '}' || pwsh || atCommandStart(segStart, i))) {
         finish(i)
         return i + 1
+      }
+      // A comment: # at the start of a word, to the end of the line.
+      if (c === '#' && (i === 0 || /[\s;|&(){}]/.test(s[i - 1]))) {
+        if (pwsh && s[i - 1] === '<') unsure('block comment')
+        const nl = s.indexOf('\n', i)
+        next(i, nl < 0 ? s.length : nl + 1)
+        i = nl < 0 ? s.length : nl + 1
+        continue
       }
       if (pwsh && c === '`') {
         i += 2 // an escaped character

