@@ -174,3 +174,11 @@ describe('security review: writing arguments always ask', () => {
     for (const line of ['sed -n 1p f', 'find . -name x', 'tree -f', 'sort -n in']) expect(auto(line)).toBe(true)
   })
 })
+
+describe('security review: a first word shaped like a regex', () => {
+  it('is never offered or stored as a prefix rule', () => {
+    const a = analyzeCommandLine('/./s --help', { rules: buildRules(), enabled: true }).actions
+    expect(a.some((x) => x.kind === 'prefix')).toBe(false)
+    expect(rulesOfAction({ kind: 'prefix', keys: ['/./s', 'make'], scope: 'user' })).toEqual([{ key: 'make', value: true, scope: 'user' }])
+  })
+})

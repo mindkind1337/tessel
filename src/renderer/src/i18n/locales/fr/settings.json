@@ -235,7 +235,8 @@
       "terminalRuleAllow": "autorisée",
       "terminalRuleAsk": "demande toujours",
       "terminalRuleAllowLine": "autorisée (ligne entière)",
-      "terminalRuleAskLine": "demande toujours (ligne entière)"
+      "terminalRuleAskLine": "demande toujours (ligne entière)",
+      "terminalRuleRegex": "expression régulière"
     },
     "orchestration": {
       "yourTeam": "Votre équipe",

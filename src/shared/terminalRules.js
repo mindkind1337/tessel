@@ -744,7 +744,8 @@ export function autoApproveActions(commandLine, subCommands, { subResults, lineR
     for (const command of unapproved) {
       const parts = command.trim().split(/\s+/)
       const base = parts[0].toLowerCase()
-      if (NEVER_SUGGEST.has(base)) continue
+      // A word shaped like a /regex/ would be stored as one (/./s matches everything).
+      if (NEVER_SUGGEST.has(base) || isRegexKey(parts[0])) continue
       let key
       if (WITH_SUBCOMMANDS.has(base)) {
         const sub = nextNonFlag(parts, 1)
@@ -771,7 +772,12 @@ export function autoApproveActions(commandLine, subCommands, { subResults, lineR
 // The rules an action adds: [{ key, value, scope }].
 export function rulesOfAction(action) {
   if (!action || typeof action !== 'object') return []
-  if (action.kind === 'prefix' && Array.isArray(action.keys)) return action.keys.filter((k) => typeof k === 'string' && k).map((key) => ({ key, value: true, scope: action.scope }))
+  if (action.kind === 'prefix' && Array.isArray(action.keys)) return action.keys.filter((k) => typeof k === 'string' && k && !isRegexKey(k)).map((key) => ({ key, value: true, scope: action.scope }))
   if (action.kind === 'exact' && typeof action.key === 'string') return [{ key: action.key, value: { approve: true, matchCommandLine: true }, scope: action.scope }]
   return []
+}
+
+// A rule key read as a regular expression (/pattern/flags).
+export function isRegexKey(key) {
+  return /^\/.+\/[a-z]*$/.test(String(key || ''))
 }

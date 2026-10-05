@@ -7,9 +7,11 @@
 import { computed, inject } from 'vue'
 import { t } from '../i18n'
 import { settings } from '../settings'
+import { isRegexKey } from '../../../shared/terminalRules'
 
 const askConfirm = inject('askConfirm', null)
 
+const regexLabel = computed(() => t('settings.agents.terminalRuleRegex', 'regular expression'))
 const userRules = computed(() => Object.entries(settings.agentTerminalRules || {}))
 const projectRules = computed(() =>
   Object.entries(settings.agentTerminalWorkspaceRules || {})
@@ -102,7 +104,7 @@ async function setAutoApprove(e) {
         <div class="yolo-folder-list">
           <div v-for="[key, value] in userRules" :key="key" class="yolo-folder">
             <code class="yolo-folder-path terminal-rule" :title="key">{{ key }}</code>
-            <span class="set-hint">{{ ruleValue(value) }}</span>
+            <span class="set-hint">{{ ruleValue(value) }}{{ isRegexKey(key) ? ` · ${regexLabel}` : "" }}</span>
             <button class="exit-btn" @click="removeUser(key)">{{ t('settings.agents.yoloFolderRemove', 'Remove') }}</button>
           </div>
         </div>
@@ -115,7 +117,7 @@ async function setAutoApprove(e) {
         <div class="yolo-folder-list">
           <div v-for="[key, value] in p.rules" :key="key" class="yolo-folder">
             <code class="yolo-folder-path terminal-rule" :title="key">{{ key }}</code>
-            <span class="set-hint">{{ ruleValue(value) }}</span>
+            <span class="set-hint">{{ ruleValue(value) }}{{ isRegexKey(key) ? ` · ${regexLabel}` : "" }}</span>
             <button class="exit-btn" @click="removeProject(p.project, key)">{{ t('settings.agents.yoloFolderRemove', 'Remove') }}</button>
           </div>
         </div>

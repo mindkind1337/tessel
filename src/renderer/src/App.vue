@@ -67,6 +67,7 @@ import { pageOf } from './browser/pageHost'
 import { createAgentBrowserTargets, addPageNear } from './browser/agentBrowserTargets'
 import { createAgentTerminalTargets } from './agentTerminal/agentTerminalTargets'
 import { onTerminalControl, onTerminalLog, forgetTerminal } from './agentTerminal/agentTerminalState'
+import { rulesOfAction } from '../../shared/terminalRules'
 import AgentCommandApproval from './components/AgentCommandApproval.vue'
 import GitHubDialog from './components/GitHubDialog.vue'
 import LinearDialog from './components/LinearDialog.vue'
@@ -8656,7 +8657,8 @@ const agentTerminalTargets = createAgentTerminalTargets({
     // A rule needs auto approve on; "this project" and "always" are saved here.
     if (action && !(await enableTerminalAutoApprove())) return { ...answer, action: null }
     if (action && (action.kind === 'prefix' || action.kind === 'exact') && action.scope !== 'session') {
-      const add = action.kind === 'prefix' ? Object.fromEntries(action.keys.map((k) => [k, true])) : { [action.key]: { approve: true, matchCommandLine: true } }
+      // The same rules the main process would make (never a prefix shaped like a /regex/).
+      const add = Object.fromEntries(rulesOfAction(action).map((r) => [r.key, r.value]))
       if (action.scope === 'user') settings.agentTerminalRules = { ...settings.agentTerminalRules, ...add }
       else {
         const key = workspaceRulesKey(c.ws)
