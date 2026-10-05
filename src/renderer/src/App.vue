@@ -1,6 +1,6 @@
 <script setup>
 import { ensureAgentNames, renameAgentName, resolveAgentAddress, agentProgramLabel } from '../../shared/agentNames'
-import { ref, reactive, provide, watch, computed, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import { ref, reactive, provide, watch, computed, nextTick, onMounted, onBeforeUnmount, toRaw } from 'vue'
 import SplitNode from './components/SplitNode.vue'
 import FloatingTerminal from './components/FloatingTerminal.vue'
 import { createFloatingTerminal, isFloatingToggleKey } from './floatingTerminal'
@@ -51,7 +51,7 @@ import {
 } from './agentStatus'
 import { detectApproval } from './agentLimit'
 import { agentRulesReason, applyAgentStateRules } from './agentStateRules'
-import { activity, recordActivity, loadActivity, saveActivityNow, activityChanged } from './activityStore'
+import { activity, recordActivity, loadActivity, saveActivityNow, activityChanged, trimCount as activityTrimCount } from './activityStore'
 import ActivityPanel from './components/ActivityPanel.vue'
 import ConfirmDialog from './components/ConfirmDialog.vue'
 import { askQuitRunning } from './quitConfirm'
@@ -4699,12 +4699,23 @@ const RESTORE_WINDOW_MS = 60000
 let activityLoaded = false
 const lastStateEvent = {} // leafId -> the logged event of its current state
 
+// Each pane's last state logged before startup, found in one pass over the
+// plain log (not one pass through Vue's proxies per pane: with 20000 events
+// and a dozen agents that froze startup). Events logged since have later
+// times, so the index only changes when old events leave the log.
+let savedStates = null
+let savedStatesTrim = -1
 function savedStateBefore(id) {
-  let last = null
-  for (const e of activity) {
-    if (e.type === 'agent.state' && e.paneId === id && e.t < appStartedAt && (!last || e.t > last.t)) last = e
+  if (!savedStates || savedStatesTrim !== activityTrimCount()) {
+    savedStates = new Map()
+    savedStatesTrim = activityTrimCount()
+    for (const e of toRaw(activity)) {
+      if (e.type !== 'agent.state' || !(e.t < appStartedAt)) continue
+      const last = savedStates.get(e.paneId)
+      if (!last || e.t > last.t) savedStates.set(e.paneId, e)
+    }
   }
-  return last
+  return savedStates.get(id) || null
 }
 
 // The saved start is taken back once per pane at most, and never after the

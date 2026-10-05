@@ -7,7 +7,7 @@ import { spawn, execFile } from 'child_process'
 import { loadTasks, loadBoard, saveTasks } from './taskBoardPersistence'
 import { createAutomations } from './automations'
 import { createRemotePromptWriter } from './automationRemotePrompt'
-import { trimEvents, isEvent } from '../shared/activity'
+import { trimEvents, isEvent, isActivityText } from '../shared/activity'
 import { agentModelLive, watchModelFiles } from './agentModel'
 import { createCodexAccounts } from './codexAccounts'
 import { createClaudeAccounts } from './claudeAccounts'
@@ -891,22 +891,33 @@ ipcMain.handle('taskboard:save', (_evt, board) => {
 
 // Activity of the agents (see src/shared/activity.js): its own activity.json,
 // written atomically (temp file + rename) and kept bounded.
+// The log is up to 20000 events (several MB): it travels as JSON text. Read,
+// parsed and handed over as objects, it froze the window for a third of a
+// second at startup (the main thread's read and parse, then the preload's
+// copy of every object into the page); a string crosses at once, and the
+// window parses and checks it (parseActivityText). opts.text: that form.
 const activityFile = () => join(app.getPath('userData'), 'activity.json')
-ipcMain.handle('activity:load', () => {
+ipcMain.handle('activity:load', async (_evt, opts) => {
+  const asText = !!(opts && opts.text)
   try {
-    if (!fs.existsSync(activityFile())) return []
-    const data = JSON.parse(fs.readFileSync(activityFile(), 'utf8'))
+    const text = await fs.promises.readFile(activityFile(), 'utf8')
+    if (asText) return { text }
+    const data = JSON.parse(text)
     return Array.isArray(data) ? trimEvents(data.filter(isEvent)) : []
   } catch (err) {
-    log.warn('activity', `load failed: ${err.message}`)
-    return []
+    if (err.code !== 'ENOENT') log.warn('activity', `load failed: ${err.message}`)
+    return asText ? { text: '' } : []
   }
 })
+// events: the list, or the window's JSON text of it (already checked and
+// trimmed there, see activityStore.js): written as is.
 ipcMain.handle('activity:save', (_evt, events) => {
   try {
-    if (!Array.isArray(events)) return { ok: false, error: 'not a list' } // i18n-ignore internal: the renderer's own data, never shown
+    const text = typeof events === 'string' ? events : null
+    if (text !== null && !isActivityText(text)) return { ok: false, error: 'not a list' } // i18n-ignore internal: the renderer's own data, never shown
+    if (text === null && !Array.isArray(events)) return { ok: false, error: 'not a list' } // i18n-ignore internal: the renderer's own data, never shown
     const tmp = activityFile() + '.tmp'
-    fs.writeFileSync(tmp, JSON.stringify(trimEvents(events.filter(isEvent))), 'utf8')
+    fs.writeFileSync(tmp, text !== null ? text : JSON.stringify(trimEvents(events.filter(isEvent))), 'utf8')
     fs.renameSync(tmp, activityFile())
     return { ok: true }
   } catch (err) {
