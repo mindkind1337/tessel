@@ -85,7 +85,8 @@ byte in either direction for 30 min is closed (its server.cjs killed).
 server.cjs runs with cwd = the pane env's `TESSEL_PROJECT_DIR` (when absolute).
 
 ### Shim modes (`node tessel-shim.cjs <mode>`)
-- `mcp` – connect, hello, pipe stdio. No socket/env → print reason on stderr, exit 1.
+- `mcp` – connect, hello, pipe stdio. No socket/env, or Tessel unreachable (an agent
+  started outside Tessel, e.g. VS Code) → a silent empty MCP server (no tools).
 - `hook <args...>` – connect, send stdin, print stdout/stderr, exit with code.
   Unreachable Tessel → exit 0 silently (a hook must never block the agent).
 - `install` – idempotent: Claude `~/.claude.json` `mcpServers["tessel-team"]` =
