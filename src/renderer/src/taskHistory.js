@@ -12,7 +12,7 @@
 //   cacheReadTokens, cacheWriteTokens, usd, known, model, models: [...],
 //   subagents, partial, at } | null }
 // No IPC and no DOM here: App.vue loads and saves it with the board.
-import { reactive } from 'vue'
+import { reactive, toRaw } from 'vue'
 
 export const MAX_HISTORY = 2000
 const MAX_PERIODS = 50
@@ -115,12 +115,16 @@ function trim() {
 }
 
 // Done cards with no record (finished before the history was kept, or
-// in a board saved by an older version): recorded now.
+// in a board saved by an older version): recorded now. The ids already
+// recorded are read once (looking each card up in the history through Vue's
+// proxies, hundreds of cards by hundreds of records, slowed startup).
 export function backfillHistory(cards, now = Date.now()) {
   let added = 0
+  const known = new Set(toRaw(taskHistory).map((r) => r && r.id))
   for (const c of cards || []) {
-    if (!c || c.column !== 'done' || find(c.id)) continue
+    if (!c || c.column !== 'done' || known.has(c.id)) continue
     recordDone(c, now)
+    known.add(c.id)
     added++
   }
   if (added) taskHistory.sort((a, b) => (a.doneAt || 0) - (b.doneAt || 0))
