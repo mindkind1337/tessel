@@ -4372,7 +4372,7 @@ async function installClaudeOnHost(hostId) {
   const leaf = await openPaneBelow(selectedShell.value, null, opts)
   if (!leaf) return
   // Typed while the remote shell starts: the terminal host keeps it for it.
-  window.shellApi.writePty(leaf.id, REMOTE_CLAUDE_INSTALL + '')
+  window.shellApi.writePty(leaf.id, REMOTE_CLAUDE_INSTALL + '\r')
 }
 onMounted(() => {
   const api = window.shellApi.remoteAgents
