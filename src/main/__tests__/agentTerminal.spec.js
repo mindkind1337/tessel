@@ -538,3 +538,18 @@ describe('security review: another SSH host', () => {
     expect(win.ops()).toEqual(['host', 'prepare', 'run'])
   })
 })
+
+describe('security review: Stop and the session', () => {
+  it('Stop takes back the agent’s "allow all" and session rules', async () => {
+    const win = fakeWindow({ approve: { allow: true, action: { kind: 'session' } } })
+    const { at } = make(win, { settings: { autoApprove: true } })
+    await at.handle(signed('run', { command: 'make', explanation: 'x', goal: 'y', mode: 'sync' }))
+    await at.handle(signed('run', { command: 'make', explanation: 'x', goal: 'y', mode: 'sync' }))
+    expect(win.calls.filter((c) => c.op === 'approve')).toHaveLength(1)
+    at.stop(OWN.id)
+    expect(at._sessions.get(AGENT)).toMatchObject({ allowAll: false, rules: {} })
+    at.allowAgain(OWN.id, AGENT)
+    await at.handle(signed('run', { command: 'make', explanation: 'x', goal: 'y', mode: 'sync' }))
+    expect(win.calls.filter((c) => c.op === 'approve')).toHaveLength(2)
+  })
+})

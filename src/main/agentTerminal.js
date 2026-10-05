@@ -234,6 +234,9 @@ export function createAgentTerminal({ verify, settings = () => ({ enabled: true 
     stopped.add(key(who, target))
     approvedPanes.delete(key(who, target))
     readPanes.delete(key(who, target))
+    // What the agent was allowed for its session goes too: its next commands ask.
+    sessions.set(who, { allowAll: false, rules: {} })
+    for (const k of [...hostPanes]) if (k.startsWith(`${who}|`)) hostPanes.delete(k)
     release(target, { stopped: true })
     return true
   }
