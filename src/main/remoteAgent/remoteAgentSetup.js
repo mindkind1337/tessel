@@ -211,3 +211,43 @@ export function createRemoteAgentCheck({ ensureShim, agentTools, label = (id) =>
     check: (hostId) => run(hostId)
   }
 }
+
+// The agent sessions on a host: what `tessel-shim.cjs sessions <limit>`
+// printed (one JSON line {"v":1,"sessions":[...]}, the last that parses),
+// each row checked; the host added. -> rows | null (nothing readable)
+export const REMOTE_SESSIONS_DEFAULT = 60
+export const REMOTE_SESSIONS_MAX = 200
+export function remoteSessionsLimit(raw) {
+  const n = Number(raw)
+  return Number.isInteger(n) && n >= 1 && n <= REMOTE_SESSIONS_MAX ? n : REMOTE_SESSIONS_DEFAULT
+}
+const SESSION_ID_RE = /^[0-9a-zA-Z-]{1,80}$/
+const CONTROL_RE = /[\u0000-\u001f\u007f]/
+export function parseRemoteSessions(text, hostId, limit = REMOTE_SESSIONS_MAX) {
+  const lines = String(text || '').split('\n').map((l) => l.trim()).filter(Boolean)
+  let doc = null
+  for (let i = lines.length - 1; i >= 0 && !doc; i--) {
+    try {
+      const v = JSON.parse(lines[i])
+      if (v && typeof v === 'object' && v.v === 1 && Array.isArray(v.sessions)) doc = v
+    } catch {
+      /* not that one */
+    }
+  }
+  if (!doc) return null
+  const rows = []
+  const perAgent = { claude: 0, codex: 0 }
+  for (const r of doc.sessions) {
+    if (!r || typeof r !== 'object') continue
+    if (r.agent !== 'claude' && r.agent !== 'codex') continue
+    if (typeof r.id !== 'string' || !SESSION_ID_RE.test(r.id)) continue
+    if (typeof r.cwd !== 'string' || !r.cwd.startsWith('/') || r.cwd.length > 4096 || CONTROL_RE.test(r.cwd)) continue
+    if (perAgent[r.agent] >= limit) continue
+    perAgent[r.agent]++
+    const started = typeof r.started === 'string' && r.started.length <= 40 && !Number.isNaN(Date.parse(r.started)) ? r.started : null
+    const updated = typeof r.updated === 'number' && Number.isFinite(r.updated) && r.updated >= 0 ? r.updated : null
+    const title = typeof r.title === 'string' ? r.title.replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200) : ''
+    rows.push({ agent: r.agent, id: r.id, cwd: r.cwd, started, updated, title, host: hostId })
+  }
+  return rows
+}

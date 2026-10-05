@@ -33,7 +33,7 @@ import { t } from './i18n'
 import { validateCloneUrl, deriveCloneRepoName, cloneFailureMessage, errorText as addProjectErrorText } from './addProject'
 import { parseWorktreeList, MAX_WORKTREES } from './worktreeList'
 import { parseSparseList, sparseDirsUnder } from './sparseCheckout'
-import { parseAgentTools } from './remoteAgent/remoteAgentSetup'
+import { parseAgentTools, parseRemoteSessions, remoteSessionsLimit } from './remoteAgent/remoteAgentSetup'
 
 export const SESSION_PREFIX = 'rfs:'
 const MAX_ENTRIES = 5000
@@ -1316,6 +1316,41 @@ export function createRemoteFs({
     return parseAgentTools(Buffer.isBuffer(res.out) ? res.out.toString('utf8') : String(res.out || ''))
   }
 
+  // Whether a request can run on the host without any sign-in: its
+  // session is up, or its shared ssh2 connection is signed in already.
+  function connectedQuietly(hostId) {
+    if (!hostIdOk(hostId)) return false
+    const entry = sessions.get(hostId)
+    if (entry && !entry.closed && entry.session && entry.session.state === 'ready') return true
+    try {
+      return !!(hosts.sharedConnected && hosts.sharedConnected(hostId))
+    } catch {
+      return false
+    }
+  }
+
+  // The agent sessions on this host (the shim's `sessions`: ids, folders,
+  // titles). Never a sign-in: a host that is not connected says so.
+  // -> { ok: true, sessions: [row + host] } | { ok: false, error, notConnected? }
+  async function listAgentSessions(hostId, limit) {
+    if (!hostIdOk(hostId)) return { ok: false, error: t('main.remote.notFound', 'This remote host is no longer saved in Tessel.') }
+    const notConnected = () => ({ ok: false, notConnected: true, error: t('main.remoteFs.notConnected', '{{host}} is not connected. Use Connect to sign in.', { host: hostLabel(hostId) }) })
+    if (!connectedQuietly(hostId)) return notConnected()
+    const n = remoteSessionsLimit(limit)
+    const entry = sessions.get(hostId)
+    const open = !!(entry && !entry.closed && entry.session && entry.session.state === 'ready')
+    // An open session: used as is (never reopened). None yet on a signed-in
+    // shared connection: one exec channel there, nothing to ask.
+    const res = await call(hostId, '__t_rsess', [String(n)], { cap: 4 * 1024 * 1024, timeoutMs: 30_000, op: 'sessions', ...(open ? { ifOpen: true } : {}) })
+    if (!res || res.skipped) return notConnected()
+    if (res.error) return { ok: false, error: res.error }
+    if (res.rc === 81) return { ok: false, noHelper: true, error: t('main.remoteFs.sessionsNoHelper', "Tessel's helper is not set up on {{host}} yet: its agent sessions cannot be listed.", { host: hostLabel(hostId) }) }
+    const unreadable = () => ({ ok: false, error: t('main.remoteFs.sessionsUnreadable', 'The agent sessions on {{host}} could not be read.', { host: hostLabel(hostId) }) })
+    if (res.rc !== 0) return unreadable()
+    const rows = parseRemoteSessions(Buffer.isBuffer(res.out) ? res.out.toString('utf8') : String(res.out || ''), hostId, n)
+    return rows ? { ok: true, sessions: rows } : unreadable()
+  }
+
   async function browse({ hostId, path } = {}) {
     if (!hostIdOk(hostId)) return { ok: false, error: t('main.remote.notFound', 'This remote host is no longer saved in Tessel.') }
     allow(hostId)
@@ -1412,6 +1447,8 @@ export function createRemoteFs({
     connect,
     installAgentShim,
     agentTools,
+    connectedQuietly,
+    listAgentSessions,
     browse,
     cloneProject,
     createProject,
