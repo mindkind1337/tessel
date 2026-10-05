@@ -130,7 +130,10 @@ export const FUNCTIONS = new Set([
   '__t_newproj',
   // Agents on this host (remoteAgent/remoteAgentSetup.js): put Tessel's shim
   // in ~/.tessel-server and have it register the team tools there.
-  '__t_ragent'
+  '__t_ragent',
+  // The agents installed on this host (remoteAgent/remoteAgentSetup.js
+  // parseAgentTools): their paths only.
+  '__t_agents'
 ])
 
 // The prelude: POSIX sh, for Linux (GNU, busybox) and macOS / BSD tools.
@@ -470,6 +473,19 @@ __t_ragent() {
     printf '%s\\n' "$1" >"$__s/bin/VERSION"
   fi
   "$__nd" "$__s/bin/tessel-shim.cjs" install --node "$__nd"
+}
+__t_agents() {
+  for __a in claude codex; do
+    __p=$(command -v "$__a" 2>/dev/null) || __p=
+    case $__p in /*) ;; *) __p= ;; esac
+    if [ -z "$__p" ]; then __p=$("\${SHELL:-/bin/sh}" -lc "command -v $__a" </dev/null 2>/dev/null | tail -n 1) || __p=; case $__p in /*) ;; *) __p= ;; esac; fi
+    if [ -z "$__p" ]; then for __c in "$HOME/.local/bin/$__a" "$HOME/.npm-global/bin/$__a" "$HOME"/.nvm/versions/node/*/bin/"$__a"; do [ -f "$__c" ] && [ -x "$__c" ] && __p=$__c; done; fi
+    [ -n "$__p" ] && [ -x "$__p" ] || __p=-
+    printf '%s %s\\n' "$__a" "$__p"
+  done
+  __p=$(for __c in "$HOME"/.vscode-server/extensions/anthropic.claude-code-*/resources/native-binary/claude; do [ -f "$__c" ] && [ -x "$__c" ] && printf '%s\\n' "$__c"; done | awk '{ v = $0; sub(/.*\\/anthropic\\.claude-code-/, "", v); sub(/\\/.*/, "", v); n = split(v, a, /[.-]/); k = ""; for (i = 1; i <= 4; i++) k = k sprintf("%09d", (i <= n && a[i] ~ /^[0-9]+$/) ? a[i] : 0); if (p == "" || k > b) { b = k; p = $0 } } END { print p }')
+  [ -n "$__p" ] || __p=-
+  printf 'vscode-claude %s\\n' "$__p"
 }
 if [ -z "$__T_B" ]; then printf '\\n@@R %s base64\\n' "$__T_N"; else printf '\\n@@R %s ok\\n' "$__T_N"; fi
 `

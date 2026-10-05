@@ -127,7 +127,7 @@ import { findNode, noNodeError } from './nodePath'
 import { removeStatusHooks, STATUS_HOOK_AGENTS } from './agentStatusHooks'
 import teamServerSource from './teamMcp/server.cjs?raw'
 import remoteShimSource from './remoteAgent/tessel-shim.cjs?raw'
-import { REMOTE_AGENT_PROVIDERS, createShimInstaller, instanceName, newRemoteToken, readInstallId, remoteProjectDataDir, remoteServerEnv } from './remoteAgent/remoteAgentSetup'
+import { REMOTE_AGENT_PROVIDERS, createShimInstaller, instanceName, newRemoteToken, readInstallId, remoteProjectDataDir, remoteServerEnv, createRemoteAgentCheck } from './remoteAgent/remoteAgentSetup'
 import { ensureInbox, takeInbox, removeInbox } from './leadInbox'
 import { t, setLanguage as setMainLanguage, currentLocale, onLanguageChange } from './i18n'
 import { createCliServer, CliError } from './cliServer'
@@ -1734,7 +1734,10 @@ const sshAskpass = createSshAskpass({
   writePty: (id, data) => {
     if (!isRemoteFsPane(id)) host.send('write', { id, data })
   },
-  onConnected: (id) => remoteHosts.paneConnected(id),
+  onConnected: (id) => {
+    remoteHosts.paneConnected(id)
+    remoteAgentCheck.paneConnected(id)
+  },
   onConnecting: (id) => remoteHosts.paneConnecting(id),
   onCancel: (id, hostId) => {
     if (isRemoteFsPane(id)) remoteFs.closePane(id, 'auth-cancelled')
@@ -2986,6 +2989,7 @@ const host = createPtyClient({
     installLogs.onExit(id, exitCode)
     sshAskpass.paneExited(id)
     remoteHosts.paneExited(id, exitCode)
+    remoteAgentCheck.paneExited(id)
     flushData() // deliver the last output before the exit notice
     if (exitCode && info) {
       log.warn(
@@ -3023,6 +3027,24 @@ const remoteShims = createShimInstaller({
   install: (hostId, shim) => remoteFs.installAgentShim(hostId, shim),
   source: remoteShimSource,
   log: (text) => log.warn('remote-agent', text)
+})
+// Like VS Code's server: the first terminal opened on a host in this run
+// (once signed in) puts the shim there and looks for the agents installed
+// there, in the background; the window hears remoteAgents:status and may
+// ask again (remoteAgents:check, after installing one).
+const remoteAgentCheck = createRemoteAgentCheck({
+  ensureShim: (hostId) => remoteShims.ensure(hostId),
+  agentTools: (hostId) => remoteFs.agentTools(hostId),
+  label: (hostId) => {
+    const target = remoteHosts.get(hostId)
+    return (target && target.label) || hostId
+  },
+  send: (status) => send('remoteAgents:status', status),
+  log: (text) => log.warn('remote-agent', text)
+})
+ipcMain.handle('remoteAgents:check', async (_evt, hostId) => {
+  if (typeof hostId !== 'string' || !/^[\w-]{1,80}$/.test(hostId) || !remoteHosts.get(hostId)) return null
+  return remoteAgentCheck.check(hostId)
 })
 function remoteShimWarning(reason) {
   if (reason === 'no-node') return t('main.remoteAgent.noNode', 'Node.js was not found on this host, so the agent there has no team tools or live status. Install Node.js 18 or newer on the host.')
@@ -3227,6 +3249,9 @@ ipcMain.handle('pty:create', async (_evt, opts = {}) => {
     // through); without askpass, connected at once as before.
     remoteHosts.paneStarted(id, remote.target.id, { connected: !askpassEnv })
     if (askpassToken) sshAskpass.paneStarted(id, askpassToken)
+    // The host's shim and agents, once this ssh is signed in.
+    if (askpassEnv) remoteAgentCheck.waitConnected(id, remote.target.id)
+    else void remoteAgentCheck.hostStarted(remote.target.id)
   }
   if (agentProvider) {
     try { await agentStateStore.register({ paneId: id, provider: agentProvider, launchToken: agentLaunchToken, startedAt: agentStartedAt }) }
@@ -3296,6 +3321,8 @@ async function createSshPane(opts, target, spec, shell, startedAt) {
   ptyInfo.set(id, { shellId: shell.id, shellName: shell.name, backend: 'ssh', pid: null, agentLaunchToken, agentCodexHome: null })
   setTeamSecret(id, teamSecret)
   remoteHosts.paneStarted(id, target.id, { ssh2: true })
+  // The host's shim and agents (its shared connection: no new question).
+  void remoteAgentCheck.hostStarted(target.id)
   return {
     ok: true,
     shell: { id: shell.id, name: shell.name },
