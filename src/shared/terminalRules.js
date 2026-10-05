@@ -689,8 +689,11 @@ export function analyzeCommandLine(commandLine, { lang = 'bash', rules = buildRu
   // A file written (other than /dev/null): VS Code blocks auto approval for
   // writes outside the workspace; Tessel asks for every one.
   const blocked = parsed.hasUnanalyzableSyntax || parsed.fileWrites.length > 0
-  if (blocked) isAutoApproved = false
-  if (!enabled) isAutoApproved = false
+  // Not approved after all: the card does not say it was.
+  if ((blocked || !enabled) && isAutoApproved) {
+    isAutoApproved = false
+    info = null
+  }
   const disclaimers = []
   const firstWords = subCommands.map((c) => c.split(' ')[0].toLowerCase())
   if (!isAutoApproved && (firstWords.some((w) => WEB_COMMANDS.includes(w)) || (isPwsh && firstWords.some((w) => WEB_COMMANDS_PWSH.includes(w)))))

@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { reactive } from 'vue'
 import { createAgentTerminalTargets } from '../agentTerminal/agentTerminalTargets'
 import { fakeTerminal } from './fakeTerminal'
 
@@ -216,6 +217,21 @@ describe('agent terminals: its own', () => {
     const r = await settle(run, 100)
     expect(r.state).toBe('cancelled')
     expect(deps.writePty).toHaveBeenCalledWith('pane-own-1', '\x03')
+    // Its next command gets a new terminal.
+    const next = ask(targets, { op: 'prepare', mode: 'sync' })
+    await vi.advanceTimersByTimeAsync(1000)
+    termOf('pane-own-2').osc('A')
+    expect(await settle(next, 5000)).toMatchObject({ id: 'pane-own-2', isNew: true })
+  })
+})
+
+describe('agent terminals: the approval', () => {
+  it('answers with plain objects (IPC cannot clone the card\'s reactive ones)', async () => {
+    const { targets, deps } = setup()
+    deps.approve.mockResolvedValue({ allow: true, action: reactive({ kind: 'prefix', keys: ['git'], scope: 'session' }) })
+    const r = await ask(targets, { op: 'approve', terminal: 'pane-srv', card: { kind: 'command', command: 'git log' } })
+    expect(() => structuredClone(r)).not.toThrow()
+    expect(r).toEqual({ allow: true, command: null, action: { kind: 'prefix', keys: ['git'], scope: 'session' }, remember: 'once' })
   })
 })
 

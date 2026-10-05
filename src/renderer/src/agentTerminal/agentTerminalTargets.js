@@ -234,7 +234,7 @@ export function createAgentTerminalTargets(deps) {
   // The terminal for a command of this agent: its foreground one (sync), or
   // a new one (async, or the foreground one busy), on this host.
   async function ownTerminal(agentLeaf, ws, hostId, mode) {
-    const mine = ownTerminals(agentLeaf.id).filter((x) => (x.s.hostId || null) === (hostId || null))
+    const mine = ownTerminals(agentLeaf.id).filter((x) => !x.s.retired && (x.s.hostId || null) === (hostId || null))
     const idle = (x) => !x.s.exec || x.s.exec.done
     if (mode !== 'async') {
       const fg = mine.find((x) => x.s.role === 'foreground' && idle(x))
@@ -345,11 +345,15 @@ export function createAgentTerminalTargets(deps) {
       deps.toast({ kind: 'sensitive', agentLeaf, leaf, name })
       return { id: leaf.id, name, state: 'sensitive', output: outputNow(), prompt: getLastLine(outputNow()), strategy: t.shell.quality() }
     }
-    return { id: leaf.id, name, state: raced.type === 'input' ? 'input' : raced.type === 'idle' ? 'background' : 'timeout', output: outputNow(), strategy: t.shell.quality() }
+    return { id: leaf.id, name, state: raced.type === 'input' ? 'input' : raced.type === 'idle' || mode === 'async' ? 'background' : 'timeout', output: outputNow(), strategy: t.shell.quality() }
   }
 
+  // The user's Stop on a terminal's badge: the command it waits on is let go;
+  // the agent's own terminal is not used for its commands again (a new one
+  // is opened next time, its commands approved as always).
   function cancelPane(paneId) {
     const s = terms.get(paneId)
+    if (s && s.owner) s.retired = true
     if (!s || !s.exec || s.exec.done) return false
     s.exec.cancel()
     // The agent's own terminal: what it ran is interrupted too.
@@ -412,7 +416,8 @@ export function createAgentTerminalTargets(deps) {
       return {
         allow: !!(r && r.allow),
         command: r && typeof r.command === 'string' ? r.command : null,
-        action: r && r.action ? r.action : null,
+        // A plain copy: the card's own objects are reactive, which IPC cannot clone.
+        action: r && r.action ? JSON.parse(JSON.stringify(r.action)) : null,
         remember: r && r.remember === 'pane' ? 'pane' : 'once'
       }
     }

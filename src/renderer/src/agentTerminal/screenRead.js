@@ -62,7 +62,8 @@ export function getRawOutput(term, startMarker, endMarker = null) {
   const buffer = term.buffer.active
   let startLine = Math.max(startMarker && startMarker.line >= 0 ? startMarker.line : 0, 0)
   while (startLine > 0 && buffer.getLine(startLine) && buffer.getLine(startLine).isWrapped) startLine--
-  const endLine = endMarker && endMarker.line >= 0 ? Math.min(buffer.length, endMarker.line + 1) : buffer.length
+  // The end marker's row is where the next prompt starts: not the output.
+  const endLine = endMarker && endMarker.line >= 0 ? Math.min(buffer.length, Math.max(startLine + 1, endMarker.line)) : buffer.length
   const lines = []
   let current = ''
   for (let y = startLine; y < endLine; y++) {

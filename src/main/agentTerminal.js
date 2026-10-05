@@ -41,6 +41,7 @@ export const TERMINAL_OPS = ['list', 'run', 'output', 'send', 'kill', 'lastComma
 export const MAX_COMMAND_BYTES = 8 * 1024
 export const MAX_TEXT = 1000
 export const RUN_MAX_TIMEOUT_MS = 120000
+export const ASYNC_DEFAULT_TIMEOUT_MS = 20000
 export const MAX_KEYS = 32
 // Writes per agent: at most RATE_MAX in RATE_WINDOW_MS.
 export const RATE_MAX = 20
@@ -381,7 +382,8 @@ export function createAgentTerminal({ verify, settings = () => ({ enabled: true 
     let command = checkCommand(args.command)
     const mode = args.mode === 'async' || args.isBackground === true ? 'async' : 'sync'
     const timeout = Number(args.timeout)
-    const timeoutMs = Number.isFinite(timeout) && timeout > 0 ? Math.min(RUN_MAX_TIMEOUT_MS, Math.max(1000, Math.round(timeout))) : RUN_MAX_TIMEOUT_MS
+    // async: how long to wait for its first quiet moment (VS Code's first window: 20 s).
+    const timeoutMs = Number.isFinite(timeout) && timeout > 0 ? Math.min(RUN_MAX_TIMEOUT_MS, Math.max(1000, Math.round(timeout))) : mode === 'async' ? ASYNC_DEFAULT_TIMEOUT_MS : RUN_MAX_TIMEOUT_MS
     const t = targetFrom(await ask('terminalTarget', { agent: agentPane, op: 'prepare', terminal: args.id == null ? null : args.id, host: args.host || null, mode }, { timeoutMs: 60000 }))
     writable(t)
     notStopped(agentPane, t)
@@ -457,8 +459,10 @@ export function createAgentTerminal({ verify, settings = () => ({ enabled: true 
         shown = data || '(Enter)'
       }
     }
-    // A question for a secret on screen: never answered by an agent.
-    if (detectsSensitiveInputPrompt(t.cursorLine || '') && /[:?]\s*$/.test(String(t.cursorLine || ''))) {
+    // A question for a secret on screen: never answered by an agent (it may
+    // still cancel it: Ctrl+C, Ctrl+D, Ctrl+\, Escape).
+    const cancelOnly = mode === 'keys' && /^(?:\x03|\x04|\x1c|\x1b)+$/.test(data)
+    if (!cancelOnly && detectsSensitiveInputPrompt(t.cursorLine || '') && /[:?]\s*$/.test(String(t.cursorLine || ''))) {
       throw fail('needs_user_input', `"${t.name}" is asking for a password or other secret: the user types it there. Do not send it.`)
     }
     // VS Code asks before each input to a terminal; the user's "Allow all

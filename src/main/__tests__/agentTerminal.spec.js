@@ -314,7 +314,11 @@ describe('agent terminal: limits', () => {
     const win2 = fakeWindow({ target: { ...OWN, cursorLine: 'Enter passphrase for key: ' } })
     const b = make(win2)
     await expect(b.at.handle(signed('send', { id: OWN.id, command: 'hunter2' }))).rejects.toMatchObject({ code: 'needs_user_input' })
+    await expect(b.at.handle(signed('send', { id: OWN.id, keys: ['y', 'Enter'] }))).rejects.toMatchObject({ code: 'needs_user_input' })
     expect(win2.ops()).not.toContain('send')
+    // It may still cancel the question.
+    await b.at.handle(signed('send', { id: OWN.id, keys: ['Ctrl+C'] }))
+    expect(win2.calls.find((c) => c.op === 'send')).toMatchObject({ mode: 'keys', data: '\x03' })
   })
 
   it('a timed-out command keeps running: the agent gets its id and how to follow it', async () => {

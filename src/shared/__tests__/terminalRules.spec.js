@@ -100,7 +100,7 @@ describe('the decision', () => {
     expect(analyzeCommandLine('ls x.PS1', { rules: r, enabled: true }).isDenied).toBe(true)
   })
   it('nothing is auto-approved while the switch is off, with unanalyzable syntax, or a file written', () => {
-    expect(run('ls', { enabled: false }).isAutoApproved).toBe(false)
+    expect(run('ls', { enabled: false })).toMatchObject({ isAutoApproved: false, info: null })
     expect(run('ls > out.txt')).toMatchObject({ isAutoApproved: false, disclaimers: ['fileWrite'] })
     expect(run('FOO=1')).toMatchObject({ isAutoApproved: false, isAutoApproveAllowed: false, actions: [] })
   })

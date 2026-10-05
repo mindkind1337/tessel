@@ -8614,6 +8614,7 @@ const agentTerminalTargets = createAgentTerminalTargets({
       return null
     }
     leaf.paneName = name
+    leaf.title = name
     leaf.openedBy = agentLeaf.id
     keepView(leaf, agentLeaf, ws)
     let last = null
