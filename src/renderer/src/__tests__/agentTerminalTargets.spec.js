@@ -281,3 +281,13 @@ describe('security review: reading another project', () => {
     expect(await ask(targets, { op: 'selection', terminal: 'pane-srv' })).toMatchObject({ text: 'selected text' })
   })
 })
+
+describe('security review: which host', () => {
+  it('says whether a host is the project’s own, without opening anything', async () => {
+    const { targets, deps } = setup()
+    expect(await ask(targets, { op: 'host', host: 'resources' })).toMatchObject({ hostId: 'ssh-res', label: 'resources', projectHost: false })
+    expect(await ask(targets, { op: 'host' })).toMatchObject({ hostId: null, projectHost: true })
+    expect(deps.createTerminal).not.toHaveBeenCalled()
+    expect((await ask(targets, { op: 'resolve', terminal: 'pane-srv' })).projectHost).toBe(false)
+  })
+})

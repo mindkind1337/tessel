@@ -127,6 +127,8 @@ export function createAgentTerminalTargets(deps) {
       exited: !!l.exited,
       ready: !!pane,
       own: ownBy(l.id, agentLeaf.id),
+      // On the host of the agent's project (this computer for a local project)?
+      projectHost: (l.remoteHostId || null) === ((agentWs.remote && agentWs.remote.hostId) || null),
       ...shellOf(l)
     }
   }
@@ -401,6 +403,12 @@ export function createAgentTerminalTargets(deps) {
       deps.dismissApprovals(agentLeaf.id)
       for (const [id, s] of terms) if (s.exec && !s.exec.done && s.exec.agentPane === agentLeaf.id) cancelPane(id)
       return { ok: true }
+    }
+
+    // Which host a command of its own would run on, opening nothing.
+    if (req.op === 'host') {
+      const hostId = hostOf(agentLeaf, ws, req.host)
+      return { hostId, label: hostId ? deps.hostLabel(hostId) : 'this computer', projectHost: (hostId || null) === ((ws.remote && ws.remote.hostId) || null) } // i18n-ignore
     }
 
     if (req.op === 'prepare') {

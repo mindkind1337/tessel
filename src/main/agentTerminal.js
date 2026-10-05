@@ -189,6 +189,7 @@ function steering(id, hung) {
 export function createAgentTerminal({ verify, settings = () => ({ enabled: true }), ask, busyOf = async () => ({}), send = () => {}, logFile = null, outputDir = null, log = null, now = () => Date.now(), fsImpl = fs }) {
   const approvedPanes = new Set() // "agent|pane": the user allowed this agent in this user terminal
   const readPanes = new Set() // "agent|pane": the user allowed this agent to read this terminal
+  const hostPanes = new Set() // "agent|host:<id>": the user allowed this agent on this SSH host
   const stopped = new Set() // "agent|pane": the user stopped it there
   const stoppedNoticeAt = new Map()
   const sessions = new Map() // agent pane -> { allowAll, rules }
@@ -365,13 +366,16 @@ export function createAgentTerminal({ verify, settings = () => ({ enabled: true 
     notStopped(agentPane, t)
     const s = conf()
     const lang = t.lang === 'powershell' ? 'powershell' : 'bash'
-    const rules = buildRules({ user: s.userRules, workspace: (s.workspaceRules || {})[t.workspaceKey], ignoreDefaults: !!s.ignoreDefaults })
-    const session = sessionOf(agentPane)
-    const analysis = analyzeCommandLine(command, { lang, rules, session, enabled: !!s.autoApprove })
+    // A terminal on a host that is not the project's: the project's rules do
+    // not apply, and nothing is approved without asking (rules or session).
+    const elsewhere = t.projectHost === false
+    const rules = buildRules({ user: s.userRules, workspace: elsewhere ? {} : (s.workspaceRules || {})[t.workspaceKey], ignoreDefaults: !!s.ignoreDefaults })
+    const session = elsewhere ? {} : sessionOf(agentPane)
+    const analysis = analyzeCommandLine(command, { lang, rules, session, enabled: !!s.autoApprove && !elsewhere })
     const base = { kind: 'command', command, explanation: String(args.explanation || '').slice(0, MAX_TEXT), goal: String(args.goal || '').slice(0, MAX_TEXT), info: analysis.info, disclaimers: analysis.disclaimers, own: !!t.own }
     if (t.own) {
       if (analysis.isAutoApproved) return { command, edited: false, rule: analysis.info }
-      const answer = await card(agentPane, t, { ...base, actions: analysis.actions })
+      const answer = await card(agentPane, t, { ...base, actions: elsewhere ? [] : analysis.actions })
       applyAction(agentPane, t, answer.action)
       const edited = typeof answer.command === 'string' && answer.command.trim() && answer.command !== command ? checkCommand(answer.command) : null
       return { command: edited || command, edited: !!edited, rule: null }
@@ -404,6 +408,19 @@ export function createAgentTerminal({ verify, settings = () => ({ enabled: true 
     const timeout = Number(args.timeout)
     // async: how long to wait for its first quiet moment (VS Code's first window: 20 s).
     const timeoutMs = Number.isFinite(timeout) && timeout > 0 ? Math.min(RUN_MAX_TIMEOUT_MS, Math.max(1000, Math.round(timeout))) : mode === 'async' ? ASYNC_DEFAULT_TIMEOUT_MS : RUN_MAX_TIMEOUT_MS
+    // Its own terminal on a host that is not the project's: the user allows
+    // that host first (once per host), before anything is opened there.
+    if (args.id == null) {
+      const h = await ask('terminalTarget', { agent: agentPane, op: 'host', host: args.host || null })
+      if (h && h.projectHost === false && h.hostId) {
+        const hk = key(agentPane, `host:${h.hostId}`)
+        if (!hostPanes.has(hk)) {
+          const label = String(h.label || h.hostId).slice(0, 100)
+          const answer = await card(agentPane, { id: `host:${h.hostId}`, name: label, own: false }, { kind: 'host', host: label, command: '', own: false, explanation: String(args.explanation || '').slice(0, MAX_TEXT), goal: String(args.goal || '').slice(0, MAX_TEXT), info: null, disclaimers: [], actions: [] })
+          if (answer.remember === 'pane') hostPanes.add(hk)
+        }
+      }
+    }
     const t = targetFrom(await ask('terminalTarget', { agent: agentPane, op: 'prepare', terminal: args.id == null ? null : args.id, host: args.host || null, mode, mayOpen: mayOpen(agentPane) }, { timeoutMs: 60000 }))
     if (t.isNew) opened(agentPane)
     writable(t)

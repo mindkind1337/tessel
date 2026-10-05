@@ -56,6 +56,8 @@ function fakeWindow({ target = OWN, approve = { allow: true }, run = { state: 'c
         return typeof run === 'function' ? run(params) : run
       case 'send':
         return { name: target.name, output: 'sent ok' }
+      case 'host':
+        return params.host === 'other' ? { hostId: 'ssh-other', label: 'other', projectHost: false } : { hostId: null, label: 'this computer', projectHost: true }
       case 'active':
         return { ...target }
       case 'lastCommand':
@@ -105,7 +107,7 @@ describe('agent terminal: who may call', () => {
     const { at } = make(win)
     const r = await at.handle(signed('run', { command: 'echo hello', explanation: 'say hello', goal: 'test', mode: 'sync' }))
     expect(r.text).toContain('hello')
-    expect(win.ops()).toEqual(['prepare', 'approve', 'run'])
+    expect(win.ops()).toEqual(['host', 'prepare', 'approve', 'run'])
     expect(win.calls[0].agent).toBe(AGENT)
   })
 
@@ -180,7 +182,7 @@ describe('agent terminal: approval', () => {
     const win = fakeWindow()
     const { at } = make(win, { settings: { autoApprove: true } })
     const r = await at.handle(signed('run', { command: 'git status', explanation: 'x', goal: 'y', mode: 'sync' }))
-    expect(win.ops()).toEqual(['prepare', 'run'])
+    expect(win.ops()).toEqual(['host', 'prepare', 'run'])
     expect(r.text).toContain('Auto approved by rule')
   })
 
@@ -199,7 +201,7 @@ describe('agent terminal: approval', () => {
     const win = fakeWindow()
     const { at } = make(win)
     await at.handle(signed('run', { command: 'git status', explanation: 'x', goal: 'y', mode: 'sync' }))
-    expect(win.ops()).toEqual(['prepare', 'approve', 'run'])
+    expect(win.ops()).toEqual(['host', 'prepare', 'approve', 'run'])
   })
 
   it('a skipped command does not run', async () => {
@@ -498,5 +500,41 @@ describe('security review: reading a terminal', () => {
     await at.handle(signed('run', { id: USER.id, command: 'ls', explanation: 'x', goal: 'y', mode: 'sync' }))
     at.stop(USER.id)
     await expect(at.handle(signed('output', { id: USER.id }))).rejects.toMatchObject({ code: 'stopped_by_user' })
+  })
+})
+
+describe('security review: another SSH host', () => {
+  const REMOTE = { ...OWN, id: 'pane-remote', host: 'other', lang: 'bash', shellKind: 'ssh', projectHost: false }
+  it('its first use asks the user (per host), and nothing runs there without asking', async () => {
+    const win = fakeWindow({ target: REMOTE, approve: (p) => ({ allow: true, remember: p.card.kind === 'host' ? 'pane' : 'once' }) })
+    const { at } = make(win, { settings: { autoApprove: true, workspaceRules: { 'C:\proj': { make: true } } } })
+    await at.handle(signed('run', { command: 'ls', explanation: 'x', goal: 'y', mode: 'sync', host: 'other' }))
+    await at.handle(signed('run', { command: 'make', explanation: 'x', goal: 'y', mode: 'sync', host: 'other' }))
+    const kinds = win.calls.filter((c) => c.op === 'approve').map((c) => c.card.kind)
+    expect(kinds).toEqual(['host', 'command', 'command'])
+    // The host card comes before any terminal is opened there.
+    expect(win.ops().indexOf('approve')).toBeLessThan(win.ops().indexOf('prepare'))
+  })
+
+  it('a host the user refused: nothing is opened', async () => {
+    const win = fakeWindow({ target: REMOTE, approve: { allow: false } })
+    const { at } = make(win)
+    await expect(at.handle(signed('run', { command: 'ls', explanation: 'x', goal: 'y', mode: 'sync', host: 'other' }))).rejects.toMatchObject({ code: 'denied' })
+    expect(win.ops()).not.toContain('prepare')
+  })
+
+  it('"allow all in this session" does not cover another host', async () => {
+    const win = fakeWindow({ target: REMOTE, approve: (p) => ({ allow: true, remember: 'pane', action: p.card.kind === 'command' ? { kind: 'session' } : null }) })
+    const { at } = make(win, { settings: { autoApprove: true } })
+    await at.handle(signed('run', { command: 'make', explanation: 'x', goal: 'y', mode: 'sync', host: 'other' }))
+    await at.handle(signed('run', { command: 'make', explanation: 'x', goal: 'y', mode: 'sync', host: 'other' }))
+    expect(win.calls.filter((c) => c.op === 'approve' && c.card.kind === 'command')).toHaveLength(2)
+  })
+
+  it('the project’s own host: no host card', async () => {
+    const win = fakeWindow({ target: { ...OWN, projectHost: true } })
+    const { at } = make(win, { settings: { autoApprove: true } })
+    await at.handle(signed('run', { command: 'ls', explanation: 'x', goal: 'y', mode: 'sync' }))
+    expect(win.ops()).toEqual(['host', 'prepare', 'run'])
   })
 })
