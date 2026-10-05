@@ -101,6 +101,22 @@ describe('the panel', () => {
     return mount(TaskHistoryPanel, { props: { active: true, now: NOW, projects: [{ id: 'ws', name: 'Tessel', panes: [{ id: 'p1' }] }], ...props }, attachTo: document.body })
   }
 
+  it("shows this workspace's tasks by default, every workspace's with All", async () => {
+    window.shellApi = { jobCost: { forCards: vi.fn(async () => ({})), onChanged: () => () => {} } }
+    setTaskHistory([
+      { id: 'w1', title: 'Here', wsId: 'ws', doneAt: NOW - 1000 },
+      { id: 'w2', title: 'Elsewhere', wsId: 'other', doneAt: NOW - 2000 }
+    ])
+    const w = mountPanel({ workspaceId: 'ws' })
+    await flushPromises()
+    const rows = () => w.findAll('[data-test^="history-row-"]').map((x) => x.attributes('data-test'))
+    expect(rows()).toEqual(['history-row-w1'])
+    expect(w.find('[data-test="total-tasks"]').text()).toBe('1')
+    await w.find('[data-test="history-scope-all"]').trigger('click')
+    expect(rows()).toEqual(['history-row-w1', 'history-row-w2'])
+    w.unmount()
+  })
+
   it('lists the tasks with their figures and the totals', async () => {
     window.shellApi = { jobCost: { forCards: vi.fn(async () => ({})), onChanged: () => () => {} } }
     const w = mountPanel()

@@ -120,7 +120,7 @@ describe('SidePanel.vue', () => {
   })
 
   it('Task history: a tab of its own after Tasks, its rows open their pane (fullscreen left)', async () => {
-    setTaskHistory([{ id: 'h1', title: 'Shipped it', agentName: 'Ada', agentKind: 'claude', project: 'proj', paneId: 'p1', doneAt: Date.now() - 1000, durationMs: 60000, cost: { status: 'ok', inputTokens: 10, outputTokens: 5, usd: 0.02, known: true, final: true, models: [] } }])
+    setTaskHistory([{ id: 'h1', title: 'Shipped it', wsId: 'ws1', agentName: 'Ada', agentKind: 'claude', project: 'proj', paneId: 'p1', doneAt: Date.now() - 1000, durationMs: 60000, cost: { status: 'ok', inputTokens: 10, outputTokens: 5, usd: 0.02, known: true, final: true, models: [] } }])
     const projects = [{ id: 'ws1', name: 'proj', panes: [{ id: 'p1', kind: 'agent', agentId: 'claude', title: 'Ada', state: 'idle' }] }]
     const w = mount(SidePanel, { props: { tab: 'tasks', root: ROOT, workspaceId: 'ws1', projects, fullscreen: true }, attachTo: document.body })
     const ids = w.findAll('.side-tab').map((x) => x.attributes('data-test'))

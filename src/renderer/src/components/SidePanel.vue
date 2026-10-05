@@ -369,6 +369,7 @@ onBeforeUnmount(() => {
         :projects="projects"
         :now="now"
         :active="current() === 'taskHistory'"
+        :workspace-id="workspaceId"
         @focus-pane="focusPane"
       />
       <SessionHistoryPanel

@@ -66,6 +66,11 @@
       "notStarted": "Elle n'est jamais passée par En cours.",
       "noCard": "Sa carte n'existe plus, ni son enregistrement.",
       "error": "Les chiffres n'ont pas pu être lus."
+    },
+    "scope": {
+      "aria": "Quelles tâches",
+      "workspace": "Cet espace de travail",
+      "all": "Tous les espaces"
     }
   }
 }
