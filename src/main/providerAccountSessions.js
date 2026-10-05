@@ -9,7 +9,14 @@ import { claudeSubagents, codexSubagents, opencodeSubagents, clineSubagents } fr
 import { clineDataDir } from './jsonAgents'
 import { deleteSession, revealSessionFile, sessionDetails } from './sessionDetails'
 
-export function createAccountSessions({ accounts, home = os.homedir(), env = process.env }) {
+// listSessions: the list reader (index.js gives one that reads in its own
+// process, sessionListClient.js); by default agentSessions' own, here.
+export function createAccountSessions({
+  accounts,
+  home = os.homedir(),
+  env = process.env,
+  listSessions: readList = async (...args) => listSessions(...args)
+}) {
   const root = (provider, result) =>
     provider === 'codex'
       ? result.env?.CODEX_HOME || env.CODEX_HOME || join(home, '.codex')
@@ -74,12 +81,12 @@ export function createAccountSessions({ accounts, home = os.homedir(), env = pro
       const all = await accounts.list()
       // Non-Codex histories are shared by the provider, not per managed login.
       const claude = await accounts.sessionEnv('claude')
-      const out = listSessions(query, home, {
-        codex: null,
-        claude: claude.ok ? root('claude', claude) : null
-      }).map((row) =>
-        row.agent === 'claude' ? { ...row, accountId: claude.accountId ?? null } : row
-      )
+      const out = (
+        await readList(query, home, {
+          codex: null,
+          claude: claude.ok ? root('claude', claude) : null
+        })
+      ).map((row) => (row.agent === 'claude' ? { ...row, accountId: claude.accountId ?? null } : row))
       const provider = all.providers.find((entry) => entry.provider === 'codex')
       if (provider?.error) return out
       const ids = [null, ...(provider?.accounts || []).map((account) => account.id)]
@@ -91,13 +98,12 @@ export function createAccountSessions({ accounts, home = os.homedir(), env = pro
             ? 'System default'
             : provider.accounts.find((account) => account.id === accountId)?.label ||
               'Codex account'
-        out.push(
-          ...listSessions(query, home, {
-            codex: root('codex', scope),
-            claude: null,
-            others: false
-          }).map((row) => ({ ...row, accountId, accountLabel: label }))
-        )
+        const rows = await readList(query, home, {
+          codex: root('codex', scope),
+          claude: null,
+          others: false
+        })
+        out.push(...rows.map((row) => ({ ...row, accountId, accountLabel: label })))
       }
       return out.sort((a, b) => b.updated - a.updated)
     }

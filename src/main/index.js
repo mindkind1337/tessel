@@ -18,6 +18,8 @@ import { registerProviderUsage } from './providerUsageIpc'
 import { createProviderCredentials } from './providerCredentials'
 import { createAccountSessions } from './providerAccountSessions'
 import { createCommandLookup } from './commandLookup'
+import { createSessionLister } from './sessionListClient'
+import { listSessions } from './agentSessions'
 import { postToInbox } from './agentInbox'
 import { hooksStatus } from './teamHooksStatus'
 import { createAgentStateStore } from './agentStateStore'
@@ -1838,7 +1840,15 @@ registerProviderUsage({
 ipcMain.handle('accounts:loginStatus', safe((id) => accounts.loginStatus(id)))
 ipcMain.handle('accounts:launchEnv', safe((query) => typeof query === 'string'
   ? accounts.launchEnv(query) : accounts.launchEnv(query?.provider, query?.accountId)))
-const accountSessions = createAccountSessions({ accounts })
+// The past conversations list is read in its own process (it reads hundreds
+// of transcript files; here it froze the window for 130-250 ms).
+const sessionLister = createSessionLister({
+  fork: () => utilityProcess.fork(join(__dirname, 'sessionListWorker.js'), [], { serviceName: 'Tessel session list' }),
+  fallback: listSessions,
+  log
+})
+app.on('will-quit', () => sessionLister.close())
+const accountSessions = createAccountSessions({ accounts, listSessions: sessionLister.list })
 const accountUsage = createAccountUsage({ accounts, userData: app.getPath('userData') })
 // Tokens, time and estimated cost of each job (task card) and pane session,
 // from the agents' session files in every account's folder (jobCost.js).
