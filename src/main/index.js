@@ -3927,7 +3927,7 @@ const cliHandlers = {
   'task.add': async (params) => cliBridge.ask('addTask', params),
   usage: async () => accountUsage.usage(),
   browser: async (params) => agentBrowser.handle(params),
-  terminal: async (params) => agentTerminal.handle(params)
+  terminal: async (params, opts) => agentTerminal.handle(params, opts)
 }
 const cliServer = createCliServer({
   userData: app.getPath('userData'),

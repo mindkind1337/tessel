@@ -10,6 +10,7 @@ import {
   TOKEN_FILE,
   CliError,
   createCliServer,
+  MAX_TERMINAL_PER_PANE,
   handleRequestLine,
   parseRequestLine,
   readOrCreateToken,
@@ -289,5 +290,55 @@ describe('createCliServer', () => {
     const server = createCliServer({ userData: dir, netApi, handlers: {}, onDown })
     expect(await server.start()).toBe(false)
     expect(onDown).not.toHaveBeenCalled()
+  })
+})
+
+describe('security review: terminal requests cannot starve the pipe', () => {
+  const termLine = (token, pane) => line({ token, method: 'terminal', params: { pane, op: 'run', args: {}, auth: { nonce: 'n'.repeat(20), at: 1, mac: 'x' } } })
+  async function setup(handlers) {
+    const net = fakeNet()
+    const server = createCliServer({ userData: dir, netApi: net, handlers })
+    await server.start()
+    const token = fs.readFileSync(path.join(dir, TOKEN_FILE), 'utf8')
+    const open = (text) => {
+      const sock = fakeSocket()
+      net.servers[0].onConnection(sock)
+      sock.emit('data', Buffer.from(text))
+      return sock
+    }
+    return { server, token, open }
+  }
+
+  it('long terminal requests leave room for the other requests; a pane has its own cap', async () => {
+    const hold = []
+    const { server, token, open } = await setup({
+      terminal: () => new Promise((resolve) => hold.push(resolve)),
+      ping: async () => ({ pong: true })
+    })
+    // Many panes, each waiting on the user for minutes.
+    for (let i = 0; i < 12; i++) open(termLine(token, `pane-${i}`))
+    await vi.waitFor(() => expect(hold.length).toBe(12))
+    const ping = open(line({ token, method: 'ping' }))
+    await vi.waitFor(() => expect(ping.end).toHaveBeenCalled())
+    expect(JSON.parse(ping.answer)).toEqual({ ok: true, result: { pong: true } })
+    // One pane: at most a few at a time.
+    const same = []
+    for (let i = 0; i < 6; i++) same.push(open(termLine(token, 'pane-x')))
+    await vi.waitFor(() => expect(same.filter((s) => s.end.mock.calls.length).length).toBe(6 - MAX_TERMINAL_PER_PANE))
+    expect(JSON.parse(same.at(-1).answer).error.code).toBe('busy')
+    server.stop()
+  })
+
+  it('the client going away cancels its terminal request and frees its place', async () => {
+    let signal = null
+    const { server, token, open } = await setup({ terminal: (_p, opts) => ((signal = opts && opts.signal), new Promise(() => {})) })
+    const sock = open(termLine(token, 'pane-a'))
+    await vi.waitFor(() => expect(signal).toBeTruthy())
+    expect(signal.aborted).toBe(false)
+    sock.emit('close')
+    expect(signal.aborted).toBe(true)
+    // Its place is free again.
+    for (let i = 0; i < MAX_TERMINAL_PER_PANE; i++) open(termLine(token, 'pane-a'))
+    server.stop()
   })
 })

@@ -60,6 +60,7 @@ function setup({ typing = false, quality = 'none', respond = true } = {}) {
     closeTerminal: vi.fn((id) => (ws.tree.children = ws.tree.children.filter((l) => l.id !== id))),
     activeTerminal: () => shell,
     approve: vi.fn(async () => ({ allow: true })),
+    dismissApprovals: vi.fn(),
     notifyAgent: vi.fn(),
     toast: vi.fn(),
     stoppedNotice: vi.fn(),
@@ -248,5 +249,22 @@ describe('agent terminals: reading', () => {
     const r = await ask(targets, { op: 'output', terminal: 'pane-srv' })
     expect(r).toMatchObject({ command: 'uptime', running: false })
     expect(r.output).toContain('result line')
+  })
+})
+
+describe('security review: opening and abandoning', () => {
+  it('past the limit, no new terminal is opened', async () => {
+    const { targets, deps } = setup()
+    await expect(ask(targets, { op: 'prepare', mode: 'async', mayOpen: false })).rejects.toMatchObject({ code: 'rate_limited' })
+    expect(deps.createTerminal).not.toHaveBeenCalled()
+  })
+
+  it('an abandoned request lets the agent\'s command go and drops its approval cards', async () => {
+    const { targets, deps } = setup({ respond: false })
+    const run = ask(targets, { op: 'run', terminal: 'pane-srv', command: 'sleep 100' })
+    await vi.advanceTimersByTimeAsync(2000)
+    await ask(targets, { op: 'abort' })
+    expect(deps.dismissApprovals).toHaveBeenCalledWith('pane-ada')
+    expect((await settle(run, 100)).state).toBe('cancelled')
   })
 })

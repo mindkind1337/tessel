@@ -3,8 +3,8 @@ import { createRequire } from 'module'
 import { join } from 'path'
 import fs from 'fs'
 import os from 'os'
-import { createAgentTerminal, stripAnsi, checkCommand, keyData, keysData, MAX_COMMAND_BYTES, RATE_MAX } from '../agentTerminal'
-import { handleRequestLine, validateParams } from '../cliServer'
+import { createAgentTerminal, stripAnsi, checkCommand, keyData, keysData, MAX_COMMAND_BYTES, RATE_MAX, PREPARE_MAX } from '../agentTerminal'
+import { handleRequestLine, validateParams, CliError } from '../cliServer'
 import { setTeamSecret, verifyRequest, _resetTeamAuth } from '../teamAuth'
 import { MAX_OUTPUT_LENGTH } from '../../shared/terminalOutput'
 
@@ -45,6 +45,9 @@ function fakeWindow({ target = OWN, approve = { allow: true }, run = { state: 'c
     expect(method).toBe('terminalTarget')
     switch (params.op) {
       case 'prepare':
+        // async: a new terminal each time (the window refuses past the limit).
+        if (params.mode === 'async' && params.mayOpen === false) throw new CliError('rate_limited', 'limit')
+        return typeof target === 'function' ? target(params) : { ...target, isNew: params.mode === 'async' }
       case 'resolve':
         return typeof target === 'function' ? target(params) : { ...target }
       case 'approve':
@@ -60,6 +63,7 @@ function fakeWindow({ target = OWN, approve = { allow: true }, run = { state: 'c
       case 'list':
         return { agent: 'Ada', terminals: [{ ...USER, busy: null }, { ...PEER, busy: null }] }
       case 'stoppedNotice':
+      case 'abort':
         return { ok: true }
       default:
         throw new Error(`unexpected op ${params.op}`)
@@ -414,5 +418,33 @@ describe('terminal tools in the MCP server', () => {
       delete process.env.TESSEL_TEAM_SECRET
       delete process.env.TESSEL_PANE_ID
     }
+  })
+})
+
+describe('security review: requests that wait', () => {
+  it('opening terminals is rate-limited before any approval', async () => {
+    const win = fakeWindow({ approve: { allow: false } })
+    const { at } = make(win)
+    let refused = null
+    for (let i = 0; i < 20 && !refused; i++) {
+      try {
+        await at.handle(signed('run', { command: 'make', explanation: 'x', goal: 'y', mode: 'async' }))
+      } catch (err) {
+        if (err.code === 'rate_limited') refused = i
+      }
+    }
+    expect(refused).toBe(PREPARE_MAX)
+    expect(win.calls.filter((c) => c.op === 'prepare').map((c) => c.mayOpen)).toEqual([...Array(PREPARE_MAX).fill(true), false])
+  })
+
+  it('the client going away ends a request waiting for the user, and the window lets it go', async () => {
+    const win = fakeWindow({ approve: () => new Promise(() => {}) })
+    const { at } = make(win)
+    const ctl = new AbortController()
+    const p = at.handle(signed('run', { command: 'make', explanation: 'x', goal: 'y', mode: 'sync' }), { signal: ctl.signal })
+    await vi.waitFor(() => expect(win.ops()).toContain('approve'))
+    ctl.abort()
+    await expect(p).rejects.toMatchObject({ code: 'cancelled' })
+    expect(win.calls.find((c) => c.op === 'abort')).toMatchObject({ agent: AGENT })
   })
 })

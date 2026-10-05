@@ -52,6 +52,7 @@ export const ASYNC_IDLE_MS = 3000
 //   closeTerminal(id)
 //   activeTerminal() -> leaf | null    the user's active pane, when a terminal
 //   approve(card) -> Promise<{ allow, command, action, remember }>
+//   dismissApprovals(agentPane): its approval cards are answered no
 //   notifyAgent(agentLeaf, text)       a notice in its inbox
 //   toast(text, opts)
 //   stoppedNotice({ agentLeaf, agentLabel, leaf, name })
@@ -233,7 +234,7 @@ export function createAgentTerminalTargets(deps) {
 
   // The terminal for a command of this agent: its foreground one (sync), or
   // a new one (async, or the foreground one busy), on this host.
-  async function ownTerminal(agentLeaf, ws, hostId, mode) {
+  async function ownTerminal(agentLeaf, ws, hostId, mode, mayOpen = true) {
     const mine = ownTerminals(agentLeaf.id).filter((x) => !x.s.retired && (x.s.hostId || null) === (hostId || null))
     const idle = (x) => !x.s.exec || x.s.exec.done
     if (mode !== 'async') {
@@ -246,6 +247,8 @@ export function createAgentTerminalTargets(deps) {
         return { ...free, isNew: false }
       }
     }
+    // Too many new terminals lately (the main process counts them).
+    if (!mayOpen) throw refuse('rate_limited', 'You opened too many terminals lately: wait a minute, or use one you have (terminal_list).') // i18n-ignore
     const all = ownTerminals(agentLeaf.id)
     if (all.length >= MAX_OWN_TERMINALS) {
       const old = all.find((x) => idle(x) && x.s.role === 'background') || all.find(idle)
@@ -383,13 +386,21 @@ export function createAgentTerminalTargets(deps) {
     }
 
     // run_in_terminal: the agent's own terminal, or one of the user's it names.
+    // The agent's tool call went away: its approval cards go, the commands it
+    // waits on are let go.
+    if (req.op === 'abort') {
+      deps.dismissApprovals(agentLeaf.id)
+      for (const [id, s] of terms) if (s.exec && !s.exec.done && s.exec.agentPane === agentLeaf.id) cancelPane(id)
+      return { ok: true }
+    }
+
     if (req.op === 'prepare') {
       if (req.terminal != null && req.terminal !== '') {
         const target = resolve(ws, agentLeaf, req.terminal)
         return { ...describe(target.leaf, target.ws, ws, agentLeaf), agentLabel, isNew: false }
       }
       const hostId = hostOf(agentLeaf, ws, req.host)
-      const own = await ownTerminal(agentLeaf, ws, hostId, req.mode)
+      const own = await ownTerminal(agentLeaf, ws, hostId, req.mode, req.mayOpen !== false)
       return { ...describe(own.leaf, own.ws, ws, agentLeaf), own: true, agentLabel, isNew: own.isNew }
     }
 

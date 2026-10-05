@@ -46,6 +46,11 @@ export const MAX_KEYS = 32
 // Writes per agent: at most RATE_MAX in RATE_WINDOW_MS.
 export const RATE_MAX = 20
 export const RATE_WINDOW_MS = 10000
+// New terminals (and SSH sessions) an agent's commands may open before any
+// approval: at most PREPARE_MAX per agent in PREPARE_WINDOW_MS; past it, the
+// window refuses to open one (a command in a terminal it has still runs).
+export const PREPARE_MAX = 6
+export const PREPARE_WINDOW_MS = 60000
 // The badge goes after this long without a write.
 export const IDLE_MS = 60 * 1000
 // The user has this long to answer an approval.
@@ -243,6 +248,19 @@ export function createAgentTerminal({ verify, settings = () => ({ enabled: true 
     release(id)
   }
 
+  const opens = new Map() // agent pane -> [times it opened a terminal]
+  function mayOpen(agentPane) {
+    const t = now()
+    const list = (opens.get(agentPane) || []).filter((x) => t - x < PREPARE_WINDOW_MS)
+    opens.set(agentPane, list)
+    return list.length < PREPARE_MAX
+  }
+  function opened(agentPane) {
+    const list = opens.get(agentPane) || []
+    list.push(now())
+    opens.set(agentPane, list)
+  }
+
   function rateLimit(agentPane) {
     const t = now()
     const list = (writes.get(agentPane) || []).filter((x) => t - x < RATE_WINDOW_MS)
@@ -384,7 +402,8 @@ export function createAgentTerminal({ verify, settings = () => ({ enabled: true 
     const timeout = Number(args.timeout)
     // async: how long to wait for its first quiet moment (VS Code's first window: 20 s).
     const timeoutMs = Number.isFinite(timeout) && timeout > 0 ? Math.min(RUN_MAX_TIMEOUT_MS, Math.max(1000, Math.round(timeout))) : mode === 'async' ? ASYNC_DEFAULT_TIMEOUT_MS : RUN_MAX_TIMEOUT_MS
-    const t = targetFrom(await ask('terminalTarget', { agent: agentPane, op: 'prepare', terminal: args.id == null ? null : args.id, host: args.host || null, mode }, { timeoutMs: 60000 }))
+    const t = targetFrom(await ask('terminalTarget', { agent: agentPane, op: 'prepare', terminal: args.id == null ? null : args.id, host: args.host || null, mode, mayOpen: mayOpen(agentPane) }, { timeoutMs: 60000 }))
+    if (t.isNew) opened(agentPane)
     writable(t)
     notStopped(agentPane, t)
     // Windows PowerShell 5.1 has no &&: ; instead (VS Code rewrites it too).
@@ -535,7 +554,31 @@ export function createAgentTerminal({ verify, settings = () => ({ enabled: true 
   }
 
   // params: { pane, op, args, auth } (checked by cliServer.js) -> { text }
-  async function handle(params) {
+  // opts.signal: aborted when the agent's tool call went away (its pipe
+  // closed): the request ends, the window drops its approval card and lets
+  // its command go.
+  async function handle(params, opts = {}) {
+    const signal = opts && opts.signal
+    if (!signal) return handleNow(params)
+    if (signal.aborted) throw fail('cancelled', 'The request was cancelled.')
+    let onAbort
+    const aborted = new Promise((_resolve, reject) => {
+      onAbort = () => {
+        const pane = params && params.pane
+        if (typeof pane === 'string') ask('terminalTarget', { agent: pane, op: 'abort' }).catch(() => {})
+        reject(fail('cancelled', 'The request was cancelled.'))
+      }
+      signal.addEventListener('abort', onAbort, { once: true })
+    })
+    aborted.catch(() => {})
+    try {
+      return await Promise.race([handleNow(params), aborted])
+    } finally {
+      signal.removeEventListener('abort', onAbort)
+    }
+  }
+
+  async function handleNow(params) {
     const { pane, op, args = {}, auth } = params || {}
     const v = verify({ op, args, auth }, pane)
     if (!v || v.unsigned) throw fail('unauthorized', 'This request is not signed by a pane Tessel started: restart the agent from Tessel.')

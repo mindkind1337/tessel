@@ -8543,13 +8543,17 @@ watch(
 const AGENT_APPROVAL_MS = 5 * 60 * 1000 - 5000
 const approvalCard = ref(null) // { card, resolve }
 let agentApprovals = Promise.resolve()
-function askAgentApproval(card) {
+// Agents whose tool call went away: their waiting cards are answered no.
+const droppedApprovals = new Map() // agent pane -> time
+function askAgentApproval(card, agentPane = null) {
   const until = Date.now() + AGENT_APPROVAL_MS
+  const asked = Date.now()
+  const dropped = () => agentPane && (droppedApprovals.get(agentPane) || 0) >= asked
   const run = async () => {
-    while ((confirmState.value || approvalCard.value) && Date.now() < until) await new Promise((r) => setTimeout(r, 300))
-    if (Date.now() >= until) return { allow: false }
+    while ((confirmState.value || approvalCard.value) && Date.now() < until && !dropped()) await new Promise((r) => setTimeout(r, 300))
+    if (Date.now() >= until || dropped()) return { allow: false }
     return new Promise((resolve) => {
-      const entry = { card, resolve }
+      const entry = { card, resolve, agentPane }
       approvalCard.value = entry
       setTimeout(() => {
         if (approvalCard.value === entry) answerAgentApproval({ allow: false })
@@ -8559,6 +8563,10 @@ function askAgentApproval(card) {
   const p = agentApprovals.then(run, run)
   agentApprovals = p.catch(() => null)
   return p
+}
+function dismissAgentApprovals(agentPane) {
+  droppedApprovals.set(agentPane, Date.now())
+  if (approvalCard.value && approvalCard.value.agentPane === agentPane) answerAgentApproval({ allow: false })
 }
 function answerAgentApproval(answer) {
   const entry = approvalCard.value
@@ -8629,6 +8637,7 @@ const agentTerminalTargets = createAgentTerminalTargets({
     return leaf
   },
   closeTerminal: (id) => closeLeaf(id, { force: true }),
+  dismissApprovals: (agentPane) => dismissAgentApprovals(agentPane),
   activeTerminal: () => {
     const ws = currentWs.value
     return ws && ws.activeId ? findLeafIn(ws.tree, ws.activeId) : null
@@ -8651,7 +8660,7 @@ const agentTerminalTargets = createAgentTerminalTargets({
       where,
       folder: String(leaf.cwd || leaf.remotePath || leaf.startDir || '')
     }
-    const answer = await askAgentApproval(card)
+    const answer = await askAgentApproval(card, c.agentLeaf.id)
     if (!answer || !answer.allow) return { allow: false }
     const action = answer.action || null
     // A rule needs auto approve on; "this project" and "always" are saved here.

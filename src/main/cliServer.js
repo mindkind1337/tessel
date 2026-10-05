@@ -36,6 +36,11 @@ export const MAX_REPLY_BYTES = 1024 * 1024
 export const RUNTIME_FILE = 'cli-runtime.json'
 export const TOKEN_FILE = 'cli.token'
 export const MAX_IN_FLIGHT = 8
+// An agent's terminal tool waits for a command or the user's approval for
+// minutes: those requests have their own places, a few per pane, so they
+// never hold the ones the other requests need.
+export const MAX_TERMINAL_IN_FLIGHT = 32
+export const MAX_TERMINAL_PER_PANE = 3
 export const METHODS = ['ping', 'focus', 'open', 'new', 'status', 'task.add', 'usage', 'browser', 'terminal']
 
 const TOKEN_RE = /^[0-9a-f]{64}$/
@@ -258,7 +263,8 @@ function terminalParams(params) {
 }
 
 // One request line -> the answer's JSON text (with its line break).
-export async function handleRequestLine(line, { token, handlers }) {
+// signal: aborted when the command went away (its handler may stop).
+export async function handleRequestLine(line, { token, handlers, signal = null }) {
   let req
   try {
     req = parseRequestLine(line)
@@ -266,7 +272,7 @@ export async function handleRequestLine(line, { token, handlers }) {
     if (!METHODS.includes(req.method) || typeof handlers[req.method] !== 'function')
       throw new CliError('unknown_method', t('main.cli.unknownMethod', 'Unknown request: {{method}}', { method: String(req.method).slice(0, 40) }))
     const params = validateParams(req.method, req.params)
-    const result = await handlers[req.method](params)
+    const result = await handlers[req.method](params, { signal })
     return encodeReply({ ok: true, result: result === undefined ? null : result })
   } catch (err) {
     const code = err instanceof CliError ? err.code : 'failed'
@@ -303,6 +309,8 @@ export function createCliServer({
   let name = null
   let token = null
   let inFlight = 0
+  let terminalInFlight = 0
+  const terminalPerPane = new Map()
   let listening = false
   const runtimeFile = path.join(userData, RUNTIME_FILE)
 
@@ -336,8 +344,13 @@ export function createCliServer({
         /* the command went away */
       }
     }
+    // The command went away: its handler is told, its place is freed.
+    let release = null
+    const aborter = new AbortController()
     sock.on('close', () => {
       done = true
+      aborter.abort()
+      if (release) release()
     })
     sock.on('data', (chunk) => {
       if (done) return
@@ -349,16 +362,43 @@ export function createCliServer({
       const nl = buf.indexOf('\n')
       if (nl < 0) return
       const line = buf.slice(0, nl)
-      if (inFlight >= MAX_IN_FLIGHT) {
-        finish(encodeReply({ ok: false, error: { code: 'busy', message: t('main.cli.busy', 'Tessel is busy with other commands. Try again.') } }))
-        return
+      const busy = () => finish(encodeReply({ ok: false, error: { code: 'busy', message: t('main.cli.busy', 'Tessel is busy with other commands. Try again.') } }))
+      // A terminal tool's request (its pane read before anything is checked:
+      // only to count it; handleRequestLine checks it all).
+      let pane = null
+      try {
+        const req = parseRequestLine(line)
+        if (req.method === 'terminal') pane = typeof req.params.pane === 'string' ? req.params.pane.slice(0, 100) : ''
+      } catch {
+        pane = null
       }
-      inFlight++
-      handleRequestLine(line, { token, handlers })
-        .then(finish, () => finish(encodeReply({ ok: false, error: { code: 'failed', message: t('main.cli.failed', 'Tessel could not do it.') } })))
-        .finally(() => {
+      if (pane !== null) {
+        const mine = terminalPerPane.get(pane) || 0
+        if (terminalInFlight >= MAX_TERMINAL_IN_FLIGHT || mine >= MAX_TERMINAL_PER_PANE) return busy()
+        terminalInFlight++
+        terminalPerPane.set(pane, mine + 1)
+        let released = false
+        release = () => {
+          if (released) return
+          released = true
+          terminalInFlight--
+          const n = (terminalPerPane.get(pane) || 1) - 1
+          if (n > 0) terminalPerPane.set(pane, n)
+          else terminalPerPane.delete(pane)
+        }
+      } else {
+        if (inFlight >= MAX_IN_FLIGHT) return busy()
+        inFlight++
+        let released = false
+        release = () => {
+          if (released) return
+          released = true
           inFlight--
-        })
+        }
+      }
+      handleRequestLine(line, { token, handlers, signal: aborter.signal })
+        .then(finish, () => finish(encodeReply({ ok: false, error: { code: 'failed', message: t('main.cli.failed', 'Tessel could not do it.') } })))
+        .finally(() => release())
     })
   }
 
