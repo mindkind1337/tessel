@@ -185,3 +185,23 @@ describe('listSessions', () => {
     expect(listSessions({ cwd: 'C:\\Elsewhere' }, home)).toHaveLength(0)
   })
 })
+
+describe('parseClaudeHead', () => {
+  it("takes the typed prompt of a VS Code conversation (after its <ide_opened_file> block)", async () => {
+    const { parseClaudeHead } = await import('../agentSessions')
+    const line = JSON.stringify({
+      type: 'user',
+      cwd: '/home/me/app',
+      sessionId: 's1',
+      timestamp: '2026-10-01T10:00:00Z',
+      message: { role: 'user', content: [{ type: 'text', text: '<ide_opened_file>The user opened the file /a.lua</ide_opened_file>' }, { type: 'text', text: 'optimise the textures' }] }
+    })
+    expect(parseClaudeHead(line + '\n')).toMatchObject({ cwd: '/home/me/app', title: 'optimise the textures', sessionId: 's1' })
+  })
+
+  it('still skips a message that is only injected context', async () => {
+    const { parseClaudeHead } = await import('../agentSessions')
+    const line = JSON.stringify({ type: 'user', cwd: '/x', message: { content: [{ type: 'text', text: '<command-name>/clear</command-name>' }] } })
+    expect(parseClaudeHead(line + '\n').title).toBe('')
+  })
+})

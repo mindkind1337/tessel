@@ -16,7 +16,7 @@ const os = require('os')
 const net = require('net')
 const path = require('path')
 
-const VERSION = '1.2.0'
+const VERSION = '1.2.1'
 const PROTOCOL = 1
 const SERVER_NAME = 'tessel-team'
 const SHIM_NAME = 'tessel-shim.cjs'
@@ -554,6 +554,16 @@ function isRealPrompt(text) {
   return t.length > 0 && !t.startsWith('<')
 }
 
+// A user message's prompt: its first text block that is not injected context.
+// VS Code's Claude puts <ide_opened_file>…</ide_opened_file> as the first block
+// and the typed prompt in the next one.
+function promptOf(content) {
+  if (typeof content === 'string') return isRealPrompt(content) ? content : ''
+  if (!Array.isArray(content)) return ''
+  const block = content.find((c) => c && (c.type === 'text' || c.type === 'input_text') && isRealPrompt(c.text))
+  return block ? block.text : ''
+}
+
 function oneLine(text, max = 120) {
   const t = String(text || '').replace(/\s+/g, ' ').trim()
   return t.length > max ? t.slice(0, max - 1) + '…' : t
@@ -578,8 +588,8 @@ function parseClaudeHead(text) {
     if (!sessionId && typeof o.sessionId === 'string') sessionId = o.sessionId
     if (!started && typeof o.timestamp === 'string') started = Date.parse(o.timestamp) || 0
     if (!title && o.type === 'user' && !o.isMeta && o.message) {
-      const t = textOf(o.message.content)
-      if (isRealPrompt(t)) title = oneLine(t)
+      const t = promptOf(o.message.content)
+      if (t) title = oneLine(t)
     }
     if (!title && o.type === 'summary' && o.summary) title = oneLine(o.summary)
     if (cwd && title) break
