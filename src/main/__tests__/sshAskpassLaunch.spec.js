@@ -59,6 +59,8 @@ function harness({ helper = 'fake.exe', createDelay = null, sshMode = { mode: 's
     validateRemotePath: (p) => ({ path: p }),
     // Agents on the host (remoteAgent/remoteAgentSetup.js): what main prepared.
     prepareRemoteAgent: async (q) => (typeof remoteAgent === 'function' ? remoteAgent(q) : remoteAgent),
+    // The host's helper and agent check after its first terminal (background).
+    remoteAgentCheck: { hostStarted: async () => {}, waitConnected: () => {}, paneConnected: () => {}, paneExited: () => {} },
     // A terminal opened on a host lets its Files session sign in (remoteFs.js).
     remoteFs: { allow: (id) => allowed.push(id) },
     Date,
