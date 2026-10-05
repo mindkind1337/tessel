@@ -24,9 +24,14 @@ const skipEl = ref(null)
 const dialog = ref(null)
 let previousFocus = null
 
-const editable = computed(() => props.card.kind !== 'send' && !props.card.send)
+// A card for a whole terminal or host (allowed once, or until Tessel restarts).
+const whole = computed(() => ['pane', 'read', 'host'].includes(props.card.kind))
+const editable = computed(() => props.card.kind !== 'send' && !props.card.send && props.card.kind !== 'read' && props.card.kind !== 'host')
+const shown = computed(() => props.card.kind !== 'read' && props.card.kind !== 'host')
 const title = computed(() => {
   const c = props.card
+  if (c.kind === 'read') return t('app.agentTerminal.readTitle', '{{agent}} wants to read the terminal "{{name}}" ({{where}})', { agent: c.agentLabel, name: c.name, where: c.where })
+  if (c.kind === 'host') return t('app.agentTerminal.hostTitle', '{{agent}} wants to run commands on the SSH host {{host}}', { agent: c.agentLabel, host: c.host || c.where })
   if (c.kind === 'pane') return t('app.agentTerminal.title', '{{agent}} wants to use the terminal "{{name}}" ({{where}})', { agent: c.agentLabel, name: c.name, where: c.where })
   if (c.kind === 'send') return t('app.agentTerminal.sendTitle', '{{agent}} wants to type in its terminal "{{name}}"', { agent: c.agentLabel, name: c.name })
   return c.own
@@ -53,9 +58,20 @@ function actionLabel(a) {
   return t('app.agentTerminal.allowPrefix', 'Allow {{what}} {{scope}}', { what, scope: scopeLabel(a.scope) })
 }
 const paneText = computed(() =>
-  props.card.send
-    ? t('app.agentTerminal.keysText', 'It will press these keys there:')
-    : t('app.agentTerminal.paneText', 'It will type this command there and press Enter, with your rights on {{where}}. Allowing it in this terminal lets it type more commands there until Tessel restarts.', { where: props.card.where })
+  props.card.kind === 'read'
+    ? t('app.agentTerminal.readText', 'It will read what this terminal shows and its scrollback, which may hold passwords, keys or other secrets you typed or printed. Allowing it for this terminal lets it read it again until Tessel restarts.')
+    : props.card.kind === 'host'
+      ? t('app.agentTerminal.hostText', 'It is not the host of your project: Tessel opens a terminal there with your account, already signed in. Each command still asks you, and the rules of your project do not apply there.')
+      : props.card.send
+        ? t('app.agentTerminal.keysText', 'It will press these keys there:')
+        : t('app.agentTerminal.paneText', 'It will type this command there and press Enter, with your rights on {{where}}. Allowing it in this terminal lets it type more commands there until Tessel restarts.', { where: props.card.where })
+)
+const allowWholeLabel = computed(() =>
+  props.card.kind === 'read'
+    ? t('app.agentTerminal.allowRead', 'Allow reading this terminal')
+    : props.card.kind === 'host'
+      ? t('app.agentTerminal.allowHost', 'Allow on this host')
+      : t('app.agentTerminal.allowPane', 'Allow in this terminal')
 )
 const actions = computed(() => (Array.isArray(props.card.actions) ? props.card.actions : []))
 
@@ -102,7 +118,7 @@ function trapTab(event) {
       <h2 id="aca-title" class="confirm-title">{{ title }}</h2>
       <p v-if="card.explanation" class="confirm-text aca-line"><strong>{{ t('app.agentTerminal.explanation', 'Explanation') }}:</strong> {{ card.explanation }}</p>
       <p v-if="card.goal" class="confirm-text aca-line"><strong>{{ t('app.agentTerminal.goal', 'Goal') }}:</strong> {{ card.goal }}</p>
-      <p v-if="card.kind === 'pane'" class="confirm-text aca-line">
+      <p v-if="whole" class="confirm-text aca-line">
         {{ paneText }}
       </p>
       <textarea
@@ -114,7 +130,7 @@ function trapTab(event) {
         spellcheck="false"
         :aria-label="t('app.agentTerminal.commandLabel', 'Command (you can edit it)')"
       ></textarea>
-      <pre v-else class="confirm-code" data-test="agent-command-text">{{ card.command }}</pre>
+      <pre v-else-if="shown" class="confirm-code" data-test="agent-command-text">{{ card.command }}</pre>
       <dl v-if="card.folder" class="confirm-details">
         <dt>{{ t('app.agentTerminal.folder', 'Folder') }}</dt>
         <dd>{{ card.folder }}</dd>
@@ -123,11 +139,11 @@ function trapTab(event) {
       <p v-for="(d, i) in disclaimers" :key="i" class="confirm-text aca-warn">{{ d }}</p>
       <div class="confirm-actions">
         <button ref="skipEl" class="confirm-btn" data-test="agent-command-skip" @click="answer(false)">
-          {{ card.kind === 'pane' ? t('app.agentTerminal.deny', 'Deny') : t('app.agentTerminal.skip', 'Skip') }}
+          {{ whole ? t('app.agentTerminal.deny', 'Deny') : t('app.agentTerminal.skip', 'Skip') }}
         </button>
-        <template v-if="card.kind === 'pane'">
+        <template v-if="whole">
           <button class="confirm-btn" data-test="agent-command-once" @click="answer({ remember: 'once' })">{{ t('app.agentTerminal.allowOnce', 'Allow this time') }}</button>
-          <button class="confirm-btn primary danger" data-test="agent-command-allow" @click="answer({ remember: 'pane' })">{{ t('app.agentTerminal.allowPane', 'Allow in this terminal') }}</button>
+          <button class="confirm-btn primary danger" data-test="agent-command-allow" @click="answer({ remember: 'pane' })">{{ allowWholeLabel }}</button>
         </template>
         <div v-else class="aca-split">
           <button class="confirm-btn primary" data-test="agent-command-allow" @click="answer({ remember: 'once' })">{{ t('app.agentTerminal.allow', 'Allow') }}</button>

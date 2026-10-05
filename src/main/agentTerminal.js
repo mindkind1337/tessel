@@ -188,6 +188,7 @@ function steering(id, hung) {
 //   log, now
 export function createAgentTerminal({ verify, settings = () => ({ enabled: true }), ask, busyOf = async () => ({}), send = () => {}, logFile = null, outputDir = null, log = null, now = () => Date.now(), fsImpl = fs }) {
   const approvedPanes = new Set() // "agent|pane": the user allowed this agent in this user terminal
+  const readPanes = new Set() // "agent|pane": the user allowed this agent to read this terminal
   const stopped = new Set() // "agent|pane": the user stopped it there
   const stoppedNoticeAt = new Map()
   const sessions = new Map() // agent pane -> { allowAll, rules }
@@ -231,6 +232,7 @@ export function createAgentTerminal({ verify, settings = () => ({ enabled: true 
     if (!who) return false
     stopped.add(key(who, target))
     approvedPanes.delete(key(who, target))
+    readPanes.delete(key(who, target))
     release(target, { stopped: true })
     return true
   }
@@ -242,7 +244,7 @@ export function createAgentTerminal({ verify, settings = () => ({ enabled: true 
   }
   // A pane closed: what was decided for it, or by it, goes.
   function forgetPane(id) {
-    for (const set of [approvedPanes, stopped]) for (const k of [...set]) if (k.endsWith(`|${id}`) || k.startsWith(`${id}|`)) set.delete(k)
+    for (const set of [approvedPanes, readPanes, stopped]) for (const k of [...set]) if (k.endsWith(`|${id}`) || k.startsWith(`${id}|`)) set.delete(k)
     sessions.delete(id)
     writes.delete(id)
     release(id)
@@ -446,8 +448,27 @@ export function createAgentTerminal({ verify, settings = () => ({ enabled: true 
     return { text: [...head, body].join('\n') }
   }
 
+  // May this agent read this terminal? Its own: yes. Another (the user's,
+  // another agent's): once the user allowed it for that terminal (allowing
+  // it to write there allows reading too). Each read is logged.
+  async function readable(agentPane, t) {
+    if (t.own) return
+    notStopped(agentPane, t)
+    const k = key(agentPane, t.id)
+    if (!readPanes.has(k) && !approvedPanes.has(k)) {
+      const answer = await card(agentPane, t, { kind: 'read', command: '', own: false, explanation: '', goal: '', info: null, disclaimers: [], actions: [], userTerminal: true })
+      if (answer.remember === 'pane') readPanes.add(k)
+    }
+    allowedNow()
+    notStopped(agentPane, t)
+    controlled(t.id, agentPane, t.agentLabel)
+    writeLog({ at: now(), paneId: t.id, paneName: t.name, agent: t.agentLabel, agentPane, kind: 'read', text: '' })
+  }
+
   async function output(agentPane, args) {
-    const r = await ask('terminalTarget', { agent: agentPane, op: 'output', terminal: args.id, lines: args.lines })
+    const t = targetFrom(await ask('terminalTarget', { agent: agentPane, op: 'resolve', terminal: args.id, read: true }))
+    await readable(agentPane, t)
+    const r = await ask('terminalTarget', { agent: agentPane, op: 'output', terminal: t.id, lines: args.lines })
     if (!r || typeof r !== 'object') throw fail('no_terminal', 'Tessel\'s window did not answer with the terminal.')
     const text = truncateOutputKeepingTail(stripAnsi(r.output), MAX_POLL_OUTPUT)
     const state = r.command ? ` (command \`${String(r.command).slice(0, 200)}\`${r.running ? ', still running' : Number.isInteger(r.exitCode) ? `, exit code ${r.exitCode}` : ', ended'})` : ''
@@ -528,12 +549,22 @@ export function createAgentTerminal({ verify, settings = () => ({ enabled: true 
       x.stopped = stopped.has(k)
     }
     return {
-      text: `Terminals${args.all === true ? '' : ' of your project'} (id, number, name, kind, state, folder):\n${terms.map(terminalLine).join('\n')}\nRead one with get_terminal_output. run_in_terminal runs commands in your own terminal; give it "id" to run in one of the user's shells instead (the user approves it first).`
+      text: `Terminals${args.all === true ? '' : ' of your project'} (id, number, name, kind, state, folder):\n${terms.map(terminalLine).join('\n')}\nRead one with get_terminal_output (the user allows it once per terminal). run_in_terminal runs commands in your own terminal; give it "id" to run in one of the user's shells instead (the user approves it first).`
     }
   }
 
+  // The user's active terminal, once the user allowed reading it.
+  async function activeTerminal(agentPane) {
+    const t = await ask('terminalTarget', { agent: agentPane, op: 'active' })
+    if (!t || t.none || typeof t.id !== 'string') return null
+    await readable(agentPane, t)
+    return t
+  }
+
   async function lastCommand(agentPane) {
-    const r = await ask('terminalTarget', { agent: agentPane, op: 'lastCommand' })
+    const t = await activeTerminal(agentPane)
+    if (!t) return { text: 'No active terminal.' }
+    const r = await ask('terminalTarget', { agent: agentPane, op: 'lastCommand', terminal: t.id })
     if (!r || r.none) return { text: 'No active terminal.' }
     if (!r.commandLine && !r.output) {
       return { text: `The active terminal "${r.name}" ${r.integration ? 'has not finished a command yet' : 'does not report its commands (no shell integration)'}.${r.screen ? ` Its last lines:\n${truncateOutputKeepingTail(stripAnsi(r.screen), MAX_POLL_OUTPUT)}` : ''}` }
@@ -548,7 +579,9 @@ export function createAgentTerminal({ verify, settings = () => ({ enabled: true 
   }
 
   async function selection(agentPane) {
-    const r = await ask('terminalTarget', { agent: agentPane, op: 'selection' })
+    const t = await activeTerminal(agentPane)
+    if (!t) return { text: 'No active terminal.' }
+    const r = await ask('terminalTarget', { agent: agentPane, op: 'selection', terminal: t.id })
     if (!r || r.none) return { text: 'No active terminal.' }
     return { text: r.text ? `The selection in the active terminal "${r.name}":\n${truncateOutputKeepingTail(stripAnsi(r.text), MAX_POLL_OUTPUT)}` : `Nothing is selected in the active terminal "${r.name}".` }
   }

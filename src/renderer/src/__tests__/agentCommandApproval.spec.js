@@ -60,3 +60,14 @@ describe('the approval card', () => {
     expect(wrapper.emitted('answer')[1][0]).toMatchObject({ allow: true, remember: 'once' })
   })
 })
+
+describe('security review: the read card', () => {
+  it('asks to read a terminal: Deny, this time, or this terminal', async () => {
+    const w = mount(AgentCommandApproval, { props: { card: { kind: 'read', command: '', own: false, agentLabel: 'Ada', name: 'srv', where: 'this computer', disclaimers: [], actions: [] } }, attachTo: document.body })
+    expect(w.text()).toContain('Ada wants to read the terminal "srv" (this computer)')
+    expect(w.find('[data-test="agent-command-text"]').exists()).toBe(false)
+    await w.find('[data-test="agent-command-allow"]').trigger('click')
+    expect(w.emitted('answer')[0][0]).toMatchObject({ allow: true, remember: 'pane' })
+    w.unmount()
+  })
+})

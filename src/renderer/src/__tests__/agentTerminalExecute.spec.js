@@ -187,3 +187,11 @@ describe('the first line in an agent\'s own terminal', () => {
     expect(initLineFor('ssh')).toBe(b)
   })
 })
+
+describe('security review: the badge\'s log', () => {
+  it('keeps reads apart from commands', async () => {
+    const { onTerminalLog, terminalLog } = await import('../agentTerminal/agentTerminalState')
+    onTerminalLog({ paneId: 'p-read', at: 1, agent: 'Ada', kind: 'read', text: '' })
+    expect(terminalLog['p-read'][0].kind).toBe('read')
+  })
+})

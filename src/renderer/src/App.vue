@@ -8655,6 +8655,7 @@ const agentTerminalTargets = createAgentTerminalTargets({
       actions: c.actions,
       own: c.own,
       send: !!c.send,
+      host: c.host || null,
       agentLabel: c.agentLabel,
       name: c.name,
       where,

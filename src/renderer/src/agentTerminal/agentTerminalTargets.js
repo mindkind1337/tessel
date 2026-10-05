@@ -373,9 +373,18 @@ export function createAgentTerminalTargets(deps) {
 
     if (req.op === 'list') return { agent: agentLabel, terminals: terminalsOf(ws, agentLeaf, req.all === true).map((x) => describe(x.leaf, x.ws, ws, agentLeaf)) }
 
-    if (req.op === 'lastCommand' || req.op === 'selection') {
+    // The user's active terminal (the main process asks the user before
+    // reading it, then reads it by its id).
+    if (req.op === 'active') {
       const leaf = deps.activeTerminal()
       if (!leaf || !isTerminal(leaf, agentLeaf)) return { none: true }
+      const f = find(leaf.id)
+      return { ...describe(leaf, f ? f.ws : ws, ws, agentLeaf), agentLabel }
+    }
+
+    if (req.op === 'lastCommand' || req.op === 'selection') {
+      const leaf = req.terminal ? resolve(ws, agentLeaf, req.terminal).leaf : null
+      if (!leaf) return { none: true }
       const { pane, t } = adapterOf(leaf)
       const name = deps.paneLabel(leaf)
       if (req.op === 'selection') return { name, text: String((pane.getSelection && pane.getSelection()) || '') }
@@ -407,6 +416,9 @@ export function createAgentTerminalTargets(deps) {
     const target = resolve(ws, agentLeaf, req.terminal)
     const { leaf } = target
     const name = deps.paneLabel(leaf)
+    // Reading: only the terminals of the agent's own project.
+    if ((req.op === 'output' || (req.op === 'resolve' && req.read)) && target.ws !== ws && !ownBy(leaf.id, agentLeaf.id))
+      throw refuse('other_project', `"${name}" is in another project: you can only read the terminals of your own project.`) // i18n-ignore
 
     if (req.op === 'resolve') {
       const pane = deps.getPane(leaf.id)

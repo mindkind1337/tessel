@@ -240,7 +240,7 @@ describe('agent terminals: reading', () => {
   it('the last lines of a terminal it did not run anything in; the active terminal\'s selection', async () => {
     const { targets } = setup()
     expect(await ask(targets, { op: 'output', terminal: 'pane-codex', lines: 30 })).toMatchObject({ output: 'screen of pane-codex (30)', command: null })
-    expect(await ask(targets, { op: 'selection' })).toMatchObject({ name: 'fivem-afterlife', text: 'selected text' })
+    expect(await ask(targets, { op: 'selection', terminal: 'pane-srv' })).toMatchObject({ name: 'fivem-afterlife', text: 'selected text' })
   })
 
   it('the output of the command it ran', async () => {
@@ -266,5 +266,18 @@ describe('security review: opening and abandoning', () => {
     await ask(targets, { op: 'abort' })
     expect(deps.dismissApprovals).toHaveBeenCalledWith('pane-ada')
     expect((await settle(run, 100)).state).toBe('cancelled')
+  })
+})
+
+describe('security review: reading another project', () => {
+  it('get_terminal_output stays in the agent’s own project', async () => {
+    const { targets } = setup()
+    await expect(ask(targets, { op: 'output', terminal: 'pane-x' })).rejects.toMatchObject({ code: 'other_project' })
+    await expect(ask(targets, { op: 'resolve', terminal: 'pane-x', read: true })).rejects.toMatchObject({ code: 'other_project' })
+  })
+  it('the active terminal is named so it can be approved', async () => {
+    const { targets } = setup()
+    expect(await ask(targets, { op: 'active' })).toMatchObject({ id: 'pane-srv', name: 'fivem-afterlife' })
+    expect(await ask(targets, { op: 'selection', terminal: 'pane-srv' })).toMatchObject({ text: 'selected text' })
   })
 })

@@ -56,6 +56,12 @@ function fakeWindow({ target = OWN, approve = { allow: true }, run = { state: 'c
         return typeof run === 'function' ? run(params) : run
       case 'send':
         return { name: target.name, output: 'sent ok' }
+      case 'active':
+        return { ...target }
+      case 'lastCommand':
+        return { name: target.name, commandLine: 'make', exitCode: 0, output: 'built' }
+      case 'selection':
+        return { name: target.name, text: 'secret selection' }
       case 'output':
         return { name: target.name, command: 'npm test', running: false, exitCode: 0, output: 'out' }
       case 'kill':
@@ -446,5 +452,51 @@ describe('security review: requests that wait', () => {
     ctl.abort()
     await expect(p).rejects.toMatchObject({ code: 'cancelled' })
     expect(win.calls.find((c) => c.op === 'abort')).toMatchObject({ agent: AGENT })
+  })
+})
+
+describe('security review: reading a terminal', () => {
+  it('a user terminal is read only after the user allows it, once per terminal, and each read is logged', async () => {
+    const win = fakeWindow({ target: USER, approve: { allow: true, remember: 'pane' } })
+    const { at, sent } = make(win)
+    await at.handle(signed('output', { id: USER.id }))
+    await at.handle(signed('output', { id: USER.id }))
+    const cards = win.calls.filter((c) => c.op === 'approve')
+    expect(cards).toHaveLength(1)
+    expect(cards[0].card.kind).toBe('read')
+    expect(win.ops().filter((o) => o === 'resolve')).toHaveLength(2)
+    expect(sent.filter(([ch, p]) => ch === 'terminal:agentLog' && p.kind === 'read')).toHaveLength(2)
+  })
+
+  it('denied: nothing is read', async () => {
+    const win = fakeWindow({ target: PEER, approve: { allow: false } })
+    const { at } = make(win)
+    await expect(at.handle(signed('output', { id: PEER.id }))).rejects.toMatchObject({ code: 'denied' })
+    expect(win.ops()).not.toContain('output')
+  })
+
+  it('its own terminal needs no approval', async () => {
+    const win = fakeWindow({ target: OWN })
+    const { at } = make(win)
+    await at.handle(signed('output', { id: OWN.id }))
+    expect(win.ops()).toEqual(['resolve', 'output'])
+  })
+
+  it('the active terminal’s last command and selection: the same approval', async () => {
+    const win = fakeWindow({ target: USER, approve: { allow: true, remember: 'pane' } })
+    const { at } = make(win)
+    expect((await at.handle(signed('selection'))).text).toContain('secret selection')
+    expect((await at.handle(signed('lastCommand'))).text).toContain('make')
+    expect(win.calls.filter((c) => c.op === 'approve')).toHaveLength(1)
+    expect(win.calls.find((c) => c.op === 'selection').terminal).toBe(USER.id)
+  })
+
+  it('Stop takes reading back too', async () => {
+    const win = fakeWindow({ target: USER, approve: { allow: true, remember: 'pane' } })
+    const { at } = make(win)
+    await at.handle(signed('output', { id: USER.id }))
+    await at.handle(signed('run', { id: USER.id, command: 'ls', explanation: 'x', goal: 'y', mode: 'sync' }))
+    at.stop(USER.id)
+    await expect(at.handle(signed('output', { id: USER.id }))).rejects.toMatchObject({ code: 'stopped_by_user' })
   })
 })

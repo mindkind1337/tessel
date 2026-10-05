@@ -736,7 +736,8 @@
       "stopHint": "Empêcher cet agent de taper dans ce terminal",
       "stopped": "L’agent ne peut plus taper dans ce terminal.",
       "used": "Commandes d’agents ({{count}})",
-      "using": "{{agent}} utilise ce terminal"
+      "using": "{{agent}} utilise ce terminal",
+      "read": "a lu ce terminal"
     }
   },
   "floating": {

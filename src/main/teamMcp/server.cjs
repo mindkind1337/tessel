@@ -1269,7 +1269,7 @@ const TERMINAL_TOOLS = [
   {
     name: 'get_terminal_output',
     description:
-      'Get output from a terminal execution that was moved to background (identified by the `id` returned from run_in_terminal), or the last lines of any terminal in your project (see terminal_list; read-only, including other agents\' panes). Use this ONLY when the run_in_terminal result says the command was moved to background, timed out, or needs input. Do NOT call this after a sync command that completed normally. If a background command has not yet completed, you will be notified when it finishes — do NOT poll in a loop.',
+      'Get output from a terminal execution that was moved to background (identified by the `id` returned from run_in_terminal), or the last lines of another terminal of your project (see terminal_list; the user allows reading each one once; read-only, including other agents\' panes). Use this ONLY when the run_in_terminal result says the command was moved to background, timed out, or needs input. Do NOT call this after a sync command that completed normally. If a background command has not yet completed, you will be notified when it finishes — do NOT poll in a loop.',
     inputSchema: { type: 'object', properties: { id: TERMINAL_ID, lines: { type: 'number', description: 'For a terminal you did not run a command in: how many last lines (1-400, default 60).' } }, required: ['id'] }
   },
   {
