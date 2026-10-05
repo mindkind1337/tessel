@@ -200,10 +200,23 @@ export function gitTrust() {
 // ask: false for calls nobody asked for (never opens the dialog then).
 const localCache = new Map() // top -> { at, args }
 const LOCAL_TTL_MS = 5000
-export async function localGitArgs(top, { ask = true, hooksDir } = {}) {
+// Asked again while a check of the same repository runs (every pane of a
+// project asks at startup): that check's answer, not two more git processes
+// each (each start blocks the main thread).
+const localInflight = new Map() // key + options -> Promise of args
+export function localGitArgs(top, { ask = true, hooksDir } = {}) {
   const key = `local:${String(top).toLowerCase()}`
   const hit = localCache.get(key)
-  if (hit && Date.now() - hit.at < LOCAL_TTL_MS) return hit.args
+  if (hit && Date.now() - hit.at < LOCAL_TTL_MS) return Promise.resolve(hit.args)
+  const flight = `${key}\n${ask ? 1 : 0}\n${hooksDir || ''}`
+  if (!localInflight.has(flight)) {
+    const p = readLocalGitArgs(top, key, { ask, hooksDir })
+    localInflight.set(flight, p)
+    p.finally(() => localInflight.delete(flight)).catch(() => {})
+  }
+  return localInflight.get(flight)
+}
+async function readLocalGitArgs(top, key, { ask, hooksDir }) {
   const [res, common] = await Promise.all([
     run('git', ['-C', top, ...RISKY_CONFIG_ARGS], { timeout: 10000 }),
     run('git', ['-C', top, 'rev-parse', '--git-common-dir'], { timeout: 10000 })
