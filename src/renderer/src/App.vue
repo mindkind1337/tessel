@@ -4358,7 +4358,7 @@ const remoteAgentOffered = new Set()
 let offRemoteAgents = null
 function onRemoteAgentsStatus(st) {
   if (!st || typeof st.hostId !== 'string' || st.claude || remoteAgentOffered.has(st.hostId)) return
-  if (st.shim && st.shim !== 'ok') return
+  if (st.error || (st.shim && st.shim !== 'ok')) return
   remoteAgentOffered.add(st.hostId)
   const host = st.label || remoteHostLabel(st.hostId)
   showToast(t('app.remoteAgents.noClaude', 'Claude Code is not installed on {{host}}. Install it there to run Claude on this host from Tessel.', { host }), {
