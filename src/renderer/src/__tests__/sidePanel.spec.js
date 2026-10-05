@@ -188,6 +188,9 @@ describe('SidePanel.vue', () => {
     w.unmount()
   })
 
+  // A web tab's tooltip: its page, then how to move it to the grid.
+  const HINT = (page) => page + String.fromCharCode(10) + 'Drag to the panes to open it there'
+
   // A side panel wired like App's (v-model:tab, v-model:browsers).
   const makeWired = (tab, browsers = []) => {
     const w = mount(SidePanel, {
@@ -219,7 +222,7 @@ describe('SidePanel.vue', () => {
     const tabs = w.findAll('.side-tab')
     expect(tabs[tabs.length - 1].attributes('data-test')).toBe('side-tab-' + id)
     expect(w.find('[data-test="side-tab-' + id + '"]').classes()).toContain('on')
-    expect(w.find('[data-test="side-tab-' + id + '"]').attributes('title')).toBe('New page')
+    expect(w.find('[data-test="side-tab-' + id + '"]').attributes('title')).toBe(HINT('New page'))
     expect(w.find('.side-browser-stub').isVisible()).toBe(true)
     expect(w.find('[data-test="add-task-form"]').isVisible()).toBe(false)
     // A second page; ×: back to the first one.
@@ -243,7 +246,7 @@ describe('SidePanel.vue', () => {
     const w = makeWired('files', [{ id: 'web-a1', url: 'https://example.com/', title: 'Example' }])
     await flushPromises()
     const tab = w.find('[data-test="side-tab-web-a1"]')
-    expect(tab.attributes('title')).toBe('Example')
+    expect(tab.attributes('title')).toBe(HINT('Example'))
     expect(w.find('.side-browser-stub').exists()).toBe(false)
     await tab.trigger('click')
     await nextTick()
@@ -252,6 +255,34 @@ describe('SidePanel.vue', () => {
     await nextTick()
     expect(w.props('browsers')).toEqual([])
     expect(w.props('tab')).toBe('files')
+    w.unmount()
+  })
+
+  it('a web tab pressed asks App to follow a drag (not from its ×); App closes a moved page like ×', async () => {
+    const w = makeWired('web-b2', [
+      { id: 'web-a1', url: 'https://example.com/', title: 'Example' },
+      { id: 'web-b2', url: 'https://example.org/', title: 'Other' }
+    ])
+    await flushPromises()
+    const tab = w.find('[data-test="side-tab-web-b2"]')
+    // jsdom has no PointerEvent: a mouse event of that name.
+    const press = (el, init) => el.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, ...init }))
+    press(tab.element, { button: 0, clientX: 5, clientY: 6 })
+    const drags = w.emitted('page-drag')
+    expect(drags).toHaveLength(1)
+    expect(drags[0][0]).toBe('web-b2')
+    expect(drags[0][1].clientX).toBe(5)
+    // Right button, or the × of the tab: no drag.
+    press(tab.element, { button: 2 })
+    press(tab.find('[data-test="side-web-close"]').element, { button: 0 })
+    expect(w.emitted('page-drag')).toHaveLength(1)
+    // Dropped on the grid: App closes it, the tab shown before comes back.
+    await w.find('[data-test="side-tab-web-a1"]').trigger('click')
+    await w.find('[data-test="side-tab-web-b2"]').trigger('click')
+    w.vm.closeBrowser('web-b2')
+    await nextTick()
+    expect(w.props('browsers').map((b) => b.id)).toEqual(['web-a1'])
+    expect(w.props('tab')).toBe('web-a1')
     w.unmount()
   })
 

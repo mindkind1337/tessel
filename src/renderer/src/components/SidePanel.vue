@@ -5,6 +5,8 @@
 // their time and cost), Agents (the agent session history), then the web pages opened with + (SideBrowser.vue, one tab each,
 // x or a middle-click closes one). At the right end of the bar: + (a new web
 // page) and Fullscreen (the panel over the whole workspace; Esc restores it).
+// A page's tab dragged onto the pane grid becomes a browser pane there, and a
+// browser pane dragged onto the panel one of its pages (App.vue's pane drag).
 // A tab is created the first time it is shown, then kept (its folders,
 // search and scroll stay as they were) while the panel is open.
 import { reactive, ref, watch, computed, provide, onMounted, onBeforeUnmount } from 'vue'
@@ -65,7 +67,10 @@ const emit = defineEmits([
   // Dashboard: put these idle agents to sleep (App's sleepPanes).
   'sleep',
   'update:fullscreen',
-  'update:browsers'
+  'update:browsers',
+  // A page's tab pressed: App follows the pointer, a drag moves the page to
+  // the grid (id, the pointerdown event).
+  'page-drag'
 ])
 
 // Labels are translated where shown (the language can change while open).
@@ -198,6 +203,12 @@ function closeBrowser(id) {
 function browserLabel(b) {
   return b.title || displayUrl(b.url) || t('sidePanelAdd.newPage', 'New page')
 }
+// A page's tab pressed with the left button: maybe a drag to the grid (App
+// tells a drag from a click). Not from its close button.
+function onBrowserTabPointerDown(e, id) {
+  if (e.button !== 0 || e.target.closest('.side-web-close')) return
+  emit('page-drag', id, e)
+}
 // Middle-click closes a page's tab.
 function onBrowserTabAux(e, id) {
   if (e.button !== 1) return
@@ -205,6 +216,8 @@ function onBrowserTabAux(e, id) {
   closeBrowser(id)
 }
 window.addEventListener('keydown', onKey)
+// App closes a page moved to the grid like its x does.
+defineExpose({ closeBrowser })
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKey)
@@ -251,13 +264,14 @@ onBeforeUnmount(() => {
           role="tab"
           tabindex="0"
           :aria-selected="current() === b.id"
-          :title="browserLabel(b)"
+          :title="t('sidePanelAdd.pageTabHint', '{{page}}\nDrag to the panes to open it there', { page: browserLabel(b) })"
           :aria-label="browserLabel(b)"
           :data-test="'side-tab-' + b.id"
           @click="emit('update:tab', b.id)"
           @keydown.enter.self.prevent="emit('update:tab', b.id)"
           @keydown.space.self.prevent="emit('update:tab', b.id)"
           @mousedown.middle.prevent
+          @pointerdown="onBrowserTabPointerDown($event, b.id)"
           @auxclick="onBrowserTabAux($event, b.id)"
         >
           <Globe :size="16" aria-hidden="true" />
