@@ -66,6 +66,10 @@ import { acquirePassthrough, trackPointerDrag } from './browser/webviewPassthrou
 import { pageOf } from './browser/pageHost'
 import { paneDropZone, placeLeaf, sidePageFromLeaf, leafFromSidePage, saveSideBrowsers, restoreSideBrowsers, newSidePageId } from './browser/pageMove'
 import { createAgentBrowserTargets, addPageNear } from './browser/agentBrowserTargets'
+import { createAgentTerminalTargets } from './agentTerminal/agentTerminalTargets'
+import { onTerminalControl, onTerminalLog, forgetTerminal } from './agentTerminal/agentTerminalState'
+import { rulesOfAction } from '../../shared/terminalRules'
+import AgentCommandApproval from './components/AgentCommandApproval.vue'
 import GitHubDialog from './components/GitHubDialog.vue'
 import LinearDialog from './components/LinearDialog.vue'
 import { createExternalIssueStarter } from './externalIssues'
@@ -1975,6 +1979,8 @@ function closeLeaf(leafId, opts = {}) {
   if (!noTerminal) {
     window.shellApi.killPty(leafId)
     dropBuffer(leafId)
+    forgetTerminal(leafId)
+    agentTerminalTargets.forget(leafId)
     clearAgentStatus(leafId)
   }
   if (!ws) return
@@ -8693,6 +8699,206 @@ watch(
   },
   { immediate: true }
 )
+// The agents' terminal tools (src/main/agentTerminal.js): which terminal,
+// the agents' own terminals, the approval card, the notices.
+// One approval card on screen at a time, after any confirmation already
+// open (an agent never cancels the user's own question); Skip when the user
+// does not answer in time.
+const AGENT_APPROVAL_MS = 5 * 60 * 1000 - 5000
+const approvalCard = ref(null) // { card, resolve }
+let agentApprovals = Promise.resolve()
+// Agents whose tool call went away: their waiting cards are answered no.
+const droppedApprovals = new Map() // agent pane -> time
+function askAgentApproval(card, agentPane = null) {
+  const until = Date.now() + AGENT_APPROVAL_MS
+  const asked = Date.now()
+  const dropped = () => agentPane && (droppedApprovals.get(agentPane) || 0) >= asked
+  const run = async () => {
+    while ((confirmState.value || approvalCard.value) && Date.now() < until && !dropped()) await new Promise((r) => setTimeout(r, 300))
+    if (Date.now() >= until || dropped()) return { allow: false }
+    return new Promise((resolve) => {
+      const entry = { card, resolve, agentPane }
+      approvalCard.value = entry
+      setTimeout(() => {
+        if (approvalCard.value === entry) answerAgentApproval({ allow: false })
+      }, Math.max(1000, until - Date.now()))
+    })
+  }
+  const p = agentApprovals.then(run, run)
+  agentApprovals = p.catch(() => null)
+  return p
+}
+function dismissAgentApprovals(agentPane) {
+  droppedApprovals.set(agentPane, Date.now())
+  if (approvalCard.value && approvalCard.value.agentPane === agentPane) answerAgentApproval({ allow: false })
+}
+function answerAgentApproval(answer) {
+  const entry = approvalCard.value
+  approvalCard.value = null
+  if (entry) entry.resolve(answer || { allow: false })
+}
+// An "Allow ..." rule needs auto approve on: the one-time warning first (as
+// VS Code asks before its terminal auto approve).
+async function enableTerminalAutoApprove() {
+  if (settings.agentTerminalAutoApprove) return true
+  if (!settings.agentTerminalAutoApproveWarned) {
+    const ok = await askConfirm({
+      title: t('app.agentTerminal.warnTitle', 'Let rules approve terminal commands?'),
+      text: t('app.agentTerminal.warnText', 'Commands your rules allow will run without asking you. The rules are a best-effort protection: they assume the agent is not acting maliciously, and a command can do more than it seems. You can turn this off in Settings > Agents.'),
+      confirmLabel: t('app.agentTerminal.warnConfirm', 'Turn on'),
+      danger: true
+    })
+    if (!ok) return false
+    settings.agentTerminalAutoApproveWarned = true
+  }
+  settings.agentTerminalAutoApprove = true
+  return true
+}
+function workspaceRulesKey(ws) {
+  return String((ws.remote && `${ws.remote.hostId}:${ws.remote.path}`) || ws.cwd || ws.id || '')
+}
+const agentTerminalTargets = createAgentTerminalTargets({
+  enabled: () => settings.agentTerminal !== false,
+  workspaces: () => workspaces.value,
+  forEachLeaf,
+  getPane,
+  paneLabel,
+  hostLabel: (id) => remoteHostLabel(id),
+  agentName: (leaf) => programLabel(leaf),
+  userTyping: (id) => userIsTyping(id),
+  hosts: () => remoteHostsState.targets.map((h) => ({ id: h.id, label: h.label || h.host, connected: hostShared(h.id) })),
+  // A terminal of the agent's own, next to it, without taking the screen or the keyboard.
+  async createTerminal({ agentLeaf, ws, hostId, number = 1 }) {
+    const name =
+      number > 1
+        ? t('app.agentTerminal.paneNameN', '{{agent}} · terminal {{n}}', { agent: paneLabel(agentLeaf), n: number })
+        : t('app.agentTerminal.paneName', '{{agent}} · terminal', { agent: paneLabel(agentLeaf) })
+    if (!workspaces.value.includes(ws) || !findLeafIn(ws.tree, agentLeaf.id)) return null
+    const local = !hostId
+    // PowerShell over cmd (shell integration works there), as VS Code does.
+    const pick = shells.value.find((s) => s.id === 'pwsh') || shells.value.find((s) => s.id === 'powershell')
+    const shell = local && pick ? pick.id : selectedShell.value
+    const cwd = (agentLeaf.worktree && agentLeaf.worktree.path) || agentLeaf.startDir || ws.cwd
+    const opts = hostId ? { remoteHostId: hostId, ...(ws.remote && ws.remote.hostId === hostId ? { remotePath: ws.remote.path } : {}) } : { local: true }
+    const leaf = await createLeaf(shell, null, local ? cwd : null, null, opts)
+    if (!leaf) return null
+    if (!workspaces.value.includes(ws) || !findLeafIn(ws.tree, agentLeaf.id)) {
+      window.shellApi.killPty(leaf.id)
+      return null
+    }
+    leaf.paneName = name
+    leaf.title = name
+    leaf.openedBy = agentLeaf.id
+    keepView(leaf, agentLeaf, ws)
+    let last = null
+    forEachLeaf(ws.tree, (l) => l.openedBy === agentLeaf.id && l !== leaf && l.kind !== 'browser' && (last = l))
+    ws.tree = addPageNear(ws.tree, (last || agentLeaf).id, leaf, {
+      dir: last ? 'col' : 'row',
+      mine: (n) => n === leaf || (n.type === 'leaf' && n.kind !== 'browser' && n.openedBy === agentLeaf.id),
+      makeSplit: (dir, children, sizes) => reactive({ type: 'split', id: newId('split'), dir, sizes, children })
+    })
+    refitSoon()
+    return leaf
+  },
+  closeTerminal: (id) => closeLeaf(id, { force: true }),
+  dismissApprovals: (agentPane) => dismissAgentApprovals(agentPane),
+  activeTerminal: () => {
+    const ws = currentWs.value
+    return ws && ws.activeId ? findLeafIn(ws.tree, ws.activeId) : null
+  },
+  async approve(c) {
+    const leaf = c.leaf
+    const where = leaf.remoteHostId ? t('app.agentTerminal.ssh', 'SSH {{host}}', { host: remoteHostLabel(leaf.remoteHostId) }) : t('app.agentTerminal.local', 'this computer')
+    const card = {
+      kind: c.kind,
+      command: c.command,
+      explanation: c.explanation,
+      goal: c.goal,
+      info: c.info,
+      disclaimers: c.disclaimers,
+      actions: c.actions,
+      own: c.own,
+      send: !!c.send,
+      host: c.host || null,
+      agentLabel: c.agentLabel,
+      name: c.name,
+      where,
+      folder: String(leaf.cwd || leaf.remotePath || leaf.startDir || '')
+    }
+    const answer = await askAgentApproval(card, c.agentLeaf.id)
+    if (!answer || !answer.allow) return { allow: false }
+    const action = answer.action || null
+    // A rule needs auto approve on; "this project" and "always" are saved here.
+    if (action && !(await enableTerminalAutoApprove())) return { ...answer, action: null }
+    if (action && (action.kind === 'prefix' || action.kind === 'exact') && action.scope !== 'session') {
+      // The same rules the main process would make (never a prefix shaped like a /regex/).
+      const add = Object.fromEntries(rulesOfAction(action).map((r) => [r.key, r.value]))
+      if (action.scope === 'user') settings.agentTerminalRules = { ...settings.agentTerminalRules, ...add }
+      else {
+        const key = workspaceRulesKey(c.ws)
+        settings.agentTerminalWorkspaceRules = { ...settings.agentTerminalWorkspaceRules, [key]: { ...(settings.agentTerminalWorkspaceRules[key] || {}), ...add } }
+      }
+      await nextTick()
+    }
+    return answer
+  },
+  // A command the agent left running ended: its inbox (its team's notices,
+  // else its Claude Code session's own inbox).
+  notifyAgent(agentLeaf, text) {
+    if (!findLeaf(agentLeaf.id)) return
+    if (agentLeaf.team && teamById(agentLeaf.team)) {
+      noticeAgents([agentLeaf], text, agentLeaf.team, { source: 'tessel', scope: 'team', teamId: agentLeaf.team, wake: true })
+      return
+    }
+    if (agentLeaf.agentId === 'claude' && agentLeaf.sessionId && window.shellApi.agentInbox) window.shellApi.agentInbox({ paneId: agentLeaf.id, sessionId: agentLeaf.sessionId, text }).catch(() => {})
+  },
+  // A command asks for a password or another secret: the user types it.
+  toast({ agentLeaf, leaf, name }) {
+    showToast(t('app.agentTerminal.secret', 'A command {{agent}} ran in "{{name}}" asks for a password or another secret: type it there yourself.', { agent: paneLabel(agentLeaf), name }), {
+      kind: 'attention',
+      timeout: 15000,
+      action: { label: t('app.agentTerminal.show', 'Show'), run: () => focusPane(leaf.id) }
+    })
+  },
+  stoppedNotice({ agentLeaf, agentLabel, name, leaf }) {
+    showToast(t('app.agentTerminal.stoppedNotice', 'You stopped {{agent}} from using "{{name}}": it asked again.', { agent: agentLabel, name }), {
+      timeout: 10000,
+      action: {
+        label: t('app.agentTerminal.allowAgain', 'Allow again'),
+        run: () => {
+          const api = window.shellApi.terminalAgent
+          if (api && typeof api.allowAgain === 'function') api.allowAgain(leaf.id, agentLeaf.id).catch(() => {})
+        }
+      }
+    })
+  },
+  writePty: (id, data) => window.shellApi.writePty(id, data)
+})
+// Settings > Agents > Terminals: the main process applies them too.
+watch(
+  () => ({
+    enabled: settings.agentTerminal !== false,
+    autoApprove: settings.agentTerminalAutoApprove === true,
+    ignoreDefaults: settings.agentTerminalIgnoreDefaultRules === true,
+    userRules: JSON.parse(JSON.stringify(settings.agentTerminalRules || {})),
+    workspaceRules: JSON.parse(JSON.stringify(settings.agentTerminalWorkspaceRules || {}))
+  }),
+  (opts) => {
+    const api = window.shellApi && window.shellApi.terminalAgent
+    if (api && typeof api.settings === 'function') api.settings(opts).catch(() => {})
+  },
+  { immediate: true, deep: true }
+)
+{
+  const api = window.shellApi && window.shellApi.terminalAgent
+  if (api && typeof api.onControl === 'function')
+    api.onControl((ev) => {
+      onTerminalControl(ev)
+      // Stop: the command it waits on there is let go.
+      if (ev && ev.stopped && typeof ev.paneId === 'string') agentTerminalTargets.cancelPane(ev.paneId)
+    })
+  if (api && typeof api.onLog === 'function') api.onLog(onTerminalLog)
+}
 function startCliRequests() {
   const api = window.shellApi.cli
   if (!api) return
@@ -8700,7 +8906,12 @@ function startCliRequests() {
     if (!req || typeof req.id !== 'string') return
     let msg
     try {
-      const handled = req.method === 'browserTarget' ? agentBrowserTargets.handle(req.params || {}) : cliRequests.handle(req)
+      const handled =
+        req.method === 'browserTarget'
+          ? agentBrowserTargets.handle(req.params || {})
+          : req.method === 'terminalTarget'
+            ? agentTerminalTargets.handle(req.params || {})
+            : cliRequests.handle(req)
       msg = { id: req.id, ok: true, result: await handled }
     } catch (err) {
       msg = { id: req.id, ok: false, error: { code: (err && err.code) || 'failed', message: (err && err.message) || '' } }
@@ -9835,7 +10046,7 @@ function focusActivePane() {
   })
 }
 watch(
-  () => [paletteOpen.value, !!confirmState.value, !!notesView.value, !!reviewTask.value, !!imageView.value, !!fileView.value],
+  () => [paletteOpen.value, !!confirmState.value, !!notesView.value, !!reviewTask.value, !!imageView.value, !!fileView.value, !!approvalCard.value],
   (now, before) => {
     if (before && now.some((v, i) => before[i] && !v)) focusActivePane()
   }
@@ -9857,6 +10068,7 @@ function dialogOpen() {
     githubOpen.value ||
     linearOpen.value ||
     !!confirmState.value ||
+    !!approvalCard.value ||
     !!imageView.value ||
     !!fileView.value ||
     launcher.open
@@ -10889,6 +11101,14 @@ onBeforeUnmount(() => {
       :danger="!!confirmState.danger"
       :check-label="confirmState.checkLabel || ''"
       @answer="answerConfirm"
+    />
+
+    <AgentCommandApproval
+      v-if="approvalCard"
+      :key="approvalCard.card.command + approvalCard.card.kind"
+      :card="approvalCard.card"
+      @answer="answerAgentApproval"
+      @configure="openSettingsAt('agents')"
     />
 
     <NewTaskDialog

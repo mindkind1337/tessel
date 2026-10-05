@@ -775,6 +775,92 @@ body.popup-open .toolbar {
   opacity: 1;
 }
 
+/* An agent typing in this terminal (its terminal tools): "Ada is using this
+   terminal · Stop", like the browser's Agent badge; its log under it. */
+.pane-agent-term {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-left: auto;
+  height: 20px;
+  padding: 0 2px 0 2px;
+  border-radius: 10px;
+  border: 1px solid var(--border-strong);
+  color: var(--text-dim);
+  font-size: 10.5px;
+}
+.pane-agent-term.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+.pane-agent-term-text {
+  min-width: 0;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 4px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+.pane-agent-term-stop {
+  flex: 0 0 auto;
+  height: 16px;
+  padding: 0 7px;
+  border: none;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--chrome);
+  font: inherit;
+  font-size: 10.5px;
+}
+.pane-agent-term-stop:hover {
+  filter: brightness(1.1);
+}
+.pane-agent-term-log {
+  position: absolute;
+  top: 24px;
+  right: 0;
+  z-index: 20;
+  width: min(420px, 80vw);
+  max-height: 260px;
+  overflow: auto;
+  padding: 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+  color: var(--text);
+  font-weight: 400;
+  cursor: default;
+}
+.pane-agent-term-row {
+  display: grid;
+  gap: 2px;
+  padding: 4px 4px;
+  border-bottom: 1px solid var(--border);
+}
+.pane-agent-term-row:last-child {
+  border-bottom: none;
+}
+.pane-agent-term-meta,
+.pane-agent-term-empty {
+  color: var(--text-dim);
+  font-size: 10.5px;
+}
+.pane-agent-term-cmd {
+  font-family: var(--mono, monospace);
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
 .pane-nav-btn {
   display: inline-grid;
   place-items: center;
