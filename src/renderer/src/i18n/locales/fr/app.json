@@ -345,6 +345,8 @@
     },
     "drag": {
       "moveTo": "Déplacer vers {{ws}}",
+      "toSidePanel": "Ouvrir dans le panneau latéral",
+      "agentReleased": "Déplacée dans le panneau latéral : les agents ne peuvent plus piloter cette page.",
       "moveToWorkspace": "Déplacer vers l'espace de travail",
       "thisPane": "ce panneau",
       "swap": "Échanger avec {{pane}}",

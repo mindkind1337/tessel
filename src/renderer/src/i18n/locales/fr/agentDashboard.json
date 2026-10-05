@@ -61,6 +61,7 @@
     "title": "Nouvelle page web",
     "newPage": "Nouvelle page",
     "closePage": "Fermer la page (clic du milieu)",
+    "pageTabHint": "{{page}}\nGlissez vers les panneaux pour l'y ouvrir",
     "fullscreen": "Plein écran",
     "exitFullscreen": "Quitter le plein écran (Échap)"
   },

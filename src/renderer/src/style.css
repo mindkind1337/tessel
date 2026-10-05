@@ -965,6 +965,25 @@ body.popup-open .toolbar {
   border-left: 1px solid var(--border);
 }
 
+/* A browser pane dragged: the side panel takes it (a dashed edge while it
+   is on its way, the drop zone over the panel once it is there). */
+.task-panel.page-drop::after {
+  content: '';
+  position: absolute;
+  inset: 4px;
+  z-index: 5;
+  border: 2px dashed color-mix(in srgb, var(--accent) 70%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  pointer-events: none;
+}
+
+.task-panel.page-drop-over::after {
+  border-style: solid;
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
 .task-board {
   display: flex;
   flex-direction: column;
