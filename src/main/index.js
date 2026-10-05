@@ -17,6 +17,7 @@ import { createAccountUsage } from './providerAccountUsage'
 import { registerProviderUsage } from './providerUsageIpc'
 import { createProviderCredentials } from './providerCredentials'
 import { createAccountSessions } from './providerAccountSessions'
+import { createCommandLookup } from './commandLookup'
 import { postToInbox } from './agentInbox'
 import { hooksStatus } from './teamHooksStatus'
 import { createAgentStateStore } from './agentStateStore'
@@ -740,11 +741,12 @@ function freshEnv() {
 }
 
 // notFrom: a copy found there does not count (the first one found is the
-// one that runs).
+// one that runs). Lookups asked together share one where.exe
+// (commandLookup.js): one process per agent froze the window at startup.
+const whereFirst = createCommandLookup((names) => runQuiet('where.exe', names, { env: freshEnv(), timeout: 10000 }))
 async function commandExists(bin, notFrom = null) {
   if (!bin || !/^[\w.@+-]+$/.test(bin)) return false
-  const res = await runQuiet('where.exe', [bin], { env: freshEnv(), timeout: 10000 })
-  const first = res.ok ? res.stdout.split(/\r?\n/).map((l) => l.trim()).find(Boolean) : ''
+  const first = await whereFirst(bin)
   if (!first) return false
   return !(notFrom && notFrom.test(first))
 }
