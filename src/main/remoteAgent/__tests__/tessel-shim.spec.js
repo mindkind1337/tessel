@@ -6,6 +6,7 @@ import fs from 'fs'
 import os from 'os'
 import net from 'net'
 import { join, resolve } from 'path'
+import { parseClaudeHead as pcClaudeHead, parseCodexHead as pcCodexHead } from '../../agentSessions'
 
 const require = createRequire(import.meta.url)
 const SHIM = resolve(__dirname, '../tessel-shim.cjs')
@@ -327,5 +328,111 @@ describe('round trip', () => {
 
   it('version', async () => {
     expect((await run(['version'])).out).toBe(`${shim.VERSION}\n`)
+  })
+})
+
+describe('sessions', () => {
+  let home
+  const U = (n) => `${String(n).repeat(8)}-1111-4222-8333-${String(n).repeat(12)}`
+  const jsonl = (rows) => rows.map((r) => (typeof r === 'string' ? r : JSON.stringify(r))).join('\n') + '\n'
+  const at = (file, ms) => fs.utimesSync(file, new Date(ms), new Date(ms))
+  const claudeFile = (id, rows, ms, folder = '-srv-app') => {
+    const dir = join(home, '.claude', 'projects', folder)
+    fs.mkdirSync(dir, { recursive: true })
+    const file = join(dir, `${id}.jsonl`)
+    fs.writeFileSync(file, jsonl(rows))
+    at(file, ms)
+    return file
+  }
+  const codexFile = (name, rows, ms) => {
+    const dir = join(home, '.codex', 'sessions', '2026', '10', '05')
+    fs.mkdirSync(dir, { recursive: true })
+    const file = join(dir, name)
+    fs.writeFileSync(file, jsonl(rows))
+    at(file, ms)
+    return file
+  }
+  const codexMeta = (id, cwd = '/srv/api') => ({ type: 'session_meta', timestamp: '2026-10-05T08:00:00.000Z', payload: { id, cwd, timestamp: '2026-10-05T08:00:00.000Z' } })
+  const T = Date.UTC(2026, 9, 5, 12)
+
+  beforeEach(() => {
+    home = fs.mkdtempSync(join(os.tmpdir(), 'tessel-shim-sessions-'))
+  })
+  afterEach(() => fs.rmSync(home, { recursive: true, force: true }))
+  const list = (limit, env = {}) => shim.listSessions({ limit, home, env })
+
+  it('parses heads exactly like agentSessions.js on the PC', () => {
+    const claude = [
+      'not json',
+      { type: 'user', isMeta: true, cwd: '/srv/app', sessionId: U(1), timestamp: '2026-10-05T07:00:00.000Z', message: { content: 'meta' } },
+      { type: 'user', message: { content: '<command-name>/clear</command-name>' } },
+      { type: 'user', message: { content: [{ type: 'text', text: '  Fix the\n login   bug ' + 'x'.repeat(200) }] } }
+    ]
+    const summary = [{ type: 'summary', summary: 'A summary title', cwd: '/srv/b' }]
+    const codex = [
+      codexMeta(U(3)),
+      { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '<environment_context>x</environment_context>' }] } },
+      { type: 'event_msg', payload: { type: 'user_message', message: 'Add the API route' } }
+    ]
+    for (const rows of [claude, summary, [{ cwd: '/x' }]]) expect(shim.parseClaudeHead(jsonl(rows))).toEqual(pcClaudeHead(jsonl(rows)))
+    for (const rows of [codex, [{ type: 'other' }], [codexMeta('not-a-uuid')]]) expect(shim.parseCodexHead(jsonl(rows))).toEqual(pcCodexHead(jsonl(rows)))
+    expect(shim.parseClaudeHead(jsonl(claude)).title).toHaveLength(120)
+  })
+
+  it('lists both agents newest first, at most <limit> each, in the contract shape', () => {
+    claudeFile(U(1), [{ type: 'user', cwd: '/srv/app', timestamp: '2026-10-05T07:00:00.000Z', message: { content: 'First' } }], T - 3000)
+    claudeFile(U(2), [{ type: 'user', cwd: '/srv/app', timestamp: '2026-10-05T09:00:00.000Z', message: { content: 'Second' } }], T - 1000, '-srv-other')
+    claudeFile(U(4), [{ type: 'user', cwd: '/srv/app', message: { content: '<only injected>' } }], T) // no title: left out
+    claudeFile('not-a-uuid', [{ type: 'user', cwd: '/x', message: { content: 'x' } }], T)
+    codexFile('rollout-2026-10-05-a.jsonl', [codexMeta(U(3)), { type: 'event_msg', payload: { type: 'user_message', message: 'Codex task' } }], T - 2000)
+    codexFile('other.jsonl', [codexMeta(U(5)), { type: 'event_msg', payload: { type: 'user_message', message: 'not a rollout' } }], T)
+    expect(list(60)).toEqual({
+      v: 1,
+      sessions: [
+        { agent: 'claude', id: U(2), cwd: '/srv/app', started: '2026-10-05T09:00:00.000Z', updated: T - 1000, title: 'Second' },
+        { agent: 'codex', id: U(3), cwd: '/srv/api', started: '2026-10-05T08:00:00.000Z', updated: T - 2000, title: 'Codex task' },
+        { agent: 'claude', id: U(1), cwd: '/srv/app', started: '2026-10-05T07:00:00.000Z', updated: T - 3000, title: 'First' }
+      ]
+    })
+    expect(list(1).sessions.map((s) => [s.agent, s.id])).toEqual([
+      ['claude', U(2)],
+      ['codex', U(3)]
+    ])
+    // limit: 1..200, default 60
+    expect(list('abc').sessions).toHaveLength(3)
+    expect(list(0).sessions).toHaveLength(2)
+  })
+
+  it('reads CLAUDE_CONFIG_DIR and CODEX_HOME, and nothing there is no error', () => {
+    expect(list(60)).toEqual({ v: 1, sessions: [] })
+    const cfg = join(home, 'cfg')
+    fs.mkdirSync(join(cfg, 'projects', 'p'), { recursive: true })
+    fs.writeFileSync(join(cfg, 'projects', 'p', `${U(6)}.jsonl`), jsonl([{ type: 'user', cwd: '/a', message: { content: 'From the config dir' } }]))
+    const cx = join(home, 'cx')
+    fs.mkdirSync(join(cx, 'sessions', '2026', '10', '05'), { recursive: true })
+    fs.writeFileSync(join(cx, 'sessions', '2026', '10', '05', 'rollout-x.jsonl'), jsonl([codexMeta(U(7)), { type: 'event_msg', payload: { type: 'user_message', message: 'From CODEX_HOME' } }]))
+    const r = list(60, { CLAUDE_CONFIG_DIR: cfg, CODEX_HOME: cx })
+    expect(r.sessions.map((s) => s.title).sort()).toEqual(['From CODEX_HOME', 'From the config dir'])
+  })
+
+  it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('skips a file it cannot read', () => {
+    const bad = claudeFile(U(8), [{ type: 'user', cwd: '/a', message: { content: 'Hidden' } }], T)
+    claudeFile(U(9), [{ type: 'user', cwd: '/a', message: { content: 'Visible' } }], T - 1)
+    fs.chmodSync(bad, 0)
+    expect(list(60).sessions.map((s) => s.title)).toEqual(['Visible'])
+  })
+
+  it('the command prints one JSON line', async () => {
+    claudeFile(U(1), [{ type: 'user', cwd: '/srv/app', message: { content: 'Hello' } }], T)
+    const out = await new Promise((done) => {
+      const child = spawn(process.execPath, [SHIM, 'sessions', '5'], { env: { PATH: process.env.PATH, HOME: home, USERPROFILE: home }, stdio: ['ignore', 'pipe', 'pipe'] })
+      let text = ''
+      child.stdout.on('data', (d) => (text += d))
+      child.on('exit', (code) => done({ code, text }))
+    })
+    expect(out.code).toBe(0)
+    expect(out.text.endsWith('\n')).toBe(true)
+    expect(out.text.trim().split('\n')).toHaveLength(1)
+    expect(JSON.parse(out.text).sessions.map((s) => s.title)).toEqual(['Hello'])
   })
 })

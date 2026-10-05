@@ -6,6 +6,7 @@
 //   node tessel-shim.cjs mcp                     the tessel-team MCP server
 //   node tessel-shim.cjs hook <provider> <Event> an agent hook
 //   node tessel-shim.cjs install [--node <abs>]  set up Claude Code and Codex
+//   node tessel-shim.cjs sessions [limit]       past Claude Code / Codex conversations
 //   node tessel-shim.cjs version
 // One file, Node >= 18, no dependencies.
 'use strict'
@@ -15,7 +16,7 @@ const os = require('os')
 const net = require('net')
 const path = require('path')
 
-const VERSION = '1.1.0'
+const VERSION = '1.2.0'
 const PROTOCOL = 1
 const SERVER_NAME = 'tessel-team'
 const SHIM_NAME = 'tessel-shim.cjs'
@@ -509,6 +510,214 @@ function install({ home = os.homedir(), shimPath = path.resolve(__filename), env
 }
 
 // ---------------------------------------------------------------------------
+// sessions: the past conversations on this server for Tessel's session
+// history, read as src/main/agentSessions.js reads them on the PC (only the
+// start of each file). One JSON line:
+//   {"v":1,"sessions":[{agent,id,cwd,started,updated,title}]}, newest first,
+//   at most <limit> per agent. Unreadable files are skipped.
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const HEAD_BYTES = 256 * 1024
+
+function readHead(file, bytes = HEAD_BYTES) {
+  let fd
+  try {
+    fd = fs.openSync(file, 'r')
+    const buf = Buffer.alloc(bytes)
+    const n = fs.readSync(fd, buf, 0, bytes, 0)
+    return buf.subarray(0, n).toString('utf8')
+  } catch {
+    return ''
+  } finally {
+    if (fd !== undefined) {
+      try {
+        fs.closeSync(fd)
+      } catch {
+        // closed
+      }
+    }
+  }
+}
+
+function textOf(content) {
+  if (typeof content === 'string') return content
+  if (Array.isArray(content)) {
+    const t = content.find((c) => c && (c.type === 'text' || c.type === 'input_text') && c.text)
+    return t ? t.text : ''
+  }
+  return ''
+}
+
+// Injected context (tags like <environment_context>, <command-name>) is no prompt.
+function isRealPrompt(text) {
+  const t = String(text || '').trim()
+  return t.length > 0 && !t.startsWith('<')
+}
+
+function oneLine(text, max = 120) {
+  const t = String(text || '').replace(/\s+/g, ' ').trim()
+  return t.length > max ? t.slice(0, max - 1) + '…' : t
+}
+
+// The head of a Claude transcript: { cwd, started (ms), title, sessionId }.
+function parseClaudeHead(text) {
+  let cwd = ''
+  let started = 0
+  let title = ''
+  let sessionId = ''
+  for (const line of String(text).split('\n')) {
+    if (!line.startsWith('{')) continue
+    let o
+    try {
+      o = JSON.parse(line)
+    } catch {
+      continue
+    }
+    if (!o || typeof o !== 'object') continue
+    if (!cwd && typeof o.cwd === 'string') cwd = o.cwd
+    if (!sessionId && typeof o.sessionId === 'string') sessionId = o.sessionId
+    if (!started && typeof o.timestamp === 'string') started = Date.parse(o.timestamp) || 0
+    if (!title && o.type === 'user' && !o.isMeta && o.message) {
+      const t = textOf(o.message.content)
+      if (isRealPrompt(t)) title = oneLine(t)
+    }
+    if (!title && o.type === 'summary' && o.summary) title = oneLine(o.summary)
+    if (cwd && title) break
+  }
+  return { cwd, started, title, sessionId }
+}
+
+// A Codex rollout's first line: { id, cwd, time (ms) } or null.
+function parseCodexMeta(line) {
+  try {
+    const o = JSON.parse(line)
+    if (!o || o.type !== 'session_meta' || !o.payload) return null
+    const p = o.payload
+    if (typeof p.id !== 'string' || !UUID.test(p.id)) return null
+    return { id: p.id, cwd: p.cwd || '', time: Date.parse(p.timestamp || o.timestamp || '') || 0 }
+  } catch {
+    return null
+  }
+}
+
+// The head of a Codex rollout: { id, cwd, started (ms), title } or null.
+function parseCodexHead(text) {
+  const lines = String(text).split('\n')
+  const meta = parseCodexMeta(lines[0] || '')
+  if (!meta) return null
+  let title = ''
+  for (const line of lines.slice(1)) {
+    if (!line.includes('"user"') && !line.includes('user_message')) continue
+    let o
+    try {
+      o = JSON.parse(line)
+    } catch {
+      continue
+    }
+    if (!o || typeof o !== 'object') continue
+    const p = o.payload || {}
+    let t = ''
+    if (o.type === 'response_item' && p.type === 'message' && p.role === 'user') t = textOf(p.content)
+    else if (o.type === 'event_msg' && p.type === 'user_message') t = p.message
+    if (isRealPrompt(t)) {
+      title = oneLine(t)
+      break
+    }
+  }
+  return { id: meta.id, cwd: meta.cwd, started: meta.time, title }
+}
+
+function dirEntries(dir) {
+  try {
+    return fs.readdirSync(dir, { withFileTypes: true })
+  } catch {
+    return []
+  }
+}
+
+function mtimeOf(file) {
+  try {
+    return fs.statSync(file).mtimeMs
+  } catch {
+    return null
+  }
+}
+
+const isoOf = (ms) => (ms ? new Date(ms).toISOString() : null)
+
+function sessionLimit(raw) {
+  const n = Number.parseInt(raw, 10)
+  return Number.isFinite(n) ? Math.max(1, Math.min(200, n)) : 60
+}
+
+// Claude Code: <config>/projects/<folder slug>/<uuid>.jsonl.
+function claudeSessions(configDir, limit) {
+  const root = path.join(configDir, 'projects')
+  const files = []
+  for (const d of dirEntries(root)) {
+    if (!d.isDirectory()) continue
+    for (const f of dirEntries(path.join(root, d.name))) {
+      const m = /^(.{36})\.jsonl$/.exec(f.name)
+      if (!m || !UUID.test(m[1]) || !f.isFile()) continue
+      const full = path.join(root, d.name, f.name)
+      const updated = mtimeOf(full)
+      if (updated !== null) files.push({ id: m[1], full, updated })
+    }
+  }
+  files.sort((a, b) => b.updated - a.updated)
+  const out = []
+  for (const f of files) {
+    if (out.length >= limit) break
+    const head = parseClaudeHead(readHead(f.full))
+    if (!head.title) continue // never messaged: nothing to resume
+    out.push({ agent: 'claude', id: f.id, cwd: head.cwd, started: isoOf(head.started), updated: Math.round(f.updated), title: head.title })
+  }
+  return out
+}
+
+// Codex: <home>/sessions/YYYY/MM/DD/rollout-*.jsonl.
+function codexSessions(codexHome, limit) {
+  const files = []
+  const walk = (dir, depth) => {
+    for (const e of dirEntries(dir)) {
+      const full = path.join(dir, e.name)
+      if (e.isDirectory() && depth < 3) walk(full, depth + 1)
+      else if (e.isFile() && e.name.startsWith('rollout-') && e.name.endsWith('.jsonl')) {
+        const updated = mtimeOf(full)
+        if (updated !== null) files.push({ full, updated })
+      }
+    }
+  }
+  walk(path.join(codexHome, 'sessions'), 0)
+  files.sort((a, b) => b.updated - a.updated)
+  const out = []
+  for (const f of files) {
+    if (out.length >= limit) break
+    const head = parseCodexHead(readHead(f.full))
+    if (!head || !head.title) continue
+    out.push({ agent: 'codex', id: head.id, cwd: head.cwd, started: isoOf(head.started), updated: Math.round(f.updated), title: head.title })
+  }
+  return out
+}
+
+// -> { v: 1, sessions: [...] } (never throws)
+function listSessions({ limit, home = os.homedir(), env = process.env } = {}) {
+  const max = sessionLimit(limit)
+  const out = []
+  const safely = (fn) => {
+    try {
+      out.push(...fn())
+    } catch {
+      // that agent's history is left out
+    }
+  }
+  safely(() => claudeSessions(env.CLAUDE_CONFIG_DIR || path.join(home, '.claude'), max))
+  safely(() => codexSessions(env.CODEX_HOME || path.join(home, '.codex'), max))
+  out.sort((a, b) => b.updated - a.updated)
+  return { v: 1, sessions: out }
+}
+
+// ---------------------------------------------------------------------------
 
 function main(argv = process.argv.slice(2)) {
   const [mode, ...rest] = argv
@@ -531,11 +740,21 @@ function main(argv = process.argv.slice(2)) {
     process.exitCode = report.ok ? 0 : 1
     return
   }
+  if (mode === 'sessions') {
+    let result
+    try {
+      result = listSessions({ limit: rest[0] })
+    } catch {
+      result = { v: 1, sessions: [] }
+    }
+    process.stdout.write(JSON.stringify(result) + '\n')
+    return
+  }
   if (mode === 'version') {
     process.stdout.write(VERSION + '\n')
     return
   }
-  process.stderr.write('usage: node tessel-shim.cjs mcp | hook <provider> <Event> | install | version\n')
+  process.stderr.write('usage: node tessel-shim.cjs mcp | hook <provider> <Event> | install | sessions [limit] | version\n')
   process.exitCode = 2
 }
 
@@ -557,5 +776,8 @@ else
     splitCodexConfig,
     codexTable,
     mergeCodexToml,
-    install
+    install,
+    parseClaudeHead,
+    parseCodexHead,
+    listSessions
   }
