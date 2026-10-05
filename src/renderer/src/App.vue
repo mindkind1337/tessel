@@ -1364,9 +1364,19 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
     if (FOUND_AFTER_START.includes(sessionKind(agent)) && !leaf.sessionId) watchFoundSession(leaf, agent.id)
     return leaf
   }
+  // Claude on an SSH host: its own install there, else VS Code's copy; none:
+  // its install is offered instead of typing a command the host lacks.
+  let launchCommand = launch && launch.command
+  if (agent && agent.command && opts.remoteHostId && sessionKind(agent) === 'claude' && launchCommand === 'claude') {
+    launchCommand = await remoteClaudeCommand(opts.remoteHostId, launchCommand)
+    if (!launchCommand) {
+      offerClaudeInstall(opts.remoteHostId)
+      return leaf
+    }
+  }
   // Launch the agent CLI once the shell has had a moment to print its prompt.
   if (agent && agent.command) {
-    const start = await agentStartLine({ ...agent, command: launch.command }, opts.sessionId || null, !!opts.resume, accountId, { known: opts.remoteSession === true && !!opts.remoteHostId })
+    const start = await agentStartLine({ ...agent, command: launchCommand },opts.sessionId || null, !!opts.resume, accountId, { known: opts.remoteSession === true && !!opts.remoteHostId })
     leaf.sessionId = start.sessionId
     // Its arguments (or the Yolo flag) at the end: they work with resuming too.
     // A worker's launch options (model, effort, its first prompt) only on a
@@ -4440,18 +4450,45 @@ onBeforeUnmount(() => offRemoteBranches && offRemoteBranches())
 // has. Claude Code missing: offered once per host and run, with a button that
 // runs its official installer in a new pane on that host (it then shows its
 // sign-in link there).
-const REMOTE_CLAUDE_INSTALL = 'curl -fsSL https://claude.ai/install.sh | bash && claude' // i18n-ignore shell command
+// The installer puts it in ~/.local/bin, which a host's PATH may lack.
+const REMOTE_CLAUDE_INSTALL = 'curl -fsSL https://claude.ai/install.sh | bash && ~/.local/bin/claude' // i18n-ignore shell command
 const remoteAgentOffered = new Set()
+const remoteAgentTools = {} // hostId -> the last agent check (remoteAgents:status)
 let offRemoteAgents = null
 function onRemoteAgentsStatus(st) {
-  if (!st || typeof st.hostId !== 'string' || st.claude || remoteAgentOffered.has(st.hostId)) return
+  if (!st || typeof st.hostId !== 'string') return
+  if (!st.error) remoteAgentTools[st.hostId] = st
+  if (st.claude || st.vscodeClaude || remoteAgentOffered.has(st.hostId)) return
   if (st.error || (st.shim && st.shim !== 'ok')) return
   remoteAgentOffered.add(st.hostId)
-  const host = st.label || remoteHostLabel(st.hostId)
+  offerClaudeInstall(st.hostId, st.label)
+}
+function offerClaudeInstall(hostId, label) {
+  const host = label || remoteHostLabel(hostId)
   showToast(t('app.remoteAgents.noClaude', 'Claude Code is not installed on {{host}}. Install it there to run Claude on this host from Tessel.', { host }), {
-    timeout: 20000,
-    action: { label: t('app.remoteAgents.install', 'Install Claude Code'), run: () => installClaudeOnHost(st.hostId) }
+    timeout: 30000,
+    action: { label: t('app.remoteAgents.install', 'Install Claude Code'), run: () => installClaudeOnHost(hostId) }
   })
+}
+// Claude in a pane on an SSH host: the command that runs it there. Its own
+// install, else VS Code's copy (the Claude extension brings one, signed in
+// with the same account); none: null (the install is offered instead). A
+// host never checked yet (or a failed check) keeps `claude`.
+const POSIX_ABS = /^\/[^'\u0000-\u001f\u007f]{1,1024}$/
+async function remoteClaudeCommand(hostId, command) {
+  let st = remoteAgentTools[hostId]
+  if (st && !st.claude) {
+    // Installed since (the Install button, or by hand): asked again.
+    const api = window.shellApi.remoteAgents
+    const fresh = api && api.check ? await api.check(hostId).catch(() => null) : null
+    if (fresh && !fresh.error) st = remoteAgentTools[hostId] = fresh
+  }
+  if (!st) return command
+  // By the path found there: ~/.local/bin (its installer's) may not be on PATH.
+  if (typeof st.claude === 'string' && POSIX_ABS.test(st.claude)) return `'${st.claude}'`
+  if (st.claude) return command
+  if (typeof st.vscodeClaude === 'string' && POSIX_ABS.test(st.vscodeClaude)) return `'${st.vscodeClaude}'`
+  return null
 }
 async function installClaudeOnHost(hostId) {
   const ws = workspaces.value.find((w) => w.remote && w.remote.hostId === hostId)

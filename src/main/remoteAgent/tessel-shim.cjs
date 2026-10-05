@@ -16,7 +16,7 @@ const os = require('os')
 const net = require('net')
 const path = require('path')
 
-const VERSION = '1.2.1'
+const VERSION = '1.2.2'
 const PROTOCOL = 1
 const SERVER_NAME = 'tessel-team'
 const SHIM_NAME = 'tessel-shim.cjs'
@@ -480,7 +480,9 @@ function install({ home = os.homedir(), shimPath = path.resolve(__filename), env
 
   const claudeJson = path.join(home, '.claude.json')
   const claudeDir = path.join(home, '.claude')
-  if (fs.existsSync(claudeJson) || fs.existsSync(claudeDir) || onPath('claude', env)) {
+  // Its official installer's place (~/.local/bin), which a non-login PATH lacks.
+  const claudeLocal = path.join(home, '.local', 'bin', 'claude')
+  if (fs.existsSync(claudeJson) || fs.existsSync(claudeDir) || onPath('claude', env) || fs.existsSync(claudeLocal)) {
     jsonStep(claudeJson, (cfg) => mergeClaudeJson(cfg, shimPath, node))
     jsonStep(path.join(claudeDir, 'settings.json'), (s) => mergeHooks(s, CLAUDE_HOOK_EVENTS, 'claude', shimPath, node))
   } else report.skipped.push('claude')

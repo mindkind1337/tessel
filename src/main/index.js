@@ -3096,7 +3096,12 @@ async function prepareRemoteAgent({ id, target, remotePath, agentId, teamSecret 
   }
   const node = findNode({ env: freshEnv() })
   if (!node) return { warning: noNodeError() }
-  const shim = await remoteShims.ensure(target.id)
+  let shim = await remoteShims.ensure(target.id)
+  // Installed when this agent was not there yet (it was skipped): again, now.
+  if (shim.ok && shim.result && Array.isArray(shim.result.skipped) && shim.result.skipped.includes(provider)) {
+    remoteShims.forget(target.id)
+    shim = await remoteShims.ensure(target.id)
+  }
   if (!shim.ok) return { warning: remoteShimWarning(shim.reason) }
   let script
   try {

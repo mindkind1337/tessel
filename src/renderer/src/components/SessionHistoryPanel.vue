@@ -138,12 +138,16 @@ async function load() {
     const res = remote ? await a.listRemoteSessions({ hostId: remote.hostId, limit: view.limit }) : await a.listSessions({ cwd: null, limit: view.limit })
     if (seq !== loadSeq) return
     if (remote) {
+      waitingHost.value = !!(res && !res.ok && res.notConnected)
       sessions.value = res && res.ok && Array.isArray(res.sessions) ? res.sessions : []
       if (res && !res.ok)
         error.value = res.notConnected
           ? t('sessionHistory.remoteNotConnected', 'Connect to {{host}} (open a terminal there) to see its sessions.', { host: remote.host || remote.hostId })
           : (res.error || t('sessionHistory.remoteFailed', 'The sessions of {{host}} could not be read.', { host: remote.host || remote.hostId }))
-    } else sessions.value = Array.isArray(res) ? res : []
+    } else {
+      waitingHost.value = false
+      sessions.value = Array.isArray(res) ? res : []
+    }
   } catch (err) {
     if (seq !== loadSeq) return
     sessions.value = []
@@ -162,6 +166,18 @@ function refresh() {
   else load()
 }
 watch(() => view.limit, load)
+// A host not signed in yet: asked again every few seconds while the tab is
+// shown, so its list appears once a terminal there connects.
+const waitingHost = ref(false)
+let hostRetry = 0
+watch(
+  () => waitingHost.value && props.active,
+  (on) => {
+    if (hostRetry) clearInterval(hostRetry)
+    hostRetry = on ? setInterval(() => !loading.value && load(), 5000) : 0
+  }
+)
+onBeforeUnmount(() => hostRetry && clearInterval(hostRetry))
 // Another project (this computer / an SSH host): its own list.
 watch(
   () => (props.remote && props.remote.hostId) || '',

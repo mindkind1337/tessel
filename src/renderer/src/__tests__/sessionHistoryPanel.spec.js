@@ -279,3 +279,20 @@ describe('a project on an SSH host', () => {
     expect(wrapper.find('.sh-error').text()).toContain('box')
   })
 })
+
+describe('a host that connects after the tab opened', () => {
+  it('asks again every few seconds until the host answers', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    let connected = false
+    api.listRemoteSessions = vi.fn(() =>
+      Promise.resolve(connected ? { ok: true, sessions: [{ agent: 'claude', id: 'ffffffff-1111-4222-8333-444444444444', cwd: '/srv/p', title: 'Now there', started: null, updated: NOW, host: 'ssh-box' }] } : { ok: false, notConnected: true })
+    )
+    await make({ cwd: null, remote: { hostId: 'ssh-box', host: 'box', path: '/srv/p' } })
+    expect(rows()).toHaveLength(0)
+    connected = true
+    vi.advanceTimersByTime(5000)
+    await flushPromises()
+    expect(titles()).toEqual(['Now there'])
+    vi.useRealTimers()
+  })
+})

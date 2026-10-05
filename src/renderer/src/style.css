@@ -2248,6 +2248,8 @@ kbd {
 }
 
 .toast-action {
+  flex-shrink: 0;
+  white-space: nowrap;
   height: 26px;
   padding: 0 10px;
   border: 1px solid var(--border-strong);
