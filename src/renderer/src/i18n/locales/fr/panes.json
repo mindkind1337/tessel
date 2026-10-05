@@ -727,6 +727,16 @@
       "notConnected": "{{host}} — non connecté",
       "connect": "Connecter",
       "connecting": "Connexion…"
+    },
+    "agentTerminal": {
+      "keys": "touches",
+      "logHint": "Ce que les agents ont lancé dans ce terminal",
+      "noLog": "Rien de lancé pour l’instant",
+      "stop": "Arrêter",
+      "stopHint": "Empêcher cet agent de taper dans ce terminal",
+      "stopped": "L’agent ne peut plus taper dans ce terminal.",
+      "used": "Commandes d’agents ({{count}})",
+      "using": "{{agent}} utilise ce terminal"
     }
   },
   "floating": {

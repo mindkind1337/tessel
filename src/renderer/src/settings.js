@@ -1,5 +1,6 @@
 // User preferences. One reactive object shared by the settings dialog, App and
 // every TerminalPane; App persists it with the workspace layout.
+import { cleanRules } from '../../shared/terminalRules'
 import { reactive } from 'vue'
 import { isTheme } from './themes'
 import { UI_LANGUAGES } from './i18n'
@@ -62,6 +63,20 @@ export const DEFAULT_SETTINGS = Object.freeze({
   // (the browser_* tools, src/main/agentBrowser.js); each page shows an
   // Agent badge with a Stop button while one does. On, as in Orca.
   agentBrowser: true,
+  // Agents run shell commands (the terminal tools, src/main/agentTerminal.js,
+  // after VS Code's run_in_terminal): in terminals of their own next to them,
+  // each command approved unless the rules below allow it; in one of yours
+  // only after you allow it for that terminal. Off: no terminal tools.
+  agentTerminal: true,
+  // Commands the rules allow run without asking (off until you accept the
+  // one-time warning, as in VS Code).
+  agentTerminalAutoApprove: false,
+  agentTerminalAutoApproveWarned: false,
+  agentTerminalIgnoreDefaultRules: false,
+  // Your rules ("Always allow"): key -> true | false | { approve, matchCommandLine }
+  // (shared/terminalRules.js); a project's rules ("in this project"): its key -> rules.
+  agentTerminalRules: {},
+  agentTerminalWorkspaceRules: {},
   // Settings > Orchestration (Orca's coordinator and workers): ask before an
   // agent starts workers (on by default), how many workers one coordinator
   // runs at a time (the rest wait in a queue), how deep workers may nest
@@ -276,6 +291,8 @@ const fresh = () => ({
   agentPrefs: {},
   agentSessionOptions: {},
   yoloFolders: [],
+  agentTerminalRules: {},
+  agentTerminalWorkspaceRules: {},
   hiddenUsageProviders: [],
   sidebarFilterRepoIds: [],
   sidebarCollapsedGroups: [],
@@ -314,6 +331,16 @@ export function loadSettings(saved) {
     if (key === 'yoloFolders') {
       if (Array.isArray(v))
         settings.yoloFolders = [...new Set(v.filter((f) => typeof f === 'string' && f.trim() && f.length <= 1024).map((f) => f.trim()))].slice(0, 100)
+      continue
+    }
+    if (key === 'agentTerminalRules') {
+      settings.agentTerminalRules = cleanRules(v)
+      continue
+    }
+    if (key === 'agentTerminalWorkspaceRules') {
+      const out = {}
+      if (v && typeof v === 'object' && !Array.isArray(v)) for (const [k, r] of Object.entries(v).slice(0, 500)) if (k && k.length <= 2000) out[k] = cleanRules(r)
+      settings.agentTerminalWorkspaceRules = out
       continue
     }
     if (key === 'agentPermissions' && !['manual', 'yolo'].includes(v)) continue
