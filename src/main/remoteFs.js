@@ -104,22 +104,26 @@ export function cleanBrowsePath(p) {
 }
 
 // The host's answer to __t_skills: per SKILL.md, a "@@S <kind> <path, base64>"
-// line, then its first bytes (base64) on the next line.
-// -> [{ kind: 'home' | 'repo', path, text }] (absolute POSIX paths only)
+// line, then its first bytes (base64) on the next line. __t_cxskills (Codex)
+// also names the skills folder: "@@S <kind> <folder, base64> <path, base64>".
+// -> [{ kind: 'home' | 'repo', path, text, root? }] (absolute POSIX paths only)
 export function parseSkillListing(out, max = 1000) {
   const lines = String(out || '').split('\n')
   const files = []
   const seen = new Set()
+  const okPath = (p) => p.startsWith('/') && p.length <= 4096 && !CONTROL.test(p)
   for (let i = 0; i < lines.length && files.length < max; i++) {
-    const m = /^@@S (home|repo) ([A-Za-z0-9+/=]*)\r?$/.exec(lines[i])
+    const m = /^@@S (home|repo) ([A-Za-z0-9+/=]*)(?: ([A-Za-z0-9+/=]*))?\r?$/.exec(lines[i])
     if (!m) continue
-    const path = Buffer.from(m[2], 'base64').toString('utf8')
+    const root = m[3] !== undefined ? Buffer.from(m[2], 'base64').toString('utf8') : null
+    const path = Buffer.from(m[3] !== undefined ? m[3] : m[2], 'base64').toString('utf8')
     const body = (lines[i + 1] || '').trim()
     if (!/^[A-Za-z0-9+/=]*$/.test(body)) continue
     i++
-    if (!path.startsWith('/') || path.length > 4096 || CONTROL.test(path) || !path.endsWith('/SKILL.md') || seen.has(path)) continue
+    if (!okPath(path) || !path.endsWith('/SKILL.md') || seen.has(path)) continue
+    if (root !== null && (!okPath(root) || root.endsWith('/') || !path.startsWith(root + '/'))) continue
     seen.add(path)
-    files.push({ kind: m[1], path, text: Buffer.from(body, 'base64').toString('utf8') })
+    files.push({ kind: m[1], path, text: Buffer.from(body, 'base64').toString('utf8'), ...(root !== null ? { root } : {}) })
   }
   return files
 }
@@ -1468,10 +1472,14 @@ export function createRemoteFs({
 
   // Claude Code's skills on this host (__t_skills): ~/.claude/skills, and
   // the project's .claude/skills when `project` (a remote path) is given.
+  // agent 'codex': Codex's (__t_cxskills): $CODEX_HOME/skills and
+  // ~/.agents/skills, the project's .agents/skills and .codex/skills, each
+  // file with its skills folder (root). No link followed.
   // Their SKILL.md paths and first 8 KB only, at most `limit` per folder.
   // Never a sign-in. -> { ok: true, files: [{ kind: 'home'|'repo', path, text }] } | { ok: false, notConnected?, error }
-  async function listAgentSkills(hostId, { project = null, limit = 200 } = {}) {
+  async function listAgentSkills(hostId, { project = null, limit = 200, agent = 'claude' } = {}) {
     if (!hostIdOk(hostId)) return { ok: false, error: t('main.remote.notFound', 'This remote host is no longer saved in Tessel.') }
+    if (agent !== 'claude' && agent !== 'codex') return { ok: false, error: 'invalid' }
     let projectArg = '-'
     if (project !== null && project !== undefined) {
       const p = cleanBrowsePath(project)
@@ -1482,7 +1490,7 @@ export function createRemoteFs({
     if (!connectedQuietly(hostId)) return { ok: false, notConnected: true, error: t('main.remoteFs.notConnected', '{{host}} is not connected. Use Connect to sign in.', { host: hostLabel(hostId) }) }
     const entry = sessions.get(hostId)
     const open = !!(entry && !entry.closed && entry.session && entry.session.state === 'ready')
-    const res = await call(hostId, '__t_skills', [projectArg, String(n)], { cap: 4 * 1024 * 1024, timeoutMs: 20_000, op: 'read', ...(open ? { ifOpen: true } : {}) })
+    const res = await call(hostId, agent === 'codex' ? '__t_cxskills' : '__t_skills', [projectArg, String(n)], { cap: 4 * 1024 * 1024, timeoutMs: 20_000, op: 'read', ...(open ? { ifOpen: true } : {}) })
     if (!res || res.skipped) return { ok: false, notConnected: true, error: t('main.remoteFs.notConnected', '{{host}} is not connected. Use Connect to sign in.', { host: hostLabel(hostId) }) }
     if (res.error) return { ok: false, error: res.error }
     if (res.rc !== 0 && res.rc !== RC.PIPE && !res.truncated) return { ok: false, error: rcText(res, `rc ${res.rc}`) }

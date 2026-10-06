@@ -2045,10 +2045,10 @@ export function createChatSessions(deps) {
     const s = sessions.get(paneId)
     const unavailable = () => ({ ok: false, error: t('main.chat.skillsUnavailable', 'Skill discovery is unavailable.') })
     if (!s || s.closing || s.finished) return unavailable()
-    // On an SSH host, Claude's skills are files there: listed there over the
-    // connection (chat/remoteSkills.js), never read from this PC (Codex
-    // lists its own through its server).
-    if (s.remote && s.agent === 'claude') {
+    // On an SSH host, Claude's and Codex's skills are files there: listed
+    // there over the connection (chat/remoteSkills.js), never read from this
+    // PC. Codex's own server on the host is asked first when it answers.
+    if (s.remote && (s.agent === 'claude' || s.agent === 'codex')) {
       if (typeof remote?.skills !== 'function') return unavailable()
       try {
         if (!trust?.isTrusted(s.cwd, [])) return unavailable()
@@ -2056,7 +2056,12 @@ export function createChatSessions(deps) {
       if (s.skillScan) return s.skillScan
       s.skillScan = Promise.resolve().then(async () => {
         try {
-          const r = await remote.skills({ hostId: s.remote.hostId, project: s.remote.path, refresh })
+          if (s.agent === 'codex') {
+            const own = await Promise.resolve(s.adapter?.skills?.({ refresh })).catch(() => null)
+            if (sessions.get(paneId) !== s || s.closing || s.finished) return unavailable()
+            if (own?.ok) return { ok: true, result: publicSkillDiscovery(own.result) }
+          }
+          const r = await remote.skills({ hostId: s.remote.hostId, project: s.remote.path, refresh, ...(s.agent === 'codex' ? { agent: 'codex' } : {}) })
           if (!r?.ok || sessions.get(paneId) !== s || s.closing || s.finished) return unavailable()
           return { ok: true, result: publicSkillDiscovery(r.result) }
         } catch { return unavailable() }

@@ -98,6 +98,12 @@ describe.skipIf(!gitSh())('readAgentFile over a fake host (Git for Windows sh)',
     fs.writeFileSync(join(home, '.claude', 'skills', 'notes.md'), 'not a skill')
     fs.mkdirSync(join(home, 'app', '.claude', 'skills', 'ship'), { recursive: true })
     fs.writeFileSync(join(home, 'app', '.claude', 'skills', 'ship', 'SKILL.md'), '---\nname: ship\n---\n')
+    // Codex's skills: its home's, the shared folder's, a project's (both
+    // folders), and a Claude one it never lists.
+    for (const d of [['.codex', 'skills', 'fmt'], ['.agents', 'skills', 'shared'], ['app', '.agents', 'skills', 'lint'], ['app', '.codex', 'skills', 'old']]) {
+      fs.mkdirSync(join(home, ...d), { recursive: true })
+      fs.writeFileSync(join(home, ...d, 'SKILL.md'), `---\nname: ${d.at(-1)}\n---\n`)
+    }
     // Sub-agent transcripts next to the Claude transcript, and what is not one.
     const subs = join(home, '.claude', 'projects', '-home-me-app', SID, 'subagents')
     fs.mkdirSync(join(subs, 'nested.jsonl'), { recursive: true })
@@ -174,6 +180,20 @@ describe.skipIf(!gitSh())('readAgentFile over a fake host (Git for Windows sh)',
     const mine = await rfs.listAgentSkills(HOST)
     expect(mine.files.map((f) => f.kind)).toEqual(['home'])
     expect((await rfs.listAgentSkills(HOST, { project: 'relative' })).ok).toBe(false)
+  }, 60000)
+
+  it("lists Codex's skills: its home's, the shared folder's and a project's, each with its folder", async () => {
+    const r = await rfs.listAgentSkills(HOST, { project: '~/app', agent: 'codex' })
+    expect(r.ok).toBe(true)
+    const short = (p) => p.slice(p.indexOf('/home/') + 5)
+    expect(r.files.map((f) => [f.kind, short(f.root), short(f.path)])).toEqual([
+      ['home', '/.codex/skills', '/.codex/skills/fmt/SKILL.md'],
+      ['home', '/.agents/skills', '/.agents/skills/shared/SKILL.md'],
+      ['repo', '/app/.agents/skills', '/app/.agents/skills/lint/SKILL.md'],
+      ['repo', '/app/.codex/skills', '/app/.codex/skills/old/SKILL.md']
+    ])
+    expect((await rfs.listAgentSkills(HOST, { agent: 'codex' })).files.map((f) => f.kind)).toEqual(['home', 'home'])
+    expect((await rfs.listAgentSkills(HOST, { agent: 'grok' })).ok).toBe(false)
   }, 60000)
 
   it("lists a Claude session's sub-agent transcripts (sizes only, no link, capped) and reads one", async () => {

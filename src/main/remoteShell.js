@@ -148,6 +148,9 @@ export const FUNCTIONS = new Set([
   // .claude/skills): their SKILL.md files' paths and first bytes only,
   // read-only and bounded (chat/remoteSkills.js).
   '__t_skills',
+  // Codex's skills there ($CODEX_HOME/skills, ~/.agents/skills and a
+  // project's .agents/skills and .codex/skills), the same way.
+  '__t_cxskills',
   // A Claude Code session's sub-agent transcripts (<id>/subagents/*.jsonl
   // next to its transcript): their names, sizes and change times (at most
   // N), and a bounded window of one; read-only, no link followed (jobCost.js).
@@ -603,6 +606,36 @@ __t_skills() {
       head -c 8192 "$__f" | __t_b64e | tr -d '\\n'; printf '\\n'
     done
   done
+}
+__t_nolink() {
+  __p=$1
+  [ -d "$__p" ] || return 1
+  for __s in $(printf '%s' "$2" | tr '/' ' '); do __p=$__p/$__s; [ -d "$__p" ] && [ ! -L "$__p" ] || return 1; done
+}
+__t_skls() {
+  [ -d "$2" ] && [ ! -L "$2" ] || return 0
+  __o=$(printf '%s' "$2" | __t_b64e | tr -d '\\n')
+  find "$2" -maxdepth 4 -type f -name SKILL.md 2>/dev/null | head -n "$3" | while IFS= read -r __f; do
+    [ -f "$__f" ] && [ ! -L "$__f" ] || continue
+    printf '@@S %s %s ' "$1" "$__o"; printf '%s' "$__f" | __t_b64e | tr -d '\\n'; printf '\\n'
+    head -c 8192 "$__f" | __t_b64e | tr -d '\\n'; printf '\\n'
+  done
+}
+__t_cxskills() {
+  case $2 in ''|*[!0-9]*) return 90 ;; esac
+  __cx=\${CODEX_HOME:-$HOME/.codex}
+  [ "$__cx" = / ] || __cx=\${__cx%/}
+  [ -L "$__cx" ] || { __t_nolink "$__cx" skills && __t_skls home "$__cx/skills" "$2"; }
+  __t_nolink "$HOME" .agents/skills && __t_skls home "$HOME/.agents/skills" "$2"
+  if [ "$1" != - ] && [ -d "$1" ]; then
+    __pr=\${1%/}
+    for __k in .agents/skills .codex/skills; do
+      [ "$__pr/$__k" = "$HOME/.agents/skills" ] && continue
+      [ "$__pr/$__k" = "$__cx/skills" ] && continue
+      __t_nolink "$__pr" "$__k" && __t_skls repo "$__pr/$__k" "$2"
+    done
+  fi
+  return 0
 }
 if [ -z "$__T_B" ]; then printf '\\n@@R %s base64\\n' "$__T_N"; else printf '\\n@@R %s ok\\n' "$__T_N"; fi
 `
