@@ -1317,7 +1317,7 @@ const transcriptViews = createTranscriptViews({
   },
   sessionsDir: () => sessionsDir(),
   // A terminal agent on an SSH host: its file read over the connection.
-  readAgentFile: (hostId, q) => (remoteHosts.get(hostId) ? remoteFs.readAgentFile(hostId, q) : { ok: false, error: 'unknown host' })
+  readAgentFile: (hostId, q) => (remoteHosts.get(hostId) ? remoteFs.readAgentFile(hostId, q) : { ok: false, error: 'unknown host' }) // i18n-ignore
 })
 transcriptViews.register(ipcMain)
 app.on('will-quit', () => transcriptViews.closeAll())

@@ -259,10 +259,10 @@ describe('terminal pane header', () => {
     expect(window.shellApi.writePty).not.toHaveBeenCalled()
   })
 
-  it('an agent on an SSH host or found in a shell has no chat view; OpenCode keeps its chat pane', async () => {
+  it('an agent found in a shell has no chat view (one on an SSH host has, read on the host); OpenCode keeps its chat pane', async () => {
     ctx.unsent = {}
     ctx.trackOf = () => null
-    for (const extra of [{ remoteHostId: 'ssh-1' }, { detected: true }]) {
+    for (const extra of [{ detected: true }]) {
       wrapper.unmount()
       wrapper = mount(TerminalPane, { props: { node: { ...node(), ...extra } }, attachTo: host, global: { provide: { panelCtx: ctx } } })
       expect(wrapper.find('[data-test="pane-chat-toggle"]').exists(), JSON.stringify(extra)).toBe(false)
