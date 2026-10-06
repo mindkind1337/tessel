@@ -951,6 +951,17 @@ export function createTranscriptViews({ send, roots = transcriptViewRoots, homes
     // A host's folder is not one this PC can look into.
     return v && !v.hostId ? transcriptCwd(v.tail.lines()) : null
   }
+  // A view of an agent on an SSH host: its host, and the folder it works in
+  // there (a host path, only ever sent back to that host), or null.
+  function hostOf(viewId) {
+    return views.get(viewId)?.hostId || null
+  }
+  function remoteCwdOf(viewId) {
+    const v = views.get(viewId)
+    if (!v || !v.hostId) return null
+    const cwd = transcriptCwd(v.tail.lines())
+    return typeof cwd === 'string' && cwd.startsWith('/') && !cwd.includes('\\') && !/[\u0000-\u001f\u007f]/.test(cwd) ? cwd : null
+  }
   function schedule(viewId) {
     const v = views.get(viewId)
     if (!v || v.timer) return
@@ -1070,5 +1081,5 @@ export function createTranscriptViews({ send, roots = transcriptViewRoots, homes
     ipcMain.handle('transcriptView:earlier', (_e, q) => earlier(obj(q)?.viewId))
     ipcMain.handle('transcriptView:images', (_e, q) => imagesOf(obj(q)?.viewId, obj(q)?.keys))
   }
-  return { open, openRemote, openFromWindow, close, earlier, images: imagesOf, refresh, cwdOf, agentOf: (viewId) => views.get(viewId)?.agent || null, closeAll: () => [...views.keys()].forEach(close), register, count: () => views.size }
+  return { open, openRemote, openFromWindow, close, earlier, images: imagesOf, refresh, cwdOf, hostOf, remoteCwdOf, agentOf: (viewId) => views.get(viewId)?.agent || null, closeAll: () => [...views.keys()].forEach(close), register, count: () => views.size }
 }

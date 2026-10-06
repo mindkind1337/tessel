@@ -39,7 +39,9 @@ export function terminalSkillRoots(agent, { cwd = null, home = os.homedir(), acc
 
 // views: the transcript views (cwdOf, agentOf); homes(agent, accountId) -> the
 // pane's account folder (or null).
-export function createTerminalSkills({ views, homes = async () => null, discover = discoverClaudeSkills, home = os.homedir(), now = Date.now, wait = (ms) => new Promise((r) => setTimeout(r, ms)) } = {}) {
+// remoteSkills: chat/remoteSkills.js's skills({ hostId, project, refresh }),
+// for a view of Claude Code on an SSH host (its skills are listed there).
+export function createTerminalSkills({ views, homes = async () => null, discover = discoverClaudeSkills, remoteSkills = null, home = os.homedir(), now = Date.now, wait = (ms) => new Promise((r) => setTimeout(r, ms)) } = {}) {
   const cache = new Map() // key -> { at, value }
   const unavailable = () => ({ ok: false, error: t('main.chat.skillsUnavailable', 'Skill discovery is unavailable.') })
 
@@ -47,6 +49,19 @@ export function createTerminalSkills({ views, homes = async () => null, discover
     const o = q && typeof q === 'object' && !Array.isArray(q) ? q : {}
     const { agent } = o
     if (!TERMINAL_SKILL_AGENTS.includes(agent)) return unavailable()
+    // A view of an agent on an SSH host: never this PC's folders. Claude
+    // Code's skills there (the user's, its project's), over the connection.
+    const viewOf = typeof o.viewId === 'string' && VIEW_ID.test(o.viewId) && views && views.agentOf(o.viewId) === agent ? o.viewId : null
+    const hostId = viewOf && typeof views.hostOf === 'function' ? views.hostOf(viewOf) : null
+    if (hostId) {
+      if (agent !== 'claude' || !remoteSkills) return unavailable()
+      try {
+        const r = await remoteSkills({ hostId, project: typeof views.remoteCwdOf === 'function' ? views.remoteCwdOf(viewOf) : null, refresh: o.refresh === true })
+        return r && r.ok ? { ok: true, result: publicSkillDiscovery(r.result) } : unavailable()
+      } catch {
+        return unavailable()
+      }
+    }
     const accountId = o.accountId === null || (typeof o.accountId === 'string' && ACCOUNT_ID.test(o.accountId)) ? o.accountId : undefined
     // The project's skills only from a view of this agent (its file's cwd).
     const viewId = typeof o.viewId === 'string' && VIEW_ID.test(o.viewId) ? o.viewId : null

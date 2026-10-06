@@ -92,6 +92,12 @@ describe.skipIf(!gitSh())('readAgentFile over a fake host (Git for Windows sh)',
     fs.writeFileSync(join(home, '.claude', 'projects', '-home-me-app', `${SID}.jsonl`), content)
     fs.mkdirSync(join(home, '.codex', 'sessions', '2026', '10', '06'), { recursive: true })
     fs.writeFileSync(join(home, '.codex', 'sessions', '2026', '10', '06', `rollout-2026-10-06T01-02-03-${CODEX}.jsonl`), 'codex line\n')
+    // Skills: the user's, a project's, and a file that is not a skill.
+    fs.mkdirSync(join(home, '.claude', 'skills', 'review'), { recursive: true })
+    fs.writeFileSync(join(home, '.claude', 'skills', 'review', 'SKILL.md'), '---\nname: review\ndescription: Review it\n---\n' + 'x'.repeat(20000))
+    fs.writeFileSync(join(home, '.claude', 'skills', 'notes.md'), 'not a skill')
+    fs.mkdirSync(join(home, 'app', '.claude', 'skills', 'ship'), { recursive: true })
+    fs.writeFileSync(join(home, 'app', '.claude', 'skills', 'ship', 'SKILL.md'), '---\nname: ship\n---\n')
     // Never the test machine's own agent folders.
     const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(CLAUDE_CONFIG_DIR|CODEX_HOME)$/i.test(k)))
     rfs = createRemoteFs({
@@ -126,6 +132,35 @@ describe.skipIf(!gitSh())('readAgentFile over a fake host (Git for Windows sh)',
     expect(await rfs.readAgentFile(HOST, { agent: 'claude', id: '../../etc/passwd' })).toMatchObject({ ok: false, error: 'invalid' })
     expect(await rfs.readAgentFile(HOST, { agent: 'grok', id: SID })).toMatchObject({ ok: false, error: 'invalid' })
     expect(await rfs.readAgentFile(HOST, { agent: 'claude', id: SID, offset: -1 })).toMatchObject({ ok: false, error: 'invalid' })
+  }, 60000)
+
+  it('tells the file\'s change time with its size', async () => {
+    const r = await rfs.readAgentFile(HOST, { agent: 'claude', id: SID, offset: 0, cap: 1 })
+    const st = fs.statSync(join(home, '.claude', 'projects', '-home-me-app', `${SID}.jsonl`))
+    expect(r.mtimeMs).toBe(Math.floor(st.mtimeMs / 1000) * 1000)
+  }, 60000)
+
+  it("knows the host's home folder, once", async () => {
+    const r = await rfs.hostHome(HOST)
+    expect(r.ok).toBe(true)
+    expect(r.home.startsWith('/')).toBe(true)
+    expect(r.home.endsWith('/home')).toBe(true)
+    expect(await rfs.hostHome(HOST)).toEqual(r)
+  }, 60000)
+
+  it("lists Claude's skills: the user's and a project's, first bytes only", async () => {
+    const r = await rfs.listAgentSkills(HOST, { project: '~/app' })
+    expect(r.ok).toBe(true)
+    const rows = r.files.map((f) => [f.kind, f.path.slice(f.path.indexOf('/home/') + 5)])
+    expect(rows).toEqual([
+      ['home', '/.claude/skills/review/SKILL.md'],
+      ['repo', '/app/.claude/skills/ship/SKILL.md']
+    ])
+    expect(r.files[0].text.length).toBe(8192)
+    expect(r.files[0].text.startsWith('---\nname: review')).toBe(true)
+    const mine = await rfs.listAgentSkills(HOST)
+    expect(mine.files.map((f) => f.kind)).toEqual(['home'])
+    expect((await rfs.listAgentSkills(HOST, { project: 'relative' })).ok).toBe(false)
   }, 60000)
 })
 

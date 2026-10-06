@@ -69,6 +69,7 @@ import { createAgentTerminal } from './agentTerminal'
 import { createChatSessions } from './chat/sessions'
 import { remoteSpawnAvailable, remoteSpawnFor } from './chat/remoteProcess'
 import { remoteSessionDetails } from './chat/remoteTranscripts'
+import { createRemoteSkills } from './chat/remoteSkills'
 import { createChatImages } from './chat/chatImages'
 import { transcriptHomeFor } from './chat/transcriptHistory'
 import { createTranscriptViews } from './chat/transcriptView'
@@ -1214,6 +1215,9 @@ chatImages.sweep()
 // The usage indicator's live readings (usagePoller.js ingest), set once the
 // usage service is registered below.
 let usageLiveIngest = null
+// Claude's skills on an SSH host, for its chats and chat views ("/" menu):
+// listed there over the shared connection, never a sign-in (remoteSkills.js).
+const remoteSkills = createRemoteSkills({ listSkills: (hostId, q) => (remoteHosts.get(hostId) ? remoteFs.listAgentSkills(hostId, q) : { ok: false }) })
 const chatSessions = createChatSessions({
   dir: app.getPath('userData'),
   images: chatImages,
@@ -1276,6 +1280,9 @@ const chatSessions = createChatSessions({
       return exe ? { exe } : null
     },
     readAgentFile: (hostId, q) => remoteFs.readAgentFile(hostId, q),
+    // Claude's skills there (~/.claude/skills, the project's): listed over
+    // the connection, read-only (chat/remoteSkills.js).
+    skills: (q) => remoteSkills.skills(q),
     hostLabel: (hostId) => {
       const target = remoteHosts.get(hostId)
       return (target && target.label) || hostId
@@ -1325,6 +1332,8 @@ app.on('will-quit', () => transcriptViews.closeAll())
 // (its open view's folder), the user's and its account's.
 createTerminalSkills({
   views: transcriptViews,
+  // Claude Code on an SSH host: its skills listed there (remoteSkills.js).
+  remoteSkills: (q) => remoteSkills.skills(q),
   homes: async (agent, accountId) => {
     const r = await accountSessions.roots({ agent, accountId })
     return (r && r[agent]) || null

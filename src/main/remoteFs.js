@@ -103,6 +103,27 @@ export function cleanBrowsePath(p) {
   return out
 }
 
+// The host's answer to __t_skills: per SKILL.md, a "@@S <kind> <path, base64>"
+// line, then its first bytes (base64) on the next line.
+// -> [{ kind: 'home' | 'repo', path, text }] (absolute POSIX paths only)
+export function parseSkillListing(out, max = 1000) {
+  const lines = String(out || '').split('\n')
+  const files = []
+  const seen = new Set()
+  for (let i = 0; i < lines.length && files.length < max; i++) {
+    const m = /^@@S (home|repo) ([A-Za-z0-9+/=]*)\r?$/.exec(lines[i])
+    if (!m) continue
+    const path = Buffer.from(m[2], 'base64').toString('utf8')
+    const body = (lines[i + 1] || '').trim()
+    if (!/^[A-Za-z0-9+/=]*$/.test(body)) continue
+    i++
+    if (!path.startsWith('/') || path.length > 4096 || CONTROL.test(path) || !path.endsWith('/SKILL.md') || seen.has(path)) continue
+    seen.add(path)
+    files.push({ kind: m[1], path, text: Buffer.from(body, 'base64').toString('utf8') })
+  }
+  return files
+}
+
 // The host's answer to __t_browse: its real path, then "k name" records
 // (d folder, f file, L link to a folder, l other link, o other).
 // -> { path, entries, truncated }
@@ -1371,9 +1392,55 @@ export function createRemoteFs({
     if (res.rc !== 0) return { ok: false, error: rcText(res, `rc ${res.rc}`) }
     const out = Buffer.isBuffer(res.out) ? res.out : Buffer.from(String(res.out || ''), 'utf8')
     const nl = out.indexOf(10)
-    const size = nl > 0 ? Number(out.toString('latin1', 0, nl)) : NaN
+    // "<size> <mtime in seconds>"
+    const [sizeText, mtimeText] = nl > 0 ? out.toString('latin1', 0, nl).split(' ') : []
+    const size = Number(sizeText)
     if (!Number.isSafeInteger(size) || size < 0) return { ok: false, error: 'unreadable' }
-    return { ok: true, size, data: out.subarray(nl + 1) }
+    const mtime = Number(mtimeText)
+    return { ok: true, size, mtimeMs: Number.isSafeInteger(mtime) && mtime >= 0 ? mtime * 1000 : null, data: out.subarray(nl + 1) }
+  }
+
+  // The signed-in user's home folder on this host ($HOME), kept once known
+  // (it does not change while Tessel runs). Never a sign-in.
+  // -> { ok: true, home } | { ok: false, notConnected?, error }
+  const homes = new Map() // hostId -> home
+  async function hostHome(hostId) {
+    if (!hostIdOk(hostId)) return { ok: false, error: t('main.remote.notFound', 'This remote host is no longer saved in Tessel.') }
+    if (homes.has(hostId)) return { ok: true, home: homes.get(hostId) }
+    if (!connectedQuietly(hostId)) return { ok: false, notConnected: true, error: t('main.remoteFs.notConnected', '{{host}} is not connected. Use Connect to sign in.', { host: hostLabel(hostId) }) }
+    const entry = sessions.get(hostId)
+    const open = !!(entry && !entry.closed && entry.session && entry.session.state === 'ready')
+    const res = await call(hostId, '__t_home', [], { cap: 8192, timeoutMs: 15_000, op: 'read', ...(open ? { ifOpen: true } : {}) })
+    if (!res || res.skipped) return { ok: false, notConnected: true, error: t('main.remoteFs.notConnected', '{{host}} is not connected. Use Connect to sign in.', { host: hostLabel(hostId) }) }
+    if (res.error) return { ok: false, error: res.error }
+    const home = res.rc === 0 ? String(Buffer.isBuffer(res.out) ? res.out.toString('utf8') : res.out || '').split('\n')[0] : ''
+    if (!home.startsWith('/') || home.length > 4096 || CONTROL.test(home) || home.includes('\\')) return { ok: false, error: 'unreadable' }
+    const clean = home.length > 1 ? home.replace(/\/+$/, '') : home
+    homes.set(hostId, clean)
+    return { ok: true, home: clean }
+  }
+
+  // Claude Code's skills on this host (__t_skills): ~/.claude/skills, and
+  // the project's .claude/skills when `project` (a remote path) is given.
+  // Their SKILL.md paths and first 8 KB only, at most `limit` per folder.
+  // Never a sign-in. -> { ok: true, files: [{ kind: 'home'|'repo', path, text }] } | { ok: false, notConnected?, error }
+  async function listAgentSkills(hostId, { project = null, limit = 200 } = {}) {
+    if (!hostIdOk(hostId)) return { ok: false, error: t('main.remote.notFound', 'This remote host is no longer saved in Tessel.') }
+    let projectArg = '-'
+    if (project !== null && project !== undefined) {
+      const p = cleanBrowsePath(project)
+      if (!p) return { ok: false, error: 'invalid' }
+      projectArg = arg(p)
+    }
+    const n = Number.isSafeInteger(limit) && limit > 0 ? Math.min(limit, 500) : 200
+    if (!connectedQuietly(hostId)) return { ok: false, notConnected: true, error: t('main.remoteFs.notConnected', '{{host}} is not connected. Use Connect to sign in.', { host: hostLabel(hostId) }) }
+    const entry = sessions.get(hostId)
+    const open = !!(entry && !entry.closed && entry.session && entry.session.state === 'ready')
+    const res = await call(hostId, '__t_skills', [projectArg, String(n)], { cap: 4 * 1024 * 1024, timeoutMs: 20_000, op: 'read', ...(open ? { ifOpen: true } : {}) })
+    if (!res || res.skipped) return { ok: false, notConnected: true, error: t('main.remoteFs.notConnected', '{{host}} is not connected. Use Connect to sign in.', { host: hostLabel(hostId) }) }
+    if (res.error) return { ok: false, error: res.error }
+    if (res.rc !== 0 && res.rc !== RC.PIPE && !res.truncated) return { ok: false, error: rcText(res, `rc ${res.rc}`) }
+    return { ok: true, files: parseSkillListing(Buffer.isBuffer(res.out) ? res.out.toString('latin1') : String(res.out || '')) }
   }
 
   async function browse({ hostId, path } = {}) {
@@ -1475,6 +1542,8 @@ export function createRemoteFs({
     connectedQuietly,
     listAgentSessions,
     readAgentFile,
+    hostHome,
+    listAgentSkills,
     browse,
     cloneProject,
     createProject,

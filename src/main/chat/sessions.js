@@ -2045,9 +2045,25 @@ export function createChatSessions(deps) {
     const s = sessions.get(paneId)
     const unavailable = () => ({ ok: false, error: t('main.chat.skillsUnavailable', 'Skill discovery is unavailable.') })
     if (!s || s.closing || s.finished) return unavailable()
-    // On an SSH host, Claude's skills are files there: not read from here
-    // (Codex lists its own through its server).
-    if (s.remote && s.agent === 'claude') return unavailable()
+    // On an SSH host, Claude's skills are files there: listed there over the
+    // connection (chat/remoteSkills.js), never read from this PC (Codex
+    // lists its own through its server).
+    if (s.remote && s.agent === 'claude') {
+      if (typeof remote?.skills !== 'function') return unavailable()
+      try {
+        if (!trust?.isTrusted(s.cwd, [])) return unavailable()
+      } catch { return unavailable() }
+      if (s.skillScan) return s.skillScan
+      s.skillScan = Promise.resolve().then(async () => {
+        try {
+          const r = await remote.skills({ hostId: s.remote.hostId, project: s.remote.path, refresh })
+          if (!r?.ok || sessions.get(paneId) !== s || s.closing || s.finished) return unavailable()
+          return { ok: true, result: publicSkillDiscovery(r.result) }
+        } catch { return unavailable() }
+        finally { s.skillScan = null }
+      })
+      return s.skillScan
+    }
     const rootsOf = () => (s.remote ? [] : trustRoots(s.cwd, { worker: s.worker === true }) || [])
     let roots
     try {

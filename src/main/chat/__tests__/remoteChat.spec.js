@@ -319,6 +319,31 @@ describe('chat sessions on an SSH host', () => {
     await chat.close({ paneId })
   })
 
+  it("Claude's skills on the host: listed there with the project's path, opaque references only", async () => {
+    remote.skills = vi.fn(async () => ({
+      ok: true,
+      result: {
+        skills: [{ id: '/home/me/app/.claude/skills/deploy/SKILL.md', name: 'deploy', description: 'Ship it', providers: ['claude'], sourceKind: 'repo', sourceLabel: '/home/me/app/.claude/skills', rootPath: '/home/me/app/.claude/skills', directoryPath: '/home/me/app/.claude/skills/deploy', skillFilePath: '/home/me/app/.claude/skills/deploy/SKILL.md', installed: true, updatedAt: null }],
+        sources: [{ id: '/home/me/app/.claude/skills', label: '/home/me/app/.claude/skills', path: '/home/me/app/.claude/skills', sourceKind: 'repo', providers: ['claude'], owner: 'claude', exists: true }],
+        scannedAt: 1
+      }
+    }))
+    const chat = createChatSessions(deps)
+    await chat.open({ paneId, cwd, permissions: 'manual' })
+    const r = await chat.skills({ paneId, refresh: true })
+    expect(remote.skills).toHaveBeenCalledWith({ hostId: HOST, project: '/home/me/app', refresh: true })
+    expect(r.ok).toBe(true)
+    expect(r.result.skills.map((s) => s.name)).toEqual(['deploy'])
+    expect(JSON.stringify(r.result)).not.toContain('/home/me')
+    // Not trusted (any more): nothing listed.
+    deps.trust.isTrusted.mockReturnValue(false)
+    expect((await chat.skills({ paneId })).ok).toBe(false)
+    deps.trust.isTrusted.mockReturnValue(true)
+    remote.skills = vi.fn(async () => ({ ok: false, notConnected: true }))
+    expect((await chat.skills({ paneId })).ok).toBe(false)
+    await chat.close({ paneId })
+  })
+
   it('a lost connection: told in the chat, asleep, and the next message wakes it on the same conversation', async () => {
     const chat = createChatSessions(deps)
     await chat.open({ paneId, cwd, permissions: 'manual' })

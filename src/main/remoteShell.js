@@ -140,7 +140,14 @@ export const FUNCTIONS = new Set([
   // One agent conversation file on this host (Claude Code's transcript or a
   // Codex rollout), found by its session id in the agent's own folder only,
   // read-only, a bounded window of it (chat/remoteTranscripts.js).
-  '__t_tread'
+  '__t_tread',
+  // The signed-in user's home folder ($HOME), to tell a "~/…" project from
+  // the same folder named by its full path (chat file links).
+  '__t_home',
+  // Claude Code's skills there (~/.claude/skills and a project's
+  // .claude/skills): their SKILL.md files' paths and first bytes only,
+  // read-only and bounded (chat/remoteSkills.js).
+  '__t_skills'
 ])
 
 // The prelude: POSIX sh, for Linux (GNU, busybox) and macOS / BSD tools.
@@ -531,12 +538,32 @@ __t_tread() {
   case $4 in ''|*[!0-9]*) return 90 ;; esac
   __s=$(__t_sig "$__F") || return 91
   __z=\${__s%% *}
-  printf '%s\\n' "$__z"
+  __m=\${__s#* }; __m=\${__m%% *}
+  printf '%s %s\\n' "$__z" "$__m"
   if [ "$3" = - ]; then
     if [ "$__z" -gt "$4" ]; then tail -c "$4" "$__F"; else cat "$__F"; fi
   elif [ "$3" -lt "$__z" ]; then
     tail -c +"$(($3+1))" "$__F" | head -c "$4"
   fi
+}
+__t_home() { printf '%s\\n' "$HOME"; }
+__t_skills() {
+  case $2 in ''|*[!0-9]*) return 90 ;; esac
+  __h="$HOME/.claude"
+  for __k in home repo; do
+    if [ "$__k" = home ]; then __b=$__h; else
+      [ "$1" = - ] && continue
+      [ -d "$1" ] || continue
+      __b="\${1%/}/.claude"
+      [ "$__b" = "$__h" ] && continue
+    fi
+    [ -d "$__b" ] && [ ! -L "$__b" ] && [ -d "$__b/skills" ] && [ ! -L "$__b/skills" ] || continue
+    find "$__b/skills" -maxdepth 4 -type f -name SKILL.md 2>/dev/null | head -n "$2" | while IFS= read -r __f; do
+      [ -f "$__f" ] && [ ! -L "$__f" ] || continue
+      printf '@@S %s ' "$__k"; printf '%s' "$__f" | __t_b64e | tr -d '\\n'; printf '\\n'
+      head -c 8192 "$__f" | __t_b64e | tr -d '\\n'; printf '\\n'
+    done
+  done
 }
 if [ -z "$__T_B" ]; then printf '\\n@@R %s base64\\n' "$__T_N"; else printf '\\n@@R %s ok\\n' "$__T_N"; fi
 `
