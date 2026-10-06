@@ -62,6 +62,13 @@ const NEWPROJ_TIMEOUT_MS = 60_000
 // (a few hundred worktrees fit) and time.
 export const WORKTREES_OUTPUT = 256 * 1024
 const WORKTREES_TIMEOUT_MS = 15_000
+// An operation with no answer after this long shows as slow (the badge says
+// the host is slow to answer and offers Cancel).
+export const SLOW_MS = 12_000
+// git status of a remote project: the line counts of new (untracked) files
+// cost several processes per file on the host and hold the session's one
+// shell meanwhile; only this many files are counted (the rest show no count).
+export const REMOTE_UNTRACKED_COUNTS = 200
 
 const arg = (path) => rawArg(remotePathArg(path))
 const joinPath = (base, rel) => (rel ? (base.endsWith('/') ? `${base}${rel}` : `${base}/${rel}`) : base)
@@ -294,6 +301,7 @@ export function createRemoteFs({
         state: entry ? (entry.session && entry.session.state === 'ready' ? (entry.busy > 0 ? 'busy' : 'ready') : 'connecting') : 'closed',
         pending: entry ? entry.busy : 0,
         op: entry ? entry.op || '' : '',
+        slow: !!(entry && entry.busy > 0 && entry.slow > 0),
         ...extra
       })
     } catch {
@@ -319,6 +327,8 @@ export function createRemoteFs({
         return t('main.remoteFs.timeout', 'The operation on {{host}} took too long and was stopped.', { host })
       case 'cancelled':
         return t('main.remoteFs.cancelled', 'Cancelled.')
+      case 'busy':
+        return t('main.remoteFs.busy', '{{host}} is still busy with earlier operations: try again in a moment.', { host })
       case 'not-connected':
         return t('main.remoteFs.notConnected', '{{host}} is not connected. Use Connect to sign in.', { host })
       case 'auth-cancelled':
@@ -511,7 +521,24 @@ export function createRemoteFs({
   // One operation: -> { rc, out, err, truncated } | { error }. quiet: a poll
   // (never starts a session, never shows as activity). ifOpen: like quiet,
   // but waits its turn behind a busy session instead of being skipped.
-  async function call(hostId, fn, args, { cap, timeoutMs, upload, op = '', quiet = false, ifOpen = false } = {}) {
+  // background: behind the user's own requests in the session's queue (a
+  // poll, a reader of agent files; quiet and ifOpen calls always are).
+  // The connection dropped under the session (the network went away, the
+  // host closed it): the operation runs once more on a new session (signed
+  // in again with what is kept; a sign-in nobody asked for never happens:
+  // open() says "not connected" instead) when it never reached the host
+  // (it was waiting its turn), or when it only reads (retry: true). Not
+  // after a time-out (a host that does not answer would only keep the user
+  // waiting longer), a cancel or a shutdown, and not for polls.
+  const RETRY_ON = new Set(['closed', 'ssh', 'connect'])
+  async function call(hostId, fn, args, opts = {}) {
+    const res = await callOnce(hostId, fn, args, opts)
+    if (res && res.error && !opts.quiet && !opts.ifOpen && RETRY_ON.has(res.code) && (res.notSent || opts.retry)) {
+      return callOnce(hostId, fn, args, opts)
+    }
+    return res
+  }
+  async function callOnce(hostId, fn, args, { cap, timeoutMs, upload, op = '', quiet = false, ifOpen = false, background = false } = {}) {
     let session
     const entry0 = sessions.get(hostId)
     if (ifOpen) quiet = true
@@ -526,22 +553,58 @@ export function createRemoteFs({
       }
     }
     const entry = sessions.get(hostId)
+    let slowTimer = null
+    let slowCounted = false
     if (!quiet && entry) {
       entry.busy++
       entry.op = op
       activity(hostId, entry)
+      // Still no answer after a while: the window says the host is slow
+      // (with Cancel) instead of a spinner that looks the same forever.
+      slowTimer = timers.setTimeout(() => {
+        slowTimer = null
+        if (entry.closed) return
+        slowCounted = true
+        entry.slow = (entry.slow || 0) + 1
+        activity(hostId, entry)
+      }, SLOW_MS)
     }
     try {
-      return await session.run(fn, args, { ...(cap ? { cap } : {}), ...(timeoutMs ? { timeoutMs } : {}), ...(upload ? { upload } : {}), ...(ifOpen ? { touch: false } : {}) })
+      return await session.run(fn, args, {
+        ...(cap ? { cap } : {}),
+        ...(timeoutMs ? { timeoutMs } : {}),
+        ...(upload ? { upload } : {}),
+        ...(ifOpen ? { touch: false } : {}),
+        ...(quiet || background ? { background: true } : {})
+      })
     } catch (err) {
-      return { error: sessionErrorText(hostId, err) }
+      return { error: sessionErrorText(hostId, err), code: (err && err.code) || 'failed', ...(err && err.notSent ? { notSent: true } : {}) }
     } finally {
+      if (slowTimer) timers.clearTimeout(slowTimer)
+      if (slowCounted) entry.slow = Math.max(0, entry.slow - 1)
       if (!quiet && entry && !entry.closed) {
         entry.busy = Math.max(0, entry.busy - 1)
         if (!entry.busy) entry.op = ''
         activity(hostId, entry)
       }
     }
+  }
+
+  // The same read asked again while it runs (a refresh on focus, on a
+  // change notice, from two panels): one request, the same answer for all.
+  // Reads only; never a write, a git command that changes anything, or a
+  // poll (their own guards).
+  const inflight = new Map()
+  function shared(key, fn) {
+    const running = inflight.get(key)
+    if (running) return running
+    const p = Promise.resolve()
+      .then(fn)
+      .finally(() => {
+        if (inflight.get(key) === p) inflight.delete(key)
+      })
+    inflight.set(key, p)
+    return p
   }
 
   // --- Project folders -------------------------------------------------------------
@@ -593,7 +656,7 @@ export function createRemoteFs({
   function repoInfo(loc) {
     const key = `${loc.hostId}\n${loc.root.path}`
     if (!repoInfos.has(key)) {
-      const p = call(loc.hostId, '__t_top', [arg(loc.root.path)], { cap: 64 * 1024, op: 'status' }).then(async (res) => {
+      const p = call(loc.hostId, '__t_top', [arg(loc.root.path)], { cap: 64 * 1024, op: 'status', retry: true }).then(async (res) => {
         if (res.error) return { error: res.error }
         const lines = res.out.toString('utf8').split('\n')
         if (res.rc === RC.NOT_REPO) {
@@ -603,10 +666,10 @@ export function createRemoteFs({
         if (res.rc === RC.MISSING) return { missing: true }
         if (res.rc !== 0 || !lines[0] || !lines[1]) return { error: rcText(res, t('main.scm.statusFailed', 'Git status failed.')) }
         loc.root.real = lines[0]
-        const cfg = await call(loc.hostId, '__t_gitin', [arg(loc.root.path), arg(lines[1]), ...RISKY_CONFIG_ARGS], { cap: 256 * 1024, op: 'status' })
+        const cfg = await call(loc.hostId, '__t_gitin', [arg(loc.root.path), arg(lines[1]), ...RISKY_CONFIG_ARGS], { cap: 256 * 1024, op: 'status', retry: true })
         if (cfg.error) return { error: cfg.error }
         // Its runnable hooks ($GIT_DIR/hooks, not the *.sample ones) count too.
-        const hooks = await call(loc.hostId, '__t_hooks', [arg(loc.root.path), arg(lines[1])], { cap: 64 * 1024, op: 'status' })
+        const hooks = await call(loc.hostId, '__t_hooks', [arg(loc.root.path), arg(lines[1])], { cap: 64 * 1024, op: 'status', retry: true })
         if (hooks.error) return { error: hooks.error }
         // Exit 1: none of them set. Unreadable: everything they could be stays off.
         const risky = [
@@ -643,11 +706,21 @@ export function createRemoteFs({
     return locate(p || root, root)
   }
 
-  async function listDir({ root, dir, dotfiles = true } = {}) {
+  function listDir(q = {}) {
+    return shared(`ls
+${q.root}
+${q.dir || ''}
+${q.dotfiles !== false}`, () => listDirNow(q))
+  }
+  // background: a refresh of what is shown (after a change notice), behind
+  // the user's own requests; a folder opened by the user is not.
+  async function listDirNow({ root, dir, dotfiles = true, background = false } = {}) {
     const loc = under(root, dir || root)
     if (!loc) return { ok: false, error: t('main.explorer.outside', 'Outside the project.') }
-    const res = await call(loc.hostId, '__t_ls', [arg(loc.root.path), arg(loc.path), String(MAX_ENTRIES + 1)], { cap: 16 * 1024 * 1024, op: 'list' })
-    if (res.error) return { ok: false, error: res.error }
+    const res = await call(loc.hostId, '__t_ls', [arg(loc.root.path), arg(loc.path), String(MAX_ENTRIES + 1)], { cap: 16 * 1024 * 1024, op: 'list', background: background === true, retry: true })
+    // transient: the host did not answer (slow, busy, connection lost), the
+    // folder itself may be fine: the window keeps what it showed.
+    if (res.error) return { ok: false, error: res.error, transient: true }
     if (res.rc === RC.MISSING) return { ok: false, error: t('main.explorer.folderGone', 'The folder is gone.') }
     if (res.rc !== 0) return { ok: false, error: rcText(res, t('main.explorer.folderUnreadable', 'The folder could not be read.')) }
     const base = dir || root
@@ -669,14 +742,19 @@ export function createRemoteFs({
   }
 
   // The explorer's letters, keyed by the files' virtual paths.
-  async function projectStatus({ root, ignored = false } = {}) {
+  function projectStatus(q = {}) {
+    return shared(`st
+${q.root}
+${!!q.ignored}`, () => projectStatusNow(q))
+  }
+  async function projectStatusNow({ root, ignored = false, background = false } = {}) {
     const loc = under(root, root)
     if (!loc) return { ok: false, error: t('main.explorer.invalidFolder', 'Invalid folder.') }
     const info = await repoInfo(loc)
     if (info.error) return { ok: false, error: info.error }
     if (info.missing || !info.top) return { ok: true, files: {}, repo: false }
     const args = ['status', '--porcelain=v1', '-z', '--untracked-files=all', ...(ignored ? ['--ignored=matching'] : [])]
-    const res = await call(loc.hostId, '__t_gitin', [arg(loc.root.path), arg(info.top), ...info.gitArgs, ...args], { cap: 32 * 1024 * 1024, timeoutMs: 30000, op: 'status' })
+    const res = await call(loc.hostId, '__t_gitin', [arg(loc.root.path), arg(info.top), ...info.gitArgs, ...args], { cap: 32 * 1024 * 1024, timeoutMs: 30000, op: 'status', background: background === true, retry: true })
     if (res.error) return { ok: false, error: res.error }
     if (res.rc !== 0) return { ok: false, error: rcText(res, t('main.scm.statusFailed', 'Git status failed.')) }
     const files = {}
@@ -690,14 +768,18 @@ export function createRemoteFs({
 
   // The folders a sparse checkout keeps below the project (explorer.js
   // sparseInfo): -> { ok, sparse, dirs: [{ rel, path }] }.
-  async function sparseInfo({ root } = {}) {
+  function sparseInfo(q = {}) {
+    return shared(`sp
+${q.root}`, () => sparseInfoNow(q))
+  }
+  async function sparseInfoNow({ root } = {}) {
     const loc = under(root, root)
     if (!loc) return { ok: false, error: t('main.explorer.invalidFolder', 'Invalid folder.') }
     const none = { ok: true, sparse: false, dirs: [] }
     const info = await repoInfo(loc)
     if (info.error) return { ok: false, error: info.error }
     if (info.missing || !info.top) return none
-    const res = await call(loc.hostId, '__t_gitin', [arg(loc.root.path), arg(info.top), ...info.gitArgs, '-c', 'core.quotePath=false', 'sparse-checkout', 'list'], { cap: 1024 * 1024, timeoutMs: 15000, op: 'status' })
+    const res = await call(loc.hostId, '__t_gitin', [arg(loc.root.path), arg(info.top), ...info.gitArgs, '-c', 'core.quotePath=false', 'sparse-checkout', 'list'], { cap: 1024 * 1024, timeoutMs: 15000, op: 'status', retry: true })
     if (res.error) return { ok: false, error: res.error }
     // Exit 128 ("this worktree is not sparse") or an old git: not sparse.
     if (res.rc !== 0) return none
@@ -880,7 +962,8 @@ export function createRemoteFs({
     const res = await call(loc.hostId, '__t_read', [arg(loc.root.path), arg(loc.path), String(MAX_EDIT_BYTES)], {
       cap: MAX_EDIT_BYTES + HEADER_SLACK,
       timeoutMs: 120000,
-      op: 'read'
+      op: 'read',
+      retry: true
     })
     if (res.error) return { ok: false, error: res.error, code: 'error' }
     if (res.rc === RC.MISSING) return { ok: false, error: t('main.editor.notFound', 'The file was not found.'), code: 'missing' }
@@ -909,7 +992,7 @@ export function createRemoteFs({
   async function statForEdit(file) {
     const loc = locateFile(file)
     if (!loc) return { ok: false, error: notInProject() }
-    const res = await call(loc.hostId, '__t_stats', [arg(loc.root.path), arg(loc.path)], { cap: 4096, op: 'read' })
+    const res = await call(loc.hostId, '__t_stats', [arg(loc.root.path), arg(loc.path)], { cap: 4096, op: 'read', retry: true })
     if (res.error) return { ok: false, error: res.error }
     const st = res.rc === 0 ? parseStat(res.out.toString('latin1')) : null
     return st ? { ok: true, exists: true, ...st } : { ok: true, exists: false, sig: null }
@@ -958,7 +1041,7 @@ export function createRemoteFs({
     const fromTop = relativeTo(info.top, joinPath(info.realRoot, loc.rel))
     if (!fromTop)
       return { ok: true, repo: false, isNew: true, text: '', note: t('main.editor.noteOutside', 'Outside the repository: there is no committed version to compare with.') }
-    const res = await call(loc.hostId, '__t_gitin', [arg(loc.root.path), arg(info.top), ...info.gitArgs, 'show', '--no-textconv', `HEAD:${fromTop}`], { cap: MAX_HEAD_BYTES + 1, timeoutMs: 30000, op: 'read' })
+    const res = await call(loc.hostId, '__t_gitin', [arg(loc.root.path), arg(info.top), ...info.gitArgs, 'show', '--no-textconv', `HEAD:${fromTop}`], { cap: MAX_HEAD_BYTES + 1, timeoutMs: 30000, op: 'read', retry: true })
     if (res.error) return { ok: false, error: res.error }
     if (res.truncated) return { ok: false, error: t('main.editor.headTooLarge', 'The committed version is too large to compare (over 10 MB).') }
     if (res.rc !== 0) {
@@ -984,7 +1067,7 @@ export function createRemoteFs({
     if (fileKind(file) !== 'image') return { ok: false, error: t('main.file.notImage', 'Not an image.') }
     const loc = locateFile(file)
     if (!loc) return { ok: false, error: notInProject() }
-    const res = await call(loc.hostId, '__t_read', [arg(loc.root.path), arg(loc.path), String(MAX_IMAGE)], { cap: MAX_IMAGE + HEADER_SLACK, timeoutMs: 120000, op: 'read' })
+    const res = await call(loc.hostId, '__t_read', [arg(loc.root.path), arg(loc.path), String(MAX_IMAGE)], { cap: MAX_IMAGE + HEADER_SLACK, timeoutMs: 120000, op: 'read', retry: true })
     if (res.error) return { ok: false, error: res.error }
     if (res.rc === RC.TOO_LARGE) return { ok: false, kind: 'image', error: t('main.file.imageTooLarge', 'This image is too large to show here.') }
     if (res.rc !== 0 || res.truncated) return { ok: false, error: rcText(res, t('main.file.notFound', 'The file was not found.')) }
@@ -1112,6 +1195,7 @@ export function createRemoteFs({
       error: truncated ? 'maxBuffer exceeded' : res.rc === 0 ? null : `exit code ${res.rc}` // i18n-ignore matched by sourceControl.js, not shown
     }
   }
+  const READ_ONLY_GIT = new Set(['status', 'diff', 'remote', 'log', 'show', 'rev-parse', 'for-each-ref', 'symbolic-ref', 'ls-files', 'cat-file', 'merge-base', 'rev-list'])
   const scmBackend = {
     async repoOf(root) {
       const loc = isRemotePath(root) && rootOf(root) ? locate(root, root) : null
@@ -1139,7 +1223,9 @@ export function createRemoteFs({
         cap: maxBuffer + 1,
         timeoutMs: opts.timeout || 30000,
         upload,
-        op: slow ? list[0] === '-F' ? 'commit' : list[0] : 'git'
+        op: slow ? list[0] === '-F' ? 'commit' : list[0] : 'git',
+        // A read (nothing changes on the host): run again after a dropped connection.
+        retry: READ_ONLY_GIT.has(list[0])
       })
       return gitResult(res, maxBuffer)
     },
@@ -1166,7 +1252,7 @@ export function createRemoteFs({
     },
     async untracked(top, rels) {
       const out = new Map()
-      const list = (rels || []).filter((r) => typeof r === 'string' && r && !CONTROL.test(r)).slice(0, 2000)
+      const list = (rels || []).filter((r) => typeof r === 'string' && r && !CONTROL.test(r)).slice(0, REMOTE_UNTRACKED_COUNTS)
       for (let i = 0; i < list.length; i += 200) {
         const chunk = list.slice(i, i + 200)
         const res = await call(top.hostId, '__t_wcl', [arg(top.rootPath), arg(top.real), ...chunk], { cap: 256 * 1024, timeoutMs: 30000, op: 'status' })
@@ -1213,7 +1299,7 @@ export function createRemoteFs({
   // The window's view of a host's session.
   function snapshot() {
     const out = {}
-    for (const [hostId, e] of sessions) out[hostId] = { state: e.session && e.session.state === 'ready' ? (e.busy ? 'busy' : 'ready') : 'connecting', pending: e.busy, op: e.op }
+    for (const [hostId, e] of sessions) out[hostId] = { state: e.session && e.session.state === 'ready' ? (e.busy ? 'busy' : 'ready') : 'connecting', pending: e.busy, op: e.op, slow: !!(e.busy > 0 && e.slow > 0) }
     return out
   }
 
@@ -1225,7 +1311,11 @@ export function createRemoteFs({
   // { ok: true, repo, branch, head, worktrees: [{ path, branch, head, isMain,
   // locked, prunable, self }] } | { ok: false, error: 'invalid' |
   // 'unknown-folder' | 'not-repo' | 'offline' | 'failed' }
-  async function gitWorktrees(root) {
+  function gitWorktrees(root) {
+    return shared(`wt
+${root}`, () => gitWorktreesNow(root))
+  }
+  async function gitWorktreesNow(root) {
     if (!isRemotePath(root)) return { ok: false, error: 'invalid' }
     const r = rootOf(root)
     if (!r) return { ok: false, error: 'unknown-folder' }
@@ -1331,7 +1421,7 @@ export function createRemoteFs({
   // -> { claude, codex, vscodeClaude } (null when missing) | { error }
   async function agentTools(hostId) {
     if (!hostIdOk(hostId)) return { error: t('main.remote.notFound', 'This remote host is no longer saved in Tessel.') }
-    const res = await call(hostId, '__t_agents', [], { cap: 16 * 1024, timeoutMs: 30_000, op: 'agents' })
+    const res = await call(hostId, '__t_agents', [], { cap: 16 * 1024, timeoutMs: 30_000, op: 'agents', background: true })
     if (!res || res.error) return { error: (res && res.error) || 'failed' }
     if (res.rc !== 0) return { error: rcText(res, `rc ${res.rc}`) }
     return parseAgentTools(Buffer.isBuffer(res.out) ? res.out.toString('utf8') : String(res.out || ''))
@@ -1362,7 +1452,7 @@ export function createRemoteFs({
     const open = !!(entry && !entry.closed && entry.session && entry.session.state === 'ready')
     // An open session: used as is (never reopened). None yet on a signed-in
     // shared connection: one exec channel there, nothing to ask.
-    const res = await call(hostId, '__t_rsess', [String(n)], { cap: 4 * 1024 * 1024, timeoutMs: 30_000, op: 'sessions', ...(open ? { ifOpen: true } : {}) })
+    const res = await call(hostId, '__t_rsess', [String(n)], { cap: 4 * 1024 * 1024, timeoutMs: 30_000, op: 'sessions', background: true, ...(open ? { ifOpen: true } : {}) })
     if (!res || res.skipped) return notConnected()
     if (res.error) return { ok: false, error: res.error }
     if (res.rc === 81) return { ok: false, noHelper: true, error: t('main.remoteFs.sessionsNoHelper', "Tessel's helper is not set up on {{host}} yet: its agent sessions cannot be listed.", { host: hostLabel(hostId) }) }
@@ -1385,7 +1475,7 @@ export function createRemoteFs({
     if (!connectedQuietly(hostId)) return { ok: false, notConnected: true, error: t('main.remoteFs.notConnected', '{{host}} is not connected. Use Connect to sign in.', { host: hostLabel(hostId) }) }
     const entry = sessions.get(hostId)
     const open = !!(entry && !entry.closed && entry.session && entry.session.state === 'ready')
-    const res = await call(hostId, '__t_tread', [agent, id, offset === null ? '-' : String(offset), String(max)], { cap: max + 64, timeoutMs: 30_000, op: 'read', ...(open ? { ifOpen: true } : {}) })
+    const res = await call(hostId, '__t_tread', [agent, id, offset === null ? '-' : String(offset), String(max)], { cap: max + 64, timeoutMs: 30_000, op: 'read', background: true, ...(open ? { ifOpen: true } : {}) })
     if (!res || res.skipped) return { ok: false, notConnected: true, error: t('main.remoteFs.notConnected', '{{host}} is not connected. Use Connect to sign in.', { host: hostLabel(hostId) }) }
     if (res.error) return { ok: false, error: res.error }
     if (res.rc === RC.MISSING) return { ok: false, missing: true, error: 'missing' }
@@ -1410,7 +1500,7 @@ export function createRemoteFs({
     if (!connectedQuietly(hostId)) return { ok: false, notConnected: true, error: t('main.remoteFs.notConnected', '{{host}} is not connected. Use Connect to sign in.', { host: hostLabel(hostId) }) }
     const entry = sessions.get(hostId)
     const open = !!(entry && !entry.closed && entry.session && entry.session.state === 'ready')
-    const res = await call(hostId, '__t_home', [], { cap: 8192, timeoutMs: 15_000, op: 'read', ...(open ? { ifOpen: true } : {}) })
+    const res = await call(hostId, '__t_home', [], { cap: 8192, timeoutMs: 15_000, op: 'read', background: true, ...(open ? { ifOpen: true } : {}) })
     if (!res || res.skipped) return { ok: false, notConnected: true, error: t('main.remoteFs.notConnected', '{{host}} is not connected. Use Connect to sign in.', { host: hostLabel(hostId) }) }
     if (res.error) return { ok: false, error: res.error }
     const home = res.rc === 0 ? String(Buffer.isBuffer(res.out) ? res.out.toString('utf8') : res.out || '').split('\n')[0] : ''
@@ -1436,7 +1526,7 @@ export function createRemoteFs({
     if (!connectedQuietly(hostId)) return { ok: false, notConnected: true, error: t('main.remoteFs.notConnected', '{{host}} is not connected. Use Connect to sign in.', { host: hostLabel(hostId) }) }
     const entry = sessions.get(hostId)
     const open = !!(entry && !entry.closed && entry.session && entry.session.state === 'ready')
-    const res = await call(hostId, '__t_skills', [projectArg, String(n)], { cap: 4 * 1024 * 1024, timeoutMs: 20_000, op: 'read', ...(open ? { ifOpen: true } : {}) })
+    const res = await call(hostId, '__t_skills', [projectArg, String(n)], { cap: 4 * 1024 * 1024, timeoutMs: 20_000, op: 'read', background: true, ...(open ? { ifOpen: true } : {}) })
     if (!res || res.skipped) return { ok: false, notConnected: true, error: t('main.remoteFs.notConnected', '{{host}} is not connected. Use Connect to sign in.', { host: hostLabel(hostId) }) }
     if (res.error) return { ok: false, error: res.error }
     if (res.rc !== 0 && res.rc !== RC.PIPE && !res.truncated) return { ok: false, error: rcText(res, `rc ${res.rc}`) }
@@ -1532,7 +1622,8 @@ export function createRemoteFs({
     unwatchRoots,
     watchFiles,
     // Discard sends untracked files to the host's trash (no Recycle Bin here).
-    scm: { ...scm, scmDiscard: (q) => scm.scmDiscard(q) },
+    scm: { ...scm, scmStatus: (q = {}) => shared(`scm
+${q && q.root}`, () => scm.scmStatus(q)), scmDiscard: (q) => scm.scmDiscard(q) },
     remoteOnly,
     gitWorktrees,
     githubContext,
