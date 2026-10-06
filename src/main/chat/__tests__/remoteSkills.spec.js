@@ -48,6 +48,48 @@ describe('the host listing', () => {
     expect(r.sources.map((s) => s.path)).toEqual(['/home/me/.claude/skills', '/srv/app/.claude/skills'])
   })
 
+  it("Codex's: each file with its skills folder; the shared .agents folders belong to no one agent", () => {
+    const b64 = (s) => Buffer.from(s).toString('base64')
+    const out = [
+      `@@S home ${b64('/home/me/.codex/skills')} ${b64('/home/me/.codex/skills/fmt/SKILL.md')}`,
+      b64(skill('fmt', 'Format')),
+      `@@S repo ${b64('/srv/app/.agents/skills')} ${b64('/srv/app/.agents/skills/lint/SKILL.md')}`,
+      b64(skill('lint', 'Lint')),
+      // A file outside the folder it names: dropped.
+      `@@S repo ${b64('/srv/app/.codex/skills')} ${b64('/etc/x/SKILL.md')}`,
+      b64(skill('x', 'x'))
+    ].join('\n')
+    const files = parseSkillListing(out)
+    expect(files.map((f) => [f.kind, f.root, f.path])).toEqual([
+      ['home', '/home/me/.codex/skills', '/home/me/.codex/skills/fmt/SKILL.md'],
+      ['repo', '/srv/app/.agents/skills', '/srv/app/.agents/skills/lint/SKILL.md']
+    ])
+    const r = remoteSkillDiscovery(files, () => 1, 'codex')
+    expect(r.skills.map((s) => [s.name, s.rootPath, s.providers[0]])).toEqual([
+      ['fmt', '/home/me/.codex/skills', 'codex'],
+      ['lint', '/srv/app/.agents/skills', 'agent-skills']
+    ])
+    expect(r.sources.map((s) => [s.path, s.owner])).toEqual([
+      ['/home/me/.codex/skills', 'codex'],
+      ['/srv/app/.agents/skills', null]
+    ])
+    // Without its folder, a Codex row is not made.
+    expect(remoteSkillDiscovery([{ kind: 'home', path: '/home/me/.codex/skills/fmt/SKILL.md', text: skill('fmt', 'F') }], () => 1, 'codex').skills).toEqual([])
+  })
+
+  it("asks for Codex's on its own (kept apart from Claude's); another agent never asks", async () => {
+    const listSkills = vi.fn(async () => ({ ok: true, files: [] }))
+    const rs = createRemoteSkills({ listSkills })
+    await rs.skills({ hostId: HOST, project: '/srv/app' })
+    await rs.skills({ hostId: HOST, project: '/srv/app', agent: 'codex' })
+    expect(listSkills.mock.calls).toEqual([
+      [HOST, { project: '/srv/app' }],
+      [HOST, { project: '/srv/app', agent: 'codex' }]
+    ])
+    expect(await rs.skills({ hostId: HOST, agent: 'grok' })).toEqual({ ok: false })
+    expect(listSkills).toHaveBeenCalledTimes(2)
+  })
+
   it('one listing at a time per host and project, kept 30 s; a refresh asks again; a bad host never asks', async () => {
     let t = 1000
     let release
@@ -92,8 +134,9 @@ describe("a terminal agent's chat view on a host", () => {
     expect(r.result.skills.map((x) => x.name)).toEqual(['ship'])
     expect(JSON.stringify(r.result)).not.toContain('/srv/app')
     expect(discover).not.toHaveBeenCalled()
-    // Codex on a host: not listed (nor this PC's).
-    expect((await s.skills({ agent: 'codex', viewId: 'tv-2' })).ok).toBe(false)
+    // Codex on a host: its skills there too (never this PC's).
+    await s.skills({ agent: 'codex', viewId: 'tv-2' })
+    expect(remoteSkills).toHaveBeenLastCalledWith({ hostId: HOST, project: null, refresh: false, agent: 'codex' })
     expect(discover).not.toHaveBeenCalled()
   })
 

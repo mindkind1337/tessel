@@ -214,6 +214,9 @@ export const DEFAULT_SETTINGS = Object.freeze({
   // not a choice, and becomes 2 (a 15 chosen afterwards stays).
   usageRefreshDefault2: true,
   showGitIgnoredFiles: true,
+  // Files: a chain of folders each holding a single folder on one row (VS Code's
+  // explorer.compactFolders).
+  explorerCompactFolders: true,
 
   // Terminal rendering and interaction. gpuAcceleration: 'auto' (WebGL
   // unless the graphics are software-only; the normal renderer if WebGL

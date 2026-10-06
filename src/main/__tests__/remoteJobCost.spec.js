@@ -22,15 +22,23 @@ const estimate = ({ model, inputTokens, outputTokens }) => (/opus/.test(model ||
 // A host file as readAgentFile answers it: { ok, size, mtimeMs, data }.
 function hostFile() {
   const files = new Map() // `${agent}/${id}` -> { text, mtimeMs }
-  const readAgentFile = vi.fn(async (hostId, { agent, id, offset, cap }) => {
-    const f = files.get(`${agent}/${id}`)
+  const readAgentFile = vi.fn(async (hostId, { agent, id, offset, cap, sub }) => {
+    const f = files.get(sub ? `${agent}/${id}/${sub}` : `${agent}/${id}`)
     if (hostId !== HOST || !f) return { ok: false, missing: true, error: 'missing' }
     const buf = Buffer.from(f.text)
     const data = offset === null ? buf.subarray(Math.max(0, buf.length - cap)) : buf.subarray(Math.min(offset, buf.length), Math.min(offset + cap, buf.length))
     return { ok: true, size: buf.length, mtimeMs: f.mtimeMs, data }
   })
+  // A Claude session's sub-agent transcripts as listSubagentFiles answers.
+  const listSubagentFiles = vi.fn(async (hostId, { id, limit }) => {
+    if (hostId !== HOST || !files.has(`claude/${id}`)) return { ok: false, missing: true, error: 'missing' }
+    const out = []
+    for (const [k, f] of files) if (k.startsWith(`claude/${id}/`)) out.push({ name: k.slice(`claude/${id}/`.length), size: Buffer.byteLength(f.text), mtimeMs: f.mtimeMs })
+    return { ok: true, files: out.slice(0, limit) }
+  })
   return {
     readAgentFile,
+    listSubagentFiles,
     set: (agent, id, text, mtimeMs = 1000) => files.set(`${agent}/${id}`, { text, mtimeMs }),
     add: (agent, id, text) => {
       const f = files.get(`${agent}/${id}`)
@@ -118,6 +126,34 @@ describe('job cost of a terminal agent on a host', () => {
     expect(c).toMatchObject({ status: 'ok', inputTokens: 100, outputTokens: 50 })
     expect(host.readAgentFile.mock.calls.every(([h]) => h === HOST)).toBe(true)
     await jc.close()
+  })
+
+  it("a Claude session's sub-agents on the host count too; an unchanged one is not read again", async () => {
+    const host = hostFile()
+    host.set('claude', S1, claudeLine({ id: 'm1', at: T0 + 1000, input: 100, output: 50 }) + '\n')
+    host.set('claude', `${S1}/agent-a1`, claudeLine({ id: 's1', at: T0 + 2000, input: 7, output: 3 }) + '\n')
+    host.set('claude', `${S1}/agent-b2`, claudeLine({ id: 's2', at: T0 + 3000, input: 1, output: 1 }) + '\n')
+    report('pane-s', 'claude', S1)
+    let t = T0 + 3600000
+    const jc = createJobCost({ userDataDir: userData, sessionsDir: () => sessions, estimate, now: () => t, pollMs: 0, remotePollMs: 0, hostOfPane: () => HOST, readAgentFile: host.readAgentFile, listSubagentFiles: host.listSubagentFiles })
+    expect((await jc.forPanes(['pane-s']))['pane-s']).toMatchObject({ status: 'ok', inputTokens: 108, outputTokens: 54 })
+    expect(host.listSubagentFiles).toHaveBeenCalledWith(HOST, { id: S1, limit: 50 })
+    const subReads = () => host.readAgentFile.mock.calls.filter(([, q]) => q.sub).map(([, q]) => q.sub)
+    expect(subReads().sort()).toEqual(['agent-a1', 'agent-b2'])
+    // Later: one sub-agent wrote more, the other did not; only it is read.
+    host.add('claude', `${S1}/agent-a1`, claudeLine({ id: 's3', at: T0 + 4000, input: 2, output: 2 }) + '\n')
+    t += 6000
+    expect((await jc.forPanes(['pane-s']))['pane-s']).toMatchObject({ inputTokens: 110, outputTokens: 56 })
+    expect(subReads().sort()).toEqual(['agent-a1', 'agent-a1', 'agent-b2'])
+    expect(host.listSubagentFiles).toHaveBeenCalledTimes(2)
+    // Within the gap: neither listed nor read again.
+    await jc.forPanes(['pane-s'])
+    expect(host.listSubagentFiles).toHaveBeenCalledTimes(2)
+    await jc.close()
+    // No listing wired: the session's own file only.
+    const plain = createJobCost({ userDataDir: userData, sessionsDir: () => sessions, estimate, now: () => t, pollMs: 0, remotePollMs: 0, hostOfPane: () => HOST, readAgentFile: host.readAgentFile })
+    expect((await plain.forPanes(['pane-s']))['pane-s']).toMatchObject({ inputTokens: 100, outputTokens: 50 })
+    await plain.close()
   })
 
   it('a change on the host is told (polled only while asked about); no reader: unavailable', async () => {

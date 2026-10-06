@@ -345,6 +345,8 @@
       "remaining": "Restant",
       "gitIgnored": "Afficher les fichiers ignorés par Git",
       "gitIgnoredHint": "Fichiers correspondant à .gitignore.",
+      "compactFolders": "Dossiers compacts",
+      "compactFoldersHint": "Dans Fichiers, un dossier qui ne contient qu’un dossier partage sa ligne avec lui, comme a/b/c.",
       "sidebar": "Apparence de la barre latérale gauche",
       "sidebarHint": "Accordez la barre latérale gauche à votre terminal, gardez-la par défaut ou appliquez une teinte.",
       "sidebarDefault": "Par défaut",

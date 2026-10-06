@@ -158,7 +158,15 @@ export const FUNCTIONS = new Set([
   // Claude Code's skills there (~/.claude/skills and a project's
   // .claude/skills): their SKILL.md files' paths and first bytes only,
   // read-only and bounded (chat/remoteSkills.js).
-  '__t_skills'
+  '__t_skills',
+  // Codex's skills there ($CODEX_HOME/skills, ~/.agents/skills and a
+  // project's .agents/skills and .codex/skills), the same way.
+  '__t_cxskills',
+  // A Claude Code session's sub-agent transcripts (<id>/subagents/*.jsonl
+  // next to its transcript): their names, sizes and change times (at most
+  // N), and a bounded window of one; read-only, no link followed (jobCost.js).
+  '__t_subs',
+  '__t_sread'
 ])
 
 // The prelude: POSIX sh, for Linux (GNU, busybox) and macOS / BSD tools.
@@ -543,19 +551,53 @@ __t_tfile() {
   esac
   [ -n "$__F" ] && [ -f "$__F" ] || return 91
 }
-__t_tread() {
-  __t_tfile "$1" "$2" || return $?
-  case $3 in -|''|*[!0-9]*) [ "$3" = - ] || return 90 ;; esac
-  case $4 in ''|*[!0-9]*) return 90 ;; esac
-  __s=$(__t_sig "$__F") || return 91
+__t_twin() {
+  case $2 in -|''|*[!0-9]*) [ "$2" = - ] || return 90 ;; esac
+  case $3 in ''|*[!0-9]*) return 90 ;; esac
+  __s=$(__t_sig "$1") || return 91
   __z=\${__s%% *}
   __m=\${__s#* }; __m=\${__m%% *}
   printf '%s %s\\n' "$__z" "$__m"
-  if [ "$3" = - ]; then
-    if [ "$__z" -gt "$4" ]; then tail -c "$4" "$__F"; else cat "$__F"; fi
-  elif [ "$3" -lt "$__z" ]; then
-    tail -c +"$(($3+1))" "$__F" | head -c "$4"
+  if [ "$2" = - ]; then
+    if [ "$__z" -gt "$3" ]; then tail -c "$3" "$1"; else cat "$1"; fi
+  elif [ "$2" -lt "$__z" ]; then
+    tail -c +"$(($2+1))" "$1" | head -c "$3"
   fi
+}
+__t_tread() {
+  __t_tfile "$1" "$2" || return $?
+  __t_twin "$__F" "$3" "$4"
+}
+__t_subdir() {
+  __t_tfile claude "$1" || return $?
+  __SD=\${__F%.jsonl}
+  [ -d "$__SD" ] && [ ! -L "$__SD" ] || return 92
+  __SD=$__SD/subagents
+  [ -d "$__SD" ] && [ ! -L "$__SD" ] || return 92
+}
+__t_subs() {
+  case $2 in ''|*[!0-9]*) return 90 ;; esac
+  __t_subdir "$1"; __r=$?
+  [ "$__r" = 92 ] && return 0
+  [ "$__r" = 0 ] || return $__r
+  __n=0
+  for __c in "$__SD"/*.jsonl; do
+    [ "$__n" -lt "$2" ] || break
+    [ -f "$__c" ] && [ ! -L "$__c" ] || continue
+    __b=\${__c##*/}
+    case $__b in .*|*[!0-9A-Za-z_.-]*) continue ;; esac
+    __s=$(__t_sig "$__c") || continue
+    __z=\${__s%% *}
+    __m=\${__s#* }; __m=\${__m%% *}
+    printf '%s %s %s\\n' "$__z" "$__m" "$__b"
+    __n=$((__n+1))
+  done
+}
+__t_sread() {
+  case $2 in .*|*[!0-9A-Za-z_.-]*|'') return 90 ;; *.jsonl) ;; *) return 90 ;; esac
+  __t_subdir "$1" || return 91
+  [ -f "$__SD/$2" ] && [ ! -L "$__SD/$2" ] || return 91
+  __t_twin "$__SD/$2" "$3" "$4"
 }
 __t_home() { printf '%s\\n' "$HOME"; }
 __t_skills() {
@@ -575,6 +617,36 @@ __t_skills() {
       head -c 8192 "$__f" | __t_b64e | tr -d '\\n'; printf '\\n'
     done
   done
+}
+__t_nolink() {
+  __p=$1
+  [ -d "$__p" ] || return 1
+  for __s in $(printf '%s' "$2" | tr '/' ' '); do __p=$__p/$__s; [ -d "$__p" ] && [ ! -L "$__p" ] || return 1; done
+}
+__t_skls() {
+  [ -d "$2" ] && [ ! -L "$2" ] || return 0
+  __o=$(printf '%s' "$2" | __t_b64e | tr -d '\\n')
+  find "$2" -maxdepth 4 -type f -name SKILL.md 2>/dev/null | head -n "$3" | while IFS= read -r __f; do
+    [ -f "$__f" ] && [ ! -L "$__f" ] || continue
+    printf '@@S %s %s ' "$1" "$__o"; printf '%s' "$__f" | __t_b64e | tr -d '\\n'; printf '\\n'
+    head -c 8192 "$__f" | __t_b64e | tr -d '\\n'; printf '\\n'
+  done
+}
+__t_cxskills() {
+  case $2 in ''|*[!0-9]*) return 90 ;; esac
+  __cx=\${CODEX_HOME:-$HOME/.codex}
+  [ "$__cx" = / ] || __cx=\${__cx%/}
+  [ -L "$__cx" ] || { __t_nolink "$__cx" skills && __t_skls home "$__cx/skills" "$2"; }
+  __t_nolink "$HOME" .agents/skills && __t_skls home "$HOME/.agents/skills" "$2"
+  if [ "$1" != - ] && [ -d "$1" ]; then
+    __pr=\${1%/}
+    for __k in .agents/skills .codex/skills; do
+      [ "$__pr/$__k" = "$HOME/.agents/skills" ] && continue
+      [ "$__pr/$__k" = "$__cx/skills" ] && continue
+      __t_nolink "$__pr" "$__k" && __t_skls repo "$__pr/$__k" "$2"
+    done
+  fi
+  return 0
 }
 if [ -z "$__T_B" ]; then printf '\\n@@R %s base64\\n' "$__T_N"; else printf '\\n@@R %s ok\\n' "$__T_N"; fi
 `

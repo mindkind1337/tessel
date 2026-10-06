@@ -4,7 +4,7 @@ import { ref } from 'vue'
 import PaneContextMenu from './PaneContextMenu.vue'
 import BrandIcon from './BrandIcon.vue'
 import { t } from '../i18n'
-const props = defineProps(["ctxMenu","paneTitle","closeCtxMenuAndRefocus","node","team","teamFactTitle","isLead","isAgent","yoloTitle","statusTitle","exited","asksApproval","limit","limitState","agentStatus","estimatedState","needsYou","stuck","track","cache","cacheTitle","cacheLeft","unsent","launchStale","menuResolveUnsent","applyTitle","menuRestartApply","menuCopy","menuPaste","menuCopyOutput","menuClear","menuResetTerminal","menuCopySession","menuFind","hasModelChoice","modelTitle","menuModel","modelText","sessionPillLabel","paneModelList","paneValues","ctx","menuVoice","settings","menuPickVoice","otherPanes","menuSendSelection","menuAskReview","closeCtxMenu","leadToggleText","leaveTeamText","startEditTitle","isMaximized","menuOpenHere","menuSplit","menuRestart","canViewTranscript","menuViewTranscript","transcriptOpen","canOpenAsChat","menuOpenAsChat","chatViewAvailable","canSwitchYolo","menuSwitchYolo","yoloFolder","yoloFolderOn","menuYoloFolder","folderName","menuClose","isChat","disabledReasons"])
+const props = defineProps(["ctxMenu","paneTitle","closeCtxMenuAndRefocus","node","team","teamFactTitle","isLead","isAgent","yoloTitle","statusTitle","exited","asksApproval","limit","limitState","agentStatus","estimatedState","needsYou","stuck","track","cache","cacheTitle","cacheLeft","unsent","launchStale","menuResolveUnsent","applyTitle","menuRestartApply","menuCopy","menuPaste","menuCopyOutput","menuClear","menuResetTerminal","menuCopySession","menuFind","hasModelChoice","modelTitle","menuModel","modelText","sessionPillLabel","paneModelList","paneValues","ctx","menuVoice","settings","menuPickVoice","otherPanes","menuSendSelection","menuAskReview","closeCtxMenu","leadToggleText","leaveTeamText","startEditTitle","isMaximized","menuOpenHere","menuSplit","menuRestart","canViewTranscript","menuViewTranscript","transcriptOpen","canOpenAsChat","menuOpenAsChat","chatViewAvailable","canContinueOnHost","continueOnHostReason","menuContinueOnHost","canSwitchYolo","menuSwitchYolo","yoloFolder","yoloFolderOn","menuYoloFolder","folderName","menuClose","isChat","disabledReasons"])
 const unavailable = name => props.disabledReasons?.[name] || ''
 const menuRef = ref(null)
 defineExpose({ focus: options => menuRef.value?.focus(options), contains: target => menuRef.value?.contains(target), getBoundingClientRect: () => menuRef.value.getBoundingClientRect() })
@@ -205,6 +205,16 @@ defineExpose({ focus: options => menuRef.value?.focus(options), contains: target
                 : t('pane.menu.switchToChatView', 'Switch to chat view')
               : t('pane.menu.openAsChat', 'Open as chat')
         }}
+      </button>
+      <button
+        v-if="canContinueOnHost && !isChat"
+        class="ctx-menu-item"
+        data-test="menu-continue-on-host"
+        :disabled="!!continueOnHostReason"
+        :title="continueOnHostReason || t('pane.menu.continueOnHostHint', 'Stop this terminal agent and go on with the same conversation in a chat pane that runs on the SSH host')"
+        @click="menuContinueOnHost"
+      >
+        {{ t('pane.menu.continueOnHost', 'Continue in a chat pane (on the host)') }}
       </button>
       <template v-if="canSwitchYolo">
         <button

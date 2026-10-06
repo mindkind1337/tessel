@@ -1949,6 +1949,8 @@ const jobCost = createJobCost({
     return null
   },
   readAgentFile: (hostId, q) => (remoteHosts.get(hostId) ? remoteFs.readAgentFile(hostId, q) : { ok: false, error: 'unknown host' }), // i18n-ignore
+  // A Claude session's sub-agent transcripts there (names and sizes only).
+  listSubagentFiles: (hostId, q) => (remoteHosts.get(hostId) ? remoteFs.listSubagentFiles(hostId, q) : { ok: false, error: 'unknown host' }), // i18n-ignore
   log
 })
 jobCost.register(ipcMain)
