@@ -127,6 +127,7 @@ describe('Confirm before closing running terminals', () => {
       firstLeafId: () => null,
       createLeaf: () => Promise.resolve(null),
       wsLeafOpts: (_ws, opts = {}) => opts,
+      refillEmptiedWorkspace: vi.fn(),
       selectedShell: { value: 'pwsh' },
       window: { shellApi: { killPty: vi.fn(), ptyRunningWork: vi.fn() } },
       setTimeout,

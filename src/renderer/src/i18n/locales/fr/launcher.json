@@ -1,0 +1,29 @@
+{
+  "launcher": {
+    "title": "Que voulez-vous lancer dans {{name}} ?",
+    "whereRemote": "{{path}} sur {{host}}",
+    "noFolder": "Aucun dossier de projet",
+    "agents": "Agents",
+    "agentsOnHost": "Agents sur l'hôte",
+    "agentUnchecked": "Pas encore vérifié sur l'hôte",
+    "noAgents": "Aucun agent n'est installé. Paramètres > Agents explique comment en installer un.",
+    "noAgentsOnHost": "Aucun agent n'a été trouvé sur cet hôte.",
+    "other": "Autre",
+    "terminalLabel": "Terminal",
+    "terminal": {
+      "hint": "Un shell dans le dossier du projet",
+      "remoteHint": "Le shell de connexion sur {{host}}"
+    },
+    "shell": "Shell",
+    "browser": "Page de navigateur",
+    "sessionsTitle": "Reprendre une session récente",
+    "sessions": {
+      "hostNotConnected": "Connectez-vous à {{host}} pour voir ses conversations récentes.",
+      "none": "Aucune conversation dans ce projet pour l'instant.",
+      "more": "Plus…"
+    },
+    "remember": "Retenir pour les nouveaux projets",
+    "keys": "1-9 ou ↑↓ puis Entrée pour lancer · Échap pour rester vide",
+    "remembered": "Les nouveaux projets démarreront ainsi. Modifiable dans Paramètres > Agents."
+  }
+}

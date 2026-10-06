@@ -3,6 +3,8 @@ import { ensureAgentNames, renameAgentName, resolveAgentAddress, agentProgramLab
 import { ref, reactive, provide, watch, computed, nextTick, onMounted, onBeforeUnmount, toRaw } from 'vue'
 import SplitNode from './components/SplitNode.vue'
 import FloatingTerminal from './components/FloatingTerminal.vue'
+import ProjectLauncher from './components/ProjectLauncher.vue'
+import { emptiedWorkspaceChoice, launcherAgents, launcherShells, projectOpenChoice, rememberedValue } from './projectLauncher'
 import { createFloatingTerminal, isFloatingToggleKey } from './floatingTerminal'
 import BrandIcon from './components/BrandIcon.vue'
 import SidePanel from './components/SidePanel.vue'
@@ -130,6 +132,9 @@ const agents = ref([])
 const programLabel = (pane) => agentProgramLabel(pane, agents.value)
 const launchableAgents = computed(() => agents.value.filter((a) => agentEnabled(settings.agentPrefs, a.id)))
 const selectedShell = ref(null)
+// The saved layout is back (or the first one built): an empty project shows
+// its launcher from then on, not "Starting...".
+const layoutReady = ref(false)
 const broadcast = ref(false)
 
 // --- Workspaces --------------------------------------------------------------
@@ -2008,16 +2013,9 @@ function closeLeaf(leafId, opts = {}) {
   } else {
     ws.tree = null
     ws.activeId = null
-    createLeaf(selectedShell.value, null, ws.cwd, null, wsLeafOpts(ws)).then((leaf) => {
-      if (!leaf) return
-      // A pane was dropped here meanwhile: keep it, drop this new shell.
-      if (ws.tree) {
-        window.shellApi.killPty(leaf.id)
-        return
-      }
-      ws.tree = leaf
-      ws.activeId = leaf.id
-    })
+    // Its last pane closed: the launcher (or a fresh terminal, when "When a
+    // project opens" is a terminal).
+    refillEmptiedWorkspace(ws)
   }
   if (hadTeam) {
     pruneTeams()
@@ -2918,7 +2916,7 @@ async function launch({ kind, id, sessionOptions = null }, targetId = activeId.v
     return
   }
   if (!ws) return
-  const leaf = await createLeaf(shellId, agent, ws.cwd, worktree, { sessionOptions })
+  const leaf = await createLeaf(shellId, agent, ws.cwd, worktree, wsLeafOpts(ws, { sessionOptions }))
   if (leaf) {
     ws.tree = leaf
     ws.activeId = leaf.id
@@ -3012,11 +3010,9 @@ async function addProjects({ projects, source } = {}) {
     workspaces.value.push(ws)
     firstId = firstId || ws.id
     added++
-    const leaf = await createLeaf(selectedShell.value, null, ws.cwd, null, wsLeafOpts(ws))
-    if (leaf && workspaces.value.includes(ws) && !ws.tree) {
-      ws.tree = leaf
-      ws.activeId = leaf.id
-    } else if (leaf) window.shellApi.killPty(leaf.id)
+    // No shell nobody asked for: the launcher, or what Settings > Agents
+    // "When a project opens" says.
+    await seedNewWorkspace(ws)
   }
   if (firstId) selectWorkspace(firstId)
   if (!added) return
@@ -4024,19 +4020,13 @@ function mapLeaves(node, fn) {
   return { ...node, children: node.children.map((c) => mapLeaves(c, fn)) }
 }
 
-// Take a pane out of its workspace; an emptied workspace gets a fresh shell.
+// Take a pane out of its workspace; an emptied workspace shows the launcher
+// (or gets a fresh shell, see refillEmptiedWorkspace).
 function detachLeaf(ws, leafId) {
   const next = removeLeaf(ws.tree, leafId)
   ws.tree = next
   if (ws.activeId === leafId) ws.activeId = next ? firstLeafId(next) : null
-  if (!next) {
-    createLeaf(selectedShell.value, null, ws.cwd, null, wsLeafOpts(ws)).then((leaf) => {
-      if (leaf && !ws.tree) {
-        ws.tree = leaf
-        ws.activeId = leaf.id
-      }
-    })
-  }
+  if (!next) refillEmptiedWorkspace(ws)
 }
 
 // The band along the visible workspace's outer edge where a dropped pane
@@ -4213,6 +4203,101 @@ function wsLeafOpts(ws, opts = {}) {
   return { ...opts, remoteHostId: ws.remote.hostId, remotePath: ws.remote.path }
 }
 
+// --- An empty project: the launcher (projectLauncher.js, ProjectLauncher.vue) --
+// A project with no pane asks which program to start instead of opening a
+// shell by itself. What it offers in `ws`: the agents (on an SSH host, the
+// ones found there), the shells.
+function launcherContext(ws) {
+  const remote = !!(ws && ws.remote)
+  return {
+    agents: agents.value,
+    shells: shells.value,
+    selectedShell: selectedShell.value,
+    remote,
+    remoteStatus: remote ? remoteAgentTools[ws.remote.hostId] || null : null,
+    enabled: (id) => agentEnabled(settings.agentPrefs, id)
+  }
+}
+const launcherWs = computed(() => {
+  const ws = currentWs.value
+  return layoutReady.value && ws && !ws.tree ? ws : null
+})
+const launcherProps = computed(() => {
+  const ws = launcherWs.value
+  if (!ws) return null
+  const ctx = launcherContext(ws)
+  return {
+    name: ws.name,
+    cwd: ws.remote ? null : ws.cwd || null,
+    remote: ws.remote ? { hostId: ws.remote.hostId, host: remoteHostLabel(ws.remote.hostId), path: ws.remote.path } : null,
+    agents: launcherAgents(ctx),
+    shells: launcherShells(ctx),
+    hostConnected: !!(ws.remote && hostShared(ws.remote.hostId))
+  }
+})
+// Start the choice (the launcher's, or the setting's) in the empty project
+// `ws`. -> the new pane, or null.
+async function startInEmptyWorkspace(ws, choice) {
+  if (!ws || !choice || !workspaces.value.includes(ws)) return null
+  if (choice.kind === 'browser') return openInBrowser({ ws, newPane: true, focusAddress: true })
+  if (choice.kind === 'session') {
+    selectWorkspace(ws.id)
+    await resumeSession(choice.session)
+    return ws.tree ? findLeafIn(ws.tree, ws.activeId) : null
+  }
+  if (choice.kind !== 'agent' && choice.kind !== 'terminal') return null
+  const agent = choice.kind === 'agent' ? agentById(choice.id) : null
+  if (choice.kind === 'agent' && !agent) return null
+  const shellId = choice.kind === 'terminal' && choice.shellId && shells.value.some((s) => s.id === choice.shellId) ? choice.shellId : selectedShell.value
+  const leaf = await createLeaf(shellId, agent, ws.cwd, null, wsLeafOpts(ws))
+  if (!leaf) return null
+  if (!workspaces.value.includes(ws)) {
+    window.shellApi.killPty(leaf.id)
+    return null
+  }
+  // Something opened there meanwhile (a pane dropped, a second pick): next to it.
+  ws.tree = ws.tree ? reactive({ type: 'split', id: newId('split'), dir: 'row', sizes: [50, 50], children: [ws.tree, leaf] }) : leaf
+  ws.activeId = leaf.id
+  return leaf
+}
+// A new project (added, created, cloned, on an SSH host): what "When a
+// project opens" says (Settings > Agents), else nothing: the launcher shows.
+// Nothing connects to an SSH host until something is chosen.
+async function seedNewWorkspace(ws) {
+  const choice = projectOpenChoice(settings.projectOpen, launcherContext(ws))
+  if (choice) await startInEmptyWorkspace(ws, choice)
+}
+// A project whose last pane closed (or moved away): the launcher, or a fresh
+// terminal as before when "When a project opens" is a terminal.
+function refillEmptiedWorkspace(ws) {
+  const choice = emptiedWorkspaceChoice(settings.projectOpen, { shells: shells.value, remote: !!ws.remote })
+  if (!choice) return
+  const shellId = choice.shellId || selectedShell.value
+  createLeaf(shellId, null, ws.cwd, null, wsLeafOpts(ws)).then((leaf) => {
+    if (!leaf) return
+    // A pane was dropped here meanwhile: keep it, drop this new shell.
+    if (ws.tree || !workspaces.value.includes(ws)) {
+      window.shellApi.killPty(leaf.id)
+      return
+    }
+    ws.tree = leaf
+    ws.activeId = leaf.id
+  })
+}
+// Picked in the launcher: started, and kept for new projects when asked.
+async function pickFromLauncher(choice, { remember = false } = {}) {
+  const ws = launcherWs.value
+  if (!ws) return
+  if (remember) {
+    const value = rememberedValue(choice, { remote: !!ws.remote })
+    if (value) {
+      settings.projectOpen = value
+      showToast(t('launcher.remembered', 'New projects will start this way. Change it in Settings > Agents.'))
+    }
+  }
+  await startInEmptyWorkspace(ws, choice)
+}
+
 function folderName(path) {
   if (!path) return ''
   const parts = path.replace(/[\\/]+$/, '').split(/[\\/]/)
@@ -4280,11 +4365,7 @@ async function createWorkspace() {
   selectWorkspace(ws.id)
   // Put the new workspace's name straight into edit mode.
   nextTick(() => sidebarEl.value && sidebarEl.value.startRename(ws.id))
-  const leaf = await createLeaf(selectedShell.value, null, ws.cwd, null, wsLeafOpts(ws))
-  if (leaf) {
-    ws.tree = leaf
-    ws.activeId = leaf.id
-  }
+  await seedNewWorkspace(ws)
 }
 
 function renameWorkspace(id, name) {
@@ -4480,7 +4561,8 @@ onBeforeUnmount(() => offRemoteBranches && offRemoteBranches())
 // The installer puts it in ~/.local/bin, which a host's PATH may lack.
 const REMOTE_CLAUDE_INSTALL = 'curl -fsSL https://claude.ai/install.sh | bash && ~/.local/bin/claude' // i18n-ignore shell command
 const remoteAgentOffered = new Set()
-const remoteAgentTools = {} // hostId -> the last agent check (remoteAgents:status)
+// Reactive: an empty SSH project's launcher lists the agents found there.
+const remoteAgentTools = reactive({}) // hostId -> the last agent check (remoteAgents:status)
 let offRemoteAgents = null
 function onRemoteAgentsStatus(st) {
   if (!st || typeof st.hostId !== 'string') return
@@ -4724,6 +4806,12 @@ async function openCard({ wsId, path, isMain }) {
     : listed
       ? { path: listed.path, branch: listed.branch || '' }
       : null
+  // The project folder's card of an empty project: its launcher (or what
+  // "When a project opens" says).
+  if (!ws.tree && isMain) {
+    await seedNewWorkspace(ws)
+    return
+  }
   if (!ws.tree) {
     const leaf = await createLeaf(selectedShell.value, null, isMain ? ws.cwd : path, worktree, isMain ? wsLeafOpts(ws) : {})
     if (leaf && wsById(wsId)) {
@@ -10418,12 +10506,14 @@ async function restoreOrSeedLayout() {
       } catch {
         ws.tree = null
       }
-      if (!ws.tree) {
+      // Saved with no pane (its launcher was shown): it comes back so. One
+      // whose panes could not come back gets a shell, as before.
+      if (!ws.tree && snap.tree != null) {
         const leaf = await createLeaf(selectedShell.value, null, ws.cwd, null, wsLeafOpts(ws))
         if (!leaf) continue
         ws.tree = leaf
       }
-      ws.activeId = firstAwakeLeafId(ws.tree)
+      ws.activeId = ws.tree ? firstAwakeLeafId(ws.tree) : null
       workspaces.value.push(ws)
     }
     if (workspaces.value.length) {
@@ -10458,6 +10548,7 @@ onMounted(async () => {
   await loadModelLists()
   startStep = 'layout'
   await restoreOrSeedLayout()
+  layoutReady.value = true
   startStep = 'terminals'
   if (window.shellApi.reconcilePtys) {
     const ids = []
@@ -10966,7 +11057,15 @@ onBeforeUnmount(() => {
             <div class="browser-host"></div>
           </div>
         </div>
-        <div v-if="!tree" class="startup-message">
+        <!-- A project with no pane: which program to start (projectLauncher.js). -->
+        <ProjectLauncher
+          v-if="launcherProps"
+          :key="launcherWs.id"
+          v-bind="launcherProps"
+          @pick="pickFromLauncher"
+          @more-sessions="showSideTab('history')"
+        />
+        <div v-else-if="!tree" class="startup-message">
           {{ initError || t('app.main.starting', 'Starting...') }}
         </div>
         <FloatingTerminal :ctl="floating" @restore-focus="focusActiveInput" />
