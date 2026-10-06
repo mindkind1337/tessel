@@ -3,11 +3,16 @@
 // resolveContext(pane) may supply a local context instead of panelCtx.paneFolder.
 // Returns computed { worktreeId, worktreePath, roots, runtimeEnvironmentId: null } or null.
 import { computed, inject, toValue, unref } from 'vue'
+import { chatRemoteRoot } from '../../remoteChatLinks.js'
 
 export function useNativeChatFileLinkContext(pane, options = {}) {
   const panel = inject('panelCtx', null)
   return computed(() => {
     const leaf = toValue(pane)
+    // Tessel: a chat whose agent runs on an SSH host: its links are the
+    // host's files, opened over the remote file system (remoteChatLinks.js).
+    const hostRoot = leaf && chatRemoteRoot(leaf.cwd)
+    if (hostRoot) return { worktreeId: leaf.id, worktreePath: hostRoot, roots: [hostRoot], runtimeEnvironmentId: null, remote: true, remoteRoot: hostRoot }
     const resolve = unref(toValue(options).resolveContext)
     const context = resolve
       ? resolve(leaf)

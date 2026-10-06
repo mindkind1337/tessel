@@ -23,6 +23,7 @@ import { t } from '../../../i18n/index.js'
 import { isPathInsideOrEqual } from '../shared/cross-platform-path.js'
 import { chatPathProblem, isSystemOpenFile } from '../../../../../shared/chatFileLinks.js'
 import { fileKind } from '../../../../../shared/fileKinds.js'
+import { remoteLinkTarget } from '../../remoteChatLinks.js'
 
 function chatFilesApi() {
   return globalThis.window?.shellApi?.chatFiles || null
@@ -98,6 +99,24 @@ export function useNativeChatFileLinkClick(context, options = {}) {
     const early = chatPathProblem(route.pathText, { requireAbsolute: false })
     if (early === 'control' || early === 'network') return failure(early, route.pathText)
     const parsed = parseExplicitFileLinkTarget(route.pathText, { allowRelativeDirectoryPath: true })
+    // Tessel: an agent on an SSH host names the host's files: opened by their
+    // virtual path in the editor (or the image viewer), over the remote file
+    // system, only within the chat's project there.
+    if (owner?.remoteRoot) {
+      const hit = parsed ? remoteLinkTarget(owner.remoteRoot, parsed.pathText) : null
+      if (!hit) return failure('unresolved', route.pathText)
+      if (!hit.inside) return failure('outside', route.pathText)
+      try {
+        if (fileKind(hit.file) === 'image' && (await showInLightbox(hit.file))) return
+        const open = callback('openFile') || panel?.viewFile
+        if (!open) return failure('unresolved', route.pathText)
+        const result = await open({ file: hit.file, line: parsed.line ?? route.line, col: parsed.column }, event)
+        if (result === false || result?.ok === false) failure('unverifiable', hit.path, result?.error)
+      } catch (error) {
+        failure('unverifiable', hit.path, error)
+      }
+      return
+    }
     const target =
       owner?.worktreePath && !owner.remote && !owner.runtimeEnvironmentId && parsed
         ? resolveExplicitFileLinkTarget(parsed, owner.worktreePath, owner.homePath)

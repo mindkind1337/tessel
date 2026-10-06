@@ -34,7 +34,10 @@ describe('which panes', () => {
     expect(canShowChatView({ kind: 'agent', agentId: 'opencode' })).toBe(false)
     expect(canShowChatView({ kind: 'agent', agentId: 'grok' })).toBe(false)
     expect(canShowChatView({ kind: 'chat', agentId: 'claude' })).toBe(false)
-    expect(canShowChatView({ kind: 'agent', agentId: 'claude', remoteHostId: 'ssh-1' })).toBe(false)
+    // On an SSH host: Claude Code and Codex (their files read over the connection).
+    expect(canShowChatView({ kind: 'agent', agentId: 'claude', remoteHostId: 'ssh-1' })).toBe(true)
+    expect(canShowChatView({ kind: 'agent', agentId: 'codex', remoteHostId: 'ssh-1' })).toBe(true)
+    expect(canShowChatView({ kind: 'agent', agentId: 'openclaude', remoteHostId: 'ssh-1' })).toBe(false)
     expect(canShowChatView({ kind: 'agent', agentId: 'claude', detected: true })).toBe(false)
     expect(composerAgent('openclaude')).toBe('claude')
     expect(composerAgent('codex')).toBe('codex')

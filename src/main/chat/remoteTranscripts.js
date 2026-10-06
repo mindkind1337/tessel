@@ -7,6 +7,7 @@
 // Paths here are the host's: none is ever read on this PC (attachments are
 // resolved from inline data only) nor put through Windows' path functions.
 import { claudeHistoryEvents, codexHistoryEvents, HISTORY_LIMITS, ATTACHMENT_LIMITS, resolveHistoryAttachments } from './transcriptHistory.js'
+import { HEAD_BYTES, DETAILS_TAIL_BYTES, detailsFromLines, splitLines } from '../sessionDetails.js'
 
 const HOST_ID = /^ssh-[\w-]{1,60}$/
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -222,4 +223,29 @@ export async function remoteTranscriptExists({ readAgentFile, hostId, agent, ses
   } catch {
     return null
   }
+}
+
+// Agent Session History's details of a conversation kept on a host (its
+// first prompt, latest turns, message count), as sessionDetails.js does for
+// a local file: its first HEAD_BYTES and, when longer, its last bytes.
+// -> { ok: true, file: null, size, firstPrompt, turns, messageCount } | { ok: false, notConnected? }
+export async function remoteSessionDetails({ readAgentFile, hostId, agent, id } = {}) {
+  if (!validRemoteTranscript(agent, hostId, id) || typeof readAgentFile !== 'function') return { ok: false }
+  const read = async (q) => {
+    try {
+      return await readAgentFile(hostId, { agent, id, ...q })
+    } catch {
+      return null
+    }
+  }
+  const head = await read({ offset: 0, cap: HEAD_BYTES })
+  if (!head?.ok || !Buffer.isBuffer(head.data)) return { ok: false, ...(head?.notConnected ? { notConnected: true } : {}) }
+  const whole = head.size <= HEAD_BYTES
+  let tailLines = null
+  if (!whole) {
+    const tail = await read({ offset: null, cap: DETAILS_TAIL_BYTES })
+    // Its first line is cut (the window starts inside it).
+    tailLines = tail?.ok && Buffer.isBuffer(tail.data) ? splitLines(tail.data.toString('utf8')).slice(1) : []
+  }
+  return { ok: true, file: null, size: head.size, ...detailsFromLines(agent, id, splitLines(head.data.toString('utf8')), tailLines, whole) }
 }

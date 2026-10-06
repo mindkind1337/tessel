@@ -95,6 +95,7 @@ import {
 import { mergeCommandMarkers, splitCommandTurns, terminalBackgroundTasks } from '../../../chat/terminalChatExtras.js'
 import { createTranscriptImages } from '../../../chat/transcriptImages.js'
 import { t } from '../../../i18n'
+import { remoteRoot } from '../../../../../shared/remotePath.js'
 import { useNativeChatFontScale } from '../../../chat/orca/composables/use-native-chat-font-scale.js'
 
 const props = defineProps({
@@ -249,6 +250,9 @@ function stopRetry() {
   retry = null
 }
 function openArgs() {
+  // An agent on an SSH host: its file is the host's (read over the connection).
+  const hostId = props.node && typeof props.node.remoteHostId === 'string' ? props.node.remoteHostId : null
+  if (hostId) return { agent: props.agent, sessionId: props.sessionId, hostId }
   if (!props.interactive) return { agent: props.agent, sessionId: props.sessionId }
   return { agent: props.agent, sessionId: props.sessionId, paneId: props.paneId, ...(props.accountId !== undefined ? { accountId: props.accountId } : {}) }
 }
@@ -418,6 +422,9 @@ const session = computed(() => ({
 }))
 const fileLinkContext = computed(() => {
   const n = props.node
+  // On an SSH host: the host's files, opened over the remote file system.
+  const hostRoot = n && n.remoteHostId ? remoteRoot(n.remoteHostId, n.remotePath || '~') : null
+  if (hostRoot) return { worktreeId: n.id, worktreePath: hostRoot, roots: [hostRoot], runtimeEnvironmentId: null, remote: true, remoteRoot: hostRoot }
   const folder = n && (n.startDir || n.cwd || n.projectDir)
   return folder ? { worktreeId: n.id, worktreePath: folder, roots: [folder, n.projectDir].filter(Boolean) } : null
 })

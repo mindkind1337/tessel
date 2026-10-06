@@ -52,10 +52,13 @@ export function keysAllowed(bytes, lastAt, now = Date.now()) {
   return !String(bytes || '').includes(KEY_CTRL_C) || !Number.isFinite(lastAt) || now - lastAt >= INTERRUPT_GAP_MS
 }
 
-// A terminal agent Tessel started on this computer (not one detected in a
-// shell, not on an SSH host).
+// A terminal agent Tessel started (not one detected in a shell). On an SSH
+// host: Claude Code and Codex, whose files there are read over the
+// connection (src/main/chat/remoteTranscripts.js).
+export const REMOTE_CHAT_VIEW_AGENTS = ['claude', 'codex']
 export function canShowChatView(node) {
-  return !!node && node.kind === 'agent' && CHAT_VIEW_AGENTS.includes(node.agentId) && !node.remoteHostId && !node.detected
+  if (!node || node.kind !== 'agent' || node.detected || !CHAT_VIEW_AGENTS.includes(node.agentId)) return false
+  return !node.remoteHostId || REMOTE_CHAT_VIEW_AGENTS.includes(node.agentId)
 }
 
 // The composer's slash commands and question keys follow Claude Code's for

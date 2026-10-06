@@ -3064,7 +3064,7 @@ const paneMenuBindings = computed(() => ({
         :disabled-reason="chatDisabledReason"
         :send-message="chatSend"
         :write-keys="chatKeys"
-        :allow-images="chatViewTakesImages(node.agentId)"
+        :allow-images="!node.remoteHostId && chatViewTakesImages(node.agentId)"
         :session-options="chatSessionOptions"
         :set-option="chatSetOption"
         :list-files="chatListFiles"

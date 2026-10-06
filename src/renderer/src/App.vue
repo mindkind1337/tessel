@@ -475,14 +475,21 @@ function chatPaneState(leaf) {
 function openChatAgent({ ws = currentWs.value, agent = 'claude' } = {}) {
   if (!ws) return null
   const active = ws.activeId ? findLeafIn(ws.tree, ws.activeId) : null
+  // A project on an SSH host: the agent runs there, in the project's folder
+  // (src/main/chat/remoteProcess.js); its folder is the virtual root.
+  const hostRoot = ws.remote ? remoteRoot(ws.remote.hostId, ws.remote.path) : null
+  if (ws.remote && agent === 'opencode') {
+    showToast(t('app.chat.noOpencodeOnHost', 'OpenCode chats run on this computer only: open a terminal on the host to use OpenCode there.'), { kind: 'error' })
+    return null
+  }
   // Opened from a worktree's grid: the chat works in that copy.
-  const copy = active && viewKey(active, ws.cwd) ? active.worktree || { path: leafViewPath(active), branch: '' } : null
-  const cwd = (copy && copy.path) || ws.cwd || (active && active.cwd) || null
-  if (!cwd || ws.remote) {
+  const copy = !hostRoot && active && viewKey(active, ws.cwd) ? active.worktree || { path: leafViewPath(active), branch: '' } : null
+  const cwd = hostRoot || (copy && copy.path) || ws.cwd || (active && active.cwd) || null
+  if (!cwd) {
     showToast(t('app.chat.needFolder', 'A chat agent works in a project folder on this computer: open one first.'), { kind: 'error' })
     return null
   }
-  const leaf = makeChatLeaf({ agentId: agent, cwd, projectDir: ws.cwd || null })
+  const leaf = makeChatLeaf({ agentId: agent, cwd, projectDir: hostRoot || ws.cwd || null })
   if (copy) leaf.worktree = { path: copy.path, branch: copy.branch || '' }
   const split = (orig) => reactive({ type: 'split', id: newId('split'), dir: 'row', sizes: [50, 50], children: [orig, leaf] })
   if (active) ws.tree = replaceNode(ws.tree, active.id, split)
@@ -2650,11 +2657,11 @@ function buildCommands() {
   }
   add(t('app.cmd.group.new', 'New'), t('app.cmd.newWorkspace', 'New workspace'), createWorkspace, { shortcut: 'Ctrl+Shift+N' })
   add(t('app.cmd.group.new', 'New'), t('project.cmd.addProject', 'Add a project…'), openAddProject)
-  if (currentWs.value && currentWs.value.cwd && !currentWs.value.remote)
+  if (currentWs.value && (currentWs.value.cwd || currentWs.value.remote))
     add(t('app.cmd.group.new', 'New'), t('app.cmd.newChat', 'New Claude agent (chat)'), () => openChatAgent(), {
       hint: t('app.cmd.newChatHint', 'Claude without a terminal: team messages reach it as turns of their own')
     })
-  if (currentWs.value && currentWs.value.cwd && !currentWs.value.remote)
+  if (currentWs.value && (currentWs.value.cwd || currentWs.value.remote))
     add(t('app.cmd.group.new', 'New'), t('app.cmd.newChatCodex', 'New Codex agent (chat)'), () => openChatAgent({ agent: 'codex' }), {
       hint: t('app.cmd.newChatCodexHint', 'Codex without a terminal: team messages reach it as turns of their own')
     })
@@ -9403,6 +9410,33 @@ function releaseChatTeam(id) {
   channelQueued.delete(p.key)
 }
 let offChatEvents = null
+// Chats whose host connection dropped (paneId -> true), and each host's last
+// known status: a host back to 'connected' resumes its dropped chats.
+const chatDisconnected = {}
+const lastHostStatus = {}
+watch(
+  () => remoteHostsState.states,
+  (states) => {
+    for (const [hostId, st] of Object.entries(states || {})) {
+      const now = st && st.status
+      const before = lastHostStatus[hostId]
+      lastHostStatus[hostId] = now
+      if (now !== 'connected' || before === 'connected') continue
+      for (const paneId of Object.keys(chatDisconnected)) {
+        const leaf = findLeaf(paneId)
+        const at = leaf && leaf.kind === 'chat' ? parseRemotePath(leaf.cwd) : null
+        if (!at) {
+          delete chatDisconnected[paneId]
+          continue
+        }
+        if (at.hostId !== hostId) continue
+        delete chatDisconnected[paneId]
+        chatOpen(leaf, { askTrust: false }).catch(() => {})
+      }
+    }
+  },
+  { deep: true }
+)
 onMounted(() => {
   const chat = window.shellApi.chat
   if (!chat || !chat.onEvent) return
@@ -9411,6 +9445,10 @@ onMounted(() => {
     if (!ev) return
     if (ev.type === 'status' && e.paneId && typeof ev.state === 'string') {
       chatStatus[e.paneId] = ev.state
+      // A chat on an SSH host that lost its connection: opened again (resumed)
+      // once its host is connected again (see the watch on remoteHostsState).
+      if (ev.state === 'asleep' && ev.reason === 'disconnected') chatDisconnected[e.paneId] = true
+      else if (ev.state !== 'asleep') delete chatDisconnected[e.paneId]
       if (ev.state === 'working') delete chatInterrupted[e.paneId]
       // No process any more (or a new one): its background work is over.
       if (!['idle', 'working', 'approval'].includes(ev.state)) chatBackground[e.paneId] = 0

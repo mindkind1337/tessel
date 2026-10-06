@@ -8,7 +8,8 @@ import os from 'os'
 import { join } from 'path'
 import { createRemoteFs } from '../../remoteFs'
 import { gitSh, fakeSpawn } from '../../__tests__/fixtures/fakeSsh'
-import { createRemoteTail, readRemoteHistory, remoteTranscriptExists, validRemoteTranscript } from '../remoteTranscripts'
+import { createRemoteTail, readRemoteHistory, remoteTranscriptExists, validRemoteTranscript, remoteSessionDetails } from '../remoteTranscripts'
+import { createTranscriptViews } from '../transcriptView'
 
 const HOST = 'ssh-test1'
 const SID = '11111111-2222-4333-8444-555555555555'
@@ -126,4 +127,46 @@ describe.skipIf(!gitSh())('readAgentFile over a fake host (Git for Windows sh)',
     expect(await rfs.readAgentFile(HOST, { agent: 'grok', id: SID })).toMatchObject({ ok: false, error: 'invalid' })
     expect(await rfs.readAgentFile(HOST, { agent: 'claude', id: SID, offset: -1 })).toMatchObject({ ok: false, error: 'invalid' })
   }, 60000)
+})
+
+describe('views and details of a conversation on a host', () => {
+  const line = (o) => JSON.stringify(o)
+  const userLine = (text, at) => line({ type: 'user', uuid: `u${at}`, timestamp: new Date(1759300000000 + at * 1000).toISOString(), message: { role: 'user', content: text } })
+  const agentLine = (text, at) => line({ type: 'assistant', uuid: `a${at}`, timestamp: new Date(1759300000000 + at * 1000).toISOString(), message: { id: `m${at}`, role: 'assistant', content: [{ type: 'text', text }] } })
+
+  it('a terminal agent on a host: its view reads the host file, then what was added', async () => {
+    let text = userLine('first question', 1) + '\n' + agentLine('first answer', 2) + '\n'
+    const readAgentFile = vi.fn(async (_h, q) => fileReader(() => Buffer.from(text))(q))
+    const sent = []
+    const views = createTranscriptViews({ send: (c, p) => sent.push([c, p]), readAgentFile, roots: () => ({}), debounceMs: 1, remotePollMs: 60000 })
+    const r = await views.openFromWindow({ agent: 'claude', sessionId: SID, hostId: HOST, paneId: 'p1' })
+    expect(r.ok).toBe(true)
+    expect(r.events.filter((e) => e.type === 'user').map((e) => e.text)).toEqual(['first question'])
+    expect(readAgentFile.mock.calls[0][0]).toBe(HOST)
+    expect(views.cwdOf(r.viewId)).toBe(null)
+    text += userLine('second', 3) + '\n'
+    await views.refresh(r.viewId)
+    const ev = sent.find(([c, p]) => c === 'transcriptView:event' && p.ok)
+    expect(ev[1].events.filter((e) => e.type === 'user').map((e) => e.text)).toEqual(['first question', 'second'])
+    expect(await views.openFromWindow({ agent: 'grok', sessionId: SID, hostId: HOST })).toMatchObject({ ok: false, code: 'invalid' })
+    expect(await views.openFromWindow({ agent: 'claude', sessionId: SID, hostId: 'not-a-host' })).toMatchObject({ ok: false, code: 'invalid' })
+    views.closeAll()
+  })
+
+  it('a host that is not wired: missing, never a local read', async () => {
+    const views = createTranscriptViews({ send: () => {}, roots: () => ({}) })
+    expect(await views.openFromWindow({ agent: 'claude', sessionId: SID, hostId: HOST })).toMatchObject({ ok: false, code: 'missing' })
+  })
+
+  it('session details: first prompt, latest turns, count', async () => {
+    const text = [userLine('the first prompt', 1), agentLine('ok', 2), userLine('more', 3), agentLine('done', 4)].join('\n') + '\n'
+    const readAgentFile = vi.fn(async (_h, q) => fileReader(() => Buffer.from(text))(q))
+    const d = await remoteSessionDetails({ readAgentFile, hostId: HOST, agent: 'claude', id: SID })
+    expect(d.ok).toBe(true)
+    expect(d.firstPrompt).toBe('the first prompt')
+    expect(d.messageCount).toBe(4)
+    expect(d.turns.map((x) => x.text)).toEqual(['ok', 'more', 'done'])
+    expect(d.file).toBe(null)
+    expect(await remoteSessionDetails({ readAgentFile: async () => ({ ok: false, notConnected: true }), hostId: HOST, agent: 'claude', id: SID })).toEqual({ ok: false, notConnected: true })
+  })
 })

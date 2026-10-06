@@ -48,6 +48,7 @@ import { ompSessionsDir } from '../agentSessionSources.js'
 import { HISTORY_LIMITS, ATTACHMENT_LIMITS, resolveHistoryAttachments, claudeHistoryEvents, codexHistoryEvents, createBuilder, findTranscript } from './transcriptHistory.js'
 import { resolveHistoryAttachmentsCached } from './historyAttachments.js'
 import { createRemoteDrives } from './remoteDrives.js'
+import { createRemoteTail, remoteWindowReader, validRemoteTranscript } from './remoteTranscripts.js'
 
 // The chat view's limits: its user messages show their images (a screenshot
 // pasted in the terminal), the newest first within a smaller page budget
@@ -845,7 +846,10 @@ export function reportedTranscript(sessionsDir, paneId, agent, sessionId) {
 // first time that view sends it (an image that left the page and comes back
 // is sent again). The window keeps the ones it has (transcriptImages.js) and
 // asks for one it lacks (transcriptView:images, bounded like a page).
-export function createTranscriptViews({ send, roots = transcriptViewRoots, homes = async () => null, sessionsDir = () => null, watch = fs.watch, debounceMs = 300, pollMs = 2000, log = null, limits = VIEW_LIMITS, isRemote = null } = {}) {
+// readAgentFile(hostId, q) (remoteFs.js): a terminal agent on an SSH host has
+// its file there; its view reads it over the connection (a remote tail,
+// polled every remotePollMs), never a path on this PC.
+export function createTranscriptViews({ send, roots = transcriptViewRoots, homes = async () => null, sessionsDir = () => null, watch = fs.watch, debounceMs = 300, pollMs = 2000, remotePollMs = 3000, log = null, limits = VIEW_LIMITS, isRemote = null, readAgentFile = null } = {}) {
   const views = new Map() // viewId -> { agent, sessionId, file, tail, watcher, timer, poll, stamp, eventCap, images, sent, queue }
   let nextId = 0
   let drives = null
@@ -869,7 +873,8 @@ export function createTranscriptViews({ send, roots = transcriptViewRoots, homes
   // out when this view already sent them.
   async function eventsFor(v) {
     const core = eventsCore(v.agent, v.sessionId, v.tail, limits, v.eventCap)
-    if (limits.attachments) await resolveHistoryAttachmentsCached(core.events, limits.attachments, { cache: v.images, isRemote: remote })
+    // A host's file names the host's paths: none is looked at here.
+    if (limits.attachments) await resolveHistoryAttachmentsCached(core.events, limits.attachments, { cache: v.images, isRemote: v.hostId ? async () => true : remote })
     const shown = new Set()
     for (const ev of core.events) {
       if (!Array.isArray(ev.images)) continue
@@ -890,12 +895,17 @@ export function createTranscriptViews({ send, roots = transcriptViewRoots, homes
     if (!v) return Promise.resolve()
     return serial(v, async () => {
       if (views.get(viewId) !== v) return
-      const stamp = stampOf(v.file)
-      if (stamp === v.stamp) return
-      v.stamp = stamp
-      const read = v.tail.read()
+      if (!v.hostId) {
+        const stamp = stampOf(v.file)
+        if (stamp === v.stamp) return
+        v.stamp = stamp
+      }
+      const read = await v.tail.read()
+      if (views.get(viewId) !== v) return
       if (read === false) return
       if (read === null) {
+        // A host that does not answer for a moment: the view stays as it is.
+        if (v.hostId) return
         send('transcriptView:event', { viewId, ok: false, code: 'missing' })
         return
       }
@@ -911,7 +921,7 @@ export function createTranscriptViews({ send, roots = transcriptViewRoots, homes
     const v = views.get(viewId)
     if (!v) return { ok: false, code: 'missing' }
     return serial(v, async () => {
-      const res = v.tail.readEarlier(limits.bytes)
+      const res = await v.tail.readEarlier(limits.bytes)
       if (!res) return { ok: false, code: 'changed' }
       if (res.added) v.eventCap = Math.min(v.eventCap + limits.events, limits.events * (EARLIER_STEPS + 1))
       return { ok: true, added: res.added, ...(await eventsFor(v)) }
@@ -938,7 +948,8 @@ export function createTranscriptViews({ send, roots = transcriptViewRoots, homes
   // skills), or null.
   function cwdOf(viewId) {
     const v = views.get(viewId)
-    return v ? transcriptCwd(v.tail.lines()) : null
+    // A host's folder is not one this PC can look into.
+    return v && !v.hostId ? transcriptCwd(v.tail.lines()) : null
   }
   function schedule(viewId) {
     const v = views.get(viewId)
@@ -997,11 +1008,41 @@ export function createTranscriptViews({ send, roots = transcriptViewRoots, homes
     }
     return { ok: true, viewId, events: res.events, truncated: res.truncated, more: res.more, background: res.background }
   }
-  // The window names the agent, the session, its pane and its account, never
-  // a folder or a file.
+  function makeRoom() {
+    while (views.size >= MAX_VIEWS) {
+      const oldest = views.keys().next().value
+      close(oldest)
+      send('transcriptView:event', { viewId: oldest, ok: false, code: 'closed' })
+    }
+  }
+  // A terminal agent on an SSH host: its conversation file there.
+  async function openRemote({ agent, sessionId, hostId } = {}) {
+    if (!validRemoteTranscript(agent, hostId, sessionId)) return { ok: false, code: 'invalid' }
+    if (typeof readAgentFile !== 'function') return { ok: false, code: 'missing' }
+    const tail = createRemoteTail(remoteWindowReader(readAgentFile, { hostId, agent, id: sessionId }), limits.bytes, { maxEarlier: limits.bytes * EARLIER_STEPS })
+    let first
+    try {
+      first = await tail.read()
+    } catch {
+      first = null
+    }
+    if (first === null) return { ok: false, code: 'missing' }
+    makeRoom()
+    const viewId = `tv-${++nextId}` // i18n-ignore id
+    const v = { agent, sessionId, hostId, file: null, tail, watcher: null, timer: null, poll: null, stamp: '', eventCap: limits.events, images: new Map(), sent: new Set(), queue: Promise.resolve() }
+    views.set(viewId, v)
+    const res = await serial(v, () => eventsFor(v))
+    if (views.get(viewId) !== v) return { ok: false, code: 'missing' }
+    v.poll = setInterval(() => schedule(viewId), remotePollMs)
+    v.poll.unref?.()
+    return { ok: true, viewId, events: res.events, truncated: res.truncated, more: res.more, background: res.background }
+  }
+  // The window names the agent, the session, its pane and its account (or
+  // the SSH host it runs on), never a folder or a file.
   async function openFromWindow(q) {
     const o = obj(q) || {}
     const { agent, sessionId } = o
+    if (o.hostId != null) return openRemote({ agent, sessionId, hostId: o.hostId })
     if (!TRANSCRIPT_VIEW_AGENTS.includes(agent) || !validViewId(agent, sessionId)) return { ok: false, code: 'invalid' }
     const accountId = o.accountId === null || (typeof o.accountId === 'string' && ACCOUNT_ID.test(o.accountId)) ? o.accountId : undefined
     let home = null
@@ -1029,5 +1070,5 @@ export function createTranscriptViews({ send, roots = transcriptViewRoots, homes
     ipcMain.handle('transcriptView:earlier', (_e, q) => earlier(obj(q)?.viewId))
     ipcMain.handle('transcriptView:images', (_e, q) => imagesOf(obj(q)?.viewId, obj(q)?.keys))
   }
-  return { open, openFromWindow, close, earlier, images: imagesOf, refresh, cwdOf, agentOf: (viewId) => views.get(viewId)?.agent || null, closeAll: () => [...views.keys()].forEach(close), register, count: () => views.size }
+  return { open, openRemote, openFromWindow, close, earlier, images: imagesOf, refresh, cwdOf, agentOf: (viewId) => views.get(viewId)?.agent || null, closeAll: () => [...views.keys()].forEach(close), register, count: () => views.size }
 }
