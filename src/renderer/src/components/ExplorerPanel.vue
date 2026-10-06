@@ -9,6 +9,7 @@
 import { ref, reactive, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import ThemedSelect from './ui/ThemedSelect.vue'
 import { statusOf, folderStatus, ignoredSet, isIgnored } from '../explorerStatus'
+import { buildRows, toggledPaths, soleSubfolder, activeGuide, segmentOf, rowPadding, guideX, INDENT } from '../explorerRows'
 import { settings } from '../settings'
 import { isRemotePath, remoteHostPath } from '../../../shared/remotePath'
 import { t } from '../i18n'
@@ -114,22 +115,32 @@ async function refresh() {
 const folderStatuses = computed(() => folderStatus(status.value, key(props.root)))
 const ignored = computed(() => ignoredSet(status.value))
 
-// The rows shown: open folders' children, depth first.
-const rows = computed(() => {
-  const out = []
-  const walk = (dir, depth) => {
-    const n = nodes[dir]
-    if (!n) return
-    for (const e of n.entries) {
-      // Settings > Appearance, "Show Git-Ignored Files" off: hidden.
-      if (!settings.showGitIgnoredFiles && ignoredOf(e.path)) continue
-      out.push({ ...e, depth })
-      if (e.dir && open[e.path]) walk(e.path, depth + 1)
-    }
-  }
-  if (props.root) walk(displayRoot.value, 0)
-  return out
+// Settings > Appearance, "Show Git-Ignored Files" off: hidden.
+const hiddenEntry = (e) => !settings.showGitIgnoredFiles && ignoredOf(e.path)
+// What is being renamed or getting a new child stands on its own row.
+const noJoin = computed(() => {
+  const ed = edit.value
+  if (!ed) return null
+  return new Set([ed.mode === 'rename' ? ed.entry.path : ed.dir])
 })
+// The rows shown: open folders' children, depth first; a chain of folders
+// each holding a single folder on one row (compact folders, like VS Code).
+const tree = computed(() =>
+  buildRows({
+    root: props.root ? displayRoot.value : null,
+    nodes,
+    open,
+    compact: settings.explorerCompactFolders !== false,
+    hidden: hiddenEntry,
+    noJoin: noJoin.value
+  })
+)
+const rows = computed(() => tree.value.rows)
+// The brighter indent guide, under the selected folder (or its parent).
+const guide = computed(() => activeGuide(tree.value.rows, tree.value.index, selected.value))
+const inGuide = (i) => !!guide.value && i >= guide.value.from && i < guide.value.to
+// The selected folder of a compact row (-1: the row is not selected).
+const segSelected = (row, i) => (selected.value != null && tree.value.index.get(selected.value) === i ? segmentOf(row, selected.value) : -1)
 function letterOf(e) {
   return e.dir ? folderStatuses.value[key(e.path)] || '' : statusOf(status.value, key(e.path))
 }
@@ -199,7 +210,7 @@ async function revealInTree(p) {
   query.value = ''
   selected.value = p
   nextTick(() => {
-    const el = document.querySelector(`.explorer-row[data-path="${CSS.escape(p)}"]`) // i18n-ignore
+    const el = document.querySelector(`.explorer [data-path="${CSS.escape(p)}"]`) // i18n-ignore
     if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' })
   })
 }
@@ -216,20 +227,105 @@ function moreAct(what) {
   if (what === 'new-file') startNew(displayRoot.value, false)
   else if (what === 'new-folder') startNew(displayRoot.value, true)
   else if (what === 'dotfiles') dotfiles.value = !dotfiles.value
+  else if (what === 'compact') settings.explorerCompactFolders = settings.explorerCompactFolders === false
 }
 
-async function toggle(e) {
-  if (!e.dir) return
-  if (open[e.path]) delete open[e.path]
-  else {
-    open[e.path] = true
-    if (!nodes[e.path]) await loadDir(e.path)
+// A row opens or closes as one: every folder of a compact row. A folder
+// opened with a sole sub-folder opens it too, so the chain shows as one row
+// (VS Code's autoExpandCompressedChildren); only with compact folders on.
+async function toggleRow(row) {
+  if (!row.dir) return
+  const paths = toggledPaths(row)
+  if (row.open) {
+    for (const p of paths) delete open[p]
+    return
+  }
+  for (const p of paths) open[p] = true
+  let dir = row.path
+  const revision = viewRevision
+  for (let guard = 0; guard < 64 && dir; guard++) {
+    if (!nodes[dir]) await loadDir(dir)
+    if (revision !== viewRevision || !open[dir] || settings.explorerCompactFolders === false) return
+    const next = soleSubfolder(nodes, dir, hiddenEntry)
+    if (!next || open[next.path]) return
+    open[next.path] = true
+    dir = next.path
   }
 }
-function onRowClick(e) {
+// The segment of a compact row under the pointer (its last one elsewhere).
+function segAt(ev, row) {
+  const el = ev && ev.target && ev.target.closest ? ev.target.closest('[data-seg]') : null
+  const i = el ? Number(el.dataset.seg) : -1
+  return i >= 0 && i < row.chain.length ? i : row.chain.length - 1
+}
+let pressedSeg = -1
+function onRowMouseDown(ev, row) {
+  pressedSeg = segAt(ev, row)
+}
+// A click on a segment selects that folder; the row opens or closes.
+function onRowClick(ev, row) {
+  const e = row.chain[segAt(ev, row)]
   selected.value = e.path
-  if (e.dir) toggle(e)
+  if (row.dir) toggleRow(row)
   else emit('open', e.path)
+}
+function rowOf(path) {
+  const i = tree.value.index.get(path)
+  return i === undefined ? null : rows.value[i]
+}
+
+// --- Keyboard ------------------------------------------------------------------------
+// Like VS Code's explorer: up and down move between rows, right opens (or
+// goes to the next folder of a compact row), left closes (or goes back a
+// folder, then to the parent), Enter opens, F2 renames, Delete trashes.
+const treeEl = ref(null)
+function scrollToSelected() {
+  nextTick(() => {
+    const p = selected.value
+    if (!p) return
+    const tree = treeEl.value
+    const el = tree ? [...tree.querySelectorAll('[data-path]')].find((x) => x.dataset.path === p) : null
+    if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' })
+  })
+}
+function selectRow(i) {
+  const list = rows.value
+  if (!list.length) return
+  const row = list[Math.max(0, Math.min(list.length - 1, i))]
+  selected.value = row.path
+  scrollToSelected()
+}
+function onTreeKey(ev) {
+  if (ev.target && /^(INPUT|TEXTAREA)$/.test(ev.target.tagName)) return
+  const list = rows.value
+  const cur = selected.value != null ? tree.value.index.get(selected.value) : undefined
+  const row = cur === undefined ? null : list[cur]
+  const seg = row ? segmentOf(row, selected.value) : -1
+  const k = ev.key
+  let done = true
+  if (k === 'ArrowDown') selectRow(row ? cur + 1 : 0)
+  else if (k === 'ArrowUp') selectRow(row ? cur - 1 : list.length - 1)
+  else if (k === 'Home') selectRow(0)
+  else if (k === 'End') selectRow(list.length - 1)
+  else if (!row) done = false
+  else if (k === 'ArrowRight') {
+    if (seg < row.chain.length - 1) selected.value = row.chain[seg + 1].path
+    else if (row.dir && !row.open) toggleRow(row)
+    else if (row.dir && list[cur + 1] && list[cur + 1].depth > row.depth) selectRow(cur + 1)
+  } else if (k === 'ArrowLeft') {
+    if (seg > 0) selected.value = row.chain[seg - 1].path
+    else if (row.dir && row.open) toggleRow(row)
+    else if (rowOf(row.parent)) {
+      selected.value = row.parent
+      scrollToSelected()
+    }
+  } else if (k === 'Enter') {
+    if (row.dir) toggleRow(row)
+    else emit('open', row.path)
+  } else if (k === 'F2') startRename(row.chain[seg])
+  else if (k === 'Delete') trashIt(row.chain[seg])
+  else done = false
+  if (done) ev.preventDefault()
 }
 function collapseAll() {
   for (const k of Object.keys(open)) delete open[k]
@@ -246,6 +342,10 @@ const posixQuoted = (p) => (/[^\w@%+=:,./-]/.test(p) ? `'${p.replace(/'/g, `'\\'
 const quoted = (p) => (remote.value ? posixQuoted(p) : /[\s&()^;,'"]/.test(p) ? `"${p}"` : p)
 
 // --- Drag a file to a terminal -------------------------------------------------
+// From a compact row: the folder pressed.
+function onRowDragStart(ev, row) {
+  onDragStart(ev, row.chain[pressedSeg >= 0 && pressedSeg < row.chain.length ? pressedSeg : row.chain.length - 1])
+}
 function onDragStart(ev, e) {
   if (!ev.dataTransfer) return
   ev.dataTransfer.setData('text/x-tessel-path', hostPath(e.path))
@@ -256,6 +356,10 @@ function onDragStart(ev, e) {
 // --- Context menu ----------------------------------------------------------------
 const menu = reactive({ open: false, x: 0, y: 0, entry: null })
 const menuEl = ref(null)
+// On a compact row: the folder right-clicked (the last one off the names).
+function onRowContext(ev, row) {
+  onContext(ev, row.chain[segAt(ev, row)])
+}
 function onContext(ev, e) {
   ev.preventDefault()
   selected.value = e ? e.path : null
@@ -301,7 +405,14 @@ const editEl = ref(null)
 const setEditEl = (el) => {
   if (el) editEl.value = el
 }
+// A folder inside a closed compact row stands on its own row while edited:
+// the folders before it in that row open, so it shows.
+function openBefore(path) {
+  const row = rowOf(path)
+  if (row && row.chain.length > 1) for (const c of row.chain.slice(0, segmentOf(row, path))) open[c.path] = true
+}
 async function startNew(dir, folder) {
+  openBefore(dir)
   if (dir !== displayRoot.value && !open[dir]) {
     open[dir] = true
     await loadDir(dir)
@@ -312,6 +423,7 @@ async function startNew(dir, folder) {
 async function startRename(e) {
   // From the search results: shown in the tree first.
   if (searching.value) await revealInTree(e.path.replace(/[\\/][^\\/]*$/, ''))
+  openBefore(e.path)
   edit.value = { mode: 'rename', entry: e, value: e.name, error: '' }
   nextTick(() => {
     const el = editEl.value
@@ -484,6 +596,15 @@ function rowTitle(e) {
             <button role="menuitemcheckbox" class="ctx-menu-item" :aria-checked="dotfiles" data-test="explorer-dotfiles" @click="moreAct('dotfiles')">
               <span class="explorer-check">{{ dotfiles ? '✓' : '' }}</span>{{ t('explorer.showDotfiles', 'Show dotfiles') }}
             </button>
+            <button
+              role="menuitemcheckbox"
+              class="ctx-menu-item"
+              :aria-checked="settings.explorerCompactFolders !== false"
+              data-test="explorer-compact"
+              @click="moreAct('compact')"
+            >
+              <span class="explorer-check">{{ settings.explorerCompactFolders !== false ? '✓' : '' }}</span>{{ t('explorer.compactFolders', 'Compact folders') }}
+            </button>
           </div>
         </span>
       </span>
@@ -566,8 +687,8 @@ function rowTitle(e) {
           @contextmenu="onContext($event, h)"
           @dragstart="onDragStart($event, h)"
         >
-          <svg v-if="h.dir" class="explorer-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M1.8 4h4.4l1.4 1.5h6.6v7.7H1.8z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /></svg>
-          <svg v-else class="explorer-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 1.8h5l3 3v9.4H4z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /></svg>
+          <svg v-if="h.dir" class="explorer-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M1.8 4h4.4l1.4 1.5h6.6v7.7H1.8z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /></svg>
+          <svg v-else class="explorer-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 1.8h5l3 3v9.4H4z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /></svg>
           <span class="explorer-name">{{ h.name }}</span>
           <span class="explorer-hit-dir">{{ dirOf(h.rel) }}</span>
           <span v-if="ignoredOf(h.path)" class="explorer-ignored" :title="t('explorer.ignored', 'Ignored by .gitignore')">⊘</span>
@@ -600,8 +721,17 @@ function rowTitle(e) {
       ></div>
       <div v-if="search.busy && !search.results.length" class="explorer-empty">{{ t('explorer.search.searching', 'Searching…') }}</div>
     </div>
-    <div v-else class="explorer-tree" role="tree" @contextmenu.self="onContext($event, null)">
-      <div v-if="edit && edit.mode === 'new' && edit.dir === displayRoot" class="explorer-edit" :style="{ paddingLeft: '8px' }">
+    <div
+      v-else
+      ref="treeEl"
+      class="explorer-tree explorer-files"
+      role="tree"
+      tabindex="0"
+      :aria-label="t('explorer.side.files', 'Files')"
+      @keydown="onTreeKey"
+      @contextmenu.self="onContext($event, null)"
+    >
+      <div v-if="edit && edit.mode === 'new' && edit.dir === displayRoot" class="explorer-edit" :style="{ paddingLeft: rowPadding(0) + 22 + 'px' }">
         <input
           :ref="setEditEl"
           v-model="edit.value"
@@ -613,37 +743,55 @@ function rowTitle(e) {
         />
         <div v-if="edit.error" class="explorer-edit-error">{{ edit.error }}</div>
       </div>
-      <template v-for="e in rows" :key="e.path">
+      <template v-for="(row, i) in rows" :key="row.path">
         <div
-          v-if="!(edit && edit.mode === 'rename' && edit.entry.path === e.path)"
+          v-if="!(edit && edit.mode === 'rename' && edit.entry.path === row.path)"
           class="explorer-row"
-          :class="{ selected: selected === e.path, dir: e.dir, ignored: ignoredOf(e.path), ['git-' + (letterOf(e) || 'none')]: true }"
+          :class="{
+            selected: segSelected(row, i) >= 0,
+            dir: row.dir,
+            open: row.open,
+            compact: row.chain.length > 1,
+            ignored: ignoredOf(row.path),
+            ['git-' + (letterOf(row.entry) || 'none')]: true
+          }"
           role="treeitem"
-          :aria-expanded="e.dir ? !!open[e.path] : undefined"
-          :style="{ paddingLeft: 8 + e.depth * 14 + 'px' }"
-          :title="rowTitle(e)"
+          :aria-level="row.depth + 1"
+          :aria-expanded="row.dir ? row.open : undefined"
+          :aria-selected="segSelected(row, i) >= 0"
+          :style="{ paddingLeft: rowPadding(row.depth) + 'px' }"
+          :title="rowTitle(row.entry)"
           draggable="true"
-          :data-path="e.path"
-          @click="onRowClick(e)"
-          @dblclick="!e.dir && emit('open', e.path, { keep: true })"
-          @contextmenu="onContext($event, e)"
-          @dragstart="onDragStart($event, e)"
+          :data-path="row.path"
+          @mousedown="onRowMouseDown($event, row)"
+          @click="onRowClick($event, row)"
+          @dblclick="!row.dir && emit('open', row.path, { keep: true })"
+          @contextmenu="onRowContext($event, row)"
+          @dragstart="onRowDragStart($event, row)"
         >
-          <span class="explorer-chev">{{ e.dir ? (open[e.path] ? '▾' : '▸') : '' }}</span>
-          <svg v-if="e.dir" class="explorer-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M1.8 4h4.4l1.4 1.5h6.6v7.7H1.8z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /></svg>
-          <svg v-else class="explorer-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 1.8h5l3 3v9.4H4z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /></svg>
-          <span class="explorer-name">{{ e.name }}</span>
-          <span v-if="ignoredOf(e.path)" class="explorer-ignored" :title="t('explorer.ignored', 'Ignored by .gitignore')">⊘</span>
-          <span v-else-if="letterOf(e)" class="explorer-git">{{ e.dir ? '•' : letterOf(e) }}</span>
+          <span v-if="row.depth" class="explorer-guides" aria-hidden="true" :style="{ left: guideX(0) + 'px', width: row.depth * INDENT + 'px' }"></span>
+          <span v-if="inGuide(i)" class="explorer-guide-active" aria-hidden="true" :style="{ left: guideX(guide.depth) + 'px' }"></span>
+          <span class="explorer-twistie" aria-hidden="true"><svg v-if="row.dir" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M10.072 8.024L5.715 3.667l.618-.62L11 7.716v.618L6.333 13l-.618-.619 4.357-4.357z" /></svg></span>
+          <svg v-if="row.dir" class="explorer-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M1.8 4h4.4l1.4 1.5h6.6v7.7H1.8z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /></svg>
+          <svg v-else class="explorer-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 1.8h5l3 3v9.4H4z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /></svg>
+          <span v-if="row.chain.length > 1" class="explorer-name">
+            <template v-for="(c, s) in row.chain" :key="c.path">
+              <span v-if="s" class="explorer-crumb-sep">/</span>
+              <span class="explorer-crumb" :class="{ active: segSelected(row, i) === s }" :data-seg="s" :data-path="c.path" :title="rowTitle(c)">{{ c.name }}</span>
+            </template>
+          </span>
+          <span v-else class="explorer-name">{{ row.name }}</span>
+          <span v-if="ignoredOf(row.path)" class="explorer-ignored" :title="t('explorer.ignored', 'Ignored by .gitignore')">⊘</span>
+          <span v-else-if="letterOf(row.entry)" class="explorer-git">{{ row.dir ? '•' : letterOf(row.entry) }}</span>
         </div>
-        <div v-else class="explorer-edit" :style="{ paddingLeft: 8 + e.depth * 14 + 'px' }">
+        <div v-else class="explorer-edit" :style="{ paddingLeft: rowPadding(row.depth) + 22 + 'px' }">
           <input :ref="setEditEl" v-model="edit.value" class="explorer-edit-input" @keydown.enter.prevent="commitEdit" @keydown.escape.prevent="edit = null" @blur="commitEdit" />
           <div v-if="edit.error" class="explorer-edit-error">{{ edit.error }}</div>
         </div>
         <div
-          v-if="e.dir && open[e.path] && edit && edit.mode === 'new' && edit.dir === e.path"
+          v-if="row.open && edit && edit.mode === 'new' && edit.dir === row.path"
           class="explorer-edit"
-          :style="{ paddingLeft: 8 + (e.depth + 1) * 14 + 'px' }"
+          :style="{ paddingLeft: rowPadding(row.depth + 1) + 22 + 'px' }"
         >
           <input
             :ref="setEditEl"

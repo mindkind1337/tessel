@@ -2250,6 +2250,15 @@ function previewSound() {
                 </div>
                 <input v-model="settings.showGitIgnoredFiles" type="checkbox" class="set-switch" />
               </label>
+              <label class="set-row">
+                <div class="set-label">
+                  {{ t('settings.appearance.compactFolders', 'Compact Folders') }}
+                  <span class="set-hint">{{
+                    t('settings.appearance.compactFoldersHint', 'In Files, a folder holding a single folder shares its row with it, like a/b/c.')
+                  }}</span>
+                </div>
+                <input v-model="settings.explorerCompactFolders" type="checkbox" class="set-switch" data-test="settings-compact-folders" />
+              </label>
               <!-- Orca's Appearance > Window & Sidebar (same section). -->
               <div class="set-row">
                 <div id="settings-sidebar-appearance-label" class="set-label">
