@@ -105,9 +105,17 @@ export async function connectRemoteHost(target) {
 export function manageRemoteHosts() {
   if (handlers.openSettings) handlers.openSettings()
 }
+// Disconnected on purpose (Disconnect): its panes that end now stay ended,
+// they do not wait to reopen as after a dropped connection.
+const disconnectedAt = {}
+export const DISCONNECT_GRACE_MS = 30_000
+export function recentlyDisconnected(id, now = Date.now()) {
+  return !!(id && disconnectedAt[id] && now - disconnectedAt[id] < DISCONNECT_GRACE_MS)
+}
 export async function disconnectRemoteHost(id) {
   const a = api()
   if (!a) return { ok: false }
+  if (typeof id === 'string') disconnectedAt[id] = Date.now()
   return a.disconnect(id)
 }
 

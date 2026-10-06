@@ -4,7 +4,7 @@ import { ref, reactive, provide, watch, computed, nextTick, onMounted, onBeforeU
 import SplitNode from './components/SplitNode.vue'
 import FloatingTerminal from './components/FloatingTerminal.vue'
 import ProjectLauncher from './components/ProjectLauncher.vue'
-import { emptiedWorkspaceChoice, launcherAgents, launcherShells, projectOpenChoice, rememberedValue } from './projectLauncher'
+import { allowDropRetry, droppedRemotePane, emptiedWorkspaceChoice, launcherAgents, launcherShells, projectOpenChoice, rememberedValue } from './projectLauncher'
 import { createFloatingTerminal, isFloatingToggleKey } from './floatingTerminal'
 import BrandIcon from './components/BrandIcon.vue'
 import SidePanel from './components/SidePanel.vue'
@@ -79,7 +79,7 @@ import LinearDialog from './components/LinearDialog.vue'
 import { createExternalIssueStarter } from './externalIssues'
 import './issueDialogs.css'
 import { addNotification, readForPane, playAlertSound } from './notificationsStore'
-import { initRemoteHosts, setRemoteHostHandlers, remoteHostsState, manageRemoteHosts, hostShared } from './remoteHosts'
+import { initRemoteHosts, setRemoteHostHandlers, remoteHostsState, manageRemoteHosts, hostShared, recentlyDisconnected } from './remoteHosts'
 import AddProjectDialog from './components/project/AddProjectDialog.vue'
 import { savedRemote, savedGroup } from './addProject'
 import NotesPanel from './components/NotesPanel.vue'
@@ -3634,6 +3634,79 @@ async function restartLeaf(leafId) {
   dropBuffer(leafId)
   clearAgentStatus(leafId)
 }
+
+// --- Panes on an SSH host after a dropped connection ---------------------------
+// A pane on an SSH host whose connection dropped (ssh ended with 255) waits
+// for the host again, like a pane restored after a restart: same place, name,
+// team and conversation, what it showed kept above. Once the host is signed
+// in again (Connect in one pane, or the shared connection back by itself),
+// the watch after connectLeaf reopens all of them together: a shell in its folder, an
+// agent resuming its conversation. Never a pane closed or a host
+// disconnected on purpose; at most DROP_RETRIES times in a few minutes.
+const dropRetries = {}
+function waitForHostAgain(leafId, { exitCode, pid = null } = {}) {
+  const old = findLeaf(leafId)
+  if (!old || restartingLeaves.has(leafId) || connectingLeaves.has(leafId) || switchingLeaves.has(leafId)) return false
+  if (!droppedRemotePane(old, { exitCode, pid, userDisconnected: recentlyDisconnected(old.remoteHostId) })) return false
+  const now = Date.now()
+  const retry = allowDropRetry(dropRetries[leafId], now)
+  dropRetries[leafId] = retry.times
+  if (!retry.ok) return false
+  const ws = wsOfLeaf(leafId)
+  if (!ws) return false
+  let shown = ''
+  try {
+    const pane = getPane(leafId)
+    shown = pane && pane.screenText ? String(pane.screenText(200) || '') : ''
+  } catch {
+    shown = ''
+  }
+  const waiting = reactive({
+    type: 'leaf',
+    id: old.id,
+    shellId: old.shellId,
+    shellName: old.shellName,
+    title: old.title,
+    kind: old.kind,
+    agentId: old.agentId || null,
+    agentCommand: old.agentCommand || null,
+    accent: old.accent || null,
+    worktree: old.worktree || null,
+    backend: 'ssh',
+    startDir: old.startDir || null,
+    sessionId: old.sessionId || null,
+    accountId: old.accountId,
+    launchedAt: old.launchedAt || null,
+    ...(old.sessionOptions ? { sessionOptions: old.sessionOptions } : {}),
+    ...(old.permissions ? { permissions: old.permissions } : {}),
+    ...(old.permissionMode ? { permissionMode: old.permissionMode } : {}),
+    remoteHostId: old.remoteHostId,
+    remotePath: old.remotePath || null,
+    restoredText: shown,
+    savedText: shown,
+    // An agent resumes its conversation (it knows its id); a shell starts
+    // again in its folder on the host.
+    notConnected: { cwd: null, resume: old.kind === 'agent' && !!old.sessionId },
+    broadcast: old.broadcast,
+    ...(old.num ? { num: old.num } : {}),
+    ...(old.paneName ? { paneName: old.paneName } : {}),
+    ...(typeof old.team === 'string' ? { team: old.team } : {}),
+    ...(old.titleSet ? { titleSet: true } : {}),
+    ...(old.autoTitle ? { autoTitle: old.autoTitle } : {}),
+    ...(old.teamTools ? { teamTools: true } : {}),
+    ...(typeof old.toolsVersion === 'string' ? { toolsVersion: old.toolsVersion } : {}),
+    // A new terminal component: it shows the "not connected" state.
+    gen: (old.gen || 0) + 1,
+    droppedAt: now
+  })
+  ws.tree = replaceNode(ws.tree, leafId, () => waiting)
+  return true
+}
+let offDropExit = null
+onMounted(() => {
+  if (window.shellApi.onExit) offDropExit = window.shellApi.onExit((e) => e && waitForHostAgain(e.id, { exitCode: e.exitCode, pid: e.pid }))
+})
+onBeforeUnmount(() => offDropExit && offDropExit())
 
 // Pane menu > Restart in Yolo / Restart asking first: the pane keeps that
 // choice (for its next restarts too) and restarts, its conversation resumed.
