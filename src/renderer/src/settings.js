@@ -7,6 +7,7 @@ import { UI_LANGUAGES } from './i18n'
 import { validHiddenUsageProviders } from '../../shared/usageProviders'
 import { validSessionOptionSettings } from '../../shared/agentSessionOptions'
 import { MAX_CONCURRENT_LIMIT, NESTED_DEPTH_LIMIT } from '../../shared/orchestration'
+import { validProjectOpen } from './projectLauncher'
 
 // Font names: the same in every language.
 export const FONT_FAMILIES = [
@@ -100,6 +101,9 @@ export const DEFAULT_SETTINGS = Object.freeze({
   chatIdleMinutes: 30,
   restoreWorkspaces: true,
   resumeAgents: true,
+  // What a new project starts (projectLauncher.js): 'ask' (its launcher),
+  // 'terminal', 'terminal:<shellId>' or 'agent:<agentId>'.
+  projectOpen: 'ask',
   // Windows input method tip for voice typing ('' = whatever is active).
   voiceTip: '',
   // true once you pick a voice language yourself (then we never override it).
@@ -355,6 +359,7 @@ export function loadSettings(saved) {
       continue
     }
     if (key === 'agentPermissions' && !['manual', 'yolo'].includes(v)) continue
+    if (key === 'projectOpen' && !validProjectOpen(v)) continue
     if (key === 'keepAwake' && !['off', 'agents', 'on'].includes(v)) continue
     if (key === 'promptCacheTtlMs' && ![300000, 3600000].includes(v)) continue
     if (key === 'agentSleepMinutes' && !(Number.isInteger(v) && v >= 1 && v <= 1440)) continue

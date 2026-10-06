@@ -241,7 +241,13 @@
       "terminalRuleAllowLine": "autorisée (ligne entière)",
       "terminalRuleAskLine": "demande toujours (ligne entière)",
       "terminalRuleRegex": "expression régulière",
-      "terminalLog": "Tessel tient un journal de chaque commande que les agents lancent dans les terminaux et des terminaux qu’ils lisent (quand, quel agent, quel terminal, la commande en entier) dans agent-terminal.log, dans son dossier de données, jusqu’à 1 Mo (la partie plus ancienne dans agent-terminal.log.old). Les commandes peuvent contenir des secrets que vous avez donnés à un agent."
+      "terminalLog": "Tessel tient un journal de chaque commande que les agents lancent dans les terminaux et des terminaux qu’ils lisent (quand, quel agent, quel terminal, la commande en entier) dans agent-terminal.log, dans son dossier de données, jusqu’à 1 Mo (la partie plus ancienne dans agent-terminal.log.old). Les commandes peuvent contenir des secrets que vous avez donnés à un agent.",
+      "projectOpen": "À l'ouverture d'un projet",
+      "projectOpenHint": "Ce qu'un nouveau projet lance, ici ou sur un hôte SSH. Demander affiche les agents, les terminaux et les conversations récentes à choisir.",
+      "projectOpenAsk": "Demander",
+      "projectOpenTerminal": "Ouvrir un terminal",
+      "projectOpenShell": "Ouvrir un terminal : {{shell}}",
+      "projectOpenAgent": "Lancer {{agent}}"
     },
     "orchestration": {
       "yourTeam": "Votre équipe",

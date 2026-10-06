@@ -65,6 +65,10 @@ const props = defineProps({
   agentUpdateHistory: { type: Object, default: () => ({ entries: [], last: {} }) }
 })
 
+// Settings > Agents "When a project opens" (projectLauncher.js): its choices.
+const projectOpenShellLabel = (shell) => t('settings.agents.projectOpenShell', 'Open a terminal: {{shell}}', { shell })
+const projectOpenAgentLabel = (agent) => t('settings.agents.projectOpenAgent', 'Start {{agent}}', { agent })
+
 // The pages, grouped as in the sidebar. `icon` is a 16x16 stroke path.
 // Titles are getters: read where they are shown, in the interface's language.
 const PAGES = {
@@ -1230,6 +1234,26 @@ function previewSound() {
                     :value="a.id"
                   >
                     {{ a.name }}
+                  </option>
+                </ThemedSelect>
+              </div>
+              <div class="set-row">
+                <label class="set-label" for="settings-project-open">
+                  {{ t('settings.agents.projectOpen', 'When a project opens') }}
+                  <span class="set-hint">{{ t('settings.agents.projectOpenHint', 'What a new project starts, here or on an SSH host. Ask shows the agents, terminals and recent conversations to choose from.') }}</span>
+                </label>
+                <ThemedSelect id="settings-project-open" v-model="settings.projectOpen" class="set-select" data-setting="projectOpen">
+                  <option value="ask">{{ t('settings.agents.projectOpenAsk', 'Ask') }}</option>
+                  <option value="terminal">{{ t('settings.agents.projectOpenTerminal', 'Open a terminal') }}</option>
+                  <option v-for="s in shells" :key="'terminal:' + s.id" :value="'terminal:' + s.id">
+                    {{ projectOpenShellLabel(s.name) }}
+                  </option>
+                  <option
+                    v-for="a in agents.filter((x) => x.available && agentEnabled(settings.agentPrefs, x.id))"
+                    :key="'agent:' + a.id"
+                    :value="'agent:' + a.id"
+                  >
+                    {{ projectOpenAgentLabel(a.name) }}
                   </option>
                 </ThemedSelect>
               </div>
