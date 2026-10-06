@@ -1615,12 +1615,12 @@ function pasteSize(text) {
   return `text, ${lines} line${lines === 1 ? '' : 's'}, ${String(text).length} chars` // i18n-ignore
 }
 
-async function pasteClipboard() {
+async function pasteClipboard(how = 'menu') {
   const text = await window.shellApi.readClipboard()
-  if (text) requestPaste(text, 'menu')
+  if (text) requestPaste(text, how)
   else if (window.shellApi.clipboardHasImage && (await window.shellApi.clipboardHasImage()))
-    pasteImage('menu')
-  else logPaste('menu: the clipboard has no text or image')
+    pasteImage(how)
+  else logPaste(`${how}: the clipboard has no text or image`) // i18n-ignore
 }
 
 // An image can't be typed into a terminal. Claude Code attaches an image
@@ -2524,16 +2524,20 @@ onMounted(() => {
       ctx.routeInput(props.node.id, ' ')
       return false
     }
-    // Ctrl+V pastes (text or image, see onPasteEvent) instead of sending the
-    // raw Ctrl+V key: let the browser raise its paste event.
+    // Ctrl+V pastes (text or image) instead of sending the raw Ctrl+V key.
+    // Read from the clipboard here, as the menu's Paste does: the browser's
+    // paste event did not always come for an image-only clipboard.
     if (
       e.type === 'keydown' &&
       e.ctrlKey &&
       !e.shiftKey &&
       !e.altKey &&
       e.key.toLowerCase() === 'v'
-    )
+    ) {
+      e.preventDefault()
+      pasteClipboard('Ctrl+V')
       return false
+    }
     if (e.type === 'keydown' && e.ctrlKey && e.shiftKey) {
       const k = e.key.toLowerCase()
       if (k === 'c') {

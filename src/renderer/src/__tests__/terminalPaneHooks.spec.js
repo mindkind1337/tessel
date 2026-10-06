@@ -60,7 +60,9 @@ vi.mock('@xterm/xterm', () => ({
     onData() {}
     onResize() {}
     onSelectionChange() {}
-    attachCustomKeyEventHandler() {}
+    attachCustomKeyEventHandler(fn) {
+      this.keyHandler = fn
+    }
     paste(data) {
       ;(this.pasted ||= []).push(data)
     }
@@ -256,6 +258,31 @@ describe('TerminalPane status integration', () => {
     expect(term.pasted.at(-1)).toBe('secret one\nsecret two')
     expect(logged().at(-1)).toBe('paste in test-pane (agent working): confirmed: text, 2 lines, 21 chars pasted')
     expect(logged().join('\n')).not.toContain('secret')
+  })
+
+  // Ctrl+V reads the clipboard itself (the browser's paste event did not
+  // always come for an image-only clipboard): an image is saved and its path pasted.
+  it('Ctrl+V with only an image on the clipboard: saved, its path pasted, the key never reaches the terminal', async () => {
+    wrapper.unmount()
+    window.shellApi.log = vi.fn()
+    window.shellApi.readClipboard = vi.fn(async () => '')
+    window.shellApi.clipboardHasImage = vi.fn(async () => true)
+    window.shellApi.saveClipboardImage = vi.fn(async () => 'C:\\Temp\\tessel-paste\\image-2.png')
+    window.shellApi.writePty = vi.fn()
+    wrapper = mount(TerminalPane, {
+      props: { node: { id: 'test-pane', kind: 'agent', type: 'leaf', title: 'Claude', agentId: 'claude', agentLaunchToken: 'launch' } },
+      global: { provide: { panelCtx: ctx } },
+      attachTo: document.body
+    })
+    await nextTick()
+    const term = fixture.terminals.at(-1)
+    const key = new KeyboardEvent('keydown', { key: 'v', ctrlKey: true, cancelable: true })
+    expect(term.keyHandler(key)).toBe(false)
+    expect(key.defaultPrevented).toBe(true)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(term.pasted).toEqual(['C:\\Temp\\tessel-paste\\image-2.png'])
+    expect(window.shellApi.log.mock.calls.map((c) => c[1]).at(-1)).toBe('paste in test-pane: Ctrl+V: image saved, its path pasted')
+    expect(window.shellApi.writePty).not.toHaveBeenCalledWith('test-pane', '\x16')
   })
 
   // The suggestion is read again 3 s after a turn ends; a new turn started
