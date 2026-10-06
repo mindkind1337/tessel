@@ -37,7 +37,9 @@
       "devToolsLabel": "Ouvrir les outils de développement du navigateur",
       "external": "Ouvrir dans le navigateur par défaut",
       "clearData": "Effacer les données de navigation (cookies, stockage des sites, cache)",
-      "clearDataLabel": "Effacer les données de navigation"
+      "clearDataLabel": "Effacer les données de navigation",
+      "importCookies": "Importer les cookies d'un autre navigateur (restez connecté à vos sites)",
+      "importCookiesLabel": "Importer les cookies"
     },
     "empty": {
       "title": "Nouvel onglet",
@@ -111,6 +113,34 @@
       "stop": "Arrêter",
       "stopHint": "Empêcher les agents de piloter cette page",
       "stopped": "Les agents ne peuvent plus piloter cette page. Fermez-la et ouvrez-en une nouvelle pour le leur permettre à nouveau."
+    },
+    "cookieImport": {
+      "title": "Importer les cookies d'un autre navigateur",
+      "intro": "Copiez vos connexions depuis un autre navigateur pour rester connecté à vos sites dans le navigateur de Tessel.",
+      "detecting": "Détection de vos navigateurs…",
+      "none": "Aucun autre navigateur avec des cookies n'a été trouvé sur cet ordinateur.",
+      "chooseProfile": "Choisir un profil",
+      "defaultBrowser": "Navigateur par défaut",
+      "count": "{{n}} cookies",
+      "domainFilter": "Seulement ces domaines (facultatif)",
+      "domainPlaceholder": "ex. github.com, linear.app",
+      "warning": "Ce sont vos connexions. Les agents qui utilisent les outils du navigateur agiront avec elles, sauf si vous activez une session d'agent distincte dans Paramètres > Navigateur. Les cookies Google ne sont jamais importés.",
+      "appBoundNote": "{{n}} cookies de ce profil utilisent le chiffrement lié à l'application de Chrome et ne peuvent pas être lus ; exportez-les dans un fichier et utilisez Importer depuis un fichier.",
+      "import": "Importer les cookies",
+      "fromFile": "Importer depuis un fichier…",
+      "close": "Fermer (Échap)",
+      "done": "Terminé",
+      "imported": "{{n}} cookies importés",
+      "skippedAppBound": "{{n}} ignorés, chiffrés par la protection liée à l'application de Chrome",
+      "skippedGoogle": "{{n}} cookies Google ignorés (connectez-vous plutôt à Google dans le navigateur de Tessel)",
+      "skippedOther": "{{n}} autres ignorés",
+      "toast": "{{n}} cookies importés dans le navigateur de Tessel.",
+      "unavailable": "L'import de cookies n'est pas disponible.",
+      "locked": "Fermez d'abord ce navigateur, puis réessayez (il garde ses cookies verrouillés tant qu'il est ouvert).",
+      "badFile": "Ce fichier n'est pas un export de cookies que Tessel comprend (un export JSON ou un cookies.txt).",
+      "tooBig": "Ce fichier est trop volumineux.",
+      "notFound": "Ce profil est introuvable.",
+      "failed": "L'import n'a pas pu être effectué."
     }
   },
   "browserDesign": {

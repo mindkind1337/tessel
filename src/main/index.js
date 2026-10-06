@@ -59,7 +59,9 @@ import { AGENT_INSTALLS, checkInstall } from './agentInstalls'
 import { createInstallLogs } from './installLog'
 import { writeBoardRule } from './agentMemory'
 import { claudeImageFile, isPastedImage, PASTE_DIR } from './pastedImages'
-import { createBrowserGuests } from './browserGuest'
+import { createBrowserGuests, BROWSER_PARTITION } from './browserGuest'
+import { listBrowsersForImport, importFromProfile, importFromFile } from './cookieImport/importer'
+import { detectBrowsers as detectBrowsersForImport } from './cookieImport/detect'
 import { createAgentBrowser } from './agentBrowser'
 import { createAgentTerminal } from './agentTerminal'
 import { createChatSessions } from './chat/sessions'
@@ -2636,6 +2638,66 @@ const browserGuests = createBrowserGuests({
   onGuest: (guest) => agentBrowser.watchGuest(guest)
 })
 browserGuests.register(ipcMain)
+// Importing cookies from another browser into Tessel's browser session, so the
+// user stays signed in to their sites in the built-in browser
+// (src/main/cookieImport). Only counts and domain names leave the main
+// process; no value is ever logged, returned or written to disk, and a copy of
+// a cookie database is deleted right after it is read.
+ipcMain.handle('browser:cookieSources', async (event) => {
+  if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return []
+  try {
+    return await listBrowsersForImport()
+  } catch (err) {
+    log.warn('cookie-import', `listing browsers failed: ${err && err.message}`)
+    return []
+  }
+})
+ipcMain.handle('browser:importCookies', async (event, opts) => {
+  if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return { ok: false, code: 'refused' }
+  const o = opts && typeof opts === 'object' ? opts : {}
+  try {
+    const browsers = await detectBrowsersForImport()
+    const browser = browsers.find((b) => b.id === o.browserId)
+    const profile = browser && browser.profiles.find((p) => p.dir === o.profileDir)
+    if (!browser || !profile) return { ok: false, code: 'not-found' }
+    return await importFromProfile({
+      browser,
+      profile,
+      session: browserGuests.browserSession(BROWSER_PARTITION),
+      domainFilter: typeof o.domainFilter === 'string' ? o.domainFilter : ''
+    })
+  } catch (err) {
+    log.warn('cookie-import', `import failed: ${err && err.code ? err.code : ''}`)
+    return { ok: false, code: (err && err.code) || 'failed' }
+  }
+})
+ipcMain.handle('browser:pickCookieFile', async (event) => {
+  if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return null
+  const r = await dialog.showOpenDialog(mainWindow, {
+    title: t('main.dialog.pickCookieFile', 'Import cookies from a file'),
+    properties: ['openFile'],
+    filters: [{ name: t('main.dialog.cookieFileFilter', 'Cookies (JSON, cookies.txt)'), extensions: ['json', 'txt'] }]
+  })
+  return r.canceled || !r.filePaths.length ? null : r.filePaths[0]
+})
+ipcMain.handle('browser:importCookieFile', async (event, opts) => {
+  if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return { ok: false, code: 'refused' }
+  const o = opts && typeof opts === 'object' ? opts : {}
+  try {
+    return await importFromFile({
+      filePath: typeof o.filePath === 'string' ? o.filePath : '',
+      session: browserGuests.browserSession(BROWSER_PARTITION),
+      domainFilter: typeof o.domainFilter === 'string' ? o.domainFilter : ''
+    })
+  } catch (err) {
+    return { ok: false, code: (err && err.code) || 'failed' }
+  }
+})
+ipcMain.handle('browser:clearImportedCookies', (event) => {
+  if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return { ok: false }
+  // Only the main session's cookies (the user's imported logins live there).
+  return browserGuests.clearData({ partition: BROWSER_PARTITION, cookiesOnly: true })
+})
 // Agents driving the browser's pages (agentBrowser.js): the browser_* tools
 // of teamMcp/server.cjs, over the tessel command's pipe ('browser' below),
 // each request signed by its pane's team secret.

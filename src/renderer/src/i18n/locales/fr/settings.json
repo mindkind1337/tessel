@@ -80,6 +80,10 @@
       "automations": {
         "title": "Automatisations",
         "desc": "Exécuter une tâche d'agent selon une planification, quand Tessel est ouvert."
+      },
+      "browser": {
+        "title": "Navigateur",
+        "desc": "Le navigateur intégré : importer vos connexions et la session utilisée par les agents."
       }
     },
     "groups": {
@@ -765,6 +769,19 @@
       "removeText": "La commande sera supprimée et son dossier retiré du PATH de votre compte Windows. L’application Tessel restera installée.",
       "remove": "Retirer",
       "agentsNote": "Les programmes exécutés sous votre compte, y compris les agents des panneaux de Tessel, peuvent aussi utiliser cette commande pour ouvrir des projets, des fichiers et des panneaux, ou ajouter des cartes. Elle ne saisit aucun texte dans un terminal et ne répond à aucune demande de confirmation."
+    },
+    "browser": {
+      "cookies": "Vos connexions",
+      "importCookies": "Importer les cookies d'un autre navigateur",
+      "importCookiesHint": "Copiez vos connexions depuis Chrome, Edge, Brave, Firefox et d'autres pour rester connecté à vos sites dans le navigateur intégré. Vous choisissez un navigateur et un profil à chaque fois ; les cookies Google ne sont jamais importés.",
+      "importCookiesButton": "Importer les cookies…",
+      "clearImported": "Effacer les cookies du navigateur",
+      "clearImportedHint": "Supprimer tous les cookies de la session principale du navigateur intégré, y compris ceux que vous avez importés. Vous serez déconnecté de vos sites.",
+      "clearButton": "Effacer les cookies",
+      "cleared": "Cookies effacés.",
+      "agents": "Les agents et le navigateur",
+      "separateSession": "Les agents utilisent une session de navigateur distincte",
+      "separateSessionHint": "Les pages que les agents ouvrent utilisent leur propre session, sans les connexions que vous avez importées, afin qu'un agent utilisant les outils du navigateur n'agisse pas avec vos identifiants. Les pages déjà ouvertes gardent la session dans laquelle elles ont démarré. Désactivé : les agents partagent la même session de navigateur et peuvent utiliser les sites où vous êtes connecté."
     }
   }
 }

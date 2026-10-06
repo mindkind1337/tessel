@@ -54,6 +54,7 @@ import { agentRulesReason, applyAgentStateRules } from './agentStateRules'
 import { activity, recordActivity, loadActivity, saveActivityNow, activityChanged, trimCount as activityTrimCount } from './activityStore'
 import ActivityPanel from './components/ActivityPanel.vue'
 import ConfirmDialog from './components/ConfirmDialog.vue'
+import CookieImportDialog from './components/CookieImportDialog.vue'
 import { askQuitRunning } from './quitConfirm'
 import ImageViewer from './components/ImageViewer.vue'
 import FileViewer from './components/FileViewer.vue'
@@ -810,6 +811,9 @@ const sidebarEl = ref(null)
 // An image shown over Tessel ([Image #N] in a Claude Code pane): { src, title, file }
 const imageView = ref(null)
 const confirmState = ref(null)
+// Import cookies from another browser (CookieImportDialog): opened from a
+// browser pane's menu and from Settings > Browser.
+const cookieImportOpen = ref(false)
 function askConfirm(opts) {
   return new Promise((resolve) => {
     if (confirmState.value) confirmState.value.resolve(false)
@@ -1563,7 +1567,8 @@ function serializeNode(node) {
       paneName: node.paneName || undefined,
       url: allowedBrowserUrl(node.url) || BLANK_URL,
       zoom: Number.isFinite(node.zoom) ? node.zoom : 0,
-      viewPath: node.viewPath || undefined
+      viewPath: node.viewPath || undefined,
+      agentSession: node.agentSession ? true : undefined
     }
   }
   if (node.type === 'leaf') {
@@ -1672,6 +1677,7 @@ async function deserializeNode(snap, cwd = null) {
     if (Number.isInteger(snap.num) && snap.num > 0) leaf.num = snap.num
     if (Number.isFinite(snap.zoom)) leaf.zoom = Math.max(-3, Math.min(5, snap.zoom))
     if (validViewPath(snap.viewPath)) leaf.viewPath = snap.viewPath
+    if (snap.agentSession === true) leaf.agentSession = true
     return leaf
   }
   if (snap.type === 'leaf') {
@@ -2591,6 +2597,10 @@ provide('panelCtx', {
       ? leaf.chatPermissions
       : launchPermissions(null, [leaf && leaf.projectDir, leaf && leaf.cwd], settings.yoloFolders, settings.agentPermissions),
   openExternal: (url) => openExternalUrl(url),
+  // Import cookies from another browser (the browser pane's menu).
+  openCookieImport: () => {
+    cookieImportOpen.value = true
+  },
   // Tessel's shortcuts pressed in an editor pane (it keeps them from Monaco).
   appShortcut: (e) => onKey(e, { fromEditor: true })
 })
@@ -8679,6 +8689,9 @@ const agentBrowserTargets = createAgentBrowserTargets({
   openPage({ ws, near, url, stack = false }) {
     if (!workspaces.value.includes(ws) || !findLeafIn(ws.tree, near.id)) return null
     const leaf = makeBrowserLeaf(null, url)
+    // "Agents use a separate browser session": the page gets the agents' own
+    // session, apart from the user's imported logins in the main one.
+    if (settings.browserAgentSeparateSession) leaf.agentSession = true
     keepView(leaf, near, ws)
     ws.tree = addPageNear(ws.tree, near.id, leaf, {
       dir: stack ? 'col' : 'row',
@@ -11103,6 +11116,12 @@ onBeforeUnmount(() => {
       @answer="answerConfirm"
     />
 
+    <CookieImportDialog
+      v-if="cookieImportOpen"
+      @imported="(s) => showToast(t('browser.cookieImport.toast', 'Imported {{n}} cookies into Tessel\'s browser.', { n: s.imported }), { timeout: 4000 })"
+      @close="cookieImportOpen = false"
+    />
+
     <AgentCommandApproval
       v-if="approvalCard"
       :key="approvalCard.card.command + approvalCard.card.kind"
@@ -11171,6 +11190,7 @@ onBeforeUnmount(() => {
       @open-update-log="openUpdateLog"
       @update-all-agents="updateAllAgents"
       @cancel-agent-update="cancelAgentUpdate"
+      @open-cookie-import="(((settingsOpen = false)), (cookieImportOpen = true))"
       @open-connections="((settingsOpen = false), (mcpTab = 'connections'), (mcpOpen = true))"
       @check-updates="checkForUpdates"
       @open-update="((settingsOpen = false), (updateOpen = true))"

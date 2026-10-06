@@ -166,6 +166,15 @@ const PAGES = {
     },
     icon: 'M4 11V7a4 4 0 018 0v4l1 1.5H3zM6.5 14a1.5 1.5 0 003 0'
   },
+  browser: {
+    get title() {
+      return t('settings.pages.browser.title', 'Browser')
+    },
+    get desc() {
+      return t('settings.pages.browser.desc', 'The built-in browser: importing your sign-ins and the session agents use.')
+    },
+    icon: 'M8 1.5a6.5 6.5 0 100 13 6.5 6.5 0 000-13zM1.5 8h13M8 1.5c1.8 1.7 2.8 4 2.8 6.5S9.8 12.8 8 14.5M8 1.5C6.2 3.2 5.2 5.5 5.2 8s1 4.8 2.8 6.5'
+  },
   git: {
     get title() {
       return t('settings.pages.git.title', 'Git & Source Control')
@@ -227,7 +236,7 @@ const GROUPS = [
     get title() {
       return t('settings.groups.configure', 'Configure')
     },
-    pages: ['general', 'appearance', 'text', 'terminal', 'editor', 'alerts']
+    pages: ['general', 'appearance', 'text', 'terminal', 'editor', 'browser', 'alerts']
   },
   {
     id: 'workflows',
@@ -270,6 +279,7 @@ const PAGE_TITLES_EN = {
   text: 'Text', // i18n-ignore
   terminal: 'Terminal', // i18n-ignore
   editor: 'Editor', // i18n-ignore
+  browser: 'Browser', // i18n-ignore
   alerts: 'Notifications', // i18n-ignore
   git: 'Git & Source Control', // i18n-ignore
   automations: 'Automations', // i18n-ignore
@@ -416,8 +426,25 @@ const emit = defineEmits([
   'open-update-log',
   'test-notification',
   'install-agent',
-  'agent-install-page'
+  'agent-install-page',
+  'open-cookie-import'
 ])
+
+const browserApi = typeof window !== 'undefined' && window.shellApi ? window.shellApi.browser : null
+const clearingCookies = ref(false)
+const clearedCookies = ref(false)
+async function clearImportedCookies() {
+  if (!browserApi || typeof browserApi.clearImportedCookies !== 'function' || clearingCookies.value) return
+  clearingCookies.value = true
+  clearedCookies.value = false
+  try {
+    const r = await browserApi.clearImportedCookies()
+    clearedCookies.value = !!(r && r.ok)
+  } catch {
+    clearedCookies.value = false
+  }
+  clearingCookies.value = false
+}
 
 // Settings > Agents > Detection rules: which rules read the agents' screens.
 const agentRulesLine = computed(() => {
@@ -2968,6 +2995,56 @@ function previewSound() {
                 </div>
               </div>
 
+            </div>
+          </div>
+        </section>
+
+        <!-- ============ Browser ============ -->
+        <section
+          id="set-browser"
+          class="set-page"
+          data-page="browser"
+          :hidden="!shown('browser')"
+          aria-labelledby="set-browser-title"
+        >
+          <header class="set-page-head">
+            <h2 id="set-browser-title">{{ PAGES.browser.title }}</h2>
+            <p class="set-page-desc">{{ PAGES.browser.desc }}</p>
+          </header>
+          <div class="set-group">
+            <h3 class="set-group-title">{{ t('settings.browser.cookies', 'Your sign-ins') }}</h3>
+            <div class="set-card">
+              <div class="set-row">
+                <div class="set-label">
+                  {{ t('settings.browser.importCookies', 'Import cookies from another browser') }}
+                  <span class="set-hint">{{ t('settings.browser.importCookiesHint', 'Copy your sign-ins from Chrome, Edge, Brave, Firefox and others so you stay logged in to your sites in the built-in browser. You choose a browser and profile each time; Google cookies are never imported.') }}</span>
+                </div>
+                <button type="button" class="exit-btn" data-test="settings-import-cookies" @click="emit('open-cookie-import')">
+                  {{ t('settings.browser.importCookiesButton', 'Import cookies…') }}
+                </button>
+              </div>
+              <div class="set-row">
+                <div class="set-label">
+                  {{ t('settings.browser.clearImported', 'Clear browser cookies') }}
+                  <span class="set-hint">{{ t('settings.browser.clearImportedHint', 'Delete every cookie in the built-in browser\'s main session, including the ones you imported. You will be signed out of your sites.') }}</span>
+                  <span v-if="clearedCookies" class="set-hint">{{ t('settings.browser.cleared', 'Cookies cleared.') }}</span>
+                </div>
+                <button type="button" class="exit-btn" :disabled="clearingCookies" data-test="settings-clear-cookies" @click="clearImportedCookies">
+                  {{ t('settings.browser.clearButton', 'Clear cookies') }}
+                </button>
+              </div>
+            </div>
+          </div>
+          <div class="set-group">
+            <h3 class="set-group-title">{{ t('settings.browser.agents', 'Agents and the browser') }}</h3>
+            <div class="set-card">
+              <label class="set-row">
+                <div class="set-label">
+                  {{ t('settings.browser.separateSession', 'Agents use a separate browser session') }}
+                  <span class="set-hint">{{ t('settings.browser.separateSessionHint', 'Pages agents open use their own session, without the sign-ins you imported, so an agent using the browser tools does not act with your logins. Pages already open keep the session they started in. Off: agents share the one browser session and can use the sites you are signed into.') }}</span>
+                </div>
+                <input v-model="settings.browserAgentSeparateSession" type="checkbox" class="set-switch" data-setting="browserAgentSeparateSession" />
+              </label>
             </div>
           </div>
         </section>

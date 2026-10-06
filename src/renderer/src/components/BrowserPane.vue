@@ -26,6 +26,7 @@ import {
   Camera,
   ChevronDown,
   ChevronUp,
+  Cookie,
   Copy,
   Crosshair,
   Eraser,
@@ -54,7 +55,7 @@ import {
 } from '../browser/browserPage'
 import { registerWebview } from '../browser/webviewPassthrough'
 import { registerNavigationOwner, focusNavigationOwner, isNavigationOwner, releaseNavigationOwner } from '../browser/navigationFocus'
-import { claimPage, releasePage, placePage, createWebview } from '../browser/pageHost'
+import { claimPage, releasePage, placePage, createWebview, MAIN_PARTITION, AGENT_PARTITION } from '../browser/pageHost'
 import DesignModePanel from './DesignModePanel.vue'
 import { t } from '../i18n'
 
@@ -86,6 +87,9 @@ const design = ref(null)
 // later page goes through loadURL.
 const currentUrl = ref(allowedBrowserUrl(props.node.url) || BLANK_URL)
 const initialSrc = currentUrl.value
+// A page an agent opened when "Agents use a separate browser session" was on
+// is marked on the leaf; it keeps that session for its whole life.
+const partition = props.node.agentSession ? AGENT_PARTITION : MAIN_PARTITION
 const pageTitle = ref(pageTitleFor(props.node.title, currentUrl.value))
 const loading = ref(false)
 const canGoBack = ref(false)
@@ -357,6 +361,10 @@ async function clearData() {
   if (!ctx.toast) return
   if (r && r.ok) ctx.toast(t('browser.clearData.done', 'Browsing data cleared'), { timeout: 3000 })
   else ctx.toast(t('browser.clearData.failed', 'Could not clear the browsing data.'), { kind: 'error' })
+}
+function openCookieImport() {
+  closeMenus()
+  if (ctx.openCookieImport) ctx.openCookieImport()
 }
 function openExternal(url = currentUrl.value) {
   if (!displayUrl(url)) return
@@ -795,7 +803,7 @@ function adoptLivePage() {
 function mountPage() {
   const host = pageLayer()
   if (host) {
-    const claimed = claimPage(props.node.id, host, initialSrc, pageOwner)
+    const claimed = claimPage(props.node.id, host, initialSrc, pageOwner, partition)
     page = claimed.page
     webviewEl.value = page.webview
     overlayTarget.value = page.overlay
@@ -813,7 +821,7 @@ function mountPage() {
     return
   }
   // No page layer (a pane shown on its own): the page in the pane.
-  const el = createWebview(initialSrc)
+  const el = createWebview(initialSrc, partition)
   if (pageEl.value) pageEl.value.insertBefore(el, pageEl.value.firstChild)
   webviewEl.value = el
 }
@@ -1084,6 +1092,16 @@ defineExpose({ navigate, focusAddress })
           @click="openDevTools"
         >
           <SquareCode :size="16" />
+        </button>
+        <button
+          type="button"
+          class="bp-btn"
+          data-test="browser-import-cookies"
+          :title="t('browser.tools.importCookies', 'Import cookies from another browser (stay signed in to your sites)')"
+          :aria-label="t('browser.tools.importCookiesLabel', 'Import cookies')"
+          @click="openCookieImport"
+        >
+          <Cookie :size="16" />
         </button>
         <button
           type="button"

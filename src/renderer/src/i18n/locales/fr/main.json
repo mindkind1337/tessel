@@ -27,7 +27,9 @@
       "hostKeyQuestion": "Tessel ne s’est jamais connecté à {{host}} (port {{port}}) et ne peut pas vérifier qu’il s’agit de la bonne machine.\n\nEmpreinte de la clé {{keyType}} :\n{{fingerprint}}\n\nComparez-la avec l’empreinte fournie par votre administrateur ou celle que l’hôte affiche (ssh-keygen -lf /etc/ssh/ssh_host_*_key.pub). Si elle correspond, Tessel retient cette clé pour cet hôte."
     },
     "dialog": {
-      "pickFolder": "Choisir un dossier de projet"
+      "pickFolder": "Choisir un dossier de projet",
+      "pickCookieFile": "Importer les cookies depuis un fichier",
+      "cookieFileFilter": "Cookies (JSON, cookies.txt)"
     },
     "chatFiles": {
       "executable": "Tessel n'ouvre jamais de programmes ni de scripts depuis le chat.",

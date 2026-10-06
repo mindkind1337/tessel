@@ -450,7 +450,16 @@ const api = {
     // badge's Stop, and when an agent starts or stops driving a page.
     agentSettings: (opts) => ipcRenderer.invoke('browser:agentSettings', opts),
     agentStop: (id) => ipcRenderer.invoke('browser:agentStop', id),
-    onAgentControl: (cb) => subscribe('browser:agentControl', cb)
+    onAgentControl: (cb) => subscribe('browser:agentControl', cb),
+    // Importing cookies from another browser (src/main/cookieImport): the
+    // detected browsers and profiles with a cheap count, the import of a
+    // profile or a file, and clearing the imported cookies. Only counts and
+    // domain names cross; a cookie value never does.
+    cookieSources: () => ipcRenderer.invoke('browser:cookieSources'),
+    importCookies: (opts) => ipcRenderer.invoke('browser:importCookies', opts),
+    pickCookieFile: () => ipcRenderer.invoke('browser:pickCookieFile'),
+    importCookieFile: (opts) => ipcRenderer.invoke('browser:importCookieFile', opts),
+    clearImportedCookies: () => ipcRenderer.invoke('browser:clearImportedCookies')
   },
 
   // Agents using the other terminals (src/main/agentTerminal.js): the
