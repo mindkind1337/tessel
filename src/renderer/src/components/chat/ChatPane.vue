@@ -34,7 +34,10 @@ import { modelLabel } from '../../../../shared/modelLabel'
 import { modelsFor } from '../../agentModels'
 import { nativeChatSessionChoiceLabel } from '../../chat/orca/native-chat-session-option-labels.js'
 import { t } from '../../i18n'
-import { useJobCost, hasUsage, jobCostLine, jobCostDetails } from '../../jobCost'
+import HoverCardContent from '../hover/HoverCardContent.vue'
+import { useHoverCard } from '../hover/useHoverCard'
+import PaneHoverDetails from '../PaneHoverDetails.vue'
+import { agentStateLabel } from '../../sidebarModel'
 
 const props = defineProps({
   node: { type: Object, required: true }
@@ -130,15 +133,36 @@ const title = computed(() => {
   return /^\s*(claude|codex|opencode)\s*\(chat\)\s*$/i.test(own) ? agentName.value : own
 })
 
-// The title's tooltip: its name, what the current session used (tokens,
-// time, estimated cost: jobCost.js), and how to move the pane.
-const costOf = useJobCost('panes', () => [props.node.id])
-const titleHint = computed(() => {
-  const base = t('chat.pane.titleHint', '{{title}}\nDrag the header to move the pane', { title: title.value })
-  const cost = costOf(props.node.id)
-  if (!hasUsage(cost)) return base
-  return [base, '', jobCostLine(cost), jobCostDetails(cost, undefined, { withSummary: false })].join('\n')
+// The header's hover card, the same as a terminal agent's (PaneHoverDetails):
+// name, model, conversation, branch, state, team, this session's figures.
+const headerHover = useHoverCard({
+  openDelay: 400,
+  disabled: () => editingName.value || (typeof document !== 'undefined' && document.body.classList.contains('pane-dragging')),
+  ignore: 'input, .chat-badge, .chat-rate'
 })
+const hoverState = computed(() => {
+  if (status.value === 'approval') return { dot: 'waiting', label: t('sidebar.row.asksApproval', 'Asks your approval') }
+  if (status.value === 'working') return { dot: 'working', label: agentStateLabel('working') }
+  if (backgroundRunning.value) return { dot: 'monitoring', label: agentStateLabel('monitoring') }
+  return { dot: 'idle', label: agentStateLabel('idle') }
+})
+const hoverInfo = computed(() => ({
+  heading: title.value,
+  agentName: agentName.value,
+  iconKind: agentId.value,
+  accent: props.node.accent || null,
+  model: modelText.value,
+  conversation: props.node.autoTitle || '',
+  branch: props.node.worktree ? props.node.worktree.branch : '',
+  state: hoverState.value,
+  stateDetail: '',
+  warn: '',
+  yolo: yolo.value ? t('chat.pane.yoloHint', 'Tools run without asking (Settings)') : '',
+  team: team.value ? { name: team.value.name, lead: isLead.value } : null,
+  num: props.node.num || 0,
+  session: props.node.sessionId || '',
+  id: props.node.id
+}))
 
 const editingName = ref(false)
 const nameDraft = ref('')
@@ -559,6 +583,8 @@ function onPaneMouseDown() {
   ctx.setActive(props.node.id)
 }
 function onNavPointerDown(e) {
+  // A press (a drag, a rename, a button) closes the hover card.
+  headerHover.dismiss()
   if (e.button !== 0) return
   if (e.target.closest('button, input, label')) return
   if (typeof ctx.beginPaneDrag === 'function') ctx.beginPaneDrag(props.node.id, e)
@@ -698,7 +724,8 @@ defineExpose({ start, send, interrupt, focusPendingApproval, focusComposer: () =
       @mousedown.stop="onNavMouseDown"
       @pointerdown="onNavPointerDown"
     >
-      <div class="pane-nav-left">
+      <!-- Resting on the number, icon or title shows the hover card. -->
+      <div class="pane-nav-left" data-test="pane-hover-trigger" v-on="headerHover.triggerListeners">
         <!-- Its team, as a number (the lead's in the accent). -->
         <span v-if="team" class="pane-team-num" :class="{ lead: isLead }" data-test="chat-team-num" aria-hidden="true">{{ teamNumber(team.name) }}</span>
         <span
@@ -706,13 +733,12 @@ defineExpose({ start, send, interrupt, focusPendingApproval, focusComposer: () =
           :class="[iconState, { yolo }]"
           :aria-label="`${title} (${agentName})`"
           data-test="chat-icon"
-          :title="yolo ? t('chat.pane.yoloHint', 'Tools run without asking (Settings)') : undefined"
         >
           <BrandIcon :kind="agentId" :size="15" />
           <span class="pane-status-dot"></span>
         </span>
         <input v-if="editingName" ref="nameInput" v-model="nameDraft" class="pane-tab-input" :aria-label="t('pane.renameAgent', 'Agent name')" @mousedown.stop @click.stop @keydown.enter.prevent="saveName" @keydown.esc="editingName = false" @blur="saveName" />
-        <span v-else tabindex="0" @dblclick.stop="beginRename" @keydown.enter.prevent="beginRename" class="pane-title" data-test="chat-title" :title="titleHint">{{ title }}</span>
+        <span v-else tabindex="0" @dblclick.stop="beginRename" @keydown.enter.prevent="beginRename" class="pane-title" data-test="chat-title">{{ title }}</span>
         <!-- The state is the dot on the agent's logo; its words stay for screen readers. -->
         <span class="chat-status chat-status-sr" :class="'st-' + status" data-test="chat-status">{{ statusLabel }}</span>
         <span
@@ -730,6 +756,9 @@ defineExpose({ start, send, interrupt, focusPendingApproval, focusComposer: () =
         <AgentChildren v-if="children.length" :agent-id="agentId" :items="children" />
         <span v-if="rateText" class="chat-rate" data-test="chat-rate" :title="t('chat.rate.hint', '{{agent}} usage limits (5 hours, 7 days)', { agent: agentName })">{{ rateText }}</span>
       </div>
+      <HoverCardContent :hc="headerHover" side="bottom" align="start" :side-offset="6" class="pane-hover-card" data-test="pane-hover-card">
+        <PaneHoverDetails :info="hoverInfo" />
+      </HoverCardContent>
       <div class="pane-nav-actions" @mousedown.stop>
         <!-- The same conversation in a terminal (as the terminal agents' chat
              toggle): it goes on there, resumed. -->

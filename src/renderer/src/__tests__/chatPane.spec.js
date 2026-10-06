@@ -203,7 +203,7 @@ describe('ChatPane.vue', () => {
     expect(wrapper.get('[data-test="chat-title"]').text()).toBe('Curie')
   })
 
-  it("the title's tooltip adds the session's tokens and estimated cost", async () => {
+  it("the header's hover card shows the session's tokens and estimated cost", async () => {
     resetJobCost()
     window.shellApi.jobCost = {
       forCards: vi.fn(async () => ({})),
@@ -211,11 +211,14 @@ describe('ChatPane.vue', () => {
       onChanged: vi.fn(() => () => {})
     }
     await mountPane()
-    await vi.waitFor(() => expect(wrapper.get('[data-test="chat-title"]').attributes('title')).toContain('12.4k tokens · 6 min · ~$0.31'))
-    const hint = wrapper.get('[data-test="chat-title"]').attributes('title')
-    expect(hint).toContain('Drag the header to move the pane')
-    expect(hint).toContain('Model: Opus 5.5')
-    expect(hint).toContain('API-equivalent estimate')
+    // The header's hover card, as a terminal agent's: name, model, this session's figures.
+    await wrapper.get('[data-test="pane-hover-trigger"]').trigger('pointerover')
+    const card = () => document.querySelector('[data-pane-hover-details]')
+    await vi.waitFor(() => expect(card() && card().textContent).toContain('12.4k tokens · 6 min · ~$0.31'), { timeout: 2000 })
+    expect(card().querySelector('[data-hover-heading]').textContent).toBe(wrapper.get('[data-test="chat-title"]').text())
+    expect(card().textContent).toContain('Drag the header to move the pane')
+    expect(card().textContent).toContain('API-equivalent estimate')
+    expect(wrapper.get('[data-test="chat-title"]').attributes('title')).toBeUndefined()
     expect(window.shellApi.jobCost.forPanes).toHaveBeenCalledWith(['c1'])
     wrapper.unmount()
     wrapper = null
@@ -875,7 +878,8 @@ describe('ChatPane.vue', () => {
     expect(wrapper.find('[data-test="chat-permissions"]').exists()).toBe(false)
     const icon = wrapper.get('[data-test="chat-icon"]')
     expect(icon.classes()).toContain('yolo')
-    expect(icon.attributes('title')).toBe('Tools run without asking (Settings)')
+    // Said in the header's hover card (no native tooltip on the icon).
+    expect(icon.attributes('title')).toBeUndefined()
     // … (the chat's menu), then maximize and close.
     expect(wrapper.find('[data-test="chat-more"]').exists()).toBe(true)
     await wrapper.get('[data-test="chat-more"]').trigger('click')
