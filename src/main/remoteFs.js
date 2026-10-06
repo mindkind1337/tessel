@@ -1351,6 +1351,31 @@ export function createRemoteFs({
     return rows ? { ok: true, sessions: rows } : unreadable()
   }
 
+  // One agent conversation file on this host (__t_tread: Claude Code's
+  // transcript or a Codex rollout, found by its id in the agent's own folder
+  // there), a bounded window of it: offset null = its last `cap` bytes, else
+  // from that byte on. Never a sign-in, like listAgentSessions.
+  // -> { ok: true, size, data: Buffer } | { ok: false, missing? , notConnected?, error }
+  async function readAgentFile(hostId, { agent, id, offset = null, cap = 4 * 1024 * 1024 } = {}) {
+    if (!hostIdOk(hostId)) return { ok: false, error: t('main.remote.notFound', 'This remote host is no longer saved in Tessel.') }
+    if ((agent !== 'claude' && agent !== 'codex') || typeof id !== 'string' || !/^[0-9A-Za-z-]{8,100}$/.test(id)) return { ok: false, error: 'invalid' }
+    if (offset !== null && !(Number.isSafeInteger(offset) && offset >= 0)) return { ok: false, error: 'invalid' }
+    const max = Number.isSafeInteger(cap) && cap > 0 ? Math.min(cap, 32 * 1024 * 1024) : 4 * 1024 * 1024
+    if (!connectedQuietly(hostId)) return { ok: false, notConnected: true, error: t('main.remoteFs.notConnected', '{{host}} is not connected. Use Connect to sign in.', { host: hostLabel(hostId) }) }
+    const entry = sessions.get(hostId)
+    const open = !!(entry && !entry.closed && entry.session && entry.session.state === 'ready')
+    const res = await call(hostId, '__t_tread', [agent, id, offset === null ? '-' : String(offset), String(max)], { cap: max + 64, timeoutMs: 30_000, op: 'read', ...(open ? { ifOpen: true } : {}) })
+    if (!res || res.skipped) return { ok: false, notConnected: true, error: t('main.remoteFs.notConnected', '{{host}} is not connected. Use Connect to sign in.', { host: hostLabel(hostId) }) }
+    if (res.error) return { ok: false, error: res.error }
+    if (res.rc === RC.MISSING) return { ok: false, missing: true, error: 'missing' }
+    if (res.rc !== 0) return { ok: false, error: rcText(res, `rc ${res.rc}`) }
+    const out = Buffer.isBuffer(res.out) ? res.out : Buffer.from(String(res.out || ''), 'utf8')
+    const nl = out.indexOf(10)
+    const size = nl > 0 ? Number(out.toString('latin1', 0, nl)) : NaN
+    if (!Number.isSafeInteger(size) || size < 0) return { ok: false, error: 'unreadable' }
+    return { ok: true, size, data: out.subarray(nl + 1) }
+  }
+
   async function browse({ hostId, path } = {}) {
     if (!hostIdOk(hostId)) return { ok: false, error: t('main.remote.notFound', 'This remote host is no longer saved in Tessel.') }
     allow(hostId)
@@ -1449,6 +1474,7 @@ export function createRemoteFs({
     agentTools,
     connectedQuietly,
     listAgentSessions,
+    readAgentFile,
     browse,
     cloneProject,
     createProject,

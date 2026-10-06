@@ -63,6 +63,7 @@ import { createBrowserGuests } from './browserGuest'
 import { createAgentBrowser } from './agentBrowser'
 import { createAgentTerminal } from './agentTerminal'
 import { createChatSessions } from './chat/sessions'
+import { remoteSpawnAvailable, remoteSpawnFor } from './chat/remoteProcess'
 import { createChatImages } from './chat/chatImages'
 import { transcriptHomeFor } from './chat/transcriptHistory'
 import { createTranscriptViews } from './chat/transcriptView'
@@ -1255,6 +1256,26 @@ const chatSessions = createChatSessions({
       systemCodex: process.env.CODEX_HOME || join(os.homedir(), '.codex'),
       codexAccountsBase: join(app.getPath('userData'), 'codex-accounts')
     }),
+  // Chats in a project on an SSH host: the agent runs there (remoteSpawn,
+  // chat/remoteProcess.js), found where a terminal agent is (__t_agents);
+  // its conversation files are read over the connection (remoteFs.js).
+  remote: {
+    available: () => remoteSpawnAvailable(),
+    spawnFor: (q) => remoteSpawnFor(q),
+    resolveAgent: async (agent, hostId) => {
+      if (!remoteHosts.get(hostId)) return { error: t('main.remote.notFound', 'This remote host is no longer saved in Tessel.') }
+      remoteFs.allow(hostId)
+      const tools = await remoteFs.agentTools(hostId)
+      if (!tools || tools.error) return { error: String((tools && tools.error) || 'failed') }
+      const exe = agent === 'codex' ? tools.codex : tools.claude || tools.vscodeClaude
+      return exe ? { exe } : null
+    },
+    readAgentFile: (hostId, q) => remoteFs.readAgentFile(hostId, q),
+    hostLabel: (hostId) => {
+      const target = remoteHosts.get(hostId)
+      return (target && target.label) || hostId
+    }
+  },
   log
 })
 chatSessions.register(ipcMain)

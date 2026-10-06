@@ -10,12 +10,19 @@
 // File: { version: 1, folders: { [normalized path]: { trusted: true, at } } }
 import { isAbsolute, resolve } from 'path'
 import { readJsonSafe, writeJsonSafe } from '../safeJson.js'
+import { isRemotePath, parseRemotePath, remoteRoot } from '../../shared/remotePath.js'
 
 export const MAX_FOLDERS = 2000
 
 // One key per folder: absolute, resolved, lower case (Windows paths ignore
 // case), no trailing separator (except a drive root).
+// A folder on an SSH host (ssh://<hostId>/path): its normalized virtual
+// root, case kept (POSIX paths are case-sensitive), never Windows' resolve().
 export function trustKey(dir) {
+  if (isRemotePath(dir)) {
+    const p = parseRemotePath(dir)
+    return p ? remoteRoot(p.hostId, p.path) : null
+  }
   if (typeof dir !== 'string' || !dir || dir.length > 4096 || dir.includes('\0') || !isAbsolute(dir))
     return null
   let key = resolve(dir).toLowerCase()

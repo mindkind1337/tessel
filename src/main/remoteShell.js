@@ -136,7 +136,11 @@ export const FUNCTIONS = new Set([
   '__t_agents',
   // The agent sessions on this host (the shim's `sessions`): ids, folders,
   // titles, never their contents.
-  '__t_rsess'
+  '__t_rsess',
+  // One agent conversation file on this host (Claude Code's transcript or a
+  // Codex rollout), found by its session id in the agent's own folder only,
+  // read-only, a bounded window of it (chat/remoteTranscripts.js).
+  '__t_tread'
 ])
 
 // The prelude: POSIX sh, for Linux (GNU, busybox) and macOS / BSD tools.
@@ -503,6 +507,36 @@ __t_agents() {
   __p=$(for __c in "$HOME"/.vscode-server/extensions/anthropic.claude-code-*/resources/native-binary/claude; do [ -f "$__c" ] && [ -x "$__c" ] && printf '%s\\n' "$__c"; done | awk '{ v = $0; sub(/.*\\/anthropic\\.claude-code-/, "", v); sub(/\\/.*/, "", v); n = split(v, a, /[.-]/); k = ""; for (i = 1; i <= 4; i++) k = k sprintf("%09d", (i <= n && a[i] ~ /^[0-9]+$/) ? a[i] : 0); if (p == "" || k > b) { b = k; p = $0 } } END { print p }')
   [ -n "$__p" ] || __p=-
   printf 'vscode-claude %s\\n' "$__p"
+}
+__t_tfile() {
+  case $2 in ''|*[!0-9A-Za-z-]*) return 90 ;; esac
+  __F=
+  case $1 in
+    claude)
+      for __c in "\${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/projects/*/"$2".jsonl; do [ -f "$__c" ] && [ ! -L "$__c" ] && { __F=$__c; break; }; done ;;
+    codex)
+      __cd="\${CODEX_HOME:-$HOME/.codex}"
+      for __r in "$__cd/sessions" "$__cd/archived_sessions"; do
+        [ -d "$__r" ] || continue
+        __F=$(find "$__r" -type f -name "rollout-*$2.jsonl" 2>/dev/null | head -n 1)
+        [ -n "$__F" ] && break
+      done ;;
+    *) return 90 ;;
+  esac
+  [ -n "$__F" ] && [ -f "$__F" ] || return 91
+}
+__t_tread() {
+  __t_tfile "$1" "$2" || return $?
+  case $3 in -|''|*[!0-9]*) [ "$3" = - ] || return 90 ;; esac
+  case $4 in ''|*[!0-9]*) return 90 ;; esac
+  __s=$(__t_sig "$__F") || return 91
+  __z=\${__s%% *}
+  printf '%s\\n' "$__z"
+  if [ "$3" = - ]; then
+    if [ "$__z" -gt "$4" ]; then tail -c "$4" "$__F"; else cat "$__F"; fi
+  elif [ "$3" -lt "$__z" ]; then
+    tail -c +"$(($3+1))" "$__F" | head -c "$4"
+  fi
 }
 if [ -z "$__T_B" ]; then printf '\\n@@R %s base64\\n' "$__T_N"; else printf '\\n@@R %s ok\\n' "$__T_N"; fi
 `

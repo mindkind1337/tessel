@@ -222,7 +222,9 @@ function imageName(c, mediaType, used) {
 
 // Turns the noted candidates of `events` into their images and files (in
 // place), newest event first; what cannot be shown becomes placeholder text.
-export function resolveHistoryAttachments(events, caps = ATTACHMENT_LIMITS) {
+// local: false (a transcript read from an SSH host): a path it names is the
+// host's, never read on this PC (only inline images are shown).
+export function resolveHistoryAttachments(events, caps = ATTACHMENT_LIMITS, { local = true } = {}) {
   let budget = caps.pageBytes
   for (let i = (Array.isArray(events) ? events.length : 0) - 1; i >= 0; i--) {
     const ev = events[i]
@@ -237,10 +239,10 @@ export function resolveHistoryAttachments(events, caps = ATTACHMENT_LIMITS) {
     for (const c of note.list) {
       if (c.kind === 'file') {
         if (files.length >= caps.files) lostFiles++
-        else files.push(resolveFile(c))
+        else files.push(resolveFile(local ? c : { ...c, path: null }))
         continue
       }
-      const got = images.length < caps.images && budget > 0 ? resolveImage(c, caps) : null
+      const got = images.length < caps.images && budget > 0 ? resolveImage(local ? c : { ...c, path: null }, caps) : null
       if (!got || got.buf.length > budget) {
         lostImages++
         continue

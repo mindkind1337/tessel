@@ -844,7 +844,12 @@
       "noOpencode": "OpenCode est introuvable. Installez-le, puis réessayez.",
       "opencodeAuthNotEnforced": "OpenCode a répondu sans son mot de passe : le chat n'a pas été ouvert.",
       "opencodeVersion": "Cet OpenCode est plus ancien que {{version}}, la version avec laquelle Tessel a été testé. Mettez OpenCode à jour, puis réessayez.",
-      "interrupted": "Interrompu"
+      "interrupted": "Interrompu",
+      "remoteUnavailable": "Les agents de chat sur un hôte SSH ne sont pas encore disponibles dans cette version de Tessel. Ouvrez plutôt un agent dans un terminal sur l’hôte.",
+      "remoteNoAnswer": "{{host}} n’a pas répondu : {{error}}",
+      "noCodexOnHost": "Codex est introuvable sur {{host}}. Installez-le sur cet hôte, puis réessayez.",
+      "noClaudeOnHost": "Claude Code est introuvable sur {{host}}. Installez-le sur cet hôte, puis réessayez.",
+      "remoteDisconnected": "La connexion à {{host}} a été perdue. La conversation reprend dès son retour (envoyez un message, ou attendez que Tessel se reconnecte)."
     },
     "browserMenu": {
       "openLinkNewPane": "Ouvrir le lien dans un nouveau volet",
