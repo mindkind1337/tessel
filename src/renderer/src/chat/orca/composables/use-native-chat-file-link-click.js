@@ -23,7 +23,7 @@ import { t } from '../../../i18n/index.js'
 import { isPathInsideOrEqual } from '../shared/cross-platform-path.js'
 import { chatPathProblem, isSystemOpenFile } from '../../../../../shared/chatFileLinks.js'
 import { fileKind } from '../../../../../shared/fileKinds.js'
-import { remoteLinkTarget } from '../../remoteChatLinks.js'
+import { remoteLinkTarget, hostHome, chatRemoteHost } from '../../remoteChatLinks.js'
 
 function chatFilesApi() {
   return globalThis.window?.shellApi?.chatFiles || null
@@ -103,7 +103,13 @@ export function useNativeChatFileLinkClick(context, options = {}) {
     // virtual path in the editor (or the image viewer), over the remote file
     // system, only within the chat's project there.
     if (owner?.remoteRoot) {
-      const hit = parsed ? remoteLinkTarget(owner.remoteRoot, parsed.pathText) : null
+      let hit = parsed ? remoteLinkTarget(owner.remoteRoot, parsed.pathText) : null
+      // A project saved as "~/…" and a file named by its full path (or the
+      // reverse): the same folder once the host's home folder is known.
+      if (hit && !hit.inside && (hit.path.startsWith('~') || /^ssh:\/\/[^/]+\/~/.test(owner.remoteRoot))) {
+        const home = await hostHome(chatRemoteHost(owner.remoteRoot))
+        if (home) hit = remoteLinkTarget(owner.remoteRoot, parsed.pathText, { home }) || hit
+      }
       if (!hit) return failure('unresolved', route.pathText)
       if (!hit.inside) return failure('outside', route.pathText)
       try {

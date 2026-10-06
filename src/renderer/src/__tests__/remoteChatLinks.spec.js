@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import { chatRemoteRoot, remoteLinkTarget } from '../chat/remoteChatLinks.js'
+import { describe, expect, it, vi } from 'vitest'
+import { chatRemoteRoot, remoteLinkTarget, chatRemoteHost, hostHome, forgetHostHomes } from '../chat/remoteChatLinks.js'
 
 const ROOT = 'ssh://ssh-box1/home/me/app'
 
@@ -29,5 +29,36 @@ describe('file links of a chat on an SSH host', () => {
   it('a project from the home folder keeps its "~"', () => {
     expect(remoteLinkTarget('ssh://ssh-box1/~/app', 'src/a.js')).toMatchObject({ file: 'ssh://ssh-box1/~/app/src/a.js', inside: true })
     expect(remoteLinkTarget('ssh://ssh-box1/~/app', '~/../x')).toBe(null)
+  })
+
+  it('a "~/…" project and full host paths: the same folder once the home folder is known', () => {
+    const HOME_ROOT = 'ssh://ssh-box1/~/app'
+    // Not known: outside, as before.
+    expect(remoteLinkTarget(HOME_ROOT, '/home/me/app/src/a.js')).toMatchObject({ inside: false })
+    // Known: inside, named the project's way.
+    expect(remoteLinkTarget(HOME_ROOT, '/home/me/app/src/a.js', { home: '/home/me' })).toEqual({ file: 'ssh://ssh-box1/~/app/src/a.js', path: '~/app/src/a.js', inside: true })
+    expect(remoteLinkTarget(HOME_ROOT, '/home/me/app', { home: '/home/me/' })).toMatchObject({ path: '~/app', inside: true })
+    expect(remoteLinkTarget(HOME_ROOT, '/home/me/other/a.js', { home: '/home/me' })).toMatchObject({ path: '/home/me/other/a.js', inside: false })
+    expect(remoteLinkTarget(HOME_ROOT, '/home/meapp/a.js', { home: '/home/me' })).toMatchObject({ inside: false })
+    // The reverse: an absolute project, a "~/…" link.
+    expect(remoteLinkTarget(ROOT, '~/app/b.md', { home: '/home/me' })).toEqual({ file: 'ssh://ssh-box1/home/me/app/b.md', path: '/home/me/app/b.md', inside: true })
+    // A bad home is ignored.
+    expect(remoteLinkTarget(HOME_ROOT, '/home/me/app/a.js', { home: 'C:\\Users\\me' })).toMatchObject({ inside: false })
+    expect(chatRemoteHost(HOME_ROOT)).toBe('ssh-box1')
+    expect(chatRemoteHost('C:\\x')).toBe(null)
+  })
+
+  it("asks a host's home once; an unknown one is asked again", async () => {
+    forgetHostHomes()
+    const ask = vi.fn(async () => ({ ok: true, home: '/home/me' }))
+    expect(await hostHome('ssh-box1', ask)).toBe('/home/me')
+    expect(await hostHome('ssh-box1', ask)).toBe('/home/me')
+    expect(ask).toHaveBeenCalledTimes(1)
+    const off = vi.fn(async () => ({ ok: false, notConnected: true }))
+    expect(await hostHome('ssh-box2', off)).toBe(null)
+    expect(await hostHome('ssh-box2', off)).toBe(null)
+    expect(off).toHaveBeenCalledTimes(2)
+    expect(await hostHome('not a host', ask)).toBe(null)
+    expect(await hostHome('ssh-box3', async () => ({ ok: true, home: 'relative' }))).toBe(null)
   })
 })

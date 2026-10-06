@@ -238,6 +238,8 @@ const api = {
   gitWorktrees: (cwd) => ipcRenderer.invoke('git:worktrees', cwd),
   // A remote project's .tessel data folder on this computer (remote agents).
   remoteProjectDataDir: (hostId, remotePath) => ipcRenderer.invoke('remote:projectDataDir', hostId, remotePath),
+  // A host's home folder ($HOME), for "~/…" projects (chat file links).
+  remoteHome: (hostId) => ipcRenderer.invoke('remote:home', hostId),
   // Their git evidence, for Clean up worktrees.
   worktreeCleanupScan: (cwd) => ipcRenderer.invoke('git:worktreeCleanupScan', cwd),
   createWorktree: (cwd, label, options) =>

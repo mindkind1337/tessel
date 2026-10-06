@@ -3334,6 +3334,18 @@ ipcMain.handle('remote:projectDataDir', (_evt, hostId, remotePath) => {
   }
   return dir
 })
+// The signed-in user's home folder on a host (its $HOME), kept per host: a
+// project saved as ~/… and a file named by its full path are the same
+// folder (chat file links). Never a sign-in. -> { ok, home } | { ok: false }
+ipcMain.handle('remote:home', async (_evt, hostId) => {
+  if (typeof hostId !== 'string' || !/^ssh-[\w-]{1,60}$/.test(hostId) || !remoteHosts.get(hostId)) return { ok: false }
+  try {
+    const r = await remoteFs.hostHome(hostId)
+    return r && r.ok ? { ok: true, home: r.home } : { ok: false, ...(r && r.notConnected ? { notConnected: true } : {}) }
+  } catch {
+    return { ok: false }
+  }
+})
 
 ipcMain.handle('pty:create', async (_evt, opts = {}) => {
   const launchCancelled = () => ({
