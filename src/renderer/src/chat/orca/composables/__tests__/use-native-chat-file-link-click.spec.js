@@ -5,6 +5,7 @@ import { mount } from '@vue/test-utils'
 import { renderHook } from './withSetup.js'
 import { useNativeChatFileLinkClick } from '../use-native-chat-file-link-click.js'
 import { createNativeChatFileHref } from '../../shared/native-chat-href-routing.js'
+import { forgetHostHomes } from '../../../remoteChatLinks.js'
 
 const event = () => ({ preventDefault: vi.fn(), stopPropagation: vi.fn() })
 const exists = (kind = 'file') => vi.fn(async () => kind)
@@ -14,6 +15,31 @@ function setup(context, options) {
 }
 
 describe('useNativeChatFileLinkClick', () => {
+  // Tessel: a chat on an SSH host whose project was saved as "~/app": a full
+  // host path inside it opens once the host's home folder is known.
+  it('a "~/…" host project: a full path inside it opens by the project\'s path', async () => {
+    forgetHostHomes()
+    const remoteHome = vi.fn(async () => ({ ok: true, home: '/home/me' }))
+    const had = window.shellApi
+    window.shellApi = { remoteHome }
+    try {
+      const openFile = vi.fn()
+      const root = 'ssh://ssh-box1/~/app'
+      const result = setup({ worktreePath: root, roots: [root], remote: true, remoteRoot: root }, { openFile })
+      await result.current(event(), '/home/me/app/src/a.js:3')
+      expect(remoteHome).toHaveBeenCalledWith('ssh-box1')
+      expect(openFile).toHaveBeenCalledWith(expect.objectContaining({ file: 'ssh://ssh-box1/~/app/src/a.js', line: 3 }), expect.anything())
+      // Outside the project: still refused, the home asked once.
+      const onOpenFailure = vi.fn()
+      const other = setup({ worktreePath: root, roots: [root], remote: true, remoteRoot: root }, { openFile, onOpenFailure })
+      await other.current(event(), '/home/me/other/b.js')
+      expect(onOpenFailure).toHaveBeenCalledWith(expect.objectContaining({ verdict: 'outside' }))
+      expect(remoteHome).toHaveBeenCalledTimes(1)
+    } finally {
+      window.shellApi = had
+    }
+  })
+
   it.each([
     ['docs/deck.md', '/repo/docs/deck.md', null, null],
     ['/repo/src/app.ts:12', '/repo/src/app.ts', 12, null],
