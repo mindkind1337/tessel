@@ -435,6 +435,7 @@
     "newFile": "Nouveau fichier",
     "newFolder": "Nouveau dossier",
     "showDotfiles": "Afficher les dotfiles",
+    "compactFolders": "Dossiers compacts",
     "noProject": "Cet espace de travail n'a pas de dossier de projet. Choisissez-en un dans le menu de l'espace de travail (Dossier du projet…) pour voir ses fichiers ici.",
     "ignored": "Ignoré par .gitignore",
     "folderName": "Nom du dossier",
