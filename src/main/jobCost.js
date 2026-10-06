@@ -14,7 +14,10 @@
 // accounts' folders (the reported path, checked to be inside one; else looked
 // up by id), with a Claude session's sub-agent transcripts
 // (<id>/subagents/*.jsonl). Other chat agents (OpenCode): the pane's journal.
-// Any other agent, or a pane on another computer: status 'unavailable'.
+// Claude Code and Codex in a terminal on an SSH host: the session's file
+// there, read over the host's connection (bounded, throttled; its
+// sub-agents' files not read). Any other agent, or a pane on another
+// computer: status 'unavailable'.
 //
 // A card: its work periods (taskBoardStore.js workPeriods: [{ start, end,
 // paneId }]; for a card from before they were kept, startedAt to doneAt, or
@@ -43,7 +46,11 @@ const MAX_PANES = 500
 const MAX_SUBAGENT_FILES = 50
 const CALL_BUDGET_BYTES = 128 * 1024 * 1024
 const FILE_AGENTS = ['claude', 'codex']
+const HOST_ID = /^ssh-[\w-]{1,60}$/
 export const PANES_FILE = 'job-cost-panes.json'
+
+// The cache key of a conversation file on an SSH host (never a path read here).
+const remoteKey = (hostId, agent, id) => `ssh-file://${hostId}/${agent}/${id}`
 
 const obj = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : null)
 const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null)
@@ -207,6 +214,15 @@ export function attribute(events, cards) {
 //   account (~/.claude, CLAUDE_CONFIG_DIR...)
 // isRemote(path) -> true for a file on another computer (not read)
 // send(channel, payload): to the window ('jobCost:changed')
+// A terminal agent on an SSH host (Claude Code, Codex): its conversation
+// file there, read over the host's connection:
+//   hostOfPane(paneId) -> the SSH host a running pane is on, or null (its
+//     sessions remember it, so a card still finds them once it closed);
+//   readAgentFile(hostId, { agent, id, offset, cap }) (remoteFs.js): a bounded
+//     window of that file. Only what was added since the last read is asked
+//     for, at most remoteBudgetBytes per call, each file at most once per
+//     remoteGapMs; files asked about in the last remoteWatchMs are checked
+//     every remotePollMs for the change notice (only while someone looks).
 export function createJobCost({
   userDataDir,
   sessionsDir = () => null,
@@ -216,13 +232,21 @@ export function createJobCost({
   estimate = defaultEstimate,
   now = Date.now,
   fs = fsp,
-  cache = createUsageFileCache({ fs }),
+  cache = createUsageFileCache({ fs, now }),
   budgetBytes = CALL_BUDGET_BYTES,
   pollMs = 5000,
   debounceMs = 1500,
+  hostOfPane = () => null,
+  readAgentFile = null,
+  remoteBudgetBytes = 8 * 1024 * 1024,
+  remoteGapMs = 5000,
+  remotePollMs = 15000,
+  remoteWatchMs = 2 * 60 * 1000,
   log = null
 } = {}) {
-  const paneLog = new Map() // paneId -> [{ agent, sessionId, transcriptPath, seenAt }]
+  const paneLog = new Map() // paneId -> [{ agent, sessionId, transcriptPath, hostId?, seenAt }]
+  const remoteWatched = new Map() // key -> { hostId, agent, id, until, stamp }
+  let remotePoller = null
   let logLoaded = false
   let logDirty = false
   let saveTimer = null
@@ -300,15 +324,26 @@ export function createJobCost({
     return null
   }
 
+  function paneHost(paneId) {
+    try {
+      const h = hostOfPane(paneId)
+      return typeof h === 'string' && HOST_ID.test(h) ? h : null
+    } catch {
+      return null
+    }
+  }
+
   async function noteSession(paneId) {
     await loadLog()
     const s = await currentSession(paneId)
     if (!s) return paneLog.get(paneId)?.at(-1) || null
+    // A terminal agent on an SSH host: its session is a file there.
+    const hostId = s.chat ? null : paneHost(paneId)
     const list = paneLog.get(paneId) || []
     const last = list[list.length - 1]
-    if (!last || last.sessionId !== s.sessionId || last.agent !== s.agent || (s.transcriptPath && last.transcriptPath !== s.transcriptPath)) {
+    if (!last || last.sessionId !== s.sessionId || last.agent !== s.agent || (s.transcriptPath && last.transcriptPath !== s.transcriptPath) || (hostId && last.hostId !== hostId)) {
       const others = list.filter((x) => !(x.sessionId === s.sessionId && x.agent === s.agent))
-      others.push({ agent: s.agent, sessionId: s.sessionId, transcriptPath: s.transcriptPath, chat: s.chat, seenAt: now() })
+      others.push({ agent: s.agent, sessionId: s.sessionId, transcriptPath: s.transcriptPath, chat: s.chat, ...(hostId ? { hostId } : {}), seenAt: now() })
       paneLog.delete(paneId)
       paneLog.set(paneId, others.slice(-MAX_SESSIONS_PER_PANE))
       while (paneLog.size > MAX_PANES) paneLog.delete(paneLog.keys().next().value)
@@ -338,6 +373,13 @@ export function createJobCost({
 
   // A session -> its files [{ file, kind, sub }] | { reason }
   async function filesOf(paneId, s) {
+    // On an SSH host: its file there (its sub-agents' files are not read).
+    if (s.hostId && !s.chat) {
+      if (!FILE_AGENTS.includes(s.agent)) return { reason: 'remote' }
+      if (!UUID.test(s.sessionId) || !HOST_ID.test(s.hostId)) return { reason: 'invalid-session' }
+      if (typeof readAgentFile !== 'function') return { reason: 'remote' }
+      return { files: [{ file: remoteKey(s.hostId, s.agent, s.sessionId), kind: s.agent, sub: null, remote: { hostId: s.hostId, agent: s.agent, id: s.sessionId } }] }
+    }
     if (FILE_AGENTS.includes(s.agent)) {
       if (!UUID.test(s.sessionId)) return { reason: 'invalid-session' }
       const key = `${s.agent}|${s.sessionId}|${s.transcriptPath || ''}`
@@ -410,18 +452,25 @@ export function createJobCost({
 
   // The events of a set of files, each event once (a resumed or forked session
   // copies earlier lines into its new file: the same keys).
-  async function eventsOf(files, budget, seen = new Set()) {
+  async function eventsOf(files, budget, seen = new Set(), remoteBudget = { bytes: remoteBudgetBytes }) {
     const events = []
     let first = null
     let last = null
     let partial = false
     let any = false
     for (const f of files) {
-      if (isRemote(f.file)) continue
-      const r = await cache.read(f.file, f.kind, budget, { agent: f.agent || null })
-      if (!r) continue
+      let r
+      if (f.remote) {
+        r = await readRemoteFile(f, remoteBudget)
+        if (!r) continue
+        watchRemote(f)
+      } else {
+        if (isRemote(f.file)) continue
+        r = await cache.read(f.file, f.kind, budget, { agent: f.agent || null })
+        if (!r) continue
+        watch(f.file)
+      }
       any = true
-      watch(f.file)
       if (!r.done) partial = true
       if (r.first !== null && (first === null || r.first < first)) first = r.first
       if (r.last !== null && (last === null || r.last > last)) last = r.last
@@ -438,6 +487,7 @@ export function createJobCost({
   async function forPanes(paneIds) {
     const ids = Array.isArray(paneIds) ? [...new Set(paneIds.filter((id) => typeof id === 'string' && PANE_ID.test(id)))].slice(0, MAX_IDS) : []
     const budget = { bytes: budgetBytes }
+    const remoteBudget = { bytes: remoteBudgetBytes }
     const out = {}
     for (const id of ids) {
       try {
@@ -453,7 +503,7 @@ export function createJobCost({
           out[id] = unavailable(where.reason, { sessionId: s.sessionId, agent: s.agent })
           continue
         }
-        const r = await eventsOf(where.files, budget)
+        const r = await eventsOf(where.files, budget, new Set(), remoteBudget)
         if (!r.any) {
           watchPending(id, s)
           out[id] = unavailable('missing-file', { sessionId: s.sessionId, agent: s.agent })
@@ -516,6 +566,7 @@ export function createJobCost({
     const wanted = new Set()
     for (const id of ids) for (const w of winOf.get(id) || []) if (w.paneId && byPane.has(w.paneId)) wanted.add(w.paneId)
     const budget = { bytes: budgetBytes }
+    const remoteBudget = { bytes: remoteBudgetBytes }
     const tallies = new Map() // card -> [tally]
     const reasons = new Map() // card -> reason when none of its panes could be read
     let partial = false
@@ -535,7 +586,7 @@ export function createJobCost({
           }
         }
         if (files.length) {
-          const r = await eventsOf(files, budget)
+          const r = await eventsOf(files, budget, new Set(), remoteBudget)
           if (r.partial) partial = true
           if (r.any) res = attribute(r.events, [...byPane.get(paneId)].map(([id, windows]) => ({ id, windows })))
           else reason = reason || 'missing-file'
@@ -579,6 +630,69 @@ export function createJobCost({
     }
     if (partial) changedSoon()
     return out
+  }
+
+  // --- Files on an SSH host ---------------------------------------------------
+
+  function readerOf(f) {
+    const { hostId, agent, id } = f.remote
+    return async ({ offset, cap }) => {
+      try {
+        const r = await readAgentFile(hostId, { agent, id, offset, cap })
+        return r && typeof r === 'object' ? r : { ok: false }
+      } catch {
+        return { ok: false }
+      }
+    }
+  }
+
+  async function readRemoteFile(f, remoteBudget) {
+    try {
+      return await cache.readRemote(f.file, f.kind, readerOf(f), remoteBudget, { minGapMs: remoteGapMs })
+    } catch (err) {
+      warn('remote read', err)
+      return null
+    }
+  }
+
+  // Asked about: checked now and then for a while (the change notice), at
+  // most every remotePollMs, one file at a time.
+  function watchRemote(f) {
+    const w = remoteWatched.get(f.file)
+    const until = now() + remoteWatchMs
+    if (w) w.until = until
+    else remoteWatched.set(f.file, { f, until, stamp: null })
+    if (!remotePoller && remotePollMs > 0) {
+      remotePoller = setInterval(() => void pollRemote(), remotePollMs)
+      remotePoller.unref?.()
+    }
+  }
+
+  let remotePolling = false
+  async function pollRemote() {
+    if (remotePolling) return
+    remotePolling = true
+    let changed = false
+    try {
+      const t = now()
+      for (const [key, w] of remoteWatched) {
+        if (w.until < t) {
+          remoteWatched.delete(key)
+          continue
+        }
+        const r = await readRemoteFile(w.f, { bytes: remoteBudgetBytes })
+        const stamp = r ? `${r.events.length}:${r.last ?? ''}:${r.done}` : ''
+        if (w.stamp !== null && w.stamp !== stamp) changed = true
+        w.stamp = stamp
+      }
+    } finally {
+      remotePolling = false
+    }
+    if (!remoteWatched.size && remotePoller) {
+      clearInterval(remotePoller)
+      remotePoller = null
+    }
+    if (changed) changedSoon()
   }
 
   // --- Change notices: the files the window asked about, stat'ed ------------
@@ -640,6 +754,9 @@ export function createJobCost({
   async function close() {
     if (poller) clearInterval(poller)
     poller = null
+    if (remotePoller) clearInterval(remotePoller)
+    remotePoller = null
+    remoteWatched.clear()
     if (changedTimer) clearTimeout(changedTimer)
     changedTimer = null
     if (saveTimer) {
@@ -649,7 +766,7 @@ export function createJobCost({
     await saveLog()
   }
 
-  return { forCards, forPanes, register, close, poll, sessionsOf: (id) => paneLog.get(id) || [] }
+  return { forCards, forPanes, register, close, poll, pollRemote, sessionsOf: (id) => paneLog.get(id) || [] }
 }
 
 function mergeTally(into, from) {

@@ -9,6 +9,7 @@ import { createAutomations } from './automations'
 import { createRemotePromptWriter } from './automationRemotePrompt'
 import { trimEvents, isEvent, isActivityText } from '../shared/activity'
 import { agentModelLive, watchModelFiles } from './agentModel'
+import { createRemoteModelReader, remoteAgentModel } from './remoteAgentModel'
 import { createCodexAccounts } from './codexAccounts'
 import { createClaudeAccounts } from './claudeAccounts'
 import { createProviderLogin } from './providerLogin'
@@ -1550,8 +1551,12 @@ ipcMain.handle('sessions:agyContinue', (_evt, q = {}) => {
   }
 })
 // The model an agent pane uses (for its header), or null.
+// A terminal agent on an SSH host: its conversation file there (never this
+// PC's settings), read over the connection, throttled (remoteAgentModel.js).
+const remoteModels = createRemoteModelReader({ readAgentFile: (hostId, q) => (remoteHosts.get(hostId) ? remoteFs.readAgentFile(hostId, q) : { ok: false }) })
 ipcMain.handle('agents:model', async (_evt, q = {}) => {
   try {
+    if (q && q.remoteHostId != null) return typeof q.remoteHostId === 'string' && remoteHosts.get(q.remoteHostId) ? await remoteAgentModel(q, remoteModels) : null
     return await agentModelLive(q || {})
   } catch {
     return null
@@ -1933,6 +1938,13 @@ const jobCost = createJobCost({
   homes: jobCostHomeList,
   isRemote: isRemotePath,
   send,
+  // A terminal agent on an SSH host: its conversation file there, read over
+  // the host's connection (never a sign-in).
+  hostOfPane: (paneId) => {
+    for (const h of remoteHosts.list()) if (remoteHosts.panesOf(h.id).includes(paneId)) return h.id
+    return null
+  },
+  readAgentFile: (hostId, q) => (remoteHosts.get(hostId) ? remoteFs.readAgentFile(hostId, q) : { ok: false, error: 'unknown host' }), // i18n-ignore
   log
 })
 jobCost.register(ipcMain)

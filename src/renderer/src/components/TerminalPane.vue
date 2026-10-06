@@ -234,11 +234,23 @@ function newestClaudeOf(family) {
 }
 let modelBusy = false
 let modelAgain = false // asked while a check ran: one more after it
+// Whether the pane is off screen now (paneOnScreen is set up further down:
+// before that, it counts as shown).
+function paneOffScreenNow() {
+  try {
+    return !paneOnScreen.value
+  } catch {
+    return false
+  }
+}
 async function refreshModel() {
   if (!isAgent.value || !window.shellApi.agentModel) {
     if (!isAgent.value) agentModel.value = null
     return
   }
+  // On an SSH host its file is read over the connection: only while the
+  // pane is shown (it asks again when it is back on screen).
+  if (props.node.remoteHostId && (paneOffScreenNow() || document.visibilityState === 'hidden')) return
   if (modelBusy) {
     modelAgain = true
     return
@@ -271,6 +283,8 @@ async function refreshModel() {
       command: [n.agentCommand, launchArgsOf(n), n.detectedCommand].filter(Boolean).join(' '),
       cwd: n.startDir,
       launchedAt: n.launchedAt || 0,
+      // An agent on an SSH host: its conversation file is there.
+      ...(n.remoteHostId ? { remoteHostId: n.remoteHostId } : {}),
       chosenModel:
         n.sessionOptions && typeof n.sessionOptions.model === 'string'
           ? n.sessionOptions.model
@@ -2102,6 +2116,11 @@ let releaseTimer = null
 let screenObserver = null
 // The same, reactive (the conversation view watches its file only while shown).
 const paneOnScreen = ref(true)
+// Back on screen: an agent on an SSH host reads its model again (skipped
+// while it was hidden, see refreshModel).
+watch(paneOnScreen, (shown) => {
+  if (shown && props.node.remoteHostId) refreshModel()
+})
 function setOnScreen(visible) {
   paneOnScreen.value = visible
   if (visible === onScreen) return

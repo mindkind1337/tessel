@@ -135,11 +135,34 @@ function journalLine(e, line) {
   })
 }
 
+// Bytes just read at the end of what was read before: its complete lines
+// go through the kind's reader; a line still being written waits (carry).
+function consume(e, kind, data, file) {
+  if (e.carry) data = Buffer.concat([e.carry, data])
+  const cut = data.lastIndexOf(10)
+  e.carry = cut < 0 ? data : data.subarray(cut + 1)
+  if (e.carry.length > 64 * 1024 * 1024) e.carry = null // a runaway line: dropped
+  if (cut < 0) return
+  const text = data.subarray(0, cut).toString('utf8')
+  for (const line of text.split('\n')) {
+    if (!line.trim()) continue
+    if (kind === 'claude') claudeLine(e, line)
+    else if (kind === 'codex') codexLine(e, line, file)
+    else journalLine(e, line)
+  }
+}
+
 // cache.read(file, kind, budget, { agent }) -> { events, first, last, done }
 //   budget: { bytes } shared by every file of one call; a file not read to
 //   its end (done: false) goes on from there next time.
+// cache.readRemote(key, kind, readWindow, budget, { minGapMs }) -> the same | null
+//   a conversation file on an SSH host (Claude Code, Codex), read through
+//   readWindow({ offset, cap }) -> { ok, size, mtimeMs, data } | { ok: false, missing? }
+//   (remoteFs.js readAgentFile): only the bytes after what was read before,
+//   at most READ_CHUNK a request; the host is asked at most once per
+//   minGapMs per file (the figures kept meanwhile).
 // fs: injectable for tests ({ stat, open }).
-export function createUsageFileCache({ fs = fsp, maxFiles = MAX_FILES } = {}) {
+export function createUsageFileCache({ fs = fsp, maxFiles = MAX_FILES, now = Date.now } = {}) {
   const entries = new Map() // path -> entry (oldest used first)
 
   function remember(file, e) {
@@ -173,20 +196,8 @@ export function createUsageFileCache({ fs = fsp, maxFiles = MAX_FILES } = {}) {
         if (!bytesRead) break
         budget.bytes -= bytesRead
         e.offset += bytesRead
-        let data = buf.subarray(0, bytesRead)
-        if (e.carry) data = Buffer.concat([e.carry, data])
-        const cut = data.lastIndexOf(10)
         // A line still being written stays for the next read.
-        e.carry = cut < 0 ? data : data.subarray(cut + 1)
-        if (e.carry.length > 64 * 1024 * 1024) e.carry = null // a runaway line: dropped
-        if (cut < 0) continue
-        const text = data.subarray(0, cut).toString('utf8')
-        for (const line of text.split('\n')) {
-          if (!line.trim()) continue
-          if (kind === 'claude') claudeLine(e, line)
-          else if (kind === 'codex') codexLine(e, line, file)
-          else journalLine(e, line)
-        }
+        consume(e, kind, buf.subarray(0, bytesRead), file)
       }
     } catch {
       // Unreadable now: what was read so far stands; tried again next time.
@@ -205,5 +216,64 @@ export function createUsageFileCache({ fs = fsp, maxFiles = MAX_FILES } = {}) {
     return { events: e.events, first: e.first, last: e.last, done }
   }
 
-  return { read, size: () => entries.size, forget: (file) => entries.delete(file), clear: () => entries.clear() }
+  async function readRemote(key, kind, readWindow, budget = { bytes: Infinity }, { minGapMs = 5000 } = {}) {
+    if (kind !== 'claude' && kind !== 'codex') throw new Error('unknown remote usage file kind') // i18n-ignore programming error
+    let e = entries.get(key)
+    if (e && e.kind !== kind) e = null
+    // Asked a moment ago: the figures kept, no request to the host.
+    if (e && e.checkedAt != null && now() - e.checkedAt < minGapMs) {
+      remember(key, e)
+      return view(e, e.offset >= e.size)
+    }
+    // One request at a time per file.
+    if (e && e.pending) return e.pending
+    if (!e) e = fresh(kind)
+    remember(key, e)
+    const entry = e
+    entry.pending = (async () => {
+      let restarted = false
+      let readAny = entry.checkedAt != null
+      try {
+        while (budget.bytes > 0) {
+          let r
+          try {
+            r = await readWindow({ offset: entry.offset, cap: Math.max(1, Math.min(READ_CHUNK, budget.bytes)) })
+          } catch {
+            r = null
+          }
+          if (!r || !r.ok || !Buffer.isBuffer(r.data) || !Number.isSafeInteger(r.size)) {
+            if (r && r.missing) {
+              if (entries.get(key) === entry) entries.delete(key)
+              return null
+            }
+            // Not reachable now: what was read stands, asked again later.
+            return readAny ? view(entry, false) : null
+          }
+          readAny = true
+          // Shrank (replaced): read again from its start, once.
+          if (r.size < entry.offset) {
+            if (restarted) break
+            restarted = true
+            const again = fresh(kind)
+            Object.assign(entry, again)
+            continue
+          }
+          entry.size = r.size
+          if (r.mtimeMs !== undefined) entry.mtimeMs = r.mtimeMs
+          if (!r.data.length) break
+          budget.bytes -= r.data.length
+          entry.offset += r.data.length
+          consume(entry, kind, r.data, key)
+          if (entry.offset >= r.size) break
+        }
+        return view(entry, entry.offset >= entry.size)
+      } finally {
+        entry.checkedAt = now()
+        entry.pending = null
+      }
+    })()
+    return entry.pending
+  }
+
+  return { read, readRemote, size: () => entries.size, forget: (file) => entries.delete(file), clear: () => entries.clear() }
 }

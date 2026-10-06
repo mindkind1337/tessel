@@ -539,7 +539,7 @@ export function agentModel(query = {}, home = os.homedir()) {
   return withEffort
 }
 // Same model: a full id and its alias ("claude-fable-5-1", "fable"), [1m] aside.
-function sameClaudeModel(a, b) {
+export function sameClaudeModel(a, b) {
   const x = String(a || '').replace(/\[1m\]$/i, '').toLowerCase()
   const y = String(b || '').replace(/\[1m\]$/i, '').toLowerCase()
   if (!x || !y) return false
