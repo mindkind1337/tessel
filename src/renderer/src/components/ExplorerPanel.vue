@@ -79,21 +79,26 @@ const scopeHelp = computed(() =>
   t('explorer.sparse.help', 'This repository uses a sparse checkout: only some folders are on disk. Choosing one changes what the tree shows, not what is checked out. Name search looks in the folder shown; content search in the whole project.')
 )
 
-async function loadDir(dir) {
+// background: a refresh of what is shown (a remote host serves the user's
+// own clicks first).
+async function loadDir(dir, { background = false } = {}) {
   if (!api() || !props.root) return
   const revision = viewRevision, root = props.root
   const request = Symbol()
   directoryRequests.set(dir, request)
   const cur = nodes[dir] || { entries: [], loading: false, error: '' }
   nodes[dir] = { ...cur, loading: true }
-  const res = await api().list({ root, dir, dotfiles: dotfiles.value }).catch(() => null)
+  const res = await api().list({ root, dir, dotfiles: dotfiles.value, ...(background ? { background: true } : {}) }).catch(() => null)
   if (!stillCurrent(revision, root) || directoryRequests.get(dir) !== request) return
-  nodes[dir] = res && res.ok ? { entries: res.entries, loading: false, error: '' } : { entries: [], loading: false, error: (res && res.error) || t('explorer.readFailed', 'Could not read it.') }
+  const error = (res && res.error) || t('explorer.readFailed', 'Could not read it.')
+  // A remote host that did not answer (transient): what was shown stays, with the error.
+  if (res && res.ok) nodes[dir] = { entries: res.entries, loading: false, error: '' }
+  else nodes[dir] = { entries: res && res.transient ? cur.entries : [], loading: false, error }
 }
-async function loadStatus() {
+async function loadStatus({ background = false } = {}) {
   if (!api() || !props.root) return
   const revision = viewRevision, root = props.root, request = ++statusRequest
-  const res = await api().status({ root, ignored: true }).catch(() => null)
+  const res = await api().status({ root, ignored: true, ...(background ? { background: true } : {}) }).catch(() => null)
   if (!stillCurrent(revision, root) || request !== statusRequest) return
   if (!res || !res.ok) return
   const out = {}
@@ -106,9 +111,9 @@ async function refresh() {
   if (!props.root) return
   const revision = viewRevision, root = props.root
   const dirs = [...new Set([props.root, displayRoot.value, ...Object.keys(open).filter((d) => open[d])])]
-  await Promise.all([...dirs.map(loadDir), loadSparse()])
+  await Promise.all([...dirs.map((d) => loadDir(d, { background: true })), loadSparse()])
   if (!stillCurrent(revision, root)) return
-  loadStatus()
+  loadStatus({ background: true })
   if (query.value.trim()) runSearch()
 }
 const folderStatuses = computed(() => folderStatus(status.value, key(props.root)))

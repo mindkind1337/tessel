@@ -24,8 +24,31 @@ export function statusOf(root) {
   return root ? scmStatus[rootKey(root)] || null : null
 }
 
-export async function refreshStatus(root) {
-  if (!root || !api()) return null
+// At most one status request per folder runs at a time, and at most one
+// more waits behind it: refreshes asked meanwhile (focus, a change notice,
+// a poll, two panels) share that next one. On a slow host (a remote
+// project) they would otherwise pile up behind each other there.
+const runs = {} // key -> { running, next }
+function startRun(k, root) {
+  const entry = { running: null, next: null }
+  runs[k] = entry
+  entry.running = readStatus(root).finally(() => {
+    if (runs[k] === entry && !entry.next) delete runs[k]
+  })
+  return entry.running
+}
+export function refreshStatus(root) {
+  if (!root || !api()) return Promise.resolve(null)
+  const k = rootKey(root)
+  const r = runs[k]
+  if (!r) return startRun(k, root)
+  // Asked after the running one started (a stage, a save…): its answer may
+  // be stale, so the next run is the one that counts.
+  if (!r.next) r.next = r.running.catch(() => null).then(() => startRun(k, root))
+  return r.next
+}
+
+async function readStatus(root) {
   const k = rootKey(root)
   const my = (seqs[k] = (seqs[k] || 0) + 1)
   if (!scmStatus[k]) scmStatus[k] = { loading: true, loaded: false, error: '', data: null }

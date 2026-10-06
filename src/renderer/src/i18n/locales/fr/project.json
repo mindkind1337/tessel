@@ -88,6 +88,8 @@
       "badgeHint": "Les fichiers et les modifications de ce projet sont sur {{host}}, lus par SSH.",
       "connecting": "Connexion à {{host}}…",
       "cancel": "Annuler (ferme la connexion)",
+      "slow": "{{host}} tarde à répondre…",
+      "slowHint": "Aucune réponse de {{host}} depuis un moment. Attendez, ou annulez : la connexion de ce projet sera rouverte à la prochaine opération.",
       "op": {
         "list": "Lecture du dossier…",
         "read": "Lecture du fichier…",

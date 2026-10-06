@@ -47,3 +47,24 @@ it('keeps the latest directory refresh when an older refresh arrives last', asyn
   await flushPromises()
   expect(wrapper.findAll('.explorer-name').map(n => n.text())).toEqual(['new.js'])
 })
+
+it('a refresh the remote host did not answer keeps the rows shown, with the error', async () => {
+  const api = setup()
+  await flushPromises()
+  api.list.mockResolvedValueOnce({ ok: false, transient: true, error: 'Box is slow to answer' })
+  await wrapper.get('[data-test="explorer-refresh"]').trigger('click')
+  await flushPromises()
+  expect(wrapper.findAll('.explorer-name').map(n => n.text())).toEqual(['current.js'])
+  expect(wrapper.text()).toContain('Box is slow to answer')
+  // A refresh asks in the background (a remote host serves clicks first).
+  expect(api.list.mock.calls.at(-1)[0]).toMatchObject({ background: true })
+})
+
+it('a folder that is really gone is emptied', async () => {
+  const api = setup()
+  await flushPromises()
+  api.list.mockResolvedValueOnce({ ok: false, error: 'The folder is gone.' })
+  await wrapper.get('[data-test="explorer-refresh"]').trigger('click')
+  await flushPromises()
+  expect(wrapper.findAll('.explorer-name')).toHaveLength(0)
+})

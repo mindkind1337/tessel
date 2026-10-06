@@ -53,8 +53,15 @@ const label = computed(() => {
   const a = activity.value
   if (!a) return ''
   if (a.state === 'connecting') return t('project.remote.connecting', 'Connecting to {{host}}…', { host: props.host })
+  // No answer for a while (main's SLOW_MS): said so, not an endless spinner.
+  if (a.slow) return t('project.remote.slow', '{{host}} is slow to answer…', { host: props.host })
   return opLabel(a.op)
 })
+const labelTitle = computed(() =>
+  activity.value && activity.value.slow
+    ? t('project.remote.slowHint', 'No answer from {{host}} for a while. Wait, or cancel: this project’s connection opens again with the next operation.', { host: props.host })
+    : undefined
+)
 
 watch(busy, (b) => {
   clearTimeout(slowTimer)
@@ -115,7 +122,7 @@ onBeforeUnmount(() => {
       </button>
     </template>
     <template v-else-if="busy && slow">
-      <span class="rb-busy" role="status" data-test="remote-busy">
+      <span class="rb-busy" :class="{ 'rb-slow': activity && activity.slow }" role="status" data-test="remote-busy" :title="labelTitle">
         <Loader2 :size="12" class="rb-spin" aria-hidden="true" />
         <span class="rb-label">{{ label }}</span>
       </span>
@@ -171,6 +178,9 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 4px;
   max-width: 50%;
+}
+.rb-slow {
+  color: var(--warn, #d29922);
 }
 .rb-label {
   overflow: hidden;
