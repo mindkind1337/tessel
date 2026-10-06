@@ -17,9 +17,14 @@ const pages = new Map()
 
 // The page element, hardened as BrowserPane always made it (browserGuest.js
 // in the main process checks and locks it down again when it attaches).
-export function createWebview(src) {
+export const MAIN_PARTITION = 'persist:tessel-browser'
+// The agents' own session (Settings > Browser: "Agents use a separate browser
+// session"): pages an agent opens keep away from the user's imported logins.
+export const AGENT_PARTITION = 'persist:tessel-browser-agent'
+
+export function createWebview(src, partition = MAIN_PARTITION) {
   const el = document.createElement('webview')
-  el.setAttribute('partition', 'persist:tessel-browser')
+  el.setAttribute('partition', partition === AGENT_PARTITION ? AGENT_PARTITION : MAIN_PARTITION)
   el.setAttribute('allowpopups', 'true')
   el.setAttribute('webpreferences', 'contextIsolation=yes,sandbox=yes,nodeIntegration=no')
   el.className = 'bp-webview'
@@ -43,7 +48,7 @@ export function createWebview(src) {
 // new one on `src`. A page left in another workspace's layer cannot move
 // without loading again: it is replaced. owner: who holds it now (the pane
 // built last), so the pane it replaces letting go later changes nothing.
-export function claimPage(paneId, host, src, owner = null) {
+export function claimPage(paneId, host, src, owner = null, partition = MAIN_PARTITION) {
   const had = pages.get(paneId)
   if (had) {
     clearTimeout(had.timer)
@@ -59,7 +64,7 @@ export function claimPage(paneId, host, src, owner = null) {
   box.dataset.browserPage = paneId
   // Hidden until the pane places it.
   box.style.visibility = 'hidden'
-  const webview = createWebview(src)
+  const webview = createWebview(src, partition)
   const overlay = document.createElement('div')
   overlay.className = 'bp-box-overlay'
   box.append(webview, overlay)

@@ -7,7 +7,7 @@ import { join } from 'path'
 
 vi.mock('../browserPicker', () => ({ pickerScript: (a) => `/*${a}*/`, clampPickPayload: (x) => x }))
 
-import { createBrowserGuests, BROWSER_PARTITION, shortcutOf, contextMenuItems, wantsNewPane } from '../browserGuest'
+import { createBrowserGuests, BROWSER_PARTITION, BROWSER_PARTITION_AGENT, BROWSER_PARTITIONS, shortcutOf, contextMenuItems, wantsNewPane } from '../browserGuest'
 
 const ev = (extra = {}) => ({ preventDefault: vi.fn(), ...extra })
 
@@ -199,6 +199,14 @@ describe('will-attach-webview', () => {
     attachParams({ src: 'https://b.test', partition: BROWSER_PARTITION })
     expect(t.ses.setPermissionRequestHandler).toHaveBeenCalledTimes(1)
     expect(t.ses.listenerCount('will-download')).toBe(1)
+  })
+
+  it('accepts and hardens the agents\' separate session', () => {
+    const params = { src: 'https://a.test', partition: BROWSER_PARTITION_AGENT }
+    const prefs = {}
+    t.winWc.emit('will-attach-webview', ev(), prefs, params)
+    expect(prefs.partition).toBe(BROWSER_PARTITION_AGENT)
+    expect(t.electron.session.fromPartition).toHaveBeenCalledWith(BROWSER_PARTITION_AGENT)
   })
 })
 
@@ -721,10 +729,11 @@ describe('a page in full screen anyway', () => {
 })
 
 describe('clearData', () => {
-  it('clears the browser session only, asked by the window', async () => {
+  it('clears both browser sessions (the main one and the agents\'), asked by the window', async () => {
     expect(await t.call('browser:clearData')).toEqual({ ok: true })
-    for (const name of ['clearStorageData', 'clearCache', 'clearAuthCache', 'clearHostResolverCache']) expect(t.ses[name]).toHaveBeenCalledTimes(1)
-    expect(t.electron.session.fromPartition.mock.calls.every(([p]) => p === BROWSER_PARTITION)).toBe(true)
+    // One pass per browser partition; Tessel's own session is never asked for.
+    for (const name of ['clearStorageData', 'clearCache', 'clearAuthCache', 'clearHostResolverCache']) expect(t.ses[name]).toHaveBeenCalledTimes(2)
+    expect(t.electron.session.fromPartition.mock.calls.every(([p]) => BROWSER_PARTITIONS.has(p))).toBe(true)
   })
 
   it('refuses another sender', async () => {

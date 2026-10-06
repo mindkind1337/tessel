@@ -63,6 +63,11 @@ export const DEFAULT_SETTINGS = Object.freeze({
   // (the browser_* tools, src/main/agentBrowser.js); each page shows an
   // Agent badge with a Stop button while one does. On, as in Orca.
   agentBrowser: true,
+  // Agent-opened browser pages use a separate session, so the sites the user
+  // imported cookies into (Settings > Browser) stay signed in only for the
+  // user, not for agents using the browser tools. Off: agents share the one
+  // session, as in Orca.
+  browserAgentSeparateSession: false,
   // Agents run shell commands (the terminal tools, src/main/agentTerminal.js,
   // after VS Code's run_in_terminal): in terminals of their own next to them,
   // each command approved unless the rules below allow it; in one of yours

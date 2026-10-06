@@ -35,6 +35,12 @@ import { pickerScript, clampPickPayload } from './browserPicker'
 import { t } from './i18n'
 
 export const BROWSER_PARTITION = 'persist:tessel-browser'
+// A second session for agent-driven pages, used only when the user turns on
+// "Agents use a separate browser session" (Settings > Browser): its cookies
+// (and the logins imported into the main session) stay apart from the agents'.
+export const BROWSER_PARTITION_AGENT = 'persist:tessel-browser-agent'
+// Every partition a browser page may use (nothing else attaches).
+export const BROWSER_PARTITIONS = new Set([BROWSER_PARTITION, BROWSER_PARTITION_AGENT])
 // A picked element's screenshot, a page's: at most this big (PNG).
 const MAX_SCREENSHOT_BYTES = 8 * 1024 * 1024
 // A screenshot the page never gives.
@@ -170,15 +176,29 @@ export function createBrowserGuests({ getWindow, send, log = null, screenshotDir
   const { webContents, clipboard, nativeImage, session: electronSession, Menu = null } = electron
   // guest id -> { cancel } while an element is being picked.
   const picking = new Map()
-  let sessionReady = false
+  // Our hardened sessions, by partition (so a page is only accepted in one we
+  // made and locked down ourselves, never another webContents' session).
+  const ourSessions = new Map()
 
   const warn = (msg) => log && log.warn('browser', msg)
 
-  // The browser's session: its permissions and downloads (once).
-  function browserSession() {
-    const ses = electronSession.fromPartition(BROWSER_PARTITION)
-    if (sessionReady) return ses
-    sessionReady = true
+  function isBrowserSession(ses) {
+    if (!ses) return false
+    for (const s of ourSessions.values()) if (s === ses) return true
+    // A partition we have not hardened yet still resolves to the same session
+    // object: recognise it so a page is matched even before its first attach.
+    for (const p of BROWSER_PARTITIONS) if (electronSession.fromPartition(p) === ses) return true
+    return false
+  }
+
+  // A browser session (the main one, or the agents' when asked): its
+  // permissions and downloads, hardened once.
+  function browserSession(partition = BROWSER_PARTITION) {
+    if (!BROWSER_PARTITIONS.has(partition)) partition = BROWSER_PARTITION
+    const existing = ourSessions.get(partition)
+    if (existing) return existing
+    const ses = electronSession.fromPartition(partition)
+    ourSessions.set(partition, ses)
     ses.setPermissionRequestHandler((wc, permission, callback, details) => {
       const ok = GRANTED_PERMISSIONS.has(permission)
       if (!ok && !SILENT_DENIALS.has(permission) && shouldTellDenied(wc, permission)) {
@@ -231,12 +251,12 @@ export function createBrowserGuests({ getWindow, send, log = null, screenshotDir
   // browser's, and always locked down.
   function onWillAttach(event, webPreferences, params) {
     const src = params.src ? allowedBrowserUrl(params.src) : BLANK_URL
-    if (params.partition !== BROWSER_PARTITION || !src) {
+    if (!BROWSER_PARTITIONS.has(params.partition) || !src) {
       warn(`refused a page: ${String(params.partition || '').slice(0, 60)} ${String(params.src || '').slice(0, 200)}`)
       event.preventDefault()
       return
     }
-    browserSession()
+    browserSession(params.partition)
     // Rebuilt from an allow-list rather than cleaned key by key: a setting
     // Electron adds later (or one forgotten here) never reaches the page.
     // Gone with it: preload, preloadURL, additionalArguments, session (only
@@ -257,7 +277,7 @@ export function createBrowserGuests({ getWindow, send, log = null, screenshotDir
       webviewTag: false,
       plugins: false,
       javascript: true,
-      partition: BROWSER_PARTITION,
+      partition: params.partition,
       disableHtmlFullscreenWindowResize: true,
       // alert() in a loop would hold Tessel's whole window: from the second
       // dialog on, the page's dialogs can be turned off.
@@ -508,7 +528,7 @@ export function createBrowserGuests({ getWindow, send, log = null, screenshotDir
   function focusedGuest(win) {
     const wc = typeof webContents.getFocusedWebContents === 'function' ? webContents.getFocusedWebContents() : null
     if (!wc || wc.isDestroyed() || typeof wc.getType !== 'function' || wc.getType() !== 'webview') return null
-    if (wc.hostWebContents !== win.webContents || wc.session !== browserSession()) return null
+    if (wc.hostWebContents !== win.webContents || !isBrowserSession(wc.session)) return null
     return wc
   }
 
@@ -542,7 +562,7 @@ export function createBrowserGuests({ getWindow, send, log = null, screenshotDir
     const guest = Number.isSafeInteger(id) ? webContents.fromId(id) : null
     if (!guest || guest.isDestroyed() || guest.getType() !== 'webview') return null
     if (guest.hostWebContents !== win.webContents) return null
-    if (guest.session !== browserSession()) return null
+    if (!isBrowserSession(guest.session)) return null
     return guest
   }
 
@@ -555,7 +575,7 @@ export function createBrowserGuests({ getWindow, send, log = null, screenshotDir
     const guest = webContents.fromId(id)
     if (!guest || guest.isDestroyed() || guest.getType() !== 'webview') return null
     if (guest.hostWebContents !== win.webContents) return null
-    if (guest.session !== browserSession()) return null
+    if (!isBrowserSession(guest.session)) return null
     return guest
   }
 
@@ -598,14 +618,24 @@ export function createBrowserGuests({ getWindow, send, log = null, screenshotDir
   }
 
   // Everything the browser's pages kept: cookies, storage, cache, HTTP
-  // authentication. Tessel's own session is not touched.
-  async function clearData() {
-    const ses = browserSession()
+  // authentication. Tessel's own session is not touched. By default both
+  // browser sessions (the main one and the agents') are cleared; a partition
+  // narrows it to one, and 'cookies' clears only the cookies of a partition
+  // (used by "Clear imported cookies").
+  async function clearData({ partition = null, cookiesOnly = false } = {}) {
+    const partitions = partition && BROWSER_PARTITIONS.has(partition) ? [partition] : [...BROWSER_PARTITIONS]
     try {
-      await ses.clearStorageData()
-      await ses.clearCache()
-      await ses.clearAuthCache()
-      if (typeof ses.clearHostResolverCache === 'function') await ses.clearHostResolverCache()
+      for (const p of partitions) {
+        const ses = browserSession(p)
+        if (cookiesOnly) {
+          await ses.clearStorageData({ storages: ['cookies'] })
+        } else {
+          await ses.clearStorageData()
+          await ses.clearCache()
+          await ses.clearAuthCache()
+          if (typeof ses.clearHostResolverCache === 'function') await ses.clearHostResolverCache()
+        }
+      }
       return { ok: true }
     } catch (err) {
       warn(`clearing the browser data failed: ${err.message}`)
