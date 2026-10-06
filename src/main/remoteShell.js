@@ -147,7 +147,12 @@ export const FUNCTIONS = new Set([
   // Claude Code's skills there (~/.claude/skills and a project's
   // .claude/skills): their SKILL.md files' paths and first bytes only,
   // read-only and bounded (chat/remoteSkills.js).
-  '__t_skills'
+  '__t_skills',
+  // A Claude Code session's sub-agent transcripts (<id>/subagents/*.jsonl
+  // next to its transcript): their names, sizes and change times (at most
+  // N), and a bounded window of one; read-only, no link followed (jobCost.js).
+  '__t_subs',
+  '__t_sread'
 ])
 
 // The prelude: POSIX sh, for Linux (GNU, busybox) and macOS / BSD tools.
@@ -532,19 +537,53 @@ __t_tfile() {
   esac
   [ -n "$__F" ] && [ -f "$__F" ] || return 91
 }
-__t_tread() {
-  __t_tfile "$1" "$2" || return $?
-  case $3 in -|''|*[!0-9]*) [ "$3" = - ] || return 90 ;; esac
-  case $4 in ''|*[!0-9]*) return 90 ;; esac
-  __s=$(__t_sig "$__F") || return 91
+__t_twin() {
+  case $2 in -|''|*[!0-9]*) [ "$2" = - ] || return 90 ;; esac
+  case $3 in ''|*[!0-9]*) return 90 ;; esac
+  __s=$(__t_sig "$1") || return 91
   __z=\${__s%% *}
   __m=\${__s#* }; __m=\${__m%% *}
   printf '%s %s\\n' "$__z" "$__m"
-  if [ "$3" = - ]; then
-    if [ "$__z" -gt "$4" ]; then tail -c "$4" "$__F"; else cat "$__F"; fi
-  elif [ "$3" -lt "$__z" ]; then
-    tail -c +"$(($3+1))" "$__F" | head -c "$4"
+  if [ "$2" = - ]; then
+    if [ "$__z" -gt "$3" ]; then tail -c "$3" "$1"; else cat "$1"; fi
+  elif [ "$2" -lt "$__z" ]; then
+    tail -c +"$(($2+1))" "$1" | head -c "$3"
   fi
+}
+__t_tread() {
+  __t_tfile "$1" "$2" || return $?
+  __t_twin "$__F" "$3" "$4"
+}
+__t_subdir() {
+  __t_tfile claude "$1" || return $?
+  __SD=\${__F%.jsonl}
+  [ -d "$__SD" ] && [ ! -L "$__SD" ] || return 92
+  __SD=$__SD/subagents
+  [ -d "$__SD" ] && [ ! -L "$__SD" ] || return 92
+}
+__t_subs() {
+  case $2 in ''|*[!0-9]*) return 90 ;; esac
+  __t_subdir "$1"; __r=$?
+  [ "$__r" = 92 ] && return 0
+  [ "$__r" = 0 ] || return $__r
+  __n=0
+  for __c in "$__SD"/*.jsonl; do
+    [ "$__n" -lt "$2" ] || break
+    [ -f "$__c" ] && [ ! -L "$__c" ] || continue
+    __b=\${__c##*/}
+    case $__b in .*|*[!0-9A-Za-z_.-]*) continue ;; esac
+    __s=$(__t_sig "$__c") || continue
+    __z=\${__s%% *}
+    __m=\${__s#* }; __m=\${__m%% *}
+    printf '%s %s %s\\n' "$__z" "$__m" "$__b"
+    __n=$((__n+1))
+  done
+}
+__t_sread() {
+  case $2 in .*|*[!0-9A-Za-z_.-]*|'') return 90 ;; *.jsonl) ;; *) return 90 ;; esac
+  __t_subdir "$1" || return 91
+  [ -f "$__SD/$2" ] && [ ! -L "$__SD/$2" ] || return 91
+  __t_twin "$__SD/$2" "$3" "$4"
 }
 __t_home() { printf '%s\\n' "$HOME"; }
 __t_skills() {

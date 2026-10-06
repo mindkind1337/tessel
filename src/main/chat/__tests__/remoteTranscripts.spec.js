@@ -98,6 +98,19 @@ describe.skipIf(!gitSh())('readAgentFile over a fake host (Git for Windows sh)',
     fs.writeFileSync(join(home, '.claude', 'skills', 'notes.md'), 'not a skill')
     fs.mkdirSync(join(home, 'app', '.claude', 'skills', 'ship'), { recursive: true })
     fs.writeFileSync(join(home, 'app', '.claude', 'skills', 'ship', 'SKILL.md'), '---\nname: ship\n---\n')
+    // Sub-agent transcripts next to the Claude transcript, and what is not one.
+    const subs = join(home, '.claude', 'projects', '-home-me-app', SID, 'subagents')
+    fs.mkdirSync(join(subs, 'nested.jsonl'), { recursive: true })
+    fs.writeFileSync(join(subs, 'agent-a1.jsonl'), 'sub one\n')
+    fs.writeFileSync(join(subs, 'agent-b2.jsonl'), 'sub two!\n')
+    fs.writeFileSync(join(subs, 'notes.txt'), 'not a transcript')
+    fs.writeFileSync(join(subs, '.hidden.jsonl'), 'hidden')
+    fs.writeFileSync(join(home, 'secret.jsonl'), 'outside')
+    try {
+      fs.symlinkSync(join(home, 'secret.jsonl'), join(subs, 'agent-link.jsonl'))
+    } catch {
+      // No symbolic links here (Windows without the right): checked where possible.
+    }
     // Never the test machine's own agent folders.
     const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(CLAUDE_CONFIG_DIR|CODEX_HOME)$/i.test(k)))
     rfs = createRemoteFs({
@@ -161,6 +174,28 @@ describe.skipIf(!gitSh())('readAgentFile over a fake host (Git for Windows sh)',
     const mine = await rfs.listAgentSkills(HOST)
     expect(mine.files.map((f) => f.kind)).toEqual(['home'])
     expect((await rfs.listAgentSkills(HOST, { project: 'relative' })).ok).toBe(false)
+  }, 60000)
+
+  it("lists a Claude session's sub-agent transcripts (sizes only, no link, capped) and reads one", async () => {
+    const r = await rfs.listSubagentFiles(HOST, { id: SID })
+    expect(r.ok).toBe(true)
+    expect(r.files.map((f) => [f.name, f.size]).sort()).toEqual([
+      ['agent-a1', 8],
+      ['agent-b2', 9]
+    ])
+    expect(r.files.every((f) => Number.isSafeInteger(f.mtimeMs) && f.mtimeMs > 0)).toBe(true)
+    expect((await rfs.listSubagentFiles(HOST, { id: SID, limit: 1 })).files).toHaveLength(1)
+    // No Claude transcript by that id: missing.
+    expect(await rfs.listSubagentFiles(HOST, { id: CODEX })).toMatchObject({ ok: false, missing: true })
+    const one = await rfs.readAgentFile(HOST, { agent: 'claude', id: SID, sub: 'agent-b2', offset: 4, cap: 3 })
+    expect(one).toMatchObject({ ok: true, size: 9 })
+    expect(one.data.toString()).toBe('two')
+    expect((await rfs.readAgentFile(HOST, { agent: 'claude', id: SID, sub: 'agent-a1' })).data.toString()).toBe('sub one\n')
+    // Never a link, a folder, a hidden or made-up name, or another agent's.
+    for (const sub of ['agent-link', 'nested', 'agent-zz']) expect(await rfs.readAgentFile(HOST, { agent: 'claude', id: SID, sub, offset: 0, cap: 100 }), sub).toMatchObject({ ok: false, missing: true })
+    for (const sub of ['.hidden', '../agent-a1', 'a/b', ''])
+      expect(await rfs.readAgentFile(HOST, { agent: 'claude', id: SID, sub, offset: 0, cap: 100 }), sub).toMatchObject({ ok: false, error: 'invalid' })
+    expect(await rfs.readAgentFile(HOST, { agent: 'codex', id: CODEX, sub: 'agent-a1' })).toMatchObject({ ok: false, error: 'invalid' })
   }, 60000)
 })
 

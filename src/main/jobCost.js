@@ -15,8 +15,9 @@
 // up by id), with a Claude session's sub-agent transcripts
 // (<id>/subagents/*.jsonl). Other chat agents (OpenCode): the pane's journal.
 // Claude Code and Codex in a terminal on an SSH host: the session's file
-// there, read over the host's connection (bounded, throttled; its
-// sub-agents' files not read). Any other agent, or a pane on another
+// there, read over the host's connection (bounded, throttled), with a Claude
+// session's sub-agent transcripts there (at most MAX_SUBAGENT_FILES, listed
+// at most once per remoteGapMs). Any other agent, or a pane on another
 // computer: status 'unavailable'.
 //
 // A card: its work periods (taskBoardStore.js workPeriods: [{ start, end,
@@ -50,7 +51,8 @@ const HOST_ID = /^ssh-[\w-]{1,60}$/
 export const PANES_FILE = 'job-cost-panes.json'
 
 // The cache key of a conversation file on an SSH host (never a path read here).
-const remoteKey = (hostId, agent, id) => `ssh-file://${hostId}/${agent}/${id}`
+const remoteKey = (hostId, agent, id, sub = null) => `ssh-file://${hostId}/${agent}/${id}${sub ? `/subagents/${sub}` : ''}`
+const MAX_SUBAGENT_LISTS = 200
 
 const obj = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : null)
 const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null)
@@ -223,6 +225,10 @@ export function attribute(events, cards) {
 //     for, at most remoteBudgetBytes per call, each file at most once per
 //     remoteGapMs; files asked about in the last remoteWatchMs are checked
 //     every remotePollMs for the change notice (only while someone looks).
+//   listSubagentFiles(hostId, { id, limit }) (remoteFs.js): a Claude
+//     session's sub-agent transcripts there -> { ok, files: [{ name, size,
+//     mtimeMs }] }; each read with readAgentFile(.., { sub: name }), only
+//     when the listing shows it grew.
 export function createJobCost({
   userDataDir,
   sessionsDir = () => null,
@@ -238,6 +244,7 @@ export function createJobCost({
   debounceMs = 1500,
   hostOfPane = () => null,
   readAgentFile = null,
+  listSubagentFiles = null,
   remoteBudgetBytes = 8 * 1024 * 1024,
   remoteGapMs = 5000,
   remotePollMs = 15000,
@@ -247,6 +254,7 @@ export function createJobCost({
   const paneLog = new Map() // paneId -> [{ agent, sessionId, transcriptPath, hostId?, seenAt }]
   const remoteWatched = new Map() // key -> { hostId, agent, id, until, stamp }
   let remotePoller = null
+  const subLists = new Map() // `${hostId}/${sessionId}` -> { at, files: Map(name -> { size }) | null, pending }
   let logLoaded = false
   let logDirty = false
   let saveTimer = null
@@ -373,12 +381,18 @@ export function createJobCost({
 
   // A session -> its files [{ file, kind, sub }] | { reason }
   async function filesOf(paneId, s) {
-    // On an SSH host: its file there (its sub-agents' files are not read).
+    // On an SSH host: its file there, and a Claude session's sub-agents'.
     if (s.hostId && !s.chat) {
       if (!FILE_AGENTS.includes(s.agent)) return { reason: 'remote' }
       if (!UUID.test(s.sessionId) || !HOST_ID.test(s.hostId)) return { reason: 'invalid-session' }
       if (typeof readAgentFile !== 'function') return { reason: 'remote' }
-      return { files: [{ file: remoteKey(s.hostId, s.agent, s.sessionId), kind: s.agent, sub: null, remote: { hostId: s.hostId, agent: s.agent, id: s.sessionId } }] }
+      const files = [{ file: remoteKey(s.hostId, s.agent, s.sessionId), kind: s.agent, sub: null, remote: { hostId: s.hostId, agent: s.agent, id: s.sessionId } }]
+      if (s.agent === 'claude') {
+        const subs = await remoteSubagents(s.hostId, s.sessionId)
+        for (const name of subs ? [...subs.keys()].slice(0, MAX_SUBAGENT_FILES) : [])
+          files.push({ file: remoteKey(s.hostId, 'claude', s.sessionId, name), kind: 'claude', sub: name, remote: { hostId: s.hostId, agent: 'claude', id: s.sessionId, sub: name } })
+      }
+      return { files }
     }
     if (FILE_AGENTS.includes(s.agent)) {
       if (!UUID.test(s.sessionId)) return { reason: 'invalid-session' }
@@ -634,11 +648,53 @@ export function createJobCost({
 
   // --- Files on an SSH host ---------------------------------------------------
 
+  // A Claude session's sub-agent transcripts on a host: listed at most once
+  // per remoteGapMs (one listing at a time) -> Map(name -> { size }) | null.
+  async function remoteSubagents(hostId, id) {
+    if (typeof listSubagentFiles !== 'function') return null
+    const key = `${hostId}/${id}`
+    let e = subLists.get(key)
+    if (e && e.pending) return e.pending
+    if (e && now() - e.at < remoteGapMs) return e.files
+    if (!e) {
+      e = { at: 0, files: null, pending: null }
+      subLists.set(key, e)
+      while (subLists.size > MAX_SUBAGENT_LISTS) subLists.delete(subLists.keys().next().value)
+    }
+    const entry = e
+    entry.pending = (async () => {
+      try {
+        await null // pending is set before this settles, even on a throw
+        const r = await listSubagentFiles(hostId, { id, limit: MAX_SUBAGENT_FILES })
+        if (r && r.ok && Array.isArray(r.files)) {
+          const files = new Map()
+          for (const f of r.files.slice(0, MAX_SUBAGENT_FILES)) if (f && typeof f.name === 'string' && Number.isSafeInteger(f.size)) files.set(f.name, { size: f.size })
+          entry.files = files
+        } else if (r && r.missing) entry.files = new Map()
+      } catch (err) {
+        warn('remote sub-agents', err)
+      } finally {
+        entry.at = now()
+        entry.pending = null
+      }
+      return entry.files
+    })()
+    return entry.pending
+  }
+
   function readerOf(f) {
-    const { hostId, agent, id } = f.remote
+    const { hostId, agent, id, sub = null } = f.remote
     return async ({ offset, cap }) => {
       try {
-        const r = await readAgentFile(hostId, { agent, id, offset, cap })
+        // A sub-agent's file the listing shows unchanged since it was read:
+        // its size, no request.
+        if (sub) {
+          const subs = await remoteSubagents(hostId, id)
+          const known = subs && subs.get(sub)
+          if (subs && !known) return { ok: false, missing: true }
+          if (known && offset !== null && known.size === offset) return { ok: true, size: known.size, data: Buffer.alloc(0) }
+        }
+        const r = await readAgentFile(hostId, { agent, id, offset, cap, ...(sub ? { sub } : {}) })
         return r && typeof r === 'object' ? r : { ok: false }
       } catch {
         return { ok: false }
@@ -757,6 +813,7 @@ export function createJobCost({
     if (remotePoller) clearInterval(remotePoller)
     remotePoller = null
     remoteWatched.clear()
+    subLists.clear()
     if (changedTimer) clearTimeout(changedTimer)
     changedTimer = null
     if (saveTimer) {

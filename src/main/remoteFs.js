@@ -124,6 +124,26 @@ export function parseSkillListing(out, max = 1000) {
   return files
 }
 
+// A sub-agent transcript's name on a host, without .jsonl (Claude Code's
+// agent-<id>): what __t_subs lists and __t_sread reads.
+export const SUBAGENT_NAME = /^[0-9A-Za-z_][0-9A-Za-z_.-]{0,150}$/
+export const MAX_SUBAGENT_FILES = 50
+
+// The host's answer to __t_subs: "<size> <mtime in seconds> <name>.jsonl"
+// lines. -> [{ name, size, mtimeMs }] (names as SUBAGENT_NAME, at most max)
+export function parseSubagentListing(out, max = MAX_SUBAGENT_FILES) {
+  const files = []
+  const seen = new Set()
+  for (const line of String(out || '').split('\n')) {
+    if (files.length >= max) break
+    const m = /^(\d{1,15}) (\d{1,15}) (.+)\.jsonl\r?$/.exec(line)
+    if (!m || !SUBAGENT_NAME.test(m[3]) || seen.has(m[3])) continue
+    seen.add(m[3])
+    files.push({ name: m[3], size: Number(m[1]), mtimeMs: Number(m[2]) * 1000 })
+  }
+  return files
+}
+
 // The host's answer to __t_browse: its real path, then "k name" records
 // (d folder, f file, L link to a folder, l other link, o other).
 // -> { path, entries, truncated }
@@ -1376,16 +1396,22 @@ export function createRemoteFs({
   // transcript or a Codex rollout, found by its id in the agent's own folder
   // there), a bounded window of it: offset null = its last `cap` bytes, else
   // from that byte on. Never a sign-in, like listAgentSessions.
+  // sub: one of a Claude session's sub-agent transcripts instead (its name
+  // without .jsonl, from listSubagentFiles; __t_sread).
   // -> { ok: true, size, data: Buffer } | { ok: false, missing? , notConnected?, error }
-  async function readAgentFile(hostId, { agent, id, offset = null, cap = 4 * 1024 * 1024 } = {}) {
+  async function readAgentFile(hostId, { agent, id, offset = null, cap = 4 * 1024 * 1024, sub = null } = {}) {
     if (!hostIdOk(hostId)) return { ok: false, error: t('main.remote.notFound', 'This remote host is no longer saved in Tessel.') }
     if ((agent !== 'claude' && agent !== 'codex') || typeof id !== 'string' || !/^[0-9A-Za-z-]{8,100}$/.test(id)) return { ok: false, error: 'invalid' }
+    if (sub !== null && sub !== undefined && (agent !== 'claude' || !SUBAGENT_NAME.test(sub))) return { ok: false, error: 'invalid' }
     if (offset !== null && !(Number.isSafeInteger(offset) && offset >= 0)) return { ok: false, error: 'invalid' }
     const max = Number.isSafeInteger(cap) && cap > 0 ? Math.min(cap, 32 * 1024 * 1024) : 4 * 1024 * 1024
     if (!connectedQuietly(hostId)) return { ok: false, notConnected: true, error: t('main.remoteFs.notConnected', '{{host}} is not connected. Use Connect to sign in.', { host: hostLabel(hostId) }) }
     const entry = sessions.get(hostId)
     const open = !!(entry && !entry.closed && entry.session && entry.session.state === 'ready')
-    const res = await call(hostId, '__t_tread', [agent, id, offset === null ? '-' : String(offset), String(max)], { cap: max + 64, timeoutMs: 30_000, op: 'read', ...(open ? { ifOpen: true } : {}) })
+    const where = offset === null ? '-' : String(offset)
+    const res = sub
+      ? await call(hostId, '__t_sread', [id, `${sub}.jsonl`, where, String(max)], { cap: max + 64, timeoutMs: 30_000, op: 'read', ...(open ? { ifOpen: true } : {}) })
+      : await call(hostId, '__t_tread', [agent, id, where, String(max)], { cap: max + 64, timeoutMs: 30_000, op: 'read', ...(open ? { ifOpen: true } : {}) })
     if (!res || res.skipped) return { ok: false, notConnected: true, error: t('main.remoteFs.notConnected', '{{host}} is not connected. Use Connect to sign in.', { host: hostLabel(hostId) }) }
     if (res.error) return { ok: false, error: res.error }
     if (res.rc === RC.MISSING) return { ok: false, missing: true, error: 'missing' }
@@ -1398,6 +1424,26 @@ export function createRemoteFs({
     if (!Number.isSafeInteger(size) || size < 0) return { ok: false, error: 'unreadable' }
     const mtime = Number(mtimeText)
     return { ok: true, size, mtimeMs: Number.isSafeInteger(mtime) && mtime >= 0 ? mtime * 1000 : null, data: out.subarray(nl + 1) }
+  }
+
+  // A Claude Code session's sub-agent transcripts on this host (__t_subs:
+  // <id>/subagents/*.jsonl next to its transcript, no link followed), at
+  // most `limit`: their names (without .jsonl), sizes and change times, never
+  // their contents. Never a sign-in.
+  // -> { ok: true, files: [{ name, size, mtimeMs }] } | { ok: false, missing?, notConnected?, error }
+  async function listSubagentFiles(hostId, { id, limit = MAX_SUBAGENT_FILES } = {}) {
+    if (!hostIdOk(hostId)) return { ok: false, error: t('main.remote.notFound', 'This remote host is no longer saved in Tessel.') }
+    if (typeof id !== 'string' || !/^[0-9A-Za-z-]{8,100}$/.test(id)) return { ok: false, error: 'invalid' }
+    const n = Number.isSafeInteger(limit) && limit > 0 ? Math.min(limit, MAX_SUBAGENT_FILES) : MAX_SUBAGENT_FILES
+    if (!connectedQuietly(hostId)) return { ok: false, notConnected: true, error: t('main.remoteFs.notConnected', '{{host}} is not connected. Use Connect to sign in.', { host: hostLabel(hostId) }) }
+    const entry = sessions.get(hostId)
+    const open = !!(entry && !entry.closed && entry.session && entry.session.state === 'ready')
+    const res = await call(hostId, '__t_subs', [id, String(n)], { cap: 64 * 1024, timeoutMs: 20_000, op: 'read', ...(open ? { ifOpen: true } : {}) })
+    if (!res || res.skipped) return { ok: false, notConnected: true, error: t('main.remoteFs.notConnected', '{{host}} is not connected. Use Connect to sign in.', { host: hostLabel(hostId) }) }
+    if (res.error) return { ok: false, error: res.error }
+    if (res.rc === RC.MISSING) return { ok: false, missing: true, error: 'missing' }
+    if (res.rc !== 0 && res.rc !== RC.PIPE && !res.truncated) return { ok: false, error: rcText(res, `rc ${res.rc}`) }
+    return { ok: true, files: parseSubagentListing(Buffer.isBuffer(res.out) ? res.out.toString('utf8') : String(res.out || ''), n) }
   }
 
   // The signed-in user's home folder on this host ($HOME), kept once known
@@ -1542,6 +1588,7 @@ export function createRemoteFs({
     connectedQuietly,
     listAgentSessions,
     readAgentFile,
+    listSubagentFiles,
     hostHome,
     listAgentSkills,
     browse,
