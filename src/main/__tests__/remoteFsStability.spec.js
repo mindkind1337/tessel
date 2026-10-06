@@ -158,6 +158,26 @@ describe('remote files on a slow host', () => {
     rfs.close()
   })
 
+  it('a connection that died after a long silence (a stalled link) is not retried: the error comes now', async () => {
+    let clock = 1000
+    let n = 0
+    const { rfs, children } = service(
+      (fn) => {
+        if (fn === '__t_stats' && n++ === 0) return null
+        return { rc: 0, out: '' }
+      },
+      { now: () => clock }
+    )
+    const p = rfs.statForEdit(`${ROOT}/a.txt`)
+    for (let i = 0; i < 40 && n === 0; i++) await later(5)
+    clock += 60_000
+    children[0].emit('exit', 255)
+    const res = await p
+    expect(res.ok).toBe(false)
+    expect(children).toHaveLength(1)
+    rfs.close()
+  })
+
   it('a save in flight when the connection drops is never sent again', async () => {
     const { rfs, seen, children } = service((fn) => (fn === '__t_write' ? null : { rc: 0, out: '' }))
     const p = rfs.writeForEdit({ file: `${ROOT}/a.txt`, text: 'x' })

@@ -530,10 +530,15 @@ export function createRemoteFs({
   // (it was waiting its turn), or when it only reads (retry: true). Not
   // after a time-out (a host that does not answer would only keep the user
   // waiting longer), a cancel or a shutdown, and not for polls.
+  // (`now` is the factory's clock.)
   const RETRY_ON = new Set(['closed', 'ssh', 'connect'])
+  // Only a drop that came quickly: a connection that died after a long
+  // silence (a stalled link, ended by its keep-alive) would only start a
+  // new sign-in to a host that does not answer, and keep the user waiting.
   async function call(hostId, fn, args, opts = {}) {
+    const t0 = now()
     const res = await callOnce(hostId, fn, args, opts)
-    if (res && res.error && !opts.quiet && !opts.ifOpen && RETRY_ON.has(res.code) && (res.notSent || opts.retry)) {
+    if (res && res.error && !opts.quiet && !opts.ifOpen && RETRY_ON.has(res.code) && (res.notSent || opts.retry) && now() - t0 < SLOW_MS) {
       return callOnce(hostId, fn, args, opts)
     }
     return res
