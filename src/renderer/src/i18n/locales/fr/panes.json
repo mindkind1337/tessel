@@ -546,7 +546,9 @@
       "hideTranscript": "Revenir au terminal",
       "switchToChatView": "Passer en vue chat",
       "switchToTerminalView": "Passer en vue terminal",
-      "chatViewHint": "Afficher cette conversation comme un chat par-dessus son terminal, ou de nouveau le terminal : l'agent continue de tourner, rien ne redémarre"
+      "chatViewHint": "Afficher cette conversation comme un chat par-dessus son terminal, ou de nouveau le terminal : l'agent continue de tourner, rien ne redémarre",
+      "continueOnHost": "Continuer dans un panneau de chat (sur l’hôte)",
+      "continueOnHostHint": "Arrêter cet agent du terminal et poursuivre la même conversation dans un panneau de chat qui tourne sur l’hôte SSH"
     },
     "badge": {
       "quiet": "silencieux depuis {{minutes}} min",

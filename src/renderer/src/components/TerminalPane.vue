@@ -63,6 +63,7 @@ import NativeChatTranscriptView from './chat/orca/NativeChatTranscriptView.vue'
 import {
   KEY_SHIFT_TAB,
   canCycleToYolo,
+  REMOTE_CHAT_VIEW_AGENTS,
   canShowChatView,
   chatViewTakesImages,
   composerAgent,
@@ -1133,6 +1134,19 @@ function menuOpenAsChat() {
   closeCtxMenu()
   if (chatViewAvailable.value) toggleChatView()
   else if (ctx.switchToChat) ctx.switchToChat(props.node.id)
+}
+// Pane menu > Continue in a chat pane (on the host): a Claude or Codex agent
+// on an SSH host goes on in a chat pane running there (its header button
+// only shows the chat view over the terminal). App's switch checks first
+// that chats can run on the host and says so when they cannot.
+const canContinueOnHost = computed(() => {
+  const n = props.node
+  return n.kind === 'agent' && !!n.remoteHostId && !n.detected && REMOTE_CHAT_VIEW_AGENTS.includes(n.agentId) && !!ctx.switchToChat
+})
+const continueOnHostReason = computed(() => (props.node.sessionId ? '' : t('pane.menu.noSession', 'Start a conversation first')))
+function menuContinueOnHost() {
+  closeCtxMenu()
+  if (canContinueOnHost.value && props.node.sessionId) ctx.switchToChat(props.node.id)
 }
 function menuYoloFolder() {
   closeCtxMenu()
@@ -2796,6 +2810,9 @@ const paneMenuBindings = computed(() => ({
   canOpenAsChat: unref(canOpenAsChat),
   menuOpenAsChat: unref(menuOpenAsChat),
   chatViewAvailable: unref(chatViewAvailable),
+  canContinueOnHost: unref(canContinueOnHost),
+  continueOnHostReason: unref(continueOnHostReason),
+  menuContinueOnHost: unref(menuContinueOnHost),
   canSwitchYolo: unref(canSwitchYolo),
   menuSwitchYolo: unref(menuSwitchYolo),
   yoloFolder: unref(yoloFolder),

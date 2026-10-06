@@ -87,7 +87,7 @@ import { parseLeadRequest, findTaskRef, leadGuide, memberGuide } from '../../sha
 import { workerLaunchArgs, wakeLaunchArgs, CHAT_RESULTS_POINTER } from '../../shared/orchestration'
 import { createOrchestrator } from './orchestrator'
 import { formatChatTranscript } from './chat/chatTranscript'
-import { canShowChatView, chatViewTakesImages, isPastedImageCopy } from './chat/terminalChatBridge'
+import { REMOTE_CHAT_VIEW_AGENTS, canShowChatView, chatViewTakesImages, isPastedImageCopy } from './chat/terminalChatBridge'
 import { automationLaunchArgs, AUTOMATION_AGENTS, permissionFingerprint, quoteGlobArgs } from '../../shared/automations'
 import { agyContinueLaunchArgs } from '../../shared/agyContinue'
 import { createAutomationRunner, probeRunAgent } from './automationRunner'
@@ -2710,6 +2710,9 @@ function buildCommands() {
       add(layout, leaf.chatView ? t('pane.menu.switchToTerminalView', 'Switch to terminal view') : t('pane.menu.switchToChatView', 'Switch to chat view'), () => {
         leaf.chatView = !leaf.chatView || undefined
       })
+    // A Claude or Codex terminal on an SSH host: on in a chat pane there.
+    if (leaf && leaf.kind === 'agent' && leaf.remoteHostId && !leaf.detected && leaf.sessionId && REMOTE_CHAT_VIEW_AGENTS.includes(leaf.agentId))
+      add(layout, t('pane.menu.continueOnHost', 'Continue in a chat pane (on the host)'), () => requestSwitch(id, 'chat'))
   }
   add(layout, t('app.cmd.closeActive', 'Close the active pane'), closeActive, { shortcut: 'Ctrl+Shift+W' })
   add(layout, sidebarCollapsed.value ? t('app.cmd.showSidebar', 'Show the sidebar') : t('app.cmd.hideSidebar', 'Hide the sidebar'), toggleSidebar)
