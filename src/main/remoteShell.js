@@ -50,6 +50,17 @@ const HARD_MARGIN_MS = 15_000
 export const MAX_RESPONSE = 96 * 1024 * 1024
 const MAX_STDERR_TAIL = 4096
 const UPLOAD_LINE = 16 * 1024
+// The shell runs one request at a time, so a request may wait behind others.
+// That wait is bounded too (the request fails as "busy", the session goes
+// on), and so is the queue: a slow or stalled host never collects an
+// endless pile of requests the window awaits. Background requests (polls,
+// readers of agent files) wait behind the user's own and give up sooner.
+export const QUEUE_WAIT_MS = 90_000
+export const BG_QUEUE_WAIT_MS = 20_000
+export const MAX_QUEUED = 64
+export const MAX_BG_QUEUED = 16
+// Upload lines written per slice (64 x 16 KB of base64: ~1 MB).
+const UPLOAD_SLICE_LINES = 64
 
 // Exit codes of the prelude's functions (the rest are the commands' own).
 export const RC = {
@@ -147,7 +158,15 @@ export const FUNCTIONS = new Set([
   // Claude Code's skills there (~/.claude/skills and a project's
   // .claude/skills): their SKILL.md files' paths and first bytes only,
   // read-only and bounded (chat/remoteSkills.js).
-  '__t_skills'
+  '__t_skills',
+  // Codex's skills there ($CODEX_HOME/skills, ~/.agents/skills and a
+  // project's .agents/skills and .codex/skills), the same way.
+  '__t_cxskills',
+  // A Claude Code session's sub-agent transcripts (<id>/subagents/*.jsonl
+  // next to its transcript): their names, sizes and change times (at most
+  // N), and a bounded window of one; read-only, no link followed (jobCost.js).
+  '__t_subs',
+  '__t_sread'
 ])
 
 // The prelude: POSIX sh, for Linux (GNU, busybox) and macOS / BSD tools.
@@ -532,19 +551,53 @@ __t_tfile() {
   esac
   [ -n "$__F" ] && [ -f "$__F" ] || return 91
 }
-__t_tread() {
-  __t_tfile "$1" "$2" || return $?
-  case $3 in -|''|*[!0-9]*) [ "$3" = - ] || return 90 ;; esac
-  case $4 in ''|*[!0-9]*) return 90 ;; esac
-  __s=$(__t_sig "$__F") || return 91
+__t_twin() {
+  case $2 in -|''|*[!0-9]*) [ "$2" = - ] || return 90 ;; esac
+  case $3 in ''|*[!0-9]*) return 90 ;; esac
+  __s=$(__t_sig "$1") || return 91
   __z=\${__s%% *}
   __m=\${__s#* }; __m=\${__m%% *}
   printf '%s %s\\n' "$__z" "$__m"
-  if [ "$3" = - ]; then
-    if [ "$__z" -gt "$4" ]; then tail -c "$4" "$__F"; else cat "$__F"; fi
-  elif [ "$3" -lt "$__z" ]; then
-    tail -c +"$(($3+1))" "$__F" | head -c "$4"
+  if [ "$2" = - ]; then
+    if [ "$__z" -gt "$3" ]; then tail -c "$3" "$1"; else cat "$1"; fi
+  elif [ "$2" -lt "$__z" ]; then
+    tail -c +"$(($2+1))" "$1" | head -c "$3"
   fi
+}
+__t_tread() {
+  __t_tfile "$1" "$2" || return $?
+  __t_twin "$__F" "$3" "$4"
+}
+__t_subdir() {
+  __t_tfile claude "$1" || return $?
+  __SD=\${__F%.jsonl}
+  [ -d "$__SD" ] && [ ! -L "$__SD" ] || return 92
+  __SD=$__SD/subagents
+  [ -d "$__SD" ] && [ ! -L "$__SD" ] || return 92
+}
+__t_subs() {
+  case $2 in ''|*[!0-9]*) return 90 ;; esac
+  __t_subdir "$1"; __r=$?
+  [ "$__r" = 92 ] && return 0
+  [ "$__r" = 0 ] || return $__r
+  __n=0
+  for __c in "$__SD"/*.jsonl; do
+    [ "$__n" -lt "$2" ] || break
+    [ -f "$__c" ] && [ ! -L "$__c" ] || continue
+    __b=\${__c##*/}
+    case $__b in .*|*[!0-9A-Za-z_.-]*) continue ;; esac
+    __s=$(__t_sig "$__c") || continue
+    __z=\${__s%% *}
+    __m=\${__s#* }; __m=\${__m%% *}
+    printf '%s %s %s\\n' "$__z" "$__m" "$__b"
+    __n=$((__n+1))
+  done
+}
+__t_sread() {
+  case $2 in .*|*[!0-9A-Za-z_.-]*|'') return 90 ;; *.jsonl) ;; *) return 90 ;; esac
+  __t_subdir "$1" || return 91
+  [ -f "$__SD/$2" ] && [ ! -L "$__SD/$2" ] || return 91
+  __t_twin "$__SD/$2" "$3" "$4"
 }
 __t_home() { printf '%s\\n' "$HOME"; }
 __t_skills() {
@@ -564,6 +617,36 @@ __t_skills() {
       head -c 8192 "$__f" | __t_b64e | tr -d '\\n'; printf '\\n'
     done
   done
+}
+__t_nolink() {
+  __p=$1
+  [ -d "$__p" ] || return 1
+  for __s in $(printf '%s' "$2" | tr '/' ' '); do __p=$__p/$__s; [ -d "$__p" ] && [ ! -L "$__p" ] || return 1; done
+}
+__t_skls() {
+  [ -d "$2" ] && [ ! -L "$2" ] || return 0
+  __o=$(printf '%s' "$2" | __t_b64e | tr -d '\\n')
+  find "$2" -maxdepth 4 -type f -name SKILL.md 2>/dev/null | head -n "$3" | while IFS= read -r __f; do
+    [ -f "$__f" ] && [ ! -L "$__f" ] || continue
+    printf '@@S %s %s ' "$1" "$__o"; printf '%s' "$__f" | __t_b64e | tr -d '\\n'; printf '\\n'
+    head -c 8192 "$__f" | __t_b64e | tr -d '\\n'; printf '\\n'
+  done
+}
+__t_cxskills() {
+  case $2 in ''|*[!0-9]*) return 90 ;; esac
+  __cx=\${CODEX_HOME:-$HOME/.codex}
+  [ "$__cx" = / ] || __cx=\${__cx%/}
+  [ -L "$__cx" ] || { __t_nolink "$__cx" skills && __t_skls home "$__cx/skills" "$2"; }
+  __t_nolink "$HOME" .agents/skills && __t_skls home "$HOME/.agents/skills" "$2"
+  if [ "$1" != - ] && [ -d "$1" ]; then
+    __pr=\${1%/}
+    for __k in .agents/skills .codex/skills; do
+      [ "$__pr/$__k" = "$HOME/.agents/skills" ] && continue
+      [ "$__pr/$__k" = "$__cx/skills" ] && continue
+      __t_nolink "$__pr" "$__k" && __t_skls repo "$__pr/$__k" "$2"
+    done
+  fi
+  return 0
 }
 if [ -z "$__T_B" ]; then printf '\\n@@R %s base64\\n' "$__T_N"; else printf '\\n@@R %s ok\\n' "$__T_N"; fi
 `
@@ -653,7 +736,12 @@ export function createRemoteSession({
       current.reject(err)
       current = null
     }
-    while (queue.length) queue.shift().reject(err)
+    while (queue.length) {
+      const q = queue.shift()
+      if (q.waitTimer) timers.clearTimeout(q.waitTimer)
+      // Never sent to the host: the caller may run it on a new session.
+      q.reject(Object.assign(sessionError(reason), { notSent: true }))
+    }
     if (child) {
       try {
         child.stdin.end()
@@ -746,16 +834,61 @@ export function createRemoteSession({
     }
   }
 
+  function busyError() {
+    const e = new Error('remote session busy') // i18n-ignore internal: callers translate by code
+    e.code = 'busy'
+    return e
+  }
+
   function pump() {
     if (state !== 'ready' || current || !queue.length) return
-    const req = queue.shift()
-    current = { ...req, out: [], err: [], section: null, size: 0, rc: null }
+    // The user's own requests first; background ones in the gaps.
+    let at = queue.findIndex((r) => !r.bg)
+    if (at < 0) at = 0
+    const [req] = queue.splice(at, 1)
+    if (req.waitTimer) timers.clearTimeout(req.waitTimer)
+    current = { ...req, out: [], err: [], section: null, size: 0, rc: null, startedAt: Date.now() }
     current.timer = timers.setTimeout(() => fail('timeout'), req.timeoutMs + HARD_MARGIN_MS)
-    try {
-      child.stdin.write(req.script)
-    } catch {
-      fail('closed')
+    writeRequest(current)
+  }
+
+  // An upload (a file saved) goes in slices, the event loop free between
+  // them: a 40 MB save is ~55 MB of base64 lines, which in one piece held
+  // the main process for half a second. A pipe that pushes back (ssh.exe's
+  // stdin) is waited for.
+  function writeRequest(req) {
+    const write = (text) => {
+      try {
+        return child.stdin.write(text)
+      } catch {
+        fail('closed')
+        return null
+      }
     }
+    if (!req.upload) {
+      write(req.script)
+      return
+    }
+    const raw = (UPLOAD_LINE / 4) * 3 // bytes per base64 line (no padding inside)
+    const step = UPLOAD_SLICE_LINES * raw
+    let off = 0
+    if (write('__t_up\n') === null) return
+    const next = () => {
+      if (state === 'closed' || current !== req) return
+      if (off >= req.upload.length) {
+        write(req.script)
+        return
+      }
+      const end = Math.min(off + step, req.upload.length)
+      const lines = []
+      for (let i = off; i < end; i += raw) lines.push(`printf '%s\\n' '${req.upload.subarray(i, Math.min(i + raw, end)).toString('base64')}' >>"$__T_D/u"\n`)
+      off = end
+      const ok = write(lines.join(''))
+      if (ok === null) return
+      if (ok === false && typeof child.stdin.once === 'function') child.stdin.once('drain', () => setImmediate(next))
+      else setImmediate(next)
+    }
+    next()
   }
 
   function start() {
@@ -794,18 +927,42 @@ export function createRemoteSession({
   }
 
   // -> Promise<{ rc, out: Buffer, err: string, truncated }>; rejects with an
-  // error whose code is the session's end (timeout, closed, cancelled…).
-  function run(fn, args = [], { cap = 4 * 1024 * 1024, timeoutMs = DEFAULT_TIMEOUT_MS, upload = null, touch = true } = {}) {
+  // error whose code is the session's end (timeout, closed, cancelled…), or
+  // 'busy' (waited too long for its turn, or too many waiting: the session
+  // goes on). background: a poll or a reader, behind the user's requests.
+  // signal: an AbortSignal; aborted while it waits, the request is dropped
+  // (once it runs, only the session's end stops it).
+  function run(fn, args = [], { cap = 4 * 1024 * 1024, timeoutMs = DEFAULT_TIMEOUT_MS, upload = null, touch = true, background = false, queueWaitMs, signal = null } = {}) {
     if (state === 'closed') return Promise.reject(sessionError(closedReason || 'closed'))
+    if (signal && signal.aborted) return Promise.reject(Object.assign(new Error('cancelled'), { code: 'cancelled' })) // i18n-ignore internal
+    const waiting = queue.filter((q) => !!q.bg === !!background).length
+    if (waiting >= (background ? MAX_BG_QUEUED : MAX_QUEUED)) return Promise.reject(busyError())
     let script
     const id = ++seq
     try {
-      script = requestScript(id, cap, fn, args, upload, Math.max(1, Math.ceil(timeoutMs / 1000)))
+      // The request line only: its upload is written in slices (writeRequest).
+      script = requestScript(id, cap, fn, args, null, Math.max(1, Math.ceil(timeoutMs / 1000)))
     } catch (err) {
       return Promise.reject(Object.assign(new Error(err.message), { code: 'bad-argument' }))
     }
+    const data = upload ? Buffer.from(upload) : null
     return new Promise((resolve, reject) => {
-      queue.push({ id, cap, script, timeoutMs, touch, resolve, reject })
+      const req = { id, cap, script, upload: data, timeoutMs, touch, bg: !!background, resolve, reject, waitTimer: null }
+      const drop = (err) => {
+        const at = queue.indexOf(req)
+        if (at < 0) return
+        queue.splice(at, 1)
+        if (req.waitTimer) timers.clearTimeout(req.waitTimer)
+        reject(err)
+      }
+      queue.push(req)
+      // Its turn has to come within the wait limit (counted from now, so
+      // only while the session is up or starting).
+      const wait = Number.isFinite(queueWaitMs) && queueWaitMs > 0 ? queueWaitMs : background ? BG_QUEUE_WAIT_MS : QUEUE_WAIT_MS
+      req.waitTimer = timers.setTimeout(() => drop(busyError()), wait)
+      if (signal && typeof signal.addEventListener === 'function') {
+        signal.addEventListener('abort', () => drop(Object.assign(new Error('cancelled'), { code: 'cancelled' })), { once: true }) // i18n-ignore internal
+      }
       pump()
     })
   }

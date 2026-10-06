@@ -344,6 +344,34 @@ describe('chat sessions on an SSH host', () => {
     await chat.close({ paneId })
   })
 
+  it("Codex's skills on the host: its own server's list, else the host's folders listed there", async () => {
+    const root = '/home/me/app/.agents/skills'
+    remote.skills = vi.fn(async () => ({
+      ok: true,
+      result: {
+        skills: [{ id: `${root}/lint/SKILL.md`, name: 'lint', description: 'Lint it', providers: ['agent-skills'], sourceKind: 'repo', sourceLabel: root, rootPath: root, directoryPath: `${root}/lint`, skillFilePath: `${root}/lint/SKILL.md`, installed: true, updatedAt: null }],
+        sources: [{ id: root, label: root, path: root, sourceKind: 'repo', providers: ['agent-skills'], owner: null, exists: true }],
+        scannedAt: 1
+      }
+    }))
+    const chat = createChatSessions(deps)
+    await chat.open({ paneId, cwd, agent: 'codex', permissions: 'manual' })
+    // Its server does not answer (no transport yet): the host listing.
+    adapters[0].skills = vi.fn(async () => ({ ok: false }))
+    const r = await chat.skills({ paneId, refresh: true })
+    expect(adapters[0].skills).toHaveBeenCalledWith({ refresh: true })
+    expect(remote.skills).toHaveBeenCalledWith({ hostId: HOST, project: '/home/me/app', refresh: true, agent: 'codex' })
+    expect(r.ok).toBe(true)
+    expect(r.result.skills.map((s) => s.name)).toEqual(['lint'])
+    expect(JSON.stringify(r.result)).not.toContain('/home/me')
+    // Its server answers: that list, no host listing.
+    remote.skills.mockClear()
+    adapters[0].skills = vi.fn(async () => ({ ok: true, result: { skills: [], sources: [], scannedAt: 2 } }))
+    expect((await chat.skills({ paneId })).ok).toBe(true)
+    expect(remote.skills).not.toHaveBeenCalled()
+    await chat.close({ paneId })
+  })
+
   it('a lost connection: told in the chat, asleep, and the next message wakes it on the same conversation', async () => {
     const chat = createChatSessions(deps)
     await chat.open({ paneId, cwd, permissions: 'manual' })

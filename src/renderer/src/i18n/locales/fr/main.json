@@ -697,6 +697,7 @@
       "connectTimeout": "La connexion à {{host}} a expiré.",
       "timeout": "L'opération sur {{host}} a pris trop de temps et a été arrêtée.",
       "cancelled": "Annulé.",
+      "busy": "{{host}} est encore occupé par des opérations précédentes : réessayez dans un instant.",
       "notConnected": "{{host}} n'est pas connecté. Utilisez Connecter pour vous connecter.",
       "sessionsNoHelper": "L’assistant de Tessel n’est pas encore installé sur {{host}} : ses sessions d’agent ne peuvent pas être listées.",
       "sessionsUnreadable": "Les sessions d’agent de {{host}} n’ont pas pu être lues.",

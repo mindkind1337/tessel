@@ -93,3 +93,26 @@ describe('Files and Changes once connected', () => {
     expect(window.shellApi.scm.status.mock.calls.length).toBeGreaterThan(statused)
   })
 })
+
+describe('a host slow to answer', () => {
+  it('the badge says so (with Cancel) instead of the operation name', async () => {
+    vi.useFakeTimers()
+    let emit
+    window.shellApi.remoteFs.onActivity = (fn) => {
+      emit = fn
+      return () => {}
+    }
+    const w = mount(RemoteBadge, { props: { hostId: HOST, host: 'Box', path: '/srv/app' } })
+    emit({ hostId: HOST, state: 'busy', pending: 1, op: 'list', slow: false })
+    await nextTick()
+    vi.advanceTimersByTime(500)
+    await nextTick()
+    expect(w.get('[data-test="remote-busy"]').text()).toContain('Reading the folder')
+    emit({ hostId: HOST, state: 'busy', pending: 1, op: 'list', slow: true })
+    await nextTick()
+    expect(w.get('[data-test="remote-busy"]').text()).toContain('Box is slow to answer')
+    expect(w.find('[data-test="remote-cancel"]').exists()).toBe(true)
+    w.unmount()
+    vi.useRealTimers()
+  })
+})

@@ -279,6 +279,43 @@ describe('terminal pane header', () => {
     delete ctx.switchToChat
   })
 
+  it('a Claude or Codex terminal on an SSH host: the menu also goes on in a chat pane on the host', async () => {
+    ctx.unsent = {}
+    ctx.trackOf = () => null
+    ctx.switchToChat = vi.fn()
+    window.shellApi.transcriptView = { open: vi.fn(async () => ({ ok: false, code: 'missing' })), close: vi.fn(), onEvent: () => () => {} }
+    const openMenu = async (n) => {
+      wrapper.unmount()
+      wrapper = mount(TerminalPane, { props: { node: n }, attachTo: host, global: { provide: { panelCtx: ctx } } })
+      await header().get('[data-test="pane-menu-btn"]').trigger('click')
+      await flushPromises()
+      return document.body.querySelector('[data-test="menu-continue-on-host"]')
+    }
+    const sessionId = '22222222-3333-4444-8555-666666666666'
+    for (const agentId of ['claude', 'codex']) {
+      const n = reactive({ ...node(), agentId, remoteHostId: 'h1', remotePath: '~/app', sessionId })
+      const item = await openMenu(n)
+      expect(item, agentId).not.toBeNull()
+      expect(item.textContent).toContain('Continue in a chat pane (on the host)')
+      // The chat view toggle stays next to it.
+      expect(document.body.querySelector('[data-test="menu-open-as-chat"]').textContent).toContain('Switch to chat view')
+      item.click()
+      await flushPromises()
+      expect(ctx.switchToChat).toHaveBeenLastCalledWith('hp')
+      expect(n.chatView).toBeFalsy()
+    }
+    // No conversation yet: shown, but off.
+    ctx.switchToChat.mockClear()
+    const none = await openMenu(reactive({ ...node(), remoteHostId: 'h1' }))
+    expect(none.disabled).toBe(true)
+    expect(none.getAttribute('title')).toBe('Start a conversation first')
+    // Not on a host, found in a shell, or another agent: no entry.
+    for (const extra of [{}, { remoteHostId: 'h1', detected: true }, { remoteHostId: 'h1', agentId: 'grok' }])
+      expect(await openMenu(reactive({ ...node(), sessionId, ...extra })), JSON.stringify(extra)).toBeNull()
+    expect(ctx.switchToChat).not.toHaveBeenCalled()
+    delete ctx.switchToChat
+  })
+
   it('an agent whose turn ended while its background work runs: monitoring dot and badge, then idle', async () => {
     ctx.unsent = {}
     ctx.trackOf = () => null
