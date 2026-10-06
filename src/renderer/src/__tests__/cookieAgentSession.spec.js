@@ -19,3 +19,37 @@ describe('browser session partition', () => {
     expect(DEFAULT_SETTINGS.browserAgentSeparateSession).toBe(false)
   })
 })
+
+import { inheritsAgentSession, afterCookieImport } from '../browser/agentSession'
+import { settings, resetSettings } from '../settings'
+
+describe('a new pane from an agent page', () => {
+  it('inherits the agents\' session from the page it came from', () => {
+    expect(inheritsAgentSession({ kind: 'browser', agentSession: true })).toBe(true)
+    expect(inheritsAgentSession({ kind: 'browser' })).toBe(false)
+    expect(inheritsAgentSession(null)).toBe(false)
+  })
+})
+
+describe('the first cookie import', () => {
+  it('turns the separate agent session on, once', () => {
+    resetSettings()
+    expect(settings.browserAgentSeparateSession).toBe(false)
+    expect(afterCookieImport(settings)).toBe(true)
+    expect(settings.browserAgentSeparateSession).toBe(true)
+    expect(settings.cookiesImportedOnce).toBe(true)
+    // The user turns it off again: later imports leave it off.
+    settings.browserAgentSeparateSession = false
+    expect(afterCookieImport(settings)).toBe(false)
+    expect(settings.browserAgentSeparateSession).toBe(false)
+    resetSettings()
+  })
+
+  it('says nothing when it was already on', () => {
+    resetSettings()
+    settings.browserAgentSeparateSession = true
+    expect(afterCookieImport(settings)).toBe(false)
+    expect(settings.cookiesImportedOnce).toBe(true)
+    resetSettings()
+  })
+})

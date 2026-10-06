@@ -4,6 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import CookieImportDialog from '../components/CookieImportDialog.vue'
+import { settings, resetSettings } from '../settings'
 
 const SOURCES = [
   {
@@ -30,11 +31,12 @@ beforeEach(() => {
   api = {
     cookieSources: vi.fn().mockResolvedValue(SOURCES),
     importCookies: vi.fn().mockResolvedValue({ ok: true, summary: { total: 50, imported: 47, skipped: 3, reasons: { appBound: 0, google: 2, expired: 1 }, domains: ['github.com'] } }),
-    pickCookieFile: vi.fn().mockResolvedValue('C:/exports/cookies.json'),
+    pickCookieFile: vi.fn().mockResolvedValue({ token: 'tok-1', name: 'cookies.json' }),
     importCookieFile: vi.fn().mockResolvedValue({ ok: true, summary: { total: 5, imported: 5, skipped: 0, reasons: {}, domains: ['x.com'] } }),
     clearImportedCookies: vi.fn().mockResolvedValue({ ok: true })
   }
   window.shellApi = { browser: api }
+  resetSettings()
 })
 afterEach(() => {
   delete window.shellApi
@@ -79,7 +81,7 @@ describe('CookieImportDialog', () => {
     await wrapper.find('[data-test="cookie-import-file"]').trigger('click')
     await flushPromises()
     expect(api.pickCookieFile).toHaveBeenCalled()
-    expect(api.importCookieFile).toHaveBeenCalledWith({ filePath: 'C:/exports/cookies.json', domainFilter: '' })
+    expect(api.importCookieFile).toHaveBeenCalledWith({ token: 'tok-1', domainFilter: '' })
   })
 
   it('warns that agents act with these logins', async () => {
@@ -93,5 +95,25 @@ describe('CookieImportDialog', () => {
     await wrapper.find('[data-test="cookie-import"]').trigger('click')
     await flushPromises()
     expect(wrapper.text()).toMatch(/Close that browser first/i)
+  })
+
+  it("turns on the agents' separate session at the first import, and says so", async () => {
+    const wrapper = await open()
+    await wrapper.find('[data-test="cookie-import"]').trigger('click')
+    await flushPromises()
+    expect(settings.browserAgentSeparateSession).toBe(true)
+    expect(wrapper.find('[data-test="cookie-separate-note"]').text()).toMatch(/Agents now use a separate session without these logins; change it in Settings > Browser/)
+    // A second import: no note again.
+    await wrapper.find('[data-test="cookie-import"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-test="cookie-separate-note"]').exists()).toBe(false)
+  })
+
+  it('does not touch the setting when the import fails', async () => {
+    api.importCookies.mockResolvedValue({ ok: false, code: 'locked' })
+    const wrapper = await open()
+    await wrapper.find('[data-test="cookie-import"]').trigger('click')
+    await flushPromises()
+    expect(settings.browserAgentSeparateSession).toBe(false)
   })
 })

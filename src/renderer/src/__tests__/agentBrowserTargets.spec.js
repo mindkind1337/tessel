@@ -31,11 +31,13 @@ function world() {
   return [wsA, wsB, remote]
 }
 
-function setup({ enabled = true, guests = { 'browser-a1': 101, 'browser-a2': 102, 'browser-b': 201, 'browser-wt': 301 } } = {}) {
+function setup({ enabled = true, separate = false, agentPages = [], guests = { 'browser-a1': 101, 'browser-a2': 102, 'browser-b': 201, 'browser-wt': 301 } } = {}) {
   const wss = world()
+  for (const ws of wss) forEachLeaf(ws.tree, (l) => agentPages.includes(l.id) && (l.agentSession = true))
   const opened = []
   const targets = createAgentBrowserTargets({
     enabled: () => enabled,
+    separateSession: () => separate,
     workspaces: () => wss,
     forEachLeaf,
     sameView: (l, other) => (l.view || '') === (other.view || ''),
@@ -71,7 +73,7 @@ describe('which browser page an agent drives', () => {
     expect(await targets.handle({ agent: 'agent-a', op: 'resolve', last: 'browser-b' })).toMatchObject({ page: 'browser-a2' })
   })
 
-  it('never another project\'s page, even named', async () => {
+  it("never another project\'s page, even named", async () => {
     const { targets } = setup()
     await expect(targets.handle({ agent: 'agent-a', op: 'resolve', page: 'browser-b' })).rejects.toMatchObject({ code: 'page_not_found' })
     await expect(targets.handle({ agent: 'agent-a', op: 'resolve', page: 'browser-wt' })).rejects.toMatchObject({ code: 'page_not_found' })
@@ -199,5 +201,31 @@ describe('which browser page an agent drives', () => {
     const { targets } = setup({ guests: {} })
     expect(await targets.handle({ agent: 'agent-a', op: 'resolve' })).toMatchObject({ page: 'browser-a2', guestId: null })
     vi.restoreAllMocks()
+  })
+})
+
+describe("the agents' separate browser session", () => {
+  it("lists and resolves only pages in the agents' session when it is on", async () => {
+    const { targets } = setup({ separate: true, agentPages: ['browser-a1'] })
+    const r = await targets.handle({ agent: 'agent-a', op: 'list' })
+    expect(r.pages.map((p) => p.page)).toEqual(['browser-a1'])
+    // The shown page (browser-a2, the user's session) is never the default.
+    expect(await targets.handle({ agent: 'agent-a', op: 'resolve' })).toMatchObject({ page: 'browser-a1' })
+  })
+
+  it("refuses a named page of the user's session", async () => {
+    const { targets } = setup({ separate: true, agentPages: ['browser-a1'] })
+    await expect(targets.handle({ agent: 'agent-a', op: 'resolve', page: 'browser-a2' })).rejects.toMatchObject({ code: 'page_not_found' })
+  })
+
+  it("refuses when no page is in the agents' session", async () => {
+    const { targets } = setup({ separate: true })
+    await expect(targets.handle({ agent: 'agent-a', op: 'resolve' })).rejects.toMatchObject({ code: 'no_page' })
+  })
+
+  it('keeps every page of the project when it is off', async () => {
+    const { targets } = setup({ separate: false, agentPages: ['browser-a1'] })
+    const r = await targets.handle({ agent: 'agent-a', op: 'list' })
+    expect(r.pages.map((p) => p.page)).toEqual(['browser-a2', 'browser-a1'])
   })
 })

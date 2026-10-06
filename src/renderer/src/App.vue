@@ -67,6 +67,7 @@ import { acquirePassthrough, trackPointerDrag } from './browser/webviewPassthrou
 import { pageOf } from './browser/pageHost'
 import { paneDropZone, placeLeaf, sidePageFromLeaf, leafFromSidePage, saveSideBrowsers, restoreSideBrowsers, newSidePageId } from './browser/pageMove'
 import { createAgentBrowserTargets, addPageNear } from './browser/agentBrowserTargets'
+import { inheritsAgentSession } from './browser/agentSession'
 import { createAgentTerminalTargets } from './agentTerminal/agentTerminalTargets'
 import { onTerminalControl, onTerminalLog, forgetTerminal } from './agentTerminal/agentTerminalState'
 import { rulesOfAction } from '../../shared/terminalRules'
@@ -382,7 +383,7 @@ function makeBrowserLeaf(id = null, url = BLANK_URL) {
 // split to the right with a new one.
 // activate: false leaves the active pane as it is (a link opened in the
 // background from a page, like a browser's middle-click).
-function openInBrowser({ url = BLANK_URL, ws = currentWs.value, newPane = false, focusAddress = false, activate = true } = {}) {
+function openInBrowser({ url = BLANK_URL, ws = currentWs.value, newPane = false, focusAddress = false, activate = true, agentSession = false } = {}) {
   if (!ws) return null
   const target = allowedBrowserUrl(url) || BLANK_URL
   const active = ws.activeId ? findLeafIn(ws.tree, ws.activeId) : null
@@ -393,6 +394,8 @@ function openInBrowser({ url = BLANK_URL, ws = currentWs.value, newPane = false,
   }
   if (!leaf) {
     leaf = makeBrowserLeaf(null, target)
+    // Opened from a page of the agents' separate session: stays in it.
+    if (agentSession) leaf.agentSession = true
     keepView(leaf, active, ws)
     const split = (orig) => reactive({ type: 'split', id: newId('split'), dir: 'row', sizes: [50, 50], children: [orig, leaf] })
     if (active) ws.tree = replaceNode(ws.tree, active.id, split)
@@ -2583,8 +2586,12 @@ provide('panelCtx', {
   browserPorts: () => browserPorts(),
   // A link a page opens in a new pane (middle-click, Ctrl+click, its menu),
   // in the workspace of the pane it came from, next to it.
-  openBrowserPane: (url, { fromId = null, activate = false } = {}) =>
-    openInBrowser({ url, ws: (fromId && wsOfLeaf(fromId)) || currentWs.value, newPane: true, activate }),
+  // A page of the agents' separate session opens its new panes in that session.
+  openBrowserPane: (url, { fromId = null, activate = false } = {}) => {
+    const ws = (fromId && wsOfLeaf(fromId)) || currentWs.value
+    const from = fromId && ws ? findLeafIn(ws.tree, fromId) : null
+    return openInBrowser({ url, ws, newPane: true, activate, agentSession: inheritsAgentSession(from) })
+  },
   // A chat agent pane: open or resume its Claude (asks to trust its folder
   // the first time), and the permissions it runs with.
   chatOpen: (leaf, opts) => chatOpen(leaf, opts),
@@ -8675,6 +8682,7 @@ const cliRequests = createCliRequests({
 // agent's own project and worktree they act on, a new one next to it.
 const agentBrowserTargets = createAgentBrowserTargets({
   enabled: () => settings.agentBrowser !== false,
+  separateSession: () => settings.browserAgentSeparateSession === true,
   workspaces: () => workspaces.value,
   forEachLeaf,
   sameView,
@@ -8705,10 +8713,10 @@ const agentBrowserTargets = createAgentBrowserTargets({
 // Settings > Agents > Let agents use the browser: the main process refuses
 // the browser tools too while it is off.
 watch(
-  () => settings.agentBrowser !== false,
-  (enabled) => {
+  () => [settings.agentBrowser !== false, settings.browserAgentSeparateSession === true],
+  ([enabled, separateSession]) => {
     const api = window.shellApi && window.shellApi.browser
-    if (api && typeof api.agentSettings === 'function') api.agentSettings({ enabled }).catch(() => {})
+    if (api && typeof api.agentSettings === 'function') api.agentSettings({ enabled, separateSession }).catch(() => {})
   },
   { immediate: true }
 )

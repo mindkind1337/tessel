@@ -29,11 +29,49 @@ export function sqliteModule() {
   return sqlite
 }
 
-// A database (and its -wal / -journal next to it) copied to a fresh temp
-// folder: fn(copyPath) runs, then the folder goes. code 'locked' when the
-// browser holds the file shut (Chrome on Windows while it runs).
+// Copies of a cookie database live in folders named COPY_PREFIX* (under
+// Tessel's own userData folder when the caller gives one, else the temp
+// folder). The ones an import is reading right now are never cleaned.
+export const COPY_PREFIX = 'tessel-cookies-'
+const activeCopies = new Set()
+
+function removeDir(dir) {
+  try {
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3 })
+    return true
+  } catch {
+    return false
+  }
+}
+
+// Removes copy folders an earlier run left behind (a crash, a kill, a file
+// Windows held open): at start and before each import. -> how many went.
+export function cleanStaleCopies(roots) {
+  let n = 0
+  for (const root of roots || []) {
+    let names
+    try {
+      names = fs.readdirSync(root, { withFileTypes: true })
+    } catch {
+      continue
+    }
+    for (const e of names) {
+      if (!e.isDirectory() || !e.name.startsWith(COPY_PREFIX)) continue
+      const dir = join(root, e.name)
+      if (activeCopies.has(dir)) continue
+      if (removeDir(dir)) n++
+    }
+  }
+  return n
+}
+
+// A database (and its -wal / -journal next to it) copied to a fresh folder:
+// fn(copyPath) runs, then the folder goes. code 'locked' when the browser
+// holds the file shut (Chrome on Windows while it runs).
 export async function withDatabaseCopy(file, fn, { tmpRoot = os.tmpdir() } = {}) {
-  const dir = fs.mkdtempSync(join(tmpRoot, 'tessel-cookies-'))
+  fs.mkdirSync(tmpRoot, { recursive: true })
+  const dir = fs.mkdtempSync(join(tmpRoot, COPY_PREFIX))
+  activeCopies.add(dir)
   const copy = join(dir, 'db.sqlite')
   try {
     try {
@@ -51,11 +89,9 @@ export async function withDatabaseCopy(file, fn, { tmpRoot = os.tmpdir() } = {})
     }
     return await fn(copy)
   } finally {
-    try {
-      fs.rmSync(dir, { recursive: true, force: true })
-    } catch {
-      // the temp folder is cleaned by the system later
-    }
+    // Gone now; if Windows still holds it, the next start or import cleans it.
+    removeDir(dir)
+    activeCopies.delete(dir)
   }
 }
 

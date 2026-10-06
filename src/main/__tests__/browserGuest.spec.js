@@ -65,7 +65,7 @@ afterEach(() => {
   fs.rmSync(root, { recursive: true, force: true })
 })
 
-function setup() {
+function setup(opts = {}) {
   const sent = []
   const ses = fakeSession()
   const winWc = new EventEmitter()
@@ -85,11 +85,11 @@ function setup() {
       })
     },
     nativeImage: { createFromPath: vi.fn(() => ({ isEmpty: () => false })) },
-    session: { fromPartition: vi.fn(() => ses) }
+    session: { fromPartition: vi.fn((p) => (opts.agentSes && p === BROWSER_PARTITION_AGENT ? opts.agentSes : ses)) }
   }
   const log = { warn: vi.fn() }
   const openExternal = vi.fn()
-  const bg = createBrowserGuests({ getWindow: () => win, send: (ch, payload) => sent.push([ch, payload]), log, screenshotDir: dir, electron, openExternal })
+  const bg = createBrowserGuests({ getWindow: () => win, send: (ch, payload) => sent.push([ch, payload]), log, screenshotDir: dir, electron, openExternal, agentSessionOnly: opts.agentSessionOnly })
   bg.attachToWindow(win)
   const handlers = {}
   bg.register({ handle: (ch, fn) => (handlers[ch] = fn) })
@@ -201,7 +201,7 @@ describe('will-attach-webview', () => {
     expect(t.ses.listenerCount('will-download')).toBe(1)
   })
 
-  it('accepts and hardens the agents\' separate session', () => {
+  it("accepts and hardens the agents\' separate session", () => {
     const params = { src: 'https://a.test', partition: BROWSER_PARTITION_AGENT }
     const prefs = {}
     t.winWc.emit('will-attach-webview', ev(), prefs, params)
@@ -224,7 +224,7 @@ describe('a page attached', () => {
     expect(t.sent).toEqual([])
   })
 
-  it('a popup without the user\'s click or key (an ad frame) is refused silently, logged once', () => {
+  it("a popup without the user\'s click or key (an ad frame) is refused silently, logged once", () => {
     const g = t.attach()
     g.emit('input-event', ev(), { type: 'mouseMove' })
     g.emit('input-event', ev(), { type: 'mouseWheel' })
@@ -254,7 +254,7 @@ describe('a page attached', () => {
     }
   })
 
-  it('a key, a touch or a mouse button counts as the user\'s input', () => {
+  it("a key, a touch or a mouse button counts as the user\'s input", () => {
     const g = t.attach()
     const inputs = [
       ['input-event', { type: 'keyDown' }],
@@ -289,7 +289,7 @@ describe('a page attached', () => {
     }
   })
 
-  it('frames: no file: nor javascript:, the page\'s own about:/data:/blob: frames stay', () => {
+  it("frames: no file: nor javascript:, the page\'s own about:/data:/blob: frames stay", () => {
     const g = t.attach()
     for (const url of ['file:///C:/x', 'javascript:alert(1)']) {
       const e = ev({ url, isMainFrame: false })
@@ -324,7 +324,7 @@ describe('a page attached', () => {
     expect(g.loadURL).not.toHaveBeenCalled()
   })
 
-  it('sends the browser\'s shortcuts to the window, not to the page', () => {
+  it("sends the browser\'s shortcuts to the window, not to the page", () => {
     const g = t.attach()
     const cases = [
       [{ key: 'l', control: true }, 'focusAddress'],
@@ -399,7 +399,7 @@ describe('the browser session', () => {
     expect(denied).toHaveLength(6)
   })
 
-  it('a denied request without a requesting URL names the page\'s origin', () => {
+  it("a denied request without a requesting URL names the page\'s origin", () => {
     const wc = { id: 9, isDestroyed: () => false, getURL: () => 'https://page.test/x' }
     t.ses.request(wc, 'media', vi.fn(), {})
     expect(t.sent[0][1]).toEqual({ webContentsId: 9, permission: 'media', origin: 'https://page.test' })
@@ -447,7 +447,7 @@ describe('the browser session', () => {
 })
 
 describe('guestFor', () => {
-  it('finds a page of the browser shown in Tessel\'s window', () => {
+  it("finds a page of the browser shown in Tessel\'s window", () => {
     const g = t.attach()
     expect(t.bg.guestFor(t.fromWindow, 7)).toBe(g)
   })
@@ -539,7 +539,7 @@ describe('Design Mode: pick', () => {
     expect(await second).toEqual({ ok: false, code: 'failed' })
   })
 
-  it('the page\'s answer is refused: failed', async () => {
+  it("the page\'s answer is refused: failed", async () => {
     const g = t.attach()
     g.armResult = Promise.resolve(null)
     expect(await t.call('browser:pick', 7)).toEqual({ ok: false, code: 'failed' })
@@ -693,7 +693,7 @@ describe('copyImage', () => {
 })
 
 describe('a page in full screen anyway', () => {
-  it('is taken out of it, and Tessel\'s window put back', async () => {
+  it("is taken out of it, and Tessel\'s window put back", async () => {
     const g = t.attach()
     t.click(g) // the page's click, with the window not in full screen
     t.win.full = true // what the page's full screen did to the window
@@ -729,7 +729,7 @@ describe('a page in full screen anyway', () => {
 })
 
 describe('clearData', () => {
-  it('clears both browser sessions (the main one and the agents\'), asked by the window', async () => {
+  it("clears both browser sessions (the main one and the agents\'), asked by the window", async () => {
     expect(await t.call('browser:clearData')).toEqual({ ok: true })
     // One pass per browser partition; Tessel's own session is never asked for.
     for (const name of ['clearStorageData', 'clearCache', 'clearAuthCache', 'clearHostResolverCache']) expect(t.ses[name]).toHaveBeenCalledTimes(2)
@@ -1031,5 +1031,30 @@ describe('the right-click menu', () => {
     expect(t.sent).toEqual([])
     expect(t.openExternal).not.toHaveBeenCalled()
     expect(t.bg.showContextMenu(g, {})).toBe(null)
+  })
+})
+
+describe("guestById and the agents' separate session", () => {
+  it('gives agents only pages of their own session when it is on', () => {
+    const agentSes = fakeSession()
+    let only = true
+    const s = setup({ agentSes, agentSessionOnly: () => only })
+    // A page in the user's (main) session: out of the agents' reach.
+    s.attach()
+    expect(s.bg.guestById(7)).toBeNull()
+    // A page in the agents' session: theirs.
+    const g = s.attach({ ses: agentSes })
+    expect(s.bg.guestById(7)).toBe(g)
+    // Off: any browser page of the window, as before.
+    only = false
+    s.attach()
+    expect(s.bg.guestById(7)).not.toBeNull()
+  })
+
+  it("the window's own lookups are not narrowed", () => {
+    const agentSes = fakeSession()
+    const s = setup({ agentSes, agentSessionOnly: () => true })
+    const g = s.attach()
+    expect(s.bg.guestFor(s.fromWindow, 7)).toBe(g)
   })
 })

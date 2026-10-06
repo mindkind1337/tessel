@@ -824,7 +824,10 @@ describe('agent browser: helpers', () => {
     const src = fs.readFileSync(join(__dirname, '..', 'index.js'), 'utf8')
     expect(src).toMatch(/let agentBrowserEnabled = false/)
     expect(src).toMatch(/agentBrowserEnabled = !!\(opts && opts\.enabled === true\)/)
-    expect(src).toMatch(/if \(!agentBrowserEnabled\) agentBrowser\.releaseAll\(\)/)
+    // Off, or the agents' session changed: every driven page let go first.
+    expect(src).toMatch(/if \(!agentBrowserEnabled \|\| separate !== agentBrowserSeparate\) agentBrowser\.releaseAll\(\)\s+agentBrowserSeparate = separate/)
+    expect(src).toMatch(/let agentBrowserSeparate = false/)
+    expect(src).toMatch(/agentSessionOnly: \(\) => agentBrowserSeparate/)
     expect(src).toMatch(/screenshotDir: join\(PASTE_DIR, 'agent-browser'\)/)
   })
 

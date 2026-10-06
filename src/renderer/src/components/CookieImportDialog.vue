@@ -8,6 +8,8 @@
 import { ref, computed, onMounted } from 'vue'
 import { Cookie, Loader2, AlertTriangle, Globe } from 'lucide-vue-next'
 import { t } from '../i18n'
+import { settings } from '../settings'
+import { afterCookieImport } from '../browser/agentSession'
 
 const emit = defineEmits(['close', 'imported'])
 
@@ -19,6 +21,8 @@ const domainFilter = ref('')
 const importing = ref(false)
 const result = ref(null) // the last summary
 const error = ref('')
+// The first import turned the agents' separate session on: said under the result.
+const separateTurnedOn = ref(false)
 
 const current = computed(() => browsers.value.find((b) => b.id === (selected.value && selected.value.browserId)) || null)
 const currentProfile = computed(() => current.value && current.value.profiles.find((p) => p.dir === (selected.value && selected.value.profileDir)))
@@ -62,10 +66,12 @@ async function doImport() {
   importing.value = true
   error.value = ''
   result.value = null
+  separateTurnedOn.value = false
   try {
     const r = await api.importCookies({ ...selected.value, domainFilter: domainFilter.value })
     if (r && r.ok) {
       result.value = r.summary
+      separateTurnedOn.value = afterCookieImport(settings)
       emit('imported', r.summary)
     } else error.value = codeMessage(r && r.code)
   } catch {
@@ -76,15 +82,21 @@ async function doImport() {
 
 async function importFile() {
   if (importing.value || !api.pickCookieFile) return
-  const filePath = await api.pickCookieFile()
-  if (!filePath) return
+  const picked = await api.pickCookieFile()
+  if (!picked) return
+  if (!picked.token) {
+    error.value = codeMessage('refused')
+    return
+  }
   importing.value = true
   error.value = ''
   result.value = null
+  separateTurnedOn.value = false
   try {
-    const r = await api.importCookieFile({ filePath, domainFilter: domainFilter.value })
+    const r = await api.importCookieFile({ token: picked.token, domainFilter: domainFilter.value })
     if (r && r.ok) {
       result.value = r.summary
+      separateTurnedOn.value = afterCookieImport(settings)
       emit('imported', r.summary)
     } else error.value = codeMessage(r && r.code)
   } catch {
@@ -97,6 +109,7 @@ function codeMessage(code) {
   if (code === 'locked') return t('browser.cookieImport.locked', 'Close that browser first, then try again (it keeps its cookies locked while open).')
   if (code === 'format') return t('browser.cookieImport.badFile', 'That file is not a cookie export Tessel understands (a JSON export or a cookies.txt).')
   if (code === 'too-big') return t('browser.cookieImport.tooBig', 'That file is too large.')
+  if (code === 'refused') return t('browser.cookieImport.refusedFile', 'Choose a cookie file on this computer (not on a network share), then try again.')
   if (code === 'not-found' || code === 'missing') return t('browser.cookieImport.notFound', 'That profile could not be found.')
   return t('browser.cookieImport.failed', 'The import could not be completed.')
 }
@@ -164,11 +177,14 @@ const resultText = computed(() => {
 
       <div class="cookie-warn" role="note">
         <AlertTriangle :size="15" aria-hidden="true" />
-        <span>{{ t('browser.cookieImport.warning', 'These are your logins. Agents that use the browser tools will act with them, unless you turn on a separate agent session in Settings > Browser. Google cookies are never imported.') }}</span>
+        <span>{{ t('browser.cookieImport.warning', 'These are your logins. Agents that use the browser tools act with them unless agents use a separate session (Settings > Browser; your first import turns it on). Google cookies are never imported.') }}</span>
       </div>
       <div v-if="appBoundWarn" class="cookie-appbound">{{ appBoundText }}</div>
 
       <div v-if="result" class="cookie-result" data-test="cookie-result">{{ resultText }}</div>
+      <div v-if="result && separateTurnedOn" class="cookie-separate" data-test="cookie-separate-note">
+        {{ t('browser.cookieImport.separateOn', 'Agents now use a separate session without these logins; change it in Settings > Browser.') }}
+      </div>
       <div v-if="error" class="cookie-error" role="alert">{{ error }}</div>
 
       <div class="confirm-actions">
@@ -306,6 +322,11 @@ const resultText = computed(() => {
   background: color-mix(in srgb, var(--accent) 12%, transparent);
   color: var(--text-strong);
   font-size: 12.5px;
+}
+.cookie-separate {
+  margin-top: 8px;
+  color: var(--text-dim);
+  font-size: 12px;
 }
 .cookie-error {
   margin-top: 12px;

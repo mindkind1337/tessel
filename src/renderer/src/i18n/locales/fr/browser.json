@@ -124,7 +124,7 @@
       "count": "{{n}} cookies",
       "domainFilter": "Seulement ces domaines (facultatif)",
       "domainPlaceholder": "ex. github.com, linear.app",
-      "warning": "Ce sont vos connexions. Les agents qui utilisent les outils du navigateur agiront avec elles, sauf si vous activez une session d'agent distincte dans Paramètres > Navigateur. Les cookies Google ne sont jamais importés.",
+      "warning": "Ce sont vos connexions. Les agents qui utilisent les outils du navigateur agissent avec elles, sauf s'ils utilisent une session distincte (Paramètres > Navigateur ; votre premier import l'active). Les cookies Google ne sont jamais importés.",
       "appBoundNote": "{{n}} cookies de ce profil utilisent le chiffrement lié à l'application de Chrome et ne peuvent pas être lus ; exportez-les dans un fichier et utilisez Importer depuis un fichier.",
       "import": "Importer les cookies",
       "fromFile": "Importer depuis un fichier…",
@@ -140,7 +140,9 @@
       "badFile": "Ce fichier n'est pas un export de cookies que Tessel comprend (un export JSON ou un cookies.txt).",
       "tooBig": "Ce fichier est trop volumineux.",
       "notFound": "Ce profil est introuvable.",
-      "failed": "L'import n'a pas pu être effectué."
+      "failed": "L'import n'a pas pu être effectué.",
+      "separateOn": "Les agents utilisent désormais une session distincte sans ces connexions ; modifiez ce choix dans Paramètres > Navigateur.",
+      "refusedFile": "Choisissez un fichier de cookies sur cet ordinateur (pas sur un partage réseau), puis réessayez."
     }
   },
   "browserDesign": {

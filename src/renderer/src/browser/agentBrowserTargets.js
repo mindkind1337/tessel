@@ -49,6 +49,7 @@ export const MAX_AGENT_PAGES = 5
 
 // deps:
 //   enabled() -> bool
+//   separateSession() -> bool   Settings > Browser > Agents use a separate browser session
 //   workspaces() -> [ws]; forEachLeaf(tree, fn)
 //   sameView(leaf, other, ws) -> bool (the same worktree grid)
 //   guestOf(paneId) -> webContents id of its page | null (pageHost.js)
@@ -69,11 +70,15 @@ export function createAgentBrowserTargets(deps) {
     return null
   }
 
-  // The browser panes the agent may drive, the shown one first.
+  // The browser panes the agent may drive, the shown one first. With "Agents
+  // use a separate browser session" on, only pages in the agents' own session
+  // (agentSession): the user's pages, with their imported logins, are out of
+  // reach (the main process checks the page's session again, browserGuest.js).
   function pagesOf(ws, agentLeaf) {
+    const separate = typeof deps.separateSession === 'function' && deps.separateSession()
     const list = []
     deps.forEachLeaf(ws.tree, (l) => {
-      if (l.kind === 'browser' && deps.sameView(l, agentLeaf, ws)) list.push(l)
+      if (l.kind === 'browser' && deps.sameView(l, agentLeaf, ws) && (!separate || l.agentSession === true)) list.push(l)
     })
     const active = list.find((l) => l.id === ws.activeId)
     return active ? [active, ...list.filter((l) => l !== active)] : list

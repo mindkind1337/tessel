@@ -4,12 +4,14 @@
 // process wires this up in index.js; nothing here reaches the renderer but
 // counts and domain names.
 import { detectBrowsers } from './detect'
-import { withDatabaseCopy, readChromiumCookies, chromiumKey, countChromiumCookies } from './chromium'
+import { withDatabaseCopy, readChromiumCookies, chromiumKey, countChromiumCookies, cleanStaleCopies } from './chromium'
 import { readFirefoxCookies, countFirefoxCookies } from './firefox'
 import { parseCookieFile, MAX_COOKIE_FILE } from './cookieFile'
 import { planImport, writeCookies, parseDomainFilter, isGoogleHost } from './cookies'
 import { unprotectDpapi } from './dpapi'
+import { isAllowedCookieFilePath } from './fileTokens'
 import fs from 'fs'
+import os from 'os'
 
 // The browsers and profiles, each profile with a cheap cookie count (and how
 // many of its cookies are app-bound, so the window can warn before an import).
@@ -51,6 +53,8 @@ async function readProfileRows(browser, profile, { platform = process.platform, 
 export async function importFromProfile({ browser, profile, session, domainFilter = '', deps = {} }) {
   if (!browser || !profile || !session) return { ok: false, code: 'invalid' }
   const domains = parseDomainFilter(domainFilter)
+  // Copies an earlier run left behind go first.
+  cleanStaleCopies([deps.tmpRoot, os.tmpdir()].filter(Boolean))
   let rows
   try {
     rows = await readProfileRows(browser, profile, deps)
@@ -65,6 +69,8 @@ export async function importFromProfile({ browser, profile, session, domainFilte
 // Import from a cookie file (the way in for app-bound cookies).
 export async function importFromFile({ filePath, session, domainFilter = '' }) {
   if (!filePath || !session) return { ok: false, code: 'invalid' }
+  // A local file only (no network share, no device path).
+  if (!isAllowedCookieFilePath(filePath)) return { ok: false, code: 'refused' }
   let stat
   try {
     stat = fs.statSync(filePath)

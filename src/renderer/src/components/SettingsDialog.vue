@@ -6,7 +6,7 @@ import { t, intlLocale, UI_LANGUAGES } from '../i18n'
 // with "Back to app", a search box and the pages, then one page at a time.
 // Edits the shared `settings` store directly, so every change applies live to
 // all panes and is saved automatically.
-import { ref, computed, watch, nextTick, onMounted, onUnmounted, onUpdated } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onUnmounted, onUpdated, inject } from 'vue'
 import BrandIcon from './BrandIcon.vue'
 import ProviderAccounts from './ProviderAccounts.vue'
 import ProviderUsageAccounts from './ProviderUsageAccounts.vue'
@@ -433,8 +433,18 @@ const emit = defineEmits([
 const browserApi = typeof window !== 'undefined' && window.shellApi ? window.shellApi.browser : null
 const clearingCookies = ref(false)
 const clearedCookies = ref(false)
+const askConfirm = inject('askConfirm', null)
 async function clearImportedCookies() {
   if (!browserApi || typeof browserApi.clearImportedCookies !== 'function' || clearingCookies.value) return
+  // Signs the user out of every site: asked first, as the pane's Clear browsing data.
+  const question = {
+    title: t('settings.browser.clearConfirmTitle', 'Clear browser cookies?'),
+    text: t('settings.browser.clearConfirmText', "Every cookie of Tessel's browser is deleted, including the ones you imported. You will be signed out of your sites."),
+    confirmLabel: t('settings.browser.clearButton', 'Clear cookies'),
+    danger: true
+  }
+  const ok = askConfirm ? await askConfirm(question) : window.confirm(question.title)
+  if (!ok) return
   clearingCookies.value = true
   clearedCookies.value = false
   try {
@@ -3041,7 +3051,7 @@ function previewSound() {
               <label class="set-row">
                 <div class="set-label">
                   {{ t('settings.browser.separateSession', 'Agents use a separate browser session') }}
-                  <span class="set-hint">{{ t('settings.browser.separateSessionHint', 'Pages agents open use their own session, without the sign-ins you imported, so an agent using the browser tools does not act with your logins. Pages already open keep the session they started in. Off: agents share the one browser session and can use the sites you are signed into.') }}</span>
+                  <span class="set-hint">{{ t('settings.browser.separateSessionHint', 'Pages agents open use their own session, without the sign-ins you imported, and agents can read, click and type only in those pages: your own browser pages are out of their reach. Links and pop-ups from an agent\'s page stay in its session. Turned on by your first cookie import. Off: agents share the one browser session and can use the sites you are signed into.') }}</span>
                 </div>
                 <input v-model="settings.browserAgentSeparateSession" type="checkbox" class="set-switch" data-setting="browserAgentSeparateSession" />
               </label>

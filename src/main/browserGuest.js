@@ -172,7 +172,10 @@ export function contextMenuItems(params = {}, nav = {}) {
   return items
 }
 
-export function createBrowserGuests({ getWindow, send, log = null, screenshotDir, electron, openExternal = null, onGuest = null }) {
+// agentSessionOnly() -> bool: Settings > Browser > "Agents use a separate
+// browser session". On, guestById (the agents' only way to a page) gives only
+// pages of the agents' own session, never the user's with its logins.
+export function createBrowserGuests({ getWindow, send, log = null, screenshotDir, electron, openExternal = null, onGuest = null, agentSessionOnly = () => false }) {
   const { webContents, clipboard, nativeImage, session: electronSession, Menu = null } = electron
   // guest id -> { cancel } while an element is being picked.
   const picking = new Map()
@@ -576,6 +579,15 @@ export function createBrowserGuests({ getWindow, send, log = null, screenshotDir
     if (!guest || guest.isDestroyed() || guest.getType() !== 'webview') return null
     if (guest.hostWebContents !== win.webContents) return null
     if (!isBrowserSession(guest.session)) return null
+    // The separate agent session on: the agents' session only, whatever the
+    // window said (the window is not trusted with this).
+    let only = false
+    try {
+      only = !!agentSessionOnly()
+    } catch {
+      only = true
+    }
+    if (only && guest.session !== electronSession.fromPartition(BROWSER_PARTITION_AGENT)) return null
     return guest
   }
 

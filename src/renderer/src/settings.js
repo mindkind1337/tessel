@@ -68,6 +68,9 @@ export const DEFAULT_SETTINGS = Object.freeze({
   // user, not for agents using the browser tools. Off: agents share the one
   // session, as in Orca.
   browserAgentSeparateSession: false,
+  // Set at the first successful cookie import, which turns the separate agent
+  // session on once (browser/agentSession.js afterCookieImport).
+  cookiesImportedOnce: false,
   // Agents run shell commands (the terminal tools, src/main/agentTerminal.js,
   // after VS Code's run_in_terminal): in terminals of their own next to them,
   // each command approved unless the rules below allow it; in one of yours

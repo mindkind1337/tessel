@@ -781,7 +781,9 @@
       "cleared": "Cookies effacés.",
       "agents": "Les agents et le navigateur",
       "separateSession": "Les agents utilisent une session de navigateur distincte",
-      "separateSessionHint": "Les pages que les agents ouvrent utilisent leur propre session, sans les connexions que vous avez importées, afin qu'un agent utilisant les outils du navigateur n'agisse pas avec vos identifiants. Les pages déjà ouvertes gardent la session dans laquelle elles ont démarré. Désactivé : les agents partagent la même session de navigateur et peuvent utiliser les sites où vous êtes connecté."
+      "separateSessionHint": "Les pages que les agents ouvrent utilisent leur propre session, sans les connexions que vous avez importées, et les agents ne peuvent lire, cliquer et saisir que dans ces pages : vos propres pages du navigateur sont hors de leur portée. Les liens et fenêtres surgissantes d'une page d'agent restent dans sa session. Activé par votre premier import de cookies. Désactivé : les agents partagent la même session de navigateur et peuvent utiliser les sites où vous êtes connecté.",
+      "clearConfirmTitle": "Effacer les cookies du navigateur ?",
+      "clearConfirmText": "Tous les cookies du navigateur de Tessel sont supprimés, y compris ceux que vous avez importés. Vous serez déconnecté de vos sites."
     }
   }
 }

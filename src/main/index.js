@@ -62,6 +62,8 @@ import { claudeImageFile, isPastedImage, PASTE_DIR } from './pastedImages'
 import { createBrowserGuests, BROWSER_PARTITION } from './browserGuest'
 import { listBrowsersForImport, importFromProfile, importFromFile } from './cookieImport/importer'
 import { detectBrowsers as detectBrowsersForImport } from './cookieImport/detect'
+import { cleanStaleCopies } from './cookieImport/chromium'
+import { createFileTokens } from './cookieImport/fileTokens'
 import { createAgentBrowser } from './agentBrowser'
 import { createAgentTerminal } from './agentTerminal'
 import { createChatSessions } from './chat/sessions'
@@ -2624,7 +2626,12 @@ ipcMain.handle('clipboard:hasImage', () =>
 // clipboard itself). Files older than a day are removed.
 // The built-in browser (browserGuest.js): its pages' rules, Design Mode
 // (pick an element, screenshots saved next to pasted images).
+// Settings > Browser > Agents use a separate browser session: the agents'
+// way to a page (guestById) then gives only pages of their own session.
+// Off until the window says what the setting is (its first report comes at start).
+let agentBrowserSeparate = false
 const browserGuests = createBrowserGuests({
+  agentSessionOnly: () => agentBrowserSeparate,
   getWindow: () => mainWindow,
   send,
   log,
@@ -2643,6 +2650,15 @@ browserGuests.register(ipcMain)
 // (src/main/cookieImport). Only counts and domain names leave the main
 // process; no value is ever logged, returned or written to disk, and a copy of
 // a cookie database is deleted right after it is read.
+// Copies of a cookie database go in Tessel's own folder (deleted right after
+// each read); copies an earlier run left behind go at start.
+const COOKIE_COPY_DIR = join(app.getPath('userData'), 'cookie-import-tmp')
+try {
+  cleanStaleCopies([COOKIE_COPY_DIR, os.tmpdir()])
+} catch {}
+// A cookie file only from the path the picker below returned: the window
+// gets a single-use token, never the path (cookieImport/fileTokens.js).
+const cookieFileTokens = createFileTokens()
 ipcMain.handle('browser:cookieSources', async (event) => {
   if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return []
   try {
@@ -2664,7 +2680,8 @@ ipcMain.handle('browser:importCookies', async (event, opts) => {
       browser,
       profile,
       session: browserGuests.browserSession(BROWSER_PARTITION),
-      domainFilter: typeof o.domainFilter === 'string' ? o.domainFilter : ''
+      domainFilter: typeof o.domainFilter === 'string' ? o.domainFilter : '',
+      deps: { tmpRoot: COOKIE_COPY_DIR }
     })
   } catch (err) {
     log.warn('cookie-import', `import failed: ${err && err.code ? err.code : ''}`)
@@ -2678,14 +2695,21 @@ ipcMain.handle('browser:pickCookieFile', async (event) => {
     properties: ['openFile'],
     filters: [{ name: t('main.dialog.cookieFileFilter', 'Cookies (JSON, cookies.txt)'), extensions: ['json', 'txt'] }]
   })
-  return r.canceled || !r.filePaths.length ? null : r.filePaths[0]
+  if (r.canceled || !r.filePaths.length) return null
+  const token = cookieFileTokens.issue(r.filePaths[0])
+  // A network share or a device path: refused (only a local file).
+  if (!token) return { refused: true }
+  return { token, name: basename(r.filePaths[0]) }
 })
 ipcMain.handle('browser:importCookieFile', async (event, opts) => {
   if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return { ok: false, code: 'refused' }
   const o = opts && typeof opts === 'object' ? opts : {}
+  // Only the path the picker returned, once.
+  const filePath = cookieFileTokens.take(o.token)
+  if (!filePath) return { ok: false, code: 'refused' }
   try {
     return await importFromFile({
-      filePath: typeof o.filePath === 'string' ? o.filePath : '',
+      filePath,
       session: browserGuests.browserSession(BROWSER_PARTITION),
       domainFilter: typeof o.domainFilter === 'string' ? o.domainFilter : ''
     })
@@ -2719,8 +2743,12 @@ const agentBrowser = createAgentBrowser({
 ipcMain.handle('browser:agentSettings', (event, opts) => {
   if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return false
   agentBrowserEnabled = !!(opts && opts.enabled === true)
-  // Turned off: every page an agent drives is let go now.
-  if (!agentBrowserEnabled) agentBrowser.releaseAll()
+  const separate = !!(opts && opts.separateSession === true)
+  // Turned off, or the session the agents may use changed: every page an
+  // agent drives is let go now (before the change, so each can still be
+  // reached and its debugger detached).
+  if (!agentBrowserEnabled || separate !== agentBrowserSeparate) agentBrowser.releaseAll()
+  agentBrowserSeparate = separate
   return true
 })
 // The Stop on a page's "Agent" badge.
