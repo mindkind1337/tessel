@@ -763,7 +763,8 @@
       "needFolder": "Un agent de chat travaille dans un dossier de projet sur cet ordinateur : ouvrez-en un d'abord.",
       "titleCodex": "Codex (chat)",
       "workerNoFolder": "un worker en chat a besoin d'un dossier de projet sur cet ordinateur",
-      "titleOpencode": "OpenCode (chat)"
+      "titleOpencode": "OpenCode (chat)",
+      "noOpencodeOnHost": "Les chats OpenCode tournent seulement sur cet ordinateur : ouvrez un terminal sur l’hôte pour y utiliser OpenCode."
     },
     "switch": {
       "noAgent": "{{name}} n'est pas disponible dans un terminal ici.",

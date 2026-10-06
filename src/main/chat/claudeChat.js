@@ -337,7 +337,10 @@ export function createClaudeChat(opts) {
     // Code 1 after an interrupted last turn, or anything after our close, is a normal end.
     const normal = closing || code === 0 || (code === 1 && lastTurnInterrupted)
     logAt(normal ? 'info' : 'warn', `exited code=${code} signal=${signal}${error ? ' error=' + error : ''}`)
-    emit('exit', { code, signal, stderrTail, crashed: !normal, error: error || null })
+    // A remote agent (remoteProcess.js) whose connection dropped: told apart,
+    // so the chat can say so and resume the conversation later.
+    const disconnected = !closing && child?.disconnected === true
+    emit('exit', { code, signal, stderrTail, crashed: !normal && !disconnected, error: error || null, ...(disconnected ? { disconnected: true } : {}) })
   }
 
   // -> { ok:true, pid, info } | { ok:false, code:'spawn'|'exit'|'timeout'|'signin'|'failed', error }

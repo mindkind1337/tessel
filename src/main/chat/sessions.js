@@ -41,6 +41,9 @@ import { readTranscriptHistory, readOlderHistory, opencodeHistoryEvents, resolve
 import { t } from '../i18n.js'
 import { approvalPreview } from '../../shared/chatApproval.js'
 import { validOpencodeModel } from './opencodeChat.js'
+import { isRemotePath, parseRemotePath, remoteRoot } from '../../shared/remotePath.js'
+import { cleanRemoteEnv, killRemoteChild } from './remoteProcess.js'
+import { readRemoteHistory, remoteTranscriptExists } from './remoteTranscripts.js'
 
 // teamText: a team message (6000) with the window's "(message <id>, reply to
 // <id>) " prefix; a longer one is cut (teamMessageText), never refused.
@@ -75,6 +78,22 @@ const DENIED = 'The user denied this.' // i18n-ignore sent to the agent
 
 export const validFlag = (v) => typeof v === 'string' && FLAG.test(v) && !v.startsWith('-')
 export const validId = (v) => typeof v === 'string' && ID.test(v)
+// A folder on an SSH host (ssh://<hostId>/path) -> { hostId, path, root }
+// (root: its normalized virtual path), or null.
+export function remoteFolder(dir) {
+  const p = isRemotePath(dir) ? parseRemotePath(dir) : null
+  if (!p) return null
+  const root = remoteRoot(p.hostId, p.path)
+  return root ? { hostId: p.hostId, path: p.path, root } : null
+}
+// Variables a remote chat's agent gets from Settings > Agents: never this
+// PC's own (PATH, HOME…), which mean nothing on the host.
+const NOT_FOR_HOST = new Set(['PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'PWD', 'TMPDIR', 'TEMP', 'TMP', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA'])
+export function remoteAgentEnv({ paneId, agent, extraEnv } = {}) {
+  const extra = cleanRemoteEnv(extraEnv)
+  for (const k of Object.keys(extra)) if (NOT_FOR_HOST.has(k.toUpperCase()) || k.toUpperCase().startsWith('TESSEL_')) delete extra[k]
+  return { ...extra, TESSEL_PANE_ID: paneId, TESSEL_AGENT_PROVIDER: agent }
+}
 export function validFolder(dir) {
   try {
     return typeof dir === 'string' && dir.length <= 4096 && !dir.includes('\0') && isAbsolute(dir) && fs.statSync(dir).isDirectory()
@@ -162,7 +181,12 @@ export function createChatSessions(deps) {
     onRateLimit = null,
     // How long a message steered into a turn that ended before the agent took
     // it waits for the agent to start it as a turn of its own.
-    steerWaitMs = STEER_WAIT_MS
+    steerWaitMs = STEER_WAIT_MS,
+    // Chats on an SSH host (remoteProcess.js, remoteTranscripts.js):
+    // { available(), spawnFor({ hostId, cwd, env }), resolveAgent(agent, hostId)
+    //   -> { exe, exeArgs? } | { error } | null, readAgentFile(hostId, q),
+    //   hostLabel(hostId) }. null: a remote folder is refused.
+    remote = null
   } = deps || {}
   const sessions = new Map() // paneId -> session
   const seqs = new Map() // paneId -> last seq (outlives a session)
@@ -264,6 +288,84 @@ export function createChatSessions(deps) {
       : t('main.chat.historyImported', 'Earlier conversation, from the history {{agent}} keeps.', { agent: agentName })
     emitHistory(s.paneId, [{ type: 'notice', kind: 'info', text, imported: true, ...(Number.isFinite(first) ? { at: first } : {}) }, ...res.events])
     logAt('info', `${s.paneId}: ${res.events.length} earlier events imported${res.truncated ? ' (the most recent part)' : ''}`) // i18n-ignore log line
+  }
+
+  const hostName = (hostId) => {
+    try {
+      return String(remote?.hostLabel?.(hostId) || hostId)
+    } catch {
+      return hostId
+    }
+  }
+
+  // importHistory for a chat on an SSH host: the agent's file there, read
+  // over the connection (remoteTranscripts.js). Once, like importHistory.
+  async function importRemoteHistory(s) {
+    if (!s.sessionId || !s.remote || typeof remote?.readAgentFile !== 'function') return
+    const j = journalOf(s.paneId)
+    const meta = j.readMeta()
+    if (meta && meta.sessionId === s.sessionId) return
+    let res = null
+    try {
+      res = await readRemoteHistory({ readAgentFile: remote.readAgentFile, hostId: s.remote.hostId, agent: s.agent, sessionId: s.sessionId })
+    } catch (err) {
+      logAt('warn', `${s.paneId}: earlier remote history not read: ${err?.message || err}`) // i18n-ignore log line
+    }
+    // Not read (the host did not answer): asked again at the next open.
+    if (!res?.ok && res?.code !== 'empty') return
+    j.writeMeta({ sessionId: s.sessionId, agent: s.agent, cwd: s.cwd })
+    if (!res.ok || !Array.isArray(res.events) || !res.events.length || s.closing) return
+    const agentName = PRODUCT[s.agent] || 'Claude' // i18n-ignore product names
+    const first = res.events[0].at
+    const text = res.truncated
+      ? t('main.chat.historyImportedPart', 'Earlier conversation, from the history {{agent}} keeps (only its most recent part).', { agent: agentName })
+      : t('main.chat.historyImported', 'Earlier conversation, from the history {{agent}} keeps.', { agent: agentName })
+    emitHistory(s.paneId, [{ type: 'notice', kind: 'info', text, imported: true, ...(Number.isFinite(first) ? { at: first } : {}) }, ...res.events])
+  }
+
+  // A chat on an SSH host lost its connection (remoteProcess.js): its
+  // process is gone with it. The chat says so and waits, asleep: its next
+  // message (or the window, once the host is back) opens it again on the
+  // same conversation (--resume / thread resume).
+  function dropped(s, e) {
+    if (s.finished || s.closing || !s.started || !s.sessionId) return finish(s, e)
+    s.asleep = true
+    s.ready = false
+    s.adapter = null
+    s.wakeAsked = false
+    s.disconnected = true
+    if (s.idleTimer) clearTimeout(s.idleTimer)
+    s.idleTimer = null
+    cancelQuestions(s)
+    if (s.turn) markFailed(s, s.turn)
+    if (s.turn && s.turn.timer) clearTimeout(s.turn.timer)
+    s.turn = null
+    s.compaction = null
+    for (const [requestId, ap] of s.approvals) {
+      if (ap.status !== 'pending') continue
+      ap.status = 'cancelled'
+      ap.input = null
+      emit(s.paneId, { type: 'approvalStatus', requestId, status: 'cancelled' })
+    }
+    s.approvals.clear()
+    s.tools.clear()
+    s.toolAgents.clear()
+    s.messages.clear()
+    if (s.launchToken && state?.unregister) {
+      const token = s.launchToken
+      Promise.resolve().then(() => state.unregister(s.paneId, token)).catch(() => {})
+    }
+    s.launchToken = null
+    try {
+      team?.revokeSecret?.(s.paneId)
+    } catch {
+      /* nothing to revoke */
+    }
+    const host = hostName(s.remote?.hostId || '')
+    const text = t('main.chat.remoteDisconnected', 'The connection to {{host}} was lost. The conversation goes on once it is back (send a message, or wait for Tessel to reconnect).', { host })
+    emit(s.paneId, { type: 'notice', kind: 'warning', text })
+    status(s, 'asleep', { reason: 'disconnected', error: text })
+    logAt('warn', `${s.paneId}: remote agent disconnected`) // i18n-ignore log line
   }
 
   // OpenCode keeps its conversations in its own database: a resumed chat
@@ -997,7 +1099,8 @@ export function createChatSessions(deps) {
         ...(e.fiveHour ? { fiveHour: e.fiveHour } : {}),
         ...(e.sevenDay ? { sevenDay: e.sevenDay } : {})
       })
-      if (onRateLimit && (s.agent === 'claude' || s.agent === 'codex')) {
+      // A host's account is not one this PC shows: its limits are not told.
+      if (onRateLimit && !s.remote && (s.agent === 'claude' || s.agent === 'codex')) {
         try {
           onRateLimit({
             provider: s.agent,
@@ -1035,7 +1138,7 @@ export function createChatSessions(deps) {
       })
     })
     on('stderr', (e) => logAt('info', `${s.paneId} stderr: ${String(e.text || '').slice(-500)}`))
-    on('exit', (e) => finish(s, e))
+    on('exit', (e) => (e.disconnected && s.remote ? dropped(s, e) : finish(s, e)))
   }
 
   // Claude: its own context count, asked when the chat is ready, after each
@@ -1190,14 +1293,17 @@ export function createChatSessions(deps) {
       if (permissions === 'yolo') permissions = 'manual'
       if (permissionMode != null && !modeAllowed(agent, permissionMode, 'manual')) permissionMode = 'default'
     }
+    // A folder on an SSH host: the agent runs there (Claude, Codex).
+    const onHost = remoteFolder(cwd)
+    const hostProject = onHost && projectDir != null && projectDir !== '' ? remoteFolder(projectDir) : null
     if (
       !Number.isInteger(idleMinutes) ||
       idleMinutes < 0 ||
       idleMinutes > 1440 ||
       !validPaneId(paneId) ||
       !AGENTS.includes(agent) ||
-      !validFolder(cwd) ||
-      (projectDir != null && projectDir !== '' && !validFolder(projectDir)) ||
+      (onHost ? !remote || agent === 'opencode' : !validFolder(cwd)) ||
+      (projectDir != null && projectDir !== '' && (onHost ? !hostProject || hostProject.hostId !== onHost.hostId : !validFolder(projectDir))) ||
       (resumeId != null && !validResumeId(agent, resumeId)) ||
       (model != null && !validModel(agent, model)) ||
       (effort != null && !validFlag(effort)) ||
@@ -1231,8 +1337,10 @@ export function createChatSessions(deps) {
       permissions,
       maxPermissions: capped ? 'manual' : null,
       permissionMode: null,
-      cwd,
-      projectDir: projectDir || null,
+      cwd: onHost ? onHost.root : cwd,
+      projectDir: onHost ? (hostProject ? hostProject.root : null) : projectDir || null,
+      // On an SSH host: { hostId, path } (path: the host's own).
+      remote: onHost ? { hostId: onHost.hostId, path: onHost.path } : null,
       worker: opts.worker === true,
       status: 'starting',
       ready: false,
@@ -1272,12 +1380,13 @@ export function createChatSessions(deps) {
       if (from?.stopping) await from.stopping
       let roots = []
       try {
-        roots = trustRoots(cwd, { worker: opts.worker === true }) || []
+        // A copy Tessel made counts as its project: local folders only.
+        roots = onHost ? [] : trustRoots(cwd, { worker: opts.worker === true }) || []
       } catch {
         roots = []
       }
-      if (!trust?.isTrusted(cwd, roots)) {
-        const yes = askTrust === true && trust?.ask ? await trust.ask(cwd) : false
+      if (!trust?.isTrusted(s.cwd, roots)) {
+        const yes = askTrust === true && trust?.ask ? await trust.ask(s.cwd) : false
         if (s.closing) return closedWhileStarting()
         if (!yes) {
           drop()
@@ -1287,17 +1396,35 @@ export function createChatSessions(deps) {
       }
 
       if (s.closing) return closedWhileStarting()
+      if (onHost && !remote.available()) {
+        drop()
+        const error = t('main.chat.remoteUnavailable', 'Chat agents on an SSH host are not available in this version of Tessel yet. Open a terminal agent on the host instead.')
+        emit(paneId, { type: 'status', state: 'crashed', agent, error })
+        return { ok: false, code: 'remote-unavailable', error }
+      }
       let found = null
       try {
-        found = await (agent === 'codex' ? resolveCodex() : agent === 'opencode' ? resolveOpencode() : resolveClaude())
+        found = onHost
+          ? await remote.resolveAgent(agent, onHost.hostId)
+          : await (agent === 'codex' ? resolveCodex() : agent === 'opencode' ? resolveOpencode() : resolveClaude())
       } catch {
         found = null
       }
       if (s.closing) return closedWhileStarting()
+      if (onHost && found && typeof found.error === 'string') {
+        // The host could not be asked (not connected, signed out).
+        drop()
+        const error = t('main.chat.remoteNoAnswer', '{{host}} did not answer: {{error}}', { host: hostName(onHost.hostId), error: found.error })
+        emit(paneId, { type: 'status', state: 'crashed', agent, error })
+        return { ok: false, code: 'remote-unreachable', error }
+      }
       if (!found || typeof found.exe !== 'string' || !found.exe) {
         drop()
-        const error =
-          agent === 'codex'
+        const error = onHost
+          ? agent === 'codex'
+            ? t('main.chat.noCodexOnHost', 'Codex was not found on {{host}}. Install it there, then try again.', { host: hostName(onHost.hostId) })
+            : t('main.chat.noClaudeOnHost', 'Claude Code was not found on {{host}}. Install it there, then try again.', { host: hostName(onHost.hostId) })
+          : agent === 'codex'
             ? t('main.chat.noCodex', 'Codex was not found. Install it, then try again.')
             : agent === 'opencode'
               ? t('main.chat.noOpencode', 'OpenCode was not found. Install it, then try again.')
@@ -1308,26 +1435,41 @@ export function createChatSessions(deps) {
 
       emit(paneId, { type: 'status', state: 'starting', agent, ...(s.sessionId ? { sessionId: s.sessionId } : {}) })
       const teamSecret = team.newSecret()
-      let base = envDeps.forPane({ paneId, cwd, projectDir: s.projectDir, accountEnv, ...(envOpts || {}) })
-      if (base && typeof base === 'object' && base.env && typeof base.env === 'object') base = base.env
-      const childEnv = buildChatEnv(base, { agent, paneId, teamSecret, projectDir: s.projectDir, pathEnv: found.pathEnv })
-      // Which login's limits this chat reports: its config folder only.
+      let childEnv
+      if (onHost) {
+        // The host's own environment (its login shell's), plus Tessel's few
+        // variables and Settings > Agents ones: never this PC's, never an
+        // account's local folders.
+        childEnv = remoteAgentEnv({ paneId, agent, extraEnv: envOpts?.extraEnv })
+      } else {
+        let base = envDeps.forPane({ paneId, cwd, projectDir: s.projectDir, accountEnv, ...(envOpts || {}) })
+        if (base && typeof base === 'object' && base.env && typeof base.env === 'object') base = base.env
+        childEnv = buildChatEnv(base, { agent, paneId, teamSecret, projectDir: s.projectDir, pathEnv: found.pathEnv })
+      }
+      // Which login's limits this chat reports: its config folder only (none
+      // on a host: its account is the host's, not one this PC shows).
       s.usageEnv = {}
-      for (const name of ['CLAUDE_CONFIG_DIR', 'CODEX_HOME'])
-        if (typeof childEnv?.[name] === 'string' && childEnv[name]) s.usageEnv[name] = childEnv[name]
+      if (!onHost)
+        for (const name of ['CLAUDE_CONFIG_DIR', 'CODEX_HOME'])
+          if (typeof childEnv?.[name] === 'string' && childEnv[name]) s.usageEnv[name] = childEnv[name]
       s.startedAt = now()
-      // Where this agent keeps its conversations (for the older pages too).
+      // Where this agent keeps its conversations (for the older pages too);
+      // on a host, its files there are read over the connection.
       try {
-        s.historyHome = transcriptHome(agent, childEnv) || null
+        s.historyHome = onHost ? null : transcriptHome(agent, childEnv) || null
       } catch {
         s.historyHome = null
       }
       // A resumed conversation: its earlier turns first (never on a wake).
-      if (resumeId && !from) importHistory(s, childEnv)
+      if (resumeId && !from) {
+        if (onHost) await importRemoteHistory(s)
+        else importHistory(s, childEnv)
+        if (s.closing) return closedWhileStarting()
+      }
       // Codex trusts the folder itself only when the chat may write there: a
       // Manual (read-only) chat would ignore the project's .codex settings.
-      // A chat's Claude (-p) never asks, so only Codex.
-      if (agent === 'codex' && typeof preTrust === 'function') {
+      // A chat's Claude (-p) never asks, so only Codex (local folders only).
+      if (agent === 'codex' && typeof preTrust === 'function' && !onHost) {
         try {
           await preTrust({ agentId: 'codex', cwd, env: childEnv, enabled: opts.agentFolderTrust === true })
         } catch {
@@ -1339,12 +1481,33 @@ export function createChatSessions(deps) {
         agent,
         exe: found.exe,
         exeArgs: Array.isArray(found.exeArgs) ? found.exeArgs : [],
-        cwd,
+        cwd: onHost ? onHost.path : cwd,
         env: childEnv,
         ...(s.model ? { model: s.model } : {}),
         ...(s.effort ? { effort: s.effort } : {}),
         log
       }
+      // On a host: the process starts there (the adapters talk to it as to a
+      // local child) and is ended there.
+      if (onHost) {
+        try {
+          Object.assign(common, { spawn: remote.spawnFor({ hostId: onHost.hostId, cwd: onHost.path, env: childEnv }), killTree: killRemoteChild, remote: true })
+        } catch (err) {
+          drop()
+          const error = String(err?.message || err)
+          emit(paneId, { type: 'status', state: 'crashed', agent, error })
+          return { ok: false, code: 'failed', error }
+        }
+      }
+      // A Claude conversation never written (closed before its first
+      // message): started again under its id, on a host as locally.
+      const neverWritten =
+        agent === 'claude' && resumeId
+          ? onHost
+            ? (await remoteTranscriptExists({ readAgentFile: remote.readAgentFile, hostId: onHost.hostId, agent, sessionId: resumeId })) === false
+            : claudeNeverWritten(resumeId, s.historyHome)
+          : false
+      if (s.closing) return closedWhileStarting()
       const permissionModeUsed = permissions === 'yolo' ? 'bypassPermissions' : permissionMode && permissionMode !== 'bypassPermissions' ? permissionMode : 'default'
       s.permissionMode = permissionModeUsed
 
@@ -1358,7 +1521,7 @@ export function createChatSessions(deps) {
             ? { ...common, ...(resumeId ? { threadId: resumeId } : {}), permissions }
             : agent === 'opencode'
               ? { ...common, ...(resumeId ? { sessionId: resumeId } : {}), permissions, ...(permissionModeUsed === 'plan' ? { permissionMode: 'plan' } : {}) }
-              : { ...common, ...(resumeId && !claudeNeverWritten(resumeId, s.historyHome) ? { resume: resumeId } : { sessionId: s.sessionId }), permissionMode: permissionModeUsed }
+              : { ...common, ...(resumeId && !neverWritten ? { resume: resumeId } : { sessionId: s.sessionId }), permissionMode: permissionModeUsed }
         )
       } catch (err) {
         drop()
@@ -1431,7 +1594,7 @@ export function createChatSessions(deps) {
           logAt('warn', `${paneId}: agent status unavailable: ${err?.message || err}`)
         }
       }
-      journalOf(paneId).writeMeta({ sessionId: s.sessionId, agent, cwd })
+      journalOf(paneId).writeMeta({ sessionId: s.sessionId, agent, cwd: s.cwd })
       if (s.finished || s.closing) {
         // Gone (or closed) while its status was being registered.
         if (state?.unregister) Promise.resolve().then(() => state.unregister(paneId, s.launchToken)).catch(() => {})
@@ -1882,14 +2045,18 @@ export function createChatSessions(deps) {
     const s = sessions.get(paneId)
     const unavailable = () => ({ ok: false, error: t('main.chat.skillsUnavailable', 'Skill discovery is unavailable.') })
     if (!s || s.closing || s.finished) return unavailable()
+    // On an SSH host, Claude's skills are files there: not read from here
+    // (Codex lists its own through its server).
+    if (s.remote && s.agent === 'claude') return unavailable()
+    const rootsOf = () => (s.remote ? [] : trustRoots(s.cwd, { worker: s.worker === true }) || [])
     let roots
     try {
-      roots = trustRoots(s.cwd, { worker: s.worker === true }) || []
+      roots = rootsOf()
       if (!trust?.isTrusted(s.cwd, roots)) return unavailable()
     } catch { return unavailable() }
     const checked = value => {
       try {
-        const currentRoots = trustRoots(s.cwd, { worker: s.worker === true }) || []
+        const currentRoots = rootsOf()
         if (sessions.get(paneId) !== s || s.closing || s.finished || !trust.isTrusted(s.cwd, currentRoots)) return unavailable()
         const result = s.projectDir && !trust.isTrusted(s.projectDir, currentRoots)
           ? withoutProjectSkills(value.result, s.projectDir, s.cwd) : value.result

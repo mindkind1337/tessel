@@ -62,6 +62,9 @@ const deleteReason = computed(() =>
   onHost.value ? t('sessionHistory.row.onHost', 'This conversation is stored on the SSH host.') : deleteBlockedReason(s.value, props.paneId ? { [s.value.id]: props.paneId } : {})
 )
 const logActions = computed(() => hasLog(s.value.agent) && !onHost.value)
+// Its first prompt and latest turns: Claude Code's and Codex's files on the
+// host are read over the connection (src/main/chat/remoteTranscripts.js).
+const hostDetails = computed(() => onHost.value && (s.value.agent === 'claude' || s.value.agent === 'codex'))
 
 // --- Details (loaded when expanded) -------------------------------------------------
 const details = ref(null) // { ok, file, firstPrompt, turns, messageCount }
@@ -70,10 +73,13 @@ let detailsPromise = null
 function loadDetails() {
   if (detailsPromise) return detailsPromise
   const a = api()
-  if (!logActions.value || !a || !a.sessionDetails) return Promise.resolve(null)
+  if (!(logActions.value || hostDetails.value) || !a || !a.sessionDetails) return Promise.resolve(null)
   detailsLoading.value = true
+  const query = hostDetails.value
+    ? { agent: s.value.agent, id: s.value.id, hostId: s.value.host }
+    : { agent: s.value.agent, id: s.value.id, ...(s.value.accountId !== undefined ? { accountId: s.value.accountId } : {}) }
   detailsPromise = a
-    .sessionDetails({ agent: s.value.agent, id: s.value.id, ...(s.value.accountId !== undefined ? { accountId: s.value.accountId } : {}) })
+    .sessionDetails(query)
     .then((res) => {
       details.value = res && res.ok ? res : { ok: false }
       return details.value
@@ -291,7 +297,7 @@ function onRowClick(event) {
             <p v-else class="sh-card-empty">{{ t('sessionHistory.details.noFirstPrompt', 'No first prompt available') }}</p>
           </div>
         </section>
-        <section v-if="logActions" class="sh-section">
+        <section v-if="logActions || hostDetails" class="sh-section">
           <div class="sh-section-head"><MessageSquare :size="12" aria-hidden="true" /><span>{{ t('sessionHistory.details.latestTurns', 'Latest turns') }}</span></div>
           <div v-if="turns.length" class="sh-turns" data-test="details-turns">
             <div v-for="(turn, i) in turns" :key="i" class="sh-card" :class="turn.role === 'user' ? 'sh-card-user' : 'sh-card-agent'">

@@ -43,9 +43,18 @@ const DEFAULT_CHOICES = ['accept', 'acceptForSession', 'decline', 'cancel']
 
 // A user message's turn/start input: the text, then each image as a
 // localImage (a file Codex reads when the turn starts).
-export function codexUserInput(text, images = []) {
+// A Codex on an SSH host cannot read this PC's files: its images go inline
+// (an image item with a data URL) instead.
+export function codexUserInput(text, images = [], { inline = false } = {}) {
   const input = text.trim() || !images.length ? [{ type: 'text', text, text_elements: [] }] : []
-  for (const img of images) input.push({ type: 'localImage', path: img.path })
+  for (const img of images) {
+    if (!inline) {
+      input.push({ type: 'localImage', path: img.path })
+      continue
+    }
+    const pic = typeof img.claudeImage === 'function' ? img.claudeImage() : { mime: img.mime, data: img.base64() }
+    input.push({ type: 'image', url: `data:${pic.mime};base64,${pic.data}` })
+  }
   return input
 }
 
@@ -676,7 +685,9 @@ export function createCodexChat(opts) {
     log = null,
     killTree = killCodexTree,
     clientVersion = '0.0.0',
-    probeAccount = true
+    probeAccount = true,
+    // On an SSH host (remoteProcess.js): images inline, not as paths.
+    remote = false
   } = opts
   const timeouts = { ...DEFAULT_TIMEOUTS, ...(opts.timeouts || {}) }
   let model = opts.model || null // what we ask for (turn/start); state.model is what Codex reports
@@ -1002,7 +1013,9 @@ export function createCodexChat(opts) {
     dispatchEvents(subagentEvents)
     const normal = closing || code === 0
     logAt(normal ? 'info' : 'warn', `exited code=${code} signal=${signal}${error ? ' error=' + error : ''}`)
-    emit('exit', { code, signal, stderrTail, crashed: !normal, error: error || null })
+    // A remote agent (remoteProcess.js) whose connection dropped: told apart.
+    const disconnected = !closing && child?.disconnected === true
+    emit('exit', { code, signal, stderrTail, crashed: !normal && !disconnected, error: error || null, ...(disconnected ? { disconnected: true } : {}) })
   }
 
   // Signed out, as far as Codex tells (guess, not recorded: account/read
@@ -1197,7 +1210,12 @@ export function createCodexChat(opts) {
     if (typeof text !== 'string' || (!text.trim() && !pics.length)) return { ok: false, error: 'empty' }
     const id = typeof uuid === 'string' && uuid ? uuid : randomUUID()
     state.sent.add(id) // before the write: the echo can beat the answer
-    const input = codexUserInput(text, pics)
+    let input
+    try {
+      input = codexUserInput(text, pics, { inline: remote === true })
+    } catch (err) {
+      return { ok: false, error: `image: ${err?.message || err}` } // i18n-ignore internal
+    }
     const open = state.turn && !state.turn.settled && state.turn.id ? state.turn : null
     // A turn started under another posture is not joined: a new turn/start
     // carries the current one.

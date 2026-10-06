@@ -132,28 +132,38 @@ export function sessionDetails(q = {}, home = os.homedir(), roots = {}) {
   const { file, size } = found
   const whole = size <= HEAD_BYTES
   const head = lines(readHead(file, HEAD_BYTES))
-  // The last line of a window is cut (or still being written).
-  if (!whole) head.pop()
-  const headRows = safeRows(q.agent, head, q.id)
-  const first = headRows.find((r) => r.role === 'user')
-  let tailRows = headRows
+  let tailLines = null
   if (!whole) {
     const tail = readLastLines(file, TAIL_BYTES)
-    tailRows = tail ? safeRows(q.agent, tail.lines, q.id) : []
+    tailLines = tail ? tail.lines : []
   }
+  return { ok: true, file, size, ...detailsFromLines(q.agent, q.id, head, tailLines, whole) }
+}
+
+// The details of a conversation from its first lines (head: complete lines
+// read from its start; its last one is dropped when the file goes on) and,
+// when it was not read whole, its last lines. Also for a file read on an SSH
+// host (chat/remoteTranscripts.js remoteSessionDetails).
+// -> { firstPrompt, turns, messageCount }
+export function detailsFromLines(agent, id, headLines, tailLines, whole) {
+  const head = [...(Array.isArray(headLines) ? headLines : [])]
+  // The last line of a window is cut (or still being written).
+  if (!whole) head.pop()
+  const headRows = safeRows(agent, head, id)
+  const first = headRows.find((r) => r.role === 'user')
+  const tailRows = whole ? headRows : safeRows(agent, Array.isArray(tailLines) ? tailLines : [], id)
   const turns = tailRows
     .filter(spoken)
     .slice(-LATEST_TURNS)
     .map((r) => ({ role: r.role, text: clip(r.text, TURN_MAX), at: Number.isFinite(r.ts) ? r.ts : null }))
   return {
-    ok: true,
-    file,
-    size,
     firstPrompt: first ? clip(first.text, PROMPT_MAX) : '',
     turns,
     messageCount: whole ? headRows.filter(spoken).length : null
   }
 }
+export const DETAILS_TAIL_BYTES = TAIL_BYTES
+export const splitLines = lines
 function safeRows(agent, list, id) {
   try {
     return rowsFromLines(agent, list, id)

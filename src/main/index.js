@@ -67,6 +67,8 @@ import { createFileTokens } from './cookieImport/fileTokens'
 import { createAgentBrowser } from './agentBrowser'
 import { createAgentTerminal } from './agentTerminal'
 import { createChatSessions } from './chat/sessions'
+import { remoteSpawnAvailable, remoteSpawnFor } from './chat/remoteProcess'
+import { remoteSessionDetails } from './chat/remoteTranscripts'
 import { createChatImages } from './chat/chatImages'
 import { transcriptHomeFor } from './chat/transcriptHistory'
 import { createTranscriptViews } from './chat/transcriptView'
@@ -1259,6 +1261,26 @@ const chatSessions = createChatSessions({
       systemCodex: process.env.CODEX_HOME || join(os.homedir(), '.codex'),
       codexAccountsBase: join(app.getPath('userData'), 'codex-accounts')
     }),
+  // Chats in a project on an SSH host: the agent runs there (remoteSpawn,
+  // chat/remoteProcess.js), found where a terminal agent is (__t_agents);
+  // its conversation files are read over the connection (remoteFs.js).
+  remote: {
+    available: () => remoteSpawnAvailable(),
+    spawnFor: (q) => remoteSpawnFor(q),
+    resolveAgent: async (agent, hostId) => {
+      if (!remoteHosts.get(hostId)) return { error: t('main.remote.notFound', 'This remote host is no longer saved in Tessel.') }
+      remoteFs.allow(hostId)
+      const tools = await remoteFs.agentTools(hostId)
+      if (!tools || tools.error) return { error: String((tools && tools.error) || 'failed') }
+      const exe = agent === 'codex' ? tools.codex : tools.claude || tools.vscodeClaude
+      return exe ? { exe } : null
+    },
+    readAgentFile: (hostId, q) => remoteFs.readAgentFile(hostId, q),
+    hostLabel: (hostId) => {
+      const target = remoteHosts.get(hostId)
+      return (target && target.label) || hostId
+    }
+  },
   log
 })
 chatSessions.register(ipcMain)
@@ -1293,7 +1315,9 @@ const transcriptViews = createTranscriptViews({
     const r = await accountSessions.roots({ agent, accountId })
     return (r && r[agent]) || null
   },
-  sessionsDir: () => sessionsDir()
+  sessionsDir: () => sessionsDir(),
+  // A terminal agent on an SSH host: its file read over the connection.
+  readAgentFile: (hostId, q) => (remoteHosts.get(hostId) ? remoteFs.readAgentFile(hostId, q) : { ok: false, error: 'unknown host' })
 })
 transcriptViews.register(ipcMain)
 app.on('will-quit', () => transcriptViews.closeAll())
@@ -1490,7 +1514,15 @@ ipcMain.handle('sessions:list', async (_evt, q = {}) => {
 // first prompt and latest turns, its transcript shown in the file manager,
 // its deletion (to the Recycle Bin).
 ipcMain.handle('sessions:details', async (_evt, q = {}) => {
-  try { return await accountSessions.details(q || {}) } catch { return { ok: false } }
+  try {
+    // A conversation on an SSH host (its history): read there, over the
+    // connection, never a sign-in (chat/remoteTranscripts.js).
+    if (q && typeof q.hostId === 'string') {
+      if (!remoteHosts.get(q.hostId)) return { ok: false }
+      return await remoteSessionDetails({ readAgentFile: (hostId, r) => remoteFs.readAgentFile(hostId, r), hostId: q.hostId, agent: q.agent, id: q.id })
+    }
+    return await accountSessions.details(q || {})
+  } catch { return { ok: false } }
 })
 ipcMain.handle('sessions:revealLog', async (_evt, q = {}) => {
   try { return await accountSessions.reveal(q || {}, (p) => shell.showItemInFolder(p)) } catch { return { ok: false, error: 'failed' } }
