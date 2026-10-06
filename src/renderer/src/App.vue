@@ -7093,7 +7093,11 @@ async function switchToTerminal(leafId) {
   const old = findLeaf(leafId)
   if (!old || old.kind !== 'chat' || switchingLeaves.has(leafId)) return false
   const agent = agentById(old.agentId)
-  if (!agent || agent.available === false || !agent.command) {
+  // A chat on an SSH host goes on in a terminal there (its own install is
+  // looked for there by the remote agent launch, not on this computer).
+  const onHost = isRemotePath(old.cwd) ? parseRemotePath(old.cwd) : null
+  if (isRemotePath(old.cwd) && !onHost) return false
+  if (!agent || (!onHost && agent.available === false) || !agent.command) {
     showToast(t('app.switch.noAgent', '{{name}} is not available in a terminal here.', { name: old.agentId }), { kind: 'error' })
     return false
   }
@@ -7110,10 +7114,15 @@ async function switchToTerminal(leafId) {
     const ws = wsOfLeaf(leafId)
     if (!ws || findLeaf(leafId) !== old) return false
     const sessionOptions = validPaneSessionOptions({ model: old.model || undefined, ...(old.effort ? { effort: old.effort } : {}) })
-    const fresh = await createLeaf(selectedShell.value, agent, old.cwd || ws.cwd, old.worktree || null, {
+    // On a host: the agent launch there, in the chat's folder, resuming the
+    // conversation by its id (its file is the host's, never looked up here).
+    const where = onHost
+      ? [null, null, { remoteHostId: onHost.hostId, remotePath: onHost.path, remoteSession: true }]
+      : [old.cwd || ws.cwd, old.worktree || null, { accountId: old.accountId }]
+    const fresh = await createLeaf(selectedShell.value, agent, where[0], where[1], {
       id: leafId,
       sessionId: old.sessionId,
-      accountId: old.accountId,
+      ...where[2],
       ...(sessionOptions ? { sessionOptions } : {}),
       // The terminal follows Settings (Yolo, Yolo folders) like a new one;
       // a chat known to ask first, or a worker capped by its coordinator,
@@ -7153,12 +7162,35 @@ async function switchToTerminal(leafId) {
 }
 async function switchToChat(leafId) {
   const old = findLeaf(leafId)
-  if (!old || old.kind !== 'agent' || !CHAT_AGENTS.includes(old.agentId) || !old.sessionId || old.detected || old.remoteHostId) return false
+  if (!old || old.kind !== 'agent' || !CHAT_AGENTS.includes(old.agentId) || !old.sessionId || old.detected) return false
   // OpenCode's chat resumes its own session ids only (ses_…).
   if (old.agentId === 'opencode' && !/^ses_[A-Za-z0-9]{20,40}$/.test(old.sessionId)) return false
   if (switchingLeaves.has(leafId) || restartingLeaves.has(leafId)) return false
   const ws = wsOfLeaf(leafId)
   if (!ws) return false
+  // An agent on an SSH host: its chat runs there too, in the folder its
+  // terminal started in (Claude finds its conversation by that folder).
+  // Checked before its terminal is stopped: a chat that cannot run there
+  // leaves the terminal as it is.
+  let hostRoot = null
+  if (old.remoteHostId) {
+    if (old.agentId === 'opencode') {
+      showToast(t('app.chat.noOpencodeOnHost', 'OpenCode chats run on this computer only: open a terminal on the host to use OpenCode there.'), { kind: 'error' })
+      return false
+    }
+    hostRoot = remoteRoot(old.remoteHostId, old.remotePath || '~')
+    if (!hostRoot) return false
+    const available = window.shellApi.chat && window.shellApi.chat.remoteAvailable ? await window.shellApi.chat.remoteAvailable().catch(() => false) : false
+    if (!available) {
+      showToast(t('app.switch.remoteChatUnavailable', 'Chats on an SSH host are not available in this version of Tessel yet: {{name}} stays in its terminal.', { name: old.paneName || old.title }), { kind: 'error', timeout: 8000 })
+      return false
+    }
+    if (!hostShared(old.remoteHostId)) {
+      showToast(t('app.switch.hostNotConnected', '{{host}} is not connected: {{name}} stays in its terminal.', { host: remoteHostLabel(old.remoteHostId), name: old.paneName || old.title }), { kind: 'error', timeout: 8000 })
+      return false
+    }
+    if (findLeaf(leafId) !== old || switchingLeaves.has(leafId) || restartingLeaves.has(leafId)) return false
+  }
   switchingLeaves.add(leafId)
   try {
     // Its terminal must be gone before the chat resumes the conversation.
@@ -7181,8 +7213,8 @@ async function switchToChat(leafId) {
     const leaf = makeChatLeaf({
       id: leafId,
       agentId: old.agentId,
-      cwd: old.startDir || (old.worktree && old.worktree.path) || now.cwd,
-      projectDir: now.cwd || null,
+      cwd: hostRoot || old.startDir || (old.worktree && old.worktree.path) || now.cwd,
+      projectDir: hostRoot ? (now.remote && now.remote.hostId === old.remoteHostId ? remoteRoot(now.remote.hostId, now.remote.path) : null) || hostRoot : now.cwd || null,
       sessionId: old.sessionId,
       team: old.team || null
     })

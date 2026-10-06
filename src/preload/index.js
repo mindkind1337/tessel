@@ -495,6 +495,8 @@ const api = {
     history: (opts) => ipcRenderer.invoke('chat:history', opts),
     historyOlder: (opts) => ipcRenderer.invoke('chat:historyOlder', opts),
     skills: (opts) => ipcRenderer.invoke('chat:skills', opts),
+    // Whether chats can run on an SSH host in this build (remoteSpawn).
+    remoteAvailable: () => ipcRenderer.invoke('chat:remoteAvailable'),
     // Attached images: clipboard bytes, or a dropped/picked file (checked and
     // copied by the main process) -> { ok, image: { id, name, width, height } }.
     imageSave: (opts) => ipcRenderer.invoke('chat:imageSave', opts),

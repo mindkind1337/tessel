@@ -1292,6 +1292,10 @@ const chatSessions = createChatSessions({
   log
 })
 chatSessions.register(ipcMain)
+// Whether a chat can run on an SSH host in this build (the transport's
+// remoteSpawn, chat/remoteProcess.js): asked before a terminal agent there is
+// stopped to go on as a chat.
+ipcMain.handle('chat:remoteAvailable', () => remoteSpawnAvailable())
 // Read-only chat views of the agents without a chat protocol (Grok,
 // OpenClaude, OMP): their session file, watched while the view is open.
 // Search in what was said in the agents' conversations: a local index, off

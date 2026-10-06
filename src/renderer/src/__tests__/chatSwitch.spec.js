@@ -8,6 +8,7 @@ import vm from 'vm'
 import { join } from 'path'
 import { reactive } from 'vue'
 import { chatViewTakesImages, isPastedImageCopy } from '../chat/terminalChatBridge'
+import { isRemotePath, parseRemotePath, remoteRoot } from '../../../shared/remotePath'
 
 const source = fs.readFileSync(join(process.cwd(), 'src/renderer/src/App.vue'), 'utf8')
 function slice(from, to) {
@@ -36,6 +37,11 @@ function load(leaf) {
     scheduleSave: () => {},
     showToast: vi.fn(),
     restartingLeaves: new Set(),
+    isRemotePath,
+    parseRemotePath,
+    remoteRoot,
+    hostShared: vi.fn(() => true),
+    remoteHostLabel: (id) => `host ${id}`,
     CHAT_AGENTS: ['claude', 'codex'],
     settings: {},
     setTimeout: (fn) => fn(),
@@ -119,6 +125,27 @@ describe('chat to terminal', () => {
     expect(ctx.createLeaf).not.toHaveBeenCalled()
     expect(ctx.showToast).toHaveBeenCalled()
   })
+
+  it('a chat on an SSH host: the terminal agent there resumes it in the same host folder, with its mode', async () => {
+    const { api, ctx, ws } = load(chat({ cwd: 'ssh://ssh-box1/home/me/app', chatPermissions: 'manual', chatPermissionMode: 'plan', accountId: 'acc-1' }))
+    // Its own install is the host's: this computer's availability does not count.
+    ctx.agentById = (id) => ({ id, name: id, command: id, available: false })
+    expect(await api.switchToTerminal('pane-1')).toBe(true)
+    const [, agent, cwd, worktree, opts] = ctx.createLeaf.mock.calls[0]
+    expect(agent.id).toBe('claude')
+    expect(cwd).toBe(null)
+    expect(worktree).toBe(null)
+    expect(opts).toMatchObject({ id: 'pane-1', sessionId: 's-1', resume: true, remoteHostId: 'ssh-box1', remotePath: '/home/me/app', remoteSession: true, permissions: 'manual', permissionMode: 'plan' })
+    // The account is this computer's: not carried to the host.
+    expect(opts.accountId).toBeUndefined()
+    expect(ws.tree).toMatchObject({ kind: 'agent', id: 'pane-1' })
+    const home = load(chat({ cwd: 'ssh://ssh-box1/~/app' }))
+    await home.api.switchToTerminal('pane-1')
+    expect(home.ctx.createLeaf.mock.calls[0][4]).toMatchObject({ remoteHostId: 'ssh-box1', remotePath: '~/app' })
+    const bad = load(chat({ cwd: 'ssh://nothost/x' }))
+    expect(await bad.api.switchToTerminal('pane-1')).toBe(false)
+    expect(bad.ctx.createLeaf).not.toHaveBeenCalled()
+  })
 })
 
 describe('terminal to chat', () => {
@@ -175,12 +202,44 @@ describe('terminal to chat', () => {
     expect(ws.tree.kind).toBe('agent')
   })
 
-  it('only Claude or Codex with a known conversation, on this computer', async () => {
+  it('only Claude or Codex with a known conversation (on a host: only when chats can run there)', async () => {
     for (const extra of [{ agentId: 'gemini' }, { sessionId: null }, { remoteHostId: 'ssh-1' }, { detected: true }]) {
-      const { api, ws } = load(term(extra))
+      const { api, ws, calls } = load(term(extra))
       expect(await api.switchToChat('pane-2')).toBe(false)
       expect(ws.tree.kind).toBe('agent')
+      expect(calls).not.toContain('killPty')
     }
+  })
+
+  it('on an SSH host: its terminal stopped, then a chat there on the same conversation and folder', async () => {
+    const { api, ctx, ws, calls } = load(term({ agentId: 'claude', sessionId: 's-9', remoteHostId: 'ssh-box1', remotePath: '/srv/app', startDir: 'C:\\Users\\me', permissions: 'manual' }))
+    ctx.window.shellApi.chat.remoteAvailable = vi.fn(async () => true)
+    expect(await api.switchToChat('pane-2')).toBe(true)
+    expect(calls[0]).toBe('killPty')
+    expect(ws.tree).toMatchObject({ kind: 'chat', id: 'pane-2', agentId: 'claude', sessionId: 's-9', cwd: 'ssh://ssh-box1/srv/app', maxPermissions: 'manual' })
+    // A host terminal with no project folder: the home folder it started in.
+    const home = load(term({ remoteHostId: 'ssh-box1' }))
+    home.ctx.window.shellApi.chat.remoteAvailable = vi.fn(async () => true)
+    expect(await home.api.switchToChat('pane-2')).toBe(true)
+    expect(home.ws.tree.cwd).toBe('ssh://ssh-box1/~')
+  })
+
+  it('on an SSH host: chats not available there, the host not connected, or OpenCode: said so, the terminal kept', async () => {
+    const off = load(term({ remoteHostId: 'ssh-box1', remotePath: '/srv/app' }))
+    off.ctx.window.shellApi.chat.remoteAvailable = vi.fn(async () => false)
+    expect(await off.api.switchToChat('pane-2')).toBe(false)
+    expect(off.calls).not.toContain('killPty')
+    expect(off.ctx.showToast.mock.calls[0][0]).toContain('not available')
+    const away = load(term({ remoteHostId: 'ssh-box1', remotePath: '/srv/app' }))
+    away.ctx.window.shellApi.chat.remoteAvailable = vi.fn(async () => true)
+    away.ctx.hostShared.mockReturnValue(false)
+    expect(await away.api.switchToChat('pane-2')).toBe(false)
+    expect(away.calls).not.toContain('killPty')
+    expect(away.ctx.showToast.mock.calls[0][0]).toContain('not connected')
+    const oc = load(term({ agentId: 'opencode', sessionId: 'ses_' + 'a'.repeat(26), remoteHostId: 'ssh-box1' }))
+    oc.ctx.window.shellApi.chat.remoteAvailable = vi.fn(async () => true)
+    expect(await oc.api.switchToChat('pane-2')).toBe(false)
+    expect(oc.calls).not.toContain('killPty')
   })
 })
 

@@ -774,7 +774,9 @@
       "stillRunning": "{{name}} n'a pas pu être ouvert en chat : son terminal ne s'est pas arrêté. Réessayez.",
       "cancelled": "{{name}} reste tel quel.",
       "waitTerminal": "{{name}} passera en terminal à la fin de son tour (recliquez pour annuler).",
-      "waitChat": "{{name}} passera en chat à la fin de son tour (recliquez pour annuler)."
+      "waitChat": "{{name}} passera en chat à la fin de son tour (recliquez pour annuler).",
+      "remoteChatUnavailable": "Les chats sur un hôte SSH ne sont pas encore disponibles dans cette version de Tessel : {{name}} reste dans son terminal.",
+      "hostNotConnected": "{{host}} n’est pas connecté : {{name}} reste dans son terminal."
     },
     "where": {
       "top": "en haut",
