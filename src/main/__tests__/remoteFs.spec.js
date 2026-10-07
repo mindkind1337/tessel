@@ -3,7 +3,7 @@ import fs from 'fs'
 import os from 'os'
 import { join } from 'path'
 import { execFileSync } from 'child_process'
-import { createRemoteFs, checkRemoteName, cleanRel, findPattern, trashInfoPath, porcelainLetters, parseStat } from '../remoteFs'
+import { createRemoteFs, checkRemoteName, cleanRel, findPattern, trashInfoPath, porcelainLetters, parseStat, parseFingerprint } from '../remoteFs'
 import { remoteRoot, childPath } from '../../shared/remotePath'
 import { gitSh, fakeSpawn, posixPath } from './fixtures/fakeSsh'
 
@@ -31,6 +31,13 @@ describe('helpers', () => {
     expect(porcelainLetters('?? new.txt\0 M a.js\0R  b.js\0old.js\0')).toEqual([['new.txt', 'U'], ['a.js', 'M'], ['b.js', 'R']])
     expect(parseStat('12 1700000000 42 644')).toEqual({ size: 12, mtimeMs: 1700000000000, sig: 'r:12:1700000000:42' })
     expect(parseStat('garbage')).toBe(null)
+  })
+  it('the project fingerprint: changed paths relative to the project, or all when cut', () => {
+    expect(parseFingerprint(Buffer.from('same\n'))).toBe(null)
+    expect(parseFingerprint(Buffer.from('init\n'))).toBe(null)
+    const out = Buffer.from('changed\0/home/me/.local/srv/.\0/home/me/.local/srv/./logs/server.log\0/home/me/.local/srv/./a b/c\0')
+    expect(parseFingerprint(out)).toEqual({ rels: ['', 'logs/server.log', 'a b/c'] })
+    expect(parseFingerprint(Buffer.concat([Buffer.from('changed\0'), Buffer.alloc(100, 'x')]), 50)).toEqual({ rels: null })
   })
 })
 
@@ -91,6 +98,61 @@ describe.skipIf(!gitSh())('remote project over a fake ssh (Git for Windows sh)',
     // Its session is the host's connection (status bar), started once.
     expect(events.filter((e) => e[0] === 'started')).toHaveLength(1)
     expect(sent.some(([c]) => c === 'remoteFs:activity')).toBe(true)
+  }, 30000)
+
+  it('lists several folders in one round trip, a chain of sole folders with them', async () => {
+    fs.mkdirSync(join(proj, 'deep', 'a', 'b'), { recursive: true })
+    fs.writeFileSync(join(proj, 'deep', 'a', 'b', 'x.lua'), 'x\n')
+    const lines = []
+    const counting = createRemoteFs({
+      hosts: stubHosts([]),
+      spawnImpl: (file, args, opts) => {
+        const c = fakeSpawn({ home })(file, args, opts)
+        const write = c.stdin.write.bind(c.stdin)
+        c.stdin.write = (text, ...rest) => {
+          for (const m of String(text).matchAll(/__t_q \d+ \d+ \d+ (__t_\w+)/g)) lines.push(m[1])
+          return write(text, ...rest)
+        }
+        return c
+      }
+    })
+    counting.setRoots([root])
+    try {
+      const res = await counting.listMany({ root, dirs: [root, childPath(root, 'deep'), childPath(root, 'nope'), `${root}\\..`], chain: true })
+      expect(res.ok).toBe(true)
+      expect(lines).toEqual(['__t_lsm'])
+      const by = Object.fromEntries(res.results.map((r) => [r.dir, r]))
+      expect(by[root].entries.map((e) => e.name)).toEqual(['deep', 'src', 'a.txt'])
+      // deep holds only a, which holds only b: all three in the answer.
+      expect(by[childPath(root, 'deep')].entries.map((e) => e.name)).toEqual(['a'])
+      expect(by[childPath(root, 'deep/a')].entries.map((e) => e.name)).toEqual(['b'])
+      expect(by[childPath(root, 'deep/a/b')].entries).toEqual([{ name: 'x.lua', path: childPath(root, 'deep/a/b/x.lua'), dir: false }])
+      expect(by[childPath(root, 'nope')]).toMatchObject({ ok: false, error: 'The folder is gone.' })
+      expect(by[`${root}\\..`]).toMatchObject({ ok: false })
+      // Without chain, only the folders asked.
+      const flat = await counting.listMany({ root, dirs: [childPath(root, 'deep')], max: 10 })
+      expect(flat.results.map((r) => r.dir)).toEqual([childPath(root, 'deep')])
+    } finally {
+      counting.close()
+      fs.rmSync(join(proj, 'deep'), { recursive: true, force: true })
+    }
+  }, 30000)
+
+  it('a watched project says which paths changed', async () => {
+    await rfs.listDir({ root }) // a session (a poll never starts one)
+    rfs.watchRoot(root)
+    await rfs.poll() // the first look
+    await new Promise((r) => setTimeout(r, 1100))
+    fs.writeFileSync(join(proj, 'src', 'new.js'), 'n\n')
+    sent.length = 0
+    // The project is looked at every other poll.
+    for (let i = 0; i < 4 && !sent.some(([c]) => c === 'explorer:changed'); i++) await rfs.poll()
+    const change = sent.find(([c]) => c === 'explorer:changed')
+    expect(change).toBeTruthy()
+    expect(change[1].root).toBe(root)
+    expect(change[1].paths).toEqual(expect.arrayContaining([childPath(root, 'src'), childPath(root, 'src/new.js')]))
+    rfs.unwatchRoots()
+    fs.rmSync(join(proj, 'src', 'new.js'))
   }, 30000)
 
   it('refuses a path outside the project (.., another folder)', async () => {

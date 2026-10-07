@@ -8,6 +8,7 @@ import { StringDecoder } from 'string_decoder'
 import { t } from './i18n'
 import { localGitArgs } from './gitSafety'
 import { parseSparseList, sparseDirsUnder } from './sparseCheckout'
+import { sortEntries, compareNames } from '../shared/explorerSort'
 
 const MAX_ENTRIES = 5000
 // Never listed (Orca hides the same by default): git's own folder.
@@ -65,8 +66,27 @@ export function listDir({ root, dir, dotfiles = true } = {}) {
     entries.push({ name: d.name, path: join(full, d.name), dir: isDir })
     if (entries.length >= MAX_ENTRIES) break
   }
-  entries.sort((a, b) => (a.dir !== b.dir ? (a.dir ? -1 : 1) : a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })))
+  sortEntries(entries)
   return { ok: true, entries, truncated: items.length > MAX_ENTRIES }
+}
+
+// Several folders in one call (the open ones after a change, a prefetch),
+// each folder's sole sub-folder too when chain (VS Code's
+// resolveSingleChildDescendants: a compact row "a / b / c" opens at once).
+// -> { ok, results: [{ dir, ...listDir's answer }] }
+export const MAX_LIST_MANY = 64
+export function listMany({ root, dirs, dotfiles = true, chain = false } = {}) {
+  const results = []
+  for (const d of (Array.isArray(dirs) ? dirs : []).filter((x) => typeof x === 'string').slice(0, MAX_LIST_MANY)) {
+    let dir = d
+    for (let guard = 0; guard <= 64; guard++) {
+      const res = listDir({ root, dir, dotfiles })
+      results.push({ dir, ...res })
+      if (!chain || !res.ok || res.entries.length !== 1 || !res.entries[0].dir) break
+      dir = res.entries[0].path
+    }
+  }
+  return { ok: true, results }
 }
 
 // `git status --porcelain=v1 -z` run at the repository's top -> { full path:
@@ -125,7 +145,10 @@ export async function projectStatus({ root, ignored = false } = {}) {
   return new Promise((done) => {
     const args = ['-C', top, ...safety, 'status', '--porcelain=v1', '-z', '--untracked-files=all']
     if (ignored) args.push('--ignored=matching')
-    execFile('git', args, { windowsHide: true, timeout: 15000, maxBuffer: 32 * 1024 * 1024 }, (err, stdout, stderr) => {
+    // GIT_OPTIONAL_LOCKS=0 (as VS Code runs it): status never rewrites the
+    // index, whose change the project's watch would report as a new change.
+    const env = { ...process.env, GIT_OPTIONAL_LOCKS: '0' }
+    execFile('git', args, { windowsHide: true, timeout: 15000, maxBuffer: 32 * 1024 * 1024, env }, (err, stdout, stderr) => {
       // A repository whose status failed is not a clean one: said as an error.
       if (err)
         return done({
@@ -208,7 +231,7 @@ async function walk(root, { dotfiles = true } = {}, fn) {
     } catch {
       continue
     }
-    items.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }))
+    items.sort((a, b) => compareNames(a.name, b.name))
     for (const d of items) {
       if (HEAVY_SET.has(d.name)) continue
       if (!dotfiles && d.name.startsWith('.')) continue
@@ -547,22 +570,42 @@ export async function trash({ root, path: p } = {}, trashItem) {
   }
 }
 
-// Watching a project: changes come as one call per burst (fn(root)), not for
-// busy tool folders. -> a function that stops watching.
+// Watching a project: changes come as one call per burst, not for busy tool
+// folders: fn(root, { paths, renamed }) with the full paths that changed,
+// and those created, deleted or renamed (not only modified: their folder's
+// entries changed). null: too many, or one not named; the window reads
+// everything shown again.
+// -> a function that stops watching.
+export const MAX_CHANGED_PATHS = 256
 export function watchProject(root, fn) {
   let timer = null
   let first = 0
+  let paths = new Set()
+  let renamed = new Set() // created, deleted or renamed (not only modified)
+  let all = false
   let watcher
   try {
-    watcher = fs.watch(root, { recursive: true }, (_type, file) => {
+    watcher = fs.watch(root, { recursive: true }, (type, file) => {
       if (file && UNWATCHED.test(String(file)) && !isGitStateChange(file)) return
+      if (!file) all = true
+      else if (!all) {
+        const full = join(root, String(file))
+        paths.add(full)
+        if (type === 'rename') renamed.add(full)
+        if (paths.size > MAX_CHANGED_PATHS) all = true
+      }
       const now = Date.now()
       if (!timer) first = now
       clearTimeout(timer)
       // 150 ms after the last change, at most 500 ms after the first (Orca's).
       timer = setTimeout(() => {
         timer = null
-        fn(root)
+        const list = all ? null : [...paths]
+        const moved = all ? null : [...renamed]
+        paths = new Set()
+        renamed = new Set()
+        all = false
+        fn(root, { paths: list, renamed: moved })
       }, now - first > 350 ? 0 : 150)
     })
     watcher.on('error', () => {})
