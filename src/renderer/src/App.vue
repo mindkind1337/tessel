@@ -9450,20 +9450,40 @@ watch(
   },
   { immediate: true, deep: true }
 )
+// Every listener below is removed when this window's app goes away (the dev
+// server's hot reload of App.vue makes a new one: a listener left behind
+// keeps the old code answering).
+const offTerminalAgent = []
 {
   const api = window.shellApi && window.shellApi.terminalAgent
   if (api && typeof api.onControl === 'function')
-    api.onControl((ev) => {
-      onTerminalControl(ev)
-      // Stop: the command it waits on there is let go.
-      if (ev && ev.stopped && typeof ev.paneId === 'string') agentTerminalTargets.cancelPane(ev.paneId)
-    })
-  if (api && typeof api.onLog === 'function') api.onLog(onTerminalLog)
+    offTerminalAgent.push(
+      api.onControl((ev) => {
+        onTerminalControl(ev)
+        // Stop: the command it waits on there is let go.
+        if (ev && ev.stopped && typeof ev.paneId === 'string') agentTerminalTargets.cancelPane(ev.paneId)
+      })
+    )
+  if (api && typeof api.onLog === 'function') offTerminalAgent.push(api.onLog(onTerminalLog))
 }
+onBeforeUnmount(() => {
+  for (const off of offTerminalAgent.splice(0)) if (typeof off === 'function') off()
+})
+// The tessel command's and the agents' tools' requests (cliBridge.js: the
+// first answer wins). One listener only, removed with this app: after a hot
+// reload, an old one would answer first with the old code (an agent on an
+// SSH host was told "The browser tools work in local projects only" by a
+// window already running the code that allows it).
+let offCliRequests = null
+onBeforeUnmount(() => {
+  if (offCliRequests) offCliRequests()
+  offCliRequests = null
+})
 function startCliRequests() {
   const api = window.shellApi.cli
   if (!api) return
-  api.onRequest(async (req) => {
+  if (offCliRequests) offCliRequests()
+  offCliRequests = api.onRequest(async (req) => {
     if (!req || typeof req.id !== 'string') return
     let msg
     try {
