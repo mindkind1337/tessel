@@ -6,7 +6,7 @@ import fs from 'fs'
 import vm from 'vm'
 import { join } from 'path'
 
-const source = fs.readFileSync(join(process.cwd(), 'src/renderer/src/App.vue'), 'utf8')
+const source = fs.readFileSync(join(process.cwd(), 'src/renderer/src/App.vue'), 'utf8').replace(/\r\n/g, '\n')
 function slice(from, to) {
   const a = source.indexOf(from)
   const b = source.indexOf(to, a)
