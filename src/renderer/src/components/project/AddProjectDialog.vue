@@ -35,6 +35,7 @@ import {
   remotePathError,
   remoteProjectName
 } from '../../addProject'
+import { sshCredentialState } from '../../sshCredentials'
 import AddProjectHostSelector from './AddProjectHostSelector.vue'
 import AddProjectNestedStep from './AddProjectNestedStep.vue'
 import RemoteFolderBrowser from './RemoteFolderBrowser.vue'
@@ -112,6 +113,16 @@ async function connectFromList(id) {
   if (hostSelector.value) hostSelector.value.close()
   focusBrowse()
 }
+
+// The sign-in prompt (SshPasswordDialog: password, passphrase, host key)
+// goes over this dialog: the host list closes so nothing covers it; the
+// dialog stays, and selects the host once signed in (connectFromList).
+watch(
+  () => sshCredentialState.queue.length > 0,
+  (asking) => {
+    if (asking && hostSelector.value) hostSelector.value.close()
+  }
+)
 
 // --- Add remote host: the SSH host form over this dialog ---------------------
 const hostForm = reactive({ open: false, initial: emptyForm(), error: '', saving: false })

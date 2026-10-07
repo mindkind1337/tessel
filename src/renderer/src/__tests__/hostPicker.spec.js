@@ -9,7 +9,9 @@ import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import AddProjectHostSelector from '../components/project/AddProjectHostSelector.vue'
 import { buildHostOptions, sshHostDetail } from '../addProject'
-import { hostAddress, shortRemotePath, homeRelative } from '../remoteHostDisplay'
+import { hostAddress, shortRemotePath, homeRelative, hostListWidth } from '../remoteHostDisplay'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { setMessages } from '../i18n'
 
 const TARGETS = [
@@ -19,6 +21,7 @@ const TARGETS = [
 ]
 
 let rect
+let rowRect
 let naturalHeight
 const origRect = HTMLElement.prototype.getBoundingClientRect
 const origScroll = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollHeight')
@@ -26,11 +29,14 @@ const origScroll = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrol
 beforeEach(() => {
   setMessages('en', {})
   rect = { top: 100, bottom: 128, left: 40, right: 240, width: 200, height: 28 }
+  rowRect = null
   naturalHeight = 200
   window.innerWidth = 1000
   window.innerHeight = 700
   HTMLElement.prototype.getBoundingClientRect = function () {
-    return this.matches && this.matches('[data-test="host-trigger"]') ? { ...rect, x: rect.left, y: rect.top } : origRect.call(this)
+    if (this.matches && this.matches('[data-test="host-trigger"]')) return { ...rect, x: rect.left, y: rect.top }
+    if (rowRect && this.matches && this.matches('.aph')) return { ...rowRect, x: rowRect.left, y: rowRect.top }
+    return origRect.call(this)
   }
   Object.defineProperty(HTMLElement.prototype, 'scrollHeight', {
     configurable: true,
@@ -190,6 +196,124 @@ describe('row detail', () => {
     expect(q('[data-test="host-status-ssh-a"]').textContent).toBe('Déconnecté')
     expect(q('[data-test="host-status-ssh-b"]').textContent).toBe('Connecté')
     w.unmount()
+  })
+})
+
+describe('row layout: dot, text, one action', () => {
+  const STATES = { 'ssh-b': { status: 'connected' } }
+  async function openWith(hosts, props = {}) {
+    const w = mountPicker({ hosts, ...props })
+    await w.find('[data-test="host-trigger"]').trigger('click')
+    await nextTick()
+    return w
+  }
+
+  it('every row is on one grid: dot slot, icon, text, action; no status column', async () => {
+    const w = await openWith(buildHostOptions(TARGETS, STATES))
+    const rows = Array.from(list().querySelectorAll('[data-host-item]'))
+    // Add remote host, Local Windows, then the SSH hosts: the same four cells.
+    expect(rows).toHaveLength(2 + TARGETS.length)
+    for (const row of rows) {
+      const cells = Array.from(row.children).map((c) => c.getAttribute('class') || '')
+      expect(cells).toHaveLength(4)
+      expect(cells[0]).toContain('aph-dot-slot')
+      expect(cells[1]).toContain('aph-icon')
+      expect(cells[2]).toContain('aph-item-body')
+      expect(cells[3]).toContain('aph-action')
+    }
+    expect(list().querySelector('.aph-item-status')).toBeNull()
+    expect(list().querySelector('.aph-item-head')).toBeNull()
+    w.unmount()
+  })
+
+  it('disconnected: grey dot and a Connect button; connected: green dot and a Connected tag, no button', async () => {
+    const w = await openWith(buildHostOptions(TARGETS, STATES))
+    const dotA = q('[data-test="host-status-ssh-a"]')
+    expect(dotA.classList.contains('aph-dot')).toBe(true)
+    expect(dotA.dataset.tone).toBe('off')
+    const actionA = q('[data-test="host-action-ssh-a"]')
+    expect(actionA.querySelector('[data-test="host-connect-ssh-a"]').textContent.trim()).toBe('Connect')
+    expect(actionA.querySelector('.aph-tag')).toBeNull()
+
+    expect(q('[data-test="host-status-ssh-b"]').dataset.tone).toBe('ok')
+    const actionB = q('[data-test="host-action-ssh-b"]')
+    expect(actionB.querySelector('[data-test="host-connect-ssh-b"]')).toBeNull()
+    expect(actionB.querySelector('[data-test="host-connected-ssh-b"]').textContent).toBe('Connected')
+    // The status word only for screen readers (in the dot), the tooltip and the aria-label.
+    expect(q('[data-test="host-status-ssh-a"] .aph-sr').textContent).toBe('Disconnected')
+    expect(q('[data-test="host-ssh-a"]').getAttribute('aria-label')).toContain('Disconnected')
+    expect(q('[data-test="host-ssh-a"]').getAttribute('aria-label')).toContain('fivem-afterlife')
+    expect(q('[data-test="host-ssh-b"]').getAttribute('aria-label')).toContain('Connected')
+    // Local Windows: no dot, This computer under it, a check when selected.
+    expect(q('[data-test="host-status-local"]')).toBeNull()
+    expect(q('[data-test="host-sub-local"]').textContent).toBe('This computer')
+    expect(q('[data-test="host-action-local"] .aph-check')).not.toBeNull()
+    w.unmount()
+  })
+
+  it('an error: red dot, the error on line 2 in red (instead of the address), the full text in the tooltip', async () => {
+    const err = 'Could not connect to 158.69.53.210: Connection refused after a very long while, try again later'
+    const w = await openWith(buildHostOptions(TARGETS, STATES, { errors: { 'ssh-a': err } }))
+    expect(q('[data-test="host-status-ssh-a"]').dataset.tone).toBe('bad')
+    expect(q('[data-test="host-status-ssh-a"]').classList.contains('tone-bad')).toBe(true)
+    const line = q('[data-test="host-error-ssh-a"]')
+    expect(line.textContent).toBe(err)
+    expect(line.classList.contains('bad')).toBe(true)
+    expect(q('[data-test="host-sub-ssh-a"]')).toBeNull()
+    expect(q('[data-test="host-ssh-a"]').getAttribute('title')).toContain(err)
+    expect(q('[data-test="host-connect-ssh-a"]').textContent.trim()).toBe('Retry')
+    w.unmount()
+  })
+
+  it('connecting: yellow dot, the busy button', async () => {
+    const w = await openWith(buildHostOptions(TARGETS, STATES, { connecting: { 'ssh-a': true } }))
+    expect(q('[data-test="host-status-ssh-a"]').dataset.tone).toBe('busy')
+    expect(q('[data-test="host-connect-ssh-a"]').classList.contains('busy')).toBe(true)
+    w.unmount()
+  })
+})
+
+describe('list width', () => {
+  async function widthWith(row) {
+    rowRect = row
+    const w = mountPicker()
+    await w.find('[data-test="host-trigger"]').trigger('click')
+    await nextTick()
+    const out = { width: list().style.width, left: list().style.left }
+    w.unmount()
+    return out
+  }
+  it('as wide as the picker row (the dialog content), 460 to 640 px', async () => {
+    expect(await widthWith({ top: 100, bottom: 128, left: 24, right: 488, width: 464, height: 28 })).toEqual({ width: '464px', left: '24px' })
+    expect((await widthWith({ top: 100, bottom: 128, left: 24, right: 324, width: 300, height: 28 })).width).toBe('460px')
+    expect((await widthWith({ top: 100, bottom: 128, left: 24, right: 924, width: 900, height: 28 })).width).toBe('640px')
+  })
+
+  it('hostListWidth clamps to the window', () => {
+    expect(hostListWidth(464, 1000)).toBe(464)
+    expect(hostListWidth(200, 1000)).toBe(460)
+    expect(hostListWidth(1200, 1000)).toBe(640)
+    expect(hostListWidth(464, 400)).toBe(384)
+    expect(hostListWidth(0, 0)).toBe(0)
+  })
+})
+
+describe('layers: the sign-in prompt is above the dialog and its host list', () => {
+  const src = (rel) => readFileSync(resolve(__dirname, rel), 'utf8')
+  const zOf = (css, selector) => {
+    const i = css.indexOf(selector + ' {')
+    expect(i).toBeGreaterThanOrEqual(0)
+    const block = css.slice(i, css.indexOf('}', i))
+    return Number(/z-index:\s*(\d+)/.exec(block)[1])
+  }
+  it('prompt > host list > Add a project dialog, and above the other lists teleported to <body>', () => {
+    const dialog = zOf(src('../components/project/AddProjectDialog.vue'), '.ap-backdrop')
+    const hostList = zOf(src('../components/project/AddProjectHostSelector.vue'), '.aph-list')
+    const prompt = zOf(src('../components/remote/remoteHosts.css'), '.ssh-cred-backdrop')
+    const select = zOf(src('../components/ui/ThemedSelect.vue'), '.ts-select-popup')
+    expect(hostList).toBeGreaterThan(dialog)
+    expect(prompt).toBeGreaterThan(hostList)
+    expect(prompt).toBeGreaterThan(select)
   })
 })
 

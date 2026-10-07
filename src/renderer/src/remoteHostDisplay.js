@@ -51,3 +51,13 @@ export function shortRemotePath(path, user = '') {
   if (parts.length <= 2) return p
   return `${prefix}${parts[0]}/…/${parts[parts.length - 1]}`
 }
+
+// The width of a host list (Add a project): the width of what it opens
+// under (the dialog's content), between min and max, and never wider than
+// the window less its margins.
+export const HOST_LIST_MIN_WIDTH = 460
+export const HOST_LIST_MAX_WIDTH = 640
+export function hostListWidth(anchorWidth, viewportWidth, { min = HOST_LIST_MIN_WIDTH, max = HOST_LIST_MAX_WIDTH, margin = 8 } = {}) {
+  const want = Math.min(max, Math.max(min, Number(anchorWidth) || 0))
+  return Math.max(0, Math.min(want, (Number(viewportWidth) || 0) - 2 * margin))
+}

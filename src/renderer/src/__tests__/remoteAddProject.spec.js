@@ -8,6 +8,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import AddProjectDialog from '../components/project/AddProjectDialog.vue'
 import { remoteHostsState } from '../remoteHosts'
+import { sshCredentialState, addSshCredentialRequest } from '../sshCredentials'
 import { setMessages } from '../i18n'
 import { joinRemote, parentRemote, remoteCrumbs, isPathInput, resolveTypedPath, filterRemoteEntries, enterAction, hostStatusText } from '../addProject'
 
@@ -81,6 +82,7 @@ beforeEach(() => {
 afterEach(() => {
   remoteHostsState.targets = []
   remoteHostsState.states = {}
+  sshCredentialState.queue = []
   document.body.innerHTML = ''
 })
 
@@ -89,6 +91,25 @@ const mountDialog = (props = {}) => mount(AddProjectDialog, { props, attachTo: d
 const browserNames = (w) => w.findAll('.rfb-row .rfb-name').map((n) => n.text())
 
 describe('connect from the host list', () => {
+  it('the password prompt closes the host list (not the dialog); once signed in the host is selected', async () => {
+    const w = mountDialog()
+    await w.find('[data-test="host-trigger"]').trigger('click')
+    await w.find('[data-test="host-connect-ssh-box"]').trigger('click')
+    expect(w.find('[data-test="host-list"]').exists()).toBe(true)
+    // ssh asks for the password: the prompt opens over the dialog.
+    addSshCredentialRequest({ paneId: 'remote-fs:ssh-box', promptId: 'p1', hostId: 'ssh-box', label: 'box', kind: 'password' })
+    await flushPromises()
+    expect(w.find('[data-test="host-list"]').exists()).toBe(false)
+    expect(w.find('[data-test="add-project"]').exists()).toBe(true)
+    expect(w.emitted('close')).toBeUndefined()
+    // The password is accepted: the prompt goes, the host is connected and selected.
+    sshCredentialState.queue = []
+    await signedIn()
+    expect(w.vm.hostId).toBe('ssh-box')
+    expect(w.find('[data-test="host-trigger"]').text()).toContain('Connected')
+    w.unmount()
+  })
+
   it('disconnected -> connecting -> connected: the host is selected and the dialog goes on', async () => {
     const w = mountDialog()
     await w.find('[data-test="host-trigger"]').trigger('click')
