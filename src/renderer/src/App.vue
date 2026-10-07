@@ -81,7 +81,7 @@ import LinearDialog from './components/LinearDialog.vue'
 import { createExternalIssueStarter } from './externalIssues'
 import './issueDialogs.css'
 import { addNotification, readForPane, playAlertSound } from './notificationsStore'
-import { initRemoteHosts, setRemoteHostHandlers, remoteHostsState, manageRemoteHosts, hostShared, recentlyDisconnected } from './remoteHosts'
+import { initRemoteHosts, setRemoteHostHandlers, remoteHostsState, hostShared, recentlyDisconnected } from './remoteHosts'
 import { hostAddress } from './remoteHostDisplay'
 import AddProjectDialog from './components/project/AddProjectDialog.vue'
 import { savedRemote, savedGroup } from './addProject'
@@ -3085,10 +3085,6 @@ async function addProjects({ projects, source } = {}) {
   else if (source === 'create') showToast(t('project.toast.created', 'Project created'))
   else if (source === 'remote') showToast(t('project.toast.remoteAdded', 'Project added on SSH host'))
   else if (added > 1) showToast(t('project.toast.imported', '{{count}} projects added', { count: added }))
-}
-function manageHostsFromAddProject() {
-  addProjectOpen.value = false
-  manageRemoteHosts()
 }
 
 // Run a command (or steps) in a new terminal pane (installs, setup). `shell`
@@ -11549,7 +11545,6 @@ onBeforeUnmount(() => {
       v-if="addProjectOpen"
       :project-count="workspaces.length"
       @add="addProjects"
-      @manage-hosts="manageHostsFromAddProject"
       @close="addProjectOpen = false"
     />
     <GitHubDialog v-if="githubOpen" :cwd="(issueWorkspace && gitKeyOf(issueWorkspace)) || ''" :pr-cwd="githubTaskContext?.cwd || ''" :pr-base="githubTaskContext?.base || ''" :initial-mode="githubTaskContext ? 'createPr' : ''" :agents="taskAgentKinds" :default-agent="settings.defaultAgent || ''" :start-issue="prepareLinkedIssue" :pr-agents="githubPrAgents" :send-prompt="sendGithubPrompt" @busy="githubBusy = $event" @close="githubOpen = false" />

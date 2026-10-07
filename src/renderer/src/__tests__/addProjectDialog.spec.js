@@ -154,11 +154,12 @@ describe('start step', () => {
     w.unmount()
   })
 
-  it('Add remote host asks for Settings > SSH Hosts', async () => {
+  it('Add remote host opens the SSH host form over the dialog (addRemoteHostFromDialog.spec.js)', async () => {
     const w = mountDialog()
     await w.find('[data-test="host-trigger"]').trigger('click')
     await w.find('[data-test="host-add"]').trigger('click')
-    expect(w.emitted('manage-hosts')).toHaveLength(1)
+    expect(document.querySelector('.rh-dialog')).not.toBeNull()
+    expect(w.emitted('close')).toBeUndefined()
     w.unmount()
   })
 

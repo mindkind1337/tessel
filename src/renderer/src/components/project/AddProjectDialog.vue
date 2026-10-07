@@ -6,6 +6,10 @@
 // - Host: this computer or a saved SSH host. An SSH host is signed in to
 //   from its row in the host list (Connect / Retry; the askpass dialog asks
 //   for a password when needed) and selected once connected.
+//   "Add remote host" opens the SSH host form over this dialog (like VS
+//   Code's Connect to Host from a new window): once saved, the new host is
+//   signed in to and selected here, and the new project goes on with it.
+//   Nothing opens in the current project; Cancel comes back unchanged.
 // - Browse folder: a folder, a repository, or a folder holding several
 //   repositories (they are found and offered: AddProjectNestedStep).
 //   On an SSH host: its folders are browsed (RemoteFolderBrowser) and the
@@ -17,7 +21,7 @@
 import { ref, reactive, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import { ArrowLeft, ChevronDown, Folder, GitBranch, LoaderCircle, CircleStop, X } from 'lucide-vue-next'
 import { t } from '../../i18n'
-import { remoteHostsState, refreshRemoteHosts } from '../../remoteHosts'
+import { remoteHostsState, refreshRemoteHosts, emptyForm, buildSavePayload, remoteErrorText } from '../../remoteHosts'
 import {
   LOCAL_HOST_ID,
   buildHostOptions,
@@ -34,12 +38,13 @@ import {
 import AddProjectHostSelector from './AddProjectHostSelector.vue'
 import AddProjectNestedStep from './AddProjectNestedStep.vue'
 import RemoteFolderBrowser from './RemoteFolderBrowser.vue'
+import RemoteHostForm from '../remote/RemoteHostForm.vue'
 
 const props = defineProps({
   projectCount: { type: Number, default: 1 },
   initialHostId: { type: String, default: LOCAL_HOST_ID }
 })
-const emit = defineEmits(['close', 'add', 'manage-hosts'])
+const emit = defineEmits(['close', 'add'])
 
 const step = ref('add') // 'add' | 'clone' | 'create' | 'remote' | 'nested'
 const hostId = ref(props.initialHostId || LOCAL_HOST_ID)
@@ -107,6 +112,62 @@ async function connectFromList(id) {
   if (hostSelector.value) hostSelector.value.close()
   focusBrowse()
 }
+
+// --- Add remote host: the SSH host form over this dialog ---------------------
+const hostForm = reactive({ open: false, initial: emptyForm(), error: '', saving: false })
+function openHostForm() {
+  if (busy.value) return
+  hostForm.initial = emptyForm()
+  hostForm.error = ''
+  hostForm.saving = false
+  hostForm.open = true
+}
+// Cancel: back to the dialog as it was.
+function closeHostForm() {
+  if (hostForm.saving) return
+  hostForm.open = false
+  nextTick(() => {
+    const trig = document.querySelector('[data-test="host-trigger"]')
+    if (trig) trig.focus()
+  })
+}
+// Saved: the new host is selected here and signed in to (its Files
+// session, the askpass dialog when needed), never a pane in the current
+// project.
+async function saveHostForm(form) {
+  const payload = buildSavePayload(form)
+  if (!payload.ok) {
+    hostForm.error = payload.error
+    return
+  }
+  const a = window.shellApi && window.shellApi.remoteHosts
+  if (hostForm.saving || !a || typeof a.add !== 'function') return
+  hostForm.saving = true
+  hostForm.error = ''
+  let res
+  try {
+    res = await a.add(payload.target)
+  } catch {
+    res = null
+  }
+  hostForm.saving = false
+  if (!res || !res.ok || !res.target || typeof res.target.id !== 'string') {
+    hostForm.error = remoteErrorText(res && res.error, t('remote.pane.saveFailed', 'Failed to save target'))
+    return
+  }
+  const id = res.target.id
+  hostForm.open = false
+  await refreshRemoteHosts()
+  // Shown at once, even before the list is read again.
+  if (!remoteHostsState.targets.some((x) => x && x.id === id)) remoteHostsState.targets = [...remoteHostsState.targets, res.target]
+  if (step.value !== 'add') return
+  hostId.value = id
+  startError.value = ''
+  const ok = await connectHost(id)
+  if (!ok && conn.errors[id]) startError.value = conn.errors[id]
+  focusBrowse()
+}
+
 // The selected SSH host, signed in (connecting first when needed).
 async function ensureConnected() {
   const h = host.value
@@ -588,7 +649,7 @@ defineExpose({ step, hostId, browseFor })
             :disabled="busy"
             @select="(id) => (hostId = id)"
             @connect="connectFromList"
-            @add-host="emit('manage-hosts')"
+            @add-host="openHostForm"
           />
           <button
             ref="browseEl"
@@ -828,6 +889,17 @@ defineExpose({ step, hostId, browseFor })
         @stop="stopScan"
       />
     </div>
+    <!-- Add remote host: over this dialog, outside it (its Esc is its own). -->
+    <Teleport to="body">
+      <RemoteHostForm
+        v-if="hostForm.open"
+        :initial="hostForm.initial"
+        :saving="hostForm.saving"
+        :error="hostForm.error"
+        @save="saveHostForm"
+        @close="closeHostForm"
+      />
+    </Teleport>
   </div>
 </template>
 
