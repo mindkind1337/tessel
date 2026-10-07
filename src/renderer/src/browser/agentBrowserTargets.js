@@ -89,7 +89,7 @@ export function createAgentBrowserTargets(deps) {
     const found = findAgent(paneId)
     if (!found) throw refuse('not_agent', 'Your pane is not open in Tessel.') // i18n-ignore
     if (found.leaf.kind !== 'agent' && found.leaf.kind !== 'chat') throw refuse('not_agent', 'Only an agent pane may use the browser tools.') // i18n-ignore
-    if (found.ws.remote) throw refuse('remote_project', 'The browser tools work in local projects only.') // i18n-ignore
+    // An agent on an SSH host has the same tools: its pages open here, in its project's grid.
     return found
   }
 

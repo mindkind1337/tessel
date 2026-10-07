@@ -80,14 +80,15 @@ describe('which browser page an agent drives', () => {
     expect(await targets.handle({ agent: 'agent-b', op: 'resolve', page: 'browser-b' })).toMatchObject({ guestId: 201 })
   })
 
-  it('only agent and chat panes; not a shell, an unknown pane, a remote project', async () => {
+  it('only agent and chat panes, a remote project included; not a shell or an unknown pane', async () => {
     const { targets } = setup()
     expect(await targets.handle({ agent: 'chat-a', op: 'resolve' })).toMatchObject({ page: 'browser-a2' })
     await expect(targets.handle({ agent: 'shell-a', op: 'resolve' })).rejects.toMatchObject({ code: 'not_agent' })
     await expect(targets.handle({ agent: 'browser-a1', op: 'resolve' })).rejects.toMatchObject({ code: 'not_agent' })
     await expect(targets.handle({ agent: 'nope', op: 'resolve' })).rejects.toMatchObject({ code: 'not_agent' })
     await expect(targets.handle({ op: 'resolve' })).rejects.toMatchObject({ code: 'not_agent' })
-    await expect(targets.handle({ agent: 'agent-r', op: 'resolve' })).rejects.toMatchObject({ code: 'remote_project' })
+    // An agent on an SSH host uses the browser like a local one.
+    await expect(targets.handle({ agent: 'agent-r', op: 'list' })).resolves.toBeTruthy()
   })
 
   it('nothing while the setting is off', async () => {
