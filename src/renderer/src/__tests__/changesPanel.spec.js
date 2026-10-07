@@ -718,6 +718,10 @@ describe('Source Control: branch line and Commits', () => {
     await flushPromises()
     expect(calls.find(([n]) => n === 'commitFiles')[1]).toEqual({ root: ROOT, commit: hash })
     expect(w.find('[data-test="sc-history-files"]').text()).toContain('Ann')
+    // The commit's time with its day (1700000000000: 14 Nov 2023, 22:13 UTC), the year as it is not this one.
+    const when = new Date(1700000000000)
+    expect(w.find('[data-test="sc-history-files"] .sch-file-meta').text()).toMatch(new RegExp(':' + String(when.getMinutes()).padStart(2, '0')))
+    expect(w.find('[data-test="sc-history-files"] .sch-file-meta').text()).toContain('2023')
     await w.find('[data-test="git-history-commit-file"]').trigger('click')
     expect(w.emitted('open-diff')[0][0]).toMatchObject({ root: ROOT, rel: 'src/a.js', area: 'commit', commit: hash, file: 'C:\\proj\\src\\a.js', preview: true })
     await w.find('[data-test="sc-history-toggle"]').trigger('click') // closed again for the next tests

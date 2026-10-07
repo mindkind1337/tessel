@@ -19,6 +19,7 @@ import {
 import { STATUS_COLORS, STATUS_LABELS } from '../../../shared/sourceControl'
 import { getFileTypeIcon } from '../fileTypeIcons'
 import { t, intlLocale } from '../i18n'
+import { dateTimeFormat } from '../../../shared/intlCache'
 import PanelState from './ui/PanelState.vue'
 
 const props = defineProps({
@@ -124,11 +125,18 @@ function refLabel(ref) {
 function refStyle(ref) {
   return ref.color ? { borderColor: graphColor(ref.color), color: graphColor(ref.color) } : null
 }
+// The commit's day and time ("6 oct. 23:12"), with the year when it is not this one.
+function commitDate(timestamp, now = new Date()) {
+  const d = new Date(timestamp)
+  const options = { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }
+  if (d.getFullYear() !== now.getFullYear()) options.year = 'numeric'
+  return dateTimeFormat(intlLocale(), options).format(d)
+}
 function meta(item) {
   let date = ''
   if (item.timestamp != null && Number.isFinite(item.timestamp)) {
     try {
-      date = new Intl.DateTimeFormat(intlLocale(), { month: 'short', day: 'numeric' }).format(new Date(item.timestamp))
+      date = commitDate(item.timestamp)
     } catch {
       date = ''
     }
