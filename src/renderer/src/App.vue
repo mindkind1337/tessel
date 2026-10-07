@@ -5,7 +5,7 @@ import SplitNode from './components/SplitNode.vue'
 import FloatingTerminal from './components/FloatingTerminal.vue'
 import ProjectLauncher from './components/ProjectLauncher.vue'
 import { allowDropRetry, droppedRemotePane, emptiedWorkspaceChoice, launcherAgents, launcherShells, projectOpenChoice, rememberedValue, remoteAgentFound } from './projectLauncher'
-import { claudeStartChoice, codexResumes, hostMenuAgents, needsRemoteAgentCheck, remoteAgentLine, remoteInstallCommand } from './remoteAgentLaunch'
+import { claudeStartChoice, codexResumes, hostMenuAgents, needsRemoteAgentCheck, remoteAgentLine, remoteInstallCommand, remotePaneInstallCommand } from './remoteAgentLaunch'
 import { createFloatingTerminal, isFloatingToggleKey } from './floatingTerminal'
 import BrandIcon from './components/BrandIcon.vue'
 import SidePanel from './components/SidePanel.vue'
@@ -1244,6 +1244,9 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
       savedText: opts.savedOutput || '',
       // How it starts on Connect (the folder and resume, as at restore).
       notConnected: { cwd: projectDir, resume: !!opts.resume },
+      // Its agent was missing on the host: after Connect, started only when
+      // the host says it is there now (else its card again).
+      ...(opts.agentMissing && agent ? { agentMissing: { agent: agent.id, name: remoteAgentName(agent.id), resume: !!opts.resume } } : {}),
       broadcast: true
     })
   }
@@ -1412,12 +1415,18 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
   // Launch the agent CLI once the shell has had a moment to print its prompt.
   // Claude or Codex on an SSH host: its own install there (Claude: else VS
   // Code's copy), checked first when it was missing or never checked; none:
-  // its install is offered instead of typing a command the host lacks.
+  // nothing is typed, the pane shows it (its "not installed" card: Install,
+  // Check again, Open a shell instead) and keeps its conversation id. A pane
+  // already missing it (restored, reconnected) starts it only when the host
+  // says it is there now.
   let launchCommand = launch && launch.command
   const hostKind = agent && opts.remoteHostId ? sessionKind(agent) : null
   if (agent && agent.command && (hostKind === 'claude' || hostKind === 'codex') && launchCommand === hostKind) {
-    launchCommand = await remoteAgentCommand(opts.remoteHostId, hostKind, launchCommand)
-    if (!launchCommand) offerAgentInstall(opts.remoteHostId, hostKind)
+    launchCommand = await remoteAgentCommand(opts.remoteHostId, hostKind, launchCommand, { strict: !!opts.agentMissing })
+    if (!launchCommand) {
+      leaf.sessionId = opts.sessionId || null
+      leaf.agentMissing = { agent: hostKind, name: remoteAgentName(hostKind), resume: !!opts.resume }
+    }
   }
   if (agent && agent.command && launchCommand) {
     const start = await agentStartLine({ ...agent, command: launchCommand }, opts.sessionId || null, !!opts.resume, accountId, {
@@ -1652,7 +1661,9 @@ function serializeNode(node) {
       launchSig: node.detected ? undefined : node.launchSig || undefined,
       launchYolo: node.detected ? undefined : node.launchYolo || undefined,
       // Shown as a chat over its terminal (TerminalPane's chat view).
-      chatView: !node.detected && node.chatView ? true : undefined
+      chatView: !node.detected && node.chatView ? true : undefined,
+      // Its agent is not installed on its SSH host: its card comes back.
+      agentMissing: !node.detected && node.agentMissing ? true : undefined
     }
   }
   return {
@@ -1795,6 +1806,9 @@ async function deserializeNode(snap, cwd = null) {
       // Its terminal gone: it waits for Connect instead of signing in now.
       lazyRemote: true,
       keepOnFailure: true,
+      // Its agent was missing on the host: started only if the host says it
+      // is there now, else its card again (never a failing command typed).
+      ...(snap.agentMissing === true && agent ? { agentMissing: true } : {}),
       // A team member started again (its terminal was gone): team messages
       // waiting for it go in its first prompt (see createLeaf).
       ...(typeof snap.team === 'string' ? { wake: { teamId: snap.team, gen: 0 } } : {})
@@ -1808,6 +1822,11 @@ async function deserializeNode(snap, cwd = null) {
     if (leaf.attached && typeof snap.launchSig === 'string') {
       leaf.launchSig = snap.launchSig.slice(0, 20000)
       leaf.launchYolo = snap.launchYolo === true
+    }
+    // Its terminal still running (the shell its agent was missing from):
+    // its card again, with its conversation id.
+    if (leaf.attached && snap.agentMissing === true && leaf.kind === 'agent' && leaf.remoteHostId && !leaf.agentMissing) {
+      leaf.agentMissing = { agent: leaf.agentId, name: remoteAgentName(leaf.agentId), resume: !!settings.resumeAgents && !!leaf.sessionId }
     }
     if (snap.titleSet === true) leaf.titleSet = true
     if (typeof snap.autoTitle === 'string' && snap.autoTitle) leaf.autoTitle = snap.autoTitle.slice(0, 80)
@@ -2581,6 +2600,10 @@ provide('panelCtx', {
   wakeLeaf: (id) => wakeLeaf(id),
   // A restored remote pane waiting for Connect.
   connectLeaf: (id) => connectLeaf(id),
+  // Its agent not installed on its SSH host (the pane's card).
+  installMissingAgent: (id) => installMissingAgent(id),
+  recheckMissingAgent: (id) => recheckMissingAgent(id),
+  missingAgentShell: (id) => missingAgentShell(id),
   setActive,
   toggleMaximize,
   fontSize,
@@ -3567,6 +3590,7 @@ async function connectLeaf(leafId) {
       remoteHostId: old.remoteHostId,
       remotePath: old.remotePath || undefined,
       keepOnFailure: true,
+      ...(old.agentMissing ? { agentMissing: true } : {}),
       ...(typeof old.team === 'string' ? { wake: { teamId: old.team, gen: 0 } } : {})
     })
     // Could not start (said in a toast): it stays as it was, Connect again.
@@ -3734,6 +3758,8 @@ function waitForHostAgain(leafId, { exitCode, pid = null } = {}) {
     // An agent resumes its conversation (it knows its id); a shell starts
     // again in its folder on the host.
     notConnected: { cwd: null, resume: old.kind === 'agent' && !!old.sessionId },
+    // Its agent missing there: never typed blindly once it reconnects.
+    ...(old.agentMissing ? { agentMissing: { ...old.agentMissing, checking: false, installing: null } } : {}),
     broadcast: old.broadcast,
     ...(old.num ? { num: old.num } : {}),
     ...(old.paneName ? { paneName: old.paneName } : {}),
@@ -4724,27 +4750,23 @@ function offerAgentInstall(hostId, id, label) {
 // again first when it was missing (installed since?) or never checked while
 // the host is connected; null when it is not there.
 const REMOTE_CHECK_MS = 15000
-async function remoteAgentCommand(hostId, id, command) {
+// opts.strict: only when the host says it is there (a pane already missing
+// it never types it on a check that failed or was too slow).
+async function remoteAgentCommand(hostId, id, command, { strict = false } = {}) {
   let st = remoteAgentTools[hostId]
-  const api = window.shellApi.remoteAgents
-  if (api && api.check && needsRemoteAgentCheck(id, st, { connected: hostShared(hostId) })) {
-    let timer = null
-    const fresh = await Promise.race([
-      api.check(hostId).catch(() => null),
-      new Promise((resolve) => {
-        timer = setTimeout(() => resolve(null), REMOTE_CHECK_MS)
-      })
-    ])
-    clearTimeout(timer)
-    if (fresh && !fresh.error) st = remoteAgentTools[hostId] = fresh
-  }
+  if (needsRemoteAgentCheck(id, st, { connected: hostShared(hostId) })) st = (await askHostAgents(hostId)) || st
+  if (strict && remoteAgentFound(id, st) !== true) return null
   return remoteAgentLine(id, st, command)
 }
 // Install agent `id` on the host: its exact command shown, then run in a new
 // pane there (it shows its own output and questions).
-async function installAgentOnHost(hostId, id) {
-  const command = remoteInstallCommand(id)
-  if (!command) return
+// opts.forLeafId: installed for that pane's "not installed" card: the pane
+// opens under it, and its shell ending with 0 (the install worked) checks
+// the host again and starts the agent there (missingAgentInstallExit).
+// -> the install pane, or null.
+async function installAgentOnHost(hostId, id, { forLeafId = null } = {}) {
+  const command = forLeafId ? remotePaneInstallCommand(id) : remoteInstallCommand(id)
+  if (!command) return null
   const agent = remoteAgentName(id)
   const ok = await askConfirm({
     title: t('app.remoteAgents.installTitle', 'Install {{agent}} on {{host}}?', { agent, host: remoteHostLabel(hostId) }),
@@ -4752,14 +4774,112 @@ async function installAgentOnHost(hostId, id) {
     code: command,
     confirmLabel: t('app.remoteAgents.installConfirm', 'Install')
   })
-  if (ok !== true) return
+  if (ok !== true) return null
   const ws = workspaces.value.find((w) => w.remote && w.remote.hostId === hostId)
   const opts = ws ? { remoteHostId: hostId, remotePath: ws.remote.path } : { remoteHostId: hostId }
-  const leaf = await openPaneBelow(selectedShell.value, null, opts)
-  if (!leaf) return
+  const waiting = forLeafId ? findLeaf(forLeafId) : null
+  if (waiting && waiting.remotePath) opts.remotePath = waiting.remotePath
+  const leaf = waiting ? await splitLeaf(forLeafId, 'col', null, selectedShell.value, null, opts) : await openPaneBelow(selectedShell.value, null, opts)
+  if (!leaf) return null
+  if (waiting && waiting.agentMissing && findLeaf(forLeafId) === waiting) {
+    missingAgentInstalls[leaf.id] = forLeafId
+    waiting.agentMissing.installing = leaf.id
+  }
   // Typed while the remote shell starts: the terminal host keeps it for it.
   window.shellApi.writePty(leaf.id, command + '\r')
+  return leaf
 }
+
+// --- An agent missing on its SSH host: its pane's card ----------------------
+// createLeaf typed nothing (leaf.agentMissing: { agent, name, resume,
+// checking, notFound, installing }); TerminalPane shows the card over the
+// pane's shell on the host, with Install, Check again, Open a shell instead.
+const missingAgentInstalls = {} // install pane id -> the waiting pane's id
+// The host's agents, asked now (at most REMOTE_CHECK_MS). -> its status, or null.
+async function askHostAgents(hostId) {
+  const api = window.shellApi.remoteAgents
+  if (!api || !api.check) return null
+  let timer = null
+  const fresh = await Promise.race([
+    api.check(hostId).catch(() => null),
+    new Promise((resolve) => {
+      timer = setTimeout(() => resolve(null), REMOTE_CHECK_MS)
+    })
+  ])
+  clearTimeout(timer)
+  if (fresh && !fresh.error) remoteAgentTools[hostId] = fresh
+  return fresh && !fresh.error ? fresh : null
+}
+// Check again: the host asked; there now: the agent starts in this pane (its
+// conversation id kept). -> true when it started.
+async function recheckMissingAgent(leafId) {
+  const leaf = findLeaf(leafId)
+  const missing = leaf && leaf.agentMissing
+  if (!missing || !leaf.remoteHostId || missing.checking || leaf.notConnected) return false
+  missing.checking = true
+  missing.notFound = false
+  let found = false
+  try {
+    const st = await askHostAgents(leaf.remoteHostId)
+    found = remoteAgentFound(missing.agent, st) === true
+  } finally {
+    missing.checking = false
+  }
+  if (findLeaf(leafId) !== leaf || leaf.agentMissing !== missing) return false
+  if (!found) {
+    missing.notFound = true
+    return false
+  }
+  // Its shell is replaced by the agent, same pane (restartInPlace keeps its
+  // id, number, team and conversation).
+  const ok = await restartInPlace(leafId, { resume: !!missing.resume })
+  if (!ok && findLeaf(leafId) === leaf)
+    showToast(t('app.restart.failed', '{{name}} could not be restarted: its terminal did not stop. Try again.', { name: leaf.paneName || leaf.title }), { kind: 'error', timeout: 8000 })
+  return ok
+}
+// Install: the same confirm and install pane as the toast's, under this pane.
+async function installMissingAgent(leafId) {
+  const leaf = findLeaf(leafId)
+  const missing = leaf && leaf.agentMissing
+  if (!missing || !leaf.remoteHostId || leaf.notConnected) return null
+  return installAgentOnHost(leaf.remoteHostId, missing.agent, { forLeafId: leafId })
+}
+// The install pane ended: with 0 (it worked) the host is checked again and
+// the agent started in the waiting pane when it is there now.
+function missingAgentInstallExit(paneId, exitCode) {
+  const waitingId = missingAgentInstalls[paneId]
+  if (!waitingId) return false
+  delete missingAgentInstalls[paneId]
+  const leaf = findLeaf(waitingId)
+  if (!leaf || !leaf.agentMissing) return false
+  if (leaf.agentMissing.installing === paneId) leaf.agentMissing.installing = null
+  if (exitCode !== 0) return false
+  recheckMissingAgent(waitingId)
+  return true
+}
+// Open a shell instead: the pane becomes a plain shell on the host (its shell
+// is already running there); what waited to be typed to the agent is not.
+function missingAgentShell(leafId) {
+  const leaf = findLeaf(leafId)
+  if (!leaf || !leaf.agentMissing) return false
+  delete leaf.agentMissing
+  leaf.kind = 'shell'
+  leaf.agentId = null
+  leaf.agentCommand = null
+  leaf.accent = null
+  leaf.sessionId = null
+  if (!leaf.titleSet) leaf.title = remoteHostLabel(leaf.remoteHostId)
+  if (pendingMessages[leafId]) {
+    for (const item of pendingMessages[leafId]) failDelivery(item)
+    delete pendingMessages[leafId]
+  }
+  return true
+}
+let offMissingAgentExit = null
+onMounted(() => {
+  if (window.shellApi.onExit) offMissingAgentExit = window.shellApi.onExit((e) => e && missingAgentInstallExit(e.id, e.exitCode))
+})
+onBeforeUnmount(() => offMissingAgentExit && offMissingAgentExit())
 // Picked an agent shown as "Install…" (the launcher, the "+" menu): asked
 // again first (installed by hand since?); there now: started; else its
 // install. -> true when it is there now.
@@ -5011,7 +5131,7 @@ function sleepPanes(ids) {
   let slept = 0
   for (const id of ids || []) {
     const leaf = findLeaf(id)
-    if (!leaf || leaf.kind !== 'agent' || leaf.sleeping || leaf.notConnected || restartingLeaves.has(id)) continue
+    if (!leaf || leaf.kind !== 'agent' || leaf.sleeping || leaf.notConnected || leaf.agentMissing || restartingLeaves.has(id)) continue
     const ws = wsOfLeaf(id)
     if (ws && ws.id === currentWsId.value && id === activeId.value) {
       skipped.push(t('app.sleep.activePane', '{{pane}} (the pane you are in)', { pane: paneLabel(leaf) }))
@@ -5575,6 +5695,12 @@ function flushPending() {
     // Restarting, or going to a chat: its terminal is about to go, nothing
     // is typed into it (the message waits for the pane that comes back).
     if (restartingLeaves.has(id) || switchingLeaves.has(id)) {
+      waiting = true
+      continue
+    }
+    // Its agent is not installed on its host (its card): nothing is typed
+    // into the bare shell; it waits for the agent to start there.
+    if (asChat && asChat.agentMissing) {
       waiting = true
       continue
     }
@@ -7596,7 +7722,7 @@ async function sleepTick() {
 }
 function putToSleep(leaf) {
   // Not connected (a restored remote pane): nothing runs, nothing to stop.
-  if (leaf.notConnected) return
+  if (leaf.notConnected || leaf.agentMissing) return
   leaf.sleeping = { at: Date.now() }
   window.shellApi.killPty(leaf.id)
   if (window.shellApi.log) window.shellApi.log('info', `agent sleep: ${paneLabel(leaf)} asleep (idle ${settings.agentSleepMinutes} min)`)
@@ -7850,6 +7976,7 @@ function pointerBlocked(id) {
   if (leaf.kind !== 'agent' || !leaf.teamTools) return 'not an agent pane with the team tools'
   if (leaf.sleeping) return 'asleep'
   if (leaf.notConnected) return 'not connected'
+  if (leaf.agentMissing) return 'its agent is not installed on the host'
   if (restartingLeaves.has(id)) return 'being restarted'
   const now = Date.now()
   const w = wakeState[id]
@@ -7883,7 +8010,7 @@ async function restartForTeamTools() {
   const now = Date.now()
   for (const team of teams.value) {
     for (const leaf of teamMembers(team.id)) {
-      if (leaf.kind !== 'agent' || hasCurrentTools(leaf) || restartedForTools.has(leaf.id)) continue
+      if (leaf.kind !== 'agent' || leaf.agentMissing || hasCurrentTools(leaf) || restartedForTools.has(leaf.id)) continue
       // Only an agent that gets the tools (Claude Code, Codex) and whose
       // conversation Tessel can resume for sure: a quiet terminal is no proof
       // there is nothing to keep. Otherwise it is left running, and it says so.

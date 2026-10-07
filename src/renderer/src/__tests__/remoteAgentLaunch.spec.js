@@ -3,7 +3,7 @@
 // command typed (or none: its install offered), the install commands and the
 // "+" menu's agents.
 import { describe, expect, it } from 'vitest'
-import { claudeStartChoice, codexResumes, hostMenuAgents, needsRemoteAgentCheck, remoteAgentLine, remoteInstallCommand } from '../remoteAgentLaunch'
+import { claudeStartChoice, codexResumes, hostMenuAgents, needsRemoteAgentCheck, remoteAgentLine, remoteInstallCommand, remotePaneInstallCommand } from '../remoteAgentLaunch'
 
 const newId = () => 'new-uuid'
 
@@ -66,10 +66,34 @@ describe('installs', () => {
     expect(remoteInstallCommand('claude')).toBe('curl -fsSL https://claude.ai/install.sh | bash && ~/.local/bin/claude')
     const codex = remoteInstallCommand('codex')
     expect(codex).toContain('command -v npm')
-    expect(codex).toContain('npm install -g @openai/codex')
+    expect(codex).toContain('npm install -g --prefix "$HOME/.local" @openai/codex')
     expect(codex).toContain('curl -fsSL https://chatgpt.com/codex/install.sh | sh')
     expect(remoteInstallCommand('gemini')).toBe(null)
     expect(remoteInstallCommand('constructor')).toBe(null)
+  })
+
+  // Found on a server: `npm install -g @openai/codex` failed with EACCES on
+  // mkdir '/usr/local/lib/node_modules' (a global npm folder owned by root).
+  it('never needs root: npm installs into ~/.local (~/.local/bin/codex), no sudo, no system folder', () => {
+    expect(remoteInstallCommand('codex')).toBe(
+      'if command -v npm >/dev/null 2>&1; then npm install -g --prefix "$HOME/.local" @openai/codex; else curl -fsSL https://chatgpt.com/codex/install.sh | sh; fi'
+    )
+    for (const id of ['claude', 'codex']) {
+      for (const cmd of [remoteInstallCommand(id), remotePaneInstallCommand(id)]) {
+        expect(cmd).not.toMatch(/\bsudo\b|\/usr\/local|\bsu\b/)
+        // Every npm install says where (never the global, root-owned prefix).
+        for (const npm of cmd.match(/npm install[^;&|]*/g) || []) expect(npm).toContain('--prefix "$HOME/.local"')
+      }
+    }
+    // Claude Code's own installer: into ~/.local/bin, no root.
+    expect(remoteInstallCommand('claude')).not.toContain('npm')
+  })
+
+  it("from a pane's card: the install alone, then its shell ends (0 when it worked)", () => {
+    expect(remotePaneInstallCommand('claude')).toBe('curl -fsSL https://claude.ai/install.sh | bash && exit')
+    expect(remotePaneInstallCommand('codex')).toBe(`${remoteInstallCommand('codex')} && exit`)
+    expect(remotePaneInstallCommand('gemini')).toBe(null)
+    expect(remotePaneInstallCommand('constructor')).toBe(null)
   })
 })
 

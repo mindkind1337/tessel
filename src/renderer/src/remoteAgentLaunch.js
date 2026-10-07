@@ -56,17 +56,30 @@ export function needsRemoteAgentCheck(id, status, { connected = false } = {}) {
 }
 
 // The official installs on a Linux / macOS host, run in a new pane there
-// after you confirm (shown exactly as typed).
+// after you confirm (shown exactly as typed). Never as root: most servers'
+// global npm folder (/usr/local/lib/node_modules) is root's (EACCES).
 // - Claude Code: its installer puts it in ~/.local/bin (which PATH may lack),
 //   then it starts to show its sign-in link.
-// - Codex CLI: npm when the host has it (`npm install -g @openai/codex`),
-//   else OpenAI's standalone installer (Codex README).
+// - Codex CLI: npm when the host has it, into ~/.local (its binary in
+//   ~/.local/bin/codex, where the host check looks), else OpenAI's
+//   standalone installer (Codex README).
 export const REMOTE_INSTALL_COMMANDS = {
   claude: 'curl -fsSL https://claude.ai/install.sh | bash && ~/.local/bin/claude', // i18n-ignore shell command
-  codex: 'if command -v npm >/dev/null 2>&1; then npm install -g @openai/codex; else curl -fsSL https://chatgpt.com/codex/install.sh | sh; fi' // i18n-ignore shell command
+  codex: 'if command -v npm >/dev/null 2>&1; then npm install -g --prefix "$HOME/.local" @openai/codex; else curl -fsSL https://chatgpt.com/codex/install.sh | sh; fi' // i18n-ignore shell command
 }
 export function remoteInstallCommand(id) {
   return Object.prototype.hasOwnProperty.call(REMOTE_INSTALL_COMMANDS, id) ? REMOTE_INSTALL_COMMANDS[id] : null
+}
+// Installed from a pane that waits for the agent (its "not installed" card):
+// the install alone (that pane starts the agent, Claude Code's sign-in there
+// too), then its shell ends with 0 when it worked, so Tessel checks the host
+// again; a failure leaves the shell open with its error.
+const PANE_INSTALL_COMMANDS = {
+  claude: 'curl -fsSL https://claude.ai/install.sh | bash && exit', // i18n-ignore shell command
+  codex: REMOTE_INSTALL_COMMANDS.codex + ' && exit' // i18n-ignore shell command
+}
+export function remotePaneInstallCommand(id) {
+  return Object.prototype.hasOwnProperty.call(PANE_INSTALL_COMMANDS, id) ? PANE_INSTALL_COMMANDS[id] : null
 }
 
 // The "+" menu's agents for a pane on an SSH host: Claude Code and Codex as

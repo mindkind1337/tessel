@@ -386,7 +386,7 @@ const paneMenuValues = computed(() => {
 // What the pane uses: its own choice, else the default from Settings.
 const paneValues = computed(() => launchSessionValues(props.node.sessionOptions, settings.agentSessionOptions, props.node.agentId))
 const settingsDefault = computed(() => resolveSessionOptionDefaults(settings.agentSessionOptions, props.node.agentId))
-const paneRunning = computed(() => isAgent.value && !exited.value && !props.node.sleeping && !props.node.failed && !props.node.notConnected)
+const paneRunning = computed(() => isAgent.value && !exited.value && !props.node.sleeping && !props.node.failed && !props.node.notConnected && !props.node.agentMissing)
 const paneBusy = computed(() => shownState.value === 'working' || agentStatus.value === 'busy' || asksApproval.value)
 const modelDefaultLabel = computed(() =>
   settingsDefault.value
@@ -860,6 +860,25 @@ function notConnectedText() {
 }
 function connectRemote() {
   if (props.node.notConnected && !props.node.connecting && ctx.connectLeaf) ctx.connectLeaf(props.node.id)
+}
+
+// Its agent is not installed on its SSH host (App.vue createLeaf): nothing
+// was typed; the card offers its install, a new check, or a plain shell.
+const missingAgentName = computed(() => (props.node.agentMissing && props.node.agentMissing.name) || props.node.title || '')
+function missingAgentText() {
+  return t('pane.missingAgent.text', '{{agent}} is not installed on {{host}}.', { agent: missingAgentName.value, host: remoteHostName.value })
+}
+function missingAgentInstallLabel() {
+  return t('pane.missingAgent.install', 'Install {{agent}}', { agent: missingAgentName.value })
+}
+function installMissing() {
+  if (props.node.agentMissing && !props.node.agentMissing.installing && ctx.installMissingAgent) ctx.installMissingAgent(props.node.id)
+}
+function recheckMissing() {
+  if (props.node.agentMissing && !props.node.agentMissing.checking && ctx.recheckMissingAgent) ctx.recheckMissingAgent(props.node.id)
+}
+function shellInstead() {
+  if (props.node.agentMissing && ctx.missingAgentShell) ctx.missingAgentShell(props.node.id)
 }
 
 const sleptAt = computed(() =>
@@ -3211,6 +3230,30 @@ const paneMenuBindings = computed(() => ({
       <button class="exit-btn primary" data-test="remote-connect" :disabled="!!node.connecting" @click="connectRemote">
         {{ node.connecting ? t('pane.remote.connecting', 'Connecting…') : t('pane.remote.connect', 'Connect') }}
       </button>
+    </div>
+
+    <div v-else-if="node.agentMissing" class="missing-agent" data-test="missing-agent-card" @mousedown.stop>
+      <div class="missing-agent-card" role="group" :aria-label="missingAgentText()">
+        <BrandIcon :kind="node.agentMissing.agent || node.agentId" :accent="node.accent" :label="missingAgentName" :size="32" />
+        <p class="missing-agent-text" data-test="missing-agent-text">{{ missingAgentText() }}</p>
+        <p v-if="node.agentMissing.notFound" class="missing-agent-hint" data-test="missing-agent-not-found">
+          {{ t('pane.missingAgent.stillMissing', 'Still not found on the host.') }}
+        </p>
+        <p v-else-if="node.agentMissing.installing" class="missing-agent-hint" data-test="missing-agent-installing">
+          {{ t('pane.missingAgent.installing', 'Installing in the pane below. It starts here once the install ends.') }}
+        </p>
+        <div class="missing-agent-actions">
+          <button class="exit-btn primary" data-test="missing-agent-install" :disabled="!!node.agentMissing.installing" @click="installMissing">
+            {{ missingAgentInstallLabel() }}
+          </button>
+          <button class="exit-btn" data-test="missing-agent-check" :disabled="!!node.agentMissing.checking" @click="recheckMissing">
+            {{ node.agentMissing.checking ? t('pane.missingAgent.checking', 'Checking…') : t('pane.missingAgent.check', 'Check again') }}
+          </button>
+        </div>
+        <button class="exit-btn subtle" data-test="missing-agent-shell" @click="shellInstead">
+          {{ t('pane.missingAgent.shell', 'Open a shell instead') }}
+        </button>
+      </div>
     </div>
 
     <div v-else-if="node.sleeping && !chatShown" class="exit-overlay sleeping" data-test="sleep-overlay" @mousedown.stop>

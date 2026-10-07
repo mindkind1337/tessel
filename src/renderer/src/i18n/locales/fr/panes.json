@@ -733,6 +733,15 @@
       "connect": "Connecter",
       "connecting": "Connexion…"
     },
+    "missingAgent": {
+      "text": "{{agent}} n'est pas installé sur {{host}}.",
+      "install": "Installer {{agent}}",
+      "check": "Vérifier à nouveau",
+      "checking": "Vérification…",
+      "shell": "Ouvrir un terminal à la place",
+      "stillMissing": "Toujours introuvable sur l'hôte.",
+      "installing": "Installation dans le panneau du dessous. Il démarre ici une fois l'installation terminée."
+    },
     "agentTerminal": {
       "keys": "touches",
       "logHint": "Ce que les agents ont lancé dans ce terminal",

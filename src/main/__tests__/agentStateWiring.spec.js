@@ -407,9 +407,9 @@ function wakeSandbox(over = {}) {
     claudeStartChoice,
     codexResumes,
     // On an SSH host (remoteAgentLaunch.js): the command found there, or
-    // null and its install offered.
+    // null and the pane shows its "not installed" card.
     remoteAgentCommand: vi.fn(async (_hostId, _id, command) => command),
-    offerAgentInstall: vi.fn(),
+    remoteAgentName: (id) => (id === 'codex' ? 'Codex CLI' : 'Claude Code'),
     quoteGlobArgs: (s) => s,
     FOUND_AFTER_START: [],
     watchFoundSession: () => {},
@@ -429,13 +429,15 @@ function wakeSandbox(over = {}) {
     ctx
   )
   // Launches the agent in pane opts.id the way createLeaf does; -> the line typed to start it.
+  let lastLeaf = null
   const launchLine = async (agentId, opts) => {
     written.length = 0
     const leaf = { id: opts.id }
+    lastLeaf = leaf
     await api.launch(leaf, { id: agentId, name: agentId, command: agentId }, opts, opts.id, { command: agentId, args: '' }, undefined, null)
     return written[0]
   }
-  return { ctx, api, launchLine, written: () => written }
+  return { ctx, api, launchLine, written: () => written, lastLeaf: () => lastLeaf }
 }
 
 it('Tessel relaunching a Codex with team messages waiting: a first prompt on its command line, fresh or resumed; none when nothing waits', async () => {
@@ -526,13 +528,19 @@ it('on an SSH host, Codex: resumed unless its rollout is gone there (then a fres
 
 // Found on an SSH host without Codex: `codex --no-daemon ...` typed, and the
 // shell said "Command 'codex' not found".
-it('on an SSH host: an agent missing there is not typed; its install is offered; one found runs by its path there', async () => {
-  const { ctx, launchLine, written } = wakeSandbox()
+it('on an SSH host: an agent missing there is not typed; the pane shows its card (conversation id kept); one found runs by its path there', async () => {
+  const { ctx, launchLine, written, lastLeaf } = wakeSandbox()
   ctx.remoteAgentCommand = vi.fn(async () => null)
-  expect(await launchLine('codex', { id: 'pane-m', remoteHostId: 'ssh-box' })).toBeUndefined()
+  expect(await launchLine('codex', { id: 'pane-m', remoteHostId: 'ssh-box', sessionId: 's-7', resume: true })).toBeUndefined()
   expect(written()).toEqual([])
-  expect(ctx.remoteAgentCommand).toHaveBeenCalledWith('ssh-box', 'codex', 'codex')
-  expect(ctx.offerAgentInstall).toHaveBeenCalledWith('ssh-box', 'codex')
+  expect(ctx.remoteAgentCommand).toHaveBeenCalledWith('ssh-box', 'codex', 'codex', { strict: false })
+  expect(lastLeaf().agentMissing).toEqual({ agent: 'codex', name: 'Codex CLI', resume: true })
+  expect(lastLeaf().sessionId).toBe('s-7')
+  // A pane already missing it (restored, reconnected): only what the host
+  // says now counts (strict).
+  await launchLine('claude', { id: 'pane-m', remoteHostId: 'ssh-box', agentMissing: true })
+  expect(ctx.remoteAgentCommand).toHaveBeenLastCalledWith('ssh-box', 'claude', 'claude', { strict: true })
+  expect(lastLeaf().agentMissing).toMatchObject({ agent: 'claude', name: 'Claude Code', resume: false })
   ctx.remoteAgentCommand = vi.fn(async () => "'/home/u/.local/bin/claude'")
   ctx.window.shellApi.remoteAgentSessionExists = vi.fn(async () => null)
   expect(await launchLine('claude', { id: 'pane-m', remoteHostId: 'ssh-box' })).toBe("'/home/u/.local/bin/claude' --session-id new-uuid\r")
