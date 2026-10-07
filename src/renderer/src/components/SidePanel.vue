@@ -24,6 +24,7 @@ import { t } from '../i18n'
 import { displayUrl } from '../../../shared/browserUrl'
 import TaskHistoryPanel from './TaskHistoryPanel.vue'
 import { SIDE_TABS } from '../sideTabs'
+import { statusMatters } from '../explorerChanges'
 import { Files, GitBranch, ListChecks, LayoutDashboard, Maximize2, Minimize2, Plus, Globe, X, ReceiptText } from 'lucide-vue-next'
 
 const props = defineProps({
@@ -144,8 +145,11 @@ onMounted(() => {
   if (props.root && explorer()) explorer().watch(props.root)
   reload()
   if (explorer() && explorer().onChanged)
-    stop = explorer().onChanged((r) => {
+    stop = explorer().onChanged((r, info) => {
       if (!props.root || rootKey(r) !== rootKey(props.root)) return
+      // Only git-ignored files changed (a server's log, its cache): the
+      // Changes count cannot change.
+      if (info && !statusMatters(props.root, info.paths)) return
       clearTimeout(timer)
       timer = setTimeout(reload, 250)
     })
