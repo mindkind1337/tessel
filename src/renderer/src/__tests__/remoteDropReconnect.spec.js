@@ -11,6 +11,7 @@ import vm from 'vm'
 import { join } from 'path'
 import { reactive } from 'vue'
 import { allowDropRetry, droppedRemotePane } from '../projectLauncher'
+import { claudeStartChoice, codexResumes } from '../remoteAgentLaunch'
 
 const source = fs.readFileSync(join(process.cwd(), 'src/renderer/src/App.vue'), 'utf8')
 function slice(from, to) {
@@ -195,5 +196,94 @@ describe('after Tessel restarted', () => {
     runWatchers()
     await vi.waitFor(() => expect(ctx.createLeaf).toHaveBeenCalledTimes(2))
     expect(ctx.createLeaf.mock.calls.find((c) => c[4].id === 'pane-a')[4]).toMatchObject({ sessionId: SESSION, resume: true })
+  })
+})
+
+// What the reopened agent types (App.vue's agentStartLine, with the options
+// the reopen passed to createLeaf): its conversation is on the host, never in
+// this computer's transcripts. Found that way: Claude Code refused the old id
+// ("Session ID ... is already in use") and the agent never started.
+describe('the line the reopened agent starts with', () => {
+  function startLine({ onHost }) {
+    const ctx = {
+      window: {
+        shellApi: {
+          claudeSessionExists: vi.fn(async () => false),
+          remoteAgentSessionExists: vi.fn(onHost)
+        }
+      },
+      sessionKind: (a) => a.id,
+      newUuid: () => 'new-uuid',
+      claudeStartChoice,
+      codexResumes,
+      Promise
+    }
+    vm.createContext(ctx)
+    vm.runInContext(slice('async function agentStartLine(', '\n// Codex, OpenCode, Cline and Copilot pick') + '\nthis.agentStartLine = agentStartLine', ctx)
+    return ctx
+  }
+  async function reopenOpts(resume) {
+    const { ws, ctx, states, runWatchers } = load()
+    ws.tree = reactive({ ...liveAgent(), pid: null, notConnected: { cwd: null, resume } })
+    states[HOST] = { status: 'connected', shared: true }
+    runWatchers()
+    await vi.waitFor(() => expect(ctx.createLeaf).toHaveBeenCalledTimes(1))
+    return ctx.createLeaf.mock.calls[0][4]
+  }
+  const run = (env, opts) => env.agentStartLine({ id: 'claude', command: 'claude' }, opts.sessionId || null, !!opts.resume, undefined, { known: false, hostId: opts.remoteHostId || null })
+
+  it('after a dropped connection: resumed when the host has it (asked there, not here)', async () => {
+    const opts = await reopenOpts(true)
+    const env = startLine({ onHost: async () => true })
+    expect((await run(env, opts)).line).toBe(`claude --resume ${SESSION}`)
+    expect(env.window.shellApi.remoteAgentSessionExists).toHaveBeenCalledWith(HOST, 'claude', SESSION)
+    expect(env.window.shellApi.claudeSessionExists).not.toHaveBeenCalled()
+  })
+
+  it('the host can not be asked (dropped again, too slow): resumed, never --session-id with the old id', async () => {
+    const opts = await reopenOpts(true)
+    const env = startLine({ onHost: async () => null })
+    expect((await run(env, opts)).line).toBe(`claude --resume ${SESSION}`)
+  })
+
+  it('restored with "Resume agents" off: a new id when the host has it or can not tell', async () => {
+    const opts = await reopenOpts(false)
+    for (const answer of [true, null]) {
+      const env = startLine({ onHost: async () => answer })
+      const start = await run(env, opts)
+      expect(start.line).toBe('claude --session-id new-uuid')
+      expect(start.line).not.toContain(SESSION)
+    }
+    // Never written to on the host: its id is free.
+    expect((await run(startLine({ onHost: async () => false }), opts)).line).toBe(`claude --session-id ${SESSION}`)
+  })
+})
+
+// A restart in place (pane menu > Restart, an update, the team tools) of an
+// agent on an SSH host starts it on that host again, where its conversation
+// is: it used to start on this computer.
+describe('an agent on a host restarted in place', () => {
+  it('starts on its host again, in its folder, resuming', async () => {
+    const leaf = reactive({ ...liveAgent(), gen: 0 })
+    const ws = reactive({ id: 'ws1', tree: leaf })
+    const ctx = {
+      findLeaf: (id) => (ws.tree && ws.tree.id === id ? ws.tree : null),
+      wsOfLeaf: (id) => (ws.tree && ws.tree.id === id ? ws : null),
+      window: { shellApi: { killPty: vi.fn(), attachPty: vi.fn(async () => ({ ok: false })) } },
+      setTimeout: (fn) => fn(),
+      dropBuffer: vi.fn(),
+      clearAgentStatus: vi.fn(),
+      setDraft: vi.fn(),
+      replaceNode: (node, id, make) => make(node),
+      createLeaf: vi.fn(async (shellId, agent, cwd, worktree, opts) => reactive({ type: 'leaf', id: opts.id })),
+      teamToolsVersion: '1',
+      Promise,
+      Object,
+      Date
+    }
+    vm.createContext(ctx)
+    vm.runInContext(slice('async function restartInPlaceNow(leafId, opts) {', '\n// --- Chat <-> terminal') + '\nthis.restartInPlaceNow = restartInPlaceNow', ctx)
+    expect(await ctx.restartInPlaceNow('pane-a', { resume: true })).toBe(true)
+    expect(ctx.createLeaf.mock.calls[0][4]).toMatchObject({ id: 'pane-a', sessionId: SESSION, resume: true, remoteHostId: HOST, remotePath: '/srv/app' })
   })
 })

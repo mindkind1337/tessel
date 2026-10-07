@@ -10,6 +10,7 @@ import { paneEnv } from '../paneEnv'
 import { newTeamSecret, setTeamSecret, revokeTeamSecret, teamSecretOf, _resetTeamAuth } from '../teamAuth'
 import { wakeLaunchArgs, WAKE_LAUNCH_PROMPT } from '../../shared/orchestration'
 import { STATUS_PROVIDERS } from '../../shared/agentStateModel'
+import { claudeStartChoice, codexResumes } from '../../renderer/src/remoteAgentLaunch'
 // Claude Code and Codex panes: status from their hooks from launch.
 const managedAgentStatus = (leaf) => !!leaf.agentLaunchToken
 
@@ -403,6 +404,13 @@ function wakeSandbox(over = {}) {
     sessionKind: (a) => a.id,
     safeSessionId: () => true,
     newUuid: () => 'new-uuid',
+    claudeStartChoice,
+    codexResumes,
+    // On an SSH host (remoteAgentLaunch.js): the command found there, or
+    // null and its install offered.
+    remoteAgentCommand: vi.fn(async (_hostId, _id, command) => command),
+    offerAgentInstall: vi.fn(),
+    quoteGlobArgs: (s) => s,
     FOUND_AFTER_START: [],
     watchFoundSession: () => {},
     workerLaunchArgs: () => '',
@@ -469,6 +477,69 @@ it('not resuming: a Claude Code pane whose conversation exists starts with a new
   expect(await launchLine('claude', { id: 'pane-c', sessionId: 'unused-id', resume: false })).toBe('claude --session-id unused-id\r')
   // Resuming: as before.
   expect(await launchLine('claude', { id: 'pane-c', sessionId: 'old-id', resume: true })).toBe('claude --resume old-id\r')
+})
+
+// Found on an SSH host: a Claude pane started with --session-id <its old id>
+// and Claude Code answered "Session ID ... is already in use": the check
+// looked at this computer's transcripts, where a host's conversation never
+// is. On a host it is asked there; when it can't be told, an id is never
+// reused with --session-id.
+it('on an SSH host: the conversation is checked on the host, never here; an id is never reused blindly', async () => {
+  const { ctx, launchLine } = wakeSandbox()
+  const local = vi.fn(async () => false)
+  ctx.window.shellApi.claudeSessionExists = local
+  const onHost = { 'old-id': true, 'unused-id': false }
+  ctx.window.shellApi.remoteAgentSessionExists = vi.fn(async (hostId, agent, id) => (hostId === 'ssh-box' && agent === 'claude' ? onHost[id] ?? null : null))
+  const remote = (o) => ({ id: 'pane-r', remoteHostId: 'ssh-box', remotePath: '/srv/app', ...o })
+  // "Resume agents" off, the conversation on the host: a new id.
+  expect(await launchLine('claude', remote({ sessionId: 'old-id', resume: false }))).toBe('claude --session-id new-uuid\r')
+  // Resuming it (a restart, a reconnect after a dropped connection): resumed.
+  expect(await launchLine('claude', remote({ sessionId: 'old-id', resume: true }))).toBe('claude --resume old-id\r')
+  // Never written to on the host: the same id is free.
+  expect(await launchLine('claude', remote({ sessionId: 'unused-id', resume: false }))).toBe('claude --session-id unused-id\r')
+  expect(local).not.toHaveBeenCalled()
+  expect(ctx.window.shellApi.remoteAgentSessionExists).toHaveBeenCalledWith('ssh-box', 'claude', 'old-id')
+  // The host can't be checked (not connected, too slow, a failure): resumed
+  // when resuming, else a new id; never --session-id with the old one.
+  for (const answer of [async () => null, async () => { throw new Error('timeout') }]) {
+    ctx.window.shellApi.remoteAgentSessionExists = vi.fn(answer)
+    expect(await launchLine('claude', remote({ sessionId: 'old-id', resume: true }))).toBe('claude --resume old-id\r')
+    expect(await launchLine('claude', remote({ sessionId: 'old-id', resume: false }))).toBe('claude --session-id new-uuid\r')
+  }
+  // Listed from the host's own history: known, nothing asked.
+  ctx.window.shellApi.remoteAgentSessionExists = vi.fn(async () => false)
+  expect(await launchLine('claude', remote({ sessionId: 'old-id', resume: true, remoteSession: true }))).toBe('claude --resume old-id\r')
+  expect(ctx.window.shellApi.remoteAgentSessionExists).not.toHaveBeenCalled()
+})
+
+it('on an SSH host, Codex: resumed unless its rollout is gone there (then a fresh Codex, never an id reused)', async () => {
+  const { ctx, launchLine } = wakeSandbox()
+  const remote = (o) => ({ id: 'pane-x', remoteHostId: 'ssh-box', ...o })
+  ctx.window.shellApi.remoteAgentSessionExists = vi.fn(async () => false)
+  expect(await launchLine('codex', remote({ sessionId: 's-1', resume: true }))).toBe('codex --no-daemon -c check_for_update_on_startup=false\r')
+  expect(ctx.window.shellApi.remoteAgentSessionExists).toHaveBeenCalledWith('ssh-box', 'codex', 's-1')
+  ctx.window.shellApi.remoteAgentSessionExists = vi.fn(async () => null)
+  expect(await launchLine('codex', remote({ sessionId: 's-1', resume: true }))).toBe('codex resume s-1 --no-daemon -c check_for_update_on_startup=false\r')
+  ctx.window.shellApi.remoteAgentSessionExists = vi.fn(async () => true)
+  expect(await launchLine('codex', remote({ sessionId: 's-1', resume: false }))).toBe('codex --no-daemon -c check_for_update_on_startup=false\r')
+})
+
+// Found on an SSH host without Codex: `codex --no-daemon ...` typed, and the
+// shell said "Command 'codex' not found".
+it('on an SSH host: an agent missing there is not typed; its install is offered; one found runs by its path there', async () => {
+  const { ctx, launchLine, written } = wakeSandbox()
+  ctx.remoteAgentCommand = vi.fn(async () => null)
+  expect(await launchLine('codex', { id: 'pane-m', remoteHostId: 'ssh-box' })).toBeUndefined()
+  expect(written()).toEqual([])
+  expect(ctx.remoteAgentCommand).toHaveBeenCalledWith('ssh-box', 'codex', 'codex')
+  expect(ctx.offerAgentInstall).toHaveBeenCalledWith('ssh-box', 'codex')
+  ctx.remoteAgentCommand = vi.fn(async () => "'/home/u/.local/bin/claude'")
+  ctx.window.shellApi.remoteAgentSessionExists = vi.fn(async () => null)
+  expect(await launchLine('claude', { id: 'pane-m', remoteHostId: 'ssh-box' })).toBe("'/home/u/.local/bin/claude' --session-id new-uuid\r")
+  // Not on a host: never asked.
+  ctx.remoteAgentCommand = vi.fn()
+  await launchLine('codex', { id: 'pane-l' })
+  expect(ctx.remoteAgentCommand).not.toHaveBeenCalled()
 })
 
 it('team wake-ups off: no launch prompt, checked before and after counting and when the line is typed; nothing recorded', async () => {

@@ -789,7 +789,12 @@
     },
     "remoteAgents": {
       "noClaude": "Claude Code n’est pas installé sur {{host}}. Installez-le pour lancer Claude sur cet hôte depuis Tessel.",
-      "install": "Installer Claude Code"
+      "install": "Installer Claude Code",
+      "noAgent": "{{agent}} n’est pas installé sur {{host}} : il n’a pas été démarré. Installez-le pour le lancer sur cet hôte depuis Tessel.",
+      "installAgent": "Installer {{agent}}",
+      "installTitle": "Installer {{agent}} sur {{host}} ?",
+      "installText": "Tessel ouvre un terminal sur l’hôte et y lance cette commande d’installation officielle :",
+      "installConfirm": "Installer"
     },
     "agentTerminal": {
       "allow": "Autoriser",

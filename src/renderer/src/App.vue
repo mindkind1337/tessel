@@ -4,7 +4,8 @@ import { ref, reactive, provide, watch, computed, nextTick, onMounted, onBeforeU
 import SplitNode from './components/SplitNode.vue'
 import FloatingTerminal from './components/FloatingTerminal.vue'
 import ProjectLauncher from './components/ProjectLauncher.vue'
-import { allowDropRetry, droppedRemotePane, emptiedWorkspaceChoice, launcherAgents, launcherShells, projectOpenChoice, rememberedValue } from './projectLauncher'
+import { allowDropRetry, droppedRemotePane, emptiedWorkspaceChoice, launcherAgents, launcherShells, projectOpenChoice, rememberedValue, remoteAgentFound } from './projectLauncher'
+import { claudeStartChoice, codexResumes, hostMenuAgents, needsRemoteAgentCheck, remoteAgentLine, remoteInstallCommand } from './remoteAgentLaunch'
 import { createFloatingTerminal, isFloatingToggleKey } from './floatingTerminal'
 import BrandIcon from './components/BrandIcon.vue'
 import SidePanel from './components/SidePanel.vue'
@@ -1058,8 +1059,16 @@ function newUuid() {
 
 // The command that starts an agent: a fresh conversation, or the pane's own
 // previous one when `resume` is set and it exists.
-async function agentStartLine(agent, sessionId, resume, accountId, { known = false } = {}) {
+async function agentStartLine(agent, sessionId, resume, accountId, { known = false, hostId = null } = {}) {
   const kind = sessionKind(agent)
+  // A pane on an SSH host: its conversations are on the host, never in this
+  // computer's transcripts. Asked there (never a sign-in): true / false, or
+  // null when it can't be told (not connected, too slow, an agent the host
+  // check doesn't know).
+  const onHost = async (which) =>
+    window.shellApi.remoteAgentSessionExists
+      ? await window.shellApi.remoteAgentSessionExists(hostId, which, sessionId).then((v) => (typeof v === 'boolean' ? v : null), () => null)
+      : null
   if (kind === 'claude' || kind === 'openclaude') {
     // Whether the conversation exists. If we can't check (older app
     // version), assume it does: resume it rather than reuse an id in use.
@@ -1069,20 +1078,24 @@ async function agentStartLine(agent, sessionId, resume, accountId, { known = fal
       ? false
       : known
         ? true
-        : kind === 'openclaude'
-        ? window.shellApi.agentResumeTarget
-          ? !!(await window.shellApi.agentResumeTarget({ agent: kind, sessionId }).catch(() => null))
-          : true
-        : window.shellApi.claudeSessionExists
-          ? await window.shellApi.claudeSessionExists(sessionId, accountId !== undefined ? { accountId } : undefined)
-          : true
-    if (sessionId && resume && exists)
-      return { line: `${agent.command} --resume ${sessionId}`, sessionId, resumed: true } // i18n-ignore
-    // No transcript yet (you never messaged it): start fresh, same id. Not
-    // resuming one that exists ("Resume agents" off): a new id, since Claude
-    // Code refuses an id in use and the agent would not start.
-    const id = sessionId && !exists ? sessionId : newUuid()
-    return { line: `${agent.command} --session-id ${id}`, sessionId: id, resumed: false } // i18n-ignore
+        : hostId
+          ? kind === 'claude'
+            ? await onHost('claude')
+            : null
+          : kind === 'openclaude'
+            ? window.shellApi.agentResumeTarget
+              ? !!(await window.shellApi.agentResumeTarget({ agent: kind, sessionId }).catch(() => null))
+              : true
+            : window.shellApi.claudeSessionExists
+              ? await window.shellApi.claudeSessionExists(sessionId, accountId !== undefined ? { accountId } : undefined)
+              : true
+    // Resuming one that exists (or can't be told): --resume. No transcript
+    // yet (you never messaged it): start fresh, same id. Not resuming one
+    // that exists ("Resume agents" off), or can't tell: a new id, since
+    // Claude Code refuses an id in use and the agent would not start.
+    const choice = claudeStartChoice({ sessionId, resume, exists, newId: newUuid })
+    if (choice.resume) return { line: `${agent.command} --resume ${choice.id}`, sessionId: choice.id, resumed: true } // i18n-ignore
+    return { line: `${agent.command} --session-id ${choice.id}`, sessionId: choice.id, resumed: false } // i18n-ignore
   }
   if (kind === 'codex') {
     // Without Codex's shared daemon: with it, the team tools lose the pane's
@@ -1092,11 +1105,20 @@ async function agentStartLine(agent, sessionId, resume, accountId, { known = fal
       // No update check at start: its menu takes keystrokes (a reminder's
       // Enter chose "Update now" and Codex quit). Updates: Settings > Agents.
       ' -c check_for_update_on_startup=false'
-    if (sessionId && resume) return { line: `${agent.command} resume ${sessionId}${own}`, sessionId, resumed: true } // i18n-ignore
+    // On a host: its rollout there (gone: a fresh Codex rather than a resume
+    // that fails); can't tell: resumed as here.
+    const exists = sessionId && resume && hostId && !known ? await onHost('codex') : null
+    if (codexResumes({ sessionId, resume, exists })) return { line: `${agent.command} resume ${sessionId}${own}`, sessionId, resumed: true } // i18n-ignore
     return { line: `${agent.command}${own}`, sessionId: null, resumed: false }
   }
   if (kind === 'gemini' || kind === 'qwen') {
     // Like Claude Code: resume if it was written to, else start with this id.
+    // On a host: this computer's sessions say nothing; never an id reused.
+    if (hostId) {
+      const choice = claudeStartChoice({ sessionId, resume, exists: known ? true : null, newId: newUuid })
+      if (choice.resume) return { line: `${agent.command} --resume ${choice.id}`, sessionId: choice.id, resumed: true } // i18n-ignore
+      return { line: `${agent.command} --session-id ${choice.id}`, sessionId: choice.id, resumed: false } // i18n-ignore
+    }
     if (sessionId && resume) {
       const check = kind === 'gemini' ? window.shellApi.geminiSessionExists : window.shellApi.qwenSessionExists
       const exists = check ? await check(sessionId).catch(() => false) : false
@@ -1388,15 +1410,20 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
     return leaf
   }
   // Launch the agent CLI once the shell has had a moment to print its prompt.
-  // Claude on an SSH host: its own install there, else VS Code's copy; none:
+  // Claude or Codex on an SSH host: its own install there (Claude: else VS
+  // Code's copy), checked first when it was missing or never checked; none:
   // its install is offered instead of typing a command the host lacks.
   let launchCommand = launch && launch.command
-  if (agent && agent.command && opts.remoteHostId && sessionKind(agent) === 'claude' && launchCommand === 'claude') {
-    launchCommand = await remoteClaudeCommand(opts.remoteHostId, launchCommand)
-    if (!launchCommand) offerClaudeInstall(opts.remoteHostId)
+  const hostKind = agent && opts.remoteHostId ? sessionKind(agent) : null
+  if (agent && agent.command && (hostKind === 'claude' || hostKind === 'codex') && launchCommand === hostKind) {
+    launchCommand = await remoteAgentCommand(opts.remoteHostId, hostKind, launchCommand)
+    if (!launchCommand) offerAgentInstall(opts.remoteHostId, hostKind)
   }
   if (agent && agent.command && launchCommand) {
-    const start = await agentStartLine({ ...agent, command: launchCommand },opts.sessionId || null, !!opts.resume, accountId, { known: opts.remoteSession === true && !!opts.remoteHostId })
+    const start = await agentStartLine({ ...agent, command: launchCommand }, opts.sessionId || null, !!opts.resume, accountId, {
+      known: opts.remoteSession === true && !!opts.remoteHostId,
+      hostId: opts.remoteHostId || null
+    })
     leaf.sessionId = start.sessionId
     // Its arguments (or the Yolo flag) at the end: they work with resuming too.
     // A worker's launch options (model, effort, its first prompt) only on a
@@ -2870,7 +2897,11 @@ async function launch({ kind, id, sessionOptions = null }, targetId = activeId.v
     return
   }
   const agent = kind === 'agent' ? agentById(id) : null
-  if (kind === 'agent' && (!agent || agent.available === false)) return
+  // On an SSH host, Claude Code and Codex go by what the host has (checked
+  // again as they start), not by this computer's install.
+  const hostWs = (targetId && wsOfLeaf(targetId)) || currentWs.value
+  const onHostAgent = !!(agent && hostWs && hostWs.remote && (agent.id === 'claude' || agent.id === 'codex'))
+  if (kind === 'agent' && (!agent || (agent.available === false && !onHostAgent))) return
   const shellId = kind === 'shell' ? id : selectedShell.value
 
   // Optionally give the agent its own git worktree + branch.
@@ -3447,8 +3478,21 @@ function openLauncherCentered() {
 function onLauncherLaunch(item) {
   const target = launcher.targetId
   launcher.open = false
+  // An agent missing on the project's host: its install there (asked first).
+  if (item && item.kind === 'install') {
+    const ws = (target && wsOfLeaf(target)) || currentWs.value
+    if (ws && ws.remote) recheckOrInstall(ws.remote.hostId, item.id).then((there) => there && launch({ kind: 'agent', id: item.id }, target))
+    return
+  }
   launch(item, target)
 }
+// The "+" menu's agents: on an SSH project, as found on its host
+// (remoteAgentLaunch.js hostMenuAgents: a missing one shows as Install…).
+const launchMenuAgents = computed(() => {
+  const ws = (launcher.targetId && wsOfLeaf(launcher.targetId)) || currentWs.value
+  const remote = !!(ws && ws.remote)
+  return hostMenuAgents(launchableAgents.value, { remote, status: remote ? remoteAgentTools[ws.remote.hostId] || null : null })
+})
 
 const launcherTargetTitle = computed(() => {
   const id = launcher.targetId
@@ -4321,6 +4365,12 @@ async function startInEmptyWorkspace(ws, choice) {
     await resumeSession(choice.session)
     return ws.tree ? findLeafIn(ws.tree, ws.activeId) : null
   }
+  // An agent missing on the host (shown as Install…): installed there once
+  // you confirm; installed by hand since: started.
+  if (choice.kind === 'install') {
+    if (!ws.remote || !(await recheckOrInstall(ws.remote.hostId, choice.id))) return null
+    return startInEmptyWorkspace(ws, { kind: 'agent', id: choice.id })
+  }
   if (choice.kind !== 'agent' && choice.kind !== 'terminal') return null
   const agent = choice.kind === 'agent' ? agentById(choice.id) : null
   if (choice.kind === 'agent' && !agent) return null
@@ -4634,8 +4684,8 @@ onBeforeUnmount(() => offRemoteBranches && offRemoteBranches())
 // has. Claude Code missing: offered once per host and run, with a button that
 // runs its official installer in a new pane on that host (it then shows its
 // sign-in link there).
-// The installer puts it in ~/.local/bin, which a host's PATH may lack.
-const REMOTE_CLAUDE_INSTALL = 'curl -fsSL https://claude.ai/install.sh | bash && ~/.local/bin/claude' // i18n-ignore shell command
+// Codex (or Claude) missing when a pane starts it there: the same offer
+// (remoteAgentLaunch.js has the official install commands).
 const remoteAgentOffered = new Set()
 // Reactive: an empty SSH project's launcher lists the agents found there.
 const remoteAgentTools = reactive({}) // hostId -> the last agent check (remoteAgents:status)
@@ -4646,42 +4696,80 @@ function onRemoteAgentsStatus(st) {
   if (st.claude || st.vscodeClaude || remoteAgentOffered.has(st.hostId)) return
   if (st.error || (st.shim && st.shim !== 'ok')) return
   remoteAgentOffered.add(st.hostId)
-  offerClaudeInstall(st.hostId, st.label)
+  offerAgentInstall(st.hostId, 'claude', st.label)
 }
-function offerClaudeInstall(hostId, label) {
+function remoteAgentName(id) {
+  const a = agentById(id)
+  return (a && a.name) || (id === 'codex' ? 'Codex CLI' : 'Claude Code') // i18n-ignore
+}
+// Agent `id` is not on the host: a toast whose button shows the official
+// install command and runs it there once you confirm.
+function offerAgentInstall(hostId, id, label) {
+  if (!remoteInstallCommand(id)) return
   const host = label || remoteHostLabel(hostId)
-  showToast(t('app.remoteAgents.noClaude', 'Claude Code is not installed on {{host}}. Install it there to run Claude on this host from Tessel.', { host }), {
+  const agent = remoteAgentName(id)
+  const text =
+    id === 'claude'
+      ? t('app.remoteAgents.noClaude', 'Claude Code is not installed on {{host}}. Install it there to run Claude on this host from Tessel.', { host })
+      : t('app.remoteAgents.noAgent', '{{agent}} is not installed on {{host}}, so it was not started. Install it there to run it on this host from Tessel.', { agent, host })
+  showToast(text, {
     timeout: 30000,
-    action: { label: t('app.remoteAgents.install', 'Install Claude Code'), run: () => installClaudeOnHost(hostId) }
+    action: {
+      label: id === 'claude' ? t('app.remoteAgents.install', 'Install Claude Code') : t('app.remoteAgents.installAgent', 'Install {{agent}}', { agent }),
+      run: () => installAgentOnHost(hostId, id)
+    }
   })
 }
-// Claude in a pane on an SSH host: the command that runs it there. Its own
-// install, else VS Code's copy (the Claude extension brings one, signed in
-// with the same account); none: null (the install is offered instead). A
-// host never checked yet (or a failed check) keeps `claude`.
-const POSIX_ABS = /^\/[^'\u0000-\u001f\u007f]{1,1024}$/
-async function remoteClaudeCommand(hostId, command) {
+// The command that starts agent `id` on the host (remoteAgentLine): asked
+// again first when it was missing (installed since?) or never checked while
+// the host is connected; null when it is not there.
+const REMOTE_CHECK_MS = 15000
+async function remoteAgentCommand(hostId, id, command) {
   let st = remoteAgentTools[hostId]
-  if (st && !st.claude) {
-    // Installed since (the Install button, or by hand): asked again.
-    const api = window.shellApi.remoteAgents
-    const fresh = api && api.check ? await api.check(hostId).catch(() => null) : null
+  const api = window.shellApi.remoteAgents
+  if (api && api.check && needsRemoteAgentCheck(id, st, { connected: hostShared(hostId) })) {
+    let timer = null
+    const fresh = await Promise.race([
+      api.check(hostId).catch(() => null),
+      new Promise((resolve) => {
+        timer = setTimeout(() => resolve(null), REMOTE_CHECK_MS)
+      })
+    ])
+    clearTimeout(timer)
     if (fresh && !fresh.error) st = remoteAgentTools[hostId] = fresh
   }
-  if (!st) return command
-  // By the path found there: ~/.local/bin (its installer's) may not be on PATH.
-  if (typeof st.claude === 'string' && POSIX_ABS.test(st.claude)) return `'${st.claude}'`
-  if (st.claude) return command
-  if (typeof st.vscodeClaude === 'string' && POSIX_ABS.test(st.vscodeClaude)) return `'${st.vscodeClaude}'`
-  return null
+  return remoteAgentLine(id, st, command)
 }
-async function installClaudeOnHost(hostId) {
+// Install agent `id` on the host: its exact command shown, then run in a new
+// pane there (it shows its own output and questions).
+async function installAgentOnHost(hostId, id) {
+  const command = remoteInstallCommand(id)
+  if (!command) return
+  const agent = remoteAgentName(id)
+  const ok = await askConfirm({
+    title: t('app.remoteAgents.installTitle', 'Install {{agent}} on {{host}}?', { agent, host: remoteHostLabel(hostId) }),
+    text: t('app.remoteAgents.installText', 'Tessel opens a terminal on the host and runs this official install command there:'),
+    code: command,
+    confirmLabel: t('app.remoteAgents.installConfirm', 'Install')
+  })
+  if (ok !== true) return
   const ws = workspaces.value.find((w) => w.remote && w.remote.hostId === hostId)
   const opts = ws ? { remoteHostId: hostId, remotePath: ws.remote.path } : { remoteHostId: hostId }
   const leaf = await openPaneBelow(selectedShell.value, null, opts)
   if (!leaf) return
   // Typed while the remote shell starts: the terminal host keeps it for it.
-  window.shellApi.writePty(leaf.id, REMOTE_CLAUDE_INSTALL + '\r')
+  window.shellApi.writePty(leaf.id, command + '\r')
+}
+// Picked an agent shown as "Install…" (the launcher, the "+" menu): asked
+// again first (installed by hand since?); there now: started; else its
+// install. -> true when it is there now.
+async function recheckOrInstall(hostId, id) {
+  const api = window.shellApi.remoteAgents
+  const fresh = api && api.check ? await api.check(hostId).catch(() => null) : null
+  if (fresh && !fresh.error) remoteAgentTools[hostId] = fresh
+  if (remoteAgentFound(id, remoteAgentTools[hostId]) === true) return true
+  await installAgentOnHost(hostId, id)
+  return false
 }
 onMounted(() => {
   const api = window.shellApi.remoteAgents
@@ -7150,6 +7238,9 @@ async function restartInPlaceNow(leafId, opts) {
     permissions: old.permissions,
     permissionMode: old.permissionMode,
     resume: !!old.sessionId && opts.resume !== false,
+    // On its SSH host again (its conversation is there), in its folder.
+    ...(old.remoteHostId ? { remoteHostId: old.remoteHostId } : {}),
+    ...(old.remoteHostId && old.remotePath ? { remotePath: old.remotePath } : {}),
     // Team messages waiting for it: its first prompt says so (see createLeaf).
     wake: { teamId: old.team || null, gen: (old.gen || 0) + 1 }
   })
@@ -11216,7 +11307,7 @@ onBeforeUnmount(() => {
     <LaunchMenu
       v-if="launcher.open"
       :shells="shells"
-      :agents="launchableAgents"
+      :agents="launchMenuAgents"
       :default-shell="selectedShell"
       :placement="placement"
       :target-title="launcherTargetTitle"
