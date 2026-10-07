@@ -18,6 +18,7 @@
       "pickNone": "Aucune",
       "pickAll": "Toutes",
       "cancel": "Annuler",
+      "loadFailed": "Le tableau des tâches enregistré n'a pas pu être lu : {{error}}",
       "empty": "Aucune tâche"
     },
     "card": {

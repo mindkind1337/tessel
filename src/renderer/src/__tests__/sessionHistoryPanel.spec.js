@@ -296,3 +296,90 @@ describe('a host that connects after the tab opened', () => {
     vi.useRealTimers()
   })
 })
+
+describe('SessionHistoryPanel.vue: loading, empty and error states', () => {
+  // A list call that answers when the test says so.
+  function deferredList() {
+    const pending = []
+    const fn = vi.fn((q) => new Promise((resolve, reject) => pending.push({ q, resolve, reject })))
+    return { fn, pending }
+  }
+  const loadingShown = () => wrapper.find('[data-test="session-loading"]').exists()
+  const emptyShown = () => wrapper.find('[data-test="session-empty"]').exists()
+
+  it('a slow read shows it is loading, not "No sessions"; empty only once it answered empty', async () => {
+    const list = deferredList()
+    api.listSessions = list.fn
+    await make()
+    expect(loadingShown()).toBe(true)
+    expect(emptyShown()).toBe(false)
+    list.pending[0].resolve([])
+    await flushPromises()
+    expect(loadingShown()).toBe(false)
+    expect(wrapper.find('[data-test="session-empty"]').text()).toContain('No agent sessions found')
+  })
+
+  it('another local project: read again, loading (not "none") while its rows are not there yet', async () => {
+    const list = deferredList()
+    api.listSessions = list.fn
+    await make({ cwd: 'C:\\proj' })
+    list.pending[0].resolve(SESSIONS)
+    await flushPromises()
+    expect(titles()).toEqual(['Fix the build'])
+    await wrapper.setProps({ cwd: 'E:\\fresh' })
+    await flushPromises()
+    expect(list.fn).toHaveBeenCalledTimes(2)
+    expect(loadingShown()).toBe(true)
+    expect(emptyShown()).toBe(false)
+    list.pending[1].resolve([...SESSIONS, { agent: 'claude', id: 'dddddddd-1111-4222-8333-444444444444', cwd: 'E:\\fresh', title: 'Brand new', started: NOW - 5000, updated: NOW - 5000 }])
+    await flushPromises()
+    expect(titles()).toEqual(['Brand new'])
+  })
+
+  it('a late answer for the previous SSH host never fills the new one', async () => {
+    const list = deferredList()
+    api.listRemoteSessions = list.fn
+    await make({ cwd: null, remote: { hostId: 'host-a', host: 'a', path: '/srv/p' } })
+    expect(loadingShown()).toBe(true)
+    await wrapper.setProps({ remote: { hostId: 'host-b', host: 'b', path: '/srv/p' } })
+    await flushPromises()
+    expect(list.pending.map((p) => p.q.hostId)).toEqual(['host-a', 'host-b'])
+    list.pending[0].resolve({ ok: true, sessions: [{ agent: 'claude', id: 'eeeeeeee-1111-4222-8333-444444444444', cwd: '/srv/p', title: 'On host A', started: NOW, updated: NOW }] })
+    await flushPromises()
+    expect(titles()).toEqual([])
+    expect(loadingShown()).toBe(true)
+    expect(emptyShown()).toBe(false)
+    list.pending[1].resolve({ ok: true, sessions: [] })
+    await flushPromises()
+    expect(titles()).toEqual([])
+    expect(loadingShown()).toBe(false)
+    expect(emptyShown()).toBe(true)
+  })
+
+  it('another SSH host: the previous host’s rows go at once, the list shows it is loading', async () => {
+    const list = deferredList()
+    api.listRemoteSessions = list.fn
+    await make({ cwd: null, remote: { hostId: 'host-a', host: 'a', path: '/srv/p' } })
+    list.pending[0].resolve({ ok: true, sessions: [{ agent: 'claude', id: 'eeeeeeee-1111-4222-8333-444444444444', cwd: '/srv/p', title: 'On host A', started: NOW, updated: NOW }] })
+    await flushPromises()
+    expect(titles()).toEqual(['On host A'])
+    await wrapper.setProps({ remote: { hostId: 'host-b', host: 'b', path: '/srv/p' } })
+    await flushPromises()
+    expect(titles()).toEqual([])
+    expect(loadingShown()).toBe(true)
+  })
+
+  it('an error is shown with Retry, which reads the list again', async () => {
+    let fail = true
+    api.listSessions = vi.fn(() => (fail ? Promise.reject(new Error('disk gone')) : Promise.resolve(SESSIONS)))
+    await make()
+    expect(wrapper.find('[data-test="session-error"]').text()).toContain('disk gone')
+    expect(loadingShown()).toBe(false)
+    expect(emptyShown()).toBe(false)
+    fail = false
+    await wrapper.find('[data-test="session-load-retry"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-test="session-error"]').exists()).toBe(false)
+    expect(titles()).toEqual(['Fix the build'])
+  })
+})

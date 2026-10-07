@@ -41,6 +41,8 @@ const props = defineProps({
   // The Dashboard tab: App's sidebarProjects (every project, its panes) and
   // its clock (the "Working 4m" times).
   projects: { type: Array, default: () => [] },
+  // The saved layout is back (App's layoutReady): the Dashboard lists its agents.
+  projectsReady: { type: Boolean, default: true },
   now: { type: Number, default: () => Date.now() },
   // The panel over the whole workspace (App keeps it, not saved).
   fullscreen: { type: Boolean, default: false },
@@ -324,6 +326,7 @@ onBeforeUnmount(() => {
         v-if="shown.dashboard"
         v-show="current() === 'dashboard'"
         :projects="projects"
+        :ready="projectsReady"
         :now="now"
         @focus-pane="focusPane"
         @sleep="(ids) => emit('sleep', ids)"

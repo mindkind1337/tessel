@@ -188,3 +188,22 @@ describe('AgentDashboard.vue', () => {
     await setUiLanguage('en')
   })
 })
+
+describe('AgentDashboard.vue: before the layout is back', () => {
+  it('shows it is loading, not "No agents yet"; empty only once ready', async () => {
+    const w = mount(AgentDashboard, { props: { projects: [], now: NOW, ready: false } })
+    expect(w.find('[data-test="adb-loading"]').exists()).toBe(true)
+    expect(w.find('[data-test="adb-empty"]').exists()).toBe(false)
+    await w.setProps({ ready: true })
+    expect(w.find('[data-test="adb-loading"]').exists()).toBe(false)
+    expect(w.find('[data-test="adb-empty"]').exists()).toBe(true)
+    w.unmount()
+  })
+
+  it('agents already listed are shown even before ready', async () => {
+    const w = mount(AgentDashboard, { props: { projects: projects(), now: NOW, ready: false } })
+    expect(w.find('[data-test="adb-loading"]').exists()).toBe(false)
+    expect(w.find('[data-test="adb-empty"]').exists()).toBe(false)
+    w.unmount()
+  })
+})

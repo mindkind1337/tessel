@@ -19,6 +19,7 @@ import {
 import { STATUS_COLORS, STATUS_LABELS } from '../../../shared/sourceControl'
 import { getFileTypeIcon } from '../fileTypeIcons'
 import { t, intlLocale } from '../i18n'
+import PanelState from './ui/PanelState.vue'
 
 const props = defineProps({
   // The repository folder (the project or a task's copy).
@@ -98,12 +99,15 @@ async function toggleCommit(item) {
   expanded.value = next
   if (files.value[id] && files.value[id].status !== 'error') return
   files.value = { ...files.value, [id]: { status: 'loading' } }
+  // The list read again since (another repository, HEAD moved): this answer is not for it.
+  const token = seq
   let res = null
   try {
     res = await api().commitFiles({ root: props.root, commit: id })
   } catch (err) {
     res = { ok: false, error: err && err.message }
   }
+  if (token !== seq) return
   files.value = {
     ...files.value,
     [id]: res && res.ok ? { status: 'ready', entries: res.entries || [] } : { status: 'error', error: (res && res.error) || t('changes.history.filesFailed', 'Failed to load commit files') }
@@ -248,13 +252,19 @@ const historyHeight = moduleRef(256)
       </div>
     </div>
     <template v-if="!collapsed">
-      <div v-if="state.status === 'error' && !result" class="sch-body sch-msg bad" :style="bodyStyle">{{ state.error }}</div>
+      <div v-if="state.status === 'error' && !result" class="sch-body" :style="bodyStyle" data-test="sc-history-error">
+        <PanelState kind="error" :text="state.error" @retry="load" />
+      </div>
       <div v-else-if="!result" class="sch-body sch-msg" :style="bodyStyle">
         <RefreshCw :size="12" class="sc-spin" />
         <span>{{ t('changes.history.loading', 'Loading graph...') }}</span>
       </div>
       <div v-else-if="!rows.length" class="sch-body sch-msg" :style="bodyStyle">{{ t('changes.history.none', 'No commits yet') }}</div>
       <div v-else class="sch-body" :style="bodyStyle" data-test="sc-history-list">
+        <div v-if="state.status === 'error'" class="sch-file-meta bad sch-stale-error" data-test="sc-history-error">
+          <span :title="state.error">{{ state.error }}</span>
+          <button type="button" class="exit-btn" data-test="sc-history-retry" @click.stop="load">{{ t('changes.compare.retry', 'Retry') }}</button>
+        </div>
         <template v-for="row in rows" :key="row.vm.historyItem.id">
           <button
             type="button"

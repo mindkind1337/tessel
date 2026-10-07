@@ -808,3 +808,15 @@
   font-size: 11px;
   font-weight: 400;
 }
+.sh-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.sh-error > span {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.sh-error-retry {
+  flex: 0 0 auto;
+}

@@ -742,3 +742,95 @@ describe('Source Control: a project on an SSH host', () => {
     expect(w.find('[data-test="sc-create-pr"]').exists()).toBe(false)
   })
 })
+
+describe('Source Control: loading, empty and error states', () => {
+  it('a slow status shows that it is loading, not "No changes"; clean only once it answered', async () => {
+    let answer
+    api({ status: () => new Promise((resolve) => (answer = resolve)) })
+    make()
+    await flushPromises()
+    expect(w.find('[data-test="changes-loading"]').exists()).toBe(true)
+    expect(w.find('[data-test="changes-loading"]').text()).toContain('Reading git status')
+    expect(w.find('[data-test="sc-empty"]').exists()).toBe(false)
+    answer(status([]))
+    await flushPromises()
+    expect(w.find('[data-test="changes-loading"]').exists()).toBe(false)
+    expect(w.find('[data-test="sc-empty"]').text()).toContain('No changes')
+  })
+
+  it('another project: loading again, never the previous project’s rows, its late answer dropped', async () => {
+    const answers = []
+    api({ status: (q) => new Promise((resolve) => answers.push({ q, resolve })) })
+    make({ root: 'C:/one' })
+    await flushPromises()
+    answers[0].resolve({ ...status([{ path: 'a.js', area: 'unstaged', status: 'modified' }]), top: 'C:/one' })
+    await flushPromises()
+    expect(names()).toEqual(['a.js'])
+    await w.setProps({ root: 'C:/two' })
+    await flushPromises()
+    expect(names()).toEqual([])
+    expect(w.find('[data-test="changes-loading"]').exists()).toBe(true)
+    expect(w.find('[data-test="sc-empty"]').exists()).toBe(false)
+    answers[1].resolve({ ...status([]), top: 'C:/two' })
+    await flushPromises()
+    expect(w.find('[data-test="sc-empty"]').exists()).toBe(true)
+  })
+
+  it('an error offers Retry, which reads the status again', async () => {
+    let fail = true
+    api({ status: () => (fail ? { ok: false, error: 'Host unreachable' } : status([{ path: 'a.js', area: 'unstaged', status: 'modified' }])) })
+    make()
+    await flushPromises()
+    expect(w.find('[data-test="changes-error"]').text()).toContain('Host unreachable')
+    fail = false
+    await w.find('[data-test="panel-retry"]').trigger('click')
+    await flushPromises()
+    expect(w.find('[data-test="changes-error"]').exists()).toBe(false)
+    expect(names()).toEqual(['a.js'])
+  })
+
+  it('a clean status is not "No changes" while Committed on Branch is still being read', async () => {
+    let compareAnswer
+    api({
+      status: () => status([], { branch: 'feature' }),
+      branchCompare: () => new Promise((resolve) => (compareAnswer = resolve))
+    })
+    make()
+    await flushPromises()
+    await new Promise((r) => setTimeout(r, 350))
+    await flushPromises()
+    expect(w.find('[data-test="sc-empty"]').exists()).toBe(false)
+    expect(w.find('[data-test="changes-branch-loading"]').exists()).toBe(true)
+    compareAnswer({ ok: true, base: 'origin/main', ahead: 0, behind: 0, files: [] })
+    await flushPromises()
+    expect(w.find('[data-test="changes-branch-loading"]').exists()).toBe(false)
+    expect(w.find('[data-test="sc-empty"]').exists()).toBe(true)
+  })
+
+  it('Commits: an error offers Retry; a late answer for the previous project is dropped', async () => {
+    const answers = []
+    api({
+      status: (q) => ({ ...status([]), top: q.root }),
+      history: (q) => new Promise((resolve) => answers.push({ q, resolve }))
+    })
+    make({ root: 'C:/one' })
+    await flushPromises()
+    await w.find('[data-test="sc-history-toggle"]').trigger('click')
+    await flushPromises()
+    expect(w.find('[data-test="sc-history"]').text()).toContain('Loading graph')
+    answers[0].resolve({ ok: false, error: 'Commits unreadable' })
+    await flushPromises()
+    expect(w.find('[data-test="sc-history-error"]').text()).toContain('Commits unreadable')
+    await w.find('[data-test="sc-history-error"] [data-test="panel-retry"]').trigger('click')
+    await flushPromises()
+    expect(answers).toHaveLength(2)
+    // The project changes before the answer: it is not shown there.
+    await w.setProps({ root: 'C:/two' })
+    await flushPromises()
+    answers[1].resolve({ ok: true, items: [{ id: 'a'.repeat(40), displayId: 'aaaaaaa', subject: 'Old project commit', parentIds: [], references: [] }] })
+    await flushPromises()
+    expect(w.find('[data-test="sc-history"]').text()).not.toContain('Old project commit')
+    expect(w.find('[data-test="sc-history"]').text()).toContain('Loading graph')
+    await w.find('[data-test="sc-history-toggle"]').trigger('click') // closed again for the next tests
+  })
+})

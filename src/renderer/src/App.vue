@@ -101,7 +101,7 @@ import { trackAgent } from '../../shared/tracking'
 import { pasteAndConfirm, turnStarting } from './deliver'
 import { createTeamDelivery } from './teamDelivery'
 import { dropBuffer, seedBuffer } from './ptyStore'
-import { tasks as boardTasks, setTasks, updateTask, removeTask, addTask, deletedTaskIds, addDeletedTasks, takeDeletedToPurge, cardOnBoard } from './taskBoardStore'
+import { tasks as boardTasks, setTasks, updateTask, removeTask, addTask, deletedTaskIds, addDeletedTasks, takeDeletedToPurge, cardOnBoard, beginBoardLoad, endBoardLoad } from './taskBoardStore'
 import { taskHistory, setTaskHistory, backfillHistory, setHistoryDescriber } from './taskHistory'
 import { restoredSideTab } from './sideTabs'
 import { paneModels } from './paneModels'
@@ -137,6 +137,9 @@ const selectedShell = ref(null)
 // The saved layout is back (or the first one built): an empty project shows
 // its launcher from then on, not "Starting...".
 const layoutReady = ref(false)
+// The saved task board is read further down the startup: the Tasks and Task
+// history tabs say they are loading until then.
+beginBoardLoad()
 const broadcast = ref(false)
 
 // --- Workspaces --------------------------------------------------------------
@@ -10915,8 +10918,10 @@ onMounted(async () => {
       setTaskHistory(saved && saved.history)
       for (const k of (saved && saved.appliedRequests) || []) appliedRequests.add(k)
     }
-  } catch {
+    endBoardLoad()
+  } catch (err) {
     /* start with an empty board if persisted tasks can't be read */
+    endBoardLoad((err && err.message) || String(err))
   }
   // Drop assignments to panes that didn't survive into this session, then start
   // saving. Reconciling before the watch is registered keeps it from writing the
@@ -11387,6 +11392,7 @@ onBeforeUnmount(() => {
           v-model:fullscreen="sideFullscreen"
           v-model:browsers="sideBrowsers"
           :projects="sidebarProjects"
+          :projects-ready="layoutReady"
           :now="clock"
           :root="sideRoot"
           :can-insert="canInsertPath"

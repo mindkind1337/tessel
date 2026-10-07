@@ -7,7 +7,8 @@
 
 import { ref, computed, inject, watch } from 'vue'
 import { COLUMNS } from '../../../shared/taskModel'
-import { tasks, addTask, moveTask, removeTask } from '../taskBoardStore'
+import { tasks, addTask, moveTask, removeTask, boardState } from '../taskBoardStore'
+import PanelState from './ui/PanelState.vue'
 import TaskCard from './TaskCard.vue'
 import OrchestrationCard from './OrchestrationCard.vue'
 import JobCostLine from './JobCostLine.vue'
@@ -184,7 +185,17 @@ const deleteLabel = computed(() =>
     <!-- Orchestration: a lead's workers (allow, stop, go to them). -->
     <OrchestrationCard :workspace-id="workspaceId" />
 
-    <div class="task-board-columns">
+    <!-- The saved board is still being read at launch: not "No tasks" yet. -->
+    <PanelState v-if="!boardState.loaded" :rows="2" data-test="board-loading" />
+    <PanelState
+      v-else-if="boardState.error"
+      kind="error"
+      :retry="false"
+      :text="t('tasks.board.loadFailed', 'The saved task board could not be read: {{error}}', { error: boardState.error })"
+      data-test="board-error"
+    />
+
+    <div v-if="boardState.loaded" class="task-board-columns">
       <section
         v-for="column in COLUMNS"
         :key="column"

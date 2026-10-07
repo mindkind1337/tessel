@@ -16,12 +16,16 @@ import { buildDashboard, dashboardBucket, DASHBOARD_STATES, dashboardView } from
 import { t } from '../i18n'
 import { teamNumber } from '../teamNumber'
 import AgentDashboardRunning from './AgentDashboardRunning.vue'
+import PanelState from './ui/PanelState.vue'
 import './agentDashboard.css'
 
 const props = defineProps({
   // App's sidebarProjects: [{ id, name, panes: [...] }].
   projects: { type: Array, default: () => [] },
-  now: { type: Number, default: () => Date.now() }
+  now: { type: Number, default: () => Date.now() },
+  // The saved layout is back (App's layoutReady): until then no agent is
+  // listed yet, and the tab says it is loading, not "No agents yet".
+  ready: { type: Boolean, default: true }
 })
 const emit = defineEmits(['focus-pane', 'sleep'])
 
@@ -245,7 +249,8 @@ async function sleepIdle() {
     </div>
 
     <div class="adb-body">
-      <div v-if="!total" class="adb-empty" data-test="adb-empty">
+      <PanelState v-if="!total && !ready" data-test="adb-loading" />
+      <div v-else-if="!total" class="adb-empty" data-test="adb-empty">
         <div class="adb-empty-title">{{ t('agentDashboard.empty', 'No agents yet') }}</div>
         <div class="adb-empty-hint">{{ t('agentDashboard.emptyHint', 'Agents you start in any project show up here.') }}</div>
       </div>
