@@ -38,15 +38,42 @@ working on Tessel itself (see [Build from source](#build-from-source)).
   one folded "N other branches" line; an agent can work in its own copy (its
   own worktree and branch) so two agents never overwrite each other.
 - **Add a project**: browse a folder, clone from a URL, create one, or import
-  every repository in a folder.
-- **Remote hosts over SSH**: hosts from `~/.ssh/config` or Settings → SSH Hosts,
-  terminals on a host, passwords asked through OpenSSH's askpass.
+  every repository in a folder, on this computer or on an SSH host. A new
+  project opens on a **launcher** instead of a shell: pick an agent, a
+  terminal, a web page, or resume one of the project's recent sessions.
+- **Clean up worktrees**: one dialog lists every worktree with its git
+  evidence (clean or dirty, merged or not, last activity); safe ones are ticked.
+- **Drop-down terminal** (``Ctrl+` ``): a terminal over any view that keeps
+  running while hidden.
+- **Crash recovery**: if the window's page crashes, it reloads with the same
+  layout and the same running terminals.
 - **Broadcast**: type once into every pane you pick.
-- **Built-in browser pane**: a real browser in a pane, with a design mode to
-  pick an element and send feedback about it to an agent.
-- **Files, editor and Source Control**: a file explorer, an editor pane, and a
-  Source Control panel (changes by folder, stage per file, commit, commits
-  graph, create a pull request).
+- **Built-in browser**: a real browser in a pane or in the side panel (drag a
+  page between them), with a design mode to pick an element and send feedback
+  about it to an agent. **Import cookies** from Chrome, Edge, Brave, Firefox…
+  (your default browser first) to stay signed in to your sites.
+- **Files, editor and Source Control**: a compact file explorer like VS Code's
+  (compact folders, indent guides, only visible rows drawn), an editor pane,
+  and a Source Control panel (changes by folder, stage per file, commit,
+  commits graph with times, create a pull request, send failing checks or
+  review comments to an agent).
+- **Side panel**: Dashboard of agents, agent session history, task history
+  (time, tokens and estimated cost per task), files, Source Control and web
+  pages; each tab says when it is loading.
+
+### Remote hosts over SSH (like VS Code Remote-SSH)
+
+- Hosts from `~/.ssh/config` or Settings → SSH Hosts; one shared connection per
+  host for terminals, files and git, the password asked once.
+- **Agents run on the host**: Claude Code and Codex start on the server, in
+  the project's folder, with **all of Tessel's tools** (team, task board,
+  browser, terminals) through a small helper Tessel puts in your home folder
+  there (no root needed). A missing agent shows a card in its pane to install it.
+- Their conversations, history, model, cost and skills are read on the host;
+  file links open the host's files.
+- **Stable on slow or dropped links**: your clicks go first, every remote call
+  has a time limit, a slow host says so, and when the connection comes back
+  the project's panes reopen and agents resume their conversations.
 
 ### Agents
 
@@ -75,6 +102,16 @@ working on Tessel itself (see [Build from source](#build-from-source)).
 - **MCP servers and tools**: see every MCP server for Claude Code and Codex,
   test the connection, copy a server to another agent, and install from a
   catalog of popular servers and developer tools.
+- **Browser tools for agents**: an agent can open pages, click, fill, read and
+  take screenshots in Tessel's browser; you see a badge on the page and can
+  stop it. After you import cookies, agents use a separate session without
+  your logins (Settings → Browser).
+- **Terminal tools for agents**: an agent runs commands in a terminal of its
+  own next to its pane (on the project's SSH host when it is there). Each
+  command asks first, with rules like VS Code's (allow a command for the
+  session, the project or always; risky ones always ask). Reading or typing in
+  your own terminals needs your approval, shows a badge with Stop, and is
+  logged. Passwords never go through the agent.
 
 ### Native chat
 
@@ -92,7 +129,12 @@ on the same conversation:
 - Earlier history (images and files included), older pages on demand, and
   sub-agents in the header.
 - **Switch a pane between chat and terminal** at any time: same conversation,
-  same pane. While the agent works, the switch waits for the end of its turn.
+  same pane, same permission mode. While the agent works, the switch waits for
+  the end of its turn.
+- **Chat view over a terminal agent**: Claude Code, Codex, Cursor and others
+  running in a terminal can also be shown as a chat (images, model and effort,
+  modes, `/` commands) without restarting them. Approval cards show what the
+  agent asks (the command, file or address) and its own choices.
 
 ### Teams and the task board
 
@@ -101,7 +143,7 @@ on the same conversation:
   their work. A small number beside each agent shows its team.
 - **Task board**: a kanban beside the panes (`Ctrl+Shift+K`). You and the
   agents add and move cards, so you can see who does what. Tasks are saved
-  with the workspace.
+  with the workspace, with the tokens, time and estimated cost of each one.
 
 ### Usage and search
 
@@ -137,6 +179,7 @@ Press **F1** in the app for the full list.
 | `Ctrl+Shift+B`                  | Toggle Broadcast                  |
 | `Ctrl+Shift+K`                  | Toggle Task Board                 |
 | `Ctrl+Shift+X`                  | Toggle the file explorer          |
+| ``Ctrl+` ``                     | Drop-down terminal                |
 | `Ctrl+,`                        | Settings                          |
 | `F1`                            | Keyboard shortcuts                |
 
