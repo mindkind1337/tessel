@@ -25,16 +25,29 @@ export function countFirefoxCookies(dbPath) {
   }
 }
 
+// originAttributes (empty for an ordinary cookie) -> why it is skipped:
+// 'container' (a Multi-Account Container's: userContextId), else
+// 'partitioned' (a third-party cookie Total Cookie Protection keeps per site,
+// first-party isolation, a private window's).
+export function originSkipReason(originAttributes) {
+  const s = String(originAttributes || '')
+  if (!s) return null
+  return /(^|[\^&])userContextId=[1-9]/.test(s) ? 'container' : 'partitioned'
+}
+
 // -> [{ cookie } | { skip }]. A container's or a partitioned cookie
-// (originAttributes) has no place in Tessel's single jar: skipped.
+// (originAttributes) has no place in Tessel's single jar: skipped. The expiry
+// is read as text: a far-future one can be past what a JS number holds
+// exactly, and node:sqlite throws on those.
 export function readFirefoxCookies(dbPath) {
   const { DatabaseSync } = sqliteModule()
   const db = new DatabaseSync(dbPath, { readOnly: true })
   try {
     const rows = []
-    for (const r of db.prepare('SELECT originAttributes, name, value, host, path, expiry, isSecure, isHttpOnly, sameSite FROM moz_cookies').iterate()) {
-      if (r.originAttributes) {
-        rows.push({ skip: 'partitioned' })
+    for (const r of db.prepare('SELECT originAttributes, name, value, host, path, CAST(expiry AS TEXT) AS expiry, isSecure, isHttpOnly, sameSite FROM moz_cookies').iterate()) {
+      const why = originSkipReason(r.originAttributes)
+      if (why) {
+        rows.push({ skip: why })
         continue
       }
       const host = String(r.host || '')

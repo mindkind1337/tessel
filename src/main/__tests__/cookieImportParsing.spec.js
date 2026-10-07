@@ -105,7 +105,7 @@ describe('toElectronCookie attribute mapping', () => {
   })
   it('skips an expired cookie and an invalid one', () => {
     expect(toElectronCookie({ host: 'example.com', name: 's', value: 'v', expires: 10 }, 1000).skip).toBe('expired')
-    expect(toElectronCookie({ host: '', name: 's', value: 'v' }).skip).toBe('invalid')
+    expect(toElectronCookie({ host: '', name: 's', value: 'v' }).skip).toBe('invalidHost')
   })
   it('caps the expiry at 400 days', () => {
     const now = 1_000_000_000

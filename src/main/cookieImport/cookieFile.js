@@ -28,7 +28,7 @@ function jsonExpiry(c) {
 function fromJson(c) {
   if (!c || typeof c !== 'object' || typeof c.name !== 'string') return { skip: 'invalid' }
   const domain = String(c.domain || c.host || '').trim()
-  if (!domain) return { skip: 'invalid' }
+  if (!domain) return { skip: 'invalidHost' }
   if (c.partitionKey) return { skip: 'partitioned' }
   const hostOnly = typeof c.hostOnly === 'boolean' ? c.hostOnly : !domain.startsWith('.')
   return {
