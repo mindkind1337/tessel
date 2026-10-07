@@ -102,6 +102,12 @@ describe('approvalChoice: the options mapped to their keys', () => {
     expect(approvalChoice({ number: 2, label: 'Yes, allow all edits during this session (shift+tab)' })).toMatchObject({ kind: 'always', label: 'Yes, allow all edits during this session', keys: '2' })
     expect(approvalChoice({ number: 3, label: 'No, and tell Claude what to do differently (esc)' })).toMatchObject({ kind: 'no', keys: '3' })
     expect(approvalChoice({ number: 1, label: 'Trust and continue' })).toMatchObject({ kind: 'other', keys: '1' })
+    // Claude Code's current prompt: a typographic apostrophe, a colon, a gray hint.
+    expect(approvalChoice({ number: 2, label: 'Yes, and don’t ask again for: curl *' })).toMatchObject({ kind: 'always', scope: 'curl *', keys: '2' })
+    expect(approvalChoice({ number: 3, label: 'Yes, and switch to auto mode · auto mode handles these prompts for you' })).toMatchObject({ kind: 'auto', label: 'Yes, and switch to auto mode', keys: '3' })
+    expect(approvalChoice({ number: 4, label: 'No' })).toMatchObject({ kind: 'no', keys: '4' })
+    // Only a plain "Yes" is shown as just "Yes".
+    expect(approvalChoice({ number: 2, label: 'Yes, during this session' }).kind).not.toBe('yes')
   })
 })
 

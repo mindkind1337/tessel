@@ -735,6 +735,7 @@
   "chat.orca.approval.yes": "Oui",
   "chat.orca.approval.no": "Non",
   "chat.orca.approval.alwaysFor": "Oui, et ne plus demander pour {{scope}}",
+  "chat.orca.approval.autoMode": "Oui, et passer en mode auto",
   "chat.orca.terminalChat.answerInTerminal": "{{agent}} vous pose une question : répondez-y dans son terminal.",
   "chat.orca.question.from": "{{agent}} vous pose une question",
   "chat.orca.question.kept": "Votre réponse est gardée dans l’historique de ce chat.",

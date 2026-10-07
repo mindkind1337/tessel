@@ -255,12 +255,18 @@ function dedent(lines) {
 // what "don't ask again" covers), keys (its number) }.
 export function approvalChoice(option) {
   const label = String(option.label || '')
+    // Claude writes "don’t" with a typographic apostrophe.
+    .replace(/[‘’ʼ]/g, "'")
     .replace(/\s*\((?:esc|y|n|a|p|shift\+tab|tab|enter)\)\s*$/i, '')
+    // Its gray hint after " · " ("auto mode handles these prompts for you").
+    .replace(/\s+·\s+.*$/, '')
     .trim()
-  const yes = /^yes\b/i.test(label)
-  const always = yes && /don'?t ask again|do not ask again|always|allow all|this session|for the session/i.test(label)
-  const scopeMatch = /don'?t ask again for (.+)$/i.exec(label) || /do not ask again for (.+)$/i.exec(label)
-  const kind = always ? 'always' : yes ? 'yes' : /^no\b/i.test(label) ? 'no' : 'other'
+  const plainYes = /^yes\.?$/i.test(label)
+  const scopeMatch = /(?:don'?t|do not) ask again for:?\s*(.+)$/i.exec(label)
+  const always = !plainYes && /^yes\b/i.test(label) && /don'?t ask again|do not ask again|always|allow all|this session|for the session/i.test(label)
+  const autoMode = /^yes\b.*\bauto mode\b/i.test(label)
+  // Only a plain "Yes" is shown as "Yes": any other choice keeps what makes it different.
+  const kind = plainYes ? 'yes' : always ? 'always' : autoMode ? 'auto' : /^no\b/i.test(label) ? 'no' : 'other'
   return { kind, label, scope: scopeMatch ? scopeMatch[1].trim() : '', number: option.number, keys: String(option.number) }
 }
 

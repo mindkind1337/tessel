@@ -951,6 +951,7 @@ function choiceLabel(choice) {
   if (choice.kind === 'yes') return t('chat.orca.approval.yes', 'Yes')
   if (choice.kind === 'no') return t('chat.orca.approval.no', 'No')
   if (choice.kind === 'always' && choice.scope) return t('chat.orca.approval.alwaysFor', "Yes, and don't ask again for {{scope}}", { scope: choice.scope })
+  if (choice.kind === 'auto') return t('chat.orca.approval.autoMode', 'Yes, and switch to auto mode')
   return choice.label
 }
 // A choice of its prompt: its own number key.
