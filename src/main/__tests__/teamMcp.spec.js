@@ -1113,21 +1113,22 @@ describe('an agent on an SSH host (TESSEL_REMOTE=1)', () => {
     fs.rmSync(dir, { recursive: true, force: true })
   })
 
-  it('neither lists nor runs the browser and worker tools', () => {
-    const all = mcp.handle({ id: 1, method: 'tools/list' }).tools.map((t) => t.name)
-    expect(all).toContain('browser_open')
+  it('lists every tool a local agent has: browser, terminal and worker tools included', () => {
+    const local = mcp.handle({ id: 1, method: 'tools/list' }).tools.map((t) => t.name)
+    expect(local).toContain('browser_open')
     remote(A)
     const names = mcp.handle({ id: 1, method: 'tools/list' }).tools.map((t) => t.name)
-    expect(names.filter((n) => n.startsWith('browser_'))).toEqual([])
-    for (const n of ['team_worker_start', 'team_worker_read', 'team_worker_stop', 'team_worker_release', 'team_worker_list']) expect(names).not.toContain(n)
-    // A remote agent can still be a worker: it reports, and the board and messages stay.
-    expect(names).toEqual(expect.arrayContaining(['team_worker_done', 'team_heartbeat', 'team_send', 'team_task_add', 'team_inbox']))
-    for (const n of ['browser_navigate', 'team_worker_start', 'team_worker_read']) {
-      const r = call(n, { url: 'http://localhost/', agent: 'claude', task: 'x', brief: 'y' })
-      expect(r.isError).toBe(true)
-      expect(r.content[0].text).toMatch(/not available to an agent on an SSH host \(build-box\)/)
+    expect(names).toEqual(local)
+    expect(names).toEqual(expect.arrayContaining(['browser_open', 'browser_snapshot', 'run_in_terminal', 'terminal_list', 'team_worker_start', 'team_send', 'team_task_add', 'team_inbox']))
+    // Not refused for being remote (it may fail for other reasons: no Tessel here).
+    for (const n of ['team_worker_list']) {
+      const r = call(n, {})
+      expect(r && typeof r.then === 'function' ? '' : r.content[0].text).not.toMatch(/not available to an agent on an SSH host/)
     }
-    expect(mcp.handle({ id: 1, method: 'initialize' }).instructions).not.toMatch(/browser_snapshot|team_worker_start/)
+    const instructions = mcp.handle({ id: 1, method: 'initialize' }).instructions
+    expect(instructions).toMatch(/browser_snapshot/)
+    expect(instructions).toMatch(/run_in_terminal/)
+    expect(instructions).toMatch(/You run on an SSH host/)
   })
 
   it('its messages and reports say which host they come from', () => {

@@ -38,15 +38,17 @@ const path = require('path')
 const crypto = require('crypto')
 const { randomUUID } = crypto
 
-const VERSION = '1.11.2'
+const VERSION = '1.11.3'
 const MAX_TEXT = 6000
 
 // --- An agent on an SSH host --------------------------------------------------
 // Tessel runs this server on this computer for an agent on an SSH host
 // (src/main/remoteAgent/REMOTE_AGENTS.md), with TESSEL_REMOTE=1 and the host's
-// label. That host is not trusted like this computer: no browser (it is on
-// this computer), no starting or driving workers, its messages say where
-// they come from, and only the project folder Tessel gave is ever read.
+// label. It has every tool a local agent has (the user's rule: a remote
+// connection gets the team tools, the board, the browser and the terminal
+// tools, like a local one): the browser is Tessel's on this computer, its
+// terminals open on the host (agentTerminal.js). Its messages say where they
+// come from, and only the project folder Tessel gave is ever read.
 const isRemote = () => process.env.TESSEL_REMOTE === '1'
 function remoteHost() {
   // eslint-disable-next-line no-control-regex
@@ -55,10 +57,6 @@ function remoteHost() {
 }
 // The note put before what it writes to the others (messages, reports).
 const remoteTag = () => (isRemote() ? `[from an agent on ${remoteHost()}] ` : '')
-const REMOTE_BLOCKED = new Set(['team_worker_start', 'team_worker_read', 'team_worker_stop', 'team_worker_release', 'team_worker_list'])
-// Terminal tools: Tessel's panes are on the user's computer.
-const TERMINAL_TOOL_NAMES = new Set(['run_in_terminal', 'get_terminal_output', 'send_to_terminal', 'kill_terminal', 'terminal_last_command', 'terminal_selection', 'terminal_list'])
-const remoteBlocked = (name) => isRemote() && (REMOTE_BLOCKED.has(name) || String(name).startsWith('browser_') || TERMINAL_TOOL_NAMES.has(name))
 
 // --- Finding my team and me ---------------------------------------------------
 
@@ -1340,11 +1338,6 @@ function boardLocate(start) {
 const BOARD_TOOLS = ['team_tasks', 'team_task_add', 'team_task_move', 'team_task_done', 'team_task_gate']
 
 function callTool(name, args = {}, signal = null) {
-  if (remoteBlocked(name))
-    return {
-      text: `${name} is not available to an agent on an SSH host (${remoteHost()}): Tessel's browser and its workers are on the user's computer. Ask a teammate on the user's computer, or the user.`,
-      isError: true
-    }
   // The browser and terminal tools need no team: only this pane's identity.
   if (BROWSER_OPS[name]) return browserTool(BROWSER_OPS[name], args)
   if (TERMINAL_OPS[name]) return terminalTool(TERMINAL_OPS[name], args)
@@ -1398,9 +1391,10 @@ function callTool(name, args = {}, signal = null) {
 
 const INSTRUCTIONS =
   'You work in Tessel: the user follows everything you do on its task board, so keep it up to date yourself, without being asked. Add a card (team_task_add) for every piece of work the moment you start it (what the user asks, each step you decide to take, each task you give a teammate), and move your cards as they go (team_task_move: "done" as soon as one is finished). Only a quick question or a short answer needs no card. If you are in a team, call team_inbox when you start and after each step to read messages from teammates, answer them with team_send, and never ask the user to pass messages between agents. To work together: give a teammate a card (team_task_add, with "after" when it must wait for other cards), finish work you were given with team_task_done and a short report, ask one teammate and wait for the answer with team_ask, ask the user to decide with team_task_gate, and send to groups like "@codex" or "@idle"; team_members shows who is idle. A team lead can also coordinate workers: start new agents in new panes with team_worker_start (one per independent piece of work), follow them with team_worker_list and team_worker_read, and stop or release them; a worker reports with team_worker_done and sends team_heartbeat while it works. To check a web page (your dev server, a UI change), use the built-in browser of Tessel with the browser_* tools: browser_pages or browser_open, then browser_snapshot to read the page with element refs (@e1), browser_click / browser_fill / browser_type / browser_press by ref, and browser_snapshot again after the page changes or navigates; browser_wait instead of sleeping, browser_console for errors, browser_screenshot to see it. The user sees an Agent badge on the page and can stop you. To run shell commands, use run_in_terminal: it runs them in a terminal of your own next to your pane (on your project SSH host when it is there) and the user approves each command; terminal_list shows the other terminals of the user, which you can read with get_terminal_output.'
-// On an SSH host: no browser and no workers.
+// On an SSH host: the same tools, and where they run.
 const REMOTE_INSTRUCTIONS =
-  'You work in Tessel: the user follows everything you do on its task board, so keep it up to date yourself, without being asked. Add a card (team_task_add) for every piece of work the moment you start it (what the user asks, each step you decide to take, each task you give a teammate), and move your cards as they go (team_task_move: "done" as soon as one is finished). Only a quick question or a short answer needs no card. If you are in a team, call team_inbox when you start and after each step to read messages from teammates, answer them with team_send, and never ask the user to pass messages between agents. To work together: give a teammate a card (team_task_add, with "after" when it must wait for other cards), finish work you were given with team_task_done and a short report, ask one teammate and wait for the answer with team_ask, ask the user to decide with team_task_gate, and send to groups like "@codex" or "@idle"; team_members shows who is idle. You run on an SSH host: the browser and worker tools are not available to you (they are on the computer of the user).'
+  INSTRUCTIONS +
+  " You run on an SSH host: Tessel's browser is on the user's computer (a page on the host is reached through an address that computer can open), and run_in_terminal opens your terminal on that host."
 
 // signal: aborted when the client cancels this request (a waiting team_ask).
 function handle(msg, signal = null) {
@@ -1414,7 +1408,7 @@ function handle(msg, signal = null) {
     }
   }
   if (method === 'ping') return {}
-  if (method === 'tools/list') return { tools: isRemote() ? TOOLS.filter((t) => !remoteBlocked(t.name)) : TOOLS }
+  if (method === 'tools/list') return { tools: TOOLS }
   if (method === 'tools/call') {
     const done = (r) => ({ content: [{ type: 'text', text: r.text }, ...(r.image ? [{ type: 'image', data: r.image.data, mimeType: r.image.mimeType }] : [])], isError: !!r.isError })
     const failed = (err) => done({ text: `Tessel team tool failed: ${err.message}`, isError: true })
