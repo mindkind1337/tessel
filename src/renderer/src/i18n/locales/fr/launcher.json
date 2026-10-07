@@ -24,6 +24,8 @@
     },
     "remember": "Retenir pour les nouveaux projets",
     "keys": "1-9 ou ↑↓ puis Entrée pour lancer · Échap pour rester vide",
-    "remembered": "Les nouveaux projets démarreront ainsi. Modifiable dans Paramètres > Agents."
+    "remembered": "Les nouveaux projets démarreront ainsi. Modifiable dans Paramètres > Agents.",
+    "installAgent": "Installer {{name}}…",
+    "agentMissing": "Pas installé sur l’hôte"
   }
 }

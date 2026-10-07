@@ -34,20 +34,20 @@ export function remoteAgentFound(id, status) {
 
 // The agents the launcher offers: here, the installed and enabled ones; on
 // an SSH host, the ones found there (both, marked unchecked, before the
-// host was checked). -> [{ id, name, accent, unchecked }]
+// host was checked), and those found missing there as "Install…" (missing:
+// never started as if ready). -> [{ id, name, accent, unchecked, missing }]
 export function launcherAgents({ agents = [], remote = false, remoteStatus = null, enabled = () => true } = {}) {
   const list = Array.isArray(agents) ? agents : []
   if (!remote)
     return list
       .filter((a) => a && a.available !== false && enabled(a.id))
-      .map((a) => ({ id: a.id, name: a.name, accent: a.accent || null, unchecked: false }))
+      .map((a) => ({ id: a.id, name: a.name, accent: a.accent || null, unchecked: false, missing: false }))
   const out = []
   for (const id of REMOTE_AGENT_IDS) {
     const a = list.find((x) => x && x.id === id)
     if (!a || !enabled(id)) continue
     const found = remoteAgentFound(id, remoteStatus)
-    if (found === false) continue
-    out.push({ id, name: a.name, accent: a.accent || null, unchecked: found === null })
+    out.push({ id, name: a.name, accent: a.accent || null, unchecked: found === null, missing: found === false })
   }
   return out
 }
@@ -71,7 +71,7 @@ export function projectOpenChoice(setting, { agents = [], shells = [], remote = 
   const [kind, id] = setting.split(':')
   if (kind === 'terminal') return { kind: 'terminal', shellId: !remote && shells.some((s) => s && s.id === id) ? id : null }
   const offered = launcherAgents({ agents, remote, remoteStatus, enabled })
-  return offered.some((a) => a.id === id) ? { kind: 'agent', id } : null
+  return offered.some((a) => a.id === id && !a.missing) ? { kind: 'agent', id } : null
 }
 
 // The setting a launcher choice is remembered as ("Remember for new

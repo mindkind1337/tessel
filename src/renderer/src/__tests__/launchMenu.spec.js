@@ -56,3 +56,20 @@ describe('model at launch', () => {
     w.unmount()
   })
 })
+
+describe('on an SSH project', () => {
+  it('an agent missing on the host: Install… (asks for its install), never offered as ready; its chat neither', async () => {
+    const agents = [
+      { id: 'claude', name: 'Claude Code', command: 'claude', available: true },
+      { id: 'codex', name: 'Codex CLI', command: 'codex', available: false, installOnHost: true }
+    ]
+    const w = mount(LaunchMenu, { props: { shells: [], agents }, attachTo: document.body })
+    const install = w.get('[data-test="launch-host-install-codex"]')
+    expect(install.text()).toContain('Install Codex CLI…')
+    expect(w.find('[data-test="launch-chat-codex"]').exists()).toBe(false)
+    expect(w.findAll('.launch-item').filter((b) => b.text().trim() === 'Codex CLI')).toHaveLength(0)
+    await install.trigger('click')
+    expect(w.emitted('launch')).toEqual([[{ kind: 'install', id: 'codex' }]])
+    w.unmount()
+  })
+})

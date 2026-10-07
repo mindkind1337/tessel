@@ -107,10 +107,13 @@ describe('a new project', () => {
     ])
   })
 
-  it('on an SSH host already checked: only the agents found there', async () => {
+  it('on an SSH host already checked: the agents found there ready, a missing one as Install…', async () => {
     const { api } = load({ remoteStatus: { 'ssh-box': { claude: '/usr/bin/claude', codex: null } } })
     await api.addProjects({ projects: [REMOTE] })
-    expect(api.launcherProps.value.agents.map((a) => a.id)).toEqual(['claude'])
+    expect(api.launcherProps.value.agents.map((a) => [a.id, a.missing])).toEqual([
+      ['claude', false],
+      ['codex', true]
+    ])
   })
 
   it('no launcher while the layout is not back yet', async () => {
@@ -162,6 +165,22 @@ describe('each choice starts the right pane', () => {
     const { ctx, ws } = await pick({ kind: 'session', session })
     expect(ctx.selectWorkspace).toHaveBeenLastCalledWith(ws.id)
     expect(ctx.resumeSession).toHaveBeenCalledWith(session)
+  })
+
+  it('an agent missing on the host (Install…): its install, nothing started; installed by hand since: started', async () => {
+    const env = load({ remoteStatus: { 'ssh-box': { claude: 'x', codex: null } } })
+    env.ctx.recheckOrInstall = vi.fn(async () => false)
+    await env.api.addProjects({ projects: [REMOTE] })
+    await env.api.pickFromLauncher({ kind: 'install', id: 'codex' }, { remember: true })
+    expect(env.ctx.recheckOrInstall).toHaveBeenCalledWith('ssh-box', 'codex')
+    expect(env.ctx.createLeaf).not.toHaveBeenCalled()
+    // Never remembered as what new projects start.
+    expect(env.ctx.settings.projectOpen).toBe('ask')
+    env.ctx.recheckOrInstall = vi.fn(async () => true)
+    await env.api.pickFromLauncher({ kind: 'install', id: 'codex' }, { remember: false })
+    expect(env.ctx.createLeaf).toHaveBeenCalledTimes(1)
+    expect(env.ctx.createLeaf.mock.calls[0][1]).toBe(AGENTS[1])
+    expect(env.ctx.createLeaf.mock.calls[0][4]).toEqual({ remoteHostId: 'ssh-box', remotePath: '/srv/app' })
   })
 
   it('an agent that is not in the list starts nothing', async () => {

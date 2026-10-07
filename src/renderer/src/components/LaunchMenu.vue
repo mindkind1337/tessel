@@ -31,6 +31,10 @@ const emit = defineEmits([
 ])
 
 const installedAgents = computed(() => props.agents.filter((a) => a.available))
+// On an SSH project: agents found missing on its host (remoteAgentLaunch.js
+// hostMenuAgents), offered as Install… there, never as ready.
+const hostMissingAgents = computed(() => props.agents.filter((a) => a && a.installOnHost))
+const installLabel = (a) => t('pane.launch.installOnHost', 'Install {{name}}…', { name: a.name })
 
 const rootEl = ref(null)
 const pos = ref({ left: props.x, top: props.y })
@@ -201,6 +205,19 @@ onMounted(async () => {
         </button>
       </div>
     </template>
+    <div v-for="agent in hostMissingAgents" :key="`install-${agent.id}`" class="launch-row">
+      <button
+        class="launch-item subtle"
+        role="menuitem"
+        :data-test="`launch-host-install-${agent.id}`"
+        :title="t('pane.launch.installOnHostHint', '{{name}} is not installed on this host: install it there', { name: agent.name })"
+        @click="emit('launch', { kind: 'install', id: agent.id })"
+      >
+        <BrandIcon :kind="agent.id" :accent="agent.accent" :label="agent.name" :size="16" />
+        <span class="launch-name">{{ installLabel(agent) }}</span>
+        <span class="launch-tag">{{ t('pane.launch.notOnHost', 'Not on the host') }}</span>
+      </button>
+    </div>
     <!-- Claude as a chat (src/main/chat): no terminal, team messages as turns. -->
     <div v-if="installedAgents.some((a) => a.id === 'claude' && a.available !== false)" class="launch-row">
       <button

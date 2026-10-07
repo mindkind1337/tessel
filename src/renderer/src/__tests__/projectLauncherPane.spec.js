@@ -143,3 +143,23 @@ describe('the launcher of an SSH project', () => {
     expect(picks().at(-1)[0]).toMatchObject({ kind: 'session', session: { id: 'dddddddd-1111-4222-8333-444444444444', host: 'ssh-box' } })
   })
 })
+
+describe('an agent missing on the SSH host', () => {
+  it('shows as Install…, and picking it (click or key) asks for its install, never remembered', async () => {
+    await open({
+      cwd: null,
+      remote: { hostId: 'ssh-box', host: 'Box', path: '/srv/app' },
+      agents: [AGENTS[0], { id: 'codex', name: 'Codex', accent: null, unchecked: false, missing: true }]
+    })
+    const row = wrapper.get('[data-test="launcher-agent-codex"]')
+    expect(row.text()).toContain('Install Codex…')
+    expect(wrapper.find('[data-test="launcher-missing-codex"]').exists()).toBe(true)
+    await wrapper.get('[data-test="launcher-remember"]').setValue(true)
+    await row.trigger('click')
+    await key('2')
+    expect(picks()).toEqual([
+      [{ kind: 'install', id: 'codex' }, { remember: false }],
+      [{ kind: 'install', id: 'codex' }, { remember: false }]
+    ])
+  })
+})

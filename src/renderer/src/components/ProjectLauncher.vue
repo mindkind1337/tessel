@@ -20,7 +20,7 @@ const props = defineProps({
   cwd: { type: String, default: null },
   // An SSH project: { hostId, host, path }.
   remote: { type: Object, default: null },
-  // [{ id, name, accent, unchecked }] (launcherAgents).
+  // [{ id, name, accent, unchecked, missing }] (launcherAgents).
   agents: { type: Array, default: () => [] },
   // The shells a terminal can open in, the default first (launcherShells).
   shells: { type: Array, default: () => [] },
@@ -109,9 +109,14 @@ const numberOf = (item) => {
   return i >= 0 && i < 9 ? String(i + 1) : ''
 }
 
+// A missing agent reads as its install (the name has mustaches: built here).
+const agentLabelOf = (a) => (a.missing ? t('launcher.installAgent', 'Install {{name}}…', { name: a.name }) : a.name)
+
 function pick(item) {
   if (!item) return
-  if (item.kind === 'agent') emit('pick', { kind: 'agent', id: item.agent.id }, { remember: remember.value })
+  // Missing on the host: its install (asked first), never started as if ready.
+  if (item.kind === 'agent' && item.agent.missing) emit('pick', { kind: 'install', id: item.agent.id }, { remember: false })
+  else if (item.kind === 'agent') emit('pick', { kind: 'agent', id: item.agent.id }, { remember: remember.value })
   else if (item.kind === 'terminal') emit('pick', { kind: 'terminal', shellId: props.remote ? null : shellId.value }, { remember: remember.value })
   else if (item.kind === 'browser') emit('pick', { kind: 'browser' }, { remember: false })
   else if (item.kind === 'session') emit('pick', { kind: 'session', session: item.session }, { remember: false })
@@ -200,8 +205,9 @@ const terminalHint = computed(() =>
         >
           <span class="pl-num">{{ numberOf(item) }}</span>
           <BrandIcon :kind="item.agent.id" :accent="item.agent.accent" :label="item.agent.name" :size="16" />
-          <span class="pl-label">{{ item.agent.name }}</span>
-          <span v-if="item.agent.unchecked" class="pl-hint">{{ t('launcher.agentUnchecked', 'Not checked on the host yet') }}</span>
+          <span class="pl-label">{{ agentLabelOf(item.agent) }}</span>
+          <span v-if="item.agent.missing" class="pl-hint" :data-test="`launcher-missing-${item.agent.id}`">{{ t('launcher.agentMissing', 'Not installed on the host') }}</span>
+          <span v-else-if="item.agent.unchecked" class="pl-hint">{{ t('launcher.agentUnchecked', 'Not checked on the host yet') }}</span>
         </button>
       </section>
       <p v-else class="pl-empty">

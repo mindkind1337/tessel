@@ -443,7 +443,10 @@
       "chatOpencodeHint": "OpenCode dans un volet de chat : pas de terminal ; les messages de l'équipe lui arrivent comme des tours à part",
       "installConfirmHint": "Installer {{name}} avec l'installateur de son éditeur ({{steps}}). Tessel montre la commande et demande d'abord.",
       "installPage": "Page d'installation :",
-      "installPageHint": "Pas d'installation automatique sous Windows : ouvrir la page d'installation de {{name}} dans votre navigateur ({{url}})"
+      "installPageHint": "Pas d'installation automatique sous Windows : ouvrir la page d'installation de {{name}} dans votre navigateur ({{url}})",
+      "installOnHost": "Installer {{name}}…",
+      "installOnHostHint": "{{name}} n’est pas installé sur cet hôte : l’installer là-bas",
+      "notOnHost": "Absent de l’hôte"
     },
     "model": {
       "fromSession": "d'après sa dernière réponse",

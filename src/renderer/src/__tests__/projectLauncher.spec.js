@@ -56,7 +56,11 @@ describe('what the launcher offers', () => {
       ['claude', true],
       ['codex', true]
     ])
-    expect(launcherAgents({ agents: AGENTS, remote: true, remoteStatus: { claude: '/home/me/.local/bin/claude', codex: null } }).map((a) => a.id)).toEqual(['claude'])
+    // Missing there: offered as Install… (missing), never as ready.
+    expect(launcherAgents({ agents: AGENTS, remote: true, remoteStatus: { claude: '/home/me/.local/bin/claude', codex: null } }).map((a) => [a.id, a.missing])).toEqual([
+      ['claude', false],
+      ['codex', true]
+    ])
     // VS Code's copy of Claude counts.
     expect(remoteAgentFound('claude', { claude: null, vscodeClaude: '/x/claude' })).toBe(true)
     expect(remoteAgentFound('gemini', { claude: 'x' })).toBe(false)
