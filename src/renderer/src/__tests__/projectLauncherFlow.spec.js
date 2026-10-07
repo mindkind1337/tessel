@@ -73,7 +73,7 @@ function load({ projectOpen = 'ask', remoteStatus = {} } = {}) {
   vm.createContext(ctx)
   vm.runInContext(
     slice('function wsLeafOpts(ws, opts = {})', 'function folderName(') +
-      slice('function sameProject(ws, spec)', 'function manageHostsFromAddProject') +
+      slice('function sameProject(ws, spec)', '// Run a command (or steps) in a new terminal pane') +
       '\nthis.api = { addProjects, startInEmptyWorkspace, seedNewWorkspace, refillEmptiedWorkspace, pickFromLauncher, launcherProps, launcherWs }',
     ctx
   )
