@@ -11,6 +11,7 @@
 import { FolderOpen, Globe, Plus } from 'lucide-vue-next'
 import { t } from './i18n'
 import { hostStatus, statusLabel } from './remoteHosts'
+import { hostAddress, hostFolder, shortRemotePath } from './remoteHostDisplay'
 
 export const LOCAL_HOST_ID = 'local'
 
@@ -30,9 +31,23 @@ export function buildHostOptions(targets = [], states = {}, local = {}) {
   ]
   for (const tg of targets || []) {
     if (!tg || typeof tg.id !== 'string') continue
-    out.push({ id: tg.id, kind: 'ssh', label: tg.label || tg.host, detail: 'SSH', ...sshHostState(tg.id, states, local) })
+    out.push({ id: tg.id, kind: 'ssh', label: tg.label || tg.host, detail: 'SSH', ...sshHostDetail(tg), ...sshHostState(tg.id, states, local) })
   }
   return out
+}
+
+// What tells two saved hosts apart (same IP, another login or folder):
+// user@host[:port] and the default folder, from the saved record only.
+// subtitle: the line under the name ("user@ip:port · ~/folder"); the
+// address is left out when the name already says it.
+// full: the whole of it, for the tooltip (the port always shown).
+export function sshHostDetail(tg) {
+  const address = hostAddress(tg)
+  const folder = hostFolder(tg)
+  const label = (tg && (tg.label || tg.host)) || ''
+  const subtitle = [address && address !== label ? address : '', folder ? shortRemotePath(folder, tg.username) : ''].filter(Boolean).join(' · ')
+  const full = [hostAddress(tg, { port: true }), folder].filter(Boolean).join(' · ')
+  return { address, folder, subtitle, full }
 }
 
 function sshHostState(id, states, local) {

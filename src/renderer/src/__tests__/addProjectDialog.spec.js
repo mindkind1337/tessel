@@ -98,7 +98,8 @@ afterEach(() => {
   document.body.innerHTML = ''
 })
 
-const mountDialog = (props = {}) => mount(AddProjectDialog, { props, attachTo: document.body })
+// The host list is teleported to <body>; stubbed in place here (hostPicker.spec.js covers the teleport).
+const mountDialog = (props = {}) => mount(AddProjectDialog, { props, attachTo: document.body, global: { stubs: { teleport: true } } })
 
 describe('start step', () => {
   it('shows Orca\'s title, host, one big action and the other ways', () => {

@@ -84,19 +84,20 @@ afterEach(() => {
   document.body.innerHTML = ''
 })
 
-const mountDialog = (props = {}) => mount(AddProjectDialog, { props, attachTo: document.body })
+// The host list is teleported to <body>; stubbed in place here (hostPicker.spec.js covers the teleport).
+const mountDialog = (props = {}) => mount(AddProjectDialog, { props, attachTo: document.body, global: { stubs: { teleport: true } } })
 const browserNames = (w) => w.findAll('.rfb-row .rfb-name').map((n) => n.text())
 
 describe('connect from the host list', () => {
   it('disconnected -> connecting -> connected: the host is selected and the dialog goes on', async () => {
     const w = mountDialog()
     await w.find('[data-test="host-trigger"]').trigger('click')
-    expect(w.find('[data-test="host-status-ssh-box"]').text()).toBe('Disconnected - SSH')
+    expect(w.find('[data-test="host-status-ssh-box"]').text()).toBe('Disconnected')
     const connect = w.find('[data-test="host-connect-ssh-box"]')
     expect(connect.text()).toBe('Connect')
     await connect.trigger('click')
     // Connecting: in the row, the list stays open.
-    expect(w.find('[data-test="host-status-ssh-box"]').text()).toBe('Connecting… - SSH')
+    expect(w.find('[data-test="host-status-ssh-box"]').text()).toBe('Connecting…')
     expect(w.find('[data-test="host-connect-ssh-box"]').text()).toContain('Connecting')
     await signedIn()
     expect(calls).toEqual([['connect', 'ssh-box']])
@@ -126,8 +127,8 @@ describe('connect from the host list', () => {
     await signedIn()
     expect(w.find('[data-test="host-list"]').exists()).toBe(true)
     expect(w.vm.hostId).toBe('local')
-    expect(w.find('[data-test="host-status-ssh-box"]').text()).toContain('Error - SSH')
-    expect(w.find('[data-test="host-status-ssh-box"]').text()).toContain('Connection refused')
+    expect(w.find('[data-test="host-status-ssh-box"]').text()).toBe('Error')
+    expect(w.find('[data-test="host-error-ssh-box"]').text()).toContain('Connection refused')
     expect(w.find('[data-test="host-connect-ssh-box"]').text()).toBe('Retry')
     await w.find('[data-test="host-connect-ssh-box"]').trigger('click')
     await signedIn()
@@ -143,7 +144,7 @@ describe('connect from the host list', () => {
     await w.find('[data-test="host-trigger"]').trigger('click')
     await w.find('[data-test="host-connect-ssh-box"]').trigger('click')
     await signedIn()
-    expect(w.find('[data-test="host-status-ssh-box"]').text()).toBe('Disconnected - SSH')
+    expect(w.find('[data-test="host-status-ssh-box"]').text()).toBe('Disconnected')
     expect(w.find('[data-test="host-connect-ssh-box"]').text()).toBe('Connect')
     w.unmount()
   })
@@ -156,13 +157,13 @@ describe('connect from the host list', () => {
     connectResults = [{ ok: false, error: 'refusé' }]
     const w = mountDialog()
     await w.find('[data-test="host-trigger"]').trigger('click')
-    expect(w.find('[data-test="host-status-ssh-box"]').text()).toBe('Déconnecté - SSH')
+    expect(w.find('[data-test="host-status-ssh-box"]').text()).toBe('Déconnecté')
     expect(w.find('[data-test="host-connect-ssh-box"]').text()).toBe('Se connecter')
     await w.find('[data-test="host-connect-ssh-box"]').trigger('click')
-    expect(w.find('[data-test="host-status-ssh-box"]').text()).toBe('Connexion… - SSH')
+    expect(w.find('[data-test="host-status-ssh-box"]').text()).toBe('Connexion…')
     expect(w.find('[data-test="host-connect-ssh-box"]').text()).toContain('Connexion')
     await signedIn()
-    expect(w.find('[data-test="host-status-ssh-box"]').text()).toContain('Erreur - SSH')
+    expect(w.find('[data-test="host-status-ssh-box"]').text()).toBe('Erreur')
     expect(w.find('[data-test="host-connect-ssh-box"]').text()).toBe('Réessayer')
     w.unmount()
   })
