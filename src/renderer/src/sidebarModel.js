@@ -328,7 +328,15 @@ export function buildProjectCards(project, now = Date.now()) {
     title: project.cwd ? folderName(project.cwd) : project.name,
     taskId: null,
     // A project on an SSH host: its host, shown as a chip on the card.
-    ...(project.remote && project.remote.host ? { host: project.remote.host } : {}),
+    // Its folder there and user@host:port, on a muted line and in the hover card.
+    ...(project.remote && project.remote.host
+      ? {
+          host: project.remote.host,
+          remotePath: project.remote.path || '',
+          hostAddress: project.remote.address || '',
+          hostUser: project.remote.user || ''
+        }
+      : {}),
     panes: []
   }
   cards.push(main)

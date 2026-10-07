@@ -2,7 +2,7 @@
 // badge, a chip with its host, and its other git worktrees on the host
 // (hidden behind one line, shown on request), like a local project; a host
 // not connected keeps what was shown.
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import WorkspaceSidebar from '../components/WorkspaceSidebar.vue'
@@ -37,7 +37,9 @@ function remoteProject(extra = {}) {
 describe('a remote project: the model', () => {
   it('its card carries the branch and the host', () => {
     const [card] = buildProjectCards(remoteProject(), NOW)
-    expect(card).toMatchObject({ isMain: true, branch: 'main', host: 'fivem-afterlife' })
+    expect(card).toMatchObject({ isMain: true, branch: 'main', host: 'fivem-afterlife', remotePath: '/srv/app' })
+    const [who] = buildProjectCards(remoteProject({ remote: { host: 'h', path: '/p', address: 'me@1.2.3.4:22', user: 'me' } }), NOW)
+    expect(who).toMatchObject({ remotePath: '/p', hostAddress: 'me@1.2.3.4:22', hostUser: 'me' })
     const [local] = buildProjectCards({ ...remoteProject(), cwd: 'C:\\app', remote: undefined }, NOW)
     expect(local.host).toBeUndefined()
   })
@@ -107,6 +109,47 @@ describe('a remote project: the sidebar', () => {
     expect(settings.sidebarShownWorktrees).toEqual({ 'repo:ws1': ['ssh://ssh-box1/srv/app-feature'] })
     await w.get('[data-test="sidebar-other-branch"]').trigger('click')
     expect(w.emitted('open-card')).toEqual([[{ wsId: 'ws1', path: 'ssh://ssh-box1/srv/app-feature', isMain: false }]])
+  })
+
+  it('the folder on the host: a short muted line with user@host:port and the full path in its tooltip', () => {
+    const w = mountSidebar([
+      remoteProject({
+        remote: { host: 'fivem-afterlife', path: '/home/fivem/FXServer/server-data/resources', address: 'fivem@158.69.53.210:22', user: 'fivem' }
+      })
+    ])
+    const line = w.get('[data-card-key="ws1::"]').get('[data-test="card-remote-path"]')
+    expect(line.text()).toBe('~/FXServer/…/resources')
+    expect(line.attributes('title')).toBe('fivem@158.69.53.210:22\n/home/fivem/FXServer/server-data/resources')
+  })
+
+  it('a short path stays whole; compact cards leave the line out', async () => {
+    const w = mountSidebar()
+    expect(w.get('[data-card-key="ws1::"]').get('[data-test="card-remote-path"]').text()).toBe('/srv/app')
+    settings.compactWorktreeCards = true
+    await nextTick()
+    expect(w.get('[data-card-key="ws1::"]').find('[data-test="card-remote-path"]').exists()).toBe(false)
+  })
+
+  it('the host chip turned off: no line, but the hover card still has the host and the folder', async () => {
+    vi.useFakeTimers()
+    try {
+      settings.worktreeCardProperties = settings.worktreeCardProperties.filter((x) => x !== 'host')
+      const w = mountSidebar([
+        remoteProject({ remote: { host: 'fivem-afterlife', path: '/home/fivem/FXServer/server-data/resources', address: 'fivem@158.69.53.210:22', user: 'fivem' } })
+      ])
+      const card = w.get('[data-card-key="ws1::"]')
+      expect(card.find('[data-test="card-remote-path"]').exists()).toBe(false)
+      await card.get('.wtc-parent').trigger('pointerover')
+      vi.advanceTimersByTime(130)
+      await nextTick()
+      await nextTick()
+      const hover = document.querySelector('.worktree-hover-card')
+      expect(hover.querySelector('[data-test="hover-remote-host"]').textContent).toBe('fivem-afterlife')
+      expect(hover.querySelector('[data-test="hover-remote-address"]').textContent).toBe('fivem@158.69.53.210:22')
+      expect(hover.querySelector('[data-test="hover-remote-path"]').textContent).toBe('/home/fivem/FXServer/server-data/resources')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('in French', async () => {

@@ -81,6 +81,7 @@ import { createExternalIssueStarter } from './externalIssues'
 import './issueDialogs.css'
 import { addNotification, readForPane, playAlertSound } from './notificationsStore'
 import { initRemoteHosts, setRemoteHostHandlers, remoteHostsState, manageRemoteHosts, hostShared, recentlyDisconnected } from './remoteHosts'
+import { hostAddress } from './remoteHostDisplay'
 import AddProjectDialog from './components/project/AddProjectDialog.vue'
 import { savedRemote, savedGroup } from './addProject'
 import NotesPanel from './components/NotesPanel.vue'
@@ -3044,6 +3045,12 @@ function remoteHostLabel(hostId) {
   const target = remoteHostsState.targets.find((x) => x.id === hostId)
   return target ? target.label || target.host : hostId
 }
+// user@host:port of a saved host and its login, for the sidebar card's
+// folder line (the saved record only: no password, no key path).
+function remoteHostWho(hostId) {
+  const target = remoteHostsState.targets.find((x) => x.id === hostId)
+  return target ? { address: hostAddress(target, { port: true }), user: target.username || '' } : {}
+}
 function sameProject(ws, spec) {
   if (spec.remote) return !!(ws.remote && ws.remote.hostId === spec.remote.hostId && ws.remote.path === spec.remote.path)
   return !ws.remote && !!ws.cwd && !!spec.cwd && samePath(ws.cwd, spec.cwd)
@@ -4985,7 +4992,7 @@ const sidebarProjects = computed(() =>
       panes,
       copies,
       worktrees: (gitKeyOf(w) && wsWorktrees[gitKeyOf(w)]) || [],
-      ...(w.remote ? { remote: { host: remoteHostLabel(w.remote.hostId), path: w.remote.path } } : {}),
+      ...(w.remote ? { remote: { host: remoteHostLabel(w.remote.hostId), path: w.remote.path, ...remoteHostWho(w.remote.hostId) } } : {}),
       ...(w.group ? { repoCount: w.group.repos.length } : {})
     }
   })

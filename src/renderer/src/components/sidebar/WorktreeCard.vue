@@ -8,7 +8,7 @@
 // Its details (title, branch, status, folder, live ports) show in Orca's
 // WorktreeCardDetailsHover card instead of native tooltips.
 import { computed, useId } from 'vue'
-import { ChevronDown, Folder, Plug, Server } from 'lucide-vue-next'
+import { ChevronDown, Folder, FolderOpen, Plug, Server } from 'lucide-vue-next'
 import BrandIcon from '../BrandIcon.vue'
 import AgentStateDot from './AgentStateDot.vue'
 import CompactAgentRow from './CompactAgentRow.vue'
@@ -23,6 +23,7 @@ import {
   summarizeAgentIdentities,
   getWorktreeStatusLabel
 } from '../../sidebarModel'
+import { shortRemotePath } from '../../remoteHostDisplay'
 import { t } from '../../i18n'
 
 const props = defineProps({
@@ -66,9 +67,17 @@ const showHostChip = computed(() => props.showHost && !!card.value.host)
 const hasMetaRow = computed(() =>
   props.compactCards ? false : !!(showBranch.value || hasPorts.value || props.showProjectBadge || showHostChip.value)
 )
+// A project on an SSH host: the folder it works in there, shortened
+// (~/FXServer/…/resources) on a muted line under the chip; it goes with the
+// chip's toggle, and the hover card always has it.
+const remotePath = computed(() => (card.value.host && card.value.remotePath) || '')
+const remotePathShort = computed(() => shortRemotePath(remotePath.value, card.value.hostUser || ''))
+const remoteWhere = computed(() => card.value.hostAddress || card.value.host || '')
+const remotePathTitle = computed(() => [remoteWhere.value, remotePath.value].filter(Boolean).join('\n'))
+const showRemotePath = computed(() => !props.compactCards && showHostChip.value && !!remotePath.value)
 const showTitleRowIndicators = computed(() => props.compactCards && hasPorts.value)
 const showInlineAgents = computed(() => props.showAgents && rows.value.length > 0)
-const titleOnly = computed(() => !hasMetaRow.value && !showInlineAgents.value)
+const titleOnly = computed(() => !hasMetaRow.value && !showRemotePath.value && !showInlineAgents.value)
 const statusGlyph = computed(() => (card.value.sleeping ? 'sleeping' : card.value.status))
 const statusLabel = computed(() =>
   card.value.sleeping ? t('sidebar.status.sleeping', 'Sleeping') : getWorktreeStatusLabel(card.value.status)
@@ -111,7 +120,7 @@ const statusLine = computed(() =>
   card.value.isUnread ? t('sidebar.hover.statusUnread', '{{status}} · Unread', { status: statusLabel.value }) : statusLabel.value
 )
 // The old native tooltips' text (branch, folder), for screen readers.
-const cardDescription = computed(() => [card.value.host, card.value.branch, card.value.path].filter(Boolean).join(', '))
+const cardDescription = computed(() => [card.value.host, remotePath.value, card.value.branch, card.value.path].filter(Boolean).join(', '))
 function pickHint(r) {
   return props.picking && props.picking.active ? props.picking.why(r) || '' : ''
 }
@@ -219,6 +228,10 @@ function onCardClick(e) {
                 />
               </div>
             </div>
+            <div v-if="showRemotePath" class="wtc-remote-path" :title="remotePathTitle" data-test="card-remote-path">
+              <FolderOpen :size="10" aria-hidden="true" />
+              <span class="wtc-remote-path-text">{{ remotePathShort }}</span>
+            </div>
           </div>
 
           <!-- Agents and terminals in this workspace (Orca's inline agent list). -->
@@ -325,6 +338,17 @@ function onCardClick(e) {
             <div v-if="card.isMain && card.branch" class="hc-muted">
               {{ t('sidebar.card.primaryHint', 'Primary worktree (original clone directory)') }}
             </div>
+          </div>
+        </section>
+        <section v-if="card.host" class="hc-section" data-test="hover-remote">
+          <div class="hc-section-title">
+            <Server :size="12" aria-hidden="true" />
+            <span>{{ t('sidebar.hover.sshHost', 'SSH host') }}</span>
+          </div>
+          <div class="hc-section-body hc-lines">
+            <div class="hc-strong" data-test="hover-remote-host">{{ card.host }}</div>
+            <div v-if="card.hostAddress && card.hostAddress !== card.host" class="hc-muted" data-test="hover-remote-address">{{ card.hostAddress }}</div>
+            <div v-if="remotePath" class="hc-path" data-test="hover-remote-path">{{ remotePath }}</div>
           </div>
         </section>
         <section v-if="hasPorts" class="hc-section">

@@ -9981,6 +9981,28 @@ button.act-stat:hover,
   text-transform: none;
 }
 
+/* ...and the folder it works in there, shortened, on a muted line. */
+.wtc-remote-path {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  margin-top: 3px;
+  color: var(--wts-muted);
+  font-size: 11px;
+  line-height: 1;
+}
+.wtc-remote-path svg {
+  flex-shrink: 0;
+  opacity: 0.8;
+}
+.wtc-remote-path-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* The agents and terminals of a workspace (Orca's compact agent list). */
 .wtc-agents {
   display: flex;

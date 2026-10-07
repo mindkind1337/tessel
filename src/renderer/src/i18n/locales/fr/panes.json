@@ -335,6 +335,7 @@
       "subAgentsTitle": "Sous-agents",
       "statusUnread": "{{status}} · Non lu",
       "folder": "Dossier",
+      "sshHost": "Hôte SSH",
       "workerDone": "Exécutant de {{coordinator}} : a terminé",
       "workerFailed": "Exécutant de {{coordinator}} : a échoué",
       "workerOf": "Exécutant de {{coordinator}}",
