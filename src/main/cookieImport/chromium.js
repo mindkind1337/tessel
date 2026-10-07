@@ -185,7 +185,10 @@ export function readChromiumCookies(dbPath, key) {
     const version = dbVersionOf(db)
     const partitioned = hasColumn(db, 'cookies', 'top_frame_site_key')
     const persistentCol = hasColumn(db, 'cookies', 'is_persistent') ? 'is_persistent' : hasColumn(db, 'cookies', 'has_expires') ? 'has_expires' : '1'
-    const sql = `SELECT host_key, name, value, encrypted_value, path, expires_utc, is_secure, is_httponly, samesite, ${persistentCol} AS persistent${partitioned ? ', top_frame_site_key' : ''} FROM cookies`
+    // expires_utc (microseconds since 1601, about 1.3e16 today) is past what
+    // a JS number holds exactly: node:sqlite throws on it, so it is read as
+    // text (chromiumExpiry turns it into seconds).
+    const sql = `SELECT host_key, name, value, encrypted_value, path, CAST(expires_utc AS TEXT) AS expires_utc, is_secure, is_httponly, samesite, ${persistentCol} AS persistent${partitioned ? ', top_frame_site_key' : ''} FROM cookies`
     const rows = []
     for (const r of db.prepare(sql).iterate()) {
       if (partitioned && r.top_frame_site_key) {
