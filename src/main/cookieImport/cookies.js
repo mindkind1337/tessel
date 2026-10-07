@@ -43,12 +43,14 @@ export function matchesDomains(host, domains) {
 }
 
 // A cookie -> the details of Electron's session.cookies.set, or null with
-// why: 'invalid' (no host or name, a bad path), 'expired'.
+// why: 'invalidHost' (no host, or not a host name), 'invalid' (no name, a
+// name too long), 'expired' (setting it would delete the cookie instead).
 export function toElectronCookie(c, nowSec = Date.now() / 1000) {
   if (!c || typeof c.name !== 'string' || typeof c.value !== 'string') return { skip: 'invalid' }
   const rawHost = String(c.host || '').trim().toLowerCase()
   const host = rawHost.replace(/^\./, '')
-  if (!host || !/^[a-z0-9._-]+$|^\[[0-9a-f:.]+\]$/.test(host) || c.name.length > 4096) return { skip: 'invalid' }
+  if (!host || !/^[a-z0-9._-]+$|^\[[0-9a-f:.]+\]$/.test(host)) return { skip: 'invalidHost' }
+  if (c.name.length > 4096) return { skip: 'invalid' }
   const path = typeof c.path === 'string' && c.path.startsWith('/') ? c.path : '/'
   const expires = Number(c.expires) || 0
   if (expires > 0 && expires <= nowSec) return { skip: 'expired' }
@@ -79,7 +81,12 @@ export function newSummary() {
     total: 0,
     imported: 0,
     skipped: 0,
-    reasons: { appBound: 0, google: 0, expired: 0, filtered: 0, partitioned: 0, undecryptable: 0, invalid: 0, rejected: 0 },
+    // Of the imported ones, against what the session had before (null when
+    // the session could not be read).
+    added: null,
+    updated: null,
+    unchanged: null,
+    reasons: { appBound: 0, google: 0, expired: 0, filtered: 0, partitioned: 0, container: 0, undecryptable: 0, invalidHost: 0, invalid: 0, rejected: 0 },
     domains: []
   }
 }
@@ -123,16 +130,78 @@ export function planImport(rows, { domains = [], nowSec = Date.now() / 1000 } = 
   return { writes, summary }
 }
 
+// A cookie's identity in a jar: name + domain + path. domain: '.host' for a
+// domain cookie, 'host' for a host-only one (Chromium's own way).
+export function cookieKey(name, domain, path) {
+  return [name, String(domain || '').toLowerCase(), path || '/'].join('\u0000')
+}
+
+function detailsKey(d) {
+  let domain = d.domain
+  if (!domain) {
+    try {
+      domain = new URL(d.url).hostname
+    } catch {
+      domain = ''
+    }
+  }
+  return cookieKey(d.name, domain, d.path)
+}
+
+// What decides "unchanged": the value and the flags. Kept in the main
+// process's memory only, for the length of one import.
+function fingerprint(c) {
+  return `${c.secure ? 1 : 0}${c.httpOnly ? 1 : 0}${c.value}`
+}
+
+// The session's cookies before the import: key -> fingerprint, or null when
+// they could not be read.
+export async function snapshotSession(ses) {
+  try {
+    const list = await ses.cookies.get({})
+    const map = new Map()
+    for (const c of list || []) {
+      const bare = String(c.domain || '').replace(/^\./, '')
+      const domain = c.hostOnly === false || (c.hostOnly == null && String(c.domain || '').startsWith('.')) ? `.${bare}` : bare
+      map.set(cookieKey(c.name, domain, c.path), fingerprint(c))
+    }
+    return map
+  } catch {
+    return null
+  }
+}
+
 // The cookies into the session (the browser's own, never Tessel's), a few at a
-// time. A cookie Chromium refuses is counted, its value never shown.
+// time. A cookie Chromium refuses is counted, its value never shown. Each one
+// written is counted new, updated or unchanged against the session's cookies
+// before (compared here, in the main process; only the counts leave).
 export async function writeCookies(ses, writes, summary, { batch = 50 } = {}) {
+  const before = await snapshotSession(ses)
+  if (before) {
+    summary.added = 0
+    summary.updated = 0
+    summary.unchanged = 0
+  }
   for (let i = 0; i < writes.length; i += batch) {
     const part = writes.slice(i, i + batch)
     const results = await Promise.allSettled(part.map((d) => ses.cookies.set(d)))
-    for (const r of results) {
-      if (r.status === 'fulfilled') summary.imported++
-      else skip(summary, 'rejected')
-    }
+    results.forEach((r, j) => {
+      if (r.status !== 'fulfilled') {
+        skip(summary, 'rejected')
+        return
+      }
+      summary.imported++
+      if (!before) return
+      const d = part[j]
+      const key = detailsKey(d)
+      const had = before.get(key)
+      const now = fingerprint(d)
+      if (had == null) summary.added++
+      else if (had === now) summary.unchanged++
+      else summary.updated++
+      // The same cookie twice in one source: the second is not new.
+      before.set(key, now)
+    })
   }
   if (typeof ses.cookies.flushStore === 'function') await ses.cookies.flushStore().catch(() => {})
   return summary

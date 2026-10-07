@@ -58,6 +58,7 @@ import { activity, recordActivity, loadActivity, saveActivityNow, activityChange
 import ActivityPanel from './components/ActivityPanel.vue'
 import ConfirmDialog from './components/ConfirmDialog.vue'
 import CookieImportDialog from './components/CookieImportDialog.vue'
+import { toastText as cookieImportToast } from './browser/cookieImportText'
 import { askQuitRunning } from './quitConfirm'
 import ImageViewer from './components/ImageViewer.vue'
 import FileViewer from './components/FileViewer.vue'
@@ -11589,7 +11590,7 @@ onBeforeUnmount(() => {
 
     <CookieImportDialog
       v-if="cookieImportOpen"
-      @imported="(s) => showToast(t('browser.cookieImport.toast', 'Imported {{n}} cookies into Tessel\'s browser.', { n: s.imported }), { timeout: 4000 })"
+      @imported="(s) => showToast(cookieImportToast(s), { timeout: 4000 })"
       @close="cookieImportOpen = false"
     />
 

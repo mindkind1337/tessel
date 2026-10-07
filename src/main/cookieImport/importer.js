@@ -14,10 +14,12 @@ import fs from 'fs'
 import os from 'os'
 
 // The browsers and profiles, each profile with a cheap cookie count (and how
-// many of its cookies are app-bound, so the window can warn before an import).
+// many of its cookies are app-bound, so the window can warn before an import)
+// and its last import (opts.history: history.js), date and count only.
 // Values are never read here.
 export async function listBrowsersForImport(opts = {}) {
-  const browsers = await detectBrowsers(opts)
+  const { history, detect = detectBrowsers, ...detectOpts } = opts
+  const browsers = await detect(detectOpts)
   return browsers.map((b) => ({
     id: b.id,
     name: b.name,
@@ -33,7 +35,15 @@ export async function listBrowsersForImport(opts = {}) {
       } catch {
         // locked (the browser is open) or no sqlite: no count, still offered
       }
-      return { dir: p.dir, name: p.name, lastUsed: !!p.lastUsed, cookieCount: count, appBoundCount: appBound }
+      const last = history ? history.get(b.id, p.dir) : null
+      return {
+        dir: p.dir,
+        name: p.name,
+        lastUsed: !!p.lastUsed,
+        cookieCount: count,
+        appBoundCount: appBound,
+        lastImport: last ? { at: last.at, imported: last.imported } : null
+      }
     })
   }))
 }
@@ -49,8 +59,10 @@ async function readProfileRows(browser, profile, { platform = process.platform, 
 }
 
 // Import a detected browser's profile. target: { session } (Electron). Returns
-// { ok, summary } or { ok: false, code }.
-export async function importFromProfile({ browser, profile, session, domainFilter = '', deps = {} }) {
+// { ok, summary } or { ok: false, code }. With a history (history.js), the
+// summary says when this profile was imported before (previousAt) and this
+// import is recorded (counts and date only).
+export async function importFromProfile({ browser, profile, session, domainFilter = '', history = null, deps = {} }) {
   if (!browser || !profile || !session) return { ok: false, code: 'invalid' }
   const domains = parseDomainFilter(domainFilter)
   // Copies an earlier run left behind go first.
@@ -63,6 +75,11 @@ export async function importFromProfile({ browser, profile, session, domainFilte
   }
   const { writes, summary } = planImport(rows, { domains })
   await writeCookies(session, writes, summary)
+  if (history) {
+    const before = history.get(browser.id, profile.dir)
+    summary.previousAt = before ? before.at : null
+    history.record(browser.id, profile.dir, summary)
+  }
   return { ok: true, summary }
 }
 

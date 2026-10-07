@@ -10,6 +10,7 @@ import { Cookie, Loader2, AlertTriangle, Globe } from 'lucide-vue-next'
 import { t } from '../i18n'
 import { settings } from '../settings'
 import { afterCookieImport } from '../browser/agentSession'
+import { lastImportText, headlineText, skippedText, skipBreakdown } from '../browser/cookieImportText'
 
 const emit = defineEmits(['close', 'imported'])
 
@@ -114,17 +115,14 @@ function codeMessage(code) {
   return t('browser.cookieImport.failed', 'The import could not be completed.')
 }
 
+// "Already imported on <date>. This time: X new, Y updated, Z unchanged."
+// then what was skipped; the reasons one by one under "Details".
 const resultText = computed(() => {
   const s = result.value
   if (!s) return ''
-  const parts = [t('browser.cookieImport.imported', 'Imported {{n}} cookies', { n: s.imported })]
-  const r = s.reasons || {}
-  if (r.appBound) parts.push(t('browser.cookieImport.skippedAppBound', 'skipped {{n}} encrypted by Chrome\'s app-bound protection', { n: r.appBound }))
-  if (r.google) parts.push(t('browser.cookieImport.skippedGoogle', 'skipped {{n}} Google cookies (sign in to Google in Tessel\'s browser instead)', { n: r.google }))
-  const other = (r.expired || 0) + (r.invalid || 0) + (r.partitioned || 0) + (r.undecryptable || 0) + (r.rejected || 0)
-  if (other) parts.push(t('browser.cookieImport.skippedOther', 'skipped {{n}} others', { n: other }))
-  return parts.join(', ') + '.'
+  return [headlineText(s), skippedText(s)].filter(Boolean).join(' ')
 })
+const breakdown = computed(() => (result.value ? skipBreakdown(result.value) : []))
 </script>
 
 <template>
@@ -159,7 +157,10 @@ const resultText = computed(() => {
               :checked="selected && selected.browserId === b.id && selected.profileDir === p.dir"
               @change="pick(b.id, p.dir)"
             />
-            <span class="cookie-profile-label">{{ profileLabel(b, p) || p.name }}</span>
+            <span class="cookie-profile-text">
+              <span class="cookie-profile-label">{{ profileLabel(b, p) || p.name }}</span>
+              <span v-if="p.lastImport" class="cookie-profile-last" data-test="cookie-last-import">{{ lastImportText(p.lastImport) }}</span>
+            </span>
           </label>
         </div>
       </div>
@@ -181,7 +182,17 @@ const resultText = computed(() => {
       </div>
       <div v-if="appBoundWarn" class="cookie-appbound">{{ appBoundText }}</div>
 
-      <div v-if="result" class="cookie-result" data-test="cookie-result">{{ resultText }}</div>
+      <div v-if="result" class="cookie-result" data-test="cookie-result">
+        <span data-test="cookie-result-text">{{ resultText }}</span>
+        <details v-if="breakdown.length" class="cookie-details" data-test="cookie-details">
+          <summary>{{ t('browser.cookieImport.details', 'Details') }}</summary>
+          <ul>
+            <li v-for="row in breakdown" :key="row.id" :data-reason="row.id">
+              <span>{{ row.label }}</span><span class="cookie-details-n">{{ row.n }}</span>
+            </li>
+          </ul>
+        </details>
+      </div>
       <div v-if="result && separateTurnedOn" class="cookie-separate" data-test="cookie-separate-note">
         {{ t('browser.cookieImport.separateOn', 'Agents now use a separate session without these logins; change it in Settings > Browser.') }}
       </div>
@@ -322,6 +333,38 @@ const resultText = computed(() => {
   background: color-mix(in srgb, var(--accent) 12%, transparent);
   color: var(--text-strong);
   font-size: 12.5px;
+}
+.cookie-profile-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.cookie-profile-last {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+.cookie-details {
+  margin-top: 6px;
+  font-size: 12px;
+}
+.cookie-details summary {
+  cursor: pointer;
+  color: var(--text-dim);
+}
+.cookie-details ul {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.cookie-details li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 2px 0;
+  color: var(--text);
+}
+.cookie-details-n {
+  font-variant-numeric: tabular-nums;
 }
 .cookie-separate {
   margin-top: 8px;

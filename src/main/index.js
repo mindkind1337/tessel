@@ -65,6 +65,7 @@ import { listBrowsersForImport, importFromProfile, importFromFile } from './cook
 import { detectBrowsers as detectBrowsersForImport } from './cookieImport/detect'
 import { cleanStaleCopies } from './cookieImport/chromium'
 import { createFileTokens } from './cookieImport/fileTokens'
+import { createImportHistory } from './cookieImport/history'
 import { createAgentBrowser } from './agentBrowser'
 import { createAgentTerminal } from './agentTerminal'
 import { createChatSessions } from './chat/sessions'
@@ -2731,10 +2732,12 @@ try {
 // A cookie file only from the path the picker below returned: the window
 // gets a single-use token, never the path (cookieImport/fileTokens.js).
 const cookieFileTokens = createFileTokens()
+// When each profile was imported and what it gave (counts and dates only).
+const cookieImportHistory = createImportHistory(join(app.getPath('userData'), 'cookie-imports.json'))
 ipcMain.handle('browser:cookieSources', async (event) => {
   if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return []
   try {
-    return await listBrowsersForImport()
+    return await listBrowsersForImport({ history: cookieImportHistory })
   } catch (err) {
     log.warn('cookie-import', `listing browsers failed: ${err && err.message}`)
     return []
@@ -2753,6 +2756,7 @@ ipcMain.handle('browser:importCookies', async (event, opts) => {
       profile,
       session: browserGuests.browserSession(BROWSER_PARTITION),
       domainFilter: typeof o.domainFilter === 'string' ? o.domainFilter : '',
+      history: cookieImportHistory,
       deps: { tmpRoot: COOKIE_COPY_DIR }
     })
   } catch (err) {
