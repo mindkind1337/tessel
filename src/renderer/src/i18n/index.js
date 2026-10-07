@@ -4,6 +4,7 @@
 // from locales/<lang>/*.json (one file per area, flat or nested keys),
 // loaded when the language is chosen. A missing translation shows the English.
 import { reactive } from 'vue'
+import { pluralRules } from '../../../shared/intlCache'
 
 export const UI_LANGUAGES = [
   { value: 'system', key: 'settings.language.system', label: 'System' },
@@ -107,7 +108,7 @@ export function t(key, fallback, vars) {
 
 function pluralForm(locale, count) {
   try {
-    return new Intl.PluralRules(locale).select(count)
+    return pluralRules(locale).select(count)
   } catch {
     return count === 1 ? 'one' : 'other'
   }

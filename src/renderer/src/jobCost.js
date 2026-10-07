@@ -7,6 +7,7 @@
 // changed. Without the API (older main process, tests) nothing shows.
 import { reactive, watch, getCurrentInstance, onBeforeUnmount } from 'vue'
 import { formatCost } from '../../shared/modelPricing'
+import { numberFormat } from '../../shared/intlCache'
 import { modelLabel } from '../../shared/modelLabel'
 import { formatDuration } from './timeFormat'
 import { t, intlLocale } from './i18n'
@@ -204,7 +205,7 @@ export function hasUsage(e) {
 // 950 -> "950", 12 400 -> "12.4k" ("12,4k" in French), 3 200 000 -> "3.2M".
 export function formatTokens(n, locale = intlLocale()) {
   const v = num(n)
-  const fmt = (x, digits) => new Intl.NumberFormat(locale, { maximumFractionDigits: digits }).format(x)
+  const fmt = (x, digits) => numberFormat(locale, { maximumFractionDigits: digits }).format(x)
   if (v < 1000) return fmt(Math.round(v), 0)
   if (v < 1_000_000) {
     const k = v / 1000

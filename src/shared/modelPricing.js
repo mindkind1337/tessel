@@ -34,6 +34,7 @@
 //   passes them as cacheWrite1hTokens, priced at the 1-hour rate.
 
 import { CLAUDE_PRICING } from './claudePricing.js'
+import { numberFormat } from './intlCache.js'
 
 export const PRICING_UPDATED = '2026-10-03'
 
@@ -244,9 +245,9 @@ export function formatCost(usd, locale) {
   if (usd === null || usd === undefined || typeof usd !== 'number' || !Number.isFinite(usd)) return '—'
   let fmt
   try {
-    fmt = new Intl.NumberFormat(locale || 'en', { style: 'currency', currency: 'USD', currencyDisplay: 'narrowSymbol', minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    fmt = numberFormat(locale || 'en', { style: 'currency', currency: 'USD', currencyDisplay: 'narrowSymbol', minimumFractionDigits: 2, maximumFractionDigits: 2 })
   } catch {
-    fmt = new Intl.NumberFormat('en', { style: 'currency', currency: 'USD', currencyDisplay: 'narrowSymbol', minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    fmt = numberFormat('en', { style: 'currency', currency: 'USD', currencyDisplay: 'narrowSymbol', minimumFractionDigits: 2, maximumFractionDigits: 2 })
   }
   const text = (n) => fmt.format(n).replace(/[  ]/g, ' ')
   if (usd > 0 && usd < 0.01) return `< ${text(0.01)}`

@@ -178,3 +178,45 @@ export async function loadHistoryCosts(records, { api, isActive = () => true, no
 export function forgetAsked(ids) {
   for (const id of ids || []) asked.delete(id)
 }
+
+// --- Rows drawn: only those in view ----------------------------------------------
+// As the explorer does (explorerRows.js), but a row's height is not fixed: a
+// row's line can wrap and an open row shows its details. Each drawn row is
+// measured; the others count as the height measured for a closed row.
+export const ROW_ESTIMATE = 44
+export const VIRTUAL_MIN = 100
+export const OVERSCAN = 8
+
+// The top of each row (and the end of the last): length n + 1.
+export function rowTops(ids, heightOf, estimate = ROW_ESTIMATE) {
+  const n = (ids || []).length
+  const tops = new Float64Array(n + 1)
+  for (let i = 0; i < n; i++) {
+    const h = heightOf(ids[i])
+    tops[i + 1] = tops[i] + (h > 0 ? h : estimate)
+  }
+  return tops
+}
+
+// The first row whose bottom is below y.
+function rowAt(tops, y) {
+  let lo = 0
+  let hi = tops.length - 2
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1
+    if (tops[mid + 1] > y) hi = mid
+    else lo = mid + 1
+  }
+  return lo
+}
+
+// The rows in view (with OVERSCAN more each side): { start, end, before, after }
+// (before and after: the heights of the rows not drawn).
+export function visibleRange(tops, scrollTop, viewport, overscan = OVERSCAN) {
+  const n = tops.length - 1
+  if (n <= 0) return { start: 0, end: 0, before: 0, after: 0 }
+  const top = Math.max(0, scrollTop || 0)
+  const start = Math.max(0, rowAt(tops, top) - overscan)
+  const end = Math.min(n, rowAt(tops, top + Math.max(0, viewport || 0)) + 1 + overscan)
+  return { start, end, before: tops[start], after: tops[n] - tops[end] }
+}

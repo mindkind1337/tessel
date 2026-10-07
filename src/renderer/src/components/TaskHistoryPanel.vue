@@ -6,20 +6,20 @@
 // time), totals of what is shown, a row's details (work periods, cost per
 // model) and a CSV export. The figures are read through
 // window.shellApi.jobCost.forCards in batches, only while the tab is shown,
-// and kept in the records (taskHistoryView.js).
-import { ref, computed, watch, onBeforeUnmount } from 'vue'
-import { History, Download, Search, ChevronRight, ChevronDown, ExternalLink } from 'lucide-vue-next'
+// and kept in the records (taskHistoryView.js). Each row is a component of
+// its own (TaskHistoryRow.vue) and only the rows in view are drawn: opening
+// one re-renders that row, not hundreds.
+import { ref, computed, watch, onBeforeUnmount, onUpdated, nextTick } from 'vue'
+import { History, Download, Search } from 'lucide-vue-next'
 import ThemedSelect from './ui/ThemedSelect.vue'
-import BrandIcon from './BrandIcon.vue'
+import TaskHistoryRow from './TaskHistoryRow.vue'
 import { taskHistory } from '../taskHistory'
 import { boardState } from '../taskBoardStore'
 import PanelState from './ui/PanelState.vue'
-import { filterHistory, sortHistory, historyTotals, filterOptions, historyCsv, loadHistoryCosts, forgetAsked, pricedUsd, PERIODS } from '../taskHistoryView'
-import { formatTokens, costText } from '../jobCost'
-import { formatCost } from '../../../shared/modelPricing'
-import { modelLabel } from '../../../shared/modelLabel'
-import { formatDuration } from '../timeFormat'
-import { t, intlLocale, currentLocale } from '../i18n'
+import { filterHistory, sortHistory, historyTotals, filterOptions, historyCsv, loadHistoryCosts, forgetAsked, rowTops, visibleRange, PERIODS, ROW_ESTIMATE, VIRTUAL_MIN } from '../taskHistoryView'
+import { formatTokens } from '../jobCost'
+import { duration, tokensTitle, estimateHint, usdText } from '../taskHistoryText'
+import { t } from '../i18n'
 import './sessionHistory.css'
 
 const props = defineProps({
@@ -132,61 +132,122 @@ onBeforeUnmount(() => listen(false))
 
 // --- Text --------------------------------------------------------------------------
 
-const dateFmt = computed(() => (currentLocale(), new Intl.DateTimeFormat(intlLocale(), { dateStyle: 'short', timeStyle: 'short' })))
-const timeFmt = computed(() => (currentLocale(), new Intl.DateTimeFormat(intlLocale(), { timeStyle: 'short' })))
-const when = (ms) => (ms ? dateFmt.value.format(new Date(ms)) : '')
-const duration = (ms) => (ms > 0 ? formatDuration(ms) : '—')
-const tokensOf = (c) => (c ? (c.inputTokens || 0) + (c.outputTokens || 0) : 0)
-
-function tokensText(r) {
-  if (!r.cost) return '…'
-  if (r.cost.status !== 'ok') return '—'
-  return formatTokens(tokensOf(r.cost))
-}
-function tokensTitle(c) {
-  if (!c || c.status !== 'ok') return undefined
-  return [
-    t('jobCost.detail.input', 'Input: {{n}}', { n: formatTokens(c.inputTokens) }),
-    t('jobCost.detail.output', 'Output: {{n}}', { n: formatTokens(c.outputTokens) }),
-    t('jobCost.detail.cacheRead', 'Cache read: {{n}}', { n: formatTokens(c.cacheReadTokens) }),
-    t('jobCost.detail.cacheWrite', 'Cache write: {{n}}', { n: formatTokens(c.cacheWriteTokens) })
-  ].join('\n')
-}
-function costCell(r) {
-  if (!r.cost) return '…'
-  if (pricedUsd(r) === null) return t('taskHistory.unknown', 'unknown')
-  return costText(r.cost) || '—'
-}
-const estimateHint = () => t('jobCost.detail.estimate', 'API-equivalent estimate (subscriptions are not billed per token)')
-function usdText(usd) {
-  const s = formatCost(usd, intlLocale())
-  return s.startsWith('<') ? s : `~${s}` // i18n-ignore
-}
-
-const REASONS = {
-  'no-session': () => t('taskHistory.reason.noSession', 'No agent session was seen for its pane.'),
-  'missing-file': () => t('taskHistory.reason.missingFile', "The agent's session file could not be found."),
-  remote: () => t('taskHistory.reason.remote', 'The agent ran on another computer.'),
-  'unsupported-agent': () => t('taskHistory.reason.unsupported', 'Tessel cannot read the usage of this agent.'),
-  'invalid-session': () => t('taskHistory.reason.invalidSession', 'The session id is not valid.'),
-  'no-pane': () => t('taskHistory.reason.noPane', 'No agent pane worked on it.'),
-  'not-started': () => t('taskHistory.reason.notStarted', 'It never went through Doing.'),
-  'no-card': () => t('taskHistory.reason.noCard', 'Its card is gone and so is its record.'),
-  error: () => t('taskHistory.reason.error', 'The figures could not be read.')
-}
-const reasonText = (c) => (c && REASONS[c.reason] ? REASONS[c.reason]() : t('taskHistory.reason.error', 'The figures could not be read.'))
-
 const unknownText = (n) => t('taskHistory.total.unknown', '{{count}} with an unknown cost (not counted)', { count: n })
 const pendingText = (n) => t('taskHistory.total.pending', '{{count}} being read', { count: n })
-const subagentsText = (n) => (n === 1 ? t('taskHistory.detail.subagents', '{{count}} sub-agent', { count: 1 }) : t('taskHistory.detail.subagents', '{{count}} sub-agents', { count: n }))
-
-function agentLabel(r) {
-  return r.agentName || r.agentKind || t('taskHistory.noAgent', 'No agent')
-}
 
 function toggle(id) {
+  // The rows that open or close are measured again.
+  if (openId.value) heights.delete(openId.value)
+  heights.delete(id)
   openId.value = openId.value === id ? null : id
 }
+
+// --- Rows drawn: only those in view ----------------------------------------------
+// Under VIRTUAL_MIN rows all are drawn. Before the list is first measured, as
+// many as fill a tall panel; a list measured without a size (never shown) all
+// of them; hidden later (the tab left), the size it had is kept. A row drawn
+// is measured (ResizeObserver: its details may grow while its
+// figures are read); a row never drawn counts as a closed row's height.
+const listEl = ref(null)
+const scrollTop = ref(0)
+const viewport = ref(0)
+const listMeasured = ref(false)
+const FIRST_VIEWPORT = 1200
+const heights = new Map() // record id -> its measured height
+const measured = ref(0) // bumped when a height changes
+const closedHeight = ref(ROW_ESTIMATE)
+const shownIds = computed(() => shown.value.map((r) => r.id))
+const tops = computed(() => {
+  void measured.value
+  return rowTops(shownIds.value, (id) => heights.get(id), closedHeight.value)
+})
+const windowed = computed(() => {
+  const list = shown.value
+  const h = viewport.value || (listMeasured.value ? 0 : FIRST_VIEWPORT)
+  if (list.length < VIRTUAL_MIN || !h) return { list, before: 0, after: 0, virtual: false }
+  const { start, end, before, after } = visibleRange(tops.value, scrollTop.value, h)
+  return { list: list.slice(start, end), before, after, virtual: true }
+})
+
+function noteHeight(el) {
+  const id = el && el.dataset ? el.dataset.id : null
+  const h = el ? el.offsetHeight : 0
+  if (!id || !(h > 0) || heights.get(id) === h) return false
+  heights.set(id, h)
+  if (id !== openId.value) closedHeight.value = h
+  return true
+}
+let rowObserver = null
+const observed = new Set()
+function measureRows() {
+  const el = listEl.value
+  if (!el) return
+  let changed = false
+  const items = el.querySelectorAll(':scope > .th-item')
+  if (rowObserver) {
+    // Rows scrolled out of view are no longer watched.
+    for (const item of observed) {
+      if (item.isConnected) continue
+      rowObserver.unobserve(item)
+      observed.delete(item)
+    }
+    for (const item of items) {
+      if (observed.has(item)) continue
+      observed.add(item)
+      rowObserver.observe(item)
+    }
+  } else for (const item of items) if (noteHeight(item)) changed = true
+  if (changed) measured.value++
+}
+onUpdated(measureRows)
+
+let scrollQueued = false
+const nextFrame = (fn) => (typeof requestAnimationFrame === 'function' ? requestAnimationFrame(fn) : setTimeout(fn, 16))
+function onListScroll(ev) {
+  const el = ev && ev.target
+  if (!el || scrollQueued) return
+  scrollQueued = true
+  nextFrame(() => {
+    scrollQueued = false
+    scrollTop.value = el.scrollTop
+  })
+}
+function measureList() {
+  const el = listEl.value
+  if (!el) return
+  listMeasured.value = true
+  const h = el.clientHeight || 0
+  // Hidden (v-show): the size it had stays, so the rows stay windowed.
+  if (h > 0 || !viewport.value) viewport.value = h
+  if (h > 0) scrollTop.value = el.scrollTop || 0
+}
+let listObserver = null
+watch(
+  listEl,
+  (el) => {
+    if (listObserver) listObserver.disconnect()
+    if (rowObserver) rowObserver.disconnect()
+    observed.clear()
+    listObserver = null
+    rowObserver = null
+    measureList()
+    if (el && typeof ResizeObserver === 'function') {
+      listObserver = new ResizeObserver(() => measureList())
+      listObserver.observe(el)
+      rowObserver = new ResizeObserver((entries) => {
+        let changed = false
+        for (const e of entries) if (e.target.isConnected && noteHeight(e.target)) changed = true
+        if (changed) measured.value++
+      })
+    }
+    if (el) void nextTick(measureRows)
+  },
+  { flush: 'post' }
+)
+onBeforeUnmount(() => {
+  if (listObserver) listObserver.disconnect()
+  if (rowObserver) rowObserver.disconnect()
+})
 
 // --- CSV ---------------------------------------------------------------------------
 
@@ -287,7 +348,7 @@ function exportCsv() {
       </label>
     </div>
 
-    <div class="th-list" role="list">
+    <div ref="listEl" class="th-list" role="list" data-test="history-list" @scroll="onListScroll">
       <PanelState v-if="!boardState.loaded" data-test="history-loading" />
       <PanelState
         v-else-if="boardState.error && !taskHistory.length"
@@ -300,52 +361,17 @@ function exportCsv() {
         {{ t('taskHistory.empty', 'No finished task yet. Tasks moved to Done on the task board appear here.') }}
       </div>
       <div v-else-if="!shown.length" class="th-empty" data-test="history-none">{{ t('taskHistory.noMatch', 'No task matches these filters.') }}</div>
-      <div v-for="r in shown" :key="r.id" class="th-item" role="listitem" :data-test="'history-row-' + r.id">
-        <button type="button" class="th-row" :class="{ open: openId === r.id }" :aria-expanded="openId === r.id" @click="toggle(r.id)">
-          <component :is="openId === r.id ? ChevronDown : ChevronRight" :size="12" class="th-chevron" aria-hidden="true" />
-          <span class="th-main">
-            <span class="th-line1">
-              <span class="th-task" :title="r.title">{{ r.title }}</span>
-              <span class="th-cost" :class="{ dim: pricedUsd(r) === null }" :title="estimateHint()" data-test="row-cost">{{ costCell(r) }}</span>
-            </span>
-            <span class="th-line2">
-              <span class="th-date" data-test="row-date">{{ when(r.doneAt) }}</span>
-              <span class="th-agent" data-test="row-agent"><BrandIcon v-if="r.agentKind" :kind="r.agentKind" :size="12" />{{ agentLabel(r) }}</span>
-              <span v-if="r.project" class="th-project" data-test="row-project">{{ r.project }}</span>
-              <span class="th-time" data-test="row-time">{{ duration(r.durationMs) }}</span>
-              <span class="th-tokens" :title="tokensTitle(r.cost)" data-test="row-tokens">{{ tokensText(r) }}</span>
-            </span>
-          </span>
-        </button>
-        <div v-if="openId === r.id" class="th-detail" data-test="history-detail">
-          <div class="th-detail-head">
-            <span>{{ t('taskHistory.detail.periods', 'Work periods') }}</span>
-            <button v-if="paneAlive(r)" type="button" class="th-open-btn" data-test="history-open-pane" @click="emit('focus-pane', r.paneId)">
-              <ExternalLink :size="12" aria-hidden="true" />{{ t('taskHistory.detail.openPane', 'Open agent pane') }}
-            </button>
-          </div>
-          <ul v-if="r.workPeriods && r.workPeriods.length" class="th-periods">
-            <li v-for="(p, i) in r.workPeriods" :key="i">{{ when(p.start) }} – {{ timeFmt.format(new Date(p.end || p.start)) }} · {{ duration((p.end || p.start) - p.start) }}</li>
-          </ul>
-          <div v-else class="th-dim">{{ t('taskHistory.detail.noPeriods', 'No time in Doing was recorded.') }}</div>
-          <template v-if="r.cost && r.cost.status === 'ok'">
-            <div class="th-detail-head">{{ t('taskHistory.detail.models', 'Cost by model') }}</div>
-            <table class="th-models" data-test="history-models"><tbody>
-              <tr v-for="(m, i) in r.cost.models" :key="i">
-                <td>{{ modelLabel(m.model) || m.model || t('taskHistory.detail.unknownModel', 'Unknown model') }}</td>
-                <td :title="tokensTitle({ status: 'ok', ...m })">{{ formatTokens((m.inputTokens || 0) + (m.outputTokens || 0)) }}</td>
-                <td :title="estimateHint()">{{ m.known && typeof m.usd === 'number' ? usdText(m.usd) : t('taskHistory.unknown', 'unknown') }}</td>
-              </tr>
-            </tbody></table>
-            <div v-if="r.cost.subagents" class="th-dim" data-test="history-subagents">
-              {{ subagentsText(r.cost.subagents) }}
-            </div>
-            <div v-if="r.cost.incomplete" class="th-dim">{{ t('taskHistory.detail.incomplete', 'Some of its panes could not be read: the figures may be low.') }}</div>
-          </template>
-          <div v-else-if="r.cost" class="th-dim" data-test="history-reason">{{ reasonText(r.cost) }}</div>
-          <div v-else class="th-dim">{{ t('taskHistory.detail.reading', 'Reading the figures…') }}</div>
-        </div>
-      </div>
+      <div v-if="windowed.before" class="th-spacer" aria-hidden="true" :style="{ height: windowed.before + 'px' }"></div>
+      <TaskHistoryRow
+        v-for="r in windowed.list"
+        :key="r.id"
+        :record="r"
+        :open="openId === r.id"
+        :alive="paneAlive(r)"
+        @toggle="toggle"
+        @focus-pane="(id) => emit('focus-pane', id)"
+      />
+      <div v-if="windowed.after" class="th-spacer" aria-hidden="true" :style="{ height: windowed.after + 'px' }"></div>
     </div>
   </div>
 </template>
@@ -479,122 +505,7 @@ function exportCsv() {
   padding: 16px 12px;
   color: var(--text-dim);
 }
-.th-item {
-  border-bottom: 1px solid var(--border);
-}
-.th-row {
-  display: flex;
-  width: 100%;
-  align-items: flex-start;
-  gap: 4px;
-  padding: 6px 10px 6px 6px;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-.th-row:hover,
-.th-row.open {
-  background: var(--surface-2);
-}
-.th-chevron {
+.th-spacer {
   flex: 0 0 auto;
-  margin-top: 2px;
-  color: var(--text-dim);
-}
-.th-main {
-  display: flex;
-  flex: 1 1 auto;
-  flex-direction: column;
-  min-width: 0;
-  gap: 2px;
-}
-.th-line1 {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-}
-.th-task {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--text-strong);
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-.th-cost {
-  flex: 0 0 auto;
-  font-variant-numeric: tabular-nums;
-}
-.th-cost.dim {
-  color: var(--text-dim);
-}
-.th-line2 {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 2px 10px;
-  color: var(--text-dim);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-}
-.th-agent {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  max-width: 100%;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-.th-detail {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 4px 10px 10px 22px;
-  background: var(--surface-2);
-  font-size: 11.5px;
-}
-.th-detail-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-top: 4px;
-  color: var(--text-strong);
-  font-weight: 600;
-}
-.th-open-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 8px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
-  background: var(--surface-3);
-  color: var(--text-strong);
-  font: inherit;
-  font-weight: 400;
-  cursor: pointer;
-}
-.th-open-btn:hover {
-  border-color: var(--accent);
-}
-.th-periods {
-  margin: 0;
-  padding-left: 16px;
-  color: var(--text);
-  font-variant-numeric: tabular-nums;
-}
-.th-models {
-  border-collapse: collapse;
-  font-variant-numeric: tabular-nums;
-}
-.th-models td {
-  padding: 1px 12px 1px 0;
-}
-.th-dim {
-  color: var(--text-dim);
 }
 </style>
