@@ -735,6 +735,12 @@ function focusActiveInput() {
     ed.focus()
     return
   }
+  // A terminal agent shown as a chat: its composer, not the terminal behind it.
+  const chatView = document.querySelector('.ws-layer:not(.hidden) .pane.active [data-test="terminal-chat-view"] [contenteditable="true"]')
+  if (chatView) {
+    chatView.focus()
+    return
+  }
   const ta = document.querySelector('.ws-layer:not(.hidden) .pane.active .xterm-helper-textarea')
   if (ta) {
     ta.focus()
@@ -3324,10 +3330,21 @@ function voiceTypingIn(paneId, tip) {
   settings.voiceTipChosen = true
   voiceTyping(paneId)
 }
+// A text field the caller focused in that pane (a chat's composer) keeps the
+// keyboard: voice typing types where it is, never into the terminal behind.
+function editableIn(paneId, el) {
+  if (!el || !el.isConnected || !paneId) return false
+  const pane = el.closest && el.closest('.pane')
+  if (!pane || pane.getAttribute('data-pane-id') !== paneId) return false
+  if (el.classList && el.classList.contains('xterm-helper-textarea')) return false
+  return el.isContentEditable || el.tagName === 'TEXTAREA' || el.tagName === 'INPUT'
+}
 async function voiceTyping(paneId) {
+  const before = document.activeElement
   if (paneId) focusPane(paneId)
   await nextTick()
-  focusActiveInput()
+  if (editableIn(paneId, before)) before.focus()
+  else focusActiveInput()
   if (!window.shellApi.voiceTyping) {
     showToast(t('app.voice.restart', 'Restart Tessel to enable voice typing, or press Win+H.'), { kind: 'error' })
     return
