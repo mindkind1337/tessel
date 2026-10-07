@@ -3,7 +3,7 @@ import fs from 'fs'
 import os from 'os'
 import { join } from 'path'
 import { execFileSync } from 'child_process'
-import { inside, listDir, parsePorcelain, projectStatus, checkName, create, rename, trash, searchNames, searchContent, searchContentWalk, parseGrepRecord, clipLine, grepFileCheck, grepReader, grepArgs, searchCap, SEARCH_LIMIT, isGitStateChange, sparseInfo } from '../explorer'
+import { inside, listDir, parsePorcelain, projectStatus, checkName, create, rename, trash, searchNames, searchContent, searchContentWalk, parseGrepRecord, clipLine, grepFileCheck, grepReader, grepArgs, searchCap, SEARCH_LIMIT, isGitStateChange, sparseInfo, listMany, watchProject } from '../explorer'
 import { parseSparseList, sparseDirsUnder } from '../sparseCheckout'
 import { statusOf, folderStatus, ignoredSet, isIgnored } from '../../renderer/src/explorerStatus'
 
@@ -31,6 +31,53 @@ describe('file explorer', () => {
   it('lists folders first, in natural order, without .git; dotfiles optional', () => {
     expect(listDir({ root }).entries.map((e) => e.name)).toEqual(['src', '.env', 'a2.md', 'a10.md'])
     expect(listDir({ root, dotfiles: false }).entries.map((e) => e.name)).toEqual(['src', 'a2.md', 'a10.md'])
+  })
+
+  it('lists several folders in one call, each sole sub-folder chain too', () => {
+    fs.mkdirSync(join(root, 'deep', 'a', 'b'), { recursive: true })
+    fs.writeFileSync(join(root, 'deep', 'a', 'b', 'x.lua'), '')
+    const res = listMany({ root, dirs: [root, join(root, 'deep'), join(root, 'gone'), join(root, '..')], chain: true })
+    expect(res.ok).toBe(true)
+    expect(res.results.map((r) => [r.dir, r.ok])).toEqual([
+      [root, true],
+      [join(root, 'deep'), true],
+      [join(root, 'deep', 'a'), true],
+      [join(root, 'deep', 'a', 'b'), true],
+      [join(root, 'gone'), false],
+      [join(root, '..'), false]
+    ])
+    expect(res.results[3].entries.map((e) => e.name)).toEqual(['x.lua'])
+    // Without chain: only the folders asked.
+    expect(listMany({ root, dirs: [join(root, 'deep')] }).results).toHaveLength(1)
+  })
+
+  it('sorts a big folder by number value, fast', () => {
+    const big = join(root, 'big')
+    fs.mkdirSync(big)
+    for (let i = 0; i < 3000; i++) fs.writeFileSync(join(big, `f${i}.txt`), '')
+    const t0 = performance.now()
+    const res = listDir({ root, dir: big })
+    const ms = performance.now() - t0
+    expect(res.entries.slice(0, 3).map((e) => e.name)).toEqual(['f0.txt', 'f1.txt', 'f2.txt'])
+    expect(res.entries[10].name).toBe('f10.txt')
+    expect(ms).toBeLessThan(1500)
+  })
+
+  it('the watch says which paths changed, and which were created or deleted', async () => {
+    const got = []
+    const stop = watchProject(root, (r, info) => got.push(info))
+    try {
+      await new Promise((r) => setTimeout(r, 100))
+      fs.writeFileSync(join(root, 'src', 'new.js'), 'n')
+      for (let i = 0; i < 40 && !got.length; i++) await new Promise((r) => setTimeout(r, 50))
+      expect(got.length).toBeGreaterThan(0)
+      const paths = got.flatMap((g) => g.paths || [])
+      const renamed = got.flatMap((g) => g.renamed || [])
+      expect(paths).toContain(join(root, 'src', 'new.js'))
+      expect(renamed).toContain(join(root, 'src', 'new.js'))
+    } finally {
+      stop()
+    }
   })
 
   it('reads git status letters (renames skip their old path)', () => {

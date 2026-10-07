@@ -322,3 +322,38 @@ describe('the order of the cards in a column', () => {
     tasks.splice(before)
   })
 })
+
+describe('TaskBoard.vue: while the saved board is read', () => {
+  it('shows it is loading, not "No tasks", until the board is read; then the columns', async () => {
+    const { beginBoardLoad, endBoardLoad } = await import('../taskBoardStore')
+    beginBoardLoad()
+    try {
+      const wrapper = mount(TaskBoard)
+      expect(wrapper.find('[data-test="board-loading"]').exists()).toBe(true)
+      expect(wrapper.text()).not.toContain('No tasks')
+      expect(wrapper.findAll('[data-test="column"]')).toHaveLength(0)
+      addTask({ title: 'Saved card' })
+      endBoardLoad()
+      await nextTick()
+      expect(wrapper.find('[data-test="board-loading"]').exists()).toBe(false)
+      expect(wrapper.findAll('[data-test="column"]')).toHaveLength(COLUMNS.length)
+      expect(wrapper.text()).toContain('Saved card')
+    } finally {
+      endBoardLoad()
+    }
+  })
+
+  it('a board that could not be read says so (the empty board stays usable)', async () => {
+    const { beginBoardLoad, endBoardLoad } = await import('../taskBoardStore')
+    beginBoardLoad()
+    try {
+      const wrapper = mount(TaskBoard)
+      endBoardLoad('file locked')
+      await nextTick()
+      expect(wrapper.find('[data-test="board-error"]').text()).toContain('file locked')
+      expect(wrapper.findAll('[data-test="column"]')).toHaveLength(COLUMNS.length)
+    } finally {
+      endBoardLoad()
+    }
+  })
+})

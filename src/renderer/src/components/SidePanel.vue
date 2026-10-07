@@ -24,6 +24,7 @@ import { t } from '../i18n'
 import { displayUrl } from '../../../shared/browserUrl'
 import TaskHistoryPanel from './TaskHistoryPanel.vue'
 import { SIDE_TABS } from '../sideTabs'
+import { statusMatters } from '../explorerChanges'
 import { Files, GitBranch, ListChecks, LayoutDashboard, Maximize2, Minimize2, Plus, Globe, X, ReceiptText } from 'lucide-vue-next'
 
 const props = defineProps({
@@ -41,6 +42,8 @@ const props = defineProps({
   // The Dashboard tab: App's sidebarProjects (every project, its panes) and
   // its clock (the "Working 4m" times).
   projects: { type: Array, default: () => [] },
+  // The saved layout is back (App's layoutReady): the Dashboard lists its agents.
+  projectsReady: { type: Boolean, default: true },
   now: { type: Number, default: () => Date.now() },
   // The panel over the whole workspace (App keeps it, not saved).
   fullscreen: { type: Boolean, default: false },
@@ -142,8 +145,11 @@ onMounted(() => {
   if (props.root && explorer()) explorer().watch(props.root)
   reload()
   if (explorer() && explorer().onChanged)
-    stop = explorer().onChanged((r) => {
+    stop = explorer().onChanged((r, info) => {
       if (!props.root || rootKey(r) !== rootKey(props.root)) return
+      // Only git-ignored files changed (a server's log, its cache): the
+      // Changes count cannot change.
+      if (info && !statusMatters(props.root, info.paths)) return
       clearTimeout(timer)
       timer = setTimeout(reload, 250)
     })
@@ -324,6 +330,7 @@ onBeforeUnmount(() => {
         v-if="shown.dashboard"
         v-show="current() === 'dashboard'"
         :projects="projects"
+        :ready="projectsReady"
         :now="now"
         @focus-pane="focusPane"
         @sleep="(ids) => emit('sleep', ids)"

@@ -115,6 +115,7 @@ export function remotePathArg(path) {
 // The functions Tessel may call (a request naming anything else is refused).
 export const FUNCTIONS = new Set([
   '__t_ls',
+  '__t_lsm',
   '__t_stats',
   '__t_read',
   '__t_write',
@@ -223,7 +224,7 @@ __t_ent() {
   [ "$__P" = "$__R" ] && return 90
   return 0
 }
-__t_git() { __g=$1; shift; LC_ALL=C LANGUAGE= GIT_TERMINAL_PROMPT=0 GIT_MERGE_AUTOEDIT=no GIT_EDITOR=: GIT_PAGER=cat PAGER=cat git -C "$__g" -c core.fsmonitor=false -c core.quotepath=off "$@"; }
+__t_git() { __g=$1; shift; LC_ALL=C LANGUAGE= GIT_TERMINAL_PROMPT=0 GIT_OPTIONAL_LOCKS=0 GIT_MERGE_AUTOEDIT=no GIT_EDITOR=: GIT_PAGER=cat PAGER=cat git -C "$__g" -c core.fsmonitor=false -c core.quotepath=off "$@"; }
 __t_up() { : >"$__T_D/u"; }
 if mkfifo "$__T_D/p" 2>/dev/null; then __T_FIFO=1; else __T_FIFO=; fi
 __t_q() {
@@ -260,6 +261,31 @@ __t_ls() {
     if [ -L "$__f" ]; then if [ -d "$__f" ]; then __k=L; else __k=l; fi
     elif [ -d "$__f" ]; then __k=d; elif [ -f "$__f" ]; then __k=f; else __k=o; fi
     printf '%s %s\\000' "$__k" "\${__f##*/}"
+  done
+}
+__t_lsm() {
+  __lr=$1; __lmx=$2; __lch=$3; __ldt=$4; shift 4
+  for __ld in "$@"; do
+    __lk=D; __lg=0; __ls=
+    while :; do
+      __t_tgt "$__lr" "$__ld"; __lrc=$?
+      [ "$__lrc" = 0 ] && { [ -d "$__P" ] || __lrc=92; }
+      printf '%s %s %s\\000' "$__lk" "$__lrc" "$__ls"
+      [ "$__lrc" = 0 ] || break
+      __n=0; __vis=0; __ls=
+      for __f in "$__P"/* "$__P"/.[!.]* "$__P"/..?*; do
+        [ -e "$__f" ] || [ -L "$__f" ] || continue
+        __n=$((__n+1)); [ "$__n" -gt "$__lmx" ] && break
+        if [ -L "$__f" ]; then if [ -d "$__f" ]; then __k=L; else __k=l; fi
+        elif [ -d "$__f" ]; then __k=d; elif [ -f "$__f" ]; then __k=f; else __k=o; fi
+        __b=\${__f##*/}
+        printf '%s %s\\000' "$__k" "$__b"
+        case $__b in .git) continue ;; .*) [ "$__ldt" = 1 ] || continue ;; esac
+        __vis=$((__vis+1)); [ "$__k" = d ] && __ls=$__b
+      done
+      [ "$__lch" = 1 ] && [ "$__vis" = 1 ] && [ -n "$__ls" ] && [ "$__lg" -lt 64 ] || break
+      __ld="\${__ld%/}/$__ls"; __lk=C; __lg=$((__lg+1))
+    done
   done
 }
 __t_stats() {
@@ -409,9 +435,10 @@ __t_fp() {
   __m="$__T_D/fp$2"
   if [ ! -e "$__m" ]; then : >"$__m"; echo init; return 0; fi
   : >"$__m.n"
-  __x=$(find "$__R/." \\( -name node_modules -o -name dist -o -name build -o -name out -o -name .next -o -name .cache -o -name target -o -name .venv -o -name __pycache__ -o -path '*/.git/objects' -o -path '*/.git/logs' \\) -prune -o -newer "$__m" -print 2>/dev/null | head -n 1)
+  find "$__R/." \\( -name node_modules -o -name dist -o -name build -o -name out -o -name .next -o -name .cache -o -name target -o -name .venv -o -name __pycache__ -o -path '*/.git/objects' -o -path '*/.git/logs' \\) -prune -o -newer "$__m" -print0 2>/dev/null | head -c "\${3:-65536}" >"$__T_D/fpl"
   mv -f "$__m.n" "$__m"
-  if [ -n "$__x" ]; then echo changed; else echo same; fi
+  if [ -s "$__T_D/fpl" ]; then printf 'changed\\000'; cat "$__T_D/fpl"; else echo same; fi
+  rm -f "$__T_D/fpl"
 }
 __t_wtl() {
   __t_root "$1" || return $?

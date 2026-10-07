@@ -12,6 +12,8 @@ import { History, Download, Search, ChevronRight, ChevronDown, ExternalLink } fr
 import ThemedSelect from './ui/ThemedSelect.vue'
 import BrandIcon from './BrandIcon.vue'
 import { taskHistory } from '../taskHistory'
+import { boardState } from '../taskBoardStore'
+import PanelState from './ui/PanelState.vue'
 import { filterHistory, sortHistory, historyTotals, filterOptions, historyCsv, loadHistoryCosts, forgetAsked, pricedUsd, PERIODS } from '../taskHistoryView'
 import { formatTokens, costText } from '../jobCost'
 import { formatCost } from '../../../shared/modelPricing'
@@ -286,7 +288,15 @@ function exportCsv() {
     </div>
 
     <div class="th-list" role="list">
-      <div v-if="!taskHistory.length" class="th-empty" data-test="history-empty">
+      <PanelState v-if="!boardState.loaded" data-test="history-loading" />
+      <PanelState
+        v-else-if="boardState.error && !taskHistory.length"
+        kind="error"
+        :retry="false"
+        :text="t('tasks.board.loadFailed', 'The saved task board could not be read: {{error}}', { error: boardState.error })"
+        data-test="history-error"
+      />
+      <div v-else-if="!taskHistory.length" class="th-empty" data-test="history-empty">
         {{ t('taskHistory.empty', 'No finished task yet. Tasks moved to Done on the task board appear here.') }}
       </div>
       <div v-else-if="!shown.length" class="th-empty" data-test="history-none">{{ t('taskHistory.noMatch', 'No task matches these filters.') }}</div>

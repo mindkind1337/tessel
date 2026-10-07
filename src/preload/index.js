@@ -162,6 +162,7 @@ const api = {
   },
   explorer: {
     list: (q) => ipcRenderer.invoke('explorer:list', q),
+    listMany: (q) => ipcRenderer.invoke('explorer:listMany', q),
     status: (q) => ipcRenderer.invoke('explorer:status', q),
     sparse: (q) => ipcRenderer.invoke('explorer:sparse', q),
     searchNames: (q) => ipcRenderer.invoke('explorer:searchNames', q),
@@ -172,8 +173,9 @@ const api = {
     reveal: (q) => ipcRenderer.invoke('explorer:reveal', q),
     watch: (root) => ipcRenderer.invoke('explorer:watch', root),
     unwatch: () => ipcRenderer.invoke('explorer:unwatch'),
+    // fn(root, { paths }): paths that changed, null when not known (all).
     onChanged: (fn) => {
-      const h = (_e, root) => fn(root)
+      const h = (_e, c) => (c && typeof c === 'object' ? fn(c.root, { paths: Array.isArray(c.paths) ? c.paths : null, renamed: Array.isArray(c.renamed) ? c.renamed : null }) : fn(c, { paths: null }))
       ipcRenderer.on('explorer:changed', h)
       return () => ipcRenderer.removeListener('explorer:changed', h)
     }

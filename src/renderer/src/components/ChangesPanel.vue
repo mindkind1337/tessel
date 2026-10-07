@@ -26,6 +26,7 @@ import { ExternalLink, Folder, FolderOpen, List, ListTree, Loader2, RefreshCw } 
 import { sectionTreeRows, sectionListRows, getSourceControlDirectoryActionPaths } from '../../../shared/sourceControlTree'
 import { getFileTypeIcon } from '../fileTypeIcons'
 import ScmHistoryPanel from './ScmHistoryPanel.vue'
+import PanelState from './ui/PanelState.vue'
 import { tasks } from '../taskBoardStore'
 import { settings } from '../settings'
 import { refreshStatus, statusOf, bumpRevision, rootKey } from '../scmState'
@@ -89,6 +90,20 @@ const state = computed(() => statusOf(repoRoot.value))
 const data = computed(() => (state.value && state.value.data) || null)
 const loaded = computed(() => !!(state.value && state.value.loaded))
 const error = computed(() => (state.value && state.value.error) || '')
+// Read again while the list is shown: a small spinner in the header, the
+// rows stay. Only for a read that takes a while (an SSH project), so the
+// quick reads after each focus or file change do not blink.
+const refreshing = ref(false)
+let refreshingTimer = 0
+watch(
+  () => !!(state.value && state.value.loading && state.value.loaded),
+  (on) => {
+    clearTimeout(refreshingTimer)
+    if (!on) refreshing.value = false
+    else refreshingTimer = setTimeout(() => (refreshing.value = true), 400)
+  }
+)
+onBeforeUnmount(() => clearTimeout(refreshingTimer))
 const entries = computed(() => (data.value && data.value.repo ? data.value.entries || [] : []))
 const top = computed(() => (data.value && data.value.top) || repoRoot.value)
 
@@ -362,6 +377,10 @@ function onRowKeydown(e, node) {
 
 // --- The branch against its base (branch-context-row.tsx) ---------------------------
 const compare = ref(null) // { base, ahead, behind, added, removed, reviewUrl, error }
+// The folder the compare answered for: until it has, a clean status is not
+// "No changes" yet (the branch may have committed work to list).
+const compareFor = ref(null)
+const compareSettled = computed(() => !api() || !api().branchCompare || compareFor.value === repoRoot.value)
 let compareSeq = 0
 let compareTimer = 0
 async function loadCompare() {
@@ -375,6 +394,7 @@ async function loadCompare() {
     res = { ok: false, error: err && err.message }
   }
   if (token !== compareSeq || disposed || root !== repoRoot.value) return
+  compareFor.value = root
   if (res && res.ok) compare.value = res.base ? res : null
   else compare.value = { base: (res && res.base) || (compare.value && compare.value.base) || null, error: (res && res.error) || unknownError() }
 }
@@ -831,6 +851,7 @@ watch(repoRoot, () => {
   generateError.value = ''
   openKey.value = null
   compare.value = null
+  compareFor.value = null
   collapsedDirs.value = new Set()
   load()
   scheduleCompare()
@@ -915,6 +936,9 @@ function draftStore() {
           {{ t('changes.pr.create', 'Create PR') }}
         </button>
         <span class="sc-fill" aria-hidden="true"></span>
+        <span v-if="refreshing" class="sc-refreshing" role="status" :title="t('app.sessions.loading', 'Loading…')" data-test="changes-refreshing">
+          <Loader2 :size="12" class="sc-spin" aria-hidden="true" />
+        </span>
         <button
           type="button"
           class="sc-icon-btn"
@@ -1170,12 +1194,15 @@ function draftStore() {
           )
         }}
       </div>
-      <div
+      <PanelState
         v-else-if="loaded && error"
-        class="explorer-empty explorer-error"
+        kind="error"
+        class="explorer-error"
         data-test="changes-error"
-        v-text="t('changes.statusError', 'Could not read the git status: {{error}}', { error })"
-      ></div>
+        :text="t('changes.statusError', 'Could not read the git status: {{error}}', { error })"
+        :busy="!!(state && state.loading)"
+        @retry="refreshAll"
+      />
       <div v-else-if="loaded && data && !data.repo" class="explorer-empty">{{ t('changes.notRepo', 'This folder is not in a git repository.') }}</div>
       <template v-else>
         <!-- Conflicts / an operation stopped half way -->
@@ -1578,7 +1605,7 @@ function draftStore() {
         </div>
 
         <div
-          v-if="loaded && data && data.repo && !hasUncommittedEntries && !branchEntries.length && !normalizedFilter"
+          v-if="loaded && data && data.repo && !hasUncommittedEntries && !branchEntries.length && !normalizedFilter && compareSettled"
           class="sc-empty"
           data-test="sc-empty"
         >
@@ -1589,7 +1616,12 @@ function draftStore() {
           <div class="sc-empty-heading">{{ t('changes.filter.noMatchTitle', 'No matching files') }}</div>
           <div class="sc-empty-text" v-text="noMatchText()"></div>
         </div>
-        <div v-if="!loaded" class="explorer-empty">{{ t('changes.reading', 'Reading git status…') }}</div>
+        <PanelState v-if="!loaded" :text="t('changes.reading', 'Reading git status…')" data-test="changes-loading" />
+        <PanelState
+          v-else-if="data && data.repo && !hasUncommittedEntries && !branchEntries.length && !normalizedFilter && !compareSettled"
+          :rows="1"
+          data-test="changes-branch-loading"
+        />
 
         <!-- Commits, docked at the bottom as the list scrolls (sync/git-history-panel.tsx). -->
         <div v-if="data && data.repo" class="sc-history-dock">

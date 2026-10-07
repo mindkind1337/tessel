@@ -2954,6 +2954,8 @@ ipcMain.handle('chatFiles:reveal', (_evt, q = {}) => revealChatPath(q || {}, { s
 // (remoteFs.js); delete goes to the host user's trash.
 const explorerFor = (q) => (remoteArg(q) ? remoteFs : explorer)
 ipcMain.handle('explorer:list', safe((q) => explorerFor(q).listDir(q || {})))
+// Several folders in one call (one round trip to a remote host).
+ipcMain.handle('explorer:listMany', safe((q) => explorerFor(q).listMany(q || {})))
 ipcMain.handle('explorer:status', safe((q) => explorerFor(q).projectStatus(q || {})))
 // A sparse checkout's folders, offered as the tree's root.
 ipcMain.handle('explorer:sparse', safe((q) => explorerFor(q).sparseInfo(q || {})))
@@ -2989,8 +2991,9 @@ ipcMain.handle('explorer:watch', (_evt, root) => {
     }
     explorerWatches.set(
       root,
-      explorer.watchProject(root, (r) => {
-        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('explorer:changed', r)
+      explorer.watchProject(root, (r, info) => {
+        // The paths that changed (null: everything shown is read again).
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('explorer:changed', { root: r, paths: info ? info.paths : null, renamed: info ? info.renamed : null })
       })
     )
   }

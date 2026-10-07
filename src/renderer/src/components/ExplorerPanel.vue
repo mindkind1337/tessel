@@ -8,8 +8,10 @@
 // A sparse checkout: the tree can show one of its folders as its root.
 import { ref, reactive, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import ThemedSelect from './ui/ThemedSelect.vue'
+import PanelState from './ui/PanelState.vue'
 import { statusOf, folderStatus, ignoredSet, isIgnored } from '../explorerStatus'
-import { buildRows, toggledPaths, soleSubfolder, activeGuide, segmentOf, rowPadding, guideX, INDENT } from '../explorerRows'
+import { buildRows, toggledPaths, soleSubfolder, activeGuide, segmentOf, rowPadding, guideX, INDENT, ROW_HEIGHT } from '../explorerRows'
+import { statusMatters, foldersToReload, sameEntries, sameStatus, rememberIgnored, inGitDir, parentOf } from '../explorerChanges'
 import { settings } from '../settings'
 import { isRemotePath, remoteHostPath } from '../../../shared/remotePath'
 import { t } from '../i18n'
@@ -82,19 +84,117 @@ const scopeHelp = computed(() =>
 
 // background: a refresh of what is shown (a remote host serves the user's
 // own clicks first).
+// A folder's answer applied (the same entries keep their array: nothing is
+// drawn again). A remote host that did not answer (transient): what was
+// shown stays, with the error.
+function applyListing(dir, res, cur) {
+  const before = cur || nodes[dir] || { entries: [] }
+  if (res && res.ok) {
+    const now = nodes[dir]
+    nodes[dir] = { entries: now && sameEntries(now.entries, res.entries) ? now.entries : res.entries, loading: false, error: '' }
+    return
+  }
+  const error = (res && res.error) || t('explorer.readFailed', 'Could not read it.')
+  nodes[dir] = { entries: res && res.transient ? before.entries : [], loading: false, error }
+}
+function markLoading(dir, request, background) {
+  directoryRequests.set(dir, request)
+  const cur = nodes[dir] || { entries: [], loading: false, error: '' }
+  // A refresh in the background keeps the rows as they are until it answers.
+  if (!background || !nodes[dir]) nodes[dir] = { ...cur, loading: true }
+  return cur
+}
+function doneLoading(dir, request) {
+  if (directoryRequests.get(dir) === request) directoryRequests.delete(dir)
+}
 async function loadDir(dir, { background = false } = {}) {
   if (!api() || !props.root) return
   const revision = viewRevision, root = props.root
   const request = Symbol()
-  directoryRequests.set(dir, request)
-  const cur = nodes[dir] || { entries: [], loading: false, error: '' }
-  nodes[dir] = { ...cur, loading: true }
-  const res = await api().list({ root, dir, dotfiles: dotfiles.value, ...(background ? { background: true } : {}) }).catch(() => null)
+  const cur = markLoading(dir, request, background)
+  if (background) backgroundLoads.value++
+  const res = await api()
+    .list({ root, dir, dotfiles: dotfiles.value, ...(background ? { background: true } : {}) })
+    .catch(() => null)
+    .finally(() => {
+      if (background) backgroundLoads.value = Math.max(0, backgroundLoads.value - 1)
+    })
   if (!stillCurrent(revision, root) || directoryRequests.get(dir) !== request) return
-  const error = (res && res.error) || t('explorer.readFailed', 'Could not read it.')
-  // A remote host that did not answer (transient): what was shown stays, with the error.
-  if (res && res.ok) nodes[dir] = { entries: res.entries, loading: false, error: '' }
-  else nodes[dir] = { entries: res && res.transient ? cur.entries : [], loading: false, error }
+  applyListing(dir, res, cur)
+  doneLoading(dir, request)
+}
+const BACKGROUND_CHUNK = 8
+// Several folders in one request (one round trip to a remote host), with
+// each one's chain of sole sub-folders when chain (a compact row opens at
+// once). Without listMany, one request per folder.
+async function loadDirs(dirs, { background = false, chain = false } = {}) {
+  dirs = [...new Set(dirs.filter(Boolean))]
+  if (!api() || !props.root || !dirs.length) return
+  const many = api().listMany
+  if (!many || (dirs.length === 1 && !chain)) {
+    await Promise.all(dirs.map((d) => loadDir(d, { background })))
+    return
+  }
+  // A refresh of many folders goes in a few requests, one after the other:
+  // a click waits for one of them at most, never for all.
+  if (background && dirs.length > BACKGROUND_CHUNK) {
+    for (let i = 0; i < dirs.length; i += BACKGROUND_CHUNK) {
+      if (disposed) return
+      await loadDirs(dirs.slice(i, i + BACKGROUND_CHUNK), { background, chain })
+    }
+    return
+  }
+  const revision = viewRevision, root = props.root
+  const request = Symbol()
+  const before = {}
+  for (const d of dirs) before[d] = markLoading(d, request, background)
+  if (background) backgroundLoads.value++
+  const res = await many({ root, dirs, dotfiles: dotfiles.value, ...(chain ? { chain: true } : {}), ...(background ? { background: true } : {}) })
+    .catch(() => null)
+    .finally(() => {
+      if (background) backgroundLoads.value = Math.max(0, backgroundLoads.value - 1)
+    })
+  if (!stillCurrent(revision, root)) return
+  const got = new Set()
+  for (const r of res && res.ok && Array.isArray(res.results) ? res.results : []) {
+    if (!r || typeof r.dir !== 'string') continue
+    got.add(r.dir)
+    if (r.dir in before) {
+      if (directoryRequests.get(r.dir) === request) {
+        applyListing(r.dir, r, before[r.dir])
+        doneLoading(r.dir, request)
+      }
+    } else if (r.ok && !directoryRequests.has(r.dir)) applyListing(r.dir, r, null) // a sub-folder of a chain
+  }
+  const missing = dirs.filter((d) => !got.has(d) && directoryRequests.get(d) === request)
+  // The whole request failed: said on each folder. A folder its answer did
+  // not reach (cut at its size): asked on its own.
+  if (res && res.ok) await Promise.all(missing.map((d) => loadDir(d, { background })))
+  else
+    for (const d of missing) {
+      applyListing(d, res, before[d])
+      doneLoading(d, request)
+    }
+}
+// The user's own folder loads made in the same moment (folders clicked
+// quickly) go as one request.
+let loadBatch = null
+function loadSoon(dir, { chain = false } = {}) {
+  if (!api() || !api().listMany) return loadDir(dir)
+  if (!loadBatch) {
+    const batch = { dirs: new Set(), chain: false, revision: viewRevision }
+    batch.done = new Promise((resolve) =>
+      setTimeout(() => {
+        if (loadBatch === batch) loadBatch = null
+        if (batch.revision !== viewRevision) return resolve()
+        loadDirs([...batch.dirs], { chain: batch.chain }).then(resolve, resolve)
+      }, 0)
+    )
+    loadBatch = batch
+  }
+  loadBatch.dirs.add(dir)
+  if (chain) loadBatch.chain = true
+  return loadBatch.done
 }
 async function loadStatus({ background = false } = {}) {
   if (!api() || !props.root) return
@@ -104,21 +204,150 @@ async function loadStatus({ background = false } = {}) {
   if (!res || !res.ok) return
   const out = {}
   for (const [p, l] of Object.entries(res.files || {})) out[key(p)] = l
-  status.value = out
+  // The same letters: nothing to draw again.
+  if (!sameStatus(status.value, out)) status.value = out
   repo.value = !!res.repo
 }
-// Everything shown again: the open folders and the git status.
+// Git status after changes: at most every second (every 4 s on a remote
+// host, where it shares the connection with the user's clicks), one run at
+// a time, the last change always seen (VS Code's git extension debounces
+// and throttles it the same way).
+let statusTimer = 0
+let statusBusy = false
+let statusAgain = false
+let statusLast = 0
+const statusGap = () => (remote.value ? 4000 : 1000)
+function requestStatus() {
+  if (statusBusy) {
+    statusAgain = true
+    return
+  }
+  if (statusTimer) return
+  statusTimer = setTimeout(runStatus, Math.max(0, statusLast + statusGap() - Date.now()))
+}
+async function runStatus() {
+  statusTimer = 0
+  statusBusy = true
+  try {
+    await loadStatus({ background: true })
+  } finally {
+    statusBusy = false
+    statusLast = Date.now()
+    if (statusAgain && !disposed) {
+      statusAgain = false
+      requestStatus()
+    }
+  }
+}
+function resetStatusRuns() {
+  clearTimeout(statusTimer)
+  statusTimer = 0
+  statusAgain = false
+}
+// The open folders (shown or not) and the project's own.
+const openDirs = () => [props.root, displayRoot.value, ...Object.keys(open).filter((d) => open[d])]
+// Everything shown again: the open folders (one request) and the git status.
 async function refresh() {
   if (!props.root) return
   const revision = viewRevision, root = props.root
-  const dirs = [...new Set([props.root, displayRoot.value, ...Object.keys(open).filter((d) => open[d])])]
-  await Promise.all([...dirs.map((d) => loadDir(d, { background: true })), loadSparse()])
+  prefetched.clear()
+  await Promise.all([loadDirs(openDirs(), { background: true }), loadSparse()])
   if (!stillCurrent(revision, root)) return
   loadStatus({ background: true })
   if (query.value.trim()) runSearch()
 }
+// A change notice: the folders it touches read again, git status when it
+// can see the change; everything when the paths are not known.
+let pendingChange = { all: false, paths: new Set(), renamed: new Set(), renamedKnown: true }
+function noteChange(info) {
+  const paths = info && Array.isArray(info.paths) ? info.paths : null
+  if (!paths) pendingChange.all = true
+  else for (const p of paths) if (typeof p === 'string') pendingChange.paths.add(p)
+  if (info && Array.isArray(info.renamed)) for (const p of info.renamed) if (typeof p === 'string') pendingChange.renamed.add(p)
+  if (!info || !Array.isArray(info.renamed)) pendingChange.renamedKnown = false
+  clearTimeout(changedTimer)
+  changedTimer = setTimeout(applyChanges, 200)
+}
+async function applyChanges() {
+  const change = pendingChange
+  pendingChange = { all: false, paths: new Set(), renamed: new Set(), renamedKnown: true }
+  if (!props.root || disposed) return
+  const revision = viewRevision, root = props.root
+  if (change.all) {
+    prefetched.clear()
+    await Promise.all([loadDirs(openDirs(), { background: true }), loadSparse()])
+    if (!stillCurrent(revision, root)) return
+    requestStatus()
+    if (query.value.trim()) runSearch()
+    return
+  }
+  const paths = [...change.paths]
+  for (const p of paths) {
+    prefetched.delete(key(p))
+    prefetched.delete(key(parentOf(p)))
+  }
+  const matters = statusMatters(props.root, paths, ignored.value)
+  if (matters) requestStatus()
+  // A sparse checkout's list lives in git's own folder.
+  if (paths.some((p) => /[\\/]\.git[\\/](info[\\/]sparse-checkout|config(\.worktree)?)$/i.test(p))) loadSparse()
+  const dirs = foldersToReload(nodes, paths, { remote: remote.value, renamed: change.renamedKnown ? [...change.renamed] : null })
+  if (dirs.length) await loadDirs(dirs, { background: true })
+  if (!stillCurrent(revision, root)) return
+  if (matters && query.value.trim() && paths.some((p) => !inGitDir(p))) runSearch()
+}
+// --- Prefetch (a remote project) --------------------------------------------------
+// After a folder opens, when the connection is idle, its sub-folders are read
+// in one background request (up to 24 of them, 300 entries each), kept
+// aside: opening one then shows it at once. Kept aside, they change nothing
+// shown (a compact row joins only folders read for it); a change notice
+// drops them.
+const prefetched = new Map() // folder key -> { dir, entries }
+const prefetchWanted = new Set()
+let prefetchTimer = 0
+const PREFETCH_DIRS = 24
+const PREFETCH_ENTRIES = 300
+function schedulePrefetch(dir) {
+  if (!remote.value || !api() || !api().listMany) return
+  prefetchWanted.add(dir)
+  clearTimeout(prefetchTimer)
+  prefetchTimer = setTimeout(runPrefetch, 700)
+}
+async function runPrefetch() {
+  prefetchTimer = 0
+  const revision = viewRevision, root = props.root
+  const want = []
+  for (const d of prefetchWanted) {
+    const n = nodes[d]
+    for (const e of n && n.entries ? n.entries : [])
+      if (e.dir && !e.link && !nodes[e.path] && !prefetched.has(key(e.path)) && !hiddenEntry(e) && !ignoredOf(e.path)) want.push(e.path)
+  }
+  prefetchWanted.clear()
+  if (!want.length || !root) return
+  const shownDots = dotfiles.value
+  const res = await api()
+    .listMany({ root, dirs: want.slice(0, PREFETCH_DIRS), dotfiles: shownDots, background: true, max: PREFETCH_ENTRIES })
+    .catch(() => null)
+  if (!stillCurrent(revision, root) || shownDots !== dotfiles.value) return
+  for (const r of res && res.ok && Array.isArray(res.results) ? res.results : [])
+    if (r && r.ok && !r.truncated && !nodes[r.dir]) prefetched.set(key(r.dir), { dir: r.dir, entries: r.entries })
+}
+// A folder to show: from the prefetch, or read (with its chain of sole
+// sub-folders when compact folders are on).
+function ensureDir(dir) {
+  if (nodes[dir] && !nodes[dir].error) return Promise.resolve()
+  const pre = prefetched.get(key(dir))
+  if (pre && pre.dir === dir) {
+    prefetched.delete(key(dir))
+    nodes[dir] = { entries: pre.entries, loading: false, error: '' }
+    return Promise.resolve()
+  }
+  return loadSoon(dir, { chain: settings.explorerCompactFolders !== false })
+}
 const folderStatuses = computed(() => folderStatus(status.value, key(props.root)))
 const ignored = computed(() => ignoredSet(status.value))
+// Known to the side panel too: a change in ignored files only is no change
+// for its Changes count either.
+watch(ignored, (set) => rememberIgnored(props.root, set))
 
 // Settings > Appearance, "Show Git-Ignored Files" off: hidden.
 const hiddenEntry = (e) => !settings.showGitIgnoredFiles && ignoredOf(e.path)
@@ -207,17 +436,17 @@ async function revealInTree(p) {
   const rel = relPath(p)
   const parts = rel === p ? [] : rel.split(/[\\/]/).filter(Boolean)
   let dir = r
+  const missing = []
   for (let i = 0; i < parts.length; i++) {
     dir = dir + '\\' + parts[i]
     open[dir] = true
-    if (!nodes[dir]) await loadDir(dir)
+    if (!nodes[dir]) missing.push(dir)
   }
+  // Its folders read together (one round trip to a remote host).
+  if (missing.length) await loadDirs(missing)
   query.value = ''
   selected.value = p
-  nextTick(() => {
-    const el = document.querySelector(`.explorer [data-path="${CSS.escape(p)}"]`) // i18n-ignore
-    if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' })
-  })
+  scrollToSelected()
 }
 function onHitClick(h) {
   selected.value = h.path + (h.line ? ':' + h.line : '')
@@ -249,13 +478,14 @@ async function toggleRow(row) {
   let dir = row.path
   const revision = viewRevision
   for (let guard = 0; guard < 64 && dir; guard++) {
-    if (!nodes[dir]) await loadDir(dir)
-    if (revision !== viewRevision || !open[dir] || settings.explorerCompactFolders === false) return
+    await ensureDir(dir)
+    if (revision !== viewRevision || !open[dir] || settings.explorerCompactFolders === false) break
     const next = soleSubfolder(nodes, dir, hiddenEntry)
-    if (!next || open[next.path]) return
+    if (!next || open[next.path]) break
     open[next.path] = true
     dir = next.path
   }
+  if (revision === viewRevision && open[dir]) schedulePrefetch(dir)
 }
 // The segment of a compact row under the pointer (its last one elsewhere).
 function segAt(ev, row) {
@@ -284,15 +514,116 @@ function rowOf(path) {
 // goes to the next folder of a compact row), left closes (or goes back a
 // folder, then to the parent), Enter opens, F2 renames, Delete trashes.
 const treeEl = ref(null)
+// The selected row brought into view: scrolled to by its place first (it
+// may not be drawn: only the rows in view are), then exactly.
 function scrollToSelected() {
   nextTick(() => {
     const p = selected.value
-    if (!p) return
-    const tree = treeEl.value
-    const el = tree ? [...tree.querySelectorAll('[data-path]')].find((x) => x.dataset.path === p) : null
-    if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' })
+    const el = treeEl.value
+    if (!p || !el) return
+    const ri = tree.value.index.get(p)
+    if (ri !== undefined && windowed.value.virtual) {
+      const at = items.value.findIndex((it) => it.kind === 'row' && it.i === ri)
+      if (at >= 0) {
+        const top = at * ROW_HEIGHT
+        if (top < el.scrollTop) el.scrollTop = top
+        else if (top + ROW_HEIGHT > el.scrollTop + viewport.value) el.scrollTop = top + ROW_HEIGHT - viewport.value
+        scrollTop.value = el.scrollTop
+      }
+    }
+    nextTick(() => {
+      const row = [...el.querySelectorAll('[data-path]')].find((x) => x.dataset.path === p)
+      if (row && row.scrollIntoView) row.scrollIntoView({ block: 'nearest' })
+    })
   })
 }
+
+// --- Rows drawn: only those in view (VS Code's listView.ts) -----------------------
+// Every row is 22 px, so the rows in view follow from the scroll position;
+// the others are one empty space above and one below. Under 150 rows, or
+// while a name is edited (its field must stay), all are drawn.
+const VIRTUAL_MIN = 150
+const OVERSCAN = 12
+const scrollTop = ref(0)
+const viewport = ref(0)
+// The tree's items: its rows, and under an open folder still being read (or
+// that could not be), a "Loading…" (or error) line.
+const items = computed(() => {
+  const out = []
+  tree.value.rows.forEach((row, i) => {
+    out.push({ kind: 'row', key: row.path, row, i })
+    if (!row.open) return
+    const n = nodes[row.path]
+    if (!n || (n.loading && !n.entries.length && !n.error)) out.push({ kind: 'loading', key: 'loading:' + row.path, depth: row.depth + 1 })
+    else if (n.error && !n.loading) out.push({ kind: 'error', key: 'error:' + row.path, depth: row.depth + 1, dir: row.path, error: n.error })
+  })
+  return out
+})
+const windowed = computed(() => {
+  const list = items.value
+  const h = viewport.value
+  if (list.length < VIRTUAL_MIN || !h || edit.value) return { list, before: 0, after: 0, virtual: false }
+  const start = Math.max(0, Math.floor(scrollTop.value / ROW_HEIGHT) - OVERSCAN)
+  const end = Math.min(list.length, Math.ceil((scrollTop.value + h) / ROW_HEIGHT) + OVERSCAN)
+  return { list: list.slice(start, end), before: start * ROW_HEIGHT, after: (list.length - end) * ROW_HEIGHT, virtual: true }
+})
+let scrollQueued = false
+const nextFrame = (fn) => (typeof requestAnimationFrame === 'function' ? requestAnimationFrame(fn) : setTimeout(fn, 16))
+function onTreeScroll(ev) {
+  const el = ev && ev.target
+  if (!el || scrollQueued) return
+  scrollQueued = true
+  nextFrame(() => {
+    scrollQueued = false
+    scrollTop.value = el.scrollTop
+  })
+}
+function measure() {
+  const el = treeEl.value
+  viewport.value = el ? el.clientHeight || 0 : 0
+  if (el) scrollTop.value = el.scrollTop || 0
+}
+let resizeObserver = null
+watch(
+  treeEl,
+  (el) => {
+    if (resizeObserver) resizeObserver.disconnect()
+    resizeObserver = null
+    measure()
+    if (el && typeof ResizeObserver === 'function') {
+      resizeObserver = new ResizeObserver(() => measure())
+      resizeObserver.observe(el)
+    }
+  },
+  { flush: 'post' }
+)
+// The folder of an error line read again.
+function retryDir(dir) {
+  if (dir) loadDirs([dir])
+}
+// The project's own folder could not be read: everything again.
+function retryRoot() {
+  const dir = displayRoot.value
+  if (!dir) return
+  loadDir(dir).then(() => {
+    if (!repo.value) loadStatus()
+  })
+}
+// The project's folder could not be read: what went wrong, with Retry;
+// above the rows when a remote host did not answer and they were kept.
+const rootError = computed(() => {
+  const n = props.root ? nodes[displayRoot.value] : null
+  return n && n.error && !n.loading ? { text: n.error, kept: n.entries.length > 0 } : null
+})
+// Folders read again in the background (after a change, Refresh): a small
+// spinner in the header.
+const backgroundLoads = ref(0)
+// The project's folder before its first answer: "Loading…", never an
+// empty tree.
+const rootLoading = computed(() => {
+  const n = props.root ? nodes[displayRoot.value] : null
+  return !!props.root && !!api() && (!n || (n.loading && !n.entries.length && !n.error))
+})
 function selectRow(i) {
   const list = rows.value
   if (!list.length) return
@@ -504,9 +835,18 @@ let changedTimer = 0
 async function showRoot() {
   const revision = ++viewRevision, root = props.root
   directoryRequests.clear()
+  prefetched.clear()
+  prefetchWanted.clear()
+  clearTimeout(prefetchTimer)
+  clearTimeout(changedTimer)
+  pendingChange = { all: false, paths: new Set(), renamed: new Set(), renamedKnown: true }
+  resetStatusRuns()
+  loadBatch = null
   for (const k of Object.keys(nodes)) delete nodes[k]
   for (const k of Object.keys(open)) delete open[k]
   status.value = {}
+  if (treeEl.value) treeEl.value.scrollTop = 0
+  scrollTop.value = 0
   edit.value = null
   sparseDirs.value = []
   scope.value = WHOLE
@@ -527,17 +867,21 @@ watch(dotfiles, refresh)
 onMounted(() => {
   showRoot()
   if (api() && api().onChanged)
-    stopChanged = api().onChanged((r) => {
+    stopChanged = api().onChanged((r, info) => {
       if (!props.root || key(r) !== key(props.root)) return
-      clearTimeout(changedTimer)
-      changedTimer = setTimeout(refresh, 200)
+      noteChange(info)
     })
+  window.addEventListener('resize', measure)
 })
 onBeforeUnmount(() => {
   disposed = true
   if (stopChanged) stopChanged()
   clearTimeout(changedTimer)
   clearTimeout(searchTimer)
+  clearTimeout(prefetchTimer)
+  resetStatusRuns()
+  window.removeEventListener('resize', measure)
+  if (resizeObserver) resizeObserver.disconnect()
   if (api()) api().unwatch()
 })
 function letterTitle(letter) {
@@ -560,6 +904,7 @@ function rowTitle(e) {
   <div class="explorer" :aria-label="t('explorer.side.files', 'Files')" @keydown.escape="closeMenu">
     <div class="explorer-head">
       <span class="explorer-title" :title="root || ''">{{ rootName || t('explorer.side.files', 'Files') }}</span>
+      <span v-if="backgroundLoads > 0 && !rootLoading" class="explorer-spinner explorer-head-spinner" role="status" :aria-label="t('explorer.loading', 'Loading…')" data-test="explorer-reloading"></span>
       <span class="explorer-actions">
         <button
           class="tb-icon"
@@ -734,6 +1079,7 @@ function rowTitle(e) {
       tabindex="0"
       :aria-label="t('explorer.side.files', 'Files')"
       @keydown="onTreeKey"
+      @scroll="onTreeScroll"
       @contextmenu.self="onContext($event, null)"
     >
       <div v-if="edit && edit.mode === 'new' && edit.dir === displayRoot" class="explorer-edit" :style="{ paddingLeft: rowPadding(0) + 22 + 'px' }">
@@ -748,9 +1094,23 @@ function rowTitle(e) {
         />
         <div v-if="edit.error" class="explorer-edit-error">{{ edit.error }}</div>
       </div>
-      <template v-for="(row, i) in rows" :key="row.path">
+      <PanelState v-if="rootLoading" />
+      <PanelState v-else-if="rootError && !rootError.kept" kind="error" :text="rootError.text" @retry="retryRoot" />
+      <div v-else-if="rootError" class="explorer-root-error" role="alert" data-test="explorer-error">
+        <span class="explorer-root-error-text">{{ rootError.text }}</span>
+        <button class="explorer-retry" data-test="explorer-retry" @click="retryRoot">{{ t('explorer.retry', 'Retry') }}</button>
+      </div>
+      <div v-if="windowed.before" class="explorer-spacer" aria-hidden="true" :style="{ height: windowed.before + 'px' }"></div>
+      <template v-for="{ key: itemKey, kind, row, i, depth, dir, error } in windowed.list" :key="itemKey">
+        <div v-if="kind === 'loading'" class="explorer-pending" role="status" data-test="explorer-dir-loading" :style="{ paddingLeft: rowPadding(depth) + 22 + 'px' }">
+          <span class="explorer-spinner" aria-hidden="true"></span>{{ t('explorer.loading', 'Loading…') }}
+        </div>
+        <div v-else-if="kind === 'error'" class="explorer-pending explorer-dir-error" role="alert" :title="error" :style="{ paddingLeft: rowPadding(depth) + 22 + 'px' }">
+          <span class="explorer-dir-error-text">{{ error }}</span>
+          <button class="explorer-retry" data-test="explorer-retry-dir" @click.stop="retryDir(dir)">{{ t('explorer.retry', 'Retry') }}</button>
+        </div>
         <div
-          v-if="!(edit && edit.mode === 'rename' && edit.entry.path === row.path)"
+          v-else-if="!(edit && edit.mode === 'rename' && edit.entry.path === row.path)"
           class="explorer-row"
           :class="{
             selected: segSelected(row, i) >= 0,
@@ -789,12 +1149,12 @@ function rowTitle(e) {
           <span v-if="ignoredOf(row.path)" class="explorer-ignored" :title="t('explorer.ignored', 'Ignored by .gitignore')">⊘</span>
           <span v-else-if="letterOf(row.entry)" class="explorer-git">{{ row.dir ? '•' : letterOf(row.entry) }}</span>
         </div>
-        <div v-else class="explorer-edit" :style="{ paddingLeft: rowPadding(row.depth) + 22 + 'px' }">
+        <div v-else-if="kind === 'row'" class="explorer-edit" :style="{ paddingLeft: rowPadding(row.depth) + 22 + 'px' }">
           <input :ref="setEditEl" v-model="edit.value" class="explorer-edit-input" @keydown.enter.prevent="commitEdit" @keydown.escape.prevent="edit = null" @blur="commitEdit" />
           <div v-if="edit.error" class="explorer-edit-error">{{ edit.error }}</div>
         </div>
         <div
-          v-if="row.open && edit && edit.mode === 'new' && edit.dir === row.path"
+          v-if="kind === 'row' && row.open && edit && edit.mode === 'new' && edit.dir === row.path"
           class="explorer-edit"
           :style="{ paddingLeft: rowPadding(row.depth + 1) + 22 + 'px' }"
         >
@@ -810,7 +1170,8 @@ function rowTitle(e) {
           <div v-if="edit.error" class="explorer-edit-error">{{ edit.error }}</div>
         </div>
       </template>
-      <div v-if="nodes[displayRoot] && nodes[displayRoot].error" class="explorer-empty">{{ nodes[displayRoot].error }}</div>
+      <div v-if="windowed.after" class="explorer-spacer" aria-hidden="true" :style="{ height: windowed.after + 'px' }"></div>
+
     </div>
 
     <div v-if="menu.open" class="explorer-menu-back" @mousedown.self="closeMenu" @contextmenu.prevent="closeMenu">

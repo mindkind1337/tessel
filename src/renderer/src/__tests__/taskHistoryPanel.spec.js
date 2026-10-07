@@ -195,3 +195,43 @@ describe('the panel', () => {
     w.unmount()
   })
 })
+
+describe('TaskHistoryPanel.vue: while the saved board is read', () => {
+  it('shows it is loading, not "No finished task yet", until the board (and its history) is read', async () => {
+    const { beginBoardLoad, endBoardLoad } = await import('../taskBoardStore')
+    setTaskHistory([])
+    beginBoardLoad()
+    try {
+      const w = mount(TaskHistoryPanel, { props: { active: false, now: NOW } })
+      expect(w.find('[data-test="history-loading"]').exists()).toBe(true)
+      expect(w.find('[data-test="history-empty"]').exists()).toBe(false)
+      setTaskHistory(sample())
+      endBoardLoad()
+      await nextTick()
+      expect(w.find('[data-test="history-loading"]').exists()).toBe(false)
+      expect(w.find('[data-test="history-row-a"]').exists()).toBe(true)
+      w.unmount()
+    } finally {
+      endBoardLoad()
+    }
+  })
+
+  it('empty only once read; an unreadable board is an error, not "none"', async () => {
+    const { beginBoardLoad, endBoardLoad } = await import('../taskBoardStore')
+    setTaskHistory([])
+    beginBoardLoad()
+    try {
+      const w = mount(TaskHistoryPanel, { props: { active: false, now: NOW } })
+      endBoardLoad('file locked')
+      await nextTick()
+      expect(w.find('[data-test="history-error"]').text()).toContain('file locked')
+      expect(w.find('[data-test="history-empty"]').exists()).toBe(false)
+      endBoardLoad()
+      await nextTick()
+      expect(w.find('[data-test="history-empty"]').exists()).toBe(true)
+      w.unmount()
+    } finally {
+      endBoardLoad()
+    }
+  })
+})

@@ -178,11 +178,24 @@ watch(
   }
 )
 onBeforeUnmount(() => hostRetry && clearInterval(hostRetry))
-// Another project (this computer / an SSH host): its own list.
+// Another project: its list is read again. Another source (this computer /
+// an SSH host): the rows of the previous one go at once (the list shows it
+// is loading, never "none"), and an answer for it still on the way is
+// dropped (loadSeq). The same source, another folder: the rows stay while
+// the list is read again (a conversation may be newer than the last read).
+const sourceKey = () => (props.remote && props.remote.hostId ? `remote:${props.remote.hostId}` : 'local') // i18n-ignore
 watch(
-  () => (props.remote && props.remote.hostId) || '',
-  (now, before) => {
-    if (now !== before) load()
+  () => [sourceKey(), scopeDir.value],
+  ([src, dir], before) => {
+    if (!before || (src === before[0] && dir === before[1])) return
+    if (src !== before[0]) {
+      loadSeq++
+      sessions.value = []
+      error.value = ''
+      waitingHost.value = false
+      expanded.clear()
+    }
+    load()
   }
 )
 // Shown again after a minute away: read again (a conversation may have ended).
@@ -351,9 +364,12 @@ const sortAria = computed(() =>
 )
 
 // --- Empty states ------------------------------------------------------------------------
+// While a read is on the way and nothing is listed for this project yet: the
+// loading rows, not "No sessions".
+const showLoading = computed(() => loading.value && !searching.value && !filtered.value.length)
 const emptyTitle = computed(() => {
   if (searching.value) return ''
-  if (loading.value && !sessions.value.length) return ''
+  if (loading.value) return ''
   if (!sessions.value.length) return error.value ? '' : t('sessionHistory.empty.noSessions', 'No agent sessions found')
   if (!filtered.value.length) return view.agents.length ? t('sessionHistory.empty.noMatch', 'No sessions match the current filters') : t('sessionHistory.empty.noAgentsSelected', 'No agents selected')
   return ''
@@ -476,7 +492,10 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <div v-if="error && !searching" class="sh-error" role="alert">{{ error }}</div>
+    <div v-if="error && !searching" class="sh-error" role="alert" data-test="session-error">
+      <span>{{ error }}</span>
+      <button class="exit-btn sh-error-retry" :disabled="loading" data-test="session-load-retry" @click="load">{{ t('changes.compare.retry', 'Retry') }}</button>
+    </div>
 
     <div v-if="searchMessage || indexLine" class="sh-notice" role="status" data-test="session-notice">
       <p v-if="searchMessage">{{ searchMessage }}</p>
@@ -503,7 +522,7 @@ onBeforeUnmount(() => {
     </div>
 
     <div class="sh-list" data-test="session-list">
-      <div v-if="loading && !sessions.length" class="sh-loading" aria-busy="true">
+      <div v-if="showLoading" class="sh-loading" aria-busy="true" data-test="session-loading">
         <div class="sh-loading-line"><LoaderCircle :size="13" class="sh-spin" aria-hidden="true" /><span>{{ t('sessionHistory.scanning', 'Scanning sessions') }}</span></div>
         <div v-for="i in 6" :key="i" class="sh-skeleton"><span class="sh-skel-dot"></span><span class="sh-skel-lines"><span class="sh-skel w80"></span><span class="sh-skel w60"></span><span class="sh-skel w40"></span></span></div>
       </div>

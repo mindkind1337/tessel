@@ -12,6 +12,19 @@ import { recordDone, forgetDone, renameDone } from './taskHistory'
 // references and watchers stay valid across hydration.
 export const tasks = reactive([])
 
+// The saved board read at launch (App.vue): until it is, the Tasks and Task
+// history tabs say they are loading, not "No tasks". error: it could not be
+// read (the board starts empty). Loaded unless App says a read is on the way.
+export const boardState = reactive({ loaded: true, error: '' })
+export function beginBoardLoad() {
+  boardState.loaded = false
+  boardState.error = ''
+}
+export function endBoardLoad(error = '') {
+  boardState.loaded = true
+  boardState.error = error ? String(error) : ''
+}
+
 function find(id) {
   return tasks.find((t) => t.id === id) || null
 }

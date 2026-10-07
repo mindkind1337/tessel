@@ -424,6 +424,8 @@
       "closeAria": "Fermer le panneau latéral"
     },
     "readFailed": "Impossible de le lire.",
+    "loading": "Chargement…",
+    "retry": "Réessayer",
     "copied": "Copié.",
     "editFailed": "L'opération n'a pas pu être effectuée.",
     "unknownError": "erreur inconnue",

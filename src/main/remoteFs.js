@@ -29,6 +29,7 @@ import { cleanEnv } from './cleanEnv'
 import { RISKY_CONFIG_ARGS, parseRisky, hookEntries, neutralize, gitTrust } from './gitSafety'
 import { parseRemotePath, remoteRoot, relativeTo, childPath, isRemotePath } from '../shared/remotePath'
 import { fileKind, extOf, IMAGE_MIME } from '../shared/fileKinds'
+import { sortEntries } from '../shared/explorerSort'
 import { t } from './i18n'
 import { validateCloneUrl, deriveCloneRepoName, cloneFailureMessage, errorText as addProjectErrorText } from './addProject'
 import { parseWorktreeList, MAX_WORKTREES } from './worktreeList'
@@ -37,6 +38,7 @@ import { parseAgentTools, parseRemoteSessions, remoteSessionsLimit } from './rem
 
 export const SESSION_PREFIX = 'rfs:'
 const MAX_ENTRIES = 5000
+const MAX_LIST_MANY = 64 // folders in one listMany request
 const MAX_ROOTS = 200
 const MAX_WATCHED = 500
 const MAX_IMAGE = 30 * 1024 * 1024
@@ -87,6 +89,33 @@ function sigForHost(sig) {
 const HASH_RE = /^(sha256:[0-9a-f]{64}|cksum:\d+:\d+)$/
 
 // A name for a new file or folder, or a rename, on a POSIX host.
+// __t_fp's answer -> null (nothing changed, or the first look) or
+// { rels }: the paths that changed, relative to the project ('' for the
+// project folder itself), or rels null when the list was cut (too many).
+// find prints "<real root>/./<rel>"; a real path has no "/./" of its own.
+export const FP_PATHS_BYTES = 64 * 1024
+export function parseFingerprint(out, max = FP_PATHS_BYTES) {
+  const buf = Buffer.isBuffer(out) ? out : Buffer.from(String(out || ''), 'utf8')
+  const nul = buf.indexOf(0)
+  const head = (nul < 0 ? buf : buf.subarray(0, nul)).toString('latin1').trim()
+  if (head !== 'changed') return null
+  const body = buf.subarray(nul + 1)
+  if (body.length >= max) return { rels: null }
+  const rels = new Set()
+  for (const rec of body.toString('utf8').split('\0')) {
+    if (!rec) continue
+    const at = rec.indexOf('/./')
+    if (at < 0) {
+      if (rec.endsWith('/.')) rels.add('')
+      continue
+    }
+    const rel = rec.slice(at + 3)
+    if (!rel || CONTROL.test(rel) || rel.includes('\\')) continue
+    rels.add(rel)
+  }
+  return { rels: [...rels] }
+}
+
 export function checkRemoteName(name) {
   const n = String(name || '').trim()
   if (!n) return t('main.explorer.noName', 'Give it a name.')
@@ -750,12 +779,21 @@ ${q.dotfiles !== false}`, () => listDirNow(q))
     // transient: the host did not answer (slow, busy, connection lost), the
     // folder itself may be fine: the window keeps what it showed.
     if (res.error) return { ok: false, error: res.error, transient: true }
-    if (res.rc === RC.MISSING) return { ok: false, error: t('main.explorer.folderGone', 'The folder is gone.') }
-    if (res.rc !== 0) return { ok: false, error: rcText(res, t('main.explorer.folderUnreadable', 'The folder could not be read.')) }
-    const base = dir || root
+    const failed = listFailure(res.rc, res)
+    if (failed) return failed
+    return listEntries(res.out.toString('utf8').split('\0'), dir || root, dotfiles, MAX_ENTRIES)
+  }
+  // A folder's rc from __t_ls / __t_lsm -> null (read) or the answer to give.
+  function listFailure(rc, res) {
+    if (rc === 0) return null
+    if (rc === RC.MISSING) return { ok: false, error: t('main.explorer.folderGone', 'The folder is gone.') }
+    return { ok: false, error: rcText({ ...res, rc }, t('main.explorer.folderUnreadable', 'The folder could not be read.')) }
+  }
+  // "<kind> <name>" records -> { ok, entries, truncated }, folders first.
+  function listEntries(records, base, dotfiles, max) {
     const entries = []
     let count = 0
-    for (const rec of res.out.toString('utf8').split('\0')) {
+    for (const rec of records) {
       const m = /^([dfLlo]) (.+)$/s.exec(rec)
       if (!m) continue
       count++
@@ -763,11 +801,74 @@ ${q.dotfiles !== false}`, () => listDirNow(q))
       // Not addressable (a backslash or a control character in the name) or hidden.
       if (CONTROL.test(name) || name.includes('\\') || name === '.git') continue
       if (!dotfiles && name.startsWith('.')) continue
-      if (entries.length >= MAX_ENTRIES) break
+      if (entries.length >= max) break
       entries.push({ name, path: childPath(base, name), dir: m[1] === 'd' || m[1] === 'L', ...(m[1] === 'L' || m[1] === 'l' ? { link: true } : {}) })
     }
-    entries.sort((a, b) => (a.dir !== b.dir ? (a.dir ? -1 : 1) : a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })))
-    return { ok: true, entries, truncated: count > MAX_ENTRIES }
+    sortEntries(entries)
+    return { ok: true, entries, truncated: count > max }
+  }
+
+  // Several folders in one round trip (a refresh of the open ones, a
+  // prefetch), each folder's sole sub-folder too when chain (VS Code's
+  // resolveSingleChildDescendants: a compact row "a / b / c" opens with one
+  // request). max: entries per folder (a prefetch asks fewer).
+  // -> { ok, results: [{ dir, ok, entries, truncated } | { dir, ok: false, error }] }
+  // A folder the answer did not reach (cut at its size) is left out.
+  function listMany(q = {}) {
+    const dirs = Array.isArray(q.dirs) ? q.dirs.filter((d) => typeof d === 'string').slice(0, MAX_LIST_MANY) : []
+    return shared(`lm
+${q.root}
+${dirs.join('\n')}
+${q.dotfiles !== false}
+${!!q.chain}
+${q.max || ''}`, () => listManyNow({ ...q, dirs }))
+  }
+  async function listManyNow({ root, dirs, dotfiles = true, chain = false, background = false, max = MAX_ENTRIES } = {}) {
+    const top = under(root, root)
+    if (!top) return { ok: false, error: t('main.explorer.outside', 'Outside the project.') }
+    const limit = Number.isInteger(max) && max > 0 ? Math.min(max, MAX_ENTRIES) : MAX_ENTRIES
+    const asked = []
+    const results = []
+    for (const d of dirs) {
+      const loc = under(root, d)
+      if (loc) asked.push({ dir: d, loc })
+      else results.push({ dir: d, ok: false, error: t('main.explorer.outside', 'Outside the project.') })
+    }
+    if (!asked.length) return { ok: true, results }
+    const res = await call(top.hostId, '__t_lsm', [arg(top.root.path), String(limit + 1), chain ? '1' : '0', dotfiles ? '1' : '0', ...asked.map((a) => arg(a.loc.path))], {
+      cap: 16 * 1024 * 1024,
+      timeoutMs: 60000,
+      op: 'list',
+      background: background === true,
+      retry: true
+    })
+    if (res.error) return { ok: false, error: res.error, transient: true }
+    const sections = []
+    let cur = null
+    let at = -1
+    for (const rec of res.out.toString('utf8').split('\0')) {
+      const h = /^([DC]) (\d+) (.*)$/s.exec(rec)
+      if (h) {
+        let dir
+        if (h[1] === 'D') {
+          at++
+          if (at >= asked.length) break
+          dir = asked[at].dir
+        } else {
+          if (!cur || !h[3] || CONTROL.test(h[3]) || h[3].includes('\\')) break
+          dir = childPath(cur.dir, h[3])
+        }
+        cur = { dir, rc: Number(h[2]), records: [] }
+        sections.push(cur)
+      } else if (cur) cur.records.push(rec)
+    }
+    // Cut at the cap: the last folder may be incomplete.
+    if (res.truncated && sections.length) sections.pop()
+    for (const s of sections) {
+      const failed = listFailure(s.rc, res)
+      results.push({ dir: s.dir, ...(failed || listEntries(s.records, s.dir, dotfiles, limit)) })
+    }
+    return { ok: true, results }
   }
 
   // The explorer's letters, keyed by the files' virtual paths.
@@ -1131,7 +1232,7 @@ ${q.root}`, () => sparseInfoNow(q))
       // often, and the session goes on (no new sign-in).
       for (const [virtual, w] of watchedRoots) {
         if (pollTick < w.next) continue
-        const res = await call(w.hostId, '__t_fp', [arg(w.root.path), String(w.marker)], { cap: 4096, quiet: true, timeoutMs: 10000 })
+        const res = await call(w.hostId, '__t_fp', [arg(w.root.path), String(w.marker), String(FP_PATHS_BYTES)], { cap: FP_PATHS_BYTES + 4096, quiet: true, timeoutMs: 10000 })
         if (res.skipped || res.error) {
           w.next = pollTick + 1
           continue
@@ -1143,10 +1244,15 @@ ${q.root}`, () => sparseInfoNow(q))
         }
         w.every = ROOT_POLL_TICKS
         w.next = pollTick + w.every
-        if (res.rc === 0 && res.out.toString('latin1').trim() === 'changed' && watchedRoots.get(virtual) === w) {
-          // Its files or its git state changed: the window reads again.
-          repoInfos.delete(`${w.hostId}\n${w.root.path}`)
-          send('explorer:changed', virtual)
+        const change = res.rc === 0 ? parseFingerprint(res.out, FP_PATHS_BYTES) : null
+        if (change && watchedRoots.get(virtual) === w) {
+          // Its files or its git state changed: the window reads again what
+          // they touch (everything when not known). The repository's top,
+          // settings and hooks are looked at again only when git's own
+          // folder may have changed them.
+          const rels = change.rels
+          if (!rels || rels.some((r) => r === '.git' || /^\.git\/(config|hooks|commondir|worktrees)/.test(r))) repoInfos.delete(`${w.hostId}\n${w.root.path}`)
+          send('explorer:changed', { root: virtual, paths: rels ? rels.map((r) => (r ? childPath(virtual, r) : virtual)) : null })
         }
       }
       const groups = new Map()
@@ -1665,6 +1771,7 @@ ${root}`, () => gitWorktreesNow(root))
     allowPath,
     setRoots,
     listDir,
+    listMany,
     projectStatus,
     sparseInfo,
     searchNames,
