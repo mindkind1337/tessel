@@ -963,15 +963,36 @@ const chatCompacting = computed(() => {
   const o = observedState.value
   return !!(o && o.state === 'working' && o.reason === 'compacting')
 })
+const chatApprovalOn = computed(() => {
+  const o = observedState.value
+  return asksApproval.value || shownState.value === 'approval' || !!(o && o.state === 'approval' && o.reason === 'input')
+})
+// Its screen's last lines while the chat shows an approval: the card shows
+// the prompt's request and choices from them (chat/approvalRequest.js) when
+// its file does not have them. Read again as the agent draws (throttled).
+const approvalScreen = ref('')
+let approvalScreenTimer = null
+function readApprovalScreen() {
+  const text = chatShown.value && chatApprovalOn.value && term ? screenText(40) : ''
+  if (text !== approvalScreen.value) approvalScreen.value = text
+}
+function scheduleApprovalScreen() {
+  if (approvalScreenTimer || !chatShown.value || !chatApprovalOn.value) return
+  approvalScreenTimer = setTimeout(() => {
+    approvalScreenTimer = null
+    if (mounted) readApprovalScreen()
+  }, 150)
+}
+onBeforeUnmount(() => clearTimeout(approvalScreenTimer))
 const chatWaiting = computed(() => {
   const o = observedState.value
   const input = !!(o && o.state === 'approval' && o.reason === 'input')
   const ask = o && o.state === 'approval' && o.ask ? o.ask : null
-  const approval = asksApproval.value || shownState.value === 'approval' || input
+  const approval = chatApprovalOn.value
   // Which approval (when the pane went into it): an answered one's card
   // stays hidden until another one comes.
   const approvalKey = approval ? (o && o.state === 'approval' && Number.isFinite(o.since) ? o.since : 'screen') : null
-  return { approval, input, ask, approvalKey }
+  return { approval, input, ask, approvalKey, screen: approval ? approvalScreen.value : '' }
 })
 // Why a message sent from the chat still waits to be typed (Tessel's delivery
 // holds it): '' when nothing holds it that the pane can tell.
@@ -1179,6 +1200,11 @@ const needsYou = computed(() => !!attention[props.node.id])
 const limit = computed(() => limits[props.node.id] || null)
 
 const asksApproval = computed(() => !!approvals[props.node.id])
+// The chat's approval card reads its screen again when it shows one (above).
+watch([chatShown, chatApprovalOn], () => {
+  readApprovalScreen()
+  scheduleApprovalScreen()
+})
 // How it is doing (src/shared/tracking.js), when it may be stuck.
 const track = computed(() => (ctx.trackOf ? ctx.trackOf(props.node.id) : null))
 // Sub-agents of this conversation running now (AgentChildren reports them):
@@ -2592,6 +2618,7 @@ onMounted(() => {
         if (mounted && term === outputTerm) {
           hasLiveScreen = true
           markActivity()
+          scheduleApprovalScreen()
         }
       })
     }

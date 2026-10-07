@@ -15,7 +15,8 @@
 //   node, isVisible (the file is watched only while the view shows);
 //   interactive: paneId, accountId (the main process finds the file in that
 //   account's folder), working, waiting ({ approval, input, ask: the
-//   question its hook gives, or null }),
+//   question its hook gives, or null; screen: its screen's last lines
+//   while it asks for an approval, for the card's request: approvalRequest.js }),
 //   disabledReason (why nothing can be sent now), sendMessage(text,
 //   { images, command, onDelivered, onFailed, onQueued, onTyped }), writeKeys(bytes) (the
 //   cards' keys); the full composer's (after Orca's bridge composer,
@@ -97,6 +98,9 @@ import { createTranscriptImages } from '../../../chat/transcriptImages.js'
 import { t } from '../../../i18n'
 import { remoteRoot } from '../../../../../shared/remotePath.js'
 import { useNativeChatFontScale } from '../../../chat/orca/composables/use-native-chat-font-scale.js'
+import { approvalRequest } from '../../../chat/approvalRequest.js'
+import { nativeChatToolIconName } from '../../../chat/orca/shared/native-chat-tool-icon.js'
+import { NATIVE_CHAT_TOOL_GLYPHS } from './native-chat-tool-glyphs.js'
 
 const props = defineProps({
   agent: { type: String, required: true },
@@ -899,6 +903,62 @@ function deny() {
   markApprovalAnswered()
   keys(cardKeys(props.agent).deny)
 }
+// What it asks to do (its pending tool call, else its screen's prompt) and
+// the choices its prompt offers; null: the generic note. Nothing is ever
+// answered without a click; the agent's text is shown as text only.
+const request = computed(() => {
+  if (!card.value || card.value.kind !== 'approval') return null
+  return approvalRequest({ agent: props.agent, events: fileEvents.value, screen: String((props.waiting || {}).screen || '') })
+})
+const requestExpanded = ref(false)
+watch(
+  () => (request.value ? `${request.value.tool}|${request.value.command || request.value.detail || ''}` : ''),
+  () => (requestExpanded.value = false)
+)
+const CLAMP_LINES = 6
+const CLAMP_CHARS = 600
+const requestCode = computed(() => {
+  const r = request.value
+  return r ? r.command || (r.kind === 'url' ? '' : r.detail) || '' : ''
+})
+const requestCodeLong = computed(() => requestCode.value.split('\n').length > CLAMP_LINES || requestCode.value.length > CLAMP_CHARS)
+const requestCodeShown = computed(() => {
+  const text = requestCode.value
+  if (requestExpanded.value || !requestCodeLong.value) return text
+  return `${text.split('\n').slice(0, CLAMP_LINES).join('\n').slice(0, CLAMP_CHARS)}…`
+})
+const requestToolLabel = computed(() => {
+  const r = request.value
+  if (!r) return ''
+  if (r.mcp) return `${r.mcp.server} · ${r.mcp.tool}`
+  return r.tool || ''
+})
+function screenGlyph(title) {
+  const s = String(title || '').toLowerCase()
+  if (/bash|command|shell/.test(s)) return 'square-terminal'
+  if (/edit|create|write|file|patch/.test(s)) return 'pencil'
+  if (/fetch|web|url/.test(s)) return 'globe'
+  if (/mcp|tool/.test(s)) return 'plug'
+  return 'wrench'
+}
+const requestIcon = computed(() => {
+  const r = request.value
+  if (!r) return null
+  const name = r.kind === 'screen' ? screenGlyph(r.tool) : nativeChatToolIconName(r.tool || '')
+  return NATIVE_CHAT_TOOL_GLYPHS[name] || null
+})
+function choiceLabel(choice) {
+  if (choice.kind === 'yes') return t('chat.orca.approval.yes', 'Yes')
+  if (choice.kind === 'no') return t('chat.orca.approval.no', 'No')
+  if (choice.kind === 'always' && choice.scope) return t('chat.orca.approval.alwaysFor', "Yes, and don't ask again for {{scope}}", { scope: choice.scope })
+  return choice.label
+}
+// A choice of its prompt: its own number key.
+function choose(choice) {
+  if (!card.value || card.value.kind !== 'approval' || !choice || !/^\d$/.test(choice.keys)) return
+  markApprovalAnswered()
+  keys(choice.keys)
+}
 const fromAgent = computed(() => props.agentName || props.agent)
 const questionHead = computed(() => t('chat.orca.question.from', '{{agent}} asks you', { agent: fromAgent.value }))
 const approvalHead = computed(() => t('chat.orca.terminalChat.approvalTitle', '{{agent}} asks for your approval', { agent: fromAgent.value }))
@@ -997,10 +1057,51 @@ const title = computed(() => t('chat.orca.transcriptView.title', 'Conversation o
           <ShieldQuestion class="nc-term-card-icon" aria-hidden="true" />
           <span>{{ approvalHead }}</span>
         </p>
-        <p class="nc-term-card-note">{{ t('chat.orca.terminalChat.approvalNote', 'What it wants to do is shown in its terminal.') }}</p>
+        <div v-if="request" class="nc-term-request" data-test="terminal-chat-request" :data-source="request.source">
+          <p v-if="requestToolLabel" class="nc-term-request-tool" data-test="terminal-chat-request-tool">
+            <component :is="requestIcon" v-if="requestIcon" class="nc-term-request-icon" aria-hidden="true" />
+            <span>{{ requestToolLabel }}</span>
+            <span v-if="request.diff" class="nc-term-request-diff" data-test="terminal-chat-request-diff">
+              <span class="nc-term-request-add">+{{ request.diff.added }}</span>
+              <span class="nc-term-request-del">−{{ request.diff.removed }}</span>
+            </span>
+          </p>
+          <p v-if="request.path" class="nc-term-request-line" data-test="terminal-chat-request-path">{{ request.path }}</p>
+          <p v-if="request.url" class="nc-term-request-line" data-test="terminal-chat-request-url">{{ request.url }}</p>
+          <pre v-if="requestCode" class="nc-term-request-code" data-test="terminal-chat-request-code">{{ requestCodeShown }}</pre>
+          <button
+            v-if="requestCodeLong"
+            type="button"
+            class="nc-term-request-more"
+            data-test="terminal-chat-request-more"
+            @click="requestExpanded = !requestExpanded"
+          >
+            {{ requestExpanded ? t('chat.orca.terminalChat.approvalLess', 'Show less') : t('chat.orca.terminalChat.approvalMore', 'Show all') }}
+          </button>
+          <p v-if="request.command && request.detail" class="nc-term-card-note" data-test="terminal-chat-request-detail">{{ request.detail }}</p>
+          <p v-if="request.url && request.detail" class="nc-term-card-note">{{ request.detail }}</p>
+          <p v-if="request.question" class="nc-term-card-note" data-test="terminal-chat-request-question">{{ request.question }}</p>
+        </div>
+        <p v-else class="nc-term-card-note" data-test="terminal-chat-approval-note">{{ t('chat.orca.terminalChat.approvalNote', 'What it wants to do is shown in its terminal.') }}</p>
         <div class="nc-term-card-actions">
-          <Button size="sm" data-test="terminal-chat-allow" @click="approve">{{ t('chat.orca.approval.allow', 'Allow') }}</Button>
-          <Button size="sm" variant="outline" data-test="terminal-chat-deny" @click="deny">{{ t('chat.orca.approval.deny', 'Deny') }}</Button>
+          <template v-if="request && request.choices.length">
+            <Button
+              v-for="choice in request.choices"
+              :key="choice.number"
+              size="sm"
+              :variant="choice.kind === 'yes' ? 'default' : 'outline'"
+              :title="choice.label"
+              :data-test="`terminal-chat-choice-${choice.kind}`"
+              :data-key="choice.keys"
+              @click="choose(choice)"
+            >
+              {{ choiceLabel(choice) }}
+            </Button>
+          </template>
+          <template v-else>
+            <Button size="sm" data-test="terminal-chat-allow" @click="approve">{{ t('chat.orca.approval.allow', 'Allow') }}</Button>
+            <Button size="sm" variant="outline" data-test="terminal-chat-deny" @click="deny">{{ t('chat.orca.approval.deny', 'Deny') }}</Button>
+          </template>
           <Button size="sm" variant="ghost" data-test="terminal-chat-see" @click="emit('close')">
             <SquareTerminal />
             {{ t('chat.orca.terminalChat.showTerminal', 'Show terminal') }}
@@ -1179,6 +1280,61 @@ const title = computed(() => t('chat.orca.transcriptView.title', 'Conversation o
   max-width: 56rem;
   margin: 4px auto 0;
   color: var(--nc-muted-foreground);
+}
+/* What the approval asks: its tool, then its command, file or URL. */
+.nc-term-request {
+  max-width: 56rem;
+  margin: 4px auto 0;
+  min-width: 0;
+}
+.nc-term-request-tool {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-weight: 500;
+}
+.nc-term-request-icon {
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+  color: var(--nc-muted-foreground);
+}
+.nc-term-request-diff {
+  display: inline-flex;
+  gap: 4px;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  font-weight: 400;
+}
+.nc-term-request-add {
+  color: #3fa66b;
+}
+.nc-term-request-del {
+  color: #d05a5a;
+}
+.nc-term-request-line,
+.nc-term-request-code {
+  margin: 4px 0 0;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.nc-term-request-code {
+  max-height: 16rem;
+  overflow: auto;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--nc-muted-foreground) 12%, transparent);
+  white-space: pre-wrap;
+}
+.nc-term-request-more {
+  margin-top: 2px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent, #6aa0ff);
+  font: inherit;
+  cursor: pointer;
 }
 .nc-term-card-actions {
   display: flex;

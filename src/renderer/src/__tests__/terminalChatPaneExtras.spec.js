@@ -160,6 +160,25 @@ describe('the chat view of a terminal pane, closer to the chat pane', () => {
     expect(view().props('waiting')).toMatchObject({ approval: true, approvalKey: 777 })
   })
 
+  it("an approval gives the chat its screen's prompt (the card shows what it asks); none otherwise", async () => {
+    screen.rows[0] = ' Bash command'
+    screen.rows[1] = '   curl -sS https://example.test'
+    screen.rows[2] = ' Do you want to proceed?'
+    screen.rows[3] = ' ❯ 1. Yes'
+    screen.rows[4] = '   2. No'
+    try {
+      mountPane()
+      await flushPromises()
+      expect(view().props('waiting').screen).toBe('')
+      state({ state: 'approval', reason: 'permission', since: 900 })
+      await flushPromises()
+      expect(view().props('waiting').screen).toContain('Do you want to proceed?')
+      expect(view().props('waiting').screen).toContain('curl -sS https://example.test')
+    } finally {
+      for (let i = 0; i < 5; i++) screen.rows[i] = ''
+    }
+  })
+
   it('a question it asks is badged as a question, not an approval', async () => {
     mountPane()
     state({ state: 'approval', reason: 'input', since: 300 })

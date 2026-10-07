@@ -323,6 +323,80 @@ describe('NativeChatTranscriptView, a terminal agent chat view (interactive)', (
     await vi.advanceTimersByTimeAsync(10)
     expect(writeKeys).toHaveBeenCalledWith('2')
   })
+
+  // The approval card shows what the agent asks (chat/approvalRequest.js).
+  const pendingBash = (command) => ({
+    ok: true,
+    viewId: 'tv-1',
+    events: [conversation[0], { type: 'tool', id: 'b1', name: 'Bash', input: { command }, status: 'running', at: 2500 }, { type: 'tool', id: 'b1', status: 'done' }, { type: 'turnEnd', status: 'completed' }]
+  })
+  const BOX = [
+    '────────────────────────────',
+    ' Bash command',
+    '',
+    '   curl -sS https://example.test',
+    '',
+    ' Do you want to proceed?',
+    ' ❯ 1. Yes',
+    "   2. Yes, and don't ask again for curl commands in /root",
+    '   3. No, and tell Claude what to do differently (esc)'
+  ].join('\n')
+
+  it("an approval from the file's pending call: its tool and command, as text, with Allow / Deny", async () => {
+    const writeKeys = vi.fn()
+    api.open.mockResolvedValueOnce(pendingBash('echo <b>hi</b> && curl -sS https://example.test'))
+    await mountChat({ writeKeys, waiting: { approval: true, approvalKey: 1 } })
+    const card = document.querySelector('[data-test="terminal-chat-approval"]')
+    expect(card.querySelector('[data-test="terminal-chat-request-tool"]').textContent).toContain('Bash')
+    const code = card.querySelector('[data-test="terminal-chat-request-code"]')
+    expect(code.textContent).toBe('echo <b>hi</b> && curl -sS https://example.test')
+    // Untrusted: shown as text, never as HTML.
+    expect(code.querySelector('b')).toBeNull()
+    expect(card.querySelector('[data-test="terminal-chat-approval-note"]')).toBeNull()
+    expect(writeKeys).not.toHaveBeenCalled()
+    card.querySelector('[data-test="terminal-chat-allow"]').click()
+    expect(writeKeys.mock.calls.map((c) => c[0])).toEqual(['1'])
+  })
+
+  it("an approval with its screen's prompt: Claude's own choices, each its number key", async () => {
+    const writeKeys = vi.fn()
+    api.open.mockResolvedValueOnce(pendingBash('curl -sS https://example.test'))
+    await mountChat({ writeKeys, waiting: { approval: true, approvalKey: 1, screen: BOX } })
+    const card = document.querySelector('[data-test="terminal-chat-approval"]')
+    expect(card.querySelector('[data-test="terminal-chat-allow"]')).toBeNull()
+    expect(card.querySelector('[data-test="terminal-chat-choice-always"]').textContent).toContain("Yes, and don't ask again for curl commands in /root")
+    expect(card.querySelector('[data-test="terminal-chat-see"]')).not.toBeNull()
+    card.querySelector('[data-test="terminal-chat-choice-always"]').click()
+    expect(writeKeys.mock.calls.map((c) => c[0])).toEqual(['2'])
+    await flushPromises()
+    expect(document.querySelector('[data-test="terminal-chat-approval"]')).toBeNull()
+    await wrapper.setProps({ waiting: { approval: true, approvalKey: 2, screen: BOX } })
+    document.querySelector('[data-test="terminal-chat-choice-no"]').click()
+    expect(writeKeys.mock.calls.map((c) => c[0])).toEqual(['2', '3'])
+  })
+
+  it('an approval from the screen alone (the file lags), and a long command folded with Show all', async () => {
+    await mountChat({ waiting: { approval: true, approvalKey: 1, screen: BOX } })
+    const card = document.querySelector('[data-test="terminal-chat-approval"]')
+    expect(card.querySelector('[data-test="terminal-chat-request"]').getAttribute('data-source')).toBe('screen')
+    expect(card.querySelector('[data-test="terminal-chat-request-tool"]').textContent).toContain('Bash command')
+    expect(card.querySelector('[data-test="terminal-chat-request-code"]').textContent).toBe('curl -sS https://example.test')
+    wrapper.unmount()
+    const long = Array.from({ length: 12 }, (_, i) => `echo line ${i}`).join('\n')
+    api.open.mockResolvedValueOnce(pendingBash(long))
+    await mountChat({ waiting: { approval: true, approvalKey: 1 } })
+    const code = () => document.querySelector('[data-test="terminal-chat-request-code"]').textContent
+    expect(code()).not.toContain('line 11')
+    document.querySelector('[data-test="terminal-chat-request-more"]').click()
+    await flushPromises()
+    expect(code()).toContain('line 11')
+  })
+
+  it('an approval with nothing readable: the generic note', async () => {
+    await mountChat({ waiting: { approval: true, approvalKey: 1, screen: '✻ Working… (esc to interrupt)' } })
+    expect(document.querySelector('[data-test="terminal-chat-approval-note"]')).not.toBeNull()
+    expect(document.querySelector('[data-test="terminal-chat-request"]')).toBeNull()
+  })
 })
 
 describe('NativeChatTranscriptView, the full composer of a terminal agent chat view', () => {
