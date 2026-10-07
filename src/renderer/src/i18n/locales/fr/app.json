@@ -795,7 +795,8 @@
       "installTitle": "Installer {{agent}} sur {{host}} ?",
       "installText": "Tessel ouvre un terminal sur l’hôte et y lance cette commande d’installation officielle :",
       "installConfirm": "Installer",
-      "rootNoYolo": "Claude Code refuse le mode Yolo en root : démarré en mode Accepter les modifications. Utilisez un compte non root sur {{host}} pour le mode Yolo."
+      "rootNoYolo": "Claude Code refuse le mode Yolo en root : démarré en mode Accepter les modifications. Utilisez un compte non root sur {{host}} pour le mode Yolo.",
+      "toolsNotConnected": "Les outils de Tessel ne sont pas connectés sur {{host}} : {{reason}}"
     },
     "agentTerminal": {
       "allow": "Autoriser",

@@ -1303,6 +1303,16 @@ function rootNoYoloTitle() {
 function dismissRootNote() {
   delete props.node.rootNoYoloNote
 }
+// Its agent on an SSH host has no Tessel tools (App.vue
+// noteRemoteToolsMissing): Retry restarts it in place, prepared again (the
+// conversation resumed); a new launch sets the note again if it still fails.
+function dismissRemoteToolsNote() {
+  delete props.node.remoteToolsNote
+}
+function retryRemoteTools() {
+  delete props.node.remoteToolsNote
+  if (ctx.restartLeaf) ctx.restartLeaf(props.node.id)
+}
 
 // The header's hover card (Orca's hover card, like the sidebar's agent rows)
 // instead of native tooltips on the number, icon, title and state badge.
@@ -3190,7 +3200,17 @@ const paneMenuBindings = computed(() => ({
       />
     </div>
 
-    <div v-if="node.rootNoYoloNote && !node.failed" class="root-note" data-test="root-no-yolo-note" role="status" @mousedown.stop>
+    <div v-if="node.remoteToolsNote && !node.failed" class="root-note tools-note" data-test="remote-tools-note" role="alert" @mousedown.stop>
+      <span class="root-note-text">{{ node.remoteToolsNote }}</span>
+      <button class="exit-btn primary" data-test="remote-tools-retry" @click="retryRemoteTools">{{ t('pane.retry', 'Retry') }}</button>
+      <button class="pane-nav-btn" data-test="remote-tools-close" :title="t('pane.rootNoYolo.close', 'Close')" :aria-label="t('pane.rootNoYolo.close', 'Close')" @click="dismissRemoteToolsNote">
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+        </svg>
+      </button>
+    </div>
+
+    <div v-if="node.rootNoYoloNote && !node.failed" :class="['root-note', { 'below-tools-note': !!node.remoteToolsNote }]" data-test="root-no-yolo-note" role="status" @mousedown.stop>
       <span class="root-note-text">{{ node.rootNoYoloNote }}</span>
       <button class="pane-nav-btn" data-test="root-no-yolo-close" :title="t('pane.rootNoYolo.close', 'Close')" :aria-label="t('pane.rootNoYolo.close', 'Close')" @click="dismissRootNote">
         <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">

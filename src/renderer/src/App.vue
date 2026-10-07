@@ -1405,6 +1405,9 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
   })
   leaf.attached = attached
   if (res.agentStatusWarning) showToast(res.agentStatusWarning, { timeout: 10000 })
+  // Its agent on an SSH host could not get the Tessel tools (team, board,
+  // browser, terminal): said in the pane, with Retry, never silently.
+  if (res.remoteToolsWarning) noteRemoteToolsMissing(leaf, res.remoteToolsWarning)
   if (attached) {
     // Still running: nothing to start. Keep the pane's conversation id, and
     // if Codex's id wasn't found yet, keep looking for it.
@@ -4819,6 +4822,15 @@ function noteRootNoYolo(leaf, hostId) {
   })
   if (window.shellApi.log) window.shellApi.log('info', `pane ${leaf.id}: Claude Code on ${hostId} runs as root, started in acceptEdits instead of Yolo`)
 }
+// The agent on a host has no Tessel tools (main: remoteToolsReason): its
+// note in the pane ("Tessel tools are not connected on <host>: <reason>"),
+// with Retry (a restart in place, prepared again) and Close.
+function noteRemoteToolsMissing(leaf, warning) {
+  const host = (warning && warning.host) || remoteHostLabel(leaf.remoteHostId)
+  const reason = (warning && warning.reason) || t('app.common.unknownError', 'unknown error')
+  leaf.remoteToolsNote = t('app.remoteAgents.toolsNotConnected', 'Tessel tools are not connected on {{host}}: {{reason}}', { host, reason })
+  if (window.shellApi.log) window.shellApi.log('warn', `pane ${leaf.id}: Tessel tools not connected on ${leaf.remoteHostId}: ${reason}`)
+}
 // The safety net: Claude Code refused its Yolo flag in pane `id` (root not
 // known before): `retry` (the same line without it) typed once, and the note.
 const ROOT_REFUSAL_WATCH_MS = 60000
@@ -4983,8 +4995,26 @@ async function recheckOrInstall(hostId, id) {
 onMounted(() => {
   const api = window.shellApi.remoteAgents
   if (api && api.onStatus) offRemoteAgents = api.onStatus(onRemoteAgentsStatus)
+  if (api && api.onToolsMissing) offRemoteToolsMissing = api.onToolsMissing(onRemoteToolsMissing)
 })
-onBeforeUnmount(() => offRemoteAgents && offRemoteAgents())
+onBeforeUnmount(() => {
+  if (offRemoteAgents) offRemoteAgents()
+  if (offRemoteToolsMissing) offRemoteToolsMissing()
+})
+// The terminal host could not give a pane's agent its tools on the host (its
+// socket or environment there): the pane's note. It may come before the
+// pane exists (its terminal still being created): looked for again a few
+// times.
+let offRemoteToolsMissing = null
+function onRemoteToolsMissing(msg, tries = 0) {
+  if (!msg || typeof msg.id !== 'string') return
+  const leaf = findLeaf(msg.id)
+  if (leaf && leaf.remoteHostId && !leaf.notConnected) {
+    noteRemoteToolsMissing(leaf, { host: typeof msg.host === 'string' ? msg.host : '', reason: typeof msg.reason === 'string' ? msg.reason : '' })
+    return
+  }
+  if (tries < 10) setTimeout(() => onRemoteToolsMissing(msg, tries + 1), 1000)
+}
 async function refreshBranches() {
   const cwds = [...new Set(workspaces.value.map((w) => w.cwd).filter(Boolean))]
   const remotes = [...new Set(workspaces.value.filter((w) => w.remote).map(gitKeyOf).filter(Boolean))]

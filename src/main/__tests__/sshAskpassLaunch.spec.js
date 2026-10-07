@@ -59,6 +59,8 @@ function harness({ helper = 'fake.exe', createDelay = null, sshMode = { mode: 's
     validateRemotePath: (p) => ({ path: p }),
     // Agents on the host (remoteAgent/remoteAgentSetup.js): what main prepared.
     prepareRemoteAgent: async (q) => (typeof remoteAgent === 'function' ? remoteAgent(q) : remoteAgent),
+    REMOTE_AGENT_PROVIDERS: ['claude', 'codex'],
+    remoteToolsReason: (code) => `reason ${code}`,
     // The host's helper and agent check after its first terminal (background).
     remoteAgentCheck: { hostStarted: async () => {}, waitConnected: () => {}, paneConnected: () => {}, paneExited: () => {} },
     // A terminal opened on a host lets its Files session sign in (remoteFs.js).
@@ -128,10 +130,10 @@ describe('pty:create on the shared ssh2 connection (the real handler from index.
     h.broker.close()
   })
 
-  it('an agent pane whose host could not be set up still opens, with the reason', async () => {
-    const h = harness({ sshMode: { mode: 'ssh2', spec: { host: 'box', port: 22, username: 'me' } }, remoteAgent: { warning: 'no node there' } })
+  it('an agent pane whose host could not be set up still opens, with the reason for its pane', async () => {
+    const h = harness({ sshMode: { mode: 'ssh2', spec: { host: 'box', port: 22, username: 'me' } }, remoteAgent: { toolsReason: 'no node there' } })
     const res = await h.create('pane-1', { agentId: 'claude' })
-    expect(res).toMatchObject({ ok: true, agentLaunchToken: null, agentStatusWarning: 'no node there' })
+    expect(res).toMatchObject({ ok: true, agentLaunchToken: null, agentStatusWarning: null, remoteToolsWarning: { host: 'fake', reason: 'no node there' } })
     expect(h.creates[0].ssh.remoteAgent).toBeUndefined()
     h.broker.close()
   })
@@ -148,6 +150,24 @@ describe('pty:create with askpass (the real handler from index.js)', () => {
     expect(h.creates).toEqual([{ kind: 'create', askpass: true, token: expect.stringMatching(/^[0-9a-f]{64}$/) }])
     expect(h.started).toEqual([['pane-1', 'host-1', { connected: false }]])
     h.broker.close()
+  })
+
+  it('an agent on a host opened with the system ssh: its pane says the tools are not connected there', async () => {
+    const h = harness()
+    const p = h.create('pane-1', { agentId: 'claude' })
+    await flush()
+    h.version()
+    const res = await p
+    expect(res.ok).toBe(true)
+    expect(res.remoteToolsWarning).toEqual({ host: 'fake', reason: 'reason system-ssh' })
+    // A plain shell there: nothing to say.
+    const h2 = harness()
+    const p2 = h2.create('pane-2')
+    await flush()
+    h2.version()
+    expect((await p2).remoteToolsWarning).toBe(null)
+    h.broker.close()
+    h2.broker.close()
   })
 
   it('closed while ssh -V runs: no terminal is created at all (not a fallback without askpass)', async () => {

@@ -619,6 +619,13 @@ const api = {
       const handler = (_e, payload) => cb(payload)
       ipcRenderer.on('remoteAgents:status', handler)
       return () => ipcRenderer.removeListener('remoteAgents:status', handler)
+    },
+    // A pane's agent could not get Tessel's tools there (its socket or
+    // environment on the host): { id, host, reason }.
+    onToolsMissing: (cb) => {
+      const handler = (_e, payload) => cb(payload)
+      ipcRenderer.on('remoteAgents:toolsMissing', handler)
+      return () => ipcRenderer.removeListener('remoteAgents:toolsMissing', handler)
     }
   },
   // ssh's questions for a remote host pane: password, passphrase, challenge,

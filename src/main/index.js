@@ -137,6 +137,7 @@ import {
   SERVER_NAME
 } from './teamInstall'
 import { findNode, noNodeError } from './nodePath'
+import { remoteToolsReason as remoteToolsReasonText, remoteInstallErrorFor, REMOTE_TOOLS_CODES } from './remoteToolsReason'
 import { removeStatusHooks, STATUS_HOOK_AGENTS } from './agentStatusHooks'
 import teamServerSource from './teamMcp/server.cjs?raw'
 import remoteShimSource from './remoteAgent/tessel-shim.cjs?raw'
@@ -3239,7 +3240,11 @@ const host = createPtyClient({
     send('pty:exit', { id, exitCode, signal, pid: pid || null })
   },
   // ssh2 connections, channels and questions (ssh/sshRemote.js).
-  onEvent: (msg) => sshRemote.onEvent(msg),
+  onEvent: (msg) => {
+    // The tunnel could not give a pane's agent its tools (remote-tools).
+    if (msg && msg.op === 'remote-tools') return remoteToolsMissing(msg)
+    sshRemote.onEvent(msg)
+  },
   onConnected: () => {
     void sshRemote.onConnected()
   },
@@ -3301,30 +3306,56 @@ function remoteShimWarning(reason) {
   if (reason === 'old-node') return t('main.remoteAgent.oldNode', 'Node.js on this host is older than 18, so the agent there has no team tools or live status. Update Node.js on the host.')
   return t('main.remoteAgent.failed', 'Tessel could not set up its team tools on this host, so the agent there has no team tools or live status.')
 }
+// Why the agent on a host has no Tessel tools (remoteToolsReason.js), said
+// in its pane with Retry. Never silent.
+const remoteToolsReason = (reason, detail) => remoteToolsReasonText(t, reason, detail, { noNodeError })
+// The terminal host's tunnel could not give pane msg.id's agent its tools
+// ({ op: 'remote-tools', id, hostId, code }): said in that pane.
+function remoteToolsMissing(msg) {
+  const id = typeof msg.id === 'string' && /^[\w-]{1,80}$/.test(msg.id) ? msg.id : null
+  if (!id) return
+  const target = typeof msg.hostId === 'string' ? remoteHosts.get(msg.hostId) : null
+  const code = REMOTE_TOOLS_CODES.has(msg.code) ? msg.code : 'failed'
+  log.warn('remote-agent', `pane ${id}: no Tessel tools on ${msg.hostId}: ${code}`)
+  send('remoteAgents:toolsMissing', { id, host: String((target && target.label) || msg.hostId || ''), reason: remoteToolsReason(code) })
+}
 async function prepareRemoteAgent({ id, target, remotePath, agentId, teamSecret }) {
   const provider = REMOTE_AGENT_PROVIDERS.includes(agentId) ? agentId : null
   if (!provider) return {}
+  const fail = (reason, detail) => ({ toolsReason: remoteToolsReason(reason, detail) })
   // A terminal host started by an older Tessel keeps running across app
   // restarts without the tunnel: nothing is set up, and the user is told.
   if (!host.features.remoteAgent) {
     log.warn('remote-agent', 'the terminal host is older than this Tessel: no team tools for the agent on the host')
-    return { warning: t('main.remoteAgent.oldHost', "Tessel's terminal host was started by an older version, so this agent has no team tools or live status on the host. Quit Tessel completely and start it again (this restarts the terminals), then launch the agent again.") }
+    return fail('old-host')
   }
   const node = findNode({ env: freshEnv() })
-  if (!node) return { warning: noNodeError() }
+  if (!node) return fail('local-node')
   let shim = await remoteShims.ensure(target.id)
   // Installed when this agent was not there yet (it was skipped): again, now.
   if (shim.ok && shim.result && Array.isArray(shim.result.skipped) && shim.result.skipped.includes(provider)) {
     remoteShims.forget(target.id)
     shim = await remoteShims.ensure(target.id)
   }
-  if (!shim.ok) return { warning: remoteShimWarning(shim.reason) }
+  if (!shim.ok) return fail(shim.reason, shim.detail)
+  // Still skipped (no settings of that agent there), or its files could not
+  // be written: its MCP server and hooks are not registered on the host.
+  if (shim.result && Array.isArray(shim.result.skipped) && shim.result.skipped.includes(provider)) {
+    remoteShims.forget(target.id)
+    return fail('skipped', provider)
+  }
+  const installError = remoteInstallErrorFor(shim.result, provider)
+  if (installError) {
+    remoteShims.forget(target.id)
+    log.warn('remote-agent', `install on ${target.id}: ${installError}`)
+    return fail('config', installError)
+  }
   let script
   try {
     script = writeServerScript(join(app.getPath('appData'), 'tessel-team'), teamServerSource)
   } catch (err) {
     log.error('remote-agent', `team server script: ${err.message}`)
-    return { warning: remoteShimWarning('failed') }
+    return fail('failed', err.message)
   }
   // A remote project's team channel and board live on this computer (a pane
   // outside any project: the host's folder). server.cjs never looks for a
@@ -3334,12 +3365,12 @@ async function prepareRemoteAgent({ id, target, remotePath, agentId, teamSecret 
     fs.mkdirSync(projectDir, { recursive: true })
   } catch (err) {
     log.error('remote-agent', `data folder: ${err.message}`)
-    return { warning: remoteShimWarning('failed') }
+    return fail('failed', err.message)
   }
   const launchToken = crypto.randomBytes(16).toString('hex')
   // Only what server.cjs needs: the remote side drives that process
-  // (remoteServerEnv), and TESSEL_REMOTE limits its tools (no browser, no
-  // workers on this computer).
+  // (remoteServerEnv); TESSEL_REMOTE tags its messages with the host and
+  // keeps it to the project folder Tessel gave (its tools are all there).
   const env = remoteServerEnv(freshEnv(), {
     TESSEL_PANE_ID: String(id),
     TESSEL_TEAM_SECRET: teamSecret,
@@ -3533,6 +3564,9 @@ ipcMain.handle('pty:create', async (_evt, opts = {}) => {
     cwd: startDir,
     agentLaunchToken,
     agentStatusWarning,
+    // An agent on a host opened with the system ssh: no tunnel for its
+    // Tessel tools there (remoteAgent/REMOTE_AGENTS.md, v1), said in the pane.
+    remoteToolsWarning: remote && REMOTE_AGENT_PROVIDERS.includes(opts.agentId) ? { host: String(remote.name || remote.target.id), reason: remoteToolsReason('system-ssh') } : null,
     remoteHost: remote ? { id: remote.target.id, label: remote.name } : null
   }
 })
@@ -3598,7 +3632,9 @@ async function createSshPane(opts, target, spec, shell, startedAt) {
     pid: null,
     cwd: startDir,
     agentLaunchToken,
-    agentStatusWarning: agent.warning || null,
+    agentStatusWarning: null,
+    // Its agent has no Tessel tools there: said in the pane, with Retry.
+    remoteToolsWarning: agent.toolsReason ? { host: String(target.label || target.id), reason: agent.toolsReason } : null,
     remoteHost: { id: target.id, label: target.label }
   }
 }

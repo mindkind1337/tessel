@@ -2203,6 +2203,16 @@ kbd {
   flex: 1;
   min-width: 0;
 }
+/* An agent on an SSH host without Tessel's tools: the reason and Retry */
+.root-note.tools-note {
+  border-color: color-mix(in srgb, var(--warn) 60%, transparent);
+}
+.root-note.below-tools-note {
+  top: 80px;
+}
+.tools-note .exit-btn {
+  flex: none;
+}
 
 /* ================= Find bar ================= */
 .find-bar {

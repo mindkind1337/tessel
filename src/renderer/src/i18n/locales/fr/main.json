@@ -885,7 +885,22 @@
       "noNode": "Node.js est introuvable sur cet hôte : l’agent qui y tourne n’a ni les outils d’équipe ni son état en direct. Installez Node.js 18 ou plus récent sur l’hôte.",
       "oldNode": "Node.js sur cet hôte est antérieur à la version 18 : l’agent qui y tourne n’a ni les outils d’équipe ni son état en direct. Mettez Node.js à jour sur l’hôte.",
       "failed": "Tessel n’a pas pu installer ses outils d’équipe sur cet hôte : l’agent qui y tourne n’a ni les outils d’équipe ni son état en direct.",
-      "oldHost": "Le gestionnaire de terminaux de Tessel a été lancé par une version plus ancienne : cet agent n’a ni les outils d’équipe ni son état en direct sur l’hôte. Quittez complètement Tessel puis relancez-le (les terminaux redémarrent), puis relancez l’agent."
+      "oldHost": "Le gestionnaire de terminaux de Tessel a été lancé par une version plus ancienne : cet agent n’a ni les outils d’équipe ni son état en direct sur l’hôte. Quittez complètement Tessel puis relancez-le (les terminaux redémarrent), puis relancez l’agent.",
+      "reason": {
+        "noNode": "Node.js 18 ou plus récent est introuvable sur l’hôte (Tessel cherche aussi la copie de VS Code Remote-SSH). Installez Node.js sur l’hôte, puis Réessayer.",
+        "oldNode": "Node.js sur l’hôte est antérieur à la version 18. Mettez-le à jour, puis Réessayer.",
+        "timeout": "leur installation sur l’hôte a pris trop de temps.",
+        "oldHost": "le gestionnaire de terminaux de Tessel a été lancé par une version plus ancienne. Quittez complètement Tessel puis relancez-le.",
+        "systemSsh": "cet hôte est ouvert avec le ssh du système (hôte de rebond ou proxy), qui ne peut pas encore les transporter.",
+        "skipped": "{{agent}} n’a pas encore de réglages sur l’hôte. Lancez-le une fois sur l’hôte, puis Réessayer.",
+        "config": "ses réglages sur l’hôte n’ont pas pu être mis à jour ({{detail}}).",
+        "failedDetail": "ils n’ont pas pu être installés sur l’hôte ({{detail}}).",
+        "failed": "ils n’ont pas pu être installés sur l’hôte.",
+        "bind": "le sshd de l’hôte a refusé de transférer le socket de Tessel (AllowStreamLocalForwarding ou DisableForwarding dans son sshd_config).",
+        "prep": "le dossier de Tessel sur l’hôte (~/.tessel-server) n’a pas pu être préparé.",
+        "env": "les réglages Tessel du volet n’ont pas pu être écrits sur l’hôte.",
+        "tunnelTimeout": "le socket de Tessel sur l’hôte n’était pas prêt à temps."
+      }
     }
   },
   "main.chat.image.tooLarge": "Cette image dépasse {{mb}} Mo.",

@@ -247,3 +247,26 @@ describe('the helpers', () => {
     expect(canCycleToYolo(node)).toBe(false)
   })
 })
+
+describe('an agent on a host without Tessel tools', () => {
+  it('says so in the pane, with the host and the reason, and still starts the agent', async () => {
+    const env = load({ username: 'deploy' })
+    env.shellApi.createPty.mockImplementationOnce(async (o) => ({
+      ok: true,
+      shell: { id: 'pwsh', name: 'PowerShell' },
+      backend: 'ssh',
+      pid: null,
+      cwd: '/srv/app',
+      remoteHost: { id: o.remoteHostId, label: 'Box' },
+      remoteToolsWarning: { host: 'Box', reason: 'Node.js 18 or newer was not found on the host.' }
+    }))
+    const leaf = await env.start()
+    expect(leaf.remoteToolsNote).toBe('Tessel tools are not connected on Box: Node.js 18 or newer was not found on the host.')
+    expect(env.typed()).toHaveLength(1)
+  })
+  it('no warning: no note', async () => {
+    const env = load({ username: 'deploy' })
+    const leaf = await env.start()
+    expect(leaf.remoteToolsNote).toBeUndefined()
+  })
+})

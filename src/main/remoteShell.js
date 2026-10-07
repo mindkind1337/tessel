@@ -511,6 +511,7 @@ __t_findnode() {
   case $__nd in /*) ;; *) __nd= ;; esac
   if [ -z "$__nd" ]; then __nd=$("\${SHELL:-/bin/sh}" -lc 'command -v node' </dev/null 2>/dev/null | tail -n 1) || __nd=; case $__nd in /*) ;; *) __nd= ;; esac; fi
   if [ -z "$__nd" ]; then for __c in "$HOME"/.nvm/versions/node/*/bin/node "$HOME"/.volta/bin/node "$HOME"/.local/bin/node /usr/local/bin/node /opt/homebrew/bin/node; do [ -x "$__c" ] && __nd=$__c; done; fi
+  if [ -z "$__nd" ]; then __nd=$(ls -td -- "$HOME"/.vscode-server/cli/servers/*/server/node "$HOME"/.vscode-server/bin/*/node "$HOME"/.cursor-server/cli/servers/*/server/node "$HOME"/.cursor-server/bin/*/node 2>/dev/null | head -n 1) || __nd=; case $__nd in /*) ;; *) __nd= ;; esac; fi
   [ -n "$__nd" ] && [ -x "$__nd" ]
 }
 __t_rsess() {
@@ -539,6 +540,7 @@ __t_ragent() {
   __v=$("$__nd" -p 'process.versions.node.split(".")[0]' 2>/dev/null) || return 81
   [ "$__v" -ge 18 ] 2>/dev/null || return 82
   printf '%s\\n' "$__nd" >"$__s/bin/NODE"
+  if [ ! -e "$HOME/.claude" ] && [ ! -e "$HOME/.claude.json" ]; then for __c in "$HOME"/.vscode-server/extensions/anthropic.claude-code-*/resources/native-binary/claude; do [ -f "$__c" ] && [ -x "$__c" ] && { ( umask 077; mkdir -p "$HOME/.claude" ); break; }; done; fi
   if [ "$(cat "$__s/bin/VERSION" 2>/dev/null)" != "$1" ] || [ ! -f "$__s/bin/tessel-shim.cjs" ]; then
     __tmp=$(mktemp "$__s/bin/.shim.XXXXXX") || return 98
     __t_b64d <"$__T_D/u" >"$__tmp" || { rm -f "$__tmp"; return 98; }
