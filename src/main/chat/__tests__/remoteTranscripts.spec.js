@@ -80,6 +80,21 @@ describe('remote tail', () => {
     expect(await remoteTranscriptExists({ readAgentFile: async () => ({ ok: false, error: 'x' }), hostId: HOST, agent: 'claude', sessionId: SID })).toBe(null)
     expect(validRemoteTranscript('grok', HOST, SID)).toBe(false)
   })
+
+  it('whether a conversation is on the host: one byte asked; not answered in time or not connected -> null', async () => {
+    const read = vi.fn(async () => ({ ok: true, size: 9, data: Buffer.from('x') }))
+    expect(await remoteTranscriptExists({ readAgentFile: read, hostId: HOST, agent: 'claude', sessionId: SID, timeoutMs: 1000 })).toBe(true)
+    expect(read).toHaveBeenCalledWith(HOST, { agent: 'claude', id: SID, offset: null, cap: 1 })
+    const never = () => new Promise(() => {})
+    expect(await remoteTranscriptExists({ readAgentFile: never, hostId: HOST, agent: 'claude', sessionId: SID, timeoutMs: 20 })).toBe(null)
+    // Fails after the timeout: nobody waits, nothing unhandled.
+    const late = () => new Promise((_, reject) => setTimeout(() => reject(new Error('late')), 40))
+    expect(await remoteTranscriptExists({ readAgentFile: late, hostId: HOST, agent: 'claude', sessionId: SID, timeoutMs: 10 })).toBe(null)
+    await new Promise((r) => setTimeout(r, 60))
+    expect(await remoteTranscriptExists({ readAgentFile: async () => ({ ok: false, notConnected: true }), hostId: HOST, agent: 'codex', sessionId: '019a0000-1111-7222-8333-444444444444' })).toBe(null)
+    // A Codex rollout there.
+    expect(await remoteTranscriptExists({ readAgentFile: async () => ({ ok: false, missing: true }), hostId: HOST, agent: 'codex', sessionId: '019a0000-1111-7222-8333-444444444444' })).toBe(false)
+  })
 })
 
 describe.skipIf(!gitSh())('readAgentFile over a fake host (Git for Windows sh)', () => {

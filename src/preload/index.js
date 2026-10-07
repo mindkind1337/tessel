@@ -96,6 +96,8 @@ const api = {
   diagnostics: () => ipcRenderer.invoke('logs:diagnostics'),
   claudeHoldDefaultModel: () => ipcRenderer.invoke('claude:holdDefaultModel'),
   claudeSessionExists: (id, scope) => ipcRenderer.invoke('sessions:claudeExists', id, scope),
+  // A pane on an SSH host: is its conversation there? -> true | false | null
+  remoteAgentSessionExists: (hostId, agent, id) => ipcRenderer.invoke('remote:agentSessionExists', hostId, agent, id),
   findCodexSession: (query) => ipcRenderer.invoke('sessions:findCodex', query),
   findAgentSession: (query) => ipcRenderer.invoke('sessions:find', query),
   sessionTitle: (query) => ipcRenderer.invoke('sessions:title', query),

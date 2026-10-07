@@ -213,15 +213,24 @@ export async function readRemoteHistory({ readAgentFile, hostId, agent, sessionI
 
 // Whether the host has that conversation's file (a Claude chat closed before
 // its first message never wrote one: --resume would fail). Unknown -> null.
-export async function remoteTranscriptExists({ readAgentFile, hostId, agent, sessionId } = {}) {
+// timeoutMs: not answered by then -> null (a terminal pane waits for it).
+export async function remoteTranscriptExists({ readAgentFile, hostId, agent, sessionId, timeoutMs = 0 } = {}) {
   if (!validRemoteTranscript(agent, hostId, sessionId) || typeof readAgentFile !== 'function') return null
+  let timer = null
   try {
-    const r = await readAgentFile(hostId, { agent, id: sessionId, offset: null, cap: 1 })
+    const read = Promise.resolve(readAgentFile(hostId, { agent, id: sessionId, offset: null, cap: 1 }))
+    read.catch(() => {}) // a late failure after the timeout: nobody waits
+    const r =
+      Number.isFinite(timeoutMs) && timeoutMs > 0
+        ? await Promise.race([read, new Promise((resolve) => (timer = setTimeout(() => resolve(null), timeoutMs)))])
+        : await read
     if (r?.ok) return true
     if (r?.missing) return false
     return null
   } catch {
     return null
+  } finally {
+    clearTimeout(timer)
   }
 }
 

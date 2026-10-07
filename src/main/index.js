@@ -69,7 +69,7 @@ import { createAgentBrowser } from './agentBrowser'
 import { createAgentTerminal } from './agentTerminal'
 import { createChatSessions } from './chat/sessions'
 import { remoteSpawnAvailable, remoteSpawnFor } from './chat/remoteProcess'
-import { remoteSessionDetails } from './chat/remoteTranscripts'
+import { remoteSessionDetails, remoteTranscriptExists } from './chat/remoteTranscripts'
 import { createRemoteSkills } from './chat/remoteSkills'
 import { createChatImages } from './chat/chatImages'
 import { transcriptHomeFor } from './chat/transcriptHistory'
@@ -1537,6 +1537,19 @@ ipcMain.handle('sessions:details', async (_evt, q = {}) => {
     }
     return await accountSessions.details(q || {})
   } catch { return { ok: false } }
+})
+// A terminal agent starting on an SSH host: whether its conversation is on
+// the host (Claude Code's transcript, a Codex rollout), to resume it or
+// start with a new id; never this computer's transcripts. Never a sign-in
+// (remoteFs.readAgentFile). -> true | false | null (can't tell: not
+// connected, no answer in time)
+ipcMain.handle('remote:agentSessionExists', async (_evt, hostId, agent, id) => {
+  try {
+    if (typeof hostId !== 'string' || !remoteHosts.get(hostId)) return null
+    return await remoteTranscriptExists({ readAgentFile: (h, r) => remoteFs.readAgentFile(h, r), hostId, agent, sessionId: id, timeoutMs: 8000 })
+  } catch {
+    return null
+  }
 })
 ipcMain.handle('sessions:revealLog', async (_evt, q = {}) => {
   try { return await accountSessions.reveal(q || {}, (p) => shell.showItemInFolder(p)) } catch { return { ok: false, error: 'failed' } }
