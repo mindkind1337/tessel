@@ -8048,60 +8048,19 @@ button.act-stat:hover,
 /* A folder being read ("Loading…") or that could not be (with Retry): a
    line of the tree, 22 px like its rows (only the rows in view are drawn,
    placed by that height). */
-.explorer-loading {
-  padding: 12px;
-  color: var(--text-dim);
-  font-size: 12px;
-}
-
-.explorer-loading-line {
+/* A remote host that did not answer: the rows shown are kept, with the
+   error and Retry on a line above them. */
+.explorer-root-error {
   display: flex;
   align-items: center;
   gap: 8px;
-}
-
-.explorer-skel-row {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-top: 12px;
-}
-
-.explorer-skel {
-  height: 10px;
-  border-radius: 3px;
-  background: var(--surface-3);
-}
-
-.explorer-skel.w80 {
-  width: 80%;
-}
-
-.explorer-skel.w50 {
-  width: 50%;
-  opacity: 0.7;
-}
-
-/* The project's folder could not be read: the error and Retry; a line above
-   the rows when they were kept (a remote host that did not answer). */
-.explorer-root-error {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 8px;
-  padding: 12px;
+  padding: 4px 8px 4px 12px;
   color: var(--text-dim);
   font-size: 12px;
   line-height: 1.5;
 }
 
-.explorer-root-error.line {
-  flex-direction: row;
-  align-items: center;
-  padding: 4px 8px 4px 12px;
-}
-
-.explorer-root-error.line .explorer-root-error-text {
+.explorer-root-error-text {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;

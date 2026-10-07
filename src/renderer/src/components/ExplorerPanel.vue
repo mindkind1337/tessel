@@ -8,6 +8,7 @@
 // A sparse checkout: the tree can show one of its folders as its root.
 import { ref, reactive, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import ThemedSelect from './ui/ThemedSelect.vue'
+import PanelState from './ui/PanelState.vue'
 import { statusOf, folderStatus, ignoredSet, isIgnored } from '../explorerStatus'
 import { buildRows, toggledPaths, soleSubfolder, activeGuide, segmentOf, rowPadding, guideX, INDENT, ROW_HEIGHT } from '../explorerRows'
 import { statusMatters, foldersToReload, sameEntries, sameStatus, rememberIgnored, inGitDir, parentOf } from '../explorerChanges'
@@ -1093,11 +1094,9 @@ function rowTitle(e) {
         />
         <div v-if="edit.error" class="explorer-edit-error">{{ edit.error }}</div>
       </div>
-      <div v-if="rootLoading" class="explorer-loading" role="status" aria-busy="true" data-test="explorer-loading">
-        <div class="explorer-loading-line"><span class="explorer-spinner" aria-hidden="true"></span>{{ t('explorer.loading', 'Loading…') }}</div>
-        <div v-for="n in 3" :key="n" class="explorer-skel-row" aria-hidden="true"><span class="explorer-skel w80"></span><span class="explorer-skel w50"></span></div>
-      </div>
-      <div v-else-if="rootError" class="explorer-root-error" :class="{ line: rootError.kept }" role="alert" data-test="explorer-error">
+      <PanelState v-if="rootLoading" />
+      <PanelState v-else-if="rootError && !rootError.kept" kind="error" :text="rootError.text" @retry="retryRoot" />
+      <div v-else-if="rootError" class="explorer-root-error" role="alert" data-test="explorer-error">
         <span class="explorer-root-error-text">{{ rootError.text }}</span>
         <button class="explorer-retry" data-test="explorer-retry" @click="retryRoot">{{ t('explorer.retry', 'Retry') }}</button>
       </div>
