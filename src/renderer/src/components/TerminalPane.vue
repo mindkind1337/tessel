@@ -1262,10 +1262,21 @@ const titleDescription = computed(() => {
         : t('sidebar.card.team', 'Team: {{team}}', { team: team.value.name })
     )
   if (isAgent.value && props.node.launchYolo) lines.push(t('pane.title.yolo', 'Yolo: runs without asking you'))
+  else if (isAgent.value && props.node.rootNoYolo) lines.push(rootNoYoloTitle())
   if (headerState.value) lines.push(headerState.value.label)
   lines.push(t('pane.title.hint', 'Double-click to rename. Drag the header to move the pane. More in the … menu'))
   return lines.join('\n')
 })
+
+// Claude Code on a host signed in as root: started in Accept edits, since it
+// refuses Yolo there (App.vue noteRootNoYolo). Its one-time note in the pane,
+// closed with its button.
+function rootNoYoloTitle() {
+  return t('pane.title.rootNoYolo', 'Accept edits: Claude Code refuses Yolo as root')
+}
+function dismissRootNote() {
+  delete props.node.rootNoYoloNote
+}
 
 // The header's hover card (Orca's hover card, like the sidebar's agent rows)
 // instead of native tooltips on the number, icon, title and state badge.
@@ -1317,7 +1328,7 @@ const hoverInfo = computed(() => {
     branch: n.worktree ? n.worktree.branch : '',
     state: headerState.value,
     stateDetail: live && !asksApproval.value && !limit.value ? statusSource.value : '',
-    warn: stuck.value && track.value ? track.value.reason : '',
+    warn: stuck.value && track.value ? track.value.reason : agent && n.rootNoYolo ? rootNoYoloTitle() : '',
     yolo: agent && n.launchYolo ? yoloTitle() : '',
     team: team.value ? { name: team.value.name, lead: isLead.value } : null,
     num: n.num || 0,
@@ -3150,6 +3161,15 @@ const paneMenuBindings = computed(() => ({
         :is-visible="paneOnScreen"
         @close="closeTranscript"
       />
+    </div>
+
+    <div v-if="node.rootNoYoloNote && !node.failed" class="root-note" data-test="root-no-yolo-note" role="status" @mousedown.stop>
+      <span class="root-note-text">{{ node.rootNoYoloNote }}</span>
+      <button class="pane-nav-btn" data-test="root-no-yolo-close" :title="t('pane.rootNoYolo.close', 'Close')" :aria-label="t('pane.rootNoYolo.close', 'Close')" @click="dismissRootNote">
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+        </svg>
+      </button>
     </div>
 
     <div v-if="findOpen" class="find-bar" @mousedown.stop>

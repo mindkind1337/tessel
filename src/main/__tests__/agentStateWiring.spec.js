@@ -10,7 +10,7 @@ import { paneEnv } from '../paneEnv'
 import { newTeamSecret, setTeamSecret, revokeTeamSecret, teamSecretOf, _resetTeamAuth } from '../teamAuth'
 import { wakeLaunchArgs, WAKE_LAUNCH_PROMPT } from '../../shared/orchestration'
 import { STATUS_PROVIDERS } from '../../shared/agentStateModel'
-import { claudeStartChoice, codexResumes } from '../../renderer/src/remoteAgentLaunch'
+import { claudeStartChoice, codexResumes, hasClaudeYoloFlag, rootSafeClaudeArgs } from '../../renderer/src/remoteAgentLaunch'
 // Claude Code and Codex panes: status from their hooks from launch.
 const managedAgentStatus = (leaf) => !!leaf.agentLaunchToken
 
@@ -417,6 +417,12 @@ function wakeSandbox(over = {}) {
     wakeLaunchArgs,
     // createLeaf's Claude permission mode (a chat continued in a terminal): none here.
     permissionMode: null,
+    // Claude Code's Yolo as root (remoteAgentLaunch.js): no root host here.
+    hasClaudeYoloFlag,
+    rootSafeClaudeArgs,
+    remoteHostIsRoot: () => false,
+    noteRootNoYolo: vi.fn(),
+    watchRootYoloRefusal: vi.fn(),
     setTimeout: (fn) => fn(),
     ...over
   }

@@ -55,6 +55,59 @@ export function needsRemoteAgentCheck(id, status, { connected = false } = {}) {
   return !!connected
 }
 
+// ---- Claude Code's Yolo as root ----------------------------------------------
+// Claude Code refuses --dangerously-skip-permissions as root ("cannot be used
+// with root/sudo privileges for security reasons") and never starts. On a host
+// signed in as root it starts in Accept edits instead, the closest mode it
+// allows there (a chat's own --permission-mode kept). Never IS_SANDBOX or any
+// other bypass: that is for real sandboxes, and yours to choose.
+// Codex's --dangerously-bypass-approvals-and-sandbox has no such check.
+export const CLAUDE_YOLO_FLAG = '--dangerously-skip-permissions'
+export const ROOT_PERMISSION_MODE = 'acceptEdits'
+
+// Whether a host's sessions run as root: its saved user is root, its agent
+// check says uid 0 (when the check reports it), or the agent found there is
+// in root's home (/root/...).
+export function hostRunsAsRoot({ username = '', status = null, command = '' } = {}) {
+  if (String(username || '').trim() === 'root') return true
+  if (status && !status.error && (status.uid === 0 || status.user === 'root')) return true
+  return /^'?\/root\//.test(String(command || ''))
+}
+
+// Whether these arguments carry Claude Code's Yolo flag (refused as root).
+export function hasClaudeYoloFlag(args) {
+  return /(^|\s)--dangerously-skip-permissions(?=\s|$)/.test(String(args || ''))
+}
+
+// The arguments without the Yolo flag, in Accept edits unless they (or the
+// chat's mode) already set a permission mode.
+export function rootSafeClaudeArgs(args, mode = null) {
+  const rest = String(args || '')
+    .replace(/(^|\s+)--dangerously-skip-permissions(?=\s|$)/g, '')
+    .trim()
+  if (/--permission-mode\b/.test(rest)) return rest
+  return [rest, `--permission-mode ${mode || ROOT_PERMISSION_MODE}`].filter(Boolean).join(' ') // i18n-ignore
+}
+
+// Claude Code's refusal, seen in a pane's output (the safety net when root was
+// not known before: a host with no saved user). Spaces and line breaks are
+// ignored (the terminal may wrap the line), as are colours.
+const ROOT_REFUSAL = '--dangerously-skip-permissionscannotbeusedwithroot/sudoprivileges'
+// eslint-disable-next-line no-control-regex
+const ANSI = /\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]/g
+// -> a function fed each chunk of output; true (once) when the refusal shows.
+export function rootRefusalWatcher() {
+  let tail = ''
+  let seen = false
+  return (data) => {
+    if (seen) return false
+    tail = (tail + String(data || '').replace(ANSI, '').replace(/\s+/g, '')).slice(-600)
+    if (!tail.includes(ROOT_REFUSAL)) return false
+    seen = true
+    return true
+  }
+}
+
 // The official installs on a Linux / macOS host, run in a new pane there
 // after you confirm (shown exactly as typed). Never as root: most servers'
 // global npm folder (/usr/local/lib/node_modules) is root's (EACCES).

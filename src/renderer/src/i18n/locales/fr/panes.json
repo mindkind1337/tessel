@@ -504,6 +504,7 @@
       "namedAfter": "{{name}} : {{title}} (nommé d'après sa conversation)",
       "branch": "Branche : {{branch}} (copie séparée)",
       "yolo": "Yolo : s'exécute sans vous demander",
+      "rootNoYolo": "Accepter les modifications : Claude Code refuse le mode Yolo en root",
       "hint": "Double-cliquez pour renommer. Faites glisser l'en-tête pour déplacer le panneau. Plus dans le menu …"
     },
     "hover": {
@@ -728,6 +729,9 @@
       "chipLabel": "Modèle : {{model}}. Choisir le modèle",
       "chipStatic": "Modèle : {{model}}",
       "noEffort": "Ce modèle n'a pas d'effort de raisonnement à choisir."
+    },
+    "rootNoYolo": {
+      "close": "Fermer"
     },
     "remote": {
       "notConnected": "{{host}} — non connecté",

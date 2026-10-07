@@ -2181,6 +2181,29 @@ kbd {
   text-overflow: ellipsis;
 }
 
+/* Claude Code on a root host: started in Accept edits (one-time note) */
+.root-note {
+  position: absolute;
+  top: 36px;
+  left: 14px;
+  right: 14px;
+  z-index: 7;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 4px 4px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface-2);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.45);
+  color: var(--text);
+  font-size: 12px;
+}
+.root-note-text {
+  flex: 1;
+  min-width: 0;
+}
+
 /* ================= Find bar ================= */
 .find-bar {
   position: absolute;

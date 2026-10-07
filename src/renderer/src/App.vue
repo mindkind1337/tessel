@@ -5,7 +5,7 @@ import SplitNode from './components/SplitNode.vue'
 import FloatingTerminal from './components/FloatingTerminal.vue'
 import ProjectLauncher from './components/ProjectLauncher.vue'
 import { allowDropRetry, droppedRemotePane, emptiedWorkspaceChoice, launcherAgents, launcherShells, projectOpenChoice, rememberedValue, remoteAgentFound } from './projectLauncher'
-import { claudeStartChoice, codexResumes, hostMenuAgents, needsRemoteAgentCheck, remoteAgentLine, remoteInstallCommand, remotePaneInstallCommand } from './remoteAgentLaunch'
+import { claudeStartChoice, codexResumes, hostMenuAgents, needsRemoteAgentCheck, remoteAgentLine, remoteInstallCommand, remotePaneInstallCommand, hostRunsAsRoot, hasClaudeYoloFlag, rootSafeClaudeArgs, rootRefusalWatcher } from './remoteAgentLaunch'
 import { createFloatingTerminal, isFloatingToggleKey } from './floatingTerminal'
 import BrandIcon from './components/BrandIcon.vue'
 import SidePanel from './components/SidePanel.vue'
@@ -1439,6 +1439,14 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
       leaf.agentMissing = { agent: hostKind, name: remoteAgentName(hostKind), resume: !!opts.resume }
     }
   }
+  // Claude Code refuses its Yolo flag as root and never starts: on a host
+  // signed in as root it starts in Accept edits instead, and the pane says so
+  // (remoteAgentLaunch.js). Codex has no such check.
+  let launchArgs = (launch && launch.args) || ''
+  if (agent && agent.id === 'claude' && launchCommand && opts.remoteHostId && hasClaudeYoloFlag(launchArgs) && remoteHostIsRoot(opts.remoteHostId, launchCommand)) {
+    launchArgs = rootSafeClaudeArgs(launchArgs, permissionMode)
+    noteRootNoYolo(leaf, opts.remoteHostId)
+  }
   if (agent && agent.command && launchCommand) {
     const start = await agentStartLine({ ...agent, command: launchCommand }, opts.sessionId || null, !!opts.resume, accountId, {
       known: opts.remoteSession === true && !!opts.remoteHostId,
@@ -1482,13 +1490,23 @@ async function createLeaf(shellId, agent = null, cwd = null, worktree = null, op
       window.shellApi.killPty(id)
       return null
     }
-    const permissionModeArg = permissionMode && !/--permission-mode\b/.test(launch.args || '') ? ` --permission-mode ${permissionMode}` : '' // i18n-ignore
-    const base = (launch.args ? `${start.line} ${launch.args}` : start.line) + extra + automationArgs + continueArgs + permissionModeArg
+    const lineWith = (args) => {
+      const permissionModeArg = permissionMode && !/--permission-mode\b/.test(args) ? ` --permission-mode ${permissionMode}` : '' // i18n-ignore
+      return (args ? `${start.line} ${args}` : start.line) + extra + automationArgs + continueArgs + permissionModeArg
+    }
+    const base = lineWith(launchArgs)
     setTimeout(() => {
       const withWake = !!wakeArg && !!settings.teamWakeUps
       const full = base + (withWake ? wakeArg : '')
       const line = opts.wrap ? opts.wrap(full) : full
       window.shellApi.writePty(id, `${line}\r`)
+      // Safety net: started with the Yolo flag where root was not known (a host
+      // with no saved user) and Claude Code refused it: started once more
+      // without it, in Accept edits.
+      if (opts.remoteHostId && hasClaudeYoloFlag(launchArgs)) {
+        const safe = lineWith(rootSafeClaudeArgs(launchArgs, permissionMode)) + (withWake ? wakeArg : '')
+        watchRootYoloRefusal(leaf, id, opts.wrap ? opts.wrap(safe) : safe)
+      }
       // Recorded only when the prompt really went: it was this launch's reminder.
       if (withWake) {
         noteLaunchWake(id, opts.wake.gen || 0)
@@ -1671,6 +1689,8 @@ function serializeNode(node) {
       permissionMode: node.detected ? undefined : node.permissionMode || undefined,
       launchSig: node.detected ? undefined : node.launchSig || undefined,
       launchYolo: node.detected ? undefined : node.launchYolo || undefined,
+      // Claude Code on a root host: started in Accept edits, not Yolo.
+      rootNoYolo: node.detected ? undefined : node.rootNoYolo || undefined,
       // Shown as a chat over its terminal (TerminalPane's chat view).
       chatView: !node.detected && node.chatView ? true : undefined,
       // Its agent is not installed on its SSH host: its card comes back.
@@ -1833,6 +1853,10 @@ async function deserializeNode(snap, cwd = null) {
     if (leaf.attached && typeof snap.launchSig === 'string') {
       leaf.launchSig = snap.launchSig.slice(0, 20000)
       leaf.launchYolo = snap.launchYolo === true
+      if (snap.rootNoYolo === true) {
+        leaf.rootNoYolo = true
+        leaf.launchYolo = false
+      }
     }
     // Its terminal still running (the shell its agent was missing from):
     // its card again, with its conversation id.
@@ -4776,6 +4800,47 @@ function offerAgentInstall(hostId, id, label) {
 const REMOTE_CHECK_MS = 15000
 // opts.strict: only when the host says it is there (a pane already missing
 // it never types it on a check that failed or was too slow).
+// Claude Code's Yolo as root (createLeaf): whether the host's sessions run as
+// root (its saved user, its agent check, the agent found in /root).
+function remoteHostIsRoot(hostId, command = '') {
+  const target = remoteHostsState.targets.find((x) => x.id === hostId)
+  return hostRunsAsRoot({ username: target && target.username, status: remoteAgentTools[hostId], command })
+}
+// The pane started in Accept edits instead of Yolo: never shown as Yolo, and
+// a short note in it, once per pane.
+const rootNoYoloNoted = new Set()
+function noteRootNoYolo(leaf, hostId) {
+  leaf.launchYolo = false
+  leaf.rootNoYolo = true
+  if (rootNoYoloNoted.has(leaf.id)) return
+  rootNoYoloNoted.add(leaf.id)
+  leaf.rootNoYoloNote = t('app.remoteAgents.rootNoYolo', 'Claude Code refuses Yolo as root: started in Accept edits mode. Use a non-root account on {{host}} for Yolo.', {
+    host: remoteHostLabel(hostId)
+  })
+  if (window.shellApi.log) window.shellApi.log('info', `pane ${leaf.id}: Claude Code on ${hostId} runs as root, started in acceptEdits instead of Yolo`)
+}
+// The safety net: Claude Code refused its Yolo flag in pane `id` (root not
+// known before): `retry` (the same line without it) typed once, and the note.
+const ROOT_REFUSAL_WATCH_MS = 60000
+function watchRootYoloRefusal(leaf, id, retry) {
+  if (!window.shellApi.onData) return
+  const refused = rootRefusalWatcher()
+  let off = null
+  const stop = () => {
+    if (off) off()
+    off = null
+  }
+  off = window.shellApi.onData(({ id: paneId, data }) => {
+    if (paneId !== id || !refused(data)) return
+    stop()
+    const now = findLeaf(id)
+    if (now && now !== leaf) return // replaced meanwhile (restarted)
+    noteRootNoYolo(leaf, leaf.remoteHostId)
+    // Claude Code exits on it: its shell's prompt comes back first.
+    setTimeout(() => window.shellApi.writePty(id, `${retry}\r`), 400)
+  })
+  setTimeout(stop, ROOT_REFUSAL_WATCH_MS)
+}
 async function remoteAgentCommand(hostId, id, command, { strict = false } = {}) {
   let st = remoteAgentTools[hostId]
   if (needsRemoteAgentCheck(id, st, { connected: hostShared(hostId) })) st = (await askHostAgents(hostId)) || st

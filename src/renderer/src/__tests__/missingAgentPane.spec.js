@@ -8,7 +8,7 @@ import fs from 'fs'
 import vm from 'vm'
 import { join } from 'path'
 import { reactive } from 'vue'
-import { needsRemoteAgentCheck, remoteAgentLine, remoteInstallCommand, remotePaneInstallCommand } from '../remoteAgentLaunch'
+import { needsRemoteAgentCheck, remoteAgentLine, remoteInstallCommand, remotePaneInstallCommand, hasClaudeYoloFlag, rootSafeClaudeArgs } from '../remoteAgentLaunch'
 import { remoteAgentFound } from '../projectLauncher'
 
 const source = fs.readFileSync(join(process.cwd(), 'src/renderer/src/App.vue'), 'utf8')
@@ -92,6 +92,8 @@ function load({ shared = true, status = null, tree = null } = {}) {
     remoteAgentFound,
     remoteInstallCommand,
     remotePaneInstallCommand,
+    hasClaudeYoloFlag,
+    rootSafeClaudeArgs,
     setTimeout,
     clearTimeout,
     Promise,

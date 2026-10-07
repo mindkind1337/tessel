@@ -397,6 +397,9 @@ export function launchPermissionMode(node) {
     return node.launchYolo || node.permissions === 'yolo' || /--dangerously-bypass-approvals-and-sandbox\b/.test(args) ? 'bypassPermissions' : 'default'
   const own = /--permission-mode[ =]["']?([A-Za-z]+)/.exec(args)
   if (own && MODES.has(own[1])) return own[1]
+  // On a host signed in as root: started in Accept edits (Claude Code refuses
+  // Yolo there), whatever its launch asked for.
+  if (node.rootNoYolo) return 'acceptEdits'
   return node.launchYolo || node.permissions === 'yolo' || /--dangerously-skip-permissions\b/.test(args) ? 'bypassPermissions' : 'default'
 }
 
@@ -404,7 +407,7 @@ export function launchPermissionMode(node) {
 // started able to use it: with --dangerously-skip-permissions, its
 // --allow-dangerously-skip-permissions, or started in that mode.
 export function canCycleToYolo(node) {
-  if (!node || composerAgent(node.agentId) === 'codex') return false
+  if (!node || composerAgent(node.agentId) === 'codex' || node.rootNoYolo) return false
   const args = launchArgsOf(node)
   return !!node.launchYolo || /--(?:allow-)?dangerously-skip-permissions\b/.test(args) || /--permission-mode[ =]["']?bypassPermissions\b/.test(args)
 }
