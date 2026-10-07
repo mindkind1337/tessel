@@ -46,7 +46,9 @@ provide('panelCtx', {
   exitFullscreen: side ? side.exit : null,
   toast: parent.toast,
   openExternal: parent.openExternal,
-  browserPorts: parent.browserPorts
+  browserPorts: parent.browserPorts,
+  // The toolbar's cookie button: the same import dialog as in the grid.
+  openCookieImport: parent.openCookieImport
 })
 
 const pane = ref(null)
